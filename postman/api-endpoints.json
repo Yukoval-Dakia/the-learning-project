@@ -1349,7 +1349,7 @@
           },
           "revision_id": "REPLACE_revision_optional"
         },
-        "notes": "mode:auto_score(默认,要求 admitted) | manual(D9)；container_only 组必填 container_occurrence_ref。返回 {status,issuance,practice_dto(公开面无答案键),admission_generation_observed}。错误：not_found(404)/unpublished|suspended|withdrawn|not_admitted|container_ref_required|binding_invalid(422)/claim_unavailable|issuance_id_conflict(409)；replayed→200"
+        "notes": "mode:auto_score(默认,要求 admitted) | manual(D9)；container_only 组必填 container_occurrence_ref。返回 {status,issuance,practice_dto(公开面无答案键),admission_generation_observed}。错误：not_found(404)/unpublished|suspended|withdrawn|not_admitted|container_ref_required|binding_invalid(422)/claim_unavailable|issuance_id_conflict(409)；replayed→200。not_admitted(422) 的错误体 details.serving_reason 给出 typed gate 原因（自动判分不可达/human_review/missing_referenced_figure 等公共枚举）"
       }
     ]
   },
@@ -1362,7 +1362,7 @@
         "query": [],
         "contentType": null,
         "bodyExample": null,
-        "notes": "返回 issuance/practice_dto/draft/submissions；已接收 submission 带原始 response_set/group_evidence/idempotency_key，恢复不泄漏候选反馈。不存在返回404。"
+        "notes": "返回 issuance/practice_dto/draft/submissions；已接收 submission 带原始 response_set/group_evidence/idempotency_key，恢复不泄漏候选反馈。不存在返回404。practice_dto=null 时 unavailable_reason 给出 typed 收回原因（公共枚举，如 human_review/missing_referenced_figure），已有提交不受影响"
       }
     ]
   },

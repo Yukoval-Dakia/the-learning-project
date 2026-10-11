@@ -26,6 +26,7 @@ import {
 } from '@/server/questions/contract-normalizer';
 import { publishQuestionGroup } from '@/server/questions/publisher';
 import * as runtimeEnv from '@/server/runtime-env';
+import { seedHistoricalAssessmentIssuance } from '../../../../tests/fixtures/historical-assessment-issuance';
 
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { GET as pollStatus } from '../api/judge-run-status-route';
@@ -39,7 +40,6 @@ import {
   dispatchNativeAttempt,
   executeNativeAttempt,
 } from './assessment/durable-attempt';
-import { issueAssessment } from './assessment/issue';
 import * as evaluationService from './judge/evaluate-submission';
 import { createRecordedModelExecutor } from './judge/recorded-model-executor';
 import * as durableConfig from './judge-durable-config';
@@ -106,7 +106,8 @@ async function fixture(knowledgeIds: string[] = []) {
     },
   });
   expect(pub.status).toBe('published');
-  const issued = await issueAssessment(db, { group_id: id });
+  // Preserve durable historical evaluation coverage without inventing serving admission.
+  const issued = await seedHistoricalAssessmentIssuance(db, { group_id: id });
   if (issued.status !== 'issued') throw new Error(issued.status);
   const request = {
     issuance_id: issued.issuance.issuance_id,

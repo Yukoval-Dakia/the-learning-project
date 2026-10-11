@@ -16,6 +16,7 @@ import {
   batchResolveSubjectDisplayIds,
   resolveSubjectRenderNotation,
 } from '@/kernel/read-models/subject-resolution';
+import { readAutomaticIssuanceServingDecisions } from '@/kernel/records/assessment-issuance';
 import { projectEvaluationToJudgeResult } from '../judge/evaluation-authority';
 import type { PaperDetailResult, PaperDetailSection, PaperDetailSlot } from '../paper-detail';
 import { resolveKnowledgeNames } from '../practice-read';
@@ -42,6 +43,9 @@ export async function getFrozenPaperDetail(
         .where(inArray(assessment_issuance.issuance_id, issuanceIds))
     : [];
   const issuedById = new Map(issued.map((row) => [row.issuance.issuance_id, row]));
+  // Serving admission over the pinned issuances — the same authoritative guard the
+  // recovery read faces use; it reads the immutable frozen bindings, never mutates.
+  const servingDecisions = await readAutomaticIssuanceServingDecisions(db, issuanceIds);
   const drafts = issuanceIds.length
     ? await db
         .select()
@@ -86,17 +90,37 @@ export async function getFrozenPaperDetail(
     })),
   );
   const sections = new Map<number, PaperDetailSection>();
+  const withheld: NonNullable<PaperDetailResult['withheld_assessments']> = [];
   let pos = 0,
     right = 0,
     wrong = 0;
   for (const slot of binding.slots) {
     const frozen = issuedById.get(slot.issuance_id);
     if (!frozen) throw new ApiError('corrupt_state', 'paper opening receipt has no issuance', 409);
+    const original = submissionByIssuance.get(slot.issuance_id);
+    // Serving gate (same boundary as getIssuanceState): an unsupported pinned
+    // contract withholds the answer surface for UNANSWERED slots — the slot is
+    // withheld from this projection entirely, since PaperSlotAssessment.practice_dto
+    // is non-nullable and omitting `assessment` would flip the whole paper into
+    // the legacy view-only path. The typed reason is exposed via
+    // withheld_assessments so the UI can render an explicit placeholder instead
+    // of a silently missing slot. An accepted submission keeps its DTO/history
+    // for settlement and recovery; stored issuance/draft/submission bytes are
+    // untouched.
+    const decision = servingDecisions.get(slot.issuance_id);
+    if (decision?.kind === 'unavailable' && original == null) {
+      withheld.push({
+        issuance_id: slot.issuance_id,
+        question_id: slot.question_id,
+        part_ref: slot.part_ref,
+        reason: decision.reason,
+      });
+      continue;
+    }
     const dto = projectPracticeIssuance(
       revisionRowToContract(frozen.revision),
       issuanceRowToContract(frozen.issuance),
     );
-    const original = submissionByIssuance.get(slot.issuance_id);
     const draft = draftByIssuance.get(slot.issuance_id);
     const capture = original ? captureBySubmission.get(original.submission_id) : undefined;
     const frozenAnswer = capture ? answerByEvent.get(capture.id) : undefined;
@@ -173,6 +197,17 @@ export async function getFrozenPaperDetail(
     }
     section.slots.push(detail);
   }
+  // Slots the gate refused at open time carry no issuance at all — surface them
+  // with a null issuance id next to pinned-but-unservable slots so the read
+  // shape is identical and never invents an issuance that does not exist.
+  for (const slot of binding.withheld_slots ?? []) {
+    withheld.push({
+      issuance_id: null,
+      question_id: slot.question_id,
+      part_ref: slot.part_ref,
+      reason: slot.reason,
+    });
+  }
   return {
     artifact_id: paper.id,
     title: paper.title,
@@ -180,6 +215,7 @@ export async function getFrozenPaperDetail(
     intent_source: paper.intent_source,
     session: { id: binding.session_id, status: sessionStatus, pos, right, wrong },
     sections: [...sections.values()].sort((a, b) => a.section_index - b.section_index),
+    withheld_assessments: withheld.length > 0 ? withheld : undefined,
     is_flat_fallback: false,
   };
 }

@@ -2,7 +2,6 @@ import { createId } from '@paralleldrive/cuid2';
 import { eq, sql } from 'drizzle-orm';
 import { judgeDeliveryInput } from '@/capabilities/practice/public';
 import { dispatchNativeAttempt } from '@/capabilities/practice/server/assessment/durable-attempt';
-import { issueAssessment } from '@/capabilities/practice/server/assessment/issue';
 import type { JudgeRunEnqueueDeps } from '@/capabilities/practice/server/judge-run-dispatch';
 import { readJudgeRunPermanent } from '@/capabilities/practice/server/judge-run-observation';
 import type { Db } from '@/db/client';
@@ -13,6 +12,7 @@ import {
   normalizeQuestionRowToContract,
 } from '@/server/questions/contract-normalizer';
 import { publishQuestionGroup } from '@/server/questions/publisher';
+import { seedHistoricalAssessmentIssuance } from '../fixtures/historical-assessment-issuance';
 export async function resetJudgeControl(database: Db, phase = 'pg-boss') {
   await database.execute(
     sql`update judge_run_control set phase=${phase},epoch=0,incarnation=gen_random_uuid(),transition_event_id=null,phase_changed_at=clock_timestamp()`,
@@ -86,8 +86,12 @@ export async function frozenJudge(database: Db, now = new Date()) {
     },
   });
   if (published.status !== 'published') throw new Error(published.status);
-  const issued = await issueAssessment(database, { group_id: id });
-  if (issued.status !== 'issued') throw new Error(issued.status);
+  // YUK-1445 — the frozen contract deliberately keeps a model_executor, which the
+  // serving gate rightly refuses for NEW issuance (no authoritative model admission
+  // registry exists). These suites recover ALREADY-issued work, so seed the exact
+  // rows issueAssessment persists (binding, claim columns, receipt event) through
+  // the historical fixture — never a fresh serving grant, never a gate bypass.
+  const issued = await seedHistoricalAssessmentIssuance(database, { group_id: id, now });
   const slot = contract.response_spec.slots[0];
   if (!slot) throw new Error('Frozen response slot missing');
   const request = {
