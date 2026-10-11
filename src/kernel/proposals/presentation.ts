@@ -345,6 +345,11 @@ function summaryItem(label: string, value: unknown): ProposalSummaryItem | null 
   return text ? { label, value: truncate(text, BLOCK_EXCERPT_CAP) } : null;
 }
 
+function reasonSummaryItem(label: string, value: unknown): ProposalSummaryItem | null {
+  if (value === undefined || value === null) return null;
+  return summaryItem(label, proposalReasonPlainText(value));
+}
+
 function compact(items: Array<ProposalSummaryItem | null>): ProposalSummaryItem[] {
   return items.filter((item): item is ProposalSummaryItem => item !== null);
 }
@@ -608,7 +613,7 @@ const proposalPresenters: { [K in AiProposalPayloadT['kind']]: ProposalPresenter
       const change = recordOf(payload.proposed_change);
       return compact([
         summaryItem('延后到', change?.defer_until),
-        summaryItem('安排说明', change?.reason),
+        reasonSummaryItem('安排说明', change?.reason),
       ]);
     },
   },
@@ -649,7 +654,7 @@ const proposalPresenters: { [K in AiProposalPayloadT['kind']]: ProposalPresenter
       const change = recordOf(payload.proposed_change);
       return compact([
         summaryItem('动作', '移出当前工作区'),
-        summaryItem('原因', change?.archived_reason ?? change?.reason),
+        reasonSummaryItem('原因', change?.archived_reason ?? change?.reason),
       ]);
     },
   },
@@ -659,7 +664,7 @@ const proposalPresenters: { [K in AiProposalPayloadT['kind']]: ProposalPresenter
       const change = recordOf(payload.proposed_change);
       return compact([
         summaryItem('动作', '撤回这次 AI 判定'),
-        summaryItem('复核说明', proposalReasonPlainText(change?.reason_md)),
+        reasonSummaryItem('复核说明', change?.reason_md),
       ]);
     },
   },
@@ -675,7 +680,7 @@ const proposalPresenters: { [K in AiProposalPayloadT['kind']]: ProposalPresenter
             ? `${change.scope_knowledge_ids.length} 个知识点`
             : null,
         ),
-        summaryItem('判断依据', change?.reasoning),
+        reasonSummaryItem('判断依据', change?.reasoning),
       ]);
     },
   },

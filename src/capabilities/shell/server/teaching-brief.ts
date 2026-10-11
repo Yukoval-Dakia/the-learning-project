@@ -35,6 +35,7 @@ import {
 } from '@/db/schema';
 import { getCorrectionStatuses } from '@/kernel/events';
 import { type ProposalInboxRow, getProposalInboxRow } from '@/kernel/proposals/inbox';
+import { proposalReasonPlainText } from '@/kernel/proposals/reason-text';
 
 export const TEACHING_BRIEF_FINDING_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const TEACHING_BRIEF_OUTCOME_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -377,7 +378,7 @@ function factsFromProposalRow(
       claimMd: change.claim_md.trim(),
       knowledgeId: change.knowledge_id,
       causeCategory: change.cause_category,
-      reasonMd: row.payload.reason_md,
+      reasonMd: proposalReasonPlainText(row.payload.reason_md),
       probeMd: change.probe_md,
       probeReferenceMd: change.probe_reference_md,
       probeSpec: change.probe_spec ?? null,
@@ -425,7 +426,7 @@ function factsFromRawProposalRow(row: EventRow): CandidateResult<ConjectureFacts
       claimMd: change.claim_md.trim(),
       knowledgeId: change.knowledge_id,
       causeCategory: change.cause_category,
-      reasonMd: payload.reason_md,
+      reasonMd: proposalReasonPlainText(payload.reason_md),
       probeMd: change.probe_md,
       probeReferenceMd: change.probe_reference_md,
       probeSpec: change.probe_spec ?? null,

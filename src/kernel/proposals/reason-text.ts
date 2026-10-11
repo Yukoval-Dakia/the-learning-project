@@ -1,3 +1,6 @@
+import remarkMath from 'remark-math';
+import remarkParse from 'remark-parse';
+import { unified } from 'unified';
 import { z } from 'zod';
 
 const RecentFailureEvidence = z
@@ -35,7 +38,7 @@ export function proposalReasonPlainText(value: unknown): string {
   if (
     text.includes('recent_failure_count_30d') ||
     /```|~~~|<(?:think|thinking|analysis|reasoning)\b/i.test(text) ||
-    /(?:^|\n)\s*["']?[a-z][a-z0-9]*_[a-z][a-z0-9_]+["']?\s*[=:]/i.test(text) ||
+    technicalAssignmentOutsideMath(text) ||
     /\b(?:api[-_]?key|password|secret|authorization|access[-_]?token|refresh[-_]?token)\b\s*[=:]/i.test(
       text,
     ) ||
@@ -51,6 +54,53 @@ export function proposalReasonPlainText(value: unknown): string {
   }
   // No slicing, token substitution, or math-delimiter rewriting.
   return value;
+}
+
+interface ReasonMathNode {
+  type: string;
+  position?:
+    | { start: { offset?: number | undefined }; end: { offset?: number | undefined } }
+    | undefined;
+  children?: ReasonMathNode[] | undefined;
+}
+
+const reasonMathParser = unified().use(remarkParse).use(remarkMath);
+
+function technicalAssignmentOutsideMath(text: string): boolean {
+  const assignments = [...text.matchAll(/\b[a-z][a-z0-9]*_[a-z][a-z0-9_]+["']?\s*[=:]/gi)];
+  if (assignments.length === 0) return false;
+  const mathSpans: Array<[number, number]> = [];
+  const collect = (node: ReasonMathNode): void => {
+    const start = node.position?.start.offset;
+    const end = node.position?.end.offset;
+    if (
+      (node.type === 'inlineMath' || node.type === 'math') &&
+      start !== undefined &&
+      end !== undefined
+    ) {
+      mathSpans.push([start, end]);
+    }
+    for (const child of node.children ?? []) collect(child);
+  };
+  try {
+    collect(reasonMathParser.parse(text));
+  } catch {
+    return true;
+  }
+  // The renderer's explicit legacy delimiter grammar, in original source coordinates.
+  const legacy =
+    /(```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`)|(?<!\\)\\\[((?:(?!\n\s*\n)[^`])+?)\\\]|(?<!\\)\\\(((?:(?!\n\s*\n)[^`])+?)\\\)/g;
+  for (const match of text.matchAll(legacy)) {
+    if (match[2] !== undefined || match[3] !== undefined) {
+      mathSpans.push([match.index, match.index + match[0].length]);
+    }
+  }
+  return assignments.some(
+    (match) =>
+      !mathSpans.some(
+        ([start, end]) => start <= match.index && match.index + match[0].length <= end,
+      ),
+  );
 }
 
 function unsafeUrlIn(text: string): boolean {
@@ -73,7 +123,7 @@ export function mapProposalReasonFields(value: unknown): unknown {
   return Object.fromEntries(
     entries.map(([key, item]) => [
       key,
-      key === 'reason_md' || key === 'reasoning'
+      key === 'reason_md' || key === 'reasoning' || key === 'reason' || key === 'archived_reason'
         ? proposalReasonPlainText(item)
         : mapProposalReasonFields(item),
     ]),
