@@ -11,6 +11,10 @@ Stable-layer base for the UI rewrite (YUK-1354). Source of truth for every rule:
   `web/src/globals.css`, Start routes/router/boot, package/lock/vite entries (I4).
 - No external URLs (the CSP allows same-origin fonts only). No new dependencies without
   coordination. Reuse `@/ui/primitives/useFocusTrap` for modal layers; do not bind ⌘K.
+- The mascot (B1–B4) is one instance owned by `<UiNextRoot>`. Pages only declare
+  `<MascotSlot>` / `<MascotDock>` and drive it with `useMascotActivity`. `three` (YUK-1473) may
+  be imported only by `mascot/flower-gl.ts`, which is reached by dynamic import alone; never
+  import it, or `flower-gl`, statically from anything else, so it stays out of initial chunks.
 - Components are presentation and interaction only: no data fetching, no business rules (I1).
   Showcase examples use local sample data and never call real writes.
 - Collapsed or hidden regions are `inert` (A1); small controls opt into `.un-hit` (A2).
