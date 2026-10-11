@@ -1,12 +1,12 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-11：YUK-1107再优先解阻main：review cron位置36误选regexsubstring，新最小显式integer修复与DBOS同类扫描，review/本地/CI待验。1696已合a213且23PASS/完整CI绿，生产风险YUK-1481；提速隔离96d22a57d暂停，成熟head须连续3次完整CI绿，不占产品窗口。
+> Linear 是权威 tracker。2026-10-11：YUK-1107隔离head f0f2d63bf完整CI三绿166/207/144秒、中位166；唯一验证R2 NONE及逐不变量说明已过。正常纳入main c2新测试规则后，作者代码不变，等待新exact-head CI再合1691。judge阶段诊断仅独立实验，backup等audit/owner，120未达。
 
 ## NOW
 
-- **YUK-1404 / native03 题图修复候选**：PR1657 figure-only源码与前瞻公开输入过滤完成；55个原始题块离线重放无跨题绑定，四项隐私不变量与Node24静态构建通过。历史block/source/revision不改，1658 kind未复制。crop未登记SHA与旧visibility未知，公开图继续withheld，不称完整交付。[证据与交接](docs/planning/2026-10-11-yuk1404-native03-figure-repair.md)。
+- **YUK-1404 / native03题图修复**：PR1657 fixed4c52 exact CI38144495041全绿；正常纳入main eb960c079，仅PLAN/now冲突。图ownership/隐私产品代码与单capture边界测试保留，旧细粒度四tests已删。独立初审/最终R2预算已完成，不启第三审。当前crop producer仍无source_asset SHA登记，旧visibility未知，public withholding不是完整配图交付；同卷actual-output验收仍待。无DB/runtime/provider/paid。 [证据](docs/planning/2026-10-11-yuk1404-native03-figure-repair.md)。
 
-- **YUK-1107 / review cron main解阻优先**：owner要求同位置36的22008故障先解阻；父隔离tree fix/yuk-1107-review-cron-position-cast，baseff2c9e229。git blame确认SQLoracle源自#1690 e178；全扫tests/dbos-*只2处SQLsubstring后cast，session已integer，唯一review缺口现加integer，原horizon max+60/H边界/ledger断言全保留。新独立review、DNS后批准的review1+session2共3cases、exactCI/matchhead待验；无runtime/锁。旧1696已合a213、fixed7c23PASS/完整CI234秒，R2已resolve、UI/功能已通知；生产RST风险单独YUK-1481。速度树96d22a57d仅本地checkpoint暂停、1691draft远端fc，backup另批；同head3连续全绿前不入main，120目标未达标。
+- **YUK-1107 / 完整CI≤120秒继续**：#1696/#1697主线解阻已交；critical f0f2d63bf三次完整CI38141930431/38141956448/38142360324全绿166/207/144秒，中位166秒，实际8DB/2unit/native-WASM-JS；R2 NONE且核逐不变量测试行说明，21session用例及全部断言保留。正常纳入main c2仅AGENTS/流程规则docs，作者runtime/fixture/CI代码字节不变；协调者要求新exactCI过后才match-head合1691，不启第三审。原432秒仅1次观察，计时是workflow创建到Gate绿；120目标仍未达。另独立perf/yuk-1107-judge-stage-profile head6bae53c2f只现有process例计时+上传既有诊断，CI38143778742待阶段分布；worker/support/模型/生产/断言不改，无本机DB/锁。backup去重/删除暂停待slop audit与owner，任一main提速回归先revert。生产RST风险另票YUK-1481。
 
 - **YUK-1107 / session cron已交付**：#1681合main56df7c09；控制时间验证边界，生产60秒保护/cron及严格ledger不变；R2无P0/P1，父修Drizzle初始化后exact cd0c45d CI38120469007全绿。两例PASS、文件34.564秒；实测跨分钟边界，YUK-1397修复交付。整套390秒，不核销120秒目标。[证据与限度](docs/planning/2026-10-11-yuk1107-cron-speed.md)。
 
@@ -32,8 +32,6 @@
 
 ## NEXT
 
-- **YUK-1404 / PR1657父验收**：异模型独立审查、exact-head CI、与固定1658正常组合及隔离同纸产品重跑由父owner负责；作者不合并/不跑runtime。
-
 - Start/judge共享文件边界见[交接](docs/planning/2026-10-09-judge-start-ownership.md)，Start/boot/shutdown由5796独占；judge A/B/C/D由7631接续，迁移号后核。
 
 - PR1625 本轮仅同步 main 并恢复可合并状态；判分 DBOS 家族源码、进程恢复、真实模型和整体迁移退出分开验收。正常 push 后等待新 exact-head CI，不合并 PR。
@@ -46,8 +44,6 @@
 - UI 线：视觉方向已定（#1612、#1627）。#1633 KaTeX、#1634 F06 对比度与 #1642 ≠ 修复（YUK-1446）已于 2026-10-10 20:01 JST 部署到 TEST（main `515669863`），并完成真实页面截图验收。遗留 YUK-1447（等 rehype-katex 升级）。下一步 YUK-1438：等功能线各后端片落地后接入；placement/profile 的 UI 等迁移线给出 Start client 契约。
 
 ## PARKED
-
-- **YUK-1404 / future crop资产登记**：现有crop.ts仅写R2，publisher只信source_asset.sha256。下一前瞻切片在现有裁图与persist-image-asset接口登记实际PNG字节、稳定身份及可见性，协调两套storage key约定；不假造digest/不回填历史/不建新registry。
 
 
 - **YUK-1358/1359已有UI观察**：真实Inbox dismiss后本页499但侧栏500，document reload恢复一致；原onResolve仅本地resolved更新。Google Fonts原import受CSP拦截；fallback可用。记录在现有迁移验收/后续UI边界，不放宽CSP、不冒称本PR修复。
