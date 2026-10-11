@@ -5,8 +5,19 @@ import './tokens.css';
 import './components.css';
 
 export * from './mascot';
-export type { FlyOptions, MorphSnapshot } from './motion/flights';
-export { bump, flyTo, playMorphs, snapshotMorphs } from './motion/flights';
+export type { CaptureFlight, FlyOptions, MorphSnapshot, QuoteFlight } from './motion/flights';
+export {
+  bump,
+  cancelMorphs,
+  flyCapture,
+  flyQuote,
+  flyTo,
+  playMorphs,
+  playMorphsAfterPaint,
+  snapshotMorphs,
+} from './motion/flights';
+export type { SharedMorph } from './motion/morph';
+export { useSharedMorph } from './motion/morph';
 export { holdReadingPosition } from './motion/reading';
 export { prefersReducedMotion, useReducedMotion } from './motion/reduced-motion';
 export { FLASH_CLASS, reveal } from './motion/reveal';

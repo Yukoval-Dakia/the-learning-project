@@ -613,6 +613,38 @@
   }
 }
 
+/* ── Flying copies (M4–M6) ───────────────────────────────
+   Positioned by script on --un-z-flight. Solid, not glass: they are objects in motion. */
+[data-ui-next] {
+  & .un-quote-ghost {
+    max-width: 320px;
+    padding: 2px var(--un-sp-2);
+    overflow: hidden;
+    border-radius: var(--un-r-1);
+    background: var(--un-accent-soft);
+    color: var(--un-accent-ink);
+    font-size: var(--un-fs-1);
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    box-shadow: 0 8px 22px -8px color-mix(in srgb, var(--un-accent) 55%, transparent);
+    will-change: transform, opacity;
+  }
+
+  & .un-fly-chip {
+    max-width: 280px;
+    padding: var(--un-sp-1) 10px;
+    overflow: hidden;
+    border-radius: var(--un-r-3);
+    background: var(--un-accent-strong);
+    color: var(--un-text-on-accent);
+    font-size: var(--un-fs-1);
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    box-shadow: 0 6px 18px -6px color-mix(in srgb, var(--un-accent-strong) 60%, transparent);
+    will-change: transform, opacity;
+  }
+}
+
 /* ── Mascot (B1–B4) ──────────────────────────────────────
    One fixed layer over the page; the box is moved and scaled by a JS spring (transform only).
    The still flower shows until the glass one is ready, then cross-fades. */
@@ -795,6 +827,17 @@
       animation: un-flash var(--un-t-glow) var(--un-ease-glide) both;
     }
 
+    /* A new view rises in; arriving through a shared title it only fades, so the title has a
+       still place to land (M4). */
+    & .un-page-enter {
+      animation: un-page-in var(--un-t-panel) var(--un-ease-glide) both;
+    }
+
+    &[data-un-morph-in] .un-page-enter,
+    & [data-un-morph-in] .un-page-enter {
+      animation-name: un-page-fade;
+    }
+
     /* The still flower spins while the companion thinks (B2); one turn ≈ 4.2 s, as in 3D. */
     & .un-mascot[data-thinking="true"] .un-mascot-still {
       animation: un-mascot-spin 4.2s linear infinite;
@@ -850,6 +893,19 @@
   }
   100% {
     background-color: transparent;
+  }
+}
+
+@keyframes un-page-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--un-rise));
+  }
+}
+
+@keyframes un-page-fade {
+  from {
+    opacity: 0;
   }
 }
 
