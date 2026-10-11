@@ -3,6 +3,7 @@ import { AiProposalKind } from '@/core/schema/proposal';
 import type { Db } from '@/db/client';
 import { ApiError, collectionPayload } from '@/kernel/http';
 import { listProposalInboxPage } from '@/kernel/proposals/inbox';
+import { proposalInboxRowForLearner } from '@/kernel/proposals/learner-read';
 
 // Retain the HTTP policy; the domain reader's omitted limit means unlimited.
 const ProposalInboxQuery = z.object({
@@ -49,7 +50,7 @@ export async function readProposalInbox(db: Db, input: unknown = {}) {
     cursor: query.cursor,
   });
   const rows = page.rows.map((row) => ({
-    ...row,
+    ...proposalInboxRowForLearner(row),
     proposed_at: row.proposed_at.toISOString(),
     decided_at: row.decided_at?.toISOString() ?? null,
   }));

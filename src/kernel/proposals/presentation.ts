@@ -11,6 +11,7 @@ import {
   resolveSubjectRenderNotation,
 } from '@/kernel/read-models/subject-resolution';
 import { resolveKnownSubjectId } from '@/subjects/profile';
+import { proposalReasonPlainText } from './reason-text';
 
 type DbLike = Db | Tx;
 type QuestionEditChange = Extract<AiProposalPayloadT, { kind: 'question_edit' }>['proposed_change'];
@@ -658,7 +659,7 @@ const proposalPresenters: { [K in AiProposalPayloadT['kind']]: ProposalPresenter
       const change = recordOf(payload.proposed_change);
       return compact([
         summaryItem('动作', '撤回这次 AI 判定'),
-        summaryItem('复核说明', change?.reason_md),
+        summaryItem('复核说明', proposalReasonPlainText(change?.reason_md)),
       ]);
     },
   },
