@@ -142,6 +142,7 @@ export function SentenceBreaksBlock({
             {hasGap ? (
               <span
                 className="un-sb-gap"
+                data-gap={gap}
                 data-on={placed.has(gap) || undefined}
                 data-caret={(!readOnly && caret === gap) || undefined}
               >
