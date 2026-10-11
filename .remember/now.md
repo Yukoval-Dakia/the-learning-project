@@ -1,3 +1,7 @@
+# YUK-1107 controlled-time revision (2026-10-11)
+
+Owner directs removing real 61s/60s waits. Only three cron fixture files changed: isolated application PG clock + producer-trigger search path, strict pre-horizon rejection/exact-horizon acceptance, real legacy enqueue receipt, both native schedules paused/settled before boundary checks. Logs /tmp/yuk1358-1680-db4-ci.log and /tmp/yuk1356-b250-db4-ci.log confirm two ENQUEUED slot-boundary failures; strict ledger remains intact. New runtime/review acceptance pending; old060a evidence is historical. No new local DB/container/Vitest batch until functional lane releases its shared window.
+
 # YUK-1403 prevention slice delivered (2026-10-11)
 
 PR #1679 merged bfe3ff98470cc69764a0f33589d6354890d9327d; exact d7f21c70d CI Gate 38117714463 SUCCESS, R2 P0/P1 NONE, inline threads zero. 10 weak cases removed / 3 assertions strengthened / AST admission required. Existing YUK-1403 remains In Progress for pending migration-smoke and the captured syntax P2. No deployment. Cron draft #1681 is still pending runtime acceptance; functional lane owns next shared window.

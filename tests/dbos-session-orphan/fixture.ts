@@ -5,6 +5,7 @@ import { observabilityCapability } from '@/capabilities/observability/manifest';
 const sessionFamilies = ['prune_orphan_conversation_sessions', 'prune_orphan_placement_sessions'];
 export const nativeCron = '*/2 * * * * *';
 export const schedulerPollMs = 100;
+export const clockSearchPath = 'session_cron_clock, pg_catalog, public';
 
 function declaration(name: string) {
   const job = observabilityCapability.jobs?.handlers?.find((job) => job.name === name);

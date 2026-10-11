@@ -1,10 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-11：YUK-1403 防回潮 #1679 已合 main bfe3ff98（exact d7f21c7 CI 全绿、R2 无 P0/P1）。YUK-1107 cron 草稿 #1681 等故障变异、最终 SHA 复跑与 exact CI；共享运行窗口交功能线。
+> Linear 是权威 tracker。2026-10-11：YUK-1403 防回潮 #1679 已合 main bfe3ff98；owner改为控制测试时间，不再等待61/60秒。YUK-1107草稿#1681同修#1680/#1625分钟边界fixture故障，独立R2与新exact CI待验，本机窗口仍归功能线。
 
 ## NOW
 
-- **YUK-1107 / cron 测试加速**：仅测试 fixture 使用真实 DBOS 两秒 cadence，生产排期与 60 秒排空保护不变。最终 060a 两例 PASS（Vitest 277.61 秒）、非 cron 两例 SIGKILL PASS及 static/build通过，独立 R1 无 P0/P1；[证据与剩余验收](docs/planning/2026-10-11-yuk1107-cron-speed.md)。故障变异、最终交付 SHA 复跑与 exact-head CI 未完成，不核销整票两分钟目标或 YUK-1397。
+- **YUK-1107 / cron 测试加速**：owner要求取消真实分钟等待；fixture时钟检查60秒边界前拒绝、边界时成功，生产保护与严格ledger不变。真实native两scheduler/receipt/restart后暂停两族调度，覆盖#1680/#1625的ENQUEUED边界首因；新的源码尚待独立R2与exact CI，不能用旧060a的277.61秒PASS代替。[证据与验收](docs/planning/2026-10-11-yuk1107-cron-speed.md)。
 
 - **YUK-1388 / 第四批审查完成（2026-10-10）**：O1–O7 裁决、7 个 P0 根（含新增 M100 出题前自动可判 → YUK-1445）、100 根 / 828 子主张、W0–W4 五波，见最终报告 `tlp-audit-artifacts/yuk1388/stage4/final-report.md`（仓库外 artifact 目录）。V01/V02 独立审查 15 条发现全部接受并由 I03 修正。票保持 In Progress，等 owner 读报告并裁决是否清理 R03 写入 TEST Mem0 的 5 条合成危机记忆。
 - **YUK-1403 / 防回潮**：删10个普通配置/自证case、强化3处回执/版本断言；新增AST case准入并接CI。29unit/26DB、typecheck/lint/build与临时CLI负例通过；R1 P1 已修、R2 无新 P0/P1，exact d7f21c7 CI Gate 38117714463 全绿，#1679 已合 main bfe3ff98。括号/静态属性注册漏检 P2 已留 Linear。原migration-smoke32例仍等#1625，不能以本轮替代该收尾。

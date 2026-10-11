@@ -4,9 +4,14 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { promisify } from 'node:util';
+import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from 'vitest';
 import { z } from 'zod';
+import {
+  sessionOrphanObligations,
+  sessionOrphanRollbackHorizon,
+} from '@/server/durable/session-orphan-backend';
 import {
   type ChildExit,
   assertFixtureCanReset,
@@ -15,7 +20,7 @@ import {
   errorDiagnostic,
   waitForFixtureMessage,
 } from '../dbos-review-orphan/fixture-process';
-import { nativeCron, sessionDeclarations } from './fixture';
+import { clockSearchPath, nativeCron, sessionDeclarations } from './fixture';
 
 const exec = promisify(execFile);
 const bundle = resolve(`.cache/yuk1394-session-cron-${process.pid}.cjs`);
@@ -26,10 +31,20 @@ let family: (typeof families)[number] = families[0];
 const logs: unknown[] = [];
 let db: ReturnType<typeof postgres>;
 let url: string;
+let producerSearchPath: string | undefined;
+let clockInstalled = false;
 let suiteBlocked: string | undefined =
   'Cron fixture setup has not established settled durable state';
 let nativeBaseline: Awaited<ReturnType<typeof nativeLedger>>;
 const schema = z.object({ kind: z.string(), error: z.string().optional() }).passthrough();
+async function advanceClock(at: string) {
+  await db`update session_cron_clock.state set frozen_at = null,
+    offset_ms = greatest(offset_ms, ceil(extract(epoch from (${at}::timestamptz - pg_catalog.clock_timestamp())) * 1000)::bigint) where singleton`;
+  expect(
+    (await db`select session_cron_clock.clock_timestamp() >= ${at}::timestamptz as reached`)[0]
+      .reached,
+  ).toBe(true);
+}
 function start() {
   const child = spawn(process.execPath, [bundle], {
     stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
@@ -155,6 +170,31 @@ beforeAll(async () => {
   const initialLedger = await nativeLedger();
   observations.push({ initialLedger });
   assertSettledCronLedger(initialLedger);
+  const [producer] =
+    await db`select prosrc, proconfig from pg_proc where oid = 'public.fence_session_orphan_producer()'::regprocedure`;
+  const settings = z.array(z.string()).nullable().parse(producer.proconfig) ?? [];
+  producerSearchPath = settings
+    .find((value) => value.startsWith('search_path='))
+    ?.slice('search_path='.length);
+  await db`create schema if not exists session_cron_clock`;
+  await db`create table if not exists session_cron_clock.state (singleton boolean primary key check (singleton), frozen_at timestamptz, offset_ms bigint not null)`;
+  await db`insert into session_cron_clock.state values (true, null, 0) on conflict (singleton) do update set frozen_at = null, offset_ms = 0`;
+  await db.unsafe(`create or replace function session_cron_clock.clock_timestamp() returns timestamptz language plpgsql volatile as $$
+    declare clock record;
+    begin
+      select frozen_at, offset_ms into strict clock from session_cron_clock.state where singleton;
+      return coalesce(clock.frozen_at, pg_catalog.clock_timestamp() + clock.offset_ms * interval '1 millisecond');
+    end $$`);
+  // The producer trigger runs on pg-boss's connection; only its application clock changes.
+  await db.unsafe(
+    `alter function public.fence_session_orphan_producer() set search_path to ${clockSearchPath}`,
+  );
+  clockInstalled = true;
+  expect(
+    (
+      await db`select prosrc from pg_proc where oid = 'public.fence_session_orphan_producer()'::regprocedure`
+    )[0].prosrc,
+  ).toBe(producer.prosrc);
   await db`delete from contract_epoch`;
   await db`update session_orphan_control set phase = 'pg-boss', phase_changed_at = clock_timestamp(), legacy_not_before = null`;
   await db`update prune_job_events_control set phase = 'pg-boss'`;
@@ -164,6 +204,7 @@ beforeEach(async () => {
   assertFixtureCanReset(children.keys(), suiteBlocked);
   nativeBaseline = await nativeLedger();
   assertSettledCronLedger(nativeBaseline);
+  await db`update session_cron_clock.state set frozen_at = null, offset_ms = 0 where singleton`;
   observations.push({ scenario: expect.getState().currentTestName, nativeBaseline });
 });
 afterEach(async (context) => {
@@ -205,6 +246,19 @@ afterAll(async () => {
     suiteBlocked = 'Final owned child cleanup did not establish process exit';
     observations.push({ finalCleanupFailure: errorDiagnostic(error) });
   }
+  if (clockInstalled && children.size === 0 && !cleanupError) {
+    try {
+      if (producerSearchPath === undefined)
+        await db`alter function public.fence_session_orphan_producer() reset search_path`;
+      else
+        await db.unsafe(
+          `alter function public.fence_session_orphan_producer() set search_path to '${producerSearchPath.replaceAll("'", "''")}'`,
+        );
+      await db`update session_cron_clock.state set frozen_at = null, offset_ms = 0 where singleton`;
+    } catch (error) {
+      cleanupError = error;
+    }
+  }
   if (process.env.TLP_SESSION_CRON_EVIDENCE_PATH)
     await writeFile(
       process.env.TLP_SESSION_CRON_EVIDENCE_PATH,
@@ -234,7 +288,7 @@ afterAll(async () => {
 });
 for (const selected of families) {
   // @invariant concurrency: cutover and rollback preserve exactly-once receipts across two schedulers and restart
-  // @fails-if remove the producer fence, receipt uniqueness or 60-second drain horizon; late writes or early rollback fail
+  // @fails-if ignore an active forwarder, duplicate receipts or admit rollback before the computed 60-second horizon; boundary assertions fail
   it(`observes real ${selected} Timekeeper, mixed phases, native two-scheduler ticks/restart and independent rollback`, async () => {
     family = selected;
     const started = performance.now();
@@ -265,16 +319,34 @@ for (const selected of families) {
     expect(noProof.error).toContain('Drain blocked');
     expect(noProof.error).toContain('"kind":"forwarder"');
     expect(noProof.error).toContain('"state":"active"');
-    // Keep a real forwarder suspended longer than the 60-second source lookback.
-    const barrier = Date.now();
-    await expect
-      .poll(() => Date.now() - barrier >= 61000, { timeout: 65000, interval: 1000 })
-      .toBe(true);
-    phase('legacy-lookback-expired');
+    const drainingControl = await db`select * from session_orphan_control where family = ${family}`;
+    const forwarders = await db`select id::text, created_on::text, state::text,
+      (greatest(created_on, c.phase_changed_at) + interval '61 seconds')::text as aged_at
+      from pgboss.job j cross join session_orphan_control c
+      where j.name = '__pgboss__send-it' and j.state = 'active' and j.data->>'name' = ${family} and c.family = ${family}`;
+    expect(forwarders).toHaveLength(1);
+    const [forwarder] = forwarders;
+    const forwarderId = z.string().parse(forwarder?.id);
+    await advanceClock(z.string().parse(forwarder.aged_at));
+    expect(
+      (
+        await db`select session_cron_clock.clock_timestamp() >= created_on + interval '61 seconds' as aged
+      from pgboss.job where id = ${forwarderId}::uuid`
+      )[0].aged,
+    ).toBe(true);
+    observations.push({ controlledForwarderAge: forwarder });
+    phase('legacy-forwarder-logically-aged');
     expect(await receiptFor(id)).toHaveLength(0);
     const stillHeld = await first.command({ kind: 'transition', phase: 'dbos' }, 'rejected');
     expect(stillHeld.error).toContain('"kind":"forwarder"');
     expect(stillHeld.error).toContain('"state":"active"');
+    expect(stillHeld.error).toContain(forwarderId);
+    expect(await db`select * from session_orphan_control where family = ${family}`).toEqual(
+      drainingControl,
+    );
+    expect(
+      (await db`select state::text from pgboss.job where id = ${forwarderId}::uuid`)[0].state,
+    ).toBe('active');
     await first.command({ kind: 'release-forward' });
     const rejected = await first.wait('forward-rejected');
     observations.push({ lateForwardRejected: rejected });
@@ -427,31 +499,52 @@ for (const selected of families) {
     const otherControl = await db`select * from session_orphan_control where family = ${other}`;
     const otherReceipts =
       await db`select * from session_orphan_receipt where family = ${other} order by tick_id,session_id`;
+    // Both families have proved real native ticks; stop new ticks before boundary assertions.
+    await second.command({ kind: 'pause-native' });
+    await expect
+      .poll(
+        async () => {
+          assertSettledCronLedger(await nativeLedger());
+          return true;
+        },
+        { timeout: 10000, interval: 100 },
+      )
+      .toBe(true);
     await second.command({ kind: 'transition', phase: 'draining-dbos' });
     phase('rollback-draining');
     const [rollbackBarrier] =
-      await db`select phase_changed_at from session_orphan_control where family = ${family}`;
+      await db`select * from session_orphan_control where family = ${family}`;
     await observeLegacySettled(family);
+    await expect
+      .poll(() => sessionOrphanObligations(drizzle(db), { family, backend: 'dbos' }), {
+        timeout: 10000,
+        interval: 100,
+      })
+      .toEqual([]);
     await second.command({
       kind: 'quiesce',
       reason:
         'Two compatible workers only; first stopped; all native/legacy forwarding observed settled',
     });
+    const horizon = await sessionOrphanRollbackHorizon(drizzle(db), family);
+    const [expectedHorizon] = await db`select (greatest(c.phase_changed_at,
+      coalesce((select max(substring(workflow_uuid from ${`sched-${family}-`.length + 1})::timestamptz)
+        from tlp_dbos.workflow_status where name = ${family}), 'epoch'::timestamptz),
+      coalesce((select max(tick_at) from session_orphan_tick where family = ${family} and backend = 'dbos'), c.phase_changed_at))
+      + interval '60 seconds') = ${horizon}::timestamptz as matches
+      from session_orphan_control c where c.family = ${family}`;
+    expect(expectedHorizon.matches).toBe(true);
+    const rollbackLedger = await nativeLedger();
+    await db`update session_cron_clock.state set frozen_at = ${horizon}::timestamptz - interval '1 microsecond' where singleton`;
     const early = await second.command({ kind: 'transition', phase: 'pg-boss' }, 'rejected');
-    expect(early.error).toMatch(/cooldown|Drain blocked/);
+    expect(early.error).toContain('Rollback cooldown');
+    expect(await db`select * from session_orphan_control where family = ${family}`).toEqual([
+      rollbackBarrier,
+    ]);
+    expect(await nativeLedger()).toEqual(rollbackLedger);
     phase('early-rollback-rejected');
-    await expect
-      .poll(
-        async () => {
-          const response = await second.command(
-            { kind: 'transition', phase: 'pg-boss' },
-            'ack-or-rejected',
-          );
-          return response.kind === 'ack';
-        },
-        { timeout: 80000, interval: 1000 },
-      )
-      .toBe(true);
+    await db`update session_cron_clock.state set frozen_at = ${horizon}::timestamptz where singleton`;
+    await second.command({ kind: 'transition', phase: 'pg-boss' });
     await expect
       .poll(
         async () =>
@@ -464,18 +557,26 @@ for (const selected of families) {
     phase('rollback-accepted');
     expect(
       (
-        await db`select clock_timestamp() >= ${rollbackBarrier.phase_changed_at}::timestamptz + interval '60 seconds' as elapsed`
-      )[0].elapsed,
+        await db`select legacy_not_before = ${horizon}::timestamptz as matches from session_orphan_control where family = ${family}`
+      )[0].matches,
     ).toBe(true);
+    observations.push({
+      controlledRollbackBoundary: { horizon, before: '1 microsecond', at: horizon },
+    });
+    await advanceClock(horizon);
     const rolled = `rolled-${randomUUID()}`;
     await oldSession(rolled);
     await second.command({ kind: 'release-forward' });
+    // Probe the real legacy producer/consumer immediately, without waiting for a new minute slot.
+    const rollbackJob = await second.command({ kind: 'enqueue-legacy' });
+    const rollbackJobId = z.string().parse(rollbackJob.legacyJobId);
     await expect
       .poll(async () => (await receiptFor(rolled)).length, { timeout: 120000, interval: 100 })
       .toBe(1);
     const legacy = await receiptFor(rolled);
     expect(legacy[0].backend).toBe('pg-boss');
     expect(legacy[0].provenance).toBe('legacy-first-admission');
+    expect(legacy[0].tick_id).toBe(`legacy:${rollbackJobId}`);
     expect(await db`select * from session_orphan_control where family = ${other}`).toEqual(
       otherControl,
     );
