@@ -1,0 +1,274 @@
+/* YUK-1473 — practice question page in the new design language. Scoped under [data-ui-next];
+   semantic --un- tokens only (T1). Layout: reading column + 384px companion (R1, C1); on phones
+   the companion becomes the bottom sheet (C2). Cards cast no shadow; no glass in the page (T3). */
+
+[data-ui-next].un-pn-root {
+  background: var(--un-bg);
+  color: var(--un-text-1);
+  min-height: 100%;
+}
+
+[data-ui-next] .un-pn {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--un-w-panel);
+  min-height: 100%;
+}
+
+[data-ui-next] .un-pn-main {
+  min-width: 0;
+  padding: var(--un-sp-6) var(--un-sp-6) var(--un-sp-8);
+}
+
+[data-ui-next] .un-pn-column {
+  max-width: 820px;
+  margin: 0 auto;
+  display: grid;
+  gap: var(--un-sp-7);
+}
+
+/* Banner: where it came from, what it is, its state (R2 order). */
+[data-ui-next] .un-pn-banner {
+  display: grid;
+  gap: var(--un-sp-2);
+  justify-items: start;
+}
+[data-ui-next] .un-pn-eyebrow {
+  margin: var(--un-sp-2) 0 0;
+  font-size: var(--un-fs-1);
+  color: var(--un-text-3);
+}
+[data-ui-next] .un-pn-title {
+  margin: 0;
+  font-family: var(--un-font-serif);
+  font-size: var(--un-fs-5);
+  font-weight: var(--un-fw-medium);
+  line-height: var(--un-lh-tight);
+  letter-spacing: var(--un-ls-tight);
+}
+[data-ui-next] .un-pn-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--un-sp-2);
+}
+
+[data-ui-next] .un-pn-section {
+  display: grid;
+  gap: var(--un-sp-4);
+}
+[data-ui-next] .un-pn-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--un-sp-3);
+}
+[data-ui-next] .un-pn-h2 {
+  margin: 0;
+  font-size: var(--un-fs-2);
+  font-weight: var(--un-fw-semibold);
+  color: var(--un-text-1);
+}
+
+/* Question: stem in reading measure; a single figure sits beside it on wide screens. */
+[data-ui-next] .un-pn-stem {
+  display: grid;
+  gap: var(--un-sp-5);
+}
+[data-ui-next] .un-pn-stem-with-figure {
+  grid-template-columns: minmax(0, 1fr) minmax(200px, 300px);
+  align-items: start;
+}
+[data-ui-next] .un-pn-faces {
+  display: grid;
+  gap: var(--un-sp-4);
+  max-width: var(--un-w-prose);
+}
+[data-ui-next] .un-pn-face {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--un-sp-2);
+  align-items: baseline;
+}
+[data-ui-next] .un-pn-face-no {
+  font-size: var(--un-fs-2);
+  color: var(--un-text-3);
+}
+[data-ui-next] .un-pn-prose {
+  font-size: var(--un-fs-3);
+  line-height: var(--un-lh-prose);
+  color: var(--un-text-1);
+}
+[data-ui-next] .un-pn-prose p {
+  margin: 0 0 var(--un-sp-3);
+}
+[data-ui-next] .un-pn-prose p:last-child {
+  margin-bottom: 0;
+}
+/* R7: inline formulas do not break; display formulas get block spacing for KaTeX struts. */
+[data-ui-next] .un-pn-prose .katex {
+  white-space: nowrap;
+}
+[data-ui-next] .un-pn-prose .katex-display {
+  margin: var(--un-sp-3) 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.2em 0;
+}
+[data-ui-next] .un-pn-figures {
+  display: grid;
+  gap: var(--un-sp-4);
+}
+[data-ui-next] .un-pn-figure {
+  margin: 0;
+  display: grid;
+  gap: var(--un-sp-2);
+}
+[data-ui-next] .un-pn-figure img {
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--un-r-1);
+}
+[data-ui-next] .un-pn-figure figcaption {
+  font-size: var(--un-fs-1);
+  color: var(--un-text-3);
+}
+
+/* My answer: my own work, right after the question (R1). */
+[data-ui-next] .un-pn-answer {
+  display: grid;
+  gap: var(--un-sp-4);
+  padding: var(--un-sp-5);
+  border: 1px solid var(--un-line);
+  border-radius: var(--un-r-2);
+  background: var(--un-bg-raised);
+}
+[data-ui-next] .un-pn-note {
+  margin: 0;
+  font-size: var(--un-fs-1);
+  color: var(--un-text-3);
+}
+
+[data-ui-next] .un-pn-history {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: var(--un-sp-2);
+}
+[data-ui-next] .un-pn-history li {
+  display: flex;
+  align-items: center;
+  gap: var(--un-sp-3);
+  font-size: var(--un-fs-2);
+}
+[data-ui-next] .un-pn-history-day {
+  min-width: 3.5em;
+  color: var(--un-text-3);
+  font-variant-numeric: tabular-nums;
+}
+[data-ui-next] .un-pn-history-cause {
+  color: var(--un-text-2);
+}
+
+/* States: same shape as the content they stand in for (M14). */
+[data-ui-next] .un-pn-state {
+  margin: 0;
+  padding: var(--un-sp-5);
+  border: 1px solid var(--un-line);
+  border-radius: var(--un-r-2);
+  color: var(--un-text-2);
+}
+[data-ui-next] .un-pn-skeleton {
+  display: grid;
+  gap: var(--un-sp-3);
+}
+[data-ui-next] .un-pn-skeleton span {
+  display: block;
+  height: 1.1em;
+  border-radius: var(--un-r-1);
+  background: var(--un-bg-sunk);
+}
+[data-ui-next] .un-pn-skeleton span:nth-child(2) {
+  width: 86%;
+}
+[data-ui-next] .un-pn-skeleton span:nth-child(3) {
+  width: 62%;
+}
+
+/* Companion (C1): beside the content, never over it. */
+[data-ui-next] .un-pn .un-companion {
+  position: sticky;
+  top: 0;
+  height: 100dvh;
+  border-left: 1px solid var(--un-line);
+}
+[data-ui-next] .un-pn-companion-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--un-sp-2);
+}
+[data-ui-next] .un-pn-companion-name {
+  font-weight: var(--un-fw-semibold);
+}
+[data-ui-next] .un-pn-companion-state {
+  font-size: var(--un-fs-1);
+  color: var(--un-text-3);
+}
+[data-ui-next] .un-pn-companion-body {
+  display: grid;
+  grid-template-rows: 1fr auto;
+  gap: var(--un-sp-4);
+  height: 100%;
+}
+[data-ui-next] .un-pn-companion-empty {
+  margin: 0;
+  font-size: var(--un-fs-2);
+  line-height: var(--un-lh-prose);
+  color: var(--un-text-3);
+}
+[data-ui-next] .un-pn-composer textarea {
+  width: 100%;
+  box-sizing: border-box;
+  resize: none;
+  padding: var(--un-sp-3);
+  border: 1px solid var(--un-line);
+  border-radius: var(--un-r-2);
+  background: var(--un-bg-raised);
+  color: var(--un-text-1);
+  font: inherit;
+  font-size: var(--un-fs-2);
+}
+[data-ui-next] .un-pn-composer textarea:disabled {
+  color: var(--un-text-disabled);
+}
+
+[data-ui-next] .un-pn-phone-sheet {
+  display: none;
+}
+
+/* Phone (T8: ≤ 720px): one column; figure above the stem; companion as the bottom sheet. */
+@media (max-width: 720px) {
+  [data-ui-next] .un-pn {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  [data-ui-next] .un-pn .un-companion {
+    display: none;
+  }
+  [data-ui-next] .un-pn-phone-sheet {
+    display: block;
+  }
+  [data-ui-next] .un-pn-main {
+    padding: var(--un-sp-4) var(--un-sp-4) calc(var(--un-sp-8) * 2);
+  }
+  [data-ui-next] .un-pn-column {
+    gap: var(--un-sp-6);
+  }
+  [data-ui-next] .un-pn-stem-with-figure {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  [data-ui-next] .un-pn-stem-with-figure .un-pn-figures {
+    order: -1;
+  }
+  [data-ui-next] .un-pn-answer {
+    padding: var(--un-sp-4);
+  }
+}

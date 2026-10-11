@@ -11,6 +11,7 @@ import { ErrorState } from '@/ui/primitives/ErrorState';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import './practice-face.css';
 
+import { PracticeNextSolo } from './next/PracticeNextSolo';
 import { PfPaper } from './PfPaper';
 import { PfRetro } from './PfRetro';
 import { PfShelf } from './PfShelf';
@@ -81,7 +82,20 @@ function streamForRequestedScope(
 }
 
 // navigate 暂未消费（M3 知识面挂上后，复盘 trace 的知识点链接会用它跳转）。
-export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePageProps) {
+export default function PracticeFacePage(props: PracticeFacePageProps) {
+  return <PracticeFace {...props} soloView="retained" />;
+}
+
+/** YUK-1473 — the same practice flow with the solve view in the new design language. */
+export function PracticeNextPage(props: PracticeFacePageProps) {
+  return <PracticeFace {...props} soloView="next" />;
+}
+
+function PracticeFace({
+  getQuery,
+  setQuery,
+  soloView,
+}: PracticeFacePageProps & { soloView: 'retained' | 'next' }) {
   const qc = useQueryClient();
   const [scopeKnowledgeId, setScopeKnowledgeId] = useState<string | null>(() => {
     const value = getQuery('kc')?.trim();
@@ -279,24 +293,36 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
   let body: React.ReactNode;
   if (mode.kind === 'solo') {
     const pos = items.findIndex((it) => it.id === mode.item.id) + 1;
-    body = (
-      <PfSolo
-        // key=item.id：流自动推进换题时强制重挂，判分/作答 state 不跨题残留。
-        key={mode.item.id}
-        item={mode.item}
-        sessionId={visibleStream?.scope?.session_id ?? null}
-        pos={pos || mode.item.position}
-        total={items.length}
-        onDone={() => void completeSolo(mode.item)}
-        onBack={() => {
-          setMode({ kind: 'list' });
-          void refreshStream();
-        }}
-        // YUK-432 — 客观题自动 commit 后退出回流：标 done（不自动推进），消除卡 in_progress 的 slot。
-        onCommittedBack={() => void markSoloDoneAndExit(mode.item)}
-        addToast={addToast}
-      />
-    );
+    body =
+      soloView === 'next' ? (
+        <PracticeNextSolo
+          key={mode.item.id}
+          item={mode.item}
+          pos={pos || mode.item.position}
+          total={items.length}
+          onBack={() => {
+            setMode({ kind: 'list' });
+            void refreshStream();
+          }}
+        />
+      ) : (
+        <PfSolo
+          // key=item.id：流自动推进换题时强制重挂，判分/作答 state 不跨题残留。
+          key={mode.item.id}
+          item={mode.item}
+          sessionId={visibleStream?.scope?.session_id ?? null}
+          pos={pos || mode.item.position}
+          total={items.length}
+          onDone={() => void completeSolo(mode.item)}
+          onBack={() => {
+            setMode({ kind: 'list' });
+            void refreshStream();
+          }}
+          // YUK-432 — 客观题自动 commit 后退出回流：标 done（不自动推进），消除卡 in_progress 的 slot。
+          onCommittedBack={() => void markSoloDoneAndExit(mode.item)}
+          addToast={addToast}
+        />
+      );
   } else if (mode.kind === 'paper') {
     body = (
       <PfPaper
