@@ -19,7 +19,7 @@ status: accepted
 
 ### D1 三个工具：search_bank 找候选、read_bank 取内容、check_bank 答检查；教学决策永远归 agent
 
-`search_bank`（自然语言 + 题/作答/材料锚点 + 确定性 scope）返回带来源证据的候选与诚实覆盖信息；`read_bank`（批量 refs + include 分层 + focus 定位 + 分片续读）返回版本化内容与证据，原文 / 记录事实 / 派生分析分层；`check_bank` 回答 agent 显式提出的检查，verdict ∈ supported / contradicted / unknown，方法与依赖版本全披露。选什么、怎么组合、何时补题、何时停止由备题 agent 决定；工具不做教学效用排序、不组卷、不改 learner state（提案 §3）。**`search_bank` / `read_bank` 在 agent 面取代 `query_questions` 与 `get_question_context` 的题库内容层**；首批消费者是备题员第一刀（ADR-0069）与 Copilot。`get_question_context` 的学习者状态层不在取代范围——那是 learner-side 读取，归学习者大脑契约（D4）。
+`search_bank`（自然语言 + 题/作答/材料锚点 + 确定性 scope）返回带来源证据的候选与诚实覆盖信息；`read_bank`（批量 refs + include 分层 + focus 定位 + 分片续读）返回版本化内容与证据，原文 / 记录事实 / 派生分析分层；`check_bank` 回答 agent 显式提出的检查，verdict ∈ supported / contradicted / unknown，方法与依赖版本全披露。选什么、怎么组合、何时补题、何时停止由备题 agent 决定；工具不做教学效用排序、不组卷、不改 learner state（提案 §3）。**`search_bank` / `read_bank` 在 agent 面取代 `query_questions` 与 `get_question_context` 的题库内容层**；首批消费者是备题员第一刀（ADR-0069，三工具全授予）与 Copilot。LIGHT 的取代**只切换备题员与 Copilot 两个面**的取题路径；coach / dreaming / maintenance / ingestion_block_edit 继续经现有 `get_question_context` 读取不变，直至 read_bank 按面授权铺开（并入未决问题 3 一并裁决）。`get_question_context` 的学习者状态层不在取代范围——那是 learner-side 读取，归学习者大脑契约（D4）。
 
 ### D2 版本化内容引用 ref + 显式范围 + cursor；v1 无 result_ref 句柄
 
