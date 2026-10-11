@@ -46,21 +46,17 @@ branch `fix/yuk-1404-merge-preview-notation`，base `dbbb1f8c`（main12c740/UI16
 | `pnpm audit:api-contracts` | exit 0（173/173 declared, 0 legacy, 163 OpenAPI paths） |
 | `pnpm audit:api-client`（commit 后复跑，true exit 直接捕获） | exit 0（regenerated client 与已提交合同一致；commit 前运行必然因未提交的 generated diff 报 ELIFECYCLE 1，属预期顺序非真实失败） |
 
-## 测试裁决：本切片不新增测试
+## 验收与测试边界
 
-- 允许的唯一测试类别是"显式非法 subject/assets 不留 document/session/receipt 半成品"
-  的数据原子性测试。该保证在本切片是结构性的：subject 校验与既有 asset 校验同在
-  `initiateUpload` 的事务开始之前 throw；不存在绕过事务写 source_document 的路径。
-- 既有测试无此路径覆盖（rg `initiateUpload|CreateIngestionSessionBody|
-  createIngestionSessionResource|ingestion-sessions` 于 `*.test.ts`：0 命中），无可更新对象。
-- 本切片被禁止执行 DB/container/runtime；父会话拥有 serialized 真实 DB 验收。
-  写一个未执行的 DB 测试等于未验证的断言，违反证据合同，故不写。
+本切片未新增持久化回归测试，默认测试限制仍按五类不变量执行。非法科目/资产的原子拒绝由父会话使用真实创建 handler 和隔离数据库验证。子任务被禁止执行 DB/container/runtime，不等于禁止编写父会话会执行的不变量测试；此前“未执行测试违反合同”的解释不成立，已更正。
+
+父验收固定 `8b02a2a0da0468c1f04cd643c80ea57422d6cced`、Node 24.19.0，仓库外封存 `/tmp/yuk1404-upload-8b02-parent-01/seal.json`。九次合成请求验证 unknown/empty/general subject 和 missing asset 返回400，来源/会话/业务回执完整 before/after 相等；math、wenyan alias、省略和null返回201及正确Location；canonical provenance和刷新读取一致；实际math草稿尚无已收录题时notation=katex；历史不可解析非空信号返回null；legacy200复用同一创建逻辑。读取前后来源/会话/回执未变，provider_attempt和ai_task_runs均0。单个实际验收矩阵通过，不写成九条持久化测试。
+
+父 Node24 typecheck/lint/build/API-client/API-contract审计通过。隔离PG teardown后原四TEST id/image/start/health和releasehash逐项未变，owner token核验后共享锁释放。无TEST学习者数据写、provider调用或新增支出。这是实际handler和DB证据，不是网络RPC、blob/OCR、浏览器公式或真实照片质量证明。
 
 ## 限制与移交
 
-- 真实 DB 验收（合成数据隔离库：显式 math 上传预览 katex、非数学真实 notation、
-  省略/未知/混合不启用数学解析、非法 subject/asset 无半成品、读取零 provider 调用）
-  与真实 UI 公式可读性验收由父会话串行执行。
+- 上述真实创建/DB矩阵已由父会话串行完成。真实 UI 公式可读性与可跳过选项发送仍归 Opus；custom/retired/mixed关联题场景目前仅源码复核，不冒称本矩阵已运行。
 - UI 发送 `subject_id` 的可跳过选项由 Opus 线实施（本切片未改任何 UI 文件）。
 - Start 路由/typed operation extraction/wrappers/boot/DBOS 未触碰（迁移线边界）。
 
