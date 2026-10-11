@@ -409,14 +409,12 @@ function SupplyStatus({
         );
       default:
         return (
-          <>
-            <EmptyState
-              icon="clock"
-              title="暂时没有可以继续的题"
-              text="这个目标现有的题已经用完，目前没有新的题在准备。可以上传自己的材料，从里面出题。"
-              action={upload('primary')}
-            />
-          </>
+          <EmptyState
+            icon="clock"
+            title="暂时没有可以继续的题"
+            text="这个目标现有的题已经用完，目前没有新的题在准备。可以上传自己的材料，从里面出题。"
+            action={upload('primary')}
+          />
         );
     }
   }
