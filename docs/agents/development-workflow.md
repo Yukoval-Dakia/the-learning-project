@@ -193,6 +193,21 @@ use a scoped mutation or known failure when that relationship is uncertain. Dele
 whose only outcome is a UI shape, config/DTO shape, helper call, or implementation mirror.
 Do not label one of those cases as an invariant to satisfy the check.
 
+No fine-grained tests (owner 2026-10-11). The five invariants decide *whether* a test is
+needed; this rule decides *where it enters*. An invariant carried by a helper is tested through
+the nearest real boundary or its module's public entry, not the helper itself. Real boundaries
+are a route, job, DB transaction (including lock/CAS/idempotency primitives exercised on real
+Postgres), the settlement/grading chain, an agent tool contract, or a deterministic core
+module's public entry (functions exported from the module index; TS↔Rust parity suites count).
+One case per invariant; a table-driven case counts as one. Add a branch or boundary case only
+when removing it would let a specific defect through that no other case catches, and name that
+defect in `@fails-if`. Reject internal-helper tests, parameter permutations over the same path,
+and assertions on mock interactions or call counts. Mock only external dependencies (provider,
+network, clock, blob storage); DB-backed invariants belong in the DB lane on real Postgres.
+When a PR adds more test lines (fixtures included) than production lines (non-test files under
+`src/`, `server/`, `web/`, `scripts/`, plus migration SQL), its description must justify each
+invariant. This is a justification trigger, not a hard cap; delete what cannot be justified.
+
 Locally the base is `git merge-base HEAD origin/main`; use
 `pnpm audit:test-policy --base <commit>` to reproduce a CI comparison. CI fetches history
 and supplies `TEST_POLICY_BASE`. Manual dispatch requires the `test_policy_base` commit SHA.
