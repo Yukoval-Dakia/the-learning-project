@@ -42,7 +42,7 @@ These are production paths, not test-only consumers. No publisher, normalizer, s
 
 Node 24.19.0: four scoped security tests cover student-work privacy, source/crop metadata, unknown visibility with a verified clean positive control, and a neighboring student's page. Typecheck, lint and build pass; lint reports 172 existing warnings. A first test invocation found no file because the unit lane uses explicit registration; only this new security file was added to `fastTestInclude`. A first offline replay failed to resolve Zod from `/tmp`; the corrected replay uses the installed workspace package. Both failures and later outputs remain in the log archive.
 
-Evidence: [source replay and gate receipts](evidence/2026-10-11-yuk1404-native03-figure-repair.json), [native03 replay](evidence/2026-10-11-yuk1404-native03-figure-replay.json.gz), [logs and replay script](evidence/2026-10-11-yuk1404-native03-figure-logs.tar.gz), [source patch](evidence/2026-10-11-yuk1404-native03-figure-source.patch).
+Evidence: [source replay and gate receipts](evidence/2026-10-11-yuk1404-native03-figure-repair.json), [native03 replay](evidence/2026-10-11-yuk1404-native03-figure-replay.json.gz), [logs and replay script](evidence/2026-10-11-yuk1404-native03-figure-logs.tar.gz), [source patch](evidence/2026-10-11-yuk1404-native03-figure-source.patch.gz).
 
 Parent owns different-model independent review, exact-head CI, later normal composition with fixed PR #1658, and an isolated same-paper product rerun. No author self-review, merge, DB, container, runtime, browser, OCR, provider, paid call, shared lock or deployment was performed.
 

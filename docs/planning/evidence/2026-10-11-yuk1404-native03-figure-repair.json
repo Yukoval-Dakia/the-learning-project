@@ -100,6 +100,8 @@
   "artifacts": {
     "2026-10-11-yuk1404-native03-figure-logs.tar.gz": "15efd3be6a0a83f6f0e8510c0e9ad6a2b5b2cd15414edfb8e001818b6a773dbe",
     "2026-10-11-yuk1404-native03-figure-replay.json.gz": "933a5b1617a7d3ba1fc9bec4a66616280f7839aa17f6b4365cdbefd757aed902",
-    "2026-10-11-yuk1404-native03-figure-source.patch": "eb89fbeba3153a3b2e1c05c8a77cc9f8211a01d909637095be0830fb18b567fe"
-  }
+    "2026-10-11-yuk1404-native03-figure-source.patch.gz": "36cde5e10fa783934ff8f49202bf79e938740e4c37ecca3bede92456d5131065"
+  },
+  "source_commit": "b471ed8fe41843c1a3abcce39537faf3f9de8f38",
+  "patch_packaging": "Exact patch bytes gzip-packaged to retain blank context lines without text-artifact trailing-whitespace diagnostics. Raw patch SHA256 unchanged; initial source/evidence commit preserved."
 }
