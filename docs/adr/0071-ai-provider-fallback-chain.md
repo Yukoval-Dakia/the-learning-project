@@ -34,7 +34,7 @@ status: proposed
 ### D5 门：判分只落准入模型；能力 fail-closed；embedding 不跨模型
 
 - **判分/评级任务**：链条目必须挂在 YUK-1445 准入切片上（D17 `admitted_slice_id`，`src/core/schema/assessment/execution.ts:53-61`；未准入 ⇒ `unadmitted_model_executor`，escalation 只许 withhold/human_review）。链上无可用条目 ⇒ 按现策略标 undecided/withhold，**绝不让未准入模型静默判分**。
-- **vision / 工具调用任务**：逐条目过 `assertModelProfileCapabilityFit`（'unknown' 即拒）。代码事实：toolCalling 今日只准入于 opencode-go 的 `glm-5.3-flash`/`deepseek-v4-pro`/`mimo-v2.6-pro`、`zai-coding-cn` 的 `glm-5.3`、openai 的 `gpt-6-astra`（`providers.ts` bindings）；`xiaomi/mimo-v2.6-pro` 为 'unknown'（无 binding、无 catalog 位）——见 D9。
+- **vision / 工具调用任务**：逐条目过 `assertModelProfileCapabilityFit`（'unknown' 即拒）。代码事实（`providers.ts` bindings）：toolCalling=true 已声明于 `xiaomi-token-plan` 的 `mimo-v2.6-pro`（`providers.ts:111-123`，YUK-1402 actual-output 证据）、opencode-go 的 `glm-5.3-flash`/`deepseek-v4-pro`/`mimo-v2.6-pro`、`zai-coding-cn` 的 `glm-5.3`、openai 的 `gpt-6-astra`；旧按量 `xiaomi` lane 的 `mimo-v2.6-pro` 无此声明（'unknown' ⇒ fail-closed）。Token Plan 证据不外推到按量或 OpenCode Go 同名模型（`src/server/ai/AGENTS.md`）——见 D9。
 - **embedding**：不跨模型。向量空间随模型不同（DashScope `text-embedding-v4` @1024 维写死 Drizzle `vector(1024)` 列，`src/server/ai/embed.ts:18-19`），换模型即污染向量空间；走既有 direct-provider-attempt / `dashscope.embedding` admission lane 延迟重试。
 
 ### D6 成本：每次尝试按其所在 provider 的口径独立预留与记账；unknown 永不记 0
@@ -49,9 +49,9 @@ run 行记录请求链与最终服务 provider/model（`ai_task_runs.provider/mo
 
 删除 `runTaskWithLaneFallback`（`provider-lane-fallback.ts`，整任务重跑形状）与 invoker durable fallback 的 crossover 合并（`invoker.ts:237-247`）；`VISION_JUDGE_PROVIDER`/DB `vision_judge` lane 升级为该 lane 的链输入（旧单值兼容为长度 1），vision judge 与所有任务同链同门同冷却。
 
-### D9 默认链（提案）：`xiaomi/mimo-v2.6-pro` → `opencode-go/mimo-v2.6-pro`
+### D9 默认链（提案）：`xiaomi-token-plan/mimo-v2.6-pro` → `opencode-go/mimo-v2.6-pro`
 
-代码核实三点修正票面：①注册表 provider id 是 **`xiaomi`**（`XIAOMI_API_KEY`），「Token Plan」是商业计划名、不是代码里的 lane id；②两家 native pi catalog 都有 `mimo-v2.6-pro`（text+image、1M ctx，`pi-provider-catalog.snapshot.json`），同模型双通道成立；③`xiaomi/mimo-v2.6-pro` 今日 toolCalling='unknown' ⇒ fail-closed——**needsToolCall 种类今日实际从 `opencode-go/mimo-v2.6-pro` 起步**，除非 owner 按 YUK-924 证据纪律（封存 actual-output 后方可声明 binding）为 xiaomi 补 toolCalling 声明。其余通道（`anthropic-sub`、`zai-coding-cn` 等）仅凭各自能力/准入证据入链。顺序 owner 随时调整。
+代码核实：①`xiaomi-token-plan` 是独立 provider（`providers.ts:111`，`XIAOMI_TOKEN_PLAN_API_KEY`，YUK-1402），与旧按量 `xiaomi`（`XIAOMI_API_KEY`）key 不互通，TEST 现役即此 lane；②两通道都有 `mimo-v2.6-pro`（text+image），同模型双通道成立，且两者各自的 toolCalling 声明都有自己的 actual-output 证据（Token Plan：YUK-1402；OpenCode Go：YUK-1341），故 needsToolCall 种类两个条目都可用，仍逐条过能力门；③旧按量 `xiaomi` lane 不在默认链（无 toolCalling 证据，且与 Token Plan 证据不互通）。其余通道（`anthropic-sub`、`zai-coding-cn` 等）仅凭各自能力/准入证据入链。顺序 owner 随时调整。
 
 ### D10 交付切片与验收
 
@@ -75,7 +75,7 @@ run 行记录请求链与最终服务 provider/model（`ai_task_runs.provider/mo
 - **扩展现有 runner transient retry 为跨 provider**：它是 same-target、call-site opt-in 且 pinned routing 下关闭（`hasGlobalProviderOverride`），粒度与动机都不匹配 109 连拒。
 - **Redis 冷却**：架构无 Redis；PG 已是跨进程协调面（session admission 先例）。
 - **任意错误皆跨链**：unknown-paid 双花——被 D3 白名单拒绝。
-- **直接给 `xiaomi/mimo-v2.6-pro` 声明 toolCalling=true 让默认链首位可用**：违反证据门纪律，被 D9 拒绝。
+- **把一条通道的能力证据外推到同名模型的其他通道**（如用 Token Plan 证据给按量 `xiaomi` 或反之声明 toolCalling）：违反 YUK-924 证据门纪律，被 D5/D9 拒绝。
 
 ## 未决问题
 
