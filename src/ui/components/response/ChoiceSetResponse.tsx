@@ -159,7 +159,9 @@ export function ChoiceSetResponse({
                 )}
                 <span className="rs-opt-k">{opt.label}</span>
                 <span className="rs-opt-t">
-                  <MathMarkdown notation={notation}>{withoutLabelPrefix(opt.text_md, opt.label)}</MathMarkdown>
+                  <MathMarkdown notation={notation}>
+                    {withoutLabelPrefix(opt.text_md, opt.label)}
+                  </MathMarkdown>
                 </span>
               </button>
             </>
