@@ -66,6 +66,16 @@ export async function placementAssessmentProgress(tx: Tx, sessionId: string) {
     const state = await getIssuanceState(tx, row.issuanceId);
     const accepted = state.submissions[0];
     if (!accepted && answeredIds.has(receipt.questionId)) continue;
+    if (!accepted && state.practice_dto === null) {
+      throw new ApiError(
+        'not_admitted',
+        'This frozen placement question cannot be automatically graded. End this placement session to continue safely.',
+        409,
+        undefined,
+        // serving_reason 只用声明过的公共枚举；诊断不可用则如实 null，不造新枚举值。
+        { serving_reason: state.unavailable_reason ?? null },
+      );
+    }
     let phase: 'answering' | 'retry' | 'pending' | 'held' = 'answering';
     let pendingRun: { run_id: string; poll_url: string } | null = null;
     if (accepted) {

@@ -30,7 +30,7 @@ import {
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
 import { publishQuestionGroup } from '@/server/questions/publisher';
 import { publishPaperModelFixture } from '../../../../tests/fixtures/assessment-paper';
-import { issueSoloFixture } from '../../../../tests/fixtures/assessment-solo';
+import { issueHistoricalSoloFixture } from '../../../../tests/fixtures/assessment-solo';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { runJudgeRun } from '../jobs/judge_run';
 import { issueAssessment } from '../server/assessment/issue';
@@ -93,13 +93,13 @@ describe('createAttemptResource — durable divert 202 pass-through (W2)', () =>
     vi.restoreAllMocks();
   });
 
-  // @invariant data: a rate-limited one-time diagnostic original is retained with its claim held, and later recovery settles exactly that stored submission once — never a substitute answer
-  // @fails-if drop the original on 429, release the one-time claim, or let recovery dispatch a different submission id; the retained-original equality, claim_unavailable/409, pending-payload and single-settlement assertions fail
+  // @invariant concurrency: a rate-limited one_time-claimed diagnostic submit persists its original submission exactly once, keeps the claim held, and later recovers through one durable pending receipt with a single execution across retries
+  // @fails-if make the 429 path drop the original or the recovery re-enqueue/re-execute instead of replaying the pending receipt; originals()/bossSend/execute counts or claim_status assertions fail
   it('retains a rate-limited diagnostic original and recovers it once without releasing its claim', async () => {
     vi.stubEnv('AI_RATE_LIMIT_MAX', '1');
     const firstQuestionId = `q_${newId()}`;
     await seedQuestion(firstQuestionId);
-    const firstIssued = await issueSoloFixture(testDb(), firstQuestionId, true);
+    const firstIssued = await issueHistoricalSoloFixture(testDb(), firstQuestionId, true);
     const accepted = await createAttempt(
       new Request('http://localhost/api/attempts', {
         method: 'POST',
@@ -176,7 +176,7 @@ describe('createAttemptResource — durable divert 202 pass-through (W2)', () =>
         },
       }),
     ).toMatchObject({ status: 'admission_updated' });
-    const diagnosticIssued = await issueSoloFixture(testDb(), diagnosticId, true);
+    const diagnosticIssued = await issueHistoricalSoloFixture(testDb(), diagnosticId, true);
     const assessment = diagnosticIssued.assessment('diagnostic answer');
     const submit = (original = assessment) =>
       createAttempt(
@@ -253,7 +253,8 @@ describe('createAttemptResource — durable divert 202 pass-through (W2)', () =>
     ).not.toContainEqual(expect.objectContaining({ action: 'experimental:judge_pending_attempt' }));
     expect(await testDb().select().from(evaluation)).toHaveLength(0);
     expect(await issueAssessment(testDb(), { group_id: diagnosticId })).toMatchObject({
-      status: 'claim_unavailable',
+      status: 'not_admitted',
+      serving_reason: 'model_admission_unavailable',
     });
     expect(
       (await submit({ ...assessment, idempotency_key: 'second-independent-answer' })).status,

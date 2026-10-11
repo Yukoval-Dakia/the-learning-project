@@ -16,6 +16,8 @@ import {
   createMem0OpaqueOperationContext,
   executeMem0OpaqueOperation,
 } from '@/server/ai/provider-attempt-runtime';
+import { contractIntegrityDigest } from '@/server/questions/contract-normalizer';
+import { publishQuestionGroup } from '@/server/questions/publisher';
 import { resetDb } from '../../../../tests/helpers/db';
 import { composeNightly, recomposeStream } from './stream-store';
 
@@ -73,13 +75,97 @@ async function seedSamplableQuestion(db: Db): Promise<string> {
     id: questionId,
     kind: 'choice',
     prompt_md: '哪一个事务边界不会让连接池自我饥饿？',
-    reference_md: 'provider lifecycle 在 compose lock transaction 之外',
+    reference_md: 'B',
+    choices_md: [
+      'provider lifecycle 嵌套在 compose lock transaction 内',
+      'provider lifecycle 在 compose lock transaction 之外',
+    ],
     knowledge_ids: [knowledgeId],
     source: 'manual',
     draft_status: 'active',
     created_at: now,
     updated_at: now,
   });
+  // Compose candidates must be published + admitted + automatically servable —
+  // pin an explicit deterministic option-set contract (owner: no
+  // reference_md key extraction / normalizer guess-key path).
+  const options = [
+    {
+      option_id: `opt_${questionId}_a`,
+      label: 'A',
+      text: 'provider lifecycle 嵌套在 compose lock transaction 内',
+    },
+    {
+      option_id: `opt_${questionId}_b`,
+      label: 'B',
+      text: 'provider lifecycle 在 compose lock transaction 之外',
+    },
+  ];
+  const contract = {
+    structure: {
+      group_id: questionId,
+      materials: [],
+      parts: [
+        {
+          part_id: 'p1',
+          prompt_md: '哪一个事务边界不会让连接池自我饥饿？',
+          material_ids: [],
+        },
+      ],
+    },
+    response_spec: {
+      slots: [{ slot_id: 'p1::r', part_id: 'p1', kind: 'single_choice' as const, options }],
+    },
+    scoring_basis: {
+      units: [
+        {
+          scoring_unit_id: 'p1::u',
+          slot_refs: ['p1::r'],
+          material_refs: [],
+          evidence_slot_refs: [],
+          requires_group_evidence: false,
+          criterion: {
+            kind: 'option_set_key' as const,
+            accepted_option_ids: [`opt_${questionId}_b`],
+          },
+          points: 2,
+        },
+      ],
+      aggregation: { kind: 'sum' as const },
+      blank_scores_zero: true,
+    },
+    execution_plan: {
+      plan_version: 1,
+      assignments: [
+        {
+          scoring_unit_ids: ['p1::u'],
+          executor: { kind: 'deterministic' as const, comparator: 'exact_option_set' as const },
+        },
+      ],
+      escalation: {
+        on_unadmitted_model: 'withhold' as const,
+        on_low_confidence: 'human_review' as const,
+      },
+    },
+  };
+  const published = await publishQuestionGroup(db, {
+    group_id: questionId,
+    contract: { ...contract, integrity_digest: contractIntegrityDigest(contract) },
+    expectedCurrentRevision: null,
+    expectedAdmissionGeneration: null,
+    availability: 'general_pool',
+    actorRef: 'test:stream-provider-lock',
+    now,
+    admission: {
+      state: 'admitted',
+      evidence: {
+        marking_provenance: 'official',
+        verification: { structural_check_passed: true, independent_verification: null },
+        model_slice: null,
+      },
+    },
+  });
+  if (published.status !== 'published') throw new Error(published.status);
   return questionId;
 }
 
