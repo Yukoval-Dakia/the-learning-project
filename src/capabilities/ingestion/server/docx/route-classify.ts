@@ -125,6 +125,11 @@ function externalResourceRelationshipError(part: string): ApiError {
 }
 
 /** Last URI segment of the relationship Type, lowercased (e.g. 'image'). A public schema constant — never the Target. */
+// OPC (ECMA-376 Part 2) mandates this namespace for every relationships part.
+// The serializer re-emits it canonically; a part whose root is NOT bound to it is
+// not a relationships part a converter would read — sanitize-impossible → reject.
+const OPC_RELATIONSHIPS_NS = 'http://schemas.openxmlformats.org/package/2006/relationships';
+
 function relationshipTypeCategory(typeUri: string): string {
   const idx = typeUri.lastIndexOf('/');
   return (idx === -1 ? typeUri : typeUri.slice(idx + 1)).toLowerCase();
@@ -136,11 +141,20 @@ interface RelationshipPartAnalysis {
   /** External NON-hyperlink relationships (the resource-loading kind converters must never see). */
   externalResourceRels: Array<{ id: string; type: string }>;
   /**
-   * Parsed <Relationships> node (root attributes as string keys + the Relationship
-   * array), reused by the sanitizer. Null when the root element is not
+   * Parsed <Relationships> node with PREFIX-STRIPPED names (detection view —
+   * namespace-agnostic superset). Null when the root element is not
    * <Relationships> — such a part carries no strippable relationships.
    */
   relationshipsNode: Record<string, unknown> | null;
+  /**
+   * P1-1 (R1) — TRUE namespaced shape parsed WITHOUT removeNSPrefix, so xmlns
+   * declarations and prefixed names stay visible. fast-xml-parser with
+   * removeNSPrefix:true silently DROPS xmlns declarations, which made the
+   * previous serializer emit a namespace-less <Relationships> that
+   * namespace-aware readers (pandoc/LibreOffice/ElementTree) could not resolve.
+   * Null when no element root exists at all.
+   */
+  namespaced: { rootName: string; node: Record<string, unknown> } | null;
 }
 
 function parseRelationships(xml: string): Record<string, unknown> | null {
@@ -159,6 +173,31 @@ function parseRelationships(xml: string): Record<string, unknown> | null {
     throw new ApiError('validation_error', '无法解析 DOCX（关系 XML 无效）', 400);
   }
   return parsed.Relationships ?? null;
+}
+
+/** True-shape parse: prefixes and xmlns declarations preserved (P1-1). */
+function parseRelationshipsNamespaced(
+  xml: string,
+): { rootName: string; node: Record<string, unknown> } | null {
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = new XMLParser({
+      ignoreAttributes: false,
+      attributeNamePrefix: '',
+      removeNSPrefix: false,
+      parseAttributeValue: false,
+      processEntities: true,
+      strictReservedNames: true,
+      isArray: (tagName) => tagName === 'Relationship' || tagName.endsWith(':Relationship'),
+    }).parse(xml) as Record<string, unknown>;
+  } catch {
+    throw new ApiError('validation_error', '无法解析 DOCX（关系 XML 无效）', 400);
+  }
+  const rootName = Object.keys(parsed).find((key) => key !== '?xml');
+  if (rootName == null) return null;
+  const node = parsed[rootName];
+  if (node == null || typeof node !== 'object' || Array.isArray(node)) return null;
+  return { rootName, node: node as Record<string, unknown> };
 }
 
 /**
@@ -182,8 +221,9 @@ function analyzeRelationshipPart(bytes: Uint8Array): RelationshipPartAnalysis {
   }
 
   const relationshipsNode = parseRelationships(xml);
+  const namespaced = parseRelationshipsNamespaced(xml);
   if (relationshipsNode == null) {
-    return { hasDoctype, externalResourceRels: [], relationshipsNode: null };
+    return { hasDoctype, externalResourceRels: [], relationshipsNode: null, namespaced };
   }
 
   const relationships = relationshipElementsOf(relationshipsNode);
@@ -207,7 +247,7 @@ function analyzeRelationshipPart(bytes: Uint8Array): RelationshipPartAnalysis {
       externalResourceRels.push({ id, type: relationshipTypeCategory(type) });
     }
   }
-  return { hasDoctype, externalResourceRels, relationshipsNode };
+  return { hasDoctype, externalResourceRels, relationshipsNode, namespaced };
 }
 
 /** The <Relationship> child elements of a parsed <Relationships> node (always an array via isArray). */
@@ -406,43 +446,68 @@ function relationshipAttrSnapshots(node: Record<string, unknown>): string[] {
 
 /**
  * Deterministically re-serialize a relationship part without the omitted
- * <Relationship> elements. The rewritten part is UTF-8 with a fixed prolog (the
- * original may have been UTF-16 — the fixed prolog keeps the rebuilt part
- * self-consistent). Round-trip verified: the output must re-validate, re-parse,
- * contain ZERO external non-hyperlink relationships, and keep every surviving
- * relationship's attributes byte-equal to the original parse. Any surprise is a
- * fail-closed rejection (sanitization impossible → the external relationship
- * still rejects the upload, never a bypass).
+ * <Relationship> elements, PRESERVING the OPC namespace (R1 P1-1).
+ *
+ * fast-xml-parser with removeNSPrefix:true silently DROPS xmlns declarations, so
+ * the sanitizer works from the TRUE-SHAPE parse (removeNSPrefix:false) where
+ * prefixes and xmlns declarations stay visible. The root element's namespace is
+ * resolved from its own declarations (a root has no ancestor to inherit from)
+ * and MUST be the OPC relationships namespace, in default-ns or prefixed form;
+ * anything else — foreign namespace, missing declaration, prefixed attributes,
+ * mixed child prefixes, non-Relationship children — is sanitize-impossible and
+ * rejects fail-closed (the external relationship still rejects the upload,
+ * never a bypass). The output re-emits the namespace CANONICALLY as
+ * <Relationships xmlns="…package/2006/relationships"> so any namespace-aware
+ * reader (pandoc, LibreOffice, ElementTree) can address every surviving
+ * relationship. UTF-8 with a fixed prolog (the original may have been UTF-16).
+ *
+ * Round-trip verified: the output must re-validate, re-parse, contain ZERO
+ * external non-hyperlink relationships, and keep every surviving relationship's
+ * attributes byte-equal to the original parse.
  */
 function serializeSanitizedRelationshipPart(
   analysis: RelationshipPartAnalysis,
   part: string,
 ): Uint8Array {
-  const node = analysis.relationshipsNode;
-  if (node == null) {
-    // Root is not <Relationships> yet external rels were found — impossible via
-    // analyzeRelationshipPart (it returns null node only with no external rels).
-    // Guard anyway: fail closed.
-    throw externalResourceRelationshipError(part);
-  }
+  const fail = (): ApiError => externalResourceRelationshipError(part);
+  const namespaced = analysis.namespaced;
+  if (namespaced == null || analysis.relationshipsNode == null) throw fail();
+  const { rootName, node } = namespaced;
+
+  // Root namespace resolution: must be declared on the root element itself.
+  const rootPrefix = rootName.includes(':') ? rootName.slice(0, rootName.indexOf(':')) : '';
+  const rootNsAttr = rootPrefix === '' ? 'xmlns' : `xmlns:${rootPrefix}`;
+  const declaredRootNs = typeof node[rootNsAttr] === 'string' ? (node[rootNsAttr] as string) : null;
+  if (declaredRootNs !== OPC_RELATIONSHIPS_NS) throw fail();
+  const childName = rootPrefix === '' ? 'Relationship' : `${rootPrefix}:Relationship`;
+
   const omitIds = new Set(analysis.externalResourceRels.map((rel) => rel.id));
+
+  // The detection view (prefix-stripped) and the true-shape view must agree on
+  // the element count; divergence (mixed child prefixes/forms) → refuse.
+  const childRaw = node[childName];
+  const children: Array<Record<string, unknown>> =
+    childRaw == null
+      ? []
+      : Array.isArray(childRaw)
+        ? (childRaw as Array<Record<string, unknown>>)
+        : [childRaw as Record<string, unknown>];
+  if (relationshipElementsOf(analysis.relationshipsNode).length !== children.length) {
+    throw fail();
+  }
 
   const keptAttrMaps: Array<Record<string, string>> = [];
   const keptElements: string[] = [];
-  for (const rel of relationshipElementsOf(node)) {
-    const attrs: Array<[string, string]> = [];
+  for (const rel of children) {
+    const attrs: Array<[name: string, value: string]> = [];
     for (const [name, value] of Object.entries(rel)) {
       if (name === '#text') {
-        if (typeof value === 'string' && value.trim() !== '') {
-          throw externalResourceRelationshipError(part);
-        }
+        if (typeof value === 'string' && value.trim() !== '') throw fail();
         continue;
       }
-      // A child element (object value) cannot be faithfully represented in the
-      // flat relationship schema — refuse to sanitize rather than guess.
-      if (typeof value !== 'string') {
-        throw externalResourceRelationshipError(part);
-      }
+      // Prefixed attributes cannot be faithfully re-emitted unprefixed (and are
+      // invalid OPC); non-string values are child elements — both refuse.
+      if (name.includes(':') || typeof value !== 'string') throw fail();
       attrs.push([name, value]);
     }
     const id = attrs.find(([name]) => name.toLowerCase() === 'id')?.[1] ?? '';
@@ -453,38 +518,35 @@ function serializeSanitizedRelationshipPart(
     );
   }
 
+  // Root attributes: skip the child array + whitespace text; DROP all xmlns*
+  // declarations (the canonical OPC xmlns is emitted below); keep unprefixed
+  // non-declaration attributes verbatim. Anything else refuses.
   const rootAttrs: string[] = [];
   for (const [name, value] of Object.entries(node)) {
-    if (name === 'Relationship') continue;
+    if (name === childName) continue;
     if (name === '#text') {
-      if (typeof value === 'string' && value.trim() !== '') {
-        throw externalResourceRelationshipError(part);
-      }
+      if (typeof value === 'string' && value.trim() !== '') throw fail();
       continue;
     }
-    if (typeof value !== 'string') {
-      throw externalResourceRelationshipError(part);
-    }
+    if (name === 'xmlns' || name.startsWith('xmlns:')) continue;
+    if (name.includes(':') || typeof value !== 'string') throw fail();
     rootAttrs.push(`${name}="${escapeXmlAttributeValue(value)}"`);
   }
 
-  const xml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n<Relationships${rootAttrs.length > 0 ? ` ${rootAttrs.join(' ')}` : ''}>${keptElements.join('')}</Relationships>`;
+  const xml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n<Relationships xmlns="${OPC_RELATIONSHIPS_NS}"${rootAttrs.length > 0 ? ` ${rootAttrs.join(' ')}` : ''}>${keptElements.join('')}</Relationships>`;
 
-  // Round-trip verification: re-run the full analyzer on the serialized bytes and
-  // require (a) valid, (b) zero external resource relationships, (c) the exact
-  // kept attribute set survives.
+  // Round-trip verification (detection view): valid, zero external resource
+  // relationships, kept attribute set survives exactly.
   const rebuiltBytes = new TextEncoder().encode(xml);
   const roundTrip = analyzeRelationshipPart(rebuiltBytes);
-  if (roundTrip.hasDoctype || roundTrip.externalResourceRels.length > 0) {
-    throw externalResourceRelationshipError(part);
-  }
+  if (roundTrip.hasDoctype || roundTrip.externalResourceRels.length > 0) throw fail();
   const roundTripSnapshots = relationshipAttrSnapshots(roundTrip.relationshipsNode ?? {});
   const keptSnapshots = keptAttrMaps.map(normalizedAttrSnapshot);
   if (
     roundTripSnapshots.length !== keptSnapshots.length ||
     roundTripSnapshots.some((snapshot, i) => snapshot !== keptSnapshots[i])
   ) {
-    throw externalResourceRelationshipError(part);
+    throw fail();
   }
   return rebuiltBytes;
 }
@@ -494,6 +556,15 @@ function serializeSanitizedRelationshipPart(
  * against the COPY and require zero DOCTYPE / external resource relationships
  * anywhere. Defense in depth — a serializer bug surfaces as a loud 400, never as
  * an external target reaching a converter.
+ *
+ * The prefix-stripping detection view is a SUPERSET of what any namespace-aware
+ * converter reads: a converter addresses only elements in the OPC relationships
+ * namespace, while the stripped parse sees `Relationship` elements in EVERY
+ * namespace (prefixed or default). Zero found in the superset ⟹ zero visible to
+ * the converter — this holds regardless of namespace trickery, which is why the
+ * post-condition may stay on the stripped parser (P1-1 fixed the SERIALIZED
+ * shape separately; addressability is asserted by the namespace-aware readback
+ * in route-classify.test.ts).
  */
 function assertConverterInputClean(converterBytes: Uint8Array): void {
   const { relationshipParts } = scanForClassification(converterBytes);

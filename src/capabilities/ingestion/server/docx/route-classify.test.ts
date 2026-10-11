@@ -141,6 +141,72 @@ function expectApiError(fn: () => unknown, messagePart: string): ApiError {
   throw new Error(`expected ApiError containing "${messagePart}", got no throw`);
 }
 
+// ---------- independent namespace-aware readback (R1 P1-1) ----------
+
+interface NsRelationship {
+  namespace: string;
+  attrs: Record<string, string>;
+}
+
+/**
+ * A minimal XML tag tokenizer + in-scope namespace resolver, deliberately NOT
+ * fast-xml-parser: it mirrors how a namespace-aware consumer (Python
+ * ElementTree / pandoc / LibreOffice) addresses relationships, which is exactly
+ * the reader class that saw 0 relationships before the P1-1 fix. Known test-only
+ * limitation: attribute values must not contain a literal '>' — true for the
+ * canonical serializer output (escaped to &gt;) and for these fixtures.
+ */
+function namespaceAwareRels(bytes: Uint8Array): {
+  rootName: string;
+  rootNamespace: string | null;
+  relationships: NsRelationship[];
+} {
+  const xml = new TextDecoder('utf-8').decode(bytes);
+  const defaultStack: Array<string | null> = [null];
+  const prefixStack: Array<Record<string, string>> = [{}];
+  const relationships: NsRelationship[] = [];
+  let rootName = '';
+  let rootNamespace: string | null = null;
+  const tagRe =
+    /<(\/?)([A-Za-z_][\w.-]*(?::[A-Za-z_][\w.-]*)?)((?:\s+[\w:.-]+\s*=\s*"[^"]*")*)\s*(\/?)>/g;
+  let match: RegExpExecArray | null = tagRe.exec(xml);
+  while (match != null) {
+    const [, closing, rawName, attrText, selfClosing] = match;
+    if (closing) {
+      defaultStack.pop();
+      prefixStack.pop();
+      match = tagRe.exec(xml);
+      continue;
+    }
+    const attrs: Record<string, string> = {};
+    const attrRe = /([\w:.-]+)\s*=\s*"([^"]*)"/g;
+    let attrMatch: RegExpExecArray | null = attrRe.exec(attrText);
+    while (attrMatch != null) {
+      attrs[attrMatch[1]] = attrMatch[2];
+      attrMatch = attrRe.exec(attrText);
+    }
+    const nextDefault = 'xmlns' in attrs ? attrs.xmlns : defaultStack[defaultStack.length - 1];
+    const nextPrefixes = { ...prefixStack[prefixStack.length - 1] };
+    for (const [name, value] of Object.entries(attrs)) {
+      if (name.startsWith('xmlns:')) nextPrefixes[name.slice(6)] = value;
+    }
+    const prefix = rawName.includes(':') ? rawName.slice(0, rawName.indexOf(':')) : '';
+    const ns = prefix === '' ? nextDefault : (nextPrefixes[prefix] ?? null);
+    if (rootName === '') {
+      rootName = rawName;
+      rootNamespace = ns;
+    } else if (rawName === 'Relationship' || rawName.endsWith(':Relationship')) {
+      relationships.push({ namespace: ns ?? '', attrs });
+    }
+    if (!selfClosing) {
+      defaultStack.push(nextDefault);
+      prefixStack.push(nextPrefixes);
+    }
+    match = tagRe.exec(xml);
+  }
+  return { rootName, rootNamespace, relationships };
+}
+
 // ---------- prepareDocxForConversion: the YUK-1476 omission semantics ----------
 
 describe('prepareDocxForConversion — external refs NEVER reach converters', () => {
@@ -168,6 +234,28 @@ describe('prepareDocxForConversion — external refs NEVER reach converters', ()
     expect([...copyRels.keys()].sort()).toEqual(['rId1']);
     expect(copyRels.get('rId1')?.Target).toBe('media/image2.png');
     expect(copyRels.get('rId1')?.TargetMode).toBeUndefined();
+
+    // R1 P1-1 — namespace-aware readback (independent reader): the rebuilt part
+    // must address every surviving relationship under the OPC namespace, with
+    // the canonical declaration on the root element.
+    const footerRelsBytes = unzipSync(copy)['word/_rels/footer1.xml.rels'] as Uint8Array;
+    const footerRelsText = new TextDecoder('utf-8').decode(footerRelsBytes);
+    expect(footerRelsText).toContain(`<Relationships xmlns="${RELS_NS}">`);
+    const nsRead = namespaceAwareRels(footerRelsBytes);
+    expect(nsRead.rootName).toBe('Relationships');
+    expect(nsRead.rootNamespace).toBe(RELS_NS);
+    expect(nsRead.relationships).toEqual([
+      {
+        namespace: RELS_NS,
+        attrs: expect.objectContaining({ Id: 'rId1', Target: 'media/image2.png' }),
+      },
+    ]);
+    const docRelsRead = namespaceAwareRels(
+      unzipSync(copy)['word/_rels/document.xml.rels'] as Uint8Array,
+    );
+    expect(docRelsRead.rootNamespace).toBe(RELS_NS);
+    expect(docRelsRead.relationships.map((r) => r.namespace)).toEqual([RELS_NS, RELS_NS]);
+    expect(docRelsRead.relationships.map((r) => r.attrs.Id).sort()).toEqual(['rId1', 'rId2']);
     const copyDocRels = readRels(copy, 'word/_rels/document.xml.rels');
     expect([...copyDocRels.keys()].sort()).toEqual(['rId1', 'rId2']);
     expect(copyDocRels.get('rId2')).toMatchObject({ TargetMode: 'External' });
@@ -216,6 +304,13 @@ describe('prepareDocxForConversion — external refs NEVER reach converters', ()
     const docRels = readRels(prep.converterBytes, 'word/_rels/document.xml.rels');
     expect([...docRels.keys()]).toEqual(['rId1']);
     expect(docRels.get('rId1')?.Target).toBe('media/image1.png');
+    const bodyNsRead = namespaceAwareRels(
+      unzipSync(prep.converterBytes)['word/_rels/document.xml.rels'] as Uint8Array,
+    );
+    expect(bodyNsRead.rootNamespace).toBe(RELS_NS);
+    expect(bodyNsRead.relationships.map((r) => [r.namespace, r.attrs.Id])).toEqual([
+      [RELS_NS, 'rId1'],
+    ]);
     // Embedded image media byte-identical → pandoc --extract-media still sees it.
     expect(
       Buffer.from(unzipSync(prep.converterBytes)['media/image1.png']).equals(
@@ -288,6 +383,34 @@ describe('prepareDocxForConversion — external refs NEVER reach converters', ()
     expect(prep.line).toBe('text');
   });
 
+  it('sanitizes a PREFIXED-root OPC relationship part to the canonical default-ns form', () => {
+    const original = buildDocx({
+      'word/_rels/footer1.xml.rels': strToU8(
+        `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n<pr:Relationships xmlns:pr="${RELS_NS}"><pr:Relationship Id="rId1" Type="${IMAGE_TYPE}" Target="media/image2.png"/><pr:Relationship Id="rId2" Type="${IMAGE_TYPE}" Target="https://cdn.example.com/logo.png" TargetMode="External"/></pr:Relationships>`,
+      ),
+      'media/image2.png': MEDIA_FOOTER_IMAGE,
+    });
+    const prep = prepareDocxForConversion(original);
+    expect(prep.omissions).toEqual([
+      { part: 'word/_rels/footer1.xml.rels', relationshipId: 'rId2', relationshipType: 'image' },
+    ]);
+    const bytes = unzipSync(prep.converterBytes)['word/_rels/footer1.xml.rels'] as Uint8Array;
+    const nsRead = namespaceAwareRels(bytes);
+    expect(nsRead.rootName).toBe('Relationships');
+    expect(nsRead.rootNamespace).toBe(RELS_NS);
+    expect(nsRead.relationships).toEqual([
+      {
+        namespace: RELS_NS,
+        attrs: expect.objectContaining({ Id: 'rId1', Target: 'media/image2.png' }),
+      },
+    ]);
+    expect(
+      Buffer.from(unzipSync(prep.converterBytes)['media/image2.png']).equals(
+        Buffer.from(MEDIA_FOOTER_IMAGE),
+      ),
+    ).toBe(true);
+  });
+
   it('rebuilds deterministically: same input → same converter bytes + digest', () => {
     const original = schoolShapeDocx();
     const a = prepareDocxForConversion(original);
@@ -315,6 +438,13 @@ describe('prepareDocxForConversion — external refs NEVER reach converters', ()
     const kept = readRels(prep.converterBytes, 'word/_rels/footer1.xml.rels');
     expect([...kept.keys()]).toEqual(['rId1']);
     expect(kept.get('rId1')?.Target).toBe('media/image2.png');
+    const utf16NsRead = namespaceAwareRels(
+      unzipSync(prep.converterBytes)['word/_rels/footer1.xml.rels'] as Uint8Array,
+    );
+    expect(utf16NsRead.rootNamespace).toBe(RELS_NS);
+    expect(utf16NsRead.relationships.map((r) => [r.namespace, r.attrs.Id])).toEqual([
+      [RELS_NS, 'rId1'],
+    ]);
   });
 });
 
@@ -385,6 +515,44 @@ describe('prepareDocxForConversion — fail-closed guards preserved', () => {
       ),
     });
     expectApiError(() => prepareDocxForConversion(docx), '外部资源关系');
+  });
+
+  it('rejects foreign-namespace roots, prefixed attributes, and mixed child prefixes (R1 P1-1)', () => {
+    // Root bound to a FOREIGN namespace: converters ignore such a part entirely;
+    // re-emitting it in canonical OPC form would INJECT visibility — reject.
+    const foreign = buildDocx({
+      'word/_rels/footer1.xml.rels': strToU8(
+        `<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://evil.example.invalid/rels"><Relationship Id="rId1" Type="${IMAGE_TYPE}" Target="https://cdn.example.com/x.png" TargetMode="External"/></Relationships>`,
+      ),
+    });
+    expectApiError(() => prepareDocxForConversion(foreign), '外部资源关系');
+
+    // Prefixed attribute on a Relationship — cannot be faithfully re-emitted
+    // unprefixed (and is invalid OPC). Prefix declared so the XML stays valid.
+    const prefixedAttr = buildDocx({
+      'word/_rels/footer1.xml.rels': strToU8(
+        `<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="${RELS_NS}" xmlns:ns="http://x/ns"><Relationship Id="rId1" ns:Z="q" Type="${IMAGE_TYPE}" Target="https://cdn.example.com/x.png" TargetMode="External"/></Relationships>`,
+      ),
+    });
+    expectApiError(() => prepareDocxForConversion(prefixedAttr), '外部资源关系');
+
+    // Mixed child prefixes: the detection view (prefix-stripped) and the
+    // true-shape view disagree on the element count — refuse to sanitize.
+    const mixed = buildDocx({
+      'word/_rels/footer1.xml.rels': strToU8(
+        `<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="${RELS_NS}" xmlns:p="${RELS_NS}"><Relationship Id="rId1" Type="${IMAGE_TYPE}" Target="a.png"/><p:Relationship Id="rId2" Type="${IMAGE_TYPE}" Target="https://cdn.example.com/x.png" TargetMode="External"/></Relationships>`,
+      ),
+    });
+    expectApiError(() => prepareDocxForConversion(mixed), '外部资源关系');
+
+    // No namespace declaration at all on the root — namespace-less parts are
+    // unreadable by namespace-aware consumers; refuse to sanitize.
+    const noNs = buildDocx({
+      'word/_rels/footer1.xml.rels': strToU8(
+        `<?xml version="1.0" encoding="UTF-8"?><Relationships><Relationship Id="rId1" Type="${IMAGE_TYPE}" Target="https://cdn.example.com/x.png" TargetMode="External"/></Relationships>`,
+      ),
+    });
+    expectApiError(() => prepareDocxForConversion(noNs), '外部资源关系');
   });
 
   it('bounds the rebuild: a high-ratio archive is rejected pre-inflation, not ballooned', () => {

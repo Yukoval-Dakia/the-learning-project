@@ -70,6 +70,16 @@ export async function POST(req: Request): Promise<Response> {
     // corrupt / non-docx zip and on every preserved fail-closed guard.
     const prep = prepareDocxForConversion(docxBytes);
     const line = prep.line;
+    // YUK-1476 (R1 P1-2) — the SAME honest omission facts (both digests + omitted
+    // facts) are forwarded on BOTH lines so every docx receipt is identical.
+    const externalRefOmission =
+      prep.omissions.length > 0
+        ? {
+            inputSha256: prep.inputSha256,
+            converterInputSha256: prep.converterInputSha256,
+            omissions: prep.omissions,
+          }
+        : undefined;
 
     const converter = getDocxConverter();
     const r2 = getR2();
@@ -81,6 +91,7 @@ export async function POST(req: Request): Promise<Response> {
       const { sessionId } = await Ingestion.initiateUpload(db, {
         assetIds: evidence.assetIds,
         entrypoint: 'docx',
+        externalRefOmission,
       });
       const boss = await getStartedBoss();
       await Ingestion.enqueueExtraction({ db, boss, sessionId });
@@ -146,14 +157,7 @@ export async function POST(req: Request): Promise<Response> {
       blocks,
       // YUK-1476 — honest omission audit (both digests + omitted facts) on the
       // text-line session; only present when the converter input was sanitized.
-      externalRefOmission:
-        prep.omissions.length > 0
-          ? {
-              inputSha256: prep.inputSha256,
-              converterInputSha256: prep.converterInputSha256,
-              omissions: prep.omissions,
-            }
-          : undefined,
+      externalRefOmission,
     });
 
     return Response.json(

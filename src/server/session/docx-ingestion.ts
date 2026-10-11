@@ -5,7 +5,6 @@ import {
   AUTO_ENROLL_SINGLETON_SECONDS,
   autoEnrollJobEnabled,
 } from '@/capabilities/ingestion/public';
-import type { DocxOmittedExternalRef } from '@/capabilities/ingestion/server/docx/route-classify';
 import {
   type StructuredQuestionT,
   structuredToPromptMarkdown,
@@ -15,6 +14,7 @@ import { learning_session, question_block, source_document } from '@/db/schema';
 import { COPILOT_NUDGE_EVALUATE_QUEUE } from '@/server/boss/queue-names';
 import { writeJobEvent } from '@/server/events/writer';
 import { writeQuestionBlockCreateEvent } from '@/server/projections/question_block-create-event';
+import { type DocxExternalRefOmissionFacts, EXTERNAL_REF_OMISSION_NOTICE } from './docx-omission';
 
 import { writeSessionEvent } from './events';
 
@@ -59,20 +59,9 @@ export interface InitiateDocxTextUploadParams {
   externalRefOmission?: DocxExternalRefOmissionFacts;
 }
 
-/** YUK-1476 — audit facts for external resources omitted from the converter input copy. */
-export interface DocxExternalRefOmissionFacts {
-  /** SHA-256 (hex) of the ORIGINAL uploaded docx bytes. */
-  inputSha256: string;
-  /** SHA-256 (hex) of the sanitized converter-input copy. */
-  converterInputSha256: string;
-  /** What was omitted (part + rId + public type category — never the external Target URL). */
-  omissions: DocxOmittedExternalRef[];
-}
-
-// Owner-fixed learner wording (2026-10-11): states the omission plainly, leaks
-// no remote URL / PII, and rides the EXISTING learning_session.warnings field
-// (already part of the session-detail DTO) — no new copy surface.
-const EXTERNAL_REF_OMISSION_NOTICE = '已忽略外部链接';
+// Shared with the visual line (Ingestion.initiateUpload) via the zero-dependency
+// leaf './docx-omission' — re-exported here so existing type consumers are stable.
+export type { DocxExternalRefOmissionFacts } from './docx-omission';
 
 export interface InitiateDocxTextUploadResult {
   sessionId: string;
