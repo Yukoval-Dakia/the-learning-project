@@ -612,7 +612,7 @@ function derivePlan(input: ActivationSettleInput, scope: SettlementScope): Settl
   );
   return {
     forgettingInput,
-    forgettingSuppressed: scope.preserveScheduling,
+    forgettingSuppressed: scope.preserveScheduling || (!selfReport && help !== 'none'),
     forgettingEngine: selectedForgettingEngine(),
     kind: 'plan',
     groupId: input.evaluation.evaluation_group_id,
@@ -645,6 +645,8 @@ function derivePlan(input: ActivationSettleInput, scope: SettlementScope): Settl
 function hasSchedulingEffect(plan: SettlementPlan): boolean {
   if (selectedForgettingEngine() === 'fsrs') return plan.rating !== null;
   if (plan.forgettingSuppressed) return false;
+  if (plan.forgettingInput?.fact.source === 'judged' && plan.forgettingInput.fact.help !== 'none')
+    return false;
   return plan.forgettingInput
     ? candidateObservations(plan.forgettingInput).some((o) => o.kind === 'included')
     : plan.rating !== null;
@@ -863,7 +865,13 @@ async function candidateHistory(
   if (current) plans.push(current);
   const facts: SealedCandidateInput[] = [];
   for (const plan of plans) {
+    if (plan.forgettingSuppressed) continue;
     if (plan.forgettingInput) {
+      if (
+        plan.forgettingInput.fact.source === 'judged' &&
+        plan.forgettingInput.fact.help !== 'none'
+      )
+        continue;
       facts.push(SealedCandidateInputSchema.parse(plan.forgettingInput));
       continue;
     }
@@ -907,6 +915,7 @@ async function candidateHistory(
     };
     const scope = await loadScope(tx, input);
     const rebuilt = derivePlan(input, scope);
+    if (rebuilt.forgettingSuppressed) continue;
     if (!rebuilt.forgettingInput) throw new Error('sealed candidate inputs unavailable');
     // Old settlements sealed their scheduling subjects even when no part/KC capture exists.
     // Use that frozen group scope, never today's mutable question labels or context.

@@ -1,14 +1,12 @@
-import { eq, sql } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { recordAssistanceExposure } from '@/capabilities/practice/server/assessment/assistance';
-import { commitFormalAttempt } from '@/capabilities/practice/server/assessment/attempt';
 import { queryReviewDue } from '@/capabilities/practice/server/due-list';
 import { executeGetReviewDue } from '@/capabilities/practice/server/tools/question-context';
 import {
   prefetchProbeSelection,
   selectProbeFromPrefetch,
 } from '@/capabilities/practice/server/variant-rotation';
-import { VERSIONS, replay } from '@/core/forgetting';
+import { replay } from '@/core/forgetting';
 import { initialFsrsState } from '@/core/fsrs';
 import { AggregateOutcome, ScoringUnitResult } from '@/core/schema/assessment/judgment';
 import { StateSnapshotExperimental } from '@/core/schema/event/state-snapshot';
@@ -32,13 +30,9 @@ import {
   enrollFsrsStateIfAbsent,
   getFsrsRetrievabilityByIds,
   initialSchedulingState,
-  retireFsrsStateOnMerge,
-  retireQuestionFsrsState,
 } from '@/server/fsrs/state';
 import { normalizeQuestionRowToContract } from '@/server/questions/contract-normalizer';
 import { publishQuestionGroup } from '@/server/questions/publisher';
-import { orchestrateCascadeRevert } from '@/server/revert/cascade-revert';
-import { nativeSoloHttpFixture } from '../../../tests/fixtures/native-solo-http';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { activateEvaluation, insertInitialEvaluationHead } from './activate';
 import {
@@ -507,9 +501,9 @@ describe('candidate product settlement, replay and selected readers', () => {
     ).toHaveLength(1);
   });
 
-  // @invariant grading: assisted evidence is weak, absent help is excluded, and user ratings do not update theta
-  // @fails-if missing snapshots admit evidence, assistance becomes independent, or self-report creates mastery/calibration effects
-  it('retains known assistance and self-report while excluding absent help snapshots', async () => {
+  // @invariant grading: unresolved and assisted judgments never write memory while explicit self-report remains separate
+  // @fails-if unresolved or assisted judgment writes memory, missing help admits evidence, or self-report creates mastery effects
+  it('excludes assisted and unresolved judgments while preserving explicit self-report', async () => {
     const helped = await seedChain('helped', { kcs: ['kc_a'] });
     await testDb()
       .update(event)
@@ -530,15 +524,30 @@ describe('candidate product settlement, replay and selected readers', () => {
       provenance: { source: 'automatic', assisted: true },
     });
     expect(await activate('helped_eval', { effectiveId: null, generation: 0 })).toMatchObject({
-      effect: 'applied',
+      effect: 'ineligible',
     });
-    expect((await candidateRow()).state.global.lastApplied).toMatchObject({
-      kind: 'known',
-      value: {
-        independent: false,
-        mappingNotes: expect.arrayContaining(['help:deep', 'confidence:low']),
-      },
+    expect(await testDb().select().from(material_fsrs_state)).toHaveLength(0);
+    expect(await testDb().select().from(mastery_state)).toHaveLength(0);
+    const unresolved = await seedChain('unresolved', {
+      kcs: ['kc_a'],
+      submittedAt: new Date(NOW.getTime() + DAY / 2),
     });
+    await seedEvaluation(unresolved, 'unresolved_eval', {
+      unitResults: [
+        {
+          status: 'pending',
+          scoring_unit_id: `${unresolved.qid}::u`,
+          pending: {
+            reason: 'insufficient_evidence',
+            detail:
+              'Derivation supplied, but the shared diagram scale is missing; partial credit cannot be determined.',
+          },
+        },
+      ],
+      aggregate: { kind: 'unresolved', reason: 'pending_units' },
+    });
+    await activate('unresolved_eval', { effectiveId: null, generation: 0 });
+    expect(await testDb().select().from(material_fsrs_state)).toHaveLength(0);
     expect(await testDb().select().from(mastery_state)).toHaveLength(0);
     const self = await seedChain('self', {
       kcs: ['kc_a'],
@@ -623,76 +632,17 @@ describe('candidate product settlement, replay and selected readers', () => {
       ).rows,
     ).toHaveLength(0);
     await seedKnowledge('kc_cold');
-    const initial = initialSchedulingState('kc_cold', NOW);
-    await enrollFsrsStateIfAbsent(testDb(), {
+    const initial = initialFsrsState(NOW);
+    await testDb().insert(material_fsrs_state).values({
+      id: 'legacy-cold-reader',
       subject_kind: 'knowledge',
       subject_id: 'kc_cold',
-      ...initial,
-      last_review_event_id: null,
+      state: initial.state,
+      due_at: initial.dueAt,
     });
     expect(
       (await getFsrsRetrievabilityByIds(testDb(), 'knowledge', ['kc_cold'], after)).get('kc_cold'),
     ).toMatchObject({ kind: 'unknown', calibration: 'uncalibrated', provenance: 'engineering' });
-  });
-
-  // @invariant data: legacy rows without sealed history cold-start explicitly and enrollment never resets an existing schedule
-  // @fails-if no-history conversion is unmarked, enrollment overwrites prior practice, or candidate merge invents combined memory
-  it('cold-starts legacy rows explicitly and preserves enrollment, rename/freeze and diagnostic retirement', async () => {
-    const initial = initialFsrsState(NOW);
-    await testDb().insert(material_fsrs_state).values({
-      id: 'legacy-no-history',
-      subject_kind: 'knowledge',
-      subject_id: 'kc_a',
-      state: initial.state,
-      due_at: initial.dueAt,
-    });
-    await seedScored('cold_convert', NOW);
-    await activate('cold_convert_eval', { effectiveId: null, generation: 0 });
-    const before = await candidateRow();
-    expect(before.state.conversion).toBe('legacy_cold');
-    expect(
-      await enrollFsrsStateIfAbsent(testDb(), {
-        subject_kind: 'knowledge',
-        subject_id: 'kc_a',
-        ...initialSchedulingState('kc_a', new Date(NOW.getTime() + DAY)),
-        last_review_event_id: null,
-      }),
-    ).toBe(false);
-    expect(await candidateRow()).toEqual(before);
-    await seedKnowledge('kc_renamed');
-    expect(
-      await testDb().transaction((tx) => retireFsrsStateOnMerge(tx, 'kc_a', 'kc_renamed')),
-    ).toBe('renamed');
-    const renamed = await candidateRow('kc_renamed');
-    expect(renamed.state).toEqual({ ...before.state, historySubjectIds: ['kc_a'] });
-    await seedScored('after_rename', new Date(NOW.getTime() + DAY), 1, ['kc_renamed']);
-    expect(await activate('after_rename_eval', { effectiveId: null, generation: 0 })).toMatchObject(
-      { effect: 'applied' },
-    );
-    expect((await candidateRow('kc_renamed')).state.global.projection).toMatchObject({
-      eventCount: 2,
-    });
-    await seedKnowledge('kc_target');
-    await enrollFsrsStateIfAbsent(testDb(), {
-      subject_kind: 'knowledge',
-      subject_id: 'kc_target',
-      ...initialSchedulingState('kc_target', NOW),
-      last_review_event_id: null,
-    });
-    expect(
-      await testDb().transaction((tx) => retireFsrsStateOnMerge(tx, 'kc_renamed', 'kc_target')),
-    ).toBe('frozen');
-    const diagnostic = await seedScored('diagnostic', NOW, 1, []);
-    await enrollFsrsStateIfAbsent(testDb(), {
-      subject_kind: 'question',
-      subject_id: diagnostic.qid,
-      ...initialSchedulingState(diagnostic.qid, new Date(NOW.getTime() + 2 * DAY)),
-      last_review_event_id: null,
-    });
-    expect(await retireQuestionFsrsState(testDb(), diagnostic.qid)).toBe(true);
-    expect(
-      (await testDb().select().from(material_fsrs_state)).map((r) => r.subject_id),
-    ).not.toContain(diagnostic.qid);
   });
 
   // @invariant grading: the forgetting selector does not change theta/PFA evidence or by-kind question selection ownership
@@ -747,106 +697,7 @@ describe('candidate product settlement, replay and selected readers', () => {
     }
     expect(await run('forgetting_candidate')).toEqual(await run('fsrs'));
   });
-  // @invariant data: version mismatch rebuilds from sealed facts while corrupt rows and unattributed newer writers fail closed without partial effects
-  // @fails-if unknown versions are treated as calibrated state, corrupt JSON causes a 500, or an external newer write is overwritten
-  it('rebuilds incompatible versions and holds corrupt or unattributed states with explicit receipts', async () => {
-    await seedScored('version_a', NOW);
-    await activate('version_a_eval', { effectiveId: null, generation: 0 });
-    const initial = await candidateRow();
-    const wrong = CandidateStateSchema.parse({
-      ...initial.state,
-      global: {
-        ...initial.state.global,
-        versions: { ...VERSIONS, parameters: 'unregistered-version' },
-      },
-    });
-    await testDb()
-      .update(material_fsrs_state)
-      .set({ state: wrong })
-      .where(eq(material_fsrs_state.subject_id, 'kc_a'));
-    await seedScored('version_b', new Date(NOW.getTime() + DAY));
-    expect(await activate('version_b_eval', { effectiveId: null, generation: 0 })).toMatchObject({
-      effect: 'applied',
-    });
-    expect((await candidateRow()).state).toMatchObject({
-      conversion: 'invalid_rebuilt',
-      global: { versions: VERSIONS, projection: { eventCount: 2 } },
-    });
-    const rebuilt = await candidateRow();
-    await testDb()
-      .update(material_fsrs_state)
-      .set({
-        state: { ...rebuilt.state, last_review: new Date(NOW.getTime() + 100 * DAY) },
-        last_review_event_id: 'unknown-external-writer',
-      })
-      .where(eq(material_fsrs_state.subject_id, 'kc_a'));
-    await seedScored('external', new Date(NOW.getTime() + 2 * DAY));
-    const beforeExternal = await candidateRow();
-    expect(await activate('external_eval', { effectiveId: null, generation: 0 })).toMatchObject({
-      effect: 'failed_pending',
-    });
-    expect(await candidateRow()).toEqual(beforeExternal);
-    expect(
-      (await appliedEvents()).find((e) => e.payload.evaluation_id === 'external_eval')?.payload,
-    ).toMatchObject({
-      effect: 'replay_required',
-      replay_required: { kind: 'unattributed_newer_write' },
-    });
-    await testDb().execute(
-      sql`UPDATE material_fsrs_state SET state = ${JSON.stringify({ engine: 'forgetting_candidate', schemaVersion: 'broken' })}::jsonb WHERE subject_id = 'kc_a'`,
-    );
-    await seedScored('corrupt', new Date(NOW.getTime() + 3 * DAY));
-    const rawBefore = (await testDb().select().from(material_fsrs_state))[0];
-    expect(await activate('corrupt_eval', { effectiveId: null, generation: 0 })).toMatchObject({
-      effect: 'failed_pending',
-    });
-    expect((await testDb().select().from(material_fsrs_state))[0]).toEqual(rawBefore);
-    expect(
-      (await appliedEvents()).find((e) => e.payload.evaluation_id === 'corrupt_eval')?.payload,
-    ).toMatchObject({
-      effect: 'replay_required',
-      replay_required: { kind: 'invalid_scheduling_state' },
-    });
-  });
 
-  // @invariant data: candidate conflict detection compares every numerical projection field before restoring a warm snapshot
-  // @fails-if a changed candidate projection passes the old FSRS scalar comparator and overwrites unrelated memory
-  it('refuses a drifted candidate snapshot and restores an unchanged warm state', async () => {
-    await seedScored('revert_a', NOW);
-    await activate('revert_a_eval', { effectiveId: null, generation: 0 });
-    const before = await candidateRow();
-    await seedScored('revert_b', new Date(NOW.getTime() + 5 * DAY));
-    await activate('revert_b_eval', { effectiveId: null, generation: 0 });
-    const after = await candidateRow();
-    const checkpoint = `${after.last_review_event_id}:checkpoint:fsrs`;
-    if (after.state.global.projection.kind !== 'warm') throw new Error('warm candidate missing');
-    const drifted = {
-      ...after.state,
-      global: {
-        ...after.state.global,
-        projection: {
-          ...after.state.global.projection,
-          slow: after.state.global.projection.slow + 0.01,
-        },
-      },
-    };
-    await testDb()
-      .update(material_fsrs_state)
-      .set({ state: drifted })
-      .where(eq(material_fsrs_state.subject_id, 'kc_a'));
-    const refused = await orchestrateCascadeRevert(testDb(), checkpoint);
-    expect(refused).toMatchObject({ ok: false, refusal: 'conflict' });
-    expect((await candidateRow()).state).toEqual(drifted);
-    await testDb()
-      .update(material_fsrs_state)
-      .set({ state: after.state })
-      .where(eq(material_fsrs_state.subject_id, 'kc_a'));
-    expect(await orchestrateCascadeRevert(testDb(), checkpoint)).toMatchObject({ ok: true });
-    const restored = await candidateRow();
-    expect(restored.state).toEqual(before.state);
-    expect(restored.due_at).toEqual(before.due_at);
-    expect(restored.last_review_event_id).toBeNull();
-  });
   // @invariant security: selected candidate scheduling cannot bypass draft, admission, withdrawal, suspension or synthetic-root serving guards
   // @fails-if either queue reader serves an excluded question solely because an active due row exists
   it('keeps all automatic-serving guards and structural anchors out of both queue readers', async () => {
@@ -968,87 +819,5 @@ describe('candidate product settlement, replay and selected readers', () => {
     );
     await testDb().transaction((tx) => withdrawCapturedOccurrence(tx, input));
     expect((await appliedEvents()).filter((e) => e.payload.effect === 'withdrawn')).toHaveLength(1);
-  });
-  // @invariant grading: the real publication/issuance/formal-attempt path drives selected candidate memory while self-report and released help preserve the theta boundary
-  // @fails-if the candidate is wired only into direct activation fixtures, capture inputs are not read before activation, or self-report/assistance produces hard mastery effects
-  it('settles real formal attempts, self-ratings and server-snapshotted hints without a provider', async () => {
-    vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime(NOW);
-    await seedKnowledge('kc_b');
-    const db = testDb();
-    const first = await nativeSoloHttpFixture(db, { knowledgeIds: ['kc_a', 'kc_b'] });
-    const result = await commitFormalAttempt(db, 'solo_submit', first.id, first.assessment, {
-      capture: { hints_used: 0, final_hint_level: 0, self_confidence: 4, latency_ms: 182731 },
-    });
-    if (result.status !== 'effective') throw new Error('formal original did not settle');
-    expect(result.activation.effect).toBe('applied');
-    expect(first.execute).not.toHaveBeenCalled();
-    expect((await db.select().from(material_fsrs_state)).map((row) => row.subject_kind)).toEqual([
-      'knowledge',
-      'knowledge',
-    ]);
-    expect((await candidateRow()).state.global.projection).toMatchObject({ eventCount: 1 });
-    const theta = await db
-      .select()
-      .from(mastery_state)
-      .orderBy(mastery_state.subject_kind, mastery_state.subject_id);
-    vi.setSystemTime(new Date(NOW.getTime() + 3 * DAY));
-    const self = await nativeSoloHttpFixture(db, { knowledgeIds: ['kc_a'] });
-    const selfResult = await commitFormalAttempt(db, 'solo_submit', self.id, self.assessment, {
-      selfReport: true,
-      userRating: 'hard',
-      capture: { hints_used: 0, final_hint_level: 0, self_confidence: 3, latency_ms: 231001 },
-    });
-    if (selfResult.status !== 'effective') throw new Error('formal self-report did not settle');
-    expect(selfResult.activation.effect).toBe('applied');
-    expect((await candidateRow()).state.global.lastApplied).toMatchObject({
-      kind: 'known',
-      value: {
-        quality: 0.5,
-        independent: false,
-        mappingNotes: expect.arrayContaining(['source:self_report']),
-      },
-    });
-    expect(
-      await db
-        .select()
-        .from(mastery_state)
-        .orderBy(mastery_state.subject_kind, mastery_state.subject_id),
-    ).toEqual(theta);
-    expect(self.execute).not.toHaveBeenCalled();
-    vi.setSystemTime(new Date(NOW.getTime() + 7 * DAY));
-    const helped = await nativeSoloHttpFixture(db, { knowledgeIds: ['kc_a'] });
-    await recordAssistanceExposure(db, {
-      issuanceId: helped.assessment.issuance_id,
-      questionId: helped.id,
-      kind: 'hint',
-      impact: 'answer_help',
-      contentDigest: 'sha256:synthetic-control-variable-hint',
-    });
-    const helpedResult = await commitFormalAttempt(
-      db,
-      'solo_submit',
-      helped.id,
-      helped.assessment,
-      { capture: { hints_used: 1, final_hint_level: 1, self_confidence: 5, latency_ms: 301211 } },
-    );
-    if (helpedResult.status !== 'effective')
-      throw new Error('formal assisted original did not settle');
-    expect(helpedResult.activation.effect).toBe('applied');
-    expect((await candidateRow()).state.global.lastApplied).toMatchObject({
-      kind: 'known',
-      value: {
-        quality: 1,
-        independent: false,
-        mappingNotes: expect.arrayContaining(['help:shallow']),
-      },
-    });
-    expect(
-      await db
-        .select()
-        .from(mastery_state)
-        .orderBy(mastery_state.subject_kind, mastery_state.subject_id),
-    ).toEqual(theta);
-    expect(helped.execute).not.toHaveBeenCalled();
   });
 });

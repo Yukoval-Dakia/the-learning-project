@@ -58,7 +58,6 @@ export const fastTestInclude = [
   'src/core/coldstart-solver-parity.unit.test.ts',
   'src/core/coldstart-solver.unit.test.ts',
   'src/core/forgetting/forgetting.unit.test.ts',
-  'src/server/fsrs/candidate.unit.test.ts',
   'src/core/graph-laplacian.test.ts',
   'src/core/migration/apply.test.ts',
   'src/core/migration/classify.test.ts',

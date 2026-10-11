@@ -4,7 +4,7 @@
 
 ## NOW
 
-- **YUK-1470 / candidate integration ready for parent acceptance**：指定分支已完成版本态、封存证据、replay/revert、due/retention 与六初始入口；源0064b911e通过157DB/26unit及候选模式19DB、typecheck/lint/build、policy/partition。默认FSRS；TEST T1–T6、独立review及exact-head CI由父线接续，本线不开PR。无DB需求，后续容器操作先等协调start。[回执与命令](docs/planning/2026-10-11-yuk1470-forgetting-candidate.md)。
+- **YUK-1470 / candidate integration ready for parent acceptance**：指定分支已完成版本态、封存证据、replay/revert、due/retention 与六初始入口；22:15 owner规则收敛为8DB边界+1公开engine新增invariant；当前62DB/21unit及typecheck/lint/build、policy/partition全过，整分支test1626行≤product2123行（接入delta887≤1200）。默认FSRS；TEST T1–T6、独立review及exact-head CI由父线接续，本线不开PR。无DB需求，后续容器操作先等协调start。[回执与命令](docs/planning/2026-10-11-yuk1470-forgetting-candidate.md)。
 
 - **YUK-1107 / 全量≤120秒继续**：父d0c4657a独占fast-crons树；prune/review控制时间、session21例恢复、isolated runtime及backup162例父r4全过。R1/R2发现P1已修并由父最终实跑覆盖，未启R3；历史失败保留。当前10源文件hash与r4一致，typecheck/lint172warnings/build通过；完整exact-head CI待push，backup仍约116秒本机长尾，不能核销120秒目标。原锁token/parity清理后09:47:59Z释放，超出8分钟已报告；当前不启本机runtime，迁移优先。[证据与剩余目标](docs/planning/2026-10-11-yuk1107-full-ci-continuation.md)。
 

@@ -172,10 +172,6 @@ describe('deterministic forgetting and scheduling invariants', () => {
     expect(adaptEvidence(evidence({ source: 'self_report', help: 'unknown' }))).toMatchObject([
       { kind: 'excluded', reason: 'help_unknown' },
     ]);
-    for (const source of ['reading', 'conversation', 'agent_explanation'] as const)
-      expect(adaptEvidence(evidence({ source }))).toMatchObject([
-        { kind: 'excluded', reason: 'separate_evidence' },
-      ]);
   });
 
   // @invariant grading: effective facts always produce the same score and preserve sealed historical inputs

@@ -110,7 +110,7 @@ pnpm vitest run --config .cache/yuk1470-scoped.vitest.ts \
  src/capabilities/agency/server/conjecture/probe-lifecycle.db.test.ts
 ```
 
-14 files / 157 cases PASS。多步现实 fixture 覆盖乱序、相同时点稳定顺序、重复、反向 activation clock、legacy conversion/cold start、跨版本 revert/re-apply、assisted/self-report/unknown help、corrupt/版本不符/future writer、保留摄取撤回、正式 issuance/commit/assistance、rename/freeze 与 serving guards。
+历史 14 files / 157 cases PASS（源0064b911e；当前 policy gate 见下）。多步现实 fixture 覆盖乱序、相同时点稳定顺序、重复、反向 activation clock、legacy conversion/cold start、跨版本 revert/re-apply、assisted/self-report/unknown help、corrupt/版本不符/future writer、保留摄取撤回、正式 issuance/commit/assistance、rename/freeze 与 serving guards。
 
 ```sh
 pnpm vitest run --config vitest.unit.config.ts \
@@ -119,7 +119,7 @@ pnpm vitest run --config vitest.unit.config.ts \
  src/capabilities/practice/server/fsrs.unit.test.ts
 ```
 
-3 files / 26 cases PASS。覆盖完整 canonical fact 映射、replay duplicates/conflicts/cutoff/context、五种 due 投影、混合 schema/selector 与 UI unknown/calibration 边界。
+历史 3 files / 26 cases PASS（22:15 policy 后已删 helper-only suite，不作为当前 gate）。当时覆盖完整 canonical fact 映射、replay duplicates/conflicts/cutoff/context、五种 due 投影、混合 schema/selector 与 UI unknown/calibration 边界。
 
 ```sh
 FORGETTING_ENGINE=forgetting_candidate DATABASE_URL=postgres://postgres@127.0.0.1:32771/yuk1470 TEST_DATABASE_URL=postgres://postgres@127.0.0.1:32771/yuk1470 \
@@ -158,3 +158,50 @@ pnpm audit:partition
 - [ ] 父独立审查与整合后 exact-head CI。
 
 Linear capture：已核对既有 YUK-1470 为 In Progress；已发现的接入 correctness 问题在本线修复，未发现需另建票的 actionable follow-up。TEST、review、CI、切换及 PR 属既有票父验收，不重复创建、不标整票 Done。本线只 commit/push 指定分支，无 PR。
+
+
+## 22:15 owner 测试规则替换与收敛
+
+新规则替换 verification pack 的逐行实施要求；A–G 只作为行为 checklist。新增接入 suite 由 12 DB + 5 helper-only cases 收敛为 **8 DB boundary cases**；保留纯引擎公开入口的 **1 个 self-report invariant**。原 reviewed engine 的 11 cases 与既有 FSRS/settlement/revert tests 不属于本线新增矩阵，未复制或展开。删除 `src/server/fsrs/candidate.unit.test.ts` 全文件及其 partition 注册；不保留单独的 schema/selector/mapper/due-result/UI-helper 测试。
+
+| 保留 case | 实际边界与 invariant |
+| --- | --- |
+| sealed settlement | 结算 DB 事务：全部输入封存；重复 activation 无第二次写入；反向 activation clock 不改变 occurrence。 |
+| ordered settlement | 结算 DB 事务：相同四次、同时间 tie 与失败事实，以正序/晚到序列执行后得到完全相同 state/due/mastery；两条真实历史用于检验 determinism，并非每个参数一例。 |
+| legacy correction | replay/revert：legacy history 转换，before/after 跨版本，更正后重放等价且原 receipt 不变。 |
+| excluded settlement | 结算 DB 事务：assisted / unresolved 无 memory 写；显式 self-report 仍是独立授权渠道；缺 help 不新增写入。 |
+| due and unknown | due/Today 实际 reads：同一投影的到期翻转与 tool counts；无 sealed history 的 legacy cold read 保持 unknown。 |
+| ownership guard | 结算 DB 事务：两种引擎相同 θ/PFA 结果，调用真实现有 by-kind selector 检验结果/引用一致。 |
+| serving guard | due reads：一次读取现实混合队列，只输出获准项；多状态只是同一个队列 fixture，不逐项重复调用测试路径。 |
+| captured withdrawal | replay/revert：撤回 preserved capture 后后续有效事实不变，重复撤回幂等，原文事件 immutable。 |
+| self-report | forgetting public entrypoint：用户评级只贡献 0.1 工程系数、非独立证据，unknown help 排除。 |
+
+无模型 fallback 与 no-future-leakage 使用原已审 pure engine public-entry invariants（`schedules without any model...` / `decays monotonically...`），不再写 helper case 或参数分支矩阵。新增 suite 不断言 mock interactions。
+
+Owner 同时明确 assisted judgment 无写入：`settle.ts` 封存 suppression；直接 apply、historical replay 与 legacy reconstruction 都排除 assisted judged facts。self-report 不因 AI 未决而丢失；它仍不更新 θ̂。`src/core/schema/assessment/settlement.ts` 未编辑，feature line 的 partial_unknown_points 分类改动留待父整合；本线从空 points/unsupported judgment 不产生 candidate observation。
+
+行数预算以 `git diff --numstat ecd845d9e` 的 added 列计算，包含 fixture 与所有 legacy-test 类型适配：**test 887 行 ≤ product 1200 行**。Product 仅计 src 内非测试 TS/TSX，排除 generated client、文档、Postman 和 Vitest 配置，未借助文档或生成代码放大预算，无超额例外。整条分支（含原 reviewed engine commit）的 merge-base 为 `79825bb6da73f9894c65a5d6735e3725f098e8e1`，同一统计口径为 **test 1626 行 ≤ product 2123 行**，仍无超额例外。
+
+新 DB 使用协调线明确 start 授权的 `yuk1470-boundary-db-20261011-2215-89cb7792b`，ID `ca8fcea10f8131947009fc89d1a0a3c4797c19e4d45f7f04bcb6bf236790998a`，localhost:32772；创建前仅见 7 baseline containers，均 stable/running。无 Testcontainers/Ryuk/prune；删除已获得协调线第二次 start，仅按 exact name stop/rm 完成。
+
+当前 scoped 命令（同上 temporary config，无新 harness）：
+
+```sh
+DATABASE_URL=postgres://postgres@127.0.0.1:32772/yuk1470 pnpm db:migrate
+DATABASE_URL=postgres://postgres@127.0.0.1:32772/yuk1470 TEST_DATABASE_URL=postgres://postgres@127.0.0.1:32772/yuk1470 \
+pnpm vitest run --config .cache/yuk1470-scoped.vitest.ts \
+ src/server/assessment/settle-forgetting.db.test.ts \
+ src/server/assessment/settle.db.test.ts \
+ src/capabilities/practice/server/review-settlement.db.test.ts \
+ src/server/revert/cascade-revert.db.test.ts
+pnpm vitest run --config vitest.unit.config.ts \
+ src/core/forgetting/forgetting.unit.test.ts \
+ src/capabilities/practice/server/fsrs.unit.test.ts
+pnpm typecheck
+pnpm lint
+pnpm build
+pnpm audit:test-policy --base 79825bb6da73f9894c65a5d6735e3725f098e8e1
+pnpm audit:partition
+```
+
+首轮 boundary-db-r1 因 assisted 的期望仍为 applied（实际正确返回 ineligible）失败，修正边界期望后重跑；失败 log 保留，不以通过覆盖。最终 boundary-db-r2：4 files / 62 cases PASS（含本线8 boundary cases）；unit：2 files / 21 cases PASS（engine12/FSRS9）；typecheck/lint/build 全过（lint172既有warning）；test-policy checked29/inherited81/errors=[]，partition unit64/db208/migration1/errors=[]。证据为 .cache/yuk1470-evidence/boundary-*.log。协调线再次明确 start 后，已仅按 exact name docker stop / docker rm 删除该容器。
