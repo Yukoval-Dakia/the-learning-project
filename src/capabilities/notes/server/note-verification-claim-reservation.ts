@@ -63,6 +63,21 @@ export type NoteVerificationReservation =
   | { kind: 'not_ready'; artifactType?: string }
   | { kind: 'not_queued'; artifactType?: string };
 
+/**
+ * Optional backend-control admission hook (YUK-1355 paid-effect wiring).
+ *
+ * Contract: invoked as the FIRST statement inside the reservation
+ * transaction, BEFORE the artifact row lock, so the pinned lock order is
+ * family-control advisory → artifact → claim. Resolution means admitted; a
+ * throw (PaidEffectControlFencedError) rejects the reservation and rolls the
+ * transaction back — no claim row is created and no state changes. Default
+ * absent: legacy callers behave exactly as before (no admission check).
+ * Implementations must take the shared family control lock
+ * (lockPaidEffectControlFamily) and verify owner/generation inside this tx —
+ * a read on a separate connection does not fence the race.
+ */
+export type NoteVerificationControlAdmission = (tx: Tx) => Promise<void>;
+
 function taskRunId(artifactId: string, artifactVersion: number, fence: number): string {
   const digest = createHash('sha256')
     .update(`note-verify-v1\0${artifactId}\0${artifactVersion}\0${fence}`)
@@ -108,8 +123,14 @@ export async function failArtifactVerificationForEpoch(
 export async function reserveNoteVerification(
   db: Db,
   artifactId: string,
+  opts: { controlAdmission?: NoteVerificationControlAdmission } = {},
 ): Promise<NoteVerificationReservation> {
   return db.transaction(async (tx) => {
+    // YUK-1355: admission runs FIRST — family-control advisory before the
+    // artifact row lock (pinned order family-control → artifact → claim).
+    // A fenced delivery throws here, so the whole transaction (including the
+    // claim insert below) rolls back.
+    await opts.controlAdmission?.(tx);
     const artifactRows = await tx
       .select({
         type: artifact.type,

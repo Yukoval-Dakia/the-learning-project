@@ -1,0 +1,250 @@
+{
+  "kind": "bounded read-only proposed operational contract; no implementation or runtime acceptance",
+  "captured_at_utc": "2026-10-08T22:32:59.917709+00:00",
+  "workspace": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage",
+  "product_baseline": "a8800730b3c67667574bc44ec02edb7ed7800f78",
+  "observed_head_start": "8fb6b54d11c8c069990a91a092b8f578cbc7d378",
+  "observed_head_at_seal": "645a69252dba5e2822881df8086fc555734bd4c6",
+  "inputs": [
+    {
+      "path": "/tmp/yuk1355-judge-durable-design-20261009.md",
+      "sha256": "bf16d8dcb03762f8c9e06b5a3198ec110b21121f43eb3378d1ad7e4787b097d9"
+    },
+    {
+      "path": "/tmp/yuk1355-judge-durable-design-20261009.sources.json",
+      "sha256": "bbdfe602175333e93afcafd56f3ec53e35c198813d316ebce9132511d76cd9ac"
+    },
+    {
+      "path": "/tmp/yuk1356-judge-design-refresh-20261009.json",
+      "sha256": "a0017b22fa164fe8b13a6b56d9e4e1a2e63f53f90e50557eabc3ad385a236c6b"
+    }
+  ],
+  "files": [
+    {
+      "path": "docs/planning/2026-10-09-yuk1356-judge-implementation-entry.md",
+      "sha256": "7c59b2c82843ffce69e371582d42400c6d746d7e850dcfdf2646b902e0a61258",
+      "baseline_sha256": "7c59b2c82843ffce69e371582d42400c6d746d7e850dcfdf2646b902e0a61258",
+      "same_as_product_baseline": true
+    },
+    {
+      "path": "src/capabilities/practice/server/assessment/durable-attempt.ts",
+      "sha256": "ff40f65a2f9eb9324c00d6e4d32f72b70ac895f32d79f232531001990f0c1f32",
+      "baseline_sha256": "ff40f65a2f9eb9324c00d6e4d32f72b70ac895f32d79f232531001990f0c1f32",
+      "same_as_product_baseline": true
+    },
+    {
+      "path": "src/capabilities/practice/server/assessment/attempt.ts",
+      "sha256": "52bee297f4cd6bb162f08c6ac99733b57ae5b24baba632d0cc36b6d847ad694c",
+      "baseline_sha256": "52bee297f4cd6bb162f08c6ac99733b57ae5b24baba632d0cc36b6d847ad694c",
+      "same_as_product_baseline": true
+    },
+    {
+      "path": "src/capabilities/practice/server/assessment/native-attempt-dispatch-port.ts",
+      "sha256": "d1aee6d3602635ec15a197dc520486d169e0424fce5a587c8c226948915d92b5",
+      "baseline_sha256": "d1aee6d3602635ec15a197dc520486d169e0424fce5a587c8c226948915d92b5",
+      "same_as_product_baseline": true
+    },
+    {
+      "path": "src/capabilities/practice/server/judge/evaluate-submission.ts",
+      "sha256": "f6f556f6aa44760f53406d6c17ee00fbbb0199b617c9ffb6aa4e19df39044e6e",
+      "baseline_sha256": "f6f556f6aa44760f53406d6c17ee00fbbb0199b617c9ffb6aa4e19df39044e6e",
+      "same_as_product_baseline": true
+    },
+    {
+      "path": "src/capabilities/practice/server/judge/evaluation-authority.ts",
+      "sha256": "361ed1ce454c37f3a887004105dda2c44bb68e6a3fd438238c5bb6b6e47efd01",
+      "baseline_sha256": "361ed1ce454c37f3a887004105dda2c44bb68e6a3fd438238c5bb6b6e47efd01",
+      "same_as_product_baseline": true
+    },
+    {
+      "path": "src/capabilities/practice/server/judge/recorded-model-executor.ts",
+      "sha256": "d341a2f7fabf6a66fc39c38e2a35430b3753bb7a03db0e03da63fea4d91f5f7b",
+      "baseline_sha256": "d341a2f7fabf6a66fc39c38e2a35430b3753bb7a03db0e03da63fea4d91f5f7b",
+      "same_as_product_baseline": true
+    },
+    {
+      "path": "src/capabilities/practice/server/judge-run-dispatch.ts",
+      "sha256": "12846b0155153b41039d25d5ab3b5ad1115d46eb4af893af68314ef1c8f7b9be",
+      "baseline_sha256": "12846b0155153b41039d25d5ab3b5ad1115d46eb4af893af68314ef1c8f7b9be",
+      "same_as_product_baseline": true
+    },
+    {
+      "path": "src/capabilities/practice/server/judge-run-status.ts",
+      "sha256": "4c5e7b89f97dca120e78737fb21cc7be07a2950df87c244e905370a982d3e834",
+      "baseline_sha256": "4c5e7b89f97dca120e78737fb21cc7be07a2950df87c244e905370a982d3e834",
+      "same_as_product_baseline": true
+    },
+    {
+      "path": "src/capabilities/practice/server/judge-run-payload.ts",
+      "sha256": "02d31e3b3a73b60ea14b5e960bd832bd124b9942d5dad157c75071da22f2f993",
+      "baseline_sha256": "02d31e3b3a73b60ea14b5e960bd832bd124b9942d5dad157c75071da22f2f993",
+      "same_as_product_baseline": true
+    },
+    {
+      "path": "src/capabilities/practice/jobs/judge_run.ts",
+      "sha256": "ee2d89d344892335828773e7b7b2bc30b26ac2c5112569c9ae9d4a7b157155c9",
+      "baseline_sha256": "ee2d89d344892335828773e7b7b2bc30b26ac2c5112569c9ae9d4a7b157155c9",
+      "same_as_product_baseline": true
+    },
+    {
+      "path": "src/capabilities/practice/server/placement-assessment.ts",
+      "sha256": "59510014cdb75c626a97490bf3781622a06a518869ee66a9e2dadb8b2e132cfa",
+      "baseline_sha256": "59510014cdb75c626a97490bf3781622a06a518869ee66a9e2dadb8b2e132cfa",
+      "same_as_product_baseline": true
+    },
+    {
+      "path": "src/capabilities/practice/server/intervention-diagnostics.ts",
+      "sha256": "e0470849027888fdec49fb7f89b16b4b48e14f85a5c943deddabba6e4405652a",
+      "baseline_sha256": "e0470849027888fdec49fb7f89b16b4b48e14f85a5c943deddabba6e4405652a",
+      "same_as_product_baseline": true
+    },
+    {
+      "path": "src/capabilities/practice/server/review-operation.ts",
+      "sha256": "888c55639960d8e5a39d08b15dea8469cbd23c408bc94ccf5248bf7ae25a60d9",
+      "baseline_sha256": "888c55639960d8e5a39d08b15dea8469cbd23c408bc94ccf5248bf7ae25a60d9",
+      "same_as_product_baseline": true
+    },
+    {
+      "path": "src/capabilities/practice/api/judge-run-status-route.ts",
+      "sha256": "fd20850a2badc0b242643b74c88a07f46e69ab67b11f916fd429021189bcca94",
+      "baseline_sha256": "fd20850a2badc0b242643b74c88a07f46e69ab67b11f916fd429021189bcca94",
+      "same_as_product_baseline": true
+    },
+    {
+      "path": "src/server/assessment/activate.ts",
+      "sha256": "af627ddc99bc585e17c1d0d512d53a130908c55ebeeba749e3e61dbfc4b7a3cf",
+      "baseline_sha256": "af627ddc99bc585e17c1d0d512d53a130908c55ebeeba749e3e61dbfc4b7a3cf",
+      "same_as_product_baseline": true
+    },
+    {
+      "path": "src/server/assessment/runtime.ts",
+      "sha256": "f8a036b711465d4095c60d53ebc1be7c18616908c5a7c52aa2d5d060181ae3e4",
+      "baseline_sha256": "f8a036b711465d4095c60d53ebc1be7c18616908c5a7c52aa2d5d060181ae3e4",
+      "same_as_product_baseline": true
+    },
+    {
+      "path": "src/db/client.ts",
+      "sha256": "c966556606dea1ca7f89231f74763eb26ca7677f9bbfe7095204c346fd616231",
+      "baseline_sha256": "c966556606dea1ca7f89231f74763eb26ca7677f9bbfe7095204c346fd616231",
+      "same_as_product_baseline": true
+    },
+    {
+      "path": "src/db/schema.ts",
+      "sha256": "46ba5b6cec6f86c6b6f025c6b631d1124b593d4e5557225921d1179b48c088a1",
+      "baseline_sha256": "46ba5b6cec6f86c6b6f025c6b631d1124b593d4e5557225921d1179b48c088a1",
+      "same_as_product_baseline": true
+    },
+    {
+      "path": "src/db/session-advisory-lock.ts",
+      "sha256": "0ad6eee72a893d2deabc9f8ea1d87a437d0c84e0d01c6d80f6d68520b61538d6",
+      "baseline_sha256": "0ad6eee72a893d2deabc9f8ea1d87a437d0c84e0d01c6d80f6d68520b61538d6",
+      "same_as_product_baseline": true
+    },
+    {
+      "path": "src/db/learning-state-lock.ts",
+      "sha256": "59f03b3d20c94b1e25ae77598bb6d8ed29ed265e9dd75164cada0cc0eae0f785",
+      "baseline_sha256": "59f03b3d20c94b1e25ae77598bb6d8ed29ed265e9dd75164cada0cc0eae0f785",
+      "same_as_product_baseline": true
+    },
+    {
+      "path": "src/kernel/events/events.ts",
+      "sha256": "0a215e98ee38dc5bec6782b802926b7c4f553a3418568c41fa3bfa64360170ba",
+      "baseline_sha256": "0a215e98ee38dc5bec6782b802926b7c4f553a3418568c41fa3bfa64360170ba",
+      "same_as_product_baseline": true
+    },
+    {
+      "path": "src/kernel/read-models/assessment-verdict.ts",
+      "sha256": "5a4d75d620f47f64581a1be9c4a5f5f3265b682bde8bdf137189c2a5d5214632",
+      "baseline_sha256": "5a4d75d620f47f64581a1be9c4a5f5f3265b682bde8bdf137189c2a5d5214632",
+      "same_as_product_baseline": true
+    },
+    {
+      "path": "src/core/schema/event/judge-pending-events.ts",
+      "sha256": "1a3feb5a803471b7cf16865d97edc26563be4abafa15fee1405d17a9012f68cb",
+      "baseline_sha256": "1a3feb5a803471b7cf16865d97edc26563be4abafa15fee1405d17a9012f68cb",
+      "same_as_product_baseline": true
+    },
+    {
+      "path": "src/core/schema/event/index.ts",
+      "sha256": "3fb2b57dc02fc7b48dee5136ecb3317542e31f5c31e5aba4b97938d203c6af40",
+      "baseline_sha256": "3fb2b57dc02fc7b48dee5136ecb3317542e31f5c31e5aba4b97938d203c6af40",
+      "same_as_product_baseline": true
+    },
+    {
+      "path": "src/core/schema/event/experimental.ts",
+      "sha256": "6e4ee484de40710aadd7a9a3b27c45930ad007a79ab2b179f286dde2126029b9",
+      "baseline_sha256": "6e4ee484de40710aadd7a9a3b27c45930ad007a79ab2b179f286dde2126029b9",
+      "same_as_product_baseline": true
+    },
+    {
+      "path": "src/server/durable/producer-fence-lock.ts",
+      "sha256": "4b1676b2c1df9657c01bebc1e71a071401150f63d33a12becb5cd2f639e54c60",
+      "baseline_sha256": "4b1676b2c1df9657c01bebc1e71a071401150f63d33a12becb5cd2f639e54c60",
+      "same_as_product_baseline": true
+    },
+    {
+      "path": "src/server/export/constants.ts",
+      "sha256": "a520ddddacf4c8a60bc44c13c56f815798a3e039c47b92716fb9f1f0591f796f",
+      "baseline_sha256": "a520ddddacf4c8a60bc44c13c56f815798a3e039c47b92716fb9f1f0591f796f",
+      "same_as_product_baseline": true
+    },
+    {
+      "path": "node_modules/@dbos-inc/dbos-sdk/dist/src/client.d.ts",
+      "sha256": "1dbdb49d46e6d86a533912c74a9880cead5c958f2fb29f06754e5e2395226267",
+      "baseline_sha256": null,
+      "same_as_product_baseline": null
+    }
+  ],
+  "report_path": "/tmp/yuk1356-judge-operational-contract-details-20261009.md",
+  "report_sha256": "0169a76864e1d9d1a14e9248ff8aedc7c5ff0595bf907b9b5f836b7d40d807f6",
+  "report_lines": 184,
+  "validation": "local source/contract consistency and hashes only; no tests/build/DB/network/services",
+  "excluded_ownership": [
+    "YUK1394 review/gate",
+    "Start/**",
+    "UI",
+    "canonical boot/shutdown",
+    "kernel manifest",
+    "generic SSE"
+  ],
+  "final_source_integrity": {
+    "docs/planning/2026-10-09-yuk1356-judge-implementation-entry.md": true,
+    "src/capabilities/practice/server/assessment/durable-attempt.ts": true,
+    "src/capabilities/practice/server/assessment/attempt.ts": true,
+    "src/capabilities/practice/server/assessment/native-attempt-dispatch-port.ts": true,
+    "src/capabilities/practice/server/judge/evaluate-submission.ts": true,
+    "src/capabilities/practice/server/judge/evaluation-authority.ts": true,
+    "src/capabilities/practice/server/judge/recorded-model-executor.ts": true,
+    "src/capabilities/practice/server/judge-run-dispatch.ts": true,
+    "src/capabilities/practice/server/judge-run-status.ts": true,
+    "src/capabilities/practice/server/judge-run-payload.ts": true,
+    "src/capabilities/practice/jobs/judge_run.ts": true,
+    "src/capabilities/practice/server/placement-assessment.ts": true,
+    "src/capabilities/practice/server/intervention-diagnostics.ts": true,
+    "src/capabilities/practice/server/review-operation.ts": true,
+    "src/capabilities/practice/api/judge-run-status-route.ts": true,
+    "src/server/assessment/activate.ts": true,
+    "src/server/assessment/runtime.ts": true,
+    "src/db/client.ts": true,
+    "src/db/schema.ts": true,
+    "src/db/session-advisory-lock.ts": true,
+    "src/db/learning-state-lock.ts": true,
+    "src/kernel/events/events.ts": true,
+    "src/kernel/read-models/assessment-verdict.ts": true,
+    "src/core/schema/event/judge-pending-events.ts": true,
+    "src/core/schema/event/index.ts": true,
+    "src/core/schema/event/experimental.ts": true,
+    "src/server/durable/producer-fence-lock.ts": true,
+    "src/server/export/constants.ts": true,
+    "node_modules/@dbos-inc/dbos-sdk/dist/src/client.d.ts": true
+  },
+  "worktree_status_at_seal": "",
+  "head_product_difference_paths": [
+    ".remember/now.md",
+    "PLAN.md",
+    "docs/planning/2026-10-07-yuk1359-exit-inventory.md",
+    "docs/planning/2026-10-09-yuk1359-dbos-restore-evidence-gap.md",
+    "docs/planning/2026-10-09-yuk1394-parent-acceptance.md",
+    "docs/planning/evidence/2026-10-09-yuk1359-restore-count-failure.json"
+  ]
+}
