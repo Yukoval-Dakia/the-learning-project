@@ -356,7 +356,20 @@ async function commitFault(
 ) {
   const target = safeUrl();
   const sockets = new Set<Socket>();
+  const disconnectPrimary = new Set<() => void>();
+  const errorFields = Buffer.from(
+    'SERROR\0VERROR\0C08006\0MPrimary unavailable after lost COMMIT response\0\0',
+  );
+  const connectionFailure = Buffer.alloc(5 + errorFields.length);
+  connectionFailure[0] = 'E'.charCodeAt(0);
+  connectionFailure.writeInt32BE(4 + errorFields.length, 1);
+  errorFields.copy(connectionFailure, 5);
+  const ready = Buffer.from([90, 0, 0, 0, 5, 73]);
+  let maxQueuedCycles = 0;
   let fired = false;
+  let listenerClosed: Promise<void> | undefined;
+  const closeListener = () =>
+    (listenerClosed ??= new Promise<void>((done) => server.close(() => done())));
   const server = createServer((downstream) => {
     downstream.setNoDelay(true);
     if (fired && mode === 'after-server-commit-and-unavailable') {
@@ -371,17 +384,46 @@ async function commitFault(
     let back = Buffer.alloc(0);
     let startup = true;
     let receiptTx = false;
+    let unavailable = false;
+    let pendingReady = 0;
+    let unsyncedQuery = false;
+    let failedExtendedQuery = false;
     const statements = new Map<string, string>();
     const close = () => {
       downstream.destroy();
       upstream.destroy();
       sockets.delete(downstream);
       sockets.delete(upstream);
+      disconnectPrimary.delete(disconnect);
     };
+    const rejectQuery = () => {
+      downstream.write(connectionFailure);
+      evidence.push({ unavailableResponse: '08006' });
+    };
+    const disconnect = () => {
+      unavailable = true;
+      upstream.destroy();
+      // Reject in-flight work before closing the client transport. An abrupt RST
+      // lets postgres-js issue its automatic ROLLBACK after clearing its socket.
+      while (pendingReady > 0) {
+        rejectQuery();
+        downstream.write(ready);
+        pendingReady--;
+      }
+      if (unsyncedQuery) {
+        rejectQuery();
+        failedExtendedQuery = true;
+      }
+    };
+    disconnectPrimary.add(disconnect);
     downstream.on('error', close);
-    upstream.on('error', close);
-    downstream.on('close', () => upstream.destroy());
-    upstream.on('close', () => downstream.destroy());
+    upstream.on('error', () => {
+      if (!unavailable) close();
+    });
+    downstream.on('close', close);
+    upstream.on('close', () => {
+      if (!unavailable) close();
+    });
     downstream.on('data', (chunk) => {
       front = Buffer.concat([front, typeof chunk === 'string' ? Buffer.from(chunk) : chunk]);
       while (front.length >= (startup ? 4 : 5)) {
@@ -395,6 +437,28 @@ async function commitFault(
           continue;
         }
         const tag = String.fromCharCode(packet[0]);
+        if (unavailable) {
+          // No SQL reaches the primary after the fault, including through a
+          // previously healthy pool connection. Honor extended-protocol Sync.
+          if (tag === 'X') close();
+          else if (tag === 'S') {
+            downstream.write(ready);
+            failedExtendedQuery = false;
+          } else if (tag === 'Q' && !failedExtendedQuery) {
+            rejectQuery();
+            downstream.write(ready);
+          } else if ((tag === 'P' || tag === 'B') && !failedExtendedQuery) {
+            rejectQuery();
+            failedExtendedQuery = true;
+          }
+          continue;
+        }
+        if (tag === 'P' || tag === 'B' || tag === 'E') unsyncedQuery = true;
+        if (tag === 'Q' || tag === 'S') {
+          pendingReady++;
+          unsyncedQuery = false;
+          maxQueuedCycles = Math.max(maxQueuedCycles, pendingReady);
+        }
         let query = '';
         if (tag === 'Q') query = packet.subarray(5, -1).toString();
         if (tag === 'P') {
@@ -427,6 +491,7 @@ async function commitFault(
       }
     });
     upstream.on('data', (chunk) => {
+      if (unavailable) return;
       back = Buffer.concat([back, typeof chunk === 'string' ? Buffer.from(chunk) : chunk]);
       while (back.length >= 5) {
         const size = back.readInt32BE(1) + 1;
@@ -442,12 +507,13 @@ async function commitFault(
             // Existing pool connections must become unavailable too. Refusing only
             // new connections lets the authoritative reread use a healthy sibling.
             evidence.push({ unavailableSocketCount: sockets.size });
-            for (const socket of sockets) socket.destroy();
-            sockets.clear();
+            void closeListener();
+            for (const disconnect of disconnectPrimary) disconnect();
           } else close();
           return;
         }
         if (command === 'COMMIT' || command === 'ROLLBACK') receiptTx = false;
+        if (tag === 'Z' && pendingReady > 0) pendingReady--;
         downstream.write(packet);
       }
     });
@@ -463,9 +529,10 @@ async function commitFault(
   return {
     url: url.toString(),
     fired: () => fired,
+    maxQueuedCycles: () => maxQueuedCycles,
     async stop() {
       for (const socket of sockets) socket.destroy();
-      await new Promise<void>((done) => server.close(() => done()));
+      await closeListener();
     },
   };
 }
@@ -671,16 +738,30 @@ for (const family of families)
       }, 120000);
     }
     // @invariant data: unavailable commit outcomes remain unknown without terminal workflow replay
-    // @fails-if an unresolved primary outcome is retried blindly or a terminal DBOS ERROR resumes business effects
+    // @fails-if an unresolved primary outcome is retried blindly, a terminal DBOS ERROR resumes business effects, or the outage strands a queued Sync cycle
     it('holds an unavailable primary as unknown and does not resume a terminal DBOS ERROR', async () => {
       await reset();
       await sessions();
       const proxy = await commitFault('after-server-commit-and-unavailable');
       const id = nextId();
-      const first = worker({ id, appUrl: proxy.url });
+      const queuedClient = postgres(proxy.url, { max: 1, ssl: false });
+      let first: ReturnType<typeof worker> | undefined;
       try {
+        // Prepare once, then put two complete extended cycles on one connection
+        // before the real worker's lost-COMMIT fault. Both must receive errors.
+        await queuedClient`select pg_sleep(${0}::double precision)`;
+        let queuedResults: PromiseSettledResult<unknown>[] | undefined;
+        const queuedDone = Promise.allSettled([
+          queuedClient`select pg_sleep(${30}::double precision)`.execute(),
+          queuedClient`select pg_sleep(${30}::double precision)`.execute(),
+        ]).then((results) => {
+          queuedResults = results;
+        });
+        await expect.poll(() => proxy.maxQueuedCycles(), { timeout: 5000 }).toBe(2);
+        first = worker({ id, appUrl: proxy.url });
         await first.wait('ready');
         // This fixture expects the failure message itself, after the workflow becomes ERROR.
+        await first.wait('failure');
         await expect
           .poll(
             async () =>
@@ -689,6 +770,12 @@ for (const family of families)
             { timeout: 60000 },
           )
           .toBe('ERROR');
+        await expect.poll(() => queuedResults?.length, { timeout: 5000 }).toBe(2);
+        await queuedDone;
+        expect(queuedResults).toEqual([
+          { status: 'rejected', reason: expect.objectContaining({ code: '08006' }) },
+          { status: 'rejected', reason: expect.objectContaining({ code: '08006' }) },
+        ]);
         expect(proxy.fired()).toBe(true);
         const before = await snapshots(id);
         expect(before.receipts).toHaveLength(1);
@@ -818,9 +905,10 @@ for (const family of families)
           await clientBoss.stop();
         }
       } finally {
-        if (first.child.exitCode === null && first.child.signalCode === null)
+        await queuedClient.end({ timeout: 2 });
+        if (first && first.child.exitCode === null && first.child.signalCode === null)
           first.child.kill('SIGKILL');
-        await first.exited;
+        await first?.exited;
         await proxy.stop();
       }
     }, 120000);
