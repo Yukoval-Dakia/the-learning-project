@@ -1,7 +1,7 @@
 // Worker regressions use the actual original, recorded executor and atomic settlement.
 import { eq } from 'drizzle-orm';
-
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { FsrsStateSchema } from '@/core/schema/event/blocks';
 
 import { evaluation, knowledge, mastery_state, material_fsrs_state } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
@@ -127,7 +127,7 @@ describe('native judge worker', () => {
     await runJudgeRun(db, newer.job, first);
     await runJudgeRun(db, older.job, first);
     const [card] = await db.select().from(material_fsrs_state);
-    expect(card.state.reps).toBe(2);
+    expect(FsrsStateSchema.parse(card.state).reps).toBe(2);
     expect(card.state.last_review).toBeTruthy();
     if (!card.state.last_review) throw new Error('expected last review time');
     expect(new Date(card.state.last_review).toISOString()).toBe(newer.job.submit.submitted_at);
@@ -148,8 +148,8 @@ describe('native judge worker', () => {
     await runJudgeRun(db, newer.job, first);
     await runJudgeRun(db, older.job, first);
     const cards = await db.select().from(material_fsrs_state);
-    expect(cards.find((row) => row.subject_id === 'k1')?.state.reps).toBe(1);
-    expect(cards.find((row) => row.subject_id === 'k2')?.state.reps).toBe(2);
+    expect(FsrsStateSchema.parse(cards.find((row) => row.subject_id === 'k1')?.state).reps).toBe(1);
+    expect(FsrsStateSchema.parse(cards.find((row) => row.subject_id === 'k2')?.state).reps).toBe(2);
     const [k2] = await db.select().from(mastery_state).where(eq(mastery_state.subject_id, 'k2'));
     expect(k2.evidence_count).toBe(2);
     expect(k2.last_outcome_at?.toISOString()).toBe(newer.job.submit.submitted_at);

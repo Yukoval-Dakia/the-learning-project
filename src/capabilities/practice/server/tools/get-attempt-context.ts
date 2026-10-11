@@ -1,3 +1,8 @@
+import {
+  CandidateStateSchema,
+  type SchedulingState,
+  isCandidateState,
+} from '@/core/schema/scheduling-state';
 // YUK-81 / Foundation D M1 Lane C; YUK-832 evidence-reader hardening.
 //
 // Exact-id event evidence reader, preserving the historical tool/input name.
@@ -43,7 +48,7 @@ const InputSchema = z.object({
   causalLimit: z.number().int().positive().max(50).optional(),
 });
 
-const FsrsStateEvidenceSchema = z.object({
+const LegacyFsrsStateEvidenceSchema = z.object({
   due: z.string().datetime(),
   stability: z.number(),
   difficulty: z.number(),
@@ -55,6 +60,8 @@ const FsrsStateEvidenceSchema = z.object({
   state: z.enum(['new', 'learning', 'review', 'relearning']),
   last_review: z.string().datetime().nullable(),
 });
+
+const FsrsStateEvidenceSchema = z.union([LegacyFsrsStateEvidenceSchema, CandidateStateSchema]);
 
 const FsrsEvidenceSchema = z.object({
   rating: z.enum(['again', 'hard', 'good']),
@@ -883,18 +890,8 @@ function eventRef(
   };
 }
 
-function fsrsStateEvidence(value: {
-  due: Date;
-  stability: number;
-  difficulty: number;
-  elapsed_days?: number;
-  scheduled_days: number;
-  learning_steps: number;
-  reps: number;
-  lapses: number;
-  state: 'new' | 'learning' | 'review' | 'relearning';
-  last_review: Date | null;
-}): z.infer<typeof FsrsStateEvidenceSchema> {
+function fsrsStateEvidence(value: SchedulingState): z.infer<typeof FsrsStateEvidenceSchema> {
+  if (isCandidateState(value)) return value;
   return {
     ...value,
     due: value.due.toISOString(),

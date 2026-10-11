@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { canonicalHash } from '@/core/migration/canonical';
 import type { ModelExecutorRequest, ModelUnitOutcomeT } from '@/core/schema/assessment';
+import { FsrsStateSchema } from '@/core/schema/event/blocks';
 import { JudgeWorkflowInput } from '@/core/schema/event/judge-operational-events';
 import { NativeJudgePendingSubmitInput } from '@/core/schema/event/judge-pending-events';
 import type { Db } from '@/db/client';
@@ -591,7 +592,9 @@ describe('native durable assessment', () => {
     spy.mockRestore();
     await runJudgeRun(f.db, f.jobs[0], { ...meta, retryCount: 1 });
     expect(await f.db.select().from(event).where(eq(event.id, run))).toHaveLength(1);
-    expect((await f.db.select().from(material_fsrs_state))[0].state.reps).toBe(1);
+    expect(
+      FsrsStateSchema.parse((await f.db.select().from(material_fsrs_state))[0].state).reps,
+    ).toBe(1);
     expect(f.execute).toHaveBeenCalledTimes(1);
   });
 
@@ -715,7 +718,7 @@ describe('native durable assessment', () => {
     expect(f.execute.mock.calls[0][0].slot_responses).toEqual(f.request.response_set.entries);
     expect(await f.db.select().from(evaluation)).toHaveLength(1);
     const [card] = await f.db.select().from(material_fsrs_state);
-    expect(card.state.reps).toBe(1);
+    expect(FsrsStateSchema.parse(card.state).reps).toBe(1);
     const restored = JudgeRunTerminalResultSchema.parse(
       await reconstructDoneFromDomainEvents(f.db, runId),
     );
@@ -746,7 +749,9 @@ describe('native durable assessment', () => {
     expect(f.jobs).toHaveLength(1);
     expect(f.execute).toHaveBeenCalledTimes(1);
     expect(await f.db.select().from(evaluation)).toHaveLength(1);
-    expect((await f.db.select().from(material_fsrs_state))[0].state.reps).toBe(1);
+    expect(
+      FsrsStateSchema.parse((await f.db.select().from(material_fsrs_state))[0].state).reps,
+    ).toBe(1);
   });
 
   // @invariant data: a committed pending original is the sole authority for its run parameters — conflicting rating or unassisted-policy retries are rejected without a second admission or refund
@@ -988,7 +993,9 @@ describe('native durable assessment', () => {
     spy.mockRestore();
     await runJudgeRun(f.db, f.jobs[0], { ...meta, retryCount: 1 });
     expect(f.execute).toHaveBeenCalledTimes(1);
-    expect((await f.db.select().from(material_fsrs_state))[0].state.reps).toBe(1);
+    expect(
+      FsrsStateSchema.parse((await f.db.select().from(material_fsrs_state))[0].state).reps,
+    ).toBe(1);
   });
 
   // @invariant grading: unjudgeable work is held unscored with no learning effects, and a later self-report never replaces its first evaluation reference
@@ -1025,7 +1032,9 @@ describe('native durable assessment', () => {
     expect(later.coarse_outcome).toBe('unsupported');
     expect(later.assessment?.effective_evaluation_id).not.toBe(first.assessment?.candidate_id);
     expect(await f.db.select().from(event).where(eq(event.id, run))).toEqual(receipts);
-    expect((await f.db.select().from(material_fsrs_state))[0].state.reps).toBe(1);
+    expect(
+      FsrsStateSchema.parse((await f.db.select().from(material_fsrs_state))[0].state).reps,
+    ).toBe(1);
   });
   // @invariant data: an admitted native attempt enqueues with durable authorization, returns a 202 handle, and its poll reconstructs the effective terminal result with original anchored to its candidate
   // @fails-if execute synchronously in the request, enqueue without authorization, or return a handle that cannot reconstruct the result; the 202/poll-200, effective-result and original==candidate assertions fail

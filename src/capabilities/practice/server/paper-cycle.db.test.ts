@@ -1,3 +1,4 @@
+import { FsrsStateSchema } from '@/core/schema/event/blocks';
 // U5 (YUK-203) — end-to-end paper lifecycle DB test (Cross §11 highest single
 // risk: the append-only frozen-rows × derived read-layer consistency).
 //
@@ -624,7 +625,9 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
       expect(results[1]).toEqual(results[0]);
       expect(execute).toHaveBeenCalledTimes(1);
       expect(await db.select().from(evaluation)).toHaveLength(1);
-      expect((await db.select().from(material_fsrs_state))[0].state.reps).toBe(1);
+      expect(
+        FsrsStateSchema.parse((await db.select().from(material_fsrs_state))[0].state).reps,
+      ).toBe(1);
     } finally {
       release();
       await first;

@@ -1,3 +1,4 @@
+import { FsrsStateSchema } from '@/core/schema/event/blocks';
 // Native ordered replay replaces the retired deferred writer's evidence-only skip.
 // Unknown newer projections remain fail-closed; pending originals never pretend to be scores.
 
@@ -49,7 +50,7 @@ describe('native late arrival and frozen learning scope', () => {
         })),
         fsrs: final.fsrs.map((row) => ({
           id: row.subject_id,
-          reps: row.state.reps,
+          reps: FsrsStateSchema.parse(row.state).reps,
           at: row.state.last_review,
         })),
       };

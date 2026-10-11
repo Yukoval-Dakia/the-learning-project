@@ -1,3 +1,4 @@
+import { FsrsStateSchema } from '@/core/schema/event/blocks';
 // YUK-471 Wave 0 (deferred capstone) — cascade-revert ORCHESTRATOR tests.
 //
 // The orchestrator (`orchestrateCascadeRevert`) is the consumer that makes the
@@ -162,7 +163,7 @@ async function readFsrsState(
       ),
     )
     .limit(1);
-  return rows[0]?.state ?? null;
+  return rows[0] ? FsrsStateSchema.parse(rows[0].state) : null;
 }
 
 async function countCorrectionsFor(targetEventId: string): Promise<number> {

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { FsrsStateSchema } from '@/core/schema/event/blocks';
+import { isCandidateState } from '@/core/schema/scheduling-state';
 import { projectNativeCsv } from './native-assessment-reporting';
 
 export interface Row {
@@ -564,14 +565,14 @@ export function buildReviewEventsCsv(tables: Record<string, Row[]>): string {
         review.prompt.slice(0, 80).replace(/[\n\r]/g, ' '),
         review.knowledgeIds.map((id) => knowledgeById.get(id) ?? id).join('; '),
         review.rating,
-        review.before?.stability ?? '',
-        review.before?.difficulty ?? '',
+        review.before && !isCandidateState(review.before) ? review.before.stability : '',
+        review.before && !isCandidateState(review.before) ? review.before.difficulty : '',
         review.before?.due.toISOString() ?? '',
-        review.before?.state ?? '',
-        review.after?.stability ?? '',
-        review.after?.difficulty ?? '',
+        review.before && !isCandidateState(review.before) ? review.before.state : '',
+        review.after && !isCandidateState(review.after) ? review.after.stability : '',
+        review.after && !isCandidateState(review.after) ? review.after.difficulty : '',
         review.after?.due.toISOString() ?? '',
-        review.after?.state ?? '',
+        review.after && !isCandidateState(review.after) ? review.after.state : '',
         review.before?.due.toISOString() ?? '',
         review.after?.due.toISOString() ?? '',
       ]

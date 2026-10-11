@@ -1,6 +1,7 @@
 import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { FsrsStateSchema } from '@/core/schema/event/blocks';
 import {
   artifact,
   evaluation,
@@ -141,7 +142,7 @@ describe('paper opening freezes actual assessment occurrences', () => {
     });
     expect(await db.select().from(evaluation_effective_head)).toEqual(beforeHead);
     expect(await db.select().from(material_fsrs_state)).toEqual(beforeFsrs);
-    expect(beforeFsrs[0].state.reps).toBe(1);
+    expect(FsrsStateSchema.parse(beforeFsrs[0].state).reps).toBe(1);
     await expect(
       submitNativePaperAttempt(db, {
         ...input,
