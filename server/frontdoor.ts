@@ -17,6 +17,7 @@ export function buildLegacySpa(root: string): Hono {
     '/apple-touch-icon.png',
     '/icon-192.png',
     '/icon-512.png',
+    '/icon-maskable-512.png',
     '/favicon.svg',
   ]) {
     spa.get(asset, (c) => c.notFound());
