@@ -43,8 +43,7 @@ type GL = WebGLRenderingContext | WebGL2RenderingContext;
 function context(canvas: HTMLCanvasElement, caveat: boolean): GL | null {
   const attrs: WebGLContextAttributes = { failIfMajorPerformanceCaveat: caveat };
   try {
-    return (canvas.getContext('webgl2', attrs) ??
-      canvas.getContext('webgl', attrs)) as GL | null;
+    return (canvas.getContext('webgl2', attrs) ?? canvas.getContext('webgl', attrs)) as GL | null;
   } catch {
     return null;
   }
