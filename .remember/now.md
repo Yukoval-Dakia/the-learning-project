@@ -1,3 +1,11 @@
+# Full CI continuation after r4 (2026-10-11)
+
+Owner requires complete CI <=120 seconds, YUK-1107 In Progress. Sole writer d0c4657a owns .worktrees/yuk-1107-fast-crons / perf/yuk-1107-fast-crons, base148cf4bd, backup child commit integrated asb7828661a. Final r4 frozen10files passed24DB and162unit, nofailedcases. Local Vitest DB116.69s serial4files, unit116.18s; source hashes/ledgers/cleanup retained in .cache/cron-speed-evidence/window-20261011-r4. R1fresh-clone P1 andR2genuine-Timekeeper/native-point P1 fixed, finaldelta personallyruntimeverified, notclaimedearlierstaticreviewcoverage. No thirdreview. Typecheck/lint172warnings/build passed; policy/partition and complete exact-head CI still pending. Backupfile115.84s remains longtail, full120s notachieved; next executionarchitecture read-only investigation delegatedCodex gpt-6.1-sol high.
+
+Sharedwindow start09:38:08Z <=8min, runtime ended~09:44:21Z but token/parity cleanuprelease09:47:59.444858Z. Parent reported overrun precisely to totalcoordinator24b7fe69 andmigration4bbfaeee. 59ownedPIDs absent, ownTestcontainers empty, original4 ID/Image/State/Ports andoriginalreleasehash unchanged. No lockheld/newruntime batches; nextwindowmigrationpriority. Prior broadkill ownershipviolation and failedr3 preserved, neverreusedascleanuporperformanceacceptance.
+
+Evidence andremainingacceptance: docs/planning/2026-10-11-yuk1107-full-ci-continuation.md. Latest fullgreenbaseline38122365986 at148cf4bd took432sec; no affected-only/nightly/suite-skipping. PriorPR1679/1681/1687 merged/unwatched. NewcurrentfixturePRpending, noissueclosure/deployment/provider/TESTacceptance.
+
 # Session cron delivery complete (2026-10-11)
 
 PR1681 merged56df7c09e87244c1e993d58243eafbd398752569 at07:23:01Z; exact cd0c45db7739a0f5dcc02ca29f046a2fbd18f9d9 Gate38120469007 all jobs green. DB4 50files/259casesPASS, cron2/2PASS16.798s/14.137s,file34.564s; conversation crossed07:12UTC real minute with both schedulespaused. R2 NONE at244c, parser-initialization delta parent-verified+CI-covered. OriginalYUK1397 fixture slice delivered; no historical-source claims. WholeGate390s; DB2/3 slow steps289/302s, top files reviewcron252.318s/sessionmigration286.936s/prunecron201.624s; YUK1107 broadgoal notDone, no active next-scopewriter. Local runtime window still functional lane; no local DB/container/Vitest since release.

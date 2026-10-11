@@ -10,6 +10,7 @@ import { afterAll, beforeAll, expect, it } from 'vitest';
 import { z } from 'zod';
 import dbosPackage from '../../node_modules/@dbos-inc/dbos-sdk/package.json';
 import pgBossPackage from '../../node_modules/pg-boss/package.json';
+import { clockSearchPath } from './fixture';
 
 const messageSchema = z.object({ kind: z.string(), error: z.string().optional() }).passthrough();
 const children = new Set<ChildProcess>();
@@ -25,6 +26,22 @@ let boss: PgBoss;
 let passed = false;
 let databaseUrl: string;
 let unrelatedJob: string | null;
+let originalProducerFunction: string | undefined;
+let originalJobClock: string | undefined;
+
+async function advanceClock(at: string) {
+  await sql`update prune_cron_clock.state set frozen_at = null,
+    offset_ms = greatest(offset_ms, ceil(extract(epoch from (${at}::timestamptz - pg_catalog.clock_timestamp())) * 1000)::bigint) where singleton`;
+  expect(
+    (await sql`select prune_cron_clock.clock_timestamp() >= ${at}::timestamptz as reached`)[0]
+      .reached,
+  ).toBe(true);
+}
+
+async function advanceClockBy(seconds: number) {
+  await sql`update prune_cron_clock.state set frozen_at = null,
+    offset_ms = offset_ms + ${seconds * 1000}::bigint where singleton`;
+}
 
 function startCronWorker() {
   const child = spawn(process.execPath, [resolve('.cache/yuk1355-cron-worker.cjs')], {
@@ -57,7 +74,9 @@ function startCronWorker() {
     const message = messageSchema.parse(value);
     messages.push(message);
     log.messages.push(message);
-    process.stdout.write(`cron IPC pid=${child.pid} kind=${message.kind}\n`);
+    process.stdout.write(
+      `cron IPC pid=${child.pid} kind=${message.kind} error=${message.error ?? ''}\n`,
+    );
   });
   child.on('exit', () => children.delete(child));
   async function wait(kind: string, timeout = 20000) {
@@ -78,7 +97,7 @@ function startCronWorker() {
       .toBe(true);
     return messageSchema.parse(found);
   }
-  async function command(command: { kind: string; phase?: string }, response = 'ack') {
+  async function command(command: { kind: string; phase?: string; at?: string }, response = 'ack') {
     child.send(command);
     return wait(response);
   }
@@ -109,7 +128,7 @@ async function snapshot(stage: string) {
     workflows:
       await sql`select workflow_uuid, name, status, schedule_name, inputs from tlp_dbos.workflow_status order by workflow_uuid`,
     receipts: await sql`select * from prune_job_events_receipt order by workflow_id`,
-    audit: await sql`select * from yuk1355_cron_audit order by sequence`,
+    audit: await sql`select * from public.yuk1355_cron_audit order by sequence`,
   };
   observations.push(data);
   process.stdout.write(`cron observed stage=${stage} at=${data.at}\n`);
@@ -138,7 +157,7 @@ beforeAll(async () => {
   const adminUrl = new URL(url);
   adminUrl.pathname = '/postgres';
   const admin = postgres(adminUrl.toString(), { max: 1 });
-  const databaseName = `test_fork_${Date.now()}`;
+  const databaseName = `test_fork_${Date.now()}${process.pid}`;
   try {
     // Clone the freshly migrated template, not a possibly reused Vitest worker DB.
     await admin.unsafe(`CREATE DATABASE "${databaseName}" TEMPLATE "test"`);
@@ -147,7 +166,10 @@ beforeAll(async () => {
   }
   url.pathname = `/${databaseName}`;
   databaseUrl = url.toString();
-  sql = postgres(url.toString(), { max: 3 });
+  sql = postgres(url.toString(), {
+    max: 3,
+    connection: { search_path: clockSearchPath },
+  });
   await promisify(execFile)(resolve('node_modules/.bin/esbuild'), [
     'tests/dbos-prune/worker.ts',
     '--bundle',
@@ -163,6 +185,21 @@ beforeAll(async () => {
     '--external:winston',
     '--external:winston-transport',
   ]);
+  const [producer] =
+    await sql`select pg_get_functiondef('public.fence_prune_job_events_producer()'::regprocedure) as definition`;
+  originalProducerFunction = z.string().parse(producer.definition);
+  await sql.unsafe(`
+    create schema if not exists prune_cron_clock;
+    create table if not exists prune_cron_clock.state (singleton boolean primary key check (singleton), frozen_at timestamptz, offset_ms bigint not null);
+    insert into prune_cron_clock.state values (true, null, -180000) on conflict (singleton) do update set frozen_at = null, offset_ms = -180000;
+    create or replace function prune_cron_clock.clock_timestamp() returns timestamptz language plpgsql volatile as $$
+      declare clock record;
+      begin
+        select frozen_at, offset_ms into strict clock from prune_cron_clock.state where singleton;
+        return coalesce(clock.frozen_at, pg_catalog.clock_timestamp() + clock.offset_ms * interval '1 millisecond');
+      end $$;
+    alter function public.fence_prune_job_events_producer() set search_path to ${clockSearchPath};
+  `);
   await sql`delete from contract_epoch`;
   boss = new PgBoss({
     connectionString: url.toString(),
@@ -174,6 +211,14 @@ beforeAll(async () => {
     throw error;
   });
   await boss.start();
+  const [jobClock] =
+    await sql`select pg_get_functiondef('pgboss.job_now()'::regprocedure) as definition`;
+  originalJobClock = z.string().parse(jobClock.definition);
+  await sql.unsafe(`
+    create or replace function pgboss.job_now() returns timestamptz language sql volatile as $$
+      select prune_cron_clock.clock_timestamp();
+    $$;
+  `);
   await boss.createQueue('yuk1355_unknown_external');
   unrelatedJob = await boss.send('yuk1355_unknown_external', {
     outcome: 'unknown',
@@ -182,7 +227,7 @@ beforeAll(async () => {
   await sql`update pgboss.job set state = 'failed' where id = ${unrelatedJob}::uuid`;
   // Test-only statement/row audit: records actual SQL effects and phase in their transaction.
   await sql.unsafe(`
-    CREATE TABLE yuk1355_cron_audit (
+    CREATE TABLE public.yuk1355_cron_audit (
       sequence bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
       at timestamptz NOT NULL DEFAULT clock_timestamp(),
       kind text NOT NULL, phase text NOT NULL, task_id text,
@@ -191,7 +236,7 @@ beforeAll(async () => {
     );
     CREATE FUNCTION yuk1355_cron_observe() RETURNS trigger LANGUAGE plpgsql AS $$
     BEGIN
-      INSERT INTO yuk1355_cron_audit(kind,phase,task_id,detail)
+      INSERT INTO public.yuk1355_cron_audit(kind,phase,task_id,detail)
       SELECT (CASE WHEN TG_TABLE_NAME IN ('job','job_common') THEN 'job' ELSE TG_TABLE_NAME END) || ':' || TG_OP, phase,
         CASE WHEN TG_TABLE_NAME IN ('job','job_common') THEN to_jsonb(NEW)->>'id'
              WHEN TG_TABLE_NAME = 'prune_job_events_receipt' THEN to_jsonb(NEW)->>'workflow_id' END,
@@ -224,6 +269,10 @@ afterAll(async () => {
     observations.push({ stage: 'failure-cleanup', pid: child.pid, exit: await exited });
   }
   await boss?.stop();
+  if (sql && children.size === 0) {
+    if (originalProducerFunction) await sql.unsafe(originalProducerFunction);
+    if (originalJobClock) await sql.unsafe(originalJobClock);
+  }
   await sql?.end();
   if (process.env.TLP_PRUNE_CRON_EVIDENCE_PATH)
     await writeFile(
@@ -244,7 +293,10 @@ afterAll(async () => {
             productionCron: '0 4 * * *',
             testCron: '* * * * *',
             timezone: 'Asia/Shanghai',
-            clocksChanged: false,
+            clocksChanged: true,
+            nativeTestCron: 'one shared future calendar point',
+            clockStrategy:
+              'legacy ticks start three minutes before native time; align before DBOS cutover; freeze cooldown boundary',
             pgMonitorSeconds: 1,
             pgForwardPollSeconds: 1,
             reconcileMilliseconds: 50,
@@ -262,6 +314,7 @@ afterAll(async () => {
               'src/server/durable/prune-worker.ts',
               'src/server/durable/prune-family.ts',
               'tests/dbos-prune/worker.ts',
+              'tests/dbos-prune/fixture.ts',
               'tests/dbos-prune/cron.db.test.ts',
               'drizzle/0115_yuk1355_prune_backend.sql',
               'pnpm-lock.yaml',
@@ -284,6 +337,8 @@ afterAll(async () => {
     );
 });
 
+// @invariant concurrency: backend cutover preserves one prune effect per scheduled point and blocks pending rollback
+// @fails-if cached legacy forwarding bypasses the producer fence, repeats a DBOS effect, or a pending workflow permits rollback
 it('observes actual minute ticks, cached legacy forwarding, drain, two DBOS schedulers and rollback', async () => {
   const marker = randomUUID();
   await sql`insert into job_events (business_table,business_id,event_type,payload,occurred_at)
@@ -291,7 +346,7 @@ it('observes actual minute ticks, cached legacy forwarding, drain, two DBOS sche
   const worker = startCronWorker();
   await worker.wait('ready');
   await pollSchedules('pg-boss');
-  await worker.wait('forward-held', 75000);
+  await worker.wait('forward-held', 25000);
   const firstHeld = await snapshot('first-real-tick-held');
   const [firstTick] = firstHeld.jobs.filter(
     (job) => job.name === '__pgboss__send-it' && job.state === 'active',
@@ -311,7 +366,9 @@ it('observes actual minute ticks, cached legacy forwarding, drain, two DBOS sche
     )
     .toBe('created');
   await worker.command({ kind: 'arm-forward' });
-  await worker.wait('forward-held', 75000);
+  await advanceClockBy(60);
+  await worker.command({ kind: 'sync-clock' });
+  await worker.wait('forward-held', 25000);
   const beforeDrain = await snapshot('second-real-tick-cached-before-drain');
   const [cached] = beforeDrain.jobs.filter(
     (job) => job.name === '__pgboss__send-it' && job.state === 'active',
@@ -320,13 +377,15 @@ it('observes actual minute ticks, cached legacy forwarding, drain, two DBOS sche
   expect(beforeDrain.receipts).toHaveLength(0);
   // Keep another real tick in SEND_IT while the first forwarding callback is held.
   // It will be forwarded only after rollback, covering stale caches beyond cutover.
+  await advanceClockBy(60);
+  await worker.command({ kind: 'sync-clock' });
   await expect
     .poll(
       async () =>
         (
           await sql`select count(*)::int as count from pgboss.job where name = '__pgboss__send-it' and state = 'created'`
         )[0]?.count,
-      { timeout: 75000, interval: 100 },
+      { timeout: 25000, interval: 100 },
     )
     .toBe(1);
   const backlog = await snapshot('third-real-tick-backlogged-before-drain');
@@ -352,6 +411,17 @@ it('observes actual minute ticks, cached legacy forwarding, drain, two DBOS sche
   expect(drained.audit.find((row) => row.kind === 'job_events:DELETE')?.phase).toBe(
     'draining-pg-boss',
   );
+  // The legacy effect occurred a minute before the native tick. Align application,
+  // pg-boss and native dates before native scheduling, without changing DBOS dates.
+  await advanceClockBy(60);
+  await worker.command({ kind: 'sync-clock' });
+  await peer.command({ kind: 'sync-clock' });
+  await sql`insert into job_events (business_table,business_id,event_type,payload,occurred_at)
+    values ('yuk1355-cron',${marker},'dbos-old','{}',now() - interval '31 days')`;
+  const nativeAt = new Date(Math.ceil((Date.now() + 5000) / 1000) * 1000).toISOString();
+  await worker.command({ kind: 'arm-native', at: nativeAt });
+  await peer.command({ kind: 'arm-native', at: nativeAt });
+  observations.push({ stage: 'native-point-armed', at: nativeAt });
   await worker.command({ kind: 'transition', phase: 'dbos' });
   await pollSchedules('dbos');
   await worker.command({ kind: 'release-forward' });
@@ -382,19 +452,17 @@ it('observes actual minute ticks, cached legacy forwarding, drain, two DBOS sche
         row.phase !== 'pg-boss',
     ),
   ).toHaveLength(0);
-  await sql`insert into job_events (business_table,business_id,event_type,payload,occurred_at)
-    values ('yuk1355-cron',${marker},'dbos-old','{}',now() - interval '31 days')`;
   await expect
     .poll(
       async () =>
         (await sql`select count(*)::int as count from prune_job_events_receipt`)[0]?.count,
-      { timeout: 75000, interval: 100 },
+      { timeout: 25000, interval: 100 },
     )
     .toBe(1);
   const native = await snapshot('real-dbos-cron-receipt-before-checkpoint');
   const [receipt] = native.receipts;
   expect(receipt.workflow_id).toMatch(
-    /^sched-prune_job_events-\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:00\.000Z$/,
+    /^sched-prune_job_events-\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.000Z$/,
   );
   expect(native.workflows).toHaveLength(1);
   expect(native.workflows[0]).toMatchObject({
@@ -427,6 +495,18 @@ it('observes actual minute ticks, cached legacy forwarding, drain, two DBOS sche
       { timeout: 15000 },
     )
     .toBe('SUCCESS');
+  await worker.command({ kind: 'pause-native' });
+  await peer.command({ kind: 'pause-native' });
+  const [cooldown] = await sql`select (cutoff + interval '2592060 seconds')::text as horizon
+    from prune_job_events_receipt where workflow_id = ${receipt.workflow_id}`;
+  const horizon = z.string().parse(cooldown.horizon);
+  await sql`update prune_cron_clock.state set frozen_at = ${horizon}::timestamptz - interval '1 microsecond' where singleton`;
+  expect(
+    (
+      await sql`select exists(select 1 from prune_job_events_receipt
+    where cutoff > clock_timestamp() - interval '2592060 seconds') as recent`
+    )[0].recent,
+  ).toBe(true);
   await worker.command({ kind: 'transition', phase: 'pg-boss' });
   await pollSchedules('none');
   await snapshot('rollback-phase-with-cron-cooldown');
@@ -447,13 +527,26 @@ it('observes actual minute ticks, cached legacy forwarding, drain, two DBOS sche
   expect(suppressed.audit.filter((row) => row.kind === 'job_events:DELETE')).toHaveLength(2);
   expect(await sql`select * from job_events where business_id = ${marker}`).toHaveLength(1);
   expect(suppressed.jobs.find((job) => job.id === lateCached.id)?.state).toBe('completed');
+
+  await sql`update prune_cron_clock.state set frozen_at = ${horizon}::timestamptz where singleton`;
+  expect(
+    (
+      await sql`select exists(select 1 from prune_job_events_receipt
+    where cutoff > clock_timestamp() - interval '2592060 seconds') as recent`
+    )[0].recent,
+  ).toBe(false);
+  await advanceClock(horizon);
+  await worker.command({ kind: 'sync-clock' });
+  await peer.command({ kind: 'sync-clock' });
+  await pollSchedules('pg-boss');
+
   await expect
     .poll(
       async () =>
         (
           await sql`select count(*)::int as count from pgboss.job where name = 'prune_job_events' and state = 'completed'`
         )[0]?.count,
-      { timeout: 75000, interval: 100 },
+      { timeout: 15000, interval: 100 },
     )
     .toBe(3);
   await pollSchedules('pg-boss');
@@ -471,7 +564,7 @@ it('observes actual minute ticks, cached legacy forwarding, drain, two DBOS sche
   const summaries = await sql`select date_trunc('minute', at) as minute,
     count(*) filter (where kind = 'job_events:DELETE')::int as executions,
     array_agg(phase) filter (where kind = 'job_events:DELETE') as effect_phases
-    from yuk1355_cron_audit group by 1 order by 1`;
+    from public.yuk1355_cron_audit group by 1 order by 1`;
   observations.push({
     stage: 'observed-result',
     legacyId,
@@ -497,7 +590,7 @@ it('observes actual minute ticks, cached legacy forwarding, drain, two DBOS sche
     retry_count: 0,
     data: { outcome: 'unknown', nested: { replayAllowed: false } },
   });
+  passed = true;
   await worker.stop();
   await peer.stop();
-  passed = true;
-}, 390000);
+}, 180000);
