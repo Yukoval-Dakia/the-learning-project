@@ -11,8 +11,12 @@ import { parseItemPriorOutput } from '@/server/ai/item-prior';
 import {
   itemPriorPaidEffectInput,
   itemPriorPaidEffectRevision,
+  validateItemPriorAppliedApplication,
 } from '@/server/durable/item-prior-paid-effect-adapter';
-import { computePaidEffectIdentity } from '@/server/durable/paid-effect-protocol';
+import {
+  computePaidEffectIdentity,
+  computePaidEffectInputDigest,
+} from '@/server/durable/paid-effect-protocol';
 import { applyItemPrior } from '@/server/mastery/item-calibration';
 import { defaultSubjectProfile } from '@/subjects/profile';
 import {
@@ -553,5 +557,125 @@ describe('float4 application comparison', () => {
       readyStaged('q_f4_null', 0, 0.4),
     );
     expect(nullRow).toMatchObject({ status: 'superseded' }); // null never matches a finite draft
+  });
+});
+
+describe('terminal item prior application compatibility (pure, no DB proof)', () => {
+  async function terminalFixture() {
+    const work = await preparedWork();
+    const results = [0.1, 0.4, 0.2].map(
+      (b) => ({ version: 1, kind: 'output', outputText: text(b, 0.5) }) as const,
+    );
+    const staged = settleItemPriorStagedItem(
+      work,
+      results.map((r) => parseStagedItemPriorOutput(work.method, r.outputText)),
+    );
+    const application = {
+      version: 1,
+      questionId: work.candidate.id,
+      questionRevision: work.questionRevision,
+      inputDigest: work.inputDigest,
+      method: work.method,
+      repCount: work.repCount,
+      results: results.map((result, index) => ({
+        identity: computePaidEffectIdentity(itemPriorPaidEffectInput(work, index)),
+        resultDigest: computePaidEffectInputDigest(result),
+      })),
+      draft: staged.draft,
+      disposition: { status: 'matched' },
+    };
+    return { work, results, staged, application };
+  }
+
+  // @invariant durability: immutable terminal disposition is compatible with the full frozen workset and results
+  // @fails-if a valid historical receipt requires recomputing a disposition from the current domain
+  it('validates a complete historical matched or superseded application without domain reads', async () => {
+    const { work, results, staged, application } = await terminalFixture();
+    expect(
+      validateItemPriorAppliedApplication(work, staged, results, [
+        application,
+        application,
+        application,
+      ]),
+    ).toEqual({ status: 'matched' });
+    const superseded = {
+      ...application,
+      disposition: {
+        status: 'superseded',
+        existing: { b: -1, bAnchor: -1, confidence: 1, source: 'fixed_anchor' },
+      },
+    };
+    expect(
+      validateItemPriorAppliedApplication(work, staged, results, [
+        superseded,
+        superseded,
+        superseded,
+      ]),
+    ).toEqual(superseded.disposition);
+    expect(vi.mocked(applyItemPrior)).not.toHaveBeenCalled();
+  });
+
+  // @invariant durability: every coordinate and ordered result digest is bound to the immutable application
+  // @fails-if a terminal marker alone accepts a different entity, revision, input, method, rep set or output
+  it('rejects incompatible identity, result and application payloads', async () => {
+    const { work, results, staged, application } = await terminalFixture();
+    const invalid = [
+      { ...application, questionId: 'another_question' },
+      { ...application, questionRevision: 'another_revision' },
+      { ...application, inputDigest: computePaidEffectInputDigest('different input') },
+      { ...application, method: 'llasa' },
+      { ...application, repCount: 2 },
+      { ...application, results: [...application.results].reverse() },
+      {
+        ...application,
+        results: application.results.map((r) => ({
+          ...r,
+          resultDigest: computePaidEffectInputDigest('different result'),
+        })),
+      },
+      { ...application, draft: { ...staged.draft, reasoning: 'rewritten historical draft' } },
+      { ...application, disposition: { status: 'no-anchor' } },
+      { ...application, extra: 'unknown field' },
+    ];
+    for (const incompatible of invalid) {
+      expect(() =>
+        validateItemPriorAppliedApplication(work, staged, results, [
+          incompatible,
+          incompatible,
+          incompatible,
+        ]),
+      ).toThrow();
+    }
+    expect(() =>
+      validateItemPriorAppliedApplication(work, staged, results.slice(1), [
+        application,
+        application,
+        application,
+      ]),
+    ).toThrow();
+    expect(vi.mocked(applyItemPrior)).not.toHaveBeenCalled();
+  });
+
+  // @invariant durability: terminal receipts must form one complete compatible application, never a partial union
+  // @fails-if missing applications or individually valid different dispositions are silently considered complete
+  it('rejects incomplete and differing terminal application sets', async () => {
+    const { work, results, staged, application } = await terminalFixture();
+    expect(() =>
+      validateItemPriorAppliedApplication(work, staged, results, [application, application]),
+    ).toThrow('incomplete');
+    const superseded = {
+      ...application,
+      disposition: {
+        status: 'superseded',
+        existing: { b: -1, bAnchor: -1, confidence: 1, source: 'fixed_anchor' },
+      },
+    };
+    expect(() =>
+      validateItemPriorAppliedApplication(work, staged, results, [
+        application,
+        superseded,
+        application,
+      ]),
+    ).toThrow('incompatible');
   });
 });

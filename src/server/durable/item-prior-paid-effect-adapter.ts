@@ -5,6 +5,7 @@ import {
   type ItemPriorPreparedWork,
   type ItemPriorRepReceipt,
   type ItemPriorStagedItem,
+  MAX_REPS,
   commitItemPriorStagedCalibration,
   itemPriorOutputReceiptSchema,
   itemPriorPreparedInput,
@@ -12,16 +13,20 @@ import {
   parseStagedItemPriorOutput,
   settleItemPriorStagedItem,
 } from '@/capabilities/practice/server/item-prior-durable-operation';
+import { ItemPriorDraft } from '@/core/schema/item_prior';
 import type { Db } from '@/db/client';
 import {
+  PaidEffectApplicationConflictError,
   PaidEffectProtocolError,
   type PaidEffectReservation,
   computePaidEffectIdentity,
   computePaidEffectInputDigest,
   paidEffectDispatchRefSchema,
+  paidEffectIdentitySchema,
   paidEffectJsonEquals,
 } from './paid-effect-protocol';
 import {
+  type PaidEffectSnapshot,
   markPaidEffectUnknown,
   readPaidEffect,
   recordPaidEffectApplication,
@@ -34,6 +39,97 @@ export const itemPriorDispatchSchema = paidEffectDispatchRefSchema.extend({
   tickId: z.string().min(1),
 });
 export type ItemPriorDispatch = z.infer<typeof itemPriorDispatchSchema>;
+
+const applicationDispositionSchema = z.discriminatedUnion('status', [
+  z.strictObject({ status: z.literal('matched') }),
+  z.strictObject({
+    status: z.literal('superseded'),
+    existing: z.strictObject({
+      b: z.number().nullable(),
+      bAnchor: z.number().nullable(),
+      confidence: z.number().nullable(),
+      source: z.string().nullable(),
+    }),
+  }),
+  z.strictObject({ status: z.literal('no-anchor') }),
+]);
+const applicationSchema = z.strictObject({
+  version: z.literal(1),
+  questionId: z.string().min(1),
+  questionRevision: z.string().min(1),
+  inputDigest: paidEffectIdentitySchema.shape.inputDigest,
+  method: z.enum(['feature', 'llasa']),
+  repCount: z.number().int().positive().max(MAX_REPS),
+  results: z
+    .array(
+      z.strictObject({
+        identity: paidEffectIdentitySchema,
+        resultDigest: paidEffectIdentitySchema.shape.inputDigest,
+      }),
+    )
+    .min(1)
+    .max(MAX_REPS),
+  disposition: applicationDispositionSchema,
+  draft: ItemPriorDraft.nullable(),
+});
+type OutputReceipt = Extract<ItemPriorRepReceipt, { kind: 'output' }>;
+
+function applicationBase(
+  work: ItemPriorPreparedWork,
+  staged: ItemPriorStagedItem,
+  results: readonly OutputReceipt[],
+) {
+  const authoritative = settleItemPriorStagedItem(
+    work,
+    results.map((result) => parseStagedItemPriorOutput(work.method, result.outputText)),
+  );
+  if (!paidEffectJsonEquals(authoritative, staged)) {
+    throw new PaidEffectApplicationConflictError(
+      'item-prior staged draft differs from immutable results',
+    );
+  }
+  return {
+    version: 1,
+    questionId: work.candidate.id,
+    questionRevision: work.questionRevision,
+    inputDigest: work.inputDigest,
+    method: work.method,
+    repCount: work.repCount,
+    results: results.map((result, index) => ({
+      identity: computePaidEffectIdentity(itemPriorPaidEffectInput(work, index)),
+      resultDigest: computePaidEffectInputDigest(result),
+    })),
+    draft: staged.draft ?? null,
+  };
+}
+
+/** Pure compatibility check; only the store consumer can establish that every rep is applied. */
+export function validateItemPriorAppliedApplication(
+  work: ItemPriorPreparedWork,
+  staged: ItemPriorStagedItem,
+  results: readonly OutputReceipt[],
+  applications: readonly unknown[],
+) {
+  const base = applicationBase(work, staged, results);
+  if (applications.length !== work.repCount) {
+    throw new PaidEffectApplicationConflictError(
+      'item-prior terminal application set is incomplete',
+    );
+  }
+  const historical = applicationSchema.parse(applications[0]);
+  if ((staged.status === 'no-anchor') !== (historical.disposition.status === 'no-anchor')) {
+    throw new PaidEffectApplicationConflictError(
+      'item-prior terminal disposition differs from immutable results',
+    );
+  }
+  const expected = { ...base, disposition: historical.disposition };
+  if (!applications.every((application) => paidEffectJsonEquals(application, expected))) {
+    throw new PaidEffectApplicationConflictError(
+      'item-prior terminal application receipts are incompatible',
+    );
+  }
+  return historical.disposition;
+}
 
 /** B's sibling exemption requires one revision to identify one complete frozen workset. */
 export function itemPriorPaidEffectRevision(work: ItemPriorPreparedWork): string {
@@ -113,7 +209,8 @@ export class ItemPriorPaidEffectAdapter {
         const identities = Array.from({ length: work.repCount }, (_, index) =>
           computePaidEffectIdentity(itemPriorPaidEffectInput(work, index)),
         );
-        const results: Array<Extract<ItemPriorRepReceipt, { kind: 'output' }>> = [];
+        const results: OutputReceipt[] = [];
+        const snapshots: PaidEffectSnapshot[] = [];
         for (const identity of identities) {
           const snapshot = await readPaidEffect(tx, identity);
           if (!snapshot || !['receipt_ready', 'applied'].includes(snapshot.state)) {
@@ -122,16 +219,24 @@ export class ItemPriorPaidEffectAdapter {
             );
           }
           results.push(itemPriorOutputReceiptSchema.parse(snapshot.result));
+          snapshots.push(snapshot);
         }
-        const authoritative = settleItemPriorStagedItem(
-          work,
-          results.map((result) => parseStagedItemPriorOutput(work.method, result.outputText)),
-        );
-        if (!paidEffectJsonEquals(authoritative, staged)) {
-          throw new PaidEffectProtocolError(
-            'item-prior staged draft differs from immutable results',
+        if (snapshots.every((snapshot) => snapshot.state === 'applied')) {
+          // Historical disposition survives supported later domain edits and lost workflow acknowledgments.
+          // This branch performs no domain reads/writes and never rewrites an application receipt.
+          return validateItemPriorAppliedApplication(
+            work,
+            staged,
+            results,
+            snapshots.map((snapshot) => snapshot.application),
           );
         }
+        if (snapshots.some((snapshot) => snapshot.state === 'applied')) {
+          throw new PaidEffectApplicationConflictError(
+            'item-prior mixed applied and unapplied receipts require reconciliation',
+          );
+        }
+        const base = applicationBase(work, staged, results);
         const disposition =
           staged.status === 'no-anchor'
             ? ({ status: 'no-anchor' } as const)
@@ -141,20 +246,7 @@ export class ItemPriorPaidEffectAdapter {
             'item-prior settled item has no application disposition',
           );
         }
-        const application = {
-          version: 1,
-          questionId: work.candidate.id,
-          questionRevision: work.questionRevision,
-          inputDigest: work.inputDigest,
-          method: work.method,
-          repCount: work.repCount,
-          results: identities.map((identity, index) => ({
-            identity,
-            resultDigest: computePaidEffectInputDigest(results[index]),
-          })),
-          disposition,
-          draft: staged.draft ?? null,
-        };
+        const application = { ...base, disposition };
         for (const identity of identities) {
           await recordPaidEffectApplication(tx, identity, application);
         }

@@ -1,4 +1,6 @@
 // Offline checks of the blocked candidate, not DBOS crash/recovery acceptance.
+// Dispatched admission now requires the node-bound stored pg-boss payload.
+// These cached-step checks validate replay identity only; prepared DB cases cover live ownership.
 // Dispatch checks use the actual adapter/store with a concrete Drizzle client
 // whose transaction driver refuses access. No successful store admission is mocked.
 

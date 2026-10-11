@@ -1,8 +1,11 @@
 // Prepared for the parent's DB partition; not run by this offline lane.
 // Real Postgres admission checks, one-step double, no DBOS runtime or provider.
+import { randomUUID } from 'node:crypto';
 import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { PgBoss } from 'pg-boss';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 import {
   type ItemPriorPreparedWork,
   type ItemPriorStagedItem,
@@ -28,6 +31,7 @@ import {
   ItemPriorMemberIdentityError,
   ItemPriorMemberIncompleteError,
   type ItemPriorStepRunner,
+  itemPriorDispatchedRequestSchema,
   runItemPriorDurableMember,
   runItemPriorDurableMemberExecution,
 } from '@/server/durable/item-prior-family';
@@ -41,6 +45,7 @@ import {
   computePaidEffectInputDigest,
 } from '@/server/durable/paid-effect-protocol';
 import { readPaidEffect, recordPaidEffectApplication } from '@/server/durable/paid-effect-store';
+import { setFixedAnchor } from '@/server/mastery/fixed-anchor';
 import { resetDb, testDb } from '../helpers/db';
 
 const db = testDb();
@@ -229,10 +234,68 @@ describe('item prior application float4 verification (DB, prepared)', () => {
 const originalDispatch = {
   version: 1,
   backend: 'pg-boss',
-  deliveryId: 'item_prior_original_job',
+  deliveryId: '11111111-1111-4111-8111-111111111111',
   tickId: request.dagRunId,
   generation: 0,
 } as const;
+
+let fixtureBoss: PgBoss | undefined;
+const ownedJobs: Array<{ name: string; id: string }> = [];
+
+async function createActiveDispatchedJob(
+  rawRequest: unknown,
+  storedPayload?: object,
+  name = ITEM_PRIOR_MEMBER,
+) {
+  const dispatched = itemPriorDispatchedRequestSchema.parse(rawRequest);
+  if (!fixtureBoss) {
+    const url = new URL(z.url().parse(process.env.TEST_DATABASE_URL));
+    if (
+      !/^\/test_fork_\d+$/.test(url.pathname) ||
+      !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
+    )
+      throw new Error('Disposable fork DB required');
+    fixtureBoss = new PgBoss({
+      connectionString: url.toString(),
+      max: 2,
+      supervise: false,
+      schedule: false,
+    });
+    fixtureBoss.on('error', () => {});
+    await fixtureBoss.start();
+  }
+  await fixtureBoss.createQueue(name);
+  const jobId = await fixtureBoss.send(name, storedPayload ?? dispatched, {
+    id: dispatched.dispatch.deliveryId,
+  });
+  if (!jobId) throw new Error('Fixture job was not enqueued');
+  ownedJobs.push({ name, id: jobId });
+  const [job] = await fixtureBoss.fetch(name, { includeMetadata: true });
+  if (job?.id !== jobId || job.state !== 'active')
+    throw new Error('Fixture must fetch the exact job into active state');
+
+  return dispatched;
+}
+
+async function seedDispatchedNode(
+  rawRequest: unknown,
+  storedPayload?: object,
+  name = ITEM_PRIOR_MEMBER,
+) {
+  const dispatched = await createActiveDispatchedJob(rawRequest, storedPayload, name);
+  await db
+    .update(dag_orchestration_node)
+    .set({ boss_job_id: dispatched.dispatch.deliveryId, status: 'enqueued' })
+    .where(eq(dag_orchestration_node.id, dispatched.nodeId));
+  return dispatched;
+}
+
+afterEach(async () => {
+  for (const job of ownedJobs.splice(0)) await fixtureBoss?.deleteJob(job.name, job.id);
+});
+afterAll(async () => {
+  await fixtureBoss?.stop();
+});
 
 function executionSteps() {
   let recorded: ItemPriorDispatchedAdmission | undefined;
@@ -332,7 +395,7 @@ describe('item prior concrete shared-store consumer (DB, prepared)', () => {
     const checkpoints = executionSteps();
     const outputs = [output(0.1), '{broken JSON', output(0.2)];
     const provider = vi.fn(async () => ({ text: outputs.shift() ?? '' }));
-    const dispatchedRequest = { ...request, dispatch: originalDispatch };
+    const dispatchedRequest = await seedDispatchedNode({ ...request, dispatch: originalDispatch });
     const first = await runItemPriorDurableMemberExecution({
       db,
       request: dispatchedRequest,
@@ -381,7 +444,7 @@ describe('item prior concrete shared-store consumer (DB, prepared)', () => {
     expect(await db.select().from(paid_effect)).toEqual(before);
     expect(await db.select().from(item_calibration)).toEqual([anchor]);
     expect(await db.select().from(paid_effect_control)).toEqual([]); // bootstrap pg-boss; no cutover
-    expect((await db.select().from(dag_orchestration_node))[0]?.status).toBe('pending');
+    expect((await db.select().from(dag_orchestration_node))[0]?.status).toBe('enqueued');
   });
 
   // @invariant durability: unknowns remain unresolved across new nights, input/revision changes and rep expansion
@@ -390,6 +453,7 @@ describe('item prior concrete shared-store consumer (DB, prepared)', () => {
     await seedDagRun();
     await seedQuestion('q_adapter_unknown');
     const checkpoints = executionSteps();
+    await seedDispatchedNode({ ...request, dispatch: originalDispatch });
     const provider = vi.fn(async () => {
       throw new Error('transport failed after possible paid send');
     });
@@ -439,16 +503,18 @@ describe('item prior concrete shared-store consumer (DB, prepared)', () => {
       stale: false,
       updated_at: new Date(),
     });
+    const nextDispatch = {
+      ...originalDispatch,
+      tickId: nextRequest.dagRunId,
+      deliveryId: randomUUID(),
+    };
+    await seedDispatchedNode({ ...nextRequest, dispatch: nextDispatch });
     await expect(
       runItemPriorDurableMemberExecution({
         db,
         request: {
           ...nextRequest,
-          dispatch: {
-            ...originalDispatch,
-            tickId: nextRequest.dagRunId,
-            deliveryId: 'next_delivery',
-          },
+          dispatch: nextDispatch,
         },
         steps: executionSteps().runner,
         runTaskFn: noProvider,
@@ -504,12 +570,12 @@ describe('item prior concrete shared-store consumer (DB, prepared)', () => {
     }
     expect(await readPaidEffect(db, effectIdentity(work))).toEqual(unknown);
     expect(await db.select().from(item_calibration)).toEqual([]);
-    expect((await db.select().from(dag_orchestration_node))[0]?.status).toBe('pending');
+    expect((await db.select().from(dag_orchestration_node))[0]?.status).toBe('enqueued');
   });
 
-  // @invariant durability: domain write and all application receipts roll back together on a real receipt conflict
-  // @fails-if application failure leaves a hard row committed or replays the paid task instead of immutable results
-  it('rolls back application over a conflicting immutable receipt and replays paid results for free', async () => {
+  // @invariant durability: partial application cannot be treated as terminal or repaired by a new domain write
+  // @fails-if mixed receipt states complete, mutate a hard row, or resend immutable paid results
+  it('holds mixed applied and unapplied receipts without domain writes or paid replay', async () => {
     await seedQuestion('q_adapter_rollback');
     const work = await realWork('q_adapter_rollback', 2);
     const effects = new ItemPriorPaidEffectAdapter(db, originalDispatch);
@@ -540,6 +606,7 @@ describe('item prior concrete shared-store consumer (DB, prepared)', () => {
   it('fences the original generation against explicit control before any send', async () => {
     await seedDagRun();
     await seedQuestion('q_adapter_generation');
+    await seedDispatchedNode({ ...request, dispatch: originalDispatch });
     await db
       .insert(paid_effect_control)
       .values({ family: ITEM_PRIOR_MEMBER, backend: 'pg-boss', generation: 2 });
@@ -553,8 +620,8 @@ describe('item prior concrete shared-store consumer (DB, prepared)', () => {
         gateEpoch: noGate,
       }),
     ).rejects.toMatchObject({
-      code: 'ITEM_PRIOR_DURABLE_STORE',
-      reason: { name: 'PaidEffectControlFencedError', reason: 'stale_generation' },
+      name: 'PaidEffectControlFencedError',
+      reason: 'stale_generation',
     });
     expect(provider).not.toHaveBeenCalled();
     expect(await db.select().from(paid_effect)).toEqual([]);
@@ -568,6 +635,7 @@ describe('item prior concrete shared-store consumer (DB, prepared)', () => {
     await seedDagRun();
     await seedQuestion('q_adapter_llasa');
     const checkpoints = executionSteps();
+    await seedDispatchedNode({ ...request, dispatch: originalDispatch, method: 'llasa', reps: 9 });
     const provider = vi.fn(async () => ({
       text: JSON.stringify({
         simulated_responses: [-2, -1, 0, 1, 2].flatMap((theta) =>
@@ -669,5 +737,245 @@ describe('item prior noncausal application dispositions (DB, prepared)', () => {
       });
     }
     expect(await db.select().from(item_calibration)).toEqual([]);
+  });
+});
+
+describe('adapter R1 recovery and owning delivery regressions (DB, prepared UNRUN)', () => {
+  // @invariant durability: committed terminal application survives lost workflow acknowledgment and supported anchor changes
+  // @fails-if replay recomputes superseded, conflicts forever, changes receipts, rewrites the fixed anchor, or sends again
+  it('replays an applied historical matched receipt after lost acknowledgment and setFixedAnchor change', async () => {
+    await seedDagRun();
+    await seedQuestion('q_r1_anchor_recovery');
+    const dispatched = await seedDispatchedNode({ ...request, dispatch: originalDispatch });
+    const checkpoints = executionSteps();
+    const outputs = [output(0.1), output(0.4), output(0.2)];
+    const provider = vi.fn(async () => ({ text: outputs.shift() ?? '' }));
+    await expect(
+      runItemPriorDurableMemberExecution({
+        db,
+        request: dispatched,
+        steps: checkpoints.runner,
+        runTaskFn: provider,
+        gateEpoch: noGate,
+      }).then(() => {
+        throw new Error('simulated lost workflow acknowledgment');
+      }),
+    ).rejects.toThrow('simulated lost workflow acknowledgment');
+    const work = checkpoints.admission()?.prepared[0];
+    if (!work) throw new Error('Missing frozen work');
+    const paidBefore = await db.select().from(paid_effect);
+    expect(paidBefore).toHaveLength(3);
+    expect(paidBefore.every((r) => r.state === 'applied')).toBe(true);
+    await setFixedAnchor(db, { questionId: work.candidate.id, bucket: 'very_hard' });
+    const currentAnchor = await db.select().from(item_calibration);
+    expect(currentAnchor[0]).toMatchObject({
+      b: 2,
+      b_anchor: 2,
+      source: 'fixed_anchor',
+      confidence: 1,
+    });
+    const stages = await runItemPriorItemRepStages(work, {
+      effects: new ItemPriorPaidEffectAdapter(db, originalDispatch),
+      runTaskFn: noProvider,
+    });
+    // Today's domain state is separate from the historical terminal application disposition.
+    expect((await commitItemPriorStagedCalibration(db, stages)).status).toBe('superseded');
+    const replayProvider = vi.fn(noProvider);
+    const recovered = await runItemPriorDurableMemberExecution({
+      db,
+      request: dispatched,
+      steps: checkpoints.runner,
+      runTaskFn: replayProvider,
+      gateEpoch: noGate,
+    });
+    expect(recovered).toMatchObject({ matched: 1, superseded: 0, held: 0, incomplete: 0 });
+    expect(replayProvider).not.toHaveBeenCalled();
+    expect(provider).toHaveBeenCalledTimes(3);
+    expect(await db.select().from(paid_effect)).toEqual(paidBefore);
+    expect(await db.select().from(item_calibration)).toEqual(currentAnchor);
+    expect((await db.select().from(dag_orchestration_node))[0]).toMatchObject({
+      status: 'enqueued',
+      boss_job_id: dispatched.dispatch.deliveryId,
+    });
+  });
+
+  // @invariant durability: all-applied state alone is insufficient when immutable applications disagree with results or each other
+  // @fails-if terminal replay trusts just state/applied/first receipt or repairs incompatible history through domain writes
+  it('holds fully applied incompatible result or application payloads without rewriting history or domain', async () => {
+    for (const mode of ['result', 'disposition'] as const) {
+      const id = `q_r1_incompatible_${mode}`;
+      await seedQuestion(id);
+      const work = await realWork(id, 3);
+      const effects = new ItemPriorPaidEffectAdapter(db, originalDispatch);
+      const outputs = [output(0.1), output(0.4), output(0.2)];
+      const staged = await runItemPriorItemRepStages(work, {
+        effects,
+        runTaskFn: async () => ({ text: outputs.shift() ?? '' }),
+      });
+      const results: Array<{ identity: ReturnType<typeof effectIdentity>; resultDigest: string }> =
+        [];
+      for (const rep of [0, 1, 2]) {
+        const receipt = await readPaidEffect(db, effectIdentity(work, rep));
+        if (receipt?.state !== 'receipt_ready') throw new Error('Missing real result receipt');
+        results.push({
+          identity: receipt.identity,
+          resultDigest: computePaidEffectInputDigest(receipt.result),
+        });
+      }
+      const application = {
+        version: 1,
+        questionId: id,
+        questionRevision: work.questionRevision,
+        inputDigest: work.inputDigest,
+        method: work.method,
+        repCount: 3,
+        results,
+        draft: staged.draft ?? null,
+        disposition: { status: 'matched' },
+      };
+      await db.transaction(async (tx) => {
+        for (const rep of [0, 1, 2]) {
+          const incompatible =
+            mode === 'result'
+              ? {
+                  ...application,
+                  results: results.map((r) => ({
+                    ...r,
+                    resultDigest: computePaidEffectInputDigest('different immutable output'),
+                  })),
+                }
+              : rep === 1
+                ? {
+                    ...application,
+                    disposition: {
+                      status: 'superseded',
+                      existing: { b: -1, bAnchor: -1, confidence: 1, source: 'fixed_anchor' },
+                    },
+                  }
+                : application;
+          await recordPaidEffectApplication(tx, effectIdentity(work, rep), incompatible);
+        }
+      });
+      const before = await db.select().from(paid_effect);
+      expect(before.filter((r) => r.entity_id === id).every((r) => r.state === 'applied')).toBe(
+        true,
+      );
+      await expect(effects.commitStaged(work, staged)).rejects.toMatchObject({
+        code: 'ITEM_PRIOR_APPLICATION',
+        reason: { name: 'PaidEffectApplicationConflictError' },
+      });
+      expect(await db.select().from(paid_effect)).toEqual(before);
+      expect(await db.select().from(item_calibration)).toEqual([]);
+      const replayProvider = vi.fn(noProvider);
+      expect(await runItemPriorItemRepStages(work, { effects, runTaskFn: replayProvider })).toEqual(
+        staged,
+      );
+      expect(replayProvider).not.toHaveBeenCalled();
+    }
+  });
+
+  // @invariant concurrency: only the node-bound original active pg-boss delivery may bypass the competing-job guard
+  // @fails-if the own active job is rejected, a foreign job/backend is admitted, or the old candidate's guard is weakened
+  it('admits the exact original active owning job and rejects competing deliveries while keeping the old candidate held', async () => {
+    await seedDagRun();
+    await seedQuestion('q_r1_own_active');
+    const dispatched = await seedDispatchedNode({ ...request, dispatch: originalDispatch });
+    expect(
+      await fixtureBoss?.getJobById(ITEM_PRIOR_MEMBER, dispatched.dispatch.deliveryId),
+    ).toMatchObject({ id: dispatched.dispatch.deliveryId, state: 'active', data: dispatched });
+    const competing = await createActiveDispatchedJob({
+      ...dispatched,
+      dispatch: { ...dispatched.dispatch, deliveryId: randomUUID() },
+    });
+    expect(
+      await fixtureBoss?.getJobById(ITEM_PRIOR_MEMBER, competing.dispatch.deliveryId),
+    ).toMatchObject({ id: competing.dispatch.deliveryId, state: 'active', data: competing });
+    const noSend = vi.fn(noProvider);
+    await expect(
+      runItemPriorDurableMember({ db, request, steps: steps(), gateEpoch: noGate }),
+    ).rejects.toBeInstanceOf(ItemPriorMemberIdentityError);
+    for (const foreign of [
+      competing,
+      { ...dispatched, dispatch: { ...dispatched.dispatch, backend: 'dbos' } },
+    ]) {
+      await expect(
+        runItemPriorDurableMemberExecution({
+          db,
+          request: foreign,
+          steps: executionSteps().runner,
+          runTaskFn: noSend,
+          gateEpoch: noGate,
+        }),
+      ).rejects.toBeInstanceOf(ItemPriorMemberIdentityError);
+    }
+    expect(noSend).not.toHaveBeenCalled();
+    expect(await db.select().from(paid_effect)).toEqual([]);
+    const provider = vi.fn(async () => ({ text: output(0.2) }));
+    const result = await runItemPriorDurableMemberExecution({
+      db,
+      request: dispatched,
+      steps: executionSteps().runner,
+      runTaskFn: provider,
+      gateEpoch: noGate,
+    });
+    expect(result).toMatchObject({ matched: 1, considered: 1 });
+    expect(provider).toHaveBeenCalledTimes(3);
+    expect((await db.select().from(dag_orchestration_node))[0]).toMatchObject({
+      status: 'enqueued',
+      boss_job_id: dispatched.dispatch.deliveryId,
+    });
+  });
+
+  // @invariant concurrency: declared backend/ID cannot upgrade an old job or substitute a foreign persisted payload/current generation
+  // @fails-if node-bound ID and pg-boss declaration alone admit unversioned, wrong-node, wrong-queue or upgraded-generation jobs
+  it('rejects unversioned, foreign identity, wrong queue and generation-substituted active job payloads', async () => {
+    await seedDagRun();
+    await seedQuestion('q_r1_foreign_payload');
+    const provider = vi.fn(noProvider);
+    const cases = ['unversioned', 'foreign-node', 'wrong-queue', 'upgraded-generation'] as const;
+    for (const variant of cases) {
+      const dispatched = {
+        ...request,
+        dispatch: { ...originalDispatch, deliveryId: randomUUID() },
+      };
+      const stored =
+        variant === 'unversioned'
+          ? {}
+          : variant === 'foreign-node'
+            ? { ...dispatched, nodeId: 'foreign_node' }
+            : dispatched;
+      await seedDispatchedNode(
+        dispatched,
+        stored,
+        variant === 'wrong-queue' ? 'foreign_item_prior_queue' : ITEM_PRIOR_MEMBER,
+      );
+      if (variant === 'upgraded-generation') {
+        await db
+          .insert(paid_effect_control)
+          .values({ family: ITEM_PRIOR_MEMBER, backend: 'pg-boss', generation: 1 });
+      }
+      const supplied =
+        variant === 'upgraded-generation'
+          ? { ...dispatched, dispatch: { ...dispatched.dispatch, generation: 1 } }
+          : dispatched;
+      await expect(
+        runItemPriorDurableMemberExecution({
+          db,
+          request: supplied,
+          steps: executionSteps().runner,
+          runTaskFn: provider,
+          gateEpoch: noGate,
+        }),
+      ).rejects.toBeInstanceOf(ItemPriorMemberIdentityError);
+      expect(
+        await fixtureBoss?.getJobById(
+          variant === 'wrong-queue' ? 'foreign_item_prior_queue' : ITEM_PRIOR_MEMBER,
+          dispatched.dispatch.deliveryId,
+        ),
+      ).toMatchObject({ state: 'active', data: stored });
+      expect(await db.select().from(paid_effect)).toEqual([]);
+      expect(await db.select().from(item_calibration)).toEqual([]);
+    }
+    expect(provider).not.toHaveBeenCalled();
   });
 });

@@ -1,6 +1,6 @@
 # YUK-1355: item_prior_backfill DAG member reference checkpoint
 
-> Current source checkpoint: [fixed shared-store integration](#2026-10-11-fixed-shared-store-integration).
+> Current source checkpoint: [adapter R1 repairs](#2026-10-11-adapter-r1-repairs).
 > Earlier sections describe their pinned revisions. The explicit versioned path now
 > consumes the real store; the original candidate remains blocked and unregistered.
 
@@ -686,3 +686,151 @@ operations, and performed no push, PR, Linear or child delegation. The parent
 owns PLAN/.remember/Linear capture and issue state; no new shared-source fix
 or duplicate tracker item is requested by this consumer integration. Keep the
 existing migration/recovery/exit obligations open.
+
+
+## 2026-10-11 adapter R1 repairs
+
+Starting clean at `77b5513e821e3f45199fd7121a8533a4939a13c0`, sole writer in the
+same ORIGINAL tree and existing branch. The parent accepted two adapter R1 P1s.
+This repair changes only the same seven owned files. Old core A/C R2 stays closed;
+only the single adapter verification R2 remains. No review or child was launched.
+
+The owner reports shared B DB05 at fixed `403c7248682129722be0051b9fba5622540c71f3`
+passed three files / 34 DB cases. That evidence does not validate this adapter.
+The parent's newer `73d061395` only adds A/C families to unsupported cutovers
+until versioned producer/consumer and drain proofs exist. Neither B revision is
+merged by this repair, and no shared production file is edited. Normal/default
+pg-boss remains unchanged, the old candidate stays blocked and unregistered,
+and no runtime admission is claimed.
+
+### P1: terminal application replay after a supported anchor edit
+
+The old `commitStaged` consulted today's hard row before comparing the immutable
+application receipt. After an application committed but its workflow acknowledgment
+was lost, `setFixedAnchor` could change that row. Replaying then manufactured a
+new `superseded` payload against the historical `matched` receipt, causing a
+permanent immutable-receipt conflict.
+
+The repaired path first reads every rep result and state from the real store:
+
+- All `applied`: validate the strict version-1 application schema, reconstruct
+  the staged draft from the immutable result texts, and compare every full
+  stored application against the frozen question revision, prepared-input
+  digest, method, rep count, ordered effect identities/result digests, draft
+  and historical disposition. Return the saved terminal disposition only when
+  all applications are compatible. This branch performs no domain reads/writes
+  and no application-receipt rewrite.
+- Mixed `applied`/`receipt_ready`: propagate an application conflict for
+  reconciliation before any domain write. No partial union is called complete.
+- Missing/unfinished result or incompatible terminal application: propagate
+  an explicit error without modifying the domain or historical receipts.
+- Every rep `receipt_ready`: retain the existing atomic fresh application path.
+
+`matched` and `superseded` can now be historical terminal dispositions. Current
+hard-row divergence is a separate domain read, not a reason to rewrite the paid
+history. The pure compatibility validator is tested directly for complete
+historical matched/superseded receipts, every identity/result coordinate,
+missing applications and differing terminal dispositions. These are pure
+validation checks, not DB evidence.
+
+### P1: exact active owning pg-boss delivery
+
+Only the explicit dispatched path receives an ownership exception. It requires
+`node.boss_job_id === dispatch.deliveryId`, the actual pg-boss row ID and family
+queue name, and the actual persisted strict versioned job payload matching the
+original DAG run/date/node, parameters and dispatch. A declared pg-boss backend
+alone grants nothing. A foreign job ID, wrong queue/node, unversioned payload,
+missing original job, or substituted generation is rejected.
+
+The original backend/generation is checked against the shared read-only control
+snapshot; `reservePaidEffect` still checks it atomically before every new send.
+The control read validates the supplied original generation and never supplies
+an upgraded generation to an old job. A competing active pg-boss job still
+blocks the dispatched DBOS path. The old candidate uses its unchanged guard,
+so it still rejects an active pg-boss job even when that job is its own.
+
+### Exact prepared DB cases and commands
+
+The existing owned DB file now has 15 cases, all PREPARED UNRUN. Member fixtures
+create/fetch actual pg-boss jobs into `active` with persisted versioned payloads
+and bind the actual owning job to an enqueued DAG node. The active-ownership
+regression has two actual active jobs, with only one node-bound owner. Fixture
+resources use the disposable fork DB, disable schedules/supervision, delete only
+their tracked synthetic jobs, and stop their own client. No fixture ran here.
+
+The lost-ack regression commits real paid/application receipts, simulates the
+missing workflow acknowledgment, invokes the supported real `setFixedAnchor`
+writer, and replays the recorded admission. It requires historical `matched`,
+zero new task calls, unchanged paid rows and unchanged later fixed-anchor row.
+It is a DB regression with a recorded-step double, not a DBOS crash-process proof.
+
+The mixed-state case now rejects before domain mutation. The all-applied
+incompatible case writes initial application receipts through the real B API,
+then rejects incompatible result digests and individually valid differing
+historical dispositions without rewriting any record. It does not overwrite
+immutable history to construct a fixture.
+
+Full prepared file command, for the parent-authorized DB window only:
+
+```bash
+pnpm vitest run --config vitest.db.config.ts tests/integration/item-prior-durable-member.db.test.ts
+```
+
+R1-only command selects the final four cases, leaving eleven unselected:
+
+```bash
+pnpm vitest run --config vitest.db.config.ts tests/integration/item-prior-durable-member.db.test.ts -t "adapter R1 recovery and owning delivery regressions"
+```
+
+Exact 15-case list, extracted from the owned TypeScript AST:
+
+1. `freezes the real anti-join result, leaves anchors unchanged, and stays blocked on replay`
+2. `rejects mismatched dates and node IDs without settling a node`
+3. `applies, re-verifies and supersedes across real float4 columns`
+4. `reserves once under a real store race and completes only with the exact winning fence`
+5. `runs the actual member, freezes provider arguments, and replays matched application receipts`
+6. `rejects member completion over unknowns and never sends on later nights or changed work`
+7. `holds mixed applied and unapplied receipts without domain writes or paid replay`
+8. `fences the original generation against explicit control before any send`
+9. `uses a single LLaSA unit with frozen reference input`
+10. `records matched and superseded dispositions atomically while preserving foreign rows`
+11. `settles no-anchor only with every immutable result and application receipt`
+12. `replays an applied historical matched receipt after lost acknowledgment and setFixedAnchor change`
+13. `holds fully applied incompatible result or application payloads without rewriting history or domain`
+14. `admits the exact original active owning job and rejects competing deliveries while keeping the old candidate held`
+15. `rejects unversioned, foreign identity, wrong queue and generation-substituted active job payloads`
+
+### Permitted verification and remaining gates
+
+Node `24.19.0`, pnpm `11.13.1`. Executed scoped unit command:
+
+```bash
+pnpm vitest run --config vitest.unit.config.ts src/capabilities/practice/server/item-prior-durable-operation.unit.test.ts src/server/durable/item-prior-family.unit.test.ts
+```
+
+Final permitted checks passed: two files / 25 units (19 operation, six family),
+both TypeScript projects, full lint with 172 warnings, six owned files scoped
+Biome with no diagnostics, and full build. The final owned checks/typecheck also
+cover the last test-fixture split into actual enqueue/fetch and node-binding
+helpers. No production code changed after the passing build. Initial fixture
+array typing failure and all earlier receipts are retained separately.
+
+Logs, exact unit/DB test lists, commands and hashes are sealed at
+`/tmp/yuk1355-item-prior-adapter-r1-20261011/receipt.json` and adjacent logs.
+Final log SHA-256:
+
+```text
+unit-02       b7a2b9962ea34e2af9096883f1ce6931287a7a49582fe87a962408ca03d78fe6
+typecheck-03  36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6
+lint-01       c1769b6b3f17b51ca2c5fa3d3a7a30eb9544db8e6e5c1dafd3f22592b52d2323
+owned-biome   95c92ef456bd53640bd07718e285a0b358e52582beb79d4e2d96e2152ee57215
+build-01      0d1c6201a6a5e3c1cff94fdc362c93b1414d1d10d4cfb7393dc76e8c3f96d5c1
+```
+
+The parent still owns the 15-case DB run, the single remaining adapter R2, and
+actual producer/drain/process recovery/runtime/provider acceptance. The old
+core R2 and shared B's DB result are not promoted into evidence for this repair.
+No DB/Docker/runtime/provider/credential/lock/PR/Linear/child operations ran.
+PLAN/.remember/Linear reconciliation remains parent-owned within the explicit
+scope boundary; these are accepted findings on the existing task, not new
+untracked follow-ups. No shared-store repair or additional cutover is requested.

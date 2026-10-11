@@ -552,7 +552,7 @@ export interface ItemPriorApplicationRowSnapshot {
 }
 
 export type ItemPriorApplicationVerification =
-  /** Domain row now matches this staged draft exactly (see caveat below). */
+  /** Domain row matches at application time; a validated terminal receipt preserves this historical disposition. */
   | { readonly status: 'matched' }
   /** A different hard row already exists; this attempt's draft was NOT persisted. */
   | { readonly status: 'superseded'; readonly existing: ItemPriorApplicationRowSnapshot }

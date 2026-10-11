@@ -22,10 +22,16 @@ import type { PracticeTaskRunFn } from '@/capabilities/practice/server/task-runt
 import type { Db, Tx } from '@/db/client';
 import { waitForRunnableEpoch } from '@/server/contract-epoch';
 import {
+  type ItemPriorDispatch,
   ItemPriorPaidEffectAdapter,
   itemPriorDispatchSchema,
 } from './item-prior-paid-effect-adapter';
-import { paidEffectJsonEquals } from './paid-effect-protocol';
+import { readPaidEffectControl } from './paid-effect-control';
+import {
+  PaidEffectControlFencedError,
+  decidePaidEffectControlAdmission,
+  paidEffectJsonEquals,
+} from './paid-effect-protocol';
 
 export const ITEM_PRIOR_MEMBER = 'item_prior_backfill';
 // The retained manifest declares dependsOn: []; this candidate is only that root.
@@ -80,10 +86,16 @@ const nodeRowSchema = z.object({
   boss_job_id: z.string().nullable(),
 });
 const bossJobSchema = z.object({ state: z.string() });
+const dispatchedBossJobSchema = bossJobSchema.extend({
+  id: z.string(),
+  name: z.string(),
+  data: z.unknown(),
+});
 
 async function verifyItemPriorMemberIdentity(
   tx: Tx,
   request: ItemPriorMemberRequest,
+  dispatch?: ItemPriorDispatch,
 ): Promise<void> {
   const [rawRun] = await tx.execute(
     sql`select id, run_date, status from dag_orchestration_run where id = ${request.dagRunId}`,
@@ -107,6 +119,52 @@ async function verifyItemPriorMemberIdentity(
     throw new ItemPriorMemberIdentityError(
       `DAG node ${node.id}: status=${node.status}, expected nonterminal node ${request.nodeId}`,
     );
+  if (dispatch) {
+    if (dispatch.backend === 'pg-boss') {
+      if (node.boss_job_id !== dispatch.deliveryId) {
+        throw new ItemPriorMemberIdentityError(
+          'Dispatched pg-boss job is not the node-bound original delivery',
+        );
+      }
+      const [rawJob] = await tx.execute(
+        sql`select id::text as id, name, state::text as state, data from pgboss.job
+          where id = ${dispatch.deliveryId}::uuid`,
+      );
+      if (!rawJob) {
+        throw new ItemPriorMemberIdentityError('The original node-bound pg-boss job is missing');
+      }
+      const job = dispatchedBossJobSchema.parse(rawJob);
+      const original = itemPriorDispatchedRequestSchema.safeParse(job.data);
+      if (
+        job.id !== dispatch.deliveryId ||
+        job.name !== ITEM_PRIOR_MEMBER ||
+        !original.success ||
+        !paidEffectJsonEquals(original.data, { ...request, dispatch })
+      ) {
+        throw new ItemPriorMemberIdentityError(
+          'Persisted pg-boss job differs from the original versioned DAG dispatch',
+        );
+      }
+      // The exact original owning job may be created/retry/active. Backend alone is never ownership.
+    } else if (node.boss_job_id) {
+      const [rawJob] = await tx.execute(
+        sql`select state::text as state from pgboss.job where id = ${node.boss_job_id}::uuid`,
+      );
+      if (rawJob && ['created', 'retry', 'active'].includes(bossJobSchema.parse(rawJob).state)) {
+        throw new ItemPriorMemberIdentityError(
+          `Competing pg-boss job ${node.boss_job_id} still owns node ${request.nodeId}`,
+        );
+      }
+    }
+    // Read-only snapshot check preserves the supplied generation. reservePaidEffect also
+    // enforces the shared control atomically before a send, including a concurrent switch.
+    const control = await readPaidEffectControl(tx, ITEM_PRIOR_MEMBER);
+    const admission = decidePaidEffectControlAdmission(control, dispatch);
+    if (admission.kind === 'fenced') {
+      throw new PaidEffectControlFencedError(ITEM_PRIOR_MEMBER, admission.reason, admission.owner);
+    }
+    return;
+  }
   // This is only a read check in one direction, not a cross-backend claim or fence.
   // Even passing this check never enables paid dispatch in this checkpoint.
   if (node.boss_job_id) {
@@ -139,13 +197,14 @@ export interface ItemPriorMemberDeps {
 async function admitItemPriorMember(
   deps: Pick<ItemPriorMemberDeps, 'db' | 'gateEpoch'>,
   request: ItemPriorMemberRequest,
+  dispatch?: ItemPriorDispatch,
 ): Promise<ItemPriorAdmission> {
   // All I/O stays inside the step. A missing checkpoint may repeat these reads;
   // retriesAllowed:false does not prevent crash recovery from running a step.
   await (deps.gateEpoch ?? waitForRunnableEpoch)(deps.db);
   return deps.db.transaction(
     async (tx) => {
-      await verifyItemPriorMemberIdentity(tx, request);
+      await verifyItemPriorMemberIdentity(tx, request, dispatch);
       const params = {
         method: normalizeMethod(request.method),
         reps: normalizeReps(request.reps),
@@ -233,7 +292,7 @@ export interface ItemPriorDurableMemberResult {
   readonly dispatch: ItemPriorDispatchedRequest['dispatch'];
   readonly params: ItemPriorExecutionParams;
   readonly considered: number;
-  /** Readback matches the staged draft and transactional application receipts match. Noncausal. */
+  /** Verified matched application disposition, possibly historical after later domain edits. Noncausal. */
   readonly matched: number;
   readonly superseded: number;
   readonly held: number;
@@ -256,7 +315,7 @@ export async function runItemPriorDurableMemberExecution(
   const request = itemPriorDispatchedRequestSchema.parse(deps.request);
   // A distinct recorded step prevents an old unversioned checkpoint from becoming an upgraded job.
   const admission = await deps.steps.runStep('item-prior-dispatched-admission-v1', async () => ({
-    ...(await admitItemPriorMember(deps, request)),
+    ...(await admitItemPriorMember(deps, request, request.dispatch)),
     dispatch: request.dispatch,
   }));
   const expectedIdentity = {
