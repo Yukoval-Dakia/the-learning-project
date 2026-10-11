@@ -3,6 +3,7 @@ import {
   ContextKeySchema,
   DAY_MS,
   DigestSchema,
+  type Due,
   ENGINEERING_MODEL,
   ENGINEERING_SCHEDULE,
   EffectiveObservationSchema,
@@ -42,6 +43,7 @@ export const CandidateFactSchema = z
     final_hint_level: z.number().nullable(),
     self_confidence: z.number().nullable(),
     latency_ms: z.number().nullable(),
+    identityRemap: z.object({ fromIds: z.array(z.string()), toId: z.string() }).optional(),
     points: z.array(
       z.object({
         maximum: z.number(),
@@ -77,7 +79,7 @@ export function sealCandidateFact(raw: CandidateFact): SealedCandidateInput {
     fact,
     evidenceDigest: DigestSchema.parse(canonicalHash(fact)),
     orderKey: SequenceKeySchema.parse(
-      `${String(ms + 8_640_000_000_000_000).padStart(17, '0')}:${fact.submissionId}`,
+      `${String(BigInt(ms) + 8_640_000_000_000_000n).padStart(17, '0')}:${fact.submissionId}`,
     ),
     recordedSequence: ms,
   };
@@ -103,7 +105,7 @@ function seed(skillId: string, context?: string) {
 export function candidateObservations(
   input: Pick<SealedCandidateInput, 'fact' | 'evidenceDigest' | 'orderKey' | 'recordedSequence'>,
 ) {
-  const { fact } = input;
+  const fact = CandidateFactSchema.parse(input.fact);
   const evidence: EvidenceInput = {
     identity: {
       learnerId: LearnerIdSchema.parse('self'),
@@ -157,6 +159,11 @@ export function projectCandidateDue(state: CandidateState, asOf: Date) {
     horizonAt: EpochMsSchema.parse(ms + ENGINEERING_SCHEDULE.horizonDays * DAY_MS),
     model: ENGINEERING_MODEL,
   });
+  return projectDueResult(result, asOf);
+}
+/** Projection policy is independent of the model and preserves the producing kind. */
+export function projectDueResult(result: Due, asOf: Date) {
+  const ms = EpochMsSchema.parse(asOf.getTime());
   const fallback = result.kind === 'unknown' || result.kind === 'invalid_input';
   const schedule = fallbackSchedule({
     asOf: ms,
@@ -199,6 +206,7 @@ export function rebuildCandidate(
   facts: readonly SealedCandidateInput[],
   asOf: Date,
   conversion: CandidateState['conversion'],
+  historySubjectIds: string[] = [],
 ) {
   const unique = new Map<string, SealedCandidateInput>();
   for (const raw of facts) {
@@ -269,6 +277,7 @@ export function rebuildCandidate(
     global: projection(),
     contexts: Object.fromEntries(contexts.map((c) => [c, projection(c)])),
     conversion,
+    historySubjectIds,
     last_review: asOf,
   };
   return CandidateStateSchema.parse({ ...state, ...projectCandidateDue(state, asOf) });

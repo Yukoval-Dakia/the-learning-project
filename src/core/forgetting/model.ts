@@ -7,7 +7,7 @@ export const VERSIONS: Versions = Object.freeze({
   mapping: VersionSchema.parse('evidence-quality-20261011-v2'),
   order: VersionSchema.parse('effective-order-lexicographic-v1'),
 });
-// All thirteen numeric constants are engineering assumptions, not fitted population priors.
+// All fourteen numeric constants are engineering assumptions, not fitted population priors.
 export const ENGINEERING_MODEL: MemoryModel = Object.freeze({
   versions: VERSIONS,
   provenance: 'engineering',

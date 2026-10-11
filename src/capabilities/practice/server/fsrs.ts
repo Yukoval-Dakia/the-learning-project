@@ -3,6 +3,7 @@ export {
   type InitialFsrsState,
   type ScheduleResult,
   initialFsrsState,
-  retrievabilityForKc,
   scheduleReview,
 } from '@/core/fsrs';
+
+export { retrievabilityForKc } from '@/server/fsrs/retention';

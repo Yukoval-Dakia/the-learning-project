@@ -1,4 +1,6 @@
 import { getCurrentFailureAttempts } from '@/kernel/read-models/failure-attempts';
+import { selectedForgettingEngine } from '@/server/fsrs/engine-selection';
+import { resolveSchedulingProjection } from '@/server/fsrs/state';
 // Phase 1c.1 Step 9.B — `/api/review/due` handler over `material_fsrs_state`.
 //
 // queryReviewDue is the typed actionable queue. get_review_due separately
@@ -258,7 +260,7 @@ export async function queryReviewDue(
 
   const candidateWindow = Math.min(Math.max(limit * 4, 100), 400);
   const usedDueQuestionIds = new Set<string>();
-  const knowledgeStateRows = (
+  const rawKnowledgeStateRows = (
     await activeDb
       .select({
         knowledge_id: material_fsrs_state.subject_id,
@@ -270,7 +272,7 @@ export async function queryReviewDue(
       .where(
         and(
           eq(material_fsrs_state.subject_kind, 'knowledge'),
-          lte(material_fsrs_state.due_at, now),
+          selectedForgettingEngine() === 'fsrs' ? lte(material_fsrs_state.due_at, now) : undefined,
         ),
       )
       .orderBy(material_fsrs_state.due_at, material_fsrs_state.subject_id)
@@ -287,6 +289,19 @@ export async function queryReviewDue(
   // reads (was up to ~3 serial round-trips PER due KC — the /api/review/due N+1). The per-KC
   // selection below is then pure in-memory over the prefetch, and the shared usedDueQuestionIds
   // set is threaded through the SAME sequential order → byte-identical probe picks.
+  const knowledgeStateRows = (
+    await Promise.all(
+      rawKnowledgeStateRows.map((row) =>
+        resolveSchedulingProjection(activeDb, 'knowledge', row.knowledge_id, row, now),
+      ),
+    )
+  )
+    .filter((row) => row.due_at <= now)
+    .sort(
+      (a, b) =>
+        a.due_at.getTime() - b.due_at.getTime() || a.knowledge_id.localeCompare(b.knowledge_id),
+    );
+
   const probePrefetch = await prefetchProbeSelection(
     activeDb,
     knowledgeStateRows.map((stateRow) => ({
@@ -316,7 +331,7 @@ export async function queryReviewDue(
     if (dueRows.length === candidateWindow) break;
   }
 
-  const legacyQuestionStateRows = await activeDb
+  const rawLegacyQuestionStateRows = await activeDb
     .select({
       question_id: material_fsrs_state.subject_id,
       state: material_fsrs_state.state,
@@ -334,7 +349,7 @@ export async function queryReviewDue(
     .where(
       and(
         eq(material_fsrs_state.subject_kind, 'question'),
-        lte(material_fsrs_state.due_at, now),
+        selectedForgettingEngine() === 'fsrs' ? lte(material_fsrs_state.due_at, now) : undefined,
         notDraftPredicate(question.draft_status),
         // YUK-1045 — §3.3 契约准入门：suspended/withdrawn 组不出 due 页
         // （挂起=暂停交付；复核通过翻转维度后自然恢复，学习状态不重建）。
@@ -342,6 +357,19 @@ export async function queryReviewDue(
       ),
     )
     .orderBy(material_fsrs_state.due_at, question.created_at);
+  const legacyQuestionStateRows = (
+    await Promise.all(
+      rawLegacyQuestionStateRows.map((row) =>
+        resolveSchedulingProjection(activeDb, 'question', row.question_id, row, now),
+      ),
+    )
+  )
+    .filter((row) => row.due_at <= now)
+    .sort(
+      (a, b) =>
+        a.due_at.getTime() - b.due_at.getTime() || a.question_id.localeCompare(b.question_id),
+    );
+
   const admittedLegacyIds = await readAutomaticallyServableQuestionIds(
     activeDb,
     legacyQuestionStateRows.map((row) => row.question_id),

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { RelationTypeSchema } from '@/core/schema/event/blocks';
+import { RetentionReadingSchema } from '@/core/schema/scheduling-state';
 import { ApiPageSchema } from '@/kernel/http-contracts';
 import { SubjectProfileSchema } from '@/subjects/profile-schema';
 
@@ -202,6 +203,7 @@ export const KnowledgeNodePageResponseSchema = z.object({
   low_confidence: z.boolean(),
   evidence_count: z.number().int().nonnegative(),
   retrievability: z.number().nullable(),
+  retention: RetentionReadingSchema.nullable(),
   beta: z.number().nullable(),
   difficulty_anchored: z.boolean(),
   last_evidence_at: z.string().nullable(),

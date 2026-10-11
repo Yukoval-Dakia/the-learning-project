@@ -17407,6 +17407,28 @@ export interface operations {
                             verification_status: string;
                             version: number;
                         } | null;
+                        retention: (number | {
+                            asOf?: number;
+                            /** @enum {string} */
+                            calibration: "uncalibrated";
+                            /** @enum {string} */
+                            interval?: "not_estimated";
+                            /** @enum {string} */
+                            kind: "score";
+                            /** @enum {string} */
+                            provenance: "engineering";
+                            scope: string;
+                            value: number;
+                        } | {
+                            asOf?: number;
+                            /** @enum {string} */
+                            calibration: "uncalibrated";
+                            /** @enum {string} */
+                            kind: "unknown";
+                            /** @enum {string} */
+                            provenance: "engineering";
+                            reason: string;
+                        }) | null;
                         retrievability: number | null;
                         subject_profile: {
                             displayName: string;

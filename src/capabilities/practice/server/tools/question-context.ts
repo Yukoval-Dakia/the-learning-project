@@ -1,3 +1,5 @@
+import { selectedForgettingEngine } from '@/server/fsrs/engine-selection';
+import { resolveSchedulingProjection } from '@/server/fsrs/state';
 // YUK-102 / Foundation D M2 — moved to Practice by YUK-892 (F4.0).
 //
 // Composite read tools for one question contract (attempts, reviews, FSRS
@@ -492,7 +494,18 @@ export async function executeGetReviewDue(
   const questionProjectionById = new Map(
     [...questionProjectionRows, ...diagnosticProjectionRows].map((row) => [row.subject_id, row]),
   );
-  const projectionRows = [...knowledgeProjectionRows, ...questionProjectionById.values()];
+  const rawProjectionRows = [...knowledgeProjectionRows, ...questionProjectionById.values()];
+  const projectionRows = await Promise.all(
+    rawProjectionRows.map((row) =>
+      resolveSchedulingProjection(
+        ctx.db,
+        row.subject_kind === 'knowledge' ? 'knowledge' : 'question',
+        row.subject_id,
+        row,
+        now,
+      ),
+    ),
+  );
   const futureProjectionRows = projectionRows
     .filter((row) => row.due_at > now)
     .sort((a, b) => {
@@ -516,12 +529,12 @@ export async function executeGetReviewDue(
   const usedDueQuestionIds = new Set<string>();
   const knowledgeStateConditions = [
     eq(material_fsrs_state.subject_kind, 'knowledge'),
-    lte(material_fsrs_state.due_at, now),
+    ...(selectedForgettingEngine() === 'fsrs' ? [lte(material_fsrs_state.due_at, now)] : []),
   ];
   if (input.knowledgeIds?.length) {
     knowledgeStateConditions.push(inArray(material_fsrs_state.subject_id, input.knowledgeIds));
   }
-  const dueKnowledgeStates = await ctx.db
+  const rawDueKnowledgeStates = await ctx.db
     .select({
       knowledge_id: material_fsrs_state.subject_id,
       state: material_fsrs_state.state,
@@ -530,7 +543,20 @@ export async function executeGetReviewDue(
     .from(material_fsrs_state)
     .where(and(...knowledgeStateConditions))
     .orderBy(asc(material_fsrs_state.due_at), asc(material_fsrs_state.subject_id))
-    .limit(limit);
+    .limit(selectedForgettingEngine() === 'fsrs' ? limit : 2147483647);
+  const dueKnowledgeStates = (
+    await Promise.all(
+      rawDueKnowledgeStates.map((row) =>
+        resolveSchedulingProjection(ctx.db, 'knowledge', row.knowledge_id, row, now),
+      ),
+    )
+  )
+    .filter((row) => row.due_at <= now)
+    .sort(
+      (a, b) =>
+        a.due_at.getTime() - b.due_at.getTime() || a.knowledge_id.localeCompare(b.knowledge_id),
+    )
+    .slice(0, limit);
 
   for (const due of dueKnowledgeStates) {
     const qRows = await ctx.db
@@ -569,7 +595,7 @@ export async function executeGetReviewDue(
 
   const legacyQuestionConditions = [
     eq(material_fsrs_state.subject_kind, 'question'),
-    lte(material_fsrs_state.due_at, now),
+    ...(selectedForgettingEngine() === 'fsrs' ? [lte(material_fsrs_state.due_at, now)] : []),
     // Guard-B (codex PR #298 #3357817910): a legacy/mis-written
     // material_fsrs_state row keyed on a question whose question is still
     // draft_status='draft' must NEVER enter the candidate pool. The knowledge
@@ -587,7 +613,7 @@ export async function executeGetReviewDue(
   if (input.knowledgeIds?.length) {
     legacyQuestionConditions.push(questionKnowledgeContainsAny(input.knowledgeIds));
   }
-  const legacyDueRows = await ctx.db
+  const rawLegacyDueRows = await ctx.db
     .select({
       question_id: material_fsrs_state.subject_id,
       state: material_fsrs_state.state,
@@ -601,7 +627,20 @@ export async function executeGetReviewDue(
     .innerJoin(question, eq(question.id, material_fsrs_state.subject_id))
     .where(and(...legacyQuestionConditions))
     .orderBy(asc(material_fsrs_state.due_at), asc(question.created_at))
-    .limit(limit);
+    .limit(selectedForgettingEngine() === 'fsrs' ? limit : 2147483647);
+  const legacyDueRows = (
+    await Promise.all(
+      rawLegacyDueRows.map((row) =>
+        resolveSchedulingProjection(ctx.db, 'question', row.question_id, row, now),
+      ),
+    )
+  )
+    .filter((row) => row.due_at <= now)
+    .sort(
+      (a, b) =>
+        a.due_at.getTime() - b.due_at.getTime() || a.question_id.localeCompare(b.question_id),
+    )
+    .slice(0, limit);
   for (const due of legacyDueRows) {
     if (usedDueQuestionIds.has(due.question_id)) continue;
     usedDueQuestionIds.add(due.question_id);

@@ -70,6 +70,7 @@ import {
   writeAttemptSnapshotBrackets,
 } from '@/capabilities/practice/public';
 import { scheduleReview } from '@/core/fsrs';
+import { canonicalHash } from '@/core/migration/canonical';
 import type {
   ExecutionPlanT,
   KcObservation,
@@ -85,7 +86,11 @@ import {
   ratingForVerdict,
   resolveThetaDecision,
 } from '@/core/schema/assessment';
-import { type SchedulingState, isCandidateState } from '@/core/schema/scheduling-state';
+import {
+  type SchedulingState,
+  SchedulingStateSchema,
+  isCandidateState,
+} from '@/core/schema/scheduling-state';
 import type { Tx } from '@/db/client';
 import {
   assessment_issuance,
@@ -107,6 +112,7 @@ import {
   type SealedCandidateInput,
   SealedCandidateInputSchema,
   candidateObservations,
+  candidateRetention,
   initialCandidateState,
   rebuildCandidate,
   sealCandidateFact,
@@ -511,33 +517,46 @@ function derivePlan(input: ActivationSettleInput, scope: SettlementScope): Settl
   const occurrence = input.inputScope?.occurrence_at ?? input.submission.submitted_at.toISOString();
   const selfReport = ratingSource === 'user';
   const points = selfReport
-    ? fsrsSubjects.map((subject) => ({
-        maximum: 1,
-        earned: rating === 'good' ? 1 : rating === 'hard' ? 0.5 : 0,
-        shares: [{ skillId: subject.id, share: 1 / fsrsSubjects.length }],
-      }))
+    ? [
+        {
+          maximum: 1,
+          earned: rating === 'good' ? 1 : rating === 'hard' ? 0.5 : 0,
+          shares: fsrsSubjects.map((subject) => ({
+            skillId: subject.id,
+            share: 1 / fsrsSubjects.length,
+          })),
+        },
+      ]
     : scope.basis.units.flatMap((unit) => {
         const result = input.evaluation.unit_results.find(
           (r) => r.scoring_unit_id === unit.scoring_unit_id,
         );
-        if (
-          !result ||
-          result.status !== 'scored' ||
-          result.points_awarded == null ||
-          !unit.points ||
-          unit.points <= 0
-        )
-          return [];
+        if (!result || result.status !== 'scored') return [];
+        const maximum =
+          unit.criterion.kind === 'holistic_level'
+            ? Math.max(0, ...Object.values(unit.level_points ?? {}))
+            : unit.points;
+        const earned =
+          unit.criterion.kind === 'holistic_level'
+            ? result.matched?.level_id
+              ? unit.level_points?.[result.matched.level_id]
+              : null
+            : result.points_awarded;
+        if (maximum == null || maximum <= 0 || earned == null) return [];
+        const scoreWeight =
+          scope.basis.aggregation.kind === 'weighted_sum'
+            ? (scope.basis.aggregation.weights[unit.scoring_unit_id] ?? 0)
+            : 1;
+        if (scoreWeight <= 0) return [];
         const partIds = unitPartIds.get(unit.scoring_unit_id);
-        const kcs =
-          partIds && partIds.size
-            ? [...new Set([...partIds].flatMap((id) => partKcIds.get(id) ?? scopeKcIds))]
-            : scopeKcIds;
+        const kcs = partIds?.size
+          ? [...new Set([...partIds].flatMap((id) => partKcIds.get(id) ?? scopeKcIds))]
+          : scopeKcIds;
         const ids = kcs.length ? kcs : scopeKcIds.length === 0 ? [input.questionGroupId] : [];
         return [
           {
-            maximum: unit.points,
-            earned: result.points_awarded,
+            maximum: maximum * scoreWeight,
+            earned: earned * scoreWeight,
             shares: ids.map((id) => ({ skillId: id, share: 1 / ids.length })),
           },
         ];
@@ -561,8 +580,16 @@ function derivePlan(input: ActivationSettleInput, scope: SettlementScope): Settl
       revisionId: input.submission.revision_id,
       context: scope.groupRow ? `${scope.groupRow.source}:${scope.groupRow.kind}` : null,
       source: selfReport ? 'self_report' : 'judged',
-      judgment: selfReport || judgeRoute === 'exact' ? 'deterministic' : 'admitted',
-      judgeRevision: input.submission.revision_id,
+      judgment: selfReport
+        ? 'deterministic'
+        : verdict.verdict === 'unsupported'
+          ? 'unknown'
+          : judgeRoute === 'exact'
+            ? 'deterministic'
+            : 'admitted',
+      judgeRevision: selfReport
+        ? 'self-report-rating-v1'
+        : `${input.submission.revision_id}:${input.evaluation.plan_digest ?? canonicalHash(scope.plan)}`,
       help,
       guess: 'unknown',
       confidence:
@@ -727,7 +754,7 @@ function liveAppliedSettlements(rows: SettlementEventRow[]): AppliedSettlementEv
   return live;
 }
 
-/** revert/re-apply 顺序：occurrence ASC → created ASC → id ASC（稳定全序）。 */
+/** Revert/re-apply order follows occurrence time then immutable submission ID. */
 function byOccurrenceAsc(a: AppliedSettlementEvent, b: AppliedSettlementEvent): number {
   return (
     a.occurrenceMs - b.occurrenceMs ||
@@ -747,12 +774,20 @@ function byOccurrenceAsc(a: AppliedSettlementEvent, b: AppliedSettlementEvent): 
  */
 function replayClosure(
   live: AppliedSettlementEvent[],
-  input: { minOccurrenceMs: number; excludeGroupId: string; seedSubjects: Set<string> },
+  input: {
+    minOccurrenceMs: number;
+    minSubmissionId?: string;
+    excludeGroupId: string;
+    seedSubjects: Set<string>;
+  },
 ): AppliedSettlementEvent[] {
   const members = new Map<string, AppliedSettlementEvent>();
   const covered = new Set<string>(input.seedSubjects);
   const eligible = (m: AppliedSettlementEvent): boolean =>
-    m.groupId !== input.excludeGroupId && m.occurrenceMs >= input.minOccurrenceMs;
+    m.groupId !== input.excludeGroupId &&
+    (m.occurrenceMs > input.minOccurrenceMs ||
+      (m.occurrenceMs === input.minOccurrenceMs &&
+        (!input.minSubmissionId || m.inputs.submissionId >= input.minSubmissionId)));
   const absorb = (m: AppliedSettlementEvent) => {
     if (members.has(m.id)) return;
     members.set(m.id, m);
@@ -801,16 +836,24 @@ async function candidateHistory(
   subject: FsrsSubject,
   current: SettlementPlan | null,
   cutoff: Date,
+  resolvedPlans?: SettlementPlan[],
+  historySubjectIds: string[] = [],
 ): Promise<SealedCandidateInput[]> {
   const live = liveAppliedSettlements(await loadSettlementEvents(tx));
-  const plans = live
-    .filter(
-      (m) =>
-        m.fsrsApplied.includes(subjectKey(subject.kind, subject.id)) &&
-        m.inputs.submissionId !== current?.submissionId &&
-        m.occurrenceMs <= cutoff.getTime(),
-    )
-    .map((m) => m.inputs);
+  const plans = resolvedPlans
+    ? [...resolvedPlans].filter(
+        (p) => p.submissionId !== current?.submissionId && new Date(p.occurrenceAt) <= cutoff,
+      )
+    : live
+        .filter(
+          (m) =>
+            [subject.id, ...historySubjectIds].some((id) =>
+              m.fsrsApplied.includes(subjectKey(subject.kind, id)),
+            ) &&
+            m.inputs.submissionId !== current?.submissionId &&
+            m.occurrenceMs <= cutoff.getTime(),
+        )
+        .map((m) => m.inputs);
   if (current) plans.push(current);
   const facts: SealedCandidateInput[] = [];
   for (const plan of plans) {
@@ -840,6 +883,7 @@ async function candidateHistory(
       .from(question_revision)
       .where(eq(question_revision.revision_id, sub.revision_id));
     if (!issuance || !head || !revision) throw new Error('sealed attempt coordinates unavailable');
+    const frozenInput = EvaluationProvenance.parse(evalRow.provenance).input_snapshot;
     const input: ActivationSettleInput = {
       tx,
       submission: sub,
@@ -847,6 +891,11 @@ async function candidateHistory(
       issuance,
       head,
       questionGroupId: revision.group_id,
+      inputScope: {
+        issued_part_ids: frozenInput?.issued_part_ids ?? issuance.part_ids,
+        occurrence_at: plan.occurrenceAt,
+        member_submission_ids: frozenInput?.member_submission_ids ?? [sub.submission_id],
+      },
       now: new Date(plan.occurrenceAt),
       ...(plan.ratingSource === 'user' && plan.rating ? { userRating: plan.rating } : {}),
     };
@@ -855,7 +904,21 @@ async function candidateHistory(
     facts.push(rebuilt.forgettingInput);
     if (current && plan === current) current.forgettingInput = rebuilt.forgettingInput;
   }
-  return facts;
+  return facts.map((input) => {
+    if (!input.fact.points.some((p) => p.shares.some((s) => historySubjectIds.includes(s.skillId))))
+      return input;
+    return sealCandidateFact({
+      ...input.fact,
+      identityRemap: { fromIds: historySubjectIds, toId: subject.id },
+      points: input.fact.points.map((p) => ({
+        ...p,
+        shares: p.shares.map((s) => ({
+          ...s,
+          skillId: historySubjectIds.includes(s.skillId) ? subject.id : s.skillId,
+        })),
+      })),
+    });
+  });
 }
 
 /** Read-only legacy conversion. Historical receipts and the stored projection are never rewritten. */
@@ -882,7 +945,7 @@ async function executePlan(
   plan: SettlementPlan,
   settlementEventId: string,
   occurrenceAt: Date,
-  options: { skipFsrs?: boolean } & SettlementObservers = {},
+  options: { skipFsrs?: boolean; memoryHistory?: SettlementPlan[] } & SettlementObservers = {},
 ): Promise<ApplyOutcome> {
   const outcome: ApplyOutcome = {
     fsrsApplied: [],
@@ -892,7 +955,7 @@ async function executePlan(
     subjects: planSubjects(plan),
   };
 
-  // ---- FSRS（D14 三等级；rating=null ⇒ 不调度）----
+  // Single memory projection: legacy ratings or sealed candidate evidence, never both.
   const fsrsSnapshots: Array<{
     subject_kind: 'question' | 'knowledge';
     subject_id: string;
@@ -913,7 +976,21 @@ async function executePlan(
       plan.forgettingEngine = engine;
       let after: SchedulingState;
       if (engine === 'forgetting_candidate') {
-        const history = await candidateHistory(tx, subject, plan, occurrenceAt);
+        const history = await candidateHistory(
+          tx,
+          subject,
+          plan,
+          occurrenceAt,
+          options.memoryHistory?.filter((p) =>
+            p.fsrsSubjects.some(
+              (s) =>
+                s.kind === subject.kind &&
+                (s.id === subject.id ||
+                  (before && isCandidateState(before) && before.historySubjectIds.includes(s.id))),
+            ),
+          ),
+          before && isCandidateState(before) ? before.historySubjectIds : [],
+        );
         after = rebuildCandidate(
           subject.id,
           history,
@@ -921,10 +998,21 @@ async function executePlan(
           before === null
             ? 'native'
             : isCandidateState(before)
-              ? 'native'
+              ? candidateRetention(
+                  before,
+                  new Date(
+                    Math.max(
+                      occurrenceAt.getTime(),
+                      before.last_review?.getTime() ?? occurrenceAt.getTime(),
+                    ),
+                  ),
+                ).now.kind === 'unknown' && before.global.projection.kind === 'warm'
+                ? 'invalid_rebuilt'
+                : 'native'
               : history.length > 1
                 ? 'legacy_history'
                 : 'legacy_cold',
+          before && isCandidateState(before) ? before.historySubjectIds : [],
         );
       } else {
         if (before && isCandidateState(before))
@@ -1223,6 +1311,31 @@ export async function learningSettlement(
   }
   const mySubjects = planSubjects(plan);
   const settlementEventId = `stl_${createId()}`;
+  for (const subject of hasSchedulingEffect(plan) ? plan.fsrsSubjects : []) {
+    const [row] = await tx
+      .select({ state: material_fsrs_state.state })
+      .from(material_fsrs_state)
+      .where(
+        and(
+          eq(material_fsrs_state.subject_kind, subject.kind),
+          eq(material_fsrs_state.subject_id, subject.id),
+        ),
+      );
+    if (row && !SchedulingStateSchema.safeParse(row.state).success) {
+      await writeReplayRequired(tx, {
+        eventId: settlementEventId,
+        plan,
+        activatedAt,
+        priorEffectiveEvaluationId: input.head.effective_evaluation_id,
+        detail: {
+          kind: 'invalid_scheduling_state',
+          subject: subjectKey(subject.kind, subject.id),
+          reason: 'no_valid_restore_bracket',
+        },
+      });
+      return 'failed_pending';
+    }
+  }
 
   // ---- live applied 结算面 + 被替换结算定位 ----
   const rows = await loadSettlementEvents(tx);
@@ -1278,6 +1391,7 @@ export async function learningSettlement(
   }
   const conflictSet = replayClosure(live, {
     minOccurrenceMs: occurrenceMs,
+    minSubmissionId: plan.submissionId,
     excludeGroupId: plan.groupId,
     seedSubjects,
   });
@@ -1346,10 +1460,20 @@ export async function learningSettlement(
           throw new ReplayRequiredError(refusal);
         }
       }
+      const memoryHistory = live
+        .filter(
+          (m) =>
+            m.fsrsApplied.length > 0 &&
+            (!revertSet.some((reverted) => reverted.id === m.id) ||
+              (m.id === replacedMember?.id && preserveUserRating)),
+        )
+        .map((m) => m.inputs);
       const mine = await executePlan(sp, plan, settlementEventId, occurrenceAt, {
         skipFsrs: preserveUserRating,
+        memoryHistory,
         ...observers,
       });
+      if (mine.fsrsApplied.length > 0) memoryHistory.push(plan);
       for (const member of reapplySet) {
         const newIdFor = `stl_${createId()}`;
         // YUK-1093 P1-2 — re-apply 保真：原结算经守卫【跳过】了 FSRS（plan 有
@@ -1363,8 +1487,9 @@ export async function learningSettlement(
           member.inputs,
           newIdFor,
           new Date(member.occurrenceMs),
-          { skipFsrs: memberSkippedFsrs },
+          { skipFsrs: memberSkippedFsrs, memoryHistory },
         );
+        if (reOutcome.fsrsApplied.length > 0) memoryHistory.push(member.inputs);
         replayAppliedIds.set(member.id, newIdFor);
         await writeSettlementEvent(sp, {
           id: newIdFor,
