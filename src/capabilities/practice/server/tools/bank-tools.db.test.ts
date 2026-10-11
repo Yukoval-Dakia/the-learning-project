@@ -14,6 +14,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { event, material_fsrs_state, question } from '@/db/schema';
 import type { ToolContext } from '@/kernel/tools/types';
+import { embedHash, questionEmbedText } from '@/server/ai/embed-source';
+import { generateReferenceSolution } from '@/server/ai/solution-generate';
 import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { archiveQuestion, editQuestion } from '@/server/questions/write';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
@@ -322,5 +324,58 @@ describe('bank tools boundary invariants (search_bank / read_bank / check_bank)'
     const fsrsAfter = await db.select({ n: sql<number>`count(*)::int` }).from(material_fsrs_state);
     expect(after[0].n).toBe(before[0].n);
     expect(fsrsAfter[0].n).toBe(fsrsBefore[0].n);
+  });
+
+  it('after a reference-solution backfill changes content, the old vector is no longer used', async () => {
+    // 旧向量 = axis(3)；查询 fake 也指向 axis(3) —— 若旧向量滞留，它必是向量通道首命中。
+    const axisVector = (i: number) => {
+      const v = new Array<number>(1024).fill(0);
+      v[i] = 1;
+      return v;
+    };
+    embedState.vector = axisVector(3);
+    await seedQuestion('bt_stale_vec', {
+      prompt_md: '椭圆离心率的取值范围判断题（补写参考答案前）',
+      embedding: axisVector(3),
+      embed_model: 'text-embedding-v4',
+      embed_version: 2,
+      embed_content_hash: 'stale-hash-before-backfill',
+    });
+
+    // 内容变更经真实边界：reference backfill（runTaskFn 是外部 AI runner seam 的确定性 fake）。
+    const backfill = await generateReferenceSolution({
+      db,
+      questionId: 'bt_stale_vec',
+      runTaskFn: async () => ({
+        text: JSON.stringify({
+          reference_solution: {
+            expected_signals: ['椭圆定义'],
+            final_answer: '0<e<1',
+            answer_equivalents: [],
+          },
+          worked_solution_md: '由椭圆定义 0<e<1，逐一核对选项。',
+          confidence: 0.9,
+        }),
+      }),
+    });
+    expect(backfill.status).toBe('generated');
+
+    // 失效已发生：embedding 置空、embed_content_hash = 合并后源文本的新 digest
+    // （夜间 embed_backfill 谓词 embedding IS NULL 据此重嵌入）。
+    const [row] = await db.select().from(question).where(eq(question.id, 'bt_stale_vec'));
+    expect(row.embedding).toBeNull();
+    expect(row.embed_content_hash).toBe(
+      embedHash(
+        questionEmbedText({
+          prompt_md: row.prompt_md,
+          reference_md: row.reference_md,
+          choices_md: row.choices_md,
+        }),
+      ),
+    );
+
+    // 旧向量不再被使用：查询向量与旧向量同向、FTS 无法命中该题 ⇒ 没有任何通道召回它。
+    const search = await searchHits({ query: '万有引力人造卫星轨道' });
+    expect(search.hits.map((h) => h.question_id)).not.toContain('bt_stale_vec');
   });
 });
