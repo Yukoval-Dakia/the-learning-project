@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { SharedMaterial } from './materials';
+import { QuestionPresentation } from './presentation';
 
 // ====================================================================
 // YUK-1046 — 五层模型 · 第一层：题目结构（grounding §3.1、§7.2）
@@ -38,6 +39,7 @@ export const QuestionGroupStructure = z.object({
   materials: z.array(SharedMaterial).default([]),
   /** 至少一个 part：单题也是 1-part 组。part_id 唯一。 */
   parts: z.array(QuestionPart).min(1),
+  presentation: QuestionPresentation.optional(),
 });
 export type QuestionGroupStructureT = z.infer<typeof QuestionGroupStructure>;
 

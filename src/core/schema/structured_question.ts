@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { SingleChoiceEntrySpec, type SingleChoiceEntrySpecT } from './assessment/choice-entry';
 import { QuestionKind } from './business';
 
 // ---------- BBox：0-1 归一化的轴对齐 bounding box ----------
@@ -66,6 +67,7 @@ export const ExtractionEvidence = z.object({
 export const QuestionRole = z.enum(['stem', 'sub', 'standalone']);
 
 export const QuestionOption = z.object({
+  option_id: z.string().min(1).optional(),
   label: z.string(),
   text: z.string(),
 });
@@ -96,7 +98,8 @@ export type StructuredQuestionT = {
   role: 'stem' | 'sub' | 'standalone';
   question_no?: string;
   prompt_text: string;
-  options?: { label: string; text: string }[];
+  options?: { option_id?: string; label: string; text: string }[];
+  assessment?: SingleChoiceEntrySpecT;
   answers?: string[];
   analysis?: string;
   bbox?: BBoxT;
@@ -147,6 +150,7 @@ export const StructuredQuestion: z.ZodType<StructuredQuestionT> = z.lazy(() =>
       question_no: z.string().optional(),
       prompt_text: z.string(),
       options: z.array(QuestionOption).optional(),
+      assessment: SingleChoiceEntrySpec.optional(),
       answers: z.array(z.string()).optional(),
       analysis: z.string().optional(),
       bbox: BBox.optional(),

@@ -1,0 +1,43 @@
+{
+  "base": "79825bb6da73f9894c65a5d6735e3725f098e8e1",
+  "static_gates": [
+    {
+      "gate": "typecheck",
+      "exit_code": 0,
+      "seconds": 10.07,
+      "log": "/tmp/yuk1445-choice-entry-typecheck-parent-final.log"
+    },
+    {
+      "gate": "lint",
+      "exit_code": 0,
+      "seconds": 2.61,
+      "log": "/tmp/yuk1445-choice-entry-lint-parent-final.log"
+    },
+    {
+      "gate": "build",
+      "exit_code": 0,
+      "seconds": 17.95,
+      "log": "/tmp/yuk1445-choice-entry-build-parent-final.log"
+    }
+  ],
+  "unit_suites": 2,
+  "unit_tests": 60,
+  "db_tests_run": false,
+  "provider_calls": 0,
+  "source_consumer": "existing store_sourced_question → sourced-draft-insert → canonical publisher → existing source_verify solve_check → PracticeIssuanceDto",
+  "source_files": {
+    "src/kernel/records/assessment-choice-calibration.ts": "ead8944f252d3766d644ed3d6c45625758d7e6043da2eebd7e51b72b12e4d79f",
+    "src/capabilities/practice/tasks/choice-entry-solve.ts": "3b0d00fec8d59ed01fd52c3319132720d8e9e8723b49436f1e4d69477d5053a5",
+    "src/capabilities/practice/server/choice-entry.ts": "c0f7d069d28d757c08417b3ec248cdc854c64742df5dfb4adec6d7ddc9884689",
+    "src/core/schema/assessment/presentation.ts": "fe0f7f429b37f99d044e9512a7823a867a7dce7851141a60f7409e66c1dd6c47",
+    "src/core/schema/assessment/choice-entry.ts": "261f3487af571a5c4a30635c693871a72a82048d25c7bf74bc349ed5e4c417f9"
+  },
+  "logs": {
+    "/tmp/yuk1445-choice-entry-typecheck-parent-final.log": "36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6",
+    "/tmp/yuk1445-choice-entry-lint-parent-final.log": "52b0d1f36b41af726261939ad8d07f0b70a4516df93aee0e24b9207ab1c16359",
+    "/tmp/yuk1445-choice-entry-build-parent-final.log": "ca6e09c87025a084dd69dcb81fb238bd2f863620cb3ec84fd2487f3a286ff08e",
+    "/tmp/yuk1445-choice-entry-units-source-final.log": "d8e1ff5510b218b92f1dda75b3ee93a2bd77526e90ea198b76b766a0a8ee5f6b",
+    "/tmp/yuk1445-choice-entry-test-policy.log": "cbbd7b2df675fb87d1ba33fe51a3a639ed20a8d0214766bdf11e5537056f890c",
+    "/tmp/yuk1445-choice-entry-parent-gates.json": "ae2b2470d8aa7a3528319d2eec733d6b496b8c23bd77ec3bf4112dadb9ce6c54"
+  }
+}

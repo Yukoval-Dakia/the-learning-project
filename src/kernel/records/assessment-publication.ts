@@ -59,6 +59,7 @@ import {
   SCORING_ADMISSION_STATE,
   SCORING_ADMISSION_WITHHELD_REASON,
 } from '@/core/schema/assessment/lifecycle';
+import { validateQuestionPresentation } from '@/core/schema/assessment/presentation';
 import type { Db, Tx } from '@/db/client';
 import {
   question,
@@ -68,6 +69,7 @@ import {
   source_asset,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { validateChoiceCalibration } from './assessment-choice-calibration';
 import {
   contractIntegrityDigest,
   normalizeQuestionGroupToContract,
@@ -525,6 +527,42 @@ export async function publishQuestionGroup(
       );
     }
 
+    if (contract.structure.presentation != null) {
+      const presentationIssues = validateQuestionPresentation(
+        contract.structure.presentation,
+        contract.structure,
+        contract.response_spec,
+        contract.scoring_basis,
+      );
+      if (presentationIssues.length)
+        throw new Error(
+          `publishQuestionGroup: presentation invalid: ${presentationIssues.join(',')}`,
+        );
+      if (input.admission.state === 'admitted') {
+        const evidence = input.admission.evidence;
+        if (
+          evidence?.calibration == null ||
+          evidence.verification.independent_verification?.passed !== true ||
+          evidence.marking_provenance !== 'system_verified'
+        ) {
+          throw new Error(
+            'publishQuestionGroup: choice entry requires independent solves and frozen calibration evidence',
+          );
+        }
+        validateChoiceCalibration(
+          {
+            ...contract,
+            group_id: groupId,
+            revision_id: 'publication-validation',
+            revision_ordinal: 1,
+            published_at: input.now.toISOString(),
+            supersedes_revision_id: null,
+          },
+          evidence.calibration,
+        );
+      }
+    }
+
     // 组级串行化：锁根 question 行（发布与编辑同一锁序 question → lifecycle）。
     const [root] = await tx
       .select({ id: question.id })
@@ -964,6 +1002,27 @@ export async function publishQuestionGroupFromRow(
         state: 'withheld',
         reason: (lifecycle?.scoring_admission_withheld_reason ??
           SCORING_ADMISSION_WITHHELD_REASON.UNVERIFIED_RULES) as WithheldReason,
+      };
+    }
+    // Source verification cannot turn an AI-generated key into an official printed key.
+    // Retain the entry proof only for this exact unchanged revision, never after an edit.
+    const priorEvidence = lifecycle?.scoring_admission_evidence;
+    if (
+      !contentChanged &&
+      contract.structure.presentation != null &&
+      admission.state === 'admitted' &&
+      admission.evidence != null &&
+      admission.evidence.calibration == null &&
+      priorEvidence?.calibration != null
+    ) {
+      admission = {
+        state: 'admitted',
+        evidence: {
+          ...admission.evidence,
+          marking_provenance: priorEvidence.marking_provenance,
+          verification: priorEvidence.verification,
+          calibration: priorEvidence.calibration,
+        },
       };
     }
     if (contract.conversion_issues.length > 0 && admission.state === 'admitted') {

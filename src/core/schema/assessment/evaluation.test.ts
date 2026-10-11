@@ -1455,3 +1455,162 @@ describe('automatic serving — explicit figure dependency gate (YUK-1445)', () 
     expect(decideAutomaticServing(revision, ['p1'])).toEqual({ kind: 'admitted' });
   });
 });
+
+import { ChoiceMethodCalibration } from '@/core/schema/assessment/choice-entry';
+import { projectPracticeIssuance } from '@/core/schema/assessment/dto';
+import {
+  QuestionPresentation,
+  validateQuestionPresentation,
+} from '@/core/schema/assessment/presentation';
+import { StructuredQuestion } from '@/core/schema/structured_question';
+import {
+  calibrateChoiceMethod,
+  validateChoiceCalibration,
+} from '@/kernel/records/assessment-choice-calibration';
+import { normalizeQuestionRowToContract } from '@/kernel/records/assessment-normalization';
+
+const now = new Date('2026-10-11T00:00:00Z');
+const options = [
+  { option_id: 'opaque-red', label: 'A', text: '9' },
+  { option_id: 'opaque-blue', label: 'B', text: '6' },
+  { option_id: 'opaque-green', label: 'C', text: '3' },
+  { option_id: 'opaque-yellow', label: 'D', text: '0' },
+];
+function revision(): PublishedQuestionRevisionT {
+  const node = StructuredQuestion.parse({
+    id: 'one',
+    role: 'standalone',
+    prompt_text: '2 + 4 = ?',
+    options,
+    assessment: {
+      kind: 'single_choice',
+      printed_points: 2,
+      criterion: { kind: 'option_set_key', accepted_option_ids: ['opaque-blue'] },
+      presentation: {
+        version: 1,
+        layout: 'stack',
+        blocks: [
+          { kind: 'prompt', part_id: 'one' },
+          { kind: 'response', slot_id: 'one::r', scoring_unit_id: 'one::u' },
+        ],
+      },
+    },
+  });
+  const contract = normalizeQuestionRowToContract({
+    id: 'one',
+    kind: 'choice',
+    prompt_md: node.prompt_text,
+    reference_md: 'A. PRIVATE WRONG REFERENCE',
+    choices_md: options.map((o) => o.text),
+    structured: node,
+    rubric_json: null,
+    judge_kind_override: null,
+    source: 'web_sourced',
+  });
+  return {
+    ...contract,
+    revision_id: 'revision-one',
+    revision_ordinal: 1,
+    published_at: now.toISOString(),
+    supersedes_revision_id: null,
+  };
+}
+const solves = ChoiceMethodCalibration.shape.solves.parse([
+  {
+    task_run_id: 'first',
+    provider: 'recorded-provider',
+    model: 'recorded-model',
+    input_digest: `sha256:${'a'.repeat(64)}`,
+    output_digest: `sha256:${'b'.repeat(64)}`,
+  },
+  {
+    task_run_id: 'second',
+    provider: 'recorded-provider',
+    model: 'recorded-model',
+    input_digest: `sha256:${'c'.repeat(64)}`,
+    output_digest: `sha256:${'d'.repeat(64)}`,
+  },
+]);
+
+describe('choice entry frozen method', () => {
+  // @invariant grading: stable option IDs determine marks even when a legacy reference disagrees and the issued display order is reversed.
+  // @fails-if normalization parses the reference key, changes the printed score, or scoring compares a display letter/index.
+  it('grades the declared opaque ID and every distractor through the real evaluator', async () => {
+    const result = await calibrateChoiceMethod(revision(), solves, now);
+    expect(result.probes.map((probe) => [probe.probe_id, probe.actual_points])).toEqual([
+      ['select:opaque-red', 0],
+      ['select:opaque-blue', 2],
+      ['select:opaque-green', 0],
+      ['select:opaque-yellow', 0],
+      ['shuffled-correct', 2],
+      ['explicit-blank', 0],
+    ]);
+    expect(result.probes.every((probe) => probe.passed)).toBe(true);
+  });
+
+  // @invariant grading: a changed key or declared scoring method cannot reuse calibration from an earlier method.
+  // @fails-if calibration validation accepts a valid but different key against the old probe and method digest.
+  it('rejects reused calibration after the typed key changes', async () => {
+    const original = revision();
+    const result = await calibrateChoiceMethod(original, solves, now);
+    const changed = revision();
+    changed.scoring_basis.units[0].criterion = {
+      kind: 'option_set_key',
+      accepted_option_ids: ['opaque-red'],
+    };
+    expect(() => validateChoiceCalibration(changed, result)).toThrow('does not cover');
+    const missing = { ...result, probes: result.probes.slice(1) };
+    expect(() => validateChoiceCalibration(original, missing)).toThrow('does not cover');
+  });
+
+  // @invariant grading: two independent answer verifications cannot be satisfied by reusing one task-run identity.
+  // @fails-if a replay of the same solve receipt is accepted as two independent passes.
+  it('refuses one solve reused twice', async () => {
+    await expect(calibrateChoiceMethod(revision(), [solves[0], solves[0]], now)).rejects.toThrow(
+      'independent task runs',
+    );
+  });
+
+  // @invariant security: practice display exposes only public references and cannot carry an answer key or private solution in its declarative blocks.
+  // @fails-if the public DTO leaks the private reference, or the presentation boundary permits a key-bearing property.
+  it('strips private references and rejects key-bearing presentation', () => {
+    const source = revision();
+    const dto = projectPracticeIssuance(source, {
+      issuance_id: 'issued',
+      issued_at: now.toISOString(),
+      binding: {
+        revision_id: source.revision_id,
+        part_ids: ['one'],
+        material_bindings: source.structure.materials.map((m) => ({
+          material_id: m.material_id,
+          asset_digest: m.asset.digest,
+        })),
+        option_order: [
+          { slot_id: 'one::r', option_ids: [...options].reverse().map((o) => o.option_id) },
+        ],
+      },
+      claim: { policy: 'unbounded', status: 'unclaimed', claimed_by_ref: null },
+    });
+    expect(JSON.stringify(dto)).not.toContain('PRIVATE');
+    expect(JSON.stringify(dto)).not.toContain('accepted_option_ids');
+    expect(() =>
+      QuestionPresentation.parse({ ...source.structure.presentation, answer_key: 'opaque-blue' }),
+    ).toThrow();
+    const presentation = source.structure.presentation;
+    if (!presentation) throw new Error('test requires frozen presentation');
+    expect(
+      validateQuestionPresentation(
+        {
+          ...presentation,
+          blocks: [
+            { kind: 'prompt', part_id: 'one' },
+            { kind: 'response', slot_id: 'one::r', scoring_unit_id: 'other-unit' },
+          ],
+        },
+        source.structure,
+        source.response_spec,
+        source.scoring_basis,
+      ),
+    ).toContain('presentation_unit_slot_mismatch');
+  });
+});

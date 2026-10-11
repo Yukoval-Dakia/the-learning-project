@@ -60,6 +60,7 @@ import {
   ResponseSpec,
   ScoringBasis,
 } from '@/core/schema/assessment';
+import type { SingleChoiceEntrySpecT } from '@/core/schema/assessment/choice-entry';
 import { ConjectureProbeSpec, ConjectureProbeSpecV2 } from '@/core/schema/business';
 import { extractAnswerHead, isExactCapableReference } from '@/core/schema/judge-routing';
 import type { FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
@@ -266,6 +267,8 @@ interface LeafInput {
   partId: string;
   prompt: string;
   choices: string[] | null;
+  declaredOptions?: { option_id?: string; label: string; text: string }[];
+  choiceEntry?: SingleChoiceEntrySpecT;
   /** 该 part 自己的答案文本候选（叶 answers / part 行 reference）。 */
   answerTexts: string[];
   /**
@@ -348,6 +351,25 @@ function numericKeyFor(row: {
 
 function normalizeLeafScoring(leaf: LeafInput): LeafScoring {
   const slotId = `${leaf.partId}::r`;
+  if (leaf.choiceEntry != null) {
+    const options = (leaf.declaredOptions ?? []).map((option) => {
+      if (!option.option_id) throw new Error('typed choice entry requires stable option IDs');
+      return { ...option, option_id: option.option_id };
+    });
+    if (
+      options.length < 2 ||
+      !options.some(
+        (option) => option.option_id === leaf.choiceEntry?.criterion.accepted_option_ids[0],
+      )
+    ) {
+      throw new Error('typed choice key does not map to an existing option');
+    }
+    return {
+      slot: { slot_id: slotId, part_id: leaf.partId, kind: 'single_choice', options },
+      criterionKind: 'option_set_key',
+      acceptedOptionIds: leaf.choiceEntry.criterion.accepted_option_ids,
+    };
+  }
   const answerText = leaf.answerTexts.find((t) => t != null && t.trim().length > 0) ?? null;
 
   // ---- 选择槽：先解析答案头（字母数决定 single/multi，P1-3）。----
@@ -512,7 +534,7 @@ function buildUnit(leaf: LeafInput, scoring: LeafScoring) {
                 statement_md: scoring.ruleStatement ?? '',
                 source: (scoring.ruleProvenance ?? 'system_proposed') as RuleProvenance,
               },
-    points: 1,
+    points: leaf.choiceEntry?.printed_points ?? 1,
   };
 }
 
@@ -563,6 +585,15 @@ function assemble(
   const structure = QuestionGroupStructure.parse({
     group_id: groupId,
     materials: frozenMaterials,
+    ...(leaves.every((leaf) => leaf.choiceEntry != null)
+      ? {
+          presentation: {
+            version: 1,
+            layout: leaves[0]?.choiceEntry?.presentation.layout ?? 'stack',
+            blocks: leaves.flatMap((leaf) => leaf.choiceEntry?.presentation.blocks ?? []),
+          },
+        }
+      : {}),
     parts: leaves.map((leaf, i) => ({
       part_id: leaf.partId,
       prompt_md: leaf.prompt,
@@ -625,7 +656,10 @@ function normalizeQuestionRowBase(row: NormalizableQuestionRow): NormalizedContr
         ? `${stemText}\n\n${row.prompt_md}`
         : stemText;
     const shared = buildSharedMaterials({
-      stemText: stemMaterialText,
+      stemText:
+        structuredRoot.assessment != null && structuredRoot.role === 'standalone'
+          ? null
+          : stemMaterialText,
       figures,
       figureDigests: row.figureDigests ?? null,
       rubric: row.rubric_json,
@@ -652,6 +686,8 @@ function normalizeQuestionRowBase(row: NormalizableQuestionRow): NormalizedContr
       partId: leaf.id,
       prompt: leaf.prompt_text,
       choices: leaf.options?.map((o) => o.text) ?? null,
+      declaredOptions: leaf.options,
+      choiceEntry: leaf.assessment,
       answerTexts: hasNonBlankAnswer(leaf.answers)
         ? leaf.answers
         : rowReference != null
@@ -765,7 +801,8 @@ interface LeafNode {
   id: string;
   prompt_text: string;
   answers: string[];
-  options?: { label: string; text: string }[];
+  options?: StructuredQuestionT['options'];
+  assessment?: SingleChoiceEntrySpecT;
 }
 
 function collectLeaves(node: StructuredQuestionT, out: LeafNode[] = []): LeafNode[] {
@@ -779,6 +816,7 @@ function collectLeaves(node: StructuredQuestionT, out: LeafNode[] = []): LeafNod
     prompt_text: node.prompt_text,
     answers: node.answers ?? [],
     options: node.options,
+    assessment: node.assessment,
   });
   return out;
 }
@@ -882,6 +920,8 @@ export function normalizeQuestionGroupToContract(
       // 接受的题面编辑永远进不了 revision，digest 不变即 noop）。
       prompt: structuredLeaf?.prompt_text ?? p.prompt_md,
       choices,
+      declaredOptions: structuredLeaf?.options,
+      choiceEntry: structuredLeaf?.assessment,
       answerTexts,
       judgeKindOverride: root.judge_kind_override,
       numericKey: numericKeyFor({

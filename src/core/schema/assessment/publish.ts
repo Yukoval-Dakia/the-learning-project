@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { ChoiceMethodCalibration } from './choice-entry';
 
 // ====================================================================
 // YUK-1046 — 统一评估契约 · 发布 policy（grounding §3.3、D1、D17）
@@ -57,6 +58,7 @@ export const AdmissionEvidence = z.object({
   marking_provenance: MarkingRuleProvenance,
   verification: VerificationRecord,
   model_slice: ModelSliceAdmissionSummary.nullable(),
+  calibration: ChoiceMethodCalibration.optional(),
 });
 export type AdmissionEvidenceT = z.infer<typeof AdmissionEvidence>;
 

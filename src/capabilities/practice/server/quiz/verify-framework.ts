@@ -48,6 +48,7 @@ import {
 } from '@/server/ai/provenance';
 import type { Provider } from '@/server/ai/providers';
 import type { SubjectProfile } from '@/subjects/profile';
+import { readVerifiedChoiceEntry } from '../choice-entry';
 import {
   PlacementStarterAdmissionError,
   PlacementStarterStaleAuthorityError,
@@ -288,7 +289,7 @@ export interface SolveCheckResult {
   // why we landed on the verdict (audit trail).
   reason: string;
   // Which comparison established the terminal verdict. Exact mismatches fall through to semantic.
-  compared_by: 'normalize' | 'semantic' | 'none';
+  compared_by: 'normalize' | 'semantic' | 'none' | 'entry_calibration';
   /** Exact candidates disagreed before the SemanticJudge fallback (YUK-612 audit signal). */
   normalized_exact_mismatch?: boolean;
   task_run_ids?: string[];
@@ -444,6 +445,7 @@ export function solveCheckBlocks(
   flags: { semantic: boolean; normalize: boolean } = SOLVE_CHECK_TIER34_VETO,
 ): boolean {
   if (result.verdict !== 'fail') return false;
+  if (result.compared_by === 'entry_calibration') return true;
   if (result.compared_by === 'semantic') return flags.semantic;
   if (result.compared_by === 'normalize') return flags.normalize;
   return false; // compared_by === 'none' never accompanies verdict='fail'; defensive.
@@ -989,6 +991,24 @@ export async function runSolveCheck(
   question: SolveCheckQuestion,
   opts: SolveCheckOptions,
 ): Promise<SolveCheckResult> {
+  if (opts.db != null && question.metadata?.choice_entry === true) {
+    const entry = await readVerifiedChoiceEntry(opts.db, question);
+    if (entry.kind === 'verified')
+      return {
+        verdict: 'pass',
+        compared_by: 'entry_calibration',
+        task_run_ids: entry.task_run_ids,
+        reason:
+          'The frozen typed option key has two independent entry solves and complete deterministic method calibration.',
+      };
+    if (entry.kind === 'unavailable')
+      return {
+        verdict: 'fail',
+        compared_by: 'entry_calibration',
+        reason:
+          'The typed choice entry changed or lacks verifiable independent solve/calibration receipts.',
+      };
+  }
   const releaseStrict = opts.validationMode === 'release_strict';
   // F2: prefer the structured final answer (rubric_json.reference_solution) over the
   // worked-solution prose in reference_md. referenceAnswer is the primary candidate

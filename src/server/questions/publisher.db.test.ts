@@ -6,9 +6,20 @@
 
 import { eq, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-
+import { runSolveCheck } from '@/capabilities/practice/server/quiz/verify-framework';
 import type { AdmissionEvidenceT } from '@/core/schema/assessment';
-import { event, question, question_group_lifecycle, question_revision } from '@/db/schema';
+import { ChoiceMethodCalibration } from '@/core/schema/assessment/choice-entry';
+import { StructuredQuestion } from '@/core/schema/structured_question';
+import {
+  ai_task_runs,
+  event,
+  question,
+  question_admission_verification,
+  question_group_lifecycle,
+  question_revision,
+} from '@/db/schema';
+import { calibrateChoiceMethod } from '@/kernel/records/assessment-choice-calibration';
+import { resolveSubjectProfile } from '@/subjects/profile';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import {
   type NormalizableQuestionRow,
@@ -305,3 +316,213 @@ describe('publishQuestionGroupFromRow — 锁序/组语义/未决转换（复审
     expect(part?.prompt_md).toBe('sibling edited prompt');
   });
 });
+
+describe('choice entry publication invariants', () => {
+  beforeEach(resetDb);
+  afterEach(resetDb);
+
+  // @invariant data: admission and an immutable revision remain atomic when a new choice entry lacks calibration.
+  // @fails-if the publisher commits any revision/lifecycle row for an independently uncalibrated presentation.
+  it('choice entry cannot publish an admitted revision without calibration', async () => {
+    const db = testDb();
+    const structured = choiceEntryNode();
+    await seedQuestion('choice-entry', {
+      structured,
+      prompt_md: structured.prompt_text,
+      reference_md: 'Independent solution: 2+4=6',
+      choices_md: ['9', '6', '3', '0'],
+    });
+    const row = await readRow('choice-entry');
+    await expect(
+      publishQuestionGroup(db, {
+        ...publishInput(row),
+        admission: {
+          state: 'admitted',
+          evidence: {
+            marking_provenance: 'system_verified',
+            verification: {
+              structural_check_passed: true,
+              independent_verification: {
+                passed: true,
+                verifier: 'independent_model',
+                verified_at: new Date().toISOString(),
+              },
+            },
+            model_slice: null,
+          },
+        },
+      }),
+    ).rejects.toThrow('frozen calibration');
+    expect(
+      await db
+        .select()
+        .from(question_revision)
+        .where(eq(question_revision.group_id, 'choice-entry')),
+    ).toEqual([]);
+    expect(
+      await db
+        .select()
+        .from(question_group_lifecycle)
+        .where(eq(question_group_lifecycle.group_id, 'choice-entry')),
+    ).toEqual([]);
+  });
+
+  // @invariant data: source verification preserves an unchanged AI answer's immutable calibrated revision and never relabels it official; a changed key cannot reuse proof.
+  // @fails-if source verify loses/relabels entry proof, creates a new revision for the same content, or accepts the old calibration for an edited key.
+  it('choice entry retains its proof through canonical source verification and rejects stale proof after edits', async () => {
+    const db = testDb();
+    const structured = choiceEntryNode();
+    await seedQuestion('choice-entry', {
+      structured,
+      prompt_md: structured.prompt_text,
+      reference_md: 'Independent solution: 2+4=6',
+      choices_md: ['9', '6', '3', '0'],
+    });
+    const row = await readRow('choice-entry');
+    const contract = normalizeQuestionRowToContract(row);
+    const now = new Date();
+    const refs = ChoiceMethodCalibration.shape.solves.parse([
+      {
+        task_run_id: 'fixture-solve-1',
+        provider: 'fixture',
+        model: 'fixture',
+        input_digest: `sha256:${'a'.repeat(64)}`,
+        output_digest: `sha256:${'b'.repeat(64)}`,
+      },
+      {
+        task_run_id: 'fixture-solve-2',
+        provider: 'fixture',
+        model: 'fixture',
+        input_digest: `sha256:${'c'.repeat(64)}`,
+        output_digest: `sha256:${'d'.repeat(64)}`,
+      },
+    ]);
+    const calibration = await calibrateChoiceMethod(
+      {
+        ...contract,
+        revision_id: 'probe-only',
+        revision_ordinal: 1,
+        published_at: now.toISOString(),
+        supersedes_revision_id: null,
+      },
+      refs,
+      now,
+    );
+    const evidence: AdmissionEvidenceT = {
+      marking_provenance: 'system_verified',
+      model_slice: null,
+      calibration,
+      verification: {
+        structural_check_passed: true,
+        independent_verification: {
+          passed: true,
+          verifier: 'independent_model',
+          verified_at: now.toISOString(),
+        },
+      },
+    };
+    const first = await publishQuestionGroup(db, {
+      ...publishInput(row),
+      admission: { state: 'admitted', evidence },
+      verification: { policy_id: 'choice-entry@1', outcome: 'passed', evidence: { calibration } },
+    });
+    expect(first.status).toBe('published');
+    await db.insert(ai_task_runs).values(
+      refs.map((ref) => ({
+        id: ref.task_run_id,
+        task_kind: 'ChoiceEntrySolveTask',
+        provider: ref.provider,
+        model: ref.model,
+        input_hash: ref.input_digest,
+        status: 'success',
+        started_at: now,
+      })),
+    );
+    const solveCheck = await runSolveCheck(
+      { ...row, choices_md: row.choices_md, metadata: { choice_entry: true } },
+      {
+        db,
+        profile: { id: 'math', full: resolveSubjectProfile('math') },
+        runTaskFn: async () => {
+          throw new Error('Typed key must not be reparsed by a legacy free-text solver');
+        },
+      },
+    );
+    expect(solveCheck.verdict).toBe('pass');
+    expect(solveCheck.task_run_ids).toEqual(['fixture-solve-1', 'fixture-solve-2']);
+    const before = await db
+      .select()
+      .from(question_revision)
+      .where(eq(question_revision.group_id, 'choice-entry'));
+    await publishQuestionGroupFromRow(db, {
+      rootId: 'choice-entry',
+      admission: { state: 'admitted', evidence: ADMITTED_EVIDENCE },
+      verification: { policy_id: 'source_verify@1', outcome: 'passed' },
+      actorRef: 'test:source-verify',
+      now,
+    });
+    const [lifecycle] = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, 'choice-entry'));
+    expect(lifecycle.scoring_admission_evidence?.marking_provenance).toBe('system_verified');
+    expect(lifecycle.scoring_admission_evidence?.calibration).toEqual(calibration);
+    expect(
+      await db
+        .select()
+        .from(question_admission_verification)
+        .where(eq(question_admission_verification.revision_id, before[0].revision_id)),
+    ).toHaveLength(2);
+    expect(
+      await db
+        .select()
+        .from(question_revision)
+        .where(eq(question_revision.group_id, 'choice-entry')),
+    ).toEqual(before);
+    const edited = choiceEntryNode();
+    if (!edited.assessment) throw new Error('test requires typed entry');
+    edited.assessment.criterion.accepted_option_ids = ['wrong-id'];
+    await db.update(question).set({ structured: edited }).where(eq(question.id, 'choice-entry'));
+    await expect(
+      publishQuestionGroupFromRow(db, {
+        rootId: 'choice-entry',
+        admission: { state: 'admitted', evidence },
+        actorRef: 'test:stale-entry',
+        now,
+      }),
+    ).rejects.toThrow('does not cover');
+    expect(
+      await db
+        .select()
+        .from(question_revision)
+        .where(eq(question_revision.group_id, 'choice-entry')),
+    ).toEqual(before);
+  });
+});
+
+function choiceEntryNode() {
+  return StructuredQuestion.parse({
+    id: 'choice-entry',
+    role: 'standalone',
+    prompt_text: '2+4=?',
+    options: [
+      { option_id: 'wrong-id', label: 'A', text: '9' },
+      { option_id: 'correct-id', label: 'B', text: '6' },
+      { option_id: 'wrong-id-2', label: 'C', text: '3' },
+      { option_id: 'wrong-id-3', label: 'D', text: '0' },
+    ],
+    assessment: {
+      kind: 'single_choice',
+      printed_points: 2,
+      criterion: { kind: 'option_set_key', accepted_option_ids: ['correct-id'] },
+      presentation: {
+        version: 1,
+        layout: 'stack',
+        blocks: [
+          { kind: 'prompt', part_id: 'choice-entry' },
+          { kind: 'response', slot_id: 'choice-entry::r', scoring_unit_id: 'choice-entry::u' },
+        ],
+      },
+    },
+  });
+}

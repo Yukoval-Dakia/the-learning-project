@@ -27,6 +27,7 @@ import {
 import { defaultJudgeKindForQuestion, isExactCapableReference } from '@/core/schema/judge-routing';
 import type { WebSourcedProvenanceT } from '@/core/schema/provenance';
 import type { SourcedQuestionT } from '@/core/schema/sourcing';
+import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Tx } from '@/db/client';
 import { question } from '@/db/schema';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
@@ -40,6 +41,7 @@ type AgentRefValue = (typeof question.$inferInsert)['created_by'];
 export interface InsertSourcedDraftInput {
   id: string;
   q: SourcedQuestionT;
+  structured?: StructuredQuestionT;
   /** Resolved, existence-checked knowledge ids for the fresh draft AND the target-KC set
    *  merged into an existing row on an ON CONFLICT race (caller owns resolution). */
   knowledgeIds: string[];
@@ -157,6 +159,7 @@ export async function insertSourcedDraft(
     reference_md: referenceMd,
     rubric_json: q.rubric_json ?? null,
     choices_md: choicesMd,
+    ...(input.structured == null ? {} : { structured: input.structured }),
     judge_kind_override: judgeKind,
     knowledge_ids: knowledgeIds,
     difficulty: q.difficulty,

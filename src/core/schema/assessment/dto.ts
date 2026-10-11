@@ -3,6 +3,7 @@ import { projectIssuedScoringBasis } from './evaluation';
 import type { EvaluationRecordT, SubmissionRecordT } from './judgment';
 import { EvaluationInputSnapshot } from './judgment';
 import { SharedMaterialKind, isPublicSharedMaterial } from './materials';
+import { QuestionPresentation } from './presentation';
 import { LifecycleQualification, PublishDecision } from './publish';
 import { ResponseSpec } from './response';
 import type { AssessmentIssuanceT, PublishedQuestionRevisionT } from './revision';
@@ -60,6 +61,7 @@ export const PracticeIssuanceDto = z.strictObject({
   faces: z.array(PublicQuestionFace).min(1),
   materials: z.array(PublicMaterialView),
   response_spec: ResponseSpec,
+  presentation: QuestionPresentation.optional(),
   /** Public input requirements, without executor descriptors or marking criteria. */
   response_requirements: z
     .array(
@@ -173,6 +175,27 @@ export function projectPracticeIssuance(
     response_spec: {
       slots: projectedSlots,
     },
+    ...(revision.structure.presentation == null
+      ? {}
+      : {
+          presentation: {
+            ...revision.structure.presentation,
+            blocks: revision.structure.presentation.blocks.filter((block) => {
+              switch (block.kind) {
+                case 'prompt':
+                  return boundParts.has(block.part_id);
+                case 'material':
+                  return publicMaterialIds.has(block.material_id);
+                case 'response':
+                  return emittedSlotIds.has(block.slot_id);
+                default: {
+                  const exhaustive: never = block;
+                  return exhaustive;
+                }
+              }
+            }),
+          },
+        }),
     response_requirements: projectedSlots
       .filter((slot) => slot.kind !== 'table')
       .map((slot) => {

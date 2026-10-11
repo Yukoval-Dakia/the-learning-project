@@ -2,6 +2,7 @@ import { defineOwnedTaskSpecs } from '@/ai/owned-task-specs';
 import { assessmentRuleTaskSpec } from './assessment-rule';
 import { attributionRerankTaskSpec, attributionTaskSpec } from './attribution';
 import { causeCategoryProposeTaskSpec } from './cause-category-propose';
+import { choiceEntrySolveTaskSpec } from './choice-entry-solve';
 import { itemPriorLlasaTaskSpec, itemPriorTaskSpec } from './item-prior';
 import { jevScoringDecisionTaskSpec } from './jev-typed';
 import {
@@ -25,6 +26,7 @@ import { variantGenTaskSpec } from './variant-gen';
 import { variantVerifyTaskSpec } from './variant-verify';
 
 export const practiceTaskSpecs = defineOwnedTaskSpecs('practice', {
+  ChoiceEntrySolveTask: choiceEntrySolveTaskSpec,
   AttributionTask: attributionTaskSpec,
   AttributionRerankTask: attributionRerankTaskSpec,
   CauseCategoryProposeTask: causeCategoryProposeTaskSpec,

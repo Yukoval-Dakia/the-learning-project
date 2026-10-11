@@ -38,6 +38,7 @@ import {
 import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { insertSourcedDraft } from '@/server/questions/sourced-draft-insert';
 import { resolveSubjectProfile } from '@/subjects/profile';
+import { prepareSingleChoiceEntry } from '../choice-entry';
 import { SupplyTraceV1 } from '../question-supply/evidence-demand';
 import { cleanupStagedAssets } from '../question-supply/jyeoo-candidates';
 import { JYEOO_SOURCE_HOST } from '../question-supply/jyeoo-supply-config';
@@ -95,6 +96,8 @@ const inputSchema = z.object({
   /** loom subject id（whitelist_match 判定的 profile 来源，如 'math'）。 */
   subject_id: z.string().trim().min(1),
   supply_trace: SupplyTraceV1.optional(),
+  /** Opt-in first ADR-0073 slice: points transcribed from the source, not an inferred weight. */
+  choice_entry: z.object({ printed_points: z.number().positive() }).optional(),
   /** 需求台账关联（YUK-698 EvidenceDemand；E2 接上 planner 后传入）。 */
   demand_id: z.string().min(1).optional(),
 });
@@ -249,6 +252,18 @@ export async function executeStoreSourcedQuestion(
 
   // ── 5. insert + 图片链接 + verify intent（单事务） ──────────────────────────
   const questionId = createId();
+  if (input.choice_entry != null && (hasImages || (candidate.figures?.length ?? 0) > 0)) {
+    throw new Error('choice entry first slice does not support figure-bearing candidates');
+  }
+  const choiceEntry =
+    input.choice_entry == null
+      ? null
+      : await prepareSingleChoiceEntry(db, {
+          question_id: questionId,
+          subject_id: input.subject_id,
+          question: candidate.question,
+          printed_points: input.choice_entry.printed_points,
+        });
   const whitelist = (resolveSubjectProfile(input.subject_id).sourceWhitelist ?? []) as string[];
   // 路由专属元数据键：jyeoo → jyeoo:{id,candidate_id}（E1 连续）；web → sourcing:{candidate_id}
   // （web 的 url/title/fetched_at/whitelist_match 由 insertSourcedDraft 写入 metadata.web_sourced）。
@@ -257,6 +272,7 @@ export async function executeStoreSourcedQuestion(
       ? { jyeoo: { id: candidate.source_id, candidate_id: candidate.candidate_id } }
       : { sourcing: { candidate_id: candidate.candidate_id } };
   const metadataExtras = {
+    ...(choiceEntry == null ? {} : { choice_entry: true }),
     prompt_image_refs: candidate.image_refs ?? [],
     knowledge_hints: candidate.knowledge_hints,
     attribution_state: input.attribution_state,
@@ -269,7 +285,8 @@ export async function executeStoreSourcedQuestion(
     persisted = await db.transaction(async (tx) => {
       const inserted = await insertSourcedDraft(tx, {
         id: questionId,
-        q: candidate.question,
+        q: choiceEntry?.question ?? candidate.question,
+        ...(choiceEntry == null ? {} : { structured: choiceEntry.structured }),
         knowledgeIds: input.knowledge_ids,
         sourceRoute: input.source_route,
         createdBy: SOURCED_CREATED_BY_BY_ROUTE[input.source_route],
@@ -313,6 +330,16 @@ export async function executeStoreSourcedQuestion(
       // ⇒ 幂等 noop）。草稿未核验 ⇒ admission 维持 withheld（preserve 语义）。
       await publishQuestionGroupFromRow(tx, {
         rootId: questionId,
+        ...(choiceEntry == null
+          ? {}
+          : {
+              admission: { state: 'admitted' as const, evidence: choiceEntry.evidence },
+              verification: {
+                policy_id: 'choice-entry@1',
+                outcome: 'passed' as const,
+                evidence: { calibration: choiceEntry.evidence.calibration },
+              },
+            }),
         actorRef: `store-sourced:${input.source_route}:enrich`,
         now,
       });
@@ -416,12 +443,13 @@ export const storeSourcedQuestionTool: DomainTool<Input, Output> = {
   description:
     '把一道来源候选题（jyeoo_fetch_candidates 产出）提交进题池草稿层。' +
     '服务端强制 dedup（exact+near）与知识节点活体校验；成功即挂 source_verify 链（过闸才转 active）。' +
+    '单选题可传 choice_entry.printed_points，通过两次盲解与冻结标定生成显式选项ID键；只支持无图且印刷分值明确的完整单选题。' +
     '必须显式提供 subject_id，用于该学科的来源白名单；' +
     'rejected 候选不要重试；知识归属用 knowledge_ids + attribution_state 声明。',
   effect: 'write',
   inputSchema,
   outputSchema,
-  costClass: 'local',
+  costClass: 'expensive_llm',
   // 无 safeHandoff：题面写库 + verify 链必须 in-process（registry 规则：safeHandoff 仅限
   // idempotent read）。
   mirrorEvent: 'when_causal',
