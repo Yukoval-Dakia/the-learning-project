@@ -194,9 +194,11 @@ export function PracticeNextSolo({ item, pos, total, onBack }: PracticeNextSoloP
               </p>
               <h1 className="un-pn-title">{title}</h1>
               <div className="un-pn-chips">
-                {q?.labels.map((l) => (
-                  <Chip key={l.id}>{l.name}</Chip>
-                ))}
+                {q?.labels
+                  .filter((l) => l.name !== title)
+                  .map((l) => (
+                    <Chip key={l.id}>{l.name}</Chip>
+                  ))}
                 {accepted ? (
                   <Chip tone="accent">已提交</Chip>
                 ) : lastAttempt ? (
