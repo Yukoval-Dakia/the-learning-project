@@ -2,7 +2,8 @@ name: CI Gate
 
 # GitHub-only pre-merge gate. The heavyweight lanes run in parallel; the final `gate` job keeps
 # the historical required-check name stable. DB tests use Testcontainers on GitHub-hosted runners.
-# Docs-only changes still make every lane succeed without installing dependencies.
+# Each lane plans locally, so setup no longer waits for a separate classifier job.
+# Verified docs-only changes still succeed without installing dependencies.
 
 on:
   pull_request:
@@ -23,63 +24,40 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  changes:
-    name: detect code changes
+  static:
+    name: typecheck · lint
     runs-on: ubuntu-latest
-    timeout-minutes: 5
-    outputs:
-      code_changed: ${{ steps.filter.outputs.code_changed }}
-      static_changed: ${{ steps.filter.outputs.static_changed }}
-      unit_changed: ${{ steps.filter.outputs.unit_changed }}
-      db_changed: ${{ steps.filter.outputs.db_changed }}
-      migration_changed: ${{ steps.filter.outputs.migration_changed }}
-      build_changed: ${{ steps.filter.outputs.build_changed }}
-      parity_changed: ${{ steps.filter.outputs.parity_changed }}
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v7
-        with:
-          node-version-file: '.node-version'
-
-      # Fail closed: unknown paths/bases and main pushes run the full gate. Pull requests use
-      # all retained invariant suites for every code change.
       - name: Plan core gate
         id: filter
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
           CI_EVENT_NAME: ${{ github.event_name }}
         run: node scripts/ci/gate-plan.mjs
-
-  static:
-    name: typecheck · lint
-    needs: changes
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
       - name: Static lane skipped
-        if: needs.changes.outputs.static_changed != 'true'
+        if: steps.filter.outputs.static_changed == 'false'
         run: echo "Static lane not selected — lane is green."
-      - uses: actions/checkout@v5
-        if: needs.changes.outputs.static_changed == 'true'
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-        if: needs.changes.outputs.static_changed == 'true'
+        if: steps.filter.outputs.static_changed != 'false'
         with:
           version: 11.13.1
       - uses: actions/setup-node@v7
-        if: needs.changes.outputs.static_changed == 'true'
+        if: steps.filter.outputs.static_changed != 'false'
         with:
           node-version-file: '.node-version'
           cache: 'pnpm'
       - name: Install dependencies
-        if: needs.changes.outputs.static_changed == 'true'
+        if: steps.filter.outputs.static_changed != 'false'
         run: pnpm install --frozen-lockfile
       # TypeScript validates every cached file fingerprint before reusing semantic state.
       # Key compiler/config separately, then restore the newest compatible commit as the
       # incremental base instead of rebuilding the ~1.3 MB graph on every static lane.
       - name: Restore TypeScript incremental state
-        if: needs.changes.outputs.static_changed == 'true'
+        if: steps.filter.outputs.static_changed != 'false'
         uses: actions/cache@v6
         with:
           path: tsconfig.tsbuildinfo
@@ -87,16 +65,15 @@ jobs:
           restore-keys: |
             ts7-buildinfo-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'tsconfig.json') }}-
       - name: Typecheck
-        if: needs.changes.outputs.static_changed == 'true'
+        if: steps.filter.outputs.static_changed != 'false'
         run: pnpm typecheck
       # YUK-909 — warning-count ratchet at the Biome 2 baseline: warning/info totals
       # may only decrease. Lower the baseline after a fixing batch: pnpm lint:ratchet:update
       - name: Lint and warning ratchet
-        if: needs.changes.outputs.static_changed == 'true'
+        if: steps.filter.outputs.static_changed != 'false'
         run: node scripts/ci/lint-ratchet.mjs
   audits:
     name: audits (${{ matrix.group }})
-    needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -130,36 +107,40 @@ jobs:
               pnpm audit:hub-sync-writers
               pnpm audit:provider-attempt-truth
     steps:
-      - name: Audit lane skipped
-        if: needs.changes.outputs.static_changed != 'true'
-        run: echo "Audit lane not selected — lane is green."
       - uses: actions/checkout@v5
-        if: needs.changes.outputs.static_changed == 'true'
         with:
           fetch-depth: 0
+      - name: Plan core gate
+        id: filter
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          CI_EVENT_NAME: ${{ github.event_name }}
+        run: node scripts/ci/gate-plan.mjs
+      - name: Audit lane skipped
+        if: steps.filter.outputs.static_changed == 'false'
+        run: echo "Audit lane not selected — lane is green."
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-        if: needs.changes.outputs.static_changed == 'true'
+        if: steps.filter.outputs.static_changed != 'false'
         with:
           version: 11.13.1
       - uses: actions/setup-node@v7
-        if: needs.changes.outputs.static_changed == 'true'
+        if: steps.filter.outputs.static_changed != 'false'
         with:
           node-version-file: '.node-version'
           cache: 'pnpm'
       - name: Install dependencies
-        if: needs.changes.outputs.static_changed == 'true'
+        if: steps.filter.outputs.static_changed != 'false'
         run: pnpm install --frozen-lockfile
       # Audits mirror the standalone pre-PR audits plus the audit prefix of `pnpm test`.
       # The split test lanes below must not call the umbrella script again.
       - name: Audits
-        if: needs.changes.outputs.static_changed == 'true'
+        if: steps.filter.outputs.static_changed != 'false'
         env:
           TEST_POLICY_BASE: ${{ inputs.test_policy_base || github.event.pull_request.base.sha || github.event.before }}
         run: ${{ matrix.commands }}
 
   unit:
     name: unit invariant tests (${{ matrix.shard }}/2)
-    needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -167,162 +148,214 @@ jobs:
       matrix:
         shard: [1, 2]
     steps:
-      - name: unit lane skipped
-        if: needs.changes.outputs.unit_changed != 'true'
-        run: echo "Docs-only change; unit lane skipped."
       - uses: actions/checkout@v5
-        if: needs.changes.outputs.unit_changed == 'true'
+        with:
+          fetch-depth: 0
+      - name: Plan core gate
+        id: filter
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          CI_EVENT_NAME: ${{ github.event_name }}
+        run: node scripts/ci/gate-plan.mjs
+      - name: unit lane skipped
+        if: steps.filter.outputs.unit_changed == 'false'
+        run: echo "Docs-only change; unit lane skipped."
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-        if: needs.changes.outputs.unit_changed == 'true'
+        if: steps.filter.outputs.unit_changed != 'false'
         with:
           version: 11.13.1
       - uses: actions/setup-node@v7
-        if: needs.changes.outputs.unit_changed == 'true'
+        if: steps.filter.outputs.unit_changed != 'false'
         with:
           node-version-file: '.node-version'
           cache: 'pnpm'
       - name: Install dependencies
-        if: needs.changes.outputs.unit_changed == 'true'
+        if: steps.filter.outputs.unit_changed != 'false'
         run: pnpm install --frozen-lockfile
       - name: Run retained unit invariants
-        if: needs.changes.outputs.unit_changed == 'true'
-        run: pnpm test:unit --shard=${{ matrix.shard }}/2
+        if: steps.filter.outputs.unit_changed != 'false'
+        run: |
+          mkdir -p .cache/ci-profile
+          pnpm test:unit --shard=${{ matrix.shard }}/2 --reporter=default --reporter=json --outputFile.json=.cache/ci-profile/unit-${{ matrix.shard }}.json
+      - name: Save per-case unit timings
+        if: always() && steps.filter.outputs.unit_changed != 'false'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: unit-case-timings-${{ matrix.shard }}
+          path: .cache/ci-profile/unit-${{ matrix.shard }}.json
+          retention-days: 7
+          if-no-files-found: ignore
 
   db:
-    name: db invariant tests (${{ matrix.shard }}/4)
-    needs: changes
+    name: db invariant tests (${{ matrix.shard }}/8)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     steps:
-      - name: db lane skipped
-        if: needs.changes.outputs.db_changed != 'true'
-        run: echo "Docs-only change; db lane skipped."
       - uses: actions/checkout@v5
-        if: needs.changes.outputs.db_changed == 'true'
         with:
           fetch-depth: 0
+      - name: Plan core gate
+        id: filter
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          CI_EVENT_NAME: ${{ github.event_name }}
+        run: node scripts/ci/gate-plan.mjs
+      - name: db lane skipped
+        if: steps.filter.outputs.db_changed == 'false'
+        run: echo "Docs-only change; db lane skipped."
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-        if: needs.changes.outputs.db_changed == 'true'
+        if: steps.filter.outputs.db_changed != 'false'
         with:
           version: 11.13.1
       - uses: actions/setup-node@v7
-        if: needs.changes.outputs.db_changed == 'true'
+        if: steps.filter.outputs.db_changed != 'false'
         with:
           node-version-file: '.node-version'
           cache: 'pnpm'
       - name: Install dependencies
-        if: needs.changes.outputs.db_changed == 'true'
+        if: steps.filter.outputs.db_changed != 'false'
         run: pnpm install --frozen-lockfile
       - name: Run retained db invariants
-        if: needs.changes.outputs.db_changed == 'true'
-        run: pnpm test:db --shard=${{ matrix.shard }}/4
+        if: steps.filter.outputs.db_changed != 'false'
+        env:
+          TLP_SESSION_EVIDENCE_PATH: .cache/ci-profile/session
+          TLP_REVIEW_EVIDENCE_PATH: .cache/ci-profile/review-migration.json
+        run: |
+          mkdir -p .cache/ci-profile
+          pnpm test:db --shard=${{ matrix.shard }}/8 --reporter=default --reporter=json --outputFile.json=.cache/ci-profile/db-${{ matrix.shard }}.json
+      - name: Save per-case DB timings
+        if: always() && steps.filter.outputs.db_changed != 'false'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: db-case-timings-${{ matrix.shard }}
+          path: .cache/ci-profile/*.json
+          retention-days: 7
+          if-no-files-found: ignore
 
   migration:
     name: migration smoke
-    needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Migration lane skipped
-        if: needs.changes.outputs.migration_changed != 'true'
-        run: echo "Migration lane not selected — lane is green."
       - uses: actions/checkout@v5
-        if: needs.changes.outputs.migration_changed == 'true'
+        with:
+          fetch-depth: 0
+      - name: Plan core gate
+        id: filter
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          CI_EVENT_NAME: ${{ github.event_name }}
+        run: node scripts/ci/gate-plan.mjs
+      - name: Migration lane skipped
+        if: steps.filter.outputs.migration_changed == 'false'
+        run: echo "Migration lane not selected — lane is green."
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-        if: needs.changes.outputs.migration_changed == 'true'
+        if: steps.filter.outputs.migration_changed != 'false'
         with:
           version: 11.13.1
       - uses: actions/setup-node@v7
-        if: needs.changes.outputs.migration_changed == 'true'
+        if: steps.filter.outputs.migration_changed != 'false'
         with:
           node-version-file: '.node-version'
           cache: 'pnpm'
       - name: Install dependencies
-        if: needs.changes.outputs.migration_changed == 'true'
+        if: steps.filter.outputs.migration_changed != 'false'
         run: pnpm install --frozen-lockfile
       - name: Migration smoke
-        if: needs.changes.outputs.migration_changed == 'true'
+        if: steps.filter.outputs.migration_changed != 'false'
         run: pnpm test:migration
 
   build:
     name: production build and security canaries
-    needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: Build lane skipped
-        if: needs.changes.outputs.build_changed != 'true'
-        run: echo "Docs-only change; build lane skipped."
       - uses: actions/checkout@v5
-        if: needs.changes.outputs.build_changed == 'true'
+        with:
+          fetch-depth: 0
+      - name: Plan core gate
+        id: filter
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          CI_EVENT_NAME: ${{ github.event_name }}
+        run: node scripts/ci/gate-plan.mjs
+      - name: Build lane skipped
+        if: steps.filter.outputs.build_changed == 'false'
+        run: echo "Docs-only change; build lane skipped."
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-        if: needs.changes.outputs.build_changed == 'true'
+        if: steps.filter.outputs.build_changed != 'false'
         with:
           version: 11.13.1
       - uses: actions/setup-node@v7
-        if: needs.changes.outputs.build_changed == 'true'
+        if: steps.filter.outputs.build_changed != 'false'
         with:
           node-version-file: '.node-version'
           cache: 'pnpm'
       - name: Install dependencies
-        if: needs.changes.outputs.build_changed == 'true'
+        if: steps.filter.outputs.build_changed != 'false'
         run: pnpm install --frozen-lockfile
       - name: Build with injected secrets and verify security boundaries
-        if: needs.changes.outputs.build_changed == 'true'
+        if: steps.filter.outputs.build_changed != 'false'
         run: pnpm acceptance:start-frontdoor --build
         env:
           DATABASE_URL: postgres://placeholder
 
-  # TS↔Rust grading parity (YUK-1403). Path-selected by gate-plan; when selected, missing
+  # TS↔Rust grading parity (YUK-1403). Every code change selects this lane; missing
   # native/WASM artifacts fail the suites instead of skipping them.
   parity:
     name: Rust numerics · native/WASM/JS parity
-    needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - name: Parity lane skipped
-        if: needs.changes.outputs.parity_changed != 'true'
-        run: echo "No parity-relevant change — lane is green."
       - uses: actions/checkout@v5
-        if: needs.changes.outputs.parity_changed == 'true'
+        with:
+          fetch-depth: 0
+      - name: Plan core gate
+        id: filter
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          CI_EVENT_NAME: ${{ github.event_name }}
+        run: node scripts/ci/gate-plan.mjs
+      - name: Parity lane skipped
+        if: steps.filter.outputs.parity_changed == 'false'
+        run: echo "No parity-relevant change — lane is green."
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-        if: needs.changes.outputs.parity_changed == 'true'
+        if: steps.filter.outputs.parity_changed != 'false'
         with:
           version: 11.13.1
       - uses: actions/setup-node@v7
-        if: needs.changes.outputs.parity_changed == 'true'
+        if: steps.filter.outputs.parity_changed != 'false'
         with:
           node-version-file: '.node-version'
           cache: 'pnpm'
       # stable @ 2026-07-20; pin third-party actions to immutable commits.
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
-        if: needs.changes.outputs.parity_changed == 'true'
+        if: steps.filter.outputs.parity_changed != 'false'
         with:
           targets: wasm32-wasip1-threads
       # v2 @ 2026-07-20. Cache Cargo registry/git data and this standalone crate's target.
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
-        if: needs.changes.outputs.parity_changed == 'true'
+        if: steps.filter.outputs.parity_changed != 'false'
         with:
           workspaces: crates/calibration-native -> target
       - name: Install dependencies
-        if: needs.changes.outputs.parity_changed == 'true'
+        if: steps.filter.outputs.parity_changed != 'false'
         run: pnpm install --frozen-lockfile
       - name: Rust numerical invariants
-        if: needs.changes.outputs.parity_changed == 'true'
+        if: steps.filter.outputs.parity_changed != 'false'
         run: cargo test --manifest-path crates/calibration-native/Cargo.toml
       - name: Build native addon
-        if: needs.changes.outputs.parity_changed == 'true'
+        if: steps.filter.outputs.parity_changed != 'false'
         run: pnpm build:native
       - name: Build release WASM addon
-        if: needs.changes.outputs.parity_changed == 'true'
+        if: steps.filter.outputs.parity_changed != 'false'
         run: pnpm build:native:wasm
       - name: Require artifacts and run parity suites
-        if: needs.changes.outputs.parity_changed == 'true'
+        if: steps.filter.outputs.parity_changed != 'false'
         env:
           REQUIRE_RUST_PARITY: '1'
         run: |
@@ -339,13 +372,12 @@ jobs:
   gate:
     name: typecheck · lint · audits · test · build
     if: always()
-    needs: [changes, static, audits, unit, db, migration, build, parity]
+    needs: [static, audits, unit, db, migration, build, parity]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Require every CI lane
         env:
-          CHANGES_RESULT: ${{ needs.changes.result }}
           STATIC_RESULT: ${{ needs.static.result }}
           AUDITS_RESULT: ${{ needs.audits.result }}
           UNIT_RESULT: ${{ needs.unit.result }}
@@ -356,7 +388,7 @@ jobs:
         run: |
           set -euo pipefail
           failed=0
-          for lane in CHANGES STATIC AUDITS UNIT DB MIGRATION BUILD PARITY; do
+          for lane in STATIC AUDITS UNIT DB MIGRATION BUILD PARITY; do
             result_var="${lane}_RESULT"
             result="${!result_var}"
             printf '%-12s %s\n' "$lane" "$result"

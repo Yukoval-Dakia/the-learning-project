@@ -1,10 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-11：YUK-1107再优先解阻main：review cron位置36误选regexsubstring，新最小显式integer修复与DBOS同类扫描，review/本地/CI待验。1696已合a213且23PASS/完整CI绿，生产风险YUK-1481；提速隔离96d22a57d暂停，成熟head须连续3次完整CI绿，不占产品窗口。
+> Linear 是权威 tracker。2026-10-11：两次main P1已交付1696/a213与1697/189bc5eab，原断言保留，功能/UI已通知；YUK-1107回独立提速树。同head连续3次完整CI绿色后才入main，不占产品DB窗，120秒目标未达标。
 
 ## NOW
 
-- **YUK-1107 / review cron main解阻优先**：owner要求同位置36的22008故障先解阻；父隔离tree fix/yuk-1107-review-cron-position-cast，baseff2c9e229。git blame确认SQLoracle源自#1690 e178；全扫tests/dbos-*只2处SQLsubstring后cast，session已integer，唯一review缺口现加integer，原horizon max+60/H边界/ledger断言全保留。新独立review、DNS后批准的review1+session2共3cases、exactCI/matchhead待验；无runtime/锁。旧1696已合a213、fixed7c23PASS/完整CI234秒，R2已resolve、UI/功能已通知；生产RST风险单独YUK-1481。速度树96d22a57d仅本地checkpoint暂停、1691draft远端fc，backup另批；同head3连续全绿前不入main，120目标未达标。
+- **YUK-1107 / 完整CI≤120秒继续**：#1697 exact0b895完整CI38140482253绿、R1 NONE、review1 R5PASS21.70秒与session2 R4PASS；R5实际22:02:49JST释锁，总95.388秒，协调者确认FSRS自移除，其余7 exact parity真，失败R4与旧退出容器差异保留。父独占fast-crons / perf/yuk-1107-ci-critical-path，正常纳入main189bc5eab，#1691保持draft，原21session分拆/断言AST证明与其他保留不变量提速，不混backup。成熟门槛同exacthead连续3次完整CI绿无flake；main回归先revert PR。原432秒为1次run创建→Gate绿，近期246/234中位240秒n2；两PR140–160秒仅预测，120仍进行中。生产RST风险已另票YUK-1481。
 
 - **YUK-1107 / session cron已交付**：#1681合main56df7c09；控制时间验证边界，生产60秒保护/cron及严格ledger不变；R2无P0/P1，父修Drizzle初始化后exact cd0c45d CI38120469007全绿。两例PASS、文件34.564秒；实测跨分钟边界，YUK-1397修复交付。整套390秒，不核销120秒目标。[证据与限度](docs/planning/2026-10-11-yuk1107-cron-speed.md)。
 
