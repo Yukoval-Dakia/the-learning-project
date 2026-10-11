@@ -13,7 +13,7 @@ export type StarterStatus =
   | { kind: 'preparing'; lastFailure: string | null }
   | { kind: 'ready' }
   | { kind: 'failed'; reason: string }
-  | { kind: 'unknown'; reason: string };
+  | { kind: 'unknown'; reason: string; final: boolean };
 
 const FAILURE_TEXT: Record<StarterFailure['code'], string> = {
   schema_invalid: 'AI 出的题格式不对，用不了',
@@ -22,10 +22,10 @@ const FAILURE_TEXT: Record<StarterFailure['code'], string> = {
   underfilled: 'AI 出的题不够数',
   verification_timeout: '检查题目时超时了',
   interrupted: '准备过程被中断了',
-  delivery_lost: '准备结果在返回途中丢了',
+  delivery_lost: '准备任务中途丢失了',
   cost_unknown: '这次的花费没法确认，为安全起见先停下了',
   budget_exhausted: '本周的 AI 预算用完了',
-  authority_unknown: '学习目标有变化，之前的准备对不上了',
+  authority_unknown: '没法确认学习目标对应哪些内容，之前的准备对不上了',
   unknown: '没有记下具体原因',
 };
 
@@ -48,7 +48,14 @@ export function starterStatus(outcomes: readonly StarterOutcome[] | undefined): 
   const failed = list.find((o) => o.state === 'exhausted');
   if (failed) return { kind: 'failed', reason: starterFailureText(failed.failure_reason) };
   const unknown = list.find((o) => o.state === 'unknown');
-  if (unknown) return { kind: 'unknown', reason: starterFailureText(unknown.failure_reason) };
+  if (unknown) {
+    return {
+      kind: 'unknown',
+      reason: starterFailureText(unknown.failure_reason),
+      // An unconfirmed cost stops paid preparation for good; checking again cannot change it.
+      final: unknown.failure_reason.code === 'cost_unknown',
+    };
+  }
   if (list.some((o) => o.state === 'absent' && o.next_action === 'provide_goal')) {
     return { kind: 'need_goal' };
   }

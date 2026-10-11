@@ -58,6 +58,7 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
   const [restoreVersion, setRestoreVersion] = useState(0);
   const [errMsg, setErrMsg] = useState<string | null>(null);
   const [supply, setSupply] = useState<StarterOutcome[] | undefined>(undefined);
+  const [checking, setChecking] = useState(false);
   const [leaving, setLeaving] = useState(false);
   const [exitFailure, setExitFailure] = useState<{ destination: string; message: string } | null>(
     null,
@@ -253,11 +254,13 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
         <LoomCard pad padLg>
           <SupplyStatus
             outcomes={supply}
-            onRecheck={() =>
-              void loadNext().catch((e: unknown) =>
-                setErrMsg(e instanceof Error ? e.message : String(e)),
-              )
-            }
+            checking={checking}
+            onRecheck={() => {
+              setChecking(true);
+              void loadNext()
+                .catch((e: unknown) => setErrMsg(e instanceof Error ? e.message : String(e)))
+                .finally(() => setChecking(false));
+            }}
             onUpload={() => void leaveProbe('/onboarding/upload')}
             onSetGoal={() => void leaveProbe('/welcome')}
           />
@@ -297,11 +300,13 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
 // No question to show yet: say what the question supply is actually doing (design H5).
 function SupplyStatus({
   outcomes,
+  checking,
   onRecheck,
   onUpload,
   onSetGoal,
 }: {
   outcomes: StarterOutcome[] | undefined;
+  checking: boolean;
   onRecheck: () => void;
   onUpload: () => void;
   onSetGoal: () => void;
@@ -313,94 +318,107 @@ function SupplyStatus({
     </Btn>
   );
   const recheck = (variant: 'primary' | 'secondary', label = '再查一次') => (
-    <Btn variant={variant} icon="refresh" onClick={onRecheck}>
-      {label}
+    <Btn variant={variant} icon="refresh" disabled={checking} onClick={onRecheck}>
+      {checking ? '正在查…' : label}
     </Btn>
   );
-  switch (status.kind) {
-    case 'need_goal':
-      return (
-        <EmptyState
-          icon="target"
-          title="还缺学习目标"
-          text="先说清这次要学什么，才能为你准备题目。"
-          action={
-            <Btn variant="primary" icon="target" onClick={onSetGoal}>
-              去设定目标
-            </Btn>
-          }
-        />
-      );
-    case 'preparing':
-      return (
-        <>
+  return (
+    <div role="status" aria-live="polite">
+      {supplyBody()}
+    </div>
+  );
+  function supplyBody() {
+    switch (status.kind) {
+      case 'need_goal':
+        return (
           <EmptyState
-            icon="clock"
-            title="正在准备题目 · 还不能开始"
-            text="准备好后这里会出现第一题。可以先离开，回来再查。"
-            action={recheck('primary')}
+            icon="target"
+            title="还缺学习目标"
+            text="先说清这次要学什么，才能为你准备题目。"
+            action={
+              <Btn variant="primary" icon="target" onClick={onSetGoal}>
+                去设定目标
+              </Btn>
+            }
           />
-          {status.lastFailure && (
+        );
+      case 'preparing':
+        return (
+          <>
+            <EmptyState
+              icon="clock"
+              title="正在准备题目 · 还不能开始"
+              text="准备好后这里会出现第一题。可以先离开，回来再查。"
+              action={recheck('primary')}
+            />
+            {status.lastFailure && (
+              <p className="ob-pl-supply-note">
+                <span className="badge tone-hard">上次没成功</span>
+                {status.lastFailure}，稍后会自动重试。
+              </p>
+            )}
+          </>
+        );
+      case 'ready':
+        return (
+          <>
+            <EmptyState
+              icon="check"
+              title="题目准备好了"
+              text="加载第一题就可以开始。加载后仍然没有题的话，可以先上传自己的材料。"
+              action={recheck('primary', '加载题目')}
+            />
+            {upload('secondary')}
+          </>
+        );
+      case 'failed':
+        return (
+          <>
+            <EmptyState
+              icon="alert"
+              title="没能准备好题目"
+              text="可以上传自己的材料，从里面出题；也可以稍后再试一次。"
+              action={upload('primary')}
+            />
             <p className="ob-pl-supply-note">
-              <span className="badge tone-hard">上次没成功</span>
-              {status.lastFailure}，正在重试。
+              <span className="badge tone-hard">原因</span>
+              {status.reason}
             </p>
-          )}
-        </>
-      );
-    case 'ready':
-      return (
-        <EmptyState
-          icon="check"
-          title="题目准备好了"
-          text="加载第一题就可以开始。"
-          action={recheck('primary', '加载题目')}
-        />
-      );
-    case 'failed':
-      return (
-        <>
-          <EmptyState
-            icon="alert"
-            title="没能准备好题目"
-            text="可以上传自己的材料，从里面出题；也可以稍后再试一次。"
-            action={upload('primary')}
-          />
-          <p className="ob-pl-supply-note">
-            <span className="badge tone-hard">原因</span>
-            {status.reason}
-          </p>
-          {recheck('secondary')}
-        </>
-      );
-    case 'unknown':
-      return (
-        <>
-          <EmptyState
-            icon="alert"
-            title="还不确定题目有没有准备好"
-            text="再查一次看看最新情况；一直这样的话，可以先上传自己的材料。"
-            action={recheck('primary')}
-          />
-          <p className="ob-pl-supply-note">
-            <span className="badge tone-hard">原因</span>
-            {status.reason}
-          </p>
-          {upload('secondary')}
-        </>
-      );
-    default:
-      return (
-        <>
-          <EmptyState
-            icon="clock"
-            title="暂时没有可以开始的题"
-            text="这个目标还没有准备好的题。可以上传自己的材料，从里面出题；也可以稍后再查。"
-            action={upload('primary')}
-          />
-          {recheck('secondary')}
-        </>
-      );
+            {recheck('secondary')}
+          </>
+        );
+      case 'unknown':
+        return (
+          <>
+            <EmptyState
+              icon="alert"
+              title="还不确定题目有没有准备好"
+              text={
+                status.final
+                  ? '这次准备已经停下，不会再自动继续。可以上传自己的材料，从里面出题。'
+                  : '再查一次看看最新情况；一直这样的话，可以先上传自己的材料。'
+              }
+              action={status.final ? upload('primary') : recheck('primary')}
+            />
+            <p className="ob-pl-supply-note">
+              <span className="badge tone-hard">原因</span>
+              {status.reason}
+            </p>
+            {!status.final && upload('secondary')}
+          </>
+        );
+      default:
+        return (
+          <>
+            <EmptyState
+              icon="clock"
+              title="暂时没有可以继续的题"
+              text="这个目标现有的题已经用完，目前没有新的题在准备。可以上传自己的材料，从里面出题。"
+              action={upload('primary')}
+            />
+          </>
+        );
+    }
   }
 }
 

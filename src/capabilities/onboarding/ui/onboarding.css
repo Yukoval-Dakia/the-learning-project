@@ -1098,7 +1098,7 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: var(--s-2);
   margin: var(--s-3) 0;
   font-size: var(--fs-caption);
   color: var(--ink-2);
