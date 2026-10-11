@@ -699,6 +699,18 @@
   }
 }
 
+/* Medium widths (721px–1100px): whether the companion stays beside the content or overlays it
+   is undecided (T8, design doc §11). Provisional: it stays beside, and the reading column gives
+   up some padding instead. */
+@media (min-width: 721px) and (max-width: 1100px) {
+  [data-ui-next] .un-pn-main {
+    padding: var(--un-sp-6) var(--un-sp-4) var(--un-sp-8);
+  }
+  [data-ui-next] .un-pn-banner {
+    gap: var(--un-sp-4);
+  }
+}
+
 /* ── Phone (T8: ≤ 720px): one column; companion as the bottom sheet; mascot 84px (B1) that
    tucks into the page bar once the banner scrolls under it (B3). ── */
 @media (max-width: 720px) {
