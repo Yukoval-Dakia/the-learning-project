@@ -978,6 +978,8 @@ describe('native durable assessment', () => {
     expect(f.execute).toHaveBeenCalledTimes(1);
   });
 
+  // @invariant data: Atomic domain completion survives a failed DONE notification without repeating a paid effect
+  // @fails-if a notification retry re-executes the model or duplicates the accepted memory effect
   it('recovers a failed DONE notification from atomic domain completion without another model call', async () => {
     const f = await fixture();
     const run = await dispatchNativeAttempt(f.db, f.id, f.request, f.options, f.deps);

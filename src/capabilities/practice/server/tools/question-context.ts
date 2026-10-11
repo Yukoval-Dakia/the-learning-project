@@ -1,5 +1,7 @@
+import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
 import { selectedForgettingEngine } from '@/server/fsrs/engine-selection';
 import { resolveSchedulingProjection } from '@/server/fsrs/state';
+import { SYNTHETIC_SUBJECT_ROOT_RE } from '../placement-scope';
 // YUK-102 / Foundation D M2 — moved to Practice by YUK-892 (F4.0).
 //
 // Composite read tools for one question contract (attempts, reviews, FSRS
@@ -559,6 +561,7 @@ export async function executeGetReviewDue(
     .slice(0, limit);
 
   for (const due of dueKnowledgeStates) {
+    if (SYNTHETIC_SUBJECT_ROOT_RE.test(due.knowledge_id)) continue;
     const qRows = await ctx.db
       .select({
         id: question.id,
@@ -579,7 +582,12 @@ export async function executeGetReviewDue(
       )
       .orderBy(asc(question.created_at), asc(question.id))
       .limit(10);
-    const selected = qRows.find((row) => !usedDueQuestionIds.has(row.id));
+    const admitted = await readAutomaticallyServableQuestionIds(
+      ctx.db,
+      qRows.map((row) => row.id),
+      { includeInterventionDiagnostics: true },
+    );
+    const selected = qRows.find((row) => admitted.has(row.id) && !usedDueQuestionIds.has(row.id));
     if (!selected) continue;
     usedDueQuestionIds.add(selected.id);
     dueRows.push({
@@ -641,8 +649,13 @@ export async function executeGetReviewDue(
         a.due_at.getTime() - b.due_at.getTime() || a.question_id.localeCompare(b.question_id),
     )
     .slice(0, limit);
+  const admittedLegacy = await readAutomaticallyServableQuestionIds(
+    ctx.db,
+    legacyDueRows.map((row) => row.question_id),
+    { includeInterventionDiagnostics: true },
+  );
   for (const due of legacyDueRows) {
-    if (usedDueQuestionIds.has(due.question_id)) continue;
+    if (!admittedLegacy.has(due.question_id) || usedDueQuestionIds.has(due.question_id)) continue;
     usedDueQuestionIds.add(due.question_id);
     dueRows.push(due);
   }
@@ -728,11 +741,14 @@ export async function executeGetReviewDue(
     ),
   );
 
+  const admittedNew = await readAutomaticallyServableQuestionIds(ctx.db, newQuestionIds, {
+    includeInterventionDiagnostics: true,
+  });
   const rows: GetReviewDueOutput['rows'] = [];
   for (const qid of newQuestionIds) {
     const q = qById.get(qid);
     const failure = latestNeverReviewed.get(qid);
-    if (!q || !failure) continue;
+    if (!q || !failure || !admittedNew.has(qid)) continue;
     const cause = causeByQid.get(qid);
     rows.push({
       question_id: q.id,

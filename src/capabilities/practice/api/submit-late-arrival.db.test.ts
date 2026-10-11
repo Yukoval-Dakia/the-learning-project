@@ -32,6 +32,8 @@ async function state() {
 }
 
 describe('native late arrival and frozen learning scope', () => {
+  // @invariant concurrency: Late grading restores shared-domain effects in original occurrence order
+  // @fails-if domain-overlap replay is skipped and the latest ability or schedule regresses
   it('replays a later sibling on the shared domain without requiring overlapping KC IDs', async () => {
     expect(HIERARCHICAL_ELO_ENABLED).toBe(true);
     const run = async (reverse: boolean) => {

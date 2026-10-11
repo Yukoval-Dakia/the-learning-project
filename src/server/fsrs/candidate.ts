@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import {
+  AppendReceiptSchema,
   ContextKeySchema,
   DAY_MS,
   DigestSchema,
@@ -9,8 +10,10 @@ import {
   EffectiveObservationSchema,
   EpochMsSchema,
   type EvidenceInput,
+  FractionSchema,
   LearnerIdSchema,
   type MemoryState,
+  MemoryStateSchema,
   ScoreSchema,
   SequenceKeySchema,
   SkillIdSchema,
@@ -43,6 +46,7 @@ export const CandidateFactSchema = z
     final_hint_level: z.number().nullable(),
     self_confidence: z.number().nullable(),
     latency_ms: z.number().nullable(),
+    legacyScopeVersion: z.number().int().optional(),
     identityRemap: z.object({ fromIds: z.array(z.string()), toId: z.string() }).optional(),
     points: z.array(
       z.object({
@@ -53,6 +57,35 @@ export const CandidateFactSchema = z
     ),
   })
   .strict();
+export const CandidateReplayInputSchema = z.object({
+  seed: MemoryStateSchema.pick({
+    learnerId: true,
+    skillId: true,
+    scope: true,
+    versions: true,
+    inputDigest: true,
+  }),
+  effective: z.array(
+    z.object({
+      observation: EffectiveObservationSchema,
+      recordedSequence: z.number().int().nonnegative(),
+      receipt: AppendReceiptSchema,
+    }),
+  ),
+  queryTime: EpochMsSchema,
+  knowledgeCutoff: z.number().int().nonnegative(),
+  model: z.object({
+    versions: VersionsSchema,
+    provenance: z.literal('engineering'),
+    fastHalfLifeDays: z.number(),
+    slowHalfLifeDays: z.number(),
+    fastWeight: FractionSchema,
+    gain: z.number(),
+    failureRate: z.number(),
+    spacingDays: z.number(),
+  }),
+});
+export type CandidateReplayInput = z.infer<typeof CandidateReplayInputSchema>;
 export type CandidateFact = z.infer<typeof CandidateFactSchema>;
 export const SealedCandidateInputSchema = z.object({
   versions: VersionsSchema,
@@ -117,7 +150,14 @@ export function candidateObservations(
       orderKey: input.orderKey,
       evidenceDigest: input.evidenceDigest,
       evidenceRefs: [fact.submissionId, fact.evaluationId, fact.revisionId],
-      mappingNotes: [],
+      mappingNotes: [
+        ...(fact.legacyScopeVersion === undefined
+          ? []
+          : [`legacy_frozen_group_scope:${fact.legacyScopeVersion}`]),
+        ...(fact.identityRemap
+          ? [`identity_remap:${fact.identityRemap.fromIds.join(',')}:${fact.identityRemap.toId}`]
+          : []),
+      ],
     },
     occurredAt: { kind: 'known', value: EpochMsSchema.parse(fact.occurredAt.getTime()) },
     source: fact.source,
@@ -207,6 +247,7 @@ export function rebuildCandidate(
   asOf: Date,
   conversion: CandidateState['conversion'],
   historySubjectIds: string[] = [],
+  recordReplayInput?: (input: CandidateReplayInput) => void,
 ) {
   const unique = new Map<string, SealedCandidateInput>();
   for (const raw of facts) {
@@ -254,13 +295,15 @@ export function rebuildCandidate(
         digest = next;
         return { observation: o.observation, recordedSequence: o.recordedSequence, receipt };
       });
-    const result = replay({
+    const replayInput = CandidateReplayInputSchema.parse({
       seed: initial,
       effective,
       queryTime: EpochMsSchema.parse(asOf.getTime()),
       knowledgeCutoff: Number.MAX_SAFE_INTEGER,
       model: ENGINEERING_MODEL,
     });
+    recordReplayInput?.(replayInput);
+    const result = replay(replayInput);
     if (result.kind !== 'updated' && result.kind !== 'duplicate')
       throw new Error(`candidate replay ${result.kind}: ${result.reason}`);
     return result.state;

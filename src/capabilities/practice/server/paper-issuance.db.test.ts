@@ -64,6 +64,8 @@ async function paper(questionIds: string[]) {
 
 beforeEach(resetDb);
 describe('paper opening freezes actual assessment occurrences', () => {
+  // @invariant grading: Reopening a paper keeps the corrected verdict and its existing schedule
+  // @fails-if opening revives the original verdict or creates another review gain
   it('replays the current corrected grade without reactivating the original or rescheduling', async () => {
     const db = testDb();
     const q = await seedFrozenSolveQuestion(db);

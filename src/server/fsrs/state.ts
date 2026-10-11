@@ -24,7 +24,7 @@ import {
   acquireSortedAdvisoryLocks,
   withLearningStateLock,
 } from '@/server/advisory-locks';
-import { initialCandidateState } from './candidate';
+import { initialCandidateState, projectCandidateDue } from './candidate';
 import { type RetentionReading, retrievabilityForKc } from './retention';
 
 export type { RetentionReading } from './retention';
@@ -51,8 +51,23 @@ export async function resolveSchedulingProjection<T extends { state: unknown; du
     (!parsed.success || !isCandidateState(parsed.data))
   ) {
     const { candidateStateForRead } = await import('@/server/assessment/settle');
-    const state = await db.transaction((tx) => candidateStateForRead(tx, { kind, id }, now));
-    return { ...row, state, due_at: state.due };
+    try {
+      const rebuilt = await db.transaction((tx) => candidateStateForRead(tx, { kind, id }, now));
+      const state = parsed.success
+        ? rebuilt
+        : { ...rebuilt, conversion: 'invalid_rebuilt' as const };
+      return { ...row, state, due_at: state.due };
+    } catch {
+      const anchor = new Date(Math.min(row.due_at.getTime(), now.getTime()));
+      const cold = initialCandidateState(id, anchor);
+      const state = {
+        ...cold,
+        ...projectCandidateDue(cold, anchor),
+        conversion: 'invalid_rebuilt' as const,
+        fallbackReason: 'sealed_history_unavailable',
+      };
+      return { ...row, state, due_at: state.due };
+    }
   }
   if (!parsed.success) throw new Error('invalid scheduling state');
   return { ...row, state: parsed.data };

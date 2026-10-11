@@ -109,6 +109,7 @@ import { ApiError } from '@/kernel/http';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import {
   CandidateFactSchema,
+  type CandidateReplayInput,
   type SealedCandidateInput,
   SealedCandidateInputSchema,
   candidateObservations,
@@ -196,6 +197,9 @@ interface SettlementPlan {
   forgettingInput?: SealedCandidateInput;
   forgettingEngine?: 'fsrs' | 'forgetting_candidate';
   forgettingSuppressed?: boolean;
+  forgettingReplayInputs?: Array<
+    CandidateReplayInput & { subject_kind: FsrsSubject['kind']; subject_id: string }
+  >;
 }
 
 interface AppliedSettlementEvent {
@@ -306,6 +310,7 @@ interface SettlementScope {
   plan: ExecutionPlanT;
   issuedPartIds: string[];
   fullScope: boolean;
+  frozenLearningScope: boolean;
   capture: NonNullable<ActivationSettleInput['forgettingCapture']>;
   assistance: 'independent' | 'assisted' | 'unknown';
 }
@@ -392,6 +397,7 @@ async function loadScope(tx: Tx, input: ActivationSettleInput): Promise<Settleme
   const numeric = (key: string) =>
     typeof original?.payload[key] === 'number' ? original.payload[key] : null;
   return {
+    frozenLearningScope: frozen !== null,
     capture: input.forgettingCapture ?? {
       hints_used: numeric('hints_used'),
       final_hint_level: numeric('final_hint_level'),
@@ -531,7 +537,7 @@ function derivePlan(input: ActivationSettleInput, scope: SettlementScope): Settl
         const result = input.evaluation.unit_results.find(
           (r) => r.scoring_unit_id === unit.scoring_unit_id,
         );
-        if (!result || result.status !== 'scored') return [];
+        if (result?.status !== 'scored') return [];
         const maximum =
           unit.criterion.kind === 'holistic_level'
             ? Math.max(0, ...Object.values(unit.level_points ?? {}))
@@ -899,10 +905,27 @@ async function candidateHistory(
       now: new Date(plan.occurrenceAt),
       ...(plan.ratingSource === 'user' && plan.rating ? { userRating: plan.rating } : {}),
     };
-    const rebuilt = derivePlan(input, await loadScope(tx, input));
+    const scope = await loadScope(tx, input);
+    const rebuilt = derivePlan(input, scope);
     if (!rebuilt.forgettingInput) throw new Error('sealed candidate inputs unavailable');
-    facts.push(rebuilt.forgettingInput);
-    if (current && plan === current) current.forgettingInput = rebuilt.forgettingInput;
+    // Old settlements sealed their scheduling subjects even when no part/KC capture exists.
+    // Use that frozen group scope, never today's mutable question labels or context.
+    const historicalInput = scope.frozenLearningScope
+      ? rebuilt.forgettingInput
+      : sealCandidateFact({
+          ...rebuilt.forgettingInput.fact,
+          context: null,
+          legacyScopeVersion: plan.scopeVersion,
+          points: rebuilt.forgettingInput.fact.points.map((p) => ({
+            ...p,
+            shares: plan.fsrsSubjects.map((s) => ({
+              skillId: s.id,
+              share: 1 / plan.fsrsSubjects.length,
+            })),
+          })),
+        });
+    facts.push(historicalInput);
+    if (current && plan === current) current.forgettingInput = historicalInput;
   }
   return facts.map((input) => {
     if (!input.fact.points.some((p) => p.shares.some((s) => historySubjectIds.includes(s.skillId))))
@@ -947,6 +970,7 @@ async function executePlan(
   occurrenceAt: Date,
   options: { skipFsrs?: boolean; memoryHistory?: SettlementPlan[] } & SettlementObservers = {},
 ): Promise<ApplyOutcome> {
+  if (selectedForgettingEngine() === 'forgetting_candidate') plan.forgettingReplayInputs = [];
   const outcome: ApplyOutcome = {
     fsrsApplied: [],
     thetaApplied: [],
@@ -1013,6 +1037,12 @@ async function executePlan(
                 ? 'legacy_history'
                 : 'legacy_cold',
           before && isCandidateState(before) ? before.historySubjectIds : [],
+          (input) =>
+            plan.forgettingReplayInputs?.push({
+              ...input,
+              subject_kind: subject.kind,
+              subject_id: subject.id,
+            }),
         );
       } else {
         if (before && isCandidateState(before))
@@ -1425,7 +1455,28 @@ export async function learningSettlement(
   }
 
   if (revertSet.length === 0 && !preserveUserRating) {
-    const applied = await executePlan(tx, plan, settlementEventId, occurrenceAt, observers);
+    let applied: ApplyOutcome;
+    try {
+      applied =
+        selectedForgettingEngine() === 'forgetting_candidate'
+          ? await tx.transaction((sp) =>
+              executePlan(sp, plan, settlementEventId, occurrenceAt, observers),
+            )
+          : await executePlan(tx, plan, settlementEventId, occurrenceAt, observers);
+    } catch (error) {
+      if (selectedForgettingEngine() !== 'forgetting_candidate') throw error;
+      await writeReplayRequired(tx, {
+        eventId: settlementEventId,
+        plan,
+        activatedAt,
+        priorEffectiveEvaluationId: priorEffectiveId,
+        detail: {
+          kind: 'candidate_rebuild_failed',
+          reason: error instanceof Error ? error.message : 'unknown_failure',
+        },
+      });
+      return 'failed_pending';
+    }
     const effect: ActivationEffect =
       applied.fsrsApplied.length > 0 || applied.thetaApplied.length > 0 ? 'applied' : 'ineligible';
     await writeSettlementEvent(tx, {

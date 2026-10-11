@@ -1,6 +1,5 @@
 import { z } from 'zod';
-import { FsrsStateSchema } from '@/core/schema/event/blocks';
-import { isCandidateState } from '@/core/schema/scheduling-state';
+import { SchedulingStateSchema, isCandidateState } from '@/core/schema/scheduling-state';
 import { projectNativeCsv } from './native-assessment-reporting';
 
 export interface Row {
@@ -439,7 +438,9 @@ export function buildMistakesCsv(tables: Record<string, Row[]>): string {
     const userPayload = userParsed.success ? userParsed.data : null;
     const judgePayload = judgeParsed.success ? judgeParsed.data : null;
     const schedule = resolveFsrsForQuestion(attempt.questionId, attempt.knowledgeIds);
-    const stateParsed = FsrsStateSchema.safeParse(parseJsonCell<unknown>(schedule?.row.state));
+    const stateParsed = SchedulingStateSchema.safeParse(
+      parseJsonCell<unknown>(schedule?.row.state),
+    );
     const state = stateParsed.success ? stateParsed.data : null;
     const reviews = reviewStats(attempt.questionId);
     lines.push(
@@ -454,8 +455,8 @@ export function buildMistakesCsv(tables: Record<string, Row[]>): string {
         userPayload?.user_notes ?? '',
         attempt.difficulty ?? '',
         state?.due.toISOString() ?? '',
-        state?.reps ?? '',
-        state?.lapses ?? '',
+        state && !isCandidateState(state) ? state.reps : '',
+        state && !isCandidateState(state) ? state.lapses : '',
         schedule?.kind ?? '',
         'active',
         reviews.last ?? '',

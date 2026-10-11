@@ -117,6 +117,8 @@ describe('native judge worker', () => {
     expect(execute).toHaveBeenCalledTimes(1);
   });
 
+  // @invariant grading: Late worker results preserve the latest occurrence schedule and count every distinct review
+  // @fails-if late grading overwrites newer memory instead of reverting and replaying it
   it('late grading replays in original order without regressing the latest FSRS time', async () => {
     const db = testDb();
     const older = await nativeJudgeRunFixture(db, { now: new Date(Date.now() - 10 * minute) });
@@ -133,6 +135,8 @@ describe('native judge worker', () => {
     expect(new Date(card.state.last_review).toISOString()).toBe(newer.job.submit.submitted_at);
   });
 
+  // @invariant grading: The worker replays every shared skill rather than just a primary target
+  // @fails-if non-primary shared KC history is silently omitted from replay
   it('late replay includes overlapping KC writes beyond one selected primary target', async () => {
     const db = testDb();
     await seedKc('k1');

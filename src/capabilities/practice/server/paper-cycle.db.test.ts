@@ -602,6 +602,8 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
     }
   });
 
+  // @invariant concurrency: Concurrent paper requests produce one durable execution and one learning receipt
+  // @fails-if concurrent callers charge twice or apply the accepted learning effect twice
   it('YUK-695: concurrent model requests share one durable execution and one accepted receipt', async () => {
     const { db, input } = await modelPaper();
     let release!: () => void;
