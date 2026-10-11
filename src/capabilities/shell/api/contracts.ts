@@ -50,10 +50,30 @@ export const AutoAppliedProposalDigestSchema = z.object({
   }),
 });
 
+// YUK-1404 — additive block-preview detail: true structured counts + bounded
+// learner-facing sub-question / option previews. The preview lists may be
+// shorter than the count fields (named bounds server-side); the counts are
+// null only for legacy blocks without a structured tree. Only label +
+// excerpt/text cross the wire from these items — no answers / analysis /
+// student work ever enters the preview.
+const ProposalBlockSubQuestionPreviewResponseSchema = z.object({
+  label: z.string(),
+  excerpt: z.string(),
+});
+
+const ProposalBlockOptionPreviewResponseSchema = z.object({
+  label: z.string(),
+  text: z.string(),
+});
+
 const ProposalBlockPreviewResponseSchema = z.object({
   id: z.string(),
   label: z.string(),
   excerpt: z.string(),
+  sub_question_count: z.number().int().nullable(),
+  option_count: z.number().int().nullable(),
+  sub_questions: z.array(ProposalBlockSubQuestionPreviewResponseSchema),
+  options: z.array(ProposalBlockOptionPreviewResponseSchema),
 });
 
 const ProposalPresentationResponseSchema = z.object({

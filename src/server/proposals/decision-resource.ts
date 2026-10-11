@@ -131,6 +131,7 @@ export async function createProposalDecision(
         decision: 'accept',
         user_note: input.user_note,
         corrected_payload: input.corrected_payload,
+        confirm_lossy: input.confirm_lossy,
       });
     } else if (input.decision === 'reverse') {
       result = await acceptAiProposal(db, proposalId, {

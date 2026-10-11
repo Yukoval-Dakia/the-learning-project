@@ -155,10 +155,12 @@
     "react-markdown": "^10",
     "rehype-katex": "^7",
     "remark-math": "^6",
+    "remark-parse": "11.0.0",
     "sharp": "^0.35.5",
     "tencentcloud-sdk-nodejs-ocr": "^4.1.322",
     "ts-fsrs": "^5.4.2",
     "undici": "^8.10.2",
+    "unified": "11.0.5",
     "zod": "^4.6.5",
     "zustand": "^5.0.15",
     "@tanstack/react-start": "1.168.60"

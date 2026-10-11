@@ -1,5 +1,9 @@
 import { inArray } from 'drizzle-orm';
+import remarkMath from 'remark-math';
+import remarkParse from 'remark-parse';
+import { unified } from 'unified';
 import type { AiProposalPayloadT } from '@/core/schema/proposal';
+import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db, Tx } from '@/db/client';
 import { question, question_block } from '@/db/schema';
 
@@ -8,11 +12,45 @@ type QuestionEditChange = Extract<AiProposalPayloadT, { kind: 'question_edit' }>
 
 const TITLE_DETAIL_CAP = 48;
 const BLOCK_EXCERPT_CAP = 120;
+// YUK-1404 — named bounds for the additive sub-question / option previews on
+// block previews. Lists carry at most these entries; the *_count fields keep
+// the TRUE structured totals, so a truncated list is always shorter than its
+// count — the UI never mistakes a preview list for the full set.
+const BLOCK_SUB_QUESTION_PREVIEW_MAX = 3;
+const BLOCK_OPTION_PREVIEW_MAX = 4;
+const SUB_QUESTION_EXCERPT_CAP = 80;
+const OPTION_TEXT_CAP = 60;
 
 export interface ProposalBlockPreview {
   id: string;
   label: string;
   excerpt: string;
+  /**
+   * YUK-1404 — TRUE structured totals (never the preview-list lengths). null
+   * when the block has no structured tree (legacy rows) — the UI must not
+   * guess a count it cannot know.
+   */
+  sub_question_count: number | null;
+  option_count: number | null;
+  /** Bounded learner-facing previews; may be shorter than the counts above. */
+  sub_questions: ProposalBlockSubQuestionPreview[];
+  options: ProposalBlockOptionPreview[];
+}
+
+/**
+ * YUK-1404 — bounded sub-question preview: learner label + text excerpt ONLY.
+ * No answers / analysis / student-work flags / figure ids ever enter this
+ * projection (learner-visible read surface).
+ */
+export interface ProposalBlockSubQuestionPreview {
+  label: string;
+  excerpt: string;
+}
+
+/** YUK-1404 — bounded option preview: the option's own label + text ONLY. */
+export interface ProposalBlockOptionPreview {
+  label: string;
+  text: string;
 }
 
 export interface ProposalSummaryItem {
@@ -54,9 +92,220 @@ function textOf(value: unknown): string | null {
   return text.length > 0 ? text : null;
 }
 
+// YUK-1404 P1 — a raw slice could cut inside a math span and leak a dangling
+// `$` / `$$` / `\(` opener or raw TeX into the learner preview. Truncation
+// backs off to just before the span the cap would split (never synthesizing a
+// closing delimiter). Math spans are NOT hand-scanned: they are the position
+// spans of the `inlineMath` / `math` nodes produced by the renderer's own
+// pipeline (unified + remark-parse + remark-math — what react-markdown runs
+// with, micromark 3.1), so the grammar is the actual one: whitespace-padded
+// and digit-adjacent dollars are math, `$$$…$$$` is one span, a `$` after an
+// even run of backslashes opens, unclosed flow `$$` may span blank lines and
+// runs to EOF, code spans/fences win, and only a CommonMark line-anchored
+// ``` / ~~~ run is a fence (inline backticks are not). The explicit legacy
+// `\(...\)` / `\[...\]` forms never reach that parser as math, so they are
+// protected with their ORIGINAL offsets via the renderer normalizer's own
+// grammar (LATEX_DELIMITED in src/ui/lib/math-markdown.tsx, mirrored below):
+// the renderer rewrites exactly those spans into dollar math before parsing.
+// Guard spaces and the display-block reflow exist only in normalized
+// coordinates, so AST spans found there are mapped back piecewise (rewrite
+// interiors are covered by their whole source span) — offsets are never
+// shifted blindly. Preview read-side only: the stored source is never
+// rewritten, and text whose cap touches no active span stays byte-identical
+// to the plain slice.
+
+/** Minimal structural mdast view — only type/children/position are read. */
+interface MathAstNode {
+  type: string;
+  children?: MathAstNode[] | undefined;
+  position?:
+    | { start: { offset?: number | undefined }; end: { offset?: number | undefined } }
+    | undefined;
+}
+
+let mathSpanParser: { parse(text: string): unknown } | null = null;
+
+/** The renderer's markdown→math pipeline (remark-math defaults: single `$` on). */
+function rendererMathParser(): { parse(text: string): unknown } {
+  mathSpanParser ??= unified().use(remarkParse).use(remarkMath) as unknown as {
+    parse(text: string): unknown;
+  };
+  return mathSpanParser;
+}
+
+function collectMathSpans(node: MathAstNode, spans: Array<[number, number]>): void {
+  if (node.type === 'inlineMath' || node.type === 'math') {
+    const start = node.position?.start.offset;
+    const end = node.position?.end.offset;
+    if (typeof start === 'number' && typeof end === 'number' && start < end) {
+      spans.push([start, end]);
+    }
+  }
+  for (const child of node.children ?? []) collectMathSpans(child, spans);
+}
+
+/** Mirror of LATEX_DELIMITED (src/ui/lib/math-markdown.tsx) — keep in lockstep. */
+const LEGACY_MATH_DELIMITED =
+  /(```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`)|(?<!\\)\\\[((?:(?!\n\s*\n)[^`])+?)\\\]|(?<!\\)\\\(((?:(?!\n\s*\n)[^`])+?)\\\)/g;
+
+interface LegacyRewrite {
+  /** Span in the stored source that the renderer would rewrite to dollars. */
+  sourceStart: number;
+  sourceEnd: number;
+  /** Same span in the normalized coordinates the renderer parses. */
+  normalizedStart: number;
+  normalizedEnd: number;
+}
+
+/** Verbatim mirror of the normalizeMathDelimiters replacement callback. */
+function legacyMathReplacement(
+  source: string,
+  match: string,
+  display: string | undefined,
+  inline: string | undefined,
+  offset: number,
+): string {
+  const prev = source.slice(Math.max(0, offset - 2), offset);
+  const before = prev.endsWith('$') || prev === '\\)' || prev === '\\]' ? ' ' : '';
+  const after = source[offset + match.length] === '$' ? ' ' : '';
+  if (display !== undefined) {
+    const lineStart = source.lastIndexOf('\n', offset - 1) + 1;
+    const indent = source.slice(lineStart, offset);
+    if (/^[ \t]*$/.test(indent)) return `$$\n${indent}${display.trim()}\n${indent}$$\n${indent}`;
+    return `${before}$$${display}$$${after}`;
+  }
+  return `${before}$${(inline ?? '').trim()}$${after}`;
+}
+
+/** The text the renderer actually parses, plus where each legacy rewrite landed. */
+function effectiveSourceOf(source: string): { effective: string; rewrites: LegacyRewrite[] } {
+  const rewrites: LegacyRewrite[] = [];
+  if (!source.includes('\\(') && !source.includes('\\[')) {
+    return { effective: source, rewrites };
+  }
+  const parts: string[] = [];
+  let normalizedLength = 0;
+  let sourceCursor = 0;
+  for (const match of source.matchAll(LEGACY_MATH_DELIMITED)) {
+    const [text, code, display, inline] = match;
+    const start = match.index ?? 0;
+    parts.push(source.slice(sourceCursor, start));
+    normalizedLength += start - sourceCursor;
+    if (code === undefined) {
+      const replacement = legacyMathReplacement(source, text, display, inline, start);
+      rewrites.push({
+        sourceStart: start,
+        sourceEnd: start + text.length,
+        normalizedStart: normalizedLength,
+        normalizedEnd: normalizedLength + replacement.length,
+      });
+      parts.push(replacement);
+      normalizedLength += replacement.length;
+    } else {
+      parts.push(text);
+      normalizedLength += text.length;
+    }
+    sourceCursor = start + text.length;
+  }
+  parts.push(source.slice(sourceCursor));
+  return { effective: parts.join(''), rewrites };
+}
+
+/**
+ * Map a math span found in normalized coordinates back to source coordinates.
+ * Pieces inside a rewrite are dropped — that rewrite's whole source span is
+ * already protected; pieces outside are shifted only by the length deltas of
+ * fully-preceding rewrites, so offsets never drift.
+ */
+function mathSpanInSource(
+  span: readonly [number, number],
+  rewrites: readonly LegacyRewrite[],
+): Array<[number, number]> {
+  const pieces: Array<[number, number]> = [];
+  let start = span[0];
+  const end = span[1];
+  for (const rewrite of rewrites) {
+    if (rewrite.normalizedEnd <= start || rewrite.normalizedStart >= end) continue;
+    if (start < rewrite.normalizedStart) pieces.push([start, rewrite.normalizedStart]);
+    start = Math.max(start, rewrite.normalizedEnd);
+    if (start >= end) break;
+  }
+  if (start < end) pieces.push([start, end]);
+  return pieces.map(([from, to]) => {
+    let shift = 0;
+    for (const rewrite of rewrites) {
+      if (rewrite.normalizedEnd <= from) {
+        shift +=
+          rewrite.sourceEnd -
+          rewrite.sourceStart -
+          (rewrite.normalizedEnd - rewrite.normalizedStart);
+      }
+    }
+    return [from + shift, to + shift] as [number, number];
+  });
+}
+
+/** Merged, disjoint active-math spans in SOURCE coordinates. */
+function activeMathSpans(value: string): Array<[number, number]> {
+  if (!value.includes('$') && !value.includes('\\(') && !value.includes('\\[')) return [];
+  const { effective, rewrites } = effectiveSourceOf(value);
+  const spans: Array<[number, number]> = rewrites.map(
+    (rewrite) => [rewrite.sourceStart, rewrite.sourceEnd] as [number, number],
+  );
+  // The parse is the only non-trivial cost, and dollars are its only trigger.
+  // A parse failure must never 500 the read path — fall back to the legacy
+  // spans (the renderer would fail on the same content anyway).
+  if (effective.includes('$')) {
+    try {
+      const astSpans: Array<[number, number]> = [];
+      collectMathSpans(rendererMathParser().parse(effective) as MathAstNode, astSpans);
+      for (const span of astSpans) spans.push(...mathSpanInSource(span, rewrites));
+    } catch {
+      // legacy spans above still protect explicit \(...\) / \[...\]
+    }
+  }
+  spans.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const merged: Array<[number, number]> = [];
+  for (const span of spans) {
+    const last = merged[merged.length - 1];
+    if (last && span[0] <= last[1]) last[1] = Math.max(last[1], span[1]);
+    else merged.push([span[0], span[1]]);
+  }
+  return merged;
+}
+
+/**
+ * Largest cut index ≤ limit that does not split an active math span. When the
+ * raw limit lands strictly inside a span, back off to the span's start; text
+ * with no intersecting span cuts exactly where the old raw slice did.
+ */
+function mathSafeCut(value: string, limit: number): number {
+  for (const [start, end] of activeMathSpans(value)) {
+    if (start < limit && limit < end) return start;
+  }
+  return limit;
+}
+
 function truncate(value: string, cap: number): string {
   if (value.length <= cap) return value;
-  return `${value.slice(0, cap - 1)}…`;
+  return `${value.slice(0, mathSafeCut(value, cap - 1))}…`;
+}
+
+function subQuestionPreview(
+  sub: StructuredQuestionT,
+  index: number,
+): ProposalBlockSubQuestionPreview {
+  return {
+    label: textOf(sub.question_no) ?? `第 ${index + 1} 问`,
+    excerpt: truncate(textOf(sub.prompt_text) ?? '题面暂缺', SUB_QUESTION_EXCERPT_CAP),
+  };
+}
+
+function optionPreview(option: { label: string; text: string }): ProposalBlockOptionPreview {
+  return {
+    label: textOf(option.label) ?? '?',
+    text: truncate(textOf(option.text) ?? '选项暂缺', OPTION_TEXT_CAP),
+  };
 }
 
 function titled(base: string, detail: unknown): string {
@@ -572,10 +821,20 @@ function blockPreview(block: QuestionBlockPreviewRow): ProposalBlockPreview {
   if (questionNo) position.push(`题号 ${questionNo}`);
   if (pageIndex !== undefined) position.push(`第 ${pageIndex + 1} 页`);
   const prompt = textOf(block.structured?.prompt_text) ?? textOf(block.extracted_prompt_md);
+  const tree = block.structured ?? null;
   return {
     id: block.id,
     label: position.join(' · '),
     excerpt: truncate(prompt ?? '题面暂缺', BLOCK_EXCERPT_CAP),
+    // YUK-1404 — true totals; null when the block predates structured storage.
+    sub_question_count: tree ? (tree.sub_questions?.length ?? 0) : null,
+    option_count: tree ? (tree.options?.length ?? 0) : null,
+    sub_questions: (tree?.sub_questions ?? [])
+      .slice(0, BLOCK_SUB_QUESTION_PREVIEW_MAX)
+      .map((sub, index) => subQuestionPreview(sub, index)),
+    options: (tree?.options ?? [])
+      .slice(0, BLOCK_OPTION_PREVIEW_MAX)
+      .map((option) => optionPreview(option)),
   };
 }
 
