@@ -9,13 +9,13 @@
 // resume without provider calls; an unknown paid outcome stays held across new
 // deliveries and is never caught as an ordinary retryable failure.
 
-import { inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { aggregateItemPriorRepDrafts } from '@/core/item-prior-reps';
 import { canonicalHash } from '@/core/migration/canonical';
 import type { ItemPriorDraftT } from '@/core/schema/item_prior';
 
 import type { Db, Tx } from '@/db/client';
-import { knowledge, question } from '@/db/schema';
+import { item_calibration, knowledge, question } from '@/db/schema';
 import { parseItemPriorLlasaOutput, parseItemPriorOutput } from '@/server/ai/item-prior';
 import { applyItemPrior } from '@/server/mastery/item-calibration';
 import type { SubjectProfile } from '@/subjects/profile';
@@ -343,6 +343,61 @@ export interface ItemPriorRepEffectPort {
 
 // ─── YUK-1355 — staged per-rep execution / parse / aggregate / application ───
 
+// Parent-review 2026-10-11: durable unknowns are NOT ordinary failures. A
+// store/receipt/application error at or after a paid send must propagate (or
+// surface as an explicitly held, store-backed state) so the obligation stays
+// visible to later reconciliation; it must never be swallowed into a generic
+// per-item skip or a completed member result.
+
+/** Durable-store access failed before any send this run (lookup/admit). */
+export class ItemPriorDurableStoreError extends Error {
+  readonly code = 'ITEM_PRIOR_DURABLE_STORE';
+
+  constructor(
+    message: string,
+    readonly reason?: unknown,
+  ) {
+    super(message);
+    this.name = 'ItemPriorDurableStoreError';
+  }
+}
+
+/**
+ * A paid effect was dispatched (or its output received) but the receipt could
+ * not be confirmed persisted. The outcome AND the receipt state are both
+ * unresolved; the obligation stays open for reconciliation. Never isolatable.
+ */
+export class ItemPriorReceiptPersistenceError extends Error {
+  readonly code = 'ITEM_PRIOR_RECEIPT_PERSISTENCE';
+
+  constructor(
+    message: string,
+    readonly reason?: unknown,
+    readonly identity?: ItemPriorRepIdentity,
+  ) {
+    super(message);
+    this.name = 'ItemPriorReceiptPersistenceError';
+  }
+}
+
+/**
+ * Application write/read-back failed after every rep resolved. All paid
+ * effects are already receipted, so a later delivery replays them for free,
+ * but the application outcome itself is unknown and must stay visible.
+ */
+export class ItemPriorApplicationError extends Error {
+  readonly code = 'ITEM_PRIOR_APPLICATION';
+
+  constructor(
+    message: string,
+    readonly reason?: unknown,
+    readonly questionId?: string,
+  ) {
+    super(message);
+    this.name = 'ItemPriorApplicationError';
+  }
+}
+
 /** Outcome of one rep after this seam is done with it. */
 export type ItemPriorRepOutcome =
   /** Completed response parsed into a draft (receipt recorded). */
@@ -405,8 +460,15 @@ function outcomeFromRecord(
  * Execute one rep through the shared port. Resume first: an existing record is
  * reused as-is and the provider is never called. Otherwise the rep must be
  * admitted; a provider error records an `unknown` receipt (an exception does
- * not prove that no paid effect occurred) and stays held — it is never
- * re-sent here and never surfaces as an ordinary retryable failure.
+ * not prove that no paid effect occurred) and returns held; a completed
+ * response records an immutable `output` receipt and parses deterministically.
+ *
+ * Error discipline (parent review 2026-10-11): store failures before any send
+ * and receipt-persistence failures at/after a send are thrown as dedicated
+ * error classes — they are durable unknowns the caller must propagate, never
+ * isolate as ordinary per-item failures. Provider errors themselves are NOT
+ * thrown: they become a recorded unknown receipt (held) when persistence
+ * succeeds, or an `ItemPriorReceiptPersistenceError` when it does not.
  */
 export async function executeItemPriorRep(
   work: ItemPriorPreparedWork,
@@ -414,13 +476,29 @@ export async function executeItemPriorRep(
   deps: ItemPriorRepExecutionDeps,
 ): Promise<ItemPriorRepOutcome> {
   const identity = itemPriorRepIdentity(work, repIndex);
-  const record = await deps.port.lookupRep(identity);
+  let record: ItemPriorRepRecord | undefined;
+  try {
+    record = await deps.port.lookupRep(identity);
+  } catch (err) {
+    throw new ItemPriorDurableStoreError(
+      `lookupRep failed for question ${identity.questionId} rep ${repIndex}; no send happened this run, but prior obligations are unreadable`,
+      err,
+    );
+  }
   if (record) return outcomeFromRecord(work.method, record);
 
-  const admission = await deps.port.admitRep(identity, {
-    taskName: work.taskName,
-    inputDigest: work.inputDigest,
-  });
+  let admission: ItemPriorRepAdmission;
+  try {
+    admission = await deps.port.admitRep(identity, {
+      taskName: work.taskName,
+      inputDigest: work.inputDigest,
+    });
+  } catch (err) {
+    throw new ItemPriorDurableStoreError(
+      `admitRep failed for question ${identity.questionId} rep ${repIndex}; no send happened this run`,
+      err,
+    );
+  }
   if (admission.decision === 'refused') return { state: 'pending' };
   if (admission.decision === 'held') return { state: 'held' };
 
@@ -433,13 +511,29 @@ export async function executeItemPriorRep(
   } catch (err) {
     // Persist the unfinished obligation before returning: the send may have
     // happened, so the durable record — not this process — owns the outcome.
-    await deps.port.completeRep(identity, {
-      kind: 'unknown',
-      reason: err instanceof Error ? err.message : String(err),
-    });
+    try {
+      await deps.port.completeRep(identity, {
+        kind: 'unknown',
+        reason: err instanceof Error ? err.message : String(err),
+      });
+    } catch (receiptErr) {
+      throw new ItemPriorReceiptPersistenceError(
+        `send failed AND unknown-receipt persistence failed for question ${identity.questionId} rep ${repIndex}; paid outcome and receipt state are both unresolved`,
+        receiptErr,
+        identity,
+      );
+    }
     return { state: 'held' };
   }
-  await deps.port.completeRep(identity, { kind: 'output', outputText });
+  try {
+    await deps.port.completeRep(identity, { kind: 'output', outputText });
+  } catch (err) {
+    throw new ItemPriorReceiptPersistenceError(
+      `output received but receipt persistence unconfirmed for question ${identity.questionId} rep ${repIndex}; treat as an unresolved obligation`,
+      err,
+      identity,
+    );
+  }
   return parseStagedItemPriorOutput(work.method, outputText);
 }
 
@@ -500,23 +594,124 @@ export async function runItemPriorItemRepStages(
   return settleItemPriorStagedItem(work, outcomes);
 }
 
+/** Persisted hard-track columns the application seam compares against. */
+export interface ItemPriorApplicationRowSnapshot {
+  readonly b: number | null;
+  readonly bAnchor: number | null;
+  readonly confidence: number | null;
+  readonly source: string | null;
+}
+
+export type ItemPriorApplicationVerification =
+  /** Domain row now matches this staged draft exactly (see caveat below). */
+  | { readonly status: 'applied' }
+  /** A different hard row already exists; this attempt's draft was NOT persisted. */
+  | { readonly status: 'superseded'; readonly existing: ItemPriorApplicationRowSnapshot }
+  /** Staged item is not ready — nothing to apply. */
+  | { readonly status: 'not-applicable' };
+
+function stagedRowMatches(
+  row: ItemPriorApplicationRowSnapshot,
+  staged: ItemPriorStagedItem,
+): boolean {
+  const draft = staged.draft;
+  return (
+    draft !== undefined &&
+    row.b === draft.b_logit &&
+    row.bAnchor === draft.b_logit &&
+    row.confidence === draft.confidence &&
+    row.source === staged.source
+  );
+}
+
+async function readItemPriorHardRow(
+  db: Db | Tx,
+  questionId: string,
+): Promise<ItemPriorApplicationRowSnapshot | null> {
+  const [row] = await db
+    .select({
+      b: item_calibration.b,
+      bAnchor: item_calibration.b_anchor,
+      confidence: item_calibration.confidence,
+      source: item_calibration.source,
+    })
+    .from(item_calibration)
+    .where(and(eq(item_calibration.question_id, questionId), eq(item_calibration.track, 'hard')));
+  return row ?? null;
+}
+
 /**
- * Application seam: write the hard-track anchor iff every rep resolved and a
- * draft survived. Uses the retained writer (onConflictDoNothing), so replaying
- * a ready item after a crash between application and acknowledgement is a
- * no-op; receipt-bound dispositive comparison stays with lane B / the parent.
+ * Application seam with real verification (parent review 2026-10-11):
+ * `applyItemPrior` is conflict-ignoring and returns void, so a bare `true`
+ * proved nothing. This seam reads the hard row back and compares it against
+ * the staged draft (b, b_anchor, confidence, source — exact double round-trip):
+ *
+ * - existing row already matching → `applied` (idempotent replay of the same
+ *   staged result);
+ * - existing row differing → `superseded`: another writer's anchor holds and
+ *   is never overwritten — this attempt's draft was not persisted;
+ * - no row → write once via the retained writer, then re-read; a missing or
+ *   differing row after a successful write escalates to `superseded` /
+ *   `ItemPriorApplicationError`.
+ *
+ * CAVEAT (no applied guarantee without the shared protocol): `applied` proves
+ * the domain state equals this staged draft, not causal authorship — an
+ * identical row written earlier by another attempt is indistinguishable until
+ * lane B's receipt-bound comparison exists.
+ *
+ * Write/read-back failures throw `ItemPriorApplicationError`: all reps are
+ * already receipted, so a later delivery replays them for free, but the
+ * application outcome itself is unknown and must stay visible.
  */
 export async function commitItemPriorStagedCalibration(
   db: Db | Tx,
   staged: ItemPriorStagedItem,
-): Promise<boolean> {
-  if (staged.status !== 'ready' || !staged.draft) return false;
-  await applyItemPrior(db, {
-    questionId: staged.questionId,
-    draft: staged.draft,
-    source: staged.source,
-  });
-  return true;
+): Promise<ItemPriorApplicationVerification> {
+  if (staged.status !== 'ready' || !staged.draft) return { status: 'not-applicable' };
+  const readBack = async (): Promise<ItemPriorApplicationRowSnapshot | null> => {
+    try {
+      return await readItemPriorHardRow(db, staged.questionId);
+    } catch (err) {
+      throw new ItemPriorApplicationError(
+        `hard-row read-back failed for question ${staged.questionId}; application outcome unknown`,
+        err,
+        staged.questionId,
+      );
+    }
+  };
+
+  const existing = await readBack();
+  if (existing) {
+    return stagedRowMatches(existing, staged)
+      ? { status: 'applied' }
+      : { status: 'superseded', existing };
+  }
+
+  try {
+    await applyItemPrior(db, {
+      questionId: staged.questionId,
+      draft: staged.draft,
+      source: staged.source,
+    });
+  } catch (err) {
+    throw new ItemPriorApplicationError(
+      `applyItemPrior failed for question ${staged.questionId}; application outcome unknown`,
+      err,
+      staged.questionId,
+    );
+  }
+
+  const after = await readBack();
+  if (!after) {
+    throw new ItemPriorApplicationError(
+      `write returned success but no hard row is readable for question ${staged.questionId}`,
+      undefined,
+      staged.questionId,
+    );
+  }
+  return stagedRowMatches(after, staged)
+    ? { status: 'applied' }
+    : { status: 'superseded', existing: after };
 }
 
 /**

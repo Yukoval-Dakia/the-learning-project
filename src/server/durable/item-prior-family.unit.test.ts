@@ -1,7 +1,8 @@
 // Offline checks of the blocked candidate, not DBOS crash/recovery acceptance.
 // The execution-path checks drive the per-rep seams behind a protocol-faithful
 // port double; default mock implementations keep the blocked-candidate proofs
-// (no paid dispatch, no profile resolution, no calibration write).
+// (no paid dispatch, no calibration write). Admission resolves subject profiles
+// on purpose — that is the frozen-input preparation, not paid execution.
 
 import type { SQL } from 'drizzle-orm';
 import { PgDialect } from 'drizzle-orm/pg-core';
@@ -18,7 +19,7 @@ import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/practice/se
 import { makePracticeTaskRunFn } from '@/capabilities/practice/server/task-runtime';
 import { stableStringify } from '@/core/migration/canonical';
 import type { Db, Tx } from '@/db/client';
-import { knowledge, question } from '@/db/schema';
+import { item_calibration, knowledge, question } from '@/db/schema';
 import { applyItemPrior } from '@/server/mastery/item-calibration';
 import { defaultSubjectProfile } from '@/subjects/profile';
 import {
@@ -45,17 +46,26 @@ const makeRunFnMock = vi.mocked(makePracticeTaskRunFn);
 const resolveProfileMock = vi.mocked(resolveSubjectProfileForKnowledgeIds);
 const applyItemPriorMock = vi.mocked(applyItemPrior);
 
+/** In-memory hard-row store the (overridden) applyItemPrior mock writes into. */
+let calibrationRows: Array<{
+  question_id: string;
+  b: number;
+  bAnchor: number;
+  confidence: number;
+  source: string;
+}>;
+
 beforeEach(() => {
   // Clear call records only (implementations below are re-set every test).
   vi.clearAllMocks();
-  // Defaults preserve the blocked-candidate contract; execution-path tests
-  // override exactly the seams they drive.
+  calibrationRows = [];
+  // Defaults preserve the blocked-candidate contract: no paid dispatch, no
+  // calibration write. Admission resolves subject profiles on purpose —
+  // frozen paid inputs, not paid execution.
   makeRunFnMock.mockImplementation(() => {
     throw new Error('Paid dispatch must remain blocked');
   });
-  resolveProfileMock.mockImplementation(async () => {
-    throw new Error('Candidate must not resolve paid execution context');
-  });
+  resolveProfileMock.mockResolvedValue(defaultSubjectProfile);
   applyItemPriorMock.mockImplementation(async () => {
     throw new Error('Candidate must not write calibration');
   });
@@ -87,6 +97,33 @@ function database(
     },
   ];
   let selects = 0;
+  // Shared read chain: admission uses it through tx, application verification
+  // through db. item_calibration reads return the test store as-is (the real
+  // query filters question_id + track; tests keep at most one applied row
+  // readable at a time).
+  const selectChain = () => ({
+    from: (table: unknown) => ({
+      where: () => {
+        if (table === question) {
+          selects++;
+          return { limit: async () => structuredClone(candidates) };
+        }
+        if (table === knowledge) return Promise.resolve([{ id: 'kc_boundary', name: '边界条件' }]);
+        if (table === item_calibration)
+          return Promise.resolve(
+            structuredClone(
+              calibrationRows.map(({ b, bAnchor, confidence, source }) => ({
+                b,
+                bAnchor,
+                confidence,
+                source,
+              })),
+            ),
+          );
+        throw new Error('Unexpected table');
+      },
+    }),
+  });
   const tx = {
     execute: async (query: SQL) => {
       const { sql: text } = new PgDialect().sqlToQuery(query);
@@ -109,23 +146,12 @@ function database(
       if (text.includes('pgboss.job')) return [{ state: overrides.bossState }];
       throw new Error('Unexpected database operation');
     },
-    select: () => ({
-      from: (table: unknown) => ({
-        where: () => {
-          if (table === question) {
-            selects++;
-            return { limit: async () => structuredClone(candidates) };
-          }
-          if (table === knowledge)
-            return Promise.resolve([{ id: 'kc_boundary', name: '边界条件' }]);
-          throw new Error('Unexpected table');
-        },
-      }),
-    }),
+    select: selectChain,
   };
   // Only this read-chain test boundary substitutes for a Drizzle database.
   const db = {
     transaction: async (fn: (tx: Tx) => Promise<ItemPriorAdmission>) => fn(tx as unknown as Tx),
+    select: selectChain,
   } as unknown as Db;
   return { db, candidates, selects: () => selects };
 }
@@ -222,15 +248,22 @@ class PortDouble implements ItemPriorRepEffectPort {
   readonly admits: Array<{ identity: ItemPriorRepIdentity; decision: ItemPriorRepAdmission }> = [];
   readonly completes: Array<{ identity: ItemPriorRepIdentity; receipt: ItemPriorRepReceipt }> = [];
   admitOverride: ((identity: ItemPriorRepIdentity) => ItemPriorRepAdmission) | undefined;
+  failLookup: Error | undefined;
+  failAdmit: Error | undefined;
+  failComplete: Error | undefined;
 
   getRecord(identity: ItemPriorRepIdentity): ItemPriorRepRecord | undefined {
     const record = this.records.get(stableStringify(identity));
     return record === undefined ? undefined : structuredClone(record);
   }
 
-  lookupRep: ItemPriorRepEffectPort['lookupRep'] = async (identity) => this.getRecord(identity);
+  lookupRep: ItemPriorRepEffectPort['lookupRep'] = async (identity) => {
+    if (this.failLookup) throw this.failLookup;
+    return this.getRecord(identity);
+  };
 
   admitRep: ItemPriorRepEffectPort['admitRep'] = async (identity) => {
+    if (this.failAdmit) throw this.failAdmit;
     const decision: ItemPriorRepAdmission = this.records.has(stableStringify(identity))
       ? { decision: 'held' }
       : (this.admitOverride?.(identity) ?? { decision: 'admitted' });
@@ -239,6 +272,7 @@ class PortDouble implements ItemPriorRepEffectPort {
   };
 
   completeRep: ItemPriorRepEffectPort['completeRep'] = async (identity, receipt) => {
+    if (this.failComplete) throw this.failComplete;
     const key = stableStringify(identity);
     if (this.records.has(key)) {
       throw new Error('PortDouble: immutable-receipt violation (second completion)');
@@ -268,12 +302,24 @@ function text(b: number, confidence: number): string {
   return JSON.stringify({ b_logit: b, confidence, reasoning: '嵌套分类讨论与边界检查' });
 }
 
+/** Overriding applyItemPrior to write into the in-memory hard-row store. */
+function wireCalibrationWriter() {
+  applyItemPriorMock.mockImplementation(async (_db, input) => {
+    calibrationRows.push({
+      question_id: input.questionId,
+      b: input.draft.b_logit,
+      bAnchor: input.draft.b_logit,
+      confidence: input.draft.confidence,
+      source: input.source ?? 'llm_prior',
+    });
+  });
+}
+
 describe('item prior durable member execution behind the shared port', () => {
   // @invariant grading: frozen query order drives execution and only settled items are applied
   // @fails-if held items throw, block later items, or get written despite unresolved reps
   it('applies settled items in frozen query order and counts held items without throwing', async () => {
-    resolveProfileMock.mockResolvedValue(defaultSubjectProfile);
-    applyItemPriorMock.mockImplementation(async () => {});
+    wireCalibrationWriter();
     const fixture = database({ candidates: [row('q_a'), row('q_b')] });
     const port = new PortDouble();
     const outputs = [
@@ -304,6 +350,7 @@ describe('item prior durable member execution behind the shared port', () => {
     expect(result.identity).toEqual(request); // delivery identity reported, distinct from rep identities
     expect(result.considered).toBe(2);
     expect(result.applied).toBe(1);
+    expect(result.superseded).toBe(0);
     expect(result.held).toBe(1);
     expect(providerCalls).toBe(6);
     expect(applyItemPriorMock.mock.calls.map(([, input]) => input.questionId)).toEqual(['q_a']);
@@ -314,13 +361,15 @@ describe('item prior durable member execution behind the shared port', () => {
       ['q_b', 'held'],
     ]);
     expect(makeRunFnMock).not.toHaveBeenCalled(); // no manufactured default dispatch
+    // Frozen paid inputs: profiles resolved exactly once per candidate during
+    // admission; execution never re-resolves (no recovery input drift).
+    expect(resolveProfileMock).toHaveBeenCalledTimes(2);
   });
 
   // @invariant durability: an unknown rep stays held across a new nightly delivery without re-send
   // @fails-if a later delivery re-admits or re-sends the unknown rep, or treats it as retryable
   it('keeps an unknown rep held across a new nightly delivery without provider re-send', async () => {
-    resolveProfileMock.mockResolvedValue(defaultSubjectProfile);
-    applyItemPriorMock.mockImplementation(async () => {});
+    wireCalibrationWriter();
     const night1 = database({ candidates: [row('q_hold')] });
     const port = new PortDouble();
     const outputs = [
@@ -380,20 +429,85 @@ describe('item prior durable member execution behind the shared port', () => {
     ]);
   });
 
-  // @invariant concurrency: a preparation failure isolates its item without blocking later items
-  // @fails-if an item-level preparation error aborts the member or is miscounted as held/applied
-  it('isolates a preparation failure per item without blocking later items', async () => {
-    resolveProfileMock
-      .mockImplementationOnce(async () => {
-        throw new Error('profile read failed');
-      })
-      .mockResolvedValue(defaultSubjectProfile);
-    applyItemPriorMock.mockImplementation(async () => {});
-    const fixture = database({ candidates: [row('q_a'), row('q_b')] });
+  // @invariant durability: a receipt that cannot be persisted after a paid send propagates
+  // @fails-if the member swallows it into skippedError or returns an ordinary result over it
+  it('propagates a receipt-persistence failure instead of isolating it', async () => {
+    const fixture = database({ candidates: [row('q_receipt')] });
+    const port = new PortDouble();
+    port.failComplete = new Error('receipt write failed');
+    const runTaskFn = async () => {
+      throw new Error('dispatch raised; outcome unknown');
+    };
+    await expect(
+      runItemPriorDurableMemberExecution({
+        db: fixture.db,
+        steps: steps(),
+        request,
+        port,
+        runTaskFn,
+        gateEpoch: noGate,
+      }),
+    ).rejects.toMatchObject({ code: 'ITEM_PRIOR_RECEIPT_PERSISTENCE' });
+    expect(applyItemPriorMock).not.toHaveBeenCalled();
+  });
+
+  // @invariant durability: a durable-store failure before any send propagates as its own class
+  // @fails-if store errors are isolated per item, completed over, or trigger a provider call
+  it('propagates a durable-store failure without any send', async () => {
+    const fixture = database({ candidates: [row('q_store')] });
+    const port = new PortDouble();
+    port.failLookup = new Error('store unreachable');
+    const hostile = async (): Promise<{ text: string }> => {
+      throw new Error('provider must not be called');
+    };
+    await expect(
+      runItemPriorDurableMemberExecution({
+        db: fixture.db,
+        steps: steps(),
+        request,
+        port,
+        runTaskFn: hostile,
+        gateEpoch: noGate,
+      }),
+    ).rejects.toMatchObject({ code: 'ITEM_PRIOR_DURABLE_STORE' });
+  });
+
+  // @invariant durability: an application unknown propagates after all reps resolved
+  // @fails-if the write error is isolated as skippedError or reported as applied
+  it('propagates an application failure for a settled item', async () => {
+    const fixture = database({ candidates: [row('q_apply')] });
     const port = new PortDouble();
     const outputs = [text(0.2, 0.3), text(0.8, 0.6), text(1.2, 0.5)];
     const runTaskFn = async () => ({ text: outputs.shift() ?? '' });
+    applyItemPriorMock.mockImplementation(async () => {
+      throw new Error('connection dropped mid-commit');
+    });
+    await expect(
+      runItemPriorDurableMemberExecution({
+        db: fixture.db,
+        steps: steps(),
+        request,
+        port,
+        runTaskFn,
+        gateEpoch: noGate,
+      }),
+    ).rejects.toMatchObject({ code: 'ITEM_PRIOR_APPLICATION' });
+  });
 
+  // @invariant grading: another writer's differing hard row is reported superseded, never overwritten
+  // @fails-if conflict-ignore is trusted as this attempt's applied effect
+  it('counts superseded for a foreign hard row and does not write', async () => {
+    calibrationRows.push({
+      question_id: 'q_super',
+      b: -9.9,
+      bAnchor: -9.9,
+      confidence: 0.1,
+      source: 'fixed_anchor',
+    });
+    const fixture = database({ candidates: [row('q_super')] });
+    const port = new PortDouble();
+    const outputs = [text(0.2, 0.3), text(0.8, 0.6), text(1.2, 0.5)];
+    const runTaskFn = async () => ({ text: outputs.shift() ?? '' });
     const result = await runItemPriorDurableMemberExecution({
       db: fixture.db,
       steps: steps(),
@@ -402,10 +516,10 @@ describe('item prior durable member execution behind the shared port', () => {
       runTaskFn,
       gateEpoch: noGate,
     });
-
-    expect(result.considered).toBe(2);
-    expect(result.skippedError).toBe(1);
-    expect(result.applied).toBe(1);
-    expect(applyItemPriorMock.mock.calls.map(([, input]) => input.questionId)).toEqual(['q_b']);
+    expect(result.applied).toBe(0);
+    expect(result.superseded).toBe(1);
+    expect(result.items[0]?.status).toBe('ready'); // staged resolution is independent of application
+    expect(applyItemPriorMock).not.toHaveBeenCalled();
+    expect(calibrationRows).toHaveLength(1); // foreign row untouched
   });
 });

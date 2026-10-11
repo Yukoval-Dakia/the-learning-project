@@ -5,13 +5,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { runItemPriorBackfill } from '@/capabilities/practice/jobs/item_prior_backfill';
 import { stableStringify } from '@/core/migration/canonical';
+import type { ItemPriorDraftT } from '@/core/schema/item_prior';
 import type { Db } from '@/db/client';
-import { knowledge, question } from '@/db/schema';
+import { item_calibration, knowledge, question } from '@/db/schema';
 import { parseItemPriorLlasaOutput, parseItemPriorOutput } from '@/server/ai/item-prior';
 import { applyItemPrior } from '@/server/mastery/item-calibration';
 import {
+  ItemPriorApplicationError,
   type ItemPriorCandidateFrozen,
+  ItemPriorDurableStoreError,
   type ItemPriorPreparedWork,
+  ItemPriorReceiptPersistenceError,
   type ItemPriorRepAdmission,
   type ItemPriorRepEffectPort,
   type ItemPriorRepIdentity,
@@ -42,6 +46,8 @@ function candidate(id: string): ItemPriorCandidateFrozen {
 
 function database(candidates: ItemPriorCandidateFrozen[]): Db {
   // Test-only Drizzle read-chain double; no real connection or global client.
+  // item_calibration reads return the test store as-is (the real query filters
+  // question_id + track; tests keep at most one applied row readable at a time).
   return {
     select: () => ({
       from: (table: unknown) => ({
@@ -50,6 +56,17 @@ function database(candidates: ItemPriorCandidateFrozen[]): Db {
             return { limit: async (limit: number) => candidates.slice(0, limit) };
           if (table === knowledge)
             return Promise.resolve([{ id: 'kc_boundary', name: '边界条件' }]);
+          if (table === item_calibration)
+            return Promise.resolve(
+              structuredClone(
+                calibrationRows.map(({ b, bAnchor, confidence, source }) => ({
+                  b,
+                  bAnchor,
+                  confidence,
+                  source,
+                })),
+              ),
+            );
           throw new Error('Unexpected table');
         },
       }),
@@ -61,18 +78,41 @@ function text(b: number, confidence: number) {
   return JSON.stringify({ b_logit: b, confidence, reasoning: '嵌套分类讨论与边界检查' });
 }
 
+/** In-memory hard-row store the mocked applyItemPrior writes into. */
+let calibrationRows: Array<{
+  question_id: string;
+  b: number;
+  bAnchor: number;
+  confidence: number;
+  source: string;
+}>;
+
 beforeEach(() => {
   vi.clearAllMocks();
+  calibrationRows = [];
+  vi.mocked(applyItemPrior).mockImplementation(async (_db, input) => {
+    calibrationRows.push({
+      question_id: input.questionId,
+      b: input.draft.b_logit,
+      bAnchor: input.draft.b_logit,
+      confidence: input.draft.confidence,
+      source: input.source ?? 'llm_prior',
+    });
+  });
 });
 
 /** Test-only stand-in for lane B's durable store. Records persist for the
  * double's lifetime (across "deliveries"), completion is single-shot, and the
- * key is the work identity — never scheduler delivery identity. */
+ * key is the work identity — never scheduler delivery identity. The fail*
+ * fields inject durable-store failures to exercise error classification. */
 class PortDouble implements ItemPriorRepEffectPort {
   readonly records = new Map<string, ItemPriorRepRecord>();
   readonly admits: Array<{ identity: ItemPriorRepIdentity; decision: ItemPriorRepAdmission }> = [];
   readonly completes: Array<{ identity: ItemPriorRepIdentity; receipt: ItemPriorRepReceipt }> = [];
   admitOverride: ((identity: ItemPriorRepIdentity) => ItemPriorRepAdmission) | undefined;
+  failLookup: Error | undefined;
+  failAdmit: Error | undefined;
+  failComplete: Error | undefined;
 
   setRecord(identity: ItemPriorRepIdentity, record: ItemPriorRepRecord): void {
     this.records.set(stableStringify(identity), structuredClone(record));
@@ -83,9 +123,13 @@ class PortDouble implements ItemPriorRepEffectPort {
     return record === undefined ? undefined : structuredClone(record);
   }
 
-  lookupRep: ItemPriorRepEffectPort['lookupRep'] = async (identity) => this.getRecord(identity);
+  lookupRep: ItemPriorRepEffectPort['lookupRep'] = async (identity) => {
+    if (this.failLookup) throw this.failLookup;
+    return this.getRecord(identity);
+  };
 
   admitRep: ItemPriorRepEffectPort['admitRep'] = async (identity) => {
+    if (this.failAdmit) throw this.failAdmit;
     const decision: ItemPriorRepAdmission = this.records.has(stableStringify(identity))
       ? { decision: 'held' }
       : (this.admitOverride?.(identity) ?? { decision: 'admitted' });
@@ -94,6 +138,7 @@ class PortDouble implements ItemPriorRepEffectPort {
   };
 
   completeRep: ItemPriorRepEffectPort['completeRep'] = async (identity, receipt) => {
+    if (this.failComplete) throw this.failComplete;
     const key = stableStringify(identity);
     if (this.records.has(key)) {
       throw new Error('PortDouble: immutable-receipt violation (second completion)');
@@ -229,7 +274,9 @@ describe('item prior staged rep execution', () => {
       'unknown',
       'output',
     ]);
-    expect(await commitItemPriorStagedCalibration(undefined as unknown as Db, staged)).toBe(false);
+    expect(await commitItemPriorStagedCalibration(undefined as unknown as Db, staged)).toEqual({
+      status: 'not-applicable',
+    });
     expect(vi.mocked(applyItemPrior)).not.toHaveBeenCalled();
   });
 
@@ -270,7 +317,9 @@ describe('item prior staged rep execution', () => {
     expect(staged.status).toBe('ready');
     expect(staged.draft?.b_logit).toBe(0.8); // median of 0.2 / 0.8 / 1.2
     expect(staged.draft?.confidence).toBe(0.5); // median of 0.3 / 0.5 / 0.6
-    expect(await commitItemPriorStagedCalibration(database([]), staged)).toBe(true);
+    expect(await commitItemPriorStagedCalibration(database([]), staged)).toEqual({
+      status: 'applied',
+    });
     expect(vi.mocked(applyItemPrior)).toHaveBeenCalledTimes(1);
     expect(vi.mocked(applyItemPrior).mock.calls[0]?.[1]).toEqual({
       questionId: 'q_stage',
@@ -328,7 +377,9 @@ describe('item prior staged rep execution', () => {
     expect(staged.status).toBe('incomplete');
     expect(staged.pendingReps).toEqual([0, 1, 2]);
     expect(port.completes).toHaveLength(0);
-    expect(await commitItemPriorStagedCalibration(undefined as unknown as Db, staged)).toBe(false);
+    expect(await commitItemPriorStagedCalibration(undefined as unknown as Db, staged)).toEqual({
+      status: 'not-applicable',
+    });
   });
 
   // @invariant durability: an existing unresolved claim holds the item without a second physical send
@@ -355,7 +406,9 @@ describe('item prior staged rep execution', () => {
     expect(staged.status).toBe('no-anchor');
     expect(staged.repOutcomes.every((o) => o.state === 'dropped')).toBe(true);
     expect(port.completes.every(({ receipt }) => receipt.kind === 'output')).toBe(true);
-    expect(await commitItemPriorStagedCalibration(undefined as unknown as Db, staged)).toBe(false);
+    expect(await commitItemPriorStagedCalibration(undefined as unknown as Db, staged)).toEqual({
+      status: 'not-applicable',
+    });
     expect(vi.mocked(applyItemPrior)).not.toHaveBeenCalled();
   });
 
@@ -435,5 +488,157 @@ describe('retained item_prior_backfill consumer', () => {
     expect(writes[0]?.draft.confidence).toBeCloseTo(0.4, 10);
     expect(writes[1]?.draft.b_logit).toBe(1.4);
     expect(writes[1]?.draft.confidence).toBe(0.5);
+  });
+});
+
+describe('durable unknown classification', () => {
+  // @invariant durability: a store read failure before any send propagates as a durable-store error
+  // @fails-if lookupRep failures are swallowed, isolated per item, or trigger a provider call
+  it('propagates a lookupRep failure without any send', async () => {
+    const work = await preparedWork();
+    const port = new PortDouble();
+    port.failLookup = new Error('store unreachable');
+    const lookupError = await runItemPriorItemRepStages(work, {
+      port,
+      runTaskFn: hostileProvider,
+    }).then(
+      () => undefined,
+      (err: unknown) => err,
+    );
+    expect(lookupError).toBeInstanceOf(ItemPriorDurableStoreError);
+    expect(lookupError).toMatchObject({ code: 'ITEM_PRIOR_DURABLE_STORE' });
+    expect(port.admits).toHaveLength(0);
+  });
+
+  // @invariant durability: an admission failure propagates instead of being treated as refusal or a send
+  // @fails-if admitRep failures become pending/held outcomes or trigger a provider call
+  it('propagates an admitRep failure without any send', async () => {
+    const work = await preparedWork();
+    const port = new PortDouble();
+    port.failAdmit = new Error('claim store write failed');
+    const admitError = await runItemPriorItemRepStages(work, {
+      port,
+      runTaskFn: hostileProvider,
+    }).then(
+      () => undefined,
+      (err: unknown) => err,
+    );
+    expect(admitError).toBeInstanceOf(ItemPriorDurableStoreError);
+    expect(admitError).toMatchObject({ code: 'ITEM_PRIOR_DURABLE_STORE' });
+    expect(port.admits).toHaveLength(0);
+  });
+
+  // @invariant durability: send failed AND the unknown receipt could not be persisted — both unresolved
+  // @fails-if the rep settles as held/dropped/skipped instead of propagating a receipt-persistence error
+  it('propagates when the unknown receipt cannot be persisted after a failed send', async () => {
+    const work = await preparedWork();
+    const port = new PortDouble();
+    port.failComplete = new Error('receipt write failed');
+    const provider = queuedProvider([new Error('dispatch raised; outcome unknown')]);
+    const error = await runItemPriorItemRepStages(work, {
+      port,
+      runTaskFn: provider.runTaskFn,
+    }).then(
+      () => undefined,
+      (err: unknown) => err,
+    );
+    expect(error).toBeInstanceOf(ItemPriorReceiptPersistenceError);
+    expect(error).toMatchObject({ code: 'ITEM_PRIOR_RECEIPT_PERSISTENCE' });
+    // The obligation is identifiable for reconciliation.
+    expect((error as ItemPriorReceiptPersistenceError).identity).toEqual(
+      itemPriorRepIdentity(work, 0),
+    );
+  });
+
+  // @invariant durability: output received but receipt persistence unconfirmed is an unresolved obligation
+  // @fails-if the parsed draft is returned without a confirmed receipt
+  it('propagates when an output receipt cannot be persisted', async () => {
+    const work = await preparedWork();
+    const port = new PortDouble();
+    port.failComplete = new Error('receipt write failed');
+    const provider = queuedProvider([text(0.4, 0.5)]);
+    await expect(
+      runItemPriorItemRepStages(work, { port, runTaskFn: provider.runTaskFn }),
+    ).rejects.toMatchObject({ code: 'ITEM_PRIOR_RECEIPT_PERSISTENCE' });
+    expect(port.records.size).toBe(0); // nothing was confirmed persisted
+  });
+});
+
+describe('application verification seam', () => {
+  /** A ready staged item with surviving drafts b ∈ {0.2, 0.8, 1.2} → median 0.8. */
+  async function readyStagedItem(): Promise<{
+    staged: Awaited<ReturnType<typeof runItemPriorItemRepStages>>;
+    expectedDraft: ItemPriorDraftT;
+  }> {
+    const work = await preparedWork();
+    const port = new PortDouble();
+    const outputs = [text(0.2, 0.3), text(1.2, 0.5), text(0.8, 0.6)];
+    for (const [repIndex, outputText] of outputs.entries()) {
+      port.setRecord(itemPriorRepIdentity(work, repIndex), { state: 'output', outputText });
+    }
+    const staged = await runItemPriorItemRepStages(work, { port, runTaskFn: hostileProvider });
+    if (staged.status !== 'ready' || !staged.draft) throw new Error('fixture must settle ready');
+    return { staged, expectedDraft: staged.draft };
+  }
+
+  // @invariant grading: a pre-existing differing hard row is never overwritten and never reported applied
+  // @fails-if conflict-ignore is trusted as success or superseded rows are re-written
+  it("reports superseded for another writer's differing hard row without writing", async () => {
+    const { staged } = await readyStagedItem();
+    calibrationRows.push({
+      question_id: 'q_stage',
+      b: -9.9,
+      bAnchor: -9.9,
+      confidence: 0.1,
+      source: 'fixed_anchor',
+    });
+    const verification = await commitItemPriorStagedCalibration(database([]), staged);
+    expect(verification).toEqual({
+      status: 'superseded',
+      existing: { b: -9.9, bAnchor: -9.9, confidence: 0.1, source: 'fixed_anchor' },
+    });
+    expect(vi.mocked(applyItemPrior)).not.toHaveBeenCalled();
+    expect(calibrationRows).toHaveLength(1); // the foreign row is untouched
+  });
+
+  // @invariant grading: an already-matching hard row reports applied idempotently without a second write
+  // @fails-if replay after application re-writes or reports superseded
+  it('reports applied for a matching existing row without writing again', async () => {
+    const { staged, expectedDraft } = await readyStagedItem();
+    calibrationRows.push({
+      question_id: 'q_stage',
+      b: expectedDraft.b_logit,
+      bAnchor: expectedDraft.b_logit,
+      confidence: expectedDraft.confidence,
+      source: 'llm_prior',
+    });
+    const verification = await commitItemPriorStagedCalibration(database([]), staged);
+    expect(verification).toEqual({ status: 'applied' });
+    expect(vi.mocked(applyItemPrior)).not.toHaveBeenCalled();
+  });
+
+  // @invariant durability: an application write failure propagates as an application unknown
+  // @fails-if the write error is swallowed into a boolean, a skip, or a completed result
+  it('propagates an application write failure', async () => {
+    const { staged } = await readyStagedItem();
+    vi.mocked(applyItemPrior).mockImplementation(async () => {
+      throw new Error('connection dropped mid-commit');
+    });
+    await expect(commitItemPriorStagedCalibration(database([]), staged)).rejects.toMatchObject({
+      code: 'ITEM_PRIOR_APPLICATION',
+    });
+  });
+
+  // @invariant durability: a write that leaves no readable row is an application unknown
+  // @fails-if a silent writer (no row) is reported applied
+  it('propagates when a successful write leaves no readable hard row', async () => {
+    const { staged } = await readyStagedItem();
+    vi.mocked(applyItemPrior).mockImplementation(async () => {}); // succeeds, writes nothing
+    const error = await commitItemPriorStagedCalibration(database([]), staged).then(
+      () => undefined,
+      (err: unknown) => err,
+    );
+    expect(error).toBeInstanceOf(ItemPriorApplicationError);
+    expect(error).toMatchObject({ code: 'ITEM_PRIOR_APPLICATION', questionId: 'q_stage' });
   });
 });

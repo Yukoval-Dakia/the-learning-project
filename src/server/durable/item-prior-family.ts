@@ -7,8 +7,12 @@ import { sql } from 'drizzle-orm';
 import { z } from 'zod';
 import {
   DEFAULT_MAX_PER_RUN,
+  ItemPriorApplicationError,
   type ItemPriorCandidateFrozen,
+  ItemPriorDurableStoreError,
   type ItemPriorExecutionParams,
+  type ItemPriorPreparedWork,
+  ItemPriorReceiptPersistenceError,
   type ItemPriorRepEffectPort,
   type ItemPriorStagedItem,
   commitItemPriorStagedCalibration,
@@ -42,6 +46,14 @@ export interface ItemPriorAdmission {
   params: ItemPriorExecutionParams;
   candidates: ItemPriorCandidateFrozen[];
   knowledgeNames: [string, string][];
+  /**
+   * Frozen per-candidate paid inputs (subject profile included), prepared
+   * inside the same read-only snapshot. Execution and every later recorded-step
+   * replay consume only these works: re-resolving a profile after admission
+   * would re-key the input digest, strand old obligations and re-send the same
+   * logical input under a new identity (parent review 2026-10-11).
+   */
+  prepared: ItemPriorPreparedWork[];
 }
 
 export class ItemPriorMemberIdentityError extends Error {}
@@ -134,8 +146,20 @@ async function admitItemPriorMember(
   return deps.db.transaction(
     async (tx) => {
       await verifyItemPriorMemberIdentity(tx, request);
+      const params = {
+        method: normalizeMethod(request.method),
+        reps: normalizeReps(request.reps),
+      } satisfies ItemPriorExecutionParams;
       const candidates = await selectItemPriorCandidates(tx, DEFAULT_MAX_PER_RUN);
       const names = await resolveItemPriorKnowledgeNames(tx, candidates);
+      // Freeze the exact paid inputs (subject profile included) inside this
+      // snapshot so execution and every later replay use identical digests; a
+      // profile change after admission can never re-key the work.
+      const nameById = new Map(names);
+      const prepared: ItemPriorPreparedWork[] = [];
+      for (const candidate of candidates) {
+        prepared.push(await prepareItemPriorWork(tx, candidate, nameById, params));
+      }
       return {
         identity: {
           member: request.member,
@@ -143,9 +167,10 @@ async function admitItemPriorMember(
           runDate: request.runDate,
           nodeId: request.nodeId,
         },
-        params: { method: normalizeMethod(request.method), reps: normalizeReps(request.reps) },
+        params,
         candidates,
         knowledgeNames: [...names.entries()],
+        prepared,
       } satisfies ItemPriorAdmission;
     },
     { isolationLevel: 'repeatable read', accessMode: 'read only' },
@@ -185,7 +210,9 @@ export function registerItemPriorFamilyWorkflow(db: Db) {
 // unregistered and unbooted, requires an explicit port AND runTaskFn (no
 // manufactured defaults), and never turns the blocked candidate's rejection
 // off. Held items are counted and returned — never thrown, never retried
-// in-run, never auto-resent on a later delivery.
+// in-run, never auto-resent on a later delivery. Durable unknowns (store
+// access, receipt persistence, application outcome) propagate as dedicated
+// errors instead of being isolated or completed over.
 
 export interface ItemPriorMemberExecutionDeps extends ItemPriorMemberDeps {
   /** Lane B's durable paid-effect protocol, relayed by the parent. Required. */
@@ -199,7 +226,10 @@ export interface ItemPriorDurableMemberResult {
   readonly identity: ItemPriorAdmission['identity'];
   readonly params: ItemPriorExecutionParams;
   readonly considered: number;
+  /** Domain hard row verified to match this staged draft — NOT a paid-effect receipt guarantee. */
   readonly applied: number;
+  /** An existing differing hard row held; this attempt's draft was not persisted. */
+  readonly superseded: number;
   readonly held: number;
   readonly noAnchor: number;
   readonly incomplete: number;
@@ -215,17 +245,28 @@ export async function runItemPriorDurableMemberExecution(
     admitItemPriorMember(deps, request),
   );
   const items: ItemPriorStagedItem[] = [];
-  const counts = { applied: 0, held: 0, noAnchor: 0, incomplete: 0, skippedError: 0 };
-  const nameById = new Map(admission.knowledgeNames);
-  for (const candidate of admission.candidates) {
+  const counts = {
+    applied: 0,
+    superseded: 0,
+    held: 0,
+    noAnchor: 0,
+    incomplete: 0,
+    skippedError: 0,
+  };
+  // Frozen works only: preparation already happened inside the recorded
+  // admission snapshot, so execution never re-resolves profiles or re-keys
+  // input digests (recovery input drift, parent review 2026-10-11).
+  for (const work of admission.prepared) {
     try {
-      const work = await prepareItemPriorWork(deps.db, candidate, nameById, admission.params);
       const staged = await runItemPriorItemRepStages(work, {
         port: deps.port,
         runTaskFn: deps.runTaskFn,
       });
-      if (await commitItemPriorStagedCalibration(deps.db, staged)) {
+      const verification = await commitItemPriorStagedCalibration(deps.db, staged);
+      if (verification.status === 'applied') {
         counts.applied++;
+      } else if (verification.status === 'superseded') {
+        counts.superseded++;
       } else if (staged.status === 'held') {
         counts.held++;
       } else if (staged.status === 'no-anchor') {
@@ -235,11 +276,24 @@ export async function runItemPriorDurableMemberExecution(
       }
       items.push(staged);
     } catch (err) {
-      // Retained error isolation: one item's preparation/staging failure must
-      // not block the rest. Unknown paid outcomes never reach this catch —
-      // they are recorded in the port and surface as status 'held'.
+      // Durable unknowns propagate (parent review 2026-10-11): a store,
+      // receipt-persistence or application failure at/after a paid send must
+      // stay visible for later reconciliation — isolating it as an ordinary
+      // skip would let a later delivery treat an unresolved obligation as a
+      // plain retry or, worse, let the member report completion over it.
+      if (
+        err instanceof ItemPriorDurableStoreError ||
+        err instanceof ItemPriorReceiptPersistenceError ||
+        err instanceof ItemPriorApplicationError
+      ) {
+        throw err;
+      }
+      // Defensive per-item isolation for unexpected non-durable failures.
+      // Every classified path above either returns an outcome or throws one of
+      // the propagated durable errors; provider failures are recorded in the
+      // port and surface as status 'held', so they never reach this catch.
       console.error('[item_prior_durable_member] question staging failed', {
-        questionId: candidate.id,
+        questionId: work.candidate.id,
         err,
       });
       counts.skippedError++;

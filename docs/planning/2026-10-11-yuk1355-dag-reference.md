@@ -344,3 +344,112 @@ build.log     6fe975d09b9c1cf584c5449518bb0c6863e4517e45a6513baaab23bf081e13a5
 tests, the family, its unit tests and this document; `vitest.shared.ts`,
 schema, migrations, registration, manifests, boot, barrels and Start files are
 untouched. The five files form this continuation's diff.
+
+## 2026-10-11 parent-review fixes (round 1)
+
+Parent review of `3cf13cf64` identified three substantive gaps; fixed on this
+tree (B's rejected handoff `d78e3c43f` was NOT read or integrated — cross-
+revision unknown predicate and backend/generation reserve verification are
+being reworked by lane B; the next fixed protocol arrives via the parent).
+
+### 1. Durable unknowns are no longer swallowable
+
+`executeItemPriorRep` classifies store and receipt failures explicitly:
+
+- `lookupRep`/`admitRep` throws → `ItemPriorDurableStoreError`
+  (`ITEM_PRIOR_DURABLE_STORE`): no send happened this run, but prior
+  obligations are unreadable — propagates.
+- Provider send failed AND `completeRep(unknown)` throws →
+  `ItemPriorReceiptPersistenceError` (`ITEM_PRIOR_RECEIPT_PERSISTENCE`,
+  carries the rep identity): paid outcome AND receipt state both unresolved —
+  propagates for reconciliation; never isolated, never an in-memory-only held.
+- Provider succeeded AND `completeRep(output)` throws → same class: the
+  receipt is unconfirmed, so the parsed draft is NOT returned.
+- Provider errors with successful receipt persistence still settle as
+  store-backed `held` (recorded unknown), unchanged.
+
+`runItemPriorDurableMemberExecution` rethrows all three classes; its generic
+per-item catch is now documented honestly as a defensive net for unexpected
+non-durable failures (the earlier "unknown outcomes never reach this catch"
+comment was wrong and is gone). Provider failures never reach the catch at
+all — they are port-recorded and surface as `held`.
+
+### 2. Frozen paid inputs (recovery drift fixed)
+
+The parent-flagged drift was real: execution re-called
+`prepareItemPriorWork` after the cached admission, re-resolving the subject
+profile; a changed profile would re-key the input digest, strand old
+obligations under the old digest and re-send the same logical input under a
+new identity. Now `admitItemPriorMember` prepares every candidate's work
+(input, profile, digests, repCount) inside the same read-only snapshot and
+records it in the admission (`ItemPriorAdmission.prepared`); execution
+consumes only the frozen works and never re-resolves. A recorded-step replay
+returns the recorded works verbatim; an unrecorded admission re-runs
+preparation against a fresh consistent snapshot, which is safe because
+nothing has been sent under any digest yet. The happy-path unit test asserts
+`resolveSubjectProfileForKnowledgeIds` is called exactly once per candidate
+(admission only).
+
+### 3. Real application verification
+
+`applyItemPrior` is conflict-ignoring and returns void, so the old
+`return true` proved nothing. `commitItemPriorStagedCalibration` now reads
+the hard row back and compares b / b_anchor / confidence / source against
+the staged draft (exact double round-trip):
+
+- existing row matching the staged draft → `applied` (idempotent replay,
+  no second write);
+- existing row differing → `superseded` with the persisted values — the
+  foreign anchor is never overwritten and this attempt's draft was not
+  persisted;
+- no row → write once, re-read; a missing row escalates to
+  `ItemPriorApplicationError`, a differing row to `superseded`;
+- write or read failures throw `ItemPriorApplicationError`
+  (`ITEM_PRIOR_APPLICATION`): every rep is already receipted so a later
+  delivery replays them for free, but the application outcome itself is
+  unknown and stays visible.
+
+CAVEAT preserved in code and here: `applied` proves the domain row matches
+this staged draft, NOT causal authorship — an identical row written earlier
+by another attempt is indistinguishable until lane B's receipt-bound
+comparison exists. No applied guarantee is claimed without the shared fixed
+protocol. The member result adds a `superseded` counter alongside `applied`.
+
+### Test surface changes
+
+The obsolete "isolates a preparation failure" family test (preparation moved
+into admission and profile resolution cannot throw) was replaced by:
+receipt-persistence propagation, durable-store propagation, application-
+failure propagation, and superseded counting; operation-level tests add
+lookup/admit/complete failure classification and the four application
+verification cases (superseded without write, matching-row idempotency,
+write failure, write-without-row). Retained-path tests are unchanged.
+
+### Validation record (fresh, round 1)
+
+Same Node/pnpm as before; gates rerun after these fixes with sealed logs
+(see below). 29 unit tests total (16 operation incl. 2 retained, 6 family
+incl. 3 blocked-candidate proofs, 7 new classification/verification cases
+within the two files' counts).
+
+```text
+unit exit=0        2 files, 29 tests passed
+typecheck exit=0   both TypeScript projects
+lint exit=0        174 warnings (baseline level; owned files scoped-clean)
+build exit=0       Vite SPA, Start client/server, Hono server, worker, migrate
+```
+
+Logs under `/private/var/folders/bt/rcf5s7tx3s93g3dz0046y96w0000gn/T/opencode/tlp-yuk1355-reps-gates-r1/`.
+SHA-256:
+
+```text
+unit.log      122cd4527f7ea945b65d88d10d78bbdb3344fdebc946f142d524ff18dd2ab431
+typecheck.log 36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6
+lint.log      08c22324c601b8576c922e3b6f4af483a8ba0de462c2d8029ecad1d725f1407b
+build.log     49494ab3eb68057fda31eeb11b29779566cb4e19414d26e639d206178a0f1195
+```
+
+`git diff --check` passed. Same five owned files only; the blocked candidate's
+always-reject is untouched and nothing new is registered or booted. The
+provisional `ItemPriorRepEffectPort` remains the sole B integration point;
+B's rejected `d78e3c43f` was never read or imported.
