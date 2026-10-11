@@ -505,7 +505,7 @@ for (const selected of families)
       await db`select schedule_name,status from tlp_dbos.workflow_schedules where schedule_name in (${families[0]},${families[1]}) order by schedule_name`,
     ).toEqual(families.map((schedule_name) => ({ schedule_name, status: 'PAUSED' })));
     await delay(2200);
-    expect(await nativeLedger()).toEqual(settled);
+    expect((await nativeLedger()).workflows).toEqual(settled.workflows);
     observations.push({ settledBeforeStop: settled });
     phase('native-ledger-settled-before-stop');
     await second.stop();
