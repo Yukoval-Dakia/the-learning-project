@@ -39,9 +39,13 @@ const logs: {
   stdout: string;
   stderr: string;
   messages: unknown[];
+  caseName: string;
+  spawnedAtMs: number;
+  stages: { kind: string; ms: number; boundary?: string }[];
   exit?: unknown;
 }[] = [];
 const evidence: unknown[] = [];
+let caseName = '';
 let wireUrl: string;
 const wire: { unit: string; bodyDigest: string; at: string; body: unknown }[] = [];
 const transport: {
@@ -163,6 +167,7 @@ function worker(
     reconcile?: { scheduledAt: Date; authorizationAt: Date };
   } = {},
 ) {
+  const spawnedAt = performance.now();
   const child = spawn(process.execPath, [resolve('.cache/yuk1356-judge-worker.cjs')], {
     stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
     env: {
@@ -187,18 +192,34 @@ function worker(
   children.add(child);
   const exited = once(child, 'close'),
     messages: z.infer<typeof ipc>[] = [];
-  const log: (typeof logs)[number] = { pid: child.pid, stdout: '', stderr: '', messages: [] };
+  const log: (typeof logs)[number] = {
+    pid: child.pid,
+    stdout: '',
+    stderr: '',
+    messages: [],
+    caseName,
+    spawnedAtMs: spawnedAt,
+    stages: [{ kind: 'spawn', ms: 0 }],
+  };
   logs.push(log);
   child.stdout?.on('data', (chunk) => (log.stdout += String(chunk)));
   child.stderr?.on('data', (chunk) => (log.stderr += String(chunk)));
   child.on('message', (raw) => {
-    messages.push(ipc.parse(raw));
+    const message = ipc.parse(raw);
+    messages.push(message);
     log.messages.push(raw);
+    log.stages.push({
+      kind: message.kind,
+      ms: performance.now() - spawnedAt,
+      ...(message.boundary === undefined ? {} : { boundary: message.boundary }),
+    });
   });
   child.on('exit', (code, signal) => {
+    log.stages.push({ kind: 'exit', ms: performance.now() - spawnedAt });
     log.exit = { code, signal };
   });
   child.on('close', () => {
+    log.stages.push({ kind: 'close', ms: performance.now() - spawnedAt });
     children.delete(child);
   });
   const wait = async (kind: string) => {
@@ -224,10 +245,12 @@ function worker(
     wait,
     closed: () => exited,
     kill: async () => {
+      log.stages.push({ kind: 'kill', ms: performance.now() - spawnedAt });
       child.kill('SIGKILL');
       expect(await exited).toEqual([null, 'SIGKILL']);
     },
     stop: async () => {
+      log.stages.push({ kind: 'stop', ms: performance.now() - spawnedAt });
       child.send({ kind: 'stop' });
       expect(await exited).toEqual([0, null]);
     },
@@ -306,7 +329,8 @@ beforeAll(async () => {
   if (!address || typeof address === 'string') throw new Error('Observer address');
   wireUrl = `http://127.0.0.1:${address.port}/v1`;
 }, 60000);
-beforeEach(async () => {
+beforeEach(async (context) => {
+  caseName = context.task.name;
   await resetDb();
   await resetJudgeControl(testDb(), 'dbos');
   await testDb().execute(sql`delete from contract_epoch`);
