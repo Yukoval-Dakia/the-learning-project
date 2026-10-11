@@ -1,8 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-11：YUK-1403防回潮#1679及session cron修复#1681已合main；cd0c45d exact CI全绿，cron两例34.56秒，整套6:30。YUK-1397交付，YUK-1107整体两分钟目标仍未达到，剩余长尾归原票。
+> Linear 是权威 tracker。2026-10-11：owner要求继续全量CI≤120秒；YUK-1107 In Progress，fast-crons树六文件未提交，prune实跑失败；父已修两处类型/旧迁移fixture契约问题，typecheck通过，静态独立审查中。功能线持runtime窗口，当前不启本机DB/容器批次；旧session交付与390秒全量证据保留。
 
 ## NOW
+
+- **YUK-1107 / 全量≤120秒继续**：父线程d0c4657a独占`.worktrees/yuk-1107-fast-crons`，base148cf4bd；review/prune cron控制时间改写未验收。中断run23曾广匹配kill Vitest，违反进程归属；当前只做静态修复，不复用该清理方法。prune约25秒失败不计加速：PG逻辑时间+120秒、native DBOS tick仍实时导致冷却判断错位，断言保留待修。恢复review worker非cron的enqueue/retrieve/done/destroy及失败退出契约、修obligations参数后typecheck通过；独立R1只读审查进行中。报告/浏览器线持共享deployment锁，DB验证及exact-head全量计时待协调窗口。
 
 - **YUK-1107 / session cron已交付**：#1681合main56df7c09；控制时间验证边界，生产60秒保护/cron及严格ledger不变；R2无P0/P1，父修Drizzle初始化后exact cd0c45d CI38120469007全绿。两例PASS、文件34.564秒；实测跨分钟边界，YUK-1397修复交付。整套390秒，不核销120秒目标。[证据与限度](docs/planning/2026-10-11-yuk1107-cron-speed.md)。
 
@@ -41,7 +43,6 @@
 
 ## PARKED
 
-- **YUK-1107 / 整体≤120秒未达**：当前Gate390秒，DB2/3步骤289/302秒；review-orphan cron252.318秒、session migration286.936秒、prune cron201.624秒。按真实时间边界/恢复语义继续定位，不能移nightly/跳suite伪造全量两分钟；当前无该范围writer，跟进归原票。
 
 - **YUK-1358/1359已有UI观察**：真实Inbox dismiss后本页499但侧栏500，document reload恢复一致；原onResolve仅本地resolved更新。Google Fonts原import受CSP拦截；fallback可用。记录在现有迁移验收/后续UI边界，不放宽CSP、不冒称本PR修复。
 - **YUK-1382 / Admin runs未知费用显示**：源码基线fadcb0c87中，observability/ui/admin-runs.tsx:207将nullable cost_usd累加；observability-shared.tsx:11以(value ?? 0).toFixed(4)将未知显示为$0.0000，列表/详情/合计均受影响。已查重并登记Backlog，待验证真实零、全未知、已知+未知；不在1381改UI。此条是源码发现，尚无浏览器验收。
