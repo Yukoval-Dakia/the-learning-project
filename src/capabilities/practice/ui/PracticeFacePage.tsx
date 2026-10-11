@@ -13,7 +13,11 @@ import { useSharedMorph } from '@/ui-next/public';
 import './practice-face.css';
 
 import { PracticeNextEmpty } from './next/PracticeNextEmpty';
-import { type PracticeCompanionMode, PracticeNextSolo } from './next/PracticeNextSolo';
+import {
+  type PracticeCompanionMode,
+  type PracticeLayout,
+  PracticeNextSolo,
+} from './next/PracticeNextSolo';
 import { PfPaper } from './PfPaper';
 import { PfRetro } from './PfRetro';
 import { PfShelf } from './PfShelf';
@@ -97,11 +101,20 @@ export interface PracticeNextPageProps extends PracticeFacePageProps {
    * still mounts its global dock until the migration line turns it off.
    */
   companion?: PracticeCompanionMode;
+  /**
+   * How the question page lays out the question and the answer: `paper` or `focused` (the two
+   * redesigns from the 2026-10-11 owner review), or `classic`, the default until the owner picks.
+   */
+  layout?: PracticeLayout;
 }
 
 /** YUK-1473 — the same practice flow with the solve view in the new design language. */
-export function PracticeNextPage({ companion = 'none', ...props }: PracticeNextPageProps) {
-  return <PracticeFace {...props} soloView="next" companion={companion} />;
+export function PracticeNextPage({
+  companion = 'none',
+  layout = 'classic',
+  ...props
+}: PracticeNextPageProps) {
+  return <PracticeFace {...props} soloView="next" companion={companion} layout={layout} />;
 }
 
 function PracticeFace({
@@ -110,7 +123,12 @@ function PracticeFace({
   setQuery,
   soloView,
   companion = 'none',
-}: PracticeFacePageProps & { soloView: 'retained' | 'next'; companion?: PracticeCompanionMode }) {
+  layout = 'classic',
+}: PracticeFacePageProps & {
+  soloView: 'retained' | 'next';
+  companion?: PracticeCompanionMode;
+  layout?: PracticeLayout;
+}) {
   const qc = useQueryClient();
   const [scopeKnowledgeId, setScopeKnowledgeId] = useState<string | null>(() => {
     const value = getQuery('kc')?.trim();
@@ -456,6 +474,7 @@ function PracticeFace({
           }}
           navigate={navigate}
           companion={companion}
+          layout={layout}
         />
       ) : (
         <PfSolo
