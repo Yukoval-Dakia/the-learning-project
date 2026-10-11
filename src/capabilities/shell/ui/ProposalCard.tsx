@@ -7,7 +7,7 @@ import { useWorkbenchClient } from './workbench-client';
 // 裁决在卡内 async（busy per-card），错误经 onError 上抛页级 toast；
 // resolved 留痕 map 由 InboxPage 持有（设计稿同构）。
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 // Type-only (erased at compile time — does NOT pull react-markdown into the main bundle,
 // the deferred loader still owns the runtime import).
 import type { Components } from 'react-markdown';
@@ -244,14 +244,14 @@ function BlockStructure({ block }: { block: MergeBlockPreview }) {
   const subMore = (block.sub_question_count ?? 0) - block.sub_questions.length;
   const optMore = (block.option_count ?? 0) - block.options.length;
   if (block.sub_question_count === null && block.option_count === null) {
-    return <div className="merge-structure-note">没有识别出小问和选项</div>;
+    return <div className="merge-structure-note">这道题的小问和选项还没整理出来</div>;
   }
   return (
     <>
       {block.sub_questions.length > 0 && (
         <ul className="merge-structure">
-          {block.sub_questions.map((sub) => (
-            <li key={sub.label}>
+          {block.sub_questions.map((sub, i) => (
+            <li key={`${i}:${sub.label}`}>
               <b>{sub.label}</b> {sub.excerpt}
             </li>
           ))}
@@ -260,8 +260,8 @@ function BlockStructure({ block }: { block: MergeBlockPreview }) {
       {subMore > 0 && <div className="merge-structure-note">还有 {subMore} 个小问</div>}
       {block.options.length > 0 && (
         <ul className="merge-structure">
-          {block.options.map((option) => (
-            <li key={option.label}>
+          {block.options.map((option, i) => (
+            <li key={`${i}:${option.label}`}>
               <b>{option.label}</b> {option.text}
             </li>
           ))}
@@ -297,7 +297,12 @@ export function ProposalCard({
   const [busy, setBusy] = useState(false);
   const [pickingRel, setPickingRel] = useState(false);
   // Block merges are irreversible: accept first asks for an explicit confirmation.
-  const [confirmingMerge, setConfirmingMerge] = useState<{ affected: number | null } | null>(null);
+  const [confirmingMerge, setConfirmingMerge] = useState(false);
+  const confirmRef = useRef<HTMLButtonElement | null>(null);
+  // The CTA that had focus is hidden while confirming; hand focus to 「确认合并」.
+  useEffect(() => {
+    if (confirmingMerge) confirmRef.current?.focus();
+  }, [confirmingMerge]);
   // codex 验证轮 P3：裁决留痕后按钮组整体锁定——卡片留在列表里，再点会
   // 重复请求 / 反向操作直接 409。
   const locked = busy || resolved !== null;
@@ -313,19 +318,19 @@ export function ProposalCard({
       // YUK-271（codex 验证轮 P2）：stale 的 block_merge accept 没写 rate
       // event，提议仍 pending——不标已裁决，经页级 toast 说明后保持可操作。
       if (isBlockMergeStale(result)) {
-        setConfirmingMerge(null);
+        setConfirmingMerge(false);
         onError('这条合并建议已失效：相关的题已经变了，已跳过。');
         return;
       }
-      setConfirmingMerge(null);
+      setConfirmingMerge(false);
       onResolve(p.id, label);
     } catch (err) {
       // The server refuses an unconfirmed merge; show the confirmation instead of an error.
       if (err instanceof ApiError && err.status === 409 && err.code === 'confirm_required') {
-        const affected = err.details.affected_block_count;
-        setConfirmingMerge({ affected: typeof affected === 'number' ? affected : null });
+        setConfirmingMerge(true);
         return;
       }
+      setConfirmingMerge(false);
       onError(err instanceof Error ? err.message : '裁决失败，请重试。');
     } finally {
       setBusy(false);
@@ -512,12 +517,13 @@ export function ProposalCard({
         </div>
       )}
 
-      {confirmingMerge && (
+      {confirmingMerge && !resolved && (
         <div className="merge-confirm" role="alert">
           <b>合并后无法撤销</b>
           <span>并进来的题会成为保留那道题的一部分，之后不能再拆开。</span>
           <div className="merge-confirm-actions">
             <Btn
+              ref={confirmRef}
               size="sm"
               variant="again"
               icon="check"
@@ -530,7 +536,7 @@ export function ProposalCard({
               size="sm"
               variant="ghost"
               disabled={locked}
-              onClick={() => setConfirmingMerge(null)}
+              onClick={() => setConfirmingMerge(false)}
             >
               先不合并
             </Btn>
@@ -553,7 +559,7 @@ export function ProposalCard({
               disabled={locked || archiveTargetMissing}
               onClick={() =>
                 p.kind === 'block_merge'
-                  ? setConfirmingMerge({ affected: null })
+                  ? setConfirmingMerge(true)
                   : void decide('accept', acceptedLabel)
               }
             >
