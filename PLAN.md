@@ -1,8 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-11：YUK-1107 全量≤120秒继续；r4父验24DB/162unit全过，typecheck/lint/build通过，PR1690完整CI38130110481因unavailable-primary fixture失败；代理只断单连接已源修，等待新head验证。共享锁实际09:47:59Z释放，清理超出8分钟已报总协调/迁移；下一窗口优先迁移。
+> Linear 是权威 tracker。2026-10-11：YUK-1470 候选接入已完成本地 scoped 验证并交父验收；默认 FSRS，TEST T1–T6、独立 review 与 exact-head CI 尚未完成，详细证据见 NOW 与计划回执。
 
 ## NOW
+
+- **YUK-1470 / candidate integration ready for parent acceptance**：指定分支已完成版本态、封存证据、replay/revert、due/retention 与六初始入口；源0064b911e通过157DB/26unit及候选模式19DB、typecheck/lint/build、policy/partition。默认FSRS；TEST T1–T6、独立review及exact-head CI由父线接续，本线不开PR。无DB需求，后续容器操作先等协调start。[回执与命令](docs/planning/2026-10-11-yuk1470-forgetting-candidate.md)。
 
 - **YUK-1107 / 全量≤120秒继续**：父d0c4657a独占fast-crons树；prune/review控制时间、session21例恢复、isolated runtime及backup162例父r4全过。R1/R2发现P1已修并由父最终实跑覆盖，未启R3；历史失败保留。当前10源文件hash与r4一致，typecheck/lint172warnings/build通过；完整exact-head CI待push，backup仍约116秒本机长尾，不能核销120秒目标。原锁token/parity清理后09:47:59Z释放，超出8分钟已报告；当前不启本机runtime，迁移优先。[证据与剩余目标](docs/planning/2026-10-11-yuk1107-full-ci-continuation.md)。
 
