@@ -4,7 +4,7 @@
 
 ## NOW
 
-- **YUK-1107 / main CI回归优先**：父d0c4657a独占 tlp-yuk1107-main-ci-regressions-20261011 / fix/yuk-1107-session-ci-regressions，base135bb18e6d；cron horizon 查询显式 integer 位置，migration 故障代理关闭监听并等待真实 failure，全部原业务断言保留。独立审查、scoped窗口及 exact-head CI待验；1691远端fc2626d Gate38134462539失败195秒，局部b652未push，120秒目标未达标；无runtime/锁。[回归证据](docs/planning/2026-10-11-yuk1107-main-ci-regressions.md)。
+- **YUK-1107 / main CI回归优先**：父d0c4657a独占 tlp-yuk1107-main-ci-regressions-20261011 / fix/yuk-1107-session-ci-regressions，base135bb18e6d；cron horizon 查询显式 integer 位置，migration 故障代理关闭监听并等待真实 failure，全部原业务断言保留。初版R1 NONE/cron2PASS，migration首outage客户端未捕获socket.write(null)，23例9PASS14FAIL；原窗口79.60秒token/parity释锁。proxy修复保持lostCOMMIT/primary不可达语义，R2/新scoped窗/exactCI待验；1691远端fc2626d Gate38134462539失败195秒，局部b652未push，120秒目标未达标；无runtime/锁。[回归证据](docs/planning/2026-10-11-yuk1107-main-ci-regressions.md)。
 
 - **YUK-1107 / session cron已交付**：#1681合main56df7c09；控制时间验证边界，生产60秒保护/cron及严格ledger不变；R2无P0/P1，父修Drizzle初始化后exact cd0c45d CI38120469007全绿。两例PASS、文件34.564秒；实测跨分钟边界，YUK-1397修复交付。整套390秒，不核销120秒目标。[证据与限度](docs/planning/2026-10-11-yuk1107-cron-speed.md)。
 

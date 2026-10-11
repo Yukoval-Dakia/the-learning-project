@@ -1,3 +1,7 @@
+# Main P1 runtime failure retained (2026-10-11)
+
+916711cfc R1NONE/static/build passed;23case window9PASS14FAIL,cron2PASS. Migrationfirstconversationoutage failed: actualCOMMIT observed,worker2421 uncaughtpostgres-jsnextWrite50924 socket.write(null),exit1/no failuremessage,PENDING plus13guardblocked. All7approvedrunningcontainers andallpre-existingresource/release/sourceparity passed;19PIDs/session8066a27e72f4 gone,tokenrelease11:57:18.717Z,total79.60s. No appendedbatch. Source-onlyproxy correction rejectsPGSQL08006 while keepingclienttransportuntilfailurecleanup; noSQLreachesprimaryafterlostCOMMIT,alloriginalassertionsretained. NeedsR2/newcoordinatedwindow/exactCI. ProductRSTworkercrash risk must remain separatefollowupafterP1 delivery;searchLinearbeforecreatingandnotifycoordinator. MigrationDB07 thenA-lane ownnextwindows.
+
 # Main CI regressions first (2026-10-11)
 
 Sole writer d0c4657a owns tlp-yuk1107-main-ci-regressions-20261011 / fix/yuk-1107-session-ci-regressions, base135bb18e6d. Main run38135449130 independently shows cron substring position42 inferred as textOID25 and migration placement PENDING instead of ERROR. Minimal fixture-only fixes preserve product and every original business assertion. Independent review, new scoped runtime window and exact-head CI remain pending. No runtime/lock held.
