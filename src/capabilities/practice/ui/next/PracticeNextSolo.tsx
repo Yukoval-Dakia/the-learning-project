@@ -5,7 +5,7 @@
 // Rules: docs/design/2026-10-07-ui-visual-direction.md R1, R3, R4, R7, C1, C2, T1–T5, M1, A1, A2.
 
 import { useQuery } from '@tanstack/react-query';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ResponseSetT, SlotResponseT } from '@/core/schema/assessment';
 import { AssetEvidencePreview } from '@/ui/components/response/AssetEvidencePreview';
 import { EvidenceComposer } from '@/ui/components/response/EvidenceComposer';
@@ -142,6 +142,19 @@ export function PracticeNextSolo({ item, pos, total, onBack }: PracticeNextSoloP
     }));
 
   const [sheet, setSheet] = useState<SheetSnap>('peek');
+  // Transitional: inside the retained shell its fixed phone tab bar would cover the sheet, so the
+  // sheet peeks above whatever bottom bar the shell draws (YUK-1473 checkpoint 1, owner decision).
+  const [shellInset, setShellInset] = useState(0);
+  useLayoutEffect(() => {
+    const bar = document.querySelector<HTMLElement>('.mobile-tabbar');
+    if (!bar) return;
+    const measure = () =>
+      setShellInset(getComputedStyle(bar).display === 'none' ? 0 : bar.offsetHeight);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(bar);
+    return () => ro.disconnect();
+  }, []);
   const timeline = q ? toAttemptTimelineEvents(q.timeline) : [];
   const lastAttempt = [...timeline].reverse().find((e) => e.kind === 'attempt');
   const title = item.knowledge_name ?? q?.labels[0]?.name ?? '这道题';
@@ -330,7 +343,13 @@ export function PracticeNextSolo({ item, pos, total, onBack }: PracticeNextSoloP
         </CompanionPanel>
       </div>
       <div className="un-pn-phone-sheet">
-        <BottomSheet label="学习伙伴" snap={sheet} onSnapChange={setSheet} header={companionHeader}>
+        <BottomSheet
+          label="学习伙伴"
+          snap={sheet}
+          onSnapChange={setSheet}
+          bottomInset={shellInset}
+          header={companionHeader}
+        >
           {companionBody}
         </BottomSheet>
       </div>
