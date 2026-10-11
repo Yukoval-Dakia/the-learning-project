@@ -94,3 +94,13 @@ The actual new Testcontainers session was6bd0f987eeaf, discovered from its own P
 All r6 evidence is retained in .cache/cron-speed-evidence/window-20261011-r6: seal.json, source.json, db.raw.log, db.exit.json, db.vitest.json, fixture ledgers, recorder-used.py, recorder-offline.json, resources-before/clean.json, testcontainers-clean.txt, cleanup-auto-failed.json and final cleanup.json. The failed r5 records remain unchanged.
 
 Parent then normally integrated origin/main79825bb6d. No task-owned fixture/workflow source changed in that merge; support.ts is copied exactly from current main and was not authored by this lane. Final integrated static/build validation and exact-head hosted full CI including actual native/WASM parity remain required. No new local batch or third independent review is launched.
+
+## Isolated maturity gate after main repair
+
+Main P1 PR1696 landed a213267109d after samehead7c28 local23PASS and fullCI38138443111 allfourDBshardsgreen234s, R2threadresolved andmatchheadmerge. Itsactualhostrelease12:19:58.479Z,total281.116s,8running/allpre-existingexited/resource/release/sourceparitytrue;38PIDs/session537cce644699gone. The autoRyuklayerfailure receipt remains alongside final actual-gone parity. ProductionRSTdriver/workercrashrisk is separately trackedYUK-1481.
+
+Owner requires speedwork only in isolatedtrees. Each exacthead must pass completeCI3consecutive times withoutflakes, with assertionAST/countproof and smallrevertablePR, beforemain. Main-breaking speedchanges must be reverted immediately,then repaired in isolation. Speedexperiments useCIrunners anddo nottake productexclusivehostwindows bydefault.
+
+CriticalPR1691 isdraft; latestmain merged normally. The unpublishedb652checkpoint was non-destructively reverted to exclude backupconsolidation, while its CIJSONprofile upload was reapplied independently. The main’s mature faultproxy/queuedSync regression is ported to the splitfactory and bothfamilycases. [AST proof](evidence/yuk1107/critical-session-assertions.json) preserves all21expandedcaseassertions, including newqueuedSync coverage, while sharedstate remainsper-file. Backupdonor12assertions/162→157consolidation stays in a separate forthcomingbranch/PR. No fulllocaltest/DB/provider batch is run here.
+
+Recorded pre-work baseline has onlyone observation432s; recent two successful fullfourshardruns246/234s have median240s. These useCIcreation tofinalrequiredGate, sinceGitHubpushedDate isnull, not measuredpush timestamps. Current latestlongestjobs DB3/4/1=205/161/129s; files sessionmigration158.643s,reviewmigration99.452s,sessioncron78.450s. Forecast140–160s aftercritical+backup is an estimate, not120s acceptance. The frozenhead/3consecutivefullCI receipts remain pending.

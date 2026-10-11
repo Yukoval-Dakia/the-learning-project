@@ -1,0 +1,126 @@
+{
+  "base": "a213267109d",
+  "expectedExpandedCases": 21,
+  "files": {
+    "conversation": 10,
+    "placement": 10,
+    "legacy": 1
+  },
+  "registrations": [
+    {
+      "file": "migration.db.test.ts",
+      "title": "`SIGKILL at ${pauseAt} recovers the same inputs and frozen candidates`",
+      "assertionCalls": 8,
+      "assertionsPreserved": true,
+      "wholeBodyEqual": true
+    },
+    {
+      "file": "migration.db.test.ts",
+      "title": "`reconciles ${mode} through the authoritative lock`",
+      "assertionCalls": 8,
+      "assertionsPreserved": true,
+      "wholeBodyEqual": true
+    },
+    {
+      "file": "migration.db.test.ts",
+      "title": "'holds an unavailable primary as unknown and does not resume a terminal DBOS ERROR'",
+      "assertionCalls": 45,
+      "assertionsPreserved": true,
+      "wholeBodyEqual": true
+    },
+    {
+      "file": "migration.db.test.ts",
+      "title": "`drops admission and deferred receipt COMMIT packets for ${family} without blind effect retry`",
+      "assertionCalls": 8,
+      "assertionsPreserved": true,
+      "wholeBodyEqual": true
+    },
+    {
+      "file": "migration.db.test.ts",
+      "title": "`observes actual archived ${family} selected handler exit before attestation`",
+      "assertionCalls": 10,
+      "assertionsPreserved": true,
+      "wholeBodyEqual": false
+    },
+    {
+      "file": "migration-placement.db.test.ts",
+      "title": "`SIGKILL at ${pauseAt} recovers the same inputs and frozen candidates`",
+      "assertionCalls": 8,
+      "assertionsPreserved": true,
+      "wholeBodyEqual": true
+    },
+    {
+      "file": "migration-placement.db.test.ts",
+      "title": "`reconciles ${mode} through the authoritative lock`",
+      "assertionCalls": 8,
+      "assertionsPreserved": true,
+      "wholeBodyEqual": true
+    },
+    {
+      "file": "migration-placement.db.test.ts",
+      "title": "'holds an unavailable primary as unknown and does not resume a terminal DBOS ERROR'",
+      "assertionCalls": 45,
+      "assertionsPreserved": true,
+      "wholeBodyEqual": true
+    },
+    {
+      "file": "migration-placement.db.test.ts",
+      "title": "`drops admission and deferred receipt COMMIT packets for ${family} without blind effect retry`",
+      "assertionCalls": 8,
+      "assertionsPreserved": true,
+      "wholeBodyEqual": true
+    },
+    {
+      "file": "migration-placement.db.test.ts",
+      "title": "`observes actual archived ${family} selected handler exit before attestation`",
+      "assertionCalls": 10,
+      "assertionsPreserved": true,
+      "wholeBodyEqual": false
+    },
+    {
+      "file": "migration-legacy.db.test.ts",
+      "title": "'recovers genuine old prune and review partial ledgers before and after both new-family admissions'",
+      "assertionCalls": 14,
+      "assertionsPreserved": true,
+      "wholeBodyEqual": true
+    }
+  ],
+  "supplementary": [
+    {
+      "file": "tests/dbos-review-orphan/migration.db.test.ts",
+      "title": "`SIGKILL at ${pauseAt} recovers the same inputs and frozen candidates`",
+      "preserved": 8,
+      "added": 0
+    },
+    {
+      "file": "tests/dbos-review-orphan/migration.db.test.ts",
+      "title": "`reconciles ${mode} through the authoritative lock`",
+      "preserved": 8,
+      "added": 0
+    },
+    {
+      "file": "tests/dbos-review-orphan/migration.db.test.ts",
+      "title": "'holds an unavailable primary as unknown and does not resume a terminal DBOS ERROR'",
+      "preserved": 18,
+      "added": 0
+    },
+    {
+      "file": "tests/dbos-review-orphan/migration.db.test.ts",
+      "title": "'demonstrates why a selected-row pre-migration consumer must be quiesced before cutover'",
+      "preserved": 10,
+      "added": 0
+    },
+    {
+      "file": "tests/dbos-review-orphan/migration.db.test.ts",
+      "title": "'recovers the genuine old prune-v1 bundle both before and after review admission'",
+      "preserved": 10,
+      "added": 0
+    },
+    {
+      "file": "tests/dbos-session-orphan/cron.db.test.ts",
+      "title": "`observes real ${selected} Timekeeper, mixed phases, native two-scheduler ticks/restart and independent rollback`",
+      "preserved": 98,
+      "added": 2
+    }
+  ]
+}

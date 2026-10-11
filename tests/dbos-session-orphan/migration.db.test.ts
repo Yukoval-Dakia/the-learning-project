@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { DBOSClient } from '@dbos-inc/dbos-sdk';
 import { PgBoss } from 'pg-boss';
+import postgres from 'postgres';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createMigrationFixture } from './migration-fixture';
 
@@ -104,16 +105,30 @@ for (const family of caseFamilies)
       }, 120000);
     }
     // @invariant data: unavailable commit outcomes remain unknown without terminal workflow replay
-    // @fails-if an unresolved primary outcome is retried blindly or a terminal DBOS ERROR resumes business effects
+    // @fails-if an unresolved primary outcome is retried blindly or a terminal DBOS ERROR resumes business effects, or the outage strands a queued Sync cycle
     it('holds an unavailable primary as unknown and does not resume a terminal DBOS ERROR', async () => {
       await reset();
       await sessions();
       const proxy = await commitFault('after-server-commit-and-unavailable');
       const id = nextId();
-      const first = worker({ id, appUrl: proxy.url });
+      const queuedClient = postgres(proxy.url, { max: 1, ssl: false });
+      let first: ReturnType<typeof worker> | undefined;
       try {
+        // Prepare once, then put two complete extended cycles on one connection
+        // before the real worker's lost-COMMIT fault. Both must receive errors.
+        await queuedClient`select pg_sleep(${0}::double precision)`;
+        let queuedResults: PromiseSettledResult<unknown>[] | undefined;
+        const queuedDone = Promise.allSettled([
+          queuedClient`select pg_sleep(${30}::double precision)`.execute(),
+          queuedClient`select pg_sleep(${30}::double precision)`.execute(),
+        ]).then((results) => {
+          queuedResults = results;
+        });
+        await expect.poll(() => proxy.maxQueuedCycles(), { timeout: 5000 }).toBe(2);
+        first = worker({ id, appUrl: proxy.url });
         await first.wait('ready');
         // This fixture expects the failure message itself, after the workflow becomes ERROR.
+        await first.wait('failure');
         await expect
           .poll(
             async () =>
@@ -123,6 +138,12 @@ for (const family of caseFamilies)
             { timeout: 60000 },
           )
           .toBe('ERROR');
+        await expect.poll(() => queuedResults?.length, { timeout: 5000 }).toBe(2);
+        await queuedDone;
+        expect(queuedResults).toEqual([
+          { status: 'rejected', reason: expect.objectContaining({ code: '08006' }) },
+          { status: 'rejected', reason: expect.objectContaining({ code: '08006' }) },
+        ]);
         expect(proxy.fired()).toBe(true);
         const before = await snapshots(id);
         expect(before.receipts).toHaveLength(1);
@@ -145,7 +166,6 @@ for (const family of caseFamilies)
         const { inspectSessionOrphanOutcome } = await import(
           '@/server/durable/session-orphan-family'
         );
-
         expect(
           await inspectSessionOrphanOutcome(fixture.appDb, {
             family,
@@ -265,9 +285,10 @@ for (const family of caseFamilies)
           await clientBoss.stop();
         }
       } finally {
-        if (first.child.exitCode === null && first.child.signalCode === null)
+        await queuedClient.end({ timeout: 2 });
+        if (first && first.child.exitCode === null && first.child.signalCode === null)
           first.child.kill('SIGKILL');
-        await first.exited;
+        await first?.exited;
         await proxy.stop();
       }
     }, 120000);
