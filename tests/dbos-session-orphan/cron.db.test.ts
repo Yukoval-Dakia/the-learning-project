@@ -531,8 +531,9 @@ for (const selected of families) {
         'Two compatible workers only; first stopped; all native/legacy forwarding observed settled',
     });
     const horizon = await sessionOrphanRollbackHorizon(phaseQueries, family);
+    // An untyped substring argument resolves to the regex overload, not a position.
     const [expectedHorizon] = await db`select (greatest(c.phase_changed_at,
-      coalesce((select max(substring(workflow_uuid from ${`sched-${family}-`.length + 1})::timestamptz)
+      coalesce((select max(substring(workflow_uuid from ${`sched-${family}-`.length + 1}::integer)::timestamptz)
         from tlp_dbos.workflow_status where name = ${family}), 'epoch'::timestamptz),
       coalesce((select max(tick_at) from session_orphan_tick where family = ${family} and backend = 'dbos'), c.phase_changed_at))
       + interval '60 seconds') = ${horizon}::timestamptz as matches

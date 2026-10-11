@@ -1,6 +1,19 @@
 # YUK-1404 native03 figure repair candidate — 2026-10-11
 
 Sole writer tlp-yuk-1404-salvage-figures, fix/yuk-1404-figure-binding-salvage; started clean080b04f and normal-merged main135bb18e6 to9d6336dcf. Figure-only changes cover extraction, structure figure metadata, figure_attach, future auto-enroll/capture figure inputs and four security tests with explicit unit registration. No kind copy from pending1658/70f988fe0. Old SWE-2/GLM5.3/K3 quota failures and historical native03 records preserved. Source-only checks and55-block offline replay pass; no public crop acceptance because verified asset metadata/old clean visibility absent. Parent owns different-model review/exactCI/normal fixed composition/isolated same-paper rerun. Existing crop/asset writer registration is the next prospective1404 seam; no source history repair. Report docs/planning/2026-10-11-yuk1404-native03-figure-repair.md. No runtime/DB/provider/paid/children/merge/deploy.
+# R2 P1 correction pending new fixed-head runtime (2026-10-11)
+
+PR1696 draft/link/watch. R2 on e84 found queuedSync/describeFirst P1, posted discussion_r4241515109. Local e84 batch aborted, nofinalcasecounts;128.382s actualtokenrelease12:07:49.493Z,8baseline+alloldexited/release/sourceparitytrue,28PIDs/ownsession19c1e608b0db gone. Noappendbatch. Sourcefix counts eachforwardQ/Sync and rejects each separately, waitsSyncforunsynceddescribeFirst; existingoutagecaseaddsactualtwoqueuedSyncassertions,businessassertionspreserved,23total. CoordinatorforbidsR3 and replacesmergeconditions with fixedP1+regression,newlocal23PASS,exactCIgreen,reply/resolveR2PRthread,matchhead. Newhead/windowpending,neverreuseoldslot. ProductRSTcrashfollowupafterP1 remains separate.
+
+# Main P1 runtime failure retained (2026-10-11)
+
+916711cfc R1NONE/static/build passed;23case window9PASS14FAIL,cron2PASS. Migrationfirstconversationoutage failed: actualCOMMIT observed,worker2421 uncaughtpostgres-jsnextWrite50924 socket.write(null),exit1/no failuremessage,PENDING plus13guardblocked. All7approvedrunningcontainers andallpre-existingresource/release/sourceparity passed;19PIDs/session8066a27e72f4 gone,tokenrelease11:57:18.717Z,total79.60s. No appendedbatch. Source-onlyproxy correction rejectsPGSQL08006 while keepingclienttransportuntilfailurecleanup; noSQLreachesprimaryafterlostCOMMIT,alloriginalassertionsretained. NeedsR2/newcoordinatedwindow/exactCI. ProductRSTworkercrash risk must remain separatefollowupafterP1 delivery;searchLinearbeforecreatingandnotifycoordinator. MigrationDB07 thenA-lane ownnextwindows.
+
+# Main CI regressions first (2026-10-11)
+
+Sole writer d0c4657a owns tlp-yuk1107-main-ci-regressions-20261011 / fix/yuk-1107-session-ci-regressions, base135bb18e6d. Main run38135449130 independently shows cron substring position42 inferred as textOID25 and migration placement PENDING instead of ERROR. Minimal fixture-only fixes preserve product and every original business assertion. Independent review, new scoped runtime window and exact-head CI remain pending. No runtime/lock held.
+
+Large PR1691 remains remote fc2626d and unwatched; local b65257e03 checkpoint in fast-crons is parked and unpushed. Exact fc Gate38134462539 failed after195s; DB6 unavailable-primary first failure61.585s, remaining7DB/unit/build/parity passed. Full120s not achieved. Future independently reviewed small fixture-speed PR may own proposals.db.test.ts and provider-session-admission.db.test.ts only, never provider-session-admission.ts.
 
 # Full CI continuation after r4 (2026-10-11)
 

@@ -17,7 +17,7 @@ import { useEffect, useRef } from 'react';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 
-import type { ChoiceOption } from './response-types';
+import { type ChoiceOption, withoutLabelPrefix } from './response-types';
 
 export interface ChoiceSetResponseProps {
   options: ChoiceOption[];
@@ -159,7 +159,9 @@ export function ChoiceSetResponse({
                 )}
                 <span className="rs-opt-k">{opt.label}</span>
                 <span className="rs-opt-t">
-                  <MathMarkdown notation={notation}>{opt.text_md}</MathMarkdown>
+                  <MathMarkdown notation={notation}>
+                    {withoutLabelPrefix(opt.text_md, opt.label)}
+                  </MathMarkdown>
                 </span>
               </button>
             </>
