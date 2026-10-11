@@ -357,6 +357,9 @@ async function commitFault(
   const target = safeUrl();
   const sockets = new Set<Socket>();
   let fired = false;
+  let listenerClosed: Promise<void> | undefined;
+  const closeListener = () =>
+    (listenerClosed ??= new Promise<void>((done) => server.close(() => done())));
   const server = createServer((downstream) => {
     downstream.setNoDelay(true);
     if (fired && mode === 'after-server-commit-and-unavailable') {
@@ -442,6 +445,7 @@ async function commitFault(
             // Existing pool connections must become unavailable too. Refusing only
             // new connections lets the authoritative reread use a healthy sibling.
             evidence.push({ unavailableSocketCount: sockets.size });
+            void closeListener();
             for (const socket of sockets) socket.destroy();
             sockets.clear();
           } else close();
@@ -465,7 +469,7 @@ async function commitFault(
     fired: () => fired,
     async stop() {
       for (const socket of sockets) socket.destroy();
-      await new Promise<void>((done) => server.close(() => done()));
+      await closeListener();
     },
   };
 }
@@ -681,6 +685,7 @@ for (const family of families)
       try {
         await first.wait('ready');
         // This fixture expects the failure message itself, after the workflow becomes ERROR.
+        await first.wait('failure');
         await expect
           .poll(
             async () =>
