@@ -1,0 +1,179 @@
+/* YUK-1473 — layout A「纸面」(paper). The question and the answer read as one sheet of paper on the
+   page: the question number in a left gutter, each answer written right under its own question on
+   ruled lines (no box, it grows as you write), the choices part of the sheet, a small glass action
+   bar floating at the bottom of the screen while answering (a floating layer, T3), then the result
+   and a quiet timeline of earlier attempts at the end of the same sheet. */
+
+[data-ui-next] .un-pn[data-layout="paper"] {
+  & .un-pn-column {
+    max-width: 820px;
+    gap: var(--un-sp-5);
+  }
+  & .un-pn-q {
+    gap: var(--un-sp-5);
+  }
+
+  & .un-pn-sheet {
+    display: grid;
+    gap: var(--un-sp-6);
+    padding: var(--un-sp-6) var(--un-sp-7) var(--un-sp-6) var(--un-sp-6);
+    border-radius: var(--un-r-2);
+    background: var(--un-bg-raised);
+    box-shadow: 0 0 0 var(--un-hairline) var(--un-line);
+  }
+
+  /* The stem, with the question square in the gutter. */
+  & .un-pn-sheet-q {
+    display: grid;
+    grid-template-columns: var(--un-pn-no) minmax(0, 1fr) auto;
+    column-gap: var(--un-sp-3);
+    align-items: baseline;
+  }
+
+  /* Everything written sits under the text, in the same column as the question words. */
+  & .un-pn-sheet > .un-pn-write,
+  & .un-pn-sheet > .un-pn-extras,
+  & .un-pn-sheet > .un-pn-sheet-result,
+  & .un-pn-sheet > .un-pn-section {
+    margin-left: var(--un-pn-gutter);
+  }
+  & .un-pn-vparts {
+    gap: var(--un-sp-6);
+  }
+  & .un-pn-vpart-body {
+    gap: var(--un-sp-3);
+  }
+
+  /* Ruled writing lines: a soft baseline under every line, carried along as the text grows.
+     Focus draws a coral margin line and warms the rules; no box appears. */
+  & .rs-textarea,
+  & .un-pn-textarea {
+    padding: 0 var(--un-sp-1);
+    background-color: transparent;
+    background-image: repeating-linear-gradient(
+      to bottom,
+      transparent 0,
+      transparent calc(var(--un-pn-line) - 1px),
+      var(--un-line-strong) calc(var(--un-pn-line) - 1px),
+      var(--un-line-strong) var(--un-pn-line)
+    );
+    background-attachment: local;
+  }
+  & .rs-textarea:hover:not(:disabled),
+  & .un-pn-textarea:hover {
+    background-color: color-mix(in srgb, var(--un-bg-hover) 60%, transparent);
+  }
+  & .rs-textarea:focus-visible,
+  & .un-pn-textarea:focus-visible {
+    background-color: color-mix(in srgb, var(--un-accent-soft) 45%, transparent);
+    background-image: repeating-linear-gradient(
+      to bottom,
+      transparent 0,
+      transparent calc(var(--un-pn-line) - 1.5px),
+      var(--un-accent) calc(var(--un-pn-line) - 1.5px),
+      var(--un-accent) var(--un-pn-line)
+    );
+    box-shadow: inset 2px 0 0 var(--un-accent-strong);
+  }
+  /* Handed in: the lines shrink to what was written. */
+  & .rs-textarea:disabled {
+    min-height: var(--un-pn-line);
+    background-image: repeating-linear-gradient(
+      to bottom,
+      transparent 0,
+      transparent calc(var(--un-pn-line) - 1px),
+      var(--un-line) calc(var(--un-pn-line) - 1px),
+      var(--un-line) var(--un-pn-line)
+    );
+  }
+  & .un-pn-textarea {
+    min-height: calc(2 * var(--un-pn-line));
+    font-size: var(--un-fs-2);
+  }
+
+  /* Choices are lines of the sheet. */
+  & .rs-opt {
+    margin-left: calc(-1 * var(--un-sp-3));
+  }
+
+  /* 断句: the text sits on the sheet itself. */
+  & .un-sb-text {
+    padding: var(--un-sp-2) 0;
+    background: transparent;
+  }
+  & .un-sb-text[role="slider"]:focus-visible {
+    box-shadow: inset 2px 0 0 var(--un-accent-strong);
+  }
+
+  /* ── The floating action bar: glass, stuck to the bottom of the screen while answering, and
+     settled in its place once the sheet ends above the screen bottom. ── */
+  & .un-pn-bar {
+    position: sticky;
+    bottom: calc(var(--un-pn-bottom, 0px) + var(--un-sp-4));
+    z-index: var(--un-z-raised);
+    justify-self: start;
+    max-width: 100%;
+    box-sizing: border-box;
+    margin-left: calc(var(--un-pn-gutter) - var(--un-sp-2));
+    padding: 6px var(--un-sp-3) 6px 6px;
+    border-radius: var(--un-r-3);
+    gap: var(--un-sp-1) var(--un-sp-2);
+  }
+  & .un-pn-bar .un-btn-primary {
+    border-radius: var(--un-r-3);
+  }
+  & .un-pn-bar-tools .un-btn {
+    border-radius: var(--un-r-3);
+  }
+  & .un-pn-bar-save:empty {
+    display: none;
+  }
+  & .un-pn-bar-save {
+    padding-left: var(--un-sp-2);
+    border-left: var(--un-hairline) solid var(--un-line);
+  }
+
+  /* ── Result, then the earlier attempts: the end of the same sheet ── */
+  & .un-pn-sheet-result {
+    display: grid;
+    gap: var(--un-sp-4);
+    padding-top: var(--un-sp-5);
+    border-top: var(--un-hairline) solid var(--un-line);
+  }
+  & .un-pn-sheet > .un-pn-section:has(> .un-pn-history) {
+    padding-top: var(--un-sp-4);
+    border-top: var(--un-hairline) dashed var(--un-line);
+  }
+}
+
+/* Medium widths: a little less paper margin. */
+@media (min-width: 721px) and (max-width: 1100px) {
+  [data-ui-next] .un-pn[data-layout="paper"] .un-pn-sheet {
+    padding: var(--un-sp-5);
+  }
+}
+
+/* Phone: the sheet runs to the screen edges; the bar floats above the companion's peek. */
+@media (max-width: 720px) {
+  [data-ui-next] .un-pn[data-layout="paper"] {
+    & .un-pn-sheet {
+      gap: var(--un-sp-5);
+      margin: 0 calc(-1 * var(--un-sp-2));
+      padding: var(--un-sp-5) var(--un-sp-4) var(--un-sp-5) var(--un-sp-3);
+    }
+    & .un-pn-vparts {
+      gap: var(--un-sp-5);
+    }
+    & .un-pn-bar {
+      /* The companion sheet peeks about 76px above the shell's tab bar (C2). */
+      bottom: calc(var(--un-pn-bottom, 0px) + 76px + var(--un-sp-2));
+      margin-left: 0;
+      justify-self: stretch;
+      justify-content: space-between;
+    }
+    /* No room for the calm 「已保存」 on a phone; a failed save still shows. */
+    & .un-pn-bar-save:has(.rs-save:not(.is-error, .is-conflict)) {
+      display: none;
+    }
+  }
+}
