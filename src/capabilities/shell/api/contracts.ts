@@ -79,13 +79,17 @@ const ProposalBlockPreviewResponseSchema = z.object({
 const ProposalPresentationResponseSchema = z.object({
   title: z.string(),
   change_summary: z.array(z.object({ label: z.string(), value: z.string() })),
-  technical_details: z.string().nullable(),
   evidence_labels: z.record(z.string(), z.string()),
   block_merge: z
     .object({
       primary: ProposalBlockPreviewResponseSchema.nullable(),
       merged: z.array(ProposalBlockPreviewResponseSchema),
       continuity_label: z.string().nullable(),
+      // YUK-1404 — the proposal's exact ingestion-session subject
+      // renderConfig.notation, resolved server-side from the canonical subject
+      // registry. null for unknown/missing session, unresolved subject, or
+      // unregistered subject — the UI must not guess a math default.
+      notation: z.string().nullable(),
     })
     .nullable(),
 });
