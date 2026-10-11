@@ -21,6 +21,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { QUESTION_KIND_OPTIONS, type QuestionKindOptionId } from '@/core/schema/business';
 import { RecordLanding, knowledgeLabelsFor } from '@/ui/components/RecordLanding';
 import { deriveOptionIds } from '@/ui/components/response/response-types';
+import { UploadSubjectPicker, uploadSubjectField } from '@/ui/components/UploadSubjectPicker';
 import { type ApiSubject, useSubjects } from '@/ui/hooks/useSubjects';
 import { ApiAuthError, ApiError, apiJson } from '@/ui/lib/api';
 import { expandDocx, expandPdf, uploadAsset, useAssetUrl } from '@/ui/lib/assets';
@@ -198,6 +199,7 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
   // Bug B (fix-docx-ingestion): true while recovering an in-flight run from the URL.
   const [recovering, setRecovering] = useState(false);
   const [files, setFiles] = useState<File[]>([]);
+  const [uploadSubject, setUploadSubject] = useState<string | null>(null);
   // When the single picked file is a PDF (vision_paper only), it expands
   // server-side to N page images; pdfPageCount is the count returned by
   // /api/ingestion/pdf, used for the "展开 PDF（N 页）" labels.
@@ -373,7 +375,11 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
         session: { id: string };
       }>('/api/ingestion', {
         method: 'POST',
-        body: JSON.stringify({ entrypoint: mode, asset_ids: ids }),
+        body: JSON.stringify({
+          entrypoint: mode,
+          asset_ids: ids,
+          ...uploadSubjectField(uploadSubject),
+        }),
       });
       await startIngestionOperation(session.session.id, { kind: 'extract' });
       return session.session.id;
@@ -596,6 +602,7 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
     setPhase('idle');
     setLanding(null);
     setFiles([]);
+    setUploadSubject(null);
     setPdfPageCount(null);
     setSessionId(null);
     setIngestionLine(null);
@@ -755,6 +762,12 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
               )}
             </ul>
           )}
+          <UploadSubjectPicker
+            value={uploadSubject}
+            onChange={setUploadSubject}
+            disabled={startMutation.isPending}
+            docxSelected={files.length > 0 && isDocx(files[0])}
+          />
           {errorMessage && <p style={errorStyle}>{errorMessage}</p>}
           <div style={{ marginTop: 'var(--s-3)', display: 'flex', justifyContent: 'flex-end' }}>
             <Button

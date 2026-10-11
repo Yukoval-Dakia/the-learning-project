@@ -1190,3 +1190,9 @@
   gap: var(--s-2);
   margin-top: var(--s-1);
 }
+/* Inline math in merge-card text: keep markdown paragraphs inline with their label. */
+.inbox-loom .merge-math,
+.inbox-loom .merge-math p {
+  display: inline;
+  margin: 0;
+}
