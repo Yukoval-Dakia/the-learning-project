@@ -1,0 +1,84 @@
+{
+  "source": "c9a0aab8a9011c93ea21532b958cb52ef11f7c74",
+  "test_only_fix": "6981981b7",
+  "results": {
+    "original_reconcile": {
+      "passed": 1,
+      "skipped": 10
+    },
+    "raw_timestamp_fixture_recheck": {
+      "passed": 1,
+      "skipped": 10
+    },
+    "latest_three_file_batch": {
+      "passed": 43,
+      "failed": 1,
+      "total_discovered": 51,
+      "full_suite_pass": false
+    }
+  },
+  "failure": "dispatchNativeAttempt changed userRating incorrectly returns existing runId through lost-COMMIT catch",
+  "runtime_runs": [
+    {
+      "path": "/tmp/yuk1356-parent-envelope-db",
+      "logs": [
+        {
+          "name": "first-case.log",
+          "sha256": "e2360c89e576ebc3196522b1ff7fee291555bb96d548faae8d167dcd9a6497b1"
+        },
+        {
+          "name": "repair-regressions.log",
+          "sha256": "488159f571ce1e10369267fe4303ede393ba779f1befcbf8220a54c7b42f2674"
+        },
+        {
+          "name": "keyset-fixture-recheck.log",
+          "sha256": "ad5b711776536f740dd7dd648911429614d13aff8d40210cfc9f3c3ed76fe9c9"
+        },
+        {
+          "name": "repair-regressions-recheck.log",
+          "sha256": "560a48707ff6b9a649cfe48ff360814067902d4ad9a6d86217e12960a53ffe5c"
+        }
+      ],
+      "cleanup": {
+        "owner": {
+          "owner": "7631c12b-ff58-44b3-aee5-303edfdfd42c",
+          "issue": "YUK-1356",
+          "phase": "isolated-judge-scoped-db",
+          "token": "08f35186-f98e-4c8a-aef4-75d7dc13a0c6",
+          "candidate": "c9a0aab8a9011c93ea21532b958cb52ef11f7c74",
+          "dirtyDiffSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "createdAt": "2026-10-09T01:15:40.998491+00:00"
+        },
+        "releasedAt": "2026-10-09T01:18:58.222285+00:00",
+        "containersUnchanged": true,
+        "releaseUnchanged": true,
+        "runningUnchanged": true
+      }
+    },
+    {
+      "path": "/tmp/yuk1356-parent-notification-fixture-db",
+      "logs": [
+        {
+          "name": "tests.log",
+          "sha256": "832a814436012c6c45d206f9d33d644bc7d03cbfbd5dfeccba7d65a8e6ef3e89"
+        }
+      ],
+      "cleanup": {
+        "owner": {
+          "owner": "7631c12b-ff58-44b3-aee5-303edfdfd42c",
+          "issue": "YUK-1356",
+          "phase": "isolated-judge-scoped-db",
+          "token": "9f39de57-50c9-43f0-a58c-c0ae7c750ea0",
+          "candidate": "c9a0aab8a9011c93ea21532b958cb52ef11f7c74",
+          "dirtyDiffSha256": "48b4c35b299c957cdd6137e564770eaa3751305dbb76ae80a1b42ff22e666ea4",
+          "createdAt": "2026-10-09T01:20:31.765949+00:00"
+        },
+        "releasedAt": "2026-10-09T01:21:16.111293+00:00",
+        "containersUnchanged": true,
+        "releaseUnchanged": true,
+        "runningUnchanged": true
+      }
+    }
+  ],
+  "r2_started": false
+}

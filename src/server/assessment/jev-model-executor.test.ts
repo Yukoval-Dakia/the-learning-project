@@ -226,4 +226,26 @@ describe('createJevModelExecutor — Jev lane', () => {
       out.kind === 'scored' && 'confidence' in out ? out.confidence : undefined,
     ).toBeUndefined();
   });
+
+  // @invariant grading: the durable judge transport issues exactly one real typed request — a controlled 503 returns a pending outcome with no lifecycle retry
+  // @fails-if retry the transport on the 503; the fetchImpl called-once and unretried-log assertions fail
+  it('durable judge policy reaches the real typed transport with one transient request', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(
+      async () =>
+        new Response(JSON.stringify({ error: { message: 'controlled 503' } }), {
+          status: 503,
+          headers: { 'content-type': 'application/json' },
+        }),
+    );
+    const port = createJevModelExecutor({
+      ...executorOptions(),
+      deadlineAt: Date.now() + 30_000,
+      judgeRetryPolicy: 'none',
+      fetchImpl,
+    });
+    const outcome = await port(request());
+    expect(outcome.kind).toBe('pending');
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(logMocks.retried).not.toHaveBeenCalled();
+  });
 });

@@ -1,6 +1,10 @@
 # YUK-1356 judge family implementation entry
 
-Preparation at source `b9b019a3a0bfd655a618a0dc302796fadcaf1b6e`. PR1624 remains subject to its exact-head CI and merge gate. This document reserves neither a writer nor a migration number. Implementation starts from fresh main after1394 delivery, in this thread's bound worktree.
+PR1624 formally merged as `96077db1905ebab6a522b0ae36f9f22e26be5895`, tree identical to exact a880 CI37852269707. This bound worktree now uses `feat/yuk-1356-durable-judge` from that fresh main. The parent verified all32 sealed report/source inputs and the report digest, read the existing claim, settlement callback and resolution code, and accepted the [operational contract](2026-10-09-yuk1356-judge-operational-contract.md) as the implementation direction. Runtime properties remain unproven.
+
+The2026-10-08T22:35Z preflight inspected77 registered trees,75 accessible. The broad practice scan found only unrelated tools WIP in tlp-yuk-1367-structured-practice; those tools are excluded. Authorized judge/shared paths have no observed dirty overlap. Two unavailable historical trees are excluded from that assertion. Main migrations end0117; no accessible tree has0118. Reserve0118 for this lane, recheck main before generation. Receipt: `/tmp/yuk1356-implementation-ownership-preflight-20261009.json`.
+
+One Codex gpt-6.1-sol xhigh implementation writer will own the complete bounded judge family, existing HTTP/public/placement/diagnostic consumers and scoped tests. Parent owns PLAN, .remember, tracker, independent review and runtime acceptance. No child runtime, DB, Docker, provider, browser, install, push, PR or deployment operations. The type-system-discipline principle requires schema-derived receipt variants and distinct unknown/absent states rather than optional state bags. The writer must keep existing native scoring and effect writers authoritative.
 
 Use existing YUK1356, UUID `25b13c76-a8c2-4c21-9c43-429d81feff24`. Its scope already includes the judge business family. YUK1355 supplies the shared durable infrastructure; do not create a duplicate judge epic. Tracker comments `83aa9179-e668-483b-913b-f541eaa0b8d4` and `42f51b33-e37c-42a6-acf5-02b3d570feac` retain assignment and source refresh evidence.
 

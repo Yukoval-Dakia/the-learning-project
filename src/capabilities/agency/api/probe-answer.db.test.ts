@@ -24,7 +24,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   PROBE_JUDGE_STARTED_ACTION,
   serveProbeOnce,
-  servePublishedProbe,
 } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
 import * as evaluationService from '@/capabilities/practice/server/judge/evaluate-submission';
 import { createRecordedModelExecutor } from '@/capabilities/practice/server/judge/recorded-model-executor';
@@ -43,6 +42,7 @@ import { writeAiProposal } from '@/kernel/proposals/writer';
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
 import { publishPaperModelFixture } from '../../../../tests/fixtures/assessment-paper';
 import { withProbeSpecs } from '../../../../tests/fixtures/conjecture-probe-spec';
+import { seedHistoricalAssessmentIssuance } from '../../../../tests/fixtures/historical-assessment-issuance';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { POST } from './probe-answer';
 
@@ -184,7 +184,11 @@ async function issueOfflineProbe(probeQuestionId: string) {
   const [row] = await testDb().select().from(question).where(eq(question.id, probeQuestionId));
   if (!existing && row?.source === 'mind_probe') {
     await publishPaperModelFixture(testDb(), probeQuestionId);
-    await servePublishedProbe(testDb(), probeQuestionId);
+    await seedHistoricalAssessmentIssuance(testDb(), {
+      group_id: probeQuestionId,
+      issuance_id: `iss_probe_${probeQuestionId}`,
+      container_occurrence_ref: `probe:${probeQuestionId}`,
+    });
   }
 }
 
