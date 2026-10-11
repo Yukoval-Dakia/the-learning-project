@@ -9,4 +9,4 @@ export { CompanionPanel } from './CompanionPanel';
 export type { UiNextRootProps } from './Root';
 export { UiNextRoot } from './Root';
 export type { TabBarItem, TabBarProps } from './TabBar';
-export { TabBar } from './TabBar';
+export { TabBar, useScrollCondense } from './TabBar';

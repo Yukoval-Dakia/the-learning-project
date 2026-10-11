@@ -1,4 +1,5 @@
-import type { ReactNode } from 'react';
+import type { ReactNode, RefObject } from 'react';
+import { useEffect, useState } from 'react';
 
 export interface TabBarItem {
   id: string;
@@ -18,13 +19,16 @@ export interface TabBarProps {
   /** Accessible name, e.g. "主导航". */
   label: string;
   items: readonly TabBarItem[];
-  /** Condensed while reading downward. */
+  /** Condensed while reading downward (see useScrollCondense): narrower, labels folded away. */
   compact?: boolean;
   /** Yields to a raised sheet; hidden and inert (A1). */
   hidden?: boolean;
 }
 
-/** Floating glass tab bar for phones (N3 mechanism; which entries it shows is pending-layer). */
+/**
+ * Floating glass tab bar for phones (N3 mechanism; which entries it shows is pending-layer).
+ * Each tab's icon carries `data-tab-target="<id>"`, the landing spot for a capture flight (M5).
+ */
 export function TabBar({ label, items, compact = false, hidden = false }: TabBarProps) {
   return (
     <nav
@@ -43,7 +47,7 @@ export function TabBar({ label, items, compact = false, hidden = false }: TabBar
           aria-current={item.active ? 'page' : undefined}
           onClick={item.onSelect}
         >
-          <span className="un-tab-icon" aria-hidden="true">
+          <span className="un-tab-icon" aria-hidden="true" data-tab-target={item.id}>
             {item.icon}
           </span>
           {item.badge !== undefined && (
@@ -57,4 +61,31 @@ export function TabBar({ label, items, compact = false, hidden = false }: TabBar
       ))}
     </nav>
   );
+}
+
+/**
+ * True while the reader moves down a scroller past `after` px; false again as soon as they head
+ * back up (N3: the tab bar condenses while reading and returns on the way back). Small jitters
+ * below `step` px are ignored.
+ */
+export function useScrollCondense(
+  scrollRef: RefObject<HTMLElement | null>,
+  { after = 80, step = 6 }: { after?: number; step?: number } = {},
+): boolean {
+  const [condensed, setCondensed] = useState(false);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    let last = el.scrollTop;
+    const onScroll = () => {
+      const top = el.scrollTop;
+      const d = top - last;
+      if (Math.abs(d) < step) return;
+      setCondensed(d > 0 && top > after);
+      last = top;
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => el.removeEventListener('scroll', onScroll);
+  }, [scrollRef, after, step]);
+  return condensed;
 }

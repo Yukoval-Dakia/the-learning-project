@@ -577,7 +577,9 @@
   & .un-tab-icon {
     display: grid;
     place-items: center;
-    transition: transform var(--un-t-feedback) var(--un-ease-spring);
+    transition:
+      transform var(--un-t-feedback) var(--un-ease-spring),
+      translate var(--un-t-ui) var(--un-ease-spring);
   }
 
   & .un-tab:active .un-tab-icon {
@@ -610,6 +612,20 @@
   & .un-tab-label {
     font-size: var(--un-fs-1);
     line-height: 1.1;
+    transition:
+      opacity var(--un-t-ui) var(--un-ease-glide),
+      transform var(--un-t-ui) var(--un-ease-glide);
+  }
+
+  /* Condensed (N3): icons only. The labels fold away and the icons settle to the middle, with
+     transform and opacity only (M8), so nothing reflows while the reader scrolls. */
+  & .un-tabbar[data-compact="true"] .un-tab-label {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+
+  & .un-tabbar[data-compact="true"] .un-tab-icon {
+    translate: 0 8px;
   }
 }
 
