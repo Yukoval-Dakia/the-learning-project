@@ -14,6 +14,7 @@ import type { Components } from 'react-markdown';
 import { isPublicHttpUrl } from '@/core/net/private-host';
 import { ApiError } from '@/ui/lib/api';
 import { DeferredMarkdownRenderer } from '@/ui/lib/deferred-markdown-renderer';
+import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { Btn } from '@/ui/primitives/Btn';
 import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
@@ -240,7 +241,24 @@ type MergeBlockPreview = NonNullable<
 
 // Sub-questions and options of a merge block (YUK-1404 preview contract). Counts are the full
 // totals; the lists are capped, so the remainder is stated. null means the structure is unknown.
-function BlockStructure({ block }: { block: MergeBlockPreview }) {
+// Question text in a merge card. With the upload's subject notation (YUK-1404) it goes through the
+// shared math renderer; without it the text stays plain, since markdown could misread `*` or `_`.
+function MergeText({ text, notation }: { text: string; notation: string | null }) {
+  if (!notation) return <>{text}</>;
+  return (
+    <MathMarkdown notation={notation} className="merge-math">
+      {text}
+    </MathMarkdown>
+  );
+}
+
+function BlockStructure({
+  block,
+  notation,
+}: {
+  block: MergeBlockPreview;
+  notation: string | null;
+}) {
   const subMore = (block.sub_question_count ?? 0) - block.sub_questions.length;
   const optMore = (block.option_count ?? 0) - block.options.length;
   if (block.sub_question_count === null && block.option_count === null) {
@@ -252,7 +270,7 @@ function BlockStructure({ block }: { block: MergeBlockPreview }) {
         <ul className="merge-structure">
           {block.sub_questions.map((sub) => (
             <li key={`${sub.label}\u0000${sub.excerpt}`}>
-              <b>{sub.label}</b> {sub.excerpt}
+              <b>{sub.label}</b> <MergeText text={sub.excerpt} notation={notation} />
             </li>
           ))}
         </ul>
@@ -262,7 +280,7 @@ function BlockStructure({ block }: { block: MergeBlockPreview }) {
         <ul className="merge-structure">
           {block.options.map((option) => (
             <li key={`${option.label}\u0000${option.text}`}>
-              <b>{option.label}</b> {option.text}
+              <b>{option.label}</b> <MergeText text={option.text} notation={notation} />
             </li>
           ))}
         </ul>
@@ -479,8 +497,10 @@ export function ProposalCard({
         <div className="merge-preview">
           <div className="merge-block">
             <div className="merge-label">保留这道 · {mergePreview.primary.label}</div>
-            <div className="merge-text">{mergePreview.primary.excerpt}</div>
-            <BlockStructure block={mergePreview.primary} />
+            <div className="merge-text">
+              <MergeText text={mergePreview.primary.excerpt} notation={mergePreview.notation} />
+            </div>
+            <BlockStructure block={mergePreview.primary} notation={mergePreview.notation} />
           </div>
           <div className="merge-join" aria-hidden="true">
             <LoomIcon name="arrow" size={16} />
@@ -490,8 +510,10 @@ export function ProposalCard({
             {mergePreview.merged.map((block) => (
               <div className="merge-text merge-text-part" key={block.id}>
                 <b>{block.label}</b>
-                <span>{block.excerpt}</span>
-                <BlockStructure block={block} />
+                <span>
+                  <MergeText text={block.excerpt} notation={mergePreview.notation} />
+                </span>
+                <BlockStructure block={block} notation={mergePreview.notation} />
               </div>
             ))}
           </div>

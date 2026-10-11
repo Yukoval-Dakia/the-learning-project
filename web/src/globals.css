@@ -15863,3 +15863,14 @@ div.copilot-tool-line.is-static {
     overflow-wrap: anywhere;
   }
 }
+
+/* YUK-1438 — optional upload subject choice (VisionTab / onboarding upload). */
+.upload-subject {
+  display: grid;
+  gap: var(--s-1);
+  margin-top: var(--s-3);
+}
+.upload-subject-note {
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+}
