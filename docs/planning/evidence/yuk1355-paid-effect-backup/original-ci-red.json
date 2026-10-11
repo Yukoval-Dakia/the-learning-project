@@ -1,0 +1,37 @@
+[
+  {
+    "run": "38141711556",
+    "job": "114476785360",
+    "originalPath": "/tmp/yuk1355-pr1698-6dea-114476785360.log",
+    "sha256": "70307c0983a89b11410fc85529c02d5f5d8a5dc994f4fe52547c0a4383fec2b3",
+    "status": "original failed log retained; not overwritten"
+  },
+  {
+    "run": "38141711556",
+    "job": "114476785334",
+    "originalPath": "/tmp/yuk1355-pr1698-6dea-114476785334.log",
+    "sha256": "073b400fc944d3b1166ddcba8436145c8dee34098de4dbdcff8136091f715152",
+    "status": "original failed log retained; not overwritten"
+  },
+  {
+    "run": "38141711556",
+    "job": "114476785325",
+    "originalPath": "/tmp/yuk1355-pr1698-6dea-114476785325.log",
+    "sha256": "c1729da0b7d23cb3ab30fad3de1b77b04f7fa6308d328888d4cd78c4741f2f9c",
+    "status": "original failed log retained; not overwritten"
+  },
+  {
+    "run": "38141711556",
+    "job": "114476785361",
+    "originalPath": "/tmp/yuk1355-pr1698-6dea-114476785361.log",
+    "sha256": "13af24a4d52d79384ddafac8aa1d417e2a8ef22ca8a7a4873768d9ae9cc5b634",
+    "status": "original failed log retained; not overwritten"
+  },
+  {
+    "run": "38141711556",
+    "job": "114476785347",
+    "originalPath": "/tmp/yuk1355-pr1698-6dea-114476785347.log",
+    "sha256": "4b85add994714d505daec633fa604e31b31137dc7938d1ad81d7d63248744133",
+    "status": "original failed log retained; not overwritten"
+  }
+]

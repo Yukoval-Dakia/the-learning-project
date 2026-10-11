@@ -248,6 +248,7 @@ export const dbTestInclude = [
   'src/server/export/intervention-backup.db.test.ts',
   'src/server/export/mem0-collection-backup.db.test.ts',
   'src/server/export/provider-attempt-backup.db.test.ts',
+  'src/server/export/paid-effect-backup.db.test.ts',
   'src/server/export/subscription-backup.db.test.ts',
   'src/server/mastery/fixed-anchor.db.test.ts',
   'src/server/mastery/item-calibration.db.test.ts',
