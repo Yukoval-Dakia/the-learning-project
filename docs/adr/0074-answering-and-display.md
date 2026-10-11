@@ -27,9 +27,12 @@ ADR-0073 钉死了判分侧：计分单元 + 入库标定的冻结方法 + 一�
 
 展示 spec 里的**每个作答位绑定一个 scoring_unit_id**（经 revision 的 ResponseSpec 槽位）。对每个单元，后端只认三件事：**收哪些证据**（option_ids / 空文本 / 位置集合 / 照片或笔迹区域）、**哪个冻结判分方法**（ADR-0073 D2 的判据 + 执行器 + 版本）、**多少分**。这正是既有形状：`ScoringUnit` 的 `slot_refs`/`evidence_slot_refs`/`criterion`/`points`（`scoring.ts:115-126`），slot 上无 points 的纪律（`response.ts:10-12`）。**录入时校验绑定**：`validateScoringBasis` 已在发布 barrier 纯校验 unit→slot 可解析、判据↔槽位种类相容（`criterion_slot_kind_mismatch`）、证据槽必须 open_response（`scoring.ts:187-204, 206-223, 230+`）；本 ADR 把展示 spec 纳入同一 barrier——spec 渲染的作答位必须落在 revision 槽位上且被某 unit 消费，**错配 ⇒ 该题不准入**（与 ADR-0073 D5「未标定不出」同一出口）。**展示永不影响判分**：换版式、换 renderer、改交互都不动 judgment；判分只读证据与冻结方法。
 
-### D4 书写模式（web，A4）
+### D4 手写主路径：排版良好的作答卷 PDF ↔ GoodNotes 等笔记 App 往返（owner 16:14，取代 A4 网页笔写为主路径）
 
-网页笔写用 Pointer Events：`pointerType === 'pen'` 过滤、pressure/tilt、coalesced 与 predicted events、手掌误触抑制、书写区 `touch-action: none` 不滚动。平板（粗指针/笔可用）进入一道题时**自动建议进入书写模式**；书写模式**为书写重排题面**（题干与材料让位、答题画布常驻、断句/连线直接在题面上笔答后按 D1 读成结构化位置或手写证据）。PaperKit 是原生组件、web 不可用，只记为未来原生/套壳 App 的选项。
+owner 在 iPad 实测网页笔写原型后：「不行，书写质量差。我在想是否该这样：输出排版良好的pdf，我在goodnote做完再把pdf传回来。」因此手写作答的主路径改为**作答卷往返**：
+- **导出**：一组题（今日练习/一张卷/复盘题）导出为排版良好的作答卷 PDF，题面按 D2 展示 spec 的印刷版式渲染（含公式、图、文章；文章类题在横版页上文章左、题右），每个计分单元有**预留作答区**；每页印**作答卷身份码**（发放 issuance id + 页码，二维码 + 人可读短码）与作答区定位标记。导出即一次 issuance，选项顺序等随 issuance 冻结（ADR-0073、`dto.ts` option_order），沿用 YUK-1427「打印纸卡、纸上作答、回收时保住同一任务身份」。
+- **回收**：学习者在 GoodNotes 等 App 作答后导出 PDF（或纸质打印后拍照）上传；系统按身份码与定位标记把每个作答区确定性对回计分单元（不靠猜题），再由录入同一套 capture 逐区读出作答（圈选的选项、空内文字、过程、断句斜线、连线笔迹、红笔订正按偏好）交 ADR-0073 同一判分。找不到身份码/定位标记时退回普通照片录入路径并如实标注。
+- **网页笔写降为可选**：Pointer Events 画布保留为轻量备选（短答、临时草稿），不作手写主路径；PaperKit 仍只记为未来原生/套壳 App 选项。点选（选择题、agent 生成的断句点选块）照常在网页完成。
 
 ### D5 录入视图与进度（owner 15:46）
 
