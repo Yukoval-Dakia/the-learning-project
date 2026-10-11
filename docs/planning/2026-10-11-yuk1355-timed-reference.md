@@ -413,3 +413,9 @@ Parent owns R2 on the fixed repair commit, the fixed lane-B handoff, DB/process/
 provider/runtime acceptance, tracker capture and later delivery. No R3 on old
 code or child review was started. No DB, container, runtime service, provider,
 credential, lock, push, PR or Linear operation occurred here.
+
+## Frozen-input stage final R2
+
+Final R2 reviewed `c3ac4c728a1e0c1d7540e860ef79271c5ebd554f` against `51613a4d2b7c1d964cde1eb483ded90c96e86f61`: both R1 P1s resolved, remaining proven P0/P1 NONE in the five-file delta. The initial SWE-2 request hit quota without a verdict; Sol resumed the same R2. No third round was opened.
+
+Review confirmed saved receipt provenance drives recovery apply, full prepared input is detached and digested, completed/mismatched receipts stay preserved, and unique conflicts remain pending. Eleven retained function bodies were independently AST-compared unchanged. Parent independently passed 48 scoped unit cases. Two new real-DB cases remain unrun; provisional shared-store integration and DB/process/provider/runtime acceptance remain pending. Candidate stays held and unregistered.
