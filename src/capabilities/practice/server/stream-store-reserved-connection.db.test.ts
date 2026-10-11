@@ -1,10 +1,10 @@
 import { createId } from '@paralleldrive/cuid2';
-import { eq, sql } from 'drizzle-orm';
+import { sql } from 'drizzle-orm';
 import postgres from 'postgres';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Db } from '@/db/client';
 import { knowledge, learning_item, practice_stream_item, question } from '@/db/schema';
-import { normalizeQuestionRowToContract } from '@/server/questions/contract-normalizer';
+import { contractIntegrityDigest } from '@/server/questions/contract-normalizer';
 import { publishQuestionGroup } from '@/server/questions/publisher';
 import { resetDb } from '../../../../tests/helpers/db';
 import { handleReviewDue } from './due-list';
@@ -83,11 +83,70 @@ async function seedSamplableQuestion(db: Db): Promise<string> {
     updated_at: now,
   });
   // Compose candidates must be published + admitted + automatically servable —
-  // pin a real deterministic option-set contract instead of an unpublished row.
-  const [row] = await db.select().from(question).where(eq(question.id, questionId));
+  // pin an explicit deterministic option-set contract (owner: no
+  // reference_md key extraction / normalizer guess-key path).
+  const options = [
+    {
+      option_id: `opt_${questionId}_a`,
+      label: 'A',
+      text: 'A borrowed short-lived session.',
+    },
+    {
+      option_id: `opt_${questionId}_b`,
+      label: 'B',
+      text: 'The reserved lock-holding session.',
+    },
+  ];
+  const contract = {
+    structure: {
+      group_id: questionId,
+      materials: [],
+      parts: [
+        {
+          part_id: 'p1',
+          prompt_md: 'Which session must own work guarded by a session advisory lock?',
+          material_ids: [],
+        },
+      ],
+    },
+    response_spec: {
+      slots: [{ slot_id: 'p1::r', part_id: 'p1', kind: 'single_choice' as const, options }],
+    },
+    scoring_basis: {
+      units: [
+        {
+          scoring_unit_id: 'p1::u',
+          slot_refs: ['p1::r'],
+          material_refs: [],
+          evidence_slot_refs: [],
+          requires_group_evidence: false,
+          criterion: {
+            kind: 'option_set_key' as const,
+            accepted_option_ids: [`opt_${questionId}_b`],
+          },
+          points: 2,
+        },
+      ],
+      aggregation: { kind: 'sum' as const },
+      blank_scores_zero: true,
+    },
+    execution_plan: {
+      plan_version: 1,
+      assignments: [
+        {
+          scoring_unit_ids: ['p1::u'],
+          executor: { kind: 'deterministic' as const, comparator: 'exact_option_set' as const },
+        },
+      ],
+      escalation: {
+        on_unadmitted_model: 'withhold' as const,
+        on_low_confidence: 'human_review' as const,
+      },
+    },
+  };
   const published = await publishQuestionGroup(db, {
     group_id: questionId,
-    contract: normalizeQuestionRowToContract(row),
+    contract: { ...contract, integrity_digest: contractIntegrityDigest(contract) },
     expectedCurrentRevision: null,
     expectedAdmissionGeneration: null,
     availability: 'general_pool',
