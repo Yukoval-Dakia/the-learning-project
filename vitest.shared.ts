@@ -289,6 +289,8 @@ export const dbTestInclude = [
   'tests/dbos-review-orphan/migration.db.test.ts',
   'tests/dbos-session-orphan/cron.db.test.ts',
   'tests/dbos-session-orphan/migration.db.test.ts',
+  'tests/dbos-session-orphan/migration-placement.db.test.ts',
+  'tests/dbos-session-orphan/migration-legacy.db.test.ts',
   'tests/integration/config-hot-reload.db.test.ts',
   'tests/integration/config-restore-epoch.db.test.ts',
   'tests/integration/config-write-boundaries.db.test.ts',
