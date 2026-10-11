@@ -31,6 +31,7 @@ import {
 } from './assessment-trace-content';
 
 export interface PiModelExecutorOptions {
+  judgeRetryPolicy?: RunTaskCtx['judgeRetryPolicy'];
   db: Db;
   deadlineAt: number;
   /** Caller cap, intersected with the published unit cap and task budget. */
@@ -161,6 +162,7 @@ export function createPiModelExecutor(options: PiModelExecutorOptions): ModelUni
         () =>
           runTask('AssessmentRuleJudgeTask', prepared.input, {
             db: options.db,
+            judgeRetryPolicy: options.judgeRetryPolicy,
             taskRunId,
             signal,
             laminarContent: isLaminarTracingEnabled()

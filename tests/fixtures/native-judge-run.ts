@@ -1,13 +1,18 @@
 import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { vi } from 'vitest';
+import { z } from 'zod';
 import { dispatchNativeAttempt } from '@/capabilities/practice/server/assessment/durable-attempt';
 import * as evaluationService from '@/capabilities/practice/server/judge/evaluate-submission';
 import { createRecordedModelExecutor } from '@/capabilities/practice/server/judge/recorded-model-executor';
+import { fenceJudgeUnitClaim } from '@/capabilities/practice/server/judge-operational';
 import type { NativeJudgeRunJobData } from '@/capabilities/practice/server/judge-run-payload';
 import type { ModelExecutorRequest, ModelUnitOutcomeT } from '@/core/schema/assessment';
+import { JudgeWorkflowInput } from '@/core/schema/event/judge-operational-events';
+import { NativeJudgePendingSubmitInput } from '@/core/schema/event/judge-pending-events';
 import type { Db } from '@/db/client';
-import { question } from '@/db/schema';
+import { event, question } from '@/db/schema';
+import { resetJudgeControl } from '../dbos-judge/support';
 import { issueSoloFixture } from './assessment-solo';
 
 /** Real original/dispatch/worker fixture; only model and queue IO are offline. */
@@ -21,6 +26,12 @@ export async function nativeJudgeRunFixture(
     requireUnassistedModelEvidence?: boolean;
   } = {},
 ) {
+  const pending = await db
+    .select({ id: event.id })
+    .from(event)
+    .where(eq(event.action, 'experimental:judge_pending_attempt'))
+    .limit(1);
+  if (!pending.length) await resetJudgeControl(db);
   const questionId = options.questionId ?? `native_worker_${createId()}`;
   const [existing] = await db.select().from(question).where(eq(question.id, questionId));
   if (!existing) {
@@ -63,8 +74,13 @@ export async function nativeJudgeRunFixture(
       cost_usd_micros: 120,
     }),
   );
-  vi.spyOn(evaluationService, 'createFormalModelExecutor').mockImplementation(() =>
-    createRecordedModelExecutor(db, execute),
+  vi.spyOn(evaluationService, 'createFormalModelExecutor').mockImplementation(
+    (database, _signal, _admission, execution) =>
+      createRecordedModelExecutor(
+        database,
+        execute,
+        execution ? { fence: (tx, request) => fenceJudgeUnitClaim(tx, execution, request) } : {},
+      ),
   );
   const jobs: NativeJudgeRunJobData[] = [];
   await dispatchNativeAttempt(
@@ -79,9 +95,17 @@ export async function nativeJudgeRunFixture(
     {
       checkRateLimit: () => 1,
       boss: {
-        send: async (_queue, data) => {
-          jobs.push(data as NativeJudgeRunJobData);
-          return createId();
+        send: async (_queue, data, sendOptions) => {
+          const parsed = z
+            .object({
+              run_id: z.string(),
+              caller: z.literal('native_assessment'),
+              submit: NativeJudgePendingSubmitInput,
+              operational: JudgeWorkflowInput,
+            })
+            .parse(data);
+          jobs.push(parsed);
+          return sendOptions?.id ?? null;
         },
       },
     },

@@ -1006,7 +1006,11 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       // returns control to loom's deliberate retry layer instead of burning
       // the task budget on client-side retries. Same knob on pi's stream
       // options; preserve an explicit operator value including '0'.
-      ...(piMaxRetries() !== undefined ? { maxRetries: piMaxRetries() } : {}),
+      ...(options.judgeRetryPolicy === 'none'
+        ? { maxRetries: 0 }
+        : piMaxRetries() !== undefined
+          ? { maxRetries: piMaxRetries() }
+          : {}),
       ...(options.effort !== undefined ? { reasoning: options.effort } : {}),
     };
   }

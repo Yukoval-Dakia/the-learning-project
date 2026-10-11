@@ -2,16 +2,25 @@
 // Legacy completed runs can reconstruct notifications. Unfinished legacy payloads
 // retain their original answer and terminate without invoking a retired scorer.
 
-import { and, eq } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import type { JobWithMetadata } from 'pg-boss';
 import { ZodError } from 'zod';
+import { canonicalHash } from '@/core/migration/canonical';
+import { JudgeWorkflowInput } from '@/core/schema/event/judge-operational-events';
+import { JudgePendingAttemptPayload } from '@/core/schema/event/judge-pending-events';
 import type { Db } from '@/db/client';
-import { event, job_events } from '@/db/schema';
+import { event } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
-import { writeJobEvent } from '@/server/events/writer';
+import { EvaluateSubmissionError } from '../server/judge/evaluate-submission';
+import {
+  JudgeReceiptConflict,
+  JudgeRunClosedError,
+  disposeJudgeRun,
+} from '../server/judge-operational';
+import { projectJudgeRunNotification } from '../server/judge-run-notification';
+import { readJudgeRunPermanent } from '../server/judge-run-observation';
 import type { JudgeRunJobData } from '../server/judge-run-payload';
-import { reconstructDoneFromDomainEvents } from '../server/judge-run-payload';
-import { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from '../server/judge-run-status';
+import { JUDGE_RUN_EVENTS } from '../server/judge-run-status';
 
 // Original native input pointers and historical queue payloads share the recovery envelope.
 export type { JudgeRunJobData } from '../server/judge-run-payload';
@@ -24,6 +33,33 @@ export type JudgeRunOutcome =
 export interface JudgeRunDeps {
   /** Failure/recovery seam around the real native executor; production supplies none. */
   executeNativeAttemptFn?: typeof import('../server/assessment/durable-attempt')['executeNativeAttempt'];
+}
+
+export async function runJudgeWorkflowDelivery(
+  db: Db,
+  untrusted: unknown,
+  deps: JudgeRunDeps = {},
+) {
+  const input = JudgeWorkflowInput.parse(untrusted);
+  const [row] = await db.select().from(event).where(eq(event.id, input.pending_id));
+  const pending = JudgePendingAttemptPayload.parse(row?.payload);
+  if (
+    pending.caller !== 'native_assessment' ||
+    pending.run_id !== input.run_id ||
+    canonicalHash(pending) !== input.pending_digest
+  )
+    throw new JudgeReceiptConflict('Workflow input differs from frozen pending operation');
+  return runJudgeRun(
+    db,
+    {
+      run_id: pending.run_id,
+      caller: 'native_assessment',
+      submit: pending.submit,
+      operational: input,
+    },
+    { retryCount: 0, retryLimit: 0, deliveryId: input.delivery_id },
+    deps,
+  );
 }
 
 /** Queue retry metadata governs infrastructure retries, never automatic model fallback. */
@@ -41,6 +77,15 @@ export async function runJudgeRun(
   deps: JudgeRunDeps = {},
 ): Promise<JudgeRunOutcome> {
   const runId = data.run_id;
+  const permanent = await readJudgeRunPermanent(db, runId);
+  if (permanent.kind === 'manual') {
+    await writeTerminalJobEvent(db, {
+      businessId: runId,
+      eventType: JUDGE_RUN_EVENTS.FAILED,
+      payload: { reason: 'manual', error_code: permanent.disposition.reason },
+    });
+    return { status: 'skipped', run_id: runId, reason: 'manual' };
+  }
 
   // ── 幂等守卫 ────────────────────────────────────────────────────────────
   // 回填事务已 commit（attempt event id=run_id 已写）但终态 job_event 写前 worker
@@ -130,11 +175,21 @@ export async function runJudgeRun(
     // terminalizes on the first delivery with its own reason code.
     const nonRetryable =
       err instanceof NonRetryableJudgeRunError ||
+      err instanceof JudgeRunClosedError ||
+      err instanceof JudgeReceiptConflict ||
+      (err instanceof EvaluateSubmissionError && err.code !== 'evaluation_busy') ||
       err instanceof ZodError ||
       isPermanentPersistError(err) ||
       (data.caller === 'native_assessment' &&
         err instanceof ApiError &&
-        ['coordinate_mismatch', 'stale_head', 'unsupported_judge_route'].includes(err.code));
+        [
+          'coordinate_mismatch',
+          'stale_head',
+          'unsupported_judge_route',
+          'judge_authorization_required',
+          'judge_disposed',
+          'attempt_conflict',
+        ].includes(err.code));
     // W4 #TtWiB — will pg-boss deliver this job again? Only when the failure is retryable AND
     // the budget is not spent. That question, not "did something fail", decides whether the
     // trace we write is TERMINAL. Round 3 over-generalized the "terminal writes must throw"
@@ -154,6 +209,26 @@ export async function runJudgeRun(
     );
 
     if (!willRetry) {
+      // Permanent manual evidence precedes notification and diagnostic release.
+      if (permanent.kind !== 'absent')
+        await disposeJudgeRun(db, runId, {
+          reason:
+            data.caller === 'submit'
+              ? 'historical_unknown'
+              : err instanceof JudgeReceiptConflict
+                ? 'invalid_receipt'
+                : (err instanceof ApiError || err instanceof EvaluateSubmissionError) &&
+                    ['coordinate_mismatch', 'stale_head', 'attempt_conflict'].includes(err.code)
+                  ? 'input_conflict'
+                  : 'terminal_delivery',
+          actorRef: 'judge:worker',
+          evidenceRefs: [`evt_pending_${runId}`, meta.deliveryId ?? runId],
+          evidenceDigest: canonicalHash({
+            runId,
+            deliveryId: meta.deliveryId ?? null,
+            code: classifyJudgeRunFailure(err),
+          }),
+        });
       const claimedAt = new Date(data.submit.submitted_at);
       if (!Number.isNaN(claimedAt.getTime())) {
         await (
@@ -249,8 +324,7 @@ function isPermanentPersistError(err: unknown): boolean {
 
 /** 该 run 的 attempt/outcome event（id=run_id）是否已落库 ⇒ 回填已由某次投递提交。 */
 async function attemptAlreadyPersisted(db: Db, runId: string): Promise<boolean> {
-  const rows = await db.select({ id: event.id }).from(event).where(eq(event.id, runId)).limit(1);
-  return rows.length > 0;
+  return (await readJudgeRunPermanent(db, runId)).kind === 'resolved';
 }
 
 /**
@@ -267,33 +341,16 @@ async function attemptAlreadyPersisted(db: Db, runId: string): Promise<boolean> 
 async function recoverAlreadyPersisted(
   db: Db,
   runId: string,
-  deliveryId?: string,
+  _deliveryId?: string,
 ): Promise<JudgeRunOutcome> {
-  const priorDone = await db
-    .select({ id: job_events.id })
-    .from(job_events)
-    .where(
-      and(
-        eq(job_events.business_table, JUDGE_RUN_TABLE),
-        eq(job_events.business_id, runId),
-        eq(job_events.event_type, JUDGE_RUN_EVENTS.DONE),
-      ),
-    )
-    .limit(1);
-  const hasDone = priorDone.length > 0;
-  if (!hasDone) {
-    await writeTerminalJobEvent(db, {
-      businessId: runId,
-      eventType: JUDGE_RUN_EVENTS.DONE,
-      payload: {
-        ...((await reconstructDoneFromDomainEvents(db, runId)) ?? {
-          attempt_event_id: runId,
-          already_persisted: true,
-        }),
-        ...(deliveryId ? { delivery_id: deliveryId } : {}),
-      },
-    });
-  }
+  const state = await readJudgeRunPermanent(db, runId);
+  if (state.kind !== 'resolved')
+    throw new JudgeReceiptConflict('Notification repair requires exact domain completion');
+  await writeTerminalJobEvent(db, {
+    businessId: runId,
+    eventType: JUDGE_RUN_EVENTS.DONE,
+    payload: state.result,
+  });
   return { status: 'skipped', run_id: runId, reason: 'already_persisted' };
 }
 
@@ -306,10 +363,8 @@ async function bestEffortWriteJobEvent(
   args: { businessId: string; eventType: string; payload: Record<string, unknown> },
 ): Promise<void> {
   try {
-    await writeJobEvent(db, {
-      business_table: JUDGE_RUN_TABLE,
-      business_id: args.businessId,
-      event_type: args.eventType,
+    await projectJudgeRunNotification(db, args.businessId, {
+      eventType: args.eventType,
       payload: args.payload,
     });
   } catch (err) {
@@ -331,10 +386,8 @@ async function writeTerminalJobEvent(
   let lastErr: unknown;
   for (let attempt = 0; attempt < TERMINAL_WRITE_ATTEMPTS; attempt++) {
     try {
-      await writeJobEvent(db, {
-        business_table: JUDGE_RUN_TABLE,
-        business_id: args.businessId,
-        event_type: args.eventType,
+      await projectJudgeRunNotification(db, args.businessId, {
+        eventType: args.eventType,
         payload: args.payload,
       });
       return;
@@ -441,6 +494,13 @@ export function buildJudgeRunHandler(
           // job. A malformed payload cannot improve on redelivery, so retrying would only
           // re-write the same FAILED twice more before the DLQ.
           try {
+            if ((await readJudgeRunPermanent(db, data.run_id)).kind !== 'absent')
+              await disposeJudgeRun(db, data.run_id, {
+                reason: 'invalid_receipt',
+                actorRef: 'judge:worker',
+                evidenceRefs: [job.id],
+                evidenceDigest: canonicalHash(data),
+              });
             await writeTerminalJobEvent(db, {
               businessId: data.run_id,
               eventType: JUDGE_RUN_EVENTS.FAILED,
@@ -470,6 +530,14 @@ export function buildJudgeRunHandler(
         continue;
       }
       try {
+        if (
+          data.caller === 'native_assessment' &&
+          data.operational &&
+          data.operational.delivery_id !== job.id
+        )
+          throw new JudgeReceiptConflict(
+            'pg-boss delivery ID differs from retained workflow input',
+          );
         const result = await runJudgeRun(
           db,
           data,

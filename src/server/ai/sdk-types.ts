@@ -29,6 +29,8 @@ type UUID = string;
  * session resume pointer.
  */
 export interface Options {
+  /** Server-owned durable judge call: one transport request, no paid retry. */
+  judgeRetryPolicy?: 'none';
   /** Catalog model id inside the resolved provider. */
   model?: string;
   /** Plain-string system prompt (SDK preset objects were never produced here). */

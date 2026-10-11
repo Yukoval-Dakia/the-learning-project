@@ -338,6 +338,60 @@ export { practiceTaskSpecs } from './task-public';
 export const submitReviewAnswer: typeof import('./server/review-operation').submitReviewAnswer =
   async (...args) => (await import('./server/review-operation')).submitReviewAnswer(...args);
 
+export type { JudgeStatusDto, JudgeStatusRead } from './server/judge-run-observation';
+export {
+  JudgeRunStatusResponseSchema,
+  JudgeRunTerminalResultSchema,
+} from './server/judge-run-status';
+export async function readJudgeRunStatus(database: import('@/db/client').Db, runId: string) {
+  return (await import('./server/judge-run-observation')).readJudgeRunStatus(database, runId);
+}
+export async function runJudgeDelivery(
+  ...args: Parameters<typeof import('./jobs/judge_run').runJudgeRun>
+) {
+  return (await import('./jobs/judge_run')).runJudgeRun(...args);
+}
+export async function reconcileJudgeAttempts(
+  ...args: Parameters<typeof import('./jobs/judge_pending_reconcile').reconcileStalledJudgeAttempts>
+) {
+  return (await import('./jobs/judge_pending_reconcile')).reconcileStalledJudgeAttempts(...args);
+}
+export async function buildLegacyJudgeHandler(
+  ...args: Parameters<typeof import('./jobs/judge_run').buildJudgeRunHandler>
+) {
+  return (await import('./jobs/judge_run')).buildJudgeRunHandler(...args);
+}
+export async function recordJudgeOperationalReceipt(
+  ...args: Parameters<typeof import('./server/judge-operational').writeJudgeReceipt>
+) {
+  return (await import('./server/judge-operational')).writeJudgeReceipt(...args);
+}
+export async function readPermanentJudgeRun(
+  ...args: Parameters<typeof import('./server/judge-run-observation').readJudgeRunPermanent>
+) {
+  return (await import('./server/judge-run-observation')).readJudgeRunPermanent(...args);
+}
+export async function executeJudgeWorkflow(
+  ...args: Parameters<typeof import('./jobs/judge_run').runJudgeWorkflowDelivery>
+) {
+  return (await import('./jobs/judge_run')).runJudgeWorkflowDelivery(...args);
+}
+
+export const reserveJudgeOperationalDelivery: typeof import('./server/judge-operational').reserveJudgeDelivery =
+  async (...args) => (await import('./server/judge-operational')).reserveJudgeDelivery(...args);
+
+// Judge engine identity and census belong to practice; the shared host consumes this seam.
+export {
+  JUDGE_DBOS_QUEUE,
+  JUDGE_DBOS_WORKFLOW,
+  type JudgeEngineInventoryT,
+  inspectDbosJudgeInventory,
+  judgeDeliveryInput,
+  judgeLegacyJobId,
+  sealJudgeEngineInventory,
+  validateJudgeEngineInventory,
+} from './server/judge-engine-client';
+
 // YUK-1358 — stream typed operations：HTTP adapter（api/stream.ts）与 TanStack Start
 // live consumer 共用的 HTTP 无关 seam。lazy 透出同上方 submitReviewAnswer——stream-store
 // compose 链可达 AI runner SDK，不能静态进本 barrel 的 migrate-bundle 消费面。

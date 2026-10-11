@@ -13,6 +13,7 @@ import {
   pgView,
   primaryKey,
   real,
+  smallint,
   text,
   timestamp,
   uniqueIndex,
@@ -4259,6 +4260,26 @@ export const system_config_epoch = pgTable('system_config_epoch', {
 });
 
 // YUK-1355: only the admitted housekeeping family can change recovery owner.
+export const judge_run_control = pgTable(
+  'judge_run_control',
+  {
+    id: smallint('id').primaryKey(),
+    incarnation: uuid('incarnation').notNull(),
+    epoch: bigint('epoch', { mode: 'number' }).notNull(),
+    phase: text('phase').notNull(),
+    phase_changed_at: timestamp('phase_changed_at', { withTimezone: true }).notNull(),
+    transition_event_id: text('transition_event_id'),
+  },
+  (t) => [
+    check('judge_run_control_singleton', sql`${t.id} = 1`),
+    check('judge_run_control_epoch', sql`${t.epoch} >= 0`),
+    check(
+      'judge_run_control_phase',
+      sql`${t.phase} IN ('pg-boss','draining-pg-boss','dbos','draining-dbos')`,
+    ),
+  ],
+);
+
 export const prune_job_events_control = pgTable(
   'prune_job_events_control',
   {
