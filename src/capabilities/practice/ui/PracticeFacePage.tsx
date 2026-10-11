@@ -11,7 +11,8 @@ import { ErrorState } from '@/ui/primitives/ErrorState';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import './practice-face.css';
 
-import { PracticeNextSolo } from './next/PracticeNextSolo';
+import { PracticeNextEmpty } from './next/PracticeNextEmpty';
+import { type PracticeCompanionMode, PracticeNextSolo } from './next/PracticeNextSolo';
 import { PfPaper } from './PfPaper';
 import { PfRetro } from './PfRetro';
 import { PfShelf } from './PfShelf';
@@ -81,21 +82,33 @@ function streamForRequestedScope(
   return stream.scope ? undefined : stream;
 }
 
-// navigate 暂未消费（M3 知识面挂上后，复盘 trace 的知识点链接会用它跳转）。
+// navigate：旧页面暂未消费（M3 知识面挂上后复盘 trace 会用它跳转）；新页面用于空态与学习伙伴回复里的链接。
 export default function PracticeFacePage(props: PracticeFacePageProps) {
   return <PracticeFace {...props} soloView="retained" />;
 }
 
+export interface PracticeNextPageProps extends PracticeFacePageProps {
+  /**
+   * Where the learning companion's conversation lives. `embedded` mounts the Copilot dock inside
+   * the page's companion panel and is only valid when the shell's global dock is off (one dock
+   * owns the open-with-context signal). Default `none`: the honest placeholder, since the shell
+   * still mounts its global dock until the migration line turns it off.
+   */
+  companion?: PracticeCompanionMode;
+}
+
 /** YUK-1473 — the same practice flow with the solve view in the new design language. */
-export function PracticeNextPage(props: PracticeFacePageProps) {
-  return <PracticeFace {...props} soloView="next" />;
+export function PracticeNextPage({ companion = 'none', ...props }: PracticeNextPageProps) {
+  return <PracticeFace {...props} soloView="next" companion={companion} />;
 }
 
 function PracticeFace({
+  navigate,
   getQuery,
   setQuery,
   soloView,
-}: PracticeFacePageProps & { soloView: 'retained' | 'next' }) {
+  companion = 'none',
+}: PracticeFacePageProps & { soloView: 'retained' | 'next'; companion?: PracticeCompanionMode }) {
   const qc = useQueryClient();
   const [scopeKnowledgeId, setScopeKnowledgeId] = useState<string | null>(() => {
     const value = getQuery('kc')?.trim();
@@ -298,12 +311,17 @@ function PracticeFace({
         <PracticeNextSolo
           key={mode.item.id}
           item={mode.item}
+          sessionId={visibleStream?.scope?.session_id ?? null}
           pos={pos || mode.item.position}
           total={items.length}
+          onDone={() => void completeSolo(mode.item)}
           onBack={() => {
             setMode({ kind: 'list' });
             void refreshStream();
           }}
+          onCommittedBack={() => void markSoloDoneAndExit(mode.item)}
+          navigate={navigate}
+          companion={companion}
         />
       ) : (
         <PfSolo
@@ -397,7 +415,17 @@ function PracticeFace({
             )}
           </div>
         </div>
-        {view === 'shelf' ? (
+        {soloView === 'next' &&
+        view === 'stream' &&
+        visibleStream &&
+        !streamQ.isFetching &&
+        visibleStream.items.length === 0 ? (
+          <PracticeNextEmpty
+            scopeLabel={scopeKnowledgeId ? (visibleStream.scope?.label ?? null) : null}
+            onClearScope={scopeKnowledgeId ? clearScope : null}
+            navigate={navigate}
+          />
+        ) : view === 'shelf' ? (
           <PfShelf
             openPaper={(artifactId) => setMode({ kind: 'paper', artifactId })}
             openRetro={(artifactId) => setMode({ kind: 'retro', artifactId })}
