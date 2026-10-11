@@ -2,6 +2,7 @@
 // The chosen id rides the ingestion-session create request as `subject_id` (YUK-1404),
 // so draft questions can render their subject's notation (e.g. math formulas) before
 // anything is enrolled. Skippable: no choice sends nothing and the upload is unchanged.
+import { useId } from 'react';
 import { useSubjects } from '@/ui/hooks/useSubjects';
 import { listSubjectChoices } from '@/ui/lib/subject';
 
@@ -18,17 +19,24 @@ export function UploadSubjectPicker({
   docxSelected?: boolean;
 }) {
   const { subjects } = useSubjects();
-  const choices = listSubjectChoices(subjects);
+  // Unconfigured rows are raw knowledge domains with no subject profile; the server rejects
+  // them as subject_id (400), which would fail an otherwise valid upload.
+  const choices = listSubjectChoices(subjects).filter(
+    (s) => s.configurationStatus !== 'unconfigured',
+  );
+  const labelId = useId();
   return (
     <div className="upload-subject">
-      <span className="field-label">这份材料是哪一科？（可不选）</span>
-      <div className="chip-set">
+      <span className="field-label" id={labelId}>
+        这份材料是哪一科？（可不选）
+      </span>
+      <div className="chip-set" role="group" aria-labelledby={labelId}>
         {choices.map((s) => (
           <button
             key={s.id}
             type="button"
-            className={`chip${value === s.id ? ' is-on' : ''}`}
-            aria-pressed={value === s.id}
+            className={`chip${!docxSelected && value === s.id ? ' is-on' : ''}`}
+            aria-pressed={!docxSelected && value === s.id}
             disabled={disabled || docxSelected}
             onClick={() => onChange(value === s.id ? null : s.id)}
           >

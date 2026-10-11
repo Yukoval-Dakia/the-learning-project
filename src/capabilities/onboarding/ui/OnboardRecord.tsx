@@ -272,6 +272,7 @@ export default function OnboardRecord({ navigate }: OnboardRecordProps) {
 
   const reset = () => {
     setFiles([]);
+    setUploadSubject(null);
     setPhase('idle');
     setSessionId(null);
     setBlockCount(null);

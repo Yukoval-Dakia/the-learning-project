@@ -510,9 +510,9 @@ export function ProposalCard({
             {mergePreview.merged.map((block) => (
               <div className="merge-text merge-text-part" key={block.id}>
                 <b>{block.label}</b>
-                <span>
+                <div>
                   <MergeText text={block.excerpt} notation={mergePreview.notation} />
-                </span>
+                </div>
                 <BlockStructure block={block} notation={mergePreview.notation} />
               </div>
             ))}

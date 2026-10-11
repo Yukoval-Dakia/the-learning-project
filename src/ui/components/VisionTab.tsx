@@ -602,6 +602,7 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
     setPhase('idle');
     setLanding(null);
     setFiles([]);
+    setUploadSubject(null);
     setPdfPageCount(null);
     setSessionId(null);
     setIngestionLine(null);
