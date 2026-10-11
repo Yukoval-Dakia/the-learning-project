@@ -1,3 +1,13 @@
+# r6 scoped acceptance and full CI continuation (2026-10-11)
+
+At fixed c4f452a02be2e21e983974ebe432b3d2ff7c1fbb, the authorized four-file batch passed 22/22: review migration 10, review cron 1, placement migration 10, historical legacy 1. Vitest and outer batch exited 0, no timeout; test plus teardown wall time was 162.205696 seconds. File times were 38.013, 13.397, 59.751 and 26.336 seconds. Lost-COMMIT normal workers exited [0, null]; outage recorded real unknown/ERROR with no uncaught ECONNRESET. This result is only 22 cases and does not claim 49 all PASS or complete CI within 120 seconds. Keep r5 failure and uncompleted cases as historical receipts.
+
+Atomic window began 10:59:35.171386Z; actual final token/parity release was 11:03:28.399496Z, total 233.228110 seconds. All 65 observed owned PIDs and PGID 768 were absent. The actual new Testcontainers session 6bd0f987eeaf and both PG/Ryuk IDs were empty, with original four services, release digest, source head/hashes and owner token equal. Auto cleanup briefly failed with Docker's rw-layer-snapshot-not-found error; cleanup-auto-failed.json remains. Subsequent actual session filter was empty; no additional stop/remove was used. Both coordinator and migration received the release receipt. No runtime or lock remains; no second batch.
+
+Parent then normally merged current origin/main 79825bb6d, bringing already-owned #1677 changes without authoring them; support.ts equals that main commit and remains read-only. Task-owned fixture/workflow source matches the runtime-tested c4f snapshot. Run final integrated static/build checks and hosted full CI with actual parity. No new independent third review. Existing YUK-1107 remains In Progress until the full 120-second target is actually verified.
+
+r6 raw, Vitest JSON, source and cleanup evidence: .cache/cron-speed-evidence/window-20261011-r6. Longer history below is historical, not current status.
+
 # Full CI continuation after r5 (2026-10-11)
 
 Owner target remains complete CI ≤120 seconds; YUK-1107 is In Progress. Parent d0c4657a owns .worktrees/yuk-1107-fast-crons / perf/yuk-1107-ci-critical-path. PR1690 exact6e1f076 was merged as e178690eb; complete Gate38130593891 took218 seconds. That workflow path skipped native/WASM parity, so it does not establish complete parity or120 seconds.
