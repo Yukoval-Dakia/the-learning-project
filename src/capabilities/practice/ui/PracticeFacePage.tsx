@@ -26,6 +26,7 @@ import {
   advanceStreamItem,
   getStream,
 } from './practice-api';
+import { questionDetailQuery } from './use-practice-submit';
 
 export interface PracticeFacePageProps {
   navigate: (to: string) => void;
@@ -128,12 +129,22 @@ function PracticeFace({
     [setQuery],
   );
   const [mode, setMode] = useState<Mode>({ kind: 'list' });
+  // YUK-1473 — moving to the next question in place (see advanceInPlace below).
+  const [advancing, setAdvancing] = useState(false);
+  const advancingRef = useRef(false);
+  const advanceSeq = useRef(0);
   // YUK-1473 — shared-title morph (M4) between a stream row and the new question page. Only the
   // new solo view takes part; the retained one never captures, so nothing flies there.
   const hostRef = useRef<HTMLDivElement>(null);
+  // One key for every question: moving to the next question keeps the page mounted and is not
+  // a view change (no morph, no page entrance replay).
   const morph = useSharedMorph(
     hostRef,
-    mode.kind === 'solo' ? `solo:${mode.item.id}` : mode.kind === 'list' ? 'list' : mode.kind,
+    mode.kind === 'solo' && soloView === 'next'
+      ? 'solo'
+      : mode.kind === 'solo'
+        ? `solo:${mode.item.id}`
+        : mode.kind,
   );
   const listScroll = useRef(0);
   const captureMorph = useCallback(
@@ -158,6 +169,10 @@ function PracticeFace({
     setView(nextView);
     setMode({ kind: 'list' });
     setActionFailure(null);
+    // A scope change ends any move to the next question that is still on its way.
+    advanceSeq.current += 1;
+    advancingRef.current = false;
+    setAdvancing(false);
   }, [getQuery]);
 
   const streamQueryKey = useMemo(
@@ -175,6 +190,8 @@ function PracticeFace({
   let streamError: Error | null = null;
   if (streamQ.isError) streamError = streamQ.error as Error;
   else if (streamScopeMismatch && !streamQ.isFetching) streamError = SCOPE_MISMATCH_ERROR;
+
+  const items = useMemo(() => visibleStream?.items ?? [], [visibleStream]);
 
   const addToast = useCallback((text: string, tone?: 'info', icon?: string) => {
     const id = Math.random().toString(36).slice(2);
@@ -219,7 +236,7 @@ function PracticeFace({
         ({ item: confirmed } = await advanceStreamItem(item.id, status));
       } catch (error) {
         recordFailure(action, error, () => void commit(item, status, action, onConfirmed));
-        return;
+        return false;
       }
 
       // PATCH 回执是服务端确认态。先写 cache，再做导航或 refresh；后续 GET 即使失败，
@@ -227,6 +244,7 @@ function PracticeFace({
       qc.setQueryData<StreamView>(streamQueryKey, (view) => replaceConfirmedItem(view, confirmed));
       setActionFailure(null);
       await onConfirmed(confirmed);
+      return true;
     },
     [qc, recordFailure, streamQueryKey],
   );
@@ -304,6 +322,88 @@ function PracticeFace({
     [commitStreamItem, continueAfterSolo],
   );
 
+  // YUK-1473 — the new question page moves to the next question in place: the finished question
+  // stays on screen (its 下一题 shows 下一题准备中…) until the next one is confirmed, then the page
+  // swaps the question column without passing through the list. One advance at a time; going
+  // back to the list cancels it, so a late answer never pulls the learner back into a question.
+  const endAdvance = useCallback(() => {
+    advancingRef.current = false;
+    setAdvancing(false);
+  }, []);
+  const cancelAdvance = useCallback(() => {
+    advanceSeq.current += 1;
+    endAdvance();
+  }, [endAdvance]);
+
+  const continueInPlace = useCallback(
+    async function continueNext(seq: number) {
+      const live = () => seq === advanceSeq.current;
+      let fresh: StreamView;
+      try {
+        fresh = await fetchFreshStream();
+      } catch (error) {
+        if (!live()) return;
+        endAdvance();
+        setMode({ kind: 'list' });
+        recordFailure('读取下一项', error, () => void continueAfterSolo());
+        return;
+      }
+      if (!live()) return;
+
+      const next = fresh.items.find((it) => it.status === 'pending');
+      if (next?.item_kind === 'question') {
+        const ok = await commitStreamItem(next, 'in_progress', '开始下一题', (confirmed) => {
+          if (live()) setMode({ kind: 'solo', item: confirmed });
+        });
+        if (!live()) return;
+        endAdvance();
+        if (!ok) setMode({ kind: 'list' });
+        return;
+      }
+
+      endAdvance();
+      captureMorph('solo');
+      setMode({ kind: 'list' });
+      if (next?.item_kind === 'paper') {
+        addToast('下一项是今天的卷——卷内不给即时反馈，准备好了再进。', 'info', 'layers');
+      }
+    },
+    [
+      addToast,
+      captureMorph,
+      commitStreamItem,
+      continueAfterSolo,
+      endAdvance,
+      fetchFreshStream,
+      recordFailure,
+    ],
+  );
+
+  const advanceInPlace = useCallback(
+    async (item: StreamItem) => {
+      if (advancingRef.current) return;
+      advancingRef.current = true;
+      setAdvancing(true);
+      const seq = ++advanceSeq.current;
+      const ok = await commitStreamItem(item, 'done', '完成练习', () => continueInPlace(seq));
+      // Marking done failed: stay on the question; the error above offers a retry.
+      if (!ok && seq === advanceSeq.current) endAdvance();
+    },
+    [commitStreamItem, continueInPlace, endAdvance],
+  );
+
+  // While a result is on screen, read the next question ahead so it can arrive without a wait
+  // (M13). A read only: the next item is not started until the learner moves on.
+  const prefetchNext = useCallback(
+    (current: StreamItem) => {
+      const next = items.find(
+        (it) => it.status === 'pending' && it.item_kind === 'question' && it.id !== current.id,
+      );
+      if (next) void qc.prefetchQuery(questionDetailQuery(next.ref_id));
+    },
+    [items, qc],
+  );
+
   // YUK-432 (Bugbot FINDING 1) — 客观题自动 commit 后「返回流」的退出。review 已落库 → 该 slot
   // 实质 done，必须标 done（否则留下「已判分但 slot 卡 in_progress」的不一致态）。区别于
   // completeSolo（「下一项」）：这里**只**标 done + 回列表，不自动推进到下一道 pending——用户按的是
@@ -330,26 +430,30 @@ function PracticeFace({
     }
   }, [backToList]);
 
-  const items = useMemo(() => visibleStream?.items ?? [], [visibleStream]);
-
   let body: React.ReactNode;
   if (mode.kind === 'solo') {
     const pos = items.findIndex((it) => it.id === mode.item.id) + 1;
     body =
       soloView === 'next' ? (
+        // Not keyed by question: the page stays mounted and swaps its question column itself.
         <PracticeNextSolo
-          key={mode.item.id}
           item={mode.item}
           sessionId={visibleStream?.scope?.session_id ?? null}
           pos={pos || mode.item.position}
           total={items.length}
-          onDone={() => void completeSolo(mode.item)}
+          advancing={advancing}
+          onDone={(done) => void advanceInPlace(done)}
+          onResultShown={prefetchNext}
           onBack={() => {
+            cancelAdvance();
             captureMorph('solo');
             setMode({ kind: 'list' });
             void refreshStream();
           }}
-          onCommittedBack={() => void markSoloDoneAndExit(mode.item)}
+          onCommittedBack={(done) => {
+            cancelAdvance();
+            void markSoloDoneAndExit(done);
+          }}
           navigate={navigate}
           companion={companion}
         />
@@ -467,7 +571,9 @@ function PracticeFace({
             error={streamError}
             openItem={openItem}
             refresh={refreshStream}
-            updateItem={commitStreamItem}
+            updateItem={async (item, status, action, onConfirmed) => {
+              await commitStreamItem(item, status, action, onConfirmed);
+            }}
             addToast={addToast}
           />
         )}

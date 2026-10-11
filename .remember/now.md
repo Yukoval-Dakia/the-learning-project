@@ -1,3 +1,11 @@
+# Full CI continuation after r4 (2026-10-11)
+
+Owner requires complete CI <=120 seconds, YUK-1107 In Progress. Sole writer d0c4657a owns .worktrees/yuk-1107-fast-crons / perf/yuk-1107-fast-crons, base148cf4bd, backup child commit integrated asb7828661a. Final r4 frozen10files passed24DB and162unit, nofailedcases. Local Vitest DB116.69s serial4files, unit116.18s; source hashes/ledgers/cleanup retained in .cache/cron-speed-evidence/window-20261011-r4. R1fresh-clone P1 andR2genuine-Timekeeper/native-point P1 fixed, finaldelta personallyruntimeverified, notclaimedearlierstaticreviewcoverage. No thirdreview. Typecheck/lint172warnings/build passed; policy/partition and complete exact-head CI still pending. Backupfile115.84s remains longtail, full120s notachieved; next executionarchitecture read-only investigation delegatedCodex gpt-6.1-sol high.
+
+Sharedwindow start09:38:08Z <=8min, runtime ended~09:44:21Z but token/parity cleanuprelease09:47:59.444858Z. Parent reported overrun precisely to totalcoordinator24b7fe69 andmigration4bbfaeee. 59ownedPIDs absent, ownTestcontainers empty, original4 ID/Image/State/Ports andoriginalreleasehash unchanged. No lockheld/newruntime batches; nextwindowmigrationpriority. Prior broadkill ownershipviolation and failedr3 preserved, neverreusedascleanuporperformanceacceptance.
+
+Evidence andremainingacceptance: docs/planning/2026-10-11-yuk1107-full-ci-continuation.md. Latest fullgreenbaseline38122365986 at148cf4bd took432sec; no affected-only/nightly/suite-skipping. PriorPR1679/1681/1687 merged/unwatched. NewcurrentfixturePRpending, noissueclosure/deployment/provider/TESTacceptance.
+
 # Session cron delivery complete (2026-10-11)
 
 PR1681 merged56df7c09e87244c1e993d58243eafbd398752569 at07:23:01Z; exact cd0c45db7739a0f5dcc02ca29f046a2fbd18f9d9 Gate38120469007 all jobs green. DB4 50files/259casesPASS, cron2/2PASS16.798s/14.137s,file34.564s; conversation crossed07:12UTC real minute with both schedulespaused. R2 NONE at244c, parser-initialization delta parent-verified+CI-covered. OriginalYUK1397 fixture slice delivered; no historical-source claims. WholeGate390s; DB2/3 slow steps289/302s, top files reviewcron252.318s/sessionmigration286.936s/prunecron201.624s; YUK1107 broadgoal notDone, no active next-scopewriter. Local runtime window still functional lane; no local DB/container/Vitest since release.
@@ -19,6 +27,16 @@ PR #1679 merged bfe3ff98470cc69764a0f33589d6354890d9327d; exact d7f21c70d CI Gat
 Owned tree: tlp-cron-speed-20261011, perf/yuk-1107-session-cron. Runtime-tested source 060a8b7afcaab98090870f97ec7431d15db541aa; 2/2 PASS, Vitest 277.61 s, R1 P0/P1 NONE. Source annotation/braces preserve test callback AST. See docs/planning/2026-10-11-yuk1107-cron-speed.md.
 
 Shared after-2 lock released after exact token, absent child PIDs and empty own Testcontainers session checks. Functional DOCX/PDF lane has priority. No new local DB/container/Vitest/mutation batch before their explicit window release; do not infer availability from an absent lock. Remaining: fault detection, final SHA repeat, exact CI.
+
+# PR1625 main conflict resolution — 2026-10-10
+
+Normal merge of current origin/main into fixed judge head4a08126. Only PLAN.md and this handoff conflict; source auto-merges. Preserve main board and historical judge synchronization below. Prior exact-head green does not validate this composition. Real provider acceptance remains incomplete; no unknown-effect replay, no PR merge/deploy. Local gates and new exact-head CI required.
+
+# PR1625 main synchronization, invariant tests only — 2026-10-10
+
+Sole writer in tlp-yuk-1356-durable-judge / feat/yuk-1356-durable-judge. Original head29a802f1a; git merge origin/main87f66b3e2 includes #1630/#1631, no rebase or feature edits. Owner authorizes normal commit/push and exact-head CI repair only; never merge PR. Modify/delete defaults deleted except five status-route cases and one durable runner fallback case. New/modified tests retained only for irreversible data, deterministic scoring/settlement, concurrency/rollback/idempotency, or security. No crisis changes. All retained files explicitly assigned in vitest.shared.ts. Read-only Luna classification child, parent only writer, no new PR review round.
+
+Merge5856878204466fd93c7dfa5717a43b1bdcdcaa8c pushed normally. Partition60unit/205DB/1migration, retained scoped unit/DB/migration and typecheck/lint/build passed; process stale deleted evidence path repaired and exact14process rerun passed. Exact-head CI38016152473 failed only DB4: submit-durable-resource and review-operation fixtures returned fake queue delivery IDs, discarded operational input and omitted unit claim fencing. Both are genuine data-retention/idempotent-settlement invariants, retained. Test-only repair captures actual queued payload/ID, uses recorded model executor fence and checks worker duplicate skips already_persisted with original business effects unchanged. Reproduced RED2failed/2passed then GREEN4passed; partition/typecheck/lint/build pass, lint208 existing warnings. Evidence /tmp/yuk1356-ci-fixtures-{red,green}.log and /tmp/yuk1356-ci-repair-*.log. Next normal commit/push and T3 exact-head CI watch; never merge PR. Historical actual-provider429 remains separate. No new actionable follow-up: existing YUK1356/YUK1401 synchronization/test maintenance only, no issue status promotion, deployment or runtime service changes.
 
 # YUK-1388 stage 4 complete; coordinator still owns audit close-out (2026-10-10 17:10 JST)
 

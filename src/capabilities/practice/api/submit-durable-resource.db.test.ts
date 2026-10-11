@@ -7,9 +7,14 @@
 
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 import { newId } from '@/core/ids';
 import type { ModelExecutorRequest, ModelUnitOutcomeT } from '@/core/schema/assessment';
-import { JudgePendingAttemptPayload } from '@/core/schema/event/judge-pending-events';
+import { JudgeWorkflowInput } from '@/core/schema/event/judge-operational-events';
+import {
+  JudgePendingAttemptPayload,
+  NativeJudgePendingSubmitInput,
+} from '@/core/schema/event/judge-pending-events';
 import {
   INTERVENTION_CONTRACT_VERSION,
   INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
@@ -25,19 +30,30 @@ import {
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
 import { publishQuestionGroup } from '@/server/questions/publisher';
 import { publishPaperModelFixture } from '../../../../tests/fixtures/assessment-paper';
-import { issueSoloFixture } from '../../../../tests/fixtures/assessment-solo';
+import { issueHistoricalSoloFixture } from '../../../../tests/fixtures/assessment-solo';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { runJudgeRun } from '../jobs/judge_run';
 import { issueAssessment } from '../server/assessment/issue';
 import * as evaluationService from '../server/judge/evaluate-submission';
 import { createRecordedModelExecutor } from '../server/judge/recorded-model-executor';
+import { fenceJudgeUnitClaim } from '../server/judge-operational';
 
 vi.mock('@/server/runtime-env', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/server/runtime-env')>();
   return { ...actual, shouldEnqueueBackgroundJobs: () => true };
 });
 
-const bossSend = vi.fn().mockResolvedValue('job-1');
+const jobSchema = z.object({
+  run_id: z.string(),
+  caller: z.literal('native_assessment'),
+  submit: NativeJudgePendingSubmitInput,
+  operational: JudgeWorkflowInput,
+});
+const queuedJobs: z.infer<typeof jobSchema>[] = [];
+const bossSend = vi.fn(async (_queue: string, data: unknown, options?: { id?: string }) => {
+  queuedJobs.push(jobSchema.parse(data));
+  return options?.id ?? null;
+});
 vi.mock('@/server/boss/client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/server/boss/client')>();
   return { ...actual, getStartedBoss: async () => ({ send: bossSend }) };
@@ -69,6 +85,7 @@ describe('createAttemptResource — durable divert 202 pass-through (W2)', () =>
     await resetDb();
     __resetRateLimitForTests();
     bossSend.mockClear();
+    queuedJobs.length = 0;
     vi.stubEnv('JUDGE_DURABLE_ENABLED', '1');
   });
   afterEach(() => {
@@ -76,11 +93,13 @@ describe('createAttemptResource — durable divert 202 pass-through (W2)', () =>
     vi.restoreAllMocks();
   });
 
+  // @invariant concurrency: a rate-limited one_time-claimed diagnostic submit persists its original submission exactly once, keeps the claim held, and later recovers through one durable pending receipt with a single execution across retries
+  // @fails-if make the 429 path drop the original or the recovery re-enqueue/re-execute instead of replaying the pending receipt; originals()/bossSend/execute counts or claim_status assertions fail
   it('retains a rate-limited diagnostic original and recovers it once without releasing its claim', async () => {
     vi.stubEnv('AI_RATE_LIMIT_MAX', '1');
     const firstQuestionId = `q_${newId()}`;
     await seedQuestion(firstQuestionId);
-    const firstIssued = await issueSoloFixture(testDb(), firstQuestionId, true);
+    const firstIssued = await issueHistoricalSoloFixture(testDb(), firstQuestionId, true);
     const accepted = await createAttempt(
       new Request('http://localhost/api/attempts', {
         method: 'POST',
@@ -157,7 +176,7 @@ describe('createAttemptResource — durable divert 202 pass-through (W2)', () =>
         },
       }),
     ).toMatchObject({ status: 'admission_updated' });
-    const diagnosticIssued = await issueSoloFixture(testDb(), diagnosticId, true);
+    const diagnosticIssued = await issueHistoricalSoloFixture(testDb(), diagnosticId, true);
     const assessment = diagnosticIssued.assessment('diagnostic answer');
     const submit = (original = assessment) =>
       createAttempt(
@@ -195,8 +214,13 @@ describe('createAttemptResource — durable divert 202 pass-through (W2)', () =>
         cost_usd_micros: 100,
       }),
     );
-    vi.spyOn(evaluationService, 'createFormalModelExecutor').mockImplementation(() =>
-      createRecordedModelExecutor(testDb(), execute),
+    vi.spyOn(evaluationService, 'createFormalModelExecutor').mockImplementation(
+      (database, _signal, _admission, execution) =>
+        createRecordedModelExecutor(
+          database,
+          execute,
+          execution ? { fence: (tx, request) => fenceJudgeUnitClaim(tx, execution, request) } : {},
+        ),
     );
     const rejected = await submit();
 
@@ -229,7 +253,8 @@ describe('createAttemptResource — durable divert 202 pass-through (W2)', () =>
     ).not.toContainEqual(expect.objectContaining({ action: 'experimental:judge_pending_attempt' }));
     expect(await testDb().select().from(evaluation)).toHaveLength(0);
     expect(await issueAssessment(testDb(), { group_id: diagnosticId })).toMatchObject({
-      status: 'claim_unavailable',
+      status: 'not_admitted',
+      serving_reason: 'model_admission_unavailable',
     });
     expect(
       (await submit({ ...assessment, idempotency_key: 'second-independent-answer' })).status,
@@ -251,9 +276,14 @@ describe('createAttemptResource — durable divert 202 pass-through (W2)', () =>
     const payload = JudgePendingAttemptPayload.parse(pending.payload);
     if (payload.caller !== 'native_assessment') throw new Error('expected native pending receipt');
     expect(payload.submit.submission_id).toBe(saved[0].submission_id);
-    const job = { run_id: payload.run_id, caller: payload.caller, submit: payload.submit };
-    await runJudgeRun(testDb(), job, { retryCount: 0, retryLimit: 2 });
-    await runJudgeRun(testDb(), job, { retryCount: 1, retryLimit: 2 });
+    const job = queuedJobs.find((queued) => queued.run_id === payload.run_id);
+    if (!job) throw new Error('expected mapped diagnostic delivery');
+    const meta = { retryCount: 0, retryLimit: 2, deliveryId: job.operational.delivery_id };
+    expect(await runJudgeRun(testDb(), job, meta)).toMatchObject({ status: 'done' });
+    expect(await runJudgeRun(testDb(), job, { ...meta, retryCount: 1 })).toMatchObject({
+      status: 'skipped',
+      reason: 'already_persisted',
+    });
     expect(execute).toHaveBeenCalledTimes(1);
     expect(await originals()).toEqual(saved);
     expect(await testDb().select().from(assessment_issuance)).toEqual(issuances);

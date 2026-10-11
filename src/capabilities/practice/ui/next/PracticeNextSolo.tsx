@@ -14,12 +14,17 @@
 // Motion (M1–M6): the title morphs from the stream row (PracticeFacePage), quoted text flies into
 // the companion's composer, submit → judgment settles in place, the mascot thinks while the
 // companion works and turns a petal when a reply is recorded or a result lands.
+// Next question: the page stays mounted; the next question loads out of sight while the finished
+// one stays readable, then the old column drifts up and fades as the new one rises in, the
+// position rolls, the title crossfades and the page glides back to the top (M3: one swap at a
+// time; reduced motion: an instant swap).
 
 import { ArrowLeft, Eye, MessageSquareQuote } from 'lucide-react';
 import {
   type CSSProperties,
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useRef,
   useState,
@@ -43,6 +48,7 @@ import {
   type ChipTone,
   CompanionPanel,
   CompanionStatus,
+  DURATION,
   Expand,
   IconButton,
   Judgment,
@@ -51,11 +57,13 @@ import {
   MascotDock,
   MascotSlot,
   PHONE_MEDIA,
+  RollNumber,
   Segmented,
   type SheetSnap,
   Toaster,
   UiNextRoot,
   flyQuote,
+  prefersReducedMotion,
   useMascot,
   useMascotActivity,
   useToaster,
@@ -83,8 +91,13 @@ export interface PracticeNextSoloProps {
   pos: number;
   total: number;
   onBack: () => void;
-  onDone: () => void;
-  onCommittedBack?: () => void;
+  /** 下一题 on `item` (each question passes itself: by then the host may hold the next one). */
+  onDone: (item: StreamItem) => void;
+  onCommittedBack?: (item: StreamItem) => void;
+  /** The host is reading the next item after 下一题; the finished question stays on screen. */
+  advancing?: boolean;
+  /** A result is showing on `item`: the host can prefetch the next question (M13). */
+  onResultShown?: (item: StreamItem) => void;
   /** Route push for links inside companion replies. */
   navigate: (to: string) => void;
   /**
@@ -205,6 +218,105 @@ export function PracticeNextSolo(props: PracticeNextSoloProps) {
   );
 }
 
+/** A question in the stage, with its place in the stream when it was handed over. */
+interface StageSlot {
+  item: StreamItem;
+  pos: number;
+}
+
+/**
+ * The question column's stage. `shown` is the question on screen; `next` mounts out of sight and
+ * loads while `shown` stays readable; once `next` is ready they swap and `shown` leaves (drifts up
+ * and fades) while the new one rises in, in the same frame. At most one of each, so pressing
+ * 下一题 quickly replaces the waiting question instead of stacking motion (M3).
+ */
+interface Stage {
+  shown: StageSlot;
+  next: StageSlot | null;
+  leaving: StageSlot | null;
+  /** Counts swaps; the effects that follow a swap (scroll, focus, announcement) key on it. */
+  swaps: number;
+}
+
+/** What the banner and the phone bar show for the question on screen. */
+interface QuestionHead {
+  title: string;
+  labels: { id: string; name: string }[];
+  state: { label: string; tone?: ChipTone } | null;
+  returning: boolean;
+  hasPassage: boolean;
+}
+
+/** If the next question is still not ready after this long, show it with its own loading state. */
+const NEXT_READY_FALLBACK_MS = 8000;
+/**
+ * How long the leaving question keeps its place. It has faded by --un-t-ui, but it holds the
+ * page's height until the glide to the top has finished, so a shorter new question never makes
+ * the browser clamp the scroll position mid-glide (that would be a jump).
+ */
+const LEAVE_MS = DURATION.panel + 40;
+
+/**
+ * A short glide back to the top of the page for the new question, interruptible by the reader
+ * (wheel, touch, key). Instant under reduced motion. Returns a function that stops it.
+ */
+function glideToTop(reduced: boolean): () => void {
+  const from = window.scrollY;
+  if (from <= 1) return () => {};
+  if (reduced) {
+    window.scrollTo({ top: 0, behavior: 'instant' });
+    return () => {};
+  }
+  const duration = Math.min(DURATION.panel, DURATION.small + from * 0.12);
+  const start = performance.now();
+  let frame = 0;
+  const handBack = ['wheel', 'touchstart', 'keydown'] as const;
+  const stop = () => {
+    cancelAnimationFrame(frame);
+    for (const type of handBack) window.removeEventListener(type, stop);
+  };
+  for (const type of handBack) window.addEventListener(type, stop, { passive: true });
+  const tick = (now: number) => {
+    const t = Math.min(1, (now - start) / duration);
+    // Close to --un-ease-glide: quick start, long soft landing.
+    const eased = 1 - (1 - t) ** 4;
+    window.scrollTo({ top: Math.round(from * (1 - eased)), behavior: 'instant' });
+    if (t < 1) frame = requestAnimationFrame(tick);
+    else stop();
+  };
+  frame = requestAnimationFrame(tick);
+  return stop;
+}
+
+/** Text that crossfades to its new value instead of cutting (the title on a question change). */
+function SwapText({ text }: { text: string }) {
+  const [state, setState] = useState({ now: text, was: null as string | null, n: 0 });
+  if (text !== state.now) setState({ now: text, was: state.now, n: state.n + 1 });
+  const n = state.n;
+  return (
+    <span className="un-pn-swap">
+      <span key={`now-${n}`} className={state.was === null ? undefined : 'un-pn-swap-in'}>
+        {state.now}
+      </span>
+      {state.was !== null && (
+        <span
+          key={`was-${n}`}
+          className="un-pn-swap-out"
+          aria-hidden="true"
+          onAnimationEnd={() => setState((p) => (p.n === n ? { ...p, was: null } : p))}
+        >
+          {state.was}
+        </span>
+      )}
+    </span>
+  );
+}
+
+/**
+ * The steady layers: page chrome, banner (eyebrow, title, chips, mascot slot), the companion and
+ * its sheet, the lightbox and toasts. They stay mounted from one question to the next; only the
+ * question column below the banner changes (QuestionColumn).
+ */
 function PracticeNextSoloPage({
   item,
   sessionId,
@@ -213,41 +325,21 @@ function PracticeNextSoloPage({
   onBack,
   onDone,
   onCommittedBack,
+  advancing = false,
+  onResultShown,
   navigate,
   companion,
 }: PracticeNextSoloProps) {
   const toaster = useToaster();
   const push = toaster.push;
   const notify = useCallback((text: string) => void push(text), [push]);
-  const s = usePracticeSubmit({
-    item,
-    sessionId,
-    onDone,
-    onBack,
-    onCommittedBack,
-    addToast: notify,
-  });
-  const { q, frozen, phase, displayedPreview } = s;
   const embedded = companion === 'embedded';
 
-  // A new question opens at its top, so its title is where the stream row's title flies to (M4).
+  // A question opened from the list starts at its top, so its title is where the stream row's
+  // title flies to (M4). Later questions glide there instead (see the swap effect below).
   useLayoutEffect(() => {
     window.scrollTo(0, 0);
   }, []);
-
-  // ⌘/Ctrl+Enter submits while answering (same shortcut as PfSolo).
-  const { runJudge } = s;
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (phase !== 'answering') return;
-      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-        e.preventDefault();
-        void runJudge();
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [phase, runJudge]);
 
   const [sheet, setSheet] = useState<SheetSnap>('peek');
   const shell = useShellInsets();
@@ -255,19 +347,12 @@ function PracticeNextSoloPage({
   const isPhone = useSyncExternalStore(subscribePhone, readPhone, () => false);
   const [companionBusy, setCompanionBusy] = useState(false);
   const [zoomed, setZoomed] = useState<MaterialView | null>(null);
-  const [pane, setPane] = useState<'passage' | 'questions'>('questions');
 
   // ── The mascot follows real state only (B2, C3): it thinks while the embedded companion works,
-  // and turns one petal when a reply's committed turn is re-read or a judgment lands.
+  // and turns one petal when a reply's committed turn is re-read. A landed judgment turns a petal
+  // too; the question column does that, once per verdict.
   const [recordedReply, setRecordedReply] = useState<string | undefined>(undefined);
   useMascotActivity({ thinking: embedded && companionBusy, settleKey: recordedReply });
-  const mascot = useMascot();
-  const landedVerdict = useRef<JudgeFeedback | null>(null);
-  useEffect(() => {
-    if (!displayedPreview || landedVerdict.current === displayedPreview) return;
-    landedVerdict.current = displayedPreview;
-    mascot.advance();
-  }, [displayedPreview, mascot]);
 
   // ── Quote into the conversation (M6): the passage lifts off the page and lands in the composer.
   const mainRef = useRef<HTMLDivElement>(null);
@@ -293,92 +378,90 @@ function PracticeNextSoloPage({
       },
     });
   }, []);
-  const quoteBlock = (text: string, el: Element | null | undefined) =>
-    quote({ text, rect: el?.getBoundingClientRect() ?? null });
-
-  const timeline = s.timelineEvents;
-  const lastAttempt = [...timeline].reverse().find((e) => e.kind === 'attempt');
-  const title = item.knowledge_name ?? q?.labels[0]?.name ?? '这道题';
-  const notation = q?.notation ?? null;
-  const loading =
-    !s.qQ.isError &&
-    (!q || s.frozenQ.isLoading || (!!frozen && s.restoredIssuanceId !== s.issuanceId));
-  const issuanceFailed = !s.qQ.isError && !loading && (s.frozenQ.isError || !frozen);
-
-  const passages = (frozen?.materials ?? []).filter(
-    (m) => m.kind === 'passage' && m.content_md !== undefined,
+  const quoteBlock = useCallback(
+    (text: string, el: Element | null | undefined) =>
+      quote({ text, rect: el?.getBoundingClientRect() ?? null }),
+    [quote],
   );
-  const figures = (frozen?.materials ?? []).filter((m) => !passages.includes(m));
-  const hasPassage = passages.length > 0;
-  const faces = frozen?.faces ?? [];
-  const multiPart = faces.length > 1;
-  const lone = !multiPart && figures.length === 1 && figures[0].content_md === undefined;
-  const answerLocked = s.returning || phase !== 'answering' || !!s.accepted || !!s.pendingRun;
 
-  const renderSlot = (slot: SlotView) => {
-    const spec = nativeSlotFieldSpec(slot);
-    if (!spec) return null;
-    const entry = s.nativeResponses.entries.find((e) => e.slot_id === slot.slot_id);
-    return (
-      <ResponseSlotField
-        key={slot.slot_id}
-        spec={spec}
-        value={nativeResponseValue(entry)}
-        label={slot.placement?.label}
-        notation={notation}
-        disabled={answerLocked}
-        onChange={(value) => s.updateNativeResponse(nativeResponseEntry(slot, value, entry))}
-        feedback={phase === 'feedback' ? 'graded' : 'none'}
-        hotkeys={frozen?.response_spec.slots.length === 1 && s.isChoice && phase === 'answering'}
-        ariaLabel={slot.placement?.label ?? '作答'}
-      />
+  // ── The stage: the host hands over the next item; it loads out of sight, then swaps in.
+  const [stage, setStage] = useState<Stage>(() => ({
+    shown: { item, pos },
+    next: null,
+    leaving: null,
+    swaps: 0,
+  }));
+  if (item.id === stage.shown.item.id) {
+    if (stage.next || stage.shown.item !== item || stage.shown.pos !== pos) {
+      setStage((st) => ({ ...st, shown: { item, pos }, next: null }));
+    }
+  } else if (stage.next?.item !== item || stage.next.pos !== pos) {
+    setStage((st) => ({ ...st, next: { item, pos } }));
+  }
+
+  const swapIn = useCallback((id: string) => {
+    setStage((st) =>
+      st.next?.item.id === id
+        ? {
+            shown: st.next,
+            next: null,
+            // Under reduced motion the old question goes at once: an instant swap (M3).
+            leaving: prefersReducedMotion() ? null : st.shown,
+            swaps: st.swaps + 1,
+          }
+        : st,
     );
+  }, []);
+
+  const nextId = stage.next?.item.id;
+  useEffect(() => {
+    if (!nextId) return;
+    const timer = window.setTimeout(() => swapIn(nextId), NEXT_READY_FALLBACK_MS);
+    return () => window.clearTimeout(timer);
+  }, [nextId, swapIn]);
+
+  const leaving = stage.leaving;
+  useEffect(() => {
+    if (!leaving) return;
+    const timer = window.setTimeout(
+      () => setStage((st) => (st.leaving === leaving ? { ...st, leaving: null } : st)),
+      LEAVE_MS,
+    );
+    return () => window.clearTimeout(timer);
+  }, [leaving]);
+
+  // After a swap: glide to the top, give focus to the new title if it was on the old question,
+  // and say which question this is.
+  const stageRef = useRef<HTMLDivElement>(null);
+  const titleRef = useRef<HTMLHeadingElement>(null);
+  const [announce, setAnnounce] = useState('');
+  const swaps = stage.swaps;
+  const shownPos = stage.shown.pos;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs once per swap; reads the position at that moment
+  useLayoutEffect(() => {
+    if (swaps === 0) return;
+    const stop = glideToTop(prefersReducedMotion());
+    const active = document.activeElement;
+    if (!active || active === document.body || stageRef.current?.contains(active)) {
+      titleRef.current?.focus({ preventScroll: true });
+    }
+    setAnnounce(`第 ${shownPos} 题`);
+    return stop;
+  }, [swaps]);
+
+  // ── The banner reads the question on screen; that column reports what it shows.
+  const [head, setHead] = useState<QuestionHead | null>(null);
+  const backRef = useRef<(() => Promise<void>) | null>(null);
+  const waitingNext = advancing || stage.next !== null;
+  const goBack = () => {
+    // While the next question is on its way, the one on screen is already finished: just leave.
+    if (waitingNext) onBack();
+    else void backRef.current?.();
   };
 
-  const renderMaterial = (m: MaterialView) => {
-    const label = m.alt_text ?? m.caption ?? '题目配图';
-    const zoomable = m.content_md === undefined && (m.kind === 'figure' || m.kind === 'table');
-    return (
-      <figure key={m.material_id} className="un-pn-figure">
-        {m.content_md !== undefined ? (
-          <MathMarkdown notation={notation} className="un-pn-prose">
-            {m.content_md}
-          </MathMarkdown>
-        ) : zoomable ? (
-          <button
-            type="button"
-            className="un-pn-figure-zoom"
-            onClick={() => setZoomed(m)}
-            aria-label={`放大看：${label}`}
-          >
-            <AssetEvidencePreview assetId={m.asset_id} kind="image" label={label} />
-            <span className="un-pn-figure-hint" aria-hidden="true">
-              点开放大
-            </span>
-          </button>
-        ) : (
-          <AssetEvidencePreview assetId={m.asset_id} label={label} />
-        )}
-        {m.caption && <figcaption>{m.caption}</figcaption>}
-      </figure>
-    );
-  };
-
-  /** A small "引用到学习伙伴" for a block of question text; the keyboard path to M6 (A4). */
-  const quoteButton = (text: string, what: string) =>
-    embedded ? (
-      <IconButton
-        label={`把${what}引用到学习伙伴`}
-        className="un-pn-quote-btn"
-        icon={<MessageSquareQuote size={14} />}
-        onClick={(e) =>
-          quoteBlock(
-            text,
-            e.currentTarget.closest('[data-quote-block]')?.querySelector('[data-quote-text]'),
-          )
-        }
-      />
-    ) : null;
+  const shownItem = stage.shown.item;
+  const title = head?.title ?? shownItem.knowledge_name ?? '这道题';
+  const returning = head?.returning ?? false;
 
   const header = (
     <div className="un-pn-companion-head">
@@ -434,27 +517,18 @@ function PracticeNextSoloPage({
     );
   };
 
-  const stateChip =
-    s.accepted || s.autoCommitted ? (
-      <Chip tone="accent">已提交</Chip>
-    ) : lastAttempt ? (
-      <Chip tone={HISTORY_TEXT[lastAttempt.outcome].tone}>
-        上次 · {HISTORY_TEXT[lastAttempt.outcome].label}
-      </Chip>
-    ) : q ? (
-      <Chip>第一次做</Chip>
-    ) : null;
-
   // B3: on phones a slim page bar carries the way back, the title and the mascot's dock.
   const phoneBar = (
     <header className="un-pn-phonebar">
       <IconButton
         label="返回练习"
         icon={<ArrowLeft size={18} />}
-        disabled={s.returning}
-        onClick={() => void s.handleBack()}
+        disabled={returning}
+        onClick={goBack}
       />
-      <span className="un-pn-phonebar-title">{title}</span>
+      <span className="un-pn-phonebar-title">
+        <SwapText text={title} />
+      </span>
       <MascotDock />
     </header>
   );
@@ -463,30 +537,32 @@ function PracticeNextSoloPage({
     <header className="un-pn-banner">
       <div className="un-pn-banner-text">
         <div className="un-pn-back">
-          <Button
-            variant="quiet"
-            size="sm"
-            disabled={s.returning}
-            onClick={() => void s.handleBack()}
-          >
+          <Button variant="quiet" size="sm" disabled={returning} onClick={goBack}>
             <ArrowLeft size={14} aria-hidden="true" />
             返回练习
           </Button>
         </div>
         <p className="un-pn-eyebrow">
-          {practiceSourceLabel(item.source)} · 第 {pos} / {total} 题
-          {item.estimated_minutes ? ` · 约 ${item.estimated_minutes} 分钟` : ''}
+          {practiceSourceLabel(shownItem.source)} · 第 <RollNumber value={shownPos} /> / {total} 题
+          {shownItem.estimated_minutes ? ` · 约 ${shownItem.estimated_minutes} 分钟` : ''}
         </p>
-        <h1 className="un-pn-title" data-morph={practiceMorphKey(item.id)}>
-          {title}
+        <h1
+          ref={titleRef}
+          tabIndex={-1}
+          className="un-pn-title"
+          data-morph={practiceMorphKey(shownItem.id)}
+        >
+          <SwapText text={title} />
         </h1>
-        <div className="un-pn-chips">
-          {q?.labels
-            .filter((l) => l.name !== title)
-            .map((l) => (
-              <Chip key={l.id}>{l.name}</Chip>
-            ))}
-          {stateChip}
+        {/* Keyed by question: the new question's chips fade in with it. */}
+        <div
+          key={shownItem.id}
+          className={swaps > 0 ? 'un-pn-chips un-pn-chips-in' : 'un-pn-chips'}
+        >
+          {head?.labels.map((l) => (
+            <Chip key={l.id}>{l.name}</Chip>
+          ))}
+          {head?.state && <Chip tone={head.state.tone}>{head.state.label}</Chip>}
         </div>
       </div>
       <MascotSlot
@@ -497,6 +573,297 @@ function PracticeNextSoloPage({
         glow={9}
       />
     </header>
+  );
+
+  const column = (slot: StageSlot, role: QuestionRole) => (
+    <QuestionColumn
+      key={slot.item.id}
+      item={slot.item}
+      role={role}
+      sessionId={sessionId}
+      embedded={embedded}
+      waitingNext={role === 'shown' && waitingNext}
+      arrived={role === 'shown' && stage.swaps > 0}
+      notify={notify}
+      onReady={swapIn}
+      onHead={setHead}
+      backRef={backRef}
+      onBack={onBack}
+      onDone={onDone}
+      onCommittedBack={onCommittedBack}
+      onResultShown={onResultShown}
+      onQuote={quoteBlock}
+      onZoom={setZoomed}
+    />
+  );
+
+  const insets = {
+    '--un-pn-top': `${shell.top}px`,
+  } as CSSProperties;
+
+  return (
+    <div className="un-pn" style={insets}>
+      <div className="un-pn-main un-page-enter" ref={mainRef}>
+        <div className={head?.hasPassage ? 'un-pn-column un-pn-column-wide' : 'un-pn-column'}>
+          {phoneBar}
+          {banner}
+          <div className="un-pn-stage" ref={stageRef}>
+            {stage.leaving && column(stage.leaving, 'leaving')}
+            {column(stage.shown, 'shown')}
+            {stage.next && column(stage.next, 'next')}
+          </div>
+        </div>
+        <p className="un-pn-sr" aria-live="polite">
+          {announce}
+        </p>
+      </div>
+      {/* C1: a floating layer beside the reading column, never over it. Glass (T3: floating). */}
+      <div className="un-pn-aside un-glass">
+        <CompanionPanel open label="学习伙伴" header={header}>
+          {companionBody('panel')}
+        </CompanionPanel>
+      </div>
+      <div className="un-pn-phone-sheet">
+        <BottomSheet
+          label="学习伙伴"
+          snap={sheet}
+          onSnapChange={setSheet}
+          bottomInset={shell.bottom}
+          header={header}
+        >
+          {companionBody('sheet')}
+        </BottomSheet>
+      </div>
+      <QuoteBubble
+        selection={quoteSel.selection}
+        onQuote={(passage) => {
+          quote(passage);
+          quoteSel.clear();
+        }}
+      />
+      <FigureLightbox
+        open={zoomed !== null}
+        onClose={() => setZoomed(null)}
+        assetId={zoomed?.asset_id ?? ''}
+        label={zoomed?.alt_text ?? zoomed?.caption ?? '题目配图'}
+      />
+      <Toaster toasts={toaster.toasts} dismiss={toaster.dismiss} />
+    </div>
+  );
+}
+
+/** `shown` is on screen; `next` loads out of sight; `leaving` fades out after a swap. */
+type QuestionRole = 'shown' | 'next' | 'leaving';
+
+interface QuestionColumnProps {
+  item: StreamItem;
+  role: QuestionRole;
+  sessionId?: string | null;
+  embedded: boolean;
+  /** The host is fetching the next question: the next-question buttons wait, calmly. */
+  waitingNext: boolean;
+  /** Came in by a swap (rises in), rather than opened from the list. */
+  arrived: boolean;
+  notify: (text: string) => void;
+  onReady: (itemId: string) => void;
+  onHead: (head: QuestionHead) => void;
+  backRef: { current: (() => Promise<void>) | null };
+  onBack: () => void;
+  onDone: (item: StreamItem) => void;
+  onCommittedBack?: (item: StreamItem) => void;
+  onResultShown?: (item: StreamItem) => void;
+  onQuote: (text: string, el: Element | null | undefined) => void;
+  onZoom: (m: MaterialView) => void;
+}
+
+/** One question's content below the banner: 题目 → 我的作答 → 结果 → 作答记录. */
+function QuestionColumn({
+  item,
+  role,
+  sessionId,
+  embedded,
+  waitingNext,
+  arrived,
+  notify,
+  onReady,
+  onHead,
+  backRef,
+  onBack,
+  onDone,
+  onCommittedBack,
+  onResultShown,
+  onQuote,
+  onZoom,
+}: QuestionColumnProps) {
+  const shown = role === 'shown';
+  const s = usePracticeSubmit({
+    item,
+    sessionId,
+    onDone: () => onDone(item),
+    onBack,
+    onCommittedBack: onCommittedBack ? () => onCommittedBack(item) : undefined,
+    addToast: notify,
+    shown: role !== 'next',
+  });
+  const { q, frozen, phase, displayedPreview } = s;
+  // Several questions can be in the page at once during a swap, so ids are per question.
+  const uid = useId();
+  const id = (name: string) => `${uid}-${name}`;
+
+  // ⌘/Ctrl+Enter submits while answering (same shortcut as PfSolo); only the question on screen.
+  const { runJudge } = s;
+  useEffect(() => {
+    if (!shown) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (phase !== 'answering') return;
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        e.preventDefault();
+        void runJudge();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [shown, phase, runJudge]);
+
+  // A landed judgment turns one petal (B2), once per verdict, only on screen.
+  const mascot = useMascot();
+  const landedVerdict = useRef<JudgeFeedback | null>(null);
+  useEffect(() => {
+    if (!shown || !displayedPreview || landedVerdict.current === displayedPreview) return;
+    landedVerdict.current = displayedPreview;
+    mascot.advance();
+  }, [shown, displayedPreview, mascot]);
+
+  // While the learner reads the result, the host prefetches the next question (M13).
+  const hasResult = !!displayedPreview || !!s.pendingRun;
+  const prefetched = useRef(false);
+  useEffect(() => {
+    if (!shown || !hasResult || prefetched.current) return;
+    prefetched.current = true;
+    onResultShown?.(item);
+  }, [shown, hasResult, item, onResultShown]);
+
+  const [pane, setPane] = useState<'passage' | 'questions'>('questions');
+
+  const timeline = s.timelineEvents;
+  const lastAttempt = [...timeline].reverse().find((e) => e.kind === 'attempt');
+  const title = item.knowledge_name ?? q?.labels[0]?.name ?? '这道题';
+  const notation = q?.notation ?? null;
+  const loading =
+    !s.qQ.isError &&
+    (!q || s.frozenQ.isLoading || (!!frozen && s.restoredIssuanceId !== s.issuanceId));
+  const issuanceFailed = !s.qQ.isError && !loading && (s.frozenQ.isError || !frozen);
+
+  // Waiting out of sight: say when there is something to show (content or an error).
+  useEffect(() => {
+    if (role === 'next' && !loading) onReady(item.id);
+  }, [role, loading, item.id, onReady]);
+
+  const passages = (frozen?.materials ?? []).filter(
+    (m) => m.kind === 'passage' && m.content_md !== undefined,
+  );
+  const figures = (frozen?.materials ?? []).filter((m) => !passages.includes(m));
+  const hasPassage = passages.length > 0;
+  const faces = frozen?.faces ?? [];
+  const multiPart = faces.length > 1;
+  const lone = !multiPart && figures.length === 1 && figures[0].content_md === undefined;
+  const answerLocked = s.returning || phase !== 'answering' || !!s.accepted || !!s.pendingRun;
+
+  // The banner shows the question on screen.
+  let state: QuestionHead['state'] = null;
+  if (s.accepted || s.autoCommitted) state = { label: '已提交', tone: 'accent' };
+  else if (lastAttempt) {
+    const h = HISTORY_TEXT[lastAttempt.outcome];
+    state = { label: `上次 · ${h.label}`, tone: h.tone };
+  } else if (q) state = { label: '第一次做' };
+  const head: QuestionHead = {
+    title,
+    labels: (q?.labels ?? []).filter((l) => l.name !== title).map(({ id, name }) => ({ id, name })),
+    state,
+    returning: s.returning,
+    hasPassage,
+  };
+  const headKey = JSON.stringify(head);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: headKey carries the head's content
+  useLayoutEffect(() => {
+    if (shown) onHead(head);
+  }, [shown, headKey, onHead]);
+  useLayoutEffect(() => {
+    if (shown) backRef.current = s.handleBack;
+  });
+
+  const renderSlot = (slot: SlotView) => {
+    const spec = nativeSlotFieldSpec(slot);
+    if (!spec) return null;
+    const entry = s.nativeResponses.entries.find((e) => e.slot_id === slot.slot_id);
+    return (
+      <ResponseSlotField
+        key={slot.slot_id}
+        spec={spec}
+        value={nativeResponseValue(entry)}
+        label={slot.placement?.label}
+        notation={notation}
+        disabled={answerLocked}
+        onChange={(value) => s.updateNativeResponse(nativeResponseEntry(slot, value, entry))}
+        feedback={phase === 'feedback' ? 'graded' : 'none'}
+        hotkeys={
+          shown && frozen?.response_spec.slots.length === 1 && s.isChoice && phase === 'answering'
+        }
+        ariaLabel={slot.placement?.label ?? '作答'}
+      />
+    );
+  };
+
+  const renderMaterial = (m: MaterialView) => {
+    const label = m.alt_text ?? m.caption ?? '题目配图';
+    const zoomable = m.content_md === undefined && (m.kind === 'figure' || m.kind === 'table');
+    return (
+      <figure key={m.material_id} className="un-pn-figure">
+        {m.content_md !== undefined ? (
+          <MathMarkdown notation={notation} className="un-pn-prose">
+            {m.content_md}
+          </MathMarkdown>
+        ) : zoomable ? (
+          <button
+            type="button"
+            className="un-pn-figure-zoom"
+            onClick={() => onZoom(m)}
+            aria-label={`放大看：${label}`}
+          >
+            <AssetEvidencePreview assetId={m.asset_id} kind="image" label={label} />
+            <span className="un-pn-figure-hint" aria-hidden="true">
+              点开放大
+            </span>
+          </button>
+        ) : (
+          <AssetEvidencePreview assetId={m.asset_id} label={label} />
+        )}
+        {m.caption && <figcaption>{m.caption}</figcaption>}
+      </figure>
+    );
+  };
+
+  /** A small "引用到学习伙伴" for a block of question text; the keyboard path to M6 (A4). */
+  const quoteButton = (text: string, what: string) =>
+    embedded ? (
+      <IconButton
+        label={`把${what}引用到学习伙伴`}
+        className="un-pn-quote-btn"
+        icon={<MessageSquareQuote size={14} />}
+        onClick={(e) =>
+          onQuote(
+            text,
+            e.currentTarget.closest('[data-quote-block]')?.querySelector('[data-quote-text]'),
+          )
+        }
+      />
+    ) : null;
+
+  /** In place of a next-question button while the next question is on its way. */
+  const preparing = (
+    <Button variant="primary" disabled>
+      下一题准备中…
+    </Button>
   );
 
   // ── Body states (M14): loading skeleton in the page's own shape, error with retry, content.
@@ -560,9 +927,9 @@ function PracticeNextSoloPage({
     const stemText = faces.map((f) => f.prompt_md).join('\n');
 
     const questionSection = (
-      <section className="un-pn-section" aria-labelledby="un-pn-question" data-quote-block="">
+      <section className="un-pn-section" aria-labelledby={id('question')} data-quote-block="">
         <div className="un-pn-section-head">
-          <h2 id="un-pn-question" className="un-pn-h2">
+          <h2 id={id('question')} className="un-pn-h2">
             题目
           </h2>
           {!multiPart && stemText.trim() && quoteButton(stemText, '题目')}
@@ -603,12 +970,12 @@ function PracticeNextSoloPage({
               type="button"
               className="un-pn-link un-hit"
               aria-expanded={s.showTrace}
-              aria-controls="un-pn-trace"
+              aria-controls={id('trace')}
               onClick={() => s.setShowTrace(!s.showTrace)}
             >
               {s.showTrace ? '收起思路' : '＋ 记下你的思路（可选，不计分）'}
             </button>
-            <Expand open={s.showTrace} id="un-pn-trace">
+            <Expand open={s.showTrace} id={id('trace')}>
               <textarea
                 className="un-pn-textarea"
                 rows={3}
@@ -634,12 +1001,13 @@ function PracticeNextSoloPage({
                 <Button
                   key={grade}
                   variant="secondary"
-                  disabled={!s.canSubmit || s.committing}
+                  disabled={!s.canSubmit || s.committing || waitingNext}
                   onClick={() => void s.commit({ withAppeal: false, rating: grade })}
                 >
                   {RATING_LABEL[grade]}
                 </Button>
               ))}
+              {waitingNext && <span className="un-pn-hint">下一题准备中…</span>}
             </>
           ) : (
             <>
@@ -655,9 +1023,9 @@ function PracticeNextSoloPage({
       ) : null;
 
     const answerSection = multiPart ? (
-      <section className="un-pn-section" aria-labelledby="un-pn-parts">
+      <section className="un-pn-section" aria-labelledby={id('parts')}>
         <div className="un-pn-section-head">
-          <h2 id="un-pn-parts" className="un-pn-h2">
+          <h2 id={id('parts')} className="un-pn-h2">
             小问与作答
           </h2>
           <SaveStateChip state={s.autosave.state} onRetry={s.autosave.retry} />
@@ -690,9 +1058,9 @@ function PracticeNextSoloPage({
         {submitRow}
       </section>
     ) : (
-      <section className="un-pn-section" aria-labelledby="un-pn-answer">
+      <section className="un-pn-section" aria-labelledby={id('answer')}>
         <div className="un-pn-section-head">
-          <h2 id="un-pn-answer" className="un-pn-h2">
+          <h2 id={id('answer')} className="un-pn-h2">
             我的作答
           </h2>
           <SaveStateChip state={s.autosave.state} onRetry={s.autosave.retry} />
@@ -714,8 +1082,8 @@ function PracticeNextSoloPage({
 
     const resultSection =
       s.pendingRun || phase !== 'answering' || judgmentPhase ? (
-        <section className="un-pn-section" aria-labelledby="un-pn-result" aria-live="polite">
-          <h2 id="un-pn-result" className="un-pn-h2">
+        <section className="un-pn-section" aria-labelledby={id('result')} aria-live="polite">
+          <h2 id={id('result')} className="un-pn-h2">
             结果
           </h2>
           {s.pendingRun ? (
@@ -729,9 +1097,13 @@ function PracticeNextSoloPage({
                   : '这份作答在排队判分，不需要重交。可以先做下一题，结果稍后到。'}
               </p>
               <div className="un-pn-actions">
-                <Button variant="secondary" onClick={onDone}>
-                  先做下一题
-                </Button>
+                {waitingNext ? (
+                  preparing
+                ) : (
+                  <Button variant="secondary" onClick={() => onDone(item)}>
+                    先做下一题
+                  </Button>
+                )}
               </div>
             </div>
           ) : phase === 'confidence' ? (
@@ -801,6 +1173,7 @@ function PracticeNextSoloPage({
                         <ChipToggle
                           key={g}
                           pressed={s.rating === g}
+                          disabled={waitingNext}
                           onPressedChange={() => s.setRating(g)}
                         >
                           {RATING_LABEL[g]}
@@ -817,13 +1190,20 @@ function PracticeNextSoloPage({
                   <div className="un-pn-actions">
                     {displayedPreview.coarse_outcome === 'unsupported' &&
                       !s.autoCommitted &&
-                      !s.committedPreview && (
+                      !s.committedPreview &&
+                      !waitingNext && (
                         <Button variant="secondary" onClick={s.startSelfRate}>
                           自己评一下
                         </Button>
                       )}
-                    {s.autoCommitted ? (
-                      <Button variant="primary" disabled={s.committing} onClick={onDone}>
+                    {waitingNext ? (
+                      preparing
+                    ) : s.autoCommitted ? (
+                      <Button
+                        variant="primary"
+                        disabled={s.committing}
+                        onClick={() => onDone(item)}
+                      >
                         下一题
                       </Button>
                     ) : (
@@ -837,25 +1217,26 @@ function PracticeNextSoloPage({
                         {s.committing ? '正在记下…' : '确认，下一题'}
                       </Button>
                     )}
-                    {appealEntryAvailable({
-                      phase,
-                      appealOpen: s.appealOpen,
-                      autoCommitted: s.autoCommitted,
-                      autoCommitJudgeEventId: s.autoCommitJudgeEventId,
-                    }) && (
-                      <button
-                        type="button"
-                        className="un-pn-link un-hit"
-                        aria-expanded={false}
-                        aria-controls="un-pn-appeal"
-                        onClick={() => s.setAppealOpen(true)}
-                      >
-                        觉得判得不对？说明理由重判
-                      </button>
-                    )}
+                    {!waitingNext &&
+                      appealEntryAvailable({
+                        phase,
+                        appealOpen: s.appealOpen,
+                        autoCommitted: s.autoCommitted,
+                        autoCommitJudgeEventId: s.autoCommitJudgeEventId,
+                      }) && (
+                        <button
+                          type="button"
+                          className="un-pn-link un-hit"
+                          aria-expanded={false}
+                          aria-controls={id('appeal')}
+                          onClick={() => s.setAppealOpen(true)}
+                        >
+                          觉得判得不对？说明理由重判
+                        </button>
+                      )}
                   </div>
 
-                  <Expand open={s.appealOpen} id="un-pn-appeal">
+                  <Expand open={s.appealOpen} id={id('appeal')}>
                     <div className="un-pn-appeal">
                       <textarea
                         className="un-pn-textarea"
@@ -872,6 +1253,7 @@ function PracticeNextSoloPage({
                           disabled={
                             !s.appealText.trim() ||
                             s.committing ||
+                            waitingNext ||
                             (s.autoCommitted ? !s.autoCommitJudgeEventId : !s.rating)
                           }
                           onClick={() => {
@@ -898,8 +1280,8 @@ function PracticeNextSoloPage({
 
     const historySection =
       timeline.length > 0 ? (
-        <section className="un-pn-section" aria-labelledby="un-pn-history">
-          <h2 id="un-pn-history" className="un-pn-h2">
+        <section className="un-pn-section" aria-labelledby={id('history')}>
+          <h2 id={id('history')} className="un-pn-h2">
             作答记录
           </h2>
           <ol className="un-pn-history">
@@ -973,50 +1355,16 @@ function PracticeNextSoloPage({
     );
   }
 
-  const insets = {
-    '--un-pn-top': `${shell.top}px`,
-  } as CSSProperties;
-
+  // The question that arrived by a swap rises in; the one that left drifts up and fades (CSS).
   return (
-    <div className="un-pn" style={insets}>
-      <div className="un-pn-main un-page-enter" ref={mainRef}>
-        <div className={hasPassage ? 'un-pn-column un-pn-column-wide' : 'un-pn-column'}>
-          {phoneBar}
-          {banner}
-          {body}
-        </div>
-      </div>
-      {/* C1: a floating layer beside the reading column, never over it. Glass (T3: floating). */}
-      <div className="un-pn-aside un-glass">
-        <CompanionPanel open label="学习伙伴" header={header}>
-          {companionBody('panel')}
-        </CompanionPanel>
-      </div>
-      <div className="un-pn-phone-sheet">
-        <BottomSheet
-          label="学习伙伴"
-          snap={sheet}
-          onSnapChange={setSheet}
-          bottomInset={shell.bottom}
-          header={header}
-        >
-          {companionBody('sheet')}
-        </BottomSheet>
-      </div>
-      <QuoteBubble
-        selection={quoteSel.selection}
-        onQuote={(passage) => {
-          quote(passage);
-          quoteSel.clear();
-        }}
-      />
-      <FigureLightbox
-        open={zoomed !== null}
-        onClose={() => setZoomed(null)}
-        assetId={zoomed?.asset_id ?? ''}
-        label={zoomed?.alt_text ?? zoomed?.caption ?? '题目配图'}
-      />
-      <Toaster toasts={toaster.toasts} dismiss={toaster.dismiss} />
+    <div
+      className="un-pn-q"
+      data-role={role}
+      data-arrived={arrived || undefined}
+      inert={!shown}
+      aria-hidden={shown ? undefined : true}
+    >
+      {body}
     </div>
   );
 }

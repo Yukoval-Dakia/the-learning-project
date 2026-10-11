@@ -57,6 +57,25 @@ export interface UsePracticeSubmitOptions {
   // （不自动推进到下一题）。仅 autoCommitted 时走它；未提供时回落 onBack（向后兼容旧调用方）。
   onCommittedBack?: () => void;
   addToast: PracticeNotify;
+  /**
+   * Whether the question is on screen. The new page mounts the next question out of sight while
+   * the previous one is still showing (YUK-1473); the answer timer starts only once it is shown.
+   * Default true.
+   */
+  shown?: boolean;
+}
+
+/**
+ * The question-detail read, shared by the hook and the page that prefetches the next question
+ * while the learner reads a result (M13). Same key and projection as the hook's own read.
+ */
+export function questionDetailQuery(refId: string) {
+  return {
+    queryKey: ['question-detail', refId] as const,
+    // Explicit Practice projection lets product-owned diagnostics expose only
+    // learner-safe prompt/options while the question-bank surface remains 404.
+    queryFn: () => getQuestionFull(refId, { surface: 'practice' }),
+  };
 }
 
 export type Rating = 'again' | 'hard' | 'good';
@@ -257,16 +276,12 @@ export function usePracticeSubmit({
   onBack,
   onCommittedBack,
   addToast,
+  shown = true,
 }: UsePracticeSubmitOptions) {
   // 题面聚合 /api/questions/:id（getQuestionFull）。注意 getQuestion 与 getQuestionFull 命中同一
   // URL、同一 loadQuestionDetail 全聚合——「轻」query 只是类型窄了子集，服务端并不更省；故这里直接
   // 用全投影，YUK-617 W1 的 timeline 从同一份 data.timeline 白拿，不再二次请求（避免同题双取全聚合）。
-  const qQ = useQuery({
-    queryKey: ['question-detail', item.ref_id],
-    // Explicit Practice projection lets product-owned diagnostics expose only
-    // learner-safe prompt/options while the question-bank surface remains 404.
-    queryFn: () => getQuestionFull(item.ref_id, { surface: 'practice' }),
-  });
+  const qQ = useQuery(questionDetailQuery(item.ref_id));
   // YUK-1051 — 选项身份从数组下标换成内容派生的 stable option id（response-types）：
   // 重渲染 / 草稿恢复 / 复盘里同一选项文本恒同 id；选项数不硬编码（1–9 数字键随选项数）。
   const [nativeResponses, setNativeResponses] = useState<ResponseSetT>({ entries: [] });
@@ -496,8 +511,8 @@ export function usePracticeSubmit({
   // 用 useLayoutEffect（非 useEffect）：layout 阶段在浏览器 paint **之前**同步跑，stamp 更贴近题面真正
   // 变可见的时刻——useEffect 在 paint 之后异步跑会系统性低估 latency（PR review timing-accuracy note）。
   useLayoutEffect(() => {
-    if (q?.id) questionShownAtRef.current = Date.now();
-  }, [q?.id]);
+    if (q?.id && shown) questionShownAtRef.current = Date.now();
+  }, [q?.id, shown]);
 
   // A successful one-shot is already retired server-side. Restore its
   // canonical review/judge projection on mount so refresh or a lost response

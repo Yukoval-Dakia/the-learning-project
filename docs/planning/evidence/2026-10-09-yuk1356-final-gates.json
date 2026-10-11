@@ -1,0 +1,228 @@
+{
+  "candidate": "fd5d79ee280e1cdae412bc1740e0b26f51f72a7b",
+  "checks": {
+    "typecheck": 0,
+    "lint": 0,
+    "build": 0,
+    "audit:schema": 0,
+    "audit:partition": 0,
+    "audit:api-client": 0,
+    "audit:api-client-usage": 0,
+    "audit:capability-boundaries": 0,
+    "audit:provider-lanes": 0,
+    "audit:profile": 0,
+    "audit:task-census": 0,
+    "audit:draft-status": 0,
+    "audit:draft-status-reads": 0
+  },
+  "earlierFailure": "lint rejected formatting in parent-process-first.json; formatting-only fix proved parsed JSON equality",
+  "emitted": {
+    "fixedFiles": 710,
+    "manifestSha256": "982e164aba26b18726e4a9f9d1e04a263d43213d356dca8b0933ae953aa888a7",
+    "cases": [
+      {
+        "kind": "esm",
+        "status": "PASS_BOUNDED_EMITTED_LOGGER_CLOSURE",
+        "node": "v24.19.0",
+        "source": {
+          "path": "/tmp/yuk1356-parent-emitted-proof/final-fd5d79ee2/snapshot/dist/start/server/assets/commands-Cp9i_wIJ.js",
+          "original": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage/dist/start/server/assets/commands-Cp9i_wIJ.js",
+          "sha256": "68501b84ad58f9abf93dc2c2a1260e1ce53ab243dc4c063b909d98f0b4e70425"
+        },
+        "outputSha256": "1285eb2fc543592c84c18041d849797efd3107c6585bf9f89461b79cf3774389",
+        "defaultLoads": [
+          {
+            "request": "node:fs",
+            "parent": "/private/tmp/yuk1356-parent-emitted-proof/final-fd5d79ee2/snapshot/dist/start/server/assets/rolldown-runtime-BMI-E3GI.js"
+          },
+          {
+            "request": "node:path",
+            "parent": "/private/tmp/yuk1356-parent-emitted-proof/final-fd5d79ee2/snapshot/dist/start/server/assets/rolldown-runtime-BMI-E3GI.js"
+          },
+          {
+            "request": "node:util",
+            "parent": "/private/tmp/yuk1356-parent-emitted-proof/final-fd5d79ee2/snapshot/dist/start/server/assets/rolldown-runtime-BMI-E3GI.js"
+          }
+        ],
+        "beforeResources": [],
+        "afterResources": [],
+        "negative": "EXPECTED_NATIVE_MODULE_NOT_FOUND"
+      },
+      {
+        "kind": "cjs",
+        "status": "PASS_BOUNDED_EMITTED_LOGGER_CLOSURE",
+        "node": "v24.19.0",
+        "source": {
+          "path": "/tmp/yuk1356-parent-emitted-proof/final-fd5d79ee2/snapshot/dist/migrate.cjs",
+          "original": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage/dist/migrate.cjs",
+          "sha256": "ae1f967cdfc83b632346db735f04018de90e687c667f638ca8360975908dd887"
+        },
+        "outputSha256": "4cf0fe8f3f21bc74a9c96faa5bc5f5440c11ed0d7c01acead2d3aeb5b2655b14",
+        "defaultLoads": [
+          {
+            "request": "/tmp/yuk1356-parent-emitted-proof/final-fd5d79ee2/logger-closure.cjs",
+            "parent": "/private/tmp/yuk1356-parent-emitted-proof/probe.mjs"
+          },
+          {
+            "request": "node:fs",
+            "parent": "/private/tmp/yuk1356-parent-emitted-proof/final-fd5d79ee2/logger-closure.cjs"
+          },
+          {
+            "request": "node:path",
+            "parent": "/private/tmp/yuk1356-parent-emitted-proof/final-fd5d79ee2/logger-closure.cjs"
+          },
+          {
+            "request": "package.json",
+            "parent": "/private/tmp/yuk1356-parent-emitted-proof/final-fd5d79ee2/logger-closure.cjs"
+          },
+          {
+            "request": "node:util",
+            "parent": "/private/tmp/yuk1356-parent-emitted-proof/final-fd5d79ee2/logger-closure.cjs"
+          }
+        ],
+        "beforeResources": [],
+        "afterResources": [],
+        "negative": "EXPECTED_NATIVE_MODULE_NOT_FOUND"
+      }
+    ],
+    "limits": "Real emitted ESM/CJS logger, utilities and serialization closure only. Whole Start/worker entrypoints not executed. OTLP-enabled path is negative missing-package control, not accepted operation."
+  },
+  "archive": {
+    "path": "docs/planning/evidence/2026-10-09-yuk1356-final-gates.json.gz",
+    "sha256": "9663c1e7f319a00a59605f7c19792bdb1ae43e7ee16c9b0428d0a981527b7f97"
+  },
+  "files": [
+    {
+      "name": "gates/audit-api-client-usage.log",
+      "sha256": "71c2c93dd9e51bd4fc368e7845a5a34d42b2b56cf97e4dcf94a8556a99f45b46"
+    },
+    {
+      "name": "gates/continue.sh",
+      "sha256": "c85bbe52fe045d9e1466b7288c86ca60b2b52b90ec1770718bcfbd4c4c287866"
+    },
+    {
+      "name": "gates/results-first.txt",
+      "sha256": "e06eb3793c494826502ad9e147d2f64fc981ff1fc4f1eab9e04c5251afabaac9"
+    },
+    {
+      "name": "gates/lint.log",
+      "sha256": "59859cf788a5b058010d9870ae7a5733b66d49aed2d0daf870727f0cdaed812d"
+    },
+    {
+      "name": "gates/lint-first-failed.log",
+      "sha256": "7ef92e38c46a23c0c87d9981d02f24b24bf9954a58908824165e84a0b4c75de9"
+    },
+    {
+      "name": "gates/typecheck.log",
+      "sha256": "36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6"
+    },
+    {
+      "name": "gates/results.txt",
+      "sha256": "bcf286900a8609f22800afaf5865e156e53ef46125ede9e25215d849ae398447"
+    },
+    {
+      "name": "gates/audit-partition.log",
+      "sha256": "2c7fd71f6d1f20423d5ce5db2581155871c5481cab0b426fd99c1639f58ab41d"
+    },
+    {
+      "name": "gates/run.sh",
+      "sha256": "4c4e360fac933548bfa636333c685abbe5093ead2bbb204f655ca3951d70b626"
+    },
+    {
+      "name": "gates/audit-provider-lanes.log",
+      "sha256": "4e94a5c1aa34213ec2cbb56a60b90e883fdcf6a7fd9c10daff833b754ea85b5c"
+    },
+    {
+      "name": "gates/audit-draft-status-reads.log",
+      "sha256": "9e617d974e877613f34ad61db55cc16fcf482d978916280603b34f9c48419a4d"
+    },
+    {
+      "name": "gates/audit-draft-status.log",
+      "sha256": "de3569839d7a890654a591c9c6b77334b1031fa56e3ecedef457f132dd24eb8d"
+    },
+    {
+      "name": "gates/process-first-before.json",
+      "sha256": "777779a25f7da3471a67495fe3e7bdb9a6f666f64fe5869160a9f588c7a27402"
+    },
+    {
+      "name": "gates/audit-schema.log",
+      "sha256": "a7420b3f292ab5a2dafe8e8438baacdd5c44bcf9c782ae2f9353b3602649363e"
+    },
+    {
+      "name": "gates/audit-capability-boundaries.log",
+      "sha256": "aedc56a1435d2f2d6367609b7a87b0933e249cc1525e8effe1cca179d4c6fb4d"
+    },
+    {
+      "name": "gates/audit-profile.log",
+      "sha256": "f2f14ec06808ef23b857f78b1f54fd2fb25ba55e75776644d2a00aef10981db4"
+    },
+    {
+      "name": "gates/audit-task-census.log",
+      "sha256": "ddf8d63319f242b650617ac0e743a24966ea2eb10c9c446a74b9d24f8c58df6a"
+    },
+    {
+      "name": "gates/audit-api-client.log",
+      "sha256": "f26bc904f865f0cc5a1a1613ea5d4017d46fdab55aceaf8eb0a831aedd0cea7c"
+    },
+    {
+      "name": "gates/build.log",
+      "sha256": "45601ba4447dbf56d0a135dcfcc5708c62592b469a37aa3abb2f4fc387dd97d6"
+    },
+    {
+      "name": "emitted/snapshot.json",
+      "sha256": "982e164aba26b18726e4a9f9d1e04a263d43213d356dca8b0933ae953aa888a7"
+    },
+    {
+      "name": "emitted/snapshot-verification.json",
+      "sha256": "2400987751a69adca48179b247846d6e8d39ee37ff876f852bfe72a758e398d2"
+    },
+    {
+      "name": "emitted/closure.json",
+      "sha256": "8f797b77721adf35744f449174681bdd6f269cdc45c04a05f2d1cefda19f97b2"
+    },
+    {
+      "name": "emitted/extract.log",
+      "sha256": "40312f50ad9a9d9c9a6bd70265df9d5c85f96cac41ea03a655621b5ed1ea1291"
+    },
+    {
+      "name": "emitted/extract.exit",
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "name": "emitted/esm-result.json",
+      "sha256": "cb91fd1c013291ba552fe511fcaa5814e252cdbcfe63b5c39aeec8bf9042748c"
+    },
+    {
+      "name": "emitted/cjs-result.json",
+      "sha256": "1da23f0f85ad37b7366afeefcf6e73f9929ad198741cec001bbc1b68338893ec"
+    },
+    {
+      "name": "emitted/esm.log",
+      "sha256": "d0981a0bc1aae0a7e2f73e464863e233c2ce7865ed83319a6b7f552cfd15fefd"
+    },
+    {
+      "name": "emitted/cjs.log",
+      "sha256": "f7cc7604ec82d39ad4bbf2a0f68462f559b6055f3f0eebdc95bd0427dbd5fc6d"
+    },
+    {
+      "name": "emitted/esm.exit",
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "name": "emitted/cjs.exit",
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "name": "emitted-tools/extract.cjs",
+      "sha256": "98bf117fba15725352baa444bf55ed070ef5ac33d4df1728d757d28a1b1131c0"
+    },
+    {
+      "name": "emitted-tools/probe.mjs",
+      "sha256": "53406c463fe1059b3c1d438a8effa5b8702e0651985f5a92f49cbff95a3c9bb1"
+    },
+    {
+      "name": "emitted-tools/run.sh",
+      "sha256": "592ee7ccff70b8fa3be9b36138813604adbedc5e73f3de88c2de4b803a710edb"
+    }
+  ]
+}

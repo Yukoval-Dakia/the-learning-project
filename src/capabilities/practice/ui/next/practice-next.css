@@ -691,6 +691,90 @@
   color: var(--un-text-2);
 }
 
+/* ── Next question: the stage. The question on screen, the next one loading out of sight and the
+   one leaving all share one grid cell, so a swap never pushes the page around. The leaving one
+   keeps its height until the glide to the top is done; the waiting one takes no space. ── */
+[data-ui-next] .un-pn-stage {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+[data-ui-next] .un-pn-q {
+  grid-area: 1 / 1;
+  display: grid;
+  gap: var(--un-sp-6);
+  align-content: start;
+  min-width: 0;
+}
+[data-ui-next] .un-pn-q[data-role="next"] {
+  position: absolute;
+  inset: 0 0 auto;
+  visibility: hidden;
+}
+[data-ui-next] .un-pn-q[data-role="leaving"] {
+  pointer-events: none;
+}
+
+/* Title and phone-bar title crossfade on a question change; the old words leave in place. */
+[data-ui-next] .un-pn-swap {
+  position: relative;
+  display: block;
+}
+[data-ui-next] .un-pn-swap-out {
+  position: absolute;
+  inset: 0 0 auto;
+  pointer-events: none;
+}
+[data-ui-next] .un-pn-phonebar-title .un-pn-swap,
+[data-ui-next] .un-pn-phonebar-title .un-pn-swap-out {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Announces 「第 n 题」 after a swap; read by screen readers only. */
+[data-ui-next] .un-pn-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  /* One motion: the finished question drifts up and fades while the next rises in, together. */
+  [data-ui-next] .un-pn-q[data-role="shown"][data-arrived] {
+    animation: un-page-in var(--un-t-panel) var(--un-ease-glide) both;
+  }
+  [data-ui-next] .un-pn-q[data-role="leaving"] {
+    animation: un-pn-q-leave var(--un-t-ui) var(--un-ease-glide) both;
+  }
+  [data-ui-next] .un-pn-swap-in,
+  [data-ui-next] .un-pn-chips-in {
+    animation: un-page-fade var(--un-t-ui) var(--un-ease-glide) both;
+  }
+  [data-ui-next] .un-pn-swap-out {
+    animation: un-pn-fade-out var(--un-t-small) var(--un-ease-glide) both;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-ui-next] .un-pn-swap-out {
+    display: none;
+  }
+}
+@keyframes un-pn-q-leave {
+  to {
+    opacity: 0;
+    transform: translateY(calc(-1 * var(--un-rise)));
+  }
+}
+@keyframes un-pn-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
 /* Arriving through a shared title (M4), the page only fades so the title has a still place to
    land. The morph flag sits on the practice host, outside this scope, so it is matched here. */
 @media (prefers-reduced-motion: no-preference) {
@@ -727,7 +811,8 @@
   [data-ui-next] .un-pn-main {
     padding: 0 var(--un-sp-4) calc(var(--un-sp-8) * 2);
   }
-  [data-ui-next] .un-pn-column {
+  [data-ui-next] .un-pn-column,
+  [data-ui-next] .un-pn-q {
     gap: var(--un-sp-5);
   }
   [data-ui-next] .un-pn-phonebar {

@@ -10,10 +10,11 @@
  *   pnpm audit:schema --json   # JSON 输出
  *   pnpm audit:schema --list   # 只列字段健康表，不 enforce
  *
- * 实现：扫描 src/ + app/ 内所有 .ts/.tsx；另核对 0117 注册 seed 的固定初始化契约。
+ * 实现：扫描 src/ + app/ 内所有 .ts/.tsx；另核对 0117/0118 注册 seed 的固定初始化契约。
  */
 
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -197,6 +198,177 @@ function sessionOrphanFamilyInitialization(
   )
     return undefined;
   return { migration: SESSION_ORPHAN_MIGRATION, values: SESSION_ORPHAN_FAMILIES };
+}
+
+const JUDGE_CONTROL_MIGRATION_TAG = '0118_yuk1356_judge_durable';
+const JUDGE_CONTROL_MIGRATION = `drizzle/${JUDGE_CONTROL_MIGRATION_TAG}.sql`;
+const JUDGE_CONTROL_INITIAL_BATCH = `
+CREATE TABLE judge_run_control (
+  id smallint PRIMARY KEY CONSTRAINT judge_run_control_singleton CHECK (id = 1),
+  incarnation uuid NOT NULL,
+  epoch bigint NOT NULL CONSTRAINT judge_run_control_epoch CHECK (epoch >= 0),
+  phase text NOT NULL CONSTRAINT judge_run_control_phase CHECK (phase IN ('pg-boss','draining-pg-boss','dbos','draining-dbos')),
+  phase_changed_at timestamptz NOT NULL,
+  transition_event_id text
+);
+INSERT INTO judge_run_control VALUES (1, gen_random_uuid(), 0, 'pg-boss', clock_timestamp(), NULL);
+`;
+const JUDGE_CONTROL_DECLARATION = `pgTable(
+  'judge_run_control',
+  {
+    id: smallint('id').primaryKey(),
+    incarnation: uuid('incarnation').notNull(),
+    epoch: bigint('epoch', { mode: 'number' }).notNull(),
+    phase: text('phase').notNull(),
+    phase_changed_at: timestamp('phase_changed_at', { withTimezone: true }).notNull(),
+    transition_event_id: text('transition_event_id'),
+  },
+  (t) => [
+    check('judge_run_control_singleton', sql\`\${t.id} = 1\`),
+    check('judge_run_control_epoch', sql\`\${t.epoch} >= 0\`),
+    check(
+      'judge_run_control_phase',
+      sql\`\${t.phase} IN ('pg-boss','draining-pg-boss','dbos','draining-dbos')\`,
+    ),
+  ],
+)`;
+// Pin only this migration's remaining receipt/index/fence batches. A later
+// appended control mutation cannot borrow the first batch's initialization proof.
+const JUDGE_CONTROL_REMAINDER_SHA256 =
+  '2ba58ae37dc6b8b12d4e21cfd53966b5af8cb34b920bad221bb88d4a874adc55';
+const normalizeJudgeSql = (source: string) => source.trim().replace(/\s+/g, ' ');
+function judgeDeclarationTokens(source: string) {
+  const scanner = ts.createScanner(
+    ts.ScriptTarget.Latest,
+    true,
+    ts.LanguageVariant.Standard,
+    source,
+  );
+  const tokens: string[] = [];
+  while (scanner.scan() !== ts.SyntaxKind.EndOfFileToken) tokens.push(scanner.getTokenText());
+  return tokens.join('\n');
+}
+function judgeControlIncarnationInitialization(
+  schema: string,
+  files: ReadonlyMap<string, string>,
+): WriteHit['initialization'] {
+  const migration = files.get(JUDGE_CONTROL_MIGRATION);
+  const journalText = files.get(MIGRATION_JOURNAL);
+  if (!migration || !journalText) return undefined;
+  let journal: unknown;
+  try {
+    journal = JSON.parse(journalText);
+  } catch {
+    return undefined;
+  }
+  if (
+    !isRecord(journal) ||
+    journal.version !== '7' ||
+    journal.dialect !== 'postgresql' ||
+    !Array.isArray(journal.entries)
+  )
+    return undefined;
+  const registrations = journal.entries.filter(
+    (entry: unknown) =>
+      isRecord(entry) && (entry.idx === 118 || entry.tag === JUDGE_CONTROL_MIGRATION_TAG),
+  );
+  const registration: unknown = registrations[0];
+  if (
+    registrations.length !== 1 ||
+    !isRecord(registration) ||
+    registration.idx !== 118 ||
+    registration.tag !== JUDGE_CONTROL_MIGRATION_TAG ||
+    registration.version !== '7' ||
+    registration.when !== 1791504000002 ||
+    registration.breakpoints !== true
+  )
+    return undefined;
+  const breakpoint = migration.indexOf('--> statement-breakpoint');
+  if (
+    breakpoint < 0 ||
+    normalizeJudgeSql(migration.slice(0, breakpoint)) !==
+      normalizeJudgeSql(JUDGE_CONTROL_INITIAL_BATCH) ||
+    createHash('sha256')
+      .update(normalizeJudgeSql(migration.slice(breakpoint + '--> statement-breakpoint'.length)))
+      .digest('hex') !== JUDGE_CONTROL_REMAINDER_SHA256
+  )
+    return undefined;
+  const file = ts.createSourceFile('schema.ts', schema, ts.ScriptTarget.Latest, true);
+  const declarations = file.statements.flatMap((statement) =>
+    ts.isVariableStatement(statement) &&
+    statement.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword)
+      ? [...statement.declarationList.declarations].filter((declaration) => {
+          const table = declaration.initializer;
+          return (
+            (ts.isIdentifier(declaration.name) && declaration.name.text === 'judge_run_control') ||
+            (table &&
+              ts.isCallExpression(table) &&
+              ts.isIdentifier(table.expression) &&
+              table.expression.text === 'pgTable' &&
+              table.arguments[0] &&
+              ts.isStringLiteral(table.arguments[0]) &&
+              table.arguments[0].text === 'judge_run_control')
+          );
+        })
+      : [],
+  );
+  const declaration = declarations[0];
+  if (
+    declarations.length !== 1 ||
+    !declaration ||
+    !ts.isIdentifier(declaration.name) ||
+    declaration.name.text !== 'judge_run_control' ||
+    !declaration.initializer ||
+    judgeDeclarationTokens(declaration.initializer.getText(file)) !==
+      judgeDeclarationTokens(JUDGE_CONTROL_DECLARATION)
+  )
+    return undefined;
+  return { migration: JUDGE_CONTROL_MIGRATION, values: ['gen_random_uuid()'] };
+}
+
+type JudgeInitializationIssue =
+  | { code: 'invalid_initialization'; message: string }
+  | { code: 'production_write'; path: string; kind: WriteStatement['kind']; message: string };
+function isMutableJudgeControlPatch(payload: string): boolean {
+  const file = ts.createSourceFile(
+    'control-patch.ts',
+    `const patch = ${payload}`,
+    ts.ScriptTarget.Latest,
+    true,
+  );
+  const statement = file.statements[0];
+  if (!statement || !ts.isVariableStatement(statement)) return false;
+  const patch = statement.declarationList.declarations[0]?.initializer;
+  if (!patch || !ts.isObjectLiteralExpression(patch) || patch.properties.length === 0) return false;
+  const mutableColumns = new Set(['epoch', 'phase', 'phase_changed_at', 'transition_event_id']);
+  return patch.properties.every(
+    (property) =>
+      (ts.isPropertyAssignment(property) || ts.isShorthandPropertyAssignment(property)) &&
+      (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) &&
+      mutableColumns.has(property.name.text),
+  );
+}
+function judgeControlWriteIssues(index: Map<string, WriteStatement[]>): JudgeInitializationIssue[] {
+  return [...index].flatMap(([path, statements]) =>
+    statements.flatMap((statement): JudgeInitializationIssue[] => {
+      if (statement.table !== 'judge_run_control') return [];
+      if (
+        statement.kind === 'update' &&
+        statement.explicitPayload === true &&
+        isMutableJudgeControlPatch(statement.payload)
+      )
+        return [];
+      return [
+        {
+          code: 'production_write',
+          path,
+          kind: statement.kind,
+          message:
+            'judge_run_control is initialized only by 0118; production updates must explicitly preserve id and incarnation',
+        },
+      ];
+    }),
+  );
 }
 
 // ADR-0058 / YUK-939 intentionally retired this writer, not its historical
@@ -732,7 +904,10 @@ export function buildProductionWriteIndex(
   sources: ReadonlyMap<string, string>,
 ): Map<string, WriteStatement[]> {
   const production = new Map([...sources].filter(([path]) => isProductionSource(path)));
-  const index = extractDrizzleWriteIndex(production, new Set(['subagent_run']));
+  const index = extractDrizzleWriteIndex(
+    production,
+    new Set(['subagent_run', 'judge_run_control']),
+  );
   for (const [path, source] of production) {
     index.set(path, [...(index.get(path) ?? []), ...extractExecutedSqlWrites(source)]);
   }
@@ -776,6 +951,17 @@ export function auditSchemaWrites(
 ) {
   const index = buildProductionWriteIndex(sources);
   const familyInitialization = sessionOrphanFamilyInitialization(schema, initializationFiles);
+  const incarnationInitialization = judgeControlIncarnationInitialization(
+    schema,
+    initializationFiles,
+  );
+  const judgeInitializationIssues: JudgeInitializationIssue[] = judgeControlWriteIssues(index);
+  if (!incarnationInitialization)
+    judgeInitializationIssues.unshift({
+      code: 'invalid_initialization',
+      message:
+        'judge_run_control.incarnation requires the exact Drizzle declaration and uniquely registered 0118 singleton initializer',
+    });
   const retention = historicalRetention(schema, index);
   const retainedSchemas = [
     retention,
@@ -817,9 +1003,15 @@ export function auditSchemaWrites(
     const initialization =
       f.table === 'session_orphan_control' && f.field === 'family'
         ? familyInitialization
-        : undefined;
+        : f.table === 'judge_run_control' &&
+            f.field === 'incarnation' &&
+            judgeInitializationIssues.length === 0
+          ? incarnationInitialization
+          : undefined;
     let status: WriteHit['status'];
-    if (insert_files > 0 && update_files > 0) status = 'live';
+    if (f.table === 'judge_run_control' && f.field === 'incarnation')
+      status = initialization ? 'init-only' : 'stub';
+    else if (insert_files > 0 && update_files > 0) status = 'live';
     else if (insert_files > 0) status = 'init-only';
     else if (update_files > 0) status = 'update-only';
     else if (initialization) status = 'init-only';
@@ -837,7 +1029,7 @@ export function auditSchemaWrites(
     // Mixed native columns retain their ordinary production classification.
     results.push({ ...field, status: 'historical-retained' });
   }
-  return { results, historicalRetention: retention, retainedSchemas };
+  return { results, historicalRetention: retention, retainedSchemas, judgeInitializationIssues };
 }
 
 export function audit(repoRoot = REPO_ROOT) {
@@ -852,7 +1044,7 @@ export function audit(repoRoot = REPO_ROOT) {
       ]),
     ),
     new Map(
-      [MIGRATION_JOURNAL, SESSION_ORPHAN_MIGRATION].flatMap((path) => {
+      [MIGRATION_JOURNAL, SESSION_ORPHAN_MIGRATION, JUDGE_CONTROL_MIGRATION].flatMap((path) => {
         const absolute = resolve(repoRoot, path);
         return existsSync(absolute) ? [[path, readFileSync(absolute, 'utf8')]] : [];
       }),
@@ -865,7 +1057,7 @@ function main() {
   const asJson = args.includes('--json');
   const listOnly = args.includes('--list');
 
-  const { results, retainedSchemas } = audit();
+  const { results, retainedSchemas, judgeInitializationIssues } = audit();
   const retentionIssues = retainedSchemas.flatMap((retention) => retention.issues);
   const hygiene = validateAllowlistHygiene(loadAllowlist(), {
     today: todayIso(),
@@ -887,6 +1079,7 @@ function main() {
           unallowedStubs,
           allowedStubs,
           allowlistIssues: hygiene.issues,
+          judgeInitializationIssues,
         },
         null,
         2,
@@ -895,7 +1088,10 @@ function main() {
     process.exit(
       listOnly
         ? 0
-        : unallowedStubs.length > 0 || hygiene.issues.length > 0 || retentionIssues.length > 0
+        : unallowedStubs.length > 0 ||
+            hygiene.issues.length > 0 ||
+            retentionIssues.length > 0 ||
+            judgeInitializationIssues.length > 0
           ? 1
           : 0,
     );
@@ -925,6 +1121,12 @@ function main() {
     `  stub (unallowed): ${unallowedStubs.length}${unallowedStubs.length > 0 ? ' ⚠️' : ''}`,
   );
 
+  if (judgeInitializationIssues.length > 0) {
+    console.log('\nJudge initialization contract violations:');
+    for (const issue of judgeInitializationIssues)
+      console.log(`  - ${issue.message}${'path' in issue ? ` (${issue.path})` : ''}`);
+    if (!listOnly) process.exit(1);
+  }
   if (retentionIssues.length > 0 && !listOnly) process.exit(1);
 
   if (hygiene.issues.length > 0 && !listOnly) {

@@ -1355,7 +1355,7 @@
                 }
               ]
             },
-            "description": "pending 恢复读面：issuance + live draft + 已接收提交（draft=null 即服务端无未保存草稿）\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 返回 issuance/practice_dto/draft/submissions；已接收 submission 带原始 response_set/group_evidence/idempotency_key，恢复不泄漏候选反馈。不存在返回404。"
+            "description": "pending 恢复读面：issuance + live draft + 已接收提交（draft=null 即服务端无未保存草稿）\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 返回 issuance/practice_dto/draft/submissions；已接收 submission 带原始 response_set/group_evidence/idempotency_key，恢复不泄漏候选反馈。不存在返回404。practice_dto=null 时 unavailable_reason 给出 typed 收回原因（公共枚举，如 human_review/missing_referenced_figure），已有提交不受影响"
           },
           "response": []
         },
@@ -1374,7 +1374,7 @@
               "host": ["{{baseUrl}}"],
               "path": ["api", "issuances"]
             },
-            "description": "issueAssessment：发题时绑定不可变 revision/目标 part/实际材料/选项展示映射（preselected≠issued；§3.1/§7.1）\n\n**Notes:** mode:auto_score(默认,要求 admitted) | manual(D9)；container_only 组必填 container_occurrence_ref。返回 {status,issuance,practice_dto(公开面无答案键),admission_generation_observed}。错误：not_found(404)/unpublished|suspended|withdrawn|not_admitted|container_ref_required|binding_invalid(422)/claim_unavailable|issuance_id_conflict(409)；replayed→200",
+            "description": "issueAssessment：发题时绑定不可变 revision/目标 part/实际材料/选项展示映射（preselected≠issued；§3.1/§7.1）\n\n**Notes:** mode:auto_score(默认,要求 admitted) | manual(D9)；container_only 组必填 container_occurrence_ref。返回 {status,issuance,practice_dto(公开面无答案键),admission_generation_observed}。错误：not_found(404)/unpublished|suspended|withdrawn|not_admitted|container_ref_required|binding_invalid(422)/claim_unavailable|issuance_id_conflict(409)；replayed→200。not_admitted(422) 的错误体 details.serving_reason 给出 typed gate 原因（自动判分不可达/human_review/missing_referenced_figure 等公共枚举）",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"group_id\": \"REPLACE_group_root\",\n  \"part_ids\": [\n    \"p1\"\n  ],\n  \"mode\": \"auto_score\",\n  \"container_occurrence_ref\": null,\n  \"claim\": {\n    \"claimed_by_ref\": \"REPLACE_occurrence\"\n  },\n  \"revision_id\": \"REPLACE_revision_optional\"\n}",
@@ -1438,6 +1438,31 @@
                 }
               }
             }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "jobs",
+      "item": [
+        {
+          "name": "GET /api/jobs/judge_run/:id/status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/jobs/judge_run/:id/status",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "jobs", "judge_run", ":id", "status"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "读取 durable native judge 的四态状态\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** run_id 保持原始提交身份。永久 native 完成或人工处置优先于引擎与可清理通知；unknown 引擎证据不返回 404。已验证不存在返回 404，状态读取不可用返回 503。此读取不会写入、排队或判分。"
           },
           "response": []
         }

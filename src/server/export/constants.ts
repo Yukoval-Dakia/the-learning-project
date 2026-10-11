@@ -335,6 +335,8 @@ export const BACKUP_EXCLUDED_TABLES: ReadonlySet<string> = new Set<string>([
   // SSE-replay telemetry of pg-boss job lifecycle; operational, re-derived as jobs
   // run (ADR-0005/0008). Not authored data — restoring stale replay rows is wrong.
   'job_events',
+  // Judge control incarnation must be restored with native receipts and both engines.
+  'judge_run_control',
   // YUK-1355: runtime ownership/receipts must travel with pg-boss and tlp_dbos
   // in a full PostgreSQL backup. A learner archive cannot restore task execution.
   'prune_job_events_control',

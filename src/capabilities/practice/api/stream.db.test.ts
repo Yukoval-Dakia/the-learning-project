@@ -6,6 +6,8 @@ import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { knowledge, learning_session, question } from '@/db/schema';
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
+import { contractIntegrityDigest } from '@/server/questions/contract-normalizer';
+import { publishQuestionGroup } from '@/server/questions/publisher';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 // G1 (review)：route 永不传 composeDeps，production lazy-compose 走 defaultRunTaskFn →
@@ -52,6 +54,7 @@ async function seedScopedQuestion(input: {
       kind: 'choice',
       prompt_md: '专项题',
       reference_md: 'B',
+      choices_md: ['坡度不变，只记录流速', '固定水量，只改变坡度'],
       knowledge_ids: [input.knowledgeId],
       difficulty: 3,
       source: 'manual',
@@ -65,6 +68,72 @@ async function seedScopedQuestion(input: {
       updated_at: now,
       version: 0,
     });
+  // Scoped stream items require a published, admitted, automatically-servable
+  // contract. The deterministic option-set key is declared explicitly — no
+  // normalizer reference_md key extraction (owner: no guess-key path).
+  const options = [
+    { option_id: `opt_${qid}_a`, label: 'A', text: '坡度不变，只记录流速' },
+    { option_id: `opt_${qid}_b`, label: 'B', text: '固定水量，只改变坡度' },
+  ];
+  const contract = {
+    structure: {
+      group_id: qid,
+      materials: [],
+      parts: [{ part_id: 'p1', prompt_md: '专项题', material_ids: [] }],
+    },
+    response_spec: {
+      slots: [{ slot_id: 'p1::r', part_id: 'p1', kind: 'single_choice' as const, options }],
+    },
+    scoring_basis: {
+      units: [
+        {
+          scoring_unit_id: 'p1::u',
+          slot_refs: ['p1::r'],
+          material_refs: [],
+          evidence_slot_refs: [],
+          requires_group_evidence: false,
+          criterion: {
+            kind: 'option_set_key' as const,
+            accepted_option_ids: [`opt_${qid}_b`],
+          },
+          points: 2,
+        },
+      ],
+      aggregation: { kind: 'sum' as const },
+      blank_scores_zero: true,
+    },
+    execution_plan: {
+      plan_version: 1,
+      assignments: [
+        {
+          scoring_unit_ids: ['p1::u'],
+          executor: { kind: 'deterministic' as const, comparator: 'exact_option_set' as const },
+        },
+      ],
+      escalation: {
+        on_unadmitted_model: 'withhold' as const,
+        on_low_confidence: 'human_review' as const,
+      },
+    },
+  };
+  const published = await publishQuestionGroup(testDb(), {
+    group_id: qid,
+    contract: { ...contract, integrity_digest: contractIntegrityDigest(contract) },
+    expectedCurrentRevision: null,
+    expectedAdmissionGeneration: null,
+    availability: 'general_pool',
+    actorRef: 'test:scoped-stream-publication',
+    now,
+    admission: {
+      state: 'admitted',
+      evidence: {
+        marking_provenance: 'official',
+        verification: { structural_check_passed: true, independent_verification: null },
+        model_slice: null,
+      },
+    },
+  });
+  if (published.status !== 'published') throw new Error(published.status);
   return qid;
 }
 
