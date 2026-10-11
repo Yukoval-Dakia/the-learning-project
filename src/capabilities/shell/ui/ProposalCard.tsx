@@ -250,8 +250,8 @@ function BlockStructure({ block }: { block: MergeBlockPreview }) {
     <>
       {block.sub_questions.length > 0 && (
         <ul className="merge-structure">
-          {block.sub_questions.map((sub, i) => (
-            <li key={`${i}:${sub.label}`}>
+          {block.sub_questions.map((sub) => (
+            <li key={`${sub.label}\u0000${sub.excerpt}`}>
               <b>{sub.label}</b> {sub.excerpt}
             </li>
           ))}
@@ -260,8 +260,8 @@ function BlockStructure({ block }: { block: MergeBlockPreview }) {
       {subMore > 0 && <div className="merge-structure-note">还有 {subMore} 个小问</div>}
       {block.options.length > 0 && (
         <ul className="merge-structure">
-          {block.options.map((option, i) => (
-            <li key={`${i}:${option.label}`}>
+          {block.options.map((option) => (
+            <li key={`${option.label}\u0000${option.text}`}>
               <b>{option.label}</b> {option.text}
             </li>
           ))}
