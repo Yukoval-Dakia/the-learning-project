@@ -26,7 +26,7 @@ Node 24.19.0 / pnpm 11.13.1：自有 scoped units 87/87；合入的 assessment p
 | --- | --- | --- | --- |
 | DB05 shared | `403c72486` | 34/34 PASS | 不是三族 consumer/process/cutover 验收 |
 | DB06 C + switch | `288acbe82` | 23/24 PASS，1 FAIL | 原失败保留；不是 clean C 全量 PASS |
-| DB07 focused | `366bd301d` | 3/3 PASS | C fixture 修复及 focused switch；不与 DB06 拼成 clean batch |
+| DB07 focused | `366bd301d` | 3/3 PASS | C fixture 修复及两项恢复邻例；不与 DB06 拼成 clean batch |
 | DB08 A | `cb1deee1b` | 10/28 PASS，18 FAIL | 原 import-order 产品失败保留 |
 | DB09 focused A | `ed023d5de` | 24/24 PASS | 18 旧红例 + 6 moved cases；另 10 outside scope，未 clean 全量重跑 |
 
