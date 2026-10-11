@@ -38,6 +38,7 @@ import {
 import {
   loadDraftReviewPage,
   loadPracticeFacePage,
+  loadPracticeNextPage,
   loadQuestionDetailPage,
   loadQuestionsPage,
 } from '@/capabilities/practice/ui-public';
@@ -48,9 +49,13 @@ import { RootShell as SharedRootShell } from './RootShell';
 function RootShell() {
   const router = useRouter();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const searchStr = useRouterState({ select: (s) => s.location.searchStr });
   const navigate = useCallback((to: string) => router.history.push(to), [router]);
+  // REVIEW BUILD ONLY (YUK-1473) — the new practice page embeds its own companion dock.
+  const embeddedCompanion =
+    pathname === surfacePath('practice') && new URLSearchParams(searchStr).get('ui') === 'next';
   return (
-    <SharedRootShell pathname={pathname} navigate={navigate}>
+    <SharedRootShell pathname={pathname} navigate={navigate} globalCopilot={!embeddedCompanion}>
       <Outlet />
     </SharedRootShell>
   );
@@ -248,6 +253,8 @@ const PracticeRoute = import.meta.env.PROD
   ? StartPageEntry
   : lazyRouteComponent(async () => {
       const PracticeFacePage = await loadPracticeFacePage();
+      // REVIEW BUILD ONLY (YUK-1473 checkpoint screenshots) — never merged.
+      const PracticeNextPage = await loadPracticeNextPage();
 
       function PracticeRouteComponent() {
         const router = useRouter();
@@ -267,6 +274,16 @@ const PracticeRoute = import.meta.env.PROD
           },
           [router],
         );
+        if (new URLSearchParams(searchStr).get('ui') === 'next') {
+          return (
+            <PracticeNextPage
+              navigate={(to) => router.history.push(to)}
+              getQuery={getQuery}
+              setQuery={setQuery}
+              companion="embedded"
+            />
+          );
+        }
         return (
           <PracticeFacePage
             navigate={(to) => router.history.push(to)}

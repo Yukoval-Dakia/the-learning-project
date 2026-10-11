@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { CopilotDock } from '@/capabilities/copilot/ui-public';
 import { useWorkbenchClient } from '@/capabilities/shell/ui-public';
+import { openCopilot as publishCopilotOpen } from '@/ui/lib/use-copilot-dwell';
 import { AppSidebar } from '@/ui/shell/AppSidebar';
 import { AppTopbar } from '@/ui/shell/AppTopbar';
 import { CommandPalette } from '@/ui/shell/CommandPalette';
@@ -33,10 +34,13 @@ export function RootShell({
   children,
   pathname,
   navigate,
+  globalCopilot = true,
 }: {
   children: ReactNode;
   pathname: string;
   navigate: (to: string) => void;
+  /** REVIEW BUILD ONLY (YUK-1473): false when the page mounts its own embedded companion. */
+  globalCopilot?: boolean;
 }) {
   // chrome state。paletteOpen 驱动 CommandPalette（S14）；⌘K toggle + searchbox
   // 点击都 set 它。
@@ -100,10 +104,15 @@ export function RootShell({
   // trigger（data-testid=copilot-drawer-trigger）走既有 dock-open 路径，不造新机制。
   const copilotMountRef = useRef<HTMLDivElement | null>(null);
   const openCopilot = useCallback(() => {
+    // Without the global dock the page's embedded companion owns the open signal.
+    if (!globalCopilot) {
+      publishCopilotOpen();
+      return;
+    }
     copilotMountRef.current
       ?.querySelector<HTMLButtonElement>('[data-testid="copilot-drawer-trigger"]')
       ?.click();
-  }, []);
+  }, [globalCopilot]);
 
   const closeMobileNav = useCallback(() => setMobileNavOpen(false), []);
 
@@ -166,13 +175,15 @@ export function RootShell({
       {/* CopilotDock 根挂（保留既有实例 + explicit-open + navigate/pathname 接线）。
           .shell-copilot-mount 隐藏其 launcher wrapper；drawer 本身 fixed 渲到根。
           nudge 数量上提给 AppTopbar 的可见 launcher，避免重复入口。 */}
-      <div ref={copilotMountRef} className="shell-copilot-mount">
-        <CopilotDock
-          pathname={pathname}
-          navigate={navigate}
-          onNudgeCountChange={setCopilotNudgeCount}
-        />
-      </div>
+      {globalCopilot && (
+        <div ref={copilotMountRef} className="shell-copilot-mount">
+          <CopilotDock
+            pathname={pathname}
+            navigate={navigate}
+            onNudgeCountChange={setCopilotNudgeCount}
+          />
+        </div>
+      )}
 
       {/* S14/YUK-329 — ⌘K 命令面板消费 paletteOpen seam。组件 fixed 渲到根；
           页面组投影 shipped surface inventory，知识节点走 /api/knowledge fetch。 */}
