@@ -71,6 +71,18 @@ export async function resolveSchedulingProjection<T extends { state: unknown; du
     }
   }
   if (!parsed.success) throw new Error('invalid scheduling state');
+  if (
+    selectedForgettingEngine() === 'forgetting_candidate' &&
+    isCandidateState(parsed.data) &&
+    parsed.data.dueKind !== 'initial' &&
+    parsed.data.modelDue === undefined
+  ) {
+    const state = parsed.data;
+    // Anchor to the completed occurrence, never the reader's wall clock.
+    const anchor = state.last_review ?? new Date(Math.min(state.due.getTime(), now.getTime()));
+    const projected = projectCandidateDue(state, anchor);
+    return { ...row, state: { ...state, ...projected }, due_at: projected.due };
+  }
   return { ...row, state: parsed.data };
 }
 

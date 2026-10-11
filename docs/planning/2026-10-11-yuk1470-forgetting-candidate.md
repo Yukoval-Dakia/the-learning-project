@@ -180,7 +180,10 @@ Linear capture：已核对既有 YUK-1470 为 In Progress；已发现的接入 c
 
 Owner 同时明确 assisted judgment 无写入：`settle.ts` 封存 suppression；直接 apply、historical replay 与 legacy reconstruction 都排除 assisted judged facts。self-report 不因 AI 未决而丢失；它仍不更新 θ̂。`src/core/schema/assessment/settlement.ts` 未编辑，feature line 的 partial_unknown_points 分类改动留待父整合；本线从空 points/unsupported judgment 不产生 candidate observation。
 
-行数预算以 `git diff --numstat ecd845d9e` 的 added 列计算，包含 fixture 与所有 legacy-test 类型适配：**test 887 行 ≤ product 1200 行**。Product 仅计 src 内非测试 TS/TSX，排除 generated client、文档、Postman 和 Vitest 配置，未借助文档或生成代码放大预算，无超额例外。整条分支（含原 reviewed engine commit）的 merge-base 为 `79825bb6da73f9894c65a5d6735e3725f098e8e1`，同一统计口径为 **test 1626 行 ≤ product 2123 行**，仍无超额例外。
+历史 integration-only 预算以 `git diff --numstat ecd845d9e` 的 added 列计算：test 887 / product 1200；该切片不含此前加入的 oracle fixture，此数字只描述当时切片。原全分支“test 1626 ≤ product 2123、无超额例外”的结论漏计 `src/core/forgetting/numeric-oracle.fixture.json` **594 行**，已撤回。统一以 API PR base `c2ace38ddba976175afde2bed342d8fba5767d79` 重计：review 源 `2b8633ef` 为 **test 2220 / product 2123**；前次 CI 修复源 `d86c9d4d` 为 **test 2282 / product 2141**。这些数字不沿用原历史 merge-base `79825bb6`。
+
+统计只取完整 diff 的 added 列：test 包含路径中的 `.test.` / `.spec.` / `.fixture.` 及 `tests/`；product 为 `src/` 下非测试 TS/TSX，排除 `.generated.`。其余文档、生成 client、Postman、Vitest 配置均排除；此 diff 无另外漏出的 server/web/scripts 产品改动。测试多于产品触发逐不变量说明，不能通过删有效测试或计入文档/生成代码缩小差额：594 行独立高精度 oracle 验证数值结果，不是实现镜像；核心公开入口保护确定性、乱序/更正/撤回及 future cutoff；DB 结算保护幂等、状态恢复、助力/未决排除和独立用户评级；实际队列/tool 保护冷却与过滤边界，旧测试的类型适配保持已有数据/结算断言。
+
 
 新 DB 使用协调线明确 start 授权的 `yuk1470-boundary-db-20261011-2215-89cb7792b`，ID `ca8fcea10f8131947009fc89d1a0a3c4797c19e4d45f7f04bcb6bf236790998a`，localhost:32772；创建前仅见 7 baseline containers，均 stable/running。无 Testcontainers/Ryuk/prune；删除已获得协调线第二次 start，仅按 exact name stop/rm 完成。
 
@@ -205,3 +208,20 @@ pnpm audit:partition
 ```
 
 首轮 boundary-db-r1 因 assisted 的期望仍为 applied（实际正确返回 ineligible）失败，修正边界期望后重跑；失败 log 保留，不以通过覆盖。最终 boundary-db-r2：4 files / 62 cases PASS（含本线8 boundary cases）；unit：2 files / 21 cases PASS（engine12/FSRS9）；typecheck/lint/build 全过（lint172既有warning）；test-policy checked29/inherited81/errors=[]，partition unit64/db208/migration1/errors=[]。证据为 .cache/yuk1470-evidence/boundary-*.log。协调线再次明确 start 后，已仅按 exact name docker stop / docker rm 删除该容器。
+
+
+## PR1700 三项 P1 修复回执（2026-10-11）
+
+修复限定为候选的助力准入、执行冷却和部分得分归属；默认仍为 FSRS。纯核心动力学、工程参数、开关默认、θ/PFA、UI、kernel facade 和已验 rename 实现均未修改。
+
+- 助力：自动评价的 assisted、submission/help 及 sealed hint 数量任一禁止证据均阻止候选写入。直接结算、sealed history 与 legacy 重建共用判定；旧 plan 在选择 writer 前只规范化候选输入/抑制字段，不改历史事件。显式 user rating 的独立 self-report 通道保留。
+- 冷却：应用投影调用既有 `arrange` / `fallbackSchedule`；`due` 为实际 eligibleAt，向后兼容的 optional `modelDue` 保留原结果/kind。lastCompletedAt 来自有效作答，不以每次读取 now 重置。旧无 modelDue 的候选态只读补投影，新态沿用已安排日期；beyond_horizon 使用 checkedThrough，unknown/invalid 原因保留。尚无生产用户日期入口来源，本次未声称该入口已验；仅保留已有约束参数能力，不新建日期 pipeline。
+- 归属：多 KC 的未定位 partial 点保留 evidenceRefs 与 `unattributed_multi_skill`，不均分猜分；同卷单 KC 合法点继续纳入。writer 和相关预检查只取 included 的技能，legacy 回落不把空 shares 再填成平均值。
+
+仅增强既有三个 DB case，没有增加 case 数或矩阵：continuous case 检验未定位 partial 与同卷合法邻项；assisted case 保护直接、旧 sealed、旧 legacy reader/实际 replay 的不同准入缺口，并比较只读后的持久化事件；due case 以首次独立失败验证一天冷却以及旧候选态的队列/tool 一致性。原 8 个候选边界 case 保留。统一 base `c2ace38ddba976175afde2bed342d8fba5767d79` 的完整分支 added 为 **test 2455 / product 2233**，包含 594 行 oracle；逐文件分类与排除清单在本轮外置证据中，未删有效测试凑数。
+
+最小 RED 在未修产品源 `d86c9d4d` 上由同三个 case 得到 3 fail / 5 skipped：错误写入两类不合格记忆、首次失败早到期一天。失败日志与测试 patch 独立保留。后续两次夹具失败分别是 Date/jsonb 表示比较与 terminal evaluation 冻结约束；已比较实际持久化回执，并从一开始创建不可变 assisted 评价，不绕过 guard。验证 driver 仅使用显式环境 allowlist、loopback sentinel 与未改的标准 Testcontainers globalSetup，每次新合成 PG；无真实 DB、provider、Mac、R2 或全量本地测试。
+
+证据目录 `/workspace/pr1700-r1-fix-evidence/`；同一最终提交的 scoped DB/core-unit、typecheck/lint/build 与相关 audits 结果由父交付回执绑定精确 SHA。R1 三项 P1 已进入此修复；限定 R2、远端 exact-head CI、原 PR 唯一评论及发布仍由父负责，不把中间本地 PASS 当最终交付。Linear capture 沿用 YUK-1470；本次没有三项之外的新 actionable follow-up，不新建重复票。
+
+额外 `audit:fold-writes --strict` 的 precommit 检查报告 rehearsal/corpus.ts 六处写者未登记；脚本、allowlist 与 corpus 在上述统一 base、修前 head 和当前工作树的 Git blob 均相同。这是既有非默认 strict advisory，不改 allowlist、不开三项以外的整治；其失败保留在证据中，不称全部 audit 绿色。

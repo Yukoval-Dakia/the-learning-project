@@ -25,18 +25,26 @@ import {
   question_group_lifecycle,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { CandidateReplayInputSchema } from '@/server/fsrs/candidate';
+import {
+  CandidateReplayInputSchema,
+  SealedCandidateInputSchema,
+  sealCandidateFact,
+} from '@/server/fsrs/candidate';
 import {
   enrollFsrsStateIfAbsent,
   getFsrsRetrievabilityByIds,
   initialSchedulingState,
 } from '@/server/fsrs/state';
-import { normalizeQuestionRowToContract } from '@/server/questions/contract-normalizer';
+import {
+  normalizeQuestionGroupToContract,
+  normalizeQuestionRowToContract,
+} from '@/server/questions/contract-normalizer';
 import { publishQuestionGroup } from '@/server/questions/publisher';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { activateEvaluation, insertInitialEvaluationHead } from './activate';
 import {
   ASSESSMENT_SETTLEMENT_ACTION,
+  candidateStateForRead,
   learningSettlement,
   withdrawCapturedOccurrence,
 } from './settle';
@@ -87,10 +95,18 @@ async function seedQuestionRow(id: string, opts: SeedQuestionOpts & { parentId?:
   });
 }
 
-async function publishAdmittedForGroup(qid: string) {
+async function publishAdmittedForGroup(qid: string, partIds: string[] = []) {
   const db = testDb();
   const [row] = await db.select().from(question).where(eq(question.id, qid)).limit(1);
-  const n = normalizeQuestionRowToContract(row);
+  const parts = await Promise.all(
+    partIds.map(async (id) => {
+      const [part] = await db.select().from(question).where(eq(question.id, id));
+      return part;
+    }),
+  );
+  const n = parts.length
+    ? normalizeQuestionGroupToContract(row, parts)
+    : normalizeQuestionRowToContract(row);
   const result = await publishQuestionGroup(db, {
     group_id: n.group_id,
     contract: {
@@ -122,7 +138,7 @@ interface SeedIds {
 /** 单 submission group + head 同事务（§11 原子不变量）。 */
 async function seedChain(
   prefix: string,
-  opts: { kcs?: string[]; submittedAt?: Date } = {},
+  opts: { kcs?: string[]; submittedAt?: Date; parts?: Array<{ id: string; kcs: string[] }> } = {},
 ): Promise<SeedIds> {
   const db = testDb();
   const qid = `${prefix}_q`;
@@ -131,11 +147,17 @@ async function seedChain(
   const submissionId = `${prefix}_sub`;
   const submittedAt = opts.submittedAt ?? NOW;
   await seedQuestionRow(qid, { kcs: opts.kcs });
-  const { revisionId } = await publishAdmittedForGroup(qid);
+  for (const part of opts.parts ?? [])
+    await seedQuestionRow(part.id, { kcs: part.kcs, parentId: qid });
+  const partIds = opts.parts?.map((part) => part.id) ?? [qid];
+  const { revisionId } = await publishAdmittedForGroup(
+    qid,
+    opts.parts?.map((part) => part.id),
+  );
   await db.insert(assessment_issuance).values({
     issuance_id: issuanceId,
     revision_id: revisionId,
-    part_ids: [qid],
+    part_ids: partIds,
     material_bindings: [],
     option_order: [],
     claim_policy: 'one_time',
@@ -314,8 +336,28 @@ describe('candidate product settlement, replay and selected readers', () => {
   });
 
   // @invariant grading: sealed scored facts drive one versioned candidate row and immutable brackets at submission time
-  // @fails-if settlement uses activation time, drops capture fields, double counts a duplicate, or writes two state sources
+  // @fails-if ambiguous multi-KC partial creates memory or drops a valid neighboring unit, settlement uses activation time, or duplicates count twice
   it('seals continuous evidence and ignores duplicate activation and reverse activation clocks', async () => {
+    await seedKnowledge('kc_b');
+    await seedScored('unattributed', NOW, 0.5, ['kc_a', 'kc_b']);
+    expect(await activate('unattributed_eval', { effectiveId: null, generation: 0 })).toMatchObject(
+      {
+        effect: 'ineligible',
+      },
+    );
+    expect(await testDb().select().from(material_fsrs_state)).toHaveLength(0);
+    const excludedReceipt = (await appliedEvents())[0];
+    expect(excludedReceipt.payload.replay_inputs).toMatchObject({
+      forgettingInput: {
+        adaptedEvidence: [
+          {
+            kind: 'excluded',
+            reason: 'unattributed_multi_skill',
+            evidenceRefs: expect.arrayContaining(['unattributed_sub', 'unattributed_eval']),
+          },
+        ],
+      },
+    });
     const a = await seedScored('continuous_a', NOW, 0.5);
     expect(
       await activate(
@@ -332,7 +374,8 @@ describe('candidate product settlement, replay and selected readers', () => {
       last_review: NOW,
       global: { projection: { kind: 'warm', eventCount: 1 } },
     });
-    const receipt = (await appliedEvents())[0];
+    const receipt = (await appliedEvents()).find((e) => e.payload.submission_id === a.submissionId);
+    if (!receipt) throw new Error('candidate receipt missing');
     const replayInputs = receipt.payload.replay_inputs;
     if (
       !replayInputs ||
@@ -389,6 +432,41 @@ describe('candidate product settlement, replay and selected readers', () => {
     expect((await appliedEvents()).map((e) => e.payload.submission_id)).toEqual(
       expect.arrayContaining([a.submissionId, b.submissionId]),
     );
+    await seedKnowledge('kc_c');
+    await seedKnowledge('kc_d');
+    const mixed = await seedChain('mixed', {
+      kcs: ['kc_b', 'kc_c'],
+      parts: [
+        { id: 'mixed_unmapped', kcs: [] },
+        { id: 'mixed_mapped', kcs: ['kc_d'] },
+      ],
+    });
+    await seedEvaluation(mixed, 'mixed_eval', {
+      unitResults: [unitResult('mixed_unmapped::u', 0.5), unitResult('mixed_mapped::u', 0.5)],
+    });
+    await activate('mixed_eval', { effectiveId: null, generation: 0 });
+    expect(
+      (await testDb().select().from(material_fsrs_state)).map((r) => r.subject_id).sort(),
+    ).toEqual(['kc_a', 'kc_d']);
+    expect((await candidateRow('kc_d')).state.global.lastApplied).toMatchObject({
+      kind: 'known',
+      value: { quality: 0.5 },
+    });
+    const mixedReceipt = (await appliedEvents()).find(
+      (e) => e.payload.submission_id === mixed.submissionId,
+    );
+    expect(mixedReceipt?.payload.replay_inputs).toMatchObject({
+      forgettingInput: {
+        adaptedEvidence: [
+          { kind: 'included', observation: { skillId: 'kc_d', quality: 0.5 } },
+          {
+            kind: 'excluded',
+            reason: 'unattributed_multi_skill',
+            evidenceRefs: expect.arrayContaining([mixed.submissionId]),
+          },
+        ],
+      },
+    });
   });
 
   // @invariant concurrency: late and equal-time facts converge to the same ordered candidate state without future leakage
@@ -502,23 +580,9 @@ describe('candidate product settlement, replay and selected readers', () => {
   });
 
   // @invariant grading: unresolved and assisted judgments never write memory while explicit self-report remains separate
-  // @fails-if unresolved or assisted judgment writes memory, missing help admits evidence, or self-report creates mastery effects
+  // @fails-if evaluation assistance or sealed hint counts are ignored in direct/legacy/sealed memory writes, or explicit self-report is dropped
   it('excludes assisted and unresolved judgments while preserving explicit self-report', async () => {
     const helped = await seedChain('helped', { kcs: ['kc_a'] });
-    await testDb()
-      .update(event)
-      .set({
-        payload: {
-          assistance: { status: 'assisted', event_ids: ['released-hint-with-answer-help'] },
-        },
-      })
-      .where(eq(event.id, 'helped_receipt'));
-    await testDb()
-      .update(event)
-      .set({
-        payload: { hints_used: 2, final_hint_level: 2, self_confidence: 2, duration_ms: 402122 },
-      })
-      .where(eq(event.id, `evt_assessment_${helped.submissionId}`));
     await seedEvaluation(helped, 'helped_eval', {
       unitResults: [unitResult(`${helped.qid}::u`, 1)],
       provenance: { source: 'automatic', assisted: true },
@@ -549,18 +613,69 @@ describe('candidate product settlement, replay and selected readers', () => {
     await activate('unresolved_eval', { effectiveId: null, generation: 0 });
     expect(await testDb().select().from(material_fsrs_state)).toHaveLength(0);
     expect(await testDb().select().from(mastery_state)).toHaveLength(0);
+    // Reproduce old persisted receipts: the sealed path must inspect plan provenance;
+    // the legacy path must reconstruct the authoritative evaluation's assisted flag.
+    const helpedReceipt = (await appliedEvents()).find(
+      (e) => e.payload.submission_id === helped.submissionId,
+    );
+    if (!helpedReceipt) throw new Error('helped receipt missing');
+    const helpedReceiptId = helpedReceipt.id;
+    const helpedPlan = helpedReceipt.payload.replay_inputs as Record<string, unknown>;
+    const helpedFact = SealedCandidateInputSchema.parse(helpedPlan.forgettingInput).fact;
+    const oldPlan = {
+      ...helpedPlan,
+      forgettingSuppressed: false,
+      forgettingInput: sealCandidateFact({ ...helpedFact, help: 'none' }),
+    };
+    const oldPayload = {
+      ...helpedReceipt.payload,
+      effect: 'applied',
+      effects: { subjects: ['knowledge:kc_a'], fsrs_applied: ['knowledge:kc_a'] },
+      replay_inputs: oldPlan,
+    };
+    async function expectHistoryExcluded(replayInputs: Record<string, unknown>) {
+      const payload = { ...oldPayload, replay_inputs: replayInputs };
+      const [sealedReceipt] = await testDb()
+        .update(event)
+        .set({ payload })
+        .where(eq(event.id, helpedReceiptId))
+        .returning();
+      const state = await testDb().transaction((tx) =>
+        candidateStateForRead(tx, { kind: 'knowledge', id: 'kc_a' }, NOW),
+      );
+      expect(state.global.projection.kind).toBe('cold');
+      const [unchanged] = await testDb().select().from(event).where(eq(event.id, helpedReceiptId));
+      expect(unchanged).toEqual(sealedReceipt);
+    }
+    await expectHistoryExcluded(oldPlan);
+    await expectHistoryExcluded({
+      ...oldPlan,
+      provenance: { source: 'automatic', assisted: false },
+      forgettingInput: sealCandidateFact({
+        ...helpedFact,
+        help: 'none',
+        hints_used: 2,
+        final_hint_level: 2,
+      }),
+    });
+    const { forgettingInput: _sealed, ...legacyPlan } = oldPlan;
+    await expectHistoryExcluded({
+      ...legacyPlan,
+      provenance: { source: 'automatic', assisted: false },
+    });
     const self = await seedChain('self', {
       kcs: ['kc_a'],
       submittedAt: new Date(NOW.getTime() + DAY),
     });
     await seedEvaluation(self, 'self_eval', {
       aggregate: { kind: 'unresolved', reason: 'no_mapping', pending_units: [] },
-      provenance: { source: 'self_report', assisted: false },
+      provenance: { source: 'automatic', assisted: true },
     });
     expect(
       await activate('self_eval', { effectiveId: null, generation: 0 }, undefined, 'hard'),
     ).toMatchObject({ effect: 'applied' });
     const beforeUnknown = await candidateRow();
+    expect(beforeUnknown.state.global.projection).toMatchObject({ eventCount: 1 });
     expect(beforeUnknown.state.global.lastApplied).toMatchObject({
       kind: 'known',
       value: {
@@ -580,15 +695,73 @@ describe('candidate product settlement, replay and selected readers', () => {
     expect(missingReceipt?.payload.replay_inputs).toMatchObject({
       forgettingInput: { adaptedEvidence: [{ kind: 'excluded', reason: 'help_unknown' }] },
     });
+    // Seed a legacy bracket via explicit rating, then model its old judgment-only replay receipt.
+    // The immutable evaluation remains assisted; late arrival must not recreate its two rows.
+    await seedKnowledge('kc_b');
+    await seedKnowledge('kc_c');
+    vi.stubEnv('FORGETTING_ENGINE', 'fsrs');
+    const legacy = await seedChain('legacy_helped', {
+      submittedAt: new Date(NOW.getTime() + 4 * DAY),
+      kcs: ['kc_b', 'kc_c'],
+    });
+    await seedEvaluation(legacy, 'legacy_helped_eval', {
+      unitResults: [unitResult(`${legacy.qid}::u`, 1)],
+      provenance: { source: 'automatic', assisted: true },
+    });
+    await activate('legacy_helped_eval', { effectiveId: null, generation: 0 }, undefined, 'good');
+    const legacyReceipt = (await appliedEvents()).find(
+      (e) => e.payload.submission_id === legacy.submissionId,
+    );
+    if (!legacyReceipt) throw new Error('legacy receipt missing');
+    const {
+      forgettingInput: _input,
+      forgettingSuppressed: _suppressed,
+      ...legacyInputs
+    } = legacyReceipt.payload.replay_inputs as Record<string, unknown>;
+    await testDb()
+      .update(event)
+      .set({
+        payload: {
+          ...legacyReceipt.payload,
+          replay_inputs: {
+            ...legacyInputs,
+            ratingSource: 'verdict',
+            provenance: { source: 'automatic', assisted: false },
+          },
+        },
+      })
+      .where(eq(event.id, legacyReceipt.id));
+    vi.stubEnv('FORGETTING_ENGINE', 'forgetting_candidate');
+    await seedScored('late_before_help', new Date(NOW.getTime() + 3 * DAY), 1, ['kc_b']);
+    expect(
+      await activate('late_before_help_eval', { effectiveId: null, generation: 0 }),
+    ).toMatchObject({ effect: 'applied' });
+    expect(
+      (await testDb().select().from(material_fsrs_state)).map((r) => r.subject_id).sort(),
+    ).toEqual(['kc_a', 'kc_b']);
+    expect((await candidateRow('kc_b')).state.global.projection).toMatchObject({ eventCount: 1 });
   });
 
   // @invariant grading: due-list and copilot use the same selected due projection and preserve unknown retention metadata
-  // @fails-if due rows are filtered by legacy dates, counts diverge, cold retention becomes zero, or suspended questions are served
+  // @fails-if first independent failure bypasses one-day completion cooldown, reader clocks postpone it, or queue/tool counts diverge
   it('flips due boundaries across queue/tool readers and keeps cold states unknown', async () => {
-    const seed = await seedScored('due', NOW);
+    const seed = await seedScored('due', NOW, 0);
     await activate('due_eval', { effectiveId: null, generation: 0 });
     const row = await candidateRow();
-    expect(row.due_at.getTime()).toBeGreaterThan(NOW.getTime());
+    expect(row.due_at.getTime()).toBe(NOW.getTime() + DAY);
+    expect(row.state).toMatchObject({
+      modelDue: { kind: 'due_now', at: NOW.getTime() },
+      dueKind: 'due_now',
+    });
+    // A pre-fix candidate row has no modelDue and an unconstrained persisted date.
+    const { modelDue: _modelDue, ...legacyCandidate } = row.state;
+    await testDb()
+      .update(material_fsrs_state)
+      .set({ state: { ...legacyCandidate, due: NOW }, due_at: NOW })
+      .where(eq(material_fsrs_state.id, row.id));
+    expect(
+      (await queryReviewDue(testDb(), { now: new Date(NOW.getTime() + DAY / 2) })).rows,
+    ).toHaveLength(0);
     const before = new Date(row.due_at.getTime() - 1);
     const after = row.due_at;
     expect((await queryReviewDue(testDb(), { now: before })).rows).toHaveLength(0);

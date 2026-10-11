@@ -20,6 +20,7 @@ import {
   VERSIONS,
   VersionsSchema,
   adaptEvidence,
+  arrange,
   coldState,
   due,
   fallbackSchedule,
@@ -181,7 +182,13 @@ export function candidateObservations(
       })),
     },
   };
-  return adaptEvidence(evidence);
+  return adaptEvidence(evidence).map((observation) =>
+    observation.kind === 'excluded' &&
+    observation.reason === 'unattributed_scoring' &&
+    fact.points.some((point) => point.shares.length === 0)
+      ? { ...observation, reason: 'unattributed_multi_skill' }
+      : observation,
+  );
 }
 export function candidateView(state: CandidateState) {
   return {
@@ -190,7 +197,11 @@ export function candidateView(state: CandidateState) {
     requestedScope: { kind: 'global' as const },
   };
 }
-export function projectCandidateDue(state: CandidateState, asOf: Date) {
+export function projectCandidateDue(
+  state: CandidateState,
+  asOf: Date,
+  explicitUserNotBefore?: Date,
+) {
   const ms = EpochMsSchema.parse(asOf.getTime());
   const result = due({
     view: candidateView(state),
@@ -199,28 +210,32 @@ export function projectCandidateDue(state: CandidateState, asOf: Date) {
     horizonAt: EpochMsSchema.parse(ms + ENGINEERING_SCHEDULE.horizonDays * DAY_MS),
     model: ENGINEERING_MODEL,
   });
-  return projectDueResult(result, asOf);
+  return projectDueResult(result, asOf, state.last_review, explicitUserNotBefore);
 }
 /** Projection policy is independent of the model and preserves the producing kind. */
-export function projectDueResult(result: Due, asOf: Date) {
+export function projectDueResult(
+  result: Due,
+  asOf: Date,
+  lastCompletedAt: Date | null,
+  explicitUserNotBefore?: Date,
+) {
   const ms = EpochMsSchema.parse(asOf.getTime());
   const fallback = result.kind === 'unknown' || result.kind === 'invalid_input';
-  const schedule = fallbackSchedule({
-    asOf: ms,
-    constraints: {
-      lastCompletedAt: { kind: 'known', value: ms },
-      explicitUserNotBefore: { kind: 'unknown', reason: 'not_requested' },
-    },
-  });
-  if (schedule.kind !== 'eligible') throw new Error(`candidate fallback: ${schedule.reason}`);
-  const at =
-    result.kind === 'due_now' || result.kind === 'scheduled'
-      ? result.at
-      : result.kind === 'beyond_horizon'
-        ? result.checkedThrough
-        : schedule.eligibleAt;
+  const constraints = {
+    lastCompletedAt: lastCompletedAt
+      ? { kind: 'known' as const, value: EpochMsSchema.parse(lastCompletedAt.getTime()) }
+      : { kind: 'unknown' as const, reason: 'no_completed_review' },
+    explicitUserNotBefore: explicitUserNotBefore
+      ? { kind: 'known' as const, value: EpochMsSchema.parse(explicitUserNotBefore.getTime()) }
+      : { kind: 'unknown' as const, reason: 'not_requested' },
+  };
+  const schedule = fallback
+    ? fallbackSchedule({ asOf: ms, constraints })
+    : arrange({ asOf: ms, modelDue: result, constraints });
+  if (schedule.kind !== 'eligible') throw new Error(`candidate schedule: ${schedule.reason}`);
   return {
-    due: new Date(at),
+    due: new Date(schedule.eligibleAt),
+    modelDue: result,
     dueKind: result.kind,
     fallbackReason: fallback ? result.reason : null,
   };
@@ -321,7 +336,9 @@ export function rebuildCandidate(
     contexts: Object.fromEntries(contexts.map((c) => [c, projection(c)])),
     conversion,
     historySubjectIds,
-    last_review: asOf,
+    last_review: observations.length
+      ? new Date(observations[observations.length - 1].observation.occurredAt)
+      : null,
   };
   return CandidateStateSchema.parse({ ...state, ...projectCandidateDue(state, asOf) });
 }

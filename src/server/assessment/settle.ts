@@ -563,7 +563,11 @@ function derivePlan(input: ActivationSettleInput, scope: SettlementScope): Settl
           {
             maximum: maximum * scoreWeight,
             earned: earned * scoreWeight,
-            shares: ids.map((id) => ({ skillId: id, share: 1 / ids.length })),
+            // A partial total cannot identify which of several skills earned it.
+            shares:
+              ids.length > 1 && earned > 0 && earned < maximum
+                ? []
+                : ids.map((id) => ({ skillId: id, share: 1 / ids.length })),
           },
         ];
       });
@@ -571,7 +575,10 @@ function derivePlan(input: ActivationSettleInput, scope: SettlementScope): Settl
   const help =
     scope.assistance === 'unknown'
       ? 'unknown'
-      : scope.assistance === 'assisted' || (capture.hints_used ?? 0) > 0
+      : scope.assistance === 'assisted' ||
+          (!selfReport && provenance.assisted) ||
+          (capture.hints_used ?? 0) > 0 ||
+          (capture.final_hint_level ?? 0) > 0
         ? (capture.final_hint_level ?? 0) >= 3
           ? 'answer'
           : (capture.final_hint_level ?? 0) >= 2
@@ -642,20 +649,41 @@ function derivePlan(input: ActivationSettleInput, scope: SettlementScope): Settl
 
 // ---------- 结算事件面 ----------
 
+function candidateSchedulingSuppressed(plan: SettlementPlan): boolean {
+  if (plan.forgettingSuppressed) return true;
+  const selfReport = plan.forgettingInput
+    ? plan.forgettingInput.fact.source === 'self_report'
+    : plan.ratingSource === 'user';
+  return (
+    !selfReport &&
+    (plan.provenance.assisted ||
+      (plan.forgettingInput !== undefined &&
+        (plan.forgettingInput.fact.help !== 'none' ||
+          (plan.forgettingInput.fact.hints_used ?? 0) > 0 ||
+          (plan.forgettingInput.fact.final_hint_level ?? 0) > 0)))
+  );
+}
+
+function schedulingSubjects(plan: SettlementPlan): FsrsSubject[] {
+  if (selectedForgettingEngine() === 'fsrs') return plan.rating === null ? [] : plan.fsrsSubjects;
+  if (candidateSchedulingSuppressed(plan)) return [];
+  if (!plan.forgettingInput) return plan.rating === null ? [] : plan.fsrsSubjects;
+  const included = new Set(
+    candidateObservations(plan.forgettingInput).flatMap((o) =>
+      o.kind === 'included' ? [o.observation.skillId as string] : [],
+    ),
+  );
+  return plan.fsrsSubjects.filter((subject) => included.has(subject.id));
+}
+
 function hasSchedulingEffect(plan: SettlementPlan): boolean {
-  if (selectedForgettingEngine() === 'fsrs') return plan.rating !== null;
-  if (plan.forgettingSuppressed) return false;
-  if (plan.forgettingInput?.fact.source === 'judged' && plan.forgettingInput.fact.help !== 'none')
-    return false;
-  return plan.forgettingInput
-    ? candidateObservations(plan.forgettingInput).some((o) => o.kind === 'included')
-    : plan.rating !== null;
+  return schedulingSubjects(plan).length > 0;
 }
 
 function planSubjects(plan: SettlementPlan): Set<string> {
   const subjects = new Set<string>();
   if (hasSchedulingEffect(plan)) {
-    for (const s of plan.fsrsSubjects) subjects.add(subjectKey(s.kind, s.id));
+    for (const s of schedulingSubjects(plan)) subjects.add(subjectKey(s.kind, s.id));
   }
   if (plan.theta.applied) {
     for (const kc of plan.theta.knowledgeIds) subjects.add(subjectKey('knowledge', kc));
@@ -865,13 +893,8 @@ async function candidateHistory(
   if (current) plans.push(current);
   const facts: SealedCandidateInput[] = [];
   for (const plan of plans) {
-    if (plan.forgettingSuppressed) continue;
+    if (candidateSchedulingSuppressed(plan)) continue;
     if (plan.forgettingInput) {
-      if (
-        plan.forgettingInput.fact.source === 'judged' &&
-        plan.forgettingInput.fact.help !== 'none'
-      )
-        continue;
       facts.push(SealedCandidateInputSchema.parse(plan.forgettingInput));
       continue;
     }
@@ -915,6 +938,9 @@ async function candidateHistory(
     };
     const scope = await loadScope(tx, input);
     const rebuilt = derivePlan(input, scope);
+    if (current && plan === current) {
+      current.forgettingSuppressed = rebuilt.forgettingSuppressed;
+    }
     if (rebuilt.forgettingSuppressed) continue;
     if (!rebuilt.forgettingInput) throw new Error('sealed candidate inputs unavailable');
     // Old settlements sealed their scheduling subjects even when no part/KC capture exists.
@@ -927,10 +953,17 @@ async function candidateHistory(
           legacyScopeVersion: plan.scopeVersion,
           points: rebuilt.forgettingInput.fact.points.map((p) => ({
             ...p,
-            shares: plan.fsrsSubjects.map((s) => ({
-              skillId: s.id,
-              share: 1 / plan.fsrsSubjects.length,
-            })),
+            shares:
+              p.shares.length === 0 ||
+              (rebuilt.forgettingInput?.fact.source === 'judged' &&
+                plan.fsrsSubjects.length > 1 &&
+                p.earned > 0 &&
+                p.earned < p.maximum)
+                ? []
+                : plan.fsrsSubjects.map((s) => ({
+                    skillId: s.id,
+                    share: 1 / plan.fsrsSubjects.length,
+                  })),
           })),
         });
     facts.push(historicalInput);
@@ -979,7 +1012,13 @@ async function executePlan(
   occurrenceAt: Date,
   options: { skipFsrs?: boolean; memoryHistory?: SettlementPlan[] } & SettlementObservers = {},
 ): Promise<ApplyOutcome> {
-  if (selectedForgettingEngine() === 'forgetting_candidate') plan.forgettingReplayInputs = [];
+  if (selectedForgettingEngine() === 'forgetting_candidate') {
+    plan.forgettingReplayInputs = [];
+    // Resolve old plans before selecting writers: excluded legacy facts cannot create cold rows.
+    if (!plan.forgettingInput && !candidateSchedulingSuppressed(plan) && plan.fsrsSubjects[0]) {
+      await candidateHistory(tx, plan.fsrsSubjects[0], plan, occurrenceAt, []);
+    }
+  }
   const outcome: ApplyOutcome = {
     fsrsApplied: [],
     thetaApplied: [],
@@ -998,11 +1037,12 @@ async function executePlan(
   if (hasSchedulingEffect(plan) && !options.skipFsrs) {
     // 主体锁：sorted 序取 `fsrs:<kind>:<id>`（与 updateThetaForAttempt 的
     // `fsrs:knowledge:<id>` 同 namespace；G 已由 activation 持有）。
-    const keys = plan.fsrsSubjects.map((s) => subjectKey(s.kind, s.id)).sort();
+    const subjects = schedulingSubjects(plan);
+    const keys = subjects.map((s) => subjectKey(s.kind, s.id)).sort();
     for (const key of keys) {
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`fsrs:${key}`}))`);
     }
-    for (const subject of plan.fsrsSubjects) {
+    for (const subject of subjects) {
       const source = await getFsrsState(tx, subject.kind, subject.id);
       const before = source?.state ?? null;
       const engine = selectedForgettingEngine();
@@ -1350,7 +1390,7 @@ export async function learningSettlement(
   }
   const mySubjects = planSubjects(plan);
   const settlementEventId = `stl_${createId()}`;
-  for (const subject of hasSchedulingEffect(plan) ? plan.fsrsSubjects : []) {
+  for (const subject of schedulingSubjects(plan)) {
     const [row] = await tx
       .select({ state: material_fsrs_state.state })
       .from(material_fsrs_state)
@@ -1406,7 +1446,7 @@ export async function learningSettlement(
   // later occurrences are reverted/replayed below from their own frozen plans.
   const fsrsAtRisk = new Set<string>();
   if (hasSchedulingEffect(plan)) {
-    for (const s of plan.fsrsSubjects) fsrsAtRisk.add(subjectKey(s.kind, s.id));
+    for (const s of schedulingSubjects(plan)) fsrsAtRisk.add(subjectKey(s.kind, s.id));
   }
   if (replacedMember !== null) {
     for (const s of replacedMember.fsrsApplied) fsrsAtRisk.add(s);
@@ -1446,7 +1486,7 @@ export async function learningSettlement(
   // （legacy review / 手工写入），追加会静默埋没乱序证据。
   const unexplained = await findUnattributedNewerWrites(tx, {
     occurrenceMs,
-    fsrsSubjects: hasSchedulingEffect(plan) ? plan.fsrsSubjects : [],
+    fsrsSubjects: schedulingSubjects(plan),
     thetaKcIds: plan.theta.applied ? plan.theta.knowledgeIds : [],
     abilityIds: plan.theta.applied ? Object.values(plan.theta.abilityGlobalByKnowledgeId) : [],
     reapplySet,
