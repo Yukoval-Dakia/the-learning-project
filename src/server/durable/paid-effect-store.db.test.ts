@@ -937,6 +937,41 @@ describe('paid-effect backend control (DB)', () => {
     });
   });
 
+  // @invariant concurrency: an empty paid ledger cannot authorize cutover while retained producers and consumers lack versioned dispatch fencing
+  // @fails-if a staged adapter is treated as proof that its retained driver can safely relinquish ownership
+  it.each(['item_prior_backfill', 'judge_calibration_sample'])(
+    'refuses unintegrated family ownership changes for %s without mutating control',
+    async (family) => {
+      await expect(switchPaidEffectBackend(testDb(), family, 'dbos')).rejects.toBeInstanceOf(
+        PaidEffectSwitchUnsupportedError,
+      );
+      expect(await readPaidEffectControl(testDb(), family)).toEqual({
+        family,
+        backend: 'pg-boss',
+        generation: 0,
+        explicit: false,
+      });
+      await testDb().insert(paid_effect_control).values({ family, backend: 'dbos', generation: 7 });
+      const before = await testDb()
+        .select()
+        .from(paid_effect_control)
+        .where(eq(paid_effect_control.family, family));
+      await expect(switchPaidEffectBackend(testDb(), family, 'pg-boss')).rejects.toBeInstanceOf(
+        PaidEffectSwitchUnsupportedError,
+      );
+      expect(
+        await testDb()
+          .select()
+          .from(paid_effect_control)
+          .where(eq(paid_effect_control.family, family)),
+      ).toEqual(before);
+      await expect(switchPaidEffectBackend(testDb(), family, 'dbos')).resolves.toMatchObject({
+        backend: 'dbos',
+        generation: 7,
+      });
+    },
+  );
+
   // @invariant concurrency: note_verify pg-boss deliveries are admitted under the bootstrap default when no control row exists and fenced once DBOS owns the family
   // @fails-if the retained pg-boss consumer bypasses backend control, or keeps executing after ownership moved to DBOS
   it('admits note_verify deliveries under the default owner and fences after a switch', async () => {

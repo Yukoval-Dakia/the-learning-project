@@ -252,13 +252,14 @@ export class PaidEffectSwitchBlockedError extends PaidEffectProtocolError {
 }
 
 /**
- * TEMPORARY safety guard (P1-R2-2): switching a family whose paid authority
- * lives outside paid_effect is refused until claim-side atomic admission AND
- * persisted producer dispatch generations are wired. note_verify's current
- * handler and DBOS candidate pass no generation. Keep cutover closed until
- * the parent integrates and proves both producer/consumer contracts.
+ * Retained handlers do not yet consume persisted dispatch generations.
+ * Their new adapters alone cannot fence the retained driver during cutover.
  */
-export const PAID_EFFECT_SWITCH_UNSUPPORTED_FAMILIES: readonly string[] = ['note_verify'];
+export const PAID_EFFECT_SWITCH_UNSUPPORTED_FAMILIES: readonly string[] = [
+  'note_verify',
+  'item_prior_backfill',
+  'judge_calibration_sample',
+];
 
 export class PaidEffectSwitchUnsupportedError extends PaidEffectProtocolError {
   override name = 'PaidEffectSwitchUnsupportedError';
