@@ -1,4 +1,5 @@
 // Prepared only: parent owns the coordinated real-DB backup/restore window.
+import { sql } from 'drizzle-orm';
 import { unzipSync, zipSync } from 'fflate';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
@@ -127,6 +128,8 @@ describe('paid-effect durable backup contract', () => {
     const db = testDb();
     await seedLedger();
     const before = await ledger();
+    const rawControls = await db.execute(sql`select * from paid_effect_control`);
+    const rawEffects = await db.execute(sql`select * from paid_effect`);
     const bytes = await archive();
     const entries = unzipSync(bytes);
     const manifest = z
@@ -137,13 +140,9 @@ describe('paid-effect durable backup contract', () => {
     const data = decode(bytes);
     // Compare the real exported payload with complete real PG rows, including
     // structured JSON, nullable receipts, owner/fence and timestamp serialization.
-    expect(data.paid_effect_control).toEqual(
-      expect.arrayContaining(JSON.parse(JSON.stringify(before.controls))),
-    );
+    expect(data.paid_effect_control).toEqual(expect.arrayContaining([...rawControls]));
     expect(data.paid_effect_control).toHaveLength(2);
-    expect(data.paid_effect).toEqual(
-      expect.arrayContaining(JSON.parse(JSON.stringify(before.effects))),
-    );
+    expect(data.paid_effect).toEqual(expect.arrayContaining([...rawEffects]));
     expect(data.paid_effect).toHaveLength(5);
     await db.delete(paid_effect);
     await db.delete(paid_effect_control);
