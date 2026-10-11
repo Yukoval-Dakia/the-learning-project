@@ -370,7 +370,7 @@ export async function acceptVariantQuestionProposal(
  * Dismiss flows through the dedicated questionDraftProposalDismissApplier
  * (YUK-308, declared in manifest.proposals.kinds): the draft row stays inert
  * (draft_status='draft', never pooled / FSRS'd) AND is tombstoned via
- * metadata.dismissed_at so it stops reading as a live draft — query_questions /
+ * metadata.dismissed_at so it stops reading as a live draft — search_bank /
  * listQuestions / the draft-review pool exclude it and write_quiz's narrow
  * draft gate refuses it. A new draft_status value was deliberately NOT
  * introduced: the pool-visibility predicate is fail-open (`<> 'draft'`), so a
@@ -622,7 +622,7 @@ export interface QuestionDraftDismissResult {
 /**
  * YUK-308 — question_draft dismiss applier (previously the phase-deferred gap:
  * the generic dismiss path left the draft row indistinguishable from a live
- * pending one, so query_questions's include_drafts=true default and
+ * pending one, so search_bank's draft_state=all default and
  * write_quiz's draft admission kept re-surfacing a question the user already
  * rejected).
  *
@@ -638,7 +638,7 @@ export interface QuestionDraftDismissResult {
  * (src/server/questions/write.ts header — the archive path made the same
  * call with metadata.archived_at). `draft_status='draft'` +
  * `metadata.dismissed_at` keeps the row invisible everywhere drafts are
- * excluded, while the marker lets draft-aware surfaces (query_questions,
+ * excluded, while the marker lets draft-aware surfaces (search_bank,
  * listQuestions, listDraftReview, write_quiz, the matcher's lazy-verify) tell
  * "rejected" apart from "awaiting review".
  *

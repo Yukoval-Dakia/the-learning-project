@@ -24,14 +24,9 @@ export const READ_TOOLS = [
   // YUK-203 U4 / L-memtool — Mem0 fact-layer retrieval (D7②). Granted only to
   // coach / dreaming / copilot below; NOT to evaluator surfaces.
   'search_memory_facts',
-  // ADR-0032 D9 / YUK-304 (lane B) — 题池查询 (wraps the YUK-280 listQuestions
-  // reader; drafts included by default for duplicate-avoidance). Granted to the
-  // copilot surfaces ONLY for now — widening maintenance is A2 territory, so the
-  // MAINTENANCE_READ_TOOLS chokepoint below filters it back out.
-  'query_questions',
   // ADR-0072 LIGHT — 题库 agent 三工具（search/read/check）随各自竖切接入。
   // 授予 copilot surfaces；备题员面（ADR-0069 第一刀）落地时再扩。Maintenance
-  // chokepoint 下方过滤回（同 query_questions containment —— 扩面归 coordinator）。
+  // chokepoint 下方过滤回（同款 containment —— 扩面归 coordinator）。
   'search_bank',
   'read_bank',
   'check_bank',
@@ -39,7 +34,7 @@ export const READ_TOOLS = [
   // reader (read≡write coordinate fix). Granted ONLY on `ingestion_block_edit`
   // below; it reads the DRAFT pool (question_block.structured) so it MUST NOT
   // reach the active question face — the MAINTENANCE_READ_TOOLS chokepoint below
-  // filters it back out (same containment as query_questions).
+  // filters it back out (same containment as the bank tools).
   'get_question_block_structure',
   // YUK-939 — capability-owned generation-only tools. Neither retains a draft
   // nor writes a proposal; author_question remains the distinct retained path.
@@ -206,10 +201,9 @@ export const COPILOT_TOOLS = [
   // (assemble authored drafts + pool questions into a runnable paper). The old
   // U6 "skills add no tool" red line locked the teaching/solve BEHAVIOR-PACK
   // merge; this is the deliberate ADR-0031 surface change, not a violation.
-  'query_questions',
   'write_quiz',
-  // ADR-0072 LIGHT — 题库三工具接替 query_questions 的取题路径（D1：LIGHT
-  // 只切 copilot/备题员两个面；coach/dreaming/maintenance/ingestion_block_edit
+  // ADR-0072 LIGHT — 题库三工具接替已删除的 query_questions 的取题路径（D1：
+  // LIGHT 只切 copilot/备题员两个面；coach/dreaming/maintenance/ingestion_block_edit
   // 继续经现有 get_question_context 读取不变）。
   'search_bank',
   'read_bank',
@@ -285,9 +279,9 @@ const COACH_TOOLS = [
 // Maintenance read base must filter it back out rather than spreading READ_TOOLS
 // wholesale. This is the single chokepoint keeping Maintenance memory-free.
 //
-// YUK-304 (lane B, scope discipline) — `query_questions` is ALSO filtered out:
-// ADR-0032 D9 grants it to the copilot surfaces only; widening maintenance is
-// A2 territory, not this lane's call.
+// ADR-0032 D9 granted query_questions (since removed — ADR-0072 search_bank
+// replaces it) to the copilot surfaces only; widening maintenance is A2
+// territory, not this lane's call.
 //
 // ADR-0072 LIGHT — the bank tools (search/read/check_bank) follow the same
 // containment: copilot-surface grants only; widening is the coordinator's call.
@@ -302,7 +296,6 @@ const MAINTENANCE_READ_TOOLS = READ_TOOLS.filter(
   ): name is Exclude<
     ReadDomainToolName,
     | 'search_memory_facts'
-    | 'query_questions'
     | 'search_bank'
     | 'read_bank'
     | 'check_bank'
@@ -314,7 +307,6 @@ const MAINTENANCE_READ_TOOLS = READ_TOOLS.filter(
     | 'read_agent_notes'
   > =>
     name !== 'search_memory_facts' &&
-    name !== 'query_questions' &&
     name !== 'search_bank' &&
     name !== 'read_bank' &&
     name !== 'check_bank' &&

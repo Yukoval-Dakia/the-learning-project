@@ -107,7 +107,7 @@ export const questionDraftProposalAcceptApplier: ProposalAcceptApplier = async (
 
 // YUK-308 — question_draft dismiss: tombstone the still-draft question row via
 // metadata.dismissed_at (see dismissQuestionDraftProposal) so a user-rejected
-// draft stops re-surfacing through query_questions / write_quiz / the
+// draft stops re-surfacing through search_bank / write_quiz / the
 // draft-review pool. Replaces the generic write-only rate path for this kind.
 export const questionDraftProposalDismissApplier: ProposalDismissApplier = async (db, input) => {
   const result = await dismissQuestionDraftProposal(

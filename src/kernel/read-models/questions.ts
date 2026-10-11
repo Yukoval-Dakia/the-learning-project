@@ -124,7 +124,7 @@ export interface ListQuestionsParams {
   // YUK-409 题库面 enrichment opt-in. true → 回填 subject / knowledge_labels /
   // is_composite / children（loom screen-questions 所需的派生量）。只在默认 SQL-
   // 分页 flat 路径生效（题库 UI 唯一走的路径）；tier/family/OOM 路径与 copilot
-  // query_questions 工具不传它 → 零额外查询、零行为变更。
+  // search_bank 工具不传它 → 零额外查询、零行为变更。
   enrich?: boolean;
   limit: number; // clamp 1..200
   offset: number; // >= 0
@@ -152,7 +152,7 @@ export interface QuestionListItem {
   // ── YUK-409 题库面 enrichment (opt-in via `enrich`; null when not requested) ──
   // 这些字段是 loom screen-questions 的真面所需、基础投影没有的派生量。**全部 additive**
   // （existing list/route 契约与测试只断言 .id / 子属性，从不整对象 toEqual），且仅在
-  // `enrich:true`（题库 UI 路径）时计算——tier/family/OOM 路径与 copilot query_questions
+  // `enrich:true`（题库 UI 路径）时计算——tier/family/OOM 路径与 copilot search_bank
   // 工具走 enrich:false，零额外查询、零行为变更。null≡未请求 enrichment。
   //
   // subject: 派生学科 profile id（batchResolveSubjectIds，knowledge_ids[0] →
@@ -283,7 +283,7 @@ function buildSqlFilters(params: ListQuestionsParams): SQL[] {
   // YUK-308 — proposal-dismissed draft tombstones (metadata.dismissed_at,
   // written by the question_draft dismiss applier) are dead rows, not live
   // drafts: exclude them on EVERY path, including include_drafts=true (the
-  // copilot query_questions default — otherwise a rejected draft keeps
+  // copilot search_bank default — otherwise a rejected draft keeps
   // re-surfacing as "reusable" to the orchestrator) and draftStatus='draft'
   // /'all' queries. Same marker family as metadata.archived_at (soft-delete);
   // kept off draft_status because the fail-open pool predicate treats any

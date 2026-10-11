@@ -40,7 +40,6 @@ const POLICIES: Record<string, ResultPolicy> = {
   get_question_context: 'reader',
   get_attempt_context: 'reader',
   get_learning_item_context: 'reader',
-  query_questions: 'reader',
   search_bank: 'reader',
   read_bank: 'reader',
   check_bank: 'reader',

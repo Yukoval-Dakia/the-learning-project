@@ -17,7 +17,6 @@ const TOOL_LABELS: Record<string, string> = {
   get_learning_item_context: '学习项详情',
   expand_knowledge_subgraph: '关联知识',
   find_knowledge_paths: '知识路径',
-  query_questions: '题目',
   search_bank: '题库检索',
   read_bank: '题库内容',
   check_bank: '题库检查',
