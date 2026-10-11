@@ -400,7 +400,7 @@ it.each(['native-load-committed', 'claim-committed', 'candidate-sealed', 'domain
   },
   90000,
 );
-// @invariant concurrency: real DBOS recovery replays only the unknown unit — the saved scored result and its claim survive the crash byte-identically and no unit is re-purchased
+// @invariant concurrency: real DBOS recovery preserves the saved score and the unknown paid claim without another wire request; the unclaimed third unit remains unpurchased
 // @fails-if replay the saved unit or lose its evidence on recovery; the wire unit order, 2-claim count and arrayContaining(savedBeforeKill) assertions fail
 it('saved first, second wire unknown, third unclaimed survives SIGKILL and actual DBOS recovery', async () => {
   const f = await accepted();
