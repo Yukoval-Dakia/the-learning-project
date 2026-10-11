@@ -1,39 +1,60 @@
-/* YUK-1473 — practice question page in the new design language. Scoped under [data-ui-next];
-   semantic --un- tokens only (T1). Layout: reading column + 384px companion (R1, C1); on phones
-   the companion becomes the bottom sheet (C2). Cards cast no shadow; no glass in the page (T3). */
+/* YUK-1473 — practice question page in the loft design language. Scoped under [data-ui-next];
+   semantic --un- tokens only (T1). Layout: one reading column (880px, the loft question page)
+   and the companion floating on the right (C1, 384px); on phones the companion becomes the
+   bottom sheet (C2) and a slim page bar holds the mascot's dock (B3).
+   Layers (T3, T7): page → cards (flat, no shadow) → floating companion (glass) → sheet /
+   lightbox → toast. Nothing on the page itself is glass.
+   --un-pn-top: the height of the retained shell's sticky top bar (transitional; set by the page). */
 
 [data-ui-next].un-pn-root {
+  min-height: 100%;
   background: var(--un-bg);
   color: var(--un-text-1);
-  min-height: 100%;
 }
 
 [data-ui-next] .un-pn {
   display: grid;
   grid-template-columns: minmax(0, 1fr) var(--un-w-panel);
+  gap: var(--un-sp-4);
+  align-items: start;
   min-height: 100%;
+  padding-right: var(--un-sp-3);
 }
 
 [data-ui-next] .un-pn-main {
   min-width: 0;
-  padding: var(--un-sp-6) var(--un-sp-6) var(--un-sp-8);
+  padding: var(--un-sp-7) var(--un-sp-6) var(--un-sp-8);
 }
 
 [data-ui-next] .un-pn-column {
-  max-width: 820px;
-  margin: 0 auto;
   display: grid;
-  gap: var(--un-sp-7);
+  gap: var(--un-sp-6);
+  max-width: 880px;
+  margin: 0 auto;
 }
 
-/* Banner: where it came from, what it is, its state (R2 order). */
+/* ── Banner (R2 order; B1 mascot slot at the right) ───────────────────── */
 [data-ui-next] .un-pn-banner {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--un-sp-6);
+}
+[data-ui-next] .un-pn-banner-text {
   display: grid;
   gap: var(--un-sp-2);
   justify-items: start;
+  min-width: 0;
+}
+[data-ui-next] .un-pn-back {
+  margin: 0 0 var(--un-sp-1) calc(-1 * var(--un-sp-2));
+}
+[data-ui-next] .un-pn-back .un-btn {
+  gap: var(--un-sp-1);
+  color: var(--un-text-3);
 }
 [data-ui-next] .un-pn-eyebrow {
-  margin: var(--un-sp-2) 0 0;
+  margin: 0;
   font-size: var(--un-fs-1);
   color: var(--un-text-3);
 }
@@ -41,25 +62,28 @@
   margin: 0;
   font-family: var(--un-font-serif);
   font-size: var(--un-fs-5);
-  font-weight: var(--un-fw-medium);
+  font-weight: var(--un-fw-regular);
   line-height: var(--un-lh-tight);
   letter-spacing: var(--un-ls-tight);
+  text-wrap: balance;
 }
 [data-ui-next] .un-pn-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--un-sp-2);
+  gap: var(--un-sp-1);
 }
 
+/* ── Sections: a quiet heading, then the content (the loft doc-section rhythm) ── */
 [data-ui-next] .un-pn-section {
   display: grid;
-  gap: var(--un-sp-4);
+  gap: var(--un-sp-3);
 }
 [data-ui-next] .un-pn-section-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--un-sp-3);
+  min-height: var(--un-h-control-sm);
 }
 [data-ui-next] .un-pn-h2 {
   margin: 0;
@@ -68,44 +92,61 @@
   color: var(--un-text-1);
 }
 
-/* Question: stem in reading measure; a single figure sits beside it on wide screens. */
-[data-ui-next] .un-pn-stem {
-  display: grid;
-  gap: var(--un-sp-5);
+/* The small "引用到学习伙伴" button stays quiet until hovered or focused. */
+[data-ui-next] .un-pn-quote-btn {
+  flex: none;
+  color: var(--un-text-4);
 }
-[data-ui-next] .un-pn-stem-with-figure {
-  grid-template-columns: minmax(0, 1fr) minmax(200px, 300px);
-  align-items: start;
+[data-ui-next] .un-pn-quote-btn:hover,
+[data-ui-next] .un-pn-quote-btn:focus-visible {
+  color: var(--un-accent-strong);
+}
+
+/* ── Question: the stem in reading measure; a lone figure floats beside it ── */
+[data-ui-next] .un-pn-figures {
+  display: grid;
+  gap: var(--un-sp-4);
+}
+[data-ui-next] .un-pn-stem {
+  display: flow-root;
+}
+[data-ui-next] .un-pn-stem[data-lone] > .un-pn-figures {
+  float: right;
+  width: 42%;
+  max-width: 300px;
+  margin: 0 0 var(--un-sp-3) var(--un-sp-5);
+}
+[data-ui-next] .un-pn-stem:not([data-lone]) > .un-pn-figures {
+  margin-top: var(--un-sp-4);
 }
 [data-ui-next] .un-pn-faces {
   display: grid;
-  gap: var(--un-sp-4);
-  max-width: var(--un-w-prose);
+  gap: var(--un-sp-3);
 }
 [data-ui-next] .un-pn-face {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr) auto;
   gap: var(--un-sp-2);
   align-items: baseline;
 }
+[data-ui-next] .un-pn-faces .un-pn-face {
+  grid-template-columns: auto minmax(0, 1fr);
+}
 [data-ui-next] .un-pn-face-no {
-  font-size: var(--un-fs-2);
+  font-size: var(--un-fs-3);
   color: var(--un-text-3);
 }
 [data-ui-next] .un-pn-prose {
   font-size: var(--un-fs-3);
   line-height: var(--un-lh-prose);
   color: var(--un-text-1);
+  overflow-wrap: anywhere;
 }
 [data-ui-next] .un-pn-prose p {
   margin: 0 0 var(--un-sp-3);
 }
 [data-ui-next] .un-pn-prose p:last-child {
   margin-bottom: 0;
-}
-/* Long stems stay inside the measure: long tokens wrap, wide blocks scroll on their own. */
-[data-ui-next] .un-pn-prose {
-  overflow-wrap: anywhere;
 }
 [data-ui-next] .un-pn-prose img {
   max-width: 100%;
@@ -137,10 +178,6 @@
   overflow-x: auto;
   overflow-y: hidden;
   padding: 0.2em 0;
-}
-[data-ui-next] .un-pn-figures {
-  display: grid;
-  gap: var(--un-sp-4);
 }
 [data-ui-next] .un-pn-figure {
   margin: 0;
@@ -191,17 +228,17 @@
   color: var(--un-text-3);
 }
 
-/* My answer: my own work, right after the question (R1). */
+/* ── My answer: my own work, right after the question (R1). A flat card, no shadow. ── */
 [data-ui-next] .un-pn-answer {
   display: grid;
   gap: var(--un-sp-4);
   padding: var(--un-sp-5);
-  border: 1px solid var(--un-line);
   border-radius: var(--un-r-2);
   background: var(--un-bg-raised);
+  box-shadow: 0 0 0 var(--un-hairline) var(--un-line);
 }
 /* The reused response components carry the old page rhythm; inside this box the box padding
-   and the grid gap own the spacing (checkpoint 1; full ui-next restyle is a checkpoint 2 item). */
+   and the grid gap own the spacing. */
 [data-ui-next] .un-pn-answer .rs-slotfield,
 [data-ui-next] .un-pn-answer .rs-textwrap,
 [data-ui-next] .un-pn-answer .rs-opts {
@@ -266,22 +303,22 @@
   gap: var(--un-sp-3);
 }
 
-/* Result (R3): the deterministic check is stated plainly; status colour only on the chip. */
+/* ── Result (R3): the judgment settles in place; status colour only on its chip. ── */
 [data-ui-next] .un-pn-result {
   display: grid;
   gap: var(--un-sp-4);
   padding: var(--un-sp-5);
-  border: var(--un-hairline) solid var(--un-line);
   border-radius: var(--un-r-2);
+  box-shadow: 0 0 0 var(--un-hairline) var(--un-line);
+  transition: box-shadow var(--un-t-ui) var(--un-ease-glide);
 }
 [data-ui-next] .un-pn-result[data-tone="positive"] {
-  border-color: color-mix(in srgb, var(--un-positive) 35%, var(--un-line));
+  box-shadow: 0 0 0 var(--un-hairline) color-mix(in srgb, var(--un-positive) 35%, var(--un-line));
 }
-[data-ui-next] .un-pn-verdict {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--un-sp-2) var(--un-sp-3);
+[data-ui-next] .un-pn-judgment-body {
+  display: grid;
+  gap: var(--un-sp-3);
+  padding-top: var(--un-sp-2);
 }
 [data-ui-next] .un-pn-result-text {
   margin: 0;
@@ -314,36 +351,77 @@
   gap: var(--un-sp-3);
 }
 
+/* ── History: the loft timeline (a hairline with one dot per attempt) ── */
 [data-ui-next] .un-pn-history {
-  margin: 0;
-  padding: 0;
-  list-style: none;
+  position: relative;
   display: grid;
-  gap: var(--un-sp-2);
+  gap: var(--un-sp-3);
+  margin: 0;
+  padding: 0 0 0 var(--un-sp-5);
+  list-style: none;
+}
+[data-ui-next] .un-pn-history::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 8px;
+  bottom: 8px;
+  width: var(--un-hairline);
+  background: var(--un-line-strong);
 }
 [data-ui-next] .un-pn-history li {
+  position: relative;
   display: flex;
-  align-items: center;
-  gap: var(--un-sp-3);
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--un-sp-1) var(--un-sp-3);
   font-size: var(--un-fs-2);
+}
+[data-ui-next] .un-pn-history-dot {
+  position: absolute;
+  left: calc(-1 * var(--un-sp-5));
+  top: 0.45em;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--un-bg);
+  box-shadow: inset 0 0 0 1.5px var(--un-text-3);
+}
+[data-ui-next] .un-pn-history li[data-tone="positive"] .un-pn-history-dot {
+  box-shadow: inset 0 0 0 5px var(--un-positive);
+}
+[data-ui-next] .un-pn-history li[data-tone="caution"] .un-pn-history-dot {
+  box-shadow: inset 0 0 0 1.5px var(--un-caution);
 }
 [data-ui-next] .un-pn-history-day {
   min-width: 3.5em;
-  color: var(--un-text-3);
+  font-size: var(--un-fs-1);
+  color: var(--un-text-4);
   font-variant-numeric: tabular-nums;
+}
+[data-ui-next] .un-pn-history-line {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--un-sp-1) var(--un-sp-3);
+}
+[data-ui-next] .un-pn-history li[data-tone="positive"] .un-pn-history-outcome {
+  color: var(--un-positive);
+}
+[data-ui-next] .un-pn-history li[data-tone="caution"] .un-pn-history-outcome {
+  color: var(--un-caution);
 }
 [data-ui-next] .un-pn-history-cause {
   color: var(--un-text-2);
 }
 
-/* States: same shape as the content they stand in for (M14). */
+/* ── States: same shape as the content they stand in for (M14) ── */
 [data-ui-next] .un-pn-state {
   display: grid;
   gap: var(--un-sp-4);
   margin: 0;
   padding: var(--un-sp-5);
-  border: 1px solid var(--un-line);
   border-radius: var(--un-r-2);
+  box-shadow: 0 0 0 var(--un-hairline) var(--un-line);
   color: var(--un-text-2);
 }
 [data-ui-next] .un-pn-skeleton {
@@ -374,14 +452,17 @@
 }
 [data-ui-next] .un-pn-skeleton .un-pn-skel-box {
   height: 132px;
-  border: var(--un-hairline) solid var(--un-line);
   border-radius: var(--un-r-2);
   background: var(--un-bg-raised);
+  box-shadow: 0 0 0 var(--un-hairline) var(--un-line);
 }
 
-/* R9 — passage pinned left with its own scroll, questions right; never stacked on desktop. */
+/* ── R9: passage pinned left with its own scroll, questions right; never stacked on desktop ── */
 [data-ui-next] .un-pn-column-wide {
   max-width: 1240px;
+}
+[data-ui-next] .un-pn-column-wide > .un-pn-banner {
+  max-width: 880px;
 }
 [data-ui-next] .un-pn-split {
   display: grid;
@@ -394,35 +475,50 @@
 }
 [data-ui-next] .un-pn-passage {
   position: sticky;
-  top: var(--un-sp-4);
-  max-height: calc(100dvh - 2 * var(--un-sp-4));
+  top: calc(var(--un-pn-top, 0px) + var(--un-sp-4));
+  max-height: calc(100dvh - var(--un-pn-top, 0px) - 2 * var(--un-sp-4));
   overflow-y: auto;
   overscroll-behavior: contain;
   display: grid;
   gap: var(--un-sp-5);
   padding: var(--un-sp-5);
-  border: var(--un-hairline) solid var(--un-line);
   border-radius: var(--un-r-2);
   background: var(--un-bg-raised);
+  box-shadow: 0 0 0 var(--un-hairline) var(--un-line);
+}
+[data-ui-next] .un-pn-passage-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--un-sp-3);
 }
 [data-ui-next] .un-pn-passage-title {
-  margin: 0 0 var(--un-sp-2);
+  margin: 0;
   font-family: var(--un-font-serif);
   font-size: var(--un-fs-3);
   font-weight: var(--un-fw-medium);
 }
 [data-ui-next] .un-pn-questions {
   display: grid;
-  gap: var(--un-sp-7);
+  gap: var(--un-sp-6);
   min-width: 0;
 }
 
-/* Companion (C1): beside the content, never over it. */
-[data-ui-next] .un-pn .un-companion {
+/* ── Companion (C1): a floating layer beside the content, never over it ── */
+[data-ui-next] .un-pn-aside {
   position: sticky;
-  top: 0;
-  height: 100dvh;
-  border-left: 1px solid var(--un-line);
+  top: calc(var(--un-pn-top, 0px) + var(--un-sp-3));
+  z-index: var(--un-z-raised);
+  height: calc(100dvh - var(--un-pn-top, 0px) - 2 * var(--un-sp-3));
+  margin-top: var(--un-sp-3);
+  overflow: hidden;
+  border-radius: var(--un-r-2);
+}
+[data-ui-next] .un-pn-aside > .un-companion {
+  width: 100%;
+  height: 100%;
+  border-left: 0;
+  background: transparent;
 }
 [data-ui-next] .un-pn-companion-head {
   display: flex;
@@ -432,9 +528,24 @@
 [data-ui-next] .un-pn-companion-name {
   font-weight: var(--un-fw-semibold);
 }
-[data-ui-next] .un-pn-companion-state {
-  font-size: var(--un-fs-1);
+/* "正在看" (C1), stated honestly: it cannot see the question yet. */
+[data-ui-next] .un-pn-companion-ctx {
+  display: flex;
+  align-items: center;
+  gap: var(--un-sp-1);
+  margin: 0;
+  padding: var(--un-sp-1) var(--un-sp-2);
+  border-radius: var(--un-r-1);
+  background: var(--un-bg-sunk);
   color: var(--un-text-3);
+  font-size: var(--un-fs-1);
+}
+[data-ui-next] .un-pn-companion-live {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: var(--un-sp-2);
+  height: 100%;
+  min-height: 0;
 }
 [data-ui-next] .un-pn-companion-body {
   display: grid;
@@ -453,9 +564,10 @@
   box-sizing: border-box;
   resize: none;
   padding: var(--un-sp-3);
-  border: 1px solid var(--un-line);
+  border: 0;
   border-radius: var(--un-r-2);
-  background: var(--un-bg-raised);
+  background: var(--un-bg);
+  box-shadow: 0 0 0 var(--un-hairline) var(--un-line);
   color: var(--un-text-1);
   font: inherit;
   font-size: var(--un-fs-2);
@@ -469,7 +581,7 @@
   height: 100%;
   min-height: 0;
 }
-[data-ui-next] .un-companion-body:has(> .un-pn-dock) {
+[data-ui-next] .un-companion-body:has(.un-pn-companion-live) {
   overflow: hidden;
   padding-bottom: var(--un-sp-3);
 }
@@ -477,8 +589,34 @@
 [data-ui-next] .un-pn-phone-sheet {
   display: none;
 }
+[data-ui-next] .un-pn-phonebar {
+  display: none;
+}
 
-/* Figure zoom: a glass floating layer (T3), modal, at the palette level (T7). */
+/* ── Selection bubble (R6, M6): glass, just above the selection (T3, T7 bubble) ── */
+[data-ui-next] .un-pn-quote-bubble {
+  position: fixed;
+  z-index: var(--un-z-bubble);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--un-sp-1);
+  height: var(--un-h-control-sm);
+  padding: 0 var(--un-sp-3);
+  border-radius: var(--un-r-3);
+  color: var(--un-text-1);
+  font-size: var(--un-fs-1);
+  font-weight: var(--un-fw-medium);
+  white-space: nowrap;
+  transform: translate(-50%, -100%);
+}
+[data-ui-next] .un-pn-quote-bubble[data-below] {
+  transform: translate(-50%, 0);
+}
+[data-ui-next] .un-pn-quote-bubble:hover {
+  color: var(--un-accent-ink);
+}
+
+/* ── Figure zoom: a glass floating layer (T3), modal, at the palette level (T7) ── */
 [data-ui-next] .un-pn-lightbox-layer {
   position: fixed;
   inset: 0;
@@ -530,7 +668,7 @@
   border-radius: var(--un-r-1);
 }
 
-/* Nothing to practise (M14): plain words and a way out. */
+/* ── Nothing to practise (M14): plain words and a way out ── */
 [data-ui-next] .un-pn-empty {
   display: grid;
   gap: var(--un-sp-4);
@@ -538,8 +676,8 @@
   max-width: var(--un-w-prose);
   margin: var(--un-sp-6) 0;
   padding: var(--un-sp-6);
-  border: var(--un-hairline) solid var(--un-line);
   border-radius: var(--un-r-2);
+  box-shadow: 0 0 0 var(--un-hairline) var(--un-line);
 }
 [data-ui-next] .un-pn-empty-title {
   font-family: var(--un-font-serif);
@@ -553,28 +691,67 @@
   color: var(--un-text-2);
 }
 
-/* Phone (T8: ≤ 720px): one column; figure above the stem; companion as the bottom sheet. */
+/* Arriving through a shared title (M4), the page only fades so the title has a still place to
+   land. The morph flag sits on the practice host, outside this scope, so it is matched here. */
+@media (prefers-reduced-motion: no-preference) {
+  [data-un-morph-in] [data-ui-next] .un-page-enter {
+    animation-name: un-page-fade;
+  }
+}
+
+/* ── Phone (T8: ≤ 720px): one column; companion as the bottom sheet; mascot 84px (B1) that
+   tucks into the page bar once the banner scrolls under it (B3). ── */
 @media (max-width: 720px) {
   [data-ui-next] .un-pn {
     grid-template-columns: minmax(0, 1fr);
+    padding-right: 0;
   }
-  [data-ui-next] .un-pn .un-companion {
+  [data-ui-next] .un-pn-aside {
     display: none;
   }
   [data-ui-next] .un-pn-phone-sheet {
     display: block;
   }
   [data-ui-next] .un-pn-main {
-    padding: var(--un-sp-4) var(--un-sp-4) calc(var(--un-sp-8) * 2);
+    padding: 0 var(--un-sp-4) calc(var(--un-sp-8) * 2);
   }
   [data-ui-next] .un-pn-column {
-    gap: var(--un-sp-6);
+    gap: var(--un-sp-5);
   }
-  [data-ui-next] .un-pn-stem-with-figure {
-    grid-template-columns: minmax(0, 1fr);
+  [data-ui-next] .un-pn-phonebar {
+    position: sticky;
+    top: var(--un-pn-top, 0px);
+    z-index: var(--un-z-raised);
+    display: flex;
+    align-items: center;
+    gap: var(--un-sp-2);
+    height: var(--un-h-topbar);
+    margin: 0 calc(-1 * var(--un-sp-4));
+    padding: 0 var(--un-sp-4) 0 var(--un-sp-2);
+    background: var(--un-bg);
+    box-shadow: 0 var(--un-hairline) 0 var(--un-line);
   }
-  [data-ui-next] .un-pn-stem-with-figure .un-pn-figures {
-    order: -1;
+  [data-ui-next] .un-pn-phonebar-title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--un-fs-3);
+    font-weight: var(--un-fw-semibold);
+  }
+  [data-ui-next] .un-pn-back {
+    display: none;
+  }
+  [data-ui-next] .un-pn-banner {
+    gap: var(--un-sp-3);
+    align-items: start;
+  }
+  [data-ui-next] .un-pn-stem[data-lone] > .un-pn-figures {
+    float: none;
+    width: auto;
+    max-width: none;
+    margin: 0 0 var(--un-sp-4);
   }
   [data-ui-next] .un-pn-answer,
   [data-ui-next] .un-pn-result {
@@ -589,8 +766,8 @@
   [data-ui-next] .un-pn-pane-switch {
     display: block;
     position: sticky;
-    top: 0;
-    z-index: 1;
+    top: calc(var(--un-pn-top, 0px) + var(--un-h-topbar));
+    z-index: var(--un-z-raised);
     padding: var(--un-sp-2) 0;
     background: var(--un-bg);
   }
@@ -605,10 +782,10 @@
   }
   /* At half height only the top half of the sheet is on screen (the sheet is 100dvh - 60px tall
      and slides down by half of that), so the dock shrinks to keep its composer visible. */
-  [data-ui-next] .un-pn-dock[data-snap="half"] {
+  [data-ui-next] .un-pn-companion-live[data-snap="half"] {
     height: calc(100% - 50dvh + 30px);
   }
-  [data-ui-next] .un-sheet-body:has(> .un-pn-dock) {
+  [data-ui-next] .un-sheet-body:has(.un-pn-companion-live) {
     overflow: hidden;
   }
 }
