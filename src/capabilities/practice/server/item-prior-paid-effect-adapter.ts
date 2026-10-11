@@ -29,7 +29,6 @@ import {
   type ItemPriorPreparedWork,
   type ItemPriorRepReceipt,
   type ItemPriorStagedItem,
-  MAX_REPS,
   commitItemPriorStagedCalibration,
   itemPriorOutputReceiptSchema,
   itemPriorPreparedInput,
@@ -37,6 +36,7 @@ import {
   parseStagedItemPriorOutput,
   settleItemPriorStagedItem,
 } from './item-prior-durable-operation';
+import { MAX_REPS } from './item-prior-limits';
 
 export const itemPriorDispatchSchema = paidEffectDispatchRefSchema.extend({
   version: z.literal(1),

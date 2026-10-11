@@ -42,6 +42,7 @@ export const fastTestInclude = [
   'src/capabilities/practice/server/assessment/durable-attempt-dispatch.unit.test.ts',
   'src/capabilities/practice/server/fsrs.unit.test.ts',
   'src/capabilities/practice/server/item-prior-durable-operation.unit.test.ts',
+  'src/capabilities/practice/server/item-prior-import-order.unit.test.ts',
   'src/capabilities/practice/server/judge-engine-client.unit.test.ts',
   'src/capabilities/practice/server/judge-operational-state.unit.test.ts',
   'src/capabilities/practice/server/judge/evaluation-authority.unit.test.ts',
@@ -93,7 +94,6 @@ export const fastTestInclude = [
   'src/server/memory/client.test.ts',
   'src/server/memory/provider-operation.test.ts',
   'src/server/projections/parity.unit.test.ts',
-  'src/server/durable/item-prior-family.unit.test.ts',
 ];
 
 export const dbTestInclude = [
@@ -303,6 +303,7 @@ export const dbTestInclude = [
   'tests/integration/config-restore-epoch.db.test.ts',
   'tests/integration/config-write-boundaries.db.test.ts',
   'tests/integration/item-prior-durable-member.db.test.ts',
+  'src/server/durable/item-prior-family.db.test.ts',
   'tests/integration/item_prior_backfill.db.test.ts',
   'tests/integration/native-pi-config-migration.db.test.ts',
   'tests/integration/restore-snapshot.db.test.ts',

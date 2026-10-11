@@ -1,0 +1,34 @@
+{
+  "source": "/tmp/yuk1355-consumer-parent-db-08/db.log",
+  "sha256": "d44cd41a58bac4ea9a7edacbb2460f3dfd581846ec1f187e8d7397fab2a8264b",
+  "total": 28,
+  "passed": 10,
+  "failed": 18,
+  "statusAtFixedHandoff": "UNRUN on repaired head; DB08 failures remain the latest DB evidence",
+  "cases": [
+    "item prior concrete shared-store consumer (DB, prepared) > runs the actual member, freezes provider arguments, and replays matched application receipts",
+    "item prior concrete shared-store consumer (DB, prepared) > uses a single LLaSA unit with frozen reference input",
+    "item prior noncausal application dispositions (DB, prepared) > records matched and superseded dispositions atomically while preserving foreign rows",
+    "adapter R1 recovery and owning delivery regressions (DB, prepared UNRUN) > replays an applied historical matched receipt after lost acknowledgment and setFixedAnchor change",
+    "adapter R1 recovery and owning delivery regressions (DB, prepared UNRUN) > holds fully applied incompatible result or application payloads without rewriting history or domain",
+    "adapter terminal-job reservation regressions (DB, prepared UNRUN) > withholds cancelled owning job with absent effect and nonterminal node",
+    "adapter terminal-job reservation regressions (DB, prepared UNRUN) > withholds cancelled owning job with pending effect and nonterminal node",
+    "adapter terminal-job reservation regressions (DB, prepared UNRUN) > withholds failed owning job with absent effect and nonterminal node",
+    "adapter terminal-job reservation regressions (DB, prepared UNRUN) > withholds failed owning job with pending effect and nonterminal node",
+    "adapter terminal-job reservation regressions (DB, prepared UNRUN) > withholds completed owning job with absent effect and nonterminal node",
+    "adapter terminal-job reservation regressions (DB, prepared UNRUN) > withholds completed owning job with pending effect and nonterminal node",
+    "adapter terminal-job reservation regressions (DB, prepared UNRUN) > rechecks cancelled state after active admission and on cached replay",
+    "adapter terminal-job reservation regressions (DB, prepared UNRUN) > rechecks failed state after active admission and on cached replay",
+    "adapter terminal-job reservation regressions (DB, prepared UNRUN) > rechecks completed state after active admission and on cached replay",
+    "adapter terminal-job reservation regressions (DB, prepared UNRUN) > recovers receipt_ready receipts from a completed job without sending",
+    "adapter terminal-job reservation regressions (DB, prepared UNRUN) > recovers applied receipts from a completed job without sending",
+    "adapter terminal-job reservation regressions (DB, prepared UNRUN) > serializes cancellation before reservation on the actual PostgreSQL job row",
+    "adapter terminal-job reservation regressions (DB, prepared UNRUN) > serializes reservation before cancellation and preserves the existing sending obligation"
+  ],
+  "newDbPartition": {
+    "file": "src/server/durable/item-prior-family.db.test.ts",
+    "cases": 6,
+    "status": "UNRUN in DB partition; six test invocations unchanged, file content differs only in one invariant category comment"
+  },
+  "focusedParentCommand": "PATH=/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin:$PATH pnpm --config.verify-deps-before-run=false vitest run --config vitest.db.config.ts tests/integration/item-prior-durable-member.db.test.ts src/server/durable/item-prior-family.db.test.ts"
+}

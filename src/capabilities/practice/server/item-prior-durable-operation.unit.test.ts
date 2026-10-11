@@ -35,6 +35,27 @@ import {
 } from './item-prior-durable-operation';
 import type { PracticeTaskRunFn } from './task-runtime';
 
+// These tests exercise an in-memory read chain, not Drizzle SQL or a driver.
+// Table/column tokens keep that control boundary entirely offline.
+vi.mock('@/db/schema', () => ({
+  question: {
+    id: 'question.id',
+    kind: 'question.kind',
+    prompt_md: 'question.prompt_md',
+    reference_md: 'question.reference_md',
+    choices_md: 'question.choices_md',
+    knowledge_ids: 'question.knowledge_ids',
+  },
+  knowledge: { id: 'knowledge.id', name: 'knowledge.name' },
+  item_calibration: {
+    question_id: 'item_calibration.question_id',
+    track: 'item_calibration.track',
+    b: 'item_calibration.b',
+    b_anchor: 'item_calibration.b_anchor',
+    confidence: 'item_calibration.confidence',
+    source: 'item_calibration.source',
+  },
+}));
 vi.mock('@/server/mastery/item-calibration', () => ({ applyItemPrior: vi.fn() }));
 vi.mock('./knowledge-runtime', () => ({
   resolveSubjectProfileForKnowledgeIds: async () => defaultSubjectProfile,
@@ -150,7 +171,7 @@ const hostileProvider: PracticeTaskRunFn = () => {
 };
 
 describe('item prior per-rep work identity', () => {
-  // @invariant durability: question revision and rendered-input digest move on independent axes
+  // @invariant data: question revision and rendered-input digest move on independent axes
   // @fails-if editing knowledge names rekeys the question revision, or editing the question row leaves the input digest unchanged
   it('freezes question revision and input digest on independent axes', async () => {
     const base = candidate('q_stage');
@@ -182,7 +203,7 @@ describe('item prior per-rep work identity', () => {
     expect(again).toEqual(w1); // deterministic preparation
   });
 
-  // @invariant durability: a rep is keyed by revision + input digest + rep index, never by delivery identity
+  // @invariant data: a rep is keyed by revision + input digest + rep index, never by delivery identity
   // @fails-if scheduler fields leak into the identity or rep indexing is unbounded
   it('keys a rep by revision, input digest and rep index only', async () => {
     const work = await preparedWork();
@@ -200,7 +221,7 @@ describe('item prior per-rep work identity', () => {
 });
 
 describe('item prior reservation consumer', () => {
-  // @invariant durability: a revision identifies the complete frozen workset required by B's sibling exemption
+  // @invariant data: a revision identifies the complete frozen workset required by B's sibling exemption
   // @fails-if changed input or rep count reuses an unknown workset revision, or a corrupted digest is sent
   it('binds the frozen revision to exact prepared input and rep count', async () => {
     const work = await preparedWork();
@@ -226,7 +247,7 @@ describe('item prior reservation consumer', () => {
     ).toThrow('frozen input no longer matches');
   });
 
-  // @invariant durability: a held rep prevents later sibling sends on the same or a later night
+  // @invariant data: a held rep prevents later sibling sends on the same or a later night
   // @fails-if the per-item loop continues to reserve new siblings after an unknown or in-flight effect
   it('stops reserving later siblings after a held rep', async () => {
     const work = await preparedWork();
@@ -246,7 +267,7 @@ describe('item prior reservation consumer', () => {
     expect(completeRep).not.toHaveBeenCalled();
   });
 
-  // @invariant durability: only a winner can send and completion carries the exact admitted fence
+  // @invariant data: only a winner can send and completion carries the exact admitted fence
   // @fails-if the provider is called for held/completed, or the winner fence is dropped
   it('handles held, completed and winner reservations with the exact winner fence', async () => {
     const work = await preparedWork({ reps: 1 });
@@ -284,7 +305,7 @@ describe('item prior reservation consumer', () => {
     expect(completeRep.mock.calls).toEqual([[winner, { version: 1, kind: 'output', outputText }]]);
   });
 
-  // @invariant durability: readonly recovery is incomplete, never a new paid send or completion
+  // @invariant data: readonly recovery is incomplete, never a new paid send or completion
   // @fails-if an absent/pending terminal-job effect becomes a winner or discharges the work
   it('keeps terminal-job absent and pending recovery incomplete without running or completing', async () => {
     const work = await preparedWork({ reps: 1 });
@@ -313,7 +334,7 @@ describe('item prior reservation consumer', () => {
     }
   });
 
-  // @invariant durability: durable-store and receipt failures cannot settle a rep
+  // @invariant data: durable-store and receipt failures cannot settle a rep
   // @fails-if store/receipt errors become drops, held in memory, or a successful draft
   it('propagates reservation and output/unknown persistence errors', async () => {
     const work = await preparedWork({ reps: 1 });
@@ -484,7 +505,7 @@ describe('application verification seam', () => {
     expect(vi.mocked(applyItemPrior)).not.toHaveBeenCalled();
   });
 
-  // @invariant durability: an application write failure propagates as an application unknown
+  // @invariant data: an application write failure propagates as an application unknown
   // @fails-if the write error is swallowed into a boolean, a skip, or a completed result
   it('propagates an application write failure', async () => {
     const { staged } = await readyStagedItem();
@@ -496,7 +517,7 @@ describe('application verification seam', () => {
     });
   });
 
-  // @invariant durability: a write that leaves no readable row is an application unknown
+  // @invariant data: a write that leaves no readable row is an application unknown
   // @fails-if a silent writer (no row) is reported applied
   it('propagates when a successful write leaves no readable hard row', async () => {
     const { staged } = await readyStagedItem();
@@ -616,7 +637,7 @@ describe('terminal item prior application compatibility (pure, no DB proof)', ()
     return { work, results, staged, application };
   }
 
-  // @invariant durability: immutable terminal disposition is compatible with the full frozen workset and results
+  // @invariant data: immutable terminal disposition is compatible with the full frozen workset and results
   // @fails-if a valid historical receipt requires recomputing a disposition from the current domain
   it('validates a complete historical matched or superseded application without domain reads', async () => {
     const { work, results, staged, application } = await terminalFixture();
@@ -644,7 +665,7 @@ describe('terminal item prior application compatibility (pure, no DB proof)', ()
     expect(vi.mocked(applyItemPrior)).not.toHaveBeenCalled();
   });
 
-  // @invariant durability: every coordinate and ordered result digest is bound to the immutable application
+  // @invariant data: every coordinate and ordered result digest is bound to the immutable application
   // @fails-if a terminal marker alone accepts a different entity, revision, input, method, rep set or output
   it('rejects incompatible identity, result and application payloads', async () => {
     const { work, results, staged, application } = await terminalFixture();
@@ -685,7 +706,7 @@ describe('terminal item prior application compatibility (pure, no DB proof)', ()
     expect(vi.mocked(applyItemPrior)).not.toHaveBeenCalled();
   });
 
-  // @invariant durability: terminal receipts must form one complete compatible application, never a partial union
+  // @invariant data: terminal receipts must form one complete compatible application, never a partial union
   // @fails-if missing applications or individually valid different dispositions are silently considered complete
   it('rejects incomplete and differing terminal application sets', async () => {
     const { work, results, staged, application } = await terminalFixture();

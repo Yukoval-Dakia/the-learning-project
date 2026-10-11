@@ -1,0 +1,40 @@
+{
+  "base": "0b45c22f246ecb1f611abb73325b47bbe38471eb",
+  "files": [
+    {
+      "path": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "sha256": "417927bebdbb1e10d99b3cdf1603e3d9710f44f389e063e0b86c897baacea586"
+    },
+    {
+      "path": "src/capabilities/practice/server/item-prior-durable-operation.unit.test.ts",
+      "sha256": "92e87653f92e8a48dbe945a32a7a9a2f75d04d13cea5e10f1b6f2121f3a5cbce"
+    },
+    {
+      "path": "src/capabilities/practice/server/item-prior-import-order.unit.test.ts",
+      "sha256": "2c74c53ccbc97fc47a03946117821255b440950f513dd6ec0b5f233aa8e92c45"
+    },
+    {
+      "path": "src/capabilities/practice/server/item-prior-limits.ts",
+      "sha256": "0749fb97ed70f59b3137a0849be72cf3e942a57890fdccd8c927de3abf175183"
+    },
+    {
+      "path": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "sha256": "c47dcaf790f3d04b2707b66a95c96fcd26665f39cc672eba839246264a9d42e7"
+    },
+    {
+      "path": "src/server/durable/item-prior-family.db.test.ts",
+      "sha256": "1c2e2ef26bc82681cc109f58fd431e7b33dd39dd90b8047c903d1cfa35e212b2"
+    },
+    {
+      "path": "tests/integration/item-prior-durable-member.db.test.ts",
+      "sha256": "df1d19cec98164e017e5d292348ee5f7a48e041c0f6f00cdecfca41c55fdaf6f"
+    },
+    {
+      "path": "vitest.shared.ts",
+      "sha256": "d9868b69b238a0529d02a8271304334566cb1391a7ce634ca60c71ca8d283379"
+    }
+  ],
+  "deleted": [
+    "src/server/durable/item-prior-family.unit.test.ts"
+  ]
+}

@@ -440,7 +440,7 @@ describe('item prior concrete shared-store consumer (DB, prepared)', () => {
     });
   });
 
-  // @invariant durability: frozen inputs and receipts replay without new calls and settle transactionally
+  // @invariant data: frozen inputs and receipts replay without new calls and settle transactionally
   // @fails-if a profile/question edit rekeys replay, invalid results become unknown, or application receipts are absent
   it('runs the actual member, freezes provider arguments, and replays matched application receipts', async () => {
     await seedDagRun();
@@ -500,7 +500,7 @@ describe('item prior concrete shared-store consumer (DB, prepared)', () => {
     expect((await db.select().from(dag_orchestration_node))[0]?.status).toBe('enqueued');
   });
 
-  // @invariant durability: unknowns remain unresolved across new nights, input/revision changes and rep expansion
+  // @invariant data: unknowns remain unresolved across new nights, input/revision changes and rep expansion
   // @fails-if held completes the member, later siblings are sent over a held rep, or new frozen work bypasses unknown
   it('rejects member completion over unknowns and never sends on later nights or changed work', async () => {
     await seedDagRun();
@@ -622,7 +622,7 @@ describe('item prior concrete shared-store consumer (DB, prepared)', () => {
     expect((await db.select().from(dag_orchestration_node))[0]?.status).toBe('enqueued');
   });
 
-  // @invariant durability: partial application cannot be treated as terminal or repaired by a new domain write
+  // @invariant data: partial application cannot be treated as terminal or repaired by a new domain write
   // @fails-if mixed receipt states complete, mutate a hard row, or resend immutable paid results
   it('holds mixed applied and unapplied receipts without domain writes or paid replay', async () => {
     await seedQuestion('q_adapter_rollback');
@@ -726,7 +726,7 @@ describe('item prior concrete shared-store consumer (DB, prepared)', () => {
 });
 
 describe('item prior noncausal application dispositions (DB, prepared)', () => {
-  // @invariant durability: equality with an existing row never invents causal authorship and differing rows survive
+  // @invariant data: equality with an existing row never invents causal authorship and differing rows survive
   // @fails-if a foreign row is overwritten, bare readback marks paid effects applied, or receipt equality is skipped
   it('records matched and superseded dispositions atomically while preserving foreign rows', async () => {
     for (const [id, b] of [
@@ -767,7 +767,7 @@ describe('item prior noncausal application dispositions (DB, prepared)', () => {
     }
   });
 
-  // @invariant durability: known parse failures need immutable application receipts but never a fabricated anchor
+  // @invariant data: known parse failures need immutable application receipts but never a fabricated anchor
   // @fails-if no-anchor leaves receipt_ready forever or writes a default hard row
   it('settles no-anchor only with every immutable result and application receipt', async () => {
     await seedQuestion('q_no_anchor');
@@ -790,7 +790,7 @@ describe('item prior noncausal application dispositions (DB, prepared)', () => {
 });
 
 describe('adapter R1 recovery and owning delivery regressions (DB, prepared UNRUN)', () => {
-  // @invariant durability: committed terminal application survives lost workflow acknowledgment and supported anchor changes
+  // @invariant data: committed terminal application survives lost workflow acknowledgment and supported anchor changes
   // @fails-if replay recomputes superseded, conflicts forever, changes receipts, rewrites the fixed anchor, or sends again
   it('replays an applied historical matched receipt after lost acknowledgment and setFixedAnchor change', async () => {
     await seedDagRun();
@@ -848,7 +848,7 @@ describe('adapter R1 recovery and owning delivery regressions (DB, prepared UNRU
     });
   });
 
-  // @invariant durability: all-applied state alone is insufficient when immutable applications disagree with results or each other
+  // @invariant data: all-applied state alone is insufficient when immutable applications disagree with results or each other
   // @fails-if terminal replay trusts just state/applied/first receipt or repairs incompatible history through domain writes
   it('holds fully applied incompatible result or application payloads without rewriting history or domain', async () => {
     for (const mode of ['result', 'disposition'] as const) {
@@ -1032,7 +1032,7 @@ describe('adapter R1 recovery and owning delivery regressions (DB, prepared UNRU
 // R2 finding retained: a300 allowed a terminal owning job to claim pending/absent effects
 // until the orchestrator polled. These regressions remain PREPARED UNRUN, not DB proof.
 describe('adapter terminal-job reservation regressions (DB, prepared UNRUN)', () => {
-  // @invariant durability: terminal original jobs only recover real receipts while the DAG node lags
+  // @invariant data: terminal original jobs only recover real receipts while the DAG node lags
   // @fails-if any terminal job creates an intent, claims pending, calls the runner or completes the node
   it.each(
     terminalJobStates.flatMap((state) =>
@@ -1141,7 +1141,7 @@ describe('adapter terminal-job reservation regressions (DB, prepared UNRUN)', ()
     },
   );
 
-  // @invariant durability: terminal job recovery consumes immutable result/application receipts without a new send
+  // @invariant data: terminal job recovery consumes immutable result/application receipts without a new send
   // @fails-if terminal state rejects known receipts, rewrites historical matched disposition, or admits another send
   it.each(['receipt_ready', 'applied'] as const)(
     'recovers %s receipts from a completed job without sending',

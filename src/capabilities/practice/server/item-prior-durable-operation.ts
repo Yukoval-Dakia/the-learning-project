@@ -21,6 +21,7 @@ import { item_calibration, knowledge, question } from '@/db/schema';
 import { parseItemPriorLlasaOutput, parseItemPriorOutput } from '@/server/ai/item-prior';
 import { applyItemPrior } from '@/server/mastery/item-calibration';
 import type { SubjectProfile } from '@/subjects/profile';
+import { MAX_REPS } from './item-prior-limits';
 import { resolveSubjectProfileForKnowledgeIds } from './knowledge-runtime';
 import {
   type PracticeTaskCallCtx,
@@ -59,7 +60,7 @@ export const DEFAULT_MAX_PER_RUN = 25;
 // 0.173，≈+$0.0004/题）。上限防 job data 把付费乘数打爆（reps 把每题 LLM
 // 成本 ×N，9 已远超实用值 3）。
 export const DEFAULT_REPS = 3;
-export const MAX_REPS = 9;
+export { MAX_REPS } from './item-prior-limits';
 
 export function normalizeReps(raw: unknown): number {
   // 缺失/非正整数 → 生产默认（nightly cron 不带 job data → 3 reps）；
@@ -449,7 +450,8 @@ export async function executeItemPriorRep(
 
   let outputText: string;
   try {
-    const runResult = await deps.runTaskFn(work.taskName, work.input, {
+    const taskName = work.taskName;
+    const runResult = await deps.runTaskFn(taskName, work.input, {
       subjectProfile: work.subjectProfile,
     });
     outputText = runResult.text;

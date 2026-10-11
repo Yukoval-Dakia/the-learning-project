@@ -1,0 +1,271 @@
+{
+  "base": "0b45c22f246ecb1f611abb73325b47bbe38471eb",
+  "node": "24.19.0",
+  "pnpm": "11.13.1",
+  "scope": "Offline only: no DB, testcontainers, Docker, runtime services, provider or lock use; no review round",
+  "checks": [
+    {
+      "name": "real-entry-before",
+      "exitCode": 1,
+      "tests": 12,
+      "passed": 9,
+      "failed": 3,
+      "log": "repro-before.log.gz",
+      "command": "pnpm vitest run --config vitest.unit.config.ts src/capabilities/practice/server/item-prior-import-order.unit.test.ts"
+    },
+    {
+      "name": "real-entry-diagnostic-before",
+      "exitCode": 1,
+      "operationValue": 9,
+      "capturedSchemaMaximum": "undefined",
+      "log": "repro-before-diagnostic.log.gz",
+      "command": "pnpm vitest run --config vitest.unit.config.ts src/capabilities/practice/server/item-prior-import-order.unit.test.ts (temporary bound diagnostic; removed after capture)"
+    },
+    {
+      "name": "real-entry-after",
+      "exitCode": 0,
+      "tests": 12,
+      "log": "repro-after.log.gz",
+      "command": "pnpm vitest run --config vitest.unit.config.ts src/capabilities/practice/server/item-prior-import-order.unit.test.ts"
+    },
+    {
+      "name": "A scoped units",
+      "exitCode": 0,
+      "tests": 32,
+      "log": "unit-a.log.gz",
+      "command": "pnpm vitest run --config vitest.unit.config.ts src/capabilities/practice/server/item-prior-durable-operation.unit.test.ts src/capabilities/practice/server/item-prior-import-order.unit.test.ts"
+    },
+    {
+      "name": "shared Notes C scoped units",
+      "exitCode": 0,
+      "tests": 55,
+      "log": "unit-shared-c.log.gz",
+      "command": "pnpm vitest run --config vitest.unit.config.ts src/capabilities/practice/server/calibration-sample-durable-operation.test.ts src/capabilities/practice/jobs/judge_calibration_sample.test.ts src/server/durable/calibration-sample-family.test.ts src/server/durable/paid-effect-protocol.test.ts src/server/durable/note-verify-family.test.ts src/capabilities/notes/jobs/note_verify.control.test.ts"
+    },
+    {
+      "name": "typecheck",
+      "exitCode": 0,
+      "log": "typecheck.log.gz",
+      "command": "pnpm typecheck"
+    },
+    {
+      "name": "lint",
+      "exitCode": 0,
+      "warnings": 172,
+      "log": "lint.log.gz",
+      "command": "pnpm lint"
+    },
+    {
+      "name": "build",
+      "exitCode": 0,
+      "log": "build.log.gz",
+      "command": "pnpm build"
+    },
+    {
+      "name": "capability boundaries",
+      "exitCode": 0,
+      "debt": [
+        428,
+        0,
+        48
+      ],
+      "log": "boundaries.log.gz",
+      "command": "pnpm audit:capability-boundaries"
+    },
+    {
+      "name": "architecture deepening",
+      "exitCode": 0,
+      "log": "architecture.log.gz",
+      "command": "pnpm audit:architecture-deepening"
+    },
+    {
+      "name": "task census",
+      "exitCode": 0,
+      "log": "census.log.gz",
+      "command": "pnpm audit:task-census"
+    },
+    {
+      "name": "test partition",
+      "exitCode": 0,
+      "log": "partition.log.gz",
+      "command": "pnpm audit:partition"
+    },
+    {
+      "name": "AST preservation",
+      "exitCode": 0,
+      "identical": 492,
+      "equivalent": 493,
+      "total": 493,
+      "unchangedTestInvocations": 46,
+      "log": "ast-annotations.log.gz",
+      "command": "node docs/planning/evidence/yuk1355-a-import-initialization/compare-ast.cjs",
+      "annotationOnlyFiles": [
+        "src/server/durable/item-prior-family.db.test.ts",
+        "tests/integration/item-prior-durable-member.db.test.ts"
+      ]
+    },
+    {
+      "name": "protected paths and prior evidence unchanged",
+      "exitCode": 0,
+      "log": "protected-paths.log.gz",
+      "command": "git diff --exit-code 0b45c22f246ecb1f611abb73325b47bbe38471eb -- src/db src/core src/capabilities/practice/server/calibration-sample-durable-operation.ts src/capabilities/practice/server/calibration-sample-store.ts src/server/durable/calibration-sample-family.ts src/capabilities/notes scripts docs/modules docs/architecture.md; separately compare prior three evidence directories"
+    },
+    {
+      "name": "test-policy",
+      "command": "pnpm audit:test-policy",
+      "exitCode": 0,
+      "checked": 153,
+      "errors": 0,
+      "log": "test-policy.log.gz"
+    }
+  ],
+  "toolingAttempts": [
+    {
+      "name": "external tmp config import path",
+      "exitCode": 1,
+      "resolution": "used the repository unit config with its explicit new invariant entry",
+      "log": "repro-config-initial.log.gz"
+    },
+    {
+      "name": "AST helper first TryStatement selection",
+      "exitCode": 1,
+      "resolution": "match exactly one taskName binding in the provider try block before reversal",
+      "log": "ast-initial.log.gz"
+    },
+    {
+      "name": "test-policy rejected durability category",
+      "exitCode": 1,
+      "resolution": "25 A test annotation categories changed to data; protected outcome, fails-if and assertions unchanged; auditor unchanged",
+      "log": "test-policy-initial.log.gz"
+    }
+  ],
+  "logReceipts": [
+    {
+      "file": "repro-config-initial.log.gz",
+      "source": "/tmp/yuk1355-import-repro-before.log",
+      "sourceSha256": "eb930647f06684cfef86ba9782e29930b38a14163a1794e3624d85a98595f0ad",
+      "bytes": 8820
+    },
+    {
+      "file": "repro-before.log.gz",
+      "source": "/tmp/yuk1355-import-repro-before-02.log",
+      "sourceSha256": "c08e2fdd1634126dc36f34e6963353ffb703649f58044847d389fa35daa4143d",
+      "bytes": 4900
+    },
+    {
+      "file": "repro-before-diagnostic.log.gz",
+      "source": "/tmp/yuk1355-import-repro-before-03.log",
+      "sourceSha256": "49a8d3b69672f922634a19d7714574e82a9b9abe660a93ee85372efcb04f74bb",
+      "bytes": 5365
+    },
+    {
+      "file": "repro-after.log.gz",
+      "source": "/tmp/yuk1355-import-repro-after-01.log",
+      "sourceSha256": "b419869adb96cada940e11ab09a9c263fa49d0b67a6af7d7f84b3fa60116f70e",
+      "bytes": 592
+    },
+    {
+      "file": "unit-a.log.gz",
+      "source": "/tmp/yuk1355-a-unit-final.log",
+      "sourceSha256": "1855add54311c92b2875c93f4e2c18da9e828a1d8a574db73b10ab1ae336564d",
+      "bytes": 593
+    },
+    {
+      "file": "unit-shared-c.log.gz",
+      "source": "/tmp/yuk1355-a-unit-shared-c-final.log",
+      "sourceSha256": "3e86020368bda0d33c2e6a6a2c22b78b6a9903d24c2b7c1fe49f1848ab09f923",
+      "bytes": 595
+    },
+    {
+      "file": "architecture.log.gz",
+      "source": "/tmp/yuk1355-a-architecture-final.log",
+      "sourceSha256": "51199ca7d173ff21f9305dafb981919244ea60e762e4204a267747cea441f5dd",
+      "bytes": 565
+    },
+    {
+      "file": "partition.log.gz",
+      "source": "/tmp/yuk1355-a-partition-final.log",
+      "sourceSha256": "f716089986eb6d3c66b15415fda3d152898b5f9cfed523b77a291b227a3cb91a",
+      "bytes": 126
+    },
+    {
+      "file": "boundaries.log.gz",
+      "source": "/tmp/yuk1355-a-boundaries-final.log",
+      "sourceSha256": "9d20b3d4bc59ff636d53c09f0157701c9ee76c1f77541030976fd9651ba505a1",
+      "bytes": 212
+    },
+    {
+      "file": "census.log.gz",
+      "source": "/tmp/yuk1355-a-census-final.log",
+      "sourceSha256": "03afb0d2be8fad15cd30755b7971366f5c887f606be653c374e4d870f361be2e",
+      "bytes": 773
+    },
+    {
+      "file": "typecheck.log.gz",
+      "source": "/tmp/yuk1355-a-typecheck-final.log",
+      "sourceSha256": "36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6",
+      "bytes": 61
+    },
+    {
+      "file": "lint.log.gz",
+      "source": "/tmp/yuk1355-a-lint-final.log",
+      "sourceSha256": "201687b542ed9adc938315cdef17199e888947e4b00807566b50ca5537de973d",
+      "bytes": 19627
+    },
+    {
+      "file": "build.log.gz",
+      "source": "/tmp/yuk1355-a-build-final.log",
+      "sourceSha256": "f43687c6e8c3c8ba0500cd1c56494ae7fbb5223a40e46185cc29ff46f3532746",
+      "bytes": 131214
+    },
+    {
+      "file": "ast-initial.log.gz",
+      "source": "/tmp/yuk1355-a-ast-final.log",
+      "sourceSha256": "66379f89bab78e7e5d099a6ac57db9a71915bee4b983f70e166f8218f7fc92e8",
+      "bytes": 1264
+    },
+    {
+      "file": "ast.log.gz",
+      "source": "/tmp/yuk1355-a-ast-final-02.log",
+      "sourceSha256": "9135290051f7cd5937ad2fd60d6b8dfb1aa3674670c71e03c72daacc9c6d660f",
+      "bytes": 106
+    },
+    {
+      "file": "protected-paths.log.gz",
+      "source": "/tmp/yuk1355-a-protected-final.log",
+      "sourceSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "file": "biome-format.log.gz",
+      "source": "/tmp/yuk1355-biome-initial.log",
+      "sourceSha256": "317c96616d45cb4b7af7d64715abdc45a520f0b13991860ff2ce9856122fa54d",
+      "bytes": 40
+    },
+    {
+      "file": "db08-original.log.gz",
+      "source": "/tmp/yuk1355-consumer-parent-db-08/db.log",
+      "sourceSha256": "d44cd41a58bac4ea9a7edacbb2460f3dfd581846ec1f187e8d7397fab2a8264b",
+      "bytes": 24125
+    },
+    {
+      "file": "test-policy-initial.log.gz",
+      "source": "/tmp/yuk1355-a-test-policy-final.log",
+      "sourceSha256": "313b79c176a62a5c2db4514a63161fbbfcab68cdbd02ed7793abff8078cd3ad3",
+      "bytes": 11332
+    },
+    {
+      "file": "test-policy.log.gz",
+      "source": "/tmp/yuk1355-a-test-policy-final-02.log",
+      "sourceSha256": "8d568e9daa2399e14a300bff0315e34145bfe22e22f4a428c428f4364e55aa96",
+      "bytes": 159
+    },
+    {
+      "file": "ast-annotations.log.gz",
+      "source": "/tmp/yuk1355-a-ast-final-03.log",
+      "sourceSha256": "1eaa48ea04a047cc7a174d9478c6fb499f48438cc65eb793361389996775c7bb",
+      "bytes": 473
+    }
+  ],
+  "commandPathPrefix": "PATH=/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin:$PATH"
+}

@@ -307,7 +307,7 @@ describe('item prior original dispatched identity', () => {
     expect(provider).not.toHaveBeenCalled();
   });
 
-  // @invariant durability: actual store transaction errors propagate before a physical send
+  // @invariant data: actual store transaction errors propagate before a physical send
   // @fails-if the execution path still calls an injected always-admitted port or isolates a store failure
   it('calls the real shared store and propagates its transaction driver failure', async () => {
     const fixture = database();
