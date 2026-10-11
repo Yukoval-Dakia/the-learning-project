@@ -430,6 +430,7 @@ describe('prepared staged core integration', () => {
   // @invariant data: failed apply recovers from its saved receipt on a later tick without a second provider request
   // @fails-if use the new tick config/clock or plan the entity again after recovery; stored provenance or call count changes
   it('rolls back the domain write and recovers the original receipt on a later model/tick without resend', async () => {
+    setTestConfig({ VISION_JUDGE_PROVIDER: 'xiaomi', 'lane.global.provider': 'xiaomi' });
     const { item } = await freezeOne();
     const executedAt = new Date('2026-10-11T22:13:00.000Z');
     const runTaskInner = vi.fn<NonNullable<JudgeCalibrationSampleDeps['runTaskInner']>>(
@@ -465,6 +466,19 @@ describe('prepared staged core integration', () => {
       lastApplicationError: 'crash after domain write before application receipt',
     });
     const savedResult = structuredClone(before?.result);
+    expect(savedResult).toMatchObject({
+      execution: {
+        receipt: {
+          outcome: {
+            config: { rejudgeProvider: CFG.rejudgeProvider, rejudgeModel: CFG.rejudgeModel },
+            lane: {
+              visionJudgeProviderAtSample: 'xiaomi',
+              aiProviderOverrideAtSample: 'xiaomi',
+            },
+          },
+        },
+      },
+    });
     await testDb()
       .update(question)
       .set({ prompt_md: '恢复前改变题干', version: 3 })
