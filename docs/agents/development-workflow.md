@@ -195,7 +195,8 @@ Do not label one of those cases as an invariant to satisfy the check.
 
 Locally the base is `git merge-base HEAD origin/main`; use
 `pnpm audit:test-policy --base <commit>` to reproduce a CI comparison. CI fetches history
-and supplies `TEST_POLICY_BASE`. A missing or invalid base fails the check.
+and supplies `TEST_POLICY_BASE`. Manual dispatch requires the `test_policy_base` commit SHA.
+A missing CI base or invalid base fails the check.
 
 ## Postman
 

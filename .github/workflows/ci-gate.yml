@@ -7,6 +7,11 @@ name: CI Gate
 on:
   pull_request:
   workflow_dispatch:
+    inputs:
+      test_policy_base:
+        description: Commit SHA to compare test case admission
+        required: true
+        type: string
   push:
     branches: [main]
 
@@ -149,7 +154,7 @@ jobs:
       - name: Audits
         if: needs.changes.outputs.static_changed == 'true'
         env:
-          TEST_POLICY_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          TEST_POLICY_BASE: ${{ inputs.test_policy_base || github.event.pull_request.base.sha || github.event.before }}
         run: ${{ matrix.commands }}
 
   unit:

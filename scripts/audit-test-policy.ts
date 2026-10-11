@@ -7,16 +7,10 @@ import ts from 'typescript';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const categories = ['data', 'grading', 'concurrency', 'security', 'crisis'];
 const testPath = /\.(?:test|spec)\.(?:[cm]?[jt]sx?)$/;
+const printer = ts.createPrinter({ removeComments: true, newLine: ts.NewLineKind.LineFeed });
 
 function git(args: string[]): string {
   return execFileSync('git', args, { cwd: root, encoding: 'utf8' });
-}
-
-function tokens(text: string): string {
-  const scanner = ts.createScanner(ts.ScriptTarget.Latest, true, ts.LanguageVariant.JSX, text);
-  const result: string[] = [];
-  while (scanner.scan() !== ts.SyntaxKind.EndOfFileToken) result.push(scanner.getTokenText());
-  return result.join('\0');
 }
 
 function registrations(file: string, text: string) {
@@ -53,6 +47,34 @@ function registrations(file: string, text: string) {
     }
     return undefined;
   }
+  // Vitest factories remain factories when saved to a variable before registration.
+  let foundAlias = true;
+  while (foundAlias) {
+    foundAlias = false;
+    function collectAlias(node: ts.Node): void {
+      if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+        const name = registrationName(node.initializer);
+        const names =
+          name && caseNames.has(name)
+            ? caseNames
+            : name && suiteNames.has(name)
+              ? suiteNames
+              : undefined;
+        if (names && !names.has(node.name.text)) {
+          names.add(node.name.text);
+          foundAlias = true;
+        }
+      }
+      ts.forEachChild(node, collectAlias);
+    }
+    collectAlias(ast);
+  }
+  function isFactory(call: ts.CallExpression): boolean {
+    return (
+      ts.isPropertyAccessExpression(call.expression) &&
+      ['each', 'for', 'extend', 'runIf', 'skipIf'].includes(call.expression.name.text)
+    );
+  }
   function title(call: ts.CallExpression): string {
     const argument = call.arguments[0];
     return argument && ts.isStringLiteralLike(argument)
@@ -61,7 +83,11 @@ function registrations(file: string, text: string) {
   }
   const cases: { key: string; fingerprint: string; comments: string; line: number }[] = [];
   function visit(node: ts.Node): void {
-    if (ts.isCallExpression(node) && caseNames.has(registrationName(node.expression) ?? '')) {
+    if (
+      ts.isCallExpression(node) &&
+      !isFactory(node) &&
+      caseNames.has(registrationName(node.expression) ?? '')
+    ) {
       // each/for are factories; the outer invocation registers the case.
       if (
         !(ts.isCallExpression(node.parent) && node.parent.expression === node) &&
@@ -81,7 +107,7 @@ function registrations(file: string, text: string) {
         const ranges = ts.getLeadingCommentRanges(text, node.getFullStart()) ?? [];
         cases.push({
           key: JSON.stringify([...suites, title(node)]),
-          fingerprint: tokens(node.getText(ast)),
+          fingerprint: printer.printNode(ts.EmitHint.Unspecified, node, ast),
           comments: ranges.map((range) => text.slice(range.pos, range.end)).join('\n'),
           line: ast.getLineAndCharacterOfPosition(node.getStart(ast)).line + 1,
         });
@@ -98,9 +124,14 @@ function main(): void {
   if (args.length && (args.length !== 2 || args[0] !== '--base')) {
     throw new Error('Usage: pnpm audit:test-policy [--base <commit>]');
   }
-  const requested = args[1] ?? (process.env.TEST_POLICY_BASE || undefined);
+  const requested = args[1] ?? process.env.TEST_POLICY_BASE;
+  if (process.env.CI && !requested) {
+    throw new Error(
+      'CI requires TEST_POLICY_BASE or --base; workflow_dispatch must supply test_policy_base.',
+    );
+  }
   // CI supplies the actual PR base/push parent. Locally include uncommitted changes.
-  const base = requested ?? git(['merge-base', 'HEAD', 'origin/main']).trim();
+  const base = requested || git(['merge-base', 'HEAD', 'origin/main']).trim();
   if (!/^[a-f0-9]{7,40}$/.test(base) || /^0+$/.test(base)) {
     throw new Error(
       'TEST_POLICY_BASE must be an existing commit SHA; fetch the comparison base first.',
