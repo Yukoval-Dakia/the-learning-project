@@ -17,6 +17,12 @@
   /* AI evidence text can carry long unbroken tokens; let it wrap instead of widening the page
      at phone width (YUK-1478). */
   min-width: 0;
+  /* Inherited by everything in the card (evidence, merge text, learning plan); chips that must
+     not wrap set nowrap themselves. */
+  overflow-wrap: anywhere;
+}
+.inbox-loom .proposal .katex-display {
+  overflow-x: auto;
 }
 @media screen and (prefers-reduced-motion: no-preference) {
   .inbox-loom .proposal {
