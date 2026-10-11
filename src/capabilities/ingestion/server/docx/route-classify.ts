@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { XMLParser, XMLValidator } from 'fast-xml-parser';
 import { type UnzipFileInfo, unzipSync, zipSync } from 'fflate';
+import type { DocxOmittedExternalRef } from '@/core/schema/docx-omission';
 
 import { ApiError } from '@/kernel/http';
 
@@ -353,15 +354,6 @@ function classifyLineFromEntries(entries: Record<string, Uint8Array>): DocxLine 
 }
 
 // ---------- YUK-1476: converter-input sanitization ----------
-/** One omitted external resource relationship. Part name + rId + public Type category — never the Target URL. */
-export interface DocxOmittedExternalRef {
-  /** Relationship part it lived in, e.g. 'word/_rels/footer1.xml.rels'. */
-  part: string;
-  /** Relationship Id (e.g. 'rId2'). */
-  relationshipId: string;
-  /** Relationship Type URI last segment, lowercased (e.g. 'image', 'attachedtemplate') — a public schema constant. */
-  relationshipType: string;
-}
 
 /**
  * Result of preparing a DOCX upload for conversion. `converterBytes` is the ONLY

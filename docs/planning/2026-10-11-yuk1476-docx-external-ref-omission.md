@@ -63,7 +63,7 @@ POST `/api/ingestion/docx` → 400
   （provenance JSON 列 + 既有 warnings 字段），无新 store/schema/DTO，非第二创建入口。
 - `api/docx.ts` 一次构造 facts，两线转发同一对象 → 所有 docx receipt 一致。
 
-## Adapter 接线（2026-10-11 release 后已落地）
+## Adapter 源码接线（尚未发布）
 
 `api/docx.ts` 已切换到 `prepareDocxForConversion`：visual/text 两线的
 `persistDocxPageEvidence` 与 `docxToMarkdown` 均只接 `prep.converterBytes`；
@@ -101,3 +101,11 @@ fail-closed、异命名空间根/前缀属性/混合子前缀/无命名空间声
   不以 media 字节等同冒充转换器验收。
 - 剩余 fail-closed 拒绝的 typed `details.reason` 固定签名（仅提案，未实施，owner 已裁不写 DTO）：
   `details: { reason: 'docx_external_resource_relationship', part: <rels part name> }`。
+
+## 父实际入口及 CI 边界修复
+
+固定97b3候选在80e63 runner上使用原始政治卷，实际转换器与POST验证已完成。原件SHA `6b7e5b2c162297350173041f4c448d54d62a02f1aeef5eac113587a34e262131`，安全副本SHA `b63554b032e2ed73828a5566eb6fc2b7072fe72e26e16974e693b44c3def406e`。断网真实 `getDocxConverter` 的pandoc/LibreOffice均exit0，四个内嵌media digest保留。实际argv、exit/stderr、UID/passwd/home/profile/temp/out可写性封在仓库外 `real-pipeline-zj-papers/docx-converter-identity-02/`。501与镜像设计node1000都在独立可写profile下可转换，所以旧exit77不能归因UID本身；不靠root或外网绕过。
+
+真实POST201/5.3885秒，新session与5页存证、10draft、忽略链接回执，auto_enroll/nudge各created，未启worker/provider、正式题0。32题只切10块、31空题干、32无独立块、4media但blocks只引用2个，均为现有text segmentation质量证据；本安全修复不补题，不把media保留当完整入库。17:52:44 JST核owner/token/原四TEST+release parity释锁。原400、父构建ignore、S3就绪、默认profile/bootstrap失败记录均保留。
+
+PR1689 fixed97b3的CI其余门禁通过，architecture唯一失败来自server/session回执type-only深层导入capability实现。将原 `DocxOmittedExternalRef` 原样移到core schema，由producer与两线共享receipt直接消费，不上调baseline、无runtime行为改变。真实converter bundle重建SHA与已验产物完全相同 `c5c31c67b368dbb445ce5615084d55710eb94b4fe8c281cc48b3d75cc3a5acbf`；capability audit为零deep imports。本修复不新增审查轮；R2预算已完成，exact-head CI仍须通过。

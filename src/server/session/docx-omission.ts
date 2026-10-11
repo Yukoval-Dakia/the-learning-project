@@ -1,12 +1,11 @@
-import type { DocxOmittedExternalRef } from '@/capabilities/ingestion/server/docx/route-classify';
+import type { DocxOmittedExternalRef } from '@/core/schema/docx-omission';
 
 // YUK-1476 (R1 P1-2) — zero-dependency leaf holding the SHARED external-ref
 // omission audit contract. Both docx lines consume it so the receipt is
 // identical everywhere:
 //   - text line  → src/server/session/docx-ingestion.ts (initiateDocxTextUpload)
 //   - visual line→ src/server/session/ingestion.ts (Ingestion.initiateUpload)
-// Type-only import above (erased at runtime) keeps this leaf out of every
-// bundle graph; no second session-create entry, no new store/schema.
+// The shared core type is erased at runtime; no second session-create entry, no new store/schema.
 
 /** Audit facts for external resources omitted from the DOCX converter-input copy. */
 export interface DocxExternalRefOmissionFacts {
