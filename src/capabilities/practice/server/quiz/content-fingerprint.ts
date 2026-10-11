@@ -1,15 +1,13 @@
 import { createHash } from 'node:crypto';
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray, isNull, ne, or } from 'drizzle-orm';
-
-import { initialFsrsState } from '@/capabilities/practice/server/fsrs';
 import { SYNTHETIC_SUBJECT_ROOT_RE } from '@/capabilities/practice/server/placement-scope';
 import { QUESTION_EDIT_ACTION } from '@/core/schema/event/experimental';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
-import { enrollFsrsStateIfAbsent } from '@/server/fsrs/state';
+import { enrollFsrsStateIfAbsent, initialSchedulingState } from '@/server/fsrs/state';
 
 // Bumping this version rewrites the canonical string, so every persisted
 // `canonical_content_hash` computed under the old version becomes stale and
@@ -345,7 +343,6 @@ export async function mergeExactQuestionDuplicateKnowledgeIds(
   const eventId = createId();
   const enrolledKnowledgeIds: string[] = [];
   if (row.draftStatus !== 'draft') {
-    const initial = initialFsrsState(params.now);
     for (const knowledgeId of addedKnowledgeIds) {
       // YUK-1037 — same anchor-not-content exclusion as the verify-time enroll
       // loops: a merged-in synthetic subject root ('seed:<subj>:root') still
@@ -356,8 +353,7 @@ export async function mergeExactQuestionDuplicateKnowledgeIds(
       const enrolled = await enrollFsrsStateIfAbsent(tx, {
         subject_kind: 'knowledge',
         subject_id: knowledgeId,
-        state: initial.state,
-        due_at: initial.dueAt,
+        ...initialSchedulingState(knowledgeId, params.now),
         last_review_event_id: eventId,
       });
       if (enrolled) enrolledKnowledgeIds.push(knowledgeId);

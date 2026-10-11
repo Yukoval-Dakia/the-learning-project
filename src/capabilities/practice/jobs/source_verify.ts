@@ -1,3 +1,4 @@
+import { initialSchedulingState } from '@/server/fsrs/state';
 // YUK-216 S2 slice 2 (题源扩展 Strategy D) — tier-2 source_verify handler.
 //
 // docs/superpowers/specs/2026-06-05-question-source-expansion-design.md §4
@@ -55,7 +56,6 @@ import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
 import { normalizeToCanonicalKind } from '@/subjects/question-kind';
-import { initialFsrsState } from '../server/fsrs';
 import { SYNTHETIC_SUBJECT_ROOT_RE } from '../server/placement-scope';
 import { SupplyTraceV1 } from '../server/question-supply/evidence-demand';
 import { lockPlacementSupplyScopes } from '../server/question-supply/placement-supply-lock';
@@ -721,7 +721,6 @@ export async function runSourceVerify(
         // FSRS enroll-if-absent per knowledge point (identical convention to
         // quiz_verify): materialize an initial card only for knowledge points with no
         // existing projection; never reset an existing schedule.
-        const initial = initialFsrsState(now);
         const fsrsSubjectIds = Array.from(new Set(current.knowledgeIds ?? []));
         if (fsrsSubjectIds.length > 0) {
           for (const knowledgeId of fsrsSubjectIds) {
@@ -739,8 +738,7 @@ export async function runSourceVerify(
             await upsertFsrsState(tx, {
               subject_kind: 'knowledge',
               subject_id: knowledgeId,
-              state: initial.state,
-              due_at: initial.dueAt,
+              ...initialSchedulingState(knowledgeId, now),
               last_review_event_id: verifyEventId,
             });
           }
@@ -750,8 +748,7 @@ export async function runSourceVerify(
             await upsertFsrsState(tx, {
               subject_kind: 'question',
               subject_id: questionId,
-              state: initial.state,
-              due_at: initial.dueAt,
+              ...initialSchedulingState(questionId, now),
               last_review_event_id: verifyEventId,
             });
           }
