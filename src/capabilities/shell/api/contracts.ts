@@ -79,7 +79,6 @@ const ProposalBlockPreviewResponseSchema = z.object({
 const ProposalPresentationResponseSchema = z.object({
   title: z.string(),
   change_summary: z.array(z.object({ label: z.string(), value: z.string() })),
-  technical_details: z.string().nullable(),
   evidence_labels: z.record(z.string(), z.string()),
   block_merge: z
     .object({

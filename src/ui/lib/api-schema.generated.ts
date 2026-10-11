@@ -13400,6 +13400,7 @@ export interface operations {
                     asset_ids: string[];
                     /** @enum {string} */
                     entrypoint: "vision_single" | "vision_paper" | "docx";
+                    subject_id?: string | null;
                 };
             };
         };
@@ -13799,6 +13800,7 @@ export interface operations {
                     asset_ids: string[];
                     /** @enum {string} */
                     entrypoint: "vision_single" | "vision_paper" | "docx";
+                    subject_id?: string | null;
                 };
             };
         };
@@ -28171,7 +28173,6 @@ export interface operations {
                                 evidence_labels: {
                                     [key: string]: string;
                                 };
-                                technical_details: string | null;
                                 title: string;
                             } | null;
                             proposed_at: string;
@@ -29268,7 +29269,6 @@ export interface operations {
                                 evidence_labels: {
                                     [key: string]: string;
                                 };
-                                technical_details: string | null;
                                 title: string;
                             } | null;
                             proposed_at: string;

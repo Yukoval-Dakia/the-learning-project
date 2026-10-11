@@ -5,7 +5,7 @@ import { unified } from 'unified';
 import type { AiProposalPayloadT } from '@/core/schema/proposal';
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db, Tx } from '@/db/client';
-import { learning_session, question, question_block } from '@/db/schema';
+import { learning_session, question, question_block, source_document } from '@/db/schema';
 import {
   batchResolveSubjectDisplayIds,
   resolveSubjectRenderNotation,
@@ -66,7 +66,6 @@ export interface ProposalSummaryItem {
 export interface ProposalPresentation {
   title: string;
   change_summary: ProposalSummaryItem[];
-  technical_details: string | null;
   evidence_labels: Record<string, string>;
   block_merge: {
     primary: ProposalBlockPreview | null;
@@ -75,9 +74,12 @@ export interface ProposalPresentation {
     /**
      * YUK-1404 — the session's subject render notation (renderConfig.notation)
      * from the canonical subject registry, so the UI gates the KaTeX chain like
-     * every other subject-aware face. null unless every question linked to the
-     * exact ingestion session resolves to the same registered canonical subject
-     * — never a math/default guess.
+     * every other subject-aware face. Explicit-first: when the learner picked a
+     * subject at upload, that stored signal alone decides (retired-but-registered
+     * subjects keep their notation; a stored id that no longer resolves → null,
+     * never a guess). Otherwise null unless every question linked to the exact
+     * ingestion session resolves to the same registered canonical subject —
+     * never a math/default guess.
      */
     notation: string | null;
   } | null;
@@ -465,39 +467,7 @@ type ProposalPayload<K extends AiProposalPayloadT['kind'] = AiProposalPayloadT['
 type ProposalPresenter<K extends AiProposalPayloadT['kind']> = {
   title: (payload: ProposalPayloadByKind[K]) => string;
   summary: (payload: ProposalPayloadByKind[K]) => ProposalSummaryItem[];
-  details: (payload: ProposalPayloadByKind[K]) => string | null;
 };
-
-function defaultTechnicalDetails(payload: AiProposalPayloadT): string {
-  const details = recordOf(payload.proposed_change);
-  if (!details) return JSON.stringify(payload.proposed_change, null, 2);
-  return JSON.stringify(details, null, 2);
-}
-
-function difficultyTechnicalDetails(payload: AiProposalPayloadT): string {
-  const details = recordOf(payload.proposed_change);
-  if (!details) return JSON.stringify(payload.proposed_change, null, 2);
-  const { difficulty, ...learnerSafe } = details;
-  return JSON.stringify(
-    { ...learnerSafe, difficulty_estimate: estimatedDifficulty(difficulty) },
-    null,
-    2,
-  );
-}
-
-function relearnTechnicalDetails(payload: AiProposalPayloadT): string {
-  const details = recordOf(payload.proposed_change);
-  if (!details) return JSON.stringify(payload.proposed_change, null, 2);
-  const { current_mastery, peak_mastery, ...learnerSafe } = details;
-  return JSON.stringify(
-    {
-      ...learnerSafe,
-      mastery_trend_estimate: estimatedMasteryTrend(current_mastery, peak_mastery),
-    },
-    null,
-    2,
-  );
-}
 
 // One exhaustive entry owns each kind's human projection and safe technical details.
 const proposalPresenters: { [K in AiProposalPayloadT['kind']]: ProposalPresenter<K> } = {
@@ -507,7 +477,6 @@ const proposalPresenters: { [K in AiProposalPayloadT['kind']]: ProposalPresenter
       const change = recordOf(payload.proposed_change);
       return compact([summaryItem('新知识点', change?.name)]);
     },
-    details: defaultTechnicalDetails,
   },
   knowledge_edge: {
     title: () => '调整知识关系',
@@ -518,7 +487,6 @@ const proposalPresenters: { [K in AiProposalPayloadT['kind']]: ProposalPresenter
         summaryItem('关系', readableToken(change?.relation_type)),
       ]);
     },
-    details: defaultTechnicalDetails,
   },
   knowledge_mutation: {
     title: (payload) => MUTATION_OPERATION[payload.proposed_change.mutation] ?? '调整知识结构',
@@ -543,7 +511,6 @@ const proposalPresenters: { [K in AiProposalPayloadT['kind']]: ProposalPresenter
         ),
       ]);
     },
-    details: defaultTechnicalDetails,
   },
   learning_item: {
     title: (payload) => {
@@ -562,7 +529,6 @@ const proposalPresenters: { [K in AiProposalPayloadT['kind']]: ProposalPresenter
         summaryItem('计划', stepCount > 0 ? `${stepCount} 个学习步骤` : null),
       ]);
     },
-    details: defaultTechnicalDetails,
   },
   note_update: {
     title: (payload) => {
@@ -593,7 +559,6 @@ const proposalPresenters: { [K in AiProposalPayloadT['kind']]: ProposalPresenter
           : summaryItem('说明', noteUpdateSummary(change)),
       ]);
     },
-    details: defaultTechnicalDetails,
   },
   variant_question: {
     title: (payload) => titled('生成变式练习', payload.proposed_change.prompt_md),
@@ -608,7 +573,6 @@ const proposalPresenters: { [K in AiProposalPayloadT['kind']]: ProposalPresenter
         ),
       ]);
     },
-    details: difficultyTechnicalDetails,
   },
   completion: {
     title: () => '确认学习项已完成',
@@ -620,7 +584,6 @@ const proposalPresenters: { [K in AiProposalPayloadT['kind']]: ProposalPresenter
         : null;
       return compact([summaryItem('建议', '标记学习项已完成'), summaryItem('依据', signals)]);
     },
-    details: defaultTechnicalDetails,
   },
   relearn: {
     title: () => '重新巩固学习项',
@@ -637,7 +600,6 @@ const proposalPresenters: { [K in AiProposalPayloadT['kind']]: ProposalPresenter
         ),
       ]);
     },
-    details: relearnTechnicalDetails,
   },
   defer: {
     title: () => '调整学习安排',
@@ -648,7 +610,6 @@ const proposalPresenters: { [K in AiProposalPayloadT['kind']]: ProposalPresenter
         summaryItem('安排说明', change?.reason),
       ]);
     },
-    details: defaultTechnicalDetails,
   },
   record_links: {
     title: () => '补充记录关联',
@@ -664,7 +625,6 @@ const proposalPresenters: { [K in AiProposalPayloadT['kind']]: ProposalPresenter
         summaryItem('关联', links === null ? '补充记录之间的关联' : `${links} 条关联`),
       ]);
     },
-    details: defaultTechnicalDetails,
   },
   record_promotion: {
     title: (payload) => {
@@ -681,7 +641,6 @@ const proposalPresenters: { [K in AiProposalPayloadT['kind']]: ProposalPresenter
         summaryItem('草稿标题或题面', draft?.title ?? draft?.prompt_md),
       ]);
     },
-    details: defaultTechnicalDetails,
   },
   archive: {
     title: () => '归档学习内容',
@@ -692,7 +651,6 @@ const proposalPresenters: { [K in AiProposalPayloadT['kind']]: ProposalPresenter
         summaryItem('原因', change?.archived_reason ?? change?.reason),
       ]);
     },
-    details: defaultTechnicalDetails,
   },
   judge_retraction: {
     title: () => '复核一次 AI 判定',
@@ -703,7 +661,6 @@ const proposalPresenters: { [K in AiProposalPayloadT['kind']]: ProposalPresenter
         summaryItem('复核说明', change?.reason_md),
       ]);
     },
-    details: defaultTechnicalDetails,
   },
   goal_scope: {
     title: (payload) => titled('确认目标范围', payload.proposed_change.title),
@@ -720,7 +677,6 @@ const proposalPresenters: { [K in AiProposalPayloadT['kind']]: ProposalPresenter
         summaryItem('判断依据', change?.reasoning),
       ]);
     },
-    details: defaultTechnicalDetails,
   },
   block_merge: {
     title: (payload) => {
@@ -738,7 +694,6 @@ const proposalPresenters: { [K in AiProposalPayloadT['kind']]: ProposalPresenter
         ),
       ]);
     },
-    details: defaultTechnicalDetails,
   },
   image_candidate: {
     title: (payload) => titled('图题来源', payload.proposed_change.source_title),
@@ -750,7 +705,6 @@ const proposalPresenters: { [K in AiProposalPayloadT['kind']]: ProposalPresenter
         summaryItem('题型', readableToken(change?.requested_kind)),
       ]);
     },
-    details: defaultTechnicalDetails,
   },
   question_draft: {
     title: (payload) => titled('审核新题', payload.proposed_change.prompt_preview),
@@ -762,12 +716,10 @@ const proposalPresenters: { [K in AiProposalPayloadT['kind']]: ProposalPresenter
         summaryItem('AI 估计难度', estimatedDifficulty(change?.difficulty)),
       ]);
     },
-    details: difficultyTechnicalDetails,
   },
   question_edit: {
     title: (payload) => titled('修订一道题目', payload.proposed_change.node_preview),
     summary: (payload) => questionEditSummary(payload.proposed_change),
-    details: defaultTechnicalDetails,
   },
   conjecture: {
     title: (payload) => titled('验证诊断推测', payload.proposed_change.claim_md),
@@ -782,7 +734,6 @@ const proposalPresenters: { [K in AiProposalPayloadT['kind']]: ProposalPresenter
         ),
       ]);
     },
-    details: () => null,
   },
   cause_category: {
     title: (payload) => titled('收编错因类目', payload.proposed_change.label),
@@ -795,7 +746,6 @@ const proposalPresenters: { [K in AiProposalPayloadT['kind']]: ProposalPresenter
         summaryItem('来源', change?.source === 'owner' ? '人工提议' : 'AI 提议（other 复发）'),
       ]);
     },
-    details: defaultTechnicalDetails,
   },
 };
 
@@ -803,12 +753,6 @@ export function proposalChangeSummary<K extends AiProposalPayloadT['kind']>(
   payload: ProposalPayload<K>,
 ): ProposalSummaryItem[] {
   return proposalPresenters[payload.kind].summary(payload);
-}
-
-function technicalDetails<K extends AiProposalPayloadT['kind']>(
-  payload: ProposalPayload<K>,
-): string | null {
-  return proposalPresenters[payload.kind].details(payload);
 }
 
 /** A concise learner-facing identity, derived from meaningful payload fields. */
@@ -905,13 +849,34 @@ type IngestionSessionQuestionRow = {
 };
 
 /**
+ * YUK-1404 — the explicit upload-subject signal stored by initiateUpload: a
+ * nonempty `learner_selected_subject_id` string on the session-bound
+ * source_document provenance. Anything else (key absent, null, non-string —
+ * including every legacy session) reads as "no explicit signal", which keeps
+ * the derived fallback below available exactly as before this feature existed.
+ */
+function explicitUploadSubjectOf(provenance: unknown): string | null {
+  const value = recordOf(provenance)?.learner_selected_subject_id;
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+/**
  * YUK-1404 — each block-merge proposal's notation, from its exact ingestion
  * session, batched (deduplicated session ids, chunked IN queries — no per-card
- * N+1). The session subject stays a derived view (no learning_session column):
- * the session's linked questions (stamped `metadata.ingestion_session_id` at
- * enroll/import) carry knowledge_ids → effective domain → canonical subject via
- * the shared bridge. A session resolves only when EVERY linked question maps to
- * the SAME registered canonical subject (aliases included); mixed subjects, any
+ * N+1). EXPLICIT FIRST: when the learner picked a subject at upload, the
+ * session-bound source_document.provenance.learner_selected_subject_id alone
+ * decides — read-side resolvability is the registry's resolvable-all set
+ * (retired-but-registered subjects keep their original rendering), a stored id
+ * that no longer resolves at all pins the session to null, and the derived
+ * path below never runs for that session (no guessed fallback, no
+ * stem/formula inference).
+ *
+ * Sessions with NO explicit signal (omitted/null upload, legacy rows) keep the
+ * previous derived view (no learning_session column): the session's linked
+ * questions (stamped `metadata.ingestion_session_id` at enroll/import) carry
+ * knowledge_ids → effective domain → canonical subject via the shared bridge.
+ * A session resolves only when EVERY linked question maps to the SAME
+ * registered canonical subject (aliases included); mixed subjects, any
  * unresolved question (no knowledge ids / no domain), any unregistered subject,
  * an unknown session, and a session with no linked questions (observe mode) all
  * yield null — plain text, never an inferred or fallback math profile.
@@ -926,20 +891,66 @@ async function loadIngestionSessionNotations(
   // The exact ingestion session rows — a session id with no
   // learning_session(type='ingestion') row stays null even if stale question
   // metadata still references it.
-  const knownSessionIds: string[] = [];
+  const knownSessions: Array<{ id: string; source_document_id: string | null }> = [];
   for (const chunk of chunksOf(sessionIds)) {
-    const rows = await db
-      .select({ id: learning_session.id })
-      .from(learning_session)
-      .where(and(eq(learning_session.type, 'ingestion'), inArray(learning_session.id, chunk)));
-    for (const row of rows) knownSessionIds.push(row.id);
+    knownSessions.push(
+      ...(await db
+        .select({
+          id: learning_session.id,
+          source_document_id: learning_session.source_document_id,
+        })
+        .from(learning_session)
+        .where(and(eq(learning_session.type, 'ingestion'), inArray(learning_session.id, chunk)))),
+    );
   }
-  if (knownSessionIds.length === 0) return notationBySession;
+  if (knownSessions.length === 0) return notationBySession;
+
+  // YUK-1404 explicit signal: read the session-bound source_document provenance
+  // (chunked IN; a missing/deleted document row simply has no signal).
+  const documentIds = [
+    ...new Set(
+      knownSessions
+        .map((session) => session.source_document_id)
+        .filter((id): id is string => id !== null),
+    ),
+  ];
+  const provenanceByDocument = new Map<string, unknown>();
+  for (const chunk of chunksOf(documentIds)) {
+    const rows = await db
+      .select({ id: source_document.id, provenance: source_document.provenance })
+      .from(source_document)
+      .where(inArray(source_document.id, chunk));
+    for (const row of rows) provenanceByDocument.set(row.id, row.provenance);
+  }
+  const explicitBySession = new Map<string, string>();
+  for (const session of knownSessions) {
+    const explicit = explicitUploadSubjectOf(
+      session.source_document_id === null
+        ? null
+        : (provenanceByDocument.get(session.source_document_id) ?? null),
+    );
+    if (explicit !== null) explicitBySession.set(session.id, explicit);
+  }
+  for (const [sessionId, rawSubjectId] of explicitBySession) {
+    // Wider-than-selectable on purpose: retired-but-registered subjects keep
+    // their notation; an id that resolves to nothing pins null. Either way the
+    // derived fallback never runs for an explicit session.
+    const canonical = resolveKnownSubjectId(rawSubjectId);
+    notationBySession.set(
+      sessionId,
+      canonical === null ? null : resolveSubjectRenderNotation(canonical),
+    );
+  }
+
+  const derivedSessionIds = knownSessions
+    .map((session) => session.id)
+    .filter((id) => !explicitBySession.has(id));
+  if (derivedSessionIds.length === 0) return notationBySession;
 
   // The sessions' linked questions in stable (created_at, id) order — the same
   // metadata linkage import-completion's pendingCaptures query relies on.
   const sessionQuestions: IngestionSessionQuestionRow[] = [];
-  for (const chunk of chunksOf(knownSessionIds)) {
+  for (const chunk of chunksOf(derivedSessionIds)) {
     sessionQuestions.push(
       ...(await db
         .select({
@@ -981,7 +992,7 @@ async function loadIngestionSessionNotations(
     if (current === undefined) canonicalBySession.set(row.ingestion_session_id, canonical);
     else if (current !== canonical) canonicalBySession.set(row.ingestion_session_id, null);
   }
-  for (const sessionId of knownSessionIds) {
+  for (const sessionId of derivedSessionIds) {
     const canonical = canonicalBySession.get(sessionId) ?? null;
     notationBySession.set(
       sessionId,
@@ -1004,7 +1015,6 @@ export async function loadProposalPresentations(
     presentations.set(proposal.id, {
       title: proposalDisplayTitle(proposal.payload),
       change_summary: proposalChangeSummary(proposal.payload),
-      technical_details: technicalDetails(proposal.payload),
       evidence_labels: {},
       block_merge: null,
     });

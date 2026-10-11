@@ -1,0 +1,72 @@
+# YUK-1404 上传科目信号 — 实施切片证据
+
+实施树：`/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1404-merge-preview-notation`，
+branch `fix/yuk-1404-merge-preview-notation`，base `dbbb1f8c`（main12c740/UI1663 已并入）。
+设计依据：`docs/planning/2026-10-11-yuk1404-explicit-upload-subject.md`（FULL 方案，协调者已批准）。
+
+## 范围内变更（本切片 owned files）
+
+| 文件 | 变更 |
+|------|------|
+| `src/capabilities/ingestion/api/contracts.ts` | `CreateIngestionSessionBody` 增 `subject_id: z.string().nullable().optional()` |
+| `src/capabilities/ingestion/api/sessions.ts` | POST 解析后、任何 DB 写之前：非空 `subject_id` 经 `resolveSelectableSubjectId`（`src/subjects/profile.ts:349`）解析别名并校验当前可选；解析失败 → `ApiError('validation_error', …, 400)`。canonical id 以 `learnerSelectedSubjectId` 转发；omitted/null → `null`，照常上传 |
+| `src/server/session/ingestion.ts` | `InitiateUploadParams` 增 `learnerSelectedSubjectId?: string \| null`；`initiateUpload` 在原事务内把它写进 session 绑定的 `source_document.provenance.learner_selected_subject_id`（仅非空时写键；无新表/列，不触碰 `scope_knowledge_ids`） |
+| `src/kernel/proposals/presentation.ts` | `loadIngestionSessionNotations` 改为 explicit-first：先读 session 绑定 source_document provenance 的显式信号；非空信号用 resolvable-all registry（`resolveKnownSubjectId`）解析——retired-but-registered 保留原 notation，彻底不可解析 → `null` 且**不走**派生回退。无显式信号（键缺席/null/非字符串/legacy）的 session 保持既有 all-linked registered/unanimous 派生回退，逻辑未变，仅作用于无显式信号的子集 |
+| `src/kernel/proposals/presentation.ts`（cleanup） | UI1663 并入后 `technical_details` 已无消费者。全源核实（rg：仅本文件 producer + shell contracts + generated client）后移除：`ProposalPresentation.technical_details` 字段、`ProposalPresenter.details`、20 个 presenter 的 `details` 项、`technicalDetails`/`defaultTechnicalDetails`/`difficultyTechnicalDetails`/`relearnTechnicalDetails` helper。`estimatedDifficulty`/`estimatedMasteryTrend`/`recordOf` 仍被 summary 使用，保留 |
+| `src/capabilities/shell/api/contracts.ts` | `ProposalPresentationResponseSchema` 移除 `technical_details` |
+| `src/ui/lib/api-schema.generated.ts` | `pnpm gen:api-client` 机械再生成：两处 create-session 请求体 +`subject_id?: string \| null`；两处 proposal presentation 响应体 −`technical_details` |
+
+不变量：`createIngestionSessionResource` 的 resource/Location/error/legacy 语义未动
+（canonical wrapper 与 legacy deprecated wrapper 均直接复用 POST，行为随 body 合同加性扩展）。
+无 KC/attempt/auto-tag/auto-enroll/goal/job 改动；无新导出（`ingestion/public.ts` 未改）。
+
+## 关键语义裁决（与设计 §7/§11 对齐）
+
+1. **写侧**：只有"请求显式给出且通过 selectable 校验"才写
+   `learner_selected_subject_id`（canonical id）。omitted/null/空串（空串解析失败 400）
+   一律不写键 → 与 legacy 行字节同形，派生回退对两者等同可用。
+2. **读侧显式优先**：显式会话的 notation 只由存储信号决定——数学科目上传后、
+   尚无任何已收录题即得 katex；已收录题也不改变它（派生路径对显式会话永不执行）。
+   存储信号后来不可解析（如自定义科目被删）→ `null`，不猜、不回退、不 general。
+3. **读侧回退保留**：仅无显式信号的会话走既有 conservative 派生回退
+   （全部关联题 unanimous 且 registered 才解析；混合/未知/无关联题 → null）。
+   retired-but-resolvable 的渲染语义复用 registry resolvable-all 集合，与
+   `resolveSubjectRenderNotation` 既有合同一致。
+
+## 验证（真实 exit code，本机 Node v26.10.0）
+
+| 命令 | 结果 |
+|------|------|
+| `pnpm gen:api-client` | exit 0；generated diff 仅上述 4 处机械变更 |
+| `pnpm gen:postman` | exit 0；`postman/` 无 diff（api-endpoints.json 本就不含 ingestion 路由，确定性 no-op） |
+| `pnpm typecheck`（`tsc --noEmit` + `tsc --noEmit -p server/start/tsconfig.json`） | exit 0 |
+| `pnpm lint` | exit 0（174 warnings 全部位于非 owned 文件的既有基线；对 5 个 owned 源文件逐一 grep：0 命中，exit 1） |
+| `pnpm build`（server.cjs / worker.cjs / migrate.cjs） | exit 0 |
+| `pnpm audit:api-client-usage` | exit 0（"every capability *-api.ts uses generated operations"） |
+| `pnpm audit:api-contracts` | exit 0（173/173 declared, 0 legacy, 163 OpenAPI paths） |
+| `pnpm audit:api-client`（commit 后复跑，true exit 直接捕获） | exit 0（regenerated client 与已提交合同一致；commit 前运行必然因未提交的 generated diff 报 ELIFECYCLE 1，属预期顺序非真实失败） |
+
+## 测试裁决：本切片不新增测试
+
+- 允许的唯一测试类别是"显式非法 subject/assets 不留 document/session/receipt 半成品"
+  的数据原子性测试。该保证在本切片是结构性的：subject 校验与既有 asset 校验同在
+  `initiateUpload` 的事务开始之前 throw；不存在绕过事务写 source_document 的路径。
+- 既有测试无此路径覆盖（rg `initiateUpload|CreateIngestionSessionBody|
+  createIngestionSessionResource|ingestion-sessions` 于 `*.test.ts`：0 命中），无可更新对象。
+- 本切片被禁止执行 DB/container/runtime；父会话拥有 serialized 真实 DB 验收。
+  写一个未执行的 DB 测试等于未验证的断言，违反证据合同，故不写。
+
+## 限制与移交
+
+- 真实 DB 验收（合成数据隔离库：显式 math 上传预览 katex、非数学真实 notation、
+  省略/未知/混合不启用数学解析、非法 subject/asset 无半成品、读取零 provider 调用）
+  与真实 UI 公式可读性验收由父会话串行执行。
+- UI 发送 `subject_id` 的可跳过选项由 Opus 线实施（本切片未改任何 UI 文件）。
+- Start 路由/typed operation extraction/wrappers/boot/DBOS 未触碰（迁移线边界）。
+
+## 未来工作（已记录，未实施）
+
+若录入 agent 对照臂胜出：agent 可为未知/混合科目会话提出**逐题**科目提议，必须标注
+"推断"、经学习者一次确认才生效、复用既有提议/确认机制；学习者显式选择始终优先，
+推断不得静默覆盖；不从题面或公式形状直接启用 math notation。属后续 agent 切换切片，
+本次上传信号、预览与 UI 合同均未实施它。
