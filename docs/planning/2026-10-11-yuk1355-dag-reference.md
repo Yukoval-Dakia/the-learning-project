@@ -200,3 +200,11 @@ The prior speculative family/tests/document are preserved for comparison under
 this checkpoint. No DB/runtime/provider/restore/whole-migration acceptance is
 claimed. The parent still owns independent review, admission audits, shared
 registration reconciliation and exact-head CI.
+
+## Independent review and parent verification
+
+Independent R1 on `f53e1470c775ac25615a452fd037bc6fc88fcfb5` versus `6f1f3e07e41a4db7b302f5404daf7e3067999423` returned NONE: no proven P0/P1 in the eight-file diff. The initial SWE-2 request failed on quota without a verdict; Codex Sol 6.1 resumed that same R1. No second review round has been used.
+
+Parent separately reran the two scoped unit files: five cases passed (`/tmp/yuk1355-dag-parent-unit.log`). R1 was source-only and did not repeat those checks. DB tests and DBOS runtime recovery remain unrun.
+
+Review confirmed the retained query, three-rep/median/LLaSA behavior and failure isolation. The candidate has no reachable provider call, domain write or business-completion path and rejects even an empty batch. This does not close the missing per-rep claims/immutable receipts, cross-run unknown reconciliation, durable obligations or symmetric backend fencing. Complete those prerequisites before treating this as a reusable migrated DAG template.
