@@ -3,10 +3,7 @@
   "old_head": "4c52d593a1e172a1d17d2ff1b905d813c51b0a0e",
   "composition_source_head": "52d70b88a366c2965916f57e3af3c58c534e4332",
   "main": "eb960c07952aa5dcf4fff303ea16b06beb228cce",
-  "conflicts": [
-    "PLAN.md",
-    ".remember/now.md"
-  ],
+  "conflicts": ["PLAN.md", ".remember/now.md"],
   "owned_product_files": [
     "src/capabilities/ingestion/jobs/tencent_ocr_extract.ts",
     "src/capabilities/ingestion/server/assessment-capture.ts",
@@ -49,8 +46,5 @@
     "verdict": "NONE",
     "report": "/tmp/yuk1404-pr1657-native03-final-verification-glmmax.md"
   },
-  "remaining": [
-    "canonical crop asset registration",
-    "isolated same-paper actual-output acceptance"
-  ]
+  "remaining": ["canonical crop asset registration", "isolated same-paper actual-output acceptance"]
 }
