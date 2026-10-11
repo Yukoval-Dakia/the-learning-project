@@ -1,3 +1,21 @@
+# YUK-1107 parser initialization repair (2026-10-11)
+
+Independent R2 bfe3ff98..244c5ddf P0/P1 NONE. Current CI38119955807 DB4 failed at other-family receipt equality, solely Date vs full-precision string: constructing Drizzle mid-test mutates postgres-js client timestamp parsers. Driver source and offline zero-SQL probe reproduce it. Initialize Drizzle once before any ledger/control snapshot; keep full equality/strict guard. Conversation reached H-1us rejection and H acceptance; placement blocked after failure, no full PASS/timing claim. No third review; new exact CI pending.
+
+# YUK-1107 controlled-time revision (2026-10-11)
+
+Owner directs removing real 61s/60s waits. Only three cron fixture files changed: isolated application PG clock + producer-trigger search path, strict pre-horizon rejection/exact-horizon acceptance, real legacy enqueue receipt, both native schedules paused/settled before boundary checks. Logs /tmp/yuk1358-1680-db4-ci.log and /tmp/yuk1356-b250-db4-ci.log confirm two ENQUEUED slot-boundary failures; strict ledger remains intact. New runtime/review acceptance pending; old060a evidence is historical. No new local DB/container/Vitest batch until functional lane releases its shared window.
+
+# YUK-1403 prevention slice delivered (2026-10-11)
+
+PR #1679 merged bfe3ff98470cc69764a0f33589d6354890d9327d; exact d7f21c70d CI Gate 38117714463 SUCCESS, R2 P0/P1 NONE, inline threads zero. 10 weak cases removed / 3 assertions strengthened / AST admission required. Existing YUK-1403 remains In Progress for pending migration-smoke and the captured syntax P2. No deployment. Cron draft #1681 is still pending runtime acceptance; functional lane owns next shared window.
+
+# YUK-1107 cron acceleration handoff (2026-10-11)
+
+Owned tree: tlp-cron-speed-20261011, perf/yuk-1107-session-cron. Runtime-tested source 060a8b7afcaab98090870f97ec7431d15db541aa; 2/2 PASS, Vitest 277.61 s, R1 P0/P1 NONE. Source annotation/braces preserve test callback AST. See docs/planning/2026-10-11-yuk1107-cron-speed.md.
+
+Shared after-2 lock released after exact token, absent child PIDs and empty own Testcontainers session checks. Functional DOCX/PDF lane has priority. No new local DB/container/Vitest/mutation batch before their explicit window release; do not infer availability from an absent lock. Remaining: fault detection, final SHA repeat, exact CI.
+
 # PR1625 main conflict resolution — 2026-10-10
 
 Normal merge of current origin/main into fixed judge head4a08126. Only PLAN.md and this handoff conflict; source auto-merges. Preserve main board and historical judge synchronization below. Prior exact-head green does not validate this composition. Real provider acceptance remains incomplete; no unknown-effect replay, no PR merge/deploy. Local gates and new exact-head CI required.
