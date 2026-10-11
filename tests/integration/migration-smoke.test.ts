@@ -3680,7 +3680,9 @@ for (const populated of [false, true])
       container = await migrationContainer().start();
       client = postgres(container.getConnectionUri(), { max: 1 });
       const migrations = orderedMigrations();
-      expect(migrations.at(-1)?.tag).toBe('0117_yuk1394_session_orphan_backend');
+      expect(
+        migrations.some((migration) => migration.tag === '0117_yuk1394_session_orphan_backend'),
+      ).toBe(true);
       for (const migration of migrations) {
         if (migration.tag === '0117_yuk1394_session_orphan_backend') break;
         await applyMigrationFile(client, migration.sql);
