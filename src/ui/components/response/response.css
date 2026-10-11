@@ -570,9 +570,6 @@
   align-items: center;
   gap: 5px;
 }
-.rs-save-gen {
-  color: var(--ink-5);
-}
 .rs-save.is-saving {
   color: var(--info-ink);
 }
