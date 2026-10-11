@@ -11,9 +11,12 @@ import { startWorkbenchClient } from './workbench-client';
 export function StartWorkbenchShell({
   pathname,
   children,
+  globalCopilot = true,
 }: {
   pathname: string;
   children: ReactNode;
+  /** REVIEW BUILD ONLY (YUK-1473): false when the page mounts its own embedded companion. */
+  globalCopilot?: boolean;
 }) {
   const [queryClient] = useState(() => new QueryClient());
   return (
@@ -21,7 +24,7 @@ export function StartWorkbenchShell({
       <TokenGate>
         <WorkbenchClientProvider value={startWorkbenchClient}>
           <AgentNoteClientProvider value={startAgentNoteClient}>
-            <RootShell pathname={pathname} navigate={startNavigate}>
+            <RootShell pathname={pathname} navigate={startNavigate} globalCopilot={globalCopilot}>
               {children}
             </RootShell>
           </AgentNoteClientProvider>
