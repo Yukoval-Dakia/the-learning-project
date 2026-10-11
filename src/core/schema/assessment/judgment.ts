@@ -104,15 +104,31 @@ export type EvidenceCitationT = z.infer<typeof EvidenceCitation>;
  * （blank_marked_zero 只在 basis.blank_scores_zero=true 时合法 —— 由
  * settlement lane 校验；类型层先保证不是伪零分冒充）。
  *
- * points_awarded：加法单元必填；holistic 单元为 null —— 执行器只报告
- * matched.level_id，分数由发布侧 level_points 映射在聚合时解析
- * （模型不得在输出里自造等级分数）。
+ * points_awarded：加法单元必填 —— 唯一例外是 partial_unknown_points
+ * （ADR-0074 D3a：无印规则的部分对，typed 记正确数/总数，分数未知）；
+ * holistic 单元为 null —— 执行器只报告 matched.level_id，分数由发布侧
+ * level_points 映射在聚合时解析（模型不得在输出里自造等级分数）。
  */
 export const ScoredUnitResult = z.object({
   status: z.literal('scored'),
   scoring_unit_id: z.string().min(1),
   points_awarded: z.number().min(0).nullable(),
   scored_because: z.enum(['response', 'blank_marked_zero']),
+  /**
+   * ADR-0074 D3a / 独立复核 P1-1 修复：加法单元判为【部分对且无印规则】的
+   * typed 承载 —— 正确数/总数 + points_awarded=null（分数未知，不造分、
+   * 不摊等权、不伪零）。执行器只在确定性判得正确计数、且卷面没有可折算
+   * 分数的 typed 规则时携带；聚合进 no_mapping（见 aggregateUnitResults）。
+   * 一致性（不得与 points_awarded 数值并存、correct ≤ total、holistic
+   * 禁携）由 aggregateUnitResults fail-closed 裁决 —— 与既有 points 纪律
+   * 同一层，不在 schema 层 superRefine（保持判别联合成员是纯 object）。
+   */
+  partial_unknown_points: z
+    .object({
+      correct_count: z.number().int().min(0),
+      total_count: z.number().int().min(1),
+    })
+    .optional(),
   matched: z
     .object({
       rule_id: z.string().min(1).optional(),
@@ -394,6 +410,28 @@ export function aggregateUnitResults(
         detail: `unit '${unitId}' scored blank as zero but basis.blank_scores_zero=false`,
       };
     }
+    // P1-1：typed 部分对承载的一致性裁决（fail-closed，同 points 纪律层）。
+    const partial = result.partial_unknown_points;
+    if (partial != null) {
+      if (unit.criterion.kind === 'holistic_level') {
+        return {
+          kind: 'invalid',
+          detail: `holistic unit '${unitId}' carries partial_unknown_points — holistic scoring has its own level mapping discipline`,
+        };
+      }
+      if (result.points_awarded !== null) {
+        return {
+          kind: 'invalid',
+          detail: `unit '${unitId}' carries both points_awarded=${result.points_awarded} and partial_unknown_points — partial-unknown must leave points null`,
+        };
+      }
+      if (partial.correct_count > partial.total_count) {
+        return {
+          kind: 'invalid',
+          detail: `unit '${unitId}' partial counts ${partial.correct_count}/${partial.total_count} are contradictory`,
+        };
+      }
+    }
     if (unit.criterion.kind === 'holistic_level') {
       // YUK-1096 P1-3：holistic 单元的分数只经发布侧 level_points 映射
       // 解析 —— 执行器自报 points_awarded 是矛盾输入（999 分不得泄入
@@ -426,6 +464,14 @@ export function aggregateUnitResults(
       return { kind: 'points', points: mapped };
     }
     if (result.points_awarded === null) {
+      if (result.partial_unknown_points != null) {
+        // ADR-0074 D3a：无印规则的部分对 —— 判得正确数/总数，分数未知。
+        // 与 holistic 未映射档位同语义：no_mapping，不凭空制造总分，也不伪零。
+        return {
+          kind: 'no_mapping',
+          detail: `unit '${unitId}' is partial ${result.partial_unknown_points.correct_count}/${result.partial_unknown_points.total_count} without a printed rule — points unknown`,
+        };
+      }
       return {
         kind: 'invalid',
         detail: `additive unit '${unitId}' result carries null points_awarded`,

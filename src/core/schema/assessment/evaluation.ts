@@ -470,16 +470,19 @@ async function runDeterministicComparator(
           evidence_citations: [{ slot_id: entry.slot_id }],
         };
       }
-      // 无印规则：记对数、partial、分数未知 —— 与多选无错子集同政策，
-      // 绝不伪零分也不造分（ADR-0074 D3a；typed 承载归判分记录扩展，另行 lane）。
-      return withUnit(
-        pending({
-          reason: 'needs_review',
-          trigger: 'flagged',
-          detail: `matching partial without printed rule: ${correctPairs.length}/${accepted.size} pairs correct — points unknown (no fabricated score)`,
-        }),
-        unit.scoring_unit_id,
-      );
+      // 无印规则：typed 部分对 —— 记正确数/总数、points=null（分数未知）。
+      // 绝不伪零分也不造分；聚合进 no_mapping（ADR-0074 D3a / 独立复核 P1-1）。
+      return {
+        status: 'scored',
+        scoring_unit_id: unit.scoring_unit_id,
+        points_awarded: null,
+        scored_because: 'response',
+        partial_unknown_points: {
+          correct_count: correctPairs.length,
+          total_count: accepted.size,
+        },
+        evidence_citations: [{ slot_id: entry.slot_id }],
+      };
     }
     case 'position_set_rule': {
       if (entry.kind !== 'sentence_breaks' || unit.criterion.kind !== 'position_set_key') {
@@ -522,15 +525,19 @@ async function runDeterministicComparator(
           evidence_citations: [{ slot_id: entry.slot_id }],
         };
       }
-      // 无印规则：记对数、partial、分数未知 —— 绝不伪零分（同配对无规则分支）。
-      return withUnit(
-        pending({
-          reason: 'needs_review',
-          trigger: 'flagged',
-          detail: `sentence_breaks partial without printed rule: ${correctCount}/${acceptedSet.size} breaks correct — points unknown (no fabricated score)`,
-        }),
-        unit.scoring_unit_id,
-      );
+      // 无印规则：typed 部分对 —— 记正确数/总数、points=null（分数未知），
+      // 聚合进 no_mapping；绝不伪零分（同配对无规则分支）。
+      return {
+        status: 'scored',
+        scoring_unit_id: unit.scoring_unit_id,
+        points_awarded: null,
+        scored_because: 'response',
+        partial_unknown_points: {
+          correct_count: correctCount,
+          total_count: acceptedSet.size,
+        },
+        evidence_citations: [{ slot_id: entry.slot_id }],
+      };
     }
   }
 }

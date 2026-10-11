@@ -96,3 +96,72 @@ compile-forced 消费面（各一 case）：`coverage.ts`（能力矩阵行 + ki
 3. push 后 exact-head GitHub `CI Gate`。
 4. merge 与等待窗裁决（本切片不 push、不开 PR、不 merge）。
 5. 提交后复跑 `pnpm audit:api-client` 应绿（生成物与 schema 同 commit）。
+
+---
+
+## 7. 独立复核 P1 修复（a371dd845 之后的第二刀；本节之前的记录不可变）
+
+输入：独立 Sol xhigh 初审 `/tmp/yuk1445-matching-sentence-breaks-initial-review-sol.md`
+的 2 个 P1，父线程读实际源后均裁决接受。本轮唯一写入者，树干净于
+a371dd845fdce70e8509a37c0e7fd59e994fd271；migration 只释放
+`src/core/schema/assessment/judgment.ts`。未动 choice-0fa8 / figure-5403 任何源。
+
+### P1-1 — 无印规则部分对改为 typed structured partial（不再是 pending/needs_review）
+
+- **新结果形状**：`ScoredUnitResult.partial_unknown_points:
+  {correct_count:int≥0, total_count:int≥1}`（optional）+ `points_awarded:null` +
+  `status:'scored'`、`scored_because:'response'`。两个执行器分支（matching
+  无规则非精确、sentence_breaks 无规则非精确）产出该形状，携带确定性正确计数。
+- **聚合行为**：`aggregateUnitResults` 对 additive 单元 `points_awarded===null` 且
+  携带 partial ⇒ `unresolved(no_mapping)`（detail 含 `2/3`）—— 与 holistic 未映射
+  档位同语义：判得了、分数未知、不造总分不伪零。evaluation `status='completed'`
+  （无 pending 单元），不再产生 `pending_units`。
+- **fail-closed 守卫（同聚合层）**：partial 与数值 `points_awarded` 并存、
+  `correct_count>total_count`、holistic 单元携带 partial ⇒ `invalid_result`。
+  加法单元 null 无 partial 的旧 invalid 分支不变（历史语义保留）。
+- **未改 settlement（范围已报父线程，未获释放）**：`settlement.ts`
+  `classifyScoredUnit`（约 :254）additive 分支 `points_awarded ?? 0` 会把
+  scored-partial 单元归为 `{kind:'zero'}` KC 证据 —— 需要 4 行级修改
+  （`partial_unknown_points && correct_count>0 ⇒ 'partial'`；`=0 ⇒ 'zero'`）。
+  父线程释放前本文件不动；组级 verdict 不受影响（no_mapping 聚合 ⇒ unsupported）。
+
+### P1-2 — 印规则可达满分 ≠ 发布 unit.points 在 canonical 校验拒绝
+
+- `validateScoringBasis`（发布 barrier 与 evaluateSubmissionCore 服务路径共用）新增
+  `key_rule_points_mismatch`：`per_correct_pair` 的 `points_per_pair×accepted_pairs数`
+  与 `per_correct_break` 的 `points_per_break×accepted_positions数` 都必须
+  **等于** `unit.points`（浮点相对 ε=1e-9，十进制卷面分值如 1.5×3=4.5 不误拒）。
+  例：3 对×4=12≠6 拒；3 断×2=6≠3 拒。不封顶、不折算、不猜权重；校验先于判分，
+  精确作答也不能静默绕过矛盾规则。
+- 既有 `key_rule_conflicts_exact_set`（max_breaks<接受数）保留。
+
+### 测试证据（原始错误期望与失败记录保留）
+
+- 初版门禁日志与 21:39 三处失败（位置越界/2-3 计数测试数据错误）保留于上方 §5
+  与会话记录；本节不覆盖。
+- **RED 证明**：将 judgment/scoring/evaluation 三文件临时还原 a371dd845 后跑修订
+  测试 ⇒ **4 failed | 23 passed**（`/tmp/yuk1445-p1-red-proof.log`，
+  sha256 前 16 位 `66860c31a4cfc5cd`）——失败的正是两个修订 partial 用例、
+  P1-2 拒绝用例与聚合守卫用例（十进制不误拒用例按设计在新旧两版都过）。
+  还原修复后全绿。
+- `scoring.test.ts` 现 **27 passed**；assessment 单测目录 **105/105**（含 Choice P1
+  evaluation.test.ts 与 settlement.test.ts 原样通过）。
+
+### 本轮门禁（实际运行、无管道掩码 exit）
+
+typecheck（双 tsconfig）exit 0；`pnpm lint` exit 0（172 warnings=存量基线，
+`/tmp/yuk1445-lint-final.log` sha256 前 16 `98eb391b35389a36`）；`pnpm build`
+exit 0；`pnpm gen:api-client` 重跑生成物无 diff（OpenAPI 投影不含该 optional
+字段）⇒ `audit:api-client` 提交后必绿。文件签名（sha256 前 16）：
+judgment `e01c259fa060d54a`、scoring `8a0882b5087e3e99`、evaluation
+`03c115b7a80ff937`、scoring.test `49bbc7c87aecbc15`。
+
+### Owner 交接要点
+
+- 新结果形状/聚合行为：见 P1-1；下游（settlement 的 KC 分类）待父释放 4 行修改。
+- 基数 owner 补充绑定：**新录入**的 matching 条目必须声明 pairing（及适用时
+  has_distractors）—— 这是录入侧（store/entry gate）义务；纯 schema 无法区分
+  新旧 revision，故字段保持 optional+历史宽松缺省，不做破坏存量的强制。
+- 免责：base/head 均未实现 per-item calibration registration；本切片的标定探针
+  用例**不是** admission，D3 亦未全部完成（R10 UI 点选块、录入侧 spec 产出、
+  作答卷往返等仍归各自 lane）。

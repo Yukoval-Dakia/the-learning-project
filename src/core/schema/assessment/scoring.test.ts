@@ -468,6 +468,7 @@ describe('aggregateUnitResults — 总分只聚合一次', () => {
 
 function matchingFixture(options?: {
   rule?: Extract<ScoringUnitCriterionT, { kind: 'matching_pairs_key' }>['rule'];
+  points?: number;
 }): PublishedQuestionRevisionT {
   const revision: PublishedQuestionRevisionT = PublishedQuestionRevision.parse({
     revision_id: 'rev_match_1',
@@ -517,7 +518,7 @@ function matchingFixture(options?: {
             ],
             ...(options?.rule ? { rule: options.rule } : {}),
           },
-          points: 6,
+          points: options?.points ?? 6,
         },
       ],
       aggregation: { kind: 'sum' },
@@ -676,7 +677,7 @@ describe('ADR-0074 D3a — matching 配对确定性判分', () => {
     });
   });
 
-  it('no printed rule: partial records the correct count and stays needs_review with unknown points — never fake 0 nor invented fraction', async () => {
+  it('no printed rule: structured partial verdict — correct/total counts recorded, points null, aggregate no_mapping (never fake zero, never pending prose)', async () => {
     const output = await evaluate(matchingFixture(), [
       {
         slot_id: 'm1',
@@ -688,17 +689,17 @@ describe('ADR-0074 D3a — matching 配对确定性判分', () => {
         ],
       },
     ]);
-    const unit = output.record.unit_results[0];
-    expect(unit.status).toBe('pending');
-    if (unit.status === 'pending') {
-      expect(unit.pending.reason).toBe('needs_review');
-      expect(unit.pending.detail).toContain('2/3');
-    }
-    // 聚合如实 unresolved(pending_units)—— 分数未知不造总分。
-    expect(output.record.aggregate).toMatchObject({
-      kind: 'unresolved',
-      reason: 'pending_units',
+    // 独立复核 P1-1：部分对必须以 typed 结果落判 —— 旧缺陷下这里是
+    // pending(needs_review)+detail 文本，本用例在其上必红。
+    expect(output.record.unit_results[0]).toMatchObject({
+      status: 'scored',
+      scored_because: 'response',
+      points_awarded: null,
+      partial_unknown_points: { correct_count: 2, total_count: 3 },
     });
+    expect(output.record.status).toBe('completed');
+    // 分数未知 ⇒ no_mapping（与 holistic 未映射档位同语义），不造总分也不伪零。
+    expect(output.record.aggregate).toMatchObject({ kind: 'unresolved', reason: 'no_mapping' });
   });
 
   it('structural violations fail closed: duplicate left item, foreign option id, one_to_one duplicate right option', async () => {
@@ -738,6 +739,85 @@ describe('ADR-0074 D3a — matching 配对确定性判分', () => {
         },
       ]),
     ).rejects.toMatchObject({ code: 'invalid_response_set' });
+  });
+
+  it('P1-2: printed rule attainable max must equal published points — contradictory rules are rejected at canonical scoring validation, even for exact answers', async () => {
+    // 3 对 × 每对 4 分 = 12 ≠ 发布 6 分。
+    await expect(
+      evaluate(matchingFixture({ rule: { kind: 'per_correct_pair', points_per_pair: 4 } }), [
+        {
+          slot_id: 'm1',
+          kind: 'matching',
+          pairs: [
+            { item_id: 'i1', option_id: 'r2' },
+            { item_id: 'i2', option_id: 'r1' },
+            { item_id: 'i3', option_id: 'r3' },
+          ],
+        },
+      ]),
+    ).rejects.toMatchObject({ code: 'invalid_scoring_basis' });
+    // 3 断 × 每处 2 分 = 6 ≠ 发布 3 分。
+    await expect(
+      evaluate(
+        breaksFixture({
+          rule: { kind: 'per_correct_break', points_per_break: 2, max_breaks: 3 },
+        }),
+        [{ slot_id: 's1', kind: 'sentence_breaks', positions: [2, 5, 8] }],
+      ),
+    ).rejects.toMatchObject({ code: 'invalid_scoring_basis' });
+    // 旧缺陷（无该校验）下两个 basis 均通过校验并照常判分 —— 本用例在其上必红。
+  });
+
+  it('P1-2: valid decimal weights are not falsely rejected (1.5×3=4.5) and grade exactly', async () => {
+    const output = await evaluate(
+      matchingFixture({
+        rule: { kind: 'per_correct_pair', points_per_pair: 1.5 },
+        points: 4.5,
+      }),
+      [
+        {
+          slot_id: 'm1',
+          kind: 'matching',
+          pairs: [
+            { item_id: 'i1', option_id: 'r2' },
+            { item_id: 'i2', option_id: 'r1' },
+            { item_id: 'i3', option_id: 'r4' },
+          ],
+        },
+      ],
+    );
+    expect(output.record.unit_results[0]).toMatchObject({
+      status: 'scored',
+      points_awarded: 3, // 2 × 1.5
+    });
+    expect(output.record.aggregate).toMatchObject({ kind: 'points_total', points: 3 });
+  });
+
+  it('P1-1 aggregate guards: partial-unknown resolves no_mapping; numeric points + partial or contradictory counts are invalid_result', () => {
+    const basis = matchingFixture().scoring_basis;
+    const partial = aggregateUnitResults(basis, [
+      scored('u_match', 0, {
+        points_awarded: null,
+        partial_unknown_points: { correct_count: 2, total_count: 3 },
+      }),
+    ]);
+    expect(partial).toMatchObject({ kind: 'unresolved', reason: 'no_mapping' });
+    if (partial.kind === 'unresolved') {
+      expect(partial.detail).toContain('2/3');
+    }
+
+    const withNumeric = aggregateUnitResults(basis, [
+      scored('u_match', 4, { partial_unknown_points: { correct_count: 2, total_count: 3 } }),
+    ]);
+    expect(withNumeric).toMatchObject({ kind: 'unresolved', reason: 'invalid_result' });
+
+    const contradictory = aggregateUnitResults(basis, [
+      scored('u_match', 0, {
+        points_awarded: null,
+        partial_unknown_points: { correct_count: 4, total_count: 3 },
+      }),
+    ]);
+    expect(contradictory).toMatchObject({ kind: 'unresolved', reason: 'invalid_result' });
   });
 
   it('no attempt stays missing_response; active blank with blank_scores_zero=false stays needs_review (no fake zero)', async () => {
@@ -809,19 +889,19 @@ describe('ADR-0074 D3a — sentence_breaks 断句确定性判分', () => {
       status: 'scored',
       points_awarded: 2,
     });
-    // 无规则：记 2/3 对、分数未知 —— 绝不伪零也不造分。
+    // 无规则：typed 部分对 —— 2/3、分数未知、no_mapping（旧缺陷下是
+    // pending/needs_review，本断言在其上必红）。
     const unknown = await evaluate(breaksFixture(), [
       { slot_id: 's1', kind: 'sentence_breaks', positions: [2, 6, 8] },
     ]);
-    const unit = unknown.record.unit_results[0];
-    expect(unit.status).toBe('pending');
-    if (unit.status === 'pending') {
-      expect(unit.pending.reason).toBe('needs_review');
-      expect(unit.pending.detail).toContain('2/3');
-    }
+    expect(unknown.record.unit_results[0]).toMatchObject({
+      status: 'scored',
+      points_awarded: null,
+      partial_unknown_points: { correct_count: 2, total_count: 3 },
+    });
     expect(unknown.record.aggregate).toMatchObject({
       kind: 'unresolved',
-      reason: 'pending_units',
+      reason: 'no_mapping',
     });
   });
 

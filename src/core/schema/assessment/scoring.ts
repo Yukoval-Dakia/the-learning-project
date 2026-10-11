@@ -243,6 +243,7 @@ export interface ScoringBasisIssue {
     | 'key_position_not_declared'
     | 'key_position_duplicated'
     | 'key_rule_conflicts_exact_set'
+    | 'key_rule_points_mismatch'
     | 'key_pairing_violation'
     | 'weights_must_cover_units_exactly'
     | 'no_unit_references_any_slot';
@@ -250,6 +251,13 @@ export interface ScoringBasisIssue {
 }
 
 // P1-8：判据↔槽位种类相容表 —— 答案键必须落在能承载它的槽位上。
+/**
+ * 浮点相等（相对 ε=1e-9）：卷面十进制分值（如 1.5×3、0.5×2）不得因二进制
+ * 表示误差被误拒（独立复核 P1-2 —— 校验“可达满分=发布满分”，非重算权重）。
+ */
+function samePoints(a: number, b: number): boolean {
+  return Math.abs(a - b) <= 1e-9 * Math.max(1, Math.abs(a), Math.abs(b));
+}
 function expectsSlotKinds(
   criterion: ScoringUnitT['criterion'],
 ): readonly ResponseSlotT['kind'][] | null {
@@ -396,6 +404,19 @@ export function validateScoringBasis(
           }
         }
       }
+      // 独立复核 P1-2：印规则可达满分必须等于发布 unit.points —— 矛盾规则
+      // 在发布/服务共用的 canonical 校验处拒绝，不封顶、不折算、不让精确
+      // 集合静默绕过矛盾规则。
+      if (unit.criterion.rule?.kind === 'per_correct_pair' && unit.points != null) {
+        const attainable =
+          unit.criterion.rule.points_per_pair * unit.criterion.accepted_pairs.length;
+        if (!samePoints(attainable, unit.points)) {
+          issues.push({
+            code: 'key_rule_points_mismatch',
+            detail: `unit '${unit.scoring_unit_id}' printed rule attains ${attainable} (${unit.criterion.rule.points_per_pair}×${unit.criterion.accepted_pairs.length} pairs) but the unit publishes points=${unit.points} — contradictory rule is rejected at entry, never capped or rescaled`,
+          });
+        }
+      }
     }
     if (unit.criterion.kind === 'position_set_key') {
       const breakSlots = referencedSlots.filter(
@@ -426,6 +447,17 @@ export function validateScoringBasis(
           code: 'key_rule_conflicts_exact_set',
           detail: `unit '${unit.scoring_unit_id}' rule max_breaks=${unit.criterion.rule.max_breaks} is below the accepted break count ${unit.criterion.accepted_positions.length} — the exact reference set would be zeroed by its own rule`,
         });
+      }
+      // 独立复核 P1-2：同配对 —— 印规则可达满分必须等于发布 unit.points。
+      if (unit.criterion.rule?.kind === 'per_correct_break' && unit.points != null) {
+        const attainable =
+          unit.criterion.rule.points_per_break * unit.criterion.accepted_positions.length;
+        if (!samePoints(attainable, unit.points)) {
+          issues.push({
+            code: 'key_rule_points_mismatch',
+            detail: `unit '${unit.scoring_unit_id}' printed rule attains ${attainable} (${unit.criterion.rule.points_per_break}×${unit.criterion.accepted_positions.length} breaks) but the unit publishes points=${unit.points} — contradictory rule is rejected at entry, never capped or rescaled`,
+          });
+        }
       }
     }
     if (unit.criterion.kind === 'holistic_level') {
