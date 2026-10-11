@@ -1,0 +1,56 @@
+{
+  "schema": "yuk1404-figure-main-composition-v1",
+  "old_head": "4c52d593a1e172a1d17d2ff1b905d813c51b0a0e",
+  "composition_source_head": "52d70b88a366c2965916f57e3af3c58c534e4332",
+  "main": "eb960c07952aa5dcf4fff303ea16b06beb228cce",
+  "conflicts": [
+    "PLAN.md",
+    ".remember/now.md"
+  ],
+  "owned_product_files": [
+    "src/capabilities/ingestion/jobs/tencent_ocr_extract.ts",
+    "src/capabilities/ingestion/server/assessment-capture.ts",
+    "src/capabilities/ingestion/server/auto-enroll.ts",
+    "src/capabilities/ingestion/server/figure_attach.ts",
+    "src/capabilities/ingestion/server/structure.ts",
+    "src/capabilities/ingestion/tasks/structure.ts"
+  ],
+  "owned_product_byte_identical": true,
+  "gates": {
+    "typecheck": {
+      "path": "/tmp/yuk1404-figure-52d70-typecheck.log",
+      "sha256": "36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6",
+      "exit_code": 0
+    },
+    "lint": {
+      "path": "/tmp/yuk1404-figure-52d70-lint.log",
+      "sha256": "5685fbfab6cfc146fc7a6dbad200846f2ac698acca5a2893bf5fa7f51427ce59",
+      "exit_code": 0
+    },
+    "partition": {
+      "path": "/tmp/yuk1404-figure-52d70-partition.log",
+      "sha256": "d505fa6d14a74c12d1c0d74ae54297e041bc68fd258c49488f265090615d2e44",
+      "exit_code": 0
+    },
+    "build": {
+      "path": "/tmp/yuk1404-figure-52d70-build.log",
+      "sha256": "ef5b2ef5d4a25d0dbf5462045a3ea2be90fa9a8d018d409904ab901381d49f3c",
+      "exit_code": 0
+    }
+  },
+  "old_exact_ci": "https://github.com/Yukoval-Dakia/the-learning-project/actions/runs/38144495041",
+  "new_exact_ci": "pending",
+  "new_local_DB": false,
+  "runtime": false,
+  "provider_calls": 0,
+  "public_figure_acceptance": false,
+  "independent_final_review": {
+    "fixed_source": "ec18738296c753de7520a722d863abb1068b4130",
+    "verdict": "NONE",
+    "report": "/tmp/yuk1404-pr1657-native03-final-verification-glmmax.md"
+  },
+  "remaining": [
+    "canonical crop asset registration",
+    "isolated same-paper actual-output acceptance"
+  ]
+}
