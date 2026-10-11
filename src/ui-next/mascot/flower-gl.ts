@@ -29,6 +29,7 @@ import {
   Vector3,
   WebGLRenderer,
 } from 'three';
+import type { Orientation } from './orientation';
 
 const DEG = Math.PI / 180;
 const WHITE = 0xffffff;
@@ -39,13 +40,6 @@ const PETAL = Math.PI / 3;
 const SPIN_SPEED = 1.5;
 /** How quickly the flower turns toward its goal orientation (per second, exponential). */
 const TURN_RATE = 5.5;
-
-export interface Orientation {
-  /** Degrees around each axis; callers keep these inside the B2 limits. */
-  x: number;
-  y: number;
-  z: number;
-}
 
 export interface FlowerHandle {
   setRotation(orientation: Orientation): void;
