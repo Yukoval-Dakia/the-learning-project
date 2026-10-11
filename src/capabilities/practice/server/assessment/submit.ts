@@ -58,6 +58,9 @@ import {
   scopeResponseSpec,
   validateResponseSet,
 } from '@/core/schema/assessment';
+// （初始 head 插入已内联 —— 原 insertInitialEvaluationHead 归 server/activate，
+//  capability 边界不允许 server import；语义等价：空 effective、generation 0。）
+import type { ServingUnavailableReason } from '@/core/schema/assessment/serving-admission';
 import type { Db, Tx } from '@/db/client';
 import {
   assessment_issuance,
@@ -70,10 +73,9 @@ import {
   question_revision,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { readAutomaticIssuanceServingDecisions } from '@/kernel/records/assessment-issuance';
 import { snapshotAssessmentLearningScope } from '../judge/evaluate-submission';
 import { snapshotIssuanceAssistance } from './assistance';
-// （初始 head 插入已内联 —— 原 insertInitialEvaluationHead 归 server/activate，
-//  capability 边界不允许 server import；语义等价：空 effective、generation 0。）
 import {
   issuanceRowToContract,
   readObservedAdmissionGeneration,
@@ -160,6 +162,11 @@ export interface IssuanceState {
   issuance: AssessmentIssuanceT | null;
   /** 恢复快照所需的作答期公开 DTO（由冻结绑定 + pinned revision 重建）。 */
   practice_dto: PracticeIssuanceDtoT | null;
+  /**
+   * YUK-1445 —— practice_dto 被 serving gate 收回时的 typed 原因（公开安全
+   * 枚举；诊断 detail 不透出）。有已接收提交 ⇒ null（恢复面不受影响）。
+   */
+  unavailable_reason: ServingUnavailableReason | null;
   /** 发题时观测到的 admission generation（恢复后激活 CAS 锚点；未知 = null）。 */
   admission_generation_observed: number | null;
   /** 最新 live draft；无 = null（客户端据此恢复 pending 作答 promise）。 */
@@ -672,8 +679,15 @@ export async function getIssuanceState(
         .where(eq(question_revision.revision_id, issuanceRow.revision_id))
         .limit(1)
     : [null];
+  const servingDecisions =
+    submissions.length === 0 && issuanceRow
+      ? await readAutomaticIssuanceServingDecisions(db, [issuanceId])
+      : null;
+  const servingDecision = servingDecisions?.get(issuanceId);
   const practice_dto =
-    issuance != null && revRow != null
+    issuance != null &&
+    revRow != null &&
+    (submissions.length > 0 || servingDecision?.kind === 'admitted')
       ? projectPracticeIssuance(revisionRowToContract(revRow), issuance)
       : null;
 
@@ -707,6 +721,7 @@ export async function getIssuanceState(
   return {
     issuance,
     practice_dto,
+    unavailable_reason: servingDecision?.kind === 'unavailable' ? servingDecision.reason : null,
     admission_generation_observed,
     draft: draftIsLive
       ? {

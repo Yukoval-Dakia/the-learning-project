@@ -22,6 +22,7 @@ import { and, inArray, sql } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { isPoolVisible, notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
 import { event, question } from '@/db/schema';
+import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
 
 // ADR-0030 §1 — by-kind routing class.
 export type RotationClass = 'recall' | 'application';
@@ -198,7 +199,11 @@ export async function prefetchProbeSelection(
       .where(
         and(inArray(question.id, lastQuestionIds), questionSuspendedPredicate(question)),
       )) as QuestionRow[];
-    for (const r of rows) questionRowById.set(r.id, r);
+    const admittedIds = await readAutomaticallyServableQuestionIds(
+      dbHandle,
+      rows.map((row) => row.id),
+    );
+    for (const r of rows) if (admittedIds.has(r.id)) questionRowById.set(r.id, r);
   }
 
   const knowledgeIds = Array.from(new Set(inputs.map((i) => i.knowledgeId)));
@@ -223,8 +228,13 @@ export async function prefetchProbeSelection(
         ),
       )
       .orderBy(question.created_at, question.id)) as QuestionRow[];
+    const admittedIds = await readAutomaticallyServableQuestionIds(
+      dbHandle,
+      rows.map((row) => row.id),
+    );
     const dueKcSet = new Set(knowledgeIds);
     for (const r of rows) {
+      if (!admittedIds.has(r.id)) continue;
       for (const kc of r.knowledge_ids ?? []) {
         if (!dueKcSet.has(kc)) continue;
         const bucket = kcQuestions.get(kc);

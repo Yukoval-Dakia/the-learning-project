@@ -45,6 +45,7 @@ import { effectiveCauseCategoryForFailureAttempt } from '@/kernel/read-models/ca
 // parent-chain walk. Extracted to `@/capabilities/knowledge/server/subject-resolution` (P5.2)
 // so the brief-refresh layer shares the SAME canonical bridge.
 import { batchResolveSubjectIds } from '@/kernel/read-models/subject-resolution';
+import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
 import { type FailureAttempt, getFailureAttempts } from './attempt-events';
 import { SYNTHETIC_SUBJECT_ROOT_RE } from './placement-scope';
 
@@ -97,7 +98,9 @@ async function loadLatestFailureQuestionIds(
   candidateLimit: number,
 ): Promise<string[]> {
   const rows = await getCurrentFailureAttempts(activeDb, { perQuestionLimit: 1 });
-  return [...new Set(rows.map((row) => row.question_id))].slice(0, candidateLimit);
+  const ids = [...new Set(rows.map((row) => row.question_id))];
+  const admittedIds = await readAutomaticallyServableQuestionIds(activeDb, ids);
+  return ids.filter((id) => admittedIds.has(id)).slice(0, candidateLimit);
 }
 
 async function getFailureAttemptsPerQuestion(
@@ -271,7 +274,6 @@ export async function queryReviewDue(
         ),
       )
       .orderBy(material_fsrs_state.due_at, material_fsrs_state.subject_id)
-      .limit(candidateWindow)
   ).filter(
     // YUK-1037 — defense in depth: a 'seed:<subj>:root' FSRS subject is a
     // structural anchor, never probeable content. Enroll sites no longer mint
@@ -311,6 +313,7 @@ export async function queryReviewDue(
       fsrs_subject_kind: 'knowledge',
       fsrs_subject_id: stateRow.knowledge_id,
     });
+    if (dueRows.length === candidateWindow) break;
   }
 
   const legacyQuestionStateRows = await activeDb
@@ -338,10 +341,15 @@ export async function queryReviewDue(
         questionSuspendedPredicate(question),
       ),
     )
-    .orderBy(material_fsrs_state.due_at, question.created_at)
-    .limit(candidateWindow);
-
-  for (const row of legacyQuestionStateRows) {
+    .orderBy(material_fsrs_state.due_at, question.created_at);
+  const admittedLegacyIds = await readAutomaticallyServableQuestionIds(
+    activeDb,
+    legacyQuestionStateRows.map((row) => row.question_id),
+    { includeInterventionDiagnostics: true },
+  );
+  for (const row of legacyQuestionStateRows
+    .filter((row) => admittedLegacyIds.has(row.question_id))
+    .slice(0, candidateWindow)) {
     if (usedDueQuestionIds.has(row.question_id)) continue;
     usedDueQuestionIds.add(row.question_id);
     dueRows.push({
@@ -484,7 +492,11 @@ export async function queryReviewDue(
             questionSuspendedPredicate(question),
           ),
         );
-      const qById = new Map(qRows.map((q) => [q.id, q]));
+      const admittedIds = await readAutomaticallyServableQuestionIds(
+        activeDb,
+        qRows.map((row) => row.id),
+      );
+      const qById = new Map(qRows.filter((q) => admittedIds.has(q.id)).map((q) => [q.id, q]));
       // Preserve attempt order (newest-first from getFailureAttempts).
       for (const qid of trulyNew) {
         const q = qById.get(qid);

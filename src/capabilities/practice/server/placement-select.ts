@@ -27,6 +27,7 @@ import type { Db, Tx } from '@/db/client';
 import { notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
 import { question, question_group_lifecycle } from '@/db/schema';
 import { resolveSubjectKnowledgeIds } from '@/kernel/read-models/knowledge-tree';
+import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
 import { type CandidateInput, collectCandidateSignals } from './candidate-signals';
 import { rotationClassForKind } from './variant-rotation';
 
@@ -169,7 +170,7 @@ export async function selectNextPlacementItem(
           admitted,
         );
 
-  const rows = await db
+  const candidatesRows = await db
     .select({
       id: question.id,
       knowledge_ids: question.knowledge_ids,
@@ -179,12 +180,16 @@ export async function selectNextPlacementItem(
     })
     .from(question)
     .where(whereClause)
-    // ORDER BY id so the LIMIT truncation is DETERMINISTIC: when a subgraph exceeds the cap,
-    // the SAME 200 questions are scanned every replay (keeps the replay-safe pick stable even
-    // at the >200 boundary, not just within a fixed candidate set). id has a primary-key index.
-    .orderBy(question.id)
-    .limit(PLACEMENT_CANDIDATE_LIMIT);
+    .orderBy(question.id);
 
+  const admittedIds = await readAutomaticallyServableQuestionIds(
+    db,
+    candidatesRows.map((row) => row.id),
+  );
+  // Filter before the existing window and information ranking; unsupported rows cannot starve supply.
+  const rows = candidatesRows
+    .filter((row) => admittedIds.has(row.id))
+    .slice(0, PLACEMENT_CANDIDATE_LIMIT);
   if (rows.length === 0) return null;
 
   // refId → its KC set, so the leaning-preference tier can be computed per candidate signal

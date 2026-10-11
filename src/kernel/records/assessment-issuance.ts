@@ -18,9 +18,8 @@
 //     值（判分与学生所见同版）。
 //   - 挂起/撤回（§3.3）：suspended ⇒ 禁止新 issuance（含已选入纸卷但未发出的
 //     槽）；withdrawn 同理。container_only 组必须声明容器 occurrence 引用。
-//   - admission（auto_score 默认）：scoring_admission_state ≠ 'admitted' ⇒
-//     not_admitted —— 未准入题不得作为自动判分练习发出（§7.3；手动练习走
-//     mode='manual'）。
+//   - admission：所有新发题与发题重放都要求准入且自动可判；manual 不绕过。
+//     导入已有学习证据的 capture 走独立来源校验，不代表新发题权限。
 //   - 一次性 claim：claim_policy='one_time' 的组在请求 claim 时原子占用（同
 //     组有 claimed 且未释放的 issuance ⇒ claim_unavailable）；claim 到期/
 //     恢复由 releaseIssuanceClaim（activate.ts）处理，claim 恢复绝不复活被
@@ -37,7 +36,7 @@
 // ====================================================================
 
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 
 // jsonb 会重排对象键序 —— 绑定载荷比对必须用 canonical 串化，否则每次重试
 // 都被误判成 issuance_id_conflict（同 judgment.ts 的幂等口径）。
@@ -46,12 +45,19 @@ import type { PracticeIssuanceDtoT, PublishedQuestionRevisionT } from '@/core/sc
 import {
   type AssessmentIssuanceT,
   type IssuanceBindingT,
+  PublishedQuestionRevision,
+  decideAutomaticServing,
   deriveIssuanceBinding,
   projectPracticeIssuance,
   validateIssuanceBinding,
 } from '@/core/schema/assessment';
+import type {
+  AutomaticServingDecision,
+  ServingUnavailableReason,
+} from '@/core/schema/assessment/serving-admission';
 import { InterventionDiagnosticQuestionMetadata } from '@/core/schema/intervention';
 import type { Db, Tx } from '@/db/client';
+import { notDraftPredicate } from '@/db/predicates';
 import {
   assessment_issuance,
   learning_session,
@@ -103,6 +109,86 @@ export function revisionRowToContract(row: RevisionRow): PublishedQuestionRevisi
     published_at: row.published_at.toISOString(),
     supersedes_revision_id: row.supersedes_revision_id,
   };
+}
+
+/** Current pool capability, using the same part binding as placement/solo issuance. No effects. */
+export async function readAutomaticallyServableQuestionIds(
+  db: Db | Tx,
+  questionIds: readonly string[],
+  options: { includeInterventionDiagnostics?: boolean } = {},
+): Promise<Set<string>> {
+  if (questionIds.length === 0) return new Set();
+  const rows = await db
+    .select({
+      id: question.id,
+      parentId: question.parent_question_id,
+      revision: question_revision,
+    })
+    .from(question)
+    .innerJoin(
+      question_group_lifecycle,
+      eq(
+        question_group_lifecycle.group_id,
+        sql`COALESCE(${question.parent_question_id}, ${question.id})`,
+      ),
+    )
+    .innerJoin(
+      question_revision,
+      and(
+        eq(question_revision.revision_id, question_group_lifecycle.current_revision_id),
+        eq(question_revision.group_id, question_group_lifecycle.group_id),
+      ),
+    )
+    .where(
+      and(
+        inArray(question.id, [...new Set(questionIds)]),
+        notDraftPredicate(question.draft_status),
+        eq(question_group_lifecycle.scoring_admission_state, 'admitted'),
+        eq(question_group_lifecycle.suspended, false),
+        eq(question_group_lifecycle.withdrawn, false),
+        options.includeInterventionDiagnostics
+          ? sql`(${question_group_lifecycle.availability} = 'general_pool' OR ${question.source} = 'intervention_diagnostic')`
+          : eq(question_group_lifecycle.availability, 'general_pool'),
+      ),
+    );
+  const admitted = new Set<string>();
+  for (const row of rows) {
+    const parsed = PublishedQuestionRevision.safeParse(revisionRowToContract(row.revision));
+    if (!parsed.success) continue;
+    const revision = parsed.data;
+    const partIds = row.parentId ? [row.id] : revision.structure.parts.map((part) => part.part_id);
+    if (decideAutomaticServing(revision, partIds).kind === 'admitted') admitted.add(row.id);
+  }
+  return admitted;
+}
+
+/** Recovery checks the immutable issued revision, never the current question version. */
+export async function readAutomaticIssuanceServingDecisions(
+  db: Db | Tx,
+  issuanceIds: readonly string[],
+): Promise<Map<string, AutomaticServingDecision>> {
+  if (issuanceIds.length === 0) return new Map();
+  const rows = await db
+    .select({ issuance: assessment_issuance, revision: question_revision })
+    .from(assessment_issuance)
+    .innerJoin(
+      question_revision,
+      eq(question_revision.revision_id, assessment_issuance.revision_id),
+    )
+    .where(inArray(assessment_issuance.issuance_id, [...new Set(issuanceIds)]));
+  return new Map(
+    rows.map(({ issuance, revision: row }) => {
+      const parsed = PublishedQuestionRevision.safeParse(revisionRowToContract(row));
+      const decision: AutomaticServingDecision = parsed.success
+        ? decideAutomaticServing(parsed.data, issuance.part_ids)
+        : {
+            kind: 'unavailable',
+            reason: 'invalid_scoring_contract',
+            detail: 'invalid frozen revision',
+          };
+      return [issuance.issuance_id, decision];
+    }),
+  );
 }
 
 /** jsonb 键序无关的绑定相等判定（幂等重放的唯一判据 —— claim 不参与）。 */
@@ -170,9 +256,9 @@ export interface IssueAssessmentRequest {
   option_order_overrides?: Record<string, readonly string[]>;
   /**
    * 发题模式：
-   *   - 'auto_score'（默认）：要求 scoring_admission_state='admitted'；
-   *   - 'manual'（D9）：允许未准入组的显式手动/自评练习（仅手动学习效应，
-   *     绝不推断 AI 正确性）—— admission generation 仍原样观测记录。
+   *   - 'auto_score'（默认）：自动判分练习；
+   *   - 'manual'：显式手动/自评学习效应，不推断 AI 正确性。
+   * 两种模式均要求评分准入与自动可判；admission generation 原样观测记录。
    */
   mode?: 'auto_score' | 'manual';
   /**
@@ -210,12 +296,15 @@ export type IssueAssessmentResult =
         | 'revision_mismatch' // 显式指定的 revision 不属于该组
         | 'suspended' // verify/retraction 挂起 ⇒ 禁止新 issuance（§3.3）
         | 'withdrawn'
-        | 'not_admitted' // auto_score 面未获评分准入
+        | 'not_admitted' // 未获评分准入或冻结契约不可自动判分
         | 'container_ref_required' // container_only 缺 occurrence ref
         | 'claim_unavailable' // one_time 组已有未释放 claim
         | 'issuance_id_conflict' // 同 id 不同绑定载荷（不覆盖）
         | 'binding_invalid'; // 绑定与 revision 不一致（unknown part/material/...）
       issues?: string[]; // binding_invalid 时给出具体 issue 列表
+      /** YUK-1445 —— not_admitted 由自动判分 gate 拒绝时的 typed 原因
+       * （公共枚举；诊断 detail 仍只在 issues/message 内部）。 */
+      serving_reason?: ServingUnavailableReason;
     };
 
 // ---------- 编排主体 ----------
@@ -358,7 +447,7 @@ async function issueAssessmentInternal(
       if (request.container_occurrence_ref !== `probe:${root.id}`)
         return { status: 'container_ref_required' };
     }
-    if (!capture && mode === 'auto_score' && lifecycle?.scoring_admission_state !== 'admitted') {
+    if (!capture && lifecycle?.scoring_admission_state !== 'admitted') {
       return { status: 'not_admitted' };
     }
 
@@ -380,6 +469,19 @@ async function issueAssessmentInternal(
         status: 'binding_invalid',
         issues: bindingIssues.map((issue) => `${issue.code}(${issue.detail})`),
       };
+    }
+
+    // Neither manual mode nor a replay authorizes another learner-facing serve
+    // of an unsupported frozen contract. Ingestion capture is a separate receipt.
+    if (!capture) {
+      const decision = decideAutomaticServing(revision, binding.part_ids);
+      if (decision.kind === 'unavailable') {
+        return {
+          status: 'not_admitted',
+          issues: [`${decision.reason}: ${decision.detail}`],
+          serving_reason: decision.reason,
+        };
+      }
     }
 
     // 5) 幂等锚点先行解析（P1-2：issuance_id 重试必须先于 claim 互斥判——
@@ -409,6 +511,13 @@ async function issueAssessmentInternal(
           ),
         };
       }
+    }
+
+    // The group-root lock serializes this recheck with publication/withdrawal.
+    // Historical replay above keeps its immutable revision and held evidence.
+    if (!capture) {
+      if (revisionId !== lifecycle?.current_revision_id) return { status: 'revision_mismatch' };
+      if (lifecycle?.scoring_admission_state !== 'admitted') return { status: 'not_admitted' };
     }
 
     if (root.source === 'intervention_diagnostic') {

@@ -10,6 +10,7 @@ import {
   PracticeIssuanceDto,
   ResponseSet,
 } from '@/core/schema/assessment';
+import { SERVING_UNAVAILABLE_REASONS } from '@/core/schema/assessment/serving-admission';
 
 // ---------- 发题（issueAssessment） ----------
 
@@ -110,6 +111,9 @@ export const IssuanceStateSchema = z.object({
   issuance: AssessmentIssuanceSchema.nullable(),
   /** 恢复快照补回作答期公开 DTO（由 issuance 冻结绑定 + pinned revision 重建）。 */
   practice_dto: PracticeIssuanceDto.nullable(),
+  /** YUK-1445 —— practice_dto 被 serving gate 收回时的 typed 原因（公共枚举；
+   * 诊断 detail 不透出）。有已接收提交 ⇒ null。 */
+  unavailable_reason: z.enum(SERVING_UNAVAILABLE_REASONS).nullable(),
   /** 发题时观测到的 admission generation（恢复后激活 CAS 的锚点；未知 = null）。 */
   admission_generation_observed: z.number().int().nullable(),
   /** 最新 live draft；null = 服务端无未保存草稿（恢复 promise 的真相源）。 */
