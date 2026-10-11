@@ -232,7 +232,9 @@ afterAll(async () => {
   }
   if (cleanupError) throw cleanupError;
 });
-for (const selected of families)
+for (const selected of families) {
+  // @invariant concurrency: cutover and rollback preserve exactly-once receipts across two schedulers and restart
+  // @fails-if remove the producer fence, receipt uniqueness or 60-second drain horizon; late writes or early rollback fail
   it(`observes real ${selected} Timekeeper, mixed phases, native two-scheduler ticks/restart and independent rollback`, async () => {
     family = selected;
     const started = performance.now();
@@ -511,3 +513,4 @@ for (const selected of families)
     await second.stop();
     phase('complete');
   }, 600000);
+}
