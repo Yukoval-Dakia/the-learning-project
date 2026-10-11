@@ -160,6 +160,10 @@ export function nativeSlotFieldSpec(slot: ResponseSlotT): ResponseSlotSpec | nul
       return { kind: 'text' };
     case 'table':
       return null;
+    // ADR-0074 D3a：断句字间点选编辑器归 R10 UI 线；在它落地前本表单如实
+    // 返回 null（无作答控件），不预留假输入。
+    case 'sentence_breaks':
+      return null;
     case 'matching':
       return {
         kind: 'matching',

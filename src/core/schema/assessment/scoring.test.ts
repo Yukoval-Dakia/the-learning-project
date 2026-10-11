@@ -3,9 +3,18 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { type ScoredUnitResultT, aggregateUnitResults } from './judgment';
+import { PracticeIssuanceDto, projectPracticeIssuance } from './dto';
+import { evaluateSubmissionCore } from './evaluation';
+import { type ScoredUnitResultT, type SubmissionRecordT, aggregateUnitResults } from './judgment';
+import { codePointCount } from './position-gap';
 import { ResponseSpec, type ResponseSpecT } from './response';
-import { ScoringBasis, type ScoringBasisT } from './scoring';
+import {
+  AssessmentIssuance,
+  PublishedQuestionRevision,
+  type PublishedQuestionRevisionT,
+  deriveIssuanceBinding,
+} from './revision';
+import { ScoringBasis, type ScoringBasisT, type ScoringUnitCriterionT } from './scoring';
 import { QuestionGroupStructure, type QuestionGroupStructureT } from './structure';
 
 function fixture(): {
@@ -449,5 +458,463 @@ describe('aggregateUnitResults — 总分只聚合一次', () => {
       scored('u_essay', 5, { matched: { level_id: 'full', option_ids: [] } }),
     ]);
     expect(coincidental).toMatchObject({ kind: 'unresolved', reason: 'invalid_result' });
+  });
+});
+
+// ====================================================================
+// ADR-0074 D3a — 配对（matching）与断句（sentence_breaks）确定性判分
+// + 公私边界（键永不入公开 DTO）的不变量测试（fast include）。
+// ====================================================================
+
+function matchingFixture(options?: {
+  rule?: Extract<ScoringUnitCriterionT, { kind: 'matching_pairs_key' }>['rule'];
+}): PublishedQuestionRevisionT {
+  const revision: PublishedQuestionRevisionT = PublishedQuestionRevision.parse({
+    revision_id: 'rev_match_1',
+    group_id: 'grp_match',
+    revision_ordinal: 1,
+    integrity_digest: 'sha256:match',
+    structure: {
+      group_id: 'grp_match',
+      materials: [],
+      parts: [{ part_id: 'p1', prompt_md: '把作家与作品配对。', material_ids: [] }],
+    },
+    response_spec: {
+      slots: [
+        {
+          slot_id: 'm1',
+          part_id: 'p1',
+          kind: 'matching',
+          // 左右刻意不按声明顺序对应 —— 判分只认稳定 id，不认位置。
+          left_items: [
+            { item_id: 'i1', label: 'A', text: '鲁迅' },
+            { item_id: 'i2', label: 'B', text: '沈从文' },
+            { item_id: 'i3', label: 'C', text: '老舍' },
+          ],
+          right_options: [
+            { option_id: 'r1', label: '1', text: '《边城》' },
+            { option_id: 'r2', label: '2', text: '《呐喊》' },
+            { option_id: 'r3', label: '3', text: '《茶馆》' },
+            { option_id: 'r4', label: '4', text: '《围城》（干扰项）' },
+          ],
+          allow_left_unmatched: false,
+          pairing: 'one_to_one',
+          has_distractors: true,
+        },
+      ],
+    },
+    scoring_basis: {
+      units: [
+        {
+          scoring_unit_id: 'u_match',
+          slot_refs: ['m1'],
+          criterion: {
+            kind: 'matching_pairs_key',
+            accepted_pairs: [
+              { item_id: 'i1', option_id: 'r2' },
+              { item_id: 'i2', option_id: 'r1' },
+              { item_id: 'i3', option_id: 'r3' },
+            ],
+            ...(options?.rule ? { rule: options.rule } : {}),
+          },
+          points: 6,
+        },
+      ],
+      aggregation: { kind: 'sum' },
+      blank_scores_zero: false,
+    },
+    execution_plan: {
+      plan_version: 1,
+      assignments: [
+        {
+          scoring_unit_ids: ['u_match'],
+          executor: { kind: 'deterministic', comparator: 'exact_matching_pairs' },
+        },
+      ],
+      escalation: { on_unadmitted_model: 'withhold', on_low_confidence: 'human_review' },
+    },
+    published_at: '2026-10-11T12:00:00.000Z',
+    supersedes_revision_id: null,
+  });
+  return revision;
+}
+
+function breaksFixture(options?: {
+  text?: string;
+  accepted?: number[];
+  rule?: Extract<ScoringUnitCriterionT, { kind: 'position_set_key' }>['rule'];
+}): PublishedQuestionRevisionT {
+  const text = options?.text ?? '学而时习之不亦说乎';
+  const accepted = options?.accepted ?? [2, 5, 8];
+  return PublishedQuestionRevision.parse({
+    revision_id: 'rev_break_1',
+    group_id: 'grp_break',
+    revision_ordinal: 1,
+    integrity_digest: 'sha256:break',
+    structure: {
+      group_id: 'grp_break',
+      materials: [],
+      parts: [{ part_id: 'p1', prompt_md: '用斜线（/）断句。', material_ids: [] }],
+    },
+    response_spec: {
+      slots: [{ slot_id: 's1', part_id: 'p1', kind: 'sentence_breaks', text }],
+    },
+    scoring_basis: {
+      units: [
+        {
+          scoring_unit_id: 'u_break',
+          slot_refs: ['s1'],
+          criterion: {
+            kind: 'position_set_key',
+            accepted_positions: accepted,
+            ...(options?.rule ? { rule: options.rule } : {}),
+          },
+          points: 3,
+        },
+      ],
+      aggregation: { kind: 'sum' },
+      blank_scores_zero: false,
+    },
+    execution_plan: {
+      plan_version: 1,
+      assignments: [
+        {
+          scoring_unit_ids: ['u_break'],
+          executor: { kind: 'deterministic', comparator: 'position_set_rule' },
+        },
+      ],
+      escalation: { on_unadmitted_model: 'withhold', on_low_confidence: 'human_review' },
+    },
+    published_at: '2026-10-11T12:00:00.000Z',
+    supersedes_revision_id: null,
+  });
+}
+
+function submissionFor(
+  revision: PublishedQuestionRevisionT,
+  entries: SubmissionRecordT['response_set']['entries'],
+): SubmissionRecordT {
+  return {
+    submission_id: 'sub_1',
+    issuance_id: 'iss_1',
+    revision_id: revision.revision_id,
+    evaluation_group_id: 'eg_1',
+    response_set: { entries },
+    group_evidence: [],
+    idempotency_key: 'idem-1',
+    submitted_at: '2026-10-11T12:05:00.000Z',
+  };
+}
+
+async function evaluate(
+  revision: PublishedQuestionRevisionT,
+  entries: SubmissionRecordT['response_set']['entries'],
+) {
+  return evaluateSubmissionCore({
+    evaluation_id: 'ev_1',
+    submission: submissionFor(revision, entries),
+    revision,
+    attempt: 1,
+  });
+}
+
+describe('ADR-0074 D3a — matching 配对确定性判分', () => {
+  it('exact set gets full credit regardless of submission order (stable ids, not positions)', async () => {
+    const revision = matchingFixture();
+    // 与键数组顺序完全相反的提交 —— 集合语义，顺序无关。
+    const output = await evaluate(revision, [
+      {
+        slot_id: 'm1',
+        kind: 'matching',
+        pairs: [
+          { item_id: 'i3', option_id: 'r3' },
+          { item_id: 'i2', option_id: 'r1' },
+          { item_id: 'i1', option_id: 'r2' },
+        ],
+      },
+    ]);
+    expect(output.record.unit_results).toEqual([
+      expect.objectContaining({
+        status: 'scored',
+        scoring_unit_id: 'u_match',
+        points_awarded: 6,
+        scored_because: 'response',
+      }),
+    ]);
+    expect(output.record.aggregate).toMatchObject({ kind: 'points_total', points: 6 });
+  });
+
+  it('printed per_correct_pair rule applied exactly: 2/3 correct scores 2×points_per_pair; all-wrong scores 0 by rule', async () => {
+    const rule = { kind: 'per_correct_pair', points_per_pair: 2 } as const;
+    const partial = await evaluate(matchingFixture({ rule }), [
+      {
+        slot_id: 'm1',
+        kind: 'matching',
+        pairs: [
+          { item_id: 'i1', option_id: 'r2' },
+          { item_id: 'i2', option_id: 'r1' },
+          { item_id: 'i3', option_id: 'r4' },
+        ],
+      },
+    ]);
+    expect(partial.record.unit_results[0]).toMatchObject({ status: 'scored', points_awarded: 4 });
+
+    const allWrong = await evaluate(matchingFixture({ rule }), [
+      {
+        slot_id: 'm1',
+        kind: 'matching',
+        pairs: [
+          { item_id: 'i1', option_id: 'r1' },
+          { item_id: 'i2', option_id: 'r3' },
+          { item_id: 'i3', option_id: 'r2' },
+        ],
+      },
+    ]);
+    expect(allWrong.record.unit_results[0]).toMatchObject({
+      status: 'scored',
+      points_awarded: 0,
+    });
+  });
+
+  it('no printed rule: partial records the correct count and stays needs_review with unknown points — never fake 0 nor invented fraction', async () => {
+    const output = await evaluate(matchingFixture(), [
+      {
+        slot_id: 'm1',
+        kind: 'matching',
+        pairs: [
+          { item_id: 'i1', option_id: 'r2' },
+          { item_id: 'i2', option_id: 'r4' },
+          { item_id: 'i3', option_id: 'r3' },
+        ],
+      },
+    ]);
+    const unit = output.record.unit_results[0];
+    expect(unit.status).toBe('pending');
+    if (unit.status === 'pending') {
+      expect(unit.pending.reason).toBe('needs_review');
+      expect(unit.pending.detail).toContain('2/3');
+    }
+    // 聚合如实 unresolved(pending_units)—— 分数未知不造总分。
+    expect(output.record.aggregate).toMatchObject({
+      kind: 'unresolved',
+      reason: 'pending_units',
+    });
+  });
+
+  it('structural violations fail closed: duplicate left item, foreign option id, one_to_one duplicate right option', async () => {
+    const revision = matchingFixture();
+    await expect(
+      evaluate(revision, [
+        {
+          slot_id: 'm1',
+          kind: 'matching',
+          pairs: [
+            { item_id: 'i1', option_id: 'r2' },
+            { item_id: 'i1', option_id: 'r3' },
+          ],
+        },
+      ]),
+    ).rejects.toMatchObject({ code: 'invalid_response_set' });
+
+    await expect(
+      evaluate(revision, [
+        {
+          slot_id: 'm1',
+          kind: 'matching',
+          pairs: [{ item_id: 'i1', option_id: 'r999' }],
+        },
+      ]),
+    ).rejects.toMatchObject({ code: 'invalid_response_set' });
+
+    await expect(
+      evaluate(revision, [
+        {
+          slot_id: 'm1',
+          kind: 'matching',
+          pairs: [
+            { item_id: 'i1', option_id: 'r2' },
+            { item_id: 'i2', option_id: 'r2' },
+          ],
+        },
+      ]),
+    ).rejects.toMatchObject({ code: 'invalid_response_set' });
+  });
+
+  it('no attempt stays missing_response; active blank with blank_scores_zero=false stays needs_review (no fake zero)', async () => {
+    const revision = matchingFixture(); // blank_scores_zero: false
+    const missing = await evaluate(revision, []);
+    expect(missing.record.unit_results[0]).toMatchObject({
+      status: 'pending',
+      pending: { reason: 'missing_response' },
+    });
+
+    const blank = await evaluate(revision, [{ slot_id: 'm1', kind: 'matching', pairs: [] }]);
+    expect(blank.record.unit_results[0]).toMatchObject({
+      status: 'pending',
+      pending: { reason: 'needs_review' },
+    });
+  });
+});
+
+describe('ADR-0074 D3a — sentence_breaks 断句确定性判分', () => {
+  it('positions count Unicode code points (surrogate pair = one character); reference set scores full credit', async () => {
+    const text = '甲乙𝄞丙丁';
+    expect(text.length).toBe(6); // UTF-16 code units
+    expect(codePointCount(text)).toBe(5); // code points —— 断句索引语义
+    // 字缝 3 = 𝄞 与丙 之间（code point 计）；UTF-16 计数会把它错位成 3 与 4 之间。
+    const withRule = breaksFixture({
+      text,
+      accepted: [2, 4],
+      rule: { kind: 'per_correct_break', points_per_break: 1.5, max_breaks: 2 },
+    });
+    const output = await evaluate(withRule, [
+      { slot_id: 's1', kind: 'sentence_breaks', positions: [4, 2] },
+    ]);
+    expect(output.record.unit_results[0]).toMatchObject({
+      status: 'scored',
+      points_awarded: 3,
+    });
+  });
+
+  it('printed 超N处0分 rule: over-marking beyond max_breaks scores zero even with every accepted break present', async () => {
+    const revision = breaksFixture({
+      accepted: [2, 5, 8],
+      rule: { kind: 'per_correct_break', points_per_break: 1, max_breaks: 3 },
+    });
+    const output = await evaluate(revision, [
+      { slot_id: 's1', kind: 'sentence_breaks', positions: [2, 5, 8, 7] },
+    ]);
+    expect(output.record.unit_results[0]).toMatchObject({
+      status: 'scored',
+      points_awarded: 0,
+      feedback_md: 'rule_max_breaks_exceeded',
+    });
+  });
+
+  it('misplaced breaks: rule scores per correct break only; without a rule partial stays needs_review with unknown points', async () => {
+    const rule = { kind: 'per_correct_break', points_per_break: 1, max_breaks: 5 } as const;
+    // 同样断 3 处、全部错位 —— 规则判定 0 对 ⇒ 0 分（规则定义，非伪零）。
+    const misplaced = await evaluate(breaksFixture({ rule }), [
+      { slot_id: 's1', kind: 'sentence_breaks', positions: [3, 6, 7] },
+    ]);
+    expect(misplaced.record.unit_results[0]).toMatchObject({
+      status: 'scored',
+      points_awarded: 0,
+    });
+    // 2 处正确 1 处错位 ⇒ 2 分。
+    const partial = await evaluate(breaksFixture({ rule }), [
+      { slot_id: 's1', kind: 'sentence_breaks', positions: [2, 6, 8] },
+    ]);
+    expect(partial.record.unit_results[0]).toMatchObject({
+      status: 'scored',
+      points_awarded: 2,
+    });
+    // 无规则：记 2/3 对、分数未知 —— 绝不伪零也不造分。
+    const unknown = await evaluate(breaksFixture(), [
+      { slot_id: 's1', kind: 'sentence_breaks', positions: [2, 6, 8] },
+    ]);
+    const unit = unknown.record.unit_results[0];
+    expect(unit.status).toBe('pending');
+    if (unit.status === 'pending') {
+      expect(unit.pending.reason).toBe('needs_review');
+      expect(unit.pending.detail).toContain('2/3');
+    }
+    expect(unknown.record.aggregate).toMatchObject({
+      kind: 'unresolved',
+      reason: 'pending_units',
+    });
+  });
+
+  it('out-of-range (text start/end, beyond), duplicate positions, and blanks are explicit — never silently clamped', async () => {
+    const revision = breaksFixture(); // text 10 chars, valid interior gaps 1..9
+    for (const positions of [[0], [10], [99], [2, 2]]) {
+      await expect(
+        evaluate(revision, [{ slot_id: 's1', kind: 'sentence_breaks', positions }]),
+      ).rejects.toMatchObject({ code: 'invalid_response_set' });
+    }
+    const missing = await evaluate(revision, []);
+    expect(missing.record.unit_results[0]).toMatchObject({
+      status: 'pending',
+      pending: { reason: 'missing_response' },
+    });
+    const blank = await evaluate(revision, [
+      { slot_id: 's1', kind: 'sentence_breaks', positions: [] },
+    ]);
+    expect(blank.record.unit_results[0]).toMatchObject({
+      status: 'pending',
+      pending: { reason: 'needs_review' },
+    });
+  });
+});
+
+describe('ADR-0074 D3a — 键永不入公开 DTO（公私边界）', () => {
+  it('projectPracticeIssuance carries the frozen text but no criterion/key material; strict schema rejects injected private fields', () => {
+    const matching = matchingFixture();
+    const revision: PublishedQuestionRevisionT = PublishedQuestionRevision.parse({
+      ...matching,
+      response_spec: {
+        slots: [
+          ...matching.response_spec.slots,
+          {
+            slot_id: 's1',
+            part_id: 'p1',
+            kind: 'sentence_breaks',
+            text: '学而时习之不亦说乎',
+          },
+        ],
+      },
+      scoring_basis: {
+        units: [
+          ...matching.scoring_basis.units,
+          {
+            scoring_unit_id: 'u_break',
+            slot_refs: ['s1'],
+            criterion: {
+              kind: 'position_set_key',
+              accepted_positions: [2, 5, 8],
+              rule: { kind: 'per_correct_break', points_per_break: 1, max_breaks: 3 },
+            },
+            points: 3,
+          },
+        ],
+        aggregation: { kind: 'sum' },
+        blank_scores_zero: false,
+      },
+      execution_plan: {
+        plan_version: 1,
+        assignments: [
+          {
+            scoring_unit_ids: ['u_match'],
+            executor: { kind: 'deterministic', comparator: 'exact_matching_pairs' },
+          },
+          {
+            scoring_unit_ids: ['u_break'],
+            executor: { kind: 'deterministic', comparator: 'position_set_rule' },
+          },
+        ],
+        escalation: { on_unadmitted_model: 'withhold', on_low_confidence: 'human_review' },
+      },
+    });
+    const issuance = AssessmentIssuance.parse({
+      issuance_id: 'iss_1',
+      binding: deriveIssuanceBinding(revision),
+      issued_at: '2026-10-11T12:00:00.000Z',
+      claim: { policy: 'one_time', status: 'unclaimed', claimed_by_ref: null },
+    });
+    const dto = projectPracticeIssuance(revision, issuance);
+    // 公开面有作答契约与冻结明文……
+    const serialized = JSON.stringify(dto);
+    // ……但没有任何键材料或题级规则（判据只在私有 scoring_basis 里）。
+    expect(serialized).not.toContain('accepted_positions');
+    expect(serialized).not.toContain('accepted_pairs');
+    expect(serialized).not.toContain('points_per_break');
+    expect(serialized).not.toContain('points_per_pair');
+    expect(serialized).not.toContain('scoring_basis');
+    // strictObject：向公开 DTO 注入私有字段直接 parse 失败 —— 边界是 schema 契约。
+    const injected = PracticeIssuanceDto.safeParse({
+      ...dto,
+      scoring_basis: revision.scoring_basis,
+    });
+    expect(injected.success).toBe(false);
   });
 });

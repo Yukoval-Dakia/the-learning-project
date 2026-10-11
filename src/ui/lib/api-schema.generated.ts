@@ -9455,6 +9455,13 @@ export interface operations {
                                 slot_id: string;
                                 /** @default  */
                                 text_md?: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "sentence_breaks";
+                                /** @default [] */
+                                positions?: number[];
+                                self_confidence?: number;
+                                slot_id: string;
                             })[];
                         };
                         submission_id?: string;
@@ -9648,6 +9655,13 @@ export interface operations {
                                 slot_id: string;
                                 /** @default  */
                                 text_md?: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "sentence_breaks";
+                                /** @default [] */
+                                positions?: number[];
+                                self_confidence?: number;
+                                slot_id: string;
                             })[];
                         };
                         submission_id?: string;
@@ -9841,6 +9855,13 @@ export interface operations {
                                 slot_id: string;
                                 /** @default  */
                                 text_md?: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "sentence_breaks";
+                                /** @default [] */
+                                positions?: number[];
+                                self_confidence?: number;
+                                slot_id: string;
                             })[];
                         };
                         submission_id?: string;
@@ -10477,6 +10498,13 @@ export interface operations {
                                     slot_id: string;
                                     /** @default  */
                                     text_md?: string;
+                                } | {
+                                    /** @enum {string} */
+                                    kind: "sentence_breaks";
+                                    /** @default [] */
+                                    positions?: number[];
+                                    self_confidence?: number;
+                                    slot_id: string;
                                 })[];
                             };
                             submission_id?: string;
@@ -15704,6 +15732,7 @@ export interface operations {
                                 } | {
                                     /** @default false */
                                     allow_left_unmatched: boolean;
+                                    has_distractors?: boolean;
                                     /** @enum {string} */
                                     kind: "matching";
                                     left_items: {
@@ -15711,6 +15740,8 @@ export interface operations {
                                         label: string;
                                         text: string;
                                     }[];
+                                    /** @enum {string} */
+                                    pairing?: "one_to_one" | "many_to_one";
                                     part_id: string;
                                     placement?: {
                                         col?: number;
@@ -15759,6 +15790,17 @@ export interface operations {
                                         row?: number;
                                     };
                                     slot_id: string;
+                                } | {
+                                    /** @enum {string} */
+                                    kind: "sentence_breaks";
+                                    part_id: string;
+                                    placement?: {
+                                        col?: number;
+                                        label?: string;
+                                        row?: number;
+                                    };
+                                    slot_id: string;
+                                    text: string;
                                 })[];
                             };
                             revision_id: string;
@@ -15915,6 +15957,7 @@ export interface operations {
                                 } | {
                                     /** @default false */
                                     allow_left_unmatched: boolean;
+                                    has_distractors?: boolean;
                                     /** @enum {string} */
                                     kind: "matching";
                                     left_items: {
@@ -15922,6 +15965,8 @@ export interface operations {
                                         label: string;
                                         text: string;
                                     }[];
+                                    /** @enum {string} */
+                                    pairing?: "one_to_one" | "many_to_one";
                                     part_id: string;
                                     placement?: {
                                         col?: number;
@@ -15970,6 +16015,17 @@ export interface operations {
                                         row?: number;
                                     };
                                     slot_id: string;
+                                } | {
+                                    /** @enum {string} */
+                                    kind: "sentence_breaks";
+                                    part_id: string;
+                                    placement?: {
+                                        col?: number;
+                                        label?: string;
+                                        row?: number;
+                                    };
+                                    slot_id: string;
+                                    text: string;
                                 })[];
                             };
                             revision_id: string;
@@ -16189,6 +16245,13 @@ export interface operations {
                                     slot_id: string;
                                     /** @default  */
                                     text_md: string;
+                                } | {
+                                    /** @enum {string} */
+                                    kind: "sentence_breaks";
+                                    /** @default [] */
+                                    positions: number[];
+                                    self_confidence?: number;
+                                    slot_id: string;
                                 })[];
                             };
                             save_epoch: number;
@@ -16333,6 +16396,7 @@ export interface operations {
                                 } | {
                                     /** @default false */
                                     allow_left_unmatched: boolean;
+                                    has_distractors?: boolean;
                                     /** @enum {string} */
                                     kind: "matching";
                                     left_items: {
@@ -16340,6 +16404,8 @@ export interface operations {
                                         label: string;
                                         text: string;
                                     }[];
+                                    /** @enum {string} */
+                                    pairing?: "one_to_one" | "many_to_one";
                                     part_id: string;
                                     placement?: {
                                         col?: number;
@@ -16388,6 +16454,17 @@ export interface operations {
                                         row?: number;
                                     };
                                     slot_id: string;
+                                } | {
+                                    /** @enum {string} */
+                                    kind: "sentence_breaks";
+                                    part_id: string;
+                                    placement?: {
+                                        col?: number;
+                                        label?: string;
+                                        row?: number;
+                                    };
+                                    slot_id: string;
+                                    text: string;
                                 })[];
                             };
                             revision_id: string;
@@ -16484,6 +16561,13 @@ export interface operations {
                                     slot_id: string;
                                     /** @default  */
                                     text_md: string;
+                                } | {
+                                    /** @enum {string} */
+                                    kind: "sentence_breaks";
+                                    /** @default [] */
+                                    positions: number[];
+                                    self_confidence?: number;
+                                    slot_id: string;
                                 })[];
                             };
                             submission_id: string;
@@ -16820,6 +16904,13 @@ export interface operations {
                             slot_id: string;
                             /** @default  */
                             text_md?: string;
+                        } | {
+                            /** @enum {string} */
+                            kind: "sentence_breaks";
+                            /** @default [] */
+                            positions?: number[];
+                            self_confidence?: number;
+                            slot_id: string;
                         })[];
                     };
                 };
@@ -20498,6 +20589,7 @@ export interface operations {
                                             } | {
                                                 /** @default false */
                                                 allow_left_unmatched: boolean;
+                                                has_distractors?: boolean;
                                                 /** @enum {string} */
                                                 kind: "matching";
                                                 left_items: {
@@ -20505,6 +20597,8 @@ export interface operations {
                                                     label: string;
                                                     text: string;
                                                 }[];
+                                                /** @enum {string} */
+                                                pairing?: "one_to_one" | "many_to_one";
                                                 part_id: string;
                                                 placement?: {
                                                     col?: number;
@@ -20553,6 +20647,17 @@ export interface operations {
                                                     row?: number;
                                                 };
                                                 slot_id: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "sentence_breaks";
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                slot_id: string;
+                                                text: string;
                                             })[];
                                         };
                                         revision_id: string;
@@ -20623,6 +20728,13 @@ export interface operations {
                                             slot_id: string;
                                             /** @default  */
                                             text_md: string;
+                                        } | {
+                                            /** @enum {string} */
+                                            kind: "sentence_breaks";
+                                            /** @default [] */
+                                            positions: number[];
+                                            self_confidence?: number;
+                                            slot_id: string;
                                         })[];
                                     };
                                     save_epoch: number;
@@ -20922,6 +21034,13 @@ export interface operations {
                                                 slot_id: string;
                                                 /** @default  */
                                                 text_md: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "sentence_breaks";
+                                                /** @default [] */
+                                                positions: number[];
+                                                self_confidence?: number;
+                                                slot_id: string;
                                             })[];
                                         };
                                         save_epoch: number;
@@ -21066,6 +21185,7 @@ export interface operations {
                                             } | {
                                                 /** @default false */
                                                 allow_left_unmatched: boolean;
+                                                has_distractors?: boolean;
                                                 /** @enum {string} */
                                                 kind: "matching";
                                                 left_items: {
@@ -21073,6 +21193,8 @@ export interface operations {
                                                     label: string;
                                                     text: string;
                                                 }[];
+                                                /** @enum {string} */
+                                                pairing?: "one_to_one" | "many_to_one";
                                                 part_id: string;
                                                 placement?: {
                                                     col?: number;
@@ -21121,6 +21243,17 @@ export interface operations {
                                                     row?: number;
                                                 };
                                                 slot_id: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "sentence_breaks";
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                slot_id: string;
+                                                text: string;
                                             })[];
                                         };
                                         revision_id: string;
@@ -21217,6 +21350,13 @@ export interface operations {
                                                 slot_id: string;
                                                 /** @default  */
                                                 text_md: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "sentence_breaks";
+                                                /** @default [] */
+                                                positions: number[];
+                                                self_confidence?: number;
+                                                slot_id: string;
                                             })[];
                                         };
                                         submission_id: string;
@@ -22050,6 +22190,13 @@ export interface operations {
                                                 slot_id: string;
                                                 /** @default  */
                                                 text_md: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "sentence_breaks";
+                                                /** @default [] */
+                                                positions: number[];
+                                                self_confidence?: number;
+                                                slot_id: string;
                                             })[];
                                         };
                                         save_epoch: number;
@@ -22194,6 +22341,7 @@ export interface operations {
                                             } | {
                                                 /** @default false */
                                                 allow_left_unmatched: boolean;
+                                                has_distractors?: boolean;
                                                 /** @enum {string} */
                                                 kind: "matching";
                                                 left_items: {
@@ -22201,6 +22349,8 @@ export interface operations {
                                                     label: string;
                                                     text: string;
                                                 }[];
+                                                /** @enum {string} */
+                                                pairing?: "one_to_one" | "many_to_one";
                                                 part_id: string;
                                                 placement?: {
                                                     col?: number;
@@ -22249,6 +22399,17 @@ export interface operations {
                                                     row?: number;
                                                 };
                                                 slot_id: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "sentence_breaks";
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                slot_id: string;
+                                                text: string;
                                             })[];
                                         };
                                         revision_id: string;
@@ -22345,6 +22506,13 @@ export interface operations {
                                                 slot_id: string;
                                                 /** @default  */
                                                 text_md: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "sentence_breaks";
+                                                /** @default [] */
+                                                positions: number[];
+                                                self_confidence?: number;
+                                                slot_id: string;
                                             })[];
                                         };
                                         submission_id: string;
@@ -22940,6 +23108,13 @@ export interface operations {
                                                 slot_id: string;
                                                 /** @default  */
                                                 text_md: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "sentence_breaks";
+                                                /** @default [] */
+                                                positions: number[];
+                                                self_confidence?: number;
+                                                slot_id: string;
                                             })[];
                                         };
                                         save_epoch: number;
@@ -23084,6 +23259,7 @@ export interface operations {
                                             } | {
                                                 /** @default false */
                                                 allow_left_unmatched: boolean;
+                                                has_distractors?: boolean;
                                                 /** @enum {string} */
                                                 kind: "matching";
                                                 left_items: {
@@ -23091,6 +23267,8 @@ export interface operations {
                                                     label: string;
                                                     text: string;
                                                 }[];
+                                                /** @enum {string} */
+                                                pairing?: "one_to_one" | "many_to_one";
                                                 part_id: string;
                                                 placement?: {
                                                     col?: number;
@@ -23139,6 +23317,17 @@ export interface operations {
                                                     row?: number;
                                                 };
                                                 slot_id: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "sentence_breaks";
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                slot_id: string;
+                                                text: string;
                                             })[];
                                         };
                                         revision_id: string;
@@ -23235,6 +23424,13 @@ export interface operations {
                                                 slot_id: string;
                                                 /** @default  */
                                                 text_md: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "sentence_breaks";
+                                                /** @default [] */
+                                                positions: number[];
+                                                self_confidence?: number;
+                                                slot_id: string;
                                             })[];
                                         };
                                         submission_id: string;
@@ -23793,6 +23989,13 @@ export interface operations {
                                                 slot_id: string;
                                                 /** @default  */
                                                 text_md: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "sentence_breaks";
+                                                /** @default [] */
+                                                positions: number[];
+                                                self_confidence?: number;
+                                                slot_id: string;
                                             })[];
                                         };
                                         save_epoch: number;
@@ -23937,6 +24140,7 @@ export interface operations {
                                             } | {
                                                 /** @default false */
                                                 allow_left_unmatched: boolean;
+                                                has_distractors?: boolean;
                                                 /** @enum {string} */
                                                 kind: "matching";
                                                 left_items: {
@@ -23944,6 +24148,8 @@ export interface operations {
                                                     label: string;
                                                     text: string;
                                                 }[];
+                                                /** @enum {string} */
+                                                pairing?: "one_to_one" | "many_to_one";
                                                 part_id: string;
                                                 placement?: {
                                                     col?: number;
@@ -23992,6 +24198,17 @@ export interface operations {
                                                     row?: number;
                                                 };
                                                 slot_id: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "sentence_breaks";
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                slot_id: string;
+                                                text: string;
                                             })[];
                                         };
                                         revision_id: string;
@@ -24088,6 +24305,13 @@ export interface operations {
                                                 slot_id: string;
                                                 /** @default  */
                                                 text_md: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "sentence_breaks";
+                                                /** @default [] */
+                                                positions: number[];
+                                                self_confidence?: number;
+                                                slot_id: string;
                                             })[];
                                         };
                                         submission_id: string;
@@ -24776,6 +25000,7 @@ export interface operations {
                                             } | {
                                                 /** @default false */
                                                 allow_left_unmatched: boolean;
+                                                has_distractors?: boolean;
                                                 /** @enum {string} */
                                                 kind: "matching";
                                                 left_items: {
@@ -24783,6 +25008,8 @@ export interface operations {
                                                     label: string;
                                                     text: string;
                                                 }[];
+                                                /** @enum {string} */
+                                                pairing?: "one_to_one" | "many_to_one";
                                                 part_id: string;
                                                 placement?: {
                                                     col?: number;
@@ -24831,6 +25058,17 @@ export interface operations {
                                                     row?: number;
                                                 };
                                                 slot_id: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "sentence_breaks";
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                slot_id: string;
+                                                text: string;
                                             })[];
                                         };
                                         revision_id: string;
@@ -24901,6 +25139,13 @@ export interface operations {
                                             slot_id: string;
                                             /** @default  */
                                             text_md: string;
+                                        } | {
+                                            /** @enum {string} */
+                                            kind: "sentence_breaks";
+                                            /** @default [] */
+                                            positions: number[];
+                                            self_confidence?: number;
+                                            slot_id: string;
                                         })[];
                                     };
                                     save_epoch: number;
@@ -25174,6 +25419,13 @@ export interface operations {
                                 slot_id: string;
                                 /** @default  */
                                 text_md?: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "sentence_breaks";
+                                /** @default [] */
+                                positions?: number[];
+                                self_confidence?: number;
+                                slot_id: string;
                             })[];
                         };
                         submission_id?: string;
@@ -25415,6 +25667,13 @@ export interface operations {
                                 slot_id: string;
                                 /** @default  */
                                 text_md?: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "sentence_breaks";
+                                /** @default [] */
+                                positions?: number[];
+                                self_confidence?: number;
+                                slot_id: string;
                             })[];
                         };
                         submission_id?: string;
@@ -31445,6 +31704,13 @@ export interface operations {
                                 slot_id: string;
                                 /** @default  */
                                 text_md?: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "sentence_breaks";
+                                /** @default [] */
+                                positions?: number[];
+                                self_confidence?: number;
+                                slot_id: string;
                             })[];
                         };
                         submission_id?: string;
@@ -32264,6 +32530,13 @@ export interface operations {
                                 slot_id: string;
                                 /** @default  */
                                 text_md?: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "sentence_breaks";
+                                /** @default [] */
+                                positions?: number[];
+                                self_confidence?: number;
+                                slot_id: string;
                             })[];
                         };
                         submission_id?: string;
@@ -32653,6 +32926,13 @@ export interface operations {
                                 slot_id: string;
                                 /** @default  */
                                 text_md?: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "sentence_breaks";
+                                /** @default [] */
+                                positions?: number[];
+                                self_confidence?: number;
+                                slot_id: string;
                             })[];
                         };
                         submission_id?: string;
@@ -32911,6 +33191,13 @@ export interface operations {
                                 slot_id: string;
                                 /** @default  */
                                 text_md?: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "sentence_breaks";
+                                /** @default [] */
+                                positions?: number[];
+                                self_confidence?: number;
+                                slot_id: string;
                             })[];
                         };
                         submission_id?: string;
@@ -34697,6 +34984,13 @@ export interface operations {
                                 slot_id: string;
                                 /** @default  */
                                 text_md?: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "sentence_breaks";
+                                /** @default [] */
+                                positions?: number[];
+                                self_confidence?: number;
+                                slot_id: string;
                             })[];
                         };
                         submission_id?: string;
@@ -34890,6 +35184,13 @@ export interface operations {
                                 slot_id: string;
                                 /** @default  */
                                 text_md?: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "sentence_breaks";
+                                /** @default [] */
+                                positions?: number[];
+                                self_confidence?: number;
+                                slot_id: string;
                             })[];
                         };
                         submission_id?: string;
@@ -35083,6 +35384,13 @@ export interface operations {
                                 slot_id: string;
                                 /** @default  */
                                 text_md?: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "sentence_breaks";
+                                /** @default [] */
+                                positions?: number[];
+                                self_confidence?: number;
+                                slot_id: string;
                             })[];
                         };
                         submission_id?: string;
@@ -36107,6 +36415,13 @@ export interface operations {
                                 slot_id: string;
                                 /** @default  */
                                 text_md?: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "sentence_breaks";
+                                /** @default [] */
+                                positions?: number[];
+                                self_confidence?: number;
+                                slot_id: string;
                             })[];
                         };
                         submission_id?: string;
@@ -36479,6 +36794,13 @@ export interface operations {
                             slot_id: string;
                             /** @default  */
                             text_md?: string;
+                        } | {
+                            /** @enum {string} */
+                            kind: "sentence_breaks";
+                            /** @default [] */
+                            positions?: number[];
+                            self_confidence?: number;
+                            slot_id: string;
                         })[];
                     };
                     submission_id?: string;
@@ -36590,6 +36912,13 @@ export interface operations {
                                     slot_id: string;
                                     /** @default  */
                                     text_md: string;
+                                } | {
+                                    /** @enum {string} */
+                                    kind: "sentence_breaks";
+                                    /** @default [] */
+                                    positions: number[];
+                                    self_confidence?: number;
+                                    slot_id: string;
                                 })[];
                             };
                             revision_id: string;
@@ -36703,6 +37032,13 @@ export interface operations {
                                     slot_id: string;
                                     /** @default  */
                                     text_md: string;
+                                } | {
+                                    /** @enum {string} */
+                                    kind: "sentence_breaks";
+                                    /** @default [] */
+                                    positions: number[];
+                                    self_confidence?: number;
+                                    slot_id: string;
                                 })[];
                             };
                             revision_id: string;

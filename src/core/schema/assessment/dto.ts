@@ -247,6 +247,11 @@ export const RevealedAnswerKey = z.discriminatedUnion('criterion_kind', [
   }),
   z.object({
     scoring_unit_id: z.string().min(1),
+    criterion_kind: z.literal('position_set_key'),
+    accepted_positions: z.array(z.number().int().min(1)),
+  }),
+  z.object({
+    scoring_unit_id: z.string().min(1),
     criterion_kind: z.literal('text_key'),
     accepted_texts: z.array(z.string().min(1)),
   }),
@@ -327,6 +332,14 @@ function revealAnswerKey(
         scoring_unit_id: unit.scoring_unit_id,
         criterion_kind: 'matching_pairs_key',
         accepted_pairs: criterion.accepted_pairs,
+      };
+    case 'position_set_key':
+      // ADR-0074 D3a：只揭示键值（接受断点）；题级计分规则是 marking 政策，
+      // 与配对/选项键同律不随键面揭示。
+      return {
+        scoring_unit_id: unit.scoring_unit_id,
+        criterion_kind: 'position_set_key',
+        accepted_positions: criterion.accepted_positions,
       };
     case 'text_key':
       return {

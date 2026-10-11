@@ -442,16 +442,95 @@ async function runDeterministicComparator(
       const accepted = new Map(
         unit.criterion.accepted_pairs.map((pair) => [pair.item_id, pair.option_id] as const),
       );
+      // 全对 = 集合比较，与提交顺序无关（稳定 id 语义，ADR-0074 D3a）。
       const hit =
         entry.pairs.length === accepted.size &&
         entry.pairs.every((pair) => accepted.get(pair.item_id) === pair.option_id);
-      return {
-        status: 'scored',
-        scoring_unit_id: unit.scoring_unit_id,
-        points_awarded: hit ? full : 0,
-        scored_because: 'response',
-        evidence_citations: [{ slot_id: entry.slot_id }],
-      };
+      if (hit) {
+        return {
+          status: 'scored',
+          scoring_unit_id: unit.scoring_unit_id,
+          points_awarded: full,
+          scored_because: 'response',
+          evidence_citations: [{ slot_id: entry.slot_id }],
+        };
+      }
+      const correctPairs = entry.pairs.filter(
+        (pair) => accepted.get(pair.item_id) === pair.option_id,
+      );
+      // 卷面印了 typed 规则 ⇒ 按规则恰好执行（不发明权重/封顶）。
+      const rule = unit.criterion.rule;
+      if (rule?.kind === 'per_correct_pair') {
+        return {
+          status: 'scored',
+          scoring_unit_id: unit.scoring_unit_id,
+          points_awarded: correctPairs.length * rule.points_per_pair,
+          scored_because: 'response',
+          matched: { option_ids: correctPairs.map((pair) => pair.option_id) },
+          evidence_citations: [{ slot_id: entry.slot_id }],
+        };
+      }
+      // 无印规则：记对数、partial、分数未知 —— 与多选无错子集同政策，
+      // 绝不伪零分也不造分（ADR-0074 D3a；typed 承载归判分记录扩展，另行 lane）。
+      return withUnit(
+        pending({
+          reason: 'needs_review',
+          trigger: 'flagged',
+          detail: `matching partial without printed rule: ${correctPairs.length}/${accepted.size} pairs correct — points unknown (no fabricated score)`,
+        }),
+        unit.scoring_unit_id,
+      );
+    }
+    case 'position_set_rule': {
+      if (entry.kind !== 'sentence_breaks' || unit.criterion.kind !== 'position_set_key') {
+        return unjudgeableMismatch(unit, 'slot/entry kind mismatch for position_set_key');
+      }
+      // 集合比较：位置语义已在 validateResponseSet 结构拦下（内部字缝、
+      // 无重复），此处只比集合与题级规则（ADR-0074 D3a 断句）。
+      const acceptedSet = new Set(unit.criterion.accepted_positions);
+      const exact =
+        entry.positions.length === acceptedSet.size &&
+        entry.positions.every((position) => acceptedSet.has(position));
+      if (exact) {
+        return {
+          status: 'scored',
+          scoring_unit_id: unit.scoring_unit_id,
+          points_awarded: full,
+          scored_because: 'response',
+          evidence_citations: [{ slot_id: entry.slot_id }],
+        };
+      }
+      const rule = unit.criterion.rule;
+      const correctCount = entry.positions.filter((position) => acceptedSet.has(position)).length;
+      if (rule?.kind === 'per_correct_break') {
+        // 印刷「超 N 处 0 分」：作答断点数超过 N ⇒ 整题 0 分，先于逐处计分。
+        if (entry.positions.length > rule.max_breaks) {
+          return {
+            status: 'scored',
+            scoring_unit_id: unit.scoring_unit_id,
+            points_awarded: 0,
+            scored_because: 'response',
+            feedback_md: 'rule_max_breaks_exceeded',
+            evidence_citations: [{ slot_id: entry.slot_id }],
+          };
+        }
+        return {
+          status: 'scored',
+          scoring_unit_id: unit.scoring_unit_id,
+          points_awarded: correctCount * rule.points_per_break,
+          scored_because: 'response',
+          evidence_citations: [{ slot_id: entry.slot_id }],
+        };
+      }
+      // 无印规则：记对数、partial、分数未知 —— 绝不伪零分（同配对无规则分支）。
+      return withUnit(
+        pending({
+          reason: 'needs_review',
+          trigger: 'flagged',
+          detail: `sentence_breaks partial without printed rule: ${correctCount}/${acceptedSet.size} breaks correct — points unknown (no fabricated score)`,
+        }),
+        unit.scoring_unit_id,
+      );
     }
   }
 }
