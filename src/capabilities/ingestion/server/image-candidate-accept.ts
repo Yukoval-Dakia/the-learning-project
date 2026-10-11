@@ -153,41 +153,111 @@ const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10 MB
 
 type LookupFn = typeof lookup;
 
+// YUK-1404 — typed, learner-safe source-fetch failure contract for image_candidate accept.
+//
+// The proposal's source_url is AI-written (TEST evidence: real jyeoo /shiti/{id} PAGE
+// links), so the old messages interpolated the raw host / resolved IP / full URL straight
+// into the client response. The vocabulary below is serialized through ApiError `details`
+// ({ reason, next_step }) for UI mapping while `message` stays generic and actionable;
+// the exact raw detail goes to server logs ONLY. Codes and HTTP statuses are preserved
+// verbatim from the pre-YUK-1404 guard (400 validation_error for non-public destinations,
+// 422 extraction_failed for resolution/download failures, 422 unsupported_media_type for
+// non-image payloads) — the SSRF validation/pinning/redirect/size/timing behavior is
+// UNCHANGED; only the error surface was retyped.
+export type ImageCandidateSourceFailureReason =
+  | 'source_host_nonpublic'
+  | 'source_dns_lookup_failed'
+  | 'source_dns_no_addresses'
+  | 'source_fetch_failed'
+  | 'source_not_an_image';
+
+const SOURCE_FAILURE_CONTRACT = {
+  source_host_nonpublic: { code: 'validation_error', status: 400 },
+  source_dns_lookup_failed: { code: 'extraction_failed', status: 422 },
+  source_dns_no_addresses: { code: 'extraction_failed', status: 422 },
+  source_fetch_failed: { code: 'extraction_failed', status: 422 },
+  source_not_an_image: { code: 'unsupported_media_type', status: 422 },
+} as const satisfies Record<ImageCandidateSourceFailureReason, { code: string; status: number }>;
+
+const SOURCE_FAILURE_MESSAGES = {
+  source_host_nonpublic:
+    '这张图暂时取不到。请换用公开的图片链接，或直接上传图片；现有题目不受影响。',
+  source_dns_lookup_failed:
+    '这张图暂时取不到（来源网站连不上）。请稍后重试，或直接上传图片；现有题目不受影响。',
+  source_dns_no_addresses:
+    '这张图暂时取不到（来源网站连不上）。请换用图片链接，或直接上传图片；现有题目不受影响。',
+  source_fetch_failed:
+    '这张图暂时取不到（来源网站连不上）。请稍后重试，或直接上传图片；现有题目不受影响。',
+  // Real-world shape (YUK-1404 TEST evidence): scanner proposals point at /shiti/{id}
+  // PAGES, not image files — this is the failure those accepts produce.
+  source_not_an_image:
+    '这个链接没有返回可读取的图片，可能指向了网页。请换用图片链接，或直接上传图片；现有题目不受影响。',
+} as const satisfies Record<ImageCandidateSourceFailureReason, string>;
+
+const SOURCE_FAILURE_NEXT_STEP = {
+  source_host_nonpublic: 'replace_source_url',
+  source_dns_lookup_failed: 'retry_accept',
+  source_dns_no_addresses: 'replace_source_url',
+  source_fetch_failed: 'retry_accept',
+  source_not_an_image: 'replace_source_url',
+} as const satisfies Record<
+  ImageCandidateSourceFailureReason,
+  'retry_accept' | 'replace_source_url'
+>;
+
+/**
+ * Throw the typed, learner-safe source-fetch failure. `rawDetail` carries the real
+ * host / resolved IP / URL and is written to the server log ONLY — never into the
+ * ApiError message or details, which are serialized to the client.
+ */
+function throwSourceFetchFailure(
+  reason: ImageCandidateSourceFailureReason,
+  rawDetail: string,
+): never {
+  console.warn(`[image_candidate_accept] source fetch rejected (${reason}):`, rawDetail);
+  const contract = SOURCE_FAILURE_CONTRACT[reason];
+  throw new ApiError(contract.code, SOURCE_FAILURE_MESSAGES[reason], contract.status, undefined, {
+    reason,
+    next_step: SOURCE_FAILURE_NEXT_STEP[reason],
+  });
+}
+
 // FIX-7 — reject URL forms and literal destinations that can never be valid public image
 // sources. Hostnames receive a second A/AAAA answer check below. The literal-host + CIDR logic
 // is shared with the client via @/core/net/private-host (isBlockedHostLiteral); this wrapper
 // only adds the throwing ApiError semantics the accept path relies on.
-function assertPublicHttpUrl(url: string): URL {
+export function assertPublicHttpUrl(url: string): URL {
   let parsed: URL;
   try {
     parsed = new URL(url);
   } catch {
     throw new ApiError(
       'validation_error',
-      `image_candidate source_url is not a valid URL: ${url}`,
+      // YUK-1404 — no raw URL interpolation: the AI-written source_url can embed
+      // internal topology. The raw input is visible to the operator in the proposal row.
+      '这个图片链接无法识别。请换用图片链接，或直接上传图片。',
       400,
     );
   }
   if (parsed.username || parsed.password) {
     throw new ApiError(
       'validation_error',
-      'image_candidate source_url must not contain credentials',
+      '这个图片链接含有登录信息，无法使用。请换用公开的图片链接，或直接上传图片。',
       400,
     );
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     throw new ApiError(
       'validation_error',
-      `image_candidate source_url must be http(s), got ${parsed.protocol}`,
+      '这个图片链接不支持下载。请换用网页上的图片链接，或直接上传图片。',
       400,
     );
   }
   if (isBlockedHostLiteral(parsed.hostname)) {
     const bareHost = stripIpv6Brackets(parsed.hostname.toLowerCase());
-    throw new ApiError(
-      'validation_error',
-      `image_candidate source_url resolves to a non-public host (${bareHost}); refusing to fetch`,
-      400,
+    throwSourceFetchFailure(
+      'source_host_nonpublic',
+      `blocked literal host ${bareHost} in ${parsed.href}`,
     );
   }
   return parsed;
@@ -196,16 +266,15 @@ function assertPublicHttpUrl(url: string): URL {
 type ResolvedAddress = { address: string; family: 4 | 6 };
 const DNS_LOOKUP_TIMEOUT_MS = 5_000;
 
-async function resolvePublicAddresses(parsed: URL, lookupFn: LookupFn): Promise<ResolvedAddress[]> {
+export async function resolvePublicAddresses(
+  parsed: URL,
+  lookupFn: LookupFn,
+): Promise<ResolvedAddress[]> {
   const bareHost = stripIpv6Brackets(parsed.hostname);
   const literalFamily = ipFamily(bareHost);
   if (literalFamily === 4 || literalFamily === 6) {
     if (isBlockedIpAddress(bareHost)) {
-      throw new ApiError(
-        'validation_error',
-        `image_candidate source_url host ${bareHost} is non-public; refusing to fetch`,
-        400,
-      );
+      throwSourceFetchFailure('source_host_nonpublic', `blocked literal IP host ${bareHost}`);
     }
     return [{ address: bareHost, family: literalFamily }];
   }
@@ -220,29 +289,27 @@ async function resolvePublicAddresses(parsed: URL, lookupFn: LookupFn): Promise<
       }),
     ]);
   } catch (err) {
-    throw new ApiError(
-      'extraction_failed',
-      `image_candidate source_url DNS lookup failed for ${bareHost}: ${err instanceof Error ? err.message : String(err)}`,
-      422,
+    // node:dns errors embed the hostname in their message (getaddrinfo ENOTFOUND
+    // <host>) — keep err out of the learner-safe message; log it raw server-side.
+    throwSourceFetchFailure(
+      'source_dns_lookup_failed',
+      `lookup ${bareHost}: ${err instanceof Error ? err.message : String(err)}`,
     );
   } finally {
     if (timer) clearTimeout(timer);
   }
   if (answers.length === 0) {
-    throw new ApiError(
-      'extraction_failed',
-      `image_candidate source_url DNS lookup returned no addresses for ${bareHost}`,
-      422,
-    );
+    throwSourceFetchFailure('source_dns_no_addresses', `no A/AAAA answers for ${bareHost}`);
   }
   const invalid = answers.find(
     (answer) => (answer.family !== 4 && answer.family !== 6) || isBlockedIpAddress(answer.address),
   );
   if (invalid) {
-    throw new ApiError(
-      'validation_error',
-      `image_candidate source_url host ${bareHost} resolves to a non-public address (${invalid.address}); refusing to fetch`,
-      400,
+    // The YUK-1404 incident shape: a fake-IP resolver answering from 198.18.0.0/15
+    // lands here (blocked range, by design — do not allowlist it).
+    throwSourceFetchFailure(
+      'source_host_nonpublic',
+      `${bareHost} answer ${invalid.address} (family ${invalid.family}) is non-public`,
     );
   }
   return answers as ResolvedAddress[];
@@ -273,7 +340,7 @@ function createPinnedLookup(answers: ResolvedAddress[]): LookupFunction {
 // a redirect loop / chain can't spin.
 const MAX_REDIRECTS = 3;
 
-async function readBoundedResponseBody(res: PinnedFetchResponse, url: string): Promise<Uint8Array> {
+async function readBoundedResponseBody(res: PinnedFetchResponse): Promise<Uint8Array> {
   if (!res.body) return new Uint8Array();
   const reader = res.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -286,7 +353,8 @@ async function readBoundedResponseBody(res: PinnedFetchResponse, url: string): P
       await reader.cancel();
       throw new ApiError(
         'payload_too_large',
-        `image_candidate source_url body exceeds ${MAX_IMAGE_BYTES} bytes for ${url}`,
+        // YUK-1404 — sizes are safe to show; the source URL is not.
+        '这张图超过了 10 MB，暂时无法获取。请压缩后上传，或换一张图片。',
         413,
       );
     }
@@ -301,7 +369,7 @@ async function readBoundedResponseBody(res: PinnedFetchResponse, url: string): P
   return bytes;
 }
 
-async function defaultFetchImageBytes(
+export async function defaultFetchImageBytes(
   url: string,
   lookupFn: LookupFn = lookup,
 ): Promise<{ bytes: Uint8Array; mimeType: string }> {
@@ -332,17 +400,15 @@ async function defaultFetchImageBytes(
         const location = res.headers.get('location');
         await res.body?.cancel();
         if (!location) {
-          throw new ApiError(
-            'extraction_failed',
-            `image fetch got ${res.status} with no Location for ${currentUrl}`,
-            422,
+          throwSourceFetchFailure(
+            'source_fetch_failed',
+            `${res.status} redirect without Location at ${currentUrl}`,
           );
         }
         if (hop === MAX_REDIRECTS) {
-          throw new ApiError(
-            'extraction_failed',
-            `image fetch exceeded ${MAX_REDIRECTS} redirects starting at ${url}`,
-            422,
+          throwSourceFetchFailure(
+            'source_fetch_failed',
+            `exceeded ${MAX_REDIRECTS} redirects from ${url}`,
           );
         }
         currentUrl = new URL(location, currentUrl).toString();
@@ -350,28 +416,22 @@ async function defaultFetchImageBytes(
       }
       if (!res.ok) {
         await res.body?.cancel();
-        throw new ApiError(
-          'extraction_failed',
-          `image fetch failed (${res.status}) for ${url}`,
-          422,
-        );
+        throwSourceFetchFailure('source_fetch_failed', `HTTP ${res.status} for ${url}`);
       }
 
       const mimeType = res.headers.get('content-type')?.split(';')[0]?.trim() ?? '';
       if (!mimeType.startsWith('image/')) {
         await res.body?.cancel();
-        throw new ApiError(
-          'unsupported_media_type',
-          `image_candidate source_url returned non-image Content-Type '${mimeType || '(none)'}' for ${url}`,
-          422,
+        throwSourceFetchFailure(
+          'source_not_an_image',
+          `non-image Content-Type '${mimeType || '(none)'}' at ${url}`,
         );
       }
       if (!ALLOWED_IMAGE_MIME.has(mimeType)) {
         await res.body?.cancel();
-        throw new ApiError(
-          'unsupported_media_type',
-          `image_candidate source_url Content-Type '${mimeType}' is not a supported image type (supported: ${[...ALLOWED_IMAGE_MIME].join(', ')})`,
-          422,
+        throwSourceFetchFailure(
+          'source_not_an_image',
+          `unsupported image Content-Type '${mimeType}' (supported: ${[...ALLOWED_IMAGE_MIME].join(', ')}) at ${url}`,
         );
       }
       const declaredLength = Number(res.headers.get('content-length') ?? '');
@@ -379,11 +439,22 @@ async function defaultFetchImageBytes(
         await res.body?.cancel();
         throw new ApiError(
           'payload_too_large',
-          `image_candidate source_url Content-Length ${declaredLength} exceeds ${MAX_IMAGE_BYTES} bytes`,
+          '这张图超过了 10 MB，暂时无法获取。请压缩后上传，或换一张图片。',
           413,
         );
       }
-      return { bytes: await readBoundedResponseBody(res, url), mimeType };
+      return { bytes: await readBoundedResponseBody(res), mimeType };
+    } catch (err) {
+      // Transport-level failures (undici TypeError 'fetch failed', AbortSignal.timeout
+      // TimeoutError, ECONNREFUSED/EHOSTUNREACH causes…) never carried an ApiError and
+      // used to bubble as generic 500 internal_error. Map them onto the same typed,
+      // learner-safe source_fetch_failed contract (YUK-1404's network-fetch class).
+      // ApiErrors from the guards above pass through untouched.
+      if (err instanceof ApiError) throw err;
+      throwSourceFetchFailure(
+        'source_fetch_failed',
+        `transport error at ${currentUrl}: ${err instanceof Error ? err.message : String(err)}`,
+      );
     } finally {
       // Cleanup must never replace the fetch/validation error that explains the
       // failed accept. There are no reusable sockets beyond this one guarded hop.
@@ -392,7 +463,7 @@ async function defaultFetchImageBytes(
       });
     }
   }
-  throw new ApiError('extraction_failed', `image fetch produced no response for ${url}`, 422);
+  throwSourceFetchFailure('source_fetch_failed', `no terminal response for ${url}`);
 }
 
 /**
@@ -595,11 +666,7 @@ export async function acceptImageCandidateProposal(
     // ── 1+2. download + persist the asset ───────────────────────────────────────
     const { bytes, mimeType } = await fetchImageBytes(change.source_url);
     if (bytes.byteLength === 0) {
-      throw new ApiError(
-        'extraction_failed',
-        `image fetch returned 0 bytes for ${change.source_url}`,
-        422,
-      );
+      throwSourceFetchFailure('source_fetch_failed', `0 bytes from ${change.source_url}`);
     }
     const resolvedMime = ALLOWED_IMAGE_MIME.has(mimeType) ? mimeType : 'image/png';
     const sourceAsset = await persistImageAsset(db, r2, {
