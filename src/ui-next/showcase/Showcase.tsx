@@ -39,6 +39,7 @@ import {
   UiNextRoot,
   useScrollCondense,
 } from '../shell';
+import { AnswerBlocksDemo } from './AnswerBlocksDemo';
 import {
   CaptureDemo,
   DemoThread,
@@ -245,6 +246,13 @@ function ShowcaseBody({
       >
         <div className="un-showcase">
           <PracticeStage conversation={conversation} openCompanion={openCompanion} />
+
+          <section className="un-showcase-section" aria-labelledby="un-sc-answer">
+            <h2 id="un-sc-answer" className="un-showcase-h">
+              点选作答（示例题：断句、配对）
+            </h2>
+            <AnswerBlocksDemo />
+          </section>
 
           <section className="un-showcase-section" aria-labelledby="un-sc-mascot">
             <h2 id="un-sc-mascot" className="un-showcase-h">
