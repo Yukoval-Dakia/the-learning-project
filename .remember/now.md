@@ -1,3 +1,9 @@
+# YUK-1107 cron acceleration handoff (2026-10-11)
+
+Owned tree: tlp-cron-speed-20261011, perf/yuk-1107-session-cron. Runtime-tested source 060a8b7afcaab98090870f97ec7431d15db541aa; 2/2 PASS, Vitest 277.61 s, R1 P0/P1 NONE. Source annotation/braces preserve test callback AST. See docs/planning/2026-10-11-yuk1107-cron-speed.md.
+
+Shared after-2 lock released after exact token, absent child PIDs and empty own Testcontainers session checks. Functional DOCX/PDF lane has priority. No new local DB/container/Vitest/mutation batch before their explicit window release; do not infer availability from an absent lock. Remaining: fault detection, final SHA repeat, exact CI.
+
 # YUK-1388 stage 4 complete; coordinator still owns audit close-out (2026-10-10 17:10 JST)
 
 Final report tlp-audit-artifacts/yuk1388/stage4/final-report.md (O1–O7 plain page first). V01 Opus + V02 Sol reviews: 15 findings all ACCEPTED (stage4/V-adjudication.md); I03 corrections done (Sol, after Claude auth 403 killed Opus runs): P0 7 incl. new M100 -> YUK-1445 Urgent (7/8 admitted items human_review only), P1 50->34, hint denominator 21 (first-attempt fail 14.29%), W0 exit = empty-DB day-one journey + >=80% auto-gradable + KC guard + 5 friction metrics, C21/C24full/C26/C28-30 PARKED, T052 -> YUK-1355. Linear comment 1df07109 on YUK-1388 (stays In Progress: owner must read report + decide on deleting R03's 5 synthetic crisis memories in TEST Mem0).
