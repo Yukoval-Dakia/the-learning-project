@@ -656,6 +656,8 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
   });
 
   // ── YUK-1445: mixed papers stay openable — gate-refused slots are typed-withheld ──
+  // @invariant grading: a mixed paper issues only gate-admitted slots — the refused slot never gains a learner-facing issuance row, and reopen never re-asks the gate into serving it
+  // @fails-if make paper opening ignore per-slot serving decisions or issue-then-mask; the assessment_issuance row count or the typed withheld_slots reason assertions fail
   it('YUK-1445: mixed paper opens servable slots and lists gate-refused slots as typed withheld', async () => {
     const db = testDb();
     await seedQuestion('q_ok', 'true');

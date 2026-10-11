@@ -171,6 +171,8 @@ async function expectNoActivation() {
 describe('YUK-1045 authoritative candidate admission snapshot', () => {
   beforeEach(resetDb);
 
+  // @invariant grading: neither auto, manual, nor replay issuance can serve a withdrawn-admission group, and every rejected attempt leaves historical rows, events, and accepted work byte-identical
+  // @fails-if let issueAssessment admit on mode 'manual' or when reusing an issuance_id (replay); a not_admitted status or the before/after equality assertions fail
   it('rejects manual and replay serving without changing historical issuance or accepted work', async () => {
     const s = await seed({ model: true });
     const unanswered = await seedHistoricalAssessmentIssuance(testDb(), {
@@ -250,6 +252,8 @@ describe('YUK-1045 authoritative candidate admission snapshot', () => {
     await expectNoActivation();
   });
 
+  // @invariant data: budget trimming deletes only eligible tail items — the accepted recovery entry point and stored unsupported rows survive, and serving reads never mutate issuance or submission history
+  // @fails-if make the trim treat the recovery/withheld rows as eligible or let the stream read mutate issuance/submissions; the storedIds or before/after equality assertions fail
   it('keeps the accepted recovery row reachable and untouchable while the budget trims eligible tails', async () => {
     const db = testDb();
     const admitted = await seed();
@@ -332,6 +336,8 @@ describe('YUK-1045 authoritative candidate admission snapshot', () => {
     expect(await db.select().from(assessment_submission)).toEqual(beforeSubmissions);
   });
 
+  // @invariant grading: an unanswered gate-refused paper slot is withheld from the learner answer surface while the accepted pinned submission keeps its projected DTO, and the read leaves the withheld issuance and its draft persisted untouched
+  // @fails-if project the unsupported unanswered slot onto the answer surface or delete/rewrite its stored issuance/draft during the read; the slot-count or persistence assertions fail
   it('withholds unanswered unsupported paper slots while accepted pinned work keeps its history', async () => {
     const db = testDb();
     const s = await seed({ model: true });

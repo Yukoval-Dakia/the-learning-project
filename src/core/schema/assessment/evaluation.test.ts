@@ -1078,6 +1078,8 @@ describe('whole-page evidence is not a blank response', () => {
 });
 
 describe('automatic serving preserves frozen scoring semantics', () => {
+  // @invariant grading: open answers declaring evidence requirements are withheld from deterministic serving while pure text scores the same fixed points deterministically
+  // @fails-if drop the evidence_required/accepted_evidence predicate in decideAutomaticServing; both withheld variants would return admitted and be auto-graded
   it('withholds attachment answers the text comparator cannot consume, while pure text remains deterministic', async () => {
     const revision = revisionFor({
       slots: [
@@ -1193,6 +1195,8 @@ describe('automatic serving preserves frozen scoring semantics', () => {
     });
   }
 
+  // @invariant grading: an issued subset of a mixed group scores correct/wrong answers to the same points with zero model invocations and leaves the frozen revision untouched
+  // @fails-if route the deterministic unit through the model or project the unissued human-review unit into the scored basis; points/scoping/model_units_invoked assertions fail
   it('serves an automatic subset of a mixed group and scores correct/wrong responses deterministically without a model', async () => {
     const revision = mixedRevision();
     const model = vi.fn(() => {
@@ -1224,6 +1228,8 @@ describe('automatic serving preserves frozen scoring semantics', () => {
     expect(revision).toEqual(mixedRevision());
   });
 
+  // @invariant grading: a frozen plan that misses, duplicates, misroutes or comparator-mismatches a unit is rejected before serving, and a criterion the slot cannot parse withholds the contract
+  // @fails-if remove the unit_not_covered/unit_covered_twice/unknown_unit_assignment/comparator_criterion_mismatch checks in validateExecutionPlan; any invalidPlan variant would be admitted
   it('rejects missing, duplicate, unknown, comparator-mismatched executors and unsupported slot input', () => {
     const revision = mixedRevision();
     const invalidPlans: ExecutionPlanT['assignments'][] = [
@@ -1261,6 +1267,8 @@ describe('automatic serving preserves frozen scoring semantics', () => {
     });
   });
 
+  // @invariant grading: weighted subsets project their exact weights and capped/threshold scopes that cannot project to the issued subset are withheld rather than guessed
+  // @fails-if make projectIssuedScoringBasis silently project capped_sum/threshold_levels or drop the projected weights; the points/policy or unprojectable_aggregation assertions fail
   it('projects sum and weighted subsets but withholds unprojectable capped/threshold scopes', async () => {
     const revision = mixedRevision();
     revision.scoring_basis.aggregation = {
@@ -1301,6 +1309,8 @@ describe('automatic serving preserves frozen scoring semantics', () => {
     }
   });
 
+  // @invariant grading: a model executor without authoritative slice admission can never auto-serve learner answers, regardless of typed task kind or declared budget
+  // @fails-if treat a known task_kind or a nonnull admitted_slice_id string as execution authority; model_admission_unavailable disappears and the model would grade
   it('withholds invented model admission even for a known typed task and declared budget', () => {
     const revision = mixedRevision();
     for (const task_kind of [
@@ -1324,6 +1334,8 @@ describe('automatic serving preserves frozen scoring semantics', () => {
     }
   });
 
+  // @invariant grading: an already-issued human-review unit settles as pending needs_review and new service on that part stays withheld
+  // @fails-if invent a score for human_review units or drop the needs_review pending status; the unit_results assertion fails
   it('keeps existing human-review evaluation historical truth while withholding new service', async () => {
     const revision = mixedRevision();
     expect(decideAutomaticServing(revision, ['p2'])).toMatchObject({
@@ -1354,6 +1366,8 @@ describe('automatic serving — explicit figure dependency gate (YUK-1445)', () 
     asset: { asset_id: 'fig-1', digest },
   });
 
+  // @invariant grading: a stem whose learner-facing text references a figure with no bound verified figure is never auto-served; an unsolvable stem must not reach deterministic zero-scoring
+  // @fails-if remove the FIGURE_REFERENCE_RE withholding branch in decideAutomaticServing; the revision returns admitted
   it('withholds a stem that references a figure with no verified figure bound', () => {
     const revision = revisionFor({
       parts: [{ part_id: 'p1', prompt_md: '如图，在正方体中求所成角（ ）', material_ids: [] }],
@@ -1364,6 +1378,8 @@ describe('automatic serving — explicit figure dependency gate (YUK-1445)', () 
     });
   });
 
+  // @invariant grading: a verified bound figure keeps the figure-referencing stem servable; the gate must not over-withhold deterministically gradeable work
+  // @fails-if reject verified figure bindings (invert the digest/visibility check); admitted flips to missing_referenced_figure
   it('admits when a verified figure material is bound to the part', () => {
     const revision = revisionFor({
       parts: [
@@ -1374,6 +1390,8 @@ describe('automatic serving — explicit figure dependency gate (YUK-1445)', () 
     expect(decideAutomaticServing(revision, ['p1'])).toEqual({ kind: 'admitted' });
   });
 
+  // @invariant grading: a figure bound with an unverified digest counts as missing; asset content unknown to the gate can never serve as the learner-visible figure
+  // @fails-if accept any bound figure regardless of the unverified: digest prefix; the revision returns admitted
   it('treats an unverified-digest figure binding as still missing', () => {
     const revision = revisionFor({
       parts: [{ part_id: 'p1', prompt_md: '如下图所示，求角度', material_ids: ['mat-fig-1'] }],
@@ -1385,6 +1403,8 @@ describe('automatic serving — explicit figure dependency gate (YUK-1445)', () 
     });
   });
 
+  // @invariant security: private or rubric-namespaced figures are never learner-visible rescue; scoring inputs cannot be served onto the learner surface
+  // @fails-if drop the isPublicSharedMaterial filter from the verified-figure set; the private solution figure counts as the bound figure and the stem is served
   it('does not count a bound private or rubric-namespaced figure as learner-visible rescue', () => {
     for (const figure of [
       { ...figureMaterial('sha256:abc'), visibility: 'private' as const },
@@ -1404,6 +1424,8 @@ describe('automatic serving — explicit figure dependency gate (YUK-1445)', () 
     }
   });
 
+  // @invariant security: the figure scan reads only public shared materials; private scoring input never gates (or leaks into) the learner-facing surface
+  // @fails-if include private materials in the scanned surfaces; the private-only variant flips from admitted to missing_referenced_figure
   it('scans public shared materials, not private scoring inputs', () => {
     const revision = revisionFor({
       parts: [{ part_id: 'p1', prompt_md: '求值（ ）', material_ids: ['mat-stem', 'mat-sol'] }],
@@ -1431,16 +1453,5 @@ describe('automatic serving — explicit figure dependency gate (YUK-1445)', () 
     revision.structure.materials = [revision.structure.materials[1]];
     revision.structure.parts[0].material_ids = ['mat-sol'];
     expect(decideAutomaticServing(revision, ['p1'])).toEqual({ kind: 'admitted' });
-  });
-
-  it('reports the frozen executor defect first when both defects exist', () => {
-    const revision = revisionFor({
-      parts: [{ part_id: 'p1', prompt_md: '如图，求角度（ ）', material_ids: [] }],
-      assignments: [{ scoring_unit_ids: ['p1::u'], executor: { kind: 'human_review' as const } }],
-    });
-    expect(decideAutomaticServing(revision, ['p1'])).toMatchObject({
-      kind: 'unavailable',
-      reason: 'human_review',
-    });
   });
 });

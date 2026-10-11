@@ -76,6 +76,8 @@ describe('createAttemptResource — durable divert 202 pass-through (W2)', () =>
     vi.restoreAllMocks();
   });
 
+  // @invariant concurrency: a rate-limited one_time-claimed diagnostic submit persists its original submission exactly once, keeps the claim held, and later recovers through one durable pending receipt with a single execution across retries
+  // @fails-if make the 429 path drop the original or the recovery re-enqueue/re-execute instead of replaying the pending receipt; originals()/bossSend/execute counts or claim_status assertions fail
   it('retains a rate-limited diagnostic original and recovers it once without releasing its claim', async () => {
     vi.stubEnv('AI_RATE_LIMIT_MAX', '1');
     const firstQuestionId = `q_${newId()}`;
