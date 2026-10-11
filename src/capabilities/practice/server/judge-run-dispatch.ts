@@ -28,6 +28,8 @@ import { and, asc, eq, gt, lt, notExists, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import type { JobWithMetadata } from 'pg-boss';
 import { newId } from '@/core/ids';
+import { canonicalHash } from '@/core/migration/canonical';
+import type { JudgeReservation } from '@/core/schema/event/judge-operational-events';
 import {
   JudgePendingAttemptPayload,
   type JudgePendingAttemptPayloadT,
@@ -36,10 +38,22 @@ import type { Db, Tx } from '@/db/client';
 import { event, job_events } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
-import { getStartedBoss } from '@/server/boss/client';
 import { observeBossJob } from '@/server/boss/job-observation';
 import { checkRateLimit, refundRateLimit } from '@/server/http/rate-limit';
 import { JUDGE_RUN_QUEUE } from './judge-durable-config';
+import {
+  type JudgeLegacySender,
+  enqueueDbosJudgeDelivery,
+  enqueueLegacyJudgeDelivery,
+  judgeDeliveryInput,
+} from './judge-engine-client';
+import {
+  acceptJudgeDelivery,
+  lockJudgeRun,
+  readJudgeControl,
+  rejectJudgeSend,
+} from './judge-operational';
+import { judgeAcceptanceId } from './judge-operational-state';
 import type { JudgeRunJobData, LegacyJudgeRunJobData } from './judge-run-payload';
 import {
   JUDGE_RUN_EVENTS,
@@ -166,10 +180,9 @@ export async function recordJudgePendingAttempt(
 // ============================================================================
 
 export interface JudgeRunEnqueueDeps {
+  enqueueDbos?: typeof enqueueDbosJudgeDelivery;
   /** test seam — default `getStartedBoss()`. */
-  boss?: {
-    send: (name: string, data: unknown, options?: { id?: string }) => Promise<string | null>;
-  };
+  boss?: JudgeLegacySender;
   /** test seam — default the real process-wide paid-AI budget gate. */
   checkRateLimit?: () => number;
   /** test seam — paired refund for the failed-enqueue path. */
@@ -192,61 +205,104 @@ export function admitJudgeRun(deps: JudgeRunEnqueueDeps = {}): number {
   return (deps.checkRateLimit ?? checkRateLimit)();
 }
 
-/**
- * Enqueue a `judge_run`, charging the paid-AI budget exactly once.
- *
- * **Every** producer must come through here. `checkRateLimit` is a process-local window, so
- * this is not one shared counter across API and worker — that is fine and intended: the API
- * face limits learner-driven dispatch, and the worker face (sweeper, and later the manual DLQ
- * re-enqueue) limits recovery-driven dispatch inside the process that issues it. What matters
- * is that no producer exists with NO gate, which is what a bespoke `boss.send` would create.
- *
- * The gate stays BEFORE the send — moving it after would enqueue a paid job and then reject
- * the client, who retries and enqueues another — and the token is REFUNDED when the enqueue
- * fails, so a transient pg-boss blip cannot burn budget with no job to show for it.
- *
- * `opts.token` lets a caller that already went through {@link admitJudgeRun} hand its token
- * over rather than be charged twice; the refund-on-failure guarantee is identical either way.
- *
- * `jobId` pins the pg-boss job id to the run handle (the YUK-758 orchestrator idiom) so the
- * poll route can do a PK lookup. Recovery re-enqueues deliberately pass NO `jobId`: the
- * original job id is still occupied by the failed/DLQ'd job, and an id collision there returns
- * null (ON CONFLICT DO NOTHING), which would silently refuse every recovery attempt.
+/** Send only a retained authorization. Unknown acknowledgments retain the same slot and budget;
+ * only proven pre-send rejection permits a live admission refund.
  */
 export async function enqueueJudgeRun(
   job: JudgeRunJobData,
   deps: JudgeRunEnqueueDeps = {},
-  opts: { jobId?: string; token?: number; acceptExistingJobId?: boolean } = {},
+  opts: {
+    jobId?: string;
+    token?: number;
+    acceptExistingJobId?: boolean;
+    authorization?: { database: Db; reservation: JudgeReservation; sendId: string };
+  } = {},
 ): Promise<string> {
+  const authorization = opts.authorization;
+  if (!authorization)
+    throw new ApiError(
+      'judge_authorization_required',
+      'Judge sends require permanent authorization',
+      503,
+    );
+  const { database, reservation, sendId } = authorization;
+  const input = judgeDeliveryInput(reservation);
+  // The final short gate confirms the authorization still belongs to this family. No lock spans send.
+  const rejected = await database.transaction(async (tx) => {
+    const control = await readJudgeControl(tx, 'share');
+    await lockJudgeRun(tx, job.run_id);
+    if (
+      control.incarnation !== reservation.ownership.incarnation ||
+      control.phase !== reservation.ownership.backend ||
+      control.epoch !== reservation.ownership.epoch
+    )
+      return 'producer_fenced' as const;
+    const [send] = await tx.select().from(event).where(eq(event.id, sendId));
+    if (
+      send?.action !== 'experimental:judge_delivery_send' ||
+      send.payload.authorization_digest !== canonicalHash(input)
+    )
+      return 'validation_rejected' as const;
+    return null;
+  });
+  if (rejected) {
+    await database.transaction(async (tx) => {
+      await lockJudgeRun(tx, job.run_id);
+      await rejectJudgeSend(tx, reservation, sendId, rejected);
+    });
+    if (opts.token !== undefined) refundJudgeRunAdmission(opts.token, deps);
+    throw new ApiError(
+      rejected === 'producer_fenced' ? 'judge_draining' : 'judge_authorization_required',
+      'Judge send rejected before contacting the engine',
+      503,
+    );
+  }
   let rateLimitToken: number | null = null;
   try {
-    rateLimitToken = opts.token ?? admitJudgeRun(deps);
-    const boss = deps.boss ?? (await getStartedBoss());
-    const jobId = await boss.send(
-      JUDGE_RUN_QUEUE,
-      job,
-      opts.jobId === undefined ? undefined : { id: opts.jobId },
-    );
+    rateLimitToken = opts.token ?? null;
+    if (reservation.ownership.backend === 'dbos') {
+      const deliveryId = await (deps.enqueueDbos ?? enqueueDbosJudgeDelivery)(input);
+      if (deliveryId !== reservation.delivery_id)
+        throw new Error('DBOS returned a different delivery identity');
+      await database.transaction(async (tx) => {
+        await lockJudgeRun(tx, job.run_id);
+        await acceptJudgeDelivery(tx, reservation, sendId, 'enqueue_ack');
+      });
+      rateLimitToken = null;
+      return deliveryId;
+    }
+    const jobId = await enqueueLegacyJudgeDelivery(job, input, deps.boss);
     if (!jobId) {
-      if (opts.acceptExistingJobId && opts.jobId) {
-        // Deterministic recovery retry: ON CONFLICT means this exact delivery already exists.
-        // No new paid work was created, so return this call's admission token before treating the
-        // existing delivery as durable success.
-        (deps.refundRateLimit ?? refundRateLimit)(rateLimitToken);
-        rateLimitToken = null;
-        return opts.jobId;
-      }
       throw new ApiError(
         'durable_enqueue_failed',
         `judge_run enqueue returned no jobId for run ${job.run_id}`,
         503,
       );
     }
+    if (jobId !== reservation.delivery_id)
+      throw new Error('pg-boss returned a different delivery identity');
+    await database.transaction(async (tx) => {
+      await lockJudgeRun(tx, job.run_id);
+      await acceptJudgeDelivery(tx, reservation, sendId, 'enqueue_ack');
+    });
     // Durable from here: the budget token was genuinely spent.
     rateLimitToken = null;
     return jobId;
   } catch (err) {
-    if (rateLimitToken !== null) (deps.refundRateLimit ?? refundRateLimit)(rateLimitToken);
+    // Timeout, connection loss and null ON CONFLICT acknowledgments all retain the send slot.
+    // Only our explicit database producer fence establishes pre-acceptance rejection.
+    const message = err instanceof Error ? err.message : '';
+    if (message.includes('judge pg-boss producer fenced:')) {
+      await database.transaction(async (tx) => {
+        await lockJudgeRun(tx, job.run_id);
+        const [accepted] = await tx
+          .select()
+          .from(event)
+          .where(eq(event.id, judgeAcceptanceId(input.reservation_id)));
+        if (!accepted) await rejectJudgeSend(tx, reservation, sendId, 'producer_fenced');
+      });
+      if (rateLimitToken !== null) (deps.refundRateLimit ?? refundRateLimit)(rateLimitToken);
+    }
     throw err;
   }
 }

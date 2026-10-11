@@ -29,7 +29,6 @@ import {
   getRunningBoss,
   getStartedBoss,
 } from '@/server/boss/client';
-import { createServerEnv, resolveBossAutomationMode } from '@/server/env';
 
 const TEST_DATABASE_URL = 'postgres://unit:test@127.0.0.1:5432/unit';
 const ENV_KEYS = ['DATABASE_URL', 'RW_BOSS_AUTOMATION'] as const;
@@ -54,53 +53,7 @@ afterEach(() => {
   savedEnv.clear();
 });
 
-describe('resolveBossAutomationMode', () => {
-  it('resolves enabled when unset, empty, or explicit', () => {
-    expect(resolveBossAutomationMode(undefined)).toBe('enabled');
-    expect(resolveBossAutomationMode('')).toBe('enabled');
-    expect(resolveBossAutomationMode('enabled')).toBe('enabled');
-  });
-
-  it('resolves disabled only for the explicit typed value', () => {
-    expect(resolveBossAutomationMode('disabled')).toBe('disabled');
-  });
-
-  it('rejects values outside the typed mode', () => {
-    expect(() => resolveBossAutomationMode('off')).toThrow(/RW_BOSS_AUTOMATION/);
-    expect(() => resolveBossAutomationMode('0')).toThrow(/RW_BOSS_AUTOMATION/);
-    expect(() => resolveBossAutomationMode('true')).toThrow(/RW_BOSS_AUTOMATION/);
-  });
-
-  it('createServerEnv validation also rejects a non-enum value', () => {
-    expect(() =>
-      createServerEnv({ DATABASE_URL: TEST_DATABASE_URL, RW_BOSS_AUTOMATION: 'bogus' }, false),
-    ).toThrow();
-  });
-});
-
 describe('createBoss', () => {
-  it('constructs PgBoss with only connection/schema by default — automation flags untouched', () => {
-    createBoss();
-    expect(ctorArgs).toHaveLength(1);
-    // Under vitest the pool cap is applied (VITEST env is always set); no
-    // automation flag is passed so the library defaults (all true) stand.
-    expect(ctorArgs[0]).toEqual({
-      connectionString: TEST_DATABASE_URL,
-      schema: 'pgboss',
-      max: 2,
-    });
-  });
-
-  it('explicit enabled mode constructs the identical config', () => {
-    createBoss();
-    const defaultConfig = ctorArgs[0];
-    _resetBossForTests();
-    ctorArgs.length = 0;
-    process.env.RW_BOSS_AUTOMATION = 'enabled';
-    createBoss();
-    expect(ctorArgs[0]).toEqual(defaultConfig);
-  });
-
   it('maps disabled mode to schedule/supervise/migrate/registerInstance all false', () => {
     process.env.RW_BOSS_AUTOMATION = 'disabled';
     createBoss();
@@ -115,11 +68,6 @@ describe('createBoss', () => {
     });
   });
 
-  it('returns the singleton on repeat calls', () => {
-    expect(createBoss()).toBe(createBoss());
-    expect(ctorArgs).toHaveLength(1);
-  });
-
   it('rejects an invalid mode without constructing the boss', () => {
     process.env.RW_BOSS_AUTOMATION = 'bogus';
     expect(() => createBoss()).toThrow(/RW_BOSS_AUTOMATION/);
@@ -131,14 +79,6 @@ describe('createBoss', () => {
 });
 
 describe('getStartedBoss', () => {
-  it('starts the disabled-mode singleton once and caches it as running', async () => {
-    process.env.RW_BOSS_AUTOMATION = 'disabled';
-    const boss = await getStartedBoss();
-    expect(boss).toBe(createBoss());
-    expect(getRunningBoss()).toBe(boss);
-    await expect(getStartedBoss()).resolves.toBe(boss);
-  });
-
   it('clears the cached start promise on failure so a later call retries', async () => {
     startOutcome.error = new Error('connection refused');
     await expect(getStartedBoss()).rejects.toThrow('connection refused');

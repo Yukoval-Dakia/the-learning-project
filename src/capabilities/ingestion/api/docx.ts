@@ -4,7 +4,7 @@ import {
   segmentMarkdown,
 } from '@/capabilities/ingestion/server/docx/markdown-segment';
 import { persistDocxPageEvidence } from '@/capabilities/ingestion/server/docx/persist-page-evidence';
-import { classifyDocx } from '@/capabilities/ingestion/server/docx/route-classify';
+import { prepareDocxForConversion } from '@/capabilities/ingestion/server/docx/route-classify';
 import { persistImageAsset } from '@/capabilities/ingestion/server/persist-image-asset';
 import { MAX_DOCX_UPLOAD_BYTES, MAX_IMAGE_UPLOAD_BYTES } from '@/core/limits';
 import { db } from '@/db/client';
@@ -43,7 +43,8 @@ export async function POST(req: Request): Promise<Response> {
     }
     // Accept the canonical docx mime, plus empty type when the filename ends in
     // .docx (browsers send '' for drag-and-drop / some OS pickers). This is NOT
-    // the security gate: classifyDocx validates the zip / word/document.xml and
+    // the security gate: prepareDocxForConversion validates the zip /
+    // word/document.xml and 400s a misnamed non-docx.
     // 400s a misnamed non-docx.
     const isDocxMime =
       file.type === DOCX_MIME || (file.type === '' && file.name.toLowerCase().endsWith('.docx'));
@@ -62,9 +63,23 @@ export async function POST(req: Request): Promise<Response> {
     }
 
     const docxBytes = new Uint8Array(await file.arrayBuffer());
-    // Deterministic, sub-ms: zip-parse + MathType OLE count. Throws 400 on a
-    // corrupt / non-docx zip.
-    const line = classifyDocx(docxBytes);
+    // Deterministic, sub-ms: zip-parse + security preflight + MathType OLE count.
+    // YUK-1476 — external NON-hyperlink relationships (header/footer/body) are
+    // omitted from a sanitized CONVERTER INPUT COPY; pandoc/LibreOffice only ever
+    // see converterBytes, never the original external targets. Throws 400 on a
+    // corrupt / non-docx zip and on every preserved fail-closed guard.
+    const prep = prepareDocxForConversion(docxBytes);
+    const line = prep.line;
+    // YUK-1476 (R1 P1-2) — the SAME honest omission facts (both digests + omitted
+    // facts) are forwarded on BOTH lines so every docx receipt is identical.
+    const externalRefOmission =
+      prep.omissions.length > 0
+        ? {
+            inputSha256: prep.inputSha256,
+            converterInputSha256: prep.converterInputSha256,
+            omissions: prep.omissions,
+          }
+        : undefined;
 
     const converter = getDocxConverter();
     const r2 = getR2();
@@ -72,10 +87,11 @@ export async function POST(req: Request): Promise<Response> {
     if (line === 'visual') {
       // Visual line: page images ARE the extract input. Render + persist (=
       // expandPdf equivalent), then run the standard upload+extract flow.
-      const evidence = await persistDocxPageEvidence(db, r2, converter, docxBytes);
+      const evidence = await persistDocxPageEvidence(db, r2, converter, prep.converterBytes);
       const { sessionId } = await Ingestion.initiateUpload(db, {
         assetIds: evidence.assetIds,
         entrypoint: 'docx',
+        externalRefOmission,
       });
       const boss = await getStartedBoss();
       await Ingestion.enqueueExtraction({ db, boss, sessionId });
@@ -91,7 +107,7 @@ export async function POST(req: Request): Promise<Response> {
     }
 
     // Text line: pandoc → markdown → segment.
-    const { markdown, media } = await converter.docxToMarkdown(docxBytes);
+    const { markdown, media } = await converter.docxToMarkdown(prep.converterBytes);
     const segmented = segmentMarkdown({
       markdown,
       // The converter media manifest has no dimensions; the noise filter keeps
@@ -127,7 +143,7 @@ export async function POST(req: Request): Promise<Response> {
     }
 
     // Evidence page images (原图同步存储不变式 — text line也存证).
-    const evidence = await persistDocxPageEvidence(db, r2, converter, docxBytes);
+    const evidence = await persistDocxPageEvidence(db, r2, converter, prep.converterBytes);
 
     const blocks = segmented.map((s) => ({
       structured: s.structured,
@@ -139,6 +155,9 @@ export async function POST(req: Request): Promise<Response> {
     const { sessionId } = await initiateDocxTextUpload(db, {
       evidenceAssetIds: evidence.assetIds,
       blocks,
+      // YUK-1476 — honest omission audit (both digests + omitted facts) on the
+      // text-line session; only present when the converter input was sanitized.
+      externalRefOmission,
     });
 
     return Response.json(

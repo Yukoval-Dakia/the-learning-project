@@ -979,10 +979,18 @@ export async function getProposalInboxRow(
     signals: null,
     presentation: null,
   };
-  // YUK-1404 — same read rule as the list: a pending block_merge that fails
-  // the stored-facts admission proof is invisible (404 on every decision lane,
-  // so the accept path can never bypass the visibility rule). Terminal rows
-  // (accepted/dismissed/…) are never filtered, preserving idempotent replay.
+  // YUK-1404 — same rule as the list for every PROOF failure: a pending
+  // block_merge that fails the stored-facts admission proof is invisible (404
+  // on every decision lane, so the accept path can never bypass the visibility
+  // rule). Terminal rows (accepted/dismissed/…) are never filtered, preserving
+  // idempotent replay.
+  //
+  // YUK-1404 stale lane — the not_draft arm is EXEMPT on this single-row read
+  // only: a chain that already left draft makes the proposal STALE, not
+  // unproven, and the decision lane must still see the row so the accept
+  // applier can answer with the honest soft-stale result (200, no rate event,
+  // proposal stays pending) instead of a bare 404. The list/count reads keep
+  // hiding every ineligible row — the learner never sees the stale card.
   if (row.kind === 'block_merge' && row.status === 'pending') {
     const input = blockMergeAdmissionInputFromPayload(payload);
     if (!input) return null;
@@ -990,7 +998,8 @@ export async function getProposalInboxRow(
       input.primaryBlockId,
       ...input.mergeBlockIds,
     ]);
-    if (!evaluateBlockMergeAdmission(input, ctx).eligible) return null;
+    const verdict = evaluateBlockMergeAdmission(input, ctx);
+    if (!verdict.eligible && verdict.reason !== 'not_draft') return null;
   }
   const [presentationByProposalId, signalsByProposalId] = await Promise.all([
     loadProposalPresentations(db, [row]),

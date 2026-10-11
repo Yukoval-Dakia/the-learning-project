@@ -32,6 +32,7 @@ import type {
   PlacementStartResult,
 } from './placement-api';
 import { type PlacementClient, usePlacementClient } from './placement-client';
+import { type StarterOutcome, starterStatus } from './starter-supply-status';
 import './onboarding.css';
 
 const CAP = 8;
@@ -56,6 +57,8 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
   const [answeredCount, setAnsweredCount] = useState(0);
   const [restoreVersion, setRestoreVersion] = useState(0);
   const [errMsg, setErrMsg] = useState<string | null>(null);
+  const [supply, setSupply] = useState<StarterOutcome[] | undefined>(undefined);
+  const [checking, setChecking] = useState(false);
   const [leaving, setLeaving] = useState(false);
   const [exitFailure, setExitFailure] = useState<{ destination: string; message: string } | null>(
     null,
@@ -83,6 +86,7 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
     if (!sid || !sessionOpenRef.current) return;
     const next = await transport.current.placementNext(sid);
     setAnsweredCount(next.answeredCount);
+    setSupply(next.starterSupply);
     setRestoreVersion((v) => v + 1);
     if (next.done) {
       setQRef(null);
@@ -138,6 +142,7 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
           `${url.pathname}${url.search}${url.hash}`,
         );
         setAnsweredCount(res.answeredCount);
+        setSupply(res.starterSupply);
         setQRef(res.question);
         setPhase(res.question ? 'answer' : res.sourcingNeeded ? 'sourcing' : 'settling');
       })
@@ -247,30 +252,18 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
       )}
       {phase === 'sourcing' && (
         <LoomCard pad padLg>
-          <EmptyState
-            icon="clock"
-            title="备题中 · 子图还冷"
-            text="这个目标还没有可定位的题。可以上传材料，或稍后回来继续。"
-            action={
-              <Btn
-                variant="primary"
-                icon="record"
-                onClick={() => void leaveProbe('/onboarding/upload')}
-              >
-                改为上传材料
-              </Btn>
-            }
+          <SupplyStatus
+            outcomes={supply}
+            checking={checking}
+            onRecheck={() => {
+              setChecking(true);
+              void loadNext()
+                .catch((e: unknown) => setErrMsg(e instanceof Error ? e.message : String(e)))
+                .finally(() => setChecking(false));
+            }}
+            onUpload={() => void leaveProbe('/onboarding/upload')}
+            onSetGoal={() => void leaveProbe('/welcome')}
           />
-          <Btn
-            variant="secondary"
-            onClick={() =>
-              void loadNext().catch((e: unknown) =>
-                setErrMsg(e instanceof Error ? e.message : String(e)),
-              )
-            }
-          >
-            重新查询题目
-          </Btn>
           {errMsg && <ErrorState text={errMsg} />}
         </LoomCard>
       )}
@@ -302,6 +295,129 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
       )}
     </PlacementShell>
   );
+}
+
+// No question to show yet: say what the question supply is actually doing (design H5).
+function SupplyStatus({
+  outcomes,
+  checking,
+  onRecheck,
+  onUpload,
+  onSetGoal,
+}: {
+  outcomes: StarterOutcome[] | undefined;
+  checking: boolean;
+  onRecheck: () => void;
+  onUpload: () => void;
+  onSetGoal: () => void;
+}) {
+  const status = starterStatus(outcomes);
+  const upload = (variant: 'primary' | 'secondary') => (
+    <Btn variant={variant} icon="record" onClick={onUpload}>
+      上传自己的材料
+    </Btn>
+  );
+  const recheck = (variant: 'primary' | 'secondary', label = '再查一次') => (
+    <Btn variant={variant} icon="refresh" disabled={checking} onClick={onRecheck}>
+      {checking ? '正在查…' : label}
+    </Btn>
+  );
+  return (
+    <div role="status" aria-live="polite">
+      {supplyBody()}
+    </div>
+  );
+  function supplyBody() {
+    switch (status.kind) {
+      case 'need_goal':
+        return (
+          <EmptyState
+            icon="target"
+            title="还缺学习目标"
+            text="先说清这次要学什么，才能为你准备题目。"
+            action={
+              <Btn variant="primary" icon="target" onClick={onSetGoal}>
+                去设定目标
+              </Btn>
+            }
+          />
+        );
+      case 'preparing':
+        return (
+          <>
+            <EmptyState
+              icon="clock"
+              title="正在准备题目 · 还不能开始"
+              text="准备好后这里会出现第一题。可以先离开，回来再查。"
+              action={recheck('primary')}
+            />
+            {status.lastFailure && (
+              <p className="ob-pl-supply-note">
+                <span className="badge tone-hard">上次没成功</span>
+                {status.lastFailure}，稍后会自动重试。
+              </p>
+            )}
+          </>
+        );
+      case 'ready':
+        return (
+          <>
+            <EmptyState
+              icon="check"
+              title="题目准备好了"
+              text="加载第一题就可以开始。加载后仍然没有题的话，可以先上传自己的材料。"
+              action={recheck('primary', '加载题目')}
+            />
+            {upload('secondary')}
+          </>
+        );
+      case 'failed':
+        return (
+          <>
+            <EmptyState
+              icon="alert"
+              title="没能准备好题目"
+              text="可以上传自己的材料，从里面出题；也可以稍后再试一次。"
+              action={upload('primary')}
+            />
+            <p className="ob-pl-supply-note">
+              <span className="badge tone-hard">原因</span>
+              {status.reason}
+            </p>
+            {recheck('secondary')}
+          </>
+        );
+      case 'unknown':
+        return (
+          <>
+            <EmptyState
+              icon="alert"
+              title="还不确定题目有没有准备好"
+              text={
+                status.final
+                  ? '这次准备已经停下，不会再自动继续。可以上传自己的材料，从里面出题。'
+                  : '再查一次看看最新情况；一直这样的话，可以先上传自己的材料。'
+              }
+              action={status.final ? upload('primary') : recheck('primary')}
+            />
+            <p className="ob-pl-supply-note">
+              <span className="badge tone-hard">原因</span>
+              {status.reason}
+            </p>
+            {!status.final && upload('secondary')}
+          </>
+        );
+      default:
+        return (
+          <EmptyState
+            icon="clock"
+            title="暂时没有可以继续的题"
+            text="这个目标现有的题已经用完，目前没有新的题在准备。可以上传自己的材料，从里面出题。"
+            action={upload('primary')}
+          />
+        );
+    }
+  }
 }
 
 function PlacementShell({
@@ -602,11 +718,7 @@ function PlacementQuestionCard({
         <ErrorState text="这道题需要当前页面尚不支持的作答控件。可以退出并保留这次定位练习的记录。" />
       ) : (
         <>
-          <SaveStateChip
-            state={conflict ? 'conflict' : autosave.state}
-            generation={autosave.generation}
-            onRetry={autosave.retry}
-          />
+          <SaveStateChip state={conflict ? 'conflict' : autosave.state} onRetry={autosave.retry} />
           {conflict && (
             <Btn variant="secondary" onClick={() => void recover()}>
               重新加载服务端草稿 · 放弃本地修改

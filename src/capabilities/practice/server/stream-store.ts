@@ -21,6 +21,7 @@ import type { Db, Tx } from '@/db/client';
 import { notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
 import {
   artifact,
+  assessment_submission,
   event,
   knowledge,
   learning_item,
@@ -32,6 +33,10 @@ import {
 } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { resolveVerdictsForAttempts } from '@/kernel/read-models/assessment-verdict';
+import {
+  readAutomaticIssuanceServingDecisions,
+  readAutomaticallyServableQuestionIds,
+} from '@/kernel/records/assessment-issuance';
 import { Review } from '@/server/session';
 import {
   type CandidateInput,
@@ -110,7 +115,6 @@ async function lockDailyStreamPartition(db: DbLike, date: string): Promise<void>
 // from truncation past capacity) ever saw them — an unenforced invariant (YUK-349).
 const DUE_INPUT_LIMIT = 200;
 const VARIANT_WINDOW_DAYS = 7;
-const VARIANT_FAILURE_EVENT_LIMIT = 200;
 /** Hard ceiling for mistake variants admitted to one composer/LLM input. */
 export const VARIANT_INPUT_LIMIT = 50;
 
@@ -194,7 +198,7 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
   // source. Read the due intervention subset independently, then prefix-union it
   // with the capped page. The FSRS row is the activation/scheduling boundary;
   // draft follow-ups without a row remain invisible.
-  const protectedInterventionRows = await db
+  const interventionCandidates = await db
     .select({
       question_id: question.id,
       knowledge_ids: question.knowledge_ids,
@@ -210,6 +214,14 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
       ),
     )
     .orderBy(material_fsrs_state.due_at, question.created_at, question.id);
+  const admittedInterventionIds = await readAutomaticallyServableQuestionIds(
+    db,
+    interventionCandidates.map((row) => row.question_id),
+    { includeInterventionDiagnostics: true },
+  );
+  const protectedInterventionRows = interventionCandidates.filter((row) =>
+    admittedInterventionIds.has(row.question_id),
+  );
   const protectedInterventionIds = new Set(protectedInterventionRows.map((row) => row.question_id));
   const dueRows = [
     ...protectedInterventionRows,
@@ -229,10 +241,9 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
         gte(event.created_at, since),
       ),
     )
-    .orderBy(desc(event.created_at), desc(event.id))
-    .limit(VARIANT_FAILURE_EVENT_LIMIT);
+    .orderBy(desc(event.created_at), desc(event.id));
   const failedQids = [...new Set(recentFailures.map((r) => r.qid))];
-  const variantRows =
+  const variantCandidates =
     failedQids.length === 0
       ? []
       : await db
@@ -248,8 +259,16 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
               inArray(mistake_variant.parent_question_id, failedQids),
             ),
           )
-          .orderBy(desc(mistake_variant.created_at), desc(mistake_variant.id))
-          .limit(VARIANT_INPUT_LIMIT);
+          .orderBy(desc(mistake_variant.created_at), desc(mistake_variant.id));
+  const admittedVariantIds = await readAutomaticallyServableQuestionIds(
+    db,
+    variantCandidates.flatMap((row) => row.variant_question_id ?? []),
+  );
+  const variantRows = variantCandidates
+    .filter(
+      (row) => row.variant_question_id !== null && admittedVariantIds.has(row.variant_question_id),
+    )
+    .slice(0, VARIANT_INPUT_LIMIT);
 
   // 3. 新学待检 — 尚未开始或正在学习的学习项，其知识点里没有 FSRS 状态行的。
   const items = await db
@@ -276,7 +295,7 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
       // draft 题（container-only）还没被任何 review 路径物化，若不过滤会被这里抓成第一题、暴露
       // 给用户成普通练习项。
       for (const kid of untracked) {
-        const [q] = await db
+        const candidates = await db
           .select({ id: question.id })
           .from(question)
           .where(
@@ -286,8 +305,12 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
               // YUK-1045 — §3.3 契约准入门：suspended/withdrawn 组不作新检选第题。
               questionSuspendedPredicate(question),
             ),
-          )
-          .limit(1);
+          );
+        const admittedIds = await readAutomaticallyServableQuestionIds(
+          db,
+          candidates.map((row) => row.id),
+        );
+        const q = candidates.find((row) => admittedIds.has(row.id));
         if (q) newCheckPairs.push({ questionId: q.id, knowledgeId: kid });
       }
       newCheckPairs = newCheckPairs.slice(0, 3);
@@ -315,8 +338,8 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
   //    defer-flip，无 flag——见 learnable-frontier.ts 不变量块）。
   const frontierKcs = await learnableFrontier(db);
   const frontierPairs: Array<{ questionId: string; knowledgeId: string }> = [];
-  for (const kc of frontierKcs.slice(0, FRONTIER_MAX_ITEMS)) {
-    const [q] = await db
+  for (const kc of frontierKcs) {
+    const candidates = await db
       .select({ id: question.id })
       .from(question)
       .where(
@@ -329,9 +352,14 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
       )
       // Deterministic pick (reproducible composition) — the new_check sibling omits this;
       // frontier is net-new so we make it stable from the start.
-      .orderBy(question.id)
-      .limit(1);
+      .orderBy(question.id);
+    const admittedIds = await readAutomaticallyServableQuestionIds(
+      db,
+      candidates.map((row) => row.id),
+    );
+    const q = candidates.find((row) => admittedIds.has(row.id));
     if (q) frontierPairs.push({ questionId: q.id, knowledgeId: kc });
+    if (frontierPairs.length === FRONTIER_MAX_ITEMS) break;
   }
 
   // YUK-673 L3 fatigue/repetition needs stable KC + question-kind identities. Resolve every
@@ -854,6 +882,48 @@ function eventStreamItemId(payload: unknown): string | null {
  *     and its done timestamp. Ambiguity deliberately returns null rather than
  *     displaying another attempt's judgement.
  */
+async function filterProspectiveStreamQuestions(
+  db: DbLike,
+  rows: StreamItemRow[],
+): Promise<{ rows: StreamItemRow[]; recoveryRowIds: Set<string> }> {
+  const prospective = rows.filter((row) => row.item_kind === 'question' && row.status !== 'done');
+  const issuanceIds = prospective.map((row) => `iss_stream_${row.id}`);
+  const issuedDecisions = await readAutomaticIssuanceServingDecisions(db, issuanceIds);
+  // An unsupported pinned contract withholds new serving, but it does not erase
+  // already-accepted work: when the pinned issuance holds an accepted submission,
+  // the stream row is the only path back into Solo for settlement/recovery, so it
+  // stays visible (same boundary as getIssuanceState — submissions retain their
+  // DTO/history). Unsupported + unanswered rows stay stored yet must never display
+  // as a servable question.
+  const unsupportedIds = issuanceIds.filter(
+    (id) => issuedDecisions.get(id)?.kind === 'unavailable',
+  );
+  const acceptedIds = new Set<string>();
+  if (unsupportedIds.length > 0) {
+    const accepted = await db
+      .select({ issuance_id: assessment_submission.issuance_id })
+      .from(assessment_submission)
+      .where(inArray(assessment_submission.issuance_id, unsupportedIds));
+    for (const row of accepted) acceptedIds.add(row.issuance_id);
+  }
+  const admittedIds = await readAutomaticallyServableQuestionIds(
+    db,
+    prospective.map((row) => row.ref_id),
+    { includeInterventionDiagnostics: true },
+  );
+  const recoveryRowIds = new Set<string>();
+  const kept = rows.filter((row) => {
+    if (row.item_kind !== 'question' || row.status === 'done') return true;
+    const issuanceId = `iss_stream_${row.id}`;
+    if (!issuedDecisions.has(issuanceId)) return admittedIds.has(row.ref_id);
+    if (issuedDecisions.get(issuanceId)?.kind === 'admitted') return true;
+    if (!acceptedIds.has(issuanceId)) return false;
+    recoveryRowIds.add(row.id);
+    return true;
+  });
+  return { rows: kept, recoveryRowIds };
+}
+
 async function resolveStreamItemMetadata(
   db: DbLike,
   rows: StreamItemRow[],
@@ -1102,8 +1172,8 @@ async function materializeKnowledgeScopedSession(
       .from(practice_stream_item)
       .where(streamPartitionPredicate(date, sessionId))
       .orderBy(asc(practice_stream_item.position));
-
-    if (session.status === 'started' && existing.length < SCOPED_QUESTION_LIMIT) {
+    const eligibleExisting = (await filterProspectiveStreamQuestions(tx, existing)).rows;
+    if (session.status === 'started' && eligibleExisting.length < SCOPED_QUESTION_LIMIT) {
       // Deterministic, local-only selection: a user-requested scope must not pay the daily LLM
       // compose cost or inherit unrelated whole-profile candidates. Pull only published questions
       // carrying this KC; keep the session snapshot stable and fill newly available vacancies.
@@ -1118,12 +1188,15 @@ async function materializeKnowledgeScopedSession(
             questionSuspendedPredicate(question),
           ),
         )
-        .orderBy(asc(question.difficulty), desc(question.updated_at), asc(question.id))
-        .limit(SCOPED_QUESTION_LIMIT * 5);
+        .orderBy(asc(question.difficulty), desc(question.updated_at), asc(question.id));
+      const admittedIds = await readAutomaticallyServableQuestionIds(
+        tx,
+        candidates.map((row) => row.id),
+      );
       const existingRefs = new Set(existing.map((row) => row.ref_id));
       const available = candidates
-        .filter((candidate) => !existingRefs.has(candidate.id))
-        .slice(0, SCOPED_QUESTION_LIMIT - existing.length);
+        .filter((candidate) => admittedIds.has(candidate.id) && !existingRefs.has(candidate.id))
+        .slice(0, SCOPED_QUESTION_LIMIT - eligibleExisting.length);
       if (available.length > 0) {
         const now = new Date();
         const startPosition = existing.reduce((max, row) => Math.max(max, row.position), 0) + 1;
@@ -1209,6 +1282,7 @@ async function getKnowledgeScopedStream(
     label: knowledgeRow.name,
     session_id: sessionId,
   };
+  rows = (await filterProspectiveStreamQuestions(db, rows)).rows;
   const metadata = await resolveStreamItemMetadata(db, rows);
   return buildStreamView({
     date,
@@ -1236,12 +1310,21 @@ async function trimStoredPendingItemsToBudget(
       .where(streamPartitionPredicate(date))
       .orderBy(asc(practice_stream_item.position));
 
-    const frozen = current.filter((row) => row.status !== 'pending');
+    const { rows: eligible, recoveryRowIds } = await filterProspectiveStreamQuestions(tx, current);
+    // Recovery rows (unsupported pinned contract + accepted submission) are not
+    // prospective work: they stay visible as the settlement/recovery entry point
+    // but sit outside the budget economy entirely — never a trimmable tail, and
+    // never consuming the minutes that decide other rows' fate.
+    const frozen = eligible.filter(
+      (row) => row.status !== 'pending' && !recoveryRowIds.has(row.id),
+    );
     const frozenMinutes = frozen.reduce(
       (sum, row) => sum + estimateStreamItemMinutes(row.item_kind),
       0,
     );
-    const pending = current.filter((row) => row.status === 'pending');
+    const pending = eligible.filter(
+      (row) => row.status === 'pending' && !recoveryRowIds.has(row.id),
+    );
     // An intervention row is the learner-visible delivery of approved material,
     // not an ordinary recommendation tail. Never trim it merely because it was
     // appended after the day's budget was composed; instead budget the remaining
@@ -1340,14 +1423,18 @@ export async function getStream(
   }
 
   const budget = await resolveDailyPracticeBudget(db);
-  const storedMinutes = rows.reduce(
-    (sum, row) => sum + estimateStreamItemMinutes(row.item_kind),
-    0,
-  );
+  const gated = await filterProspectiveStreamQuestions(db, rows);
+  rows = gated.rows;
+  // Recovery rows are visible but not prospective: their minutes must neither
+  // trigger the trim nor decide other rows' fate (same carve-out as the trim).
+  const storedMinutes = rows
+    .filter((row) => !gated.recoveryRowIds.has(row.id))
+    .reduce((sum, row) => sum + estimateStreamItemMinutes(row.item_kind), 0);
   if ((opts.enforceBudget ?? opts.composeIfEmpty ?? false) && storedMinutes > budget.minutes) {
     rows = await trimStoredPendingItemsToBudget(db, date, budget.minutes);
   }
 
+  rows = (await filterProspectiveStreamQuestions(db, rows)).rows;
   const metadata = await resolveStreamItemMetadata(db, rows);
   return buildStreamView({
     date,

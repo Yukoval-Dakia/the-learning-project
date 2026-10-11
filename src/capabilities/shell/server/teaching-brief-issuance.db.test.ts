@@ -2,11 +2,7 @@ import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ProbeAnswerResponseSchema } from '@/capabilities/agency/api/contracts';
 import { POST } from '@/capabilities/agency/api/probe-answer';
-import {
-  getEffectiveProbeResultStatuses,
-  serveProbeOnce,
-  servePublishedProbe,
-} from '@/capabilities/agency/public';
+import { getEffectiveProbeResultStatuses, serveProbeOnce } from '@/capabilities/agency/public';
 import * as evaluationService from '@/capabilities/practice/server/judge/evaluate-submission';
 import { createRecordedModelExecutor } from '@/capabilities/practice/server/judge/recorded-model-executor';
 import {
@@ -24,6 +20,7 @@ import { editQuestion } from '@/server/questions/write';
 import { computeTeachingBriefReport } from '../../../../scripts/lib/teaching-brief-report';
 import { loadTeachingBriefReportInput } from '../../../../scripts/report-teaching-brief';
 import { publishPaperModelFixture } from '../../../../tests/fixtures/assessment-paper';
+import { seedHistoricalAssessmentIssuance } from '../../../../tests/fixtures/historical-assessment-issuance';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { POST as ACK } from '../api/teaching-brief-ack';
 import { loadTeachingBrief, validateAckableOutcome } from './teaching-brief';
@@ -97,7 +94,11 @@ async function seedProbe(id: string, minutesAgo: number, issued = true, includeF
   if (served.status !== 'served') throw new Error(`fixture serve failed: ${served.status}`);
   if (issued) {
     await publishPaperModelFixture(db, served.probe_question_id);
-    await servePublishedProbe(db, served.probe_question_id);
+    await seedHistoricalAssessmentIssuance(db, {
+      group_id: served.probe_question_id,
+      issuance_id: `iss_probe_${served.probe_question_id}`,
+      container_occurrence_ref: `probe:${served.probe_question_id}`,
+    });
   }
   return served.probe_question_id;
 }

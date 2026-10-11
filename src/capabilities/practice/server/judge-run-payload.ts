@@ -11,9 +11,10 @@
 
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { EvaluationRecord } from '@/core/schema/assessment';
+import { ActivateEvaluationIntent, EvaluationRecord } from '@/core/schema/assessment';
+import type { JudgeWorkflowInputT } from '@/core/schema/event/judge-operational-events';
 import type { NativeJudgePendingSubmitInputT } from '@/core/schema/event/judge-pending-events';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import { event, type question } from '@/db/schema';
 import {
   resolveVerdictForAttempt,
@@ -21,6 +22,15 @@ import {
 } from '@/kernel/read-models/assessment-verdict';
 import { projectEvaluationToJudgeResult } from './judge/evaluation-authority';
 import { ratingFromCoarseOutcome } from './judge-rating';
+import { JudgeRunTerminalResultSchema } from './judge-run-status';
+
+export const NativeJudgeResolutionPayload = JudgeRunTerminalResultSchema.extend({
+  version: z.literal(1),
+  status: z.enum(['effective', 'review_required']),
+  assessment: JudgeRunTerminalResultSchema.shape.assessment
+    .unwrap()
+    .extend({ activation_intent: ActivateEvaluationIntent }),
+});
 
 type QuestionRow = typeof question.$inferSelect;
 
@@ -71,6 +81,7 @@ export interface LegacyJudgeRunJobData {
 }
 
 export interface NativeJudgeRunJobData {
+  operational?: JudgeWorkflowInputT;
   run_id: string;
   caller: 'native_assessment';
   submit: NativeJudgePendingSubmitInputT;
@@ -201,7 +212,7 @@ export function applyFrozenQuestion(
  * 乱序 created_at 会把死判当活判。
  */
 export async function reconstructDoneFromDomainEvents(
-  db: Db,
+  db: Db | Tx,
   runId: string,
 ): Promise<Record<string, unknown> | null> {
   const [attempt] = await db.select().from(event).where(eq(event.id, runId)).limit(1);
@@ -357,6 +368,36 @@ export async function reconstructDoneFromDomainEvents(
     ...(evidenceJson !== undefined ? { evidence_json: evidenceJson } : {}),
     ...(capabilityRef !== undefined ? { capability_ref: capabilityRef } : {}),
     ...(route !== undefined ? { route } : {}),
+  };
+}
+
+/** Exact native activation proof may precede the separate already-effective resolution repair. */
+export async function reconstructDoneFromNativeCompletion(
+  database: Db | Tx,
+  runId: string,
+  candidateId: string,
+  attemptEventId: string,
+) {
+  const [anchor] = await database.select().from(event).where(eq(event.id, attemptEventId));
+  if (!anchor) return null;
+  const resolved = (await resolveVerdictsForNativeAttempts(database, [anchor])).get(anchor.id);
+  if (!resolved?.effective?.scoring_basis) return null;
+  return {
+    run_id: runId,
+    attempt_event_id: anchor.id,
+    judge_event_id: null,
+    status: 'effective',
+    ...projectEvaluationToJudgeResult(
+      EvaluationRecord.parse(resolved.effective.row),
+      resolved.effective.scoring_basis,
+    ),
+    assessment: {
+      submission_id: resolved.effective.row.submission_id,
+      evaluation_group_id: resolved.evaluation_group_id,
+      candidate_id: candidateId,
+      original_evaluation_id: resolved.original_evaluation_id,
+      effective_evaluation_id: resolved.effective.evaluation_id,
+    },
   };
 }
 

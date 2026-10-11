@@ -25,5 +25,6 @@ export * from './publish';
 export * from './response';
 export * from './revision';
 export * from './scoring';
+export * from './serving-admission';
 export * from './settlement';
 export * from './structure';

@@ -87,6 +87,9 @@ export async function createIssuance(req: Request): Promise<Response> {
           'not_admitted',
           `question group '${body.group_id}' is not scoring-admitted for auto_score issuance`,
           422,
+          undefined,
+          // YUK-1445 —— typed gate reason（公共枚举）进 details；issues 文本仍是诊断。
+          out.serving_reason != null ? { serving_reason: out.serving_reason } : undefined,
         );
       case 'container_ref_required':
         throw new ApiError(

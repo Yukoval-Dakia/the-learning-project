@@ -9,6 +9,7 @@ import {
   errorResponse,
 } from '@/kernel/http';
 import { Ingestion } from '@/server/session';
+import { resolveSelectableSubjectId } from '@/subjects/profile';
 import { CreateIngestionSessionBody } from './contracts';
 
 const DEFAULT_LIMIT = 20;
@@ -222,6 +223,22 @@ export async function POST(req: Request): Promise<Response> {
     }
     const body = parsed.data;
 
+    // YUK-1404 — explicit optional upload subject, validated BEFORE any
+    // source_document / learning_session write. Omitted / null = unknown: no
+    // signal is persisted and the upload proceeds unchanged (no choose/confirm
+    // demand). A non-null value must resolve through the canonical selectable
+    // registry (aliases canonicalized); unknown / non-selectable / retired → 400.
+    const requestedSubjectId = body.subject_id ?? null;
+    const canonicalSubjectId =
+      requestedSubjectId === null ? null : resolveSelectableSubjectId(requestedSubjectId);
+    if (requestedSubjectId !== null && canonicalSubjectId === null) {
+      throw new ApiError(
+        'validation_error',
+        `subject_id: unknown or not currently selectable subject '${requestedSubjectId}'`,
+        400,
+      );
+    }
+
     // Validate asset_ids exist
     const foundRows = await db
       .select({ id: source_asset.id })
@@ -237,6 +254,9 @@ export async function POST(req: Request): Promise<Response> {
     const { sessionId, sourceDocumentId } = await Ingestion.initiateUpload(db, {
       assetIds: body.asset_ids,
       entrypoint: body.entrypoint,
+      // YUK-1404 — canonical learner-selected subject (already validated above);
+      // null = no explicit signal, persisted as provenance-key absence.
+      learnerSelectedSubjectId: canonicalSubjectId,
     });
 
     return Response.json({
