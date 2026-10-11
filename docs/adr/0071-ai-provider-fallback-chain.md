@@ -11,13 +11,13 @@ status: proposed
 
 ## 背景与问题
 
-两起 TEST 事故坐实缺口：①10-07 23:06 → 10-10 09:54 JST，`opencode-go` 配额耗尽（`429 Go usage limit`，Retry-After 约 53 小时），109 个后台任务逐个撞死在同一通道上——没有任何机制读 Retry-After 或冷却；②10-11 05:30–05:48，小米通道约 20 分钟 503/429，8 个 run 失败。现状（代码核实）：`resolveTaskProvider`（`src/server/ai/providers.ts:579`）只有单点决议——chat env pin（`AI_PROVIDER_OVERRIDE`/`AI_PROVIDER_MODEL`）压过一切显式与 DB 绑定，无链；唯一跨通道重试是 vision judge 的专用旁路（`src/capabilities/practice/server/judge/provider-lane-fallback.ts`，整任务重跑，YUK-1123 要修的对象）；provider 侧 Retry-After 从不被解析（全库只有我们自己在响应头**设置** Retry-After）。多 provider 支持本身保持不变，本 ADR 在其上加有序 fallback 链。
+两起 TEST 事故坐实缺口：①10-07 23:06 → 10-10 09:54 JST，`opencode-go` 配额耗尽（`429 Go usage limit`，Retry-After 约 53 小时），109 个后台任务逐个撞死在同一通道上——没有任何机制读 Retry-After 或冷却；②10-11 05:30–05:48，小米通道约 20 分钟 503/429，8 个 run 失败。现状（代码核实）：`resolveTaskProvider`（`src/server/ai/providers.ts:596`）只有单点决议——chat env pin（`AI_PROVIDER_OVERRIDE`/`AI_PROVIDER_MODEL`）压过一切显式与 DB 绑定，无链；唯一跨通道重试代码是 vision judge 的专用旁路（`src/capabilities/practice/server/judge/provider-lane-fallback.ts`，整任务重跑形状，YUK-1123 要修的对象），但其分类器只认 `'api_error_result'`（`provider-lane-fallback.ts:40-42`），现役 pi lane 的 provider 失败不产生该 subtype——对所引事故类失败从不生效；且现役 pi lane 上 provider 的 429/5xx/连接失败以 `subtype:'error_during_execution'` 到达 runner（`pi-agent-adapter.ts:682-693`），被 `isTransientAgentFailure` 判为永久失败（`agent-run-error.ts:184-186`），连同通道的进程内重试也不触发。即现役**没有任何生效的跨通道或同通道重试**；provider 侧 Retry-After 从不被解析（全库只有我们自己在响应头**设置** Retry-After）。多 provider 支持本身保持不变，本 ADR 在其上加有序 fallback 链。
 
 ## 决定
 
 ### D1 链配置：按 lane/task kind 的有序 `{provider, model}` 列表；旧单 pin = 长度 1 的链
 
-每条 lane（全局、vision judge、per-task kind）配置一个有序链。全局默认来自 env（如 `AI_PROVIDER_FALLBACK_CHAIN`，JSON 数组）；DB lane 行沿用现有优先级——全局 pin 保持 env kill-switch 恒压 DB（`resolveGlobalProviderSwitch`：env > `lane.global.*`，owner 裁决的 incident 语义不变），lane/task 级沿用 DB > env 同 key（`getLaneOverride` 现语义）。未配链时：现役 env pin / DB 单值 / registry 默认各读作长度 1 的链，现网配置字节兼容。启动期逐项校验：`resolveModelProfile` + `assertModelProfileCapabilityFit`（`model-profiles.ts:442`，needsToolCall/isMultimodal fail-closed）与凭证在场（`isProviderLaneReady`，`providers.ts:345`）；非法条目显式报告并**跳过**，跳过后链为空则按现行 config-error fail-closed。链仅在冷冷却与错误分类判定后前进，条目顺序 owner 随时可调。
+每条 lane（全局、vision judge、per-task kind）配置一个有序链。全局默认来自 env（如 `AI_PROVIDER_FALLBACK_CHAIN`，JSON 数组）；DB lane 行沿用现有优先级——全局 pin 保持 env kill-switch 恒压 DB（`resolveGlobalProviderSwitch`：env > `lane.global.*`，owner 裁决的 incident 语义不变），lane/task 级沿用 DB > env 同 key（`getLaneOverride` 现语义）。未配链时：现役 env pin / DB 单值 / registry 默认各读作长度 1 的链，现网配置字节兼容。启动期逐项校验：`resolveModelProfile` + `assertModelProfileCapabilityFit`（`model-profiles.ts:442`，needsToolCall/isMultimodal fail-closed）与凭证在场（`isProviderLaneReady`，`providers.ts:361`）；非法条目显式报告并**跳过**，跳过后链为空则按现行 config-error fail-closed。链仅在冷冷却与错误分类判定后前进，条目顺序 owner 随时可调。
 
 ### D2 粒度：agent loop 内**单次模型请求**级 fallback；工具绝不重执行
 
@@ -25,7 +25,7 @@ status: proposed
 
 ### D3 错误分类：只在「确定未执行 / 确定未计费」时跨链；unknown-paid 永不跨链
 
-跨链白名单（在 streamFn 包装层判定）：①发送前连接/DNS/TLS 失败（流确认零字节）；②429 配额或限速；③5xx 且零输出；④auth/配置错误（401/403/404-model 等）——跨链**同时报警**。不跨链：部分流已出、发送后超时、流中断但已有输出、一切付费效果未知的失败——维持现有 unknown-paid 规则：保留全额预留、停止、如实记录，`cost_basis='unknown'` 且 `cost_usd` 为 NULL（`ai_task_runs_cost_truth_ck`，`src/db/schema.ts:1574`，DB 层禁止 unknown 记 0）。注意代码事实：现行 `api_error_status===null` 标记**混含**流中 socket 断落（`agent-run-error.ts:11-12` probe 结论），故分类器必须自查零输出，不能只看 null 状态；runner 级 `isTransientAgentFailure` 白名单（`agent-run-error.ts:174`）保持不变，本分类器更严。唯一例外：per-task 显式 opt-in 的幂等读任务，由任务声明方自行担保重发安全。
+跨链白名单（在 streamFn 包装层判定）：①发送前连接/DNS/TLS 失败（流确认零字节）；②429 配额或限速；③5xx 且零输出；④auth/配置错误（401/403/404-model 等）——跨链**同时报警**。不跨链：部分流已出、发送后超时、流中断但已有输出、一切付费效果未知的失败——维持现有 unknown-paid 规则：保留全额预留、停止、如实记录，`cost_basis='unknown'` 且 `cost_usd` 为 NULL（`ai_task_runs_cost_truth_ck`，`src/db/schema.ts:1575`，DB 层禁止 unknown 记 0）。代码事实：现役 pi lane 上 provider 失败以 `subtype:'error_during_execution'` 终态到达 runner（`pi-agent-adapter.ts:682-693`），不携带 `api_error_status`；`api_error_status===null` 混含流中断的 probe 结论（`agent-run-error.ts:11-12`）属已退役 SDK lane。故分类器必须在 streamFn 包装层直接读 pi 的错误面（`error` 事件 / `errorMessage` / `diagnostics[].error.code`），并以 pi 事件协议判「零输出」：`error` 事件先于 `start` 到达，或 `streamSimple` 同步抛出；一旦有事件交付给 loop 即锁死不可跨链。注意驱动内 `maxRetries`（`pi-agent-adapter.ts:1007-1009`）可能已在同通道重试过；runner 级 `isTransientAgentFailure` 白名单（`agent-run-error.ts:174`）保持不变，本分类器更严。唯一例外：per-task 显式 opt-in 的幂等读任务，由任务声明方自行担保重发安全。
 
 ### D4 冷却/断路器：PG 持久化，app+worker 共享；尊重 Retry-After；半开恢复
 
@@ -47,7 +47,7 @@ run 行记录请求链与最终服务 provider/model（`ai_task_runs.provider/mo
 
 ### D8 收编 YUK-1123：退役 vision-judge 旁路，走同一链同一门
 
-删除 `runTaskWithLaneFallback`（`provider-lane-fallback.ts`，整任务重跑形状）与 invoker durable fallback 的 crossover 合并（`invoker.ts:237-247`）；`VISION_JUDGE_PROVIDER`/DB `vision_judge` lane 升级为该 lane 的链输入（旧单值兼容为长度 1），vision judge 与所有任务同链同门同冷却。
+删除 `runTaskWithLaneFallback`（`provider-lane-fallback.ts`，整任务重跑形状）与 invoker durable fallback 的 crossover 合并（`invoker.ts` 约 235-246）——它在现役 pi lane 上本就不生效；`VISION_JUDGE_PROVIDER`/DB `vision_judge` lane 升级为该 lane 的链输入（旧单值兼容为长度 1），vision judge 与所有任务同链同门同冷却。
 
 ### D9 默认链（提案）：`xiaomi-token-plan/mimo-v2.6-pro` → `opencode-go/mimo-v2.6-pro`
 
@@ -66,7 +66,7 @@ run 行记录请求链与最终服务 provider/model（`ai_task_runs.provider/mo
 3. 判分只落准入模型，无可用即 undecided/withhold。
 4. embedding 永不跨模型。
 5. 冷却共享于 PG（无 Redis）；Retry-After 与配额信号必须尊重。
-6. 环境单 pin 仍是 kill-switch（长度 1 链，不跨链）。
+6. 环境单 pin 仍是 kill-switch（长度 1 链，不跨链）；唯一条目被冷却时链为空 ⇒ fail-closed，pin 不能绕过冷却。
 7. §9 承重不动；花费不设上限但全额记账；不为链可用性绕过 YUK-924 能力证据门。
 
 ## 被拒绝的备选
@@ -84,3 +84,5 @@ run 行记录请求链与最终服务 provider/model（`ai_task_runs.provider/mo
 - 混合口径聚合时 `cost_ref` 的具体编码；跨链事件的落表形状（事件脊 vs 专用明细）。
 - per-task 幂等读 opt-in 名单（初始为空）。
 - 学习者侧状态行的文案与呈现归 Opus 线，待其 UI 方接手。
+- 链条目宜同 API 族；跨族（如 anthropic ↔ openai-completions）由 pi `transformMessages` 规范化 tool-call ID，接受 thinking 保真降级。
+- 链前进产生的额外物理调用复用同一 attempt 的预留与率限窗口（与现行驱动内重试同等待遇），各物理调用按 D6 逐段结算。
