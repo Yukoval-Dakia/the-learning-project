@@ -93,6 +93,8 @@ async function settleWithoutWorker(boss: PgBoss, acceptance: CopilotDurableAccep
 }
 
 describe('durable Copilot session FIFO — real pg-boss contract', () => {
+  // @invariant security: restricted chat attachments cannot create formal submissions or assistance evidence
+  // @fails-if answer-only intake writes an event, submission or queue job before rejecting
   it('rejects answer-only review attachments before formal submission or assistance capture while preserving allow intake', async () => {
     vi.spyOn(runtimeEnv, 'shouldEnqueueBackgroundJobs').mockReturnValue(true);
     const fixture = await nativeSoloHttpFixture(testDb());
@@ -135,6 +137,8 @@ describe('durable Copilot session FIFO — real pg-boss contract', () => {
     );
   });
 
+  // @invariant concurrency: real acceptance and recovery preserve one policy and one physical delivery
+  // @fails-if same-key retry changes policy or creates a second delivery instead of returning the original receipt
   it('returns frozen policy through real 202, pending snapshot, same-key retry and changed-policy conflict', async () => {
     vi.spyOn(runtimeEnv, 'shouldEnqueueBackgroundJobs').mockReturnValue(true);
     const key = randomUUID();
@@ -204,6 +208,8 @@ describe('durable Copilot session FIFO — real pg-boss contract', () => {
     _resetBossForTests();
   });
 
+  // @invariant concurrency: a session dispatches only its FIFO head with the complete frozen request
+  // @fails-if a successor is dispatched early or loses the restricted policy when the head settles
   it('accepts three turns but dispatches only the head, then advances with the complete job body', async () => {
     const first = await accept(boss, 'one');
     const second = await accept(boss, 'two', SESSION_ID, undefined, 'answer_only');

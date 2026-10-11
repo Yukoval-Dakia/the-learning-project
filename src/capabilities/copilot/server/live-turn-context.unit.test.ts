@@ -20,6 +20,8 @@ function input(overrides: Partial<CopilotRunInput> = {}): CopilotRunInput {
 }
 
 describe('compileCopilotModelInput', () => {
+  // @invariant security: model input excludes restricted correction content and metadata
+  // @fails-if cold, resume or compaction serialization exposes restricted targets or correction positions
   it('never serializes restricted correction positions or target metadata into cold, resume or compaction', () => {
     const current = input({
       correction_contract: {

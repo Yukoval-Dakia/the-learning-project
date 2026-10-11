@@ -141,6 +141,8 @@ describe('durable Copilot dispatch acceptance', () => {
     expect(Number(queuedCount[0]?.count ?? 0)).toBe(1);
   });
 
+  // @invariant concurrency: lost COMMIT acknowledgement recovery waits for the acceptance lock
+  // @fails-if reconciliation returns missing acceptance while the reserve transaction is still committing
   it('waits behind an in-flight reserve lock before reconciling a lost COMMIT acknowledgement', async () => {
     const idempotencyKey = randomUUID();
     const runId = copilotRunIdForIdempotencyKey(idempotencyKey);

@@ -9,6 +9,14 @@ export class ApiError extends Error {
     message: string,
     public readonly status: number = 400,
     public readonly headers?: HeadersInit,
+    /**
+     * YUK-1404 — optional machine-readable detail bag serialized alongside
+     * {error, message} (the ApiErrorResponseSchema is .passthrough(), so this
+     * is contract-compatible). Lets typed failures like `confirm_required`
+     * carry structured facts (e.g. affected_block_count) for the client
+     * without overloading the learner-facing message.
+     */
+    public readonly details?: Record<string, unknown>,
   ) {
     super(message);
     this.name = 'ApiError';
@@ -18,7 +26,11 @@ export class ApiError extends Error {
 export function errorResponse(err: unknown): Response {
   if (err instanceof ApiError) {
     return Response.json(
-      { error: err.code, message: err.message },
+      {
+        error: err.code,
+        message: err.message,
+        ...(err.details !== undefined ? { details: err.details } : {}),
+      },
       { status: err.status, headers: err.headers },
     );
   }

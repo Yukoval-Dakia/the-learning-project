@@ -17,7 +17,7 @@ import { useQuery } from '@tanstack/react-query';
 import {
   type PlacementProfile,
   type ProfileKc,
-  getPlacementProfile,
+  usePlacementProfileClient,
 } from '@/capabilities/onboarding/ui-public';
 import { Btn } from '@/ui/primitives/Btn';
 import { LoomCard } from '@/ui/primitives/LoomCard';
@@ -146,6 +146,7 @@ export function ProfileBand({
   goal: { id: string; title: string };
   navigate: (to: string) => void;
 }) {
+  const { getPlacementProfile } = usePlacementProfileClient();
   const q = useQuery({
     queryKey: ['placement-profile', goal.id],
     queryFn: () => getPlacementProfile(goal.id),

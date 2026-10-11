@@ -124,10 +124,10 @@ interface ParsedImport {
   typeOnly: boolean;
 }
 
-function parseImports(code: string): ParsedImport[] {
+function parseImports(code: string, file: string): ParsedImport[] {
   const ast = parse(code, {
     sourceType: 'module',
-    plugins: ['typescript', 'jsx', 'dynamicImport', 'importAttributes'],
+    plugins: file.endsWith('.tsx') ? ['typescript', 'jsx'] : ['typescript'],
   });
   const imports: ParsedImport[] = [];
 
@@ -164,9 +164,12 @@ function parseImports(code: string): ParsedImport[] {
         }
         imports.push({ source, symbols, typeOnly });
       }
-    } else if (value.type === 'ImportExpression' || value.type === 'CallExpression') {
+    } else if (value.type === 'ImportExpression') {
+      const source = stringLiteralValue(value.source);
+      if (source) imports.push({ source, symbols: ['*'], typeOnly: false });
+    } else if (value.type === 'CallExpression') {
       const callee = isRecord(value.callee) ? value.callee.type : undefined;
-      const isDynamic = value.type === 'ImportExpression' || callee === 'Import';
+      const isDynamic = callee === 'Import';
       const isRequire =
         callee === 'Identifier' && isRecord(value.callee) && value.callee.name === 'require';
       if ((isDynamic || isRequire) && Array.isArray(value.arguments)) {
@@ -197,7 +200,7 @@ export function scanDeepImports(sources: readonly SourceFile[]): OwnershipViolat
   for (const { path, code } of sources) {
     if (TEST_RE.test(path)) continue;
     if (!path.startsWith('src/server/')) continue;
-    for (const imported of parseImports(code)) {
+    for (const imported of parseImports(code, path)) {
       const deep = capabilityDeepTarget(imported.source);
       if (deep) {
         violations.push({
@@ -225,7 +228,7 @@ export function buildOwnerGraph(sources: readonly SourceFile[]): OwnerEdge[] {
     if (TEST_RE.test(path)) continue;
     const from = ownerOfCapabilityFile(path);
     if (!from) continue;
-    for (const imported of parseImports(code)) {
+    for (const imported of parseImports(code, path)) {
       if (imported.typeOnly) continue;
       const to = publicPortOf(imported.source);
       if (!to || to === from) continue;
@@ -358,7 +361,7 @@ export function scanCataloguedReads(
         });
         continue;
       }
-      const imported = parseImports(code).find((candidate) => candidate.source === port);
+      const imported = parseImports(code, file).find((candidate) => candidate.source === port);
       if (!imported || imported.typeOnly) {
         violations.push({
           path: file,
@@ -474,7 +477,7 @@ export function scanCentralRoots(sources: readonly SourceFile[]): OwnershipViola
 
   const handlers = byPath.get('src/server/boss/handlers.ts');
   if (handlers !== undefined) {
-    for (const imported of parseImports(handlers)) {
+    for (const imported of parseImports(handlers, 'src/server/boss/handlers.ts')) {
       const match = /^@\/capabilities\/([^/]+)\//.exec(imported.source);
       if (match && !imported.typeOnly) {
         violations.push({

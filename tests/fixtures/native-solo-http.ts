@@ -5,7 +5,7 @@ import { createRecordedModelExecutor } from '@/capabilities/practice/server/judg
 import type { ModelExecutorRequest, ModelUnitOutcomeT } from '@/core/schema/assessment';
 import type { Db } from '@/db/client';
 import { knowledge, question, source_asset } from '@/db/schema';
-import { issueSoloFixture } from './assessment-solo';
+import { issueHistoricalSoloFixture, issueSoloFixture } from './assessment-solo';
 
 export const ORIGINAL_RESPONSE =
   '保持同一坡面和相同水量，分次改变坡度；记录每次流速并比较。不能同时改变水量，否则无法判断坡度的独立影响。';
@@ -51,7 +51,9 @@ export async function nativeSoloHttpFixture(
     created_at: now,
     updated_at: now,
   });
-  const issued = await issueSoloFixture(db, id, options.model);
+  const issued = options.model
+    ? await issueHistoricalSoloFixture(db, id, true)
+    : await issueSoloFixture(db, id);
   let outcome: number | 'pending' | 'throw' = options.points ?? 1;
   const execute = vi.fn(
     async (

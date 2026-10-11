@@ -20,6 +20,12 @@ import {
 export const CreateIngestionSessionBody = z.object({
   entrypoint: IngestionEntrypoint,
   asset_ids: z.array(z.string().min(1)).min(1).max(MAX_PDF_PAGES),
+  // YUK-1404 — explicit optional upload subject. Omitted / null = the learner
+  // did not pick one (legacy clients, skippable choice): the upload ALWAYS
+  // proceeds and no signal is persisted. A non-null value must resolve to a
+  // currently selectable subject (aliases canonicalized) or the request is
+  // rejected 400 before any source_document / learning_session write.
+  subject_id: z.string().nullable().optional(),
 });
 
 export const IngestionSessionSchema = z

@@ -289,6 +289,8 @@ describe('reconcile handler — direct provider-start fence after abort', () => 
     vi.stubEnv('OPENCODE_API_KEY', 'synthetic-mimo-key');
   });
 
+  // @invariant data: an unknown reconcile outcome cannot trigger a second paid request or memory mutation
+  // @fails-if redelivery reaches transport again or replaces the original aborted attempt and unknown cost evidence
   it.each([
     { mode: 'off', phase: 'headers' },
     { mode: 'observe', phase: 'headers' },

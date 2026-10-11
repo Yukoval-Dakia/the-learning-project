@@ -93,3 +93,16 @@ export const submitProbeAnswer = (input: SubmitProbeAnswerInput) =>
       latency_ms: input.latencyMs ?? null,
     },
   });
+
+// Probe answer draft: the shared issuance responses resource, same request as practice's saver.
+export const saveProbeResponseDraft = (
+  issuanceId: string,
+  body: ApiOperationRequestBody<'saveResponseDraft'>,
+  options: { keepalive?: boolean } = {},
+) =>
+  apiOperationJson('saveResponseDraft', {
+    url: `/api/issuances/${encodeURIComponent(issuanceId)}/responses`,
+    method: 'POST',
+    body,
+    init: options.keepalive ? { keepalive: true } : undefined,
+  });

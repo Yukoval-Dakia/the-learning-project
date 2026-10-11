@@ -1092,3 +1092,14 @@
   border: 1px solid var(--line-soft);
   color: var(--ink-4);
 }
+
+/* YUK-1438 — placement question-supply status: the reason behind a failed or retrying supply. */
+.ob-pl-supply-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+  margin: var(--s-3) 0;
+  font-size: var(--fs-caption);
+  color: var(--ink-2);
+}

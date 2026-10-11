@@ -1,6 +1,7 @@
+import { setTimeout as delay } from 'node:timers/promises';
 import { DBOS } from '@dbos-inc/dbos-sdk';
 import { drizzle } from 'drizzle-orm/postgres-js';
-import { PgBoss } from 'pg-boss';
+import { type Clock, PgBoss, systemClock } from 'pg-boss';
 import postgres from 'postgres';
 import { z } from 'zod';
 import * as schema from '@/db/schema';
@@ -12,6 +13,12 @@ import type { SessionOrphanWorkflows } from '@/server/durable/session-orphan-wor
 import dbosPackage from '../../node_modules/@dbos-inc/dbos-sdk/package.json';
 import pgBossPackage from '../../node_modules/pg-boss/package.json';
 import { fixtureErrorMessage, sanitizeDiagnostic } from '../dbos-review-orphan/fixture-process';
+import {
+  accelerateSessionCron,
+  clockSearchPath,
+  schedulerPollMs,
+  sessionDeclarations,
+} from './fixture';
 
 let stage = 'validate-database';
 let database: string | undefined;
@@ -116,20 +123,35 @@ async function main() {
     throw new Error('Application proxy must target the same disposable DB');
   diagnosticSecrets.push(appUrl.password, decodeURIComponent(appUrl.password));
   stage = 'load-host';
-  const appClient = postgres(appUrl.toString(), { max: 2, ssl: false, connect_timeout: 2 });
+  const cron = process.env.TLP_SESSION_CRON_TEST === '1';
+  const appClient = postgres(appUrl.toString(), {
+    max: 2,
+    ssl: false,
+    connect_timeout: 2,
+    ...(cron ? { connection: { search_path: clockSearchPath } } : {}),
+  });
   const db = drizzle(appClient, { schema });
+  let clockOffsetMs = 0;
+  const clock: Clock = { ...systemClock, now: () => Date.now() + clockOffsetMs };
+  async function synchronizeClock() {
+    if (!cron) throw new Error('Only the cron fixture may synchronize its clock');
+    const [state] = await appClient`select offset_ms::double precision as offset_ms
+      from session_cron_clock.state where singleton`;
+    clockOffsetMs = z.number().parse(state.offset_ms);
+  }
+  if (cron) await synchronizeClock();
   const family = await import('@/server/durable/session-orphan-family');
   const backend = await import('@/server/durable/session-orphan-backend');
   const selectedFamily: SessionOrphanFamily = family.sessionOrphanFamilySchema.parse(
     process.env.TLP_SESSION_FAMILY,
   );
   const host = await import('@/server/durable/prune-worker');
-  const cron = process.env.TLP_SESSION_CRON_TEST === '1';
   let holdForward = cron;
   let releaseForward: (() => void) | undefined;
   const heldRows = new Set<() => void>();
   const boss = new PgBoss({
     connectionString: url.toString(),
+    ...(cron ? { clock } : {}),
     max: 2,
     supervise: false,
     schedule: cron,
@@ -205,32 +227,8 @@ async function main() {
       }
     };
   }
-  const declarations = {
-    pruneEvents: {
-      name: 'prune_job_events',
-      backend: 'dbos',
-      queue: 'fast',
-      schedule: { cron: '0 4 * * *', tz: 'Asia/Shanghai' },
-    },
-    conversationOrphans: {
-      name: 'prune_orphan_conversation_sessions',
-      backend: 'dbos',
-      queue: 'fast',
-      schedule: { cron: cron ? '* * * * *' : '25 4 * * *', tz: 'Asia/Shanghai' },
-    },
-    placementOrphans: {
-      name: 'prune_orphan_placement_sessions',
-      backend: 'dbos',
-      queue: 'fast',
-      schedule: { cron: cron ? '* * * * *' : '35 4 * * *', tz: 'Asia/Shanghai' },
-    },
-    reviewOrphans: {
-      name: 'prune_orphan_review_sessions',
-      backend: 'dbos',
-      queue: 'fast',
-      schedule: { cron: '15 4 * * *', tz: 'Asia/Shanghai' },
-    },
-  } satisfies Parameters<typeof host.startDurableWorker>[0]['declarations'];
+  const pauseNative = cron ? accelerateSessionCron(boss) : undefined;
+  const declarations = sessionDeclarations;
   try {
     stage = 'pg-boss-start';
     await boss.start();
@@ -273,6 +271,8 @@ async function main() {
             z.object({ kind: z.literal('release-forward') }),
             z.object({ kind: z.literal('arm-forward') }),
             z.object({ kind: z.literal('release-rows') }),
+            z.object({ kind: z.literal('pause-native') }),
+            z.object({ kind: z.literal('sync-clock') }),
             z.object({ kind: z.literal('stop') }),
           ])
           .parse(raw);
@@ -291,14 +291,27 @@ async function main() {
           holdForward = false;
           releaseForward?.();
           releaseForward = undefined;
+        } else if (command.kind === 'sync-clock') {
+          await synchronizeClock();
+        } else if (command.kind === 'pause-native') {
+          if (!pauseNative) throw new Error('Only the cron fixture may pause native scheduling');
+          await pauseNative();
+          // Let the SDK observe PAUSED and abort its real per-schedule loops.
+          await delay(schedulerPollMs * 3);
         } else if (command.kind === 'arm-forward') holdForward = true;
         else if (command.kind === 'release-rows') {
           for (const release of heldRows) release();
           heldRows.clear();
         } else {
+          stage = 'stop-durable-host';
+          process.send?.({ kind: 'stop-stage', stage, pid: process.pid });
           await host.stopDurableWorker();
+          stage = 'stop-pg-boss';
+          process.send?.({ kind: 'stop-stage', stage, pid: process.pid });
           await boss.stop();
-          await appClient.end();
+          stage = 'stop-application-client';
+          process.send?.({ kind: 'stop-stage', stage, pid: process.pid });
+          await appClient.end({ timeout: 2 });
           process.exit(0);
         }
         process.send?.({ kind: 'ack' });
@@ -336,7 +349,7 @@ async function main() {
                 {},
               );
         stage = 'workflow-result';
-        await handle.getResult();
+        await handle.getResult({ pollingIntervalMs: 50 });
         stage = 'workflow-evidence';
         process.send?.({
           kind: 'done',

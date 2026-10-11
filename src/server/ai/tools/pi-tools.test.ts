@@ -68,6 +68,8 @@ beforeEach(() => {
 import { buildPiDomainAgentTools } from './pi-tools';
 
 describe('buildPiDomainAgentTools', () => {
+  // @invariant security: the Pi tool boundary honors accepted causal policy over caller claims
+  // @fails-if a caller declaring allow executes a tool forbidden by the accepted answer-only source
   it('uses the accepted causal policy even when the caller declares allow', async () => {
     policyRead.mockResolvedValue('answer_only');
     const execute = vi.fn(() => ({ hits: ['must not run'] }));

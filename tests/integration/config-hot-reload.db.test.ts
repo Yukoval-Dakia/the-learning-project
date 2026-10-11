@@ -47,10 +47,10 @@ describe('P1-3 — hydrate single-flight + epoch guard', () => {
     await db.execute(
       sql`update system_config set value = '5'::jsonb where key = 'AI_RATE_LIMIT_MAX'`,
     );
-    await db.execute(sql`update system_config_epoch set epoch = 1 where id = 'global'`);
-    // published epoch is already > 1 in-process after the set above? Snapshot epoch
-    // after setConfig is the bump epoch (≥2). Reading a stale-epoch row now must
-    // be refused.
+    // Roll the journal one step behind the epoch setConfig just published. A fixed value
+    // only worked while an earlier case had already bumped the epoch (YUK-1446).
+    await db.execute(sql`update system_config_epoch set epoch = epoch - 1 where id = 'global'`);
+    // Reading a stale-epoch row now must be refused.
     const rep = await hydrateConfigFromDb(db);
     expect(rep.staleSkipped).toBe(true);
     expect(getConfig('AI_RATE_LIMIT_MAX', {})).toBe(10); // untouched

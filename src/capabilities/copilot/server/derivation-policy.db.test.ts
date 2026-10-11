@@ -108,6 +108,8 @@ beforeEach(async () => {
 afterEach(() => vi.restoreAllMocks());
 
 describe('accepted answer-only lifecycle', () => {
+  // @invariant security: accepted restricted turns remain excluded from memory across durable terminal paths
+  // @fails-if a success, failure, cancellation or reconcile reply loses its policy and permits ingest or replay
   it.each(['success', 'failure', 'cancel', 'cancel_active', 'reconcile', 'ambiguous'] as const)(
     'freezes every %s reply and excludes direct ingest/reconcile replay',
     async (kind) => {
@@ -221,6 +223,8 @@ describe('accepted answer-only lifecycle', () => {
     },
   );
 
+  // @invariant concurrency: original acceptance freezes policy under the same idempotency key
+  // @fails-if retrying with another policy replaces the accepted request instead of reporting conflict
   it('keeps absent and explicit allow on the legacy hash and freezes policy conflicts on retry', async () => {
     const legacy = { user_message: message, triggered_by: 'chat' as const };
     expect(hashCopilotDurableInput(legacy)).toBe(
@@ -255,6 +259,8 @@ describe('accepted answer-only lifecycle', () => {
     expect(asks[0]?.payload.derivation_policy).toBe('answer_only');
   });
 
+  // @invariant security: accepted source and frozen job evidence authorize the execution policy
+  // @fails-if a mismatching job body or policy can execute against a restricted source
   it('rejects source/job/queued policy and original body mismatches before execution', async () => {
     const data = await accept('answer_only');
     await expect(
@@ -281,6 +287,8 @@ describe('accepted answer-only lifecycle', () => {
     );
   });
 
+  // @invariant security: restricted turns cannot materialize formal learning content
+  // @fails-if a chat or independent teaching writer commits a restricted teaching result
   it('blocks teaching before materialization and blocks independent teaching commit', async () => {
     const data = await accept('answer_only');
     const skill = {
@@ -322,6 +330,8 @@ describe('accepted answer-only lifecycle', () => {
     ).rejects.toThrow('不创建教学练习');
   });
 
+  // @invariant security: restricted tools obey both the fixed allowlist and read effect
+  // @fails-if a forbidden tool executes or a null-session mirror loses the accepted causal policy
   it('guards direct tools by fixed name and effect; null-session mirrors inherit the accepted root', async () => {
     const data = await accept('answer_only');
     const execute = vi.fn(async (_ctx, input: { query: string }) => ({ excerpt: input.query }));
@@ -375,6 +385,8 @@ describe('accepted answer-only lifecycle', () => {
     expect(execute).toHaveBeenCalledTimes(2);
   });
 
+  // @invariant security: restricted conversation remains visible to its user without entering later model context
+  // @fails-if cold, replay, compaction or correction reads include restricted content or metadata
   it('keeps ordinary→restricted→ordinary history visible while filtering cold/replay/compaction and correction references', async () => {
     const ordinary = await accept('allow', '日常标记：允许后续复验定义域与退化参数。');
     await writeCopilotReply(testDb(), {
@@ -495,6 +507,8 @@ describe('accepted answer-only lifecycle', () => {
     ).toMatchObject({ kind: 'clarify', reply: expect.stringContaining('重新输入') });
   });
 
+  // @invariant security: AI event readers and memory briefs exclude restricted evidence
+  // @fails-if restricted text or its evidence IDs enter a generic reader or regenerated brief
   it('excludes restricted evidence from generic AI readers, brief input and evidence; raw lookup stays visible', async () => {
     const restricted = await accept('answer_only');
     const reply = await writeCopilotReply(testDb(), {
@@ -546,6 +560,8 @@ describe('accepted answer-only lifecycle', () => {
     ).rejects.toThrow('operator replay requires');
   });
 
+  // @invariant concurrency: cursor publication and cleanup remain owned by the current durable execution
+  // @fails-if restricted execution retains a reusable cursor or replay clears its successor
   it('publishes ordinary cursor before terminal, clears restricted cursor at the execution fence and leaves the successor intact on replay', async () => {
     const ordinary = await accept('allow', '日常资料：定义域需要独立复验。');
     const assemble: NonNullable<Parameters<typeof runCopilotRun>[0]['resolveCopilotRunInputFn']> = (
@@ -590,6 +606,8 @@ describe('accepted answer-only lifecycle', () => {
     expect(isCopilotWorkerSessionOwned(sessionId, 'pi:restricted_candidate')).toBe(true);
   });
 
+  // @invariant concurrency: late cleanup cannot erase a successor session cursor
+  // @fails-if cleanup for a prior execution removes the newer owner cursor
   it('late cursor cleanup cannot erase a successor cursor', async () => {
     await setAgentSdkSessionId(testDb(), sessionId, 'pi:successor');
     await clearAgentSdkSessionId(testDb(), sessionId, 'pi:old_owned');

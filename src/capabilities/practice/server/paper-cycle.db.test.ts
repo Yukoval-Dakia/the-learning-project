@@ -22,6 +22,7 @@ import type { Db } from '@/db/client';
 import {
   answer,
   artifact,
+  assessment_issuance,
   assessment_submission,
   evaluation,
   event,
@@ -35,14 +36,17 @@ import {
   publishPaperModelFixture,
   reopenFrozenPaperFixture,
   startFrozenPaperFixture,
+  startHistoricalPaperFixture,
   submitPaperFixture as submitPaperSlot,
 } from '../../../../tests/fixtures/assessment-paper';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { PATCH as completeReview } from '../api/review-session-detail';
 import { autosaveAnswerDraft, freezeAnswerDraft } from './answer-draft';
+import { readPaperAssessmentBinding } from './assessment/paper-issuance';
 import { handleFailureLearningAttemptDelivery } from './failure-learning-subscription';
 import * as evaluationService from './judge/evaluate-submission';
 import { createRecordedModelExecutor } from './judge/recorded-model-executor';
+import { getPaperDetail } from './paper-detail';
 import { getPracticeList } from './practice-read';
 
 async function seedQuestion(id: string, reference: string) {
@@ -157,7 +161,7 @@ async function modelPaper() {
   await db.update(question).set({ judge_kind_override: 'semantic' }).where(eq(question.id, 'q1'));
   await publishPaperModelFixture(db, 'q1');
   await seedPaper('paper1', ['q1']);
-  const { sessionId } = await startFrozenPaperFixture(db, 'paper1');
+  const { sessionId } = await startHistoricalPaperFixture(db, 'paper1');
   return {
     db,
     input: {
@@ -649,6 +653,63 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
       right: 1,
       wrong: 0,
     });
+  });
+
+  // ── YUK-1445: mixed papers stay openable — gate-refused slots are typed-withheld ──
+  // @invariant grading: a mixed paper issues only gate-admitted slots — the refused slot never gains a learner-facing issuance row, and reopen never re-asks the gate into serving it
+  // @fails-if make paper opening ignore per-slot serving decisions or issue-then-mask; the assessment_issuance row count or the typed withheld_slots reason assertions fail
+  it('YUK-1445: mixed paper opens servable slots and lists gate-refused slots as typed withheld', async () => {
+    const db = testDb();
+    await seedQuestion('q_ok', 'true');
+    await seedQuestion('q_model', '必须列出方程、解释消元并保留速度单位。');
+    await db
+      .update(question)
+      .set({ judge_kind_override: 'semantic' })
+      .where(eq(question.id, 'q_model'));
+    await publishPaperModelFixture(db, 'q_model');
+    await seedPaper('paper_mixed', ['q_ok', 'q_model']);
+
+    const opened = await startFrozenPaperFixture(db, 'paper_mixed');
+    const binding = await readPaperAssessmentBinding(db, opened.sessionId);
+    expect(binding?.slots.map((slot) => slot.question_id)).toEqual(['q_ok']);
+    expect(binding?.withheld_slots).toEqual([
+      {
+        question_id: 'q_model',
+        part_ref: null,
+        section_index: 0,
+        reason: 'model_admission_unavailable',
+      },
+    ]);
+    // The withheld slot has no learner-facing issuance row at all.
+    expect(await db.select().from(assessment_issuance)).toHaveLength(1);
+
+    const detail = await getPaperDetail(db, 'paper_mixed');
+    expect(
+      detail?.sections.flatMap((section) => section.slots).map((slot) => slot.question_id),
+    ).toEqual(['q_ok']);
+    expect(detail?.withheld_assessments).toEqual([
+      {
+        issuance_id: null,
+        question_id: 'q_model',
+        part_ref: null,
+        reason: 'model_admission_unavailable',
+      },
+    ]);
+
+    // Reopening an active session is idempotent: same session, no new issuance.
+    const again = await startFrozenPaperFixture(db, 'paper_mixed');
+    expect(again).toEqual({ sessionId: opened.sessionId, created: false });
+    expect(await db.select().from(assessment_issuance)).toHaveLength(1);
+
+    // Abandon → reopen is a fresh occurrence: a new binding + new issuance for
+    // the servable slot; the gate-refused slot stays withheld, never issued.
+    await Review.abandonReviewSession(db, opened.sessionId);
+    await reopenFrozenPaperFixture(db, opened.sessionId);
+    const reopened = await readPaperAssessmentBinding(db, opened.sessionId);
+    expect(reopened?.slots.map((slot) => slot.question_id)).toEqual(['q_ok']);
+    expect(reopened?.withheld_slots).toEqual(binding?.withheld_slots);
+    expect(reopened?.slots[0]?.issuance_id).not.toBe(binding?.slots[0]?.issuance_id);
+    expect(await db.select().from(assessment_issuance)).toHaveLength(2);
   });
 
   // ── round-6 fix #4 (CR 3359820529): reopen + same-content resubmit is NOT idempotent ──

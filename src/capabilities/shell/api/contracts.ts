@@ -50,22 +50,46 @@ export const AutoAppliedProposalDigestSchema = z.object({
   }),
 });
 
+// YUK-1404 — additive block-preview detail: true structured counts + bounded
+// learner-facing sub-question / option previews. The preview lists may be
+// shorter than the count fields (named bounds server-side); the counts are
+// null only for legacy blocks without a structured tree. Only label +
+// excerpt/text cross the wire from these items — no answers / analysis /
+// student work ever enters the preview.
+const ProposalBlockSubQuestionPreviewResponseSchema = z.object({
+  label: z.string(),
+  excerpt: z.string(),
+});
+
+const ProposalBlockOptionPreviewResponseSchema = z.object({
+  label: z.string(),
+  text: z.string(),
+});
+
 const ProposalBlockPreviewResponseSchema = z.object({
   id: z.string(),
   label: z.string(),
   excerpt: z.string(),
+  sub_question_count: z.number().int().nullable(),
+  option_count: z.number().int().nullable(),
+  sub_questions: z.array(ProposalBlockSubQuestionPreviewResponseSchema),
+  options: z.array(ProposalBlockOptionPreviewResponseSchema),
 });
 
 const ProposalPresentationResponseSchema = z.object({
   title: z.string(),
   change_summary: z.array(z.object({ label: z.string(), value: z.string() })),
-  technical_details: z.string().nullable(),
   evidence_labels: z.record(z.string(), z.string()),
   block_merge: z
     .object({
       primary: ProposalBlockPreviewResponseSchema.nullable(),
       merged: z.array(ProposalBlockPreviewResponseSchema),
       continuity_label: z.string().nullable(),
+      // YUK-1404 — the proposal's exact ingestion-session subject
+      // renderConfig.notation, resolved server-side from the canonical subject
+      // registry. null for unknown/missing session, unresolved subject, or
+      // unregistered subject — the UI must not guess a math default.
+      notation: z.string().nullable(),
     })
     .nullable(),
 });

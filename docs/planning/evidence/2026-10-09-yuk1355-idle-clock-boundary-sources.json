@@ -1,0 +1,1661 @@
+{
+  "schema_version": 1,
+  "task": "future promote_conversation_idle read-only design",
+  "workspace": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage",
+  "revision": "96077db1905ebab6a522b0ae36f9f22e26be5895",
+  "tree": "a8bcf299050ed76c6cbd91ac4e98d266c395bf46",
+  "source_method": "git show and git grep against exact revision only; no evolving worktree content used",
+  "report": {
+    "path": "/tmp/yuk1355-idle-clock-boundary-design-20261009.md",
+    "sha256": "9a2b7983d6263657983edcbec10d7d445c49aa6c19f1517ff10df3a3062b6a0a",
+    "lines": 98
+  },
+  "path_abbreviation": {
+    "cap/": "src/capabilities/"
+  },
+  "prerequisite_inputs": [
+    {
+      "path": "/tmp/yuk1355-session-housekeeping-next-20261009.md",
+      "sha256": "069f2cbcb6cc077f725ba4a7018ba8c10d9e291a168f3ffa2df278d2a6fc3ce9",
+      "bytes": 14213,
+      "use": "prerequisite inventory only; superseded ownership/counts/receipt advice are not authority"
+    },
+    {
+      "path": "/tmp/yuk1359-next-dbos-family-20261009.md",
+      "sha256": "eef0ffd5e98e7b6acc8d954fa298b071275423f705221bd579e032a1e387ae6c",
+      "bytes": 13104,
+      "use": "prerequisite inventory only; superseded ownership/counts/receipt advice are not authority"
+    }
+  ],
+  "evidence_sources": [
+    {
+      "path": ".remember/now.md",
+      "git_blob": "4a09a1fb26b2f9b24614829512c1d9e04dfe33da",
+      "sha256": "b34684088cfa2e743736c8c7c7ea1d2475cfc3539bd7d1cfade5f6a118f5781c",
+      "bytes": 99752,
+      "line_count": 692,
+      "coverage": "full file or targeted line excerpts inspected; citation-level evidence, not a full code review"
+    },
+    {
+      "path": "PLAN.md",
+      "git_blob": "6643431a9e33139feca049379cce566b16d562dd",
+      "sha256": "64b73d8088f4c9682d5a5852e62996ce607cc7513583340528829e1a35399b4a",
+      "bytes": 8413,
+      "line_count": 49,
+      "coverage": "full file or targeted line excerpts inspected; citation-level evidence, not a full code review"
+    },
+    {
+      "path": "drizzle/0117_yuk1394_session_orphan_backend.sql",
+      "git_blob": "877cd1ebda4babecabb223f94242a8678bd49966",
+      "sha256": "04884374996fe547033a2331426997e1672698e8d6cf0d88564be3668b149583",
+      "bytes": 4604,
+      "line_count": 85,
+      "coverage": "full file or targeted line excerpts inspected; citation-level evidence, not a full code review"
+    },
+    {
+      "path": "src/capabilities/copilot/api/accept-chip.ts",
+      "git_blob": "a9d5ed326330a50866ad513f6b4b6649570b2932",
+      "sha256": "7f5cfb5533fcdac116414ea5e05b92c362d3e783a69173d9edaba85e6ad7f3b2",
+      "bytes": 9425,
+      "line_count": 210,
+      "coverage": "full file or targeted line excerpts inspected; citation-level evidence, not a full code review"
+    },
+    {
+      "path": "src/capabilities/copilot/api/chat.ts",
+      "git_blob": "def714643cdf091ba48acb98816e41f95d7c36b3",
+      "sha256": "bc289a77b4ebbc57555130b604c97b2041af13d0ac73e281f2133a34b23d86d5",
+      "bytes": 15999,
+      "line_count": 389,
+      "coverage": "full file or targeted line excerpts inspected; citation-level evidence, not a full code review"
+    },
+    {
+      "path": "src/capabilities/copilot/api/nudges.ts",
+      "git_blob": "7667ca5048760fdae0f4ceb2ebd87fe5cab2f137",
+      "sha256": "c68e96e645916a06bf39fb8a7383f5009695635b8c22e50ab4aef15426ec9e6d",
+      "bytes": 3925,
+      "line_count": 100,
+      "coverage": "full file or targeted line excerpts inspected; citation-level evidence, not a full code review"
+    },
+    {
+      "path": "src/capabilities/copilot/api/revert-checkpoint.ts",
+      "git_blob": "4208d73c371e32e57ec8b08861276e106c8b46dd",
+      "sha256": "36431c68b0485dd845103a706f3d80f749207649266bb28faae89234b009e445",
+      "bytes": 8087,
+      "line_count": 192,
+      "coverage": "full file or targeted line excerpts inspected; citation-level evidence, not a full code review"
+    },
+    {
+      "path": "src/capabilities/copilot/api/sessions.ts",
+      "git_blob": "821b123c1cfcc1affc56d4b8449a05033e87fe25",
+      "sha256": "0e28e155c5cbbf4ecea33797aa4aa4781e00c7d92b7f7da8b6613d105b0d1d21",
+      "bytes": 662,
+      "line_count": 21,
+      "coverage": "full file or targeted line excerpts inspected; citation-level evidence, not a full code review"
+    },
+    {
+      "path": "src/capabilities/copilot/server/conversation-writes.ts",
+      "git_blob": "522dfbd99449a9828f2e142f6c4c2124e8d2e9c8",
+      "sha256": "91050e068aded6ed1cbf7ec429c3e09484343b27bcdca917c574c81b9913e3cb",
+      "bytes": 10987,
+      "line_count": 253,
+      "coverage": "full file or targeted line excerpts inspected; citation-level evidence, not a full code review"
+    },
+    {
+      "path": "src/capabilities/copilot/server/durable-dispatch.ts",
+      "git_blob": "54c10f31dd2d288528688660afee83ced3c7f757",
+      "sha256": "9661248b9c337613d48444ad6b43ba412ba4b2d3c2e7c9f759b0766a023559d6",
+      "bytes": 17076,
+      "line_count": 481,
+      "coverage": "full file or targeted line excerpts inspected; citation-level evidence, not a full code review"
+    },
+    {
+      "path": "src/capabilities/copilot/server/subagent-mailbox.ts",
+      "git_blob": "464ce4934f7b79df99dfbc9cc5b5c6a323f7db79",
+      "sha256": "1465b7b38d9295275c61858b82191045e14cbd1b979689911df49a8316d9046c",
+      "bytes": 17936,
+      "line_count": 557,
+      "coverage": "full file or targeted line excerpts inspected; citation-level evidence, not a full code review"
+    },
+    {
+      "path": "src/capabilities/practice/api/contracts.ts",
+      "git_blob": "60a851d562e017177d4cafed250ae425f5e3cca6",
+      "sha256": "4099bfbdd6859ec8c0e0d5d6e344e2cbb007d5541e68844968b37c44ab35a4fa",
+      "bytes": 7664,
+      "line_count": 203,
+      "coverage": "full file or targeted line excerpts inspected; citation-level evidence, not a full code review"
+    },
+    {
+      "path": "src/capabilities/practice/api/placement-next.ts",
+      "git_blob": "4a9ffa254c3d4173ba74b1546a2d355cc56ae99e",
+      "sha256": "a1886a853c3c221f9776fd8bd84f58cad15b25acaee865d0754d48b61901f9e7",
+      "bytes": 7701,
+      "line_count": 166,
+      "coverage": "full file or targeted line excerpts inspected; citation-level evidence, not a full code review"
+    },
+    {
+      "path": "src/capabilities/practice/api/solve-hint.ts",
+      "git_blob": "0e1f89d323f4787228e8f2a5c1e667f23f263d1b",
+      "sha256": "eeab288522a0de910cfd76164c5bcb30b543ff9d1d82739d96bcda6428bfd096",
+      "bytes": 2627,
+      "line_count": 73,
+      "coverage": "full file or targeted line excerpts inspected; citation-level evidence, not a full code review"
+    },
+    {
+      "path": "src/capabilities/practice/api/submit.ts",
+      "git_blob": "53c3e565cf584ceb4e094e06758fe005810e054c",
+      "sha256": "100803b9dffdffd39126e2111a557187c3a66435902f1790501e73c97c651305",
+      "bytes": 4888,
+      "line_count": 115,
+      "coverage": "full file or targeted line excerpts inspected; citation-level evidence, not a full code review"
+    },
+    {
+      "path": "src/capabilities/practice/server/assessment/attempt.ts",
+      "git_blob": "3b3ecbcbfec85e0e7562ca284ccc6fa2fb144778",
+      "sha256": "52bee297f4cd6bb162f08c6ac99733b57ae5b24baba632d0cc36b6d847ad694c",
+      "bytes": 12552,
+      "line_count": 334,
+      "coverage": "full file or targeted line excerpts inspected; citation-level evidence, not a full code review"
+    },
+    {
+      "path": "src/capabilities/practice/server/assessment/durable-attempt.ts",
+      "git_blob": "220890966775f4f54b8aa49e31bd8914bf88bbf6",
+      "sha256": "ff40f65a2f9eb9324c00d6e4d32f72b70ac895f32d79f232531001990f0c1f32",
+      "bytes": 10136,
+      "line_count": 279,
+      "coverage": "full file or targeted line excerpts inspected; citation-level evidence, not a full code review"
+    },
+    {
+      "path": "src/capabilities/practice/server/assessment/paper-issuance.ts",
+      "git_blob": "4e75863c0e57e21625468260d19cb9e9bd6f4d8b",
+      "sha256": "a68e96950814cfc7ee8f6065d863f291af2df3c1c0122de41a99475c78c9c4f4",
+      "bytes": 7343,
+      "line_count": 199,
+      "coverage": "full file or targeted line excerpts inspected; citation-level evidence, not a full code review"
+    },
+    {
+      "path": "src/capabilities/practice/server/assessment/submit.ts",
+      "git_blob": "8c9ec8591b50324503d61d697d83d6c982080242",
+      "sha256": "c6e59464c7dc6de63e89679fee88642a094536843c3dfe29930027eeac9fe94b",
+      "bytes": 30472,
+      "line_count": 763,
+      "coverage": "full file or targeted line excerpts inspected; citation-level evidence, not a full code review"
+    },
+    {
+      "path": "src/capabilities/practice/server/judge-run-dispatch.ts",
+      "git_blob": "93f7d678a18305ba7d3c1bc90b71789c3316647f",
+      "sha256": "12846b0155153b41039d25d5ab3b5ad1115d46eb4af893af68314ef1c8f7b9be",
+      "bytes": 27628,
+      "line_count": 635,
+      "coverage": "full file or targeted line excerpts inspected; citation-level evidence, not a full code review"
+    },
+    {
+      "path": "src/capabilities/practice/server/judge/evaluate-submission.ts",
+      "git_blob": "c6581920086c72bf74970a6c96d5ea430ff5b618",
+      "sha256": "f6f556f6aa44760f53406d6c17ee00fbbb0199b617c9ffb6aa4e19df39044e6e",
+      "bytes": 28813,
+      "line_count": 689,
+      "coverage": "full file or targeted line excerpts inspected; citation-level evidence, not a full code review"
+    },
+    {
+      "path": "src/capabilities/practice/server/placement-assessment.ts",
+      "git_blob": "8457b2abfab83e6e9d4e8667eb34029588bcfc62",
+      "sha256": "59510014cdb75c626a97490bf3781622a06a518869ee66a9e2dadb8b2e132cfa",
+      "bytes": 10932,
+      "line_count": 291,
+      "coverage": "full file or targeted line excerpts inspected; citation-level evidence, not a full code review"
+    },
+    {
+      "path": "src/capabilities/practice/server/review-operation.ts",
+      "git_blob": "b05df187c6b3277bf553a90be656d19f0ab69e3b",
+      "sha256": "888c55639960d8e5a39d08b15dea8469cbd23c408bc94ccf5248bf7ae25a60d9",
+      "bytes": 19346,
+      "line_count": 532,
+      "coverage": "full file or targeted line excerpts inspected; citation-level evidence, not a full code review"
+    },
+    {
+      "path": "src/capabilities/practice/server/solve-session.ts",
+      "git_blob": "4cccaaffa5ae1b5dd9af941824f93e5c261efc35",
+      "sha256": "1a138125589cc77e5914906d44290cc570d22ab86dd23981e65785dff5276675",
+      "bytes": 15999,
+      "line_count": 430,
+      "coverage": "full file or targeted line excerpts inspected; citation-level evidence, not a full code review"
+    },
+    {
+      "path": "src/db/client.ts",
+      "git_blob": "3b40edc70b2bfe0eb08acafe57f278666baff11a",
+      "sha256": "c966556606dea1ca7f89231f74763eb26ca7677f9bbfe7095204c346fd616231",
+      "bytes": 2700,
+      "line_count": 53,
+      "coverage": "full file or targeted line excerpts inspected; citation-level evidence, not a full code review"
+    },
+    {
+      "path": "src/db/learning-state-lock.ts",
+      "git_blob": "e7804f3309e3cbf505179ab2829a87ccde0e4791",
+      "sha256": "59f03b3d20c94b1e25ae77598bb6d8ed29ed265e9dd75164cada0cc0eae0f785",
+      "bytes": 1623,
+      "line_count": 33,
+      "coverage": "full file or targeted line excerpts inspected; citation-level evidence, not a full code review"
+    },
+    {
+      "path": "src/db/schema.ts",
+      "git_blob": "09952b405a79a9833fea691bf3468789f6a492c3",
+      "sha256": "46ba5b6cec6f86c6b6f025c6b631d1124b593d4e5557225921d1179b48c088a1",
+      "bytes": 235032,
+      "line_count": 4418,
+      "coverage": "full file or targeted line excerpts inspected; citation-level evidence, not a full code review"
+    },
+    {
+      "path": "src/kernel/events/events.ts",
+      "git_blob": "1b8d37c5fc57a12bb7a84f31ce6b5fa969486ce0",
+      "sha256": "0a215e98ee38dc5bec6782b802926b7c4f553a3418568c41fa3bfa64360170ba",
+      "bytes": 13547,
+      "line_count": 329,
+      "coverage": "full file or targeted line excerpts inspected; citation-level evidence, not a full code review"
+    },
+    {
+      "path": "src/server/advisory-locks.ts",
+      "git_blob": "83d55cc552c17d22e905aad72ae4747855d4d75d",
+      "sha256": "b4b7816b7da7a0b95113cfde171f033882d7b76161dfb3345f315f4c6b7782c5",
+      "bytes": 1642,
+      "line_count": 35,
+      "coverage": "full file or targeted line excerpts inspected; citation-level evidence, not a full code review"
+    },
+    {
+      "path": "src/server/assessment/activate.ts",
+      "git_blob": "a26949cfef510a50ebd7d4dd544906e7c3d12a87",
+      "sha256": "af627ddc99bc585e17c1d0d512d53a130908c55ebeeba749e3e61dbfc4b7a3cf",
+      "bytes": 22939,
+      "line_count": 569,
+      "coverage": "full file or targeted line excerpts inspected; citation-level evidence, not a full code review"
+    },
+    {
+      "path": "src/server/boss/handlers.ts",
+      "git_blob": "a1a45df77a6b198113b1afc0e2bec757e495abf1",
+      "sha256": "78a7ac9e307e8954e6a2899dc995ccc72f29f1284c8f33ed7ed756a5c990892c",
+      "bytes": 7501,
+      "line_count": 149,
+      "coverage": "full file or targeted line excerpts inspected; citation-level evidence, not a full code review"
+    },
+    {
+      "path": "src/server/boss/handlers/promote_conversation_idle.test.ts",
+      "git_blob": "6e0e7ec168aec7b1711ef05e7689ec9a8451ee77",
+      "sha256": "d04de4fefa87b2c8aca27616d19ac81fb0d864868def5893d34c25d1f1058765",
+      "bytes": 6147,
+      "line_count": 163,
+      "coverage": "full file or targeted line excerpts inspected; citation-level evidence, not a full code review"
+    },
+    {
+      "path": "src/server/boss/handlers/promote_conversation_idle.ts",
+      "git_blob": "528a83114bb1e46ab1bad1fe2473d8956d1bc974",
+      "sha256": "68de171ad2f0a4dfa92d2d34aae4b4a36dcef3d04cf463c9109f3586fbadaec8",
+      "bytes": 2967,
+      "line_count": 81,
+      "coverage": "full file or targeted line excerpts inspected; citation-level evidence, not a full code review"
+    },
+    {
+      "path": "src/server/boss/register-capability-jobs.ts",
+      "git_blob": "38c772d48972f7d82c3eb742c6f519008b1dbf94",
+      "sha256": "12e5193a8788d90e5ddb19c292480906dfb3569f1af93645ad3f435ee98eb0e3",
+      "bytes": 6904,
+      "line_count": 161,
+      "coverage": "full file or targeted line excerpts inspected; citation-level evidence, not a full code review"
+    },
+    {
+      "path": "src/server/durable/producer-fence-lock.ts",
+      "git_blob": "9ebaaa0db27bd881e853aa8b4aacc4a248431d01",
+      "sha256": "4b1676b2c1df9657c01bebc1e71a071401150f63d33a12becb5cd2f639e54c60",
+      "bytes": 362,
+      "line_count": 9,
+      "coverage": "full file or targeted line excerpts inspected; citation-level evidence, not a full code review"
+    },
+    {
+      "path": "src/server/durable/prune-worker.ts",
+      "git_blob": "d0a9d1e6bd0dfc20b378c3bbb866f8bbcad0e5b5",
+      "sha256": "4955caa40d02bb0aa1f7df7bbf8c5486896b67f335e159972a2b49d46c0d9033",
+      "bytes": 12160,
+      "line_count": 367,
+      "coverage": "full file or targeted line excerpts inspected; citation-level evidence, not a full code review"
+    },
+    {
+      "path": "src/server/durable/session-orphan-backend.ts",
+      "git_blob": "4dd5b94360d5682d7291ebd39b183e5207a2b572",
+      "sha256": "fdadf3162e4d386b7bc6701e59a6178811345fbdfc6e5acd247ad3e32a0435b1",
+      "bytes": 18008,
+      "line_count": 400,
+      "coverage": "full file or targeted line excerpts inspected; citation-level evidence, not a full code review"
+    },
+    {
+      "path": "src/server/durable/session-orphan-family.db.test.ts",
+      "git_blob": "6f2f3e92e5db0e3cde07846dd307d553d4ebaf98",
+      "sha256": "88c2eb800a4cd168bb945995a2a448d0bdf8be1d9860e6d3f49d2f632082017e",
+      "bytes": 20111,
+      "line_count": 475,
+      "coverage": "full file or targeted line excerpts inspected; citation-level evidence, not a full code review"
+    },
+    {
+      "path": "src/server/durable/session-orphan-family.ts",
+      "git_blob": "eb3061b1094f0fecb2abfefe5ce400789c5fb22a",
+      "sha256": "4a1adc35e93c4af0e77298851e990029c73aee28cc3556f1d10185a5e02abab3",
+      "bytes": 22246,
+      "line_count": 541,
+      "coverage": "full file or targeted line excerpts inspected; citation-level evidence, not a full code review"
+    },
+    {
+      "path": "src/server/durable/session-orphan-worker.ts",
+      "git_blob": "08dd3fa28253387ec7a40a92da339d3237014c5d",
+      "sha256": "4189de4fc9b10b1cc44996ae02c5cfa589a6a2848dc143c9f44b316be6268467",
+      "bytes": 4660,
+      "line_count": 135,
+      "coverage": "full file or targeted line excerpts inspected; citation-level evidence, not a full code review"
+    },
+    {
+      "path": "src/server/events/writer.ts",
+      "git_blob": "8f20bec08b8654e5cbdf37a7d3f66748664cb329",
+      "sha256": "f5945ee4bbaae9606e24b2611f8918ba63bd54afc6d113371acf2525a3362eb7",
+      "bytes": 1662,
+      "line_count": 46,
+      "coverage": "full file or targeted line excerpts inspected; citation-level evidence, not a full code review"
+    },
+    {
+      "path": "src/server/session/conversation.ts",
+      "git_blob": "3a5ff5bef4e554ecaba9b9cec1d3a5f7d6519ae7",
+      "sha256": "ac63a079c2f4b0a33d68f9542cee4c2713aa748f28f882e449b960798c05f293",
+      "bytes": 23258,
+      "line_count": 666,
+      "coverage": "full file or targeted line excerpts inspected; citation-level evidence, not a full code review"
+    },
+    {
+      "path": "src/server/session/events.ts",
+      "git_blob": "30199085b00d72dc947dbf0ae613d5a3f2f7af93",
+      "sha256": "aa957392fbf28e4159e712e1050d67b0819070ba221ef52f6ae16114fa466353",
+      "bytes": 3237,
+      "line_count": 81,
+      "coverage": "full file or targeted line excerpts inspected; citation-level evidence, not a full code review"
+    },
+    {
+      "path": "src/server/session/review.ts",
+      "git_blob": "e1a32e1ee980d289b7a5a584ed3c502f55e1c400",
+      "sha256": "9d0aa3f5c458c461aeb7578d465e4428919865dc701fd7e573ce38b2ad26be8d",
+      "bytes": 13247,
+      "line_count": 381,
+      "coverage": "full file or targeted line excerpts inspected; citation-level evidence, not a full code review"
+    },
+    {
+      "path": "src/server/session/tutor.ts",
+      "git_blob": "319fa9b07b44841aaa0e27a44a8293e3ffc9443a",
+      "sha256": "a9dfdab756c3016458bf20c866d70b6bb13e8721f827576ec1a97b0d364fca9d",
+      "bytes": 6437,
+      "line_count": 190,
+      "coverage": "full file or targeted line excerpts inspected; citation-level evidence, not a full code review"
+    }
+  ],
+  "writer_census_sources": [
+    {
+      "path": "src/capabilities/agency/jobs/coach_daily.ts",
+      "git_blob": "ed25425c0eb2f65f7b01140d4da9ea88cb8628b1",
+      "sha256": "880907e362b7e4343569d939400a4e8ba4f6d77fbe5e11c0fc81674b423f8d03",
+      "bytes": 25962,
+      "line_count": 478,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/agency/jobs/dreaming_nightly.ts",
+      "git_blob": "65aeb10d137930d9d172820097cb40e4fe9665f5",
+      "sha256": "029f27152e202fb90351fe4be787eff28b7178469349d804f74f759cdbcdb1ff",
+      "bytes": 21550,
+      "line_count": 444,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/agency/jobs/research_meeting_agent_nightly.ts",
+      "git_blob": "14e26af0f3c581be4f372ac0467c022b61d2bc4b",
+      "sha256": "e4cabf1cb6b1461440c476674c721ae850a28029c9c908147202f651853644c5",
+      "bytes": 14593,
+      "line_count": 358,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/agency/jobs/research_meeting_nightly.ts",
+      "git_blob": "56e9b16f6a5b80100927553a800c404e8961935d",
+      "sha256": "34dbb1ceda94264c59a57d0fb3e622d743c2ac32c5eeda29a1849d8bbd96a12b",
+      "bytes": 58088,
+      "line_count": 1315,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/agency/server/conjecture-accept.ts",
+      "git_blob": "6b7f7f2140b77bfbcd0f41b64ab79f3292cabaac",
+      "sha256": "07ed84b575e2b9453193d4eb5c9c3dc9e8df47d6c4afd4d015cce651ad191dfc",
+      "bytes": 18514,
+      "line_count": 374,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/agency/server/conjecture/probe-lifecycle.ts",
+      "git_blob": "2586d06c334215fca8127a340c79d329d8a2622f",
+      "sha256": "5e6b1f48a14ba4bfae53e9536eb717b7eeffa35d54a0ad344b65f7230219fc06",
+      "bytes": 40006,
+      "line_count": 1002,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/agency/server/goals/accept.ts",
+      "git_blob": "d61efc09e7e046429bc23ed37b1bfbf66b4deafe",
+      "sha256": "05d717ccdfcedd3ec487c7aeaf00cbc521517bb99cda83ff328817dce2d9e665",
+      "bytes": 5058,
+      "line_count": 147,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/agency/server/goals/commands.ts",
+      "git_blob": "7751f2537439b7ab94910f4b476cd081514e81a1",
+      "sha256": "7f08345e45441835c6b4b6f0baba2f472aa82f6fc1ce4cce0c3c4376407c6cfd",
+      "bytes": 7368,
+      "line_count": 202,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/agency/server/intervention/store.ts",
+      "git_blob": "abe0b650ab1f04cd5e88422103d7f5637f8c6464",
+      "sha256": "3e992cc5fd6c0a8565c100479a1053fddddc2b7c907f02f1c5ff2275307b7f7f",
+      "bytes": 29199,
+      "line_count": 825,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/agency/server/learning-intent.ts",
+      "git_blob": "4f0e2f9d09285c9b84df246d41c02303771f57b0",
+      "sha256": "45ca3b9020f7a147ee2aa9fd3234ebbb37d9802097e1e2c32b6e9a08adbddace",
+      "bytes": 27044,
+      "line_count": 792,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/agency/server/meeting/director.ts",
+      "git_blob": "df94fbaf04c2f5ed6656361b543980365d63edc3",
+      "sha256": "638e49004a0d0a906623bf0e1ea215f098918217737e4fa93174576c18745dfa",
+      "bytes": 27071,
+      "line_count": 566,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/agency/server/notes.ts",
+      "git_blob": "78168fcee338d78f86ef551b0992b8486e6d6ba2",
+      "sha256": "bc58e2d41f98ec7733ed6c5a8d84d69a8366135cf6f23aed3064fe7e9a5b8050",
+      "bytes": 16490,
+      "line_count": 425,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/agency/server/proposal-appliers.ts",
+      "git_blob": "fe7ba05531fdf1d628d074ef44f37fbf86acefb9",
+      "sha256": "c204c2a314e80f49d4e8b6523a5d349f3db003ee6820d25fe549cd0edf7a244e",
+      "bytes": 18772,
+      "line_count": 514,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/agency/server/proposal-retract-learning-item.ts",
+      "git_blob": "96bb218821f921a7518ea8ec99b567e1c0987fea",
+      "sha256": "ed90342c62fb1c9f33a1e9b717242bb93629b4fe2017d2ae1f277226f691765a",
+      "bytes": 2060,
+      "line_count": 60,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/agency/server/proposal-retract-learning-state.ts",
+      "git_blob": "b284572d6b3cd88cca6197fd2b6bc732a821efc5",
+      "sha256": "952c8b9c5659ce7eba8bbcaea62f9d200f38c44af82ac7fee32730463c8158ac",
+      "bytes": 3969,
+      "line_count": 125,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/copilot/jobs/copilot_nudge_evaluate.ts",
+      "git_blob": "6db35acb58e11704232aa2ba2bee40578dc33746",
+      "sha256": "e05822c5cc1e984f2ba179bffb1886a136b484ec25f98bc6ed22857449356341",
+      "bytes": 4212,
+      "line_count": 102,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/copilot/server/learner-state.ts",
+      "git_blob": "84193948789321d16e623e0d46617b4ec043947e",
+      "sha256": "ee3fea61e2ac6330c8dd5af8eb5f4311f8f8810d3b629b427cf79f00a71a5ad3",
+      "bytes": 26288,
+      "line_count": 601,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/copilot/server/reply-finalization.actual-fixture.ts",
+      "git_blob": "9a1593e98028bd9c9570990b6dd60a26b361d6fd",
+      "sha256": "0e4cba35ffc635bdda98e387bdd1b42a914e07bbc2c7177005bdaff3f6bbfea0",
+      "bytes": 57281,
+      "line_count": 1675,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/copilot/server/review-answer-consumer.ts",
+      "git_blob": "f61b911e46e0ac1cdc89cecba7faa7ab691a767c",
+      "sha256": "86d716f8eb87ef31348411e79f34e48d5573324f6c5c0ae7c8b345c41945b95f",
+      "bytes": 5142,
+      "line_count": 129,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/copilot/server/tools/query-events.ts",
+      "git_blob": "5a16e934fe2f19139412ab787491c88d9eeb4f80",
+      "sha256": "f6468cc083190c5222b84187f0b338ceb4faf6a011301a71e3d54cce4c282080",
+      "bytes": 18288,
+      "line_count": 461,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/ingestion/api/mistakes.ts",
+      "git_blob": "e89fe8da30af85abb494707a4334e5a5cc5902fe",
+      "sha256": "b13da60bd4d4604ee873b38494f16149c676b10ea00b23677cb66e536538909f",
+      "bytes": 9724,
+      "line_count": 233,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/ingestion/server/auto-enroll.ts",
+      "git_blob": "1ae0d2f6c76bdee352baaecf776203fe0d1ab727",
+      "sha256": "9c4290c286acac24090ae06eeab62f9661ce59af8c0de964b388bae6e89450ea",
+      "bytes": 47028,
+      "line_count": 918,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/ingestion/server/block-structured-edit.ts",
+      "git_blob": "3eade2b17169cbeb7b87edf1e59e11303c979552",
+      "sha256": "a0dd73e9568c22ee5f6e8abe10bd8c335abc1f32b6415cd06172613e2160e126",
+      "bytes": 31483,
+      "line_count": 764,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/ingestion/server/enroll.ts",
+      "git_blob": "f3c49a9f2224422ac4e5dac84b64d9aa4c22778f",
+      "sha256": "f52fafb4afbf7f7d343c56cac0e345d7b45652714d70f3efb2e6cc4b6e246dbc",
+      "bytes": 10001,
+      "line_count": 247,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/ingestion/server/image-candidate-accept.ts",
+      "git_blob": "af25d6f952766794021bf973762f2c3e8ee03cd2",
+      "sha256": "59e340b40dd404214fe701685bd53df7f1a40fb839117b4b0b3a3d4f1631020c",
+      "bytes": 48688,
+      "line_count": 1017,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/ingestion/server/legacy-record-appliers.ts",
+      "git_blob": "9a534f5f5241795fe2282ad0ae8c36207a096c41",
+      "sha256": "3d83f09351b66444393928ed22e1d7d9d7d2ba41d659f3ce2126b9ba1896f315",
+      "bytes": 18628,
+      "line_count": 531,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/ingestion/server/proposal-appliers.ts",
+      "git_blob": "0475be61c569feae7d6a3bd2407ece017a8ca584",
+      "sha256": "f47976d3aeeafb1a551dc893d86e238b498b5839bff17278054e84b6e9a60ae1",
+      "bytes": 6731,
+      "line_count": 154,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/ingestion/server/revert-auto-enroll.ts",
+      "git_blob": "11d7f0f90e2a3b4636500cb747d62ba13b03e571",
+      "sha256": "93bf82674e9301f92a2e78efd58628bd0fd44fbc81fb57917036ca3488fb28eb",
+      "bytes": 6999,
+      "line_count": 190,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/knowledge/api/contracts.ts",
+      "git_blob": "8ce25ec22eda3f0b8198db46affbe2945b587f26",
+      "sha256": "e36f00dbee57060a00c8c50d3dbe44360338f3fede8e526c48ad48e2877bb6b7",
+      "bytes": 8224,
+      "line_count": 272,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/knowledge/api/edges.ts",
+      "git_blob": "b277554f01c2b72cce36ad97c3adde9b9c09d9b9",
+      "sha256": "36fad85f319a51ae5a70654fa3a1c6d8f822a01f7d026fd4bd36365204082984",
+      "bytes": 6402,
+      "line_count": 153,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/knowledge/jobs/kc_dedup_nightly.ts",
+      "git_blob": "03765fcfd867a3ee891bb00f68f9d98223dcc778",
+      "sha256": "412b82800ff980de7b928326a08984b201a34ef2b64facb7815b6c169921baf3",
+      "bytes": 15082,
+      "line_count": 324,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/knowledge/jobs/kg_borrow_shadow_sweep.ts",
+      "git_blob": "1811b1586cac91c2b3b78105d8dbb956b6cac208",
+      "sha256": "d2f19daaafec8b1f7030c0163da30f981caa68a9510df83ffb9efddfe5f7cb3b",
+      "bytes": 18685,
+      "line_count": 447,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/knowledge/jobs/knowledge_edge_propose_nightly.ts",
+      "git_blob": "0da7e7773316da0082dd5ec20c52bfc0247a0341",
+      "sha256": "285b4cb11390232c6027945cf6529cc57b4924834da07d80975aa553c0c6bd5c",
+      "bytes": 14573,
+      "line_count": 335,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/knowledge/jobs/merge_attribution_sweep.ts",
+      "git_blob": "84df75ad4ccd26870bb6d5b5a815f50f3f62a20e",
+      "sha256": "31008fe114a43e81f6ff4ccc46dfd0c7d959f81d1100f15658d2f711009c1425",
+      "bytes": 23549,
+      "line_count": 474,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/knowledge/jobs/projection_oracle_sweep.ts",
+      "git_blob": "a887579c080a0a55a4a423b2790f138610d83bcf",
+      "sha256": "b2782de2913881d07a62771d4da6b3ad178cf3ec664c662a2449af142ee5798e",
+      "bytes": 10658,
+      "line_count": 241,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/knowledge/server/edge-proposal-accept.ts",
+      "git_blob": "f242569f50614f79b5c24702190354f1152b7ad5",
+      "sha256": "bca40124c056ecea10e59b93922cbfa4ff78711b39671a9c1e33560a42490086",
+      "bytes": 18311,
+      "line_count": 469,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/knowledge/server/edges.ts",
+      "git_blob": "d70a21aec57e1137a52bae1159e8038467794535",
+      "sha256": "7a0a67dff07a594040f73d783bf27da4e1e8efc435c1754fc89df790fc3791cf",
+      "bytes": 18995,
+      "line_count": 527,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/knowledge/server/node-creation.ts",
+      "git_blob": "b546db9368ec6052ad1480555f272c7f17518669",
+      "sha256": "ac20565bce1e1e83fe4031f9cf09ed6e6901013d07076c6e7eb551ff1057f71f",
+      "bytes": 3029,
+      "line_count": 79,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/knowledge/server/node-page.ts",
+      "git_blob": "74e7ee69ea4a732b72ec8821c3b7371ba484a00c",
+      "sha256": "028a00c1fc659ab59a794dfdba7a4150ccb286356a3b86d84830e15355003932",
+      "bytes": 25148,
+      "line_count": 552,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/knowledge/server/proposal-appliers.ts",
+      "git_blob": "c3c7ddc470d16fab53795e96e13a7b898a100aa2",
+      "sha256": "614c6bf3e3bb028c9c31d2f53fabac4815b1505d0d018edff3640fde02b8c9f4",
+      "bytes": 5386,
+      "line_count": 170,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/knowledge/server/proposals.ts",
+      "git_blob": "2f69ce242e4a068d9a48c196801ec0a663baf95f",
+      "sha256": "ea712aa307cbc1c5a05ecad97373997c9a7c0ab2834681c28e000f2dfb57d361",
+      "bytes": 47962,
+      "line_count": 1153,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/knowledge/server/propose_edge.ts",
+      "git_blob": "320ca76a06b93d3710f029475d619ec0c62a7c54",
+      "sha256": "8b92ef594214b1e3802df3eb21a9be43c8c6705221ea43950e003c291da859e4",
+      "bytes": 39969,
+      "line_count": 846,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/knowledge/server/tag-knowledge.ts",
+      "git_blob": "32223281524a701069f87d00e3c0885dd8e053cf",
+      "sha256": "cfb6e7440b5ec1b31cf8ff952ff159c4cfa0dd284c4a876dd907c9080d77007d",
+      "bytes": 16293,
+      "line_count": 321,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/knowledge/ui/humanize-activity.ts",
+      "git_blob": "b90574d771659c8e2887b488ee718c8cfe2c887c",
+      "sha256": "baab748551549eb146910bb5907606c7386bbaf7f08b4e19accfeb10143bf136",
+      "bytes": 3526,
+      "line_count": 93,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/notes/api/correct.ts",
+      "git_blob": "c3f5186afafcf81eb2e49589ed7cce8ec06dc81b",
+      "sha256": "4de19169a4772682a7dbac2550c8679a492947997ac704ec43bc5b307b18c595",
+      "bytes": 4082,
+      "line_count": 120,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/notes/jobs/note-refine.ts",
+      "git_blob": "d33d42aa3d8cf211345c292e7fc847f8720b137e",
+      "sha256": "bbd93fa2971b98a3c490e5e6290bb19b5b5fcde589d472e60339d5df1d30bdb0",
+      "bytes": 16739,
+      "line_count": 412,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/notes/jobs/note_verify.ts",
+      "git_blob": "b9ea37e23edbdb2f8b83e2a2e64001db8c97a31e",
+      "sha256": "6f4be077790a16b92f4a46a41c51878a975607b9c1e177dbad27f508e4930447",
+      "bytes": 17038,
+      "line_count": 480,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/notes/server/artifact-corrections.ts",
+      "git_blob": "54bffa5665518ea60d4204060648116b91569c65",
+      "sha256": "057dc0903bafe9dde450fb58880be543f1a606a2f19f3bcf875964aa7a69f473",
+      "bytes": 6240,
+      "line_count": 170,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/notes/server/artifacts/mutation-events.ts",
+      "git_blob": "4c85a6e890ead4cc694bd41ab9a167c118a385aa",
+      "sha256": "09aa3b8e203975ff939a926e358487355961871f076381f99844656df7dcf6e2",
+      "bytes": 8236,
+      "line_count": 179,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/notes/server/hub-dismiss.ts",
+      "git_blob": "86e56f8587dd7bd9c395dff74caf3f0d0f9f1600",
+      "sha256": "57f030eb21077992e680dc58317e48dc5418a786bc33f1231fd2e2e9a5b6f49e",
+      "bytes": 9533,
+      "line_count": 224,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/notes/server/hub-sync-reconciliation.ts",
+      "git_blob": "d56d6160897c47b02d42809926ad40a1bf4cf8ac",
+      "sha256": "bcff2866f8414b1c00cfd60a12133cc1919040b2dc326bacfc617ac01f6fed80",
+      "bytes": 45489,
+      "line_count": 1081,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/notes/server/mastery-progress-subscription.ts",
+      "git_blob": "8a08238f5183272120dabdc504d7aca9c2b9993a",
+      "sha256": "ffc521721f8092c8c4744248db409b02d2ad0a7a1b9bb4521f780bbba1a1a98b",
+      "bytes": 6311,
+      "line_count": 174,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/notes/server/note-handoff.ts",
+      "git_blob": "526397eb7bb44c61aae9d52c4e78f38460511a37",
+      "sha256": "609e18368cbd27831b476f8167337a41a606d3fe667dc6ec60ffc3f797507822",
+      "bytes": 13008,
+      "line_count": 383,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/notes/server/note-refine-apply.ts",
+      "git_blob": "46e7a3750ffcb0c986d3a87a08de40556b2ec767",
+      "sha256": "cf9ae2cc7ed9e24b6067634699154679ebbd5db48cfe30180f95a063c200c9cd",
+      "bytes": 16888,
+      "line_count": 427,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/notes/server/proposal-accept-applier.ts",
+      "git_blob": "74099dfc8948395863651b68df92068942775c3d",
+      "sha256": "54c3843873ce935965f6680bc8caee51d9d5db4af07762b1fc7ddaeb114da03f",
+      "bytes": 5280,
+      "line_count": 172,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/observability/api/event-contracts.ts",
+      "git_blob": "e56425d9c63716e1f3052e8cdefcb7c795eff373",
+      "sha256": "d90c6d5e44cc447d97ff0fb182f31fe67daaf8bf9b79003453b59a4c414d2385",
+      "bytes": 3346,
+      "line_count": 112,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/observability/server/event-detail.ts",
+      "git_blob": "d4e34459ecbb82a6e86cfd286dca19e42cd71da4",
+      "sha256": "75e9762e960fe467b700b72a670a95eb7ada70b6b2933f3523525e13146b3f15",
+      "bytes": 2951,
+      "line_count": 88,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/observability/ui/EventDetailPage.tsx",
+      "git_blob": "0457f66145f4d3b08dabb15424d1bcecc40f4ef7",
+      "sha256": "3127947d57fe394dd53893dd224aa0bbb719a14a408f21805f2d46ebcde9c55b",
+      "bytes": 10977,
+      "line_count": 339,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/observability/ui/event-detail-model.ts",
+      "git_blob": "7ca42190c2a4715841c071bb2617169ce7ff8cde",
+      "sha256": "de6f601c45802caa06cdd94391ccdf243b1287eef7d8e4600c1c9b7f2a55025f",
+      "bytes": 4028,
+      "line_count": 140,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/practice/api/review-draft-force-enable.ts",
+      "git_blob": "63fb01b59dc3661324cbbb83f9a724547bfd2efb",
+      "sha256": "b85c21e0a2405ade3b24a34a21fe992323119e54ff406eccffa6d1f879ca5e64",
+      "bytes": 2389,
+      "line_count": 60,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/practice/jobs/quiz_gen.ts",
+      "git_blob": "5f4ebdd65e88d2ff09eef8c5c5731d77cd590b11",
+      "sha256": "2a261707ec6472b810d5f91c97b98d65db174fd3f82fab9c80e09868344bae9d",
+      "bytes": 92192,
+      "line_count": 2041,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/practice/jobs/quiz_verify.ts",
+      "git_blob": "3cffbaf40e7f29af1242f2c456ea845d16b2474d",
+      "sha256": "da6c088af0bcb2476b0d259cac1510c3058c8d9689e76a3382d4bec52592a483",
+      "bytes": 66721,
+      "line_count": 1328,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/practice/jobs/rejudge.ts",
+      "git_blob": "8613a217dc939dfcaabe4b44a0d5efa6ecc343de",
+      "sha256": "1b38e79d7c8ba2d6ae3ca61249dde0e4421b2859a4e31a38726d2a77c2d326dc",
+      "bytes": 2482,
+      "line_count": 63,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/practice/jobs/source_verify.ts",
+      "git_blob": "2af3b0bd7232dd11152cdf5a70d66eb1d439d613",
+      "sha256": "b1564a41ad3934ee88a1f035791713358931e75a65d5f3aa502d81f8262d8212",
+      "bytes": 50729,
+      "line_count": 1000,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/practice/jobs/supply_planner.ts",
+      "git_blob": "1db0b38d792befa0f9bf787f4051d7412a1285ab",
+      "sha256": "9a91196615a2b677ce9b65c9225ace517fa63be1dd761a8d1192932f0c3bba70",
+      "bytes": 21606,
+      "line_count": 562,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/practice/jobs/variant_verify.ts",
+      "git_blob": "e39a2026b649044708beb7cb2c58becb4a257453",
+      "sha256": "586cd7206705b295a1f43a8b323224b0a6898b00c5ae53f228ce1e3f5856f0ae",
+      "bytes": 17053,
+      "line_count": 398,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/practice/server/assessment/appeal.ts",
+      "git_blob": "277339278b4e23528c6d1f8ee81643a49dd845ee",
+      "sha256": "6b7659d6d30ae4bab5f3ec709ace491989afdaca4c1dfb1b5a9a36d0578218fb",
+      "bytes": 6579,
+      "line_count": 171,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/practice/server/assessment/assistance.ts",
+      "git_blob": "feb46de47e896f9272408802c59b6963f6bc5e60",
+      "sha256": "80cc049e97bdad7ff9634e9b194d6004e7d15965624e7b7d7ae5889ee79ea84b",
+      "bytes": 3456,
+      "line_count": 106,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/practice/server/attempt-snapshot.ts",
+      "git_blob": "1c05a30425e808d6dab9992684afd11443662051",
+      "sha256": "6e9841104abd742c7e6dbb1a4da989310841069eea63e83858536ab25161f3ef",
+      "bytes": 4750,
+      "line_count": 111,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/practice/server/failure-learning-attribution.ts",
+      "git_blob": "effca0c33540c4aa2d523795a0222d9e70a58ef9",
+      "sha256": "25ecb0294ff5a2beded386e13b029fe820cf010531fc9f9e6a39b2a4dd49cf42",
+      "bytes": 19117,
+      "line_count": 360,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/practice/server/failure-learning-variant.ts",
+      "git_blob": "7d9235192e5c26e9bf17ebcdeb14beb68c2e0b26",
+      "sha256": "8f70df1482771786ed1f8fba2b25144d9ce576cbc367128a8768c4be12002f1f",
+      "bytes": 15604,
+      "line_count": 369,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/practice/server/judge-calibration-sample-core.ts",
+      "git_blob": "d12fd2bcc8f5976a1510e000d7d5a053b8b53949",
+      "sha256": "1dbe27b6f49cdd8fbe92bf62be65caad4b86c58a54cfa132366f8e67b0606ad5",
+      "bytes": 21095,
+      "line_count": 519,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/practice/server/judge/recorded-model-executor.ts",
+      "git_blob": "b6e23aa7a394848bcb709d193e5bebe0e2b22408",
+      "sha256": "d341a2f7fabf6a66fc39c38e2a35430b3753bb7a03db0e03da63fea4d91f5f7b",
+      "bytes": 5019,
+      "line_count": 129,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/practice/server/mastery-progress-signal.ts",
+      "git_blob": "541647659684b9b54d337992fe31eaacc586cc31",
+      "sha256": "196f3811af491422ae35e85716c269070c4a216fd12d110ba17feb7418a8842f",
+      "bytes": 8144,
+      "line_count": 169,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/practice/server/merge-attribution.ts",
+      "git_blob": "9bd8535d0f770b383c678a0931e9c8894ccfa34f",
+      "sha256": "6591d8d2159144910d6e79cd8b875690ee375e6f684b5228628c564c23c671a4",
+      "bytes": 2224,
+      "line_count": 64,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/practice/server/paper-adaptation.ts",
+      "git_blob": "4524b0bbaffbc7af75f1b5286a0d5e8d877d4f26",
+      "sha256": "e3c45528fbff3667391dc75c89036c9a685fa61fe247b148b9a07b0ce9401a6f",
+      "bytes": 2748,
+      "line_count": 71,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/practice/server/proposal-appliers.ts",
+      "git_blob": "326c5c05042f8bc8e8c5587e12fd2cbd6cefd56c",
+      "sha256": "647c4756ab278cacc8cf9b47b4adadfc8c88a844dbbfb95fbbce4c3aab83c182",
+      "bytes": 47616,
+      "line_count": 1225,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/practice/server/question-supply/dispatcher.ts",
+      "git_blob": "ed5f308721fc28d3cbac76cdb302a9c9335733c8",
+      "sha256": "ce9b26292483a813cbe27b8638afb378788b56dfe2c792aa9d2ea3ff27bdb3d8",
+      "bytes": 27676,
+      "line_count": 544,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/practice/server/question-supply/inventory-projection.ts",
+      "git_blob": "31ba0a37b598f7d39a6a948bb5ab617fc6e8af93",
+      "sha256": "ac09fa92775c697fdfcda00ce47b50e48cdc3c930ca5830308b16d18acbddbb7",
+      "bytes": 13374,
+      "line_count": 356,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/practice/server/question-supply/jyeoo-candidates.ts",
+      "git_blob": "0c0fad705e5bf51c55fd49c9c102c96118de5c10",
+      "sha256": "f630ec644e5172aab2a4b89d84c0b759278c642662238c5ae12a32f268b37c79",
+      "bytes": 31288,
+      "line_count": 799,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/practice/server/question-supply/plan-executor.ts",
+      "git_blob": "0b7510902381558acaf9c1b273ec0a37946aaccb",
+      "sha256": "5d514589c85f0aa330c572c93714f7a62dd8aa8b44a722c34002eb0ca83a7a56",
+      "bytes": 38668,
+      "line_count": 975,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/practice/server/question-supply/web-candidates.ts",
+      "git_blob": "d76e8855a4930d3ed5fe1a63b2e7b55d0a6e99f9",
+      "sha256": "627005299e34771824f6aafb22666f0938f6c1b1834d16f869a50d0b4575efd0",
+      "bytes": 15779,
+      "line_count": 373,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/practice/server/quiz/content-fingerprint.ts",
+      "git_blob": "0e75208be4a8ec0e122886f6685cfd9ab3377aa9",
+      "sha256": "d9293c73d2dcec041e00efe34ecc893ceb9605b9342c25a38e320b1307499c38",
+      "bytes": 16408,
+      "line_count": 402,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/practice/server/quiz/selection-miss.ts",
+      "git_blob": "f94e3778f2e9b11394af1fe018d9f9201ff82723",
+      "sha256": "f9dba041e18527460f80eaf4edf94ed6cc027664a073acc8ae2f7f9959627f4b",
+      "bytes": 5149,
+      "line_count": 119,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/practice/server/quiz/verify-and-promote.ts",
+      "git_blob": "5fbb8685f58dc9d8dc06e7d008617892b4ae5113",
+      "sha256": "89c5e9fb930031197bca3b0a5827f336c5ce90480cc3e5fb9c6bae32400efedb",
+      "bytes": 22372,
+      "line_count": 431,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/practice/server/quiz/verify-framework.ts",
+      "git_blob": "34d8178c399ff9b58652f9025d42df6c14955d55",
+      "sha256": "8402674a55fefcb2900c9c3cd721281d412a6b867c283db1a3823a07328c0499",
+      "bytes": 71281,
+      "line_count": 1523,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/practice/server/tools/store-sourced-question.ts",
+      "git_blob": "4e310a5e01f1b2fe88785128424e13930de44c12",
+      "sha256": "59a51bb51565d46606b4fe438b8dfced85506097b700034de73e7d0858cfb256",
+      "bytes": 19053,
+      "line_count": 437,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/shell/server/teaching-brief-ack.ts",
+      "git_blob": "0617cbc797d5be6ea02ce109457d4fd15217f0f4",
+      "sha256": "0f5fe9b1a6d1c182b13a7bacd2a18b0a79feacda4562a2ff2d14ebaf557d054c",
+      "bytes": 10550,
+      "line_count": 208,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/shell/server/teaching-brief-interactions.ts",
+      "git_blob": "2699382c4c9a0c7f84ce908f26950d5b49fd7aee",
+      "sha256": "a76ac8a66d6943d5fdeb9386b5e0a0a65e818a8b20692127c849160727b687ac",
+      "bytes": 10131,
+      "line_count": 229,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/capabilities/shell/server/workbench-summary.ts",
+      "git_blob": "d477a4ae08c6230dbc810d9486f4168c9639f515",
+      "sha256": "43e4f8fce5dceeb12b0095fbd59bb20f63e1f9d2f646d2ca121f18a99e331310",
+      "bytes": 9081,
+      "line_count": 251,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/core/migration/redact.ts",
+      "git_blob": "a4c66d996772bf84176e11d4f3cfa628d02f144e",
+      "sha256": "809a43036d84902928bf3cfecc58754f77239e44cb32956525d4ae8e0b5ab153",
+      "bytes": 6379,
+      "line_count": 200,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/core/migration/types.ts",
+      "git_blob": "e904ca17ebab4dbef79b8410eb60fcc4b92e7b66",
+      "sha256": "63adecd87dd491dbfd2df10c1b4f9d04d3381c42e0294bacacb124d9f389970f",
+      "bytes": 16310,
+      "line_count": 479,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/core/prereq-risk.ts",
+      "git_blob": "c95eb1d0a0d5f7fb94ec936a6234057fe7e1eef3",
+      "sha256": "512240062d8a126f5dc25ce7235d09ef4a93c220ce33a82994ac59139a57534f",
+      "bytes": 6490,
+      "line_count": 127,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/core/projections/artifact.ts",
+      "git_blob": "65c1519b819afc95a948467c97b233b508f4072b",
+      "sha256": "603e0f69dedaf75658077b836394f92997e7180436b6ef14ca46b27bb204a2fb",
+      "bytes": 19791,
+      "line_count": 340,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/core/projections/fold-event.ts",
+      "git_blob": "123e50588010cd50fc2e7ca050b178dc9752d18f",
+      "sha256": "f61d51725402e40a02b7a523f69a739cf4838334562353aed3c90974a7da3b93",
+      "bytes": 2379,
+      "line_count": 44,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/core/projections/goal.ts",
+      "git_blob": "ae3d33271e8e90d1bd6ef7bb34d16dbcaa743ee8",
+      "sha256": "6bc38a7f064c3bd08fcc1665d38d61927f698807c36717cffb956d2dce453333",
+      "bytes": 15681,
+      "line_count": 303,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/core/projections/item_calibration.ts",
+      "git_blob": "b7dd4fcd50359657c1006fe5e7f8b695c3deb015",
+      "sha256": "096daecd2aeefa12a47cd67bd5bd06e792fd7aac01402839b4023936d0a153fe",
+      "bytes": 5764,
+      "line_count": 122,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/core/projections/knowledge.ts",
+      "git_blob": "35ffe0bff45defac69994ef0ebbbf04b2fc48dd2",
+      "sha256": "59eb28803f129d1e2a36a4bea556e01f9b6de87a04243b76127bc7ba6efabeb4",
+      "bytes": 20314,
+      "line_count": 457,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/core/projections/knowledge_edge.ts",
+      "git_blob": "e1b0f0447a64b7b23271c6a7f49ce354b7c8997a",
+      "sha256": "ad7bfb80889ccdbc0859b20ddc0e2812f6f87051aaa558b36b664a1244ee8954",
+      "bytes": 14905,
+      "line_count": 314,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/core/projections/learning_item.ts",
+      "git_blob": "c777cba1d16847dc2500fbe8f1155b85ae9558ec",
+      "sha256": "58cd4384038730e7de717faaf9b200c8088928c1b2572ef8d40e52a2a15b4892",
+      "bytes": 17329,
+      "line_count": 339,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/core/projections/mistake_variant.ts",
+      "git_blob": "b9abb33a7cf9c4b54ac25ba65fb5d83309c6faaf",
+      "sha256": "481c738da00b8ef8ae871275c6c34197affc3be5981a213b797b4ffb94dd3c28",
+      "bytes": 11163,
+      "line_count": 231,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/core/projections/question_block.ts",
+      "git_blob": "0283741fc29632f9fb12df043cd78be6a9af40fc",
+      "sha256": "59f2047854f81e25c913516a84b8243eaa7b1c6e41a5e62e29576f07642a6053",
+      "bytes": 17852,
+      "line_count": 308,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/core/schema/AGENTS.md",
+      "git_blob": "5e6099452b22ec446e2e608ef4a001275c39cdbf",
+      "sha256": "055fb225f81af10f66cfec78dc824ce7ae1959a5211cc5cda770f10f606243c9",
+      "bytes": 2070,
+      "line_count": 27,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/core/schema/event/artifact-events.ts",
+      "git_blob": "adedc0c7de06d5c98399cafc9900badb4b4c14e1",
+      "sha256": "8001fd70fd048c05a28680b9578c343bb6edfa58434e678bf4a6364bb8a2f2f3",
+      "bytes": 21371,
+      "line_count": 358,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/core/schema/event/experimental.ts",
+      "git_blob": "bfd6e6191e5e3261cce02e51938ee7415d7cc85f",
+      "sha256": "6e4ee484de40710aadd7a9a3b27c45930ad007a79ab2b179f286dde2126029b9",
+      "bytes": 15802,
+      "line_count": 280,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/core/schema/event/genesis.ts",
+      "git_blob": "b2a6afa8ed5ceaf32fe47be1bca8a3f3bdf903bd",
+      "sha256": "f387cfb1a988792c6375a73e6b84f2ffca29559e19e3463ed2df1d6a7a9dc825",
+      "bytes": 33285,
+      "line_count": 534,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/core/schema/event/goal-events.ts",
+      "git_blob": "dd41618893de320eeacf20a06cfb5f2bd8b6e1e3",
+      "sha256": "1a65dd67927faf5229b81b7ec54b3f8df5327b637272f2d6fd5195973d38ab76",
+      "bytes": 4578,
+      "line_count": 80,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/core/schema/event/judge-pending-events.ts",
+      "git_blob": "21d4455b996963813941a666ec817a48adcd4d34",
+      "sha256": "1a3feb5a803471b7cf16865d97edc26563be4abafa15fee1405d17a9012f68cb",
+      "bytes": 7228,
+      "line_count": 133,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/core/schema/event/knowledge-node-events.ts",
+      "git_blob": "38e7195afcd07a5774a04db3b5c03366ce23cb6d",
+      "sha256": "1b30d7115cb5282324c5c8d8809bbd484d9a8e6afa905502cd3da01cb926219a",
+      "bytes": 1762,
+      "line_count": 48,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/core/schema/event/known.ts",
+      "git_blob": "a9a1ff5145f975a839634015f94fd2fa29ff68cc",
+      "sha256": "fe3a11ff196fe434f28ab3ce3fad6c7fef570762bf6498e4cc4915c7313b3da1",
+      "bytes": 49210,
+      "line_count": 1000,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/core/schema/event/learning-item-events.ts",
+      "git_blob": "ab2e8e5b3f25540451b96edf6a5ae79be5fa7d74",
+      "sha256": "385d10a35801e0fb8c9e39fb596889c7b670ad7bb196ebfe5aa5923108198e13",
+      "bytes": 6064,
+      "line_count": 112,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/core/schema/event/mistake-variant-events.ts",
+      "git_blob": "5e6da453ea561827573c4922698dbff4fc18c409",
+      "sha256": "b133cc89b8d721bf9cb8e1c5eb7af3f76bbdb0088d2f7d6b3dbb22349060c9e7",
+      "bytes": 5105,
+      "line_count": 78,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/core/schema/event/nudge-events.ts",
+      "git_blob": "c04c20f01bb467f43e592a0497c25b585b36daaf",
+      "sha256": "7b35eea75888a802aaa0d5a06f4ada44888d338269bc1789869b17d67525cb79",
+      "bytes": 3293,
+      "line_count": 54,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/core/schema/event/question-block-events.ts",
+      "git_blob": "955316027b227966b200d5de6c8751b6f9971ceb",
+      "sha256": "6a1a2d8a6ae459d107060fee8aa20b462a6b5e4c678ebf5b7590c6fe0317f442",
+      "bytes": 18531,
+      "line_count": 303,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/core/schema/event/state-snapshot.ts",
+      "git_blob": "77152620fa47a6a71f06fe52597a2513e878c3db",
+      "sha256": "b8b020a7207f789cf4c26041cc5cca2c5e9ffcbebe7a3b5dbe36aa63feaa86fc",
+      "bytes": 13650,
+      "line_count": 242,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/core/schema/event/subagent-events.ts",
+      "git_blob": "cfde6c3b80ab9d6d49bbfe49b6a30cc2c1cb5f05",
+      "sha256": "789616e98a5b481cada7b189ea4646970cddebab0d4f0e71fbab752eae7a6a5d",
+      "bytes": 1683,
+      "line_count": 45,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/kernel/artifacts.ts",
+      "git_blob": "20254a3662c639eb2db747bf229c69bc7688c692",
+      "sha256": "b7c2eea602ad90e357b43067342c903d26fb08051842309a5afd491b1438ce13",
+      "bytes": 5626,
+      "line_count": 117,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/kernel/events/corrections.ts",
+      "git_blob": "642ca720bc52434ba8d400f2f627a35ca4d5f812",
+      "sha256": "06ae279f08de6cf0d341b5860cb92863894a2259dcd94715a570b65303c7d2c1",
+      "bytes": 3369,
+      "line_count": 107,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/kernel/events/index.ts",
+      "git_blob": "dd72757444d5f5074dba86775e2b20a08bd8a587",
+      "sha256": "74f8a2a27401d606dc0f6d383fe3fa05038db4fac380fa585be65ae882b33486",
+      "bytes": 779,
+      "line_count": 30,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/kernel/proposals/writer.ts",
+      "git_blob": "3633706fc9bb73ba2c29702eaba015ff9eeabbea",
+      "sha256": "47bf3391a7e50a378b37205eb7f7dbe0f195f20289a58a45f2c11f290baf901a",
+      "bytes": 5679,
+      "line_count": 151,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/kernel/read-models/assessment-verdict.ts",
+      "git_blob": "a2e9d614757a64af976d5fa4b2e55de431e37133",
+      "sha256": "5a4d75d620f47f64581a1be9c4a5f5f3265b682bde8bdf137189c2a5d5214632",
+      "bytes": 37989,
+      "line_count": 936,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/kernel/read-models/failure-attempts.ts",
+      "git_blob": "63c2be4d1d6a9adce8e6864f3e9f85efd3846fd8",
+      "sha256": "11c3a84164adf82bb0f644ca1947170c03e13b50cee43b1dc839ea5c3e0390e4",
+      "bytes": 35216,
+      "line_count": 875,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/kernel/records/assessment-issuance.ts",
+      "git_blob": "81f202ae672cbf05cf442e9a2c50b635f5cc4fec",
+      "sha256": "80012ee1230c5803a5b5b355e436e679f985b70e79d2233ac2edcdbe0dbe1d3f",
+      "bytes": 23015,
+      "line_count": 554,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/kernel/records/assessment-publication.ts",
+      "git_blob": "36d7b6c380108cd100d9387098da0c0acf294f6f",
+      "sha256": "199b25ed1d85d26ddba579726235abb1dfcdf67800131f4f3d724e780ffad8da",
+      "bytes": 45318,
+      "line_count": 1111,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/kernel/records/queries.ts",
+      "git_blob": "0f8aefbc26ee1f83f86c4f0059520c3ae08e95b9",
+      "sha256": "a2dc3f1dcc060c4e5bf415eebe195160d49ac8b09af37dfeff0d50568df15bbc",
+      "bytes": 15662,
+      "line_count": 452,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/kernel/records/question-block-lifecycle-event.ts",
+      "git_blob": "c1b1488d307fff6c7db0e2d7fbd7e4d8978e13b3",
+      "sha256": "871f69acf56b4decfdc2d50d80063b2b43ec83f15b09bbb6ea0f16ba56837da3",
+      "bytes": 5024,
+      "line_count": 90,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/kernel/tools/tool-operations.ts",
+      "git_blob": "d8174f0a930b8418b3252d7da197ef4212e41b53",
+      "sha256": "cdbaf2f34ece67ce98e1649fd703078b22159796bfba8fd1c41c56641a875465",
+      "bytes": 33276,
+      "line_count": 952,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/server/ai/tools/mcp-bridge.ts",
+      "git_blob": "b6fd401e18d73f8438e0de3a408d44e72d238cba",
+      "sha256": "684a92be1e46ce77dc50909fd6c7efbd55bd57ac80c2be190281a8f704ac026d",
+      "bytes": 28217,
+      "line_count": 739,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/server/assessment/settle.ts",
+      "git_blob": "7bd70e17b468307895f14ae0c862abd1b7181790",
+      "sha256": "0930f6852f60ff83f43a7240664a40439f060b74a59b5f9f4e21051f8e2a73c0",
+      "bytes": 60890,
+      "line_count": 1535,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/server/boss/verify-dispatch-outbox.ts",
+      "git_blob": "e6a76030b6e795a9f1a656d688f32a4b0c6d8b9b",
+      "sha256": "003d107310825dd0864e1846ab32999232edaf070d38bf3cc0683c4394a52d79",
+      "bytes": 23902,
+      "line_count": 588,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/server/conjectures/reconcile.ts",
+      "git_blob": "c81e21ca397ee31dc038dadb6664a11258a198b6",
+      "sha256": "54364853c52bb9011fcfb4443c3ebfb6d87641598cde699e6b468ec4440db56d",
+      "bytes": 27747,
+      "line_count": 592,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/server/mastery/personalized-difficulty.ts",
+      "git_blob": "d1e29f73f69705063d8f09bcd3af1773d4c77cf0",
+      "sha256": "e139207c0ced884a510e2d4005458b61909e525301bb27a0cb8949e899f94126",
+      "bytes": 39684,
+      "line_count": 645,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/server/mastery/prereq-propagation.ts",
+      "git_blob": "493de9268c32e15eb5c16f7f7e995e439e7ed6f0",
+      "sha256": "ebb6e6e617fe81909c83cab80c91ce1f2b629b59208873684b344258a6bcfb04",
+      "bytes": 13419,
+      "line_count": 271,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/server/memory/brief.ts",
+      "git_blob": "75489749516d65afeda63e143122fbb149bfcfaa",
+      "sha256": "a330919636dad817a45902432187afb3e708adc014e63b82c04495d61e81b517",
+      "bytes": 13572,
+      "line_count": 329,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/server/memory/client.ts",
+      "git_blob": "062b2a6a1968c09e32ebaaea8a2b0a18a92a93fb",
+      "sha256": "4a613fcead4ebfa1cab766bb25431a619b5d3222a4bfaf3f285fc89fe15f376f",
+      "bytes": 20100,
+      "line_count": 467,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/server/memory/memory-ingest-recovery-store.ts",
+      "git_blob": "4208c65bc1c3d023894c60e07a0ca75a4709bbcd",
+      "sha256": "3bfb4885882dce0a4677ab21facde8424b55ef9d4bc72b4c14c92a66438aa433",
+      "bytes": 10013,
+      "line_count": 262,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/server/memory/memory-reconcile-handoff-cursor-store.ts",
+      "git_blob": "27b5b2014b289610ad5548cb1ebc12f61a0a25dc",
+      "sha256": "6225cefe57e04e7be33bdd957fd68b39d352bc2b7c282513cbc9fc0449c62224",
+      "bytes": 2292,
+      "line_count": 70,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/server/memory/memory-reconcile-handoff-store.ts",
+      "git_blob": "2ce0384f30a3df1f43794269b6bd731f3fba0f76",
+      "sha256": "9c8711c21d02011884a6effa5eeeb7fecd323afcd8ae61ffa9ed0b6ae8eb2401",
+      "bytes": 9877,
+      "line_count": 298,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/server/memory/triggers.ts",
+      "git_blob": "4d69660e93efb551cdda1f10b95b76e28ed5a0cb",
+      "sha256": "c29149bd1bedd7cf1114b0a5e6fcb64f4a5216b8682ec5a11cb969ba8d391c0e",
+      "bytes": 50453,
+      "line_count": 1162,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/server/migration/capture.ts",
+      "git_blob": "656b1f55731da9cb0d2bd104ad4220bbb067d75c",
+      "sha256": "116a7bd0be586d0250284c7995630013daf008bac4bb3835c283aca9aa4437b5",
+      "bytes": 21589,
+      "line_count": 590,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/server/projections/gather.ts",
+      "git_blob": "98de98e23c3270c576c903bdecd7ae441f5c8021",
+      "sha256": "55a5161210691be96d84bd0067c486879fd3fe07fb87dc10a2dd987051aa40b3",
+      "bytes": 28925,
+      "line_count": 566,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/server/projections/learning_item.ts",
+      "git_blob": "1bc12225a7cfc34ff73a457940d02b98af99b1b1",
+      "sha256": "1f711c61eb9fdf3dd8c5bdef2a4d27053c63ef89744fcf55dc42e3e9c4b6c1c3",
+      "bytes": 7134,
+      "line_count": 153,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/server/projections/question_block-create-event.ts",
+      "git_blob": "484127f18a04566507b12703d1df917025e2b365",
+      "sha256": "fd8e2c58e4248ebb4bb7ad1da3860a2682dff8a9ebfa0edc75659d374549edc5",
+      "bytes": 4536,
+      "line_count": 82,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/server/projections/snapshot-mappers.ts",
+      "git_blob": "b33f07947c6aa621ca623fb6d0ea6dbb72b8393c",
+      "sha256": "667a12cabab5578b7bbd8a5f74cfddd387b86794b97d859660c1390ad219e965",
+      "bytes": 6596,
+      "line_count": 150,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/server/proposals/applier-helpers.ts",
+      "git_blob": "a39845c897b420c930f24581fa3cca8b38e41719",
+      "sha256": "c25390bf5d831e3214eba4242bc9f08768fd69036422219286a9a01625d1aead",
+      "bytes": 4798,
+      "line_count": 142,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/server/proposals/retract-action.ts",
+      "git_blob": "6cc2db7e49d1a10cf3b03d615ec6b0126642c123",
+      "sha256": "a40a407db770d919259db099c07d9e133163e05b0a383bb8f5b06d56c352af56",
+      "bytes": 4292,
+      "line_count": 108,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/server/questions/write.ts",
+      "git_blob": "254cbeddcb111cc88c7b609a313838c22b82fc00",
+      "sha256": "f54c90c138dfd7f97bad9954c1810d060329cbe7425c20c20c681b5d3d566cdc",
+      "bytes": 38906,
+      "line_count": 855,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/server/rehearsal/corpus.ts",
+      "git_blob": "f71e5f6be563cbf89d3e98f464cef99368327a1d",
+      "sha256": "9b2cbec0702cf781d3a5c18df913592ec984b1a43cabcfc99c6e7d75b3b230a3",
+      "bytes": 39373,
+      "line_count": 1222,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/server/revert/cascade-revert.ts",
+      "git_blob": "b203b7a538776b4b27c2d5f290ab1c98415e25a1",
+      "sha256": "8aaf4d1f8f510a5e0f0f932f37e7f89ade8d30d5e912c640f8bb255f6b371c0a",
+      "bytes": 41945,
+      "line_count": 839,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/server/session/docx-ingestion.ts",
+      "git_blob": "3ef1b255a66bac60a79714499920222875083ad8",
+      "sha256": "48f32e41d8c09ee30847374ae0b2997278f9747fb2bfb218c3f6cf6fd7dbcea3",
+      "bytes": 11378,
+      "line_count": 270,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/server/session/ingestion.ts",
+      "git_blob": "7d7c52122e60a79b90a4c6115dfa5081e1cf19b0",
+      "sha256": "b83cf7924446920f788117bc4d17126377f52056c20492da92fe89790f79ff43",
+      "bytes": 24752,
+      "line_count": 694,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/server/subjects/subject-control-write.ts",
+      "git_blob": "d9b48432a6d4c3abc421e1f440b82c70e494ce3e",
+      "sha256": "75afae2abd77b69b03ac0505bb066bf80db091fed1f60c5b0f402d615d3733ec",
+      "bytes": 15822,
+      "line_count": 425,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/ui/lib/api-schema.generated.ts",
+      "git_blob": "c0737f424f9d92a36733ebfaa2b6123392917c77",
+      "sha256": "333b337a69a6e7044d6e0ce7417e9cea898f6d5df430292ecd33099373e32200",
+      "bytes": 1392056,
+      "line_count": 36636,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    },
+    {
+      "path": "src/ui/primitives/CauseBadge.tsx",
+      "git_blob": "4b79d195c48224f9a95203e8b213d5f7d713d8ca",
+      "sha256": "6124fb1d25e27e0e465939aefbe1b9e1d81c8231a9012cfdbab3e55f82abc025",
+      "bytes": 2916,
+      "line_count": 95,
+      "coverage": "targeted literal/session/actor snippets only; not a full-file review"
+    }
+  ],
+  "census_commands": [
+    [
+      "git",
+      "grep",
+      "-l",
+      "-E",
+      "writeEvent|writeEvents|actor_kind",
+      "96077db1905ebab6a522b0ae36f9f22e26be5895",
+      "--",
+      "src",
+      "server",
+      "subjects",
+      ":!*test*"
+    ],
+    [
+      "git",
+      "grep",
+      "-n",
+      "-E",
+      "createCopilotConversation|startConversation\\(|assertAcceptingTurns\\(|recordJudgePendingAttempt\\(",
+      "96077db1905ebab6a522b0ae36f9f22e26be5895",
+      "--",
+      ":!*test*",
+      ":!docs",
+      ":!PLAN.md",
+      ":!.remember",
+      ":!drizzle"
+    ]
+  ],
+  "limitations": [
+    "No source changed, tests, runtime, DB, network, provider, delegation or tracker/PR activity.",
+    "Writer census is source reachability at fixed revision, not a live caller/queue census.",
+    "Future file list contains proposed new paths and an unassigned migration path, not existing implementation.",
+    "No runtime reproduction or PASS claim."
+  ]
+}

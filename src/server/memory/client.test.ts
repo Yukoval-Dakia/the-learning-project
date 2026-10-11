@@ -68,6 +68,8 @@ function testProviderOperation() {
 }
 
 describe('createMemoryClient', () => {
+  // @invariant security: the memory client rejects restricted content before external processing
+  // @fails-if restricted add or restore initializes the SDK or reaches the provider-start callback
   it('rejects answer-only inputs before SDK initialization, lookup, provider start or add', async () => {
     const before = sdk.loaded.mock.calls.length;
     const beforeAdd = vi.fn();

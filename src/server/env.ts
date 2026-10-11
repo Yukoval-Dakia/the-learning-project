@@ -115,6 +115,12 @@ const server = {
   R2_BUCKET: optionalString,
   R2_ENDPOINT: z.string().url().optional(),
   R2_SECRET_ACCESS_KEY: optionalString,
+  // YUK-1359 — pg-boss 自自动化的一次性 infra 模式开关（schedule/supervise/
+  // migrate/registerInstance 四个 automation owner 共用一个显式开关）。缺省
+  // enabled = 与历史构造逐字节一致；disabled 只用于迁移验收期的隔离 app
+  // 运行时（restore acceptance）。解析见 resolveBossAutomationMode，构造
+  // 映射见 src/server/boss/client.ts。不从 RW_WORKER 推断。
+  RW_BOSS_AUTOMATION: z.enum(['enabled', 'disabled']).optional(),
   RW_STATIC_DIR: optionalString,
   RW_WORKER: optionalString,
   SEED_SYNTHETIC_OK: optionalString,
@@ -179,6 +185,24 @@ export function resolveApiPort(rawApiPort: string | undefined): number {
     throw new Error(`API_PORT must be a positive integer, got: ${JSON.stringify(rawApiPort)}`);
   }
   return parsed;
+}
+
+export type BossAutomationMode = 'enabled' | 'disabled';
+
+/**
+ * YUK-1359 — RW_BOSS_AUTOMATION 的单一解析点（与 resolveApiPort 同构）。
+ * 未设 / 空串 / 'enabled' → 'enabled'（默认，行为与此前完全一致）；
+ * 'disabled' → 关闭 pg-boss 自身的自动化子系统（构造参数见
+ * src/server/boss/client.ts）。其余取值 throw——skipValidation（VITEST）
+ * 路径不经 zod 枚举，所以本函数必须自己拒绝非法值，不能只靠 schema 兜底。
+ */
+export function resolveBossAutomationMode(rawAutomation: string | undefined): BossAutomationMode {
+  const trimmed = rawAutomation?.trim();
+  if (trimmed === undefined || trimmed === '' || trimmed === 'enabled') return 'enabled';
+  if (trimmed === 'disabled') return 'disabled';
+  throw new Error(
+    `RW_BOSS_AUTOMATION must be 'enabled' or 'disabled', got: ${JSON.stringify(rawAutomation)}`,
+  );
 }
 
 export function requireApiInternalToken(

@@ -6,7 +6,7 @@ Owner 的后续指令是先完成整个非 UI 迁移，UI 暂缓，再完成 Lin
 
 ## 当前退出状态，2026-10-09 JST
 
-本节基线为已合入的 main `6212a4560c68c294245dc3f3e10e4f774c6ff6f8`。父重新核对固定 Git 对象：14份任务提取输入与原53f05收据逐字节一致，18份路由输入与main6212收据一致。下文历史行号和验收仍只适用于各自版本。1355、1356、1358、1359均未完成；源码合并不代表部署或旧消费者退出。
+本节任务族基线已更新为正式main `96077db1905ebab6a522b0ae36f9f22e26be5895`；路由仍按已核验main6212收据记录。父使用固定Git对象重新提取任务声明，复现旧6212结果后核对1394增量，不读取在建judge文件。下文历史行号和验收只适用于各自版本。1355、1356、1358、1359均未完成；源码合并不代表部署或旧消费者退出。
 
 | 范围 | 已有证据 | 尚需完成 |
 | --- | --- | --- |
@@ -16,19 +16,21 @@ Owner 的后续指令是先完成整个非 UI 迁移，UI 暂缓，再完成 Lin
 | 配置与科目三个页面 | PR1620已合main10df，复用1389/1390/1391公共操作。18操作、122RPC、35窗口和三页浏览器证据见[父验收](2026-10-09-yuk1358-start-admin-controls-parent.md)。 | canonical自动启动与全SPA退出仍未完成。配置提交成功但刷新失败不得重写；catalog/journal只读首屏与RPC完整分页的证据分开保留。 |
 | W2/W3/W4与practice | 1380事件详情/纠错、1392 board公共读取已合入；1356共享review操作及真实Pi原件效果已有证据。 | 15个页面仍无显式Start入口；领域出口不等于消费者完成。practice实际提交、判分DBOS及共享子树继续验收。 |
 | 构建与镜像入口 | `server/start/routes/$.ts`调用legacySpa；frontdoor、package build及Dockerfile仍服务旧web产物。 | 全部实际消费者迁移后统一dev/build/镜像入口，再删旧挂载。保留UI使用的组件、样式不能按目录名删除。 |
-| 持久任务恢复 | main的prune_job_events与review orphan均已声明DBOS backend；PR1621已合入e1f2。故障/真实cron与独立R1证据见[1393父验收](2026-10-09-yuk1393-parent-acceptance.md)。 | 最终逐族运行切换、旧义务分类排空、回退和唯一恢复owner。默认phase仍pg-boss，声明DBOS不代表运行切换。 |
+| 持久任务恢复 | main96077已有prune_job_events、review、conversation、placement四个DBOS声明；1393/1394源码、故障恢复和cron证据已交付。 | 默认phase仍pg-boss；共享host仍按phase挂兼容worker/schedule。最终逐族运行切换、旧义务分类排空、回退和唯一恢复owner仍待验收。 |
 
 [路由收据](evidence/2026-10-09-yuk1359-route-coverage-main6212.json)逐项对应UI_SURFACES的28项：12页面加根跳转，共13项有显式Start路由；15页面仍走旧SPA回落。这是入口覆盖，不是完成率，不证明页面的嵌套消费者全部迁移。旧f80d基线的9/19收据继续保留为历史。
 
 15页面为 `/welcome`、`/onboarding/upload`、`/placement`、`/profile`、`/events/$id`、`/record`、`/practice`、`/drafts`、`/questions`、`/questions/$id`、`/knowledge`、`/knowledge/$id`、`/notes`、`/notes/$id`、`/coach`。PR1623事件页尚未合入，不提前计入；handoff页数不包含根跳转，不能直接和这里的13项比较。
 
-[任务声明收据](evidence/2026-10-09-yuk1359-job-declarations-main6212.json)只解析 `jobs.handlers`，排除event handlers。main有55个manifest声明，其中53个pg-boss load入口和2个DBOS声明；manifest schedule20、infra schedule4、memory schedule3。两个注册器有11处direct work。提取输入与已验证的53f05候选收据逐字节一致，因此复用其静态解析结果并记录新main及每份输入hash。这不是运行队列或未完成义务数，也不包含实际producer/SEND_IT/retry/DLQ盘点，不能简单相加为完成比例。
+[任务声明收据](evidence/2026-10-09-yuk1359-job-declarations-main96077.json)只解析 `jobs.handlers`，排除event handlers。main有57个manifest声明，其中53个pg-boss load入口和4个DBOS声明；manifest schedule22、infra schedule2、memory schedule3，合计声明数仍27。原两个注册文件的direct work调用点由11减为9，但该数不含durable host内部按phase保留的兼容注册，不能当成完整旧consumer数或退出比例。旧[6212收据](evidence/2026-10-09-yuk1359-job-declarations-main6212.json)保留，原提取结果本次逐项复现。
 
-YUK1394的两个六小时清理族已实现，PR1624最终候选为 `b9b019a3a`，尚未合入。原cron测试的两项P1已修复并通过R2；后续CI另暴露共享producer fence安装死锁，修复源码为 `1aeec5e36`。父级29项DB测试、34项进程恢复测试及隔离删锁反例见[共享锁验收收据](evidence/2026-10-09-yuk1394-shared-fence-verification.json)。原DB、migration、cron和审查证据按各自revision保留在[父验收](2026-10-09-yuk1394-parent-acceptance.md)，不将原R2扩大为对新增锁修复的审查。最终exact-head CI仍须通过，旧binary仍须停写退出；候选不计入main的两族声明，也未切换运行后端。
+YUK1394已随PR1624合main96077，exact a880 CI37852269707全绿、merge tree相同。两个清理任务从infra迁至observability manifest，只读profile audit改为04:26。父29项DB、34项进程恢复及隔离删锁反例见[共享锁验收](evidence/2026-10-09-yuk1394-shared-fence-verification.json)，其余证据保持[原revision](2026-10-09-yuk1394-parent-acceptance.md)。0117明确将两族phase初始化为pg-boss；session-orphan-worker仍在pg-boss/draining-pg-boss阶段注册boss.work，仅pg-boss阶段挂旧schedule。因此源码声明已交付，实际旧binary停写、运行phase切换和队列义务归零并未由本次静态检查证明。
 
-下一判分族沿既有YUK1356继续，包含 `judge_run` 与 `judge_pending_reconcile`；设计和ownership已交接，须在1394合入后的fresh main实施。Start消费者与boot仍归5796。`promote_conversation_idle`的五分钟用户事件时钟及选择后插入竞态仍归1355，尚未真实DB重现，不冒称已验证P1。其余任务族仍需独立核消费者、唯一恢复owner及退出条件。
+下一判分族沿既有YUK1356继续，包含 `judge_run` 与 `judge_pending_reconcile`；设计已完成并核验，唯一T3实现任务yuk1356-durable-judge-implementation-20261009-v1正在freshmain96077分支实施；尚无交付候选，不提前计入上述main统计。Start消费者与boot仍归5796。`promote_conversation_idle`的五分钟用户事件时钟及选择后插入竞态仍归1355，尚未真实DB重现，不冒称已验证P1。其余任务族仍需独立核消费者、唯一恢复owner及退出条件。
 
 Linear捕获：路由清点 `01c035d9-4603-484f-b542-ad37a495c50e`，任务清单 `a85667b1-7fc7-4f44-95bf-f43d3f95893a`，后续housekeeping `cb362f85-e98f-4936-b809-de70ed8983fe`。共享audit修复PR1618及各lane证据仍有效，但不关闭整迁移。本次仅更新文档，无runtime、provider、队列或数据操作。
+
+DBOS恢复缺口已核到[具体helper与历史证据](2026-10-09-yuk1359-dbos-restore-evidence-gap.md)：全库dump没有排除DBOS，但仓库drill只统计三个旧schema；当前部署所附102表恢复清单没有DBOS表。完整恢复演练仍须覆盖实际DBOS状态、领域receipt和唯一恢复owner，归既有1359/1329，不以旧备份成功核销。
 
 ## 历史调查记录
 
@@ -198,3 +200,12 @@ PR1599已合入7bc216509，tree与CI head6ab98ed8c一致；CI Gate37677610975成
 PR1600已于2026-10-07 21:18:58Z合入 `7100dfae4`，合并tree `743ee4d80617dc9b34c7533d724e052af5fd50c4` 与准确head `c40a18621` 一致；CI Gate `37686417034` 成功，独立初审P0/P1 NONE，无未裁决review threads，完整17分钟窗满足。未部署。Start挂载任务归主线，实际新入口行为及旧SPA退出尚未完成。
 
 [W1详细消费者清单](2026-10-08-yuk1359-w1-consumers.md)固定基线7bc216509，覆盖Today子组件与Inbox共享命令。新增确认ProfileBand的目标画像读取和LearningIntentComposer的待审提议提交；不新增恢复owner。后续新入口按[Start验收矩阵](2026-10-08-yuk1376-start-acceptance.md)取得实际证据，不能借用旧SPA的通过结论。既有1358/1359/1376覆盖剩余工作，本轮无新独立缺陷，不重复建票。
+
+
+## Main7472 route entry census
+
+After PR1623, parent re-read the exact committed `7472f4395f4a12a5167e33034d5d8af8bf695049` UI_SURFACES and every Start route through TypeScript AST literal extraction. [Sealed inputs and mapping](evidence/2026-10-09-yuk1359-start-route-census.json) show28 surfaces:14 explicit Start entries including the root redirect, and14 still served through the SPA fallback. API and build catchalls do not count as page migration. This supersedes the6212 entry count only, not its runtime evidence.
+
+Remaining entries are `/welcome`, `/onboarding/upload`, `/placement`, `/profile`, `/record`, `/practice`, `/drafts`, `/questions`, `/questions/$id`, `/knowledge`, `/knowledge/$id`, `/notes`, `/notes/$id`, `/coach`. Shared Copilot, nested consumers, build/dev/Compose, canonical boot and legacy deletion obligations remain beyond this entry count. No runtime or full-page PASS follows from it.
+
+A parent source check identifies `/notes` list as an independent candidate for the Start owner while judge actual output awaits provider availability. Existing `notes/public.ts` exports `listNotes` and ISO `NoteSummary`; `api/notes-list.ts` still validates NoteListQuerySchema and resolves subject knowledge IDs before the typed read. Preserve no-subject versus empty knowledge-set semantics and AND text filtering, with no invented pagination. This is proposed sequencing, not authorization to duplicate the owner's writer, a new aggregate, or completion of note detail/presence/AI commands. Parent sent these exact boundaries to5796; no notes or Start code changed.

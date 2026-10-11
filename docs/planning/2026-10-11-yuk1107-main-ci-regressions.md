@@ -1,0 +1,27 @@
+# Main CI regression repair (YUK-1107)
+
+Owner requested this P1 ahead of further CI speed work. The two fixture repairs serve the data/settlement invariants; production behavior remains unchanged.
+
+## Evidence and cause
+
+Main-based UI PR #1692 run38135449130 fails independently in DB shards3/4 and4/4. Job114459492869 reports substring argument42 with PostgreSQL inferred type25 (text), not integer. PostgreSQL selects the regular-expression substring overload; a valid scheduled workflow containing42 yields42, whose timestamptz cast fails. The production horizon already validates every exact native family/timestamp identity before this independent SQL comparison. The fix explicitly casts the position to integer, preserving all rows and the max(control barrier, scheduled native timestamp, DBOS tick)+60seconds comparison. No malformed-ID deletion/filter hides a failure. H−1microsecond rejection and exact-H acceptance remain unchanged.
+
+Job114459492903 shows placement outage PENDING instead of ERROR, followed by five fixture-blocked cases. The fault proxy destroys existing application sockets after observing the server COMMIT but keeps listening and resets reconnections. Closing its listener at that same fault boundary refuses subsequent connections. Existing proxy connections detach from the real primary and report SQLSTATE08006 instead of resetting the client transport. The original real COMMIT acknowledgement remains withheld. All subsequent simple or extended SQL is rejected, with extended-protocol Sync respected; no healthy sibling reaches the database. Stop awaits one listener-close promise. The case waits for the real worker failure before polling original ERROR, receipt/event equality, committed/not-committed outcomes, terminal recovery rejection and strict obligations. Both parameterized families use the same fixture.
+
+## Validation status
+
+Initial fixed916711cfc independent R1 returned NONE; typecheck/lint/build/test-policy/partition passed. AST comparison preserved109cron and99migration assertion expressions. Approved runtime23cases finished9PASS/14FAIL: cron2PASS; migration7PASS, first conversation outage failed,13subsequent cases guard-blocked. The first worker2421 exited1 with no failure message: bundled postgres-js nextWrite50924 called socket.write after socket was null. Actual COMMIT was observed, receipt/event for crash-a persisted, workflow remained PENDING and crash-b/crash-c receipts were missing. The original failed receipt is retained. This is not a successful migration result.
+
+Window started11:55:59.116Z, actual token release11:57:18.717Z, total79.599s; all7approved running container identities and all pre-existing stopped inventory, release/source/token parity passed. Own session8066a27e72f4 PG/Ryuk and19trackedPIDs gone. Two earlier preflight attempts aborted beforemkdir and remain separate receipts. No appended batch.
+
+The subsequent proxy repair is source-only and needs fresh scoped validation, R2 verification review and exact-head CI. Coordinator approved keeping the original lost-COMMIT/unavailable-primary meaning with explicit protocol failure. The production RST/crash risk remains uncovered by the repaired fixture; after this P1 delivery, deduplicate and capture it in Linear separately, preserving this failed receipt and original trigger. No product fix is included. Shared runtime window must be newly coordinated; no TEST/provider/full local CI. Preserve existing failed r5/r6/remote receipts. FullCI≤120seconds remains unachieved; parked #1691 changes are excluded from this repair.
+
+## R2 correction and merge conditions
+
+Independent R2 on e84ffabf found one P1: a connection can have multiple already-forwarded Sync cycles, each requiring a separate error/Ready pair; describeFirst without Sync must get only an error until the client sends Sync. The delegate finding is recorded on PR1696 discussion_r4241515109. Original queued-query driver and [PostgreSQL16 protocol flow](https://www.postgresql.org/docs/16/protocol-flow.html) support that boundary.
+
+The e84 local batch was deliberately aborted on that finding. It has no final Vitest case count and is not a PASS. Actual token release12:07:49.493Z,128.382s total;28trackedPIDs and ownsession19c1e608b0db gone;8approved running identities, all existing exited resources, release/source/token parity true. Failed/aborted receipts remain in separate evidence directories.
+
+The correction counts forwarded Q/Sync cycles and emits one error/Ready for each outstanding cycle, leaving an unsynced extended query waiting for its Sync. The existing parameterized outage case prepares one actual postgres connection, queues two extended pg_sleep queries before starting the real worker, and requires both to reject with08006 after the lost-COMMIT fault. The primary-side sockets are disconnected immediately; the sleeps are canceled rather than awaited. The original208assertion expressions remain an ordered subsequence, with only fixture regression assertions added. Both business families retain their existing unknown/ERROR/no-replay assertions; total23cases remains unchanged.
+
+Coordinator explicitly forbids a third review. Replacement merge conditions: fix this R2P1 and its fixture regression; all23local cases pass on the new fixedhead; exact-head completeCI green; reply with fix/commit and resolve the R2PRthread; merge with match-head. A new scoped window must be explicitly approved. No current runtime/lock, no merger or120s claim.

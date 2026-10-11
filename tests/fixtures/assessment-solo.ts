@@ -1,46 +1,76 @@
 import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { issueAssessment } from '@/capabilities/practice/server/assessment/issue';
-import type { ResponseSpecT, SlotResponseT } from '@/core/schema/assessment';
+import type {
+  AssessmentIssuanceT,
+  PracticeIssuanceDtoT,
+  ResponseSpecT,
+  SlotResponseT,
+} from '@/core/schema/assessment';
 import type { Db } from '@/db/client';
 import { question, question_group_lifecycle } from '@/db/schema';
 import { normalizeQuestionRowToContract } from '@/server/questions/contract-normalizer';
 import { publishQuestionGroup } from '@/server/questions/publisher';
 import { publishPaperModelFixture } from './assessment-paper';
+import { seedHistoricalAssessmentIssuance } from './historical-assessment-issuance';
 
 /** Publish before issue, then retain this original across retries and current-row edits. */
 export async function issueSoloFixture(db: Db, questionId: string, model = false) {
+  await publishSoloContract(db, questionId, model);
+  const issued = await issueAssessment(db, { group_id: questionId });
+  if (issued.status !== 'issued') throw new Error(issued.status);
+  return withSoloResponse(issued);
+}
+
+/**
+ * Already-issued solo work for recovery/settlement/permission-recheck callers.
+ * The serving gate correctly refuses NEW issuance of unavailable contracts
+ * (e.g. model executors have no authoritative admission registry), so tests
+ * that need a pre-existing issuance seed one directly — the same rows
+ * issueAssessment would have written while the contract was still servable.
+ */
+export async function issueHistoricalSoloFixture(db: Db, questionId: string, model = false) {
+  await publishSoloContract(db, questionId, model);
+  const issued = await seedHistoricalAssessmentIssuance(db, { group_id: questionId });
+  return withSoloResponse(issued);
+}
+
+async function publishSoloContract(db: Db, questionId: string, model: boolean) {
   const [lifecycle] = await db
     .select()
     .from(question_group_lifecycle)
     .where(eq(question_group_lifecycle.group_id, questionId));
-  if (!lifecycle?.current_revision_id) {
-    if (model) await publishPaperModelFixture(db, questionId);
-    else {
-      const [row] = await db.select().from(question).where(eq(question.id, questionId));
-      if (!row) throw new Error('solo fixture question missing');
-      const result = await publishQuestionGroup(db, {
-        group_id: questionId,
-        contract: normalizeQuestionRowToContract(row),
-        expectedCurrentRevision: null,
-        expectedAdmissionGeneration: null,
-        availability: 'general_pool',
-        actorRef: 'test:solo-publication',
-        now: new Date(),
-        admission: {
-          state: 'admitted',
-          evidence: {
-            marking_provenance: 'official',
-            verification: { structural_check_passed: true, independent_verification: null },
-            model_slice: null,
-          },
-        },
-      });
-      if (result.status !== 'published') throw new Error(result.status);
-    }
+  if (lifecycle?.current_revision_id) return;
+  if (model) {
+    await publishPaperModelFixture(db, questionId);
+    return;
   }
-  const issued = await issueAssessment(db, { group_id: questionId });
-  if (issued.status !== 'issued') throw new Error(issued.status);
+  const [row] = await db.select().from(question).where(eq(question.id, questionId));
+  if (!row) throw new Error('solo fixture question missing');
+  const result = await publishQuestionGroup(db, {
+    group_id: questionId,
+    contract: normalizeQuestionRowToContract(row),
+    expectedCurrentRevision: null,
+    expectedAdmissionGeneration: null,
+    availability: 'general_pool',
+    actorRef: 'test:solo-publication',
+    now: new Date(),
+    admission: {
+      state: 'admitted',
+      evidence: {
+        marking_provenance: 'official',
+        verification: { structural_check_passed: true, independent_verification: null },
+        model_slice: null,
+      },
+    },
+  });
+  if (result.status !== 'published') throw new Error(result.status);
+}
+
+function withSoloResponse(issued: {
+  issuance: AssessmentIssuanceT;
+  practice_dto: PracticeIssuanceDtoT;
+}) {
   const ids = {
     issuance_id: issued.issuance.issuance_id,
     evaluation_group_id: `test_solo_group_${createId()}`,

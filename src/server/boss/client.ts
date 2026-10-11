@@ -1,6 +1,6 @@
 import { PgBoss } from 'pg-boss';
 
-import { getServerEnv } from '@/server/env';
+import { getServerEnv, resolveBossAutomationMode } from '@/server/env';
 
 // Queue-owning callers import one boss runtime port for both the singleton and
 // pg-boss's transaction adapter; the adapter itself remains independently testable.
@@ -91,9 +91,33 @@ export function createBoss(): PgBoss {
   // boss/client.test when run with the full suite. Production (worker /
   // route processes) keeps the library default.
   const isVitest = Boolean(env.VITEST);
+  // YUK-1359 — RW_BOSS_AUTOMATION=disabled 显式关闭 pg-boss 自带的 automation
+  // 子系统（pg-boss 12.36.0 dist 验证的 gating）：
+  //   schedule:false         #doStart 跳过 timekeeper.start()（index.js:176）——
+  //                          无 __pgboss__send-it 行、无 5s 内部消费、无 30s cron claim
+  //   supervise:false        boss supervisor 定时器不武装（boss.js:149）、
+  //                          navigator.start() 提前返回（navigator.js:47）——无
+  //                          monitor/maintain/flow claim
+  //   migrate:false          #doStart 走 contractor.check()（只读 isInstalled +
+  //                          schemaVersion，版本≠44 直接 throw）而非
+  //                          contractor.start()；bam.start() 同样被跳过
+  //                          （index.js:160,179）——无任何 DDL/schema 创建
+  //   registerInstance:false registrar.start() 提前返回（registrar.js:55）——
+  //                          无 instance INSERT、无 30s heartbeat、无 prune
+  // 四个 flag 只在 disabled 时显式传入；enabled（默认）路径不传任何 flag，
+  // 构造配置与历史逐字节一致（库内 default 全 true）。
+  // 残余（非 automation owner，不在本开关范围）：start 时的 SELECT version()
+  // 探针 + contractor.check() 两次 SELECT、manager 的 60s queue-cache SELECT
+  // 定时器与 2s 纯内存 wip 定时器（无 work() 调用时永不发 DB 流量）。
+  // send/fetch/complete 都直接走 manager（index.js:301+），不依赖被关掉的子系统。
+  // 不从 RW_WORKER 推断；worker 进程语义不变（不设即 enabled）。
+  const automation = resolveBossAutomationMode(env.RW_BOSS_AUTOMATION);
   bossState.instance = new PgBoss({
     connectionString,
     schema: 'pgboss',
+    ...(automation === 'disabled'
+      ? { schedule: false, supervise: false, migrate: false, registerInstance: false }
+      : {}),
     ...(isVitest ? { max: 2 } : {}),
   });
   return bossState.instance;

@@ -1,0 +1,247 @@
+{
+  "version": "YUK-1388-stage4-2026-10-10",
+  "source_root": "tlp-audit-artifacts/yuk1388/stage4",
+  "immutable": true,
+  "metrics": {
+    "photo_count": {
+      "value": {
+        "passed": 21,
+        "total": 21
+      },
+      "unit": "questions",
+      "source": "R03/report.md §§A,summary; R03/evidence/A-scores.json"
+    },
+    "photo_type": {
+      "value": {
+        "passed": 0,
+        "total": 21
+      },
+      "unit": "questions",
+      "source": "R03/report.md §§A,summary; R03/evidence/A-scores.json"
+    },
+    "photo_choices": {
+      "value": {
+        "passed": 0,
+        "total": 10
+      },
+      "unit": "questions",
+      "source": "R03/report.md §§A,summary; R03/evidence/A-scores.json"
+    },
+    "photo_answers": {
+      "value": {
+        "passed": 0,
+        "total": 21
+      },
+      "unit": "questions",
+      "source": "R03/report.md §§A,summary; R03/evidence/A-scores.json"
+    },
+    "photo_figures": {
+      "value": {
+        "passed": 0,
+        "total": 4
+      },
+      "unit": "questions",
+      "source": "R03/report.md §§A,summary; R03/evidence/A-scores.json"
+    },
+    "photo_stem_accuracy": {
+      "value": 0.9746666666666667,
+      "unit": "mean normalized character accuracy over 21",
+      "source": "R03/evidence/A-scores.json + scripts/score_a.py"
+    },
+    "photo_kc_exact": {
+      "value": null,
+      "unit": "exact label match; audit semantic rubric used 13 reasonable/3 partial/5 wrong",
+      "source": "R03/report.md §A; incomparable semantic/exact denominators"
+    },
+    "photo_served_gradable": {
+      "value": {
+        "passed": 1,
+        "total": 8
+      },
+      "unit": "served/admitted groups; current denominator reported separately",
+      "source": "R01/report.md; evidence/admitted-executors.json; owner 100% ruling in I02/waves-v1.md"
+    },
+    "photo_served_total": {
+      "value": 8,
+      "unit": "admitted groups in R01 census, not photo gold count",
+      "source": "R01/report.md"
+    },
+    "kc_auto_approved": {
+      "value": 8,
+      "unit": "new photo-import KCs automatically approved",
+      "source": "R03/report.md §A"
+    },
+    "hints_anchored": {
+      "value": {
+        "passed": 0,
+        "total": 21
+      },
+      "unit": "distinct hint levels, human judgment",
+      "source": "R03b/report.md §D"
+    },
+    "hints_early_leak": {
+      "value": {
+        "passed": 4,
+        "total": 5
+      },
+      "unit": "solution ladders leaking before last level; lower is better",
+      "source": "R03b/report.md §D"
+    },
+    "hints_first_attempt_502": {
+      "value": {
+        "passed": 3,
+        "total": 21
+      },
+      "unit": "distinct first requests",
+      "source": "R03b/corrections.md; corrected denominator"
+    },
+    "cold_starter_items": {
+      "value": 0,
+      "unit": "items after 617.949 seconds",
+      "source": "R01/evidence/starter-final.json; report.md"
+    },
+    "cold_starter_wait_ms": {
+      "value": 617949,
+      "unit": "milliseconds",
+      "source": "R01/report.md"
+    },
+    "notes_failed": {
+      "value": {
+        "passed": 12,
+        "total": 14
+      },
+      "unit": "failed generation jobs; lower is better",
+      "source": "R01/report.md; evidence/jobs-seal-final.json"
+    },
+    "first_material_ms": {
+      "value": 1293026,
+      "unit": "milliseconds, first readable long note",
+      "source": "R01/report.md"
+    },
+    "first_item_ms": {
+      "value": null,
+      "unit": "milliseconds",
+      "source": "I02/waves-v1.md: no audit run completed an empty-DB day-one journey; R02 used old DB"
+    },
+    "grading_ms": {
+      "value": null,
+      "unit": "milliseconds",
+      "source": "I02/waves-v1.md: no audit run completed an empty-DB day-one journey; R02 used old DB"
+    },
+    "first_help_ms": {
+      "value": null,
+      "unit": "milliseconds",
+      "source": "I02/waves-v1.md: no audit run completed an empty-DB day-one journey; R02 used old DB"
+    },
+    "total_wait_ms": {
+      "value": null,
+      "unit": "milliseconds",
+      "source": "I02/waves-v1.md: no audit run completed an empty-DB day-one journey; R02 used old DB"
+    },
+    "journey_ms": {
+      "value": null,
+      "unit": "milliseconds",
+      "source": "I02/waves-v1.md: no audit run completed an empty-DB day-one journey; R02 used old DB"
+    },
+    "actions_to_first_item": {
+      "value": null,
+      "unit": "learner actions",
+      "source": "I02/waves-v1.md: no audit run completed an empty-DB day-one journey; R02 used old DB"
+    },
+    "served_gradable": {
+      "value": {
+        "passed": 1,
+        "total": 8
+      },
+      "unit": "served/admitted groups",
+      "source": "R01/report.md; 100% required in new empty-DB journey"
+    },
+    "self_rating_share": {
+      "value": 0.6666666666666666,
+      "unit": "R02 three practiced items (one auto result was wrong)",
+      "source": "R02/report.md; I02 friction_metrics"
+    },
+    "photo_transcription_fields": {
+      "value": 3,
+      "unit": "fields in R02 one-photo case",
+      "source": "R02-O57/O58/O59; I02 friction_metrics"
+    },
+    "help_without_output": {
+      "value": 3,
+      "unit": "failed help requests in R02; new denominator is one journey",
+      "source": "R02-O22/O44; I02 friction_metrics"
+    },
+    "wait_without_visible_progress": {
+      "value": null,
+      "unit": "count not preregistered in audit; new target 0",
+      "source": "I02 friction_metrics; R01 starter/note and R02 placement observed stalls"
+    },
+    "long_task_trackable": {
+      "value": {
+        "passed": 5,
+        "total": 10
+      },
+      "unit": "flow types with job/session status; not end-to-end PASS",
+      "source": "R01/report.md O1 table"
+    },
+    "long_task_identity_restored": {
+      "value": {
+        "passed": 4,
+        "total": 10
+      },
+      "unit": "same tracking identity restored, not content correctness",
+      "source": "R01/report.md O1 table"
+    },
+    "long_task_success_without_delivery": {
+      "value": 3,
+      "unit": "confirmed flow types (note, coach, placement)",
+      "source": "R01/report.md O1 table"
+    },
+    "copilot_replies": {
+      "value": 11,
+      "unit": "of 12 tasks (B01 had no answer)",
+      "source": "R03 + R03b reports"
+    },
+    "crisis_replies": {
+      "value": 6,
+      "unit": "of 6 synthetic prompts; not safety pass count",
+      "source": "R03/report.md §C"
+    },
+    "copilot_correctness": {
+      "value": 2.08,
+      "unit": "mean human rubric score /3 across 12 tasks",
+      "source": "R03b/evidence/B-scores-12.json"
+    },
+    "copilot_grounding": {
+      "value": 1.83,
+      "unit": "mean human rubric score /3 across 12 tasks",
+      "source": "R03b/evidence/B-scores-12.json"
+    },
+    "copilot_actionability": {
+      "value": 1.92,
+      "unit": "mean human rubric score /3 across 12 tasks",
+      "source": "R03b/evidence/B-scores-12.json"
+    },
+    "copilot_tool_behaviour": {
+      "value": 1.58,
+      "unit": "mean human rubric score /3 across 12 tasks",
+      "source": "R03b/evidence/B-scores-12.json"
+    },
+    "copilot_latency_progress": {
+      "value": 2.0,
+      "unit": "mean human rubric score /3 across 12 tasks",
+      "source": "R03b/evidence/B-scores-12.json"
+    },
+    "copilot_failure_honesty": {
+      "value": 2.08,
+      "unit": "mean human rubric score /3 across 12 tasks",
+      "source": "R03b/evidence/B-scores-12.json"
+    }
+  },
+  "notes": [
+    "Different populations are labeled; do not compare 21 photo questions to 8 census groups as if denominator were identical.",
+    "Null is unmeasured/incomparable; never zero or PASS.",
+    "Audit figures: required own-page clean attachment 0/4 because batch-wide foreign attachment contaminated even own-page figures.",
+    "Crisis professional sufficiency and real learner outcomes require human review."
+  ]
+}

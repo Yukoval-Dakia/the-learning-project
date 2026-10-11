@@ -132,6 +132,8 @@ describe('judgeReconciliation transport deadline', () => {
     ]);
   }
 
+  // @invariant data: a transport deadline preserves unknown usage and cost for an unobserved outcome
+  // @fails-if a stalled request escapes the deadline or fabricates provider usage or cost
   it('aborts a request stalled before response headers without inventing usage or cost', async () => {
     vi.useFakeTimers();
     const attempts: unknown[] = [];
@@ -155,6 +157,8 @@ describe('judgeReconciliation transport deadline', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  // @invariant data: invalid provider JSON remains a permanent failure with unknown usage and cost
+  // @fails-if invalid JSON is converted into a retryable success or invented usage or cost
   it('keeps a genuine invalid JSON body permanent with unknown usage and cost', async () => {
     const attempts: unknown[] = [];
     const ids: string[] = [];

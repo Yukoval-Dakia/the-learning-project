@@ -6,12 +6,15 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { afterAll, describe, expect, it } from 'vitest';
+import { join, resolve } from 'node:path';
+import { buildSync } from 'esbuild';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { stableStringify } from '@/core/migration/canonical';
 import { classifyMigrationCapture } from '@/core/migration/classify';
@@ -49,7 +52,22 @@ import {
 
 // YUK-1056 — cutover-backup CLI 单测（纯 fs/对象；不触 DB/docker）。
 
-const TMP = mkdtempSync(join(tmpdir(), 'cutover-backup-test-'));
+const TMP = realpathSync(mkdtempSync(join(tmpdir(), 'cutover-backup-test-')));
+const CLI = join(TMP, 'cutover-backup.mjs');
+beforeAll(() => {
+  // Keep package resolution (including lazy postgres and import.meta.resolve('tsx')) native.
+  symlinkSync(resolve('node_modules'), join(TMP, 'node_modules'), 'dir');
+  buildSync({
+    entryPoints: [resolve('scripts/cutover-backup.ts')],
+    outfile: CLI,
+    bundle: true,
+    platform: 'node',
+    target: 'node24',
+    format: 'esm',
+    packages: 'external',
+    treeShaking: false,
+  });
+});
 afterAll(() => rmSync(TMP, { recursive: true, force: true }));
 
 describe('P1-1 restore evidence 绑定当前 dump', () => {
@@ -205,7 +223,7 @@ function inventoryFixture(): DatabaseManifest {
     ],
   };
 }
-function sourceFixture(directory: string): SourceManifest {
+function sourceFixture(directory: string, dumpBytes?: number): SourceManifest {
   const database = {
     cluster: '9007199254741001',
     database_oid: '16384',
@@ -236,7 +254,7 @@ function sourceFixture(directory: string): SourceManifest {
   const quiescencePath = join(directory, 'quiescence.json'),
     dumpPath = join(directory, 'fixture.dump');
   writeFileSync(quiescencePath, JSON.stringify(evidence));
-  writeFileSync(dumpPath, 'offline dump bytes');
+  writeFileSync(dumpPath, dumpBytes ? Buffer.alloc(dumpBytes, 'x') : 'offline dump bytes');
   return parseSourceManifest({
     format: 'loom-db-source',
     version: 2,
@@ -899,8 +917,8 @@ describe('artifact and receipt consumer', () => {
 
 // All transport executables below are intercepted, with exit 97 for unknown calls.
 // There is deliberately no delegation to Docker, psql, pnpm or any network client.
-function offlineTransport(directory: string, mode: string) {
-  const source = sourceFixture(directory),
+function offlineTransport(directory: string, mode: string, dumpBytes?: number) {
+  const source = sourceFixture(directory, dumpBytes),
     sourcePath = join(directory, 'source.json');
   writeFileSync(sourcePath, JSON.stringify(source));
   const bin = join(directory, 'bin');
@@ -954,8 +972,12 @@ if(!password||env.PGPASSWORD!==password||(c.mode==='scratch-auth-restore'&&clien
 }
 }
 if(args.includes('--version')) {out('psql (PostgreSQL) 16.14\\n');process.exit(0);}
-if(args.includes('pg_dump')) {if(c.mode==='dump')bad();out('offline dump bytes');process.exit(0);}
-if(args.includes('pg_restore')) {input(b=>{fs.appendFileSync(${JSON.stringify(join(directory, 'bytes.jsonl'))},JSON.stringify({sha:crypto.createHash('sha256').update(b).digest('hex')})+'\\n');if(args.includes('-l')){if(c.mode==='toc')bad();out('1; 1 1 TABLE fixture offline\\n');}else if(c.mode==='restore')bad();});}
+if(args.includes('pg_dump')) {if(c.mode==='dump')bad();process.stdout.write(c.mode.startsWith('toc-early')?'x'.repeat(1048576):'offline dump bytes',()=>process.exit(0));}
+else if(args.includes('pg_restore')) {
+const list=args.includes('-l'),early=list?c.mode.startsWith('toc-early'):c.mode==='restore-early-close';
+if(early){let replied=false;const reply=()=>{if(replied)return;replied=true;process.stdin.pause();if(!list)process.exit(0);if(c.mode==='toc-early-nonzero'){process.stderr.write('injected early toc failure\\n');process.exit(17);}process.stdout.write(c.mode==='toc-early-malformed'?'not a toc\\n':'1; 1 1 TABLE fixture offline\\n',()=>process.exit(0));};process.stdin.once('data',reply);process.stdin.once('end',reply);}
+else input(b=>{fs.appendFileSync(${JSON.stringify(join(directory, 'bytes.jsonl'))},JSON.stringify({sha:crypto.createHash('sha256').update(b).digest('hex')})+'\\n');if(list){if(c.mode==='toc')bad();out('1; 1 1 TABLE fixture offline\\n');}else if(c.mode==='restore')bad();});
+}
 else if(args.includes('psql')) {
 const sql=args.includes('-c')?args[args.indexOf('-c')+1]:undefined;
 if(!sql){let text='';process.stdin.on('data',b=>{text+=b;if(text.includes('pg_export_snapshot')){text='';if(c.mode==='keeper-export')bad();out({snapshot:c.source.snapshot,pid:123});if(c.mode==='keeper-closed')process.exit(0);}else if(text.includes('ROLLBACK')){const marker=text.match(/SELECT '(loom_keeper_closed_[a-f0-9-]+)'/);if(marker&&c.mode!=='keeper-no-ack')out(marker[1]+'\\n');process.exit(0);}});}
@@ -999,11 +1021,28 @@ end:async options=>{log(['end',options.timeout]);if(c.mode==='driver-close')thro
     preload,
     `
 import {registerHooks,syncBuiltinESMExports} from 'node:module';
+import fs from 'node:fs';
 import net from 'node:net';import tls from 'node:tls';import dgram from 'node:dgram';import cp from 'node:child_process';
 const trap=()=>{throw Error('OFFLINE network/listener trap');};
 net.connect=trap;net.createConnection=trap;net.Socket.prototype.connect=trap;net.Server.prototype.listen=trap;tls.connect=trap;dgram.createSocket=trap;syncBuiltinESMExports();
 if(process.env.YUK1359_IMPORT_ONLY==='1'){for(const key of ['spawn','spawnSync','exec','execSync','execFile','execFileSync','fork'])cp[key]=trap;syncBuiltinESMExports();}
 registerHooks({resolve(specifier,context,next){return specifier==='postgres'?{url:${JSON.stringify(`file://${driverPath}`)},shortCircuit:true}:next(specifier,context);}});
+// NODE_OPTIONS reaches transport children too; only the bundled CLI may shorten its identity deadlines.
+if(process.argv[1]===${JSON.stringify(CLI)}){
+const deadline=${JSON.stringify(
+      mode === 'driver-timeout'
+        ? { delay: 15_000, message: 'identity deadline exceeded' }
+        : mode === 'driver-close-timeout'
+          ? { delay: 2_000, message: 'close deadline' }
+          : null,
+    )};
+if(deadline){const original=globalThis.setTimeout;globalThis.setTimeout=(callback,delay,...args)=>{
+if(delay===deadline.delay&&callback.toString().includes(deadline.message)){
+fs.appendFileSync(${JSON.stringify(join(directory, 'commands.jsonl'))},JSON.stringify({tool:'deadline',args:[String(delay)]})+'\\n');
+return original(callback,1,...args);
+}return original(callback,delay,...args);
+};}
+}
 `,
   );
   return { source, sourcePath, bin, preload };
@@ -1013,28 +1052,24 @@ function offlineCli(
   transport: ReturnType<typeof offlineTransport>,
   args: string[],
 ) {
-  return spawnSync(
-    process.execPath,
-    ['--import', transport.preload, '--import', 'tsx', 'scripts/cutover-backup.ts', ...args],
-    {
-      cwd: process.cwd(),
-      encoding: 'utf8',
-      timeout: 20_000,
-      env: {
-        PATH: `${transport.bin}:${process.env.PATH}`,
-        NODE_OPTIONS: `--import=${transport.preload}`,
-        PGHOST: 'forbidden-fallback',
-        PGDATABASE: 'forbidden-fallback',
-        PGUSER: 'forbidden-fallback',
-        PGPASSWORD: 'forbidden-fallback',
-        DATABASE_URL: 'postgres://forbidden/forbidden',
-        HOME: process.env.HOME,
-        npm_config_manage_package_manager_versions: 'false',
-        npm_config_verify_deps_before_run: 'false',
-        pnpm_config_verify_deps_before_run: 'false',
-      },
+  return spawnSync(process.execPath, ['--import', transport.preload, CLI, ...args], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+    timeout: 20_000,
+    env: {
+      PATH: `${transport.bin}:${process.env.PATH}`,
+      NODE_OPTIONS: `--import=${transport.preload}`,
+      PGHOST: 'forbidden-fallback',
+      PGDATABASE: 'forbidden-fallback',
+      PGUSER: 'forbidden-fallback',
+      PGPASSWORD: 'forbidden-fallback',
+      DATABASE_URL: 'postgres://forbidden/forbidden',
+      HOME: process.env.HOME,
+      npm_config_manage_package_manager_versions: 'false',
+      npm_config_verify_deps_before_run: 'false',
+      pnpm_config_verify_deps_before_run: 'false',
     },
-  );
+  });
 }
 describe('real CLI through fully intercepted transport', () => {
   it.each(['inventory', 'table-stream', 'sequence', 'toc', 'stream-invalid', 'restore', 'cleanup'])(
@@ -1172,6 +1207,97 @@ describe('real CLI through fully intercepted transport', () => {
     ]);
     expect(result.status).toBe(1);
     expect(parseRestoreReceipt(readJsonArtifact(out).value).verified).toBe(false);
+  });
+  it('pg_restore -l reads only the dump prefix: all three TOC sites survive early exit 0', () => {
+    const dumpBytes = 4 * 1024 * 1024;
+    const captureDir = mkdtempSync(join(TMP, 'toc-early-capture-')),
+      captureTransport = offlineTransport(captureDir, 'toc-early-exit'),
+      captureOut = join(captureDir, 'capture');
+    const captured = offlineCli(captureDir, captureTransport, [
+      '--operation=capture-parity',
+      `--out=${captureOut}`,
+      '--target=postgres://offline:offline@offline/loom',
+      `--quiescence-evidence=${captureTransport.source.quiescence.artifact.file}`,
+      '--container=offline-source',
+      '--strict',
+    ]);
+    expect(captured.status, captured.stderr).toBe(0);
+    const capturedJson = z
+      .object({ source_manifest: z.string() })
+      .parse(JSON.parse(captured.stdout));
+    expect(
+      parseSourceManifest(readJsonArtifact(capturedJson.source_manifest).value).toc_entries,
+    ).toBe(1);
+
+    const listDir = mkdtempSync(join(TMP, 'toc-early-list-')),
+      listTransport = offlineTransport(listDir, 'toc-early-exit', dumpBytes),
+      listOut = join(listDir, 'receipt.json');
+    const listing = offlineCli(listDir, listTransport, [
+      '--operation=restore-drill',
+      `--dump=${listTransport.source.dump.file}`,
+      `--out=${listOut}`,
+      `--image=${IMAGE}`,
+      '--list-only',
+    ]);
+    expect(listing.status, listing.stderr).toBe(0);
+    expect(listing.stdout).toContain('1; 1 1 TABLE fixture offline');
+    expect(existsSync(listOut)).toBe(false);
+
+    const fullDir = mkdtempSync(join(TMP, 'toc-early-full-')),
+      fullTransport = offlineTransport(fullDir, 'toc-early-exit', dumpBytes),
+      fullOut = join(fullDir, 'receipt.json');
+    const restored = offlineCli(fullDir, fullTransport, [
+      '--operation=restore-drill',
+      `--dump=${fullTransport.source.dump.file}`,
+      `--source-manifest=${fullTransport.sourcePath}`,
+      `--out=${fullOut}`,
+    ]);
+    expect(restored.status, restored.stderr).toBe(0);
+    expect(parseRestoreReceipt(readJsonArtifact(fullOut).value)).toMatchObject({
+      kind: 'verified',
+      verified: true,
+    });
+    // The actual restore must still receive every dump byte.
+    const shas = readFileSync(join(fullDir, 'bytes.jsonl'), 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => z.object({ sha: z.string() }).parse(JSON.parse(line)).sha);
+    expect(shas).toContain(fullTransport.source.dump.sha256);
+  });
+  it.each([
+    { mode: 'toc-early-nonzero', error: { phase: 'toc', exitCode: 17 } },
+    { mode: 'toc-early-malformed', error: { phase: 'toc', code: 'invalid_toc' } },
+  ])('early TOC closure keeps exit and output gates: $mode', ({ mode, error }) => {
+    const directory = mkdtempSync(join(TMP, `${mode}-`)),
+      transport = offlineTransport(directory, mode, 4 * 1024 * 1024),
+      out = join(directory, 'receipt.json');
+    const result = offlineCli(directory, transport, [
+      '--operation=restore-drill',
+      `--dump=${transport.source.dump.file}`,
+      `--source-manifest=${transport.sourcePath}`,
+      `--out=${out}`,
+    ]);
+    expect(result.status, result.stderr).toBe(1);
+    const receipt = parseRestoreReceipt(readJsonArtifact(out).value);
+    expect(receipt).toMatchObject({ kind: 'failed', verified: false });
+    if (receipt.kind === 'legacy-limited') throw new Error('unexpected legacy');
+    expect(receipt.errors).toContainEqual(expect.objectContaining(error));
+  });
+  it('actual restore still requires complete input delivery: early stdin closure is refused', () => {
+    const directory = mkdtempSync(join(TMP, 'restore-early-')),
+      transport = offlineTransport(directory, 'restore-early-close', 4 * 1024 * 1024),
+      out = join(directory, 'receipt.json');
+    const result = offlineCli(directory, transport, [
+      '--operation=restore-drill',
+      `--dump=${transport.source.dump.file}`,
+      `--source-manifest=${transport.sourcePath}`,
+      `--out=${out}`,
+    ]);
+    expect(result.status, result.stderr).toBe(1);
+    const receipt = parseRestoreReceipt(readJsonArtifact(out).value);
+    expect(receipt).toMatchObject({ kind: 'failed', verified: false });
+    if (receipt.kind === 'legacy-limited') throw new Error('unexpected legacy');
+    expect(receipt.errors.some((e) => e.phase === 'restore')).toBe(true);
   });
 });
 function requireDirectory(directory: string): string[] {
@@ -1766,6 +1892,8 @@ describe('host provenance and explicit lazy driver', () => {
       expect(transportCommands(directory)).toEqual([]);
     },
   );
+  // @invariant security: identity-driver failures keep source credentials out of capture diagnostics
+  // @fails-if propagate raw driver errors; SECRET or PostgreSQL credentials appear in diagnostics
   it.each([
     'driver-connect',
     'driver-query',
@@ -1799,6 +1927,14 @@ describe('host provenance and explicit lazy driver', () => {
           .map((f) => readFileSync(join(out, f), 'utf8'))
           .join();
       expect(diagnostics).not.toMatch(/SECRET|postgres:\/\/|offline:offline/);
+      if (mode === 'driver-timeout' || mode === 'driver-close-timeout') {
+        expect(commands.filter((c) => c.tool === 'deadline')).toEqual([
+          { tool: 'deadline', args: [mode === 'driver-timeout' ? '15000' : '2000'] },
+        ]);
+        expect(diagnostics).toContain(
+          `"code":"${mode === 'driver-timeout' ? 'deadline_exceeded' : 'driver_cleanup_failed'}"`,
+        );
+      }
       expect(commands.some((c) => c.tool === 'psql')).toBe(false);
     },
     25_000,

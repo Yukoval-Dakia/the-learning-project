@@ -7,12 +7,14 @@ import { useWorkbenchClient } from './workbench-client';
 // 裁决在卡内 async（busy per-card），错误经 onError 上抛页级 toast；
 // resolved 留痕 map 由 InboxPage 持有（设计稿同构）。
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 // Type-only (erased at compile time — does NOT pull react-markdown into the main bundle,
 // the deferred loader still owns the runtime import).
 import type { Components } from 'react-markdown';
 import { isPublicHttpUrl } from '@/core/net/private-host';
+import { ApiError } from '@/ui/lib/api';
 import { DeferredMarkdownRenderer } from '@/ui/lib/deferred-markdown-renderer';
+import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { Btn } from '@/ui/primitives/Btn';
 import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
@@ -233,6 +235,61 @@ function EvidenceChip({
   );
 }
 
+type MergeBlockPreview = NonNullable<
+  NonNullable<NonNullable<ProposalInboxRow['presentation']>['block_merge']>['primary']
+>;
+
+// Sub-questions and options of a merge block (YUK-1404 preview contract). Counts are the full
+// totals; the lists are capped, so the remainder is stated. null means the structure is unknown.
+// Question text in a merge card. With the upload's subject notation (YUK-1404) it goes through the
+// shared math renderer; without it the text stays plain, since markdown could misread `*` or `_`.
+function MergeText({ text, notation }: { text: string; notation: string | null }) {
+  if (!notation) return <>{text}</>;
+  return (
+    <MathMarkdown notation={notation} className="merge-math">
+      {text}
+    </MathMarkdown>
+  );
+}
+
+function BlockStructure({
+  block,
+  notation,
+}: {
+  block: MergeBlockPreview;
+  notation: string | null;
+}) {
+  const subMore = (block.sub_question_count ?? 0) - block.sub_questions.length;
+  const optMore = (block.option_count ?? 0) - block.options.length;
+  if (block.sub_question_count === null && block.option_count === null) {
+    return <div className="merge-structure-note">这道题的小问和选项还没整理出来</div>;
+  }
+  return (
+    <>
+      {block.sub_questions.length > 0 && (
+        <ul className="merge-structure">
+          {block.sub_questions.map((sub) => (
+            <li key={`${sub.label}\u0000${sub.excerpt}`}>
+              <b>{sub.label}</b> <MergeText text={sub.excerpt} notation={notation} />
+            </li>
+          ))}
+        </ul>
+      )}
+      {subMore > 0 && <div className="merge-structure-note">还有 {subMore} 个小问</div>}
+      {block.options.length > 0 && (
+        <ul className="merge-structure">
+          {block.options.map((option) => (
+            <li key={`${option.label}\u0000${option.text}`}>
+              <b>{option.label}</b> <MergeText text={option.text} notation={notation} />
+            </li>
+          ))}
+        </ul>
+      )}
+      {optMore > 0 && <div className="merge-structure-note">还有 {optMore} 个选项</div>}
+    </>
+  );
+}
+
 export interface ProposalCardProps {
   p: ProposalInboxRow;
   index: number;
@@ -257,6 +314,13 @@ export function ProposalCard({
   const client = useWorkbenchClient();
   const [busy, setBusy] = useState(false);
   const [pickingRel, setPickingRel] = useState(false);
+  // Block merges are irreversible: accept first asks for an explicit confirmation.
+  const [confirmingMerge, setConfirmingMerge] = useState(false);
+  const confirmRef = useRef<HTMLButtonElement | null>(null);
+  // The CTA that had focus is hidden while confirming; hand focus to 「确认合并」.
+  useEffect(() => {
+    if (confirmingMerge) confirmRef.current?.focus();
+  }, [confirmingMerge]);
   // codex 验证轮 P3：裁决留痕后按钮组整体锁定——卡片留在列表里，再点会
   // 重复请求 / 反向操作直接 409。
   const locked = busy || resolved !== null;
@@ -264,7 +328,7 @@ export function ProposalCard({
   const decide = async (
     decision: ProposalDecision,
     label: string,
-    opts: { newRelationType?: string } = {},
+    opts: { newRelationType?: string; confirmLossy?: true } = {},
   ) => {
     setBusy(true);
     try {
@@ -272,13 +336,19 @@ export function ProposalCard({
       // YUK-271（codex 验证轮 P2）：stale 的 block_merge accept 没写 rate
       // event，提议仍 pending——不标已裁决，经页级 toast 说明后保持可操作。
       if (isBlockMergeStale(result)) {
-        onError(
-          `该题块合并提议已失效（题块状态已变更：${result.skip_reason ?? 'unknown'}），已跳过。`,
-        );
+        setConfirmingMerge(false);
+        onError('这条合并建议已失效：相关的题已经变了，已跳过。');
         return;
       }
+      setConfirmingMerge(false);
       onResolve(p.id, label);
     } catch (err) {
+      // The server refuses an unconfirmed merge; show the confirmation instead of an error.
+      if (err instanceof ApiError && err.status === 409 && err.code === 'confirm_required') {
+        setConfirmingMerge(true);
+        return;
+      }
+      setConfirmingMerge(false);
       onError(err instanceof Error ? err.message : '裁决失败，请重试。');
     } finally {
       setBusy(false);
@@ -349,7 +419,7 @@ export function ProposalCard({
         </span>
         <span className="ai-tag">
           <LoomIcon name="sparkle" size={12} />
-          AI · {p.actor_ref}
+          AI 建议
         </span>
         {/* YUK-617 mode-1 — 修正类建议标签（suggestion_kind=corrective 不计接受率）。primitive 内部
             对非 corrective 早返回 null，故 proactive/缺失不渲染。字段已在 wire（BaseProposal 顶层）。 */}
@@ -374,8 +444,13 @@ export function ProposalCard({
               className="ev-rawid"
               title={`复制引用 ${seg.text}`}
               onClick={() => {
+                // navigator.clipboard is missing over the plain-HTTP LAN address.
+                if (!navigator.clipboard) {
+                  onError('这个地址下不能复制，可以手动选中文字复制。');
+                  return;
+                }
                 void navigator.clipboard
-                  ?.writeText(seg.text)
+                  .writeText(seg.text)
                   .catch(() => onError('复制技术引用失败。'));
               }}
             >
@@ -426,18 +501,24 @@ export function ProposalCard({
       {mergePreview?.primary && mergePreview.merged.length > 0 && (
         <div className="merge-preview">
           <div className="merge-block">
-            <div className="merge-label">保留 · {mergePreview.primary.label}</div>
-            <div className="merge-text">{mergePreview.primary.excerpt}</div>
+            <div className="merge-label">保留这道 · {mergePreview.primary.label}</div>
+            <div className="merge-text">
+              <MergeText text={mergePreview.primary.excerpt} notation={mergePreview.notation} />
+            </div>
+            <BlockStructure block={mergePreview.primary} notation={mergePreview.notation} />
           </div>
           <div className="merge-join" aria-hidden="true">
             <LoomIcon name="arrow" size={16} />
           </div>
           <div className="merge-block merge-into">
-            <div className="merge-label">并入 · {mergePreview.merged.length} 块</div>
+            <div className="merge-label">并进来的 {mergePreview.merged.length} 道</div>
             {mergePreview.merged.map((block) => (
               <div className="merge-text merge-text-part" key={block.id}>
                 <b>{block.label}</b>
-                <span>{block.excerpt}</span>
+                <div>
+                  <MergeText text={block.excerpt} notation={mergePreview.notation} />
+                </div>
+                <BlockStructure block={block} notation={mergePreview.notation} />
               </div>
             ))}
           </div>
@@ -463,6 +544,33 @@ export function ProposalCard({
         </div>
       )}
 
+      {confirmingMerge && !resolved && (
+        <div className="merge-confirm" role="alert">
+          <b>合并后无法撤销</b>
+          <span>并进来的题会成为保留那道题的一部分，之后不能再拆开。</span>
+          <div className="merge-confirm-actions">
+            <Btn
+              ref={confirmRef}
+              size="sm"
+              variant="again"
+              icon="check"
+              disabled={locked}
+              onClick={() => void decide('accept', acceptedLabel, { confirmLossy: true })}
+            >
+              确认合并
+            </Btn>
+            <Btn
+              size="sm"
+              variant="ghost"
+              disabled={locked}
+              onClick={() => setConfirmingMerge(false)}
+            >
+              先不合并
+            </Btn>
+          </div>
+        </div>
+      )}
+
       <div className="proposal-foot">
         <div
           className="proposal-actions"
@@ -470,13 +578,17 @@ export function ProposalCard({
         >
           {/* M4 review fix (codex P2)：defer/archive/judge_retraction 的 accept
               在 dispatchAccept 是 400（unsupported_proposal_kind），不渲 CTA。 */}
-          {isAcceptSupported(p.kind) && (
+          {isAcceptSupported(p.kind) && !confirmingMerge && (
             <Btn
               size="sm"
               variant={isArchiveEdge ? 'again' : 'good'}
               icon={isArchiveEdge ? 'archive' : 'check'}
               disabled={locked || archiveTargetMissing}
-              onClick={() => void decide('accept', acceptedLabel)}
+              onClick={() =>
+                p.kind === 'block_merge'
+                  ? setConfirmingMerge(true)
+                  : void decide('accept', acceptedLabel)
+              }
             >
               {acceptButtonLabel}
             </Btn>
@@ -575,26 +687,6 @@ export function ProposalCard({
             ),
           )}
         </div>
-      )}
-
-      {p.kind !== 'conjecture' && p.presentation?.technical_details && (
-        <details className="proposal-technical-details">
-          <summary>技术详情</summary>
-          <div className="proposal-technical-head">
-            <span>原始变更数据（含引用 ID）</span>
-            <button
-              type="button"
-              onClick={() => {
-                void navigator.clipboard
-                  ?.writeText(p.presentation?.technical_details ?? '')
-                  .catch(() => onError('复制技术详情失败。'));
-              }}
-            >
-              复制
-            </button>
-          </div>
-          <pre>{p.presentation.technical_details}</pre>
-        </details>
       )}
     </LoomCard>
   );

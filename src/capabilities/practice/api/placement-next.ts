@@ -36,6 +36,7 @@ import {
   capForPace,
   evaluatePlacementTermination,
 } from '../server/placement-termination';
+import { readPlacementStarterOutcomes } from '../server/question-supply/placement-starter-outcome-reader';
 import { CreatePlacementQuestionSelectionBodySchema } from './placement-contracts';
 
 export async function createPlacementQuestionSelection(
@@ -151,7 +152,11 @@ export async function createPlacementQuestionSelection(
       };
     });
 
-    return Response.json(result);
+    const starterSupply = await db.transaction((tx) => readPlacementStarterOutcomes(tx, id), {
+      isolationLevel: 'repeatable read',
+      accessMode: 'read only',
+    });
+    return Response.json({ ...result, starterSupply });
   } catch (err) {
     return errorResponse(err);
   }

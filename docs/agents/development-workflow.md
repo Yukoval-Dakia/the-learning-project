@@ -99,6 +99,7 @@ pnpm audit:api-client-usage
 pnpm audit:capability-boundaries
 pnpm audit:provider-lanes
 pnpm audit:partition
+pnpm audit:test-policy
 pnpm audit:profile
 pnpm audit:learner-copy
 pnpm audit:no-learning-styles
@@ -153,10 +154,10 @@ pnpm build
 
 After push, the exact-head GitHub `CI Gate` runs separate static, audit, unit, DB,
 migration, build and parity lanes. Every code change runs all retained invariant files in
-the unit/DB lanes; only docs-only changes skip them. The parity lane is path-selected (below). The exact include lists live in
+the unit/DB lanes; only verified docs-only changes skip them. Each lane computes its plan after checkout, without waiting for a classifier job. DB files run in eight nonempty native Vitest shards; unit files run in two. The exact include lists live in
 `vitest.shared.ts`, and `audit:partition` rejects missing, duplicate or unassigned
 files and direct unmocked DB imports in unit files. The audit lanes run exactly the
-commands listed in `.github/workflows/ci-gate.yml`: schema, dependencies, partition,
+commands listed in `.github/workflows/ci-gate.yml`: schema, dependencies, partition, test-policy,
 question-writers, API-contract, API-client, API-client-usage, capability-boundary,
 architecture-deepening, profile, learner-copy, no-learning-styles, structured-judge,
 task-census, draft-status, strict draft-status-read, strict flags, hub-sync-writer and
@@ -164,12 +165,53 @@ provider-attempt-truth. `audit:provider-lanes` is a local-only census and is not
 The build lane injects secret canaries into the build environment, scans
 both SPA and Start browser artifacts, and verifies frontdoor token/exemptions via
 an isolated listener. The parity lane runs `cargo test` plus the native/WASM/JS
-parity suites with `REQUIRE_RUST_PARITY=1` whenever the crate, its TS twins
-(`src/core/poly-exp*`, `coldstart-solver*`, `theta-grid*`, `src/server/calibration/`),
-dependencies, `.node-version`, vitest config or the gate itself change, and on every main
-push or unknown/invalid base; the
+parity suites with `REQUIRE_RUST_PARITY=1` for every code change, main push,
+manual full invocation and unknown/invalid base. Only an explicit successful docs-only
+plan may skip work. Missing planner output selects work, and planner failure fails the
+lane. The
 plan lives in `scripts/ci/gate-plan.mjs`. The explicit local audit commands
 remain useful for clear attribution, but they do not replace the GitHub gate.
+
+### Test admission
+
+`audit:test-policy` compares AST case registrations with the PR base or main push parent.
+New, changed and duplicated cases require two comments immediately before each registration:
+
+```ts
+// @invariant concurrency: a stale version cannot overwrite a committed answer
+// @fails-if remove the version predicate from the answer UPDATE; the stale write must be rejected
+it('rejects a stale answer write', async () => { /* real write and rejection assertion */ });
+```
+
+Categories are `data`, `grading`, `concurrency`, `security`, and `crisis`, matching
+the five classes in AGENTS.md. Formatting-only changes and deletions do not require new
+declarations. Existing cases are inherited, not retroactively certified.
+
+The check enforces explicit admission and reports the exact registration. It cannot decide
+whether the claim is true. Independent review must trace the named defect to the assertion;
+use a scoped mutation or known failure when that relationship is uncertain. Delete a case
+whose only outcome is a UI shape, config/DTO shape, helper call, or implementation mirror.
+Do not label one of those cases as an invariant to satisfy the check.
+
+No fine-grained tests (owner 2026-10-11). The five invariants decide *whether* a test is
+needed; this rule decides *where it enters*. An invariant carried by a helper is tested through
+the nearest real boundary or its module's public entry, not the helper itself. Real boundaries
+are a route, job, DB transaction (including lock/CAS/idempotency primitives exercised on real
+Postgres), the settlement/grading chain, an agent tool contract, or a deterministic core
+module's public entry (functions exported from the module index; TS↔Rust parity suites count).
+One case per invariant; a table-driven case counts as one. Add a branch or boundary case only
+when removing it would let a specific defect through that no other case catches, and name that
+defect in `@fails-if`. Reject internal-helper tests, parameter permutations over the same path,
+and assertions on mock interactions or call counts. Mock only external dependencies (provider,
+network, clock, blob storage); DB-backed invariants belong in the DB lane on real Postgres.
+When a PR adds more test lines (fixtures included) than production lines (non-test files under
+`src/`, `server/`, `web/`, `scripts/`, plus migration SQL), its description must justify each
+invariant. This is a justification trigger, not a hard cap; delete what cannot be justified.
+
+Locally the base is `git merge-base HEAD origin/main`; use
+`pnpm audit:test-policy --base <commit>` to reproduce a CI comparison. CI fetches history
+and supplies `TEST_POLICY_BASE`. Manual dispatch requires the `test_policy_base` commit SHA.
+A missing CI base or invalid base fails the check.
 
 ## Postman
 

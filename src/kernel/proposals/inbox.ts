@@ -30,6 +30,12 @@ import { event, proposal_signals } from '@/db/schema';
 import { getCorrectionStatuses } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import {
+  blockMergeAdmissionInputFromPayload,
+  evaluateBlockMergeAdmission,
+  loadBlockMergeAdmissionContext,
+} from '@/kernel/proposals/block-merge-admission';
+import { legacyKnowledgeProposalForLearner } from '@/kernel/proposals/learner-read';
+import {
   type ProposalPresentation,
   loadProposalPresentations,
 } from '@/kernel/proposals/presentation';
@@ -83,6 +89,15 @@ export interface ListProposalInboxOpts {
   // ranked pagination loop refills to the requested `limit` of matching rows,
   // rather than the caller projecting every row just to post-filter by author.
   actorRef?: string;
+  /**
+   * YUK-1404 — pending block_merge proposals are learner-visible ONLY when the
+   * stored rows prove the merge joins one question (see
+   * block-merge-admission.ts). Inadmissible proposals stay stored but read as
+   * invisible by default; internal callers that need the RAW pending set
+   * (durable-producer cooldown dedup) opt out via this flag. Terminal
+   * (accepted/dismissed/stale/rubric_rejected) rows are never affected.
+   */
+  includeInadmissibleBlockMerges?: boolean;
   limit?: number;
   cursor?: string;
 }
@@ -366,6 +381,7 @@ export async function countPendingProposalInboxByKind(
       db,
       candidateRows.map((row) => row.id),
     );
+    const pendingPayloads: AiProposalPayloadT[] = [];
     for (const row of candidateRows) {
       if (correctionStatuses.get(row.id)?.state !== 'active') continue;
       if (deriveProposalStatus(row, undefined, undefined) !== 'pending') {
@@ -373,6 +389,36 @@ export async function countPendingProposalInboxByKind(
       }
       const payload = safeDeriveLegacyAiProposal(row);
       if (!payload) continue;
+      pendingPayloads.push(payload);
+    }
+
+    // YUK-1404 — same learner-visibility rule as the list: pending block_merge
+    // proposals that fail the stored-facts admission proof are not counted.
+    // The pending set is internal-truth-complete regardless; the count tracks
+    // what a learner would see. One batched fact load per batch (no N+1).
+    const mergeInputs = new Map<
+      AiProposalPayloadT,
+      ReturnType<typeof blockMergeAdmissionInputFromPayload>
+    >();
+    const mergeBlockIds = new Set<string>();
+    for (const payload of pendingPayloads) {
+      const input = blockMergeAdmissionInputFromPayload(payload);
+      mergeInputs.set(payload, input);
+      if (!input) continue;
+      mergeBlockIds.add(input.primaryBlockId);
+      for (const id of input.mergeBlockIds) mergeBlockIds.add(id);
+    }
+    const admissionCtx =
+      mergeBlockIds.size === 0
+        ? null
+        : await loadBlockMergeAdmissionContext(db, [...mergeBlockIds]);
+    for (const payload of pendingPayloads) {
+      if (payload.kind === 'block_merge') {
+        const input = mergeInputs.get(payload) ?? null;
+        if (!input || !admissionCtx || !evaluateBlockMergeAdmission(input, admissionCtx).eligible) {
+          continue;
+        }
+      }
       counts[payload.kind] = (counts[payload.kind] ?? 0) + 1;
     }
 
@@ -763,10 +809,41 @@ export async function listProposalInboxRows(
   return (await listProposalInboxPage(db, opts)).rows;
 }
 
+// YUK-1404 — one batched admission proof for every pending block_merge row in
+// a projected batch: ONE question_block query + ONE source_document query
+// (no per-row N+1), run BEFORE signals/presentation loading so dropped rows
+// neither surface nor consume pagination capacity.
+async function dropInadmissibleBlockMerges(
+  db: DbLike,
+  rows: ProposalInboxRow[],
+): Promise<ProposalInboxRow[]> {
+  const candidates = rows.filter((row) => row.kind === 'block_merge' && row.status === 'pending');
+  if (candidates.length === 0) return rows;
+  const blockIds = new Set<string>();
+  for (const row of candidates) {
+    const input = blockMergeAdmissionInputFromPayload(row.payload);
+    if (!input) continue;
+    blockIds.add(input.primaryBlockId);
+    for (const id of input.mergeBlockIds) blockIds.add(id);
+  }
+  const ctx = await loadBlockMergeAdmissionContext(db, [...blockIds]);
+  const dropped = new Set<string>();
+  for (const row of candidates) {
+    const input = blockMergeAdmissionInputFromPayload(row.payload);
+    if (!input || !evaluateBlockMergeAdmission(input, ctx).eligible) {
+      dropped.add(row.id);
+    }
+  }
+  return rows.filter((row) => !dropped.has(row.id));
+}
+
 async function projectLoadedProposalRows(
   db: DbLike,
   loadedProposalRows: LoadedProposalEvent[],
-  filters: Pick<ListProposalInboxOpts, 'status' | 'kind' | 'lane' | 'actorRef'> = {},
+  filters: Pick<
+    ListProposalInboxOpts,
+    'status' | 'kind' | 'lane' | 'actorRef' | 'includeInadmissibleBlockMerges'
+  > = {},
 ): Promise<ProposalInboxRow[]> {
   const { status, kind, lane, actorRef } = filters;
   const proposalRows = loadedProposalRows.map((loaded) => loaded.row);
@@ -810,15 +887,19 @@ async function projectLoadedProposalRows(
     });
   }
 
+  const visibleRows = filters.includeInadmissibleBlockMerges
+    ? out
+    : await dropInadmissibleBlockMerges(db, out);
+
   const [signalsByProposalId, presentationByProposalId] = await Promise.all([
-    loadProposalSignalsForRows(db, out),
-    loadProposalPresentations(db, out),
+    loadProposalSignalsForRows(db, visibleRows),
+    loadProposalPresentations(db, visibleRows),
   ]);
-  for (const row of out) {
+  for (const row of visibleRows) {
     row.signals = signalsByProposalId.get(row.id) ?? null;
     row.presentation = presentationByProposalId.get(row.id) ?? null;
   }
-  return out;
+  return visibleRows;
 }
 
 export async function listProposalInboxPage(
@@ -899,6 +980,28 @@ export async function getProposalInboxRow(
     signals: null,
     presentation: null,
   };
+  // YUK-1404 — same rule as the list for every PROOF failure: a pending
+  // block_merge that fails the stored-facts admission proof is invisible (404
+  // on every decision lane, so the accept path can never bypass the visibility
+  // rule). Terminal rows (accepted/dismissed/…) are never filtered, preserving
+  // idempotent replay.
+  //
+  // YUK-1404 stale lane — the not_draft arm is EXEMPT on this single-row read
+  // only: a chain that already left draft makes the proposal STALE, not
+  // unproven, and the decision lane must still see the row so the accept
+  // applier can answer with the honest soft-stale result (200, no rate event,
+  // proposal stays pending) instead of a bare 404. The list/count reads keep
+  // hiding every ineligible row — the learner never sees the stale card.
+  if (row.kind === 'block_merge' && row.status === 'pending') {
+    const input = blockMergeAdmissionInputFromPayload(payload);
+    if (!input) return null;
+    const ctx = await loadBlockMergeAdmissionContext(db, [
+      input.primaryBlockId,
+      ...input.mergeBlockIds,
+    ]);
+    const verdict = evaluateBlockMergeAdmission(input, ctx);
+    if (!verdict.eligible && verdict.reason !== 'not_draft') return null;
+  }
   const [presentationByProposalId, signalsByProposalId] = await Promise.all([
     loadProposalPresentations(db, [row]),
     loadProposalSignalsForRows(db, [row]),
@@ -992,15 +1095,17 @@ export async function listLegacyKnowledgeProposals(
     const status = deriveProposalStatus(row, correction, rate);
     if (opts.status && status !== opts.status) continue;
     const projected = legacyPayloadFor(row);
-    out.push({
-      id: row.id,
-      kind: row.subject_kind,
-      payload: projected.payload,
-      reasoning: projected.reasoning,
-      status,
-      proposed_at: row.created_at,
-      decided_at: correction?.decided_at ?? rate?.created_at ?? null,
-    });
+    out.push(
+      legacyKnowledgeProposalForLearner({
+        id: row.id,
+        kind: row.subject_kind,
+        payload: projected.payload,
+        reasoning: projected.reasoning,
+        status,
+        proposed_at: row.created_at,
+        decided_at: correction?.decided_at ?? rate?.created_at ?? null,
+      }),
+    );
     if (opts.limit !== undefined && out.length >= opts.limit) break;
   }
   return out;
@@ -1016,6 +1121,12 @@ export async function pendingProposalWithCooldown(
   kind: string,
   cooldownKey: string,
 ): Promise<boolean> {
-  const rows = await listProposalInboxRows(db, { status: 'pending' });
+  // Cooldown dedup must see the RAW pending set: an inadmissible (learner-
+  // invisible) block_merge still occupies its cooldown slot so the producer
+  // cannot re-propose it forever (YUK-1404).
+  const rows = await listProposalInboxRows(db, {
+    status: 'pending',
+    includeInadmissibleBlockMerges: true,
+  });
   return rows.some((row) => row.kind === kind && row.payload.cooldown_key === cooldownKey);
 }
