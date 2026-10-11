@@ -153,9 +153,6 @@ export async function switchPaidEffectBackend(
     // where an admission reading "no row = default pg-boss" overlapped a
     // concurrent insert+scan+flip switch that never saw the uncommitted claim.
     await lockPaidEffectControlFamily(tx, family);
-    if (PAID_EFFECT_SWITCH_UNSUPPORTED_FAMILIES.includes(family)) {
-      throw new PaidEffectSwitchUnsupportedError(family);
-    }
     const existing = await tx
       .select()
       .from(paid_effect_control)
@@ -212,6 +209,9 @@ export async function switchPaidEffectBackend(
     if (gate.blocked) throw new PaidEffectSwitchBlockedError(family, gate.blocking);
     const current = rowToControl(family, row);
     if (current.backend === to) return current;
+    if (PAID_EFFECT_SWITCH_UNSUPPORTED_FAMILIES.includes(family)) {
+      throw new PaidEffectSwitchUnsupportedError(family);
+    }
     const generation = current.generation + 1;
     await tx
       .update(paid_effect_control)

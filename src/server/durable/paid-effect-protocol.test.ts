@@ -172,7 +172,37 @@ describe('paid-effect backend control admission (pure decision)', () => {
     ).toMatchObject({ kind: 'admitted' });
     expect(
       decidePaidEffectControlAdmission(explicitPgboss, { backend: 'pg-boss', deliveryId: 'j1' }),
+    ).toMatchObject({ kind: 'fenced', reason: 'missing_generation' });
+    expect(
+      decidePaidEffectControlAdmission(explicitPgboss, {
+        backend: 'pg-boss',
+        deliveryId: 'j1',
+        generation: 0,
+      }),
+    ).toMatchObject({ kind: 'fenced', reason: 'stale_generation' });
+    expect(
+      decidePaidEffectControlAdmission(explicitPgboss, {
+        backend: 'pg-boss',
+        deliveryId: 'j2',
+        generation: 2,
+      }),
     ).toMatchObject({ kind: 'admitted' });
+    expect(
+      decidePaidEffectControlAdmission(
+        { ...explicitPgboss, generation: 0 },
+        {
+          backend: 'pg-boss',
+          deliveryId: 'bootstrap-legacy',
+        },
+      ),
+    ).toMatchObject({ kind: 'admitted' });
+    expect(
+      decidePaidEffectControlAdmission(bootstrap, {
+        backend: 'pg-boss',
+        deliveryId: 'invalid-bootstrap',
+        generation: 2,
+      }),
+    ).toMatchObject({ kind: 'fenced', reason: 'stale_generation' });
   });
 });
 
@@ -211,22 +241,50 @@ describe('paid-effect switch blocking predicate', () => {
 });
 
 describe('paid-effect fixed entity-gate predicate', () => {
-  // @invariant concurrency: the ONE fixed gate policy — sibling units of the same revision are exempt (parallel rep sends), while a same-revision same-unit input change and ANY cross-revision open send are blocked
+  // @invariant concurrency: only A's recognized feature reps of one revision are exempt; all other families and method changes stay entity-gated
   // @fails-if rep siblings block each other, or a changed digest under the same unit / an old unknown under a new revision buys a new send
   it('exempts only same-revision sibling units', () => {
-    const claim = { entityRevision: 'rev-1', unit: 'method-a/rep:2' };
-    expect(paidEffectGateBlocks({ entityRevision: 'rev-1', unit: 'method-a/rep:1' }, claim)).toBe(
-      false,
-    );
-    expect(paidEffectGateBlocks({ entityRevision: 'rev-1', unit: 'method-a/rep:2' }, claim)).toBe(
-      true,
-    );
-    expect(paidEffectGateBlocks({ entityRevision: 'rev-2', unit: 'method-a/rep:1' }, claim)).toBe(
-      true,
-    );
-    expect(paidEffectGateBlocks({ entityRevision: 'rev-2', unit: 'method-a/rep:2' }, claim)).toBe(
-      true,
-    );
+    const claim = { family: 'item_prior_backfill', entityRevision: 'rev-1', unit: 'feature/rep:1' };
+    expect(paidEffectGateBlocks({ ...claim, unit: 'feature/rep:0' }, claim)).toBe(false);
+    expect(paidEffectGateBlocks(claim, claim)).toBe(true);
+    expect(
+      paidEffectGateBlocks({ ...claim, entityRevision: 'rev-2', unit: 'feature/rep:0' }, claim),
+    ).toBe(true);
+    expect(paidEffectGateBlocks({ ...claim, entityRevision: 'rev-2' }, claim)).toBe(true);
+    for (const unit of [
+      'llasa/rep:0',
+      'other/rep:0',
+      'feature/rep:-1',
+      'feature/rep:01',
+      'feature/rep:0\n',
+      'rejudge:p/M2',
+    ]) {
+      expect(paidEffectGateBlocks({ ...claim, unit }, claim)).toBe(true);
+      expect(paidEffectGateBlocks({ ...claim, unit: 'feature/rep:0' }, { ...claim, unit })).toBe(
+        true,
+      );
+    }
+    const c = {
+      family: 'judge_calibration_sample',
+      entityRevision: 'workset-1',
+      unit: 'rejudge:p/M1',
+    };
+    expect(paidEffectGateBlocks(c, { ...c, unit: 'rejudge:p/M2' })).toBe(true);
+    expect(
+      paidEffectGateBlocks({ ...c, unit: 'feature/rep:0' }, { ...c, unit: 'feature/rep:1' }),
+    ).toBe(true);
+  });
+
+  // @invariant concurrency: C's model coordinate cannot create a sibling exemption for the same entity/workset
+  // @fails-if the gate ignores family and exempts M2 while M1 is unresolved
+  it('keeps C model changes entity-gated', () => {
+    const m1 = {
+      family: 'judge_calibration_sample',
+      entityRevision: 'workset-1',
+      unit: 'rejudge:p/M1',
+    };
+    expect(paidEffectGateBlocks(m1, { ...m1, unit: 'rejudge:p/M2' })).toBe(true);
+    expect(paidEffectGateBlocks(m1, { ...m1, unit: 'rejudge:q/M1' })).toBe(true);
   });
 
   // @invariant concurrency: gate serialization is keyed on family+entity only — claims for DIFFERENT revisions of one entity must contend on the same advisory lock or the cross-revision block can be raced past
@@ -237,7 +295,7 @@ describe('paid-effect fixed entity-gate predicate', () => {
       entityId: 'e1',
       entityRevision: 'rev-1',
       unit: 'u',
-      inputDigest: 'sha256:' + 'a'.repeat(64),
+      inputDigest: `sha256:${'a'.repeat(64)}`,
     };
     expect(paidEffectGateLockKey(base)).toBe('paid-effect:gate:v1:f:e1');
     expect(paidEffectGateLockKey({ ...base, entityRevision: 'rev-2' })).toBe(

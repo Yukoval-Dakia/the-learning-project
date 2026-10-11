@@ -74,25 +74,27 @@ export const PAID_EFFECT_ENTITY_GATE_STATES = [
   'unknown',
 ] as const satisfies readonly PaidEffectState[];
 
+/** A has zero-based feature reps; llasa has one call and no parallel siblings. */
+export const PAID_EFFECT_PARALLEL_REP_UNIT_PATTERN = '^feature/rep:(0|[1-9][0-9]*)$';
+const parallelRepUnit = new RegExp(PAID_EFFECT_PARALLEL_REP_UNIT_PATTERN);
+
 /**
- * THE fixed entity-gate predicate (P1-1: one policy, no caller-selectable
- * scope). A claim for identity X is blocked by an open effect B (same family,
- * same entityId, B ≠ X, B in sending/unknown) UNLESS B is a sibling unit of
- * the SAME revision (B.entityRevision === X.entityRevision AND B.unit !==
- * X.unit) — the per-rep parallel-send design. Consequences, exactly as
- * required:
- * - same revision, different unit (rep:1 vs rep:2): allowed;
- * - same revision, SAME unit, different input digest: BLOCKED (reconciliation
- *   required — the digest change must not silently re-buy the same unit);
- * - different revision (new workSetId / bumped questionRevision) with an old
- *   sending/unknown: BLOCKED at entity level.
+ * Open effects gate the entity. Only item_prior_backfill's recognized feature
+ * reps of the same revision are parallel siblings. Model/method changes and
+ * arbitrary unit strings never bypass an unresolved send.
+ * The SQL scan uses the same family, pattern, revision and unit predicates.
  */
 export function paidEffectGateBlocks(
-  blocker: { readonly entityRevision: string; readonly unit: string },
-  claim: { readonly entityRevision: string; readonly unit: string },
+  blocker: Pick<PaidEffectIdentity, 'family' | 'entityRevision' | 'unit'>,
+  claim: Pick<PaidEffectIdentity, 'family' | 'entityRevision' | 'unit'>,
 ): boolean {
   const siblingUnitOfSameRevision =
-    blocker.entityRevision === claim.entityRevision && blocker.unit !== claim.unit;
+    blocker.family === 'item_prior_backfill' &&
+    claim.family === 'item_prior_backfill' &&
+    parallelRepUnit.exec(blocker.unit)?.[0] === blocker.unit &&
+    parallelRepUnit.exec(claim.unit)?.[0] === claim.unit &&
+    blocker.entityRevision === claim.entityRevision &&
+    blocker.unit !== claim.unit;
   return !siblingUnitOfSameRevision;
 }
 
@@ -164,9 +166,22 @@ export interface PaidEffectDeliveryRef {
   readonly deliveryId: string;
   /** Scheduler tick identity, when the family is tick-driven. */
   readonly tickId?: string | null;
-  /** Control generation observed at dispatch; stale generations are fenced. */
+  /** Persisted dispatch generation, required after bootstrap for either backend. */
   readonly generation?: number | null;
 }
+
+/**
+ * Input contract for a versioned producer/host. Parse the generation bound to
+ * the original dispatch, never a control read taken when consuming an old job.
+ * Legacy unversioned refs remain bootstrap-only; this does not change payloads.
+ */
+export const paidEffectDispatchRefSchema = z.strictObject({
+  backend: PAID_EFFECT_BACKEND_SCHEMA,
+  deliveryId: z.string().min(1),
+  tickId: z.string().min(1).nullish(),
+  generation: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+});
+export type VerifiedPaidEffectDispatchRef = z.infer<typeof paidEffectDispatchRefSchema>;
 
 export interface PaidEffectControlSnapshot {
   readonly family: string;
@@ -238,20 +253,19 @@ export class PaidEffectSwitchBlockedError extends PaidEffectProtocolError {
 
 /**
  * TEMPORARY safety guard (P1-R2-2): switching a family whose paid authority
- * lives outside paid_effect is refused UNTIL its claim-side admission checks
- * owner/generation inside the claim-creating transaction. note_verify is now
- * wired atomically (reserveNoteVerification controlAdmission), so it is NOT
- * listed here; any future probe family without in-transaction admission must
- * be, until its wiring lands.
+ * lives outside paid_effect is refused until claim-side atomic admission AND
+ * persisted producer dispatch generations are wired. note_verify's current
+ * handler and DBOS candidate pass no generation. Keep cutover closed until
+ * the parent integrates and proves both producer/consumer contracts.
  */
-export const PAID_EFFECT_SWITCH_UNSUPPORTED_FAMILIES: readonly string[] = [];
+export const PAID_EFFECT_SWITCH_UNSUPPORTED_FAMILIES: readonly string[] = ['note_verify'];
 
 export class PaidEffectSwitchUnsupportedError extends PaidEffectProtocolError {
   override name = 'PaidEffectSwitchUnsupportedError';
   constructor(readonly family: string) {
     super(
       `paid-effect backend switch unsupported for ${family}: ` +
-        'claim-side atomic control admission is not wired yet; refusing to move ownership',
+        'atomic admission and versioned dispatch are not both ready; refusing to move ownership',
     );
   }
 }
@@ -349,12 +363,9 @@ export function computePaidEffectIdentity(input: PaidEffectInput): PaidEffectIde
 /**
  * Pure admission decision over a control snapshot. The store/DB layer only
  * supplies the locked snapshot; every rule lives here so it is testable
- * offline and identical for both backends. Generation rules (P1-2): a DBOS
- * delivery MUST carry the dispatch-time control generation when the control
- * row is explicit — a backend that went away and came back (A→B→A) must not
- * re-admit pre-switch dispatches; pg-boss legacy deliveries carry none and are
- * governed by the backend match alone (pg-boss is the default owner and the
- * effect-row CAS still dedupes sends).
+ * offline and identical for both backends. Both backends require the original
+ * dispatch generation after bootstrap. Only pg-boss generation 0 admits old
+ * unversioned calls, including a materialized bootstrap control row.
  */
 export function decidePaidEffectControlAdmission(
   control: PaidEffectControlSnapshot,
@@ -368,14 +379,11 @@ export function decidePaidEffectControlAdmission(
     owner: control.backend,
     generation: control.generation,
   });
-  if (!control.explicit) {
-    // Bootstrap default: pg-boss owns generation 0; DBOS never default-admits.
-    return ref.backend === DEFAULT_PAID_EFFECT_BACKEND
-      ? { kind: 'admitted', control }
-      : fenced('backend_mismatch');
-  }
   if (ref.backend !== control.backend) return fenced('backend_mismatch');
-  if (ref.backend === 'dbos' && ref.generation == null) {
+  const bootstrap =
+    control.backend === DEFAULT_PAID_EFFECT_BACKEND &&
+    control.generation === DEFAULT_PAID_EFFECT_GENERATION;
+  if (!bootstrap && ref.generation == null) {
     return fenced('missing_generation');
   }
   if (ref.generation != null && ref.generation !== control.generation) {

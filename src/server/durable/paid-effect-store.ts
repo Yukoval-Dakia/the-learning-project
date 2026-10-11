@@ -10,11 +10,10 @@
 // - intent before physical send; ONE send admission (reservePaidEffect /
 //   claimPaidEffectSend) with the winner/held/completed discrimination;
 // - immutable result receipt (semantic JSON equality; unequal rewrite
-//   rejected), completable only by the winning delivery (+fence when given);
+//   rejected), completable only by the winning delivery and exact fence;
 // - unknown outcomes are durable unresolved obligations, never auto-replayed,
 //   including under a new tick or a new revision/workset of the same entity —
-//   enforced by the entity gate, whose scope ('entity' | 'entity-revision')
-//   is a pinned family-level protocol option;
+//   enforced by the fixed entity gate with only A's recognized rep exemption;
 // - failed application leaves the row in receipt_ready (readable unfinished
 //   obligation) and the only way forward is replaying the application from the
 //   receipt — there is no path back to a physical send.
@@ -26,6 +25,7 @@ import { admitPaidEffectDeliveryControl, lockPaidEffectControlFamily } from './p
 import {
   PAID_EFFECT_BACKEND_SCHEMA,
   PAID_EFFECT_ENTITY_GATE_STATES,
+  PAID_EFFECT_PARALLEL_REP_UNIT_PATTERN,
   PAID_EFFECT_STATE_SCHEMA,
   PaidEffectApplicationConflictError,
   type PaidEffectBackend,
@@ -80,7 +80,7 @@ export interface PaidEffectSendClaimDelivery {
   readonly deliveryId: string;
   readonly tickId?: string | null;
   readonly leaseExpiresAt: Date;
-  /** Dispatch-time control generation; REQUIRED for DBOS deliveries. */
+  /** Original dispatch generation; required for both backends after bootstrap. */
   readonly generation?: number | null;
 }
 
@@ -140,6 +140,9 @@ function toSnapshot(row: PaidEffectRow): PaidEffectSnapshot {
 }
 
 async function lockRow(tx: Tx, identity: PaidEffectIdentity): Promise<PaidEffectRow | null> {
+  // Result/application writes can be composed with admission in one tx too.
+  // Keep every store row lock behind the family lock, not just send claims.
+  await lockPaidEffectControlFamily(tx, identity.family);
   const rows = await tx.select().from(paid_effect).where(identityWhere(identity)).for('update');
   return rows[0] ?? null;
 }
@@ -160,7 +163,8 @@ async function lockEntityGate(tx: Tx, identity: PaidEffectIdentity): Promise<voi
 /**
  * Gate scan under the FIXED predicate (paidEffectGateBlocks): an open
  * sending/unknown effect of the same (family, entityId) blocks this claim
- * UNLESS it is a sibling unit of the SAME revision. Same revision + same unit
+ * UNLESS it is an item_prior_backfill feature rep of the SAME revision.
+ * Same revision + same unit
  * + different digest BLOCKS (reconciliation); a different revision BLOCKS
  * (entity-level cross-revision/cross-night). Runs inside the caller's
  * transaction AFTER lockEntityGate; returns the blocker's identity, or null.
@@ -188,10 +192,13 @@ async function findGateBlocker(
           ne(paid_effect.unit, identity.unit),
           ne(paid_effect.input_digest, identity.inputDigest),
         ),
-        // FIXED gate predicate — mirrors paidEffectGateBlocks exactly:
-        // blocked unless (same revision AND different unit).
+        // Mirrors paidEffectGateBlocks: only A's recognized feature siblings.
         sql`not (
-          ${paid_effect.entity_revision} = ${identity.entityRevision}
+          ${paid_effect.family} = 'item_prior_backfill'
+          and ${identity.family} = 'item_prior_backfill'
+          and ${paid_effect.unit} ~ ${PAID_EFFECT_PARALLEL_REP_UNIT_PATTERN}
+          and ${identity.unit} ~ ${PAID_EFFECT_PARALLEL_REP_UNIT_PATTERN}
+          and ${paid_effect.entity_revision} = ${identity.entityRevision}
           and ${paid_effect.unit} <> ${identity.unit}
         )`,
       ),
@@ -219,6 +226,9 @@ export async function admitPaidEffectIntent(
 ): Promise<PaidEffectIntentAdmission> {
   const identity = computePaidEffectIdentity(raw);
   const parsedInput = JSON.parse(canonicalizePaidEffectJson(raw.input)) as unknown;
+  // Lowest public admission must serialize BEFORE INSERT or a conflict row
+  // lock, including callers that then claim in this same transaction.
+  await lockPaidEffectControlFamily(tx, identity.family);
   const inserted = await tx
     .insert(paid_effect)
     .values({
@@ -259,7 +269,7 @@ async function claimLockedRow(
 ): Promise<{ fence: number } | { blockedBy: PaidEffectIdentity }> {
   await lockEntityGate(tx, identity);
   // P1-2: control owner/generation verified in the SAME transaction and the
-  // SAME lock order as the claim (row → entity advisory → control FOR SHARE),
+  // SAME lock order as the claim (family → row → entity → control FOR SHARE),
   // so a concurrent switch (control FOR UPDATE) serializes against every
   // admission and a fenced backend can never win a claim.
   const admission = await admitPaidEffectDeliveryControl(tx, identity.family, {
@@ -388,7 +398,7 @@ function requireOwnerDelivery(
 
 /**
  * Record the exact immutable result receipt — completable only by the winning
- * delivery (and, when passed, only with the winner's fence). Re-writing a
+ * delivery and exact winner fence, including equal-receipt retries. Re-writing a
  * semantically equal receipt is idempotent; an unequal rewrite is rejected
  * without mutating the row. A late receipt resolving an 'unknown' row is
  * monotone information gain and stays allowed for the owning delivery.
@@ -442,7 +452,10 @@ export async function markPaidEffectUnknown(
 ): Promise<void> {
   const row = await lockRow(tx, identity);
   if (!row) throw new PaidEffectProtocolError('paid-effect row missing');
-  if (row.state === 'unknown') return;
+  if (row.state === 'unknown') {
+    requireOwnerDelivery(row, identity, deliveryId, opts.fence);
+    return;
+  }
   if (row.state === 'receipt_ready' || row.state === 'applied') {
     throw new PaidEffectProtocolError('outcome already known; refusing to mark unknown');
   }

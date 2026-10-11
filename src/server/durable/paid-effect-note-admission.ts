@@ -27,7 +27,11 @@ import {
   paidEffectControlTableExists,
 } from './paid-effect-control';
 import { NOTE_VERIFY_OBLIGATION_FAMILY } from './paid-effect-note-obligations';
-import { PaidEffectControlFencedError, type PaidEffectDeliveryRef } from './paid-effect-protocol';
+import {
+  PaidEffectControlFencedError,
+  type PaidEffectDeliveryRef,
+  decidePaidEffectControlAdmission,
+} from './paid-effect-protocol';
 
 export type { PaidEffectDeliveryRef };
 
@@ -35,24 +39,26 @@ export type { PaidEffectDeliveryRef };
  * Build the in-transaction admission hook for one delivery. The ref carries
  * the dispatch identity: pg-boss jobs pass {backend:'pg-boss', deliveryId:
  * jobId}; a DBOS host passes {backend:'dbos', deliveryId: workflowId,
- * generation} — generation is REQUIRED for DBOS under an explicit control row.
+ * generation}. After bootstrap, BOTH backends require the generation persisted
+ * at dispatch. Versioned hosts can validate paidEffectDispatchRefSchema first.
+ * The retained handler currently passes no generation; cutover stays guarded.
  */
 export function buildNoteVerificationControlAdmission(
   ref: PaidEffectDeliveryRef,
 ): (tx: Tx) => Promise<void> {
   return async (tx: Tx) => {
     await lockPaidEffectControlFamily(tx, NOTE_VERIFY_OBLIGATION_FAMILY);
-    if (!(await paidEffectControlTableExists(tx))) {
-      if (ref.backend === 'pg-boss') return; // bootstrap default owner stands
-      throw new PaidEffectControlFencedError(
-        NOTE_VERIFY_OBLIGATION_FAMILY,
-        'backend_mismatch',
-        'pg-boss',
-      );
-    }
-    // Reentrant no-op re-acquire of the family lock; the read runs in the
-    // same lock window the switch serializes on.
-    const admission = await admitPaidEffectDeliveryControl(tx, NOTE_VERIFY_OBLIGATION_FAMILY, ref);
+    const admission = (await paidEffectControlTableExists(tx))
+      ? await admitPaidEffectDeliveryControl(tx, NOTE_VERIFY_OBLIGATION_FAMILY, ref)
+      : decidePaidEffectControlAdmission(
+          {
+            family: NOTE_VERIFY_OBLIGATION_FAMILY,
+            backend: 'pg-boss',
+            generation: 0,
+            explicit: false,
+          },
+          ref,
+        );
     if (admission.kind === 'fenced') {
       throw new PaidEffectControlFencedError(
         NOTE_VERIFY_OBLIGATION_FAMILY,

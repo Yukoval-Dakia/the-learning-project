@@ -13,11 +13,15 @@
 // obligation (including the note_verify claim probe), and the supporting
 // contracts (intent idempotence, history preservation, generation fencing).
 import { eq, sql } from 'drizzle-orm';
+import { drizzle } from 'drizzle-orm/postgres-js';
+import postgres from 'postgres';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { z } from 'zod';
 
 import { admitNoteVerifyDelivery } from '@/capabilities/notes/jobs/note_verify';
 import { reserveNoteVerification } from '@/capabilities/notes/server/note-verification-claim-reservation';
 import type { Db, Tx } from '@/db/client';
+import * as schema from '@/db/schema';
 import { artifact, note_verification_claim, paid_effect, paid_effect_control } from '@/db/schema';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import {
@@ -35,7 +39,10 @@ import {
   PaidEffectProtocolError,
   PaidEffectReceiptConflictError,
   PaidEffectSwitchBlockedError,
+  PaidEffectSwitchUnsupportedError,
   computePaidEffectIdentity,
+  paidEffectControlLockKey,
+  paidEffectDispatchRefSchema,
 } from './paid-effect-protocol';
 import {
   admitPaidEffectIntent,
@@ -104,6 +111,100 @@ async function claimFence(
   const result = await claim(db, identity, deliveryId, leaseMs);
   if (result.kind !== 'claimed') throw new Error(`expected claimed, got ${result.kind}`);
   return result.fence;
+}
+
+function settled<T>(run: Promise<T>) {
+  return run.then(
+    (value) => ({ status: 'fulfilled' as const, value }),
+    (reason: unknown) => ({ status: 'rejected' as const, reason }),
+  );
+}
+
+async function reachBarrier(barrier: Promise<void>, run: Promise<unknown>): Promise<void> {
+  await Promise.race([
+    barrier,
+    run.then((result) => {
+      throw new Error(`transaction finished before its barrier: ${JSON.stringify(result)}`);
+    }),
+  ]);
+}
+
+/** Dedicated real connection, with latches around real SQL/COMMIT only. */
+async function isolatedConnection(
+  hooks: { afterFamilyLock?: () => Promise<void>; beforeCommit?: () => Promise<void> } = {},
+) {
+  const url = new URL(z.url().parse(process.env.TEST_DATABASE_URL));
+  if (
+    !/^\/test_fork_\d+$/.test(url.pathname) ||
+    !['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)
+  ) {
+    throw new Error('Concurrency tests require the disposable Vitest fork');
+  }
+  const client = postgres(url.toString(), { max: 1 });
+  const db: Db = drizzle(client, { schema });
+  const [backend] = await db.execute<{ pid: number; name: string }>(
+    sql`select pg_backend_pid() as pid, current_database() as name`,
+  );
+  expect(backend.name).toBe(url.pathname.slice(1));
+  const transaction = db.transaction.bind(db);
+  db.transaction = (body, config) =>
+    transaction(async (tx) => {
+      await tx.execute(sql`set local lock_timeout = '8s'`);
+      await tx.execute(sql`set local statement_timeout = '10s'`);
+      if (hooks.afterFamilyLock) {
+        const execute = tx.execute.bind(tx);
+        let paused = false;
+        tx.execute = <TRow extends Record<string, unknown> = Record<string, unknown>>(
+          query: Parameters<Tx['execute']>[0],
+        ) => {
+          const pending = execute<TRow>(query);
+          const run = pending.execute.bind(pending);
+          pending.execute = async () => {
+            const result = await run();
+            if (!paused && pending.getQuery().sql.includes('pg_advisory_xact_lock')) {
+              paused = true;
+              await hooks.afterFamilyLock?.();
+            }
+            return result;
+          };
+          return pending;
+        };
+      }
+      const result = await body(tx);
+      await hooks.beforeCommit?.();
+      return result;
+    }, config);
+  return { db, pid: backend.pid, close: () => client.end({ timeout: 5 }) };
+}
+
+async function expectFamilyWait(holderPid: number, waiterPid: number, family: string) {
+  expect(holderPid).not.toBe(waiterPid);
+  const key = paidEffectControlLockKey(family);
+  await expect
+    .poll(
+      async () => {
+        const [state] = await testDb().execute<{
+          holder: boolean;
+          waiter: boolean;
+          blocked: boolean;
+        }>(sql`
+      select exists (
+        select 1 from pg_locks where locktype = 'advisory' and pid = ${holderPid}
+        and classid = ((hashtextextended(${key}, 0) >> 32) & 4294967295)::oid
+        and objid = (hashtextextended(${key}, 0) & 4294967295)::oid
+        and objsubid = 1 and mode = 'ExclusiveLock' and granted
+      ) as holder, exists (
+        select 1 from pg_locks where locktype = 'advisory' and pid = ${waiterPid}
+        and classid = ((hashtextextended(${key}, 0) >> 32) & 4294967295)::oid
+        and objid = (hashtextextended(${key}, 0) & 4294967295)::oid
+        and objsubid = 1 and mode = 'ExclusiveLock' and not granted
+      ) as waiter, ${holderPid} = any(pg_blocking_pids(${waiterPid})) as blocked
+    `);
+        return state;
+      },
+      { timeout: 5_000, interval: 20 },
+    )
+    .toEqual({ holder: true, waiter: true, blocked: true });
 }
 
 describe('paid-effect store transitions', () => {
@@ -219,6 +320,18 @@ describe('paid-effect store transitions', () => {
         markPaidEffectUnknown(tx, identity, 'delivery-new-tick', 'x', { fence }),
       ),
     ).rejects.toBeInstanceOf(PaidEffectDeliveryConflictError);
+    const unknown = await readPaidEffect(testDb(), identity);
+    await expect(
+      testDb().transaction((tx) =>
+        markPaidEffectUnknown(tx, identity, 'delivery-1', 'x', { fence: fence + 1 }),
+      ),
+    ).rejects.toBeInstanceOf(PaidEffectDeliveryConflictError);
+    await expect(
+      testDb().transaction((tx) =>
+        markPaidEffectUnknown(tx, identity, 'delivery-1', 'different retry reason', { fence }),
+      ),
+    ).resolves.toBeUndefined();
+    expect(await readPaidEffect(testDb(), identity)).toEqual(unknown);
     // Late resolution by the owning delivery is monotone information gain.
     await expect(
       testDb().transaction((tx: Tx) =>
@@ -311,10 +424,15 @@ describe('paid-effect reserve admission (winner/held/completed)', () => {
     await resetDb();
   });
 
-  function reserveInput(entityRevision: string, input: unknown, unit = 'verify') {
+  function reserveInput(
+    entityRevision: string,
+    input: unknown,
+    unit = 'verify',
+    family = 'reserve_family',
+  ) {
     return {
       input: {
-        family: 'reserve_family',
+        family,
         entityId: 'e1',
         entityRevision,
         unit,
@@ -408,39 +526,89 @@ describe('paid-effect reserve admission (winner/held/completed)', () => {
     expect(newRevision).toMatchObject({ kind: 'held' });
   });
 
-  // @invariant concurrency: under the FIXED predicate sibling units of ONE revision are deliberately parallel paid sends and do not block each other, while the SAME unit with a different input and ANY new revision are blocked by the old unknown
-  // @fails-if rep:2 is blocked by rep:1's unknown within one revision, or a same-unit digest change / revision change escapes the old unknown
+  // @invariant concurrency: only A's recognized feature rep siblings of ONE revision are parallel sends; input/method/revision drift and malformed units stay blocked
+  // @fails-if feature rep 1 is blocked by rep 0's unknown, or a changed method/input/revision or malformed rep unit escapes the old unknown
   it('keeps sibling rep units parallel, blocks same-unit input drift and new revisions', async () => {
     const rep1 = await reservePaidEffect(
       testDb(),
-      reserveInput('rev-1', INPUT, 'method-a/rep:1').input,
-      reserveInput('rev-1', INPUT, 'method-a/rep:1').delivery,
+      reserveInput('rev-1', INPUT, 'feature/rep:0', 'item_prior_backfill').input,
+      reserveInput('rev-1', INPUT, 'feature/rep:0', 'item_prior_backfill').delivery,
     );
     expect(rep1).toMatchObject({ kind: 'winner' });
     await testDb().transaction(async (tx: Tx) => {
-      await markPaidEffectUnknown(tx, rep1.identity, 'delivery-rev-1-method-a/rep:1', 'crash', {
+      await markPaidEffectUnknown(tx, rep1.identity, 'delivery-rev-1-feature/rep:0', 'crash', {
         fence: 1,
       });
     });
     const rep2 = await reservePaidEffect(
       testDb(),
-      reserveInput('rev-1', INPUT, 'method-a/rep:2').input,
-      reserveInput('rev-1', INPUT, 'method-a/rep:2').delivery,
+      reserveInput('rev-1', INPUT, 'feature/rep:1', 'item_prior_backfill').input,
+      reserveInput('rev-1', INPUT, 'feature/rep:1', 'item_prior_backfill').delivery,
     );
     expect(rep2).toMatchObject({ kind: 'winner' });
     const sameUnitDifferentInput = await reservePaidEffect(
       testDb(),
-      reserveInput('rev-1', OTHER_INPUT, 'method-a/rep:1').input,
-      reserveInput('rev-1', OTHER_INPUT, 'method-a/rep:1').delivery,
+      reserveInput('rev-1', OTHER_INPUT, 'feature/rep:0', 'item_prior_backfill').input,
+      reserveInput('rev-1', OTHER_INPUT, 'feature/rep:0', 'item_prior_backfill').delivery,
     );
-    expect(sameUnitDifferentInput).toMatchObject({ kind: 'held' });
+    expect(sameUnitDifferentInput).toMatchObject({
+      kind: 'held',
+      state: 'pending',
+      blockedBy: rep1.identity,
+    });
+    for (const unit of [
+      'llasa/rep:0',
+      'unknown/rep:0',
+      'feature/rep:-1',
+      'feature/rep:01',
+      'feature/rep:0\n',
+    ]) {
+      const request = reserveInput('rev-1', INPUT, unit, 'item_prior_backfill');
+      await expect(
+        reservePaidEffect(testDb(), request.input, request.delivery),
+      ).resolves.toMatchObject({
+        kind: 'held',
+        state: 'pending',
+        blockedBy: rep1.identity,
+      });
+    }
     const nextRevision = await reservePaidEffect(
       testDb(),
-      reserveInput('rev-2', INPUT, 'method-a/rep:1').input,
-      reserveInput('rev-2', INPUT, 'method-a/rep:1').delivery,
+      reserveInput('rev-2', INPUT, 'feature/rep:0', 'item_prior_backfill').input,
+      reserveInput('rev-2', INPUT, 'feature/rep:0', 'item_prior_backfill').delivery,
     );
     expect(nextRevision).toMatchObject({ kind: 'held' });
     expect(nextRevision.kind === 'held' && nextRevision.blockedBy?.entityRevision).toBe('rev-1');
+  });
+
+  // @invariant concurrency: C's old unknown gates the entity even if a later frozen workset selects a different model; caller-chosen rep-like units in C also cannot exempt it
+  // @fails-if the SQL gate exempts arbitrary different units, letting M2 buy while M1 is unknown
+  it('holds C model changes and fake rep siblings behind an unknown paid send', async () => {
+    const first = reserveInput(
+      'workset-1',
+      INPUT,
+      'rejudge:xiaomi-token-plan/M1',
+      'judge_calibration_sample',
+    );
+    const m1 = await reservePaidEffect(testDb(), first.input, first.delivery);
+    expect(m1).toMatchObject({ kind: 'winner', fence: 1 });
+    await testDb().transaction((tx) =>
+      markPaidEffectUnknown(tx, m1.identity, first.delivery.deliveryId, 'paid result unknown', {
+        fence: 1,
+      }),
+    );
+    const unknown = await readPaidEffect(testDb(), m1.identity);
+    for (const unit of ['rejudge:xiaomi-token-plan/M2', 'feature/rep:0', 'feature/rep:1']) {
+      const next = reserveInput('workset-1', OTHER_INPUT, unit, 'judge_calibration_sample');
+      const held = await reservePaidEffect(testDb(), next.input, next.delivery);
+      expect(held).toMatchObject({ kind: 'held', state: 'pending', blockedBy: m1.identity });
+      expect(await readPaidEffect(testDb(), held.identity)).toMatchObject({
+        state: 'pending',
+        fence: 0,
+        delivery: { deliveryId: null },
+      });
+    }
+    expect(await readPaidEffect(testDb(), m1.identity)).toEqual(unknown);
   });
 
   // @invariant concurrency: two consumers racing to start DIFFERENT effects of one entity serialize on the family+entity gate lock — exactly one winner, the other held naming the blocker
@@ -467,8 +635,8 @@ describe('paid-effect reserve admission (winner/held/completed)', () => {
     );
   });
 
-  // @invariant concurrency: completion is valid only for the winning delivery AND its exact fence — a stale fence or a non-owner delivery cannot write the receipt
-  // @fails-if a wrong-fence delivery records a result for a send it no longer owns
+  // @invariant concurrency: completion and equal-receipt retries require the winning delivery AND its exact fence
+  // @fails-if a wrong-fence or non-owner delivery records a receipt or is accepted as an idempotent completion
   it('validates winner delivery and fence on completion', async () => {
     const won = await reservePaidEffect(
       testDb(),
@@ -511,6 +679,35 @@ describe('paid-effect reserve admission (winner/held/completed)', () => {
         ),
       ),
     ).resolves.toBe('recorded');
+    const recorded = await readPaidEffect(testDb(), won.identity);
+    for (const owner of [
+      { deliveryId: 'delivery-w1-verify', fence: 99 },
+      { deliveryId: 'delivery-other', fence: 1 },
+    ]) {
+      await expect(
+        testDb().transaction((tx) =>
+          recordPaidEffectResult(
+            tx,
+            won.identity,
+            owner.deliveryId,
+            { verdict: 'pass' },
+            { fence: owner.fence },
+          ),
+        ),
+      ).rejects.toBeInstanceOf(PaidEffectDeliveryConflictError);
+    }
+    await expect(
+      testDb().transaction((tx) =>
+        recordPaidEffectResult(
+          tx,
+          won.identity,
+          'delivery-w1-verify',
+          { verdict: 'pass' },
+          { fence: 1 },
+        ),
+      ),
+    ).resolves.toBe('idempotent');
+    expect(await readPaidEffect(testDb(), won.identity)).toEqual(recorded);
   });
 });
 
@@ -638,6 +835,51 @@ describe('paid-effect backend control (DB)', () => {
     ).resolves.toMatchObject({ kind: 'fenced', reason: 'stale_generation' });
   });
 
+  // @invariant concurrency: after pg-boss 0 -> DBOS 1 -> pg-boss 2, old unversioned and generation-0 jobs cannot create a paid send; only a dispatch bound to generation 2 wins
+  // @fails-if pg-boss's missing generation bypasses the round-trip fence or is stamped with the current generation at consumption
+  it('fences old pg-boss jobs after a backend round trip without upgrading them', async () => {
+    await expect(switchPaidEffectBackend(testDb(), 'test_family', 'dbos')).resolves.toMatchObject({
+      backend: 'dbos',
+      generation: 1,
+    });
+    await expect(
+      switchPaidEffectBackend(testDb(), 'test_family', 'pg-boss'),
+    ).resolves.toMatchObject({ backend: 'pg-boss', generation: 2 });
+    const input = {
+      family: 'test_family',
+      entityId: 'a1',
+      entityRevision: 'r0',
+      unit: 'verify',
+      input: INPUT,
+    };
+    const identity = computePaidEffectIdentity(input);
+    const delivery = {
+      backend: 'pg-boss' as const,
+      deliveryId: 'old-unversioned',
+      leaseExpiresAt: new Date(Date.now() + 60_000),
+    };
+    await expect(reservePaidEffect(testDb(), input, delivery)).rejects.toMatchObject({
+      name: 'PaidEffectControlFencedError',
+      reason: 'missing_generation',
+    });
+    expect(await readPaidEffect(testDb(), identity)).toBeNull();
+    await expect(
+      reservePaidEffect(testDb(), input, { ...delivery, generation: 0 }),
+    ).rejects.toMatchObject({ name: 'PaidEffectControlFencedError', reason: 'stale_generation' });
+    expect(await readPaidEffect(testDb(), identity)).toBeNull();
+    await expect(
+      reservePaidEffect(testDb(), input, {
+        ...delivery,
+        deliveryId: 'versioned-new',
+        generation: 2,
+      }),
+    ).resolves.toMatchObject({ kind: 'winner', fence: 1 });
+    expect(await readPaidEffect(testDb(), identity)).toMatchObject({
+      state: 'sending',
+      delivery: { deliveryId: 'versioned-new', backend: 'pg-boss' },
+    });
+  });
+
   // @invariant concurrency: the note_verify switch gate sees the family's EXISTING claim obligations (provider_started maps to sending) even though notes never write paid_effect rows
   // @fails-if the switch moves note_verify ownership while a live note verification claim is in flight, or the probe ignores the claim table entirely
   it('blocks the note_verify switch on live note claim obligations', async () => {
@@ -678,9 +920,13 @@ describe('paid-effect backend control (DB)', () => {
       'switch blocked',
     );
     await testDb().delete(note_verification_claim);
-    await expect(switchPaidEffectBackend(testDb(), 'note_verify', 'dbos')).resolves.toMatchObject({
-      backend: 'dbos',
-      generation: 1,
+    await expect(switchPaidEffectBackend(testDb(), 'note_verify', 'dbos')).rejects.toBeInstanceOf(
+      PaidEffectSwitchUnsupportedError,
+    );
+    expect(await readPaidEffectControl(testDb(), 'note_verify')).toMatchObject({
+      backend: 'pg-boss',
+      generation: 0,
+      explicit: false,
     });
   });
 
@@ -696,7 +942,10 @@ describe('paid-effect backend control (DB)', () => {
       generation: 0,
       explicit: false,
     });
-    await switchPaidEffectBackend(testDb(), 'note_verify', 'dbos');
+    // Historical/restore control state, not authorization to cut over unversioned producers.
+    await testDb()
+      .insert(paid_effect_control)
+      .values({ family: 'note_verify', backend: 'dbos', generation: 1 });
     await expect(admitNoteVerifyDelivery(testDb(), 'job-2')).resolves.toMatchObject({
       kind: 'fenced',
       reason: 'backend_mismatch',
@@ -704,25 +953,313 @@ describe('paid-effect backend control (DB)', () => {
     });
   });
 
-  // @invariant concurrency: with NO control row yet (the missing-row race), a concurrent claim and a concurrent switch can never BOTH win — the family advisory serializes them before any row exists to lock
-  // @fails-if the claim is admitted (or already committed) while the switch also succeeds, leaving a pg-boss send in flight under DBOS ownership
-  it('serializes the missing-row concurrent claim vs switch', async () => {
-    const identity = await admitIntent(testDb(), INPUT);
-    const [claimResult, switchResult] = await Promise.allSettled([
-      claim(testDb(), identity, 'delivery-1'),
-      switchPaidEffectBackend(testDb(), 'test_family', 'dbos'),
-    ]);
-    const claimWon = claimResult.status === 'fulfilled' && claimResult.value.kind === 'claimed';
-    const switchWon = switchResult.status === 'fulfilled';
-    expect(claimWon && switchWon).toBe(false);
-    if (claimWon) {
-      // The switch must have seen the committed claim and refused.
+  // @invariant concurrency: a restored non-bootstrap note owner fences old unversioned jobs in the claim transaction, while a verified original dispatch generation permits the matching owner
+  // @fails-if note reservation silently upgrades an old job to generation 2 or creates a claim before checking the persisted dispatch generation
+  it('fences unversioned note reservations after rollback to pg-boss generation 2', async () => {
+    const now = new Date();
+    await testDb().insert(artifact).values({
+      id: 'note-generation-2',
+      type: 'note_atomic',
+      title: 'generation fence',
+      knowledge_ids: [],
+      intent_source: 'learning_intent',
+      source: 'ai_generated',
+      attrs: {},
+      generation_status: 'ready',
+      verification_status: 'queued',
+      history: [],
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+    await testDb()
+      .insert(paid_effect_control)
+      .values({ family: 'note_verify', backend: 'pg-boss', generation: 2 });
+    const before = await testDb()
+      .select()
+      .from(artifact)
+      .where(eq(artifact.id, 'note-generation-2'));
+    await expect(
+      reserveNoteVerification(testDb(), 'note-generation-2', {
+        controlAdmission: buildNoteVerificationControlAdmission({
+          backend: 'pg-boss',
+          deliveryId: 'old-unversioned',
+        }),
+      }),
+    ).rejects.toMatchObject({ name: 'PaidEffectControlFencedError', reason: 'missing_generation' });
+    expect(await testDb().select().from(note_verification_claim)).toHaveLength(0);
+    expect(
+      await testDb().select().from(artifact).where(eq(artifact.id, 'note-generation-2')),
+    ).toEqual(before);
+    const originalDispatch = paidEffectDispatchRefSchema.parse({
+      backend: 'pg-boss',
+      deliveryId: 'persisted-versioned',
+      generation: 2,
+    });
+    await expect(
+      reserveNoteVerification(testDb(), 'note-generation-2', {
+        controlAdmission: buildNoteVerificationControlAdmission(originalDispatch),
+      }),
+    ).resolves.toMatchObject({
+      kind: 'claimed',
+      lease: { artifactId: 'note-generation-2', fence: 1 },
+    });
+    expect(await testDb().select().from(note_verification_claim)).toHaveLength(1);
+  });
+
+  // @invariant concurrency: a pending intent is serialized against cutover even before any send claim exists; switch sees the committed pending obligation
+  // @fails-if remove intent's family lock and the switch misses an uncommitted pending row, or only sending rows block cutover
+  it('makes the switch wait for an uncommitted pending intent with no send claim', async () => {
+    const paused = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const a = await isolatedConnection({
+      beforeCommit: async () => {
+        paused.resolve();
+        await release.promise;
+      },
+    });
+    const b = await isolatedConnection();
+    const input = {
+      family: 'test_family',
+      entityId: 'a1',
+      entityRevision: 'r0',
+      unit: 'verify',
+      input: INPUT,
+    };
+    const identity = computePaidEffectIdentity(input);
+    const runs: Promise<unknown>[] = [];
+    try {
+      expect(await readPaidEffect(testDb(), identity)).toBeNull();
+      const intentRun = settled(a.db.transaction((tx) => admitPaidEffectIntent(tx, input)));
+      runs.push(intentRun);
+      await reachBarrier(paused.promise, intentRun);
+      const switchRun = settled(switchPaidEffectBackend(b.db, input.family, 'dbos'));
+      runs.push(switchRun);
+      await expectFamilyWait(a.pid, b.pid, input.family);
+      expect(await readPaidEffect(testDb(), identity)).toBeNull();
+      release.resolve();
+      expect(await intentRun).toEqual({ status: 'fulfilled', value: { kind: 'admitted' } });
+      const switchResult = await switchRun;
       expect(switchResult.status).toBe('rejected');
-      expect(await readPaidEffect(testDb(), identity)).toMatchObject({ state: 'sending' });
-    } else if (switchWon) {
-      // The claim must have been fenced under the new owner and left nothing behind.
+      if (switchResult.status !== 'rejected') throw new Error('switch must be blocked');
+      expect(switchResult.reason).toBeInstanceOf(PaidEffectSwitchBlockedError);
+      expect(switchResult.reason).toMatchObject({
+        blocking: { pending: 1, sending: 0, unknown: 0, receipt_ready: 0 },
+      });
+      expect(await readPaidEffect(testDb(), identity)).toMatchObject({
+        state: 'pending',
+        fence: 0,
+        delivery: { deliveryId: null },
+      });
+      expect(await readPaidEffectControl(testDb(), input.family)).toMatchObject({
+        backend: 'pg-boss',
+        generation: 0,
+        explicit: false,
+      });
+    } finally {
+      release.resolve();
+      await Promise.all(runs);
+      await Promise.all([a.close(), b.close()]);
+    }
+  });
+
+  // @invariant concurrency: an uncommitted lowest-level intent owns the family lock before inserting; a missing-row switch waits and observes the committed send
+  // @fails-if remove the family lock from admitPaidEffectIntent; the switch commits unseen while the new intent is paused, or the two transactions deadlock
+  it('serializes missing-row intent then claim before a switch on two connections', async () => {
+    const a = await isolatedConnection();
+    const b = await isolatedConnection();
+    const paused = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const input = {
+      family: 'test_family',
+      entityId: 'a1',
+      entityRevision: 'r0',
+      unit: 'verify',
+      input: INPUT,
+    };
+    const identity = computePaidEffectIdentity(input);
+    const runs: Promise<unknown>[] = [];
+    try {
+      expect(await readPaidEffect(testDb(), identity)).toBeNull();
+      expect(await readPaidEffectControl(testDb(), input.family)).toMatchObject({
+        explicit: false,
+      });
+      const claimRun = settled(
+        a.db.transaction(async (tx) => {
+          expect(await admitPaidEffectIntent(tx, input)).toEqual({ kind: 'admitted' });
+          paused.resolve();
+          await release.promise;
+          return claimPaidEffectSend(tx, identity, {
+            backend: 'pg-boss',
+            deliveryId: 'first',
+            leaseExpiresAt: new Date(Date.now() + 60_000),
+          });
+        }),
+      );
+      runs.push(claimRun);
+      await reachBarrier(paused.promise, claimRun);
+      const switchRun = settled(switchPaidEffectBackend(b.db, input.family, 'dbos'));
+      runs.push(switchRun);
+      await expectFamilyWait(a.pid, b.pid, input.family);
+      // The intent is uncommitted and invisible to a different connection.
+      expect(await readPaidEffect(testDb(), identity)).toBeNull();
+      release.resolve();
+      const [claimResult, switchResult] = await Promise.all([claimRun, switchRun]);
+      expect(claimResult).toMatchObject({
+        status: 'fulfilled',
+        value: { kind: 'claimed', fence: 1 },
+      });
+      expect(switchResult.status).toBe('rejected');
+      if (switchResult.status !== 'rejected') throw new Error('switch must be blocked');
+      expect(switchResult.reason).toBeInstanceOf(PaidEffectSwitchBlockedError);
+      expect(switchResult.reason).toMatchObject({
+        blocking: { pending: 0, sending: 1, unknown: 0, receipt_ready: 0 },
+      });
+      expect(await readPaidEffect(testDb(), identity)).toMatchObject({
+        state: 'sending',
+        fence: 1,
+        delivery: { deliveryId: 'first' },
+      });
+      expect(await readPaidEffectControl(testDb(), input.family)).toMatchObject({
+        backend: 'pg-boss',
+        generation: 0,
+        explicit: false,
+      });
+    } finally {
+      release.resolve();
+      await Promise.all(runs);
+      await Promise.all([a.close(), b.close()]);
+    }
+  });
+
+  // @invariant concurrency: a missing-row switch holding the family lock runs before any intent insert; the old pg-boss transaction is fenced and rolls back completely
+  // @fails-if intent admission inserts before acquiring the family lock, obtains a paid_effect write lock while the switch is paused, or survives the new backend owner
+  it('lets a missing-row switch win before intent creation and fences the old claim', async () => {
+    const paused = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const a = await isolatedConnection({
+      afterFamilyLock: async () => {
+        paused.resolve();
+        await release.promise;
+      },
+    });
+    const b = await isolatedConnection();
+    const input = {
+      family: 'test_family',
+      entityId: 'a1',
+      entityRevision: 'r0',
+      unit: 'verify',
+      input: INPUT,
+    };
+    const identity = computePaidEffectIdentity(input);
+    const runs: Promise<unknown>[] = [];
+    try {
+      expect(await readPaidEffect(testDb(), identity)).toBeNull();
+      expect(await readPaidEffectControl(testDb(), input.family)).toMatchObject({
+        explicit: false,
+      });
+      const switchRun = settled(switchPaidEffectBackend(a.db, input.family, 'dbos'));
+      runs.push(switchRun);
+      await reachBarrier(paused.promise, switchRun);
+      const claimRun = settled(
+        b.db.transaction(async (tx) => {
+          await admitPaidEffectIntent(tx, input);
+          return claimPaidEffectSend(tx, identity, {
+            backend: 'pg-boss',
+            deliveryId: 'old',
+            leaseExpiresAt: new Date(Date.now() + 60_000),
+          });
+        }),
+      );
+      runs.push(claimRun);
+      await expectFamilyWait(a.pid, b.pid, input.family);
+      const writes = await testDb().execute(sql`select 1 from pg_locks where pid = ${b.pid}
+        and relation = 'paid_effect'::regclass and mode = 'RowExclusiveLock' and granted`);
+      expect(writes).toHaveLength(0);
+      release.resolve();
+      const [switchResult, claimResult] = await Promise.all([switchRun, claimRun]);
+      expect(switchResult).toMatchObject({
+        status: 'fulfilled',
+        value: { backend: 'dbos', generation: 1, explicit: true },
+      });
       expect(claimResult.status).toBe('rejected');
-      expect(await readPaidEffect(testDb(), identity)).toMatchObject({ state: 'pending' });
+      if (claimResult.status !== 'rejected') throw new Error('old claim must be fenced');
+      expect(claimResult.reason).toBeInstanceOf(PaidEffectControlFencedError);
+      expect(claimResult.reason).toMatchObject({ reason: 'backend_mismatch', owner: 'dbos' });
+      expect(await readPaidEffect(testDb(), identity)).toBeNull();
+      expect(await readPaidEffectControl(testDb(), input.family)).toMatchObject({
+        backend: 'dbos',
+        generation: 1,
+        explicit: true,
+      });
+    } finally {
+      release.resolve();
+      await Promise.all(runs);
+      await Promise.all([a.close(), b.close()]);
+    }
+  });
+
+  // @invariant concurrency: intent's conflict-row lock follows the family lock; intent-then-claim and reserve serialize without the family/row deadlock
+  // @fails-if remove intent's family lock so the first transaction holds the row and waits for reserve's family lock while reserve waits for that row
+  it('serializes intent then claim against reserve without reversing family and row locks', async () => {
+    const a = await isolatedConnection();
+    const b = await isolatedConnection();
+    const identity = await admitIntent(testDb(), INPUT);
+    const input = {
+      family: identity.family,
+      entityId: identity.entityId,
+      entityRevision: identity.entityRevision,
+      unit: identity.unit,
+      input: INPUT,
+    };
+    const paused = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const runs: Promise<unknown>[] = [];
+    try {
+      const firstRun = settled(
+        a.db.transaction(async (tx) => {
+          expect(await admitPaidEffectIntent(tx, input)).toMatchObject({
+            kind: 'existing',
+            state: 'pending',
+          });
+          paused.resolve();
+          await release.promise;
+          return claimPaidEffectSend(tx, identity, {
+            backend: 'pg-boss',
+            deliveryId: 'first',
+            leaseExpiresAt: new Date(Date.now() + 60_000),
+          });
+        }),
+      );
+      runs.push(firstRun);
+      await reachBarrier(paused.promise, firstRun);
+      const reserveRun = settled(
+        reservePaidEffect(b.db, input, {
+          backend: 'pg-boss',
+          deliveryId: 'second',
+          leaseExpiresAt: new Date(Date.now() + 60_000),
+        }),
+      );
+      runs.push(reserveRun);
+      await expectFamilyWait(a.pid, b.pid, input.family);
+      release.resolve();
+      expect(await firstRun).toMatchObject({
+        status: 'fulfilled',
+        value: { kind: 'claimed', fence: 1 },
+      });
+      expect(await reserveRun).toMatchObject({
+        status: 'fulfilled',
+        value: { kind: 'held', state: 'sending', blockedBy: null },
+      });
+      expect(await readPaidEffect(testDb(), identity)).toMatchObject({
+        state: 'sending',
+        fence: 1,
+        delivery: { deliveryId: 'first' },
+      });
+    } finally {
+      release.resolve();
+      await Promise.all(runs);
+      await Promise.all([a.close(), b.close()]);
     }
   });
 
@@ -745,7 +1282,10 @@ describe('paid-effect backend control (DB)', () => {
       updated_at: now,
       version: 0,
     });
-    await switchPaidEffectBackend(testDb(), 'note_verify', 'dbos');
+    // Historical/restore control state, not authorization to cut over unversioned producers.
+    await testDb()
+      .insert(paid_effect_control)
+      .values({ family: 'note_verify', backend: 'dbos', generation: 1 });
     await expect(
       reserveNoteVerification(testDb(), 'note-fenced-1', {
         controlAdmission: buildNoteVerificationControlAdmission({
@@ -761,9 +1301,9 @@ describe('paid-effect backend control (DB)', () => {
     expect(claims).toHaveLength(0);
   });
 
-  // @invariant concurrency: the note reservation (with its in-transaction admission) and a concurrent note_verify switch serialize on the family lock — the reservation can never claim while the switch succeeds, closing the tx1/tx2 window
-  // @fails-if a pg-boss reservation creates a claim AND the switch to DBOS also succeeds in the same interleave
-  it('serializes the note reservation vs switch interleave', async () => {
+  // @invariant concurrency: a real note reservation holds the family lock until its claim commits; a concurrent missing-row switch waits and sees exactly one sending obligation
+  // @fails-if remove/move the reservation hook outside its transaction, allowing the switch past the uncommitted claim instead of waiting on the same family lock
+  it('serializes the note reservation vs switch with an observable blocked backend', async () => {
     const now = new Date();
     await testDb().insert(artifact).values({
       id: 'note-race-1',
@@ -780,23 +1320,67 @@ describe('paid-effect backend control (DB)', () => {
       updated_at: now,
       version: 0,
     });
-    const [reserveResult, switchResult] = await Promise.allSettled([
-      reserveNoteVerification(testDb(), 'note-race-1', {
-        controlAdmission: buildNoteVerificationControlAdmission({
-          backend: 'pg-boss',
-          deliveryId: 'job-race',
+    const before = await testDb().select().from(artifact).where(eq(artifact.id, 'note-race-1'));
+    const paused = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const a = await isolatedConnection({
+      beforeCommit: async () => {
+        paused.resolve();
+        await release.promise;
+      },
+    });
+    const b = await isolatedConnection();
+    const runs: Promise<unknown>[] = [];
+    try {
+      expect(await readPaidEffectControl(testDb(), 'note_verify')).toMatchObject({
+        explicit: false,
+      });
+      const reserveRun = settled(
+        reserveNoteVerification(a.db, 'note-race-1', {
+          controlAdmission: buildNoteVerificationControlAdmission({
+            backend: 'pg-boss',
+            deliveryId: 'job-race',
+          }),
         }),
-      }),
-      switchPaidEffectBackend(testDb(), 'note_verify', 'dbos'),
-    ]);
-    const reserveWon =
-      reserveResult.status === 'fulfilled' && reserveResult.value.kind === 'claimed';
-    const switchWon = switchResult.status === 'fulfilled';
-    expect(reserveWon && switchWon).toBe(false);
-    if (reserveWon) {
+      );
+      runs.push(reserveRun);
+      await reachBarrier(paused.promise, reserveRun);
+      const switchRun = settled(switchPaidEffectBackend(b.db, 'note_verify', 'dbos'));
+      runs.push(switchRun);
+      await expectFamilyWait(a.pid, b.pid, 'note_verify');
+      expect(await testDb().select().from(note_verification_claim)).toHaveLength(0);
+      release.resolve();
+      expect(await reserveRun).toMatchObject({
+        status: 'fulfilled',
+        value: { kind: 'claimed', lease: { artifactId: 'note-race-1', fence: 1 } },
+      });
+      const switchResult = await switchRun;
       expect(switchResult.status).toBe('rejected');
-    } else if (switchWon) {
-      expect(reserveResult.status).toBe('rejected');
+      if (switchResult.status !== 'rejected') throw new Error('switch must be blocked');
+      expect(switchResult.reason).toBeInstanceOf(PaidEffectSwitchBlockedError);
+      expect(switchResult.reason).toMatchObject({
+        blocking: { pending: 0, sending: 1, unknown: 0, receipt_ready: 0 },
+      });
+      const claims = await testDb().select().from(note_verification_claim);
+      expect(claims).toHaveLength(1);
+      expect(claims[0]).toMatchObject({
+        artifact_id: 'note-race-1',
+        artifact_version: 0,
+        state: 'reserved',
+        fence: 1,
+      });
+      expect(await testDb().select().from(artifact).where(eq(artifact.id, 'note-race-1'))).toEqual(
+        before,
+      );
+      expect(await readPaidEffectControl(testDb(), 'note_verify')).toMatchObject({
+        backend: 'pg-boss',
+        generation: 0,
+        explicit: false,
+      });
+    } finally {
+      release.resolve();
+      await Promise.all(runs);
+      await Promise.all([a.close(), b.close()]);
     }
   });
 });
