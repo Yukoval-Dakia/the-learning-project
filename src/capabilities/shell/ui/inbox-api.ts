@@ -203,10 +203,17 @@ export type ProposalDecision = 'accept' | 'reverse' | 'change_type' | 'dismiss';
 
 export function proposalDecisionBody(
   decision: ProposalDecision,
-  opts: { newRelationType?: string; userNote?: string; correctedClaimMd?: string } = {},
+  opts: {
+    newRelationType?: string;
+    userNote?: string;
+    correctedClaimMd?: string;
+    /** Accept-only: the learner confirmed an irreversible block merge (YUK-1404). */
+    confirmLossy?: true;
+  } = {},
 ): ApiOperationRequestBody<'createProposalDecision'> {
   return {
     decision,
+    ...(decision === 'accept' && opts.confirmLossy ? { confirm_lossy: true as const } : {}),
     ...(opts.newRelationType ? { new_relation_type: opts.newRelationType } : {}),
     ...(opts.userNote ? { user_note: opts.userNote } : {}),
     // Empty edits reach validation instead of degrading to an uncorrected accept.

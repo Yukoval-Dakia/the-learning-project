@@ -1191,3 +1191,38 @@
   gap: var(--s-3);
   margin-top: var(--s-4);
 }
+
+/* YUK-1438 — merge card: sub-questions/options and the irreversible-merge confirmation. */
+.inbox-loom .merge-structure {
+  margin: var(--s-1) 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 2px;
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+}
+.inbox-loom .merge-structure b {
+  color: var(--ink-4);
+  font-weight: 500;
+}
+.inbox-loom .merge-structure-note {
+  margin-top: var(--s-1);
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+}
+.inbox-loom .merge-confirm {
+  margin-top: var(--s-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  padding: var(--s-3);
+  display: grid;
+  gap: var(--s-1);
+  font-size: var(--fs-caption);
+  color: var(--ink-2);
+}
+.inbox-loom .merge-confirm-actions {
+  display: flex;
+  gap: var(--s-2);
+  margin-top: var(--s-1);
+}
