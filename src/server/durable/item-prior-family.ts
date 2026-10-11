@@ -7,15 +7,10 @@ import { sql } from 'drizzle-orm';
 import { z } from 'zod';
 import {
   DEFAULT_MAX_PER_RUN,
-  ItemPriorApplicationError,
   type ItemPriorCandidateFrozen,
-  ItemPriorDurableStoreError,
   type ItemPriorExecutionParams,
   type ItemPriorPreparedWork,
-  ItemPriorReceiptPersistenceError,
-  type ItemPriorRepEffectPort,
   type ItemPriorStagedItem,
-  commitItemPriorStagedCalibration,
   normalizeMethod,
   normalizeReps,
   prepareItemPriorWork,
@@ -26,6 +21,11 @@ import {
 import type { PracticeTaskRunFn } from '@/capabilities/practice/server/task-runtime';
 import type { Db, Tx } from '@/db/client';
 import { waitForRunnableEpoch } from '@/server/contract-epoch';
+import {
+  ItemPriorPaidEffectAdapter,
+  itemPriorDispatchSchema,
+} from './item-prior-paid-effect-adapter';
+import { paidEffectJsonEquals } from './paid-effect-protocol';
 
 export const ITEM_PRIOR_MEMBER = 'item_prior_backfill';
 // The retained manifest declares dependsOn: []; this candidate is only that root.
@@ -134,10 +134,10 @@ export interface ItemPriorMemberDeps {
  * Shared admission body (one recorded step, `item-prior-admission-v1`): epoch
  * gate, then a read-only repeatable-read freeze of delivery identity,
  * normalized params, candidates and knowledge names. Used unchanged by the
- * blocked candidate and by the port-driven execution path below.
+ * blocked candidate and by the explicit versioned execution path below.
  */
 async function admitItemPriorMember(
-  deps: ItemPriorMemberDeps,
+  deps: Pick<ItemPriorMemberDeps, 'db' | 'gateEpoch'>,
   request: ItemPriorMemberRequest,
 ): Promise<ItemPriorAdmission> {
   // All I/O stays inside the step. A missing checkpoint may repeat these reads;
@@ -203,107 +203,105 @@ export function registerItemPriorFamilyWorkflow(db: Db) {
   );
 }
 
-// ─── YUK-1355 — real per-rep execution behind the shared port (unregistered) ──
-//
-// This path exists so the seams above compose into an executable member the
-// moment the parent relays lane B's fixed typed protocol. It stays
-// unregistered and unbooted, requires an explicit port AND runTaskFn (no
-// manufactured defaults), and never turns the blocked candidate's rejection
-// off. Held items are counted and returned — never thrown, never retried
-// in-run, never auto-resent on a later delivery. Durable unknowns (store
-// access, receipt persistence, application outcome) propagate as dedicated
-// errors instead of being isolated or completed over.
+// Explicit versioned dispatch only. The old candidate and registration remain blocked.
+export const itemPriorDispatchedRequestSchema = itemPriorMemberRequestSchema
+  .extend({ dispatch: itemPriorDispatchSchema })
+  .refine((request) => request.dispatch.tickId === request.dagRunId, {
+    message: 'dispatch tickId must be the original DAG run ID',
+    path: ['dispatch', 'tickId'],
+  });
+export type ItemPriorDispatchedRequest = z.infer<typeof itemPriorDispatchedRequestSchema>;
 
-export interface ItemPriorMemberExecutionDeps extends ItemPriorMemberDeps {
-  /** Lane B's durable paid-effect protocol, relayed by the parent. Required. */
-  readonly port: ItemPriorRepEffectPort;
-  /** Explicit provider runner; no default is manufactured here. Required. */
+export interface ItemPriorDispatchedAdmission extends ItemPriorAdmission {
+  readonly dispatch: ItemPriorDispatchedRequest['dispatch'];
+}
+
+export interface ItemPriorExecutionStepRunner {
+  runStep(
+    name: string,
+    fn: () => Promise<ItemPriorDispatchedAdmission>,
+  ): Promise<ItemPriorDispatchedAdmission>;
+}
+
+export interface ItemPriorMemberExecutionDeps extends Omit<ItemPriorMemberDeps, 'steps'> {
+  readonly steps: ItemPriorExecutionStepRunner;
   readonly runTaskFn: PracticeTaskRunFn;
 }
 
 export interface ItemPriorDurableMemberResult {
-  /** Scheduler delivery identity — distinct from every item's rep identity. */
   readonly identity: ItemPriorAdmission['identity'];
+  readonly dispatch: ItemPriorDispatchedRequest['dispatch'];
   readonly params: ItemPriorExecutionParams;
   readonly considered: number;
-  /** Domain hard row verified to match this staged draft — NOT a paid-effect receipt guarantee. */
-  readonly applied: number;
-  /** An existing differing hard row held; this attempt's draft was not persisted. */
+  /** Readback matches the staged draft and transactional application receipts match. Noncausal. */
+  readonly matched: number;
   readonly superseded: number;
   readonly held: number;
   readonly noAnchor: number;
   readonly incomplete: number;
-  readonly skippedError: number;
   readonly items: readonly ItemPriorStagedItem[];
+}
+
+export class ItemPriorMemberIncompleteError extends Error {
+  readonly code = 'ITEM_PRIOR_MEMBER_INCOMPLETE';
+
+  constructor(readonly result: ItemPriorDurableMemberResult) {
+    super(`item_prior_backfill node ${result.identity.nodeId} has unresolved items`);
+  }
 }
 
 export async function runItemPriorDurableMemberExecution(
   deps: ItemPriorMemberExecutionDeps,
 ): Promise<ItemPriorDurableMemberResult> {
-  const request = itemPriorMemberRequestSchema.parse(deps.request);
-  const admission = await deps.steps.runStep('item-prior-admission-v1', () =>
-    admitItemPriorMember(deps, request),
-  );
-  const items: ItemPriorStagedItem[] = [];
-  const counts = {
-    applied: 0,
-    superseded: 0,
-    held: 0,
-    noAnchor: 0,
-    incomplete: 0,
-    skippedError: 0,
+  const request = itemPriorDispatchedRequestSchema.parse(deps.request);
+  // A distinct recorded step prevents an old unversioned checkpoint from becoming an upgraded job.
+  const admission = await deps.steps.runStep('item-prior-dispatched-admission-v1', async () => ({
+    ...(await admitItemPriorMember(deps, request)),
+    dispatch: request.dispatch,
+  }));
+  const expectedIdentity = {
+    member: request.member,
+    dagRunId: request.dagRunId,
+    runDate: request.runDate,
+    nodeId: request.nodeId,
   };
-  // Frozen works only: preparation already happened inside the recorded
-  // admission snapshot, so execution never re-resolves profiles or re-keys
-  // input digests (recovery input drift, parent review 2026-10-11).
-  for (const work of admission.prepared) {
-    try {
-      const staged = await runItemPriorItemRepStages(work, {
-        port: deps.port,
-        runTaskFn: deps.runTaskFn,
-      });
-      const verification = await commitItemPriorStagedCalibration(deps.db, staged);
-      if (verification.status === 'applied') {
-        counts.applied++;
-      } else if (verification.status === 'superseded') {
-        counts.superseded++;
-      } else if (staged.status === 'held') {
-        counts.held++;
-      } else if (staged.status === 'no-anchor') {
-        counts.noAnchor++;
-      } else {
-        counts.incomplete++;
-      }
-      items.push(staged);
-    } catch (err) {
-      // Durable unknowns propagate (parent review 2026-10-11): a store,
-      // receipt-persistence or application failure at/after a paid send must
-      // stay visible for later reconciliation — isolating it as an ordinary
-      // skip would let a later delivery treat an unresolved obligation as a
-      // plain retry or, worse, let the member report completion over it.
-      if (
-        err instanceof ItemPriorDurableStoreError ||
-        err instanceof ItemPriorReceiptPersistenceError ||
-        err instanceof ItemPriorApplicationError
-      ) {
-        throw err;
-      }
-      // Defensive per-item isolation for unexpected non-durable failures.
-      // Every classified path above either returns an outcome or throws one of
-      // the propagated durable errors; provider failures are recorded in the
-      // port and surface as status 'held', so they never reach this catch.
-      console.error('[item_prior_durable_member] question staging failed', {
-        questionId: work.candidate.id,
-        err,
-      });
-      counts.skippedError++;
-    }
+  if (
+    !paidEffectJsonEquals(admission.identity, expectedIdentity) ||
+    !paidEffectJsonEquals(admission.dispatch, request.dispatch) ||
+    !paidEffectJsonEquals(admission.params, {
+      method: normalizeMethod(request.method),
+      reps: normalizeReps(request.reps),
+    })
+  ) {
+    throw new ItemPriorMemberIdentityError(
+      'Recorded item-prior dispatch differs from original request',
+    );
   }
-  return {
+  const effects = new ItemPriorPaidEffectAdapter(deps.db, admission.dispatch);
+  const items: ItemPriorStagedItem[] = [];
+  const counts = { matched: 0, superseded: 0, held: 0, noAnchor: 0, incomplete: 0 };
+  for (const work of admission.prepared) {
+    const staged = await runItemPriorItemRepStages(work, {
+      effects,
+      runTaskFn: deps.runTaskFn,
+    });
+    const disposition = await effects.commitStaged(work, staged);
+    if (disposition.status === 'matched') counts.matched++;
+    else if (disposition.status === 'superseded') counts.superseded++;
+    else if (disposition.status === 'no-anchor') counts.noAnchor++;
+    else if (staged.status === 'held') counts.held++;
+    else counts.incomplete++;
+    items.push(staged);
+  }
+  const result = {
     identity: admission.identity,
+    dispatch: admission.dispatch,
     params: admission.params,
     considered: admission.candidates.length,
     ...counts,
     items,
   } satisfies ItemPriorDurableMemberResult;
+  // Successful workflow return must never discharge a DAG member over an open obligation.
+  if (result.held > 0 || result.incomplete > 0) throw new ItemPriorMemberIncompleteError(result);
+  return result;
 }

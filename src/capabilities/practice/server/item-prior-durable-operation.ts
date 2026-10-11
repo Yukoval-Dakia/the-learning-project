@@ -1,7 +1,7 @@
 // YUK-1355: extracted item_prior_backfill operation, consumed by the retained
 // pg-boss handler. The unregistered DBOS candidate only consumes the read functions.
-// Provider errors do not prove that no paid effect occurred. Retained catch/skip
-// behavior stays here; durable dispatch needs a separate safe claim/receipt owner.
+// Retained catch/skip behavior stays here. The explicit versioned execution path
+// consumes the real shared paid-effect adapter; it is not a default cutover.
 //
 // YUK-1355 (2026-10-11 continuation): per-rep preparation/execute/parse/aggregate/
 // application seams. Rep work identity = question revision + input digest + rep
@@ -10,6 +10,7 @@
 // deliveries and is never caught as an ordinary retryable failure.
 
 import { and, eq, inArray, sql } from 'drizzle-orm';
+import { z } from 'zod';
 import { aggregateItemPriorRepDrafts } from '@/core/item-prior-reps';
 import { canonicalHash } from '@/core/migration/canonical';
 import type { ItemPriorDraftT } from '@/core/schema/item_prior';
@@ -17,6 +18,8 @@ import type { ItemPriorDraftT } from '@/core/schema/item_prior';
 import type { Db, Tx } from '@/db/client';
 import { item_calibration, knowledge, question } from '@/db/schema';
 import { parseItemPriorLlasaOutput, parseItemPriorOutput } from '@/server/ai/item-prior';
+import type { ItemPriorPaidEffectAdapter } from '@/server/durable/item-prior-paid-effect-adapter';
+import { computePaidEffectInputDigest } from '@/server/durable/paid-effect-protocol';
 import { applyItemPrior } from '@/server/mastery/item-calibration';
 import type { SubjectProfile } from '@/subjects/profile';
 import { resolveSubjectProfileForKnowledgeIds } from './knowledge-runtime';
@@ -124,8 +127,8 @@ export type ItemPriorTaskName = 'ItemPriorTask' | 'ItemPriorLlasaTask';
  * identity (dagRunId / runDate / nodeId): the same question prepared on a later
  * nightly delivery yields the same rep identities, so staged reps resume
  * instead of re-sending, while a changed question or changed input yields new
- * identities and every old record — including an unknown paid outcome — stays
- * untouched.
+ * identities. The adapter binds row revision, input digest and rep count into
+ * one frozen workset revision so an old unknown gates changed work.
  */
 export interface ItemPriorRepIdentity {
   readonly questionId: string;
@@ -196,8 +199,22 @@ export async function prepareItemPriorWork(
     input,
     subjectProfile,
     questionRevision: canonicalHash({ tag: 'item-prior-question-revision-v1', candidate }),
-    inputDigest: canonicalHash({ tag: 'item-prior-input-v1', taskName, input, subjectProfile }),
+    inputDigest: computePaidEffectInputDigest(
+      itemPriorPreparedInput({ taskName, input, subjectProfile }),
+    ),
     repCount: params.method === 'llasa' ? 1 : params.reps,
+  };
+}
+
+/** Exact frozen arguments passed to the task runner, including its profile context. */
+export function itemPriorPreparedInput(
+  work: Pick<ItemPriorPreparedWork, 'taskName' | 'input' | 'subjectProfile'>,
+) {
+  return {
+    version: 1,
+    taskName: work.taskName,
+    input: work.input,
+    ctx: { subjectProfile: work.subjectProfile },
   };
 }
 
@@ -290,56 +307,16 @@ export async function commitItemPriorCalibration(
   await applyItemPrior(db, { questionId: candidate.id, draft, source });
 }
 
-// ─── YUK-1355 — provisional shared paid-effect port (EXPLICIT B DEPENDENCY) ──
-//
-// ONE owner: lane B, task migration-shared-durable-effects-implementation-
-// 20261011 (worktree tlp-migration-receipt-reference). Lane B owns the real
-// durable claim / fence / immutable-receipt store and its schema. The shapes
-// below are only lane A's consumption surface for per-rep paid effects; the
-// parent relays B's fixed typed protocol before this repository imports any
-// real implementation. Until then:
-//   - NO production implementation of this port exists in this repository;
-//   - nothing registered, booted or manifested consumes it;
-//   - it must not be presented as live admission, and no manufactured
-//     always-success adapter may be bound to it (test doubles stay in tests).
-//
-// Contract this seam relies on:
-//   - lookupRep is a pure read keyed by the work identity (revision + input
-//     digest + rep index), never by scheduler delivery identity.
-//   - admitRep claims one physical send for the identity ('admitted'), reports
-//     an existing unresolved claim ('held'), or a backend refusal with no paid
-//     effect ('refused').
-//   - completeRep appends the exact immutable receipt once per admission; a
-//     divergent second receipt for the same identity is a protocol violation
-//     B's implementation rejects.
-//   - Records survive workflow restarts, later nightly deliveries and
-//     cross-backend cutover; nothing in this seam deletes or rewrites them.
-
-/** Durable record of one rep's paid effect. */
-export type ItemPriorRepRecord =
-  | { readonly state: 'unknown' }
-  | { readonly state: 'output'; readonly outputText: string };
-
-export type ItemPriorRepAdmission =
-  | { readonly decision: 'admitted' }
-  | { readonly decision: 'held' }
-  | { readonly decision: 'refused'; readonly reason: string };
+/** Immutable completed result payload stored by the shared paid-effect owner. */
+export const itemPriorOutputReceiptSchema = z.strictObject({
+  version: z.literal(1),
+  kind: z.literal('output'),
+  outputText: z.string(),
+});
 
 export type ItemPriorRepReceipt =
-  | { readonly kind: 'output'; readonly outputText: string }
+  | z.infer<typeof itemPriorOutputReceiptSchema>
   | { readonly kind: 'unknown'; readonly reason: string };
-
-export interface ItemPriorRepEffectPort {
-  lookupRep(identity: ItemPriorRepIdentity): Promise<ItemPriorRepRecord | undefined>;
-  admitRep(
-    identity: ItemPriorRepIdentity,
-    intent: {
-      taskName: ItemPriorTaskName;
-      inputDigest: string;
-    },
-  ): Promise<ItemPriorRepAdmission>;
-  completeRep(identity: ItemPriorRepIdentity, receipt: ItemPriorRepReceipt): Promise<void>;
-}
 
 // ─── YUK-1355 — staged per-rep execution / parse / aggregate / application ───
 
@@ -349,7 +326,7 @@ export interface ItemPriorRepEffectPort {
 // visible to later reconciliation; it must never be swallowed into a generic
 // per-item skip or a completed member result.
 
-/** Durable-store access failed before any send this run (lookup/admit). */
+/** Reservation or immutable-result validation failed before any send this run. */
 export class ItemPriorDurableStoreError extends Error {
   readonly code = 'ITEM_PRIOR_DURABLE_STORE';
 
@@ -426,7 +403,7 @@ export interface ItemPriorStagedItem {
 }
 
 export interface ItemPriorRepExecutionDeps {
-  readonly port: ItemPriorRepEffectPort;
+  readonly effects: Pick<ItemPriorPaidEffectAdapter, 'reserveRep' | 'completeRep'>;
   readonly runTaskFn: PracticeTaskRunFn;
 }
 
@@ -448,59 +425,27 @@ export function parseStagedItemPriorOutput(
   }
 }
 
-function outcomeFromRecord(
-  method: ItemPriorMethod,
-  record: ItemPriorRepRecord,
-): ItemPriorRepOutcome {
-  if (record.state === 'unknown') return { state: 'held' };
-  return parseStagedItemPriorOutput(method, record.outputText);
-}
-
-/**
- * Execute one rep through the shared port. Resume first: an existing record is
- * reused as-is and the provider is never called. Otherwise the rep must be
- * admitted; a provider error records an `unknown` receipt (an exception does
- * not prove that no paid effect occurred) and returns held; a completed
- * response records an immutable `output` receipt and parses deterministically.
- *
- * Error discipline (parent review 2026-10-11): store failures before any send
- * and receipt-persistence failures at/after a send are thrown as dedicated
- * error classes — they are durable unknowns the caller must propagate, never
- * isolate as ordinary per-item failures. Provider errors themselves are NOT
- * thrown: they become a recorded unknown receipt (held) when persistence
- * succeeds, or an `ItemPriorReceiptPersistenceError` when it does not.
- */
+/** Reserve through the real store before every physical send. A receipt is replayed for free. */
 export async function executeItemPriorRep(
   work: ItemPriorPreparedWork,
   repIndex: number,
   deps: ItemPriorRepExecutionDeps,
 ): Promise<ItemPriorRepOutcome> {
   const identity = itemPriorRepIdentity(work, repIndex);
-  let record: ItemPriorRepRecord | undefined;
+  let reservation: Awaited<ReturnType<ItemPriorPaidEffectAdapter['reserveRep']>>;
   try {
-    record = await deps.port.lookupRep(identity);
+    reservation = await deps.effects.reserveRep(work, repIndex);
+    if (reservation.kind === 'completed') {
+      const receipt = itemPriorOutputReceiptSchema.parse(reservation.result);
+      return parseStagedItemPriorOutput(work.method, receipt.outputText);
+    }
   } catch (err) {
     throw new ItemPriorDurableStoreError(
-      `lookupRep failed for question ${identity.questionId} rep ${repIndex}; no send happened this run, but prior obligations are unreadable`,
+      `reserveRep failed for question ${identity.questionId} rep ${repIndex}; obligations unreadable or dispatch fenced`,
       err,
     );
   }
-  if (record) return outcomeFromRecord(work.method, record);
-
-  let admission: ItemPriorRepAdmission;
-  try {
-    admission = await deps.port.admitRep(identity, {
-      taskName: work.taskName,
-      inputDigest: work.inputDigest,
-    });
-  } catch (err) {
-    throw new ItemPriorDurableStoreError(
-      `admitRep failed for question ${identity.questionId} rep ${repIndex}; no send happened this run`,
-      err,
-    );
-  }
-  if (admission.decision === 'refused') return { state: 'pending' };
-  if (admission.decision === 'held') return { state: 'held' };
+  if (reservation.kind === 'held') return { state: 'held' };
 
   let outputText: string;
   try {
@@ -509,16 +454,14 @@ export async function executeItemPriorRep(
     });
     outputText = runResult.text;
   } catch (err) {
-    // Persist the unfinished obligation before returning: the send may have
-    // happened, so the durable record — not this process — owns the outcome.
     try {
-      await deps.port.completeRep(identity, {
+      await deps.effects.completeRep(reservation, {
         kind: 'unknown',
         reason: err instanceof Error ? err.message : String(err),
       });
     } catch (receiptErr) {
       throw new ItemPriorReceiptPersistenceError(
-        `send failed AND unknown-receipt persistence failed for question ${identity.questionId} rep ${repIndex}; paid outcome and receipt state are both unresolved`,
+        `send failed and unknown persistence failed for question ${identity.questionId} rep ${repIndex}`,
         receiptErr,
         identity,
       );
@@ -526,10 +469,10 @@ export async function executeItemPriorRep(
     return { state: 'held' };
   }
   try {
-    await deps.port.completeRep(identity, { kind: 'output', outputText });
+    await deps.effects.completeRep(reservation, { version: 1, kind: 'output', outputText });
   } catch (err) {
     throw new ItemPriorReceiptPersistenceError(
-      `output received but receipt persistence unconfirmed for question ${identity.questionId} rep ${repIndex}; treat as an unresolved obligation`,
+      `output received but receipt persistence unconfirmed for question ${identity.questionId} rep ${repIndex}`,
       err,
       identity,
     );
@@ -580,7 +523,7 @@ export function settleItemPriorStagedItem(
 
 /**
  * Staged execution of one item's intended reps, ascending rep order. Resolved
- * reps are replayed from the port without provider calls; application is the
+ * reps are replayed from shared receipts without provider calls; application is the
  * caller's decision and only valid once every rep resolved.
  */
 export async function runItemPriorItemRepStages(
@@ -589,7 +532,13 @@ export async function runItemPriorItemRepStages(
 ): Promise<ItemPriorStagedItem> {
   const outcomes: ItemPriorRepOutcome[] = [];
   for (let repIndex = 0; repIndex < work.repCount; repIndex++) {
-    outcomes.push(await executeItemPriorRep(work, repIndex, deps));
+    const outcome = await executeItemPriorRep(work, repIndex, deps);
+    outcomes.push(outcome);
+    if (outcome.state === 'held') {
+      // Do not mint later sibling sends over an unresolved effect, including on a later night.
+      while (outcomes.length < work.repCount) outcomes.push({ state: 'pending' });
+      break;
+    }
   }
   return settleItemPriorStagedItem(work, outcomes);
 }
@@ -604,7 +553,7 @@ export interface ItemPriorApplicationRowSnapshot {
 
 export type ItemPriorApplicationVerification =
   /** Domain row now matches this staged draft exactly (see caveat below). */
-  | { readonly status: 'applied' }
+  | { readonly status: 'matched' }
   /** A different hard row already exists; this attempt's draft was NOT persisted. */
   | { readonly status: 'superseded'; readonly existing: ItemPriorApplicationRowSnapshot }
   /** Staged item is not ready — nothing to apply. */
@@ -664,7 +613,7 @@ async function readItemPriorHardRow(
  * (`Math.fround` on both sides; PG `real` legally shortens medians), `source`
  * exactly:
  *
- * - existing row already matching → `applied` (idempotent replay of the same
+ * - existing row already matching → `matched` (idempotent replay of the same
  *   staged result);
  * - existing row differing → `superseded`: another writer's anchor holds and
  *   is never overwritten — this attempt's draft was not persisted;
@@ -672,10 +621,10 @@ async function readItemPriorHardRow(
  *   differing row after a successful write escalates to `superseded` /
  *   `ItemPriorApplicationError`.
  *
- * CAVEAT (no applied guarantee without the shared protocol): `applied` proves
- * the domain state equals this staged draft, not causal authorship — an
- * identical row written earlier by another attempt is indistinguishable until
- * lane B's receipt-bound comparison exists.
+ * `matched` proves the domain state equals this staged draft. It never proves
+ * causal authorship. The adapter separately binds this disposition to the exact
+ * immutable paid results with transactional application receipts; this readback
+ * alone never settles paid effects.
  *
  * Write/read-back failures throw `ItemPriorApplicationError`: all reps are
  * already receipted, so a later delivery replays them for free, but the
@@ -701,7 +650,7 @@ export async function commitItemPriorStagedCalibration(
   const existing = await readBack();
   if (existing) {
     return stagedRowMatches(existing, staged)
-      ? { status: 'applied' }
+      ? { status: 'matched' }
       : { status: 'superseded', existing };
   }
 
@@ -728,7 +677,7 @@ export async function commitItemPriorStagedCalibration(
     );
   }
   return stagedRowMatches(after, staged)
-    ? { status: 'applied' }
+    ? { status: 'matched' }
     : { status: 'superseded', existing: after };
 }
 

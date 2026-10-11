@@ -1,5 +1,9 @@
 # YUK-1355: item_prior_backfill DAG member reference checkpoint
 
+> Current source checkpoint: [fixed shared-store integration](#2026-10-11-fixed-shared-store-integration).
+> Earlier sections describe their pinned revisions. The explicit versioned path now
+> consumes the real store; the original candidate remains blocked and unregistered.
+
 Base: `6f1f3e07e41a4db7b302f5404daf7e3067999423`, branch
 `feat/yuk-1355-dag-reference`. This continues existing uncommitted WIP.
 The retained handler consumes the extracted operation. The DBOS candidate is
@@ -530,3 +534,155 @@ and no third review is requested.
 ## Per-rep stage final R2
 
 R2 on `3acf6be20eb162f8ec8b557317525ca7883e9de6` versus `927a927effc4364009823350c4e100b3c10a94ba` confirms the float4 P1 is resolved, with no new P0/P1 within scope. Parent independently ran 32 unit cases successfully. The actual Postgres test is still prepared, not run. This completes the per-rep stage R1/R2 budget; shared protocol integration is a separate substantive change and remains pending. No paid-effect or runtime acceptance is inferred.
+
+
+## 2026-10-11 fixed shared-store integration
+
+Sole writer in the ORIGINAL
+`/Volumes/YukovalSBak/yukoval-projects/tlp-migration-dag-reference`, existing
+`feat/yuk-1355-dag-reference`, starting clean at
+`8a584e1ce631e5b1534b35dea18845562850e222`. The parent already normally merged
+fixed B `8e3b1af04` and main/0119. This work reads only that local fixed source.
+The owner subsequently reports B R2 `403c7248682129722be0051b9fba5622540c71f3`
+NONE within its scope, with production shared APIs unchanged. Its final real-DB
+acceptance remains parent-owned and pending a new window. No accepted runtime
+or cutover is inferred.
+
+### Concrete consumer and behavior
+
+`runItemPriorDurableMemberExecution` constructs `ItemPriorPaidEffectAdapter`
+from the recorded original dispatch and the real `Db`. It no longer accepts
+`ItemPriorRepEffectPort`; the provisional lookup/admit interface and its
+in-memory store doubles are deleted. The adapter calls the fixed
+`reservePaidEffect`, `recordPaidEffectResult`, `markPaidEffectUnknown`,
+`readPaidEffect` and `recordPaidEffectApplication` exports directly.
+
+- A strict version-1 request requires backend, delivery ID, original generation
+  and tick ID. Tick ID must equal the frozen DAG run ID. Generation is required
+  even for bootstrap through this new contract. It is never manufactured from
+  a current control read. The distinct `item-prior-dispatched-admission-v1`
+  checkpoint freezes dispatch, normalized parameters and prepared work.
+  Recorded dispatch/identity/parameter mismatch rejects execution. The old
+  unversioned candidate keeps its original checkpoint and always rejects.
+- The paid identity is family `item_prior_backfill`, question entity ID, frozen
+  workset revision, `feature/rep:N` or `llasa/rep:0`, and the shared input digest.
+  The exact stored input envelope is `{version:1, taskName, input,
+  ctx:{subjectProfile}}`; the task runner receives those same prepared arguments.
+  The adapter recomputes the digest before reservation and rejects drift.
+- Frozen workset revision is the shared digest of `{version:1,
+  questionRevision, inputDigest, repCount}`. The question-row revision remains
+  separately available in the prepared work. B's recognized feature-sibling
+  exemption in `paid-effect-store.ts` / `paid-effect-protocol.ts` assumes one
+  revision identifies one complete frozen workset. Binding all three coordinates
+  prevents knowledge/profile input drift and rep-count changes from using that
+  exemption around an old unknown. A bare question-row revision is insufficient
+  for this adapter. No shared implementation change is required for this binding.
+- Only `winner` sends. The complete winner identity and fence go to result or
+  unknown persistence, together with the original delivery ID. `completed`
+  parses immutable version-1 output without sending; `held` never sends.
+  Provider errors become a durable unknown. Store, fenced-control and receipt
+  failures propagate. A held rep stops later sibling reservations; remaining
+  slots are pending. Later nights and changed work cannot turn that unknown into
+  a new send ticket.
+- Application re-reads every immutable result from the actual store and
+  recomputes the staged result before any domain write. The retained applier,
+  float4 readback and every rep's application receipt share one transaction.
+  Its version-1 application payload binds the question revision, input digest,
+  rep count, ordered identities/result digests, draft and disposition.
+  Immutable application mismatch rolls the transaction back. A later replay
+  reuses paid results. `matched` describes equality with the hard row; it never
+  claims causal authorship. `superseded` preserves a foreign differing anchor.
+  Known parse failures settle `no-anchor` with receipts and no hard-row write.
+- The member throws `ItemPriorMemberIncompleteError` over any held/incomplete
+  item. Successful return requires settled dispositions with transactional
+  application receipts. It never writes DAG node status in this lane.
+
+Only seven owned files change: operation, operation units, family, family units,
+the narrow new family adapter, the existing DB test file, and this document.
+The retained handler, shared paid-effect production modules, schema/SQL,
+registration, boot, manifest, public barrels, Lane C and default pg-boss path
+are not cut over. No child delegation or further old-diff review was started.
+Prior A/C R1/R2 remain closed; this integration is a new substantive review
+scope for the parent.
+
+### Prepared real-DB cases
+
+`tests/integration/item-prior-durable-member.db.test.ts` contains 11 prepared
+cases: three retained admission/float4 cases and eight concrete adapter/store
+cases. They use the real Drizzle database and fixed B transitions. The task
+runner supplies offline output only, so these are DB proofs, not provider proofs.
+They are NOT RUN in this lane.
+
+1. Concurrent real reservations yield one winner; wrong fence and losing
+   delivery cannot complete; immutable result replay performs no send; stored
+   envelope and shared digest match exactly.
+2. Actual versioned member execution records the frozen provider arguments,
+   aggregates valid reps through float4 storage, and replays original inputs
+   and application receipts after a question edit.
+3. A provider exception records unknown, stops siblings, rejects member
+   completion, and remains held through a new DAG night, changed input,
+   changed question revision and expanded rep count. Old unknown history and
+   pending DAG nodes are preserved.
+4. A real immutable application conflict rolls back the hard-row write and
+   all application transitions. Already-recorded paid results replay for free.
+5. Explicit control fences the original generation without a provider call or
+   a committed intent. The adapter never reads current generation to upgrade it.
+6. LLaSA uses one paid unit with frozen reference/choices input and its retained
+   provenance, regardless of requested reps.
+7. Equal and differing foreign anchors remain unchanged. Bare readback leaves
+   effects `receipt_ready`; only matching transactional application receipts
+   settle the disposition, without causal attribution.
+8. All-invalid known outputs settle `no-anchor` with every application receipt
+   and no invented hard row.
+
+### Permitted validation and receipts
+
+Node `24.19.0` from `/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin`,
+pnpm `11.13.1`. Final unit checks drive retained behavior, parsing/error
+classification, frozen workset binding, held-stop behavior, original-dispatch
+validation and an actual adapter/store transaction failure through a concrete
+Drizzle/postgres-js client whose driver rejects before connecting. No mock
+claims database safety or successful paid admission.
+
+```text
+scoped units       exit 0; 2 files / 22 tests
+pnpm typecheck     exit 0; both TS projects, including all prepared DB cases
+pnpm lint          exit 0; 172 warnings
+owned Biome        exit 0; 6 source/test files, no warnings or errors
+pnpm build         exit 0; SPA, Start client/server, API, worker, migrate
+```
+
+Sealed local logs, including earlier failing attempts, and `receipt.json`:
+`/tmp/yuk1355-item-prior-shared-integration-20261011T104259Z/`.
+Final log SHA-256:
+
+```text
+unit-final2       7510a0147efeb8a1d68add427cc61d1261a01e73e907ac636525bc460362c109
+typecheck-final3  36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6
+lint-final       3bb99fe5aefbae3aebe64e9b4b53f312a370015c98323e4bd0099f448b74e6cd
+owned-biome      201178af575c70bc8663078255965f0c87e364938856fa46b0dfd288dd8df957
+build-final      f3749474b7076d1d516a12ca637a659425eefa79e6c767ea69608813e547e67e
+```
+
+### Parent-owned gates before admission
+
+Run the prepared scoped DB file with 0119 applied in the authorized DB window:
+
+```bash
+pnpm vitest run --config vitest.db.config.ts tests/integration/item-prior-durable-member.db.test.ts
+```
+
+Then validate the actual versioned producer/host path, persisted original
+backend/generation/DAG identity, old unversioned job disposition, concurrent
+backend admission, crash/restart with unfinished sending and application,
+lease-expiry unknown classification, switch/rollback and real DAG downstream
+non-completion over held work. Provider actual-output/cost quality and paid
+acceptance remain separate gates. Registration/default admission and runtime
+cutover stay parent-owned until those proofs and the new integration review
+are complete. B's final real-DB gate also remains open.
+
+This lane ran no DB/testcontainers/Docker/runtime/provider or credential/lock
+operations, and performed no push, PR, Linear or child delegation. The parent
+owns PLAN/.remember/Linear capture and issue state; no new shared-source fix
+or duplicate tracker item is requested by this consumer integration. Keep the
+existing migration/recovery/exit obligations open.
