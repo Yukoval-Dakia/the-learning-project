@@ -2,7 +2,8 @@ import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { resetTestConfig, setTestConfig } from '@/core/config/store';
-import type { ResponseSetT } from '@/core/schema/assessment';
+import { canonicalHash } from '@/core/migration/canonical';
+import type { ResponseSetT, ResponseSpecT } from '@/core/schema/assessment';
 import { JudgeWorkflowInput } from '@/core/schema/event/judge-operational-events';
 import {
   JudgePendingAttemptPayload,
@@ -25,16 +26,19 @@ import {
   placement_starter_cost_component,
   question,
 } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
+import { Placement } from '@/server/session';
 
 import { publishPaperModelFixture } from '../../../../tests/fixtures/assessment-paper';
 import { publishPlacementFixture } from '../../../../tests/fixtures/assessment-placement';
+import { seedHistoricalAssessmentIssuance } from '../../../../tests/fixtures/historical-assessment-issuance';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { insertLegacyGoal } from '../../../../tests/helpers/legacy-goal';
 import { RECONCILE_STALL_MS, reconcileStalledJudgeAttempts } from '../jobs/judge_pending_reconcile';
 import { runJudgeRun } from '../jobs/judge_run';
 import { dispatchNativeAttempt, executeNativeAttempt } from '../server/assessment/durable-attempt';
 import type { SaveSubmissionRequest } from '../server/assessment/submit';
-import { saveSubmission } from '../server/assessment/submit';
+import { getIssuanceState, saveSubmission } from '../server/assessment/submit';
 import * as evaluationService from '../server/judge/evaluate-submission';
 import { createRecordedModelExecutor } from '../server/judge/recorded-model-executor';
 import { fenceJudgeUnitClaim } from '../server/judge-operational';
@@ -103,12 +107,66 @@ async function open() {
   return { ...session, question: session.question };
 }
 type Open = Awaited<ReturnType<typeof open>>;
+async function openHistorical() {
+  const { sessionId } = await Placement.startPlacementSession(db, { knowledgeIds: ['kc1'] });
+  const identity = canonicalHash({ sessionId, ordinal: 1 });
+  const issued = await seedHistoricalAssessmentIssuance(db, {
+    issuance_id: `iss_placement_${identity}`,
+    group_id: 'q1',
+    container_occurrence_ref: `placement:${sessionId}`,
+    actorRef: 'assessment:placement',
+  });
+  const receipt = {
+    ordinal: 1,
+    questionId: 'q1',
+    score: 0,
+    scoreKind: 'klp' as const,
+    issuance_id: issued.issuance.issuance_id,
+    evaluation_group_id: `eg_placement_${identity}`,
+    submission_id: `sub_placement_${identity}`,
+    idempotency_key: `placement_${identity}`,
+  };
+  await writeEvent(db, {
+    id: `evt_placement_${identity}`,
+    session_id: sessionId,
+    actor_kind: 'user',
+    actor_ref: 'self',
+    action: 'experimental:assessment_placement_issued',
+    subject_kind: 'issuance',
+    subject_id: receipt.issuance_id,
+    outcome: null,
+    payload: receipt,
+  });
+  // The original response was captured against this historical frozen DTO.
+  // Current unanswered reads remain unavailable; no model serving authority is created.
+  return {
+    sessionId,
+    knowledgeIds: ['kc1'],
+    answeredCount: 0,
+    sourcingNeeded: false,
+    starterSupply: [],
+    historicalResponseSpec: issued.practice_dto.response_spec,
+    question: {
+      questionId: 'q1',
+      score: receipt.score,
+      scoreKind: receipt.scoreKind,
+      assessment: {
+        ...receipt,
+        state: await getIssuanceState(db, receipt.issuance_id),
+        phase: 'answering' as const,
+        pending_run: null,
+      },
+    },
+  };
+}
 function original(
-  session: Open,
+  session: Open & { historicalResponseSpec?: ResponseSpecT },
   text = 'fixture answer',
 ): SaveSubmissionRequest & { submission_id: string } {
   const binding = session.question.assessment;
-  const spec = binding.state.practice_dto?.response_spec.slots.find((s) => s.kind !== 'table');
+  const spec = (
+    binding.state.practice_dto?.response_spec ?? session.historicalResponseSpec
+  )?.slots.find((s) => s.kind !== 'table');
   if (!spec) throw new Error('missing response slot');
   const responseSet: ResponseSetT = {
     entries: [{ slot_id: spec.slot_id, kind: 'text', text_md: text }],
@@ -464,7 +522,7 @@ describe('placement frozen native workflow', () => {
     async (delivery) => {
       await seed();
       await publishPaperModelFixture(db, 'q1');
-      const session = await open();
+      const session = await openHistorical();
       const input = original(session, '方程和条件均已列出。');
       await saveSubmission(db, input);
       expect(await readJudgeRunPermanent(db, `judge_native_${input.submission_id}`)).toEqual({
@@ -623,7 +681,7 @@ describe('placement frozen native workflow', () => {
   it('holds a stored worker resolution even if its job notification was lost, without model redispatch', async () => {
     await seed();
     await publishPaperModelFixture(db, 'q1');
-    const session = await open();
+    const session = await openHistorical();
     const jobs: NativeJudgeRunJobData[] = [];
     await dispatchNativeAttempt(
       db,

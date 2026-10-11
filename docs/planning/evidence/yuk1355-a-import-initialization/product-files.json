@@ -34,7 +34,5 @@
       "sha256": "d9868b69b238a0529d02a8271304334566cb1391a7ce634ca60c71ca8d283379"
     }
   ],
-  "deleted": [
-    "src/server/durable/item-prior-family.unit.test.ts"
-  ]
+  "deleted": ["src/server/durable/item-prior-family.unit.test.ts"]
 }

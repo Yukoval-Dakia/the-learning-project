@@ -12,6 +12,8 @@ import { PgBoss } from 'pg-boss';
 import postgres from 'postgres';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
+import type { Db } from '@/db/client';
+import * as schema from '@/db/schema';
 import {
   type ChildExit,
   assertFixtureCanReset,
@@ -44,6 +46,8 @@ let caseLogStart = 0;
 let suiteBlocked: string | undefined = 'Session fixture setup has not completed';
 let hadCaseFailure = false;
 let db: ReturnType<typeof postgres>;
+let appDb: Db;
+let fixtureUrl: string | undefined;
 const messageSchema = fixtureMessageSchema;
 const diagnosticSecrets: string[] = [];
 const buildArgs = [
@@ -60,7 +64,7 @@ const buildArgs = [
   '--external:winston-transport',
 ];
 function safeUrl() {
-  const url = new URL(z.url().parse(process.env.TEST_DATABASE_URL));
+  const url = new URL(z.url().parse(fixtureUrl ?? process.env.TEST_DATABASE_URL));
   if (
     !/^\/test_fork_\d+$/.test(url.pathname) ||
     !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
@@ -210,7 +214,22 @@ function worker(
   }
   async function stop() {
     child.send({ kind: 'stop' });
-    expect(await exited).toEqual([0, null]);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      expect(
+        await Promise.race([
+          exited,
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(
+              () => reject(new Error(`Owned worker shutdown timed out: ${JSON.stringify(record)}`)),
+              30000,
+            );
+          }),
+        ]),
+      ).toEqual([0, null]);
+    } finally {
+      clearTimeout(timer);
+    }
   }
   return { child, exited, wait, kill, stop };
 }
@@ -337,30 +356,74 @@ async function commitFault(
 ) {
   const target = safeUrl();
   const sockets = new Set<Socket>();
+  const disconnectPrimary = new Set<() => void>();
+  const errorFields = Buffer.from(
+    'SERROR\0VERROR\0C08006\0MPrimary unavailable after lost COMMIT response\0\0',
+  );
+  const connectionFailure = Buffer.alloc(5 + errorFields.length);
+  connectionFailure[0] = 'E'.charCodeAt(0);
+  connectionFailure.writeInt32BE(4 + errorFields.length, 1);
+  errorFields.copy(connectionFailure, 5);
+  const ready = Buffer.from([90, 0, 0, 0, 5, 73]);
+  let maxQueuedCycles = 0;
   let fired = false;
+  let listenerClosed: Promise<void> | undefined;
+  const closeListener = () =>
+    (listenerClosed ??= new Promise<void>((done) => server.close(() => done())));
   const server = createServer((downstream) => {
+    downstream.setNoDelay(true);
     if (fired && mode === 'after-server-commit-and-unavailable') {
       downstream.destroy();
       return;
     }
     const upstream = createConnection({ host: target.hostname, port: Number(target.port || 5432) });
+    upstream.setNoDelay(true);
     sockets.add(downstream);
     sockets.add(upstream);
     let front = Buffer.alloc(0);
     let back = Buffer.alloc(0);
     let startup = true;
     let receiptTx = false;
+    let unavailable = false;
+    let pendingReady = 0;
+    let unsyncedQuery = false;
+    let failedExtendedQuery = false;
     const statements = new Map<string, string>();
     const close = () => {
       downstream.destroy();
       upstream.destroy();
       sockets.delete(downstream);
       sockets.delete(upstream);
+      disconnectPrimary.delete(disconnect);
     };
+    const rejectQuery = () => {
+      downstream.write(connectionFailure);
+      evidence.push({ unavailableResponse: '08006' });
+    };
+    const disconnect = () => {
+      unavailable = true;
+      upstream.destroy();
+      // Reject in-flight work before closing the client transport. An abrupt RST
+      // lets postgres-js issue its automatic ROLLBACK after clearing its socket.
+      while (pendingReady > 0) {
+        rejectQuery();
+        downstream.write(ready);
+        pendingReady--;
+      }
+      if (unsyncedQuery) {
+        rejectQuery();
+        failedExtendedQuery = true;
+      }
+    };
+    disconnectPrimary.add(disconnect);
     downstream.on('error', close);
-    upstream.on('error', close);
-    downstream.on('close', () => upstream.destroy());
-    upstream.on('close', () => downstream.destroy());
+    upstream.on('error', () => {
+      if (!unavailable) close();
+    });
+    downstream.on('close', close);
+    upstream.on('close', () => {
+      if (!unavailable) close();
+    });
     downstream.on('data', (chunk) => {
       front = Buffer.concat([front, typeof chunk === 'string' ? Buffer.from(chunk) : chunk]);
       while (front.length >= (startup ? 4 : 5)) {
@@ -374,6 +437,28 @@ async function commitFault(
           continue;
         }
         const tag = String.fromCharCode(packet[0]);
+        if (unavailable) {
+          // No SQL reaches the primary after the fault, including through a
+          // previously healthy pool connection. Honor extended-protocol Sync.
+          if (tag === 'X') close();
+          else if (tag === 'S') {
+            downstream.write(ready);
+            failedExtendedQuery = false;
+          } else if (tag === 'Q' && !failedExtendedQuery) {
+            rejectQuery();
+            downstream.write(ready);
+          } else if ((tag === 'P' || tag === 'B') && !failedExtendedQuery) {
+            rejectQuery();
+            failedExtendedQuery = true;
+          }
+          continue;
+        }
+        if (tag === 'P' || tag === 'B' || tag === 'E') unsyncedQuery = true;
+        if (tag === 'Q' || tag === 'S') {
+          pendingReady++;
+          unsyncedQuery = false;
+          maxQueuedCycles = Math.max(maxQueuedCycles, pendingReady);
+        }
         let query = '';
         if (tag === 'Q') query = packet.subarray(5, -1).toString();
         if (tag === 'P') {
@@ -406,6 +491,7 @@ async function commitFault(
       }
     });
     upstream.on('data', (chunk) => {
+      if (unavailable) return;
       back = Buffer.concat([back, typeof chunk === 'string' ? Buffer.from(chunk) : chunk]);
       while (back.length >= 5) {
         const size = back.readInt32BE(1) + 1;
@@ -417,10 +503,17 @@ async function commitFault(
         if (!fired && receiptTx && command === 'COMMIT' && mode !== 'before-server-commit') {
           fired = true;
           evidence.push({ fault: mode, at: new Date().toISOString(), serverCommand: command });
-          close();
+          if (mode === 'after-server-commit-and-unavailable') {
+            // Existing pool connections must become unavailable too. Refusing only
+            // new connections lets the authoritative reread use a healthy sibling.
+            evidence.push({ unavailableSocketCount: sockets.size });
+            void closeListener();
+            for (const disconnect of disconnectPrimary) disconnect();
+          } else close();
           return;
         }
         if (command === 'COMMIT' || command === 'ROLLBACK') receiptTx = false;
+        if (tag === 'Z' && pendingReady > 0) pendingReady--;
         downstream.write(packet);
       }
     });
@@ -436,9 +529,10 @@ async function commitFault(
   return {
     url: url.toString(),
     fired: () => fired,
+    maxQueuedCycles: () => maxQueuedCycles,
     async stop() {
       for (const socket of sockets) socket.destroy();
-      await new Promise<void>((done) => server.close(() => done()));
+      await closeListener();
     },
   };
 }
@@ -448,7 +542,20 @@ beforeAll(async () => {
   // Fail before opening any pool/worker when the required immutable source is absent.
   await exec('git', ['cat-file', '-e', `${OLD_BASE}^{commit}`]);
   await exec('git', ['cat-file', '-e', `${REVIEW_BASE}^{commit}`]);
-  db = postgres(safeUrl().toString(), { max: 3, connect_timeout: 2 });
+  const target = safeUrl();
+  const adminTarget = new URL(target);
+  adminTarget.pathname = '/postgres';
+  const admin = postgres(adminTarget.toString(), { max: 1 });
+  const databaseName = `test_fork_${Date.now()}${process.pid}`;
+  try {
+    await admin.unsafe(`CREATE DATABASE "${databaseName}" TEMPLATE "test"`);
+  } finally {
+    await admin.end();
+  }
+  target.pathname = `/${databaseName}`;
+  fixtureUrl = target.toString();
+  db = postgres(fixtureUrl, { max: 3, connect_timeout: 2 });
+  appDb = drizzle(db, { schema });
   await exec(resolve('node_modules/.bin/esbuild'), [
     'tests/dbos-session-orphan/worker.ts',
     ...buildArgs,
@@ -456,6 +563,14 @@ beforeAll(async () => {
   ]);
   await db`delete from contract_epoch`;
   suiteBlocked = undefined;
+  try {
+    const seed = worker();
+    await seed.wait('ready');
+    await seed.stop();
+  } catch (error) {
+    suiteBlocked = 'Initial durable host setup failed; evidence retained';
+    throw error;
+  }
 }, 60000);
 beforeEach(() => {
   caseLogStart = logs.length;
@@ -557,10 +672,9 @@ for (const family of families)
       'row-committed',
       'checkpoint-saved',
     ]) {
+      // @invariant data: crash recovery retains frozen candidates and committed session effects
+      // @fails-if a restarted owner changes admitted inputs or emits a second event for an already committed session
       it(`SIGKILL at ${pauseAt} recovers the same inputs and frozen candidates`, async () => {
-        const seed = worker();
-        await seed.wait('ready');
-        await seed.stop();
         await reset();
         await sessions();
         const id = nextId();
@@ -598,10 +712,9 @@ for (const family of families)
       }, 120000);
     }
     for (const mode of ['after-server-commit', 'before-server-commit'] as const) {
+      // @invariant data: lost COMMIT acknowledgement is reconciled from the authoritative database ledger
+      // @fails-if recovery treats a committed receipt as missing or reruns its session effect after acknowledgement loss
       it(`reconciles ${mode} through the authoritative lock`, async () => {
-        const seed = worker();
-        await seed.wait('ready');
-        await seed.stop();
         await reset();
         await sessions();
         const proxy = await commitFault(mode);
@@ -624,18 +737,31 @@ for (const family of families)
         }
       }, 120000);
     }
+    // @invariant data: unavailable commit outcomes remain unknown without terminal workflow replay
+    // @fails-if an unresolved primary outcome is retried blindly, a terminal DBOS ERROR resumes business effects, or the outage strands a queued Sync cycle
     it('holds an unavailable primary as unknown and does not resume a terminal DBOS ERROR', async () => {
-      const seed = worker();
-      await seed.wait('ready');
-      await seed.stop();
       await reset();
       await sessions();
       const proxy = await commitFault('after-server-commit-and-unavailable');
       const id = nextId();
-      const first = worker({ id, appUrl: proxy.url });
+      const queuedClient = postgres(proxy.url, { max: 1, ssl: false });
+      let first: ReturnType<typeof worker> | undefined;
       try {
+        // Prepare once, then put two complete extended cycles on one connection
+        // before the real worker's lost-COMMIT fault. Both must receive errors.
+        await queuedClient`select pg_sleep(${0}::double precision)`;
+        let queuedResults: PromiseSettledResult<unknown>[] | undefined;
+        const queuedDone = Promise.allSettled([
+          queuedClient`select pg_sleep(${30}::double precision)`.execute(),
+          queuedClient`select pg_sleep(${30}::double precision)`.execute(),
+        ]).then((results) => {
+          queuedResults = results;
+        });
+        await expect.poll(() => proxy.maxQueuedCycles(), { timeout: 5000 }).toBe(2);
+        first = worker({ id, appUrl: proxy.url });
         await first.wait('ready');
         // This fixture expects the failure message itself, after the workflow becomes ERROR.
+        await first.wait('failure');
         await expect
           .poll(
             async () =>
@@ -644,6 +770,12 @@ for (const family of families)
             { timeout: 60000 },
           )
           .toBe('ERROR');
+        await expect.poll(() => queuedResults?.length, { timeout: 5000 }).toBe(2);
+        await queuedDone;
+        expect(queuedResults).toEqual([
+          { status: 'rejected', reason: expect.objectContaining({ code: '08006' }) },
+          { status: 'rejected', reason: expect.objectContaining({ code: '08006' }) },
+        ]);
         expect(proxy.fired()).toBe(true);
         const before = await snapshots(id);
         expect(before.receipts).toHaveLength(1);
@@ -665,17 +797,17 @@ for (const family of families)
         const { inspectSessionOrphanOutcome } = await import(
           '@/server/durable/session-orphan-family'
         );
-        const { testDb } = await import('../helpers/db');
+
         expect(
-          await inspectSessionOrphanOutcome(testDb(), { family, tickId: id, sessionId: 'crash-a' }),
+          await inspectSessionOrphanOutcome(appDb, { family, tickId: id, sessionId: 'crash-a' }),
         ).toMatchObject({ kind: 'committed', outcome: { kind: 'abandoned' } });
         expect(
-          await inspectSessionOrphanOutcome(testDb(), { family, tickId: id, sessionId: 'crash-b' }),
+          await inspectSessionOrphanOutcome(appDb, { family, tickId: id, sessionId: 'crash-b' }),
         ).toEqual({ kind: 'not-committed' });
         const { sessionOrphanObligations } = await import(
           '@/server/durable/session-orphan-backend'
         );
-        const obligations = await sessionOrphanObligations(testDb(), { family, backend: 'dbos' });
+        const obligations = await sessionOrphanObligations(appDb, { family, backend: 'dbos' });
         expect(obligations).toContainEqual(
           expect.objectContaining({ family, task_id: id, state: 'ERROR', kind: 'task' }),
         );
@@ -702,25 +834,25 @@ for (const family of families)
         try {
           await clientBoss.start();
           await backend.changeSessionOrphanPhase(
-            testDb(),
+            appDb,
             clientBoss,
             { family, target: 'draining-dbos' },
             scheduleClient,
           );
           await expect(
             backend.changeSessionOrphanPhase(
-              testDb(),
+              appDb,
               clientBoss,
               { family, target: 'pg-boss' },
               scheduleClient,
             ),
           ).rejects.toThrow('Drain blocked');
-          await backend.attestSessionOrphanQuiescence(testDb(), {
+          await backend.attestSessionOrphanQuiescence(appDb, {
             family,
             reason: `Observed unknown-outcome owner PID ${first.child.pid} and retrieval PID ${retry.child.pid} exited; no other owners in disposable DB`,
           });
           await expect(
-            backend.retireFailedSessionOrphan(testDb(), {
+            backend.retireFailedSessionOrphan(appDb, {
               kind: 'terminal-task',
               family,
               backend: 'dbos',
@@ -729,7 +861,7 @@ for (const family of families)
             }),
           ).rejects.toThrow('rows before');
           for (const sessionId of ['crash-b', 'crash-c'])
-            await backend.retireFailedSessionOrphan(testDb(), {
+            await backend.retireFailedSessionOrphan(appDb, {
               kind: 'terminal-row',
               family,
               backend: 'dbos',
@@ -738,7 +870,7 @@ for (const family of families)
               sessionId,
               reason: 'Known stopped ERROR owner, no replay',
             });
-          await backend.retireFailedSessionOrphan(testDb(), {
+          await backend.retireFailedSessionOrphan(appDb, {
             kind: 'terminal-task',
             family,
             backend: 'dbos',
@@ -746,13 +878,13 @@ for (const family of families)
             reason: 'Explicit failed task disposition after rows',
           });
           expect(
-            (await backend.sessionOrphanObligations(testDb(), { family, backend: 'dbos' })).filter(
+            (await backend.sessionOrphanObligations(appDb, { family, backend: 'dbos' })).filter(
               (r) => r.task_id === id,
             ),
           ).toHaveLength(0);
           const { runSessionOrphanTick } = await import('@/server/durable/session-orphan-family');
           await expect(
-            runSessionOrphanTick(testDb(), {
+            runSessionOrphanTick(appDb, {
               family,
               source: {
                 kind: 'dbos',
@@ -773,9 +905,10 @@ for (const family of families)
           await clientBoss.stop();
         }
       } finally {
-        if (first.child.exitCode === null && first.child.signalCode === null)
+        await queuedClient.end({ timeout: 2 });
+        if (first && first.child.exitCode === null && first.child.signalCode === null)
           first.child.kill('SIGKILL');
-        await first.exited;
+        await first?.exited;
         await proxy.stop();
       }
     }, 120000);
@@ -920,11 +1053,10 @@ async function verifiedArtifact(kind: 'prune' | 'review' | 'conversation' | 'pla
   return path;
 }
 for (const family of families) {
+  // @invariant data: admission and deferred receipts survive COMMIT-response loss without effect retry
+  // @fails-if wire acknowledgement loss changes the committed admission or repeats a deferred session effect
   it(`drops admission and deferred receipt COMMIT packets for ${family} without blind effect retry`, async () => {
     selectedFamily = family;
-    const seed = worker();
-    await seed.wait('ready');
-    await seed.stop();
     for (const targetKind of ['admission', 'deferred'] as const) {
       await reset();
       await sessions();
@@ -958,11 +1090,10 @@ for (const family of families) {
       }
     }
   }, 180000);
+  // @invariant concurrency: archived consumers must exit before new-family quiescence can be attested
+  // @fails-if a running archived handler is treated as stopped or consumes a session after new-family admission
   it(`observes actual archived ${family} selected handler exit before attestation`, async () => {
     selectedFamily = family;
-    const seed = worker();
-    await seed.wait('ready');
-    await seed.stop();
     await reset();
     await db`update session_orphan_control set phase = 'pg-boss'`;
     const domain = family === families[0] ? 'conversation' : 'placement';
@@ -1031,13 +1162,12 @@ for (const family of families) {
     await current.stop();
   }, 180000);
 }
+// @invariant data: old prune and review partial receipts survive both new-family admissions
+// @fails-if native family admission changes retained old-family receipts or repeats an already committed old effect
 it('recovers genuine old prune and review partial ledgers before and after both new-family admissions', async () => {
   const { runSessionOrphanTick } = await import('@/server/durable/session-orphan-family');
-  const { testDb } = await import('../helpers/db');
+
   selectedFamily = families[0];
-  const seed = worker();
-  await seed.wait('ready');
-  await seed.stop();
   const pruneArtifact = await verifiedArtifact('prune'),
     reviewArtifact = await verifiedArtifact('review');
   for (const kind of ['prune', 'review'] as const)
@@ -1070,7 +1200,7 @@ it('recovers genuine old prune and review partial ledgers before and after both 
           selectedFamily = family;
           const nativeId = nextId();
           // Actual bounded runner with a valid scheduled identity. No SDK enqueue exists while old code runs.
-          await runSessionOrphanTick(testDb(), {
+          await runSessionOrphanTick(appDb, {
             family,
             source: {
               kind: 'dbos',

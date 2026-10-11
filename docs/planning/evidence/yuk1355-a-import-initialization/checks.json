@@ -64,11 +64,7 @@
     {
       "name": "capability boundaries",
       "exitCode": 0,
-      "debt": [
-        428,
-        0,
-        48
-      ],
+      "debt": [428, 0, 48],
       "log": "boundaries.log.gz",
       "command": "pnpm audit:capability-boundaries"
     },

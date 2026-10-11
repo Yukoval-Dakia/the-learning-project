@@ -1,0 +1,82 @@
+{
+  "source_head": "ee415d3e05b9e87b23bbc62df377fe199a7f4c41",
+  "failed_head": "c35b16605a6c0d3e879ab070f9b33c06bd223075",
+  "failed_run": 38127410412,
+  "source_files": [
+    "tests/dbos-judge/support.ts",
+    "src/capabilities/practice/server/stream-store.db.test.ts",
+    "src/capabilities/practice/api/review-sessions.db.test.ts",
+    "src/capabilities/practice/api/placement-native.db.test.ts",
+    "src/capabilities/agency/server/intervention/intervention-preparation.db.test.ts"
+  ],
+  "assertion_comparison": {
+    "base": "c35b166",
+    "results": [
+      {
+        "file": "tests/dbos-judge/support.ts",
+        "originalAssertions": 0,
+        "currentAssertions": 0,
+        "identical": true
+      },
+      {
+        "file": "src/capabilities/practice/server/stream-store.db.test.ts",
+        "originalAssertions": 24,
+        "currentAssertions": 24,
+        "identical": true
+      },
+      {
+        "file": "src/capabilities/practice/api/review-sessions.db.test.ts",
+        "originalAssertions": 10,
+        "currentAssertions": 10,
+        "identical": true
+      },
+      {
+        "file": "src/capabilities/practice/api/placement-native.db.test.ts",
+        "originalAssertions": 152,
+        "currentAssertions": 152,
+        "identical": true
+      },
+      {
+        "file": "src/capabilities/agency/server/intervention/intervention-preparation.db.test.ts",
+        "originalAssertions": 154,
+        "currentAssertions": 154,
+        "identical": true
+      }
+    ],
+    "limits": "AST comparison of expect calls only; does not replace fixture semantic inspection or DB outcomes"
+  },
+  "gates": {
+    "typecheck": 0,
+    "lint": 0,
+    "build": 0,
+    "audit_test_policy": 0
+  },
+  "scoped_db": {
+    "files": 10,
+    "tests_passed": 73,
+    "tests_failed": 0,
+    "receipt": {
+      "head": "ee415d3e05b9e87b23bbc62df377fe199a7f4c41",
+      "red_exit": 1,
+      "scoped_exit": 0,
+      "containerParity": true,
+      "releaseParity": true,
+      "tokenMatches": true,
+      "processExited": true,
+      "elapsedSeconds": 99.78825408301782,
+      "finishedAt": "2026-10-11T10:20:05.902258+00:00",
+      "released": true
+    }
+  },
+  "artifacts": {
+    "/tmp/yuk1445-ee415-parent-db-01/historical-red.log": "3b383b576428275c0aa152262fc8061d9c37b34a16ca122abcc3657a5c9279bb",
+    "/tmp/yuk1445-ee415-parent-db-01/scoped.log": "0683d686ae5861f770623bf675f884c661eaf4109ac63bd603f7c6cf6e3b82e4",
+    "/tmp/yuk1445-ee415-parent-db-01/receipt.json": "d65ef78a2116c71392f6aceb6fdafaf5481ca3f0a621a47a1bcf0d8b0fc56261",
+    "/tmp/yuk1445-parent-fixture-assertion-proof.json": "61c6104bd3116912b8831cf9a42cb171c20d171cb39f8b00a36af3fb8bd10bbc",
+    "/tmp/yuk1445-parent-fixture-typecheck.log": "36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6",
+    "/tmp/yuk1445-parent-fixture-lint.log": "fe8e4a180ed142ee93e0fbe3c7782b3ba05ff7dc4fff723d584d6b26492c400a",
+    "/tmp/yuk1445-parent-fixture-build.log": "f5a9f3434abd3f7dc1b97b9467d8d46b566aaeb81bf294ab98ad8d76299a89e4",
+    "/tmp/yuk1445-parent-fixture-test-policy.log": "2b868f9796aafc54e442aa79908a986c89e130b74490b42cc1f710a2e14d6608"
+  },
+  "limits": "Fixture/source and disposable DB evidence only; no live provider admission, TEST deployment or complete grading-system delivery."
+}

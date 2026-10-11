@@ -6,7 +6,7 @@ import {
   INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
 } from '@/core/schema/intervention';
 import { assessment_submission, knowledge, question } from '@/db/schema';
-import { issueSoloFixture } from '../../../../tests/fixtures/assessment-solo';
+import { issueHistoricalSoloFixture } from '../../../../tests/fixtures/assessment-solo';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import * as evaluationService from '../server/judge/evaluate-submission';
 import { createRecordedModelExecutor } from '../server/judge/recorded-model-executor';
@@ -46,7 +46,7 @@ async function fixture() {
     created_at: now,
     updated_at: now,
   });
-  const issued = await issueSoloFixture(db, id, true);
+  const issued = await issueHistoricalSoloFixture(db, id, true);
   const assessment = issued.assessment('v+c=18，v-c=12，两式相加得 v=15 km/h。');
   const execute = vi.fn(
     async (

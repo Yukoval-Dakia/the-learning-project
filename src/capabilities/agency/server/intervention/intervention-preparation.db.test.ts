@@ -40,6 +40,7 @@ import {
   InterventionPackage,
   PEDAGOGY_METHOD_DEFINITION_VERSION,
 } from '@/core/schema/intervention';
+import type { Db } from '@/db/client';
 import {
   ai_task_runs,
   evaluation,
@@ -51,16 +52,21 @@ import {
   material_fsrs_state,
   practice_stream_item,
   question,
+  question_group_lifecycle,
 } from '@/db/schema';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
 import { eventCorrectionsGlobalLockKey, writeEvent } from '@/kernel/events';
 import type { EventSubscriptionDelivery } from '@/kernel/manifest';
 import { writeAiProposal } from '@/kernel/proposals/writer';
-
 import type { TaskTextRunFn } from '@/server/ai/provenance';
+import {
+  contractIntegrityDigest,
+  normalizeQuestionRowToContract,
+} from '@/server/questions/contract-normalizer';
+import { publishQuestionGroup } from '@/server/questions/publisher';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { publishPaperModelFixture } from '../../../../../tests/fixtures/assessment-paper';
-import { issueSoloFixture } from '../../../../../tests/fixtures/assessment-solo';
+import { issueHistoricalSoloFixture } from '../../../../../tests/fixtures/assessment-solo';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { answerProbe } from '../conjecture/probe-lifecycle';
 import { prepareInterventionWave } from './prepare';
@@ -363,6 +369,63 @@ function delivery(sourceEventId: string): EventSubscriptionDelivery {
     deliverySeq: '1',
     sourceEventId,
   };
+}
+
+// Delivery/settlement uses explicit deterministic fixtures; model recovery keeps its original model contracts.
+async function publishDeliveryDiagnostic(db: Db, questionId: string, acceptedText: string) {
+  const [row] = await db.select().from(question).where(eq(question.id, questionId));
+  if (!row) throw new Error('missing delivery diagnostic');
+  const [lifecycle] = await db
+    .select()
+    .from(question_group_lifecycle)
+    .where(eq(question_group_lifecycle.group_id, questionId));
+  const contract = normalizeQuestionRowToContract(row);
+  const slot = contract.response_spec.slots[0];
+  const unit = contract.scoring_basis.units[0];
+  if (
+    !slot ||
+    !unit ||
+    contract.response_spec.slots.length !== 1 ||
+    contract.scoring_basis.units.length !== 1
+  )
+    throw new Error('delivery diagnostic requires one response and scoring unit');
+  contract.response_spec.slots = [
+    { slot_id: slot.slot_id, part_id: slot.part_id, kind: 'text', math_preview: true },
+  ];
+  contract.scoring_basis.units = [
+    {
+      ...unit,
+      slot_refs: [slot.slot_id],
+      evidence_slot_refs: [],
+      requires_group_evidence: false,
+      criterion: { kind: 'text_key', accepted_texts: [acceptedText], normalization: 'trim' },
+    },
+  ];
+  contract.execution_plan.assignments = [
+    {
+      scoring_unit_ids: [unit.scoring_unit_id],
+      executor: { kind: 'deterministic', comparator: 'exact_text' },
+    },
+  ];
+  contract.integrity_digest = contractIntegrityDigest(contract);
+  const published = await publishQuestionGroup(db, {
+    group_id: questionId,
+    contract,
+    expectedCurrentRevision: lifecycle?.current_revision_id ?? null,
+    expectedAdmissionGeneration: lifecycle?.scoring_admission_generation ?? null,
+    availability: 'general_pool',
+    actorRef: 'test:diagnostic-delivery',
+    now: new Date(),
+    admission: {
+      state: 'admitted',
+      evidence: {
+        marking_provenance: 'official',
+        verification: { structural_check_passed: true, independent_verification: null },
+        model_slice: null,
+      },
+    },
+  });
+  if (published.status !== 'published') throw new Error(published.status);
 }
 
 function preparationJobIdOf(record: { preparation_job_id: string | null }): string {
@@ -794,7 +857,7 @@ describe('YUK-791 intervention preparation closed loop', () => {
     'retains a valid %s permanent diagnostic disposition and its real settlement despite late notifications',
     async (disposition) => {
       const f = await prepareAdmittedDiagnosticFixture(`permanent_${disposition}`);
-      const issued = await issueSoloFixture(f.db, f.questionId, true);
+      const issued = await issueHistoricalSoloFixture(f.db, f.questionId, true);
       await f.db
         .update(question)
         .set({ draft_status: 'draft', updated_at: f.staleAt })
@@ -1031,8 +1094,17 @@ describe('YUK-791 intervention preparation closed loop', () => {
     expect(active?.status).toBe('active');
     expect(active?.delivery_mode).toBe('eligible');
     if (!active?.settlement) throw new Error('active intervention has no settlement schedule');
-    for (const diagnostic of Object.values(active.settlement.diagnostics)) {
-      await publishPaperModelFixture(db, diagnostic.question_id);
+    const deliveryAnswers = {
+      immediate: '2x exp(x²+1)',
+      delayed: '6x/(3x²+1)',
+      transfer: '8πt(t²+1)²',
+    };
+    for (const kind of ['immediate', 'delayed', 'transfer'] as const) {
+      await publishDeliveryDiagnostic(
+        db,
+        active.settlement.diagnostics[kind].question_id,
+        deliveryAnswers[kind],
+      );
     }
     await recoverEligibleInterventionDiagnostics(db, activationNow);
     const diagnosticQuestions = await db

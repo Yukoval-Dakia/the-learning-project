@@ -1,8 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-11：YUK-1403防回潮#1679及session cron修复#1681已合main；cd0c45d exact CI全绿，cron两例34.56秒，整套6:30。YUK-1397交付，YUK-1107整体两分钟目标仍未达到，剩余长尾归原票。
+> Linear 是权威 tracker。2026-10-11：YUK-1107 优先修 main CI P1：cron substring 起始位置误选正则重载，migration unavailable-primary 代理重连卡 PENDING。隔离小 PR 保留产品和原断言，审查/运行待验；完整≤120秒目标仍进行中，1691远端fc失败195秒，局部b652提速checkpoint暂停。
 
 ## NOW
+
+- **YUK-1107 / main CI回归优先**：父d0c4657a独占 tlp-yuk1107-main-ci-regressions-20261011 / fix/yuk-1107-session-ci-regressions，base135bb18e6d；cron horizon 查询显式 integer 位置，migration 故障代理关闭监听并等待真实 failure，全部原业务断言保留。初版R1 NONE/cron2PASS，migration首outage客户端未捕获socket.write(null)，23例9PASS14FAIL；原窗口79.60秒token/parity释锁。R2指出多queuedSync/describeFirst P1，e84本机提前中止128.38秒token/parity释锁，无最终case计数；已按逐Q/Sync周期修并在既有outagecase加同连接2queuedSync断言，禁止第三审，新固定head23PASS/exactCI/回复resolve原R2线程待验；1691远端fc2626d Gate38134462539失败195秒，局部b652未push，120秒目标未达标；无runtime/锁。[回归证据](docs/planning/2026-10-11-yuk1107-main-ci-regressions.md)。
 
 - **YUK-1107 / session cron已交付**：#1681合main56df7c09；控制时间验证边界，生产60秒保护/cron及严格ledger不变；R2无P0/P1，父修Drizzle初始化后exact cd0c45d CI38120469007全绿。两例PASS、文件34.564秒；实测跨分钟边界，YUK-1397修复交付。整套390秒，不核销120秒目标。[证据与限度](docs/planning/2026-10-11-yuk1107-cron-speed.md)。
 
@@ -41,7 +43,6 @@
 
 ## PARKED
 
-- **YUK-1107 / 整体≤120秒未达**：当前Gate390秒，DB2/3步骤289/302秒；review-orphan cron252.318秒、session migration286.936秒、prune cron201.624秒。按真实时间边界/恢复语义继续定位，不能移nightly/跳suite伪造全量两分钟；当前无该范围writer，跟进归原票。
 
 - **YUK-1358/1359已有UI观察**：真实Inbox dismiss后本页499但侧栏500，document reload恢复一致；原onResolve仅本地resolved更新。Google Fonts原import受CSP拦截；fallback可用。记录在现有迁移验收/后续UI边界，不放宽CSP、不冒称本PR修复。
 - **YUK-1382 / Admin runs未知费用显示**：源码基线fadcb0c87中，observability/ui/admin-runs.tsx:207将nullable cost_usd累加；observability-shared.tsx:11以(value ?? 0).toFixed(4)将未知显示为$0.0000，列表/详情/合计均受影响。已查重并登记Backlog，待验证真实零、全未知、已知+未知；不在1381改UI。此条是源码发现，尚无浏览器验收。

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { GroupEvidence, PracticeIssuanceDto, ResponseSet } from '@/core/schema/assessment';
+import { SERVING_UNAVAILABLE_REASONS } from '@/core/schema/assessment/serving-admission';
 import { ApiPageSchema } from '@/kernel/http-contracts';
 import { REASONING_TRACE_MAX_LEN } from '@/kernel/limits';
 import { CreateSubmissionBodySchema } from './assessment-contracts';
@@ -225,5 +226,17 @@ export const PaperDetailResponseSchema = z.object({
     })
     .nullable(),
   sections: z.array(PaperDetailSectionSchema),
+  /** Slots withheld by the serving gate — issuance_id is null when the slot was
+   * refused at open time and no issuance was ever created. */
+  withheld_assessments: z
+    .array(
+      z.object({
+        issuance_id: z.string().nullable(),
+        question_id: z.string(),
+        part_ref: z.string().nullable(),
+        reason: z.enum(SERVING_UNAVAILABLE_REASONS),
+      }),
+    )
+    .optional(),
   is_flat_fallback: z.boolean(),
 });

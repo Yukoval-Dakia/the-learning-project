@@ -2,6 +2,7 @@ import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { canonicalHash } from '@/core/migration/canonical';
 import { Artifact } from '@/core/schema';
+import { SERVING_UNAVAILABLE_REASONS } from '@/core/schema/assessment/serving-admission';
 import type { Db, Tx } from '@/db/client';
 import {
   artifact,
@@ -40,6 +41,21 @@ export const PaperAssessmentBinding = z.object({
       idempotency_key: z.string(),
     }),
   ),
+  /**
+   * YUK-1445 — slots the serving gate refused at open time (typed reason only;
+   * no issuance exists for them, so no issuance_id is recorded). Optional so
+   * bindings written before this field existed still parse.
+   */
+  withheld_slots: z
+    .array(
+      z.object({
+        question_id: z.string(),
+        part_ref: z.string().nullable(),
+        section_index: z.number().int().nonnegative(),
+        reason: z.enum(SERVING_UNAVAILABLE_REASONS),
+      }),
+    )
+    .optional(),
 });
 export type PaperAssessmentBindingT = z.infer<typeof PaperAssessmentBinding>;
 const ACTION = 'experimental:assessment_paper_issued';
@@ -130,6 +146,7 @@ export async function issuePaperAssessment(tx: Tx, sessionId: string, paperId: s
   }
   // Shared roots acquire locks in the same order across overlapping papers.
   const issuedSlots = new Map<string, PaperAssessmentBindingT['slots'][number]>();
+  const withheldSlots: NonNullable<PaperAssessmentBindingT['withheld_slots']> = [];
   for (const { slot, groupId } of [...pending].sort((a, b) => a.groupId.localeCompare(b.groupId))) {
     const [lifecycle] = await tx
       .select()
@@ -166,6 +183,18 @@ export async function issuePaperAssessment(tx: Tx, sessionId: string, paperId: s
       now: session.started_at,
     });
     if (issued.status !== 'issued' && issued.status !== 'replayed') {
+      // YUK-1445 — a gate-refused slot is withheld individually so a mixed paper
+      // stays openable; every other failure (structural, lifecycle, claim) still
+      // aborts the whole opening transaction.
+      if (issued.status === 'not_admitted' && issued.serving_reason !== undefined) {
+        withheldSlots.push({
+          question_id: slot.question_id,
+          part_ref: slot.part_ref,
+          section_index: slot.section_index,
+          reason: issued.serving_reason,
+        });
+        continue;
+      }
       throw new ApiError(issued.status, `paper slot issuance failed: ${issued.status}`, 409);
     }
     issuedSlots.set(`${slot.question_id}::${slot.part_ref ?? ''}`, {
@@ -175,12 +204,18 @@ export async function issuePaperAssessment(tx: Tx, sessionId: string, paperId: s
       idempotency_key: `paper_${identity}`,
     });
   }
+  if (issuedSlots.size === 0) {
+    throw new ApiError('not_admitted', `paper ${paperId} has no automatically servable slots`, 409);
+  }
   const binding = PaperAssessmentBinding.parse({
     version: 1,
     paper_id: paperId,
     session_id: sessionId,
     started_at: session.started_at.toISOString(),
-    slots: slots.map((slot) => issuedSlots.get(`${slot.question_id}::${slot.part_ref ?? ''}`)),
+    slots: slots
+      .map((slot) => issuedSlots.get(`${slot.question_id}::${slot.part_ref ?? ''}`))
+      .filter((slot) => slot !== undefined),
+    ...(withheldSlots.length > 0 ? { withheld_slots: withheldSlots } : {}),
   });
   await writeEvent(tx, {
     id: paperBindingId(sessionId, session.started_at),

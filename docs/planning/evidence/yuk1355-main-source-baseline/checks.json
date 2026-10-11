@@ -1,0 +1,205 @@
+{
+  "base": "9ce33e61da3ee40c7e89256212a7aedaf0b88e9d",
+  "fetchedMain": "a7b838b06a3e8bd86b0eb5626487a378e538099e",
+  "node": "24.19.0",
+  "pnpm": "11.13.1",
+  "commandPathPrefix": "PATH=/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin:$PATH",
+  "scope": "Offline source gates only; no full pnpm test, DB, testcontainers, Docker, runtime, providers, lock, credential, PR/push/Linear/child/review operation",
+  "preflight": {
+    "git": "2.54.0 (Apple Git-157)",
+    "gh": "2.101.0",
+    "remote": "https://github.com/Yukoval-Dakia/the-learning-project.git",
+    "fetch": "git fetch origin, exit0",
+    "ghAuth": "not accessed; no gh operation needed"
+  },
+  "checks": [
+    {
+      "name": "owned-units",
+      "argv": [
+        "pnpm",
+        "vitest",
+        "run",
+        "--config",
+        "vitest.unit.config.ts",
+        "src/capabilities/practice/server/item-prior-durable-operation.unit.test.ts",
+        "src/capabilities/practice/server/item-prior-import-order.unit.test.ts",
+        "src/capabilities/practice/server/calibration-sample-durable-operation.test.ts",
+        "src/capabilities/practice/jobs/judge_calibration_sample.test.ts",
+        "src/server/durable/calibration-sample-family.test.ts",
+        "src/server/durable/paid-effect-protocol.test.ts",
+        "src/server/durable/note-verify-family.test.ts",
+        "src/capabilities/notes/jobs/note_verify.control.test.ts"
+      ],
+      "exitCode": 0,
+      "log": "owned-units.log.gz",
+      "logSha256": "12cd9c7518d9ab1c594bb3e3fc79b873f8f0572482571b6bffbd938db0a9e66f",
+      "passed": 87
+    },
+    {
+      "name": "main-contract-units",
+      "argv": [
+        "pnpm",
+        "vitest",
+        "run",
+        "--config",
+        "vitest.unit.config.ts",
+        "src/core/schema/assessment/evaluation.test.ts"
+      ],
+      "exitCode": 0,
+      "log": "main-contract-units.log.gz",
+      "logSha256": "a4366d130a59b0cc1267ee0bc835f34f05f3bf6729bb891e2ca0e056e591da1c",
+      "passed": 55
+    },
+    {
+      "name": "typecheck",
+      "argv": ["pnpm", "typecheck"],
+      "exitCode": 0,
+      "log": "typecheck.log.gz",
+      "logSha256": "36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6"
+    },
+    {
+      "name": "lint-initial",
+      "argv": ["pnpm", "lint"],
+      "exitCode": 1,
+      "log": "lint-initial.log.gz",
+      "logSha256": "4a5a5af4eee5d66ce8276af3587169070af7c35b1d1c1e24f4da847e462296f5"
+    },
+    {
+      "name": "lint-errors",
+      "argv": [
+        "pnpm",
+        "exec",
+        "biome",
+        "check",
+        ".",
+        "--diagnostic-level=error",
+        "--max-diagnostics=20"
+      ],
+      "exitCode": 1,
+      "log": "lint-errors.log.gz",
+      "logSha256": "87fa1ea92072312ebf250246df222b6383f6b7bc3a6511d437597b3174fdca48"
+    },
+    {
+      "name": "evidence-format",
+      "argv": [
+        "pnpm",
+        "exec",
+        "biome",
+        "format",
+        "--write",
+        "docs/planning/evidence/yuk1355-a-import-initialization/checks.json",
+        "docs/planning/evidence/yuk1355-a-import-initialization/compare-ast.cjs",
+        "docs/planning/evidence/yuk1355-a-import-initialization/import-paths.cjs",
+        "docs/planning/evidence/yuk1355-a-import-initialization/product-files.json"
+      ],
+      "exitCode": 0,
+      "log": "evidence-format.log.gz",
+      "logSha256": "4ccad4fe71916c208cd175dd6122fa01e69804d4210d3bbfea7ad2cfee9c5f99"
+    },
+    {
+      "name": "build",
+      "argv": ["pnpm", "build"],
+      "exitCode": 0,
+      "log": "build.log.gz",
+      "logSha256": "3b44ca02882c43d481a95655d09aa7fca9b56a97fa4ce8a0464f54ec0b3fb057"
+    },
+    {
+      "name": "boundaries",
+      "argv": ["pnpm", "audit:capability-boundaries"],
+      "exitCode": 0,
+      "log": "boundaries.log.gz",
+      "logSha256": "9d20b3d4bc59ff636d53c09f0157701c9ee76c1f77541030976fd9651ba505a1"
+    },
+    {
+      "name": "architecture",
+      "argv": ["pnpm", "audit:architecture-deepening"],
+      "exitCode": 0,
+      "log": "architecture.log.gz",
+      "logSha256": "51199ca7d173ff21f9305dafb981919244ea60e762e4204a267747cea441f5dd"
+    },
+    {
+      "name": "census",
+      "argv": ["pnpm", "audit:task-census"],
+      "exitCode": 0,
+      "log": "census.log.gz",
+      "logSha256": "03afb0d2be8fad15cd30755b7971366f5c887f606be653c374e4d870f361be2e"
+    },
+    {
+      "name": "partition",
+      "argv": ["pnpm", "audit:partition"],
+      "exitCode": 0,
+      "log": "partition.log.gz",
+      "logSha256": "f716089986eb6d3c66b15415fda3d152898b5f9cfed523b77a291b227a3cb91a"
+    },
+    {
+      "name": "test-policy",
+      "argv": ["pnpm", "audit:test-policy", "--base", "a7b838b06a3e8bd86b0eb5626487a378e538099e"],
+      "exitCode": 0,
+      "log": "test-policy.log.gz",
+      "logSha256": "a9729f874b8250dd3e0c4c940b1100cd61f7e03d71721ca202a90020a49cfcb1"
+    },
+    {
+      "name": "lint-after-format",
+      "argv": ["pnpm", "lint"],
+      "exitCode": 0,
+      "log": "lint-after-format.log.gz",
+      "logSha256": "11fcf01a11b9c830c31594d1af4c2666ad447d402cce83655a3259d5eb2e011c"
+    },
+    {
+      "name": "lint-final-all-evidence",
+      "argv": ["pnpm", "lint"],
+      "exitCode": 0,
+      "warnings": 172,
+      "log": "lint-sealed.log.gz",
+      "logSha256": "65600639a52b135cb9160d91a50b93f0314461f9cab5d816e8b11ade04eb731a"
+    }
+  ],
+  "boundaryDebt": [428, 0, 48],
+  "baselinesAndAuditors": [
+    {
+      "path": "scripts/capability-boundary-baseline.json",
+      "sha256": "5a3a1c515293808da8afebd276f4845f673d57cfb6e8ba60a765ec7a6a2e3d03",
+      "unchangedVsBase": true
+    },
+    {
+      "path": "scripts/lint-baseline.json",
+      "sha256": "6e8ad7c7a4b252dd65fe1bfb28ef1fe5fbe30cc0ca13cd04197c312e258acac8",
+      "unchangedVsBase": true
+    },
+    {
+      "path": "scripts/audit-capability-boundaries.ts",
+      "sha256": "3abbf2bc5a2defb46b107b65fc6b99202bef4973b857358d8d94f2672e11f290",
+      "unchangedVsBase": true
+    },
+    {
+      "path": "scripts/audit-architecture-deepening.ts",
+      "sha256": "b4cc070ea1edaee30b3e28361f0e8b9a4a8664541013c611d9161c16af60b380",
+      "unchangedVsBase": true
+    },
+    {
+      "path": "scripts/audit-task-census.ts",
+      "sha256": "33894ac2771dbf52c2b4afb7bf2d6454967fa3149de5399a3a9a4421939fa48b",
+      "unchangedVsBase": true
+    },
+    {
+      "path": "scripts/audit-test-partition.ts",
+      "sha256": "9382780ad507f6cc8b341b8496bfdb396d1dfa51087f4b54549f36c31cffd171",
+      "unchangedVsBase": true
+    },
+    {
+      "path": "scripts/audit-test-policy.ts",
+      "sha256": "80dce7d214662b353c71c2a70b59d53d6b202ed35f2f32610a030cae9e59582f",
+      "unchangedVsBase": true
+    }
+  ],
+  "mainChangedFilesPreserved": 67,
+  "ownProductAndTestsPreserved": true,
+  "toolingNotes": [
+    "Migration proof initially included appended _journal.json in historical immutable files; corrected to check journal prefix and byte-identical historical SQL/snapshots.",
+    "Semantic classifier variable typo corrected; no product edits.",
+    "Log sealer initially used a nonexistent lint-initial temporary filename; corrected to archive the actual initial lint log."
+  ],
+  "allRequiredSourceGates": "PASS",
+  "remainingStaticBlockers": [],
+  "writerRelease": "terminal after normal merge checkpoint; parent owns PR/CI/runtime and any DB window"
+}

@@ -13,7 +13,7 @@ import { NativeJudgePendingSubmitInput } from '@/core/schema/event/judge-pending
 import type { Db } from '@/db/client';
 import { event, question } from '@/db/schema';
 import { resetJudgeControl } from '../dbos-judge/support';
-import { issueSoloFixture } from './assessment-solo';
+import { issueHistoricalSoloFixture } from './assessment-solo';
 
 /** Real original/dispatch/worker fixture; only model and queue IO are offline. */
 export async function nativeJudgeRunFixture(
@@ -49,7 +49,7 @@ export async function nativeJudgeRunFixture(
       updated_at: now,
     });
   }
-  const issued = await issueSoloFixture(db, questionId, true);
+  const issued = await issueHistoricalSoloFixture(db, questionId, true);
   const request = {
     ...issued.assessment(options.response ?? 'v+c=18，v-c=12，消去水速得v=15 km/h。'),
     now: options.now,
