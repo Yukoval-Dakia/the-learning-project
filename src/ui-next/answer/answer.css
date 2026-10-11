@@ -205,8 +205,10 @@
   }
 
   & .un-match-chip {
-    display: inline-grid;
-    place-items: center;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    white-space: nowrap;
     min-width: 22px;
     height: 22px;
     padding: 0 6px;
@@ -325,7 +327,7 @@
   & .un-sb-gap {
     position: relative;
     display: inline-block;
-    width: 0.38em;
+    width: 0.5em;
     height: 1em;
   }
 
@@ -346,12 +348,12 @@
     top: 50%;
     left: 50%;
     width: 2.5px;
-    height: 1.15em;
+    height: 1.05em;
     border-radius: 2px;
     background: var(--un-accent-strong);
     opacity: 0;
     pointer-events: none;
-    transform: translate(-50%, -50%) rotate(20deg) scaleY(0.2);
+    transform: translate(-50%, -50%) rotate(14deg) scaleY(0.2);
     transition:
       opacity var(--un-t-small) var(--un-ease-glide),
       transform var(--un-t-ui) var(--un-ease-spring);
@@ -359,13 +361,13 @@
 
   & .un-sb-gap[data-on] .un-sb-mark {
     opacity: 1;
-    transform: translate(-50%, -50%) rotate(20deg) scaleY(1);
+    transform: translate(-50%, -50%) rotate(14deg) scaleY(1);
   }
 
   @media (hover: hover) {
     & .un-sb-hit:hover + .un-sb-mark {
       opacity: 0.32;
-      transform: translate(-50%, -50%) rotate(20deg) scaleY(1);
+      transform: translate(-50%, -50%) rotate(14deg) scaleY(1);
     }
 
     & .un-sb-gap[data-on] .un-sb-hit:hover + .un-sb-mark {
