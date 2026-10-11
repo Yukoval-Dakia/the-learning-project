@@ -1,11 +1,30 @@
-// YUK-1473 — one practice question with the learning companion beside it, in the new design
-// language. Checkpoint 2: every state of the page on real data. Submission, judging, appeal and
-// drafts run through the same hook as PfSolo (use-practice-submit), so the API calls, query keys
-// and idempotency ids are identical; only the rendering is new.
-// Rules: docs/design/2026-10-07-ui-visual-direction.md R1, R3, R4, R7, R9, C1–C3, C6, T1–T5,
-// M1, M9, M14, A1, A2.
+// YUK-1473 — one practice question with the learning companion beside it, in the loft design
+// language (checkpoint 1, redone). Submission, judging, appeal and drafts run through the same hook
+// as PfSolo (use-practice-submit), so the API calls, query keys and idempotency ids are identical;
+// only the rendering is new.
+//
+// Composition (docs/design/2026-10-07-ui-visual-direction.md):
+// - banner: eyebrow (source · position · minutes), serif title, state chips, and the one mascot in
+//   the banner's slot (B1: 128px, 84px on phones; on phones it tucks into the page bar, B3);
+// - 题目 → 我的作答 (with the judgment in place, R3) → 作答记录, in one reading column (R1, R2);
+//   passage items keep the passage pinned left and the questions right (R9);
+// - the companion floats on the right (C1, 384px); on phones it is the bottom sheet (C2).
+// Layers (T3, T7): page → cards (flat, no shadow) → floating companion → sheet / lightbox → toast.
+// Glass only on floating layers: the companion, the selection bubble, the lightbox.
+// Motion (M1–M6): the title morphs from the stream row (PracticeFacePage), quoted text flies into
+// the companion's composer, submit → judgment settles in place, the mascot thinks while the
+// companion works and turns a petal when a reply is recorded or a result lands.
 
-import { useCallback, useEffect, useLayoutEffect, useState, useSyncExternalStore } from 'react';
+import { ArrowLeft, Eye, MessageSquareQuote } from 'lucide-react';
+import {
+  type CSSProperties,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 import { CopilotDock } from '@/capabilities/copilot/ui-public';
 import type { PracticeIssuanceDtoT } from '@/core/schema/assessment';
 import { REASONING_TRACE_MAX_LEN } from '@/kernel/limits';
@@ -23,15 +42,25 @@ import {
   ChipToggle,
   type ChipTone,
   CompanionPanel,
+  CompanionStatus,
   Expand,
+  IconButton,
+  Judgment,
+  type JudgmentPhase,
+  MASCOT_SIZE,
+  MascotDock,
+  MascotSlot,
   PHONE_MEDIA,
   Segmented,
   type SheetSnap,
   Toaster,
   UiNextRoot,
+  flyQuote,
+  useMascot,
+  useMascotActivity,
   useToaster,
 } from '@/ui-next/public';
-import { practiceSourceLabel } from '../PfStream';
+import { practiceMorphKey, practiceSourceLabel } from '../PfStream';
 import type { StreamItem } from '../practice-api';
 import {
   type JudgeFeedback,
@@ -43,6 +72,7 @@ import {
   usePracticeSubmit,
 } from '../use-practice-submit';
 import { FigureLightbox } from './FigureLightbox';
+import { QuoteBubble, type QuotedPassage, clipQuote, useQuotableSelection } from './QuoteSelection';
 import './practice-next.css';
 
 export type PracticeCompanionMode = 'embedded' | 'none';
@@ -77,6 +107,9 @@ const HISTORY_TEXT = {
 } as const satisfies Record<string, { label: string; tone: ChipTone }>;
 
 const RATINGS: readonly Rating[] = ['again', 'hard', 'good'];
+
+/** The mascot's resting angle on question pages (B2; the loft prototype's question rest). */
+const QUESTION_REST = { x: -6, y: -12, z: 8 } as const;
 
 function formatDay(sec: number): string {
   const d = new Date(sec * 1000);
@@ -132,7 +165,47 @@ function issuanceProblem(error: unknown): { text: string; selfRate: boolean; ret
   };
 }
 
-export function PracticeNextSolo({
+/**
+ * How much of the top and bottom of the screen the retained shell covers with its own sticky
+ * bars. Transitional: the page lives inside the retained shell until the migration line swaps it,
+ * so sticky layers sit below its top bar and the phone sheet peeks above its tab bar
+ * (YUK-1473 checkpoint 1, owner decision).
+ */
+function useShellInsets(): { top: number; bottom: number } {
+  const [insets, setInsets] = useState({ top: 0, bottom: 0 });
+  useLayoutEffect(() => {
+    const topBar = document.querySelector<HTMLElement>('.main > .topbar');
+    const tabBar = document.querySelector<HTMLElement>('.mobile-tabbar');
+    const shown = (el: HTMLElement | null) =>
+      el && getComputedStyle(el).display !== 'none' ? el.offsetHeight : 0;
+    const measure = () => {
+      const next = { top: shown(topBar), bottom: shown(tabBar) };
+      setInsets((prev) => (prev.top === next.top && prev.bottom === next.bottom ? prev : next));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    if (topBar) ro.observe(topBar);
+    if (tabBar) ro.observe(tabBar);
+    return () => ro.disconnect();
+  }, []);
+  return insets;
+}
+
+/** The composer of whichever embedded companion is mounted (panel or sheet). */
+function companionComposer(): HTMLElement | null {
+  return document.querySelector<HTMLElement>('.un-pn-root [data-companion-composer]');
+}
+
+/** One question page. The mascot hooks need <UiNextRoot>, so the page body renders inside it. */
+export function PracticeNextSolo(props: PracticeNextSoloProps) {
+  return (
+    <UiNextRoot className="un-pn-root">
+      <PracticeNextSoloPage {...props} />
+    </UiNextRoot>
+  );
+}
+
+function PracticeNextSoloPage({
   item,
   sessionId,
   pos,
@@ -155,6 +228,12 @@ export function PracticeNextSolo({
     addToast: notify,
   });
   const { q, frozen, phase, displayedPreview } = s;
+  const embedded = companion === 'embedded';
+
+  // A new question opens at its top, so its title is where the stream row's title flies to (M4).
+  useLayoutEffect(() => {
+    window.scrollTo(0, 0);
+  }, []);
 
   // ⌘/Ctrl+Enter submits while answering (same shortcut as PfSolo).
   const { runJudge } = s;
@@ -171,24 +250,51 @@ export function PracticeNextSolo({
   }, [phase, runJudge]);
 
   const [sheet, setSheet] = useState<SheetSnap>('peek');
-  // Transitional: inside the retained shell its fixed phone tab bar would cover the sheet, so the
-  // sheet peeks above whatever bottom bar the shell draws (YUK-1473 checkpoint 1, owner decision).
-  const [shellInset, setShellInset] = useState(0);
-  useLayoutEffect(() => {
-    const bar = document.querySelector<HTMLElement>('.mobile-tabbar');
-    if (!bar) return;
-    const measure = () =>
-      setShellInset(getComputedStyle(bar).display === 'none' ? 0 : bar.offsetHeight);
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(bar);
-    return () => ro.disconnect();
-  }, []);
+  const shell = useShellInsets();
   // One Dock instance only: it goes into the panel on wide screens, into the sheet on phones.
   const isPhone = useSyncExternalStore(subscribePhone, readPhone, () => false);
   const [companionBusy, setCompanionBusy] = useState(false);
   const [zoomed, setZoomed] = useState<MaterialView | null>(null);
   const [pane, setPane] = useState<'passage' | 'questions'>('questions');
+
+  // ── The mascot follows real state only (B2, C3): it thinks while the embedded companion works,
+  // and turns one petal when a reply's committed turn is re-read or a judgment lands.
+  const [recordedReply, setRecordedReply] = useState<string | undefined>(undefined);
+  useMascotActivity({ thinking: embedded && companionBusy, settleKey: recordedReply });
+  const mascot = useMascot();
+  const landedVerdict = useRef<JudgeFeedback | null>(null);
+  useEffect(() => {
+    if (!displayedPreview || landedVerdict.current === displayedPreview) return;
+    landedVerdict.current = displayedPreview;
+    mascot.advance();
+  }, [displayedPreview, mascot]);
+
+  // ── Quote into the conversation (M6): the passage lifts off the page and lands in the composer.
+  const mainRef = useRef<HTMLDivElement>(null);
+  const [draft, setDraft] = useState<{ key: number; text: string } | null>(null);
+  const flight = useRef<(() => void) | null>(null);
+  useEffect(() => () => flight.current?.(), []);
+  const quoteSel = useQuotableSelection(mainRef, embedded);
+  const quote = useCallback(({ text, rect }: QuotedPassage) => {
+    const clipped = clipQuote(text);
+    if (!clipped) return;
+    // On phones the sheet rises first; the flight tracks the composer while it moves (C4).
+    if (window.matchMedia(PHONE_MEDIA).matches) {
+      setSheet((snap) => (snap === 'full' ? snap : 'half'));
+    }
+    flight.current?.();
+    flight.current = flyQuote({
+      from: rect,
+      content: clipped,
+      to: companionComposer,
+      onLand: () => {
+        flight.current = null;
+        setDraft((prev) => ({ key: (prev?.key ?? 0) + 1, text: `「${clipped}」\n` }));
+      },
+    });
+  }, []);
+  const quoteBlock = (text: string, el: Element | null | undefined) =>
+    quote({ text, rect: el?.getBoundingClientRect() ?? null });
 
   const timeline = s.timelineEvents;
   const lastAttempt = [...timeline].reverse().find((e) => e.kind === 'attempt');
@@ -258,23 +364,37 @@ export function PracticeNextSolo({
     );
   };
 
+  /** A small "引用到学习伙伴" for a block of question text; the keyboard path to M6 (A4). */
+  const quoteButton = (text: string, what: string) =>
+    embedded ? (
+      <IconButton
+        label={`把${what}引用到学习伙伴`}
+        className="un-pn-quote-btn"
+        icon={<MessageSquareQuote size={14} />}
+        onClick={(e) =>
+          quoteBlock(
+            text,
+            e.currentTarget.closest('[data-quote-block]')?.querySelector('[data-quote-text]'),
+          )
+        }
+      />
+    ) : null;
+
   const header = (
     <div className="un-pn-companion-head">
       <span className="un-pn-companion-name">学习伙伴</span>
-      <span className="un-pn-companion-state">
-        {companion === 'embedded' && companionBusy ? '在想…' : '在这里'}
-      </span>
+      <CompanionStatus thinking={embedded && companionBusy} />
     </div>
   );
   // C1 asks for "正在看：…". The companion can't see the question yet (backend gap), so it says so
-  // instead of pretending.
+  // instead of pretending, and points at the way to show it: quoting.
   const blindNote = (
     <p className="un-pn-companion-empty">
-      它现在还看不到这道题的内容。想问这道题，把题目要点或你卡住的地方写进问题里。
+      它现在还看不到这道题的内容。想问这道题，选中题目里的话引用给它，或者把卡住的地方写进问题里。
     </p>
   );
   const companionBody = (where: 'panel' | 'sheet') => {
-    if (companion !== 'embedded') {
+    if (!embedded) {
       return (
         <div className="un-pn-companion-body">
           <p className="un-pn-companion-empty">
@@ -293,45 +413,89 @@ export function PracticeNextSolo({
     }
     if ((where === 'sheet') !== isPhone) return null;
     return (
-      <div className="un-pn-dock" data-snap={where === 'sheet' ? sheet : undefined}>
-        <CopilotDock
-          variant="embedded"
-          pathname={window.location.pathname}
-          navigate={navigate}
-          onRevealRequest={() => setSheet((snap) => (snap === 'full' ? snap : 'half'))}
-          onBusyChange={setCompanionBusy}
-          emptyHint={blindNote}
-        />
+      <div className="un-pn-companion-live" data-snap={where === 'sheet' ? sheet : undefined}>
+        <p className="un-pn-companion-ctx">
+          <Eye size={13} aria-hidden="true" />
+          还看不到这道题 · 可以引用题目里的话
+        </p>
+        <div className="un-pn-dock">
+          <CopilotDock
+            variant="embedded"
+            pathname={window.location.pathname}
+            navigate={navigate}
+            onRevealRequest={() => setSheet((snap) => (snap === 'full' ? snap : 'half'))}
+            onBusyChange={setCompanionBusy}
+            onReplyRecorded={setRecordedReply}
+            insertDraft={draft}
+            emptyHint={blindNote}
+          />
+        </div>
       </div>
     );
   };
 
+  const stateChip =
+    s.accepted || s.autoCommitted ? (
+      <Chip tone="accent">已提交</Chip>
+    ) : lastAttempt ? (
+      <Chip tone={HISTORY_TEXT[lastAttempt.outcome].tone}>
+        上次 · {HISTORY_TEXT[lastAttempt.outcome].label}
+      </Chip>
+    ) : q ? (
+      <Chip>第一次做</Chip>
+    ) : null;
+
+  // B3: on phones a slim page bar carries the way back, the title and the mascot's dock.
+  const phoneBar = (
+    <header className="un-pn-phonebar">
+      <IconButton
+        label="返回练习"
+        icon={<ArrowLeft size={18} />}
+        disabled={s.returning}
+        onClick={() => void s.handleBack()}
+      />
+      <span className="un-pn-phonebar-title">{title}</span>
+      <MascotDock />
+    </header>
+  );
+
   const banner = (
     <header className="un-pn-banner">
-      <Button variant="quiet" size="sm" disabled={s.returning} onClick={() => void s.handleBack()}>
-        ← 返回练习
-      </Button>
-      <p className="un-pn-eyebrow">
-        {practiceSourceLabel(item.source)} · 第 {pos} / {total} 题
-        {item.estimated_minutes ? ` · 约 ${item.estimated_minutes} 分钟` : ''}
-      </p>
-      <h1 className="un-pn-title">{title}</h1>
-      <div className="un-pn-chips">
-        {q?.labels
-          .filter((l) => l.name !== title)
-          .map((l) => (
-            <Chip key={l.id}>{l.name}</Chip>
-          ))}
-        {s.accepted || s.autoCommitted ? (
-          <Chip tone="accent">已提交</Chip>
-        ) : lastAttempt ? (
-          <Chip tone={HISTORY_TEXT[lastAttempt.outcome].tone}>
-            上次 · {HISTORY_TEXT[lastAttempt.outcome].label}
-          </Chip>
-        ) : q ? (
-          <Chip>第一次做</Chip>
-        ) : null}
+      <div className="un-pn-banner-text">
+        <div className="un-pn-back">
+          <Button
+            variant="quiet"
+            size="sm"
+            disabled={s.returning}
+            onClick={() => void s.handleBack()}
+          >
+            <ArrowLeft size={14} aria-hidden="true" />
+            返回练习
+          </Button>
+        </div>
+        <p className="un-pn-eyebrow">
+          {practiceSourceLabel(item.source)} · 第 {pos} / {total} 题
+          {item.estimated_minutes ? ` · 约 ${item.estimated_minutes} 分钟` : ''}
+        </p>
+        <h1 className="un-pn-title" data-morph={practiceMorphKey(item.id)}>
+          {title}
+        </h1>
+        <div className="un-pn-chips">
+          {q?.labels
+            .filter((l) => l.name !== title)
+            .map((l) => (
+              <Chip key={l.id}>{l.name}</Chip>
+            ))}
+          {stateChip}
+        </div>
       </div>
+      <MascotSlot
+        className="un-pn-mascot"
+        size={MASCOT_SIZE.read}
+        phoneSize={MASCOT_SIZE.readPhone}
+        rest={QUESTION_REST}
+        glow={9}
+      />
     </header>
   );
 
@@ -389,15 +553,24 @@ export function PracticeNextSolo({
       frozen.response_spec.slots.filter((slot) => slot.part_id === partId);
     const faceParts = new Set(faces.map((f) => f.part_id));
     const looseSlots = frozen.response_spec.slots.filter((slot) => !faceParts.has(slot.part_id));
+    const figuresEl =
+      figures.length > 0 ? (
+        <div className="un-pn-figures">{figures.map(renderMaterial)}</div>
+      ) : null;
+    const stemText = faces.map((f) => f.prompt_md).join('\n');
 
     const questionSection = (
-      <section className="un-pn-section" aria-labelledby="un-pn-question">
-        <h2 id="un-pn-question" className="un-pn-h2">
-          题目
-        </h2>
-        <div className={lone ? 'un-pn-stem un-pn-stem-with-figure' : 'un-pn-stem'}>
+      <section className="un-pn-section" aria-labelledby="un-pn-question" data-quote-block="">
+        <div className="un-pn-section-head">
+          <h2 id="un-pn-question" className="un-pn-h2">
+            题目
+          </h2>
+          {!multiPart && stemText.trim() && quoteButton(stemText, '题目')}
+        </div>
+        <div className="un-pn-stem" data-lone={lone || undefined}>
+          {lone && figuresEl}
           {!multiPart && (
-            <div className="un-pn-faces">
+            <div className="un-pn-faces" data-quotable="" data-quote-text="">
               {faces.map((face) => (
                 <div key={face.part_id} className="un-pn-face">
                   {face.question_no && <span className="un-pn-face-no">{face.question_no}</span>}
@@ -408,7 +581,7 @@ export function PracticeNextSolo({
               ))}
             </div>
           )}
-          {figures.length > 0 && <div className="un-pn-figures">{figures.map(renderMaterial)}</div>}
+          {!lone && figuresEl}
         </div>
       </section>
     );
@@ -490,19 +663,25 @@ export function PracticeNextSolo({
           <SaveStateChip state={s.autosave.state} onRetry={s.autosave.retry} />
         </div>
         <ol className="un-pn-parts">
-          {faces.map((face, index) => (
-            <li key={face.part_id} className="un-pn-part">
-              <div className="un-pn-face">
-                <span className="un-pn-face-no">{face.question_no ?? `(${index + 1})`}</span>
-                <MathMarkdown notation={notation} className="un-pn-prose">
-                  {face.prompt_md}
-                </MathMarkdown>
-              </div>
-              {slotsOf(face.part_id).length > 0 && (
-                <div className="un-pn-answer">{slotsOf(face.part_id).map(renderSlot)}</div>
-              )}
-            </li>
-          ))}
+          {faces.map((face, index) => {
+            const no = face.question_no ?? `(${index + 1})`;
+            return (
+              <li key={face.part_id} className="un-pn-part" data-quote-block="">
+                <div className="un-pn-face">
+                  <span className="un-pn-face-no">{no}</span>
+                  <div data-quotable="" data-quote-text="">
+                    <MathMarkdown notation={notation} className="un-pn-prose">
+                      {face.prompt_md}
+                    </MathMarkdown>
+                  </div>
+                  {quoteButton(`${no} ${face.prompt_md}`, `第 ${no} 问`)}
+                </div>
+                {slotsOf(face.part_id).length > 0 && (
+                  <div className="un-pn-answer">{slotsOf(face.part_id).map(renderSlot)}</div>
+                )}
+              </li>
+            );
+          })}
         </ol>
         <div className="un-pn-answer">
           {looseSlots.map(renderSlot)}
@@ -526,15 +705,23 @@ export function PracticeNextSolo({
       </section>
     );
 
+    // Submit → judgment (R3): one element goes from "正在判" to the result in place, and the
+    // explanation opens beneath it. Open questions stop in between for the confidence beat.
     const verdict = displayedPreview ? verdictWords(displayedPreview) : null;
+    let judgmentPhase: JudgmentPhase | null = null;
+    if (phase === 'feedback' && displayedPreview) judgmentPhase = 'settled';
+    else if (phase === 'answering' && s.judging && !s.pendingRun) judgmentPhase = 'checking';
+
     const resultSection =
-      s.pendingRun || phase !== 'answering' ? (
+      s.pendingRun || phase !== 'answering' || judgmentPhase ? (
         <section className="un-pn-section" aria-labelledby="un-pn-result" aria-live="polite">
           <h2 id="un-pn-result" className="un-pn-h2">
             结果
           </h2>
           {s.pendingRun ? (
             <div className="un-pn-result">
+              {/* Not the running judgment line: this can take minutes, and nothing changes
+                  here until the result arrives (M1). */}
               <Chip>判分在后台</Chip>
               <p className="un-pn-result-text">
                 {s.pendingPoll.status === 'failed' || s.pendingPoll.error
@@ -569,126 +756,141 @@ export function PracticeNextSolo({
               </div>
               <p className="un-pn-hint">1 = 全靠猜 · 5 = 十拿九稳 · 不计分</p>
             </div>
-          ) : displayedPreview && verdict ? (
-            <div className="un-pn-result" data-tone={verdict.tone}>
-              <div className="un-pn-verdict">
-                <Chip tone={verdict.tone}>{verdict.label}</Chip>
-                {verdict.note && <span className="un-pn-hint">{verdict.note}</span>}
-              </div>
-              {displayedPreview.coarse_outcome === 'unsupported' ? (
-                <p className="un-pn-result-text">
-                  {s.autoCommitted || s.committedPreview
-                    ? '这题暂时没法自动判，这次作答已经存下了。可以继续下一题，或者返回练习跳过它。'
-                    : '这题暂时没法自动判。可以先自己评一下，或者返回练习跳过这题。'}
-                </p>
-              ) : displayedPreview.feedback_md ? (
-                <MathMarkdown notation={notation} className="un-pn-prose un-pn-result-text">
-                  {displayedPreview.feedback_md}
-                </MathMarkdown>
-              ) : null}
-              {q?.reference_md && (
-                <div className="un-pn-reference">
-                  <span className="un-pn-hint">参考答案</span>
-                  <MathMarkdown notation={notation} className="un-pn-prose">
-                    {q.reference_md}
-                  </MathMarkdown>
-                </div>
-              )}
-
-              {!s.autoCommitted && (
-                <div className="un-pn-rate">
-                  <span className="un-pn-actions-label">按这次的情况安排复习：</span>
-                  {RATINGS.map((g) => (
-                    <ChipToggle
-                      key={g}
-                      pressed={s.rating === g}
-                      onPressedChange={() => s.setRating(g)}
-                    >
-                      {RATING_LABEL[g]}
-                    </ChipToggle>
-                  ))}
-                  <span className="un-pn-hint">
-                    {displayedPreview.suggested_rating
-                      ? `建议：${RATING_LABEL[displayedPreview.suggested_rating]}`
-                      : '这次没有建议，自己选一个'}
-                  </span>
-                </div>
-              )}
-
-              <div className="un-pn-actions">
-                {displayedPreview.coarse_outcome === 'unsupported' &&
-                  !s.autoCommitted &&
-                  !s.committedPreview && (
-                    <Button variant="secondary" onClick={s.startSelfRate}>
-                      自己评一下
-                    </Button>
-                  )}
-                {s.autoCommitted ? (
-                  <Button variant="primary" disabled={s.committing} onClick={onDone}>
-                    下一题
-                  </Button>
-                ) : (
-                  <Button
-                    variant="primary"
-                    disabled={s.committing || !s.rating}
-                    onClick={() =>
-                      s.rating && void s.commit({ withAppeal: false, rating: s.rating })
-                    }
-                  >
-                    {s.committing ? '正在记下…' : '确认，下一题'}
-                  </Button>
-                )}
-                {appealEntryAvailable({
-                  phase,
-                  appealOpen: s.appealOpen,
-                  autoCommitted: s.autoCommitted,
-                  autoCommitJudgeEventId: s.autoCommitJudgeEventId,
-                }) && (
-                  <button
-                    type="button"
-                    className="un-pn-link un-hit"
-                    aria-expanded={false}
-                    aria-controls="un-pn-appeal"
-                    onClick={() => s.setAppealOpen(true)}
-                  >
-                    觉得判得不对？说明理由重判
-                  </button>
-                )}
-              </div>
-
-              <Expand open={s.appealOpen} id="un-pn-appeal">
-                <div className="un-pn-appeal">
-                  <textarea
-                    className="un-pn-textarea"
-                    rows={2}
-                    value={s.appealText}
-                    placeholder="说说为什么，比如「我的写法和参考答案是等价的」"
-                    onChange={(e) => s.setAppealText(e.target.value)}
-                    aria-label="重判理由"
-                  />
-                  <div className="un-pn-actions">
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      disabled={
-                        !s.appealText.trim() ||
-                        s.committing ||
-                        (s.autoCommitted ? !s.autoCommitJudgeEventId : !s.rating)
-                      }
-                      onClick={() => {
-                        if (s.autoCommitted) void s.submitAutoCommitAppeal();
-                        else if (s.rating) void s.commit({ withAppeal: true, rating: s.rating });
-                      }}
-                    >
-                      提交重判，先继续
-                    </Button>
-                    <Button variant="quiet" size="sm" onClick={() => s.setAppealOpen(false)}>
-                      算了
-                    </Button>
-                    <span className="un-pn-hint">重判在后台进行，不耽误做下一题</span>
+          ) : judgmentPhase ? (
+            <div className="un-pn-result" data-tone={verdict?.tone}>
+              <Judgment
+                phase={judgmentPhase}
+                tone={verdict?.tone ?? 'neutral'}
+                label={verdict?.label ?? ''}
+                checkingLabel="正在判"
+              >
+                {displayedPreview && verdict ? (
+                  <div className="un-pn-judgment-body">
+                    {verdict.note && <p className="un-pn-hint">{verdict.note}</p>}
+                    {displayedPreview.coarse_outcome === 'unsupported' ? (
+                      <p className="un-pn-result-text">
+                        {s.autoCommitted || s.committedPreview
+                          ? '这题暂时没法自动判，这次作答已经存下了。可以继续下一题，或者返回练习跳过它。'
+                          : '这题暂时没法自动判。可以先自己评一下，或者返回练习跳过这题。'}
+                      </p>
+                    ) : displayedPreview.feedback_md ? (
+                      <MathMarkdown notation={notation} className="un-pn-prose un-pn-result-text">
+                        {displayedPreview.feedback_md}
+                      </MathMarkdown>
+                    ) : null}
+                    {q?.reference_md && (
+                      <div className="un-pn-reference">
+                        <span className="un-pn-hint">参考答案</span>
+                        <MathMarkdown notation={notation} className="un-pn-prose">
+                          {q.reference_md}
+                        </MathMarkdown>
+                      </div>
+                    )}
                   </div>
-                </div>
-              </Expand>
+                ) : (
+                  <div />
+                )}
+              </Judgment>
+
+              {displayedPreview && (
+                <>
+                  {!s.autoCommitted && (
+                    <div className="un-pn-rate">
+                      <span className="un-pn-actions-label">按这次的情况安排复习：</span>
+                      {RATINGS.map((g) => (
+                        <ChipToggle
+                          key={g}
+                          pressed={s.rating === g}
+                          onPressedChange={() => s.setRating(g)}
+                        >
+                          {RATING_LABEL[g]}
+                        </ChipToggle>
+                      ))}
+                      <span className="un-pn-hint">
+                        {displayedPreview.suggested_rating
+                          ? `建议：${RATING_LABEL[displayedPreview.suggested_rating]}`
+                          : '这次没有建议，自己选一个'}
+                      </span>
+                    </div>
+                  )}
+
+                  <div className="un-pn-actions">
+                    {displayedPreview.coarse_outcome === 'unsupported' &&
+                      !s.autoCommitted &&
+                      !s.committedPreview && (
+                        <Button variant="secondary" onClick={s.startSelfRate}>
+                          自己评一下
+                        </Button>
+                      )}
+                    {s.autoCommitted ? (
+                      <Button variant="primary" disabled={s.committing} onClick={onDone}>
+                        下一题
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="primary"
+                        disabled={s.committing || !s.rating}
+                        onClick={() =>
+                          s.rating && void s.commit({ withAppeal: false, rating: s.rating })
+                        }
+                      >
+                        {s.committing ? '正在记下…' : '确认，下一题'}
+                      </Button>
+                    )}
+                    {appealEntryAvailable({
+                      phase,
+                      appealOpen: s.appealOpen,
+                      autoCommitted: s.autoCommitted,
+                      autoCommitJudgeEventId: s.autoCommitJudgeEventId,
+                    }) && (
+                      <button
+                        type="button"
+                        className="un-pn-link un-hit"
+                        aria-expanded={false}
+                        aria-controls="un-pn-appeal"
+                        onClick={() => s.setAppealOpen(true)}
+                      >
+                        觉得判得不对？说明理由重判
+                      </button>
+                    )}
+                  </div>
+
+                  <Expand open={s.appealOpen} id="un-pn-appeal">
+                    <div className="un-pn-appeal">
+                      <textarea
+                        className="un-pn-textarea"
+                        rows={2}
+                        value={s.appealText}
+                        placeholder="说说为什么，比如「我的写法和参考答案是等价的」"
+                        onChange={(e) => s.setAppealText(e.target.value)}
+                        aria-label="重判理由"
+                      />
+                      <div className="un-pn-actions">
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          disabled={
+                            !s.appealText.trim() ||
+                            s.committing ||
+                            (s.autoCommitted ? !s.autoCommitJudgeEventId : !s.rating)
+                          }
+                          onClick={() => {
+                            if (s.autoCommitted) void s.submitAutoCommitAppeal();
+                            else if (s.rating)
+                              void s.commit({ withAppeal: true, rating: s.rating });
+                          }}
+                        >
+                          提交重判，先继续
+                        </Button>
+                        <Button variant="quiet" size="sm" onClick={() => s.setAppealOpen(false)}>
+                          算了
+                        </Button>
+                        <span className="un-pn-hint">重判在后台进行，不耽误做下一题</span>
+                      </div>
+                    </div>
+                  </Expand>
+                </>
+              )}
             </div>
           ) : null}
         </section>
@@ -702,15 +904,19 @@ export function PracticeNextSolo({
           </h2>
           <ol className="un-pn-history">
             {[...timeline].reverse().map((e) => (
-              <li key={e.event_id}>
+              <li
+                key={e.event_id}
+                data-tone={e.kind === 'attempt' ? HISTORY_TEXT[e.outcome].tone : 'neutral'}
+              >
+                <span className="un-pn-history-dot" aria-hidden="true" />
                 <span className="un-pn-history-day">{formatDay(e.created_at_sec)}</span>
                 {e.kind === 'attempt' ? (
-                  <>
-                    <Chip tone={HISTORY_TEXT[e.outcome].tone}>{HISTORY_TEXT[e.outcome].label}</Chip>
+                  <span className="un-pn-history-line">
+                    <span className="un-pn-history-outcome">{HISTORY_TEXT[e.outcome].label}</span>
                     {e.cause?.primary_label && (
                       <span className="un-pn-history-cause">{e.cause.primary_label}</span>
                     )}
-                  </>
+                  </span>
                 ) : (
                   <span className="un-pn-history-cause">复习 · 按间隔安排</span>
                 )}
@@ -733,6 +939,8 @@ export function PracticeNextSolo({
       // R9: the passage stays pinned on the left and scrolls on its own; questions on the right.
       <div className="un-pn-split" data-pane={pane}>
         <div className="un-pn-pane-switch">
+          {/* Provisional (design doc §11, owner checkpoint pending): on phones a switch keeps
+              the passage one tap away instead of stacking it above the questions. */}
           <Segmented
             label="文章与题目"
             value={pane}
@@ -745,11 +953,16 @@ export function PracticeNextSolo({
         </div>
         <section className="un-pn-passage" aria-label="文章">
           {passages.map((m) => (
-            <div key={m.material_id} className="un-pn-passage-block">
-              {m.caption && <p className="un-pn-passage-title">{m.caption}</p>}
-              <MathMarkdown notation={notation} className="un-pn-prose">
-                {m.content_md ?? ''}
-              </MathMarkdown>
+            <div key={m.material_id} className="un-pn-passage-block" data-quote-block="">
+              <div className="un-pn-passage-head">
+                {m.caption && <p className="un-pn-passage-title">{m.caption}</p>}
+                {quoteButton(m.content_md ?? '', '这段文章')}
+              </div>
+              <div data-quotable="" data-quote-text="">
+                <MathMarkdown notation={notation} className="un-pn-prose">
+                  {m.content_md ?? ''}
+                </MathMarkdown>
+              </div>
             </div>
           ))}
         </section>
@@ -760,15 +973,21 @@ export function PracticeNextSolo({
     );
   }
 
+  const insets = {
+    '--un-pn-top': `${shell.top}px`,
+  } as CSSProperties;
+
   return (
-    <UiNextRoot className="un-pn-root">
-      <div className="un-pn">
-        <div className="un-pn-main">
-          <div className={hasPassage ? 'un-pn-column un-pn-column-wide' : 'un-pn-column'}>
-            {banner}
-            {body}
-          </div>
+    <div className="un-pn" style={insets}>
+      <div className="un-pn-main un-page-enter" ref={mainRef}>
+        <div className={hasPassage ? 'un-pn-column un-pn-column-wide' : 'un-pn-column'}>
+          {phoneBar}
+          {banner}
+          {body}
         </div>
+      </div>
+      {/* C1: a floating layer beside the reading column, never over it. Glass (T3: floating). */}
+      <div className="un-pn-aside un-glass">
         <CompanionPanel open label="学习伙伴" header={header}>
           {companionBody('panel')}
         </CompanionPanel>
@@ -778,12 +997,19 @@ export function PracticeNextSolo({
           label="学习伙伴"
           snap={sheet}
           onSnapChange={setSheet}
-          bottomInset={shellInset}
+          bottomInset={shell.bottom}
           header={header}
         >
           {companionBody('sheet')}
         </BottomSheet>
       </div>
+      <QuoteBubble
+        selection={quoteSel.selection}
+        onQuote={(passage) => {
+          quote(passage);
+          quoteSel.clear();
+        }}
+      />
       <FigureLightbox
         open={zoomed !== null}
         onClose={() => setZoomed(null)}
@@ -791,6 +1017,6 @@ export function PracticeNextSolo({
         label={zoomed?.alt_text ?? zoomed?.caption ?? '题目配图'}
       />
       <Toaster toasts={toaster.toasts} dismiss={toaster.dismiss} />
-    </UiNextRoot>
+    </div>
   );
 }
