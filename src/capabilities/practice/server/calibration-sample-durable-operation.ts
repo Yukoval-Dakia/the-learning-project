@@ -25,18 +25,40 @@
 // DBOS candidate evaluates only the gate until durable claims exist.
 // A `pg-boss` source keeps sampleDeps.now (core default: new Date()) unchanged.
 //
-// Part 2 (2026-10-11 continuation) adds the frozen-workset / staged-resume
-// seams: per-item effect identity strictly separated from scheduler delivery
-// identity, and a gated staged executor over a PROVISIONAL durable-effect
-// port. The port is the explicit lane-B dependency — it has NO implementation
-// here and NO production caller; see the Part 2 section comment.
+// The explicitly dispatched staged operation below consumes the fixed shared
+// store. The retained handler and unregistered gate-only candidate still use
+// Part 1; parent owns producer integration and runtime admission.
 
 import { z } from 'zod';
 import type { Provider } from '@/ai/registry';
 import { getConfigFlag } from '@/core/config/store';
 import { canonicalHash, stableStringify } from '@/core/migration/canonical';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import { resolveTaskProvider } from '@/server/ai/providers';
+import {
+  type CalibrationSampleDispatch,
+  type CalibrationSendLease,
+  admitCalibrationStoreDispatch,
+  applyCalibrationStoreReceipt,
+  calibrationSampleDispatchSchema,
+  calibrationStoreApplicationSchema,
+  markCalibrationStoreUnknown,
+  prepareCalibrationStoreWorkSet,
+  readCalibrationStoreObligations,
+  readCalibrationStoredInput,
+  recordCalibrationStoreResult,
+  reserveCalibrationStoreEffect,
+} from '@/server/durable/calibration-sample-store';
+import {
+  type PaidEffectIdentity,
+  type PaidEffectInput,
+  PaidEffectProtocolError,
+  computePaidEffectIdentity,
+  computePaidEffectInputDigest,
+  paidEffectIdentitySchema,
+  paidEffectJsonEquals,
+} from '@/server/durable/paid-effect-protocol';
+import type { PaidEffectSnapshot } from '@/server/durable/paid-effect-store';
 import {
   JUDGE_CALIBRATION_SAMPLING_ENABLED_ENV,
   readJudgeCalibrationConfig,
@@ -188,84 +210,10 @@ export async function runCalibrationSampleOperation(
   return { kind: 'sampled', source, result };
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Part 2 — frozen scheduled workset, per-item effect identity, staged
-// resume/apply seams (2026-10-11 fix round; supersedes f007ed528).
-//
-// f007ed528 was rejected by the parent as a safe stage implementation. Three
-// defects are fixed here; the earlier commit must NOT be cited as having had a
-// real domain apply or a no-double-send guarantee:
-//   1. its intent append returned void, so two processes reading the same
-//      empty history could both send — reservation is now an explicit
-//      compare-and-set verdict on the port (`reserveIntent`), and a lost
-//      reserve NEVER sends;
-//   2. its completed→applied transition was a bare marker append — echo
-//      equality proves receipt integrity, NOT that the domain effect landed.
-//      Application is now a REQUIRED `applyReceipt` seam returning trusted
-//      application evidence; only its success marks `applied`, and a failure
-//      keeps the record `completed` (recoverable, provider never re-invoked);
-//   3. its workset id bound anchor+cfg but not the frozen items — the effect
-//      revision now carries a freeze digest over the full ordered workset
-//      (each item bound by its input digest), and a replay presenting a
-//      different freeze under the same workset id is REJECTED whole.
-//
-// DELIVERY ≠ EFFECT. `CalibrationSampleTickSource` (Part 1) is scheduler
-// DELIVERY identity: which pg-boss job / DBOS workflow delivered the tick.
-// Nothing below takes it as input. Effect identity is the durable paid
-// effect's own coordinates — entity (which judge event), workset revision
-// (scheduled id + freeze digest), model (which second lane), input digest
-// (which immutable re-judge input face).
-//
-// LANE B DEPENDENCY (explicit, unresolved): this port is the consumer-side
-// seam for the shared durable paid-effect store owned by lane B
-// (`tlp-migration-receipt-reference`, task
-// migration-shared-durable-effects-implementation-20261011), which is the
-// SOLE implementer of the shared atomic reserve/claim/fence protocol. The
-// atomicity REQUIRED of `reserveIntent` (exactly one concurrent winner per
-// effectId) is a store guarantee this lane does not and must not implement.
-// The interface is PROVISIONAL until the parent relays lane B's fixed typed
-// protocol, at which point it is replaced/aliased to it. Until that handoff
-// the staged executor has NO production caller: the retained pg-boss handler
-// keeps Part 1 behavior verbatim and the DBOS candidate stays gate-only held
-// (paid-refusal protection preserved).
-// This seam is not live admission and must not be presented as one.
-//
-// CORE RELEASE (received 2026-10-11 from the feature owner; single file
-// `judge-calibration-sample-core.ts`, minimal behavior-equivalent extraction):
-//   • `selectJudgeCalibrationCandidates(db, cfg, now): Promise<JudgeCandidate[]>`
-//     — the MF4 selection block, moved verbatim; freezing reuses THIS math.
-//   • `rejudgeSingleCalibrationCandidate(db, cfg, candidate, opts): Promise<JudgeCalibrationSingleRejudge>`
-//     — provider EXECUTION only (no observation write); skip faces are
-//     classified outcomes, failures throw to the caller's isolation catch.
-//   • `applyJudgeCalibrationRejudgeSample(db, cfg, rejudged, laneSnapshots, now): Promise<'written'|'duplicate'>`
-//     — domain APPLY only (no provider call); reports the MF8 unique conflict honestly.
-//   • `readCalibrationLaneSnapshots(): JudgeCalibrationLaneSnapshots`
-//   • `freezeCalibrationWorkSetFromCandidates(db, candidates)`
-//     — captures exact question/profile/answer inputs and reports unprepared candidates.
-// `buildCalibrationStagedCoreSeams` below wires these as the REAL staged
-// seams (composed rejudge is never used as receipt recovery: execution and
-// apply remain separate calls).
-//
-// Resume semantics implemented here (shared invariants, parent plan):
-//   • the atomic reserve happens BEFORE the physical send; the exact
-//     immutable receipt follows; application follows the receipt through the
-//     required apply seam only.
-//   • unknown send/result outcomes are durable unresolved obligations — never
-//     resent automatically, including under a later tick/workset that
-//     re-selects the same entity (entity-key blocking), and never inferred
-//     complete from a step checkpoint or a domain row.
-//   • replay of a completed receipt compares its immutable identity echo
-//     before reuse; a mismatched receipt is held, not reused, not resent.
-//     Echo equality authorizes the APPLY attempt — it is never itself the
-//     domain application.
-//   • records are append-only; a changed revision never erases historical
-//     obligations — they keep appearing in every report until discharged.
-//   • record timestamps retain the workset anchor. Receipts separately save
-//     the execution clock and lane snapshots before invoking the judge.
-// ═══════════════════════════════════════════════════════════════════════════
+// Frozen workset and shared-store consumer. Historical R1/R2 covered the
+// frozen core faces; this integration requires its own later parent review.
 
-/** Family discriminator mirrored from src/server/durable/calibration-sample-family.ts
- * (the capability must not import the server adapter; both literals must stay equal). */
+/** Reviewed family discriminator, unchanged by shared-store integration. */
 const CALIBRATION_SAMPLE_EFFECT_FAMILY = 'judge_calibration_sample';
 
 /** Scheduling identity of a workset: which tick (anchor) under which config.
@@ -426,60 +374,12 @@ export type CalibrationItemSkipClassification =
   | 'missing_question'
   | 'unsupported';
 
-export type CalibrationStagedEffectStage =
-  | 'intent'
-  | 'sent_unknown'
-  | 'skipped'
-  | 'completed'
-  | 'applied';
-
-/** One append-only durable row. `receipt` is present exactly when the stage
- * is `completed` or `applied`, EXCEPT that a `sent_unknown` row MAY carry the
- * original mismatching receipt as adjudication evidence (preserved, never
- * reused). `application` is present exactly when `applied`; `classification`
- * exactly when `skipped`. All are immutable once written. `recordedAt` is
- * always the freezing workset's anchor — never a fresh clock. */
-export interface CalibrationStagedEffectRecord {
-  readonly effectId: string;
-  readonly entityKey: string;
-  readonly identity: CalibrationEffectIdentity;
-  readonly stage: CalibrationStagedEffectStage;
-  readonly receipt: CalibrationItemReceipt | null;
-  readonly application: CalibrationApplicationReceipt | null;
-  readonly classification: CalibrationItemSkipClassification | null;
-  readonly recordedAt: string;
-}
-
-/** Verdict of the atomic intent reservation. `lost` means another process won
- * the compare-and-set for this exact effectId and owns the send. */
-export type CalibrationReserveOutcome =
-  | { status: 'reserved' }
-  | { status: 'lost'; winner: CalibrationStagedEffectRecord };
-
-/** PROVISIONAL lane-B dependency (see the Part 2 header). The real durable
- * paid-effect store owned by lane B implements this; this lane only consumes.
- * Rows are immutable and append-only — this module never mutates, rewrites or
- * deletes a row, and never infers completion from row existence. */
-export interface CalibrationStagedExecutionPort {
-  /** The family's FULL durable record stream in append (chronological) order,
-   * across ALL workset revisions — resume must see old obligations. */
-  loadFamilyRecords(): Promise<readonly CalibrationStagedEffectRecord[]>;
-  /** Atomically reserve the intent to send one effect. MUST be a
-   * compare-and-set in the real store: exactly ONE concurrent caller wins per
-   * effectId; every other caller receives `lost` with the winning row. A
-   * void-returning append is FORBIDDEN here — it would let two processes read
-   * the same empty history and both send. Store errors propagate (loud). */
-  reserveIntent(record: CalibrationStagedEffectRecord): Promise<CalibrationReserveOutcome>;
-  /** Append one immutable OBSERVATION row (skip / receipt / application).
-   * These rows make no claim of exclusivity — exclusivity lives only in
-   * `reserveIntent`. */
-  appendRecord(record: CalibrationStagedEffectRecord): Promise<void>;
-}
-
 /** Workset preparation time. Execution records its own send-start timestamp;
  * recovery receives the original anchor and reads sample time from the receipt. */
 export interface CalibrationStagedSeamContext {
   readonly anchor: Date;
+  readonly lease?: CalibrationSendLease;
+  readonly transaction?: Tx;
 }
 
 /** The per-item execution seam: EITHER a clean skip classification (no
@@ -499,7 +399,7 @@ export type CalibrationItemExecution =
 
 /** The REQUIRED domain-apply seam: apply an immutable receipt to the domain
  * and return trusted application evidence. ONLY its success marks `applied`;
- * a failure or throw leaves the record `completed` — recoverable on a later
+ * a failure or throw leaves the shared row `receipt_ready` — recoverable on a later
  * tick with the provider NEVER re-invoked. Echo equality authorizes this
  * call; it is never itself the application. */
 export type ApplyCalibrationReceiptFn = (
@@ -525,6 +425,7 @@ export interface CalibrationStagedItemDisposition {
   readonly judgeEventId: string;
   readonly effectId: string;
   readonly kind: CalibrationItemDispositionKind;
+  readonly sharedIdentity: PaidEffectIdentity;
   readonly classification?: CalibrationItemSkipClassification;
 }
 
@@ -536,13 +437,15 @@ export interface CalibrationOpenObligation {
   readonly entityKey: string;
   readonly judgeEventId: string;
   readonly stage: 'intent' | 'sent_unknown' | 'receipt_mismatch';
+  readonly stored: PaidEffectSnapshot;
   readonly workSetId: string;
 }
 
-/** A `completed` record whose application has not succeeded yet — unfinished
+/** A `receipt_ready` row whose application has not succeeded yet — unfinished
  * business visible on every tick; recovery re-applies from the receipt
  * without touching the provider. */
 export interface CalibrationPendingApplication {
+  readonly stored: PaidEffectSnapshot;
   readonly effectId: string;
   readonly judgeEventId: string;
   readonly workSetId: string;
@@ -613,44 +516,194 @@ export interface CalibrationStagedWorkSetInput {
 }
 
 export interface CalibrationStagedExecutionInput {
+  readonly database: Db;
+  readonly dispatch: CalibrationSampleDispatch;
+  readonly leaseExpiresAt: Date;
   readonly workSet: CalibrationStagedWorkSetInput;
-  readonly port: CalibrationStagedExecutionPort;
-  readonly executeItem: ExecuteCalibrationItemFn;
-  readonly applyReceipt: ApplyCalibrationReceiptFn;
+  /** Test-only execution/application seams; the default binds the real core. */
+  readonly seams?: CalibrationStagedCoreSeams;
 }
 
 export type CalibrationStagedOperationOutcome =
   | { kind: 'disabled'; flagEnv: string | undefined }
   | { kind: 'staged'; report: CalibrationStagedExecutionReport };
 
-/** Gated staged resume/apply execution. Same kill switch and bare second-lane
- * pre-flight as the retained path (default OFF ⇒ zero port calls, zero sends).
- * Not wired to any backend: the DBOS candidate stays held until the parent
- * relays lane B's fixed protocol. */
+const CalibrationEffectSchema = z.strictObject({
+  family: z.literal(CALIBRATION_SAMPLE_EFFECT_FAMILY),
+  judgeEventId: z.string().min(1),
+  workSetId: z.string().min(1),
+  freezeDigest: z.string().regex(/^[0-9a-f]{64}$/),
+  provider: z.string().min(1),
+  model: z.string().min(1),
+  inputDigest: z.string().regex(/^[0-9a-f]{64}$/),
+});
+const CalibrationConfigSchema = z.strictObject({
+  rejudgeProvider: z.string().min(1),
+  rejudgeModel: z.string().min(1),
+  batchMax: z.number().int().positive(),
+  windowDays: z.number().int().positive(),
+});
+const CalibrationPreparedInputSchema = z.object({
+  answer_event_id: z.string().min(1),
+  question_id: z.string().min(1),
+  judge_route: z.string().min(1),
+  prior_outcome: z.enum(['correct', 'partial', 'incorrect']),
+  answer_md: z.string(),
+  student_image_refs: z.array(z.string()),
+  question: z.record(z.string(), z.unknown()),
+  subject_profile: z.record(z.string(), z.unknown()),
+});
+const CalibrationFrozenIntentSchema = z.strictObject({
+  version: z.literal(1),
+  workSetId: z.string().min(1),
+  freezeDigest: z.string(),
+  anchor: z.iso.datetime(),
+  config: CalibrationConfigSchema,
+  effect: CalibrationEffectSchema,
+  members: z.array(z.strictObject({ judgeEventId: z.string().min(1), inputDigest: z.string() })),
+  prepared_input: CalibrationPreparedInputSchema,
+});
+const CalibrationStoredResultSchema = z.strictObject({
+  version: z.literal(1),
+  identity: paidEffectIdentitySchema,
+  execution: z.discriminatedUnion('kind', [
+    z.strictObject({
+      kind: z.literal('sent'),
+      receipt: z.strictObject({
+        effect: CalibrationEffectSchema,
+        outcome: z.record(z.string(), z.unknown()),
+      }),
+    }),
+    z.strictObject({
+      kind: z.literal('skipped'),
+      classification: z.enum([
+        'missing_answer_event',
+        'missing_input',
+        'missing_image_refs',
+        'missing_question',
+        'unsupported',
+      ]),
+    }),
+  ]),
+});
+function calibrationStoreCoordinates(effect: CalibrationEffectIdentity) {
+  return {
+    family: effect.family,
+    entityId: effect.judgeEventId,
+    entityRevision: `${effect.workSetId}:freeze:${effect.freezeDigest}`,
+    unit: `rejudge:${encodeURIComponent(effect.provider)}/${encodeURIComponent(effect.model)}`,
+  };
+}
+
+/** The shared digest covers the full frozen envelope; the family digest still
+ * identifies the unchanged prepared runner face. Delivery is excluded from both. */
+export function buildCalibrationStoreInput(input: {
+  item: CalibrationWorkSetItem;
+  items: readonly CalibrationWorkSetItem[];
+  anchor: Date;
+  cfg: JudgeCalibrationConfig;
+}): PaidEffectInput {
+  const workSetId = computeCalibrationWorkSetId(input);
+  const freezeDigest = computeCalibrationFreezeDigest(input.items);
+  const effect = computeCalibrationEffectIdentity({ ...input, workSetId, freezeDigest });
+  // Normalize DB Dates to the same JSON representation the reviewed family
+  // digest uses. Shared canonicalization then rejects any remaining lossy value.
+  const envelope: unknown = JSON.parse(
+    stableStringify({
+      version: 1,
+      workSetId,
+      freezeDigest,
+      anchor: input.anchor.toISOString(),
+      config: input.cfg,
+      effect,
+      members: input.items.map((item) => ({
+        judgeEventId: item.judgeEventId,
+        inputDigest: computeCalibrationInputDigest(item),
+      })),
+      prepared_input: calibrationInputFace(input.item),
+    }),
+  );
+  CalibrationFrozenIntentSchema.parse(envelope);
+  return { ...calibrationStoreCoordinates(effect), input: envelope };
+}
+
+function readFrozenCalibrationIntent(raw: unknown, identity: PaidEffectIdentity) {
+  const frozen = CalibrationFrozenIntentSchema.parse(raw);
+  if (
+    !paidEffectJsonEquals(
+      computePaidEffectIdentity({
+        ...calibrationStoreCoordinates(frozen.effect),
+        input: raw,
+      }),
+      identity,
+    ) ||
+    computeCalibrationWorkSetId({ anchor: new Date(frozen.anchor), cfg: frozen.config }) !==
+      frozen.workSetId ||
+    canonicalHash(frozen.members) !== frozen.freezeDigest ||
+    frozen.effect.workSetId !== frozen.workSetId ||
+    frozen.effect.freezeDigest !== frozen.freezeDigest ||
+    frozen.effect.provider !== frozen.config.rejudgeProvider ||
+    frozen.effect.model !== frozen.config.rejudgeModel ||
+    canonicalHash(frozen.prepared_input) !== frozen.effect.inputDigest ||
+    !frozen.members.some(
+      (item) =>
+        item.judgeEventId === frozen.effect.judgeEventId &&
+        item.inputDigest === frozen.effect.inputDigest,
+    )
+  ) {
+    throw new PaidEffectProtocolError('calibration stored input provenance mismatch');
+  }
+  return frozen;
+}
+
+function readStoredCalibrationResult(
+  raw: unknown,
+  identity: PaidEffectIdentity,
+  frozenInput: unknown,
+) {
+  const frozen = readFrozenCalibrationIntent(frozenInput, identity);
+  const result = CalibrationStoredResultSchema.parse(raw);
+  if (!paidEffectJsonEquals(result.identity, identity)) {
+    throw new PaidEffectProtocolError('calibration result shared identity mismatch');
+  }
+  if (result.execution.kind === 'sent') {
+    const receipt = result.execution.receipt;
+    const saved = CalibrationRecordedOutcome.parse(receipt.outcome);
+    if (
+      !receiptEchoMatches(receipt, frozen.effect) ||
+      !paidEffectJsonEquals(saved.prepared_input, frozen.prepared_input) ||
+      !paidEffectJsonEquals(saved.config, frozen.config) ||
+      saved.workset_anchor !== frozen.anchor
+    ) {
+      throw new PaidEffectProtocolError('calibration receipt provenance mismatch');
+    }
+  }
+  return { frozen, execution: result.execution };
+}
+
+/** Concrete shared-store consumer. No registration or default backend change.
+ * The persisted original dispatch generation, not a consume-time control read,
+ * fences every intent/claim. DBOS steps are never ownership evidence. */
 export async function runCalibrationStagedOperation(
   deps: CalibrationSampleOperationDeps,
   input: CalibrationStagedExecutionInput,
 ): Promise<CalibrationStagedOperationOutcome> {
   const gate = await readCalibrationSampleGate(deps);
-  if (gate.kind === 'disabled') {
-    return { kind: 'disabled', flagEnv: gate.flagEnv };
-  }
+  if (gate.kind === 'disabled') return { kind: 'disabled', flagEnv: gate.flagEnv };
   const cfg = { ...gate.cfg };
-  const workSetId = computeCalibrationWorkSetId({ anchor: input.workSet.anchor, cfg });
-  const seamCtx: CalibrationStagedSeamContext = { anchor: input.workSet.anchor };
-  const freezeDigest = computeCalibrationFreezeDigest(input.workSet.items);
-  const recordedAt = input.workSet.anchor.toISOString();
-
-  // Latest row per effectId wins (append order = chronology); all rows stay in
-  // the store untouched — nothing here rewrites history.
-  const records = [...(await input.port.loadFamilyRecords())];
-  const latest = new Map<string, CalibrationStagedEffectRecord>();
-  for (const record of records) latest.set(record.effectId, record);
-
-  const append = async (record: CalibrationStagedEffectRecord): Promise<void> => {
-    await input.port.appendRecord(record);
-    latest.set(record.effectId, record);
-  };
+  const dispatch = calibrationSampleDispatchSchema.parse(input.dispatch);
+  const anchor = new Date(input.workSet.anchor);
+  if (
+    dispatch.scheduledAt !== anchor.toISOString() ||
+    !Number.isFinite(input.leaseExpiresAt.getTime()) ||
+    input.leaseExpiresAt <= new Date()
+  ) {
+    throw new PaidEffectProtocolError('calibration dispatch anchor/lease mismatch');
+  }
+  const items = structuredClone(input.workSet.items);
+  const workSetId = computeCalibrationWorkSetId({ anchor, cfg });
+  const freezeDigest = computeCalibrationFreezeDigest(items);
+  const database = input.database;
 
   const counts: CalibrationStagedExecutionCounts = {
     appliedFresh: 0,
@@ -666,266 +719,232 @@ export async function runCalibrationStagedOperation(
     reservedByOtherProcess: 0,
   };
   const dispositions: CalibrationStagedItemDisposition[] = [];
-
-  // Phase R1 — finish pending applications for ANY revision: a `completed`
-  // row is a paid effect whose receipt exists; applying it goes ONLY through
-  // the required apply seam and never touches the provider. A receipt whose
-  // identity echo does not match its stored identity is held, never reused.
-  // An apply failure keeps the record completed (recoverable, no resend).
-  const appliedFromReceipt = new Set<string>();
-  const recoveredEntities = new Map<string, string>();
-  const receiptMismatch = new Set<string>();
-  for (const record of [...latest.values()]) {
-    if (record.stage !== 'completed') continue;
-    if (!receiptEchoMatches(record.receipt, record.identity)) {
-      receiptMismatch.add(record.effectId);
-      continue;
+  const recovered = new Map<
+    string,
+    {
+      effect: CalibrationEffectIdentity;
+      sharedIdentity: PaidEffectIdentity;
+      classification?: CalibrationItemSkipClassification;
     }
-    // echo equality authorizes the apply attempt — it is NOT the application
+  >();
+  const mismatched = new Set<string>();
+  const recoveryPending = new Set<string>();
+  const key = (identity: PaidEffectIdentity) => computePaidEffectInputDigest(identity);
+
+  await admitCalibrationStoreDispatch(database, dispatch);
+  const seams =
+    input.seams ?? (await buildCalibrationStagedCoreSeams(database, cfg, deps.sampleDeps));
+
+  const applyKnown = async (identity: PaidEffectIdentity) =>
+    applyCalibrationStoreReceipt(database, identity, async (transaction, raw, frozenInput) => {
+      const saved = readStoredCalibrationResult(raw, identity, frozenInput);
+      if (saved.execution.kind === 'skipped')
+        return { write: 'skipped', classification: saved.execution.classification };
+      const application = await seams.applyReceipt(saved.execution.receipt, saved.frozen.effect, {
+        anchor: new Date(saved.frozen.anchor),
+        transaction,
+      });
+      if (application.write !== 'written') {
+        throw new PaidEffectProtocolError(
+          'calibration unique duplicate requires immutable adjudication',
+        );
+      }
+      return { domainRef: application.domainRef, write: 'written' };
+    });
+
+  // Recover actual receipt_ready rows across every revision before planning
+  // this tick. A current workset cannot replace the T1 input/config/time.
+  for (const row of await readCalibrationStoreObligations(database)) {
+    if (row.state !== 'receipt_ready') continue;
     try {
-      const application = await input.applyReceipt(
-        record.receipt as CalibrationItemReceipt,
-        record.identity,
-        { anchor: new Date(record.recordedAt) },
-      );
-      if (application.write !== 'written') continue;
-      await append({ ...record, stage: 'applied', application });
-      appliedFromReceipt.add(record.effectId);
-      recoveredEntities.set(record.entityKey, record.effectId);
+      const frozenInput = await readCalibrationStoredInput(database, row.identity);
+      const saved = readStoredCalibrationResult(row.result, row.identity, frozenInput);
+      const result = await applyKnown(row.identity);
+      if (result.kind === 'applied') {
+        calibrationStoreApplicationSchema.parse(result.application);
+        recovered.set(row.identity.entityId, {
+          effect: saved.frozen.effect,
+          sharedIdentity: row.identity,
+          classification:
+            saved.execution.kind === 'skipped' ? saved.execution.classification : undefined,
+        });
+      } else recoveryPending.add(key(row.identity));
     } catch {
-      // stays completed — a later tick retries the APPLICATION only
+      mismatched.add(key(row.identity));
     }
   }
 
-  // Entity-level blockers: any open (intent / sent-unknown) effect, a
-  // mismatched receipt awaiting adjudication, OR a completed-pending-apply
-  // effect (its paid outcome is not applied yet — a new revision must not
-  // RE-BUY the same entity before the standing receipt is applied) blocks NEW
-  // effects for the same business entity — across revisions, across ticks.
-  // Only APPLIED history does not block.
-  const blockedEntityKeys = new Set<string>();
-  for (const record of latest.values()) {
-    if (
-      record.stage === 'intent' ||
-      record.stage === 'sent_unknown' ||
-      record.stage === 'completed' ||
-      receiptMismatch.has(record.effectId)
-    ) {
-      blockedEntityKeys.add(record.entityKey);
-    }
-  }
-
-  // Freeze-mismatch rejection: the recorded freeze digests under this
-  // workset id are the accepted freezes. A later replay presenting a digest
-  // outside that set is corrupt — the WHOLE workset is rejected before any
-  // reserve or send.
-  const recordedFreezeDigests = [
-    ...new Set(
-      records
-        .filter((record) => record.identity.workSetId === workSetId)
-        .map((record) => record.identity.freezeDigest),
-    ),
-  ].sort();
+  const plannedEntities = new Set<string>();
+  const effects = items
+    .filter((item) => {
+      if (recovered.has(item.judgeEventId) || plannedEntities.has(item.judgeEventId)) return false;
+      plannedEntities.add(item.judgeEventId);
+      return true;
+    })
+    .map((item) => buildCalibrationStoreInput({ item, items, anchor, cfg }));
+  const preparation = await prepareCalibrationStoreWorkSet(database, {
+    workSetId,
+    freezeDigest,
+    effects,
+    dispatch,
+  });
   const freezeMismatch: CalibrationWorkSetFreezeMismatch | null =
-    recordedFreezeDigests.length > 0 && !recordedFreezeDigests.includes(freezeDigest)
-      ? { workSetId, presentedFreezeDigest: freezeDigest, recordedFreezeDigests }
+    preparation.kind === 'freeze_mismatch'
+      ? {
+          workSetId,
+          presentedFreezeDigest: freezeDigest,
+          recordedFreezeDigests: preparation.recordedFreezeDigests,
+        }
       : null;
-
-  /** Fresh-effect pipeline: atomic reserve → execute → receipt → apply. A
-   * lost reserve sends and appends nothing (the winner's rows are the durable
-   * truth); an unknowable send becomes a durable unknown obligation; a clean
-   * skip is terminal; application happens ONLY through the required apply
-   * seam, and its failure keeps the record completed (recoverable, provider
-   * never re-invoked). */
-  const runFreshCalibrationEffect = async (
-    item: CalibrationWorkSetItem,
-    coords: { effectId: string; entityKey: string; identity: CalibrationEffectIdentity },
-  ): Promise<{
-    kind: CalibrationItemDispositionKind;
-    classification?: CalibrationItemSkipClassification;
-  }> => {
-    const reservation = await input.port.reserveIntent({
-      effectId: coords.effectId,
-      entityKey: coords.entityKey,
-      identity: coords.identity,
-      stage: 'intent',
-      receipt: null,
-      application: null,
-      classification: null,
-      recordedAt,
-    });
-    if (reservation.status === 'lost') return { kind: 'reserved_by_other_process' };
-    let execution: CalibrationItemExecution;
-    try {
-      execution = await input.executeItem(item, coords.identity, seamCtx);
-    } catch {
-      // After a won reserve, a failed or unknowable send can never be proven
-      // un-sent — record the unresolved obligation (per-item isolation kept:
-      // the caller continues with the next item).
-      await append({
-        effectId: coords.effectId,
-        entityKey: coords.entityKey,
-        identity: coords.identity,
-        stage: 'sent_unknown',
-        receipt: null,
-        application: null,
-        classification: null,
-        recordedAt,
-      });
-      return { kind: 'held_unknown_send' };
-    }
-    if (execution.kind === 'skipped') {
-      // Terminal for this effect: no observation row, no apply (the
-      // classification preserves WHY, including the paid-no-row `unsupported`
-      // face).
-      await append({
-        effectId: coords.effectId,
-        entityKey: coords.entityKey,
-        identity: coords.identity,
-        stage: 'skipped',
-        receipt: null,
-        application: null,
-        classification: execution.classification,
-        recordedAt,
-      });
-      return { kind: 'skipped', classification: execution.classification };
-    }
-    const receipt = execution.receipt;
-    if (!receiptEchoMatches(receipt, coords.identity)) {
-      // The send happened but the receipt does not prove THIS effect's
-      // outcome — durable unresolved obligation, never an auto-resend. The
-      // ORIGINAL mismatching receipt is PRESERVED on the sent_unknown row as
-      // adjudication evidence (it must not be silently discarded).
-      await append({
-        effectId: coords.effectId,
-        entityKey: coords.entityKey,
-        identity: coords.identity,
-        stage: 'sent_unknown',
-        receipt,
-        application: null,
-        classification: null,
-        recordedAt,
-      });
-      return { kind: 'held_unknown_send' };
-    }
-    await append({
-      effectId: coords.effectId,
-      entityKey: coords.entityKey,
-      identity: coords.identity,
-      stage: 'completed',
-      receipt,
-      application: null,
-      classification: null,
-      recordedAt,
-    });
-    try {
-      const application = await input.applyReceipt(receipt, coords.identity, seamCtx);
-      if (application.write !== 'written') return { kind: 'completed_apply_pending' };
-      await append({
-        effectId: coords.effectId,
-        entityKey: coords.entityKey,
-        identity: coords.identity,
-        stage: 'applied',
-        receipt,
-        application,
-        classification: null,
-        recordedAt,
-      });
-      return { kind: 'applied_fresh' };
-    } catch {
-      // stays completed — application is recoverable, the provider is never
-      // re-invoked for it
-      return { kind: 'completed_apply_pending' };
-    }
-  };
-
-  // Phase R2 — plan the frozen items.
-  const seenEntityKeys = new Set<string>();
-  for (const item of input.workSet.items) {
-    const identity = computeCalibrationEffectIdentity({ workSetId, freezeDigest, item, cfg });
-    let effectId = computeCalibrationEffectId(identity);
-    const entityKey = computeCalibrationEntityKey(item.judgeEventId);
-
+  const seen = new Set<string>();
+  for (const item of items) {
+    const effectInput = buildCalibrationStoreInput({ item, items, anchor, cfg });
+    let sharedIdentity = computePaidEffectIdentity(effectInput);
+    const effect = computeCalibrationEffectIdentity({ item, cfg, workSetId, freezeDigest });
+    let effectId = computeCalibrationEffectId(effect);
     let kind: CalibrationItemDispositionKind;
     let classification: CalibrationItemSkipClassification | undefined;
-    if (freezeMismatch !== null) {
-      kind = 'held_workset_freeze_mismatch';
-    } else if (seenEntityKeys.has(entityKey)) {
-      kind = 'held_duplicate_in_workset';
+    if (freezeMismatch) kind = 'held_workset_freeze_mismatch';
+    else if (seen.has(item.judgeEventId)) kind = 'held_duplicate_in_workset';
+    else if (recovered.has(item.judgeEventId)) {
+      const original = recovered.get(item.judgeEventId);
+      if (!original) throw new PaidEffectProtocolError('calibration recovered identity missing');
+      effectId = computeCalibrationEffectId(original.effect);
+      sharedIdentity = original.sharedIdentity;
+      classification = original.classification;
+      kind = classification ? 'skipped' : 'applied_from_receipt';
     } else {
-      seenEntityKeys.add(entityKey);
-      const record = latest.get(effectId);
-      const recoveredEffectId = recoveredEntities.get(entityKey);
-      if (recoveredEffectId !== undefined) {
-        effectId = recoveredEffectId;
-        kind = 'applied_from_receipt';
-      } else if (record !== undefined) {
-        if (appliedFromReceipt.has(effectId)) {
-          kind = 'applied_from_receipt';
-        } else if (receiptMismatch.has(effectId)) {
+      seen.add(item.judgeEventId);
+      const reservation = await reserveCalibrationStoreEffect(
+        database,
+        effectInput,
+        dispatch,
+        input.leaseExpiresAt,
+      );
+      if (reservation.kind === 'held') {
+        kind = reservation.blockedBy ? 'held_blocked_by_open_obligation' : 'held_unknown_send';
+      } else if (reservation.kind === 'completed' && mismatched.has(key(sharedIdentity))) {
+        kind = 'held_receipt_mismatch';
+      } else if (reservation.kind === 'completed' && recoveryPending.has(key(sharedIdentity))) {
+        kind = 'completed_apply_pending';
+      } else if (reservation.kind === 'completed') {
+        try {
+          const saved = readStoredCalibrationResult(
+            reservation.result,
+            reservation.identity,
+            effectInput.input,
+          );
+          const result = await applyKnown(reservation.identity);
+          kind =
+            result.kind === 'pending'
+              ? 'completed_apply_pending'
+              : saved.execution.kind === 'skipped'
+                ? 'skipped'
+                : reservation.applied
+                  ? 'applied_replay'
+                  : 'applied_from_receipt';
+          if (saved.execution.kind === 'skipped') classification = saved.execution.classification;
+          if (result.kind === 'applied')
+            calibrationStoreApplicationSchema.parse(result.application);
+        } catch {
+          mismatched.add(key(sharedIdentity));
           kind = 'held_receipt_mismatch';
-        } else if (record.stage === 'applied') {
-          kind = 'applied_replay';
-        } else if (record.stage === 'completed') {
-          // apply already attempted (and failed) in R1 — recoverable, no resend
-          kind = 'completed_apply_pending';
-        } else if (record.stage === 'skipped') {
-          kind = 'skipped';
-          classification = record.classification ?? undefined;
-        } else {
-          kind = 'held_unknown_send';
         }
-      } else if (blockedEntityKeys.has(entityKey)) {
-        kind = 'held_blocked_by_open_obligation';
       } else {
-        const fresh = await runFreshCalibrationEffect(item, { effectId, entityKey, identity });
-        kind = fresh.kind;
-        classification = fresh.classification;
+        const lease: CalibrationSendLease = {
+          identity: reservation.identity,
+          delivery: dispatch.delivery,
+          fence: reservation.fence,
+          leaseExpiresAt: input.leaseExpiresAt,
+        };
+        let execution: CalibrationItemExecution | null = null;
+        try {
+          execution = await seams.executeItem(item, effect, { anchor, lease });
+        } catch (error) {
+          await markCalibrationStoreUnknown(
+            database,
+            lease,
+            error instanceof Error ? error.message : String(error),
+          );
+        }
+        if (!execution) kind = 'held_unknown_send';
+        else {
+          // Even a mismatching receipt remains immutable evidence. Application
+          // validation holds it in receipt_ready; it cannot trigger another send.
+          await recordCalibrationStoreResult(database, lease, {
+            version: 1,
+            identity: reservation.identity,
+            execution,
+          });
+          try {
+            readStoredCalibrationResult(
+              { version: 1, identity: reservation.identity, execution },
+              reservation.identity,
+              effectInput.input,
+            );
+            const result = await applyKnown(reservation.identity);
+            kind =
+              result.kind === 'pending'
+                ? 'completed_apply_pending'
+                : execution.kind === 'skipped'
+                  ? 'skipped'
+                  : 'applied_fresh';
+            if (execution.kind === 'skipped') classification = execution.classification;
+            if (result.kind === 'applied')
+              calibrationStoreApplicationSchema.parse(result.application);
+          } catch {
+            mismatched.add(key(sharedIdentity));
+            kind = 'held_receipt_mismatch';
+          }
+        }
       }
     }
-    dispositions.push({ judgeEventId: item.judgeEventId, effectId, kind, classification });
+    seen.add(item.judgeEventId);
+    dispositions.push({
+      judgeEventId: item.judgeEventId,
+      effectId,
+      sharedIdentity,
+      kind,
+      classification,
+    });
     counts[DISPOSITION_COUNT_FIELD[kind]] += 1;
   }
 
-  // Phase R3 — unresolved obligations and pending applications, including
-  // those frozen under OTHER workset revisions: a changed revision must never
-  // erase them.
   const openObligations: CalibrationOpenObligation[] = [];
   const pendingApplications: CalibrationPendingApplication[] = [];
-  for (const record of latest.values()) {
-    if (record.stage === 'intent' || record.stage === 'sent_unknown') {
+  for (const row of await readCalibrationStoreObligations(database)) {
+    const frozen = readFrozenCalibrationIntent(
+      await readCalibrationStoredInput(database, row.identity),
+      row.identity,
+    );
+    const obligation = {
+      stored: row,
+      effectId: computeCalibrationEffectId(frozen.effect),
+      judgeEventId: row.identity.entityId,
+      workSetId: frozen.workSetId,
+    };
+    if (row.state === 'receipt_ready' && !mismatched.has(key(row.identity)))
+      pendingApplications.push(obligation);
+    else
       openObligations.push({
-        effectId: record.effectId,
-        entityKey: record.entityKey,
-        judgeEventId: record.identity.judgeEventId,
-        stage: record.stage,
-        workSetId: record.identity.workSetId,
+        ...obligation,
+        entityKey: computeCalibrationEntityKey(row.identity.entityId),
+        stage:
+          row.state === 'receipt_ready'
+            ? 'receipt_mismatch'
+            : row.state === 'pending'
+              ? 'intent'
+              : 'sent_unknown',
       });
-    } else if (receiptMismatch.has(record.effectId)) {
-      openObligations.push({
-        effectId: record.effectId,
-        entityKey: record.entityKey,
-        judgeEventId: record.identity.judgeEventId,
-        stage: 'receipt_mismatch',
-        workSetId: record.identity.workSetId,
-      });
-    } else if (record.stage === 'completed') {
-      pendingApplications.push({
-        effectId: record.effectId,
-        judgeEventId: record.identity.judgeEventId,
-        workSetId: record.identity.workSetId,
-      });
-    }
   }
-
   return {
     kind: 'staged',
     report: {
       workSetId,
       freezeDigest,
-      anchor: recordedAt,
-      dispositions,
+      anchor: anchor.toISOString(),
       counts,
+      dispositions,
       openObligations,
       pendingApplications,
       freezeMismatch,
@@ -935,10 +954,9 @@ export async function runCalibrationStagedOperation(
 
 /** The REAL staged seams over the released core extraction. Execution and
  * apply stay separate calls — a combined rejudge is never used as receipt
- * recovery. Lazy core import keeps unit tests (which inject their own seams)
- * from loading the reconstruction chain. NOT a production caller: admission
- * stays parent-owned behind the lane-B handoff; the DBOS candidate's
- * paid-refusal protection is unchanged. */
+ * recovery. This binds the concrete store consumer's default execution and
+ * application. Runtime admission and producer registration remain parent-owned;
+ * the unregistered DBOS candidate still refuses paid execution. */
 export interface CalibrationStagedCoreSeams {
   readonly executeItem: ExecuteCalibrationItemFn;
   readonly applyReceipt: ApplyCalibrationReceiptFn;
@@ -984,6 +1002,20 @@ const CalibrationRecordedOutcome = z.object({
   }),
 });
 
+function trackCalibrationRunnerFailure<Args extends unknown[], Result>(
+  runner: (...args: Args) => Promise<Result>,
+  rejected: (error: unknown) => void,
+) {
+  return async (...args: Args): Promise<Result> => {
+    try {
+      return await runner(...args);
+    } catch (error) {
+      rejected(error);
+      throw error;
+    }
+  };
+}
+
 export async function buildCalibrationStagedCoreSeams(
   db: Db,
   cfg: JudgeCalibrationConfig,
@@ -992,7 +1024,7 @@ export async function buildCalibrationStagedCoreSeams(
   const executionConfig = { ...cfg };
   const core = await import('./judge-calibration-sample-core');
   const judgeFn = sampleDeps.judgeFn ?? (await import('./judge/question-contract')).judgeAnswer;
-  const runTaskInner = sampleDeps.runTaskInner ?? core.makeJudgeCalibrationRunner(db);
+  const injectedRunner = sampleDeps.runTaskInner;
   const executionClock = sampleDeps.now ?? (() => new Date());
 
   return {
@@ -1014,11 +1046,23 @@ export async function buildCalibrationStagedCoreSeams(
       const worksetAnchor = ctx.anchor.toISOString();
       const lane = core.readCalibrationLaneSnapshots();
       const executedAt = executionClock().toISOString();
+      // The retained semantic pipeline converts a runner rejection into an
+      // unsupported verdict. That verdict cannot discharge a durable send
+      // whose wire outcome is unknown. Preserve the actual rejection outside
+      // the reviewed core, then let the store consumer fence it as unknown.
+      const runnerFailure: { value: { error: unknown } | null } = { value: null };
+      const rejected = (error: unknown) => {
+        runnerFailure.value = { error };
+      };
+      const trackedRunner = injectedRunner
+        ? trackCalibrationRunnerFailure(injectedRunner, rejected)
+        : trackCalibrationRunnerFailure(core.makeJudgeCalibrationRunner(db), rejected);
       const outcome = await core.judgeCalibrationPreparedFace(
         executionConfig,
         { ...frozen, studentImageRefs: [...frozen.studentImageRefs] },
-        { db, judgeFn, runTaskInner },
+        { db, judgeFn, runTaskInner: trackedRunner },
       );
+      if (runnerFailure.value) throw runnerFailure.value.error;
       if (outcome.kind !== 'rejudged') {
         return { kind: 'skipped', classification: outcome.kind };
       }
@@ -1038,7 +1082,7 @@ export async function buildCalibrationStagedCoreSeams(
         },
       };
     },
-    applyReceipt: async (receipt, identity) => {
+    applyReceipt: async (receipt, identity, ctx) => {
       if (!receiptEchoMatches(receipt, identity)) {
         throw new Error('apply refused: receipt identity mismatch');
       }
@@ -1064,8 +1108,14 @@ export async function buildCalibrationStagedCoreSeams(
       ) {
         throw new Error('apply refused: receipt input/config does not match effect');
       }
+      // The reviewed core requires Db although it only uses query methods.
+      // Attach its metadata-only $client field to the actual transaction;
+      // all domain SQL still uses the transaction's session and savepoint.
+      const applicationDb: Db = ctx.transaction
+        ? Object.assign(ctx.transaction, { $client: db.$client })
+        : db;
       const written = await core.applyJudgeCalibrationRejudgeSample(
-        db,
+        applicationDb,
         saved.config,
         rejudged,
         saved.lane,

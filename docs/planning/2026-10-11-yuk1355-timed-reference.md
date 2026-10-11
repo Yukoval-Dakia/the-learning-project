@@ -1,5 +1,13 @@
 # YUK-1355 timed-model reference source checkpoint
 
+Current source integration starts from parent merge
+`9cfb3dc1d23da6a3ff7228838bae6ce389bde98b`, which contains fixed shared B
+`8e3b1af04d54a21bee79b22b4ab6524187795809`. The concrete calibration store
+consumer and prepared Postgres cases are described in the final section below.
+The original extraction and frozen-input checkpoints that follow are historical.
+The retained default is still pg-boss; the DBOS candidate remains held and
+unregistered. This document does not grant runtime admission.
+
 Lane C, continued on 2026-10-11 in
 `/Volumes/YukovalSBak/yukoval-projects/tlp-migration-timed-reference`,
 branch `feat/yuk-1355-timed-reference`, base
@@ -419,3 +427,172 @@ credential, lock, push, PR or Linear operation occurred here.
 Final R2 reviewed `c3ac4c728a1e0c1d7540e860ef79271c5ebd554f` against `51613a4d2b7c1d964cde1eb483ded90c96e86f61`: both R1 P1s resolved, remaining proven P0/P1 NONE in the five-file delta. The initial SWE-2 request hit quota without a verdict; Sol resumed the same R2. No third round was opened.
 
 Review confirmed saved receipt provenance drives recovery apply, full prepared input is detached and digested, completed/mismatched receipts stay preserved, and unique conflicts remain pending. Eleven retained function bodies were independently AST-compared unchanged. Parent independently passed 48 scoped unit cases. Two new real-DB cases remain unrun; provisional shared-store integration and DB/process/provider/runtime acceptance remain pending. Candidate stays held and unregistered.
+
+## Fixed shared-store consumer integration
+
+This continuation owns only the calibration operation, gate-only family adapter,
+their matching tests, the narrow new
+`src/server/durable/calibration-sample-store.ts`, and this document in the
+original worktree. No shared paid-effect production file, core policy, schema,
+SQL, boot, manifest, public barrel, handler, config, test partition or other
+lane source was edited. The parent merge is the immutable comparison base.
+
+The parent reports shared B final R2 at
+`403c7248682129722be0051b9fba5622540c71f3` as NONE within that fixed scope.
+Its delta from the locally merged B production source contains tests/documentation
+only. This lane used local fixed production exports, without reading a moving
+tree. Parent's final real-DB window on that B revision remains pending.
+Earlier C R1/R2 covers the earlier frozen-input delta, not this substantive adapter
+integration. Parent must independently review the new actual diff; no old review
+round was repeated here.
+
+### Concrete behavior and source path
+
+`runCalibrationStagedOperation` now requires a real database, a version-1
+dispatch, an explicit send lease expiry and the prepared frozen workset.
+Its default execution/application seams bind the reviewed real core.
+`CalibrationStagedExecutionPort`, synthetic append records and memory-only
+ownership tests were removed. The production handler still calls the unchanged
+Part 1 operation; neither it nor the held DBOS candidate calls the new consumer.
+
+The versioned dispatch exported by the family includes the original scheduled
+identity and `delivery.{backend,deliveryId,tickId,generation}`. The producer must
+persist that generation at dispatch. Consumer-time control reads never substitute
+a newer generation. Every freeze/claim transaction checks the original reference;
+the shared claim checks control again atomically. This contract is exposed for
+later producer integration and does not change current job payloads or schedules.
+
+| Trigger | System action | Caller-visible result | Prohibited behavior |
+| --- | --- | --- | --- |
+| Sampling disabled | Return before store/core use | Disabled | Intent, spend or domain write |
+| Current versioned dispatch and nonempty frozen workset | Persist member intents under the family lock, then use shared admission/claim | Exactly the shared winner fence may execute | Delivery-based effect identity or memory-only ownership |
+| Existing sending/unknown effect, including another model/revision | Shared entity gate refuses send; read the stored obligation | Held with actual state, fence, delivery and lease | Lease-expiry or new-tick automatic resend; feature-rep exemption for calibration |
+| Known receipt needing application | Validate stored input and both identity layers; apply T1 receipt in a savepoint | Applied receipt or readable receipt_ready obligation | Reconstruct input/config/lane/time from the later tick |
+| Application failure | Roll back domain write and application receipt together; record failure | Receipt_ready, retry application only | Workflow SUCCESS as business proof or a second provider call |
+| MF8 unique conflict | Roll back the savepoint and retain the immutable result | Pending immutable comparison/adjudication | Treat a pre-existing row as this effect's owned application |
+| Changed freeze under an existing workset ID | Reject new intents/claims | Freeze mismatch | Replace previously selected members or input |
+| Enabled old candidate tick | Keep the unchanged held-result workflow error | Held | Paid DBOS work or production registration |
+
+Each store input includes the original config/anchor, full prepared input face,
+ordered member digests and the reviewed family identity. Shared identity maps
+judge-event ID to entity, workset ID plus freeze digest to revision, and the
+encoded provider/model to the rejudge unit. Its `sha256:` digest covers the entire
+JSON envelope. The existing family digest still binds the prepared runner face.
+Dates use the reviewed family JSON representation; scheduler delivery is absent
+from both identities.
+
+The narrow adapter calls actual shared
+`admitPaidEffectIntent`, `claimPaidEffectSend`, `recordPaidEffectResult`,
+`markPaidEffectUnknown`, `recordPaidEffectApplication`,
+`notePaidEffectApplicationFailure`, `readPaidEffect` and
+`listPaidEffectObligations`. The composed reservation preserves their family
+lock order and typed winner lease/fence. Calibration adds only its established
+rule that an unapplied older receipt also blocks buying a new effect for that
+entity, serialized with all result/application writes. B's sending/unknown gate
+continues to enforce cross-revision and cross-model blocking.
+
+The shared schema stores immutable input/result/application JSON and mutable
+monotone state, rather than the old provisional append-record model.
+Obligation reports include actual shared snapshots across revisions. Local maps
+only collect report/recovery dispositions; they never prove send ownership.
+The retained semantic pipeline catches runner rejections and returns unsupported.
+The owned execution seam tracks the actual runner rejection and rethrows it after
+that pipeline returns; the shared consumer then records unknown instead of
+manufacturing a terminal skip. A genuine unsupported face still has the reviewed
+no-observation policy. A real-pipeline unit case and the prepared unknown DB case
+exercise this distinction. The core policy file is unchanged.
+
+Saved applications include a version, shared identity, immutable result digest
+and typed written/skipped evidence. The default domain writer uses the actual
+savepoint transaction, with its metadata-only `$client` property supplied for the
+reviewed core's narrower `Db` signature. No domain SQL uses that pool property.
+A successful recovered receipt suppresses a new intent for the same entity on
+that invocation, so recovery cannot leave an invented pending purchase behind.
+
+### Prepared DB acceptance
+
+The existing DB file is assigned to the existing DB partition and now contains
+14 cases. It uses real seeded question/answer/judge/profile rows, real shared
+store/control tables and real domain observation writes, with local provider
+outputs only. No store admission, lock, fence or application safety is mocked
+as true. Prepared cases cover the retained handler and held candidate, frozen
+inputs after source edits, competing deliveries, unknown outcomes across model
+and tick changes, stale/foreign dispatch fencing plus a valid generation,
+T1 receipt recovery after an actual rolled-back domain write, MF8 conflict
+savepoint recovery, freeze mismatch, stale/unequal immutable result completion,
+immutable application conflicts, and a mismatching receipt face held without
+repurchase.
+
+These cases were not run or collected. Typecheck is source evidence only;
+it does not establish PostgreSQL lock/CAS/savepoint behavior. The test send lease
+uses a distant fixed future date solely to avoid current-date dependence.
+
+### Verification and logs
+
+Node 24.19.0 and pnpm 11.13.1 were used. Artifact directory:
+`/tmp/yuk1355-calibration-shared-adapter-20261011.iTni1a`.
+
+- Scoped unit: 34/34 across operation, retained handler and family files.
+  `unit-sealed.log` is the final passing result.
+- Initial `unit.log` preserved a test-helper default-member defect; that helper
+  was repaired. `unit-final.log` preserved one 10-second core-import timeout;
+  `unit-serial.log` passed 33/33 after serialized execution. No timeout
+  threshold was raised. `typecheck-verified.log` preserved a malformed two-argument
+  fixture assertion, repaired before final source checks. `typecheck-final-unknown.log`
+  retained a runner-context union typing error; the typed tracking wrapper now
+  preserves each real runner signature without casts.
+- `typecheck-sealed.log`: both project configurations passed.
+- `lint-sealed.log`: exit 0, 172 warnings; no baseline modification.
+- `build-sealed.log`: web/Start/server/worker/migrate bundles passed.
+- `test-policy-final.log`: 12 new/changed cases admitted, 24 inherited,
+  errors empty against the fixed parent merge.
+- `partition.log`: no partition errors; no partition edits.
+- `retained-source.json`: 15 reviewed family/operation function ASTs unchanged,
+  plus byte-identical core, handler, manifest, fixed shared protocol/control/store,
+  0119 SQL and partition file.
+- `capability-boundaries.log`: FAIL, five diagnostics. Own new
+  `practice -> durable` distinct imports are 3; inherited `notes -> durable`
+  imports are 3 and `durable -> notes` is 1. Total capability-to-server is
+  434 against baseline 428, and server-to-capability deep is 1 against 0.
+  Parent must reconcile the authorized shared-consumer boundaries in one place;
+  this lane did not loosen the baseline or edit another lane.
+
+### Parent-owned requirements and gates
+
+1. In `src/server/durable/paid-effect-protocol.ts`,
+   `PAID_EFFECT_SWITCH_UNSUPPORTED_FAMILIES` includes only `note_verify`.
+   `switchPaidEffectBackend` in `paid-effect-control.ts` can therefore switch
+   calibration when paid_effect is empty, although the old registered handler
+   still executes through Part 1 without shared generation admission.
+   Minimal shared repair: refuse calibration ownership changes until persisted
+   producer generations, real consumer wiring and legacy drain are proven.
+   The new versioned contract alone does not close that gap. Parent owns the
+   shared fix and tracker capture; this lane made no Linear/PLAN mutation.
+2. `listPaidEffectObligations` in `paid-effect-store.ts` is capped and lacks
+   pagination. This adapter requests 1001 and fails closed above 1000 rather
+   than silently omit an old obligation. Add a complete/paginated shared read
+   before admitting a larger workload. `PaidEffectSnapshot` also omits
+   `input_json`; the narrow family reader reads that immutable column directly.
+   A shared snapshot input field would remove that family-specific query.
+3. Empty worksets have no paid_effect member row. The adapter cannot seal an
+   empty selection, unprepared-only selection or tick summary as a durable
+   family receipt. Parent must provide the owned tick/freeze/disposition receipt
+   before claiming replay-stable selection, summary completion or cron admission.
+   No sentinel paid effect, new schema or summary policy was invented here.
+4. The reviewed core apply signatures still accept `Db`, while the event kernel
+   already accepts `Db | Tx`. The typed transaction bridge is bounded to this
+   application path; parent may widen the core parameter type without changing
+   policy to remove the metadata bridge. Core's unsupported face also retains
+   its reviewed classification-only contract; this lane does not claim that
+   classification as full actual-provider output/cost evidence.
+5. Run the 14 prepared DB cases and retained core suite, then real process/crash
+   recovery, unknown/late result reconciliation, producer fencing, legacy
+   drain/rollback, restore, actual-provider and runtime acceptance. Review this
+   new adapter diff independently. Resolve the boundary audit before delivery
+   gates. Shared B final DB acceptance remains separate. Exact-head CI, tracker,
+   push/PR and any cutover stay parent-owned.
+
+No DB/testcontainers/Docker, runtime/provider/credential/operational lock, push,
+PR, Linear, child delegation, registration, schedule or default-backend change
+occurred in this continuation. The new adapter is a committed source consumer
+with prepared DB evidence, not an accepted or admitted cutover.

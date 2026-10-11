@@ -5,20 +5,32 @@ import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetTestConfig, setTestConfig } from '@/core/config/store';
-import { event, knowledge, question } from '@/db/schema';
+import { event, knowledge, paid_effect, paid_effect_control, question } from '@/db/schema';
 import {
   calibrationSampleScheduledId,
   runCalibrationSampleTick,
 } from '@/server/durable/calibration-sample-family';
+import {
+  type CalibrationSampleDispatch,
+  type CalibrationSendLease,
+  recordCalibrationStoreResult,
+} from '@/server/durable/calibration-sample-store';
+import {
+  PaidEffectApplicationConflictError,
+  PaidEffectControlFencedError,
+  PaidEffectDeliveryConflictError,
+  PaidEffectReceiptConflictError,
+  computePaidEffectIdentity,
+} from '@/server/durable/paid-effect-protocol';
+import { readPaidEffect, recordPaidEffectApplication } from '@/server/durable/paid-effect-store';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { buildJudgeCalibrationSampleHandler } from '../jobs/judge_calibration_sample';
 import { JUDGE_CALIBRATION_SAMPLING_ENABLED_ENV } from '../jobs/judge-calibration-config';
 import {
-  type CalibrationStagedEffectRecord,
-  type CalibrationStagedExecutionPort,
   type CalibrationWorkSetItem,
   buildCalibrationSampleOperationPort,
   buildCalibrationStagedCoreSeams,
+  buildCalibrationStoreInput,
   computeCalibrationEffectIdentity,
   computeCalibrationFreezeDigest,
   computeCalibrationInputDigest,
@@ -289,23 +301,6 @@ describe('gate-only DBOS candidate integration', () => {
   });
 });
 
-// The record port below is an isolated test double. It does not test or
-// implement lane B's durable store, fencing, or concurrency guarantee.
-function stagedTestPort(rows: CalibrationStagedEffectRecord[]): CalibrationStagedExecutionPort {
-  return {
-    loadFamilyRecords: async () => [...rows],
-    reserveIntent: async (record) => {
-      const winner = rows.find((row) => row.effectId === record.effectId);
-      if (winner) return { status: 'lost', winner };
-      rows.push(record);
-      return { status: 'reserved' };
-    },
-    appendRecord: async (record) => {
-      rows.push(record);
-    },
-  };
-}
-
 async function freezeOne() {
   const judgeEventId = await seedJudgedAttempt();
   const candidates = await selectJudgeCalibrationCandidates(testDb(), CFG, scheduledAt);
@@ -431,7 +426,7 @@ describe('prepared staged core integration', () => {
 
   // @invariant data: failed apply recovers from its saved receipt on a later tick without a second provider request
   // @fails-if use the new tick config/clock or plan the entity again after recovery; stored provenance or call count changes
-  it('retains an apply failure then writes the original receipt on a later model/tick without resend', async () => {
+  it('rolls back the domain write and recovers the original receipt on a later model/tick without resend', async () => {
     const { item } = await freezeOne();
     const executedAt = new Date('2026-10-11T22:13:00.000Z');
     const runTaskInner = vi.fn<NonNullable<JudgeCalibrationSampleDeps['runTaskInner']>>(
@@ -441,58 +436,408 @@ describe('prepared staged core integration', () => {
       runTaskInner,
       now: () => executedAt,
     });
-    const records: CalibrationStagedEffectRecord[] = [];
-    const port = stagedTestPort(records);
-    const first = await runCalibrationStagedOperation(
-      { config: CFG, resolveProviderFn: () => {} },
-      {
-        port,
-        workSet: { anchor: scheduledAt, items: [item] },
-        executeItem: seams.executeItem,
-        applyReceipt: async () => {
-          throw new Error('injected domain apply failure');
+    const first = await runStore([item], {
+      seams: {
+        ...seams,
+        applyReceipt: async (...args) => {
+          const result = await seams.applyReceipt(...args);
+          expect(result.write).toBe('written');
+          throw new Error('crash after domain write before application receipt');
         },
       },
-    );
+    });
     expect(first).toMatchObject({
       kind: 'staged',
       report: { counts: { completedApplyPending: 1 } },
     });
     expect(await eventsByAction(JUDGE_CALIBRATION_SAMPLE_ACTION)).toEqual([]);
-    expect(records.map((row) => row.stage)).toEqual(['intent', 'completed']);
-    const originalReceipt = JSON.stringify(records[1]?.receipt);
-    const laterAnchor = new Date('2026-10-12T22:10:00.000Z');
-    const laterCfg = { ...CFG, rejudgeModel: 'new-model', batchMax: 2, windowDays: 30 };
+    const identity = computePaidEffectIdentity(
+      buildCalibrationStoreInput({ item, items: [item], anchor: scheduledAt, cfg: CFG }),
+    );
+    const before = await readPaidEffect(testDb(), identity);
+    expect(before).toMatchObject({
+      state: 'receipt_ready',
+      application: null,
+      applicationAttempts: 1,
+      lastApplicationError: 'crash after domain write before application receipt',
+    });
+    const savedResult = structuredClone(before?.result);
+    await testDb()
+      .update(question)
+      .set({ prompt_md: '恢复前改变题干', version: 3 })
+      .where(eq(question.id, item.questionId));
+    await testDb()
+      .update(event)
+      .set({ payload: { answer_md: '恢复前改变作答' } })
+      .where(eq(event.id, item.answerEventId));
     setTestConfig({
       VISION_JUDGE_PROVIDER: 'anthropic-sub',
       'lane.global.provider': 'anthropic-sub',
     });
-    const laterSeams = await buildCalibrationStagedCoreSeams(testDb(), laterCfg, {
-      runTaskInner,
-      now: () => laterAnchor,
+    const laterAnchor = new Date('2026-10-12T22:10:00.000Z');
+    const laterCfg = { ...CFG, rejudgeModel: 'later-model', windowDays: 30 };
+    const later = await runStore([item], {
+      anchor: laterAnchor,
+      cfg: laterCfg,
+      sampleDeps: { runTaskInner, now: () => laterAnchor },
     });
-    const later = await runCalibrationStagedOperation(
-      { config: laterCfg, resolveProviderFn: () => {} },
-      {
-        port,
-        workSet: { anchor: laterAnchor, items: [item] },
-        executeItem: laterSeams.executeItem,
-        applyReceipt: laterSeams.applyReceipt,
-      },
-    );
     expect(later).toMatchObject({
       kind: 'staged',
-      report: { pendingApplications: [], counts: { appliedFromReceipt: 1 } },
+      report: { counts: { appliedFromReceipt: 1 }, openObligations: [], pendingApplications: [] },
     });
     expect(runTaskInner).toHaveBeenCalledOnce();
-    expect(records.map((row) => row.stage)).toEqual(['intent', 'completed', 'applied']);
-    expect(JSON.stringify(records[2]?.receipt)).toBe(originalReceipt);
-    expect(records[2]?.recordedAt).toBe(scheduledAt.toISOString());
+    const after = await readPaidEffect(testDb(), identity);
+    expect(after?.result).toEqual(savedResult);
+    expect(after).toMatchObject({
+      state: 'applied',
+      application: {
+        version: 1,
+        effect: identity,
+        application: {
+          write: 'written',
+          domainRef: `${JUDGE_CALIBRATION_SAMPLE_ACTION}:${item.judgeEventId}`,
+        },
+      },
+    });
     const rows = await eventsByAction(JUDGE_CALIBRATION_SAMPLE_ACTION);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
       created_at: executedAt,
-      payload: { rejudge_model: CFG.rejudgeModel, sampled_at: executedAt.toISOString() },
+      payload: {
+        sampled_at: executedAt.toISOString(),
+        rejudge_model: CFG.rejudgeModel,
+        ai_provider_override_at_sample: 'xiaomi',
+        vision_judge_provider_at_sample: 'xiaomi',
+      },
     });
+    expect(await storeRows()).toHaveLength(1);
+  });
+});
+
+function dispatch(anchor = scheduledAt, deliveryId = 'original-pg-job'): CalibrationSampleDispatch {
+  return {
+    version: 1,
+    scheduledAt: anchor.toISOString(),
+    delivery: {
+      backend: 'pg-boss',
+      deliveryId,
+      generation: 0,
+      tickId: calibrationSampleScheduledId(anchor),
+    },
+  };
+}
+
+async function storeRows() {
+  return testDb()
+    .select()
+    .from(paid_effect)
+    .where(eq(paid_effect.family, 'judge_calibration_sample'))
+    .orderBy(paid_effect.entity_revision, paid_effect.unit, paid_effect.input_digest);
+}
+
+function runStore(
+  items: readonly CalibrationWorkSetItem[],
+  options: {
+    anchor?: Date;
+    cfg?: JudgeCalibrationConfig;
+    deliveryId?: string;
+    seams?: Awaited<ReturnType<typeof buildCalibrationStagedCoreSeams>>;
+    sampleDeps?: JudgeCalibrationSampleDeps;
+    dispatch?: CalibrationSampleDispatch;
+  } = {},
+) {
+  const anchor = options.anchor ?? scheduledAt;
+  return runCalibrationStagedOperation(
+    { config: options.cfg ?? CFG, resolveProviderFn: () => {}, sampleDeps: options.sampleDeps },
+    {
+      database: testDb(),
+      dispatch: options.dispatch ?? dispatch(anchor, options.deliveryId),
+      leaseExpiresAt: new Date('2099-01-01T00:00:00.000Z'),
+      workSet: { anchor, items },
+      seams: options.seams,
+    },
+  );
+}
+
+function localOutput() {
+  return vi.fn<NonNullable<JudgeCalibrationSampleDeps['runTaskInner']>>(async () => ({
+    text: semanticOutput('partial'),
+  }));
+}
+
+describe('concrete calibration shared-store consumer', () => {
+  // @invariant concurrency: one stored winner fence permits one send across competing deliveries
+  // @fails-if admission is read-then-append or delivery mints the effect identity; both providers execute
+  it('uses the real row CAS when a second delivery arrives during the first send', async () => {
+    const { item } = await freezeOne();
+    let release = () => {};
+    let entered = () => {};
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const runTaskInner = vi.fn<NonNullable<JudgeCalibrationSampleDeps['runTaskInner']>>(
+      async () => {
+        entered();
+        await pending;
+        return { text: semanticOutput('partial') };
+      },
+    );
+    const first = runStore([item], { deliveryId: 'winner-job', sampleDeps: { runTaskInner } });
+    try {
+      await started;
+      const loser = await runStore([item], {
+        deliveryId: 'loser-job',
+        sampleDeps: { runTaskInner },
+      });
+      expect(loser).toMatchObject({ kind: 'staged', report: { counts: { heldUnknownSend: 1 } } });
+      const [sending] = await storeRows();
+      expect(sending).toMatchObject({
+        state: 'sending',
+        fence: 1,
+        delivery_id: 'winner-job',
+        delivery_backend: 'pg-boss',
+        send_lease_expires_at: new Date('2099-01-01T00:00:00.000Z'),
+      });
+    } finally {
+      release();
+    }
+    expect(await first).toMatchObject({ kind: 'staged', report: { counts: { appliedFresh: 1 } } });
+    expect(runTaskInner).toHaveBeenCalledOnce();
+    expect(await eventsByAction(JUDGE_CALIBRATION_SAMPLE_ACTION)).toHaveLength(1);
+    const originalRows = await storeRows();
+    expect(
+      await runStore([item], { deliveryId: 'third-job', sampleDeps: { runTaskInner } }),
+    ).toMatchObject({ kind: 'staged', report: { counts: { appliedReplay: 1 } } });
+    expect(await storeRows()).toEqual(originalRows);
+    expect(runTaskInner).toHaveBeenCalledOnce();
+  });
+
+  // @invariant concurrency: unknown sends block the same entity across models and revisions
+  // @fails-if grant calibration models the feature-rep exemption or clear the old row; the second send runs
+  it('holds an unknown entity on a later model/tick and keeps the original obligation immutable', async () => {
+    const { item } = await freezeOne();
+    const failed = vi.fn<NonNullable<JudgeCalibrationSampleDeps['runTaskInner']>>(async () => {
+      throw new Error('wire outcome unknown');
+    });
+    expect(await runStore([item], { sampleDeps: { runTaskInner: failed } })).toMatchObject({
+      kind: 'staged',
+      report: { counts: { heldUnknownSend: 1 } },
+    });
+    const [original] = await storeRows();
+    expect(original).toMatchObject({
+      state: 'unknown',
+      fence: 1,
+      unresolved_reason: 'wire outcome unknown',
+    });
+    const later = localOutput();
+    const nextAnchor = new Date('2026-10-12T22:10:00.000Z');
+    const result = await runStore([item], {
+      anchor: nextAnchor,
+      cfg: { ...CFG, rejudgeModel: 'different/model' },
+      sampleDeps: { runTaskInner: later },
+    });
+    expect(result).toMatchObject({
+      kind: 'staged',
+      report: { counts: { heldBlockedByOpenObligation: 1 } },
+    });
+    if (result.kind !== 'staged') throw new Error('expected staged report');
+    expect(result.report.openObligations.map((row) => row.stage).sort()).toEqual([
+      'intent',
+      'sent_unknown',
+    ]);
+    expect(later).not.toHaveBeenCalled();
+    expect(failed).toHaveBeenCalledOnce();
+    expect((await storeRows()).find((row) => row.state === 'unknown')).toEqual(original);
+    expect(await eventsByAction(JUDGE_CALIBRATION_SAMPLE_ACTION)).toEqual([]);
+  });
+
+  // @invariant concurrency: the stored producer generation fences stale dispatches before intent or recovery writes
+  // @fails-if substitute a current control read for the dispatched generation; the stale job is admitted
+  it('refuses stale and foreign-backend dispatches before any intent or domain mutation', async () => {
+    const { item } = await freezeOne();
+    await testDb()
+      .insert(paid_effect_control)
+      .values({ family: 'judge_calibration_sample', backend: 'pg-boss', generation: 2 });
+    const before = await allEvents();
+    const output = localOutput();
+    await expect(runStore([item], { sampleDeps: { runTaskInner: output } })).rejects.toBeInstanceOf(
+      PaidEffectControlFencedError,
+    );
+    const current = dispatch();
+    current.delivery.generation = 2;
+    const dbos = {
+      ...current,
+      delivery: {
+        ...current.delivery,
+        backend: 'dbos' as const,
+        deliveryId: calibrationSampleScheduledId(scheduledAt),
+      },
+    };
+    await expect(
+      runStore([item], { dispatch: dbos, sampleDeps: { runTaskInner: output } }),
+    ).rejects.toBeInstanceOf(PaidEffectControlFencedError);
+    expect(await storeRows()).toEqual([]);
+    expect(await allEvents()).toEqual(before);
+    expect(output).not.toHaveBeenCalled();
+    expect(
+      await runStore([item], { dispatch: current, sampleDeps: { runTaskInner: output } }),
+    ).toMatchObject({ kind: 'staged', report: { counts: { appliedFresh: 1 } } });
+    expect(output).toHaveBeenCalledOnce();
+  });
+
+  // @invariant data: an MF8 conflict cannot manufacture ownership of a pre-existing observation
+  // @fails-if mark unique_duplicate applied or skip savepoint rollback; the receipt is discharged or the transaction aborts
+  it('retains a real MF8 conflict as receipt_ready and never buys it again', async () => {
+    const { item } = await freezeOne();
+    const output = localOutput();
+    const seams = await buildCalibrationStagedCoreSeams(testDb(), CFG, { runTaskInner: output });
+    const execution = await seams.executeItem(item, identityFor(item), { anchor: scheduledAt });
+    if (execution.kind !== 'sent') throw new Error('expected semantic receipt');
+    expect(
+      await seams.applyReceipt(execution.receipt, identityFor(item), { anchor: scheduledAt }),
+    ).toMatchObject({ write: 'written' });
+    const existing = await eventsByAction(JUDGE_CALIBRATION_SAMPLE_ACTION);
+    const result = await runStore([item], { sampleDeps: { runTaskInner: output } });
+    expect(result).toMatchObject({
+      kind: 'staged',
+      report: { counts: { completedApplyPending: 1 } },
+    });
+    expect((await storeRows())[0]).toMatchObject({
+      state: 'receipt_ready',
+      application_json: null,
+      last_application_error: 'calibration unique duplicate requires immutable adjudication',
+    });
+    const saved = await storeRows();
+    const calls = output.mock.calls.length;
+    await runStore([item], {
+      anchor: new Date('2026-10-12T22:10:00.000Z'),
+      cfg: { ...CFG, rejudgeModel: 'later-model' },
+      sampleDeps: { runTaskInner: output },
+    });
+    expect(output).toHaveBeenCalledTimes(calls);
+    expect(await eventsByAction(JUDGE_CALIBRATION_SAMPLE_ACTION)).toEqual(existing);
+    expect((await storeRows()).find((row) => row.state === 'receipt_ready')?.result_json).toEqual(
+      saved[0]?.result_json,
+    );
+  });
+
+  // @invariant data: saved frozen membership and full inputs cannot change under one workset identity
+  // @fails-if the freeze check is transient or ignores prepared input; the changed input obtains a new claim
+  it('rejects a changed freeze before admitting any new intent or sending', async () => {
+    const { item } = await freezeOne();
+    const output = localOutput();
+    await runStore([item], { sampleDeps: { runTaskInner: output } });
+    const before = await storeRows();
+    const changed = { ...item, question: { ...item.question, prompt_md: 'changed frozen prompt' } };
+    expect(await runStore([changed], { sampleDeps: { runTaskInner: output } })).toMatchObject({
+      kind: 'staged',
+      report: { counts: { heldWorksetFreezeMismatch: 1 } },
+    });
+    expect(output).toHaveBeenCalledOnce();
+    expect(await storeRows()).toEqual(before);
+  });
+
+  // @invariant concurrency: result completion requires the exact persisted delivery and winner fence
+  // @fails-if drop the fence or immutable payload comparison; a stale/unequal completion mutates the receipt
+  it('carries the typed winner lease through result storage and rejects stale or unequal completions', async () => {
+    const { item } = await freezeOne();
+    const seams = await buildCalibrationStagedCoreSeams(testDb(), CFG, {
+      runTaskInner: localOutput(),
+    });
+    const captured: { lease: CalibrationSendLease | null } = { lease: null };
+    await runStore([item], {
+      seams: {
+        ...seams,
+        executeItem: async (...args) => {
+          captured.lease = args[2].lease ?? null;
+          return seams.executeItem(...args);
+        },
+        applyReceipt: async () => {
+          throw new Error('hold application');
+        },
+      },
+    });
+    const lease = captured.lease;
+    if (!lease) throw new Error('winner lease was not carried to execution');
+    const before = await readPaidEffect(testDb(), lease.identity);
+    expect(before).toMatchObject({
+      state: 'receipt_ready',
+      fence: lease.fence,
+      delivery: { deliveryId: lease.delivery.deliveryId },
+    });
+    await expect(
+      recordCalibrationStoreResult(testDb(), { ...lease, fence: lease.fence + 1 }, before?.result),
+    ).rejects.toBeInstanceOf(PaidEffectDeliveryConflictError);
+    await expect(
+      recordCalibrationStoreResult(testDb(), lease, { unequal: true }),
+    ).rejects.toBeInstanceOf(PaidEffectReceiptConflictError);
+    expect(await recordCalibrationStoreResult(testDb(), lease, before?.result)).toBe('idempotent');
+    expect(await readPaidEffect(testDb(), lease.identity)).toEqual(before);
+    const laterOutput = localOutput();
+    await runStore([item], { sampleDeps: { runTaskInner: laterOutput } });
+    expect(laterOutput).not.toHaveBeenCalled();
+    const applied = await readPaidEffect(testDb(), lease.identity);
+    expect(applied?.state).toBe('applied');
+    await expect(
+      testDb().transaction((tx) =>
+        recordPaidEffectApplication(tx, lease.identity, { forged: true }),
+      ),
+    ).rejects.toBeInstanceOf(PaidEffectApplicationConflictError);
+    expect(await readPaidEffect(testDb(), lease.identity)).toEqual(applied);
+  });
+  // @invariant data: a mismatching receipt remains immutable evidence and cannot discharge or re-buy its entity
+  // @fails-if trust the echo without comparing the frozen face; a changed answer is applied or the provider runs again
+  it('holds a changed receipt face in the actual store and blocks a later revision', async () => {
+    const { item } = await freezeOne();
+    const output = localOutput();
+    const seams = await buildCalibrationStagedCoreSeams(testDb(), CFG, { runTaskInner: output });
+    const result = await runStore([item], {
+      seams: {
+        ...seams,
+        executeItem: async (...args) => {
+          const execution = await seams.executeItem(...args);
+          if (execution.kind !== 'sent') throw new Error('expected semantic receipt');
+          const receipt = structuredClone(execution.receipt);
+          const prepared = receipt.outcome.prepared_input;
+          if (!prepared || typeof prepared !== 'object') throw new Error('missing receipt face');
+          Reflect.set(prepared, 'answer_md', 'changed result input');
+          return { kind: 'sent', receipt };
+        },
+      },
+    });
+    expect(result).toMatchObject({
+      kind: 'staged',
+      report: {
+        counts: { heldReceiptMismatch: 1 },
+        openObligations: [
+          { stage: 'receipt_mismatch', stored: { state: 'receipt_ready', fence: 1 } },
+        ],
+      },
+    });
+    const [original] = await storeRows();
+    expect(original?.result_json).toMatchObject({
+      execution: {
+        receipt: {
+          outcome: {
+            prepared_input: { answer_md: 'changed result input' },
+          },
+        },
+      },
+    });
+    expect(await eventsByAction(JUDGE_CALIBRATION_SAMPLE_ACTION)).toEqual([]);
+    const later = localOutput();
+    expect(
+      await runStore([item], {
+        anchor: new Date('2026-10-12T22:10:00.000Z'),
+        cfg: { ...CFG, rejudgeModel: 'new-model' },
+        sampleDeps: { runTaskInner: later },
+      }),
+    ).toMatchObject({ kind: 'staged', report: { counts: { heldBlockedByOpenObligation: 1 } } });
+    expect(later).not.toHaveBeenCalled();
+    expect(output).toHaveBeenCalledOnce();
+    expect((await storeRows()).find((row) => row.state === 'receipt_ready')).toEqual(original);
   });
 });

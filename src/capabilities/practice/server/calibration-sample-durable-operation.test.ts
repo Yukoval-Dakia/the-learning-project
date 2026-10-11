@@ -13,15 +13,9 @@ import { mathProfile } from '@/subjects/math/profile';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { JUDGE_CALIBRATION_SAMPLING_ENABLED_ENV } from '../jobs/judge-calibration-config';
 import {
-  type ApplyCalibrationReceiptFn,
   type CalibrationEffectIdentity,
-  type CalibrationItemExecution,
   type CalibrationItemReceipt,
-  type CalibrationStagedEffectRecord,
-  type CalibrationStagedExecutionPort,
-  type CalibrationStagedOperationOutcome,
   type CalibrationWorkSetItem,
-  type ExecuteCalibrationItemFn,
   buildCalibrationStagedCoreSeams,
   computeCalibrationEffectId,
   computeCalibrationEffectIdentity,
@@ -315,113 +309,37 @@ const ITEM: CalibrationWorkSetItem = {
   judgeCreatedAt: '2026-10-10T08:00:00.000Z',
 };
 
-const ITEM_B: CalibrationWorkSetItem = {
-  judgeEventId: 'evt_judge_2',
-  answerEventId: 'evt_answer_2',
-  questionId: 'q_2',
-  judgeRoute: 'judge.v2.open',
-  priorOutcome: 'incorrect',
-  answerMd: '另一份作答',
-  studentImageRefs: [],
-  question: { ...FROZEN_QUESTION, id: 'q_2', prompt_md: '另一道商品问题' },
-  subjectProfile: FROZEN_PROFILE,
-  judgeCreatedAt: '2026-10-10T09:30:00.000Z',
-};
-
-/** In-memory append-only double for the PROVISIONAL lane-B port. `loseReserve`
- * forces the next reserveIntent to lose against `winner` — the concurrent
- * double-process face; `loadOverride` simulates a stale empty snapshot. */
-class MemoryStagedPort implements CalibrationStagedExecutionPort {
-  readonly rows: CalibrationStagedEffectRecord[] = [];
-  readonly appendedRows: CalibrationStagedEffectRecord[] = [];
-  loseReserve: CalibrationStagedEffectRecord | null = null;
-  loadOverride: readonly CalibrationStagedEffectRecord[] | null = null;
-
-  async loadFamilyRecords(): Promise<CalibrationStagedEffectRecord[]> {
-    return [...(this.loadOverride ?? this.rows)];
-  }
-  async reserveIntent(
-    record: CalibrationStagedEffectRecord,
-  ): Promise<{ status: 'reserved' } | { status: 'lost'; winner: CalibrationStagedEffectRecord }> {
-    if (this.loseReserve !== null) {
-      const winner = this.loseReserve;
-      this.loseReserve = null;
-      return { status: 'lost', winner };
-    }
-    this.rows.push(record);
-    return { status: 'reserved' };
-  }
-  async appendRecord(record: CalibrationStagedEffectRecord): Promise<void> {
-    this.rows.push(record);
-    this.appendedRows.push(record);
-  }
-}
-
 function receiptFor(identity: CalibrationEffectIdentity): CalibrationItemReceipt {
   return { effect: identity, outcome: { coarse_outcome: 'correct', confidence: 0.87 } };
 }
 
-const APPLY_OK: ApplyCalibrationReceiptFn = async (_receipt, identity) => ({
-  domainRef: `experimental:judge_calibration_sample:${identity.judgeEventId}`,
-  write: 'written',
-});
 function stagedIds(
   anchor: Date,
   items: readonly CalibrationWorkSetItem[],
-  item: CalibrationWorkSetItem = items[0] as CalibrationWorkSetItem,
+  item: CalibrationWorkSetItem | undefined = undefined,
   cfg: JudgeCalibrationConfig = CFG,
 ) {
+  const member = item ?? items[0];
+  if (!member) throw new Error('expected a frozen workset member');
   const workSetId = computeCalibrationWorkSetId({ anchor, cfg });
   const freezeDigest = computeCalibrationFreezeDigest(items);
-  const identity = computeCalibrationEffectIdentity({ workSetId, freezeDigest, item, cfg });
+  const identity = computeCalibrationEffectIdentity({ workSetId, freezeDigest, item: member, cfg });
   return {
     workSetId,
     freezeDigest,
     identity,
     effectId: computeCalibrationEffectId(identity),
-    entityKey: computeCalibrationEntityKey(item.judgeEventId),
+    entityKey: computeCalibrationEntityKey(member.judgeEventId),
   };
 }
 
-function completedRow(
-  anchor: Date,
-  items: readonly CalibrationWorkSetItem[],
-  receipt: CalibrationItemReceipt,
-): CalibrationStagedEffectRecord {
-  const ids = stagedIds(anchor, items);
-  return {
-    effectId: ids.effectId,
-    entityKey: ids.entityKey,
-    identity: ids.identity,
-    stage: 'completed',
-    receipt,
-    application: null,
-    classification: null,
-    recordedAt: anchor.toISOString(),
-  };
-}
-
-const SENT_OK: ExecuteCalibrationItemFn = async (_item, identity) => ({
-  kind: 'sent',
-  receipt: receiptFor(identity),
-});
-async function runStaged(
-  port: CalibrationStagedExecutionPort,
-  executeItem: ExecuteCalibrationItemFn,
-  workSet: { anchor: Date; items: readonly CalibrationWorkSetItem[] },
-  applyReceipt: ApplyCalibrationReceiptFn = APPLY_OK,
-): Promise<CalibrationStagedOperationOutcome> {
-  return runCalibrationStagedOperation(
-    { config: CFG, resolveProviderFn: () => {} },
-    { workSet, port, executeItem, applyReceipt },
-  );
-}
-
-function expectStagedReport(outcome: CalibrationStagedOperationOutcome) {
-  expect(outcome.kind).toBe('staged');
-  if (outcome.kind !== 'staged') throw new Error('unreachable: staged outcome expected');
-  return outcome.report;
-}
+const ITEM_B: CalibrationWorkSetItem = {
+  ...ITEM,
+  judgeEventId: 'evt_judge_2',
+  answerEventId: 'evt_answer_2',
+  questionId: 'q_2',
+  question: { ...FROZEN_QUESTION, id: 'q_2' },
+};
 
 describe('frozen workset identity', () => {
   // @invariant concurrency: scheduler delivery identity never enters workset identity
@@ -520,489 +438,41 @@ describe('frozen workset identity', () => {
   });
 });
 
-describe('runCalibrationStagedOperation', () => {
-  // @invariant security: the staged path cannot spend or persist while the kill switch is OFF
-  // @fails-if bypass the shared gate; the port is loaded or a send starts
-  it('default OFF — disabled before any port load, reserve, append, send or apply', async () => {
+describe('shared-store consumer gate', () => {
+  // @invariant data: disabled sampling cannot admit an intent or execute a provider
+  // @fails-if bypass the kill switch; the sentinel database lacks transaction and execution throws
+  it('returns before the real store or execution seam when disabled', async () => {
     setTestConfig({ [JUDGE_CALIBRATION_SAMPLING_ENABLED_ENV]: false });
-    const port = new MemoryStagedPort();
-    const loadSpy = vi.spyOn(port, 'loadFamilyRecords');
-    const reserveSpy = vi.spyOn(port, 'reserveIntent');
-    const appendSpy = vi.spyOn(port, 'appendRecord');
-    const executeItem = vi.fn();
-    const applyReceipt = vi.fn();
-    const outcome = await runCalibrationStagedOperation(
-      {},
-      { workSet: { anchor: ANCHOR, items: [ITEM] }, port, executeItem, applyReceipt },
-    );
-    expect(outcome).toEqual({ kind: 'disabled', flagEnv: undefined });
-    expect(loadSpy).not.toHaveBeenCalled();
-    expect(reserveSpy).not.toHaveBeenCalled();
-    expect(appendSpy).not.toHaveBeenCalled();
+    const executeItem = vi.fn(async (): Promise<never> => {
+      throw new Error('must not spend');
+    });
+    expect(
+      await runCalibrationStagedOperation(
+        {},
+        {
+          database: db,
+          dispatch: {
+            version: 1,
+            scheduledAt: ANCHOR.toISOString(),
+            delivery: {
+              backend: 'pg-boss',
+              deliveryId: 'job-original',
+              generation: 0,
+              tickId: `sched-judge_calibration_sample-${ANCHOR.toISOString()}`,
+            },
+          },
+          leaseExpiresAt: new Date('2099-01-01T00:00:00.000Z'),
+          workSet: { anchor: ANCHOR, items: [ITEM] },
+          seams: {
+            executeItem,
+            applyReceipt: async () => {
+              throw new Error('must not write');
+            },
+          },
+        },
+      ),
+    ).toEqual({ kind: 'disabled', flagEnv: undefined });
     expect(executeItem).not.toHaveBeenCalled();
-    expect(applyReceipt).not.toHaveBeenCalled();
-  });
-
-  // @invariant concurrency: intent is reserved atomically BEFORE the send; apply before applied
-  // @fails-if send before reserve or mark applied without the apply seam's evidence
-  it('fresh item — reserve→send→receipt→apply; applied row carries application evidence', async () => {
-    setTestConfig({ [JUDGE_CALIBRATION_SAMPLING_ENABLED_ENV]: true });
-    const port = new MemoryStagedPort();
-    const order: string[] = [];
-    const executeItem = vi.fn(async (...args: Parameters<ExecuteCalibrationItemFn>) => {
-      order.push('execute');
-      return SENT_OK(...args);
-    });
-    const applyReceipt = vi.fn(async (...args: Parameters<ApplyCalibrationReceiptFn>) => {
-      order.push('apply');
-      return APPLY_OK(...args);
-    });
-    const report = expectStagedReport(
-      await runStaged(port, executeItem, { anchor: ANCHOR, items: [ITEM] }, applyReceipt),
-    );
-    expect(report.dispositions[0]?.kind).toBe('applied_fresh');
-    expect(report.counts.appliedFresh).toBe(1);
-    expect(report.openObligations).toEqual([]);
-    expect(report.pendingApplications).toEqual([]);
-    expect(report.freezeMismatch).toBeNull();
-    // intent row comes from the RESERVE (atomic), observations from appendRecord
-    expect(port.rows.map((r) => r.stage)).toEqual(['intent', 'completed', 'applied']);
-    expect(port.appendedRows.map((r) => r.stage)).toEqual(['completed', 'applied']);
-    // @invariant concurrency: the physical send strictly follows the won reserve
-    expect(order).toEqual(['execute', 'apply']);
-    expect(executeItem).toHaveBeenCalledTimes(1);
-    expect(applyReceipt).toHaveBeenCalledTimes(1);
-    // @invariant concurrency: every record carries the frozen anchor, never a wall clock
-    for (const row of port.rows) expect(row.recordedAt).toBe(ANCHOR.toISOString());
-    // @invariant data: the persisted receipt is exact and echoes its effect identity
-    const identity = stagedIds(ANCHOR, [ITEM]).identity;
-    expect(port.rows[1]?.receipt).toEqual(receiptFor(identity));
-    // @invariant data: applied is marked ONLY with the apply seam's trusted evidence
-    expect(port.rows[2]?.application).toEqual({
-      domainRef: `experimental:judge_calibration_sample:${ITEM.judgeEventId}`,
-      write: 'written' as const,
-    });
-  });
-
-  // @invariant concurrency: a lost atomic reserve never sends — even on a stale empty snapshot
-  // @fails-if trust the loaded snapshot instead of the reserve verdict; both processes send
-  it('lost reserve — no send and no append even when the loaded snapshot was empty', async () => {
-    setTestConfig({ [JUDGE_CALIBRATION_SAMPLING_ENABLED_ENV]: true });
-    const port = new MemoryStagedPort();
-    const winnerRow: CalibrationStagedEffectRecord = {
-      ...stagedIds(ANCHOR, [ITEM]),
-      stage: 'intent',
-      receipt: null,
-      application: null,
-      classification: null,
-      recordedAt: ANCHOR.toISOString(),
-    } as CalibrationStagedEffectRecord;
-    // the f007 defect face: another process reserved after our (empty) load
-    port.loadOverride = [];
-    port.loseReserve = winnerRow;
-    const executeItem = vi.fn();
-    const applyReceipt = vi.fn();
-    const report = expectStagedReport(
-      await runStaged(port, executeItem, { anchor: ANCHOR, items: [ITEM] }, applyReceipt),
-    );
-    expect(report.dispositions[0]?.kind).toBe('reserved_by_other_process');
-    expect(report.counts.reservedByOtherProcess).toBe(1);
-    // @invariant concurrency: the loser sends nothing and appends nothing
-    expect(executeItem).not.toHaveBeenCalled();
-    expect(applyReceipt).not.toHaveBeenCalled();
-    expect(port.appendedRows).toEqual([]);
-    expect(port.rows).toEqual([]);
-  });
-
-  // @invariant data: an unknowable send outcome is a durable obligation, never auto-resent
-  // @fails-if retry the send on replay; the provider is invoked twice
-  it('send failure — durable unknown obligation, never resent on the same workset', async () => {
-    setTestConfig({ [JUDGE_CALIBRATION_SAMPLING_ENABLED_ENV]: true });
-    const port = new MemoryStagedPort();
-    const executeItem = vi.fn(async () => {
-      throw new Error('lane crashed mid-send');
-    });
-    const first = expectStagedReport(
-      await runStaged(port, executeItem, { anchor: ANCHOR, items: [ITEM] }),
-    );
-    expect(first.dispositions[0]?.kind).toBe('held_unknown_send');
-    expect(port.rows.map((r) => r.stage)).toEqual(['intent', 'sent_unknown']);
-    const second = expectStagedReport(
-      await runStaged(port, executeItem, { anchor: ANCHOR, items: [ITEM] }),
-    );
-    expect(second.dispositions[0]?.kind).toBe('held_unknown_send');
-    // @invariant data: still exactly one physical send attempt across replays
-    expect(executeItem).toHaveBeenCalledTimes(1);
-    expect(port.rows.map((r) => r.stage)).toEqual(['intent', 'sent_unknown']);
-    // @invariant data: the obligation appears in the report on every tick
-    expect(second.openObligations).toEqual([
-      {
-        effectId: expect.any(String),
-        entityKey: computeCalibrationEntityKey(ITEM.judgeEventId),
-        judgeEventId: ITEM.judgeEventId,
-        stage: 'sent_unknown',
-        workSetId: first.workSetId,
-      },
-    ]);
-  });
-
-  // @invariant data: a later tick re-selecting the same entity is blocked by the open obligation
-  // @fails-if a new revision silently resets the resend prohibition
-  it('new tick re-selecting the same entity — blocked, old obligation still reported', async () => {
-    setTestConfig({ [JUDGE_CALIBRATION_SAMPLING_ENABLED_ENV]: true });
-    const port = new MemoryStagedPort();
-    const failing = vi.fn(async () => {
-      throw new Error('lane crashed mid-send');
-    });
-    const first = expectStagedReport(
-      await runStaged(port, failing, { anchor: ANCHOR, items: [ITEM] }),
-    );
-    expect(first.dispositions[0]?.kind).toBe('held_unknown_send');
-    const later = expectStagedReport(
-      await runStaged(port, failing, { anchor: NEXT_NIGHT, items: [ITEM] }),
-    );
-    expect(later.dispositions[0]?.kind).toBe('held_blocked_by_open_obligation');
-    expect(later.counts.heldBlockedByOpenObligation).toBe(1);
-    // @invariant data: the new tick never sends for a blocked entity
-    expect(failing).toHaveBeenCalledTimes(1);
-    // @invariant data: no new rows — the historical obligation is unchanged
-    expect(port.rows.map((r) => r.stage)).toEqual(['intent', 'sent_unknown']);
-    // @invariant data: the reported obligation keeps its ORIGINAL revision
-    expect(later.openObligations[0]?.workSetId).toBe(first.workSetId);
-    expect(later.openObligations[0]?.stage).toBe('sent_unknown');
-  });
-
-  // @invariant data: replaying a completed receipt must not invoke the provider
-  // @fails-if resume re-sends or skips the apply; the sentinel executor throws
-  it('completed receipt replay — provider never invoked, applied through the apply seam', async () => {
-    setTestConfig({ [JUDGE_CALIBRATION_SAMPLING_ENABLED_ENV]: true });
-    const port = new MemoryStagedPort();
-    port.rows.push(completedRow(ANCHOR, [ITEM], receiptFor(stagedIds(ANCHOR, [ITEM]).identity)));
-    const executeItem = vi.fn(async () => {
-      throw new Error('provider must not be invoked on receipt replay');
-    });
-    const applyReceipt = vi.fn(async (...args: Parameters<ApplyCalibrationReceiptFn>) =>
-      APPLY_OK(...args),
-    );
-    const report = expectStagedReport(
-      await runStaged(port, executeItem, { anchor: ANCHOR, items: [ITEM] }, applyReceipt),
-    );
-    expect(report.dispositions[0]?.kind).toBe('applied_from_receipt');
-    expect(report.counts.appliedFromReceipt).toBe(1);
-    expect(executeItem).not.toHaveBeenCalled();
-    expect(applyReceipt).toHaveBeenCalledTimes(1);
-    expect(port.rows.map((r) => r.stage)).toEqual(['completed', 'applied']);
-    // @invariant data: the applied row reuses the immutable receipt and carries evidence
-    expect(port.rows[1]?.receipt).toEqual(port.rows[0]?.receipt);
-    expect(port.rows[1]?.application?.domainRef).toBe(
-      `experimental:judge_calibration_sample:${ITEM.judgeEventId}`,
-    );
-    expect(report.openObligations).toEqual([]);
-    expect(report.pendingApplications).toEqual([]);
-  });
-
-  // @invariant data: an apply failure keeps the record completed — recoverable, provider never re-invoked
-  // @fails-if mark applied without domain evidence or resend the provider to "recover"
-  it('apply failure — stays completed (apply pending), recovered later WITHOUT the provider', async () => {
-    setTestConfig({ [JUDGE_CALIBRATION_SAMPLING_ENABLED_ENV]: true });
-    const port = new MemoryStagedPort();
-    const order: string[] = [];
-    const executeItem = vi.fn(async (...args: Parameters<ExecuteCalibrationItemFn>) => {
-      order.push('execute');
-      return SENT_OK(...args);
-    });
-    const failingApply: ApplyCalibrationReceiptFn = async () => {
-      order.push('apply-fail');
-      throw new Error('observation write failed');
-    };
-    const first = expectStagedReport(
-      await runStaged(port, executeItem, { anchor: ANCHOR, items: [ITEM] }, failingApply),
-    );
-    // @invariant data: no applied row exists — echo equality is NOT domain application
-    expect(first.dispositions[0]?.kind).toBe('completed_apply_pending');
-    expect(port.rows.map((r) => r.stage)).toEqual(['intent', 'completed']);
-    expect(first.pendingApplications).toEqual([
-      { effectId: expect.any(String), judgeEventId: ITEM.judgeEventId, workSetId: first.workSetId },
-    ]);
-    expect(first.openObligations).toEqual([]);
-    // second tick: the APPLICATION is retried through the seam; the provider is not
-    const second = expectStagedReport(
-      await runStaged(port, executeItem, { anchor: ANCHOR, items: [ITEM] }, APPLY_OK),
-    );
-    expect(second.dispositions[0]?.kind).toBe('applied_from_receipt');
-    expect(executeItem).toHaveBeenCalledTimes(1);
-    expect(order).toEqual(['execute', 'apply-fail']);
-    expect(port.rows.map((r) => r.stage)).toEqual(['intent', 'completed', 'applied']);
-  });
-
-  // @invariant data: an already-applied effect is a pure replay — nothing appended, nothing sent
-  // @fails-if append, reserve or send on replay; rows grow or the sentinel executor throws
-  it('applied replay — nothing reserved, appended or re-sent', async () => {
-    setTestConfig({ [JUDGE_CALIBRATION_SAMPLING_ENABLED_ENV]: true });
-    const port = new MemoryStagedPort();
-    port.rows.push({
-      ...completedRow(ANCHOR, [ITEM], receiptFor(stagedIds(ANCHOR, [ITEM]).identity)),
-      stage: 'applied',
-      application: {
-        domainRef: `experimental:judge_calibration_sample:${ITEM.judgeEventId}`,
-        write: 'written' as const,
-      },
-    });
-    const executeItem = vi.fn(async () => {
-      throw new Error('provider must not be invoked on applied replay');
-    });
-    const report = expectStagedReport(
-      await runStaged(port, executeItem, { anchor: ANCHOR, items: [ITEM] }),
-    );
-    expect(report.dispositions[0]?.kind).toBe('applied_replay');
-    expect(report.counts.appliedReplay).toBe(1);
-    expect(executeItem).not.toHaveBeenCalled();
-    expect(port.appendedRows).toEqual([]);
-    expect(port.rows).toHaveLength(1);
-  });
-
-  // @invariant data: a receipt that does not echo its effect identity is held, not reused
-  // @fails-if reuse a mismatched receipt; a corrupt row silently discharges the effect
-  it('receipt identity-echo mismatch — held, not reused, not resent, and blocking', async () => {
-    setTestConfig({ [JUDGE_CALIBRATION_SAMPLING_ENABLED_ENV]: true });
-    const port = new MemoryStagedPort();
-    const truth = stagedIds(ANCHOR, [ITEM]);
-    const echoedWrong = receiptFor({ ...truth.identity, inputDigest: '0'.repeat(64) });
-    port.rows.push(completedRow(ANCHOR, [ITEM], echoedWrong));
-    const executeItem = vi.fn(async () => {
-      throw new Error('provider must not be invoked for a mismatched receipt');
-    });
-    const applyReceipt = vi.fn();
-    const report = expectStagedReport(
-      await runStaged(port, executeItem, { anchor: ANCHOR, items: [ITEM] }, applyReceipt),
-    );
-    expect(report.dispositions[0]?.kind).toBe('held_receipt_mismatch');
-    expect(executeItem).not.toHaveBeenCalled();
-    // @invariant data: echo mismatch does not authorize an apply attempt
-    expect(applyReceipt).not.toHaveBeenCalled();
-    expect(port.rows.map((r) => r.stage)).toEqual(['completed']);
-    expect(report.openObligations[0]?.stage).toBe('receipt_mismatch');
-    // @invariant data: the corrupt receipt blocks later attempts for its entity too
-    const later = expectStagedReport(
-      await runStaged(port, executeItem, { anchor: NEXT_NIGHT, items: [ITEM] }, applyReceipt),
-    );
-    expect(later.dispositions[0]?.kind).toBe('held_blocked_by_open_obligation');
-    expect(executeItem).not.toHaveBeenCalled();
-  });
-
-  // @invariant data: a clean skip is terminal for the effect — no obligation, no apply, no block
-  // @fails-if treat a skip as an unknown send; an eternal obligation appears for a skipped item
-  it('clean skip — terminal stage, not an obligation, replay does not re-execute', async () => {
-    setTestConfig({ [JUDGE_CALIBRATION_SAMPLING_ENABLED_ENV]: true });
-    const port = new MemoryStagedPort();
-    const executeItem = vi.fn(
-      async (): Promise<CalibrationItemExecution> => ({
-        kind: 'skipped',
-        classification: 'missing_input',
-      }),
-    );
-    const applyReceipt = vi.fn();
-    const first = expectStagedReport(
-      await runStaged(port, executeItem, { anchor: ANCHOR, items: [ITEM] }, applyReceipt),
-    );
-    expect(first.dispositions[0]).toMatchObject({
-      kind: 'skipped',
-      classification: 'missing_input',
-    });
-    expect(port.rows.map((r) => r.stage)).toEqual(['intent', 'skipped']);
-    expect(port.rows[1]?.classification).toBe('missing_input');
-    expect(first.openObligations).toEqual([]);
-    expect(first.pendingApplications).toEqual([]);
-    expect(applyReceipt).not.toHaveBeenCalled();
-    const second = expectStagedReport(
-      await runStaged(port, executeItem, { anchor: ANCHOR, items: [ITEM] }, applyReceipt),
-    );
-    expect(second.dispositions[0]).toMatchObject({
-      kind: 'skipped',
-      classification: 'missing_input',
-    });
-    // @invariant data: the skip is NOT re-executed on replay of the same workset
-    expect(executeItem).toHaveBeenCalledTimes(1);
-    // @invariant data: a later tick is NOT blocked by a terminal skip
-    const later = expectStagedReport(
-      await runStaged(port, executeItem, { anchor: NEXT_NIGHT, items: [ITEM] }, applyReceipt),
-    );
-    expect(later.dispositions[0]?.kind).not.toBe('held_blocked_by_open_obligation');
-  });
-
-  // @invariant data: history is append-only — later runs never rewrite earlier rows
-  // @fails-if a later tick mutates or erases stored rows; the deep-equal snapshot fails
-  it('append-only history — earlier rows survive byte-for-byte across later runs', async () => {
-    setTestConfig({ [JUDGE_CALIBRATION_SAMPLING_ENABLED_ENV]: true });
-    const port = new MemoryStagedPort();
-    const executeItem = vi.fn(async (...args: Parameters<ExecuteCalibrationItemFn>) => {
-      if (args[1].judgeEventId === ITEM_B.judgeEventId) {
-        throw new Error('item B lane crash');
-      }
-      return SENT_OK(...args);
-    });
-    const first = expectStagedReport(
-      await runStaged(port, executeItem, { anchor: ANCHOR, items: [ITEM, ITEM_B] }),
-    );
-    expect(first.counts.appliedFresh).toBe(1);
-    expect(first.counts.heldUnknownSend).toBe(1);
-    const snapshot = JSON.parse(JSON.stringify(port.rows)) as CalibrationStagedEffectRecord[];
-    const second = expectStagedReport(
-      await runStaged(port, executeItem, { anchor: ANCHOR, items: [ITEM, ITEM_B] }),
-    );
-    expect(second.counts.appliedReplay).toBe(1);
-    expect(second.counts.heldUnknownSend).toBe(1);
-    expect(port.rows).toHaveLength(snapshot.length);
-    // @invariant data: byte-for-byte history preservation across replays
-    expect(port.rows).toEqual(snapshot);
-    const later = expectStagedReport(
-      await runStaged(port, executeItem, { anchor: NEXT_NIGHT, items: [ITEM_B] }),
-    );
-    expect(later.counts.heldBlockedByOpenObligation).toBe(1);
-    expect(port.rows).toEqual(snapshot);
-    // @invariant data: the open obligation from the old revision keeps appearing
-    expect(later.openObligations).toEqual([
-      {
-        effectId: expect.any(String),
-        entityKey: computeCalibrationEntityKey(ITEM_B.judgeEventId),
-        judgeEventId: ITEM_B.judgeEventId,
-        stage: 'sent_unknown',
-        workSetId: first.workSetId,
-      },
-    ]);
-  });
-
-  // @invariant data: applied history does not block a new revision — only open obligations block
-  // @fails-if block on any historical row; the next night can never re-judge a completed entity
-  it('applied history — a new revision may execute after completed history', async () => {
-    setTestConfig({ [JUDGE_CALIBRATION_SAMPLING_ENABLED_ENV]: true });
-    const port = new MemoryStagedPort();
-    port.rows.push({
-      ...completedRow(ANCHOR, [ITEM], receiptFor(stagedIds(ANCHOR, [ITEM]).identity)),
-      stage: 'applied',
-      application: {
-        domainRef: `experimental:judge_calibration_sample:${ITEM.judgeEventId}`,
-        write: 'written' as const,
-      },
-    });
-    const before = JSON.parse(JSON.stringify(port.rows)) as CalibrationStagedEffectRecord[];
-    const report = expectStagedReport(
-      await runStaged(port, SENT_OK, { anchor: NEXT_NIGHT, items: [ITEM] }),
-    );
-    expect(report.dispositions[0]?.kind).toBe('applied_fresh');
-    expect(report.counts.appliedFresh).toBe(1);
-    // @invariant data: the new revision is a NEW effect — history stays intact before it
-    expect(port.rows.slice(0, 1)).toEqual(before);
-    expect(port.rows).toHaveLength(4);
-    for (const row of port.rows.slice(1)) {
-      expect(row.recordedAt).toBe(NEXT_NIGHT.toISOString());
-      expect(row.identity.workSetId).toBe(report.workSetId);
-      expect(row.identity.workSetId).not.toBe(before[0]?.identity.workSetId);
-    }
-  });
-
-  // @invariant data: one physical send per entity per workset even with duplicate members
-  // @fails-if process duplicates independently; the second duplicate sends again
-  it('duplicate entity inside one workset — second occurrence held, single send', async () => {
-    setTestConfig({ [JUDGE_CALIBRATION_SAMPLING_ENABLED_ENV]: true });
-    const port = new MemoryStagedPort();
-    const executeItem = vi.fn(async (...args: Parameters<ExecuteCalibrationItemFn>) =>
-      SENT_OK(...args),
-    );
-    const report = expectStagedReport(
-      await runStaged(port, executeItem, {
-        anchor: ANCHOR,
-        items: [ITEM, { ...ITEM, answerMd: '重复条目的不同作答' }],
-      }),
-    );
-    expect(report.dispositions.map((d) => d.kind)).toEqual([
-      'applied_fresh',
-      'held_duplicate_in_workset',
-    ]);
-    expect(executeItem).toHaveBeenCalledTimes(1);
-    expect(port.rows.map((r) => r.stage)).toEqual(['intent', 'completed', 'applied']);
-  });
-
-  // @invariant data: a workset id replayed with a different freeze is rejected whole
-  // @fails-if accept a divergent item set under the same scheduling identity
-  it('freeze mismatch — same workset id with a different frozen set is rejected whole', async () => {
-    setTestConfig({ [JUDGE_CALIBRATION_SAMPLING_ENABLED_ENV]: true });
-    const port = new MemoryStagedPort();
-    const first = expectStagedReport(
-      await runStaged(port, SENT_OK, { anchor: ANCHOR, items: [ITEM] }),
-    );
-    expect(first.freezeMismatch).toBeNull();
-    const snapshot = JSON.parse(JSON.stringify(port.rows)) as CalibrationStagedEffectRecord[];
-    const appendedAfterFirst = [...port.appendedRows];
-    // SAME anchor+cfg (same workSetId), but a different frozen item set
-    const divergent = expectStagedReport(
-      await runStaged(port, SENT_OK, { anchor: ANCHOR, items: [ITEM_B] }),
-    );
-    expect(divergent.dispositions[0]?.kind).toBe('held_workset_freeze_mismatch');
-    expect(divergent.counts.heldWorksetFreezeMismatch).toBe(1);
-    expect(divergent.freezeMismatch).toEqual({
-      workSetId: first.workSetId,
-      presentedFreezeDigest: computeCalibrationFreezeDigest([ITEM_B]),
-      recordedFreezeDigests: [computeCalibrationFreezeDigest([ITEM])],
-    });
-    // @invariant data: rejection means NO reserve, NO send, NO apply, NO append
-    expect(port.rows).toEqual(snapshot);
-    expect(port.appendedRows).toEqual(appendedAfterFirst);
-    // @invariant data: the accepted freeze still replays cleanly afterwards
-    const replay = expectStagedReport(
-      await runStaged(port, SENT_OK, { anchor: ANCHOR, items: [ITEM] }),
-    );
-    expect(replay.dispositions[0]?.kind).toBe('applied_replay');
-    expect(replay.freezeMismatch).toBeNull();
-  });
-
-  // @invariant data: a completed-pending-apply receipt must not be re-bought under a new revision
-  // @fails-if only intent/sent_unknown block; a new tick re-sends while the receipt sits unapplied
-  it('completed pending apply — a new revision is blocked until the receipt is applied', async () => {
-    setTestConfig({ [JUDGE_CALIBRATION_SAMPLING_ENABLED_ENV]: true });
-    const port = new MemoryStagedPort();
-    const executeItem = vi.fn(async (...args: Parameters<ExecuteCalibrationItemFn>) =>
-      SENT_OK(...args),
-    );
-    const failingApply: ApplyCalibrationReceiptFn = async () => {
-      throw new Error('observation write still failing');
-    };
-    const first = expectStagedReport(
-      await runStaged(port, executeItem, { anchor: ANCHOR, items: [ITEM] }, failingApply),
-    );
-    expect(first.dispositions[0]?.kind).toBe('completed_apply_pending');
-    // a LATER tick, with the receipt STILL unapplied, must not re-buy the entity
-    const later = expectStagedReport(
-      await runStaged(port, executeItem, { anchor: NEXT_NIGHT, items: [ITEM] }, failingApply),
-    );
-    expect(later.dispositions[0]?.kind).toBe('held_blocked_by_open_obligation');
-    expect(later.counts.heldBlockedByOpenObligation).toBe(1);
-    expect(executeItem).toHaveBeenCalledTimes(1);
-    // @invariant data: the pending application stays visible on every tick
-    expect(later.pendingApplications).toEqual([
-      { effectId: expect.any(String), judgeEventId: ITEM.judgeEventId, workSetId: first.workSetId },
-    ]);
-  });
-
-  // @invariant data: a fresh receipt that fails the echo check is preserved as evidence
-  // @fails-if discard the mismatching receipt; adjudication loses the original payload
-  it('fresh echo mismatch — the original receipt is preserved on the sent_unknown row', async () => {
-    setTestConfig({ [JUDGE_CALIBRATION_SAMPLING_ENABLED_ENV]: true });
-    const port = new MemoryStagedPort();
-    const mismatchingReceipt: CalibrationItemReceipt = {
-      effect: { ...stagedIds(ANCHOR, [ITEM]).identity, inputDigest: 'f'.repeat(64) },
-      outcome: { coarse_outcome: 'partial', confidence: 0.5 },
-    };
-    const executeItem = vi.fn(async () => ({ kind: 'sent' as const, receipt: mismatchingReceipt }));
-    const applyReceipt = vi.fn();
-    const report = expectStagedReport(
-      await runStaged(port, executeItem, { anchor: ANCHOR, items: [ITEM] }, applyReceipt),
-    );
-    expect(report.dispositions[0]?.kind).toBe('held_unknown_send');
-    expect(port.rows.map((r) => r.stage)).toEqual(['intent', 'sent_unknown']);
-    // @invariant data: the mismatching receipt itself is kept for adjudication
-    expect(port.rows[1]?.receipt).toEqual(mismatchingReceipt);
-    expect(applyReceipt).not.toHaveBeenCalled();
   });
 });
 
@@ -1137,6 +607,24 @@ describe('released core seams (real exports, no DB)', () => {
     expect(writeEvent).not.toHaveBeenCalled();
   });
 
+  // @invariant concurrency: an unknown runner outcome cannot become a terminal unsupported discharge
+  // @fails-if trust the pipeline's swallowed rejection; executeItem returns a skip instead of rejecting
+  it('preserves a swallowed runner rejection for durable unknown classification', async () => {
+    const item = { ...ITEM, judgeRoute: 'semantic' };
+    const failure = new Error('wire response missing');
+    const runTaskInner = vi.fn<NonNullable<JudgeCalibrationSampleDeps['runTaskInner']>>(
+      async () => {
+        throw failure;
+      },
+    );
+    const seams = await buildCalibrationStagedCoreSeams(db, CFG, { runTaskInner });
+    await expect(
+      seams.executeItem(item, stagedIds(ANCHOR, [item]).identity, { anchor: ANCHOR }),
+    ).rejects.toBe(failure);
+    expect(runTaskInner).toHaveBeenCalledOnce();
+    expect(writeEvent).not.toHaveBeenCalled();
+  });
+
   async function sendReceipt() {
     setTestConfig({ VISION_JUDGE_PROVIDER: 'xiaomi', 'lane.global.provider': 'xiaomi' });
     const item = { ...ITEM, judgeRoute: 'semantic' };
@@ -1165,54 +653,23 @@ describe('released core seams (real exports, no DB)', () => {
   // @invariant data: a later config/model/clock applies the saved receipt without another send
   // @fails-if rebuild provenance from the new tick or re-buy the entity while recovering it
   it('apply failure recovers on a later tick using the original input, lane, model and execution time', async () => {
-    setTestConfig({ [JUDGE_CALIBRATION_SAMPLING_ENABLED_ENV]: true });
-    const { item, identity, receipt, runTaskInner } = await sendReceipt();
-    const originalPayload = structuredClone(receipt);
-    const port = new MemoryStagedPort();
-    const firstSeams = await buildCalibrationStagedCoreSeams(db, CFG);
+    const { identity, receipt, runTaskInner } = await sendReceipt();
+    const original = structuredClone(receipt);
+    const first = await buildCalibrationStagedCoreSeams(db, CFG);
     vi.mocked(writeEvent).mockRejectedValueOnce(new Error('observation write failed'));
-    const executeItem = vi.fn(async () => ({ kind: 'sent' as const, receipt }));
-    const first = expectStagedReport(
-      await runStaged(
-        port,
-        executeItem,
-        { anchor: ANCHOR, items: [item] },
-        firstSeams.applyReceipt,
-      ),
+    await expect(first.applyReceipt(receipt, identity, { anchor: ANCHOR })).rejects.toThrow(
+      'observation write failed',
     );
-    expect(first.pendingApplications).toHaveLength(1);
-    expect(port.rows.map((r) => r.stage)).toEqual(['intent', 'completed']);
-
-    const laterCfg = { ...CFG, rejudgeModel: 'later-model', windowDays: 30 };
-    const laterSeams = await buildCalibrationStagedCoreSeams(db, laterCfg, {
-      now: () => NEXT_NIGHT,
+    const later = await buildCalibrationStagedCoreSeams(
+      db,
+      { ...CFG, rejudgeModel: 'later-model', windowDays: 30 },
+      { now: () => NEXT_NIGHT },
+    );
+    expect(await later.applyReceipt(receipt, identity, { anchor: NEXT_NIGHT })).toMatchObject({
+      write: 'written',
     });
-    const laterSend = vi.fn(laterSeams.executeItem);
-    const later = expectStagedReport(
-      await runCalibrationStagedOperation(
-        { config: laterCfg, resolveProviderFn: () => {} },
-        {
-          port,
-          workSet: { anchor: NEXT_NIGHT, items: [item] },
-          executeItem: laterSend,
-          applyReceipt: laterSeams.applyReceipt,
-        },
-      ),
-    );
-    expect(later.dispositions).toEqual([
-      {
-        judgeEventId: item.judgeEventId,
-        effectId: computeCalibrationEffectId(identity),
-        kind: 'applied_from_receipt',
-        classification: undefined,
-      },
-    ]);
-    expect(later.pendingApplications).toEqual([]);
-    expect(laterSend).not.toHaveBeenCalled();
     expect(runTaskInner).toHaveBeenCalledOnce();
-    expect(port.rows.map((r) => r.stage)).toEqual(['intent', 'completed', 'applied']);
-    expect(port.rows[2]?.recordedAt).toBe(ANCHOR.toISOString());
-    expect(port.rows[2]?.receipt).toEqual(originalPayload);
+    expect(receipt).toEqual(original);
     expect(vi.mocked(writeEvent).mock.calls[1]?.[1]).toMatchObject({
       action: 'experimental:judge_calibration_sample',
       created_at: executedAt,
@@ -1224,15 +681,6 @@ describe('released core seams (real exports, no DB)', () => {
         vision_judge_provider_at_sample: 'xiaomi',
         ai_provider_override_at_sample: 'xiaomi',
         same_lane_suspected: false,
-      },
-    });
-    expect(receipt.outcome).toMatchObject({
-      config: CFG,
-      executed_at: executedAt.toISOString(),
-      prepared_input: {
-        question: item.question,
-        subject_profile: item.subjectProfile,
-        answer_md: item.answerMd,
       },
     });
   });
@@ -1264,23 +712,14 @@ describe('released core seams (real exports, no DB)', () => {
   });
 
   // @invariant data: a unique-index collision alone does not discharge an immutable receipt
-  // @fails-if label duplicate as a matching application; the record incorrectly becomes applied
-  it('keeps a unique-conflict receipt pending without claiming immutable equality', async () => {
-    setTestConfig({ [JUDGE_CALIBRATION_SAMPLING_ENABLED_ENV]: true });
-    const { item, receipt, identity } = await sendReceipt();
+  // @fails-if map the core unique conflict to written; the seam incorrectly claims application ownership
+  it('reports the MF8 unique conflict without claiming application ownership', async () => {
+    const { receipt, identity } = await sendReceipt();
     const seams = await buildCalibrationStagedCoreSeams(db, CFG);
     vi.mocked(writeEvent).mockRejectedValue({ code: '23505' });
-    const port = new MemoryStagedPort();
-    port.rows.push(completedRow(ANCHOR, [item], receipt));
-    const executeItem = vi.fn(seams.executeItem);
-    const report = expectStagedReport(
-      await runStaged(port, executeItem, { anchor: ANCHOR, items: [item] }, seams.applyReceipt),
-    );
-    expect(report.pendingApplications).toHaveLength(1);
-    expect(port.rows.map((r) => r.stage)).toEqual(['completed']);
-    expect(executeItem).not.toHaveBeenCalled();
-    await expect(
-      seams.applyReceipt(receipt, identity, { anchor: NEXT_NIGHT }),
-    ).resolves.toMatchObject({ write: 'unique_duplicate' });
+    expect(await seams.applyReceipt(receipt, identity, { anchor: NEXT_NIGHT })).toEqual({
+      domainRef: `experimental:judge_calibration_sample:${identity.judgeEventId}`,
+      write: 'unique_duplicate',
+    });
   });
 });

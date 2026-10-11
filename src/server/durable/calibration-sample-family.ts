@@ -1,6 +1,6 @@
 // YUK-1355: unregistered, gate-only DBOS candidate. There is no durable
-// calibration pre-spend claim, so this module has no paid execution port.
-// Registration, scheduling, business receipts and admission remain parent-owned.
+// runtime admission yet, so this candidate has no paid execution port.
+// The separate store consumer is explicit-only; registration stays parent-owned.
 import { DBOS } from '@dbos-inc/dbos-sdk';
 import { z } from 'zod';
 
@@ -9,7 +9,12 @@ import { waitForRunnableEpoch } from '@/server/contract-epoch';
 
 export const CALIBRATION_SAMPLE_FAMILY = 'judge_calibration_sample';
 export const CALIBRATION_SAMPLE_ADMISSION_PREREQUISITE =
-  'judge_calibration_sample DBOS admission requires a durable pre-spend claim and outcome reconciliation; see docs/planning/2026-10-11-yuk1355-timed-reference.md';
+  'judge_calibration_sample DBOS admission requires parent DB/process acceptance and versioned producer fencing; see docs/planning/2026-10-11-yuk1355-timed-reference.md';
+
+export {
+  type CalibrationSampleDispatch,
+  calibrationSampleDispatchSchema,
+} from './calibration-sample-store';
 
 export function calibrationSampleScheduledId(scheduledAt: Date): string {
   return `sched-${CALIBRATION_SAMPLE_FAMILY}-${scheduledAt.toISOString()}`;
