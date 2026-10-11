@@ -17,7 +17,7 @@ ADR-0073 钉死了判分侧：计分单元 + 入库标定的冻结方法 + 一�
 
 ### D1 作答方式：拍照/手写为主（A1）
 
-默认纸上作答拍照上传，或屏幕上直接笔写（D4）。点选只保留在「点选最省事」处：选择题，以及**录入 agent 能生成点选作答的地方一律优先点选**——断句是范例：在字与字之间点一下放断句（真卷 A–H 涂卡形态同构），点选结果是结构化位置集合，按该题入库的题级规则确定性判分（语文断句「每对一处 1 分、超 3 处 0 分」是题级数据，清点 §3-1 已证不能按科目推定）。打字对短文本作答可选。**不做硬输入控件**：无公式编辑器、无画图工具——`FormulaSlot`/`NumericSlot` 是契约原语，不承诺配编辑器 UI；`MatchingSlot` 注释已立先例「ID 对选择即可作答，不要求拖拽编辑器」（`response.ts:121`）。笔迹与照片**原样保存为证据**（`EvidenceKind` 现为 image/audio/video/pdf/plaintext，`materials.ts:72`；按此扩展 stroke 原始序列，位图只是派生渲染），整体交**准入 AI judge 按该单元冻结、标定过的方法**判（ADR-0073 D2）；`open_response` 槽的 `accepted_evidence` 与 unit 的 `evidence_slot_refs`/`requires_group_evidence` 就是承载面（`response.ts:141-147`、`scoring.ts:118-124`）。**连线题＝手写上传、AI 整体判**（owner A3 原话：连线只能手写上传），不做画线的确定性判分。capture 读不准时**只追问一句**、不重复提交（追问形态见 D5）。
+默认纸上作答拍照上传，或作答卷 PDF 往返（D4，GoodNotes 等 App 写完传回）；屏幕笔写为可选备选。点选只保留在「点选最省事」处：选择题，以及**录入 agent 能生成点选作答的地方一律优先点选**——断句是范例：在字与字之间点一下放断句（真卷 A–H 涂卡形态同构），点选结果是结构化位置集合，按该题入库的题级规则确定性判分（语文断句「每对一处 1 分、超 3 处 0 分」是题级数据，清点 §3-1 已证不能按科目推定）。打字对短文本作答可选。**不做硬输入控件**：无公式编辑器、无画图工具——`FormulaSlot`/`NumericSlot` 是契约原语，不承诺配编辑器 UI；`MatchingSlot` 注释已立先例「ID 对选择即可作答，不要求拖拽编辑器」（`response.ts:121`）。笔迹与照片**原样保存为证据**（`EvidenceKind` 现为 image/audio/video/pdf/plaintext，`materials.ts:72`；按此扩展 stroke 原始序列，位图只是派生渲染），整体交**准入 AI judge 按该单元冻结、标定过的方法**判（ADR-0073 D2）；`open_response` 槽的 `accepted_evidence` 与 unit 的 `evidence_slot_refs`/`requires_group_evidence` 就是承载面（`response.ts:141-147`、`scoring.ts:118-124`）。**连线题＝手写上传、AI 整体判**（owner A3 原话：连线只能手写上传），不做画线的确定性判分。capture 读不准时**只追问一句**、不重复提交（追问形态见 D5）。
 
 ### D2 展示 spec：录入时产出的声明式积木拼装（A2）
 
@@ -26,6 +26,11 @@ ADR-0073 钉死了判分侧：计分单元 + 入库标定的冻结方法 + 一�
 ### D3 标准契约：作答位 ↔ 判分单元绑定，后端只认证据 + 方法 + 分
 
 展示 spec 里的**每个作答位绑定一个 scoring_unit_id**（经 revision 的 ResponseSpec 槽位）。对每个单元，后端只认三件事：**收哪些证据**（option_ids / 空文本 / 位置集合 / 照片或笔迹区域）、**哪个冻结判分方法**（ADR-0073 D2 的判据 + 执行器 + 版本）、**多少分**。这正是既有形状：`ScoringUnit` 的 `slot_refs`/`evidence_slot_refs`/`criterion`/`points`（`scoring.ts:115-126`），slot 上无 points 的纪律（`response.ts:10-12`）。**录入时校验绑定**：`validateScoringBasis` 已在发布 barrier 纯校验 unit→slot 可解析、判据↔槽位种类相容（`criterion_slot_kind_mismatch`）、证据槽必须 open_response（`scoring.ts:187-204, 206-223, 230+`）；本 ADR 把展示 spec 纳入同一 barrier——spec 渲染的作答位必须落在 revision 槽位上且被某 unit 消费，**错配 ⇒ 该题不准入**（与 ADR-0073 D5「未标定不出」同一出口）。**展示永不影响判分**：换版式、换 renderer、改交互都不动 judgment；判分只读证据与冻结方法。
+
+### D3a 配对与断句的作答契约（owner 16:28 更正：配对题＝左右两列配对，点选作答、确定性判）
+
+- **配对**：作答 `{kind:'matching', pairs:[{left_id,right_id}]}`（稳定 id，不认文字/位置）；判据 `matching_pairs_key`，私有、随 revision 冻结、DTO 剥离；默认一题一个计分单元，卷面印每对分值时录入拆为每对一单元；基数（一对一 / 允许多对一 / 含干扰项）逐题写在作答位 spec，界面按其约束；部分分：全对满分、卷面有印规则按印规则、无印规则记录对数且结果为 partial、分数未知（与多选子集同政策，不造分）。15:51 A3「连线手写上传 AI 判」作废；真正需要画图的题仍走作答卷/手写。
+- **断句**：作答 `{kind:'sentence_breaks', positions:number[]}`（对冻结 revision 文本的字间位置索引）；新增确定性判据「位置集合键」（接受的断点集合 + 题级规则，如「每对一处 1 分、超 3 处 0 分」），属 scoring schema 扩展，标定探针含认对参考集合、判错多断与错位。
 
 ### D4 手写主路径：排版良好的作答卷 PDF ↔ GoodNotes 等笔记 App 往返（owner 16:14，取代 A4 网页笔写为主路径）
 
@@ -44,8 +49,8 @@ owner 在 iPad 实测网页笔写原型后：「不行，书写质量差。我�
 
 ### D7 归属与交付
 
-- **UI（仅 Opus，YUK-1438）**：积木渲染器、书写模式、录入视图、PWA。
-- **功能线（YUK-1445 侧）**：录入时 spec 产出（agent 面）、绑定校验进发布 barrier、tap/stroke 捕获、追问 item。
+- **UI（仅 Opus，YUK-1438）**：积木渲染器（含新设计语言：吉祥物、形变动效、层级）、作答卷的印刷版式渲染、录入视图、PWA、可选网页笔写画布。
+- **功能线（YUK-1445 侧）**：录入时 spec 产出（agent 面）、绑定校验进发布 barrier、作答卷导出（issuance 绑定、身份码、定位标记、预留作答区）与回收对回（按身份码/标记确定性映射到计分单元，找不到则退回照片录入并标注）、点选与笔迹/照片捕获、追问 item。
 - **迁移线**：job 的 DBOS/pg-boss 接线、Start 路由、私有远程访问。
 - 交付按 AGENTS.md 阶段；验收在**真机**上做，有 iPad + Apple Pencil 的环境必测笔写与自动提示。
 
@@ -60,8 +65,8 @@ owner 在 iPad 实测网页笔写原型后：「不行，书写质量差。我�
 
 ## 分阶段交付
 
-1. **第一刀（TEST）**：选择题点选 + 断句点选积木（位置集合确定性判）+ 拍照上传走 `open_response` 证据 → 冻结方法判；录入 spec 与绑定校验进 barrier；真机验收含平板书写模式与自动提示。
-2. **第二刀**：书写画布（stroke 证据 + AI 整体判，连线先行）、沙箱出口、PWA、Copilot 同视图追问与 AI 复盘接线；随 YUK-1388 功能波次替换 `/record` 现有录入面。
+1. **第一刀（TEST）**：选择题点选 + 断句点选积木 + 配对题点选（`matching_pairs_key`）确定性判 + 拍照上传走 `open_response` 证据 → 冻结方法判；作答卷 PDF 导出与回收对回；录入 spec 与绑定校验进 barrier；验收＝iPad 真机作答卷往返（GoodNotes 导出 PDF 传回 → 每个作答区对回正确单元并出分）与点选题实测。
+2. **第二刀**：沙箱出口、PWA、Copilot 同视图追问与 AI 复盘接线；可选网页笔写画布（平板书写模式与自动提示在此刀验收）；随 YUK-1388 功能波次替换 `/record` 现有录入面。
 
 ## 被拒绝的备选
 
