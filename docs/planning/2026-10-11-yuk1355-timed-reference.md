@@ -184,3 +184,88 @@ suite, push, PR, Linear action or child delegation occurred in this continuation
 Independent R1 reviewed all nine files at `8f16ddc83fd9de6d8396616fc8b7512f3d1fc5f3` against `6f1f3e07e41a4db7b302f5404daf7e3067999423`: NONE, no proven P0/P1. The retained pg-boss behavior and fresh/cached held-result rejection were inspected. The reviewer did not run DB or runtime checks.
 
 Parent independently passed 21 unit cases across three files (`/tmp/yuk1355-timed-parent-unit.log`). Durable claims, frozen work identity, outcome reconciliation and business receipts remain admission prerequisites. No production registration, paid execution, runtime cutover or deployment is authorized by this checkpoint.
+
+## 2026-10-11 continuation — frozen workset, per-item effect identity, staged resume/apply seams
+
+Actual next implementation on the same tree (cursor `07f1d5029`, branch `feat/yuk-1355-timed-reference`).
+Only the two owned source files plus this doc changed; the family file, the retained handler, the
+core, schema, migrations, manifests, registration, boot, barrels, Start and `vitest.shared.ts` are
+untouched in this continuation.
+
+### What was implemented (Part 2 of `calibration-sample-durable-operation.ts`)
+
+1. **Delivery ≠ effect identity, concretely.** `CalibrationSampleTickSource` (Part 1) remains the
+   scheduler DELIVERY identity and is not an input anywhere in Part 2. Effect identity is
+   `CalibrationEffectIdentity` — `family`, `judgeEventId` (entity), `workSetId` (revision),
+   `provider`/`model` (the pinned second lane), `inputDigest` (canonical hash of the frozen
+   re-judge input face, via the shared `@/core/migration/canonical` primitives — no local crypto).
+   `computeCalibrationWorkSetId` derives the revision from anchor+config only: two different
+   deliveries of the same anchor+config freeze the same workset; a changed anchor or lane config is
+   a new revision. `computeCalibrationEntityKey` is deliberately revision-free so later ticks still
+   see older obligations.
+2. **Staged resume/apply boundaries.** `runCalibrationStagedOperation` (same kill switch + bare
+   second-lane pre-flight as the retained path, default OFF ⇒ zero port calls) executes a frozen
+   workset over a durable record stream in three phases: finish pending applications from immutable
+   receipts (provider never invoked), plan the frozen items, then report every unresolved obligation
+   across ALL revisions. Per fresh item: append `intent` BEFORE the physical send, then the exact
+   immutable receipt (`completed`), then `applied`. Receipts must echo their effect identity;
+   replay compares that echo before reuse — a mismatched receipt is held, never reused, never
+   resent, and blocks its entity until adjudicated.
+3. **Unknown-paid semantics.** After a persisted intent, any failed or unknowable send appends
+   `sent_unknown` — a durable unresolved obligation that is never auto-resent: not on replay of the
+   same tick, not under a later workset that re-selects the same entity (entity-key blocking), not
+   under workflow recovery. Completed history does NOT block a new revision; only open obligations
+   do. Records are append-only; every record carries the freezing workset's anchor — Part 2 never
+   reads a wall clock (no clock freshening) and holds no cached step closure state.
+4. **Report surface.** `CalibrationStagedExecutionReport` exposes per-item dispositions
+   (`applied_fresh` / `applied_from_receipt` / `applied_replay` / `held_unknown_send` /
+   `held_receipt_mismatch` / `held_blocked_by_open_obligation` / `held_duplicate_in_workset`),
+   counts, and `openObligations` (persist and appear on every tick, with their original workset
+   revision) — the held/unknown rows a parent dashboard or recovery process must keep seeing.
+
+### Explicit lane-B dependency (unresolved handshake)
+
+`CalibrationStagedExecutionPort` (`loadFamilyRecords` / `appendRecord`) is the PROVISIONAL
+consumer-side seam for the shared durable paid-effect store owned by lane B
+(`tlp-migration-receipt-reference`, task `migration-shared-durable-effects-implementation-20261011`).
+There is NO implementation of the port in this lane, no claim/fence/store code, and no production
+caller of the staged executor: the retained pg-boss handler keeps Part 1 behavior verbatim and the
+DBOS candidate stays gate-only held. When the parent relays lane B's fixed typed protocol, this
+interface is replaced/aliased to it and the staged executor is re-verified against the real store.
+This seam is NOT live admission and must not be reported as one; no always-success adapter exists
+(`executeItem` has no default — it is a required injected dependency).
+
+### Core release request (parent action; core is readonly for this lane)
+
+`judge-calibration-sample-core.ts` should export, as a behavior-preserving move:
+
+- the selection block (`runJudgeCalibrationSample` window query → effective-verdict walk →
+  action-filtered dedup → shuffle → `batchMax` slice) as e.g.
+  `selectJudgeCalibrationCandidates(db, cfg, now)` returning the frozen candidate list — freezing
+  the workset must reuse the core's exact selection/domain math, not duplicate it here; and
+- the per-candidate re-judge loop body as a per-item function over one frozen candidate — the only
+  real future `executeItem` (provider call + observation write = the apply step).
+
+Until that release, the staged seam is exercised solely by unit tests with injected executors.
+
+### Fresh offline evidence (Node 24.19.0 via mise, pnpm 11.13.1)
+
+Logs under `/tmp/yuk1355-timed-reference-codex-20261011/` (suffix `-staged`).
+
+| Check | Fresh result | Log |
+| --- | --- | --- |
+| Scoped unit, the three owned unit files | 35 passed in 3 files (23 operation: 9 retained + 14 new) | `unit-staged.log` |
+| `pnpm typecheck` | exit 0 | `typecheck-staged.log` |
+| `pnpm lint` | exit 0 | `lint-staged.log` |
+| `pnpm build` | exit 0 | `build-staged.log` |
+| `pnpm audit:partition` | exit 0 | `partition-staged.log` |
+| `pnpm audit:test-policy --base 6f1f3e07e41a4db7b302f5404daf7e3067999423` | exit 0, 40 cases checked across 4 files | `test-policy-staged.log` |
+| `pnpm audit:capability-boundaries` | exit 0, server->capability-deep remains 0 | `capability-boundaries-staged.log` |
+
+### Remaining parent gates (delta)
+
+1. Relay lane B's fixed typed protocol; reconcile `CalibrationStagedExecutionPort` against it.
+2. Release the core selection/per-item seams per the request above; wire the real
+   `selectCalibrationWorkSetFn`-equivalent and `executeItem` behind parent-owned admission.
+3. Real DB/process recovery, runtime obligation reconciliation and cutover remain parent-owned;
+   the prepared DB integration cases from the previous checkpoint are still unexecuted.
