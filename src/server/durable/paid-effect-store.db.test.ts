@@ -564,13 +564,10 @@ describe('paid-effect reserve admission (winner/held/completed)', () => {
       'feature/rep:0\n',
     ]) {
       const request = reserveInput('rev-1', INPUT, unit, 'item_prior_backfill');
-      await expect(
-        reservePaidEffect(testDb(), request.input, request.delivery),
-      ).resolves.toMatchObject({
-        kind: 'held',
-        state: 'pending',
-        blockedBy: rep1.identity,
-      });
+      const blocked = await reservePaidEffect(testDb(), request.input, request.delivery);
+      expect(blocked).toMatchObject({ kind: 'held', state: 'pending' });
+      if (blocked.kind !== 'held') throw new Error('Expected unresolved rep to block admission');
+      expect([rep1.identity, rep2.identity]).toContainEqual(blocked.blockedBy);
     }
     const nextRevision = await reservePaidEffect(
       testDb(),
