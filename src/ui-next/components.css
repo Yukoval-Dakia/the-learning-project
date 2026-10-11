@@ -287,7 +287,7 @@
     grid-template-columns: var(--un-w-sidebar) minmax(0, 1fr);
     height: 100%;
     min-height: 0;
-    background: var(--un-bg-sunk);
+    background: var(--un-bg-app);
     transition: grid-template-columns var(--un-t-panel) var(--un-ease-glide);
   }
 
@@ -308,7 +308,7 @@
     margin: var(--un-sp-2) var(--un-sp-2) var(--un-sp-2) 0;
     overflow: hidden;
     border-radius: var(--un-r-2);
-    background: var(--un-bg-raised);
+    background: var(--un-bg-frame);
     box-shadow: 0 0 0 var(--un-hairline) var(--un-line);
   }
 

@@ -39,6 +39,9 @@
   --un-critical-soft: #f7e3dc;
 
   --un-focus: var(--un-accent-strong);
+  /* Shell surfaces (§8.1): the sidebar paper around the inset frame, and the frame itself. */
+  --un-bg-app: var(--un-bg-sunk);
+  --un-bg-frame: var(--un-bg-raised);
   --un-scrim: rgb(31 30 29 / 0.28);
   --un-shadow-float: 0 1px 2px rgb(40 32 24 / 0.06), 0 18px 44px -16px rgb(40 32 24 / 0.3);
   --un-glass-alpha: 86%;
@@ -98,13 +101,18 @@
   --un-t-small: 200ms;
   --un-t-ui: 280ms;
   --un-t-panel: 420ms;
+  --un-t-flight: 540ms;
+  --un-t-ink: 900ms;
   --un-t-glow: 1600ms;
   --un-ease-spring: cubic-bezier(0.32, 1.28, 0.48, 1);
   --un-ease-spring-soft: cubic-bezier(0.32, 1.12, 0.48, 1);
   --un-ease-glide: cubic-bezier(0.22, 1, 0.36, 1);
   --un-press-scale: 0.97;
+  --un-rise: 10px;
 
-  /* Stacking (T7). */
+  /* Stacking (T7), bottom to top; mirrors Z in tokens.ts. */
+  --un-z-page: 0;
+  --un-z-raised: 1;
   --un-z-mascot: 3;
   --un-z-bubble: 4;
   --un-z-sheet: 40;
@@ -112,6 +120,13 @@
   --un-z-capture: 45;
   --un-z-palette: 50;
   --un-z-toast: 60;
+  --un-z-flight: 65;
+
+  /* Mascot slots (B1, T10); mirrors MASCOT_SIZE in tokens.ts. */
+  --un-mascot-home: 208px;
+  --un-mascot-read: 128px;
+  --un-mascot-library: 96px;
+  --un-mascot-dock: 34px;
 }
 
 /* Dark: explicit app theme or an explicit local override. */
@@ -145,6 +160,8 @@
   --un-critical: #ec876f;
   --un-critical-soft: #3a201a;
 
+  --un-bg-app: #111010;
+  --un-bg-frame: #1a1918;
   --un-scrim: rgb(0 0 0 / 0.5);
   --un-shadow-float: 0 1px 2px rgb(0 0 0 / 0.4), 0 20px 48px -12px rgb(0 0 0 / 0.6);
   --un-glass-highlight:
@@ -182,6 +199,8 @@
     --un-critical: #ec876f;
     --un-critical-soft: #3a201a;
 
+    --un-bg-app: #111010;
+    --un-bg-frame: #1a1918;
     --un-scrim: rgb(0 0 0 / 0.5);
     --un-shadow-float: 0 1px 2px rgb(0 0 0 / 0.4), 0 20px 48px -12px rgb(0 0 0 / 0.6);
     --un-glass-highlight:
@@ -197,7 +216,10 @@
     --un-t-small: 1ms;
     --un-t-ui: 1ms;
     --un-t-panel: 1ms;
+    --un-t-flight: 1ms;
+    --un-t-ink: 1ms;
     --un-press-scale: 1;
+    --un-rise: 0px;
   }
 }
 
