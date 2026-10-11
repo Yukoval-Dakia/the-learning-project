@@ -5,6 +5,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { runItemPriorBackfill } from '@/capabilities/practice/jobs/item_prior_backfill';
 import {
+  itemPriorPaidEffectInput,
+  itemPriorPaidEffectRevision,
+  validateItemPriorAppliedApplication,
+} from '@/capabilities/practice/server/item-prior-paid-effect-adapter';
+import {
   computePaidEffectIdentity,
   computePaidEffectInputDigest,
 } from '@/core/migration/paid-effect-protocol';
@@ -28,11 +33,6 @@ import {
   runItemPriorItemRepStages,
   settleItemPriorStagedItem,
 } from './item-prior-durable-operation';
-import {
-  itemPriorPaidEffectInput,
-  itemPriorPaidEffectRevision,
-  validateItemPriorAppliedApplication,
-} from './item-prior-paid-effect-adapter';
 import type { PracticeTaskRunFn } from './task-runtime';
 
 vi.mock('@/server/mastery/item-calibration', () => ({ applyItemPrior: vi.fn() }));
@@ -282,6 +282,35 @@ describe('item prior reservation consumer', () => {
     });
     expect(provider.calls()).toBe(1);
     expect(completeRep.mock.calls).toEqual([[winner, { version: 1, kind: 'output', outputText }]]);
+  });
+
+  // @invariant durability: readonly recovery is incomplete, never a new paid send or completion
+  // @fails-if an absent/pending terminal-job effect becomes a winner or discharges the work
+  it('keeps terminal-job absent and pending recovery incomplete without running or completing', async () => {
+    const work = await preparedWork({ reps: 1 });
+    for (const effectState of [null, 'pending'] as const) {
+      const runTaskFn = vi.fn(hostileProvider);
+      const completeRep = vi.fn<ItemPriorRepExecutionDeps['effects']['completeRep']>();
+      const staged = await runItemPriorItemRepStages(work, {
+        effects: {
+          reserveRep: async () => ({
+            kind: 'recovery-only',
+            identity: computePaidEffectIdentity(itemPriorPaidEffectInput(work, 0)),
+            jobState: 'cancelled',
+            effectState,
+          }),
+          completeRep,
+        },
+        runTaskFn,
+      });
+      expect(staged).toMatchObject({
+        status: 'incomplete',
+        pendingReps: [0],
+        repOutcomes: [{ state: 'pending' }],
+      });
+      expect(runTaskFn).not.toHaveBeenCalled();
+      expect(completeRep).not.toHaveBeenCalled();
+    }
   });
 
   // @invariant durability: durable-store and receipt failures cannot settle a rep

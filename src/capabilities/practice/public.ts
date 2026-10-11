@@ -45,8 +45,14 @@ export {
 } from './server/item-prior-durable-operation';
 export {
   type ItemPriorDispatch,
+  type ItemPriorDispatchedRequest,
+  ItemPriorMemberIdentityError,
+  type ItemPriorMemberRequest,
   ItemPriorPaidEffectAdapter,
   itemPriorDispatchSchema,
+  itemPriorDispatchedRequestSchema,
+  itemPriorMemberRequestSchema,
+  readItemPriorPgBossDelivery,
 } from './server/item-prior-paid-effect-adapter';
 export type { FrontierResolution } from './server/learnable-frontier';
 export {

@@ -11,6 +11,7 @@
 
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
+import type { ItemPriorPaidEffectAdapter } from '@/capabilities/practice/server/item-prior-paid-effect-adapter';
 import { aggregateItemPriorRepDrafts } from '@/core/item-prior-reps';
 import { canonicalHash } from '@/core/migration/canonical';
 import { computePaidEffectInputDigest } from '@/core/migration/paid-effect-protocol';
@@ -20,7 +21,6 @@ import { item_calibration, knowledge, question } from '@/db/schema';
 import { parseItemPriorLlasaOutput, parseItemPriorOutput } from '@/server/ai/item-prior';
 import { applyItemPrior } from '@/server/mastery/item-calibration';
 import type { SubjectProfile } from '@/subjects/profile';
-import type { ItemPriorPaidEffectAdapter } from './item-prior-paid-effect-adapter';
 import { resolveSubjectProfileForKnowledgeIds } from './knowledge-runtime';
 import {
   type PracticeTaskCallCtx,
@@ -382,7 +382,7 @@ export type ItemPriorRepOutcome =
   | { readonly state: 'dropped' }
   /** Unknown paid outcome — durable held obligation; never an auto-retry. */
   | { readonly state: 'held' }
-  /** No send happened this run (admission refused); safe to retry later. */
+  /** No send admission in this run; may be readonly terminal-job recovery of an absent effect. */
   | { readonly state: 'pending' };
 
 export type ItemPriorStagedStatus = 'ready' | 'held' | 'incomplete' | 'no-anchor';
@@ -445,6 +445,7 @@ export async function executeItemPriorRep(
     );
   }
   if (reservation.kind === 'held') return { state: 'held' };
+  if (reservation.kind === 'recovery-only') return { state: 'pending' };
 
   let outputText: string;
   try {
