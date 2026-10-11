@@ -142,7 +142,22 @@ function worker(
   }
   async function stop() {
     child.send({ kind: 'stop' });
-    expect(await exited).toEqual([0, null]);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      expect(
+        await Promise.race([
+          exited,
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(
+              () => reject(new Error(`Owned worker shutdown timed out: ${JSON.stringify(record)}`)),
+              30000,
+            );
+          }),
+        ]),
+      ).toEqual([0, null]);
+    } finally {
+      clearTimeout(timer);
+    }
   }
   return { child, exited, wait, kill, stop };
 }
@@ -208,6 +223,9 @@ async function commitFault(
   const target = safeUrl();
   const sockets = new Set<Socket>();
   let fired = false;
+  let listenerClosed: Promise<void> | undefined;
+  const closeListener = () =>
+    (listenerClosed ??= new Promise<void>((done) => server.close(() => done())));
   const server = createServer((downstream) => {
     downstream.setNoDelay(true);
     if (fired && mode === 'after-server-commit-and-unavailable') {
@@ -286,6 +304,9 @@ async function commitFault(
           fired = true;
           evidence.push({ fault: mode, at: new Date().toISOString(), serverCommand: command });
           if (mode === 'after-server-commit-and-unavailable') {
+            // Refuse new connections instead of accepting and resetting each retry.
+            // The committed reply and every existing application connection are still lost.
+            void closeListener();
             evidence.push({ unavailableSocketCount: sockets.size });
             for (const socket of sockets) socket.destroy();
             sockets.clear();
@@ -310,7 +331,7 @@ async function commitFault(
     fired: () => fired,
     async stop() {
       for (const socket of sockets) socket.destroy();
-      await new Promise<void>((done) => server.close(() => done()));
+      await closeListener();
     },
   };
 }
@@ -629,6 +650,7 @@ describe('actual review orphan crash and recovery', () => {
     try {
       await first.wait('ready');
       // Unlike ordinary wait(), this fixture expects the failure message itself.
+      await first.wait('failure');
       await expect
         .poll(
           async () =>

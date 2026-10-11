@@ -1,10 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-11：YUK-1107 全量≤120秒继续；r4父验24DB/162unit全过，typecheck/lint/build通过，PR1690完整CI38130110481因unavailable-primary fixture失败；代理只断单连接已源修，等待新head验证。共享锁实际09:47:59Z释放，清理超出8分钟已报总协调/迁移；下一窗口优先迁移。
+> Linear 是权威 tracker。2026-10-11：YUK-1107 完整 CI ≤120 秒继续；#1690 exact6e1f076 已合 main e178690eb，Gate218秒未达标。下一范围为并行规划、DB8及恢复 fixture 提速；r5硬停390秒，仅34 PASS/4 FAIL，未完成49例。实际465.301秒内精确清理/token释锁；迁移fixed403占下一窗，本线仅静态修复。
 
 ## NOW
 
-- **YUK-1107 / 全量≤120秒继续**：父d0c4657a独占fast-crons树；prune/review控制时间、session21例恢复、isolated runtime及backup162例父r4全过。R1/R2发现P1已修并由父最终实跑覆盖，未启R3；历史失败保留。当前10源文件hash与r4一致，typecheck/lint172warnings/build通过；完整exact-head CI待push，backup仍约116秒本机长尾，不能核销120秒目标。原锁token/parity清理后09:47:59Z释放，超出8分钟已报告；当前不启本机runtime，迁移优先。[证据与剩余目标](docs/planning/2026-10-11-yuk1107-full-ci-continuation.md)。
+- **YUK-1107 / 全量≤120秒继续**：父 d0c4657a 独占 fast-crons 树 / perf/yuk-1107-ci-critical-path。#1690 exact6e1f076 完整 Gate218秒，仅旧选择范围的 parity 未执行，不算120秒或完整 parity。新范围 b6f507936 静态 R1 NONE，不能替代 r5 运行结果；r5 review 两处120/60秒等待失败、后两例 guard 阻止，placement/legacy未完成。保留故障和自动清理失败/人工补清理证据。现仅修 review退出/代理监听及离线核验资源标签；原断言和生产行为不变，不另起票/第三审。共享窗迁移优先，下一轮须新协调。[证据与剩余目标](docs/planning/2026-10-11-yuk1107-full-ci-continuation.md)。
 
 - **YUK-1107 / session cron已交付**：#1681合main56df7c09；控制时间验证边界，生产60秒保护/cron及严格ledger不变；R2无P0/P1，父修Drizzle初始化后exact cd0c45d CI38120469007全绿。两例PASS、文件34.564秒；实测跨分钟边界，YUK-1397修复交付。整套390秒，不核销120秒目标。[证据与限度](docs/planning/2026-10-11-yuk1107-cron-speed.md)。
 

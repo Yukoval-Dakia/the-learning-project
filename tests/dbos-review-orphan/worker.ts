@@ -220,9 +220,15 @@ async function main() {
           for (const release of heldRows) release();
           heldRows.clear();
         } else {
+          commandStage = 'stop-durable-host';
+          process.send?.({ kind: 'stop-stage', stage: commandStage, pid: process.pid });
           await host.stopDurableWorker();
+          commandStage = 'stop-pg-boss';
+          process.send?.({ kind: 'stop-stage', stage: commandStage, pid: process.pid });
           await boss.stop();
-          await appClient.end();
+          commandStage = 'stop-application-client';
+          process.send?.({ kind: 'stop-stage', stage: commandStage, pid: process.pid });
+          await appClient.end({ timeout: 2 });
           process.exit(0);
         }
         process.send?.({ kind: 'ack' });
@@ -275,7 +281,7 @@ async function main() {
     stage = 'failure-cleanup';
     await host.stopDurableWorker();
     await boss.stop();
-    await appClient.end();
+    await appClient.end({ timeout: 2 });
     process.exit(1);
   }
 }
