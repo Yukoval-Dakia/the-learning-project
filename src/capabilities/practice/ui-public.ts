@@ -9,6 +9,10 @@ export {
 
 export const loadPracticeFacePage = () =>
   import('./ui/PracticeFacePage').then((module) => module.default);
+/** YUK-1473 — same props; the solve view renders in the new design language (TEST preview). */
+export const loadPracticeNextPage = () =>
+  import('./ui/PracticeFacePage').then((module) => module.PracticeNextPage);
+export type { PracticeFacePageProps } from './ui/PracticeFacePage';
 export const loadDraftReviewPage = () =>
   import('./ui/DraftReviewPage').then((module) => module.default);
 export const loadQuestionsPage = () =>

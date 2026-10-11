@@ -1,0 +1,614 @@
+/* YUK-1473 — practice question page in the new design language. Scoped under [data-ui-next];
+   semantic --un- tokens only (T1). Layout: reading column + 384px companion (R1, C1); on phones
+   the companion becomes the bottom sheet (C2). Cards cast no shadow; no glass in the page (T3). */
+
+[data-ui-next].un-pn-root {
+  background: var(--un-bg);
+  color: var(--un-text-1);
+  min-height: 100%;
+}
+
+[data-ui-next] .un-pn {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--un-w-panel);
+  min-height: 100%;
+}
+
+[data-ui-next] .un-pn-main {
+  min-width: 0;
+  padding: var(--un-sp-6) var(--un-sp-6) var(--un-sp-8);
+}
+
+[data-ui-next] .un-pn-column {
+  max-width: 820px;
+  margin: 0 auto;
+  display: grid;
+  gap: var(--un-sp-7);
+}
+
+/* Banner: where it came from, what it is, its state (R2 order). */
+[data-ui-next] .un-pn-banner {
+  display: grid;
+  gap: var(--un-sp-2);
+  justify-items: start;
+}
+[data-ui-next] .un-pn-eyebrow {
+  margin: var(--un-sp-2) 0 0;
+  font-size: var(--un-fs-1);
+  color: var(--un-text-3);
+}
+[data-ui-next] .un-pn-title {
+  margin: 0;
+  font-family: var(--un-font-serif);
+  font-size: var(--un-fs-5);
+  font-weight: var(--un-fw-medium);
+  line-height: var(--un-lh-tight);
+  letter-spacing: var(--un-ls-tight);
+}
+[data-ui-next] .un-pn-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--un-sp-2);
+}
+
+[data-ui-next] .un-pn-section {
+  display: grid;
+  gap: var(--un-sp-4);
+}
+[data-ui-next] .un-pn-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--un-sp-3);
+}
+[data-ui-next] .un-pn-h2 {
+  margin: 0;
+  font-size: var(--un-fs-2);
+  font-weight: var(--un-fw-semibold);
+  color: var(--un-text-1);
+}
+
+/* Question: stem in reading measure; a single figure sits beside it on wide screens. */
+[data-ui-next] .un-pn-stem {
+  display: grid;
+  gap: var(--un-sp-5);
+}
+[data-ui-next] .un-pn-stem-with-figure {
+  grid-template-columns: minmax(0, 1fr) minmax(200px, 300px);
+  align-items: start;
+}
+[data-ui-next] .un-pn-faces {
+  display: grid;
+  gap: var(--un-sp-4);
+  max-width: var(--un-w-prose);
+}
+[data-ui-next] .un-pn-face {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--un-sp-2);
+  align-items: baseline;
+}
+[data-ui-next] .un-pn-face-no {
+  font-size: var(--un-fs-2);
+  color: var(--un-text-3);
+}
+[data-ui-next] .un-pn-prose {
+  font-size: var(--un-fs-3);
+  line-height: var(--un-lh-prose);
+  color: var(--un-text-1);
+}
+[data-ui-next] .un-pn-prose p {
+  margin: 0 0 var(--un-sp-3);
+}
+[data-ui-next] .un-pn-prose p:last-child {
+  margin-bottom: 0;
+}
+/* Long stems stay inside the measure: long tokens wrap, wide blocks scroll on their own. */
+[data-ui-next] .un-pn-prose {
+  overflow-wrap: anywhere;
+}
+[data-ui-next] .un-pn-prose img {
+  max-width: 100%;
+  height: auto;
+}
+[data-ui-next] .un-pn-prose table,
+[data-ui-next] .un-pn-prose pre {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+[data-ui-next] .un-pn-prose ul,
+[data-ui-next] .un-pn-prose ol {
+  margin: 0 0 var(--un-sp-3);
+  padding-left: 1.4em;
+}
+[data-ui-next] .un-pn-prose ul {
+  list-style: disc;
+}
+[data-ui-next] .un-pn-prose ol {
+  list-style: decimal;
+}
+/* R7: inline formulas do not break; display formulas get block spacing for KaTeX struts. */
+[data-ui-next] .un-pn-prose .katex {
+  white-space: nowrap;
+}
+[data-ui-next] .un-pn-prose .katex-display {
+  margin: var(--un-sp-3) 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.2em 0;
+}
+[data-ui-next] .un-pn-figures {
+  display: grid;
+  gap: var(--un-sp-4);
+}
+[data-ui-next] .un-pn-figure {
+  margin: 0;
+  display: grid;
+  gap: var(--un-sp-2);
+}
+[data-ui-next] .un-pn-figure img {
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--un-r-1);
+}
+[data-ui-next] .un-pn-figure-zoom {
+  position: relative;
+  display: block;
+  padding: 0;
+  border-radius: var(--un-r-1);
+  cursor: zoom-in;
+}
+[data-ui-next] .un-pn-figure-zoom img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--un-r-1);
+}
+[data-ui-next] .un-pn-figure-hint {
+  position: absolute;
+  right: var(--un-sp-2);
+  bottom: var(--un-sp-2);
+  padding: 0 var(--un-sp-2);
+  border-radius: var(--un-r-3);
+  background: var(--un-bg-raised);
+  color: var(--un-text-2);
+  font-size: var(--un-fs-1);
+  opacity: 0;
+  transition: opacity var(--un-t-small) var(--un-ease-glide);
+}
+[data-ui-next] .un-pn-figure-zoom:hover .un-pn-figure-hint,
+[data-ui-next] .un-pn-figure-zoom:focus-visible .un-pn-figure-hint {
+  opacity: 1;
+}
+@media (pointer: coarse) {
+  [data-ui-next] .un-pn-figure-hint {
+    opacity: 1;
+  }
+}
+[data-ui-next] .un-pn-figure figcaption {
+  font-size: var(--un-fs-1);
+  color: var(--un-text-3);
+}
+
+/* My answer: my own work, right after the question (R1). */
+[data-ui-next] .un-pn-answer {
+  display: grid;
+  gap: var(--un-sp-4);
+  padding: var(--un-sp-5);
+  border: 1px solid var(--un-line);
+  border-radius: var(--un-r-2);
+  background: var(--un-bg-raised);
+}
+/* The reused response components carry the old page rhythm; inside this box the box padding
+   and the grid gap own the spacing (checkpoint 1; full ui-next restyle is a checkpoint 2 item). */
+[data-ui-next] .un-pn-answer .rs-slotfield,
+[data-ui-next] .un-pn-answer .rs-textwrap,
+[data-ui-next] .un-pn-answer .rs-opts {
+  margin-top: 0;
+}
+[data-ui-next] .un-pn-note,
+[data-ui-next] .un-pn-hint {
+  margin: 0;
+  font-size: var(--un-fs-1);
+  color: var(--un-text-3);
+}
+
+[data-ui-next] .un-pn-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--un-sp-2) var(--un-sp-3);
+}
+[data-ui-next] .un-pn-actions-label {
+  font-size: var(--un-fs-2);
+  color: var(--un-text-2);
+}
+[data-ui-next] .un-pn-link {
+  padding: 0;
+  font-size: var(--un-fs-1);
+  color: var(--un-text-3);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: var(--un-line-strong);
+}
+[data-ui-next] .un-pn-link:hover {
+  color: var(--un-text-1);
+}
+[data-ui-next] .un-pn-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  padding: var(--un-sp-2) var(--un-sp-3);
+  border: var(--un-hairline) solid var(--un-line-strong);
+  border-radius: var(--un-r-1);
+  background: var(--un-bg-raised);
+  color: var(--un-text-1);
+  font-size: var(--un-fs-2);
+  line-height: var(--un-lh-ui);
+}
+[data-ui-next] .un-pn-trace {
+  display: grid;
+  gap: var(--un-sp-2);
+  justify-items: start;
+}
+[data-ui-next] .un-pn-trace .un-expand {
+  width: 100%;
+}
+
+/* Multi-part: each sub-question carries its own answer box right under it. */
+[data-ui-next] .un-pn-parts {
+  display: grid;
+  gap: var(--un-sp-5);
+}
+[data-ui-next] .un-pn-part {
+  display: grid;
+  gap: var(--un-sp-3);
+}
+
+/* Result (R3): the deterministic check is stated plainly; status colour only on the chip. */
+[data-ui-next] .un-pn-result {
+  display: grid;
+  gap: var(--un-sp-4);
+  padding: var(--un-sp-5);
+  border: var(--un-hairline) solid var(--un-line);
+  border-radius: var(--un-r-2);
+}
+[data-ui-next] .un-pn-result[data-tone="positive"] {
+  border-color: color-mix(in srgb, var(--un-positive) 35%, var(--un-line));
+}
+[data-ui-next] .un-pn-verdict {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--un-sp-2) var(--un-sp-3);
+}
+[data-ui-next] .un-pn-result-text {
+  margin: 0;
+  font-size: var(--un-fs-3);
+  line-height: var(--un-lh-prose);
+  color: var(--un-text-1);
+}
+[data-ui-next] .un-pn-reference {
+  display: grid;
+  gap: var(--un-sp-1);
+  padding-top: var(--un-sp-3);
+  border-top: var(--un-hairline) solid var(--un-line);
+}
+[data-ui-next] .un-pn-rate {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--un-sp-2);
+}
+[data-ui-next] .un-pn-scale {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--un-sp-2);
+}
+[data-ui-next] .un-pn-scale .un-btn-secondary {
+  min-width: var(--un-h-control-sm);
+}
+[data-ui-next] .un-pn-appeal {
+  display: grid;
+  gap: var(--un-sp-3);
+}
+
+[data-ui-next] .un-pn-history {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: var(--un-sp-2);
+}
+[data-ui-next] .un-pn-history li {
+  display: flex;
+  align-items: center;
+  gap: var(--un-sp-3);
+  font-size: var(--un-fs-2);
+}
+[data-ui-next] .un-pn-history-day {
+  min-width: 3.5em;
+  color: var(--un-text-3);
+  font-variant-numeric: tabular-nums;
+}
+[data-ui-next] .un-pn-history-cause {
+  color: var(--un-text-2);
+}
+
+/* States: same shape as the content they stand in for (M14). */
+[data-ui-next] .un-pn-state {
+  display: grid;
+  gap: var(--un-sp-4);
+  margin: 0;
+  padding: var(--un-sp-5);
+  border: 1px solid var(--un-line);
+  border-radius: var(--un-r-2);
+  color: var(--un-text-2);
+}
+[data-ui-next] .un-pn-skeleton {
+  display: grid;
+  gap: var(--un-sp-3);
+}
+[data-ui-next] .un-pn-skeleton span {
+  display: block;
+  height: 1.1em;
+  border-radius: var(--un-r-1);
+  background: var(--un-bg-sunk);
+}
+[data-ui-next] .un-pn-skeleton span:nth-child(2) {
+  width: 86%;
+}
+[data-ui-next] .un-pn-skeleton span:nth-child(3) {
+  width: 92%;
+}
+[data-ui-next] .un-pn-skeleton .un-pn-skel-h {
+  width: 4em;
+  height: 0.9em;
+}
+[data-ui-next] .un-pn-skeleton .un-pn-skel-short {
+  width: 58%;
+}
+[data-ui-next] .un-pn-skeleton .un-pn-skel-gap {
+  margin-top: var(--un-sp-5);
+}
+[data-ui-next] .un-pn-skeleton .un-pn-skel-box {
+  height: 132px;
+  border: var(--un-hairline) solid var(--un-line);
+  border-radius: var(--un-r-2);
+  background: var(--un-bg-raised);
+}
+
+/* R9 — passage pinned left with its own scroll, questions right; never stacked on desktop. */
+[data-ui-next] .un-pn-column-wide {
+  max-width: 1240px;
+}
+[data-ui-next] .un-pn-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--un-sp-6);
+  align-items: start;
+}
+[data-ui-next] .un-pn-pane-switch {
+  display: none;
+}
+[data-ui-next] .un-pn-passage {
+  position: sticky;
+  top: var(--un-sp-4);
+  max-height: calc(100dvh - 2 * var(--un-sp-4));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: grid;
+  gap: var(--un-sp-5);
+  padding: var(--un-sp-5);
+  border: var(--un-hairline) solid var(--un-line);
+  border-radius: var(--un-r-2);
+  background: var(--un-bg-raised);
+}
+[data-ui-next] .un-pn-passage-title {
+  margin: 0 0 var(--un-sp-2);
+  font-family: var(--un-font-serif);
+  font-size: var(--un-fs-3);
+  font-weight: var(--un-fw-medium);
+}
+[data-ui-next] .un-pn-questions {
+  display: grid;
+  gap: var(--un-sp-7);
+  min-width: 0;
+}
+
+/* Companion (C1): beside the content, never over it. */
+[data-ui-next] .un-pn .un-companion {
+  position: sticky;
+  top: 0;
+  height: 100dvh;
+  border-left: 1px solid var(--un-line);
+}
+[data-ui-next] .un-pn-companion-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--un-sp-2);
+}
+[data-ui-next] .un-pn-companion-name {
+  font-weight: var(--un-fw-semibold);
+}
+[data-ui-next] .un-pn-companion-state {
+  font-size: var(--un-fs-1);
+  color: var(--un-text-3);
+}
+[data-ui-next] .un-pn-companion-body {
+  display: grid;
+  grid-template-rows: 1fr auto;
+  gap: var(--un-sp-4);
+  height: 100%;
+}
+[data-ui-next] .un-pn-companion-empty {
+  margin: 0;
+  font-size: var(--un-fs-2);
+  line-height: var(--un-lh-prose);
+  color: var(--un-text-3);
+}
+[data-ui-next] .un-pn-composer textarea {
+  width: 100%;
+  box-sizing: border-box;
+  resize: none;
+  padding: var(--un-sp-3);
+  border: 1px solid var(--un-line);
+  border-radius: var(--un-r-2);
+  background: var(--un-bg-raised);
+  color: var(--un-text-1);
+  font: inherit;
+  font-size: var(--un-fs-2);
+}
+[data-ui-next] .un-pn-composer textarea:disabled {
+  color: var(--un-text-disabled);
+}
+
+/* The embedded companion fills the panel body; the dock owns its own scrolling list. */
+[data-ui-next] .un-pn-dock {
+  height: 100%;
+  min-height: 0;
+}
+[data-ui-next] .un-companion-body:has(> .un-pn-dock) {
+  overflow: hidden;
+  padding-bottom: var(--un-sp-3);
+}
+
+[data-ui-next] .un-pn-phone-sheet {
+  display: none;
+}
+
+/* Figure zoom: a glass floating layer (T3), modal, at the palette level (T7). */
+[data-ui-next] .un-pn-lightbox-layer {
+  position: fixed;
+  inset: 0;
+  z-index: var(--un-z-palette);
+  display: grid;
+  place-items: center;
+  padding: var(--un-sp-5);
+}
+[data-ui-next] .un-pn-lightbox-scrim {
+  position: absolute;
+  inset: 0;
+  background: var(--un-scrim);
+  cursor: zoom-out;
+}
+[data-ui-next] .un-pn-lightbox {
+  position: relative;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  max-width: min(1080px, 94vw);
+  max-height: 90dvh;
+  overflow: hidden;
+  border-radius: var(--un-r-2);
+}
+[data-ui-next] .un-pn-lightbox-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--un-sp-3);
+  padding: var(--un-sp-2) var(--un-sp-2) var(--un-sp-2) var(--un-sp-4);
+  border-bottom: var(--un-hairline) solid var(--un-line);
+}
+[data-ui-next] .un-pn-lightbox-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--un-fs-1);
+  color: var(--un-text-2);
+}
+[data-ui-next] .un-pn-lightbox-body {
+  overflow: auto;
+  padding: var(--un-sp-4);
+  display: grid;
+  place-items: center;
+}
+[data-ui-next] .un-pn-lightbox-body img {
+  max-width: 100%;
+  max-height: 78dvh;
+  border-radius: var(--un-r-1);
+}
+
+/* Nothing to practise (M14): plain words and a way out. */
+[data-ui-next] .un-pn-empty {
+  display: grid;
+  gap: var(--un-sp-4);
+  justify-items: start;
+  max-width: var(--un-w-prose);
+  margin: var(--un-sp-6) 0;
+  padding: var(--un-sp-6);
+  border: var(--un-hairline) solid var(--un-line);
+  border-radius: var(--un-r-2);
+}
+[data-ui-next] .un-pn-empty-title {
+  font-family: var(--un-font-serif);
+  font-size: var(--un-fs-4);
+  font-weight: var(--un-fw-medium);
+  line-height: var(--un-lh-tight);
+}
+[data-ui-next] .un-pn-empty-text {
+  font-size: var(--un-fs-2);
+  line-height: var(--un-lh-prose);
+  color: var(--un-text-2);
+}
+
+/* Phone (T8: ≤ 720px): one column; figure above the stem; companion as the bottom sheet. */
+@media (max-width: 720px) {
+  [data-ui-next] .un-pn {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  [data-ui-next] .un-pn .un-companion {
+    display: none;
+  }
+  [data-ui-next] .un-pn-phone-sheet {
+    display: block;
+  }
+  [data-ui-next] .un-pn-main {
+    padding: var(--un-sp-4) var(--un-sp-4) calc(var(--un-sp-8) * 2);
+  }
+  [data-ui-next] .un-pn-column {
+    gap: var(--un-sp-6);
+  }
+  [data-ui-next] .un-pn-stem-with-figure {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  [data-ui-next] .un-pn-stem-with-figure .un-pn-figures {
+    order: -1;
+  }
+  [data-ui-next] .un-pn-answer,
+  [data-ui-next] .un-pn-result {
+    padding: var(--un-sp-4);
+  }
+  /* R9 on phones (form undecided, design doc §11): never one long stacked scroll. A switch keeps
+     the passage one tap away. Provisional until the owner decides the phone form. */
+  [data-ui-next] .un-pn-split {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--un-sp-4);
+  }
+  [data-ui-next] .un-pn-pane-switch {
+    display: block;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    padding: var(--un-sp-2) 0;
+    background: var(--un-bg);
+  }
+  [data-ui-next] .un-pn-split[data-pane="questions"] .un-pn-passage,
+  [data-ui-next] .un-pn-split[data-pane="passage"] .un-pn-questions {
+    display: none;
+  }
+  [data-ui-next] .un-pn-passage {
+    position: static;
+    max-height: none;
+    padding: var(--un-sp-4);
+  }
+  /* At half height only the top half of the sheet is on screen (the sheet is 100dvh - 60px tall
+     and slides down by half of that), so the dock shrinks to keep its composer visible. */
+  [data-ui-next] .un-pn-dock[data-snap="half"] {
+    height: calc(100% - 50dvh + 30px);
+  }
+  [data-ui-next] .un-sheet-body:has(> .un-pn-dock) {
+    overflow: hidden;
+  }
+}

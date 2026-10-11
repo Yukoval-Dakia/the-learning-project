@@ -1,0 +1,220 @@
+/* YUK-1473 — the embedded Copilot companion (CopilotDock variant="embedded"). It only renders
+   inside a ui-next page, so every rule is scoped under [data-ui-next] and reads --un- tokens.
+   The companion side panel is not glass (T3). Motion only on change (M1): the ink settles with a
+   colour transition, and the recording line moves only while a reply is being recorded (C3). */
+
+[data-ui-next] .un-cc {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: var(--un-sp-3);
+  height: 100%;
+  min-height: 0;
+}
+
+[data-ui-next] .un-cc-stream {
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--un-sp-4);
+  padding-top: var(--un-sp-2);
+  overscroll-behavior: contain;
+}
+
+[data-ui-next] .un-cc-empty {
+  display: grid;
+  gap: var(--un-sp-2);
+  font-size: var(--un-fs-2);
+  line-height: var(--un-lh-prose);
+  color: var(--un-text-3);
+}
+
+[data-ui-next] .un-cc-msg {
+  display: grid;
+  gap: var(--un-sp-2);
+  min-width: 0;
+}
+
+/* My own words: a quiet block on the right; the companion's words sit on the page ink. */
+[data-ui-next] .un-cc-user {
+  justify-items: end;
+}
+[data-ui-next] .un-cc-user-text {
+  max-width: 88%;
+  padding: var(--un-sp-2) var(--un-sp-3);
+  border-radius: var(--un-r-2);
+  background: var(--un-bg-sunk);
+  color: var(--un-text-1);
+  font-size: var(--un-fs-2);
+  line-height: var(--un-lh-ui);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+[data-ui-next] .un-cc-text-wrap {
+  min-width: 0;
+}
+[data-ui-next] .un-cc-text {
+  font-size: var(--un-fs-2);
+  line-height: var(--un-lh-prose);
+  color: var(--un-text-1);
+  overflow-wrap: anywhere;
+  transition: color var(--un-t-ui) var(--un-ease-glide);
+}
+[data-ui-next] .un-cc-text p {
+  margin: 0 0 var(--un-sp-2);
+}
+[data-ui-next] .un-cc-text p:last-child {
+  margin-bottom: 0;
+}
+[data-ui-next] .un-cc-text ul,
+[data-ui-next] .un-cc-text ol {
+  margin: 0 0 var(--un-sp-2);
+  padding-left: 1.3em;
+}
+[data-ui-next] .un-cc-text ul {
+  list-style: disc;
+}
+[data-ui-next] .un-cc-text ol {
+  list-style: decimal;
+}
+[data-ui-next] .un-cc-text strong {
+  font-weight: var(--un-fw-semibold);
+}
+[data-ui-next] .un-cc-text code {
+  font-family: var(--un-font-mono);
+  font-size: 0.9em;
+}
+
+/* C3 step 2–3: provisional text is lighter until the committed turn is re-read. */
+[data-ui-next] .un-cc-ai[data-state="streaming"] .un-cc-text,
+[data-ui-next] .un-cc-ai[data-state="recording"] .un-cc-text {
+  color: var(--un-text-3);
+}
+[data-ui-next] .un-cc-ai[data-state="stopped"] .un-cc-text {
+  color: var(--un-text-2);
+}
+[data-ui-next] .un-cc-caret {
+  color: var(--un-text-3);
+  margin-left: 1px;
+}
+
+[data-ui-next] .un-cc-state {
+  font-size: var(--un-fs-1);
+  color: var(--un-text-3);
+}
+[data-ui-next] .un-cc-ai[data-settled] .un-cc-state {
+  color: var(--un-positive);
+}
+
+/* The recording line: a hairline under the text; it travels only under no-preference. */
+[data-ui-next] .un-cc-recording {
+  position: relative;
+  display: block;
+  height: var(--un-hairline);
+  overflow: hidden;
+  background: var(--un-line);
+}
+[data-ui-next] .un-cc-recording::after {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 40%;
+  background: linear-gradient(90deg, transparent, var(--un-text-3), transparent);
+  transform: translateX(-100%);
+}
+
+[data-ui-next] .un-cc-check {
+  display: grid;
+  gap: var(--un-sp-2);
+  padding: var(--un-sp-3);
+  border: var(--un-hairline) solid var(--un-line);
+  border-radius: var(--un-r-2);
+  font-size: var(--un-fs-2);
+}
+[data-ui-next] .un-cc-check-choices {
+  list-style: upper-alpha;
+  padding-left: 1.4em;
+}
+[data-ui-next] .un-cc-note,
+[data-ui-next] .un-cc-tombstone {
+  font-size: var(--un-fs-1);
+  color: var(--un-text-3);
+}
+[data-ui-next] .un-cc-row-actions {
+  display: flex;
+  gap: var(--un-sp-2);
+}
+
+[data-ui-next] .un-cc-alert {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--un-sp-2);
+  padding: var(--un-sp-2) var(--un-sp-3);
+  border-radius: var(--un-r-1);
+  background: var(--un-caution-soft);
+  color: var(--un-text-1);
+  font-size: var(--un-fs-1);
+}
+[data-ui-next] .un-cc-alert > span {
+  flex: 1 1 12em;
+}
+
+[data-ui-next] .un-cc-foot {
+  display: grid;
+  gap: var(--un-sp-2);
+}
+[data-ui-next] .un-cc-run {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--un-sp-2);
+  font-size: var(--un-fs-1);
+  color: var(--un-text-3);
+}
+
+/* C6: a two-line box; Enter sends, Shift+Enter breaks the line. */
+[data-ui-next] .un-cc-composer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: var(--un-sp-2);
+  padding: var(--un-sp-2);
+  border: var(--un-hairline) solid var(--un-line-strong);
+  border-radius: var(--un-r-2);
+  background: var(--un-bg-raised);
+}
+[data-ui-next] .un-cc-composer:focus-within {
+  border-color: var(--un-focus);
+}
+[data-ui-next] .un-cc-composer textarea {
+  width: 100%;
+  min-height: calc(2 * var(--un-lh-ui) * 1em);
+  max-height: 10em;
+  resize: none;
+  padding: var(--un-sp-1) var(--un-sp-1);
+  border: 0;
+  background: transparent;
+  color: var(--un-text-1);
+  font-size: var(--un-fs-2);
+  line-height: var(--un-lh-ui);
+}
+[data-ui-next] .un-cc-composer textarea:focus-visible {
+  outline: none;
+}
+[data-ui-next] .un-cc-composer textarea:disabled {
+  color: var(--un-text-disabled);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  [data-ui-next] .un-cc-recording::after {
+    animation: un-cc-recording 1.4s var(--un-ease-glide) infinite;
+  }
+}
+
+@keyframes un-cc-recording {
+  to {
+    transform: translateX(250%);
+  }
+}

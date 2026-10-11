@@ -70,6 +70,11 @@ function srcMeta(source: string): SrcMeta {
   return meta;
 }
 
+/** Learner wording for a stream source (also used by the new practice page, YUK-1473). */
+export function practiceSourceLabel(source: string): string {
+  return srcMeta(source).label;
+}
+
 export function PfSrcBadge({ source }: { source: string }) {
   const s = srcMeta(source);
   return (

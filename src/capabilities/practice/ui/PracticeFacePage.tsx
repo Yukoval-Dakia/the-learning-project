@@ -11,6 +11,8 @@ import { ErrorState } from '@/ui/primitives/ErrorState';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import './practice-face.css';
 
+import { PracticeNextEmpty } from './next/PracticeNextEmpty';
+import { type PracticeCompanionMode, PracticeNextSolo } from './next/PracticeNextSolo';
 import { PfPaper } from './PfPaper';
 import { PfRetro } from './PfRetro';
 import { PfShelf } from './PfShelf';
@@ -80,8 +82,33 @@ function streamForRequestedScope(
   return stream.scope ? undefined : stream;
 }
 
-// navigate 暂未消费（M3 知识面挂上后，复盘 trace 的知识点链接会用它跳转）。
-export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePageProps) {
+// navigate：旧页面暂未消费（M3 知识面挂上后复盘 trace 会用它跳转）；新页面用于空态与学习伙伴回复里的链接。
+export default function PracticeFacePage(props: PracticeFacePageProps) {
+  return <PracticeFace {...props} soloView="retained" />;
+}
+
+export interface PracticeNextPageProps extends PracticeFacePageProps {
+  /**
+   * Where the learning companion's conversation lives. `embedded` mounts the Copilot dock inside
+   * the page's companion panel and is only valid when the shell's global dock is off (one dock
+   * owns the open-with-context signal). Default `none`: the honest placeholder, since the shell
+   * still mounts its global dock until the migration line turns it off.
+   */
+  companion?: PracticeCompanionMode;
+}
+
+/** YUK-1473 — the same practice flow with the solve view in the new design language. */
+export function PracticeNextPage({ companion = 'none', ...props }: PracticeNextPageProps) {
+  return <PracticeFace {...props} soloView="next" companion={companion} />;
+}
+
+function PracticeFace({
+  navigate,
+  getQuery,
+  setQuery,
+  soloView,
+  companion = 'none',
+}: PracticeFacePageProps & { soloView: 'retained' | 'next'; companion?: PracticeCompanionMode }) {
   const qc = useQueryClient();
   const [scopeKnowledgeId, setScopeKnowledgeId] = useState<string | null>(() => {
     const value = getQuery('kc')?.trim();
@@ -279,24 +306,41 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
   let body: React.ReactNode;
   if (mode.kind === 'solo') {
     const pos = items.findIndex((it) => it.id === mode.item.id) + 1;
-    body = (
-      <PfSolo
-        // key=item.id：流自动推进换题时强制重挂，判分/作答 state 不跨题残留。
-        key={mode.item.id}
-        item={mode.item}
-        sessionId={visibleStream?.scope?.session_id ?? null}
-        pos={pos || mode.item.position}
-        total={items.length}
-        onDone={() => void completeSolo(mode.item)}
-        onBack={() => {
-          setMode({ kind: 'list' });
-          void refreshStream();
-        }}
-        // YUK-432 — 客观题自动 commit 后退出回流：标 done（不自动推进），消除卡 in_progress 的 slot。
-        onCommittedBack={() => void markSoloDoneAndExit(mode.item)}
-        addToast={addToast}
-      />
-    );
+    body =
+      soloView === 'next' ? (
+        <PracticeNextSolo
+          key={mode.item.id}
+          item={mode.item}
+          sessionId={visibleStream?.scope?.session_id ?? null}
+          pos={pos || mode.item.position}
+          total={items.length}
+          onDone={() => void completeSolo(mode.item)}
+          onBack={() => {
+            setMode({ kind: 'list' });
+            void refreshStream();
+          }}
+          onCommittedBack={() => void markSoloDoneAndExit(mode.item)}
+          navigate={navigate}
+          companion={companion}
+        />
+      ) : (
+        <PfSolo
+          // key=item.id：流自动推进换题时强制重挂，判分/作答 state 不跨题残留。
+          key={mode.item.id}
+          item={mode.item}
+          sessionId={visibleStream?.scope?.session_id ?? null}
+          pos={pos || mode.item.position}
+          total={items.length}
+          onDone={() => void completeSolo(mode.item)}
+          onBack={() => {
+            setMode({ kind: 'list' });
+            void refreshStream();
+          }}
+          // YUK-432 — 客观题自动 commit 后退出回流：标 done（不自动推进），消除卡 in_progress 的 slot。
+          onCommittedBack={() => void markSoloDoneAndExit(mode.item)}
+          addToast={addToast}
+        />
+      );
   } else if (mode.kind === 'paper') {
     body = (
       <PfPaper
@@ -371,7 +415,17 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
             )}
           </div>
         </div>
-        {view === 'shelf' ? (
+        {soloView === 'next' &&
+        view === 'stream' &&
+        visibleStream &&
+        !streamQ.isFetching &&
+        visibleStream.items.length === 0 ? (
+          <PracticeNextEmpty
+            scopeLabel={scopeKnowledgeId ? (visibleStream.scope?.label ?? null) : null}
+            onClearScope={scopeKnowledgeId ? clearScope : null}
+            navigate={navigate}
+          />
+        ) : view === 'shelf' ? (
           <PfShelf
             openPaper={(artifactId) => setMode({ kind: 'paper', artifactId })}
             openRetro={(artifactId) => setMode({ kind: 'retro', artifactId })}
