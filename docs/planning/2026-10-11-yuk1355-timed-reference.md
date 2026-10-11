@@ -1,9 +1,9 @@
 # YUK-1355 timed-model reference source checkpoint
 
-Current source integration starts from parent merge
+The initial shared-store integration starts from parent merge
 `9cfb3dc1d23da6a3ff7228838bae6ce389bde98b`, which contains fixed shared B
 `8e3b1af04d54a21bee79b22b4ab6524187795809`. The concrete calibration store
-consumer and prepared Postgres cases are described in the final section below.
+consumer and prepared Postgres cases are described below; the final section records its R1 replay repair.
 The original extraction and frozen-input checkpoints that follow are historical.
 The retained default is still pg-boss; the DBOS candidate remains held and
 unregistered. This document does not grant runtime admission.
@@ -596,3 +596,129 @@ No DB/testcontainers/Docker, runtime/provider/credential/operational lock, push,
 PR, Linear, child delegation, registration, schedule or default-backend change
 occurred in this continuation. The new adapter is a committed source consumer
 with prepared DB evidence, not an accepted or admitted cutover.
+
+
+## Shared adapter R1 repair: durable reuse on nonempty-workset replay
+
+This repair resumes the original C tree at
+`982f0c1a1cda2a19be85d4370faca9b62a82cc01`. R1 found one P1 in the new adapter:
+T1 A could remain receipt_ready after a real domain rollback; T2 [A,B] recovered
+and applied T1 A, omitted the proposed T2 A intent through an invocation-local
+map, and persisted the full T2 freeze through B. Identical T2 replay no longer
+saw applied A in the obligation reader, so the empty map admitted and paid a new
+T2 A effect before hitting MF8. The original integration is not accepted as safe
+for this replay. Its source, failure descriptions and logs remain preserved.
+This nonempty persisted-freeze defect is distinct from the still-open empty/tick
+receipt requirement.
+
+### Reuse authority and repair
+
+Existing immutable facts suffice for this nonempty path. No additional shared
+signature, schema, SQL, sentinel paid unit, application marker on an unexecuted
+effect, or broadened paid identity is required.
+
+- The consumer passes every unique frozen member to preparation; it no longer
+  filters entities using an invocation-local recovered map.
+- Both prepare and reserve read applied rows for that family/entity under the
+  existing family transaction lock. The original stored input, result and
+  application are reread and verified before intent admission and before any
+  send claim. Applied history remains readable even after the obligation reader
+  stops returning it.
+- Validation binds the original shared identity and input digest, frozen member
+  digest, original config/workset/time and rejudge IDs to the result. The
+  immutable application wrapper must bind that exact original identity and
+  result digest. A written proof must name the expected observation domain
+  reference and have the same complete prepared face as the presented member.
+  A result/input/application mismatch or multiple reusable receipts stays held.
+  A domain row's existence or a unique conflict supplies no reuse authority.
+- Known skips retain the reviewed policy: reuse only their own exact paid
+  identity. They do not grant every later model/tick an observation or prevent
+  the established prospective skip policy.
+- A persisted nonempty freeze already atomically admitted its payable member
+  intents. If a presented member has neither its own intent nor a valid original
+  applied proof, replay reports held_receipt_mismatch with a source/target
+  diagnostic. It does not fill the missing member with a new purchase.
+  The existing B member envelope is the durable full-freeze evidence; no random
+  step ID or memory map substitutes for it.
+- A successful reuse returns the original effect/receipt reference, without a
+  new paid row or another domain/app write. Shared sending/unknown rules and
+  model-unit exemptions are unchanged. Historical pending/unknown/unapplied
+  rows are not rewritten or erased by this repair.
+
+The family-owned result recorder also normalizes real DB Date fields to their
+exact ISO JSON face. The reviewed core captures a full question row, including
+timestamps, while B's strict canonicalizer rejects Date objects. Without this
+boundary fix the real DB fixture cannot store the first paid receipt.
+Only Dates are converted; undefined, NaN and other unsupported values remain
+for the shared canonicalizer to reject. The consumer validates the same serialized
+receipt that it records. Core selection, runner face, config, clock, math,
+observation policy and both paid identity functions are unchanged.
+
+The R1 repair changes operation, narrow adapter, their unit/DB tests and this
+document only. Family candidate, core, handler, shared B, schema/SQL, boot,
+manifest, public barrels and partition remain byte-identical to the fixed base.
+Parent reports that B fa33 contains this original integration plus B73d's
+C/A unsupported-switch guard. That moving parent tree was not read or edited.
+The guard report does not grant a cutover.
+
+### Prepared real DB cases and exact command
+
+The owned DB file now has 22 expanded cases. Eight new cases use actual
+store/control rows, the real core execution/application, and real savepoint
+rollback, with local provider output only:
+
+1. T1 A writes then rolls back domain application, leaving a saved receipt.
+   T2 freezes [A,B], really applies T1 A using its original model/time, and
+   executes B under T2. T2 is replayed twice with the identical frozen pair.
+   Provider-call count stays two; every paid row/receipt/application column
+   and every domain event is compared unchanged after each replay.
+2. Seven T2 replay cases corrupt or remove the original reuse proof: frozen
+   input, result-to-input echo, application digest, application identity,
+   domain reference, application body, or source row. The result-echo case
+   recomputes the wrapper digest, so digest comparison alone cannot pass it.
+   Existing real observation rows remain present. Every replay holds A,
+   reuses B, sends nothing and leaves the corrupted-before-replay store and
+   all events byte/value-equal. The missing-source case specifically asserts
+   the persisted nonempty freeze cannot silently admit an omitted member.
+
+These cases are prepared and typechecked, not collected or executed. Parent's
+authorized DB window should first run exactly:
+
+```bash
+PATH=/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin:$PATH pnpm vitest run --config vitest.db.config.ts src/capabilities/practice/server/calibration-sample-durable-operation.db.test.ts -t 'replays T2|holds T2 replay'
+```
+
+Then run the entire owned 22-case file and the retained core file:
+
+```bash
+PATH=/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin:$PATH pnpm vitest run --config vitest.db.config.ts src/capabilities/practice/server/calibration-sample-durable-operation.db.test.ts src/capabilities/practice/server/judge-calibration-sample.db.test.ts
+```
+
+### Source evidence and remaining gates
+
+Fresh logs are under `/tmp/yuk1355-calibration-reuse-r1-20261011.06FrZw`, separate from every prior artifact:
+
+- `unit-final.log`: 35/35 across operation, held family and retained handler.
+  The added actual-core receipt case proves Date serialization remains
+  canonicalizable and keeps strict rejection of undefined/non-finite values.
+  It is serialization evidence, not proof of DB ownership or recovery.
+- `typecheck-final.log`: both project configurations passed, including the
+  prepared DB cases. `typecheck.log` preserves the initial missing
+  application-identity fixture variant; it was corrected before final checks.
+- `lint.log`: exit 0, 172 inherited warnings; no baseline changes.
+- `build.log`: web/Start/server/worker/migrate bundles passed.
+- `test-policy.log`: three new AST case registrations admitted, 36 inherited,
+  no errors against the fixed 982f base. The parameterized corruption case
+  expands to seven actual DB cases.
+- `retained-source.json` and `source-sha256.txt`: fixed-source comparison and
+  task-owned byte receipts. Previous integration boundary-audit failure
+  remains an open parent integration gate; this repair does not loosen it.
+
+Parent owns R2 on this actual fixed repair diff, after this integration's R1.
+The older frozen-input R2 remains closed and is not reused to certify this
+new adapter. No review child or third round was started. Real DB cases,
+process crash/restart, restore, provider, legacy drain/rollback, producer
+generation wiring, complete obligations/tick receipts and runtime acceptance
+remain separate. Default pg-boss and the unregistered held candidate are
+unchanged. No DB/container/runtime/provider/credential/operational lock,
+push/PR/Linear/child operation occurred here.

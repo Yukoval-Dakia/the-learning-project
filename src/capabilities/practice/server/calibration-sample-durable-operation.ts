@@ -36,6 +36,7 @@ import { canonicalHash, stableStringify } from '@/core/migration/canonical';
 import type { Db, Tx } from '@/db/client';
 import { resolveTaskProvider } from '@/server/ai/providers';
 import {
+  type CalibrationReuseVerifier,
   type CalibrationSampleDispatch,
   type CalibrationSendLease,
   admitCalibrationStoreDispatch,
@@ -48,6 +49,7 @@ import {
   readCalibrationStoredInput,
   recordCalibrationStoreResult,
   reserveCalibrationStoreEffect,
+  serializeCalibrationStoreResult,
 } from '@/server/durable/calibration-sample-store';
 import {
   type PaidEffectIdentity,
@@ -427,6 +429,10 @@ export interface CalibrationStagedItemDisposition {
   readonly kind: CalibrationItemDispositionKind;
   readonly sharedIdentity: PaidEffectIdentity;
   readonly classification?: CalibrationItemSkipClassification;
+  readonly reuseFailure?: {
+    readonly sourceIdentity: PaidEffectIdentity | null;
+    readonly reason: string;
+  };
 }
 
 /** An unresolved obligation visible in the report — persists and appears on
@@ -673,13 +679,69 @@ function readStoredCalibrationResult(
       !receiptEchoMatches(receipt, frozen.effect) ||
       !paidEffectJsonEquals(saved.prepared_input, frozen.prepared_input) ||
       !paidEffectJsonEquals(saved.config, frozen.config) ||
-      saved.workset_anchor !== frozen.anchor
+      saved.workset_anchor !== frozen.anchor ||
+      saved.rejudged.judgeEventId !== frozen.effect.judgeEventId ||
+      saved.rejudged.questionId !== frozen.prepared_input.question_id ||
+      saved.rejudged.answerEventId !== frozen.prepared_input.answer_event_id ||
+      saved.rejudged.judgeRoute !== frozen.prepared_input.judge_route ||
+      saved.rejudged.priorOutcome !== frozen.prepared_input.prior_outcome
     ) {
       throw new PaidEffectProtocolError('calibration receipt provenance mismatch');
     }
   }
   return { frozen, execution: result.execution };
 }
+
+const CalibrationSavedApplicationSchema = z.strictObject({
+  version: z.literal(1),
+  effect: paidEffectIdentitySchema,
+  resultDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/),
+  application: calibrationStoreApplicationSchema,
+});
+
+/** Validates immutable store facts, never domain-row existence or a conflict.
+ * Config/model/time belong to the original receipt. Reuse of an observation
+ * also requires the exact presented prepared face for this judge entity. */
+export const validateCalibrationReuseProof: CalibrationReuseVerifier = (source, requested) => {
+  if (source.snapshot.state !== 'applied')
+    throw new PaidEffectProtocolError('calibration reuse requires an applied receipt');
+  const saved = readStoredCalibrationResult(
+    source.snapshot.result,
+    source.snapshot.identity,
+    source.frozenInput,
+  );
+  const target = readFrozenCalibrationIntent(requested.input, computePaidEffectIdentity(requested));
+  const application = CalibrationSavedApplicationSchema.parse(source.snapshot.application);
+  if (
+    !paidEffectJsonEquals(application.effect, source.snapshot.identity) ||
+    application.resultDigest !== computePaidEffectInputDigest(source.snapshot.result) ||
+    source.snapshot.identity.entityId !== target.effect.judgeEventId
+  ) {
+    throw new PaidEffectProtocolError('calibration reuse application provenance mismatch');
+  }
+  if (saved.execution.kind === 'skipped') {
+    if (
+      application.application.write !== 'skipped' ||
+      application.application.classification !== saved.execution.classification
+    ) {
+      throw new PaidEffectProtocolError('calibration reuse skip provenance mismatch');
+    }
+    // Preserve the reviewed policy: a known unsupported/no-observation outcome
+    // is terminal only for its own paid effect, not every later model/tick.
+    return paidEffectJsonEquals(source.snapshot.identity, computePaidEffectIdentity(requested))
+      ? { kind: 'reusable', application: application.application }
+      : { kind: 'not_reusable' };
+  }
+  if (
+    application.application.write !== 'written' ||
+    application.application.domainRef !==
+      `experimental:judge_calibration_sample:${saved.frozen.effect.judgeEventId}` ||
+    !paidEffectJsonEquals(saved.frozen.prepared_input, target.prepared_input)
+  ) {
+    throw new PaidEffectProtocolError('calibration reuse input/domain provenance mismatch');
+  }
+  return { kind: 'reusable', application: application.application };
+};
 
 /** Concrete shared-store consumer. No registration or default backend change.
  * The persisted original dispatch generation, not a consume-time control read,
@@ -719,14 +781,6 @@ export async function runCalibrationStagedOperation(
     reservedByOtherProcess: 0,
   };
   const dispositions: CalibrationStagedItemDisposition[] = [];
-  const recovered = new Map<
-    string,
-    {
-      effect: CalibrationEffectIdentity;
-      sharedIdentity: PaidEffectIdentity;
-      classification?: CalibrationItemSkipClassification;
-    }
-  >();
   const mismatched = new Set<string>();
   const recoveryPending = new Set<string>();
   const key = (identity: PaidEffectIdentity) => computePaidEffectInputDigest(identity);
@@ -758,16 +812,10 @@ export async function runCalibrationStagedOperation(
     if (row.state !== 'receipt_ready') continue;
     try {
       const frozenInput = await readCalibrationStoredInput(database, row.identity);
-      const saved = readStoredCalibrationResult(row.result, row.identity, frozenInput);
+      readStoredCalibrationResult(row.result, row.identity, frozenInput);
       const result = await applyKnown(row.identity);
       if (result.kind === 'applied') {
         calibrationStoreApplicationSchema.parse(result.application);
-        recovered.set(row.identity.entityId, {
-          effect: saved.frozen.effect,
-          sharedIdentity: row.identity,
-          classification:
-            saved.execution.kind === 'skipped' ? saved.execution.classification : undefined,
-        });
       } else recoveryPending.add(key(row.identity));
     } catch {
       mismatched.add(key(row.identity));
@@ -777,7 +825,7 @@ export async function runCalibrationStagedOperation(
   const plannedEntities = new Set<string>();
   const effects = items
     .filter((item) => {
-      if (recovered.has(item.judgeEventId) || plannedEntities.has(item.judgeEventId)) return false;
+      if (plannedEntities.has(item.judgeEventId)) return false;
       plannedEntities.add(item.judgeEventId);
       return true;
     })
@@ -787,6 +835,7 @@ export async function runCalibrationStagedOperation(
     freezeDigest,
     effects,
     dispatch,
+    verifyReuse: validateCalibrationReuseProof,
   });
   const freezeMismatch: CalibrationWorkSetFreezeMismatch | null =
     preparation.kind === 'freeze_mismatch'
@@ -804,24 +853,37 @@ export async function runCalibrationStagedOperation(
     let effectId = computeCalibrationEffectId(effect);
     let kind: CalibrationItemDispositionKind;
     let classification: CalibrationItemSkipClassification | undefined;
+    let reuseFailure: CalibrationStagedItemDisposition['reuseFailure'];
     if (freezeMismatch) kind = 'held_workset_freeze_mismatch';
     else if (seen.has(item.judgeEventId)) kind = 'held_duplicate_in_workset';
-    else if (recovered.has(item.judgeEventId)) {
-      const original = recovered.get(item.judgeEventId);
-      if (!original) throw new PaidEffectProtocolError('calibration recovered identity missing');
-      effectId = computeCalibrationEffectId(original.effect);
-      sharedIdentity = original.sharedIdentity;
-      classification = original.classification;
-      kind = classification ? 'skipped' : 'applied_from_receipt';
-    } else {
+    else {
       seen.add(item.judgeEventId);
       const reservation = await reserveCalibrationStoreEffect(
         database,
         effectInput,
         dispatch,
         input.leaseExpiresAt,
+        validateCalibrationReuseProof,
       );
-      if (reservation.kind === 'held') {
+      if (reservation.kind === 'reused') {
+        const original = readStoredCalibrationResult(
+          reservation.source.result,
+          reservation.source.identity,
+          reservation.frozenInput,
+        );
+        effectId = computeCalibrationEffectId(original.frozen.effect);
+        sharedIdentity = reservation.source.identity;
+        if (original.execution.kind === 'skipped') {
+          kind = 'skipped';
+          classification = original.execution.classification;
+        } else
+          kind = paidEffectJsonEquals(sharedIdentity, reservation.identity)
+            ? 'applied_replay'
+            : 'applied_from_receipt';
+      } else if (reservation.kind === 'reuse_mismatch') {
+        kind = 'held_receipt_mismatch';
+        reuseFailure = { sourceIdentity: reservation.sourceIdentity, reason: reservation.reason };
+      } else if (reservation.kind === 'held') {
         kind = reservation.blockedBy ? 'held_blocked_by_open_obligation' : 'held_unknown_send';
       } else if (reservation.kind === 'completed' && mismatched.has(key(sharedIdentity))) {
         kind = 'held_receipt_mismatch';
@@ -871,17 +933,14 @@ export async function runCalibrationStagedOperation(
         else {
           // Even a mismatching receipt remains immutable evidence. Application
           // validation holds it in receipt_ready; it cannot trigger another send.
-          await recordCalibrationStoreResult(database, lease, {
+          const storedResult = serializeCalibrationStoreResult({
             version: 1,
             identity: reservation.identity,
             execution,
           });
+          await recordCalibrationStoreResult(database, lease, storedResult);
           try {
-            readStoredCalibrationResult(
-              { version: 1, identity: reservation.identity, execution },
-              reservation.identity,
-              effectInput.input,
-            );
+            readStoredCalibrationResult(storedResult, reservation.identity, effectInput.input);
             const result = await applyKnown(reservation.identity);
             kind =
               result.kind === 'pending'
@@ -906,6 +965,7 @@ export async function runCalibrationStagedOperation(
       sharedIdentity,
       kind,
       classification,
+      reuseFailure,
     });
     counts[DISPOSITION_COUNT_FIELD[kind]] += 1;
   }
