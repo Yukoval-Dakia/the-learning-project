@@ -90,6 +90,7 @@ export const fastTestInclude = [
 ];
 
 export const dbTestInclude = [
+  'src/capabilities/shell/api/proposal-reason-privacy.db.test.ts',
   'src/server/boss/isolated-runtime.db.test.ts',
   'server/start/admin-control-reader.db.test.ts',
   'server/start/admin-reader.db.test.ts',
