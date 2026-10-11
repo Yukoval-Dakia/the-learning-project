@@ -38,6 +38,7 @@ import {
 import {
   loadDraftReviewPage,
   loadPracticeFacePage,
+  loadPracticeNextPage,
   loadQuestionDetailPage,
   loadQuestionsPage,
 } from '@/capabilities/practice/ui-public';
@@ -246,6 +247,8 @@ const recordRoute = createRoute({
 // setQuery 是 replace 语义（视图切换不进 history 栈）。
 const PracticeRoute = lazyRouteComponent(async () => {
   const PracticeFacePage = await loadPracticeFacePage();
+  // REVIEW BUILD ONLY (YUK-1473 checkpoint screenshots) — never merged; the Start route owns this.
+  const PracticeNextPage = await loadPracticeNextPage();
 
   function PracticeRouteComponent() {
     const router = useRouter();
@@ -265,8 +268,9 @@ const PracticeRoute = lazyRouteComponent(async () => {
       },
       [router],
     );
+    const Page = new URLSearchParams(searchStr).get('ui') === 'next' ? PracticeNextPage : PracticeFacePage;
     return (
-      <PracticeFacePage
+      <Page
         navigate={(to) => router.history.push(to)}
         getQuery={getQuery}
         setQuery={setQuery}
