@@ -192,6 +192,19 @@ function isReusableSession(session: CopilotSessionResponse, serverNow: Date): bo
   );
 }
 
+/**
+ * The element that actually scrolls `node`: itself or its nearest ancestor with
+ * overflow-y auto/scroll (in the drawer, CopilotDrawer's body). Falls back to
+ * the node so a layout change can never make scrolling throw.
+ */
+function nearestScrollContainer(node: HTMLElement): HTMLElement {
+  for (let el: HTMLElement | null = node; el; el = el.parentElement) {
+    const overflowY = window.getComputedStyle(el).overflowY;
+    if (overflowY === 'auto' || overflowY === 'scroll') return el;
+  }
+  return node;
+}
+
 /** Best-effort reads: a failure is already visible through the query's error state. */
 function swallow(): undefined {
   return undefined;
@@ -1381,11 +1394,15 @@ export function CopilotDock({ pathname, navigate }: CopilotDockProps) {
   const stickToBottomRef = useRef(true);
   const attachStream = useCallback((node: HTMLDivElement | null) => {
     if (!node) return;
+    // The stream itself does not scroll; CopilotDrawer's body does. Resolve that
+    // container once per attach and do all scrolling/stick math on it.
+    const scroller = nearestScrollContainer(node);
     const scrollToEnd = () => {
-      node.scrollTop = node.scrollHeight;
+      scroller.scrollTop = scroller.scrollHeight;
     };
     const onScroll = () => {
-      stickToBottomRef.current = node.scrollHeight - node.scrollTop - node.clientHeight <= 48;
+      stickToBottomRef.current =
+        scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 48;
     };
     const resize = new ResizeObserver((entries) => {
       // Follow growth of the last message row or anything after it (the error,
@@ -1417,11 +1434,11 @@ export function CopilotDock({ pathname, navigate }: CopilotDockProps) {
       if (stickToBottomRef.current) scrollToEnd();
     });
     rows.observe(node, { childList: true });
-    node.addEventListener('scroll', onScroll, { passive: true });
+    scroller.addEventListener('scroll', onScroll, { passive: true });
     stickToBottomRef.current = true;
     scrollToEnd();
     return () => {
-      node.removeEventListener('scroll', onScroll);
+      scroller.removeEventListener('scroll', onScroll);
       rows.disconnect();
       resize.disconnect();
     };
