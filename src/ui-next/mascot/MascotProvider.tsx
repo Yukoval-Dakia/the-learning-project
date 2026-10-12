@@ -121,7 +121,13 @@ export function useMascotActivity({ thinking = false, settleKey }: MascotActivit
 }
 
 /** Imperative access for one-off moments. A no-op outside <UiNextRoot>. */
-export function useMascot(): { advance: () => void } {
+export function useMascot(): { advance: () => void; relayout: () => void } {
   const controller = useContext(MascotContext);
-  return useMemo(() => ({ advance: () => controller?.advance() }), [controller]);
+  return useMemo(
+    () => ({
+      advance: () => controller?.advance(),
+      relayout: () => controller?.relayout(),
+    }),
+    [controller],
+  );
 }
