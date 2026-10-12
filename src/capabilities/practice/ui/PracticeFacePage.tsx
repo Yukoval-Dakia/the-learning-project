@@ -300,6 +300,8 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
   } else if (mode.kind === 'paper') {
     body = (
       <PfPaper
+        // key=artifactId：换卷即换一次作答 visit（YUK-1483），草稿/计时/session 不跨卷残留。
+        key={mode.artifactId}
         artifactId={mode.artifactId}
         onExit={(info) => {
           setMode({ kind: 'list' });
