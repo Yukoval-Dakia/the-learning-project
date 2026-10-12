@@ -13,6 +13,7 @@
  */
 import { z } from 'zod';
 
+import { DocxConfirmation } from '@/core/schema/docx-integrity';
 import { CauseCategory, PageSpan, QuestionKind } from '@/kernel/capability-contract-schemas';
 
 // T-OC slice 1 (YUK-145, OC-3): the capture outcome is a SIGNAL, not hardcoded.
@@ -72,6 +73,10 @@ export const ImportBlock = z
 
 export const ImportBody = z.object({
   blocks: z.array(ImportBlock).min(1).max(MAX_BLOCKS),
+  docx_confirmations: z
+    .array(DocxConfirmation)
+    .max(MAX_BLOCKS * 2)
+    .optional(),
 });
 
 export type ImportBodyInput = z.input<typeof ImportBody>;

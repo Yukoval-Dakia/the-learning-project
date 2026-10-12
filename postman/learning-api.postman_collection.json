@@ -1337,6 +1337,70 @@
       ]
     },
     {
+      "name": "ingestion",
+      "item": [
+        {
+          "name": "GET /api/ingestion/:id/blocks",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/ingestion/:id/blocks",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "ingestion", ":id", "blocks"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "读取录入草稿及 DOCX 图文复核证据\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** rows 含 version；docx_integrity 为来源摘要、有序页面、媒体摘要、逐题问题及已提交的人工确认，非 DOCX/历史缺失为 null。锚点不代表视觉归属。"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "ingestion-sessions",
+      "item": [
+        {
+          "name": "POST /api/ingestion-sessions/:id/operations",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/ingestion-sessions/:id/operations",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "ingestion-sessions", ":id", "operations"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "创建录入操作\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** import 使用既有 ImportBody；DOCX text 可从 partial 逐题提交，未选草稿保留且 session 不终结。图文疑点须逐项提供 docx_confirmations（block_id、block_version、issue、source_sha256、content_sha256、page={asset_id,sha256,region}、media=[{asset_id,sha256}]）。content_sha256 是 canonicalHash({source_block_ids,final_prompt_md,image_refs,page_spans,question_kind})；page.region 须匹配最终 page_spans，媒体须覆盖原候选与最终所选图片。issue 仅 image_association 或 prompt_missing；missing_media 必须恢复来源后重提取。来源、版本或摘要不符返回冲突；reviewed 或手工字符串不能清除疑点。此断言为人工复核留痕，不是自动图像识别或发题准入。blocks 须非空并包含 knowledge_ids 等 ImportBody 必填字段；示例空数组须替换。",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"kind\": \"import\",\n  \"input\": {\n    \"blocks\": [],\n    \"docx_confirmations\": []\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
       "name": "issuances",
       "item": [
         {

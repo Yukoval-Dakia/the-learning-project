@@ -1,14 +1,61 @@
-# DOCX 浮动图与纯图片题：下一最小切片方案
+# DOCX 图文完整性：逐题确认与草稿保留
 
-第一天能用 / YUK-1404。源码核对基于 `d4817535827bade8b0aa3142e95949b13581ed7c`。
-本文是方案与取证清单，没有实现产品改动、运行数据库/付费调用或改变判分准入。
-原卷 32 题提取验收见[固定 d481 记录](2026-10-12-yuk1404-docx-boundaries.md)。
+第一天能用 / YUK-1404，同一 Draft PR #1703。原卷提取证据仍只绑定 d481 / Mac 01:57Z；
+文档 head 5b740ef8 的 [CI Gate 38194688279](https://github.com/Yukoval-Dakia/the-learning-project/actions/runs/38194688279) 已通过。
+本轮按 owner 后续授权实现确定性的后端切片，不扩 UI、不改发题准入，不调用 provider。
 
-建议交付一个边界清楚的切片：四个 drawing 有可追溯的页面位置和逐题确认；不能确认的图及纯图片题保留为来源/草稿，
-即使 session 被标 reviewed 也不能把未解决的问题带进正式题，且不能因选中其他题而自动忽略它们。
-先使用 Mac 对现有 PDF 的人工坐标确认，不为这四张图新建 OCR 或自动布局系统。
+## 本轮实现与边界
 
-## partial 当前实际挡住什么
+- 原 DOCX、转换副本、完整 Markdown 摘要及有序页面/媒体 ID 与 SHA 存入现有 source_document.provenance.docx_integrity。
+  逐块保存 image_association、prompt_missing、missing_media；空题干旁取消归属的候选媒体仍保留证据，不用锚点证明归属。
+- GET blocks 返回证据与 block version；现有 import / operations 接收可选 docx_confirmations。
+  每项只解决一个 issue，绑定原件 digest、当前草稿版本、最终题面/题型/来源块/图引用/页框的 canonical hash、
+  实际登记的页面与候选/最终媒体 SHA。确认页框必须写入最终 page_spans；每个候选媒体均须被显式核对。
+  这是有来源的人工声明，不是后端自动识图，也不能通过任意备注字符串或 reviewed 状态清除问题。
+- 在既有 session/题块锁与手动导入事务内校验，确认记录与正式题写入原子提交。
+  修改 final_prompt_md 或沿现有 updatePrompt 编辑仍然可用；只改文字不能清除源问题，旧版本确认失效。
+  合并沿 merged_from_block_ids 保留疑点，缺来源媒体必须恢复/重提取；不以清空图引用绕过。
+- 普通文字题可从 DOCX text partial 状态直接导入；只有被选中的图文题需逐项确认。
+  DOCX text 未选草稿全部保留，session 保持 partial/reviewed，直到最后一批完成才 imported；不再静默 ignored。
+  其他入口仍保留原状态与忽略规则。新手工图卡须带 source_block_ids，不能用无来源的卡片取代未决题。
+- 纯图片题须补齐非占位题面并分别确认题面/图归属；题号和整图引用本身不能生成占位正式题。
+  本轮不生成公开 FigureRef、不新增裁图/OCR、不硬编码学校题号/坐标；缺乏原始元数据的历史图文草稿需重新提取。
+
+人工坐标只作为当前来源页的复核证据，不能当生产通用解析算法。PDF drawing 位置自动提取、
+已收到 Mac 四组脱敏证据（见下）；Q32 归属、纯图片题内容补齐及实际录入资产绑定仍待完成。
+
+## Mac 四图脱敏证据（后续收到）
+
+[逐图结构记录](evidence/2026-10-12-yuk1404-docx-mac-image-mapping.json)来自父任务转交，未读取原卷或像素。
+同一 designed_node.pdf / LibreOffice 7.4.7.2：image2 视觉明确属于 Q13，XML 锚在 Q12；
+image4 为 Q31 下方题干/设问（题号在图外）；image3 候选 Q32 但仍 unresolved，29×30 的 image1 位置/用途未决。
+image3/4 的 XML 与视觉顺序相反，Q32 标签又在两图之后；不能以排序自动归题。
+坐标只保留在验收记录，不写生产代码。PDFKit 题号框是字体选择框，并非精确字形边界。
+原件/媒体 SHA 与实际录入的页面 PNG SHA 尚待补充；PDF SHA 本身不能通过页面资产校验。
+以上不是完整题面确认、正式入库或判分证据。
+
+## 本地最小验证
+
+只扩展并运行既有一条真实 Postgres 导入事务 case；没有新增案例/矩阵。
+同 case 覆盖 partial 普通文字编辑入库、reviewed 不能绕过、空题面拒绝、现有编辑不能清除疑点、
+错误页面 SHA 拒绝、只确认图片仍缺题面时拒绝、旧草稿版本拒绝、逐项确认后成功，失败前后无忽略/部分写入。
+最终 6 个合成草稿中正式题 3、剩余 draft 3、ignored 0；来源 Markdown 与四媒体映射保全。
+正式题均 withheld / unverified_rules / container_only，admitted 为 0。
+Typecheck、lint、build 通过；lint 仅现有仓库 warnings。无需付费即可复现。
+
+[结构化证据](evidence/2026-10-12-yuk1404-docx-integrity.json)与[日志](evidence/2026-10-12-yuk1404-docx-integrity.tar.gz)
+绑定产品文件摘要。合成声明只验证事务契约，绝不等于学校卷图文确认；先前独立审查也不冒称覆盖本轮 delta，未启第三审。
+
+| 验收层 | 本轮本地合成链 | 学校原卷 |
+| --- | --- | --- |
+| 完整提取 | 原 case 6 块均保留 | d481：Q1–32 各一次 |
+| 图片引用 | 四媒体/候选关联保留；确认检查通过 | 四媒体保全，视觉归属待验 |
+| 题型/选项 | 原 case 两套 ABCD；没有重做 #1658 | d481：Q1–30 各 ABCD；正式题型/choices 待验 |
+| 草稿确认 | 逐问题三条有来源确认；失败仍保留草稿 | 未验收 |
+| 正式入库 | 3 题；另 3 draft，0 ignored | 未验收 |
+| 可答题状态 | 0 admitted；未改准入 | 未验收 |
+
+## d481 基线：partial 原先实际挡住什么
 
 以下是静态源码结论，不是新的原卷入库实跑。
 
@@ -77,7 +124,7 @@ Q31/32 需要分别识别两张图的可见位置与其中题号；共锚和反�
 另须注意：`persistImageAsset` 用 `assets/<sha>` + 新 ID，而当前 `figuresForQuestion` 要求页面派生图 ID、
 `figures/<id>.png` 与可核验 SHA；不能把两个写口无条件互换来绕过公开图保护。
 
-## 最小实施顺序（本轮不实施）
+## 最初方案（历史；本轮以以上已实施范围为准）
 
 1. **先存可追溯证据。** 在现有 DOCX producer/session writer 中保存有界 drawing manifest、独立 page manifest、未解决图文问题；
    优先承载于现有 source_document.provenance 的 typed 扩展，且当次就有导入 consumer。图片与纯图片题继续保留，
@@ -87,8 +134,7 @@ Q31/32 需要分别识别两张图的可见位置与其中题号；共锚和反�
    如需生成裁图，复用 Sharp 并补既有 writer 的真实 source_asset/SHA 登记，不放松用途/可见性检查。
 3. **补 DOCX 专属导入检查。** 在 `completeIngestionImport` 现有锁和事务内，检查尚未解决的图归属、纯图片题面缺失、
    确认版本/digest 及真实页面范围；`markReviewed` 不能替代这些证据。不要从警告文案正则推断解决状态。
-   最小实现先拒绝仍含这些未决项的整次导入，保留全部草稿，避免现有 ignored sweep 把未选问题隐去。
-   这是首刀的保守代价；“部分正式导入并长期保留其他 draft”涉及终态语义，另行决定，不顺带重构。
+   最初建议整批拒绝，后续 owner 已明确要求普通文字题可先导入；本轮改为逐题校验、保留未选草稿与 session 非终态。
 4. **纯图片题保持真实状态。** 确认图片归属只能完成材料定位；在题干/选项等还未由本地人工补齐或获准识读之前，
    Q31/32 仍是保留原件的待处理草稿，不能用题号、占位文字或整页截图冒充完整正式题。此处不自动调用付费 rescue。
 

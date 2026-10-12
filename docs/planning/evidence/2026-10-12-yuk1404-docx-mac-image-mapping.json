@@ -1,0 +1,103 @@
+{
+  "source": "Mac parent sanitized report, 2026-10-12; source files not accessible in this environment",
+  "input_docx_sha256": null,
+  "converter_input_sha256": null,
+  "pdf": {
+    "label": "designed_node.pdf",
+    "sha256": "3d0afacc72cf9d155a25d8391da25306cf8ce1a6fa348146e6534ca2ad1ec27d",
+    "renderer": "LibreOffice 7.4.7.2 fixed image",
+    "coordinates": "top-left CropBox, points, page numbers one-based",
+    "width_pt": 595.304,
+    "height_pt": 841.89,
+    "rotation": 0
+  },
+  "drawings": [
+    {
+      "relationship_id": "rId5",
+      "media": "image1",
+      "paragraph_index": 1,
+      "run_index": 1,
+      "kind": "anchor",
+      "crop": false,
+      "pixel_dimensions": [
+        29,
+        30
+      ],
+      "media_sha256": null,
+      "page_number": null,
+      "bbox_pt": null,
+      "target_question": null,
+      "status": "unresolved",
+      "contains_answer": null
+    },
+    {
+      "relationship_id": "rId6",
+      "media": "image2",
+      "paragraph_index": 50,
+      "run_index": 1,
+      "kind": "anchor",
+      "crop": false,
+      "media_sha256": null,
+      "page_number": 2,
+      "bbox_pt": [
+        402.5,
+        426.8,
+        147.7,
+        111.25
+      ],
+      "xml_anchor_question": 12,
+      "target_question": 13,
+      "status": "visual association confirmed by Mac",
+      "whole_question": false,
+      "contains_answer": false
+    },
+    {
+      "relationship_id": "rId7",
+      "media": "image3",
+      "paragraph_index": 137,
+      "run_index": 1,
+      "kind": "anchor",
+      "crop": false,
+      "media_sha256": null,
+      "page_number": 5,
+      "bbox_pt": [
+        43.6,
+        226.3,
+        514.7,
+        113.45
+      ],
+      "candidate_question": 32,
+      "target_question": null,
+      "status": "unresolved",
+      "contains_prompt_and_requests": true,
+      "contains_answer": false
+    },
+    {
+      "relationship_id": "rId8",
+      "media": "image4",
+      "paragraph_index": 137,
+      "run_index": 2,
+      "kind": "anchor",
+      "crop": false,
+      "media_sha256": null,
+      "page_number": 5,
+      "bbox_pt": [
+        40.0,
+        82.7,
+        508.1,
+        123.35
+      ],
+      "target_question": 31,
+      "status": "visually below Q31, label outside image",
+      "contains_prompt_and_requests": true,
+      "contains_answer": false
+    }
+  ],
+  "limits": [
+    "Image boxes come from PDF draw matrices and rectangular clipping",
+    "Question-label boxes are PDFKit font-selection bounds, not exact glyph bounds",
+    "image3/image4 XML order is opposite visual order; Q32 label follows both images",
+    "Not production parsing coordinates, complete-question confirmation, or scoring evidence",
+    "PDF SHA is not a page PNG SHA; bind confirmation to assets from the actual ingestion render"
+  ]
+}

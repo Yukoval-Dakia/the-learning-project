@@ -38,6 +38,7 @@ import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { Ingestion } from '@/server/session';
 import type { SubjectProfile } from '@/subjects/profile';
+import { confirmDocxImport } from './docx/import-integrity';
 import {
   isTerminalIngestionOperation,
   readIngestionOperation,
@@ -53,7 +54,7 @@ export async function completeIngestionImport(
   body: import('../api/import-schema').ImportBodyParsed,
 ): Promise<{ question_ids: string[]; mistake_ids: string[]; record_ids: string[] }> {
   return db.transaction(async (tx) => {
-    await Ingestion.assertSessionAvailableForImport(tx, sessionId);
+    await Ingestion.assertSessionAvailableForImport(tx, sessionId, { allowPartialDocx: true });
     // Read source context under the same session lock as the authoritative status guard.
     const sessionRows = await tx
       .select()
@@ -159,6 +160,19 @@ export async function completeIngestionImport(
             400,
           );
         }
+      }
+    }
+
+    let isDocxTextImport = false;
+    if (sessionEntrypoint === 'docx') {
+      const checked = await confirmDocxImport(tx, sessionId, sessionSourceDocumentId, body);
+      isDocxTextImport = checked;
+      if (session.status === 'partial' && !checked) {
+        throw new ApiError(
+          'conflict',
+          'Partial DOCX import requires text-source integrity evidence',
+          409,
+        );
       }
     }
 
@@ -501,7 +515,10 @@ export async function completeIngestionImport(
       });
     }
 
-    // Sweep: mark any draft blocks user dropped as 'ignored'
+    // DOCX extraction can still have unresolved/unselected questions. Keep those
+    // drafts and their media available for the next manual import transaction.
+    let retainedDocxDrafts = false;
+    // Other entrypoints retain the existing explicit-drop sweep.
     const sessionDrafts = await tx
       .select({ id: question_block.id })
       .from(question_block)
@@ -510,7 +527,8 @@ export async function completeIngestionImport(
       );
     for (const r of sessionDrafts) {
       if (!directlyImportedIds.has(r.id) && !toIgnore.has(r.id)) {
-        toIgnore.add(r.id);
+        if (isDocxTextImport) retainedDocxDrafts = true;
+        else toIgnore.add(r.id);
       }
     }
 
@@ -543,7 +561,8 @@ export async function completeIngestionImport(
     // Terminal transition extracted | reviewed → imported. Re-asserts state
     // under the same lock (no-op vs assertSessionAvailableForImport above
     // unless something inside the txn mutated it, which is impossible).
-    await Ingestion.commitImport(tx, sessionId);
+    if (!retainedDocxDrafts)
+      await Ingestion.commitImport(tx, sessionId, { allowPartialDocx: true });
 
     // Failure-learning follow-up is derived from the committed attempt events
     // by the practice-owned durable subscription. The ingestion route no longer

@@ -48,13 +48,19 @@ import { writeSessionEvent } from './events';
 async function loadSessionForUpdate(
   tx: Db | Tx,
   sessionId: string,
-): Promise<{ status: string; warnings: string[]; source_document_id: string | null } | null> {
+): Promise<{
+  status: string;
+  warnings: string[];
+  source_document_id: string | null;
+  entrypoint: string | null;
+} | null> {
   const rows = await tx.execute<{
     status: string;
     warnings: string[] | null;
     source_document_id: string | null;
+    entrypoint: string | null;
   }>(
-    sql`SELECT status, warnings, source_document_id FROM learning_session WHERE id = ${sessionId} AND type = 'ingestion' FOR UPDATE`,
+    sql`SELECT status, warnings, source_document_id, entrypoint FROM learning_session WHERE id = ${sessionId} AND type = 'ingestion' FOR UPDATE`,
   );
   // postgres-js returns array of objects
   const row = rows[0];
@@ -63,6 +69,7 @@ async function loadSessionForUpdate(
     status: row.status,
     warnings: row.warnings ?? [],
     source_document_id: row.source_document_id,
+    entrypoint: row.entrypoint,
   };
 }
 
@@ -567,6 +574,7 @@ export async function markReviewed(db: Db, sessionId: string): Promise<void> {
 export async function assertSessionAvailableForImport(
   tx: Tx,
   sessionId: string,
+  options: { allowPartialDocx?: boolean } = {},
 ): Promise<{ source_document_id: string | null }> {
   // Auto-enrollment claims G then its block, without a session lock. Import must
   // follow G -> session -> sorted blocks, including the later draft-ignore sweep.
@@ -577,7 +585,9 @@ export async function assertSessionAvailableForImport(
   }
   assertFromState(
     current.status,
-    IMPORTABLE_SESSION_STATUSES,
+    options.allowPartialDocx && current.entrypoint === 'docx'
+      ? [...IMPORTABLE_SESSION_STATUSES, 'partial']
+      : IMPORTABLE_SESSION_STATUSES,
     sessionId,
     'Ingestion.assertSessionAvailableForImport',
   );
@@ -607,12 +617,23 @@ export async function assertSessionAvailableForImport(
  * (or accept that a fresh load + lock here is the only guard — the route uses
  * the first pattern so writes ride the same lock).
  */
-export async function commitImport(tx: Db | Tx, sessionId: string): Promise<void> {
+export async function commitImport(
+  tx: Db | Tx,
+  sessionId: string,
+  options: { allowPartialDocx?: boolean } = {},
+): Promise<void> {
   const current = await loadSessionForUpdate(tx, sessionId);
   if (!current) {
     throw new ApiError('not_found', `learning_session ${sessionId} not found`, 404);
   }
-  assertFromState(current.status, IMPORTABLE_SESSION_STATUSES, sessionId, 'Ingestion.commitImport');
+  assertFromState(
+    current.status,
+    options.allowPartialDocx && current.entrypoint === 'docx'
+      ? [...IMPORTABLE_SESSION_STATUSES, 'partial']
+      : IMPORTABLE_SESSION_STATUSES,
+    sessionId,
+    'Ingestion.commitImport',
+  );
 
   const now = new Date();
   await tx

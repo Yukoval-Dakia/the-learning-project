@@ -1,16 +1,18 @@
+import { createHash } from 'node:crypto';
 import { createId } from '@paralleldrive/cuid2';
-import { eq } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 
 import {
   AUTO_ENROLL_SINGLETON_SECONDS,
   autoEnrollJobEnabled,
 } from '@/capabilities/ingestion/public';
+import type { DocxIntegrityT } from '@/core/schema/docx-integrity';
 import {
   type StructuredQuestionT,
   structuredToPromptMarkdown,
 } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
-import { learning_session, question_block, source_document } from '@/db/schema';
+import { learning_session, question_block, source_asset, source_document } from '@/db/schema';
 import { COPILOT_NUDGE_EVALUATE_QUEUE } from '@/server/boss/queue-names';
 import { writeJobEvent } from '@/server/events/writer';
 import { writeQuestionBlockCreateEvent } from '@/server/projections/question_block-create-event';
@@ -32,7 +34,7 @@ import { writeSessionEvent } from './events';
 // stay byte-consistent with the visual line. The single divergence is the state
 // machine: no extracting hop.
 //
-// Detected gaps/ambiguous images use the existing partial → reviewed guard.
+// Detected gaps/ambiguous images remain partial; import also checks per-block evidence.
 // External-link omission alone remains a notice and does not degrade the layout.
 
 const SESSION_TABLE = 'ingestion_session' as const;
@@ -41,12 +43,16 @@ export interface DocxTextBlockInput {
   structured: StructuredQuestionT;
   /** Embedded-image asset ids attached to this block (in-position归题). */
   imageRefs: string[];
+  candidateImageRefs?: string[];
+  missingMediaPaths?: string[];
 }
 
 export interface InitiateDocxTextUploadParams {
   /** Evidence page-image asset ids (LibreOffice→PDF→PDFium). Pin on the session +
    *  source_document + every block so the review UI can render整页. */
   evidenceAssetIds: string[];
+  inputSha256?: string;
+  converterInputSha256?: string;
   blocks: DocxTextBlockInput[];
   /** Preserve the converter output and unassigned media for review/recovery. */
   markdown: string;
@@ -94,7 +100,31 @@ export async function initiateDocxTextUpload(
     const sessionId = createId();
     const omission = params.externalRefOmission;
     const warnings = [...params.warnings, ...(omission ? [EXTERNAL_REF_OMISSION_NOTICE] : [])];
-    const layoutQuality = params.warnings.length > 0 ? 'partial' : 'structured';
+    const blockIds = params.blocks.map(() => createId());
+    const integrityBlocks: DocxIntegrityT['blocks'] = params.blocks.map((block, index) => {
+      const candidates = block.candidateImageRefs ?? block.imageRefs;
+      const missing = block.missingMediaPaths ?? [];
+      const issues: DocxIntegrityT['blocks'][number]['issues'] = [];
+      if (
+        candidates.length ||
+        (Object.keys(params.mediaAssets).length &&
+          /如图|下图|图中|图示|看图|读图|见图/.test(block.structured.prompt_text))
+      ) {
+        issues.push('image_association');
+      }
+      if (!block.structured.prompt_text.trim()) issues.push('prompt_missing');
+      if (missing.length) issues.push('missing_media');
+      return {
+        block_id: blockIds[index],
+        candidate_media_ids: candidates,
+        missing_media_paths: missing,
+        issues,
+      };
+    });
+    const layoutQuality =
+      params.warnings.length > 0 || integrityBlocks.some((b) => b.issues.length)
+        ? 'partial'
+        : 'structured';
     const status = layoutQuality === 'partial' ? 'partial' : 'extracted';
     const outcome = layoutQuality === 'partial' ? 'partial' : 'success';
 
@@ -110,6 +140,27 @@ export async function initiateDocxTextUpload(
       new Set([...params.evidenceAssetIds, ...Object.values(params.mediaAssets), ...embeddedRefs]),
     );
 
+    const assets = sessionAssetIds.length
+      ? await tx
+          .select({
+            asset_id: source_asset.id,
+            sha256: source_asset.sha256,
+          })
+          .from(source_asset)
+          .where(inArray(source_asset.id, sessionAssetIds))
+      : [];
+    const integrity: DocxIntegrityT = {
+      schema_version: 1,
+      input_sha256: params.inputSha256 ?? omission?.inputSha256 ?? null,
+      converter_input_sha256: params.converterInputSha256 ?? omission?.converterInputSha256 ?? null,
+      markdown_sha256: createHash('sha256').update(params.markdown).digest('hex'),
+      page_asset_ids: params.evidenceAssetIds,
+      media_asset_ids: Object.values(params.mediaAssets),
+      assets,
+      blocks: integrityBlocks,
+      confirmations: [],
+    };
+
     // 1. source_document — evidence page images + embedded refs as source_asset_ids.
     //    YUK-1476 — provenance carries the honest omission audit: both digests +
     //    the omitted facts (part/rId/type — never the external Target URL).
@@ -122,6 +173,7 @@ export async function initiateDocxTextUpload(
         entrypoint: 'docx',
         line: 'text',
         docx_media: params.mediaAssets,
+        docx_integrity: integrity,
         ...(omission
           ? {
               docx_external_ref_omission: {
@@ -171,7 +223,7 @@ export async function initiateDocxTextUpload(
     //    importMutation ensuredSpans先例.
     const insertedBlockIds: string[] = [];
     for (const [ordinal, blk] of params.blocks.entries()) {
-      const blockId = createId();
+      const blockId = blockIds[ordinal];
       insertedBlockIds.push(blockId);
       // Per-block source_asset_ids = evidence page images + THIS block's embedded
       // refs (deduped). The import route copies image_refs straight through, and

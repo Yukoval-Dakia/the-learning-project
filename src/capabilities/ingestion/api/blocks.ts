@@ -37,9 +37,10 @@
 
 import { and, asc, eq, inArray } from 'drizzle-orm';
 
+import { DocxIntegrity } from '@/core/schema/docx-integrity';
 import { MistakeEnrollOutcome } from '@/core/schema/mistake_enroll';
 import { db } from '@/db/client';
-import { event, question_block } from '@/db/schema';
+import { event, learning_session, question_block, source_document } from '@/db/schema';
 import { errorResponse } from '@/kernel/http';
 import { learnerVisibleKnowledgeIds } from '@/kernel/read-models/learner-knowledge-visibility';
 
@@ -49,6 +50,7 @@ export async function GET(_req: Request, params: Record<string, string>): Promis
     const rows = await db
       .select({
         id: question_block.id,
+        version: question_block.version,
         ingestion_session_id: question_block.ingestion_session_id,
         source_asset_ids: question_block.source_asset_ids,
         page_spans: question_block.page_spans,
@@ -96,7 +98,14 @@ export async function GET(_req: Request, params: Record<string, string>): Promis
     const observationByBlockId = new Map<string, (typeof observations)[number]>();
     for (const obs of observations) observationByBlockId.set(obs.subject_id, obs);
 
+    const [source] = await db
+      .select({ provenance: source_document.provenance })
+      .from(learning_session)
+      .innerJoin(source_document, eq(learning_session.source_document_id, source_document.id))
+      .where(eq(learning_session.id, sessionId));
+    const integrity = DocxIntegrity.safeParse(source?.provenance.docx_integrity);
     return Response.json({
+      docx_integrity: integrity.success ? integrity.data : null,
       rows: rows.map((r) => {
         const observation = observationByBlockId.get(r.id);
         return {

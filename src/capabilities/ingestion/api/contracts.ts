@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { PublicMaterialView } from '@/core/schema/assessment';
+import { DocxIntegrity } from '@/core/schema/docx-integrity';
 
 import {
   CauseCategory,
@@ -224,6 +225,7 @@ const AutoEnrollObservationSchema = z.object({
 export const IngestionBlockSchema = z
   .object({
     id: z.string(),
+    version: z.number().int().nonnegative().optional(),
     ingestion_session_id: z.string(),
     source_asset_ids: z.array(z.string()),
     page_spans: z.array(PageSpan),
@@ -244,7 +246,10 @@ export const IngestionBlockSchema = z
   })
   .passthrough();
 
-export const IngestionBlocksResponseSchema = z.object({ rows: z.array(IngestionBlockSchema) });
+export const IngestionBlocksResponseSchema = z.object({
+  rows: z.array(IngestionBlockSchema),
+  docx_integrity: DocxIntegrity.nullable().optional(),
+});
 
 export const IngestionEventsHeadersSchema = z.object({
   'Last-Event-ID': z.string().optional(),

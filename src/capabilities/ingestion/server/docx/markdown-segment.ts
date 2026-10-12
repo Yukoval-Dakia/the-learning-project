@@ -20,6 +20,8 @@ export interface SegmentedBlock {
   structured: StructuredQuestionT;
   /** Relative media paths (e.g. "media/image1.png") attached to this block, in order. */
   imagePaths: string[];
+  /** Keep uncertain anchors as evidence even when no ownership is assigned. */
+  candidateImagePaths?: string[];
 }
 
 export interface SegmentInput {
@@ -291,6 +293,7 @@ export function segmentMarkdown(input: SegmentInput): {
   }
   if (cur) drafts.push(cur);
 
+  const candidatePaths = new Map(drafts.map((d) => [d, [...new Set(d.imagePaths)]]));
   let previous = 0;
   for (const draft of drafts) {
     const number = Number(draft.questionNo);
@@ -318,6 +321,7 @@ export function segmentMarkdown(input: SegmentInput): {
     blocks: drafts.map((d) => ({
       structured: finalize(d),
       imagePaths: [...new Set(d.imagePaths)],
+      candidateImagePaths: candidatePaths.get(d),
     })),
     warnings,
   };

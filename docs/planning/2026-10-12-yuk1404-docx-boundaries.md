@@ -19,8 +19,8 @@
 d481 的 [CI Gate 38193497862](https://github.com/Yukoval-Dakia/the-learning-project/actions/runs/38193497862)
 已核实 18/18 jobs 成功，与 Mac 原卷验收是两条不同证据。
 
-下一切片仅为 [浮动图与纯图片题的证据、复核和导入保护方案](2026-10-12-yuk1404-docx-image-evidence.md)，
-尚未实现，不改变准入核心。
+后续已实现 [图文来源证据、逐题复核及未选草稿保留](2026-10-12-yuk1404-docx-image-evidence.md)，
+通过原有一条合成 DB 回归；不改变准入核心，不冒称新 head 已跑原卷。以下早期合成入库数字为对应历史版本记录。
 
 ## 根因与证据边界
 

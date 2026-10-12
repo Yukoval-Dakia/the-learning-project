@@ -43,6 +43,8 @@ vi.mock('@/server/ai/runner', () => ({
   })),
 }));
 
+import { sha256Hex } from '@/core/migration/canonical';
+import { DocxIntegrity } from '@/core/schema/docx-integrity';
 import { Ingestion } from '@/server/session';
 import { initiateDocxTextUpload } from '@/server/session/docx-ingestion';
 // YUK-503 (YUK-471 W3-D test hardening) — fold==row parity helpers for the set_status writers.
@@ -55,6 +57,8 @@ import {
   buildIngestionOperationHandler,
 } from '../jobs/ingestion_operation';
 import { runAutoEnrollForSession } from '../server/auto-enroll';
+import { updatePrompt } from '../server/block-structured-edit';
+import { docxImportContentHash } from '../server/docx/import-integrity';
 import { segmentMarkdown } from '../server/docx/markdown-segment';
 import * as enrollment from '../server/enroll';
 import { completeIngestionImport } from '../server/import-completion';
@@ -216,18 +220,32 @@ describe('POST /api/ingestion/[id]/import', () => {
       '20.合成后题',
     ].join('\n');
     const mediaAssetIds = ['a', 'b', 'c', 'd'];
+    for (const id of ['page', ...mediaAssetIds]) {
+      await db.insert(source_asset).values({
+        id,
+        kind: 'image',
+        storage_key: `synthetic/${id}`,
+        mime_type: 'image/png',
+        byte_size: 8,
+        sha256: sha256Hex(id),
+        created_at: new Date(),
+      });
+    }
     const { blocks, warnings } = segmentMarkdown({
       markdown,
       media: mediaAssetIds.map((id) => ({ path: `media/${id}.png` })),
     });
     const result = await initiateDocxTextUpload(db, {
       evidenceAssetIds: ['page'],
+      inputSha256: sha256Hex('synthetic DOCX'),
+      converterInputSha256: sha256Hex('synthetic DOCX'),
       mediaAssets: Object.fromEntries(mediaAssetIds.map((id) => [`media/${id}.png`, id])),
       markdown,
       warnings,
       blocks: blocks.map((b) => ({
         structured: b.structured,
         imageRefs: b.imagePaths.map((path) => path.slice(6, -4)),
+        candidateImageRefs: b.candidateImagePaths?.map((path) => path.slice(6, -4)),
       })),
     });
     const [source] = await db
@@ -284,6 +302,118 @@ describe('POST /api/ingestion/[id]/import', () => {
     await expect(
       db.transaction((tx) => Ingestion.assertSessionAvailableForImport(tx, session.id)),
     ).rejects.toThrow();
+
+    await insertKnowledge(db, 'k1');
+    const requestFor = (index: number, prompt = drafts[index].extracted_prompt_md ?? '') =>
+      ImportBody.parse(
+        makeImportBody({
+          block_id: drafts[index].id,
+          source_block_ids: [drafts[index].id],
+          image_refs: drafts[index].image_refs,
+          page_spans: drafts[index].page_spans,
+          final_prompt_md: prompt,
+          outcome: 'unanswered',
+          final_wrong_answer_md: '',
+        }),
+      );
+    // The live import owner accepts ordinary manual text edits from partial DOCX.
+    const ordinary = await completeIngestionImport(
+      db,
+      session.id,
+      requestFor(0, '人工修订的普通文字题'),
+    );
+    expect(ordinary.question_ids).toHaveLength(1);
+    const [stillPartial] = await db
+      .select()
+      .from(learning_session)
+      .where(eq(learning_session.id, session.id));
+    expect(stillPartial.status).toBe('partial');
+    await Ingestion.markReviewed(db, session.id);
+    await expect(completeIngestionImport(db, session.id, requestFor(1))).rejects.toThrow(
+      'image_association',
+    );
+    await expect(completeIngestionImport(db, session.id, requestFor(2))).rejects.toThrow(
+      'question text',
+    );
+    // Use the existing editing transaction; a nonempty manual string clears no issue.
+    await updatePrompt(db, {
+      blockId: drafts[2].id,
+      nodeId: blocks[2].structured.id,
+      promptText: '人工补录的完整题干',
+      actorKind: 'user',
+      actorRef: 'docx_fixture_review',
+    });
+    const repaired = requestFor(2, '人工补录的完整题干');
+    repaired.blocks[0].image_refs = ['c'];
+    await expect(completeIngestionImport(db, session.id, repaired)).rejects.toThrow(
+      'image_association',
+    );
+    const integrity = DocxIntegrity.parse(source.provenance.docx_integrity);
+    const confirm = (
+      request: ReturnType<typeof requestFor>,
+      index: number,
+      issue: 'image_association' | 'prompt_missing',
+      version = 0,
+    ) => ({
+      block_id: drafts[index].id,
+      block_version: version,
+      issue,
+      source_sha256: sha256Hex('synthetic DOCX'),
+      content_sha256: docxImportContentHash(request.blocks[0]),
+      page: {
+        asset_id: 'page',
+        sha256: sha256Hex('page'),
+        region: request.blocks[0].page_spans[0].bbox,
+      },
+      media: integrity.blocks[index].candidate_media_ids.map((id) => ({
+        asset_id: id,
+        sha256: sha256Hex(id),
+      })),
+    });
+    const imageRequest = requestFor(1);
+    imageRequest.docx_confirmations = [confirm(imageRequest, 1, 'image_association')];
+    imageRequest.docx_confirmations[0].page.sha256 = sha256Hex('different page');
+    await expect(completeIngestionImport(db, session.id, imageRequest)).rejects.toThrow(
+      'unverified question region',
+    );
+    imageRequest.docx_confirmations = [confirm(imageRequest, 1, 'image_association')];
+    await completeIngestionImport(db, session.id, imageRequest);
+    repaired.docx_confirmations = [confirm(repaired, 2, 'image_association', 1)];
+    await expect(completeIngestionImport(db, session.id, repaired)).rejects.toThrow(
+      'prompt_missing',
+    );
+    repaired.docx_confirmations.push(confirm(repaired, 2, 'prompt_missing', 0));
+    await expect(completeIngestionImport(db, session.id, repaired)).rejects.toThrow(
+      'stale source or block',
+    );
+    const before = await db
+      .select()
+      .from(question_block)
+      .where(eq(question_block.ingestion_session_id, session.id));
+    expect(before.find((b) => b.id === drafts[2].id)?.status).toBe('draft');
+    expect(before.filter((b) => b.status === 'ignored')).toHaveLength(0);
+    expect(await db.select().from(question)).toHaveLength(2);
+    repaired.docx_confirmations[1].block_version = 1;
+    await completeIngestionImport(db, session.id, repaired);
+    const after = await db
+      .select()
+      .from(question_block)
+      .where(eq(question_block.ingestion_session_id, session.id));
+    expect(after.filter((b) => b.status === 'imported')).toHaveLength(3);
+    expect(after.filter((b) => b.status === 'draft')).toHaveLength(3);
+    expect(after.filter((b) => b.status === 'ignored')).toHaveLength(0);
+    const [saved] = await db
+      .select()
+      .from(source_document)
+      .where(eq(source_document.id, source.id));
+    expect(saved.body_md).toBe(markdown);
+    expect(saved.source_asset_ids).toEqual(['page', ...mediaAssetIds]);
+    expect(DocxIntegrity.parse(saved.provenance.docx_integrity).confirmations).toHaveLength(3);
+    const [open] = await db
+      .select()
+      .from(learning_session)
+      .where(eq(learning_session.id, session.id));
+    expect(open.status).toBe('reviewed');
   });
 
   it('durable import calls the owner once across concurrent delivery and replay', async () => {

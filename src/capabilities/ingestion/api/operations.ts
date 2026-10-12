@@ -59,7 +59,7 @@ async function validateSessionState(
   request: IngestionOperationRequestParsed,
 ): Promise<void> {
   const rows = await db
-    .select({ status: learning_session.status })
+    .select({ status: learning_session.status, entrypoint: learning_session.entrypoint })
     .from(learning_session)
     .where(and(eq(learning_session.id, sessionId), eq(learning_session.type, 'ingestion')))
     .limit(1);
@@ -70,7 +70,10 @@ async function validateSessionState(
 
   const allowedStatuses: Record<IngestionOperationRequestParsed['kind'], string[]> = {
     extract: ['uploaded', 'failed'],
-    import: [...Ingestion.IMPORTABLE_SESSION_STATUSES],
+    import: [
+      ...Ingestion.IMPORTABLE_SESSION_STATUSES,
+      ...(session.entrypoint === 'docx' ? ['partial'] : []),
+    ],
     make_paper: ['imported'],
     rescue: ['partial', 'extracted'],
   };
@@ -112,7 +115,7 @@ async function ensureOperationDispatched(
     let jobId: string | null = null;
     if (request.kind === 'extract') {
       const rows = await db
-        .select({ status: learning_session.status })
+        .select({ status: learning_session.status, entrypoint: learning_session.entrypoint })
         .from(learning_session)
         .where(and(eq(learning_session.id, sessionId), eq(learning_session.type, 'ingestion')))
         .limit(1);

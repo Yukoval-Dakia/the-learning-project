@@ -152,7 +152,16 @@ export async function POST(req: Request): Promise<Response> {
         if (assetId) imageRefs.push(assetId);
         else warnings.push(`第 ${s.structured.question_no} 题有图片未能保存，请对照原卷确认。`);
       }
-      return { structured: s.structured, imageRefs };
+      const candidatePaths = s.candidateImagePaths ?? s.imagePaths;
+      return {
+        structured: s.structured,
+        imageRefs,
+        candidateImageRefs: candidatePaths.flatMap((path) => {
+          const id = pathToAssetId.get(path);
+          return id ? [id] : [];
+        }),
+        missingMediaPaths: candidatePaths.filter((path) => !pathToAssetId.has(path)),
+      };
     });
     const referencedPaths = new Set(segmented.flatMap((s) => s.imagePaths));
     const unassignedCount = [...pathToAssetId.keys()].filter((p) => !referencedPaths.has(p)).length;
@@ -162,6 +171,8 @@ export async function POST(req: Request): Promise<Response> {
 
     const { sessionId } = await initiateDocxTextUpload(db, {
       evidenceAssetIds: evidence.assetIds,
+      inputSha256: prep.inputSha256,
+      converterInputSha256: prep.converterInputSha256,
       mediaAssets: Object.fromEntries(pathToAssetId),
       markdown,
       warnings,

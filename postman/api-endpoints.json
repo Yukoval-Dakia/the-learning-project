@@ -1710,5 +1710,33 @@
         "notes": "run_id 保持原始提交身份。永久 native 完成或人工处置优先于引擎与可清理通知；unknown 引擎证据不返回 404。已验证不存在返回 404，状态读取不可用返回 503。此读取不会写入、排队或判分。"
       }
     ]
+  },
+  {
+    "path": "/api/ingestion/:id/blocks",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "读取录入草稿及 DOCX 图文复核证据",
+        "notes": "rows 含 version；docx_integrity 为来源摘要、有序页面、媒体摘要、逐题问题及已提交的人工确认，非 DOCX/历史缺失为 null。锚点不代表视觉归属。"
+      }
+    ]
+  },
+  {
+    "path": "/api/ingestion-sessions/:id/operations",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "创建录入操作",
+        "contentType": "application/json",
+        "bodyExample": {
+          "kind": "import",
+          "input": {
+            "blocks": [],
+            "docx_confirmations": []
+          }
+        },
+        "notes": "import 使用既有 ImportBody；DOCX text 可从 partial 逐题提交，未选草稿保留且 session 不终结。图文疑点须逐项提供 docx_confirmations（block_id、block_version、issue、source_sha256、content_sha256、page={asset_id,sha256,region}、media=[{asset_id,sha256}]）。content_sha256 是 canonicalHash({source_block_ids,final_prompt_md,image_refs,page_spans,question_kind})；page.region 须匹配最终 page_spans，媒体须覆盖原候选与最终所选图片。issue 仅 image_association 或 prompt_missing；missing_media 必须恢复来源后重提取。来源、版本或摘要不符返回冲突；reviewed 或手工字符串不能清除疑点。此断言为人工复核留痕，不是自动图像识别或发题准入。blocks 须非空并包含 knowledge_ids 等 ImportBody 必填字段；示例空数组须替换。"
+      }
+    ]
   }
 ]

@@ -1,0 +1,52 @@
+{
+  "scope": "synthetic DOCX integrity transaction; not real-school acceptance",
+  "base_revision": "5b740ef8435dd547204f96fd3d81a5159117eb22",
+  "run_utc": "2026-10-12T02:29:48Z",
+  "source_files_sha256": {
+    "src/core/schema/docx-integrity.ts": "aa765e105de5ec16b5f65be4bf35f7b38f6727f863cb6231784473ab844dc0d0",
+    "src/server/session/docx-ingestion.ts": "8621028cadd8203e9d28f6bb4dd23f1b57f1105bc197be12529df57fead432c2",
+    "src/server/session/ingestion.ts": "eb6420dbc47685d180c11f8e00ba0df8a6d2c7ad2e816c579e13b830b48add81",
+    "src/capabilities/ingestion/server/docx/import-integrity.ts": "17eaa1ae3e9d1d4683ca0ec5ed6fc3f47cd8a1331b975caa3219773326ad1017",
+    "src/capabilities/ingestion/server/import-completion.ts": "03e5cb84d8901762c7b02db0045736b89e8809f369a81cd12dc08b597dcbeb36",
+    "src/capabilities/ingestion/api/operations.ts": "dc88a7224bf278413ff58d285db3946239add9c72e4aa34aac770f9c1fa4e960",
+    "src/capabilities/ingestion/api/import.db.test.ts": "cc987dd17d5819b8f357ee80578a71cfdee3591e5b78ef58b82b6ad7ddf42fbb"
+  },
+  "validation": {
+    "case": "retains incomplete DOCX source and media behind explicit review",
+    "passed": 1,
+    "skipped": 3,
+    "typecheck": "pass",
+    "lint": "pass (existing repository warnings)",
+    "build": "pass"
+  },
+  "counts": {
+    "extracted_blocks": 6,
+    "imported_questions": 3,
+    "remaining_drafts": 3,
+    "ignored": 0,
+    "confirmed_issues": 3,
+    "admitted": 0
+  },
+  "admission": {
+    "state": "withheld",
+    "reason": "unverified_rules",
+    "availability": "container_only"
+  },
+  "limits": [
+    "Synthetic source/asset digests and manual assertions, not real image ownership validation",
+    "No provider calls, real R2, deployment, merge, or Linear write",
+    "Prior independent reviews do not cover this new delta; no third review"
+  ],
+  "real_school_evidence": {
+    "revision": "d4817535827bade8b0aa3142e95949b13581ed7c",
+    "reported_by": "Mac parent",
+    "time_utc": "2026-10-12T01:57:00Z",
+    "question_numbers_once_each": 32,
+    "ABCD_sets": 30,
+    "media_preserved": 4,
+    "image_ownership": "pending",
+    "draft_confirmation": "pending",
+    "formal_import": "pending",
+    "answerability": "pending"
+  }
+}
