@@ -33,10 +33,11 @@ export interface SegmentInput {
 // the number onto its own line and put the prompt on the NEXT line (observed on real
 // 学科网 papers — Q8/Q13/Q23 otherwise merged into their predecessor); the prompt then
 // flows in from the following line(s). `\d{1,3}` keeps 4-digit years (a stray `1991.`)
-// from being mistaken for a question number. A compact year-led prompt such as
-// `4.2024年...` is also a boundary. Require the explicit year suffix: simply
-// allowing all digits here would split body quantities such as `2.5米` into Q2.
-const QUESTION_LEADING = /^\s*(\d{1,3})\\?[.．、](?=\D|$|\d{4}年)\s*(.*)$/;
+// from being mistaken for a question number. This only identifies candidates:
+// numeric-led text can also be a decimal or section counter, so its boundary
+// requires numbering/block context below rather than a fixed year/unit suffix.
+const QUESTION_LEADING = /^\s*(\d{1,3})\\?[.．、]\s*(.*)$/;
+const COMPACT_NUMERIC_LEADING = /^\s*\d{1,3}\\?[.．、]\d/;
 // 选项行: A. / B\. etc.
 const OPTION_LINE = /^\s*([A-D])\\?[.．、]\s*(.*)$/;
 // 嵌图: markdown form ![alt](media/...) AND pandoc's <img src="media/..."> HTML
@@ -74,12 +75,44 @@ function isBareQuestionBoundary(
   const lookaheadEnd = Math.min(lines.length, lineIndex + BARE_DUPLICATE_LOOKAHEAD_LINES + 1);
   for (let index = lineIndex + 1; index < lookaheadEnd; index += 1) {
     const next = QUESTION_LEADING.exec(lines[index]);
-    if (!next) continue;
+    if (!next || COMPACT_NUMERIC_LEADING.test(lines[index])) continue;
     const nextQuestionNo = Number(next[1]);
     if (nextQuestionNo === candidate) return false;
   }
 
   return true;
+}
+
+function hasNumericQuestionContext(
+  lines: readonly string[],
+  lineIndex: number,
+  currentQuestionNo: string | null,
+  candidateQuestionNo: string,
+): boolean {
+  const current = Number(currentQuestionNo ?? 0);
+  const candidate = Number(candidateQuestionNo);
+  if (candidate !== current + 1) return false;
+
+  const optionLabels = new Set<string>();
+  let nextNumber: number | null = null;
+  for (let index = lineIndex + 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    const next = QUESTION_LEADING.exec(line);
+    if (next && Number(next[1]) > current) {
+      nextNumber = Number(next[1]);
+      break;
+    }
+    for (const part of line.trim().split(/\s+(?=[A-D]\\?[.．、])/)) {
+      const option = OPTION_LINE.exec(part);
+      if (option) optionLabels.add(option[1]);
+    }
+  }
+  // `2.5米` before the real Q2 is body text. A later same-number marker
+  // outweighs this candidate; descending section counters never supply support.
+  if (nextNumber === candidate) return false;
+  // Either the following question completes the sequence (18, 19, 20), or
+  // this candidate owns an option block. Both are provisional, not proof.
+  return nextNumber === candidate + 1 || (optionLabels.has('A') && optionLabels.has('B'));
 }
 
 // ---------- math delimiter normalization (§3.3) ----------
@@ -202,6 +235,24 @@ export function segmentMarkdown(input: SegmentInput): {
         continue;
       }
       const firstLine = q[2];
+      if (COMPACT_NUMERIC_LEADING.test(line)) {
+        const supported = hasNumericQuestionContext(
+          lines,
+          lineIndex,
+          cur?.questionNo ?? null,
+          q[1],
+        );
+        warnings.push(
+          `第 ${q[1]} 题候选以数字开头，${supported ? '按相邻题号或选项暂时切分' : '边界证据不足，原行保留在正文或来源中'}，请对照原卷确认。`,
+        );
+        if (!supported) {
+          if (cur) {
+            cur.promptLines.push(line);
+            cur.imagePaths.push(...imagePaths);
+          }
+          continue;
+        }
+      }
       if (!firstLine && !isBareQuestionBoundary(lines, lineIndex, cur?.questionNo ?? null, q[1])) {
         if (cur) {
           cur.promptLines.push(line);

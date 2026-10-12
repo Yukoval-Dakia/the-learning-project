@@ -198,7 +198,7 @@ describe('POST /api/ingestion/[id]/import', () => {
   });
 
   // @invariant data: incomplete DOCX extraction retains recoverable source and all media.
-  // @fails-if year-led questions merge, decimal/counter text creates phantom blocks, or uncertain images bypass review.
+  // @fails-if numeric-led questions merge across line breaks, decimal/counter text creates phantom blocks, or uncertain images bypass review.
   it('retains incomplete DOCX source and media behind explicit review', async () => {
     const db = testDb();
     const markdown = [
@@ -210,6 +210,10 @@ describe('POST /api/ingestion/[id]/import', () => {
       '1.本节共两题',
       '4\\.',
       '![](media/c.png) ![](media/d.png)',
+      '18.合成前题',
+      '    19.2024',
+      '合成题干',
+      '20.合成后题',
     ].join('\n');
     const mediaAssetIds = ['a', 'b', 'c', 'd'];
     const { blocks, warnings } = segmentMarkdown({
@@ -245,12 +249,13 @@ describe('POST /api/ingestion/[id]/import', () => {
     });
     expect(source.source_asset_ids).toEqual(['page', ...mediaAssetIds]);
     expect(session.source_asset_ids).toEqual(source.source_asset_ids);
-    expect(drafts.map((b) => b.structured?.question_no)).toEqual(['1', '2', '4']);
+    expect(drafts.map((b) => b.structured?.question_no)).toEqual(['1', '2', '4', '18', '19', '20']);
     expect(drafts[0].structured?.options?.map((o) => o.label)).toEqual(['A', 'B', 'C', 'D']);
     expect(drafts[0].structured?.prompt_text).toBe('题甲\n2.5米是题甲的条件');
     expect(drafts[1].structured?.prompt_text).toBe('2024年图前  图后 \n1.本节共两题');
     expect(drafts[1].structured?.options?.map((o) => o.label)).toEqual(['A', 'B', 'C', 'D']);
-    expect(drafts.map((b) => b.image_refs)).toEqual([[], ['a', 'b'], []]);
+    expect(drafts[4].structured?.prompt_text).toBe('2024\n合成题干');
+    expect(drafts.map((b) => b.image_refs)).toEqual([[], ['a', 'b'], [], [], [], []]);
     expect(session.status).toBe('partial');
     expect(session.warnings).toEqual(
       expect.arrayContaining([
@@ -259,6 +264,7 @@ describe('POST /api/ingestion/[id]/import', () => {
         expect.stringContaining('图片的题目归属不明'),
         expect.stringContaining('题号 1 重复或倒序'),
         expect.stringContaining('第 2 题的图片按 DOCX 文本锚点'),
+        expect.stringContaining('第 19 题候选以数字开头'),
       ]),
     );
     const receipts = await db
@@ -271,7 +277,7 @@ describe('POST /api/ingestion/[id]/import', () => {
         ),
       );
     expect(receipts[0].payload).toMatchObject({
-      block_count: 3,
+      block_count: 6,
       layout_quality: 'partial',
       warnings: session.warnings,
     });
