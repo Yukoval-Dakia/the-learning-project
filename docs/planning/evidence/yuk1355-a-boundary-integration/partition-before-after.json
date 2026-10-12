@@ -1,0 +1,34 @@
+{
+  "base": "60c4f980fce83d73b78fb912a4b097c34b8f250a",
+  "comparisons": [
+    {
+      "path": "src/capabilities/practice/server/item-prior-durable-operation.unit.test.ts",
+      "before": [
+        "Unit imports live DB: src/capabilities/practice/server/item-prior-durable-operation.unit.test.ts -> @/db/schema"
+      ],
+      "after": [
+        "Unit imports live DB: src/capabilities/practice/server/item-prior-durable-operation.unit.test.ts -> @/db/schema"
+      ],
+      "identical": true
+    },
+    {
+      "path": "src/server/durable/item-prior-family.unit.test.ts",
+      "before": [
+        "Unit imports live DB: src/server/durable/item-prior-family.unit.test.ts -> @/db/schema",
+        "Unit imports live DB: src/server/durable/item-prior-family.unit.test.ts -> @/db/schema",
+        "Unit imports live DB: src/server/durable/item-prior-family.unit.test.ts -> drizzle-orm/pg-core",
+        "Unit imports live DB: src/server/durable/item-prior-family.unit.test.ts -> drizzle-orm/postgres-js",
+        "Unit imports live DB: src/server/durable/item-prior-family.unit.test.ts -> postgres"
+      ],
+      "after": [
+        "Unit imports live DB: src/server/durable/item-prior-family.unit.test.ts -> @/db/schema",
+        "Unit imports live DB: src/server/durable/item-prior-family.unit.test.ts -> @/db/schema",
+        "Unit imports live DB: src/server/durable/item-prior-family.unit.test.ts -> drizzle-orm/pg-core",
+        "Unit imports live DB: src/server/durable/item-prior-family.unit.test.ts -> drizzle-orm/postgres-js",
+        "Unit imports live DB: src/server/durable/item-prior-family.unit.test.ts -> postgres"
+      ],
+      "identical": true
+    }
+  ],
+  "ok": true
+}

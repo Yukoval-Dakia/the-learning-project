@@ -35,7 +35,10 @@ export async function judgeRouterV2(input: JudgeRouterInput): Promise<JudgeResul
 }
 
 function downgradeToV1(result: JudgeResultV2T): JudgeResult {
-  const verdictMap: Record<JudgeResultV2T['coarse_outcome'], JudgeResult['verdict']> = {
+  if (result.coarse_outcome === 'partial_unknown') {
+    throw new Error('JudgeResult V1 cannot represent partial correctness with an unknown score');
+  }
+  const verdictMap: Record<typeof result.coarse_outcome, JudgeResult['verdict']> = {
     correct: 'correct',
     partial: 'partial',
     incorrect: 'incorrect',

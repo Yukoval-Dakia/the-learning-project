@@ -323,7 +323,7 @@ async function main() {
           {},
         );
       const handle = DBOS.retrieveWorkflow(workflowId);
-      await handle.getResult();
+      await handle.getResult({ pollingIntervalMs: 50 });
       report({
         kind: 'done',
         status: await handle.getStatus(),
@@ -371,7 +371,7 @@ async function main() {
     }
     stage = 'workflow-result';
     const handle = DBOS.retrieveWorkflow(input.delivery_id);
-    await handle.getResult();
+    await handle.getResult({ pollingIntervalMs: 50 });
     report({
       kind: 'done',
       status: await handle.getStatus(),

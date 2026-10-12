@@ -262,7 +262,7 @@ export const SUBMISSION_LIFECYCLE_META: Record<
 };
 
 /** 判分反馈的粗粒度结果（与 JudgeResult coarse_outcome 对齐）。 */
-export type CoarseOutcome = 'correct' | 'partial' | 'incorrect' | 'unsupported';
+export type CoarseOutcome = 'correct' | 'partial' | 'partial_unknown' | 'incorrect' | 'unsupported';
 
 export const COARSE_OUTCOME_META: Record<
   CoarseOutcome,
@@ -270,6 +270,7 @@ export const COARSE_OUTCOME_META: Record<
 > = {
   correct: { label: '对', tone: 'good' },
   partial: { label: '部分对', tone: 'hard' },
+  partial_unknown: { label: '部分正确，分数未知', tone: 'hard' },
   incorrect: { label: '错', tone: 'again' },
   unsupported: { label: '暂时没法自动判', tone: 'hard' },
 };

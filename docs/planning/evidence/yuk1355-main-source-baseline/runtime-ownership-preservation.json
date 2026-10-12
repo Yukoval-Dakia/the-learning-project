@@ -1,0 +1,49 @@
+{
+  "base": "9ce33e61da3ee40c7e89256212a7aedaf0b88e9d",
+  "runtimeChanged": false,
+  "registrationChanged": false,
+  "defaultBackend": "pg-boss",
+  "unsupportedFamilySwitches": ["note_verify", "item_prior_backfill", "judge_calibration_sample"],
+  "files": [
+    {
+      "path": "scripts/worker.ts",
+      "sha256": "4c2f673f78b0501a783b83bb4073a367d6907708e66dd810f9ec070d124bf908",
+      "unchangedVsBase": true
+    },
+    {
+      "path": "src/server/boss/start-worker.ts",
+      "sha256": "9493a1396e1915a33a091f46a6fe2c89c5cdfc8e84e05043f4e4d0ee0150d63e",
+      "unchangedVsBase": true
+    },
+    {
+      "path": "src/capabilities/notes/manifest.ts",
+      "sha256": "958572f83241cccaf3ad553e7c27ed2cb2352cab1bf946088781abfe822274a5",
+      "unchangedVsBase": true
+    },
+    {
+      "path": "src/capabilities/practice/manifest.ts",
+      "sha256": "961f4c43bb84fe51392d41c4c5bd030e71fb29e02ae77b4297a45d568d445580",
+      "unchangedVsBase": true
+    },
+    {
+      "path": "src/core/migration/paid-effect-protocol.ts",
+      "sha256": "5d157350b3419a38c14c736d3369ae2ecc64d6b053791a755f2c9b864bd1a2ef",
+      "unchangedVsBase": true
+    },
+    {
+      "path": "src/db/paid-effect-control.ts",
+      "sha256": "3a6ab088edcaf832734da7be0955dd8e507af55815c47f62ed621b91441ba6e8",
+      "unchangedVsBase": true
+    },
+    {
+      "path": "src/db/paid-effect-store.ts",
+      "sha256": "eecf7f539ca0089498b523f22b85987da75a742141fdb5ee323340c9fd97594f",
+      "unchangedVsBase": true
+    },
+    {
+      "path": "src/server/durable/paid-effect-control.ts",
+      "sha256": "ae14484e287cf1b9a9d71904fd51c5bb24e5c9d30ca162dbbfbc7514a4c9edb9",
+      "unchangedVsBase": true
+    }
+  ]
+}

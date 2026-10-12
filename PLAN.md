@@ -1,10 +1,12 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-11：YUK-1107 优先修 main CI P1：cron substring 起始位置误选正则重载，migration unavailable-primary 代理重连卡 PENDING。隔离小 PR 保留产品和原断言，审查/运行待验；完整≤120秒目标仍进行中，1691远端fc失败195秒，局部b652提速checkpoint暂停。
+> Linear 是权威 tracker。2026-10-11：YUK-1107隔离head f0f2d63bf完整CI三绿166/207/144秒、中位166；唯一验证R2 NONE及逐不变量说明已过。正常纳入main c2新测试规则后，作者代码不变，等待新exact-head CI再合1691。judge阶段诊断仅独立实验，backup等audit/owner，120未达。
 
 ## NOW
 
-- **YUK-1107 / main CI回归优先**：父d0c4657a独占 tlp-yuk1107-main-ci-regressions-20261011 / fix/yuk-1107-session-ci-regressions，base135bb18e6d；cron horizon 查询显式 integer 位置，migration 故障代理关闭监听并等待真实 failure，全部原业务断言保留。初版R1 NONE/cron2PASS，migration首outage客户端未捕获socket.write(null)，23例9PASS14FAIL；原窗口79.60秒token/parity释锁。R2指出多queuedSync/describeFirst P1，e84本机提前中止128.38秒token/parity释锁，无最终case计数；已按逐Q/Sync周期修并在既有outagecase加同连接2queuedSync断言，禁止第三审，新固定head23PASS/exactCI/回复resolve原R2线程待验；1691远端fc2626d Gate38134462539失败195秒，局部b652未push，120秒目标未达标；无runtime/锁。[回归证据](docs/planning/2026-10-11-yuk1107-main-ci-regressions.md)。
+- **YUK-1404 / native03题图修复**：PR1657 fixed4c52 exact CI38144495041全绿；正常纳入main eb960c079，仅PLAN/now冲突。图ownership/隐私产品代码与单capture边界测试保留，旧细粒度四tests已删。独立初审/最终R2预算已完成，不启第三审。当前crop producer仍无source_asset SHA登记，旧visibility未知，public withholding不是完整配图交付；同卷actual-output验收仍待。无DB/runtime/provider/paid。 [证据](docs/planning/2026-10-11-yuk1404-native03-figure-repair.md)。
+
+- **YUK-1107 / 完整CI≤120秒继续**：#1696/#1697主线解阻已交；critical f0f2d63bf三次完整CI38141930431/38141956448/38142360324全绿166/207/144秒，中位166秒，实际8DB/2unit/native-WASM-JS；R2 NONE且核逐不变量测试行说明，21session用例及全部断言保留。正常纳入main c2仅AGENTS/流程规则docs，作者runtime/fixture/CI代码字节不变；协调者要求新exactCI过后才match-head合1691，不启第三审。原432秒仅1次观察，计时是workflow创建到Gate绿；120目标仍未达。另独立perf/yuk-1107-judge-stage-profile head6bae53c2f只现有process例计时+上传既有诊断，CI38143778742待阶段分布；worker/support/模型/生产/断言不改，无本机DB/锁。backup去重/删除暂停待slop audit与owner，任一main提速回归先revert。生产RST风险另票YUK-1481。
 
 - **YUK-1107 / session cron已交付**：#1681合main56df7c09；控制时间验证边界，生产60秒保护/cron及严格ledger不变；R2无P0/P1，父修Drizzle初始化后exact cd0c45d CI38120469007全绿。两例PASS、文件34.564秒；实测跨分钟边界，YUK-1397修复交付。整套390秒，不核销120秒目标。[证据与限度](docs/planning/2026-10-11-yuk1107-cron-speed.md)。
 

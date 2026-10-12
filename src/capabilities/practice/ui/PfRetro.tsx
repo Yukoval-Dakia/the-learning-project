@@ -29,7 +29,7 @@ type Verdict = 'good' | 'hard' | 'again';
 
 function verdictOf(outcome: string): Verdict {
   if (outcome === 'correct') return 'good';
-  if (outcome === 'partial') return 'hard';
+  if (outcome === 'partial' || outcome === 'partial_unknown') return 'hard';
   return 'again';
 }
 
@@ -84,7 +84,11 @@ export function PfrQRow({
         <span className="pfr-q-stem">{slot.question.prompt_md}</span>
         {sub ? (
           sub.visible_to_user ? (
-            <SlotResultBadge lifecycle="effective" releasedOutcome={releasedOutcome} />
+            <SlotResultBadge
+              lifecycle="effective"
+              releasedOutcome={releasedOutcome}
+              partialUnits={visible?.partial_units}
+            />
           ) : (
             // 交卷缓冲（visible_to_user=false）= 联合组暂定：已提交待全组解锁，无对错色。
             <SlotResultBadge lifecycle="group_tentative" />
@@ -231,6 +235,11 @@ export function PfRetro({ artifactId, onBack }: { artifactId: string; onBack: ()
   const again =
     verdicts.filter((v) => v === 'again').length + verdicts.filter((v) => v === null).length;
   const total = slots.length;
+  const unknownScores = slots.filter(
+    (slot) =>
+      slot.slot_state.submission?.visible_to_user &&
+      slot.slot_state.submission.outcome === 'partial_unknown',
+  ).length;
 
   return (
     <div className="pfr" data-screen-label={`复盘 · ${artifactId}`}>
@@ -279,7 +288,11 @@ export function PfRetro({ artifactId, onBack }: { artifactId: string; onBack: ()
           <LoomIcon name="sparkle" size={16} />
         </span>
         <div>
-          <p className="pfr-summary-text">{summaryByWrong(hard + again, total)}</p>
+          <p className="pfr-summary-text">
+            {unknownScores > 0
+              ? `${good} 题完整正确，${hard} 题部分正确，${again} 题错或未答。其中 ${unknownScores} 题分数未知。`
+              : summaryByWrong(hard + again, total)}
+          </p>
           <div className="pfr-summary-meta">paper.judge · 交卷统一判分</div>
         </div>
       </div>

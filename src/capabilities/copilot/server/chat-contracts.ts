@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { DerivationPolicy } from '@/core/schema/derivation-policy';
 import { ReviewAnswerAttachmentSchema } from '@/kernel/tools/review-answer';
 
 export const COPILOT_CHAT_TRIGGER_KINDS = ['chat', 'chip'] as const;
@@ -77,6 +78,7 @@ export const CopilotChatRequest = z
   .object({
     session_id: z.string().min(1).max(160).optional(),
     user_message: z.string().min(1).max(4000),
+    derivation_policy: DerivationPolicy.optional(),
     triggered_by: z.enum(COPILOT_CHAT_TRIGGER_KINDS),
     chip_kind: z.string().min(1).max(80).optional(),
     skill_context: CopilotSkillContext.optional(),
@@ -98,7 +100,8 @@ export const CopilotChatRequest = z
   .superRefine((request, ctx) => {
     if (
       request.review_answer &&
-      (request.triggered_by !== 'chat' ||
+      (request.derivation_policy === 'answer_only' ||
+        request.triggered_by !== 'chat' ||
         request.skill_context ||
         request.correction_target_turn_id)
     ) {

@@ -1,0 +1,107 @@
+{
+  "task": "YUK-1404 PR1657 prospective native03 figure repair",
+  "worktree": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1404-salvage-figures",
+  "branch": "fix/yuk-1404-figure-binding-salvage",
+  "start_head": "080b04f9b976525ef175c2ff8221d3218413c2b1",
+  "normal_merge_main": "135bb18e6d2743492e590984c95f58c42404d4be",
+  "normal_merge_head": "9d6336dcfa7e72703cc53c51420ee9e6a5b8da18",
+  "node": "24.19.0",
+  "source_hashes": {
+    "src/capabilities/ingestion/server/figure_attach.ts": "91363c290f70b8a2fea1d66750b7e6f4a371754a572da5441373c648537b650a",
+    "src/capabilities/ingestion/server/structure.ts": "a0240b7e5217cf6312b1018048c0db6dab9ae4f7ad5e60d86d127a31c12afe19",
+    "src/capabilities/ingestion/tasks/structure.ts": "29ba17be9af4c1911414653fd43a227cca64ad9258114ce405e06c29fcf60605",
+    "src/capabilities/ingestion/jobs/tencent_ocr_extract.ts": "4a83e62600bb21bbdc0576dbd4775a01268f3915974cfe3488cc45f3d1f84ca3",
+    "src/capabilities/ingestion/server/auto-enroll.ts": "427744774961d4663523b07e4d980a447d278611eeaa15ef2b5f6b2364e92eed",
+    "src/capabilities/ingestion/server/assessment-capture.ts": "691d4b807da6781dac001af80a966d78dbed58cf8eb29f722e22113df0800191",
+    "src/capabilities/ingestion/server/figure_attach.unit.test.ts": "31f1751bf613ef21c7ca956dfc8122fe0bd801566fa68ca32be21db612565de4",
+    "vitest.shared.ts": "551cee94ff11a4d29e30a82513c1e8c98ddfab4f3ba9eceb4e4328ebda17ded6"
+  },
+  "source_patch_sha256": "eb89fbeba3153a3b2e1c05c8a77cc9f8211a01d909637095be0830fb18b567fe",
+  "input_sha256": "d2bf8a6880090d7b3bb9035c81979cfd4e05ffdad1c846997a16e1eb4f2ee5f7",
+  "gates": {
+    "privacy_unit": {
+      "file": "privacy-unit-final.log",
+      "exit_code": 0,
+      "passed": 4
+    },
+    "typecheck": {
+      "file": "typecheck-final-02.log",
+      "exit_code": 0
+    },
+    "lint": {
+      "file": "lint-final.log",
+      "exit_code": 0,
+      "warnings": 172
+    },
+    "build": {
+      "file": "build-final.log",
+      "exit_code": 0
+    },
+    "offline_replay": {
+      "file": "native03-replay-final.log",
+      "exit_code": 0
+    }
+  },
+  "papers": [
+    {
+      "subject": "数学",
+      "block_count": 19,
+      "original_foreign_bindings": 18,
+      "retained_source_binding_count": 1,
+      "prospective_public_binding_count": 0
+    },
+    {
+      "subject": "物理",
+      "block_count": 18,
+      "original_foreign_bindings": 476,
+      "retained_source_binding_count": 27,
+      "prospective_public_binding_count": 0
+    },
+    {
+      "subject": "化学",
+      "block_count": 18,
+      "original_foreign_bindings": 187,
+      "retained_source_binding_count": 11,
+      "prospective_public_binding_count": 0
+    }
+  ],
+  "retained_failures": [
+    "privacy-unit.log: explicit unit partition did not yet register new file",
+    "native03-replay.log: external script could not resolve workspace Zod; original script retained as replay-native03-attempt01.ts"
+  ],
+  "limits": [
+    "No DB/runtime/OCR/provider/paid/browser/deploy/merge/review/children/full-test",
+    "Original provider figure_ids not available; replay uses persisted attached_to_index",
+    "No verified crop asset registration or historical clean visibility; public replay zero, not full public figure acceptance",
+    "Unchanged normalizer shares each root row figure list across its leaves; no new leaf-specific routing",
+    "Pending #1658 shape kind code not copied; later normal composition belongs to parent"
+  ],
+  "next": "Parent different-model review/exact-head CI/fixed normal composition/isolated same-paper rerun; prospective existing crop asset-registration seam remains YUK-1404",
+  "logs": {
+    "build-final.log": "12669f9b7462edf7fbef3d1a976d088db1fad7a1aa48514b2bf7c85317322828",
+    "build.log": "b13de37b1eb9d110919c074c39637cf1a4066363a482b30da9d129e22002e419",
+    "lint-final.log": "6327388e82c14cff1fdc71508011a2379c0893974afadefb3e5e993018804fef",
+    "lint.log": "0ce41e59a35f90a293c18f70f8e0d83e60e25be10a87adb0f79c3421a5886d0c",
+    "native03-replay-02.log": "c12ac3de464c7742ad4133e00da83a04737a93f2af50382a646f02b2d8b1da9a",
+    "native03-replay-03.log": "c12ac3de464c7742ad4133e00da83a04737a93f2af50382a646f02b2d8b1da9a",
+    "native03-replay-final.log": "c12ac3de464c7742ad4133e00da83a04737a93f2af50382a646f02b2d8b1da9a",
+    "native03-replay.json": "22f4cba27a84e5316216ee28d951fccaa3df20c092b2ff677f44fd72b2930456",
+    "native03-replay.log": "cb9dd6fd04ef0bb2105144afbc8dedd2bfda6e8cfb1e82794d687150d822b9fb",
+    "privacy-unit-02.log": "2c09ab6b4fc376bbeecc90a3692efbcded6c3faa2e55923cffe77cd1b7ed8db6",
+    "privacy-unit-03.log": "0dc7fd0106fce0d35b621cadac59a6a6cfce8f8e7f77966fee94ccd4b42ac08d",
+    "privacy-unit-final.log": "75abfaec5c8597f80e9204fee6b87139ec00b2dceb960f16fe30b51a58412b9f",
+    "privacy-unit.log": "e827fb868b723fa881a11273cbd26c60d63664b83614081003b74edc26ee32c9",
+    "replay-native03-attempt01.ts": "a25be0e2121e84a5e5e768f0866eb9dc8207cb8f0a1020aee07a617939e06a05",
+    "replay-native03.ts": "111a9c015131bc9054f0f9fdbb41cf6ad10a59e5db13c71ae6eec202ba06ef9d",
+    "typecheck-final-02.log": "36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6",
+    "typecheck-final.log": "36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6",
+    "typecheck.log": "36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6"
+  },
+  "artifacts": {
+    "2026-10-11-yuk1404-native03-figure-logs.tar.gz": "15efd3be6a0a83f6f0e8510c0e9ad6a2b5b2cd15414edfb8e001818b6a773dbe",
+    "2026-10-11-yuk1404-native03-figure-replay.json.gz": "933a5b1617a7d3ba1fc9bec4a66616280f7839aa17f6b4365cdbefd757aed902",
+    "2026-10-11-yuk1404-native03-figure-source.patch.gz": "36cde5e10fa783934ff8f49202bf79e938740e4c37ecca3bede92456d5131065"
+  },
+  "source_commit": "b471ed8fe41843c1a3abcce39537faf3f9de8f38",
+  "patch_packaging": "Exact patch bytes gzip-packaged to retain blank context lines without text-artifact trailing-whitespace diagnostics. Raw patch SHA256 unchanged; initial source/evidence commit preserved."
+}

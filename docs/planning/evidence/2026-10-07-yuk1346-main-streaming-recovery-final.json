@@ -1,0 +1,622 @@
+{
+  "recovery_head": "c59bb7dadae9dec440b5ccbb0a0ab93478369e1c",
+  "first_normal_merge": "6cce7fe40971d98049f3e250d7614183fa9b8f92",
+  "first_main": "df08399ff179c5882b39da87e162237fd18246c7",
+  "latest_main": "6e54da8dfb371887e5d6cd4076d1ff9cd7713beb",
+  "merge_head": "6e54da8dfb371887e5d6cd4076d1ff9cd7713beb",
+  "source_manifest_path": "/tmp/yuk1346-recovery-listen-ceaxnml2/source-files.json",
+  "source_manifest_sha256": "184d174f6cf11077163b67542177c3c9f9a8be30d8c95a7b1d860de274aaacc7",
+  "source_file_count": 3134,
+  "compared_sources": [
+    {
+      "path": "package.json",
+      "reference": "df08399ff179c5882b39da87e162237fd18246c7",
+      "reference_sha256": "af6086e9e8427830b697f5d48ce98693dd981c6aedbc01c6c749701db9bc8f68",
+      "actual_sha256": "af6086e9e8427830b697f5d48ce98693dd981c6aedbc01c6c749701db9bc8f68",
+      "equal": true
+    },
+    {
+      "path": "pnpm-lock.yaml",
+      "reference": "df08399ff179c5882b39da87e162237fd18246c7",
+      "reference_sha256": "7b1a3254d428b208c15ae5b86f831c76ae3d327018f47584cc84a7a6c27f9cf5",
+      "actual_sha256": "7b1a3254d428b208c15ae5b86f831c76ae3d327018f47584cc84a7a6c27f9cf5",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/copilot/server/reply-finalization.ts",
+      "reference": "df08399ff179c5882b39da87e162237fd18246c7",
+      "reference_sha256": "b9f625f5c6e3351fede031988c89023793537f3fa48de6a387c88e8c8b40f7b3",
+      "actual_sha256": "b9f625f5c6e3351fede031988c89023793537f3fa48de6a387c88e8c8b40f7b3",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/copilot/server/prose-stream.ts",
+      "reference": "df08399ff179c5882b39da87e162237fd18246c7",
+      "reference_sha256": "3afc279660c32c5adc762712a6a1ee28746e88ef001f29828b906c00d194073f",
+      "actual_sha256": "3afc279660c32c5adc762712a6a1ee28746e88ef001f29828b906c00d194073f",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/copilot/server/tool-result-snapshot.ts",
+      "reference": "df08399ff179c5882b39da87e162237fd18246c7",
+      "reference_sha256": "6d48fdba31fbdef0841e77d6a219371f661d29c25bc57c4e015d1cec3fc5ada2",
+      "actual_sha256": "6d48fdba31fbdef0841e77d6a219371f661d29c25bc57c4e015d1cec3fc5ada2",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/copilot/server/tool-result-snapshot.db.test.ts",
+      "reference": "df08399ff179c5882b39da87e162237fd18246c7",
+      "reference_sha256": "3ebe8fb567c5e215fd1c434d22acc6dfbdfb6d463361e89897bb8efc252582ca",
+      "actual_sha256": "3ebe8fb567c5e215fd1c434d22acc6dfbdfb6d463361e89897bb8efc252582ca",
+      "equal": true
+    },
+    {
+      "path": "src/server/ai/execution-adapter.ts",
+      "reference": "df08399ff179c5882b39da87e162237fd18246c7",
+      "reference_sha256": "b3ebf8b1b54dd7ee2ac6be86c11c44a42c01b9a448e5fff60abb578717b8a0cc",
+      "actual_sha256": "b3ebf8b1b54dd7ee2ac6be86c11c44a42c01b9a448e5fff60abb578717b8a0cc",
+      "equal": true
+    },
+    {
+      "path": "src/server/ai/pi-agent-adapter.ts",
+      "reference": "df08399ff179c5882b39da87e162237fd18246c7",
+      "reference_sha256": "194045aa9decfcabea4ff936ed45dd64501de8f55a09f810e16ec9d2f1b6e333",
+      "actual_sha256": "194045aa9decfcabea4ff936ed45dd64501de8f55a09f810e16ec9d2f1b6e333",
+      "equal": true
+    },
+    {
+      "path": "src/server/ai/runner.ts",
+      "reference": "df08399ff179c5882b39da87e162237fd18246c7",
+      "reference_sha256": "eb497e8e5c6478f91073260bc7f54751e72ac09b9584c57759ebb8b8dda7936c",
+      "actual_sha256": "eb497e8e5c6478f91073260bc7f54751e72ac09b9584c57759ebb8b8dda7936c",
+      "equal": true
+    },
+    {
+      "path": "src/server/ai/sdk-types.ts",
+      "reference": "df08399ff179c5882b39da87e162237fd18246c7",
+      "reference_sha256": "d31dffecb40f8e34960f4e17c1fdba3a468b757f935a51c7d05df51c05a5e8a2",
+      "actual_sha256": "d31dffecb40f8e34960f4e17c1fdba3a468b757f935a51c7d05df51c05a5e8a2",
+      "equal": true
+    },
+    {
+      "path": "src/subjects/copilot-skills.ts",
+      "reference": "df08399ff179c5882b39da87e162237fd18246c7",
+      "reference_sha256": "202ff2c21cbf50654dbbce77a6d9a53aab291d780c60146e5e883e1a910034dc",
+      "actual_sha256": "202ff2c21cbf50654dbbce77a6d9a53aab291d780c60146e5e883e1a910034dc",
+      "equal": true
+    },
+    {
+      "path": "src/subjects/copilot-skills.test.ts",
+      "reference": "df08399ff179c5882b39da87e162237fd18246c7",
+      "reference_sha256": "222c06b7d43588f9428a74863a2db30ee2d519fff55656c38b99ca13bd0725fe",
+      "actual_sha256": "222c06b7d43588f9428a74863a2db30ee2d519fff55656c38b99ca13bd0725fe",
+      "equal": true
+    },
+    {
+      "path": "src/subjects/_shared/skills/copilot/SKILL.md",
+      "reference": "df08399ff179c5882b39da87e162237fd18246c7",
+      "reference_sha256": "5e07c0a2a0ec65f74ea8fb303a0af7a6b37879abc79ce4c513822cb2bb63b176",
+      "actual_sha256": "5e07c0a2a0ec65f74ea8fb303a0af7a6b37879abc79ce4c513822cb2bb63b176",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/practice/server/learning-content-validation.ts",
+      "reference": "df08399ff179c5882b39da87e162237fd18246c7",
+      "reference_sha256": "fe0a2f6756aa49f3f1e90d9f5d29e58bdc41594616d85e5c01e5ed36e10e8bc2",
+      "actual_sha256": "fe0a2f6756aa49f3f1e90d9f5d29e58bdc41594616d85e5c01e5ed36e10e8bc2",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/practice/server/quiz/verify-framework.ts",
+      "reference": "df08399ff179c5882b39da87e162237fd18246c7",
+      "reference_sha256": "8402674a55fefcb2900c9c3cd721281d412a6b867c283db1a3823a07328c0499",
+      "actual_sha256": "8402674a55fefcb2900c9c3cd721281d412a6b867c283db1a3823a07328c0499",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/practice/server/quiz/verify-framework.test.ts",
+      "reference": "df08399ff179c5882b39da87e162237fd18246c7",
+      "reference_sha256": "9bb5da8b575e8e1a054e602ec3eeddf390c88defbcf470dd08ea67225abe52fa",
+      "actual_sha256": "9bb5da8b575e8e1a054e602ec3eeddf390c88defbcf470dd08ea67225abe52fa",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/practice/tasks/quiz-verify.ts",
+      "reference": "df08399ff179c5882b39da87e162237fd18246c7",
+      "reference_sha256": "5117bf0fcea51233bbe5314e5e1af281472cc02c42456f26a8f84d0b78243661",
+      "actual_sha256": "5117bf0fcea51233bbe5314e5e1af281472cc02c42456f26a8f84d0b78243661",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/practice/server/tools/question-author.ts",
+      "reference": "df08399ff179c5882b39da87e162237fd18246c7",
+      "reference_sha256": "438d12f4aae4daac2fb4009abd0f0f268dfe165ce158aeacb4a35a17afca0dc2",
+      "actual_sha256": "438d12f4aae4daac2fb4009abd0f0f268dfe165ce158aeacb4a35a17afca0dc2",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/practice/server/tools/write-quiz.ts",
+      "reference": "df08399ff179c5882b39da87e162237fd18246c7",
+      "reference_sha256": "3a922a164444fbec19727108216b18e5d2ad1d5d4ab11a1b0a5e58c6d067be23",
+      "actual_sha256": "3a922a164444fbec19727108216b18e5d2ad1d5d4ab11a1b0a5e58c6d067be23",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/practice/testing/pi-dbos-gate/manifest.ts",
+      "reference": "df08399ff179c5882b39da87e162237fd18246c7",
+      "reference_sha256": "6b67f39d2976c662d8ba20094d11c60c878694dcf28873924cbfcd829d7337f1",
+      "actual_sha256": "6b67f39d2976c662d8ba20094d11c60c878694dcf28873924cbfcd829d7337f1",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/practice/testing/pi-dbos-gate/operations.ts",
+      "reference": "df08399ff179c5882b39da87e162237fd18246c7",
+      "reference_sha256": "3dc6c592abee881ecfd7286aa278fa82d459e8a59d0264e04e6c47d16b86a21a",
+      "actual_sha256": "3dc6c592abee881ecfd7286aa278fa82d459e8a59d0264e04e6c47d16b86a21a",
+      "equal": true
+    },
+    {
+      "path": "src/server/memory/reconcile-llm.ts",
+      "reference": "c59bb7dadae9dec440b5ccbb0a0ab93478369e1c",
+      "reference_sha256": "6e8814d640201957530500fd457c13fb60a72eda72943e0f19b7e40aa1b19901",
+      "actual_sha256": "6e8814d640201957530500fd457c13fb60a72eda72943e0f19b7e40aa1b19901",
+      "equal": true
+    },
+    {
+      "path": "src/server/memory/reconcile-handler.db.test.ts",
+      "reference": "c59bb7dadae9dec440b5ccbb0a0ab93478369e1c",
+      "reference_sha256": "5390bd31dee3360ad9f42ae09ecd6ac861658beb9a8c38920d748fa5a341eacf",
+      "actual_sha256": "5390bd31dee3360ad9f42ae09ecd6ac861658beb9a8c38920d748fa5a341eacf",
+      "equal": true
+    },
+    {
+      "path": "src/server/ai/direct-provider-attempt.ts",
+      "reference": "c59bb7dadae9dec440b5ccbb0a0ab93478369e1c",
+      "reference_sha256": "beef26b75a5731fec0bee3e6caffa1287d5852a478828cae71f5d33c95c86aa8",
+      "actual_sha256": "beef26b75a5731fec0bee3e6caffa1287d5852a478828cae71f5d33c95c86aa8",
+      "equal": true
+    },
+    {
+      "path": "src/kernel/events/derivation-policy.ts",
+      "reference": "c59bb7dadae9dec440b5ccbb0a0ab93478369e1c",
+      "reference_sha256": "a4baba69853321de3e6051eed7fec3df1ab28060214b45722a0d4fadff2ea19d",
+      "actual_sha256": "a4baba69853321de3e6051eed7fec3df1ab28060214b45722a0d4fadff2ea19d",
+      "equal": true
+    },
+    {
+      "path": "src/kernel/events/events.ts",
+      "reference": "c59bb7dadae9dec440b5ccbb0a0ab93478369e1c",
+      "reference_sha256": "81d5d46d5e0173ac02f9d32069962afe4f45433ca9d1c3820e2381086ca6b7aa",
+      "actual_sha256": "81d5d46d5e0173ac02f9d32069962afe4f45433ca9d1c3820e2381086ca6b7aa",
+      "equal": true
+    },
+    {
+      "path": "src/kernel/tools/derivation-policy.ts",
+      "reference": "c59bb7dadae9dec440b5ccbb0a0ab93478369e1c",
+      "reference_sha256": "92655c025119c73acfe46a171931a9e25de68e54e4e8f4e6d74c988f27b51e6f",
+      "actual_sha256": "92655c025119c73acfe46a171931a9e25de68e54e4e8f4e6d74c988f27b51e6f",
+      "equal": true
+    },
+    {
+      "path": "src/server/memory/triggers.ts",
+      "reference": "c59bb7dadae9dec440b5ccbb0a0ab93478369e1c",
+      "reference_sha256": "20f0603cd50881d732382e63d05719934e63b180cfcec9b5b58357816a47fe15",
+      "actual_sha256": "20f0603cd50881d732382e63d05719934e63b180cfcec9b5b58357816a47fe15",
+      "equal": true
+    },
+    {
+      "path": "src/server/memory/client.ts",
+      "reference": "c59bb7dadae9dec440b5ccbb0a0ab93478369e1c",
+      "reference_sha256": "9ba9a5cefdcce86c0c935478484cb9fe112576da9f15c61b98f94f74878fcc57",
+      "actual_sha256": "9ba9a5cefdcce86c0c935478484cb9fe112576da9f15c61b98f94f74878fcc57",
+      "equal": true
+    },
+    {
+      "path": "src/server/memory/brief.ts",
+      "reference": "c59bb7dadae9dec440b5ccbb0a0ab93478369e1c",
+      "reference_sha256": "7babfd17121cc433a1f6a0ef8f4f8d9cb331464d74733f976512064b140d3174",
+      "actual_sha256": "7babfd17121cc433a1f6a0ef8f4f8d9cb331464d74733f976512064b140d3174",
+      "equal": true
+    },
+    {
+      "path": "src/server/memory/brief-writer.ts",
+      "reference": "c59bb7dadae9dec440b5ccbb0a0ab93478369e1c",
+      "reference_sha256": "144339e7938af5988bd7f5bc57ed2ae0ee444d168beb7ccdccaf9cf428dfdd8b",
+      "actual_sha256": "144339e7938af5988bd7f5bc57ed2ae0ee444d168beb7ccdccaf9cf428dfdd8b",
+      "equal": true
+    },
+    {
+      "path": "server/index.ts",
+      "reference": "6e54da8dfb371887e5d6cd4076d1ff9cd7713beb",
+      "reference_sha256": "da8c399287df870f858f63a72be553e6d157db86e8dca707d7e763bb7c4558f6",
+      "actual_sha256": "da8c399287df870f858f63a72be553e6d157db86e8dca707d7e763bb7c4558f6",
+      "equal": true
+    },
+    {
+      "path": "server/index.unit.test.ts",
+      "reference": "6e54da8dfb371887e5d6cd4076d1ff9cd7713beb",
+      "reference_sha256": "5e248ee4ec98cec8b9819ae1141907d5d54f8be482f7feace957c28ba24f1ac1",
+      "actual_sha256": "5e248ee4ec98cec8b9819ae1141907d5d54f8be482f7feace957c28ba24f1ac1",
+      "equal": true
+    },
+    {
+      "path": ".github/workflows/ci-gate.yml",
+      "reference": "6e54da8dfb371887e5d6cd4076d1ff9cd7713beb",
+      "reference_sha256": "a7a50de27ab82d8097ad553c12041c2f68e7b069dcb6230fafad3878751e55a7",
+      "actual_sha256": "a7a50de27ab82d8097ad553c12041c2f68e7b069dcb6230fafad3878751e55a7",
+      "equal": true
+    },
+    {
+      "path": "docs/agents/usability-container-smoke.md",
+      "reference": "6e54da8dfb371887e5d6cd4076d1ff9cd7713beb",
+      "reference_sha256": "7bc7a3bd490473d7c54095ba892e82ddc9153cfdc1b0cdaaeaffc1f1aeb52374",
+      "actual_sha256": "7bc7a3bd490473d7c54095ba892e82ddc9153cfdc1b0cdaaeaffc1f1aeb52374",
+      "equal": true
+    },
+    {
+      "path": "docs/planning/2026-10-07-yuk1365-sse-listener-followup.md",
+      "reference": "6e54da8dfb371887e5d6cd4076d1ff9cd7713beb",
+      "reference_sha256": "99cf06aefca818ea8917788729f59ea5a140b7d1a807ee7b922d05a3503275f8",
+      "actual_sha256": "99cf06aefca818ea8917788729f59ea5a140b7d1a807ee7b922d05a3503275f8",
+      "equal": true
+    }
+  ],
+  "changed_sources_since_first_verification": ["server/index.ts", "server/index.unit.test.ts"],
+  "patches": {
+    "final-vs-main.patch": "1659aae7bd568fad226e0625a9cc280957ec43f2a2388ff086b2fe078da30e77",
+    "final-vs-recovery.patch": "dbc2865e1f508c702698c143d46919daeb036f02b3fc79dcfb594ec8c66b8a3f",
+    "final-vs-stream-merge.patch": "10f7e5ec23c9c28cbc4f9ea2b1110ca01c01cb0f22ac571cd0925880aeaaa992"
+  },
+  "file_lists": {
+    "final-vs-main-files.txt": [
+      "M\tsrc/capabilities/copilot/api/chat.ts",
+      "M\tsrc/capabilities/copilot/api/chat.unit.test.ts",
+      "M\tsrc/capabilities/copilot/api/contracts.db.test.ts",
+      "M\tsrc/capabilities/copilot/api/contracts.ts",
+      "M\tsrc/capabilities/copilot/api/sessions.ts",
+      "M\tsrc/capabilities/copilot/jobs/copilot_run.test.ts",
+      "M\tsrc/capabilities/copilot/jobs/copilot_run.ts",
+      "M\tsrc/capabilities/copilot/server/chat-contracts.ts",
+      "M\tsrc/capabilities/copilot/server/chat-contracts.unit.test.ts",
+      "M\tsrc/capabilities/copilot/server/conversation-writes.ts",
+      "M\tsrc/capabilities/copilot/server/copilot-execution.ts",
+      "M\tsrc/capabilities/copilot/server/copilot-execution.unit.test.ts",
+      "M\tsrc/capabilities/copilot/server/copilot-run-input.ts",
+      "M\tsrc/capabilities/copilot/server/correction-contract.ts",
+      "A\tsrc/capabilities/copilot/server/derivation-policy.db.test.ts",
+      "A\tsrc/capabilities/copilot/server/derivation-policy.ts",
+      "M\tsrc/capabilities/copilot/server/durable-dispatch.db.test.ts",
+      "M\tsrc/capabilities/copilot/server/durable-dispatch.ts",
+      "M\tsrc/capabilities/copilot/server/durable-session-queue.db.test.ts",
+      "M\tsrc/capabilities/copilot/server/live-turn-context.ts",
+      "M\tsrc/capabilities/copilot/server/live-turn-context.unit.test.ts",
+      "M\tsrc/capabilities/copilot/server/reply-finalization.unit.test.ts",
+      "M\tsrc/capabilities/copilot/server/tools/query-events.ts",
+      "M\tsrc/capabilities/copilot/server/turns.db.test.ts",
+      "M\tsrc/capabilities/copilot/server/turns.ts",
+      "M\tsrc/capabilities/copilot/ui/CopilotDock.durable-retry.unit.test.tsx",
+      "M\tsrc/capabilities/copilot/ui/CopilotDock.session-entry.unit.test.tsx",
+      "M\tsrc/capabilities/copilot/ui/CopilotDock.tsx",
+      "M\tsrc/capabilities/copilot/ui/durable-reconnect-storage.ts",
+      "M\tsrc/capabilities/copilot/ui/durable-reconnect-storage.unit.test.ts",
+      "M\tsrc/capabilities/copilot/ui/message-projection.ts",
+      "M\tsrc/capabilities/copilot/ui/message-projection.unit.test.ts",
+      "M\tsrc/capabilities/copilot/ui/replay.ts",
+      "M\tsrc/capabilities/practice/server/tools/get-attempt-context.ts",
+      "A\tsrc/core/schema/derivation-policy.ts",
+      "A\tsrc/core/schema/derivation-policy.unit.test.ts",
+      "M\tsrc/core/schema/event/known.ts",
+      "A\tsrc/kernel/events/derivation-policy.ts",
+      "M\tsrc/kernel/events/events.ts",
+      "M\tsrc/kernel/events/index.ts",
+      "A\tsrc/kernel/tools/derivation-policy.ts",
+      "M\tsrc/kernel/tools/types.ts",
+      "M\tsrc/server/ai/direct-provider-attempt.ts",
+      "M\tsrc/server/ai/tools/mcp-bridge.test.ts",
+      "M\tsrc/server/ai/tools/mcp-bridge.ts",
+      "M\tsrc/server/ai/tools/pi-tools.test.ts",
+      "M\tsrc/server/memory/brief-writer.ts",
+      "M\tsrc/server/memory/brief.ts",
+      "M\tsrc/server/memory/client.test.ts",
+      "M\tsrc/server/memory/client.ts",
+      "M\tsrc/server/memory/memory-ingest-recovery-store.ts",
+      "M\tsrc/server/memory/memory-reconcile-handoff.db.test.ts",
+      "M\tsrc/server/memory/memory-reconcile-handoff.ts",
+      "M\tsrc/server/memory/reconcile-handler.db.test.ts",
+      "M\tsrc/server/memory/reconcile-llm.test.ts",
+      "M\tsrc/server/memory/reconcile-llm.ts",
+      "M\tsrc/server/memory/triggers.ts",
+      "M\tsrc/server/session/conversation.ts",
+      "M\tsrc/ui/lib/api-schema.generated.ts"
+    ],
+    "final-vs-recovery-files.txt": [
+      "M\t.github/workflows/ci-gate.yml",
+      "M\tserver/index.ts",
+      "M\tserver/index.unit.test.ts",
+      "M\tsrc/capabilities/copilot/AGENTS.md",
+      "M\tsrc/capabilities/copilot/jobs/copilot-pi-actual.db.test.ts",
+      "A\tsrc/capabilities/copilot/jobs/copilot_run.streaming.db.test.ts",
+      "M\tsrc/capabilities/copilot/jobs/copilot_run.test.ts",
+      "M\tsrc/capabilities/copilot/jobs/copilot_run.ts",
+      "D\tsrc/capabilities/copilot/server/content-validation.ts",
+      "D\tsrc/capabilities/copilot/server/content-validation.unit.test.ts",
+      "M\tsrc/capabilities/copilot/server/conversation-writes.ts",
+      "M\tsrc/capabilities/copilot/server/copilot-execution.ts",
+      "M\tsrc/capabilities/copilot/server/copilot-execution.unit.test.ts",
+      "M\tsrc/capabilities/copilot/server/copilot-run-input.ts",
+      "M\tsrc/capabilities/copilot/server/copilot-run-input.unit.test.ts",
+      "M\tsrc/capabilities/copilot/server/copilot-run-outcome.ts",
+      "M\tsrc/capabilities/copilot/server/copilot-run-status.ts",
+      "M\tsrc/capabilities/copilot/server/correction-contract.ts",
+      "M\tsrc/capabilities/copilot/server/derivation-policy.db.test.ts",
+      "M\tsrc/capabilities/copilot/server/live-turn-context.ts",
+      "M\tsrc/capabilities/copilot/server/live-turn-context.unit.test.ts",
+      "M\tsrc/capabilities/copilot/server/mode-completion.ts",
+      "M\tsrc/capabilities/copilot/server/mode-completion.unit.test.ts",
+      "M\tsrc/capabilities/copilot/server/practice-port.ts",
+      "A\tsrc/capabilities/copilot/server/prose-stream.ts",
+      "A\tsrc/capabilities/copilot/server/prose-stream.unit.test.ts",
+      "M\tsrc/capabilities/copilot/server/reply-finalization.ts",
+      "M\tsrc/capabilities/copilot/server/reply-finalization.unit.test.ts",
+      "M\tsrc/capabilities/copilot/server/subagent-mailbox.db.test.ts",
+      "M\tsrc/capabilities/copilot/server/tool-activity.ts",
+      "M\tsrc/capabilities/copilot/server/tool-result-snapshot.db.test.ts",
+      "M\tsrc/capabilities/copilot/server/tool-result-snapshot.ts",
+      "M\tsrc/capabilities/copilot/server/tool-result-snapshot.unit.test.ts",
+      "M\tsrc/capabilities/copilot/tasks/agent.ts",
+      "M\tsrc/capabilities/practice/server/learning-content-validation.ts",
+      "M\tsrc/capabilities/practice/server/quiz/verify-framework.test.ts",
+      "M\tsrc/capabilities/practice/server/quiz/verify-framework.ts",
+      "M\tsrc/capabilities/practice/tasks/quiz-verify.ts",
+      "M\tsrc/capabilities/task-registry.unit.test.ts",
+      "D\tsrc/kernel/learning-content-validation.ts",
+      "M\tsrc/server/ai/execution-adapter.ts",
+      "M\tsrc/server/ai/pi-agent-adapter.ts",
+      "M\tsrc/server/ai/runner.stream-collect.test.ts",
+      "M\tsrc/server/ai/runner.ts",
+      "M\tsrc/server/ai/sdk-types.ts",
+      "M\tsrc/subjects/_shared/skills/copilot/SKILL.md",
+      "M\tsrc/subjects/copilot-skills.test.ts",
+      "M\tsrc/subjects/copilot-skills.ts",
+      "M\ttests/acceptance/ai-pipeline.ts"
+    ],
+    "final-vs-stream-merge-files.txt": [
+      "M\t.github/workflows/ci-gate.yml",
+      "M\tserver/index.ts",
+      "M\tserver/index.unit.test.ts"
+    ]
+  },
+  "counts": {
+    "unit_files": 18,
+    "unit_passed": 451,
+    "db_files": 9,
+    "db_passed": 188,
+    "lint_warnings": 297,
+    "lint_errors": 0
+  },
+  "checks": [
+    {
+      "command": [
+        "pnpm",
+        "vitest",
+        "run",
+        "--config",
+        "vitest.unit.config.ts",
+        "server/index.unit.test.ts",
+        "src/core/schema/derivation-policy.unit.test.ts",
+        "src/capabilities/copilot/api/chat.unit.test.ts",
+        "src/capabilities/copilot/server/chat-contracts.unit.test.ts",
+        "src/capabilities/copilot/server/copilot-execution.unit.test.ts",
+        "src/capabilities/copilot/server/copilot-run-input.unit.test.ts",
+        "src/capabilities/copilot/server/live-turn-context.unit.test.ts",
+        "src/capabilities/copilot/server/reply-finalization.unit.test.ts",
+        "src/capabilities/copilot/server/prose-stream.unit.test.ts",
+        "src/capabilities/copilot/server/mode-completion.unit.test.ts",
+        "src/subjects/copilot-skills.test.ts",
+        "src/capabilities/task-registry.unit.test.ts",
+        "src/capabilities/practice/server/quiz/verify-framework.test.ts",
+        "src/server/ai/runner.stream-collect.test.ts",
+        "src/server/ai/tools/mcp-bridge.test.ts",
+        "src/server/ai/tools/pi-tools.test.ts",
+        "src/server/memory/client.test.ts",
+        "src/server/memory/reconcile-llm.test.ts"
+      ],
+      "exit_code": 0,
+      "seconds": 7.58,
+      "log": "/tmp/yuk1346-recovery-listen-ceaxnml2/unit.log",
+      "sha256": "c01d247c0f00fea7c3c4e0f997f8be96f160cc0de286ec2606750237de52a546"
+    },
+    {
+      "command": [
+        "pnpm",
+        "vitest",
+        "run",
+        "--config",
+        "vitest.db.config.ts",
+        "src/capabilities/copilot/jobs/copilot_run.test.ts",
+        "src/capabilities/copilot/jobs/copilot_run.streaming.db.test.ts",
+        "src/capabilities/copilot/server/derivation-policy.db.test.ts",
+        "src/capabilities/copilot/server/turns.db.test.ts",
+        "src/capabilities/copilot/server/durable-session-queue.db.test.ts",
+        "src/capabilities/copilot/server/tool-result-snapshot.db.test.ts",
+        "src/server/memory/reconcile-handler.db.test.ts",
+        "src/capabilities/practice/server/learning-content-validation.db.test.ts",
+        "src/capabilities/notes/server/tools/author-artifact.db.test.ts"
+      ],
+      "exit_code": 0,
+      "seconds": 23.28,
+      "log": "/tmp/yuk1346-recovery-listen-ceaxnml2/db.log",
+      "sha256": "e42ca287f0a2194402bbce4e4729ff4078298118887b4cbd7553d68379e39b80"
+    },
+    {
+      "command": ["pnpm", "typecheck"],
+      "exit_code": 0,
+      "seconds": 4.11,
+      "log": "/tmp/yuk1346-recovery-listen-ceaxnml2/typecheck.log",
+      "sha256": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92"
+    },
+    {
+      "command": ["pnpm", "lint"],
+      "exit_code": 0,
+      "seconds": 5.82,
+      "log": "/tmp/yuk1346-recovery-listen-ceaxnml2/lint.log",
+      "sha256": "415c2955832636977767a3b88a70155427e7fd424980e4ebd704264be932b79b"
+    },
+    {
+      "command": ["pnpm", "audit:schema"],
+      "exit_code": 0,
+      "seconds": 5.48,
+      "log": "/tmp/yuk1346-recovery-listen-ceaxnml2/audit-schema.log",
+      "sha256": "dcf9b31b80baa2ab85ecd72aad12df032efae015514bac30c02c5379f5a8a230"
+    },
+    {
+      "command": ["pnpm", "audit:partition"],
+      "exit_code": 0,
+      "seconds": 2.42,
+      "log": "/tmp/yuk1346-recovery-listen-ceaxnml2/audit-partition.log",
+      "sha256": "5d447308680e3713c8ea804a10be726748acc928e17d00abe83d6132468f9c55"
+    },
+    {
+      "command": ["pnpm", "audit:api-client"],
+      "exit_code": 0,
+      "seconds": 6.59,
+      "log": "/tmp/yuk1346-recovery-listen-ceaxnml2/audit-api-client.log",
+      "sha256": "f26bc904f865f0cc5a1a1613ea5d4017d46fdab55aceaf8eb0a831aedd0cea7c"
+    },
+    {
+      "command": ["pnpm", "audit:api-client-usage"],
+      "exit_code": 0,
+      "seconds": 2.24,
+      "log": "/tmp/yuk1346-recovery-listen-ceaxnml2/audit-api-client-usage.log",
+      "sha256": "71c2c93dd9e51bd4fc368e7845a5a34d42b2b56cf97e4dcf94a8556a99f45b46"
+    },
+    {
+      "command": ["pnpm", "audit:capability-boundaries"],
+      "exit_code": 0,
+      "seconds": 5.42,
+      "log": "/tmp/yuk1346-recovery-listen-ceaxnml2/audit-capability-boundaries.log",
+      "sha256": "42a7d0cb9f8f9a7948bd6aeb552b2b64b70d98953edea22293a755a32000bba1"
+    },
+    {
+      "command": ["pnpm", "audit:provider-lanes"],
+      "exit_code": 0,
+      "seconds": 8.46,
+      "log": "/tmp/yuk1346-recovery-listen-ceaxnml2/audit-provider-lanes.log",
+      "sha256": "4e94a5c1aa34213ec2cbb56a60b90e883fdcf6a7fd9c10daff833b754ea85b5c"
+    },
+    {
+      "command": ["pnpm", "audit:profile"],
+      "exit_code": 0,
+      "seconds": 2.08,
+      "log": "/tmp/yuk1346-recovery-listen-ceaxnml2/audit-profile.log",
+      "sha256": "f2f14ec06808ef23b857f78b1f54fd2fb25ba55e75776644d2a00aef10981db4"
+    },
+    {
+      "command": ["pnpm", "audit:task-census"],
+      "exit_code": 0,
+      "seconds": 3.73,
+      "log": "/tmp/yuk1346-recovery-listen-ceaxnml2/audit-task-census.log",
+      "sha256": "ddf8d63319f242b650617ac0e743a24966ea2eb10c9c446a74b9d24f8c58df6a"
+    },
+    {
+      "command": ["pnpm", "audit:draft-status"],
+      "exit_code": 0,
+      "seconds": 1.94,
+      "log": "/tmp/yuk1346-recovery-listen-ceaxnml2/audit-draft-status.log",
+      "sha256": "de3569839d7a890654a591c9c6b77334b1031fa56e3ecedef457f132dd24eb8d"
+    },
+    {
+      "command": ["pnpm", "audit:draft-status-reads"],
+      "exit_code": 0,
+      "seconds": 2.1,
+      "log": "/tmp/yuk1346-recovery-listen-ceaxnml2/audit-draft-status-reads.log",
+      "sha256": "80228a099ce15d5385a697b414e9c4dab02775883e5e3d006293fe03a69b7794"
+    },
+    {
+      "command": ["pnpm", "build"],
+      "exit_code": 0,
+      "seconds": 11.78,
+      "log": "/tmp/yuk1346-recovery-listen-ceaxnml2/build.log",
+      "sha256": "9d3dffc14b959823a3e949680671242acffcac65fedc85446abe09cb94b1cb9e"
+    }
+  ],
+  "previous_verification": "2026-10-07-yuk1346-main-streaming-recovery.json",
+  "environment_allowlist": ["PATH", "HOME", "TMPDIR", "USER", "LANG"],
+  "ownership": "Only normal merge of other owner landed PR1594 main commit; no listener implementation, PR1594 operations or runtime acceptance owned here. Parent retains PR1588 and runtime delivery.",
+  "retained_document_format_failure": {
+    "path": "/var/folders/bt/rcf5s7tx3s93g3dz0046y96w0000gn/T/yuk1346-recovery-df08399-eqc6ci0f/final-document-lint.log",
+    "sha256": "a5dc7b0ed351257f5203a9f68b1b169fd1f973d485f007a993f522264acecf17",
+    "cause": "new evidence JSON formatting; formatted before final verification"
+  },
+  "runtime": {
+    "current_revision": null,
+    "provider_actual_output": null,
+    "browser": null,
+    "host_restart": null,
+    "exact_head_ci": null,
+    "old_unknown_result": null,
+    "old_unknown_cost": null
+  },
+  "latest_main_diff_stat": [
+    " src/capabilities/copilot/api/chat.ts               |   3 +",
+    " src/capabilities/copilot/api/chat.unit.test.ts     |  10 +-",
+    " src/capabilities/copilot/api/contracts.db.test.ts  |  18 +",
+    " src/capabilities/copilot/api/contracts.ts          |   6 +",
+    " src/capabilities/copilot/api/sessions.ts           |  10 +-",
+    " src/capabilities/copilot/jobs/copilot_run.test.ts  |   3 +-",
+    " src/capabilities/copilot/jobs/copilot_run.ts       | 129 +++--",
+    " src/capabilities/copilot/server/chat-contracts.ts  |   2 +",
+    " .../copilot/server/chat-contracts.unit.test.ts     |  16 +",
+    " .../copilot/server/conversation-writes.ts          |  14 +",
+    " .../copilot/server/copilot-execution.ts            |  34 +-",
+    " .../copilot/server/copilot-execution.unit.test.ts  |  91 +++-",
+    " .../copilot/server/copilot-run-input.ts            |  36 +-",
+    " .../copilot/server/correction-contract.ts          |  33 +-",
+    " .../copilot/server/derivation-policy.db.test.ts    | 598 +++++++++++++++++++++",
+    " .../copilot/server/derivation-policy.ts            |  56 ++",
+    " .../copilot/server/durable-dispatch.db.test.ts     |   1 +",
+    " .../copilot/server/durable-dispatch.ts             |  37 +-",
+    " .../server/durable-session-queue.db.test.ts        |  43 +-",
+    " .../copilot/server/live-turn-context.ts            |  34 +-",
+    " .../copilot/server/live-turn-context.unit.test.ts  |  24 +",
+    " .../copilot/server/reply-finalization.unit.test.ts |   4 +",
+    " .../copilot/server/tools/query-events.ts           |   5 +-",
+    " src/capabilities/copilot/server/turns.db.test.ts   |   2 +",
+    " src/capabilities/copilot/server/turns.ts           |  78 ++-",
+    " .../ui/CopilotDock.durable-retry.unit.test.tsx     | 228 +++++++-",
+    " .../ui/CopilotDock.session-entry.unit.test.tsx     |  50 +-",
+    " src/capabilities/copilot/ui/CopilotDock.tsx        | 166 +++++-",
+    " .../copilot/ui/durable-reconnect-storage.ts        |  24 +",
+    " .../ui/durable-reconnect-storage.unit.test.ts      |  23 +",
+    " src/capabilities/copilot/ui/message-projection.ts  |  19 +-",
+    " .../copilot/ui/message-projection.unit.test.ts     |  38 ++",
+    " src/capabilities/copilot/ui/replay.ts              |   3 +",
+    " .../practice/server/tools/get-attempt-context.ts   |   4 +-",
+    " src/core/schema/derivation-policy.ts               |  15 +",
+    " src/core/schema/derivation-policy.unit.test.ts     |  22 +",
+    " src/core/schema/event/known.ts                     |   2 +",
+    " src/kernel/events/derivation-policy.ts             |  35 ++",
+    " src/kernel/events/events.ts                        |  46 +-",
+    " src/kernel/events/index.ts                         |   1 +",
+    " src/kernel/tools/derivation-policy.ts              |  24 +",
+    " src/kernel/tools/types.ts                          |   2 +",
+    " src/server/ai/direct-provider-attempt.ts           |   8 +-",
+    " src/server/ai/tools/mcp-bridge.test.ts             |   4 +",
+    " src/server/ai/tools/mcp-bridge.ts                  |  16 +-",
+    " src/server/ai/tools/pi-tools.test.ts               |  38 ++",
+    " src/server/memory/brief-writer.ts                  |   4 +-",
+    " src/server/memory/brief.ts                         |  39 +-",
+    " src/server/memory/client.test.ts                   |  45 ++",
+    " src/server/memory/client.ts                        |   5 +",
+    " src/server/memory/memory-ingest-recovery-store.ts  |   5 +-",
+    " .../memory/memory-reconcile-handoff.db.test.ts     |   1 +",
+    " src/server/memory/memory-reconcile-handoff.ts      |  10 +-",
+    " src/server/memory/reconcile-handler.db.test.ts     | 192 ++++++-",
+    " src/server/memory/reconcile-llm.test.ts            | 251 ++++++++-",
+    " src/server/memory/reconcile-llm.ts                 | 204 +++----",
+    " src/server/memory/triggers.ts                      |  45 +-",
+    " src/server/session/conversation.ts                 |  15 +-",
+    " src/ui/lib/api-schema.generated.ts                 |   9 +",
+    " 59 files changed, 2637 insertions(+), 243 deletions(-)"
+  ]
+}

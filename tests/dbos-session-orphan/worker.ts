@@ -1,7 +1,7 @@
 import { setTimeout as delay } from 'node:timers/promises';
 import { DBOS } from '@dbos-inc/dbos-sdk';
 import { drizzle } from 'drizzle-orm/postgres-js';
-import { PgBoss } from 'pg-boss';
+import { type Clock, PgBoss, systemClock } from 'pg-boss';
 import postgres from 'postgres';
 import { z } from 'zod';
 import * as schema from '@/db/schema';
@@ -131,6 +131,15 @@ async function main() {
     ...(cron ? { connection: { search_path: clockSearchPath } } : {}),
   });
   const db = drizzle(appClient, { schema });
+  let clockOffsetMs = 0;
+  const clock: Clock = { ...systemClock, now: () => Date.now() + clockOffsetMs };
+  async function synchronizeClock() {
+    if (!cron) throw new Error('Only the cron fixture may synchronize its clock');
+    const [state] = await appClient`select offset_ms::double precision as offset_ms
+      from session_cron_clock.state where singleton`;
+    clockOffsetMs = z.number().parse(state.offset_ms);
+  }
+  if (cron) await synchronizeClock();
   const family = await import('@/server/durable/session-orphan-family');
   const backend = await import('@/server/durable/session-orphan-backend');
   const selectedFamily: SessionOrphanFamily = family.sessionOrphanFamilySchema.parse(
@@ -142,6 +151,7 @@ async function main() {
   const heldRows = new Set<() => void>();
   const boss = new PgBoss({
     connectionString: url.toString(),
+    ...(cron ? { clock } : {}),
     max: 2,
     supervise: false,
     schedule: cron,
@@ -261,13 +271,12 @@ async function main() {
             z.object({ kind: z.literal('release-forward') }),
             z.object({ kind: z.literal('arm-forward') }),
             z.object({ kind: z.literal('release-rows') }),
-            z.object({ kind: z.literal('enqueue-legacy') }),
             z.object({ kind: z.literal('pause-native') }),
+            z.object({ kind: z.literal('sync-clock') }),
             z.object({ kind: z.literal('stop') }),
           ])
           .parse(raw);
         commandStage = `command-${command.kind}`;
-        let legacyJobId: string | undefined;
         if (command.kind === 'transition')
           await backend.changeSessionOrphanPhase(db, boss, {
             family: command.family,
@@ -282,9 +291,8 @@ async function main() {
           holdForward = false;
           releaseForward?.();
           releaseForward = undefined;
-        } else if (command.kind === 'enqueue-legacy') {
-          if (!cron) throw new Error('Only the cron fixture may enqueue its rollback probe');
-          legacyJobId = z.string().parse(await boss.send(selectedFamily, {}));
+        } else if (command.kind === 'sync-clock') {
+          await synchronizeClock();
         } else if (command.kind === 'pause-native') {
           if (!pauseNative) throw new Error('Only the cron fixture may pause native scheduling');
           await pauseNative();
@@ -306,7 +314,7 @@ async function main() {
           await appClient.end({ timeout: 2 });
           process.exit(0);
         }
-        process.send?.({ kind: 'ack', ...(legacyJobId ? { legacyJobId } : {}) });
+        process.send?.({ kind: 'ack' });
       } catch (error) {
         reportError('rejected', error, commandStage);
       }

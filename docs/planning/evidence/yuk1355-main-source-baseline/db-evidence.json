@@ -1,0 +1,68 @@
+{
+  "newDbRuns": 0,
+  "latestHeadDbAcceptance": "UNRUN",
+  "receipts": [
+    {
+      "run": "DB05",
+      "receiptPath": "docs/planning/evidence/2026-10-11-yuk1355-shared-db05.json",
+      "receiptSha256": "f37c6723eb92324072e040bc3bff514f1783fa7d8a717982f940f334a88cef27",
+      "source": "403c7248682129722be0051b9fba5622540c71f3",
+      "selected": 34,
+      "passed": 34,
+      "failed": 0,
+      "skippedOutsideScope": null,
+      "artifact": "/tmp/yuk1355-store-parent-db-05",
+      "dbLogSha256": "e5c87eea8d82c9029e354f12ccf857d12402298fdffe8e30c124a8a1a7a331ed"
+    },
+    {
+      "run": "DB06",
+      "receiptPath": "docs/planning/evidence/2026-10-11-yuk1355-consumer-db06.json",
+      "receiptSha256": "a58e6f397cd8c20cccafdc57bbb8b960d48d3576cf6e4d53e2773289c411967f",
+      "source": "288acbe82a803a88e7725566aa46cdab21d8d867",
+      "selected": 24,
+      "passed": 23,
+      "failed": 1,
+      "skippedOutsideScope": 28,
+      "artifact": "/tmp/yuk1355-consumer-parent-db-06",
+      "dbLogSha256": "0aa327b8ffaf40f2b4a6d68ccd1eb7c271559d2b11fa109285464b482d556006"
+    },
+    {
+      "run": "DB07",
+      "receiptPath": "docs/planning/evidence/2026-10-11-yuk1355-consumer-db07.json",
+      "receiptSha256": "0d26537e955faa949b149f2fd6b1a0034fd16eedf4f94f7d5908ca37397d902f",
+      "source": "366bd301d1975277976bda23bee35b4a363c6403",
+      "selected": 3,
+      "passed": 3,
+      "failed": 0,
+      "skippedOutsideScope": 19,
+      "artifact": "/tmp/yuk1355-consumer-parent-db-07",
+      "dbLogSha256": "f9798eb81a2bd419f83ed6286d7213c525ef665e9afaeaf1d2f2cea54af3f796"
+    },
+    {
+      "run": "DB08",
+      "receiptPath": "docs/planning/evidence/2026-10-11-yuk1355-consumer-db08.json",
+      "receiptSha256": "7cd6267fa22e0a0216a2d2b0cc645adfdcb9739bacc8cfb5bc0b608555880acf",
+      "source": "cb1deee1b1aa9dbd7ca8172ed3b0ea611f7f0d25",
+      "selected": 28,
+      "passed": 10,
+      "failed": 18,
+      "skippedOutsideScope": null,
+      "artifact": "/tmp/yuk1355-consumer-parent-db-08",
+      "dbLogSha256": "d44cd41a58bac4ea9a7edacbb2460f3dfd581846ec1f187e8d7397fab2a8264b"
+    },
+    {
+      "run": "DB09",
+      "receiptPath": "docs/planning/evidence/2026-10-11-yuk1355-consumer-db09.json",
+      "receiptSha256": "a8b654142502426c53729ae90f92b82bb4f6a809b938d8acaa89e5052bc916f3",
+      "source": "ed023d5debd80abefde03b77d568b846e8e46f19",
+      "selected": 24,
+      "passed": 24,
+      "failed": 0,
+      "skippedOutsideScope": 10,
+      "artifact": "/tmp/yuk1355-consumer-parent-db-09",
+      "dbLogSha256": "448bcef27c5d7095234d9057b61567c5ee5e04b2e3d31e25f7350f81de8b2107"
+    }
+  ],
+  "aggregation": "No combined clean PASS; DB06 and DB08 failures retained separately; DB07 and DB09 are focused receipts",
+  "cycleFollowup": "YUK-1482 remains existing backlog"
+}

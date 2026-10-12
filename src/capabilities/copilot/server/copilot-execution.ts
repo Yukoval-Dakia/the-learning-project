@@ -1,4 +1,5 @@
 import { observeTaskOperation } from '@/ai/task-observation';
+import { readDerivationPolicy } from '@/core/schema/derivation-policy';
 import type { Db } from '@/db/client';
 import {
   DOMAIN_TOOL_MCP_SERVER_NAME,
@@ -7,6 +8,7 @@ import {
 } from '@/kernel/tools/allowlists';
 import { resolveContextBudget } from '@/kernel/tools/budgets';
 import { ContextBudgetTracker } from '@/kernel/tools/context-throttle';
+import { ANSWER_ONLY_TOOL_NAMES, derivationToolDenial } from '@/kernel/tools/derivation-policy';
 import type { ValidateLearningContentFn } from '@/kernel/tools/types';
 import type { ModelBinding } from '@/server/ai/execution-adapter';
 import {
@@ -205,6 +207,8 @@ export function createCopilotExecutionOwner(
   const adapters = { ...defaultAdapters, ...overrides };
 
   return async (db, turn, policy) => {
+    const derivationPolicy = readDerivationPolicy(turn.input);
+    const answerOnly = derivationPolicy === 'answer_only';
     const lifecycleAbortController = new AbortController();
     const cancellationSignals = [
       { signal: lifecycleAbortController.signal, requestedBy: 'system' as const },
@@ -297,6 +301,7 @@ export function createCopilotExecutionOwner(
     const domainMountOptions = {
       ctx: {
         db,
+        derivationPolicy,
         ...(reviewAnswer ? { reviewAnswer } : {}),
         sessionId: turn.sessionId,
         taskRunId: turn.taskRunId,
@@ -308,10 +313,11 @@ export function createCopilotExecutionOwner(
         validateLearningContent,
       },
       serverName: DOMAIN_TOOL_MCP_SERVER_NAME,
-      toolNames: resolveDomainToolNames(surface),
+      toolNames: answerOnly ? [...ANSWER_ONLY_TOOL_NAMES] : resolveDomainToolNames(surface),
       taskKind: 'CopilotTask',
       cancellationSignals,
       beforeExecute: async (tool) =>
+        derivationToolDenial(derivationPolicy, tool) ??
         (await policy.cancellation.beforeTool()) ??
         finalizer.beforeDomainTool(tool) ??
         proposalFlowGate.beforeExecute(tool) ??
@@ -332,16 +338,18 @@ export function createCopilotExecutionOwner(
         );
       },
     } satisfies BuildMcpServerOptions;
-    const exa = adapters.buildExaMcpServerFn();
+    const exa = answerOnly ? null : adapters.buildExaMcpServerFn();
     const piToolMounts = [
       piDomainMount(domainMountOptions),
       ...(exa ? [piRemoteMcpMount(EXA_MCP_SERVER_NAME, exa, EXA_SCOPED_TOOL_NAMES)] : []),
     ];
     const baseAllowedTools = [
-      ...resolveMcpAllowedTools(surface),
+      ...(answerOnly
+        ? ANSWER_ONLY_TOOL_NAMES.map((name) => `mcp__${DOMAIN_TOOL_MCP_SERVER_NAME}__${name}`)
+        : resolveMcpAllowedTools(surface)),
       ...(exa ? EXA_MCP_ALLOWED_TOOLS : []),
     ];
-    const subagentsEnabled = policy.subagentsEnabled ?? isCopilotSubagentEnabled();
+    const subagentsEnabled = !answerOnly && (policy.subagentsEnabled ?? isCopilotSubagentEnabled());
     // Root turns are uncapped; the nested researcher inherits that (its loop
     // still ends with the parent's abort lineage / owner deadline).
     const parentMaxTurns = undefined;
@@ -432,15 +440,19 @@ export function createCopilotExecutionOwner(
       ],
       afterToolCall: [remoteMcpToolFinished],
     });
-    const piSkillDocs = await adapters.resolveCopilotSkillDocsFn();
+    const piSkillDocs = answerOnly ? undefined : await adapters.resolveCopilotSkillDocsFn();
     const contextDigest = copilotSessionContextDigest(input);
-    const resumeSessionId = policy.resumeSessionId;
+    const resumeSessionId = answerOnly ? undefined : policy.resumeSessionId;
     const mode: 'cold' | 'resume' = resumeSessionId ? 'resume' : 'cold';
     const compiledModelPrompt = {
-      text: compileCopilotModelInput(input, mode, {
-        includeProposalFeedback:
-          !resumeSessionId || shouldDeliverCopilotSessionContext(resumeSessionId, contextDigest),
-      }),
+      text:
+        (answerOnly
+          ? '本轮仅用于本次回答。只能读取已有资料并用文字或 Markdown 回答，不创建练习、笔记、计划或提案。\n'
+          : '') +
+        compileCopilotModelInput(input, mode, {
+          includeProposalFeedback:
+            !resumeSessionId || shouldDeliverCopilotSessionContext(resumeSessionId, contextDigest),
+        }),
       codecVersion: COPILOT_TURN_CONTEXT_CODEC_VERSION,
       mode,
       contextDigest,
@@ -555,7 +567,7 @@ export function createCopilotExecutionOwner(
           return finalized;
         },
       );
-      retainSdkSession = !partial && finalization.accepted && nativeChildrenComplete;
+      retainSdkSession = !answerOnly && !partial && finalization.accepted && nativeChildrenComplete;
       return {
         taskRunId: result.task_run_id,
         finishReason: result.finishReason ?? 'unknown',

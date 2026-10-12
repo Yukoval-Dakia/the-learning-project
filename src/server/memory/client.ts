@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { MemoryConfig, MemoryItem, SearchResult } from 'mem0ai/oss';
+import { allowsDerivation } from '@/core/schema/derivation-policy';
 import {
   type Mem0OpaqueOperationContext,
   executeMem0OpaqueOperation,
@@ -365,6 +366,8 @@ export function createMemoryClient(
   return {
     findByEventId,
     async addEventMemoryOnce(input, providerOperation, beforeProviderAdd) {
+      if (!allowsDerivation(input.payload))
+        throw new Error('answer_only event cannot enter memory');
       const existing = await findByEventId(input.id);
       if (existing.results.length > 0) {
         return { result: existing, resolution: 'event_lookup' };
@@ -376,6 +379,7 @@ export function createMemoryClient(
       };
     },
     async addVerbatimOnce(text, metadata, projectionKey, providerOperation, beforeProviderAdd) {
+      if (!allowsDerivation(metadata)) throw new Error('answer_only content cannot enter memory');
       const memory = await getMemory();
       const filters = { user_id: 'self', projection_key: projectionKey };
       const existing = await memory.getAll({ topK: 2, filters });
@@ -450,6 +454,7 @@ export function createMemoryClient(
       return (await getMemory()).history(memoryId);
     },
     async restoreVerbatim(text, metadata, providerOperation) {
+      if (!allowsDerivation(metadata)) throw new Error('answer_only content cannot enter memory');
       const memory = await getMemory();
       // infer:false → mem0's addToVectorStore skips the extraction LLM and calls
       // createMemory(text, {}, metadata) directly (index.mjs:6419-6436): the raw

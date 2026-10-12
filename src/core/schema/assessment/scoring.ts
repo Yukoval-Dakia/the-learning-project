@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { ConjectureProbeSpecV2 } from '../business';
+import { isInteriorGap } from './position-gap';
 import type { ResponseSlotT, ResponseSpecT } from './response';
 import type { QuestionGroupStructureT } from './structure';
 
@@ -54,6 +55,8 @@ export type NumericKeyCriterionT = z.infer<typeof NumericKeyCriterion>;
 /**
  * 配对题答案键（P1-8）：显式编码【哪个左项配哪个右项】—— 不能用 option
  * 集合冒充（集合无法表达映射关系）。与 exact_matching_pairs 比较器配套。
+ * 私有判据：随 revision 冻结，公开 issuance DTO 不含 criterion，反馈
+ * 揭示走 RevealedAnswerKey（dto.ts）。
  */
 export const MatchingPairsKeyCriterion = z.object({
   kind: z.literal('matching_pairs_key'),
@@ -65,8 +68,46 @@ export const MatchingPairsKeyCriterion = z.object({
       }),
     )
     .min(1),
+  /**
+   * 题级部分分规则（ADR-0074 D3a）：只按卷面【印出来的】规则 typed 录入；
+   * 缺省（无印规则）＝非全对记对数、partial、分数未知（不造分）。
+   * 卷面印每对分值时，录入侧亦可按 ADR 拆为每对一计分单元 —— 两种承载
+   * 都合法；本规则不发明权重。
+   */
+  rule: z
+    .object({
+      kind: z.literal('per_correct_pair'),
+      /** 每配对一对得多少分（卷面印值）。 */
+      points_per_pair: z.number().min(0),
+    })
+    .optional(),
 });
 export type MatchingPairsKeyCriterionT = z.infer<typeof MatchingPairsKeyCriterion>;
+
+/**
+ * 位置集合键（ADR-0074 D3a 断句）：接受的断点集合 + 题级 typed 计分规则。
+ * 私有判据（同 matching_pairs_key 的公私边界）。位置语义见 position-gap.ts
+ * （冻结明文的 code point 内部字缝）。规则只按卷面印规则 typed 录入
+ * （例：「每对一处 1 分、超 3 处 0 分」）；缺省＝无印规则：非精确集合记
+ * 对数、partial、分数未知（不造分）。绝不解析中文规则原文 —— 规则必须
+ * 录入时 typed 填入，不 regex 猜。
+ */
+export const PositionSetKeyCriterion = z.object({
+  kind: z.literal('position_set_key'),
+  /** 接受的断点集合（内部字缝索引；validateScoringBasis 校验范围与唯一）。 */
+  accepted_positions: z.array(z.number().int().min(1)).min(1),
+  rule: z
+    .object({
+      kind: z.literal('per_correct_break'),
+      /** 每对一处得多少分（卷面印值）。 */
+      points_per_break: z.number().min(0),
+      /** 「超 N 处 0 分」的 N：作答断点数 > N ⇒ 0 分（validateScoringBasis
+       * 强制 N ≥ 接受集合大小 —— 精确集合不得被自家规则归零）。 */
+      max_breaks: z.number().int().min(1),
+    })
+    .optional(),
+});
+export type PositionSetKeyCriterionT = z.infer<typeof PositionSetKeyCriterion>;
 
 /**
  * 规则引用：复杂/过程性评分依据以受版本化规则原文表达，由获准执行器
@@ -99,6 +140,7 @@ export type HolisticLevelCriterionT = z.infer<typeof HolisticLevelCriterion>;
 export const ScoringUnitCriterion = z.discriminatedUnion('kind', [
   OptionSetKeyCriterion,
   MatchingPairsKeyCriterion,
+  PositionSetKeyCriterion,
   TextKeyCriterion,
   NumericKeyCriterion,
   RuleReferenceCriterion,
@@ -198,12 +240,24 @@ export interface ScoringBasisIssue {
     | 'criterion_slot_kind_mismatch'
     | 'key_option_not_declared'
     | 'key_item_not_declared'
+    | 'key_position_not_declared'
+    | 'key_position_duplicated'
+    | 'key_rule_conflicts_exact_set'
+    | 'key_rule_points_mismatch'
+    | 'key_pairing_violation'
     | 'weights_must_cover_units_exactly'
     | 'no_unit_references_any_slot';
   detail: string;
 }
 
 // P1-8：判据↔槽位种类相容表 —— 答案键必须落在能承载它的槽位上。
+/**
+ * 浮点相等（相对 ε=1e-9）：卷面十进制分值（如 1.5×3、0.5×2）不得因二进制
+ * 表示误差被误拒（独立复核 P1-2 —— 校验“可达满分=发布满分”，非重算权重）。
+ */
+function samePoints(a: number, b: number): boolean {
+  return Math.abs(a - b) <= 1e-9 * Math.max(1, Math.abs(a), Math.abs(b));
+}
 function expectsSlotKinds(
   criterion: ScoringUnitT['criterion'],
 ): readonly ResponseSlotT['kind'][] | null {
@@ -212,6 +266,8 @@ function expectsSlotKinds(
       return ['single_choice', 'multi_choice'];
     case 'matching_pairs_key':
       return ['matching'];
+    case 'position_set_key':
+      return ['sentence_breaks'];
     case 'text_key':
       return ['text', 'open_response'];
     case 'numeric_key':
@@ -323,6 +379,83 @@ export function validateScoringBasis(
           issues.push({
             code: 'key_item_not_declared',
             detail: `unit '${unit.scoring_unit_id}' pair '${pair.item_id}'→'${pair.option_id}' does not resolve in any referenced matching slot`,
+          });
+        }
+      }
+      // ADR-0074 D3a：声明 one_to_one 的槽，键内同一右选项不得配多个左项
+      // （键与作答位基数声明同源 —— 否则永远判不出全对）。
+      for (const slot of matchingSlots) {
+        if (slot.pairing !== 'one_to_one') continue;
+        const optionUse = new Map<string, number>();
+        for (const pair of unit.criterion.accepted_pairs) {
+          const resolvesHere =
+            slot.left_items.some((item) => item.item_id === pair.item_id) &&
+            slot.right_options.some((option) => option.option_id === pair.option_id);
+          if (resolvesHere) {
+            optionUse.set(pair.option_id, (optionUse.get(pair.option_id) ?? 0) + 1);
+          }
+        }
+        for (const [optionId, uses] of optionUse) {
+          if (uses > 1) {
+            issues.push({
+              code: 'key_pairing_violation',
+              detail: `unit '${unit.scoring_unit_id}' key pairs right option '${optionId}' with ${uses} left items in one_to_one slot '${slot.slot_id}'`,
+            });
+          }
+        }
+      }
+      // 独立复核 P1-2：印规则可达满分必须等于发布 unit.points —— 矛盾规则
+      // 在发布/服务共用的 canonical 校验处拒绝，不封顶、不折算、不让精确
+      // 集合静默绕过矛盾规则。
+      if (unit.criterion.rule?.kind === 'per_correct_pair' && unit.points != null) {
+        const attainable =
+          unit.criterion.rule.points_per_pair * unit.criterion.accepted_pairs.length;
+        if (!samePoints(attainable, unit.points)) {
+          issues.push({
+            code: 'key_rule_points_mismatch',
+            detail: `unit '${unit.scoring_unit_id}' printed rule attains ${attainable} (${unit.criterion.rule.points_per_pair}×${unit.criterion.accepted_pairs.length} pairs) but the unit publishes points=${unit.points} — contradictory rule is rejected at entry, never capped or rescaled`,
+          });
+        }
+      }
+    }
+    if (unit.criterion.kind === 'position_set_key') {
+      const breakSlots = referencedSlots.filter(
+        (slot): slot is Extract<ResponseSlotT, { kind: 'sentence_breaks' }> =>
+          slot.kind === 'sentence_breaks',
+      );
+      const seenKeyPositions = new Set<number>();
+      for (const position of unit.criterion.accepted_positions) {
+        if (seenKeyPositions.has(position)) {
+          issues.push({
+            code: 'key_position_duplicated',
+            detail: `unit '${unit.scoring_unit_id}' accepts break position ${position} more than once`,
+          });
+        }
+        seenKeyPositions.add(position);
+        if (!breakSlots.some((slot) => isInteriorGap(slot.text, position))) {
+          issues.push({
+            code: 'key_position_not_declared',
+            detail: `unit '${unit.scoring_unit_id}' accepted break position ${position} is not an interior code-point gap of any referenced sentence_breaks slot`,
+          });
+        }
+      }
+      if (
+        unit.criterion.rule?.kind === 'per_correct_break' &&
+        unit.criterion.rule.max_breaks < unit.criterion.accepted_positions.length
+      ) {
+        issues.push({
+          code: 'key_rule_conflicts_exact_set',
+          detail: `unit '${unit.scoring_unit_id}' rule max_breaks=${unit.criterion.rule.max_breaks} is below the accepted break count ${unit.criterion.accepted_positions.length} — the exact reference set would be zeroed by its own rule`,
+        });
+      }
+      // 独立复核 P1-2：同配对 —— 印规则可达满分必须等于发布 unit.points。
+      if (unit.criterion.rule?.kind === 'per_correct_break' && unit.points != null) {
+        const attainable =
+          unit.criterion.rule.points_per_break * unit.criterion.accepted_positions.length;
+        if (!samePoints(attainable, unit.points)) {
+          issues.push({
+            code: 'key_rule_points_mismatch',
+            detail: `unit '${unit.scoring_unit_id}' printed rule attains ${attainable} (${unit.criterion.rule.points_per_break}×${unit.criterion.accepted_positions.length} breaks) but the unit publishes points=${unit.points} — contradictory rule is rejected at entry, never capped or rescaled`,
           });
         }
       }

@@ -18,6 +18,7 @@ import {
   FK_ORDER,
   MAX_INLINE_ASSETS,
   MEM0_COLLECTION_COLUMNS,
+  PAID_EFFECT_BACKUP_TABLES,
   RESTORE_WIPE_ONLY_TABLES,
   SCHEMA_VERSION,
   SUBSCRIPTION_PROGRESS_TABLES,
@@ -615,7 +616,7 @@ export async function restoreFromArchive({
     }
   }
 
-  // A 4.25 archive must carry even empty progress tables. Treating a missing key as
+  // An archive must carry even empty progress tables. Treating a missing key as
   // empty would silently erase its activation history and bootstrap-skip pending work.
   const missingProgress = SUBSCRIPTION_PROGRESS_TABLES.filter((table) => data[table] === undefined);
   if (missingProgress.length > 0) {
@@ -625,6 +626,22 @@ export async function restoreFromArchive({
         error: 'data_validation_failed',
         message: 'Subscription progress is missing; DB was NOT wiped.',
         issues: missingProgress.map((table) => `${table}: required progress table missing`),
+      },
+    };
+  }
+
+  // A 4.26 archive must explicitly carry both durable paid-effect tables, even
+  // when empty. Absence cannot mean bootstrap ownership or permission to resend.
+  const missingPaidEffects = PAID_EFFECT_BACKUP_TABLES.filter(
+    (table) => !Object.hasOwn(data, table),
+  );
+  if (missingPaidEffects.length > 0) {
+    return {
+      status: 400,
+      body: {
+        error: 'data_validation_failed',
+        message: 'Paid-effect durability tables are missing; DB was NOT wiped.',
+        issues: missingPaidEffects.map((table) => `${table}: required durable table missing`),
       },
     };
   }
