@@ -223,6 +223,9 @@ export function PfPaper(props: PfPaperProps) {
   const detailQ = useQuery({
     queryKey: ['paper', artifactId],
     queryFn: () => getPaperDetail(artifactId),
+    // YUK-1488 — every entry reads the server's drafts and epochs: a cached detail from an
+    // earlier visit predates the drafts that visit saved (autosave never updates the cache).
+    refetchOnMount: 'always',
   });
   const detail: PaperDetail | null = detailQ.data ?? null;
   const slots = useMemo(() => detail?.sections.flatMap((s) => s.slots) ?? [], [detail]);
@@ -237,7 +240,10 @@ export function PfPaper(props: PfPaperProps) {
     });
   }
 
-  if (detailQ.isLoading) return <p className="quiet-empty">取卷中…</p>;
+  // A visit restores its drafts once at mount, so it mounts only from a detail fetched for
+  // this entry; later background refetches never overwrite the live visit.
+  if (detailQ.isLoading || !detailQ.isFetchedAfterMount)
+    return <p className="quiet-empty">取卷中…</p>;
   if (detailQ.isError || !detail || slots.length === 0)
     return (
       <div className="pfp">
@@ -766,21 +772,34 @@ function PaperVisit({
   // and in-flight save and reads the epoch when it sends. Not while exiting (the exit button
   // already flushed and counted) or submitting (the submission carries the answer), and
   // never for a submitted slot. Late results set no state (runSave checks componentActiveRef).
+  // Left before the session open returned: wait for it (it settles either way) so the drafts
+  // go out under the opened session instead of failing on a missing one. Once the sends
+  // settle, the cached paper detail is invalidated so a return within gcTime restores the
+  // flushed text and epochs rather than the session-open snapshot.
   const flushOnUnmount = () => {
     const pending = new Set(Object.keys(saveTimers.current));
     for (const k of pending) {
       clearTimeout(saveTimers.current[k]);
       delete saveTimers.current[k];
     }
-    if (exitingRef.current || submittingRef.current) return;
-    for (const slot of slots) {
-      const key = slotKey(slot);
-      if (slot.slot_state.submission?.submitted || submittedDuringAttemptsRef.current.has(key))
-        continue;
-      const answer = answersRef.current[key] ?? '';
-      if (!pending.has(key) && answer === ackedAnswers.current[key]) continue;
-      void runSave(key, slot.question_id, slot.part_ref, answer);
-    }
+    const go = () => {
+      if (exitingRef.current || submittingRef.current) return;
+      const sends: Promise<boolean>[] = [];
+      for (const slot of slots) {
+        const key = slotKey(slot);
+        if (slot.slot_state.submission?.submitted || submittedDuringAttemptsRef.current.has(key))
+          continue;
+        const answer = answersRef.current[key] ?? '';
+        if (!pending.has(key) && answer === ackedAnswers.current[key]) continue;
+        sends.push(runSave(key, slot.question_id, slot.part_ref, answer));
+      }
+      if (sends.length === 0) return;
+      void Promise.allSettled(sends).then(() =>
+        qc.invalidateQueries({ queryKey: ['paper', artifactId] }),
+      );
+    };
+    if (!sessionRef.current && sessionStart.current) void sessionStart.current.then(go);
+    else go();
   };
 
   // The header's ref: arms pagehide and the unmount flush. Re-bound on every commit with this
