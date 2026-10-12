@@ -7159,7 +7159,7 @@ button.seg-sm {
    KPI / progress (loom.css L250-266)
    loom bare .kpi collides with the legacy .kpi → not redefined.
    .bar (loom L261) only existed scoped as .cost-ribbon .bar, so the
-   bare .bar / .ring / kpi sub-elements are safe to add.
+   bare .bar / kpi sub-elements are safe to add.
    ============================================================ */
 .bar {
   height: 8px;
@@ -7176,29 +7176,6 @@ button.seg-sm {
 }
 .bar.thin {
   height: 5px;
-}
-.ring {
-  --p: 0;
-  width: 84px;
-  height: 84px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  background: conic-gradient(var(--coral) calc(var(--p) * 1%), var(--paper-sunk) 0);
-  position: relative;
-}
-.ring::before {
-  content: "";
-  position: absolute;
-  inset: 9px;
-  border-radius: 50%;
-  background: var(--paper-raised);
-}
-.ring .ring-val {
-  position: relative;
-  font-family: var(--font-serif);
-  font-size: var(--fs-h4);
-  font-variant-numeric: tabular-nums;
 }
 
 /* ============================================================
@@ -9053,8 +9030,7 @@ button.seg-sm {
    confirmed); they remain forward-looking until those surfaces ship. */
 .today-loom .hero-title,
 .today-loom .prop-summary-n,
-.today-loom .cost-amt,
-.ring .ring-val {
+.today-loom .cost-amt {
   letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
 }
@@ -11647,7 +11623,7 @@ div.copilot-tool-line.is-static {
    Reused (grep-confirmed already present → NOT re-ported):
      .card / .card-pad* / .card-hover / .card-sunk · .btn* ·
      .badge(+tones) · .chip / .chip-k · .card-head / .card-title /
-     .card-icon(.accent) · .bar · .hero-cta · .ring / .ring-val ·
+     .card-icon(.accent) · .bar · .hero-cta ·
      .serif / .mono / .tnum / .meta / .wenyan · .thread-arrow ·
      .empty* / .sk* · .nowrap-meta · loom-rise keyframe (today-loom).
    ============================================================ */

@@ -1,9 +1,5 @@
 export type { AppFrameProps } from './AppFrame';
 export { AppFrame } from './AppFrame';
-export type { BottomSheetProps, SheetSnap } from './BottomSheet';
-export { BottomSheet } from './BottomSheet';
-export type { CommandPaletteProps, PaletteCommand } from './CommandPalette';
-export { CommandPalette } from './CommandPalette';
 export type { CompanionPanelProps } from './CompanionPanel';
 export { CompanionPanel } from './CompanionPanel';
 export type { UiNextRootProps } from './Root';
