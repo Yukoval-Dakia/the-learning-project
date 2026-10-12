@@ -49,6 +49,7 @@ import {
   isCopilotWorkerSessionOwned,
   registerCopilotWorkerSession,
 } from '@/capabilities/copilot/server/copilot-worker-session';
+import { acceptedCopilotDerivationPolicy } from '@/capabilities/copilot/server/derivation-policy';
 import {
   type CopilotRunJobData,
   hasTerminalCopilotRun,
@@ -59,6 +60,7 @@ import { runTeachingSkill } from '@/capabilities/copilot/server/skills/teaching-
 import { reconcileNativeSubagentsForParent } from '@/capabilities/copilot/server/subagent-mailbox';
 import type { Db, Tx } from '@/db/client';
 import { event, job_events } from '@/db/schema';
+import { readEventDerivationPolicy } from '@/kernel/events/derivation-policy';
 import type { ModelBinding } from '@/server/ai/execution-adapter';
 import {
   type BossJobObservation,
@@ -176,6 +178,10 @@ type ClaimCopilotExecutionFenceResult =
 type ClaimCopilotExecutionFenceFn = (
   db: Db,
   runId: string,
+  options?: {
+    beforeCancelled?: (tx: Tx) => Promise<void>;
+    beforeExecution?: (tx: Tx) => Promise<void>;
+  },
 ) => Promise<ClaimCopilotExecutionFenceResult>;
 
 type MarkCopilotRunStartedResult =
@@ -188,7 +194,7 @@ export async function markCopilotRunStarted(
   db: Db,
   runId: string,
   payload: Record<string, unknown>,
-  options: { writeJobEventFn?: WriteJobEventFn } = {},
+  options: { writeJobEventFn?: WriteJobEventFn; beforeCancelled?: (tx: Tx) => Promise<void> } = {},
 ): Promise<MarkCopilotRunStartedResult> {
   const write = options.writeJobEventFn ?? writeJobEvent;
   return withCopilotDurableDispatchLock(db, runId, async (tx) => {
@@ -201,6 +207,8 @@ export async function markCopilotRunStarted(
       .orderBy(asc(job_events.id));
     if (hasCopilotSettlementTerminal(events)) return { outcome: 'terminal', events };
     if (hasCancelRequest(events)) {
+      await persistPreExecutionCancellation(tx, runId);
+      await options.beforeCancelled?.(tx);
       await write(tx, {
         business_table: COPILOT_RUN_TABLE,
         business_id: runId,
@@ -234,7 +242,11 @@ export async function markCopilotRunStarted(
 export async function claimCopilotExecutionFence(
   db: Db,
   runId: string,
-  options: { writeJobEventFn?: WriteJobEventFn } = {},
+  options: {
+    writeJobEventFn?: WriteJobEventFn;
+    beforeCancelled?: (tx: Tx) => Promise<void>;
+    beforeExecution?: (tx: Tx) => Promise<void>;
+  } = {},
 ): Promise<ClaimCopilotExecutionFenceResult> {
   const write = options.writeJobEventFn ?? writeJobEvent;
   return withCopilotDurableDispatchLock(db, runId, async (tx) => {
@@ -250,6 +262,8 @@ export async function claimCopilotExecutionFence(
       return { outcome: 'existing' };
     }
     if (hasCancelRequest(events)) {
+      await persistPreExecutionCancellation(tx, runId);
+      await options.beforeCancelled?.(tx);
       await write(tx, {
         business_table: COPILOT_RUN_TABLE,
         business_id: runId,
@@ -262,6 +276,7 @@ export async function claimCopilotExecutionFence(
       });
       return { outcome: 'cancelled' };
     }
+    await options.beforeExecution?.(tx);
     await write(tx, {
       business_table: COPILOT_RUN_TABLE,
       business_id: runId,
@@ -269,6 +284,28 @@ export async function claimCopilotExecutionFence(
       payload: { execution_fence: 'at_most_once' },
     });
     return { outcome: 'claimed' };
+  });
+}
+
+async function persistPreExecutionCancellation(tx: Tx, runId: string): Promise<void> {
+  await acquireCopilotExecutionSettlementLock(tx, runId);
+  const [ask] = await tx
+    .select({ sessionId: event.session_id, action: event.action })
+    .from(event)
+    .where(eq(event.id, runId))
+    .limit(1);
+  if (
+    !ask?.sessionId ||
+    !['experimental:copilot_user_ask', 'experimental:copilot_chip_trigger'].includes(ask.action)
+  )
+    return;
+  if (await findPersistedDurableReply(tx, runId)) return;
+  await persistCopilotRunCancellationMarker(tx, {
+    runId,
+    sessionId: ask.sessionId,
+    actorRef:
+      ask.action === 'experimental:copilot_chip_trigger' ? 'agent:copilot_chip' : 'agent:copilot',
+    checkpointSafe: ask.action === 'experimental:copilot_user_ask',
   });
 }
 
@@ -553,6 +590,18 @@ async function projectCopilotOutcomeMarker(
           ...(marker.primaryView ? { primary_view: marker.primaryView } : {}),
         };
       }
+      if (lockedEvents.some((item) => item.event_type === COPILOT_RUN_EVENTS.EXECUTION_STARTED)) {
+        const [ask] = await tx
+          .select({ sessionId: event.session_id })
+          .from(event)
+          .where(eq(event.id, runId))
+          .limit(1);
+        if (ask?.sessionId) {
+          const cursor = await getAgentSdkSessionId(tx, ask.sessionId);
+          if (cursor) clearCopilotWorkerSession(ask.sessionId, cursor);
+          await clearAgentSdkSessionId(tx, ask.sessionId, cursor);
+        }
+      }
       await projectFailedTerminal(
         tx,
         {
@@ -635,11 +684,13 @@ async function runCopilotRunImpl(params: RunCopilotRunParams): Promise<RunCopilo
     // failed. No terminal means no repair; projection failure cannot undo a
     // paid parent outcome. The existing parent reconciler retries after crashes.
     try {
-      await reconcileNativeSubagentsForParent(
-        params.db,
-        params.data.session_id,
-        params.data.run_id,
-      );
+      if ((await readEventDerivationPolicy(params.db, params.data.run_id)) !== 'answer_only') {
+        await reconcileNativeSubagentsForParent(
+          params.db,
+          params.data.session_id,
+          params.data.run_id,
+        );
+      }
     } catch (error) {
       console.error('[copilot_run] native child settlement failed', {
         runId: params.data.run_id,
@@ -653,6 +704,8 @@ async function executeAcceptedCopilotRun(
   params: RunCopilotRunParams,
 ): Promise<RunCopilotRunResult> {
   const { db, data } = params;
+  const derivationPolicy = await acceptedCopilotDerivationPolicy(db, data);
+  const answerOnly = derivationPolicy === 'answer_only';
   const execute = params.executeCopilotTurnFn ?? executeCopilotTurn;
   const assembleRunInput = params.resolveCopilotRunInputFn ?? assembleCopilotRunInput;
   const runId = data.run_id;
@@ -667,9 +720,10 @@ async function executeAcceptedCopilotRun(
   const claimExecutionFence = params.claimExecutionFenceFn ?? claimCopilotExecutionFence;
   const createCancellationControl =
     params.createCancellationControlFn ?? createCopilotRunCancellationControl;
-  const discardWorkerCursor = async () => {
-    clearCopilotWorkerSession(data.session_id);
-    await clearAgentSdkSessionId(db, data.session_id);
+  const initialCursor = await getAgentSdkSessionId(db, data.session_id);
+  const discardWorkerCursor = async (database: Db | Tx = db) => {
+    if (initialCursor) clearCopilotWorkerSession(data.session_id, initialCursor);
+    await clearAgentSdkSessionId(database, data.session_id, initialCursor);
   };
 
   // 启动前 replay 一次：F3 terminal-already-present 守卫 + pre-fence 协作取消。
@@ -786,13 +840,17 @@ async function executeAcceptedCopilotRun(
   // paid execution fence; EXECUTION_STARTED below owns that stronger contract.
   // The dispatch lock prevents this advisory heartbeat from landing after a
   // concurrent pre-fence Stop has already written its terminal suffix.
-  const started = await markCopilotRunStarted(db, runId, {
-    surface,
-    triggered_by: data.triggered_by,
-  });
+  const started = await markCopilotRunStarted(
+    db,
+    runId,
+    {
+      surface,
+      triggered_by: data.triggered_by,
+    },
+    { beforeCancelled: answerOnly ? undefined : discardWorkerCursor },
+  );
   if (started.outcome === 'terminal') return terminalRunResult(started.events, taskRunId);
   if (started.outcome === 'cancelled') {
-    await discardWorkerCursor();
     return { status: 'cancelled' };
   }
 
@@ -804,6 +862,7 @@ async function executeAcceptedCopilotRun(
   const runInput: CopilotRunInput = await assembleRunInput(db, {
     sessionId: data.session_id,
     userMessage: data.user_message,
+    derivationPolicy,
     triggeredBy: data.triggered_by,
     ...(data.chip_kind ? { chipKind: data.chip_kind } : {}),
     ...(data.ambient ? { ambient: data.ambient } : {}),
@@ -820,7 +879,9 @@ async function executeAcceptedCopilotRun(
   // turns into context.messages (pi-agent-adapter piSessionReplay).
   const persistedSdkSessionId = await getAgentSdkSessionId(db, data.session_id);
   const resumeSessionId =
-    isCopilotWorkerSessionOwned(data.session_id, persistedSdkSessionId) && persistedSdkSessionId
+    !answerOnly &&
+    isCopilotWorkerSessionOwned(data.session_id, persistedSdkSessionId) &&
+    persistedSdkSessionId
       ? persistedSdkSessionId
       : undefined;
   let progressChain: Promise<void> = Promise.resolve();
@@ -830,12 +891,14 @@ async function executeAcceptedCopilotRun(
   // deliveries cannot both pass a replay-then-append TOCTOU and run tools twice.
   // A loser must NOT terminalize the run while the winner may still be live;
   // throwing lets pg-boss retry after the owner either persists DONE or crashes.
-  const executionClaim = await claimExecutionFence(db, runId);
+  const executionClaim = await claimExecutionFence(db, runId, {
+    beforeCancelled: answerOnly ? undefined : discardWorkerCursor,
+    beforeExecution: answerOnly ? discardWorkerCursor : undefined,
+  });
   if (executionClaim.outcome === 'terminal') {
     return terminalRunResult(executionClaim.events, taskRunId);
   }
   if (executionClaim.outcome === 'cancelled') {
-    await discardWorkerCursor();
     return { status: 'cancelled' };
   }
   if (executionClaim.outcome === 'existing') {
@@ -847,7 +910,6 @@ async function executeAcceptedCopilotRun(
     runId,
   });
   cancellationControl.startPolling();
-  let sdkSessionCommitted = false;
   const cancellationMarker =
     (
       partialText?: string,
@@ -899,6 +961,9 @@ async function executeAcceptedCopilotRun(
     });
   };
   try {
+    if (answerOnly && data.skill_context?.skill === 'teaching') {
+      throw new Error('仅用于本次回答：不能创建教学练习。请重新提交需要用于日常学习的内容。');
+    }
     if (data.skill_context?.skill === 'teaching') {
       const skillContext = data.skill_context;
       const skillResult = await (params.runTeachingSkillFn ?? runTeachingSkill)({
@@ -1061,7 +1126,6 @@ async function executeAcceptedCopilotRun(
     // per-run settlement lock. A projection failure remains repairable from the
     // marker, while a recovery that wins first blocks a contradictory outcome.
     try {
-      let committedReplyText: string | undefined;
       const markerClaim = await ensureCopilotOutcomeMarker(
         db,
         runId,
@@ -1079,7 +1143,20 @@ async function executeAcceptedCopilotRun(
             ...(modeState ? { modeState } : {}),
             now: new Date(),
           });
-          committedReplyText = cleanedReply;
+          const candidateMatchesCommitted =
+            finalized.receipt.candidate_sha256 ===
+            createHash('sha256').update(cleanedReply, 'utf8').digest('hex');
+          if (!answerOnly && result.sdkSessionId && candidateMatchesCommitted) {
+            await setAgentSdkSessionId(tx, data.session_id, result.sdkSessionId);
+            // The settlement lock still prevents terminal publication and successor pickup.
+            registerCopilotWorkerSession(
+              data.session_id,
+              result.sdkSessionId,
+              result.contextDigest,
+            );
+          } else if (!answerOnly) {
+            await discardWorkerCursor(tx);
+          }
           return {
             outcome: 'success' as const,
             replyMd: cleanedReply,
@@ -1108,15 +1185,6 @@ async function executeAcceptedCopilotRun(
         projectSuccessfulTerminal,
         projectFailedTerminal,
       );
-      const candidateMatchesPublished =
-        committedReplyText !== undefined &&
-        finalized.receipt.candidate_sha256 ===
-          createHash('sha256').update(committedReplyText, 'utf8').digest('hex');
-      if (projected.status === 'done' && result.sdkSessionId && candidateMatchesPublished) {
-        await setAgentSdkSessionId(db, data.session_id, result.sdkSessionId);
-        registerCopilotWorkerSession(data.session_id, result.sdkSessionId, result.contextDigest);
-        sdkSessionCommitted = true;
-      }
       return projected;
     } catch (settlementErr) {
       throw new DurableTerminalProjectionError(runId, 'success', settlementErr);
@@ -1140,7 +1208,6 @@ async function executeAcceptedCopilotRun(
       createCancelledMarker: cancellationMarker(),
     });
   } finally {
-    if (!sdkSessionCommitted) await discardWorkerCursor();
     cancellationControl.dispose();
   }
 }

@@ -11,6 +11,7 @@ import { and, desc, eq, gte, lt, lte, max, ne, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { event } from '@/db/schema';
 import { getCorrectionStatuses } from '@/kernel/events';
+import { eventAllowsDerivationSql } from '@/kernel/events/derivation-policy';
 // P5.1 / YUK-143 — courtesy default (20) centralized in budgets.ts;
 // byte-unchanged from the prior inline literal.
 import { TOOL_COURTESY_DEFAULTS } from '@/kernel/tools/budgets';
@@ -207,7 +208,7 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
       ? new Date(observedAt.getTime() - filter.sinceDays * 86_400_000)
       : undefined;
 
-  const conditions = [];
+  const conditions = [eventAllowsDerivationSql()];
   if (filter.eventId) conditions.push(eq(event.id, filter.eventId));
   if (filter.actorKind) conditions.push(eq(event.actor_kind, filter.actorKind));
   if (filter.actorRef) conditions.push(eq(event.actor_ref, filter.actorRef));
@@ -255,7 +256,7 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
     const [focal] = await ctx.db
       .select({ id: event.id, parent_event_id: event.caused_by_event_id })
       .from(event)
-      .where(eq(event.id, filter.siblingOfEventId))
+      .where(and(eq(event.id, filter.siblingOfEventId), eventAllowsDerivationSql()))
       .limit(1);
     if (!focal) {
       conditions.push(sql`false`);

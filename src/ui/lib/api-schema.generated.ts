@@ -10381,6 +10381,8 @@ export interface operations {
                     };
                     chip_kind?: string;
                     correction_target_turn_id?: string;
+                    /** @enum {string} */
+                    derivation_policy?: "allow" | "answer_only";
                     durable?: boolean;
                     review_answer?: {
                         assessment: {
@@ -10511,6 +10513,8 @@ export interface operations {
                 content: {
                     "application/json": {
                         checkpoint_event_id?: string;
+                        /** @enum {string} */
+                        derivation_policy?: "allow" | "answer_only";
                         run_id: string;
                         session_id: string;
                     };
@@ -11360,6 +11364,7 @@ export interface operations {
                             /** Format: date-time */
                             updated_at: string;
                         }[];
+                        supported_derivation_policies?: ("allow" | "answer_only")[];
                     };
                 };
             };
@@ -11611,6 +11616,8 @@ export interface operations {
                 content: {
                     "application/json": {
                         active_runs: {
+                            /** @enum {string} */
+                            derivation_policy?: "allow" | "answer_only";
                             events_url: string;
                             run_id: string;
                             session_id: string;
@@ -11622,6 +11629,8 @@ export interface operations {
                             /** Format: date-time */
                             at: string;
                             checkpoint_event_id?: string;
+                            /** @enum {string} */
+                            derivation_policy?: "allow" | "answer_only";
                             event_id: string;
                             primary_view?: {
                                 ref: {
