@@ -924,3 +924,8 @@
     overflow: hidden;
   }
 }
+
+/* Closed (on phones: the sheet at peek), there is nothing to close. */
+[data-ui-next] .un-pn[data-companion="closed"] .un-pn-companion-close {
+  visibility: hidden;
+}
