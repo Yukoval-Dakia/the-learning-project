@@ -392,6 +392,7 @@ export const MessageRow = memo(function MessageRow({
     <div
       className={`msg msg-${m.role}${m.streaming ? ' is-streaming' : ''}`}
       data-testid={`copilot-msg-${m.role}`}
+      data-chat-row=""
     >
       {m.role === 'tombstone' ? null : (
         <div className="msg-avatar">
@@ -950,15 +951,22 @@ export function CopilotDock({ pathname, navigate }: CopilotDockProps) {
       // re-check the visit that is open now. The per-visit guard above still
       // allows at most one automatic create per visit.
       void createConversation('automatic').finally(() => {
+        // Re-read the open visit's list rather than trusting a list fetched
+        // before this create landed (a reopen mid-create would otherwise see a
+        // stale list and create an extra empty session). fetchQuery joins the
+        // refresh createConversation already started, so no extra request.
         const current = currentVisit();
-        const fresh = currentFreshSessions();
-        if (current.open && fresh) bootstrap(current.epoch, fresh);
+        if (!current.open) return;
+        void fetchVisitSessions(current.epoch).then(
+          (snapshot) => bootstrap(current.epoch, snapshot),
+          swallow,
+        );
       });
     },
     [
       createConversation,
-      currentFreshSessions,
       currentVisit,
+      fetchVisitSessions,
       isRecoveringSession,
       selectConversation,
       setOptimisticSession,
@@ -1380,8 +1388,21 @@ export function CopilotDock({ pathname, navigate }: CopilotDockProps) {
       stickToBottomRef.current = node.scrollHeight - node.scrollTop - node.clientHeight <= 48;
     };
     const resize = new ResizeObserver((entries) => {
-      if (!stickToBottomRef.current) return;
-      if (entries.some((entry) => entry.target === node.lastElementChild)) scrollToEnd();
+      // Follow growth of the last message row or anything after it (the error,
+      // recovery and reconnect banners render after the rows).
+      const rows = node.querySelectorAll(':scope > [data-chat-row]');
+      const lastRow = rows.item(rows.length - 1);
+      const atOrAfterLastRow = (target: Element) =>
+        !lastRow ||
+        target === lastRow ||
+        Boolean(lastRow.compareDocumentPosition(target) & Node.DOCUMENT_POSITION_FOLLOWING);
+      if (stickToBottomRef.current && entries.some((entry) => atOrAfterLastRow(entry.target))) {
+        scrollToEnd();
+        return;
+      }
+      // An older row changed size (e.g. expanded) without a scroll event; the
+      // reader may no longer be at the bottom, so re-read it from the geometry.
+      onScroll();
     });
     for (const child of node.children) resize.observe(child);
     const rows = new MutationObserver((records) => {
