@@ -84,6 +84,7 @@ import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { getKnownSubjects } from '@/subjects/profile';
 import { enrollNativeCapture } from './assessment-capture';
+import { capturedQuestionShape } from './captured-question-shape';
 
 export type AutoEnrollSkipReason = 'flag_off' | 'session_not_found' | 'wrong_status';
 
@@ -405,6 +406,7 @@ export async function runAutoEnrollForSession(
 
     // Deterministic confidence gate.
     const verdict = runWorkflowJudge({
+      defaultQuestionKind: capturedQuestionShape(block.structured).kind,
       extractionConfidence: block.extraction_confidence,
       tagging,
       threshold,
@@ -621,6 +623,7 @@ export async function runAutoEnrollForSession(
         withAnswerClass({
           id: questionId,
           kind: verdict.prefilled.question_kind,
+          choices_md: capturedQuestionShape(block.structured).choices_md,
           prompt_md: questionMd,
           // P3 (YUK-489) — reference_md is the OCR-extracted answer directly (block.reference_md),
           // or null. The cold-start bridge ③ reference GENERATION (when OCR got the prompt but no

@@ -20,6 +20,7 @@ import { issueCapturedAssessment } from '@/kernel/records/assessment-issuance';
 import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
 import { writeQuestionBlockLifecycleEvent } from '@/kernel/records/question-block-lifecycle-event';
 import type { AutoEnrolledBlock } from './auto-enroll';
+import { capturedQuestionShape } from './captured-question-shape';
 import { enrollCapturedBlock } from './enroll';
 import { figuresForQuestion } from './figure_attach';
 
@@ -103,7 +104,7 @@ export async function captureIngestionOriginal(db: Db, input: CaptureInput) {
       await tx.insert(question).values(
         withAnswerClass({
           id: questionId,
-          kind: block.structured?.kind ?? 'short_answer',
+          ...capturedQuestionShape(block.structured),
           prompt_md: block.structured
             ? structuredToPromptMarkdown(block.structured)
             : (block.extracted_prompt_md ?? ''),
