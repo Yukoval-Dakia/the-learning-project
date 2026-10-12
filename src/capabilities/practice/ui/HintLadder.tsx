@@ -13,7 +13,7 @@
 // 必经确认门（中性诚实告知后果，不羞辱）；④ 失败态可重试、不静默吞、不自动跳级；⑤ 完整解未
 // 就绪 → H5 显式不可用 + 诚实空态，前几阶仍可起跑；⑥ 会话不计入判分（壳 note 保留）。
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
@@ -30,8 +30,10 @@ import {
 import type { QuestionDetail } from './practice-api';
 import { solveHint, solveStart } from './practice-api';
 
+// 每次打开解题会话都是干净起点：宿主（PfCoach）按「第几次打开」给本组件 key，重开即
+// 重挂（YUK-1483，取代旧的 open-reset effect）。上一会话还在途的提示请求只会落到已卸载
+// 的旧实例上，不会把旧提示或完整解带进新会话；挂载本身不发任何请求。
 export function HintLadder({
-  open,
   question,
   onReturnToAnswer,
   issuanceId,
@@ -39,7 +41,6 @@ export function HintLadder({
   onFullSolutionRevealed,
   requestFullSolution,
 }: {
-  open: boolean;
   question: QuestionDetail;
   onReturnToAnswer?: () => void;
   // YUK-1051 (D16) — 提示/揭示证据必须绑定 issuance 并在服务端留痕；服务端契约是
@@ -71,23 +72,6 @@ export function HintLadder({
   const [fullError, setFullError] = useState<string | null>(null);
   // owner 点了「我自己来 · 交还控制」—— 控制权回到作答。
   const [returned, setReturned] = useState(false);
-
-  // 抽屉关闭时重置整条梯（镜像旧 PfCoach 的 open-reset），下次打开是干净起点。
-  useEffect(() => {
-    if (!open) {
-      setSessionId(null);
-      setReached(-1);
-      setHints({});
-      setLoading(false);
-      setFailAt(-1);
-      setConfirmFull(false);
-      setRevealedFull(false);
-      setFetchedFull(null);
-      setFetchingFull(false);
-      setFullError(null);
-      setReturned(false);
-    }
-  }, [open]);
 
   // YUK-1051 — 注入 requestFullSolution 时完整解按需取：可用性由 seam 决定（null=不可用），
   // 确认门照常；未注入退回 question.reference_md（现状）。

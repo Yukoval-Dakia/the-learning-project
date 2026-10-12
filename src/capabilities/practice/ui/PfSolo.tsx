@@ -14,7 +14,7 @@ import { PartialUnknownJudgeResult } from '@/core/schema/capability';
 // → 流继续（设计稿「重判中 · 不阻塞，先继续」；改判回执经 M4 工作台/通知回流）。
 
 import { useQuery } from '@tanstack/react-query';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 // 边界（PR #1069 review 修复）：capability 包只依赖 @/kernel/* + 自身 + 共享 UI 件
 // （src/capabilities/AGENTS.md）。此前这里直 import @/core/schema/event/known 取长度常量，
@@ -38,7 +38,7 @@ import {
 } from '@/ui/components/response/response-types';
 import { SaveStateChip } from '@/ui/components/response/SaveStateChip';
 import { SlotResultBadge } from '@/ui/components/response/SlotResultBadge';
-import { useJudgeRunPolling } from '@/ui/hooks/useJudgeRunPolling';
+import { type JudgeRunPollingState, useJudgeRunPolling } from '@/ui/hooks/useJudgeRunPolling';
 import { useResponseDraftAutosave } from '@/ui/hooks/useResponseDraftAutosave';
 import { ApiError } from '@/ui/lib/api';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
@@ -285,6 +285,20 @@ export function buildCaptureFields(input: {
   return out;
 }
 
+// Uploaded attachments as the native group evidence the draft and submission carry.
+function nativeGroupEvidence(evidence: readonly EvidenceAttachment[]) {
+  return evidence.flatMap((item) =>
+    item.original
+      ? [
+          {
+            evidence: item.original,
+            target: item.originalTarget ?? { scope: 'all_units' as const },
+          },
+        ]
+      : [],
+  );
+}
+
 export function PfSolo({
   item,
   sessionId,
@@ -354,6 +368,13 @@ export function PfSolo({
   const [returning, setReturning] = useState(false);
   const returningRef = useRef(false);
   const [coach, setCoach] = useState(false);
+  // How many times the coach has been opened; keys the hint ladder so each opening
+  // starts a fresh ladder (YUK-1483).
+  const [coachSession, setCoachSession] = useState(0);
+  const openCoach = () => {
+    setCoach(true);
+    setCoachSession((n) => n + 1);
+  };
   // YUK-432 — 客观题在 preview 回来时已自动 commit（auto_rate:true）。记下来：反馈卡保留判定，
   // 「下一项」只 onDone() 推进（不再二次 commit）。开放题恒 false → 现有手动流不变。
   const [autoCommitted, setAutoCommitted] = useState(false);
@@ -398,20 +419,21 @@ export function PfSolo({
     },
   });
   const frozen = frozenQ.data?.practice_dto;
-  const draftEpoch = useRef<number | undefined>(undefined);
-  const hydratedIssuance = useRef<string | null>(null);
+  // Save epoch: the restored draft's epoch until the first ACK, then the latest ACK's.
+  const [restoredEpoch, setRestoredEpoch] = useState<number | undefined>(undefined);
+  const ackedEpoch = useRef<number | undefined>(undefined);
   const [restoredIssuanceId, setRestoredIssuanceId] = useState<string | null>(null);
-  useEffect(() => {
-    // Cached data belongs to the previous answering session. Restore only after this
-    // mount's successful read, then keep background reads from replacing local edits.
-    if (
-      !frozenQ.isFetchedAfterMount ||
-      frozenQ.isError ||
-      !frozenQ.data?.issuance ||
-      hydratedIssuance.current === frozenQ.data.issuance.issuance_id
-    )
-      return;
-    hydratedIssuance.current = frozenQ.data.issuance.issuance_id;
+  // Cached data belongs to the previous answering session. Restore only after this
+  // mount's successful read, once per issuance, then keep background reads from
+  // replacing local edits. YUK-1483: this is the render-time "adjust state when the
+  // input changes" step (own state only, no effect); the answer fields are not rendered
+  // until it has run, so autosave never starts from a cached or empty placeholder.
+  if (
+    frozenQ.isFetchedAfterMount &&
+    !frozenQ.isError &&
+    frozenQ.data?.issuance &&
+    restoredIssuanceId !== frozenQ.data.issuance.issuance_id
+  ) {
     const restored = frozenQ.data.submissions[0] ?? frozenQ.data.draft;
     setNativeResponses(restored?.response_set ?? { entries: [] });
     setEvidence(
@@ -422,23 +444,10 @@ export function PfSolo({
         slot_ids: null,
       })),
     );
-    draftEpoch.current = frozenQ.data.draft?.save_epoch;
+    setRestoredEpoch(frozenQ.data.draft?.save_epoch);
     setRestoredIssuanceId(frozenQ.data.issuance.issuance_id);
-  }, [frozenQ.data, frozenQ.isFetchedAfterMount, frozenQ.isError]);
-  const nativeEvidence = useMemo(
-    () =>
-      evidence.flatMap((item) =>
-        item.original
-          ? [
-              {
-                evidence: item.original,
-                target: item.originalTarget ?? { scope: 'all_units' as const },
-              },
-            ]
-          : [],
-      ),
-    [evidence],
-  );
+  }
+  const nativeEvidence = useMemo(() => nativeGroupEvidence(evidence), [evidence]);
   const accepted = frozenQ.data?.submissions[0];
   const assessmentInput = {
     issuance_id: issuanceId,
@@ -452,29 +461,54 @@ export function PfSolo({
     () => ({ response_set: nativeResponses, group_evidence: nativeEvidence }),
     [nativeResponses, nativeEvidence],
   );
-  const autosave = useResponseDraftAutosave({
-    value: draftValue,
-    enabled:
-      restoredIssuanceId === issuanceId &&
-      !!frozen &&
-      !accepted &&
-      !judging &&
-      !preview &&
-      !pendingPreview &&
-      !committing,
-    save: async (value) => {
+  // YUK-1483 — autosave is driven by the edit events below. It is armed only while
+  // answering: the fields render after the issuance is restored and are disabled once
+  // an answer is accepted; judging/committing call hold(), and returning to answering
+  // after a failure calls resume().
+  const draftGroupRef = assessmentInput.evaluation_group_id;
+  const saveDraft = useCallback(
+    async (value: typeof draftValue) => {
       const ack = await saveResponseDraft(issuanceId, {
         ...value,
-        evaluation_group_ref: assessmentInput.evaluation_group_id,
-        expected_save_epoch: draftEpoch.current,
+        evaluation_group_ref: draftGroupRef,
+        expected_save_epoch: ackedEpoch.current ?? restoredEpoch,
       });
-      draftEpoch.current = ack.save_epoch;
+      ackedEpoch.current = ack.save_epoch;
     },
-  });
-  const updateNativeResponse = (entry: SlotResponseT) =>
-    setNativeResponses((previous) => ({
-      entries: [...previous.entries.filter((item) => item.slot_id !== entry.slot_id), entry],
-    }));
+    [issuanceId, draftGroupRef, restoredEpoch],
+  );
+  const autosave = useResponseDraftAutosave({ save: saveDraft });
+  // Latest edited draft, written synchronously by every edit handler (never during render).
+  // A handler captured by an older render — e.g. EvidenceComposer finishing an upload after
+  // an await — must build on this, not on its render's answer, or it would hand autosave a
+  // pre-upload answer and the save would drop newer typing. Tagged with the issuance it was
+  // edited under, so it is only used for the issuance currently restored.
+  const latestDraft = useRef<{ issuanceId: string; value: typeof draftValue } | null>(null);
+  const currentDraft = () =>
+    latestDraft.current?.issuanceId === restoredIssuanceId ? latestDraft.current.value : draftValue;
+  const editDraft = (next: typeof draftValue) => {
+    const from = currentDraft();
+    if (restoredIssuanceId) latestDraft.current = { issuanceId: restoredIssuanceId, value: next };
+    autosave.change(next, from);
+  };
+  const updateNativeResponse = (entry: SlotResponseT) => {
+    const draft = currentDraft();
+    const response_set = {
+      entries: [
+        ...draft.response_set.entries.filter((item) => item.slot_id !== entry.slot_id),
+        entry,
+      ],
+    };
+    setNativeResponses(response_set);
+    editDraft({ response_set, group_evidence: draft.group_evidence });
+  };
+  const updateEvidence = (next: EvidenceAttachment[]) => {
+    setEvidence(next);
+    editDraft({
+      response_set: currentDraft().response_set,
+      group_evidence: nativeGroupEvidence(next),
+    });
+  };
   const isChoice =
     !!frozen?.response_spec.slots.length &&
     frozen.response_spec.slots.every(
@@ -552,96 +586,108 @@ export function PfSolo({
   // A successful one-shot is already retired server-side. Restore its
   // canonical review/judge projection on mount so refresh or a lost response
   // returns to the settled feedback card rather than a dead loading state.
-  useEffect(() => {
-    const committed = q?.committed_attempt;
-    if (!committedDiagnosticQuestionId || !isInterventionDiagnostic || !committed) {
+  // YUK-1483: applied in render when the server's committed attempt changes (own state
+  // only, no effect); a later local result keeps winning until the server one changes.
+  const committedDiagnostic =
+    committedDiagnosticQuestionId && isInterventionDiagnostic
+      ? (q?.committed_attempt ?? null)
+      : null;
+  const [appliedDiagnostic, setAppliedDiagnostic] = useState<typeof committedDiagnostic>(null);
+  if (appliedDiagnostic !== committedDiagnostic) {
+    setAppliedDiagnostic(committedDiagnostic);
+    if (committedDiagnostic) {
+      const feedback = feedbackFromCommittedDiagnosticAttempt(committedDiagnostic);
+      setCommittedPreview(feedback);
+      setRating(feedback.suggested_rating);
+      setAutoCommitted(true);
+      setAutoCommitJudgeEventId(committedDiagnostic.judge.judge_event_id);
+    } else {
       setCommittedPreview(null);
       setAutoCommitted(false);
       setAutoCommitJudgeEventId(null);
-      return;
     }
-    const feedback = feedbackFromCommittedDiagnosticAttempt(committed);
-    setCommittedPreview(feedback);
-    setRating(feedback.suggested_rating);
-    setAutoCommitted(true);
-    setAutoCommitJudgeEventId(committed.judge.judge_event_id);
-  }, [committedDiagnosticQuestionId, isInterventionDiagnostic, q?.committed_attempt]);
+  }
 
   // YUK-1051 — 202-pending 轮询：同一次 submission 的 run 继续查询（poll_url 纯读 GET），
   // 终态 done → 用回传的终态判词揭晓反馈卡（与同步回执同一渲染路径）；failed → 诚实
   // 告知「作答已存住，会自动补判」，可先行推进（solo 202 可继续，不阻塞流）。
+  // YUK-1483: the poller reports each run's terminal state once (onSettled); the
+  // feedback is claimed there, not by an effect watching the snapshot.
+  const onPendingSettled = useCallback(
+    (settled: JudgeRunPollingState) => {
+      if (settled.status !== 'done') return;
+      const r = settled.result;
+      if (r?.status === 'review_required') {
+        setCommittedPreview({
+          route: 'durable',
+          coarse_outcome: 'unsupported',
+          confidence: 0,
+          feedback_md: typeof r.feedback_md === 'string' ? r.feedback_md : '',
+          suggested_rating: null,
+        });
+        setAutoCommitted(false);
+        setAutoCommitJudgeEventId(null);
+        setPendingRun(null);
+        addToast('作答已保存，暂时没法自动判；可以自己评一下来安排复习。', 'info', 'clock');
+        return;
+      }
+      const outcome =
+        r && typeof r.coarse_outcome === 'string' && r.coarse_outcome in VERDICT_OF
+          ? (r.coarse_outcome as keyof typeof VERDICT_OF)
+          : null;
+      const partial = outcome === 'partial_unknown' ? PartialUnknownFeedback.safeParse(r) : null;
+      if (partial && !partial.success) {
+        setCommittedPreview({
+          route: 'durable',
+          coarse_outcome: 'unsupported',
+          confidence: 0,
+          feedback_md: '',
+          suggested_rating: null,
+        });
+        setRating(null);
+        setAutoCommitted(true);
+        setAutoCommitJudgeEventId(null);
+        setPendingRun(null);
+        addToast('作答已保存，但部分判定信息不完整，请稍后查看。', 'info', 'clock');
+        return;
+      }
+      const fr =
+        outcome === 'partial_unknown' || r?.final_rating === null
+          ? null
+          : r &&
+              typeof r.final_rating === 'string' &&
+              ['again', 'hard', 'good'].includes(r.final_rating)
+            ? (r.final_rating as Rating)
+            : 'hard';
+      if (outcome) {
+        setCommittedPreview({
+          route: typeof r?.route === 'string' && r.route ? r.route : 'durable',
+          coarse_outcome: outcome,
+          ...(partial?.success ? { partial_units: partial.data.partial_units } : {}),
+          confidence: typeof r?.confidence === 'number' ? r.confidence : 0,
+          feedback_md: typeof r?.feedback_md === 'string' ? r.feedback_md : '',
+          suggested_rating: fr,
+        });
+        setRating(fr);
+        setAutoCommitted(true);
+        committedAppealKind.current = r?.assessment ? 'evaluation' : 'judge';
+        setAutoCommitJudgeEventId(
+          r?.assessment
+            ? (r.assessment.effective_evaluation_id ?? r.assessment.candidate_id)
+            : typeof r?.judge_event_id === 'string'
+              ? r.judge_event_id
+              : null,
+        );
+      }
+      setPendingRun(null);
+    },
+    [addToast],
+  );
   const pendingPoll = useJudgeRunPolling({
     runId: pendingRun?.runId ?? null,
     pollUrl: pendingRun?.pollUrl ?? null,
+    onSettled: onPendingSettled,
   });
-  useEffect(() => {
-    if (!pendingRun) return;
-    if (pendingPoll.status !== 'done') return;
-    const r = pendingPoll.result;
-    if (r?.status === 'review_required') {
-      setCommittedPreview({
-        route: 'durable',
-        coarse_outcome: 'unsupported',
-        confidence: 0,
-        feedback_md: typeof r.feedback_md === 'string' ? r.feedback_md : '',
-        suggested_rating: null,
-      });
-      setAutoCommitted(false);
-      setAutoCommitJudgeEventId(null);
-      setPendingRun(null);
-      addToast('作答已保存，暂时没法自动判；可以自己评一下来安排复习。', 'info', 'clock');
-      return;
-    }
-    const outcome =
-      r && typeof r.coarse_outcome === 'string' && r.coarse_outcome in VERDICT_OF
-        ? (r.coarse_outcome as keyof typeof VERDICT_OF)
-        : null;
-    const partial = outcome === 'partial_unknown' ? PartialUnknownFeedback.safeParse(r) : null;
-    if (partial && !partial.success) {
-      setCommittedPreview({
-        route: 'durable',
-        coarse_outcome: 'unsupported',
-        confidence: 0,
-        feedback_md: '',
-        suggested_rating: null,
-      });
-      setRating(null);
-      setAutoCommitted(true);
-      setAutoCommitJudgeEventId(null);
-      setPendingRun(null);
-      addToast('作答已保存，但部分判定信息不完整，请稍后查看。', 'info', 'clock');
-      return;
-    }
-    const fr =
-      outcome === 'partial_unknown' || r?.final_rating === null
-        ? null
-        : r &&
-            typeof r.final_rating === 'string' &&
-            ['again', 'hard', 'good'].includes(r.final_rating)
-          ? (r.final_rating as Rating)
-          : 'hard';
-    if (outcome) {
-      setCommittedPreview({
-        route: typeof r?.route === 'string' && r.route ? r.route : 'durable',
-        coarse_outcome: outcome,
-        ...(partial?.success ? { partial_units: partial.data.partial_units } : {}),
-        confidence: typeof r?.confidence === 'number' ? r.confidence : 0,
-        feedback_md: typeof r?.feedback_md === 'string' ? r.feedback_md : '',
-        suggested_rating: fr,
-      });
-      setRating(fr);
-      setAutoCommitted(true);
-      committedAppealKind.current = r?.assessment ? 'evaluation' : 'judge';
-      setAutoCommitJudgeEventId(
-        r?.assessment
-          ? (r.assessment.effective_evaluation_id ?? r.assessment.candidate_id)
-          : typeof r?.judge_event_id === 'string'
-            ? r.judge_event_id
-            : null,
-      );
-    }
-    setPendingRun(null);
-  }, [pendingRun, pendingPoll.status, pendingPoll.result, addToast]);
 
   // commit 接受显式 rating + autoRate：客观题自动流不依赖手动 `rating` state（直接用 judge 的
   // suggested_rating + auto_rate:true）；手动流（开放题/申诉）走 body.rating + auto_rate 缺省 false。
@@ -658,6 +704,7 @@ export function PfSolo({
     const pv = opts.previewOverride ?? preview;
     if (returningRef.current || !q || (!pv && issuanceMode !== 'manual') || committing) return;
     setCommitting(true);
+    autosave.hold();
     try {
       const res = await submitReview({
         question_id: q.id,
@@ -737,6 +784,8 @@ export function PfSolo({
       setAutoCommitted(false);
       setAutoCommitJudgeEventId(null);
       addToast(JUDGE_FAILURE_MESSAGE, 'info', 'alert');
+      // Back to answering: unsaved edits resume autosaving.
+      autosave.resume();
     } finally {
       setCommitting(false);
     }
@@ -762,6 +811,7 @@ export function PfSolo({
   const runJudge = async () => {
     if (returningRef.current || !q || !canSubmit || issuanceMode === 'manual') return;
     setJudging(true);
+    autosave.hold();
     try {
       if (isInterventionDiagnostic) {
         // One-shot measurement integrity: do not call the repeatable advice
@@ -837,6 +887,8 @@ export function PfSolo({
         }
       }
       addToast(JUDGE_FAILURE_MESSAGE, 'info', 'alert');
+      // Still answering after a failed judge: unsaved edits resume autosaving.
+      autosave.resume();
     } finally {
       setJudging(false);
     }
@@ -855,7 +907,11 @@ export function PfSolo({
 
   // 键盘：⌘/Ctrl+Enter 提交。选项数字键（1–9，随选项数）已移进 ChoiceSetResponse 的
   // hotkeys（YUK-1051 组件族一般化，不再硬编码 1–4）；这里不再重复监听。
-  useEffect(() => {
+  // YUK-1483：监听仍挂在 window（文本框里和题面上都能按），但归作答面根节点所有——
+  // 节点挂上才监听、卸下即摘；每次提交 React 摘旧挂新，回调读的是本次提交的 phase/coach。
+  // 重复按键不会重复提交：runJudge 已有 judging/canSubmit 互斥。
+  const attachSubmitHotkey = (node: HTMLDivElement | null) => {
+    if (!node) return undefined;
     const onKey = (e: KeyboardEvent) => {
       if (phase !== 'answering' || coach) return;
       if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
@@ -865,7 +921,7 @@ export function PfSolo({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  });
+  };
 
   if (qQ.isLoading || frozenQ.isLoading) return <p className="quiet-empty">取题中…</p>;
   if (qQ.isError || !q)
@@ -899,7 +955,7 @@ export function PfSolo({
   const verdict = displayedPreview ? VERDICT_OF[displayedPreview.coarse_outcome] : null;
 
   return (
-    <div className="pfs" data-screen-label={`散题作答 · ${q.id}`}>
+    <div className="pfs" data-screen-label={`散题作答 · ${q.id}`} ref={attachSubmitHotkey}>
       <div className="pfs-top">
         {/* YUK-432 (FINDING 1) — 自动 commit 后「返回流」走 handleBack（标 slot done），否则 onBack。 */}
         <Btn
@@ -917,7 +973,7 @@ export function PfSolo({
         <PfSrcBadge source={item.source} />
         <span className="topbar-spacer" />
         {!isInterventionDiagnostic && (
-          <Btn size="sm" variant="secondary" icon="teach" onClick={() => setCoach(true)}>
+          <Btn size="sm" variant="secondary" icon="teach" onClick={openCoach}>
             需要提示？
           </Btn>
         )}
@@ -1010,7 +1066,7 @@ export function PfSolo({
               onTextChange={() => {}}
               showText={false}
               attachments={evidence}
-              onAttachmentsChange={setEvidence}
+              onAttachmentsChange={updateEvidence}
               disabled={returning || phase !== 'answering' || !!accepted}
               onUploadingChange={setUploading}
             />
@@ -1195,6 +1251,8 @@ export function PfSolo({
                       setPreview(null);
                       setPendingPreview(null);
                       activationIntent.current = undefined;
+                      // Back to answering (self-rated): unsaved edits resume autosaving.
+                      autosave.resume();
                     }}
                   >
                     自己评一下
@@ -1306,6 +1364,7 @@ export function PfSolo({
 
       <PfCoach
         open={coach}
+        session={coachSession}
         onClose={() => setCoach(false)}
         question={q}
         issuanceId={frozen ? issuanceId : undefined}
@@ -1319,11 +1378,14 @@ export function PfSolo({
    给一条」提示流换成可感知的 6 阶 H0-H5 强度梯（HintLadder）。强度梯本身的状态机 + 形态在 HintLadder。 */
 function PfCoach({
   open,
+  session,
   onClose,
   question,
   issuanceId,
 }: {
   open: boolean;
+  /** Opening count; each opening gets a fresh hint ladder (closed content stays for the slide-out). */
+  session: number;
   onClose: () => void;
   question: QuestionDetail;
   issuanceId?: string;
@@ -1365,7 +1427,7 @@ function PfCoach({
             一级一级加力，每阶更近一步；想直接看完整解也行（记为非独立完成）。会话不计入判分。
           </p>
           <HintLadder
-            open={open}
+            key={session}
             question={question}
             onReturnToAnswer={onClose}
             issuanceId={issuanceId}

@@ -6,7 +6,7 @@ import type { ResponseSetT, SlotResponseT } from '@/core/schema/assessment';
 //（judge-now-show-later，visible_to_user=false 缓冲）+ session end → 可见性解锁。
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { REASONING_TRACE_MAX_LEN } from '@/kernel/limits';
 import { AssetEvidencePreview } from '@/ui/components/response/AssetEvidencePreview';
 import { ChoiceSetResponse } from '@/ui/components/response/ChoiceSetResponse';
@@ -169,45 +169,113 @@ function clearPaperTiming(sessionId: string, paperId: string): void {
 // (a conservative, honesty-preserving direction), never a false 「进度保留」.
 const EXIT_FLUSH_TIMEOUT_MS = 3000;
 
-export function PfPaper({
-  artifactId,
-  onExit,
-  onSubmitted,
-  addToast,
-}: {
+// 草稿初值：服务端 draft / 已提交 answer 回填（一次作答 visit 挂载时取一次）。
+function restorePaperDraft(slots: readonly PaperSlot[]) {
+  const answers: Record<string, string> = {};
+  const nativeResponses: Record<string, ResponseSetT> = {};
+  const nativeEpochs: Record<string, number> = {};
+  for (const slot of slots) {
+    const key = slotKey(slot);
+    answers[key] = slot.slot_state.submission?.answer_md ?? slot.slot_state.draft?.content_md ?? '';
+    if (slot.assessment) {
+      nativeResponses[key] = slot.assessment.response_set;
+      nativeEpochs[key] = slot.assessment.save_epoch;
+    }
+  }
+  // YUK-1051 — 证据附件回填（草稿 image_refs / 已提交 answer_image_refs）。
+  return { answers, nativeResponses, nativeEpochs, evidence: restoreEvidenceFromSlots(slots) };
+}
+
+interface PfPaperProps {
   artifactId: string;
   // unsavedFailures lets the host tell an honest exit story: 0 → 「进度已保留」, >0 → a
   // non-blaming 「有 N 处草稿未保存」instead of a false success promise.
   onExit: (info?: { unsavedFailures: number }) => void;
   onSubmitted: () => void;
   addToast: (text: string, tone?: PfToast['tone'], icon?: string) => void;
-}) {
-  const qc = useQueryClient();
+}
+
+// YUK-1483 — the host keys PfPaper by artifactId, and this component keys one answering
+// visit by the paper's native occurrence. A new paper or a new occurrence therefore starts
+// from a fresh visit (empty timers, restored drafts, new session handling) instead of an
+// effect resetting a reused one; the old visit's late save results land on an unmounted
+// visit and cannot touch the new one. Background refetches of the same occurrence keep
+// the visit and never overwrite local edits.
+export function PfPaper(props: PfPaperProps) {
+  const { artifactId, onExit } = props;
   const detailQ = useQuery({
     queryKey: ['paper', artifactId],
     queryFn: () => getPaperDetail(artifactId),
   });
   const detail: PaperDetail | null = detailQ.data ?? null;
   const slots = useMemo(() => detail?.sections.flatMap((s) => s.slots) ?? [], [detail]);
-
-  const hasNativeBindings = slots.length > 0 && slots.every((slot) => slot.assessment != null);
   const nativeOccurrenceId = slots[0]?.assessment?.issuance_id;
-  const previousNativeOccurrence = useRef<string | undefined>(undefined);
+  // A same-paper occurrence replaced by another (X → Y) invalidates the stored timing for
+  // the session; the next visit clears it before reading. Render-time state adjustment.
+  const [occurrence, setOccurrence] = useState({ id: nativeOccurrenceId, replaced: false });
+  if (occurrence.id !== nativeOccurrenceId) {
+    setOccurrence({
+      id: nativeOccurrenceId,
+      replaced: occurrence.id !== undefined && nativeOccurrenceId !== undefined,
+    });
+  }
+
+  if (detailQ.isLoading) return <p className="quiet-empty">取卷中…</p>;
+  if (detailQ.isError || !detail || slots.length === 0)
+    return (
+      <div className="pfp">
+        <Btn size="sm" variant="ghost" icon="arrowL" onClick={() => onExit()}>
+          返回流
+        </Btn>
+        <p className="quiet-empty">卷加载失败或没有题。</p>
+      </div>
+    );
+  return (
+    <PaperVisit
+      key={nativeOccurrenceId ?? ''}
+      {...props}
+      detail={detail}
+      slots={slots}
+      clearStaleTiming={occurrence.replaced}
+    />
+  );
+}
+
+function PaperVisit({
+  artifactId,
+  onExit,
+  onSubmitted,
+  addToast,
+  detail,
+  slots,
+  clearStaleTiming,
+}: PfPaperProps & {
+  detail: PaperDetail;
+  slots: PaperSlot[];
+  clearStaleTiming: boolean;
+}) {
+  const qc = useQueryClient();
+  const hasNativeBindings = slots.every((slot) => slot.assessment != null);
+  // The visit's restored drafts, computed once at mount (pure).
+  const [restored] = useState(() => restorePaperDraft(slots));
   const [pos, setPos] = useState(0);
-  const [answers, setAnswers] = useState<Record<string, string>>({});
-  const [nativeResponses, setNativeResponses] = useState<Record<string, ResponseSetT>>({});
-  const nativeResponsesRef = useRef<Record<string, ResponseSetT>>({});
-  const nativeEpochs = useRef<Record<string, number>>({});
-  const nativeRestored = useRef<Record<string, string>>({});
+  // Mirror of `pos` for listeners and the session-ready callback; written by goPos.
+  const posRef = useRef(0);
+  const [answers, setAnswers] = useState<Record<string, string>>(restored.answers);
+  const [nativeResponses, setNativeResponses] = useState<Record<string, ResponseSetT>>(
+    restored.nativeResponses,
+  );
+  const nativeResponsesRef = useRef<Record<string, ResponseSetT>>(restored.nativeResponses);
+  const nativeEpochs = useRef<Record<string, number>>({ ...restored.nativeEpochs });
   // YUK-1051 — 卷级证据附件（整页解题照默认绑定整个 evaluation group=本卷；可在
   // EvaluationGroupPanel 改绑子集）。slot 草稿/提交的 image_refs 从这里按绑定范围展开。
-  const [evidence, setEvidence] = useState<EvidenceAttachment[]>([]);
+  const [evidence, setEvidence] = useState<EvidenceAttachment[]>(restored.evidence);
   // YUK-1094 — 附件上传中：交卷入口并入 upload-pending（disable），否则交卷会以旧 evidence
   // 展开 image_refs（刚上传的附件丢掉）。由 EvidenceComposer 的 onUploadingChange 上报。
   const [uploading, setUploading] = useState(false);
   // answersRef 同款的同步镜像：pagehide/退出 flush 读 ref（渲染闭包可能滞后一拍）。
-  const evidenceRef = useRef<EvidenceAttachment[]>([]);
-  evidenceRef.current = evidence;
+  // Written by the evidence handlers together with setEvidence.
+  const evidenceRef = useRef<EvidenceAttachment[]>(restored.evidence);
   // YUK-784 — 过程框采集：per-slot 过程文本与展开态（组卷面多题连续作答，切换不丢；
   // 交卷时随该 slot 的提交一并发出）。不进草稿自动保存——answer-draft wire 无此字段，
   // 中途退出会丢过程文本，这是已知且诚实的取舍（采集是可选 meta，不值得为此扩草稿契约）。
@@ -230,15 +298,17 @@ export function PfPaper({
   // Concurrent draft PUTs for one slot can settle out of order; only the LATEST
   // request may update that slot's failed flag, or an old success would clear a
   // newer failure (and vice versa).
+  // Per visit: another paper or occurrence is a new visit with its own counters, so a save
+  // that outlives its visit can only touch the unmounted one.
   const saveSeq = useRef<Record<string, number>>({});
-  // Paper generation: bumped whenever artifactId changes. Because saveSeq resets per
-  // paper, paper A's in-flight save could otherwise share a seq with paper B's first save
-  // for the same slot key and let A's late settle rewrite B's flag. The gen captured at
-  // dispatch must still match at settle, so a save outlives its paper as a no-op.
-  const saveGen = useRef(0);
-  const sessionRef = useRef<string | null>(null);
-  const [sessionReadyVersion, setSessionReadyVersion] = useState(0);
-  const sessionOpenRef = useRef(false);
+  // 已有 session 复用；没有则在 visit 挂上页面时开卷（见 attachVisit）。
+  const sessionRef = useRef<string | null>(detail.session?.id ?? null);
+  const sessionOpenRef = useRef(
+    detail.session ? ['started', 'paused'].includes(detail.session.status) : false,
+  );
+  // This visit's single startPaperSession request (reused if React re-attaches the visit).
+  const sessionStart = useRef<Promise<void> | null>(null);
+  const staleTimingCleared = useRef(false);
   // Per-slot debounce timers. A shared timer would let typing in slot B cancel slot A's
   // pending save, silently dropping A's last keystrokes while the UI still claims saved.
   const saveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
@@ -255,7 +325,7 @@ export function PfPaper({
   // Mirror of `answers`, updated synchronously on every keystroke. The pagehide/exit flush
   // reads THIS, not the render-closure `answers` (which can lag the final keystroke by a
   // frame), so the last typed text is never flushed as a stale/empty value.
-  const answersRef = useRef<Record<string, string>>({});
+  const answersRef = useRef<Record<string, string>>({ ...restored.answers });
   // Mutual exclusion with exitPaper: a submit and an exit must not both fire a terminal
   // transition (double onSubmitted/onExit). Synchronous, like exitingRef.
   const submittingRef = useRef(false);
@@ -286,173 +356,93 @@ export function PfPaper({
     timingSegmentRef.current = { key, startedAt: performance.now() };
   }, []);
 
-  // Fresh paper (route param reuse) → drop per-slot state so a recycled slot key can't
-  // carry a stale 「保存失败」or another paper's answer into this one; clear pending timers
-  // in place (keep the map identity so the unmount cleanup below always sees live timers).
-  // answers must reset too: the backfill effect only fills undefined keys, so without this
-  // a shared slot key would keep paper A's answer and skip paper B's server draft.
-  useEffect(() => {
-    if (
-      previousNativeOccurrence.current &&
-      nativeOccurrenceId &&
-      previousNativeOccurrence.current !== nativeOccurrenceId &&
-      sessionRef.current
-    ) {
-      clearPaperTiming(sessionRef.current, artifactId);
-    }
-    previousNativeOccurrence.current = nativeOccurrenceId;
-    setAnswers({});
-    setTrace({});
-    setTraceOpen({});
-    setSelfConfidence({});
-    setEvidence([]);
-    evidenceRef.current = [];
-    setUploading(false);
-    setSaveFailed({});
-    setRetrying(false);
-    setExiting(false);
-    setSubmitting(false);
-    exitingRef.current = false;
-    submittingRef.current = false;
-    answersRef.current = {};
-    nativeResponsesRef.current = {};
-    nativeEpochs.current = {};
-    nativeRestored.current = {};
-    setNativeResponses({});
-    saveSeq.current = {};
-    saveGen.current += 1;
-    // Drop the previous paper's session so a pre-session autosave on the new paper flags
-    // 「保存失败」honestly instead of PUTting a draft with the old paper's session id.
-    sessionRef.current = null;
-    sessionOpenRef.current = false;
-    for (const k of Object.keys(saveTimers.current)) {
-      clearTimeout(saveTimers.current[k]);
-      delete saveTimers.current[k];
-    }
-    // Drop the old paper's in-flight tracking so a new paper's exit can't await A's saves
-    // (their late settle is already a no-op via the bumped saveGen).
-    inFlightSaves.current.clear();
-    timingMsRef.current = {};
-    timingSegmentRef.current = null;
-    submittedDuringAttemptsRef.current.clear();
-  }, [artifactId, nativeOccurrenceId]);
+  // The freshest slots for listeners and the session-ready callback: the cached detail
+  // (same occurrence; this visit is replaced when the occurrence changes), else the
+  // slots this visit mounted with.
+  const [mountSlots] = useState(slots);
+  const latestSlots = useCallback((): PaperSlot[] => {
+    const cached = qc.getQueryData<PaperDetail>(['paper', artifactId]);
+    const fromCache = cached?.sections.flatMap((s) => s.slots) ?? [];
+    return fromCache.length > 0 ? fromCache : mountSlots;
+  }, [qc, artifactId, mountSlots]);
 
-  // Clear any pending debounce timers on unmount (no setState after teardown).
-  useEffect(() => {
-    componentActiveRef.current = true;
-    const timers = saveTimers.current;
-    return () => {
-      componentActiveRef.current = false;
-      stopTimingSegment();
-      for (const t of Object.values(timers)) clearTimeout(t);
-    };
-  }, [stopTimingSegment]);
+  // Open the timing segment for the slot on screen (submitted slots are not timed).
+  const startCurrentSegment = useCallback(() => {
+    const current = latestSlots();
+    const slot = current[Math.min(posRef.current, current.length - 1)];
+    if (slot) startTimingSegment(slotKey(slot), Boolean(slot.slot_state.submission?.submitted));
+  }, [latestSlots, startTimingSegment]);
 
-  // 已有 session 复用；没有则开卷即建（answer/submit 都需要 session_id）。
-  useEffect(() => {
-    if (!detail) return;
-    if (detail.session) {
-      sessionRef.current = detail.session.id;
-      sessionOpenRef.current = ['started', 'paused'].includes(detail.session.status);
-      timingMsRef.current = readPaperTiming(detail.session.id, artifactId);
-      return;
-    }
-    // Guard the async open against a paper switch: capture the generation at dispatch and
-    // discard a resolve/reject that lands after the user moved to another paper, so a stale
-    // open can't write its session id (or an error toast) back onto the new paper.
-    const gen = saveGen.current;
-    void startPaperSession(artifactId)
-      .then((r) => {
-        if (saveGen.current !== gen) return;
-        sessionRef.current = r.session_id;
-        sessionOpenRef.current = true;
-        timingMsRef.current = readPaperTiming(r.session_id, artifactId);
-        setSessionReadyVersion((version) => version + 1);
-        void qc.invalidateQueries({ queryKey: ['paper', artifactId] });
-      })
-      .catch((e) => {
-        if (saveGen.current !== gen) return;
-        addToast(`开卷失败：${(e as Error).message}`, 'info', 'alert');
-      });
-  }, [detail, artifactId, addToast, qc]);
-
-  // 草稿初值：服务端 draft / 已提交 answer 回填。
-  useEffect(() => {
-    if (slots.length === 0) return;
-    const nextNative = { ...nativeResponsesRef.current };
-    let changedNative = false;
-    for (const slot of slots) {
-      const bound = slot.assessment,
-        key = slotKey(slot);
-      if (bound && nativeRestored.current[key] !== bound.issuance_id) {
-        nextNative[key] = bound.response_set;
-        nativeEpochs.current[key] = bound.save_epoch;
-        nativeRestored.current[key] = bound.issuance_id;
-        changedNative = true;
+  // Session known: load its stored timing (cleared first when this visit replaced another
+  // occurrence of the same paper), drop submitted slots' time, and start timing the slot
+  // on screen.
+  const beginTiming = useCallback(
+    (sessionId: string) => {
+      if (clearStaleTiming && !staleTimingCleared.current) {
+        staleTimingCleared.current = true;
+        clearPaperTiming(sessionId, artifactId);
       }
-    }
-    if (changedNative) {
-      nativeResponsesRef.current = nextNative;
-      setNativeResponses(nextNative);
-    }
-    setAnswers((cur) => {
-      const next = { ...cur };
-      for (const s of slots) {
-        const k = slotKey(s);
-        if (next[k] !== undefined) continue;
-        next[k] = s.slot_state.submission?.answer_md ?? s.slot_state.draft?.content_md ?? '';
+      timingMsRef.current = readPaperTiming(sessionId, artifactId);
+      for (const slot of latestSlots()) {
+        if (slot.slot_state.submission?.submitted) delete timingMsRef.current[slotKey(slot)];
       }
-      return next;
-    });
-    // Seed answersRef from the server backfill (only unset keys, so a keystroke that landed
-    // before this effect isn't clobbered). answersRef is the flush source of truth.
-    for (const s of slots) {
-      const k = slotKey(s);
-      if (answersRef.current[k] === undefined) {
-        answersRef.current[k] =
-          s.slot_state.submission?.answer_md ?? s.slot_state.draft?.content_md ?? '';
-      }
-    }
-    // YUK-1051 — 证据附件回填（草稿 image_refs / 已提交 answer_image_refs）。本地已有
-    // 附件（用户刚传的）与服务端恢复的并集，asset_id 去重；绑定范围以本地为准。
-    const restored = restoreEvidenceFromSlots(slots);
-    if (restored.length > 0) {
-      setEvidence((cur) => {
-        const known = new Set(cur.map((a) => a.asset_id));
-        const merged = [...cur, ...restored.filter((a) => !known.has(a.asset_id))];
-        evidenceRef.current = merged;
-        return merged;
-      });
-    }
-  }, [slots]);
+      persistTiming();
+      startCurrentSegment();
+    },
+    [clearStaleTiming, artifactId, latestSlots, persistTiming, startCurrentSegment],
+  );
 
-  // sessionReadyVersion intentionally retriggers this effect when a fresh paper's async session
-  // creation succeeds; the ref assignment alone is not reactive.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: sessionReadyVersion is an explicit reactive signal for sessionRef.current.
-  useEffect(() => {
-    if (slots.length === 0 || !sessionRef.current) return;
-    const current = slots[Math.min(pos, slots.length - 1)];
-    for (const slot of slots) {
-      if (slot.slot_state.submission?.submitted) delete timingMsRef.current[slotKey(slot)];
-    }
-    persistTiming();
-    startTimingSegment(slotKey(current), Boolean(current.slot_state.submission?.submitted));
-    return stopTimingSegment;
-  }, [pos, slots, sessionReadyVersion, persistTiming, startTimingSegment, stopTimingSegment]);
-
-  useEffect(() => {
-    const onVisibilityChange = () => {
-      if (document.visibilityState === 'hidden') {
+  // YUK-1483 — the visit's root element owns the visit's browser resources, replacing the
+  // old mount/session/timing/visibility effects:
+  //   - attach: mark active; reuse the paper's session or open one (once per visit — a
+  //     re-attach reuses the same request, an accepted open is never re-POSTed); start
+  //     timing; listen for visibility changes (hidden pauses timing, visible resumes it).
+  //   - detach: mark inactive, close the timing segment (its time is persisted once) and
+  //     drop unfired debounces. Detach never claims an unacknowledged draft was saved;
+  //     explicit exit and pagehide keep their own flush and failure counting.
+  const attachVisit = useCallback(
+    (node: HTMLDivElement | null) => {
+      if (!node) return undefined;
+      componentActiveRef.current = true;
+      const sid = sessionRef.current;
+      if (sid) beginTiming(sid);
+      else
+        sessionStart.current ??= startPaperSession(artifactId).then(
+          (r) => {
+            sessionRef.current = r.session_id;
+            sessionOpenRef.current = true;
+            if (componentActiveRef.current) beginTiming(r.session_id);
+            else timingMsRef.current = readPaperTiming(r.session_id, artifactId);
+            void qc.invalidateQueries({ queryKey: ['paper', artifactId] });
+          },
+          (e) => {
+            // The open was not accepted: let a later attach of this visit try again.
+            sessionStart.current = null;
+            if (componentActiveRef.current)
+              addToast(`开卷失败：${(e as Error).message}`, 'info', 'alert');
+          },
+        );
+      const onVisibilityChange = () => {
+        if (document.visibilityState === 'hidden') {
+          stopTimingSegment();
+          return;
+        }
+        startCurrentSegment();
+      };
+      document.addEventListener('visibilitychange', onVisibilityChange);
+      const timers = saveTimers.current;
+      return () => {
+        componentActiveRef.current = false;
+        document.removeEventListener('visibilitychange', onVisibilityChange);
         stopTimingSegment();
-        return;
-      }
-      const current = slots[Math.min(pos, slots.length - 1)];
-      if (current)
-        startTimingSegment(slotKey(current), Boolean(current.slot_state.submission?.submitted));
-    };
-    document.addEventListener('visibilitychange', onVisibilityChange);
-    return () => document.removeEventListener('visibilitychange', onVisibilityChange);
-  }, [pos, slots, startTimingSegment, stopTimingSegment]);
+        for (const k of Object.keys(timers)) {
+          clearTimeout(timers[k]);
+          delete timers[k];
+        }
+      };
+    },
+    [artifactId, qc, addToast, beginTiming, startCurrentSegment, stopTimingSegment],
+  );
 
   const pauseCurrentSession = useCallback((keepalive = false) => {
     const sid = sessionRef.current;
@@ -504,13 +494,11 @@ export function PfPaper({
     imageRefs?: string[],
   ): Promise<boolean> => {
     const refs = imageRefs ?? evidenceIdsForSlot(evidenceRef.current, key);
-    const gen = saveGen.current;
     const seq = (saveSeq.current[key] ?? 0) + 1;
     saveSeq.current[key] = seq;
-    // Only the latest save of THIS paper may touch the flag: the paper must be unchanged
-    // (gen) and this must be its newest request (seq). A save that outlives its paper is a
-    // no-op — it can't rewrite the next paper's state.
-    const isLatest = () => saveGen.current === gen && saveSeq.current[key] === seq;
+    // Only this visit's newest request for the slot may touch the flag. A save that outlives
+    // its visit settles on the unmounted visit and can't rewrite the next paper's state.
+    const isLatest = () => saveSeq.current[key] === seq;
     // Deregister this entry when it settles, unless a newer save has already replaced it.
     const deregister = (ok: boolean) => {
       if (inFlightSaves.current.get(key) === done) inFlightSaves.current.delete(key);
@@ -542,7 +530,7 @@ export function PfPaper({
           { keepalive },
         )
           .then((ack) => {
-            if (saveGen.current === gen && ack?.save_epoch !== undefined)
+            if (ack?.save_epoch !== undefined)
               nativeEpochs.current[key] = Math.max(nativeEpochs.current[key] ?? 0, ack.save_epoch);
             if (isLatest()) setSaveFailed((f) => (f[key] ? { ...f, [key]: false } : f));
             return true;
@@ -656,7 +644,9 @@ export function PfPaper({
   // latest draft with keepalive for every slot that is either pending (unfired debounce) or
   // still in flight (a normal POST the teardown may cancel). Idempotent — the draft PUT is
   // last-write-wins, so re-sending the newest text is safe. Then pause the session.
-  usePagehideTransition(() => {
+  // YUK-1483: armed by the paper header's ref (always mounted with the visit); it is
+  // re-armed with this render's closure on each commit, so it flushes the latest drafts.
+  const attachPagehide = usePagehideTransition(() => {
     stopTimingSegment();
     // Guard the flush so a throw can't skip the session pause — the orphan sweep is the only
     // other backstop for a session left open on teardown.
@@ -715,17 +705,6 @@ export function PfPaper({
       setExiting(false);
     }
   };
-
-  if (detailQ.isLoading) return <p className="quiet-empty">取卷中…</p>;
-  if (detailQ.isError || !detail || slots.length === 0)
-    return (
-      <div className="pfp">
-        <Btn size="sm" variant="ghost" icon="arrowL" onClick={() => onExit()}>
-          返回流
-        </Btn>
-        <p className="quiet-empty">卷加载失败或没有题。</p>
-      </div>
-    );
 
   const cur = slots[Math.min(pos, slots.length - 1)];
   const curKey = slotKey(cur);
@@ -852,9 +831,16 @@ export function PfPaper({
     scheduleEvidenceSave(changed);
   };
 
+  // Switching question closes the previous question's timing segment (persisting its time
+  // once) and opens one for the new question, unless it is already submitted.
   const goPos = (n: number) => {
     setConfirm(false);
-    setPos(Math.max(0, Math.min(slots.length - 1, n)));
+    const next = Math.max(0, Math.min(slots.length - 1, n));
+    setPos(next);
+    if (next === posRef.current) return;
+    posRef.current = next;
+    stopTimingSegment();
+    if (sessionRef.current) startCurrentSegment();
   };
 
   const submitAll = async () => {
@@ -933,8 +919,8 @@ export function PfPaper({
   };
 
   return (
-    <div className="pfp" data-screen-label={`卷模式 · ${artifactId}`}>
-      <div className="pfp-top">
+    <div className="pfp" data-screen-label={`卷模式 · ${artifactId}`} ref={attachVisit}>
+      <div className="pfp-top" ref={attachPagehide}>
         <Btn
           size="sm"
           variant="ghost"
