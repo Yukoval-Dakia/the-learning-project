@@ -85,13 +85,11 @@ export async function expandDocx(file: File): Promise<DocxIngested> {
 // Asset object-URL owner (YUK-1483). One entry per asset id + auth epoch owns the in-flight
 // read and the blob: URL it produces, so every consumer of the same asset shares one request
 // and one URL. React consumers hold the entry through useSyncExternalStore subscriptions: the
-// URL is revoked (or the read aborted) only after the last subscriber leaves. Imperative callers
-// (fetchAssetObject / fetchAssetObjectUrl / peekAssetObject) cannot tell us when they are done,
-// so an entry they touched is pinned and kept, as before. Losing auth bumps the epoch and drops
-// every entry, so an old token's bytes are never shown again.
+// URL is revoked (or the read aborted) only after the last subscriber leaves. Losing auth bumps
+// the epoch and drops every entry, so an old token's bytes are never shown again.
 //
-// Entries are only created on the client (subscriptions and the imperative fetches never run
-// during SSR), so these module maps hold no per-request server state.
+// Entries are only created on the client (subscriptions never run during SSR), so these module
+// maps hold no per-request server state.
 
 export interface AssetObject {
   url: string;
@@ -113,7 +111,6 @@ interface AssetEntry {
   /** Live useSyncExternalStore subscriptions. */
   refs: number;
   /** Handed out to an imperative caller; never revoked except on auth loss. */
-  pinned: boolean;
   snapshot: AssetObjectState;
   pending: Promise<AssetObject> | null;
   abort: AbortController | null;
@@ -170,7 +167,6 @@ function getOrCreateEntry(id: string): AssetEntry {
       key,
       id,
       refs: 0,
-      pinned: false,
       snapshot: ASSET_LOADING,
       pending: null,
       abort: null,
@@ -188,7 +184,7 @@ function publish(entry: AssetEntry, snapshot: AssetObjectState): void {
 }
 
 function isLive(entry: AssetEntry): boolean {
-  return entries.get(entry.key) === entry && (entry.refs > 0 || entry.pinned);
+  return entries.get(entry.key) === entry && entry.refs > 0;
 }
 
 function startRead(entry: AssetEntry): Promise<AssetObject> {
@@ -232,15 +228,9 @@ function startRead(entry: AssetEntry): Promise<AssetObject> {
   return read;
 }
 
-function readEntry(entry: AssetEntry): Promise<AssetObject> {
-  const { url, mimeType } = entry.snapshot;
-  if (url) return Promise.resolve({ url, mimeType });
-  return entry.pending ?? startRead(entry);
-}
-
 function releaseEntry(entry: AssetEntry): void {
   entry.releaseTimer = null;
-  if (entry.refs > 0 || entry.pinned || entries.get(entry.key) !== entry) return;
+  if (entry.refs > 0 || entries.get(entry.key) !== entry) return;
   entries.delete(entry.key);
   entry.abort?.abort();
   if (entry.snapshot.url) URL.revokeObjectURL(entry.snapshot.url);
@@ -265,7 +255,7 @@ function acquireEntry(epoch: number, id: string, listener: () => void): () => vo
   return () => {
     entry.listeners.delete(listener);
     entry.refs -= 1;
-    if (entry.refs === 0 && !entry.pinned && !entry.releaseTimer) {
+    if (entry.refs === 0 && !entry.releaseTimer) {
       // Wait one task: when one consumer unmounts as another mounts the same asset in the
       // same commit, the newcomer subscribes before this fires and keeps the URL alive.
       entry.releaseTimer = setTimeout(() => releaseEntry(entry), 0);
@@ -290,28 +280,6 @@ function getServerAuthEpoch(): number {
 
 function getServerAssetState(): AssetObjectState {
   return NO_ASSET;
-}
-
-export async function fetchAssetObjectUrl(id: string): Promise<string> {
-  return (await fetchAssetObject(id)).url;
-}
-
-/**
- * YUK-1051 — mime-aware variant of fetchAssetObjectUrl. Shares the same entry (and the same
- * in-flight read), so an asset already fetched as a bare URL is not refetched.
- */
-export function fetchAssetObject(id: string): Promise<AssetObject> {
-  const entry = getOrCreateEntry(id);
-  entry.pinned = true;
-  return readEntry(entry);
-}
-
-/** Synchronous cache peek — lets a renderer avoid a loading flash for known assets. */
-export function peekAssetObject(id: string): AssetObject | null {
-  const entry = entries.get(entryKey(authEpoch, id));
-  if (!entry?.snapshot.url) return null;
-  entry.pinned = true;
-  return { url: entry.snapshot.url, mimeType: entry.snapshot.mimeType };
 }
 
 /**
