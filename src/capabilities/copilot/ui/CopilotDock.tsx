@@ -140,6 +140,10 @@ interface PendingCopilotTurn extends PersistedPendingCopilotTurn {
 
 type CopilotProgressStage = 'dispatch' | 'generation' | 'evidence-review';
 
+function isTerminalRunView(view: CopilotRunView): boolean {
+  return view.phase === 'completed' || view.phase === 'failed';
+}
+
 const COPILOT_PROGRESS_LABELS: Record<CopilotProgressStage, string> = {
   dispatch: '准备中…',
   generation: '生成中…',
@@ -639,9 +643,18 @@ export function CopilotDock({ pathname, navigate }: CopilotDockProps) {
         ? 'unsupported'
         : 'checking');
   // Pre-202 retry tuples are restored by the attach-time init command.
-  const [pendingTurns, setPendingTurns] = useState<PendingCopilotTurn[]>([]);
+  // Writes go through setPendingTurns so pendingTurnsRef is current the moment a
+  // turn is added or removed (isRecoveringSession reads it synchronously).
+  const [pendingTurns, setPendingTurnsState] = useState<PendingCopilotTurn[]>([]);
   const pendingTurnsRef = useRef(pendingTurns);
-  pendingTurnsRef.current = pendingTurns;
+  const setPendingTurns = useCallback(
+    (next: PendingCopilotTurn[] | ((previous: PendingCopilotTurn[]) => PendingCopilotTurn[])) => {
+      const value = typeof next === 'function' ? next(pendingTurnsRef.current) : next;
+      pendingTurnsRef.current = value;
+      setPendingTurnsState(value);
+    },
+    [],
+  );
   // AF S4 / YUK-203 U6 — the active skill context (teaching/solve). When set, the
   // next turn(s) route to the skill (single-session model, §4.2). Held in a ref
   // so the composer's `send` reads the live value without re-creating `send`.
@@ -906,7 +919,7 @@ export function CopilotDock({ pathname, navigate }: CopilotDockProps) {
   // resume the newest reusable session, else create one session for this visit.
   // Explicit and recovery selections are never overridden.
   const bootstrapVisitSession = useCallback(
-    (epoch: number, snapshot: CopilotSessionsResponse) => {
+    function bootstrap(epoch: number, snapshot: CopilotSessionsResponse): void {
       const visit = currentVisit();
       if (!visit.open || visit.epoch !== epoch || !hasServerTime(snapshot)) return;
       if (selectionOriginRef.current !== 'automatic') return;
@@ -933,10 +946,18 @@ export function CopilotDock({ pathname, navigate }: CopilotDockProps) {
       }
       if (sessionBootstrapRef.current === epoch) return;
       sessionBootstrapRef.current = epoch;
-      void createConversation('automatic');
+      // When the create settles (even if a reopen made its result stale),
+      // re-check the visit that is open now. The per-visit guard above still
+      // allows at most one automatic create per visit.
+      void createConversation('automatic').finally(() => {
+        const current = currentVisit();
+        const fresh = currentFreshSessions();
+        if (current.open && fresh) bootstrap(current.epoch, fresh);
+      });
     },
     [
       createConversation,
+      currentFreshSessions,
       currentVisit,
       isRecoveringSession,
       selectConversation,
@@ -954,6 +975,15 @@ export function CopilotDock({ pathname, navigate }: CopilotDockProps) {
     },
     [bootstrapVisitSession, fetchVisitSessions],
   );
+
+  // A recovery or pending turn just ended: the automatic selection is no longer
+  // carried by "recovering", so re-run the visit's bootstrap against the visit's
+  // fresh list (keep it, resume another reusable session, or create once).
+  const revalidateAutomaticSelection = useCallback(() => {
+    const visit = currentVisit();
+    const fresh = currentFreshSessions();
+    if (visit.open && fresh) bootstrapVisitSession(visit.epoch, fresh);
+  }, [bootstrapVisitSession, currentFreshSessions, currentVisit]);
 
   const prepareAndOpenDrawer = useCallback(() => {
     preloadMarkdownRenderer();
@@ -1074,6 +1104,7 @@ export function CopilotDock({ pathname, navigate }: CopilotDockProps) {
           current.view = view;
           applyRunViewToMessage(current);
           bumpRunRevision();
+          if (isTerminalRunView(view)) revalidateAutomaticSelection();
         },
       })
         .then((view) => {
@@ -1081,6 +1112,7 @@ export function CopilotDock({ pathname, navigate }: CopilotDockProps) {
           if (!current || current.controller !== controller) return;
           current.view = view;
           applyRunViewToMessage(current);
+          if (isTerminalRunView(view)) revalidateAutomaticSelection();
         })
         .catch((cause) => {
           const current = activeRunsRef.current.get(runId);
@@ -1100,7 +1132,13 @@ export function CopilotDock({ pathname, navigate }: CopilotDockProps) {
           bumpRunRevision();
         });
     },
-    [applyRunViewToMessage, bumpRunRevision, currentVisit, updateMessages],
+    [
+      applyRunViewToMessage,
+      bumpRunRevision,
+      currentVisit,
+      revalidateAutomaticSelection,
+      updateMessages,
+    ],
   );
 
   const synchronizeSnapshot = useCallback(
@@ -1186,8 +1224,16 @@ export function CopilotDock({ pathname, navigate }: CopilotDockProps) {
       });
       bumpRunRevision();
       for (const runId of retainedRunIds) subscribeRun(runId);
+      // Runs the snapshot no longer lists were just dropped; recovery may be over.
+      revalidateAutomaticSelection();
     },
-    [bumpRunRevision, restoreSkillStateFromReplay, subscribeRun, updateMessages],
+    [
+      bumpRunRevision,
+      restoreSkillStateFromReplay,
+      revalidateAutomaticSelection,
+      subscribeRun,
+      updateMessages,
+    ],
   );
 
   const refetchTurns = useCallback(async (): Promise<boolean> => {
@@ -1529,6 +1575,7 @@ export function CopilotDock({ pathname, navigate }: CopilotDockProps) {
         applyRunViewToMessage(run);
         bumpRunRevision();
         subscribeRun(runId);
+        revalidateAutomaticSelection();
       } catch (err) {
         const acceptanceUnknown =
           (!(err instanceof ApiError) && !(err instanceof ApiAuthError)) ||
@@ -1559,6 +1606,7 @@ export function CopilotDock({ pathname, navigate }: CopilotDockProps) {
           reportSendError(
             err instanceof ApiError ? `请求失败（${err.status}）` : '访问令牌已失效，请重新输入。',
           );
+          revalidateAutomaticSelection();
           return;
         }
         const message = err instanceof Error ? err.message : '请求受理状态暂时无法确认。';
@@ -1583,6 +1631,8 @@ export function CopilotDock({ pathname, navigate }: CopilotDockProps) {
       bumpRunRevision,
       recordPolicyCheck,
       reportSendError,
+      revalidateAutomaticSelection,
+      setPendingTurns,
       subscribeRun,
       updateMessages,
     ],
@@ -1607,8 +1657,9 @@ export function CopilotDock({ pathname, navigate }: CopilotDockProps) {
       updateMessages((previous) =>
         previous.filter((message) => message.idempotency_key !== idempotencyKey),
       );
+      revalidateAutomaticSelection();
     },
-    [updateMessages],
+    [revalidateAutomaticSelection, setPendingTurns, updateMessages],
   );
 
   const reconnectRun = useCallback(
@@ -1756,7 +1807,6 @@ export function CopilotDock({ pathname, navigate }: CopilotDockProps) {
       dispatching: false,
       error: '这次请求的受理状态还不能确认；恢复时会复用原请求，不会创建第二次执行。',
     }));
-    pendingTurnsRef.current = turns;
     setPendingTurns(turns);
     updateMessages(pendingMessagesForSession(recoverySessionId));
     currentSessionIdRef.current = recoverySessionId;
@@ -1770,7 +1820,13 @@ export function CopilotDock({ pathname, navigate }: CopilotDockProps) {
       created_at: recoveredAt,
       updated_at: recoveredAt,
     });
-  }, [pendingMessagesForSession, setOptimisticSession, setSelectionOrigin, updateMessages]);
+  }, [
+    pendingMessagesForSession,
+    setOptimisticSession,
+    setPendingTurns,
+    setSelectionOrigin,
+    updateMessages,
+  ]);
 
   // The Dock's always-present root node (the launcher wrapper) owns the Dock's
   // browser lifetime: attach restores storage and starts claiming open requests;
