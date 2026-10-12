@@ -1,7 +1,7 @@
 // Stable server contract for consumers outside the practice capability.
 
-// YUK-876 — the knowledge-owned failure-attempt read port consumes the
-// effective-truth resolver through this public seam (not a deep import).
+// Compatibility exports; shared read models consume their owner, kernel/events,
+// directly so initialization does not re-enter the practice runtime barrel.
 export {
   type EffectiveTruth,
   activeEffectiveTruth,

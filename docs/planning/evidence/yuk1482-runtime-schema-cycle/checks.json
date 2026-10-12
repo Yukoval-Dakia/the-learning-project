@@ -1,0 +1,78 @@
+{
+  "base": "8fb160ed517c85a56cabbebfe1f1a19f137e4639",
+  "historicalProductSource": "0b45c22f246ecb1f611abb73325b47bbe38471eb",
+  "runtime": {
+    "node": "24.19.0",
+    "pnpm": "11.25.0"
+  },
+  "historicalRepro": {
+    "failed": 3,
+    "skipped": 9,
+    "expectedFailure": true,
+    "filter": "operation entry",
+    "probe": "Unchanged current-base import-order test, added to the old checkout via a temporary config include."
+  },
+  "currentEntry": {
+    "passed": 12,
+    "failed": 0
+  },
+  "failureReaderBodyByteIdentical": true,
+  "unchangedFilesSha256": {
+    "src/capabilities/practice/server/item-prior-import-order.unit.test.ts": "2c74c53ccbc97fc47a03946117821255b440950f513dd6ec0b5f233aa8e92c45",
+    "src/capabilities/practice/server/item-prior-durable-operation.ts": "417927bebdbb1e10d99b3cdf1603e3d9710f44f389e063e0b86c897baacea586",
+    "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts": "c47dcaf790f3d04b2707b66a95c96fcd26665f39cc672eba839246264a9d42e7",
+    "src/capabilities/practice/server/item-prior-limits.ts": "0749fb97ed70f59b3137a0849be72cf3e942a57890fdccd8c927de3abf175183"
+  },
+  "logs": {
+    "historical-repro.log.gz": {
+      "sha256": "ded8a32dbc93a134d291abd4a71d0ecb41bc2c44680717961a0a8e7bcaa3a864",
+      "uncompressedSha256": "e02c73da07b32ecadd7e9a12268b2b6b81e06f134b28d7c774c475f5d17107c8"
+    },
+    "historical-config-attempt.log.gz": {
+      "sha256": "5b7b1227e432fb006b094767fd5ef83a914e3e1839df5235b3529a9656de2dea",
+      "uncompressedSha256": "a58faaa3bde160d87e133c110567398d5787b1418ebda5ca4ee75cd9ca7173ac"
+    },
+    "current-entry.log.gz": {
+      "sha256": "a153eb5485da5aa75629c16e0f43f9103b9a281454eb05c9ab3129e6c34f1e5f",
+      "uncompressedSha256": "db1aed1de0d4752972a5655c0d3770d945469b65a745c0e139f9d0ef3964d46d"
+    },
+    "static.log.gz": {
+      "sha256": "2410f9c35924a127aa40373c03b65ab81746676d61115c6a8bc202d8ddc37830",
+      "uncompressedSha256": "ee614594ad8950036c8afd56b2bd6ff7f8fda56b23b49b2fdb8ab9faae3c2979"
+    },
+    "architecture.log.gz": {
+      "sha256": "2acd62aa92b280b9be76ed5b3defa769c2ffe5546fb1a56121bf6bf9d0f6c08a",
+      "uncompressedSha256": "f6fe201b897301dc5695b9878dddfa1a9098a85e3383f1a926566c370253e1ed"
+    },
+    "build.log.gz": {
+      "sha256": "af3300385aea9ceba6ff8bfe812f80301517b3b810c741cd43eae8908da47161",
+      "uncompressedSha256": "4143c61afbcde7c89508764e9e5fba3a07761a5dace756d594acc813d5b8e4aa"
+    },
+    "static-setup-attempt.log.gz": {
+      "sha256": "1a4c052c79ca67f01f5a061fc91959f91dd1981942f9b0d82d4f92a2e7d3baa9",
+      "uncompressedSha256": "a164a71af9b231bfdda437823abe01d11476b128be0f1036c3d3076472abdf8e"
+    },
+    "static-env-attempt.log.gz": {
+      "sha256": "1a4c052c79ca67f01f5a061fc91959f91dd1981942f9b0d82d4f92a2e7d3baa9",
+      "uncompressedSha256": "a164a71af9b231bfdda437823abe01d11476b128be0f1036c3d3076472abdf8e"
+    }
+  },
+  "localChecks": {
+    "typecheck": "PASS",
+    "lint": {
+      "status": "PASS",
+      "warnings": 172
+    },
+    "build": "PASS",
+    "audit:capability-boundaries": {
+      "status": "PASS",
+      "counts": [428, 0, 48]
+    },
+    "audit:architecture-deepening": "PASS"
+  },
+  "dependencySetup": "Preinstalled dependencies; pnpm --config.verify-deps-before-run=false for each invocation, including nested scripts. Automatic installation hit an inaccessible /home/agent/.local/share/pnpm directory; repository config/lockfile unchanged.",
+  "changedSourcesSha256": {
+    "src/kernel/read-models/failure-attempts.ts": "3da50683eb5d4f950e97b5c9f93807b21e57e911ccbc6158e8cf9bb7597d0ccf",
+    "src/capabilities/practice/public.ts": "bea769b08cc83beb27aab8e49f878bcb387ab120f3149d9dbc0ef11ffc6c45cf"
+  }
+}
