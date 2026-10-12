@@ -76,3 +76,7 @@ Q30 的 A 来自 Word upperLetter 编号。Q31/32 两图共锚且 XML 与 PDF �
 已正常纳入父任务最新 main `8fb160ed`（本分支合成 `c94f4152`），四个产品文件和唯一新增
 回归与独立审查版本完全相同。合成提交再次通过 typecheck/build、同一 DB 回归与同一
 7题实际转换→确认→正式入库路径；未扩测试矩阵。证据 JSON 的格式错误已修正。
+
+Draft PR [#1703](https://github.com/Yukoval-Dakia/the-learning-project/pull/1703) 已创建。
+临时本地 PG 已停止删除，原有 Postgres 容器未动。Linear 写入被自动审批拒绝，
+理由为实现授权未明确覆盖外部 tracker 更新；未宣称同步成功，待父任务授权或代为更新。

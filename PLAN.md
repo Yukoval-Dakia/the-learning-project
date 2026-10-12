@@ -1,10 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-12：YUK-1404 学校 DOCX 题号/图片保全独立切片完成，合成 7 题全提取并经明确复核正式入库；原卷与可答题未验收，准备 Draft PR，不合并部署。
+> Linear 是权威 tracker。2026-10-12：YUK-1404 学校 DOCX 题号/图片保全独立切片完成，合成 7 题全提取并经明确复核正式入库；原卷与可答题未验收，Draft PR #1703 已推送，不合并部署。
 
 ## NOW
 
-- **YUK-1404 / 学校 DOCX 题号与图片保全**：独立 `fix/yuk-1404-docx-question-boundaries` 修复无空格/全角/加粗题号、Word 字母选项变伪数字题、同段图片/文字丢失；来源保存全文及全部媒体映射，歧义走 partial 复核。真实转换器+临时PG合成7题→7draft→明确确认后7正式，可答题0/未核验；不是原卷成功。独立初审NONE；不复制1658、不改UI、不付费。见[验收与边界](docs/planning/2026-10-12-yuk1404-docx-boundaries.md)。
+- **YUK-1404 / 学校 DOCX 题号与图片保全**：[Draft PR #1703](https://github.com/Yukoval-Dakia/the-learning-project/pull/1703) 已正常纳入 main8fb160ed，修复无空格/全角/加粗题号、Word 字母选项变伪数字题、同段图片/文字丢失；来源保存全文及全部媒体映射，歧义走 partial 复核。真实转换器+临时PG合成7题→7draft→明确确认后7正式，可答题0/未核验；不是原卷成功。独立初审NONE；不复制1658、不改UI、不付费。见[验收与边界](docs/planning/2026-10-12-yuk1404-docx-boundaries.md)。
 
 - **YUK-1404 / native03题图修复**：PR1657 fixed4c52 exact CI38144495041全绿；正常纳入main eb960c079，仅PLAN/now冲突。图ownership/隐私产品代码与单capture边界测试保留，旧细粒度四tests已删。独立初审/最终R2预算已完成，不启第三审。当前crop producer仍无source_asset SHA登记，旧visibility未知，public withholding不是完整配图交付；同卷actual-output验收仍待。无DB/runtime/provider/paid。 [证据](docs/planning/2026-10-11-yuk1404-native03-figure-repair.md)。
 
@@ -70,6 +70,8 @@
 - YUK-1325 / PR #1580：保留 `1be38edbc`、`1af72b427`、`3940d61f9`，正常合入 main `8841ce68a` 为 `e484efa60`；359 scoped tests、21 audits、typecheck/lint/build 与 lint ratchet 通过，无 high/critical 依赖告警。开发 transcript 与产品 MiMo/自主交付指导同时保留。writer 已释放，父线程负责最终 SDK/SQL/browser 回放、push、exact-head CI、review replies、Linear 与发布；P2 typed tracing 留 YUK-1339，不启动第三审。详情见 [Laminar 记录](docs/planning/2026-10-06-yuk1325-laminar.md)。旧完成线程越界写入风险仍由父线程独占 watch 约束，平台跟进待去重登记。 最新 main 的前缀 credential P1 修复及73tests记录一并保留；PR父线程仍负责后续验收，此lane无新review。
 
 ## BLOCKED-ON
+
+- YUK-1404 本次 Linear 写入被自动审批拒绝（实现授权未明确覆盖外部 tracker 更新），PR与验收摘要已在仓库交付，等待父任务授权/更新；未写入成功。原卷与准入依赖见 DOCX 验收文档。
 
 - **协调线验收**：第一天能用的时限与 TEST 危机数据清理状态由审计协调线维护；100% 实际出题自动可判已获 owner 确认，不再作为待裁决值。
 
