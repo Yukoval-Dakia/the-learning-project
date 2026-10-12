@@ -1052,11 +1052,21 @@ class PiPreparedQuery implements PreparedExecutionQuery {
         provider: this.args.resolved.provider,
         model: model.id,
         baseUrl: model.baseUrl,
+        api: model.api,
         contextWindow: model.contextWindow,
         context: llmContext,
       });
-      const options = ticket
-        ? { ...streamOptions, maxTokens: ticket.maxOutputTokens, maxRetries: 0 }
+      const admitted = ticket;
+      const options = admitted
+        ? {
+            ...streamOptions,
+            maxTokens: admitted.maxOutputTokens,
+            maxRetries: 0,
+            onPayload: async (payload: unknown, payloadModel: typeof model) =>
+              admitted.preparePayload(
+                (await streamOptions?.onPayload?.(payload, payloadModel)) ?? payload,
+              ),
+          }
         : streamOptions;
       if (guard) this.abort.signal.throwIfAborted();
       const stream = await tracePiStream(

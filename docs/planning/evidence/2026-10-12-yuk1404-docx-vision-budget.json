@@ -1,0 +1,263 @@
+{
+  "recorded_at": "2026-10-12T04:47:53.585519+00:00",
+  "base_revision": "0ff5cbf5990072b56a408cf2c085cc8dbee77226",
+  "files_sha256": {
+    "src/ai/request-guard.ts": "1b5031ec5920b67fa1011744e7ac33be900022c79d53cbd2c00ab9c049fa07e5",
+    "src/server/ai/pi-agent-adapter.ts": "0cb7df19a78049ebd7ee697ece1eb9af905a65eab807ad717d0f0d5cd63c5199",
+    "src/capabilities/ingestion/server/docx/request-budget.ts": "1d6d7f1529914ab8061eabd80ec4371476658630e709fddb39749a1f24edbc59",
+    "src/capabilities/ingestion/api/import.db.test.ts": "b3a293f5071dde102e44a416a813720453094228141e7ee4cc86b2acc1d78ee0",
+    ".env.example": "c6e1fee3aa62d1c40732726d3e554243b0bf8d890a4d10ee775d029624872c5c"
+  },
+  "execution": "Real runTask / PiAgentAdapter / agentLoop / PostgreSQL / PDFium; controlled provider streams. Two image-bearing turns additionally use real Pi OpenAI SDK serialization and retry layer with in-memory fetch responses.",
+  "case": "retains DOCX agent material and drafts through budget rejection and retry",
+  "case_result": {
+    "passed": 1,
+    "skipped": 3,
+    "duration_seconds": 18.81
+  },
+  "controlled_stream_calls": 27,
+  "in_memory_fetch_calls": 2,
+  "external_provider_http_requests": 0,
+  "paid_provider_calls": 0,
+  "real_school_docx_used": false,
+  "provider_metadata_fixture": {
+    "production_capabilities_changed": false,
+    "test_only_binding": {
+      "provider": "xiaomi",
+      "model": "mimo-v2.6-pro",
+      "toolCalling": true,
+      "vision": true
+    },
+    "restored_after_case": true,
+    "limitation": "Production application capability profile remains unconfirmed; this fixture does not authorize or establish production admission."
+  },
+  "contract": {
+    "provider": "xiaomi",
+    "model": "mimo-v2.6-pro",
+    "base_url": "https://api.xiaomimimo.com/v1",
+    "api": "openai-completions",
+    "accountPricing": "overseas-pay-as-you-go-usd",
+    "price_ref": "xiaomi-overseas-usd/2026-10-08",
+    "input_context_upper_tokens": 1048576,
+    "max_completion_tokens": 4096,
+    "input_usd_per_million": 0.435,
+    "output_usd_per_million": 0.87,
+    "request_reserve_micros": 459695,
+    "max_run_usd": 1,
+    "max_requests": 16,
+    "max_tools": 24,
+    "timeout_ms": 240000,
+    "max_retries": 0,
+    "native_web_search_allowed": false,
+    "per_image_token_estimate_used": false
+  },
+  "assertions": {
+    "unknown_account_pricing_streams": 0,
+    "unknown_binding_streams": 0,
+    "insufficient_budget_streams": 0,
+    "unknown_usage_stops_at_request": 8,
+    "unknown_hold_micros": 459695,
+    "image_budget_run_requests": 10,
+    "image_transports": 2,
+    "image_budget_run_settled_micros": 922942,
+    "next_request_rejected_for_run_budget": true,
+    "final_payload_has_png_base64": true,
+    "final_payload_max_completion_tokens": 4096,
+    "final_payload_has_max_tokens": false,
+    "final_payload_function_tools_only": true,
+    "recovery_requests": 9,
+    "source_files_hash_preserved": 6,
+    "drafts_preserved": 2,
+    "options": ["A", "B"],
+    "formal_questions": 0,
+    "ignored_blocks": 0,
+    "session_status": "partial"
+  },
+  "verification": {
+    "typecheck": "passed",
+    "lint": "passed; 172 existing warnings",
+    "build": "passed",
+    "local_full_test_run": false,
+    "new_review_pass": false,
+    "exact_head_ci": "recorded on PR after push"
+  },
+  "official_sources": [
+    "https://mimo.mi.com/docs/en-US/quick-start/usage-guide/multimodal-understanding/image-understanding",
+    "https://mimo.mi.com/docs/en-US/tokenplan/integration/openclaw",
+    "https://mimo.mi.com/docs/en-US/api/chat/openai-api",
+    "https://mimo.mi.com/docs/en-US/price/pay-as-you-go",
+    "https://mimo.mi.com/models/en-US/mimo-v2.6-pro"
+  ],
+  "remaining_blockers": [
+    "Production direct-Xiaomi application model capability admission remains unconfirmed; no binding changes made.",
+    "Overseas USD account tariff must be confirmed; shared endpoint is not region evidence.",
+    "Weekly check omits unmatched legacy cost_ledger / provider_attempt and external account spending; parent must reconcile history and remaining allowance.",
+    "No original-paper paid QA authorized or executed; exact runtime binding, per-run allowance/time window and source-data transmission authorization still required."
+  ],
+  "receipt": {
+    "runs": [
+      {
+        "id": "wbtvq482u9eb4064lcmld3z7",
+        "error": "[DocxIngestionTask] agent run errored: subtype=error_during_execution errors=DOCX budget: missing approved USD price/binding",
+        "model": "mimo-v2.6-pro",
+        "budget": {
+          "run_id": "wbtvq482u9eb4064lcmld3z7",
+          "requests": 0,
+          "statuses": ["not_sent"],
+          "charged_micros": 0,
+          "account_pricing": [null]
+        },
+        "status": "failure",
+        "provider": "xiaomi"
+      },
+      {
+        "id": "ubrr8br30wlodd6kioz4jvm0",
+        "error": "[DocxIngestionTask] agent run errored: subtype=error_during_execution errors=DOCX budget: unpriced or changed provider/model/endpoint/context limit",
+        "model": "mimo-v2.6-pro",
+        "budget": {
+          "run_id": "ubrr8br30wlodd6kioz4jvm0",
+          "requests": 0,
+          "statuses": ["not_sent"],
+          "charged_micros": 0,
+          "account_pricing": [null]
+        },
+        "status": "failure",
+        "provider": "xiaomi"
+      },
+      {
+        "id": "kt77br0rvbtnphdijwzoawo5",
+        "error": "[DocxIngestionTask] agent run errored: subtype=error_during_execution errors=DOCX budget: insufficient run budget before request",
+        "model": "mimo-v2.6-pro",
+        "budget": {
+          "run_id": "kt77br0rvbtnphdijwzoawo5",
+          "requests": 0,
+          "statuses": ["not_sent"],
+          "charged_micros": 0,
+          "account_pricing": [null]
+        },
+        "status": "failure",
+        "provider": "xiaomi"
+      },
+      {
+        "id": "t1xjmd64uy3a0qgp29wbt3c2",
+        "error": "[DocxIngestionTask] agent run errored: subtype=error_during_execution errors=DOCX budget: unknown or out-of-bound provider usage",
+        "model": "mimo-v2.6-pro",
+        "budget": {
+          "run_id": "t1xjmd64uy3a0qgp29wbt3c2",
+          "requests": 8,
+          "statuses": ["not_sent", "settled", "unknown"],
+          "charged_micros": 462803,
+          "account_pricing": ["overseas-pay-as-you-go-usd", null]
+        },
+        "status": "failure",
+        "provider": "xiaomi"
+      },
+      {
+        "id": "ktggl0qmz53zdnkgydyxqr8f",
+        "error": "[DocxIngestionTask] agent run errored: subtype=error_during_execution errors=DOCX budget: insufficient run budget before request",
+        "model": "mimo-v2.6-pro",
+        "budget": {
+          "run_id": "ktggl0qmz53zdnkgydyxqr8f",
+          "requests": 10,
+          "statuses": ["not_sent", "settled"],
+          "charged_micros": 922942,
+          "account_pricing": ["overseas-pay-as-you-go-usd", null]
+        },
+        "status": "failure",
+        "provider": "xiaomi"
+      },
+      {
+        "id": "wuvgt363qtmj4q7biy55w506",
+        "error": null,
+        "model": "mimo-v2.6-pro",
+        "budget": {
+          "run_id": "wuvgt363qtmj4q7biy55w506",
+          "requests": 9,
+          "statuses": ["not_sent", "settled"],
+          "charged_micros": 3996,
+          "account_pricing": ["overseas-pay-as-you-go-usd", null]
+        },
+        "status": "success",
+        "provider": "xiaomi"
+      }
+    ],
+    "blocks": [
+      {
+        "id": "i6tip5ohac6ylylp6l4nik0a",
+        "status": "draft",
+        "structured": {
+          "id": "q1",
+          "kind": "short_answer",
+          "role": "standalone",
+          "source": "agent_edit",
+          "options": [
+            {
+              "text": "甲",
+              "label": "A"
+            },
+            {
+              "text": "乙",
+              "label": "B"
+            }
+          ],
+          "prompt_text": "题甲",
+          "question_no": "q1",
+          "last_modified_by": "ktggl0qmz53zdnkgydyxqr8f"
+        }
+      },
+      {
+        "id": "u5pnvf666107fz9j7rpsahbh",
+        "status": "draft",
+        "structured": {
+          "id": "q2",
+          "kind": "short_answer",
+          "role": "standalone",
+          "source": "agent_edit",
+          "prompt_text": "",
+          "question_no": "q2",
+          "last_modified_by": "wuvgt363qtmj4q7biy55w506"
+        }
+      }
+    ],
+    "sessions": [
+      {
+        "id": "rxvqo9qr91ut86xcr424h6oi",
+        "status": "partial"
+      }
+    ],
+    "docx_sources": [
+      {
+        "sealed": true,
+        "source_id": "lwnismkjf9k69fsado2pc180",
+        "seen_images": ["h6yzi8u4dq8kt95a0z34yj8g"],
+        "source_assets": 6
+      }
+    ],
+    "unknown_holds": [
+      {
+        "week": "2026-10-12T00:00:00.000Z",
+        "model": "mimo-v2.6-pro",
+        "runId": "t1xjmd64uy3a0qgp29wbt3c2",
+        "status": "unknown",
+        "baseUrl": "https://api.xiaomimimo.com/v1",
+        "request": 8,
+        "priceRef": "xiaomi-overseas-usd/2026-10-08",
+        "provider": "xiaomi",
+        "priceSource": "https://mimo.mi.com/docs/en-US/price/pay-as-you-go",
+        "amountMicros": 459695,
+        "contextBytes": 22746,
+        "accountPricing": "overseas-pay-as-you-go-usd",
+        "reservedMicros": 459695,
+        "inputUpperTokens": 1048576,
+        "outputUpperTokens": 4096
+      }
+    ],
+    "budget_statuses": {
+      "settled": 26,
+      "unknown": 1,
+      "not_sent": 6
+    },
+    "formal_questions": 0,
+    "synthetic_charge_micros": 1389741
+  }
+}

@@ -14,7 +14,7 @@ import { registerCapabilityTools } from '@/server/ai/tools/register-capability-t
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import {
   event,
@@ -53,6 +53,8 @@ import {
   createAssistantMessageEventStream,
   createModels,
 } from '@earendil-works/pi-ai';
+import { streamSimple as streamOpenAICompletions } from '@earendil-works/pi-ai/api/openai-completions';
+import { normalizeContext } from '@earendil-works/pi-ai/utils/transcript';
 import { strToU8, zipSync } from 'fflate';
 import sharp from 'sharp';
 import type { TaskRuntime } from '@/ai/task-runtime';
@@ -60,6 +62,7 @@ import { DocxAgentState } from '@/core/schema/docx-agent';
 import { structuredToPromptMarkdown } from '@/core/schema/structured_question';
 import { __setPiAdapterForTests } from '@/server/ai/execution-adapter';
 import { PiAgentAdapter } from '@/server/ai/pi-agent-adapter';
+import { PROVIDER_MODEL_BINDINGS } from '@/server/ai/providers';
 import { buildPiDomainAgentTools } from '@/server/ai/tools/pi-tools';
 import { Ingestion } from '@/server/session';
 // YUK-503 (YUK-471 W3-D test hardening) — fold==row parity helpers for the set_status writers.
@@ -223,7 +226,7 @@ describe('POST /api/ingestion/[id]/import', () => {
   });
 
   // @invariant data: DOCX sources and staged drafts survive agent failure/retry without duplicate or silent-drop imports.
-  // @fails-if a task can access foreign material, failures erase staged drafts, retry duplicates questions, or unresolved material becomes a terminal import.
+  // @fails-if unknown tariffs or over-budget image requests reach transport, failures erase drafts, retry duplicates questions, or unresolved material becomes a terminal import.
   it('retains DOCX agent material and drafts through budget rejection and retry', async () => {
     const db = testDb();
     // Production worker boot registers capability tools before dispatching jobs.
@@ -313,21 +316,35 @@ describe('POST /api/ingestion/[id]/import', () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-10-12T04:00:00Z'));
     vi.stubEnv('XIAOMI_API_KEY', 'offline-provider-test-only');
-    const approve = (maxRunUsd: number) =>
+    vi.stubEnv('AI_PROVIDER_OVERRIDE', 'xiaomi');
+    vi.stubEnv('AI_PROVIDER_MODEL', 'mimo-v2.6-pro');
+    // Controlled provider metadata only. The production direct-Xiaomi v2.6-pro
+    // capability gate is still unconfirmed; this fixture does NOT admit it.
+    const binding = PROVIDER_MODEL_BINDINGS.xiaomi;
+    const originalModels = binding.models;
+    binding.models = {
+      ...originalModels,
+      'mimo-v2.6-pro': { capabilities: { toolCalling: true, vision: true } },
+    };
+    onTestFinished(() => {
+      binding.models = originalModels;
+    });
+    const approve = (maxRunUsd: number, accountPricing = 'overseas-pay-as-you-go-usd') =>
       vi.stubEnv(
         'DOCX_AGENT_BUDGET_APPROVAL',
         JSON.stringify({
           priceRef: 'xiaomi-overseas-usd/2026-10-08',
           provider: 'xiaomi',
-          model: 'mimo-v2.5',
+          model: 'mimo-v2.6-pro',
           currency: 'USD',
+          accountPricing,
           maxRunUsd,
           expiresAt: '2026-10-13T00:00:00Z',
         }),
       );
     approve(1);
     const model: Model<'openai-completions'> = {
-      id: 'mimo-v2.5',
+      id: 'mimo-v2.6-pro',
       name: 'Offline DOCX wire',
       provider: 'xiaomi',
       api: 'openai-completions',
@@ -343,11 +360,61 @@ describe('POST /api/ingestion/[id]/import', () => {
     let phase: 'unknown_usage' | 'image_bound' | 'resume' = 'unknown_usage';
     let turn = 0,
       revision = 0,
-      secondBlockId = '';
+      secondBlockId = '',
+      imageTransports = 0;
     const wire = vi.spyOn(models, 'streamSimple').mockImplementation((_model, context, options) => {
       vi.setSystemTime(new Date(Date.now() + 10)); // Keep canonical event ordering while pinning the dated price fixture.
       expect(options?.maxTokens).toBe(4096);
       expect(options?.maxRetries).toBe(0);
+      if (phase === 'image_bound' && turn >= 8) {
+        turn++;
+        // Exercise the real SDK serializer and retry layer on the image-bearing
+        // requests. Only fetch is replaced; no HTTP can leave this case.
+        return streamOpenAICompletions(model, normalizeContext(context), {
+          ...options,
+          fetch: async (_url, init) => {
+            const payload = JSON.parse(String(init?.body));
+            expect(payload.max_completion_tokens).toBe(4096);
+            expect(payload.max_tokens).toBeUndefined();
+            expect(payload.tools.every((tool: { type: string }) => tool.type === 'function')).toBe(
+              true,
+            );
+            expect(payload.web_search_options).toBeUndefined();
+            expect(JSON.stringify(payload.messages)).toContain('data:image/png;base64,');
+            imageTransports++;
+            const chunk = {
+              id: createId(),
+              object: 'chat.completion.chunk',
+              created: 0,
+              model: model.id,
+              choices: [
+                {
+                  index: 0,
+                  delta: {
+                    role: 'assistant',
+                    tool_calls: [
+                      {
+                        index: 0,
+                        id: createId(),
+                        type: 'function',
+                        function: {
+                          name: 'mcp__loom__read_docx_source',
+                          arguments: '{"action":"list"}',
+                        },
+                      },
+                    ],
+                  },
+                  finish_reason: 'tool_calls',
+                },
+              ],
+              usage: { prompt_tokens: 1_048_576, completion_tokens: 4096, total_tokens: 1_052_672 },
+            };
+            return new Response(`data: ${JSON.stringify(chunk)}\n\ndata: [DONE]\n\n`, {
+              headers: { 'Content-Type': 'text/event-stream' },
+            });
+          },
+        });
+      }
       const fail = phase !== 'resume';
       const stream = createAssistantMessageEventStream();
       void (async () => {
@@ -409,7 +476,7 @@ describe('POST /api/ingestion/[id]/import', () => {
                         asset_id: page,
                         question_keys: ['q1', 'q2'],
                         disposition: 'unresolved',
-                        reason: '视觉预算未批准，页图未核对',
+                        reason: '受控输入仅验证图片传输，视觉语义尚未验收',
                       },
                       {
                         asset_id: media,
@@ -453,7 +520,7 @@ describe('POST /api/ingestion/[id]/import', () => {
             }
             break;
           case 8:
-            expect(phase).toBe('resume'); // No provider request may follow missing usage or a native image result.
+            expect(phase).toBe('resume'); // Missing usage cannot admit another provider request.
             expect(output().sealed).toBe(true);
             content = [{ type: 'text', text: 'Partial draft batch saved' }];
             break;
@@ -505,6 +572,11 @@ describe('POST /api/ingestion/[id]/import', () => {
     __setPiAdapterForTests(new PiAgentAdapter({ models, agentLoop }));
     const job = { id: 'local-docx-job', data: { sessionId } } as never;
     const handler = buildTencentOcrHandler({ db, r2, taskRuntime: runtime });
+    approve(1, 'unknown');
+    await queue();
+    await expect(handler([job])).rejects.toThrow('missing approved USD price/binding');
+    expect(wire).not.toHaveBeenCalled();
+    approve(1);
     await queue();
     model.baseUrl = 'https://unpriced.invalid';
     await expect(handler([job])).rejects.toThrow('unpriced or changed');
@@ -538,14 +610,15 @@ describe('POST /api/ingestion/[id]/import', () => {
       reservedMicros: number;
     }>;
     expect(reservations.find((entry) => entry.status === 'unknown')).toMatchObject({
-      amountMicros: 147948,
-      reservedMicros: 147948,
+      amountMicros: 459695,
+      reservedMicros: 459695,
     });
     phase = 'image_bound';
     turn = 0;
     await queue();
-    await expect(handler([job])).rejects.toThrow('unknown image token upper bound');
-    expect(wire).toHaveBeenCalledTimes(16);
+    await expect(handler([job])).rejects.toThrow('insufficient run budget');
+    expect(wire).toHaveBeenCalledTimes(18);
+    expect(imageTransports).toBe(2); // A third full-context image request would exceed the 1 USD run cap.
     expect(
       await db
         .select()
@@ -557,7 +630,7 @@ describe('POST /api/ingestion/[id]/import', () => {
     await queue();
     await handler([job]);
     await handler([job]); // Completed queue delivery is idempotent.
-    expect(wire).toHaveBeenCalledTimes(25);
+    expect(wire).toHaveBeenCalledTimes(27);
     const drafts = await db
       .select()
       .from(question_block)
@@ -609,7 +682,7 @@ describe('POST /api/ingestion/[id]/import', () => {
       .from(question_block)
       .where(eq(question_block.ingestion_session_id, sessionId));
     expect(retained.map((b) => b.status)).toEqual(['draft', 'draft']);
-    expect(DocxAgentState.parse(saved.provenance.docx_agent).seen_images).toEqual([]);
+    expect(DocxAgentState.parse(saved.provenance.docx_agent).seen_images).toEqual([page]);
   });
 
   it('durable import calls the owner once across concurrent delivery and replay', async () => {

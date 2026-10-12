@@ -8,10 +8,12 @@ export interface ModelRequestGuard {
     provider: string;
     model: string;
     baseUrl: string;
+    api: string;
     contextWindow: number;
     context: Context;
   }): Promise<{
     maxOutputTokens: number;
+    preparePayload(payload: unknown): unknown;
     settle(usage: Usage | undefined): Promise<void>;
   }>;
 }

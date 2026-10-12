@@ -73,30 +73,37 @@
 
 第二个 architecture 检查同时发现两个新 DomainTool 尚未列入 read/write 清单：现已补齐，并从 maintenance 宽读面排除 read_docx_source，仍只授予 docx_ingestion。deepening 审计通过：56 TaskSpecs / 48 DomainTools / 57 queues；其余四项 architecture 检查均通过。
 
-## 当前 DOCX 请求前预算闸门
+## 当前 DOCX 请求前预算与图片准入
 
-仅 DocxIngestionTask 声明 requiresRequestGuard；中央 runner 透传窄接口，Pi adapter 在每一轮完成 context 组装后、实际 provider streamSimple 之前执行准入。其他任务未声明/传入时保持原逻辑。不存在只在最终任务结束后计费的替代路径。
+仅 DocxIngestionTask 声明 requiresRequestGuard；中央 runner 透传窄接口，Pi adapter 在每轮组装 context 后、实际 streamSimple 前执行准入。其他任务保持原逻辑。本轮只修正指定模型的图片上界与价格适用检查，不改全局预算框架、生产 provider pin 或模型能力目录。
 
-- DOCX 运行要求显式 `DOCX_AGENT_BUDGET_APPROVAL`，包含固定 provider/model、USD 价格版本、到期时间和不超过 1 USD 的单次额度。默认不配置即拒发请求；本次仅测试进程使用虚构授权数据，没有修改生产 env、读取真实 key 或访问计费账户。
-- 仅价格卡 `xiaomi-overseas-usd/2026-10-08` 下直连 `https://api.xiaomimimo.com/v1` 的 `mimo-v2.5` / `mimo-v2.6-pro` 能匹配；实际解析结果必须一致，绝不改变全局 pin 或回退 provider。USD 授权只适用于已核对的海外美元账户，不能拿人民币账户、Token Plan 或 OpenCode 订阅估值冒充美元合同。
-- 单次固定最多 16 次模型请求、24 次获准工具调用、240 秒；每次输出最多 4096 tokens（含思考），底层 maxRetries 强制 0，任务重试显式关闭。重复投递仍走已有 session 锁，不额外计成新的模型执行。
-- assembled context 包含 system、用户、工具 schema、完整工具/模型历史；限制序列化后 128000 bytes，文本计费预留使用官方 1M 窗口对应目录 1048576 tokens 的整个上限，不以字数估 token。工具历史和协议开销均落在这个保守窗口预留内。收到用量后验证非负整数、输入确实有观测值、输入/输出不超上限，再按未缓存全价结算（缓存不享受折扣，更保守）。
-- **图片 token 上界尚无已验证证据，因此当前读图拒绝；已组装 context 若含图片也拒绝发给 provider。** 拒绝发生在更新 seen_images 前，不能把未送达模型的图片记成已查看。这意味着当前完整视觉 DOCX 的真实 QA 仍被阻断，不是已验收的视觉产品链。
-- 每次请求前在 source_document.provenance.docx_request_budget 持久预留，价格来源、模型/端点、窗口/输出上限、请求序号与金额可审计。原有 ai_task_runs/cost_ledger 写入 owner 未改。中断、结算失败或 unknown 用量保留全额预留，并拒绝该运行的后续请求；不会用零填未知，也不删除草稿。
-- DOCX 预留通过 Postgres advisory lock 串行化。每次读取同一 UTC 周已有 task-run 成本，加 DOCX 已结算/未结算预留，超过 20 USD 或出现未知/活跃费用即拒绝。未发送请求有明确零-wire marker，避免把准入拒绝当作未知付费。旧 DOCX 无标记的 unknown 仍拒绝，不能臆断为免费。
-- **20 USD 是 DOCX 对账本的准入检查，不是全站并发费用承诺**：其他任务没有接入此锁，外部账户消费也不在本地账本。首次真实 QA 须确认周剩余额度并隔离其他并发付费工作；本 PR 不引入全站计费框架。
+- 显式配置 `DOCX_AGENT_BUDGET_APPROVAL` 的字段为 `priceRef`、`provider`、`model`、`currency`、`accountPricing`、`maxRunUsd`、`expiresAt`。新增 `accountPricing: overseas-pay-as-you-go-usd` 是操作者对账户适用海外 USD 档的确认，不能由共享 API 主机推断；未知/缺失/其他档拒绝。只有虚构测试配置，生产授权仍未设置。实际海外 USD 账户必须先由父任务核对。
+- 价格卡 `xiaomi-overseas-usd/2026-10-08` 仅匹配直连 `https://api.xiaomimimo.com/v1` + `openai-completions` 的既有两个模型；**本轮只对 `xiaomi/mimo-v2.6-pro` 放行图片**。v2.5 仍拒绝图片；Token Plan、OpenCode 和其他模型不扩大支持。实际解析模型/端点/窗口必须吻合授权。
+- [官方图片契约](https://mimo.mi.com/docs/en-US/quick-start/usage-guide/multimodal-understanding/image-understanding)（2026-09-22）明确全部图片与文字 tokens 受模型上下文约束，按输入/缓存输入/输出 token 计费；每图估算代码只供参考。本实现不采用每图 8192 为硬界。
+- [官方配置](https://mimo.mi.com/docs/en-US/tokenplan/integration/openclaw)的按量配置给出 v2.6-pro contextWindow=1048576；[模型页](https://mimo.mi.com/models/en-US/mimo-v2.6-pro)列出图片输入与 1M context。因此整模型窗口预留同时覆盖文本、图片、工具 schema/历史和协议开销。文本/工具序列化上限仍为 128000 bytes，计算时排除 image base64，只留图片类型元数据；`contextBytes` 是这个文本口径，不是 HTTP 请求大小。
+- [海外价格](https://mimo.mi.com/docs/en-US/price/pay-as-you-go)（2026-10-08）：输入 cache miss $0.435/M，输出 $0.87/M；缓存按输入全价保守计算。每请求 `(1048576×0.435 + 4096×0.87)/1000000 = $0.45969408`，向上取整到微美元为 **$0.459695**。接受请求的整个 context 上限已经包括所有图片，不需要再猜图片 token 数。
+- [API 输出契约](https://mimo.mi.com/docs/en-US/api/chat/openai-api)的 `max_completion_tokens` 包括可见输出和 reasoning。SDK 序列化后、transport 前的 DOCX 回调强制 `max_completion_tokens=4096` 并移除旧 `max_tokens`；拒绝非 function 原生工具（含额外计费 web search）、web_search_options、多输出 choice 或模型漂移。底层 maxRetries=0；任务瞬时重试关闭。仅现有 DOCX 工具清单获准。
+- 每 run 最多 16 模型请求、24 工具、240 秒、授权额度≤1 USD。每次有效 usage 后释放多余预留，下一次要求“本 run 已结算费用 + 新全额预留≤额度”。两次满额为 $0.919390，第三次超 1 USD；实际用量低可继续到 16 次。16 次满额约 $7.35512，因此 1 USD 不保证完整试卷能够收敛。手动 retry 是新 run，不是同一 1 USD 的续期。
+- 请求前持久写入 source provenance，包括账户价格声明、窗口、费用和模型来源；未知用量/中断保留全额 reserved/unknown，并终止该 run 后续请求。新 run 不删除旧预留，旧预留继续占所属 UTC 周的额度；原材料和草稿保留。已有 receipt 缺少新账户字段仍可读取，但新请求必须有明确声明。
+- **周账不完整的阻塞保持不变**：当前只读取本周 ai_task_runs.cost_usd + DOCX 持久预留并按 run 去重；现代 runner 的配对 cost_ledger 不重复计。没有对应 run 的旧 cost_ledger、独立 provider_attempt 未纳入；run 按 started_at 分周，非 ledger occurred_at。未知 run 拒绝准入。20 USD 检查不是账户全周总额保证，也不锁其他任务/外部消费。首次 QA 必须由父任务对齐历史费用和剩额，并隔离其他付费工作；本轮不扩展计费框架。
 
-公开依据：MiMo [价格](https://mimo.mi.com/docs/en-US/price/pay-as-you-go)、[模型窗口](https://mimo.mi.com/docs/zh-CN/quick-start/summary/model)、[输出包含思考的上限](https://mimo.mi.com/docs/en-US/quick-start/usage-guide/other/deep-thinking)。每次请求预留 MiMo v2.5 为 $0.147948，v2.6-pro 为 $0.459695；这不是预估实际平均费用。价格/模型证据到期会拒绝，不能自动沿用旧价格。
+### 本轮受控验收
 
-同一既有 DB case 改为 `retains DOCX agent material and drafts through budget rejection and retry`：真实 runner/Pi agentLoop + 免费可控 provider 流。未知绑定与不足预算均 0 次 provider 调用；未知用量在第 8 次后终止并保留 147948 微美元预留；未知图片上界在第 8 次后终止且 seen_images 为空；文本恢复后保留两草稿，commit partial。整个 case 共 25 次本地受控 stream 调用，0 次 provider HTTP。
+仍只修改 `retains DOCX agent material and drafts through budget rejection and retry` 一个既有 DB case。真实 runner/Pi agentLoop、PG、PDFium、材料/草稿 owner；provider 流受控，其中两次带图请求走真实 Pi OpenAI SDK 的序列化与重试层，最终 fetch 替换成内存 SSE，真实 HTTP=0。
 
-| 验收阶段 | 当前预算切片结果 |
+**测试限定**：生产应用目录尚未确认直连 xiaomi/mimo-v2.6-pro 的 toolCalling/vision 能力，真实任务会先被该门拒绝。case 只在测试进程注入明确标记的 provider 能力元数据，并在结束时恢复；没有改生产目录。Pi 原生 catalog 已有该模型的 text/image、openai-completions 和 1048576 窗口，但这不能替代应用准入。此结果只证明预算/线材契约，不证明模型质量或生产可运行。
+
+未知账户档、未知绑定和不足预算均 0 次 stream。未知用量在第 8 次后终止，459695 微美元持久保留。重试先保存/修订两草稿，再由现有读图工具取像素；两次真实 SDK 序列化后的请求体含 base64 图片、max_completion_tokens=4096、无 native search；两次满额 usage 后，下一次请求因 1 USD 不足被拒绝。该 run 共 10 次请求，低用量历史结算后合计 922942 微美元。再次恢复 9 次受控流后 commit partial。全部共 27 次受控 stream、2 次内存 fetch、0 次外部 HTTP。
+
+| 验收阶段 | 当前结果 |
 |---|---|
-| 完整提取 | 合成源材料 6 份摘要一致、草稿 2；不代表模型识别质量 |
-| 图片引用 | 上界未知而拒绝；未谎报查看或归属成功 |
+| 完整提取 | 合成材料 6 份哈希一致、草稿 2；非原卷识别质量 |
+| 图片引用 | 1 页图经工具进入真实 SDK 请求体；未确认真实题图语义归属 |
 | 题型/选项 | 两草稿与 A/B 选项保留，无正则识别 |
-| 草稿确认 | 失败保存、重试恢复、partial；原材料/草稿未删除 |
-| 正式入库 | 两题因未决材料被明确拒绝，正式题 0、draft 2、ignored 0 |
-| 可答题状态 | 无正式题，不宣称可答题 |
+| 草稿确认 | 未知用量/超预算后保留并恢复；最终 partial |
+| 正式入库 | 未决材料明确拒绝，正式 0、draft 2、ignored 0 |
+| 可答题状态 | 无正式题，不声称可答题 |
 
-当前证据：`docs/planning/evidence/2026-10-12-yuk1404-docx-budget.json`。前面的 1 正式题 / 1 草稿来自预算闸门前的历史切片，不能代替本次结果。首次视觉真实 QA 尚需可审计的图片 token 上界或能拒绝超额的供应商账户额度证据；没有这样的证据就继续 fail closed，不先付费。Docling 不是这项费用证据的替代品。
+本轮证据见 `evidence/2026-10-12-yuk1404-docx-vision-budget.json`。旧 `*docx-budget.json` 是 0ff5cbf 的拒图历史切片；更早正式1的结果也不能替代当前验收。
+
+首次真实 QA 仍 blocked：父任务需处理直连模型应用准入、确认海外 USD 账户/价格及周历史费用与剩额、明确本次 run 金额/时窗和原卷内容传输授权，并只读核对实际路由绑定。未读生产 key/account/pin、未付费、未增加模型适配、未部署或合并；本切片完成后暂停新增代码。

@@ -16,16 +16,20 @@ const WEEK_USD = 20;
 const PRICE_REF = 'xiaomi-overseas-usd/2026-10-08';
 const PRICE_SOURCE = 'https://mimo.mi.com/docs/en-US/price/pay-as-you-go';
 // Accepted-request context ceiling, NOT a characters/token heuristic. Reserve the
-// entire documented model window (including tools/history/server framing). Image
-// billing has no verified bound here and is explicitly refused before transmission.
+// entire documented model window (including tools/history/server framing). The
+// official image-understanding contract includes images + text in that ceiling:
+// https://mimo.mi.com/docs/en-US/quick-start/usage-guide/multimodal-understanding/image-understanding
+// Only the pinned v2.6-pro binding below admits images; no per-image estimate is used.
 // Model limits: https://mimo.mi.com/docs/zh-CN/quick-start/summary/model (2026-09-22).
-const TEXT_WINDOW = 1_048_576;
+const CONTEXT_WINDOW = 1_048_576;
 const Approval = z
   .object({
     priceRef: z.literal(PRICE_REF),
     provider: z.literal('xiaomi'),
     model: z.enum(['mimo-v2.5', 'mimo-v2.6-pro']),
     currency: z.literal('USD'),
+    // Explicit account-price attestation, never inferred from the shared API host.
+    accountPricing: z.literal('overseas-pay-as-you-go-usd'),
     maxRunUsd: z.number().positive().max(1),
     expiresAt: z.string().datetime(),
   })
@@ -39,6 +43,7 @@ const Entry = z.object({
   status: z.enum(['not_sent', 'reserved', 'settled', 'unknown']),
   priceRef: z.string(),
   priceSource: z.string(),
+  accountPricing: z.string().optional(), // Older durable reservations remain readable.
   provider: z.string(),
   model: z.string(),
   baseUrl: z.string(),
@@ -113,7 +118,8 @@ export async function createDocxRequestBudget(
       // Do not mark a page as viewed when its pixels cannot reach the next model request.
       if (
         call.name === 'mcp__loom__read_docx_source' &&
-        (call.args as { action?: string })?.action === 'image'
+        (call.args as { action?: string })?.action === 'image' &&
+        pinned?.model !== 'mimo-v2.6-pro'
       )
         deny('unknown image token upper bound');
     },
@@ -144,14 +150,26 @@ export async function createDocxRequestBudget(
         input.provider !== policy.provider ||
         input.model !== policy.model ||
         input.baseUrl !== 'https://api.xiaomimimo.com/v1' ||
-        input.contextWindow !== TEXT_WINDOW
+        input.api !== 'openai-completions' ||
+        input.contextWindow !== CONTEXT_WINDOW
       )
         deny('unpriced or changed provider/model/endpoint/context limit');
       for (const message of input.context.messages) {
-        if (Array.isArray(message.content) && message.content.some((part) => part.type === 'image'))
+        if (
+          policy.model !== 'mimo-v2.6-pro' &&
+          Array.isArray(message.content) &&
+          message.content.some((part) => part.type === 'image')
+        )
           deny('unknown image token upper bound');
       }
-      const contextBytes = Buffer.byteLength(JSON.stringify(input.context), 'utf8');
+      // The byte guard bounds text/tool history, not base64. Image billing is
+      // already reserved at the full context ceiling, including every image.
+      const contextBytes = Buffer.byteLength(
+        JSON.stringify(input.context, (_key, value) =>
+          value?.type === 'image' ? { type: 'image', mimeType: value.mimeType } : value,
+        ),
+        'utf8',
+      );
       if (contextBytes > 128_000) deny('assembled text/tool context exceeds byte limit');
       const rate =
         policy.model === 'mimo-v2.5'
@@ -159,7 +177,7 @@ export async function createDocxRequestBudget(
           : { input: 0.435, output: 0.87 };
       const charge = (inputTokens: number, outputTokens: number) =>
         Math.ceil(inputTokens * rate.input + outputTokens * rate.output);
-      const reserve = charge(TEXT_WINDOW, DOCX_REQUEST_LIMITS.outputTokens);
+      const reserve = charge(CONTEXT_WINDOW, DOCX_REQUEST_LIMITS.outputTokens);
       const request = requests + 1;
       const week = utcWeek(Date.now());
       pending = true; // Serialize even accidental concurrent calls before awaiting the DB reservation.
@@ -219,10 +237,11 @@ export async function createDocxRequestBudget(
           status: 'reserved',
           priceRef: policy.priceRef,
           priceSource: PRICE_SOURCE,
+          accountPricing: policy.accountPricing,
           provider: input.provider,
           model: input.model,
           baseUrl: input.baseUrl,
-          inputUpperTokens: TEXT_WINDOW,
+          inputUpperTokens: CONTEXT_WINDOW,
           outputUpperTokens: DOCX_REQUEST_LIMITS.outputTokens,
           contextBytes,
         });
@@ -234,13 +253,31 @@ export async function createDocxRequestBudget(
       requests = request;
       return {
         maxOutputTokens: DOCX_REQUEST_LIMITS.outputTokens,
+        preparePayload(payload) {
+          live();
+          if (!payload || typeof payload !== 'object') deny('unknown request payload');
+          const params = payload as Record<string, unknown>;
+          // Run after SDK serialization and any existing payload hook, immediately
+          // before transport. Native paid search is not part of the token ceiling.
+          if (
+            params.model !== policy.model ||
+            params.web_search_options !== undefined ||
+            (params.n !== undefined && params.n !== 1) ||
+            (params.tools !== undefined &&
+              (!Array.isArray(params.tools) ||
+                params.tools.some((tool) => tool.type !== 'function')))
+          )
+            deny('unpriced request extension');
+          const { max_tokens: _legacyMax, ...rest } = params;
+          return { ...rest, max_completion_tokens: DOCX_REQUEST_LIMITS.outputTokens };
+        },
         async settle(usage) {
           const tokens = usage && [usage.input, usage.output, usage.cacheRead, usage.cacheWrite];
           const valid =
             !!tokens &&
             tokens.every((n) => Number.isSafeInteger(n) && n >= 0) &&
             usage.input + usage.cacheRead + usage.cacheWrite > 0 &&
-            usage.input + usage.cacheRead + usage.cacheWrite <= TEXT_WINDOW &&
+            usage.input + usage.cacheRead + usage.cacheWrite <= CONTEXT_WINDOW &&
             usage.output <= DOCX_REQUEST_LIMITS.outputTokens;
           // No catalog USD/Token-Plan "cost" is used. Only observed token counts
           // against the pinned USD account price can release the reservation.
