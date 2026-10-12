@@ -54,20 +54,33 @@ export interface CopilotNudgeOpen {
   headline: string;
 }
 
+export type CopilotPrefillMode = 'send' | 'compose';
+
 export interface CopilotOpenRequest {
   seq: number;
   // Optional: nudge opens carry no skill context (free-form agent opening).
   skill_context?: CopilotSkillContextT;
   /** Optional message to auto-send on open (none today; reserved for §5.1). */
   prefill?: string;
+  /**
+   * How the Dock treats `prefill`: 'send' sends it as the next turn when the
+   * conversation is ready; 'compose' only appends it to the composer for the
+   * learner to send. Absent means 'send'.
+   */
+  prefill_mode?: CopilotPrefillMode;
   /** YUK-577 — set when the open was triggered by a proactive-nudge 「看看」click. */
   nudge?: CopilotNudgeOpen;
+}
+
+export interface CopilotOpenOptions {
+  /** false = put the prefill in the composer only; never auto-send it. Default true. */
+  send?: boolean;
 }
 
 interface CopilotOpenSignalStore {
   request: CopilotOpenRequest | null;
   /** Open a free-form Copilot turn without fabricating a skill/entity context. */
-  openCopilot: (prefill?: string) => void;
+  openCopilot: (prefill?: string, options?: CopilotOpenOptions) => void;
   /** YUK-577 — publish a proactive-nudge open (headline as agent opening + session ambient). */
   openCopilotForNudge: (nudge: CopilotNudgeOpen) => void;
   // PR #305 — monotonically increasing counter that survives a claim, so two
@@ -80,10 +93,11 @@ interface CopilotOpenSignalStore {
 export const useCopilotOpenSignal = create<CopilotOpenSignalStore>((set) => ({
   request: null,
   nextSeq: 0,
-  openCopilot: (prefill) =>
+  openCopilot: (prefill, options) =>
     set((s) => {
       const seq = s.nextSeq + 1;
-      return { nextSeq: seq, request: { seq, prefill } };
+      const prefill_mode: CopilotPrefillMode = options?.send === false ? 'compose' : 'send';
+      return { nextSeq: seq, request: { seq, prefill, prefill_mode } };
     }),
   openCopilotWith: (skillContext, prefill) =>
     set((s) => {
@@ -131,8 +145,8 @@ export function subscribeCopilotOpenRequests(
 }
 
 /** Open the global drawer as a normal free-form turn (no fake entity/skill ref). */
-export function openCopilot(prefill?: string): void {
-  useCopilotOpenSignal.getState().openCopilot(prefill);
+export function openCopilot(prefill?: string, options?: CopilotOpenOptions): void {
+  useCopilotOpenSignal.getState().openCopilot(prefill, options);
 }
 
 /**

@@ -1709,15 +1709,15 @@ export function CopilotDock({ pathname, navigate }: CopilotDockProps) {
       prepareAndOpenDrawer();
       const prefill = request.prefill;
       if (!prefill) return;
-      if (selectionValidatedRef.current) {
+      if (request.prefill_mode !== 'compose' && selectionValidatedRef.current) {
         // Every turn is independently accepted and server-serialized, so a
         // cross-surface handoff can be sent while earlier work is still active.
         void send(prefill);
       } else {
-        // The visit's session is not confirmed yet (cold open), so send() would
-        // refuse. Keep the handed-off text in the composer instead of dropping it;
-        // the learner sends it once the conversation is ready.
-        setInput(prefill);
+        // Compose-only handoffs (the practice ask) never auto-send, and a 'send'
+        // handoff on a cold open cannot be sent yet. Either way the text goes to
+        // the composer, appended so an unsent draft is never overwritten.
+        setInput((current) => (current.trim() ? `${current}\n${prefill}` : prefill));
       }
     },
     [prepareAndOpenDrawer, send, updateMessages],
