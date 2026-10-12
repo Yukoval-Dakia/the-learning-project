@@ -27,7 +27,7 @@
 //   • answerNote / origin（变体生成理由置信度）→ 后端无对应列，不渲。
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { deriveOptionIds } from '@/ui/components/response/response-types';
 import { ApiError } from '@/ui/lib/api';
@@ -269,8 +269,7 @@ export function DeleteModal({
   onConfirm: () => void;
 }) {
   const [typed, setTyped] = useState('');
-  const panelRef = useRef<HTMLDivElement | null>(null);
-  useFocusTrap(true, onClose, panelRef);
+  const trapRef = useFocusTrap(true, onClose);
 
   const total = counts
     ? counts.attempts + counts.mistakes + counts.fsrs_cards + counts.paper_refs + counts.children
@@ -297,7 +296,7 @@ export function DeleteModal({
         onClick={onClose}
       />
       <div
-        ref={panelRef}
+        ref={trapRef}
         className="qb-modal"
         // biome-ignore lint/a11y/useSemanticElements: native <dialog> 需 imperative API，与 CSS-class 驱动的 portal + scrim 模式不兼容（同 DraftReviewPage / CommandPalette）。focus-trap 经 useFocusTrap 落地。
         role="dialog"
