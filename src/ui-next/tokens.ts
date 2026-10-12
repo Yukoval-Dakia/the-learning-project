@@ -9,10 +9,8 @@ export const PHONE_MEDIA = `(max-width: ${PHONE_MAX_WIDTH}px)`;
 export const Z = {
   mascot: 3,
   bubble: 4,
-  sheet: 40,
   tabbar: 42,
   capture: 45,
-  palette: 50,
   toast: 60,
 } as const;
 
@@ -23,13 +21,10 @@ export const DURATION = {
   ui: 280,
   panel: 420,
   flight: 540,
-  undoWindow: 4500,
 } as const;
 
 /** Damped springs for JS-driven motion: keep velocity, retarget mid-flight (M3). */
 export const SPRING = {
-  /** Bottom sheet: firm, settles fast. */
-  sheet: { stiffness: 240, damping: 29 },
   /** Floating objects (mascot): slightly under critical, a whisper of overshoot. */
   float: { stiffness: 190, damping: 23 },
 } as const;

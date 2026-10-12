@@ -240,47 +240,6 @@
     opacity: 1;
   }
 
-  /* ── Toasts ──────────────────────────────────────────── */
-  & .un-toasts {
-    position: fixed;
-    left: 50%;
-    bottom: var(--un-sp-6);
-    z-index: var(--un-z-toast);
-    display: grid;
-    justify-items: center;
-    gap: var(--un-sp-2);
-    transform: translateX(-50%);
-    pointer-events: none;
-  }
-
-  & .un-toast {
-    display: flex;
-    align-items: center;
-    gap: var(--un-sp-4);
-    max-width: calc(100vw - 2 * var(--un-sp-4));
-    min-height: 42px;
-    padding: 0 var(--un-sp-2) 0 var(--un-sp-4);
-    border-radius: var(--un-r-3);
-    color: var(--un-text-1);
-    font-size: var(--un-fs-1);
-    white-space: nowrap;
-    pointer-events: auto;
-  }
-
-  & .un-toast-text {
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  & .un-toast-action {
-    flex: none;
-    height: 30px;
-    padding: 0 var(--un-sp-3);
-    border-radius: var(--un-r-3);
-    background: color-mix(in srgb, var(--un-text-1) 8%, transparent);
-    font-weight: var(--un-fw-medium);
-  }
-
   /* ── Shell ───────────────────────────────────────────── */
   & .un-app {
     display: grid;
@@ -377,163 +336,7 @@
     padding: 0 var(--un-sp-4) var(--un-sp-4);
   }
 
-  /* ── Command palette (glass modal) ───────────────────── */
-  & .un-palette-layer {
-    position: fixed;
-    inset: 0;
-    z-index: var(--un-z-palette);
-    display: grid;
-    justify-items: center;
-    align-items: start;
-    padding-top: 14vh;
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity var(--un-t-ui) var(--un-ease-glide);
-  }
-
-  & .un-palette-layer[data-open="true"] {
-    opacity: 1;
-    pointer-events: auto;
-  }
-
-  & .un-palette-scrim {
-    position: absolute;
-    inset: 0;
-    background: var(--un-scrim);
-    cursor: default;
-  }
-
-  & .un-palette {
-    position: relative;
-    width: min(620px, calc(100vw - 2 * var(--un-sp-4)));
-    max-height: 60vh;
-    display: grid;
-    grid-template-rows: auto minmax(0, 1fr);
-    overflow: hidden;
-    border-radius: var(--un-r-2);
-    transform: translateY(-6px) scale(0.98);
-    transition: transform var(--un-t-ui) var(--un-ease-spring);
-  }
-
-  & .un-palette-layer[data-open="true"] .un-palette {
-    transform: none;
-  }
-
-  & .un-palette-input {
-    height: 52px;
-    padding: 0 var(--un-sp-4);
-    border: 0;
-    border-bottom: var(--un-hairline) solid var(--un-line);
-    background: transparent;
-    font-size: var(--un-fs-3);
-  }
-
-  & .un-palette-input:focus-visible {
-    outline: none;
-    box-shadow: inset 0 -2px 0 var(--un-focus);
-  }
-
-  & .un-palette-list {
-    overflow: auto;
-    padding: var(--un-sp-2);
-  }
-
-  & .un-palette-group-box {
-    min-width: 0;
-    margin: 0;
-    padding: 0;
-    border: 0;
-  }
-
-  & .un-palette-group {
-    padding: var(--un-sp-2) var(--un-sp-2) var(--un-sp-1);
-    color: var(--un-text-3);
-    font-size: var(--un-fs-1);
-  }
-
-  & .un-palette-option {
-    display: flex;
-    align-items: center;
-    gap: var(--un-sp-3);
-    min-height: 40px;
-    padding: 0 var(--un-sp-2);
-    border-radius: var(--un-r-1);
-    cursor: pointer;
-  }
-
-  & .un-palette-option[aria-selected="true"] {
-    background: var(--un-bg-hover);
-  }
-
-  & .un-palette-icon {
-    display: inline-grid;
-    color: var(--un-text-3);
-  }
-
-  & .un-palette-label {
-    flex: 1;
-  }
-
-  & .un-palette-hint {
-    color: var(--un-text-3);
-  }
-
-  & .un-palette-empty {
-    padding: var(--un-sp-4);
-    color: var(--un-text-3);
-  }
-
-  /* ── Phone sheet and tab bar (shown only at phone width) ─ */
-  & .un-sheet {
-    position: fixed;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    z-index: var(--un-z-sheet);
-    display: grid;
-    grid-template-rows: var(--un-h-sheet-grip) auto minmax(0, 1fr);
-    height: calc(100dvh - 60px);
-    border-radius: var(--un-r-2) var(--un-r-2) 0 0;
-    background: var(--un-bg-raised);
-    box-shadow: var(--un-shadow-float);
-    touch-action: none;
-  }
-
-  & .un-sheet-grip {
-    display: grid;
-    place-items: center;
-    width: 100%;
-    cursor: grab;
-    touch-action: none;
-  }
-
-  & .un-sheet-grip-bar {
-    width: 36px;
-    height: 5px;
-    border-radius: var(--un-r-3);
-    background: var(--un-text-4);
-  }
-
-  & .un-sheet-head {
-    display: flex;
-    align-items: center;
-    gap: var(--un-sp-2);
-    padding: 0 var(--un-sp-3) var(--un-sp-2) var(--un-sp-4);
-  }
-
-  & .un-sheet-body {
-    min-height: 0;
-    overflow: auto;
-    padding: 0 var(--un-sp-4) var(--un-sp-4);
-    touch-action: pan-y;
-    transition: opacity var(--un-t-ui) var(--un-ease-glide);
-  }
-
-  & .un-sheet[data-snap="peek"] .un-sheet-body,
-  & .un-sheet[data-snap="closed"] .un-sheet-body {
-    opacity: 0;
-  }
-
+  /* ── Phone tab bar (shown only at phone width) ─ */
   & .un-tabbar {
     position: fixed;
     left: var(--un-sp-3);
@@ -613,7 +416,7 @@
   }
 }
 
-/* Phone (T8: 720px). The sidebar and the side panel give way to the sheet and the tab bar. */
+/* Phone (T8: 720px). The sidebar and the side panel give way to the tab bar. */
 @media (max-width: 720px) {
   [data-ui-next] {
     & .un-app,
@@ -640,17 +443,13 @@
       display: none;
     }
 
-    /* --un-chrome-bottom: how much of the screen bottom floating chrome covers. Defaults to the
-       tab bar; a bottom sheet publishes its own coverage on the root (M15, A2). */
+    /* --un-chrome-bottom: how much of the screen bottom floating chrome covers: the tab bar
+       (M15, A2). */
     --un-chrome-bottom: calc(var(--un-h-tabbar) + var(--un-sp-3));
 
     & .un-app-scroll {
       padding-bottom: calc(var(--un-chrome-bottom) + var(--un-sp-4));
       scroll-padding-bottom: calc(var(--un-chrome-bottom) + var(--un-sp-4));
-    }
-
-    & .un-toasts {
-      bottom: calc(var(--un-chrome-bottom) + var(--un-sp-3));
     }
 
     & .un-app-phone-chrome {
@@ -660,7 +459,6 @@
 }
 
 @media (min-width: 721px) {
-  [data-ui-next] .un-sheet,
   [data-ui-next] .un-tabbar {
     display: none;
   }
@@ -690,10 +488,6 @@
 
     & .un-roll[data-dir="down"] .un-roll-out {
       animation-name: un-roll-out-down;
-    }
-
-    & .un-toast {
-      animation: un-toast-in var(--un-t-ui) var(--un-ease-spring) both;
     }
 
     & .un-flash {
@@ -733,13 +527,6 @@
   to {
     transform: translateY(100%);
     opacity: 0;
-  }
-}
-
-@keyframes un-toast-in {
-  from {
-    opacity: 0;
-    transform: translateY(12px) scale(0.96);
   }
 }
 

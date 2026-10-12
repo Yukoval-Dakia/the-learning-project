@@ -10,5 +10,3 @@ export { Kbd } from './Kbd';
 export { RollNumber } from './RollNumber';
 export type { SegmentedOption, SegmentedProps } from './Segmented';
 export { Segmented } from './Segmented';
-export type { Toast, ToastAction } from './Toaster';
-export { Toaster, useToaster } from './Toaster';
