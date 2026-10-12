@@ -17,11 +17,15 @@
 //     question_no — sits above the editable prompt textarea.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useMemo, useRef, useState } from 'react';
 import { QUESTION_KIND_OPTIONS, type QuestionKindOptionId } from '@/core/schema/business';
 import { RecordLanding, knowledgeLabelsFor } from '@/ui/components/RecordLanding';
 import { deriveOptionIds } from '@/ui/components/response/response-types';
-import { UploadSubjectPicker, uploadSubjectField } from '@/ui/components/UploadSubjectPicker';
+import {
+  UploadSubjectPicker,
+  uploadSubjectField,
+  useUploadSubjectChoice,
+} from '@/ui/components/UploadSubjectPicker';
 import { type ApiSubject, useSubjects } from '@/ui/hooks/useSubjects';
 import { ApiAuthError, ApiError, apiJson } from '@/ui/lib/api';
 import { expandDocx, expandPdf, uploadAsset, useAssetUrl } from '@/ui/lib/assets';
@@ -195,16 +199,30 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
   // （React Query data，initialData 恒有值 → 不走 `?? []` 新引用），可安全喂 memo。
   const { subjects: subjectRows } = useSubjects();
 
-  const [phase, setPhase] = useState<Phase>('idle');
+  // Bug B: when this tab mounts, recover an in-flight ingestion from the URL
+  // (?ingest=<id>). Starting in phase='extracting' with that sessionId opens the SSE
+  // stream, which REPLAYS the full event history (Last-Event-ID); the settle step
+  // below derives the real phase from that history. This survives tab switches /
+  // page leaves that unmount VisionTab while the background job keeps running.
+  // Read once per mount, as before (YUK-1483: initial state, no mount effect).
+  const [recoveredSessionId] = useState(() => {
+    const ingest = routing.getQuery('ingest');
+    // Validate the param shape before trusting it as a session id — it is
+    // interpolated into /api/ingestion/${id}/{events,blocks}. Session ids are
+    // cuids ([0-9a-z…]); reject anything else so a junk ?ingest= can't open a
+    // doomed stream (and pairs with the SSE-error exit in the settle step).
+    return ingest && /^[a-zA-Z0-9_-]+$/.test(ingest) ? ingest : null;
+  });
+  const [phase, setPhase] = useState<Phase>(recoveredSessionId ? 'extracting' : 'idle');
   // Bug B (fix-docx-ingestion): true while recovering an in-flight run from the URL.
-  const [recovering, setRecovering] = useState(false);
+  const [recovering, setRecovering] = useState(recoveredSessionId !== null);
   const [files, setFiles] = useState<File[]>([]);
-  const [uploadSubject, setUploadSubject] = useState<string | null>(null);
+  const [uploadSubject, setUploadSubject] = useUploadSubjectChoice();
   // When the single picked file is a PDF (vision_paper only), it expands
   // server-side to N page images; pdfPageCount is the count returned by
   // /api/ingestion/pdf, used for the "展开 PDF（N 页）" labels.
   const [pdfPageCount, setPdfPageCount] = useState<number | null>(null);
-  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(recoveredSessionId);
   // YUK-277: the ingestion "line" for the current run. Only the DOCX text line
   // produces blocks SYNCHRONOUSLY (pandoc segmentation, no pg-boss VLM extract
   // job), so its session is already in `extracted` with both job events committed
@@ -230,61 +248,43 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
   // previous block's bucket. Followers render as a compact pill and their
   // form state is ignored at import time.
   const [bucketByBlockId, setBucketByBlockId] = useState<Record<string, string>>({});
-  const seededBlockIdsRef = useRef<Set<string>>(new Set());
+  // The blocks response last merged into blockForms / bucketByBlockId (see below).
+  const [seededRows, setSeededRows] = useState<BlockRow[] | null>(null);
 
   const sse = useIngestionSSE(phase === 'extracting' ? sessionId : null);
 
-  useEffect(() => {
-    if (phase !== 'extracting') return;
+  // YUK-1483 — settle the extraction from this session's stream snapshot while
+  // rendering (React's "adjust state when inputs change" pattern; only this
+  // component's own state, no outside work). Same rules as the former effects:
+  //   - live: the FIRST terminal event decides error (with its message) or reviewing;
+  //   - recovering (?ingest=): an SSE error (bad/stale id, network, server error)
+  //     surfaces as error instead of hanging on "extracting…"; otherwise once the
+  //     replayed history lands, derivePhaseFromEvents decides and recovery ends.
+  // Each branch moves phase off 'extracting' or ends recovery, so it runs once.
+  if (phase === 'extracting') {
+    let nextPhase: Phase | null = null;
+    let nextError: string | null = null;
     const terminal = sse.events.find((e) => SSE_TERMINAL[e.event_type]);
-    if (!terminal) return;
-    if (terminal.event_type === 'ingestion.extraction_failed') {
-      setErrorMessage(
+    if (terminal?.event_type === 'ingestion.extraction_failed') {
+      nextError =
         typeof terminal.payload.error_message === 'string'
           ? terminal.payload.error_message
-          : '抽取失败',
-      );
-      setPhase('error');
-      return;
+          : '抽取失败';
+      nextPhase = 'error';
+    } else if (terminal) {
+      nextPhase = 'reviewing';
     }
-    setPhase('reviewing');
-  }, [phase, sse.events]);
-
-  // Bug B: on mount, recover an in-flight ingestion from the URL (?ingest=<id>).
-  // Seeding sessionId + phase='extracting' re-opens the SSE stream, which REPLAYS
-  // the full event history (Last-Event-ID); the resolve effect below derives the
-  // real phase from that history. This survives tab switches / page leaves that
-  // unmount VisionTab while the background job keeps running.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: mount-only recovery — runs once.
-  useEffect(() => {
-    const ingest = routing.getQuery('ingest');
-    // Validate the param shape before trusting it as a session id — it is
-    // interpolated into /api/ingestion/${id}/{events,blocks}. Session ids are
-    // cuids ([0-9a-z…]); reject anything else so a junk ?ingest= can't open a
-    // doomed stream (and pairs with the SSE-error exit in the resolve effect).
-    if (ingest && /^[a-zA-Z0-9_-]+$/.test(ingest)) {
-      setSessionId(ingest);
-      setPhase('extracting');
-      setRecovering(true);
-    }
-  }, []);
-
-  // Once the replayed history lands, derive the recovered phase + stop recovering.
-  useEffect(() => {
-    if (!recovering) return;
-    // SSE failed to connect (bad/stale ?ingest id, network, or server error):
-    // without this branch recovery would wait on events that never arrive and
-    // hang forever on "extracting…". Surface the error and leave recovering.
-    if (sse.status === 'error') {
-      setErrorMessage(sse.error?.message ?? '恢复进行中的录入失败：连接异常');
-      setPhase('error');
+    if (recovering && sse.status === 'error') {
+      nextError = sse.error?.message ?? '恢复进行中的录入失败：连接异常';
+      nextPhase = 'error';
       setRecovering(false);
-      return;
+    } else if (recovering && sse.events.length > 0) {
+      nextPhase = derivePhaseFromEvents(sse.events);
+      setRecovering(false);
     }
-    if (sse.events.length === 0) return;
-    setPhase(derivePhaseFromEvents(sse.events));
-    setRecovering(false);
-  }, [recovering, sse.events, sse.status, sse.error]);
+    if (nextError !== null) setErrorMessage(nextError);
+    if (nextPhase !== null && nextPhase !== phase) setPhase(nextPhase);
+  }
 
   const blocksQ = useQuery<{ rows: BlockRow[] }>({
     queryKey: ['ingestion-blocks', sessionId],
@@ -297,35 +297,35 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
     queryFn: () => apiJson<{ rows: KnowledgeNode[] }>('/api/knowledge'),
   });
 
-  useEffect(() => {
-    const rows = blocksQ.data?.rows ?? [];
-    if (rows.length === 0) return;
-    setBlockForms((prev) => {
-      const next = { ...prev };
-      for (const b of rows) {
-        if (seededBlockIdsRef.current.has(b.id)) continue;
-        // YUK-277: build the per-block form via the resilient seeder, which
-        // degrades a malformed auto_enroll_observation to the default seed rather
-        // than letting a throw abort the WHOLE updater. Mark the ref AFTER the
-        // block successfully seeds — the previous order (mark-then-seed) meant a
-        // single throwing block left every block up to it marked-but-unseeded,
-        // and React discarded the partial updater, so the entire batch stayed
-        // permanently form-missing (and the import below then threw on every
-        // block). buildBlockForm never throws, so per-block try/catch is no longer
-        // needed, but the post-success ordering is the durable guard.
-        next[b.id] = buildBlockForm(b);
-        seededBlockIdsRef.current.add(b.id);
-      }
-      return next;
-    });
-    setBucketByBlockId((prev) => {
-      const next = { ...prev };
-      for (const b of rows) {
-        if (!(b.id in next)) next[b.id] = b.id;
-      }
-      return next;
-    });
-  }, [blocksQ.data]);
+  // Each new blocks response seeds a form + own bucket for blocks not seen yet;
+  // existing edits are never overwritten. Done while rendering (same pattern as
+  // above) and keyed on the response object, so it runs once per response.
+  const blockRowsData = blocksQ.data?.rows;
+  if (blockRowsData && blockRowsData !== seededRows) {
+    setSeededRows(blockRowsData);
+    if (blockRowsData.length > 0) {
+      setBlockForms((prev) => {
+        const next = { ...prev };
+        for (const b of blockRowsData) {
+          if (b.id in next) continue;
+          // YUK-277: build the per-block form via the resilient seeder, which
+          // degrades a malformed auto_enroll_observation to the default seed rather
+          // than letting a throw abort the WHOLE updater. A block counts as seeded
+          // only once its form exists (it is a key of blockForms), so a failed seed
+          // can never leave it marked-but-formless.
+          next[b.id] = buildBlockForm(b);
+        }
+        return next;
+      });
+      setBucketByBlockId((prev) => {
+        const next = { ...prev };
+        for (const b of blockRowsData) {
+          if (!(b.id in next)) next[b.id] = b.id;
+        }
+        return next;
+      });
+    }
+  }
 
   const startMutation = useMutation({
     mutationFn: async (selectedFiles: File[]) => {
@@ -388,7 +388,7 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
       setSessionId(id);
       setPhase('extracting');
       // Bug B: persist the active session in the URL so a tab-switch / page-leave
-      // can recover it (the mount effect reads ?ingest=).
+      // can recover it (the initial state reads ?ingest= on mount).
       routing.setQuery('ingest', id);
     },
     onError: (err) => {
@@ -430,6 +430,14 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
       .filter((g): g is { primary: BlockRow; followers: BlockRow[] } => Boolean(g));
   }, [blocksQ.data, bucketByBlockId]);
 
+  const offersCause = (f: BlockFormState) =>
+    f.cause_primary !== '' &&
+    causeOptionsForSelectedKnowledge(
+      knowledgeQ.data?.rows ?? [],
+      f.knowledge_ids,
+      subjectRows,
+    ).some((option) => option.id === f.cause_primary);
+
   const importMutation = useMutation({
     mutationFn: async () => {
       if (!sessionId) throw new Error('no session');
@@ -438,7 +446,7 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
         .map((g) => {
           // YUK-277: form-missing blocks used to throw `form missing` and abort
           // the ENTIRE batch import (the owner's 17-block text-line wipeout). The
-          // seeding effect now never leaves a block unseeded, but if a form is
+          // block seeding now never leaves a block unseeded, but if a form is
           // still missing here (race between blocks refetch and seed, or a future
           // regression), build the default form on the fly from the block row
           // instead of throwing — the block keeps OCR text + editable defaults and
@@ -471,7 +479,9 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
             final_reference_md: f.reference_md.trim() ? f.reference_md.trim() : null,
             final_wrong_answer_md: f.wrong_answer_md.trim(),
             knowledge_ids: f.knowledge_ids,
-            cause: f.cause_primary
+            // A cause the block's current options no longer offer is sent as none,
+            // matching what its editor shows.
+            cause: offersCause(f)
               ? {
                   primary_category: f.cause_primary,
                   user_notes: f.cause_notes.trim() ? f.cause_notes.trim() : null,
@@ -609,7 +619,7 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
     setRecovering(false);
     setBlockForms({});
     setBucketByBlockId({});
-    seededBlockIdsRef.current = new Set();
+    setSeededRows(null);
     // round-1 review — 清空 per-block setForm 缓存：旧会话 blockId 不再复用，
     // 不清则 Map 跨会话无界累积。
     setFormByBlockRef.current.clear();
@@ -896,7 +906,7 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
 
 // Exported for the static-HTML test (VisionTab.test.tsx) — BlockEditor renders
 // the "AI 预填，可改" badge from primary.auto_enroll_observation and is
-// renderToString-safe (its useState/useMemo/useEffect only need initial render).
+// renderToString-safe (its useState/useMemo only need initial render).
 export interface BlockEditorProps {
   primary: BlockRow;
   followers: BlockRow[];
@@ -950,20 +960,28 @@ export const BlockEditor = memo(function BlockEditor({
     [knowledgeNodes, selectedKnowledgeIds, subjectRows],
   );
 
-  useEffect(() => {
-    if (!form?.cause_primary) return;
-    if (causeOptions.some((option) => option.id === form.cause_primary)) return;
-    setForm((cur) => ({ ...cur, cause_primary: '', cause_notes: '' }));
-  }, [causeOptions, form?.cause_primary, setForm]);
+  // A cause the current options no longer offer shows as "不指定" (the import sends
+  // none for it too); a knowledge toggle that drops it clears it with its notes.
+  const causePrimary =
+    form?.cause_primary && causeOptions.some((option) => option.id === form.cause_primary)
+      ? form.cause_primary
+      : '';
 
   if (!form) return null;
   const toggleKid = (id: string) =>
-    setForm((cur) => ({
-      ...cur,
-      knowledge_ids: cur.knowledge_ids.includes(id)
+    setForm((cur) => {
+      const knowledge_ids = cur.knowledge_ids.includes(id)
         ? cur.knowledge_ids.filter((x) => x !== id)
-        : [...cur.knowledge_ids, id],
-    }));
+        : [...cur.knowledge_ids, id];
+      const keepsCause =
+        !cur.cause_primary ||
+        causeOptionsForSelectedKnowledge(knowledgeNodes, knowledge_ids, subjectRows).some(
+          (option) => option.id === cur.cause_primary,
+        );
+      return keepsCause
+        ? { ...cur, knowledge_ids }
+        : { ...cur, knowledge_ids, cause_primary: '', cause_notes: '' };
+    });
 
   const members = [primary, ...followers];
 
@@ -1158,9 +1176,9 @@ export const BlockEditor = memo(function BlockEditor({
       <div style={chipRowStyle}>
         <button
           type="button"
-          aria-pressed={form.cause_primary === ''}
+          aria-pressed={causePrimary === ''}
           onClick={() => setForm((cur) => ({ ...cur, cause_primary: '' }))}
-          style={chipStyle(form.cause_primary === '')}
+          style={chipStyle(causePrimary === '')}
           disabled={form.ignored}
         >
           不指定
@@ -1169,16 +1187,16 @@ export const BlockEditor = memo(function BlockEditor({
           <button
             type="button"
             key={c.id}
-            aria-pressed={form.cause_primary === c.id}
+            aria-pressed={causePrimary === c.id}
             onClick={() => setForm((cur) => ({ ...cur, cause_primary: c.id }))}
-            style={chipStyle(form.cause_primary === c.id)}
+            style={chipStyle(causePrimary === c.id)}
             disabled={form.ignored}
           >
             {c.label}
           </button>
         ))}
       </div>
-      {form.cause_primary && (
+      {causePrimary && (
         <textarea
           value={form.cause_notes}
           onChange={(e) => setForm((cur) => ({ ...cur, cause_notes: e.target.value }))}
@@ -1534,7 +1552,7 @@ const DEFAULT_BLOCK_FORM: BlockFormState = {
   ignored: false,
 };
 
-// YUK-277: resilient form builder shared by the seeding effect AND the import
+// YUK-277: resilient form builder shared by the block seeding AND the import
 // fallback. OCR-derived text fields come straight off the block; the AI-prefillable
 // fields come from seedBlockForm, which maps b.auto_enroll_observation when present
 // and falls back to today's defaults otherwise. seedBlockForm is written
@@ -1548,8 +1566,9 @@ const DEFAULT_BLOCK_FORM: BlockFormState = {
 // invariant (a malformed / observation-less block always yields a usable default
 // form and never throws) is unit-tested directly on this pure builder.
 export function buildBlockForm(b: BlockRow): BlockFormState {
-  // knowledge_ids + cause_primary are seeded together so the BlockEditor self-heal
-  // effect (cause_primary ∉ causeOptions → clear) admits a valid seeded cause.
+  // knowledge_ids + cause_primary are seeded together so the BlockEditor's offered-
+  // cause check (cause_primary ∉ causeOptions → shown and sent as none) admits a
+  // valid seeded cause.
   let seeded: ReturnType<typeof seedBlockForm>;
   try {
     seeded = seedBlockForm(b);

@@ -5,7 +5,7 @@
 //（壳层规则，见 web/src/router.tsx）。
 
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { QUESTION_KIND_OPTIONS, type QuestionKindOptionId } from '@/core/schema/business';
 import { AutoEnrolledPanel } from '@/ui/components/AutoEnrolledPanel';
 import {
@@ -92,7 +92,7 @@ function ManualForm({ navigate }: { navigate: (to: string) => void }) {
   const [difficulty, setDifficulty] = useState(3);
   const [selectedKnowledge, setSelectedKnowledge] = useState<string[]>([]);
   const [knowledgeFilter, setKnowledgeFilter] = useState('');
-  const [causePrimary, setCausePrimary] = useState<CauseCategoryId | ''>('');
+  const [chosenCause, setCausePrimary] = useState<CauseCategoryId | ''>('');
   const [causeNotes, setCauseNotes] = useState('');
   // A8 (YUK-354): 成功着陆态。录入成功后不再硬跳 /mistakes，而是停在着陆视图
   // （收好了什么 / 去向 / 下一步）。null = 仍在表单态。knowledge 在 onSuccess 当时
@@ -128,12 +128,10 @@ function ManualForm({ navigate }: { navigate: (to: string) => void }) {
     [allNodes, selectedKnowledge, subjectRows],
   );
 
-  useEffect(() => {
-    if (causePrimary && !causeOptions.some((option) => option.id === causePrimary)) {
-      setCausePrimary('');
-      setCauseNotes('');
-    }
-  }, [causeOptions, causePrimary]);
+  // A cause the current options no longer offer counts as "不指定" for both the chips
+  // and the submit body; a knowledge toggle that drops it also clears it with its notes.
+  const causePrimary: CauseCategoryId | '' =
+    chosenCause && causeOptions.some((option) => option.id === chosenCause) ? chosenCause : '';
 
   const submitM = useMutation({
     mutationFn: async () =>
@@ -187,9 +185,19 @@ function ManualForm({ navigate }: { navigate: (to: string) => void }) {
     !submitM.isPending;
 
   const toggleKnowledge = (id: string) => {
-    setSelectedKnowledge((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
-    );
+    const next = selectedKnowledge.includes(id)
+      ? selectedKnowledge.filter((x) => x !== id)
+      : [...selectedKnowledge, id];
+    setSelectedKnowledge(next);
+    if (
+      chosenCause &&
+      !causeOptionsForSelectedKnowledge(allNodes, next, subjectRows).some(
+        (option) => option.id === chosenCause,
+      )
+    ) {
+      setCausePrimary('');
+      setCauseNotes('');
+    }
   };
 
   // YUK-1051 — 附件上传：一个隐藏 input 服务两个字段（attachTarget 区分落到题面/错答）。
