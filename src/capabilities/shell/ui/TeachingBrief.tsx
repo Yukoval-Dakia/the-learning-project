@@ -126,9 +126,7 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
   } | null>(null);
   const [liveMsg, setLiveMsg] = useState('');
   // One-shot heading focus for a forward advance; consumed by the heading's ref on commit.
-  const [focusRequest, setFocusRequest] = useState<{ target: 'prepared' | 'outcome' } | null>(
-    null,
-  );
+  const [focusRequest, setFocusRequest] = useState<{ target: 'prepared' | 'outcome' } | null>(null);
   const consumedFocusRef = useRef<{ target: 'prepared' | 'outcome' } | null>(null);
   // Latest on-screen brief_id, so an in-flight decide/ack that resolves after a brief swap
   // does not land its failure on the brief the user is now looking at.
