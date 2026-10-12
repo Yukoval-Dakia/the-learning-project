@@ -416,6 +416,8 @@ function PaperVisit({
             void qc.invalidateQueries({ queryKey: ['paper', artifactId] });
           },
           (e) => {
+            // The open was not accepted: let a later attach of this visit try again.
+            sessionStart.current = null;
             if (componentActiveRef.current)
               addToast(`开卷失败：${(e as Error).message}`, 'info', 'alert');
           },
