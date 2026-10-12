@@ -1245,7 +1245,7 @@ export const practiceCapability = defineCapability({
         },
         // YUK-308 — dismiss tombstones the still-draft question row
         // (metadata.dismissed_at) so a rejected draft stops reading as a live
-        // pending draft to query_questions / write_quiz / the draft-review pool.
+        // pending draft to search_bank / write_quiz / the draft-review pool.
         dismiss: {
           load: () =>
             import('./server/proposal-accept-applier').then(
@@ -1359,8 +1359,16 @@ export const practiceCapability = defineCapability({
           import('./server/tools/web-fetch-candidates').then((m) => m.webFetchCandidatesTool),
       },
       {
-        name: 'query_questions',
-        load: () => import('./server/tools/query-questions').then((m) => m.queryQuestionsTool),
+        name: 'search_bank',
+        load: () => import('./server/tools/search-bank').then((m) => m.searchBankTool),
+      },
+      {
+        name: 'read_bank',
+        load: () => import('./server/tools/read-bank').then((m) => m.readBankTool),
+      },
+      {
+        name: 'check_bank',
+        load: () => import('./server/tools/check-bank').then((m) => m.checkBankTool),
       },
       {
         name: 'write_quiz',

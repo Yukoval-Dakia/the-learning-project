@@ -218,6 +218,7 @@ export const dbTestInclude = [
   'src/capabilities/practice/server/stream-store-reserved-connection.db.test.ts',
   'src/capabilities/practice/server/stream-store.db.test.ts',
   'src/capabilities/practice/server/tools/get-attempt-context.test.ts',
+  'src/capabilities/practice/server/tools/bank-tools.db.test.ts',
   'src/capabilities/practice/server/tools/store-sourced-question.db.test.ts',
   'src/capabilities/practice/server/tools/write-quiz.test.ts',
   'src/capabilities/shell/api/proposal-decisions.db.test.ts',

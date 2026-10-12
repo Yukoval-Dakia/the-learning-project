@@ -18,6 +18,7 @@ import { Rubric } from '@/core/schema/business';
 import { SolutionGenerateOutput } from '@/core/schema/solution';
 import type { Db } from '@/db/client';
 import { question } from '@/db/schema';
+import { embedHash, questionEmbedText } from '@/server/ai/embed-source';
 import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
 import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 
@@ -141,6 +142,13 @@ export async function generateReferenceSolution(
   // scoring basis ⇒ 旧 admission evidence 不再适用（P1-5），preserve 折叠
   // withheld/unverified_rules —— 待重新核验后再准入（来源标识已在 rubric
   // reference_solution_source='ai_generated' 留痕）。
+  //
+  // ADR-0072 LIGHT（embedding 失效 bug 修复）—— reference_md 是题库向量源文本
+  // （questionEmbedText）的一部分：此写入点与 editQuestion 同等承担 hash 失效义务。
+  // 按内容 digest 失效：合并后源文本的 embedHash 与存量 embed_content_hash 不同 ⇒
+  // 同一 UPDATE 内置空 embedding 并盖新 hash，夜间 embed_backfill（谓词
+  // embedding IS NULL OR embed_version 落后）据此重嵌入。否则旧向量滞留，
+  // 向量检索永远命中补写参考答案之前的语义。
   const written = await db.transaction(async (tx) => {
     // P1-1（第二轮复审）—— 锁序 root→child：目标是子 part 时先锁组根再改子行
     //（backfill 更新的可能是组内子行；FromRow 的根解析不做子行锁定，所以这
@@ -153,12 +161,34 @@ export async function generateReferenceSolution(
         .for('update')
         .limit(1);
     }
+    const [locked] = await tx
+      .select({
+        prompt_md: question.prompt_md,
+        choices_md: question.choices_md,
+        embed_content_hash: question.embed_content_hash,
+      })
+      .from(question)
+      .where(updateWhere)
+      .for('update')
+      .limit(1);
+    if (!locked) return [];
+    // Hash the content being written, after concurrent edits have settled under the row lock.
+    const nextEmbedHash = embedHash(
+      questionEmbedText({
+        prompt_md: locked.prompt_md,
+        reference_md: parsed.worked_solution_md,
+        choices_md: locked.choices_md,
+      }),
+    );
     const updated = await tx
       .update(question)
       .set({
         rubric_json: mergedRubric as RubricT,
         reference_md: parsed.worked_solution_md,
         updated_at: new Date(),
+        ...(nextEmbedHash !== locked.embed_content_hash
+          ? { embedding: null, embed_content_hash: nextEmbedHash }
+          : {}),
       })
       .where(updateWhere)
       .returning({ id: question.id });

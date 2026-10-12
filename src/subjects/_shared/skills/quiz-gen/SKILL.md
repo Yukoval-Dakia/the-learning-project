@@ -1,6 +1,6 @@
 ---
 name: quiz-gen
-description: Copilot 出题/组卷方法论 — 用户求卷/求题/要练习时：先 query_questions 查重，再 author_question 逐题起草（knowledge|material seed），最后 write_quiz 组卷并回 /practice 链接；绝不文本喷题。
+description: Copilot 出题/组卷方法论 — 用户求卷/求题/要练习时：先 search_bank 查重，再 author_question 逐题起草（knowledge|material seed），最后 write_quiz 组卷并回 /practice 链接；绝不文本喷题。
 ---
 
 # Copilot 出题 / 组卷方法论（ADR-0031 quiz C→A）
@@ -22,11 +22,11 @@ description: Copilot 出题/组卷方法论 — 用户求卷/求题/要练习时
 
 ## 流程
 
-### ① 先查重（query_questions）
+### ① 先查重（search_bank）
 
 出新题之前**必须**先看目标知识点上已有哪些题：
 
-- `query_questions({ knowledge_id: [...] })`——草稿默认**包含**（`include_drafts: true`），因为你前几轮拟的题还在等用户 accept，漏看就会重复出题。
+- `search_bank({ query: "<自然语言描述考查点>", kind: "..." })`——草稿默认可见（`draft_state: "all"`），因为你前几轮拟的题还在等用户 accept，漏看就会重复出题；命中卡片带 `question_id`（可直接进 write_quiz）与版本化 `ref`（read_bank 取内容）。
 - 已有合适的题（题型/难度匹配、未重复考查同一个点）→ 直接复用它的 `id` 进组卷，不要重新生成。
 - **草稿复用红线**：只复用 `source` 为 `copilot_authored` 的草稿（你前几轮拟、等 accept 的题）。其它来源的草稿行（`quiz_gen` / `web_sourced` / OCR 导入等）多是**没通过验证或还没验证**的隔离区内容——不要进卷；要用就用对应的 active 题。
 - 用 `kind` / `difficulty` / `source` 维度收窄；`subject` 维度按学科扫全科。

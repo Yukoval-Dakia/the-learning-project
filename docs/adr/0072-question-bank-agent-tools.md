@@ -4,7 +4,7 @@ status: accepted
 
 # ADR-0072 — 题库 agent 工具：search_bank / read_bank / check_bank
 
-**Status:** Accepted（设计方向，2026-10-11）；尚未实施。
+**Status:** Accepted（设计方向，2026-10-11）；LIGHT 三工具实现已在 `feat/bank-tools-light` 恢复，尚未合入 main，产品验收未完成。当前源码、6-case DB 证据与未交付能力见 [实施回执](../planning/2026-10-11-bank-tools-light-implementation.md#2026-10-12-cloud-接续与验收边界)。
 **Decision source:** owner 2026-10-11「关键还在给 agent 什么工具」；Coordinator 对题库工具提案的评估意见（YUK-1448 评论，2026-10-11 13:10），其调整逐条采纳为本文决定。
 **Tracking:** [YUK-1448](https://linear.app/yukoval-studios/issue/YUK-1448)。
 **Related:** ADR-0069（单一备题员——本文修订其 D1 工具清单与硬边界 1）、ADR-0070（统一学习者大脑——本文增补其 D1 契约一项批量读面，见 D4）、ADR-0067（教研白板）、ADR-0068（通用学科）、[YUK-1468](https://linear.app/yukoval-studios/issue/YUK-1468)（备题员）、[YUK-1470](https://linear.app/yukoval-studios/issue/YUK-1470)（学习者大脑）、[YUK-1474](https://linear.app/yukoval-studios/issue/YUK-1474)（provider fallback chain，不在本 ADR 范围）；详细设计真相源（随本文同提交版本化）`docs/planning/2026-10-11-question-bank-agent-tools-proposal.md`（下称「提案」，含接口细节、42 条种子查询与机制攻击集）。

@@ -40,7 +40,10 @@ const POLICIES: Record<string, ResultPolicy> = {
   get_question_context: 'reader',
   get_attempt_context: 'reader',
   get_learning_item_context: 'reader',
-  query_questions: 'reader',
+  // ADR-0072: bank evidence is agent-facing; content/answers need a UI-owned projection.
+  search_bank: ['scope_applied', 'requirements', 'coverage'],
+  read_bank: [],
+  check_bank: ['notes', 'supported_kinds'],
   get_record_context: 'record',
   get_review_due: 'review',
   query_events: 'events',

@@ -862,7 +862,7 @@ export const getQuestionContextTool: DomainTool<GetQuestionContextInput, GetQues
   {
     name: 'get_question_context',
     description:
-      'Read one question contract plus attempts, reviews, FSRS state, linked records, variants, knowledge paths, and assets. Check availability first: lifecycle zeros with observation_status=not_observed are compatibility placeholders for missing or protected diagnostic questions, not observed facts.',
+      'Learner-state context for one question: attempts, reviews, FSRS state, linked records, variants, knowledge paths, and assets. ADR-0072: bank CONTENT reads go through read_bank (versioned refs from search_bank) — this tool remains the learner-side read (its content projection stays for the coach/dreaming/maintenance faces; final home decided with the learner-brain line). Check availability first: lifecycle zeros with observation_status=not_observed are compatibility placeholders for missing or protected diagnostic questions, not observed facts.',
     effect: 'read',
     inputSchema: GetQuestionContextInputSchema,
     outputSchema: GetQuestionContextOutputSchema,
