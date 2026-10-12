@@ -22,6 +22,8 @@ export interface MascotController {
   thinking(): boolean;
   /** Turn one petal forward (something was recorded). */
   advance(): void;
+  /** The slot moved without resizing (a panel opened beside it): measure again. */
+  relayout(): void;
   subscribe(listener: (event: MascotEvent) => void): () => void;
   /** True once any page has declared a slot; the layer mounts from then on and stays. */
   used(): boolean;
@@ -72,6 +74,7 @@ export function createMascotController(): MascotController {
     },
     thinking: () => thinkers.size > 0,
     advance: () => emit('advance'),
+    relayout: () => emit('layout'),
     subscribe(listener) {
       listeners.add(listener);
       return () => listeners.delete(listener);
