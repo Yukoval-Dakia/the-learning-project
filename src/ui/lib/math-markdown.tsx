@@ -1,5 +1,5 @@
 import type { ComponentProps, HTMLAttributes, ReactElement } from 'react';
-import { useEffect, useState } from 'react';
+import { useSyncExternalStore } from 'react';
 import { useAssetUrl } from './assets';
 import { MarkdownRenderer, type MarkdownRendererProps } from './markdown-renderer';
 
@@ -17,6 +17,8 @@ type MathPlugins = {
 // dynamic chunk. Mirrors deferred-markdown-renderer's module-memo pattern.
 let loadedMathPlugins: MathPlugins | null = null;
 let mathPluginsPromise: Promise<MathPlugins> | null = null;
+// Plugin code, not user state: a module-level cache and listener set are SSR-safe.
+const mathPluginListeners = new Set<() => void>();
 
 function cacheMathPlugins(
   remarkMath: MathPlugins['remarkPlugins'][number],
@@ -38,7 +40,11 @@ function loadMathPlugins(): Promise<MathPlugins> {
     import('rehype-katex'),
     import('katex/dist/katex.min.css'),
   ])
-    .then(([remarkMath, rehypeKatex]) => cacheMathPlugins(remarkMath.default, rehypeKatex.default))
+    .then(([remarkMath, rehypeKatex]) => {
+      const plugins = cacheMathPlugins(remarkMath.default, rehypeKatex.default);
+      for (const listener of mathPluginListeners) listener();
+      return plugins;
+    })
     .catch((error: unknown) => {
       // Don't cache a rejected load (e.g. transient chunk-fetch failure) — clear
       // the memo so the next math render retries the import instead of failing
@@ -50,7 +56,7 @@ function loadMathPlugins(): Promise<MathPlugins> {
 }
 
 // A non-browser render (SSR / react-dom/server renderToString, incl. the repo's
-// SSR unit tests) has no effect pass, so the lazy client path below never runs.
+// SSR unit tests) never subscribes, so the lazy client path below never runs.
 // Warm the plugin cache at module evaluation there so KaTeX renders synchronously
 // on the first (only) render. `import.meta.env.SSR` is a build-time constant: the
 // client build inlines it to `false`, so this top-level-await block is dead-code
@@ -65,6 +71,32 @@ if (import.meta.env.SSR) {
 }
 
 const NO_MATH_PLUGINS: MathPlugins = { remarkPlugins: [], rehypePlugins: [] };
+
+/** A mounted KaTeX render subscribes; the first one after a cold start or a failed chunk loads. */
+function subscribeMathPlugins(listener: () => void): () => void {
+  mathPluginListeners.add(listener);
+  if (!loadedMathPlugins) {
+    void loadMathPlugins().catch(() => {
+      // Keep the readable plain-markdown fallback mounted; a later mount retries.
+    });
+  }
+  return () => {
+    mathPluginListeners.delete(listener);
+  };
+}
+
+function getLoadedMathPlugins(): MathPlugins | null {
+  return loadedMathPlugins;
+}
+
+// Non-math notation never subscribes, so the katex chunk is never requested.
+function subscribeWithoutMath(): () => void {
+  return () => {};
+}
+
+function getNoMathPlugins(): null {
+  return null;
+}
 
 // Ingested and model-written content also uses the LaTeX delimiters \( \) and \[ \]. remark-math
 // only knows dollar signs, and CommonMark treats `\(` as an escaped bracket, so those formulas
@@ -181,27 +213,14 @@ export function isKatexNotation(notation?: string | null): boolean {
  */
 export function MathMarkdown({ children, notation, ...divProps }: MathMarkdownProps): ReactElement {
   const isKatex = isKatexNotation(notation);
-  // Initialize from the module cache so an already-warm math mount (or any SSR
-  // render, where the cache is warmed at module eval) renders synchronously with
-  // no fallback frame; a cold browser mount starts null and loads in the effect.
-  const [mathPlugins, setMathPlugins] = useState<MathPlugins | null>(() =>
-    isKatex ? loadedMathPlugins : null,
+  // Read the module cache so an already-warm math mount (or any SSR render, where
+  // the cache is warmed at module eval) renders synchronously with no fallback
+  // frame; a cold browser mount reads null and the subscription loads the chunk.
+  const mathPlugins = useSyncExternalStore(
+    isKatex ? subscribeMathPlugins : subscribeWithoutMath,
+    isKatex ? getLoadedMathPlugins : getNoMathPlugins,
+    isKatex ? getLoadedMathPlugins : getNoMathPlugins,
   );
-
-  useEffect(() => {
-    if (!isKatex || mathPlugins) return;
-    let cancelled = false;
-    void loadMathPlugins()
-      .then((plugins) => {
-        if (!cancelled) setMathPlugins(plugins);
-      })
-      .catch(() => {
-        // Keep the readable plain-markdown fallback mounted; a later mount retries.
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [isKatex, mathPlugins]);
 
   const active = isKatex && mathPlugins ? mathPlugins : NO_MATH_PLUGINS;
   const source = active === NO_MATH_PLUGINS ? children : normalizeMathDelimiters(children);
