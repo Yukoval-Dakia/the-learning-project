@@ -114,17 +114,19 @@ export function useFocusTrap(
       if (!panel || !open) return undefined;
 
       const current = owner.active;
+      let attached: ActiveTrap;
       if (current && current.panel === panel) {
         current.detachPending = false;
+        attached = current;
       } else {
         if (current) {
           owner.active = null;
           current.dispose();
         }
-        owner.active = attachTrap(panel, owner);
+        attached = attachTrap(panel, owner);
+        owner.active = attached;
       }
 
-      const attached = owner.active;
       return () => {
         attached.detachPending = true;
         // Detach after the commit finishes, unless the same panel was re-attached
