@@ -101,13 +101,17 @@
 // 运行时配置 + 审计 + 失效轴（authored 运营真相，非瞬态）→ FK_ORDER 非 EXCLUDED。
 // NEW FK_ORDER tables 必 bump：64 → 67 tables，4.23 → 4.24。
 // YUK-766: preserve subscription progress and causal effects; only process claims reset.
-export const SCHEMA_VERSION = '4.25';
+// YUK-1355: preserve paid-effect unknowns, immutable receipts and backend generations.
+// Both durable tables are required even when empty; 4.25 → 4.26.
+export const SCHEMA_VERSION = '4.26';
 
 export const SUBSCRIPTION_PROGRESS_TABLES = [
   'event_subscription_checkpoint',
   'event_subscription_delivery',
   'event_subscription_effect',
 ] as const;
+
+export const PAID_EFFECT_BACKUP_TABLES = ['paid_effect_control', 'paid_effect'] as const;
 
 // Bound inline asset transfers; larger exports use a refs-only ZIP plus an asset sidecar.
 export const MAX_INLINE_ASSETS = 45;
@@ -319,6 +323,9 @@ export const FK_ORDER = [
   'system_config',
   'system_config_journal',
   'system_config_epoch',
+  // No hard FK: restore owning backend/generation before its immutable effects.
+  // Missing either table would turn an unknown paid outcome into bootstrap state.
+  ...PAID_EFFECT_BACKUP_TABLES,
   // YUK-851 has no enforced FK, but remains last so durable provider-attempt truth is
   // restored after the current authored/cost parents and rides whole-row schema changes.
   'provider_attempt',

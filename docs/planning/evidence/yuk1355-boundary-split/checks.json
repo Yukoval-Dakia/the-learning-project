@@ -1,0 +1,119 @@
+{
+  "base": "fa33bad5a1c55756f1852c3da7eb2c9e28a5cbec",
+  "checks": [
+    {
+      "name": "ast",
+      "argv": [
+        "node",
+        "/Volumes/YukovalSBak/yukoval-projects/tlp-migration-receipt-reference/docs/planning/evidence/yuk1355-boundary-split/compare-ast.cjs"
+      ],
+      "node": "v24.19.0",
+      "exitCode": 0,
+      "elapsedSeconds": 0.444,
+      "log": "ast.log.gz"
+    },
+    {
+      "name": "boundaries",
+      "argv": ["pnpm", "exec", "tsx", "scripts/audit-capability-boundaries.ts", "--json"],
+      "node": "v24.19.0",
+      "exitCode": 0,
+      "elapsedSeconds": 3.533,
+      "log": "boundaries.log.gz"
+    },
+    {
+      "name": "architecture",
+      "argv": ["pnpm", "audit:architecture-deepening"],
+      "node": "v24.19.0",
+      "exitCode": 0,
+      "elapsedSeconds": 22.431,
+      "log": "architecture.log.gz"
+    },
+    {
+      "name": "partition",
+      "argv": ["pnpm", "audit:partition"],
+      "node": "v24.19.0",
+      "exitCode": 0,
+      "elapsedSeconds": 2.334,
+      "log": "partition.log.gz"
+    },
+    {
+      "name": "unit",
+      "argv": [
+        "pnpm",
+        "vitest",
+        "run",
+        "--config",
+        "vitest.unit.config.ts",
+        "src/server/durable/paid-effect-protocol.test.ts",
+        "src/server/durable/note-verify-family.test.ts",
+        "src/capabilities/notes/jobs/note_verify.control.test.ts",
+        "src/server/durable/calibration-sample-family.test.ts",
+        "src/capabilities/practice/server/calibration-sample-durable-operation.test.ts",
+        "src/capabilities/practice/jobs/judge_calibration_sample.test.ts"
+      ],
+      "node": "v24.19.0",
+      "exitCode": 0,
+      "elapsedSeconds": 4.048,
+      "log": "unit.log.gz"
+    },
+    {
+      "name": "typecheck",
+      "argv": ["pnpm", "typecheck"],
+      "node": "v24.19.0",
+      "exitCode": 0,
+      "elapsedSeconds": 9.835,
+      "log": "typecheck.log.gz"
+    },
+    {
+      "name": "lint-initial",
+      "argv": ["pnpm", "lint"],
+      "node": "v24.19.0",
+      "exitCode": 1,
+      "elapsedSeconds": 2.875,
+      "log": "lint-initial.log.gz"
+    },
+    {
+      "name": "build",
+      "argv": ["pnpm", "build"],
+      "node": "v24.19.0",
+      "exitCode": 0,
+      "elapsedSeconds": 17.461,
+      "log": "build.log.gz"
+    },
+    {
+      "name": "diff",
+      "argv": ["git", "diff", "--check"],
+      "node": "v24.19.0",
+      "exitCode": 0,
+      "elapsedSeconds": 0.031,
+      "log": "diff.log.gz"
+    },
+    {
+      "name": "protected-paths",
+      "argv": [
+        "git",
+        "diff",
+        "--exit-code",
+        "fa33bad5a1c55756f1852c3da7eb2c9e28a5cbec",
+        "--",
+        "scripts/capability-boundary-baseline.json",
+        "scripts/audit-capability-boundaries.ts",
+        "scripts/audit-architecture-deepening.ts",
+        "vitest.shared.ts",
+        "drizzle"
+      ],
+      "node": "v24.19.0",
+      "exitCode": 0,
+      "elapsedSeconds": 0.016,
+      "log": "protected-paths.log.gz"
+    },
+    {
+      "name": "lint-final",
+      "argv": ["pnpm", "lint"],
+      "node": "v24.19.0",
+      "exitCode": 0,
+      "elapsedSeconds": 2.697,
+      "log": "lint-final.log.gz"
+    }
+  ]
+}

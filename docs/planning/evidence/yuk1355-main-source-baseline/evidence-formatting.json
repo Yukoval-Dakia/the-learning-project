@@ -1,0 +1,38 @@
+{
+  "base": "9ce33e61da3ee40c7e89256212a7aedaf0b88e9d",
+  "normalization": "JSON parsed values or helper Program AST ignoring metadata only; helpers not executed; old log bytes unchanged",
+  "comparisons": [
+    {
+      "path": "docs/planning/evidence/yuk1355-a-import-initialization/checks.json",
+      "beforeSha256": "7b0bfd9ec59d8720465b4c92be1ef045a3fa05d6f8bde31bb9dbce706739cb07",
+      "afterSha256": "b4db2c2d17ac73237630c1bf87eab540dd19881d72c17de66e5ae1f0d8d1281e",
+      "beforeValueOrAstSha256": "44f43665dd967dbe50f94691337ada36d05575b6484fcc76e165ae15a20e2e6e",
+      "afterValueOrAstSha256": "44f43665dd967dbe50f94691337ada36d05575b6484fcc76e165ae15a20e2e6e",
+      "equivalent": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-a-import-initialization/compare-ast.cjs",
+      "beforeSha256": "a938936d2a4df9e665bec6d7853f3261d0fa8fdabd343b68230c037365449c7a",
+      "afterSha256": "bf2f510d94c639df62e4d03df9c89bc462a9a3e8f8d4c8557cff877467012843",
+      "beforeValueOrAstSha256": "c800b920cb0ff3e4893b4e04d1096d2622f44a75d70e596e5c43d90c2a2e813e",
+      "afterValueOrAstSha256": "c800b920cb0ff3e4893b4e04d1096d2622f44a75d70e596e5c43d90c2a2e813e",
+      "equivalent": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-a-import-initialization/import-paths.cjs",
+      "beforeSha256": "965f0596d7e96c9461554595111cb666e04a4e621d520f11f3456e0cf8b30284",
+      "afterSha256": "f08429cde86df5c6071af4b282e3989f3d155422c7838e3c8ce979fe5375c4ff",
+      "beforeValueOrAstSha256": "28128bb7575f64ca61477affcdd99ab69615c3a406796ab10316b6d904e895ba",
+      "afterValueOrAstSha256": "28128bb7575f64ca61477affcdd99ab69615c3a406796ab10316b6d904e895ba",
+      "equivalent": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-a-import-initialization/product-files.json",
+      "beforeSha256": "4be1d185ec2d7c9dbffb6bf30f8621538fc4ab5bb0480b5b74815f5d0bf25582",
+      "afterSha256": "2cab772321b6150faa75f9841f48a57e1f48526d1a3669204d5b7792c62b3eee",
+      "beforeValueOrAstSha256": "14691e026e17c47dce79e82ea59eb3ba8fa2f8287b4a10806a3c67b2ea654ce4",
+      "afterValueOrAstSha256": "14691e026e17c47dce79e82ea59eb3ba8fa2f8287b4a10806a3c67b2ea654ce4",
+      "equivalent": true
+    }
+  ]
+}

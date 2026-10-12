@@ -1,0 +1,30 @@
+{
+  "base": "60c4f980fce83d73b78fb912a4b097c34b8f250a",
+  "files": [
+    {
+      "path": "src/capabilities/practice/public.ts",
+      "sha256": "25bde95c443d448c570976a7252037514460e71ce36bd83eae5667f6eab75ef4"
+    },
+    {
+      "path": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "sha256": "17776ba9175dee7c1120d14a02d95e7220e0f2300c9319e37ee02e79ca2f81e1"
+    },
+    {
+      "path": "src/capabilities/practice/server/item-prior-durable-operation.unit.test.ts",
+      "sha256": "6a715f6d5a69ecac3bc5afc9fc39386c29bdb7dbe4982ed187746d31f9c6e915"
+    },
+    {
+      "path": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "sha256": "afa02d06efa0ab8c3baec22e68d652d3521e6482df1807152266fbaa5062d412"
+    },
+    {
+      "path": "src/server/durable/item-prior-family.ts",
+      "sha256": "c6775f8ad8d0cb4bfb0c3d0a0318a440ed091a8eb37b9db270665b13fc1f8ac1"
+    },
+    {
+      "path": "tests/integration/item-prior-durable-member.db.test.ts",
+      "sha256": "c681c3a0dbb94807442a6105da1aa142aec73f82e6c0def782117ae48444b8fd"
+    }
+  ],
+  "deleted": ["src/server/durable/item-prior-paid-effect-adapter.ts"]
+}

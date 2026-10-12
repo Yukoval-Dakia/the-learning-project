@@ -1,4 +1,4 @@
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { canonicalHash } from '@/core/migration/canonical';
 import type { ResponseSetT } from '@/core/schema/assessment';
 import { structuredToPromptMarkdown } from '@/core/schema/structured_question';
@@ -10,6 +10,7 @@ import {
   question_block,
   question_group_lifecycle,
   question_revision,
+  source_asset,
 } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { commitFormalAttempt, recordFormalAttemptCapture, saveSubmission } from '@/kernel/judge';
@@ -21,6 +22,7 @@ import { writeQuestionBlockLifecycleEvent } from '@/kernel/records/question-bloc
 import type { AutoEnrolledBlock } from './auto-enroll';
 import { capturedQuestionShape } from './captured-question-shape';
 import { enrollCapturedBlock } from './enroll';
+import { figuresForQuestion } from './figure_attach';
 
 type Block = typeof question_block.$inferSelect;
 interface CaptureInput {
@@ -84,6 +86,21 @@ export async function captureIngestionOriginal(db: Db, input: CaptureInput) {
         409,
       );
     if (!existing) {
+      const figureAssets = block.figures.length
+        ? await tx
+            .select({
+              id: source_asset.id,
+              storage_key: source_asset.storage_key,
+              sha256: source_asset.sha256,
+            })
+            .from(source_asset)
+            .where(
+              inArray(
+                source_asset.id,
+                block.figures.map((figure) => figure.asset_id),
+              ),
+            )
+        : [];
       await tx.insert(question).values(
         withAnswerClass({
           id: questionId,
@@ -93,7 +110,10 @@ export async function captureIngestionOriginal(db: Db, input: CaptureInput) {
             : (block.extracted_prompt_md ?? ''),
           reference_md: block.reference_md,
           structured: block.structured,
-          figures: block.figures,
+          figures: figuresForQuestion(block.structured, block.figures, {
+            sourceAssetIds: block.source_asset_ids,
+            assets: figureAssets,
+          }),
           image_refs: block.image_refs,
           knowledge_ids: input.knowledgeIds,
           difficulty: input.difficulty,

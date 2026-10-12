@@ -1,0 +1,256 @@
+{
+  "priorHead": "16b1c829574ea4cf6f891b264efb6336dc5b0f2f",
+  "base": "60c4f980fce83d73b78fb912a4b097c34b8f250a",
+  "priorEvidenceFiles": [
+    {
+      "path": "docs/planning/evidence/yuk1355-boundary-split/README.md",
+      "beforeSha256": "785231fc1e6dc0cf2b62521735ee9f3a5b85d967aa0a428306ed63d80ca59b9d",
+      "afterSha256": "785231fc1e6dc0cf2b62521735ee9f3a5b85d967aa0a428306ed63d80ca59b9d",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-boundary-split/architecture.log.gz",
+      "beforeSha256": "8a9dc025eda77352b0f4fc47d5bdd5f39ae410aff46f9ecaf5300775c103fc25",
+      "afterSha256": "8a9dc025eda77352b0f4fc47d5bdd5f39ae410aff46f9ecaf5300775c103fc25",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-boundary-split/ast-before.json",
+      "beforeSha256": "35b2bd5bcfbbc22fa58dcffb13ff25f188e6c7ae42d830a77eec27e8b998a257",
+      "afterSha256": "35b2bd5bcfbbc22fa58dcffb13ff25f188e6c7ae42d830a77eec27e8b998a257",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-boundary-split/ast-comparison.json",
+      "beforeSha256": "c36867e08d161241326ee235d2acde245548d30abe957d9cba653fac85afa383",
+      "afterSha256": "c36867e08d161241326ee235d2acde245548d30abe957d9cba653fac85afa383",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-boundary-split/ast.log.gz",
+      "beforeSha256": "cf571acac31d0c7dca3225980d46cf7cbdd96687eb765933b82207dddc62506b",
+      "afterSha256": "cf571acac31d0c7dca3225980d46cf7cbdd96687eb765933b82207dddc62506b",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-boundary-split/boundaries.log.gz",
+      "beforeSha256": "4259644108414c9f47904ad39fb7ae27cf135087f5d361db0f32d20064652e56",
+      "afterSha256": "4259644108414c9f47904ad39fb7ae27cf135087f5d361db0f32d20064652e56",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-boundary-split/build.log.gz",
+      "beforeSha256": "8e81e5e4841d6ea2229ea68ae850da6d320abe01190e077e322229e7e89f8ce2",
+      "afterSha256": "8e81e5e4841d6ea2229ea68ae850da6d320abe01190e077e322229e7e89f8ce2",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-boundary-split/changed-paths.tsv",
+      "beforeSha256": "282d0e15587db6c4c8b71c2c3e4d29a6925c3856665d15cd5a15acb3cfd0af14",
+      "afterSha256": "282d0e15587db6c4c8b71c2c3e4d29a6925c3856665d15cd5a15acb3cfd0af14",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-boundary-split/checks.json",
+      "beforeSha256": "eeb89896a4366517447f62706574337985e2615536c7bf560f21ce1c71ce220f",
+      "afterSha256": "eeb89896a4366517447f62706574337985e2615536c7bf560f21ce1c71ce220f",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-boundary-split/compare-ast.cjs",
+      "beforeSha256": "524d1914b3ffc9e50c594d0b14c8ae2112da71a71d8a8c2e82de76e14184dd86",
+      "afterSha256": "524d1914b3ffc9e50c594d0b14c8ae2112da71a71d8a8c2e82de76e14184dd86",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-boundary-split/diff.log.gz",
+      "beforeSha256": "e0b17efb979b34ab7e53e6a0c8e428562efc2ba119141709db76b1a5d57e7acb",
+      "afterSha256": "e0b17efb979b34ab7e53e6a0c8e428562efc2ba119141709db76b1a5d57e7acb",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-boundary-split/import-cycles.json",
+      "beforeSha256": "6d0482d938696f44c9bd6cd3ca1f03994c31b4a732de0bcd89f4c65f21ee0f78",
+      "afterSha256": "6d0482d938696f44c9bd6cd3ca1f03994c31b4a732de0bcd89f4c65f21ee0f78",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-boundary-split/lint-final.log.gz",
+      "beforeSha256": "84964119a871ed0d2345ee466526c2e73fc8935313a24ae1ea2ec03a189dba8b",
+      "afterSha256": "84964119a871ed0d2345ee466526c2e73fc8935313a24ae1ea2ec03a189dba8b",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-boundary-split/lint-initial.log.gz",
+      "beforeSha256": "5b207a2696451ddad6c8961aa29f731e017864134944df4c638b87eb930095bb",
+      "afterSha256": "5b207a2696451ddad6c8961aa29f731e017864134944df4c638b87eb930095bb",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-boundary-split/partition.log.gz",
+      "beforeSha256": "83679c0ba07c545e2d6a23adcafaa2bf894ef80b5003d3fb29dcc2495169bb69",
+      "afterSha256": "83679c0ba07c545e2d6a23adcafaa2bf894ef80b5003d3fb29dcc2495169bb69",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-boundary-split/product-files.json",
+      "beforeSha256": "084ca907a82f549fd8c4409520707d661594baa74331d853128ad26f6f0608b8",
+      "afterSha256": "084ca907a82f549fd8c4409520707d661594baa74331d853128ad26f6f0608b8",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-boundary-split/protected-paths.log.gz",
+      "beforeSha256": "7d6ad2f00f09a2db5fe483a1cb36e04687aa8bc7ecc3e8449c90c2fc88357fc3",
+      "afterSha256": "7d6ad2f00f09a2db5fe483a1cb36e04687aa8bc7ecc3e8449c90c2fc88357fc3",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-boundary-split/typecheck.log.gz",
+      "beforeSha256": "37f3ccd9fd7bc12800987a31692a6cc7c7bba494987d0a03a8bd244d93ba28ea",
+      "afterSha256": "37f3ccd9fd7bc12800987a31692a6cc7c7bba494987d0a03a8bd244d93ba28ea",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-boundary-split/unit.log.gz",
+      "beforeSha256": "dc745ff9298fd274f3b7c8ad1b880668c3bae3a3aa8a4e98bdb7550e23f1a70b",
+      "afterSha256": "dc745ff9298fd274f3b7c8ad1b880668c3bae3a3aa8a4e98bdb7550e23f1a70b",
+      "identical": true
+    }
+  ],
+  "priorProductFiles": [
+    {
+      "path": "src/capabilities/notes/jobs/note_verify.control.test.ts",
+      "priorSha256": "5eb4c403b102b6af5b56a711a267d48623dc681b8d4ffaf16abab24e6bcb2006",
+      "currentSha256": "5eb4c403b102b6af5b56a711a267d48623dc681b8d4ffaf16abab24e6bcb2006",
+      "identical": true,
+      "allowedPublicExportAddition": false
+    },
+    {
+      "path": "src/capabilities/notes/jobs/note_verify.ts",
+      "priorSha256": "585e8bd21b3e93ad777e66ee651bf3e41bb6b9e0be8036b2b7502a0af5fb6974",
+      "currentSha256": "585e8bd21b3e93ad777e66ee651bf3e41bb6b9e0be8036b2b7502a0af5fb6974",
+      "identical": true,
+      "allowedPublicExportAddition": false
+    },
+    {
+      "path": "src/capabilities/notes/public.ts",
+      "priorSha256": "8e3d7c1a4eb37f2568fc63f83d399639cc99e3225ac6b8b39f68a05009123e60",
+      "currentSha256": "8e3d7c1a4eb37f2568fc63f83d399639cc99e3225ac6b8b39f68a05009123e60",
+      "identical": true,
+      "allowedPublicExportAddition": false
+    },
+    {
+      "path": "src/capabilities/notes/server/paid-effect-note-admission.ts",
+      "priorSha256": "a2a86a0a6e49c71a58cb425d51a5abc8966ea738c551efd11dd4a02b59846fa5",
+      "currentSha256": "a2a86a0a6e49c71a58cb425d51a5abc8966ea738c551efd11dd4a02b59846fa5",
+      "identical": true,
+      "allowedPublicExportAddition": false
+    },
+    {
+      "path": "src/capabilities/notes/server/paid-effect-note-obligations.ts",
+      "priorSha256": "ae031523d7a9b6c392b7e6313f6116d3cdc9aa8298d8b137b7e75ddba795a17b",
+      "currentSha256": "ae031523d7a9b6c392b7e6313f6116d3cdc9aa8298d8b137b7e75ddba795a17b",
+      "identical": true,
+      "allowedPublicExportAddition": false
+    },
+    {
+      "path": "src/capabilities/practice/public.ts",
+      "priorSha256": "0f7bee69b3664fcd2ea6ce9605f82fedaf8eb160192de6f9013e352d70f86abd",
+      "currentSha256": "25bde95c443d448c570976a7252037514460e71ce36bd83eae5667f6eab75ef4",
+      "identical": false,
+      "allowedPublicExportAddition": true
+    },
+    {
+      "path": "src/capabilities/practice/server/calibration-sample-durable-operation.db.test.ts",
+      "priorSha256": "cafe7722fbf6d2771d68b235a7be28ee470ead96a204c4f1bc031af93854c52f",
+      "currentSha256": "cafe7722fbf6d2771d68b235a7be28ee470ead96a204c4f1bc031af93854c52f",
+      "identical": true,
+      "allowedPublicExportAddition": false
+    },
+    {
+      "path": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "priorSha256": "2c7a9ced12d8d8f8b78d82affdc28bd0f934c400c399c7e53bd91d2e38d47a94",
+      "currentSha256": "2c7a9ced12d8d8f8b78d82affdc28bd0f934c400c399c7e53bd91d2e38d47a94",
+      "identical": true,
+      "allowedPublicExportAddition": false
+    },
+    {
+      "path": "src/capabilities/practice/server/calibration-sample-store.ts",
+      "priorSha256": "ec0c039da5efe73a88603b00736049ffe082ffe1c1aead73997dc13740bf3320",
+      "currentSha256": "ec0c039da5efe73a88603b00736049ffe082ffe1c1aead73997dc13740bf3320",
+      "identical": true,
+      "allowedPublicExportAddition": false
+    },
+    {
+      "path": "src/core/migration/paid-effect-protocol.ts",
+      "priorSha256": "5d157350b3419a38c14c736d3369ae2ecc64d6b053791a755f2c9b864bd1a2ef",
+      "currentSha256": "5d157350b3419a38c14c736d3369ae2ecc64d6b053791a755f2c9b864bd1a2ef",
+      "identical": true,
+      "allowedPublicExportAddition": false
+    },
+    {
+      "path": "src/db/paid-effect-control.ts",
+      "priorSha256": "3a6ab088edcaf832734da7be0955dd8e507af55815c47f62ed621b91441ba6e8",
+      "currentSha256": "3a6ab088edcaf832734da7be0955dd8e507af55815c47f62ed621b91441ba6e8",
+      "identical": true,
+      "allowedPublicExportAddition": false
+    },
+    {
+      "path": "src/db/paid-effect-store.ts",
+      "priorSha256": "eecf7f539ca0089498b523f22b85987da75a742141fdb5ee323340c9fd97594f",
+      "currentSha256": "eecf7f539ca0089498b523f22b85987da75a742141fdb5ee323340c9fd97594f",
+      "identical": true,
+      "allowedPublicExportAddition": false
+    },
+    {
+      "path": "src/db/schema.ts",
+      "priorSha256": "79af0f9faac8bfd9904875e12d878d78805a4b2bb64409d0b079e5a2e4500004",
+      "currentSha256": "79af0f9faac8bfd9904875e12d878d78805a4b2bb64409d0b079e5a2e4500004",
+      "identical": true,
+      "allowedPublicExportAddition": false
+    },
+    {
+      "path": "src/server/durable/calibration-sample-family.ts",
+      "priorSha256": "c21eb8284f196b34bb68dff89a7e9af189c990c21f1c678b421b7cedc2667491",
+      "currentSha256": "c21eb8284f196b34bb68dff89a7e9af189c990c21f1c678b421b7cedc2667491",
+      "identical": true,
+      "allowedPublicExportAddition": false
+    },
+    {
+      "path": "src/server/durable/note-verify-family.test.ts",
+      "priorSha256": "2c869555c6d458d397f4796d35c452e17701acbbd68fd94282eac6850011dd4a",
+      "currentSha256": "2c869555c6d458d397f4796d35c452e17701acbbd68fd94282eac6850011dd4a",
+      "identical": true,
+      "allowedPublicExportAddition": false
+    },
+    {
+      "path": "src/server/durable/note-verify-family.ts",
+      "priorSha256": "8f96664b06eae6ce2164e8bafa733750f2265083877dfa9fc38bfe8df7ee7c65",
+      "currentSha256": "8f96664b06eae6ce2164e8bafa733750f2265083877dfa9fc38bfe8df7ee7c65",
+      "identical": true,
+      "allowedPublicExportAddition": false
+    },
+    {
+      "path": "src/server/durable/paid-effect-control.ts",
+      "priorSha256": "ae14484e287cf1b9a9d71904fd51c5bb24e5c9d30ca162dbbfbc7514a4c9edb9",
+      "currentSha256": "ae14484e287cf1b9a9d71904fd51c5bb24e5c9d30ca162dbbfbc7514a4c9edb9",
+      "identical": true,
+      "allowedPublicExportAddition": false
+    },
+    {
+      "path": "src/server/durable/paid-effect-protocol.test.ts",
+      "priorSha256": "845e918289028441e44bf3464ed0a275142a73713b947afe49e733e9e912a2b4",
+      "currentSha256": "845e918289028441e44bf3464ed0a275142a73713b947afe49e733e9e912a2b4",
+      "identical": true,
+      "allowedPublicExportAddition": false
+    },
+    {
+      "path": "src/server/durable/paid-effect-store.db.test.ts",
+      "priorSha256": "71189d4d26eedf553f5b4c49aee3b7497ef5e6bb58781efdc71b0d5607640922",
+      "currentSha256": "71189d4d26eedf553f5b4c49aee3b7497ef5e6bb58781efdc71b0d5607640922",
+      "identical": true,
+      "allowedPublicExportAddition": false
+    }
+  ],
+  "ok": true
+}

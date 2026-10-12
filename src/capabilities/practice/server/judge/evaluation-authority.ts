@@ -138,6 +138,8 @@ const CONTRACT_CAPABILITY_REF = { id: 'evaluate_submission', version: '1.0.0' } 
  * points_total 聚合下归一化到 [0,1]（binary comparator ⇒ 只可能 0/满分，
  * 部分分来自多 unit 子集）。level 聚合有显式映射时同样归一化；无映射
  * （points=null）⇒ unsupported，不造总分。
+ * 无印规则的确定性部分对公开为 partial_unknown，保留正确数/总数；调度
+ * 仍消费 deriveCoarseVerdict 的 unsupported，计数不换算成分数或评级。
  */
 export function projectEvaluationToJudgeResult(
   record: EvaluationRecordT,
@@ -176,6 +178,24 @@ export function projectEvaluationToJudgeResult(
         ...pendingEvidence,
         aggregate_reason: aggregate.reason,
         aggregate_detail: aggregate.detail,
+      },
+    };
+  }
+  if (aggregate.kind === 'partial_unknown_points') {
+    return {
+      score: null,
+      score_meaning: 'correctness',
+      coarse_outcome: 'partial_unknown',
+      confidence: 1,
+      capability_ref: CONTRACT_CAPABILITY_REF,
+      feedback_md: `部分正确（${aggregate.partial_units
+        .map((unit) => `${unit.correct_count}/${unit.total_count}`)
+        .join('、')}），分数未知`,
+      partial_units: aggregate.partial_units,
+      evidence_json: {
+        evaluation_id: record.evaluation_id,
+        known_points: aggregate.known_points,
+        partial_units: aggregate.partial_units,
       },
     };
   }

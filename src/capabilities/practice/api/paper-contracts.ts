@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { GroupEvidence, PracticeIssuanceDto, ResponseSet } from '@/core/schema/assessment';
 import { SERVING_UNAVAILABLE_REASONS } from '@/core/schema/assessment/serving-admission';
+import { PartialUnknownJudgeResult } from '@/kernel/capability-contract-schemas';
 import { ApiPageSchema } from '@/kernel/http-contracts';
 import { REASONING_TRACE_MAX_LEN } from '@/kernel/limits';
 import { CreateSubmissionBodySchema } from './assessment-contracts';
@@ -128,6 +129,7 @@ export const PaperSubmissionResponseSchema = z.discriminatedUnion('visible_to_us
     visible_to_user: z.literal(true),
     coarse_outcome: z.string(),
     score: z.number().nullable(),
+    partial_units: PartialUnknownJudgeResult.shape.partial_units.optional(),
   }),
   PaperSubmissionIdentitySchema.extend({
     visible_to_user: z.literal(false),
@@ -158,6 +160,7 @@ const PaperVisibleSubmissionStateSchema = z.object({
   visible_to_user: z.literal(true),
   outcome: z.string(),
   score: z.number().nullable(),
+  partial_units: PartialUnknownJudgeResult.shape.partial_units.optional(),
   feedback_md: z.string().nullable(),
   answer_md: z.string(),
   answer_image_refs: z.array(z.string()),

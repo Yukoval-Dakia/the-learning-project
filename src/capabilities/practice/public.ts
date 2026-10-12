@@ -1,7 +1,7 @@
 // Stable server contract for consumers outside the practice capability.
 
-// YUK-876 — the knowledge-owned failure-attempt read port consumes the
-// effective-truth resolver through this public seam (not a deep import).
+// Compatibility exports; shared read models consume their owner, kernel/events,
+// directly so initialization does not re-enter the practice runtime barrel.
 export {
   type EffectiveTruth,
   activeEffectiveTruth,
@@ -21,11 +21,39 @@ export { issueAssessment } from './server/assessment/issue';
 export { saveResponseDraft, saveSubmission } from './server/assessment/submit';
 export type { AttemptSnapshotBracketsInput } from './server/attempt-snapshot';
 export { writeAttemptSnapshotBrackets } from './server/attempt-snapshot';
+export {
+  type CalibrationSampleDispatch,
+  calibrationSampleDispatchSchema,
+} from './server/calibration-sample-store';
 // YUK-1007 — practice 拥有配置键的 consumer-effective 事实（真实 reader 调用）：
 // 组合根 facts seam 聚合进 GET /api/admin/config keys[].effective。
 export { practiceConfigEffectiveFacts } from './server/config-effective-facts';
 export type { ReviewDueQuery, ReviewDueRow } from './server/due-list';
 export { retrievabilityForKc, scheduleReview } from './server/fsrs';
+export {
+  DEFAULT_MAX_PER_RUN,
+  type ItemPriorCandidateFrozen,
+  type ItemPriorExecutionParams,
+  type ItemPriorPreparedWork,
+  type ItemPriorStagedItem,
+  normalizeMethod,
+  normalizeReps,
+  prepareItemPriorWork,
+  resolveItemPriorKnowledgeNames,
+  runItemPriorItemRepStages,
+  selectItemPriorCandidates,
+} from './server/item-prior-durable-operation';
+export {
+  type ItemPriorDispatch,
+  type ItemPriorDispatchedRequest,
+  ItemPriorMemberIdentityError,
+  type ItemPriorMemberRequest,
+  ItemPriorPaidEffectAdapter,
+  itemPriorDispatchSchema,
+  itemPriorDispatchedRequestSchema,
+  itemPriorMemberRequestSchema,
+  readItemPriorPgBossDelivery,
+} from './server/item-prior-paid-effect-adapter';
 export type { FrontierResolution } from './server/learnable-frontier';
 export {
   isMasteredForFrontier,
@@ -55,6 +83,7 @@ export {
   buildSolveHintInput,
   parseHintTurn,
 } from './server/solve-session';
+export type { PracticeTaskRunFn } from './server/task-runtime';
 export const queryReviewDue: typeof import('./server/due-list').queryReviewDue = async (...args) =>
   (await import('./server/due-list')).queryReviewDue(...args);
 

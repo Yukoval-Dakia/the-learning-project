@@ -192,6 +192,8 @@ function frozenContext(row: z.infer<typeof RevisionRow>, issued: z.infer<typeof 
           return criterion.statement_md;
         case 'holistic_level':
           return criterion.levels.map((level) => level.descriptor_md).join('\n\n');
+        case 'position_set_key':
+          return criterion.accepted_positions.map((position) => `断点 ${position}`).join('\n');
         default: {
           const unreachable: never = criterion;
           return unreachable;
@@ -268,6 +270,8 @@ function frozenResponse(
             .join('\n');
         case 'ordering':
           return entry.item_order.map(itemText).join('\n');
+        case 'sentence_breaks':
+          return entry.positions.map((position) => `断点 ${position}`).join('\n');
         default: {
           const unreachable: never = entry;
           return unreachable;

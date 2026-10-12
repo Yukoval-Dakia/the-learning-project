@@ -1,4 +1,5 @@
 import { createContext, useContext } from 'react';
+import type { DerivationPolicyT } from '@/core/schema/derivation-policy';
 import { type ApiOperationJsonResponse, apiFetch, apiJson } from '@/ui/lib/api';
 import type { ReplayTurn } from './replay';
 
@@ -19,6 +20,7 @@ export interface CopilotTurnsResponse {
     session_id: string;
     status: 'queued' | 'started' | 'running' | 'cancel_requested';
     events_url: string;
+    derivation_policy?: DerivationPolicyT;
   }>;
 }
 
@@ -29,6 +31,7 @@ export interface CopilotCancelResult {
 }
 
 export type CopilotClient = {
+  /** Fresh server capabilities, including before restricted sends; never a cached snapshot. */
   listSessions: (signal?: AbortSignal) => Promise<CopilotSessionsResponse>;
   createSession: () => Promise<CopilotCreateSessionResponse>;
   listTurns: (sessionId: string, limit: number) => Promise<CopilotTurnsResponse>;
@@ -41,7 +44,8 @@ export type CopilotClient = {
 };
 
 export const httpCopilotClient: CopilotClient = {
-  listSessions: (signal) => apiJson<CopilotSessionsResponse>('/api/copilot/sessions', { signal }),
+  listSessions: (signal) =>
+    apiJson<CopilotSessionsResponse>('/api/copilot/sessions', { signal, cache: 'no-store' }),
   createSession: () =>
     apiJson<CopilotCreateSessionResponse>('/api/copilot/sessions', { method: 'POST' }),
   listTurns: (sessionId, limit) =>

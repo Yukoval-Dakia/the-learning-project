@@ -280,4 +280,3 @@ UI 依 owner 指令暂缓；此快照不擅自关闭任何功能、数据前置 
 | [YUK-545](https://linear.app/yukoval-studios/issue/YUK-545) | Backlog | mastery 冻结行的解冻门实施 — LFA 模型比较 / CDM 属性可区分度（数据够后） |
 | [YUK-530](https://linear.app/yukoval-studios/issue/YUK-530) | Backlog | A5 S3 DiagnosticDrill（CDM/IRT 诊断下钻）后端读路径 follow-up — gated ADR-0035 #4 |
 | [YUK-509](https://linear.app/yukoval-studios/issue/YUK-509) | Backlog | WASM-in-browser — calibration-native polySigmoidBatch 接进 SPA（trust upgrade，非必需 spike） |
-

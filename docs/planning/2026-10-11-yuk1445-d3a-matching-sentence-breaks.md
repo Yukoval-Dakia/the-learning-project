@@ -1,0 +1,429 @@
+# YUK-1445 / ADR-0074 D3a — 配对与断句作答契约与确定性判分（纯函数 + schema 切片）
+
+状态：D3a 第一刀已实施（source-only）；分支 `feat/yuk-1445-matching-sentence-breaks`，
+基线 `e6b8880b5`（fresh origin/main，#1695 R10 tap blocks 之后）。本文件是该切片的
+契约记录与本地门禁证据；独立 review、真实 issuance 验收、exact-head CI 与 merge 归
+父线程（未运行，见 §6）。
+
+## 1. 公开作答契约（不变更历史形状）
+
+- **配对**：公开提交沿既有 `MatchingResponse`：`{kind:'matching', pairs:[{item_id,
+  option_id}]}`。`item_id` = 左列稳定 id，`option_id` = 右列稳定 id —— 即 ADR-0074
+  D3a 的 `{left_id, right_id}` 语义，**不改名**：现有消费面（`response-types.ts` 草稿
+  转换、`exact_matching_pairs` 比较器、capture、历史 submission）全部已是该形状，
+  改名即静默改写历史作答语义，禁止。判分只认稳定 id，不认文字/位置/提交顺序。
+- **断句**：新增 `SentenceBreaksSlot {kind:'sentence_breaks', text}` 与
+  `SentenceBreaksResponse {kind:'sentence_breaks', positions:number[]}`。`text` 是
+  随 revision 冻结的明文（公开面携带 —— 学习者按它渲染）；`positions` 是 code point
+  字缝索引。
+- **位置语义**（`src/core/schema/assessment/position-gap.ts`，纯函数）：索引按
+  Unicode **code point** 计（代理对 = 1 字符，字缝永不落进代理对）；gap `i ∈ [0,L]`
+  表示第 i 个 code point 之前，有效断句位置是内部缝 `1..L-1`（文首/文末结构性拒绝）；
+  客户端必须使用冻结原文逐字渲染与计数，不做 HTML/空白/折行归一化。
+
+## 2. 私有判据（键不入公开 DTO）
+
+- `MatchingPairsKeyCriterion` 增加 optional `rule:{kind:'per_correct_pair',
+  points_per_pair}`；`PositionSetKeyCriterion`（新增）＝ `accepted_positions` +
+  optional `rule:{kind:'per_correct_break', points_per_break, max_breaks}`。
+  规则只能 typed 录入卷面**印出来**的规则（例：「每对一处 1 分、超 3 处 0 分」），
+  不解析中文规则原文、不发明通用计分政策。
+- 公开投影 `PracticeIssuanceDto` 结构上不含 criterion（strictObject）；反馈揭示
+  `RevealedAnswerKey` 新增 `position_set_key` 成员（只揭示 accepted_positions；
+  题级规则属 marking 政策，不随键面揭示，与配对/选项键同律）。
+- 基数逐题声明（`MatchingSlot`）：`pairing:'one_to_one'|'many_to_one'`（缺省＝
+  历史宽松行为，存量校验语义逐字不变）与 `has_distractors:boolean`（不泄露键）。
+  one_to_one 下：作答重复右选项 ⇒ `duplicate_pair_option`；键内一右配多左 ⇒
+  `key_pairing_violation`。
+
+## 3. 判分语义（`position_set_rule` 比较器 + `exact_matching_pairs` 扩展）
+
+对每个计分单元（默认一题一单元；卷面印每对分值时录入侧按 ADR 拆为每对一单元，
+不发明权重）：
+
+| 情形 | 结果 |
+|---|---|
+| 精确集合相等（顺序无关） | 满分（unit.points） |
+| 有印规则（typed） | 恰好按规则：配对 `正确对数×points_per_pair`；断句先判「断点数 > max_breaks ⇒ 0 分」（`rule_max_breaks_exceeded`），再 `正确断点数×points_per_break` |
+| 非精确且无印规则 | `pending(needs_review, flagged)`，detail 记录 `正确数/总数`，分数未知 —— 绝不伪零分、不造分、不摊等权 |
+| 结构违背（重复左项/外键/one_to_one 重复右项/越界或重复断点） | `invalid_response_set` 整体拒绝评估（fail-closed，不逐单元猜） |
+| 未作答（缺条目）/主动空白 | `missing_response` / `needs_review`（`blank_scores_zero=false` 时不计伪零）—— 语义与六类未决纪律一致 |
+
+校验新增：`validateScoringBasis` 拦 `key_position_not_declared`（键位置不是任一引用
+槽的内部字缝）、`key_position_duplicated`、`key_rule_conflicts_exact_set`
+（`max_breaks < 接受集合大小` —— 精确集合不得被自家规则归零）、`key_pairing_violation`。
+`serving-admission` 对确定性比较器单元照常放行（结构校验已证明单槽可判）；
+model/human 执行器照旧 withhold，不冒充准入。
+
+**已知后续（另行 lane，本切片不扩判分记录）**：无规则 partial 目前以
+`needs_review` pending + detail 文本承载对数；typed 承载（`ScoredUnitResult` 加
+partial 计数字段 + 聚合 `no_mapping` 分支）需动 `judgment.ts` 共享面，归父线程统筹
+（多选无错子集同政策同题）。
+
+## 4. 变更面（13 文件 + 1 新文件）
+
+owned：`response.ts` `scoring.ts` `execution.ts` `evaluation.ts` `scoring.test.ts`
+`position-gap.ts`（新）；authorized 最小域：`dto.ts`（RevealedAnswerKey 成员）；
+compile-forced 消费面（各一 case）：`coverage.ts`（能力矩阵行 + kind 词表）、
+`study-context.ts`、`native-assessment-reporting.ts`（2 处）、
+`native-mistake-evidence.ts`（2 处）、`jev-model-executor.ts`（投影）、
+`ResponseSlotField.tsx`（`sentence_breaks → null`，编辑器归 R10 UI 线）；
+生成物：`api-schema.generated.ts`（`pnpm gen:api-client` 再生，sha256 幂等）。
+未触碰：evaluation.test.ts / publish / publication / jobs / Start / DB / 迁移 / UI 积木。
+
+## 5. 本地门禁证据（实际运行）
+
+- `pnpm typecheck`（tsc 全仓 + server/start 双 tsconfig）：exit 0。
+- `pnpm lint`：exit 0，172 warnings（全部为存量基线，与交接记录一致），0 errors。
+- `pnpm build`：exit 0（含 build:migrate CJS bundle）。
+- `pnpm vitest run --config vitest.unit.config.ts src/core/schema/assessment/`：
+  3 files / **102 passed**（含 Choice P1 线的 evaluation.test.ts 原样通过 —— 旧判分
+  测试未动未破；settlement.test.ts 同过）。
+- 其中 D3a 新增（scoring.test.ts）：**24 passed** —— 覆盖稳定 id 乱序全对、印规则
+  恰好执行、无规则 partial 未知分（needs_review + pending_units 聚合）、重复/外键/
+  one_to_one 重复、missing vs 空白、代理对 code point 计数、参考集合、超 N 处 0 分、
+  错位、越界/重复位置、DTO 零键泄漏 + strictObject 注入拒绝。
+- `pnpm gen:api-client` 两次运行 sha256 相同（`33798fde…4bd6`，幂等）。
+- `pnpm audit:api-client` 在未提交工作树按定义失败（生成物相对 HEAD 有 diff）；
+  提交后（schema + 生成物同 commit）复跑通过 —— 见 §6 后续。
+- 未跑（按边界）：完整 `pnpm test`（仅 exact-head CI Gate 执行）、`pnpm gen:postman`
+  （未改任何 API route，route 面不变）、DB/docker/runtime/provider。
+
+## 6. 未运行的验收（父线程所有）
+
+1. 独立不同模型 review（真实 diff）。
+2. 真实 issuance/consumer 验收（R10 UI 点选块尚未落此线；capture/UI 接线归 UI 线）。
+3. push 后 exact-head GitHub `CI Gate`。
+4. merge 与等待窗裁决（本切片不 push、不开 PR、不 merge）。
+5. 提交后复跑 `pnpm audit:api-client` 应绿（生成物与 schema 同 commit）。
+
+---
+
+## 7. 独立复核 P1 修复（a371dd845 之后的第二刀；本节之前的记录不可变）
+
+输入：独立 Sol xhigh 初审 `/tmp/yuk1445-matching-sentence-breaks-initial-review-sol.md`
+的 2 个 P1，父线程读实际源后均裁决接受。本轮唯一写入者，树干净于
+a371dd845fdce70e8509a37c0e7fd59e994fd271；migration 只释放
+`src/core/schema/assessment/judgment.ts`。未动 choice-0fa8 / figure-5403 任何源。
+
+### P1-1 — 无印规则部分对改为 typed structured partial（不再是 pending/needs_review）
+
+- **新结果形状**：`ScoredUnitResult.partial_unknown_points:
+  {correct_count:int≥0, total_count:int≥1}`（optional）+ `points_awarded:null` +
+  `status:'scored'`、`scored_because:'response'`。两个执行器分支（matching
+  无规则非精确、sentence_breaks 无规则非精确）产出该形状，携带确定性正确计数。
+- **聚合行为**：`aggregateUnitResults` 对 additive 单元 `points_awarded===null` 且
+  携带 partial ⇒ `unresolved(no_mapping)`（detail 含 `2/3`）—— 与 holistic 未映射
+  档位同语义：判得了、分数未知、不造总分不伪零。evaluation `status='completed'`
+  （无 pending 单元），不再产生 `pending_units`。
+- **fail-closed 守卫（同聚合层）**：partial 与数值 `points_awarded` 并存、
+  `correct_count>total_count`、holistic 单元携带 partial ⇒ `invalid_result`。
+  加法单元 null 无 partial 的旧 invalid 分支不变（历史语义保留）。
+- **未改 settlement（范围已报父线程，未获释放）**：`settlement.ts`
+  `classifyScoredUnit`（约 :254）additive 分支 `points_awarded ?? 0` 会把
+  scored-partial 单元归为 `{kind:'zero'}` KC 证据 —— 需要 4 行级修改
+  （`partial_unknown_points && correct_count>0 ⇒ 'partial'`；`=0 ⇒ 'zero'`）。
+  父线程释放前本文件不动；组级 verdict 不受影响（no_mapping 聚合 ⇒ unsupported）。
+
+### P1-2 — 印规则可达满分 ≠ 发布 unit.points 在 canonical 校验拒绝
+
+- `validateScoringBasis`（发布 barrier 与 evaluateSubmissionCore 服务路径共用）新增
+  `key_rule_points_mismatch`：`per_correct_pair` 的 `points_per_pair×accepted_pairs数`
+  与 `per_correct_break` 的 `points_per_break×accepted_positions数` 都必须
+  **等于** `unit.points`（浮点相对 ε=1e-9，十进制卷面分值如 1.5×3=4.5 不误拒）。
+  例：3 对×4=12≠6 拒；3 断×2=6≠3 拒。不封顶、不折算、不猜权重；校验先于判分，
+  精确作答也不能静默绕过矛盾规则。
+- 既有 `key_rule_conflicts_exact_set`（max_breaks<接受数）保留。
+
+### 测试证据（原始错误期望与失败记录保留）
+
+- 初版门禁日志与 21:39 三处失败（位置越界/2-3 计数测试数据错误）保留于上方 §5
+  与会话记录；本节不覆盖。
+- **RED 证明**：将 judgment/scoring/evaluation 三文件临时还原 a371dd845 后跑修订
+  测试 ⇒ **4 failed | 23 passed**（`/tmp/yuk1445-p1-red-proof.log`，
+  sha256 前 16 位 `66860c31a4cfc5cd`）——失败的正是两个修订 partial 用例、
+  P1-2 拒绝用例与聚合守卫用例（十进制不误拒用例按设计在新旧两版都过）。
+  还原修复后全绿。
+- `scoring.test.ts` 现 **27 passed**；assessment 单测目录 **105/105**（含 Choice P1
+  evaluation.test.ts 与 settlement.test.ts 原样通过）。
+
+### 本轮门禁（实际运行、无管道掩码 exit）
+
+typecheck（双 tsconfig）exit 0；`pnpm lint` exit 0（172 warnings=存量基线，
+`/tmp/yuk1445-lint-final.log` sha256 前 16 `98eb391b35389a36`）；`pnpm build`
+exit 0；`pnpm gen:api-client` 重跑生成物无 diff（OpenAPI 投影不含该 optional
+字段）⇒ `audit:api-client` 提交后必绿。文件签名（sha256 前 16）：
+judgment `e01c259fa060d54a`、scoring `8a0882b5087e3e99`、evaluation
+`03c115b7a80ff937`、scoring.test `49bbc7c87aecbc15`。
+
+### Owner 交接要点
+
+- 新结果形状/聚合行为：见 P1-1；下游（settlement 的 KC 分类）待父释放 4 行修改。
+- 基数 owner 补充绑定：**新录入**的 matching 条目必须声明 pairing（及适用时
+  has_distractors）—— 这是录入侧（store/entry gate）义务；纯 schema 无法区分
+  新旧 revision，故字段保持 optional+历史宽松缺省，不做破坏存量的强制。
+- 免责：base/head 均未实现 per-item calibration registration；本切片的标定探针
+  用例**不是** admission，D3 亦未全部完成（R10 UI 点选块、录入侧 spec 产出、
+  作答卷往返等仍归各自 lane）。
+
+---
+
+## 8. P1-1 收口：typed partial 贯通到组级 verdict 与 KC 证据（8af031a80 之后第三刀）
+
+输入：owner 22:15 测试规则 + coordinator 对 `settlement.ts` 的专项释放
+（1470 线拥有 server/assessment/{settle,activate,settle*.db.test}，本刀未触碰）。
+§1–§7 记录不可变。本刀改动：`judgment.ts`（聚合显式 partial）、
+`settlement.ts`（verdict/classify）、`dto.ts`（反馈投影 compile-forced 最小 case）、
+两个测试文件（按 22:15 规则合并）。
+
+### 语义 delta
+
+- **AggregateOutcome 新成员** `partial_unknown_points {known_points, partial_units[
+  {scoring_unit_id, correct_count, total_count}]}`：聚合单源产出 —— 存在
+  partial-unknown 单元且无 invalid/no_mapping/pending 时返回；`capped_sum`/
+  `threshold_levels` 因 cap/阈值绑死全量满分而 fail-closed 为
+  unresolved(no_mapping)。superRefine 新增守卫：声称 partial 而无任何
+  partial 单元结果 ⇒ 矛盾拒绝。
+- **deriveCoarseVerdict**：partial_unknown_points ⇒ `verdict='partial'`、
+  reason=`partial_unknown_points`、points/maxPoints/normalized 全 null ——
+  已知部分对触达学习者，不再是 unsupported；分数未知不造总分/比例。
+  legacy（holistic 未映射/pending/普通 unresolved）原分支不动、不重释
+  （混合卷 holistic 未映射 ⇒ 聚合 unresolved ⇒ 组级仍 unsupported，有钉住用例）。
+- **classifyScoredUnit（owner override）**：`partial_unknown_points` ⇒
+  `uninformative` —— 未知分【零 KC 证据】：不按正确计数映射 partial/zero
+  （0/3 也不是已判零），修复 `points_awarded ?? 0 ⇒ zero` 主动污染 θ̂ 的缺陷。
+- **dto 反馈投影**：新聚合成员如实在 AssessmentFeedbackDto 呈现
+  （known_points + typed 计数；不伪 unresolved）。
+
+### 消费链实测（read-only 外部文件，未编辑）
+
+- `server/assessment/settle.ts`（1470 所有）：:394 deriveCoarseVerdict →
+  :409-414 ratingForVerdict → :703 `plan.rating !== null` 才写 FSRS；
+  θ̂ 经 :402/:407 localize/resolveTheta。**无需修改**：unsupported ⇒ rating
+  null ⇒ 不写（现行为）；修复后 partial ⇒ 'hard'（D14 既有映射）——
+  未知分 partial 将调度 FSRS hard，属设计内结果，已向 owner 报告待确认。
+- **剩余消费缺口（父线程释放后处理，本刀未动）**：
+  `src/capabilities/practice/server/judge/evaluation-authority.ts` 的
+  `projectEvaluationToJudgeResult(record, basis)` 需在 `aggregate.kind ===
+  'unresolved'` 块之后、`verdict.points == null` 检查之前插入 partial 分支
+  （score=null、coarse_outcome='partial'、evidence 带 known/partial_units），
+  否则学习者侧 JudgeResultV2 对 partial 聚合仍回落 unsupported 文案。
+- 纯决策层测试不证明 DB 层 no-write；settle.db 级探针属 1470 的
+  settle*.db.test（可按需准备，未运行）。
+
+### 测试清单（owner 22:15 规则；before → after；入口与理由）
+
+合并后 D3a 新增用例：scoring.test.ts 13→**12** it、settlement.test.ts 6→**4**
+it（砍掉与既有用例重复的 legacy 钉住与 rating 映射 pin；helper 直测改为经
+真实链入口）。入口全部为公共确定性核心：`evaluateSubmissionCore`（判分链）、
+`aggregateUnitResults`（judgment 单源聚合）、`deriveCoarseVerdict`（1047 投影
+与结算单源）、`localizeKcObservations`/`resolveThetaDecision`（settle.ts
+:394-414 同链消费）、`projectPracticeIssuance`（DTO 边界）。逐用例不变量：
+
+| 用例（12+4） | 不变量类别 | 理由 |
+|---|---|---|
+| 乱序稳定 id 全对 | 判分确定性 | 同作答不同顺序同分 |
+| 印规则恰好执行（配对） | 判分确定性 | 印刷规则不发明权重 |
+| 无规则结构化 partial（配对+断句） | 判分确定性 | 复核 P1：typed partial、永不伪零/造分 |
+| 结构违背 fail-closed（双槽 7 形态） | 判分确定性/安全 | 违背拒绝评估，不猜 |
+| P1-2 矛盾规则拒绝 | 判分确定性 | 矛盾 basis 不服务；精确作答不绕过 |
+| P1-2 十进制不误拒 | 独立失败模式 | 防假拒绝回归 |
+| 聚合 partial 形状/known_points/capped fail-closed/矛盾守卫 | 判分确定性 | 单源聚合语义 |
+| missing vs 主动空白（双槽） | 判分确定性 | 六类未决纪律不混淆 |
+| 代理对 code point 索引 | 判分确定性 | 索引语义确定性 |
+| 超 N 处 0 分 | 判分确定性 | 印刷规则优先序 |
+| 错位按规则计分 | 判分确定性 | 每对一处语义 |
+| 公开 DTO 零键泄漏+注入拒绝 | 安全边界 | 键不入公开面 |
+| verdict=partial 触达（settlement） | 判分确定性 | P1-1 收口主断言 |
+| 混合 holistic 不重释 | 判分确定性 | legacy 语义保留 |
+| KC 零票+θ abstain（0/3 也非 zero） | 判分确定性 | 未知分不产生掌握证据（??0 缺陷） |
+| partial 不吞同卷他人票 | 判分确定性 | 证据归因不污染 |
+
+测试行数 > 产品行数（本刀 test ~251 行 vs product ~119 行）：上表 16 用例
+各自钉一个不可削减的不变量（判分确定性 14 + 安全边界 1 + 独立失败模式 1），
+无 helper-only/参数排列/mock 交互/分支覆盖用例；fixtures 为真实 revision/
+submission 构造，mock 为零。
+
+### 本刀门禁（实际运行）
+
+typecheck（双 tsconfig）exit 0；lint exit 0（172 warnings=存量）；build
+exit 0；assessment 单测 **108/108**（scoring 26 / settlement 27 / evaluation
+55 —— evaluation 为 Choice P1 文件原样通过）。**RED 证明（合并后用例在
+8af031a80 缺陷源）**：5 failed（settlement 3 + scoring 2，
+`/tmp/yuk1445-d3a-red-8af-final.log`）。签名（sha256 前 16）：judgment
+`ab4684987ce65f1a`、settlement `02ce00192783e8e2`、dto `6a0c961d148a45c8`、
+scoring.test `f0cf2c1c33409ae0`、settlement.test `5a76a52326e808a8`、
+red log `ac46df96073104bc`。
+
+---
+
+## 9. Coordinator 最终裁决落地 + 公开面阻塞（4d04277e1 之后第四刀）
+
+输入：coordinator 最终裁决（调度面 partial_unknown 必须返回既有非调度 verdict
+—— settle 已映射 rating=null —— 不得返回 partial；typed reason 保留；公开面
+只在 evaluation-authority/公开读映射为 partial；learner 永不 unsupported；
+feature 双文件允许、foreign settle 不动；测试按 22:15 规则只留不同边界不变量；
+准备一条真实结算链 DB 边界测试但不运行）。
+
+### 已落地（本刀源码改动）
+
+- `settlement.ts`：`partial_unknown_points` 聚合 ⇒ `verdict='unsupported'` +
+  typed `reason='partial_unknown_points'`（points/max/normalized 全 null）——
+  调度面经既有 `ratingForVerdict('unsupported')=null` ⇒ settle 不写 FSRS/θ
+  （coordinator 锁定达成，无 foreign 改动）。§8 的 verdict='partial' 表述被
+  本节取代。
+- KC 证据 owner override 与聚合形状不变（§8）。
+
+### 公开面阻塞（停在准备，不代写）
+
+`JudgeResultV2`（`src/core/schema/capability.ts:77-99`）是 coarse_outcome 判别
+联合：`'partial'` 变体强制 `score∈(0,0.85)`，`score:null` 只存在于
+`'unsupported'` 变体。**分数未知的 partial 在该 schema 下没有合法承载**——
+任何数值 score 都是发明比例。`capability.ts` 不在本刀释放面；本 lane 已把
+evaluation-authority 的消费分支写好后按边界撤回（`git checkout` 还原）。
+父/coordinator 二选一（候选最小 diff，未写入）：
+
+- **候选 A（推荐）**：JudgeResultV2 新增判别值（如 `coarse_outcome:'partial'`
+  + `score:z.null()` 需拆为新判别值 `partial_unknown`，因 zod 判别联合不容
+  重复判别值）：`JudgeResultV2Base.extend({ coarse_outcome: z.literal('partial_unknown'), score: z.null(), feedback_md: z.string().min(1) })`；
+  evaluation-authority 加对应分支（本 lane 已起草，恢复即用）。涟漪：
+  coarse_outcome 全部消费面（UI CoarseOutcome/judge-result-format、
+  ratingFromCoarseOutcome、api-schema 再生）。
+- **候选 B**：`'partial'` 变体放宽 `score: z.number().gt(0).lt(0.85).nullable()`；
+  涟漪：所有读 partial.score 的消费面须处理 null（面更小但弱化数值不变量）。
+
+### 测试清单（22:15 规则最终形态，before → after）
+
+- scoring.test.ts D3a：12 → **8** it（砍 no-attempt/blank——核心旧语义已由
+  evaluation.test.ts 钉住；砍聚合直调 cases——形状经真实链断言；misplaced
+  并入印规则用例；decimal 并入 P1-2 反面；structural 去参数循环，只留
+  每验证面代表形态）。
+- settlement.test.ts D3a：4 → **3** it（一条真实链贯通用例：evaluate →
+  aggregate → verdict(unsupported+typed reason) → ratingForVerdict=null →
+  KC 弃权 → θ abstain；另两条为不同 failure 原因：混合卷不吞 holistic
+  未映射、partial 不吞同卷他人票）。
+- **DB 边界（prepared，未运行）**：新 task-owned
+  `src/server/assessment/yuk1445-partial-settlement-boundary.db.test.ts`
+  （非 foreign settle*.db.test.ts）。真实链：publishQuestionGroup（手建 D3a
+  契约 + contractIntegrityDigest）→ 真实 evaluateSubmissionCore →
+  activateEvaluation(learningSettlement) → 公开读 projectEvaluationToJudge
+  Result。边界 1（现在即可执行）：rating=null、无 material_fsrs_state 行、
+  无 mastery_state 行、θ abstain、KC 全弃权。边界 2（pin 待上述候选补丁）：
+  coarse_outcome='partial' + score=null + typed 2/3 计数 —— 补丁落地前运行
+  将在此如实失败（文件头已注明）。
+- 单测 103/103（scoring 22 / settlement 26 / evaluation 55——后者为 Choice
+  P1 文件原样通过）。
+
+### 门禁与签名（实际运行）
+
+typecheck（双 tsconfig）exit 0；lint exit 0（172 warnings=存量）；build
+exit 0；`audit:api-client` 提交后复跑绿。**真 8af RED**（源文件 checkout 到
+8af031a80 跑最终用例）：3 failed（`/tmp/yuk1445-d3a-red-8af-true.log`，
+sha256 前 16 `370fded45018d24c`；此前 §8 的 red log 记录保留）。签名：
+judgment `ab4684987ce65f1a`、settlement `710fa2f8700b8a11`、scoring.test
+`b4ce87a2e289fff8`、settlement.test `f7708acefd0c440f`、DB 边界测试
+`eef566643bbcf5d0`。DB 未运行（无窗口）；FSRS #1700 排序归 coordinator。
+
+## 10. 公开 unknown-score 契约补齐，DB 用例仍未运行
+
+本刀从干净 `175f55a20ce083b5250ad23bf4621ff905ec0e28` 继续，不重做
+`a371dd845 → 8af031a80 → 4d04277e1 → 175f55a20`。Coordinator/migration
+已释放 capability schema、公开投影和必要后端消费者。原始 2 P1 的独立初审
+仍为 `/tmp/yuk1445-matching-sentence-breaks-initial-review-sol.md`；本刀不启动
+子任务或新 review，唯一剩余整链 Astra review 由 parent 执行。
+
+### 行为与兼容性
+
+- 无印规则、确定性判得 2/3 对：公开 `coarse_outcome='partial_unknown'`、
+  `score=null`、必填非空 `partial_units:[{scoring_unit_id,correct_count,total_count}]`，
+  文案为 `部分正确（2/3），分数未知`。投影直接消费聚合计数，不从 detail 文本
+  解析，不把正确率当分数，不发明点数。多单元计数逐单元列出，不合成权重。
+- `CoarseOutcome` 和 `JudgeResultV2` 仅在原成员之后追加新成员。旧 numeric
+  `partial` 分支逐字不变，仍要求 `score∈(0,0.85)`；旧 pending、缺失 aggregate、
+  普通 unresolved、holistic 未映射和历史读取分支不重释。
+- 调度仍用既有 `deriveCoarseVerdict` 的 `unsupported + partial_unknown_points`
+  和 `ratingForVerdict=null`；已有 partial-unit KC 弃权逻辑不动。必要的公共评级
+  消费者对新成员返回 null，probe 返回无结论，calibration 不写观测；FSRS
+  算法和 SubjectProfile 旧政策不改。旧 V1 数值结果无法承载 null-score partial，
+  明确拒绝降级，不经 `??0` 制造零分。
+- attempt/advice 响应及契约携带必填 typed counts；paper submit/detail 也透传
+  counts，历史 paper 字段保持兼容。完成 API client 再生成，并同步相关 Postman
+  response notes 和 collection。生成行数不计作产品实现量或测试保留理由。
+
+### 一条真实 DB 边界用例，PREPARED — NOT RUN
+
+`yuk1445-partial-settlement-boundary.db.test.ts` 只保留单个无印规则配对单元。
+原 fixture 两个空白文本单元会走真实 `blank_marked_zero`，现有分类器本来就
+弃权；它们并非本次未知分不变量所必需，已删除，没有放宽断言或改生产逻辑。
+
+链路改为 `publishQuestionGroup → evaluateSubmission → activateEvaluation`
+（真实 `learningSettlement`）`→ resolveVerdictForGroup → public projection`。
+后端 evaluator 自己封存 admission/input snapshot 和 evaluation，测试不手造
+评分记录、快照、执行器或内部 mock。发布 evidence 只是确定性 fixture，不是
+实际 provider/model 的准入或输出证据。结算 receipt 使用实际的 `rating`、
+`theta_decision`、`kc_observations`、`effects`，移除原来不存在的 `inputs` 读取。
+断言 rating=null、theta/KC 弃权、全表 FSRS/mastery 无新增及公开 typed 2/3。
+只登记 `vitest.shared.ts` 的精确 DB 路径，没有运行 DB/container/runtime。
+
+1470 的 `settle.ts`、`activate.ts` 和 `settle.db.test.ts` 与 175f 字节一致；
+SHA-256 记录在 `/tmp/yuk1445-public-partial-foreign-readonly.json`。
+
+### 实际测试清单
+
+新增 D3a 从 8 scoring + 3 settlement + 1 DB 缩至 **6 scoring + 0 settlement + 1 DB**。
+删重复集合顺序、匹配 unknown-score 的第二份核心直测、手造 partial counts 的
+KC/holistic 直测和重复空白 fixture。保留的 6 个核心入口用例分别保护：印规则
+给分/超额断点归零、断句无规则 typed unknown、非法响应拒绝、矛盾规则最大分拒绝
+及合法十进制、Unicode 冻结字缝、公开 DTO 答案键隔离。第 7 个为上述真实 DB 边界。
+没有新增 helper-only、排列、mock counts、shape-only 或内部 mock 用例。
+
+Vitest 实际展开清单为 `/tmp/yuk1445-public-partial-unit-inventory.json`，
+逐用例状态为 `/tmp/yuk1445-public-partial-test-inventory.tsv`：scoring **20**、
+settlement **23**、evaluation **55**、既有 authority **7**，共 **105 passed**。
+其中 authority 的既有内部 mock 未修改；这些旧用例不证明新 DB/public 链已运行。
+DB 仅 **1 prepared not run**。Policy 相对整链基线 e6b8880b5 检查 7 个新增用例。
+
+### Node 24.19.0 门禁与 parent 交接
+
+- Scoped unit **105/105**，`unit-head.log`；lint exit 0、172 存量 warnings，
+  `lint-final.log`；完整 build exit 0，`build-final.log`。
+- test-policy exit 0，`policy.log`；partition 修复后 exit 0、DB 208 文件，
+  `partition-fixed.log`。原 unassigned 失败保留于 `partition.log`。
+- capability-boundaries exit 0，`boundaries.log`；API contracts exit 0、173/173，
+  `api-contracts.log`；gen:api-client 与 gen:postman exit 0，`genapi-final.log`、
+  `postman.log`。提交后再执行 audit:api-client，结果记录在外部 handoff。
+- **typecheck 未通过，仅剩 Opus-owned UI**。完整日志 `typecheck-head.log`：
+  `PfSolo.tsx(114,7)` TS2741 缺 `partial_unknown` 映射；`(156,4)` TS2366
+  `toSubmittedJudgeResult` 未处理该成员，须原样保留 null score 和 typed counts；
+  `JudgeResultPanel.tsx(24,7)`、`(31,7)` TS2741 缺 tone/label 映射。
+  独立 Start tsconfig 也因 PfSolo 两条诊断失败，`start-typecheck.log`。
+  本刀不改 UI 逻辑，不加 cast 或默认值遮盖诊断，不能称整条交付 PASS。
+
+以上日志均为 `/tmp/yuk1445-public-partial-` 前缀，初次失败没有被重试覆盖。
+Exact head、binary diff digest、生成物 digest 和提交后 gate 见
+`/tmp/yuk1445-public-partial-handoff.md`。Parent 应在 carrier 合入完整五刀链与
+Opus UI 适配后再生成契约、复查 typecheck，安排 DB window、唯一 Astra R2、
+exact-head CI、merge。未 push/PR/merge、部署、网络、安装、provider、浏览器或
+子任务。未发现已分配交接之外的新 actionable follow-up；本 lane 无网络/Linear
+写权限，既有 YUK-1445 状态与 UI/DB/R2 handoff 由 parent 对齐。
+
+### 2026-10-12 已验收切片串行合并：校准入口集成
+
+原 PR1702 head `9c7011ebea876e8a87b2f50724548b194c35eeaf` 的源码、UI/retro
+验收及 exact-head CI 已由协调者接受。本次正常合入 main
+`d3885e83cd7dce8779978636d4ff242317e55cf0`（依次包含 PR1698、PR1588）。
+实际冲突仅 `judge-calibration-sample-core.ts` 一块：PR1698 将校准执行提取到
+共享 `judgeCalibrationPreparedFace`，D3a 在旧位置新增的 `partial_unknown`
+跳过条件必须随之迁移。保留 main 的提取结构，仅在共享入口保留同一个条件，
+未知分数仍归入 no-observation classification，不伪造校准分歧或回执。
+
+只加强既有 unsupported 边界 case，使同一公开入口也拒绝 unknown-score partial；
+不增加 case、参数矩阵或新测试文件。该增量测试多于一行产品条件，是为了抓住
+普通 unsupported 断言无法发现的提取后漏判。既有 numeric partial 邻例保留。
+API client 与 Postman 重新生成无额外差异；无人工 UI 修改或 token/layout 改动。
+
+必要验证限定为既有校准公开入口、校准幂等 DB 与 D3a 真实结算 DB，加
+typecheck/lint/build 和相关准入/分区/API/边界审计。具体结果绑定本次提交，记录在
+`/workspace/merge-batch-20261012/pr1702-integration/`，新 head 仍须 exact-head CI。
+使用独立环境白名单与新建合成 PG，不连接真实 DB、材料、provider，不付费或部署。
+本次合并仅接受对应代码切片，真实 provider、整卷、整体迁移和部署仍为独立验收。

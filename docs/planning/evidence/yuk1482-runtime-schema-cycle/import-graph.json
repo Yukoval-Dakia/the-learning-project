@@ -1,0 +1,80 @@
+{
+  "base": "8fb160ed517c85a56cabbebfe1f1a19f137e4639",
+  "scope": "Registered six-edge cycle plus transitive synchronous local value imports of failure-attempts; no type-only or dynamic imports.",
+  "before": [
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "line": 25,
+      "specifier": "./knowledge-runtime",
+      "to": "src/capabilities/practice/server/knowledge-runtime.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/knowledge-runtime.ts",
+      "line": 2,
+      "specifier": "@/capabilities/knowledge/public",
+      "to": "src/capabilities/knowledge/public.ts"
+    },
+    {
+      "from": "src/capabilities/knowledge/public.ts",
+      "line": 16,
+      "specifier": "@/kernel/read-models/failure-attempts",
+      "to": "src/kernel/read-models/failure-attempts.ts"
+    },
+    {
+      "from": "src/kernel/read-models/failure-attempts.ts",
+      "line": 10,
+      "specifier": "@/capabilities/practice/public",
+      "to": "src/capabilities/practice/public.ts"
+    },
+    {
+      "from": "src/capabilities/practice/public.ts",
+      "line": 46,
+      "specifier": "./server/item-prior-paid-effect-adapter",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "line": 27,
+      "specifier": "./item-prior-durable-operation",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    }
+  ],
+  "removed": [
+    {
+      "from": "src/kernel/read-models/failure-attempts.ts",
+      "line": 10,
+      "specifier": "@/capabilities/practice/public",
+      "to": "src/capabilities/practice/public.ts"
+    }
+  ],
+  "correctedReaderImports": [
+    {
+      "from": "src/kernel/read-models/failure-attempts.ts",
+      "line": 11,
+      "specifier": "@/core/schema/question-evidence-snapshot",
+      "to": "src/core/schema/question-evidence-snapshot.ts"
+    },
+    {
+      "from": "src/kernel/read-models/failure-attempts.ts",
+      "line": 16,
+      "specifier": "@/db/schema",
+      "to": "src/db/schema.ts"
+    },
+    {
+      "from": "src/kernel/read-models/failure-attempts.ts",
+      "line": 17,
+      "specifier": "@/kernel/events",
+      "to": "src/kernel/events/index.ts"
+    },
+    {
+      "from": "src/kernel/read-models/failure-attempts.ts",
+      "line": 25,
+      "specifier": "./assessment-verdict",
+      "to": "src/kernel/read-models/assessment-verdict.ts"
+    }
+  ],
+  "readerClosureFiles": 72,
+  "readerCapabilityOrServerDependencies": [],
+  "limitImports": [],
+  "afterRegisteredCyclePresent": false
+}

@@ -1,7 +1,12 @@
 import { z } from 'zod';
 import { ActivateEvaluationIntent } from '@/core/schema/assessment';
 
-import { ActivityRef, FsrsRating, JudgeResultV2 } from '@/kernel/capability-contract-schemas';
+import {
+  ActivityRef,
+  FsrsRating,
+  JudgeResultV2,
+  PartialUnknownJudgeResult,
+} from '@/kernel/capability-contract-schemas';
 import { REASONING_TRACE_MAX_LEN } from '@/kernel/limits';
 import { CreateSubmissionBodySchema } from './assessment-contracts';
 
@@ -89,7 +94,7 @@ export const AttemptCorrectionStateSchema = z.object({
   chain: z.array(AttemptCorrectionStepSchema),
 });
 
-const AttemptJudgeResponseSchema = z
+const LegacyAttemptJudgeResponseSchema = z
   .object({
     route: z.string(),
     score: z.number().nullable(),
@@ -104,6 +109,14 @@ const AttemptJudgeResponseSchema = z
     telemetry: z.unknown().optional(),
   })
   .passthrough();
+
+const AttemptJudgeResponseSchema = z.discriminatedUnion('coarse_outcome', [
+  LegacyAttemptJudgeResponseSchema,
+  LegacyAttemptJudgeResponseSchema.omit({ coarse_outcome: true, score: true }).extend(
+    PartialUnknownJudgeResult.pick({ coarse_outcome: true, score: true, partial_units: true })
+      .shape,
+  ),
+]);
 
 const LegacyAttemptResponseSchema = z.object({
   next_due_at: z.number().int().nonnegative(),

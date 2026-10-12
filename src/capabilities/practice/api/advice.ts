@@ -92,6 +92,9 @@ export async function POST(req: Request): Promise<Response> {
         score: invoked.result.score,
         score_meaning: invoked.result.score_meaning,
         coarse_outcome: invoked.result.coarse_outcome,
+        ...(invoked.result.coarse_outcome === 'partial_unknown'
+          ? { partial_units: invoked.result.partial_units }
+          : {}),
         confidence: invoked.result.confidence,
         feedback_md: invoked.result.feedback_md,
         evidence_json: invoked.result.evidence_json,

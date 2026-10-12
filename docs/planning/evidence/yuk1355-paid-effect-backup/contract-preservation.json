@@ -1,0 +1,118 @@
+{
+  "base": "90f95b57d4fcb08e36fa7a782abffa3d7966d5cc",
+  "normalization": "Ignore AST metadata only. For restoreFromArchive remove exactly the two structurally matched paid-payload preflight statements; all original version/table/column validation and transaction code must be identical.",
+  "total": 9,
+  "identical": 8,
+  "equivalentExceptRequiredPreflight": 9,
+  "comparisons": [
+    {
+      "function": "mem0CollectionExists",
+      "beforeAstSha256": "6b735bcf36b5a3a4c077c500fefa674cb132fd18d52ee572880663e22bf3fb08",
+      "afterAstSha256": "6b735bcf36b5a3a4c077c500fefa674cb132fd18d52ee572880663e22bf3fb08",
+      "afterWithoutAddedPreflightSha256": "6b735bcf36b5a3a4c077c500fefa674cb132fd18d52ee572880663e22bf3fb08",
+      "identical": true,
+      "equivalentExceptRequiredPreflight": true
+    },
+    {
+      "function": "assertSafeMem0CollectionName",
+      "beforeAstSha256": "b8463666d54f7765312262ebc663e20f259a66a37103af2b76e74108fe51c791",
+      "afterAstSha256": "b8463666d54f7765312262ebc663e20f259a66a37103af2b76e74108fe51c791",
+      "afterWithoutAddedPreflightSha256": "b8463666d54f7765312262ebc663e20f259a66a37103af2b76e74108fe51c791",
+      "identical": true,
+      "equivalentExceptRequiredPreflight": true
+    },
+    {
+      "function": "inferMem0VectorDims",
+      "beforeAstSha256": "73da763c76fed5db77b2efa73846a8eb6a3d74479ca4c7dbb87846426af86627",
+      "afterAstSha256": "73da763c76fed5db77b2efa73846a8eb6a3d74479ca4c7dbb87846426af86627",
+      "afterWithoutAddedPreflightSha256": "73da763c76fed5db77b2efa73846a8eb6a3d74479ca4c7dbb87846426af86627",
+      "identical": true,
+      "equivalentExceptRequiredPreflight": true
+    },
+    {
+      "function": "buildColumnAllowlist",
+      "beforeAstSha256": "8e6472dddf6f9c43c07e1be57e3bff433822573924e0029f0fbd330e52dc898c",
+      "afterAstSha256": "8e6472dddf6f9c43c07e1be57e3bff433822573924e0029f0fbd330e52dc898c",
+      "afterWithoutAddedPreflightSha256": "8e6472dddf6f9c43c07e1be57e3bff433822573924e0029f0fbd330e52dc898c",
+      "identical": true,
+      "equivalentExceptRequiredPreflight": true
+    },
+    {
+      "function": "assertEveryTableIsBackedUpOrExcluded",
+      "beforeAstSha256": "0baca594adef7bbba79411febc545d65a86c5e46884e165f8291d678d03a94b0",
+      "afterAstSha256": "0baca594adef7bbba79411febc545d65a86c5e46884e165f8291d678d03a94b0",
+      "afterWithoutAddedPreflightSha256": "0baca594adef7bbba79411febc545d65a86c5e46884e165f8291d678d03a94b0",
+      "identical": true,
+      "equivalentExceptRequiredPreflight": true
+    },
+    {
+      "function": "buildBackupArchive",
+      "beforeAstSha256": "318a6a0c6a8d32b5cabcfe3ffb03c978b108279cc39a967df68b10421af4c784",
+      "afterAstSha256": "318a6a0c6a8d32b5cabcfe3ffb03c978b108279cc39a967df68b10421af4c784",
+      "afterWithoutAddedPreflightSha256": "318a6a0c6a8d32b5cabcfe3ffb03c978b108279cc39a967df68b10421af4c784",
+      "identical": true,
+      "equivalentExceptRequiredPreflight": true
+    },
+    {
+      "function": "restoreValue",
+      "beforeAstSha256": "bef07ca08894b979ccbaf535bf785bfbde9fe85c7c23284d53158475d4435b4d",
+      "afterAstSha256": "bef07ca08894b979ccbaf535bf785bfbde9fe85c7c23284d53158475d4435b4d",
+      "afterWithoutAddedPreflightSha256": "bef07ca08894b979ccbaf535bf785bfbde9fe85c7c23284d53158475d4435b4d",
+      "identical": true,
+      "equivalentExceptRequiredPreflight": true
+    },
+    {
+      "function": "mem0RestoreValue",
+      "beforeAstSha256": "3605bef1f99371bcc9fbc1bd18cec023d244407151bedff847d8b1da166c2959",
+      "afterAstSha256": "3605bef1f99371bcc9fbc1bd18cec023d244407151bedff847d8b1da166c2959",
+      "afterWithoutAddedPreflightSha256": "3605bef1f99371bcc9fbc1bd18cec023d244407151bedff847d8b1da166c2959",
+      "identical": true,
+      "equivalentExceptRequiredPreflight": true
+    },
+    {
+      "function": "restoreFromArchive",
+      "beforeAstSha256": "9aef4ec9937ee0d03f8458badfa362297d06340e268299811aa40ec58690d58b",
+      "afterAstSha256": "2937ba8d114811b845f95ebe99eb6cd256bb39f7b15d247fce6f9f258ad7f17c",
+      "afterWithoutAddedPreflightSha256": "9aef4ec9937ee0d03f8458badfa362297d06340e268299811aa40ec58690d58b",
+      "identical": false,
+      "equivalentExceptRequiredPreflight": true
+    }
+  ],
+  "protectedFiles": [
+    {
+      "path": "src/db/paid-effect-store.ts",
+      "sha256": "eecf7f539ca0089498b523f22b85987da75a742141fdb5ee323340c9fd97594f",
+      "unchanged": true
+    },
+    {
+      "path": "src/db/paid-effect-control.ts",
+      "sha256": "3a6ab088edcaf832734da7be0955dd8e507af55815c47f62ed621b91441ba6e8",
+      "unchanged": true
+    },
+    {
+      "path": "src/core/migration/paid-effect-protocol.ts",
+      "sha256": "5d157350b3419a38c14c736d3369ae2ecc64d6b053791a755f2c9b864bd1a2ef",
+      "unchanged": true
+    },
+    {
+      "path": "src/db/schema.ts",
+      "sha256": "79af0f9faac8bfd9904875e12d878d78805a4b2bb64409d0b079e5a2e4500004",
+      "unchanged": true
+    },
+    {
+      "path": "drizzle/0119_yuk1355_paid_effect.sql",
+      "sha256": "a11972ce708538d2c6357a70fc4ad8c4faf16ee25abc87622386c5943c09bf81",
+      "unchanged": true
+    },
+    {
+      "path": "src/server/durable/paid-effect-control.ts",
+      "sha256": "ae14484e287cf1b9a9d71904fd51c5bb24e5c9d30ca162dbbfbc7514a4c9edb9",
+      "unchanged": true
+    },
+    {
+      "path": "src/capabilities/observability/api/backup-import.unit.test.ts",
+      "sha256": "09a977e5fcc568ab894bd25a9f8c7c6d9651a9b2e4996df3f6a8d3539cea7ef3",
+      "unchanged": true
+    }
+  ]
+}
