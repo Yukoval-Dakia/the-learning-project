@@ -32,6 +32,7 @@ image4 为 Q31 下方题干/设问（题号在图外）；image3 候选 Q32 但�
 image3/4 的 XML 与视觉顺序相反，Q32 标签又在两图之后；不能以排序自动归题。
 坐标只保留在验收记录，不写生产代码。PDFKit 题号框是字体选择框，并非精确字形边界。
 原件/媒体 SHA 与实际录入的页面 PNG SHA 尚待补充；PDF SHA 本身不能通过页面资产校验。
+最小待补字段是原 DOCX/转换副本 SHA、四媒体 SHA；真正提交确认还需该次录入的 block ID/version、页面 asset SHA 与人工复核题目区域，直接读 GET blocks 绑定。
 以上不是完整题面确认、正式入库或判分证据。
 
 ## 本地最小验证
@@ -54,6 +55,14 @@ Typecheck、lint、build 通过；lint 仅现有仓库 warnings。无需付费�
 | 草稿确认 | 逐问题三条有来源确认；失败仍保留草稿 | 未验收 |
 | 正式入库 | 3 题；另 3 draft，0 ignored | 未验收 |
 | 可答题状态 | 0 admitted；未改准入 | 未验收 |
+
+## CI 交付记录
+
+产品提交 c8e4bad6 的 [CI 38196380739](https://github.com/Yukoval-Dakia/the-learning-project/actions/runs/38196380739)
+已完成：8 DB/2 unit 分片、迁移、生产构建通过；两处交付漏项导致总 gate 失败：
+API schema 生成物未提交、Mac 证据 JSON 未按 Biome 格式化。
+后续已补生成物并格式化；本地 api-client 审计、lint ratchet（172 warnings，baseline 210）、typecheck/build 复核通过。
+无产品行为变化、无新 DB case 或本地矩阵重跑；最终 CI 以同一 PR 当前 head 的 CI Gate 为准。
 
 ## d481 基线：partial 原先实际挡住什么
 

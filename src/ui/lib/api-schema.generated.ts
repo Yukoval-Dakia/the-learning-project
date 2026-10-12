@@ -14256,6 +14256,28 @@ export interface operations {
                             question_kind: string;
                             source_block_ids: string[];
                         }[];
+                        docx_confirmations?: {
+                            block_id: string;
+                            block_version: number;
+                            content_sha256: string;
+                            /** @enum {string} */
+                            issue: "image_association" | "prompt_missing";
+                            media: {
+                                asset_id: string;
+                                sha256: string;
+                            }[];
+                            page: {
+                                asset_id: string;
+                                region: {
+                                    height: number;
+                                    width: number;
+                                    x: number;
+                                    y: number;
+                                };
+                                sha256: string;
+                            };
+                            source_sha256: string;
+                        }[];
                     };
                     /** @enum {string} */
                     kind: "import";
@@ -14428,6 +14450,50 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
+                        docx_integrity?: {
+                            assets: {
+                                asset_id: string;
+                                sha256: string;
+                            }[];
+                            blocks: {
+                                block_id: string;
+                                candidate_media_ids: string[];
+                                issues: ("image_association" | "prompt_missing" | "missing_media")[];
+                                missing_media_paths: string[];
+                            }[];
+                            confirmations: {
+                                /** @enum {string} */
+                                actor_ref: "block_import";
+                                block_id: string;
+                                block_version: number;
+                                confirmed_at: string;
+                                content_sha256: string;
+                                /** @enum {string} */
+                                issue: "image_association" | "prompt_missing";
+                                media: {
+                                    asset_id: string;
+                                    sha256: string;
+                                }[];
+                                page: {
+                                    asset_id: string;
+                                    region: {
+                                        height: number;
+                                        width: number;
+                                        x: number;
+                                        y: number;
+                                    };
+                                    sha256: string;
+                                };
+                                source_sha256: string;
+                            }[];
+                            converter_input_sha256: string | null;
+                            input_sha256: string | null;
+                            markdown_sha256: string;
+                            media_asset_ids: string[];
+                            page_asset_ids: string[];
+                            /** @enum {number} */
+                            schema_version: 1;
+                        } | null;
                         rows: ({
                             auto_enroll_observation: {
                                 confidence: number | null;
@@ -14536,6 +14602,7 @@ export interface operations {
                                 student_answer_present?: boolean;
                                 sub_questions?: unknown[];
                             } | null;
+                            version?: number;
                             wrong_answer_md: string | null;
                         } & {
                             [key: string]: unknown;
@@ -14847,6 +14914,28 @@ export interface operations {
                         }[];
                         question_kind: string;
                         source_block_ids: string[];
+                    }[];
+                    docx_confirmations?: {
+                        block_id: string;
+                        block_version: number;
+                        content_sha256: string;
+                        /** @enum {string} */
+                        issue: "image_association" | "prompt_missing";
+                        media: {
+                            asset_id: string;
+                            sha256: string;
+                        }[];
+                        page: {
+                            asset_id: string;
+                            region: {
+                                height: number;
+                                width: number;
+                                x: number;
+                                y: number;
+                            };
+                            sha256: string;
+                        };
+                        source_sha256: string;
                     }[];
                 };
             };

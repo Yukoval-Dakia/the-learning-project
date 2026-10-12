@@ -1,10 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-12：同一 Draft #1703 已实现 DOCX 逐题图文确认及未选草稿保留；原 case 通过，原卷四图仍待 Mac 证据。
+> Linear 是权威 tracker。2026-10-12：同一 Draft #1703 已实现 DOCX 逐题图文确认及未选草稿保留；原 case 通过，Mac 四图结论已记录，Q32/小图及资产摘要绑定仍未决。
 
 ## NOW
 
-- **YUK-1404 / 学校 DOCX 题号与图片保全**：[Draft PR #1703](https://github.com/Yukoval-Dakia/the-learning-project/pull/1703) 已加来源摘要/逐题图文问题、现有 import 事务内证据确认、partial 普通文字题导入及未选草稿保留；仅原 case：合成正式3/draft3/ignored0，全部 withheld，静态构建通过。5b740ef8 文档 CI 已绿，新增产品最终 head CI 待验。原卷证据仍只绑定 d481/Mac 01:57Z：Q1–32 各一次、Q1–30 ABCD、四媒体保全；Q27/28 源串接及四图归属/纯图片题待验。见[实施与证据](docs/planning/2026-10-12-yuk1404-docx-image-evidence.md)。无第三审/Linear/付费/部署/merge。
+- **YUK-1404 / 学校 DOCX 题号与图片保全**：[Draft PR #1703](https://github.com/Yukoval-Dakia/the-learning-project/pull/1703) 已加来源摘要/逐题图文问题、现有 import 事务内证据确认、partial 普通文字题导入及未选草稿保留；仅原 case：合成正式3/draft3/ignored0，全部 withheld，静态构建通过。5b740ef8 文档 CI 已绿，产品 c8 的 DB/unit/构建通过，已修 CI 生成物/证据格式漏项；最终 CI 见 PR 当前 head。原卷证据仍只绑定 d481/Mac 01:57Z：Q1–32 各一次、Q1–30 ABCD、四媒体保全；Q27/28 源串接及四图归属/纯图片题待验。见[实施与证据](docs/planning/2026-10-12-yuk1404-docx-image-evidence.md)。无第三审/Linear/付费/部署/merge。
 
 - **YUK-1404 / native03题图修复**：PR1657 fixed4c52 exact CI38144495041全绿；正常纳入main eb960c079，仅PLAN/now冲突。图ownership/隐私产品代码与单capture边界测试保留，旧细粒度四tests已删。独立初审/最终R2预算已完成，不启第三审。当前crop producer仍无source_asset SHA登记，旧visibility未知，public withholding不是完整配图交付；同卷actual-output验收仍待。无DB/runtime/provider/paid。 [证据](docs/planning/2026-10-11-yuk1404-native03-figure-repair.md)。
 
@@ -34,7 +34,7 @@
 
 ## NEXT
 
-- DOCX 等待 Mac 四 drawing/相关页坐标与人工确认；当前逐题导入保护已落地，原卷图文确认、正式入库、可答题仍未验收。不得把合成事务成功当真实卷成功；不扩准入/OCR。
+- DOCX 已记录 Mac 四图证据，等摘要/实际录入页面绑定与 Q32/小图确认；当前逐题导入保护已落地，原卷图文确认、正式入库、可答题仍未验收。不得把合成事务成功当真实卷成功；不扩准入/OCR。
 
 - Start/judge共享文件边界见[交接](docs/planning/2026-10-09-judge-start-ownership.md)，Start/boot/shutdown由5796独占；judge A/B/C/D由7631接续，迁移号后核。
 

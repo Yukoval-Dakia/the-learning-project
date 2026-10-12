@@ -19,10 +19,7 @@
       "run_index": 1,
       "kind": "anchor",
       "crop": false,
-      "pixel_dimensions": [
-        29,
-        30
-      ],
+      "pixel_dimensions": [29, 30],
       "media_sha256": null,
       "page_number": null,
       "bbox_pt": null,
@@ -39,12 +36,7 @@
       "crop": false,
       "media_sha256": null,
       "page_number": 2,
-      "bbox_pt": [
-        402.5,
-        426.8,
-        147.7,
-        111.25
-      ],
+      "bbox_pt": [402.5, 426.8, 147.7, 111.25],
       "xml_anchor_question": 12,
       "target_question": 13,
       "status": "visual association confirmed by Mac",
@@ -60,12 +52,7 @@
       "crop": false,
       "media_sha256": null,
       "page_number": 5,
-      "bbox_pt": [
-        43.6,
-        226.3,
-        514.7,
-        113.45
-      ],
+      "bbox_pt": [43.6, 226.3, 514.7, 113.45],
       "candidate_question": 32,
       "target_question": null,
       "status": "unresolved",
@@ -81,12 +68,7 @@
       "crop": false,
       "media_sha256": null,
       "page_number": 5,
-      "bbox_pt": [
-        40.0,
-        82.7,
-        508.1,
-        123.35
-      ],
+      "bbox_pt": [40.0, 82.7, 508.1, 123.35],
       "target_question": 31,
       "status": "visually below Q31, label outside image",
       "contains_prompt_and_requests": true,
