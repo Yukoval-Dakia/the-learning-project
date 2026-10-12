@@ -12,7 +12,7 @@
 //     selectionOutcome 时才挂 .is-right/.is-wrong；paper 作答全程 feedback='none'。
 
 import './response.css';
-import { useEffect, useRef } from 'react';
+import { useCallback, useRef } from 'react';
 
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
@@ -96,23 +96,36 @@ export function ChoiceSetResponse({
   };
 
   // 数字键直选 1–9（PfSolo 1–4 键的一般化；不硬编码选项数）。挂在 window 上与既有
-  // 行为一致，但只在组件活着、未禁用、焦点不在文本输入时响应。
-  useEffect(() => {
-    if (!hotkeys || disabled) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.ctrlKey || e.metaKey || e.altKey) return;
-      if (!/^[1-9]$/.test(e.key)) return;
-      if (isTextEntryTarget(e.target)) return;
-      const idx = Number(e.key) - 1;
-      const opt = options[idx];
-      if (!opt) return;
-      if (mode === 'single') selectSingle(opt.id);
-      else toggleMulti(opt.id);
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-    // options/selected 每次渲染都新鲜；回调里只用最新闭包值即可。
-  });
+  // 行为一致，但只在选项组挂在页面上、未禁用、焦点不在文本输入时响应。
+  // YUK-1483：监听器归选项组 DOM 节点所有（ref callback 挂/摘），不用 effect。选项、
+  // 选中集合或 onChange 变化时 React 先摘旧监听再挂新的，回调里恒是本次提交的值。
+  const attachGroup = useCallback(
+    (node: HTMLDivElement | null) => {
+      groupRef.current = node;
+      if (!node || !hotkeys || disabled) return undefined;
+      const onKey = (e: KeyboardEvent) => {
+        if (e.ctrlKey || e.metaKey || e.altKey) return;
+        if (!/^[1-9]$/.test(e.key)) return;
+        if (isTextEntryTarget(e.target)) return;
+        const opt = options[Number(e.key) - 1];
+        if (!opt) return;
+        if (mode === 'single') onChange([opt.id]);
+        else {
+          // 与点击的 toggleMulti 同一语义：取消最后一项 → []（显式空集合），不是 null。
+          const current = new Set(value ?? []);
+          onChange(
+            current.has(opt.id) ? [...current].filter((x) => x !== opt.id) : [...current, opt.id],
+          );
+        }
+      };
+      window.addEventListener('keydown', onKey);
+      return () => {
+        window.removeEventListener('keydown', onKey);
+        if (groupRef.current === node) groupRef.current = null;
+      };
+    },
+    [hotkeys, disabled, options, mode, value, onChange],
+  );
 
   return (
     <>
@@ -120,7 +133,7 @@ export function ChoiceSetResponse({
           native <input type=radio> 无法承载该布局，真 <button> + ARIA 模式语义完整（同 PfSolo /
           PracticeChoiceOptions / screen-onboarding 先例）。 */}
       <div
-        ref={groupRef}
+        ref={attachGroup}
         className="rs-opts"
         role={mode === 'single' ? 'radiogroup' : 'group'}
         aria-label={ariaLabel}
