@@ -12,35 +12,18 @@
   "provider_calls": 0,
   "storage": "memR2",
   "database": "isolated disposable PostgreSQL",
-  "baseline_seven_question_numbers": [
-    "1",
-    "5",
-    "6",
-    "7",
-    "1",
-    "2",
-    "3",
-    "4"
-  ],
+  "baseline_seven_question_numbers": ["1", "5", "6", "7", "1", "2", "3", "4"],
   "acceptance": {
     "fixture": "synthetic seven-question DOCX; not the school paper",
     "converter": "real Pandoc + LibreOffice + PDFium",
     "storage": "memory R2 substitute",
     "database": "disposable local PostgreSQL",
     "receipt": {
-      "session_id": "qtto26m8dj0zwj4c3udk6vec",
+      "session_id": "on7r67l2rfwug9npo2z98mo2",
       "line": "text",
       "page_count": 1
     },
-    "questionNumbers": [
-      "1",
-      "2",
-      "3",
-      "4",
-      "5",
-      "6",
-      "7"
-    ],
+    "questionNumbers": ["1", "2", "3", "4", "5", "6", "7"],
     "draftCount": 7,
     "draftOptions": [
       {
@@ -170,5 +153,7 @@
     "db_regression": "1 passed; 3 unrelated cases skipped",
     "postman": "regenerated; no diff",
     "independent_review": "NONE; one initial pass"
-  }
+  },
+  "integrated_main": "8fb160ed517c85a56cabbebfe1f1a19f137e4639",
+  "validated_source_commit": "c94f41525e877cb108204eb769ab1d597318dab9"
 }
