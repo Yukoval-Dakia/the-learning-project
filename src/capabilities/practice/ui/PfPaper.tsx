@@ -169,6 +169,23 @@ function clearPaperTiming(sessionId: string, paperId: string): void {
 // (a conservative, honesty-preserving direction), never a false 「进度保留」.
 const EXIT_FLUSH_TIMEOUT_MS = 3000;
 
+// YUK-1489 — a plain save waits at most this long for an earlier save of its slot (the
+// pending chained pagehide save, or the slot's own in-flight save). A keepalive request that
+// never settles must not hold every later save of the slot; past the cap the save goes out
+// at the current epoch. A chain that lands after that is handled by re-saving (runSave).
+const CHAIN_WAIT_CAP_MS = 8000;
+
+// Resolves when the save settles or the cap passes, whichever comes first (never rejects).
+function chainOrCap(save: Promise<boolean>): Promise<{ timedOut: boolean }> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve({ timedOut: true }), CHAIN_WAIT_CAP_MS);
+    void save.then(() => {
+      clearTimeout(timer);
+      resolve({ timedOut: false });
+    });
+  });
+}
+
 // 草稿初值：服务端 draft / 已提交 answer 回填（一次作答 visit 挂载时取一次）。
 function restorePaperDraft(slots: readonly PaperSlot[]) {
   const answers: Record<string, string> = {};
@@ -320,6 +337,8 @@ function PaperVisit({
   // YUK-1487 — the pending chained (pagehide) save per slot; deleted when it settles. At most
   // one per slot: two chains at the same acked + 1 could land oldest-last.
   const chainedSaves = useRef<Record<string, Promise<boolean> | undefined>>({});
+  // YUK-1489 — chains a plain save stopped waiting for (cap passed). Each gets one re-save.
+  const cappedChains = useRef(new WeakSet<Promise<boolean>>());
   // Guards exitPaper against a double-click during its flush/settle window (up to
   // EXIT_FLUSH_TIMEOUT_MS): the ref blocks re-entry synchronously (so two clicks in one tick
   // can't both call onExit); `exiting` disables the button so a second click can't even fire.
@@ -563,8 +582,30 @@ function PaperVisit({
       // YUK-1487 — while a chained save for this slot is pending, a plain save waits for it
       // to settle (it never rejects) and then sends at the epoch its ACK left: sent earlier at
       // the old acked epoch, it could land first and let the chain's older text overwrite it.
-      const pendingChain = chained ? undefined : chainedSaves.current[key];
-      done = (pendingChain ? pendingChain.then(send) : send()).then(deregister);
+      // YUK-1489 — it also waits for the slot's own in-flight plain save (so it reads that
+      // save's ACK instead of drawing a needless 409), each wait capped at CHAIN_WAIT_CAP_MS.
+      // A chain still pending at the cap may land after this save and store its older text
+      // over it; when that chain later reports stored, re-save the slot's latest text once —
+      // the chain's ACK raised the acked epoch, so the re-save passes and the newest text wins.
+      // Not after the visit ended (unmounted, exiting, submitting) or once the slot is
+      // submitted: then the draft is no longer this visit's to write.
+      const earlier = chained ? undefined : inFlightSaves.current.get(key);
+      const waitEarlier = async () => {
+        if (earlier && earlier !== chainedSaves.current[key]) await chainOrCap(earlier);
+        const pendingChain = chainedSaves.current[key];
+        if (!pendingChain) return;
+        const { timedOut } = await chainOrCap(pendingChain);
+        if (!timedOut || cappedChains.current.has(pendingChain)) return;
+        cappedChains.current.add(pendingChain);
+        void pendingChain.then((stored) => {
+          if (!stored || !componentActiveRef.current) return;
+          if (exitingRef.current || submittingRef.current) return;
+          const slot = slots.find((s) => slotKey(s) === key);
+          if (!slot || slot.slot_state.submission?.submitted) return;
+          void runSave(key, slot.question_id, slot.part_ref, answersRef.current[key] ?? '');
+        });
+      };
+      done = (chained ? send() : waitEarlier().then(send)).then(deregister);
       if (chained) {
         const chain = done;
         chainedSaves.current[key] = chain;

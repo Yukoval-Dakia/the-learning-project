@@ -302,6 +302,52 @@ function nativeGroupEvidence(evidence: readonly EvidenceAttachment[]) {
   );
 }
 
+type ServerAnswer = IssuanceState['submissions'][number] | NonNullable<IssuanceState['draft']>;
+
+// A stored answer's attachments as the composer's attachment list (restore and conflict).
+function evidenceFromServer(answer: ServerAnswer | null | undefined): EvidenceAttachment[] {
+  return (answer?.group_evidence ?? []).map((item) => ({
+    asset_id: item.evidence.asset.asset_id,
+    original: item.evidence,
+    originalTarget: item.target,
+    slot_ids: null,
+  }));
+}
+
+// YUK-1489 — a draft conflict waits on the learner: this visit's text and the server's
+// current version are shown side by side until one is chosen. `submitted` = the server
+// already accepted an answer for this question, so only its version can be kept.
+type DraftConflict =
+  | { status: 'loading' }
+  | { status: 'failed' }
+  | {
+      status: 'ready';
+      state: IssuanceState;
+      answer: ServerAnswer | null;
+      epoch: number;
+      submitted: boolean;
+    };
+
+// Waits up to `ms` for a save; false when it failed, conflicted or did not answer in time.
+function settleWithin(save: Promise<boolean>, ms: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(false), ms);
+    save.then(
+      (ok) => {
+        clearTimeout(timer);
+        resolve(ok);
+      },
+      () => {
+        clearTimeout(timer);
+        resolve(false);
+      },
+    );
+  });
+}
+
+// How long 「返回流」 waits for the last draft save before leaving anyway.
+const BACK_FLUSH_TIMEOUT_MS = 8000;
+
 export function PfSolo({
   item,
   sessionId,
@@ -473,14 +519,7 @@ export function PfSolo({
   if (issuedState?.issuance && restoredIssuanceId !== issuedState.issuance.issuance_id) {
     const restored = issuedState.submissions[0] ?? issuedState.draft;
     setNativeResponses(restored?.response_set ?? { entries: [] });
-    setEvidence(
-      (restored?.group_evidence ?? []).map((item) => ({
-        asset_id: item.evidence.asset.asset_id,
-        original: item.evidence,
-        originalTarget: item.target,
-        slot_ids: null,
-      })),
-    );
+    setEvidence(evidenceFromServer(restored));
     setRestoredEpoch(issuedState.draft?.save_epoch);
     setRestoredIssuanceId(issuedState.issuance.issuance_id);
   }
@@ -524,7 +563,35 @@ export function PfSolo({
     },
     [issuanceId, draftGroupRef, restoredEpoch],
   );
-  const autosave = useResponseDraftAutosave({ save: saveDraft });
+  // YUK-1489 — on a conflict autosave stops and the server's current version is read, so the
+  // learner can compare and choose (panel below). Each read is tagged; only the newest lands.
+  const [draftConflict, setDraftConflict] = useState<DraftConflict | null>(null);
+  const conflictRead = useRef(0);
+  const readServerVersion = useCallback(() => {
+    const read = ++conflictRead.current;
+    setDraftConflict({ status: 'loading' });
+    getIssuanceState(issuanceId).then(
+      (state) => {
+        if (conflictRead.current !== read) return;
+        const submitted = state.submissions.length > 0;
+        setDraftConflict({
+          status: 'ready',
+          state,
+          answer: state.submissions[0] ?? state.draft,
+          epoch: state.draft?.save_epoch ?? 0,
+          submitted,
+        });
+      },
+      () => {
+        if (conflictRead.current === read) setDraftConflict({ status: 'failed' });
+      },
+    );
+  }, [issuanceId]);
+  const autosave = useResponseDraftAutosave({
+    save: saveDraft,
+    holdOnConflict: true,
+    onConflict: readServerVersion,
+  });
   // YUK-1485 — tab close / reload inside the 800ms debounce: flush the pending draft with
   // keepalive, as ScreenPlacement does. The controller holds the latest edited value, so this
   // sends the last keystrokes; while held (judging/committing) or after an accepted answer it
@@ -570,6 +637,49 @@ export function PfSolo({
       (slot) => slot.kind === 'single_choice' || slot.kind === 'multi_choice',
     );
   const imageRefs = useMemo(() => evidence.map((a) => a.asset_id), [evidence]);
+  // YUK-1489 — what a draft says, in the learner's words: each answered slot's text in
+  // question order, plus its attachments. Used to compare this visit with the server.
+  const answerText = (value: typeof draftValue) =>
+    (frozen?.response_spec.slots ?? [])
+      .flatMap((slot) => {
+        const entry = value.response_set.entries.find((e) => e.slot_id === slot.slot_id);
+        const text = entry ? nativeResponseText(entry, slot).trim() : '';
+        return text ? [text] : [];
+      })
+      .join('\n');
+  const serverDraft = (answer: ServerAnswer | null) => ({
+    response_set: answer?.response_set ?? { entries: [] },
+    group_evidence: nativeGroupEvidence(evidenceFromServer(answer)),
+  });
+  const draftSummary = (value: typeof draftValue) => ({
+    text: answerText(value),
+    files: value.group_evidence.map((item) => item.evidence.asset.asset_id),
+  });
+  const sameAsServer = (answer: ServerAnswer | null) => {
+    const mine = draftSummary(currentDraft());
+    const server = draftSummary(serverDraft(answer));
+    return mine.text === server.text && mine.files.join() === server.files.join();
+  };
+  // 「用服务器上的」: restore the server's version as if this visit had just opened it, and
+  // continue from its epoch. Autosave restarts with that version as the saved baseline.
+  const keepServerVersion = () => {
+    if (draftConflict?.status !== 'ready') return;
+    const { state, answer, epoch } = draftConflict;
+    ackedEpoch.current = epoch;
+    latestDraft.current = null;
+    setIssuance({ mode: issuanceMode, state, error: null });
+    setRestoredIssuanceId(null);
+    setDraftConflict(null);
+    void autosave.rebase(serverDraft(answer), 'server');
+  };
+  // 「保留我的」: save this visit's text expecting the epoch just read. A write that lands
+  // after that read raises the stored epoch, so this save gets 409 and the panel returns.
+  const keepMyVersion = () => {
+    if (draftConflict?.status !== 'ready' || draftConflict.submitted) return;
+    ackedEpoch.current = draftConflict.epoch;
+    setDraftConflict(null);
+    void autosave.rebase(serverDraft(draftConflict.answer), 'mine');
+  };
   const answerMd = nativeResponses.entries
     .map((entry) =>
       nativeResponseText(
@@ -581,6 +691,7 @@ export function PfSolo({
   const canSubmit =
     !!frozen &&
     !returning &&
+    !draftConflict &&
     !judging &&
     !pendingRun &&
     !uploading &&
@@ -618,7 +729,28 @@ export function PfSolo({
     returningRef.current = true;
     setReturning(true);
     try {
-      if (!(await autosave.flush())) return;
+      // YUK-1489 — leaving is never blocked by the draft. During a conflict nothing is
+      // saved (autosave is held); otherwise the last edit gets up to 8s. Either way, say
+      // plainly what did not make it.
+      if (draftConflict) {
+        if (!(draftConflict.status === 'ready' && sameAsServer(draftConflict.answer))) {
+          addToast(
+            draftConflict.status !== 'ready'
+              ? '你这次写的没有保存，再打开时以服务器上的为准。'
+              : draftConflict.submitted
+                ? '已返回。你这次写的没有保存：这道题已经在别处交过了，记录的是交过的那一份。'
+                : '已返回。你这次写的没有保存：这道题在别处存了另一份作答，再打开时看到的是那一份。',
+            'info',
+            'alert',
+          );
+        }
+      } else if (!(await settleWithin(autosave.flush(), BACK_FLUSH_TIMEOUT_MS))) {
+        addToast(
+          '已返回。最后的修改可能没有保存上，再打开这道题时以已保存的内容为准。',
+          'info',
+          'alert',
+        );
+      }
       if (shouldMarkSlotDoneOnBack(autoCommitted) && onCommittedBack) onCommittedBack();
       else onBack();
     } finally {
@@ -1088,7 +1220,30 @@ export function PfSolo({
             {face.prompt_md}
           </MathMarkdown>
         ))}
-        <SaveStateChip state={autosave.state} onRetry={autosave.retry} />
+        {draftConflict ? (
+          <DraftConflictPanel
+            conflict={draftConflict}
+            mine={draftSummary(draftValue)}
+            server={
+              draftConflict.status === 'ready'
+                ? {
+                    ...draftSummary(serverDraft(draftConflict.answer)),
+                    savedAt:
+                      draftConflict.answer && 'updated_at' in draftConflict.answer
+                        ? draftConflict.answer.updated_at
+                        : draftConflict.answer && 'submitted_at' in draftConflict.answer
+                          ? draftConflict.answer.submitted_at
+                          : null,
+                  }
+                : null
+            }
+            onKeepServer={keepServerVersion}
+            onKeepMine={keepMyVersion}
+            onReload={readServerVersion}
+          />
+        ) : (
+          <SaveStateChip state={autosave.state} onRetry={autosave.retry} />
+        )}
 
         {/* YUK-1051 — 作答面 = 通用 response 组件族。选择题：stable option IDs +
             radiogroup 语义不变；对错色仍只在 feedback 相位（§6.4 即时着色即判定），
@@ -1126,7 +1281,7 @@ export function PfSolo({
                   value={nativeResponseValue(entry)}
                   label={slot.placement?.label}
                   notation={q.notation}
-                  disabled={returning || phase !== 'answering' || !!accepted}
+                  disabled={returning || phase !== 'answering' || !!accepted || !!draftConflict}
                   onChange={(value) =>
                     updateNativeResponse(nativeResponseEntry(slot, value, entry))
                   }
@@ -1147,7 +1302,7 @@ export function PfSolo({
               showText={false}
               attachments={evidence}
               onAttachmentsChange={updateEvidence}
-              disabled={returning || phase !== 'answering' || !!accepted}
+              disabled={returning || phase !== 'answering' || !!accepted || !!draftConflict}
               onUploadingChange={setUploading}
             />
           </>
@@ -1449,6 +1604,107 @@ export function PfSolo({
         question={q}
         issuanceId={frozen ? issuanceId : undefined}
       />
+    </div>
+  );
+}
+
+// YUK-1489 — the draft conflict panel inside the answer card. Same tone as the question
+// detail's 「别处有更新的版本」 notice (.qd-stale): a soft hard-tone strip, plain words,
+// two choices; here the two versions are shown side by side so the choice is informed.
+function savedClock(iso: string | null): string | null {
+  if (!iso) return null;
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return null;
+  return at.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+}
+
+function DraftVersion({
+  label,
+  text,
+  files,
+}: {
+  label: string;
+  text: string;
+  files: readonly string[];
+}) {
+  return (
+    <div className="pfs-conflict-side">
+      <span className="cmp-label">{label}</span>
+      <p className={`pfs-conflict-text${text ? '' : ' is-empty'}`}>{text || '还没写'}</p>
+      {files.length > 0 && <span className="pfs-conflict-files">另有 {files.length} 个附件</span>}
+    </div>
+  );
+}
+
+function DraftConflictPanel({
+  conflict,
+  mine,
+  server,
+  onKeepServer,
+  onKeepMine,
+  onReload,
+}: {
+  conflict: DraftConflict;
+  mine: { text: string; files: readonly string[] };
+  server: { text: string; files: readonly string[]; savedAt: string | null } | null;
+  onKeepServer: () => void;
+  onKeepMine: () => void;
+  onReload: () => void;
+}) {
+  const submitted = conflict.status === 'ready' && conflict.submitted;
+  const clock = savedClock(server?.savedAt ?? null);
+  return (
+    <div className="pfs-conflict" aria-live="polite">
+      <div className="pfs-conflict-head">
+        <LoomIcon name="alert" size={15} className="pfs-conflict-ico" />
+        <p className="pfs-conflict-msg">
+          {submitted
+            ? '这道题已经在别处交过了，你这次写的还没有保存。'
+            : '这道题在别处（比如另一个标签页）存了另一份作答，你这次写的还没有保存。选一份留下，再接着写。'}
+        </p>
+      </div>
+      {conflict.status === 'loading' && (
+        <p className="pfs-conflict-note">正在读取服务器上的那一份…</p>
+      )}
+      {conflict.status === 'failed' && (
+        <div className="pfs-conflict-act">
+          <p className="pfs-conflict-note">没能读到服务器上的那一份。</p>
+          <Btn size="sm" variant="secondary" onClick={onReload}>
+            再读一次
+          </Btn>
+        </div>
+      )}
+      {conflict.status === 'ready' && server && (
+        <>
+          <div className="pfs-conflict-cmp">
+            <DraftVersion label="你这次写的" text={mine.text} files={mine.files} />
+            <DraftVersion
+              label={
+                submitted
+                  ? `交过的${clock ? `（${clock}）` : ''}`
+                  : `服务器上的${clock ? `（${clock} 保存）` : ''}`
+              }
+              text={server.text}
+              files={server.files}
+            />
+          </div>
+          <p className="pfs-conflict-note">
+            {submitted
+              ? '交过的作答不能再改，只能载入它；你这次写的会丢掉。'
+              : '用服务器上的：你这次写的会丢掉。保留我的：服务器上那一份会被替换。'}
+          </p>
+          <div className="pfs-conflict-act">
+            <Btn size="sm" variant="secondary" onClick={onKeepServer}>
+              {submitted ? '载入交过的作答' : '用服务器上的'}
+            </Btn>
+            {!submitted && (
+              <Btn size="sm" variant="primary" onClick={onKeepMine}>
+                保留我的
+              </Btn>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }
