@@ -8,7 +8,8 @@
     "node": "v24.19.0",
     "pnpm": "11.13.1",
     "database": "disposable testcontainers PG16; real/project DB not accessed",
-    "network_providers_called": false
+    "network_providers_called": false,
+    "external_mcp_handshake": "Existing ambient Exa mount attempted connection in diagnostic; failed before provider delta; disabled for final offline validation; no paid search/generation executed."
   },
   "db": {
     "command": "pnpm vitest run --config vitest.db.config.ts src/capabilities/practice/server/tools/bank-tools.db.test.ts --maxWorkers=1",
@@ -68,9 +69,9 @@
   },
   "test_volume": {
     "added_tests_including_fixtures": 572,
-    "added_product_lines": 2263
+    "added_product_lines": 2287
   },
-  "ci": "pending exact final artifact head; terminal run linked in PR body and final delivery",
+  "ci": "initial exact-head run failed; root causes fixed; final exact-head terminal run recorded in PR body/final delivery",
   "remaining": [
     "real relevance/difficulty/automatic-grading blind comparison, 42 seeds plus real demands, same snapshot",
     "actual gap filing/dispatch; current EvidenceDemand seed is not a receipt",
@@ -158,6 +159,107 @@
       "file": "db-snapshot-final.json.gz",
       "uncompressed_sha256": "4ef19a8b1d24736392bb332f78c9594910ebc4c01b28cb0796c0dd2fba17ff2a",
       "compressed_sha256": "75f3c4ecf35475b57d025caac02d53d7e6becb664aa34cf7082fcca7a3e7f44a"
+    },
+    {
+      "file": "ci-policy-failure.log.gz",
+      "uncompressed_sha256": "3ffaf2862816f47229c0830193dff261ee5fee679196dd31fcdcc7794c1a7b39",
+      "compressed_sha256": "91eacd0df04c18d06628da5ae3375a1c70b94d5b0284d000fbde949a19a22ee1"
+    },
+    {
+      "file": "ci-db2-failure.log.gz",
+      "uncompressed_sha256": "05625b00ad33d1f91ea7528440d02b477944e83d2e1014ca0452aced6e081c31",
+      "compressed_sha256": "07f26d6c4307ce69421776f537fb7da477d91732fe891287ef93ca46284e3f49"
+    },
+    {
+      "file": "ci-draft-status-reads.log.gz",
+      "uncompressed_sha256": "fc0cadf6af78f0abd6a60980cc5310c9b8c0fddc8c2320f31ce94a71bc293ef3",
+      "compressed_sha256": "5881716b3669c581f3c1c5bf280dd07cff765d8fc5d40417738fc1778f408beb"
+    },
+    {
+      "file": "ci-draft-status-reads-fixed.log.gz",
+      "uncompressed_sha256": "a596e3882da284ccd770f5c8d5fb65cd906fe0ba4f32fef0dc0d1720b38c38cf",
+      "compressed_sha256": "4dc4c02ece7cf755f56849e42c3d23aba5ed93e6478cb79cc9c2f8a672743452"
+    },
+    {
+      "file": "ci-task-census.log.gz",
+      "uncompressed_sha256": "03afb0d2be8fad15cd30755b7971366f5c887f606be653c374e4d870f361be2e",
+      "compressed_sha256": "592251b02f802e8a2896a74404f37c85390c5bddc9d6ac6c65e85b8a55b623b5"
+    },
+    {
+      "file": "ci-draft-status.log.gz",
+      "uncompressed_sha256": "de3569839d7a890654a591c9c6b77334b1031fa56e3ecedef457f132dd24eb8d",
+      "compressed_sha256": "555a6230038f4f990a9ffff746b7cce48d429f669600d0baa61d9d4452bf3c25"
+    },
+    {
+      "file": "ci-flags.log.gz",
+      "uncompressed_sha256": "2b197dacfd53a8ee0382a9e942a7c901a36581ef3e5c241326390e4973061e0f",
+      "compressed_sha256": "d6d286ca184372ca8195a92c78d6507eaaa60da29d23c4d7e2a259da9e963c57"
+    },
+    {
+      "file": "ci-hub-sync-writers.log.gz",
+      "uncompressed_sha256": "013f9280d55c6616d010b6164c0766d2285b22253e7b7c1664574d6b20aaf0c2",
+      "compressed_sha256": "b27342e53b5fabc3933069f86fe3e2b7ad648931837ee4e178494e9efcd8f591"
+    },
+    {
+      "file": "copilot-stream-diagnostic.log.gz",
+      "uncompressed_sha256": "4a45b24e7d7857a652408c59b59e72ee4371f4d6408a4850e76128d56b5111cf",
+      "compressed_sha256": "233b9311ab47b413681b12a1e8c3f81e8f170e9f46bf1c97c6c5a3e6a81ffdeb"
+    },
+    {
+      "file": "copilot-stream-object-diagnostic.log.gz",
+      "uncompressed_sha256": "512092428c44ab945be1e249f6f64560268834ee56d60aa8d8e755f3126aa6d3",
+      "compressed_sha256": "42c9602b497f7300f079f007d5292838491a4ec04a24c85d60f7a2dfd1137619"
+    },
+    {
+      "file": "copilot-fetch-diagnostic.log.gz",
+      "uncompressed_sha256": "698ba635e0838f496c9d82965e376880aa7e3e9c3ec9f569e7db7e67733e6f62",
+      "compressed_sha256": "9480720ae94dab74c9bf62d2503182fb76646286130e167ebf41ade235896abf"
+    },
+    {
+      "file": "db-ci-fix-offline.log.gz",
+      "uncompressed_sha256": "36a0abc01ee3d00c552b7f1bfae2772ca1a410343fbd32641d18254f3b00ca72",
+      "compressed_sha256": "2ef489f522ee88c82cb40a510f454f08a51e4aa079873a816070b6051c4ca291"
+    },
+    {
+      "file": "db-ci-fix-offline.json.gz",
+      "uncompressed_sha256": "ee00a40a8614e7394b08cd1f8b2226ae4d68ce9048008c13f62a18cd238e0375",
+      "compressed_sha256": "4353ae6a45edaa74b95ab110d3ffb87a0270c0af9f54841390737b598d109c3c"
+    },
+    {
+      "file": "typecheck-ci-fix.log.gz",
+      "uncompressed_sha256": "36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6",
+      "compressed_sha256": "3c1fada38edcabc17a6cc26ba1584d035bfdc6be434e7682974b56c652a68182"
+    },
+    {
+      "file": "build-ci-fix.log.gz",
+      "uncompressed_sha256": "a402e87fe9b493b5652f6daf97e1b713dd42412c9edb68d1f75138bf0849fc3b",
+      "compressed_sha256": "753747c08eded1f3c84ab297c281903587243ed1264aa97bc003e68e94562883"
     }
-  ]
+  ],
+  "post_ci_fix": {
+    "prior_head": "0f2a05e2524bbfe3ec3baaff9817e60be2a9cc1c",
+    "failed_run": 38246290114,
+    "failed_jobs": {
+      "policy": 114800866097,
+      "db_shard_2": 114800866244
+    },
+    "root_causes": [
+      "raw SQL draft-only predicate was an unknown audit shape",
+      "search_bank top-level ZodUnion rejected by existing Pi bridge before first provider delta"
+    ],
+    "fixes": [
+      "Drizzle eq predicate; no audit/baseline/allowlist change",
+      "object input schema preserves exclusive query/cursor forms and new-query defaults"
+    ],
+    "product_diff_sha256": "d5f0ae9c4f540db77b08170f0511242cbae34a785068a9ccd1f39db4f114a5f3",
+    "validation": {
+      "bank_existing_cases": "6/6",
+      "copilot_existing_streaming_cases": "2/2 unmodified",
+      "duration_seconds": 20.46,
+      "typecheck": "pass",
+      "build": "pass",
+      "policy_followup_audits": "pass"
+    },
+    "local_fixture_note": "after schema fix, ambient optional Exa MCP attempted a handshake and failed; final offline run set EXA_API_KEY empty, no secret read or live search/generation; diagnostic edits restored"
+  }
 }

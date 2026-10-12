@@ -304,7 +304,7 @@ function buildFilters(resolved: ResolvedScope): SQL[] {
   if (scope.draft_state === 'active') {
     filters.push(notDraftPredicate(question.draft_status));
   } else if (scope.draft_state === 'draft') {
-    filters.push(sql`(${question.draft_status} = 'draft')`);
+    filters.push(eq(question.draft_status, 'draft'));
   }
   const lc = question_group_lifecycle;
   if (scope.admission_state === 'admitted') {

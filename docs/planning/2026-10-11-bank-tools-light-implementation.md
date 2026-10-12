@@ -248,3 +248,16 @@ embedding 与 provider-attempt 费用记账在事务外完成，cursor 仍不调
 最终产品提交 `9493ebe51323b5fc604b19826f19e37526abedce`：DB **6/6**、类型/lint/build 与相关审计通过。
 新增测试含 fixture **572 行**，产品 **2263 行**。日志与 digest 见
 [本轮回执](evidence/yuk1448-bank-light/checks.json)；精确最终 PR head 的 CI 终态绑定在 PR 描述，避免证据提交不断使 head 漂移。
+
+
+首轮 exact-head CI `38246290114`（`0f2a05e2`）暴露两项本分支问题：draft-only 原始 SQL
+被严格读审计标未知形态；search_bank 顶层 ZodUnion 被现有 Pi 工具桥拒绝，导致 Copilot
+流式两例在首事件前等待超时。现分别改为 Drizzle eq（同一过滤语义、零豁免）和桥支持的
+object 输入 schema（新 query / cursor 仍互斥，新查询才应用默认值）。
+既有流式测试的临时早失败诊断已还原，没有新增测试或修改桥/审计器。
+
+本地可选 Exa MCP 配置在工具桥修复后触发握手失败；未读取凭证，最终离线验证显式置空
+EXA_API_KEY，使原有 provider fixture 完整执行。题库 **6/6** + 原 Copilot 流式 **2/2**
+通过，合计 8/8、20.46 秒；未调用真实找题/生成。typecheck/build 与 policy 分项审计通过。
+最终新增测试仍 **572 行**，产品 **2287 行**。首次失败和修复日志补入同一回执目录；
+不把 initial CI 红结果改写成绿，后续精确 head 的终态见 PR 描述。

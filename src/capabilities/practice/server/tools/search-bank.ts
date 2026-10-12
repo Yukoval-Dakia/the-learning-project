@@ -34,9 +34,31 @@ const SearchBankNewFormSchema = z
   })
   .strict();
 
-const SearchBankCursorFormSchema = z.object({ cursor: z.string().min(1) }).strict();
-
-export const SearchBankInputSchema = z.union([SearchBankNewFormSchema, SearchBankCursorFormSchema]);
+// Pi's existing tool bridge requires a top-level object. Keep the two wire
+// forms mutually exclusive in the runtime schema; defaults apply only to new
+// searches, so a cursor-only request never gains accidental scope fields.
+export const SearchBankInputSchema = SearchBankNewFormSchema.extend({
+  query: SearchBankNewFormSchema.shape.query.optional(),
+  draft_state: z.enum(['all', 'active', 'draft']).optional(),
+  admission_state: z.enum(['any', 'admitted', 'withheld']).optional(),
+  limit: z.number().int().min(1).max(50).optional(),
+  cursor: z.string().min(1).optional(),
+}).superRefine((input, ctx) => {
+  if (input.cursor !== undefined) {
+    if (Object.keys(input).some((key) => key !== 'cursor')) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'cursor must be supplied alone; changed conditions require a new search',
+      });
+    }
+  } else if (input.query === undefined) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['query'],
+      message: 'query is required for a new search',
+    });
+  }
+});
 
 export const SearchBankOutputSchema = z.object({
   scope_applied: z.object({
@@ -98,7 +120,9 @@ async function executeSearchBank(
   ctx: ToolContext,
   rawInput: SearchBankInput,
 ): Promise<SearchBankOutput> {
-  const input = SearchBankInputSchema.parse(rawInput);
+  const form = SearchBankInputSchema.parse(rawInput);
+  const input =
+    form.cursor !== undefined ? { cursor: form.cursor } : SearchBankNewFormSchema.parse(form);
   const request =
     'cursor' in input
       ? { form: 'cursor' as const, cursor: input.cursor }
