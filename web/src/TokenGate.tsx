@@ -1,7 +1,7 @@
 // M0 (YUK-313) 单用户 token 门；YUK-624 补齐服务端验证、401 re-gate 与可操作表单。
 
-import { useQueryClient } from '@tanstack/react-query';
-import { type FormEvent, type ReactNode, useEffect, useState } from 'react';
+import { type QueryClient, useQueryClient } from '@tanstack/react-query';
+import { type FormEvent, type ReactNode, useState, useSyncExternalStore } from 'react';
 import {
   ApiAuthError,
   clearInternalToken,
@@ -14,73 +14,114 @@ import { Button } from '@/ui/primitives/Button';
 
 type GateState = 'checking' | 'gate' | 'authed';
 
+interface GateSnapshot {
+  state: GateState;
+  error: string | null;
+  pending: boolean;
+  /** 每次鉴权失效 +1；表单按它重挂，从而清空输入框。 */
+  epoch: number;
+}
+
+// SSR 与 hydration 首帧一律 checking，服务端不读 token。
+const SERVER_SNAPSHOT: GateSnapshot = { state: 'checking', error: null, pending: false, epoch: 0 };
+
 function validationErrorMessage(error: unknown): string {
   if (error instanceof ApiAuthError) return error.message;
   return '暂时无法验证访问令牌，请检查服务后重试。';
 }
 
-export function TokenGate({ children }: { children: ReactNode }) {
-  const queryClient = useQueryClient();
-  const [state, setState] = useState<GateState>('checking');
-  const [draft, setDraft] = useState('');
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+// YUK-1483 — 每个 TokenGate 实例持有一个门控 owner（SPA main.tsx 与 Start
+// workbench-shell 各一个，绑各自的 QueryClient）。首个订阅接上 api.ts 的鉴权失效
+// 通道并开始校验已存 token；最后一个订阅离开时退订。`generation` 每次失效 +1，
+// 失效之前发出的已存 token 校验即使晚到 200 也不再放行。
+function createGateOwner(queryClient: QueryClient) {
+  let snapshot = SERVER_SNAPSHOT;
+  const listeners = new Set<() => void>();
+  let stopInvalidation: (() => void) | null = null;
+  let started = false;
+  let generation = 0;
 
-  useEffect(() => {
-    let cancelled = false;
-    const unsubscribe = subscribeAuthInvalidation((message) => {
-      void queryClient.cancelQueries();
-      queryClient.clear();
-      setDraft('');
-      setPending(false);
-      setError(message);
-      setState('gate');
-    });
+  const update = (patch: Partial<GateSnapshot>) => {
+    snapshot = { ...snapshot, ...patch };
+    for (const listener of listeners) listener();
+  };
 
+  const onInvalidated = (message: string) => {
+    generation += 1;
+    void queryClient.cancelQueries();
+    queryClient.clear();
+    update({ state: 'gate', error: message, pending: false, epoch: snapshot.epoch + 1 });
+  };
+
+  const validateStoredToken = () => {
     const storedToken = getInternalToken();
     if (!storedToken) {
-      setState('gate');
-      return unsubscribe;
+      update({ state: 'gate' });
+      return;
     }
-
-    void validateInternalToken(storedToken)
-      .then(() => {
-        if (!cancelled) setState('authed');
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return;
+    const issuedAt = generation;
+    validateInternalToken(storedToken).then(
+      () => {
+        if (issuedAt === generation) update({ state: 'authed' });
+      },
+      (err: unknown) => {
+        if (issuedAt !== generation) return;
         if (err instanceof ApiAuthError) {
           clearInternalToken(err.message);
+          // 失效通知已到本 owner 时 generation 已变；否则在这里补上回到门。
+          if (issuedAt === generation) onInvalidated(err.message);
           return;
         }
-        setError(validationErrorMessage(err));
-        setState('gate');
-      });
-
-    return () => {
-      cancelled = true;
-      unsubscribe();
-    };
-  }, [queryClient]);
-
-  const submit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const candidate = draft.trim();
-    if (!candidate || pending) return;
-    setPending(true);
-    setError(null);
-    try {
-      await validateInternalToken(candidate);
-      setInternalToken(candidate);
-      setDraft('');
-      setState('authed');
-    } catch (err) {
-      if (err instanceof ApiAuthError) clearInternalToken(err.message);
-      setError(validationErrorMessage(err));
-    } finally {
-      setPending(false);
-    }
+        update({ state: 'gate', error: validationErrorMessage(err) });
+      },
+    );
   };
+
+  return {
+    getSnapshot: () => snapshot,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      stopInvalidation ??= subscribeAuthInvalidation(onInvalidated);
+      if (!started) {
+        started = true;
+        validateStoredToken();
+      }
+      return () => {
+        listeners.delete(listener);
+        if (listeners.size === 0 && stopInvalidation) {
+          stopInvalidation();
+          stopInvalidation = null;
+        }
+      };
+    },
+    /** 提交候选 token：先服务端验证，200 后才写 localStorage 并进入应用。 */
+    submit: async (candidate: string) => {
+      if (snapshot.pending) return;
+      update({ pending: true, error: null });
+      try {
+        await validateInternalToken(candidate);
+        setInternalToken(candidate);
+        // 新 token 已生效：作废仍在路上的旧 token 校验。
+        generation += 1;
+        update({ state: 'authed', pending: false });
+      } catch (err) {
+        if (err instanceof ApiAuthError) clearInternalToken(err.message);
+        update({ error: validationErrorMessage(err), pending: false });
+      }
+    },
+  };
+}
+
+type GateOwner = ReturnType<typeof createGateOwner>;
+
+export function TokenGate({ children }: { children: ReactNode }) {
+  const queryClient = useQueryClient();
+  const [owner] = useState(() => createGateOwner(queryClient));
+  const { state, error, pending, epoch } = useSyncExternalStore(
+    owner.subscribe,
+    owner.getSnapshot,
+    () => SERVER_SNAPSHOT,
+  );
 
   if (state === 'authed') return <>{children}</>;
 
@@ -94,6 +135,27 @@ export function TokenGate({ children }: { children: ReactNode }) {
       </main>
     );
   }
+
+  return <TokenForm key={epoch} owner={owner} error={error} pending={pending} />;
+}
+
+function TokenForm({
+  owner,
+  error,
+  pending,
+}: {
+  owner: GateOwner;
+  error: string | null;
+  pending: boolean;
+}) {
+  const [draft, setDraft] = useState('');
+
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const candidate = draft.trim();
+    if (!candidate || pending) return;
+    void owner.submit(candidate);
+  };
 
   return (
     <main className="page view" style={{ maxWidth: 420, margin: '15vh auto' }}>
