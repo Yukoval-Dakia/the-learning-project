@@ -9,8 +9,8 @@
 // The UI fetches bytes via apiFetch, wraps them in a Blob, and renders the
 // resulting object URL.
 
-import { useEffect, useState } from 'react';
-import { ApiError, apiFetch } from './api';
+import { useCallback, useSyncExternalStore } from 'react';
+import { ApiError, apiFetch, subscribeAuthInvalidation } from './api';
 
 export interface UploadedAsset {
   id: string;
@@ -82,36 +82,14 @@ export async function expandDocx(file: File): Promise<DocxIngested> {
   }
 }
 
-// In-memory cache so the same asset id rendered in multiple BlockEditors
-// shares one fetch + one object URL.
-const urlCache = new Map<string, string>();
-// YUK-1051 — parallel cache for the Content-Type seen on the same response.
-// Populated by fetchAssetObject; image-only legacy callers of fetchAssetObjectUrl
-// simply ignore it.
-const mimeCache = new Map<string, string>();
-const pendingFetches = new Map<string, Promise<string>>();
-
-export async function fetchAssetObjectUrl(id: string): Promise<string> {
-  const cached = urlCache.get(id);
-  if (cached) return cached;
-  const inflight = pendingFetches.get(id);
-  if (inflight) return inflight;
-  const p = (async () => {
-    const res = await apiFetch(`/api/assets/${id}/content`);
-    const mimeType = res.headers.get('content-type')?.split(';')[0]?.trim() ?? null;
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    urlCache.set(id, url);
-    if (mimeType) mimeCache.set(id, mimeType);
-    return url;
-  })();
-  pendingFetches.set(id, p);
-  try {
-    return await p;
-  } finally {
-    pendingFetches.delete(id);
-  }
-}
+// Asset object-URL owner (YUK-1483). One entry per asset id + auth epoch owns the in-flight
+// read and the blob: URL it produces, so every consumer of the same asset shares one request
+// and one URL. React consumers hold the entry through useSyncExternalStore subscriptions: the
+// URL is revoked (or the read aborted) only after the last subscriber leaves. Losing auth bumps
+// the epoch and drops every entry, so an old token's bytes are never shown again.
+//
+// Entries are only created on the client (subscriptions never run during SSR), so these module
+// maps hold no per-request server state.
 
 export interface AssetObject {
   url: string;
@@ -119,76 +97,218 @@ export interface AssetObject {
   mimeType: string | null;
 }
 
-/**
- * YUK-1051 — mime-aware variant of fetchAssetObjectUrl. Shares the same caches, so an
- * asset already fetched as a bare URL is not refetched; the mime is recovered from the
- * parallel cache when available (a legacy first fetch may have missed it → mimeType null,
- * callers degrade conservatively to a download chip).
- */
-export async function fetchAssetObject(id: string): Promise<AssetObject> {
-  const cached = urlCache.get(id);
-  if (cached) return { url: cached, mimeType: mimeCache.get(id) ?? null };
-  const res = await apiFetch(`/api/assets/${id}/content`);
-  const mimeType = res.headers.get('content-type')?.split(';')[0]?.trim() ?? null;
-  const blob = await res.blob();
-  const url = URL.createObjectURL(blob);
-  urlCache.set(id, url);
-  if (mimeType) mimeCache.set(id, mimeType);
-  return { url, mimeType };
+/** Cached, read-only view of one asset for React consumers. */
+export interface AssetObjectState {
+  url: string | null;
+  mimeType: string | null;
+  loading: boolean;
+  error: Error | null;
 }
 
-/** Synchronous cache peek — lets a renderer avoid a loading flash for known assets. */
-export function peekAssetObject(id: string): AssetObject | null {
-  const url = urlCache.get(id);
-  return url ? { url, mimeType: mimeCache.get(id) ?? null } : null;
+interface AssetEntry {
+  key: string;
+  id: string;
+  /** Live useSyncExternalStore subscriptions. */
+  refs: number;
+  /** Handed out to an imperative caller; never revoked except on auth loss. */
+  snapshot: AssetObjectState;
+  pending: Promise<AssetObject> | null;
+  abort: AbortController | null;
+  releaseTimer: ReturnType<typeof setTimeout> | null;
+  listeners: Set<() => void>;
+}
+
+const NO_ASSET: AssetObjectState = Object.freeze({
+  url: null,
+  mimeType: null,
+  loading: false,
+  error: null,
+});
+const ASSET_LOADING: AssetObjectState = Object.freeze({
+  url: null,
+  mimeType: null,
+  loading: true,
+  error: null,
+});
+
+const entries = new Map<string, AssetEntry>();
+let authEpoch = 0;
+let authWatchStarted = false;
+const epochListeners = new Set<() => void>();
+
+function entryKey(epoch: number, id: string): string {
+  return `${epoch}\u0000${id}`;
+}
+
+function dropAllEntries(): void {
+  authEpoch += 1;
+  for (const entry of entries.values()) {
+    if (entry.releaseTimer) clearTimeout(entry.releaseTimer);
+    entry.abort?.abort();
+    if (entry.snapshot.url) URL.revokeObjectURL(entry.snapshot.url);
+  }
+  entries.clear();
+  for (const listener of epochListeners) listener();
+}
+
+function ensureAuthWatch(): void {
+  if (authWatchStarted) return;
+  authWatchStarted = true;
+  // Lives as long as the asset cache itself (module lifetime, client only).
+  subscribeAuthInvalidation(dropAllEntries);
+}
+
+function getOrCreateEntry(id: string): AssetEntry {
+  ensureAuthWatch();
+  const key = entryKey(authEpoch, id);
+  let entry = entries.get(key);
+  if (!entry) {
+    entry = {
+      key,
+      id,
+      refs: 0,
+      snapshot: ASSET_LOADING,
+      pending: null,
+      abort: null,
+      releaseTimer: null,
+      listeners: new Set(),
+    };
+    entries.set(key, entry);
+  }
+  return entry;
+}
+
+function publish(entry: AssetEntry, snapshot: AssetObjectState): void {
+  entry.snapshot = snapshot;
+  for (const listener of entry.listeners) listener();
+}
+
+function isLive(entry: AssetEntry): boolean {
+  return entries.get(entry.key) === entry && entry.refs > 0;
+}
+
+function startRead(entry: AssetEntry): Promise<AssetObject> {
+  const abort = new AbortController();
+  entry.abort = abort;
+  const read = (async (): Promise<AssetObject> => {
+    const res = await apiFetch(`/api/assets/${entry.id}/content`, { signal: abort.signal });
+    const mimeType = res.headers.get('content-type')?.split(';')[0]?.trim() ?? null;
+    const blob = await res.blob();
+    return { url: URL.createObjectURL(blob), mimeType };
+  })();
+  entry.pending = read;
+  if (entry.snapshot !== ASSET_LOADING) publish(entry, ASSET_LOADING);
+  read.then(
+    (obj) => {
+      entry.pending = null;
+      entry.abort = null;
+      if (!isLive(entry)) {
+        // Every consumer left (or auth was lost) while the bytes were in flight.
+        URL.revokeObjectURL(obj.url);
+        if (entries.get(entry.key) === entry) entries.delete(entry.key);
+        return;
+      }
+      publish(entry, { url: obj.url, mimeType: obj.mimeType, loading: false, error: null });
+    },
+    (err: unknown) => {
+      entry.pending = null;
+      entry.abort = null;
+      if (!isLive(entry)) {
+        if (entries.get(entry.key) === entry) entries.delete(entry.key);
+        return;
+      }
+      publish(entry, {
+        url: null,
+        mimeType: null,
+        loading: false,
+        error: err instanceof Error ? err : new Error(String(err)),
+      });
+    },
+  );
+  return read;
+}
+
+function releaseEntry(entry: AssetEntry): void {
+  entry.releaseTimer = null;
+  if (entry.refs > 0 || entries.get(entry.key) !== entry) return;
+  entries.delete(entry.key);
+  entry.abort?.abort();
+  if (entry.snapshot.url) URL.revokeObjectURL(entry.snapshot.url);
+}
+
+function acquireEntry(epoch: number, id: string, listener: () => void): () => void {
+  // A render from before an auth change: its epoch listener re-renders it with the new epoch.
+  if (epoch !== authEpoch) return () => {};
+  const entry = getOrCreateEntry(id);
+  entry.refs += 1;
+  entry.listeners.add(listener);
+  if (entry.releaseTimer) {
+    clearTimeout(entry.releaseTimer);
+    entry.releaseTimer = null;
+  }
+  // First subscriber starts the read; a later mount retries a failed one.
+  if (!entry.snapshot.url && !entry.pending) {
+    void startRead(entry).catch(() => {
+      // Surfaced through the entry snapshot.
+    });
+  }
+  return () => {
+    entry.listeners.delete(listener);
+    entry.refs -= 1;
+    if (entry.refs === 0 && !entry.releaseTimer) {
+      // Wait one task: when one consumer unmounts as another mounts the same asset in the
+      // same commit, the newcomer subscribes before this fires and keeps the URL alive.
+      entry.releaseTimer = setTimeout(() => releaseEntry(entry), 0);
+    }
+  };
+}
+
+function subscribeAuthEpoch(listener: () => void): () => void {
+  epochListeners.add(listener);
+  return () => {
+    epochListeners.delete(listener);
+  };
+}
+
+function getAuthEpoch(): number {
+  return authEpoch;
+}
+
+function getServerAuthEpoch(): number {
+  return 0;
+}
+
+function getServerAssetState(): AssetObjectState {
+  return NO_ASSET;
+}
+
+/**
+ * Subscribes to one asset's shared object URL and MIME. Reading starts when the first
+ * consumer subscribes; the URL stays valid while any consumer is subscribed.
+ */
+export function useAssetObject(assetId: string | null | undefined): AssetObjectState {
+  const epoch = useSyncExternalStore(subscribeAuthEpoch, getAuthEpoch, getServerAuthEpoch);
+  const id = assetId || null;
+  const subscribe = useCallback(
+    (listener: () => void) => (id ? acquireEntry(epoch, id, listener) : () => {}),
+    [id, epoch],
+  );
+  const getSnapshot = useCallback(
+    () => (id ? (entries.get(entryKey(epoch, id))?.snapshot ?? ASSET_LOADING) : NO_ASSET),
+    [id, epoch],
+  );
+  return useSyncExternalStore(subscribe, getSnapshot, getServerAssetState);
 }
 
 /**
  * Resolves an asset id to a blob: URL the browser can use as <img src>.
- * Cached across components — same id never refetches.
+ * Shared across components — same id never refetches while any consumer holds it.
  */
 export function useAssetUrl(assetId: string | null | undefined): {
   url: string | null;
   loading: boolean;
   error: Error | null;
 } {
-  const [url, setUrl] = useState<string | null>(() =>
-    assetId ? (urlCache.get(assetId) ?? null) : null,
-  );
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<Error | null>(null);
-
-  useEffect(() => {
-    if (!assetId) {
-      setUrl(null);
-      setLoading(false);
-      setError(null);
-      return;
-    }
-    const cached = urlCache.get(assetId);
-    if (cached) {
-      setUrl(cached);
-      setLoading(false);
-      return;
-    }
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    fetchAssetObjectUrl(assetId)
-      .then((u) => {
-        if (cancelled) return;
-        setUrl(u);
-        setLoading(false);
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        setError(err as Error);
-        setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [assetId]);
-
+  const { url, loading, error } = useAssetObject(assetId);
   return { url, loading, error };
 }

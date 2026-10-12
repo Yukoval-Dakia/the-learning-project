@@ -12,7 +12,7 @@
 // .profile-mini / .avatar 等类已在 web/src/globals.css（loom 端口，§App shell
 // L5705-5927）就位 —— 本组件纯结构覆盖这些类，不重定义 CSS。
 
-import { useCallback, useRef } from 'react';
+import { useCallback } from 'react';
 import { BrandMark } from '@/ui/primitives/BrandMark';
 import { IconBtn } from '@/ui/primitives/IconBtn';
 import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
@@ -59,9 +59,8 @@ export function AppSidebar({
   // 作为移动 drawer 打开时，trap focus 在 rail 内 + Esc 关闭（a11y）。桌面端是
   // 常驻 rail（mobileOpen 恒 false）时仍可交互。Esc 经与 scrim / nav 点击同一
   // close 路径关闭。
-  const sidebarRef = useRef<HTMLElement | null>(null);
   const close = useCallback(() => onNavigated?.(), [onNavigated]);
-  useFocusTrap(mobileOpen, close, sidebarRef);
+  const trapRef = useFocusTrap(mobileOpen, close);
 
   const go = (path: string) => {
     navigate(path);
@@ -72,7 +71,7 @@ export function AppSidebar({
 
   return (
     <aside
-      ref={sidebarRef}
+      ref={trapRef}
       className={`sidebar${mobileOpen ? ' open' : ''}`}
       inert={mobileLayout && !mobileOpen}
       aria-hidden={mobileLayout && !mobileOpen ? true : undefined}

@@ -1328,8 +1328,7 @@ function PfCoach({
   question: QuestionDetail;
   issuanceId?: string;
 }) {
-  const panelRef = useRef<HTMLElement | null>(null);
-  useFocusTrap(open, onClose, panelRef);
+  const trapRef = useFocusTrap(open, onClose);
 
   return createPortal(
     <>
@@ -1344,7 +1343,7 @@ function PfCoach({
       )}
       <aside
         className={`pfs-coach${open ? ' open' : ''}`}
-        ref={panelRef as never}
+        ref={trapRef}
         // biome-ignore lint/a11y/useSemanticElements: native <dialog> 需要
         // imperative showModal()/close() API，与 CSS-class 驱动的 .open 抽屉
         // + scrim/focus-trap 模式不兼容（同 CopilotDrawer）。

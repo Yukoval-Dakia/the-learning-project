@@ -5,7 +5,7 @@
 // EdgeCreateForm、foot 打开节点详情页。decay 用非颜色 cue（icon+label）。
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import { subjectContentPropsForDomain } from '@/ui/lib/subject';
 import { Btn } from '@/ui/primitives/Btn';
 import { IconBtn } from '@/ui/primitives/IconBtn';
@@ -160,8 +160,7 @@ export function NodeDrawer({
   go: (to: string) => void;
 }) {
   const qc = useQueryClient();
-  const panelRef = useRef<HTMLElement | null>(null);
-  useFocusTrap(open, onClose, panelRef);
+  const trapRef = useFocusTrap(open, onClose);
   const [rel, setRel] = useState<string>('related_to');
   const [target, setTarget] = useState('');
 
@@ -217,7 +216,7 @@ export function NodeDrawer({
         role="presentation"
       />
       <aside
-        ref={panelRef as never}
+        ref={trapRef}
         className={`drawer${open ? ' open' : ''}`}
         // biome-ignore lint/a11y/useSemanticElements: CSS-class 驱动的 .open 抽屉与
         // native <dialog> imperative API 不兼容（同 CopilotDrawer/PfCoach 先例）

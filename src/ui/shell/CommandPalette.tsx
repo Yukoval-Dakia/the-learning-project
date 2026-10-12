@@ -71,7 +71,6 @@ export function CommandPalette({ open, onClose, navigate }: CommandPaletteProps)
   const [sel, setSel] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
-  const panelRef = useRef<HTMLDivElement | null>(null);
 
   // 知识节点 open 时才 fetch（设计 index 在 open 时构建）；与 KnowledgePage 同
   // queryKey ['knowledge-tree'] → React Query 去重，不增请求。
@@ -135,7 +134,7 @@ export function CommandPalette({ open, onClose, navigate }: CommandPaletteProps)
 
   // a11y：Tab 困在 dialog 内 + 关闭时焦点回原触发元素 + Esc 关（既有 modal 模式，
   // 与 onKeyDown 的 esc 幂等——都调 onClose）。
-  useFocusTrap(open, onClose, panelRef);
+  const trapRef = useFocusTrap(open, onClose);
 
   const pick = (r: PaletteRow | undefined) => {
     if (!r) return;
@@ -199,7 +198,7 @@ export function CommandPalette({ open, onClose, navigate }: CommandPaletteProps)
         aria-modal="true"
         aria-label="搜索"
         tabIndex={-1}
-        ref={panelRef}
+        ref={trapRef}
       >
         <div className="cmdk-head">
           <LoomIcon name="search" size={16} />

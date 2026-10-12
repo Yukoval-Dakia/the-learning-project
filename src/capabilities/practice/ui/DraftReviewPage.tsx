@@ -16,7 +16,7 @@
 //     决定（数学开 KaTeX、文言保留 `$...$` 标点），不再跨科默认开启公式解析。
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { deriveOptionIds, optionLabel } from '@/ui/components/response/response-types';
 import { makeLookup } from '@/ui/lib/makeLookup';
@@ -418,8 +418,7 @@ function DrForceModal({
   // a11y：Tab 困在 dialog 内 + 关闭时焦点回原触发元素 + Esc 关（既有 modal 模式，
   // 同 CommandPalette）。trap 自带初始聚焦（panel 首个 focusable）、Tab 循环、
   // Esc + stopPropagation 与 restore-on-close，故不再手搓 keydown / mount-focus。
-  const panelRef = useRef<HTMLDivElement | null>(null);
-  useFocusTrap(true, onClose, panelRef);
+  const trapRef = useFocusTrap(true, onClose);
 
   return createPortal(
     <div className="dr-modal-wrap">
@@ -431,11 +430,11 @@ function DrForceModal({
         onClick={onClose}
       />
       <div
-        ref={panelRef}
+        ref={trapRef}
         className="dr-modal"
         // biome-ignore lint/a11y/useSemanticElements: native <dialog> 需 imperative
         // showModal()/close() API，与 CSS-class 驱动的 portal + scrim 模式不兼容（同
-        // CopilotDrawer / CommandPalette / PfSolo）。focus-trap 经 useFocusTrap(panelRef)
+        // CopilotDrawer / CommandPalette / PfSolo）。focus-trap 经 useFocusTrap 的 ref
         // 落地（Tab 循环 + Esc + restore-on-close），与 CommandPalette 同。
         role="dialog"
         aria-modal="true"
