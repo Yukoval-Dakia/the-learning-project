@@ -9,9 +9,18 @@
 //   - flush({ keepalive:true }) 供 pagehide/退出；finalization 等待 pending uploads
 //     是宿主职责（这里只管草稿本文）。
 //
-// 首个观测值视为服务端恢复基线（不算脏）。
+// YUK-1483 — 不再用 effect 盯 value。hook 持有一个本次作答（visit）的草稿控制器，
+// 宿主在真实事件里下命令：
+//   - change(next, from)：用户编辑（输入、选项、附件增删）。from 是这次编辑开始时的值；
+//     第一次 change 把它记为服务端恢复基线（不算脏），所以恢复出来的草稿不会被回存。
+//   - hold() / resume()：进入不该自动保存的阶段（判分、提交中）时暂停并清掉待发的
+//     debounce；回到作答时恢复，若仍有未存改动立刻重新排程。
+//   - flush / retry：同前。
+// 状态（state/generation/lastSavedAt）是控制器的真实快照，经 useSyncExternalStore 读。
+// 订阅随组件挂载；最后一个订阅退出（卸载）时清掉未发的 debounce——已发出的保存仍按原
+// 回执落地，不冒充取消。`save` 须在一次作答内保持稳定（按 issuance 等身份 key 宿主）。
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useMemo, useState, useSyncExternalStore } from 'react';
 import type { SaveState } from '@/ui/components/response/SaveStateChip';
 import { ApiError } from '@/ui/lib/api';
 
@@ -19,139 +28,194 @@ function defaultSerialize<T>(value: T): string {
   return JSON.stringify(value) ?? '';
 }
 
+type SaveFn<T> = (value: T, ctx: { keepalive: boolean }) => Promise<unknown>;
+
 export interface UseResponseDraftAutosaveOptions<T> {
-  value: T;
-  /** resolve = server ack；reject(ApiError 409) → conflict。 */
-  save: (value: T, ctx: { keepalive: boolean }) => Promise<unknown>;
+  /** resolve = server ack；reject(ApiError 409) → conflict。一次作答内保持稳定。 */
+  save: SaveFn<T>;
   serialize?: (value: T) => string;
   debounceMs?: number;
-  enabled?: boolean;
 }
 
-export interface ResponseDraftAutosave {
+export interface ResponseDraftAutosave<T> {
   state: SaveState;
   generation: number;
+  lastSavedAt: number | null;
+  /** 用户编辑：next = 编辑后的值，from = 编辑前的值（首次调用记为恢复基线）。 */
+  change: (next: T, from: T) => void;
+  /** 暂停自动保存（判分/提交中），清掉待发 debounce。 */
+  hold: () => void;
+  /** 恢复自动保存；仍有未存改动则重新排程。 */
+  resume: () => void;
   /** 立即保存当前值（取消待发 debounce）；keepalive 供 pagehide。 */
   flush: (opts?: { keepalive?: boolean }) => Promise<boolean>;
   retry: () => void;
+}
+
+interface AutosaveSnapshot {
+  state: SaveState;
+  generation: number;
   lastSavedAt: number | null;
 }
 
-export function useResponseDraftAutosave<T>({
-  value,
-  save,
-  serialize = defaultSerialize,
-  debounceMs = 800,
-  enabled = true,
-}: UseResponseDraftAutosaveOptions<T>): ResponseDraftAutosave {
-  const [state, setState] = useState<SaveState>('idle');
-  const [generation, setGeneration] = useState(0);
-  const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
-
-  // 基线：首个观测值（服务端恢复态）。此后序列化不同 = 脏。
-  const baselineRef = useRef<string | null>(null);
-  const lastSerializedRef = useRef<string | null>(null);
-  const valueRef = useRef(value);
-  valueRef.current = value;
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+class DraftAutosaveController<T> {
+  private snapshot: AutosaveSnapshot = { state: 'idle', generation: 0, lastSavedAt: null };
+  private listeners = new Set<() => void>();
+  // 基线：服务端恢复态 / 最近一次 ACK 的序列化。此后序列化不同 = 脏。
+  private baseline: string | null = null;
+  private lastSerialized: string | null = null;
+  private hasValue = false;
+  private value: T | undefined;
+  private timer: ReturnType<typeof setTimeout> | null = null;
   // seq 守卫：只有最新一轮保存的响应可以写状态（旧成功不盖新失败，反之亦然）。
-  const seqRef = useRef(0);
-  const inFlightRef = useRef<Promise<boolean> | null>(null);
-  const enabledRef = useRef(enabled);
-  enabledRef.current = enabled;
-  const saveRef = useRef(save);
-  saveRef.current = save;
-  const serializeRef = useRef(serialize);
-  serializeRef.current = serialize;
+  private seq = 0;
+  private inFlight: Promise<boolean> | null = null;
+  private enabled = true;
+  private save: SaveFn<T> | null = null;
 
-  const runSave = useCallback((keepalive: boolean): Promise<boolean> => {
-    if (inFlightRef.current) return inFlightRef.current;
-    if (!enabledRef.current) return Promise.resolve(true);
-    const seq = ++seqRef.current;
-    setState('saving');
+  constructor(
+    private readonly serialize: (value: T) => string,
+    private readonly debounceMs: number,
+  ) {}
+
+  getSnapshot = (): AutosaveSnapshot => this.snapshot;
+
+  subscribe = (listener: () => void): (() => void) => {
+    this.listeners.add(listener);
+    // Re-subscribe (StrictMode) with an unsaved edit: re-arm the debounce dropped below.
+    if (this.listeners.size === 1 && this.isDirty() && !this.inFlight) this.schedule();
+    return () => {
+      this.listeners.delete(listener);
+      if (this.listeners.size === 0) this.clearTimer();
+    };
+  };
+
+  change(next: T, from: T, save: SaveFn<T>) {
+    this.save = save;
+    if (this.baseline === null) {
+      this.baseline = this.serialize(from);
+      this.lastSerialized = this.baseline;
+    }
+    this.value = next;
+    this.hasValue = true;
+    const serialized = this.serialize(next);
+    if (serialized === this.baseline) return;
+    if (serialized !== this.lastSerialized) {
+      this.lastSerialized = serialized;
+      this.publish({ generation: this.snapshot.generation + 1 });
+    }
+    if (!this.enabled || this.inFlight) return;
+    this.schedule();
+  }
+
+  hold() {
+    this.enabled = false;
+    this.clearTimer();
+  }
+
+  resume(save: SaveFn<T>) {
+    this.save = save;
+    this.enabled = true;
+    if (!this.inFlight && this.isDirty()) this.schedule();
+  }
+
+  flush(save: SaveFn<T>, opts: { keepalive?: boolean } = {}): Promise<boolean> {
+    this.save = save;
+    this.clearTimer();
+    // Await the full save chain, including edits made while an older ACK is pending.
+    if (this.inFlight) return this.inFlight;
+    if (!this.enabled || !this.isDirty()) return Promise.resolve(true);
+    this.lastSerialized = this.serialize(this.value as T);
+    return this.runSave(opts.keepalive === true);
+  }
+
+  retry(save: SaveFn<T>) {
+    this.save = save;
+    if (this.inFlight) return;
+    void this.runSave(false);
+  }
+
+  private isDirty(): boolean {
+    return this.hasValue && this.serialize(this.value as T) !== this.baseline;
+  }
+
+  private schedule() {
+    this.clearTimer();
+    if (this.listeners.size === 0) return;
+    this.timer = setTimeout(() => {
+      this.timer = null;
+      void this.runSave(false);
+    }, this.debounceMs);
+  }
+
+  private clearTimer() {
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+  }
+
+  private publish(patch: Partial<AutosaveSnapshot>) {
+    this.snapshot = { ...this.snapshot, ...patch };
+    for (const listener of this.listeners) listener();
+  }
+
+  private runSave(keepalive: boolean): Promise<boolean> {
+    if (this.inFlight) return this.inFlight;
+    const save = this.save;
+    if (!this.enabled || !save || !this.hasValue) return Promise.resolve(true);
+    const seq = ++this.seq;
+    this.publish({ state: 'saving' });
     const pending = Promise.resolve().then(async () => {
+      let alive = keepalive;
       try {
         for (;;) {
-          const snapshot = valueRef.current;
-          const snapshotSerialized = serializeRef.current(snapshot);
-          await saveRef.current(snapshot, { keepalive });
-          if (seqRef.current !== seq) return false;
-          baselineRef.current = snapshotSerialized;
-          setLastSavedAt(Date.now());
-          if (enabledRef.current && serializeRef.current(valueRef.current) !== snapshotSerialized) {
-            keepalive = false;
+          const snapshot = this.value as T;
+          const snapshotSerialized = this.serialize(snapshot);
+          await (this.save ?? save)(snapshot, { keepalive: alive });
+          if (this.seq !== seq) return false;
+          this.baseline = snapshotSerialized;
+          this.publish({ lastSavedAt: Date.now() });
+          if (this.enabled && this.serialize(this.value as T) !== snapshotSerialized) {
+            alive = false;
             continue;
           }
-          setState('saved');
+          this.publish({ state: 'saved' });
           return true;
         }
       } catch (err) {
-        if (seqRef.current === seq)
-          setState(err instanceof ApiError && err.status === 409 ? 'conflict' : 'error');
+        if (this.seq === seq)
+          this.publish({
+            state: err instanceof ApiError && err.status === 409 ? 'conflict' : 'error',
+          });
         return false;
       } finally {
-        if (seqRef.current === seq) inFlightRef.current = null;
+        if (this.seq === seq) this.inFlight = null;
       }
     });
-    inFlightRef.current = pending;
+    this.inFlight = pending;
     return pending;
-  }, []);
+  }
+}
 
-  // 内容变更追踪：generation +1；去抖排程。
-  useEffect(() => {
-    const serialized = serializeRef.current(value);
-    if (!enabled && timerRef.current) {
-      clearTimeout(timerRef.current);
-      timerRef.current = null;
-    }
-    if (baselineRef.current === null) {
-      if (!enabled) return;
-      baselineRef.current = serialized;
-      lastSerializedRef.current = serialized;
-      return;
-    }
-    if (serialized === baselineRef.current) return;
-    if (serialized !== lastSerializedRef.current) {
-      lastSerializedRef.current = serialized;
-      setGeneration((g) => g + 1);
-    }
-    if (!enabled) return;
-    if (inFlightRef.current) {
-      return;
-    }
-    if (timerRef.current) clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(() => {
-      timerRef.current = null;
-      void runSave(false);
-    }, debounceMs);
-  }, [value, debounceMs, enabled, runSave]);
-
-  // 卸载清 timer（组件销毁后不再 setState）。
-  useEffect(
-    () => () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
-      seqRef.current++;
-    },
-    [],
+export function useResponseDraftAutosave<T>({
+  save,
+  serialize = defaultSerialize,
+  debounceMs = 800,
+}: UseResponseDraftAutosaveOptions<T>): ResponseDraftAutosave<T> {
+  const [controller] = useState(() => new DraftAutosaveController<T>(serialize, debounceMs));
+  const snapshot = useSyncExternalStore(
+    controller.subscribe,
+    controller.getSnapshot,
+    controller.getSnapshot,
   );
-  const flush = useCallback(
-    (opts: { keepalive?: boolean } = {}) => {
-      if (timerRef.current) {
-        clearTimeout(timerRef.current);
-        timerRef.current = null;
-      }
-      // Await the full save chain, including edits made while an older ACK is pending.
-      const serialized = serializeRef.current(valueRef.current);
-      if (inFlightRef.current) return inFlightRef.current;
-      if (!enabledRef.current || serialized === baselineRef.current) return Promise.resolve(true);
-      lastSerializedRef.current = serialized;
-      return runSave(opts.keepalive === true);
-    },
-    [runSave],
+  const commands = useMemo(
+    () => ({
+      change: (next: T, from: T) => controller.change(next, from, save),
+      hold: () => controller.hold(),
+      resume: () => controller.resume(save),
+      flush: (opts?: { keepalive?: boolean }) => controller.flush(save, opts),
+      retry: () => controller.retry(save),
+    }),
+    [controller, save],
   );
-  const retry = useCallback(() => {
-    if (inFlightRef.current) return;
-    void runSave(false);
-  }, [runSave]);
-  return { state, generation, flush, retry, lastSavedAt };
+  return { ...snapshot, ...commands };
 }
