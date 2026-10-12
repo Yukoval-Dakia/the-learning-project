@@ -18,7 +18,7 @@ import { useWorkbenchClient } from './workbench-client';
 // PrepDeskCard / ProbeAnswerCard.
 
 import { type QueryClient, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { learnerLocalDay } from '@/core/learner-day';
 import { CONJECTURE_CLAIM_MAX_CHARS } from '@/core/schema/proposal';
 import { scopedPracticeHref } from '@/ui/lib/routes';
@@ -44,7 +44,7 @@ function statefulStatus(isLoading: boolean, isError: boolean): StatefulStatus {
   return 'ok';
 }
 
-// Rank for ordinary in-place advance (design §6 / [裁决 4]); the effect also handles
+// Rank for ordinary in-place advance (design §6 / [裁决 4]); the brief reconcile also handles
 // outcome_evidence_for → the same brief's newly served recurrence probe explicitly.
 const STATE_RANK: Record<TeachingBrief['state'], number> = {
   finding: 0,
@@ -113,24 +113,32 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
 
   // §6 forward-announce: rank covers the ordinary finding → probe → outcome path;
   // state additionally recognizes preliminary outcome → recurrence probe.
-  const prevRef = useRef<{
-    brief_id: string;
-    rank: number;
-    state: TeachingBrief['state'];
-    probe_question_id: string | null;
+  // `reconciled.brief` is the brief object the per-brief state was last reconciled against;
+  // `reconciled.prev` is the baseline the next brief is compared with (null = reset baseline).
+  const [reconciled, setReconciled] = useState<{
+    brief: TeachingBrief | null;
+    prev: {
+      brief_id: string;
+      rank: number;
+      state: TeachingBrief['state'];
+      probe_question_id: string | null;
+    } | null;
   } | null>(null);
-  const preparedHeadingRef = useRef<HTMLHeadingElement>(null);
-  const outcomeHeadingRef = useRef<HTMLHeadingElement>(null);
   const [liveMsg, setLiveMsg] = useState('');
+  // One-shot heading focus for a forward advance; consumed by the heading's ref on commit.
+  const [focusRequest, setFocusRequest] = useState<{ target: 'prepared' | 'outcome' } | null>(
+    null,
+  );
+  const consumedFocusRef = useRef<{ target: 'prepared' | 'outcome' } | null>(null);
   // Latest on-screen brief_id, so an in-flight decide/ack that resolves after a brief swap
   // does not land its failure on the brief the user is now looking at.
   const latestBriefIdRef = useRef<string | null>(null);
   // YUK-710 — last-reported brief_seen key (brief_id × learner-local day); see nextBriefSeenState.
   const briefSeenKeyRef = useRef<string | null>(null);
 
-  // YUK-710 — report a "brief opened" once per brief × learner-local day. Shared by the [brief]
-  // effect (mount / swap / same-brief state advance) and the visibilitychange listener (returning
-  // to the tab), so a still-on-screen brief re-counts after the Asia/Shanghai day rolls over. The
+  // YUK-710 — report a "brief opened" once per brief × learner-local day. Shared by the band
+  // wrapper's attach (mount / swap / same-brief state advance) and the visibilitychange listener
+  // (returning to the tab), so a still-on-screen brief re-counts after the Asia/Shanghai day rolls over. The
   // key gate makes every extra trigger a no-op within the same day; the server is idempotent too.
   const fireSeenIfNew = useCallback((b: TeachingBrief) => {
     const seen = nextBriefSeenState(briefSeenKeyRef.current, b.brief_id, new Date());
@@ -140,8 +148,10 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
     }
   }, []);
 
-  useEffect(() => {
-    const prev = prevRef.current;
+  // Per-brief state reconcile, once per new brief object (mount / swap / same-brief advance),
+  // adjusted during render so the band never paints a previous brief's spinner / error.
+  if (reconciled === null || reconciled.brief !== brief) {
+    const prev = reconciled?.prev ?? null;
     const currentProbeQuestionId =
       brief?.prepared_action.kind === 'answer_probe'
         ? brief.prepared_action.probe_question_id
@@ -156,7 +166,6 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
     // A cleared brief or an identity swap resets per-brief interaction state, so a
     // dismissed finding's error / a stale reveal never bleeds into the next candidate.
     const idChanged = prev === null || prev.brief_id !== (brief?.brief_id ?? null);
-    latestBriefIdRef.current = brief?.brief_id ?? null;
     if (idChanged) {
       // Clear ALL per-brief interaction state (loading + error, both decide and ack) so a
       // prior candidate's spinner / error never bleeds onto the next one.
@@ -176,52 +185,82 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
       setProbeFailed(false);
     }
     if (!brief) {
-      prevRef.current = null; // null → reset baseline; never announce.
-      return;
+      setReconciled({ brief, prev: null }); // null → reset baseline; never announce.
+    } else {
+      const rank = STATE_RANK[brief.state];
+      // §6 [裁决 4] — announce + move focus ONLY when the SAME brief_id advances forward.
+      const sameBrief = prev !== null && prev.brief_id === brief.brief_id;
+      const rankedForward = prev !== null && rank > prev.rank;
+      const forward = sameBrief && (rankedForward || recurrenceReady);
+      // A successful retry re-projects the brief to its outcome state — the 当前结果
+      // failure state is stale the moment the brief advances.
+      if (prev !== null && prev.state !== brief.state) setProbeFailed(false);
+      setReconciled({
+        brief,
+        prev: {
+          brief_id: brief.brief_id,
+          rank,
+          state: brief.state,
+          probe_question_id: currentProbeQuestionId,
+        },
+      });
+      // mount / brief_id swap / no change → no announce, no focus steal.
+      if (forward) {
+        setLiveMsg(brief.current_outcome.summary_md); // announce once; evidence never enters here.
+        setFocusRequest({ target: brief.state === 'probe_ready' ? 'prepared' : 'outcome' });
+      }
     }
-    // YUK-710 — record the "opened a delivered brief" funnel signal (once per brief × learner-local
-    // day; see fireSeenIfNew). Fires on mount / brief swap / same-brief state advance; the day-key
-    // gate suppresses the same-day repeats, and the visibilitychange effect below covers the case of
-    // an idle tab crossing Asia/Shanghai midnight (this [brief] effect alone would not re-run then).
-    fireSeenIfNew(brief);
-    const rank = STATE_RANK[brief.state];
-    // §6 [裁决 4] — announce + move focus ONLY when the SAME brief_id advances forward.
-    const sameBrief = prev !== null && prev.brief_id === brief.brief_id;
-    const rankedForward = prev !== null && rank > prev.rank;
-    const forward = sameBrief && (rankedForward || recurrenceReady);
-    // A successful retry re-projects the brief to its outcome state — the 当前结果
-    // failure state is stale the moment the brief advances.
-    if (prev !== null && prev.state !== brief.state) setProbeFailed(false);
-    prevRef.current = {
-      brief_id: brief.brief_id,
-      rank,
-      state: brief.state,
-      probe_question_id: currentProbeQuestionId,
-    };
-    if (!forward) return; // mount / brief_id swap / no change → no announce, no focus steal.
-    setLiveMsg(brief.current_outcome.summary_md); // announce once; evidence never enters here.
-    (brief.state === 'probe_ready' ? preparedHeadingRef : outcomeHeadingRef).current?.focus();
-  }, [brief, fireSeenIfNew]);
+  }
 
-  // YUK-710 — an idle tab crossing Asia/Shanghai midnight never re-runs the [brief] effect, so on
-  // its own the same-brief new-day open would be missed. Returning to the tab (visibilitychange →
-  // visible) IS the moment a "brief opened" should count, so re-evaluate the seen-key then; the
-  // day-key gate keeps a same-day return a no-op.
-  useEffect(() => {
-    if (!brief) return;
-    const onVisible = () => {
-      if (document.visibilityState === 'visible') fireSeenIfNew(brief);
-    };
-    document.addEventListener('visibilitychange', onVisible);
-    return () => document.removeEventListener('visibilitychange', onVisible);
-  }, [brief, fireSeenIfNew]);
+  // Heading refs consume a pending forward-focus request once, when the heading commits.
+  const preparedHeadingRef = useCallback(
+    (node: HTMLHeadingElement | null) => {
+      if (!node || focusRequest?.target !== 'prepared') return;
+      if (consumedFocusRef.current === focusRequest) return;
+      consumedFocusRef.current = focusRequest;
+      node.focus();
+    },
+    [focusRequest],
+  );
+  const outcomeHeadingRef = useCallback(
+    (node: HTMLHeadingElement | null) => {
+      if (!node || focusRequest?.target !== 'outcome') return;
+      if (consumedFocusRef.current === focusRequest) return;
+      consumedFocusRef.current = focusRequest;
+      node.focus();
+    },
+    [focusRequest],
+  );
+
+  // The band wrapper is always mounted; its ref is re-attached for every new brief object.
+  // On attach it records the on-screen brief_id for in-flight decide/ack, reports brief_seen
+  // (YUK-710: once per brief × learner-local day; fires on mount / brief swap / same-brief
+  // state advance, the day-key gate suppresses same-day repeats), and listens for the tab
+  // becoming visible again. An idle tab crossing Asia/Shanghai midnight gets no new brief
+  // object, so returning to the tab (visibilitychange → visible) is the moment a "brief
+  // opened" should count; the day-key gate keeps a same-day return a no-op. Detach (new brief
+  // or unmount) removes the listener.
+  const bandWrapRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      if (!node) return;
+      latestBriefIdRef.current = brief?.brief_id ?? null;
+      if (!brief) return;
+      fireSeenIfNew(brief);
+      const onVisible = () => {
+        if (document.visibilityState === 'visible') fireSeenIfNew(brief);
+      };
+      document.addEventListener('visibilitychange', onVisible);
+      return () => document.removeEventListener('visibilitychange', onVisible);
+    },
+    [brief, fireSeenIfNew],
+  );
 
   async function decide(decision: 'accept' | 'dismiss', correctedClaimMd?: string) {
     if (!brief || brief.prepared_action.kind !== 'review_finding' || deciding) return;
     const targetId = brief.brief_id;
     // YUK-710 — interacting with the brief PROVES it was opened today, so record the seen first.
     // This closes the persistently-visible-across-midnight gap: a tab that stays visible over the
-    // Asia/Shanghai day boundary re-runs neither the [brief] effect nor visibilitychange, so without
+    // Asia/Shanghai day boundary re-runs neither the band attach nor visibilitychange, so without
     // this the accept would write a new-day action with no matching new-day seen (unpaired + the
     // prior day left unconverted). The day-key gate makes it a same-day no-op.
     fireSeenIfNew(brief);
@@ -304,7 +343,7 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
     brief !== null && brief.basis.summary_md.trim() === brief.finding.claim_md.trim();
 
   return (
-    <div className="tb-band-wrap">
+    <div className="tb-band-wrap" ref={bandWrapRef}>
       {/* aria-live region persists across state changes; announced once per forward move. */}
       <div className="tb-live visually-hidden" aria-live="polite">
         {liveMsg}
