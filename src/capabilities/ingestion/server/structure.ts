@@ -169,6 +169,7 @@ function nodeToStructured(
     source: 'vlm_structure',
   };
   if (node.question_no) out.question_no = node.question_no;
+  if (node.kind) out.kind = node.kind;
   if (node.options && node.options.length > 0)
     out.options = node.options.map((option) => ({
       label: option.label,

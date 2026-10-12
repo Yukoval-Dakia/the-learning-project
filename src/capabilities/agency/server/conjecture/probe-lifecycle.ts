@@ -1,3 +1,4 @@
+import { getFsrsRetrievabilityByIds, selectedForgettingEngine } from '@/kernel/scheduling';
 // Probe drafts remain outside practice pools. Publication freezes their question
 // and response signatures; actual queue delivery creates the native issuance.
 // The per-probe paid claim serializes evaluation. Only answerProbe writes the
@@ -291,15 +292,7 @@ export interface AnswerProbeParams {
    * the probe without changing conjecture evidence.
    */
   outcome: 0 | 1 | null;
-  /**
-   * Phase-deferred (feedback_phase_deferred_comments): R(t) snapshot at judge time.
-   * Defaults to null. The field is present NOW to keep the probe_result event shape
-   * stable for future fold-replay (a13 design §修正-3 / [MEDIUM] R(t) note): U7
-   * (Lane C, not yet landed) exposes a PUBLIC `retrievabilityForKc` reader, and U8
-   * reconcile populates this once Lane C lands. U3 must NOT deep-import practice FSRS
-   * internals (cardFromState/scheduler are private — leaking them is forbidden per
-   * a13-design §修正-6), so there is no cross-lane import here to fetch it.
-   */
+  /** Historical FSRS scalar supplied by the caller. New candidate results snapshot the selected retention reader, including unknown and engineering provenance. */
   retrievabilityAtJudge?: number | null;
   /** Provenance — the answer text that was graded. */
   answer_md?: string | null;
@@ -669,7 +662,6 @@ export async function releaseProbeJudging(
 export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProbeResult> {
   const { db, probeQuestionId, outcome } = params;
   const now = params.now ?? new Date();
-  const retrievabilityAtJudge = params.retrievabilityAtJudge ?? null;
   const answerMd = params.answer_md ?? null;
   const answerImageRefs = params.answer_image_refs ?? [];
   const taskRunId = params.taskRunId ?? null;
@@ -686,6 +678,7 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
     const [probe] = await tx
       .select({
         source: question.source,
+        knowledge_ids: question.knowledge_ids,
         metadata: question.metadata,
         version: question.version,
         prompt_md: question.prompt_md,
@@ -887,6 +880,20 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
     }
 
     const probeResultEventId = newId();
+    const retentionReadings =
+      selectedForgettingEngine() === 'forgetting_candidate'
+        ? await getFsrsRetrievabilityByIds(tx, 'knowledge', probe.knowledge_ids, now)
+        : null;
+    const reading =
+      probe.knowledge_ids.length === 1 ? retentionReadings?.get(probe.knowledge_ids[0]) : undefined;
+    const retrievabilityAtJudge =
+      selectedForgettingEngine() === 'fsrs'
+        ? (params.retrievabilityAtJudge ?? null)
+        : typeof reading === 'number'
+          ? reading
+          : reading?.kind === 'score'
+            ? reading.value
+            : null;
     await writeEvent(tx, {
       id: probeResultEventId,
       actor_kind: 'system',
@@ -907,6 +914,16 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
             }
           : {}),
         retrievability_at_judge: retrievabilityAtJudge,
+        ...(selectedForgettingEngine() === 'forgetting_candidate'
+          ? {
+              retention_at_judge: reading ?? {
+                kind: 'unknown',
+                reason: 'memory_or_single_skill_missing',
+                calibration: 'uncalibrated',
+                provenance: 'engineering',
+              },
+            }
+          : {}),
         answer_md: answerMd,
         ...(responseJudgement ? { response_judgement: structuredClone(responseJudgement) } : {}),
         // Provenance for a photo answer: the team can later see WHAT was submitted for

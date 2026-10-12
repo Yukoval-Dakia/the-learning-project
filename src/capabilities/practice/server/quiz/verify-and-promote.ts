@@ -1,3 +1,4 @@
+import { initialSchedulingState } from '@/server/fsrs/state';
 // Phase 1 增量 3 (YUK-399/YUK-396) — verifyAndPromote 薄 tier-dispatcher (caller-agnostic gate).
 //
 // plan §Task 4 + Gate 设计决策 (owner 拍板 b1). 三个 caller 的统一 gate 入口:
@@ -32,7 +33,6 @@ import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { type RunTaskFn, runQuizVerify } from '../../jobs/quiz_verify';
 import { runSourceVerify } from '../../jobs/source_verify';
-import { initialFsrsState } from '../fsrs';
 import { SYNTHETIC_SUBJECT_ROOT_RE } from '../placement-scope';
 import { lockPlacementSupplyScopes } from '../question-supply/placement-supply-lock';
 
@@ -213,7 +213,6 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
       // FSRS enroll — per-knowledge enroll-if-absent (mirror quiz_verify / source_verify /
       // acceptQuestionDraftProposal): never reset a node that already has a schedule;
       // question-level fallback when the row carries no knowledge ids.
-      const initial = initialFsrsState(now);
       const enrollIfAbsent = async (subjectKind: 'knowledge' | 'question', subjectId: string) => {
         // YUK-1037 — a synthetic subject root ('seed:<subj>:root') is a structural
         // anchor, never a content KC: skip knowledge-level enrollment so an owner
@@ -228,8 +227,7 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
         await upsertFsrsState(tx, {
           subject_kind: subjectKind,
           subject_id: subjectId,
-          state: initial.state,
-          due_at: initial.dueAt,
+          ...initialSchedulingState(subjectId, now),
           last_review_event_id: verifyEventId,
         });
       };

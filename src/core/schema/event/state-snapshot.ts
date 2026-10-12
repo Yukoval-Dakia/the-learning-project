@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { RtCorrectBuffer } from '@/core/theta'; // FIX-5 shape-lock source (type-only, erased)
 import type { ThetaGridPosterior } from '@/core/theta-grid'; // FIX-5 shape-lock source (type-only, erased)
-import { FsrsStateSchema } from './blocks'; // blocks.ts:68 — z.coerce.date()-based, jsonb-roundtrip-safe
+import { SchedulingStateSchema } from '../scheduling-state';
 
 // ====================================================================
 // StateSnapshotExperimental — A-class snapshot reversibility (YUK-471 Wave 0)
@@ -120,8 +120,8 @@ export type ThetaSnapshotT = z.infer<typeof ThetaSnapshot>;
 export const FsrsSnapshot = z.object({
   subject_kind: z.enum(['question', 'knowledge']), // = FsrsSubjectKind
   subject_id: z.string().min(1),
-  before: FsrsStateSchema.nullable(), // reuse blocks.ts:68; null = cold-start
-  after: FsrsStateSchema,
+  before: SchedulingStateSchema.nullable(), // reuse blocks.ts:68; null = cold-start
+  after: SchedulingStateSchema,
 });
 export type FsrsSnapshotT = z.infer<typeof FsrsSnapshot>;
 

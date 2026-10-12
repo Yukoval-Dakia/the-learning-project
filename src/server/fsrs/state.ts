@@ -10,9 +10,14 @@
 
 import { and, eq, inArray } from 'drizzle-orm';
 
-import { retrievabilityForKc } from '@/core/fsrs';
+import { initialFsrsState } from '@/core/fsrs';
 import { newId } from '@/core/ids';
-import type { FsrsStateSchemaT } from '@/core/schema/event/blocks';
+import {
+  CandidateStateSchema,
+  type SchedulingState,
+  SchedulingStateSchema,
+  isCandidateState,
+} from '@/core/schema/scheduling-state';
 import type { Db, Tx } from '@/db/client';
 import { material_fsrs_state } from '@/db/schema';
 import {
@@ -20,6 +25,12 @@ import {
   acquireSortedAdvisoryLocks,
   withLearningStateLock,
 } from '@/server/advisory-locks';
+import { initialCandidateState, projectCandidateDue } from './candidate';
+import { type RetentionReading, retrievabilityForKc } from './retention';
+
+export type { RetentionReading } from './retention';
+
+import { selectedForgettingEngine } from './engine-selection';
 
 type DbLike = Db | Tx;
 export type FsrsSubjectKind = 'question' | 'knowledge';
@@ -27,20 +38,105 @@ export type FsrsSubjectKind = 'question' | 'knowledge';
 /** Retention is a state-owner query, not a consumer's interpretation of card storage.
  * Missing cards stay absent (unknown), distinct from a real New card's zero retention.
  */
+/** Resolve one row under the selected engine without writing a second projection. */
+export async function resolveSchedulingProjection<T extends { state: unknown; due_at: Date }>(
+  db: DbLike,
+  kind: FsrsSubjectKind,
+  id: string,
+  row: T,
+  now: Date,
+): Promise<T & { state: SchedulingState }> {
+  const parsed = SchedulingStateSchema.safeParse(row.state);
+  if (
+    selectedForgettingEngine() === 'forgetting_candidate' &&
+    (!parsed.success || !isCandidateState(parsed.data))
+  ) {
+    const { candidateStateForRead } = await import('@/server/assessment/settle');
+    try {
+      const rebuilt = await db.transaction((tx) => candidateStateForRead(tx, { kind, id }, now));
+      const state = parsed.success
+        ? rebuilt
+        : { ...rebuilt, conversion: 'invalid_rebuilt' as const };
+      return { ...row, state, due_at: state.due };
+    } catch {
+      const anchor = new Date(Math.min(row.due_at.getTime(), now.getTime()));
+      const cold = initialCandidateState(id, anchor);
+      const state = {
+        ...cold,
+        ...projectCandidateDue(cold, anchor),
+        conversion: 'invalid_rebuilt' as const,
+        fallbackReason: 'sealed_history_unavailable',
+      };
+      return { ...row, state, due_at: state.due };
+    }
+  }
+  if (!parsed.success) throw new Error('invalid scheduling state');
+  if (
+    selectedForgettingEngine() === 'forgetting_candidate' &&
+    isCandidateState(parsed.data) &&
+    parsed.data.dueKind !== 'initial' &&
+    parsed.data.modelDue === undefined
+  ) {
+    const state = parsed.data;
+    // Anchor to the completed occurrence, never the reader's wall clock.
+    const anchor = state.last_review ?? new Date(Math.min(state.due.getTime(), now.getTime()));
+    const projected = projectCandidateDue(state, anchor);
+    return { ...row, state: { ...state, ...projected }, due_at: projected.due };
+  }
+  return { ...row, state: parsed.data };
+}
+
 export async function getFsrsRetrievabilityByIds(
   db: DbLike,
   subjectKind: FsrsSubjectKind,
   ids: string[],
   now: Date,
-): Promise<Map<string, number>> {
-  const rows = await getFsrsStatesByIds(db, subjectKind, ids);
-  return new Map([...rows].map(([id, row]) => [id, retrievabilityForKc(row.state, now)]));
+): Promise<Map<string, RetentionReading>> {
+  if (ids.length === 0) return new Map();
+  const rows = await db
+    .select()
+    .from(material_fsrs_state)
+    .where(
+      and(
+        eq(material_fsrs_state.subject_kind, subjectKind),
+        inArray(material_fsrs_state.subject_id, ids),
+      ),
+    );
+  const values = new Map<string, RetentionReading>();
+  for (const raw of rows) {
+    try {
+      const row = await resolveSchedulingProjection(db, subjectKind, raw.subject_id, raw, now);
+      values.set(raw.subject_id, retrievabilityForKc(row.state, now));
+    } catch {
+      values.set(raw.subject_id, {
+        kind: 'unknown',
+        reason: 'state_or_history_unavailable',
+        calibration: 'uncalibrated',
+        provenance: 'engineering',
+      });
+    }
+  }
+  return values;
+}
+
+/** Every enrollment uses the same server-side selection and its existing subject identity. */
+export function initialSchedulingState(
+  subjectId: string,
+  now: Date,
+): { state: SchedulingState; due_at: Date } {
+  if (selectedForgettingEngine() === 'forgetting_candidate')
+    return { state: initialCandidateState(subjectId, now), due_at: now };
+  const initial = initialFsrsState(now);
+  return {
+    state: { ...initial.state, engine: 'fsrs', schemaVersion: 'scheduling-state-v1' },
+    due_at: initial.dueAt,
+  };
 }
 
 export interface UpsertFsrsStateInput {
   subject_kind: FsrsSubjectKind;
   subject_id: string;
-  state: FsrsStateSchemaT;
+  state: SchedulingState;
   due_at: Date;
   /**
    * Review event id that produced this state — back-reference for audit / replay.
@@ -158,7 +254,7 @@ export async function retireFsrsStateOnMerge(
   await acquireLearningStateWriteLock(tx);
   await acquireSortedAdvisoryLocks(tx, 'fsrs:knowledge', [fromId, intoId]);
   const rows = await tx
-    .select({ subject_id: material_fsrs_state.subject_id })
+    .select({ subject_id: material_fsrs_state.subject_id, state: material_fsrs_state.state })
     .from(material_fsrs_state)
     .where(
       and(
@@ -169,9 +265,25 @@ export async function retireFsrsStateOnMerge(
   const present = new Set(rows.map((r) => r.subject_id));
   if (!present.has(fromId)) return 'noop';
   if (!present.has(intoId)) {
+    const source = rows.find((row) => row.subject_id === fromId);
+    if (!source) throw new Error('merge source disappeared under lock');
+    const state = source.state;
+    let renamedState: SchedulingState | undefined;
+    if (state && typeof state === 'object' && isCandidateState(state)) {
+      const candidate = CandidateStateSchema.parse(state);
+      // Validate the candidate without normalizing stored dates or dropping unknown JSON keys.
+      renamedState = {
+        ...state,
+        historySubjectIds: [...new Set([...candidate.historySubjectIds, fromId])],
+      };
+    }
     await tx
       .update(material_fsrs_state)
-      .set({ subject_id: intoId, updated_at: new Date() })
+      .set({
+        subject_id: intoId,
+        ...(renamedState ? { state: renamedState } : {}),
+        updated_at: new Date(),
+      })
       .where(
         and(
           eq(material_fsrs_state.subject_kind, 'knowledge'),
@@ -190,7 +302,7 @@ export async function retireFsrsStateOnMerge(
 export interface FsrsStateRow {
   subject_kind: string;
   subject_id: string;
-  state: FsrsStateSchemaT;
+  state: SchedulingState;
   due_at: Date;
   last_review_event_id: string | null;
 }
@@ -218,7 +330,7 @@ export async function getFsrsState(
   return {
     subject_kind: row.subject_kind,
     subject_id: row.subject_id,
-    state: row.state as FsrsStateSchemaT,
+    state: SchedulingStateSchema.parse(row.state),
     due_at: row.due_at,
     last_review_event_id: row.last_review_event_id ?? null,
   };
@@ -256,7 +368,7 @@ export async function getFsrsStatesByIds(
       {
         subject_kind: row.subject_kind,
         subject_id: row.subject_id,
-        state: row.state as FsrsStateSchemaT,
+        state: SchedulingStateSchema.parse(row.state),
         due_at: row.due_at,
         last_review_event_id: row.last_review_event_id ?? null,
       },

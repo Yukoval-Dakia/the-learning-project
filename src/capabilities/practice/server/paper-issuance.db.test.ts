@@ -1,6 +1,7 @@
 import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { FsrsStateSchema } from '@/core/schema/event/blocks';
 import {
   artifact,
   evaluation,
@@ -63,6 +64,8 @@ async function paper(questionIds: string[]) {
 
 beforeEach(resetDb);
 describe('paper opening freezes actual assessment occurrences', () => {
+  // @invariant grading: Reopening a paper keeps the corrected verdict and its existing schedule
+  // @fails-if opening revives the original verdict or creates another review gain
   it('replays the current corrected grade without reactivating the original or rescheduling', async () => {
     const db = testDb();
     const q = await seedFrozenSolveQuestion(db);
@@ -141,7 +144,7 @@ describe('paper opening freezes actual assessment occurrences', () => {
     });
     expect(await db.select().from(evaluation_effective_head)).toEqual(beforeHead);
     expect(await db.select().from(material_fsrs_state)).toEqual(beforeFsrs);
-    expect(beforeFsrs[0].state.reps).toBe(1);
+    expect(FsrsStateSchema.parse(beforeFsrs[0].state).reps).toBe(1);
     await expect(
       submitNativePaperAttempt(db, {
         ...input,

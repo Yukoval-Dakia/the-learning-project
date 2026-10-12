@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { retrievabilityForKc, scheduleReview } from './fsrs';
+import { retrievabilityForKc } from '@/core/fsrs';
+import { scheduleReview } from './fsrs';
 
 const NOW = new Date('2026-05-10T12:00:00Z');
 

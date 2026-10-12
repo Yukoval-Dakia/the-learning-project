@@ -38,6 +38,7 @@ import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { Ingestion } from '@/server/session';
 import type { SubjectProfile } from '@/subjects/profile';
+import { capturedQuestionShape } from './captured-question-shape';
 import {
   isTerminalIngestionOperation,
   readIngestionOperation,
@@ -421,6 +422,7 @@ export async function completeIngestionImport(
           withAnswerClass({
             id: questionId,
             kind: block.question_kind,
+            choices_md: capturedQuestionShape(importedStructured).choices_md,
             prompt_md: block.final_prompt_md,
             reference_md: block.final_reference_md,
             knowledge_ids: blockKnowledgeIds,

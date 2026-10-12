@@ -40,7 +40,6 @@ import type {
   AgentRef,
   ArtifactBodyBlocks,
   ArtifactHistoryEntry,
-  FsrsState,
   NoteVerificationResult,
   Provenance,
   Rubric,
@@ -74,7 +73,7 @@ import { vector } from './vector';
 type AgentRefT = z.infer<typeof AgentRef>;
 type ArtifactBodyBlocksT = z.infer<typeof ArtifactBodyBlocks>;
 type ArtifactHistoryEntryT = z.infer<typeof ArtifactHistoryEntry>;
-type FsrsStateT = z.infer<typeof FsrsState>;
+type FsrsStateT = import('@/core/schema/scheduling-state').SchedulingState;
 type NoteVerificationResultT = z.infer<typeof NoteVerificationResult>;
 type ProvenanceT = z.infer<typeof Provenance>;
 type RubricT = z.infer<typeof Rubric>;

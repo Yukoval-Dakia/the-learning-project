@@ -1,3 +1,4 @@
+import { initialSchedulingState } from '@/server/fsrs/state';
 // M4-T4 (YUK-319) — practice 包的提议 accept-applier 真身，从 dispatch 壳
 // （actions.ts @ src/server/proposals）等价平移（搬迁不改逻辑）。壳退化为
 // 纯 dispatch，按 kind 一行委托到这里。
@@ -60,7 +61,6 @@ import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 
 import { CAUSE_OVERLAY_ID_PREFIX } from './cause-overlay';
-import { initialFsrsState } from './fsrs';
 import { SYNTHETIC_SUBJECT_ROOT_RE } from './placement-scope';
 
 // YUK-17 / ADR-0018 — swappable enqueue hook so DB tests can drive
@@ -544,7 +544,6 @@ export async function acceptQuestionDraftProposal(
     // FSRS enroll — copied from quiz_verify.ts (YUK-203 P3): per-knowledge
     // enroll-if-absent so a node with an existing review schedule is never
     // reset; question-level fallback when the row carries no knowledge ids.
-    const initial = initialFsrsState(now);
     const fsrsSubjectIds = Array.from(new Set(row.knowledge_ids ?? []));
     if (fsrsSubjectIds.length > 0) {
       for (const knowledgeId of fsrsSubjectIds) {
@@ -559,8 +558,7 @@ export async function acceptQuestionDraftProposal(
         await upsertFsrsState(tx, {
           subject_kind: 'knowledge',
           subject_id: knowledgeId,
-          state: initial.state,
-          due_at: initial.dueAt,
+          ...initialSchedulingState(knowledgeId, now),
           last_review_event_id: rateEventId,
         });
       }
@@ -570,8 +568,7 @@ export async function acceptQuestionDraftProposal(
         await upsertFsrsState(tx, {
           subject_kind: 'question',
           subject_id: questionId,
-          state: initial.state,
-          due_at: initial.dueAt,
+          ...initialSchedulingState(questionId, now),
           last_review_event_id: rateEventId,
         });
       }

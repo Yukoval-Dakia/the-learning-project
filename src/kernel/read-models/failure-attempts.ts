@@ -7,11 +7,6 @@
 // stays central and is imported below.
 
 import { type SQL, and, asc, desc, eq, gt, gte, inArray, lt, or, sql } from 'drizzle-orm';
-import {
-  type EffectiveTruth,
-  activeEffectiveTruth,
-  getEffectiveTruths,
-} from '@/capabilities/practice/public';
 import type { CauseCategoryT, CauseSchemaT } from '@/core/schema/event/blocks';
 import {
   AttemptQuestionSnapshot,
@@ -19,7 +14,13 @@ import {
 } from '@/core/schema/question-evidence-snapshot';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
-import { filterActiveRows, newerEventRow } from '@/kernel/events';
+import {
+  type EffectiveTruth,
+  activeEffectiveTruth,
+  filterActiveRows,
+  getEffectiveTruths,
+  newerEventRow,
+} from '@/kernel/events';
 
 import {
   type NativeAttemptVerdict,

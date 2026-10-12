@@ -33,7 +33,7 @@ import type { Db } from '@/db/client';
 import { artifact, event, knowledge } from '@/db/schema';
 import { isLearnerVisibleKnowledgeId } from '@/kernel/read-models/learner-knowledge-visibility';
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
-import { getFsrsRetrievabilityByIds } from '@/server/fsrs/state';
+import { type RetentionReading, getFsrsRetrievabilityByIds } from '@/server/fsrs/state';
 import { getMasteryProjection, getRepresentativeKcBeta } from '@/server/mastery/state';
 import { type SlimSubjectProfile, toSlimSubjectProfile } from '@/subjects/profile';
 
@@ -120,6 +120,7 @@ export interface KnowledgeNodePage {
   //   beta           = 代表性 β（IRT logit；有锚时独立于 mastery_state，可在作答前读取）；
   //   difficulty_anchored = hard-track 难度锚是否真实存在（区分真 β=0 与无锚 sentinel）。
   retrievability: number | null;
+  retention: RetentionReading | null;
   beta: number | null;
   difficulty_anchored: boolean;
   last_evidence_at: string | null;
@@ -158,7 +159,7 @@ export async function loadRetrievabilityMap(
   db: Db,
   knowledgeIds: string[],
   now: Date = new Date(),
-): Promise<Map<string, number>> {
+): Promise<Map<string, RetentionReading>> {
   return getFsrsRetrievabilityByIds(db, 'knowledge', knowledgeIds, now);
 }
 
@@ -481,7 +482,13 @@ export async function loadKnowledgeNodePage(
     // independently of learner mastery so a never-attempted KC can expose a real
     // absolute difficulty anchor. The explicit presence bit distinguishes a true
     // medium β=0 anchor from the projection's unanchored β=0 sentinel.
-    retrievability: focalRetrievability ?? null,
+    retrievability:
+      typeof focalRetrievability === 'number'
+        ? focalRetrievability
+        : focalRetrievability?.kind === 'score'
+          ? focalRetrievability.value
+          : null,
+    retention: focalRetrievability ?? null,
     beta: focalBeta,
     difficulty_anchored: difficultyAnchored,
     last_evidence_at: nodeLastEvidenceAt ? nodeLastEvidenceAt.toISOString() : null,
