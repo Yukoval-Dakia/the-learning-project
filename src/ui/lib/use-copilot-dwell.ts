@@ -2,7 +2,7 @@
 // return-visit localStorage auto-open were removed in YUK-577: opening now always
 // requires an explicit user action or a qualified cross-tree signal.
 //
-// The hook exposes a boolean (`open`) plus controlled setters so the
+// The hook exposes `open` plus the visit epoch and controlled setters so the
 // drawer parent can also drive open state from a manual trigger button.
 //
 // AF S4 / YUK-203 U6 — cross-tree open-with-context channel. The drawer `open`
@@ -10,9 +10,8 @@
 // button in a DIFFERENT subtree (e.g. learning-items/[id]) cannot reach it to
 // open the Dock pre-seeded with a skill. A tiny module-level Zustand store —
 // co-located here, NOT a separate store file — carries an `openCopilotWith`
-// signal that CopilotDock subscribes to. The §5.1 plan ruling: lift the
-// open-with-context signal into a shared store; CopilotDock reads it alongside
-// its dwell hook.
+// signal. CopilotDock claims each request exactly once through
+// subscribeCopilotOpenRequests, attached from its always-mounted root node.
 
 'use client';
 
@@ -76,8 +75,6 @@ interface CopilotOpenSignalStore {
   nextSeq: number;
   /** Publish an open-with-context request (cross-tree). */
   openCopilotWith: (skillContext: CopilotSkillContextT, prefill?: string) => void;
-  /** @deprecated Superseded by subscribeCopilotOpenRequests' claim; removed with its last caller. */
-  clearRequest: () => void;
 }
 
 export const useCopilotOpenSignal = create<CopilotOpenSignalStore>((set) => ({
@@ -101,7 +98,6 @@ export const useCopilotOpenSignal = create<CopilotOpenSignalStore>((set) => ({
       const seq = s.nextSeq + 1;
       return { nextSeq: seq, request: { seq, nudge } };
     }),
-  clearRequest: () => set({ request: null }),
   // nextSeq is intentionally never reset — every publish gets a fresh seq.
 }));
 
