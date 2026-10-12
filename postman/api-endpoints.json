@@ -1465,7 +1465,7 @@
             "expected_generation": 0
           }
         },
-        "notes": "原生请求返回 effective/review_required，assessment 带 submission/group/candidate 与学习 effect；重复提交复用原始回执，不产生第二次练习。self_report=true 仅显式 FSRS；auto_rate=true 不把 rating fallback 当用户选择。无 assessment 的旧请求返回 historical_unknown(409)，不会补造发题或写入学习状态。原始提交事务冻结学习知识点/难度/学科目标，排队后的标签编辑不改变本次学习范围。"
+        "notes": "原生请求返回 effective/review_required，assessment 带 submission/group/candidate 与学习 effect；重复提交复用原始回执，不产生第二次练习。self_report=true 仅显式 FSRS；auto_rate=true 不把 rating fallback 当用户选择。无 assessment 的旧请求返回 historical_unknown(409)，不会补造发题或写入学习状态。原始提交事务冻结学习知识点/难度/学科目标，排队后的标签编辑不改变本次学习范围。；无印规则的部分正确返回 partial_unknown、score=null 与 typed partial_units 正确数/总数，不补造分数或评级。"
       }
     ]
   },
@@ -1495,7 +1495,7 @@
             "group_evidence": []
           }
         },
-        "notes": "返回 candidate_id/activation_intent/automatic_commit；不激活学习效应。响应没有评级建议时保留未决态，不补造评级。"
+        "notes": "返回 candidate_id/activation_intent/automatic_commit；不激活学习效应。响应没有评级建议时保留未决态，不补造评级。；无印规则的部分正确返回 partial_unknown、score=null 与 typed partial_units 正确数/总数，不补造分数或评级。"
       }
     ]
   },
@@ -1643,7 +1643,7 @@
             "group_evidence": []
           }
         },
-        "notes": "必须先读取 /api/papers/:id，将该槽位 assessment 的 issuance_id/evaluation_group_id/idempotency_key 和 practice_dto 中的槽位、选项原样用于请求；示例 text 仅适用于对应已发布文本槽位。缺少原始发题绑定返回 historical_unknown(409)，不可在提交时补建历史绑定。 重复请求必须保持原始作答不变；回执投影当前生效候选。缓冲反馈仅返回身份字段和 visible_to_user=false/feedback_buffered=true，不返回 status/coarse_outcome/score。"
+        "notes": "必须先读取 /api/papers/:id，将该槽位 assessment 的 issuance_id/evaluation_group_id/idempotency_key 和 practice_dto 中的槽位、选项原样用于请求；示例 text 仅适用于对应已发布文本槽位。缺少原始发题绑定返回 historical_unknown(409)，不可在提交时补建历史绑定。 重复请求必须保持原始作答不变；回执投影当前生效候选。缓冲反馈仅返回身份字段和 visible_to_user=false/feedback_buffered=true，不返回 status/coarse_outcome/score。；无印规则的部分正确返回 partial_unknown、score=null 与 typed partial_units 正确数/总数，不补造分数或评级。"
       }
     ]
   },

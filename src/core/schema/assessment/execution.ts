@@ -29,6 +29,7 @@ export const DeterministicComparatorId = z.enum([
   'numeric_tolerance',
   'numeric_unit_conversion',
   'exact_matching_pairs',
+  'position_set_rule',
 ]);
 export type DeterministicComparatorIdT = z.infer<typeof DeterministicComparatorId>;
 
@@ -41,6 +42,7 @@ export const COMPARATOR_CRITERION: Readonly<
   numeric_tolerance: 'numeric_key',
   numeric_unit_conversion: 'numeric_key',
   exact_matching_pairs: 'matching_pairs_key',
+  position_set_rule: 'position_set_key',
 };
 
 export const DeterministicExecutor = z.object({

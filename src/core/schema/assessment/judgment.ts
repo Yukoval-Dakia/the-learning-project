@@ -104,15 +104,31 @@ export type EvidenceCitationT = z.infer<typeof EvidenceCitation>;
  * （blank_marked_zero 只在 basis.blank_scores_zero=true 时合法 —— 由
  * settlement lane 校验；类型层先保证不是伪零分冒充）。
  *
- * points_awarded：加法单元必填；holistic 单元为 null —— 执行器只报告
- * matched.level_id，分数由发布侧 level_points 映射在聚合时解析
- * （模型不得在输出里自造等级分数）。
+ * points_awarded：加法单元必填 —— 唯一例外是 partial_unknown_points
+ * （ADR-0074 D3a：无印规则的部分对，typed 记正确数/总数，分数未知）；
+ * holistic 单元为 null —— 执行器只报告 matched.level_id，分数由发布侧
+ * level_points 映射在聚合时解析（模型不得在输出里自造等级分数）。
  */
 export const ScoredUnitResult = z.object({
   status: z.literal('scored'),
   scoring_unit_id: z.string().min(1),
   points_awarded: z.number().min(0).nullable(),
   scored_because: z.enum(['response', 'blank_marked_zero']),
+  /**
+   * ADR-0074 D3a / 独立复核 P1-1 修复：加法单元判为【部分对且无印规则】的
+   * typed 承载 —— 正确数/总数 + points_awarded=null（分数未知，不造分、
+   * 不摊等权、不伪零）。执行器只在确定性判得正确计数、且卷面没有可折算
+   * 分数的 typed 规则时携带；聚合进 no_mapping（见 aggregateUnitResults）。
+   * 一致性（不得与 points_awarded 数值并存、correct ≤ total、holistic
+   * 禁携）由 aggregateUnitResults fail-closed 裁决 —— 与既有 points 纪律
+   * 同一层，不在 schema 层 superRefine（保持判别联合成员是纯 object）。
+   */
+  partial_unknown_points: z
+    .object({
+      correct_count: z.number().int().min(0),
+      total_count: z.number().int().min(1),
+    })
+    .optional(),
   matched: z
     .object({
       rule_id: z.string().min(1).optional(),
@@ -163,6 +179,21 @@ export const AggregateOutcome = z.discriminatedUnion('kind', [
     level_id: z.string().min(1),
     /** null = 该档位未提供分数映射 —— 不制造总分。 */
     points: z.number().min(0).nullable(),
+  }),
+  z.object({
+    kind: z.literal('partial_unknown_points'),
+    /** 已确定分值单元的合计（partial 单元分数未知，不计入、不折算）。 */
+    known_points: z.number().min(0),
+    /** 分数未知的部分对单元（typed 正确数/总数；无分数、无比例 —— ADR-0074 D3a / 复核 P1-1 收口）。 */
+    partial_units: z
+      .array(
+        z.object({
+          scoring_unit_id: z.string().min(1),
+          correct_count: z.number().int().min(0),
+          total_count: z.number().int().min(1),
+        }),
+      )
+      .min(1),
   }),
   z.object({
     kind: z.literal('unresolved'),
@@ -286,6 +317,21 @@ export const EvaluationRecord = z
     if (
       record.status === 'completed' &&
       pendingUnits.length === 0 &&
+      record.aggregate?.kind === 'partial_unknown_points' &&
+      !record.unit_results.some(
+        (unit) => unit.status === 'scored' && unit.partial_unknown_points != null,
+      )
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['aggregate'],
+        message:
+          'evaluation_status_contradiction: aggregate claims partial_unknown_points but no scored unit carries partial_unknown_points',
+      });
+    }
+    if (
+      record.status === 'completed' &&
+      pendingUnits.length === 0 &&
       record.aggregate?.kind === 'unresolved' &&
       record.aggregate.reason === 'pending_units'
     ) {
@@ -379,6 +425,7 @@ export function aggregateUnitResults(
 
   type Contribution =
     | { kind: 'points'; points: number }
+    | { kind: 'partial'; unitId: string; correctCount: number; totalCount: number }
     | { kind: 'no_mapping'; detail: string }
     | { kind: 'invalid'; detail: string };
 
@@ -393,6 +440,28 @@ export function aggregateUnitResults(
         kind: 'invalid',
         detail: `unit '${unitId}' scored blank as zero but basis.blank_scores_zero=false`,
       };
+    }
+    // P1-1：typed 部分对承载的一致性裁决（fail-closed，同 points 纪律层）。
+    const partial = result.partial_unknown_points;
+    if (partial != null) {
+      if (unit.criterion.kind === 'holistic_level') {
+        return {
+          kind: 'invalid',
+          detail: `holistic unit '${unitId}' carries partial_unknown_points — holistic scoring has its own level mapping discipline`,
+        };
+      }
+      if (result.points_awarded !== null) {
+        return {
+          kind: 'invalid',
+          detail: `unit '${unitId}' carries both points_awarded=${result.points_awarded} and partial_unknown_points — partial-unknown must leave points null`,
+        };
+      }
+      if (partial.correct_count > partial.total_count) {
+        return {
+          kind: 'invalid',
+          detail: `unit '${unitId}' partial counts ${partial.correct_count}/${partial.total_count} are contradictory`,
+        };
+      }
     }
     if (unit.criterion.kind === 'holistic_level') {
       // YUK-1096 P1-3：holistic 单元的分数只经发布侧 level_points 映射
@@ -426,6 +495,17 @@ export function aggregateUnitResults(
       return { kind: 'points', points: mapped };
     }
     if (result.points_awarded === null) {
+      if (result.partial_unknown_points != null) {
+        // ADR-0074 D3a：无印规则的部分对 —— 判得正确数/总数，分数未知。
+        // 不凭空制造总分也不伪零：聚合落显式 partial_unknown_points
+        //（组级 verdict=partial 而非 unsupported；消费见 settlement/DTO）。
+        return {
+          kind: 'partial',
+          unitId,
+          correctCount: result.partial_unknown_points.correct_count,
+          totalCount: result.partial_unknown_points.total_count,
+        };
+      }
       return {
         kind: 'invalid',
         detail: `additive unit '${unitId}' result carries null points_awarded`,
@@ -448,14 +528,27 @@ export function aggregateUnitResults(
   };
 
   const resolved: Array<{ unitId: string; points: number }> = [];
+  const partialUnits: Array<{
+    scoring_unit_id: string;
+    correct_count: number;
+    total_count: number;
+  }> = [];
   for (const unitId of unitIds) {
     const contribution = contributionOf(unitId);
-    if (contribution.kind !== 'points') {
+    if (contribution.kind === 'no_mapping' || contribution.kind === 'invalid') {
       return {
         kind: 'unresolved',
         reason: contribution.kind === 'no_mapping' ? 'no_mapping' : 'invalid_result',
         detail: contribution.detail,
       };
+    }
+    if (contribution.kind === 'partial') {
+      partialUnits.push({
+        scoring_unit_id: contribution.unitId,
+        correct_count: contribution.correctCount,
+        total_count: contribution.totalCount,
+      });
+      continue;
     }
     resolved.push({ unitId, points: contribution.points });
   }
@@ -480,6 +573,22 @@ export function aggregateUnitResults(
   };
 
   let total = resolved.reduce((sum, entry) => sum + entry.points * weightOf(entry.unitId), 0);
+  // 部分对（分数未知）优先于 cap/档位映射：cap/阈值绑死全量满分，部分未知
+  // 单元下任何 cap/档位解释都是在造总分 —— fail-closed 为 unresolved。
+  if (partialUnits.length > 0) {
+    if (basis.aggregation.kind === 'capped_sum' || basis.aggregation.kind === 'threshold_levels') {
+      return {
+        kind: 'unresolved',
+        reason: 'no_mapping',
+        detail: `aggregation '${basis.aggregation.kind}' cannot express partial-unknown units without inventing a total (cap/threshold semantics bind to the full point set)`,
+      };
+    }
+    return {
+      kind: 'partial_unknown_points',
+      known_points: total,
+      partial_units: partialUnits,
+    };
+  }
   if (basis.aggregation.kind === 'capped_sum') {
     total = Math.min(total, basis.aggregation.cap);
   }

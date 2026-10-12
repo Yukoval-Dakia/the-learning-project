@@ -590,9 +590,9 @@ describe('released core seams (real exports, no DB)', () => {
     }
   });
 
-  // @invariant data: unsupported remains a classification with no observation
-  // @fails-if classify unsupported as a disagreement; a rejudged outcome or write appears
-  it('classifies unsupported without manufacturing a judged receipt', async () => {
+  // @invariant data: unsupported and unknown-score partials cannot become calibration observations
+  // @fails-if extraction loses either skip condition; the shared entry returns a rejudged outcome
+  it('classifies unsupported and unknown-score partials without manufacturing a judged receipt', async () => {
     const core = await loadCore();
     const judgeFn: typeof judgeAnswer = async () => ({
       route: 'semantic',
@@ -604,6 +604,28 @@ describe('released core seams (real exports, no DB)', () => {
         CFG,
         { ...ITEM, studentImageRefs: [...ITEM.studentImageRefs] },
         { db, judgeFn, runTaskInner: async () => ({ text: semanticText }) },
+      ),
+    ).toEqual({ kind: 'unsupported' });
+    expect(
+      await core.judgeCalibrationPreparedFace(
+        CFG,
+        { ...ITEM, studentImageRefs: [...ITEM.studentImageRefs] },
+        {
+          db,
+          judgeFn: async (input) => {
+            const invoked = await judgeFn(input);
+            return {
+              ...invoked,
+              result: {
+                ...invoked.result,
+                coarse_outcome: 'partial_unknown',
+                score: null,
+                partial_units: [{ scoring_unit_id: 'u_match', correct_count: 2, total_count: 3 }],
+              },
+            };
+          },
+          runTaskInner: async () => ({ text: semanticText }),
+        },
       ),
     ).toEqual({ kind: 'unsupported' });
     expect(writeEvent).not.toHaveBeenCalled();

@@ -100,6 +100,10 @@ export function projectFrozenStudyContext(
           return criterion.statement_md;
         case 'holistic_level':
           return criterion.levels.map((level) => level.descriptor_md).join('\n\n');
+        case 'position_set_key':
+          // ADR-0074 D3a 断句：参考 = 接受断点集合（code point 字缝索引）；
+          // 对应冻结明文已在 response_spec 槽位里，不在此重建文本。
+          return criterion.accepted_positions.map((position) => `断点 ${position}`).join('\n');
         default: {
           const exhaustive: never = criterion;
           return exhaustive;

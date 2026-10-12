@@ -13,7 +13,12 @@ export {
   NoteVerificationResult,
   QuestionKind,
 } from '@/core/schema/business';
-export { CoarseOutcome, JudgeResultV2, ScoreMeaning } from '@/core/schema/capability';
+export {
+  CoarseOutcome,
+  JudgeResultV2,
+  PartialUnknownJudgeResult,
+  ScoreMeaning,
+} from '@/core/schema/capability';
 export {
   PROBE_NON_EVIDENCE_RESOLUTION,
   PROBE_RESOLUTIONS,
