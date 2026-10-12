@@ -5,18 +5,22 @@
    and a quiet timeline of earlier attempts at the end of the same sheet. */
 
 [data-ui-next] .un-pn[data-layout="paper"] {
+  & .un-pn-main {
+    padding-top: var(--un-sp-5);
+    padding-bottom: var(--un-sp-6);
+  }
   & .un-pn-column {
     max-width: 820px;
-    gap: var(--un-sp-5);
+    gap: var(--un-sp-4);
   }
   & .un-pn-q {
-    gap: var(--un-sp-5);
+    gap: var(--un-sp-4);
   }
 
   & .un-pn-sheet {
     display: grid;
-    gap: var(--un-sp-6);
-    padding: var(--un-sp-6) var(--un-sp-7) var(--un-sp-6) var(--un-sp-6);
+    gap: var(--un-sp-5);
+    padding: var(--un-sp-5) var(--un-sp-6) var(--un-sp-5) var(--un-sp-5);
     border-radius: var(--un-r-2);
     background: var(--un-bg-raised);
     box-shadow: 0 0 0 var(--un-hairline) var(--un-line);
@@ -38,7 +42,7 @@
     margin-left: var(--un-pn-gutter);
   }
   & .un-pn-vparts {
-    gap: var(--un-sp-6);
+    gap: var(--un-sp-5);
   }
   & .un-pn-vpart-body {
     gap: var(--un-sp-3);
@@ -156,8 +160,12 @@
 /* Phone: the sheet runs to the screen edges; the bar floats above the companion's peek. */
 @media (max-width: 720px) {
   [data-ui-next] .un-pn[data-layout="paper"] {
+    & .un-pn-main {
+      padding-top: 0;
+      padding-bottom: calc(76px + var(--un-sp-5));
+    }
     & .un-pn-sheet {
-      gap: var(--un-sp-5);
+      gap: var(--un-sp-4);
       margin: 0 calc(-1 * var(--un-sp-2));
       padding: var(--un-sp-5) var(--un-sp-4) var(--un-sp-5) var(--un-sp-3);
     }
