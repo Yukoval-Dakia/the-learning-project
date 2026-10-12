@@ -3,8 +3,13 @@
 // re-derivation (summarizeRecompute.overall), not a simulated prop. The brief `running`
 // flash is presentational ("觉得是瞬时" — offline + near-instant, not a spinner-wait);
 // the math itself is synchronous and already done by the time we render.
+//
+// Each flash is identified by (run number, outcome, runMs). The flash timer is a resource
+// attached through useSyncExternalStore: subscribing to a new flash starts its timer,
+// unsubscribing (new flash, unmount) clears it, and the snapshot is whether *this* flash has
+// settled — so a changed outcome never shows the previous verdict.
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useState, useSyncExternalStore } from 'react';
 
 export type RcResolved = 'match' | 'drift' | 'preview';
 export type RcState = 'idle' | 'running' | RcResolved;
@@ -23,23 +28,42 @@ export interface UseRecompute {
   run: () => void;
 }
 
+const noop = () => {};
+
 export function useRecompute({ auto, outcome, runMs = 540 }: UseRecomputeArgs): UseRecompute {
-  const [state, setState] = useState<RcState>(auto ? 'running' : 'idle');
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 0 = idle (no flash requested); every run / auto restart bumps it.
+  const [runNo, setRunNo] = useState(auto ? 1 : 0);
+  // auto, outcome or runMs changing restarts the flash when auto, or resets to idle when not
+  // (same as the previous [auto, run] dependency behaviour).
+  const [inputs, setInputs] = useState({ auto, outcome, runMs });
+  if (inputs.auto !== auto || inputs.outcome !== outcome || inputs.runMs !== runMs) {
+    setInputs({ auto, outcome, runMs });
+    setRunNo((n) => (auto ? n + 1 : 0));
+  }
 
-  const run = useCallback(() => {
-    if (timer.current) clearTimeout(timer.current);
-    setState('running');
-    timer.current = setTimeout(() => setState(outcome), runMs);
-  }, [outcome, runMs]);
+  const flashKey = runNo === 0 ? null : `${runNo}:${outcome}:${runMs}`;
+  // Per-instance record of the last flash whose timer fired.
+  const [flash] = useState<{ settled: string | null }>(() => ({ settled: null }));
 
-  useEffect(() => {
-    if (auto) run();
-    else setState('idle');
-    return () => {
-      if (timer.current) clearTimeout(timer.current);
-    };
-  }, [auto, run]);
+  const subscribe = useCallback(
+    (notify: () => void) => {
+      if (flashKey === null || flash.settled === flashKey) return noop;
+      const timer = setTimeout(() => {
+        flash.settled = flashKey;
+        notify();
+      }, runMs);
+      return () => clearTimeout(timer);
+    },
+    [flash, flashKey, runMs],
+  );
+  const settled = useSyncExternalStore(
+    subscribe,
+    () => flashKey !== null && flash.settled === flashKey,
+    () => false,
+  );
 
+  const run = useCallback(() => setRunNo((n) => n + 1), []);
+
+  const state: RcState = flashKey === null ? 'idle' : settled ? outcome : 'running';
   return { state, run };
 }
