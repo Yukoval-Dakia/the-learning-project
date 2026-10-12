@@ -195,6 +195,17 @@ function verdictWords(p: JudgeFeedback): { label: string; tone: ChipTone; note: 
   if (p.coarse_outcome === 'unsupported') {
     return { label: '暂时没法自动判', tone: 'neutral', note: null };
   }
+  // Some parts are known right, but the points are not: never shown as 0 or as "can't judge".
+  if (p.coarse_outcome === 'partial_unknown') {
+    const counts = (p.partial_units ?? [])
+      .map((unit) => `${unit.correct_count}/${unit.total_count}`)
+      .join('、');
+    return {
+      label: `部分正确${counts ? `（${counts}）` : ''}，分数未知`,
+      tone: 'caution',
+      note: '对了几处是确定的；这道题的分数还算不出来，不按 0 分记。',
+    };
+  }
   if (isObjectiveQuestion(p.route)) {
     const note = '自动核对的结果：只比较了答案本身，还没有判断原因。';
     if (p.coarse_outcome === 'correct') return { label: '与参考答案一致', tone: 'positive', note };
@@ -1258,6 +1269,7 @@ function QuestionColumn({
     // Submit → judgment (R3): one element goes from "正在判" to the result in place, and the
     // explanation opens beneath it. Open questions stop in between for the confidence beat.
     const verdict = displayedPreview ? verdictWords(displayedPreview) : null;
+    const unknownScore = displayedPreview?.coarse_outcome === 'partial_unknown';
     let judgmentPhase: JudgmentPhase | null = null;
     if (phase === 'feedback' && displayedPreview) judgmentPhase = 'settled';
     else if (phase === 'answering' && s.judging && !s.pendingRun) judgmentPhase = 'checking';
@@ -1342,7 +1354,7 @@ function QuestionColumn({
 
         {displayedPreview && (
           <>
-            {!s.autoCommitted && (
+            {!s.autoCommitted && !unknownScore && (
               <div className="un-pn-rate">
                 <span className="un-pn-actions-label">按这次的情况安排复习：</span>
                 {RATINGS.map((g) => (
@@ -1377,6 +1389,17 @@ function QuestionColumn({
               ) : s.autoCommitted ? (
                 <Button variant="primary" disabled={s.committing} onClick={() => onDone(item)}>
                   下一题
+                </Button>
+              ) : unknownScore ? (
+                // Points unknown: no rating from the learner; the server settles it (auto_rate).
+                <Button
+                  variant="primary"
+                  disabled={s.committing}
+                  onClick={() =>
+                    void s.commit({ withAppeal: false, rating: 'hard', autoRate: true })
+                  }
+                >
+                  {s.committing ? '正在记下…' : '记下作答，下一题'}
                 </Button>
               ) : (
                 <Button
@@ -1424,10 +1447,12 @@ function QuestionColumn({
                       !s.appealText.trim() ||
                       s.committing ||
                       waitingNext ||
-                      (s.autoCommitted ? !s.autoCommitJudgeEventId : !s.rating)
+                      (s.autoCommitted ? !s.autoCommitJudgeEventId : !s.rating && !unknownScore)
                     }
                     onClick={() => {
                       if (s.autoCommitted) void s.submitAutoCommitAppeal();
+                      else if (unknownScore)
+                        void s.commit({ withAppeal: true, rating: 'hard', autoRate: true });
                       else if (s.rating) void s.commit({ withAppeal: true, rating: s.rating });
                     }}
                   >
