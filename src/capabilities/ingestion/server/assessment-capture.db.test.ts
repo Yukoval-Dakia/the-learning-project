@@ -1,7 +1,11 @@
+import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { activateSubmissionCandidate } from '@/capabilities/practice/server/judge/evaluate-submission';
+import { projectPracticeIssuance } from '@/core/schema/assessment';
+import type { FigureRefT } from '@/core/schema/structured_question';
 import {
+  assessment_issuance,
   assessment_submission,
   evaluation,
   evaluation_effective_head,
@@ -11,9 +15,12 @@ import {
   learning_session,
   mastery_state,
   material_fsrs_state,
+  question,
   question_block,
+  question_revision,
   source_asset,
 } from '@/db/schema';
+import { issuanceRowToContract, revisionRowToContract } from '@/kernel/records/assessment-issuance';
 import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { captureIngestionOriginal, enrollNativeCapture } from './assessment-capture';
@@ -105,6 +112,100 @@ async function admit(questionId: string) {
 }
 
 describe('native ingestion originals and reversible enrollment', () => {
+  // @invariant security: a mixed student-work capture retains its private original evidence without publishing its student, foreign or unverified figure references
+  // @fails-if capture publishes the mixed block's original figures or rewrites/discards its private originals; public figure exclusion or original source/evidence retention fails
+  it('keeps one mixed student-work capture private without changing its originals', async () => {
+    const db = testDb();
+    const input = await fixture();
+    const cropBytes = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADklEQVQImWP4DwYMEAoAU7oL9W/sIDEAAAAASUVORK5CYII=',
+      'base64',
+    );
+    const cropDigest = createHash('sha256').update(cropBytes).digest('hex');
+    await db.insert(source_asset).values(
+      ['capture-page-fig-0', 'foreign-page-fig-0'].map((id) => ({
+        id,
+        kind: 'image' as const,
+        storage_key: `figures/${id}.png`,
+        mime_type: 'image/png',
+        byte_size: cropBytes.length,
+        sha256: cropDigest,
+        created_at: now,
+      })),
+    );
+    const figure: FigureRefT = {
+      asset_id: 'capture-page-fig-0',
+      role: 'diagram',
+      source_page_index: 0,
+      source_bbox: { x: 0.1, y: 0.1, width: 0.2, height: 0.2 },
+      attached_to_index: 'capture-part',
+      attach_confidence: 'manual',
+    };
+    const structured = input.block.structured;
+    if (!structured) throw new Error('missing fixture structure');
+    const [block] = await db
+      .insert(question_block)
+      .values({
+        ...input.block,
+        id: 'mixed-block',
+        structured: {
+          ...structured,
+          student_answer_present: true,
+          extraction_evidence: {
+            handwriting: [{ text: 'private student answer', bbox: figure.source_bbox }],
+          },
+        },
+        figures: [
+          figure,
+          { ...figure, asset_id: 'foreign-page-fig-0' },
+          { ...figure, asset_id: 'capture-page-fig-1' },
+        ],
+      })
+      .returning();
+    const originalAssets = await db.select().from(source_asset).orderBy(source_asset.id);
+    const capture = await captureIngestionOriginal(db, { ...input, block });
+    if (!capture) throw new Error('missing mixed capture');
+    const [capturedQuestion] = await db
+      .select()
+      .from(question)
+      .where(eq(question.id, capture.questionId));
+    const [frozen] = await db
+      .select({ issuance: assessment_issuance, revision: question_revision })
+      .from(assessment_issuance)
+      .innerJoin(
+        question_revision,
+        eq(question_revision.revision_id, assessment_issuance.revision_id),
+      )
+      .where(eq(assessment_issuance.issuance_id, capture.request.issuance_id));
+    const [submission] = await db
+      .select()
+      .from(assessment_submission)
+      .where(eq(assessment_submission.submission_id, capture.request.submission_id));
+    if (!capturedQuestion || !frozen || !submission)
+      throw new Error('missing persisted mixed capture');
+    const dto = projectPracticeIssuance(
+      revisionRowToContract(frozen.revision),
+      issuanceRowToContract(frozen.issuance),
+    );
+    expect({
+      questionFigures: capturedQuestion.figures,
+      frozenFigures: frozen.revision.structure.materials.filter((item) => item.kind === 'figure'),
+      publicOriginalAssets: dto.materials.filter(
+        (item) => item.kind === 'figure' || item.asset_id === 'capture-page',
+      ),
+      privatePageAssets: submission.group_evidence.map((item) => item.evidence.asset.asset_id),
+    }).toEqual({
+      questionFigures: [],
+      frozenFigures: [],
+      publicOriginalAssets: [],
+      privatePageAssets: ['capture-page'],
+    });
+    expect(await db.select().from(question_block).where(eq(question_block.id, block.id))).toEqual([
+      block,
+    ]);
+    expect(await db.select().from(source_asset).orderBy(source_asset.id)).toEqual(originalAssets);
+  });
+
   it('admitted deterministic capture updates theta without FSRS, then retracts atomically and refuses late activation', async () => {
     const input = await fixture();
     const capture = await captureIngestionOriginal(testDb(), input);

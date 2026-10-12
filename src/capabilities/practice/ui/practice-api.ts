@@ -528,6 +528,10 @@ export interface PaperSlot {
           visible_to_user: true;
           outcome: string;
           score: number | null;
+          partial_units?: Extract<
+            import('@/core/schema/capability').JudgeResultV2T,
+            { coarse_outcome: 'partial_unknown' }
+          >['partial_units'];
           feedback_md: string | null;
           answer_md: string;
           /** 随提交冻结的作答附件（YUK-1051 恢复 wire 字段）。 */

@@ -1,0 +1,1450 @@
+{
+  "base": "60c4f980fce83d73b78fb912a4b097c34b8f250a",
+  "scope": "Synchronous value imports/re-exports reachable from A and prior shared production modules; type-only/dynamic imports excluded.",
+  "beforeModules": 576,
+  "afterModules": 576,
+  "beforeSccs": [
+    [
+      "src/capabilities/agency/public.ts",
+      "src/capabilities/agency/server/goals/commands.ts",
+      "src/capabilities/agency/server/goals/merge-attribution.ts",
+      "src/capabilities/agency/server/goals/queries.ts",
+      "src/capabilities/agency/server/misconception-promote.ts",
+      "src/capabilities/ingestion/public.ts",
+      "src/capabilities/ingestion/server/mistakes-read.ts",
+      "src/capabilities/knowledge/jobs/knowledge_edge_propose_nightly.ts",
+      "src/capabilities/knowledge/public.ts",
+      "src/capabilities/knowledge/server/edge-proposal-accept.ts",
+      "src/capabilities/knowledge/server/edge-topology-write.ts",
+      "src/capabilities/knowledge/server/edges.ts",
+      "src/capabilities/knowledge/server/node-page.ts",
+      "src/capabilities/knowledge/server/proposals.ts",
+      "src/capabilities/knowledge/server/propose_edge.ts",
+      "src/capabilities/knowledge/server/rubric-validator.ts",
+      "src/capabilities/knowledge/server/tag-knowledge.ts",
+      "src/capabilities/knowledge/server/tree.ts",
+      "src/capabilities/notes/public.ts",
+      "src/capabilities/notes/server/config-effective-facts.ts",
+      "src/capabilities/notes/server/hub-sync-reconciliation.ts",
+      "src/capabilities/practice/jobs/source_verify.ts",
+      "src/capabilities/practice/public.ts",
+      "src/capabilities/practice/server/assessment/attempt.ts",
+      "src/capabilities/practice/server/assessment/paper-attempt.ts",
+      "src/capabilities/practice/server/assessment/submit.ts",
+      "src/capabilities/practice/server/attempt-events.ts",
+      "src/capabilities/practice/server/candidate-signals.ts",
+      "src/capabilities/practice/server/cause-catalog.ts",
+      "src/capabilities/practice/server/failure-learning-attribution.ts",
+      "src/capabilities/practice/server/failure-learning-native.ts",
+      "src/capabilities/practice/server/failure-learning-public.ts",
+      "src/capabilities/practice/server/failure-learning-variant.ts",
+      "src/capabilities/practice/server/failure-learning.ts",
+      "src/capabilities/practice/server/intervention-author.ts",
+      "src/capabilities/practice/server/intervention-diagnostics.ts",
+      "src/capabilities/practice/server/judge-operational.ts",
+      "src/capabilities/practice/server/judge-run-dispatch.ts",
+      "src/capabilities/practice/server/judge-run-observation.ts",
+      "src/capabilities/practice/server/judge-run-payload.ts",
+      "src/capabilities/practice/server/judge/evaluate-submission.ts",
+      "src/capabilities/practice/server/judge/evaluation-authority.ts",
+      "src/capabilities/practice/server/judge/index.ts",
+      "src/capabilities/practice/server/knowledge-runtime.ts",
+      "src/capabilities/practice/server/learnable-frontier.ts",
+      "src/capabilities/practice/server/learning-content-validation.ts",
+      "src/capabilities/practice/server/mastery-progress-signal.ts",
+      "src/capabilities/practice/server/paper-submit.ts",
+      "src/capabilities/practice/server/placement-assessment.ts",
+      "src/capabilities/practice/server/placement-select.ts",
+      "src/capabilities/practice/server/proposal-appliers.ts",
+      "src/capabilities/practice/server/question-supply/jyeoo-candidates.ts",
+      "src/capabilities/practice/server/question-supply/placement-starter-attempts.ts",
+      "src/capabilities/practice/server/question-supply/placement-starter-store.ts",
+      "src/capabilities/practice/server/question-supply/target-discovery.ts",
+      "src/capabilities/practice/server/quiz/verify-framework.ts",
+      "src/capabilities/practice/server/review-operation.ts",
+      "src/capabilities/practice/server/solve-session.ts",
+      "src/capabilities/practice/server/tools/jyeoo-fetch-candidates.ts",
+      "src/capabilities/practice/server/tools/question-context.ts",
+      "src/capabilities/practice/server/tools/store-sourced-question.ts",
+      "src/kernel/placement-persistence.ts",
+      "src/kernel/read-models/failure-attempts.ts",
+      "src/server/assessment/learning-scope.ts",
+      "src/server/assessment/runtime.ts",
+      "src/server/assessment/settle.ts",
+      "src/server/mastery/family-key.ts",
+      "src/server/mastery/personalized-difficulty.ts",
+      "src/server/mastery/recalibration.ts",
+      "src/server/mastery/state.ts",
+      "src/server/projections/knowledge_edge.ts",
+      "src/server/proposals/owner-runtime.ts",
+      "src/server/proposals/practice-runtime.ts",
+      "src/server/questions/sourced-draft-insert.ts",
+      "src/server/records/mistakes.ts",
+      "src/server/revert/cascade-revert.ts",
+      "src/server/revert/restore-snapshot.ts",
+      "src/server/subjects/ensure-subject-root.ts"
+    ]
+  ],
+  "afterSccs": [
+    [
+      "src/capabilities/agency/public.ts",
+      "src/capabilities/agency/server/goals/commands.ts",
+      "src/capabilities/agency/server/goals/merge-attribution.ts",
+      "src/capabilities/agency/server/goals/queries.ts",
+      "src/capabilities/agency/server/misconception-promote.ts",
+      "src/capabilities/ingestion/public.ts",
+      "src/capabilities/ingestion/server/mistakes-read.ts",
+      "src/capabilities/knowledge/jobs/knowledge_edge_propose_nightly.ts",
+      "src/capabilities/knowledge/public.ts",
+      "src/capabilities/knowledge/server/edge-proposal-accept.ts",
+      "src/capabilities/knowledge/server/edge-topology-write.ts",
+      "src/capabilities/knowledge/server/edges.ts",
+      "src/capabilities/knowledge/server/node-page.ts",
+      "src/capabilities/knowledge/server/proposals.ts",
+      "src/capabilities/knowledge/server/propose_edge.ts",
+      "src/capabilities/knowledge/server/rubric-validator.ts",
+      "src/capabilities/knowledge/server/tag-knowledge.ts",
+      "src/capabilities/knowledge/server/tree.ts",
+      "src/capabilities/notes/public.ts",
+      "src/capabilities/notes/server/config-effective-facts.ts",
+      "src/capabilities/notes/server/hub-sync-reconciliation.ts",
+      "src/capabilities/practice/jobs/source_verify.ts",
+      "src/capabilities/practice/public.ts",
+      "src/capabilities/practice/server/assessment/attempt.ts",
+      "src/capabilities/practice/server/assessment/paper-attempt.ts",
+      "src/capabilities/practice/server/assessment/submit.ts",
+      "src/capabilities/practice/server/attempt-events.ts",
+      "src/capabilities/practice/server/candidate-signals.ts",
+      "src/capabilities/practice/server/cause-catalog.ts",
+      "src/capabilities/practice/server/failure-learning-attribution.ts",
+      "src/capabilities/practice/server/failure-learning-native.ts",
+      "src/capabilities/practice/server/failure-learning-public.ts",
+      "src/capabilities/practice/server/failure-learning-variant.ts",
+      "src/capabilities/practice/server/failure-learning.ts",
+      "src/capabilities/practice/server/intervention-author.ts",
+      "src/capabilities/practice/server/intervention-diagnostics.ts",
+      "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "src/capabilities/practice/server/judge-operational.ts",
+      "src/capabilities/practice/server/judge-run-dispatch.ts",
+      "src/capabilities/practice/server/judge-run-observation.ts",
+      "src/capabilities/practice/server/judge-run-payload.ts",
+      "src/capabilities/practice/server/judge/evaluate-submission.ts",
+      "src/capabilities/practice/server/judge/evaluation-authority.ts",
+      "src/capabilities/practice/server/judge/index.ts",
+      "src/capabilities/practice/server/knowledge-runtime.ts",
+      "src/capabilities/practice/server/learnable-frontier.ts",
+      "src/capabilities/practice/server/learning-content-validation.ts",
+      "src/capabilities/practice/server/mastery-progress-signal.ts",
+      "src/capabilities/practice/server/paper-submit.ts",
+      "src/capabilities/practice/server/placement-assessment.ts",
+      "src/capabilities/practice/server/placement-select.ts",
+      "src/capabilities/practice/server/proposal-appliers.ts",
+      "src/capabilities/practice/server/question-supply/jyeoo-candidates.ts",
+      "src/capabilities/practice/server/question-supply/placement-starter-attempts.ts",
+      "src/capabilities/practice/server/question-supply/placement-starter-store.ts",
+      "src/capabilities/practice/server/question-supply/target-discovery.ts",
+      "src/capabilities/practice/server/quiz/verify-framework.ts",
+      "src/capabilities/practice/server/review-operation.ts",
+      "src/capabilities/practice/server/solve-session.ts",
+      "src/capabilities/practice/server/tools/jyeoo-fetch-candidates.ts",
+      "src/capabilities/practice/server/tools/question-context.ts",
+      "src/capabilities/practice/server/tools/store-sourced-question.ts",
+      "src/kernel/placement-persistence.ts",
+      "src/kernel/read-models/failure-attempts.ts",
+      "src/server/assessment/learning-scope.ts",
+      "src/server/assessment/runtime.ts",
+      "src/server/assessment/settle.ts",
+      "src/server/mastery/family-key.ts",
+      "src/server/mastery/personalized-difficulty.ts",
+      "src/server/mastery/recalibration.ts",
+      "src/server/mastery/state.ts",
+      "src/server/projections/knowledge_edge.ts",
+      "src/server/proposals/owner-runtime.ts",
+      "src/server/proposals/practice-runtime.ts",
+      "src/server/questions/sourced-draft-insert.ts",
+      "src/server/records/mistakes.ts",
+      "src/server/revert/cascade-revert.ts",
+      "src/server/revert/restore-snapshot.ts",
+      "src/server/subjects/ensure-subject-root.ts"
+    ]
+  ],
+  "beforeUnresolved": [
+    {
+      "file": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "source": "@/server/durable/paid-effect-protocol"
+    },
+    {
+      "file": "src/server/durable/item-prior-paid-effect-adapter.ts",
+      "source": "./paid-effect-protocol"
+    },
+    {
+      "file": "src/server/durable/item-prior-paid-effect-adapter.ts",
+      "source": "./paid-effect-store"
+    },
+    {
+      "file": "src/server/durable/item-prior-family.ts",
+      "source": "./paid-effect-protocol"
+    }
+  ],
+  "afterUnresolved": [],
+  "newCyclePairs": [
+    {
+      "from": "src/capabilities/agency/public.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/agency/public.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/agency/server/goals/commands.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/agency/server/goals/commands.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/agency/server/goals/merge-attribution.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/agency/server/goals/merge-attribution.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/agency/server/goals/queries.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/agency/server/goals/queries.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/agency/server/misconception-promote.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/agency/server/misconception-promote.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/ingestion/public.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/ingestion/public.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/ingestion/server/mistakes-read.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/ingestion/server/mistakes-read.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/knowledge/jobs/knowledge_edge_propose_nightly.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/knowledge/jobs/knowledge_edge_propose_nightly.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/knowledge/public.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/knowledge/public.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/knowledge/server/edge-proposal-accept.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/knowledge/server/edge-proposal-accept.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/knowledge/server/edge-topology-write.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/knowledge/server/edge-topology-write.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/knowledge/server/edges.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/knowledge/server/edges.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/knowledge/server/node-page.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/knowledge/server/node-page.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/knowledge/server/proposals.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/knowledge/server/proposals.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/knowledge/server/propose_edge.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/knowledge/server/propose_edge.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/knowledge/server/rubric-validator.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/knowledge/server/rubric-validator.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/knowledge/server/tag-knowledge.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/knowledge/server/tag-knowledge.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/knowledge/server/tree.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/knowledge/server/tree.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/notes/public.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/notes/public.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/notes/server/config-effective-facts.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/notes/server/config-effective-facts.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/notes/server/hub-sync-reconciliation.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/notes/server/hub-sync-reconciliation.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/practice/jobs/source_verify.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/practice/jobs/source_verify.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/practice/public.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/practice/public.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/assessment/attempt.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/assessment/attempt.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/assessment/paper-attempt.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/assessment/paper-attempt.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/assessment/submit.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/assessment/submit.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/attempt-events.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/attempt-events.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/candidate-signals.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/candidate-signals.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/cause-catalog.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/cause-catalog.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/failure-learning-attribution.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/failure-learning-attribution.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/failure-learning-native.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/failure-learning-native.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/failure-learning-public.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/failure-learning-public.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/failure-learning-variant.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/failure-learning-variant.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/failure-learning.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/failure-learning.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/intervention-author.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/intervention-author.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/intervention-diagnostics.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/intervention-diagnostics.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/agency/public.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/agency/server/goals/commands.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/agency/server/goals/merge-attribution.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/agency/server/goals/queries.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/agency/server/misconception-promote.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/ingestion/public.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/ingestion/server/mistakes-read.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/knowledge/jobs/knowledge_edge_propose_nightly.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/knowledge/public.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/knowledge/server/edge-proposal-accept.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/knowledge/server/edge-topology-write.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/knowledge/server/edges.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/knowledge/server/node-page.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/knowledge/server/proposals.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/knowledge/server/propose_edge.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/knowledge/server/rubric-validator.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/knowledge/server/tag-knowledge.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/knowledge/server/tree.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/notes/public.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/notes/server/config-effective-facts.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/notes/server/hub-sync-reconciliation.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/practice/jobs/source_verify.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/practice/public.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/practice/server/assessment/attempt.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/practice/server/assessment/paper-attempt.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/practice/server/assessment/submit.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/practice/server/attempt-events.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/practice/server/candidate-signals.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/practice/server/cause-catalog.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/practice/server/failure-learning-attribution.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/practice/server/failure-learning-native.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/practice/server/failure-learning-public.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/practice/server/failure-learning-variant.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/practice/server/failure-learning.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/practice/server/intervention-author.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/practice/server/intervention-diagnostics.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/practice/server/judge-operational.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/practice/server/judge-run-dispatch.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/practice/server/judge-run-observation.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/practice/server/judge-run-payload.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/practice/server/judge/evaluate-submission.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/practice/server/judge/evaluation-authority.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/practice/server/judge/index.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/practice/server/knowledge-runtime.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/practice/server/learnable-frontier.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/practice/server/learning-content-validation.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/practice/server/mastery-progress-signal.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/practice/server/paper-submit.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/practice/server/placement-assessment.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/practice/server/placement-select.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/practice/server/proposal-appliers.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/practice/server/question-supply/jyeoo-candidates.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/practice/server/question-supply/placement-starter-attempts.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/practice/server/question-supply/placement-starter-store.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/practice/server/question-supply/target-discovery.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/practice/server/quiz/verify-framework.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/practice/server/review-operation.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/practice/server/solve-session.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/practice/server/tools/jyeoo-fetch-candidates.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/practice/server/tools/question-context.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/capabilities/practice/server/tools/store-sourced-question.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/kernel/placement-persistence.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/kernel/read-models/failure-attempts.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/server/assessment/learning-scope.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/server/assessment/runtime.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/server/assessment/settle.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/server/mastery/family-key.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/server/mastery/personalized-difficulty.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/server/mastery/recalibration.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/server/mastery/state.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/server/projections/knowledge_edge.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/server/proposals/owner-runtime.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/server/proposals/practice-runtime.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/server/questions/sourced-draft-insert.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/server/records/mistakes.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/server/revert/cascade-revert.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/server/revert/restore-snapshot.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "to": "src/server/subjects/ensure-subject-root.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/agency/public.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/agency/server/goals/commands.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/agency/server/goals/merge-attribution.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/agency/server/goals/queries.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/agency/server/misconception-promote.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/ingestion/public.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/ingestion/server/mistakes-read.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/knowledge/jobs/knowledge_edge_propose_nightly.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/knowledge/public.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/knowledge/server/edge-proposal-accept.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/knowledge/server/edge-topology-write.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/knowledge/server/edges.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/knowledge/server/node-page.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/knowledge/server/proposals.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/knowledge/server/propose_edge.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/knowledge/server/rubric-validator.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/knowledge/server/tag-knowledge.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/knowledge/server/tree.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/notes/public.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/notes/server/config-effective-facts.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/notes/server/hub-sync-reconciliation.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/practice/jobs/source_verify.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/practice/public.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/practice/server/assessment/attempt.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/practice/server/assessment/paper-attempt.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/practice/server/assessment/submit.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/practice/server/attempt-events.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/practice/server/candidate-signals.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/practice/server/cause-catalog.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/practice/server/failure-learning-attribution.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/practice/server/failure-learning-native.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/practice/server/failure-learning-public.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/practice/server/failure-learning-variant.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/practice/server/failure-learning.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/practice/server/intervention-author.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/practice/server/intervention-diagnostics.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/practice/server/judge-operational.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/practice/server/judge-run-dispatch.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/practice/server/judge-run-observation.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/practice/server/judge-run-payload.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/practice/server/judge/evaluate-submission.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/practice/server/judge/evaluation-authority.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/practice/server/judge/index.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/practice/server/knowledge-runtime.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/practice/server/learnable-frontier.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/practice/server/learning-content-validation.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/practice/server/mastery-progress-signal.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/practice/server/paper-submit.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/practice/server/placement-assessment.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/practice/server/placement-select.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/practice/server/proposal-appliers.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/practice/server/question-supply/jyeoo-candidates.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/practice/server/question-supply/placement-starter-attempts.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/practice/server/question-supply/placement-starter-store.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/practice/server/question-supply/target-discovery.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/practice/server/quiz/verify-framework.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/practice/server/review-operation.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/practice/server/solve-session.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/practice/server/tools/jyeoo-fetch-candidates.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/practice/server/tools/question-context.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/capabilities/practice/server/tools/store-sourced-question.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/kernel/placement-persistence.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/kernel/read-models/failure-attempts.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/server/assessment/learning-scope.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/server/assessment/runtime.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/server/assessment/settle.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/server/mastery/family-key.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/server/mastery/personalized-difficulty.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/server/mastery/recalibration.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/server/mastery/state.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/server/projections/knowledge_edge.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/server/proposals/owner-runtime.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/server/proposals/practice-runtime.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/server/questions/sourced-draft-insert.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/server/records/mistakes.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/server/revert/cascade-revert.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/server/revert/restore-snapshot.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "to": "src/server/subjects/ensure-subject-root.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/judge-operational.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/judge-operational.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/judge-run-dispatch.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/judge-run-dispatch.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/judge-run-observation.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/judge-run-observation.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/judge-run-payload.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/judge-run-payload.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/judge/evaluate-submission.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/judge/evaluate-submission.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/judge/evaluation-authority.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/judge/evaluation-authority.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/judge/index.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/judge/index.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/knowledge-runtime.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/knowledge-runtime.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/learnable-frontier.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/learnable-frontier.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/learning-content-validation.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/learning-content-validation.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/mastery-progress-signal.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/mastery-progress-signal.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/paper-submit.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/paper-submit.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/placement-assessment.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/placement-assessment.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/placement-select.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/placement-select.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/proposal-appliers.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/proposal-appliers.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/question-supply/jyeoo-candidates.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/question-supply/jyeoo-candidates.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/question-supply/placement-starter-attempts.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/question-supply/placement-starter-attempts.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/question-supply/placement-starter-store.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/question-supply/placement-starter-store.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/question-supply/target-discovery.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/question-supply/target-discovery.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/quiz/verify-framework.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/quiz/verify-framework.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/review-operation.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/review-operation.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/solve-session.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/solve-session.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/tools/jyeoo-fetch-candidates.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/tools/jyeoo-fetch-candidates.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/tools/question-context.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/tools/question-context.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/tools/store-sourced-question.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/tools/store-sourced-question.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/kernel/placement-persistence.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/kernel/placement-persistence.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/kernel/read-models/failure-attempts.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/kernel/read-models/failure-attempts.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/server/assessment/learning-scope.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/server/assessment/learning-scope.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/server/assessment/runtime.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/server/assessment/runtime.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/server/assessment/settle.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/server/assessment/settle.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/server/mastery/family-key.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/server/mastery/family-key.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/server/mastery/personalized-difficulty.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/server/mastery/personalized-difficulty.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/server/mastery/recalibration.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/server/mastery/recalibration.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/server/mastery/state.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/server/mastery/state.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/server/projections/knowledge_edge.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/server/projections/knowledge_edge.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/server/proposals/owner-runtime.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/server/proposals/owner-runtime.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/server/proposals/practice-runtime.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/server/proposals/practice-runtime.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/server/questions/sourced-draft-insert.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/server/questions/sourced-draft-insert.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/server/records/mistakes.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/server/records/mistakes.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/server/revert/cascade-revert.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/server/revert/cascade-revert.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/server/revert/restore-snapshot.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/server/revert/restore-snapshot.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/server/subjects/ensure-subject-root.ts",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    },
+    {
+      "from": "src/server/subjects/ensure-subject-root.ts",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    }
+  ],
+  "ok": false
+}

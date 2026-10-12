@@ -264,6 +264,10 @@ export function applyConfidenceThreshold(
   );
 }
 
+function isAbortError(error: unknown): error is Error {
+  return error instanceof Error && error.name === 'AbortError';
+}
+
 /**
  * Call GLM chat/completions to judge reconciliation. Returns typed decisions.
  * Throws ReconcileParseError on bad JSON, RetryableError/PermanentError on
@@ -294,11 +298,12 @@ export async function judgeReconciliation(
 
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const fetchImpl = opts.fetchImpl ?? fetch;
-  if (!opts.providerAttempt) {
+  const providerAttempt = opts.providerAttempt;
+  if (!providerAttempt) {
     throw new TypeError('judgeReconciliation requires provider attempt context');
   }
   const result = await executeDirectProviderAttempt(
-    opts.providerAttempt,
+    providerAttempt,
     {
       provider: glmConfig.provider,
       model: glmConfig.model,
@@ -306,112 +311,123 @@ export async function judgeReconciliation(
       protocol: 'http',
       endpointClass: 'openai-compatible.chat-completions',
       operationKind: 'memory_reconcile',
+      providerStartFence: 'operation_kind',
       unknownCostCurrency: glmConfig.provider === 'glm' ? 'CNY' : 'USD',
     },
     async (attempt) => {
+      const transportTimeoutMs = Math.min(
+        timeoutMs,
+        providerAttempt.deadlineAt.getTime() - Date.now(),
+      );
+      if (transportTimeoutMs <= 0) {
+        attempt.markTerminal('aborted', 'provider_request_aborted', 0);
+        throw new RetryableError('Memory reconcile operation deadline elapsed before transport');
+      }
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), timeoutMs);
-      let resp: Response;
+      const timer = setTimeout(() => controller.abort(), transportTimeoutMs);
       try {
-        resp = await fetchImpl(`${glmConfig.baseURL}/chat/completions`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${glmConfig.apiKey}`,
-            ...memoryLlmHeaders(glmConfig, attempt.attemptId),
-          },
-          body: JSON.stringify(body),
-          signal: controller.signal,
-        });
-      } catch (err) {
-        const aborted = err instanceof Error && err.name === 'AbortError';
-        attempt.markTerminal(
-          aborted ? 'aborted' : 'failed',
-          aborted ? 'provider_request_aborted' : 'provider_network_error',
-        );
-        if (aborted) {
-          throw new RetryableError(
-            `Memory reconcile request aborted/timed out after ${timeoutMs}ms`,
-            {
-              cause: err,
+        let resp: Response;
+        try {
+          resp = await fetchImpl(`${glmConfig.baseURL}/chat/completions`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${glmConfig.apiKey}`,
+              ...memoryLlmHeaders(glmConfig, attempt.attemptId),
             },
+            body: JSON.stringify(body),
+            signal: controller.signal,
+          });
+        } catch (err) {
+          if (isAbortError(err)) throw err;
+          attempt.markTerminal('failed', 'provider_network_error');
+          throw new RetryableError(`Memory reconcile network error: ${String(err)}`, {
+            cause: err,
+          });
+        }
+
+        const headerRequestId = resp.headers.get('x-request-id');
+        if (headerRequestId) await attempt.recordExternalRequestId(headerRequestId);
+        if (!resp.ok) {
+          let errBody: GlmChatResponse | null = null;
+          try {
+            errBody = (await resp.json()) as GlmChatResponse;
+          } catch (err) {
+            if (isAbortError(err)) throw err;
+            errBody = null;
+          }
+          const bodyRequestId = errBody?.id?.trim();
+          if (!headerRequestId && bodyRequestId) {
+            await attempt.recordExternalRequestId(bodyRequestId);
+          }
+          attempt.markTerminal('failed', `provider_http_${resp.status}`);
+          const code = errBody?.error?.code ?? '';
+          const message = `Memory reconcile error [http ${resp.status}${code ? ` code ${code}` : ''}]: ${errBody?.error?.message ?? 'no message'}`;
+          if (resp.status === 401 || resp.status === 403) throw new PermanentError(message);
+          if (resp.status === 429 || resp.status >= 500) throw new RetryableError(message);
+          throw new PermanentError(message);
+        }
+
+        let json: GlmChatResponse;
+        try {
+          json = (await resp.json()) as GlmChatResponse;
+        } catch (err) {
+          if (isAbortError(err)) throw err;
+          attempt.markTerminal('failed', 'provider_response_malformed');
+          throw new PermanentError('Memory reconcile returned a non-JSON 2xx body', { cause: err });
+        }
+        if (!headerRequestId && json.id) await attempt.recordExternalRequestId(json.id);
+
+        const promptTokens = json.usage?.prompt_tokens;
+        const completionTokens = json.usage?.completion_tokens;
+        const totalTokens = json.usage?.total_tokens;
+        const hasReportedTokens =
+          typeof promptTokens === 'number' ||
+          typeof completionTokens === 'number' ||
+          typeof totalTokens === 'number';
+        const hasPricedTokens =
+          typeof promptTokens === 'number' || typeof completionTokens === 'number';
+        if (hasReportedTokens) {
+          attempt.reportUsage({
+            input: typeof promptTokens === 'number' ? promptTokens : null,
+            output: typeof completionTokens === 'number' ? completionTokens : null,
+            total: typeof totalTokens === 'number' ? totalTokens : null,
+          });
+        }
+        if (hasPricedTokens && glmConfig.provider === 'glm') {
+          const estimatedCostCny = glmChatCostCny(promptTokens ?? 0, completionTokens ?? 0);
+          attempt.estimateCost({
+            amount: estimatedCostCny,
+            currency: 'CNY',
+            source: 'glm-chat-pricebook',
+          });
+        }
+
+        const content = json.choices?.[0]?.message?.content;
+        if (typeof content !== 'string' || content.trim().length === 0) {
+          attempt.markTerminal('failed', 'provider_response_malformed');
+          throw new ReconcileParseError(
+            'Memory reconcile response has no message content',
+            JSON.stringify(json),
           );
         }
-        throw new RetryableError(`Memory reconcile network error: ${String(err)}`, {
-          cause: err,
-        });
+        try {
+          return applyConfidenceThreshold(parseReconcileResponse(content));
+        } catch (err) {
+          attempt.markTerminal('failed', 'provider_response_malformed');
+          throw err;
+        }
+      } catch (err) {
+        if (isAbortError(err)) {
+          attempt.markTerminal('aborted', 'provider_request_aborted');
+          throw new RetryableError(
+            `Memory reconcile request aborted/timed out after ${transportTimeoutMs}ms`,
+            { cause: err },
+          );
+        }
+        throw err;
       } finally {
         clearTimeout(timer);
-      }
-
-      const headerRequestId = resp.headers.get('x-request-id');
-      if (headerRequestId) await attempt.recordExternalRequestId(headerRequestId);
-      if (!resp.ok) {
-        attempt.markTerminal('failed', `provider_http_${resp.status}`);
-        let errBody: GlmChatResponse | null = null;
-        try {
-          errBody = (await resp.json()) as GlmChatResponse;
-        } catch {
-          errBody = null;
-        }
-        const bodyRequestId = errBody?.id?.trim();
-        if (!headerRequestId && bodyRequestId) {
-          await attempt.recordExternalRequestId(bodyRequestId);
-        }
-        const code = errBody?.error?.code ?? '';
-        const message = `Memory reconcile error [http ${resp.status}${code ? ` code ${code}` : ''}]: ${errBody?.error?.message ?? 'no message'}`;
-        if (resp.status === 401 || resp.status === 403) throw new PermanentError(message);
-        if (resp.status === 429 || resp.status >= 500) throw new RetryableError(message);
-        throw new PermanentError(message);
-      }
-
-      let json: GlmChatResponse;
-      try {
-        json = (await resp.json()) as GlmChatResponse;
-      } catch (err) {
-        attempt.markTerminal('failed', 'provider_response_malformed');
-        throw new PermanentError('Memory reconcile returned a non-JSON 2xx body', { cause: err });
-      }
-      if (!headerRequestId && json.id) await attempt.recordExternalRequestId(json.id);
-
-      const promptTokens = json.usage?.prompt_tokens;
-      const completionTokens = json.usage?.completion_tokens;
-      const totalTokens = json.usage?.total_tokens;
-      const hasReportedTokens =
-        typeof promptTokens === 'number' ||
-        typeof completionTokens === 'number' ||
-        typeof totalTokens === 'number';
-      const hasPricedTokens =
-        typeof promptTokens === 'number' || typeof completionTokens === 'number';
-      if (hasReportedTokens) {
-        attempt.reportUsage({
-          input: typeof promptTokens === 'number' ? promptTokens : null,
-          output: typeof completionTokens === 'number' ? completionTokens : null,
-          total: typeof totalTokens === 'number' ? totalTokens : null,
-        });
-      }
-      if (hasPricedTokens && glmConfig.provider === 'glm') {
-        const estimatedCostCny = glmChatCostCny(promptTokens ?? 0, completionTokens ?? 0);
-        attempt.estimateCost({
-          amount: estimatedCostCny,
-          currency: 'CNY',
-          source: 'glm-chat-pricebook',
-        });
-      }
-
-      const content = json.choices?.[0]?.message?.content;
-      if (typeof content !== 'string' || content.trim().length === 0) {
-        attempt.markTerminal('failed', 'provider_response_malformed');
-        throw new ReconcileParseError(
-          'Memory reconcile response has no message content',
-          JSON.stringify(json),
-        );
-      }
-      try {
-        return applyConfidenceThreshold(parseReconcileResponse(content));
-      } catch (err) {
-        attempt.markTerminal('failed', 'provider_response_malformed');
-        throw err;
       }
     },
   );

@@ -1,0 +1,22 @@
+{
+  "base": "60c4f980fce83d73b78fb912a4b097c34b8f250a",
+  "scope": "Primary scanTaskCallers on immutable/current single-file src snapshots",
+  "beforeUnresolved": [
+    {
+      "file": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "line": 452,
+      "column": 29,
+      "callee": "deps.runTaskFn",
+      "expression": "work.taskName"
+    }
+  ],
+  "afterUnresolved": [
+    {
+      "file": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "line": 451,
+      "column": 29,
+      "callee": "deps.runTaskFn",
+      "expression": "work.taskName"
+    }
+  ]
+}

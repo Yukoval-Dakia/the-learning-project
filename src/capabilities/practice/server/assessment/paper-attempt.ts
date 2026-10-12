@@ -1,5 +1,6 @@
 import { and, eq, gte, sql } from 'drizzle-orm';
 import { EvaluationRecord } from '@/core/schema/assessment';
+import type { JudgeResultV2T } from '@/core/schema/capability';
 import type { Db } from '@/db/client';
 import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import { answer, learning_session } from '@/db/schema';
@@ -137,8 +138,9 @@ export async function submitNativePaperAttempt(db: Db, input: NativePaperAttempt
   // correction (or retraction) must never reactivate the original candidate.
   const currentVerdict = await resolveVerdictForGroup(db, slot.evaluation_group_id);
   let receipt: {
-    coarseOutcome: 'correct' | 'partial' | 'incorrect' | 'unsupported';
+    coarseOutcome: JudgeResultV2T['coarse_outcome'];
     score: number | null;
+    partialUnits?: Extract<JudgeResultV2T, { coarse_outcome: 'partial_unknown' }>['partial_units'];
     status: 'effective' | 'review_required';
     evaluationId?: string;
   };
@@ -153,6 +155,9 @@ export async function submitNativePaperAttempt(db: Db, input: NativePaperAttempt
     receipt = {
       coarseOutcome: result?.coarse_outcome ?? 'unsupported',
       score: result?.score ?? null,
+      ...(result?.coarse_outcome === 'partial_unknown'
+        ? { partialUnits: result.partial_units }
+        : {}),
       status: result ? 'effective' : 'review_required',
       evaluationId: effective?.evaluation_id,
     };
@@ -184,6 +189,9 @@ export async function submitNativePaperAttempt(db: Db, input: NativePaperAttempt
     receipt = {
       coarseOutcome: committed.candidate.result.coarse_outcome,
       score: committed.candidate.result.score,
+      ...(committed.candidate.result.coarse_outcome === 'partial_unknown'
+        ? { partialUnits: committed.candidate.result.partial_units }
+        : {}),
       status: committed.status,
       evaluationId: committed.candidate.evaluation.record.evaluation_id,
     };

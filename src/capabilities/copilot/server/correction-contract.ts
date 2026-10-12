@@ -9,6 +9,10 @@ const CorrectionEnvelopeSchema = z.object({
 
 export type CopilotCorrectionContract = {
   readonly target_prior_turn_id?: string;
+  readonly restricted_target?: boolean;
+  readonly positions_unavailable?: boolean;
+  readonly prior_turn_order?: readonly string[];
+  readonly restricted_prior_turn_ids?: readonly string[];
   readonly available_prior_turn_ids: readonly string[];
   readonly prior_turn_summaries?: Readonly<Record<string, string>>;
   readonly required_fields: readonly ['prior_turn_id', 'changed', 'retained', 'uncertain'];
@@ -37,8 +41,9 @@ function clarificationReply(
     .map((id) => {
       // Position labels stay relative to the FULL history so a narrowed
       // candidate list does not renumber older turns as “上一轮”.
-      const index = contract.available_prior_turn_ids.indexOf(id);
-      const distance = contract.available_prior_turn_ids.length - index;
+      const order = contract.prior_turn_order ?? contract.available_prior_turn_ids;
+      const index = order.indexOf(id);
+      const distance = order.length - index;
       const position =
         distance === 1 ? '上一轮' : distance === 2 ? '上上轮' : `往前第 ${distance} 轮`;
       const summary = contract.prior_turn_summaries?.[id];
@@ -72,10 +77,22 @@ export function resolveDeterministicCorrectionContract(
   userMessage: string,
   contract: CopilotCorrectionContract,
 ): CopilotImplicitCorrectionResolution {
+  if (
+    contract.restricted_target ||
+    contract.restricted_prior_turn_ids?.some((id) => userMessage.includes(id))
+  ) {
+    return {
+      kind: 'clarify',
+      reply:
+        '这条回复仅用于当时的回答，不能自动用于后续更正。请重新输入或粘贴需要使用的内容，并选择本轮用途。',
+    };
+  }
   if (contract.target_prior_turn_id !== undefined) {
     return bindTarget(contract, contract.target_prior_turn_id);
   }
   if (!CORRECTION_VERB.test(userMessage)) return { kind: 'normal', contract };
+  if (contract.positions_unavailable)
+    return { kind: 'clarify', reply: '历史用途暂时无法核对，请重新提交需要更正的内容。' };
 
   const exactTargets = contract.available_prior_turn_ids.filter((id) => userMessage.includes(id));
   if (exactTargets.length === 1) return bindTarget(contract, exactTargets[0] as string);
@@ -93,7 +110,12 @@ export function resolveDeterministicCorrectionContract(
 
   if (distances.size === 1) {
     const distance = [...distances][0] as number;
-    const target = contract.available_prior_turn_ids.at(-distance);
+    const target = (contract.prior_turn_order ?? contract.available_prior_turn_ids).at(-distance);
+    if (target && contract.restricted_prior_turn_ids?.includes(target))
+      return resolveDeterministicCorrectionContract(userMessage, {
+        ...contract,
+        restricted_target: true,
+      });
     return target
       ? bindTarget(contract, target)
       : { kind: 'clarify', reply: clarificationReply(contract) };
@@ -103,6 +125,11 @@ export function resolveDeterministicCorrectionContract(
   }
 
   if (!PRIOR_ANSWER_CUE.test(userMessage)) return { kind: 'normal', contract };
+  if (contract.restricted_prior_turn_ids?.length)
+    return {
+      kind: 'clarify',
+      reply: '请明确要更正的回复；仅用于本次回答的内容需要重新输入或粘贴后才能继续使用。',
+    };
   if (contract.available_prior_turn_ids.length === 1) {
     return bindTarget(contract, contract.available_prior_turn_ids[0] as string);
   }

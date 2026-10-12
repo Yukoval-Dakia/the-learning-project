@@ -78,6 +78,9 @@ export async function createAttempt(req: Request): Promise<Response> {
             route: 'evaluate_submission',
             score: judged.score,
             coarse_outcome: judged.coarse_outcome,
+            ...(judged.coarse_outcome === 'partial_unknown'
+              ? { partial_units: judged.partial_units }
+              : {}),
             confidence: judged.confidence,
             feedback_md: judged.feedback_md,
             evidence_json: judged.evidence_json,

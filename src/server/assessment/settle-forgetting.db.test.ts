@@ -894,6 +894,79 @@ describe('candidate product settlement, replay and selected readers', () => {
     expect((await candidateRow('kc_b')).state.global.projection).toMatchObject({ eventCount: 1 });
   });
 
+  // @invariant grading: partial-unknown settlement cannot write candidate memory, FSRS or ability evidence
+  // @fails-if partial-unknown counts become candidate observations or a sealed unsupported verdict is replayed as scored evidence
+  it('excludes partial-unknown scores from candidate settlement and sealed replay', async () => {
+    const seed = await seedChain('partial_unknown', { kcs: ['kc_a'] });
+    const unitId = `${seed.qid}::u`;
+    await seedEvaluation(seed, 'partial_unknown_eval', {
+      unitResults: [
+        {
+          status: 'scored',
+          scoring_unit_id: unitId,
+          points_awarded: null,
+          scored_because: 'response',
+          partial_unknown_points: { correct_count: 2, total_count: 3 },
+        },
+      ],
+      aggregate: {
+        kind: 'partial_unknown_points',
+        known_points: 0,
+        partial_units: [{ scoring_unit_id: unitId, correct_count: 2, total_count: 3 }],
+      },
+    });
+    expect(
+      await activate('partial_unknown_eval', { effectiveId: null, generation: 0 }),
+    ).toMatchObject({ status: 'activated', effect: 'ineligible' });
+    expect(await testDb().select().from(material_fsrs_state)).toEqual([]);
+    expect(await testDb().select().from(mastery_state)).toEqual([]);
+    const [receipt] = await appliedEvents();
+    expect(receipt.payload).toMatchObject({
+      rating: null,
+      verdict: { verdict: 'unsupported', reason: 'partial_unknown_points' },
+      effects: { fsrs_applied: [], theta_applied: [], family_observation_recorded: false },
+      replay_inputs: {
+        forgettingSuppressed: true,
+        forgettingInput: {
+          fact: { judgment: 'unknown' },
+          adaptedEvidence: [{ kind: 'excluded' }],
+        },
+      },
+    });
+    // An old seal may have admitted a scored point; the verdict remains authoritative.
+    const plan = receipt.payload.replay_inputs as Record<string, unknown>;
+    const fact = SealedCandidateInputSchema.parse(plan.forgettingInput).fact;
+    const [oldReceipt] = await testDb()
+      .update(event)
+      .set({
+        payload: {
+          ...receipt.payload,
+          effect: 'applied',
+          effects: { subjects: ['knowledge:kc_a'], fsrs_applied: ['knowledge:kc_a'] },
+          replay_inputs: {
+            ...plan,
+            forgettingSuppressed: false,
+            forgettingInput: sealCandidateFact({
+              ...fact,
+              judgment: 'admitted',
+              points: [{ maximum: 1, earned: 1, shares: [{ skillId: 'kc_a', share: 1 }] }],
+            }),
+          },
+        },
+      })
+      .where(eq(event.id, receipt.id))
+      .returning();
+    const state = await testDb().transaction((tx) =>
+      candidateStateForRead(tx, { kind: 'knowledge', id: 'kc_a' }, NOW),
+    );
+    expect(state.global.projection.kind).toBe('cold');
+    expect(await testDb().select().from(material_fsrs_state)).toEqual([]);
+    expect(await testDb().select().from(mastery_state)).toEqual([]);
+    expect((await testDb().select().from(event).where(eq(event.id, receipt.id)))[0]).toEqual(
+      oldReceipt,
+    );
+  });
+
   // @invariant grading: due-list and copilot use the same selected due projection and preserve unknown retention metadata
   // @fails-if first independent failure bypasses one-day completion cooldown, reader clocks postpone it, or queue/tool counts diverge
   it('flips due boundaries across queue/tool readers and keeps cold states unknown', async () => {

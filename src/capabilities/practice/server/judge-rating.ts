@@ -26,6 +26,7 @@ export function ratingFromCoarseOutcome(
   outcome: CoarseOutcome,
   subjectProfile?: RatingPolicyProfileLike | null,
 ): Rating | null {
+  if (outcome === 'partial_unknown') return null;
   const policy: RatingFromOutcomePolicyT = ratingFromOutcomeFor(subjectProfile);
   return policy[outcome] ?? null;
 }

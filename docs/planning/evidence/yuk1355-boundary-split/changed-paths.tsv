@@ -1,0 +1,37 @@
+A	docs/planning/evidence/yuk1355-boundary-split/README.md
+A	docs/planning/evidence/yuk1355-boundary-split/architecture.log.gz
+A	docs/planning/evidence/yuk1355-boundary-split/ast-before.json
+A	docs/planning/evidence/yuk1355-boundary-split/ast-comparison.json
+A	docs/planning/evidence/yuk1355-boundary-split/ast.log.gz
+A	docs/planning/evidence/yuk1355-boundary-split/boundaries.log.gz
+A	docs/planning/evidence/yuk1355-boundary-split/build.log.gz
+A	docs/planning/evidence/yuk1355-boundary-split/checks.json
+A	docs/planning/evidence/yuk1355-boundary-split/compare-ast.cjs
+A	docs/planning/evidence/yuk1355-boundary-split/diff.log.gz
+A	docs/planning/evidence/yuk1355-boundary-split/import-cycles.json
+A	docs/planning/evidence/yuk1355-boundary-split/lint-final.log.gz
+A	docs/planning/evidence/yuk1355-boundary-split/lint-initial.log.gz
+A	docs/planning/evidence/yuk1355-boundary-split/partition.log.gz
+A	docs/planning/evidence/yuk1355-boundary-split/product-files.json
+A	docs/planning/evidence/yuk1355-boundary-split/protected-paths.log.gz
+A	docs/planning/evidence/yuk1355-boundary-split/typecheck.log.gz
+A	docs/planning/evidence/yuk1355-boundary-split/unit.log.gz
+M	src/capabilities/notes/jobs/note_verify.control.test.ts
+M	src/capabilities/notes/jobs/note_verify.ts
+M	src/capabilities/notes/public.ts
+R089	src/server/durable/paid-effect-note-admission.ts	src/capabilities/notes/server/paid-effect-note-admission.ts
+R100	src/server/durable/paid-effect-note-obligations.ts	src/capabilities/notes/server/paid-effect-note-obligations.ts
+M	src/capabilities/practice/public.ts
+M	src/capabilities/practice/server/calibration-sample-durable-operation.db.test.ts
+M	src/capabilities/practice/server/calibration-sample-durable-operation.ts
+R098	src/server/durable/calibration-sample-store.ts	src/capabilities/practice/server/calibration-sample-store.ts
+R100	src/server/durable/paid-effect-protocol.ts	src/core/migration/paid-effect-protocol.ts
+A	src/db/paid-effect-control.ts
+R099	src/server/durable/paid-effect-store.ts	src/db/paid-effect-store.ts
+M	src/db/schema.ts
+M	src/server/durable/calibration-sample-family.ts
+M	src/server/durable/note-verify-family.test.ts
+M	src/server/durable/note-verify-family.ts
+M	src/server/durable/paid-effect-control.ts
+M	src/server/durable/paid-effect-protocol.test.ts
+M	src/server/durable/paid-effect-store.db.test.ts

@@ -24,6 +24,7 @@ export interface JudgeResultPanelProps {
 const OUTCOME_TONE: Record<JudgeResultV2T['coarse_outcome'], string> = {
   correct: 'judge-tone-correct',
   partial: 'judge-tone-partial',
+  partial_unknown: 'judge-tone-partial',
   incorrect: 'judge-tone-incorrect',
   unsupported: 'judge-tone-unsupported',
 };
@@ -31,6 +32,7 @@ const OUTCOME_TONE: Record<JudgeResultV2T['coarse_outcome'], string> = {
 const OUTCOME_LABEL: Record<JudgeResultV2T['coarse_outcome'], string> = {
   correct: '完整正确',
   partial: '部分正确',
+  partial_unknown: '部分正确',
   incorrect: '错误',
   unsupported: '无法判分',
 };
@@ -61,6 +63,10 @@ export function JudgeResultPanel({
       <div className="judge-result-panel__header">
         <span className={`judge-result-panel__outcome ${OUTCOME_TONE[result.coarse_outcome]}`}>
           {OUTCOME_LABEL[result.coarse_outcome]}
+          {result.coarse_outcome === 'partial_unknown' &&
+            `（${result.partial_units
+              .map((unit) => `${unit.correct_count}/${unit.total_count}`)
+              .join('、')}），分数未知`}
         </span>
         {result.score !== null && (
           <span className="judge-result-panel__score">{(result.score * 100).toFixed(0)}%</span>

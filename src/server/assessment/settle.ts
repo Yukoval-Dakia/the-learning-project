@@ -623,7 +623,9 @@ function derivePlan(input: ActivationSettleInput, scope: SettlementScope): Settl
   );
   return {
     forgettingInput,
-    forgettingSuppressed: scope.preserveScheduling || (!selfReport && help !== 'none'),
+    forgettingSuppressed:
+      scope.preserveScheduling ||
+      (!selfReport && (verdict.verdict === 'unsupported' || help !== 'none')),
     forgettingEngine: selectedForgettingEngine(),
     kind: 'plan',
     groupId: input.evaluation.evaluation_group_id,
@@ -660,7 +662,8 @@ function candidateSchedulingSuppressed(plan: SettlementPlan): boolean {
     : plan.ratingSource === 'user';
   return (
     !selfReport &&
-    (plan.provenance.assisted ||
+    (plan.verdict.verdict === 'unsupported' ||
+      plan.provenance.assisted ||
       (plan.forgettingInput !== undefined &&
         (plan.forgettingInput.fact.help !== 'none' ||
           (plan.forgettingInput.fact.hints_used ?? 0) > 0 ||

@@ -101,6 +101,9 @@ export function judgeResultToRatingAdvice(
 ): RatingAdvice {
   const capabilityLabel = `${result.capability_ref.id}@${result.capability_ref.version}`;
 
+  if (result.coarse_outcome === 'partial_unknown') {
+    return { rating: null, reason: result.feedback_md, evidence_score: null };
+  }
   if (result.coarse_outcome === 'unsupported') {
     return {
       rating: null,

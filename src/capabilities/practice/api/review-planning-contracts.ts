@@ -3,8 +3,8 @@ import { ActivateEvaluationIntent } from '@/core/schema/assessment';
 import {
   ActivityRef,
   CauseCategory,
-  CoarseOutcome,
   FsrsRating,
+  PartialUnknownJudgeResult,
   ScoreMeaning,
 } from '@/kernel/capability-contract-schemas';
 import { ANCHOR_BUCKETS, type AnchorBucket } from '@/server/mastery/fixed-anchor';
@@ -55,11 +55,11 @@ export const ReviewAdviceBodySchema = z.object({
   answer_image_refs: z.array(z.string()).default([]),
 });
 
-const ReviewAdviceJudgeSchema = z.object({
+const LegacyReviewAdviceJudgeSchema = z.object({
   route: z.string(),
   score: z.number().nullable(),
   score_meaning: ScoreMeaning,
-  coarse_outcome: CoarseOutcome,
+  coarse_outcome: z.enum(['correct', 'partial', 'incorrect', 'unsupported']),
   confidence: z.number().min(0).max(1),
   feedback_md: z.string(),
   evidence_json: z.record(z.string(), z.unknown()),
@@ -75,6 +75,14 @@ const ReviewAdviceJudgeSchema = z.object({
   task_run_id: z.string().optional(),
   provenance_token: z.string().optional(),
 });
+
+const ReviewAdviceJudgeSchema = z.discriminatedUnion('coarse_outcome', [
+  LegacyReviewAdviceJudgeSchema,
+  LegacyReviewAdviceJudgeSchema.omit({ coarse_outcome: true, score: true }).extend(
+    PartialUnknownJudgeResult.pick({ coarse_outcome: true, score: true, partial_units: true })
+      .shape,
+  ),
+]);
 
 export const ReviewAdviceResponseSchema = z.object({
   activity_ref: ActivityRef,

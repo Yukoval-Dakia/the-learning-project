@@ -1,3 +1,4 @@
+import { DerivationPolicy } from '@/core/schema/derivation-policy';
 import { db } from '@/db/client';
 import { errorResponse } from '@/kernel/http';
 import { createCopilotConversation, listCopilotConversations } from '@/server/session/conversation';
@@ -5,7 +6,14 @@ import { createCopilotConversation, listCopilotConversations } from '@/server/se
 export async function GET(): Promise<Response> {
   try {
     const sessions = await listCopilotConversations(db);
-    return Response.json({ sessions, server_time: new Date().toISOString() });
+    return Response.json(
+      {
+        sessions,
+        server_time: new Date().toISOString(),
+        supported_derivation_policies: DerivationPolicy.options,
+      },
+      { headers: { 'Cache-Control': 'no-store' } },
+    );
   } catch (err) {
     return errorResponse(err);
   }
