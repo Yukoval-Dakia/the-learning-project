@@ -215,6 +215,23 @@ function keepEditsOnto(draft: EditDraft, base: EditDraft, next: EditDraft): Edit
   };
 }
 
+// 冲突字段：用户改了（draft≠base）、别处也改了（next≠base）、且两边不同（draft≠next）。
+// 返回学习者看得懂的字段名，按页面上的顺序。
+function conflictingFields(draft: EditDraft, base: EditDraft, next: EditDraft): string[] {
+  const out: string[] = [];
+  const clash = <T,>(d: T, b: T, n: T, eq: (x: T, y: T) => boolean) =>
+    !eq(d, b) && !eq(n, b) && !eq(d, n);
+  const same = <T,>(x: T, y: T) => x === y;
+  if (clash(draft.prompt_md, base.prompt_md, next.prompt_md, same)) out.push('题面');
+  if (clash(draft.choices_md, base.choices_md, next.choices_md, sameList)) out.push('选项');
+  if (clash(draft.reference_md, base.reference_md, next.reference_md, same)) out.push('参考答案');
+  if (clash(draft.draft_status, base.draft_status, next.draft_status, same)) out.push('状态');
+  if (clash(draft.difficulty, base.difficulty, next.difficulty, same)) out.push('难度');
+  if (clash(draft.knowledge_ids, base.knowledge_ids, next.knowledge_ids, sameList))
+    out.push('知识点');
+  return out;
+}
+
 // mcq 正确答案 best-effort 解析：reference_md 若以单个字母（A-Z）开头则视为答案 key。
 // 后端 choices_md 不存正确标记（DEFER 注释），故从 reference_md 推。
 function answerKeyFrom(referenceMd: string): string | null {
@@ -563,7 +580,14 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
       if (err instanceof ApiError && err.status === 409) {
         void qc.invalidateQueries({ queryKey: ['question-detail', id] });
       }
-      pushToast('warn', errMessage(err));
+      // 保存总带着未保存修改；409 后 refetch 会带出上方的新版本提示条，草稿不会被刷掉，
+      // 所以不能说「已刷新，请重试」，而是指向提示条的两个选择。
+      pushToast(
+        'warn',
+        err instanceof ApiError && err.status === 409
+          ? '这道题在别处有了更新的版本，请先在上方选择载入新版本或继续编辑。'
+          : errMessage(err),
+      );
     },
   });
 
@@ -653,9 +677,12 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
       draft.knowledge_ids.some((k, i) => k !== base.knowledge_ids[i])
     )
       body.knowledge_ids = draft.knowledge_ids;
+    const from = baseline;
     patchMut.mutate(body, {
       // 保存回执成为新出处：refetch 回来的同版本数据不会被当成「别处的新版本」。
-      onSuccess: (res) => setBaseline({ src: null, version: res.version, draft: sent }),
+      // 只在出处仍是发起保存时那一个时才换——保存途中切了题（或已载入新版本），回执不属于它。
+      onSuccess: (res) =>
+        setBaseline((b) => (b === from ? { src: null, version: res.version, draft: sent } : b)),
     });
   };
 
@@ -665,6 +692,8 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
     current && unsaved && !patchMut.isPending && current.version > baseline.version
       ? current
       : null;
+  // 双方都改了、且改得不一样的字段：「继续编辑」会以用户的内容为准，提示条要点名告知。
+  const conflicts = newer ? conflictingFields(draft, baseline.draft, draftFrom(newer)) : [];
 
   const loadNewer = () => {
     if (!newer) return;
@@ -806,7 +835,13 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
         {newer && (
           <div className="qd-stale">
             <LoomIcon name="alert" size={15} className="qd-stale-ico" />
-            <div className="qd-stale-txt">这道题在别处有了更新的版本。你这里的修改还没保存。</div>
+            <div className="qd-stale-txt">
+              这道题在别处有了更新的版本。你这里的修改还没保存。
+              {conflicts.length > 0 &&
+                ` 别处也改了：${conflicts.join('、')}。继续编辑并保存会用你的内容覆盖${
+                  conflicts.length > 1 ? '它们' : '它'
+                }。`}
+            </div>
             <div className="qd-stale-act">
               <Btn size="sm" variant="ghost" onClick={loadNewer}>
                 载入新版本
