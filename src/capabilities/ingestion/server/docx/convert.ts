@@ -27,7 +27,13 @@ export interface DocxMedia {
 
 export interface DocxConverter {
   /** 文本线: docx → gfm markdown + embedded media (pandoc --extract-media). */
-  docxToMarkdown(input: Uint8Array): Promise<{ markdown: string; media: DocxMedia[] }>;
+  docxToMarkdown(input: Uint8Array): Promise<{
+    markdown: string;
+    media: DocxMedia[];
+    /** Optional lossless layout output from a mature parser adapter. Coordinates,
+     * parser/version/config metadata stay in the original JSON, not flattened into Markdown. */
+    layout?: { format: string; bytes: Uint8Array };
+  }>;
   /** 两线都用: docx → PDF bytes (visual-line main path + text-line evidence pages). */
   docxToPdf(input: Uint8Array): Promise<Uint8Array>;
 }

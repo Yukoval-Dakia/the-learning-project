@@ -1,37 +1,15 @@
 import { getDocxConverter } from '@/capabilities/ingestion/server/docx/convert';
-import {
-  normalizeMediaPath,
-  segmentMarkdown,
-} from '@/capabilities/ingestion/server/docx/markdown-segment';
-import { persistDocxPageEvidence } from '@/capabilities/ingestion/server/docx/persist-page-evidence';
 import { prepareDocxForConversion } from '@/capabilities/ingestion/server/docx/route-classify';
-import { persistImageAsset } from '@/capabilities/ingestion/server/persist-image-asset';
-import { MAX_DOCX_UPLOAD_BYTES, MAX_IMAGE_UPLOAD_BYTES } from '@/core/limits';
+import { persistDocxSourcePackage } from '@/capabilities/ingestion/server/docx/source-package';
+import { MAX_DOCX_UPLOAD_BYTES } from '@/core/limits';
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/kernel/http';
 import { getStartedBoss } from '@/server/boss/client';
 import { getR2 } from '@/server/r2';
 import { Ingestion } from '@/server/session';
-import { initiateDocxTextUpload } from '@/server/session/docx-ingestion';
 
-// YUK-258 — DOCX ingestion endpoint. ONE .docx multipart upload → classify into
-// text / visual line → build a ready-to-review ingestion session.
-//
-//   text line (语文/纯文本卷, zero MathType):
-//     pandoc → markdown → segment into question_blocks → persist embedded images +
-//     evidence page images → initiateDocxTextUpload (uploaded→extracted直达).
-//   visual line (MathType 卷):
-//     LibreOffice→PDF→PDFium page images (= expandPdf equivalent) →
-//     initiateUpload(entrypoint='docx') → enqueueExtraction(tencent_ocr_extract).
-//
-// Unlike PDF, this endpoint is SELF-CONTAINED: it builds the session itself
-// (the client does NOT then call /api/ingestion). Returns
-// `{ session_id, line, page_count }`.
-//
-// All external conversion is收口在 the converter seam (getDocxConverter); render +
-// asset persistence reuse #332. The route runs synchronously — segmentation is
-// sub-second; the converter has its own 60s timeout guard.
-
+// DOCX preserves one complete source package and queues the existing extraction job.
+// Text/visual class is conversion evidence only; the agent owns question structure.
 const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 
 export async function POST(req: Request): Promise<Response> {
@@ -84,106 +62,19 @@ export async function POST(req: Request): Promise<Response> {
     const converter = getDocxConverter();
     const r2 = getR2();
 
-    if (line === 'visual') {
-      // Visual line: page images ARE the extract input. Render + persist (=
-      // expandPdf equivalent), then run the standard upload+extract flow.
-      const evidence = await persistDocxPageEvidence(db, r2, converter, prep.converterBytes);
-      const { sessionId } = await Ingestion.initiateUpload(db, {
-        assetIds: evidence.assetIds,
-        entrypoint: 'docx',
-        externalRefOmission,
-      });
-      const boss = await getStartedBoss();
-      await Ingestion.enqueueExtraction({ db, boss, sessionId });
-      return Response.json(
-        { session_id: sessionId, line, page_count: evidence.pageCount },
-        {
-          status: 201,
-          headers: {
-            Location: `/api/ingestion-sessions/${encodeURIComponent(sessionId)}`,
-          },
-        },
-      );
-    }
-
-    // Text line: pandoc → markdown → segment.
-    const { markdown, media } = await converter.docxToMarkdown(prep.converterBytes);
-    const { blocks: segmented, warnings } = segmentMarkdown({
-      markdown,
-      // The converter media manifest has no dimensions; the noise filter keeps
-      // dimensionless media (拿不准默认存). Tiny-image filtering activates only when
-      // a future converter supplies width/height.
-      media: media.map((m) => ({ path: m.path })),
-    });
-    if (segmented.length === 0) {
-      // No question cut → reject; do NOT create a half-baked session.
-      throw new ApiError('validation_error', 'DOCX 未能切出任何题', 400);
-    }
-
-    // Persist embedded images → asset ids, keyed by their NORMALIZED relative
-    // media path (coderabbit-b: segmentMarkdown looks these up via
-    // normalizeMediaPath, so the map key must use the same normalization or refs
-    // silently drop when a converter emits './media/…' or an absolute path).
-    const pathToAssetId = new Map<string, string>();
-    for (const m of media) {
-      // codex-4 — enforce the same per-image byte cap the generic asset route
-      // applies (MAX_IMAGE_UPLOAD_BYTES). A .docx under the 20MB cap can embed a
-      // single oversized image (e.g. uncompressed BMP); skip it rather than
-      // create an oversized source_asset that diverges from every other image
-      // path's limit. The block's prompt/options still import — only the
-      // unresolved figure is reported below; review is required.
-      if (m.bytes.byteLength > MAX_IMAGE_UPLOAD_BYTES) {
-        console.warn(
-          `[docx] skipping embedded image ${m.path}: ${m.bytes.byteLength} bytes exceeds ${MAX_IMAGE_UPLOAD_BYTES} cap`,
-        );
-        continue;
-      }
-      const row = await persistImageAsset(db, r2, { bytes: m.bytes, mime: mimeForMedia(m.path) });
-      pathToAssetId.set(normalizeMediaPath(m.path), row.id);
-    }
-
-    // Evidence page images (原图同步存储不变式 — text line也存证).
-    const evidence = await persistDocxPageEvidence(db, r2, converter, prep.converterBytes);
-
-    const blocks = segmented.map((s) => {
-      const imageRefs: string[] = [];
-      for (const path of s.imagePaths) {
-        const assetId = pathToAssetId.get(path);
-        if (assetId) imageRefs.push(assetId);
-        else warnings.push(`第 ${s.structured.question_no} 题有图片未能保存，请对照原卷确认。`);
-      }
-      const candidatePaths = s.candidateImagePaths ?? s.imagePaths;
-      return {
-        structured: s.structured,
-        imageRefs,
-        candidateImageRefs: candidatePaths.flatMap((path) => {
-          const id = pathToAssetId.get(path);
-          return id ? [id] : [];
-        }),
-        missingMediaPaths: candidatePaths.filter((path) => !pathToAssetId.has(path)),
-      };
-    });
-    const referencedPaths = new Set(segmented.flatMap((s) => s.imagePaths));
-    const unassignedCount = [...pathToAssetId.keys()].filter((p) => !referencedPaths.has(p)).length;
-    if (unassignedCount > 0) {
-      warnings.push(`有 ${unassignedCount} 张内嵌图片未关联到题目，请对照原卷确认。`);
-    }
-
-    const { sessionId } = await initiateDocxTextUpload(db, {
-      evidenceAssetIds: evidence.assetIds,
-      inputSha256: prep.inputSha256,
-      converterInputSha256: prep.converterInputSha256,
-      mediaAssets: Object.fromEntries(pathToAssetId),
-      markdown,
-      warnings,
-      blocks,
-      // YUK-1476 — honest omission audit (both digests + omitted facts) on the
-      // text-line session; only present when the converter input was sanitized.
+    const source = await persistDocxSourcePackage(db, r2, converter, docxBytes, prep);
+    const { sessionId } = await Ingestion.initiateUpload(db, {
+      // Existing page_index consumers require page assets in this ordered list.
+      assetIds: source.pages.assetIds,
+      entrypoint: 'docx',
       externalRefOmission,
+      docxSource: { package: source.package, markdown: source.markdown },
     });
+    const boss = await getStartedBoss();
+    await Ingestion.enqueueExtraction({ db, boss, sessionId });
 
     return Response.json(
-      { session_id: sessionId, line, page_count: evidence.pageCount },
+      { session_id: sessionId, line, page_count: source.pages.pageCount },
       {
         status: 201,
         headers: {
@@ -194,15 +85,4 @@ export async function POST(req: Request): Promise<Response> {
   } catch (err) {
     return errorResponse(err);
   }
-}
-
-// pandoc names media imageN.<ext>; map the common raster extensions to a mime so
-// persistImageAsset stamps the source_asset row correctly. Default to PNG.
-function mimeForMedia(path: string): string {
-  const lower = path.toLowerCase();
-  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
-  if (lower.endsWith('.gif')) return 'image/gif';
-  if (lower.endsWith('.webp')) return 'image/webp';
-  if (lower.endsWith('.bmp')) return 'image/bmp';
-  return 'image/png';
 }

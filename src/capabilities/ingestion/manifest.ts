@@ -393,6 +393,14 @@ export const ingestionCapability = defineCapability({
           import('./server/tools/get-record-context').then((module) => module.getRecordContextTool),
       },
       {
+        name: 'read_docx_source',
+        load: () => import('./server/tools/docx-agent').then((m) => m.readDocxSourceTool),
+      },
+      {
+        name: 'edit_docx_drafts',
+        load: () => import('./server/tools/docx-agent').then((m) => m.editDocxDraftsTool),
+      },
+      {
         name: 'get_question_block_structure',
         load: () =>
           import('./server/tools/question-block-structure').then(

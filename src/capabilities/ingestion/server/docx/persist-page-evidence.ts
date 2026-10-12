@@ -1,5 +1,8 @@
 import { renderPdfToPngPages } from '@/capabilities/ingestion/server/pdf-render';
-import { persistImageAsset } from '@/capabilities/ingestion/server/persist-image-asset';
+import {
+  persistImageAsset,
+  persistSourceAsset,
+} from '@/capabilities/ingestion/server/persist-image-asset';
 import { MAX_DOCX_PAGES, MAX_PDF_PAGES } from '@/core/limits';
 import type { Db } from '@/db/client';
 import type { R2Client } from '@/server/r2';
@@ -16,22 +19,14 @@ if (MAX_DOCX_PAGES !== MAX_PDF_PAGES) {
   );
 }
 
-// YUK-258 — 原图同步存储不变式 (owner 铁律, BOTH lines execute this).
-//
-// Every uploaded .docx is rendered once via LibreOffice→PDF→PDFium into page
-// images persisted as source_asset rows:
-//   - 视觉线: the page images ARE the extract input (fed to tencent_ocr_extract).
-//   - 文本线: blocks come from pandoc markdown; the page images are evidence only
-//     (VLM 兜底 / 人工 review 时有图可读).
-//
-// Reuses #332全套 unchanged: renderPdfToPngPages (PDFium, 30s timeout + 15-page
-// cap) + persistImageAsset (content-addressed SHA-256 → R2 + source_asset row).
-// MAX_DOCX_PAGES is provably equal to MAX_PDF_PAGES so the cap carries over.
-
+// Render and persist evidence with the existing LibreOffice/PDFium adapter.
+// Agent structure decisions consume these pages on demand; this module does not
+// infer question boundaries, options, layout or figure ownership.
 export interface PageEvidence {
   /** source_asset row ids, in page order. */
   assetIds: string[];
   pageCount: number;
+  pdfAssetId: string;
 }
 
 /**
@@ -62,5 +57,10 @@ export async function persistDocxPageEvidence(
     assetIds.push(row.id);
   }
 
-  return { assetIds, pageCount: pages.length };
+  const pdf = await persistSourceAsset(db, r2, {
+    bytes: pdfBytes,
+    mime: 'application/pdf',
+    kind: 'pdf',
+  });
+  return { assetIds, pageCount: pages.length, pdfAssetId: pdf.id };
 }

@@ -345,12 +345,9 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
         setPhase('expanding'); // reuse the expanding phase (label shows 转换 DOCX…)
         const ingested = await expandDocx(selectedFiles[0]);
         setPdfPageCount(ingested.page_count);
-        // YUK-277: record the line so the SSE panel can drop the misleading
-        // "抽取进度" framing for the synchronous text line. The visual line still
-        // enqueues a real VLM extract job, so it keeps the SSE timeline.
-        setIngestionLine(ingested.line);
-        // Server已建 session + blocks (text line) / enqueued extract (visual line);
-        // go straight to extracting and listen for the SSE terminal.
+        // Both DOCX classifications now queue the tool-driven agent. Reuse the
+        // existing async progress panel; line describes conversion, not completion.
+        setIngestionLine('visual');
         return ingested.session_id;
       }
       // PDF expansion is a vision_paper-only entrypoint: only that mode's accept

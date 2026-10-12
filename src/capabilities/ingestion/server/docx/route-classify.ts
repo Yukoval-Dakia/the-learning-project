@@ -15,7 +15,7 @@ import { ApiError } from '@/kernel/http';
 //                          cannot extract them, so the file must go through the
 //                          LibreOffice→PDF→PDFium page-image VLM extract path)
 //   count = 0 → 'text'    (语文/纯文本卷: pandoc directly converts to markdown,
-//                          then the segmenter cuts question_blocks)
+//                          both classifications now enter the same agent tools)
 //
 // Empirical (终矩阵 background): zxxk math papers measured 151/151 MathType with
 // zero OMML; 语文 papers measure zero formulas. Mixed papers (some MathType + some

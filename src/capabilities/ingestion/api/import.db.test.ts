@@ -43,10 +43,13 @@ vi.mock('@/server/ai/runner', () => ({
   })),
 }));
 
-import { sha256Hex } from '@/core/migration/canonical';
-import { DocxIntegrity } from '@/core/schema/docx-integrity';
+import { createHash } from 'node:crypto';
+import { strToU8, zipSync } from 'fflate';
+import sharp from 'sharp';
+import { DocxAgentState } from '@/core/schema/docx-agent';
+import { structuredToPromptMarkdown } from '@/core/schema/structured_question';
+import type { runTask } from '@/server/ai/runner';
 import { Ingestion } from '@/server/session';
-import { initiateDocxTextUpload } from '@/server/session/docx-ingestion';
 // YUK-503 (YUK-471 W3-D test hardening) — fold==row parity helpers for the set_status writers.
 // The import POST emits a canonical `experimental:question_block_lifecycle` (op='set_status') alongside
 // each imperative status UPDATE; these let the test prove the additive double-write keeps the event-log
@@ -56,10 +59,10 @@ import {
   type IngestionOperationJobData,
   buildIngestionOperationHandler,
 } from '../jobs/ingestion_operation';
+import { buildTencentOcrHandler } from '../jobs/tencent_ocr_extract';
 import { runAutoEnrollForSession } from '../server/auto-enroll';
-import { updatePrompt } from '../server/block-structured-edit';
-import { docxImportContentHash } from '../server/docx/import-integrity';
-import { segmentMarkdown } from '../server/docx/markdown-segment';
+import { prepareDocxForConversion } from '../server/docx/route-classify';
+import { persistDocxSourcePackage } from '../server/docx/source-package';
 import * as enrollment from '../server/enroll';
 import { completeIngestionImport } from '../server/import-completion';
 import { readIngestionOperation, reserveIngestionOperation } from '../server/operation-store';
@@ -201,219 +204,241 @@ describe('POST /api/ingestion/[id]/import', () => {
     vi.clearAllMocks();
   });
 
-  // @invariant data: incomplete DOCX extraction retains recoverable source and all media.
-  // @fails-if numeric-led questions merge across line breaks, decimal/counter text creates phantom blocks, or uncertain images bypass review.
-  it('retains incomplete DOCX source and media behind explicit review', async () => {
+  // @invariant data: DOCX sources and staged drafts survive agent failure/retry without duplicate or silent-drop imports.
+  // @fails-if a task can access foreign material, failures erase staged drafts, retry duplicates questions, or unresolved material becomes a terminal import.
+  it('retains DOCX agent material and drafts through failure, retry and partial import', async () => {
     const db = testDb();
-    const markdown = [
-      '**1.**题甲',
-      'A.甲 B.乙 C.丙 D.丁',
-      '2.5米是题甲的条件',
-      '2.2024年图前 ![](media/a.png) 图后 ![](media/b.png)',
-      'A.甲 B.乙 C.丙 D.丁',
-      '1.本节共两题',
-      '4\\.',
-      '![](media/c.png) ![](media/d.png)',
-      '18.合成前题',
-      '    19.2024',
-      '合成题干',
-      '20.合成后题',
-    ].join('\n');
-    const mediaAssetIds = ['a', 'b', 'c', 'd'];
-    for (const id of ['page', ...mediaAssetIds]) {
-      await db.insert(source_asset).values({
-        id,
-        kind: 'image',
-        storage_key: `synthetic/${id}`,
-        mime_type: 'image/png',
-        byte_size: 8,
-        sha256: sha256Hex(id),
-        created_at: new Date(),
+    const markdown = '题甲：选择正确项。\nA.甲 B.乙\n题乙：看图回答。';
+    const original = zipSync({
+      '[Content_Types].xml': strToU8(
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>',
+      ),
+      'word/document.xml': strToU8(
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>synthetic</w:t></w:r></w:p></w:body></w:document>',
+      ),
+    });
+    // The converter is the external boundary. Storage, PDF rendering, workspace,
+    // registry tools, transactions, canonical events and import are all real.
+    const pdf = strToU8(
+      '%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 100 100]>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF',
+    );
+    const png = await sharp({
+      create: { width: 20, height: 20, channels: 3, background: '#234567' },
+    })
+      .png()
+      .toBuffer();
+    const source = await persistDocxSourcePackage(
+      db,
+      r2,
+      {
+        docxToMarkdown: async () => ({
+          markdown,
+          media: [{ path: '../untrusted-image.png', bytes: png }],
+        }),
+        docxToPdf: async () => pdf,
+      },
+      original,
+      prepareDocxForConversion(original),
+    );
+    const { sessionId, sourceDocumentId } = await Ingestion.initiateUpload(db, {
+      assetIds: source.pages.assetIds,
+      entrypoint: 'docx',
+      docxSource: { package: source.package, markdown },
+    });
+    const foreign = await setupSession(db, { assetIds: ['foreign-page'] });
+    await insertBlock(db, {
+      id: 'foreign-block',
+      sessionId: foreign.sessionId,
+      docId: foreign.sourceDocId,
+    });
+    const queue = async () =>
+      Ingestion.enqueueExtraction({
+        db,
+        sessionId,
+        boss: { send: async () => 'local-docx-job' } as never,
       });
-    }
-    const { blocks, warnings } = segmentMarkdown({
-      markdown,
-      media: mediaAssetIds.map((id) => ({ path: `media/${id}.png` })),
+    const page = source.pages.assetIds[0];
+    const media = source.package.files.find((f) => f.role === 'media')?.asset_id ?? '';
+    const text = source.package.files.find((f) => f.role === 'markdown')?.asset_id ?? '';
+    const region = { x: 0, y: 0, width: 1, height: 1 };
+    const draft = (key: string, prompt: string) => ({
+      key,
+      structured: {
+        id: key,
+        role: 'standalone',
+        question_no: key,
+        prompt_text: prompt,
+        kind: 'short_answer',
+        options:
+          key === 'q1'
+            ? [
+                { label: 'A', text: '甲' },
+                { label: 'B', text: '乙' },
+              ]
+            : undefined,
+      },
+      page_spans: [{ page_index: 0, bbox: region }],
+      figures: [],
+      unresolved: prompt ? [] : ['image-only prompt unresolved'],
+      confidence: 0.7,
     });
-    const result = await initiateDocxTextUpload(db, {
-      evidenceAssetIds: ['page'],
-      inputSha256: sha256Hex('synthetic DOCX'),
-      converterInputSha256: sha256Hex('synthetic DOCX'),
-      mediaAssets: Object.fromEntries(mediaAssetIds.map((id) => [`media/${id}.png`, id])),
-      markdown,
-      warnings,
-      blocks: blocks.map((b) => ({
-        structured: b.structured,
-        imageRefs: b.imagePaths.map((path) => path.slice(6, -4)),
-        candidateImageRefs: b.candidateImagePaths?.map((path) => path.slice(6, -4)),
-      })),
-    });
-    const [source] = await db
-      .select()
-      .from(source_document)
-      .where(eq(source_document.id, result.sourceDocumentId));
-    const [session] = await db
-      .select()
-      .from(learning_session)
-      .where(eq(learning_session.id, result.sessionId));
+    const controlledRunner =
+      (fail: boolean): typeof runTask =>
+      async (_kind, _input, ctx) => {
+        const mount = ctx.piToolMounts?.find((m) => m.type === 'custom');
+        if (mount?.type !== 'custom') throw new Error('No mounted tools');
+        const call = async (name: string, input: Record<string, unknown>) => {
+          const tool = mount.tools.find((t) => t.name === `mcp__loom__${name}`);
+          if (!tool) throw new Error(`Tool not mounted: ${name}`);
+          return tool.execute(createId(), input, new AbortController().signal);
+        };
+        const output = (result: Awaited<ReturnType<typeof call>>) =>
+          JSON.parse((result.content[0] as { text: string }).text);
+        const listing = output(await call('read_docx_source', { action: 'list' })).output;
+        expect(listing.files).toHaveLength(6);
+        expect(
+          output(await call('read_docx_source', { action: 'image', asset_id: '../foreign-page' }))
+            .error,
+        ).toContain('outside');
+        await expect(
+          call('update_prompt', {
+            block_id: 'foreign-block',
+            node_id: 'foreign',
+            prompt_text: 'overwrite',
+          }),
+        ).rejects.toThrow('outside');
+        await call('read_docx_source', { action: 'text', asset_id: text });
+        const image = await call('read_docx_source', { action: 'image', asset_id: page });
+        expect(image.content.some((part) => part.type === 'image')).toBe(true);
+        await call('read_docx_source', { action: 'image', asset_id: media });
+        const initial = output(await call('edit_docx_drafts', { action: 'inspect' })).output.state;
+        if (fail) {
+          const saved = output(
+            await call('edit_docx_drafts', {
+              action: 'upsert',
+              expected_revision: initial.revision,
+              questions: [draft('q1', '题甲'), draft('q2', '题乙')],
+            }),
+          ).output;
+          await call('update_prompt', {
+            block_id: saved.blocks.find((b: { key: string }) => b.key === 'q2').block_id,
+            node_id: 'q2',
+            prompt_text: '已通过现有工具修订',
+          });
+          // A duplicate active delivery cannot steal the workspace or start another run.
+          await buildTencentOcrHandler({
+            db,
+            r2,
+            docxRunTaskFn: async () => {
+              throw new Error('duplicate delivery reached agent');
+            },
+          })([job]);
+          throw new Error('controlled external agent interruption');
+        }
+        expect(
+          initial.questions.find((q: { key: string }) => q.key === 'q2').structured.prompt_text,
+        ).toBe('已通过现有工具修订');
+        const saved = output(
+          await call('edit_docx_drafts', {
+            action: 'upsert',
+            expected_revision: initial.revision,
+            questions: [draft('q2', '')],
+            coverage: [
+              {
+                asset_id: page,
+                question_keys: ['q1', 'q2'],
+                disposition: 'question_material',
+                reason: '两题已核对，第二题仍未辨清',
+              },
+              {
+                asset_id: media,
+                question_keys: [],
+                disposition: 'unresolved',
+                reason: '图片归属不确定',
+              },
+            ],
+          }),
+        ).output;
+        const check = output(await call('edit_docx_drafts', { action: 'check' })).output;
+        expect(check.gaps.length).toBeGreaterThan(0);
+        await call('edit_docx_drafts', { action: 'commit', expected_revision: saved.revision });
+        return {
+          task_run_id: ctx.taskRunId ?? 'controlled-agent',
+          text: 'Partial draft batch saved',
+          finishReason: 'stop',
+          cost_basis: 'unknown',
+          cost_ref: 'controlled-agent-no-provider',
+          usage: { inputTokens: 0, outputTokens: 0 },
+        };
+      };
+    const job = { id: 'local-docx-job', data: { sessionId } } as never;
+    await queue();
+    await expect(
+      buildTencentOcrHandler({ db, r2, docxRunTaskFn: controlledRunner(true) })([job]),
+    ).rejects.toThrow('controlled external');
+    expect(
+      (await db.select().from(learning_session).where(eq(learning_session.id, sessionId)))[0]
+        .status,
+    ).toBe('failed');
+    expect(
+      await db
+        .select()
+        .from(question_block)
+        .where(eq(question_block.ingestion_session_id, sessionId)),
+    ).toHaveLength(2);
+    await queue();
+    const handler = buildTencentOcrHandler({ db, r2, docxRunTaskFn: controlledRunner(false) });
+    await handler([job]);
+    await handler([job]); // Completed queue delivery is idempotent.
     const drafts = await db
       .select()
       .from(question_block)
-      .where(eq(question_block.ingestion_session_id, result.sessionId))
+      .where(eq(question_block.ingestion_session_id, sessionId))
       .orderBy(question_block.ordinal);
-    expect(source.body_md).toBe(markdown);
-    expect(source.provenance).toMatchObject({
-      docx_media: { 'media/c.png': 'c', 'media/d.png': 'd' },
-    });
-    expect(source.source_asset_ids).toEqual(['page', ...mediaAssetIds]);
-    expect(session.source_asset_ids).toEqual(source.source_asset_ids);
-    expect(drafts.map((b) => b.structured?.question_no)).toEqual(['1', '2', '4', '18', '19', '20']);
-    expect(drafts[0].structured?.options?.map((o) => o.label)).toEqual(['A', 'B', 'C', 'D']);
-    expect(drafts[0].structured?.prompt_text).toBe('题甲\n2.5米是题甲的条件');
-    expect(drafts[1].structured?.prompt_text).toBe('2024年图前  图后 \n1.本节共两题');
-    expect(drafts[1].structured?.options?.map((o) => o.label)).toEqual(['A', 'B', 'C', 'D']);
-    expect(drafts[4].structured?.prompt_text).toBe('2024\n合成题干');
-    expect(drafts.map((b) => b.image_refs)).toEqual([[], ['a', 'b'], [], [], [], []]);
-    expect(session.status).toBe('partial');
-    expect(session.warnings).toEqual(
-      expect.arrayContaining([
-        expect.stringContaining('题号 3 至 3'),
-        expect.stringContaining('第 4 题缺少'),
-        expect.stringContaining('图片的题目归属不明'),
-        expect.stringContaining('题号 1 重复或倒序'),
-        expect.stringContaining('第 2 题的图片按 DOCX 文本锚点'),
-        expect.stringContaining('第 19 题候选以数字开头'),
-      ]),
-    );
-    const receipts = await db
+    expect(drafts).toHaveLength(2);
+    expect(drafts[0].structured?.options?.map((o) => o.label)).toEqual(['A', 'B']);
+    const [saved] = await db
       .select()
-      .from(job_events)
-      .where(
-        and(
-          eq(job_events.business_id, session.id),
-          eq(job_events.event_type, 'ingestion.extraction_completed'),
-        ),
-      );
-    expect(receipts[0].payload).toMatchObject({
-      block_count: 6,
-      layout_quality: 'partial',
-      warnings: session.warnings,
-    });
-    await expect(
-      db.transaction((tx) => Ingestion.assertSessionAvailableForImport(tx, session.id)),
-    ).rejects.toThrow();
-
+      .from(source_document)
+      .where(eq(source_document.id, sourceDocumentId));
+    expect(saved.body_md).toBe(markdown);
+    expect(saved.source_asset_ids).toHaveLength(6);
+    for (const file of source.package.files) {
+      const [asset] = await db
+        .select()
+        .from(source_asset)
+        .where(eq(source_asset.id, file.asset_id));
+      const bytes = await r2.get(asset.storage_key);
+      if (!bytes) throw new Error('Persisted source bytes missing');
+      expect(createHash('sha256').update(bytes).digest('hex')).toBe(file.sha256);
+    }
+    expect(DocxAgentState.parse(saved.provenance.docx_agent).sealed).toBe(true);
     await insertKnowledge(db, 'k1');
-    const requestFor = (index: number, prompt = drafts[index].extracted_prompt_md ?? '') =>
+    const request = (row: (typeof drafts)[number]) =>
       ImportBody.parse(
         makeImportBody({
-          block_id: drafts[index].id,
-          source_block_ids: [drafts[index].id],
-          image_refs: drafts[index].image_refs,
-          page_spans: drafts[index].page_spans,
-          final_prompt_md: prompt,
+          block_id: row.id,
+          source_block_ids: [row.id],
+          image_refs: row.image_refs,
+          page_spans: row.page_spans,
+          final_prompt_md: row.structured ? structuredToPromptMarkdown(row.structured) : '',
           outcome: 'unanswered',
           final_wrong_answer_md: '',
         }),
       );
-    // The live import owner accepts ordinary manual text edits from partial DOCX.
-    const ordinary = await completeIngestionImport(
-      db,
-      session.id,
-      requestFor(0, '人工修订的普通文字题'),
-    );
-    expect(ordinary.question_ids).toHaveLength(1);
-    const [stillPartial] = await db
-      .select()
-      .from(learning_session)
-      .where(eq(learning_session.id, session.id));
-    expect(stillPartial.status).toBe('partial');
-    await Ingestion.markReviewed(db, session.id);
-    await expect(completeIngestionImport(db, session.id, requestFor(1))).rejects.toThrow(
-      'image_association',
-    );
-    await expect(completeIngestionImport(db, session.id, requestFor(2))).rejects.toThrow(
-      'question text',
-    );
-    // Use the existing editing transaction; a nonempty manual string clears no issue.
-    await updatePrompt(db, {
-      blockId: drafts[2].id,
-      nodeId: blocks[2].structured.id,
-      promptText: '人工补录的完整题干',
-      actorKind: 'user',
-      actorRef: 'docx_fixture_review',
-    });
-    const repaired = requestFor(2, '人工补录的完整题干');
-    repaired.blocks[0].image_refs = ['c'];
-    await expect(completeIngestionImport(db, session.id, repaired)).rejects.toThrow(
-      'image_association',
-    );
-    const integrity = DocxIntegrity.parse(source.provenance.docx_integrity);
-    const confirm = (
-      request: ReturnType<typeof requestFor>,
-      index: number,
-      issue: 'image_association' | 'prompt_missing',
-      version = 0,
-    ) => ({
-      block_id: drafts[index].id,
-      block_version: version,
-      issue,
-      source_sha256: sha256Hex('synthetic DOCX'),
-      content_sha256: docxImportContentHash(request.blocks[0]),
-      page: {
-        asset_id: 'page',
-        sha256: sha256Hex('page'),
-        region: request.blocks[0].page_spans[0].bbox,
-      },
-      media: integrity.blocks[index].candidate_media_ids.map((id) => ({
-        asset_id: id,
-        sha256: sha256Hex(id),
-      })),
-    });
-    const imageRequest = requestFor(1);
-    imageRequest.docx_confirmations = [confirm(imageRequest, 1, 'image_association')];
-    imageRequest.docx_confirmations[0].page.sha256 = sha256Hex('different page');
-    await expect(completeIngestionImport(db, session.id, imageRequest)).rejects.toThrow(
-      'unverified question region',
-    );
-    imageRequest.docx_confirmations = [confirm(imageRequest, 1, 'image_association')];
-    await completeIngestionImport(db, session.id, imageRequest);
-    repaired.docx_confirmations = [confirm(repaired, 2, 'image_association', 1)];
-    await expect(completeIngestionImport(db, session.id, repaired)).rejects.toThrow(
-      'prompt_missing',
-    );
-    repaired.docx_confirmations.push(confirm(repaired, 2, 'prompt_missing', 0));
-    await expect(completeIngestionImport(db, session.id, repaired)).rejects.toThrow(
-      'stale source or block',
-    );
-    const before = await db
-      .select()
-      .from(question_block)
-      .where(eq(question_block.ingestion_session_id, session.id));
-    expect(before.find((b) => b.id === drafts[2].id)?.status).toBe('draft');
-    expect(before.filter((b) => b.status === 'ignored')).toHaveLength(0);
-    expect(await db.select().from(question)).toHaveLength(2);
-    repaired.docx_confirmations[1].block_version = 1;
-    await completeIngestionImport(db, session.id, repaired);
-    const after = await db
-      .select()
-      .from(question_block)
-      .where(eq(question_block.ingestion_session_id, session.id));
-    expect(after.filter((b) => b.status === 'imported')).toHaveLength(3);
-    expect(after.filter((b) => b.status === 'draft')).toHaveLength(3);
-    expect(after.filter((b) => b.status === 'ignored')).toHaveLength(0);
-    const [saved] = await db
-      .select()
-      .from(source_document)
-      .where(eq(source_document.id, source.id));
-    expect(saved.body_md).toBe(markdown);
-    expect(saved.source_asset_ids).toEqual(['page', ...mediaAssetIds]);
-    expect(DocxIntegrity.parse(saved.provenance.docx_integrity).confirmations).toHaveLength(3);
+    await expect(completeIngestionImport(db, sessionId, request(drafts[1]))).rejects.toThrow();
+    const imported = await completeIngestionImport(db, sessionId, request(drafts[0]));
+    expect(imported.question_ids).toHaveLength(1);
     const [open] = await db
       .select()
       .from(learning_session)
-      .where(eq(learning_session.id, session.id));
-    expect(open.status).toBe('reviewed');
+      .where(eq(learning_session.id, sessionId));
+    expect(open.status).toBe('partial');
+    const retained = await db
+      .select()
+      .from(question_block)
+      .where(eq(question_block.ingestion_session_id, sessionId));
+    expect(retained.map((b) => b.status).sort()).toEqual(['draft', 'imported']);
   });
 
   it('durable import calls the owner once across concurrent delivery and replay', async () => {

@@ -1735,7 +1735,19 @@
             "docx_confirmations": []
           }
         },
-        "notes": "import 使用既有 ImportBody；DOCX text 可从 partial 逐题提交，未选草稿保留且 session 不终结。图文疑点须逐项提供 docx_confirmations（block_id、block_version、issue、source_sha256、content_sha256、page={asset_id,sha256,region}、media=[{asset_id,sha256}]）。content_sha256 是 canonicalHash({source_block_ids,final_prompt_md,image_refs,page_spans,question_kind})；page.region 须匹配最终 page_spans，媒体须覆盖原候选与最终所选图片。issue 仅 image_association 或 prompt_missing；missing_media 必须恢复来源后重提取。来源、版本或摘要不符返回冲突；reviewed 或手工字符串不能清除疑点。此断言为人工复核留痕，不是自动图像识别或发题准入。blocks 须非空并包含 knowledge_ids 等 ImportBody 必填字段；示例空数组须替换。"
+        "notes": "import 使用既有 ImportBody；DOCX text 可从 partial 逐题提交，未选草稿保留且 session 不终结。图文疑点须逐项提供 docx_confirmations（block_id、block_version、issue、source_sha256、content_sha256、page={asset_id,sha256,region}、media=[{asset_id,sha256}]）。content_sha256 是 canonicalHash({source_block_ids,final_prompt_md,image_refs,page_spans,question_kind})；page.region 须匹配最终 page_spans，媒体须覆盖原候选与最终所选图片。issue 仅 image_association 或 prompt_missing；missing_media 必须恢复来源后重提取。来源、版本或摘要不符返回冲突；reviewed 或手工字符串不能清除疑点。此断言为人工复核留痕，不是自动图像识别或发题准入。blocks 须非空并包含 knowledge_ids 等 ImportBody 必填字段；示例空数组须替换。 新 agent DOCX 使用冻结的来源/题块版本及覆盖记录校验，不使用旧人工 confirmation 格式；提交内容须与已核对草稿一致，未解决草稿/源材料阻止提前终结。"
+      }
+    ]
+  },
+  {
+    "path": "/api/ingestion/docx",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "保存完整 DOCX 材料并排队 agent 录入",
+        "contentType": "multipart/form-data",
+        "bodyExample": null,
+        "notes": "file 为单个 DOCX。201 返回 session_id、转换分类 line 和 page_count；两种分类均异步调用现有 Pi runner。agent 按 manifest 读全文/看页面及内嵌图，工具即时保存草稿；失败保留来源及已保存草稿，可经既有 extract 重试。无正则分题或 OCR 回退。原卷、转换副本、Markdown、PDF、页面图、内嵌图持久化；未完成不代表正式入库或可答题。"
       }
     ]
   }

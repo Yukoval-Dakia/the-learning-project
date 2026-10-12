@@ -1,6 +1,7 @@
 import { createId } from '@paralleldrive/cuid2';
-import { type SQL, and, asc, eq, sql } from 'drizzle-orm';
+import { type SQL, and, asc, eq, inArray, sql } from 'drizzle-orm';
 import type { PgBoss } from 'pg-boss';
+import { type DocxSourcePackageT, emptyDocxAgentState } from '@/core/schema/docx-agent';
 
 import type { BBoxT, FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db, Tx } from '@/db/client';
@@ -176,7 +177,7 @@ export async function markExtractionStarted(tx: Db | Tx, sessionId: string): Pro
 
   await tx
     .update(learning_session)
-    .set({ status: 'extracting', updated_at: new Date() })
+    .set({ status: 'extracting', error_message: null, updated_at: new Date() })
     .where(eq(learning_session.id, sessionId));
 
   await writeJobEvent(tx, {
@@ -205,6 +206,8 @@ export type ExtractionBlockInput = {
 };
 
 export type ApplyExtractionResultParams = {
+  actorRef?: string;
+  stagedBlockIds?: string[];
   sessionId: string;
   blocks: ExtractionBlockInput[];
   layoutQuality: 'structured' | 'partial' | 'text_only';
@@ -271,6 +274,77 @@ export async function applyExtractionResult(
     params.layoutQuality === 'structured' ? 'success' : 'partial';
 
   const now = new Date();
+  let insertedBlockIds: string[];
+  if (params.stagedBlockIds) {
+    const staged = params.stagedBlockIds.length
+      ? await tx
+          .select()
+          .from(question_block)
+          .where(
+            and(
+              eq(question_block.ingestion_session_id, params.sessionId),
+              inArray(question_block.id, params.stagedBlockIds),
+            ),
+          )
+          .for('update')
+      : [];
+    if (
+      current.entrypoint !== 'docx' ||
+      staged.length !== params.blocks.length ||
+      staged.some((b) => b.status !== 'draft')
+    ) {
+      throw new ApiError('conflict', 'DOCX staged blocks changed before completion', 409);
+    }
+    insertedBlockIds = params.stagedBlockIds;
+  } else {
+    insertedBlockIds = await createExtractionDrafts(tx, params);
+  }
+
+  const updatedWarnings = [...current.warnings, ...params.warnings];
+  await tx
+    .update(learning_session)
+    .set({ status: nextStatus, warnings: updatedWarnings, updated_at: now })
+    .where(eq(learning_session.id, params.sessionId));
+
+  await writeJobEvent(tx, {
+    business_table: SESSION_TABLE,
+    business_id: params.sessionId,
+    event_type: 'ingestion.extraction_completed',
+    payload: {
+      block_count: params.blocks.length,
+      layout_quality: params.layoutQuality,
+      warnings: params.warnings,
+    },
+  });
+
+  // Domain event: ExtractSourceDocument (Lane B). Chained to the session via
+  // session_id so any future timeline UI can walk the chain.
+  await writeSessionEvent(tx, {
+    session_id: params.sessionId,
+    action: 'extract',
+    subject_kind: 'source_document',
+    subject_id: params.sourceDocumentId,
+    actor_kind: 'agent',
+    actor_ref: params.actorRef ?? 'tencent_ocr',
+    outcome: eventOutcome,
+    payload: {
+      structured_block_ids: insertedBlockIds,
+      layout_quality: params.layoutQuality,
+      warnings: params.warnings,
+    },
+    created_at: now,
+  });
+
+  return { status: nextStatus };
+}
+
+/** Shared canonical create writer: normal extraction and incremental DOCX tools. */
+async function createExtractionDrafts(
+  tx: Db | Tx,
+  params: ApplyExtractionResultParams,
+  ordinalOffset = 0,
+): Promise<string[]> {
+  const now = new Date();
   const insertedBlockIds: string[] = [];
   for (const [ordinal, blk] of params.blocks.entries()) {
     const blockId = createId();
@@ -284,7 +358,7 @@ export async function applyExtractionResult(
         source_asset_ids: blk.source_asset_ids,
         page_spans: blk.page_spans,
         // YUK-221 — true positional order = the extraction array index (0-based).
-        ordinal,
+        ordinal: ordinal + ordinalOffset,
         // new schema fields
         structured: blk.structured,
         figures: blk.figures,
@@ -313,47 +387,79 @@ export async function applyExtractionResult(
       row: insertedRow,
       origin: 'ocr',
       actorKind: 'agent',
-      actorRef: 'tencent_ocr',
+      actorRef: params.actorRef ?? 'tencent_ocr',
       now,
     });
   }
 
-  const updatedWarnings = [...current.warnings, ...params.warnings];
-  await tx
-    .update(learning_session)
-    .set({ status: nextStatus, warnings: updatedWarnings, updated_at: now })
-    .where(eq(learning_session.id, params.sessionId));
+  return insertedBlockIds;
+}
 
-  await writeJobEvent(tx, {
-    business_table: SESSION_TABLE,
-    business_id: params.sessionId,
-    event_type: 'ingestion.extraction_completed',
-    payload: {
-      block_count: params.blocks.length,
-      layout_quality: params.layoutQuality,
-      warnings: params.warnings,
-    },
+/** Incremental agent drafts remain durable while the session is extracting.
+ * The caller holds the source lock and stores the key -> block mapping in the same transaction. */
+export async function stageDocxAgentDraft(
+  tx: Tx,
+  params: {
+    sessionId: string;
+    sourceDocumentId: string;
+    blockId?: string;
+    block: ExtractionBlockInput;
+    actorRef: string;
+  },
+): Promise<{ id: string; version: number }> {
+  const session = await loadSessionForUpdate(tx, params.sessionId);
+  if (session?.entrypoint !== 'docx' || session.status !== 'extracting') {
+    throw new ApiError('conflict', 'DOCX extraction is not active', 409);
+  }
+  if (!params.blockId) {
+    const [count] = await tx
+      .select({ count: sql<number>`coalesce(max(${question_block.ordinal}), -1) + 1` })
+      .from(question_block)
+      .where(eq(question_block.ingestion_session_id, params.sessionId));
+    const [id] = await createExtractionDrafts(
+      tx,
+      {
+        sessionId: params.sessionId,
+        sourceDocumentId: params.sourceDocumentId,
+        blocks: [params.block],
+        layoutQuality: 'partial',
+        warnings: [],
+        actorRef: params.actorRef,
+      },
+      Number(count.count),
+    );
+    return { id, version: 0 };
+  }
+  const [current] = await tx
+    .select()
+    .from(question_block)
+    .where(
+      and(
+        eq(question_block.id, params.blockId),
+        eq(question_block.ingestion_session_id, params.sessionId),
+      ),
+    )
+    .for('update');
+  if (current?.status !== 'draft') throw new ApiError('conflict', 'DOCX draft changed', 409);
+  const now = new Date();
+  const [row] = await tx
+    .update(question_block)
+    .set({
+      ...params.block,
+      crop_refs: params.block.figures.map((f) => f.asset_id),
+      version: current.version + 1,
+      updated_at: now,
+    })
+    .where(eq(question_block.id, current.id))
+    .returning();
+  await writeQuestionBlockCreateEvent(tx, {
+    row,
+    origin: 'docx',
+    actorKind: 'agent',
+    actorRef: params.actorRef,
+    now,
   });
-
-  // Domain event: ExtractSourceDocument (Lane B). Chained to the session via
-  // session_id so any future timeline UI can walk the chain.
-  await writeSessionEvent(tx, {
-    session_id: params.sessionId,
-    action: 'extract',
-    subject_kind: 'source_document',
-    subject_id: params.sourceDocumentId,
-    actor_kind: 'agent',
-    actor_ref: 'tencent_ocr',
-    outcome: eventOutcome,
-    payload: {
-      structured_block_ids: insertedBlockIds,
-      layout_quality: params.layoutQuality,
-      warnings: params.warnings,
-    },
-    created_at: now,
-  });
-
-  return { status: nextStatus };
+  return { id: row.id, version: row.version };
 }
 
 // ---------- markExtractionFailed ----------
@@ -657,9 +763,9 @@ export async function commitImport(
 // ---------- initiateUpload ----------
 
 export type InitiateUploadParams = {
+  docxSource?: { package: DocxSourcePackageT; markdown: string };
   assetIds: string[];
-  // YUK-258: 'docx' — the visual line feeds docx page images through this same
-  // upload+extract path (text line uses the dedicated docx-ingestion owner).
+  // DOCX keeps page-index consumers on this ordered page-only asset list.
   entrypoint: 'vision_single' | 'vision_paper' | 'docx';
   // YUK-1404 — canonical learner-selected upload subject, already resolved and
   // validated against the selectable registry by the caller (API route).
@@ -700,8 +806,8 @@ export async function initiateUpload(
     await tx.insert(source_document).values({
       id: sourceDocumentId,
       title: null,
-      source_asset_ids: params.assetIds,
-      body_md: null,
+      source_asset_ids: params.docxSource?.package.files.map((f) => f.asset_id) ?? params.assetIds,
+      body_md: params.docxSource?.markdown ?? null,
       // YUK-1404 — the explicit upload subject rides the open provenance record
       // (no new column). Key presence = explicit learner choice (canonical id);
       // key absence = unknown (omitted/null request OR legacy session). Only a
@@ -711,6 +817,13 @@ export async function initiateUpload(
       // resolving pins notation to null (never a guessed subject).
       provenance: {
         entrypoint: params.entrypoint,
+        ...(params.docxSource
+          ? {
+              line: 'agent',
+              docx_package: params.docxSource.package,
+              docx_agent: emptyDocxAgentState(),
+            }
+          : {}),
         ...(params.learnerSelectedSubjectId
           ? { learner_selected_subject_id: params.learnerSelectedSubjectId }
           : {}),

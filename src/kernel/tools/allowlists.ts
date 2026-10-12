@@ -115,7 +115,9 @@ export type ControlDomainToolName = (typeof CONTROL_TOOLS)[number];
 export type DomainToolName =
   | ReadDomainToolName
   | ProposeWriteDomainToolName
-  | ControlDomainToolName;
+  | ControlDomainToolName
+  | 'read_docx_source'
+  | 'edit_docx_drafts';
 
 export type DomainToolSurface =
   | 'knowledge_review'
@@ -127,7 +129,8 @@ export type DomainToolSurface =
   // YUK-195 — question structure-correction surface (agent/user-triggered). Kept
   // separate so copilot / dreaming / coach do NOT get question-mutation tools by
   // default; this is the only surface granting the 6 draft-edit write tools.
-  | 'ingestion_block_edit';
+  | 'ingestion_block_edit'
+  | 'docx_ingestion';
 
 const KNOWLEDGE_REVIEW_TOOLS = [
   'get_subject_graph_overview',
@@ -336,6 +339,18 @@ const INGESTION_BLOCK_EDIT_TOOLS = [
   'reassign_figure',
 ] as const satisfies readonly DomainToolName[];
 
+export const DOCX_INGESTION_TOOLS = [
+  'read_docx_source',
+  'edit_docx_drafts',
+  'get_question_block_structure',
+  'update_prompt',
+  'add_option',
+  'set_question_type',
+  'split_stem',
+  'merge_questions',
+  'reassign_figure',
+] as const satisfies readonly DomainToolName[];
+
 export const DOMAIN_TOOL_ALLOWLISTS = {
   knowledge_review: KNOWLEDGE_REVIEW_TOOLS,
   copilot: COPILOT_TOOLS,
@@ -344,6 +359,7 @@ export const DOMAIN_TOOL_ALLOWLISTS = {
   coach: COACH_TOOLS,
   maintenance: MAINTENANCE_TOOLS,
   ingestion_block_edit: INGESTION_BLOCK_EDIT_TOOLS,
+  docx_ingestion: DOCX_INGESTION_TOOLS,
 } as const satisfies Record<DomainToolSurface, readonly DomainToolName[]>;
 
 export function resolveDomainToolNames(surface: DomainToolSurface): readonly DomainToolName[] {

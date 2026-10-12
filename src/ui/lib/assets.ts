@@ -51,12 +51,8 @@ export async function expandPdf(file: File): Promise<ExpandedPdf> {
   return (await res.json()) as ExpandedPdf;
 }
 
-// YUK-258 — DOCX ingestion. POST /api/ingestion/docx is SELF-CONTAINED: it
-// classifies the .docx (text vs visual line), builds the session server-side
-// (text line lands blocks directly in 'extracted'; visual line enqueues
-// tencent_ocr_extract), and returns the session id. Unlike expandPdf (which only
-// expands assets and leaves session-create to the caller), the caller here does
-// NOT then POST /api/ingestion — the session already exists.
+// The DOCX endpoint preserves sources and queues agent extraction. It creates
+// the session itself; callers do not post a second session/extract request.
 export interface DocxIngested {
   session_id: string;
   line: 'text' | 'visual';

@@ -58,12 +58,13 @@ async function imageDimensions(bytes: Uint8Array) {
   }
 }
 
-export async function persistImageAsset(
+export async function persistSourceAsset(
   db: Db,
   r2: R2Client,
   input: {
     bytes: Uint8Array;
     mime: string;
+    kind: 'image' | 'pdf' | 'text' | 'docx';
     provenance?: typeof source_asset.$inferInsert.provenance;
     compensatePutOnInsertFailure?: boolean;
   },
@@ -72,7 +73,7 @@ export async function persistImageAsset(
   // Read the exact byte view (including pooled-buffer offsets), without decoding
   // pixels or holding the DB/storage-key lock. Existing unsupported input paths
   // remain accepted with unknown dimensions; never synthesize a size.
-  const dimensions = await imageDimensions(bytes);
+  const dimensions = input.kind === 'image' ? await imageDimensions(bytes) : null;
   const width = dimensions?.width;
   const height = dimensions?.height;
   const sha = await sha256Hex(bytes);
@@ -99,7 +100,7 @@ export async function persistImageAsset(
         .insert(source_asset)
         .values({
           id,
-          kind: 'image',
+          kind: input.kind,
           storage_key: storageKey,
           mime_type: mime,
           byte_size: bytes.byteLength,
@@ -169,4 +170,13 @@ export async function deleteImageAsset(db: Db, r2: R2Client, id: string): Promis
     await tx.delete(source_asset).where(eq(source_asset.id, id));
     return true;
   });
+}
+
+/** Existing image callers retain the same content-addressed owner protocol. */
+export function persistImageAsset(
+  db: Db,
+  r2: R2Client,
+  input: Omit<Parameters<typeof persistSourceAsset>[2], 'kind'>,
+) {
+  return persistSourceAsset(db, r2, { ...input, kind: 'image' });
 }

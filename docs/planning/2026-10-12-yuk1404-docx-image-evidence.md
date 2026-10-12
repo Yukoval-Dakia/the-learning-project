@@ -1,5 +1,6 @@
 # DOCX 图文完整性：逐题确认与草稿保留
 
+> 历史路线记录：owner 后续要求移除正则并改用 agent 工具；当前实现见 [DOCX agent 材料与草稿工具](2026-10-12-yuk1404-docx-agent-tools.md)。以下结果仅属于文中固定版本，不能用于新 agent 验收。
 第一天能用 / YUK-1404，同一 Draft PR #1703。原卷提取证据仍只绑定 d481 / Mac 01:57Z；
 文档 head 5b740ef8 的 [CI Gate 38194688279](https://github.com/Yukoval-Dakia/the-learning-project/actions/runs/38194688279) 已通过。
 本轮按 owner 后续授权实现确定性的后端切片，不扩 UI、不改发题准入，不调用 provider。

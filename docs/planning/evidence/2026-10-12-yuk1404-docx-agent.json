@@ -1,0 +1,92 @@
+{
+  "recorded_at": "2026-10-12T03:36:08.186931+00:00",
+  "base_revision": "160fd972cdb136902456e07a0f33058359436327",
+  "execution": "controlled runTaskFn with real registry/Pi tool mounts and PostgreSQL; no model or pi agentLoop execution",
+  "source": "synthetic DOCX and external converter stub; native PDFium page rendering; memory blob storage",
+  "paid_provider_calls": 0,
+  "real_school_docx_used": false,
+  "case": {
+    "name": "retains DOCX agent material and drafts through failure, retry and partial import",
+    "passed": 1,
+    "skipped": 3,
+    "file_seconds": 5.31
+  },
+  "receipt": {
+    "session_status": "partial",
+    "source_files": 6,
+    "drafts": 1,
+    "imported_blocks": 1,
+    "ignored_blocks": 0,
+    "formal_questions": 1,
+    "lifecycle": [
+      {
+        "availability": "container_only",
+        "scoring_admission_state": "withheld",
+        "reason": "unverified_rules"
+      }
+    ]
+  },
+  "tool_call_log_counts": {
+    "edit_docx_drafts": 6,
+    "update_prompt": 1,
+    "read_docx_source": 10
+  },
+  "checks": {
+    "typecheck": "pass",
+    "build": "pass",
+    "lint_ratchet": "pass; 172 warnings / 0 infos within existing baseline",
+    "task_census": "pass; 56 registered tasks, production DOCX caller found",
+    "test_policy": "pass; one changed case",
+    "api_client_generation": "pass; no generated wire diff",
+    "postman_generation": "pass"
+  },
+  "parser_scope": "Existing Pandoc/LibreOffice/PDFium; optional opaque lossless layout JSON only; no new parser/model/dependency installed",
+  "runtime_budget_config": {
+    "default_provider": "xiaomi",
+    "default_model": "mimo-v2.5",
+    "max_iterations": 48,
+    "timeout_ms": 240000,
+    "max_cost_usd_config": 0.5,
+    "transient_retries": 0,
+    "actual_provider_model": null,
+    "billing_upper_bound_verified": false
+  },
+  "limitations": [
+    "Not actual model output or real-school extraction acceptance",
+    "Unresolved image and one draft retained",
+    "Formal question remains withheld/unverified_rules/container_only",
+    "Partial automatic continuation and automatic formal import are not added",
+    "Independent review budget not restarted; exact-head CI pending"
+  ],
+  "cleanup": "Owned temporary container tlp-yuk1404-agent-20261012 removed; pre-existing postgres container unchanged",
+  "source_file_sha256": {
+    "src/capabilities/ingestion/api/docx.ts": "1d2011a33764997d07bb85321843592e800552147190f2d5e4b43622d21ad627",
+    "src/capabilities/ingestion/api/import.db.test.ts": "b27e07684b2a300893521f0589bbe02c5831bceac36d0281e3cb58c508a294b3",
+    "src/capabilities/ingestion/jobs/tencent_ocr_extract.ts": "c0bb95b03784f9b532ee1a46968232f2b82548930c2a00f6224115f3f6c6d3ae",
+    "src/capabilities/ingestion/manifest.ts": "7faa2a9ad5981dfc97be5de4d97e5059afde52bbe525a923b7fbd39c50245485",
+    "src/capabilities/ingestion/server/docx/agent-extraction.ts": "e130414838efc170ead5ce82a4848cef54057e795ea3c3566a1fd423fc5aecd9",
+    "src/capabilities/ingestion/server/docx/agent-import.ts": "287c037f21f3ac272b8573af32704d3141b85af6c06b9a7ed594bfb368ad4a44",
+    "src/capabilities/ingestion/server/docx/agent-workspace.ts": "217f412357c95922a86166339a518ae4145b87f78fc059d3ec9682b0fbb459dc",
+    "src/capabilities/ingestion/server/docx/convert.ts": "470ca6b355d763fea3b423bc88d6dff523b501252d87d1aea6fe3ce01954a97f",
+    "src/capabilities/ingestion/server/docx/import-integrity.ts": "d356710a00536524f45f50f261a50ed896883d6a44fb2ec813e05910974e1198",
+    "src/capabilities/ingestion/server/docx/persist-page-evidence.ts": "8c4a7adfa45d67cca349cf36f085c7b3c3ca15b1bd9a2421f79369f6bdc265f7",
+    "src/capabilities/ingestion/server/docx/route-classify.ts": "5299083e7ebdfbd5b28a9898b0159cf2f83a6a6e23721af25b494392e16b3b14",
+    "src/capabilities/ingestion/server/docx/source-package.ts": "2e68df6322969a2c219d5f1e3aabfe7a8db7b8228e7a19d93d69c4b5339ebb02",
+    "src/capabilities/ingestion/server/import-completion.ts": "c336d88ef82ab0e77ce9efbc23199e21faf89d65e150cef94ae757b843ba0d2b",
+    "src/capabilities/ingestion/server/persist-image-asset.ts": "dffb5b17cdd46d01a5e8032b22ab36abfe72f2520e667018303e444740aec7f0",
+    "src/capabilities/ingestion/server/tools/docx-agent.ts": "f80f9f42012a34b49d3544077a3649677f8af8ce607e81c9de82f10a9101e08e",
+    "src/capabilities/ingestion/tasks/docx-ingestion.ts": "f45ec624e55d67638eb351c1f9e2ca43e51804c915d7532cf5c50b9c697347b3",
+    "src/capabilities/ingestion/tasks/index.ts": "954e5afe392cec36bbb5d01325c0d294b4a5f77d31002f03d1e32207c592db2c",
+    "src/capabilities/task-catalog.ts": "b3e4b88b0aac5775ce08204c984cb2be1f041bf54917bfbc48cb98ddf1a6e755",
+    "src/core/schema/business.ts": "df2ba674b0f07d8146af1792911e1d22daa6a1b0c522e5bd76815cb1d5a3bebd",
+    "src/core/schema/docx-agent.ts": "b9250d0d4b1d494ab131731315830cd2458ec7665e7ee54fd2514873e84809b6",
+    "src/kernel/tools/allowlists.ts": "6c70a8683c3159dc06706ea13e95a64e2d135fd812899fcb4c9ac25fe13a7904",
+    "src/kernel/tools/budgets.ts": "86ddb989dba50beb27117a02fac6b43d20439e9d00ef5a39237cab4e858563d0",
+    "src/kernel/tools/types.ts": "d2284832ddd699354eb970332ddbc2e19d4a3888d106203159f42fe2c9708658",
+    "src/server/session/docx-omission.ts": "514ebf968f6335d44c2a7b58e7069759a896bc6d3a667121992ab6ac6fa19e13",
+    "src/server/session/ingestion.ts": "ce1b71ec21002e9f88e74f07b1e0ea1f3d16ed2319df9429f621df7c9f44dcec",
+    "src/ui/components/VisionTab.tsx": "561576bed033c5753657b7d8992bc8d5357664a5c81f5deb07532685fa0668b0",
+    "src/ui/lib/assets.ts": "05d55a7db8a9dac8149bd96f7197b6695e281595406ad83fec0991e7e2e1bbbd"
+  },
+  "log_archive_sha256": "d3c2f0263b03474d8f768d8b1deba74396ba704aac01bc676922afd57890edd2"
+}

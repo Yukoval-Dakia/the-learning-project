@@ -1,10 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-12：同一 Draft #1703 已实现 DOCX 逐题图文确认及未选草稿保留；原 case 通过，Mac 四图结论已记录，Q32/小图及资产摘要绑定仍未决。
+> Linear 是权威 tracker。2026-10-12：同一 Draft #1703 按 owner 指令转为 agent 录入工具；正则分题已移除，免费材料/事务恢复切片通过，真实模型与同卷验收仍未执行。
 
 ## NOW
 
-- **YUK-1404 / 学校 DOCX 题号与图片保全**：[Draft PR #1703](https://github.com/Yukoval-Dakia/the-learning-project/pull/1703) 已加来源摘要/逐题图文问题、现有 import 事务内证据确认、partial 普通文字题导入及未选草稿保留；仅原 case：合成正式3/draft3/ignored0，全部 withheld，静态构建通过。5b740ef8 文档 CI 已绿，产品 c8 的 DB/unit/构建通过，已修 CI 生成物/证据格式漏项；最终 CI 见 PR 当前 head。原卷证据仍只绑定 d481/Mac 01:57Z：Q1–32 各一次、Q1–30 ABCD、四媒体保全；Q27/28 源串接及四图归属/纯图片题待验。见[实施与证据](docs/planning/2026-10-12-yuk1404-docx-image-evidence.md)。无第三审/Linear/付费/部署/merge。
+- **YUK-1404 / 学校 DOCX agent 录入**：[Draft PR #1703](https://github.com/Yukoval-Dakia/the-learning-project/pull/1703) 同一分支替换 regex 路线：完整材料持久化、隔离工作区、Pi 按需读图/文本、现有编辑工具及即时草稿事务已接通。单 case 合成中断/恢复/重复投递/部分导入通过；正式1/draft1/ignored0，正式题仍 withheld。成熟解析器仅留无损布局 JSON 接口，不安装/集成新 provider。真实学校卷六阶段未验收；见[当前实施与边界](docs/planning/2026-10-12-yuk1404-docx-agent-tools.md)。无付费、第三审、Linear 写入、部署或 merge。
 
 - **YUK-1404 / native03题图修复**：PR1657 fixed4c52 exact CI38144495041全绿；正常纳入main eb960c079，仅PLAN/now冲突。图ownership/隐私产品代码与单capture边界测试保留，旧细粒度四tests已删。独立初审/最终R2预算已完成，不启第三审。当前crop producer仍无source_asset SHA登记，旧visibility未知，public withholding不是完整配图交付；同卷actual-output验收仍待。无DB/runtime/provider/paid。 [证据](docs/planning/2026-10-11-yuk1404-native03-figure-repair.md)。
 
@@ -34,7 +34,7 @@
 
 ## NEXT
 
-- DOCX 已记录 Mac 四图证据，等摘要/实际录入页面绑定与 Q32/小图确认；当前逐题导入保护已落地，原卷图文确认、正式入库、可答题仍未验收。不得把合成事务成功当真实卷成功；不扩准入/OCR。
+- DOCX 等父任务的单份同卷解析器评估，以及获准模型/输入/成本后的 actual-output 六阶段验收；原 Mac d481 的32题是已移除路线的历史证据。当前工具事务成功不等于模型识别、正式题完整或可答题；partial 自动续跑/正式导入不在本切片。
 
 - Start/judge共享文件边界见[交接](docs/planning/2026-10-09-judge-start-ownership.md)，Start/boot/shutdown由5796独占；judge A/B/C/D由7631接续，迁移号后核。
 

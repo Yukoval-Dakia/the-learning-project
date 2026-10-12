@@ -1,11 +1,11 @@
 import { eq, inArray, sql } from 'drizzle-orm';
-
 import { canonicalHash, sha256Hex } from '@/core/migration/canonical';
 import { DocxIntegrity, type DocxIntegrityT } from '@/core/schema/docx-integrity';
 import type { Tx } from '@/db/client';
 import { question_block, source_asset, source_document } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import type { ImportBodyParsed } from '../../api/import-schema';
+import { confirmDocxAgentImport } from './agent-import';
 
 type ImportBlock = ImportBodyParsed['blocks'][number];
 
@@ -30,7 +30,6 @@ function hasPrompt(prompt: string): boolean {
       .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
       .replace(/<img\b[^>]*>/gi, '')
       .replace(/[*#_`]/g, '')
-      .replace(/^\s*\d{1,3}\\?[.．、]\s*/, '')
       .trim().length > 0
   );
 }
@@ -50,6 +49,10 @@ export async function confirmDocxImport(
     .from(source_document)
     .where(eq(source_document.id, sourceDocumentId))
     .for('update');
+  if (source?.provenance.line === 'agent') {
+    await confirmDocxAgentImport(tx, sessionId, source, body);
+    return true;
+  }
   if (source?.provenance.line !== 'text') return false;
   const parsed = DocxIntegrity.safeParse(source.provenance.docx_integrity);
   const rows = await tx

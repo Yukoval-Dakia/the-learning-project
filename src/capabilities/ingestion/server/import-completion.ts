@@ -1,3 +1,4 @@
+import { hasPendingDocxAgentMaterial } from './docx/agent-import';
 /**
  * POST /api/ingestion/[id]/import
  *
@@ -517,7 +518,9 @@ export async function completeIngestionImport(
 
     // DOCX extraction can still have unresolved/unselected questions. Keep those
     // drafts and their media available for the next manual import transaction.
-    let retainedDocxDrafts = false;
+    let retainedDocxDrafts =
+      sessionEntrypoint === 'docx' &&
+      (await hasPendingDocxAgentMaterial(tx, sessionSourceDocumentId));
     // Other entrypoints retain the existing explicit-drop sweep.
     const sessionDrafts = await tx
       .select({ id: question_block.id })

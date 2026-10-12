@@ -196,7 +196,7 @@ export const ArtifactVerificationStatus = z.enum([
 ]);
 export type ArtifactVerificationStatusT = z.infer<typeof ArtifactVerificationStatus>;
 
-export const SourceAssetKind = z.enum(['image', 'pdf', 'text', 'web']);
+export const SourceAssetKind = z.enum(['image', 'pdf', 'text', 'web', 'docx']);
 
 export const IngestionSessionStatus = z.enum([
   'uploaded',
@@ -209,9 +209,7 @@ export const IngestionSessionStatus = z.enum([
   'failed',
 ]);
 
-// YUK-258: 'docx' entrypoint. The VISUAL line reuses initiateUpload+enqueueExtraction
-// with this entrypoint (page images feed tencent_ocr_extract); the TEXT line uses
-// the dedicated docx-ingestion owner and never reaches initiateUpload.
+// DOCX uploads preserve a source package and reuse the queued ingestion lifecycle.
 export const IngestionEntrypoint = z.enum(['vision_single', 'vision_paper', 'docx']);
 
 // T-OC A2 (YUK-164, D1=C): `auto_enrolled` is a terminal-but-revertible state

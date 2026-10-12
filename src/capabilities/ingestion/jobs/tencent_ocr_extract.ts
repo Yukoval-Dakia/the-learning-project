@@ -2,6 +2,7 @@ import { and, eq } from 'drizzle-orm';
 import type { JobWithMetadata } from 'pg-boss';
 import sharp from 'sharp';
 import { type PreAttachFigure, cropAndUploadFigures } from '@/capabilities/ingestion/server/crop';
+import { runDocxAgentExtraction } from '@/capabilities/ingestion/server/docx/agent-extraction';
 import {
   type IngestionExtractionProgressPayloadT,
   writeExtractionProgress,
@@ -108,6 +109,7 @@ export type TencentOcrDeps = {
    * to the production `runStructureTask`.
    */
   runStructureFn?: typeof runStructureTask;
+  docxRunTaskFn?: Parameters<typeof runDocxAgentExtraction>[0]['runTaskFn'];
 };
 
 export function buildTencentOcrHandler(
@@ -263,6 +265,19 @@ async function processOneOcrJob(
   if (!session) {
     // Don't markExtractionFailed (session doesn't exist); just throw Permanent
     throw new PermanentError(`tencent_ocr_extract: session ${sessionId} not found`);
+  }
+  if (session.entrypoint === 'docx') {
+    const result = await runDocxAgentExtraction({
+      db: deps.db,
+      r2: deps.r2,
+      sessionId,
+      runTaskFn: deps.docxRunTaskFn,
+    });
+    if (result === 'busy') return;
+    await emitOperationEventSafely(deps.db, operationId, 'operation.completed', {
+      pg_boss_job_id: bossJobId,
+    });
+    return; // Never send a DOCX agent failure through the OCR/regex fallback.
   }
   const assetIds = session.source_asset_ids;
   if (assetIds.length === 0) {

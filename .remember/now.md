@@ -1,3 +1,9 @@
+# DOCX agent tool migration — 2026-10-12
+
+Same Draft #1703, fast-forward increment from 160fd972; migration worktree /workspace/tlp-docx-agent-migration. Owner explicitly removed regex question/option identification. Source package + isolated restorable workspace + existing Pi runner registry tools + immediate canonical drafts + failure recovery connected. Old parser and synchronous text owner deleted. Existing 6 edit/merge/figure tools mounted with session scope; no broad shell/filesystem. Optional lossless layout JSON adapter only, no new parser installation. Original paused UI work remains untouched in /workspace/the-learning-project and /tmp/yuk1404-agent/paused-ui-160.tar.gz. Only existing async-progress selection changed in current VisionTab.
+
+One controlled-agent DB case passed: source files6; external agent interruption leaves2 drafts; retry and duplicate active/completed delivery do not duplicate; formal1/draft1/ignored0/sessionpartial, formal withheld/unverified_rules/container_only. No actual model quality or school acceptance. Parent owns real-paper/Docling local evaluation and Linear. New evidence and limits: docs/planning/2026-10-12-yuk1404-docx-agent-tools.md. Final static/build/exact-head CI receipts belong to this migration, not old160. Same PR stays Draft, no force/merge/deploy/paid call/third review.
+
 # DOCX per-question integrity implementation — 2026-10-12
 
 Same Draft #1703 / fix/yuk-1404-docx-question-boundaries. Added typed source digests/page/media evidence and immutable source issues; existing manual import transaction checks per-issue confirmations bound to source/block version/final content and recorded assets. reviewed/manual prompt strings cannot clear issues. Partial DOCX text ordinary imports allowed; unselected text-DOCX drafts retained, session remains partial/reviewed until consumed. No UI/admission/OCR expansion; no source-less manual image cards.

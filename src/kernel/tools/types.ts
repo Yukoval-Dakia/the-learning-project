@@ -1,3 +1,4 @@
+import type { DocxDraftInputT, DocxReadInputT } from '@/core/schema/docx-agent';
 // YUK-79 / Foundation D M1 / spec `docs/superpowers/specs/2026-05-17-agent-context-tools-design.md`
 //
 // DomainTool contract — the canonical type that every read / propose / write
@@ -85,6 +86,11 @@ export type ValidateLearningContentFn = (
 ) => Promise<LearningContentValidationOutcome>;
 
 export interface ToolContext {
+  /** Server-bound ingestion capability; never accepts a caller filesystem path. */
+  docxWorkspace?: {
+    read(input: DocxReadInputT): Promise<Record<string, unknown>>;
+    drafts(input: DocxDraftInputT): Promise<Record<string, unknown>>;
+  };
   derivationPolicy?: DerivationPolicyT;
   db: Db;
   /** Server-bound current-turn original; never populated from model arguments. */

@@ -1,6 +1,7 @@
 import { defineOwnedTaskSpecs } from '@/ai/owned-task-specs';
 import { blockAssemblyTaskSpec } from './block-assembly';
 import { coldStartPlacementBridgeTaskSpec } from './cold-start-bridge';
+import { docxIngestionTaskSpec } from './docx-ingestion';
 import { mistakeEnrollTaskSpec } from './mistake-enroll';
 import { profileCriticTaskSpec } from './profile-critic';
 import { structureTaskSpec } from './structure';
@@ -11,6 +12,7 @@ export const ingestionTaskSpecs = defineOwnedTaskSpecs('ingestion', {
   VisionExtractTask: visionExtractTaskSpec,
   VisionExtractTaskHeavy: visionExtractTaskHeavySpec,
   StructureTask: structureTaskSpec,
+  DocxIngestionTask: docxIngestionTaskSpec,
   MistakeEnrollTask: mistakeEnrollTaskSpec,
   TaggingTask: taggingTaskSpec,
   ColdStartPlacementBridgeTask: coldStartPlacementBridgeTaskSpec,

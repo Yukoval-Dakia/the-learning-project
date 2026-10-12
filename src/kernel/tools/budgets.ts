@@ -98,6 +98,7 @@ export const BUDGETS_BY_SURFACE: Record<DomainToolSurface, ContextBudget> = {
   // budget until it needs an explicit one (no read-heavy fan-out; the 6 write
   // tools are local DB mutations).
   ingestion_block_edit: GENERIC_CONTEXT_BUDGET,
+  docx_ingestion: GENERIC_CONTEXT_BUDGET,
 };
 
 export function resolveContextBudget(surface: DomainToolSurface): ContextBudget {

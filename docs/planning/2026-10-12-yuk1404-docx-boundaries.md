@@ -1,5 +1,6 @@
 # 学校 DOCX 题号与图片保全（YUK-1404）
 
+> 历史路线记录：owner 后续要求移除正则并改用 agent 工具；当前实现见 [DOCX agent 材料与草稿工具](2026-10-12-yuk1404-docx-agent-tools.md)。以下结果仅属于文中固定版本，不能用于新 agent 验收。
 第一天能用；服务录入后题目完整性契约。基线 `d3885e83`，独立分支
 `fix/yuk-1404-docx-question-boundaries`。本切片不改 UI、判分、付费调用或 #1658 的写入逻辑。
 
