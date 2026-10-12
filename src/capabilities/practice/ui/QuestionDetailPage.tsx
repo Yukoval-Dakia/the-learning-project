@@ -27,7 +27,7 @@
 //   • answerNote / origin（变体生成理由置信度）→ 后端无对应列，不渲。
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { deriveOptionIds } from '@/ui/components/response/response-types';
 import { ApiError } from '@/ui/lib/api';
@@ -443,7 +443,9 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
   const data = detailQ.data;
 
   // 编辑草稿态。data 到达 / 切换 id 时重置。
-  const [draft, setDraft] = useState<EditDraft | null>(null);
+  const [draft, setDraft] = useState<EditDraft | null>(() =>
+    data && data.id === id ? draftFrom(data) : null,
+  );
   const [saved, setSaved] = useState(false);
   const [editOptIdx, setEditOptIdx] = useState(-1);
   const [showAddChip, setShowAddChip] = useState(false);
@@ -463,15 +465,18 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
     setTimeout(() => setToasts((ts) => ts.filter((t) => t.id !== tid)), 2600);
   }, []);
 
-  // data 到达 / 切换 id 时重置编辑草稿与瞬态 UI。
-  // minor1 修：不在此 effect 里碰 saved——「已保存」提示由保存成功的独立计时器
-  // 管控（见 patchMut.onSuccess），否则 invalidate→refetch→本 effect 会把刚亮起的
+  // data 到达 / 切换 id 时重置编辑草稿与瞬态 UI（渲染期按 data 引用 + id 比对上次已重置的
+  // 版本，命中变化即调整 state；每次 refetch 得到新 data 仍会覆写草稿，保持原语义）。
+  // minor1 修：这里不碰 saved——「已保存」提示由保存成功的独立计时器
+  // 管控（见 patchMut.onSuccess），否则 invalidate→refetch→重置会把刚亮起的
   // badge 一闪即逝地抹掉。
-  useEffect(() => {
+  const [draftSource, setDraftSource] = useState({ data, id });
+  if (draftSource.data !== data || draftSource.id !== id) {
+    setDraftSource({ data, id });
     if (data?.id === id) setDraft(draftFrom(data));
     setEditOptIdx(-1);
     setShowAddChip(false);
-  }, [data, id]);
+  }
 
   // dirty 判定：草稿与服务端值逐字段比对。
   const dirty = useMemo(() => {

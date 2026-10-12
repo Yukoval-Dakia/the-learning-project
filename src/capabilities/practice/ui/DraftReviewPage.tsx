@@ -16,7 +16,7 @@
 //     决定（数学开 KaTeX、文言保留 `$...$` 标点），不再跨科默认开启公式解析。
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { deriveOptionIds, optionLabel } from '@/ui/components/response/response-types';
 import { makeLookup } from '@/ui/lib/makeLookup';
@@ -549,7 +549,7 @@ export default function DraftReviewPage({ navigate }: DraftReviewPageProps) {
   const [query, setQuery] = useState('');
   const [vstatus, setVstatus] = useState<VStatusTab>('all');
   const [page, setPage] = useState(0);
-  const [activeId, setActiveId] = useState<string | null>(null);
+  const [selectedId, setActiveId] = useState<string | null>(null);
   const [picked, setPicked] = useState<Set<string>>(() => new Set());
   // 客户端顺序队列里正在 verify 的那条（一次一条，照 demo runBatch 语义）。
   const [verifyingId, setVerifyingId] = useState<string | null>(null);
@@ -607,15 +607,16 @@ export default function DraftReviewPage({ navigate }: DraftReviewPageProps) {
   const curPage = Math.min(page, pageCount - 1);
   const pageRows = filtered.slice(curPage * DR_PAGE_SIZE, curPage * DR_PAGE_SIZE + DR_PAGE_SIZE);
 
-  // keep an active selection valid（设计稿：filtered 变动时选中首条）。filtered 是
-  // useMemo，输入不变时引用稳定，可直接入依赖。
-  useEffect(() => {
-    if (filtered.length === 0) {
-      if (activeId !== null) setActiveId(null);
-      return;
-    }
-    if (!filtered.some((r) => r.id === activeId)) setActiveId(filtered[0].id);
-  }, [filtered, activeId]);
+  // keep an active selection valid（设计稿：filtered 变动时选中首条）。有效选择在渲染时
+  // 由 filtered 派生；与存储值不同时就地落盘（之后被筛掉的旧选择不会再"跳回"），本次渲染
+  // 与 detail query 直接用有效值，不会带着旧 id 发请求。
+  const activeId =
+    filtered.length === 0
+      ? null
+      : filtered.some((r) => r.id === selectedId)
+        ? selectedId
+        : filtered[0].id;
+  if (activeId !== selectedId) setActiveId(activeId);
 
   // detail query：选中项拉全文（enabled on activeId）。
   const detailQ = useQuery({

@@ -6,12 +6,14 @@
 // Both persist in localStorage. ZERO backend writes — there is no accept/dismiss
 // (only-read iron rule). Today block + full-screen view share the same keys/hook.
 //
-// SSR hydration guard (mirrors review/page.tsx): server render + client first
-// frame must agree, so defaults are open=false / read=empty, and localStorage is
-// read in a mount-time useEffect that then setState. One frame of "collapsed,
-// no reads" before hydration is acceptable.
+// SSR hydration: both values come from a small localStorage-backed store read through
+// useSyncExternalStore. The server snapshot (and the hydration pass) is open=false /
+// read=empty, so server HTML and the client's first frame agree; React then re-renders with
+// the stored values. Snapshots are cached per raw storage string so they stay referentially
+// stable. Writes go through the toggle/mark commands, which notify every mounted consumer on
+// this page; the `storage` event keeps other tabs in step.
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useSyncExternalStore } from 'react';
 import { isFresh } from './derive';
 
 export const AN_LS_OPEN = 'loom-annotes-open'; // '1' = expanded, default collapsed
@@ -31,30 +33,72 @@ export interface AgentReads {
   unreadCount: (notes: ReadableNote[]) => number;
 }
 
-export function useAgentReads(now: Date): AgentReads {
-  const [open, setOpen] = useState(false);
-  const [readSet, setReadSet] = useState<Set<string>>(() => new Set());
+const EMPTY_READ: ReadonlySet<string> = new Set();
 
-  // Mount-after-read: hydrate both from localStorage post-mount only.
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    setOpen(window.localStorage.getItem(AN_LS_OPEN) === '1');
-    try {
-      const raw = window.localStorage.getItem(AN_LS_READ);
-      if (raw) setReadSet(new Set(JSON.parse(raw) as string[]));
-    } catch {
+// Client-only: subscribe and the client snapshots never run during SSR (the server snapshots
+// are constants), so nothing user-specific is shared across server requests.
+const listeners = new Set<() => void>();
+let readCache: { raw: string | null; set: ReadonlySet<string> } = { raw: null, set: EMPTY_READ };
+
+function notify() {
+  for (const listener of listeners) listener();
+}
+
+function onStorage(ev: StorageEvent) {
+  if (ev.key === null || ev.key === AN_LS_OPEN || ev.key === AN_LS_READ) notify();
+}
+
+/** null = stored value is corrupt. */
+function parseReadSet(raw: string | null): ReadonlySet<string> | null {
+  if (!raw) return EMPTY_READ;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? new Set(parsed as string[]) : null;
+  } catch {
+    return null;
+  }
+}
+
+function subscribe(listener: () => void) {
+  if (listeners.size === 0) {
+    // Attach-time repair of a corrupt read list (the old mount-time read did the same).
+    if (parseReadSet(window.localStorage.getItem(AN_LS_READ)) === null) {
       window.localStorage.removeItem(AN_LS_READ);
     }
-  }, []);
+    window.addEventListener('storage', onStorage);
+  }
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+    if (listeners.size === 0) window.removeEventListener('storage', onStorage);
+  };
+}
+
+function getOpenSnapshot() {
+  return window.localStorage.getItem(AN_LS_OPEN) === '1';
+}
+
+function getServerOpen() {
+  return false;
+}
+
+function getReadSnapshot(): ReadonlySet<string> {
+  const raw = window.localStorage.getItem(AN_LS_READ);
+  if (raw !== readCache.raw) readCache = { raw, set: parseReadSet(raw) ?? EMPTY_READ };
+  return readCache.set;
+}
+
+function getServerRead(): ReadonlySet<string> {
+  return EMPTY_READ;
+}
+
+export function useAgentReads(now: Date): AgentReads {
+  const open = useSyncExternalStore(subscribe, getOpenSnapshot, getServerOpen);
+  const readSet = useSyncExternalStore(subscribe, getReadSnapshot, getServerRead);
 
   const toggleOpen = useCallback(() => {
-    setOpen((prev) => {
-      const next = !prev;
-      if (typeof window !== 'undefined') {
-        window.localStorage.setItem(AN_LS_OPEN, next ? '1' : '0');
-      }
-      return next;
-    });
+    window.localStorage.setItem(AN_LS_OPEN, getOpenSnapshot() ? '0' : '1');
+    notify();
   }, []);
 
   const isUnread = useCallback(
@@ -63,14 +107,10 @@ export function useAgentReads(now: Date): AgentReads {
   );
 
   const markAllRead = useCallback((notes: ReadableNote[]) => {
-    setReadSet((prev) => {
-      const next = new Set(prev);
-      for (const n of notes) next.add(n.id);
-      if (typeof window !== 'undefined') {
-        window.localStorage.setItem(AN_LS_READ, JSON.stringify([...next]));
-      }
-      return next;
-    });
+    const next = new Set(getReadSnapshot());
+    for (const n of notes) next.add(n.id);
+    window.localStorage.setItem(AN_LS_READ, JSON.stringify([...next]));
+    notify();
   }, []);
 
   const unreadCount = useCallback(

@@ -25,7 +25,7 @@
 //    列；同 QuestionsPage subjMeta 先例）。
 
 import { useQuery } from '@tanstack/react-query';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react';
 import { type MistakeProjection, listMistakes } from '@/capabilities/ingestion/ui-public';
 import { getTree } from '@/capabilities/knowledge/ui-public';
 import { resolveKnownSubjectId } from '@/subjects/profile';
@@ -111,7 +111,7 @@ function toCauseBadgeInput(cause: MistakeCause | null): {
 // 归因开始至今秒数。唯一消费者是 CauseBadge：仅用于在 <30s「归因中...」与 ≥30s
 // 「待归因」间二选一（不渲染活动秒数计数器）。Date.now() 在 render 期取——单凭它，
 // 一条 <30s 的 pending 行会卡在「归因中...」永不翻到「待归因」（页面挂着不重渲）。
-// 修法：页面级 30s 阈值附近补一个 tick（见 MistakesPage useEffect，仅 pending>0 时跑）
+// 修法：页面级 30s 阈值附近补一个 tick（见 MistakesPage 的 pending 时钟，仅 pending>0 时跑）
 // 触发重渲，让阈值跨越被如实反映。因为没有「看起来在走的冻结数字」，所以不误导。
 function pendingSinceSec(m: MistakeRow): number {
   return Math.max(0, Math.floor(Date.now() / 1000) - m.created_at);
@@ -334,12 +334,25 @@ export default function MistakesPage({ navigate, list = listMistakes }: Mistakes
   // render 期一次性取的 Date.now() 不会自己走——补一个低频 tick 触发重渲，让阈值跨越如实
   // 反映；只在 pending>0 时跑（无 pending 行时零开销，不挂常驻 interval）。15s 间距保证 30s
   // 阈值在 ~一个周期内被跨过。tick 值本身不渲染（只为 invalidate render），不是冻结的活动计数。
-  const [, setTick] = useState(0);
-  useEffect(() => {
-    if (pending === 0) return;
-    const h = setInterval(() => setTick((t) => t + 1), 15_000);
-    return () => clearInterval(h);
-  }, [pending]);
+  // 时钟是按 pending 数订阅的本地资源：pending 变化即换一个 interval，pending=0 不挂；
+  // 卸载/换订阅时 clearInterval。快照是本页私有的 tick 计数。
+  const [pendingClock] = useState(() => ({ tick: 0 }));
+  const subscribePendingClock = useCallback(
+    (notify: () => void) => {
+      if (pending === 0) return () => {};
+      const h = setInterval(() => {
+        pendingClock.tick += 1;
+        notify();
+      }, 15_000);
+      return () => clearInterval(h);
+    },
+    [pending, pendingClock],
+  );
+  useSyncExternalStore(
+    subscribePendingClock,
+    () => pendingClock.tick,
+    () => pendingClock.tick,
+  );
 
   // 科目筛选比稳定身份键（subjectIdentityKey），不比展示 label。
   // shown 保留 derived 条目（含预算 subject），卡片渲染直接复用，不再重算 subjectOf。

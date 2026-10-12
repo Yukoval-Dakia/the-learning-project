@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { type CSSProperties, useEffect, useMemo, useState } from 'react';
+import { type CSSProperties, useMemo, useState } from 'react';
 import { Badge, type BadgeTone } from '@/ui/primitives/Badge';
 import { Button } from '@/ui/primitives/Button';
 import { Card } from '@/ui/primitives/Card';
@@ -142,16 +142,24 @@ export function AdminRunsSurface({
   const shownLimit = runsQ.data?.limit ?? 100;
   const totalRuns = runsQ.data?.total ?? runs.length;
   const isTruncated = Boolean(runsQ.data?.truncated);
-  useEffect(() => {
-    if (!runsQ.isSuccess) return;
-    if (staleRunId && runs.some((run) => run.id === staleRunId)) setStaleRunId(null);
-    if (selectedRunId && !runs.some((run) => run.id === selectedRunId)) {
-      setStaleRunId(selectedRunId);
-      setSelectedRunId(runs[0]?.id ?? null);
-      return;
+  // Reconcile the selection once per successful list read. Keyed on the response object so a
+  // failed refetch (isSuccess=false, old data kept) never clears the pick or reports a run as
+  // gone; only a fresh successful list can move the selection or mark the old pick stale.
+  const [reconciledRuns, setReconciledRuns] = useState<typeof runsQ.data>(undefined);
+  if (runsQ.isSuccess && runsQ.data !== reconciledRuns) {
+    setReconciledRuns(runsQ.data);
+    let nextStale = staleRunId;
+    if (nextStale && runs.some((run) => run.id === nextStale)) nextStale = null;
+    let nextSelected = selectedRunId;
+    if (nextSelected && !runs.some((run) => run.id === nextSelected)) {
+      nextStale = nextSelected;
+      nextSelected = runs[0]?.id ?? null;
+    } else if (!nextSelected && runs.length > 0) {
+      nextSelected = runs[0].id;
     }
-    if (!selectedRunId && runs.length > 0) setSelectedRunId(runs[0].id);
-  }, [runs, runsQ.isSuccess, selectedRunId, staleRunId]);
+    if (nextStale !== staleRunId) setStaleRunId(nextStale);
+    if (nextSelected !== selectedRunId) setSelectedRunId(nextSelected);
+  }
 
   const detailQ = useQuery({
     queryKey: ['admin-run-detail', selectedRunId],
