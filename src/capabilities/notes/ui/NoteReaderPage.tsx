@@ -6,7 +6,7 @@
 // AI refine 痕迹与 undo 接 ai-changes 链（T5 已验真）。
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { InteractiveArtifactRenderer } from '@/ui/components/InteractiveArtifactRenderer';
 import { ApiError } from '@/ui/lib/api';
 import { randomId } from '@/ui/lib/random-id';
@@ -64,6 +64,65 @@ function isVersionConflict(e: unknown): boolean {
 function jumpToBlockAnchor(anchorId: string) {
   window.history.pushState(null, '', `#${anchorId}`);
   document.getElementById(anchorId)?.scrollIntoView({ behavior: 'smooth' });
+}
+
+// 编辑期 presence（M5 全分支 review H2 接线）：编辑态每 5s 心跳，worker 的
+// note-refine 据此 defer AI patch（ADR-0023 不变量）；离开编辑态（切回阅读 /
+// 保存成功 / 换笔记 / 卸载）blur——服务端置 idle 并 FIFO flush 被 defer 的
+// patch。best-effort：presence 失败不打断编辑（与旧 ArtifactBlockTree 等价），
+// 兜底是 30s 心跳超时 sticky idle + PATCH 乐观锁。
+// YUK-384 — one editor_session_id per edit session, so the server keys presence
+// by (artifact, session). Minted on acquire, reused for every heartbeat and for
+// the blur; a later edit session mints a fresh id.
+//
+// This is a write lease, owned per reader instance (no module state). Release is
+// deferred one tick: a detach immediately followed by a re-attach for the same
+// artifact (StrictMode's simulated remount, or React re-running the ref callback)
+// keeps the same session instead of blurring and minting a second one.
+function createEditingPresence() {
+  type Lease = {
+    artifactId: string;
+    sessionId: string;
+    heartbeat: number;
+    pendingRelease: number | null;
+  };
+  let lease: Lease | null = null;
+
+  const end = (ended: Lease) => {
+    window.clearInterval(ended.heartbeat);
+    if (ended.pendingRelease !== null) window.clearTimeout(ended.pendingRelease);
+    if (lease === ended) lease = null;
+    void editingBlur(ended.artifactId, ended.sessionId).catch(() => {});
+  };
+
+  return {
+    acquire(artifactId: string) {
+      if (lease && lease.artifactId === artifactId) {
+        if (lease.pendingRelease !== null) {
+          window.clearTimeout(lease.pendingRelease);
+          lease.pendingRelease = null;
+        }
+        return;
+      }
+      if (lease) end(lease);
+      const sessionId = randomId();
+      const beat = () => {
+        void editingHeartbeat(artifactId, sessionId).catch(() => {});
+      };
+      beat();
+      lease = {
+        artifactId,
+        sessionId,
+        heartbeat: window.setInterval(beat, 5000),
+        pendingRelease: null,
+      };
+    },
+    release() {
+      const current = lease;
+      if (!current || current.pendingRelease !== null) return;
+      current.pendingRelease = window.setTimeout(() => end(current), 0);
+    },
+  };
 }
 
 // 设计源每块发 nrb-{type} 类；生产非 section 块型映射到同语义短类（无 CSS 钩子，
@@ -126,46 +185,35 @@ export default function NoteReaderPage({
     setEntryKid(new URLSearchParams(window.location.search).get('entry'));
   }
 
-  // 编辑期 presence（M5 全分支 review H2 接线）：编辑态每 5s 心跳，worker 的
-  // note-refine 据此 defer AI patch（ADR-0023 不变量）；离开编辑态（切回阅读 /
-  // 保存成功 / 换笔记 / 卸载）blur——服务端置 idle 并 FIFO flush 被 defer 的
-  // patch。best-effort：presence 失败不打断编辑（与旧 ArtifactBlockTree 等价），
-  // 兜底是 30s 心跳超时 sticky idle + PATCH 乐观锁。
-  // YUK-384 — one editor_session_id per mounted edit session, so the server keys
-  // presence by (artifact, session). Minted lazily on the first heartbeat and
-  // reused for every heartbeat; the blur reuses the same value, then it clears so
-  // a later edit session (or remount) mints a fresh id.
-  const editorSessionIdRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (mode !== 'edit') return;
-    if (editorSessionIdRef.current === null) {
-      editorSessionIdRef.current = randomId();
-    }
-    const sessionId = editorSessionIdRef.current;
-    const sendHeartbeat = () => {
-      void editingHeartbeat(id, sessionId).catch(() => {});
-    };
-    sendHeartbeat();
-    const timer = window.setInterval(sendHeartbeat, 5000);
-    return () => {
-      window.clearInterval(timer);
-      void editingBlur(id, sessionId).catch(() => {});
-      editorSessionIdRef.current = null;
-    };
-  }, [mode, id]);
+  // Editing presence (see createEditingPresence). The lease is held while the NoteEditor node is attached (edit mode only):
+  // attach acquires for this artifact, detach releases. See createEditingPresence
+  // for why release is deferred by one tick.
+  const [presence] = useState(createEditingPresence);
+  const editSessionRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      if (!node) return;
+      presence.acquire(id);
+      return () => presence.release();
+    },
+    [presence, id],
+  );
 
   // YUK-339 — 深链 → 块锚点滚动：URL 带 #nb-<blockId|index> 时，笔记数据到位后
-  // 滚到该块。ref 守卫按笔记 id 只跑一次：窗口聚焦/重连 refetch 会换 note 引用，
-  // 不加守卫会在每次后台刷新时重复跳滚；换笔记 id 后新深链可再触发。
+  // 滚到该块。ref 守卫按笔记 id 只跑一次：窗口聚焦/重连 refetch 不会重挂正文列，
+  // 守卫再挡住同篇重挂；换笔记 id 后新深链可再触发。正文列只在 note 到位后挂载，
+  // 子块（含 #nb- 锚点）先于它 commit，所以 attach 时锚点已在 DOM。
   const deepLinkedNoteRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (!note || deepLinkedNoteRef.current === id) return;
-    deepLinkedNoteRef.current = id;
-    const hash = window.location.hash;
-    if (hash.startsWith('#nb-')) {
-      document.getElementById(hash.slice(1))?.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [id, note]);
+  const docColumnRef = useCallback(
+    (node: HTMLElement | null) => {
+      if (!node || deepLinkedNoteRef.current === id) return;
+      deepLinkedNoteRef.current = id;
+      const hash = window.location.hash;
+      if (hash.startsWith('#nb-')) {
+        document.getElementById(hash.slice(1))?.scrollIntoView({ behavior: 'smooth' });
+      }
+    },
+    [id],
+  );
 
   const say = (text: string) => {
     setToast(text);
@@ -351,7 +399,7 @@ export default function NoteReaderPage({
           </nav>
         )}
 
-        <article className="note-doc-col">
+        <article ref={docColumnRef} className="note-doc-col">
           {/* S12 (YUK-335)：入口 banner（设计 screen-note-reader.jsx:201，.note-entry-banner
               coral，CSS 已移植 globals:6819）——仅当 ?entry 命中某 label 时渲，无入口
               上下文不占版面。文案点明「从哪扇门进来」+ 同篇笔记另有几个入口。 */}
@@ -405,7 +453,13 @@ export default function NoteReaderPage({
           )}
 
           {mode === 'edit' && draft ? (
-            <NoteEditor blocks={draft} labels={note.labels} noteId={note.id} onChange={setDraft} />
+            <NoteEditor
+              blocks={draft}
+              labels={note.labels}
+              noteId={note.id}
+              onChange={setDraft}
+              rootRef={editSessionRef}
+            />
           ) : (
             <NoteDocBody
               type={note.type}
