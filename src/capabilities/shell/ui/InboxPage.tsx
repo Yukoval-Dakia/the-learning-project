@@ -8,8 +8,18 @@
 // shell.css）。偏差（design pre-flight 预批）：①不渲 demo window 全局数据，A 块走真读模型；
 // ②C 块「去向」用 KIND_META label + reason_md（真 wire，非设计 demo 文案）。
 
-import { type InfiniteData, useInfiniteQuery, useQuery } from '@tanstack/react-query';
-import { useEffect, useMemo, useState } from 'react';
+import {
+  type InfiniteData,
+  InfiniteQueryObserver,
+  type InfiniteQueryObserverResult,
+  type QueryClient,
+  infiniteQueryOptions,
+  notifyManager,
+  useInfiniteQuery,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react';
 import { Btn } from '@/ui/primitives/Btn';
 import { EmptyState } from '@/ui/primitives/EmptyState';
 import { LoomCard } from '@/ui/primitives/LoomCard';
@@ -36,7 +46,7 @@ import {
   undoRemainingMs,
 } from './inbox-tier';
 import { ProposalCard } from './ProposalCard';
-import { useWorkbenchClient } from './workbench-client';
+import { type WorkbenchClient, useWorkbenchClient } from './workbench-client';
 import './shell.css';
 
 function tierIcon(name: string): LoomIconName {
@@ -48,6 +58,111 @@ const UNDO_TICK_MS = 15_000;
 const DECISION_QUERY_KEY = ['proposals', 'pending', 'decision'] as const;
 const EMPTY_DECISION_PAGES: readonly ProposalPageWire[] = [];
 const EMPTY_DECISION_PAGE_PARAMS: readonly (string | null)[] = [];
+
+function decisionQueryOptions(listPage: WorkbenchClient['listDecisionProposalPage']) {
+  return infiniteQueryOptions<
+    ProposalPageWire,
+    Error,
+    InfiniteData<ProposalPageWire, string | null>,
+    typeof DECISION_QUERY_KEY,
+    string | null
+  >({
+    queryKey: DECISION_QUERY_KEY,
+    initialPageParam: null as string | null,
+    queryFn: ({ pageParam }) => listPage(pageParam),
+    getNextPageParam: getNextDecisionPageParam,
+  });
+}
+
+type DecisionBacklog = InfiniteQueryObserverResult<
+  InfiniteData<ProposalPageWire, string | null>,
+  Error
+>;
+
+/**
+ * Owns the background drain of the decision backlog for one mounted inbox. It watches the same
+ * cached query as the page through its own observer, which never fetches on its own
+ * (`enabled: false`) and only asks for the next page. Its snapshot is the continuation state the
+ * page shows (still loading / failed / more pages).
+ *
+ * The drain acts only when the gate (has next page, fetching next page, next page failed) changes,
+ * and asks for at most one page at a time. A failed page stops the drain until the learner presses
+ * 继续加载. Unsubscribing removes the observer, so nothing outlives the page.
+ */
+class DecisionBacklogDrain {
+  readonly #observer: InfiniteQueryObserver<
+    ProposalPageWire,
+    Error,
+    InfiniteData<ProposalPageWire, string | null>,
+    typeof DECISION_QUERY_KEY,
+    string | null
+  >;
+  #lastGate: string | null = null;
+
+  constructor(client: QueryClient, listPage: WorkbenchClient['listDecisionProposalPage']) {
+    this.#observer = new InfiniteQueryObserver(client, {
+      ...decisionQueryOptions(listPage),
+      enabled: false,
+    });
+  }
+
+  subscribe = (onChange: () => void): (() => void) => {
+    const unsubscribe = this.#observer.subscribe(
+      notifyManager.batchCalls((result: DecisionBacklog) => {
+        this.#drain(result);
+        onChange();
+      }),
+    );
+    // Catch up on anything that changed between creating the observer and subscribing.
+    this.#observer.updateResult();
+    this.#drain(this.#observer.getCurrentResult());
+    return () => {
+      unsubscribe();
+      this.#lastGate = null;
+    };
+  };
+
+  getSnapshot = (): DecisionBacklog => this.#observer.getCurrentResult();
+
+  /** Explicit 继续加载 after a failed page. */
+  continueLoading = (): void => {
+    void this.#observer.fetchNextPage();
+  };
+
+  #drain(result: DecisionBacklog): void {
+    const gate = `${result.hasNextPage}|${result.isFetchingNextPage}|${result.isFetchNextPageError}`;
+    if (gate === this.#lastGate) return;
+    this.#lastGate = gate;
+    if (!result.hasNextPage) return;
+    if (result.isFetchingNextPage || result.isFetchNextPageError) return;
+    void this.#observer.fetchNextPage();
+  }
+}
+
+/**
+ * Wall clock for the A-tier undo countdown, owned by one mounted inbox. The interval only runs
+ * while subscribed, and the page subscribes only while it shows auto-applied cards. The
+ * remaining window is always computed from the real applied time, so the tick rate never
+ * stretches or resets the window.
+ */
+class UndoClock {
+  #nowMs = Date.now();
+
+  subscribe = (onChange: () => void): (() => void) => {
+    // Cards may arrive long after mount; start the countdown from the current time.
+    this.#nowMs = Date.now();
+    onChange();
+    const id = setInterval(() => {
+      this.#nowMs = Date.now();
+      onChange();
+    }, UNDO_TICK_MS);
+    return () => clearInterval(id);
+  };
+
+  getSnapshot = (): number => this.#nowMs;
+}
+
+const idleSubscribe = (): (() => void) => () => {};
 
 function formatWindowLabel(windowMs: number): string {
   const minutes = Math.round(windowMs / 60_000);
@@ -271,20 +386,10 @@ export default function InboxPage({ navigate }: InboxPageProps) {
   } = useWorkbenchClient();
   const [resolved, setResolved] = useState<Record<string, string>>({});
   const [reverting, setReverting] = useState<Record<string, true>>({});
-  const [toast, setToast] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ id: number; text: string } | null>(null);
 
-  const decisionQ = useInfiniteQuery<
-    ProposalPageWire,
-    Error,
-    InfiniteData<ProposalPageWire, string | null>,
-    typeof DECISION_QUERY_KEY,
-    string | null
-  >({
-    queryKey: DECISION_QUERY_KEY,
-    initialPageParam: null as string | null,
-    queryFn: ({ pageParam }) => listDecisionProposalPage(pageParam),
-    getNextPageParam: getNextDecisionPageParam,
-  });
+  const queryClient = useQueryClient();
+  const decisionQ = useInfiniteQuery(decisionQueryOptions(listDecisionProposalPage));
   const observationQ = useQuery({
     queryKey: ['proposals', 'pending', 'observation-preview'],
     queryFn: listObservationProposalPreview,
@@ -294,16 +399,8 @@ export default function InboxPage({ navigate }: InboxPageProps) {
 
   // 第一页 commit 后才开始逐页补齐；每次只发一个 continuation。失败时停住并把重试权交给
   // 用户，避免瞬时错误形成请求风暴。已加载卡片始终保持可操作。
-  useEffect(() => {
-    if (!decisionQ.hasNextPage) return;
-    if (decisionQ.isFetchingNextPage || decisionQ.isFetchNextPageError) return;
-    void decisionQ.fetchNextPage();
-  }, [
-    decisionQ.fetchNextPage,
-    decisionQ.hasNextPage,
-    decisionQ.isFetchNextPageError,
-    decisionQ.isFetchingNextPage,
-  ]);
+  const [drain] = useState(() => new DecisionBacklogDrain(queryClient, listDecisionProposalPage));
+  const backlog = useSyncExternalStore(drain.subscribe, drain.getSnapshot, drain.getSnapshot);
 
   const nameOf = useMemo(() => {
     const map = new Map((treeQ.data?.rows ?? []).map((n) => [n.id, n.name]));
@@ -311,9 +408,15 @@ export default function InboxPage({ navigate }: InboxPageProps) {
   }, [treeQ.data]);
 
   const showError = (msg: string) => {
-    setToast(msg);
-    setTimeout(() => setToast(null), 5000);
+    setToast((prev) => ({ id: (prev?.id ?? 0) + 1, text: msg }));
   };
+  // Each toast closes itself after 5s. The timer belongs to the toast node: a newer toast or
+  // leaving the page removes the node and clears its timer, so nothing fires after unmount.
+  const dismissToastLater = useCallback((node: HTMLDivElement | null) => {
+    if (!node) return;
+    const id = setTimeout(() => setToast(null), 5000);
+    return () => clearTimeout(id);
+  }, []);
 
   const decisionPages = decisionQ.data?.pages ?? EMPTY_DECISION_PAGES;
   const decisionPageParams = decisionQ.data?.pageParams ?? EMPTY_DECISION_PAGE_PARAMS;
@@ -343,15 +446,15 @@ export default function InboxPage({ navigate }: InboxPageProps) {
 
   const autoApplied = aaQ.data?.rows ?? [];
   const breaker = aaQ.data?.breaker;
-  const [nowMs, setNowMs] = useState(() => Date.now());
   // 撤销窗口倒计时 + live→consumed 过渡靠定时重渲染刷新（否则 nowMs 仅在偶发重渲时更新，
   // 窗口过期后仍显示旧剩余时间 + 撤销键启用，与 UNDO_WINDOW_MS 语义不符；CodeRabbit #1）。
-  // 仅在有 auto-applied 卡时挂 interval，无则不跑。
-  useEffect(() => {
-    if (autoApplied.length === 0) return;
-    const id = setInterval(() => setNowMs(Date.now()), UNDO_TICK_MS);
-    return () => clearInterval(id);
-  }, [autoApplied.length]);
+  // 仅在有 auto-applied 卡时订阅时钟（才挂 interval），无则不跑。
+  const [undoClock] = useState(() => new UndoClock());
+  const nowMs = useSyncExternalStore(
+    autoApplied.length > 0 ? undoClock.subscribe : idleSubscribe,
+    undoClock.getSnapshot,
+    undoClock.getSnapshot,
+  );
   // A 块在有 auto-applied 卡、熔断 tripped、或读模型出错（surface 错误而非静默空）时露出。
   const showTierA =
     aaQ.isLoading || autoApplied.length > 0 || breaker?.tripped === true || aaQ.isError;
@@ -382,9 +485,9 @@ export default function InboxPage({ navigate }: InboxPageProps) {
     hasVisibleContent:
       decide.length > 0 || moved.length > 0 || autoApplied.length > 0 || aaQ.isError,
     hasDiagnostic:
-      decisionQ.hasNextPage ||
-      decisionQ.isFetchingNextPage ||
-      decisionQ.isFetchNextPageError ||
+      backlog.hasNextPage ||
+      backlog.isFetchingNextPage ||
+      backlog.isFetchNextPageError ||
       decisionDiagnostics.incomplete ||
       aaQ.isLoading ||
       observationQ.isLoading ||
@@ -476,22 +579,18 @@ export default function InboxPage({ navigate }: InboxPageProps) {
         {/* ── B 档 · 逐条人审 ── */}
         <section>
           <TierHead tier="B" count={decideRemaining} />
-          {decisionQ.isFetchingNextPage && (
+          {backlog.isFetchingNextPage && (
             <LoomCard pad sunk>
               <output className="meta" aria-live="polite">
                 正在继续加载待裁决提议；已显示 {decide.length} 条，可以先处理。
               </output>
             </LoomCard>
           )}
-          {decisionQ.isFetchNextPageError && (
+          {backlog.isFetchNextPageError && (
             <LoomCard pad sunk>
               <div className="meta">
                 后续待裁决提议暂时无法加载；已显示的 {decide.length} 条仍可处理。{' '}
-                <button
-                  type="button"
-                  className="aa-link"
-                  onClick={() => void decisionQ.fetchNextPage()}
-                >
+                <button type="button" className="aa-link" onClick={drain.continueLoading}>
                   <LoomIcon name="refresh" size={13} />
                   继续加载
                 </button>
@@ -515,8 +614,8 @@ export default function InboxPage({ navigate }: InboxPageProps) {
             </LoomCard>
           )}
           {decide.length === 0 &&
-            !decisionQ.isFetchingNextPage &&
-            !decisionQ.isFetchNextPageError &&
+            !backlog.isFetchingNextPage &&
+            !backlog.isFetchNextPageError &&
             !decisionDiagnostics.incomplete && (
               <LoomCard pad sunk>
                 <div className="meta">没有待裁决的提议。</div>
@@ -591,10 +690,10 @@ export default function InboxPage({ navigate }: InboxPageProps) {
       </Stateful>
 
       {toast && (
-        <div className="pf-toasts" aria-live="polite">
+        <div key={toast.id} ref={dismissToastLater} className="pf-toasts" aria-live="polite">
           <div className="pf-toast t-info">
             <LoomIcon name="close" size={15} className="ico" />
-            <span>{toast}</span>
+            <span>{toast.text}</span>
           </div>
         </div>
       )}
