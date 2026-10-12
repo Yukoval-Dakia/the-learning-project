@@ -19,7 +19,7 @@
 // position rolls, the title crossfades and the page glides back to the top (M3: one swap at a
 // time; reduced motion: an instant swap).
 
-import { ArrowLeft, Camera, Eye, MessageSquareQuote, PenLine } from 'lucide-react';
+import { ArrowLeft, Camera, Eye, MessageSquareQuote, PenLine, Sparkles, X } from 'lucide-react';
 import {
   type CSSProperties,
   useCallback,
@@ -40,6 +40,7 @@ import { nativeResponseEntry, nativeResponseValue } from '@/ui/components/respon
 import { SaveStateChip } from '@/ui/components/response/SaveStateChip';
 import { ApiError } from '@/ui/lib/api';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
+import { useCopilotOpenSignal } from '@/ui/lib/use-copilot-dwell';
 import {
   BottomSheet,
   Button,
@@ -120,6 +121,45 @@ export interface PracticeNextSoloProps {
    */
   companion: PracticeCompanionMode;
   layout?: PracticeLayout;
+  /**
+   * Whether the 学习伙伴 (the Copilot) is open. It is one thing with one control: the shell's
+   * 学习伙伴 button (through `toggleCopilot`), ⌘J, Esc to close, and on phones the sheet itself.
+   * Leave it out and the page keeps its own state, remembered per page; closed by default.
+   */
+  companionOpen?: boolean;
+  onCompanionOpenChange?: (open: boolean) => void;
+}
+
+/** This page's remembered open/closed state for the companion (C1: each page remembers its own). */
+const COMPANION_KEY = 'un-companion-open:practice-question';
+function readCompanionOpen(): boolean {
+  try {
+    return window.localStorage.getItem(COMPANION_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+function writeCompanionOpen(open: boolean) {
+  try {
+    window.localStorage.setItem(COMPANION_KEY, open ? '1' : '0');
+  } catch {
+    // Private mode or storage off: the state just isn't remembered.
+  }
+}
+
+/** The block on the reading line, so a reflow can keep it where it was (M7). */
+function readingAnchor(
+  root: HTMLElement | null,
+  line: number,
+): { el: Element; top: number } | null {
+  const blocks = root?.querySelectorAll(
+    '.un-pn-q[data-role="shown"] :is(p, li, h2, figure, textarea, .katex-display, .rs-opt, .un-sb-text, .un-match-item)',
+  );
+  for (const el of blocks ?? []) {
+    const r = el.getBoundingClientRect();
+    if (r.height > 0 && r.bottom > line) return { el, top: r.top };
+  }
+  return null;
 }
 
 type MaterialView = PracticeIssuanceDtoT['materials'][number];
@@ -344,6 +384,8 @@ function PracticeNextSoloPage({
   navigate,
   companion,
   layout = 'classic',
+  companionOpen,
+  onCompanionOpenChange,
 }: PracticeNextSoloProps) {
   const toaster = useToaster();
   const push = toaster.push;
@@ -356,10 +398,83 @@ function PracticeNextSoloPage({
     window.scrollTo(0, 0);
   }, []);
 
-  const [sheet, setSheet] = useState<SheetSnap>('peek');
   const shell = useShellInsets();
   // One Dock instance only: it goes into the panel on wide screens, into the sheet on phones.
   const isPhone = useSyncExternalStore(subscribePhone, readPhone, () => false);
+
+  // ── The companion is the Copilot: one open/closed state, one control (C1, owner 2026-10-11
+  // 22:54). Wide screens: a 384px panel beside the content. Phones: the sheet; closed = peek.
+  const [ownOpen, setOwnOpen] = useState(readCompanionOpen);
+  const open = companionOpen ?? ownOpen;
+  const openRef = useRef(open);
+  openRef.current = open;
+  const mainRef = useRef<HTMLDivElement>(null);
+  const anchor = useRef<{ el: Element; top: number } | null>(null);
+  const setOpen = useCallback(
+    (next: boolean) => {
+      if (next === openRef.current) return;
+      // The reading column reflows once; keep the block on the reading line in place (M7).
+      anchor.current = window.matchMedia(PHONE_MEDIA).matches
+        ? null
+        : readingAnchor(mainRef.current, window.innerHeight * 0.3);
+      if (onCompanionOpenChange) onCompanionOpenChange(next);
+      if (companionOpen === undefined) {
+        setOwnOpen(next);
+        writeCompanionOpen(next);
+      }
+    },
+    [companionOpen, onCompanionOpenChange],
+  );
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs after each open/close reflow
+  useLayoutEffect(() => {
+    const a = anchor.current;
+    anchor.current = null;
+    if (!a?.el.isConnected) return;
+    const moved = a.el.getBoundingClientRect().top - a.top;
+    if (Math.abs(moved) > 1) window.scrollBy({ top: moved, behavior: 'instant' });
+  }, [open]);
+  // The 学习伙伴 button (shell topbar or the demo bar) toggles it through the Copilot channel.
+  const toggleSeq = useCopilotOpenSignal((st) => st.toggleSeq);
+  const seenToggle = useRef(toggleSeq);
+  useEffect(() => {
+    if (toggleSeq === seenToggle.current) return;
+    seenToggle.current = toggleSeq;
+    setOpen(!openRef.current);
+  }, [toggleSeq, setOpen]);
+  // ⌘J toggles; Esc closes when the companion has focus or nothing else does.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'j') {
+        e.preventDefault();
+        setOpen(!openRef.current);
+        return;
+      }
+      if (e.key !== 'Escape' || e.defaultPrevented || !openRef.current) return;
+      const active = document.activeElement;
+      const inCompanion = active?.closest('.un-pn-aside, .un-pn-phone-sheet');
+      if (inCompanion || !active || active === document.body) {
+        setOpen(false);
+        if (inCompanion) mainRef.current?.querySelector<HTMLElement>('.un-pn-title')?.focus();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [setOpen]);
+  // On phones the sheet is the companion: peek is closed; half or full is open.
+  const [raised, setRaised] = useState<Exclude<SheetSnap, 'peek' | 'closed'>>('half');
+  const sheet: SheetSnap = open ? raised : 'peek';
+  const onSheetSnap = useCallback(
+    (next: SheetSnap) => {
+      if (next === 'peek' || next === 'closed') {
+        setOpen(false);
+        return;
+      }
+      setRaised(next);
+      setOpen(true);
+    },
+    [setOpen],
+  );
+  const reveal = useCallback(() => setOpen(true), [setOpen]);
   const [companionBusy, setCompanionBusy] = useState(false);
   const [zoomed, setZoomed] = useState<MaterialView | null>(null);
 
@@ -370,29 +485,30 @@ function PracticeNextSoloPage({
   useMascotActivity({ thinking: embedded && companionBusy, settleKey: recordedReply });
 
   // ── Quote into the conversation (M6): the passage lifts off the page and lands in the composer.
-  const mainRef = useRef<HTMLDivElement>(null);
   const [draft, setDraft] = useState<{ key: number; text: string } | null>(null);
   const flight = useRef<(() => void) | null>(null);
   useEffect(() => () => flight.current?.(), []);
   const quoteSel = useQuotableSelection(mainRef, embedded);
-  const quote = useCallback(({ text, rect }: QuotedPassage) => {
-    const clipped = clipQuote(text);
-    if (!clipped) return;
-    // On phones the sheet rises first; the flight tracks the composer while it moves (C4).
-    if (window.matchMedia(PHONE_MEDIA).matches) {
-      setSheet((snap) => (snap === 'full' ? snap : 'half'));
-    }
-    flight.current?.();
-    flight.current = flyQuote({
-      from: rect,
-      content: clipped,
-      to: companionComposer,
-      onLand: () => {
-        flight.current = null;
-        setDraft((prev) => ({ key: (prev?.key ?? 0) + 1, text: `「${clipped}」\n` }));
-      },
-    });
-  }, []);
+  const quote = useCallback(
+    ({ text, rect }: QuotedPassage) => {
+      const clipped = clipQuote(text);
+      if (!clipped) return;
+      // The companion opens first (on phones the sheet rises); the flight tracks the composer while
+      // it moves (C4).
+      reveal();
+      flight.current?.();
+      flight.current = flyQuote({
+        from: rect,
+        content: clipped,
+        to: companionComposer,
+        onLand: () => {
+          flight.current = null;
+          setDraft((prev) => ({ key: (prev?.key ?? 0) + 1, text: `「${clipped}」\n` }));
+        },
+      });
+    },
+    [reveal],
+  );
   const quoteBlock = useCallback(
     (text: string, el: Element | null | undefined) =>
       quote({ text, rect: el?.getBoundingClientRect() ?? null }),
@@ -480,8 +596,15 @@ function PracticeNextSoloPage({
 
   const header = (
     <div className="un-pn-companion-head">
+      <Sparkles size={15} className="un-pn-companion-icon" aria-hidden="true" />
       <span className="un-pn-companion-name">学习伙伴</span>
       <CompanionStatus thinking={embedded && companionBusy} />
+      <IconButton
+        label="收起学习伙伴（⌘J）"
+        className="un-pn-companion-close"
+        icon={<X size={16} />}
+        onClick={() => setOpen(false)}
+      />
     </div>
   );
   // C1 asks for "正在看：…". The companion can't see the question yet (backend gap), so it says so
@@ -521,7 +644,7 @@ function PracticeNextSoloPage({
             variant="embedded"
             pathname={window.location.pathname}
             navigate={navigate}
-            onRevealRequest={() => setSheet((snap) => (snap === 'full' ? snap : 'half'))}
+            onRevealRequest={reveal}
             onBusyChange={setCompanionBusy}
             onReplyRecorded={setRecordedReply}
             insertDraft={draft}
@@ -620,7 +743,12 @@ function PracticeNextSoloPage({
   } as CSSProperties;
 
   return (
-    <div className="un-pn" data-layout={layout} style={insets}>
+    <div
+      className="un-pn"
+      data-layout={layout}
+      data-companion={open ? 'open' : 'closed'}
+      style={insets}
+    >
       <div className="un-pn-main un-page-enter" ref={mainRef}>
         <div className={head?.hasPassage ? 'un-pn-column un-pn-column-wide' : 'un-pn-column'}>
           {phoneBar}
@@ -636,8 +764,8 @@ function PracticeNextSoloPage({
         </p>
       </div>
       {/* C1: a floating layer beside the reading column, never over it. Glass (T3: floating). */}
-      <div className="un-pn-aside un-glass">
-        <CompanionPanel open label="学习伙伴" header={header}>
+      <div className="un-pn-aside un-glass" data-open={open || undefined}>
+        <CompanionPanel open={open} label="学习伙伴" header={header}>
           {companionBody('panel')}
         </CompanionPanel>
       </div>
@@ -645,7 +773,7 @@ function PracticeNextSoloPage({
         <BottomSheet
           label="学习伙伴"
           snap={sheet}
-          onSnapChange={setSheet}
+          onSnapChange={onSheetSnap}
           bottomInset={shell.bottom}
           header={header}
         >
