@@ -11,7 +11,7 @@
 
 'use client';
 
-import { type ReactNode, useEffect, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useState } from 'react';
 import { IconBtn } from './IconBtn';
 import { LoomIcon, type LoomIconName } from './LoomIcon';
 import { useFocusTrap } from './useFocusTrap';
@@ -51,7 +51,6 @@ export function CopilotDrawer({
   footer,
   ariaLabel,
 }: CopilotDrawerProps) {
-  const panelRef = useRef<HTMLDivElement | null>(null);
   // 全屏 Copilot（copilot.jsx L109 maximize）= 宽度切换的纯 chrome 状态：
   // 默认 420px 侧栏 ↔ 展开 min(900px, 92vw) 的宽读模式。每次关闭复位回窄，
   // 让下次打开从默认宽度起。
@@ -62,7 +61,7 @@ export function CopilotDrawer({
   // and the open-focus effect below: useFocusTrap focuses the first focusable
   // element on open, traps Tab within the panel, closes on Esc (stopPropagation so
   // a stacked modal's Esc doesn't leak), and restores focus to the trigger on close.
-  useFocusTrap(open, onClose, panelRef);
+  const trapRef = useFocusTrap(open, onClose);
 
   // Lock body scroll while drawer is open (mobile UX).
   useEffect(() => {
@@ -95,7 +94,7 @@ export function CopilotDrawer({
         className="absolute inset-0 bg-[rgba(15,18,22,0.32)]"
       />
       <aside
-        ref={panelRef}
+        ref={trapRef}
         // biome-ignore lint/a11y/useSemanticElements: native <dialog> requires
         // imperative showModal()/close() API which doesn't compose with the
         // controlled `open` prop + scrim/focus story used here.
