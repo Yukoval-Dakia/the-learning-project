@@ -1,5 +1,5 @@
 import type { KeyboardEvent, ReactNode } from 'react';
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useState } from 'react';
 import { useFocusTrap } from '@/ui/primitives/useFocusTrap';
 
 export interface PaletteCommand {
@@ -33,13 +33,12 @@ export function CommandPalette({
   placeholder = '搜索、跳转，或输入要做的事',
   emptyText = '没有匹配的命令',
 }: CommandPaletteProps) {
-  const panelRef = useRef<HTMLDivElement>(null);
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
   const listId = useId();
   const optionId = (i: number) => `${listId}-opt-${i}`;
 
-  useFocusTrap(open, onClose, panelRef);
+  const trapRef = useFocusTrap(open, onClose);
 
   useEffect(() => {
     if (open) {
@@ -105,7 +104,7 @@ export function CommandPalette({
         onClick={onClose}
       />
       <div
-        ref={panelRef}
+        ref={trapRef}
         className="un-palette un-glass"
         role="dialog"
         aria-modal="true"
