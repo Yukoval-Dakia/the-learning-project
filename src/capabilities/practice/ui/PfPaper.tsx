@@ -223,6 +223,9 @@ export function PfPaper(props: PfPaperProps) {
   const detailQ = useQuery({
     queryKey: ['paper', artifactId],
     queryFn: () => getPaperDetail(artifactId),
+    // YUK-1488 — every entry reads the server's drafts and epochs: a cached detail from an
+    // earlier visit predates the drafts that visit saved (autosave never updates the cache).
+    refetchOnMount: 'always',
   });
   const detail: PaperDetail | null = detailQ.data ?? null;
   const slots = useMemo(() => detail?.sections.flatMap((s) => s.slots) ?? [], [detail]);
@@ -237,7 +240,10 @@ export function PfPaper(props: PfPaperProps) {
     });
   }
 
-  if (detailQ.isLoading) return <p className="quiet-empty">取卷中…</p>;
+  // A visit restores its drafts once at mount, so it mounts only from a detail fetched for
+  // this entry; later background refetches never overwrite the live visit.
+  if (detailQ.isLoading || !detailQ.isFetchedAfterMount)
+    return <p className="quiet-empty">取卷中…</p>;
   if (detailQ.isError || !detail || slots.length === 0)
     return (
       <div className="pfp">
@@ -355,6 +361,13 @@ function PaperVisit({
   const timingSegmentRef = useRef<{ key: string; startedAt: number } | null>(null);
   const submittedDuringAttemptsRef = useRef<Set<string>>(new Set());
   const componentActiveRef = useRef(false);
+  // YUK-1488 — per slot, the text of the newest save the server acknowledged (restored drafts
+  // count as acknowledged); dropped when the newest save fails. The unmount flush re-sends a
+  // slot whose latest text differs from it.
+  const ackedAnswers = useRef<Record<string, string>>({ ...restored.answers });
+  // Bumped on every attach/detach of the header; an unmount flush runs only if nothing
+  // re-attached in the same tick (StrictMode, or the per-commit re-bind of attachTop).
+  const unmountFlushSeq = useRef(0);
 
   const persistTiming = useCallback(() => {
     const sid = sessionRef.current;
@@ -419,9 +432,11 @@ function PaperVisit({
   //   - attach: mark active; reuse the paper's session or open one (once per visit — a
   //     re-attach reuses the same request, an accepted open is never re-POSTed); start
   //     timing; listen for visibility changes (hidden pauses timing, visible resumes it).
-  //   - detach: mark inactive, close the timing segment (its time is persisted once) and
-  //     drop unfired debounces. Detach never claims an unacknowledged draft was saved;
-  //     explicit exit and pagehide keep their own flush and failure counting.
+  //   - detach: mark inactive and close the timing segment (its time is persisted once).
+  //     Unfired debounces are left to the unmount flush (attachTop, YUK-1488), which sends
+  //     them on a real unmount and leaves them running on a same-commit re-attach. Detach
+  //     never claims an unacknowledged draft was saved; explicit exit and pagehide keep
+  //     their own flush and failure counting.
   const attachVisit = useCallback(
     (node: HTMLDivElement | null) => {
       if (!node) return undefined;
@@ -452,15 +467,10 @@ function PaperVisit({
         startCurrentSegment();
       };
       document.addEventListener('visibilitychange', onVisibilityChange);
-      const timers = saveTimers.current;
       return () => {
         componentActiveRef.current = false;
         document.removeEventListener('visibilitychange', onVisibilityChange);
         stopTimingSegment();
-        for (const k of Object.keys(timers)) {
-          clearTimeout(timers[k]);
-          delete timers[k];
-        }
       };
     },
     [artifactId, qc, addToast, beginTiming, startCurrentSegment, stopTimingSegment],
@@ -523,6 +533,12 @@ function PaperVisit({
     // Only this visit's newest request for the slot may touch the flag. A save that outlives
     // its visit settles on the unmounted visit and can't rewrite the next paper's state.
     const isLatest = () => saveSeq.current[key] === seq;
+    // YUK-1488 — the flag is UI state: a save that settles after the visit unmounted (the
+    // unmount flush included) still lands on the server but never sets state.
+    const markFailed = () => {
+      delete ackedAnswers.current[key];
+      if (componentActiveRef.current) setSaveFailed((f) => ({ ...f, [key]: true }));
+    };
     // Deregister this entry when it settles, unless a newer save has already replaced it.
     const deregister = (ok: boolean) => {
       if (inFlightSaves.current.get(key) === done) inFlightSaves.current.delete(key);
@@ -536,7 +552,7 @@ function PaperVisit({
       // so exit/pagehide accounting sees this failure; a bare `Promise.resolve(false)` here
       // would be invisible to settleInFlightSaves and (with a stale saveFailed closure) let
       // exit report 0 — a false 「进度保留」over input that never left the page.
-      if (isLatest()) setSaveFailed((f) => ({ ...f, [key]: true }));
+      if (isLatest()) markFailed();
       done = Promise.resolve(false).then(deregister);
     } else {
       // Reads the epoch when it actually sends, so a save queued behind a chain uses its ACK.
@@ -561,12 +577,16 @@ function PaperVisit({
                   nativeEpochs.current[key] ?? 0,
                   ack.save_epoch,
                 );
-              if (isLatest()) setSaveFailed((f) => (f[key] ? { ...f, [key]: false } : f));
+              if (isLatest()) {
+                ackedAnswers.current[key] = v;
+                if (componentActiveRef.current)
+                  setSaveFailed((f) => (f[key] ? { ...f, [key]: false } : f));
+              }
               return true;
             })
             .catch((err) => {
               console.error('[PfPaper] draft save failed', { key, err });
-              if (isLatest()) setSaveFailed((f) => ({ ...f, [key]: true }));
+              if (isLatest()) markFailed();
               return false;
             });
         } catch (err) {
@@ -575,7 +595,7 @@ function PaperVisit({
           // exit/pagehide flush included — can be stranded on an unhandled throw, and flag the
           // slot so the exit count still records it as unsaved.
           console.error('[PfPaper] draft save threw', { key, err });
-          if (isLatest()) setSaveFailed((f) => ({ ...f, [key]: true }));
+          if (isLatest()) markFailed();
           return Promise.resolve(false);
         }
       };
@@ -744,6 +764,59 @@ function PaperVisit({
     }
     return pauseCurrentSession(true);
   });
+
+  // YUK-1488 — in-app navigation (sidebar, palette, back) unmounts the visit without pagehide
+  // or the exit button. Send, once and with a normal fetch, every slot that still has an
+  // unsaved edit: an unfired debounce, or latest text the server has not acknowledged. Each
+  // goes through runSave as a plain save, so it waits (capped) behind the slot's pending chain
+  // and in-flight save and reads the epoch when it sends. Not while exiting (the exit button
+  // already flushed and counted) or submitting (the submission carries the answer), and
+  // never for a submitted slot. Late results set no state (runSave checks componentActiveRef).
+  // Left before the session open returned: wait for it (it settles either way) so the drafts
+  // go out under the opened session instead of failing on a missing one. Once the sends
+  // settle, the cached paper detail is invalidated so a return within gcTime restores the
+  // flushed text and epochs rather than the session-open snapshot.
+  const flushOnUnmount = () => {
+    const pending = new Set(Object.keys(saveTimers.current));
+    for (const k of pending) {
+      clearTimeout(saveTimers.current[k]);
+      delete saveTimers.current[k];
+    }
+    const go = () => {
+      if (exitingRef.current || submittingRef.current) return;
+      const sends: Promise<boolean>[] = [];
+      for (const slot of slots) {
+        const key = slotKey(slot);
+        if (slot.slot_state.submission?.submitted || submittedDuringAttemptsRef.current.has(key))
+          continue;
+        const answer = answersRef.current[key] ?? '';
+        if (!pending.has(key) && answer === ackedAnswers.current[key]) continue;
+        sends.push(runSave(key, slot.question_id, slot.part_ref, answer));
+      }
+      if (sends.length === 0) return;
+      void Promise.allSettled(sends).then(() =>
+        qc.invalidateQueries({ queryKey: ['paper', artifactId] }),
+      );
+    };
+    if (!sessionRef.current && sessionStart.current) void sessionStart.current.then(go);
+    else go();
+  };
+
+  // The header's ref: arms pagehide and the unmount flush. Re-bound on every commit with this
+  // render's closure. Detach defers the flush one microtask; the attach in the same commit
+  // (re-bind or StrictMode) bumps the sequence and cancels it, so only a real unmount sends.
+  const attachTop = (node: HTMLDivElement | null) => {
+    if (!node) return undefined;
+    unmountFlushSeq.current += 1;
+    const detachPagehide = attachPagehide(node);
+    return () => {
+      detachPagehide?.();
+      const seq = ++unmountFlushSeq.current;
+      queueMicrotask(() => {
+        if (unmountFlushSeq.current === seq) flushOnUnmount();
+      });
+    };
+  };
 
   const exitPaper = async () => {
     // Reentrancy + mutual exclusion: the flush/settle window below can span up to
@@ -1007,7 +1080,7 @@ function PaperVisit({
 
   return (
     <div className="pfp" data-screen-label={`卷模式 · ${artifactId}`} ref={attachVisit}>
-      <div className="pfp-top" ref={attachPagehide}>
+      <div className="pfp-top" ref={attachTop}>
         <Btn
           size="sm"
           variant="ghost"
