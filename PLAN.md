@@ -4,7 +4,7 @@
 
 ## NOW
 
-- **YUK-1404 / 学校 DOCX agent 录入**：[Draft PR #1703](https://github.com/Yukoval-Dakia/the-learning-project/pull/1703) 同一分支替换 regex 路线：完整材料持久化、隔离工作区、Pi 按需读图/文本、现有编辑工具及即时草稿事务已接通。单 case 合成中断/恢复/重复投递/部分导入通过；正式1/draft1/ignored0，正式题仍 withheld。成熟解析器仅留无损布局 JSON 接口，不安装/集成新 provider。真实学校卷六阶段未验收；见[当前实施与边界](docs/planning/2026-10-12-yuk1404-docx-agent-tools.md)。无付费、第三审、Linear 写入、部署或 merge。
+- **YUK-1404 / 学校 DOCX agent 录入**：[Draft PR #1703](https://github.com/Yukoval-Dakia/the-learning-project/pull/1703) 同一分支替换 regex 路线：完整材料持久化、隔离工作区、Pi 按需读图/文本、现有编辑工具及即时草稿事务已接通。架构基线 428/0/48 不变；单 case 用免费受控 provider 跑过真实 runner/Pi agentLoop，中断/恢复/重复投递/部分导入通过；正式1/draft1/ignored0，正式题仍 withheld。成熟解析器仅留无损布局 JSON 接口，不安装/集成新 provider。真实学校卷六阶段未验收；见[当前实施与边界](docs/planning/2026-10-12-yuk1404-docx-agent-tools.md)。无付费、第三审、Linear 写入、部署或 merge。
 
 - **YUK-1404 / native03题图修复**：PR1657 fixed4c52 exact CI38144495041全绿；正常纳入main eb960c079，仅PLAN/now冲突。图ownership/隐私产品代码与单capture边界测试保留，旧细粒度四tests已删。独立初审/最终R2预算已完成，不启第三审。当前crop producer仍无source_asset SHA登记，旧visibility未知，public withholding不是完整配图交付；同卷actual-output验收仍待。无DB/runtime/provider/paid。 [证据](docs/planning/2026-10-11-yuk1404-native03-figure-repair.md)。
 

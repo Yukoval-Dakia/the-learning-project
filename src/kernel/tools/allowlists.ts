@@ -8,6 +8,8 @@
 export const DOMAIN_TOOL_MCP_SERVER_NAME = 'loom';
 
 export const READ_TOOLS = [
+  // Session-bound DOCX material reader; granted only to docx_ingestion.
+  'read_docx_source',
   'query_mistakes',
   'query_events',
   'get_attempt_context',
@@ -53,6 +55,8 @@ export const READ_TOOLS = [
 ] as const;
 
 export const PROPOSE_WRITE_TOOLS = [
+  // Session-bound DOCX draft writer; granted only to docx_ingestion.
+  'edit_docx_drafts',
   'submit_review_answer',
   'propose_knowledge_edge',
   'propose_knowledge_mutation',
@@ -115,9 +119,7 @@ export type ControlDomainToolName = (typeof CONTROL_TOOLS)[number];
 export type DomainToolName =
   | ReadDomainToolName
   | ProposeWriteDomainToolName
-  | ControlDomainToolName
-  | 'read_docx_source'
-  | 'edit_docx_drafts';
+  | ControlDomainToolName;
 
 export type DomainToolSurface =
   | 'knowledge_review'
@@ -289,6 +291,7 @@ const MAINTENANCE_READ_TOOLS = READ_TOOLS.filter(
     name,
   ): name is Exclude<
     ReadDomainToolName,
+    | 'read_docx_source'
     | 'search_memory_facts'
     | 'query_questions'
     | 'get_question_block_structure'
@@ -298,6 +301,7 @@ const MAINTENANCE_READ_TOOLS = READ_TOOLS.filter(
     | 'web_fetch_candidates'
     | 'read_agent_notes'
   > =>
+    name !== 'read_docx_source' &&
     name !== 'search_memory_facts' &&
     name !== 'query_questions' &&
     name !== 'get_question_block_structure' &&

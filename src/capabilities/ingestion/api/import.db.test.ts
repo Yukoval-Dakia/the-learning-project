@@ -1,9 +1,11 @@
+import { ingestionCapability } from '@/capabilities/ingestion/manifest';
+import { registerCapabilityTools } from '@/server/ai/tools/register-capability-tools';
 /**
  * Tests for POST /api/ingestion/[id]/import
  *
  * Strategy:
  * - Use testDb() / resetDb() for actual Postgres integration
- * - Mock @/server/ai/runner
+ * - Mock @/server/ai/runner except the DOCX recovery case (real Pi loop, offline provider)
  * - Lane D (YUK-482): the failure→propose-new-KC side-effect was removed from
  *   import; these tests assert only canonical capture facts are written. The
  *   practice-owned durable subscription derives failure learning afterwards.
@@ -12,7 +14,7 @@
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   event,
@@ -44,11 +46,21 @@ vi.mock('@/server/ai/runner', () => ({
 }));
 
 import { createHash } from 'node:crypto';
+import { agentLoop } from '@earendil-works/pi-agent-core';
+import {
+  type AssistantMessage,
+  type Model,
+  createAssistantMessageEventStream,
+  createModels,
+} from '@earendil-works/pi-ai';
 import { strToU8, zipSync } from 'fflate';
 import sharp from 'sharp';
+import type { TaskRuntime } from '@/ai/task-runtime';
 import { DocxAgentState } from '@/core/schema/docx-agent';
 import { structuredToPromptMarkdown } from '@/core/schema/structured_question';
-import type { runTask } from '@/server/ai/runner';
+import { __setPiAdapterForTests } from '@/server/ai/execution-adapter';
+import { PiAgentAdapter } from '@/server/ai/pi-agent-adapter';
+import { buildPiDomainAgentTools } from '@/server/ai/tools/pi-tools';
 import { Ingestion } from '@/server/session';
 // YUK-503 (YUK-471 W3-D test hardening) — fold==row parity helpers for the set_status writers.
 // The import POST emits a canonical `experimental:question_block_lifecycle` (op='set_status') alongside
@@ -198,6 +210,11 @@ function makeImportBody(overrides: Record<string, unknown> = {}) {
 }
 
 describe('POST /api/ingestion/[id]/import', () => {
+  afterEach(() => {
+    __setPiAdapterForTests(undefined);
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
   beforeEach(async () => {
     r2._store.clear();
     await resetDb();
@@ -208,6 +225,8 @@ describe('POST /api/ingestion/[id]/import', () => {
   // @fails-if a task can access foreign material, failures erase staged drafts, retry duplicates questions, or unresolved material becomes a terminal import.
   it('retains DOCX agent material and drafts through failure, retry and partial import', async () => {
     const db = testDb();
+    // Production worker boot registers capability tools before dispatching jobs.
+    await registerCapabilityTools([ingestionCapability]);
     const markdown = '题甲：选择正确项。\nA.甲 B.乙\n题乙：看图回答。';
     const original = zipSync({
       '[Content_Types].xml': strToU8(
@@ -282,100 +301,197 @@ describe('POST /api/ingestion/[id]/import', () => {
       unresolved: prompt ? [] : ['image-only prompt unresolved'],
       confidence: 0.7,
     });
-    const controlledRunner =
-      (fail: boolean): typeof runTask =>
-      async (_kind, _input, ctx) => {
-        const mount = ctx.piToolMounts?.find((m) => m.type === 'custom');
-        if (mount?.type !== 'custom') throw new Error('No mounted tools');
-        const call = async (name: string, input: Record<string, unknown>) => {
-          const tool = mount.tools.find((t) => t.name === `mcp__loom__${name}`);
-          if (!tool) throw new Error(`Tool not mounted: ${name}`);
-          return tool.execute(createId(), input, new AbortController().signal);
-        };
-        const output = (result: Awaited<ReturnType<typeof call>>) =>
-          JSON.parse((result.content[0] as { text: string }).text);
-        const listing = output(await call('read_docx_source', { action: 'list' })).output;
-        expect(listing.files).toHaveLength(6);
-        expect(
-          output(await call('read_docx_source', { action: 'image', asset_id: '../foreign-page' }))
-            .error,
-        ).toContain('outside');
-        await expect(
-          call('update_prompt', {
-            block_id: 'foreign-block',
-            node_id: 'foreign',
-            prompt_text: 'overwrite',
-          }),
-        ).rejects.toThrow('outside');
-        await call('read_docx_source', { action: 'text', asset_id: text });
-        const image = await call('read_docx_source', { action: 'image', asset_id: page });
-        expect(image.content.some((part) => part.type === 'image')).toBe(true);
-        await call('read_docx_source', { action: 'image', asset_id: media });
-        const initial = output(await call('edit_docx_drafts', { action: 'inspect' })).output.state;
-        if (fail) {
-          const saved = output(
-            await call('edit_docx_drafts', {
+    // Real central runner + PiAgentAdapter + agentLoop. Only provider streaming
+    // is controlled: no HTTP request and no paid model. Existing run logs remain live.
+    const { runTask: actualRunTask } =
+      await vi.importActual<typeof import('@/server/ai/runner')>('@/server/ai/runner');
+    const runtime: TaskRuntime = {
+      runTask: actualRunTask,
+      buildDomainTools: buildPiDomainAgentTools,
+    };
+    vi.stubEnv('XIAOMI_API_KEY', 'offline-provider-test-only');
+    const model: Model<'openai-completions'> = {
+      id: 'mimo-v2.5',
+      name: 'Offline DOCX wire',
+      provider: 'xiaomi',
+      api: 'openai-completions',
+      baseUrl: 'https://offline.invalid',
+      reasoning: false,
+      input: ['text', 'image'],
+      contextWindow: 100000,
+      maxTokens: 4096,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    };
+    const models = createModels();
+    vi.spyOn(models, 'getModel').mockReturnValue(model);
+    let fail = true,
+      turn = 0,
+      revision = 0,
+      secondBlockId = '';
+    vi.spyOn(models, 'streamSimple').mockImplementation((_model, context) => {
+      const stream = createAssistantMessageEventStream();
+      void (async () => {
+        const previous = [...context.messages].reverse().find((m) => m.role === 'toolResult');
+        const previousText =
+          previous?.content
+            .filter((part) => part.type === 'text')
+            .map((part) => part.text)
+            .join('') ?? '';
+        const output = () => JSON.parse(previousText).output;
+        const tool = (name: string, args: Record<string, unknown>): AssistantMessage['content'] => [
+          {
+            type: 'toolCall',
+            id: createId(),
+            name: `mcp__loom__${name}`,
+            arguments: JSON.parse(JSON.stringify(args)),
+          },
+        ];
+        let content: AssistantMessage['content'];
+        switch (turn++) {
+          case 0:
+            content = tool('read_docx_source', { action: 'list' });
+            break;
+          case 1:
+            expect(output().files).toHaveLength(6);
+            content = tool('read_docx_source', { action: 'image', asset_id: '../foreign-page' });
+            break;
+          case 2:
+            expect(previousText).toContain('outside');
+            content = tool('update_prompt', {
+              block_id: 'foreign-block',
+              node_id: 'foreign',
+              prompt_text: 'overwrite',
+            });
+            break;
+          case 3:
+            expect(previous?.isError).toBe(true);
+            expect(previousText).toContain('outside');
+            content = tool('read_docx_source', { action: 'text', asset_id: text });
+            break;
+          case 4:
+            content = tool('read_docx_source', { action: 'image', asset_id: page });
+            break;
+          case 5:
+            expect(previous?.content.some((part) => part.type === 'image')).toBe(true);
+            content = tool('read_docx_source', { action: 'image', asset_id: media });
+            break;
+          case 6:
+            content = tool('edit_docx_drafts', { action: 'inspect' });
+            break;
+          case 7: {
+            const initial = output().state;
+            if (!fail)
+              expect(
+                initial.questions.find((q: { key: string }) => q.key === 'q2').structured
+                  .prompt_text,
+              ).toBe('已通过现有工具修订');
+            content = tool('edit_docx_drafts', {
               action: 'upsert',
               expected_revision: initial.revision,
-              questions: [draft('q1', '题甲'), draft('q2', '题乙')],
-            }),
-          ).output;
-          await call('update_prompt', {
-            block_id: saved.blocks.find((b: { key: string }) => b.key === 'q2').block_id,
-            node_id: 'q2',
-            prompt_text: '已通过现有工具修订',
-          });
-          // A duplicate active delivery cannot steal the workspace or start another run.
-          await buildTencentOcrHandler({
-            db,
-            r2,
-            docxRunTaskFn: async () => {
-              throw new Error('duplicate delivery reached agent');
-            },
-          })([job]);
-          throw new Error('controlled external agent interruption');
+              questions: fail ? [draft('q1', '题甲'), draft('q2', '题乙')] : [draft('q2', '')],
+              ...(!fail
+                ? {
+                    coverage: [
+                      {
+                        asset_id: page,
+                        question_keys: ['q1', 'q2'],
+                        disposition: 'question_material',
+                        reason: '两题已核对，第二题仍未辨清',
+                      },
+                      {
+                        asset_id: media,
+                        question_keys: [],
+                        disposition: 'unresolved',
+                        reason: '图片归属不确定',
+                      },
+                    ],
+                  }
+                : {}),
+            });
+            break;
+          }
+          case 8:
+            revision = output().revision;
+            secondBlockId = output().blocks.find((b: { key: string }) => b.key === 'q2').block_id;
+            content = fail
+              ? tool('update_prompt', {
+                  block_id: secondBlockId,
+                  node_id: 'q2',
+                  prompt_text: '已通过现有工具修订',
+                })
+              : tool('edit_docx_drafts', { action: 'check' });
+            break;
+          case 9:
+            if (fail) {
+              // An active duplicate may not steal the workspace or enter another loop.
+              await buildTencentOcrHandler({
+                db,
+                r2,
+                taskRuntime: {
+                  ...runtime,
+                  runTask: async () => {
+                    throw new Error('duplicate reached runner');
+                  },
+                },
+              })([job]);
+              throw new Error('controlled external agent interruption');
+            }
+            expect(output().gaps.length).toBeGreaterThan(0);
+            content = tool('edit_docx_drafts', { action: 'commit', expected_revision: revision });
+            break;
+          case 10:
+            expect(output().sealed).toBe(true);
+            content = [{ type: 'text', text: 'Partial draft batch saved' }];
+            break;
+          default:
+            throw new Error('offline provider script exhausted');
         }
-        expect(
-          initial.questions.find((q: { key: string }) => q.key === 'q2').structured.prompt_text,
-        ).toBe('已通过现有工具修订');
-        const saved = output(
-          await call('edit_docx_drafts', {
-            action: 'upsert',
-            expected_revision: initial.revision,
-            questions: [draft('q2', '')],
-            coverage: [
-              {
-                asset_id: page,
-                question_keys: ['q1', 'q2'],
-                disposition: 'question_material',
-                reason: '两题已核对，第二题仍未辨清',
-              },
-              {
-                asset_id: media,
-                question_keys: [],
-                disposition: 'unresolved',
-                reason: '图片归属不确定',
-              },
-            ],
-          }),
-        ).output;
-        const check = output(await call('edit_docx_drafts', { action: 'check' })).output;
-        expect(check.gaps.length).toBeGreaterThan(0);
-        await call('edit_docx_drafts', { action: 'commit', expected_revision: saved.revision });
-        return {
-          task_run_id: ctx.taskRunId ?? 'controlled-agent',
-          text: 'Partial draft batch saved',
-          finishReason: 'stop',
-          cost_basis: 'unknown',
-          cost_ref: 'controlled-agent-no-provider',
-          usage: { inputTokens: 0, outputTokens: 0 },
+        const message: AssistantMessage = {
+          role: 'assistant',
+          content,
+          api: model.api,
+          provider: model.provider,
+          model: model.id,
+          timestamp: Date.now(),
+          usage: {
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 0,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+          },
+          stopReason: content[0]?.type === 'toolCall' ? 'toolUse' : 'stop',
         };
-      };
+        stream.push({ type: 'start', partial: message });
+        stream.push({ type: 'done', reason: message.stopReason as 'toolUse' | 'stop', message });
+      })().catch((error: Error) => {
+        const message: AssistantMessage = {
+          role: 'assistant',
+          content: [],
+          api: model.api,
+          provider: model.provider,
+          model: model.id,
+          timestamp: Date.now(),
+          usage: {
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 0,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+          },
+          stopReason: 'error',
+          errorMessage: error.message,
+        };
+        stream.push({ type: 'error', reason: 'error', error: message });
+      });
+      return stream;
+    });
+    __setPiAdapterForTests(new PiAgentAdapter({ models, agentLoop }));
     const job = { id: 'local-docx-job', data: { sessionId } } as never;
     await queue();
-    await expect(
-      buildTencentOcrHandler({ db, r2, docxRunTaskFn: controlledRunner(true) })([job]),
-    ).rejects.toThrow('controlled external');
+    await expect(buildTencentOcrHandler({ db, r2, taskRuntime: runtime })([job])).rejects.toThrow();
     expect(
       (await db.select().from(learning_session).where(eq(learning_session.id, sessionId)))[0]
         .status,
@@ -387,7 +503,9 @@ describe('POST /api/ingestion/[id]/import', () => {
         .where(eq(question_block.ingestion_session_id, sessionId)),
     ).toHaveLength(2);
     await queue();
-    const handler = buildTencentOcrHandler({ db, r2, docxRunTaskFn: controlledRunner(false) });
+    fail = false;
+    turn = 0;
+    const handler = buildTencentOcrHandler({ db, r2, taskRuntime: runtime });
     await handler([job]);
     await handler([job]); // Completed queue delivery is idempotent.
     const drafts = await db

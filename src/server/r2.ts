@@ -6,11 +6,9 @@ import {
   S3Client,
 } from '@aws-sdk/client-s3';
 
-export interface R2Client {
-  put(key: string, body: Uint8Array, contentType?: string): Promise<void>;
-  get(key: string): Promise<Uint8Array | null>;
-  delete(key: string): Promise<void>;
-}
+import type { BlobStore } from '@/kernel/blob-store';
+
+export type R2Client = BlobStore;
 
 export function createR2Client(client: S3Client, bucket: string): R2Client {
   return {

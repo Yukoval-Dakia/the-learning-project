@@ -1,0 +1,121 @@
+{
+  "recorded_at": "2026-10-12T03:59:30.089113+00:00",
+  "base_revision": "f667718db237317da8f5b3f801dc4bfab46cc5ca",
+  "execution": "real central runTask -> PiAgentAdapter -> Pi agentLoop -> mounted registry tools; only models.getModel/streamSimple provider wire is controlled",
+  "source": "synthetic DOCX + converter stub; native PDFium page render; memory BlobStore + owned temporary PostgreSQL",
+  "real_school_docx_used": false,
+  "paid_provider_calls": 0,
+  "provider_http_requests": 0,
+  "provider_label": "xiaomi/mimo-v2.5 resolved by real registry; offline model response stream, not actual model inference",
+  "case": {
+    "name": "retains DOCX agent material and drafts through failure, retry and partial import",
+    "passed": 1,
+    "skipped": 3,
+    "duration_seconds": 5.33
+  },
+  "receipt": {
+    "runs": [
+      {
+        "id": "khl7j8w7l024k0dgubx0gu14",
+        "kind": "DocxIngestionTask",
+        "model": "mimo-v2.5",
+        "status": "failure",
+        "cost_usd": null,
+        "provider": "xiaomi",
+        "cost_basis": "unknown",
+        "error_message": "[DocxIngestionTask] agent run errored: subtype=error_during_execution errors=controlled external agent interruption",
+        "finish_reason": "error"
+      },
+      {
+        "id": "j1c5ldxnvzv88waz5nxcgq5h",
+        "kind": "DocxIngestionTask",
+        "model": "mimo-v2.5",
+        "status": "success",
+        "cost_usd": null,
+        "provider": "xiaomi",
+        "cost_basis": "unknown",
+        "error_message": null,
+        "finish_reason": "end_turn"
+      }
+    ],
+    "drafts": [
+      {
+        "count": 1,
+        "status": "draft"
+      },
+      {
+        "count": 1,
+        "status": "imported"
+      }
+    ],
+    "formal": [
+      {
+        "reason": "unverified_rules",
+        "admission": "withheld",
+        "availability": "container_only"
+      }
+    ],
+    "session": [
+      {
+        "id": "r090mjr4mjfgl19nk63bzqnt",
+        "status": "partial"
+      }
+    ],
+    "tool_calls": [
+      {
+        "calls": 10,
+        "tool_name": "read_docx_source"
+      },
+      {
+        "calls": 6,
+        "tool_name": "edit_docx_drafts"
+      },
+      {
+        "calls": 1,
+        "tool_name": "update_prompt"
+      }
+    ]
+  },
+  "six_stages": {
+    "complete_extraction": "Two scripted questions; six source files hash-verified. No semantic extraction quality claim.",
+    "image_references": "Native Pi image result observed; out-of-session image/block access rejected; one unresolved media item retained.",
+    "type_options": "Draft kind and A/B options retained; no regex recognition. Formal option preservation remains #1658 dependency.",
+    "draft_confirmation": "Interruption retains two drafts; retry restores edit and seals partial batch; duplicate deliveries do not rerun.",
+    "formal_storage": "One imported block/formal question + one retained draft, zero ignored; unresolved draft import rejected; partial session.",
+    "answerable_state": "Formal question withheld/unverified_rules/container_only; not answerable acceptance."
+  },
+  "checks": {
+    "typecheck": "pass",
+    "build": "pass",
+    "capability_boundary": "pass; exact unchanged baseline 428/0/48",
+    "architecture_deepening": "pass; 56 TaskSpecs, 48 DomainTools, 57 queues",
+    "other_architecture_checks": "profile/learner-copy/no-learning-styles/structured-judge pass",
+    "task_census": "pass",
+    "test_policy": "pass; same existing case",
+    "lint_ratchet": "pass; 172 warnings/0 infos; no baseline edit"
+  },
+  "limitations": [
+    "No real model inference or school-paper acceptance",
+    "Database cost truth is unknown/null, not a claim of provider reported cost",
+    "No new parser/OCR/layout algorithms",
+    "No partial automatic continuation or automatic formal import",
+    "Draft PR, no merge/deploy; exact-head CI required after push"
+  ],
+  "cleanup": "Owned temporary container tlp-yuk1404-pi-20261012 removed; existing postgres container untouched",
+  "source_file_sha256": {
+    "src/capabilities/ingestion/api/import.db.test.ts": "ed46530e14fe448c17101cf45a1c6f2096f425a28c61804097d23ed6949432aa",
+    "src/capabilities/ingestion/jobs/tencent_ocr_extract.ts": "aa3ef4c5bd20b517d00aa157152127478ee2d27f1cf1779d06b3cbda8a8f5901",
+    "src/capabilities/ingestion/manifest.ts": "b33583a7ac6bfb604390c6c27ed24cf06966f78b157c34477842eee8bf2d9012",
+    "src/capabilities/ingestion/server/docx/agent-extraction.ts": "60d0194e9982f17890cf57d0071e3e4ead5245346e410b180c16571d131d1fa2",
+    "src/capabilities/ingestion/server/docx/agent-workspace.ts": "84f1aa14768f900ad6c7fb5f894df8a10b41f8b12df3d259b9b57cd9e2c201e6",
+    "src/capabilities/ingestion/server/docx/source-package.ts": "d000524843b0566a8505c476a1a131e1e41f8485f830b5d9011e4c93fc8e0077",
+    "src/kernel/manifest.ts": "00c7beaaf00beb1b0026fa29f1c8cd8ce986efe74fffa346025931a72ea3606e",
+    "src/kernel/tools/allowlists.ts": "7ad4de36ed9fe1cdb2d042aa0ab92c9bde49bb308c0ae662b6093fc93a098633",
+    "src/server/boss/register-capability-jobs.ts": "a3267bb95da0339b3d1317c08928b9b0beac8ad7034628744228a52bebb5ed4b",
+    "src/server/boss/start-worker.ts": "da403f724a6ffe719d2fbbb12e79b7a33c27e300634569c9738fbb672468adfc",
+    "src/server/r2.ts": "877a9a81153f6d5dea4679941d9aaa02141b77035ae03906b0537ca67f23df6d",
+    "src/ai/task-runtime.ts": "57e6445ed97391d0601cbf9cb1ffb6dd17261a8c215d01d312c3d57ca9f9cee0",
+    "src/kernel/blob-store.ts": "b6fb00b2b881c5eba3153e293d789ed4c021f6ff130a441b62a77e04fd37fc14"
+  },
+  "log_archive_sha256": "a1c5edb3929007a9b9075314e04ca4b8405e62daea36a78d49033440299cb166"
+}

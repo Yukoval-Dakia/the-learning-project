@@ -32,8 +32,8 @@
 
 ## 免费验证与六阶段验收
 
-只替换原 `import.db.test.ts` 的一个关键 case。外部 converter 返回合成材料、外部 agent 用可控工具调用模拟；实际执行材料存储、PDFium 页面渲染、工作区重建、registry 工具编译、Pi 图片结果、session/题块事务、canonical event、失败/重试、活跃重复投递和 import。
-临时本地 PG + 内存 blob；未读取真实卷、未调用模型。此前暴露的 JSONB 键序比较及 Date 工具 schema 问题已修复后重跑同一 case，没有扩大测试矩阵。
+只替换原 `import.db.test.ts` 的一个关键 case。外部 converter 返回合成材料。初版 `f667718d` 仅模拟工具调用；本次改为真正调用中央 `runTask` → `PiAgentAdapter` → Pi `agentLoop`，只替换 provider 的 `streamSimple` 响应流。实际执行材料存储、PDFium 页面渲染、工作区重建、registry 工具编译、Pi 原生图片结果、session/题块事务、canonical event、失败/重试、活跃重复投递和 import。
+临时本地 PG + 内存 blob；未读取真实卷、未发 provider HTTP 请求、未调用付费模型。两个真实 task-run 分别为 failure/error 与 success/end_turn；数据库费用字段如实保留 unknown/null，不把受控流中的零用量当供应商费用证据。此前暴露的 JSONB 键序比较及 Date 工具 schema 问题已修复后重跑同一 case，没有扩大测试矩阵。
 
 | 阶段 | 本轮合成证据 | 真实学校试卷 |
 |---|---|---|
@@ -44,7 +44,7 @@
 | 正式入库 | 一题正式入库；一草稿保留；ignored=0；session=partial | 未验收 |
 | 可答题状态 | 正式题仍为 withheld / unverified_rules / container_only | 未验收，不能由导入成功推导 |
 
-收尾证据：`docs/planning/evidence/2026-10-12-yuk1404-docx-agent.json` 与同名前缀日志归档。
+历史工具模拟证据：`docs/planning/evidence/2026-10-12-yuk1404-docx-agent.json`。本次真实 Pi 循环证据：`docs/planning/evidence/2026-10-12-yuk1404-docx-pi-loop.json` 与同名前缀日志归档。
 本地执行范围是该单 case、typecheck、lint/ratchet、build、task census、test policy 和必要 API/Postman 生成。整套测试只交给推送后的 exact-head CI Gate。
 
 ## 下一次真实模型运行的最小依赖
@@ -55,3 +55,20 @@
 - 记录代码版本、输入/输出摘要、真实 task-run ID、实际模型、用量/费用依据，再分别对账上述六阶段。
 
 旧「每周 20 USD」不作为本次调用授权。Linear 由父任务维护，本轮不重复扫描或写入。PR 保持 Draft；历史独立审查预算不重启，也不把旧审查当作覆盖本次迁移。
+
+## 架构 CI 修复
+
+`f667718d` 的 CI Gate 38200411522 只有 architecture 审计根失败（其余 16 job 通过）。不提高 baseline、不禁用审计。依赖归属按实际文件收敛：
+
+| 新增边 | 实际边界问题 | 本次归属 |
+|---|---|---|
+| agent-extraction → server/ai/tools/register-capability-tools | 领域执行重复承担进程级 registry 组合 | 删除重复注册，继续由 worker-boot 注册；单 case 显式模拟 boot |
+| agent-extraction → server/ai/runner | 领域模块直接装配 server 执行器 | worker 启动处注入真实 runTask，纯 TaskRuntime 接口不含实现 |
+| agent-extraction → server/ai/tools/pi-tools | 领域模块直接装配 server 工具桥 | 同一 worker 注入真实 buildPiDomainAgentTools，沿用既有 registry/logging |
+| agent-extraction、agent-workspace、source-package → server/r2（三边） | 纯 blob 能力依赖具体 S3/R2 基础设施的类型位置 | 原有 put/get/delete 接口归回 kernel/BlobStore；server/R2Client 保留兼容类型别名 |
+| agent-workspace → server/session | 材料工作区同时负责组装 session 草稿命令 | 工作区回传领域数据；extraction 组合调用原有 Ingestion.stageDocxAgentDraft，同一 tx 与 actor 不变 |
+| agent-extraction → server/session | 必须经过已有 session 写入 owner | 保留公共 facade；旧 docx API → session/docx-ingestion 边随旧写入路径删除，无新增 owner |
+
+删除重复注册后，实际超基线剩 ai +2、r2 +3、session +1；以上修复后审计精确为 capability→server 428 / server→capability-deep 0 / cross-capability-value 48。`JobDecl.load` 接收可选窄运行时依赖，在现有 worker 组合点传入；不改变旧 handler 工厂的第二参数语义。没有同义转发函数或藏依赖。
+
+第二个 architecture 检查同时发现两个新 DomainTool 尚未列入 read/write 清单：现已补齐，并从 maintenance 宽读面排除 read_docx_source，仍只授予 docx_ingestion。deepening 审计通过：56 TaskSpecs / 48 DomainTools / 57 queues；其余四项 architecture 检查均通过。

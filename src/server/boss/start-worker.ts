@@ -110,7 +110,14 @@ export async function startBossWorker(
   // M4-T3 (YUK-319)：渐缩簿之后挂载各 capability manifest 声明的 job（建队 +
   // work + cron schedule）。顺序约定：簿先、注册器后——簿里的链式目标
   // （note_verify）先 ready，注册器再挂链式源。
-  await registerCapabilityJobs(boss, db, capabilities);
+  const [{ runTask }, { buildPiDomainAgentTools }] = await Promise.all([
+    import('@/server/ai/runner'),
+    import('@/server/ai/tools/pi-tools'),
+  ]);
+  await registerCapabilityJobs(boss, db, capabilities, {
+    runTask,
+    buildDomainTools: buildPiDomainAgentTools,
+  });
   // YUK-891 — verify-dispatch startup recovery fires ONLY after
   // registerCapabilityJobs created the practice-owned quiz_verify/source_verify
   // queues (YUK-868). registerHandlers mounts the verify_dispatch_recover worker

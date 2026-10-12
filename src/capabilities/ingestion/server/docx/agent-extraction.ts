@@ -1,21 +1,17 @@
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray, sql } from 'drizzle-orm';
-import { ingestionCapability } from '@/capabilities/ingestion/manifest';
+import type { TaskRuntime } from '@/ai/task-runtime';
 import { DocxAgentState, DocxReadInput, DocxSourcePackage } from '@/core/schema/docx-agent';
 import type { Db } from '@/db/client';
 import { learning_session, question_block, source_document } from '@/db/schema';
+import type { BlobStore } from '@/kernel/blob-store';
 import { ApiError } from '@/kernel/http';
 import { DOCX_INGESTION_TOOLS, toMcpAllowedToolName } from '@/kernel/tools/allowlists';
-import { runTask } from '@/server/ai/runner';
-import { buildPiDomainAgentTools } from '@/server/ai/tools/pi-tools';
-import { registerCapabilityTools } from '@/server/ai/tools/register-capability-tools';
-import type { R2Client } from '@/server/r2';
 import { Ingestion } from '@/server/session';
 import { docxAgentGaps, openDocxAgentWorkspace } from './agent-workspace';
 
-/** Same production runner seam as the existing structure path. A controlled
- * runner may replace only the external agent execution in local verification. */
-type DocxAgentParams = { db: Db; r2: R2Client; sessionId: string; runTaskFn?: typeof runTask };
+/** Execution is supplied by the worker composition root; this module owns DOCX semantics. */
+type DocxAgentParams = { db: Db; r2: BlobStore; sessionId: string; runtime: TaskRuntime };
 
 export async function runDocxAgentExtraction(
   params: DocxAgentParams,
@@ -46,9 +42,27 @@ async function runClaimedDocxAgentExtraction(params: DocxAgentParams): Promise<v
   const controller = new AbortController();
   let workspace: Awaited<ReturnType<typeof openDocxAgentWorkspace>> | undefined;
   try {
-    workspace = await openDocxAgentWorkspace(db, r2, sessionId, taskRunId);
+    workspace = await openDocxAgentWorkspace(db, r2, sessionId, taskRunId, (tx, input) =>
+      Ingestion.stageDocxAgentDraft(tx, {
+        sessionId,
+        sourceDocumentId: input.sourceDocumentId,
+        blockId: input.blockId,
+        actorRef: taskRunId,
+        block: {
+          structured: {
+            ...input.question.structured,
+            source: 'agent_edit',
+            last_modified_by: taskRunId,
+          },
+          figures: input.question.figures,
+          page_spans: input.question.page_spans,
+          source_asset_ids: input.sourceAssetIds,
+          image_refs: input.question.figures.map((f) => f.asset_id),
+          extraction_confidence: input.question.confidence,
+        },
+      }),
+    );
     const boundWorkspace = workspace;
-    await registerCapabilityTools([ingestionCapability]);
     const ctx = {
       db,
       sessionId,
@@ -59,12 +73,12 @@ async function runClaimedDocxAgentExtraction(params: DocxAgentParams): Promise<v
     };
     const tools = DOCX_INGESTION_TOOLS.map((name) => {
       const options = { serverName: 'loom', toolNames: [name], taskKind: 'DocxIngestionTask', ctx };
-      const [tool] = buildPiDomainAgentTools(options);
+      const [tool] = params.runtime.buildDomainTools(options);
       const execute = tool.execute;
       tool.execute = async (callId, input, signal, onUpdate) => {
         if (name === 'read_docx_source') {
           let showImage = false;
-          const [reader] = buildPiDomainAgentTools({
+          const [reader] = params.runtime.buildDomainTools({
             ...options,
             onResult(result) {
               showImage =
@@ -132,7 +146,7 @@ async function runClaimedDocxAgentExtraction(params: DocxAgentParams): Promise<v
             unique.some((id) => !state.blocks.some((b) => b.block_id === id))
           )
             throw new ApiError('conflict', 'Block is outside this DOCX workspace', 409);
-          const [scoped] = buildPiDomainAgentTools({
+          const [scoped] = params.runtime.buildDomainTools({
             ...options,
             ctx: { ...ctx, db: tx as unknown as Db },
           });
@@ -143,7 +157,7 @@ async function runClaimedDocxAgentExtraction(params: DocxAgentParams): Promise<v
     });
     const initial = await workspace.drafts({ action: 'inspect' });
     if (!(initial.state as { sealed: boolean }).sealed) {
-      const runTaskFn = params.runTaskFn ?? runTask;
+      const runTaskFn = params.runtime.runTask;
       await runTaskFn(
         'DocxIngestionTask',
         {
@@ -157,7 +171,6 @@ async function runClaimedDocxAgentExtraction(params: DocxAgentParams): Promise<v
         },
         {
           db,
-          r2,
           taskRunId,
           lifecycleAbortController: controller,
           piToolMounts: [{ type: 'custom', tools }],

@@ -2,7 +2,7 @@ import { eq, inArray } from 'drizzle-orm';
 import type { DocxSourcePackageT } from '@/core/schema/docx-agent';
 import type { Db } from '@/db/client';
 import { source_asset } from '@/db/schema';
-import type { R2Client } from '@/server/r2';
+import type { BlobStore } from '@/kernel/blob-store';
 import { persistSourceAsset } from '../persist-image-asset';
 import type { DocxConverter } from './convert';
 import { persistDocxPageEvidence } from './persist-page-evidence';
@@ -11,7 +11,7 @@ import type { prepareDocxForConversion } from './route-classify';
 /** Preserve the complete source before any agent structure decisions. */
 export async function persistDocxSourcePackage(
   db: Db,
-  r2: R2Client,
+  r2: BlobStore,
   converter: DocxConverter,
   original: Uint8Array,
   prep: ReturnType<typeof prepareDocxForConversion>,

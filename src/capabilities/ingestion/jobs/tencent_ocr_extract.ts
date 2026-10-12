@@ -1,6 +1,7 @@
 import { and, eq } from 'drizzle-orm';
 import type { JobWithMetadata } from 'pg-boss';
 import sharp from 'sharp';
+import type { TaskRuntime } from '@/ai/task-runtime';
 import { type PreAttachFigure, cropAndUploadFigures } from '@/capabilities/ingestion/server/crop';
 import { runDocxAgentExtraction } from '@/capabilities/ingestion/server/docx/agent-extraction';
 import {
@@ -109,7 +110,7 @@ export type TencentOcrDeps = {
    * to the production `runStructureTask`.
    */
   runStructureFn?: typeof runStructureTask;
-  docxRunTaskFn?: Parameters<typeof runDocxAgentExtraction>[0]['runTaskFn'];
+  taskRuntime?: TaskRuntime;
 };
 
 export function buildTencentOcrHandler(
@@ -267,11 +268,13 @@ async function processOneOcrJob(
     throw new PermanentError(`tencent_ocr_extract: session ${sessionId} not found`);
   }
   if (session.entrypoint === 'docx') {
+    if (!deps.taskRuntime)
+      throw new PermanentError('DOCX task runtime is not injected by worker boot');
     const result = await runDocxAgentExtraction({
       db: deps.db,
       r2: deps.r2,
       sessionId,
-      runTaskFn: deps.docxRunTaskFn,
+      runtime: deps.taskRuntime,
     });
     if (result === 'busy') return;
     await emitOperationEventSafely(deps.db, operationId, 'operation.completed', {

@@ -16,9 +16,8 @@ import {
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db, Tx } from '@/db/client';
 import { learning_session, question_block, source_asset, source_document } from '@/db/schema';
+import type { BlobStore } from '@/kernel/blob-store';
 import { ApiError } from '@/kernel/http';
-import type { R2Client } from '@/server/r2';
-import { Ingestion } from '@/server/session';
 
 function conflict(message: string): never {
   throw new ApiError('conflict', message, 409);
@@ -89,9 +88,18 @@ export function docxAgentGaps(
  * session-owned bytes are restored; display names cannot select filesystem paths. */
 export async function openDocxAgentWorkspace(
   db: Db,
-  r2: R2Client,
+  r2: BlobStore,
   sessionId: string,
   taskRunId: string,
+  saveDraft: (
+    tx: Tx,
+    input: {
+      sourceDocumentId: string;
+      blockId?: string;
+      question: DocxAgentStateT['questions'][number];
+      sourceAssetIds: string[];
+    },
+  ) => Promise<{ id: string; version: number }>,
 ) {
   const [session] = await db
     .select()
@@ -336,24 +344,16 @@ export async function openDocxAgentWorkspace(
           state.questions = next;
           for (const q of replacements) {
             const mapping = state.blocks.find((m) => m.key === q.key);
-            const written = await Ingestion.stageDocxAgentDraft(tx, {
-              sessionId,
+            const written = await saveDraft(tx, {
               sourceDocumentId: sourceId,
               blockId: mapping?.block_id,
-              actorRef: taskRunId,
-              block: {
-                structured: { ...q.structured, source: 'agent_edit', last_modified_by: taskRunId },
-                figures: q.figures,
-                page_spans: q.page_spans,
-                source_asset_ids: pkg.files
-                  .filter(
-                    (f) =>
-                      f.role === 'page' && q.page_spans.some((s) => s.page_index === f.page_index),
-                  )
-                  .map((f) => f.asset_id),
-                image_refs: q.figures.map((f) => f.asset_id),
-                extraction_confidence: q.confidence,
-              },
+              question: q,
+              sourceAssetIds: pkg.files
+                .filter(
+                  (f) =>
+                    f.role === 'page' && q.page_spans.some((s) => s.page_index === f.page_index),
+                )
+                .map((f) => f.asset_id),
             });
             q.structured = { ...q.structured, source: 'agent_edit', last_modified_by: taskRunId };
             state.blocks = [

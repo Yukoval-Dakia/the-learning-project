@@ -1,3 +1,4 @@
+import type { TaskRuntime } from '@/ai/task-runtime';
 // M4-T3 (YUK-319) — capability jobs 注册器（kernel jobs 契约的组合根侧）。
 //
 // 遍历 capabilities 的 manifest.jobs.handlers，对每条**有 load** 的 JobDecl：
@@ -48,7 +49,7 @@ const EXPIRE_BY_QUEUE = {
   fast: EXPIRE_FAST,
 } as const;
 
-async function mountJob(boss: PgBoss, db: Db, decl: JobDecl): Promise<void> {
+async function mountJob(boss: PgBoss, db: Db, decl: JobDecl, runtime?: TaskRuntime): Promise<void> {
   // load 在调用点已被过滤非空；这里再守一道（TS 窄化）。
   if (!decl.load) return;
 
@@ -63,7 +64,7 @@ async function mountJob(boss: PgBoss, db: Db, decl: JobDecl): Promise<void> {
     });
   }
 
-  const factory = await decl.load();
+  const factory = await decl.load(runtime);
   // YUK-1055 — per-delivery epoch fence：错过停机的活 worker 在 epoch 翻转后
   // 被每个 delivery 拒跑；disposition（drain/translate/fenced）见
   // src/server/contract-epoch/jobs.ts。
@@ -113,6 +114,7 @@ export async function registerCapabilityJobs(
   boss: PgBoss,
   db: Db,
   capabilities: CapabilityManifest[],
+  runtime?: TaskRuntime,
 ): Promise<void> {
   const decls = capabilities
     .flatMap((cap) => cap.jobs?.handlers ?? [])
@@ -156,7 +158,7 @@ export async function registerCapabilityJobs(
     throw new Error('Production DBOS admission requires the complete four-family set');
   const ordinary = decls.filter((d) => d.backend !== 'dbos');
   // Chain targets retain their existing order; complete admission was validated before any mounting.
-  for (const decl of ordinary.filter((d) => !d.schedule)) await mountJob(boss, db, decl);
+  for (const decl of ordinary.filter((d) => !d.schedule)) await mountJob(boss, db, decl, runtime);
   if (pruneEvents && reviewOrphans && conversationOrphans && placementOrphans)
     await startDurableWorker({
       boss,
@@ -170,5 +172,5 @@ export async function registerCapabilityJobs(
         judgeReconcile,
       },
     });
-  for (const decl of ordinary.filter((d) => d.schedule)) await mountJob(boss, db, decl);
+  for (const decl of ordinary.filter((d) => d.schedule)) await mountJob(boss, db, decl, runtime);
 }

@@ -1,3 +1,4 @@
+import type { TaskRuntime } from '@/ai/task-runtime';
 // 内核契约「manifest/组合」（spec §2.1/§2.2，YUK-311 P1）。
 // P1 字段只覆盖打样包实际行使的面（events/api/ui 声明元数据）；M4 (YUK-319)
 // 夜链入容器 + 提议契约真身是 jobs/proposals 两字段的第一实例时刻，于此加入；
@@ -153,7 +154,7 @@ export interface JobDecl {
    */
   dependsOn?: readonly JobDependencyDecl[];
   /** 懒加载 handler 工厂（ApiRouteDecl.load 同构语义）；无 load 的 decl 是纯归属元数据，不被挂载。 */
-  load?: () => Promise<JobHandlerFactory>;
+  load?: (runtime?: TaskRuntime) => Promise<JobHandlerFactory>;
 }
 
 /**
