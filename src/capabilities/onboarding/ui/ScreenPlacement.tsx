@@ -134,7 +134,8 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
       goalIdRef.current ??= new URLSearchParams(window.location.search).get('goal');
       const goal = goalIdRef.current;
       if (!goal) {
-        setPhase('nogoal');
+        // Re-attach (a new `finish` after the shell re-renders) leaves the phase as is.
+        setPhase((current) => (current === 'nogoal' ? current : 'nogoal'));
         return () => {
           activeRef.current = false;
         };
