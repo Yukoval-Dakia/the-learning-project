@@ -198,13 +198,16 @@ describe('POST /api/ingestion/[id]/import', () => {
   });
 
   // @invariant data: incomplete DOCX extraction retains recoverable source and all media.
-  // @fails-if unknown images/text disappear at draft creation or partial extraction silently becomes importable.
+  // @fails-if year-led questions merge, decimal/counter text creates phantom blocks, or uncertain images bypass review.
   it('retains incomplete DOCX source and media behind explicit review', async () => {
     const db = testDb();
     const markdown = [
-      '1.题甲',
+      '**1.**题甲',
       'A.甲 B.乙 C.丙 D.丁',
-      '**2.** 图前 ![](media/a.png) 图后 ![](media/b.png)',
+      '2.5米是题甲的条件',
+      '2.2024年图前 ![](media/a.png) 图后 ![](media/b.png)',
+      'A.甲 B.乙 C.丙 D.丁',
+      '1.本节共两题',
       '4\\.',
       '![](media/c.png) ![](media/d.png)',
     ].join('\n');
@@ -244,7 +247,9 @@ describe('POST /api/ingestion/[id]/import', () => {
     expect(session.source_asset_ids).toEqual(source.source_asset_ids);
     expect(drafts.map((b) => b.structured?.question_no)).toEqual(['1', '2', '4']);
     expect(drafts[0].structured?.options?.map((o) => o.label)).toEqual(['A', 'B', 'C', 'D']);
-    expect(drafts[1].structured?.prompt_text).toBe('图前  图后');
+    expect(drafts[0].structured?.prompt_text).toBe('题甲\n2.5米是题甲的条件');
+    expect(drafts[1].structured?.prompt_text).toBe('2024年图前  图后 \n1.本节共两题');
+    expect(drafts[1].structured?.options?.map((o) => o.label)).toEqual(['A', 'B', 'C', 'D']);
     expect(drafts.map((b) => b.image_refs)).toEqual([[], ['a', 'b'], []]);
     expect(session.status).toBe('partial');
     expect(session.warnings).toEqual(
@@ -252,6 +257,8 @@ describe('POST /api/ingestion/[id]/import', () => {
         expect.stringContaining('题号 3 至 3'),
         expect.stringContaining('第 4 题缺少'),
         expect.stringContaining('图片的题目归属不明'),
+        expect.stringContaining('题号 1 重复或倒序'),
+        expect.stringContaining('第 2 题的图片按 DOCX 文本锚点'),
       ]),
     );
     const receipts = await db

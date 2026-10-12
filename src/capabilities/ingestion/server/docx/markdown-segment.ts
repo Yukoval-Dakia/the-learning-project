@@ -33,8 +33,10 @@ export interface SegmentInput {
 // the number onto its own line and put the prompt on the NEXT line (observed on real
 // 学科网 papers — Q8/Q13/Q23 otherwise merged into their predecessor); the prompt then
 // flows in from the following line(s). `\d{1,3}` keeps 4-digit years (a stray `1991.`)
-// from being mistaken for a question number.
-const QUESTION_LEADING = /^\s*(\d{1,3})\\?[.．、](?!\d)\s*(.*)$/;
+// from being mistaken for a question number. A compact year-led prompt such as
+// `4.2024年...` is also a boundary. Require the explicit year suffix: simply
+// allowing all digits here would split body quantities such as `2.5米` into Q2.
+const QUESTION_LEADING = /^\s*(\d{1,3})\\?[.．、](?=\D|$|\d{4}年)\s*(.*)$/;
 // 选项行: A. / B\. etc.
 const OPTION_LINE = /^\s*([A-D])\\?[.．、]\s*(.*)$/;
 // 嵌图: markdown form ![alt](media/...) AND pandoc's <img src="media/..."> HTML
@@ -140,9 +142,10 @@ export function normalizeMediaPath(raw: string): string {
 
 /**
  * Cut pandoc gfm markdown into per-question structured blocks with in-position
- * image attribution. Images appearing BEFORE the first question number are
- * document-header noise (校名/logo) and are dropped here; images between two
- * question numbers attach to the PRECEDING question (题干配图惯例).
+ * provisional image attribution. Images before the first question stay only on
+ * the source document; later images are provisionally associated by text anchor.
+ * Word floating anchors can disagree with visual placement, so these references
+ * always require review; Markdown alone cannot establish figure ownership.
  *
  * Noise filter (§3.4): tiny media (<50×50, from the manifest) are filtered out of
  * a block's imagePaths so decorative bullets/rules don't enter the pipeline. When
@@ -240,6 +243,11 @@ export function segmentMarkdown(input: SegmentInput): {
   let previous = 0;
   for (const draft of drafts) {
     const number = Number(draft.questionNo);
+    if (draft.imagePaths.length > 0) {
+      warnings.push(
+        `第 ${draft.questionNo} 题的图片按 DOCX 文本锚点暂存，题目归属须对照原卷确认。`,
+      );
+    }
     if (number > previous + 1) {
       warnings.push(`题号 ${previous + 1} 至 ${number - 1} 未独立提取，请对照原卷确认。`);
     }
