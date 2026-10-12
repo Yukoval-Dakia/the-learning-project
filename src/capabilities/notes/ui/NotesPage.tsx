@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { SubjectFilterTabs } from '@/ui/components/SubjectFilterTabs';
 import { useSubjects } from '@/ui/hooks/useSubjects';
 import { Btn } from '@/ui/primitives/Btn';
@@ -26,11 +26,29 @@ export default function NotesPage({
   const { subjects } = useSubjects();
   const subjectQuery = subject === 'all' ? undefined : subject;
 
-  // YUK-919 — 250ms 防抖后随查询重发（同 QuestionsPage 的搜索节奏）。
-  useEffect(() => {
-    const timer = window.setTimeout(() => setDebouncedQuery(query.trim()), 250);
-    return () => window.clearTimeout(timer);
-  }, [query]);
+  // YUK-919 — 250ms 防抖后随查询重发（同 QuestionsPage 的搜索节奏）。输入与清除
+  // 都经 changeQuery 重排计时；搜索框卸载（离页）时由 ref cleanup 取消未到期的计时。
+  const debounceTimer = useRef<number | null>(null);
+  const cancelDebounce = useCallback(() => {
+    if (debounceTimer.current === null) return;
+    window.clearTimeout(debounceTimer.current);
+    debounceTimer.current = null;
+  }, []);
+  const changeQuery = (next: string) => {
+    setQuery(next);
+    cancelDebounce();
+    debounceTimer.current = window.setTimeout(() => {
+      debounceTimer.current = null;
+      setDebouncedQuery(next.trim());
+    }, 250);
+  };
+  const searchInputRef = useCallback(
+    (node: HTMLInputElement | null) => {
+      if (!node) return;
+      return cancelDebounce;
+    },
+    [cancelDebounce],
+  );
 
   const notesQ = useQuery({
     queryKey: ['notes', subjectQuery, debouncedQuery],
@@ -60,9 +78,10 @@ export default function NotesPage({
         >
           <LoomIcon name="search" size={15} />
           <input
+            ref={searchInputRef}
             type="text"
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => changeQuery(e.target.value)}
             placeholder="搜索笔记标题或正文…"
             aria-label="搜索笔记"
             style={{ flex: 1 }}
@@ -73,7 +92,7 @@ export default function NotesPage({
               size="sm"
               icon="close"
               aria-label="清除搜索"
-              onClick={() => setQuery('')}
+              onClick={() => changeQuery('')}
             />
           )}
         </div>

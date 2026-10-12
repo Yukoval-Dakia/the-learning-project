@@ -12,7 +12,6 @@ Stable-layer base for the UI rewrite (YUK-1354). Source of truth for every rule:
 - No external URLs (the CSP allows same-origin fonts only). No new dependencies without
   coordination. Reuse `@/ui/primitives/useFocusTrap` for modal layers; do not bind ⌘K.
 - Components are presentation and interaction only: no data fetching, no business rules (I1).
-  Showcase examples use local sample data and never call real writes.
 - Collapsed or hidden regions are `inert` (A1); small controls opt into `.un-hit` (A2).
   Transitions read `--un-t-*` tokens; keyframes live only under `prefers-reduced-motion:
   no-preference` (M3).

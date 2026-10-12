@@ -10,7 +10,7 @@
 // 见 CostRibbon 组件注释。
 
 import { useQuery } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import {
   AgentNotesBoard,
   LearningIntentComposer,
@@ -330,13 +330,10 @@ export function OvernightDigestBand({ navigate }: { navigate: (to: string) => vo
   // If accepting/rejecting the last conjecture drops the count to 0, the 备课猜想
   // toggle chip disappears (buildDigestChips gates on >0) — auto-collapse so the
   // panel is never stranded open with no way to close it (CodeRabbit review-782).
-  useEffect(() => {
-    if (conjOpen && d?.new_conjectures_count === 0) setConjOpen(false);
-  }, [d?.new_conjectures_count, conjOpen]);
-  useEffect(() => {
-    // Auto-collapse when the last probe is answered (mirrors the conjecture panel).
-    if (probeOpen && activeProbes.length === 0) setProbeOpen(false);
-  }, [activeProbes.length, probeOpen]);
+  // Adjusted during render: the collapse is stored, so a later non-zero count stays closed.
+  if (conjOpen && d?.new_conjectures_count === 0) setConjOpen(false);
+  // Auto-collapse when the last probe is answered (mirrors the conjecture panel).
+  if (probeOpen && activeProbes.length === 0) setProbeOpen(false);
   const chips = d ? buildDigestChips(d) : [];
   const canDecide = !!d && (d.new_proposals_count > 0 || d.new_conjectures_count > 0);
   const hasActivity = !!d?.has_overnight_activity;

@@ -17,8 +17,12 @@
 // 挂知识点·补参考答案" + "OCR 默认/VLM 兜底" describe YUK-482's end state + the OCR/
 // VLM ordering decision, neither true on this path today.
 
-import { useEffect, useRef, useState } from 'react';
-import { UploadSubjectPicker, uploadSubjectField } from '@/ui/components/UploadSubjectPicker';
+import { useCallback, useRef, useState } from 'react';
+import {
+  UploadSubjectPicker,
+  uploadSubjectField,
+  useUploadSubjectChoice,
+} from '@/ui/components/UploadSubjectPicker';
 import { ApiAuthError, apiJson } from '@/ui/lib/api';
 import { expandDocx, expandPdf, uploadAsset } from '@/ui/lib/assets';
 import { startIngestionOperation } from '@/ui/lib/ingestion-operations';
@@ -118,54 +122,54 @@ export interface OnboardRecordProps {
 export default function OnboardRecord({ navigate }: OnboardRecordProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   // OCR review (#551): synchronous re-entrancy lock (state is async → a rapid
-  // double-click could fire two uploads before the button hides) + a mounted flag
-  // so the multi-await `start` chain never setState after an unmount (e.g. the user
-  // hits 跳过 mid-flight).
+  // double-click could fire two uploads before the button hides).
   const inFlightRef = useRef(false);
-  const mountedRef = useRef(true);
+  // YUK-1483 — the page's current attachment. The root node's ref callback opens a
+  // fresh token on attach and drops it on detach, so a multi-await `start` chain
+  // whose page went away (e.g. the user hits 跳过 mid-flight) never sets state, and
+  // a chain from an earlier attachment can't write into a later one. Server work
+  // already accepted is not cancelled.
+  const attachmentRef = useRef<object | null>(null);
+  const attachRoot = useCallback((node: HTMLDivElement | null) => {
+    attachmentRef.current = node ? {} : null;
+  }, []);
   const [files, setFiles] = useState<File[]>([]);
-  const [uploadSubject, setUploadSubject] = useState<string | null>(null);
-  const [phase, setPhase] = useState<Phase>('idle');
+  const [uploadSubject, setUploadSubject] = useUploadSubjectChoice();
+  // The step this page drove itself to; the extraction outcome is derived below.
+  const [step, setPhase] = useState<Phase>('idle');
   const [sessionId, setSessionId] = useState<string | null>(null);
-  const [blockCount, setBlockCount] = useState<number | null>(null);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [pageError, setErrorMsg] = useState<string | null>(null);
 
-  // Hold the SSE stream open through 'done' as well as 'extracting'. Passing the
-  // SAME sessionId across the extracting→done flip means useIngestionSSE's inner
-  // effect (dep: [sessionId]) does NOT re-run, so the replayed `events` survive
-  // into the done render. Gating on 'extracting' only would flip the arg to null
-  // on completion → setEvents([]) → the done-state "OCR 逐页识别" row would lose
-  // its "N 页" page-count meta (review finding 1). The stream is already closed
-  // server-side post-completion, so this just preserves the last events.
-  const sse = useIngestionSSE(phase === 'extracting' || phase === 'done' ? sessionId : null);
+  // Hold the SSE stream open through the extraction outcome as well as 'extracting'.
+  // The session's snapshot (and its replayed `events`) stays the same across the
+  // extracting→done flip, so the done-state "OCR 逐页识别" row keeps its "N 页"
+  // page-count meta (review finding 1). The stream is already closed server-side
+  // post-completion, so this just preserves the last events.
+  const sse = useIngestionSSE(step === 'extracting' ? sessionId : null);
 
-  // Terminal SSE → done / error.
-  useEffect(() => {
-    if (phase !== 'extracting') return;
-    for (const e of sse.events) {
-      if (e.event_type === 'ingestion.extraction_failed') {
-        setErrorMsg(
-          typeof e.payload.error_message === 'string' ? e.payload.error_message : '抽题失败',
-        );
-        setPhase('error');
-        return;
-      }
-      if (e.event_type === 'ingestion.extraction_completed') {
-        setBlockCount(typeof e.payload.block_count === 'number' ? e.payload.block_count : 0);
-        setPhase('done');
-        return;
-      }
-    }
-  }, [phase, sse.events]);
-
-  // OCR #551: flip the mounted flag on unmount so `start`'s post-await setState calls
-  // (after expand/upload/create) are skipped if the user navigated away mid-flight.
-  useEffect(
-    () => () => {
-      mountedRef.current = false;
-    },
-    [],
-  );
+  // Terminal SSE → done / error: the first completed/failed event of this session.
+  const terminal =
+    step === 'extracting'
+      ? sse.events.find(
+          (e) =>
+            e.event_type === 'ingestion.extraction_failed' ||
+            e.event_type === 'ingestion.extraction_completed',
+        )
+      : undefined;
+  let phase: Phase = step;
+  let errorMsg = pageError;
+  let blockCount: number | null = null;
+  if (terminal?.event_type === 'ingestion.extraction_failed') {
+    phase = 'error';
+    errorMsg =
+      typeof terminal.payload.error_message === 'string'
+        ? terminal.payload.error_message
+        : '抽题失败';
+  } else if (terminal) {
+    phase = 'done';
+    blockCount =
+      typeof terminal.payload.block_count === 'number' ? terminal.payload.block_count : 0;
+  }
 
   const prog = latestProgress(sse.events);
   const done = phase === 'done';
@@ -222,6 +226,8 @@ export default function OnboardRecord({ navigate }: OnboardRecordProps) {
     if (files.length === 0 || inFlightRef.current) return;
     inFlightRef.current = true;
     setErrorMsg(null);
+    const attachment = attachmentRef.current;
+    const stillHere = () => attachment !== null && attachmentRef.current === attachment;
     try {
       const f0 = files[0];
       // DOCX: self-contained endpoint builds the session server-side; go straight
@@ -229,7 +235,7 @@ export default function OnboardRecord({ navigate }: OnboardRecordProps) {
       if (files.length === 1 && isDocx(f0)) {
         setPhase('expanding');
         const ingested = await expandDocx(f0);
-        if (!mountedRef.current) return;
+        if (!stillHere()) return;
         setSessionId(ingested.session_id);
         setPhase('extracting');
         return;
@@ -238,12 +244,12 @@ export default function OnboardRecord({ navigate }: OnboardRecordProps) {
       if (files.length === 1 && isPdf(f0)) {
         setPhase('expanding');
         const expanded = await expandPdf(f0);
-        if (!mountedRef.current) return;
+        if (!stillHere()) return;
         assetIds = expanded.asset_ids;
       } else {
         setPhase('uploading');
         const assets = await Promise.all(files.map((f) => uploadAsset(f)));
-        if (!mountedRef.current) return;
+        if (!stillHere()) return;
         assetIds = assets.map((a) => a.id);
       }
       setPhase('creating');
@@ -256,11 +262,11 @@ export default function OnboardRecord({ navigate }: OnboardRecordProps) {
         }),
       });
       await startIngestionOperation(session.session.id, { kind: 'extract' });
-      if (!mountedRef.current) return;
+      if (!stillHere()) return;
       setSessionId(session.session.id);
       setPhase('extracting');
     } catch (e) {
-      if (!mountedRef.current) return;
+      if (!stillHere()) return;
       setErrorMsg(
         e instanceof ApiAuthError ? e.message : e instanceof Error ? e.message : String(e),
       );
@@ -275,14 +281,13 @@ export default function OnboardRecord({ navigate }: OnboardRecordProps) {
     setUploadSubject(null);
     setPhase('idle');
     setSessionId(null);
-    setBlockCount(null);
     setErrorMsg(null);
   };
 
   const rows = computeRows(phase, prog, blockCount);
 
   return (
-    <div className="page page-narrow">
+    <div ref={attachRoot} className="page page-narrow">
       <div className="page-head">
         <div className="eyebrow">RECORD · onboarding · 为你建题库</div>
         <ObSteps active="source" />
