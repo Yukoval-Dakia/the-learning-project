@@ -1,5 +1,5 @@
 import type { KeyboardEvent, ReactNode } from 'react';
-import { useEffect, useId, useMemo, useState } from 'react';
+import { useCallback, useId, useMemo, useState } from 'react';
 import { useFocusTrap } from '@/ui/primitives/useFocusTrap';
 
 export interface PaletteCommand {
@@ -40,12 +40,16 @@ export function CommandPalette({
 
   const trapRef = useFocusTrap(open, onClose);
 
-  useEffect(() => {
+  // Each opening starts a fresh search: empty query, first option. This adjusts state while
+  // rendering the new `open` value, so the first open frame already shows the reset list.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
     if (open) {
       setQuery('');
       setActive(0);
     }
-  }, [open]);
+  }
 
   const visible = useMemo(() => {
     const q = query.trim().toLocaleLowerCase();
@@ -69,11 +73,16 @@ export function CommandPalette({
     return out;
   }, [visible]);
 
-  // Keep the highlighted option in view as the arrow keys move it.
-  useEffect(() => {
-    if (!open) return;
-    document.getElementById(`${listId}-opt-${active}`)?.scrollIntoView?.({ block: 'nearest' });
-  }, [active, open, listId]);
+  // Keep the highlighted option in view as the arrow keys move it. Only the active option carries
+  // this ref, so it runs when a different option node becomes active, and again when the palette
+  // opens (the callback changes with `open`). A closed palette never scrolls.
+  const revealActive = useCallback(
+    (node: HTMLDivElement | null) => {
+      if (!node || !open) return;
+      node.scrollIntoView?.({ block: 'nearest' });
+    },
+    [open],
+  );
 
   const run = (command: PaletteCommand | undefined) => {
     if (!command) return;
@@ -134,6 +143,7 @@ export function CommandPalette({
                 // biome-ignore lint/a11y/useKeyWithClickEvents: options never take focus; the combobox input drives them with aria-activedescendant and handles Enter.
                 <div
                   key={c.id}
+                  ref={i === active ? revealActive : undefined}
                   id={optionId(i)}
                   role="option"
                   aria-selected={i === active}
