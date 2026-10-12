@@ -12,18 +12,22 @@
   color: var(--un-text-1);
 }
 
+/* The companion (the Copilot) is a fixed panel on the right that opens and closes (C1). The
+   reading column is centred in what is left: the full width when it is closed, the area left of
+   the panel when it is open. Opening reflows the column once (no width animation, M8); the panel
+   itself slides in with transform and the page keeps the reading line in place (M7, in JS). */
 [data-ui-next] .un-pn {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) var(--un-w-panel);
-  gap: var(--un-sp-4);
-  align-items: start;
+  --un-pn-aside-room: 0px;
   min-height: 100%;
-  padding-right: var(--un-sp-3);
+}
+[data-ui-next] .un-pn[data-companion="open"] {
+  --un-pn-aside-room: calc(var(--un-w-panel) + var(--un-sp-3));
 }
 
 [data-ui-next] .un-pn-main {
   min-width: 0;
-  padding: var(--un-sp-7) var(--un-sp-6) var(--un-sp-8);
+  padding: var(--un-sp-6) calc(var(--un-sp-6) + var(--un-pn-aside-room)) var(--un-sp-7)
+    var(--un-sp-6);
 }
 
 [data-ui-next] .un-pn-column {
@@ -506,22 +510,52 @@
 
 /* ── Companion (C1): a floating layer beside the content, never over it ── */
 [data-ui-next] .un-pn-aside {
-  position: sticky;
+  position: fixed;
   top: calc(var(--un-pn-top, 0px) + var(--un-sp-3));
+  right: var(--un-sp-3);
+  bottom: var(--un-sp-3);
   z-index: var(--un-z-raised);
-  height: calc(100dvh - var(--un-pn-top, 0px) - 2 * var(--un-sp-3));
-  margin-top: var(--un-sp-3);
+  width: var(--un-w-panel);
   overflow: hidden;
   border-radius: var(--un-r-2);
+  opacity: 0;
+  visibility: hidden;
+  transform: translateX(calc(100% + var(--un-sp-4)));
+  transition:
+    transform var(--un-t-panel) var(--un-ease-glide),
+    opacity var(--un-t-ui) var(--un-ease-glide),
+    visibility 0s linear var(--un-t-panel);
 }
+[data-ui-next] .un-pn-aside[data-open] {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  transition:
+    transform var(--un-t-panel) var(--un-ease-glide),
+    opacity var(--un-t-ui) var(--un-ease-glide),
+    visibility 0s;
+}
+/* The panel moves as one piece; its inner frame does not add a second slide. */
 [data-ui-next] .un-pn-aside > .un-companion {
   width: 100%;
   height: 100%;
   border-left: 0;
   background: transparent;
+  opacity: 1;
+  transform: none;
+}
+[data-ui-next] .un-pn-companion-icon {
+  flex: none;
+  align-self: center;
+  color: var(--un-accent-strong);
+}
+[data-ui-next] .un-pn-companion-close {
+  margin-left: auto;
+  color: var(--un-text-3);
 }
 [data-ui-next] .un-pn-companion-head {
   display: flex;
+  flex: 1;
   align-items: baseline;
   gap: var(--un-sp-2);
 }
@@ -788,7 +822,8 @@
    up some padding instead. */
 @media (min-width: 721px) and (max-width: 1100px) {
   [data-ui-next] .un-pn-main {
-    padding: var(--un-sp-6) var(--un-sp-4) var(--un-sp-8);
+    padding: var(--un-sp-5) calc(var(--un-sp-4) + var(--un-pn-aside-room)) var(--un-sp-6)
+      var(--un-sp-4);
   }
   [data-ui-next] .un-pn-banner {
     gap: var(--un-sp-4);
@@ -799,8 +834,10 @@
    tucks into the page bar once the banner scrolls under it (B3). ── */
 @media (max-width: 720px) {
   [data-ui-next] .un-pn {
-    grid-template-columns: minmax(0, 1fr);
-    padding-right: 0;
+    --un-pn-aside-room: 0px;
+  }
+  [data-ui-next] .un-pn[data-companion="open"] {
+    --un-pn-aside-room: 0px;
   }
   [data-ui-next] .un-pn-aside {
     display: none;
@@ -808,8 +845,9 @@
   [data-ui-next] .un-pn-phone-sheet {
     display: block;
   }
+  /* Room at the end for the companion sheet's peek (about 76px) and no more. */
   [data-ui-next] .un-pn-main {
-    padding: 0 var(--un-sp-4) calc(var(--un-sp-8) * 2);
+    padding: 0 var(--un-sp-4) calc(76px + var(--un-sp-5));
   }
   [data-ui-next] .un-pn-column,
   [data-ui-next] .un-pn-q {
