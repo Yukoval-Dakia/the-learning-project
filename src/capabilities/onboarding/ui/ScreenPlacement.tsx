@@ -45,7 +45,13 @@ function readSelfReport(search: string): PlacementSelfReport {
   };
 }
 type Phase = 'loading' | 'answer' | 'sourcing' | 'settling' | 'terminal' | 'nogoal' | 'error';
-type ExitSave = () => Promise<void>;
+// What the current question card lends the exit button: save its draft, and pause or
+// resume its autosave while leaving (the old `!leaving` gate).
+interface ExitSave {
+  save: () => Promise<void>;
+  hold: () => void;
+  resume: () => void;
+}
 export interface ScreenPlacementProps {
   navigate: (to: string) => void;
 }
@@ -217,11 +223,16 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
     if (leaving) return;
     setLeaving(true);
     setExitFailure(null);
+    // No autosave while leaving — in particular not the edits being discarded.
+    const card = saveForExit.current;
+    card?.hold();
     try {
-      if (!discard) await saveForExit.current?.();
+      if (!discard) await card?.save();
       await transition('abandoned');
       navigate(destination);
     } catch (error) {
+      // Still on the page: the card may autosave again (unless it is in conflict).
+      card?.resume();
       setExitFailure({
         destination,
         message: error instanceof Error ? error.message : String(error),
@@ -566,6 +577,9 @@ function PlacementQuestionCard({
   const [uploading, setUploading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [conflict, setConflict] = useState(false);
+  // Set together with `conflict` when a save gets a 409 (async handler, not render), so
+  // resume paths that run before the next render still see the conflict.
+  const conflictRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const epoch = useRef(binding.state.draft?.save_epoch ?? 0);
   const shownAt = useRef(Date.now());
@@ -597,7 +611,10 @@ function PlacementQuestionCard({
           epoch.current = ack.save_epoch;
           savedBytes.current = JSON.stringify(value);
         } catch (e) {
-          if (e instanceof ApiError && e.status === 409) setConflict(true);
+          if (e instanceof ApiError && e.status === 409) {
+            conflictRef.current = true;
+            setConflict(true);
+          }
           throw e;
         }
       })();
@@ -617,8 +634,9 @@ function PlacementQuestionCard({
     (value: typeof draftValue, ctx: { keepalive: boolean }) => persist(value, ctx.keepalive),
     [persist],
   );
-  const autosave = useResponseDraftAutosave({ save: saveDraft });
-  const { flush: flushDraft } = autosave;
+  // A version conflict stops autosave (only reload or discard leave it), as before.
+  const autosave = useResponseDraftAutosave({ save: saveDraft, holdOnConflict: true });
+  const { flush: flushDraft, hold: holdDraft, resume: resumeDraft } = autosave;
   const flushOnPagehide = useCallback(() => flushDraft({ keepalive: true }), [flushDraft]);
   const attachPagehide = usePagehideTransition(flushOnPagehide);
   // The card's root owns two things while it is on the page: the keepalive draft flush
@@ -628,18 +646,24 @@ function PlacementQuestionCard({
     (node: HTMLDivElement | null) => {
       if (!node) return undefined;
       const detachPagehide = attachPagehide(node);
-      const save: ExitSave = async () => {
-        if (uploading) throw new Error('附件仍在上传，请等待上传完成。');
-        if (conflict) throw new Error('草稿版本冲突，请先重新加载服务端草稿或明确放弃修改。');
-        if (status === 'answering') await persist(currentValue.current, false);
+      const exit: ExitSave = {
+        save: async () => {
+          if (uploading) throw new Error('附件仍在上传，请等待上传完成。');
+          if (conflict) throw new Error('草稿版本冲突，请先重新加载服务端草稿或明确放弃修改。');
+          if (status === 'answering') await persist(currentValue.current, false);
+        },
+        hold: holdDraft,
+        resume: () => {
+          if (!conflictRef.current) resumeDraft();
+        },
       };
-      saveForExit.current = save;
+      saveForExit.current = exit;
       return () => {
         detachPagehide?.();
-        if (saveForExit.current === save) saveForExit.current = null;
+        if (saveForExit.current === exit) saveForExit.current = null;
       };
     },
-    [attachPagehide, uploading, conflict, status, persist, saveForExit],
+    [attachPagehide, uploading, conflict, status, persist, saveForExit, holdDraft, resumeDraft],
   );
   // The poller reports this run's terminal state once; claim it here.
   const onRunSettled = useCallback(
@@ -664,24 +688,28 @@ function PlacementQuestionCard({
     enabled: status === 'pending',
     onSettled: onRunSettled,
   });
-  const editDraft = (nextResponses: ResponseSetT, nextEvidence: EvidenceAttachment[]) => {
-    const next = {
-      response_set: nextResponses,
-      group_evidence: nativeGroupEvidence(nextEvidence),
-    };
+  // Every edit builds on currentValue (written here, synchronously), not on the render it
+  // was captured in: an upload that finishes after an await calls a handler from an older
+  // render, and must not hand autosave the pre-upload answer.
+  const editDraft = (next: typeof draftValue) => {
+    const from = currentValue.current;
     currentValue.current = next;
-    autosave.change(next, draftValue);
+    autosave.change(next, from);
   };
   const updateResponse = (entry: SlotResponseT) => {
-    const next = {
-      entries: [...responses.entries.filter((e) => e.slot_id !== entry.slot_id), entry],
+    const latest = currentValue.current;
+    const response_set = {
+      entries: [...latest.response_set.entries.filter((e) => e.slot_id !== entry.slot_id), entry],
     };
-    setResponses(next);
-    editDraft(next, evidence);
+    setResponses(response_set);
+    editDraft({ response_set, group_evidence: latest.group_evidence });
   };
   const updateEvidence = (next: EvidenceAttachment[]) => {
     setEvidence(next);
-    editDraft(responses, next);
+    editDraft({
+      response_set: currentValue.current.response_set,
+      group_evidence: nativeGroupEvidence(next),
+    });
   };
   const unavailable =
     !frozen || frozen.response_spec.slots.some((slot) => !nativeSlotFieldSpec(slot));
@@ -761,7 +789,8 @@ function PlacementQuestionCard({
       setError(e instanceof Error ? e.message : String(e));
       setStatus(dispatched ? 'uncertain' : 'answering');
       // Never dispatched: back to answering, so unsaved edits resume autosaving.
-      if (!dispatched) autosave.resume();
+      // A 409 on the pre-submit save is a conflict: stay held.
+      if (!dispatched && !conflictRef.current) autosave.resume();
     } finally {
       setSubmitting(false);
     }
