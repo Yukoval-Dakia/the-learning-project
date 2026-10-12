@@ -94,7 +94,12 @@ export const submitProbeAnswer = (input: SubmitProbeAnswerInput) =>
     },
   });
 
+// keepalive bodies share a ~64KB page budget and fetch throws on one over it; same cap as
+// practice's draft saver (kept local: onboarding takes no value import from practice).
+const KEEPALIVE_MAX_BODY_BYTES = 60_000;
+
 // Probe answer draft: the shared issuance responses resource, same request as practice's saver.
+// YUK-1487 — an oversized keepalive body goes out as a normal (best-effort) fetch instead.
 export const saveProbeResponseDraft = (
   issuanceId: string,
   body: ApiOperationRequestBody<'saveResponseDraft'>,
@@ -104,5 +109,9 @@ export const saveProbeResponseDraft = (
     url: `/api/issuances/${encodeURIComponent(issuanceId)}/responses`,
     method: 'POST',
     body,
-    init: options.keepalive ? { keepalive: true } : undefined,
+    init:
+      options.keepalive === true &&
+      new TextEncoder().encode(JSON.stringify(body)).length <= KEEPALIVE_MAX_BODY_BYTES
+        ? { keepalive: true }
+        : undefined,
   });

@@ -504,17 +504,23 @@ export function PfSolo({
   // after a failure calls resume().
   const draftGroupRef = assessmentInput.evaluation_group_id;
   const saveDraft = useCallback(
-    async (value: typeof draftValue, ctx: { keepalive: boolean }) => {
+    async (value: typeof draftValue, ctx: { keepalive: boolean; chained: boolean }) => {
+      // YUK-1487 — always send an epoch (0 = no draft yet): without one the server skips the
+      // stale check, and an older in-flight save could overwrite a newer chained one. A save
+      // chained past an in-flight one sends acked + 1 so whichever lands second loses only
+      // if it is the older text (contract in useResponseDraftAutosave).
+      const acked = ackedEpoch.current ?? restoredEpoch ?? 0;
       const ack = await saveResponseDraft(
         issuanceId,
         {
           ...value,
           evaluation_group_ref: draftGroupRef,
-          expected_save_epoch: ackedEpoch.current ?? restoredEpoch,
+          expected_save_epoch: ctx.chained ? acked + 1 : acked,
         },
         { keepalive: ctx.keepalive },
       );
-      ackedEpoch.current = ack.save_epoch;
+      // ACKs of an in-flight and a chained save can arrive in either order; keep the newest.
+      ackedEpoch.current = Math.max(ackedEpoch.current ?? 0, ack.save_epoch);
     },
     [issuanceId, draftGroupRef, restoredEpoch],
   );
@@ -522,7 +528,8 @@ export function PfSolo({
   // YUK-1485 — tab close / reload inside the 800ms debounce: flush the pending draft with
   // keepalive, as ScreenPlacement does. The controller holds the latest edited value, so this
   // sends the last keystrokes; while held (judging/committing) or after an accepted answer it
-  // sends nothing, and an in-flight save is not re-sent. Armed by the answering root below.
+  // sends nothing. Newer text than an in-flight save carries goes out as one chained keepalive
+  // save (YUK-1487). Armed by the answering root below.
   const { flush: flushDraft } = autosave;
   const flushOnPagehide = useCallback(() => flushDraft({ keepalive: true }), [flushDraft]);
   const attachPagehide = usePagehideTransition(flushOnPagehide);

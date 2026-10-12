@@ -17,8 +17,18 @@
 //     debounce；回到作答时恢复，若仍有未存改动立刻重新排程。
 //   - flush / retry：同前。
 // 状态（state/generation/lastSavedAt）是控制器的真实快照，经 useSyncExternalStore 读。
-// 订阅随组件挂载；最后一个订阅退出（卸载）时清掉未发的 debounce——已发出的保存仍按原
-// 回执落地，不冒充取消。`save` 须在一次作答内保持稳定（按 issuance 等身份 key 宿主）。
+// 订阅随组件挂载；最后一个订阅退出（卸载）时清掉未发的 debounce，并在一个 microtask 后
+// 把未存改动 flush 出去（站内导航不丢最后几个字）；同一 tick 内重新订阅（StrictMode）则不
+// flush。暂停（hold）时不发。`save` 须在一次作答内保持稳定（按 issuance 等身份 key 宿主）。
+//
+// YUK-1487 — keepalive flush 遇到在途保存且当前值与它发出的值不同：页面等不了、在途的普通
+// fetch 也可能被浏览器取消，所以立刻再发一轮 { keepalive, chained } 保存当前值。宿主对
+// chained 发 expected_save_epoch = 已 ack 纪元 + 1：服务端只在 stored > expected 时 409，
+// 落库后 stored = existing + 1。在途保存带的是已 ack 纪元 E，链式带 E + 1：
+//   - 在途先落（stored E→E+1），链式 E+1 不小于 stored → 落库 E+2，最新值胜；
+//   - 链式先落（stored E→E+1），在途 E < E+1 → 409，旧值被拒，最新值仍在。
+// 只对恰好一轮在途保存成立，所以每轮在途最多链一次。控制器之后先等链式结果：它成功，
+// 在途那轮的失败（多半是被它挤掉的 409）不算冲突。
 
 import { useMemo, useState, useSyncExternalStore } from 'react';
 import type { SaveState } from '@/ui/components/response/SaveStateChip';
@@ -28,7 +38,13 @@ function defaultSerialize<T>(value: T): string {
   return JSON.stringify(value) ?? '';
 }
 
-type SaveFn<T> = (value: T, ctx: { keepalive: boolean }) => Promise<unknown>;
+/**
+ * chained = 这一轮是越过在途保存发出的（见文件头）：宿主须发 expected_save_epoch =
+ * 已 ack 纪元 + 1，其余时候发已 ack 纪元（无草稿时为 0，不能缺省，否则服务端不做 stale 检查）。
+ */
+type SaveFn<T> = (value: T, ctx: { keepalive: boolean; chained: boolean }) => Promise<unknown>;
+
+type ChainedOutcome = { ok: true; serialized: string } | { ok: false; error: unknown };
 
 export interface UseResponseDraftAutosaveOptions<T> {
   /** resolve = server ack；reject(ApiError 409) → conflict。一次作答内保持稳定。 */
@@ -75,6 +91,10 @@ class DraftAutosaveController<T> {
   // seq 守卫：只有最新一轮保存的响应可以写状态（旧成功不盖新失败，反之亦然）。
   private seq = 0;
   private inFlight: Promise<boolean> | null = null;
+  // The one save chained past the in-flight request.
+  private chained: Promise<ChainedOutcome> | null = null;
+  // Bumped on every subscribe/unsubscribe; an unmount flush runs only if nothing re-subscribed.
+  private attachSeq = 0;
   private enabled = true;
   private save: SaveFn<T> | null = null;
 
@@ -88,12 +108,21 @@ class DraftAutosaveController<T> {
 
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
+    this.attachSeq += 1;
     // Re-subscribe (StrictMode) with an unsaved edit: re-arm the debounce dropped below.
     if (this.listeners.size === 1 && this.enabled && this.isDirty() && !this.inFlight)
       this.schedule();
     return () => {
       this.listeners.delete(listener);
-      if (this.listeners.size === 0) this.clearTimer();
+      if (this.listeners.size > 0) return;
+      this.clearTimer();
+      // Unmount (in-app navigation): send the unsaved edit. Deferred one microtask so a
+      // same-tick re-subscribe (StrictMode) cancels it; flush itself honours hold().
+      const seq = ++this.attachSeq;
+      queueMicrotask(() => {
+        const save = this.save;
+        if (this.attachSeq === seq && save) void this.flush(save);
+      });
     };
   };
 
@@ -130,7 +159,10 @@ class DraftAutosaveController<T> {
     this.save = save;
     this.clearTimer();
     // Await the full save chain, including edits made while an older ACK is pending.
-    if (this.inFlight) return this.inFlight;
+    if (this.inFlight) {
+      if (opts.keepalive === true) this.chainPastInFlight(save);
+      return this.inFlight;
+    }
     if (!this.enabled || !this.isDirty()) return Promise.resolve(true);
     this.lastSerialized = this.serialize(this.value as T);
     return this.runSave(opts.keepalive === true);
@@ -140,6 +172,27 @@ class DraftAutosaveController<T> {
     this.save = save;
     if (this.inFlight) return;
     void this.runSave(false);
+  }
+
+  // Pagehide while a save is in flight: the page cannot wait for it and the browser may
+  // cancel it, so send the current value now with keepalive — even when it equals what the
+  // in-flight request carries, since unload may abort that request. Once per in-flight request.
+  private chainPastInFlight(save: SaveFn<T>) {
+    if (!this.enabled || this.chained || !this.hasValue) return;
+    const value = this.value as T;
+    const serialized = this.serialize(value);
+    this.chained = save(value, { keepalive: true, chained: true }).then(
+      (): ChainedOutcome => ({ ok: true, serialized }),
+      (error: unknown): ChainedOutcome => ({ ok: false, error }),
+    );
+  }
+
+  private async takeChained(): Promise<ChainedOutcome | null> {
+    const chained = this.chained;
+    if (!chained) return null;
+    const outcome = await chained;
+    if (this.chained === chained) this.chained = null;
+    return outcome;
   }
 
   private isDirty(): boolean {
@@ -176,12 +229,25 @@ class DraftAutosaveController<T> {
       try {
         for (;;) {
           const snapshot = this.value as T;
-          const snapshotSerialized = this.serialize(snapshot);
-          await (this.save ?? save)(snapshot, { keepalive: alive });
+          let stored = this.serialize(snapshot);
+          let failed = false;
+          let failure: unknown;
+          try {
+            await (this.save ?? save)(snapshot, { keepalive: alive, chained: false });
+          } catch (err) {
+            failed = true;
+            failure = err;
+          }
+          // A save chained past this one carries a newer value and a higher epoch. Wait for
+          // it before the next round (its ACK moves the host's epoch); when it landed, it is
+          // what the server holds, and this round's failure was only it being superseded.
+          const chained = await this.takeChained();
+          if (chained?.ok) stored = chained.serialized;
+          else if (failed) throw chained ? chained.error : failure;
           if (this.seq !== seq) return false;
-          this.baseline = snapshotSerialized;
+          this.baseline = stored;
           this.publish({ lastSavedAt: Date.now() });
-          if (this.enabled && this.serialize(this.value as T) !== snapshotSerialized) {
+          if (this.enabled && this.serialize(this.value as T) !== stored) {
             alive = false;
             continue;
           }
