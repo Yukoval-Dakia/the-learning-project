@@ -106,6 +106,13 @@ export interface PracticeNextPageProps extends PracticeFacePageProps {
    * redesigns from the 2026-10-11 owner review), or `classic`, the default until the owner picks.
    */
   layout?: PracticeLayout;
+  /**
+   * The 学习伙伴 (Copilot) open state and its toggle, when the shell owns them. Left out, the page
+   * keeps its own (remembered per page, closed by default) and still answers the shell's
+   * 学习伙伴 button through `toggleCopilot`, ⌘J and Esc.
+   */
+  companionOpen?: boolean;
+  onCompanionOpenChange?: (open: boolean) => void;
 }
 
 /** YUK-1473 — the same practice flow with the solve view in the new design language. */
@@ -124,10 +131,14 @@ function PracticeFace({
   soloView,
   companion = 'none',
   layout = 'classic',
+  companionOpen,
+  onCompanionOpenChange,
 }: PracticeFacePageProps & {
   soloView: 'retained' | 'next';
   companion?: PracticeCompanionMode;
   layout?: PracticeLayout;
+  companionOpen?: boolean;
+  onCompanionOpenChange?: (open: boolean) => void;
 }) {
   const qc = useQueryClient();
   const [scopeKnowledgeId, setScopeKnowledgeId] = useState<string | null>(() => {
@@ -475,6 +486,8 @@ function PracticeFace({
           navigate={navigate}
           companion={companion}
           layout={layout}
+          companionOpen={companionOpen}
+          onCompanionOpenChange={onCompanionOpenChange}
         />
       ) : (
         <PfSolo
