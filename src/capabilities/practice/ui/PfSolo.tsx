@@ -735,9 +735,11 @@ export function PfSolo({
       if (draftConflict) {
         if (!(draftConflict.status === 'ready' && sameAsServer(draftConflict.answer))) {
           addToast(
-            draftConflict.status === 'ready' && draftConflict.submitted
-              ? '已返回。你这次写的没有保存：这道题已经在别处交过了，记录的是交过的那一份。'
-              : '已返回。你这次写的没有保存：这道题在别处存了另一份作答，再打开时看到的是那一份。',
+            draftConflict.status !== 'ready'
+              ? '你这次写的没有保存，再打开时以服务器上的为准。'
+              : draftConflict.submitted
+                ? '已返回。你这次写的没有保存：这道题已经在别处交过了，记录的是交过的那一份。'
+                : '已返回。你这次写的没有保存：这道题在别处存了另一份作答，再打开时看到的是那一份。',
             'info',
             'alert',
           );
@@ -1221,7 +1223,7 @@ export function PfSolo({
         {draftConflict ? (
           <DraftConflictPanel
             conflict={draftConflict}
-            mine={draftSummary(currentDraft())}
+            mine={draftSummary(draftValue)}
             server={
               draftConflict.status === 'ready'
                 ? {

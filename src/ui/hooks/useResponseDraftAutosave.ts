@@ -83,6 +83,8 @@ export interface ResponseDraftAutosave<T> {
    * keep='mine' 保留本地值并立刻保存。都会恢复自动保存。resolve = 是否已与服务端一致。
    */
   rebase: (server: T, keep: 'server' | 'mine') => Promise<boolean>;
+  /** 是否处于暂停（hold，含冲突自动暂停）。供宿主在异步回调里判断还能不能补存。 */
+  isHeld: () => boolean;
 }
 
 interface AutosaveSnapshot {
@@ -162,6 +164,10 @@ class DraftAutosaveController<T> {
     this.clearTimer();
   }
 
+  isHeld(): boolean {
+    return !this.enabled;
+  }
+
   resume(save: SaveFn<T>) {
     this.save = save;
     this.enabled = true;
@@ -191,11 +197,11 @@ class DraftAutosaveController<T> {
     this.onConflict = onConflict;
   }
 
-  rebase(server: T, keep: 'server' | 'mine', save: SaveFn<T>): Promise<boolean> {
+  async rebase(server: T, keep: 'server' | 'mine', save: SaveFn<T>): Promise<boolean> {
     this.save = save;
     this.clearTimer();
-    // A save still running decides for itself; the host retries once it settles.
-    if (this.inFlight) return this.inFlight.then(() => false);
+    // A save still running settles first (it never rejects); the choice then applies on top.
+    while (this.inFlight) await this.inFlight;
     const serverSerialized = this.serialize(server);
     this.baseline = serverSerialized;
     if (keep === 'server' || !this.hasValue) {
@@ -333,6 +339,7 @@ export function useResponseDraftAutosave<T>({
         controller.change(next, from, save);
       },
       hold: () => controller.hold(),
+      isHeld: () => controller.isHeld(),
       resume: () => {
         bind();
         controller.resume(save);

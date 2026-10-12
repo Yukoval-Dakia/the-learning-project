@@ -601,6 +601,10 @@ function PlacementQuestionCard({
   // pendingChain is the same chain until it settles (later saves wait for it).
   const chainedSave = useRef<Promise<boolean> | null>(null);
   const pendingChain = useRef<Promise<boolean> | null>(null);
+  // YUK-1489 — re-saves the current answer after a chain this card stopped waiting for lands
+  // (see persist). Set while the card is mounted (attachCard); null once it is gone.
+  const resaveAfterChain = useRef<(() => void) | null>(null);
+  const cappedChains = useRef(new WeakSet<Promise<boolean>>());
   const persist = useCallback(
     async (value: typeof draftValue, keepalive: boolean, chained = false) => {
       const draft = { ...value, evaluation_group_ref: binding.evaluation_group_id };
@@ -636,26 +640,38 @@ function PlacementQuestionCard({
       // must not hold submit or exit forever (YUK-1489).
       const chainDeadline = Date.now() + CHAIN_WAIT_CAP_MS;
       for (;;) {
-        const earlier = inFlight.current ?? pendingChain.current;
-        if (!earlier) break;
-        if (earlier === inFlight.current) {
-          await earlier.then(
+        if (inFlight.current) {
+          await inFlight.current.then(
             () => undefined,
             () => undefined,
           );
           continue;
         }
+        const earlier = pendingChain.current;
+        if (!earlier) break;
         const left = chainDeadline - Date.now();
-        if (left <= 0) break;
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        const settled = await Promise.race([
-          earlier.then(() => true),
-          new Promise<boolean>((resolve) => {
-            timer = setTimeout(() => resolve(false), left);
-          }),
-        ]);
-        clearTimeout(timer);
-        if (!settled) break;
+        let settled = false;
+        if (left > 0) {
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          settled = await Promise.race([
+            earlier.then(() => true),
+            new Promise<boolean>((resolve) => {
+              timer = setTimeout(() => resolve(false), left);
+            }),
+          ]);
+          clearTimeout(timer);
+        }
+        if (settled) continue;
+        // Capped: this save goes out now. If the chain lands after it, the chain's older text
+        // is what the server holds; once it reports stored, save the current answer once more
+        // (its ACK raised the epoch, so that save passes and the newest answer wins).
+        if (!cappedChains.current.has(earlier)) {
+          cappedChains.current.add(earlier);
+          void earlier.then((stored) => {
+            if (stored) resaveAfterChain.current?.();
+          });
+        }
+        break;
       }
       if (JSON.stringify(value) === savedBytes.current) return;
       const saving = (async () => {
@@ -699,7 +715,7 @@ function PlacementQuestionCard({
   );
   // A version conflict stops autosave (only reload or discard leave it), as before.
   const autosave = useResponseDraftAutosave({ save: saveDraft, holdOnConflict: true });
-  const { flush: flushDraft, hold: holdDraft, resume: resumeDraft } = autosave;
+  const { flush: flushDraft, hold: holdDraft, resume: resumeDraft, isHeld: isDraftHeld } = autosave;
   const flushOnPagehide = useCallback(() => flushDraft({ keepalive: true }), [flushDraft]);
   const attachPagehide = usePagehideTransition(flushOnPagehide);
   // The card's root owns two things while it is on the page: the keepalive draft flush
@@ -721,12 +737,30 @@ function PlacementQuestionCard({
         },
       };
       saveForExit.current = exit;
+      // Re-save after a capped chain only while answering continues: not once autosave is
+      // held (leaving, submitting, or a conflict) and not after the card is gone.
+      const resave = () => {
+        if (isDraftHeld() || conflictRef.current) return;
+        void persist(currentValue.current, false).catch(() => {});
+      };
+      resaveAfterChain.current = resave;
       return () => {
         detachPagehide?.();
         if (saveForExit.current === exit) saveForExit.current = null;
+        if (resaveAfterChain.current === resave) resaveAfterChain.current = null;
       };
     },
-    [attachPagehide, uploading, conflict, status, persist, saveForExit, holdDraft, resumeDraft],
+    [
+      attachPagehide,
+      uploading,
+      conflict,
+      status,
+      persist,
+      saveForExit,
+      holdDraft,
+      resumeDraft,
+      isDraftHeld,
+    ],
   );
   // The poller reports this run's terminal state once; claim it here.
   const onRunSettled = useCallback(
