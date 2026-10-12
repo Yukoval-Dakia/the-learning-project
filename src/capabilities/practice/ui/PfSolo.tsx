@@ -39,6 +39,7 @@ import {
 import { SaveStateChip } from '@/ui/components/response/SaveStateChip';
 import { SlotResultBadge } from '@/ui/components/response/SlotResultBadge';
 import { type JudgeRunPollingState, useJudgeRunPolling } from '@/ui/hooks/useJudgeRunPolling';
+import { usePagehideTransition } from '@/ui/hooks/usePagehideTransition';
 import { useResponseDraftAutosave } from '@/ui/hooks/useResponseDraftAutosave';
 import { ApiError } from '@/ui/lib/api';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
@@ -503,17 +504,28 @@ export function PfSolo({
   // after a failure calls resume().
   const draftGroupRef = assessmentInput.evaluation_group_id;
   const saveDraft = useCallback(
-    async (value: typeof draftValue) => {
-      const ack = await saveResponseDraft(issuanceId, {
-        ...value,
-        evaluation_group_ref: draftGroupRef,
-        expected_save_epoch: ackedEpoch.current ?? restoredEpoch,
-      });
+    async (value: typeof draftValue, ctx: { keepalive: boolean }) => {
+      const ack = await saveResponseDraft(
+        issuanceId,
+        {
+          ...value,
+          evaluation_group_ref: draftGroupRef,
+          expected_save_epoch: ackedEpoch.current ?? restoredEpoch,
+        },
+        { keepalive: ctx.keepalive },
+      );
       ackedEpoch.current = ack.save_epoch;
     },
     [issuanceId, draftGroupRef, restoredEpoch],
   );
   const autosave = useResponseDraftAutosave({ save: saveDraft });
+  // YUK-1485 — tab close / reload inside the 800ms debounce: flush the pending draft with
+  // keepalive, as ScreenPlacement does. The controller holds the latest edited value, so this
+  // sends the last keystrokes; while held (judging/committing) or after an accepted answer it
+  // sends nothing, and an in-flight save is not re-sent. Armed by the answering root below.
+  const { flush: flushDraft } = autosave;
+  const flushOnPagehide = useCallback(() => flushDraft({ keepalive: true }), [flushDraft]);
+  const attachPagehide = usePagehideTransition(flushOnPagehide);
   // Latest edited draft, written synchronously by every edit handler (never during render).
   // A handler captured by an older render — e.g. EvidenceComposer finishing an upload after
   // an await — must build on this, not on its render's answer, or it would hand autosave a
@@ -958,6 +970,16 @@ export function PfSolo({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   };
+  // The answering root owns both window listeners: the submit hotkey and the pagehide flush.
+  const attachAnsweringRoot = (node: HTMLDivElement | null) => {
+    const detachHotkey = attachSubmitHotkey(node);
+    const detachPagehide = attachPagehide(node);
+    if (!node) return undefined;
+    return () => {
+      detachHotkey?.();
+      detachPagehide?.();
+    };
+  };
 
   if (qQ.isLoading) return <p className="quiet-empty">取题中…</p>;
   if (qQ.isError || !q)
@@ -1006,7 +1028,7 @@ export function PfSolo({
   const verdict = displayedPreview ? VERDICT_OF[displayedPreview.coarse_outcome] : null;
 
   return (
-    <div className="pfs" data-screen-label={`散题作答 · ${q.id}`} ref={attachSubmitHotkey}>
+    <div className="pfs" data-screen-label={`散题作答 · ${q.id}`} ref={attachAnsweringRoot}>
       <div className="pfs-top">
         {/* YUK-432 (FINDING 1) — 自动 commit 后「返回流」走 handleBack（标 slot done），否则 onBack。 */}
         <Btn
