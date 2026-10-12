@@ -986,9 +986,15 @@ export function PfSolo({
           返回流
         </Btn>
         <p className="quiet-empty">{(issued.error as Error | null)?.message ?? '正在恢复作答'}</p>
-        {issued.error instanceof ApiError && issued.error.code === 'not_admitted' && (
+        {issued.error instanceof ApiError && issued.error.code === 'not_admitted' ? (
           <Btn variant="secondary" onClick={() => setIssuanceMode('manual')}>
             按自行评级练习
+          </Btn>
+        ) : (
+          // Brings back the issuance placeholder, whose attach re-runs the command
+          // (read first, POST only on 404; the failed request was already dropped).
+          <Btn variant="secondary" onClick={() => setIssuance(null)}>
+            重试
           </Btn>
         )}
       </div>
