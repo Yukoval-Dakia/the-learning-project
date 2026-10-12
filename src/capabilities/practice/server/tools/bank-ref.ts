@@ -18,10 +18,11 @@
 // 单题 = 1-part 组（YUK-1043 §3.1），question 与 group 共用组版本语法；
 // kind（question/group）由 revision 形状派生，不进 ref。
 
-import { inArray } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 
 import type { Db } from '@/db/client';
 import { question_group_lifecycle, question_revision } from '@/db/schema';
+import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
 
 export const BANK_REF_VERSION = 'qrev1' as const;
 
@@ -156,5 +157,36 @@ export function bankAssetDigestMatches(stored: string, revision: string): boolea
     /^[a-f0-9]{64}$/.test(bare(stored)) &&
     /^[a-f0-9]{64}$/.test(bare(revision)) &&
     bare(stored) === bare(revision)
+  );
+}
+
+/** A group candidate can contain both servable and unavailable parts. Check each
+ * actual question/part through the issuance gate; never require unrelated parts
+ * to be automatically gradable or promise that the whole group can be issued. */
+export async function readBankServableParts(
+  db: Db,
+  groupIds: string[],
+): Promise<Map<string, string[]>> {
+  if (groupIds.length === 0) return new Map();
+  const rows = await db
+    .select({ groupId: question_revision.group_id, structure: question_revision.structure })
+    .from(question_group_lifecycle)
+    .innerJoin(
+      question_revision,
+      and(
+        eq(question_revision.revision_id, question_group_lifecycle.current_revision_id),
+        eq(question_revision.group_id, question_group_lifecycle.group_id),
+      ),
+    )
+    .where(inArray(question_group_lifecycle.group_id, groupIds));
+  const partIds = [
+    ...new Set(rows.flatMap((row) => row.structure.parts.map((part) => part.part_id))),
+  ];
+  const servable = await readAutomaticallyServableQuestionIds(db, partIds);
+  return new Map(
+    rows.map((row) => [
+      row.groupId,
+      row.structure.parts.map((part) => part.part_id).filter((id) => servable.has(id)),
+    ]),
   );
 }

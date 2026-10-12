@@ -26,7 +26,7 @@ import { embedText } from '@/server/ai/embed';
 import { canonicalKindToPersistedForms } from '@/subjects/question-kind';
 import { EvidenceDemandV1 } from '../question-supply/evidence-demand';
 import { MATCHER_COSINE_MAX_DISTANCE } from '../quiz/matcher';
-import { encodeBankRef, resolveBankRefs } from './bank-ref';
+import { encodeBankRef, readBankServableParts, resolveBankRefs } from './bank-ref';
 
 /** 每个召回通道的截断上限（OOM 保护；命中即 retrieval_truncated=true）。 */
 export const BANK_SEARCH_CHANNEL_CAP = 200;
@@ -95,6 +95,7 @@ export interface BankSearchHit {
   availability: 'general_pool' | 'container_only' | null;
   suspended: boolean;
   source: string;
+  automatically_servable_part_ids: string[];
   source_tier: { tier: number; name: string };
   difficulty: number;
   knowledge_ids: string[];
@@ -139,12 +140,29 @@ export interface BankSearchOutput {
 
 const BankSearchCursorSchema = z
   .object({
-    v: z.literal(1),
+    v: z.literal(2),
     q: z.string().trim().min(1).max(400),
     scope: BankSearchScopeSchema,
     limit: z.number().int().min(1).max(50),
     offset: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
     f: z.string().regex(/^[a-f0-9]{16}$/),
+    pool: z
+      .array(
+        z
+          .object({
+            id: z.string().min(1).max(256),
+            channels: z
+              .array(z.enum(['fts', 'vector']))
+              .min(1)
+              .max(2),
+          })
+          .strict(),
+      )
+      .max(BANK_SEARCH_CHANNEL_CAP * 2),
+    snapshot_hash: z.string().regex(/^[a-f0-9]{64}$/),
+    expires_at: z.number().int().positive(),
+    retrieval_truncated: z.boolean(),
+    unavailable_channels: z.array(z.enum(['fts', 'vector'])).max(2),
   })
   .strict();
 type BankSearchCursor = z.infer<typeof BankSearchCursorSchema>;
@@ -173,6 +191,10 @@ export function decodeBankSearchCursor(raw: string): BankSearchCursor {
   const result = BankSearchCursorSchema.safeParse(parsed);
   if (!result.success) throw new Error('cursor is not a valid bank-search cursor');
   const c = result.data;
+  if (c.expires_at <= Date.now()) throw new Error('bank-search cursor expired; start a new search');
+  if (new Set(c.pool.map((hit) => hit.id)).size !== c.pool.length) {
+    throw new Error('cursor is not a valid bank-search cursor');
+  }
   if (c.f !== bankSearchFingerprint(c.q, c.scope, c.limit)) {
     throw new Error(
       'cursor fingerprint mismatch — start a new search instead of mixing a cursor with changed conditions',
@@ -348,11 +370,13 @@ export async function runSearchBank(
   deps: BankSearchDeps = {},
 ): Promise<BankSearchOutput> {
   let offset = 0;
+  let cursor: BankSearchCursor | undefined;
   let limit: number;
   let scope: BankSearchScope;
   let effectiveQuery: string;
   if (request.form === 'cursor') {
     const c = decodeBankSearchCursor(request.cursor);
+    cursor = c;
     effectiveQuery = c.q;
     scope = c.scope;
     limit = c.limit;
@@ -367,87 +391,98 @@ export async function runSearchBank(
   const filters = buildFilters(resolved);
   const where = and(...filters);
 
-  // ── 通道 A：Postgres FTS（simple + CJK 逐字切分）──
-  const tsvec = sql`to_tsvector('simple', ${ftsDocumentExpr()})`;
-  const tsq = ftsQueryExpr(effectiveQuery);
-  const ftsRowsPromise = db
-    .select({
-      id: question.id,
-      prompt_md: question.prompt_md,
-      created_at: question.created_at,
-      rank: sql<number>`ts_rank(${tsvec}, ${tsq})`,
-    })
-    .from(question)
-    .leftJoin(question_group_lifecycle, eq(question_group_lifecycle.group_id, question.id))
-    .where(and(where, sql`${tsvec} @@ ${tsq}`))
-    .orderBy(desc(sql`ts_rank(${tsvec}, ${tsq})`), desc(question.created_at), desc(question.id))
-    .limit(BANK_SEARCH_CHANNEL_CAP + 1);
-
-  // ── 通道 B：暴力 pgvector cosine（embed 失败 → 通道不可用，不阻塞 FTS）──
-  const embedFn =
-    deps.embedFn ??
-    (async (text: string) =>
-      embedText(text, {
-        db,
-        caller: 'api',
-        deadlineAt: new Date(Date.now() + 20_000),
-      }));
-  const vectorPromise: Promise<{ vector: number[] | null; error?: string }> = embedFn(
-    effectiveQuery,
-  )
-    .then((vector) => ({ vector }))
-    .catch((err: unknown) => ({
-      vector: null,
-      error: err instanceof Error ? err.message : String(err),
-    }));
-
-  const [ftsAll, vectorResult] = await Promise.all([ftsRowsPromise, vectorPromise]);
-
-  const ftsTruncated = ftsAll.length > BANK_SEARCH_CHANNEL_CAP;
-  const ftsRows = ftsAll.slice(0, BANK_SEARCH_CHANNEL_CAP);
-  const unavailable: BankSearchCoverage['unavailable_channels'] = [];
-
-  const channels: Array<{ name: string; hits: RrfChannelHit[] }> = [
-    { name: 'fts', hits: ftsRows.map((r, i) => ({ id: r.id, rank: i })) },
-  ];
-
-  let vectorTruncated = false;
-  let vectorRows: Array<{ id: string; created_at: Date }> = [];
-  if (vectorResult.vector != null) {
-    const distanceExpr = sql<number>`(${question.embedding} <=> ${toSqlVector(vectorResult.vector)}::vector)`;
-    const vecAll = await db
-      .select({ id: question.id, created_at: question.created_at })
+  let fused: RrfFused[];
+  let unavailable: BankSearchCoverage['unavailable_channels'];
+  let retrievalTruncated: boolean;
+  if (cursor) {
+    // Resume the original bounded pool. New rows/ranks never replace earlier results,
+    // and pagination makes no additional embedding/provider call.
+    fused = cursor.pool.map((hit) => ({ ...hit, score: 0 }));
+    unavailable = cursor.unavailable_channels;
+    retrievalTruncated = cursor.retrieval_truncated;
+  } else {
+    // ── 通道 A：Postgres FTS（simple + CJK 逐字切分）──
+    const tsvec = sql`to_tsvector('simple', ${ftsDocumentExpr()})`;
+    const tsq = ftsQueryExpr(effectiveQuery);
+    const ftsRowsPromise = db
+      .select({
+        id: question.id,
+        prompt_md: question.prompt_md,
+        created_at: question.created_at,
+        rank: sql<number>`ts_rank(${tsvec}, ${tsq})`,
+      })
       .from(question)
       .leftJoin(question_group_lifecycle, eq(question_group_lifecycle.group_id, question.id))
-      .where(
-        and(
-          where,
-          sql`${question.embedding} IS NOT NULL`,
-          sql`${distanceExpr} <= ${MATCHER_COSINE_MAX_DISTANCE}`,
-        ),
-      )
-      .orderBy(sql`${distanceExpr} ASC`)
+      .where(and(where, sql`${tsvec} @@ ${tsq}`))
+      .orderBy(desc(sql`ts_rank(${tsvec}, ${tsq})`), desc(question.created_at), desc(question.id))
       .limit(BANK_SEARCH_CHANNEL_CAP + 1);
-    vectorTruncated = vecAll.length > BANK_SEARCH_CHANNEL_CAP;
-    vectorRows = vecAll.slice(0, BANK_SEARCH_CHANNEL_CAP);
-    channels.push({ name: 'vector', hits: vectorRows.map((r, i) => ({ id: r.id, rank: i })) });
-  } else {
-    unavailable.push('vector');
+
+    // ── 通道 B：暴力 pgvector cosine（embed 失败 → 通道不可用，不阻塞 FTS）──
+    const embedFn =
+      deps.embedFn ??
+      (async (text: string) =>
+        embedText(text, {
+          db,
+          caller: 'api',
+          deadlineAt: new Date(Date.now() + 20_000),
+        }));
+    const vectorPromise: Promise<{ vector: number[] | null; error?: string }> = embedFn(
+      effectiveQuery,
+    )
+      .then((vector) => ({ vector }))
+      .catch((err: unknown) => ({
+        vector: null,
+        error: err instanceof Error ? err.message : String(err),
+      }));
+
+    const [ftsAll, vectorResult] = await Promise.all([ftsRowsPromise, vectorPromise]);
+
+    const ftsTruncated = ftsAll.length > BANK_SEARCH_CHANNEL_CAP;
+    const ftsRows = ftsAll.slice(0, BANK_SEARCH_CHANNEL_CAP);
+    unavailable = [];
+
+    const channels: Array<{ name: string; hits: RrfChannelHit[] }> = [
+      { name: 'fts', hits: ftsRows.map((r, i) => ({ id: r.id, rank: i })) },
+    ];
+
+    let vectorTruncated = false;
+    let vectorRows: Array<{ id: string; created_at: Date }> = [];
+    if (vectorResult.vector != null) {
+      const distanceExpr = sql<number>`(${question.embedding} <=> ${toSqlVector(vectorResult.vector)}::vector)`;
+      const vecAll = await db
+        .select({ id: question.id, created_at: question.created_at })
+        .from(question)
+        .leftJoin(question_group_lifecycle, eq(question_group_lifecycle.group_id, question.id))
+        .where(
+          and(
+            where,
+            sql`${question.embedding} IS NOT NULL`,
+            sql`${distanceExpr} <= ${MATCHER_COSINE_MAX_DISTANCE}`,
+          ),
+        )
+        .orderBy(sql`${distanceExpr} ASC`)
+        .limit(BANK_SEARCH_CHANNEL_CAP + 1);
+      vectorTruncated = vecAll.length > BANK_SEARCH_CHANNEL_CAP;
+      vectorRows = vecAll.slice(0, BANK_SEARCH_CHANNEL_CAP);
+      channels.push({ name: 'vector', hits: vectorRows.map((r, i) => ({ id: r.id, rank: i })) });
+    } else {
+      unavailable.push('vector');
+    }
+
+    retrievalTruncated = ftsTruncated || vectorTruncated;
+    fused = rrfFuse(channels);
   }
 
-  const retrievalTruncated = ftsTruncated || vectorTruncated;
-
-  // ── RRF 融合 + 分页 ──
-  const fused = rrfFuse(channels);
-  const poolSize = fused.length;
-  const page = fused.slice(offset, offset + limit);
-  const hasMore = offset + page.length < poolSize;
-  const nextCursor = hasMore
-    ? encodeBankSearchCursor({ v: 1, q: effectiveQuery, scope, limit, offset: offset + limit })
-    : null;
-
-  // ── 卡片数据（page 量；批量无 N+1）──
-  const pageIds = page.map((p) => p.id);
+  // Revalidate the complete bounded pool before slicing. A changed/withdrawn card
+  // expires the cursor explicitly; immutable refs are never silently replaced.
+  const servableParts = await readBankServableParts(
+    db,
+    fused.map((hit) => hit.id),
+  );
+  if (scope.admission_state === 'admitted') {
+    fused = fused.filter((hit) => (servableParts.get(hit.id)?.length ?? 0) > 0);
+  }
+  const pageIds = fused.map((hit) => hit.id);
 
   const hits: BankSearchHit[] = [];
   if (pageIds.length > 0) {
@@ -507,7 +542,7 @@ export async function runSearchBank(
       .groupBy(question.parent_question_id);
     const childCount = new Map(childRows.map((r) => [r.parent as string, r.n]));
 
-    for (const fusedHit of page) {
+    for (const fusedHit of fused) {
       const row = cardById.get(fusedHit.id);
       if (row == null) continue; // 翻页窗口内被删——如实跳过
       const currentRevision =
@@ -541,6 +576,7 @@ export async function runSearchBank(
         availability: (row.lc_availability as BankSearchHit['availability']) ?? null,
         suspended: row.lc_suspended === true,
         source: row.source,
+        automatically_servable_part_ids: servableParts.get(row.id) ?? [],
         source_tier: { tier, name },
         difficulty: row.difficulty,
         knowledge_ids: row.knowledge_ids ?? [],
@@ -549,6 +585,34 @@ export async function runSearchBank(
       });
     }
   }
+
+  const snapshotHash = createHash('sha256').update(JSON.stringify(hits)).digest('hex');
+  if (cursor && snapshotHash !== cursor.snapshot_hash) {
+    throw new Error('bank-search cursor expired: candidate snapshot changed; start a new search');
+  }
+  const confirmedPoolSize = hits.length;
+  const pageHits = hits.slice(offset, offset + limit);
+  const hasMore = offset + pageHits.length < confirmedPoolSize;
+  const hitIds = new Set(hits.map((hit) => hit.question_id));
+  const nextCursor = hasMore
+    ? encodeBankSearchCursor({
+        v: 2,
+        q: effectiveQuery,
+        scope,
+        limit,
+        offset: offset + limit,
+        pool: fused
+          .filter((hit) => hitIds.has(hit.id))
+          .map(({ id, channels }) => ({
+            id,
+            channels: channels as Array<'fts' | 'vector'>,
+          })),
+        snapshot_hash: snapshotHash,
+        expires_at: cursor?.expires_at ?? Date.now() + 15 * 60_000,
+        retrieval_truncated: retrievalTruncated,
+        unavailable_channels: unavailable,
+      })
+    : null;
 
   const enforced: string[] = [];
   if (resolved.subjectKnowledgeIds !== undefined) {
@@ -566,7 +630,6 @@ export async function runSearchBank(
   enforced.push(`admission_state=${scope.admission_state}`);
   enforced.push('top-level questions only (composite parts read via their group)');
 
-  const confirmedPoolSize = poolSize - (page.length - hits.length);
   const verdict =
     confirmedPoolSize === 0 ? 'none' : confirmedPoolSize < limit ? 'sparse' : 'enough';
   const unsatisfied = {
@@ -624,7 +687,7 @@ export async function runSearchBank(
         '未被本通道召回的题不构成「库中没有」',
       ],
     },
-    hits,
+    hits: pageHits,
     coverage: {
       verdict,
       unsatisfied_constraints: verdict === 'enough' ? [] : [unsatisfied],
@@ -634,8 +697,7 @@ export async function runSearchBank(
       page_has_more: hasMore,
       next_cursor: nextCursor,
       unavailable_channels: unavailable,
-      complete:
-        !hasMore && !retrievalTruncated && unavailable.length === 0 && hits.length === page.length,
+      complete: !hasMore && !retrievalTruncated && unavailable.length === 0,
     },
   };
 }

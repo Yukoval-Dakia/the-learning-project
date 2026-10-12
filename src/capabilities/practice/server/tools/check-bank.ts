@@ -18,7 +18,7 @@ import {
 import type { Db } from '@/db/client';
 import { source_asset } from '@/db/schema';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
-import { bankAssetDigestMatches, resolveBankRefs } from './bank-ref';
+import { bankAssetDigestMatches, readBankServableParts, resolveBankRefs } from './bank-ref';
 
 export const CHECK_BANK_KINDS = [
   'same_material_refs',
@@ -157,6 +157,14 @@ export async function runCheckBank(db: Db, rawInput: CheckBankInput): Promise<Ch
 
   const allRefs = [...new Set(input.checks.flatMap((c) => c.refs))];
   const resolutions = await resolveBankRefs(db, allRefs);
+  const servable = input.checks.some(
+    (check) => check.kind === 'ref_state' && check.params?.assert === 'is_servable',
+  )
+    ? await readBankServableParts(
+        db,
+        resolutions.flatMap((r) => (r.status === 'ok' ? [r.revision.group_id] : [])),
+      )
+    : new Map<string, string[]>();
   const ctx: CheckContext = { badRefs: new Map(), revisionsByRef: new Map() };
   for (const r of resolutions) {
     if (r.status === 'ok') {
@@ -308,7 +316,7 @@ export async function runCheckBank(db: Db, rawInput: CheckBankInput): Promise<Ch
       const interpretation =
         assert === 'is_current'
           ? '每个 ref 是否仍指向其组的当前发布版本（lifecycle.current_revision_id）'
-          : '每个 ref 是否当前版本且组可服务（未撤回、未挂起、scoring admission = admitted）';
+          : '每个 ref 是否当前版本且至少一个选定小题可自动判分发出（返回可服务 part_ids；不代表整组可发）';
       if (badInCheck.length > 0 || resolved.length !== check.refs.length) {
         results.push(
           unknownResult(
@@ -322,6 +330,27 @@ export async function runCheckBank(db: Db, rawInput: CheckBankInput): Promise<Ch
         );
         continue;
       }
+      const selectedPartIds = check.params?.part_ids;
+      if (
+        selectedPartIds !== undefined &&
+        (assert !== 'is_servable' ||
+          check.refs.length !== 1 ||
+          !Array.isArray(selectedPartIds) ||
+          selectedPartIds.length === 0 ||
+          selectedPartIds.some((id) => typeof id !== 'string' || id.length === 0))
+      ) {
+        results.push(
+          unknownResult(
+            check.id,
+            check.claim,
+            '检查指定小题的自动判分可用性',
+            check.refs,
+            'part_ids requires one ref, is_servable, and a nonempty string array',
+            'record_lookup',
+          ),
+        );
+        continue;
+      }
       const evidence = resolved.map((r) => ({
         ref: r.ref,
         revision_id: r.info.revision_id,
@@ -330,6 +359,9 @@ export async function runCheckBank(db: Db, rawInput: CheckBankInput): Promise<Ch
         withdrawn: r.info.withdrawn,
         suspended: r.info.suspended,
         admission_state: r.info.admission_state,
+        ...(assert === 'is_servable'
+          ? { automatically_servable_part_ids: servable.get(r.info.group_id) ?? [] }
+          : {}),
       }));
       const verdicts = resolved.map((r) =>
         assert === 'is_current'
@@ -337,25 +369,33 @@ export async function runCheckBank(db: Db, rawInput: CheckBankInput): Promise<Ch
           : r.info.current &&
             !r.info.withdrawn &&
             !r.info.suspended &&
-            r.info.admission_state === 'admitted',
+            r.info.admission_state === 'admitted' &&
+            (selectedPartIds === undefined
+              ? (servable.get(r.info.group_id)?.length ?? 0) > 0
+              : (selectedPartIds as string[]).every((id) =>
+                  servable.get(r.info.group_id)?.includes(id),
+                )),
       );
       results.push({
         id: check.id,
         ...(check.claim != null ? { claim: check.claim } : {}),
-        interpretation,
+        interpretation:
+          selectedPartIds === undefined
+            ? interpretation
+            : '指定 ref 的每个 part_id 是否可自动判分发出（无关小题不阻塞）',
         verdict: verdicts.every(Boolean) ? 'supported' : 'contradicted',
         execution_status: 'completed',
-        method: 'record_lookup',
+        method: assert === 'is_current' ? 'record_lookup' : 'deterministic_recompute',
         inputs: check.refs,
         evidence,
         steps: [
           {
-            method: 'record_lookup',
+            method: assert === 'is_current' ? 'record_lookup' : 'deterministic_recompute',
             input_refs: check.refs,
             operation:
               assert === 'is_current'
                 ? '比较 revision_id 与 question_group_lifecycle.current_revision_id'
-                : '读取 lifecycle 的 current/withdrawn/suspended/scoring_admission_state 并逐维判定',
+                : '对每个选定小题复用正式发题只读 gate 验证 draft/availability/lifecycle 与冻结评分执行契约',
           },
         ],
         limitations: ['只描述这些 ref 的记录状态；不说明库中是否存在满足同一条件的其他题'],
@@ -500,7 +540,7 @@ async function executeCheckBank(
 export const checkBankTool: DomainTool<CheckBankInput, CheckBankOutput> = {
   name: 'check_bank',
   description:
-    'Run DETERMINISTIC checks over explicitly specified bank refs (ADR-0072 D5; v1 has NO semantic/model checks — allow_model is accepted but enables nothing). Pick an explicit `kind`: same_material_refs (≥2 refs — versioned material asset sets identical? narrow fact: asset identity, NOT "same article" semantics) / ref_state (params.assert = is_current (default) | is_servable — record lookup against lifecycle) / contract_valid (re-runs the publish-time pure validators over the stored version) / material_assets_present (figures/materials present with sha256 matching the version digest). Free-text claims are echoed, never interpreted — if no kind matches your question the verdict is unknown with the supported-kind list. Each check reports verdict (supported/contradicted/unknown), method, input refs, evidence and limitations; checks answer only the specified refs, never "nothing else in the bank".',
+    'Run DETERMINISTIC checks over explicitly specified bank refs (ADR-0072 D5; v1 has NO semantic/model checks — allow_model is accepted but enables nothing). Pick an explicit `kind`: same_material_refs (≥2 refs — versioned material asset sets identical? narrow fact: asset identity, NOT "same article" semantics) / ref_state (params.assert = is_current (default) | is_servable — the issuance gate for each part; optional params.part_ids selects a nonempty subset for one ref, otherwise reports whether any part is servable with its exact IDs) / contract_valid (re-runs the publish-time pure validators over the stored version) / material_assets_present (figures/materials present with sha256 matching the version digest). Free-text claims are echoed, never interpreted — if no kind matches your question the verdict is unknown with the supported-kind list. Each check reports verdict (supported/contradicted/unknown), method, input refs, evidence and limitations; checks answer only the specified refs, never "nothing else in the bank".',
   effect: 'read',
   inputSchema: CheckBankInputSchema,
   outputSchema: CheckBankOutputSchema,

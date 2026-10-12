@@ -6,9 +6,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as schema from '@/db/schema';
 
 import { event, material_fsrs_state, question, source_asset } from '@/db/schema';
+import {
+  contractIntegrityDigest,
+  normalizeQuestionGroupToContract,
+} from '@/kernel/records/assessment-normalization';
 import type { ToolContext } from '@/kernel/tools/types';
 import { generateReferenceSolution } from '@/server/ai/solution-generate';
-import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
+import { publishQuestionGroup, publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { archiveQuestion, editQuestion } from '@/server/questions/write';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { runEmbedBackfill } from '../../jobs/embed_backfill';
@@ -57,7 +61,8 @@ async function seedQuestion(id: string, overrides: Partial<typeof question.$infe
     id,
     kind: 'single_choice',
     prompt_md: `题 ${id}`,
-    reference_md: null,
+    reference_md: 'B',
+    choices_md: ['甲', '乙', '丙'],
     knowledge_ids: [],
     difficulty: 3,
     source: 'web_sourced',
@@ -74,6 +79,7 @@ async function publishAdmitted(id: string) {
   const result = await publishQuestionGroupFromRow(db, {
     rootId: id,
     admission: ADMITTED,
+    availability: 'general_pool',
     actorRef: 'test:publish',
     now: new Date(),
   });
@@ -184,6 +190,59 @@ describe('bank tools boundary invariants (search_bank / read_bank / check_bank)'
       }),
     ).toString('base64url');
     await expect(searchHits({ cursor: invalidCursor })).rejects.toThrow('valid bank-search cursor');
+
+    // A legacy admitted group may contain a human-only sibling. Search advertises
+    // only eligible parts; checking the actual selected part must match issuance.
+    await seedQuestion('bt_mixed', { prompt_md: '混合判分题组', kind: 'reading' });
+    await seedQuestion('bt_auto_part', { parent_question_id: 'bt_mixed', part_index: 0 });
+    await seedQuestion('bt_human_part', { parent_question_id: 'bt_mixed', part_index: 1 });
+    const [root] = await db.select().from(question).where(eq(question.id, 'bt_mixed'));
+    const parts = await db.select().from(question).where(eq(question.parent_question_id, root.id));
+    const contract = normalizeQuestionGroupToContract(root, parts);
+    const humanSlots = contract.response_spec.slots
+      .filter((slot) => slot.part_id === 'bt_human_part')
+      .map((slot) => slot.slot_id);
+    const humanUnits = new Set(
+      contract.scoring_basis.units
+        .filter((unit) => unit.slot_refs.some((slot) => humanSlots.includes(slot)))
+        .map((unit) => unit.scoring_unit_id),
+    );
+    contract.execution_plan.assignments = contract.execution_plan.assignments.flatMap(
+      (assignment) =>
+        assignment.scoring_unit_ids.map((id) => ({
+          scoring_unit_ids: [id],
+          executor: humanUnits.has(id) ? { kind: 'human_review' as const } : assignment.executor,
+        })),
+    );
+    contract.integrity_digest = contractIntegrityDigest(contract);
+    const mixed = await publishQuestionGroup(db, {
+      group_id: root.id,
+      contract,
+      expectedCurrentRevision: null,
+      expectedAdmissionGeneration: null,
+      admission: ADMITTED,
+      availability: 'general_pool',
+      actorRef: 'test:mixed',
+      now: new Date(),
+    });
+    if (mixed.status !== 'published') throw new Error('mixed publish failed');
+    const mixedRef = encodeBankRef(mixed.revision_id, mixed.revision_digest);
+    const mixedSearch = await searchHits({ query: '混合判分', admission_state: 'admitted' });
+    expect(
+      mixedSearch.hits.find((hit) => hit.ref === mixedRef)?.automatically_servable_part_ids,
+    ).toEqual(['bt_auto_part']);
+    const mixedChecks = await checkBankTool.execute(
+      ctx,
+      checkBankTool.inputSchema.parse({
+        checks: ['bt_auto_part', 'bt_human_part'].map((part) => ({
+          id: part,
+          refs: [mixedRef],
+          kind: 'ref_state',
+          params: { assert: 'is_servable', part_ids: [part] },
+        })),
+      }),
+    );
+    expect(mixedChecks.checks.map((check) => check.verdict)).toEqual(['supported', 'contradicted']);
   });
 
   // @invariant data: a versioned ref resolves to its exact immutable revision or returns an explicit per-ref error @fails-if ref resolution falls back to the group current revision or swallows unresolvable/digest-mismatch/withdrawn as an ok read
@@ -193,6 +252,16 @@ describe('bank tools boundary invariants (search_bank / read_bank / check_bank)'
     });
     const v1 = await publishAdmitted('bt_versioned');
     const v1Ref = encodeBankRef(v1.revision_id, v1.revision_digest);
+    await seedQuestion('bt_page_two', { prompt_md: '函数定义域第二个候选' });
+    await publishAdmitted('bt_page_two');
+    const firstPage = await searchHits({ query: '定义域', limit: 1 });
+    const cursor = firstPage.coverage.next_cursor;
+    expect(cursor).not.toBeNull();
+    await seedQuestion('bt_page_new', { prompt_md: '函数定义域新插入候选' });
+    const resumed = await searchHits({ cursor });
+    expect(resumed.hits).toEqual((await searchHits({ cursor })).hits);
+    expect(resumed.hits.map((hit) => hit.question_id)).not.toContain('bt_page_new');
+    expect(resumed.hits[0].question_id).not.toBe(firstPage.hits[0].question_id);
 
     const [row] = await db.select().from(question).where(eq(question.id, 'bt_versioned'));
     const edit = await editQuestion(
@@ -205,6 +274,7 @@ describe('bank tools boundary invariants (search_bank / read_bank / check_bank)'
       'test:edit',
     );
     expect(edit.status).toBe('updated');
+    await expect(searchHits({ cursor })).rejects.toThrow('candidate snapshot changed');
 
     const secondRead = await readBankTool.execute(
       ctx,
@@ -414,6 +484,7 @@ describe('bank tools boundary invariants (search_bank / read_bank / check_bank)'
     embedState.vector = axisVector(3);
     await seedQuestion('bt_stale_vec', {
       prompt_md: '椭圆离心率的取值范围判断题（补写参考答案前）',
+      reference_md: null,
       embedding: axisVector(3),
       embed_model: 'text-embedding-v4',
       embed_version: 2,
