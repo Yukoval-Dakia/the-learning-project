@@ -1,0 +1,36 @@
+{
+  "source": "60c04ea3e50b59b0264b193e46d9ba427f35b184",
+  "result": "2 passed / 1 failed; round-trip stopped before restore",
+  "fixtureDiagnosis": "All FK_ORDER tables use raw SQL export in archive.ts:209. Fixture wrongly compared PostgreSQL timestamp text with ISO serialization of typed Drizzle Dates. Fix reads pre-export raw SQL rows; strict post-restore typed rows and unknown admission assertions unchanged.",
+  "files": {
+    "db.log": {
+      "sha256": "23483afaea575cb4007fdda031cb422aa47086f2f0c3f1c9b69b0e3504b26649",
+      "path": "/tmp/yuk1355-backup-parent-db-10/db.log"
+    },
+    "exit.json": {
+      "sha256": "16ff5819f8c6bce178917bf6371c695eb6d38e5777f1517d6a841aa336f2a786",
+      "path": "/tmp/yuk1355-backup-parent-db-10/exit.json"
+    },
+    "cleanup.json": {
+      "sha256": "70f23a5cf1257deb20c9a1425fd690979b79c27ecb059568348b541a31553a10",
+      "path": "/tmp/yuk1355-backup-parent-db-10/cleanup.json"
+    },
+    "before.json": {
+      "sha256": "95cc9c2ed37d27134b2f7fc38444159cac15cb3968308c835a9f7a95c6b64d5f",
+      "path": "/tmp/yuk1355-backup-parent-db-10/before.json"
+    },
+    "after.json": {
+      "sha256": "e3c4c083ed85348b2d93d30b80f9082a0178056a68481e3a8b31520250d0bc4c",
+      "path": "/tmp/yuk1355-backup-parent-db-10/after.json"
+    }
+  },
+  "cleanup": {
+    "containerParity": true,
+    "releaseParity": true,
+    "tokenMatches": true,
+    "processExited": true,
+    "processGroupEmpty": true,
+    "released": true,
+    "releasedAt": 1791725929.28605
+  }
+}

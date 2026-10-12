@@ -1,0 +1,39 @@
+{
+  "source": "403c7248682129722be0051b9fba5622540c71f3",
+  "dbCases": 34,
+  "passed": 34,
+  "failed": 0,
+  "releasedAt": "2026-10-11T10:44:26.017984+00:00",
+  "cleanup": {
+    "containerParity": true,
+    "releaseParity": true,
+    "tokenMatches": true,
+    "processExited": true,
+    "processGroupEmpty": true,
+    "released": true,
+    "releasedAt": 1791715466.017984
+  },
+  "artifact": "/tmp/yuk1355-store-parent-db-05",
+  "sha256": {
+    "before.json": "a2b2b525a12f5091e8e5cee3850030bae645c185e436fe7fca8b026011d7ba44",
+    "exit.json": "f718b5614e460134d2ea882db05a9dffddd73e3be2e502ce79170343cc4d862e",
+    "owner.json": "b3fb9aca439519620f67ce620988c1c7cf374edab29682bdf20a35103e33bb2e",
+    "db.log": "e5c87eea8d82c9029e354f12ccf857d12402298fdffe8e30c124a8a1a7a331ed",
+    "after.json": "62ebc60d701516d4a2fa0f6f4ea69064dcfed2cc8a295f924c6e0628295b874e",
+    "cleanup.json": "3704b28b082b6bea4a240e987013169d064d0dd517257cb7f865d05d1aa75724",
+    "command.json": "a2d686450e70b1624c1ac133128a4fd6137baf9f790bf369e6d40ac162278bd0",
+    "process.json": "af92d2050fdce16514f87383c38a51f624283126a2c439aad7ef112bb4611c30",
+    "process-cleanup.json": "aa3ff6a46826c3adce99188c5318cb919db8f9353a6fac58a5deb94f16a577ca"
+  },
+  "limits": [
+    "No provider calls",
+    "No TEST writes or deploy",
+    "A/C consumer/process/cutover acceptance not implied",
+    "Prepared mutation negatives not run"
+  ],
+  "historicalRuns": {
+    "DB02": "17/28",
+    "DB03": "27/28",
+    "DB04": "33/34"
+  }
+}

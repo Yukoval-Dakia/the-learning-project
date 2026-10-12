@@ -1,0 +1,40 @@
+{
+  "previousHead": "4a711afb937990284eea612bd40538d5a21c1919",
+  "main": "ff2c9e229",
+  "conflicts": ["vitest.shared.ts"],
+  "resolution": "Keep both new image-source and note control unit partition entries",
+  "upstreamNonpartitionFilesByteIdentical": 5,
+  "scopedUnitCases": 10,
+  "logs": {
+    "unit": {
+      "path": "/tmp/yuk1355-1698-main-union-unit.log",
+      "sha256": "e66878378756b99ee5daaec46da5d19a1d8daf361c4e47594f6be14915cc8960",
+      "exit": 0
+    },
+    "partition": {
+      "path": "/tmp/yuk1355-1698-main-union-partition.log",
+      "sha256": "b2304e3477af0d5e12558f2128dfc49e8353651a8013ddd81dadd81085300f0c",
+      "exit": 0
+    },
+    "typecheck": {
+      "path": "/tmp/yuk1355-1698-main-union-typecheck.log",
+      "sha256": "36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6",
+      "exit": 0
+    },
+    "lint": {
+      "path": "/tmp/yuk1355-1698-main-union-lint.log",
+      "sha256": "b75eac27756080552966caaabe526594bc36006ea584e5e295dc6bcd2d4512ec",
+      "exit": 0
+    },
+    "build": {
+      "path": "/tmp/yuk1355-1698-main-union-build.log",
+      "sha256": "e4a00ef93a4717c78462b5eef2618fdf2a87e422c59970c98a887e348a5feaf3",
+      "exit": 0
+    }
+  },
+  "limits": [
+    "Previous3successfulchecks did not include CI Gate",
+    "No new DB/runtime/provider run",
+    "New exact-head CI required"
+  ]
+}

@@ -1,0 +1,40 @@
+{
+  "source": "cb1deee1b1aa9dbd7ca8172ed3b0ea611f7f0d25",
+  "selected": 28,
+  "passed": 10,
+  "failed": 18,
+  "releasedAt": "2026-10-11T12:03:47.393198+00:00",
+  "totalSeconds": 27.700938940048218,
+  "cleanup": {
+    "containerParity": true,
+    "releaseParity": true,
+    "tokenMatches": true,
+    "processExited": true,
+    "processGroupEmpty": true,
+    "released": true,
+    "releasedAt": 1791720227.393198
+  },
+  "exit": {
+    "code": 1,
+    "timeout": false,
+    "seconds": 15.722151792026125
+  },
+  "artifact": "/tmp/yuk1355-consumer-parent-db-08",
+  "sha256": {
+    "after.json": "6d95f7cac185a689c4bac2dfb9ad892bc3739d7a04dab681ab87df4e125921b4",
+    "before.json": "8908f087fd9ef9d15b14370f47e807314ebdeb9edb60af3a99a10270d9249126",
+    "cleanup.json": "ed50100610e59594dd43bafa3d7683473ea120eec015b3b3006b099eb3b6b9dc",
+    "command.json": "fb1360b7021500d9b9fa6fe694cfcdc5120dc814a5d079ed6ac9e6900561612c",
+    "db.log": "d44cd41a58bac4ea9a7edacbb2460f3dfd581846ec1f187e8d7397fab2a8264b",
+    "exit.json": "5b9ee118c520e26660e38403ddafb5223af9535658c08eba4e96d80d3b0b3116",
+    "owner.json": "9a81bfaf64dcd297ee4ac5f4c878fc35c9ac1e64d5d45d651813c233bf267c27",
+    "process-cleanup.json": "82c3ce475190e88c3127e58bb3f57140211de66f14938a0ed24cb6a3f4356e4e",
+    "process.json": "e2bcaef47086c604283409862d77ee805b3844ff6a78914256b189802c19cdf2",
+    "retained-resources.json": "ccc3577c8e65e2a0eed389e5d0a23067d14a7dca06ba835d4243d0c439b3f47b"
+  },
+  "limits": [
+    "No TEST writes/providers",
+    "Existing TEST4 + loft3 + FSRS1 unchanged",
+    "Failed run retained; no extra batch"
+  ]
+}
