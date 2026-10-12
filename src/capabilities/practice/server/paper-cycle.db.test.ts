@@ -1,3 +1,4 @@
+import { FsrsStateSchema } from '@/core/schema/event/blocks';
 // U5 (YUK-203) — end-to-end paper lifecycle DB test (Cross §11 highest single
 // risk: the append-only frozen-rows × derived read-layer consistency).
 //
@@ -601,6 +602,8 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
     }
   });
 
+  // @invariant concurrency: Concurrent paper requests produce one durable execution and one learning receipt
+  // @fails-if concurrent callers charge twice or apply the accepted learning effect twice
   it('YUK-695: concurrent model requests share one durable execution and one accepted receipt', async () => {
     const { db, input } = await modelPaper();
     let release!: () => void;
@@ -624,7 +627,9 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
       expect(results[1]).toEqual(results[0]);
       expect(execute).toHaveBeenCalledTimes(1);
       expect(await db.select().from(evaluation)).toHaveLength(1);
-      expect((await db.select().from(material_fsrs_state))[0].state.reps).toBe(1);
+      expect(
+        FsrsStateSchema.parse((await db.select().from(material_fsrs_state))[0].state).reps,
+      ).toBe(1);
     } finally {
       release();
       await first;

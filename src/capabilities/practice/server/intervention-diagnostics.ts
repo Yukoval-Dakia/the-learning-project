@@ -39,8 +39,11 @@ import {
 import { getEventById } from '@/kernel/events';
 import { resolveVerdictsForNativeAttempts } from '@/kernel/read-models/assessment-verdict';
 import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
-import { enrollFsrsStateIfAbsent, retireQuestionFsrsState } from '@/server/fsrs/state';
-import { initialFsrsState } from './fsrs';
+import {
+  enrollFsrsStateIfAbsent,
+  initialSchedulingState,
+  retireQuestionFsrsState,
+} from '@/server/fsrs/state';
 import { JUDGE_PENDING_ATTEMPT_ACTION } from './judge-run-dispatch';
 import { readJudgeQuestionActivity } from './judge-run-observation';
 import { streamLocalDate } from './stream-date';
@@ -770,7 +773,6 @@ export async function materializeInterventionDiagnostics(
           ),
         );
       const dueAt = new Date(scheduled.due_at);
-      const initial = initialFsrsState(dueAt);
       // A pre-fix installation may already have activation-anchored follow-up
       // cards. Replace only at the atomic exposure transition so the card due
       // date cannot retain that stale anchor.
@@ -780,8 +782,7 @@ export async function materializeInterventionDiagnostics(
       await enrollFsrsStateIfAbsent(tx, {
         subject_kind: 'question',
         subject_id: scheduled.question_id,
-        state: initial.state,
-        due_at: dueAt,
+        ...initialSchedulingState(scheduled.question_id, dueAt),
         last_review_event_id: null,
       });
     } else if (scheduled.status === 'scheduled' && !ready) {

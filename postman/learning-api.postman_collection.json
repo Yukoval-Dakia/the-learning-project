@@ -1472,6 +1472,26 @@
       "name": "knowledge",
       "item": [
         {
+          "name": "GET /api/knowledge/:id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/knowledge/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "knowledge", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "读取知识节点及保持证据\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 返回知识节点读模型。retrievability 为已知数值或 null，未知不转换为 0。retention 保留候选 score/unknown、uncalibrated 与 engineering 标记；FSRS 默认模式保持既有数值。需 x-internal-token。"
+          },
+          "response": []
+        },
+        {
           "name": "GET /api/knowledge/:id/misconceptions",
           "request": {
             "method": "GET",

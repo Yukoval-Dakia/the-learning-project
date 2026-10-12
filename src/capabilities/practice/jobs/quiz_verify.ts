@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { initialSchedulingState } from '@/server/fsrs/state';
 // Search-grounded QuizGen (T-SQ) — Q5 + Q6 handler.
 //
 // docs/superpowers/specs/2026-06-02-quizgen-search-grounded-design.md §1 / §3 / §5.
@@ -72,7 +73,6 @@ import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import type { SubjectQuestionKind } from '@/subjects/profile-schema';
 import { resolveQuizGenSkillDocs } from '@/subjects/quiz-gen-skills';
-import { type InitialFsrsState, initialFsrsState } from '../server/fsrs';
 import { SYNTHETIC_SUBJECT_ROOT_RE } from '../server/placement-scope';
 import { SupplyTraceV1 } from '../server/question-supply/evidence-demand';
 import {
@@ -230,11 +230,10 @@ async function promoteCompositeChildren(
     questionId: string;
     now: Date;
     verifiedBy: QuizGenVerificationT['verified_by'];
-    initial: InitialFsrsState;
     verifyEventId: string;
   },
 ): Promise<void> {
-  const { questionId, now, verifiedBy, initial, verifyEventId } = input;
+  const { questionId, now, verifiedBy, verifyEventId } = input;
   const childRows = await tx
     .select({
       id: question.id,
@@ -308,8 +307,7 @@ async function promoteCompositeChildren(
       await upsertFsrsState(tx, {
         subject_kind: 'question',
         subject_id: child.id,
-        state: initial.state,
-        due_at: initial.dueAt,
+        ...initialSchedulingState(child.id, now),
         last_review_event_id: verifyEventId,
       });
       continue;
@@ -323,8 +321,7 @@ async function promoteCompositeChildren(
       await upsertFsrsState(tx, {
         subject_kind: 'knowledge',
         subject_id: knowledgeId,
-        state: initial.state,
-        due_at: initial.dueAt,
+        ...initialSchedulingState(knowledgeId, now),
         last_review_event_id: verifyEventId,
       });
     }
@@ -895,7 +892,6 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
         // probes. The question itself remains the concrete item selected when
         // that knowledge becomes due. Unlabeled legacy questions fall back to
         // question-level FSRS so they are not silently dropped.
-        const initial = initialFsrsState(now);
         const fsrsSubjectIds = Array.from(new Set(current.knowledgeIds ?? []));
         if (fsrsSubjectIds.length > 0) {
           for (const knowledgeId of fsrsSubjectIds) {
@@ -918,8 +914,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
             await upsertFsrsState(tx, {
               subject_kind: 'knowledge',
               subject_id: knowledgeId,
-              state: initial.state,
-              due_at: initial.dueAt,
+              ...initialSchedulingState(knowledgeId, now),
               last_review_event_id: verifyEventId,
             });
           }
@@ -931,8 +926,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
             await upsertFsrsState(tx, {
               subject_kind: 'question',
               subject_id: questionId,
-              state: initial.state,
-              due_at: initial.dueAt,
+              ...initialSchedulingState(questionId, now),
               last_review_event_id: verifyEventId,
             });
           }
@@ -952,7 +946,6 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
           questionId,
           now,
           verifiedBy,
-          initial,
           verifyEventId,
         });
 

@@ -76,11 +76,16 @@
 import { and, eq, inArray } from 'drizzle-orm';
 import { archiveKnowledgeEdgeFromEvents } from '@/capabilities/knowledge/public';
 import { newId } from '@/core/ids';
-import type { FsrsStateSchemaT } from '@/core/schema/event/blocks';
+import { stableStringify } from '@/core/migration/canonical';
 import {
   StateSnapshotExperimental,
   type StateSnapshotExperimentalT,
 } from '@/core/schema/event/state-snapshot';
+import {
+  type SchedulingState,
+  SchedulingStateSchema,
+  isCandidateState,
+} from '@/core/schema/scheduling-state';
 import type { Db, Tx } from '@/db/client';
 import { event, mastery_state, material_fsrs_state } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
@@ -819,7 +824,10 @@ function thetaExactEq(current: number, payloadAfter: number): boolean {
 }
 
 /** Compare two FsrsState cards on their scalar identity (jsonb roundtrip-safe). */
-function fsrsCardEq(a: FsrsStateSchemaT, b: FsrsStateSchemaT): boolean {
+function fsrsCardEq(rawA: SchedulingState, rawB: SchedulingState): boolean {
+  const a = SchedulingStateSchema.parse(rawA);
+  const b = SchedulingStateSchema.parse(rawB);
+  if (isCandidateState(a) || isCandidateState(b)) return stableStringify(a) === stableStringify(b);
   return (
     +new Date(a.due) === +new Date(b.due) &&
     a.stability === b.stability &&

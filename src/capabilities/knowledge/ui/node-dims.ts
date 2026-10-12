@@ -93,6 +93,10 @@ export interface NodeThreeDimInput {
   difficultyAnchored: boolean;
   /** R 可提取性 ∈[0,1]，null = 无 fsrs_state 行（无留存数据，非 R=0）。 */
   retrievability: number | null;
+  retention?:
+    | number
+    | { kind: 'score' | 'unknown'; calibration: 'uncalibrated'; provenance: 'engineering' }
+    | null;
   /** evidence 计数（驱动冷启告示）。无投影 → 0。 */
   evidenceCount: number;
 }
@@ -105,24 +109,32 @@ function hardPointBand(band: MasteryBandIdx): MasteryBandView {
 
 // R 维：有 fsrs_state（retrievability 非 null）→ band=masteryBandIdx(R)，source=hard，
 // 无区间（点 band，不伪造精度）；无行 → 未知 + soft + 低置信（非 band 0）。
-function buildRetentionDim(retrievability: number | null): NodeDimView {
+function buildRetentionDim(
+  retrievability: number | null,
+  retention: NodeThreeDimInput['retention'],
+): NodeDimView {
   const base = {
     key: 'R' as const,
     label: '记忆保持',
     labels: A5_BANDS,
     unknownLabel: UNKNOWN_BAND_LABEL,
   };
-  if (retrievability == null) {
+  const engineering = retention && typeof retention === 'object';
+  if (retrievability == null || (engineering && retention.kind === 'unknown')) {
     return {
       ...base,
       view: masteryBandUnknown(),
-      note: '还没有复习记录 —— 记忆留存要练过才能估。',
+      note: engineering
+        ? '记忆保持未知；工程参数尚未校准。'
+        : '还没有复习记录；记忆保持需要作答证据。',
     };
   }
   return {
     ...base,
-    view: hardPointBand(masteryBandIdx(retrievability)),
-    note: '会随时间逐渐遗忘；到期时适合复习。',
+    view: engineering
+      ? { ...hardPointBand(masteryBandIdx(retrievability)), source: 'soft', lowConf: true }
+      : hardPointBand(masteryBandIdx(retrievability)),
+    note: engineering ? '工程估计，尚未校准；会随时间衰减。' : '会随时间逐渐遗忘；到期时适合复习。',
   };
 }
 
@@ -176,7 +188,7 @@ export function buildNodeThreeDim(input: NodeThreeDimInput): NodeThreeDim {
   return {
     composite: masteryDim.view,
     dims: [
-      buildRetentionDim(input.retrievability),
+      buildRetentionDim(input.retrievability, input.retention),
       masteryDim,
       buildDifficultyDim(input.beta, input.difficultyAnchored),
     ],

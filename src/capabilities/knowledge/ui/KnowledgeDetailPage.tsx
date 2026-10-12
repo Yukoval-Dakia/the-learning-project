@@ -258,6 +258,7 @@ export default function KnowledgeDetailPage({
           beta: node.beta,
           difficultyAnchored: node.difficulty_anchored,
           retrievability: node.retrievability,
+          retention: node.retention,
           evidenceCount: node.evidence_count,
         }}
       />

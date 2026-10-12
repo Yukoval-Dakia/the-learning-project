@@ -1,3 +1,4 @@
+import { FsrsStateSchema } from '@/core/schema/event/blocks';
 // YUK-1053 — 学习结算集成 DB 测试（db 分区；testcontainer + resetDb）。
 //
 // 覆盖 acceptance criteria 的可执行面：
@@ -251,7 +252,7 @@ async function fsrsRow(_kind: 'knowledge' | 'question', id: string) {
     .select()
     .from(material_fsrs_state)
     .where(eq(material_fsrs_state.subject_id, id));
-  return row;
+  return row ? { ...row, state: FsrsStateSchema.parse(row.state) } : undefined;
 }
 
 async function masteryRow(id: string, _kind = 'knowledge') {

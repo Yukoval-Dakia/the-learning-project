@@ -5,6 +5,7 @@
 
 import { eq, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { initialFsrsState } from '@/core/fsrs';
 import { db } from '@/db/client';
 import {
   kc_typed_state,
@@ -15,10 +16,11 @@ import {
 import { resetDb } from '../../../tests/helpers/db';
 import { retireLearnerAxisStateOnMerge } from '../calibration/axis-writer';
 import { retireKcTypedStateOnMerge } from '../conjectures/typed-state';
+import { initialCandidateState } from '../fsrs/candidate';
 import { retireFsrsStateOnMerge } from '../fsrs/state';
 import { retireMasteryStateOnMerge } from './state';
 
-// The retire fn only reads subject_id; the FSRS Card content is irrelevant to the 3-case logic.
+// Legacy FSRS JSON is opaque to identity rename; no complete Card is required.
 const MINIMAL_FSRS = { stability: 1, difficulty: 5, reps: 0, lapses: 0, state: 0 } as never;
 
 async function insertMastery(subjectId: string) {
@@ -96,8 +98,40 @@ describe('retireFsrsStateOnMerge (YUK-543)', () => {
     await resetDb();
   });
 
+  // @invariant data: identity rename preserves opaque legacy JSON and candidate history without changing scheduling data
+  // @fails-if merge rejects a legacy row, strips JSON keys, normalizes stored dates, or loses a candidate's prior subject IDs
   it('only from → renamed', async () => {
     await insertFsrs('k_from');
+    const due = '2026-09-26T08:00:00+08:00';
+    const lastReview = '2026-09-25T08:00:00+08:00';
+    await db.insert(material_fsrs_state).values([
+      {
+        id: 'fs_legacy_from',
+        subject_kind: 'knowledge',
+        subject_id: 'legacy_from',
+        state: {
+          ...initialFsrsState(new Date(due)).state,
+          due,
+          last_review: lastReview,
+          historical_metadata: { note: 'preserve verbatim' },
+        } as never,
+        due_at: new Date(due),
+      },
+      {
+        id: 'fs_candidate_from',
+        subject_kind: 'knowledge',
+        subject_id: 'candidate_from',
+        state: {
+          ...initialCandidateState('candidate_from', new Date(due)),
+          due,
+          last_review: lastReview,
+          historySubjectIds: ['prior_subject', 'prior_subject'],
+          historical_metadata: { note: 'preserve verbatim' },
+        } as never,
+        due_at: new Date(due),
+      },
+    ]);
+    const before = await db.select().from(material_fsrs_state);
     expect(await db.transaction((tx) => retireFsrsStateOnMerge(tx, 'k_from', 'k_into'))).toBe(
       'renamed',
     );
@@ -106,6 +140,33 @@ describe('retireFsrsStateOnMerge (YUK-543)', () => {
       .from(material_fsrs_state)
       .where(eq(material_fsrs_state.subject_id, 'k_into'));
     expect(rows).toHaveLength(1);
+    for (const source of before) {
+      const intoId = source.subject_id.replace('_from', '_into');
+      if (source.subject_id !== 'k_from') {
+        expect(
+          await db.transaction((tx) => retireFsrsStateOnMerge(tx, source.subject_id, intoId)),
+        ).toBe('renamed');
+      }
+      const [renamed] = await db
+        .select()
+        .from(material_fsrs_state)
+        .where(eq(material_fsrs_state.subject_id, intoId));
+      expect(renamed).toEqual({
+        ...source,
+        subject_id: intoId,
+        updated_at: expect.any(Date),
+        state:
+          source.subject_id === 'candidate_from'
+            ? { ...source.state, historySubjectIds: ['prior_subject', 'candidate_from'] }
+            : source.state,
+      });
+      expect(
+        await db
+          .select()
+          .from(material_fsrs_state)
+          .where(eq(material_fsrs_state.subject_id, source.subject_id)),
+      ).toHaveLength(0);
+    }
   });
   it('both → frozen', async () => {
     await insertFsrs('k_from');

@@ -1710,5 +1710,18 @@
         "notes": "run_id 保持原始提交身份。永久 native 完成或人工处置优先于引擎与可清理通知；unknown 引擎证据不返回 404。已验证不存在返回 404，状态读取不可用返回 503。此读取不会写入、排队或判分。"
       }
     ]
+  },
+  {
+    "path": "/api/knowledge/:id",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "读取知识节点及保持证据",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "返回知识节点读模型。retrievability 为已知数值或 null，未知不转换为 0。retention 保留候选 score/unknown、uncalibrated 与 engineering 标记；FSRS 默认模式保持既有数值。需 x-internal-token。"
+      }
+    ]
   }
 ]
