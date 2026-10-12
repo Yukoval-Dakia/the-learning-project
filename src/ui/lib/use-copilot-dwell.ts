@@ -70,6 +70,12 @@ interface CopilotOpenSignalStore {
   openCopilotWith: (skillContext: CopilotSkillContextT, prefill?: string) => void;
   /** Consume the pending request (CopilotDock calls this after reading it). */
   clearRequest: () => void;
+  /**
+   * YUK-1473 — counts presses of the 学习伙伴 / Copilot button on pages that own their
+   * companion (the new question page): each change toggles it open or closed there.
+   */
+  toggleSeq: number;
+  toggleCopilot: () => void;
 }
 
 export const useCopilotOpenSignal = create<CopilotOpenSignalStore>((set) => ({
@@ -94,9 +100,16 @@ export const useCopilotOpenSignal = create<CopilotOpenSignalStore>((set) => ({
       return { nextSeq: seq, request: { seq, nudge } };
     }),
   clearRequest: () => set({ request: null }),
+  toggleSeq: 0,
+  toggleCopilot: () => set((s) => ({ toggleSeq: s.toggleSeq + 1 })),
   // nextSeq is intentionally NOT reset on clearRequest — it must monotonically
   // increase so the Dock's lastHandledSeqRef never matches a future open.
 }));
+
+/** YUK-1473 — the 学习伙伴 button on a page that owns its companion: open it, or close it. */
+export function toggleCopilot(): void {
+  useCopilotOpenSignal.getState().toggleCopilot();
+}
 
 /** Open the global drawer as a normal free-form turn (no fake entity/skill ref). */
 export function openCopilot(prefill?: string): void {
