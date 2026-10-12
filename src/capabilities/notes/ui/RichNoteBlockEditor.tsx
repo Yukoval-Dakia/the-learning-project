@@ -1,7 +1,7 @@
 import { Extension, type Extensions, type JSONContent, Mark, Node, getSchema } from '@tiptap/core';
 import { EditorContent, useEditor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
-import { useEffect, useMemo, useRef } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { noteBlockSource } from '../shared/note-block-source';
 import type { BodyBlock } from './notes-api';
 
@@ -100,7 +100,20 @@ function blockExtensions(block: BodyBlock): Extensions {
   ];
 }
 
-type Props = { block: BodyBlock; label: string; onChange: (block: BodyBlock) => void };
+// The explicit command NoteEditor uses when a mounted editor must show a block it
+// did not emit itself (e.g. an id-less block whose index key now holds another
+// block after insert/remove/move). Typing never goes through here, so the cursor
+// and undo history of the editing block are untouched.
+export type BlockEditorAdapter = { replace: (block: BodyBlock) => void };
+export type BlockEditorRegistry = Map<string, BlockEditorAdapter>;
+
+type Props = {
+  block: BodyBlock;
+  label: string;
+  onChange: (block: BodyBlock) => void;
+  registry?: BlockEditorRegistry;
+  registryKey?: string;
+};
 
 function synchronizeSources(node: JSONContent): JSONContent {
   const projected = {
@@ -138,10 +151,22 @@ export function RichNoteBlockEditor(props: Props) {
   return <EditableBlock key={prepared.schemaKey} {...props} extensions={prepared.extensions} />;
 }
 
-function EditableBlock({ block, label, onChange, extensions }: Props & { extensions: Extensions }) {
+function EditableBlock({
+  block,
+  label,
+  onChange,
+  registry,
+  registryKey,
+  extensions,
+}: Props & { extensions: Extensions }) {
   const current = useRef({ block, onChange });
   current.current = { block, onChange };
+  // The block this editor currently shows: its own last emission, or the last
+  // block applied through `replace`. Guards against echoing our own update back.
   const emitted = useRef(block);
+  // TipTap 3.31 useEditor (deps = []) re-applies changed options itself after each
+  // render via editor.setOptions, so the aria-label below follows `label` without
+  // any extra sync here.
   const editor = useEditor({
     extensions,
     // Prepared above with the exact PM schema; the wire's nested content is unknown[].
@@ -174,25 +199,39 @@ function EditableBlock({ block, label, onChange, extensions }: Props & { extensi
       current.current.onChange(next);
     },
   });
-  useEffect(() => {
-    if (!editor) return;
-    editor.setOptions({
-      editorProps: {
-        attributes: {
-          class: 'nb-edit-area',
-          role: 'textbox',
-          'aria-multiline': 'true',
-          'aria-label': label,
-        },
-      },
-    });
-    if (block !== emitted.current) {
-      editor.commands.setContent(
-        { type: 'doc', content: [block as JSONContent] },
-        { emitUpdate: false, errorOnInvalidContent: true },
-      );
-      emitted.current = block;
-    }
-  }, [block, editor, label]);
-  return <EditorContent editor={editor} />;
+  const editorRef = useRef(editor);
+  editorRef.current = editor;
+  const [adapter] = useState<BlockEditorAdapter>(() => ({
+    replace: (next) => {
+      if (next === emitted.current) return;
+      const active = editorRef.current;
+      // Not created yet: useEditor builds it from the latest `content` option.
+      if (!active || active.isDestroyed) {
+        emitted.current = next;
+        return;
+      }
+      try {
+        active.commands.setContent(
+          { type: 'doc', content: [next as JSONContent] },
+          { emitUpdate: false, errorOnInvalidContent: true },
+        );
+        emitted.current = next;
+      } catch {
+        // A block with another schema remounts this editor via schemaKey, and an
+        // unsupported one renders the alert; neither may be coerced into this schema.
+      }
+    },
+  }));
+  // Register the replace command while this editor's host node is attached.
+  const attach = useCallback(
+    (node: HTMLDivElement | null) => {
+      if (!node || !registry || registryKey === undefined) return;
+      registry.set(registryKey, adapter);
+      return () => {
+        if (registry.get(registryKey) === adapter) registry.delete(registryKey);
+      };
+    },
+    [adapter, registry, registryKey],
+  );
+  return <EditorContent ref={attach} editor={editor} />;
 }
