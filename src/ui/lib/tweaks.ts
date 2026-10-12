@@ -7,11 +7,12 @@
 //
 // Storage: localStorage scoped to the per-key namespace `loom:tweaks:*`.
 // The runtime accessors are SSR-safe (return defaults when window is
-// undefined). Subscribers receive `storage` events from cross-tab edits.
+// undefined). Subscribers receive `storage` events from cross-tab edits and
+// are notified of writes made in this tab.
 
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useState, useSyncExternalStore } from 'react';
 
 export const CHAIN_ROW_COST_OPTIONS = ['summary-only', 'hover-on-row', 'always-show'] as const;
 export type ChainRowCostMode = (typeof CHAIN_ROW_COST_OPTIONS)[number];
@@ -41,6 +42,20 @@ function readStoredEnum<T extends string>(key: string, allowed: readonly T[], fa
   return fallback;
 }
 
+// Hooks reading a tweak in this tab. Only browser subscribe callbacks are kept here; values
+// always live in localStorage. A `storage` event fires only in other tabs, so writes from this
+// tab notify these listeners directly.
+const tabListeners = new Set<() => void>();
+
+function subscribeTweaks(onChange: () => void): () => void {
+  tabListeners.add(onChange);
+  window.addEventListener('storage', onChange);
+  return () => {
+    tabListeners.delete(onChange);
+    window.removeEventListener('storage', onChange);
+  };
+}
+
 function writeStoredEnum(key: string, value: string): void {
   if (!isBrowser()) return;
   try {
@@ -48,6 +63,7 @@ function writeStoredEnum(key: string, value: string): void {
   } catch {
     // ignore
   }
+  for (const listener of tabListeners) listener();
 }
 
 export function readChainRowCost(): ChainRowCostMode {
@@ -71,21 +87,22 @@ function useTweakValue<T extends string>(
   allowed: readonly T[],
   fallback: T,
 ): [T, (v: T) => void] {
-  const [value, setValue] = useState<T>(fallback);
+  // The snapshot is the validated string itself, so equal reads compare equal. The server and
+  // hydration render use the default, as before.
+  const read = useCallback(() => readStoredEnum(key, allowed, fallback), [key, allowed, fallback]);
+  const stored = useSyncExternalStore(subscribeTweaks, read, () => fallback);
 
-  useEffect(() => {
-    setValue(readStoredEnum(key, allowed, fallback));
-    function onStorage(ev: StorageEvent) {
-      if (ev.key !== key) return;
-      setValue(readStoredEnum(key, allowed, fallback));
-    }
-    window.addEventListener('storage', onStorage);
-    return () => window.removeEventListener('storage', onStorage);
-  }, [key, allowed, fallback]);
+  // When storage refuses the write (private mode, disabled storage), the choice still applies to
+  // this hook until the stored value changes, as it did before.
+  const [unsaved, setUnsaved] = useState<{ key: string; value: T; over: T } | null>(null);
+  const value = unsaved && unsaved.key === key && unsaved.over === stored ? unsaved.value : stored;
 
   function set(next: T) {
+    const before = readStoredEnum(key, allowed, fallback);
     writeStoredEnum(key, next);
-    setValue(next);
+    setUnsaved(
+      readStoredEnum(key, allowed, fallback) === next ? null : { key, value: next, over: before },
+    );
   }
   return [value, set];
 }
