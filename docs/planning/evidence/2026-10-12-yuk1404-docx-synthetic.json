@@ -1,0 +1,174 @@
+{
+  "baseline": "d3885e83",
+  "source_sha256": {
+    "src/capabilities/ingestion/api/docx.ts": "944e928898994b22b8634fab9737912ee3f7921bf48c1c50229da9a44abfb2d2",
+    "src/capabilities/ingestion/server/docx/convert.ts": "dcb2552aba3a275384df6cf55895cfdcf7acddf542b547d745fc75849abfd2ef",
+    "src/capabilities/ingestion/server/docx/markdown-segment.ts": "6a8a9c2b23980b928fdc1e1ada7d1a71b8f74785cb1a64aaa7a267bd90cf754f",
+    "src/server/session/docx-ingestion.ts": "9c1d48025efbc7957be0f70c44dd5879940eada3213f6804cc190896e5ac1136"
+  },
+  "fixture_sha256": "aa60089e5ce765ee7742ff63c6a89fc2f324959041a7ee2561ab66350dca9abe",
+  "synthetic_only": true,
+  "original_school_paper_run": false,
+  "provider_calls": 0,
+  "storage": "memR2",
+  "database": "isolated disposable PostgreSQL",
+  "baseline_seven_question_numbers": [
+    "1",
+    "5",
+    "6",
+    "7",
+    "1",
+    "2",
+    "3",
+    "4"
+  ],
+  "acceptance": {
+    "fixture": "synthetic seven-question DOCX; not the school paper",
+    "converter": "real Pandoc + LibreOffice + PDFium",
+    "storage": "memory R2 substitute",
+    "database": "disposable local PostgreSQL",
+    "receipt": {
+      "session_id": "qtto26m8dj0zwj4c3udk6vec",
+      "line": "text",
+      "page_count": 1
+    },
+    "questionNumbers": [
+      "1",
+      "2",
+      "3",
+      "4",
+      "5",
+      "6",
+      "7"
+    ],
+    "draftCount": 7,
+    "draftOptions": [
+      {
+        "no": "1",
+        "options": 2,
+        "images": 0
+      },
+      {
+        "no": "2",
+        "options": 4,
+        "images": 0
+      },
+      {
+        "no": "3",
+        "options": 0,
+        "images": 0
+      },
+      {
+        "no": "4",
+        "options": 0,
+        "images": 1
+      },
+      {
+        "no": "5",
+        "options": 0,
+        "images": 1
+      },
+      {
+        "no": "6",
+        "options": 1,
+        "images": 1
+      },
+      {
+        "no": "7",
+        "options": 4,
+        "images": 0
+      }
+    ],
+    "warnings": [],
+    "sourceMarkdownPreserved": true,
+    "formalBeforeWorker": 0,
+    "review": "markReviewed + explicit synthetic knowledge/kind",
+    "formalAfterManualImport": 7,
+    "formalChoices": [
+      {
+        "kind": "choice",
+        "choices": null,
+        "structuredOptions": 2
+      },
+      {
+        "kind": "choice",
+        "choices": null,
+        "structuredOptions": 4
+      },
+      {
+        "kind": "short_answer",
+        "choices": null,
+        "structuredOptions": 0
+      },
+      {
+        "kind": "short_answer",
+        "choices": null,
+        "structuredOptions": 0
+      },
+      {
+        "kind": "short_answer",
+        "choices": null,
+        "structuredOptions": 0
+      },
+      {
+        "kind": "choice",
+        "choices": null,
+        "structuredOptions": 1
+      },
+      {
+        "kind": "choice",
+        "choices": null,
+        "structuredOptions": 4
+      }
+    ],
+    "answerable": 0,
+    "lifecycle": [
+      {
+        "state": "withheld",
+        "reason": "unverified_rules",
+        "availability": "container_only"
+      },
+      {
+        "state": "withheld",
+        "reason": "unverified_rules",
+        "availability": "container_only"
+      },
+      {
+        "state": "withheld",
+        "reason": "unverified_rules",
+        "availability": "container_only"
+      },
+      {
+        "state": "withheld",
+        "reason": "unverified_rules",
+        "availability": "container_only"
+      },
+      {
+        "state": "withheld",
+        "reason": "unverified_rules",
+        "availability": "container_only"
+      },
+      {
+        "state": "withheld",
+        "reason": "unverified_rules",
+        "availability": "container_only"
+      },
+      {
+        "state": "withheld",
+        "reason": "unverified_rules",
+        "availability": "container_only"
+      }
+    ],
+    "networkCalls": 0,
+    "providerCalls": 0
+  },
+  "validation": {
+    "typecheck": "pass",
+    "lint": "pass; 172 existing warnings",
+    "build": "pass",
+    "test_policy": "1 checked; 0 errors",
+    "db_regression": "1 passed; 3 unrelated cases skipped",
+    "postman": "regenerated; no diff",
+    "independent_review": "NONE; one initial pass"
+  }
+}

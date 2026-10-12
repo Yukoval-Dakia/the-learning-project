@@ -34,13 +34,12 @@ export interface SegmentInput {
 // 学科网 papers — Q8/Q13/Q23 otherwise merged into their predecessor); the prompt then
 // flows in from the following line(s). `\d{1,3}` keeps 4-digit years (a stray `1991.`)
 // from being mistaken for a question number.
-const QUESTION_LEADING = /^\s*(\d{1,3})\\?\.(?:\s+(.*))?$/;
+const QUESTION_LEADING = /^\s*(\d{1,3})\\?[.．、](?!\d)\s*(.*)$/;
 // 选项行: A. / B\. etc.
-const OPTION_LINE = /^\s*([A-D])\\?\.\s+(.*)$/;
+const OPTION_LINE = /^\s*([A-D])\\?[.．、]\s*(.*)$/;
 // 嵌图: markdown form ![alt](media/...) AND pandoc's <img src="media/..."> HTML
 // form (emitted when the OOXML drawing carries explicit dimensions).
-const IMG_MD = /!\[[^\]]*\]\(([^)\s]+)[^)]*\)/;
-const IMG_HTML = /<img\s+[^>]*src="([^"]+)"/;
+const IMG_MD = /!\[[^\]]*\]\(([^)\s]+)[^)]*\)/g;
 
 interface DraftQuestion {
   questionNo: string;
@@ -127,14 +126,6 @@ function finalize(draft: DraftQuestion): StructuredQuestionT {
   return structured;
 }
 
-function extractImagePath(line: string): string | null {
-  const md = IMG_MD.exec(line);
-  if (md) return normalizeMediaPath(md[1]);
-  const html = IMG_HTML.exec(line);
-  if (html) return normalizeMediaPath(html[1]);
-  return null;
-}
-
 // pandoc references media as `media/imageN.png`, `./media/imageN.png`, or an
 // absolute tmp path depending on --extract-media. Normalize to the trailing
 // `media/<name>` form the manifest + persist stage key on.
@@ -157,8 +148,16 @@ export function normalizeMediaPath(raw: string): string {
  * a block's imagePaths so decorative bullets/rules don't enter the pipeline. When
  * a media path has no dimensions in the manifest, it is KEPT (拿不准默认存).
  */
-export function segmentMarkdown(input: SegmentInput): SegmentedBlock[] {
-  const md = normalizeHtmlImageTags(normalizeMathDelimiters(input.markdown));
+export function segmentMarkdown(input: SegmentInput): {
+  blocks: SegmentedBlock[];
+  warnings: string[];
+} {
+  // Word often bolds just the number, or the whole first line. Unwrap the
+  // leading bold span before matching the marker; retain the remaining prose.
+  const md = normalizeHtmlImageTags(normalizeMathDelimiters(input.markdown)).replace(
+    /^(\s*)(\*\*|__)(\d{1,3}\\?[.．、].*?)\2/gm,
+    '$1$3',
+  );
   const lines = md.split('\n');
 
   // Build the tiny-image deny set from the manifest (§3.4 微小尺寸).
@@ -169,9 +168,16 @@ export function segmentMarkdown(input: SegmentInput): SegmentedBlock[] {
   );
 
   const drafts: DraftQuestion[] = [];
+  const warnings: string[] = [];
   let cur: DraftQuestion | null = null;
 
-  for (const [lineIndex, line] of lines.entries()) {
+  for (const [lineIndex, rawLine] of lines.entries()) {
+    const imagePaths: string[] = [];
+    const line = rawLine.replace(IMG_MD, (_match, path: string) => {
+      const normalized = normalizeMediaPath(path);
+      if (!tinyPaths.has(normalized)) imagePaths.push(normalized);
+      return '';
+    });
     const q = QUESTION_LEADING.exec(line);
     if (q) {
       // Once a bare marker has opened a question, a later line that repeats the
@@ -179,11 +185,25 @@ export function segmentMarkdown(input: SegmentInput): SegmentedBlock[] {
       // duplicate top-level block.
       if (cur?.startedFromBare && cur.questionNo === q[1]) {
         cur.promptLines.push(line);
+        cur.imagePaths.push(...imagePaths);
+        continue;
+      }
+      // Section counters / nested decimal lists must not create phantom Q1/Q2
+      // after Q30. Keep their text, flag the ambiguity instead of discarding it.
+      if (cur && Number(q[1]) <= Number(cur.questionNo)) {
+        warnings.push(
+          `题号 ${q[1]} 重复或倒序，正文保留在第 ${cur.questionNo} 题，请对照原卷确认。`,
+        );
+        cur.promptLines.push(line);
+        cur.imagePaths.push(...imagePaths);
         continue;
       }
       const firstLine = q[2];
       if (!firstLine && !isBareQuestionBoundary(lines, lineIndex, cur?.questionNo ?? null, q[1])) {
-        if (cur) cur.promptLines.push(line);
+        if (cur) {
+          cur.promptLines.push(line);
+          cur.imagePaths.push(...imagePaths);
+        }
         continue;
       }
       if (cur) drafts.push(cur);
@@ -195,26 +215,51 @@ export function segmentMarkdown(input: SegmentInput): SegmentedBlock[] {
         startedFromBare: !firstLine,
         promptLines: firstLine ? [firstLine] : [],
         options: [],
-        imagePaths: [],
+        imagePaths,
       };
       continue;
     }
     // Before the first question: header region — drop images, ignore prose.
     if (!cur) continue;
+    // Collect every image even on a question/option line, without dropping the
+    // text before, between or after the figures.
+    cur.imagePaths.push(...imagePaths);
 
     const opt = OPTION_LINE.exec(line);
     if (opt) {
-      cur.options.push({ label: opt[1], text: opt[2].trim() });
-      continue;
-    }
-    const img = extractImagePath(line);
-    if (img) {
-      if (!tinyPaths.has(img)) cur.imagePaths.push(img);
+      for (const part of line.trim().split(/\s+(?=[A-D]\\?[.．、])/)) {
+        const option = OPTION_LINE.exec(part);
+        if (option) cur.options.push({ label: option[1], text: option[2].trim() });
+      }
       continue;
     }
     if (line.trim().length > 0) cur.promptLines.push(line);
   }
   if (cur) drafts.push(cur);
 
-  return drafts.map((d) => ({ structured: finalize(d), imagePaths: d.imagePaths }));
+  let previous = 0;
+  for (const draft of drafts) {
+    const number = Number(draft.questionNo);
+    if (number > previous + 1) {
+      warnings.push(`题号 ${previous + 1} 至 ${number - 1} 未独立提取，请对照原卷确认。`);
+    }
+    if (!draft.promptLines.join('').trim()) {
+      warnings.push(`第 ${draft.questionNo} 题缺少可提取的题干，请对照原卷确认。`);
+      if (new Set(draft.imagePaths).size > 1) {
+        // Two image-only questions can share one Word drawing anchor, whose XML
+        // order need not match page order. Retain media on the source document;
+        // do not claim both images belong to this one question.
+        warnings.push(`第 ${draft.questionNo} 题附近多张图片的题目归属不明，请对照原卷确认。`);
+        draft.imagePaths = [];
+      }
+    }
+    previous = number;
+  }
+  return {
+    blocks: drafts.map((d) => ({
+      structured: finalize(d),
+      imagePaths: [...new Set(d.imagePaths)],
+    })),
+    warnings,
+  };
 }

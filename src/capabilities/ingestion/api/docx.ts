@@ -108,7 +108,7 @@ export async function POST(req: Request): Promise<Response> {
 
     // Text line: pandoc → markdown → segment.
     const { markdown, media } = await converter.docxToMarkdown(prep.converterBytes);
-    const segmented = segmentMarkdown({
+    const { blocks: segmented, warnings } = segmentMarkdown({
       markdown,
       // The converter media manifest has no dimensions; the noise filter keeps
       // dimensionless media (拿不准默认存). Tiny-image filtering activates only when
@@ -131,7 +131,7 @@ export async function POST(req: Request): Promise<Response> {
       // single oversized image (e.g. uncompressed BMP); skip it rather than
       // create an oversized source_asset that diverges from every other image
       // path's limit. The block's prompt/options still import — only the
-      // oversized decorative figure is dropped.
+      // unresolved figure is reported below; review is required.
       if (m.bytes.byteLength > MAX_IMAGE_UPLOAD_BYTES) {
         console.warn(
           `[docx] skipping embedded image ${m.path}: ${m.bytes.byteLength} bytes exceeds ${MAX_IMAGE_UPLOAD_BYTES} cap`,
@@ -145,15 +145,26 @@ export async function POST(req: Request): Promise<Response> {
     // Evidence page images (原图同步存储不变式 — text line也存证).
     const evidence = await persistDocxPageEvidence(db, r2, converter, prep.converterBytes);
 
-    const blocks = segmented.map((s) => ({
-      structured: s.structured,
-      imageRefs: s.imagePaths
-        .map((p) => pathToAssetId.get(p))
-        .filter((id): id is string => id != null),
-    }));
+    const blocks = segmented.map((s) => {
+      const imageRefs: string[] = [];
+      for (const path of s.imagePaths) {
+        const assetId = pathToAssetId.get(path);
+        if (assetId) imageRefs.push(assetId);
+        else warnings.push(`第 ${s.structured.question_no} 题有图片未能保存，请对照原卷确认。`);
+      }
+      return { structured: s.structured, imageRefs };
+    });
+    const referencedPaths = new Set(segmented.flatMap((s) => s.imagePaths));
+    const unassignedCount = [...pathToAssetId.keys()].filter((p) => !referencedPaths.has(p)).length;
+    if (unassignedCount > 0) {
+      warnings.push(`有 ${unassignedCount} 张内嵌图片未关联到题目，请对照原卷确认。`);
+    }
 
     const { sessionId } = await initiateDocxTextUpload(db, {
       evidenceAssetIds: evidence.assetIds,
+      mediaAssets: Object.fromEntries(pathToAssetId),
+      markdown,
+      warnings,
       blocks,
       // YUK-1476 — honest omission audit (both digests + omitted facts) on the
       // text-line session; only present when the converter input was sanitized.

@@ -1,3 +1,7 @@
+# School DOCX preservation — 2026-10-12
+
+Isolated branch `fix/yuk-1404-docx-question-boundaries`, base d3885e83. Four backend files fix numbered boundaries, Word UpperAlpha labels and inline image/text loss; source markdown + complete media mapping retained, gaps/ambiguity use partial review. Synthetic seven-question real converters → temporary local PG → 7 drafts → explicit synthetic review/knowledge/kind → 7 formal; 0 answerable (withheld/unverified_rules). R2 memory substitute, no worker/provider/deploy/merge. Independent initial review NONE; one DB data-preservation case. Real 32-question paper not rerun here; Q31/32 common-anchor images require visual confirmation. #1658 choices writer and admission remain separate. Evidence: docs/planning/2026-10-12-yuk1404-docx-boundaries.md. YUK-1404 stays In Progress.
+
 # YUK-1404 figure main composition — 2026-10-11
 
 PR1657 fixed4c52 exact CI38144495041全绿；正常纳入main eb960c079，仅PLAN/now冲突。图ownership/隐私产品代码与单capture边界测试保留，旧细粒度四tests已删。独立初审/最终R2预算已完成，不启第三审。当前crop producer仍无source_asset SHA登记，旧visibility未知，public withholding不是完整配图交付；同卷actual-output验收仍待。无DB/runtime/provider/paid。

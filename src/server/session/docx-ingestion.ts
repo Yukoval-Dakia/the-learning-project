@@ -22,7 +22,7 @@ import { writeSessionEvent } from './events';
 //
 // The text line does NOT go through pg-boss / VLM extract: pandoc segments the
 // docx into structured question_blocks synchronously in the route (sub-second).
-// So this owner walks `uploaded → extracted` DIRECTLY — it does NOT reuse
+// So this owner walks `uploaded → extracted | partial` DIRECTLY — it does NOT reuse
 // Ingestion.applyExtractionResult, which hard-asserts assertFromState(['extracting'])
 // and would require an upstream queued→extracting transition that has no worker to
 // consume it (a永不消费的 pg-boss ghost job).
@@ -32,10 +32,8 @@ import { writeSessionEvent } from './events';
 // stay byte-consistent with the visual line. The single divergence is the state
 // machine: no extracting hop.
 //
-// **layout_quality='structured' (NOT 'text_only')** — pandoc-cut blocks carry
-// 题号/选项, they ARE structured. The既有不变式 (applyExtractionResult: structured →
-// extracted, text_only/partial → partial) requires structured here to stay
-// consistent with status='extracted'. See plan §5 P2.
+// Detected gaps/ambiguous images use the existing partial → reviewed guard.
+// External-link omission alone remains a notice and does not degrade the layout.
 
 const SESSION_TABLE = 'ingestion_session' as const;
 
@@ -50,6 +48,10 @@ export interface InitiateDocxTextUploadParams {
    *  source_document + every block so the review UI can render整页. */
   evidenceAssetIds: string[];
   blocks: DocxTextBlockInput[];
+  /** Preserve the converter output and unassigned media for review/recovery. */
+  markdown: string;
+  mediaAssets: Record<string, string>;
+  warnings: string[];
   /**
    * YUK-1476 — pass ONLY when the converter input was sanitized (external
    * non-hyperlink relationships omitted from the copy pandoc/LibreOffice saw).
@@ -71,7 +73,7 @@ export interface InitiateDocxTextUploadResult {
 
 /**
  * Create a text-line ingestion session in ONE transaction and land its blocks
- * directly in `extracted` state. Emits `ingestion.uploaded` then the SSE-terminal
+ * directly in `extracted` or `partial` state. Emits `ingestion.uploaded` then the SSE-terminal
  * `ingestion.extraction_completed`, plus a domain extract event — matching the
  * visual line's audit trail without the queued/extracting hops.
  *
@@ -91,7 +93,10 @@ export async function initiateDocxTextUpload(
     const sourceDocumentId = createId();
     const sessionId = createId();
     const omission = params.externalRefOmission;
-    const warnings = omission ? [EXTERNAL_REF_OMISSION_NOTICE] : [];
+    const warnings = [...params.warnings, ...(omission ? [EXTERNAL_REF_OMISSION_NOTICE] : [])];
+    const layoutQuality = params.warnings.length > 0 ? 'partial' : 'structured';
+    const status = layoutQuality === 'partial' ? 'partial' : 'extracted';
+    const outcome = layoutQuality === 'partial' ? 'partial' : 'success';
 
     // Codex-1 — the import route validates every block.image_ref against the
     // session's source_asset_ids (import/route.ts §3). Embedded-image asset ids
@@ -101,7 +106,9 @@ export async function initiateDocxTextUpload(
     // evidence page images with every block's embedded refs (deduped, evidence
     // first so page_index 0 still maps to the first evidence asset).
     const embeddedRefs = Array.from(new Set(params.blocks.flatMap((b) => b.imageRefs)));
-    const sessionAssetIds = Array.from(new Set([...params.evidenceAssetIds, ...embeddedRefs]));
+    const sessionAssetIds = Array.from(
+      new Set([...params.evidenceAssetIds, ...Object.values(params.mediaAssets), ...embeddedRefs]),
+    );
 
     // 1. source_document — evidence page images + embedded refs as source_asset_ids.
     //    YUK-1476 — provenance carries the honest omission audit: both digests +
@@ -110,10 +117,11 @@ export async function initiateDocxTextUpload(
       id: sourceDocumentId,
       title: null,
       source_asset_ids: sessionAssetIds,
-      body_md: null,
+      body_md: params.markdown,
       provenance: {
         entrypoint: 'docx',
         line: 'text',
+        docx_media: params.mediaAssets,
         ...(omission
           ? {
               docx_external_ref_omission: {
@@ -156,7 +164,7 @@ export async function initiateDocxTextUpload(
 
     // ---- 直达, 不经 queued/extracting ----
 
-    // 4. N × question_block(status='draft', layout_quality='structured'). Blocks
+    // 4. N × question_block(status='draft'). Blocks
     //    pin the evidence page images as source_asset_ids; image_refs carry the
     //    in-position embedded-image asset ids. page_spans uses the full-page
     //    degradation (markdown carries no coordinates), mirroring VisionTab's
@@ -182,7 +190,7 @@ export async function initiateDocxTextUpload(
           ordinal,
           structured: blk.structured,
           figures: [],
-          layout_quality: 'structured',
+          layout_quality: layoutQuality,
           // Codex-2 — VisionTab seeds the editable prompt from extracted_prompt_md
           // (?? ''); a null here opens every DOCX block with an empty prompt that
           // fails import with '题面不能空'. Persist the derived prompt markdown
@@ -194,7 +202,7 @@ export async function initiateDocxTextUpload(
           image_refs: blk.imageRefs,
           crop_refs: [],
           visual_complexity: 'medium',
-          extraction_confidence: 1,
+          extraction_confidence: layoutQuality === 'partial' ? 0 : 1,
           status: 'draft',
           knowledge_hint: null,
           merged_from_block_ids: [],
@@ -216,10 +224,10 @@ export async function initiateDocxTextUpload(
       });
     }
 
-    // 5. learning_session → extracted.
+    // 5. learning_session → extracted | partial.
     await tx
       .update(learning_session)
-      .set({ status: 'extracted', updated_at: now })
+      .set({ status, updated_at: now })
       .where(eq(learning_session.id, sessionId));
 
     // 6. ingestion.extraction_completed — SSE terminal. UI's SSE_TERMINAL listens
@@ -230,12 +238,12 @@ export async function initiateDocxTextUpload(
       event_type: 'ingestion.extraction_completed',
       payload: {
         block_count: params.blocks.length,
-        layout_quality: 'structured',
+        layout_quality: layoutQuality,
         warnings,
       },
     });
 
-    // 7. domain extract event — actor_ref='docx_text', outcome='success'
+    // 7. domain extract event — actor_ref='docx_text', outcome follows layout
     //    (structured → success, per applyExtractionResult eventOutcome semantics).
     await writeSessionEvent(tx, {
       session_id: sessionId,
@@ -244,10 +252,10 @@ export async function initiateDocxTextUpload(
       subject_id: sourceDocumentId,
       actor_kind: 'agent',
       actor_ref: 'docx_text',
-      outcome: 'success',
+      outcome,
       payload: {
         structured_block_ids: insertedBlockIds,
-        layout_quality: 'structured',
+        layout_quality: layoutQuality,
         warnings,
       },
       created_at: now,

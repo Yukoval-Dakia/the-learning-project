@@ -43,6 +43,8 @@ vi.mock('@/server/ai/runner', () => ({
   })),
 }));
 
+import { Ingestion } from '@/server/session';
+import { initiateDocxTextUpload } from '@/server/session/docx-ingestion';
 // YUK-503 (YUK-471 W3-D test hardening) — fold==row parity helpers for the set_status writers.
 // The import POST emits a canonical `experimental:question_block_lifecycle` (op='set_status') alongside
 // each imperative status UPDATE; these let the test prove the additive double-write keeps the event-log
@@ -53,6 +55,7 @@ import {
   buildIngestionOperationHandler,
 } from '../jobs/ingestion_operation';
 import { runAutoEnrollForSession } from '../server/auto-enroll';
+import { segmentMarkdown } from '../server/docx/markdown-segment';
 import * as enrollment from '../server/enroll';
 import { completeIngestionImport } from '../server/import-completion';
 import { readIngestionOperation, reserveIngestionOperation } from '../server/operation-store';
@@ -192,6 +195,82 @@ describe('POST /api/ingestion/[id]/import', () => {
     r2._store.clear();
     await resetDb();
     vi.clearAllMocks();
+  });
+
+  // @invariant data: incomplete DOCX extraction retains recoverable source and all media.
+  // @fails-if unknown images/text disappear at draft creation or partial extraction silently becomes importable.
+  it('retains incomplete DOCX source and media behind explicit review', async () => {
+    const db = testDb();
+    const markdown = [
+      '1.题甲',
+      'A.甲 B.乙 C.丙 D.丁',
+      '**2.** 图前 ![](media/a.png) 图后 ![](media/b.png)',
+      '4\\.',
+      '![](media/c.png) ![](media/d.png)',
+    ].join('\n');
+    const mediaAssetIds = ['a', 'b', 'c', 'd'];
+    const { blocks, warnings } = segmentMarkdown({
+      markdown,
+      media: mediaAssetIds.map((id) => ({ path: `media/${id}.png` })),
+    });
+    const result = await initiateDocxTextUpload(db, {
+      evidenceAssetIds: ['page'],
+      mediaAssets: Object.fromEntries(mediaAssetIds.map((id) => [`media/${id}.png`, id])),
+      markdown,
+      warnings,
+      blocks: blocks.map((b) => ({
+        structured: b.structured,
+        imageRefs: b.imagePaths.map((path) => path.slice(6, -4)),
+      })),
+    });
+    const [source] = await db
+      .select()
+      .from(source_document)
+      .where(eq(source_document.id, result.sourceDocumentId));
+    const [session] = await db
+      .select()
+      .from(learning_session)
+      .where(eq(learning_session.id, result.sessionId));
+    const drafts = await db
+      .select()
+      .from(question_block)
+      .where(eq(question_block.ingestion_session_id, result.sessionId))
+      .orderBy(question_block.ordinal);
+    expect(source.body_md).toBe(markdown);
+    expect(source.provenance).toMatchObject({
+      docx_media: { 'media/c.png': 'c', 'media/d.png': 'd' },
+    });
+    expect(source.source_asset_ids).toEqual(['page', ...mediaAssetIds]);
+    expect(session.source_asset_ids).toEqual(source.source_asset_ids);
+    expect(drafts.map((b) => b.structured?.question_no)).toEqual(['1', '2', '4']);
+    expect(drafts[0].structured?.options?.map((o) => o.label)).toEqual(['A', 'B', 'C', 'D']);
+    expect(drafts[1].structured?.prompt_text).toBe('图前  图后');
+    expect(drafts.map((b) => b.image_refs)).toEqual([[], ['a', 'b'], []]);
+    expect(session.status).toBe('partial');
+    expect(session.warnings).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('题号 3 至 3'),
+        expect.stringContaining('第 4 题缺少'),
+        expect.stringContaining('图片的题目归属不明'),
+      ]),
+    );
+    const receipts = await db
+      .select()
+      .from(job_events)
+      .where(
+        and(
+          eq(job_events.business_id, session.id),
+          eq(job_events.event_type, 'ingestion.extraction_completed'),
+        ),
+      );
+    expect(receipts[0].payload).toMatchObject({
+      block_count: 3,
+      layout_quality: 'partial',
+      warnings: session.warnings,
+    });
+    await expect(
+      db.transaction((tx) => Ingestion.assertSessionAvailableForImport(tx, session.id)),
+    ).rejects.toThrow();
   });
 
   it('durable import calls the owner once across concurrent delivery and replay', async () => {
