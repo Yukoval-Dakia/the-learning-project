@@ -436,13 +436,17 @@ function PracticeNextSoloPage({
     },
     [companionOpen, onCompanionOpenChange],
   );
+  // The banner's mascot slot moves with the column without resizing: tell the mascot.
+  const { relayout } = useMascot();
   // biome-ignore lint/correctness/useExhaustiveDependencies: runs after each open/close reflow
   useLayoutEffect(() => {
     const a = anchor.current;
     anchor.current = null;
-    if (!a?.el.isConnected) return;
-    const moved = a.el.getBoundingClientRect().top - a.top;
-    if (Math.abs(moved) > 1) window.scrollBy({ top: moved, behavior: 'instant' });
+    if (a?.el.isConnected) {
+      const moved = a.el.getBoundingClientRect().top - a.top;
+      if (Math.abs(moved) > 1) window.scrollBy({ top: moved, behavior: 'instant' });
+    }
+    relayout();
   }, [open]);
   // The 学习伙伴 button (shell topbar or the demo bar) toggles it through the Copilot channel.
   const toggleSeq = useCopilotOpenSignal((st) => st.toggleSeq);
