@@ -1,5 +1,5 @@
 // Placement waits for native evaluation and settlement before the next adaptive selection.
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { computeLatencyMs } from '@/capabilities/practice/ui-public';
 import type { GroupEvidenceT, ResponseSetT, SlotResponseT } from '@/core/schema/assessment';
 import { AssetEvidencePreview } from '@/ui/components/response/AssetEvidencePreview';
@@ -13,7 +13,7 @@ import {
   nativeResponseValue,
 } from '@/ui/components/response/response-types';
 import { SaveStateChip } from '@/ui/components/response/SaveStateChip';
-import { useJudgeRunPolling } from '@/ui/hooks/useJudgeRunPolling';
+import { type JudgeRunPollingState, useJudgeRunPolling } from '@/ui/hooks/useJudgeRunPolling';
 import { usePagehideTransition } from '@/ui/hooks/usePagehideTransition';
 import { useResponseDraftAutosave } from '@/ui/hooks/useResponseDraftAutosave';
 import { ApiError } from '@/ui/lib/api';
@@ -63,13 +63,22 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
   const [exitFailure, setExitFailure] = useState<{ destination: string; message: string } | null>(
     null,
   );
-  // Fixed for the screen's lifetime: re-running the start effect would open a second session.
+  // Fixed for the screen's lifetime: re-running the start would open a second session.
   const transport = useRef(client);
-  const goalIdRef = useRef(new URLSearchParams(window.location.search).get('goal'));
+  // Read from the URL when the screen attaches (not during render, which may run on a server).
+  const goalIdRef = useRef<string | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const sessionOpenRef = useRef(false);
   const saveForExit = useRef<ExitSave | null>(null);
-  const initialRequest = useRef<Promise<PlacementStartResult | 'terminal'> | null>(null);
+  // One start/resume request per screen instance, reused across StrictMode re-attach;
+  // `applied` makes sure its result is applied (URL, phase, settle) exactly once.
+  const initialRequest = useRef<{
+    promise: Promise<PlacementStartResult | 'terminal'>;
+    applied: boolean;
+  } | null>(null);
+  // True while the screen's root is attached: late completions after leaving do nothing.
+  const activeRef = useRef(false);
+  const finishing = useRef(false);
 
   const profileDest = useCallback(
     () => (goalIdRef.current ? `/profile?goal=${encodeURIComponent(goalIdRef.current)}` : '/today'),
@@ -81,6 +90,24 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
     await transport.current.placementEnd(sid, status, { keepalive: false });
     sessionOpenRef.current = false;
   }, []);
+  // The last answer is in (or the session needs no more): end the session once and go
+  // to the profile. Called from the events that reveal "done" — never from render.
+  const finish = useCallback(() => {
+    setQRef(null);
+    setPhase('settling');
+    if (finishing.current) return;
+    finishing.current = true;
+    void transition('completed')
+      .then(() => {
+        if (activeRef.current) navigate(profileDest());
+      })
+      .catch((error: unknown) => {
+        finishing.current = false;
+        if (!activeRef.current) return;
+        setErrMsg(error instanceof Error ? error.message : String(error));
+        setPhase('error');
+      });
+  }, [navigate, profileDest, transition]);
   const loadNext = useCallback(async () => {
     const sid = sessionIdRef.current;
     if (!sid || !sessionOpenRef.current) return;
@@ -89,89 +116,101 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
     setSupply(next.starterSupply);
     setRestoreVersion((v) => v + 1);
     if (next.done) {
-      setQRef(null);
-      setPhase('settling');
+      finish();
     } else {
       setQRef(next.question);
       setPhase(next.question ? 'answer' : 'sourcing');
     }
-  }, []);
+  }, [finish]);
 
-  useEffect(() => {
-    const goal = goalIdRef.current;
-    if (!goal) {
-      setPhase('nogoal');
-      return;
-    }
-    let cancelled = false;
-    initialRequest.current ??= (async () => {
-      const existing = new URLSearchParams(window.location.search).get('session');
-      if (existing) {
-        const session = await transport.current.getPlacementSession(existing);
-        if (session.goal_id !== goal) throw new Error('定位练习与当前目标不一致。');
-        sessionIdRef.current = existing;
-        if (session.status !== 'started') return 'terminal';
-        sessionOpenRef.current = true;
-        const next = await transport.current.placementNext(existing);
-        if (next.done)
-          return {
-            sessionId: existing,
-            knowledgeIds: session.scope_knowledge_ids ?? [],
-            answeredCount: next.answeredCount,
-            question: null,
-            sourcingNeeded: false,
-          };
-        return { sessionId: existing, knowledgeIds: session.scope_knowledge_ids ?? [], ...next };
+  // YUK-1483 — the screen's root owns entering placement: when it attaches it resumes the
+  // session named in the URL or starts one, once per screen (the request is reused if
+  // React re-attaches the same screen). Detaching only stops applying late results; it
+  // never ends a session the server already created.
+  const attachScreen = useCallback(
+    (node: HTMLDivElement | null) => {
+      if (!node) return undefined;
+      activeRef.current = true;
+      goalIdRef.current ??= new URLSearchParams(window.location.search).get('goal');
+      const goal = goalIdRef.current;
+      if (!goal) {
+        setPhase('nogoal');
+        return () => {
+          activeRef.current = false;
+        };
       }
-      return transport.current.startPlacement(goal, readSelfReport(window.location.search));
-    })();
-    void initialRequest.current
-      .then((res) => {
-        if (cancelled) return;
-        if (res === 'terminal') {
-          setPhase('terminal');
-          return;
-        }
-        sessionIdRef.current = res.sessionId;
-        sessionOpenRef.current = true;
-        const url = new URL(window.location.href);
-        url.searchParams.set('session', res.sessionId);
-        window.history.replaceState(
-          window.history.state,
-          '',
-          `${url.pathname}${url.search}${url.hash}`,
-        );
-        setAnsweredCount(res.answeredCount);
-        setSupply(res.starterSupply);
-        setQRef(res.question);
-        setPhase(res.question ? 'answer' : res.sourcingNeeded ? 'sourcing' : 'settling');
-      })
-      .catch((error: unknown) => {
-        if (cancelled) return;
-        setErrMsg(error instanceof Error ? error.message : String(error));
-        setPhase('error');
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (phase !== 'settling') return;
-    let cancelled = false;
-    void transition('completed')
-      .then(() => {
-        if (!cancelled) navigate(profileDest());
-      })
-      .catch((error: unknown) => {
-        if (cancelled) return;
-        setErrMsg(error instanceof Error ? error.message : String(error));
-        setPhase('error');
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [phase, navigate, profileDest, transition]);
+      let cancelled = false;
+      initialRequest.current ??= {
+        applied: false,
+        promise: (async () => {
+          const existing = new URLSearchParams(window.location.search).get('session');
+          if (existing) {
+            const session = await transport.current.getPlacementSession(existing);
+            if (session.goal_id !== goal) throw new Error('定位练习与当前目标不一致。');
+            sessionIdRef.current = existing;
+            if (session.status !== 'started') return 'terminal';
+            sessionOpenRef.current = true;
+            const next = await transport.current.placementNext(existing);
+            if (next.done)
+              return {
+                sessionId: existing,
+                knowledgeIds: session.scope_knowledge_ids ?? [],
+                answeredCount: next.answeredCount,
+                question: null,
+                sourcingNeeded: false,
+              };
+            return {
+              sessionId: existing,
+              knowledgeIds: session.scope_knowledge_ids ?? [],
+              ...next,
+            };
+          }
+          return transport.current.startPlacement(goal, readSelfReport(window.location.search));
+        })(),
+      };
+      const request = initialRequest.current;
+      void request.promise
+        .then((res) => {
+          if (cancelled || request.applied) return;
+          request.applied = true;
+          if (res === 'terminal') {
+            setPhase('terminal');
+            return;
+          }
+          sessionIdRef.current = res.sessionId;
+          sessionOpenRef.current = true;
+          const url = new URL(window.location.href);
+          url.searchParams.set('session', res.sessionId);
+          window.history.replaceState(
+            window.history.state,
+            '',
+            `${url.pathname}${url.search}${url.hash}`,
+          );
+          setAnsweredCount(res.answeredCount);
+          setSupply(res.starterSupply);
+          if (res.question) {
+            setQRef(res.question);
+            setPhase('answer');
+          } else if (res.sourcingNeeded) {
+            setQRef(null);
+            setPhase('sourcing');
+          } else {
+            finish();
+          }
+        })
+        .catch((error: unknown) => {
+          if (cancelled || request.applied) return;
+          request.applied = true;
+          setErrMsg(error instanceof Error ? error.message : String(error));
+          setPhase('error');
+        });
+      return () => {
+        cancelled = true;
+        activeRef.current = false;
+      };
+    },
+    [finish],
+  );
 
   const leaveProbe = async (destination: string, discard = false) => {
     if (leaving) return;
@@ -197,7 +236,12 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
     phase === 'terminal' || phase === 'nogoal' ? () => navigate('/today') : exitProbe;
 
   return (
-    <PlacementShell answeredCount={answeredCount} done={phase === 'settling'} onExit={shellExit}>
+    <PlacementShell
+      answeredCount={answeredCount}
+      done={phase === 'settling'}
+      onExit={shellExit}
+      rootRef={attachScreen}
+    >
       {exitFailure && (
         <LoomCard pad>
           <ErrorState text={`退出前未能确认保存或结束：${exitFailure.message}`} />
@@ -424,16 +468,18 @@ function PlacementShell({
   answeredCount,
   done,
   onExit,
+  rootRef,
   children,
 }: {
   answeredCount: number;
   done?: boolean;
   onExit: () => void;
+  rootRef: (node: HTMLDivElement | null) => (() => void) | undefined;
   children: React.ReactNode;
 }) {
   const shown = Math.min(done ? answeredCount : answeredCount + 1, CAP);
   return (
-    <div className="page ob-pl">
+    <div className="page ob-pl" ref={rootRef}>
       <div className="page-head">
         <div className="eyebrow">PLACEMENT · θ̂ · FSRS live</div>
         <ObSteps active="placement" />
@@ -467,6 +513,15 @@ function PlacementShell({
       </div>
       {children}
     </div>
+  );
+}
+
+// Uploaded attachments as the native group evidence the draft and submission carry.
+function nativeGroupEvidence(evidence: readonly EvidenceAttachment[]): GroupEvidenceT[] {
+  return evidence.flatMap((item) =>
+    item.original
+      ? [{ evidence: item.original, target: item.originalTarget ?? { scope: 'all_units' } }]
+      : [],
   );
 }
 
@@ -513,21 +568,14 @@ function PlacementQuestionCard({
   const [error, setError] = useState<string | null>(null);
   const epoch = useRef(binding.state.draft?.save_epoch ?? 0);
   const shownAt = useRef(Date.now());
-  const nativeEvidence = useMemo<GroupEvidenceT[]>(
-    () =>
-      evidence.flatMap((item) =>
-        item.original
-          ? [{ evidence: item.original, target: item.originalTarget ?? { scope: 'all_units' } }]
-          : [],
-      ),
-    [evidence],
-  );
+  const nativeEvidence = useMemo(() => nativeGroupEvidence(evidence), [evidence]);
   const draftValue = useMemo(
     () => ({ response_set: responses, group_evidence: nativeEvidence }),
     [responses, nativeEvidence],
   );
+  // Latest edited draft, written by the edit handlers (not during render) so an exit
+  // or commit right after the last keystroke sends that keystroke.
   const currentValue = useRef(draftValue);
-  currentValue.current = draftValue;
   const savedBytes = useRef(JSON.stringify(draftValue));
   const inFlight = useRef<Promise<void> | null>(null);
   const persist = useCallback(
@@ -561,46 +609,79 @@ function PlacementQuestionCard({
     },
     [binding.issuance_id, binding.evaluation_group_id, client],
   );
-  const autosave = useResponseDraftAutosave({
-    value: draftValue,
-    enabled: !!frozen && status === 'answering' && !submitting && !leaving && !conflict,
-    save: (value, ctx) => persist(value, ctx.keepalive),
-  });
-  usePagehideTransition(() => autosave.flush({ keepalive: true }));
-  useEffect(() => {
-    const save: ExitSave = async () => {
-      if (uploading) throw new Error('附件仍在上传，请等待上传完成。');
-      if (conflict) throw new Error('草稿版本冲突，请先重新加载服务端草稿或明确放弃修改。');
-      if (status === 'answering') await persist(currentValue.current, false);
-    };
-    saveForExit.current = save;
-    return () => {
-      if (saveForExit.current === save) saveForExit.current = null;
-    };
-  }, [uploading, conflict, status, persist, saveForExit]);
-  const poll = useJudgeRunPolling({
+  // YUK-1483 — autosave runs from the edit events below. Edits are only possible while
+  // answering (the fields are disabled otherwise); commit holds autosave and resumes it
+  // if the answer was never dispatched.
+  const saveDraft = useCallback(
+    (value: typeof draftValue, ctx: { keepalive: boolean }) => persist(value, ctx.keepalive),
+    [persist],
+  );
+  const autosave = useResponseDraftAutosave({ save: saveDraft });
+  const { flush: flushDraft } = autosave;
+  const flushOnPagehide = useCallback(() => flushDraft({ keepalive: true }), [flushDraft]);
+  const attachPagehide = usePagehideTransition(flushOnPagehide);
+  // The card's root owns two things while it is on the page: the keepalive draft flush
+  // on pagehide, and the exit-save it lends the parent's exit button. A new card (next
+  // question) registers its own; this card only clears the slot if it still owns it.
+  const attachCard = useCallback(
+    (node: HTMLDivElement | null) => {
+      if (!node) return undefined;
+      const detachPagehide = attachPagehide(node);
+      const save: ExitSave = async () => {
+        if (uploading) throw new Error('附件仍在上传，请等待上传完成。');
+        if (conflict) throw new Error('草稿版本冲突，请先重新加载服务端草稿或明确放弃修改。');
+        if (status === 'answering') await persist(currentValue.current, false);
+      };
+      saveForExit.current = save;
+      return () => {
+        detachPagehide?.();
+        if (saveForExit.current === save) saveForExit.current = null;
+      };
+    },
+    [attachPagehide, uploading, conflict, status, persist, saveForExit],
+  );
+  // The poller reports this run's terminal state once; claim it here.
+  const onRunSettled = useCallback(
+    (settled: JudgeRunPollingState) => {
+      if (settled.status === 'done') {
+        setStatus('waiting');
+        void onAccepted().catch((e: unknown) => {
+          setError(e instanceof Error ? e.message : String(e));
+          setStatus('uncertain');
+        });
+      } else {
+        setStatus('held');
+        setError('作答已接收，暂时无法完成定位评估。请重新查询状态。');
+      }
+    },
+    [onAccepted],
+  );
+  useJudgeRunPolling({
     runId: pendingRun?.run_id ?? null,
     pollUrl: pendingRun?.poll_url,
     readStatus: client.readJudgeRunStatus,
     enabled: status === 'pending',
+    onSettled: onRunSettled,
   });
-  useEffect(() => {
-    if (!pendingRun || !poll.settled) return;
-    if (poll.status === 'done') {
-      setStatus('waiting');
-      void onAccepted().catch((e: unknown) => {
-        setError(e instanceof Error ? e.message : String(e));
-        setStatus('uncertain');
-      });
-    } else {
-      setStatus('held');
-      setError('作答已接收，暂时无法完成定位评估。请重新查询状态。');
-    }
-  }, [pendingRun, poll.settled, poll.status, onAccepted]);
-  const updateResponse = (entry: SlotResponseT) =>
-    setResponses((previous) => ({
-      entries: [...previous.entries.filter((e) => e.slot_id !== entry.slot_id), entry],
-    }));
+  const editDraft = (nextResponses: ResponseSetT, nextEvidence: EvidenceAttachment[]) => {
+    const next = {
+      response_set: nextResponses,
+      group_evidence: nativeGroupEvidence(nextEvidence),
+    };
+    currentValue.current = next;
+    autosave.change(next, draftValue);
+  };
+  const updateResponse = (entry: SlotResponseT) => {
+    const next = {
+      entries: [...responses.entries.filter((e) => e.slot_id !== entry.slot_id), entry],
+    };
+    setResponses(next);
+    editDraft(next, evidence);
+  };
+  const updateEvidence = (next: EvidenceAttachment[]) => {
+    setEvidence(next);
+    editDraft(responses, next);
+  };
   const unavailable =
     !frozen || frozen.response_spec.slots.some((slot) => !nativeSlotFieldSpec(slot));
   const answered =
@@ -635,6 +716,7 @@ function PlacementQuestionCard({
     if (submitting || (status !== 'retry' && !canSubmit)) return;
     setSubmitting(true);
     setError(null);
+    autosave.hold();
     let dispatched = false;
     try {
       // Stop queued autosaves; an ordinary save ACK precedes finalization.
@@ -677,6 +759,8 @@ function PlacementQuestionCard({
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setStatus(dispatched ? 'uncertain' : 'answering');
+      // Never dispatched: back to answering, so unsaved edits resume autosaving.
+      if (!dispatched) autosave.resume();
     } finally {
       setSubmitting(false);
     }
@@ -693,7 +777,7 @@ function PlacementQuestionCard({
     }
   };
   return (
-    <LoomCard pad padLg className="fade-key">
+    <LoomCard pad padLg className="fade-key" ref={attachCard}>
       <div className="ob-pl-meta">
         <span className="meta mono">{qRef.questionId.slice(0, 12)}</span>
       </div>
@@ -746,7 +830,7 @@ function PlacementQuestionCard({
             onTextChange={() => {}}
             showText={false}
             attachments={evidence}
-            onAttachmentsChange={setEvidence}
+            onAttachmentsChange={updateEvidence}
             disabled={status !== 'answering' || submitting || leaving || conflict}
             upload={uploadAsset}
             uploadErrorMessage="图片上传失败，请重试"
