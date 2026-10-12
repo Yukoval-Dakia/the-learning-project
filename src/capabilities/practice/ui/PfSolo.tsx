@@ -478,19 +478,36 @@ export function PfSolo({
     [issuanceId, draftGroupRef, restoredEpoch],
   );
   const autosave = useResponseDraftAutosave({ save: saveDraft });
+  // Latest edited draft, written synchronously by every edit handler (never during render).
+  // A handler captured by an older render — e.g. EvidenceComposer finishing an upload after
+  // an await — must build on this, not on its render's answer, or it would hand autosave a
+  // pre-upload answer and the save would drop newer typing. Tagged with the issuance it was
+  // edited under, so it is only used for the issuance currently restored.
+  const latestDraft = useRef<{ issuanceId: string; value: typeof draftValue } | null>(null);
+  const currentDraft = () =>
+    latestDraft.current?.issuanceId === restoredIssuanceId ? latestDraft.current.value : draftValue;
+  const editDraft = (next: typeof draftValue) => {
+    const from = currentDraft();
+    if (restoredIssuanceId) latestDraft.current = { issuanceId: restoredIssuanceId, value: next };
+    autosave.change(next, from);
+  };
   const updateNativeResponse = (entry: SlotResponseT) => {
-    const next = {
-      entries: [...nativeResponses.entries.filter((item) => item.slot_id !== entry.slot_id), entry],
+    const draft = currentDraft();
+    const response_set = {
+      entries: [
+        ...draft.response_set.entries.filter((item) => item.slot_id !== entry.slot_id),
+        entry,
+      ],
     };
-    setNativeResponses(next);
-    autosave.change({ response_set: next, group_evidence: nativeEvidence }, draftValue);
+    setNativeResponses(response_set);
+    editDraft({ response_set, group_evidence: draft.group_evidence });
   };
   const updateEvidence = (next: EvidenceAttachment[]) => {
     setEvidence(next);
-    autosave.change(
-      { response_set: nativeResponses, group_evidence: nativeGroupEvidence(next) },
-      draftValue,
-    );
+    editDraft({
+      response_set: currentDraft().response_set,
+      group_evidence: nativeGroupEvidence(next),
+    });
   };
   const isChoice =
     !!frozen?.response_spec.slots.length &&
