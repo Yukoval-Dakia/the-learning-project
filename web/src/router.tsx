@@ -13,7 +13,7 @@ import {
   useRouterState,
 } from '@tanstack/react-router';
 import type { ComponentType } from 'react';
-import { useCallback, useEffect } from 'react';
+import { useCallback } from 'react';
 import { loadAgentNotesPage } from '@/capabilities/agency/ui-public';
 import { loadRecordPage } from '@/capabilities/ingestion/ui-public';
 import { loadKnowledgeDetailPage, loadKnowledgePage } from '@/capabilities/knowledge/ui-public';
@@ -84,6 +84,18 @@ function RoutePending() {
   );
 }
 
+// PROD 下这些路径归 Start：SPA 内导航到达时，在路由 beforeLoad（真实导航，非预加载）
+// 用 document replace 交给 Start，不多压一层 history；页面只显示 RoutePending。
+function StartPageEntry() {
+  return <RoutePending />;
+}
+
+const startDocumentBeforeLoad = import.meta.env.PROD
+  ? ({ preload, location }: { preload: boolean; location: { href: string } }) => {
+      if (!preload) window.location.replace(location.href);
+    }
+  : undefined;
+
 const rootRoute = createRootRoute({ component: RootShell });
 
 // M4-T6 (YUK-319)：工作台上线后 / 落到 /today（旧 SPA 默认 /agent-notes 退位，
@@ -102,6 +114,7 @@ const TodayRoute = import.meta.env.PROD ? StartPageEntry : lazyNavigableRoute(lo
 const todayRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: surfacePath('today'),
+  beforeLoad: startDocumentBeforeLoad,
   component: TodayRoute,
 });
 
@@ -149,6 +162,7 @@ const InboxRoute = import.meta.env.PROD ? StartPageEntry : lazyNavigableRoute(lo
 const inboxRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: surfacePath('inbox'),
+  beforeLoad: startDocumentBeforeLoad,
   component: InboxRoute,
 });
 
@@ -156,13 +170,6 @@ const inboxRoute = createRoute({
 // record→see→practice 死链：RecordPage onSuccess navigate('/mistakes') 此前 404。导航走
 // 壳层 prop 注入（同 InboxRoute），page 自持 list query + 客户端 3 轴筛选（科目/状态/归因）。
 // Vite development fallback only. YUK-1359 owns its final removal.
-function StartPageEntry() {
-  useEffect(() => {
-    window.location.replace(window.location.href);
-  }, []);
-  return <RoutePending />;
-}
-
 const MistakesRoute = import.meta.env.PROD
   ? StartPageEntry
   : lazyNavigableRoute(() => import('./routes/MistakesPage').then((module) => module.default));
@@ -170,6 +177,7 @@ const MistakesRoute = import.meta.env.PROD
 const mistakesRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: surfacePath('mistakes'),
+  beforeLoad: startDocumentBeforeLoad,
   component: MistakesRoute,
 });
 
@@ -180,6 +188,7 @@ const AgentNotesRoute = import.meta.env.PROD
 const agentNotesRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: surfacePath('agent-notes'),
+  beforeLoad: startDocumentBeforeLoad,
   component: AgentNotesRoute,
 });
 
@@ -206,6 +215,7 @@ const EventDetailRouteC = import.meta.env.PROD
 const eventDetailRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: surfacePath('event-detail'),
+  beforeLoad: startDocumentBeforeLoad,
   component: EventDetailRouteC,
 });
 
@@ -282,6 +292,7 @@ const PracticeRoute = import.meta.env.PROD
 const practiceRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: surfacePath('practice'),
+  beforeLoad: startDocumentBeforeLoad,
   component: PracticeRoute,
 });
 
@@ -359,6 +370,7 @@ const NotesRoute = import.meta.env.PROD ? StartPageEntry : lazyNavigableRoute(lo
 const notesRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: surfacePath('notes'),
+  beforeLoad: startDocumentBeforeLoad,
   component: NotesRoute,
 });
 
@@ -426,6 +438,7 @@ const AdminConfigRoute = import.meta.env.PROD
 const adminConfigRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: surfacePath('admin-config'),
+  beforeLoad: startDocumentBeforeLoad,
   component: AdminConfigRoute,
 });
 
@@ -436,6 +449,7 @@ const AdminRunsRoute = import.meta.env.PROD
 const adminRunsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: surfacePath('admin-runs'),
+  beforeLoad: startDocumentBeforeLoad,
   component: AdminRunsRoute,
 });
 
@@ -446,6 +460,7 @@ const AdminCostRoute = import.meta.env.PROD
 const adminCostRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: surfacePath('admin-cost'),
+  beforeLoad: startDocumentBeforeLoad,
   component: AdminCostRoute,
 });
 
@@ -456,6 +471,7 @@ const AdminFailuresRoute = import.meta.env.PROD
 const adminFailuresRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: surfacePath('admin-failures'),
+  beforeLoad: startDocumentBeforeLoad,
   component: AdminFailuresRoute,
 });
 
@@ -466,6 +482,7 @@ const AdminSubjectsRoute = import.meta.env.PROD
 const adminSubjectsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: surfacePath('admin-subjects'),
+  beforeLoad: startDocumentBeforeLoad,
   component: AdminSubjectsRoute,
 });
 
@@ -490,6 +507,7 @@ const AdminSubjectTraitsRoute = import.meta.env.PROD
 const adminSubjectTraitsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: surfacePath('admin-subject-detail'),
+  beforeLoad: startDocumentBeforeLoad,
   component: AdminSubjectTraitsRoute,
 });
 
@@ -501,6 +519,7 @@ const AdminCoverageLatticeRoute = import.meta.env.PROD
 const adminCoverageLatticeRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: surfacePath('admin-coverage-lattice'),
+  beforeLoad: startDocumentBeforeLoad,
   component: AdminCoverageLatticeRoute,
 });
 
@@ -510,6 +529,7 @@ const AdminConjectureScoresRoute = import.meta.env.PROD
 const adminConjectureScoresRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: surfacePath('admin-conjecture-scores'),
+  beforeLoad: startDocumentBeforeLoad,
   component: AdminConjectureScoresRoute,
 });
 
