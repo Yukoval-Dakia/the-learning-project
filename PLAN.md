@@ -4,7 +4,7 @@
 
 ## NOW
 
-- **YUK-1404 / 学校 DOCX agent 录入**：[Draft PR #1703](https://github.com/Yukoval-Dakia/the-learning-project/pull/1703)：完整材料、Pi 工具、草稿恢复已接通；DOCX 每请求预算≤1 USD/run、16 请求、24 工具、4096 输出、240s、重试0。官方整 context 上界支持仅直连 v2.6-pro 图片预留；新增海外 USD 账户价声明，最终 payload 强制输出上限并禁 native search。同一免费 case 验证带图 SDK transport 与超额拒绝，正式0/draft2/ignored0；测试能力元数据不等于生产准入。真实 QA 仍受直连模型应用能力未确认、海外账户/历史费用/周剩额/本次授权阻塞；旧 ledger/provider_attempt 周账遗漏保留，不扩全站框架。见[实施与边界](docs/planning/2026-10-12-yuk1404-docx-agent-tools.md)。无真实调用、模型适配、第三审、Linear 写入、部署或 merge；完成切片后暂停新增代码。
+- **YUK-1404 / 学校 DOCX agent 录入**：[Draft #1703](https://github.com/Yukoval-Dakia/the-learning-project/pull/1703) 保留完整来源/两工具组/草稿恢复；按用户选择复用Token Plan，删除USD approval与跨任务费用聚合。单run650M credits、16请求/24工具/4096输出/240s/重试0；真实tokens与估算credits/目录USD分别记录，未知留额，不fallback。应用已有token-plan能力可用，离线case不再注入capability。原进程opencode pin未改；用户确认账户用途权限不等于厂商豁免。最新真实输入改为Mac Desktop/test-data，等待最小样本/敏感性检查；合成真实调用取消，provider/OCR实际调用0。GLM现有服务仅核接线/计费与bbox差异，不付费；不安装Docling、不扩解析框架。见[轻量方案/当前状态](docs/planning/2026-10-12-yuk1404-token-plan-ingestion.md)。无第三审、Linear写入、部署或merge。
 
 - **YUK-1404 / native03题图修复**：PR1657 fixed4c52 exact CI38144495041全绿；正常纳入main eb960c079，仅PLAN/now冲突。图ownership/隐私产品代码与单capture边界测试保留，旧细粒度四tests已删。独立初审/最终R2预算已完成，不启第三审。当前crop producer仍无source_asset SHA登记，旧visibility未知，public withholding不是完整配图交付；同卷actual-output验收仍待。无DB/runtime/provider/paid。 [证据](docs/planning/2026-10-11-yuk1404-native03-figure-repair.md)。
 

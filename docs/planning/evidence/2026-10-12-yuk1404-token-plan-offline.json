@@ -1,0 +1,199 @@
+{
+  "recorded_at": "2026-10-12T10:54:34.797559+00:00",
+  "base_revision": "dfe9b1b3aca6ddc82ab60679dd8702e8fe517fce",
+  "files_sha256": {
+    "src/capabilities/ingestion/server/docx/request-budget.ts": "4dac2108f2f9d968e5d1b838ef03bf20f4cac42fbeba4c4d7d8be24ed99a5398",
+    "src/capabilities/ingestion/tasks/docx-ingestion.ts": "dc861f204deb6eae869f5961d7207d9b53c360020dcd364edee795c85fc6a203",
+    "src/ai/owned-task-specs.ts": "ba9bd9e13d2d7f08147282ed6fb91dfb5e98d9696ccb2fa1fdc87e9b45437172",
+    "src/capabilities/ingestion/api/import.db.test.ts": "c5a5df37f6d8e198f788b1ea5a583b6eac61a9678b31b44a36bb8336c9a4ccdd"
+  },
+  "real_provider_requests": 0,
+  "real_ocr_requests": 0,
+  "controlled_stream_calls": 27,
+  "in_memory_fetch_calls": 2,
+  "capability_fixture_injected": false,
+  "provider_metadata_preflight": {
+    "provider": "xiaomi-token-plan",
+    "model": "mimo-v2.6-pro",
+    "endpoint": "https://token-plan-cn.xiaomimimo.com/v1",
+    "api": "openai-completions",
+    "input": ["text", "image"],
+    "contextWindow": 1048576,
+    "credentialsPresent": true,
+    "capabilities": {
+      "toolCalling": true,
+      "vision": true,
+      "reasoning": true,
+      "structuredOutput": false
+    },
+    "profileSource": "binding",
+    "profileLimits": {
+      "contextWindowTokens": 1048576,
+      "maxOutputTokens": 131072
+    }
+  },
+  "limits": {
+    "model_requests": 16,
+    "tools": 24,
+    "output_tokens": 4096,
+    "timeout_ms": 240000,
+    "retries": 0,
+    "credits_upper_per_run": 650000000,
+    "reserved_credits_per_request": 317030400
+  },
+  "observed_account_credits": null,
+  "credit_accounting": "Calculated from observed provider token usage and public Token Plan rates; not account-bill verification. Unknown usage retains full reserve. Offline receipt usage is synthetic.",
+  "case": {
+    "name": "retains DOCX agent material and drafts through budget rejection and retry",
+    "passed": 1,
+    "skipped": 3,
+    "duration_seconds": 5.39
+  },
+  "real_acceptance": {
+    "status": "waiting_for_selected_Desktop_test_data",
+    "synthetic_live_run": "canceled before any call",
+    "input_received": false,
+    "whole_directory_upload": false
+  },
+  "receipt": {
+    "runs": [
+      {
+        "id": "bl5z4qnrrmxr7sj4pnmd9zj6",
+        "error": "[DocxIngestionTask] agent run errored: subtype=error_during_execution errors=DOCX limits: not the approved Token Plan binding",
+        "model": "mimo-v2.6-pro",
+        "budget": {
+          "run_id": "bl5z4qnrrmxr7sj4pnmd9zj6",
+          "requests": 0,
+          "credits_upper": 0,
+          "catalog_usd_equivalent_upper": null
+        },
+        "status": "failure",
+        "provider": "xiaomi-token-plan"
+      },
+      {
+        "id": "a3a17jfnblbqar16ozwgicqc",
+        "error": "[DocxIngestionTask] agent run errored: subtype=error_during_execution errors=DOCX limits: unknown or out-of-bound provider usage; reservation retained",
+        "model": "mimo-v2.6-pro",
+        "budget": {
+          "run_id": "a3a17jfnblbqar16ozwgicqc",
+          "requests": 8,
+          "credits_upper": 319172400,
+          "catalog_usd_equivalent_upper": 0.462803
+        },
+        "status": "failure",
+        "provider": "xiaomi-token-plan"
+      },
+      {
+        "id": "tlx6uaam5b1nnrsfsvz8m3nx",
+        "error": "[DocxIngestionTask] agent run errored: subtype=error_during_execution errors=DOCX limits: insufficient run credits before request",
+        "model": "mimo-v2.6-pro",
+        "budget": {
+          "run_id": "tlx6uaam5b1nnrsfsvz8m3nx",
+          "requests": 10,
+          "credits_upper": 636508800,
+          "catalog_usd_equivalent_upper": 0.922942
+        },
+        "status": "failure",
+        "provider": "xiaomi-token-plan"
+      },
+      {
+        "id": "r32a7x26cz442jyht0r9dct1",
+        "error": null,
+        "model": "mimo-v2.6-pro",
+        "budget": {
+          "run_id": "r32a7x26cz442jyht0r9dct1",
+          "requests": 9,
+          "credits_upper": 2754000,
+          "catalog_usd_equivalent_upper": 0.003996
+        },
+        "status": "success",
+        "provider": "xiaomi-token-plan"
+      }
+    ],
+    "blocks": [
+      {
+        "id": "z7mj53nhw9vktesv5o14a2l7",
+        "status": "draft",
+        "structured": {
+          "id": "q1",
+          "kind": "short_answer",
+          "role": "standalone",
+          "source": "agent_edit",
+          "options": [
+            {
+              "text": "甲",
+              "label": "A"
+            },
+            {
+              "text": "乙",
+              "label": "B"
+            }
+          ],
+          "prompt_text": "题甲",
+          "question_no": "q1",
+          "last_modified_by": "tlx6uaam5b1nnrsfsvz8m3nx"
+        }
+      },
+      {
+        "id": "rbl84of602e4j0qkg1xmhlx9",
+        "status": "draft",
+        "structured": {
+          "id": "q2",
+          "kind": "short_answer",
+          "role": "standalone",
+          "source": "agent_edit",
+          "prompt_text": "",
+          "question_no": "q2",
+          "last_modified_by": "r32a7x26cz442jyht0r9dct1"
+        }
+      }
+    ],
+    "sessions": [
+      {
+        "id": "nvg5tulr2xjxujyfoshrq6kz",
+        "status": "partial"
+      }
+    ],
+    "unknown_holds": [
+      {
+        "model": "mimo-v2.6-pro",
+        "runId": "a3a17jfnblbqar16ozwgicqc",
+        "status": "unknown",
+        "baseUrl": "https://token-plan-cn.xiaomimimo.com/v1",
+        "request": 8,
+        "provider": "xiaomi-token-plan",
+        "contextBytes": 22823,
+        "creditSource": "mimo-token-plan/2026-09-21",
+        "creditsUpper": 317030400,
+        "catalogSource": "xiaomi-overseas-usd/2026-10-08",
+        "reservedCredits": 317030400,
+        "inputUpperTokens": 1048576,
+        "outputUpperTokens": 4096,
+        "catalogUsdEquivalentUpper": 0.459695
+      }
+    ],
+    "source_summary": [
+      {
+        "sealed": true,
+        "source_id": "onscyvx2tn30emi0gx2aau9h",
+        "seen_images": ["kf6cz8p3vqhrpd2z7q5xej14"],
+        "source_assets": 6
+      }
+    ],
+    "budget_statuses": {
+      "settled": 26,
+      "unknown": 1,
+      "not_sent": 4
+    },
+    "formal_questions": 0
+  },
+  "glm_ocr": {
+    "credential_variable": "ZHIPU_API_KEY",
+    "present": true,
+    "endpoint": "https://open.bigmodel.cn/api/paas/v4/layout_parsing",
+    "model": "glm-ocr",
+    "called": false,
+    "single_page_cost_ceiling_confirmed": false,
+    "coordinate_discrepancy": "Current API description normalized 0-1; existing repository fixtures absolute pixels. Preserve raw response/page dimensions before adapting."
+  }
+}

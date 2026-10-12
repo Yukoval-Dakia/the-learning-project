@@ -8,8 +8,8 @@ export const docxIngestionTaskSpec = {
     kind: 'DocxIngestionTask',
     description:
       'Read complete DOCX sources on demand and author recoverable structured drafts through scoped tools.',
-    defaultProvider: 'xiaomi',
-    defaultModel: 'mimo-v2.5',
+    defaultProvider: 'xiaomi-token-plan',
+    defaultModel: 'mimo-v2.6-pro',
     budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 16, timeout: 240_000 },
     needsToolCall: true,
     requiresRequestGuard: true,

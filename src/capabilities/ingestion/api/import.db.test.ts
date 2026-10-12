@@ -14,7 +14,7 @@ import { registerCapabilityTools } from '@/server/ai/tools/register-capability-t
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
-import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   event,
@@ -62,7 +62,6 @@ import { DocxAgentState } from '@/core/schema/docx-agent';
 import { structuredToPromptMarkdown } from '@/core/schema/structured_question';
 import { __setPiAdapterForTests } from '@/server/ai/execution-adapter';
 import { PiAgentAdapter } from '@/server/ai/pi-agent-adapter';
-import { PROVIDER_MODEL_BINDINGS } from '@/server/ai/providers';
 import { buildPiDomainAgentTools } from '@/server/ai/tools/pi-tools';
 import { Ingestion } from '@/server/session';
 // YUK-503 (YUK-471 W3-D test hardening) — fold==row parity helpers for the set_status writers.
@@ -226,7 +225,7 @@ describe('POST /api/ingestion/[id]/import', () => {
   });
 
   // @invariant data: DOCX sources and staged drafts survive agent failure/retry without duplicate or silent-drop imports.
-  // @fails-if unknown tariffs or over-budget image requests reach transport, failures erase drafts, retry duplicates questions, or unresolved material becomes a terminal import.
+  // @fails-if a non-Token-Plan binding or over-budget image request reaches transport, failures erase drafts, retry duplicates questions, or unresolved material becomes a terminal import.
   it('retains DOCX agent material and drafts through budget rejection and retry', async () => {
     const db = testDb();
     // Production worker boot registers capability tools before dispatching jobs.
@@ -315,40 +314,15 @@ describe('POST /api/ingestion/[id]/import', () => {
     };
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-10-12T04:00:00Z'));
-    vi.stubEnv('XIAOMI_API_KEY', 'offline-provider-test-only');
-    vi.stubEnv('AI_PROVIDER_OVERRIDE', 'xiaomi');
+    vi.stubEnv('XIAOMI_TOKEN_PLAN_API_KEY', 'offline-provider-test-only');
+    vi.stubEnv('AI_PROVIDER_OVERRIDE', 'xiaomi-token-plan');
     vi.stubEnv('AI_PROVIDER_MODEL', 'mimo-v2.6-pro');
-    // Controlled provider metadata only. The production direct-Xiaomi v2.6-pro
-    // capability gate is still unconfirmed; this fixture does NOT admit it.
-    const binding = PROVIDER_MODEL_BINDINGS.xiaomi;
-    const originalModels = binding.models;
-    binding.models = {
-      ...originalModels,
-      'mimo-v2.6-pro': { capabilities: { toolCalling: true, vision: true } },
-    };
-    onTestFinished(() => {
-      binding.models = originalModels;
-    });
-    const approve = (maxRunUsd: number, accountPricing = 'overseas-pay-as-you-go-usd') =>
-      vi.stubEnv(
-        'DOCX_AGENT_BUDGET_APPROVAL',
-        JSON.stringify({
-          priceRef: 'xiaomi-overseas-usd/2026-10-08',
-          provider: 'xiaomi',
-          model: 'mimo-v2.6-pro',
-          currency: 'USD',
-          accountPricing,
-          maxRunUsd,
-          expiresAt: '2026-10-13T00:00:00Z',
-        }),
-      );
-    approve(1);
     const model: Model<'openai-completions'> = {
       id: 'mimo-v2.6-pro',
       name: 'Offline DOCX wire',
-      provider: 'xiaomi',
+      provider: 'xiaomi-token-plan',
       api: 'openai-completions',
-      baseUrl: 'https://api.xiaomimimo.com/v1',
+      baseUrl: 'https://token-plan-cn.xiaomimimo.com/v1',
       reasoning: false,
       input: ['text', 'image'],
       contextWindow: 1_048_576,
@@ -572,21 +546,11 @@ describe('POST /api/ingestion/[id]/import', () => {
     __setPiAdapterForTests(new PiAgentAdapter({ models, agentLoop }));
     const job = { id: 'local-docx-job', data: { sessionId } } as never;
     const handler = buildTencentOcrHandler({ db, r2, taskRuntime: runtime });
-    approve(1, 'unknown');
     await queue();
-    await expect(handler([job])).rejects.toThrow('missing approved USD price/binding');
-    expect(wire).not.toHaveBeenCalled();
-    approve(1);
-    await queue();
-    model.baseUrl = 'https://unpriced.invalid';
-    await expect(handler([job])).rejects.toThrow('unpriced or changed');
-    expect(wire).not.toHaveBeenCalled();
     model.baseUrl = 'https://api.xiaomimimo.com/v1';
-    approve(0.000001);
-    await queue();
-    await expect(handler([job])).rejects.toThrow('insufficient run budget');
+    await expect(handler([job])).rejects.toThrow('not the approved Token Plan binding');
     expect(wire).not.toHaveBeenCalled();
-    approve(1);
+    model.baseUrl = 'https://token-plan-cn.xiaomimimo.com/v1';
     await queue();
     await expect(handler([job])).rejects.toThrow('unknown or out-of-bound provider usage');
     expect(wire).toHaveBeenCalledTimes(8);
@@ -604,21 +568,21 @@ describe('POST /api/ingestion/[id]/import', () => {
       .select()
       .from(source_document)
       .where(eq(source_document.id, sourceDocumentId));
-    const reservations = interrupted.provenance.docx_request_budget as Array<{
+    const reservations = interrupted.provenance.docx_token_plan_usage as Array<{
       status: string;
-      amountMicros: number;
-      reservedMicros: number;
+      creditsUpper: number;
+      reservedCredits: number;
     }>;
     expect(reservations.find((entry) => entry.status === 'unknown')).toMatchObject({
-      amountMicros: 459695,
-      reservedMicros: 459695,
+      creditsUpper: 317030400,
+      reservedCredits: 317030400,
     });
     phase = 'image_bound';
     turn = 0;
     await queue();
-    await expect(handler([job])).rejects.toThrow('insufficient run budget');
+    await expect(handler([job])).rejects.toThrow('insufficient run credits');
     expect(wire).toHaveBeenCalledTimes(18);
-    expect(imageTransports).toBe(2); // A third full-context image request would exceed the 1 USD run cap.
+    expect(imageTransports).toBe(2); // A third full-context request would exceed the 650M credit cap.
     expect(
       await db
         .select()

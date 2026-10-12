@@ -1,5 +1,7 @@
 # DOCX agent 材料与草稿工具（YUK-1404）
 
+> 当前主线已按用户选择转为 Token Plan；本页预算段保留为 dfe9b1b3 的历史证据。最新接线、轻量方案与待验输入见 [Token Plan 录入说明](2026-10-12-yuk1404-token-plan-ingestion.md)。
+
 本次按 owner 后续指令替换同一 Draft PR #1703 的正则路线，服务「第一天能用」的完整录入契约。
 基线 `160fd972cdb136902456e07a0f33058359436327`。不 merge、不部署、不用真实 R2 或旧 Mac 数据库、不执行付费 provider。
 旧 UI 复核方案仍留在原工作区，七个未提交文件另封存 `/tmp/yuk1404-agent/paused-ui-160.tar.gz`；未纳入本次工具链。

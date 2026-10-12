@@ -16,6 +16,7 @@ const EFFORT_LEVELS = new Set<string>(['low', 'medium', 'high', 'xhigh', 'max'])
 const PROVIDERS = new Set<string>([
   'anthropic',
   'xiaomi',
+  'xiaomi-token-plan',
   'zai-coding-cn',
   'openrouter',
   'gateway',
