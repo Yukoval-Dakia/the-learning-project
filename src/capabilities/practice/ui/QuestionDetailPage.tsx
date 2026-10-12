@@ -183,6 +183,38 @@ function draftFrom(d: QuestionFullDetail): EditDraft {
   };
 }
 
+function sameList(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((x, i) => x === b[i]);
+}
+
+// 草稿的出处：draft 由哪一版服务端数据派生。dirty 与「有更新版本」都对照它判定，
+// 而不是对照最新 data——否则后台 refetch 一到，比较基准就悄悄换了。
+// src = 派生它的 data 对象；保存成功后由保存回执合成，src 为 null。
+interface DraftBaseline {
+  src: QuestionFullDetail | null;
+  version: number;
+  draft: EditDraft;
+}
+
+function baselineFrom(d: QuestionFullDetail): DraftBaseline {
+  return { src: d, version: d.version, draft: draftFrom(d) };
+}
+
+// 「继续编辑」：保留用户改过的字段，没改过的字段换成服务端新值，基准移到新版本。
+// 这样之后保存只发用户真正改的字段，并带新版本号，不会把别处的改动倒回去，也不会一直 409。
+function keepEditsOnto(draft: EditDraft, base: EditDraft, next: EditDraft): EditDraft {
+  return {
+    prompt_md: draft.prompt_md !== base.prompt_md ? draft.prompt_md : next.prompt_md,
+    reference_md: draft.reference_md !== base.reference_md ? draft.reference_md : next.reference_md,
+    choices_md: sameList(draft.choices_md, base.choices_md) ? next.choices_md : draft.choices_md,
+    difficulty: draft.difficulty !== base.difficulty ? draft.difficulty : next.difficulty,
+    knowledge_ids: sameList(draft.knowledge_ids, base.knowledge_ids)
+      ? next.knowledge_ids
+      : draft.knowledge_ids,
+    draft_status: draft.draft_status !== base.draft_status ? draft.draft_status : next.draft_status,
+  };
+}
+
 // mcq 正确答案 best-effort 解析：reference_md 若以单个字母（A-Z）开头则视为答案 key。
 // 后端 choices_md 不存正确标记（DEFER 注释），故从 reference_md 推。
 function answerKeyFrom(referenceMd: string): string | null {
@@ -442,7 +474,10 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
   });
   const data = detailQ.data;
 
-  // 编辑草稿态。data 到达 / 切换 id 时重置。
+  // 编辑草稿态 + 它的出处（baseline）。首次 data 到达 / 切换 id 时建立。
+  const [baseline, setBaseline] = useState<DraftBaseline | null>(() =>
+    data && data.id === id ? baselineFrom(data) : null,
+  );
   const [draft, setDraft] = useState<EditDraft | null>(() =>
     data && data.id === id ? draftFrom(data) : null,
   );
@@ -465,34 +500,46 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
     setTimeout(() => setToasts((ts) => ts.filter((t) => t.id !== tid)), 2600);
   }, []);
 
-  // data 到达 / 切换 id 时重置编辑草稿与瞬态 UI（渲染期按 data 引用 + id 比对上次已重置的
-  // 版本，命中变化即调整 state；每次 refetch 得到新 data 仍会覆写草稿，保持原语义）。
-  // minor1 修：这里不碰 saved——「已保存」提示由保存成功的独立计时器
-  // 管控（见 patchMut.onSuccess），否则 invalidate→refetch→重置会把刚亮起的
-  // badge 一闪即逝地抹掉。
-  const [draftSource, setDraftSource] = useState({ data, id });
-  if (draftSource.data !== data || draftSource.id !== id) {
-    setDraftSource({ data, id });
-    if (data?.id === id) setDraft(draftFrom(data));
+  // 切换题目：一律重置草稿与瞬态 UI（渲染期比对上次的 id，命中即调整 state，收敛于一次）。
+  // minor1：这里和下面的「静默采用」都不碰 saved——「已保存」提示由保存成功的独立计时器
+  // 管控（见 patchMut.onSuccess），否则 invalidate→refetch 会把刚亮起的 badge 抹掉。
+  const [shownId, setShownId] = useState(id);
+  if (shownId !== id) {
+    setShownId(id);
+    setBaseline(data?.id === id ? baselineFrom(data) : null);
+    setDraft(data?.id === id ? draftFrom(data) : null);
     setEditOptIdx(-1);
     setShowAddChip(false);
   }
 
-  // dirty 判定：草稿与服务端值逐字段比对。
+  // dirty 判定：草稿对照它的出处（baseline），不对照最新 data。
   const dirty = useMemo(() => {
-    if (!data || !draft) return false;
-    const base = draftFrom(data);
+    if (!baseline || !draft) return false;
+    const base = baseline.draft;
     return (
       base.prompt_md !== draft.prompt_md ||
       base.reference_md !== draft.reference_md ||
       base.difficulty !== draft.difficulty ||
       base.draft_status !== draft.draft_status ||
-      base.choices_md.length !== draft.choices_md.length ||
-      base.choices_md.some((c, i) => c !== draft.choices_md[i]) ||
-      base.knowledge_ids.length !== draft.knowledge_ids.length ||
-      base.knowledge_ids.some((k, i) => k !== draft.knowledge_ids[i])
+      !sameList(base.choices_md, draft.choices_md) ||
+      !sameList(base.knowledge_ids, draft.knowledge_ids)
     );
-  }, [data, draft]);
+  }, [baseline, draft]);
+  // 未保存 = 字段有改动，或选项输入框 / 「添加知识点」选择器正开着。
+  const unsaved = dirty || editOptIdx >= 0 || showAddChip;
+
+  // 服务端数据到达：没有未保存内容时静默采用（同旧行为）；有未保存内容时不覆盖草稿，
+  // 改由下方提示条让用户选。version 单调递增：低于基准的是保存前的旧缓存，跳过，
+  // 免得保存成功到 refetch 回来之间把草稿闪回旧值。采用后 baseline.src === current，收敛。
+  const current = shownId === id && data?.id === id ? data : undefined;
+  if (
+    current &&
+    (baseline === null ||
+      (!unsaved && baseline.src !== current && current.version >= baseline.version))
+  ) {
+    setBaseline(baselineFrom(current));
+    setDraft(draftFrom(current));
+  }
 
   // labels（中文名）按 knowledge_id 索引——draft 增删 chip 用 id，展示用 name。
   const labelName = useMemo(() => {
@@ -559,7 +606,7 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
     );
   }
 
-  if (detailQ.isLoading || !data || !draft) {
+  if (detailQ.isLoading || !data || !draft || !baseline) {
     return (
       <div className="page view questions-loom">
         <button type="button" className="back-link" onClick={() => navigate('/questions')}>
@@ -586,9 +633,11 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
       pushToast('warn', '存在空选项，请填写后再保存。');
       return;
     }
-    const base = draftFrom(data);
-    // 只发改了的字段（version 必带）。
-    const body: Parameters<typeof patchQuestion>[1] = { version: data.version };
+    // 只发相对出处改了的字段，version 带出处的版本：别处已有新版本时照常 409。
+    // （旧代码这里用 data——当时草稿总被 data 覆写，二者等价。）
+    const base = baseline.draft;
+    const sent = draft;
+    const body: Parameters<typeof patchQuestion>[1] = { version: baseline.version };
     if (draft.prompt_md !== base.prompt_md) body.prompt_md = draft.prompt_md;
     if (draft.reference_md !== base.reference_md)
       body.reference_md = draft.reference_md === '' ? null : draft.reference_md;
@@ -604,7 +653,33 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
       draft.knowledge_ids.some((k, i) => k !== base.knowledge_ids[i])
     )
       body.knowledge_ids = draft.knowledge_ids;
-    patchMut.mutate(body);
+    patchMut.mutate(body, {
+      // 保存回执成为新出处：refetch 回来的同版本数据不会被当成「别处的新版本」。
+      onSuccess: (res) => setBaseline({ src: null, version: res.version, draft: sent }),
+    });
+  };
+
+  // 「有更新的版本」：服务端版本高于草稿出处。没有未保存内容时上面已静默采用，
+  // 所以能走到这里的都是有未保存内容的情况。保存进行中不提示（回执马上会移动出处）。
+  const newer =
+    current && unsaved && !patchMut.isPending && current.version > baseline.version
+      ? current
+      : null;
+
+  const loadNewer = () => {
+    if (!newer) return;
+    setBaseline(baselineFrom(newer));
+    setDraft(draftFrom(newer));
+    setEditOptIdx(-1);
+    setShowAddChip(false);
+  };
+
+  const keepEditing = () => {
+    if (!newer) return;
+    const merged = keepEditsOnto(draft, baseline.draft, draftFrom(newer));
+    setDraft(merged);
+    setBaseline(baselineFrom(newer));
+    if (editOptIdx >= merged.choices_md.length) setEditOptIdx(-1);
   };
 
   // 删除：打开 modal → 首拍 DELETE（无 confirm）拿约束计数 → 用户确认 → confirm 删。
@@ -724,6 +799,24 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
             </Btn>
           </div>
         </div>
+      </div>
+
+      {/* 别处有了更新的版本，而这里有未保存的修改：不覆盖，让用户选。 */}
+      <div aria-live="polite">
+        {newer && (
+          <div className="qd-stale">
+            <LoomIcon name="alert" size={15} className="qd-stale-ico" />
+            <div className="qd-stale-txt">这道题在别处有了更新的版本。你这里的修改还没保存。</div>
+            <div className="qd-stale-act">
+              <Btn size="sm" variant="ghost" onClick={loadNewer}>
+                载入新版本
+              </Btn>
+              <Btn size="sm" variant="secondary" onClick={keepEditing}>
+                继续编辑
+              </Btn>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* parent 面包屑（小题 → 大题）*/}
