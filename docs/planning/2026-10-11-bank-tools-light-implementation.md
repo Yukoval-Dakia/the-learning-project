@@ -244,3 +244,7 @@ embedding 与 provider-attempt 费用记账在事务外完成，cursor 仍不调
 原隔离 case 增加真实 PG RLS 策略：只允许上述事务中的 revision 读取，若工具或 helper
 逃逸到事务外，实际 search/check 断言失败。预算内两轮审查已用完，不开展第三审；
 最终修复由作者定向复核、原 6 cases 和 exact-head CI 验证，未冒称审查在最终修复后再通过。
+
+最终产品提交 `9493ebe51323b5fc604b19826f19e37526abedce`：DB **6/6**、类型/lint/build 与相关审计通过。
+新增测试含 fixture **572 行**，产品 **2263 行**。日志与 digest 见
+[本轮回执](evidence/yuk1448-bank-light/checks.json)；精确最终 PR head 的 CI 终态绑定在 PR 描述，避免证据提交不断使 head 漂移。
