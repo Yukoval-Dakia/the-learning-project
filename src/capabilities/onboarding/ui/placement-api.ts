@@ -5,7 +5,6 @@
 // answer trail is keyed by that session_id (placement-next.ts counts events WHERE
 // session_id=<probe>), so it MUST be sent or /next can't advance/terminate.
 
-import { saveResponseDraft } from '@/capabilities/practice/ui-public';
 import {
   type ApiOperationJsonResponse,
   type ApiOperationRequestBody,
@@ -95,6 +94,24 @@ export const submitProbeAnswer = (input: SubmitProbeAnswerInput) =>
     },
   });
 
-// Probe answer draft: the shared issuance responses resource — practice's saver itself, so
-// it shares the keepalive size fallback.
-export const saveProbeResponseDraft = saveResponseDraft;
+// keepalive bodies share a ~64KB page budget and fetch throws on one over it; same cap as
+// practice's draft saver (kept local: onboarding takes no value import from practice).
+const KEEPALIVE_MAX_BODY_BYTES = 60_000;
+
+// Probe answer draft: the shared issuance responses resource, same request as practice's saver.
+// YUK-1487 — an oversized keepalive body goes out as a normal (best-effort) fetch instead.
+export const saveProbeResponseDraft = (
+  issuanceId: string,
+  body: ApiOperationRequestBody<'saveResponseDraft'>,
+  options: { keepalive?: boolean } = {},
+) =>
+  apiOperationJson('saveResponseDraft', {
+    url: `/api/issuances/${encodeURIComponent(issuanceId)}/responses`,
+    method: 'POST',
+    body,
+    init:
+      options.keepalive === true &&
+      new TextEncoder().encode(JSON.stringify(body)).length <= KEEPALIVE_MAX_BODY_BYTES
+        ? { keepalive: true }
+        : undefined,
+  });
