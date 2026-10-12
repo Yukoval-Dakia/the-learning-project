@@ -1,10 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-12：YUK-1404 原卷3217ff8复跑31块仍缺跨行数字题干Q19；已用相邻题号/选项上下文替代年份特例，歧义partial，同一PR待新head原卷重验。
+> Linear 是权威 tracker。2026-10-12：Mac于01:57Z固定d481实跑Q1–32各一次、Q1–30各一套ABCD，来源与四媒体保全；整体partial，图文未决项保留。下一刀仅完成取证/导入保护方案，未实施。
 
 ## NOW
 
-- **YUK-1404 / 学校 DOCX 题号与图片保全**：[Draft PR #1703](https://github.com/Yukoval-Dakia/the-learning-project/pull/1703) Mac在057e9efc得27块、3217ff8得31块；Q19为缩进19.2024后换行，年份后缀特例已删除。当前连续题号+后一题号/自身选项支持数字候选，仍不确定则保留原行；全部数字歧义及图片锚点关联走partial。沿用同一DB case，旧head缺19失败、新实现与既有小数/倒序保护通过；不再跑7题/1658矩阵、不启第三审。Q27/28源串接、Q12/13及31/32视觉归属继续未决。见[验收与边界](docs/planning/2026-10-12-yuk1404-docx-boundaries.md)。
+- **YUK-1404 / 学校 DOCX 题号与图片保全**：[Draft PR #1703](https://github.com/Yukoval-Dakia/the-learning-project/pull/1703) 固定d481于Mac 01:57Z实跑Q1–32各一次、无漏/重复/伪号，Q18吞19消除，Q1–30各一套ABCD；正文XML/Markdown/四媒体保全，整体partial。Q27/28源串接、Q12/13及31/32图文仍未验收；未证明正式题/可答题。已记录[原卷证据](docs/planning/2026-10-12-yuk1404-docx-boundaries.md)及[下一图文切片方案](docs/planning/2026-10-12-yuk1404-docx-image-evidence.md)。本轮只文档，不新增测试/第三审/Linear写入。
 
 - **YUK-1404 / native03题图修复**：PR1657 fixed4c52 exact CI38144495041全绿；正常纳入main eb960c079，仅PLAN/now冲突。图ownership/隐私产品代码与单capture边界测试保留，旧细粒度四tests已删。独立初审/最终R2预算已完成，不启第三审。当前crop producer仍无source_asset SHA登记，旧visibility未知，public withholding不是完整配图交付；同卷actual-output验收仍待。无DB/runtime/provider/paid。 [证据](docs/planning/2026-10-11-yuk1404-native03-figure-repair.md)。
 
@@ -34,7 +34,7 @@
 
 ## NEXT
 
-- DOCX 数字上下文修正的新head交Mac以同入口免费重跑原卷，逐题对账并保留Q27/28源问题；视觉确认Q12/13及31/32归属，数够32不等于题面正确。#1658题型/choices与判分准入各自验收；历史原卷正式题0仅worker未运行，不作为入库bug。
+- DOCX 下一刀取证仅四drawing锚点属性和Q12/13、31/32相关页坐标/人工确认；先补逐图证据与reviewed后仍有效的导入约束，纯图片题面未齐继续保留。现有导入会ignored未选草稿，不能假称已支持部分入库留草稿。详见图文切片方案；不扩准入/OCR。
 
 - Start/judge共享文件边界见[交接](docs/planning/2026-10-09-judge-start-ownership.md)，Start/boot/shutdown由5796独占；judge A/B/C/D由7631接续，迁移号后核。
 
