@@ -1,0 +1,88 @@
+{
+  "base": "fa33bad5a1c55756f1852c3da7eb2c9e28a5cbec",
+  "files": [
+    {
+      "path": "src/capabilities/notes/jobs/note_verify.control.test.ts",
+      "sha256": "5eb4c403b102b6af5b56a711a267d48623dc681b8d4ffaf16abab24e6bcb2006"
+    },
+    {
+      "path": "src/capabilities/notes/jobs/note_verify.ts",
+      "sha256": "585e8bd21b3e93ad777e66ee651bf3e41bb6b9e0be8036b2b7502a0af5fb6974"
+    },
+    {
+      "path": "src/capabilities/notes/public.ts",
+      "sha256": "8e3d7c1a4eb37f2568fc63f83d399639cc99e3225ac6b8b39f68a05009123e60"
+    },
+    {
+      "path": "src/capabilities/notes/server/paid-effect-note-admission.ts",
+      "sha256": "a2a86a0a6e49c71a58cb425d51a5abc8966ea738c551efd11dd4a02b59846fa5"
+    },
+    {
+      "path": "src/capabilities/notes/server/paid-effect-note-obligations.ts",
+      "sha256": "ae031523d7a9b6c392b7e6313f6116d3cdc9aa8298d8b137b7e75ddba795a17b"
+    },
+    {
+      "path": "src/capabilities/practice/public.ts",
+      "sha256": "0f7bee69b3664fcd2ea6ce9605f82fedaf8eb160192de6f9013e352d70f86abd"
+    },
+    {
+      "path": "src/capabilities/practice/server/calibration-sample-durable-operation.db.test.ts",
+      "sha256": "cafe7722fbf6d2771d68b235a7be28ee470ead96a204c4f1bc031af93854c52f"
+    },
+    {
+      "path": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "sha256": "2c7a9ced12d8d8f8b78d82affdc28bd0f934c400c399c7e53bd91d2e38d47a94"
+    },
+    {
+      "path": "src/capabilities/practice/server/calibration-sample-store.ts",
+      "sha256": "ec0c039da5efe73a88603b00736049ffe082ffe1c1aead73997dc13740bf3320"
+    },
+    {
+      "path": "src/core/migration/paid-effect-protocol.ts",
+      "sha256": "5d157350b3419a38c14c736d3369ae2ecc64d6b053791a755f2c9b864bd1a2ef"
+    },
+    {
+      "path": "src/db/paid-effect-control.ts",
+      "sha256": "3a6ab088edcaf832734da7be0955dd8e507af55815c47f62ed621b91441ba6e8"
+    },
+    {
+      "path": "src/db/paid-effect-store.ts",
+      "sha256": "eecf7f539ca0089498b523f22b85987da75a742141fdb5ee323340c9fd97594f"
+    },
+    {
+      "path": "src/db/schema.ts",
+      "sha256": "79af0f9faac8bfd9904875e12d878d78805a4b2bb64409d0b079e5a2e4500004"
+    },
+    {
+      "path": "src/server/durable/calibration-sample-family.ts",
+      "sha256": "c21eb8284f196b34bb68dff89a7e9af189c990c21f1c678b421b7cedc2667491"
+    },
+    {
+      "path": "src/server/durable/note-verify-family.test.ts",
+      "sha256": "2c869555c6d458d397f4796d35c452e17701acbbd68fd94282eac6850011dd4a"
+    },
+    {
+      "path": "src/server/durable/note-verify-family.ts",
+      "sha256": "8f96664b06eae6ce2164e8bafa733750f2265083877dfa9fc38bfe8df7ee7c65"
+    },
+    {
+      "path": "src/server/durable/paid-effect-control.ts",
+      "sha256": "ae14484e287cf1b9a9d71904fd51c5bb24e5c9d30ca162dbbfbc7514a4c9edb9"
+    },
+    {
+      "path": "src/server/durable/paid-effect-protocol.test.ts",
+      "sha256": "845e918289028441e44bf3464ed0a275142a73713b947afe49e733e9e912a2b4"
+    },
+    {
+      "path": "src/server/durable/paid-effect-store.db.test.ts",
+      "sha256": "71189d4d26eedf553f5b4c49aee3b7497ef5e6bb58781efdc71b0d5607640922"
+    }
+  ],
+  "deleted": [
+    "src/server/durable/calibration-sample-store.ts",
+    "src/server/durable/paid-effect-note-admission.ts",
+    "src/server/durable/paid-effect-note-obligations.ts",
+    "src/server/durable/paid-effect-protocol.ts",
+    "src/server/durable/paid-effect-store.ts"
+  ]
+}

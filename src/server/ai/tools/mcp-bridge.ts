@@ -22,7 +22,10 @@
 //      result the LLM can read.
 
 import { createId } from '@paralleldrive/cuid2';
+import { readDerivationPolicy } from '@/core/schema/derivation-policy';
 import { writeEvent } from '@/kernel/events';
+import { readEventDerivationPolicy } from '@/kernel/events/derivation-policy';
+import { derivationToolDenial } from '@/kernel/tools/derivation-policy';
 import {
   type ToolOperationRecord,
   type ToolOperations,
@@ -284,10 +287,16 @@ export async function executeDomainToolCall(
   rawArgs: unknown,
   opts: DomainToolCallOptions,
 ): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
+  const declared = readDerivationPolicy({ derivation_policy: opts.ctx.derivationPolicy });
+  const sourcePolicy = opts.ctx.causedByEventId
+    ? await readEventDerivationPolicy(opts.ctx.db, opts.ctx.causedByEventId)
+    : declared;
+  const policy =
+    sourcePolicy === 'answer_only' || declared === 'answer_only' ? 'answer_only' : 'allow';
   const call: ToolCallContext = {
     dt,
     opts,
-    ctx: opts.ctx,
+    ctx: { ...opts.ctx, derivationPolicy: policy },
     taskKind: opts.taskKind ?? opts.ctx.callerActor.ref,
     startedAt: Date.now(),
     gateInput: { name: dt.name, effect: dt.effect },
@@ -372,7 +381,9 @@ function parseInput(call: ToolCallContext, rawArgs: unknown): InputPhase {
 async function runBeforeExecuteGate(call: ToolCallContext, phase: InputPhase): Promise<InputPhase> {
   if (!phase.result.ok) return phase;
   try {
-    const reason = await call.opts.beforeExecute?.(call.gateInput);
+    const reason =
+      derivationToolDenial(call.ctx.derivationPolicy ?? 'allow', call.gateInput) ??
+      (await call.opts.beforeExecute?.(call.gateInput));
     return typeof reason === 'string' && reason.length > 0
       ? { ...phase, result: { ok: false, error: reason } }
       : phase;
@@ -643,6 +654,7 @@ async function mirrorToolUse(
   if (__resolveMirrorPolicy(dt.mirrorEvent, ctx.callerActor, dt.effect)) {
     const mirrorPayload: Record<string, unknown> = {
       tool_name: dt.name,
+      derivation_policy: ctx.derivationPolicy ?? 'allow',
       args: (parsedInput ?? {}) as Record<string, unknown>,
     };
     if (summary) mirrorPayload.result_summary = summary;

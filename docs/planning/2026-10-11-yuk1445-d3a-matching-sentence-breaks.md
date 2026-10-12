@@ -406,3 +406,24 @@ Opus UI 适配后再生成契约、复查 typecheck，安排 DB window、唯一 
 exact-head CI、merge。未 push/PR/merge、部署、网络、安装、provider、浏览器或
 子任务。未发现已分配交接之外的新 actionable follow-up；本 lane 无网络/Linear
 写权限，既有 YUK-1445 状态与 UI/DB/R2 handoff 由 parent 对齐。
+
+### 2026-10-12 已验收切片串行合并：校准入口集成
+
+原 PR1702 head `9c7011ebea876e8a87b2f50724548b194c35eeaf` 的源码、UI/retro
+验收及 exact-head CI 已由协调者接受。本次正常合入 main
+`d3885e83cd7dce8779978636d4ff242317e55cf0`（依次包含 PR1698、PR1588）。
+实际冲突仅 `judge-calibration-sample-core.ts` 一块：PR1698 将校准执行提取到
+共享 `judgeCalibrationPreparedFace`，D3a 在旧位置新增的 `partial_unknown`
+跳过条件必须随之迁移。保留 main 的提取结构，仅在共享入口保留同一个条件，
+未知分数仍归入 no-observation classification，不伪造校准分歧或回执。
+
+只加强既有 unsupported 边界 case，使同一公开入口也拒绝 unknown-score partial；
+不增加 case、参数矩阵或新测试文件。该增量测试多于一行产品条件，是为了抓住
+普通 unsupported 断言无法发现的提取后漏判。既有 numeric partial 邻例保留。
+API client 与 Postman 重新生成无额外差异；无人工 UI 修改或 token/layout 改动。
+
+必要验证限定为既有校准公开入口、校准幂等 DB 与 D3a 真实结算 DB，加
+typecheck/lint/build 和相关准入/分区/API/边界审计。具体结果绑定本次提交，记录在
+`/workspace/merge-batch-20261012/pr1702-integration/`，新 head 仍须 exact-head CI。
+使用独立环境白名单与新建合成 PG，不连接真实 DB、材料、provider，不付费或部署。
+本次合并仅接受对应代码切片，真实 provider、整卷、整体迁移和部署仍为独立验收。

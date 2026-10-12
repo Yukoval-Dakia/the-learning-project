@@ -14,8 +14,30 @@ type TurnContext = {
     readonly surface: CopilotRunInput['surface'];
     readonly kind?: string;
   };
-  readonly correction_contract?: CopilotRunInput['correction_contract'];
+  readonly correction_contract?: ModelCorrectionContract;
 };
+
+type ModelCorrectionContract = Pick<
+  CopilotRunInput['correction_contract'],
+  'target_prior_turn_id' | 'available_prior_turn_ids' | 'prior_turn_summaries' | 'required_fields'
+>;
+
+// Policy/position metadata is for deterministic admission only, never model context.
+function modelCorrectionContract(input: CopilotRunInput): ModelCorrectionContract {
+  const contract = input.correction_contract;
+  return {
+    ...(contract.target_prior_turn_id &&
+    !contract.restricted_target &&
+    contract.available_prior_turn_ids.includes(contract.target_prior_turn_id)
+      ? { target_prior_turn_id: contract.target_prior_turn_id }
+      : {}),
+    available_prior_turn_ids: contract.available_prior_turn_ids,
+    ...(contract.prior_turn_summaries
+      ? { prior_turn_summaries: contract.prior_turn_summaries }
+      : {}),
+    required_fields: contract.required_fields,
+  };
+}
 
 export function compileCopilotModelInput(
   input: CopilotRunInput,
@@ -24,7 +46,10 @@ export function compileCopilotModelInput(
 ): string {
   if (mode === 'cold') {
     const { learner_state_header: _learnerStateHeader, ...boundedEnvelope } = input;
-    return JSON.stringify(boundedEnvelope);
+    return JSON.stringify({
+      ...boundedEnvelope,
+      correction_contract: modelCorrectionContract(input),
+    });
   }
 
   const context = compileTurnContext(input, options.includeProposalFeedback !== false);
@@ -32,6 +57,7 @@ export function compileCopilotModelInput(
 }
 
 function compileTurnContext(input: CopilotRunInput, includeProposalFeedback: boolean): string {
+  const correction = modelCorrectionContract(input);
   const context: TurnContext = {
     v: 1,
     ...(input.review_answer ? { review_answer: input.review_answer } : {}),
@@ -48,9 +74,9 @@ function compileTurnContext(input: CopilotRunInput, includeProposalFeedback: boo
           },
         }
       : {}),
-    ...(input.correction_contract.target_prior_turn_id
+    ...(correction.target_prior_turn_id
       ? {
-          correction_contract: input.correction_contract,
+          correction_contract: correction,
         }
       : {}),
   };

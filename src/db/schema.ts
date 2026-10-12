@@ -4437,3 +4437,84 @@ export const session_orphan_disposition = pgTable(
     }),
   ],
 );
+
+// YUK-1355 Lane B — shared durable paid-effect protocol (fixed interface in
+// src/server/durable/paid-effect-protocol.ts; semantics + parent-owned SQL
+// draft in docs/planning/2026-10-11-yuk1355-paid-effect-protocol.md).
+// paid_effect_control: family-scoped backend ownership. ABSENCE of a row is
+// meaningful — it is the bootstrap default owner (pg-boss, generation 0), so
+// paid_effect.family deliberately has NO FK here.
+export const paid_effect_control = pgTable('paid_effect_control', {
+  family: text('family').primaryKey(),
+  backend: text('backend')
+    .$type<import('../core/migration/paid-effect-protocol').PaidEffectBackend>()
+    .notNull(),
+  generation: integer('generation').notNull().default(0),
+  created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+// YUK-1355 Lane B — one immutable row per paid-effect identity
+// (family, entity_id, entity_revision, unit, input_digest). Delivery identity
+// (delivery_id/tick) is audit metadata on the admitted send, never part of the
+// key; identity columns are never updated and rows are never deleted. State
+// machine: pending → sending → (unknown | receipt_ready) → applied, with no
+// path back to pending and no auto-replay from unknown.
+export const paid_effect = pgTable(
+  'paid_effect',
+  {
+    family: text('family').notNull(),
+    entity_id: text('entity_id').notNull(),
+    // Free-form revision coordinate (artifact version string, frozen workSetId,
+    // …) — text, not integer, because scheduled families key on workset ids.
+    entity_revision: text('entity_revision').notNull(),
+    unit: text('unit').notNull(),
+    input_digest: text('input_digest').notNull(),
+    input_json: jsonb('input_json').notNull(),
+    state: text('state')
+      .$type<import('../core/migration/paid-effect-protocol').PaidEffectState>()
+      .notNull(),
+    fence: integer('fence').notNull().default(0),
+    delivery_id: text('delivery_id'),
+    delivery_backend:
+      text('delivery_backend').$type<
+        import('../core/migration/paid-effect-protocol').PaidEffectBackend
+      >(),
+    delivery_tick: text('delivery_tick'),
+    send_lease_expires_at: timestamp('send_lease_expires_at', { withTimezone: true }),
+    result_json: jsonb('result_json'),
+    result_recorded_at: timestamp('result_recorded_at', { withTimezone: true }),
+    application_json: jsonb('application_json'),
+    applied_at: timestamp('applied_at', { withTimezone: true }),
+    application_attempts: integer('application_attempts').notNull().default(0),
+    last_application_error: text('last_application_error'),
+    unresolved_reason: text('unresolved_reason'),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.family, t.entity_id, t.entity_revision, t.unit, t.input_digest] }),
+    index('paid_effect_obligation_idx').on(t.family, t.state),
+    check(
+      'paid_effect_state_ck',
+      sql`${t.state} IN ('pending','sending','unknown','receipt_ready','applied')`,
+    ),
+    check('paid_effect_digest_ck', sql`${t.input_digest} ~ '^sha256:[0-9a-f]{64}$'`),
+    check('paid_effect_fence_ck', sql`${t.fence} >= 0`),
+    check(
+      'paid_effect_identity_nonempty_ck',
+      sql`${t.entity_id} <> '' AND ${t.entity_revision} <> '' AND ${t.unit} <> ''`,
+    ),
+    check(
+      'paid_effect_state_shape_ck',
+      sql`(
+        (${t.state} = 'pending' AND ${t.delivery_id} IS NULL AND ${t.delivery_backend} IS NULL AND ${t.send_lease_expires_at} IS NULL AND ${t.result_json} IS NULL AND ${t.applied_at} IS NULL)
+        OR (${t.state} = 'sending' AND ${t.delivery_id} IS NOT NULL AND ${t.delivery_backend} IS NOT NULL AND ${t.send_lease_expires_at} IS NOT NULL AND ${t.result_json} IS NULL AND ${t.applied_at} IS NULL)
+        OR (${t.state} = 'unknown' AND ${t.delivery_id} IS NOT NULL AND ${t.delivery_backend} IS NOT NULL AND ${t.send_lease_expires_at} IS NULL AND ${t.result_json} IS NULL AND ${t.applied_at} IS NULL AND ${t.unresolved_reason} IS NOT NULL)
+        OR (${t.state} = 'receipt_ready' AND ${t.result_json} IS NOT NULL AND ${t.result_recorded_at} IS NOT NULL AND ${t.send_lease_expires_at} IS NULL AND ${t.applied_at} IS NULL)
+        OR (${t.state} = 'applied' AND ${t.result_json} IS NOT NULL AND ${t.applied_at} IS NOT NULL AND ${t.application_json} IS NOT NULL AND ${t.send_lease_expires_at} IS NULL)
+      )`,
+    ),
+    check('paid_effect_application_attempts_ck', sql`${t.application_attempts} >= 0`),
+  ],
+);

@@ -1,0 +1,168 @@
+{
+  "base": "90f95b57d4fcb08e36fa7a782abffa3d7966d5cc",
+  "scope": "paid-effect durable backup contract implementation only; no third review",
+  "node": "24.19.0",
+  "pnpm": "11.13.1",
+  "pathPrefix": "/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin",
+  "sourceSha256": {
+    "src/server/export/constants.ts": "5ae7b2738a051e1535ebac902700a0080b5a97d04ac2a62f292e876d92cdaea8",
+    "src/server/export/archive.ts": "09aadb6849e964b27b41e7dfc6bf34e794c5b138256134cea1f0e8930cb364af",
+    "src/server/export/paid-effect-backup.db.test.ts": "6102a02c4a27dc0b65ef6a17b7840abf0f5b1f1b850688a5f49fefccf0f0c409",
+    "vitest.shared.ts": "909f520c33c2cb47951bed82e11a8d41d46ebaada210f9f7cd2730b6a9044a6d"
+  },
+  "lineCounts": {
+    "productFiles": [
+      {
+        "path": "src/server/export/archive.ts",
+        "added": 18,
+        "removed": 1
+      },
+      {
+        "path": "src/server/export/constants.ts",
+        "added": 8,
+        "removed": 1
+      }
+    ],
+    "productAdded": 26,
+    "productRemoved": 2,
+    "productNet": 24,
+    "newTestLines": 266,
+    "newTestCases": 3,
+    "partitionAdded": 1,
+    "documentationAndEvidence": "separate in commit diff"
+  },
+  "offlineChecks": [
+    {
+      "name": "backup-import-unit",
+      "command": "pnpm vitest run --config vitest.unit.config.ts src/capabilities/observability/api/backup-import.unit.test.ts",
+      "status": "PASS",
+      "exitCode": 0,
+      "result": {
+        "files": 1,
+        "passed": 2,
+        "failed": 0
+      },
+      "originalLog": "/tmp/yuk1355-backup-offline-final.log",
+      "sealedLog": "docs/planning/evidence/yuk1355-paid-effect-backup/logs/backup-import-unit.log.gz",
+      "rawSha256": "adc3f5c6353ef8767183d79e3b6a9021cb0dc707d65c386e7c505f6c615aec5c",
+      "gzipSha256": "7c0f78647a3b62009e2d8886049bbbc3358bad428bd3bc1b501c62d806a4e3d7"
+    },
+    {
+      "name": "typecheck",
+      "command": "pnpm typecheck",
+      "status": "PASS",
+      "exitCode": 0,
+      "result": {},
+      "originalLog": "/tmp/yuk1355-backup-typecheck-final.log",
+      "sealedLog": "docs/planning/evidence/yuk1355-paid-effect-backup/logs/typecheck.log.gz",
+      "rawSha256": "36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6",
+      "gzipSha256": "52806b9aefb5cc110e21defa775856243267445b9ce4ee181fc5102887269f03"
+    },
+    {
+      "name": "lint",
+      "command": "pnpm lint",
+      "status": "PASS",
+      "exitCode": 0,
+      "result": {
+        "warnings": 172
+      },
+      "originalLog": "/tmp/yuk1355-backup-lint-final.log",
+      "sealedLog": "docs/planning/evidence/yuk1355-paid-effect-backup/logs/lint.log.gz",
+      "rawSha256": "14e3115758c4ea4bd2bf04be9d2f119c8f3a71ae2fd03116b9ee147567c5e99c",
+      "gzipSha256": "d4d81bf4d7cc4b0276a78e9947435864a7fd6fc4eddd04e97c25fdb9f8c68228"
+    },
+    {
+      "name": "build",
+      "command": "pnpm build",
+      "status": "PASS",
+      "exitCode": 0,
+      "result": {
+        "existingBundleWarningsRetained": true
+      },
+      "originalLog": "/tmp/yuk1355-backup-build.log",
+      "sealedLog": "docs/planning/evidence/yuk1355-paid-effect-backup/logs/build.log.gz",
+      "rawSha256": "ecf364a51acf94e8a31ef258084e4ceb31434eeaa277e1be97b1d3d232d49cd7",
+      "gzipSha256": "b8ee067ccd57499c720f4bf9577f4b7b1a136081500d10c843b4ecf6f8c5981c"
+    },
+    {
+      "name": "capability-boundaries",
+      "command": "pnpm audit:capability-boundaries",
+      "status": "PASS",
+      "exitCode": 0,
+      "result": {
+        "capabilityToServer": 428,
+        "serverToCapabilityDeep": 0,
+        "crossCapabilityValue": 48
+      },
+      "originalLog": "/tmp/yuk1355-backup-boundaries.log",
+      "sealedLog": "docs/planning/evidence/yuk1355-paid-effect-backup/logs/capability-boundaries.log.gz",
+      "rawSha256": "9d20b3d4bc59ff636d53c09f0157701c9ee76c1f77541030976fd9651ba505a1",
+      "gzipSha256": "2f88f9b825656c0c20beae8b9295aa39b1d33fc7f37411a0e8748d237acc72e3"
+    },
+    {
+      "name": "architecture-deepening",
+      "command": "pnpm audit:architecture-deepening",
+      "status": "PASS",
+      "exitCode": 0,
+      "result": {},
+      "originalLog": "/tmp/yuk1355-backup-architecture.log",
+      "sealedLog": "docs/planning/evidence/yuk1355-paid-effect-backup/logs/architecture-deepening.log.gz",
+      "rawSha256": "51199ca7d173ff21f9305dafb981919244ea60e762e4204a267747cea441f5dd",
+      "gzipSha256": "733c2a012f97c3fabfa9c3507e6129e7e4add317a9d30d2c811e0b0b3cd52a79"
+    },
+    {
+      "name": "partition",
+      "command": "pnpm audit:partition",
+      "status": "PASS",
+      "exitCode": 0,
+      "result": {
+        "unit": 72,
+        "db": 213,
+        "migration": 1
+      },
+      "originalLog": "/tmp/yuk1355-backup-partition.log",
+      "sealedLog": "docs/planning/evidence/yuk1355-paid-effect-backup/logs/partition.log.gz",
+      "rawSha256": "3f98a461d678d1d96206d98dca5d0fb05549d21fbbd8ae608a607d1437a53ab0",
+      "gzipSha256": "a9fe39f950a31ed8df74d22e1e5686423519102ea7d781ca6d590f398ebe51a6"
+    },
+    {
+      "name": "test-policy",
+      "command": "pnpm audit:test-policy --base 90f95b57d4fcb08e36fa7a782abffa3d7966d5cc",
+      "status": "PASS",
+      "exitCode": 0,
+      "result": {
+        "files": 1,
+        "checked": 3,
+        "inherited": 0,
+        "errors": []
+      },
+      "originalLog": "/tmp/yuk1355-backup-test-policy.log",
+      "sealedLog": "docs/planning/evidence/yuk1355-paid-effect-backup/logs/test-policy.log.gz",
+      "rawSha256": "fc9e4baed624b0f9074d7f0f8fe72cfd34e4ec37f0301e94d4154de33c497954",
+      "gzipSha256": "8b8565ecbd495e8372e7a498ddb16244c366d89c15c20a63a485d2b2aad870cf"
+    }
+  ],
+  "preparedDb": {
+    "status": "UNRUN",
+    "cases": 3,
+    "executed": 0,
+    "command": "PATH=/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin:$PATH pnpm vitest run --config vitest.db.config.ts src/server/export/paid-effect-backup.db.test.ts",
+    "caseEvidence": "docs/planning/2026-10-11-yuk1355-paid-effect-backup-contract.md",
+    "entrypoints": [
+      "buildBackupArchive",
+      "restoreFromArchive",
+      "reservePaidEffect real DB transaction"
+    ],
+    "onlyExternalDouble": "existing memR2 helper",
+    "prohibitedTestPatternsAdded": false
+  },
+  "originalCiRedReceipt": "original-ci-red.json",
+  "preservationReceipt": "contract-preservation.json",
+  "limits": [
+    "No DB/testcontainers/Docker/runtime/provider/network/locks/PR/push/Linear/children operations.",
+    "Postgres JSONB/timestamp/row preservation and restored unknown transaction admission require the parent real-DB window.",
+    "Original CI red logs remain failed historical receipts. Offline gates are not CI recovery.",
+    "No changes to shared store/control, SQL, feature policies, auditors/baselines or existing backup unit assertions.",
+    "Prior DB05/06/07/08/09 evidence remains separate; no combined clean PASS claim."
+  ]
+}

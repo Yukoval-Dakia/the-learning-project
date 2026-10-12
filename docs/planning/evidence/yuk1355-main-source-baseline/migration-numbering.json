@@ -1,0 +1,31 @@
+{
+  "base": "9ce33e61da3ee40c7e89256212a7aedaf0b88e9d",
+  "main": "a7b838b06a3e8bd86b0eb5626487a378e538099e",
+  "inspection": "source journal/schema/snapshots only; no live database inspection or DDL",
+  "mainLastEntry": {
+    "idx": 118,
+    "version": "7",
+    "when": 1791504000002,
+    "tag": "0118_yuk1356_judge_durable",
+    "breakpoints": true
+  },
+  "currentLastEntry": {
+    "idx": 119,
+    "version": "7",
+    "when": 1791711821264,
+    "tag": "0119_yuk1355_paid_effect",
+    "breakpoints": true
+  },
+  "collision": false,
+  "renumbered": false,
+  "mainHistoricalSqlAndSnapshotsByteIdentical": 203,
+  "mainJournalPrefixIdentical": true,
+  "journalUnchangedVsBase": true,
+  "schemaUnchangedVsBase": true,
+  "sqlPath": "drizzle/0119_yuk1355_paid_effect.sql",
+  "sqlSha256": "a11972ce708538d2c6357a70fc4ad8c4faf16ee25abc87622386c5943c09bf81",
+  "sqlUnchangedVsBase": true,
+  "snapshotPrevId": "ea527d9b-5b66-444d-a114-f56e21812693",
+  "snapshotParentId": "ea527d9b-5b66-444d-a114-f56e21812693",
+  "newTables": ["public.paid_effect", "public.paid_effect_control"]
+}

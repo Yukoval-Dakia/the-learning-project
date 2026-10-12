@@ -1,10 +1,12 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-11：YUK-1107 全量≤120秒继续；r4父验24DB/162unit全过，typecheck/lint/build通过，PR1690完整CI38130110481因unavailable-primary fixture失败；代理只断单连接已源修，等待新head验证。共享锁实际09:47:59Z释放，清理超出8分钟已报总协调/迁移；下一窗口优先迁移。
+> Linear 是权威 tracker。2026-10-11：YUK-1107隔离head f0f2d63bf完整CI三绿166/207/144秒、中位166；唯一验证R2 NONE及逐不变量说明已过。正常纳入main c2新测试规则后，作者代码不变，等待新exact-head CI再合1691。judge阶段诊断仅独立实验，backup等audit/owner，120未达。
 
 ## NOW
 
-- **YUK-1107 / 全量≤120秒继续**：父d0c4657a独占fast-crons树；prune/review控制时间、session21例恢复、isolated runtime及backup162例父r4全过。R1/R2发现P1已修并由父最终实跑覆盖，未启R3；历史失败保留。当前10源文件hash与r4一致，typecheck/lint172warnings/build通过；完整exact-head CI待push，backup仍约116秒本机长尾，不能核销120秒目标。原锁token/parity清理后09:47:59Z释放，超出8分钟已报告；当前不启本机runtime，迁移优先。[证据与剩余目标](docs/planning/2026-10-11-yuk1107-full-ci-continuation.md)。
+- **YUK-1404 / native03题图修复**：PR1657 fixed4c52 exact CI38144495041全绿；正常纳入main eb960c079，仅PLAN/now冲突。图ownership/隐私产品代码与单capture边界测试保留，旧细粒度四tests已删。独立初审/最终R2预算已完成，不启第三审。当前crop producer仍无source_asset SHA登记，旧visibility未知，public withholding不是完整配图交付；同卷actual-output验收仍待。无DB/runtime/provider/paid。 [证据](docs/planning/2026-10-11-yuk1404-native03-figure-repair.md)。
+
+- **YUK-1107 / 完整CI≤120秒继续**：#1696/#1697主线解阻已交；critical f0f2d63bf三次完整CI38141930431/38141956448/38142360324全绿166/207/144秒，中位166秒，实际8DB/2unit/native-WASM-JS；R2 NONE且核逐不变量测试行说明，21session用例及全部断言保留。正常纳入main c2仅AGENTS/流程规则docs，作者runtime/fixture/CI代码字节不变；协调者要求新exactCI过后才match-head合1691，不启第三审。原432秒仅1次观察，计时是workflow创建到Gate绿；120目标仍未达。另独立perf/yuk-1107-judge-stage-profile head6bae53c2f只现有process例计时+上传既有诊断，CI38143778742待阶段分布；worker/support/模型/生产/断言不改，无本机DB/锁。backup去重/删除暂停待slop audit与owner，任一main提速回归先revert。生产RST风险另票YUK-1481。
 
 - **YUK-1107 / session cron已交付**：#1681合main56df7c09；控制时间验证边界，生产60秒保护/cron及严格ledger不变；R2无P0/P1，父修Drizzle初始化后exact cd0c45d CI38120469007全绿。两例PASS、文件34.564秒；实测跨分钟边界，YUK-1397修复交付。整套390秒，不核销120秒目标。[证据与限度](docs/planning/2026-10-11-yuk1107-cron-speed.md)。
 

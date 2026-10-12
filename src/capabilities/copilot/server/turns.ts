@@ -18,11 +18,13 @@
 // event now writes (ask/chip + reply), the column being the event's conversation
 // session (teaching + copilot share it; payload.session_id is a portable copy).
 
-import { and, asc, desc, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, lt, lte, or, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
+import { type DerivationPolicyT, readDerivationPolicy } from '@/core/schema/derivation-policy';
 import type { Db, Tx } from '@/db/client';
 import { event, tool_operation } from '@/db/schema';
 import { getCorrectionStatuses } from '@/kernel/events';
+import { eventAllowsDerivationSql } from '@/kernel/events/derivation-policy';
 import {
   findReusableCopilotConversation,
   getCopilotConversation,
@@ -57,6 +59,7 @@ export { type CopilotPrimaryView, EPHEMERAL_HTML_REF_MAX_CHARS } from '../primar
 
 export interface CopilotTurn {
   role: CopilotTurnRole;
+  derivation_policy?: DerivationPolicyT;
   text: string;
   at: string; // ISO timestamp
   event_id: string;
@@ -414,7 +417,7 @@ async function projectCopilotTurnRows(
     selectSubagentRunsForReplay(dbArg, sessionId, toolCallParentIds),
     replyParentIds.length
       ? dbArg
-          .select({ id: event.id })
+          .select({ id: event.id, payload: event.payload })
           .from(event)
           .where(
             and(
@@ -426,6 +429,11 @@ async function projectCopilotTurnRows(
       : Promise.resolve([]),
   ]);
   const replyRunIds = new Set(replyRoots.map((root) => root.id));
+  const restrictedRoots = new Set(
+    replyRoots
+      .filter((root) => readDerivationPolicy(root.payload) === 'answer_only')
+      .map((root) => root.id),
+  );
   // Retracted roots include out-of-window parents: a reply under such a parent is skipped (its parent
   // row isn't loaded, so it renders as a hidden skip, not a tombstone) rather than shown stale.
   const retractedParentIds = new Set(
@@ -497,6 +505,10 @@ async function projectCopilotTurnRows(
       const primaryView = replyPrimaryView(payload);
       const turn: CopilotTurn = {
         role: 'ai',
+        derivation_policy:
+          row.caused_by_event_id && restrictedRoots.has(row.caused_by_event_id)
+            ? 'answer_only'
+            : readDerivationPolicy(payload),
         text,
         at: row.created_at.toISOString(),
         event_id: row.id,
@@ -537,6 +549,7 @@ async function projectCopilotTurnRows(
       if (text === null) continue;
       turns.push({
         role: 'user',
+        derivation_policy: readDerivationPolicy(payload),
         text,
         at: row.created_at.toISOString(),
         event_id: row.id,
@@ -564,7 +577,7 @@ async function projectCopilotTurnRows(
  */
 export async function getRecentCopilotTurns(
   dbArg: DbLike,
-  opts: { limit?: number; now?: Date; sessionId?: string } = {},
+  opts: { limit?: number; now?: Date; sessionId?: string; forModel?: boolean } = {},
 ): Promise<CopilotTurn[]> {
   const limit = clampLimit(opts.limit);
 
@@ -596,6 +609,7 @@ export async function getRecentCopilotTurns(
     .where(
       and(
         eq(event.session_id, session.id),
+        ...(opts.forModel ? [eventAllowsDerivationSql()] : []),
         or(inArray(event.action, [...USER_ACTIONS]), eq(event.action, REPLY_ACTION)),
       ),
     )
@@ -610,12 +624,13 @@ export interface CopilotActiveRun {
   session_id: string;
   status: CopilotRunStatus;
   events_url: string;
+  derivation_policy?: DerivationPolicyT;
 }
 
 /** One database snapshot; a new browser needs no local cache to discover accepted work. */
 export async function getCopilotConversationSnapshot(
   dbArg: Db,
-  opts: { limit?: number; now?: Date; sessionId?: string } = {},
+  opts: { limit?: number; now?: Date; sessionId?: string; forModel?: boolean } = {},
 ): Promise<{ session_id: string | null; turns: CopilotTurn[]; active_runs: CopilotActiveRun[] }> {
   return dbArg.transaction(
     async (tx) => {
@@ -629,7 +644,7 @@ export async function getCopilotConversationSnapshot(
         sql.raw('terminal.payload'),
       );
       const runs = (await tx.execute(sql`
-      SELECT queued.business_id AS run_id,
+      SELECT queued.business_id AS run_id, ask.payload AS ask_payload,
         ARRAY(SELECT DISTINCT progress.event_type FROM job_events progress
           WHERE progress.business_table = queued.business_table AND progress.business_id = queued.business_id
             AND progress.event_type IN (${COPILOT_RUN_EVENTS.STARTED}, ${COPILOT_RUN_EVENTS.EXECUTION_STARTED}, ${COPILOT_RUN_EVENTS.STEP}, ${COPILOT_RUN_EVENTS.CANCEL_REQUESTED})) AS event_types
@@ -644,12 +659,13 @@ export async function getCopilotConversationSnapshot(
         AND NOT EXISTS (SELECT 1 FROM job_events terminal
           WHERE terminal.business_table = queued.business_table AND terminal.business_id = queued.business_id AND ${terminal})
       ORDER BY ask.dispatch_seq ASC, ask.id ASC
-    `)) as Array<{ run_id: string; event_types: string[] }>;
+    `)) as Array<{ run_id: string; event_types: string[]; ask_payload: unknown }>;
       return {
         session_id: session.id,
         turns,
         active_runs: runs.map((run) => ({
           run_id: run.run_id,
+          derivation_policy: readDerivationPolicy(run.ask_payload),
           session_id: session.id,
           status: deriveCopilotRunStatus(run.event_types.map((event_type) => ({ event_type }))),
           events_url: `/api/jobs/copilot_run/${encodeURIComponent(run.run_id)}/events`,
@@ -694,7 +710,7 @@ export class CopilotHistoryAnchorError extends Error {
  */
 export async function getCopilotTurnsBeforeAnchor(
   dbArg: DbLike,
-  opts: { sessionId: string; anchorEventId: string; limit?: number },
+  opts: { sessionId: string; anchorEventId: string; limit?: number; forModel?: boolean },
 ): Promise<CopilotTurn[]> {
   const limit = clampLimit(opts.limit);
   const [anchor] = await dbArg
@@ -749,6 +765,7 @@ export async function getCopilotTurnsBeforeAnchor(
     .where(
       and(
         eq(event.session_id, opts.sessionId),
+        ...(opts.forModel ? [eventAllowsDerivationSql()] : []),
         or(
           // Root user turns use the anchor's stable insertion-order boundary.
           and(
@@ -779,4 +796,51 @@ export async function getCopilotTurnsBeforeAnchor(
     .limit(limit * 2);
 
   return projectCopilotTurnRows(dbArg, opts.sessionId, rows, limit);
+}
+
+/** Positions only, never reply text. Correction references cannot hydrate a restricted turn. */
+export async function getCopilotReplyPoliciesBeforeAnchor(
+  db: DbLike,
+  opts: { sessionId: string; anchorEventId?: string; now?: Date },
+) {
+  const parent = alias(event, 'correction_parent');
+  const anchor = alias(event, 'correction_anchor');
+  const rows = await db
+    .select({
+      id: event.id,
+      parentId: parent.id,
+      policy: sql<unknown>`case when coalesce(${parent.payload}->>'derivation_policy', 'allow') = 'answer_only' or coalesce(${event.payload}->>'derivation_policy', 'allow') = 'answer_only' then 'answer_only' else coalesce(${event.payload}->>'derivation_policy', ${parent.payload}->>'derivation_policy', 'allow') end`,
+    })
+    .from(event)
+    .leftJoin(anchor, eq(anchor.id, opts.anchorEventId ?? ''))
+    .leftJoin(parent, eq(parent.id, event.caused_by_event_id))
+    .where(
+      and(
+        eq(event.session_id, opts.sessionId),
+        eq(event.action, REPLY_ACTION),
+        opts.anchorEventId
+          ? lt(sql`coalesce(${parent.dispatch_seq}, ${event.dispatch_seq})`, anchor.dispatch_seq)
+          : lte(event.created_at, opts.now ?? new Date()),
+      ),
+    )
+    .orderBy(
+      desc(sql`coalesce(${parent.dispatch_seq}, ${event.dispatch_seq})`),
+      desc(event.dispatch_seq),
+    )
+    .limit(MAX_TURN_LIMIT);
+  const statuses = await getCorrectionStatuses(
+    db,
+    rows.flatMap((row) => (row.parentId ? [row.id, row.parentId] : [row.id])),
+  );
+  return rows
+    .filter(
+      (row) =>
+        statuses.get(row.id)?.state !== 'retracted' &&
+        (!row.parentId || statuses.get(row.parentId)?.state !== 'retracted'),
+    )
+    .reverse()
+    .map((row) => ({
+      event_id: row.id,
+      derivation_policy: readDerivationPolicy({ derivation_policy: row.policy }),
+    }));
 }

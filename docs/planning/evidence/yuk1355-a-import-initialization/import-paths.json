@@ -1,0 +1,62 @@
+{
+  "base": "0b45c22f246ecb1f611abb73325b47bbe38471eb",
+  "scope": "Synchronous local value imports/reexports only; excludes type-only and dynamic imports.",
+  "beforeCycle": [
+    {
+      "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "line": 24,
+      "specifier": "./knowledge-runtime",
+      "to": "src/capabilities/practice/server/knowledge-runtime.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/knowledge-runtime.ts",
+      "line": 2,
+      "specifier": "@/capabilities/knowledge/public",
+      "to": "src/capabilities/knowledge/public.ts"
+    },
+    {
+      "from": "src/capabilities/knowledge/public.ts",
+      "line": 16,
+      "specifier": "@/kernel/read-models/failure-attempts",
+      "to": "src/kernel/read-models/failure-attempts.ts"
+    },
+    {
+      "from": "src/kernel/read-models/failure-attempts.ts",
+      "line": 10,
+      "specifier": "@/capabilities/practice/public",
+      "to": "src/capabilities/practice/public.ts"
+    },
+    {
+      "from": "src/capabilities/practice/public.ts",
+      "line": 46,
+      "specifier": "./server/item-prior-paid-effect-adapter",
+      "to": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts"
+    },
+    {
+      "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "line": 27,
+      "specifier": "./item-prior-durable-operation",
+      "to": "src/capabilities/practice/server/item-prior-durable-operation.ts"
+    }
+  ],
+  "afterLimitDependencies": {
+    "operation": [
+      {
+        "from": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+        "line": 24,
+        "specifier": "./item-prior-limits",
+        "to": "src/capabilities/practice/server/item-prior-limits.ts"
+      }
+    ],
+    "adapter": [
+      {
+        "from": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+        "line": 39,
+        "specifier": "./item-prior-limits",
+        "to": "src/capabilities/practice/server/item-prior-limits.ts"
+      }
+    ],
+    "leaf": []
+  },
+  "existingPublicCycleStillPresent": true
+}

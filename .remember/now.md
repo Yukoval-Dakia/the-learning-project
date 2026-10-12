@@ -1,3 +1,32 @@
+# YUK-1404 figure main composition — 2026-10-11
+
+PR1657 fixed4c52 exact CI38144495041全绿；正常纳入main eb960c079，仅PLAN/now冲突。图ownership/隐私产品代码与单capture边界测试保留，旧细粒度四tests已删。独立初审/最终R2预算已完成，不启第三审。当前crop producer仍无source_asset SHA登记，旧visibility未知，public withholding不是完整配图交付；同卷actual-output验收仍待。无DB/runtime/provider/paid。
+
+# Main P1 delivered; isolated speed work resumes (2026-10-11)
+
+#1697 merged189bc5eabd at exact0b895, R1 NONE, all CI38140482253 green. All91 review expect expressions unchanged. Session2 passed in R4; review1 passed directly in R5, Vitest21.70s. R4 wrapper failure and foreign old exited cf225 disappearance preserved. R5 total95.388s, actual release13:02:49.276Z, own4PIDs/session8d1be4cb79b6 gone. Coordinator confirmed FSRS writer independently removed its eighth container and accepted explained parity; remaining TEST4+loft3 exact7 unchanged. UI and feature notified to incorporate main then rerun. #1696 earlier delivereda213 with23PASS/fullCI234s; production RST risk separatelyYUK-1481.
+
+Critical speed branch perf/yuk-1107-ci-critical-path at f0f2d63bf passed three complete hosted runs38141930431/38141956448/38142360324 in166/207/144s, median166. All8DB/2unit/native-WASM-JS/migration/audit/build steps actually execute. Unique final verificationR2 NONE verifies actual port, all21session case assertions and new-policy per-invariant test-line justification. Latestmain c2 adds only AGENTS/development test rules; normal merge plus this board update leaves author runtime/fixture/workflow code identical to reviewed maturef0. Coordinator explicitly requires one new exact-head CI after this integration before match-head merge1691; no thirdreview. No full120 claim. All timing usesworkflow creation→Gategreen, baseline432 onlyn1; previousmain246/234median240n2.
+
+Stage diagnosis separately authorized in isolated tlp-yuk1107-judge-stage-profile-20261011 / perf/yuk-1107-judge-stage-profile frozen6bae53c2f: onlyprocess.db.test.ts parentmonotonic spawn/ready/boundary/done/stop/exit plus workflowupload existing diagnostic. All9registrations/15expandedcases/242assertions identical. CI38143778742 is being verified for measured stage distribution before proposingfix. Worker.ts/support.ts/normalizer/models/product excluded; no localDB/provider/container/lock. Current diagnostic code does not go to main. Backupb652 remains parked pendingtest-slop-audit andowner case selections, each deletion separatePR+ownerreview. Stage report's missing DB2 artifact claim was corrected separately; actualJSONcontains case durations but no phase records. The25msIPC optimization would save roughly≤1s and is not accepted as a solution.
+
+The entries below are retained historical attempts and do not supersede the current status above.
+
+
+# R2 P1 correction pending new fixed-head runtime (2026-10-11)
+
+PR1696 draft/link/watch. R2 on e84 found queuedSync/describeFirst P1, posted discussion_r4241515109. Local e84 batch aborted, nofinalcasecounts;128.382s actualtokenrelease12:07:49.493Z,8baseline+alloldexited/release/sourceparitytrue,28PIDs/ownsession19c1e608b0db gone. Noappendbatch. Sourcefix counts eachforwardQ/Sync and rejects each separately, waitsSyncforunsynceddescribeFirst; existingoutagecaseaddsactualtwoqueuedSyncassertions,businessassertionspreserved,23total. CoordinatorforbidsR3 and replacesmergeconditions with fixedP1+regression,newlocal23PASS,exactCIgreen,reply/resolveR2PRthread,matchhead. Newhead/windowpending,neverreuseoldslot. ProductRSTcrashfollowupafterP1 remains separate.
+
+# Main P1 runtime failure retained (2026-10-11)
+
+916711cfc R1NONE/static/build passed;23case window9PASS14FAIL,cron2PASS. Migrationfirstconversationoutage failed: actualCOMMIT observed,worker2421 uncaughtpostgres-jsnextWrite50924 socket.write(null),exit1/no failuremessage,PENDING plus13guardblocked. All7approvedrunningcontainers andallpre-existingresource/release/sourceparity passed;19PIDs/session8066a27e72f4 gone,tokenrelease11:57:18.717Z,total79.60s. No appendedbatch. Source-onlyproxy correction rejectsPGSQL08006 while keepingclienttransportuntilfailurecleanup; noSQLreachesprimaryafterlostCOMMIT,alloriginalassertionsretained. NeedsR2/newcoordinatedwindow/exactCI. ProductRSTworkercrash risk must remain separatefollowupafterP1 delivery;searchLinearbeforecreatingandnotifycoordinator. MigrationDB07 thenA-lane ownnextwindows.
+
+# Main CI regressions first (2026-10-11)
+
+Sole writer d0c4657a owns tlp-yuk1107-main-ci-regressions-20261011 / fix/yuk-1107-session-ci-regressions, base135bb18e6d. Main run38135449130 independently shows cron substring position42 inferred as textOID25 and migration placement PENDING instead of ERROR. Minimal fixture-only fixes preserve product and every original business assertion. Independent review, new scoped runtime window and exact-head CI remain pending. No runtime/lock held.
+
+Large PR1691 remains remote fc2626d and unwatched; local b65257e03 checkpoint in fast-crons is parked and unpushed. Exact fc Gate38134462539 failed after195s; DB6 unavailable-primary first failure61.585s, remaining7DB/unit/build/parity passed. Full120s not achieved. Future independently reviewed small fixture-speed PR may own proposals.db.test.ts and provider-session-admission.db.test.ts only, never provider-session-admission.ts.
+
 # Full CI continuation after r4 (2026-10-11)
 
 Owner requires complete CI <=120 seconds, YUK-1107 In Progress. Sole writer d0c4657a owns .worktrees/yuk-1107-fast-crons / perf/yuk-1107-fast-crons, base148cf4bd, backup child commit integrated asb7828661a. Final r4 frozen10files passed24DB and162unit, nofailedcases. Local Vitest DB116.69s serial4files, unit116.18s; source hashes/ledgers/cleanup retained in .cache/cron-speed-evidence/window-20261011-r4. R1fresh-clone P1 andR2genuine-Timekeeper/native-point P1 fixed, finaldelta personallyruntimeverified, notclaimedearlierstaticreviewcoverage. No thirdreview. Typecheck/lint172warnings/build passed; policy/partition and complete exact-head CI still pending. Backupfile115.84s remains longtail, full120s notachieved; next executionarchitecture read-only investigation delegatedCodex gpt-6.1-sol high.

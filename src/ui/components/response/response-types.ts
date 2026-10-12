@@ -303,12 +303,24 @@ export function nativeResponseValue(
   }
 }
 
+// Imported option text often repeats its own label ("A. 90°") although the label is shown on its
+// own. Drop that one leading copy for display; stored text and option ids are unchanged. A Latin
+// letter right after the punctuation means the text itself starts with names ("A、B两点…"), so keep it.
+export function withoutLabelPrefix(text: string, label: string): string {
+  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const stripped = text.replace(
+    new RegExp(`^\\s*[（(]?${escaped}[)）]?\\s*[.．、:：)）](?![A-Za-z])\\s*`),
+    '',
+  );
+  return stripped.trim() === '' ? text : stripped;
+}
+
 /** Human-readable capture from the served definitions; stable IDs remain in ResponseSet. */
 export function nativeResponseText(entry: SlotResponseT, spec: ResponseSlotT | undefined): string {
   const value = nativeResponseValue(entry);
   if (value?.kind === 'text') return value.text;
   const label = (item: { label: string; text: string } | undefined) =>
-    item ? `${item.label}. ${item.text}` : '原选项不可用';
+    item ? `${item.label}. ${withoutLabelPrefix(item.text, item.label)}` : '原选项不可用';
   if (entry.kind === 'choice') {
     const options =
       spec?.kind === 'single_choice' || spec?.kind === 'multi_choice' ? spec.options : [];

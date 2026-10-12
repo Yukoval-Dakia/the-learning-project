@@ -1,0 +1,242 @@
+{
+  "aCheckpoint": "f98647b7c5a00394f3ca570301c51e54eed6dd85",
+  "priorEvidence": [
+    {
+      "path": "docs/planning/evidence/yuk1355-a-boundary-integration/README.md",
+      "sha256": "620b3ef2ff0bb4a4375637ca077a60d0a9635ee477403f259331efbdde6da6f1",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-a-boundary-integration/architecture.log.gz",
+      "sha256": "e66bd3897748db901868db506a69dc1fcf361228147fedcfe0a4c73282b69668",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-a-boundary-integration/ast-before.json",
+      "sha256": "e4cfcff85bb8cb60856d68c34fde724d2ef94b3295c52b35b9f3022fdee0070d",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-a-boundary-integration/ast-comparison.json",
+      "sha256": "85090fb72c76a222dd6aee8f5b555d6aae1c48789bf05cf2a8f141988ed6a465",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-a-boundary-integration/ast.log.gz",
+      "sha256": "18954ee9afb0bc43a904834c0e7a53e3ee1b49cc483528541fe728920ddbb36e",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-a-boundary-integration/boundaries-before.log.gz",
+      "sha256": "e1dad113da581c3033f1ba64f68879eb8888ff84692c242af6d1378ed5474de1",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-a-boundary-integration/boundaries.log.gz",
+      "sha256": "4b18193cd7559a6058323b136f406e97253b018f51714002653a7c8018b18d54",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-a-boundary-integration/build.log.gz",
+      "sha256": "7cd52c8d14b627c3bdf741ab10f3339e211288e7d0541338cb1e9ac1ed46792b",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-a-boundary-integration/census-before-after.json",
+      "sha256": "fa28dfa0cd7f67a41083cfb5ee811700d12bcbb44b98257ae812b3893184ccf0",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-a-boundary-integration/changed-paths.tsv",
+      "sha256": "d443f13204774907cf094a6db7b30d8c86e55bdb6f1ad0ea1069db9ef7b89c8c",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-a-boundary-integration/checks.json",
+      "sha256": "a897f9e89f3df62475dca279035f6496ce8f97783a5158932ffeb422c43fbb05",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-a-boundary-integration/compare-ast.cjs",
+      "sha256": "7be38093bdee4976c9eea469c5537a7fa1acc5a67ecfd87550435a320646147c",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-a-boundary-integration/diff.log.gz",
+      "sha256": "e0b17efb979b34ab7e53e6a0c8e428562efc2ba119141709db76b1a5d57e7acb",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-a-boundary-integration/import-cycles.json",
+      "sha256": "3dba7ba2bfc327afedacf4e4a3da8f18dec91bb6b96ab0618a76b7a07d634119",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-a-boundary-integration/lint.log.gz",
+      "sha256": "20692b76bedebcec3a3fa5dd9f1077b1797d1cc21865451b85e5ec4fe9559468",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-a-boundary-integration/partition-before-after.json",
+      "sha256": "cb4848d983476f8292b40691f4f6c5a81fd0883b5db970bb5c2429b99d1bae3c",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-a-boundary-integration/partition.log.gz",
+      "sha256": "9e9a2be818071a251c9eccb34f332cdc2f09789e28e82df0c3c9df3efca817d5",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-a-boundary-integration/prior-preservation.json",
+      "sha256": "6836875fd73688b50566646ea5f98c65990911d017914fb7c50c40a194bd3edb",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-a-boundary-integration/product-files.json",
+      "sha256": "344ef5d873e7bcda02e4c290bbbfb5fbc4d1dc7b852da419c81ece8c2dcab083",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-a-boundary-integration/protected-paths.log.gz",
+      "sha256": "585e50340b1764f555e04c7b51114488a5d93844fc5b140815b9185a600268c5",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-a-boundary-integration/typecheck.log.gz",
+      "sha256": "37f3ccd9fd7bc12800987a31692a6cc7c7bba494987d0a03a8bd244d93ba28ea",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-a-boundary-integration/unit-a.log.gz",
+      "sha256": "d6b1be1b871f55e264cc45b7589c65aadfd7b6244f07f4b9ce30bd7d004cf37f",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-a-boundary-integration/unit-shared-notes-c.log.gz",
+      "sha256": "c6b3cf88f6752c51bf72c692b1779118761741a7fc8061e6402a1590e365d28f",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-boundary-split/README.md",
+      "sha256": "785231fc1e6dc0cf2b62521735ee9f3a5b85d967aa0a428306ed63d80ca59b9d",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-boundary-split/architecture.log.gz",
+      "sha256": "8a9dc025eda77352b0f4fc47d5bdd5f39ae410aff46f9ecaf5300775c103fc25",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-boundary-split/ast-before.json",
+      "sha256": "35b2bd5bcfbbc22fa58dcffb13ff25f188e6c7ae42d830a77eec27e8b998a257",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-boundary-split/ast-comparison.json",
+      "sha256": "c36867e08d161241326ee235d2acde245548d30abe957d9cba653fac85afa383",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-boundary-split/ast.log.gz",
+      "sha256": "cf571acac31d0c7dca3225980d46cf7cbdd96687eb765933b82207dddc62506b",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-boundary-split/boundaries.log.gz",
+      "sha256": "4259644108414c9f47904ad39fb7ae27cf135087f5d361db0f32d20064652e56",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-boundary-split/build.log.gz",
+      "sha256": "8e81e5e4841d6ea2229ea68ae850da6d320abe01190e077e322229e7e89f8ce2",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-boundary-split/changed-paths.tsv",
+      "sha256": "282d0e15587db6c4c8b71c2c3e4d29a6925c3856665d15cd5a15acb3cfd0af14",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-boundary-split/checks.json",
+      "sha256": "eeb89896a4366517447f62706574337985e2615536c7bf560f21ce1c71ce220f",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-boundary-split/compare-ast.cjs",
+      "sha256": "524d1914b3ffc9e50c594d0b14c8ae2112da71a71d8a8c2e82de76e14184dd86",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-boundary-split/diff.log.gz",
+      "sha256": "e0b17efb979b34ab7e53e6a0c8e428562efc2ba119141709db76b1a5d57e7acb",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-boundary-split/import-cycles.json",
+      "sha256": "6d0482d938696f44c9bd6cd3ca1f03994c31b4a732de0bcd89f4c65f21ee0f78",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-boundary-split/lint-final.log.gz",
+      "sha256": "84964119a871ed0d2345ee466526c2e73fc8935313a24ae1ea2ec03a189dba8b",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-boundary-split/lint-initial.log.gz",
+      "sha256": "5b207a2696451ddad6c8961aa29f731e017864134944df4c638b87eb930095bb",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-boundary-split/partition.log.gz",
+      "sha256": "83679c0ba07c545e2d6a23adcafaa2bf894ef80b5003d3fb29dcc2495169bb69",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-boundary-split/product-files.json",
+      "sha256": "084ca907a82f549fd8c4409520707d661594baa74331d853128ad26f6f0608b8",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-boundary-split/protected-paths.log.gz",
+      "sha256": "7d6ad2f00f09a2db5fe483a1cb36e04687aa8bc7ecc3e8449c90c2fc88357fc3",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-boundary-split/typecheck.log.gz",
+      "sha256": "37f3ccd9fd7bc12800987a31692a6cc7c7bba494987d0a03a8bd244d93ba28ea",
+      "identical": true
+    },
+    {
+      "path": "docs/planning/evidence/yuk1355-boundary-split/unit.log.gz",
+      "sha256": "dc745ff9298fd274f3b7c8ad1b880668c3bae3a3aa8a4e98bdb7550e23f1a70b",
+      "identical": true
+    }
+  ],
+  "aProductFiles": [
+    {
+      "path": "src/capabilities/practice/public.ts",
+      "sha256": "25bde95c443d448c570976a7252037514460e71ce36bd83eae5667f6eab75ef4"
+    },
+    {
+      "path": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "sha256": "17776ba9175dee7c1120d14a02d95e7220e0f2300c9319e37ee02e79ca2f81e1"
+    },
+    {
+      "path": "src/capabilities/practice/server/item-prior-durable-operation.unit.test.ts",
+      "sha256": "6a715f6d5a69ecac3bc5afc9fc39386c29bdb7dbe4982ed187746d31f9c6e915"
+    },
+    {
+      "path": "src/capabilities/practice/server/item-prior-paid-effect-adapter.ts",
+      "sha256": "afa02d06efa0ab8c3baec22e68d652d3521e6482df1807152266fbaa5062d412"
+    },
+    {
+      "path": "src/server/durable/item-prior-family.ts",
+      "sha256": "c6775f8ad8d0cb4bfb0c3d0a0318a440ed091a8eb37b9db270665b13fc1f8ac1"
+    },
+    {
+      "path": "tests/integration/item-prior-durable-member.db.test.ts",
+      "sha256": "c681c3a0dbb94807442a6105da1aa142aec73f82e6c0def782117ae48444b8fd"
+    }
+  ],
+  "ok": true
+}

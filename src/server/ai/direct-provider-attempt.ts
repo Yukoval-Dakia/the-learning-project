@@ -79,7 +79,7 @@ export interface DirectProviderAttemptControl {
     readonly currency: 'CNY' | 'USD';
     readonly source: string;
   }): void;
-  markTerminal(terminal: ProviderAttemptTerminal, reason: string): void;
+  markTerminal(terminal: ProviderAttemptTerminal, reason: string, wireCount?: 0 | 1): void;
 }
 
 export interface DirectProviderAttemptResult<T> {
@@ -202,6 +202,7 @@ export async function executeDirectProviderAttempt<T>(
         : CurrencyCode.parse(descriptor.unknownCostCurrency),
     source: 'provider_cost_absent',
   };
+  let wireCount: 0 | 1 = 1;
   let terminal: ProviderAttemptTerminal = 'succeeded';
   let reason = 'provider_response_accepted';
   let outcome:
@@ -232,7 +233,8 @@ export async function executeDirectProviderAttempt<T>(
         source: estimated.source,
       };
     },
-    markTerminal: (nextTerminal, nextReason) => {
+    markTerminal: (nextTerminal, nextReason, terminalWireCount = 1) => {
+      wireCount = terminalWireCount;
       terminal = nextTerminal;
       reason = nextReason;
     },
@@ -248,7 +250,7 @@ export async function executeDirectProviderAttempt<T>(
     }
   }
 
-  await handle.finish({ terminal, reason, wireCount: 1, usage, cost });
+  await handle.finish({ terminal, reason, wireCount, usage, cost });
 
   if (outcome.kind === 'failure') throw outcome.error;
   return { value: outcome.value, attemptId: lifecycle.identity.attemptId };

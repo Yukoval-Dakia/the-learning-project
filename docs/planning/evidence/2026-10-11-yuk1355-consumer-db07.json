@@ -1,0 +1,42 @@
+{
+  "source": "366bd301d1975277976bda23bee35b4a363c6403",
+  "selected": 3,
+  "passed": 3,
+  "failed": 0,
+  "skippedOutsideScope": 19,
+  "releasedAt": "2026-10-11T11:58:33.645143+00:00",
+  "totalSeconds": 21.638471841812134,
+  "cleanup": {
+    "containerParity": true,
+    "releaseParity": true,
+    "tokenMatches": true,
+    "processExited": true,
+    "processGroupEmpty": true,
+    "released": true,
+    "releasedAt": 1791719913.645143
+  },
+  "exit": {
+    "code": 0,
+    "timeout": false,
+    "seconds": 10.725718125002459
+  },
+  "artifact": "/tmp/yuk1355-consumer-parent-db-07",
+  "sha256": {
+    "after.json": "71eea0021b382f3f5e41162b61d719c4781b0088e800cc24d070328c5f68bb7e",
+    "before.json": "27b46e6967e75296eb5c349cf0aa683ee2649dd850acd2e1beb1745b30f6671b",
+    "cleanup.json": "ead45f8c78dca8dfdaeb7adf82e7bba05a46c174b7e0642295d3158bc2102e4b",
+    "command.json": "e508bd65b5588c7cc9dd2101204b3fbc2b4d8552febddc197d432038014dc803",
+    "db.log": "f9798eb81a2bd419f83ed6286d7213c525ef665e9afaeaf1d2f2cea54af3f796",
+    "exit.json": "d7a6d46ef66a00930a0d29920eee94f0831d8cd5e88b3d5fe39389ffffdceda3",
+    "owner.json": "6e938a93973b743acc6f84b0dad1d1258de7a09a233510ebf28a2cd798d01d85",
+    "process-cleanup.json": "f0de7e767c3c191ee0ed1fda3fadc2c367b234091728b0a759d3f03352508629",
+    "process.json": "fcf6eb99982ae59a140dc318e054a0e8fcb91b7f44356a89df01aae7163165ac",
+    "retained-resources.json": "ccc3577c8e65e2a0eed389e5d0a23067d14a7dca06ba835d4243d0c439b3f47b"
+  },
+  "limits": [
+    "Fixture-only correction; no production changes",
+    "DB06 23/24 retained separately; no clean combined rerun",
+    "No TEST writes/providers",
+    "A28 unrun"
+  ]
+}

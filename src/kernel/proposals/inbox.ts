@@ -34,6 +34,7 @@ import {
   evaluateBlockMergeAdmission,
   loadBlockMergeAdmissionContext,
 } from '@/kernel/proposals/block-merge-admission';
+import { legacyKnowledgeProposalForLearner } from '@/kernel/proposals/learner-read';
 import {
   type ProposalPresentation,
   loadProposalPresentations,
@@ -1094,15 +1095,17 @@ export async function listLegacyKnowledgeProposals(
     const status = deriveProposalStatus(row, correction, rate);
     if (opts.status && status !== opts.status) continue;
     const projected = legacyPayloadFor(row);
-    out.push({
-      id: row.id,
-      kind: row.subject_kind,
-      payload: projected.payload,
-      reasoning: projected.reasoning,
-      status,
-      proposed_at: row.created_at,
-      decided_at: correction?.decided_at ?? rate?.created_at ?? null,
-    });
+    out.push(
+      legacyKnowledgeProposalForLearner({
+        id: row.id,
+        kind: row.subject_kind,
+        payload: projected.payload,
+        reasoning: projected.reasoning,
+        status,
+        proposed_at: row.created_at,
+        decided_at: correction?.decided_at ?? rate?.created_at ?? null,
+      }),
+    );
     if (opts.limit !== undefined && out.length >= opts.limit) break;
   }
   return out;

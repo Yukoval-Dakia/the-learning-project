@@ -1,9 +1,13 @@
-import { eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { Job, PgBoss } from 'pg-boss';
-
+import { allowsDerivation } from '@/core/schema/derivation-policy';
 import { PermanentError, RetryableError } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
+import {
+  eventAllowsDerivationSql,
+  readEventDerivationPolicy,
+} from '@/kernel/events/derivation-policy';
 import { BRIEF_REFRESH_BUDGET } from '@/kernel/tools/budgets';
 import {
   createDirectProviderOperationContext,
@@ -198,7 +202,11 @@ export function mapEventActionToKind(action: string): string {
 }
 
 async function defaultLoadEvent(db: Db, eventId: string): Promise<MemoryEventInput | null> {
-  const rows = await db.select().from(event).where(eq(event.id, eventId)).limit(1);
+  const rows = await db
+    .select()
+    .from(event)
+    .where(and(eq(event.id, eventId), eventAllowsDerivationSql()))
+    .limit(1);
   const row = rows[0];
   if (!row) return null;
   return {
@@ -330,16 +338,20 @@ export function buildMemoryEventIngestHandler(
   const handoffMode = deps.handoffMode ?? memoryReconcileHandoffMode();
   let memoryClient = deps.memoryClient;
   return async (jobs) => {
-    memoryClient ??= createMemoryClient();
-    const client = memoryClient;
     for (const job of jobs) {
       const row = await loadEvent(db, job.data.event_id);
+      if (row && !allowsDerivation(row.payload)) {
+        if (deps.replayGrant) throw new MemoryReconcileHandoffError('restricted operator source');
+        continue;
+      }
       if (deps.replayGrant) {
         await assertMemoryIngestReplayGrant(db, deps.replayGrant, job.data.event_id);
         if (!row || row.id !== job.data.event_id)
           throw new MemoryReconcileHandoffError('operator source unavailable');
       }
       if (!row) continue;
+      memoryClient ??= createMemoryClient();
+      const client = memoryClient;
 
       // P3 (YUK-351) extraction gate (ADR-0039 §决定 7 (i) / Phase 2 §6.3 C3 / §7 H6):
       // agent-originated events must NEVER feed mem0 extraction (closes the
@@ -647,7 +659,7 @@ export function buildMemoryBriefRegenHandler(
 async function gatherCandidates(
   db: Db,
   client: MemoryClient,
-  job: Job<{ memories: ReconcileMemInput[]; user_id: string }>,
+  job: Pick<Job<{ memories: ReconcileMemInput[]; user_id: string }>, 'id' | 'data'>,
 ) {
   const userId = job.data.user_id;
   const newMemInputs = job.data.memories ?? [];
@@ -827,12 +839,23 @@ export function buildMemoryReconcileHandler(
      */
     createClient?: () => MemoryClient;
   } = {},
-): (jobs: Job<{ memories: ReconcileMemInput[]; user_id: string }>[]) => Promise<void> {
+): (
+  jobs: Pick<
+    Job<{ memories: ReconcileMemInput[]; user_id: string; source_event_id?: string }>,
+    'id' | 'data'
+  >[],
+) => Promise<void> {
   let memoryClient = deps.memoryClient;
   const judge = deps.judge ?? judgeReconciliation;
   const createClient = deps.createClient ?? createMemoryClient;
   return async (jobs) => {
     for (const job of jobs) {
+      if (!allowsDerivation(job.data)) continue;
+      if (
+        job.data.source_event_id &&
+        (await readEventDerivationPolicy(db, job.data.source_event_id)) === 'answer_only'
+      )
+        continue;
       // F-1 equivalent — per-job try/catch prevents retry storm.
       try {
         const userId = job.data.user_id;
@@ -1153,7 +1176,13 @@ export async function registerMemoryHandlers(
   await boss.work(
     MEMORY_RECONCILE_QUEUE,
     { pollingIntervalSeconds: 2, batchSize: 1 },
-    fenceAwareJobHandler(
+    fenceAwareJobHandler<
+      Job<{
+        memories: ReconcileMemInput[];
+        user_id: string;
+        source_event_id?: string;
+      }>
+    >(
       db,
       MEMORY_RECONCILE_QUEUE,
       buildMemoryReconcileHandler(db, { memoryClient: deps.memoryClient }),

@@ -1,0 +1,161 @@
+{
+  "base": "9ce33e61da3ee40c7e89256212a7aedaf0b88e9d",
+  "main": "a7b838b06a3e8bd86b0eb5626487a378e538099e",
+  "ownProductAndTestDeltaVsBase": "none; all original branch product and test files remain byte-identical",
+  "ownEvidenceDelta": "four formatting-only files; JSON values and helper Program AST preserved",
+  "newOwnDbSemantics": false,
+  "schemaOrSqlDeltaVsBase": false,
+  "renumberingDbCheckRequired": false,
+  "upstreamMainDelta": {
+    "databaseBackedServingPolicy": [
+      "src/capabilities/practice/api/assessment-contracts.ts",
+      "src/capabilities/practice/api/assessment-route.ts",
+      "src/capabilities/practice/api/paper-contracts.ts",
+      "src/capabilities/practice/server/assessment/paper-detail.ts",
+      "src/capabilities/practice/server/assessment/paper-issuance.ts",
+      "src/capabilities/practice/server/assessment/submit.ts",
+      "src/capabilities/practice/server/due-list.ts",
+      "src/capabilities/practice/server/paper-detail.ts",
+      "src/capabilities/practice/server/placement-assessment.ts",
+      "src/capabilities/practice/server/placement-select.ts",
+      "src/capabilities/practice/server/question-supply/placement-starter-attempts.ts",
+      "src/capabilities/practice/server/stream-store.ts",
+      "src/capabilities/practice/server/variant-rotation.ts",
+      "src/kernel/records/assessment-issuance.ts",
+      "src/server/rehearsal/post-write.ts"
+    ],
+    "pureServingContract": [
+      "src/core/schema/assessment/index.ts",
+      "src/core/schema/assessment/serving-admission.ts"
+    ],
+    "uiPresentation": [
+      "src/capabilities/shell/ui/shell.css",
+      "src/ui/components/response/ChoiceSetResponse.tsx",
+      "src/ui/components/response/response-types.ts"
+    ],
+    "dbTestChanges": [
+      "src/capabilities/agency/api/probe-answer.db.test.ts",
+      "src/capabilities/agency/server/intervention/intervention-preparation.db.test.ts",
+      "src/capabilities/practice/api/placement-native.db.test.ts",
+      "src/capabilities/practice/api/review-sessions.db.test.ts",
+      "src/capabilities/practice/api/stream.db.test.ts",
+      "src/capabilities/practice/api/submit-durable-resource.db.test.ts",
+      "src/capabilities/practice/api/submit-native-diagnostic.db.test.ts",
+      "src/capabilities/practice/server/native-durable-attempt.db.test.ts",
+      "src/capabilities/practice/server/paper-cycle.db.test.ts",
+      "src/capabilities/practice/server/solve-session-media.db.test.ts",
+      "src/capabilities/practice/server/stream-store-provider-lock.db.test.ts",
+      "src/capabilities/practice/server/stream-store-reserved-connection.db.test.ts",
+      "src/capabilities/practice/server/stream-store.db.test.ts",
+      "src/capabilities/shell/server/teaching-brief-issuance.db.test.ts",
+      "src/server/assessment/admission.db.test.ts",
+      "src/server/assessment/joint-input.db.test.ts",
+      "src/server/boss/isolated-runtime.db.test.ts",
+      "src/server/records/native-mistake-evidence.db.test.ts",
+      "tests/dbos-prune/cron.db.test.ts",
+      "tests/dbos-review-orphan/cron.db.test.ts",
+      "tests/dbos-session-orphan/cron.db.test.ts",
+      "tests/dbos-session-orphan/migration.db.test.ts"
+    ],
+    "offlineTestChanges": [
+      "scripts/cutover-backup.test.ts",
+      "src/core/schema/assessment/evaluation.test.ts"
+    ],
+    "testFixturesAndWorkers": [
+      "tests/dbos-judge/support.ts",
+      "tests/dbos-prune/fixture.ts",
+      "tests/dbos-prune/worker.ts",
+      "tests/dbos-review-orphan/fixture.ts",
+      "tests/dbos-review-orphan/worker.ts",
+      "tests/dbos-session-orphan/worker.ts",
+      "tests/fixtures/assessment-paper.ts",
+      "tests/fixtures/assessment-solo.ts",
+      "tests/fixtures/historical-assessment-issuance.ts",
+      "tests/fixtures/native-appeal.ts",
+      "tests/fixtures/native-judge-run.ts",
+      "tests/fixtures/native-solo-http.ts"
+    ],
+    "docsAndPlanning": [
+      ".remember/now.md",
+      "PLAN.md",
+      "docs/design/2026-10-07-ui-visual-direction.md",
+      "docs/design/2026-10-11-worksheet-print-layout.md",
+      "docs/design/worksheet-sample/region-map-b.json",
+      "docs/planning/2026-10-11-yuk1107-full-ci-continuation.md",
+      "docs/planning/2026-10-11-yuk1107-main-ci-regressions.md",
+      "docs/planning/evidence/2026-10-11-yuk1445-c35-ci-fixture-repair.json"
+    ],
+    "generatedContracts": [
+      "postman/api-endpoints.json",
+      "postman/learning-api.postman_collection.json",
+      "src/ui/lib/api-schema.generated.ts"
+    ]
+  },
+  "databaseAcceptanceAtNewMergedHead": "not executed; DB05-09 remain revision-specific, never combined into clean PASS",
+  "parentDbValidationGroups": [
+    {
+      "reason": "Automatic serving/figure admission and immutable issuance recovery decisions; unavailable_reason and withheld_slots/withheld_assessments DTOs preserve accepted submissions and historical bindings",
+      "sourceFiles": [
+        "src/kernel/records/assessment-issuance.ts",
+        "src/capabilities/practice/server/assessment/paper-issuance.ts",
+        "src/capabilities/practice/server/assessment/paper-detail.ts",
+        "src/capabilities/practice/server/assessment/submit.ts",
+        "src/capabilities/practice/server/placement-assessment.ts",
+        "src/capabilities/practice/server/placement-select.ts",
+        "src/capabilities/practice/server/question-supply/placement-starter-attempts.ts"
+      ],
+      "focusedExistingDbFiles": [
+        "src/server/assessment/admission.db.test.ts",
+        "src/capabilities/practice/api/placement-native.db.test.ts",
+        "src/capabilities/practice/server/paper-cycle.db.test.ts",
+        "src/capabilities/practice/api/review-sessions.db.test.ts"
+      ]
+    },
+    {
+      "reason": "Prospective stream/due/variant/rehearsal serving filters and frozen accepted recovery; real queries changed without table schema changes",
+      "sourceFiles": [
+        "src/capabilities/practice/server/stream-store.ts",
+        "src/capabilities/practice/server/due-list.ts",
+        "src/capabilities/practice/server/variant-rotation.ts",
+        "src/server/rehearsal/post-write.ts"
+      ],
+      "focusedExistingDbFiles": [
+        "src/capabilities/practice/server/stream-store.db.test.ts",
+        "src/capabilities/practice/api/stream.db.test.ts",
+        "src/server/rehearsal/rehearsal.db.test.ts"
+      ]
+    },
+    {
+      "reason": "Upstream clock/outage/horizon/admission fixture changes are test/harness changes. They add no paid-effect production semantics, but new timing/recovery claims require their own DB/worker acceptance",
+      "sourceFiles": [
+        "tests/dbos-judge/support.ts",
+        "tests/dbos-prune/cron.db.test.ts",
+        "tests/dbos-prune/fixture.ts",
+        "tests/dbos-prune/worker.ts",
+        "tests/dbos-review-orphan/cron.db.test.ts",
+        "tests/dbos-review-orphan/fixture.ts",
+        "tests/dbos-review-orphan/worker.ts",
+        "tests/dbos-session-orphan/cron.db.test.ts",
+        "tests/dbos-session-orphan/migration.db.test.ts",
+        "tests/dbos-session-orphan/worker.ts",
+        "tests/fixtures/assessment-paper.ts",
+        "tests/fixtures/assessment-solo.ts",
+        "tests/fixtures/historical-assessment-issuance.ts",
+        "tests/fixtures/native-appeal.ts",
+        "tests/fixtures/native-judge-run.ts",
+        "tests/fixtures/native-solo-http.ts"
+      ],
+      "focusedExistingDbFiles": [
+        "tests/dbos-prune/cron.db.test.ts",
+        "tests/dbos-review-orphan/cron.db.test.ts",
+        "tests/dbos-session-orphan/cron.db.test.ts",
+        "tests/dbos-session-orphan/migration.db.test.ts"
+      ]
+    }
+  ],
+  "defaultBackend": "pg-boss",
+  "unsupportedFamilySwitches": ["note_verify", "item_prior_backfill", "judge_calibration_sample"],
+  "registrationDelta": "none in this integration; manifests/worker boot unchanged",
+  "runtimeQueueOwner": "parent/coordinator feature queue",
+  "cycleFollowup": "YUK-1482 existing backlog; no new review or Linear action"
+}

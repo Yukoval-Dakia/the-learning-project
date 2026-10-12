@@ -1,0 +1,194 @@
+{
+  "fixedC": "99f5e069d0476a0afe50d246eecfe38cae18854a",
+  "aCheckpoint": "f98647b7c5a00394f3ca570301c51e54eed6dd85",
+  "checks": [
+    {
+      "name": "ast-c-initial",
+      "argv": [
+        "node",
+        "/Volumes/YukovalSBak/yukoval-projects/tlp-migration-receipt-reference/docs/planning/evidence/yuk1355-c-fixed-integration/compare-ast.cjs"
+      ],
+      "node": "v24.19.0",
+      "exitCode": 0,
+      "elapsedSeconds": 0.361,
+      "log": "ast-c-initial.log.gz"
+    },
+    {
+      "name": "boundaries",
+      "argv": ["pnpm", "exec", "tsx", "scripts/audit-capability-boundaries.ts", "--json"],
+      "node": "v24.19.0",
+      "exitCode": 0,
+      "elapsedSeconds": 5.104,
+      "log": "boundaries.log.gz"
+    },
+    {
+      "name": "architecture",
+      "argv": ["pnpm", "audit:architecture-deepening"],
+      "node": "v24.19.0",
+      "exitCode": 1,
+      "elapsedSeconds": 15.505,
+      "log": "architecture.log.gz"
+    },
+    {
+      "name": "partition",
+      "argv": ["pnpm", "audit:partition"],
+      "node": "v24.19.0",
+      "exitCode": 1,
+      "elapsedSeconds": 2.016,
+      "log": "partition.log.gz"
+    },
+    {
+      "name": "unit-c-initial",
+      "argv": [
+        "pnpm",
+        "vitest",
+        "run",
+        "--config",
+        "vitest.unit.config.ts",
+        "src/capabilities/practice/server/calibration-sample-durable-operation.test.ts",
+        "src/capabilities/practice/jobs/judge_calibration_sample.test.ts",
+        "src/server/durable/calibration-sample-family.test.ts"
+      ],
+      "node": "v24.19.0",
+      "exitCode": 1,
+      "elapsedSeconds": 3.612,
+      "log": "unit-c-initial.log.gz"
+    },
+    {
+      "name": "unit-shared-notes",
+      "argv": [
+        "pnpm",
+        "vitest",
+        "run",
+        "--config",
+        "vitest.unit.config.ts",
+        "src/server/durable/paid-effect-protocol.test.ts",
+        "src/server/durable/note-verify-family.test.ts",
+        "src/capabilities/notes/jobs/note_verify.control.test.ts"
+      ],
+      "node": "v24.19.0",
+      "exitCode": 0,
+      "elapsedSeconds": 3.585,
+      "log": "unit-shared-notes.log.gz"
+    },
+    {
+      "name": "unit-a",
+      "argv": [
+        "pnpm",
+        "vitest",
+        "run",
+        "--config",
+        "vitest.unit.config.ts",
+        "src/capabilities/practice/server/item-prior-durable-operation.unit.test.ts",
+        "src/server/durable/item-prior-family.unit.test.ts"
+      ],
+      "node": "v24.19.0",
+      "exitCode": 0,
+      "elapsedSeconds": 3.56,
+      "log": "unit-a.log.gz"
+    },
+    {
+      "name": "typecheck-initial",
+      "argv": ["pnpm", "typecheck"],
+      "node": "v24.19.0",
+      "exitCode": 1,
+      "elapsedSeconds": 8.202,
+      "log": "typecheck-initial.log.gz"
+    },
+    {
+      "name": "lint-initial",
+      "argv": ["pnpm", "lint"],
+      "node": "v24.19.0",
+      "exitCode": 0,
+      "elapsedSeconds": 3.277,
+      "log": "lint-initial.log.gz"
+    },
+    {
+      "name": "build-initial",
+      "argv": ["pnpm", "build"],
+      "node": "v24.19.0",
+      "exitCode": 0,
+      "elapsedSeconds": 17.272,
+      "log": "build-initial.log.gz"
+    },
+    {
+      "name": "diff",
+      "argv": ["git", "diff", "--check"],
+      "node": "v24.19.0",
+      "exitCode": 0,
+      "elapsedSeconds": 0.018,
+      "log": "diff.log.gz"
+    },
+    {
+      "name": "protected-paths",
+      "argv": [
+        "git",
+        "diff",
+        "--exit-code",
+        "f98647b7c5a00394f3ca570301c51e54eed6dd85",
+        "--",
+        "scripts/capability-boundary-baseline.json",
+        "scripts/audit-capability-boundaries.ts",
+        "scripts/audit-architecture-deepening.ts",
+        "vitest.shared.ts",
+        "src/db/schema.ts",
+        "drizzle",
+        "docs/planning/evidence/yuk1355-boundary-split",
+        "docs/planning/evidence/yuk1355-a-boundary-integration"
+      ],
+      "node": "v24.19.0",
+      "exitCode": 0,
+      "elapsedSeconds": 0.015,
+      "log": "protected-paths.log.gz"
+    },
+    {
+      "name": "ast-c",
+      "argv": ["node", "docs/planning/evidence/yuk1355-c-fixed-integration/compare-ast.cjs"],
+      "node": "v24.19.0",
+      "exitCode": 0,
+      "elapsedSeconds": 0.193,
+      "log": "ast-c.log.gz"
+    },
+    {
+      "name": "unit-c",
+      "argv": [
+        "pnpm",
+        "vitest",
+        "run",
+        "--config",
+        "vitest.unit.config.ts",
+        "src/capabilities/practice/server/calibration-sample-durable-operation.test.ts",
+        "src/capabilities/practice/jobs/judge_calibration_sample.test.ts",
+        "src/server/durable/calibration-sample-family.test.ts"
+      ],
+      "node": "v24.19.0",
+      "exitCode": 0,
+      "elapsedSeconds": 3.824,
+      "log": "unit-c.log.gz"
+    },
+    {
+      "name": "typecheck",
+      "argv": ["pnpm", "typecheck"],
+      "node": "v24.19.0",
+      "exitCode": 0,
+      "elapsedSeconds": 9.714,
+      "log": "typecheck.log.gz"
+    },
+    {
+      "name": "lint",
+      "argv": ["pnpm", "lint"],
+      "node": "v24.19.0",
+      "exitCode": 0,
+      "elapsedSeconds": 4.4,
+      "log": "lint.log.gz"
+    },
+    {
+      "name": "build",
+      "argv": ["pnpm", "build"],
+      "node": "v24.19.0",
+      "exitCode": 0,
+      "elapsedSeconds": 17.01,
+      "log": "build.log.gz"
+    }
+  ]
+}
