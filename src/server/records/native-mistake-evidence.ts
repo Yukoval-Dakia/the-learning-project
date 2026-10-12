@@ -106,6 +106,9 @@ function slotFace(slot: ResponseSlotT): string {
       ].join('\n');
     case 'numeric':
       return slot.unit_hint ?? '';
+    case 'sentence_breaks':
+      // 断句槽的题面即冻结明文（ADR-0074 D3a；位置语义见 position-gap.ts）。
+      return slot.text;
     case 'text':
     case 'formula':
     case 'open_response':
@@ -167,6 +170,9 @@ function responseText(slot: ResponseSlotT, entry: SlotResponseT): string {
             .map(itemText)
             .join(' → ')
         : '';
+    case 'sentence_breaks':
+      // 断句作答按原位置序呈现（code point 字缝索引，不解读为文字）。
+      return entry.positions.map((position) => `#${position}`).join(' ');
     default: {
       const exhaustive: never = entry;
       return exhaustive;

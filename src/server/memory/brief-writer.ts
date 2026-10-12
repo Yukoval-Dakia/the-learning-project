@@ -1,3 +1,4 @@
+import { allowsDerivation } from '@/core/schema/derivation-policy';
 // Station 2A (YUK-185, T-37) — the brief generate-writer.
 //
 // Implements the `GenerateBrief` terminal that the P5.2 regen pipeline
@@ -103,7 +104,8 @@ export async function runBriefWriter(params: {
   now: string; // 3A: real-clock ISO anchor for the 7d/3mo/long_term buckets
   ctx?: import('@/server/ai/runner-fn').RunTaskCallCtx;
 }): Promise<BriefDraft> {
-  const { runTaskFn, scopeKey, template, events, facts, now } = params;
+  const { runTaskFn, scopeKey, template, facts, now } = params;
+  const events = params.events.filter((event) => allowsDerivation(event.payload));
 
   // 4A: cold-scope short-circuit. A 0-event scope (e.g. the first `global`
   // regen on a fresh DB) has nothing to summarize — return an all-empty draft

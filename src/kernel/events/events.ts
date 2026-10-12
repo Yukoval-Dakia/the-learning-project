@@ -2,6 +2,7 @@
 // This module is the single INSERT owner for event rows.
 
 import { and, desc, eq, gte, ne, sql } from 'drizzle-orm';
+import { readDerivationPolicy } from '@/core/schema/derivation-policy';
 import { type EventT, parseEvent } from '@/core/schema/event';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
@@ -11,6 +12,7 @@ import {
   activeCorrectionStatus,
   getCorrectionStatuses,
 } from './corrections';
+import { eventAllowsDerivationSql } from './derivation-policy';
 import { computeAffectedScopes } from './scope-tagger';
 
 type DbLike = Db | Tx;
@@ -43,8 +45,16 @@ function rowToParseInput(row: typeof event.$inferSelect): Parameters<typeof pars
  * via parseEvent — failures throw, never silently swallowed). Returns null
  * when the row is absent.
  */
-export async function getEventById(db: DbLike, id: string): Promise<EnvelopedEvent | null> {
-  const rows = await db.select().from(event).where(eq(event.id, id)).limit(1);
+export async function getEventById(
+  db: DbLike,
+  id: string,
+  opts: { forDerivation?: boolean } = {},
+): Promise<EnvelopedEvent | null> {
+  const rows = await db
+    .select()
+    .from(event)
+    .where(and(eq(event.id, id), ...(opts.forDerivation ? [eventAllowsDerivationSql()] : [])))
+    .limit(1);
   const enveloped = await rowsToEnvelopedEvents(db, rows);
   return enveloped[0] ?? null;
 }
@@ -157,8 +167,16 @@ export type EventChain = {
   corrections: EnvelopedEvent[];
 };
 
-export async function getEventChain(db: DbLike, id: string): Promise<EventChain> {
-  const focalRows = await db.select().from(event).where(eq(event.id, id)).limit(1);
+export async function getEventChain(
+  db: DbLike,
+  id: string,
+  opts: { forDerivation?: boolean } = {},
+): Promise<EventChain> {
+  const focalRows = await db
+    .select()
+    .from(event)
+    .where(and(eq(event.id, id), ...(opts.forDerivation ? [eventAllowsDerivationSql()] : [])))
+    .limit(1);
   const focal = (await rowsToEnvelopedEvents(db, focalRows))[0] ?? null;
   if (focal === null) {
     throw new Error(`event ${id} not found`);
@@ -168,13 +186,19 @@ export async function getEventChain(db: DbLike, id: string): Promise<EventChain>
   // the focal row used above rather than querying the same event a second time.
   const caused_by_event_id = focalRows[0]?.caused_by_event_id ?? null;
 
-  const caused_by = caused_by_event_id ? await getEventById(db, caused_by_event_id) : null;
+  const caused_by = caused_by_event_id ? await getEventById(db, caused_by_event_id, opts) : null;
 
   // Reverse link: events with caused_by_event_id = id. Use index on caused_by_event_id.
   const reverseRows = await db
     .select()
     .from(event)
-    .where(and(eq(event.caused_by_event_id, id), ne(event.action, 'correct')))
+    .where(
+      and(
+        eq(event.caused_by_event_id, id),
+        ne(event.action, 'correct'),
+        ...(opts.forDerivation ? [eventAllowsDerivationSql()] : []),
+      ),
+    )
     .orderBy(desc(event.created_at), desc(event.dispatch_seq), desc(event.id));
   const caused_events = await rowsToEnvelopedEvents(db, reverseRows);
 
@@ -182,7 +206,12 @@ export async function getEventChain(db: DbLike, id: string): Promise<EventChain>
     .select()
     .from(event)
     .where(
-      and(eq(event.action, 'correct'), eq(event.subject_kind, 'event'), eq(event.subject_id, id)),
+      and(
+        eq(event.action, 'correct'),
+        eq(event.subject_kind, 'event'),
+        eq(event.subject_id, id),
+        ...(opts.forDerivation ? [eventAllowsDerivationSql()] : []),
+      ),
     )
     .orderBy(desc(event.created_at), desc(event.dispatch_seq), desc(event.id));
   const corrections = await rowsToEnvelopedEvents(db, correctionRows);
@@ -232,6 +261,9 @@ export interface WriteEventInput {
  * First write wins — a duplicate does NOT overwrite payload.
  */
 function prepareEventInsert(input: WriteEventInput): typeof event.$inferInsert {
+  if (readDerivationPolicy(input.payload) === 'answer_only') {
+    input = { ...input, ingest_at: input.ingest_at ?? new Date(), affected_scopes: [] };
+  }
   // parseEvent on a normalised view — Lane B's discriminated union locks
   // action/subject/outcome/payload. Envelope fields (id, session_id, created_at,
   // etc.) live on the DB row but outside Lane B's contract, so they're not

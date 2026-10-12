@@ -1,7 +1,8 @@
 import { and, desc, eq, gt, inArray, isNull, like, lt, not, or, sql } from 'drizzle-orm';
-
+import { allowsDerivation } from '@/core/schema/derivation-policy';
 import type { Db } from '@/db/client';
 import { event, memory_brief_note } from '@/db/schema';
+import { eventAllowsDerivationSql } from '@/kernel/events/derivation-policy';
 import { BRIEF_REFRESH_BUDGET, LONG_TERM_FRESHNESS_BUDGET } from '@/kernel/tools/budgets';
 import { scoreLongTermFreshness } from './brief-freshness';
 
@@ -112,6 +113,7 @@ async function loadEventsFromDb(db: Db, scopeKey: string): Promise<BriefEvent[]>
       and(
         sql`${event.affected_scopes} @> ARRAY[${scopeKey}]::text[]`,
         excludesInternalBriefLedger(),
+        eventAllowsDerivationSql(),
       ),
     )
     .orderBy(desc(event.created_at))
@@ -208,6 +210,7 @@ export async function scopeHasNewEvidence(db: Db, scopeKey: string): Promise<boo
       and(
         sql`${event.affected_scopes} @> ARRAY[${scopeKey}]::text[]`,
         excludesInternalBriefLedger(),
+        eventAllowsDerivationSql(),
         gt(event.created_at, briefLatest),
       ),
     )
@@ -280,11 +283,41 @@ export async function regenerateMemoryBrief(params: {
 }): Promise<{ wrote: boolean; row: BriefRow }> {
   const now = params.now?.() ?? new Date();
   const template = BRIEF_TEMPLATES[prefixForScope(params.scopeKey)];
-  const events = params.loadEvents
+  const loadedEvents = params.loadEvents
     ? await params.loadEvents(params.scopeKey)
     : await loadEventsFromDb(params.db as Db, params.scopeKey);
+  const events = loadedEvents.filter((row) => allowsDerivation(row.payload));
   const facts = params.searchFacts ? await params.searchFacts(params.scopeKey) : [];
-  const draft = await params.generate({ scopeKey: params.scopeKey, template, events, facts });
+  const generated = await params.generate({ scopeKey: params.scopeKey, template, events, facts });
+  const restrictedIds = new Set(
+    loadedEvents.filter((row) => !allowsDerivation(row.payload)).map((row) => row.id),
+  );
+  if (params.db) {
+    const ids = [
+      ...new Set([
+        ...generated.recent_week_evidence_ids,
+        ...generated.recent_months_evidence_ids,
+        ...generated.long_term_evidence_ids,
+      ]),
+    ];
+    if (ids.length) {
+      const forbidden = await params.db
+        .select({ id: event.id })
+        .from(event)
+        .where(and(inArray(event.id, ids), sql`NOT (${eventAllowsDerivationSql()})`));
+      for (const row of forbidden) restrictedIds.add(row.id);
+    }
+  }
+  const draft = {
+    ...generated,
+    recent_week_evidence_ids: generated.recent_week_evidence_ids.filter(
+      (id) => !restrictedIds.has(id),
+    ),
+    recent_months_evidence_ids: generated.recent_months_evidence_ids.filter(
+      (id) => !restrictedIds.has(id),
+    ),
+    long_term_evidence_ids: generated.long_term_evidence_ids.filter((id) => !restrictedIds.has(id)),
+  };
   const latestEvidenceAt =
     events.length === 0
       ? null

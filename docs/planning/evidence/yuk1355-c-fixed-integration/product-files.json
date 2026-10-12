@@ -1,0 +1,26 @@
+{
+  "fixedC": "99f5e069d0476a0afe50d246eecfe38cae18854a",
+  "aCheckpoint": "f98647b7c5a00394f3ca570301c51e54eed6dd85",
+  "files": [
+    {
+      "path": "docs/planning/2026-10-11-yuk1355-timed-reference.md",
+      "sha256": "6211fe556472b8f534cc9efb3f04de316b935b10d65b981b932969949c0ca3b1"
+    },
+    {
+      "path": "src/capabilities/practice/server/calibration-sample-durable-operation.db.test.ts",
+      "sha256": "f9c364a9fc30f8fb909ebf0031cc08e6273d1827a724840339d08f42bc31878b"
+    },
+    {
+      "path": "src/capabilities/practice/server/calibration-sample-durable-operation.test.ts",
+      "sha256": "a07c833616c326bc8862208f07d1b30785e8c11c168fc426a9d53c02d9198711"
+    },
+    {
+      "path": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "sha256": "07b38cb451d2e6d463a4cf985e61bae93cc4c605068d31723279a5ca219fd148"
+    },
+    {
+      "path": "src/capabilities/practice/server/calibration-sample-store.ts",
+      "sha256": "a41c509bc43df28e69ff769b7e25dab0ec47ff126f9aaf34936a12a75b3a8476"
+    }
+  ]
+}

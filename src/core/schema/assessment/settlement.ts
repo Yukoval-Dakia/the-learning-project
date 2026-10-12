@@ -68,7 +68,9 @@ export type VerdictReason =
   | 'no_denominator'
   | 'score_zero'
   | 'score_full'
-  | 'score_partial';
+  | 'score_partial'
+  /** ADR-0074 D3a：已知部分对、分数未知（partial_unknown_points 聚合）。 */
+  | 'partial_unknown_points';
 
 export interface CoarseVerdict {
   verdict: AssessmentVerdict;
@@ -146,6 +148,22 @@ export function deriveCoarseVerdict(
     };
   }
   const aggregate = record.aggregate;
+  if (aggregate.kind === 'partial_unknown_points') {
+    // ADR-0074 D3a / 复核 P1-1 收口（coordinator 最终裁决 2026-10-11）：
+    // 调度面与公开面分离 —— 本函数驱动 server settle 的 rating/FSRS/θ，
+    // 必须返回【既有非调度 verdict】（unsupported ⇒ ratingForVerdict=null ⇒
+    // 无 FSRS/无 θ），绝不返回 partial；typed reason `partial_unknown_points`
+    // 保留给公开投影（evaluation-authority）识别并展示为 partial。
+    // 分数/分母/归一化一律 null：未知权重不造总分、不造比例。legacy：
+    // holistic 未映射/pending/其它 unresolved 仍走原分支不变，不重释。
+    return {
+      verdict: 'unsupported',
+      reason: 'partial_unknown_points',
+      points: null,
+      maxPoints: null,
+      normalized: null,
+    };
+  }
   if (aggregate.kind === 'unresolved') {
     return {
       verdict: 'unsupported',
@@ -251,6 +269,13 @@ export function classifyScoredUnit(unit: ScoringUnitT, result: ScoringUnitResult
   }
   const max = unit.points ?? 0;
   if (max <= 0) return { kind: 'uninformative' };
+  // ADR-0074 D3a / owner override（2026-10-11）：分数未知的部分对【不产生
+  // 任何 KC 证据】—— 不按正确计数映射 partial/zero（0 对也不是已判零：
+  // 分数未知时 0/total 不构成 failure 证据），更不得经 points_awarded ?? 0
+  // 落成 zero。知识证据只来自分数已知的单元。
+  if (result.partial_unknown_points != null) {
+    return { kind: 'uninformative' };
+  }
   const awarded = result.points_awarded ?? 0;
   if (awarded <= 0) return { kind: 'zero' };
   if (awarded >= max) return { kind: 'full' };

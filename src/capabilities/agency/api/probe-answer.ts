@@ -42,6 +42,7 @@ function mapGradingOutcome(coarse: JudgeResultV2T['coarse_outcome']): 0 | 1 | nu
     case 'correct':
       return 1;
     case 'partial':
+    case 'partial_unknown':
     case 'unsupported':
       return null;
   }

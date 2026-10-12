@@ -1,0 +1,36 @@
+{
+  "source": "2b41483e6a76134a248fc2419a31eeeb55d0ea78",
+  "result": "1 passed, 2 unselected; only prior failing round-trip rerun",
+  "prior": "DB10 2 passed / 1 failed retained separately",
+  "files": {
+    "db.log": {
+      "path": "/tmp/yuk1355-backup-parent-db-11/db.log",
+      "sha256": "89ba3019dedd13b4afe1692aaec87ff5c9b63241476d8a207f530ca84d103e16"
+    },
+    "exit.json": {
+      "path": "/tmp/yuk1355-backup-parent-db-11/exit.json",
+      "sha256": "1f724d4b8178db48bc55e312573be0684f9e55444eac104fc103646747d755e2"
+    },
+    "cleanup.json": {
+      "path": "/tmp/yuk1355-backup-parent-db-11/cleanup.json",
+      "sha256": "05bfb9fd3fe52e19a6328d6a1efb99633442fb7eb94d5f093a472abe8fa2a748"
+    },
+    "before.json": {
+      "path": "/tmp/yuk1355-backup-parent-db-11/before.json",
+      "sha256": "82b4dd9ebadb31bd46c41743e6c49256a7fbb5ab556a52c38d547fba8d29559d"
+    },
+    "after.json": {
+      "path": "/tmp/yuk1355-backup-parent-db-11/after.json",
+      "sha256": "e3c4c083ed85348b2d93d30b80f9082a0178056a68481e3a8b31520250d0bc4c"
+    }
+  },
+  "cleanup": {
+    "containerParity": true,
+    "releaseParity": true,
+    "tokenMatches": true,
+    "processExited": true,
+    "processGroupEmpty": true,
+    "released": true,
+    "releasedAt": 1791726101.8628979
+  }
+}

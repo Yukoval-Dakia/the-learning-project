@@ -1,0 +1,241 @@
+{
+  "base": "9ce33e61da3ee40c7e89256212a7aedaf0b88e9d",
+  "files": [
+    {
+      "path": ".remember/now.md",
+      "sha256": "13fd51e042cabfd648956f69a117f3c0cf5d528033ddfc44ac722206f4bce11b"
+    },
+    {
+      "path": "PLAN.md",
+      "sha256": "0715ea7bbe59d69f5e79310954db21af126c5635642b214061f732a91c4b8f56"
+    },
+    {
+      "path": "scripts/cutover-backup.test.ts",
+      "sha256": "0c4c2a9f191ad6ca8f079970a552c0eeae1562cbd218c1471973ef8c2c58d89c"
+    },
+    {
+      "path": "src/capabilities/agency/api/probe-answer.db.test.ts",
+      "sha256": "6836fdccbee9f308f905c48c6feaf0c750c821c86f984de67c6a407485cc4e92"
+    },
+    {
+      "path": "src/capabilities/agency/server/intervention/intervention-preparation.db.test.ts",
+      "sha256": "bc748a0d2226deade200bdc8fa0fbd3ba007734e2b950aaed259ba808ee14440"
+    },
+    {
+      "path": "src/capabilities/practice/api/assessment-contracts.ts",
+      "sha256": "3b83d0c6d3e07b6a50eaca052db2c1c126385599c522a780e1dff8ecb3dd112d"
+    },
+    {
+      "path": "src/capabilities/practice/api/assessment-route.ts",
+      "sha256": "3a290ed09d54b43a9cd9992c9b285e0818d718b3c8daa04eb857d5486acef8c5"
+    },
+    {
+      "path": "src/capabilities/practice/api/paper-contracts.ts",
+      "sha256": "04ee867412761875207a42bf5277ec8c327d4e4f322dd20474bd69a41f4c17b9"
+    },
+    {
+      "path": "src/capabilities/practice/api/placement-native.db.test.ts",
+      "sha256": "b38995b76164d13e29a8d18338a6208d10e65548e521e97eaf989827ecd042d4"
+    },
+    {
+      "path": "src/capabilities/practice/api/review-sessions.db.test.ts",
+      "sha256": "b567d21e00f8254d879bd4200472eefbe5a23959bc1bef215f95a87fc82cb279"
+    },
+    {
+      "path": "src/capabilities/practice/api/stream.db.test.ts",
+      "sha256": "4c2b48cafba93b53ac5ee07737f45a86914eda8ab2b54e2245d7b1662ab0db94"
+    },
+    {
+      "path": "src/capabilities/practice/api/submit-durable-resource.db.test.ts",
+      "sha256": "3640fe357334d78f9356de7bc196461e08486fa61f6dd850f5183ef69b2461d6"
+    },
+    {
+      "path": "src/capabilities/practice/api/submit-native-diagnostic.db.test.ts",
+      "sha256": "cf63c5234c58ea9107804e024bdaa67fa864a36c1d8e437f7d6e109beaf98aef"
+    },
+    {
+      "path": "src/capabilities/practice/server/assessment/paper-detail.ts",
+      "sha256": "dfc58a26b37c97d012e16467ecc8bfa8c96404425ccd785d1974aa3e51bd4bbe"
+    },
+    {
+      "path": "src/capabilities/practice/server/assessment/paper-issuance.ts",
+      "sha256": "bc73010024f4dcf90e1c73d72108d7b745511761a7b7d9ebf9cc4ce615b16ef2"
+    },
+    {
+      "path": "src/capabilities/practice/server/assessment/submit.ts",
+      "sha256": "28d09dfbc02baef542647a52768baa8f61190061e8135ce8894bcf0ca24dcd47"
+    },
+    {
+      "path": "src/capabilities/practice/server/due-list.ts",
+      "sha256": "e117556b45050e35420ed6e70d76419d9310952719d41d13d30ec07c5a7762eb"
+    },
+    {
+      "path": "src/capabilities/practice/server/native-durable-attempt.db.test.ts",
+      "sha256": "d4c4a0165edbd76b3d3325307a6d3773a9f1fbd585515ba6dc9873e3488cd243"
+    },
+    {
+      "path": "src/capabilities/practice/server/paper-cycle.db.test.ts",
+      "sha256": "57eea22db2c95f9452f25f774094ea1d1a32c4225a4b62c97f7a7e3d9b16532a"
+    },
+    {
+      "path": "src/capabilities/practice/server/paper-detail.ts",
+      "sha256": "6f5e6b53618619022b16da3d9f743dc781347100a20d18b48ba485ac00a5b6c0"
+    },
+    {
+      "path": "src/capabilities/practice/server/placement-assessment.ts",
+      "sha256": "d727f02303ceb799d4988b3626e977c3e84e81bb0534705685e4abce7d222246"
+    },
+    {
+      "path": "src/capabilities/practice/server/placement-select.ts",
+      "sha256": "5228ed40e29572b03f4892cc10378fc4dc824e4bcf7076f2a43be8722d35bae8"
+    },
+    {
+      "path": "src/capabilities/practice/server/question-supply/placement-starter-attempts.ts",
+      "sha256": "956793c7062d9682f5815e9314fc75e5ac4963bc8593484e2aaef936228e2afc"
+    },
+    {
+      "path": "src/capabilities/practice/server/solve-session-media.db.test.ts",
+      "sha256": "ad9653ae417e3979674a2aade02f40444f92e6dd162cbe1bb029d71fa2e24fbb"
+    },
+    {
+      "path": "src/capabilities/practice/server/stream-store-provider-lock.db.test.ts",
+      "sha256": "770c9536c60e1ae654180b8e06b185371603e255f6c22d054b0069f2e0b9c8ad"
+    },
+    {
+      "path": "src/capabilities/practice/server/stream-store-reserved-connection.db.test.ts",
+      "sha256": "7b109ff65b8bf6bddd287ff6b8645d42119abdeddde6bd1d1a7ab7e15e977718"
+    },
+    {
+      "path": "src/capabilities/practice/server/stream-store.db.test.ts",
+      "sha256": "640a45d4f9f1ed81c8955114b064b2f66cdeb3bb9e1200d7adcf7b522f47ef6b"
+    },
+    {
+      "path": "src/capabilities/practice/server/stream-store.ts",
+      "sha256": "ae799ccaec2dc1f2c3c1ab4f4f963df0303520ad7ef396c1243c69604476835e"
+    },
+    {
+      "path": "src/capabilities/practice/server/variant-rotation.ts",
+      "sha256": "cd2304a82f9b20677aebbd1570393f13c56e521fe0f2d7072a3a34651ef0cd87"
+    },
+    {
+      "path": "src/capabilities/shell/server/teaching-brief-issuance.db.test.ts",
+      "sha256": "01065f808634ec96c6a98a491bd13e592c2d0753d83f0f49f1e4a61f723bccfe"
+    },
+    {
+      "path": "src/capabilities/shell/ui/shell.css",
+      "sha256": "a005c8d0fa3370cdb459755aea9c642c81ce03bc4d3d910a1fe4b684d62b6d54"
+    },
+    {
+      "path": "src/core/schema/assessment/evaluation.test.ts",
+      "sha256": "addc1cd8b14456465aff4c9b3063d5968993bd7c2c71066ee7e2a00e173bfe7f"
+    },
+    {
+      "path": "src/core/schema/assessment/index.ts",
+      "sha256": "fb4a24f84010cb05fd151d8cd32db064878730fd1778d7fd91cd8b0fd5397ccc"
+    },
+    {
+      "path": "src/core/schema/assessment/serving-admission.ts",
+      "sha256": "3a02745b9fc74e30da1a947ee6ab357c135b37a77a516faad47b9ebcacd07330"
+    },
+    {
+      "path": "src/kernel/records/assessment-issuance.ts",
+      "sha256": "4621454b7f275509edf3a47e145418b3abf7bc1be9569ddde5e220635bf80968"
+    },
+    {
+      "path": "src/server/assessment/admission.db.test.ts",
+      "sha256": "da5d3cc21e73d32cff44f41c2190cb3f8177b8dc052be9df1c8bc55b10d8992f"
+    },
+    {
+      "path": "src/server/assessment/joint-input.db.test.ts",
+      "sha256": "d23fdc2e3e1e80b4b97c36fc607e7989b9780be0da794ed5761a9346f070ef5b"
+    },
+    {
+      "path": "src/server/boss/isolated-runtime.db.test.ts",
+      "sha256": "d5b1f2a12856f3b7d60b3aac43da31f81f1d6a9068cfa852f548712d71bee77b"
+    },
+    {
+      "path": "src/server/records/native-mistake-evidence.db.test.ts",
+      "sha256": "565321d5e9a6fe498df2f39853bc28acb2b853b197e5187d5a63cfe163d9cc44"
+    },
+    {
+      "path": "src/server/rehearsal/post-write.ts",
+      "sha256": "74f2e3abf5531620abf1fd3a58bf843ca170b02f4c3c63e6f81d300bd5e8fbd6"
+    },
+    {
+      "path": "src/ui/components/response/ChoiceSetResponse.tsx",
+      "sha256": "28c25f381574b853b6ff5f0354a93ea9905b444a81d8ef035b63d0e69917f041"
+    },
+    {
+      "path": "src/ui/components/response/response-types.ts",
+      "sha256": "64494091c65e9ad224734e3bba971a054032c6be643ed42cd9561313a0033103"
+    },
+    {
+      "path": "src/ui/lib/api-schema.generated.ts",
+      "sha256": "66b35a233b54b5bc16352f5286defead4a4e3c1776ad645d5a211b947572b5b8"
+    },
+    {
+      "path": "tests/dbos-judge/support.ts",
+      "sha256": "67004f922a62451a5ace29059248c8db90aa2d934feec1b769f9e95ac7f863e3"
+    },
+    {
+      "path": "tests/dbos-prune/cron.db.test.ts",
+      "sha256": "a4d8864998ece69e354d3d6c560ee45d4f57d8421dd5512fbadbaf0b98434601"
+    },
+    {
+      "path": "tests/dbos-prune/fixture.ts",
+      "sha256": "d2dbcd99157a6e0ff5191175f7c62bb28ba700605cf8a1fa18c522366e900a1d"
+    },
+    {
+      "path": "tests/dbos-prune/worker.ts",
+      "sha256": "45c828be9e827e545c9522c24fb4a95bd6e8f0e58a194512ad5d4efbc8775cea"
+    },
+    {
+      "path": "tests/dbos-review-orphan/cron.db.test.ts",
+      "sha256": "1a703c0f2ae984efb2db4dc1a51d4cf5d1910e5b30e02d4225111f9831d207a1"
+    },
+    {
+      "path": "tests/dbos-review-orphan/fixture.ts",
+      "sha256": "956e2af14c79b03932fa71f48614ceca4e9fac4a7e0199eab1cddfc651cf65b0"
+    },
+    {
+      "path": "tests/dbos-review-orphan/worker.ts",
+      "sha256": "f89e3566a13ebb8ee9281546520c0bbb1ee7e654428437ec857a398ed95d3d5f"
+    },
+    {
+      "path": "tests/dbos-session-orphan/cron.db.test.ts",
+      "sha256": "d0554672a2b34a16922be31ba4557390feefc1804a6619a057696e46d318415a"
+    },
+    {
+      "path": "tests/dbos-session-orphan/migration.db.test.ts",
+      "sha256": "694c2ce15c257da689bc2e4e17a30f66d3c6c7d42e40ba0bb9c394048a91bf77"
+    },
+    {
+      "path": "tests/dbos-session-orphan/worker.ts",
+      "sha256": "250a4166f9f3d6a062ea78676d4d2f7e91136a6cc2dd8aeaf9bd376fb53ae665"
+    },
+    {
+      "path": "tests/fixtures/assessment-paper.ts",
+      "sha256": "0158a637c8494dfa67e611acaad2c916ab7e015153ad7f43a633c786362ea51e"
+    },
+    {
+      "path": "tests/fixtures/assessment-solo.ts",
+      "sha256": "25cc47640a363158714404e1afa38309a03c0110fb4f6d9457a371228ec6c37a"
+    },
+    {
+      "path": "tests/fixtures/historical-assessment-issuance.ts",
+      "sha256": "c95cf829ab4b0bebd9d4a09377e2e06175a926ec671b1345491072a6decf7b3a"
+    },
+    {
+      "path": "tests/fixtures/native-appeal.ts",
+      "sha256": "ba8730cb3582b2e585b7997dce84a4ba56bcdfe0600f69760e89ca2bf52dad3a"
+    },
+    {
+      "path": "tests/fixtures/native-judge-run.ts",
+      "sha256": "7e7d70fdebc683f013c1abdaca3d440513078d76ed579555128582bb5e7714c6"
+    },
+    {
+      "path": "tests/fixtures/native-solo-http.ts",
+      "sha256": "3668d28c33ef6bc1075a0f17e0fc3aeb3d507e58b0d1823e4d4a64ebd5a672e9"
+    }
+  ]
+}

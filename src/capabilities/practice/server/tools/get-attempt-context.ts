@@ -1017,7 +1017,7 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
   const input = InputSchema.parse(raw);
   const timelineLimit = input.timelineLimit ?? TOOL_COURTESY_DEFAULTS.get_attempt_context;
   const causalLimit = input.causalLimit ?? TOOL_COURTESY_DEFAULTS.get_attempt_context;
-  const focal = await getEventById(ctx.db, input.attemptEventId);
+  const focal = await getEventById(ctx.db, input.attemptEventId, { forDerivation: true });
 
   const noCausal: Output['causal_neighborhood'] = {
     parent: null,
@@ -1039,7 +1039,7 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
   };
   if (!focal) return emptyOutput(input, 'not_found', null, noCausal);
 
-  const chain = await getEventChain(ctx.db, focal.id);
+  const chain = await getEventChain(ctx.db, focal.id, { forDerivation: true });
   const chainEvents = [
     focal,
     ...(chain.caused_by ? [chain.caused_by] : []),

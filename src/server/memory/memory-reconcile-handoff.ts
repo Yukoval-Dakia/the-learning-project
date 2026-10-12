@@ -3,6 +3,7 @@ import { and, asc, eq, sql } from 'drizzle-orm';
 import { getConfig } from '@/core/config/store';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
+import { readEventDerivationPolicy } from '@/kernel/events/derivation-policy';
 import {
   persistRecoveryCursor,
   readLatestRecoveryCursor,
@@ -88,6 +89,9 @@ export async function dispatchMemoryReconcile(
     readonly mode: MemoryReconcileHandoffMode;
   },
 ): Promise<string | null> {
+  if ((await readEventDerivationPolicy(db, input.sourceEventId)) === 'answer_only') {
+    throw new MemoryReconcileHandoffError('restricted source cannot reconcile');
+  }
   const memories = normalizeReconcileInputs(input.memories);
   if (memories.length === 0) return null;
   const jobId = memoryReconcileJobId(input.sourceEventId, memories);
@@ -107,7 +111,11 @@ export async function dispatchMemoryReconcile(
   let confirmed = false;
   let sendReturnedNull = false;
   try {
-    const sentId = await boss.send(MEMORY_RECONCILE_QUEUE, { memories, user_id: 'self' }, options);
+    const sentId = await boss.send(
+      MEMORY_RECONCILE_QUEUE,
+      { memories, user_id: 'self', source_event_id: input.sourceEventId },
+      options,
+    );
     sendReturnedNull = sentId === null;
     confirmed = sentId === jobId || (await readback(boss, jobId));
   } catch (error) {

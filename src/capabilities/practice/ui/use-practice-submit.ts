@@ -14,6 +14,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ResponseSetT, SlotResponseT } from '@/core/schema/assessment';
+import { PartialUnknownJudgeResult } from '@/core/schema/capability';
 // 边界（PR #1069 review 修复）：capability 包只依赖 @/kernel/* + 自身 + 共享 UI 件；
 // 长度常量走 @/kernel/limits 窄 facade（见 src/kernel/limits.ts 头注释的实测表）。
 import { REASONING_TRACE_MAX_LEN } from '@/kernel/limits';
@@ -82,7 +83,15 @@ export type Rating = 'again' | 'hard' | 'good';
 export type JudgeFeedback = Pick<
   JudgePreview,
   'route' | 'coarse_outcome' | 'confidence' | 'feedback_md' | 'suggested_rating'
->;
+> & {
+  partial_units?: Extract<JudgePreview, { coarse_outcome: 'partial_unknown' }>['partial_units'];
+};
+
+const PartialUnknownFeedback = PartialUnknownJudgeResult.pick({
+  coarse_outcome: true,
+  score: true,
+  partial_units: true,
+});
 
 const INTERVENTION_DIAGNOSTIC_SOURCE = 'intervention_diagnostic';
 const JUDGE_FAILURE_MESSAGE = '判题失败，请稍后重试';
@@ -98,13 +107,18 @@ export function feedbackFromCommittedAttempt(result: SubmitResult): JudgeFeedbac
   return {
     route: result.judge.route,
     coarse_outcome: result.judge.coarse_outcome,
+    ...(result.judge.coarse_outcome === 'partial_unknown'
+      ? { partial_units: result.judge.partial_units }
+      : {}),
     confidence: result.judge.confidence,
     feedback_md: result.judge.feedback_md,
     // auto_rate 的正常回执恒带 suggested_rating；旧/滚动部署响应若漏掉，
     // review_event.rating 仍是服务端最终实际采用的评级，不能在 UI 侧猜。
     suggested_rating:
-      result.judge.suggested_rating ??
-      ('rating' in result.review_event ? result.review_event.rating : null),
+      result.judge.coarse_outcome === 'partial_unknown'
+        ? null
+        : (result.judge.suggested_rating ??
+          ('rating' in result.review_event ? result.review_event.rating : null)),
   };
 }
 
@@ -123,6 +137,7 @@ export function feedbackFromCommittedDiagnosticAttempt(
 export const VERDICT_OF: Record<JudgePreview['coarse_outcome'], { label: string; tone: Rating }> = {
   correct: { label: '对', tone: 'good' },
   partial: { label: '部分对', tone: 'hard' },
+  partial_unknown: { label: '部分正确', tone: 'hard' },
   incorrect: { label: '错', tone: 'again' },
   unsupported: { label: '暂时没法自动判', tone: 'hard' },
 };
@@ -175,6 +190,16 @@ export function toSubmittedJudgeResult(
     case 'partial':
       if (pv.score === null) throw new Error(`${pv.coarse_outcome} judge result requires score`);
       return { ...common, coarse_outcome: pv.coarse_outcome, score: pv.score };
+    case 'partial_unknown':
+      if (pv.score !== null || pv.partial_units.length === 0) {
+        throw new Error('partial_unknown judge result requires score=null and partial units');
+      }
+      return {
+        ...common,
+        coarse_outcome: 'partial_unknown',
+        score: null,
+        partial_units: pv.partial_units,
+      };
     case 'incorrect':
       if (pv.score !== 0) throw new Error('incorrect judge result requires score=0');
       return { ...common, coarse_outcome: 'incorrect', score: 0 };
@@ -561,14 +586,35 @@ export function usePracticeSubmit({
       r && typeof r.coarse_outcome === 'string' && r.coarse_outcome in VERDICT_OF
         ? (r.coarse_outcome as keyof typeof VERDICT_OF)
         : null;
+    const partial = outcome === 'partial_unknown' ? PartialUnknownFeedback.safeParse(r) : null;
+    if (partial && !partial.success) {
+      setCommittedPreview({
+        route: 'durable',
+        coarse_outcome: 'unsupported',
+        confidence: 0,
+        feedback_md: '',
+        suggested_rating: null,
+      });
+      setRating(null);
+      setAutoCommitted(true);
+      setAutoCommitJudgeEventId(null);
+      setPendingRun(null);
+      addToast('作答已保存，但部分判定信息不完整，请稍后查看。', 'info', 'clock');
+      return;
+    }
     const fr =
-      r && typeof r.final_rating === 'string' && ['again', 'hard', 'good'].includes(r.final_rating)
-        ? (r.final_rating as Rating)
-        : 'hard';
+      outcome === 'partial_unknown' || r?.final_rating === null
+        ? null
+        : r &&
+            typeof r.final_rating === 'string' &&
+            ['again', 'hard', 'good'].includes(r.final_rating)
+          ? (r.final_rating as Rating)
+          : 'hard';
     if (outcome) {
       setCommittedPreview({
         route: typeof r?.route === 'string' && r.route ? r.route : 'durable',
         coarse_outcome: outcome,
+        ...(partial?.success ? { partial_units: partial.data.partial_units } : {}),
         confidence: typeof r?.confidence === 'number' ? r.confidence : 0,
         feedback_md: typeof r?.feedback_md === 'string' ? r.feedback_md : '',
         suggested_rating: fr,
@@ -622,7 +668,8 @@ export function usePracticeSubmit({
         ...buildCaptureFields({ reasoningTrace, selfConfidence }),
         // YUK-432 — 客观题自动判分+自动评级：server 用 judge 的 suggested rating 覆盖 body.rating，
         // 并让客观判分流过 difficulty_calibration_label hook 产标签（B1 难度 firm-up 链解冻）。
-        auto_rate: opts.autoRate,
+        // Unknown points must never become a user rating; the server settles with rating=null.
+        auto_rate: pv?.coarse_outcome === 'partial_unknown' ? true : opts.autoRate,
         // YUK-433 — solo 路径 RT capture：这次作答的墙钟用时（题面就绪 → 此刻 commit）。在单一 commit()
         // 路径里 stamp，故**两条提交分支都覆盖**：手动评级 commit（开放题）与客观题 auto_rate:true 自动
         // commit 都经此。computeLatencyMs clamp 到 [0, 3_600_000]（对齐 server zod）；shownAt 为 null →

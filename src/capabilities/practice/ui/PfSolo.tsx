@@ -387,6 +387,14 @@ export function PfSolo({
                   size={12}
                 />
                 {verdict.label}
+                {displayedPreview.coarse_outcome === 'partial_unknown' &&
+                  `${
+                    displayedPreview.partial_units?.length
+                      ? `（${displayedPreview.partial_units
+                          .map((unit) => `${unit.correct_count}/${unit.total_count}`)
+                          .join('、')}）`
+                      : ''
+                  }，分数未知`}
               </span>
               <span className="ai-tag">
                 <LoomIcon name="sparkle" size={12} />
@@ -421,7 +429,7 @@ export function PfSolo({
                 隐藏手动 again/hard/good 评级行；用户仍看到上面的判定反馈卡，按「下一项」推进。
                 注意：仅隐藏**手动评级行**——「不服判」入口仍保留（FINDING 2，见下方 footer）。
                 开放题：保留现有手动评级行（默认=建议，可改）。 */}
-            {!autoCommitted && (
+            {!autoCommitted && displayedPreview.coarse_outcome !== 'partial_unknown' && (
               <div className="pfs-rate">
                 <span className="pfs-rate-label">评级</span>
                 {(['again', 'hard', 'good'] as const).map((g) => (
@@ -457,6 +465,16 @@ export function PfSolo({
                 // 客观题：已自动判分+评级，「下一项」只推进（不再二次 commit）。
                 <Btn variant="primary" icon="arrow" disabled={committing} onClick={() => onDone()}>
                   {committing ? '判分中…' : '下一项'}
+                </Btn>
+              ) : displayedPreview.coarse_outcome === 'partial_unknown' ? (
+                <Btn
+                  variant="primary"
+                  icon="arrow"
+                  disabled={committing}
+                  // Required wire fallback only; auto_rate leaves the actual rating to the server.
+                  onClick={() => void commit({ withAppeal: false, rating: 'hard', autoRate: true })}
+                >
+                  {committing ? '提交中…' : '保存作答 · 下一项'}
                 </Btn>
               ) : (
                 // 开放题：手动确认评级后 commit（auto_rate 缺省 false → server 用 body.rating）。
@@ -518,8 +536,18 @@ export function PfSolo({
                       size="sm"
                       variant="secondary"
                       icon="send"
-                      disabled={!appealText.trim() || committing || !rating}
-                      onClick={() => rating && void commit({ withAppeal: true, rating })}
+                      disabled={
+                        !appealText.trim() ||
+                        committing ||
+                        (!rating && displayedPreview.coarse_outcome !== 'partial_unknown')
+                      }
+                      onClick={() => {
+                        if (displayedPreview.coarse_outcome === 'partial_unknown') {
+                          void commit({ withAppeal: true, rating: 'hard', autoRate: true });
+                        } else if (rating) {
+                          void commit({ withAppeal: true, rating });
+                        }
+                      }}
                     >
                       提交重判 · 先继续
                     </Btn>

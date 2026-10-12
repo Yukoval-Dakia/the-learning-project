@@ -37,6 +37,7 @@ export const RESPONSE_SLOT_KINDS = ResponseSlot.options.map(
   'matching',
   'ordering',
   'open_response',
+  'sentence_breaks',
 ];
 export type ResponseSlotKindT = (typeof RESPONSE_SLOT_KINDS)[number];
 
@@ -164,6 +165,16 @@ export const CAPABILITY_COVERAGE_MATRIX: readonly ResponsePrimitiveCoverage[] = 
     manual_evidence_required: true,
     notes:
       '开放作答 + D10 证据附件（audio/video/pdf/plaintext/image 并列）。无确定性通道；证据不可读/不足走 unreadable_evidence/insufficient_evidence 未决（不造分）。collectable=partial：附件上传面在 ingestion，ResponseSet 链未接线。',
+  },
+  {
+    slot_kind: 'sentence_breaks',
+    expressible: 'covered',
+    collectable: 'partial',
+    auto_scorable: 'deterministic',
+    deterministic_comparator: 'position_set_rule',
+    manual_evidence_required: false,
+    notes:
+      'ADR-0074 D3a 断句：冻结明文的 code point 字缝点选（position-gap.ts 语义）；position_set_key 判据（接受断点集合 + 题级 typed 规则，私有）由 position_set_rule 确定性判分；无印规则的非精确集合记对数并 needs_review（分数未知不造分）。collectable=partial：R10 字间点选 UI 属界面线，ResponseSet 投递链未接线。',
   },
 ];
 

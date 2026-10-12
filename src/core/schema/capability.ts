@@ -63,7 +63,13 @@ export const ScoreMeaning = z.enum([
 ]);
 export type ScoreMeaningT = z.infer<typeof ScoreMeaning>;
 
-export const CoarseOutcome = z.enum(['correct', 'partial', 'incorrect', 'unsupported']);
+export const CoarseOutcome = z.enum([
+  'correct',
+  'partial',
+  'incorrect',
+  'unsupported',
+  'partial_unknown',
+]);
 export type CoarseOutcomeT = z.infer<typeof CoarseOutcome>;
 
 const JudgeResultV2Base = z.object({
@@ -72,6 +78,21 @@ const JudgeResultV2Base = z.object({
   capability_ref: CapabilityRef,
   feedback_md: z.string(),
   evidence_json: z.record(z.string(), z.unknown()),
+});
+
+export const PartialUnknownJudgeResult = JudgeResultV2Base.extend({
+  coarse_outcome: z.literal('partial_unknown'),
+  score: z.null(),
+  feedback_md: z.string().min(1),
+  partial_units: z
+    .array(
+      z.object({
+        scoring_unit_id: z.string().min(1),
+        correct_count: z.number().int().min(0),
+        total_count: z.number().int().min(1),
+      }),
+    )
+    .min(1),
 });
 
 export const JudgeResultV2 = z.discriminatedUnion('coarse_outcome', [
@@ -95,5 +116,6 @@ export const JudgeResultV2 = z.discriminatedUnion('coarse_outcome', [
     confidence: z.literal(0),
     feedback_md: z.string().min(1),
   }),
+  PartialUnknownJudgeResult,
 ]);
 export type JudgeResultV2T = z.infer<typeof JudgeResultV2>;

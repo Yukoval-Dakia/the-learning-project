@@ -13,7 +13,7 @@ import { physicsProfile } from '@/subjects/physics/profile';
 import type { SubjectProfile } from '@/subjects/profile-schema';
 import { yuwenProfile } from '@/subjects/yuwen/profile';
 
-type CoarseOutcome = JudgeResultV2T['coarse_outcome'];
+type CoarseOutcome = keyof typeof UNIVERSAL_RATING_FROM_OUTCOME;
 
 describe('ratingFromCoarseOutcome routes through the profile rating policy (YUK-739)', () => {
   it('universal behavior is preserved when no profile is supplied', () => {
