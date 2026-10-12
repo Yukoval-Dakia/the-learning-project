@@ -1,10 +1,12 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useState, useSyncExternalStore } from 'react';
 import { MathMarkdown, isKatexNotation } from '@/ui/lib/math-markdown';
 import { Button } from '@/ui/primitives/Button';
 
 export const ANSWER_PREVIEW_DEBOUNCE_MS = 180;
+
+const noop = () => {};
 
 export function shouldShowAnswerPreview(notation?: string | null) {
   return isKatexNotation(notation);
@@ -17,15 +19,27 @@ export function ReviewAnswerPreview({
   value: string;
   notation?: string | null;
 }) {
-  const [previewValue, setPreviewValue] = useState(value);
+  // Debounced preview: the shown value catches up with `value` after the debounce delay.
+  // The pending timer is attached per value through useSyncExternalStore; a newer value
+  // replaces it and unmount clears it.
+  const [preview] = useState(() => ({ shown: value }));
+  const subscribe = useCallback(
+    (notify: () => void) => {
+      if (preview.shown === value) return noop;
+      const timer = window.setTimeout(() => {
+        preview.shown = value;
+        notify();
+      }, ANSWER_PREVIEW_DEBOUNCE_MS);
+      return () => window.clearTimeout(timer);
+    },
+    [preview, value],
+  );
+  const previewValue = useSyncExternalStore(
+    subscribe,
+    () => preview.shown,
+    () => preview.shown,
+  );
   const [expanded, setExpanded] = useState(true);
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      setPreviewValue(value);
-    }, ANSWER_PREVIEW_DEBOUNCE_MS);
-    return () => window.clearTimeout(timer);
-  }, [value]);
 
   if (!shouldShowAnswerPreview(notation)) return null;
 
