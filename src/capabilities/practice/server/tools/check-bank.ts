@@ -15,7 +15,7 @@ import {
   validateScoringBasis,
   validateStructure,
 } from '@/core/schema/assessment';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import { source_asset } from '@/db/schema';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 import { bankAssetDigestMatches, readBankServableParts, resolveBankRefs } from './bank-ref';
@@ -147,6 +147,16 @@ function unknownResult(
 }
 
 export async function runCheckBank(db: Db, rawInput: CheckBankInput): Promise<CheckBankOutput> {
+  return db.transaction((tx) => runCheckBankInSnapshot(tx, rawInput), {
+    isolationLevel: 'repeatable read',
+    accessMode: 'read only',
+  });
+}
+
+async function runCheckBankInSnapshot(
+  db: Db | Tx,
+  rawInput: CheckBankInput,
+): Promise<CheckBankOutput> {
   const input = CheckBankInputSchema.parse(rawInput);
   const notes: string[] = [];
   if (input.allow_model) {

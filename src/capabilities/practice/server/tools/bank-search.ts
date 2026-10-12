@@ -17,7 +17,7 @@ import { type SQL, and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import { deriveSourceTier } from '@/core/schema/provenance';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import { notDraftPredicate } from '@/db/predicates';
 import { question, question_group_lifecycle, question_revision } from '@/db/schema';
 import { toSqlVector } from '@/db/vector';
@@ -267,7 +267,7 @@ interface ResolvedScope {
   withinRevisionIds?: string[];
 }
 
-async function resolveScope(db: Db, scope: BankSearchScope): Promise<ResolvedScope> {
+async function resolveScope(db: Db | Tx, scope: BankSearchScope): Promise<ResolvedScope> {
   const resolved: ResolvedScope = { scope };
   if (scope.subject !== undefined) {
     resolved.subjectKnowledgeIds = await resolveSubjectKnowledgeIds(db, scope.subject);
@@ -369,6 +369,42 @@ export async function runSearchBank(
   request: BankSearchRequest,
   deps: BankSearchDeps = {},
 ): Promise<BankSearchOutput> {
+  // Provider attempts write operational receipts, so finish them outside the
+  // read-only bank snapshot. Resuming a cursor never embeds again.
+  let embedded: { vector: number[] } | { error: unknown } | undefined;
+  if (request.form === 'new') {
+    const embedFn =
+      deps.embedFn ??
+      ((text: string) =>
+        embedText(text, {
+          db,
+          caller: 'api',
+          deadlineAt: new Date(Date.now() + 20_000),
+        }));
+    try {
+      embedded = { vector: await embedFn(request.query.trim()) };
+    } catch (error) {
+      embedded = { error };
+    }
+  }
+  return db.transaction(
+    (tx) =>
+      runSearchBankInSnapshot(tx, request, {
+        embedFn: async () => {
+          if (embedded === undefined) throw new Error('cursor continuation must not embed');
+          if ('error' in embedded) throw embedded.error;
+          return embedded.vector;
+        },
+      }),
+    { isolationLevel: 'repeatable read', accessMode: 'read only' },
+  );
+}
+
+async function runSearchBankInSnapshot(
+  db: Db | Tx,
+  request: BankSearchRequest,
+  deps: Required<BankSearchDeps>,
+): Promise<BankSearchOutput> {
   let offset = 0;
   let cursor: BankSearchCursor | undefined;
   let limit: number;
@@ -418,17 +454,8 @@ export async function runSearchBank(
       .limit(BANK_SEARCH_CHANNEL_CAP + 1);
 
     // ── 通道 B：暴力 pgvector cosine（embed 失败 → 通道不可用，不阻塞 FTS）──
-    const embedFn =
-      deps.embedFn ??
-      (async (text: string) =>
-        embedText(text, {
-          db,
-          caller: 'api',
-          deadlineAt: new Date(Date.now() + 20_000),
-        }));
-    const vectorPromise: Promise<{ vector: number[] | null; error?: string }> = embedFn(
-      effectiveQuery,
-    )
+    const vectorPromise: Promise<{ vector: number[] | null; error?: string }> = deps
+      .embedFn(effectiveQuery)
       .then((vector) => ({ vector }))
       .catch((err: unknown) => ({
         vector: null,

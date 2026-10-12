@@ -235,3 +235,12 @@ Coordinator 排期为验收 prerequisite；没有此链接不能称端到端缺�
 
 PR 保持 draft，不 merge/deploy。共享 PLAN/.remember/Linear 由 Coordinator 更新；
 本轮不重复建票，题库工具/实际质量/缺口写入未关闭 YUK-1448。
+
+
+本轮独立审查回执：初审 `755919dd` 发现 lifecycle-only serving P1；唯一验证审
+`fc231d92` 确认小题粒度/cursor 修复，并指出 ref 与准入分次读 live current 的并发 P1。
+随后 search/check 的全部 bank 查询改为同一个 **READ ONLY / REPEATABLE READ** 事务，
+embedding 与 provider-attempt 费用记账在事务外完成，cursor 仍不调用 provider。
+原隔离 case 增加真实 PG RLS 策略：只允许上述事务中的 revision 读取，若工具或 helper
+逃逸到事务外，实际 search/check 断言失败。预算内两轮审查已用完，不开展第三审；
+最终修复由作者定向复核、原 6 cases 和 exact-head CI 验证，未冒称审查在最终修复后再通过。

@@ -389,7 +389,7 @@ describe('bank tools boundary invariants (search_bank / read_bank / check_bank)'
     expect(checked.checks[0].verdict).toBe('supported');
   });
 
-  // @invariant security: bank tools expose no learner-state fields and mutate no learner-state rows while serving @fails-if a tool accesses learner tables without bank-role permission, leaks state, or changes persisted learner rows
+  // @invariant security: bank tools expose no learner-state fields and mutate no learner-state rows while serving @fails-if a tool accesses learner tables without bank-role permission, leaks state, changes persisted learner rows, or evaluates refs outside a read-only repeatable-read snapshot
   it('the tools neither read nor write learner state', async () => {
     await seedQuestion('bt_learner', { prompt_md: '等比数列通项公式求解题（带学习者历史）' });
     const pub = await publishAdmitted('bt_learner');
@@ -444,16 +444,25 @@ describe('bank tools boundary invariants (search_bank / read_bank / check_bank)'
       );
       await bankDb.execute(sql.raw(`SET ROLE "${role}"`));
       const bankCtx = { ...ctx, db: bankDb } satisfies ToolContext;
-      const search = await searchBankTool.execute(
-        bankCtx,
-        searchBankTool.inputSchema.parse({ query: '等比数列 通项' }),
-      );
       const read = await readBankTool.execute(
         bankCtx,
         readBankTool.inputSchema.parse({
           refs: [ref],
           include: ['content', 'answers', 'metadata'],
         }),
+      );
+      // The real PG role can see revisions only inside one read-only RR snapshot.
+      // A lost transaction or a live-current helper call outside it hides the ref,
+      // making the actual search/check assertions fail (no mocked query boundary).
+      await db.execute(sql.raw('ALTER TABLE question_revision ENABLE ROW LEVEL SECURITY'));
+      await db.execute(
+        sql.raw(`CREATE POLICY bank_snapshot ON question_revision FOR SELECT TO "${role}"
+        USING (current_setting('transaction_isolation') = 'repeatable read'
+          AND current_setting('transaction_read_only') = 'on')`),
+      );
+      const search = await searchBankTool.execute(
+        bankCtx,
+        searchBankTool.inputSchema.parse({ query: '等比数列 通项' }),
       );
       const check = await checkBankTool.execute(
         bankCtx,
@@ -467,6 +476,8 @@ describe('bank tools boundary invariants (search_bank / read_bank / check_bank)'
       );
     } finally {
       await client.end();
+      await db.execute(sql.raw('DROP POLICY IF EXISTS bank_snapshot ON question_revision'));
+      await db.execute(sql.raw('ALTER TABLE question_revision DISABLE ROW LEVEL SECURITY'));
       await db.execute(sql.raw(`DROP OWNED BY "${role}"`));
       await db.execute(sql.raw(`DROP ROLE "${role}"`));
     }

@@ -20,7 +20,7 @@
 
 import { and, eq, inArray } from 'drizzle-orm';
 
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import { question_group_lifecycle, question_revision } from '@/db/schema';
 import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
 
@@ -77,7 +77,10 @@ export type BankRefResolution =
  * 批量解析 refs。每个 ref 独立成败（部分成功合法），顺序与输入一致。
  * 一次查询 revision + lifecycle，批量无 N+1。
  */
-export async function resolveBankRefs(db: Db, rawRefs: string[]): Promise<BankRefResolution[]> {
+export async function resolveBankRefs(
+  db: Db | Tx,
+  rawRefs: string[],
+): Promise<BankRefResolution[]> {
   const parsed = rawRefs.map((raw) => ({ raw, parsed: parseBankRef(raw) }));
 
   const revisionIds = [
@@ -138,7 +141,7 @@ export async function resolveBankRefs(db: Db, rawRefs: string[]): Promise<BankRe
 }
 
 /** 单 ref 解析（read/check 的便捷入口；批量路径用 resolveBankRefs）。 */
-export async function resolveBankRef(db: Db, raw: string): Promise<BankRefResolution> {
+export async function resolveBankRef(db: Db | Tx, raw: string): Promise<BankRefResolution> {
   const [resolution] = await resolveBankRefs(db, [raw]);
   return resolution;
 }
@@ -164,7 +167,7 @@ export function bankAssetDigestMatches(stored: string, revision: string): boolea
  * actual question/part through the issuance gate; never require unrelated parts
  * to be automatically gradable or promise that the whole group can be issued. */
 export async function readBankServableParts(
-  db: Db,
+  db: Db | Tx,
   groupIds: string[],
 ): Promise<Map<string, string[]>> {
   if (groupIds.length === 0) return new Map();
