@@ -651,6 +651,33 @@
   align-items: center;
   gap: 4px;
 }
+/* 别处有更新版本的提示条（同 .aa-banner 的状态色软底条写法，用 hard 色）。 */
+.qd-stale {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s-3);
+  padding: var(--s-3) var(--s-4);
+  margin-bottom: var(--s-4);
+  background: var(--hard-soft);
+  border: 1px solid var(--hard-line);
+  border-radius: var(--r-3);
+}
+.qd-stale-ico {
+  color: var(--hard-ink);
+  flex: none;
+}
+.qd-stale-txt {
+  flex: 1 1 16em;
+  color: var(--hard-ink);
+  font-size: var(--fs-body);
+  line-height: 1.5;
+}
+.qd-stale-act {
+  display: flex;
+  gap: var(--s-2);
+  flex: none;
+}
 .qd-sec {
   margin-bottom: var(--s-5);
 }
