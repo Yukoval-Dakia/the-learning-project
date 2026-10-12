@@ -24,7 +24,7 @@
 //     替代（真 variant_depth>0 计数），不 fabricate 假复习数。
 
 import { useInfiniteQuery } from '@tanstack/react-query';
-import { Fragment, memo, useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, memo, useCallback, useMemo, useRef, useState } from 'react';
 import { resolveKnownSubjectId } from '@/subjects/profile';
 import { SubjectFilterTabs } from '@/ui/components/SubjectFilterTabs';
 import { useSubjects } from '@/ui/hooks/useSubjects';
@@ -364,10 +364,24 @@ export default function QuestionsPage({ navigate }: QuestionsPageProps) {
   const [open, setOpen] = useState<Set<string>>(() => new Set());
   const [knownLabels, setKnownLabels] = useState<Record<string, string>>({});
 
-  useEffect(() => {
-    const timer = window.setTimeout(() => setDebouncedQuery(query.trim()), 250);
-    return () => window.clearTimeout(timer);
-  }, [query]);
+  // Search debounce lives in the input commands: every query change (typing, clear, reset)
+  // restarts one 250ms timer; the page root's detach clears it so nothing lands after leave.
+  const searchTimer = useRef<number | null>(null);
+  const changeQuery = (next: string) => {
+    setQuery(next);
+    if (searchTimer.current !== null) window.clearTimeout(searchTimer.current);
+    searchTimer.current = window.setTimeout(() => {
+      searchTimer.current = null;
+      setDebouncedQuery(next.trim());
+    }, 250);
+  };
+  const pageRootRef = useCallback((node: HTMLDivElement | null) => {
+    if (!node) return;
+    return () => {
+      if (searchTimer.current !== null) window.clearTimeout(searchTimer.current);
+      searchTimer.current = null;
+    };
+  }, []);
 
   const stableDiffs = useMemo(() => [...diffs].sort((a, b) => a - b), [diffs]);
   const stableLabels = useMemo(() => [...labels].sort(), [labels]);
@@ -408,11 +422,15 @@ export default function QuestionsPage({ navigate }: QuestionsPageProps) {
   const top = useMemo(() => listQ.data?.pages.flatMap((page) => page.items) ?? [], [listQ.data]);
   const total = listQ.data?.pages[0]?.total ?? 0;
 
-  useEffect(() => {
-    if (top.length === 0) return;
-    setKnownLabels((current) => {
+  // Accumulate label names from every result set seen this visit, so a selected chip keeps its
+  // name after a filter change drops it from the current page. Merged once per new `top`,
+  // newest names win.
+  const [labelsMergedFrom, setLabelsMergedFrom] = useState<typeof top | null>(null);
+  if (top !== labelsMergedFrom) {
+    setLabelsMergedFrom(top);
+    if (top.length > 0) {
       let changed = false;
-      const next = { ...current };
+      const next = { ...knownLabels };
       for (const q of top) {
         for (const k of q.knowledge_labels ?? []) {
           if (next[k.id] !== k.name) {
@@ -429,9 +447,9 @@ export default function QuestionsPage({ navigate }: QuestionsPageProps) {
           }
         }
       }
-      return changed ? next : current;
-    });
-  }, [top]);
+      if (changed) setKnownLabels(next);
+    }
+  }
 
   // 已见知识点在切换 server filter 后仍保留为可撤销 chip；选中后由 API 跨全库过滤。
   const allLabels = useMemo(
@@ -462,7 +480,7 @@ export default function QuestionsPage({ navigate }: QuestionsPageProps) {
     setKind('all');
     setDiffs([]);
     setLabels([]);
-    setQuery('');
+    changeQuery('');
     setSort('time');
     setDir('desc');
     setOpen(new Set());
@@ -498,7 +516,7 @@ export default function QuestionsPage({ navigate }: QuestionsPageProps) {
   ];
 
   return (
-    <div className="page view">
+    <div className="page view" ref={pageRootRef}>
       <div className="page-head">
         <div className="eyebrow">题目总览 · 含变体、大题与各类录入来源</div>
         <div className="page-head-row">
@@ -559,13 +577,13 @@ export default function QuestionsPage({ navigate }: QuestionsPageProps) {
                 aria-label="搜索题目"
                 placeholder="搜索题面文本、知识点、题号…"
                 value={query}
-                onChange={(e) => setQuery(e.target.value)}
+                onChange={(e) => changeQuery(e.target.value)}
               />
               {query && (
                 <button
                   type="button"
                   className="qb-search-clear"
-                  onClick={() => setQuery('')}
+                  onClick={() => changeQuery('')}
                   aria-label="清除"
                 >
                   <LoomIcon name="close" size={14} />
