@@ -317,6 +317,9 @@ function PaperVisit({
   // window would see no pending timer and neither await nor keepalive-resend the save — a
   // slow-net / teardown cancel would then be reported as 「进度保留」. Cleared per paper.
   const inFlightSaves = useRef<Map<string, Promise<boolean>>>(new Map());
+  // YUK-1487 — the pending chained (pagehide) save per slot; deleted when it settles. At most
+  // one per slot: two chains at the same acked + 1 could land oldest-last.
+  const chainedSaves = useRef<Record<string, Promise<boolean> | undefined>>({});
   // Guards exitPaper against a double-click during its flush/settle window (up to
   // EXIT_FLUSH_TIMEOUT_MS): the ref blocks re-entry synchronously (so two clicks in one tick
   // can't both call onExit); `exiting` disables the button so a second click can't even fire.
@@ -517,40 +520,57 @@ function PaperVisit({
       if (isLatest()) setSaveFailed((f) => ({ ...f, [key]: true }));
       done = Promise.resolve(false).then(deregister);
     } else {
-      try {
-        done = savePaperAnswer(
-          artifactId,
-          {
-            session_id: sid,
-            question_id: questionId,
-            part_ref: partRef,
-            answer_md: v,
-            image_refs: refs,
-            assessment: nativePayloadFor(key),
-            expected_save_epoch: draftEpoch(key, chained),
-          },
-          { keepalive },
-        )
-          .then((ack) => {
-            if (ack?.save_epoch !== undefined)
-              nativeEpochs.current[key] = Math.max(nativeEpochs.current[key] ?? 0, ack.save_epoch);
-            if (isLatest()) setSaveFailed((f) => (f[key] ? { ...f, [key]: false } : f));
-            return true;
-          })
-          .catch((err) => {
-            console.error('[PfPaper] draft save failed', { key, err });
-            if (isLatest()) setSaveFailed((f) => ({ ...f, [key]: true }));
-            return false;
-          })
-          .then(deregister);
-      } catch (err) {
-        // savePaperAnswer threw synchronously (e.g. a 401 cleared the token → ApiAuthError
-        // before the fetch even starts). Convert it to a resolved failure so no caller — the
-        // exit/pagehide flush included — can be stranded on an unhandled throw, and flag the
-        // slot so the exit count still records it as unsaved.
-        console.error('[PfPaper] draft save threw', { key, err });
-        if (isLatest()) setSaveFailed((f) => ({ ...f, [key]: true }));
-        done = Promise.resolve(false).then(deregister);
+      // Reads the epoch when it actually sends, so a save queued behind a chain uses its ACK.
+      const send = (): Promise<boolean> => {
+        try {
+          return savePaperAnswer(
+            artifactId,
+            {
+              session_id: sid,
+              question_id: questionId,
+              part_ref: partRef,
+              answer_md: v,
+              image_refs: refs,
+              assessment: nativePayloadFor(key),
+              expected_save_epoch: draftEpoch(key, chained),
+            },
+            { keepalive },
+          )
+            .then((ack) => {
+              if (ack?.save_epoch !== undefined)
+                nativeEpochs.current[key] = Math.max(
+                  nativeEpochs.current[key] ?? 0,
+                  ack.save_epoch,
+                );
+              if (isLatest()) setSaveFailed((f) => (f[key] ? { ...f, [key]: false } : f));
+              return true;
+            })
+            .catch((err) => {
+              console.error('[PfPaper] draft save failed', { key, err });
+              if (isLatest()) setSaveFailed((f) => ({ ...f, [key]: true }));
+              return false;
+            });
+        } catch (err) {
+          // savePaperAnswer threw synchronously (e.g. a 401 cleared the token → ApiAuthError
+          // before the fetch even starts). Convert it to a resolved failure so no caller — the
+          // exit/pagehide flush included — can be stranded on an unhandled throw, and flag the
+          // slot so the exit count still records it as unsaved.
+          console.error('[PfPaper] draft save threw', { key, err });
+          if (isLatest()) setSaveFailed((f) => ({ ...f, [key]: true }));
+          return Promise.resolve(false);
+        }
+      };
+      // YUK-1487 — while a chained save for this slot is pending, a plain save waits for it
+      // to settle (it never rejects) and then sends at the epoch its ACK left: sent earlier at
+      // the old acked epoch, it could land first and let the chain's older text overwrite it.
+      const pendingChain = chained ? undefined : chainedSaves.current[key];
+      done = (pendingChain ? pendingChain.then(send) : send()).then(deregister);
+      if (chained) {
+        const chain = done;
+        chainedSaves.current[key] = chain;
+        void chain.then(() => {
+          if (chainedSaves.current[key] === chain) delete chainedSaves.current[key];
+        });
       }
     }
     // Track as in-flight so an exit/pagehide during the POST window can await or re-send it.
@@ -584,6 +604,9 @@ function PaperVisit({
       chained: boolean;
     }[] = [];
     for (const key of keys) {
+      // A chain for this slot is still pending (pagehide again after a bfcache restore): send
+      // nothing for it — a second chain could be overwritten by the first. Its timer stays.
+      if (opts.includeInFlight && chainedSaves.current[key]) continue;
       if (saveTimers.current[key]) {
         clearTimeout(saveTimers.current[key]);
         delete saveTimers.current[key];

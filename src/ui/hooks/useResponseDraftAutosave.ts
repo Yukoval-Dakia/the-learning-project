@@ -91,8 +91,7 @@ class DraftAutosaveController<T> {
   // seq 守卫：只有最新一轮保存的响应可以写状态（旧成功不盖新失败，反之亦然）。
   private seq = 0;
   private inFlight: Promise<boolean> | null = null;
-  // Serialized value the in-flight request carries, and the one save chained past it.
-  private sending: string | null = null;
+  // The one save chained past the in-flight request.
   private chained: Promise<ChainedOutcome> | null = null;
   // Bumped on every subscribe/unsubscribe; an unmount flush runs only if nothing re-subscribed.
   private attachSeq = 0;
@@ -176,12 +175,12 @@ class DraftAutosaveController<T> {
   }
 
   // Pagehide while a save is in flight: the page cannot wait for it and the browser may
-  // cancel it, so send the current value now with keepalive. Once per in-flight request.
+  // cancel it, so send the current value now with keepalive — even when it equals what the
+  // in-flight request carries, since unload may abort that request. Once per in-flight request.
   private chainPastInFlight(save: SaveFn<T>) {
     if (!this.enabled || this.chained || !this.hasValue) return;
     const value = this.value as T;
     const serialized = this.serialize(value);
-    if (serialized === this.sending) return;
     this.chained = save(value, { keepalive: true, chained: true }).then(
       (): ChainedOutcome => ({ ok: true, serialized }),
       (error: unknown): ChainedOutcome => ({ ok: false, error }),
@@ -231,7 +230,6 @@ class DraftAutosaveController<T> {
         for (;;) {
           const snapshot = this.value as T;
           let stored = this.serialize(snapshot);
-          this.sending = stored;
           let failed = false;
           let failure: unknown;
           try {
@@ -240,7 +238,6 @@ class DraftAutosaveController<T> {
             failed = true;
             failure = err;
           }
-          this.sending = null;
           // A save chained past this one carries a newer value and a higher epoch. Wait for
           // it before the next round (its ACK moves the host's epoch); when it landed, it is
           // what the server holds, and this round's failure was only it being superseded.
@@ -263,7 +260,6 @@ class DraftAutosaveController<T> {
         if (this.seq === seq) this.publish({ state: conflict ? 'conflict' : 'error' });
         return false;
       } finally {
-        this.sending = null;
         if (this.seq === seq) this.inFlight = null;
       }
     });

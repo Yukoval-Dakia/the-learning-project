@@ -593,8 +593,11 @@ function PlacementQuestionCard({
   const currentValue = useRef(draftValue);
   const savedBytes = useRef(JSON.stringify(draftValue));
   const inFlight = useRef<Promise<void> | null>(null);
-  // YUK-1487 — the pagehide save chained past the in-flight one (resolves true once stored).
+  // YUK-1487 — the pagehide save chained past the in-flight one (resolves true once stored):
+  // chainedSave is the latest chain since the current request started (409 supersede check);
+  // pendingChain is the same chain until it settles (later saves wait for it).
   const chainedSave = useRef<Promise<boolean> | null>(null);
+  const pendingChain = useRef<Promise<boolean> | null>(null);
   const persist = useCallback(
     async (value: typeof draftValue, keepalive: boolean, chained = false) => {
       const draft = { ...value, evaluation_group_ref: binding.evaluation_group_id };
@@ -611,16 +614,33 @@ function PlacementQuestionCard({
             epoch.current = Math.max(epoch.current, ack.save_epoch);
             savedBytes.current = JSON.stringify(value);
           });
-        chainedSave.current = sent.then(
+        const settled = sent.then(
           () => true,
           () => false,
         );
+        chainedSave.current = settled;
+        pendingChain.current = settled;
+        void settled.then(() => {
+          if (pendingChain.current === settled) pendingChain.current = null;
+        });
         await sent;
         return;
       }
-      while (inFlight.current) await inFlight.current;
+      // Wait for the earlier save and any pending chain to settle (an earlier failure is that
+      // save's own outcome, not this one's), so this request reads the epoch their ACKs left.
+      // Sent before the chain's ACK it could land first and then be overwritten by the chain.
+      for (;;) {
+        const earlier = inFlight.current ?? pendingChain.current;
+        if (!earlier) break;
+        await earlier.then(
+          () => undefined,
+          () => undefined,
+        );
+      }
       if (JSON.stringify(value) === savedBytes.current) return;
       const saving = (async () => {
+        // No chain is pending here (waited above), so only a chain sent during this request
+        // can supersede it.
         chainedSave.current = null;
         try {
           const ack = await client.saveResponseDraft(
