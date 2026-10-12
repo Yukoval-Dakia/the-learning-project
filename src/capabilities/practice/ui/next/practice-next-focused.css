@@ -4,10 +4,9 @@
    sits right up to the companion, so the page has no empty band between them. */
 
 [data-ui-next] .un-pn[data-layout="focused"] {
-  gap: var(--un-sp-3);
-
   & .un-pn-main {
-    padding: var(--un-sp-6) var(--un-sp-3) var(--un-sp-8) var(--un-sp-6);
+    padding: var(--un-sp-5) calc(var(--un-sp-5) + var(--un-pn-aside-room)) var(--un-sp-6)
+      var(--un-sp-5);
   }
   & .un-pn-column {
     max-width: 1040px;
@@ -188,16 +187,15 @@
 /* Medium widths: the column takes all the room it has. */
 @media (min-width: 721px) and (max-width: 1100px) {
   [data-ui-next] .un-pn[data-layout="focused"] .un-pn-main {
-    padding: var(--un-sp-5) var(--un-sp-2) var(--un-sp-8) var(--un-sp-4);
+    padding: var(--un-sp-4) calc(var(--un-sp-4) + var(--un-pn-aside-room)) var(--un-sp-6)
+      var(--un-sp-4);
   }
 }
 
 @media (max-width: 720px) {
   [data-ui-next] .un-pn[data-layout="focused"] {
-    gap: 0;
-
     & .un-pn-main {
-      padding: 0 var(--un-sp-3) calc(var(--un-sp-8) * 2);
+      padding: 0 var(--un-sp-3) calc(76px + var(--un-sp-4));
     }
     & .un-pn-phonebar {
       margin: 0 calc(-1 * var(--un-sp-3));
