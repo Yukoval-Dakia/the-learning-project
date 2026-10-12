@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { EvidenceAcceptanceRule, EvidenceAttachment } from './materials';
+import { codePointCount, isInteriorGap } from './position-gap';
 import type { QuestionGroupStructureT } from './structure';
 
 // ====================================================================
@@ -118,13 +119,27 @@ export const TableSlot = z.object({
     .min(1),
 });
 
-/** 配对：left items × right options；ID 对选择即可作答，不要求拖拽编辑器。 */
+/**
+ * 配对（ADR-0074 D3a：左右两列配对，点选作答、确定性判）：作答提交
+ * {kind:'matching', pairs:[{item_id, option_id}]} —— item_id 是左列稳定 id、
+ * option_id 是右列稳定 id（不认文字/位置；历史已发行的 revision 与已存
+ * submission 即此形状，不做任何 id 改名或语义改写）。
+ */
 export const MatchingSlot = z.object({
   ...slotBase,
   kind: z.literal('matching'),
   left_items: z.array(ResponseItem).min(2),
   right_options: z.array(ResponseOption).min(2),
   allow_left_unmatched: z.boolean().default(false),
+  /**
+   * ADR-0074 D3a 配对基数逐题声明。【缺省 = 历史宽松行为】（右选项可被
+   * 多个左项配对、不强制一对一）—— 存量 revision/submission 的结构校验
+   * 语义逐字不变，不猜历史题的基数。one_to_one：同一右选项被多个左项
+   * 配对是结构违背（duplicate_pair_option）；many_to_one：显式允许复用。
+   */
+  pairing: z.enum(['one_to_one', 'many_to_one']).optional(),
+  /** 右列含干扰项（存在不与任何左项配对的右选项；UI 允许右列留空）。不含键信息。 */
+  has_distractors: z.boolean().optional(),
 });
 
 /** 排序：完整顺序提交；键盘上下移动/序号编辑足够（§7.2）。 */
@@ -146,6 +161,20 @@ export const OpenResponseSlot = z.object({
   max_chars: z.number().int().min(1).optional(),
 });
 
+/**
+ * 断句（ADR-0074 D3a）：对冻结明文的字间点选。text 是【冻结原文】——
+ * 客户端必须逐字渲染同一字符串并按其 code point 计数（见 position-gap.ts
+ * 的索引语义）；不做 HTML/空白/折行归一化。不在此声明处数或上限：题目
+ * 要求只在题面文字里，接受的断点集合与题级规则是私有判据
+ * （position_set_key，scoring.ts）。
+ */
+export const SentenceBreaksSlot = z.object({
+  ...slotBase,
+  kind: z.literal('sentence_breaks'),
+  /** 冻结明文（有效断句位置要求 ≥2 个 code point；validateResponseSet 校验）。 */
+  text: z.string().min(1),
+});
+
 export const ResponseSlot = z.discriminatedUnion('kind', [
   SingleChoiceSlot,
   MultiChoiceSlot,
@@ -156,6 +185,7 @@ export const ResponseSlot = z.discriminatedUnion('kind', [
   MatchingSlot,
   OrderingSlot,
   OpenResponseSlot,
+  SentenceBreaksSlot,
 ]);
 export type ResponseSlotT = z.infer<typeof ResponseSlot>;
 
@@ -246,6 +276,14 @@ export const OpenResponse = z.object({
   self_confidence: SelfConfidence,
 });
 
+/** 断句作答：positions = 冻结明文的 code point 内部字缝索引（1..L-1；空 = 主动空白）。 */
+export const SentenceBreaksResponse = z.object({
+  slot_id: SlotId,
+  kind: z.literal('sentence_breaks'),
+  positions: z.array(z.number().int().min(0)).default([]),
+  self_confidence: SelfConfidence,
+});
+
 export const SlotResponse = z.discriminatedUnion('kind', [
   ChoiceResponse,
   TextResponse,
@@ -254,6 +292,7 @@ export const SlotResponse = z.discriminatedUnion('kind', [
   MatchingResponse,
   OrderingResponse,
   OpenResponse,
+  SentenceBreaksResponse,
 ]);
 export type SlotResponseT = z.infer<typeof SlotResponse>;
 
@@ -455,6 +494,8 @@ export function isBlankSlotResponse(entry: SlotResponseT): boolean {
       return entry.pairs.length === 0;
     case 'ordering':
       return entry.item_order.length === 0;
+    case 'sentence_breaks':
+      return entry.positions.length === 0;
     case 'open':
       return entry.text_md.trim().length === 0 && entry.evidence.length === 0;
   }
@@ -471,7 +512,10 @@ export interface ResponseSetIssue {
     | 'ordering_not_permutation'
     | 'single_choice_multiple_selection'
     | 'duplicate_selected_option'
-    | 'select_count_out_of_bounds';
+    | 'select_count_out_of_bounds'
+    | 'duplicate_pair_option'
+    | 'position_out_of_range'
+    | 'duplicate_position';
   detail: string;
 }
 
@@ -511,6 +555,7 @@ export function validateResponseSet(
       matching: 'matching',
       ordering: 'ordering',
       open_response: 'open',
+      sentence_breaks: 'sentence_breaks',
     };
     if (slot.kind === 'table') {
       issues.push({
@@ -598,6 +643,41 @@ export function validateResponseSet(
           });
         }
         pairedItems.add(pair.item_id);
+      }
+      // ADR-0074 D3a：声明 one_to_one 时，同一右选项被多个左项配对是
+      // 结构违背（不是“多配了一个”的量变）。缺省/many_to_one 保持历史
+      // 宽松行为 —— 存量 submission 不因此变非法。
+      if (slot.pairing === 'one_to_one') {
+        const pairedOptions = new Set<string>();
+        for (const pair of entry.pairs) {
+          if (pairedOptions.has(pair.option_id)) {
+            issues.push({
+              code: 'duplicate_pair_option',
+              detail: `slot '${entry.slot_id}' is declared one_to_one but pairs right option '${pair.option_id}' more than once`,
+            });
+          }
+          pairedOptions.add(pair.option_id);
+        }
+      }
+    }
+    if (entry.kind === 'sentence_breaks' && slot.kind === 'sentence_breaks') {
+      // 位置语义见 position-gap.ts：内部字缝 1..L-1（code point 计），
+      // 文首/文末/越界/重复都是结构性拒绝 —— 绝不静默截断或猜位。
+      const seenPositions = new Set<number>();
+      for (const position of entry.positions) {
+        if (!isInteriorGap(slot.text, position)) {
+          issues.push({
+            code: 'position_out_of_range',
+            detail: `slot '${entry.slot_id}' position ${position} is not an interior code-point gap of the frozen text (valid: 1..${codePointCount(slot.text) - 1})`,
+          });
+        }
+        if (seenPositions.has(position)) {
+          issues.push({
+            code: 'duplicate_position',
+            detail: `slot '${entry.slot_id}' marks break position ${position} more than once`,
+          });
+        }
+        seenPositions.add(position);
       }
     }
     if (entry.kind === 'ordering' && slot.kind === 'ordering') {

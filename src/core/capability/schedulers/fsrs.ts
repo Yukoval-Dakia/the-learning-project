@@ -45,6 +45,7 @@ const manifest: CapabilityManifestT = {
  * it pins the tracked universal constant — same values, one source of truth.
  */
 function ratingFromCoarseOutcome(outcome: JudgeResultV2T['coarse_outcome']): RatingLabel | null {
+  if (outcome === 'partial_unknown') return null;
   return UNIVERSAL_RATING_FROM_OUTCOME[outcome] ?? null;
 }
 

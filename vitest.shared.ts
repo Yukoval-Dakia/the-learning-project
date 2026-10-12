@@ -237,6 +237,7 @@ export const dbTestInclude = [
   'src/server/assessment/admission.db.test.ts',
   'src/server/assessment/joint-input.db.test.ts',
   'src/server/assessment/settle.db.test.ts',
+  'src/server/assessment/yuk1445-partial-settlement-boundary.db.test.ts',
   'src/server/boss/client.db.test.ts',
   'src/server/boss/handlers/ai_task_run_reconcile.db.test.ts',
   'src/server/boss/verify-dispatch-outbox.db.test.ts',

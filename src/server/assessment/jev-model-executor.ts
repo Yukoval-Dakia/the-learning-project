@@ -150,6 +150,8 @@ function projectSlotResponse(entry: SlotResponseT): Record<string, unknown> {
       return { slot_id: entry.slot_id, kind: entry.kind, latex: entry.latex };
     case 'matching':
       return { slot_id: entry.slot_id, kind: entry.kind, pairs: entry.pairs };
+    case 'sentence_breaks':
+      return { slot_id: entry.slot_id, kind: entry.kind, positions: entry.positions };
     case 'ordering':
       return { slot_id: entry.slot_id, kind: entry.kind, item_order: entry.item_order };
     case 'open':
