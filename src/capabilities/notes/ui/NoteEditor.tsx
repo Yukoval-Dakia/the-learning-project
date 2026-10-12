@@ -7,7 +7,7 @@
 // questionRef）不可嵌套编辑，整块删除/移动。check 复用正文编辑，不提供判分。
 // 保存由宿主（NoteReaderPage）发 PATCH body-blocks 乐观锁。
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { type Ref, useCallback, useRef, useState } from 'react';
 import { Btn } from '@/ui/primitives/Btn';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 
@@ -19,7 +19,12 @@ import {
   type SemanticKind,
   searchArtifacts,
 } from './notes-api';
-import { RichNoteBlockEditor } from './RichNoteBlockEditor';
+import { type BlockEditorRegistry, RichNoteBlockEditor } from './RichNoteBlockEditor';
+
+// React key of an outer block; also the key its mounted editor registers under.
+function blockKey(b: BodyBlock, i: number): string {
+  return b.attrs?.id ?? `${b.type}-${i}`;
+}
 
 let blockSeq = 0;
 function newBlockId(): string {
@@ -61,20 +66,37 @@ function ArtifactPicker({
   const [q, setQ] = useState('');
   const [rows, setRows] = useState<Array<{ id: string; title: string; type: string }>>([]);
   const [searchState, setSearchState] = useState<'idle' | 'loading' | 'error'>('idle');
+  // One search owner per picker: the sequence number fences late results, the
+  // controller cancels the in-flight request, the timer is the 250ms debounce.
   const requestSeq = useRef(0);
   const requestController = useRef<AbortController | null>(null);
+  const debounceTimer = useRef<number | null>(null);
 
-  useEffect(
-    () => () => {
-      requestSeq.current += 1;
-      requestController.current?.abort();
+  const cancelPending = useCallback(() => {
+    if (debounceTimer.current !== null) {
+      window.clearTimeout(debounceTimer.current);
+      debounceTimer.current = null;
+    }
+    requestController.current?.abort();
+    requestController.current = null;
+  }, []);
+
+  // Closing the picker (取消 / pick / slash toggle) unmounts this node: drop the
+  // timer, abort the request and invalidate any result still on the way.
+  const attachPicker = useCallback(
+    (node: HTMLDivElement | null) => {
+      if (!node) return;
+      return () => {
+        requestSeq.current += 1;
+        cancelPending();
+      };
     },
-    [],
+    [cancelPending],
   );
 
   const runSearch = useCallback(
     (query: string) => {
-      requestController.current?.abort();
+      cancelPending();
       const trimmed = query.trim();
       const requestId = ++requestSeq.current;
       if (!trimmed) {
@@ -106,38 +128,40 @@ function ArtifactPicker({
           setSearchState('error');
         });
     },
-    [excludeId],
+    [cancelPending, excludeId],
   );
 
-  useEffect(() => {
-    requestController.current?.abort();
-    requestController.current = null;
+  const changeQuery = (next: string) => {
+    setQ(next);
+    cancelPending();
     const requestId = ++requestSeq.current;
-    const trimmed = q.trim();
+    const trimmed = next.trim();
+    setRows([]);
     if (!trimmed) {
-      setRows([]);
       setSearchState('idle');
       return;
     }
-
-    setRows([]);
     setSearchState('loading');
-    const timer = window.setTimeout(() => {
+    debounceTimer.current = window.setTimeout(() => {
+      debounceTimer.current = null;
       if (requestId !== requestSeq.current) return;
       runSearch(trimmed);
     }, 250);
-    return () => window.clearTimeout(timer);
-  }, [q, runSearch]);
+  };
 
   return (
-    <div className="slash-menu fade-key" style={{ maxHeight: 280, overflowY: 'auto' }}>
+    <div
+      ref={attachPicker}
+      className="slash-menu fade-key"
+      style={{ maxHeight: 280, overflowY: 'auto' }}
+    >
       <div className="slash-head meta">交叉链 · 搜索笔记/学习项</div>
       <input
         className="input"
         style={{ margin: '4px 8px', width: 'calc(100% - 16px)' }}
         value={q}
         placeholder="标题关键词…"
-        onChange={(e) => setQ(e.target.value)}
+        onChange={(e) => changeQuery(e.target.value)}
       />
       {searchState === 'loading' && <output className="slash-menu-empty">正在搜索…</output>}
       {searchState === 'error' && (
@@ -173,31 +197,47 @@ export function NoteEditor({
   labels,
   noteId,
   onChange,
+  rootRef,
 }: {
   blocks: BodyBlock[];
   labels: NotePageLabel[];
   noteId: string;
   onChange: (next: BodyBlock[]) => void;
+  /** Attached while this edit session's editor is on screen (host presence lease). */
+  rootRef?: Ref<HTMLDivElement>;
 }) {
   const [slashAt, setSlashAt] = useState<number | null>(null);
   const [picker, setPicker] = useState<'none' | 'xlink' | 'question'>('none');
   const [dragIdx, setDragIdx] = useState<number | null>(null);
   const [overIdx, setOverIdx] = useState<number | null>(null);
+  // Mounted block editors by React key; filled/cleared by their host ref callbacks.
+  const [editors] = useState<BlockEditorRegistry>(() => new Map());
+
+  // Structural edits (insert/remove/move) can hand a mounted editor another block:
+  // id-less blocks are keyed by index. Push such blocks into the editor through
+  // its explicit replace command instead of remounting it; editors that keep
+  // their own block object no-op, so cursor and undo stay intact.
+  const commitBlocks = (next: BodyBlock[]) => {
+    next.forEach((b, i) => {
+      editors.get(blockKey(b, i))?.replace(b);
+    });
+    onChange(next);
+  };
 
   const insertAt = (i: number, b: BodyBlock) => {
-    onChange([...blocks.slice(0, i + 1), b, ...blocks.slice(i + 1)]);
+    commitBlocks([...blocks.slice(0, i + 1), b, ...blocks.slice(i + 1)]);
     setSlashAt(null);
     setPicker('none');
   };
   const removeAt = (i: number) => {
-    onChange(blocks.filter((_, j) => j !== i));
+    commitBlocks(blocks.filter((_, j) => j !== i));
   };
   const moveBlock = (from: number, to: number) => {
     if (from === to || from < 0 || to < 0 || from >= blocks.length || to >= blocks.length) return;
     const next = [...blocks];
     const [moved] = next.splice(from, 1);
     next.splice(to, 0, moved);
-    onChange(next);
+    commitBlocks(next);
   };
   const onDrop = (i: number) => {
     if (dragIdx != null) moveBlock(dragIdx, i);
@@ -279,7 +319,7 @@ export function NoteEditor({
   );
 
   return (
-    <div className="note-editor">
+    <div ref={rootRef} className="note-editor">
       {blocks.map((b, i) => {
         const isAtom = b.type === 'crossLinkBlock' || b.type === 'questionRefBlock';
         const reorderLabel =
@@ -291,9 +331,10 @@ export function NoteEditor({
         const textAreaType = b.attrs?.semantic_kind
           ? SEMANTIC_KIND_LABEL[b.attrs.semantic_kind]
           : '文本';
+        const key = blockKey(b, i);
         return (
           <div
-            key={b.attrs?.id ?? `${b.type}-${i}`}
+            key={key}
             className={`nb-wrap${overIdx === i ? ' is-over' : ''}${dragIdx === i ? ' is-dragging' : ''}`}
             role="listitem"
             onDragOver={(e) => {
@@ -364,6 +405,8 @@ export function NoteEditor({
                   <RichNoteBlockEditor
                     block={b}
                     label={`第 ${i + 1} 块「${textAreaType}」内容`}
+                    registry={editors}
+                    registryKey={key}
                     onChange={(edited) => {
                       const next = [...blocks];
                       next[i] = edited;
