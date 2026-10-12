@@ -1,0 +1,302 @@
+{
+  "base": "8fb160ed517c85a56cabbebfe1f1a19f137e4639",
+  "branch": "refactor/yuk-1359-session-orphan-adapters",
+  "capturedAt": "2026-10-12T11:15:22.214Z",
+  "node": "v24.19.0",
+  "pnpm": "11.25.0",
+  "productDiffSha256": "f69b9eac1cc3fa5c023f0bf65737e2b01ffd0326fb96d4239414809018d500d6",
+  "workerSha256": "c3a073091bc0137c0c9d2268ac594f254a815d976bb422079b75946cd5227c2f",
+  "rawRuntimeEvidenceSha256BeforeUriRedaction": "b9d0eb58655d71d6891919a7df39c27d857a666030d4c7e0d1afb7c9f31c2073",
+  "redaction": "Only test database connection URIs in child logs are replaced. Receipt IDs, outcomes and observations are preserved.",
+  "checks": [
+    {
+      "command": "pnpm vitest run --config vitest.db.config.ts tests/dbos-session-orphan/cron.db.test.ts",
+      "exit": 0,
+      "filesPassed": 1,
+      "testsPassed": 2,
+      "durationSeconds": 89.37
+    },
+    {
+      "command": "pnpm typecheck",
+      "exit": 0
+    },
+    {
+      "command": "pnpm lint",
+      "exit": 0,
+      "existingWarnings": 172
+    },
+    {
+      "command": "pnpm build",
+      "exit": 0
+    },
+    {
+      "command": "pnpm audit:capability-boundaries",
+      "exit": 0,
+      "debtTotals": [428, 0, 48]
+    },
+    {
+      "command": "pnpm audit:architecture-deepening",
+      "exit": 0,
+      "debtTotals": [428, 0, 48]
+    }
+  ],
+  "execution": {
+    "dependencies": "Preinstalled pnpm dependencies; process-local verify-deps-before-run=false wrapper, no repository config/lockfile edit.",
+    "database": "Existing testcontainers global setup created fresh pgvector/pgvector:pg16 tmpfs database and synthetic test_fork databases. No existing database connected.",
+    "cleanup": "Own test PostgreSQL and Ryuk containers and four fixture child processes exited; runtime lock released; pre-existing database container remained healthy.",
+    "ownerChanges": "Only isolated fixture phase transitions; no deployment, migration of a live owner, or paid provider calls."
+  },
+  "review": {
+    "reviewer": "/root/review_session_adapters",
+    "result": "NONE",
+    "scope": "three product paths only; documentation added after review",
+    "productDiffSha256": "f69b9eac1cc3fa5c023f0bf65737e2b01ffd0326fb96d4239414809018d500d6"
+  },
+  "families": [
+    {
+      "family": "prune_orphan_conversation_sessions",
+      "nativeReceipt": {
+        "family": "prune_orphan_conversation_sessions",
+        "tick_id": "sched-prune_orphan_conversation_sessions-2026-10-12T11:14:42.000Z",
+        "backend": "dbos",
+        "provenance": "scheduled",
+        "tick_at": "2026-10-12 11:14:42+00",
+        "cutoff": "2026-10-12 05:14:42+00",
+        "admission": "admitted",
+        "candidates": [
+          {
+            "sessionId": "cron-24bda38e-bf74-407c-a636-3eeadd3749a2",
+            "selectedVersion": 0,
+            "selectedStartedAt": "2026-10-12 04:14:39.435769+00"
+          }
+        ],
+        "contract_version": 1,
+        "recorded_at": "2026-10-12 11:14:42.305772+00",
+        "session_id": "cron-24bda38e-bf74-407c-a636-3eeadd3749a2",
+        "outcome": {
+          "kind": "abandoned",
+          "toVersion": 1,
+          "fromVersion": 0
+        }
+      },
+      "afterRestartReceipt": {
+        "family": "prune_orphan_conversation_sessions",
+        "tick_id": "sched-prune_orphan_conversation_sessions-2026-10-12T11:14:46.000Z",
+        "backend": "dbos",
+        "provenance": "scheduled",
+        "tick_at": "2026-10-12 11:14:46+00",
+        "cutoff": "2026-10-12 05:14:46+00",
+        "admission": "admitted",
+        "candidates": [
+          {
+            "sessionId": "next-59d0c2d7-2402-4313-a443-ae196bd5d3ed",
+            "selectedVersion": 0,
+            "selectedStartedAt": "2026-10-12 04:14:44.949306+00"
+          }
+        ],
+        "contract_version": 1,
+        "recorded_at": "2026-10-12 11:14:47.000707+00",
+        "session_id": "next-59d0c2d7-2402-4313-a443-ae196bd5d3ed",
+        "outcome": {
+          "kind": "abandoned",
+          "toVersion": 1,
+          "fromVersion": 0
+        }
+      },
+      "rollbackTimekeeperJobId": "fa4f973a-2eca-4c15-b3cf-a111b1c848fb",
+      "rollbackReceipt": {
+        "family": "prune_orphan_conversation_sessions",
+        "tick_id": "legacy:fa4f973a-2eca-4c15-b3cf-a111b1c848fb",
+        "backend": "pg-boss",
+        "provenance": "legacy-first-admission",
+        "tick_at": "2026-10-12 11:18:02.959768+00",
+        "cutoff": "2026-10-12 05:18:02.959768+00",
+        "admission": "admitted",
+        "candidates": [
+          {
+            "sessionId": "rolled-58df756c-8f10-4b36-9d03-ebbd91662df0",
+            "selectedVersion": 0,
+            "selectedStartedAt": "2026-10-12 04:14:50.713947+00"
+          }
+        ],
+        "contract_version": 1,
+        "recorded_at": "2026-10-12 11:14:52.696863+00",
+        "session_id": "rolled-58df756c-8f10-4b36-9d03-ebbd91662df0",
+        "outcome": {
+          "kind": "abandoned",
+          "toVersion": 1,
+          "fromVersion": 0
+        }
+      },
+      "afterCleanupGaps": [],
+      "afterCleanupAllWorkflowsSuccessful": true,
+      "observationIndices": [17, 19, 30, 31, 36],
+      "ledgerScope": "scenario snapshot; placement includes prior conversation history"
+    },
+    {
+      "family": "prune_orphan_placement_sessions",
+      "nativeReceipt": {
+        "family": "prune_orphan_placement_sessions",
+        "tick_id": "sched-prune_orphan_placement_sessions-2026-10-12T11:15:06.000Z",
+        "backend": "dbos",
+        "provenance": "scheduled",
+        "tick_at": "2026-10-12 11:15:06+00",
+        "cutoff": "2026-10-12 05:15:06+00",
+        "admission": "admitted",
+        "candidates": [
+          {
+            "sessionId": "cron-79ad71ea-a7c0-4f46-902e-af26bd5a6c77",
+            "selectedVersion": 0,
+            "selectedStartedAt": "2026-10-12 04:15:01.845277+00"
+          }
+        ],
+        "contract_version": 1,
+        "recorded_at": "2026-10-12 11:15:06.877688+00",
+        "session_id": "cron-79ad71ea-a7c0-4f46-902e-af26bd5a6c77",
+        "outcome": {
+          "kind": "abandoned",
+          "toVersion": 1,
+          "fromVersion": 0
+        }
+      },
+      "afterRestartReceipt": {
+        "family": "prune_orphan_placement_sessions",
+        "tick_id": "sched-prune_orphan_placement_sessions-2026-10-12T11:15:14.000Z",
+        "backend": "dbos",
+        "provenance": "scheduled",
+        "tick_at": "2026-10-12 11:15:14+00",
+        "cutoff": "2026-10-12 05:15:14+00",
+        "admission": "admitted",
+        "candidates": [
+          {
+            "sessionId": "next-68c02828-2319-470c-85f7-c47362a3c10c",
+            "selectedVersion": 0,
+            "selectedStartedAt": "2026-10-12 04:15:13.951183+00"
+          }
+        ],
+        "contract_version": 1,
+        "recorded_at": "2026-10-12 11:15:14.708862+00",
+        "session_id": "next-68c02828-2319-470c-85f7-c47362a3c10c",
+        "outcome": {
+          "kind": "abandoned",
+          "toVersion": 1,
+          "fromVersion": 0
+        }
+      },
+      "rollbackTimekeeperJobId": "c2ed9f0e-1f5d-44bd-b254-2d88364cac82",
+      "rollbackReceipt": {
+        "family": "prune_orphan_placement_sessions",
+        "tick_id": "legacy:c2ed9f0e-1f5d-44bd-b254-2d88364cac82",
+        "backend": "pg-boss",
+        "provenance": "legacy-first-admission",
+        "tick_at": "2026-10-12 11:22:02.978323+00",
+        "cutoff": "2026-10-12 05:22:02.978323+00",
+        "admission": "admitted",
+        "candidates": [
+          {
+            "sessionId": "rolled-d325e4cd-1ba3-4413-a99a-e2e6fd41bafa",
+            "selectedVersion": 0,
+            "selectedStartedAt": "2026-10-12 04:15:17.425331+00"
+          }
+        ],
+        "contract_version": 1,
+        "recorded_at": "2026-10-12 11:15:19.42165+00",
+        "session_id": "rolled-d325e4cd-1ba3-4413-a99a-e2e6fd41bafa",
+        "outcome": {
+          "kind": "abandoned",
+          "toVersion": 1,
+          "fromVersion": 0
+        }
+      },
+      "afterCleanupGaps": [],
+      "afterCleanupAllWorkflowsSuccessful": true,
+      "observationIndices": [53, 55, 66, 67, 72],
+      "ledgerScope": "scenario snapshot; placement includes prior conversation history"
+    }
+  ],
+  "unchangedFiles": [
+    {
+      "path": "src/capabilities/observability/manifest.ts",
+      "sha256": "75220783df9b24786a69a20533917015dd274a3486446a5c99a24d56ff78ac64",
+      "equalsBase": true
+    },
+    {
+      "path": "src/server/durable/prune-worker.ts",
+      "sha256": "a762d1e48a9bda26aac2929aebb50cd35d5a380d0fc2c77d2ee828a0ba390742",
+      "equalsBase": true
+    },
+    {
+      "path": "src/server/durable/session-orphan-family.ts",
+      "sha256": "4a1adc35e93c4af0e77298851e990029c73aee28cc3556f1d10185a5e02abab3",
+      "equalsBase": true
+    },
+    {
+      "path": "src/server/durable/session-orphan-backend.ts",
+      "sha256": "fdadf3162e4d386b7bc6701e59a6178811345fbdfc6e5acd247ad3e32a0435b1",
+      "equalsBase": true
+    },
+    {
+      "path": "src/server/session/conversation.ts",
+      "sha256": "dfd3a2ee3b6e2ab138f300e4c8b123f3bfe0446563be29bcc27c4426905aa15a",
+      "equalsBase": true
+    },
+    {
+      "path": "src/server/session/placement.ts",
+      "sha256": "8c654935cb0bfed281cd576544a1d17e4cddd104bf0f93076ae418cbfa029495",
+      "equalsBase": true
+    },
+    {
+      "path": "src/server/contract-epoch/boss-fence.ts",
+      "sha256": "8b7107d9fbef601cf75d9bd306234522f4e604dec5394785e8b1c6ca378f6094",
+      "equalsBase": true
+    },
+    {
+      "path": "tests/dbos-session-orphan/cron.db.test.ts",
+      "sha256": "70430c073932e1a854c7160be05813d2619c238705b9ed5c3cf3bd120f9f32cc",
+      "equalsBase": true
+    },
+    {
+      "path": "tests/dbos-session-orphan/migration.db.test.ts",
+      "sha256": "5166aff36f53ca42e734c7240632294c695160b99787cec4308b62fae86edf4f",
+      "equalsBase": true
+    },
+    {
+      "path": "tests/dbos-session-orphan/migration-placement.db.test.ts",
+      "sha256": "dcc5b019033cfba19546448ae88af8948dbd9bfead4f319e3363dc59c2f0eeb8",
+      "equalsBase": true
+    },
+    {
+      "path": "tests/dbos-session-orphan/migration-fixture.ts",
+      "sha256": "89012abc345d1c0b14ab0f0359a4ac581d084dc26de7173622d1ab8337da5d7f",
+      "equalsBase": true
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "cron-evidence.json.gz",
+      "sha256": "c67cfc5db7bf0559fed96a8bc0da71503d84429a527323d6dad4cffd3c823c06",
+      "uncompressedSha256": "c99cba87aa5707444b83d3b2448aa50287ab0276ad87c0888f2e14768a13d524"
+    },
+    {
+      "path": "cron.log.gz",
+      "sha256": "a298c71f625e937b6e16fc9ddd3b85e1865d15fbc98a3b20891e50ce07b482e9",
+      "uncompressedSha256": "e05b858d0e664341b74d49800c4cf022e4821db524387dbf83e22e1c4752bf00"
+    },
+    {
+      "path": "static.log.gz",
+      "sha256": "6cd7997b4812b8586d5ea0619632ea64170940b2cc717913c0740e00c15f9f04",
+      "uncompressedSha256": "3defa5fac1badeba2d3edd5c2b1b0724edc5bf4027b791430a546d06ca0d2ce7"
+    },
+    {
+      "path": "architecture.log.gz",
+      "sha256": "2acd62aa92b280b9be76ed5b3defa769c2ffe5546fb1a56121bf6bf9d0f6c08a",
+      "uncompressedSha256": "f6fe201b897301dc5695b9878dddfa1a9098a85e3383f1a926566c370253e1ed"
+    },
+    {
+      "path": "build.log.gz",
+      "sha256": "757ac353a28bb6be2169bd83bd0b4c1a40573cecdfe6120f843dc4bcc10e8370",
+      "uncompressedSha256": "77b8710d94a11a9313fc507deda4c7349d07bc1c31d3e3af6c69a53ff8959060"
+    }
+  ],
+  "ci": "Exact committed head CI is recorded in the draft PR after push, not represented by these local results."
+}

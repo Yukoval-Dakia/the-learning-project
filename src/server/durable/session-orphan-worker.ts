@@ -1,10 +1,8 @@
 import { DBOS } from '@dbos-inc/dbos-sdk';
 import { sql } from 'drizzle-orm';
-import type { PgBoss } from 'pg-boss';
+import type { Job, PgBoss } from 'pg-boss';
 import type { Db } from '@/db/client';
 import type { JobDecl } from '@/kernel/manifest';
-import { buildPruneOrphanConversationSessionsHandler } from '@/server/boss/handlers/prune_orphan_conversation_sessions';
-import { buildPruneOrphanPlacementSessionsHandler } from '@/server/boss/handlers/prune_orphan_placement_sessions';
 import { fenceAwareJobHandler } from '@/server/contract-epoch';
 import {
   type SessionOrphanBoundaryHook,
@@ -79,10 +77,15 @@ export function createSessionOrphanBackend({
     schedule.singletonSeconds !== undefined
   )
     throw new Error('Invalid session orphan declaration');
-  const handler =
-    family === 'prune_orphan_conversation_sessions'
-      ? buildPruneOrphanConversationSessionsHandler(db)
-      : buildPruneOrphanPlacementSessionsHandler(db);
+  const handler = async (jobs: Job<Record<string, never>>[]): Promise<void> => {
+    for (const job of jobs) {
+      if (job.name !== family) throw new Error('Unexpected legacy session orphan job name');
+      await runSessionOrphanTick(db, {
+        family,
+        source: { kind: 'pg-boss', jobId: job.id },
+      });
+    }
+  };
   let mounted = false;
   return {
     async reconcile(): Promise<void> {
