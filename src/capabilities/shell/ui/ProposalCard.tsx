@@ -7,7 +7,7 @@ import { useWorkbenchClient } from './workbench-client';
 // 裁决在卡内 async（busy per-card），错误经 onError 上抛页级 toast；
 // resolved 留痕 map 由 InboxPage 持有（设计稿同构）。
 
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 // Type-only (erased at compile time — does NOT pull react-markdown into the main bundle,
 // the deferred loader still owns the runtime import).
 import type { Components } from 'react-markdown';
@@ -290,6 +290,13 @@ function BlockStructure({
   );
 }
 
+// The CTA that had focus is hidden while confirming; hand focus to 「确认合并」 when that button
+// appears. A module-level callback keeps one identity, so React calls it only when the node is
+// attached, never on later re-renders: background updates cannot pull focus back.
+function focusWhenShown(node: HTMLButtonElement | null) {
+  node?.focus();
+}
+
 export interface ProposalCardProps {
   p: ProposalInboxRow;
   index: number;
@@ -316,11 +323,6 @@ export function ProposalCard({
   const [pickingRel, setPickingRel] = useState(false);
   // Block merges are irreversible: accept first asks for an explicit confirmation.
   const [confirmingMerge, setConfirmingMerge] = useState(false);
-  const confirmRef = useRef<HTMLButtonElement | null>(null);
-  // The CTA that had focus is hidden while confirming; hand focus to 「确认合并」.
-  useEffect(() => {
-    if (confirmingMerge) confirmRef.current?.focus();
-  }, [confirmingMerge]);
   // codex 验证轮 P3：裁决留痕后按钮组整体锁定——卡片留在列表里，再点会
   // 重复请求 / 反向操作直接 409。
   const locked = busy || resolved !== null;
@@ -550,7 +552,7 @@ export function ProposalCard({
           <span>并进来的题会成为保留那道题的一部分，之后不能再拆开。</span>
           <div className="merge-confirm-actions">
             <Btn
-              ref={confirmRef}
+              ref={focusWhenShown}
               size="sm"
               variant="again"
               icon="check"
