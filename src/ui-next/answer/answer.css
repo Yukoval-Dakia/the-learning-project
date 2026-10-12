@@ -324,11 +324,14 @@
     text-align: center;
   }
 
+  /* The gap box covers the ideographic body of the line (about -0.12em to 0.88em around the
+     baseline), so the mark centred in it sits on the middle of the characters, not above them. */
   & .un-sb-gap {
     position: relative;
     display: inline-block;
     width: 0.5em;
     height: 1em;
+    vertical-align: var(--un-sb-body-drop, -0.12em);
   }
 
   /* Reaches to the middle of both neighbouring characters and the full line height. */
