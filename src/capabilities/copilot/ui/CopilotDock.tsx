@@ -1318,16 +1318,25 @@ export function CopilotDock({ pathname, navigate }: CopilotDockProps) {
     [applyRunViewToMessage, bumpRunRevision, refetchTurns, reportSendError],
   );
 
-  // Keep the message stream pinned to the bottom (forced, as before). The stream
-  // node exists only while the drawer is open; it owns its observers: a row
-  // added/removed, or any row changing size (streaming text, terminal
-  // replacement, late Markdown formatting, images), scrolls it to the end.
+  // Stick-to-bottom for the message stream. The stream node exists only while
+  // the drawer is open and owns its observers. While the reader is at (or
+  // within 48px of) the bottom, a row added/removed or the LAST row growing
+  // (streaming text, terminal replacement, late Markdown, images) keeps it at
+  // the end; once they scroll up to read, nothing pulls them down. Expanding an
+  // older row never scrolls. The learner's own send re-sticks (see send).
+  const stickToBottomRef = useRef(true);
   const attachStream = useCallback((node: HTMLDivElement | null) => {
     if (!node) return;
     const scrollToEnd = () => {
       node.scrollTop = node.scrollHeight;
     };
-    const resize = new ResizeObserver(scrollToEnd);
+    const onScroll = () => {
+      stickToBottomRef.current = node.scrollHeight - node.scrollTop - node.clientHeight <= 48;
+    };
+    const resize = new ResizeObserver((entries) => {
+      if (!stickToBottomRef.current) return;
+      if (entries.some((entry) => entry.target === node.lastElementChild)) scrollToEnd();
+    });
     for (const child of node.children) resize.observe(child);
     const rows = new MutationObserver((records) => {
       for (const record of records) {
@@ -1338,11 +1347,14 @@ export function CopilotDock({ pathname, navigate }: CopilotDockProps) {
           if (removed instanceof Element) resize.unobserve(removed);
         }
       }
-      scrollToEnd();
+      if (stickToBottomRef.current) scrollToEnd();
     });
     rows.observe(node, { childList: true });
+    node.addEventListener('scroll', onScroll, { passive: true });
+    stickToBottomRef.current = true;
     scrollToEnd();
     return () => {
+      node.removeEventListener('scroll', onScroll);
       rows.disconnect();
       resize.disconnect();
     };
@@ -1436,6 +1448,8 @@ export function CopilotDock({ pathname, navigate }: CopilotDockProps) {
       setInput((current) => (!recovery && current === raw ? '' : current));
       correctionTargetRef.current = null;
       setCorrectionTarget(null);
+      // The learner's own message always brings the stream back to the bottom.
+      stickToBottomRef.current = true;
       updateMessages((previous) =>
         projectPendingCopilotMessagePair(previous, {
           idempotencyKey,
