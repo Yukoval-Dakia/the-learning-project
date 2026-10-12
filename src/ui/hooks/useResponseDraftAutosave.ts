@@ -35,6 +35,11 @@ export interface UseResponseDraftAutosaveOptions<T> {
   save: SaveFn<T>;
   serialize?: (value: T) => string;
   debounceMs?: number;
+  /**
+   * 自动保存遇到 409 后自己 hold（宿主在冲突时不再允许自动保存，只能重新加载/放弃）。
+   * 缺省 false：冲突后仍可 retry。
+   */
+  holdOnConflict?: boolean;
 }
 
 export interface ResponseDraftAutosave<T> {
@@ -76,6 +81,7 @@ class DraftAutosaveController<T> {
   constructor(
     private readonly serialize: (value: T) => string,
     private readonly debounceMs: number,
+    private readonly holdOnConflict: boolean,
   ) {}
 
   getSnapshot = (): AutosaveSnapshot => this.snapshot;
@@ -83,7 +89,8 @@ class DraftAutosaveController<T> {
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
     // Re-subscribe (StrictMode) with an unsaved edit: re-arm the debounce dropped below.
-    if (this.listeners.size === 1 && this.isDirty() && !this.inFlight) this.schedule();
+    if (this.listeners.size === 1 && this.enabled && this.isDirty() && !this.inFlight)
+      this.schedule();
     return () => {
       this.listeners.delete(listener);
       if (this.listeners.size === 0) this.clearTimer();
@@ -182,10 +189,9 @@ class DraftAutosaveController<T> {
           return true;
         }
       } catch (err) {
-        if (this.seq === seq)
-          this.publish({
-            state: err instanceof ApiError && err.status === 409 ? 'conflict' : 'error',
-          });
+        const conflict = err instanceof ApiError && err.status === 409;
+        if (conflict && this.holdOnConflict) this.hold();
+        if (this.seq === seq) this.publish({ state: conflict ? 'conflict' : 'error' });
         return false;
       } finally {
         if (this.seq === seq) this.inFlight = null;
@@ -200,8 +206,11 @@ export function useResponseDraftAutosave<T>({
   save,
   serialize = defaultSerialize,
   debounceMs = 800,
+  holdOnConflict = false,
 }: UseResponseDraftAutosaveOptions<T>): ResponseDraftAutosave<T> {
-  const [controller] = useState(() => new DraftAutosaveController<T>(serialize, debounceMs));
+  const [controller] = useState(
+    () => new DraftAutosaveController<T>(serialize, debounceMs, holdOnConflict),
+  );
   const snapshot = useSyncExternalStore(
     controller.subscribe,
     controller.getSnapshot,
