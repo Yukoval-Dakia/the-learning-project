@@ -71,6 +71,8 @@ import {
 } from './practice-api';
 
 type Rating = 'again' | 'hard' | 'good';
+type IssuanceMode = 'auto_score' | 'manual';
+type IssuanceState = Awaited<ReturnType<typeof getIssuanceState>>;
 type JudgeFeedback = Pick<
   JudgePreview,
   'route' | 'coarse_outcome' | 'confidence' | 'feedback_md' | 'suggested_rating'
@@ -333,7 +335,7 @@ export function PfSolo({
   // YUK-1051 — 选项身份从数组下标换成内容派生的 stable option id（response-types）：
   // 重渲染 / 草稿恢复 / 复盘里同一选项文本恒同 id；选项数不硬编码（1–9 数字键随选项数）。
   const [nativeResponses, setNativeResponses] = useState<ResponseSetT>({ entries: [] });
-  const [issuanceMode, setIssuanceMode] = useState<'auto_score' | 'manual'>('auto_score');
+  const [issuanceMode, setIssuanceMode] = useState<IssuanceMode>('auto_score');
   // YUK-1051 (D10) — 开放作答的证据附件（通用文字+附件）；asset ids 随提交走
   // answer_image_refs（CreateAttempt 契约早就有，UI 此前丢弃）。
   const [evidence, setEvidence] = useState<EvidenceAttachment[]>([]);
@@ -397,44 +399,78 @@ export function PfSolo({
   // 正合「卡在同一误区」信号意图。反馈卡里 length>0 才渲染。
   const timelineEvents = q ? toAttemptTimelineEvents(q.timeline) : [];
   const issuanceId = `iss_stream_${item.id}`;
-  const frozenQ = useQuery({
-    queryKey: ['practice-issuance', issuanceId, issuanceMode],
-    enabled: q !== null,
-    retry: false,
-    refetchOnMount: 'always',
-    queryFn: async () => {
-      try {
-        return await getIssuanceState(issuanceId);
-      } catch (error) {
-        if (!(error instanceof ApiError) || error.status !== 404) throw error;
+  // YUK-1484 — issuing is a write, so it is a command, not a query: nothing may re-run it
+  // on retry, focus, reconnect, invalidation, remount or StrictMode. The issuance
+  // placeholder owns it (attachIssuance): when it attaches, this visit reads its issuance
+  // and POSTs one only if the server has none (404). One request per visit and mode — a
+  // re-attach reuses it, an accepted issuance is never re-POSTed; a rejected request is
+  // dropped so a later attach (e.g. after switching to self-rated mode) can try again.
+  // The result lives in local state; there is no cached issuance query to refetch.
+  const issueRequests = useRef(new Map<string, Promise<IssuanceState>>());
+  const [issuance, setIssuance] = useState<{
+    mode: IssuanceMode;
+    state: IssuanceState | null;
+    error: unknown;
+  } | null>(null);
+  const attachIssuance = useCallback(
+    (node: HTMLParagraphElement | null) => {
+      if (!node || !q) return undefined;
+      const mode = issuanceMode;
+      const key = `${issuanceId}:${mode}`;
+      const requests = issueRequests.current;
+      let request = requests.get(key);
+      if (!request) {
+        const started = (async () => {
+          try {
+            return await getIssuanceState(issuanceId);
+          } catch (error) {
+            if (!(error instanceof ApiError) || error.status !== 404) throw error;
+          }
+          await issueAssessment({
+            issuance_id: issuanceId,
+            group_id: q.parent_question_id ?? q.id,
+            ...(q.parent_question_id ? { part_ids: [q.id] } : {}),
+            mode,
+          });
+          return getIssuanceState(issuanceId);
+        })();
+        requests.set(key, started);
+        // Not accepted: forget it so a later attach of this visit can try again.
+        started.catch(() => {
+          if (requests.get(key) === started) requests.delete(key);
+        });
+        request = started;
       }
-      if (!q) throw new Error('question unavailable');
-      await issueAssessment({
-        issuance_id: issuanceId,
-        group_id: q.parent_question_id ?? q.id,
-        ...(q.parent_question_id ? { part_ids: [q.id] } : {}),
-        mode: issuanceMode,
-      });
-      return getIssuanceState(issuanceId);
+      let detached = false;
+      request.then(
+        (state) => {
+          if (!detached) setIssuance({ mode, state, error: null });
+        },
+        (error: unknown) => {
+          if (!detached) setIssuance({ mode, state: null, error });
+        },
+      );
+      return () => {
+        detached = true;
+      };
     },
-  });
-  const frozen = frozenQ.data?.practice_dto;
+    [q, issuanceId, issuanceMode],
+  );
+  // The command's settled result for the current mode; null while it is in flight.
+  const issued = issuance?.mode === issuanceMode ? issuance : null;
+  const issuedState = issued?.state ?? null;
+  const frozen = issuedState?.practice_dto;
   // Save epoch: the restored draft's epoch until the first ACK, then the latest ACK's.
   const [restoredEpoch, setRestoredEpoch] = useState<number | undefined>(undefined);
   const ackedEpoch = useRef<number | undefined>(undefined);
   const [restoredIssuanceId, setRestoredIssuanceId] = useState<string | null>(null);
-  // Cached data belongs to the previous answering session. Restore only after this
-  // mount's successful read, once per issuance, then keep background reads from
-  // replacing local edits. YUK-1483: this is the render-time "adjust state when the
-  // input changes" step (own state only, no effect); the answer fields are not rendered
-  // until it has run, so autosave never starts from a cached or empty placeholder.
-  if (
-    frozenQ.isFetchedAfterMount &&
-    !frozenQ.isError &&
-    frozenQ.data?.issuance &&
-    restoredIssuanceId !== frozenQ.data.issuance.issuance_id
-  ) {
-    const restored = frozenQ.data.submissions[0] ?? frozenQ.data.draft;
+  // The state comes from this visit's own issuance read, never from a cache. Restore it
+  // once per issuance, then keep later reads (a mode switch's) from replacing local
+  // edits. YUK-1483: this is the render-time "adjust state when the input changes" step
+  // (own state only, no effect); the answer fields are not rendered until it has run,
+  // so autosave never starts from an empty placeholder.
+  if (issuedState?.issuance && restoredIssuanceId !== issuedState.issuance.issuance_id) {
+    const restored = issuedState.submissions[0] ?? issuedState.draft;
     setNativeResponses(restored?.response_set ?? { entries: [] });
     setEvidence(
       (restored?.group_evidence ?? []).map((item) => ({
@@ -444,11 +480,11 @@ export function PfSolo({
         slot_ids: null,
       })),
     );
-    setRestoredEpoch(frozenQ.data.draft?.save_epoch);
-    setRestoredIssuanceId(frozenQ.data.issuance.issuance_id);
+    setRestoredEpoch(issuedState.draft?.save_epoch);
+    setRestoredIssuanceId(issuedState.issuance.issuance_id);
   }
   const nativeEvidence = useMemo(() => nativeGroupEvidence(evidence), [evidence]);
-  const accepted = frozenQ.data?.submissions[0];
+  const accepted = issuedState?.submissions[0];
   const assessmentInput = {
     issuance_id: issuanceId,
     evaluation_group_id: accepted?.evaluation_group_id ?? `group_stream_${item.id}`,
@@ -923,7 +959,7 @@ export function PfSolo({
     return () => window.removeEventListener('keydown', onKey);
   };
 
-  if (qQ.isLoading || frozenQ.isLoading) return <p className="quiet-empty">取题中…</p>;
+  if (qQ.isLoading) return <p className="quiet-empty">取题中…</p>;
   if (qQ.isError || !q)
     return (
       <div className="pfs">
@@ -934,14 +970,23 @@ export function PfSolo({
       </div>
     );
 
-  if (frozenQ.isError || !frozen)
+  // The issuance command runs when this placeholder attaches. It is deliberately not on
+  // the error view below, so a failed request never retries itself by re-attaching.
+  if (!issued)
+    return (
+      <p className="quiet-empty" ref={attachIssuance}>
+        取题中…
+      </p>
+    );
+
+  if (issued.error || !frozen)
     return (
       <div className="pfs">
         <Btn size="sm" variant="ghost" onClick={onBack}>
           返回流
         </Btn>
-        <p className="quiet-empty">{(frozenQ.error as Error | null)?.message ?? '正在恢复作答'}</p>
-        {frozenQ.error instanceof ApiError && frozenQ.error.code === 'not_admitted' && (
+        <p className="quiet-empty">{(issued.error as Error | null)?.message ?? '正在恢复作答'}</p>
+        {issued.error instanceof ApiError && issued.error.code === 'not_admitted' && (
           <Btn variant="secondary" onClick={() => setIssuanceMode('manual')}>
             按自行评级练习
           </Btn>
