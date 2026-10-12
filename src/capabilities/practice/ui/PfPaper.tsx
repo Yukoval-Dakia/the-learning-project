@@ -169,6 +169,22 @@ function clearPaperTiming(sessionId: string, paperId: string): void {
 // (a conservative, honesty-preserving direction), never a false 「进度保留」.
 const EXIT_FLUSH_TIMEOUT_MS = 3000;
 
+// YUK-1489 — a plain save waits at most this long for a pending chained (pagehide) save. A
+// keepalive request that never settles must not hold every later save of the slot; past the
+// cap the save goes out at the current epoch and the server's epoch check catches any clash.
+const CHAIN_WAIT_CAP_MS = 8000;
+
+// Resolves when the chain settles or the cap passes, whichever comes first (never rejects).
+function chainOrCap(chain: Promise<boolean>): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, CHAIN_WAIT_CAP_MS);
+    void chain.then(() => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
+}
+
 // 草稿初值：服务端 draft / 已提交 answer 回填（一次作答 visit 挂载时取一次）。
 function restorePaperDraft(slots: readonly PaperSlot[]) {
   const answers: Record<string, string> = {};
@@ -564,7 +580,7 @@ function PaperVisit({
       // to settle (it never rejects) and then sends at the epoch its ACK left: sent earlier at
       // the old acked epoch, it could land first and let the chain's older text overwrite it.
       const pendingChain = chained ? undefined : chainedSaves.current[key];
-      done = (pendingChain ? pendingChain.then(send) : send()).then(deregister);
+      done = (pendingChain ? chainOrCap(pendingChain).then(send) : send()).then(deregister);
       if (chained) {
         const chain = done;
         chainedSaves.current[key] = chain;

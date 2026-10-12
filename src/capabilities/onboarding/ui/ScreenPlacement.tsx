@@ -36,6 +36,9 @@ import { type StarterOutcome, starterStatus } from './starter-supply-status';
 import './onboarding.css';
 
 const CAP = 8;
+// YUK-1489 — a save waits at most this long for a pending chained (pagehide) save; past it the
+// save goes out at the current epoch and the server's epoch check catches any clash.
+const CHAIN_WAIT_CAP_MS = 8000;
 const VALID_PACES = ['light', 'medium', 'dense'] as const;
 function readSelfReport(search: string): PlacementSelfReport {
   const sp = new URLSearchParams(search);
@@ -629,13 +632,30 @@ function PlacementQuestionCard({
       // Wait for the earlier save and any pending chain to settle (an earlier failure is that
       // save's own outcome, not this one's), so this request reads the epoch their ACKs left.
       // Sent before the chain's ACK it could land first and then be overwritten by the chain.
+      // A chain is only waited for until the cap: a keepalive request that never settles
+      // must not hold submit or exit forever (YUK-1489).
+      const chainDeadline = Date.now() + CHAIN_WAIT_CAP_MS;
       for (;;) {
         const earlier = inFlight.current ?? pendingChain.current;
         if (!earlier) break;
-        await earlier.then(
-          () => undefined,
-          () => undefined,
-        );
+        if (earlier === inFlight.current) {
+          await earlier.then(
+            () => undefined,
+            () => undefined,
+          );
+          continue;
+        }
+        const left = chainDeadline - Date.now();
+        if (left <= 0) break;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const settled = await Promise.race([
+          earlier.then(() => true),
+          new Promise<boolean>((resolve) => {
+            timer = setTimeout(() => resolve(false), left);
+          }),
+        ]);
+        clearTimeout(timer);
+        if (!settled) break;
       }
       if (JSON.stringify(value) === savedBytes.current) return;
       const saving = (async () => {

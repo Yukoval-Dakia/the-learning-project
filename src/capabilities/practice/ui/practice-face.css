@@ -683,6 +683,75 @@
   margin-bottom: 4px;
 }
 
+/* YUK-1489 — draft conflict: this visit's text beside the server's, then a choice.
+   Same soft hard-tone strip as the question detail's stale notice (.qd-stale). */
+.pfs-conflict {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  padding: var(--s-3) var(--s-4);
+  margin: var(--s-3) 0 var(--s-4);
+  background: var(--hard-soft);
+  border: 1px solid var(--hard-line);
+  border-radius: var(--r-3);
+}
+.pfs-conflict-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-3);
+}
+.pfs-conflict-ico {
+  color: var(--hard-ink);
+  flex: none;
+  margin-top: 3px;
+}
+.pfs-conflict-msg {
+  margin: 0;
+  color: var(--hard-ink);
+  font-size: var(--fs-body);
+  line-height: 1.5;
+}
+.pfs-conflict-cmp {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14em, 1fr));
+  gap: var(--s-3);
+}
+.pfs-conflict-side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  min-width: 0;
+  padding: var(--s-3);
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+}
+.pfs-conflict-text {
+  margin: 0;
+  max-height: 12em;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: var(--fs-body);
+  line-height: var(--lh-prose);
+  color: var(--ink-2);
+}
+.pfs-conflict-text.is-empty {
+  color: var(--ink-4);
+}
+.pfs-conflict-files,
+.pfs-conflict-note {
+  margin: 0;
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+}
+.pfs-conflict-act {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+}
+
 /* rating row */
 .pfs-rate {
   display: flex;
