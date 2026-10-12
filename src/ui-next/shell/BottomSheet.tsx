@@ -1,5 +1,5 @@
 import type { KeyboardEvent, ReactNode, PointerEvent as ReactPointerEvent } from 'react';
-import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
+import { useCallback, useLayoutEffect, useRef } from 'react';
 import { type SpringHandle, createSpring } from '../motion/spring';
 import { SPRING } from '../tokens';
 
@@ -26,6 +26,13 @@ export interface BottomSheetProps {
   bottomInset?: number;
   header: ReactNode;
   children: ReactNode;
+}
+
+interface SheetAttachment {
+  node: HTMLElement;
+  /** Set by the ref cleanup; cleared when React re-attaches the same node in the same commit. */
+  detachPending: boolean;
+  dispose: () => void;
 }
 
 interface Drag {
@@ -115,15 +122,48 @@ export function BottomSheet({
     };
   }, [snap, bottomInset, visibleAtPeek]);
 
-  useEffect(() => {
-    const onResize = () => springRef.current?.to(position(snap));
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
-  }, [snap, position]);
-
-  // Stop the spring only when the sheet goes away. Stopping it on every snap change would cancel
-  // the motion the layout effect just started.
-  useEffect(() => () => springRef.current?.stop(), []);
+  // The sheet node owns its window resources. Attaching listens for resizes, which re-aim the
+  // spring at the current stop; detaching (unmount only) stops the spring so no frame writes to a
+  // node that is gone. A snap change re-runs this callback on the same node in one commit: that
+  // pair is coalesced, so the motion the layout effect just started keeps going.
+  const attachmentRef = useRef<SheetAttachment | null>(null);
+  const restingTarget = useRef<() => number>(() => 0);
+  const attachSheet = useCallback(
+    (node: HTMLElement | null) => {
+      if (!node) return undefined;
+      sheetRef.current = node;
+      restingTarget.current = () => position(snap);
+      let attached = attachmentRef.current;
+      if (attached && attached.node === node) {
+        attached.detachPending = false;
+      } else {
+        attached?.dispose();
+        const onResize = () => springRef.current?.to(restingTarget.current());
+        window.addEventListener('resize', onResize);
+        attached = {
+          node,
+          detachPending: false,
+          dispose: () => {
+            window.removeEventListener('resize', onResize);
+            springRef.current?.stop();
+            dragRef.current = null;
+          },
+        };
+        attachmentRef.current = attached;
+      }
+      const current = attached;
+      return () => {
+        current.detachPending = true;
+        queueMicrotask(() => {
+          if (!current.detachPending || attachmentRef.current !== current) return;
+          attachmentRef.current = null;
+          if (sheetRef.current === node) sheetRef.current = null;
+          current.dispose();
+        });
+      };
+    },
+    [snap, position],
+  );
 
   const settleTo = (next: SheetSnap, velocity: number) => {
     if (next === snap) springRef.current?.to(position(next), velocity);
@@ -216,7 +256,7 @@ export function BottomSheet({
 
   return (
     <section
-      ref={sheetRef}
+      ref={attachSheet}
       className="un-sheet"
       data-snap={snap}
       aria-label={label}
