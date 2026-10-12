@@ -19,7 +19,7 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query';
-import { useMemo, useState, useSyncExternalStore } from 'react';
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react';
 import { Btn } from '@/ui/primitives/Btn';
 import { EmptyState } from '@/ui/primitives/EmptyState';
 import { LoomCard } from '@/ui/primitives/LoomCard';
@@ -386,7 +386,7 @@ export default function InboxPage({ navigate }: InboxPageProps) {
   } = useWorkbenchClient();
   const [resolved, setResolved] = useState<Record<string, string>>({});
   const [reverting, setReverting] = useState<Record<string, true>>({});
-  const [toast, setToast] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ id: number; text: string } | null>(null);
 
   const queryClient = useQueryClient();
   const decisionQ = useInfiniteQuery(decisionQueryOptions(listDecisionProposalPage));
@@ -408,9 +408,15 @@ export default function InboxPage({ navigate }: InboxPageProps) {
   }, [treeQ.data]);
 
   const showError = (msg: string) => {
-    setToast(msg);
-    setTimeout(() => setToast(null), 5000);
+    setToast((prev) => ({ id: (prev?.id ?? 0) + 1, text: msg }));
   };
+  // Each toast closes itself after 5s. The timer belongs to the toast node: a newer toast or
+  // leaving the page removes the node and clears its timer, so nothing fires after unmount.
+  const dismissToastLater = useCallback((node: HTMLDivElement | null) => {
+    if (!node) return;
+    const id = setTimeout(() => setToast(null), 5000);
+    return () => clearTimeout(id);
+  }, []);
 
   const decisionPages = decisionQ.data?.pages ?? EMPTY_DECISION_PAGES;
   const decisionPageParams = decisionQ.data?.pageParams ?? EMPTY_DECISION_PAGE_PARAMS;
@@ -684,10 +690,10 @@ export default function InboxPage({ navigate }: InboxPageProps) {
       </Stateful>
 
       {toast && (
-        <div className="pf-toasts" aria-live="polite">
+        <div key={toast.id} ref={dismissToastLater} className="pf-toasts" aria-live="polite">
           <div className="pf-toast t-info">
             <LoomIcon name="close" size={15} className="ico" />
-            <span>{toast}</span>
+            <span>{toast.text}</span>
           </div>
         </div>
       )}
