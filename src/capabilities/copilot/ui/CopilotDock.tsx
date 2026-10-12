@@ -27,8 +27,8 @@
 
 'use client';
 
-import { useQuery } from '@tanstack/react-query';
-import { memo, useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { memo, useCallback, useId, useRef, useState } from 'react';
 import { DerivationPolicy, type DerivationPolicyT } from '@/core/schema/derivation-policy';
 import { ApiAuthError, ApiError, apiJson } from '@/ui/lib/api';
 import {
@@ -37,9 +37,10 @@ import {
 } from '@/ui/lib/deferred-markdown-renderer';
 import { randomId } from '@/ui/lib/random-id';
 import {
+  type CopilotOpenRequest,
   openCopilotForNudge,
+  subscribeCopilotOpenRequests,
   useCopilotDwell,
-  useCopilotOpenSignal,
 } from '@/ui/lib/use-copilot-dwell';
 import { Btn } from '@/ui/primitives/Btn';
 import { Button } from '@/ui/primitives/Button';
@@ -172,6 +173,25 @@ function supportsAnswerOnly(policies: unknown): boolean {
 }
 
 type CopilotSessionResponse = CopilotSessionsResponse['sessions'][number];
+
+function hasServerTime(
+  snapshot: CopilotSessionsResponse | undefined,
+): snapshot is CopilotSessionsResponse {
+  return snapshot !== undefined && Number.isFinite(Date.parse(snapshot.server_time));
+}
+
+/** Automatic selection may only land on a live session inside the reuse window. */
+function isReusableSession(session: CopilotSessionResponse, serverNow: Date): boolean {
+  return (
+    (session.status === 'active' || session.status === 'idle') &&
+    isWithinCopilotReuseWindow(session.updated_at, serverNow)
+  );
+}
+
+/** Best-effort reads: a failure is already visible through the query's error state. */
+function swallow(): undefined {
+  return undefined;
+}
 
 const LEARNER_TOOL_LABELS: Readonly<Record<string, string>> = {
   query_mistakes: '错题整理',
@@ -325,8 +345,6 @@ export interface CopilotDockProps {
   pathname: string;
   /** M5-T3 (YUK-321) — route push, forwarded to CopilotHeroCard for hero href jumps. */
   navigate: (to: string) => void;
-  /** Keep the visible shell launcher in sync with pending proactive nudges. */
-  onNudgeCountChange?: (count: number) => void;
 }
 
 interface MessageRowProps {
@@ -528,71 +546,89 @@ export const MessageRow = memo(function MessageRow({
   );
 });
 
-export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotDockProps) {
+export function CopilotDock({ pathname, navigate }: CopilotDockProps) {
   // Transport seam (YUK-1473); read through a ref so the memoized callbacks below keep their deps.
   const copilotClient = useCopilotClient();
   const clientRef = useRef(copilotClient);
   clientRef.current = copilotClient;
+  const queryClient = useQueryClient();
   // YUK-577 — proactive-nudge state. A pending nudge is rendered as a badge/bar; the drawer itself
   // opens only after the user clicks it. The legacy blind dwell/revisit auto-open path is gone.
+  // RootShell reads the visible badge count from this same ['copilot','nudges'] query cache.
   const {
     nudges,
     dismiss: dismissNudge,
     markOpened,
     isMutating: nudgeMutating,
   } = useCopilotNudges();
-  useEffect(() => {
-    onNudgeCountChange?.(nudges.length);
-  }, [nudges.length, onNudgeCountChange]);
-  const { open, openDrawer, closeDrawer: closeDrawerDwell } = useCopilotDwell();
-  const prepareAndOpenDrawer = useCallback(() => {
-    preloadMarkdownRenderer();
-    openDrawer();
-  }, [openDrawer]);
+  const {
+    open,
+    epoch: drawerEpoch,
+    openDrawer,
+    closeDrawer: closeDrawerDwell,
+    currentVisit,
+  } = useCopilotDwell();
   const summaryQ = useQuery({
     queryKey: ['copilot-summary'],
     queryFn: () => apiJson<CopilotSummary>('/api/today/copilot-summary'),
     enabled: open,
     refetchInterval: open ? 60_000 : false,
   });
-  // Each opening owns a query, so cached or late responses from another visit
-  // can populate history but cannot authorize automatic reuse.
+  // Each opening owns a query key, so cached or late responses from another visit
+  // can populate history but cannot authorize automatic reuse. The query is a
+  // read-only view: fetches are explicit commands (loadVisitSessions), because a
+  // fresh list is what decides automatic reuse or creation for the visit.
   const sessionQueryInstance = useId();
-  const [drawerVisit, setDrawerVisit] = useState({ open, epoch: 0 });
-  if (drawerVisit.open !== open) {
-    setDrawerVisit({ open, epoch: drawerVisit.epoch + (open ? 1 : 0) });
-  }
-  const drawerEpochRef = useRef(drawerVisit.epoch);
-  drawerEpochRef.current = drawerVisit.epoch;
+  const sessionsKey = useCallback(
+    (epoch: number) => ['copilot-sessions', sessionQueryInstance, epoch] as const,
+    [sessionQueryInstance],
+  );
   const sessionsQ = useQuery({
-    queryKey: ['copilot-sessions', sessionQueryInstance, drawerVisit.epoch],
+    queryKey: sessionsKey(drawerEpoch),
     queryFn: ({ signal }) => clientRef.current.listSessions(signal),
-    enabled: open,
+    enabled: false,
     placeholderData: (previous) => previous,
   });
+  // Last successful list, kept by the fetch command so history stays readable
+  // when a later visit's read fails. Display only; never a reuse authorization.
   const [retainedSessions, setRetainedSessions] = useState<CopilotSessionResponse[]>([]);
-  useEffect(() => {
-    if (sessionsQ.data) setRetainedSessions(sessionsQ.data.sessions);
-  }, [sessionsQ.data]);
   const freshSessions =
-    open &&
-    sessionsQ.isFetchedAfterMount &&
-    sessionsQ.isSuccess &&
-    Number.isFinite(Date.parse(sessionsQ.data.server_time))
+    open && sessionsQ.isSuccess && !sessionsQ.isPlaceholderData && hasServerTime(sessionsQ.data)
       ? sessionsQ.data
       : null;
+  /** The current visit's fresh list as the query cache holds it right now. */
+  const currentFreshSessions = useCallback((): CopilotSessionsResponse | null => {
+    const visit = currentVisit();
+    if (!visit.open) return null;
+    const data = queryClient.getQueryData<CopilotSessionsResponse>(sessionsKey(visit.epoch));
+    return data && hasServerTime(data) ? data : null;
+  }, [currentVisit, queryClient, sessionsKey]);
 
-  const [derivationPolicy, setDerivationPolicy] = useState(loadCopilotDerivationPreference);
+  // Read from localStorage by the attach-time init command (initializeFromStorage).
+  const [derivationPolicy, setDerivationPolicy] = useState<DerivationPolicyT>('allow');
   const derivationPolicyRef = useRef(derivationPolicy);
   derivationPolicyRef.current = derivationPolicy;
-  const [policySupportCheck, setPolicySupportCheck] = useState<
-    'checking' | 'unsupported' | 'supported' | null
-  >(null);
+  // An explicit support check only stands for the visit and fresh list it was
+  // made against; a new visit or a new fresh response falls back to the list's
+  // own capability. An in-flight check always shows.
+  const [policyCheck, setPolicyCheck] = useState<{
+    result: 'checking' | 'unsupported' | 'supported';
+    epoch: number;
+    fresh: CopilotSessionsResponse | null;
+  } | null>(null);
   const checkingPolicyRef = useRef(false);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: a fresh response or drawer visit invalidates the previous support display
-  useEffect(() => {
-    setPolicySupportCheck((current) => (current === 'checking' ? current : null));
-  }, [freshSessions, drawerVisit.epoch]);
+  const recordPolicyCheck = useCallback(
+    (result: 'checking' | 'unsupported' | 'supported') => {
+      setPolicyCheck({ result, epoch: currentVisit().epoch, fresh: currentFreshSessions() });
+    },
+    [currentFreshSessions, currentVisit],
+  );
+  const policySupportCheck =
+    policyCheck &&
+    (policyCheck.result === 'checking' ||
+      (policyCheck.epoch === drawerEpoch && policyCheck.fresh === freshSessions))
+      ? policyCheck.result
+      : null;
   const policySupport =
     policySupportCheck ??
     (freshSessions
@@ -602,62 +638,65 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
       : sessionsQ.isError
         ? 'unsupported'
         : 'checking');
-  const [restoredPendingTurns] = useState<PersistedPendingCopilotTurn[]>(() => {
-    // Accepted v1 handles are intentionally ignored: the server snapshot is the
-    // only accepted-run inventory. Preserve only exact pre-202 retry tuples.
-    discardLegacyDurableCopilotReconnect();
-    return loadPersistedPendingCopilotTurns();
-  });
-  const [pendingTurns, setPendingTurns] = useState<PendingCopilotTurn[]>(() =>
-    restoredPendingTurns.map((turn) => ({
-      ...turn,
-      dispatching: false,
-      error: '这次请求的受理状态还不能确认；恢复时会复用原请求，不会创建第二次执行。',
-    })),
-  );
+  // Pre-202 retry tuples are restored by the attach-time init command.
+  const [pendingTurns, setPendingTurns] = useState<PendingCopilotTurn[]>([]);
   const pendingTurnsRef = useRef(pendingTurns);
   pendingTurnsRef.current = pendingTurns;
-  const recoverySessionId = restoredPendingTurns.at(-1)?.requestBody.session_id ?? null;
-  const [messages, setMessages] = useState<ChatMessage[]>(() =>
-    restoredPendingTurns
-      .filter((turn) => turn.requestBody.session_id === recoverySessionId)
-      .reduce<ChatMessage[]>(
-        (current, turn) =>
-          projectPendingCopilotMessagePair(current, {
-            idempotencyKey: turn.idempotencyKey,
-            sessionId: turn.requestBody.session_id,
-            userMessageId: turn.userMessageId,
-            aiMessageId: turn.aiMessageId,
-            userMessage: turn.userMessage,
-            derivationPolicy: turn.requestBody.derivation_policy ?? 'allow',
-            dispatching: false,
-          }),
-        [],
-      ),
+  // AF S4 / YUK-203 U6 — the active skill context (teaching/solve). When set, the
+  // next turn(s) route to the skill (single-session model, §4.2). Held in a ref
+  // so the composer's `send` reads the live value without re-creating `send`.
+  // Lifecycle:
+  //   SET   — when the open-with-context signal fires (cross-tree button click)
+  //           OR when replay finds the last non-end skill turn with a
+  //           skill_context (restores teaching continuity after page refresh).
+  //   CLEAR — on closeDrawer, or when the skill returns kind==='end', so
+  //           free-form turns after a session end are not re-routed to a stale
+  //           skill. A replayed end turn correctly leaves the ref null.
+  const activeSkillRef = useRef<CopilotSkillContextT | null>(null);
+  // Every message write goes through updateMessages. Separate subscriptions may
+  // observe FIFO terminals in different network order, so each write folds the
+  // complete message order into the skill context: a later teaching end always
+  // wins over an earlier turn regardless of callback arrival order.
+  const [messages, setMessagesState] = useState<ChatMessage[]>([]);
+  const messagesRef = useRef(messages);
+  const updateMessages = useCallback(
+    (next: ChatMessage[] | ((previous: ChatMessage[]) => ChatMessage[])) => {
+      const value = typeof next === 'function' ? next(messagesRef.current) : next;
+      if (value === messagesRef.current) return;
+      messagesRef.current = value;
+      activeSkillRef.current = restoreSkillContext(value, activeSkillRef.current);
+      setMessagesState(value);
+    },
+    [],
   );
-  const [currentSessionId, setCurrentSessionId] = useState<string | null>(recoverySessionId);
-  const [selectionOrigin, setSelectionOrigin] = useState<'automatic' | 'explicit' | 'recovery'>(
-    recoverySessionId ? 'recovery' : 'automatic',
-  );
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [selectionOrigin, setSelectionOriginState] = useState<
+    'automatic' | 'explicit' | 'recovery'
+  >('automatic');
+  const selectionOriginRef = useRef(selectionOrigin);
+  const setSelectionOrigin = useCallback((origin: 'automatic' | 'explicit' | 'recovery') => {
+    selectionOriginRef.current = origin;
+    setSelectionOriginState(origin);
+  }, []);
   const selectionRevisionRef = useRef(0);
   const automaticCreatedOpenRef = useRef<number | null>(null);
   const currentSessionIdRef = useRef(currentSessionId);
   currentSessionIdRef.current = currentSessionId;
-  const openRef = useRef(open);
-  openRef.current = open;
   const [sessionPanelOpen, setSessionPanelOpen] = useState(false);
-  const [creatingSession, setCreatingSession] = useState(false);
-  const [optimisticSession, setOptimisticSession] = useState<CopilotSessionResponse | null>(() => {
-    if (!recoverySessionId) return null;
-    const recoveredAt = new Date().toISOString();
-    return {
-      id: recoverySessionId,
-      status: 'active',
-      title: '正在恢复的对话',
-      created_at: recoveredAt,
-      updated_at: recoveredAt,
-    };
-  });
+  const [creatingSession, setCreatingSessionState] = useState(false);
+  const creatingSessionRef = useRef(false);
+  const setCreatingSession = useCallback((creating: boolean) => {
+    creatingSessionRef.current = creating;
+    setCreatingSessionState(creating);
+  }, []);
+  const [optimisticSession, setOptimisticSessionState] = useState<CopilotSessionResponse | null>(
+    null,
+  );
+  const optimisticSessionRef = useRef(optimisticSession);
+  const setOptimisticSession = useCallback((session: CopilotSessionResponse | null) => {
+    optimisticSessionRef.current = session;
+    setOptimisticSessionState(session);
+  }, []);
   const activeRunsRef = useRef(new Map<string, ActiveCopilotRun>());
   const snapshotRequestSeqRef = useRef(new Map<string, number>());
   const snapshotAppliedSeqRef = useRef(new Map<string, number>());
@@ -692,17 +731,6 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
   // free-form Copilot path instead of fabricating a ref. State (not a ref) so the
   // chip's visible scope label re-renders when the in-scope entity changes.
   const [focusedKnowledgeId, setFocusedKnowledgeId] = useState<string | null>(null);
-  // AF S4 / YUK-203 U6 — the active skill context (teaching/solve). When set, the
-  // next turn(s) route to the skill (single-session model, §4.2). Held in a ref
-  // so the composer's `send` reads the live value without re-creating `send`.
-  // Lifecycle:
-  //   SET   — when the open-with-context signal fires (cross-tree button click)
-  //           OR when the replay effect finds the last non-end skill turn with a
-  //           skill_context (restores teaching continuity after page refresh).
-  //   CLEAR — on closeDrawer, or when the skill returns kind==='end', so
-  //           free-form turns after a session end are not re-routed to a stale
-  //           skill. A replayed end turn correctly leaves the ref null.
-  const activeSkillRef = useRef<CopilotSkillContextT | null>(null);
   // YUK-577 — the ingestion session a nudge 「看看」opened, injected into ambient_context so the
   // user's first reply is context-aware ("about the material I just processed").
   const nudgeSessionRef = useRef<string | null>(null);
@@ -723,13 +751,6 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     [bumpRunRevision],
   );
 
-  useEffect(
-    () => () => {
-      detachSubscriptions(undefined, false);
-    },
-    [detachSubscriptions],
-  );
-
   // AF S4 / YUK-203 U6 — wrap closeDrawer to also clear the active skill context
   // so that re-opening the Dock after closing does not resume a stale skill.
   const closeDrawer = useCallback(() => {
@@ -745,7 +766,6 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     setCorrectionTarget(null);
     closeDrawerDwell();
   }, [closeDrawerDwell, detachSubscriptions]);
-  const streamRef = useRef<HTMLDivElement | null>(null);
   const sessionBootstrapRef = useRef<number | null>(null);
 
   const pendingMessagesForSession = useCallback((sessionId: string): ChatMessage[] => {
@@ -766,42 +786,93 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
       );
   }, []);
 
+  /** Read the visit's session list (one cache entry per visit) and keep the last success. */
+  const fetchVisitSessions = useCallback(
+    async (epoch: number): Promise<CopilotSessionsResponse> => {
+      const snapshot = await queryClient.fetchQuery({
+        queryKey: sessionsKey(epoch),
+        queryFn: ({ signal }) => clientRef.current.listSessions(signal),
+        staleTime: 0,
+        // Same retry budget the auto-fetching query had before this became a command.
+        retry: 3,
+      });
+      setRetainedSessions(snapshot.sessions);
+      return snapshot;
+    },
+    [queryClient, sessionsKey],
+  );
+
+  const isRecoveringSession = useCallback(
+    (sessionId: string | null): boolean =>
+      pendingTurnsRef.current.some((turn) => turn.requestBody.session_id === sessionId) ||
+      [...activeRunsRef.current.values()].some(
+        (run) =>
+          run.sessionId === sessionId &&
+          run.view.phase !== 'completed' &&
+          run.view.phase !== 'failed',
+      ),
+    [],
+  );
+
   const createConversation = useCallback(
     async (origin: 'automatic' | 'explicit' = 'explicit') => {
-      if (creatingSession) return;
+      if (creatingSessionRef.current) return;
       // YUK-1340 — bootstrap 可能异步开新对话；若发起后学员显式改选了别的会话，
       // 保留学员的选择，新会话只进列表，不抢占当前视图。
       const selectionAtRequest = ++selectionRevisionRef.current;
-      const openAtRequest = drawerVisit.epoch;
+      const openAtRequest = currentVisit().epoch;
       if (origin === 'explicit') setSelectionOrigin('explicit');
       setCreatingSession(true);
       setError(null);
       try {
         const response = await clientRef.current.createSession();
+        const visit = currentVisit();
         if (
           selectionRevisionRef.current === selectionAtRequest &&
-          (origin === 'explicit' || (openRef.current && drawerEpochRef.current === openAtRequest))
+          (origin === 'explicit' || (visit.open && visit.epoch === openAtRequest))
         ) {
           if (currentSessionIdRef.current) detachSubscriptions(currentSessionIdRef.current);
           activeSkillRef.current = null;
           setFocusedKnowledgeId(null);
           correctionTargetRef.current = null;
           setCorrectionTarget(null);
-          setMessages([]);
+          updateMessages([]);
           currentSessionIdRef.current = response.session.id;
           setSelectionOrigin(origin);
           automaticCreatedOpenRef.current = origin === 'automatic' ? openAtRequest : null;
           setOptimisticSession(response.session);
           setCurrentSessionId(response.session.id);
         }
-        void sessionsQ.refetch();
+        // Re-read the list so the new session appears; once it is listed, an
+        // automatic selection no longer needs its optimistic placeholder.
+        const refreshEpoch = currentVisit().epoch;
+        void fetchVisitSessions(refreshEpoch).then((snapshot) => {
+          const optimistic = optimisticSessionRef.current;
+          if (
+            selectionOriginRef.current === 'automatic' &&
+            optimistic &&
+            optimistic.id === currentSessionIdRef.current &&
+            snapshot.sessions.some((session) => session.id === optimistic.id)
+          ) {
+            setOptimisticSession(null);
+            sessionBootstrapRef.current = null;
+          }
+        }, swallow);
       } catch (err) {
         setError(err instanceof Error ? err.message : '新对话创建失败');
       } finally {
         setCreatingSession(false);
       }
     },
-    [creatingSession, detachSubscriptions, drawerVisit.epoch, sessionsQ],
+    [
+      currentVisit,
+      detachSubscriptions,
+      fetchVisitSessions,
+      setCreatingSession,
+      setOptimisticSession,
+      setSelectionOrigin,
+      updateMessages,
+    ],
   );
 
   const selectConversation = useCallback(
@@ -816,14 +887,79 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
       setFocusedKnowledgeId(null);
       correctionTargetRef.current = null;
       setCorrectionTarget(null);
-      setMessages(pendingMessagesForSession(sessionId));
+      updateMessages(pendingMessagesForSession(sessionId));
       setOptimisticSession(null);
       setError(null);
       currentSessionIdRef.current = sessionId;
       setCurrentSessionId(sessionId);
     },
-    [detachSubscriptions, pendingMessagesForSession],
+    [
+      detachSubscriptions,
+      pendingMessagesForSession,
+      setOptimisticSession,
+      setSelectionOrigin,
+      updateMessages,
+    ],
   );
+
+  // A visit's fresh list arrived: keep a still-reusable automatic selection, else
+  // resume the newest reusable session, else create one session for this visit.
+  // Explicit and recovery selections are never overridden.
+  const bootstrapVisitSession = useCallback(
+    (epoch: number, snapshot: CopilotSessionsResponse) => {
+      const visit = currentVisit();
+      if (!visit.open || visit.epoch !== epoch || !hasServerTime(snapshot)) return;
+      if (selectionOriginRef.current !== 'automatic') return;
+      const sessionId = currentSessionIdRef.current;
+      if (isRecoveringSession(sessionId)) return;
+      const serverNow = new Date(snapshot.server_time);
+      const optimistic = optimisticSessionRef.current;
+      const automaticSession =
+        snapshot.sessions.find((session) => session.id === sessionId) ??
+        (automaticCreatedOpenRef.current === epoch ? optimistic : null);
+      if (automaticSession && isReusableSession(automaticSession, serverNow)) {
+        if (optimistic && snapshot.sessions.some((session) => session.id === optimistic.id)) {
+          setOptimisticSession(null);
+        }
+        sessionBootstrapRef.current = null;
+        return;
+      }
+      if (creatingSessionRef.current) return;
+      const resumable = snapshot.sessions.find((session) => isReusableSession(session, serverNow));
+      if (resumable) {
+        sessionBootstrapRef.current = null;
+        selectConversation(resumable.id, 'automatic');
+        return;
+      }
+      if (sessionBootstrapRef.current === epoch) return;
+      sessionBootstrapRef.current = epoch;
+      void createConversation('automatic');
+    },
+    [
+      createConversation,
+      currentVisit,
+      isRecoveringSession,
+      selectConversation,
+      setOptimisticSession,
+    ],
+  );
+
+  /** Fresh read for a visit (open, or the retry button), then automatic selection. */
+  const loadVisitSessions = useCallback(
+    (epoch: number) => {
+      void fetchVisitSessions(epoch).then(
+        (snapshot) => bootstrapVisitSession(epoch, snapshot),
+        swallow,
+      );
+    },
+    [bootstrapVisitSession, fetchVisitSessions],
+  );
+
+  const prepareAndOpenDrawer = useCallback(() => {
+    preloadMarkdownRenderer();
+    const epoch = openDrawer();
+    if (epoch !== null) loadVisitSessions(epoch);
+  }, [loadVisitSessions, openDrawer]);
 
   const listedSessions = sessionsQ.data?.sessions ?? retainedSessions;
   const visibleSessions =
@@ -841,18 +977,14 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     );
   const automaticSession =
     freshSessions?.sessions.find((session) => session.id === currentSessionId) ??
-    (automaticCreatedOpenRef.current === drawerVisit.epoch ? optimisticSession : null);
+    (automaticCreatedOpenRef.current === drawerEpoch ? optimisticSession : null);
   const selectionValidated =
     selectionOrigin !== 'automatic' ||
     recoveringCurrentSession ||
     Boolean(
       freshSessions &&
         automaticSession &&
-        (automaticSession.status === 'active' || automaticSession.status === 'idle') &&
-        isWithinCopilotReuseWindow(
-          automaticSession.updated_at,
-          new Date(freshSessions.server_time),
-        ),
+        isReusableSession(automaticSession, new Date(freshSessions.server_time)),
     );
   const selectionValidatedRef = useRef(selectionValidated);
   selectionValidatedRef.current = selectionValidated;
@@ -860,44 +992,6 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     !creatingSession &&
     selectionValidated &&
     (selectedSession?.status === 'active' || selectedSession?.status === 'idle');
-
-  useEffect(() => {
-    if (!open || !freshSessions || selectionOrigin !== 'automatic' || recoveringCurrentSession)
-      return;
-    const sessions = freshSessions.sessions;
-    if (selectionValidated) {
-      if (optimisticSession && sessions.some((session) => session.id === optimisticSession.id)) {
-        setOptimisticSession(null);
-      }
-      sessionBootstrapRef.current = null;
-      return;
-    }
-    if (creatingSession) return;
-    const resumable = sessions.find(
-      (session) =>
-        (session.status === 'active' || session.status === 'idle') &&
-        isWithinCopilotReuseWindow(session.updated_at, new Date(freshSessions.server_time)),
-    );
-    if (resumable) {
-      sessionBootstrapRef.current = null;
-      selectConversation(resumable.id, 'automatic');
-      return;
-    }
-    if (sessionBootstrapRef.current === drawerVisit.epoch) return;
-    sessionBootstrapRef.current = drawerVisit.epoch;
-    void createConversation('automatic');
-  }, [
-    open,
-    freshSessions,
-    selectionOrigin,
-    recoveringCurrentSession,
-    selectionValidated,
-    optimisticSession,
-    creatingSession,
-    selectConversation,
-    drawerVisit.epoch,
-    createConversation,
-  ]);
 
   // Fold explicit mode transitions oldest→newest, including end barriers. The
   // quiz chip independently keeps the latest in-scope knowledge entity. A full
@@ -916,33 +1010,36 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     [],
   );
 
-  const applyRunViewToMessage = useCallback((run: ActiveCopilotRun) => {
-    // A detached/background session may still finish a delayed acceptance or
-    // callback. Keep its server-owned handle, but never project it into the
-    // currently selected conversation or mutate that conversation's mode.
-    if (currentSessionIdRef.current !== run.sessionId) return;
-    const terminal = run.view.phase === 'completed' || run.view.phase === 'failed';
-    const fallbackText =
-      run.view.phase === 'queued'
-        ? '正在等待处理这次请求。'
-        : run.view.phase === 'cancel_requested' || run.cancelRequested
-          ? '正在停止这次运行。'
-          : '正在处理你的请求，结果会在这里显示。';
-    setMessages((previous) =>
-      projectCopilotRunUpdate(previous, {
-        runId: run.runId,
-        sessionId: run.sessionId,
-        view: run.view,
-        derivationPolicy: run.derivationPolicy,
-        fallbackText,
-        ...(run.userMessage ? { userMessage: run.userMessage } : {}),
-      }),
-    );
-    if (run.view.phase === 'completed') {
-      nudgeSessionRef.current = nextNudgeSessionAfterTurn(nudgeSessionRef.current, true);
-    }
-    if (terminal) run.connectionError = undefined;
-  }, []);
+  const applyRunViewToMessage = useCallback(
+    (run: ActiveCopilotRun) => {
+      // A detached/background session may still finish a delayed acceptance or
+      // callback. Keep its server-owned handle, but never project it into the
+      // currently selected conversation or mutate that conversation's mode.
+      if (currentSessionIdRef.current !== run.sessionId) return;
+      const terminal = run.view.phase === 'completed' || run.view.phase === 'failed';
+      const fallbackText =
+        run.view.phase === 'queued'
+          ? '正在等待处理这次请求。'
+          : run.view.phase === 'cancel_requested' || run.cancelRequested
+            ? '正在停止这次运行。'
+            : '正在处理你的请求，结果会在这里显示。';
+      updateMessages((previous) =>
+        projectCopilotRunUpdate(previous, {
+          runId: run.runId,
+          sessionId: run.sessionId,
+          view: run.view,
+          derivationPolicy: run.derivationPolicy,
+          fallbackText,
+          ...(run.userMessage ? { userMessage: run.userMessage } : {}),
+        }),
+      );
+      if (run.view.phase === 'completed') {
+        nudgeSessionRef.current = nextNudgeSessionAfterTurn(nudgeSessionRef.current, true);
+      }
+      if (terminal) run.connectionError = undefined;
+    },
+    [updateMessages],
+  );
 
   const reportSendError = useCallback((message: string) => {
     setRefreshFailed(false);
@@ -957,7 +1054,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
         run.controller ||
         run.view.phase === 'completed' ||
         run.view.phase === 'failed' ||
-        !openRef.current ||
+        !currentVisit().open ||
         currentSessionIdRef.current !== run.sessionId
       ) {
         return;
@@ -989,7 +1086,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
           const current = activeRunsRef.current.get(runId);
           if (!current || current.controller !== controller || controller.signal.aborted) return;
           current.connectionError = durableReconnectErrorMessage(cause);
-          setMessages((previous) =>
+          updateMessages((previous) =>
             previous.map((message) =>
               message.id === copilotRunReplyMessageId(runId)
                 ? { ...message, streaming: false }
@@ -1003,7 +1100,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
           bumpRunRevision();
         });
     },
-    [applyRunViewToMessage, bumpRunRevision],
+    [applyRunViewToMessage, bumpRunRevision, currentVisit, updateMessages],
   );
 
   const synchronizeSnapshot = useCallback(
@@ -1062,7 +1159,10 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
           retainedRunIds.add(run.runId);
         }
       }
-      setMessages((previous) => {
+      // Restore the replayed mode first; updateMessages then folds the full
+      // reconciled order (including retained live runs) on top of it.
+      restoreSkillStateFromReplay(replayed);
+      updateMessages((previous) => {
         let next = reconcileCopilotSnapshotMessages(previous, replayed, sessionId, retainedRunIds);
         for (const runId of retainedRunIds) {
           const run = activeRunsRef.current.get(runId);
@@ -1084,11 +1184,10 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
         }
         return next;
       });
-      restoreSkillStateFromReplay(replayed);
       bumpRunRevision();
       for (const runId of retainedRunIds) subscribeRun(runId);
     },
-    [bumpRunRevision, restoreSkillStateFromReplay, subscribeRun],
+    [bumpRunRevision, restoreSkillStateFromReplay, subscribeRun, updateMessages],
   );
 
   const refetchTurns = useCallback(async (): Promise<boolean> => {
@@ -1109,20 +1208,22 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     return true;
   }, [synchronizeSnapshot]);
 
-  useEffect(() => {
-    if (!open || !currentSessionId || !selectionValidated) {
-      if (!open) detachSubscriptions();
-      return;
-    }
-    void refetchTurns().catch(() => undefined);
-    const interval = window.setInterval(() => {
-      void refetchTurns().catch(() => undefined);
-    }, 5_000);
-    return () => {
-      window.clearInterval(interval);
-      detachSubscriptions(currentSessionId);
-    };
-  }, [currentSessionId, detachSubscriptions, open, refetchTurns, selectionValidated]);
+  // While the drawer shows a validated session, Query owns the read schedule:
+  // an immediate read when the session (or drawer) becomes visible, then every
+  // 5s. Each read applies its snapshot through refetchTurns (per-session request
+  // order + runsKnownWhenRequested). Run streams are detached by the commands
+  // that leave the view: closeDrawer, selectConversation, createConversation and
+  // the Dock's detach. A failed read is retried by the next tick, as before.
+  useQuery({
+    queryKey: ['copilot-turns', sessionQueryInstance, currentSessionId],
+    queryFn: () => refetchTurns().catch(() => false),
+    enabled: open && currentSessionId !== null && selectionValidated,
+    refetchInterval: 5_000,
+    refetchIntervalInBackground: true,
+    refetchOnWindowFocus: false,
+    retry: false,
+    gcTime: 0,
+  });
 
   const revertCheckpoint = useCallback(
     async (checkpointEventId: string) => {
@@ -1217,19 +1318,35 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     [applyRunViewToMessage, bumpRunRevision, refetchTurns, reportSendError],
   );
 
-  // Auto-scroll the message stream to the bottom on new messages / loading.
-  useEffect(() => {
-    // Separate subscriptions may observe FIFO terminals in different network
-    // order. Fold the complete message order so a later teaching end always
-    // wins over an earlier turn regardless of callback arrival order.
-    activeSkillRef.current = restoreSkillContext(messages, activeSkillRef.current);
-  }, [messages]);
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: messages is the scroll trigger
-  useEffect(() => {
-    const el = streamRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [messages]);
+  // Keep the message stream pinned to the bottom (forced, as before). The stream
+  // node exists only while the drawer is open; it owns its observers: a row
+  // added/removed, or any row changing size (streaming text, terminal
+  // replacement, late Markdown formatting, images), scrolls it to the end.
+  const attachStream = useCallback((node: HTMLDivElement | null) => {
+    if (!node) return;
+    const scrollToEnd = () => {
+      node.scrollTop = node.scrollHeight;
+    };
+    const resize = new ResizeObserver(scrollToEnd);
+    for (const child of node.children) resize.observe(child);
+    const rows = new MutationObserver((records) => {
+      for (const record of records) {
+        for (const added of record.addedNodes) {
+          if (added instanceof Element) resize.observe(added);
+        }
+        for (const removed of record.removedNodes) {
+          if (removed instanceof Element) resize.unobserve(removed);
+        }
+      }
+      scrollToEnd();
+    });
+    rows.observe(node, { childList: true });
+    scrollToEnd();
+    return () => {
+      rows.disconnect();
+      resize.disconnect();
+    };
+  }, []);
 
   const send = useCallback(
     async (raw: string, recovery?: PersistedPendingCopilotTurn) => {
@@ -1271,7 +1388,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
       if (requestBody.derivation_policy === 'answer_only') {
         if (checkingPolicyRef.current) return;
         checkingPolicyRef.current = true;
-        setPolicySupportCheck('checking');
+        recordPolicyCheck('checking');
         try {
           // Read the current server before every dispatch, including original-key
           // retries. A previous drawer query cannot authorize restricted content.
@@ -1279,9 +1396,9 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
           if (!supportsAnswerOnly(current.supported_derivation_policies)) {
             throw new Error('answer_only unsupported');
           }
-          setPolicySupportCheck('supported');
+          recordPolicyCheck('supported');
         } catch {
-          setPolicySupportCheck('unsupported');
+          recordPolicyCheck('unsupported');
           const message =
             '当前服务器不支持“仅用于本次回答”，或支持信息暂时无法确认。本次未发送，原内容已保留。';
           setError(message);
@@ -1319,7 +1436,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
       setInput((current) => (!recovery && current === raw ? '' : current));
       correctionTargetRef.current = null;
       setCorrectionTarget(null);
-      setMessages((previous) =>
+      updateMessages((previous) =>
         projectPendingCopilotMessagePair(previous, {
           idempotencyKey,
           sessionId: selectedSessionId,
@@ -1372,7 +1489,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
         setPendingTurns((previous) =>
           previous.filter((turn) => turn.idempotencyKey !== idempotencyKey),
         );
-        setMessages((previous) =>
+        updateMessages((previous) =>
           currentSessionIdRef.current === selectedSessionId
             ? acceptPendingCopilotRun(previous, {
                 idempotencyKey,
@@ -1407,7 +1524,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
           setPendingTurns((previous) =>
             previous.filter((turn) => turn.idempotencyKey !== idempotencyKey),
           );
-          setMessages((previous) =>
+          updateMessages((previous) =>
             previous.map((message) =>
               message.idempotency_key === idempotencyKey && message.role === 'ai'
                 ? {
@@ -1438,7 +1555,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
               : turn,
           ),
         );
-        setMessages((previous) =>
+        updateMessages((previous) =>
           previous.map((item) =>
             item.idempotency_key === idempotencyKey && item.role === 'ai'
               ? { ...item, text: '受理状态暂时无法确认。', streaming: false }
@@ -1447,7 +1564,14 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
         );
       }
     },
-    [applyRunViewToMessage, bumpRunRevision, reportSendError, subscribeRun],
+    [
+      applyRunViewToMessage,
+      bumpRunRevision,
+      recordPolicyCheck,
+      reportSendError,
+      subscribeRun,
+      updateMessages,
+    ],
   );
 
   const retryPendingTurn = useCallback(
@@ -1460,22 +1584,25 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     [send],
   );
 
-  const discardPendingRecovery = useCallback((idempotencyKey: string) => {
-    clearPersistedPendingCopilotTurn(idempotencyKey);
-    setPendingTurns((previous) =>
-      previous.filter((turn) => turn.idempotencyKey !== idempotencyKey),
-    );
-    setMessages((previous) =>
-      previous.filter((message) => message.idempotency_key !== idempotencyKey),
-    );
-  }, []);
+  const discardPendingRecovery = useCallback(
+    (idempotencyKey: string) => {
+      clearPersistedPendingCopilotTurn(idempotencyKey);
+      setPendingTurns((previous) =>
+        previous.filter((turn) => turn.idempotencyKey !== idempotencyKey),
+      );
+      updateMessages((previous) =>
+        previous.filter((message) => message.idempotency_key !== idempotencyKey),
+      );
+    },
+    [updateMessages],
+  );
 
   const reconnectRun = useCallback(
     (runId: string) => {
       const run = activeRunsRef.current.get(runId);
       if (!run) return;
       run.connectionError = undefined;
-      setMessages((previous) =>
+      updateMessages((previous) =>
         previous.map((message) =>
           message.id === copilotRunReplyMessageId(runId)
             ? { ...message, streaming: true }
@@ -1485,7 +1612,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
       subscribeRun(runId);
       bumpRunRevision();
     },
-    [bumpRunRevision, subscribeRun],
+    [bumpRunRevision, subscribeRun, updateMessages],
   );
 
   // YUK-272 (C3) — quiz quick-chip. When a knowledge node is in scope, seed a quiz
@@ -1550,50 +1677,103 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     [],
   );
 
-  // AF S4 / YUK-203 U6 — subscribe to the cross-tree open-with-context signal.
-  // A button in another subtree (learning-items 「对话教学」) publishes a
-  // skill_context; here we adopt it as the active skill, open the Dock, and (if
-  // a prefill is given) send the first turn through the skill. `seq` guards
-  // against re-processing the same request on re-render.
-  const openRequest = useCopilotOpenSignal((s) => s.request);
-  const clearRequest = useCopilotOpenSignal((s) => s.clearRequest);
-  const lastHandledSeqRef = useRef(0);
-  useEffect(() => {
-    if (!openRequest) return;
-    if (openRequest.seq === lastHandledSeqRef.current) return;
-    lastHandledSeqRef.current = openRequest.seq;
-    activeSkillRef.current = openRequest.skill_context ?? null;
-    // YUK-272 (C3) — if the open-with-context signal carried a knowledge entity,
-    // expose it as the quiz-chip's in-scope knowledge id. YUK-266 — else CLEAR it:
-    // without this, opening the Dock with a non-knowledge context (e.g. a learning
-    // item) after a prior knowledge open would leave the stale knowledge id, so the
-    // quiz chip stays enabled and would generate a quiz for a no-longer-in-scope
-    // knowledge node.
-    if (openRequest.skill_context?.ref.kind === 'knowledge') {
-      setFocusedKnowledgeId(openRequest.skill_context.ref.id);
-    } else {
-      setFocusedKnowledgeId(null);
-    }
-    // YUK-577 — nudge 「看看」open: the deterministic headline IS the agent opening turn (seeded
-    // client-side as an `ai` message — never an owner user bubble, MF1 / A3:88). Remember the
-    // ingestion session so the user's reply carries it in ambient_context. Only seed into an empty
-    // stream (never clobber an in-progress conversation).
-    if (openRequest.nudge) {
-      const n = openRequest.nudge;
-      nudgeSessionRef.current = n.session_id;
-      setMessages((prev) =>
-        prev.length === 0 ? [{ id: nextId(), role: 'ai', text: n.headline }] : prev,
-      );
-    }
-    prepareAndOpenDrawer();
-    const prefill = openRequest.prefill;
-    clearRequest();
-    if (prefill) {
-      // Every turn is independently accepted and server-serialized, so a
-      // cross-surface handoff can be sent while earlier work is still active.
-      void send(prefill);
-    }
-  }, [openRequest, prepareAndOpenDrawer, clearRequest, send]);
+  // AF S4 / YUK-203 U6 — handle one cross-tree open-with-context request. A button
+  // in another subtree (learning-items 「对话教学」, practice handoff, a nudge)
+  // publishes it; the Dock claims it exactly once (see attachDock), adopts the
+  // skill context, opens, and sends a prefill through the original send path.
+  const handleOpenRequest = useCallback(
+    (request: CopilotOpenRequest) => {
+      activeSkillRef.current = request.skill_context ?? null;
+      // YUK-272 (C3) — if the open-with-context signal carried a knowledge entity,
+      // expose it as the quiz-chip's in-scope knowledge id. YUK-266 — else CLEAR it:
+      // without this, opening the Dock with a non-knowledge context (e.g. a learning
+      // item) after a prior knowledge open would leave the stale knowledge id, so the
+      // quiz chip stays enabled and would generate a quiz for a no-longer-in-scope
+      // knowledge node.
+      if (request.skill_context?.ref.kind === 'knowledge') {
+        setFocusedKnowledgeId(request.skill_context.ref.id);
+      } else {
+        setFocusedKnowledgeId(null);
+      }
+      // YUK-577 — nudge 「看看」open: the deterministic headline IS the agent opening turn (seeded
+      // client-side as an `ai` message — never an owner user bubble, MF1 / A3:88). Remember the
+      // ingestion session so the user's reply carries it in ambient_context. Only seed into an empty
+      // stream (never clobber an in-progress conversation).
+      if (request.nudge) {
+        const n = request.nudge;
+        nudgeSessionRef.current = n.session_id;
+        updateMessages((prev) =>
+          prev.length === 0 ? [{ id: nextId(), role: 'ai', text: n.headline }] : prev,
+        );
+      }
+      prepareAndOpenDrawer();
+      const prefill = request.prefill;
+      if (!prefill) return;
+      if (selectionValidatedRef.current) {
+        // Every turn is independently accepted and server-serialized, so a
+        // cross-surface handoff can be sent while earlier work is still active.
+        void send(prefill);
+      } else {
+        // The visit's session is not confirmed yet (cold open), so send() would
+        // refuse. Keep the handed-off text in the composer instead of dropping it;
+        // the learner sends it once the conversation is ready.
+        setInput(prefill);
+      }
+    },
+    [prepareAndOpenDrawer, send, updateMessages],
+  );
+
+  // Attach-time init command: restore the browser-owned state once per Dock
+  // instance (the derivation preference and every exact pre-202 retry tuple).
+  // Accepted v1 handles are intentionally ignored: the server snapshot is the
+  // only accepted-run inventory. Nothing auto-retries here; the learner chooses
+  // 恢复 (same key + body + message ids) or 不再恢复.
+  const storageInitializedRef = useRef(false);
+  const initializeFromStorage = useCallback(() => {
+    if (storageInitializedRef.current) return;
+    storageInitializedRef.current = true;
+    setDerivationPolicy(loadCopilotDerivationPreference());
+    discardLegacyDurableCopilotReconnect();
+    const restored = loadPersistedPendingCopilotTurns();
+    const recoverySessionId = restored.at(-1)?.requestBody.session_id;
+    if (!recoverySessionId) return;
+    const turns: PendingCopilotTurn[] = restored.map((turn) => ({
+      ...turn,
+      dispatching: false,
+      error: '这次请求的受理状态还不能确认；恢复时会复用原请求，不会创建第二次执行。',
+    }));
+    pendingTurnsRef.current = turns;
+    setPendingTurns(turns);
+    updateMessages(pendingMessagesForSession(recoverySessionId));
+    currentSessionIdRef.current = recoverySessionId;
+    setCurrentSessionId(recoverySessionId);
+    setSelectionOrigin('recovery');
+    const recoveredAt = new Date().toISOString();
+    setOptimisticSession({
+      id: recoverySessionId,
+      status: 'active',
+      title: '正在恢复的对话',
+      created_at: recoveredAt,
+      updated_at: recoveredAt,
+    });
+  }, [pendingMessagesForSession, setOptimisticSession, setSelectionOrigin, updateMessages]);
+
+  // The Dock's always-present root node (the launcher wrapper) owns the Dock's
+  // browser lifetime: attach restores storage and starts claiming open requests;
+  // detach unsubscribes and stops reading run streams without notifying the
+  // gone view. Detach never sends a cancel — only Stop does.
+  const attachDock = useCallback(
+    (node: HTMLSpanElement | null) => {
+      if (!node) return;
+      initializeFromStorage();
+      const unsubscribe = subscribeCopilotOpenRequests(handleOpenRequest);
+      return () => {
+        unsubscribe();
+        detachSubscriptions(undefined, false);
+      };
+    },
+    [detachSubscriptions, handleOpenRequest, initializeFromStorage],
+  );
 
   // YUK-577 — proactive-nudge bar at the top of the summary slot (② owner-approved落点, above
   // daily_focus). Agent-tone (invitation, NOT alert-red): subtle left border + sparkle + headline +
@@ -1793,7 +1973,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
               variant="ghost"
               size="sm"
               data-testid="copilot-sessions-retry"
-              onClick={() => void sessionsQ.refetch()}
+              onClick={() => loadVisitSessions(drawerEpoch)}
             >
               重试加载
             </Btn>
@@ -1908,8 +2088,9 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     <>
       {/* The shell drives this internal launcher programmatically and hides the
           whole wrapper. YUK-577's visible nudge count lives on AppTopbar's real
-          launcher, fed through onNudgeCountChange. */}
-      <span className="copilot-launcher relative inline-flex">
+          launcher, which RootShell feeds from the shared nudges query cache. This
+          always-mounted wrapper is also the Dock's attach point (attachDock). */}
+      <span ref={attachDock} className="copilot-launcher relative inline-flex">
         <Button
           variant="quiet"
           size="sm"
@@ -1958,7 +2139,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
         footer={footer}
       >
         <div className="copilot-loom" data-testid="copilot-chat">
-          <div className="chat-stream" ref={streamRef}>
+          <div className="chat-stream" ref={attachStream}>
             {messages.length === 0 && !sending ? (
               // YUK-340 — 空线程开场白回写设计稿手稿语气（copilot.jsx L135-141
               // cop-blank 文案逐字），copy 层零结构改动：仍走 .chat-empty。
