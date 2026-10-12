@@ -1,6 +1,6 @@
 'use client';
 
-import { type ReactNode, useEffect, useState } from 'react';
+import { type ReactNode, useState, useSyncExternalStore } from 'react';
 import { getInternalToken, setInternalToken } from '@/ui/lib/api';
 import { Button } from '@/ui/primitives/Button';
 import { Card } from '@/ui/primitives/Card';
@@ -8,13 +8,27 @@ import { PageHeader } from '@/ui/primitives/PageHeader';
 
 type GateState = 'loading' | 'gate' | 'authed';
 
-export function TokenGate({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<GateState>('loading');
-  const [input, setInput] = useState('');
+// Token presence is read from localStorage; the server snapshot (and hydration pass) is
+// 'loading', so nothing renders until the client knows. Other tabs saving or clearing the
+// token re-evaluate via the storage event.
+function subscribeToken(notify: () => void) {
+  window.addEventListener('storage', notify);
+  return () => window.removeEventListener('storage', notify);
+}
 
-  useEffect(() => {
-    setState(getInternalToken() ? 'authed' : 'gate');
-  }, []);
+function getTokenState(): GateState {
+  return getInternalToken() ? 'authed' : 'gate';
+}
+
+function getServerTokenState(): GateState {
+  return 'loading';
+}
+
+export function TokenGate({ children }: { children: ReactNode }) {
+  const stored = useSyncExternalStore(subscribeToken, getTokenState, getServerTokenState);
+  const [saved, setSaved] = useState(false);
+  const [input, setInput] = useState('');
+  const state: GateState = saved ? 'authed' : stored;
 
   if (state === 'loading') return null;
   if (state === 'authed') return <>{children}</>;
@@ -23,7 +37,7 @@ export function TokenGate({ children }: { children: ReactNode }) {
     const trimmed = input.trim();
     if (!trimmed) return;
     setInternalToken(trimmed);
-    setState('authed');
+    setSaved(true);
   };
 
   return (
