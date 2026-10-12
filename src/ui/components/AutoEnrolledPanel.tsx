@@ -16,7 +16,7 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { ApiAuthError, ApiError, apiJson } from '@/ui/lib/api';
 import {
   type AutoEnrollObservation,
@@ -75,7 +75,8 @@ export interface ObservedRow {
 
 export function AutoEnrolledPanel() {
   const qc = useQueryClient();
-  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  // The session the user clicked; null until they pick one.
+  const [pickedSessionId, setSelectedSessionId] = useState<string | null>(null);
   // Per-row two-step revert confirm: which blockId is awaiting confirmation.
   const [confirmingBlockId, setConfirmingBlockId] = useState<string | null>(null);
 
@@ -84,13 +85,14 @@ export function AutoEnrolledPanel() {
     queryFn: () => apiJson<{ rows: IngestionSessionRow[] }>('/api/ingestion?limit=20'),
   });
 
-  // Default the selection to the most-recent session once the list loads.
-  useEffect(() => {
-    const rows = sessionsQ.data?.rows ?? [];
-    if (rows.length === 0) return;
-    if (selectedSessionId && rows.some((r) => r.id === selectedSessionId)) return;
-    setSelectedSessionId(rows[0].id);
-  }, [sessionsQ.data, selectedSessionId]);
+  // The selection shown and read: the user's pick while it is still in the list,
+  // otherwise the most-recent session; none when the list is empty, so a session
+  // that is gone is never read.
+  const sessionRows = sessionsQ.data?.rows ?? [];
+  const selectedSessionId =
+    pickedSessionId && sessionRows.some((r) => r.id === pickedSessionId)
+      ? pickedSessionId
+      : (sessionRows[0]?.id ?? null);
 
   // Reuse the EXACT query key VisionTab uses so revert here + import there share
   // cache-invalidation semantics (VisionTab.tsx:151).
