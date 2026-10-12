@@ -3,7 +3,6 @@
 // （CopilotDrawer 同一套）；无 opacity-gated 入场（红线）。
 
 import './response.css';
-import { useRef } from 'react';
 import { createPortal } from 'react-dom';
 
 import { IconBtn } from '@/ui/primitives/IconBtn';
@@ -21,8 +20,7 @@ export interface EvidenceLightboxProps {
 }
 
 export function EvidenceLightbox({ open, onClose, assetId, kind, label }: EvidenceLightboxProps) {
-  const panelRef = useRef<HTMLDivElement | null>(null);
-  useFocusTrap(open, onClose, panelRef);
+  const trapRef = useFocusTrap(open, onClose);
 
   if (!open || !assetId) return null;
   return createPortal(
@@ -43,7 +41,7 @@ export function EvidenceLightbox({ open, onClose, assetId, kind, label }: Eviden
           role="dialog"
           aria-modal="true"
           aria-label={label ?? '证据查看'}
-          ref={panelRef}
+          ref={trapRef}
         >
           <div className="rs-lightbox-head">
             <span className="rs-lightbox-title">{label ?? '证据'}</span>
