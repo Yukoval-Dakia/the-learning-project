@@ -1,3 +1,4 @@
+import type { ModelRequestGuard } from '@/ai/request-guard';
 // YUK-921 — ExecutionAdapter seam. P4 (YUK-1025) retired Adapter A: the Claude
 // Agent SDK subprocess is gone and PiAgentAdapter is the only execution path.
 // The seam stays deliberately — `PreparedExecutionQuery` (startup inside
@@ -134,6 +135,7 @@ export interface ExecutionAdapterStartupArgs {
    * (tool-less turns, e.g. Copilot authoritativeReply).
    */
   piToolMounts?: PiToolMount[];
+  requestGuard?: ModelRequestGuard;
   /**
    * YUK-921 P3 — pi-side hook bridge: ordered beforeToolCall gates +
    * afterToolCall observers (spawn-contract gate, cancellation, finalization

@@ -1,3 +1,4 @@
+import type { ModelRequestGuard } from '@/ai/request-guard';
 // AI task runner — pi execution lane.
 //
 // All paths go through the ExecutionAdapter seam (execution-adapter.ts), which
@@ -311,6 +312,7 @@ export interface RunTaskCtx {
    * least one visible tool — the adapter fails closed otherwise.
    */
   piToolMounts?: PiToolMount[];
+  requestGuard?: ModelRequestGuard;
   /**
    * YUK-1022 — THE tool-call interception surface (post-P4 the only one):
    * ordered beforeToolCall gates + afterToolCall observers (spawn-contract
@@ -571,6 +573,7 @@ async function withPreparedExecutionQuery<TResult extends RunTaskResult, TValue>
         runId: lifecycle.taskRunId,
         kind: lifecycle.kind,
         piToolMounts: ctx?.piToolMounts,
+        requestGuard: ctx?.requestGuard,
         // YUK-1022 — pi-lane dual descriptors for the P3 surfaces (hooks,
         // session replay, skill bodies, nested agents). The SDK adapter
         // ignores them; `nativeCompaction` is forwarded verbatim because the

@@ -10,8 +10,9 @@ export const docxIngestionTaskSpec = {
       'Read complete DOCX sources on demand and author recoverable structured drafts through scoped tools.',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5',
-    budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 48, timeout: 240_000 },
+    budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 16, timeout: 240_000 },
     needsToolCall: true,
+    requiresRequestGuard: true,
     isMultimodal: true,
     allowedTools: DOCX_INGESTION_TOOLS.map((name) => toMcpAllowedToolName(name)),
     prompt: {

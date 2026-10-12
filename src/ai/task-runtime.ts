@@ -1,4 +1,5 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
+import type { ModelRequestGuard } from '@/ai/request-guard';
 import type { Db } from '@/db/client';
 import type { ToolContext, ToolExecutionResultObservation } from '@/kernel/tools/types';
 
@@ -10,6 +11,10 @@ export interface TaskRuntime {
     input: unknown,
     context: {
       db: Db;
+      requestGuard: ModelRequestGuard;
+      enableTransientRetry: false;
+      budgetOverride: { maxIterations: number; timeoutMs: number };
+      providerSessionDeadlineAt: number;
       taskRunId: string;
       lifecycleAbortController: AbortController;
       allowedTools: string[];

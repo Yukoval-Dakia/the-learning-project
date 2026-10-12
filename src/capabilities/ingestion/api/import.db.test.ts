@@ -213,6 +213,7 @@ describe('POST /api/ingestion/[id]/import', () => {
   afterEach(() => {
     __setPiAdapterForTests(undefined);
     vi.unstubAllEnvs();
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
   beforeEach(async () => {
@@ -223,7 +224,7 @@ describe('POST /api/ingestion/[id]/import', () => {
 
   // @invariant data: DOCX sources and staged drafts survive agent failure/retry without duplicate or silent-drop imports.
   // @fails-if a task can access foreign material, failures erase staged drafts, retry duplicates questions, or unresolved material becomes a terminal import.
-  it('retains DOCX agent material and drafts through failure, retry and partial import', async () => {
+  it('retains DOCX agent material and drafts through budget rejection and retry', async () => {
     const db = testDb();
     // Production worker boot registers capability tools before dispatching jobs.
     await registerCapabilityTools([ingestionCapability]);
@@ -309,26 +310,45 @@ describe('POST /api/ingestion/[id]/import', () => {
       runTask: actualRunTask,
       buildDomainTools: buildPiDomainAgentTools,
     };
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-12T04:00:00Z'));
     vi.stubEnv('XIAOMI_API_KEY', 'offline-provider-test-only');
+    const approve = (maxRunUsd: number) =>
+      vi.stubEnv(
+        'DOCX_AGENT_BUDGET_APPROVAL',
+        JSON.stringify({
+          priceRef: 'xiaomi-overseas-usd/2026-10-08',
+          provider: 'xiaomi',
+          model: 'mimo-v2.5',
+          currency: 'USD',
+          maxRunUsd,
+          expiresAt: '2026-10-13T00:00:00Z',
+        }),
+      );
+    approve(1);
     const model: Model<'openai-completions'> = {
       id: 'mimo-v2.5',
       name: 'Offline DOCX wire',
       provider: 'xiaomi',
       api: 'openai-completions',
-      baseUrl: 'https://offline.invalid',
+      baseUrl: 'https://api.xiaomimimo.com/v1',
       reasoning: false,
       input: ['text', 'image'],
-      contextWindow: 100000,
+      contextWindow: 1_048_576,
       maxTokens: 4096,
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     };
     const models = createModels();
     vi.spyOn(models, 'getModel').mockReturnValue(model);
-    let fail = true,
-      turn = 0,
+    let phase: 'unknown_usage' | 'image_bound' | 'resume' = 'unknown_usage';
+    let turn = 0,
       revision = 0,
       secondBlockId = '';
-    vi.spyOn(models, 'streamSimple').mockImplementation((_model, context) => {
+    const wire = vi.spyOn(models, 'streamSimple').mockImplementation((_model, context, options) => {
+      vi.setSystemTime(new Date(Date.now() + 10)); // Keep canonical event ordering while pinning the dated price fixture.
+      expect(options?.maxTokens).toBe(4096);
+      expect(options?.maxRetries).toBe(0);
+      const fail = phase !== 'resume';
       const stream = createAssistantMessageEventStream();
       void (async () => {
         const previous = [...context.messages].reverse().find((m) => m.role === 'toolResult');
@@ -353,7 +373,7 @@ describe('POST /api/ingestion/[id]/import', () => {
             break;
           case 1:
             expect(output().files).toHaveLength(6);
-            content = tool('read_docx_source', { action: 'image', asset_id: '../foreign-page' });
+            content = tool('read_docx_source', { action: 'text', asset_id: '../foreign-page' });
             break;
           case 2:
             expect(previousText).toContain('outside');
@@ -369,16 +389,9 @@ describe('POST /api/ingestion/[id]/import', () => {
             content = tool('read_docx_source', { action: 'text', asset_id: text });
             break;
           case 4:
-            content = tool('read_docx_source', { action: 'image', asset_id: page });
-            break;
-          case 5:
-            expect(previous?.content.some((part) => part.type === 'image')).toBe(true);
-            content = tool('read_docx_source', { action: 'image', asset_id: media });
-            break;
-          case 6:
             content = tool('edit_docx_drafts', { action: 'inspect' });
             break;
-          case 7: {
+          case 5: {
             const initial = output().state;
             if (!fail)
               expect(
@@ -395,8 +408,8 @@ describe('POST /api/ingestion/[id]/import', () => {
                       {
                         asset_id: page,
                         question_keys: ['q1', 'q2'],
-                        disposition: 'question_material',
-                        reason: '两题已核对，第二题仍未辨清',
+                        disposition: 'unresolved',
+                        reason: '视觉预算未批准，页图未核对',
                       },
                       {
                         asset_id: media,
@@ -410,7 +423,7 @@ describe('POST /api/ingestion/[id]/import', () => {
             });
             break;
           }
-          case 8:
+          case 6:
             revision = output().revision;
             secondBlockId = output().blocks.find((b: { key: string }) => b.key === 'q2').block_id;
             content = fail
@@ -421,9 +434,8 @@ describe('POST /api/ingestion/[id]/import', () => {
                 })
               : tool('edit_docx_drafts', { action: 'check' });
             break;
-          case 9:
+          case 7:
             if (fail) {
-              // An active duplicate may not steal the workspace or enter another loop.
               await buildTencentOcrHandler({
                 db,
                 r2,
@@ -434,12 +446,14 @@ describe('POST /api/ingestion/[id]/import', () => {
                   },
                 },
               })([job]);
-              throw new Error('controlled external agent interruption');
+              content = tool('read_docx_source', { action: 'image', asset_id: page });
+            } else {
+              expect(output().gaps.length).toBeGreaterThan(0);
+              content = tool('edit_docx_drafts', { action: 'commit', expected_revision: revision });
             }
-            expect(output().gaps.length).toBeGreaterThan(0);
-            content = tool('edit_docx_drafts', { action: 'commit', expected_revision: revision });
             break;
-          case 10:
+          case 8:
+            expect(phase).toBe('resume'); // No provider request may follow missing usage or a native image result.
             expect(output().sealed).toBe(true);
             content = [{ type: 'text', text: 'Partial draft batch saved' }];
             break;
@@ -454,11 +468,11 @@ describe('POST /api/ingestion/[id]/import', () => {
           model: model.id,
           timestamp: Date.now(),
           usage: {
-            input: 0,
-            output: 0,
+            input: phase === 'unknown_usage' && turn === 8 ? 0 : 1000,
+            output: phase === 'unknown_usage' && turn === 8 ? 0 : 10,
             cacheRead: 0,
             cacheWrite: 0,
-            totalTokens: 0,
+            totalTokens: phase === 'unknown_usage' && turn === 8 ? 0 : 1010,
             cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
           },
           stopReason: content[0]?.type === 'toolCall' ? 'toolUse' : 'stop',
@@ -490,8 +504,20 @@ describe('POST /api/ingestion/[id]/import', () => {
     });
     __setPiAdapterForTests(new PiAgentAdapter({ models, agentLoop }));
     const job = { id: 'local-docx-job', data: { sessionId } } as never;
+    const handler = buildTencentOcrHandler({ db, r2, taskRuntime: runtime });
     await queue();
-    await expect(buildTencentOcrHandler({ db, r2, taskRuntime: runtime })([job])).rejects.toThrow();
+    model.baseUrl = 'https://unpriced.invalid';
+    await expect(handler([job])).rejects.toThrow('unpriced or changed');
+    expect(wire).not.toHaveBeenCalled();
+    model.baseUrl = 'https://api.xiaomimimo.com/v1';
+    approve(0.000001);
+    await queue();
+    await expect(handler([job])).rejects.toThrow('insufficient run budget');
+    expect(wire).not.toHaveBeenCalled();
+    approve(1);
+    await queue();
+    await expect(handler([job])).rejects.toThrow('unknown or out-of-bound provider usage');
+    expect(wire).toHaveBeenCalledTimes(8);
     expect(
       (await db.select().from(learning_session).where(eq(learning_session.id, sessionId)))[0]
         .status,
@@ -502,12 +528,36 @@ describe('POST /api/ingestion/[id]/import', () => {
         .from(question_block)
         .where(eq(question_block.ingestion_session_id, sessionId)),
     ).toHaveLength(2);
-    await queue();
-    fail = false;
+    const [interrupted] = await db
+      .select()
+      .from(source_document)
+      .where(eq(source_document.id, sourceDocumentId));
+    const reservations = interrupted.provenance.docx_request_budget as Array<{
+      status: string;
+      amountMicros: number;
+      reservedMicros: number;
+    }>;
+    expect(reservations.find((entry) => entry.status === 'unknown')).toMatchObject({
+      amountMicros: 147948,
+      reservedMicros: 147948,
+    });
+    phase = 'image_bound';
     turn = 0;
-    const handler = buildTencentOcrHandler({ db, r2, taskRuntime: runtime });
+    await queue();
+    await expect(handler([job])).rejects.toThrow('unknown image token upper bound');
+    expect(wire).toHaveBeenCalledTimes(16);
+    expect(
+      await db
+        .select()
+        .from(question_block)
+        .where(eq(question_block.ingestion_session_id, sessionId)),
+    ).toHaveLength(2);
+    phase = 'resume';
+    turn = 0;
+    await queue();
     await handler([job]);
     await handler([job]); // Completed queue delivery is idempotent.
+    expect(wire).toHaveBeenCalledTimes(25);
     const drafts = await db
       .select()
       .from(question_block)
@@ -545,8 +595,10 @@ describe('POST /api/ingestion/[id]/import', () => {
         }),
       );
     await expect(completeIngestionImport(db, sessionId, request(drafts[1]))).rejects.toThrow();
-    const imported = await completeIngestionImport(db, sessionId, request(drafts[0]));
-    expect(imported.question_ids).toHaveLength(1);
+    await expect(completeIngestionImport(db, sessionId, request(drafts[0]))).rejects.toThrow(
+      'unresolved material',
+    );
+    expect(await db.select().from(question)).toHaveLength(0);
     const [open] = await db
       .select()
       .from(learning_session)
@@ -556,7 +608,8 @@ describe('POST /api/ingestion/[id]/import', () => {
       .select()
       .from(question_block)
       .where(eq(question_block.ingestion_session_id, sessionId));
-    expect(retained.map((b) => b.status).sort()).toEqual(['draft', 'imported']);
+    expect(retained.map((b) => b.status)).toEqual(['draft', 'draft']);
+    expect(DocxAgentState.parse(saved.provenance.docx_agent).seen_images).toEqual([]);
   });
 
   it('durable import calls the owner once across concurrent delivery and replay', async () => {

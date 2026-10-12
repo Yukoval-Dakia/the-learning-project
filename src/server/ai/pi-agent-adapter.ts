@@ -55,6 +55,7 @@ import type {
   MutableModels as PiMutableModels,
   Usage as PiUsage,
 } from '@earendil-works/pi-ai';
+import type { TaskDefinition } from '@/ai/task-spec';
 import { tasks } from '@/capabilities/task-registry';
 import { getConfig } from '@/core/config/store';
 import type {
@@ -856,9 +857,17 @@ class PiPreparedQuery implements PreparedExecutionQuery {
    */
   private makeBeforeToolCall(agentType?: string): AgentLoopConfig['beforeToolCall'] {
     const piHooks = this.args.piHooks;
-    if (!piHooks?.beforeToolCall?.length) return undefined;
+    if (!piHooks?.beforeToolCall?.length && !this.args.requestGuard) return undefined;
     return async ({ toolCall, args: callArgs }: BeforeToolCallContext, signal) => {
       const effectiveSignal = signal ?? this.abort.signal;
+      try {
+        this.args.requestGuard?.beforeToolCall({ name: toolCall.name, args: callArgs });
+      } catch (error) {
+        return {
+          block: true,
+          reason: error instanceof Error ? error.message : 'Request budget refused tool',
+        };
+      }
       return runPiBeforeToolCall(
         piHooks,
         { id: toolCall.id, name: toolCall.name, ...(agentType ? { agentType } : {}) },
@@ -1015,20 +1024,104 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     };
   }
 
-  private readonly streamFn: StreamFn = (model, llmContext, streamOptions) =>
-    tracePiStream(
-      (m, context, options) =>
-        withPiUsageEvidence(
-          (innerModel, innerContext, innerOptions) =>
-            this.deps.models.streamSimple(innerModel, innerContext, innerOptions),
-          m,
-          context,
-          options,
+  private readonly streamFn: StreamFn = async (model, llmContext, streamOptions) => {
+    const guard = this.args.requestGuard;
+    let settlement: Promise<void> | undefined;
+    let settlementError: string | undefined;
+    let ticket: Awaited<ReturnType<NonNullable<typeof guard>['beforeRequest']>> | undefined;
+    const settle = (message?: PiAssistantMessage) =>
+      (settlement ??= (
+        ticket?.settle(message && hasPiUsageEvidence(message) ? message.usage : undefined) ??
+        Promise.resolve()
+      ).catch(() => {
+        settlementError = 'Request budget settlement failed; reservation retained';
+      }));
+    const failed = (errorMessage: string): PiAssistantMessage => ({
+      role: 'assistant',
+      content: [],
+      api: model.api,
+      provider: model.provider,
+      model: model.id,
+      timestamp: Date.now(),
+      usage: { ...EMPTY_PI_USAGE, cost: { ...EMPTY_PI_USAGE.cost } },
+      stopReason: 'error',
+      errorMessage,
+    });
+    try {
+      ticket = await guard?.beforeRequest({
+        provider: this.args.resolved.provider,
+        model: model.id,
+        baseUrl: model.baseUrl,
+        contextWindow: model.contextWindow,
+        context: llmContext,
+      });
+      const options = ticket
+        ? { ...streamOptions, maxTokens: ticket.maxOutputTokens, maxRetries: 0 }
+        : streamOptions;
+      if (guard) this.abort.signal.throwIfAborted();
+      const stream = await tracePiStream(
+        (m, context, opts) =>
+          withPiUsageEvidence(
+            (innerModel, innerContext, innerOptions) =>
+              this.deps.models.streamSimple(innerModel, innerContext, innerOptions),
+            m,
+            context,
+            opts,
+          ),
+        model,
+        llmContext,
+        options,
+      );
+      if (!ticket) return stream;
+      const iterate = stream[Symbol.asyncIterator].bind(stream);
+      stream[Symbol.asyncIterator] = async function* () {
+        try {
+          for await (const event of { [Symbol.asyncIterator]: iterate }) {
+            if (event.type === 'done') {
+              if (event.message.model !== model.id || event.message.provider !== model.provider) {
+                await settle();
+                settlementError = 'Provider response binding changed; reservation retained';
+              } else await settle(event.message);
+            }
+            if (event.type === 'error') await settle(); // Interrupted usage may be partial; retain the full reserve.
+            if (settlementError) {
+              yield {
+                type: 'error' as const,
+                reason: 'error' as const,
+                error: failed(settlementError),
+              };
+              return;
+            }
+            yield event;
+          }
+        } catch {
+          yield {
+            type: 'error' as const,
+            reason: 'error' as const,
+            error: failed('Provider stream interrupted; reservation retained'),
+          };
+        } finally {
+          await settle();
+        }
+      };
+      return stream;
+    } catch (error) {
+      if (!guard) throw error; // Preserve unguarded callers' existing behavior.
+      await settle();
+      // Pi's StreamFn must yield a terminal error instead of rejecting: otherwise
+      // its background loop can strand query() without a terminal frame.
+      const { createAssistantMessageEventStream } = await import('@earendil-works/pi-ai');
+      const stream = createAssistantMessageEventStream();
+      stream.push({
+        type: 'error',
+        reason: 'error',
+        error: failed(
+          error instanceof Error ? error.message : 'Request budget refused provider call',
         ),
-      model,
-      llmContext,
-      streamOptions,
-    );
+      });
+      return stream;
+    }
+  };
 
   /**
    * Child tool set: the spec's allowlist over the parent's mounted wire names,
@@ -1460,6 +1553,8 @@ export class PiAgentAdapter implements ExecutionAdapter {
   }
 
   async startup(args: ExecutionAdapterStartupArgs): Promise<PreparedExecutionQuery> {
+    if ((tasks[args.kind] as TaskDefinition).requiresRequestGuard && !args.requestGuard)
+      throw new Error('Task requires per-request budget admission');
     const deps = await this.resolveDeps();
     // Fail fast inside admission but before the durable attempt row: an
     // unknown model or unresolved credential is a config error, not a paid

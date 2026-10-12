@@ -9,6 +9,7 @@ import { ApiError } from '@/kernel/http';
 import { DOCX_INGESTION_TOOLS, toMcpAllowedToolName } from '@/kernel/tools/allowlists';
 import { Ingestion } from '@/server/session';
 import { docxAgentGaps, openDocxAgentWorkspace } from './agent-workspace';
+import { DOCX_REQUEST_LIMITS, createDocxRequestBudget } from './request-budget';
 
 /** Execution is supplied by the worker composition root; this module owns DOCX semantics. */
 type DocxAgentParams = { db: Db; r2: BlobStore; sessionId: string; runtime: TaskRuntime };
@@ -30,6 +31,7 @@ export async function runDocxAgentExtraction(
 
 async function runClaimedDocxAgentExtraction(params: DocxAgentParams): Promise<void> {
   const { db, r2, sessionId } = params;
+  const deadline = Date.now() + DOCX_REQUEST_LIMITS.timeoutMs;
   const [session] = await db
     .select()
     .from(learning_session)
@@ -63,6 +65,7 @@ async function runClaimedDocxAgentExtraction(params: DocxAgentParams): Promise<v
       }),
     );
     const boundWorkspace = workspace;
+    const requestGuard = await createDocxRequestBudget(db, workspace.sourceId, taskRunId, deadline);
     const ctx = {
       db,
       sessionId,
@@ -173,6 +176,13 @@ async function runClaimedDocxAgentExtraction(params: DocxAgentParams): Promise<v
           db,
           taskRunId,
           lifecycleAbortController: controller,
+          requestGuard,
+          enableTransientRetry: false,
+          budgetOverride: {
+            maxIterations: DOCX_REQUEST_LIMITS.turns,
+            timeoutMs: DOCX_REQUEST_LIMITS.timeoutMs,
+          },
+          providerSessionDeadlineAt: deadline,
           piToolMounts: [{ type: 'custom', tools }],
           allowedTools: DOCX_INGESTION_TOOLS.map((name) => toMcpAllowedToolName(name)),
         },

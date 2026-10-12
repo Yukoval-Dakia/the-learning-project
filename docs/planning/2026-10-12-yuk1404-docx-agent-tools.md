@@ -30,7 +30,7 @@
 `DocxConverter.docxToMarkdown` 仅新增可选 `layout: { format, bytes }`：按字节保留成熟解析器的无损布局 JSON，可包含版本、配置及坐标约定，并经现有文件工具分段读取。
 本次没有安装或集成 Docling、PaddleOCR、MinerU。父任务负责单份同卷隔离评估；PDF 视觉基准与原 DOCX/media 保全不依赖选型。
 
-## 免费验证与六阶段验收
+## 免费验证与六阶段验收（01b986ca 历史切片）
 
 只替换原 `import.db.test.ts` 的一个关键 case。外部 converter 返回合成材料。初版 `f667718d` 仅模拟工具调用；本次改为真正调用中央 `runTask` → `PiAgentAdapter` → Pi `agentLoop`，只替换 provider 的 `streamSimple` 响应流。实际执行材料存储、PDFium 页面渲染、工作区重建、registry 工具编译、Pi 原生图片结果、session/题块事务、canonical event、失败/重试、活跃重复投递和 import。
 临时本地 PG + 内存 blob；未读取真实卷、未发 provider HTTP 请求、未调用付费模型。两个真实 task-run 分别为 failure/error 与 success/end_turn；数据库费用字段如实保留 unknown/null，不把受控流中的零用量当供应商费用证据。此前暴露的 JSONB 键序比较及 Date 工具 schema 问题已修复后重跑同一 case，没有扩大测试矩阵。
@@ -47,11 +47,11 @@
 历史工具模拟证据：`docs/planning/evidence/2026-10-12-yuk1404-docx-agent.json`。本次真实 Pi 循环证据：`docs/planning/evidence/2026-10-12-yuk1404-docx-pi-loop.json` 与同名前缀日志归档。
 本地执行范围是该单 case、typecheck、lint/ratchet、build、task census、test policy 和必要 API/Postman 生成。整套测试只交给推送后的 exact-head CI Gate。
 
-## 下一次真实模型运行的最小依赖
+## 下一次真实模型运行的最小依赖（预算闸门前的历史说明）
 
 - 一份获准使用的原卷，或等价的脱敏完整 source package；不能只给预切题文本。
 - 核对实际 provider/model 绑定和视觉+工具能力。TaskSpec 默认 `xiaomi / mimo-v2.5`，运行配置可覆盖；不能把默认当作实跑事实。
-- 当前单任务配置上限：48 次迭代、240 秒、`maxCost=0.5`、transientRetries=0。这是现有 runner 的成本保护配置，目录估价不等于供应商结算上限；执行前仍须确认实际计费与本次批准预算。
+- 该历史版本配置为 48 次迭代、240 秒、`maxCost=0.5`、transientRetries=0。后续只读检查确认聊天/Pi 不消费 maxCost，故该 0.5 从未构成成本保护；当前请求前闸门见下节。
 - 记录代码版本、输入/输出摘要、真实 task-run ID、实际模型、用量/费用依据，再分别对账上述六阶段。
 
 旧「每周 20 USD」不作为本次调用授权。Linear 由父任务维护，本轮不重复扫描或写入。PR 保持 Draft；历史独立审查预算不重启，也不把旧审查当作覆盖本次迁移。
@@ -72,3 +72,31 @@
 删除重复注册后，实际超基线剩 ai +2、r2 +3、session +1；以上修复后审计精确为 capability→server 428 / server→capability-deep 0 / cross-capability-value 48。`JobDecl.load` 接收可选窄运行时依赖，在现有 worker 组合点传入；不改变旧 handler 工厂的第二参数语义。没有同义转发函数或藏依赖。
 
 第二个 architecture 检查同时发现两个新 DomainTool 尚未列入 read/write 清单：现已补齐，并从 maintenance 宽读面排除 read_docx_source，仍只授予 docx_ingestion。deepening 审计通过：56 TaskSpecs / 48 DomainTools / 57 queues；其余四项 architecture 检查均通过。
+
+## 当前 DOCX 请求前预算闸门
+
+仅 DocxIngestionTask 声明 requiresRequestGuard；中央 runner 透传窄接口，Pi adapter 在每一轮完成 context 组装后、实际 provider streamSimple 之前执行准入。其他任务未声明/传入时保持原逻辑。不存在只在最终任务结束后计费的替代路径。
+
+- DOCX 运行要求显式 `DOCX_AGENT_BUDGET_APPROVAL`，包含固定 provider/model、USD 价格版本、到期时间和不超过 1 USD 的单次额度。默认不配置即拒发请求；本次仅测试进程使用虚构授权数据，没有修改生产 env、读取真实 key 或访问计费账户。
+- 仅价格卡 `xiaomi-overseas-usd/2026-10-08` 下直连 `https://api.xiaomimimo.com/v1` 的 `mimo-v2.5` / `mimo-v2.6-pro` 能匹配；实际解析结果必须一致，绝不改变全局 pin 或回退 provider。USD 授权只适用于已核对的海外美元账户，不能拿人民币账户、Token Plan 或 OpenCode 订阅估值冒充美元合同。
+- 单次固定最多 16 次模型请求、24 次获准工具调用、240 秒；每次输出最多 4096 tokens（含思考），底层 maxRetries 强制 0，任务重试显式关闭。重复投递仍走已有 session 锁，不额外计成新的模型执行。
+- assembled context 包含 system、用户、工具 schema、完整工具/模型历史；限制序列化后 128000 bytes，文本计费预留使用官方 1M 窗口对应目录 1048576 tokens 的整个上限，不以字数估 token。工具历史和协议开销均落在这个保守窗口预留内。收到用量后验证非负整数、输入确实有观测值、输入/输出不超上限，再按未缓存全价结算（缓存不享受折扣，更保守）。
+- **图片 token 上界尚无已验证证据，因此当前读图拒绝；已组装 context 若含图片也拒绝发给 provider。** 拒绝发生在更新 seen_images 前，不能把未送达模型的图片记成已查看。这意味着当前完整视觉 DOCX 的真实 QA 仍被阻断，不是已验收的视觉产品链。
+- 每次请求前在 source_document.provenance.docx_request_budget 持久预留，价格来源、模型/端点、窗口/输出上限、请求序号与金额可审计。原有 ai_task_runs/cost_ledger 写入 owner 未改。中断、结算失败或 unknown 用量保留全额预留，并拒绝该运行的后续请求；不会用零填未知，也不删除草稿。
+- DOCX 预留通过 Postgres advisory lock 串行化。每次读取同一 UTC 周已有 task-run 成本，加 DOCX 已结算/未结算预留，超过 20 USD 或出现未知/活跃费用即拒绝。未发送请求有明确零-wire marker，避免把准入拒绝当作未知付费。旧 DOCX 无标记的 unknown 仍拒绝，不能臆断为免费。
+- **20 USD 是 DOCX 对账本的准入检查，不是全站并发费用承诺**：其他任务没有接入此锁，外部账户消费也不在本地账本。首次真实 QA 须确认周剩余额度并隔离其他并发付费工作；本 PR 不引入全站计费框架。
+
+公开依据：MiMo [价格](https://mimo.mi.com/docs/en-US/price/pay-as-you-go)、[模型窗口](https://mimo.mi.com/docs/zh-CN/quick-start/summary/model)、[输出包含思考的上限](https://mimo.mi.com/docs/en-US/quick-start/usage-guide/other/deep-thinking)。每次请求预留 MiMo v2.5 为 $0.147948，v2.6-pro 为 $0.459695；这不是预估实际平均费用。价格/模型证据到期会拒绝，不能自动沿用旧价格。
+
+同一既有 DB case 改为 `retains DOCX agent material and drafts through budget rejection and retry`：真实 runner/Pi agentLoop + 免费可控 provider 流。未知绑定与不足预算均 0 次 provider 调用；未知用量在第 8 次后终止并保留 147948 微美元预留；未知图片上界在第 8 次后终止且 seen_images 为空；文本恢复后保留两草稿，commit partial。整个 case 共 25 次本地受控 stream 调用，0 次 provider HTTP。
+
+| 验收阶段 | 当前预算切片结果 |
+|---|---|
+| 完整提取 | 合成源材料 6 份摘要一致、草稿 2；不代表模型识别质量 |
+| 图片引用 | 上界未知而拒绝；未谎报查看或归属成功 |
+| 题型/选项 | 两草稿与 A/B 选项保留，无正则识别 |
+| 草稿确认 | 失败保存、重试恢复、partial；原材料/草稿未删除 |
+| 正式入库 | 两题因未决材料被明确拒绝，正式题 0、draft 2、ignored 0 |
+| 可答题状态 | 无正式题，不宣称可答题 |
+
+当前证据：`docs/planning/evidence/2026-10-12-yuk1404-docx-budget.json`。前面的 1 正式题 / 1 草稿来自预算闸门前的历史切片，不能代替本次结果。首次视觉真实 QA 尚需可审计的图片 token 上界或能拒绝超额的供应商账户额度证据；没有这样的证据就继续 fail closed，不先付费。Docling 不是这项费用证据的替代品。

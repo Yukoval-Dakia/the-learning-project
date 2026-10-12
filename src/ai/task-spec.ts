@@ -58,6 +58,8 @@ export interface TaskDefinition {
   readonly defaultModel: ModelId;
   readonly budget: TaskBudget;
   readonly needsToolCall: boolean;
+  /** A scoped caller must supply per-wire admission; fail closed if omitted. */
+  readonly requiresRequestGuard?: boolean;
   readonly isMultimodal: boolean;
   readonly allowedTools: readonly string[];
   readonly prompt: TaskPrompt;
