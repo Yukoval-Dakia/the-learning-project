@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import type { FocusEvent } from 'react';
+import { useCallback, useState } from 'react';
 import { DURATION } from '../tokens';
 
 export interface ToastAction {
@@ -33,42 +34,95 @@ export function useToaster(limit = 3) {
   return { toasts, push, dismiss };
 }
 
+/**
+ * The undo window for one toast. It counts down only while the toast is in the DOM and neither
+ * hovered nor focused, and keeps what is left across pauses, so a pause never restarts the window.
+ */
+interface UndoClock {
+  remaining: number;
+  startedAt: number;
+  timer: number | null;
+  hovered: boolean;
+  focused: boolean;
+  attached: boolean;
+  /** Latest expiry command, written from the ref callback during commit. */
+  expire: () => void;
+}
+
+function runClock(clock: UndoClock) {
+  if (!clock.attached || clock.hovered || clock.focused || clock.timer !== null) return;
+  clock.startedAt = performance.now();
+  clock.timer = window.setTimeout(
+    () => {
+      clock.timer = null;
+      clock.expire();
+    },
+    Math.max(0, clock.remaining),
+  );
+}
+
+function haltClock(clock: UndoClock) {
+  if (clock.timer === null) return;
+  window.clearTimeout(clock.timer);
+  clock.timer = null;
+  clock.remaining -= performance.now() - clock.startedAt;
+}
+
 function ToastItem({ toast, dismiss }: { toast: Toast; dismiss: (id: string) => void }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const [paused, setPaused] = useState(false);
-  const remaining = useRef<number>(DURATION.undoWindow);
+  const [clock] = useState<UndoClock>(() => ({
+    remaining: DURATION.undoWindow,
+    startedAt: 0,
+    timer: null,
+    hovered: false,
+    focused: false,
+    attached: false,
+    expire: () => {},
+  }));
+
+  // The toast node owns its timer: attaching starts the countdown, detaching stops it and keeps the
+  // time left. A new `dismiss` identity re-runs this pair without losing any of the window.
+  const ref = useCallback(
+    (node: HTMLDivElement | null) => {
+      if (!node) return undefined;
+      clock.expire = () => dismiss(toast.id);
+      clock.attached = true;
+      runClock(clock);
+      return () => {
+        clock.attached = false;
+        haltClock(clock);
+      };
+    },
+    [clock, dismiss, toast.id],
+  );
 
   // The undo window pauses while the toast is hovered or focused, so it never closes under the
-  // reader's pointer or keyboard (WCAG 2.2.1).
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const pause = () => setPaused(true);
-    const resume = () => setPaused(false);
-    el.addEventListener('pointerenter', pause);
-    el.addEventListener('pointerleave', resume);
-    el.addEventListener('focusin', pause);
-    el.addEventListener('focusout', resume);
-    return () => {
-      el.removeEventListener('pointerenter', pause);
-      el.removeEventListener('pointerleave', resume);
-      el.removeEventListener('focusin', pause);
-      el.removeEventListener('focusout', resume);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (paused) return;
-    const startedAt = performance.now();
-    const timer = window.setTimeout(() => dismiss(toast.id), remaining.current);
-    return () => {
-      window.clearTimeout(timer);
-      remaining.current -= performance.now() - startedAt;
-    };
-  }, [paused, dismiss, toast.id]);
+  // reader's pointer or keyboard (WCAG 2.2.1). Hover and focus pause separately; the window resumes
+  // only once both have left. Moving focus between controls inside the toast keeps it paused.
+  const setHovered = (hovered: boolean) => {
+    clock.hovered = hovered;
+    if (hovered) haltClock(clock);
+    else runClock(clock);
+  };
+  const onFocus = () => {
+    clock.focused = true;
+    haltClock(clock);
+  };
+  const onBlur = (e: FocusEvent<HTMLDivElement>) => {
+    if (e.relatedTarget instanceof Node && e.currentTarget.contains(e.relatedTarget)) return;
+    clock.focused = false;
+    runClock(clock);
+  };
 
   return (
-    <div ref={ref} className="un-toast un-glass">
+    // biome-ignore lint/a11y/noStaticElementInteractions: these handlers only pause the undo timer; the toast's real control is its button.
+    <div
+      ref={ref}
+      className="un-toast un-glass"
+      onPointerEnter={() => setHovered(true)}
+      onPointerLeave={() => setHovered(false)}
+      onFocus={onFocus}
+      onBlur={onBlur}
+    >
       <span className="un-toast-text">{toast.text}</span>
       {toast.action && (
         <button
