@@ -492,6 +492,8 @@ function PaperVisit({
     keepalive = false,
     // YUK-1051 — 该 slot 绑定范围内的证据附件 ids（缺席 = 按当前 evidenceRef 现算）。
     imageRefs?: string[],
+    // YUK-1487 — this save supersedes one still in flight (pagehide resend): see draftEpoch.
+    chained = false,
   ): Promise<boolean> => {
     const refs = imageRefs ?? evidenceIdsForSlot(evidenceRef.current, key);
     const seq = (saveSeq.current[key] ?? 0) + 1;
@@ -525,7 +527,7 @@ function PaperVisit({
             answer_md: v,
             image_refs: refs,
             assessment: nativePayloadFor(key),
-            expected_save_epoch: nativeEpochs.current[key],
+            expected_save_epoch: draftEpoch(key, chained),
           },
           { keepalive },
         )
@@ -556,6 +558,15 @@ function PaperVisit({
     return done;
   };
 
+  // Epoch a draft save expects. A resend chained past an in-flight save sends acked + 1: the
+  // server rejects only when stored > expected and stores existing + 1, so whichever of the
+  // two lands second, the older text is the one rejected (YUK-1487). Reusing the in-flight
+  // epoch would let an in-flight save that lands first reject the newer resend instead.
+  const draftEpoch = (key: string, chained: boolean) => {
+    const acked = nativeEpochs.current[key];
+    return chained && acked !== undefined ? acked + 1 : acked;
+  };
+
   // Single flush path for exit and pagehide. Fires every not-yet-fired debounce so its draft
   // joins the in-flight set; with includeInFlight it also re-issues a save for slots whose
   // POST is still open (pagehide teardown may cancel the original). keepalive keeps the PUT
@@ -570,6 +581,7 @@ function PaperVisit({
       questionId: string;
       partRef: PaperSlot['part_ref'];
       answer: string;
+      chained: boolean;
     }[] = [];
     for (const key of keys) {
       if (saveTimers.current[key]) {
@@ -584,6 +596,9 @@ function PaperVisit({
         questionId: slot.question_id,
         partRef: slot.part_ref,
         answer: answersRef.current[key] ?? '',
+        // Only the pagehide resend chains: two chained saves in flight for one slot could
+        // still land oldest-last, so the exit flush keeps its plain epoch.
+        chained: opts.includeInFlight === true && inFlightSaves.current.has(key),
       });
     }
     // keepalive bodies share ONE page-level budget, so allocate it cumulatively across the
@@ -599,13 +614,21 @@ function PaperVisit({
               answer_md: d.answer,
               image_refs: evidenceIdsForSlot(evidenceRef.current, d.key),
               assessment: nativePayloadFor(d.key),
-              expected_save_epoch: nativeEpochs.current[d.key],
+              expected_save_epoch: draftEpoch(d.key, d.chained),
             }),
           ),
         )
       : dirty.map(() => false);
     dirty.forEach((d, i) => {
-      void runSave(d.key, d.questionId, d.partRef, d.answer, keepaliveFlags[i]);
+      void runSave(
+        d.key,
+        d.questionId,
+        d.partRef,
+        d.answer,
+        keepaliveFlags[i],
+        undefined,
+        d.chained,
+      );
     });
   };
 
@@ -642,8 +665,8 @@ function PaperVisit({
 
   // Hard tab-close / reload: the page is tearing down, so awaiting is useless. Re-send the
   // latest draft with keepalive for every slot that is either pending (unfired debounce) or
-  // still in flight (a normal POST the teardown may cancel). Idempotent — the draft PUT is
-  // last-write-wins, so re-sending the newest text is safe. Then pause the session.
+  // still in flight (a normal POST the teardown may cancel); that resend is chained at
+  // acked + 1 (draftEpoch) so the older in-flight text cannot win. Then pause the session.
   // YUK-1483: armed by the paper header's ref (always mounted with the visit); it is
   // re-armed with this render's closure on each commit, so it flushes the latest drafts.
   const attachPagehide = usePagehideTransition(() => {

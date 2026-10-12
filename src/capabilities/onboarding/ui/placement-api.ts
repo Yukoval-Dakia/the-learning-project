@@ -5,6 +5,7 @@
 // answer trail is keyed by that session_id (placement-next.ts counts events WHERE
 // session_id=<probe>), so it MUST be sent or /next can't advance/terminate.
 
+import { saveResponseDraft } from '@/capabilities/practice/ui-public';
 import {
   type ApiOperationJsonResponse,
   type ApiOperationRequestBody,
@@ -94,15 +95,6 @@ export const submitProbeAnswer = (input: SubmitProbeAnswerInput) =>
     },
   });
 
-// Probe answer draft: the shared issuance responses resource, same request as practice's saver.
-export const saveProbeResponseDraft = (
-  issuanceId: string,
-  body: ApiOperationRequestBody<'saveResponseDraft'>,
-  options: { keepalive?: boolean } = {},
-) =>
-  apiOperationJson('saveResponseDraft', {
-    url: `/api/issuances/${encodeURIComponent(issuanceId)}/responses`,
-    method: 'POST',
-    body,
-    init: options.keepalive ? { keepalive: true } : undefined,
-  });
+// Probe answer draft: the shared issuance responses resource — practice's saver itself, so
+// it shares the keepalive size fallback.
+export const saveProbeResponseDraft = saveResponseDraft;

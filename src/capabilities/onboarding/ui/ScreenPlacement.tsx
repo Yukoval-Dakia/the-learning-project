@@ -593,25 +593,47 @@ function PlacementQuestionCard({
   const currentValue = useRef(draftValue);
   const savedBytes = useRef(JSON.stringify(draftValue));
   const inFlight = useRef<Promise<void> | null>(null);
+  // YUK-1487 — the pagehide save chained past the in-flight one (resolves true once stored).
+  const chainedSave = useRef<Promise<boolean> | null>(null);
   const persist = useCallback(
-    async (value: typeof draftValue, keepalive: boolean) => {
+    async (value: typeof draftValue, keepalive: boolean, chained = false) => {
+      const draft = { ...value, evaluation_group_ref: binding.evaluation_group_id };
+      if (chained) {
+        // The page is closing while a save is in flight: send now, not after it, at acked + 1
+        // so the older request is the one the server rejects whichever lands first.
+        const sent = client
+          .saveResponseDraft(
+            binding.issuance_id,
+            { ...draft, expected_save_epoch: epoch.current + 1 },
+            { keepalive },
+          )
+          .then((ack) => {
+            epoch.current = Math.max(epoch.current, ack.save_epoch);
+            savedBytes.current = JSON.stringify(value);
+          });
+        chainedSave.current = sent.then(
+          () => true,
+          () => false,
+        );
+        await sent;
+        return;
+      }
       while (inFlight.current) await inFlight.current;
       if (JSON.stringify(value) === savedBytes.current) return;
       const saving = (async () => {
+        chainedSave.current = null;
         try {
           const ack = await client.saveResponseDraft(
             binding.issuance_id,
-            {
-              ...value,
-              evaluation_group_ref: binding.evaluation_group_id,
-              expected_save_epoch: epoch.current,
-            },
+            { ...draft, expected_save_epoch: epoch.current },
             { keepalive },
           );
-          epoch.current = ack.save_epoch;
+          epoch.current = Math.max(epoch.current, ack.save_epoch);
           savedBytes.current = JSON.stringify(value);
         } catch (e) {
-          if (e instanceof ApiError && e.status === 409) {
+          // A 409 caused by a chained save that landed first is not a version conflict.
+          const superseded = chainedSave.current;
+          if (e instanceof ApiError && e.status === 409 && !(superseded && (await superseded))) {
             conflictRef.current = true;
             setConflict(true);
           }
@@ -631,7 +653,8 @@ function PlacementQuestionCard({
   // answering (the fields are disabled otherwise); commit holds autosave and resumes it
   // if the answer was never dispatched.
   const saveDraft = useCallback(
-    (value: typeof draftValue, ctx: { keepalive: boolean }) => persist(value, ctx.keepalive),
+    (value: typeof draftValue, ctx: { keepalive: boolean; chained: boolean }) =>
+      persist(value, ctx.keepalive, ctx.chained),
     [persist],
   );
   // A version conflict stops autosave (only reload or discard leave it), as before.

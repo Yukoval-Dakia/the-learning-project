@@ -860,7 +860,13 @@ export const saveResponseDraft = (
     url: `/api/issuances/${encodeURIComponent(issuanceId)}/responses`,
     method: 'POST',
     body,
-    init: options.keepalive ? { keepalive: true } : undefined,
+    // Same fallback as the paper draft: a body over the keepalive budget would make fetch
+    // throw, so it goes out as a normal (best-effort) request instead.
+    init:
+      options.keepalive === true &&
+      new TextEncoder().encode(JSON.stringify(body)).length <= KEEPALIVE_MAX_BODY_BYTES
+        ? { keepalive: true }
+        : undefined,
   });
 
 /**
