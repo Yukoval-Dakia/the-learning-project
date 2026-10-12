@@ -7,9 +7,9 @@
 //   - 不做录音 / 编辑器 / 代码执行；不承诺 PDF 缩略图。
 
 import './response.css';
-import { useEffect, useState } from 'react';
+import { useCallback, useSyncExternalStore } from 'react';
 
-import { fetchAssetObject, peekAssetObject } from '@/ui/lib/assets';
+import { useAssetObject } from '@/ui/lib/assets';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 
 import { type EvidenceKind, evidenceKindFromMime } from './response-types';
@@ -39,29 +39,11 @@ export function AssetEvidencePreview({
   variant = 'inline',
   onExpand,
 }: AssetEvidencePreviewProps) {
-  const [resolved, setResolved] = useState<{ url: string; mimeType: string | null } | null>(() =>
-    peekAssetObject(assetId),
-  );
-  const [failed, setFailed] = useState(false);
-
-  useEffect(() => {
-    const cached = peekAssetObject(assetId);
-    if (cached) {
-      setResolved(cached);
-      return;
-    }
-    let cancelled = false;
-    fetchAssetObject(assetId)
-      .then((obj) => {
-        if (!cancelled) setResolved(obj);
-      })
-      .catch(() => {
-        if (!cancelled) setFailed(true);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [assetId]);
+  // The shared asset entry (keyed by this assetId) owns the read and the blob URL; another
+  // consumer showing the same asset keeps the URL alive after this one unmounts.
+  const asset = useAssetObject(assetId);
+  const failed = asset.error !== null;
+  const resolved = asset.url ? { url: asset.url, mimeType: asset.mimeType } : null;
 
   const effectiveKind: EvidenceKind = kind ?? evidenceKindFromMime(mimeType ?? resolved?.mimeType);
   const name = label ?? '附件';
@@ -126,27 +108,87 @@ export function AssetEvidencePreview({
   );
 }
 
+// text/* 原文读取的资源 owner：按 blob URL 一条读取，订阅者全部离开后 abort 并丢弃，
+// 旧 URL 的结果只写回它自己的条目，不会出现在换了 URL 的预览里。条目只在客户端订阅时创建。
+interface TextPreview {
+  text: string | null;
+  truncated: boolean;
+  failed: boolean;
+}
+
+interface TextReadEntry {
+  refs: number;
+  snapshot: TextPreview;
+  abort: AbortController;
+  listeners: Set<() => void>;
+  releaseTimer: ReturnType<typeof setTimeout> | null;
+}
+
+const TEXT_LOADING: TextPreview = Object.freeze({ text: null, truncated: false, failed: false });
+const textReads = new Map<string, TextReadEntry>();
+
+function startTextRead(url: string): TextReadEntry {
+  const entry: TextReadEntry = {
+    refs: 0,
+    snapshot: TEXT_LOADING,
+    abort: new AbortController(),
+    listeners: new Set(),
+    releaseTimer: null,
+  };
+  textReads.set(url, entry);
+  const settle = (snapshot: TextPreview) => {
+    if (entry.abort.signal.aborted || textReads.get(url) !== entry) return;
+    entry.snapshot = snapshot;
+    for (const listener of entry.listeners) listener();
+  };
+  fetch(url, { signal: entry.abort.signal })
+    .then((r) => r.text())
+    .then(
+      (t) =>
+        settle({
+          text: t.slice(0, TEXT_PREVIEW_MAX_CHARS),
+          truncated: t.length > TEXT_PREVIEW_MAX_CHARS,
+          failed: false,
+        }),
+      () => settle({ text: null, truncated: false, failed: true }),
+    );
+  return entry;
+}
+
+function acquireTextRead(url: string, listener: () => void): () => void {
+  const entry = textReads.get(url) ?? startTextRead(url);
+  entry.refs += 1;
+  entry.listeners.add(listener);
+  if (entry.releaseTimer) {
+    clearTimeout(entry.releaseTimer);
+    entry.releaseTimer = null;
+  }
+  return () => {
+    entry.listeners.delete(listener);
+    entry.refs -= 1;
+    if (entry.refs > 0 || entry.releaseTimer) return;
+    entry.releaseTimer = setTimeout(() => {
+      entry.releaseTimer = null;
+      if (entry.refs > 0 || textReads.get(url) !== entry) return;
+      textReads.delete(url);
+      entry.abort.abort();
+    }, 0);
+  };
+}
+
+function getServerTextPreview(): TextPreview {
+  return TEXT_LOADING;
+}
+
 /** text/* 证据：拉取原文、转义内联（React 文本节点默认转义），超长截断并如实标注。 */
 function TextEvidence({ url, name }: { url: string; name: string }) {
-  const [text, setText] = useState<string | null>(null);
-  const [truncated, setTruncated] = useState(false);
-  const [failed, setFailed] = useState(false);
-  useEffect(() => {
-    let cancelled = false;
-    fetch(url)
-      .then((r) => r.text())
-      .then((t) => {
-        if (cancelled) return;
-        setTruncated(t.length > TEXT_PREVIEW_MAX_CHARS);
-        setText(t.slice(0, TEXT_PREVIEW_MAX_CHARS));
-      })
-      .catch(() => {
-        if (!cancelled) setFailed(true);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [url]);
+  const subscribe = useCallback((listener: () => void) => acquireTextRead(url, listener), [url]);
+  const getSnapshot = useCallback(() => textReads.get(url)?.snapshot ?? TEXT_LOADING, [url]);
+  const { text, truncated, failed } = useSyncExternalStore(
+    subscribe,
+    getSnapshot,
+    getServerTextPreview,
+  );
   if (failed) {
     return (
       <a className="rs-ev-download" href={url} download={name}>
