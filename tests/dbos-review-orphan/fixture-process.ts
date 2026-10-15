@@ -240,14 +240,19 @@ export function assertSettledCronLedger(raw: unknown) {
 }
 
 // Old-consumer replicas are built (or were prebuilt) from a fixed base commit but run against the
-// current node_modules. Freezing the whole lockfile failed on every unrelated dependency change,
-// so pin exactly what the old artifact uses instead: each bundled package must resolve at a
-// version the base lockfile has, and each runtime require must keep identical pins.
+// current node_modules. First-party old code is replayed, pinned by its fixed commit and digests.
+// The durable runtime (DBOS, pg-boss, postgres-js) stays pinned to the old lock; other bundled libraries
+// follow current versions (otherwise every drizzle-orm or @lmnr-ai/lmnr bump fails) but must
+// still resolve through the pnpm store at a version installed now. Packages the artifact loads by
+// name at runtime keep identical pins.
 export function pinnedVersions(lock: string, name: string) {
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const keys = lock.matchAll(new RegExp(`^  '?${escaped}@([^':(]+)`, 'gm'));
   return [...new Set([...keys].map((m) => m[1]))].sort();
 }
+
+// These carry the durable-runtime semantics under test; a newer copy would write "old" history.
+const OLD_LOCK_PINNED_RUNTIME: readonly string[] = ['@dbos-inc/dbos-sdk', 'pg-boss', 'postgres'];
 
 export function oldArtifactDependencyDrift(input: {
   baseLock: string;
@@ -269,7 +274,10 @@ export function oldArtifactDependencyDrift(input: {
   for (const pkg of bundledPackages) {
     const at = pkg.lastIndexOf('@');
     const [name, version] = [pkg.slice(0, at), pkg.slice(at + 1)];
-    if (!pinnedVersions(input.baseLock, name).includes(version))
+    if (
+      OLD_LOCK_PINNED_RUNTIME.includes(name) &&
+      !pinnedVersions(input.baseLock, name).includes(version)
+    )
       drift.push(`${pkg} not pinned at base`);
     if (!pinnedVersions(input.currentLock, name).includes(version))
       drift.push(`${pkg} not installed now`);

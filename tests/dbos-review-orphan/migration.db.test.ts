@@ -222,6 +222,15 @@ async function commitFault(
 ) {
   const target = safeUrl();
   const sockets = new Set<Socket>();
+  const disconnectPrimary = new Set<() => void>();
+  const errorFields = Buffer.from(
+    'SERROR\0VERROR\0C08006\0MPrimary unavailable after lost COMMIT response\0\0',
+  );
+  const connectionFailure = Buffer.alloc(5 + errorFields.length);
+  connectionFailure[0] = 'E'.charCodeAt(0);
+  connectionFailure.writeInt32BE(4 + errorFields.length, 1);
+  errorFields.copy(connectionFailure, 5);
+  const ready = Buffer.from([90, 0, 0, 0, 5, 73]);
   let fired = false;
   let listenerClosed: Promise<void> | undefined;
   const closeListener = () =>
@@ -240,17 +249,46 @@ async function commitFault(
     let back = Buffer.alloc(0);
     let startup = true;
     let receiptTx = false;
+    let unavailable = false;
+    let pendingReady = 0;
+    let unsyncedQuery = false;
+    let failedExtendedQuery = false;
     const statements = new Map<string, string>();
     const close = () => {
       downstream.destroy();
       upstream.destroy();
       sockets.delete(downstream);
       sockets.delete(upstream);
+      disconnectPrimary.delete(disconnect);
     };
+    const rejectQuery = () => {
+      downstream.write(connectionFailure);
+      evidence.push({ unavailableResponse: '08006' });
+    };
+    const disconnect = () => {
+      unavailable = true;
+      upstream.destroy();
+      // Reject in-flight work before closing the client transport. An abrupt RST
+      // lets postgres-js issue its automatic ROLLBACK after clearing its socket.
+      while (pendingReady > 0) {
+        rejectQuery();
+        downstream.write(ready);
+        pendingReady--;
+      }
+      if (unsyncedQuery) {
+        rejectQuery();
+        failedExtendedQuery = true;
+      }
+    };
+    disconnectPrimary.add(disconnect);
     downstream.on('error', close);
-    upstream.on('error', close);
-    downstream.on('close', () => upstream.destroy());
-    upstream.on('close', () => downstream.destroy());
+    upstream.on('error', () => {
+      if (!unavailable) close();
+    });
+    downstream.on('close', close);
+    upstream.on('close', () => {
+      if (!unavailable) close();
+    });
     downstream.on('data', (chunk) => {
       front = Buffer.concat([front, typeof chunk === 'string' ? Buffer.from(chunk) : chunk]);
       while (front.length >= (startup ? 4 : 5)) {
@@ -264,6 +302,27 @@ async function commitFault(
           continue;
         }
         const tag = String.fromCharCode(packet[0]);
+        if (unavailable) {
+          // No SQL reaches the primary after the fault, including through a
+          // previously healthy pool connection. Honor extended-protocol Sync.
+          if (tag === 'X') close();
+          else if (tag === 'S') {
+            downstream.write(ready);
+            failedExtendedQuery = false;
+          } else if (tag === 'Q' && !failedExtendedQuery) {
+            rejectQuery();
+            downstream.write(ready);
+          } else if ((tag === 'P' || tag === 'B') && !failedExtendedQuery) {
+            rejectQuery();
+            failedExtendedQuery = true;
+          }
+          continue;
+        }
+        if (tag === 'P' || tag === 'B' || tag === 'E') unsyncedQuery = true;
+        if (tag === 'Q' || tag === 'S') {
+          pendingReady++;
+          unsyncedQuery = false;
+        }
         let query = '';
         if (tag === 'Q') query = packet.subarray(5, -1).toString();
         if (tag === 'P') {
@@ -292,6 +351,7 @@ async function commitFault(
       }
     });
     upstream.on('data', (chunk) => {
+      if (unavailable) return;
       back = Buffer.concat([back, typeof chunk === 'string' ? Buffer.from(chunk) : chunk]);
       while (back.length >= 5) {
         const size = back.readInt32BE(1) + 1;
@@ -305,15 +365,16 @@ async function commitFault(
           evidence.push({ fault: mode, at: new Date().toISOString(), serverCommand: command });
           if (mode === 'after-server-commit-and-unavailable') {
             // Refuse new connections instead of accepting and resetting each retry.
-            // The committed reply and every existing application connection are still lost.
+            // The committed reply is lost and every existing application connection
+            // answers with a connection failure instead of a hard transport reset.
             void closeListener();
             evidence.push({ unavailableSocketCount: sockets.size });
-            for (const socket of sockets) socket.destroy();
-            sockets.clear();
+            for (const disconnect of disconnectPrimary) disconnect();
           } else close();
           return;
         }
         if (command === 'COMMIT' || command === 'ROLLBACK') receiptTx = false;
+        if (tag === 'Z' && pendingReady > 0) pendingReady--;
         downstream.write(packet);
       }
     });
