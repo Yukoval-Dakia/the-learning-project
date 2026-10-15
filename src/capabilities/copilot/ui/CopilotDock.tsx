@@ -710,6 +710,11 @@ export function CopilotDock({ pathname, navigate }: CopilotDockProps) {
   const currentSessionIdRef = useRef(currentSessionId);
   currentSessionIdRef.current = currentSessionId;
   const [sessionPanelOpen, setSessionPanelOpen] = useState(false);
+  // YUK-1486 — the today summary is a collapsible strip so the conversation
+  // keeps most of the drawer height. null = automatic (open only while the
+  // conversation is empty); a click records the learner's explicit choice.
+  const [summaryPref, setSummaryPref] = useState<boolean | null>(null);
+  const summaryRegionId = useId();
   const [creatingSession, setCreatingSessionState] = useState(false);
   const creatingSessionRef = useRef(false);
   const setCreatingSession = useCallback((creating: boolean) => {
@@ -791,6 +796,8 @@ export function CopilotDock({ pathname, navigate }: CopilotDockProps) {
     setFocusedKnowledgeId(null);
     correctionTargetRef.current = null;
     setCorrectionTarget(null);
+    // The session list is a floating layer; a re-open starts on the conversation.
+    setSessionPanelOpen(false);
     closeDrawerDwell();
   }, [closeDrawerDwell, detachSubscriptions]);
   const sessionBootstrapRef = useRef<number | null>(null);
@@ -1387,8 +1394,10 @@ export function CopilotDock({ pathname, navigate }: CopilotDockProps) {
 
   // Stick-to-bottom for the message stream. The stream node exists only while
   // the drawer is open and owns its observers. While the reader is at (or
-  // within 48px of) the bottom, a row added/removed or the LAST row growing
-  // (streaming text, terminal replacement, late Markdown, images) keeps it at
+  // within 48px of) the bottom, a row added/removed, the LAST row growing
+  // (streaming text, terminal replacement, late Markdown, images), or the
+  // scroller itself resizing (YUK-1486: the summary above it loading late or
+  // being toggled, the fullscreen width toggle, a window resize) keeps it at
   // the end; once they scroll up to read, nothing pulls them down. Expanding an
   // older row never scrolls. The learner's own send re-sticks (see send).
   const stickToBottomRef = useRef(true);
@@ -1409,11 +1418,12 @@ export function CopilotDock({ pathname, navigate }: CopilotDockProps) {
       // recovery and reconnect banners render after the rows).
       const rows = node.querySelectorAll(':scope > [data-chat-row]');
       const lastRow = rows.item(rows.length - 1);
-      const atOrAfterLastRow = (target: Element) =>
+      const keepsEnd = (target: Element) =>
+        target === scroller ||
         !lastRow ||
         target === lastRow ||
         Boolean(lastRow.compareDocumentPosition(target) & Node.DOCUMENT_POSITION_FOLLOWING);
-      if (stickToBottomRef.current && entries.some((entry) => atOrAfterLastRow(entry.target))) {
+      if (stickToBottomRef.current && entries.some((entry) => keepsEnd(entry.target))) {
         scrollToEnd();
         return;
       }
@@ -1422,6 +1432,9 @@ export function CopilotDock({ pathname, navigate }: CopilotDockProps) {
       onScroll();
     });
     for (const child of node.children) resize.observe(child);
+    // Content above the stream (the summary) sits outside the scroller, so its
+    // late growth only shows up as the scroller's own box shrinking.
+    if (scroller !== node) resize.observe(scroller);
     const rows = new MutationObserver((records) => {
       for (const record of records) {
         for (const added of record.addedNodes) {
@@ -2002,23 +2015,63 @@ export function CopilotDock({ pathname, navigate }: CopilotDockProps) {
     setCorrectionTarget(null);
   }, []);
 
-  // YUK-577 — nudge bar rides above the summary body (shows even while summary loads/unavailable).
+  // YUK-577 — nudge bar rides above the summary (shows even while summary loads/unavailable).
+  // YUK-1486 — the summary itself is a one-line toggle; it opens by default only
+  // while the conversation is empty, so a long conversation gets the height.
+  const summaryOpen = summaryPref ?? messages.length === 0;
+  const summaryPreview = summaryQ.data
+    ? summaryQ.data.daily_focus
+    : summaryQ.isLoading
+      ? '加载摘要…'
+      : '摘要暂不可用。';
   const summary = (
-    <>
-      {sessionPanelOpen ? (
+    <div className="flex flex-col gap-[6px]">
+      {nudgeBar}
+      <button
+        type="button"
+        className="copilot-summary-toggle"
+        aria-expanded={summaryOpen}
+        aria-controls={summaryOpen ? summaryRegionId : undefined}
+        data-testid="copilot-summary-toggle"
+        onClick={() => setSummaryPref(!summaryOpen)}
+      >
+        <span className="copilot-summary-label">今日摘要</span>
+        {summaryOpen ? null : <span className="copilot-summary-preview">{summaryPreview}</span>}
+        <LoomIcon name="chevronDown" size={13} className="pd-chev" />
+      </button>
+      {summaryOpen ? <div id={summaryRegionId}>{summaryBody}</div> : null}
+    </div>
+  );
+
+  // YUK-1486 — 对话记录 floats over the summary + conversation instead of pushing
+  // them down; picking a session or starting a new one closes it.
+  const sessionOverlay = sessionPanelOpen ? (
+    <div className="copilot-session-layer">
+      <button
+        type="button"
+        tabIndex={-1}
+        aria-label="收起对话记录"
+        className="copilot-session-scrim"
+        onClick={() => setSessionPanelOpen(false)}
+      />
+      <div className="copilot-session-sheet">
         <CopilotSessionPanel
           sessions={sessionItems}
           currentSessionId={currentSessionId}
           creating={creatingSession}
           disabled={false}
-          onSelect={selectConversation}
-          onCreate={() => void createConversation()}
+          onSelect={(sessionId) => {
+            setSessionPanelOpen(false);
+            selectConversation(sessionId);
+          }}
+          onCreate={() => {
+            setSessionPanelOpen(false);
+            void createConversation();
+          }}
         />
-      ) : null}
-      {nudgeBar}
-      {summaryBody}
-    </>
-  );
+      </div>
+    </div>
+  ) : null;
 
   const footer = (
     <div className="copilot-loom">
@@ -2244,6 +2297,7 @@ export function CopilotDock({ pathname, navigate }: CopilotDockProps) {
           </>
         }
         summary={summary}
+        overlay={sessionOverlay}
         footer={footer}
       >
         <div className="copilot-loom" data-testid="copilot-chat">
