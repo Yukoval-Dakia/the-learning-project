@@ -140,7 +140,9 @@ const onboardingUploadRoute = createRoute({
   component: OnboardingUploadRoute,
 });
 
-const PlacementRoute = import.meta.env.PROD ? StartPageEntry : lazyNavigableRoute(loadPlacementPage);
+const PlacementRoute = import.meta.env.PROD
+  ? StartPageEntry
+  : lazyNavigableRoute(loadPlacementPage);
 
 const placementRoute = createRoute({
   getParentRoute: () => rootRoute,
