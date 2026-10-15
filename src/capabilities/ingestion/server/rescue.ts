@@ -8,7 +8,6 @@ import { ApiError } from '@/kernel/http';
 import { type RunTaskCallCtx, makeRunTaskTextFn } from '@/server/ai/runner-fn';
 import type { R2Client } from '@/server/r2';
 import { Ingestion } from '@/server/session';
-import { assertFromState } from '@/server/session/guards';
 import { type VisionBlock, runVisionExtract } from './vision';
 
 export type RescueTier = 2 | 3;
@@ -84,12 +83,7 @@ export async function runRescue(
   }
   // Check before the optional paid call, including jobs queued while the
   // session was editable. applyRescue checks again inside its write transaction.
-  assertFromState(
-    session.status,
-    ['partial', 'extracted'] as const,
-    params.sessionId,
-    'Ingestion.applyRescue',
-  );
+  Ingestion.assertRescuableSessionStatus(session.status, params.sessionId);
 
   const assetId = session.source_asset_ids[params.page];
   if (!assetId) {

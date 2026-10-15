@@ -43,6 +43,14 @@ warnings）、完整 `pnpm build` 均通过；独立初审读取实际 diff、OC
 `1f887ed..dd16aa9` 的页来源与歧义保护组合，无引入的 P0/P1；这是第二轮也是
 最后一轮审查。完整目标身份匹配另有 YUK-1495 跟进。
 
+首个远端 CI 的 capability audit 发现直接导入内部 `session/guards` 使依赖数
+从 429 增至 430。修正为 session owner 的 `assertRescuableSessionStatus`：
+付费前检查经既有 `Ingestion` 公共入口调用，最终加锁写入也复用该规则。
+未修改 baseline 或放宽审计。主 agent 核对这一局部调整；未启动第三轮审查。
+调整后的 capability / architecture deepening audits、完整 typecheck、lint
+（0 errors / 172 existing warnings）、完整 build 均通过。审计以
+`node --import tsx` 运行同一入口，避免本环境禁止的 tsx CLI IPC socket。
+
 表格是源码推导，不是实测 HTTP/DB/provider 输出；这些运行验收均 NOT_RUN。
 多个结果覆盖成第一块的路径已拒绝；一个 prompt 仍不能证明模型识别了目标题，
 也不能证明题面完整。此拒绝在模型返回后发生，不承诺撤销已发生费用。DOCX
