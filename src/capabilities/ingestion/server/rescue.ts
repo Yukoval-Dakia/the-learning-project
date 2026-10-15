@@ -1,9 +1,9 @@
 import { createId } from '@paralleldrive/cuid2';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
-import { question_block, source_asset } from '@/db/schema';
+import { learning_session, question_block, source_asset } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { type RunTaskCallCtx, makeRunTaskTextFn } from '@/server/ai/runner-fn';
 import type { R2Client } from '@/server/r2';
@@ -34,9 +34,9 @@ export type RunRescueParams = {
  *
  * 流程：
  *   1. 验证 session 在 partial/extracted 状态、block 存在
- *   2. 下载 asset bytes（block.source_asset_ids[0] 假设单 asset）
+ *   2. 按 session 页序定位请求页，确认属于 block 后下载 asset bytes
  *   3. 调 VisionExtractTask（tier=2 → haiku）或 VisionExtractTaskHeavy（tier=3 → sonnet）
- *   4. 用第一块结果 → 合成 StructuredQuestion（standalone）
+ *   4. 仅接受唯一 prompt 块 → 合成 StructuredQuestion（standalone）
  *   5. 调 IngestionSession.applyRescue 写回（事务内 + version bump + writeJobEvent）
  */
 export async function runRescue(
@@ -50,7 +50,12 @@ export async function runRescue(
     );
   }
 
-  // Locate block + its first asset
+  if (!Number.isSafeInteger(params.page) || params.page < 0) {
+    throw new ApiError('validation_error', 'rescue page must be a nonnegative integer', 400);
+  }
+
+  // Blocks can retain all source pages or only a subset; their first asset is
+  // not necessarily the page the learner requested.
   const blocks = await params.db
     .select()
     .from(question_block)
@@ -66,9 +71,26 @@ export async function runRescue(
       400,
     );
   }
-  const assetId = block.source_asset_ids[0];
+  const [session] = await params.db
+    .select({
+      status: learning_session.status,
+      source_asset_ids: learning_session.source_asset_ids,
+    })
+    .from(learning_session)
+    .where(and(eq(learning_session.id, params.sessionId), eq(learning_session.type, 'ingestion')));
+  if (!session) {
+    throw new ApiError('not_found', `ingestion session ${params.sessionId} not found`, 404);
+  }
+  // Check before the optional paid call, including jobs queued while the
+  // session was editable. applyRescue checks again inside its write transaction.
+  Ingestion.assertRescuableSessionStatus(session.status, params.sessionId);
+
+  const assetId = session.source_asset_ids[params.page];
   if (!assetId) {
-    throw new ApiError('validation_error', `block ${params.blockId} has no source_asset_ids`, 400);
+    throw new ApiError('validation_error', 'rescue page is outside the source document', 400);
+  }
+  if (!block.source_asset_ids.includes(assetId)) {
+    throw new ApiError('validation_error', 'rescue page does not belong to this block', 400);
   }
   const assetRows = await params.db.select().from(source_asset).where(eq(source_asset.id, assetId));
   const asset = assetRows[0];
@@ -101,6 +123,9 @@ export async function runRescue(
   if (!first) {
     throw new ApiError('extraction_failed', 'Vision returned 0 blocks', 422);
   }
+  if (visionResult.blocks.length !== 1 || first.role !== 'prompt') {
+    throw new ApiError('extraction_failed', '识别结果无法唯一确定完整题面，原题块未修改。', 422);
+  }
 
   const structured: StructuredQuestionT = visionBlockToStructured(first);
   await params.db.transaction((tx) =>
@@ -118,6 +143,7 @@ function visionBlockToStructured(b: VisionBlock): StructuredQuestionT {
   return {
     id: createId(),
     role: 'standalone',
+    page_index: b.page_index,
     prompt_text: b.extracted_prompt_md,
     answers: b.reference_md ? [b.reference_md] : undefined,
     source: 'vision_rescue',
