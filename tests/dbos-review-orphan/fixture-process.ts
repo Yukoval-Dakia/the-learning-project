@@ -241,7 +241,7 @@ export function assertSettledCronLedger(raw: unknown) {
 
 // Old-consumer replicas are built (or were prebuilt) from a fixed base commit but run against the
 // current node_modules. First-party old code is replayed, pinned by its fixed commit and digests.
-// The durable runtime (DBOS, postgres-js) stays pinned to the old lock; other bundled libraries
+// The durable runtime (DBOS, pg-boss, postgres-js) stays pinned to the old lock; other bundled libraries
 // follow current versions (otherwise every drizzle-orm or @lmnr-ai/lmnr bump fails) but must
 // still resolve through the pnpm store at a version installed now. Packages the artifact loads by
 // name at runtime keep identical pins.
@@ -252,7 +252,7 @@ export function pinnedVersions(lock: string, name: string) {
 }
 
 // These carry the durable-runtime semantics under test; a newer copy would write "old" history.
-const OLD_LOCK_PINNED_RUNTIME: readonly string[] = ['@dbos-inc/dbos-sdk', 'postgres'];
+const OLD_LOCK_PINNED_RUNTIME: readonly string[] = ['@dbos-inc/dbos-sdk', 'pg-boss', 'postgres'];
 
 export function oldArtifactDependencyDrift(input: {
   baseLock: string;
