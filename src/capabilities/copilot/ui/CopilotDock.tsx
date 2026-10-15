@@ -49,6 +49,7 @@ import { IconBtn } from '@/ui/primitives/IconBtn';
 import { LoomBadge } from '@/ui/primitives/LoomBadge';
 import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
 import { ToolUseCard } from '@/ui/primitives/ToolUseCard';
+import { useFocusTrap } from '@/ui/primitives/useFocusTrap';
 import { isWithinCopilotReuseWindow } from '../session-reuse';
 import { CopilotHeroCard } from './CopilotHeroCard';
 import { type CopilotSessionListItem, CopilotSessionPanel } from './CopilotSessionPanel';
@@ -715,6 +716,12 @@ export function CopilotDock({ pathname, navigate }: CopilotDockProps) {
   // conversation is empty); a click records the learner's explicit choice.
   const [summaryPref, setSummaryPref] = useState<boolean | null>(null);
   const summaryRegionId = useId();
+  // The session sheet is a nested layer on the drawer's focus-trap stack: one Esc
+  // closes only the list, focus lands on 新对话 when it opens and returns to the
+  // history toggle when it closes (including after a session is picked).
+  const sessionSheetId = useId();
+  const closeSessionPanel = useCallback(() => setSessionPanelOpen(false), []);
+  const sessionTrapRef = useFocusTrap(sessionPanelOpen, closeSessionPanel);
   const [creatingSession, setCreatingSessionState] = useState(false);
   const creatingSessionRef = useRef(false);
   const setCreatingSession = useCallback((creating: boolean) => {
@@ -2052,9 +2059,9 @@ export function CopilotDock({ pathname, navigate }: CopilotDockProps) {
         tabIndex={-1}
         aria-label="收起对话记录"
         className="copilot-session-scrim"
-        onClick={() => setSessionPanelOpen(false)}
+        onClick={closeSessionPanel}
       />
-      <div className="copilot-session-sheet">
+      <div id={sessionSheetId} className="copilot-session-sheet" ref={sessionTrapRef}>
         <CopilotSessionPanel
           sessions={sessionItems}
           currentSessionId={currentSessionId}
@@ -2280,6 +2287,8 @@ export function CopilotDock({ pathname, navigate }: CopilotDockProps) {
               title={sessionPanelOpen ? '收起对话记录' : '对话记录'}
               aria-label={sessionPanelOpen ? '收起对话记录' : '对话记录'}
               aria-pressed={sessionPanelOpen}
+              aria-expanded={sessionPanelOpen}
+              aria-controls={sessionPanelOpen ? sessionSheetId : undefined}
               onClick={() => setSessionPanelOpen((value) => !value)}
               data-testid="copilot-session-list-toggle"
             />

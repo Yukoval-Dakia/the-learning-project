@@ -9776,6 +9776,10 @@ button.seg-sm {
 }
 .copilot-session-sheet {
   position: relative;
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100% - var(--s-2));
+  overflow: hidden;
   margin: var(--s-2) var(--s-3) 0;
   padding: var(--s-3);
   border: 1px solid var(--line-soft);
