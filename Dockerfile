@@ -55,7 +55,7 @@ RUN npm install --omit=dev --no-audit --no-fund better-sqlite3@^12.6.2
 # whose __dirname-based WASM lookup remains valid in the runner (YUK-636).
 FROM node:24-bookworm-slim AS pdfiumdeps
 WORKDIR /pdfium
-RUN npm install --omit=dev --no-audit --no-fund @hyzyla/pdfium@2.1.13
+RUN npm install --omit=dev --no-audit --no-fund @hyzyla/pdfium@3.0.0
 
 FROM base AS runner
 ENV NODE_ENV=production

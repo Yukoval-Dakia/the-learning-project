@@ -422,6 +422,11 @@ export type ApplyRescueParams = {
   figures: FigureRefT[];
 };
 
+/** Shared by paid-call preflight and the locked write; preflight does not reserve the session. */
+export function assertRescuableSessionStatus(status: string, sessionId: string): void {
+  assertFromState(status, ['partial', 'extracted'] as const, sessionId, 'Ingestion.applyRescue');
+}
+
 /**
  * partial / extracted: user-driven manual rescue. Replaces the block's
  * structured content and bumps version; session status unchanged.
@@ -434,12 +439,7 @@ export async function applyRescue(tx: Db | Tx, params: ApplyRescueParams): Promi
   if (!current) {
     throw new ApiError('not_found', `learning_session ${params.sessionId} not found`, 404);
   }
-  assertFromState(
-    current.status,
-    ['partial', 'extracted'] as const,
-    params.sessionId,
-    'Ingestion.applyRescue',
-  );
+  assertRescuableSessionStatus(current.status, params.sessionId);
 
   const now = new Date();
   const blockExists = await tx

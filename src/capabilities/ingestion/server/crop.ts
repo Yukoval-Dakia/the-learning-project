@@ -37,12 +37,18 @@ export async function cropAndUploadFigures(args: CropArgs): Promise<PreAttachFig
     throw new Error('cropAndUploadFigures: sharp could not determine page image dimensions');
   }
 
-  return await Promise.all(
+  const figures = await Promise.all(
     args.figureBoxes.map(async (bbox, idx) => {
-      const left = Math.max(0, Math.round(bbox.x * pixelW));
-      const top = Math.max(0, Math.round(bbox.y * pixelH));
-      const width = Math.max(1, Math.round(bbox.width * pixelW));
-      const height = Math.max(1, Math.round(bbox.height * pixelH));
+      // OCR can clamp an off-page box to zero area. Keep its original index
+      // reserved instead of fabricating a pixel or renumbering later crops.
+      if (bbox.width <= 0 || bbox.height <= 0) return null;
+
+      // Independent rounding can put a valid normalized box one pixel past
+      // an odd-sized page edge. Tiny positive boxes still cover one pixel.
+      const left = Math.min(pixelW - 1, Math.max(0, Math.round(bbox.x * pixelW)));
+      const top = Math.min(pixelH - 1, Math.max(0, Math.round(bbox.y * pixelH)));
+      const width = Math.min(pixelW - left, Math.max(1, Math.round(bbox.width * pixelW)));
+      const height = Math.min(pixelH - top, Math.max(1, Math.round(bbox.height * pixelH)));
 
       const cropped = await sharp(args.pageImage)
         .extract({ left, top, width, height })
@@ -62,4 +68,5 @@ export async function cropAndUploadFigures(args: CropArgs): Promise<PreAttachFig
       };
     }),
   );
+  return figures.filter((figure) => figure !== null);
 }
