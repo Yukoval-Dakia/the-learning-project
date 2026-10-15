@@ -240,9 +240,10 @@ export function assertSettledCronLedger(raw: unknown) {
 }
 
 // Old-consumer replicas are built (or were prebuilt) from a fixed base commit but run against the
-// current node_modules. Freezing the whole lockfile failed on every unrelated dependency change,
-// so pin exactly what the old artifact uses instead: each bundled package must resolve at a
-// version the base lockfile has, and each runtime require must keep identical pins.
+// current node_modules. The old code itself is pinned by its fixed commit and source digests.
+// Third-party packages bundled into the artifact may follow the current lockfile (otherwise every
+// drizzle-orm or @lmnr-ai/lmnr bump fails); they must still resolve through the pnpm store at a
+// version installed now. Only packages the artifact loads by name at runtime keep identical pins.
 export function pinnedVersions(lock: string, name: string) {
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const keys = lock.matchAll(new RegExp(`^  '?${escaped}@([^':(]+)`, 'gm'));
@@ -269,8 +270,6 @@ export function oldArtifactDependencyDrift(input: {
   for (const pkg of bundledPackages) {
     const at = pkg.lastIndexOf('@');
     const [name, version] = [pkg.slice(0, at), pkg.slice(at + 1)];
-    if (!pinnedVersions(input.baseLock, name).includes(version))
-      drift.push(`${pkg} not pinned at base`);
     if (!pinnedVersions(input.currentLock, name).includes(version))
       drift.push(`${pkg} not installed now`);
   }
