@@ -37,7 +37,7 @@ export type RunRescueParams = {
  *   1. 验证 session 在 partial/extracted 状态、block 存在
  *   2. 按 session 页序定位请求页，确认属于 block 后下载 asset bytes
  *   3. 调 VisionExtractTask（tier=2 → haiku）或 VisionExtractTaskHeavy（tier=3 → sonnet）
- *   4. 用第一块结果 → 合成 StructuredQuestion（standalone）
+ *   4. 仅接受唯一 prompt 块 → 合成 StructuredQuestion（standalone）
  *   5. 调 IngestionSession.applyRescue 写回（事务内 + version bump + writeJobEvent）
  */
 export async function runRescue(
@@ -128,6 +128,9 @@ export async function runRescue(
   const first = visionResult.blocks[0];
   if (!first) {
     throw new ApiError('extraction_failed', 'Vision returned 0 blocks', 422);
+  }
+  if (visionResult.blocks.length !== 1 || first.role !== 'prompt') {
+    throw new ApiError('extraction_failed', '识别结果无法唯一确定完整题面，原题块未修改。', 422);
   }
 
   const structured: StructuredQuestionT = visionBlockToStructured(first);
