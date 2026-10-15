@@ -123,11 +123,12 @@ const todayRoute = createRoute({
 // auto-enroll 尾巴入池）。Slice 3：/placement = 真 ScreenPlacement（③ 探针 start→submit
 // (auto_rate→θ̂)→next→end），gated on PLACEMENT_PROBE_ENABLED；goalId 经 `?goal=<id>`
 // query 从 Welcome 串过来。导航走壳层 prop 注入（同 TodayRoute）。
-const WelcomeRoute = lazyNavigableRoute(loadWelcomePage);
+const WelcomeRoute = import.meta.env.PROD ? StartPageEntry : lazyNavigableRoute(loadWelcomePage);
 
 const welcomeRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: surfacePath('welcome'),
+  beforeLoad: startDocumentBeforeLoad,
   component: WelcomeRoute,
 });
 
@@ -139,11 +140,12 @@ const onboardingUploadRoute = createRoute({
   component: OnboardingUploadRoute,
 });
 
-const PlacementRoute = lazyNavigableRoute(loadPlacementPage);
+const PlacementRoute = import.meta.env.PROD ? StartPageEntry : lazyNavigableRoute(loadPlacementPage);
 
 const placementRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: surfacePath('placement'),
+  beforeLoad: startDocumentBeforeLoad,
   component: PlacementRoute,
 });
 
