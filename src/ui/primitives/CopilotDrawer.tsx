@@ -11,7 +11,7 @@
 
 'use client';
 
-import { type ReactNode, useEffect, useState } from 'react';
+import { type ReactNode, useState } from 'react';
 import { IconBtn } from './IconBtn';
 import { LoomIcon, type LoomIconName } from './LoomIcon';
 import { useFocusTrap } from './useFocusTrap';
@@ -38,8 +38,32 @@ export interface CopilotDrawerProps {
   ariaLabel?: string;
 }
 
-export function CopilotDrawer({
-  open,
+// Lock body scroll while the drawer is mounted (mobile UX). A ref callback on the
+// root that only exists while open: attach saves the previous inline overflow and
+// sets hidden, detach restores it.
+function lockBodyScroll(node: HTMLDivElement | null): (() => void) | undefined {
+  if (!node) return undefined;
+  const prev = document.body.style.overflow;
+  document.body.style.overflow = 'hidden';
+  return () => {
+    document.body.style.overflow = prev;
+  };
+}
+
+export function CopilotDrawer(props: CopilotDrawerProps) {
+  // YUK-718 — focus trap + restore + Esc close via the shared primitive, same as
+  // NodeDrawer / CommandPalette / PfSolo: focuses the first focusable element on
+  // open, traps Tab within the panel, closes on Esc (only the topmost trap acts), and
+  // restores focus to the trigger on close.
+  const trapRef = useFocusTrap(props.open, props.onClose);
+
+  if (!props.open) return null;
+  // The open panel is its own subtree, so every close (scrim, Esc, or the parent
+  // setting open=false) drops the width toggle and the next open starts narrow.
+  return <OpenCopilotDrawer {...props} trapRef={trapRef} />;
+}
+
+function OpenCopilotDrawer({
   onClose,
   title = 'Copilot',
   icon = 'copilot',
@@ -50,41 +74,18 @@ export function CopilotDrawer({
   children,
   footer,
   ariaLabel,
-}: CopilotDrawerProps) {
+  trapRef,
+}: CopilotDrawerProps & { trapRef: (panel: HTMLElement | null) => (() => void) | undefined }) {
   // 全屏 Copilot（copilot.jsx L109 maximize）= 宽度切换的纯 chrome 状态：
-  // 默认 420px 侧栏 ↔ 展开 min(900px, 92vw) 的宽读模式。每次关闭复位回窄，
-  // 让下次打开从默认宽度起。
+  // 默认 420px 侧栏 ↔ 展开 min(900px, 92vw) 的宽读模式。
   const [expanded, setExpanded] = useState(false);
-
-  // YUK-718 — focus trap + restore + Esc close via the shared primitive, same as
-  // NodeDrawer / CommandPalette / PfSolo. Replaces the ad-hoc window-Esc listener
-  // and the open-focus effect below: useFocusTrap focuses the first focusable
-  // element on open, traps Tab within the panel, closes on Esc (stopPropagation so
-  // a stacked modal's Esc doesn't leak), and restores focus to the trigger on close.
-  const trapRef = useFocusTrap(open, onClose);
-
-  // Lock body scroll while drawer is open (mobile UX).
-  useEffect(() => {
-    if (!open) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = prev;
-    };
-  }, [open]);
-
-  // Reset to the default width whenever the drawer closes (re-opens narrow).
-  useEffect(() => {
-    if (!open) setExpanded(false);
-  }, [open]);
-
-  if (!open) return null;
 
   return (
     <div
+      ref={lockBodyScroll}
       data-testid="copilot-drawer-root"
       className="fixed inset-0 z-[60]"
-      aria-hidden={open ? 'false' : 'true'}
+      aria-hidden="false"
     >
       <button
         type="button"

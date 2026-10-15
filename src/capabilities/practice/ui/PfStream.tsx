@@ -181,7 +181,8 @@ export function PfStream({
   const handoffDemand = () => {
     const request = demand.trim();
     if (!request) return;
-    openCopilot(request);
+    // Hand the ask to the Copilot composer only; the learner decides when to send.
+    openCopilot(request, { send: false });
     setDemand('');
   };
 

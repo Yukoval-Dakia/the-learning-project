@@ -14,7 +14,7 @@
 // palette.css L9-74）就位。
 
 import { useQuery } from '@tanstack/react-query';
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useMemo, useState } from 'react';
 import { type KnowledgeTreeNode, getTree } from '@/capabilities/knowledge/ui-public';
 import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
 import { useFocusTrap } from '@/ui/primitives/useFocusTrap';
@@ -66,21 +66,48 @@ function knowledgeRows(nodes: KnowledgeTreeNode[]): PaletteRow[] {
   }));
 }
 
+// 保持选中行可见（设计 command-palette.jsx:55-62）：选中行挂载/换成另一行时测量，
+// 只在超出列表可视区时滚动，并留 8px 边距。
+function scrollRowIntoList(el: HTMLElement): void {
+  const list = el.parentElement;
+  if (!list) return;
+  const t = el.offsetTop;
+  const b = t + el.offsetHeight;
+  const st = list.scrollTop;
+  const h = list.clientHeight;
+  if (t < st) list.scrollTop = t - 8;
+  else if (b > st + h) list.scrollTop = b - h + 8;
+}
+
 export function CommandPalette({ open, onClose, navigate }: CommandPaletteProps) {
+  // a11y：Tab 困在 dialog 内 + 关闭时焦点回原触发元素 + Esc 关（既有 modal 模式，
+  // 与 onKeyDown 的 esc 幂等——都调 onClose）。trap attach 时聚焦面板内首个可聚焦
+  // 元素，即搜索输入框（设计 command-palette.jsx:52 的 autofocus）。
+  const trapRef = useFocusTrap(open, onClose);
+  if (!open) return null;
+  // 每次打开是一个新子树：query 与选区从空/0 开始（设计 command-palette.jsx:52）。
+  return <OpenCommandPalette onClose={onClose} navigate={navigate} trapRef={trapRef} />;
+}
+
+function OpenCommandPalette({
+  onClose,
+  navigate,
+  trapRef,
+}: Omit<CommandPaletteProps, 'open'> & {
+  trapRef: (panel: HTMLElement | null) => (() => void) | undefined;
+}) {
   const [q, setQ] = useState('');
   const [sel, setSel] = useState(0);
-  const inputRef = useRef<HTMLInputElement | null>(null);
-  const listRef = useRef<HTMLDivElement | null>(null);
 
   // 知识节点 open 时才 fetch（设计 index 在 open 时构建）；与 KnowledgePage 同
   // queryKey ['knowledge-tree'] → React Query 去重，不增请求。
-  const treeQ = useQuery({ queryKey: ['knowledge-tree'], queryFn: getTree, enabled: open });
+  const treeQ = useQuery({ queryKey: ['knowledge-tree'], queryFn: getTree });
   const knowledge = useMemo(() => treeQ.data?.rows ?? [], [treeQ.data]);
 
   // 全量 index（页面组静态 + 知识节点组）。设计 paletteIndex 等价物。
   const index = useMemo<PaletteRow[]>(
-    () => (open ? [...pageRows(), ...knowledgeRows(knowledge)] : []),
-    [open, knowledge],
+    () => [...pageRows(), ...knowledgeRows(knowledge)],
+    [knowledge],
   );
 
   const results = useMemo<PaletteRow[]>(() => {
@@ -101,40 +128,20 @@ export function CommandPalette({ open, onClose, navigate }: CommandPaletteProps)
     });
   }, [q, index]);
 
-  // 选区随 query 复位（设计 command-palette.jsx:51）。body 只调 setSel——deps 是
-  // 「query 变就复位」的真意图，非 body 读取的值。
-  // biome-ignore lint/correctness/useExhaustiveDependencies: q drives the reset; the body intentionally only calls the (stable) setter.
-  useEffect(() => {
+  // 选区随 query 复位（设计 command-palette.jsx:51）：输入事件里同时改 query 与选区。
+  const changeQuery = (next: string) => {
+    setQ(next);
     setSel(0);
-  }, [q]);
-  // open 时清空 query + autofocus input（设计 command-palette.jsx:52）。
-  useEffect(() => {
-    if (open) {
-      setQ('');
-      setSel(0);
-      requestAnimationFrame(() => inputRef.current?.focus());
-    }
-  }, [open]);
+  };
 
-  // 保持选中行可见（设计 command-palette.jsx:55-62）。body 读 refs（list/选中行）
-  // 但须在 sel / results 变化后跑——deps 是触发条件，非 body 读取值。
-  // biome-ignore lint/correctness/useExhaustiveDependencies: sel/results are the triggers; the body reads refs (listRef + queried row), not these values.
-  useEffect(() => {
-    const list = listRef.current;
-    const el = list?.querySelector<HTMLElement>('[data-sel="1"]');
-    if (el && list) {
-      const t = el.offsetTop;
-      const b = t + el.offsetHeight;
-      const st = list.scrollTop;
-      const h = list.clientHeight;
-      if (t < st) list.scrollTop = t - 8;
-      else if (b > st + h) list.scrollTop = b - h + 8;
-    }
-  }, [sel, results]);
-
-  // a11y：Tab 困在 dialog 内 + 关闭时焦点回原触发元素 + Esc 关（既有 modal 模式，
-  // 与 onKeyDown 的 esc 幂等——都调 onClose）。
-  const trapRef = useFocusTrap(open, onClose);
+  // 选中行的 ref：选区移动或结果集换了都会重新 attach 到当前选中行并测量。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: results is the trigger — a new result set must re-measure even when the selected index stays the same.
+  const selectedRowRef = useCallback(
+    (el: HTMLButtonElement | null) => {
+      if (el) scrollRowIntoList(el);
+    },
+    [results],
+  );
 
   const pick = (r: PaletteRow | undefined) => {
     if (!r) return;
@@ -160,8 +167,6 @@ export function CommandPalette({ open, onClose, navigate }: CommandPaletteProps)
       onClose();
     }
   };
-
-  if (!open) return null;
 
   let lastGroup: string | null = null;
   return (
@@ -203,16 +208,15 @@ export function CommandPalette({ open, onClose, navigate }: CommandPaletteProps)
         <div className="cmdk-head">
           <LoomIcon name="search" size={16} />
           <input
-            ref={inputRef}
             value={q}
-            onChange={(e) => setQ(e.target.value)}
+            onChange={(e) => changeQuery(e.target.value)}
             onKeyDown={onKey}
             placeholder={COMMAND_PALETTE_PLACEHOLDER}
             aria-label="搜索"
           />
           <kbd>esc</kbd>
         </div>
-        <div className="cmdk-list" ref={listRef}>
+        <div className="cmdk-list">
           {results.length === 0 && <div className="cmdk-empty">没有匹配「{q}」的结果。</div>}
           {results.map((r, i) => {
             const head =
@@ -227,6 +231,7 @@ export function CommandPalette({ open, onClose, navigate }: CommandPaletteProps)
                 {head}
                 <button
                   type="button"
+                  ref={i === sel ? selectedRowRef : undefined}
                   className={`cmdk-row${i === sel ? ' on' : ''}`}
                   data-sel={i === sel ? '1' : '0'}
                   onMouseEnter={() => setSel(i)}

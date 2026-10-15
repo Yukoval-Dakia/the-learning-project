@@ -2,7 +2,7 @@
 // return-visit localStorage auto-open were removed in YUK-577: opening now always
 // requires an explicit user action or a qualified cross-tree signal.
 //
-// The hook exposes a boolean (`open`) plus controlled setters so the
+// The hook exposes `open` plus the visit epoch and controlled setters so the
 // drawer parent can also drive open state from a manual trigger button.
 //
 // AF S4 / YUK-203 U6 — cross-tree open-with-context channel. The drawer `open`
@@ -10,22 +10,34 @@
 // button in a DIFFERENT subtree (e.g. learning-items/[id]) cannot reach it to
 // open the Dock pre-seeded with a skill. A tiny module-level Zustand store —
 // co-located here, NOT a separate store file — carries an `openCopilotWith`
-// signal that CopilotDock subscribes to. The §5.1 plan ruling: lift the
-// open-with-context signal into a shared store; CopilotDock reads it alongside
-// its dwell hook.
+// signal. CopilotDock claims each request exactly once through
+// subscribeCopilotOpenRequests, attached from its always-mounted root node.
 
 'use client';
 
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { create } from 'zustand';
 import type { CopilotSkillContextT } from '@/capabilities/copilot/ui-public';
 
+export interface CopilotDrawerVisit {
+  open: boolean;
+  /** Increments on every closed→open transition; one visit = one fresh session read. */
+  epoch: number;
+}
+
 export interface UseCopilotDwellResult {
   open: boolean;
-  /** Open the drawer manually (e.g. from a header button). */
-  openDrawer: () => void;
+  /** The current visit's epoch (see CopilotDrawerVisit). */
+  epoch: number;
+  /**
+   * Open the drawer manually (e.g. from a header button). Returns the epoch of the
+   * visit this call started, or null when the drawer was already open.
+   */
+  openDrawer: () => number | null;
   /** Close the drawer; no implicit timer or revisit path may reopen it. */
   closeDrawer: () => void;
+  /** The visit as of the latest open/close command, for async continuations. */
+  currentVisit: () => CopilotDrawerVisit;
 }
 
 // AF S4 / YUK-203 U6 — a single pending open-with-context request published by a
@@ -42,43 +54,50 @@ export interface CopilotNudgeOpen {
   headline: string;
 }
 
+export type CopilotPrefillMode = 'send' | 'compose';
+
 export interface CopilotOpenRequest {
   seq: number;
   // Optional: nudge opens carry no skill context (free-form agent opening).
   skill_context?: CopilotSkillContextT;
   /** Optional message to auto-send on open (none today; reserved for §5.1). */
   prefill?: string;
+  /**
+   * How the Dock treats `prefill`: 'send' sends it as the next turn when the
+   * conversation is ready; 'compose' only appends it to the composer for the
+   * learner to send. Absent means 'send'.
+   */
+  prefill_mode?: CopilotPrefillMode;
   /** YUK-577 — set when the open was triggered by a proactive-nudge 「看看」click. */
   nudge?: CopilotNudgeOpen;
+}
+
+export interface CopilotOpenOptions {
+  /** false = put the prefill in the composer only; never auto-send it. Default true. */
+  send?: boolean;
 }
 
 interface CopilotOpenSignalStore {
   request: CopilotOpenRequest | null;
   /** Open a free-form Copilot turn without fabricating a skill/entity context. */
-  openCopilot: (prefill?: string) => void;
+  openCopilot: (prefill?: string, options?: CopilotOpenOptions) => void;
   /** YUK-577 — publish a proactive-nudge open (headline as agent opening + session ambient). */
   openCopilotForNudge: (nudge: CopilotNudgeOpen) => void;
-  // PR #305 fix — monotonically increasing counter that persists across
-  // clearRequest() so seq never resets to a value already seen by the Dock's
-  // lastHandledSeqRef. Bug: seq was derived from s.request?.seq which reset to
-  // null on clear → second openCopilotWith produced seq=1 again → Dock saw
-  // seq===lastHandledSeqRef.current (still 1) and silently swallowed the open.
-  // Scenario verified: open (seq→1, handled) → clear (request null) →
-  // open again (old: seq→1 again, SWALLOWED; new: seq→2, correctly handled).
+  // PR #305 — monotonically increasing counter that survives a claim, so two
+  // consecutive identical opens are still two distinct requests.
   nextSeq: number;
   /** Publish an open-with-context request (cross-tree). */
   openCopilotWith: (skillContext: CopilotSkillContextT, prefill?: string) => void;
-  /** Consume the pending request (CopilotDock calls this after reading it). */
-  clearRequest: () => void;
 }
 
 export const useCopilotOpenSignal = create<CopilotOpenSignalStore>((set) => ({
   request: null,
   nextSeq: 0,
-  openCopilot: (prefill) =>
+  openCopilot: (prefill, options) =>
     set((s) => {
       const seq = s.nextSeq + 1;
-      return { nextSeq: seq, request: { seq, prefill } };
+      const prefill_mode: CopilotPrefillMode = options?.send === false ? 'compose' : 'send';
+      return { nextSeq: seq, request: { seq, prefill, prefill_mode } };
     }),
   openCopilotWith: (skillContext, prefill) =>
     set((s) => {
@@ -93,14 +112,41 @@ export const useCopilotOpenSignal = create<CopilotOpenSignalStore>((set) => ({
       const seq = s.nextSeq + 1;
       return { nextSeq: seq, request: { seq, nudge } };
     }),
-  clearRequest: () => set({ request: null }),
-  // nextSeq is intentionally NOT reset on clearRequest — it must monotonically
-  // increase so the Dock's lastHandledSeqRef never matches a future open.
+  // nextSeq is intentionally never reset — every publish gets a fresh seq.
 }));
 
+/**
+ * Take the pending open request, if any. Claiming clears it in the same store write,
+ * so a request is handled exactly once even if several claims race.
+ */
+function claimCopilotOpenRequest(): CopilotOpenRequest | null {
+  const { request } = useCopilotOpenSignal.getState();
+  if (!request) return null;
+  useCopilotOpenSignal.setState({ request: null });
+  return request;
+}
+
+/**
+ * The Dock's attach command: claim a request published before it mounted, then every
+ * later publish, until the returned unsubscribe runs on detach.
+ */
+export function subscribeCopilotOpenRequests(
+  handle: (request: CopilotOpenRequest) => void,
+): () => void {
+  const drain = () => {
+    const request = claimCopilotOpenRequest();
+    if (request) handle(request);
+  };
+  const unsubscribe = useCopilotOpenSignal.subscribe((state) => {
+    if (state.request) drain();
+  });
+  drain();
+  return unsubscribe;
+}
+
 /** Open the global drawer as a normal free-form turn (no fake entity/skill ref). */
-export function openCopilot(prefill?: string): void {
-  useCopilotOpenSignal.getState().openCopilot(prefill);
+export function openCopilot(prefill?: string, options?: CopilotOpenOptions): void {
+  useCopilotOpenSignal.getState().openCopilot(prefill, options);
 }
 
 /**
@@ -121,10 +167,25 @@ export function openCopilotForNudge(nudge: CopilotNudgeOpen): void {
 }
 
 export function useCopilotDwell(): UseCopilotDwellResult {
-  const [open, setOpen] = useState(false);
+  const [visit, setVisit] = useState<CopilotDrawerVisit>({ open: false, epoch: 0 });
+  // Written only by the two commands below, so async work started in one visit can
+  // check whether that visit is still the open one.
+  const visitRef = useRef(visit);
 
-  const openDrawer = useCallback(() => setOpen(true), []);
-  const closeDrawer = useCallback(() => setOpen(false), []);
+  const openDrawer = useCallback(() => {
+    if (visitRef.current.open) return null;
+    const next = { open: true, epoch: visitRef.current.epoch + 1 };
+    visitRef.current = next;
+    setVisit(next);
+    return next.epoch;
+  }, []);
+  const closeDrawer = useCallback(() => {
+    if (!visitRef.current.open) return;
+    const next = { open: false, epoch: visitRef.current.epoch };
+    visitRef.current = next;
+    setVisit(next);
+  }, []);
+  const currentVisit = useCallback(() => visitRef.current, []);
 
-  return { open, openDrawer, closeDrawer };
+  return { open: visit.open, epoch: visit.epoch, openDrawer, closeDrawer, currentVisit };
 }
