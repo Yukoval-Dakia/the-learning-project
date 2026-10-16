@@ -533,15 +533,20 @@ export function usePracticeSubmit({
   const accepted = issuedState?.submissions[0];
   // YUK-1501 — an accepted answer that /api/attempts already recorded is read-only review:
   // nothing on this page may submit it again. Recorded = the question's timeline holds an
-  // attempt for its evaluation group. Accepted alone is not enough: /api/review/advice also
-  // accepts the answer without recording an attempt (「自己评一下」 after a verdict that could
-  // not be graded, or a visit left before rating), and that answer must still be committable.
+  // attempt for its evaluation group that is settled (an effective evaluation) or whose
+  // background judge is still queued (no original evaluation yet). Accepted alone is not
+  // enough: /api/review/advice also accepts the answer without recording an attempt
+  // (「自己评一下」 after a verdict that could not be graded, or a visit left before rating),
+  // and an attempt recorded as review_required (original evaluation, nothing effective) is
+  // not scheduled yet — both must stay committable so the learner can still rate them.
   const answerRecorded =
     !!accepted &&
     (q?.timeline ?? []).some(
       (entry) =>
         entry.kind === 'attempt' &&
-        entry.assessment?.evaluation_group_id === accepted.evaluation_group_id,
+        entry.assessment?.evaluation_group_id === accepted.evaluation_group_id &&
+        (entry.assessment.effective_evaluation_id !== null ||
+          entry.assessment.original_evaluation_id === null),
     );
   // A cached question read may predate the commit (back, then reopen); until it is
   // refreshed it cannot clear an accepted answer, so submitting waits for it.
@@ -685,7 +690,10 @@ export function usePracticeSubmit({
   // continue from its epoch. Autosave restarts with that version as the saved baseline.
   const keepServerVersion = () => {
     if (draftConflict?.status !== 'ready') return;
-    const { state, answer, epoch } = draftConflict;
+    const { state, answer, epoch, submitted } = draftConflict;
+    // YUK-1501 — an answer submitted elsewhere: re-read the question so its timeline (and the
+    // read-only gate above) reflects that submission.
+    if (submitted) void qQ.refetch();
     ackedEpoch.current = epoch;
     latestDraft.current = null;
     setIssuance({ mode: issuanceMode, state, error: null });
@@ -911,14 +919,11 @@ export function usePracticeSubmit({
     previewOverride?: JudgePreview;
   }) => {
     const pv = opts.previewOverride ?? preview;
-    if (
-      returningRef.current ||
-      !q ||
-      answerRecorded ||
-      (!pv && issuanceMode !== 'manual') ||
-      committing
-    )
+    if (returningRef.current || !q || (!pv && issuanceMode !== 'manual') || committing) return;
+    if (answerRecorded) {
+      addToast('这道题已经交过了，不能再交一次。', 'info', 'alert');
       return;
+    }
     setCommitting(true);
     autosave.hold();
     try {
