@@ -165,6 +165,13 @@ export const practiceCapability = defineCapability({
   subscriptions: {
     handlers: [
       {
+        id: 'practice.question-admission-enqueue',
+        version: 1,
+        actions: ['experimental:assessment_publish'],
+        load: () =>
+          import('./server/admission/enqueue').then((m) => m.buildQuestionAdmissionSubscriber),
+      },
+      {
         id: 'practice.failure-learning-attempt',
         version: 3,
         actions: [
@@ -1225,9 +1232,9 @@ export const practiceCapability = defineCapability({
       },
       // YUK-1445 — 入库准入（G1 双盲解题一致 + G2 逐单元标定）的 live consumer：
       // 对既有 draft/revision（question_id 或 revision_id）跑 runQuestionAdmission
-      // 并经发布 seam 落 admitted/withheld/verify_hold + append-only 核验证据。
+      // 已知结果经发布 seam 落 admitted/withheld；未知保留 durable obligation。
       // 单次 admission = 2×solve（+1×crosscheck）LLM 调用 → 'llm' 档；
-      // store_sourced_question 尚未依赖本路径（B1 的 submit_question 接入点）。
+      // pending admission 的发布事件经上方 subscriber 在事务内入队；恢复不重付。
       {
         name: 'question_admission_run',
         queue: 'llm',
