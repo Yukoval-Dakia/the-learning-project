@@ -1,10 +1,32 @@
 // YUK-617 W1 — 把 /api/questions/:id 聚合里的 timeline（QFullTimelineEntry，宽 outcome:string、
-// cause? 可选）收窄成 AttemptTimeline 组件严格消费的 AttemptTimelineEvent（判别联合）。
+// cause? 可选）收窄成做题页「作答记录」严格消费的 AttemptTimelineEvent（判别联合）。
 // 服务端已保证 outcome/fsrs_rating 落在合法集，但客户端 wire 类型是宽的——这里做类型边界收窄，
-// 顺手把任何不合法/残缺条目安全丢弃（宁可不渲染，也不渲染坏数据）。
+// 顺手把任何不合法/残缺条目安全丢弃（宁可不渲染，也不渲染坏数据）。顺序沿用服务端：新的在前。
 
-import type { AttemptTimelineEvent } from '@/ui/components/AttemptTimeline';
 import type { QFullTimelineEntry } from './practice-api';
+
+export type AttemptTimelineEvent =
+  | {
+      kind: 'attempt';
+      event_id: string;
+      created_at_sec: number;
+      outcome: 'success' | 'failure' | 'partial' | 'pending' | 'unsupported';
+      duration_ms: number | null;
+      cause: {
+        primary: string;
+        confidence: number | null;
+        // YUK-1018 — misc_ id 的显示回填（misconception title）；计数仍按裸 id。
+        primary_label: string | null;
+      } | null;
+    }
+  | {
+      kind: 'review';
+      event_id: string;
+      created_at_sec: number;
+      fsrs_rating: 'again' | 'hard' | 'good';
+      outcome: 'success' | 'failure';
+      duration_ms: number | null;
+    };
 
 const ATTEMPT_OUTCOMES = new Set(['success', 'failure', 'partial', 'pending', 'unsupported']);
 const REVIEW_OUTCOMES = new Set(['success', 'failure']);
