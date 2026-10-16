@@ -96,6 +96,14 @@ const startDocumentBeforeLoad = import.meta.env.PROD
     }
   : undefined;
 
+const startOnboardingBeforeLoad = import.meta.env.PROD
+  ? ({ preload, location }: { preload: boolean; location: { href: string } }) => {
+      if (preload) return;
+      window.history.replaceState(window.history.state, '', location.href);
+      window.location.reload();
+    }
+  : undefined;
+
 const rootRoute = createRootRoute({ component: RootShell });
 
 // M4-T6 (YUK-319)：工作台上线后 / 落到 /today（旧 SPA 默认 /agent-notes 退位，
@@ -123,11 +131,12 @@ const todayRoute = createRoute({
 // auto-enroll 尾巴入池）。Slice 3：/placement = 真 ScreenPlacement（③ 探针 start→submit
 // (auto_rate→θ̂)→next→end），gated on PLACEMENT_PROBE_ENABLED；goalId 经 `?goal=<id>`
 // query 从 Welcome 串过来。导航走壳层 prop 注入（同 TodayRoute）。
-const WelcomeRoute = lazyNavigableRoute(loadWelcomePage);
+const WelcomeRoute = import.meta.env.PROD ? StartPageEntry : lazyNavigableRoute(loadWelcomePage);
 
 const welcomeRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: surfacePath('welcome'),
+  beforeLoad: startOnboardingBeforeLoad,
   component: WelcomeRoute,
 });
 
@@ -139,11 +148,14 @@ const onboardingUploadRoute = createRoute({
   component: OnboardingUploadRoute,
 });
 
-const PlacementRoute = lazyNavigableRoute(loadPlacementPage);
+const PlacementRoute = import.meta.env.PROD
+  ? StartPageEntry
+  : lazyNavigableRoute(loadPlacementPage);
 
 const placementRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: surfacePath('placement'),
+  beforeLoad: startOnboardingBeforeLoad,
   component: PlacementRoute,
 });
 

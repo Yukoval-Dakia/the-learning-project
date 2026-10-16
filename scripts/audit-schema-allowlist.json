@@ -249,46 +249,6 @@
       "expected_by": "2026-11-15"
     }
   },
-  "knowledge_edge.from_knowledge_id": {
-    "reason": "knowledge_edge CRUD in Step 6 /api/knowledge/edges and Step 7 AI propose-edge branch | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "Phase 1c.1 Step 6 /api/knowledge/edges + Step 7 AI propose implemented",
-      "expected_by": "2026-10-15"
-    }
-  },
-  "knowledge_edge.to_knowledge_id": {
-    "reason": "Same as knowledge_edge.from_knowledge_id | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "Phase 1c.1 Step 6 /api/knowledge/edges + Step 7 AI propose implemented",
-      "expected_by": "2026-10-15"
-    }
-  },
-  "knowledge_edge.relation_type": {
-    "reason": "Same as knowledge_edge.from_knowledge_id | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "Phase 1c.1 Step 6 /api/knowledge/edges + Step 7 AI propose implemented",
-      "expected_by": "2026-10-15"
-    }
-  },
-  "knowledge_edge.weight": {
-    "reason": "Same as knowledge_edge.from_knowledge_id | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "Phase 1c.1 Step 6 /api/knowledge/edges + Step 7 AI propose implemented",
-      "expected_by": "2026-10-15"
-    }
-  },
-  "knowledge_edge.created_by": {
-    "reason": "Same as knowledge_edge.from_knowledge_id | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "Phase 1c.1 Step 6 /api/knowledge/edges + Step 7 AI propose implemented",
-      "expected_by": "2026-10-15"
-    }
-  },
   "_comment_b1_w1_soft_track": "B1-W1 (ADR-0035) soft-track columns. n=1 (single learner) makes the cohort-structured IRT/CDM/KT parameters STRUCTURALLY non-estimable — this is a ceiling of the single-learner regime (Stocking 1990 / B1 foundation §6.3), NOT a 'write path not built yet' gap. They NEVER feed p(L)/scheduling (ADR-0035 决定 #4). kind:'manual' because the Wave 2 phase is not yet named in docs/superpowers/status.md (a kind:'phase' entry would fail the phase-match check). NOTE (YUK-348): item_calibration.kt_json is NO LONGER allowlisted — it now has an UPDATE write path via src/server/mastery/kt-calibration.ts applyKtEstimate (BKT forward sink, prior-echo at n=1), so audit:schema sees it as update-only (non-stub). It remains a PURE PERSISTENCE SINK with ZERO downstream consumer — having a write path does NOT soften 决定 #4. The other 5 columns (irt_a/irt_c/cdm_json + the 2 mastery_state columns) stay NULL + allowlisted.",
   "mastery_state.calibration_residual": {
     "reason": "Rechecked 2026-10-11 at main 755297781: no production producer exists; migration/capture.ts is a read and rehearsal/corpus.ts writes only fixture null. YUK-1470 / ADR-0070 D3-D6 owns sealed-prediction/outcome reconciliation and calibration. The ADR does not require reusing this legacy column. Preserve current mastery/calibration semantics; no borrowed signal or placeholder writer. 2026-10-18 is a review date, not a promised delivery date.",
