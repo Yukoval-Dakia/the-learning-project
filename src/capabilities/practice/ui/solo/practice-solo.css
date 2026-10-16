@@ -1,0 +1,1127 @@
+/* YUK-1473 — the single-question practice page, layout 「纸面」 (owner 2026-10-16). Scoped under
+   [data-ui-next]; semantic --un- tokens only (T1).
+   The question and the answer read as one sheet of paper: the question number in a left gutter,
+   each answer written right under its own question on ruled lines (no box; it grows as you
+   write), choices as lines of the sheet, a small glass action bar floating at the bottom of the
+   screen while answering (a floating layer, T3), then the result and a quiet timeline of earlier
+   attempts at the end of the same sheet.
+   Layers (T3, T7): page → sheet (flat, no shadow) → sticky glass bar → selection bubble →
+   hint drawer → figure zoom. --un-ps-top / --un-ps-bottom: the retained shell's sticky top bar and
+   phone tab bar (transitional; measured by the page). */
+
+[data-ui-next].un-ps-root {
+  color: var(--un-text-1);
+}
+
+[data-ui-next] .un-ps {
+  /* Width of the number column: question square and part rings line up in it. */
+  --un-ps-no: 26px;
+  --un-ps-gutter: calc(var(--un-ps-no) + var(--un-sp-3));
+  /* One written line in an answer field. */
+  --un-ps-line: 34px;
+
+  padding: var(--un-sp-2) 0 var(--un-sp-7);
+}
+
+[data-ui-next] .un-ps-column {
+  display: grid;
+  gap: var(--un-sp-5);
+  max-width: 820px;
+  margin: 0 auto;
+}
+
+/* ── Banner (R2): the way back and the help on one line, then eyebrow, title, chips ── */
+[data-ui-next] .un-ps-banner {
+  display: grid;
+  gap: var(--un-sp-2);
+  justify-items: start;
+  min-width: 0;
+}
+[data-ui-next] .un-ps-banner-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--un-sp-2);
+  width: 100%;
+  margin-bottom: var(--un-sp-1);
+}
+[data-ui-next] .un-ps-back {
+  gap: var(--un-sp-1);
+  margin-left: calc(-1 * var(--un-sp-2));
+  color: var(--un-text-3);
+}
+[data-ui-next] .un-ps-help {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--un-sp-2);
+}
+[data-ui-next] .un-ps-help .un-btn {
+  gap: 6px;
+}
+[data-ui-next] .un-ps-eyebrow {
+  margin: 0;
+  font-size: var(--un-fs-1);
+  color: var(--un-text-3);
+}
+[data-ui-next] .un-ps-title {
+  margin: 0;
+  font-family: var(--un-font-serif);
+  font-size: var(--un-fs-5);
+  font-weight: var(--un-fw-regular);
+  line-height: var(--un-lh-tight);
+  letter-spacing: var(--un-ls-tight);
+  text-wrap: balance;
+}
+[data-ui-next] .un-ps-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--un-sp-1);
+}
+
+/* ── The sheet ── */
+[data-ui-next] .un-ps-sheet {
+  display: grid;
+  gap: var(--un-sp-5);
+  padding: var(--un-sp-5) var(--un-sp-6) var(--un-sp-5) var(--un-sp-5);
+  border-radius: var(--un-r-2);
+  background: var(--un-bg-raised);
+  box-shadow: 0 0 0 var(--un-hairline) var(--un-line);
+}
+
+/* The stem, with the question square in the gutter. */
+[data-ui-next] .un-ps-sheet-q {
+  display: grid;
+  grid-template-columns: var(--un-ps-no) minmax(0, 1fr) auto;
+  column-gap: var(--un-sp-3);
+  align-items: baseline;
+}
+
+/* Everything written sits under the text, in the same column as the question words. */
+[data-ui-next] .un-ps-sheet > .un-ps-write,
+[data-ui-next] .un-ps-sheet > .un-ps-extras,
+[data-ui-next] .un-ps-sheet > .un-ps-indent,
+[data-ui-next] .un-ps-sheet > .un-ps-sheet-result,
+[data-ui-next] .un-ps-sheet > .un-ps-section {
+  margin-left: var(--un-ps-gutter);
+}
+
+/* Worksheet numbering (owner 2026-10-11 16:44): a filled coral square for the question, a thin
+   coral ring for each part; the same numbers as the question text. */
+[data-ui-next] .un-ps-mainno {
+  display: inline-grid;
+  place-items: center;
+  min-width: var(--un-ps-no);
+  height: var(--un-ps-no);
+  padding: 0 6px;
+  box-sizing: border-box;
+  border-radius: 7px;
+  background: var(--un-accent-strong);
+  color: var(--un-text-on-accent);
+  font-size: var(--un-fs-1);
+  font-weight: var(--un-fw-semibold);
+  line-height: 1;
+}
+[data-ui-next] .un-ps-ring {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin: 3px 2px 0;
+  box-sizing: border-box;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1.5px var(--un-accent);
+  color: var(--un-accent-ink);
+  font-size: 12px;
+  font-weight: var(--un-fw-semibold);
+  line-height: 1;
+}
+
+/* ── Question: the stem in reading measure; a lone figure floats beside it ── */
+[data-ui-next] .un-ps-stem {
+  display: flow-root;
+  min-width: 0;
+}
+[data-ui-next] .un-ps-figures {
+  display: grid;
+  gap: var(--un-sp-4);
+}
+[data-ui-next] .un-ps-stem[data-lone] > .un-ps-figures {
+  float: right;
+  width: 42%;
+  max-width: 300px;
+  margin: 0 0 var(--un-sp-3) var(--un-sp-5);
+}
+[data-ui-next] .un-ps-stem:not([data-lone]) > .un-ps-figures {
+  margin-top: var(--un-sp-4);
+}
+/* A shared stem given as a material starts the stem, so it needs no gap above it. */
+[data-ui-next] .un-ps-stem:not([data-lone]) > .un-ps-figures:first-child {
+  margin-top: 0;
+}
+[data-ui-next] .un-ps-faces {
+  display: grid;
+  gap: var(--un-sp-3);
+}
+[data-ui-next] .un-ps-face {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--un-sp-2);
+  align-items: baseline;
+}
+[data-ui-next] .un-ps-face-no {
+  font-size: var(--un-fs-3);
+  color: var(--un-text-3);
+}
+[data-ui-next] .un-ps-prose {
+  font-size: var(--un-fs-3);
+  line-height: var(--un-lh-prose);
+  color: var(--un-text-1);
+  overflow-wrap: anywhere;
+}
+[data-ui-next] .un-ps-prose p {
+  margin: 0 0 var(--un-sp-3);
+}
+[data-ui-next] .un-ps-prose p:last-child {
+  margin-bottom: 0;
+}
+[data-ui-next] .un-ps-prose img {
+  max-width: 100%;
+  height: auto;
+}
+[data-ui-next] .un-ps-prose table,
+[data-ui-next] .un-ps-prose pre {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+[data-ui-next] .un-ps-prose ul,
+[data-ui-next] .un-ps-prose ol {
+  margin: 0 0 var(--un-sp-3);
+  padding-left: 1.4em;
+}
+[data-ui-next] .un-ps-prose ul {
+  list-style: disc;
+}
+[data-ui-next] .un-ps-prose ol {
+  list-style: decimal;
+}
+/* R7: inline formulas do not break; display formulas get block spacing for KaTeX struts. */
+[data-ui-next] .un-ps-prose .katex {
+  white-space: nowrap;
+}
+[data-ui-next] .un-ps-prose .katex-display {
+  margin: var(--un-sp-3) 0;
+  padding: 0.2em 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+[data-ui-next] .un-ps-figure {
+  display: grid;
+  gap: var(--un-sp-2);
+  margin: 0;
+}
+[data-ui-next] .un-ps-figure img {
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--un-r-1);
+}
+[data-ui-next] .un-ps-figure-zoom {
+  position: relative;
+  display: block;
+  padding: 0;
+  border-radius: var(--un-r-1);
+  cursor: zoom-in;
+}
+[data-ui-next] .un-ps-figure-zoom img {
+  display: block;
+}
+[data-ui-next] .un-ps-figure-hint {
+  position: absolute;
+  right: var(--un-sp-2);
+  bottom: var(--un-sp-2);
+  padding: 0 var(--un-sp-2);
+  border-radius: var(--un-r-3);
+  background: var(--un-bg-raised);
+  color: var(--un-text-2);
+  font-size: var(--un-fs-1);
+  opacity: 0;
+  transition: opacity var(--un-t-small) var(--un-ease-glide);
+}
+[data-ui-next] .un-ps-figure-zoom:hover .un-ps-figure-hint,
+[data-ui-next] .un-ps-figure-zoom:focus-visible .un-ps-figure-hint {
+  opacity: 1;
+}
+@media (pointer: coarse) {
+  [data-ui-next] .un-ps-figure-hint {
+    opacity: 1;
+  }
+}
+[data-ui-next] .un-ps-figure figcaption {
+  font-size: var(--un-fs-1);
+  color: var(--un-text-3);
+}
+
+/* The small 「引用到学习伙伴」 button stays quiet until hovered or focused. */
+[data-ui-next] .un-ps-quote-btn {
+  flex: none;
+  color: var(--un-text-4);
+}
+[data-ui-next] .un-ps-quote-btn:hover,
+[data-ui-next] .un-ps-quote-btn:focus-visible {
+  color: var(--un-accent-strong);
+}
+
+/* ── Parts: number, then the sub-question, then its own answer right under it ── */
+[data-ui-next] .un-ps-vparts {
+  display: grid;
+  gap: var(--un-sp-5);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+[data-ui-next] .un-ps-vpart {
+  display: grid;
+  grid-template-columns: var(--un-ps-no) minmax(0, 1fr) auto;
+  column-gap: var(--un-sp-3);
+  align-items: start;
+}
+[data-ui-next] .un-ps-vpart-body {
+  display: grid;
+  gap: var(--un-sp-3);
+  min-width: 0;
+}
+[data-ui-next] .un-ps-vpart-side {
+  display: flex;
+  align-items: center;
+  gap: var(--un-sp-2);
+  min-height: 28px;
+}
+[data-ui-next] .un-ps-vpart-side:empty {
+  display: none;
+}
+[data-ui-next] .un-ps-write {
+  display: grid;
+  gap: var(--un-sp-3);
+  min-width: 0;
+}
+[data-ui-next] .un-ps-extras {
+  display: grid;
+  gap: var(--un-sp-3);
+}
+[data-ui-next] .un-ps-extras > div:empty {
+  display: none;
+}
+
+/* ── The answer fields (the production response components, rs-*), in loft type. They lose their
+   old page look (double frames, mono labels, old tokens); the sheet owns the spacing. ── */
+[data-ui-next] .un-ps {
+  & .rs-slotfield,
+  & .rs-textwrap,
+  & .rs-opts {
+    margin-top: 0;
+  }
+  & .rs-slotfield-label {
+    margin-bottom: var(--un-sp-1);
+    font-family: var(--un-font-sans);
+    font-size: var(--un-fs-1);
+    letter-spacing: 0;
+    color: var(--un-text-3);
+  }
+
+  /* Ruled writing lines: a soft baseline under every line, carried along as the text grows.
+     Focus draws a coral margin line and warms the rules; no box appears. */
+  & .rs-textarea,
+  & .un-ps-textarea {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    min-height: calc(2 * var(--un-ps-line));
+    resize: none;
+    field-sizing: content;
+    padding: 0 var(--un-sp-1);
+    border: 0;
+    border-radius: 0;
+    background-color: transparent;
+    background-image: repeating-linear-gradient(
+      to bottom,
+      transparent 0,
+      transparent calc(var(--un-ps-line) - 1px),
+      var(--un-line-strong) calc(var(--un-ps-line) - 1px),
+      var(--un-line-strong) var(--un-ps-line)
+    );
+    background-attachment: local;
+    color: var(--un-text-1);
+    font-family: var(--un-font-sans);
+    font-size: var(--un-fs-3);
+    line-height: var(--un-ps-line);
+    transition:
+      background-color var(--un-t-small) var(--un-ease-glide),
+      box-shadow var(--un-t-small) var(--un-ease-glide);
+  }
+  & .un-ps-textarea {
+    font-size: var(--un-fs-2);
+  }
+  /* A number blank is one short line. */
+  & .rs-textarea[inputmode="decimal"] {
+    min-height: var(--un-ps-line);
+    max-width: 14em;
+  }
+  & .rs-textarea::placeholder,
+  & .un-ps-textarea::placeholder {
+    color: var(--un-text-4);
+  }
+  & .rs-textarea:hover:not(:disabled),
+  & .un-ps-textarea:hover {
+    background-color: color-mix(in srgb, var(--un-bg-hover) 60%, transparent);
+  }
+  & .rs-textarea:focus-visible,
+  & .un-ps-textarea:focus-visible {
+    outline: none;
+    background-color: color-mix(in srgb, var(--un-accent-soft) 45%, transparent);
+    background-image: repeating-linear-gradient(
+      to bottom,
+      transparent 0,
+      transparent calc(var(--un-ps-line) - 1.5px),
+      var(--un-accent) calc(var(--un-ps-line) - 1.5px),
+      var(--un-accent) var(--un-ps-line)
+    );
+    box-shadow: inset 2px 0 0 var(--un-accent-strong);
+  }
+  /* Handed in: the lines shrink to what was written. */
+  & .rs-textarea:disabled {
+    min-height: var(--un-ps-line);
+    color: var(--un-text-2);
+    -webkit-text-fill-color: var(--un-text-2);
+    background-image: repeating-linear-gradient(
+      to bottom,
+      transparent 0,
+      transparent calc(var(--un-ps-line) - 1px),
+      var(--un-line) calc(var(--un-ps-line) - 1px),
+      var(--un-line) var(--un-ps-line)
+    );
+  }
+  & .rs-preview {
+    border: 0;
+    border-radius: var(--un-r-1);
+    background: var(--un-bg-sunk);
+  }
+
+  /* Choices are lines of the sheet: the letter sits in a small ring; picking fills it. */
+  & .rs-opts {
+    gap: var(--un-sp-1);
+  }
+  & .rs-opt {
+    align-items: center;
+    gap: var(--un-sp-3);
+    margin-left: calc(-1 * var(--un-sp-3));
+    padding: var(--un-sp-2) var(--un-sp-3);
+    border: 0;
+    border-radius: var(--un-r-1);
+    background: transparent;
+    color: var(--un-text-1);
+    transition:
+      background-color var(--un-t-small) var(--un-ease-glide),
+      box-shadow var(--un-t-small) var(--un-ease-glide);
+  }
+  & .rs-opt:hover:not(:disabled) {
+    background: var(--un-bg-hover);
+  }
+  & .rs-opt.is-sel:hover:not(:disabled) {
+    background: var(--un-accent-soft);
+  }
+  & .rs-opt:focus-visible {
+    border: 0;
+    box-shadow: inset 0 0 0 1.5px var(--un-focus);
+  }
+  & .rs-opt-k {
+    display: inline-grid;
+    place-items: center;
+    flex: none;
+    width: 24px;
+    min-width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    box-shadow: inset 0 0 0 1.5px var(--un-line-strong);
+    font-family: var(--un-font-sans);
+    font-size: 12px;
+    font-weight: var(--un-fw-semibold);
+    color: var(--un-text-2);
+    transition:
+      background-color var(--un-t-small) var(--un-ease-glide),
+      box-shadow var(--un-t-small) var(--un-ease-glide),
+      color var(--un-t-small) var(--un-ease-glide);
+  }
+  & .rs-opt-t {
+    font-size: var(--un-fs-3);
+    line-height: var(--un-lh-prose);
+    color: var(--un-text-1);
+  }
+  & .rs-opt-t p {
+    margin: 0;
+  }
+  & .rs-opt-box {
+    border-color: var(--un-line-strong);
+  }
+  & .rs-opt.is-sel {
+    border: 0;
+    background: var(--un-accent-soft);
+    box-shadow: none;
+  }
+  & .rs-opt.is-sel .rs-opt-k {
+    background: var(--un-accent-strong);
+    box-shadow: none;
+    color: var(--un-text-on-accent);
+  }
+  & .rs-opt.is-sel .rs-opt-box {
+    border-color: var(--un-accent-strong);
+    background: var(--un-accent-strong);
+    color: var(--un-text-on-accent);
+  }
+  /* After judging, the picked option takes the result's colour (only then, §6.4). */
+  & .rs-opt.is-right {
+    border: 0;
+    background: var(--un-positive-soft);
+    box-shadow: none;
+  }
+  & .rs-opt.is-right .rs-opt-k {
+    background: var(--un-positive);
+    box-shadow: none;
+    color: var(--un-text-on-accent);
+  }
+  & .rs-opt.is-wrong {
+    border: 0;
+    background: var(--un-caution-soft);
+    box-shadow: none;
+  }
+  & .rs-opt.is-wrong .rs-opt-k {
+    box-shadow: inset 0 0 0 1.5px var(--un-caution);
+    color: var(--un-caution);
+  }
+  & .rs-clear {
+    font-family: var(--un-font-sans);
+    font-size: var(--un-fs-1);
+    color: var(--un-text-3);
+  }
+
+  /* Attachments: small thumbnails on a tint, no frame inside a frame. */
+  & .rs-attach {
+    margin-top: 0;
+  }
+  & .rs-attach-item {
+    border: 0;
+    border-radius: var(--un-r-1);
+    background: var(--un-bg-sunk);
+  }
+  & .rs-attach-thumb {
+    border: 0;
+  }
+  & .rs-attach-file,
+  & .rs-attach-bind {
+    font-family: var(--un-font-sans);
+    font-size: var(--un-fs-1);
+    color: var(--un-text-2);
+  }
+  & .rs-attach-x {
+    border: 0;
+    background: var(--un-bg-raised);
+    box-shadow: 0 0 0 var(--un-hairline) var(--un-line-strong);
+    color: var(--un-text-3);
+  }
+  & .rs-ev-pending {
+    font-size: var(--un-fs-1);
+  }
+
+  /* The save state is a quiet note, not a chip. */
+  & .rs-save {
+    gap: var(--un-sp-1);
+    font-family: var(--un-font-sans);
+    font-size: var(--un-fs-1);
+    color: var(--un-text-4);
+    white-space: nowrap;
+  }
+  & .rs-save.is-error,
+  & .rs-save.is-conflict {
+    color: var(--un-caution);
+  }
+  & button.rs-save {
+    padding: 0;
+    border: 0;
+    background: none;
+    cursor: pointer;
+  }
+}
+
+/* ── The floating action bar: glass, stuck to the bottom of the screen while answering, and
+   settled in its place once the sheet ends above the screen bottom. ── */
+[data-ui-next] .un-ps-bar {
+  position: sticky;
+  bottom: calc(var(--un-ps-bottom, 0px) + var(--un-sp-4));
+  z-index: var(--un-z-raised);
+  justify-self: start;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--un-sp-1) var(--un-sp-2);
+  max-width: 100%;
+  box-sizing: border-box;
+  margin-left: calc(var(--un-ps-gutter) - var(--un-sp-2));
+  padding: 6px var(--un-sp-3) 6px 6px;
+  border-radius: var(--un-r-3);
+}
+[data-ui-next] .un-ps-bar-main,
+[data-ui-next] .un-ps-bar-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--un-sp-1) var(--un-sp-2);
+}
+[data-ui-next] .un-ps-bar .un-btn-primary,
+[data-ui-next] .un-ps-bar-tools .un-btn {
+  border-radius: var(--un-r-3);
+}
+[data-ui-next] .un-ps-bar-tools .un-btn {
+  gap: 6px;
+  color: var(--un-text-2);
+}
+[data-ui-next] .un-ps-bar-tools .un-btn[data-on] {
+  background: var(--un-accent-soft);
+  color: var(--un-accent-ink);
+}
+[data-ui-next] .un-ps-submit {
+  min-width: 88px;
+}
+[data-ui-next] .un-ps-bar-save:empty {
+  display: none;
+}
+[data-ui-next] .un-ps-bar-save {
+  padding-left: var(--un-sp-2);
+  border-left: var(--un-hairline) solid var(--un-line);
+}
+/* Touch screens hide keyboard hints (N5). */
+@media (pointer: coarse) {
+  [data-ui-next] .un-ps-keys {
+    display: none;
+  }
+}
+
+/* ── Plain parts ── */
+[data-ui-next] .un-ps-hint {
+  margin: 0;
+  font-size: var(--un-fs-1);
+  color: var(--un-text-3);
+}
+[data-ui-next] .un-ps-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--un-sp-2) var(--un-sp-3);
+}
+[data-ui-next] .un-ps-actions-label {
+  font-size: var(--un-fs-2);
+  color: var(--un-text-2);
+}
+[data-ui-next] .un-ps-link {
+  padding: 0;
+  font-size: var(--un-fs-1);
+  color: var(--un-text-3);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: var(--un-line-strong);
+}
+[data-ui-next] .un-ps-link:hover {
+  color: var(--un-text-1);
+}
+[data-ui-next] .un-ps-h2 {
+  margin: 0;
+  font-size: var(--un-fs-1);
+  font-weight: var(--un-fw-medium);
+  color: var(--un-text-3);
+}
+[data-ui-next] .un-ps-section {
+  display: grid;
+  gap: var(--un-sp-2);
+}
+
+/* ── Result (R3): the judgment settles in place; status colour only on its chip ── */
+[data-ui-next] .un-ps-sheet-result {
+  display: grid;
+  gap: var(--un-sp-4);
+  padding-top: var(--un-sp-5);
+  border-top: var(--un-hairline) solid var(--un-line);
+}
+[data-ui-next] .un-ps-result {
+  display: grid;
+  gap: var(--un-sp-4);
+  justify-items: start;
+}
+[data-ui-next] .un-ps-result > .un-judgment,
+[data-ui-next] .un-ps-result > .un-expand {
+  justify-self: stretch;
+}
+[data-ui-next] .un-ps-judgment-body {
+  display: grid;
+  gap: var(--un-sp-3);
+  padding-top: var(--un-sp-2);
+}
+[data-ui-next] .un-ps-result-text {
+  margin: 0;
+  font-size: var(--un-fs-3);
+  line-height: var(--un-lh-prose);
+  color: var(--un-text-1);
+}
+[data-ui-next] .un-ps-reference {
+  display: grid;
+  gap: var(--un-sp-1);
+  padding-top: var(--un-sp-3);
+  border-top: var(--un-hairline) solid var(--un-line);
+}
+[data-ui-next] .un-ps-rate,
+[data-ui-next] .un-ps-scale {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--un-sp-2);
+}
+[data-ui-next] .un-ps-scale .un-btn {
+  min-width: var(--un-h-control-sm);
+}
+[data-ui-next] .un-ps-appeal {
+  display: grid;
+  gap: var(--un-sp-3);
+}
+[data-ui-next] .un-ps-appeal .un-ps-textarea {
+  min-height: calc(2 * var(--un-ps-line));
+}
+
+/* ── 作答记录: a quiet timeline at the end of the sheet (a hairline with one dot per entry) ── */
+[data-ui-next] .un-ps-history-section {
+  padding-top: var(--un-sp-4);
+  border-top: var(--un-hairline) dashed var(--un-line);
+}
+[data-ui-next] .un-ps-history {
+  position: relative;
+  display: grid;
+  gap: var(--un-sp-2);
+  margin: 0;
+  padding: 0 0 0 var(--un-sp-5);
+  list-style: none;
+}
+[data-ui-next] .un-ps-history::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 8px;
+  bottom: 8px;
+  width: var(--un-hairline);
+  background: var(--un-line-strong);
+}
+[data-ui-next] .un-ps-history li {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--un-sp-1) var(--un-sp-3);
+  font-size: var(--un-fs-1);
+}
+[data-ui-next] .un-ps-history-dot {
+  position: absolute;
+  left: calc(-1 * var(--un-sp-5));
+  top: 0.45em;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--un-bg-raised);
+  box-shadow: inset 0 0 0 1.5px var(--un-text-3);
+}
+[data-ui-next] .un-ps-history li[data-tone="positive"] .un-ps-history-dot {
+  box-shadow: inset 0 0 0 5px var(--un-positive);
+}
+[data-ui-next] .un-ps-history li[data-tone="caution"] .un-ps-history-dot {
+  box-shadow: inset 0 0 0 1.5px var(--un-caution);
+}
+[data-ui-next] .un-ps-history-day {
+  min-width: 3.5em;
+  color: var(--un-text-4);
+  font-variant-numeric: tabular-nums;
+}
+[data-ui-next] .un-ps-history li[data-tone="positive"] .un-ps-history-outcome {
+  color: var(--un-positive);
+}
+[data-ui-next] .un-ps-history li[data-tone="caution"] .un-ps-history-outcome {
+  color: var(--un-caution);
+}
+[data-ui-next] .un-ps-history-cause {
+  color: var(--un-text-2);
+}
+/* The same cause again: stuck on the same misconception (YUK-617). Caution, never critical (R4). */
+[data-ui-next] .un-ps-history-cause[data-repeated] {
+  color: var(--un-caution);
+  font-weight: var(--un-fw-medium);
+}
+
+/* ── Draft conflict (YUK-1489): a soft caution strip on the sheet with both versions ── */
+[data-ui-next] .un-ps-conflict {
+  display: grid;
+  gap: var(--un-sp-3);
+  padding: var(--un-sp-4);
+  border-radius: var(--un-r-2);
+  background: var(--un-caution-soft);
+}
+[data-ui-next] .un-ps-conflict-msg {
+  display: flex;
+  gap: var(--un-sp-2);
+  align-items: flex-start;
+  margin: 0;
+  font-size: var(--un-fs-2);
+  line-height: var(--un-lh-ui);
+  color: var(--un-text-1);
+}
+[data-ui-next] .un-ps-conflict-ico {
+  flex: none;
+  margin-top: 3px;
+  color: var(--un-caution);
+}
+[data-ui-next] .un-ps-conflict-cmp {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--un-sp-3);
+}
+[data-ui-next] .un-ps-conflict-side {
+  display: grid;
+  align-content: start;
+  gap: var(--un-sp-1);
+  min-width: 0;
+  padding: var(--un-sp-3);
+  border-radius: var(--un-r-1);
+  background: var(--un-bg-raised);
+}
+[data-ui-next] .un-ps-conflict-text {
+  margin: 0;
+  max-height: 9em;
+  overflow: auto;
+  font-size: var(--un-fs-2);
+  line-height: var(--un-lh-ui);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+[data-ui-next] .un-ps-conflict-text[data-empty] {
+  color: var(--un-text-4);
+}
+
+/* ── States: same shape as the content they stand in for (M14) ── */
+[data-ui-next] .un-ps-state {
+  display: grid;
+  gap: var(--un-sp-4);
+  margin: 0;
+  padding: var(--un-sp-5);
+  border-radius: var(--un-r-2);
+  box-shadow: 0 0 0 var(--un-hairline) var(--un-line);
+  color: var(--un-text-2);
+}
+[data-ui-next] .un-ps-skeleton {
+  display: grid;
+  gap: var(--un-sp-3);
+  padding: var(--un-sp-5);
+  border-radius: var(--un-r-2);
+  background: var(--un-bg-raised);
+  box-shadow: 0 0 0 var(--un-hairline) var(--un-line);
+}
+[data-ui-next] .un-ps-skeleton span {
+  display: block;
+  height: 1.1em;
+  border-radius: var(--un-r-1);
+  background: var(--un-bg-sunk);
+}
+[data-ui-next] .un-ps-skeleton span:nth-child(2) {
+  width: 86%;
+}
+[data-ui-next] .un-ps-skeleton span:nth-child(3) {
+  width: 92%;
+}
+[data-ui-next] .un-ps-skeleton .un-ps-skel-h {
+  width: var(--un-ps-no);
+  height: var(--un-ps-no);
+}
+[data-ui-next] .un-ps-skeleton .un-ps-skel-short {
+  width: 58%;
+}
+[data-ui-next] .un-ps-skeleton .un-ps-skel-box {
+  height: calc(3 * var(--un-ps-line));
+  margin-top: var(--un-sp-3);
+}
+
+/* ── R9: passage pinned left with its own scroll, questions right; never stacked on desktop ── */
+[data-ui-next] .un-ps-column-wide {
+  max-width: 1240px;
+}
+[data-ui-next] .un-ps-column-wide > .un-ps-banner {
+  max-width: 820px;
+}
+[data-ui-next] .un-ps-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--un-sp-6);
+  align-items: start;
+}
+[data-ui-next] .un-ps-pane-switch {
+  display: none;
+}
+[data-ui-next] .un-ps-passage {
+  position: sticky;
+  top: calc(var(--un-ps-top, 0px) + var(--un-sp-4));
+  max-height: calc(100dvh - var(--un-ps-top, 0px) - 2 * var(--un-sp-4));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: grid;
+  gap: var(--un-sp-5);
+  padding: var(--un-sp-5);
+  border-radius: var(--un-r-2);
+  background: var(--un-bg-raised);
+  box-shadow: 0 0 0 var(--un-hairline) var(--un-line);
+}
+[data-ui-next] .un-ps-passage-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--un-sp-3);
+}
+[data-ui-next] .un-ps-passage-title {
+  margin: 0;
+  font-family: var(--un-font-serif);
+  font-size: var(--un-fs-3);
+  font-weight: var(--un-fw-medium);
+}
+[data-ui-next] .un-ps-questions {
+  min-width: 0;
+}
+
+/* ── Selection bubble (R6, M6): glass, just above the selection (T3, T7 bubble) ── */
+[data-ui-next] .un-ps-quote-bubble {
+  position: fixed;
+  z-index: var(--un-z-bubble);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--un-sp-1);
+  height: var(--un-h-control-sm);
+  padding: 0 var(--un-sp-3);
+  border-radius: var(--un-r-3);
+  color: var(--un-text-1);
+  font-size: var(--un-fs-1);
+  font-weight: var(--un-fw-medium);
+  white-space: nowrap;
+  transform: translate(-50%, -100%);
+}
+[data-ui-next] .un-ps-quote-bubble[data-below] {
+  transform: translate(-50%, 0);
+}
+[data-ui-next] .un-ps-quote-bubble:hover {
+  color: var(--un-accent-ink);
+}
+
+/* ── Hint drawer (解题提示): from the right (from the bottom on phones), solid raised surface
+   with the float shadow, on the drawer layer (T7: 40) ── */
+[data-ui-next] .un-ps-coach-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--un-z-sheet);
+  padding: 0;
+  background: var(--un-scrim);
+  cursor: default;
+}
+[data-ui-next] .un-ps-coach {
+  position: fixed;
+  top: var(--un-sp-3);
+  right: var(--un-sp-3);
+  bottom: var(--un-sp-3);
+  z-index: var(--un-z-sheet);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: min(420px, calc(100vw - 2 * var(--un-sp-3)));
+  border-radius: var(--un-r-2);
+  background: var(--un-bg-raised);
+  box-shadow: var(--un-shadow-float);
+  opacity: 0;
+  visibility: hidden;
+  transform: translateX(calc(100% + var(--un-sp-4)));
+  transition:
+    transform var(--un-t-panel) var(--un-ease-glide),
+    opacity var(--un-t-ui) var(--un-ease-glide),
+    visibility 0s linear var(--un-t-panel);
+}
+[data-ui-next] .un-ps-coach[data-open] {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  transition:
+    transform var(--un-t-panel) var(--un-ease-glide),
+    opacity var(--un-t-ui) var(--un-ease-glide),
+    visibility 0s;
+}
+[data-ui-next] .un-ps-coach-head {
+  display: flex;
+  align-items: center;
+  gap: var(--un-sp-2);
+  padding: var(--un-sp-2) var(--un-sp-2) var(--un-sp-2) var(--un-sp-4);
+  border-bottom: var(--un-hairline) solid var(--un-line);
+}
+[data-ui-next] .un-ps-coach-icon {
+  flex: none;
+  color: var(--un-accent-strong);
+}
+[data-ui-next] .un-ps-coach-title {
+  font-weight: var(--un-fw-semibold);
+}
+[data-ui-next] .un-ps-coach-close {
+  margin-left: auto;
+  color: var(--un-text-3);
+}
+[data-ui-next] .un-ps-coach-body {
+  display: grid;
+  align-content: start;
+  gap: var(--un-sp-3);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--un-sp-4);
+}
+
+/* ── Figure zoom: a glass floating layer (T3), modal, at the palette level (T7) ── */
+[data-ui-next] .un-ps-lightbox-layer {
+  position: fixed;
+  inset: 0;
+  z-index: var(--un-z-palette);
+  display: grid;
+  place-items: center;
+  padding: var(--un-sp-5);
+}
+[data-ui-next] .un-ps-lightbox-scrim {
+  position: absolute;
+  inset: 0;
+  padding: 0;
+  background: var(--un-scrim);
+  cursor: zoom-out;
+}
+[data-ui-next] .un-ps-lightbox {
+  position: relative;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  max-width: min(1080px, 94vw);
+  max-height: 90dvh;
+  overflow: hidden;
+  border-radius: var(--un-r-2);
+}
+[data-ui-next] .un-ps-lightbox-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--un-sp-3);
+  padding: var(--un-sp-2) var(--un-sp-2) var(--un-sp-2) var(--un-sp-4);
+  border-bottom: var(--un-hairline) solid var(--un-line);
+}
+[data-ui-next] .un-ps-lightbox-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--un-fs-1);
+  color: var(--un-text-2);
+}
+[data-ui-next] .un-ps-lightbox-body {
+  display: grid;
+  place-items: center;
+  overflow: auto;
+  padding: var(--un-sp-4);
+}
+[data-ui-next] .un-ps-lightbox-body img {
+  max-width: 100%;
+  max-height: 78dvh;
+  border-radius: var(--un-r-1);
+}
+
+/* The page rises in once when a question opens (M1: motion only on change). */
+@media (prefers-reduced-motion: no-preference) {
+  [data-ui-next] .un-ps-body {
+    animation: un-page-in var(--un-t-panel) var(--un-ease-glide) both;
+  }
+}
+
+/* Medium widths: a little less paper margin. */
+@media (min-width: 721px) and (max-width: 1100px) {
+  [data-ui-next] .un-ps-sheet {
+    padding: var(--un-sp-5);
+  }
+}
+
+/* ── Phone (T8: ≤ 720px): the sheet runs to the screen edges; the bar floats above the shell's
+   tab bar; the passage is one tap away instead of stacked (R9 phone form undecided, §11). ── */
+@media (max-width: 720px) {
+  [data-ui-next] .un-ps {
+    --un-ps-no: 24px;
+    --un-ps-gutter: calc(var(--un-ps-no) + var(--un-sp-2));
+    padding-top: 0;
+  }
+  [data-ui-next] .un-ps-column {
+    gap: var(--un-sp-4);
+  }
+  [data-ui-next] .un-ps-title {
+    font-size: var(--un-fs-4);
+  }
+  [data-ui-next] .un-ps-sheet {
+    gap: var(--un-sp-4);
+    margin: 0 calc(-1 * var(--un-sp-2));
+    padding: var(--un-sp-5) var(--un-sp-4) var(--un-sp-5) var(--un-sp-3);
+  }
+  [data-ui-next] .un-ps-sheet-q,
+  [data-ui-next] .un-ps-vpart {
+    column-gap: var(--un-sp-2);
+  }
+  [data-ui-next] .un-ps-stem[data-lone] > .un-ps-figures {
+    float: none;
+    width: auto;
+    max-width: none;
+    margin: 0 0 var(--un-sp-4);
+  }
+  [data-ui-next] .un-ps-bar {
+    bottom: calc(var(--un-ps-bottom, 0px) + var(--un-sp-2));
+    justify-self: stretch;
+    justify-content: space-between;
+    margin-left: 0;
+  }
+  /* No room for the calm 「已保存」 on a phone; a failed save still shows. */
+  [data-ui-next] .un-ps-bar-save:has(.rs-save:not(.is-error, .is-conflict)) {
+    display: none;
+  }
+  [data-ui-next] .un-ps-conflict-cmp {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  [data-ui-next] .un-ps-split {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--un-sp-4);
+  }
+  [data-ui-next] .un-ps-pane-switch {
+    position: sticky;
+    top: var(--un-ps-top, 0px);
+    z-index: var(--un-z-raised);
+    display: block;
+    padding: var(--un-sp-2) 0;
+    background: var(--un-bg);
+  }
+  [data-ui-next] .un-ps-split[data-pane="questions"] .un-ps-passage,
+  [data-ui-next] .un-ps-split[data-pane="passage"] .un-ps-questions {
+    display: none;
+  }
+  [data-ui-next] .un-ps-passage {
+    position: static;
+    max-height: none;
+    padding: var(--un-sp-4);
+  }
+  [data-ui-next] .un-ps-coach {
+    top: auto;
+    left: var(--un-sp-2);
+    right: var(--un-sp-2);
+    bottom: var(--un-sp-2);
+    width: auto;
+    max-height: 85dvh;
+    transform: translateY(calc(100% + var(--un-sp-4)));
+  }
+}

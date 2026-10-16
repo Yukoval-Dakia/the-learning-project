@@ -49,6 +49,10 @@ export interface EvidenceComposerProps {
    * （含失败/异常）时各报一次。
    */
   onUploadingChange?: (uploading: boolean) => void;
+  /** id of the hidden file input, so a host control elsewhere on the page can open it. */
+  inputId?: string;
+  /** false: the host draws its own 「添加附件」 control (it clicks `inputId`). Default true. */
+  showAddButton?: boolean;
 }
 
 export function EvidenceComposer({
@@ -67,6 +71,8 @@ export function EvidenceComposer({
   accept = EVIDENCE_ACCEPT,
   uploadErrorMessage = '部分附件上传失败，请重试',
   onUploadingChange,
+  inputId,
+  showAddButton = true,
 }: EvidenceComposerProps) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
@@ -150,25 +156,29 @@ export function EvidenceComposer({
         slotLabels={slotLabels}
       />
       {!disabled && (
-        <div style={{ marginTop: 'var(--s-3)' }}>
+        <div style={showAddButton ? { marginTop: 'var(--s-3)' } : undefined}>
           <input
             ref={fileRef}
+            id={inputId}
             type="file"
             accept={accept}
             multiple
             className="visually-hidden"
             aria-label="添加附件"
+            tabIndex={showAddButton ? undefined : -1}
             onChange={(e) => void onFiles(e.target.files)}
           />
-          <button
-            type="button"
-            className="rs-attach-addbtn btn btn-ghost btn-sm"
-            disabled={uploading}
-            onClick={() => fileRef.current?.click()}
-          >
-            <LoomIcon name="camera" size={14} />
-            {uploading ? '上传中…' : '添加附件'}
-          </button>
+          {showAddButton && (
+            <button
+              type="button"
+              className="rs-attach-addbtn btn btn-ghost btn-sm"
+              disabled={uploading}
+              onClick={() => fileRef.current?.click()}
+            >
+              <LoomIcon name="camera" size={14} />
+              {uploading ? '上传中…' : '添加附件'}
+            </button>
+          )}
         </div>
       )}
       {uploadError && (

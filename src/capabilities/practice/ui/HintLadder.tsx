@@ -2,7 +2,7 @@
 //
 // 形态 PORT 自 docs/design/loom-refresh/project/screen-hint-ladder.jsx（`.ladder-*` 视觉）
 // + data-hint-ladder.jsx（阶语义），用项目原语（LoomIcon）+ 真 solve/hint API 重建状态机，
-// 不引设计源的 window 全局 / demo 模拟。落在既有 PfCoach 抽屉 body 内（PfSolo.tsx）。
+// 不引设计源的 window 全局 / demo 模拟。落在做题页的解题提示抽屉 body 内（solo/SoloCoach.tsx）。
 //
 // 强度梯映射：H0-H4 = 既有 solveHint(question.id, sid, stageIdx)（hint_index 0-4，单调 +1
 // 推进，与旧流 hints.length 递增同序 → 后端行为零变更）；H5 完整解 = question.reference_md
@@ -30,7 +30,7 @@ import {
 import type { QuestionDetail } from './practice-api';
 import { solveHint, solveStart } from './practice-api';
 
-// 每次打开解题会话都是干净起点：宿主（PfCoach）按「第几次打开」给本组件 key，重开即
+// 每次打开解题会话都是干净起点：宿主（SoloCoach）按「第几次打开」给本组件 key，重开即
 // 重挂（YUK-1483，取代旧的 open-reset effect）。上一会话还在途的提示请求只会落到已卸载
 // 的旧实例上，不会把旧提示或完整解带进新会话；挂载本身不发任何请求。
 export function HintLadder({

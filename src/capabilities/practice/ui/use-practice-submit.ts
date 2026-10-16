@@ -1,10 +1,11 @@
 // YUK-1473 — the practice submission engine, shared by every view of one stream item.
-// Extracted unchanged from PfSolo (YUK-1483/1484/1485/1487/1489); PfSolo is now a view on
-// top of it. The hook owns everything that is not drawing: the issuance command, the
-// draft and its restore, autosave (conflict hold, keepalive pagehide flush), the draft
+// Extracted unchanged from the old PfSolo view (YUK-1483/1484/1485/1487/1489). Its view is now
+// the practice page (solo/PracticeSolo.tsx); PfPaper shares only buildCaptureFields and
+// shouldOfferProcessBox. The hook owns everything that is not drawing: the issuance command,
+// the draft and its restore, autosave (conflict hold, keepalive pagehide flush), the draft
 // conflict choice, 「返回流」 with its 8s cap, judge/submit/appeal, the 202-pending poll,
-// the self-rated mode, and the answering root's window listeners. A view renders from the
-// returned state and wires the returned actions and ref callbacks; it never re-implements
+// the self-rated mode, and two window listeners owned by ref callbacks. A view renders from
+// the returned state and wires the returned actions and ref callbacks; it never re-implements
 // any of them.
 
 import { useQuery } from '@tanstack/react-query';
@@ -296,6 +297,50 @@ export type DraftConflict =
       submitted: boolean;
     };
 
+/** One side of a draft conflict, in the learner's words. */
+export interface DraftSummary {
+  text: string;
+  files: readonly string[];
+}
+
+/** YUK-1489 — what the conflict panel shows, and its choices. */
+export interface PracticeDraftConflictView {
+  conflict: DraftConflict;
+  mine: DraftSummary;
+  server: (DraftSummary & { savedAt: string | null }) | null;
+  /** 「用服务器上的」 / 「载入交过的作答」. */
+  keepServer: () => void;
+  /** 「保留我的」 (not offered once the server holds a submitted answer). */
+  keepMine: () => void;
+  /** 「再读一次」 after the server's version could not be read. */
+  reload: () => void;
+}
+
+/** YUK-1484 — the issuance command's state for one visit, as a view renders it. */
+export type PracticeIssuance =
+  | {
+      /** Render a placeholder whose ref is `attach`; its attach runs the command once. */
+      status: 'pending';
+      attach: (node: HTMLElement | null) => (() => void) | undefined;
+    }
+  | {
+      status: 'failed';
+      error: unknown;
+      /** 「重试」: bring the placeholder back (read first, POST only on 404). */
+      retry: () => void;
+      /** 「按自行评级练习」 for a question that is not admitted for auto-scoring. */
+      startSelfRated: () => void;
+    }
+  | {
+      status: 'ready';
+      id: string;
+      mode: IssuanceMode;
+      frozen: NonNullable<IssuanceState['practice_dto']>;
+      accepted: IssuanceState['submissions'][number] | undefined;
+      /** The issuance's stored answer has been restored; answer fields may render. */
+      restored: boolean;
+    };
+
 // Waits up to `ms` for a save; false when it failed, conflicted or did not answer in time.
 function settleWithin(save: Promise<boolean>, ms: number): Promise<boolean> {
   return new Promise((resolve) => {
@@ -421,7 +466,7 @@ export function usePracticeSubmit({
     error: unknown;
   } | null>(null);
   const attachIssuance = useCallback(
-    (node: HTMLParagraphElement | null) => {
+    (node: HTMLElement | null) => {
       if (!node || !q) return undefined;
       const mode = issuanceMode;
       const key = `${issuanceId}:${mode}`;
@@ -1055,10 +1100,11 @@ export function usePracticeSubmit({
 
   // 键盘：⌘/Ctrl+Enter 提交。选项数字键（1–9，随选项数）已移进 ChoiceSetResponse 的
   // hotkeys（YUK-1051 组件族一般化，不再硬编码 1–4）；这里不再重复监听。
-  // YUK-1483：监听仍挂在 window（文本框里和题面上都能按），但归作答面根节点所有——
-  // 节点挂上才监听、卸下即摘；每次提交 React 摘旧挂新，回调读的是本次提交的 phase/coach。
-  // 重复按键不会重复提交：runJudge 已有 judging/canSubmit 互斥。
-  const attachSubmitHotkey = (node: HTMLDivElement | null) => {
+  // YUK-1483：监听挂在 window（文本框里和题面上都能按），但归一个 DOM 节点所有——节点挂上才监听、
+  // 卸下即摘；每次提交 React 摘旧挂新，回调读的是本次提交的 phase/hotkeysSuspended。
+  // YUK-1473：与 pagehide 落盘分开——视图把它挂在只在作答时存在的节点上（作答操作栏），
+  // pagehide 则挂在整个作答面的根上。重复按键不会重复提交：runJudge 已有 judging/canSubmit 互斥。
+  const attachSubmitHotkey = (node: HTMLElement | null) => {
     if (!node) return undefined;
     const onKey = (e: KeyboardEvent) => {
       if (phase !== 'answering' || hotkeysSuspended) return;
@@ -1070,16 +1116,6 @@ export function usePracticeSubmit({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   };
-  // The answering root owns both window listeners: the submit hotkey and the pagehide flush.
-  const attachAnsweringRoot = (node: HTMLDivElement | null) => {
-    const detachHotkey = attachSubmitHotkey(node);
-    const detachPagehide = attachPagehide(node);
-    if (!node) return undefined;
-    return () => {
-      detachHotkey?.();
-      detachPagehide?.();
-    };
-  };
 
   // 「自己评一下」 from an unsupported verdict: back to answering in self-rated mode.
   const startSelfRate = () => {
@@ -1090,14 +1126,34 @@ export function usePracticeSubmit({
     // Back to answering (self-rated): unsaved edits resume autosaving.
     autosave.resume();
   };
-  // Issuance error view: 「按自行评级练习」 re-issues in self-rated mode; 「重试」 brings back the
-  // issuance placeholder, whose attach re-runs the command (read first, POST only on 404;
-  // the failed request was already dropped).
-  const startSelfRatedIssuance = () => setIssuanceMode('manual');
-  const retryIssuance = () => setIssuance(null);
 
-  // YUK-1489 — the conflict panel's two sides, in the learner's words.
-  const conflictView = draftConflict
+  // YUK-1484 — the issuance as a view sees it. Only the pending state carries the attach ref, so
+  // the command can only run from the placeholder that stands in for an unsettled issuance.
+  // 「按自行评级练习」 re-issues in self-rated mode; 「重试」 brings the placeholder back, whose
+  // attach re-runs the command (read first, POST only on 404; the failed request was dropped).
+  let issuanceView: PracticeIssuance;
+  if (!issued) {
+    issuanceView = { status: 'pending', attach: attachIssuance };
+  } else if (issued.error || !frozen) {
+    issuanceView = {
+      status: 'failed',
+      error: issued.error,
+      retry: () => setIssuance(null),
+      startSelfRated: () => setIssuanceMode('manual'),
+    };
+  } else {
+    issuanceView = {
+      status: 'ready',
+      id: issuanceId,
+      mode: issuanceMode,
+      frozen,
+      accepted,
+      restored: restoredIssuanceId === issuanceId,
+    };
+  }
+
+  // YUK-1489 — the conflict panel's two sides, in the learner's words, and its three choices.
+  const conflict: PracticeDraftConflictView | null = draftConflict
     ? {
         conflict: draftConflict,
         mine: draftSummary(draftValue),
@@ -1113,70 +1169,61 @@ export function usePracticeSubmit({
                       : null,
               }
             : null,
+        keepServer: keepServerVersion,
+        keepMine: keepMyVersion,
+        reload: readServerVersion,
       }
     : null;
 
-  const displayedPreview = preview ?? committedPreview;
-
   return {
-    // Question
-    qQ,
-    q,
-    isInterventionDiagnostic,
-    timelineEvents,
-    // Issuance (YUK-1484): while `issued` is null, render a placeholder whose ref is
-    // `attachIssuance`; its attach runs the command.
-    issued,
-    frozen,
-    accepted,
-    issuanceId,
-    issuanceMode,
-    attachIssuance,
-    retryIssuance,
-    startSelfRatedIssuance,
-    /** The issuance's stored answer has been restored; answer fields may render. */
-    restored: restoredIssuanceId === issuanceId,
-    // Draft
-    nativeResponses,
-    evidence,
-    isChoice,
-    updateNativeResponse,
-    updateEvidence,
-    setUploading,
-    autosave,
-    // Draft conflict (YUK-1489)
-    conflictView,
-    keepServerVersion,
-    keepMyVersion,
-    readServerVersion,
-    // Judge / submit
-    phase,
-    canSubmit,
-    judging,
-    committing,
-    returning,
-    pendingRun,
-    pendingPoll,
-    displayedPreview,
-    committedPreview,
-    rating,
-    setRating,
-    autoCommitted,
-    autoCommitJudgeEventId,
-    selfConfidence,
-    reasoningTrace,
-    setReasoningTrace,
-    appealOpen,
-    setAppealOpen,
-    appealText,
-    setAppealText,
-    runJudge,
-    commit,
-    revealVerdict,
-    submitAutoCommitAppeal,
-    startSelfRate,
+    question: { query: qQ, data: q, isInterventionDiagnostic, timelineEvents },
+    issuance: issuanceView,
+    draft: {
+      responses: nativeResponses,
+      evidence,
+      isChoice,
+      updateResponse: updateNativeResponse,
+      updateEvidence,
+      uploading,
+      setUploading,
+      autosave,
+    },
+    conflict,
+    submit: {
+      phase,
+      canSubmit,
+      judging,
+      committing,
+      returning,
+      pendingRun,
+      pendingPoll,
+      displayedPreview: preview ?? committedPreview,
+      committedPreview,
+      rating,
+      setRating,
+      autoCommitted,
+      autoCommitJudgeEventId,
+      selfConfidence,
+      reasoningTrace,
+      setReasoningTrace,
+      runJudge,
+      commit,
+      revealVerdict,
+      startSelfRate,
+    },
+    appeal: {
+      open: appealOpen,
+      setOpen: setAppealOpen,
+      text: appealText,
+      setText: setAppealText,
+      /** After an automatic commit: appeal the stored anchor without submitting again. */
+      submitAfterAutoCommit: submitAutoCommitAppeal,
+    },
+    /** 「返回流」: never blocked by the draft; waits at most 8s for the last save (YUK-1489). */
     handleBack,
-    /** Ref callback for the answering surface's root: ⌘Enter hotkey + pagehide flush. */
-    attachAnsweringRoot,
+    /** Ref for the answering surface's root: arms the keepalive draft flush on pagehide. */
+    attachPagehideFlush: attachPagehide,
+    /** Ref for an element that exists only while answering: the ⌘/Ctrl+Enter submit hotkey. */
+    attachSubmitHotkey,
   };
 }
