@@ -106,8 +106,8 @@ export const PROPOSE_WRITE_TOOLS = [
   'store_sourced_question',
   // YUK-1448 (Stage 1 batch D) — search_bank 检索不足时的缺口落单工具（幂等台账
   // 登记 + 既有 dispatcher；held/unsupported_constraint 不静默丢字段）。授权面：
-  // copilot（COPILOT_TOOLS）与 supply agent 面（supply_planner 工具挂载）；
-  // 不进 Maintenance（备题/供给域写工具，非运维面）。
+  // 仅 copilot（COPILOT_TOOLS）；supply_planner 保持只读挂载；不进 Maintenance
+  // （备题/供给域写工具，非运维面）。
   'file_bank_gap',
 ] as const;
 
@@ -214,8 +214,7 @@ export const COPILOT_TOOLS = [
   'read_bank',
   'check_bank',
   // YUK-1448 (Stage 1 batch D) — copilot 检索后可直接落缺口单（search_bank 已在
-  // 本面；供给侧回执走既有 dispatcher 台账）。备题员/supply agent 面的授权在
-  // jobs/supply_planner.ts 工具挂载处。
+  // 本面；供给侧回执走既有 dispatcher 台账）。
   'file_bank_gap',
   // ADR-0033 D6 (YUK-306, lane D) — interactive 学习 artifact authoring pair.
   // effect='write' (单用户、路由守 scope、非破坏性创建 — D6 explicit); the chip

@@ -30,6 +30,7 @@ import { toSqlVector } from '@/db/vector';
 import { resolveSubjectKnowledgeIds } from '@/kernel/read-models/knowledge-tree';
 import { embedText } from '@/server/ai/embed';
 import { canonicalKindToPersistedForms } from '@/subjects/question-kind';
+import { questionVectorInvalidReason } from '../../jobs/embed_backfill';
 import { EvidenceDemandV1 } from '../question-supply/evidence-demand';
 import { MATCHER_COSINE_MAX_DISTANCE } from '../quiz/matcher';
 import { encodeBankRef, readBankServableParts, resolveBankRefs } from './bank-ref';
@@ -115,6 +116,12 @@ export const BankGapRequestSchema = z.object({
   causes: EvidenceDemandV1.shape.causes,
   constraints: BankUnsatisfiedConstraintsSchema,
   required_context: z.array(z.string()),
+  // Retrieval completeness at gap time (mirrors coverage). A truncated pool or an
+  // unavailable channel only proves the search was incomplete, never that the bank
+  // lacks the question — file_bank_gap holds such gaps instead of dispatching them.
+  complete: z.boolean(),
+  retrieval_truncated: z.boolean(),
+  unavailable_channels: z.array(z.enum(['fts', 'vector'])),
 });
 
 /** 两种调用形态互斥（提案 §6）：新检索（query + scope）或续页（cursor 只续同一次检索）。 */
@@ -373,11 +380,14 @@ async function resolveScope(db: Db | Tx, scope: BankSearchScope): Promise<Resolv
   }
   if (scope.exclude_refs !== undefined) {
     // 跨所有 revision 按 question 身份（revision.group_id = group root）排除。任意
-    // revision 的 ref 都接受（superseded 也指向同一身份）；解不动/摘要不符/已撤回
-    // 显式报错——排除名单自身必须可信，否则「排除」变成静默放行。
+    // revision 的 ref 都接受（superseded 也指向同一身份）；解不动/摘要不符显式报错
+    // ——排除名单自身必须可信，否则「排除」变成静默放行。已撤回的组本就被
+    // buildFilters 的 withdrawn 谓词挡在每种 admission_state 之外，跳过即等价排除，
+    // 不让学习者已见列表里的一道撤回题拖垮整次检索。
     const refs = await resolveBankRefs(db, scope.exclude_refs);
     const ids = new Set<string>();
     for (const ref of refs) {
+      if (ref.status === 'withdrawn') continue;
       if (ref.status !== 'ok') {
         throw new Error(`exclude_refs: ${ref.raw}: ${ref.status} (${ref.detail})`);
       }
@@ -614,14 +624,30 @@ async function runSearchBankInSnapshot(
     // 锚无向量（从未嵌入/被编辑失效等待回填）→ 通道不可用，FTS 照常——诚实降级，
     // 绝不退回查询文本向量冒充内容相似。锚题自身仍是合法候选（距离 0 最相似；
     // 调用方可用 exclude_refs 显式排除）。
+    // 锚向量须与当前 EMBED_VERSION 及锚题当前内容 hash 同版，否则同样视为不可用。
     let anchorVector: number[] | null = null;
+    let anchorInvalidReason: string | null = null;
     if (resolved.similarToGroupId !== undefined) {
       const [anchorRow] = await db
-        .select({ embedding: question.embedding })
+        .select({
+          embedding: question.embedding,
+          prompt_md: question.prompt_md,
+          reference_md: question.reference_md,
+          choices_md: question.choices_md,
+          embed_version: question.embed_version,
+          embed_content_hash: question.embed_content_hash,
+        })
         .from(question)
         .where(eq(question.id, resolved.similarToGroupId))
         .limit(1);
-      anchorVector = anchorRow?.embedding ?? null;
+      anchorInvalidReason =
+        anchorRow == null
+          ? 'no_vector'
+          : questionVectorInvalidReason({
+              ...anchorRow,
+              dimension: anchorRow.embedding?.length ?? null,
+            });
+      anchorVector = anchorInvalidReason === null ? (anchorRow?.embedding ?? null) : null;
     }
     const vectorPromise: Promise<{ vector: number[] | null; error?: string }> =
       resolved.similarToGroupId !== undefined
@@ -629,8 +655,7 @@ async function runSearchBankInSnapshot(
           ? Promise.resolve({ vector: anchorVector })
           : Promise.resolve({
               vector: null,
-              error:
-                'similar_to anchor question has no content vector (never embedded or invalidated by a content edit; awaiting embed_backfill)',
+              error: `similar_to anchor content vector unusable (${anchorInvalidReason}): never embedded, embedded under an older EMBED_VERSION, or invalidated by a content edit; awaiting embed_backfill`,
             })
         : deps
             .embedFn(effectiveQuery)
@@ -851,7 +876,7 @@ async function runSearchBankInSnapshot(
   if (scope.similar_to !== undefined) {
     enforced.push(
       unavailable.includes('vector')
-        ? 'similar_to declared but the anchor content vector is unavailable (vector channel degraded to FTS-only)'
+        ? 'similar_to declared but the anchor content vector is missing or not current (vector channel degraded to FTS-only)'
         : `similar_to=${scope.similar_to.question_ref} aspect=content (anchor's same-version content vector reused as the vector-channel query)`,
     );
   }
@@ -868,6 +893,7 @@ async function runSearchBankInSnapshot(
     retrieved_count: confirmedPoolSize,
     reason: 'insufficient_retrieved_candidates' as const,
   };
+  const complete = !hasMore && !retrievalTruncated && unavailable.length === 0;
   const gapRequest =
     verdict === 'enough'
       ? null
@@ -889,6 +915,9 @@ async function runSearchBankInSnapshot(
             'inventory_goal.horizon_days',
             'control',
           ],
+          complete,
+          retrieval_truncated: retrievalTruncated,
+          unavailable_channels: unavailable,
         });
 
   return {
@@ -947,7 +976,7 @@ async function runSearchBankInSnapshot(
         '未被本通道召回的题不构成「库中没有」',
         ...(scope.similar_to !== undefined && unavailable.includes('vector')
           ? [
-              'similar_to 锚题暂无内容向量（未嵌入或被内容编辑失效，待 embed_backfill 回填）——向量通道不可用，本页仅 FTS 召回',
+              'similar_to 锚题暂无当前同版内容向量（未嵌入、旧 EMBED_VERSION 或被内容编辑失效，待 embed_backfill 回填）——向量通道不可用，本页仅 FTS 召回',
             ]
           : []),
       ],
@@ -962,7 +991,7 @@ async function runSearchBankInSnapshot(
       page_has_more: hasMore,
       next_cursor: nextCursor,
       unavailable_channels: unavailable,
-      complete: !hasMore && !retrievalTruncated && unavailable.length === 0,
+      complete,
     },
   };
 }

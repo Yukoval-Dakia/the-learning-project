@@ -1372,8 +1372,8 @@ export const practiceCapability = defineCapability({
       },
       // YUK-1448 (Stage 1 batch D) — search_bank 检索不足时的缺口落单工具：幂等登记
       // EvidenceDemandV1 + 检索约束到既有供题台账，再走现有 dispatcher；无法落实的
-      // 限制返回 held/unsupported_constraint。授权面：copilot（COPILOT_TOOLS）与
-      // supply agent 面（jobs/supply_planner.ts 工具挂载）；不进 Maintenance。
+      // 限制返回 held/unsupported_constraint。授权面：copilot（COPILOT_TOOLS）；
+      // supply_planner 保持只读挂载；不进 Maintenance。
       {
         name: 'file_bank_gap',
         load: () => import('./server/tools/file-bank-gap').then((m) => m.fileBankGapTool),

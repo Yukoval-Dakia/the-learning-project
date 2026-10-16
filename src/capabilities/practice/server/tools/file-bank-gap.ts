@@ -5,15 +5,21 @@
 //      experimental:question_supply action，status 恒为 'filed'/'held'——绝不写
 //      'dispatched'，不污染 dispatcher 的 7d cooldown 凭证）。同 request_id + 同内容
 //      → 重放已存回执（deduplicated=true）；同 id + 不同内容 → 显式 rejected。
+//      「本次调用是否落了台账」由写入时的 filing_nonce 回读判定（first-write-wins）。
 //   2. retrieval_constraints（within_refs / source / kind / difficulty / KC，含
 //      subject / exclude_refs / similar_to）随需求一并存档——缺口上下文完整可追溯。
-//   3. 调用既有 dispatcher（dispatchSupplyTarget）。dispatcher 无法落实的限制 →
+//   3. 检索不完整（池截断 / 通道不可用）→ held/retrieval_incomplete：只证明没搜全，
+//      不能立成「全库不存在」。
+//   4. 调用既有 dispatcher（dispatchSupplyTarget）。dispatcher 无法落实的限制 →
 //      held/unsupported_constraint，绝不静默丢字段后假装已供题。
+//
+// 已知限制：dispatch 已入队而台账写入前进程崩溃，job 照常运行但本 request_id 无回执；
+// 重试会再派一次（dispatcher 指纹 cooldown 通常拦下）。
 //
 // 硬边界：不碰 learner state；不做教学决策；本工具自身零 LLM 调用（付费发生在
 // 派出的 sourcing_web / quiz_gen job 内，受 dispatcher 指纹 cooldown 节流）。
 
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Db } from '@/db/client';
@@ -117,8 +123,22 @@ type DispatchReceipt = z.infer<typeof DispatchReceiptSchema>;
 
 // ── dispatcher 可落实性判定（绝不静默丢字段）───────────────────────────────
 
+/** scope.kind 落到 dispatcher 的题型：必须是该 kind 的某个持久化形态，且在
+ * demand.task.kinds 内（'any' 时取 scope.kind 本身的形态）。null = 无法落实。 */
+function scopeTargetKind(scopeKind: string, demandKinds: string[]): string | null {
+  const forms = canonicalKindToPersistedForms(scopeKind);
+  if (demandKinds.includes('any'))
+    return forms.includes(scopeKind) ? scopeKind : (forms[0] ?? null);
+  return demandKinds.find((kind) => forms.includes(kind)) ?? null;
+}
+
 function checkHonourableConstraints(scope: BankSearchScope, demand: EvidenceDemandV1T): string[] {
   const unsupported: string[] = [];
+  if (scope.subject !== undefined && scope.subject !== demand.subject_id) {
+    unsupported.push(
+      `subject: search subject '${scope.subject}' differs from demand.subject_id '${demand.subject_id}'`,
+    );
+  }
   if (scope.within_refs !== undefined) {
     unsupported.push(
       'within_refs: the dispatcher sources NEW supply; it cannot restrict sourcing to an existing ref pool',
@@ -150,16 +170,16 @@ function checkHonourableConstraints(scope: BankSearchScope, demand: EvidenceDema
         `knowledge: search KC scope exceeds demand.claim.knowledge_ids (${outside.join(', ')}); dispatching would silently narrow the demand`,
       );
     }
-  }
-  if (scope.kind !== undefined) {
-    const covers =
-      demand.task.kinds.includes('any') ||
-      canonicalKindToPersistedForms(scope.kind).some((form) => demand.task.kinds.includes(form));
-    if (!covers) {
+    if (scope.knowledge_mode === 'all' && new Set(scope.knowledge_ids).size > 1) {
       unsupported.push(
-        `kind: search kind '${scope.kind}' is outside demand.task.kinds [${demand.task.kinds.join(', ')}]`,
+        "knowledge: mode 'all' needs every KC on one question; supply routes anchor on a single KC and cannot guarantee co-coverage",
       );
     }
+  }
+  if (scope.kind !== undefined && scopeTargetKind(scope.kind, demand.task.kinds) === null) {
+    unsupported.push(
+      `kind: no persisted form of search kind '${scope.kind}' is within demand.task.kinds [${demand.task.kinds.join(', ')}]`,
+    );
   }
   return unsupported;
 }
@@ -171,19 +191,30 @@ function buildBankGapTarget(
   evidence: z.infer<typeof BankGapRequestSchema>,
   requestId: string,
 ): QuestionSupplyTarget {
+  const scope = evidence.constraints.scope;
   const [firstKind] = demand.task.kinds;
-  const kind = demand.task.kinds.length === 1 && firstKind !== undefined ? firstKind : 'any';
+  // scope.kind 已由 checkHonourableConstraints 验证可落实；作为硬题型约束派出。
+  const scopeKind =
+    scope.kind !== undefined ? scopeTargetKind(scope.kind, demand.task.kinds) : null;
+  const kind =
+    scopeKind ?? (demand.task.kinds.length === 1 && firstKind !== undefined ? firstKind : 'any');
+  // 检索 KC 集合原样派出（mode 'all' 多 KC 已 held）；mode 'any' 时路由锚定集合中
+  // 首个 KC，产出的题仍落在该集合内。
+  const knowledgeIds =
+    scope.knowledge_ids !== undefined
+      ? [...new Set(scope.knowledge_ids)]
+      : demand.claim.knowledge_ids;
   // eligible_count 是库存目标；requested_count 是本次检索的期望量——取较大者，
   // 并夹到 [1,10]（executor/quiz_gen 载荷的 count 上限）。
   const desiredCount = Math.min(
     10,
-    Math.max(1, demand.inventory_goal.eligible_count || evidence.constraints.requested_count || 1),
+    Math.max(1, demand.inventory_goal.eligible_count, evidence.constraints.requested_count),
   );
   return {
     id: `bankgap:${demand.demand_id}`,
     fingerprint: targetFingerprint({
       subjectId: demand.subject_id,
-      knowledgeIds: demand.claim.knowledge_ids,
+      knowledgeIds,
       kind,
       difficultyBand: demand.difficulty.band as DifficultyBand,
       gapKind: 'frontier_zero',
@@ -191,7 +222,7 @@ function buildBankGapTarget(
     }),
     gapKind: 'frontier_zero',
     subjectId: demand.subject_id,
-    knowledgeIds: demand.claim.knowledge_ids,
+    knowledgeIds,
     kind,
     difficultyBand: demand.difficulty.band as DifficultyBand,
     desiredCount,
@@ -200,7 +231,7 @@ function buildBankGapTarget(
     routePreference: ['sourcing_web', 'quiz_gen'],
     priority: 50,
     reason: `bank search gap filed via file_bank_gap (request_id=${requestId}); query="${evidence.constraints.query}"; retrieved ${evidence.constraints.retrieved_count}/${evidence.constraints.requested_count}`,
-    constraints: {},
+    constraints: scopeKind !== null ? { kindRequired: true } : {},
     context: evidenceDemandToTargetContext(demand),
   };
 }
@@ -214,6 +245,8 @@ interface StoredFilingPayload {
   reason: string;
   demand_id: string;
   content_digest: string;
+  /** 每次调用随机；回读相等 ⇔ 本次调用的写入赢得 first-write-wins。 */
+  filing_nonce?: string;
   receipt: FileBankGapOutput['receipt'];
 }
 
@@ -235,6 +268,7 @@ const StoredFilingPayloadSchema = z.object({
   reason: z.string(),
   demand_id: z.string(),
   content_digest: z.string(),
+  filing_nonce: z.string().optional(),
   receipt: FileBankGapOutputSchema.shape.receipt,
 });
 
@@ -264,33 +298,40 @@ async function executeFileBankGap(ctx: ToolContext, rawInput: FileBankGapInput) 
   const scope = evidence.constraints.scope;
   const retrievalConstraints = deriveRetrievalConstraints(scope);
 
+  // 已存台账 → 同内容重放；不同内容（含并发同 request_id 异内容）→ rejected，
+  // 绝不把本次调用自己的回执当成已登记结果。
+  const replayOrReject = (stored: StoredFilingPayload | null): FileBankGapOutput =>
+    stored?.content_digest === digest
+      ? FileBankGapOutputSchema.parse({
+          demand_id: stored.demand_id,
+          deduplicated: true,
+          status: stored.status === 'filed' ? 'queued' : 'held',
+          reason: stored.reason,
+          receipt: stored.receipt,
+        })
+      : FileBankGapOutputSchema.parse({
+          demand_id: demand.demand_id,
+          deduplicated: false,
+          status: 'rejected',
+          reason:
+            'request_id already filed with DIFFERENT content; keep the original filing or use a new request_id',
+          receipt: {
+            filing_event_id: eventId,
+            content_digest: digest,
+            retrieval_constraints: retrievalConstraints,
+          },
+        });
+
   // 幂等快路径：同 request_id 已登记 → 校验内容摘要后重放 / 拒绝。
   const stored = await readStoredFiling(ctx.db, eventId);
-  if (stored) {
-    if (stored.content_digest === digest) {
-      return FileBankGapOutputSchema.parse({
-        demand_id: stored.demand_id,
-        deduplicated: true,
-        status: stored.status === 'filed' ? 'queued' : 'held',
-        reason: stored.reason,
-        receipt: stored.receipt,
-      });
-    }
-    return FileBankGapOutputSchema.parse({
-      demand_id: demand.demand_id,
-      deduplicated: false,
-      status: 'rejected',
-      reason:
-        'request_id already filed with DIFFERENT content; keep the original filing or use a new request_id',
-      receipt: {
-        filing_event_id: eventId,
-        content_digest: digest,
-        retrieval_constraints: retrievalConstraints,
-      },
-    });
-  }
+  if (stored) return replayOrReject(stored);
 
-  const writeFiling = async (payload: StoredFilingPayload) => {
+  // 落台账并判定本次写入是否生效（writeEvent first-write-wins）：回读 nonce 相等
+  // 才是本次调用登记；否则并发调用已先登记，按其内容摘要重放或拒绝。
+  const filingNonce = randomUUID();
+  const settleFiling = async (
+    payload: Omit<StoredFilingPayload, 'kind' | 'demand_id' | 'content_digest' | 'filing_nonce'>,
+  ): Promise<FileBankGapOutput> => {
     await writeEvent(ctx.db, {
       id: eventId,
       actor_kind: ctx.callerActor.kind,
@@ -300,36 +341,40 @@ async function executeFileBankGap(ctx: ToolContext, rawInput: FileBankGapInput) 
       subject_id: demand.demand_id,
       outcome: payload.status === 'filed' ? 'success' : 'partial',
       caused_by_event_id: ctx.causedByEventId ?? null,
-      payload,
+      payload: {
+        kind: 'bank_gap_filing',
+        demand_id: demand.demand_id,
+        content_digest: digest,
+        filing_nonce: filingNonce,
+        ...payload,
+      } satisfies StoredFilingPayload,
+    });
+    const canonical = await readStoredFiling(ctx.db, eventId);
+    if (canonical?.filing_nonce !== filingNonce) return replayOrReject(canonical);
+    return FileBankGapOutputSchema.parse({
+      demand_id: demand.demand_id,
+      deduplicated: false,
+      status: payload.status === 'filed' ? 'queued' : 'held',
+      reason: payload.reason,
+      receipt: payload.receipt,
     });
   };
 
   const unsupported = checkHonourableConstraints(scope, demand);
-  if (unsupported.length > 0) {
-    // dispatcher 无法落实某限制 → held：需求照常入台账（供人工/未来路由接手），
-    // 但绝不静默丢字段后假装已供题。
+  const retrievalComplete = evidence.complete && evidence.unavailable_channels.length === 0;
+  if (!retrievalComplete || unsupported.length > 0) {
+    // 检索不完整 / dispatcher 无法落实某限制 → held：需求照常入台账（供人工/未来
+    // 路由接手），但绝不把没搜全当成缺题、也绝不静默丢字段后假装已供题。
     const receipt: FileBankGapOutput['receipt'] = {
       filing_event_id: eventId,
       content_digest: digest,
       retrieval_constraints: retrievalConstraints,
-      unsupported_constraints: unsupported,
+      ...(unsupported.length > 0 ? { unsupported_constraints: unsupported } : {}),
     };
-    const reason = `unsupported_constraint: ${unsupported.length} retrieval constraint(s) the dispatcher cannot honour (see receipt.unsupported_constraints)`;
-    await writeFiling({
-      kind: 'bank_gap_filing',
-      status: 'held',
-      reason,
-      demand_id: demand.demand_id,
-      content_digest: digest,
-      receipt,
-    });
-    return FileBankGapOutputSchema.parse({
-      demand_id: demand.demand_id,
-      deduplicated: false,
-      status: 'held',
-      reason,
-      receipt,
-    });
+    const reason = !retrievalComplete
+      ? `retrieval_incomplete: the search was not exhaustive (complete=${evidence.complete}, retrieval_truncated=${evidence.retrieval_truncated}, unavailable_channels=[${evidence.unavailable_channels.join(', ')}]); a truncated pool or failed channel does not prove the bank lacks the question — re-run search_bank (e.g. a narrower scope) before filing`
+      : `unsupported_constraint: ${unsupported.length} retrieval constraint(s) the dispatcher cannot honour (see receipt.unsupported_constraints)`;
+    return settleFiling({ status: 'held', reason, receipt });
   }
 
   const target = buildBankGapTarget(demand, evidence, input.request_id);
@@ -346,39 +391,13 @@ async function executeFileBankGap(ctx: ToolContext, rawInput: FileBankGapInput) 
   const reason = queued
     ? `dispatched via ${dispatch.chosenRoute} (job ${dispatch.jobId}); satisfied when ${target.desiredCount} verified question(s) land`
     : `${dispatch.status}: ${dispatch.stopCondition}`;
-  await writeFiling({
-    kind: 'bank_gap_filing',
-    status: queued ? 'filed' : 'held',
-    reason,
-    demand_id: demand.demand_id,
-    content_digest: digest,
-    receipt,
-  });
-  // writeEvent first-write-wins：并发同 request_id 时以已存行为准回放。
-  const canonical = (await readStoredFiling(ctx.db, eventId)) ?? undefined;
-  const effective = canonical?.content_digest === digest ? canonical : undefined;
-  if (effective != null && effective.receipt !== receipt) {
-    return FileBankGapOutputSchema.parse({
-      demand_id: effective.demand_id,
-      deduplicated: true,
-      status: effective.status === 'filed' ? 'queued' : 'held',
-      reason: effective.reason,
-      receipt: effective.receipt,
-    });
-  }
-  return FileBankGapOutputSchema.parse({
-    demand_id: demand.demand_id,
-    deduplicated: false,
-    status: queued ? 'queued' : 'held',
-    reason,
-    receipt,
-  });
+  return settleFiling({ status: queued ? 'filed' : 'held', reason, receipt });
 }
 
 export const fileBankGapTool: DomainTool<FileBankGapInput, FileBankGapOutput> = {
   name: 'file_bank_gap',
   description:
-    "File a question-supply demand for a bank search gap (search_bank coverage.verdict sparse/none). Input: request_id (your idempotency key), the full EvidenceDemandV1 (search_bank's gap_request is only a seed — you must add demand_id/policy_version/subject_id/claim/evidence/task/difficulty/inventory_goal.horizon_days/control), and the fixed search evidence (the gap_request object verbatim). Idempotent: same request_id + same content replays the stored receipt; same request_id + different content is rejected. The demand plus its retrieval constraints (within_refs/source/kind/difficulty/KC) are ledgered, then the existing supply dispatcher is called. If the dispatcher cannot honour a constraint the result is held/unsupported_constraint — fields are never silently dropped. Output: demand_id, deduplicated, queued|held, reason, business receipt (ledger event id + dispatch outcome).",
+    "File a question-supply demand for a bank search gap (search_bank coverage.verdict sparse/none). Input: request_id (your idempotency key), the full EvidenceDemandV1 (search_bank's gap_request is only a seed — you must add demand_id/policy_version/subject_id/claim/evidence/task/difficulty/inventory_goal.horizon_days/control), and the fixed search evidence (the gap_request object verbatim). Idempotent: same request_id + same content replays the stored receipt; same request_id + different content is rejected. The demand plus its retrieval constraints (within_refs/source/kind/difficulty/KC) are ledgered, then the existing supply dispatcher is called with the search kind and KC set as hard constraints. If the search was incomplete (gap_request.complete=false or a channel unavailable) the result is held/retrieval_incomplete — an incomplete search never proves the bank lacks the question. If the dispatcher cannot honour a constraint (including a subject that differs from demand.subject_id, or knowledge_mode 'all' over several KCs) the result is held/unsupported_constraint — fields are never silently dropped. Output: demand_id, deduplicated, queued|held, reason, business receipt (ledger event id + dispatch outcome).",
   effect: 'write',
   inputSchema: FileBankGapInputSchema,
   outputSchema: FileBankGapOutputSchema,
