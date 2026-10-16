@@ -1,16 +1,21 @@
 import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
-
+import {
+  GLM_OCR_PRICE_CNY_PER_MILLION_TOKENS,
+  runGlmLayoutParsingWithAttempt,
+} from '@/capabilities/ingestion/server/glm_ocr';
 import { PermanentError, RetryableError } from '@/core/schema/structured_question';
 import { source_asset } from '@/db/schema';
 import type { ToolContext } from '@/kernel/tools/types';
 import { TOOL_OUTPUT_IMAGES_FIELD } from '@/kernel/tools/types';
-import { createDirectProviderOperationContext } from '@/server/ai/provider-attempt-runtime';
-import { GLM_OCR_PRICE_CNY_PER_MILLION_TOKENS, runGlmLayoutParsingWithAttempt } from '../glm_ocr';
 import { type PixelBBox, cropToPng, probeImage, rotateImage } from '../image-ops';
 import { type SourceAssetRow, isUniqueViolation, persistSourceAsset } from '../persist-image-asset';
-import { GLM_OCR_MODEL, GLM_OCR_PROVIDER } from '../provider-attempts';
+import {
+  GLM_OCR_MODEL,
+  GLM_OCR_PROVIDER,
+  createIngestionToolProviderContext,
+} from '../provider-attempts';
 import { formatAssetRef } from '../source-package';
 import {
   AssetRefInputSchema,
@@ -636,7 +641,7 @@ async function executeGlmOcr(ctx: ToolContext, raw: GlmOcrInput): Promise<GlmOcr
   // P2-6 — timeout can never exceed the caller's own deadline (an elapsed
   // deadline already threw hard_deadline_exceeded above).
   const timeoutMs = Math.min(GLM_TOOL_TIMEOUT_MS, ctx.providerSessionDeadlineAt - Date.now());
-  const providerAttempt = createDirectProviderOperationContext({
+  const providerAttempt = createIngestionToolProviderContext({
     db: ctx.db,
     caller: ctx.providerAttemptCaller,
     deadlineAt: new Date(Math.min(Date.now() + timeoutMs, ctx.providerSessionDeadlineAt)),

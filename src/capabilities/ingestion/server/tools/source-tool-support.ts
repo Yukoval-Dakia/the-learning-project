@@ -3,9 +3,8 @@ import { z } from 'zod';
 
 import type { Db } from '@/db/client';
 import { learning_session, source_asset, source_document } from '@/db/schema';
-import { type R2Client, getR2 } from '@/server/r2';
 
-import type { SourceAssetRow } from '../persist-image-asset';
+import { type R2Client, type SourceAssetRow, getR2 } from '../persist-image-asset';
 import {
   type AssetRefInput,
   loadAssetBytesVerified,

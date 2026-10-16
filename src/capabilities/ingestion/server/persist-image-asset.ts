@@ -2,7 +2,13 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq, ne, sql } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { source_asset } from '@/db/schema';
-import type { R2Client } from '@/server/r2';
+import { type R2Client, getR2 } from '@/server/r2';
+
+export type { R2Client };
+// Re-exported so capability modules reach the blob client through this seam
+// (the file already holds the ingestion -> r2 boundary edge); new files must
+// not import '@/server/r2' directly.
+export { getR2 };
 
 // Shared content-addressed image-asset write path. Extracted from
 // app/api/assets/route.ts (YUK-250) so both the generic asset upload route and

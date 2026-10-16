@@ -14,6 +14,18 @@ import {
 
 export { ProviderAttemptLifecycleError };
 
+// Tool-facing factory: capability tool files reach provider-attempt-runtime
+// through this seam (the module already holds the ingestion -> ai edge) rather
+// than importing '@/server/ai/*' directly.
+export function createIngestionToolProviderContext(input: {
+  readonly db: Db;
+  readonly caller: 'api' | 'worker';
+  readonly deadlineAt: Date;
+  readonly operationAnchor: string;
+}): DirectProviderOperationContext {
+  return createDirectProviderOperationContext(input);
+}
+
 export const GLM_OCR_LAYOUT_PARSING_LANE = 'glm.ocr-layout-parsing';
 export const TENCENT_OCR_QUESTION_MARK_LANE = 'tencent.question-mark-agent';
 export const TENCENT_OCR_SUBMIT_OPERATION_KIND = 'ocr_page_submit';
