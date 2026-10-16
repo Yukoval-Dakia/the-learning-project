@@ -14,4 +14,9 @@ CREATE TABLE "model_admission_slice" (
 );
 --> statement-breakpoint
 CREATE INDEX "model_admission_slice_lookup_idx" ON "model_admission_slice" USING btree ("subject","response_class","task_kind");--> statement-breakpoint
-CREATE UNIQUE INDEX "model_admission_slice_natural_key" ON "model_admission_slice" USING btree ("subject","response_class","task_kind","model","model_version");
+CREATE UNIQUE INDEX "model_admission_slice_natural_key" ON "model_admission_slice" USING btree ("subject","response_class","task_kind","model","model_version");--> statement-breakpoint
+-- YUK-1496: model_admission_slice is serving-gate configuration (which model
+-- slices may grade), not learner state. Least-privilege tool roles legitimately
+-- read it on every serving decision via resolveModelAdmissionContext; SELECT is
+-- the only privilege they need. PUBLIC covers ephemeral least-privilege roles.
+GRANT SELECT ON "model_admission_slice" TO PUBLIC;
