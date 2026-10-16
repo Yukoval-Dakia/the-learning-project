@@ -7,6 +7,7 @@ export { snapshotAssessmentLearningScope } from './learning-scope';
 export {
   ModelSliceRegistrationError,
   type RegisterModelAdmissionSliceInput,
+  assertModelAdmissionSliceRegistrable,
   currentModelPins,
   modelSliceIdFor,
   registerModelAdmissionSlice,

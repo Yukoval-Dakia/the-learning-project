@@ -424,7 +424,9 @@ export async function runReadBank(db: Db, rawInput: ReadBankInputParam): Promise
               rule_units: (revision.scoring_basis?.units ?? [])
                 .filter(
                   (u) =>
-                    u.criterion.kind === 'rule_reference' || u.criterion.kind === 'holistic_level',
+                    u.criterion.kind === 'rule_reference' ||
+                    u.criterion.kind === 'holistic_level' ||
+                    u.criterion.kind === 'rubric',
                 )
                 .map((u) => ({
                   scoring_unit_id: u.scoring_unit_id,

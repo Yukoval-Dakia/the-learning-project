@@ -544,11 +544,27 @@ export function createJevModelExecutor(options: JevModelExecutorOptions): ModelU
     } catch (error) {
       const escalated = await escalate(request);
       if (escalated !== undefined) return escalated;
-      return pendingOutcome({
-        reason: 'infra_failure',
+      // Charge-layer honesty (pi-lane parity): an AgentRunError from the typed
+      // runner means a durable run existed and settled wire attempts at the
+      // reserve — the ai_task_runs ledger keeps the truth, but the charge layer
+      // must not bill possibly-paid spend as free. Charge the published per-unit
+      // reservation when one is declared; without a declared cap the plan-level
+      // pre-check is skipped too, so there is nothing to reserve against.
+      const capMicros = request.executor.max_cost_usd_micros;
+      const pendingState = {
+        reason: 'infra_failure' as const,
         retryable: isTypedRetryable(error),
         detail: `Jev lane failed${error instanceof Error ? `: ${error.message}` : ''}`,
-      });
+      };
+      if (error instanceof AgentRunError && capMicros != null) {
+        return {
+          kind: 'pending',
+          pending: pendingState,
+          run_refs: [],
+          cost_usd_micros: capMicros,
+        };
+      }
+      return pendingOutcome(pendingState);
     }
 
     const answer = outcome.output.answers[request.scoring_unit_id];

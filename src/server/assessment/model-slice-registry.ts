@@ -3,7 +3,7 @@
 // ADR-0073 D2 模型级准入、stage1 G3「已准入判分切片，出题门能认」）
 // ====================================================================
 //
-// 权威记录 = model_admission_slice 表（migration 0120）。本模块提供：
+// 权威记录 = model_admission_slice 表（migration 0121）。本模块提供：
 //   - resolveModelAdmissionContext：服务门读面 —— active 切片 + 当前模型
 //     pin，供 decideAutomaticServing 的 model 分支（纯函数）消费；
 //   - registerModelAdmissionSlice：显式注册（admin/worker），携带留出题实测
@@ -113,6 +113,40 @@ export interface RegisterModelAdmissionSliceInput {
   readonly holdout_evidence_ref: string;
   readonly admitted_by: string;
   readonly admitted_at?: Date;
+}
+
+/**
+ * 付费前置栅栏（YUK-1496 R1）：在留出题付费循环开始【之前】预检切片行 ——
+ * 登记处会拒绝的状态（已退役、同 slice_id 不同证据/actor）当场抛错，绝不
+ * 让 ~30 次付费调用跑完才在登记处爆掉、被队列重跑整段付费循环。幂等可
+ * 登记的既有行（同证据 + 同 actor）或尚不存在的新切片静默通过。
+ */
+export async function assertModelAdmissionSliceRegistrable(
+  db: Db | Tx,
+  input: RegisterModelAdmissionSliceInput,
+): Promise<void> {
+  const sliceId = modelSliceIdFor(input);
+  const [existing] = await db
+    .select()
+    .from(model_admission_slice)
+    .where(eq(model_admission_slice.slice_id, sliceId))
+    .limit(1);
+  if (existing === undefined) return;
+  if (existing.status === 'retired') {
+    throw new ModelSliceRegistrationError(
+      'slice_retired',
+      `slice '${sliceId}' was retired — re-admission requires a fresh holdout run, not a row rewrite`,
+    );
+  }
+  if (
+    existing.holdout_evidence_ref !== input.holdout_evidence_ref ||
+    existing.admitted_by !== input.admitted_by
+  ) {
+    throw new ModelSliceRegistrationError(
+      'slice_conflict',
+      `slice '${sliceId}' already exists with different evidence/actor`,
+    );
+  }
 }
 
 /**

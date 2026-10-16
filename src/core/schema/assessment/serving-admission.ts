@@ -61,24 +61,51 @@ export interface ModelAdmissionContext {
   readonly current_models: ReadonlyMap<string, { model: string; model_version: string }>;
 }
 
-/** unit 判据 → 响应类；确定性判据不由模型判（返回 null，模型分支 fail-closed）。 */
-export function modelResponseClassForUnit(unit: ScoringUnitT): ModelResponseClass | null {
-  switch (unit.criterion.kind) {
-    case 'blank_key':
-      return 'blank';
-    case 'rubric':
-    case 'rule_reference':
-    case 'holistic_level':
-      return 'free';
-    default:
+/**
+ * 判据 → 可服务它的已准入判分 task kinds（与执行器能力精确对齐：rubric
+ * 执行器只判 rubric 判据；Jev typed 线判 rule/level/blank 等价；pi rule 线
+ * 判 rule/level。task kind 字面量镜像 model-slice-registry 的
+ * CURRENT_MODEL_VERSION_PINS —— 只有登记了 pin 的 task kind 才可能有已准入
+ * 切片）。切片判给不能服务该判据的 task ⇒ 服务门扣留，绝不放行后永远 pending。
+ */
+const MODEL_TASK_KINDS_BY_CRITERION: Readonly<Record<string, readonly string[]>> = {
+  rubric: ['AssessmentRubricJudgeTask'],
+  blank_key: ['JevScoringDecisionTask'],
+  rule_reference: ['JevScoringDecisionTask', 'AssessmentRuleJudgeTask'],
+  holistic_level: ['JevScoringDecisionTask', 'AssessmentRuleJudgeTask'],
+};
+
+/**
+ * unit 的响应类由其引用的【作答槽位】决定（K1 统一作答：blank 槽 → 'blank'，
+ * open_response 槽 → 'free'），不由 criterion kind 反推 —— 判据与响应类是两个
+ * 轴，同一判据可挂不同形态的槽。引用槽缺失、为空、混合或旧形态 ⇒ null
+ * （fail-closed，模型分支不放行）。
+ */
+export function modelResponseClassForUnit(
+  unit: ScoringUnitT,
+  slots: readonly ResponseSlotT[],
+): ModelResponseClass | null {
+  if (unit.slot_refs.length === 0) return null;
+  const slotById = new Map(slots.map((slot) => [slot.slot_id, slot]));
+  let responseClass: ModelResponseClass | null = null;
+  for (const slotId of unit.slot_refs) {
+    const slot = slotById.get(slotId);
+    if (slot === undefined) return null;
+    const slotClass =
+      slot.kind === 'blank' ? 'blank' : slot.kind === 'open_response' ? 'free' : null;
+    if (slotClass === null || (responseClass !== null && responseClass !== slotClass)) {
       return null;
+    }
+    responseClass = slotClass;
   }
+  return responseClass;
 }
 
 /**
  * 模型单元准入判定（纯函数）：admitted_slice_id 必须解析到一个 active 切片，
- * 且切片的 task kind / 响应类 / 模型版本与本次执行一致。上下文缺省 = 登记处
- * 未接线，全部模型单元扣留（YUK-1496 C2 之前的行为）。
+ * 且切片的 task kind 能服务该判据、响应类与本次执行一致、模型版本与当前
+ * pin 一致。上下文缺省 = 登记处未接线，全部模型单元扣留（YUK-1496 C2 之前
+ * 的行为）。
  */
 function checkModelUnitAdmission(
   unit: ScoringUnitT,
@@ -87,6 +114,7 @@ function checkModelUnitAdmission(
     { kind: 'model_executor' }
   >,
   admission: ModelAdmissionContext | undefined,
+  slots: readonly ResponseSlotT[],
 ): string | null {
   if (executor.admitted_slice_id === null) {
     return `model_executor slice unadmitted (task ${executor.task_kind})`;
@@ -101,9 +129,19 @@ function checkModelUnitAdmission(
   if (slice.task_kind !== executor.task_kind) {
     return `slice '${slice.slice_id}' is admitted for task '${slice.task_kind}', not '${executor.task_kind}'`;
   }
-  const responseClass = modelResponseClassForUnit(unit);
-  if (responseClass === null) {
+  // 判据 ↔ task kind：一个判给不能服务该判据的 task 的切片必须扣留 ——
+  // 放行只会让执行器永远 pending（rubric 执行器拒非 rubric 判据、Jev 拒
+  // rubric 判据），那是个静默黑洞，不是准入。
+  const expectedTaskKinds = MODEL_TASK_KINDS_BY_CRITERION[unit.criterion.kind];
+  if (expectedTaskKinds === undefined) {
     return `criterion '${unit.criterion.kind}' is deterministic-comparator territory, not model-servable`;
+  }
+  if (!expectedTaskKinds.includes(executor.task_kind)) {
+    return `criterion '${unit.criterion.kind}' is not servable by task '${executor.task_kind}' (expected ${expectedTaskKinds.join(' | ')}) — withheld instead of pending forever`;
+  }
+  const responseClass = modelResponseClassForUnit(unit, slots);
+  if (responseClass === null) {
+    return `unit '${unit.scoring_unit_id}' derives no coherent model response class from its answer slots (uniform blank or open_response required)`;
   }
   if (slice.response_class !== responseClass) {
     return `slice '${slice.slice_id}' covers response class '${slice.response_class}', not '${responseClass}'`;
@@ -226,9 +264,14 @@ export function decideAutomaticServing(
     }
     if (executor.kind === 'model_executor') {
       // YUK-1496 C2：模型单元只在 admitted_slice_id 解析到 active 切片且
-      // task kind / 响应类 / 模型版本三者一致时放行；登记处未接线（无
-      // admission 上下文）时维持旧行为 —— 全部扣留，绝不发明准入。
-      const admissionIssue = checkModelUnitAdmission(unit, executor, admission);
+      // task kind 能服务该判据、响应类 / 模型版本一致时放行；登记处未接线
+      // （无 admission 上下文）时维持旧行为 —— 全部扣留，绝不发明准入。
+      const admissionIssue = checkModelUnitAdmission(
+        unit,
+        executor,
+        admission,
+        revision.response_spec.slots,
+      );
       if (admissionIssue !== null) {
         return {
           kind: 'unavailable',

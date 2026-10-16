@@ -14,6 +14,7 @@
 // 出 > 0（假得分）；参考满分而判出 0（假零分）。pending/无法判定 = 不一致
 // （拉低 agreement），不算 severe —— 诚实 pending 不是判错。
 
+import { inArray } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import { z } from 'zod';
 import { type TaskKind, resolveTaskBudget } from '@/capabilities/task-registry';
@@ -29,8 +30,12 @@ import {
   modelResponseClassForUnit,
 } from '@/core/schema/assessment';
 import type { Db } from '@/db/client';
+import { question, question_revision } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { batchResolveEffectiveDomains } from '@/kernel/read-models/knowledge-tree';
+import { resolveSubjectProfile } from '@/subjects/profile';
 import {
+  assertModelAdmissionSliceRegistrable,
   createAdmissionRunExecutor,
   currentModelPins,
   modelSliceIdFor,
@@ -151,6 +156,20 @@ export async function runModelSliceAdmission(
     );
   }
   const sliceId = modelSliceIdFor(data.slice);
+  // 证据事件 id 只由 run_id 决定 —— 付费循环前就能算出，供登记预检使用。
+  const evidenceEventId = `evt_model_slice_admission_${data.run_id}`;
+  const registrationInput = {
+    ...data.slice,
+    holdout_evidence_ref: evidenceEventId,
+    admitted_by: data.admitted_by,
+  };
+
+  // 2b) 切片登记预检（付费前置栅栏）：登记处会拒绝的状态（已退役 / 同
+  //     slice_id 不同证据或 actor）在这里当场失败 —— 绝不让 ~30 次付费调用
+  //     跑完后才在登记处抛错、被队列重跑整段付费循环。幂等可登记的既有行
+  //     静默通过（登记处返回既有行，不重复写）。dry run 同样预检：退役切片
+  //     的证据不可能再用于登记，付费跑它纯属浪费。
+  await assertModelAdmissionSliceRegistrable(db, registrationInput);
 
   // 3) 留出题集与切片响应类一致 + 规模阈值 + 单元可加性。
   if (data.items.length < MODEL_SLICE_ADMISSION_THRESHOLDS.min_items) {
@@ -159,7 +178,7 @@ export async function runModelSliceAdmission(
     );
   }
   for (const item of data.items) {
-    const responseClass = modelResponseClassForUnit(item.unit);
+    const responseClass = modelResponseClassForUnit(item.unit, item.response_slots);
     if (responseClass !== data.slice.response_class) {
       throw new Error(
         `model_slice_admission_run: item '${item.item_id}' is response class '${responseClass ?? 'non-model'}', not '${data.slice.response_class}' — the holdout set does not match the slice`,
@@ -173,6 +192,61 @@ export async function runModelSliceAdmission(
     if (item.reference_points > item.unit.points) {
       throw new Error(
         `model_slice_admission_run: item '${item.item_id}' reference ${item.reference_points} exceeds unit max ${item.unit.points}`,
+      );
+    }
+  }
+
+  // 3b) 学科一致性（付费前置栅栏）：留出题必须真属于切片声明的学科。学科沿
+  //     BR-4 canonical bridge 解析 —— revision → 根题 → knowledge_ids[0] →
+  //     effective domain → subject profile id；根题缺失、无知识标注或域不可
+  //     解析都当场失败，绝不在付费之后才发现留出题集不属于本切片学科。
+  const revisionRows = await db
+    .select({
+      revision_id: question_revision.revision_id,
+      group_id: question_revision.group_id,
+    })
+    .from(question_revision)
+    .where(
+      inArray(
+        question_revision.revision_id,
+        data.items.map((item) => item.revision_id),
+      ),
+    );
+  const groupIdByRevision = new Map(revisionRows.map((row) => [row.revision_id, row.group_id]));
+  const rootRows = await db
+    .select({ id: question.id, knowledge_ids: question.knowledge_ids })
+    .from(question)
+    .where(inArray(question.id, [...new Set(groupIdByRevision.values())]));
+  const firstKnowledgeIdByGroup = new Map(
+    rootRows.map((row) => [row.id, row.knowledge_ids[0] ?? null]),
+  );
+  const domainsByKnowledgeId = await batchResolveEffectiveDomains(
+    db,
+    [...new Set(firstKnowledgeIdByGroup.values())].filter((id): id is string => id !== null),
+  );
+  for (const item of data.items) {
+    const groupId = groupIdByRevision.get(item.revision_id);
+    if (groupId === undefined) {
+      throw new Error(
+        `model_slice_admission_run: item '${item.item_id}' revision '${item.revision_id}' does not exist`,
+      );
+    }
+    const firstKnowledgeId = firstKnowledgeIdByGroup.get(groupId) ?? null;
+    if (firstKnowledgeId === null) {
+      throw new Error(
+        `model_slice_admission_run: item '${item.item_id}' root question '${groupId}' has no knowledge labeling — a holdout item's subject cannot be resolved`,
+      );
+    }
+    const domain = domainsByKnowledgeId.get(firstKnowledgeId) ?? null;
+    if (domain === null) {
+      throw new Error(
+        `model_slice_admission_run: item '${item.item_id}' knowledge '${firstKnowledgeId}' has no resolvable effective domain`,
+      );
+    }
+    const subject = resolveSubjectProfile(domain).id;
+    if (subject !== data.slice.subject) {
+      throw new Error(
+        `model_slice_admission_run: item '${item.item_id}' resolves to subject '${subject}', not '${data.slice.subject}' — the holdout set does not belong to the slice's subject`,
       );
     }
   }
@@ -275,7 +349,6 @@ export async function runModelSliceAdmission(
   // 5) 证据落账（幂等锚 run_id；内部台账，opt out 记忆摄取）。证据总是写 ——
   //    失败的 run 也是准入判断的证据；dry run 的证据同样保留，但绝不推进准入了。
   const now = new Date();
-  const evidenceEventId = `evt_model_slice_admission_${data.run_id}`;
   await writeEvent(db, {
     id: evidenceEventId,
     actor_kind: 'system',
@@ -302,15 +375,19 @@ export async function runModelSliceAdmission(
     ingest_at: now,
   });
 
-  // 6) 阈值全过且非 dry run 才登记；dry run 永不准入。
+  // 6) 阈值全过且非 dry run 才登记；dry run 永不准入。证据已落账后，登记
+  //    失败是终局的未准入结果（failures 带原因、admitted=false），绝不向队列
+  //    重抛 —— 重抛会让 pg-boss 重跑整段已付费的判分循环。
   let admitted = false;
   if (passed && !data.dry_run) {
-    await registerModelAdmissionSlice(db, {
-      ...data.slice,
-      holdout_evidence_ref: evidenceEventId,
-      admitted_by: data.admitted_by,
-    });
-    admitted = true;
+    try {
+      await registerModelAdmissionSlice(db, registrationInput);
+      admitted = true;
+    } catch (error) {
+      failures.push(
+        `registration refused: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 
   return {

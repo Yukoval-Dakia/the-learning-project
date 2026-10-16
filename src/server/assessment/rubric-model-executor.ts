@@ -10,8 +10,9 @@
 //   - 图片纪律：prepareAssessmentModelInput 只在原图真实送达（digest 核验
 //     后作为 image block 附上）时才放行；没读到原图不得声称读了 —— 引用未
 //     送达/不存在的证据，或对图片证据附“引文”，一律 pending，不猜分；
-//   - 费用诚实：cost 已知才上报（micro USD）；unknown 保持 unknown（不估数
-//     冒充已知；形式入口的 claim 记录另有 cap 预留）。超 cap ⇒ pending。
+//   - 费用诚实：truth 层（run 台账）unknown 保持 unknown；charge 层
+//     （outcome.cost_usd_micros）对 unknown 成本按整段准入预留 cap 计费 ——
+//     绝不记为零（不虚报已知，也不削弱计划级费用上限）。超 cap ⇒ pending。
 // ====================================================================
 
 import { randomUUID } from 'node:crypto';
@@ -251,13 +252,13 @@ export function createRubricModelExecutor(
           }),
         signal,
       );
-      // 费用诚实：run 台账里的 cost 已知才上报；unknown 保持 unknown（不估数）。
-      // 形式入口的 claim 记录另有 cap 预留，此处不虚报为零也不虚报为 cap。
+      // Unknown cost consumes the full admitted reservation; the runner's ledger
+      // retains unknown vs reported/estimated truth. Never represent it as free.
       cost =
         result.cost_usd !== undefined && Number.isFinite(result.cost_usd) && result.cost_usd >= 0
           ? Math.ceil(result.cost_usd * 1_000_000)
-          : undefined;
-      if (cost !== undefined && cost > cap) {
+          : cap;
+      if (cost > cap) {
         return pending(
           { reason: 'unjudgeable', detail: 'native model exceeded the admitted call cost cap' },
           [result.task_run_id],
@@ -306,7 +307,7 @@ export function createRubricModelExecutor(
         evidence_citations: citations,
         ...(decision.confidence !== undefined ? { confidence: decision.confidence } : {}),
         run_refs: [result.task_run_id],
-        ...(cost === undefined ? {} : { cost_usd_micros: cost }),
+        cost_usd_micros: cost,
       };
     } catch (error) {
       if (
@@ -333,7 +334,9 @@ export function createRubricModelExecutor(
             : 'native model asset, execution or output validation failed',
         },
         runRefs,
-        cost,
+        // Charge-layer parity with the pi lane: an unknown cost after the provider
+        // started consumes the full admitted reservation — never billed as free.
+        cost ?? (providerStarted ? cap : undefined),
       );
     }
   };

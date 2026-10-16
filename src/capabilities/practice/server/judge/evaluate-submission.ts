@@ -58,6 +58,7 @@ import {
   type ActivateEvaluationRequestT,
   type SettlementObservers,
   activateEvaluation,
+  assertModelAdmissionSliceRegistrable,
   createJevModelExecutor,
   createPiModelExecutor,
   createRubricModelExecutor,
@@ -80,6 +81,7 @@ import { createRecordedModelExecutor } from './recorded-model-executor';
 // Native assessment runtime ports are assembled at this existing capability boundary.
 // YUK-1496 C2 — 留出题准入 job 经同一边界读取登记处（不新增跨层边）。
 export {
+  assertModelAdmissionSliceRegistrable,
   currentModelPins,
   modelSliceIdFor,
   registerModelAdmissionSlice,
