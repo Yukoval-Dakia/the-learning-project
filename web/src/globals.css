@@ -9717,6 +9717,94 @@ button.seg-sm {
   box-shadow: var(--shadow-focus);
 }
 
+/* YUK-1486 — the conversation is the drawer's primary region. The today
+   summary collapses to one line, and 对话记录 floats as a glass sheet over the
+   summary + conversation instead of pushing them down. */
+.copilot-summary-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  width: 100%;
+  min-width: 0;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: var(--ink-3);
+  font-size: var(--fs-meta);
+  text-align: left;
+  cursor: pointer;
+}
+.copilot-summary-toggle:hover {
+  color: var(--ink);
+}
+.copilot-summary-toggle:focus-visible {
+  outline: none;
+  border-radius: var(--r-1);
+  box-shadow: var(--shadow-focus);
+}
+.copilot-summary-label {
+  flex-shrink: 0;
+  font-weight: 500;
+  color: var(--ink-2);
+}
+.copilot-summary-preview {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.copilot-summary-toggle .pd-chev {
+  flex-shrink: 0;
+  margin-left: auto;
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+.copilot-summary-toggle[aria-expanded="true"] .pd-chev {
+  transform: rotate(180deg);
+}
+.copilot-session-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+}
+.copilot-session-scrim {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  background: color-mix(in srgb, var(--paper-raised) 35%, transparent);
+  cursor: default;
+}
+.copilot-session-sheet {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100% - var(--s-2));
+  overflow: hidden;
+  margin: var(--s-2) var(--s-3) 0;
+  padding: var(--s-3);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-4);
+  background: color-mix(in srgb, var(--paper-raised) 82%, transparent);
+  backdrop-filter: blur(16px) saturate(1.4);
+  -webkit-backdrop-filter: blur(16px) saturate(1.4);
+  box-shadow: var(--shadow-3);
+  animation: copilot-sheet-in var(--dur-fast) var(--ease-out);
+}
+@keyframes copilot-sheet-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .copilot-session-sheet {
+    animation: none;
+  }
+  .copilot-summary-toggle .pd-chev {
+    transition: none;
+  }
+}
+
 /* thinking icon spin (global keyframe; only the .spin icon uses it) */
 .spin {
   animation: loom-spin 0.9s linear infinite;

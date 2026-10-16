@@ -139,6 +139,8 @@ function frozenContext(row: z.infer<typeof RevisionRow>, issued: z.infer<typeof 
     const options = 'options' in slot ? slot.options : [];
     const items = slot.kind === 'ordering' ? slot.items : [];
     if (slot.kind === 'select') {
+      // 断句题的题面就是冻结明文；只导出字缝描述会丢掉原文。
+      if (slot.text != null) return [slot.text];
       return slot.items.map((item) => describeSelectItem(slot, item.item_id));
     }
     if (slot.kind === 'matching')
@@ -150,7 +152,9 @@ function frozenContext(row: z.infer<typeof RevisionRow>, issued: z.infer<typeof 
       ...(slot.placement?.label ? [slot.placement.label] : []),
       ...options.map((option) => `${option.label}. ${option.text}`),
       ...items.map((item) => `${item.label}. ${item.text}`),
-      ...(slot.kind === 'numeric' && slot.unit_hint ? [slot.unit_hint] : []),
+      ...((slot.kind === 'numeric' || slot.kind === 'blank') && slot.unit_hint
+        ? [slot.unit_hint]
+        : []),
     ];
   });
   // Reference rendering selects issued units without projecting aggregation.

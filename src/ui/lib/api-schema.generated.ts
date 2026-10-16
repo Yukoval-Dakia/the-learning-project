@@ -28823,7 +28823,7 @@ export interface operations {
                                 /** @enum {string} */
                                 kind: "question_edit";
                                 proposed_change: {
-                                    edit: {
+                                    edit?: {
                                         node_id: string;
                                         /** @enum {string} */
                                         op: "edit_node_text";
@@ -28848,8 +28848,18 @@ export interface operations {
                                         /** @enum {string} */
                                         op: "set_node_kind";
                                     };
+                                    edit_request?: {
+                                        document?: unknown;
+                                        draft_ref?: string;
+                                        expected_draft_version?: number;
+                                        expected_revision?: string | null;
+                                        ops?: {
+                                            [key: string]: unknown;
+                                        }[];
+                                        question_id?: string;
+                                    };
                                     node_preview?: string;
-                                    question_id: string;
+                                    question_id?: string;
                                 };
                                 reason_md: string;
                                 rollback_plan?: unknown;
@@ -29919,7 +29929,7 @@ export interface operations {
                                 /** @enum {string} */
                                 kind: "question_edit";
                                 proposed_change: {
-                                    edit: {
+                                    edit?: {
                                         node_id: string;
                                         /** @enum {string} */
                                         op: "edit_node_text";
@@ -29944,8 +29954,18 @@ export interface operations {
                                         /** @enum {string} */
                                         op: "set_node_kind";
                                     };
+                                    edit_request?: {
+                                        document?: unknown;
+                                        draft_ref?: string;
+                                        expected_draft_version?: number;
+                                        expected_revision?: string | null;
+                                        ops?: {
+                                            [key: string]: unknown;
+                                        }[];
+                                        question_id?: string;
+                                    };
                                     node_preview?: string;
-                                    question_id: string;
+                                    question_id?: string;
                                 };
                                 reason_md: string;
                                 rollback_plan?: unknown;
