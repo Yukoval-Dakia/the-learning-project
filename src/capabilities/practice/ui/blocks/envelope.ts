@@ -10,7 +10,11 @@
 //   (the open envelope has no state).
 // - self_confidence on an existing entry is carried over untouched.
 // - state is only ever 'answered' or 'blank'; 'unknown' is never produced and never forwarded.
-import type { PresentationBlockT, PresentationT } from '@/core/schema/assessment/presentation';
+import type {
+  PresentationBlockT,
+  PresentationT,
+  ResponseClassT,
+} from '@/core/schema/assessment/presentation';
 import type { ResponseSlotT, SelectSlotT, SlotResponseT } from '@/core/schema/assessment/response';
 
 export type SelectEntryT = Extract<SlotResponseT, { kind: 'select' }>;
@@ -119,19 +123,15 @@ export function writeOpen(
 
 // ---------- submit ----------
 
-/** Input blocks that bind a select slot (spec §1.2). */
-export const SELECT_BLOCK_KINDS: ReadonlySet<PresentationBlockT['kind']> = new Set([
-  'option_list',
-  'matching_columns',
-  'break_tap',
-  'ordering',
-]);
+export interface BoundSlot {
+  slot_id: string;
+  kind: PresentationBlockT['kind'];
+  response_class: ResponseClassT;
+}
 
 /** Every slot an input block in the tree binds, in tree order. Custom blocks are listed too. */
-export function boundSlots(
-  presentation: PresentationT,
-): { slot_id: string; kind: PresentationBlockT['kind'] }[] {
-  const out: { slot_id: string; kind: PresentationBlockT['kind'] }[] = [];
+export function boundSlots(presentation: PresentationT): BoundSlot[] {
+  const out: BoundSlot[] = [];
   const walk = (block: PresentationBlockT) => {
     switch (block.kind) {
       case 'stack':
@@ -142,10 +142,16 @@ export function boundSlots(
       case 'figure':
         return;
       case 'custom':
-        for (const bind of block.binds) out.push({ slot_id: bind.slot_id, kind: 'custom' });
+        for (const bind of block.binds) {
+          out.push({ slot_id: bind.slot_id, kind: 'custom', response_class: bind.response_class });
+        }
         return;
       default:
-        out.push({ slot_id: block.bind.slot_id, kind: block.kind });
+        out.push({
+          slot_id: block.bind.slot_id,
+          kind: block.kind,
+          response_class: block.bind.response_class,
+        });
     }
   };
   walk(presentation.root);
@@ -153,9 +159,9 @@ export function boundSlots(
 }
 
 /**
- * The envelope to submit: draft entries plus an explicit `blank` for every bound select or
- * blank_input slot that is still empty. Only slots in the issued spec are touched; slots bound
- * by a custom block are left alone (the web cannot run those yet).
+ * The envelope to submit: draft entries plus an explicit `blank` for every bound select or blank
+ * slot that is still empty, whether a declared block or a custom block binds it. Only slots in
+ * the issued spec are touched.
  */
 export function entriesForSubmit(
   presentation: PresentationT,
@@ -169,7 +175,7 @@ export function entriesForSubmit(
   let out = entries.filter((entry) => !('state' in entry) || entry.state !== 'unknown');
   for (const bound of boundSlots(presentation)) {
     if (!issued.has(bound.slot_id)) continue;
-    if (bound.kind === 'blank_input') {
+    if (bound.response_class === 'blank') {
       const prev = find(out, bound.slot_id, 'blank');
       if (prev && prev.text !== '') continue;
       out = put(out, bound.slot_id, {
@@ -179,7 +185,7 @@ export function entriesForSubmit(
         text: '',
         self_confidence: prev?.self_confidence,
       });
-    } else if (SELECT_BLOCK_KINDS.has(bound.kind)) {
+    } else if (bound.response_class === 'select') {
       const prev = find(out, bound.slot_id, 'select');
       if (prev && prev.item_ids.length > 0) continue;
       out = put(out, bound.slot_id, {

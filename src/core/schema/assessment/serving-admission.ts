@@ -152,6 +152,8 @@ export function decideAutomaticServing(
   }
   // 有展示层时网页按积木树作答：select/blank 只有被声明式输入积木绑定才有输入面；
   // 自定义块（沙箱）网页尚不能运行，被它绑定的槽一律没有输入面。
+  // YUK-1497：网页沙箱渲染器已在（practice/ui/blocks/CustomBlock.tsx），但这里继续扣发，
+  // 直到后端准入预演（YUK-1513）完成；届时放行条件为「渲染器在 + digest 是 sha256: 而非 unverified:」。
   const binders = shapedPresentation?.success
     ? presentationBinders(shapedPresentation.data)
     : new Map<string, 'block' | 'custom'>();

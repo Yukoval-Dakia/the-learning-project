@@ -747,6 +747,11 @@ export function PracticeSolo({
               {submit.judging ? '正在判…' : '提交'}
             </Button>
           )}
+          {submit.customSummary.length > 0 && (
+            <span className="un-ps-hint un-ps-custom-answer">
+              你的作答：{submit.customSummary.join('；')}
+            </span>
+          )}
         </div>
         <div className="un-ps-bar-tools">
           <Button
@@ -1035,6 +1040,7 @@ export function PracticeSolo({
             onEntriesChange={draft.updateResponses}
             notation={notation}
             disabled={answerLocked}
+            submitting={submit.judging || submit.committing}
             submitted={
               !!ready.accepted ||
               submit.answerRecorded ||
