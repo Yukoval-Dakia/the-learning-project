@@ -319,6 +319,13 @@ async function assertCustomBlockAssets(
         `publishQuestionGroup: custom block '${block.block_id}' source_asset '${asset_id}' bytes missing from storage (key '${asset.storage_key}')`,
       );
     }
+    // R1 加固：存储对象的实际长度必须等于资产行登记的 byte_size（上面的
+    // 256 KiB 上限按 byte_size 判，长度不符说明行与对象不一致）。
+    if (bytes.byteLength !== asset.byte_size) {
+      throw new Error(
+        `publishQuestionGroup: custom block '${block.block_id}' source_asset '${asset_id}' stored object is ${bytes.byteLength} bytes, not the recorded byte_size ${asset.byte_size}`,
+      );
+    }
     const measuredSha256 = createHash('sha256').update(bytes).digest('hex');
     if (measuredSha256 !== asset.sha256) {
       throw new Error(

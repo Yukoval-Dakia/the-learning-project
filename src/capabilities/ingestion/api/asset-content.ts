@@ -22,6 +22,16 @@ import { source_asset } from '@/db/schema';
 import { ApiError, errorResponse } from '@/kernel/http';
 import { getR2 } from '@/server/r2';
 
+/** 可在本站按原 mime 直接渲染的位图类型（不含 svg：svg 可携带脚本）。 */
+const DISPLAYABLE_IMAGE_MIMES: ReadonlySet<string> = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+  'image/gif',
+  'image/avif',
+  'image/bmp',
+]);
+
 function matchesIfNoneMatch(header: string | null, etag: string): boolean {
   if (!header) return false;
   return header.split(',').some((candidate) => {
@@ -60,15 +70,29 @@ export async function GET(req: Request, params: Record<string, string>): Promise
     const bytes = await getR2().get(row.storage_key);
     if (!bytes) throw new ApiError('not_found', `asset ${id} bytes missing from R2`, 404);
 
-    // v2 安全裁决：JS 代码资产按惰性字节服务（text/plain + CSP sandbox）；
-    // 其余资产照旧返回存储 mime_type（图片等），nosniff 两者都带。
+    // v2 安全裁决（R1 加固）：只有已知的位图类型按存储 mime 原样返回；JS 代码
+    // 资产按惰性字节服务（text/plain + CSP sandbox，宿主页 fetch 后校验 digest
+    // 再注入沙箱 iframe）；其余一切（html / svg / xhtml / 未知类型）一律按下载
+    // 处理，绝不在本站以可执行或可渲染的类型返回。nosniff 全部都带。
     const codeAssetMime =
       row.mime_type === 'text/javascript' || row.mime_type === 'application/javascript';
+    const displayableImage = DISPLAYABLE_IMAGE_MIMES.has(row.mime_type);
+    const servedHeaders: Record<string, string> = codeAssetMime
+      ? {
+          'Content-Type': 'text/plain; charset=utf-8',
+          'Content-Security-Policy': "sandbox; default-src 'none'",
+        }
+      : displayableImage
+        ? { 'Content-Type': row.mime_type }
+        : {
+            'Content-Type': 'application/octet-stream',
+            'Content-Disposition': 'attachment',
+            'Content-Security-Policy': "sandbox; default-src 'none'",
+          };
     return new Response(new Uint8Array(bytes), {
       status: 200,
       headers: {
-        'Content-Type': codeAssetMime ? 'text/plain; charset=utf-8' : row.mime_type,
-        ...(codeAssetMime ? { 'Content-Security-Policy': "sandbox; default-src 'none'" } : {}),
+        ...servedHeaders,
         'Content-Length': String(row.byte_size),
         ...cacheHeaders,
       },
