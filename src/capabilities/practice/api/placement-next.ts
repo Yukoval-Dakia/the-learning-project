@@ -27,7 +27,7 @@
 
 import { db } from '@/db/client';
 import { ApiError, deprecatedRouteResponse, errorResponse } from '@/kernel/http';
-import { placementNoItem, runPlacementAdvanceTx } from '../server/placement-advance';
+import { noItemField, placementNoItem, runPlacementAdvanceTx } from '../server/placement-advance';
 import { readPlacementStarterOutcomes } from '../server/question-supply/placement-starter-outcome-reader';
 import { CreatePlacementQuestionSelectionBodySchema } from './placement-contracts';
 
@@ -71,7 +71,7 @@ export async function createPlacementQuestionSelection(
           starterSupply,
           // YUK-1405 L2 — the typed alternative when nothing servable exists:
           // what is being prepared (pending subjects) + recheck/end options.
-          no_item: selection.question === null ? placementNoItem(starterSupply) : null,
+          ...noItemField(selection.question === null ? placementNoItem(starterSupply) : null),
         };
     return Response.json(body);
   } catch (err) {

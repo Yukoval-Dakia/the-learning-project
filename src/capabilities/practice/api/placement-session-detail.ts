@@ -4,6 +4,7 @@ import { db } from '@/db/client';
 import { learning_session } from '@/db/schema';
 import { ApiError, errorResponse } from '@/kernel/http';
 import { Placement } from '@/server/session';
+import { unresolvedField } from '../server/placement-advance';
 import { readPlacementUnresolvedItems } from '../server/placement-assessment';
 import { readPlacementStarterOutcomes } from '../server/question-supply/placement-starter-outcome-reader';
 import { UpdatePlacementSessionBodySchema } from './placement-contracts';
@@ -34,7 +35,7 @@ export async function GET(_req: Request, params: Record<string, string>): Promis
           ...session,
           starterSupply: await readPlacementStarterOutcomes(tx, params.id),
           // YUK-1405 L1 — issued items with no verdict at read time.
-          unresolved_items: await readPlacementUnresolvedItems(tx, params.id),
+          ...unresolvedField(await readPlacementUnresolvedItems(tx, params.id)),
         };
       },
       { isolationLevel: 'repeatable read', accessMode: 'read only' },
@@ -76,7 +77,7 @@ export async function PATCH(req: Request, params: Record<string, string>): Promi
       status: transition.status,
       changed: transition.changed,
       allowed_statuses: transition.allowedStatuses,
-      unresolved_items,
+      ...unresolvedField(unresolved_items),
     });
   } catch (err) {
     return errorResponse(err);

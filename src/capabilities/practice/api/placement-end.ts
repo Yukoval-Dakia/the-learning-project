@@ -6,6 +6,7 @@
 import { db } from '@/db/client';
 import { ApiError, deprecatedRouteResponse, errorResponse } from '@/kernel/http';
 import { Placement } from '@/server/session';
+import { unresolvedField } from '../server/placement-advance';
 import { readPlacementUnresolvedItems } from '../server/placement-assessment';
 import { type EndPlacementSessionBody, EndPlacementSessionBodySchema } from './placement-contracts';
 
@@ -58,7 +59,11 @@ export async function POST(req: Request, params: Record<string, string>): Promis
       isolationLevel: 'repeatable read',
       accessMode: 'read only',
     });
-    response = Response.json({ ok: true, status: body.status, unresolved_items });
+    response = Response.json({
+      ok: true,
+      status: body.status,
+      ...unresolvedField(unresolved_items),
+    });
   } catch (err) {
     response = errorResponse(err);
   }

@@ -17,7 +17,7 @@
 
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/kernel/http';
-import { placementNoItem, runPlacementAdvanceTx } from '../server/placement-advance';
+import { noItemField, placementNoItem, runPlacementAdvanceTx } from '../server/placement-advance';
 import { readPlacementStarterOutcomes } from '../server/question-supply/placement-starter-outcome-reader';
 import { CreatePlacementHeldReleaseBodySchema } from './placement-contracts';
 
@@ -53,7 +53,7 @@ export async function POST(req: Request, params: Record<string, string>): Promis
       : {
           ...selection,
           starterSupply,
-          no_item: selection.question === null ? placementNoItem(starterSupply) : null,
+          ...noItemField(selection.question === null ? placementNoItem(starterSupply) : null),
         };
     return Response.json({
       released: true,

@@ -54,20 +54,35 @@ export interface PlacementAdvanceOptions {
   releaseIssuanceId?: string;
 }
 
+/**
+ * YUK-1405 — new placement fields are present only when they carry something, so
+ * responses with nothing unresolved keep their pre-existing exact shape. Clients
+ * treat an absent field as empty / null.
+ */
+export function unresolvedField(items: PlacementUnresolvedItem[]): {
+  unresolved_items?: PlacementUnresolvedItem[];
+} {
+  return items.length > 0 ? { unresolved_items: items } : {};
+}
+
+export function noItemField<T>(noItem: T | null): { no_item?: T } {
+  return noItem === null ? {} : { no_item: noItem };
+}
+
 export interface PlacementAdvanceOutcome {
   selection:
     | {
         done: true;
         reason: 'cap' | 'se_converged';
         answeredCount: number;
-        unresolved_items: PlacementUnresolvedItem[];
+        unresolved_items?: PlacementUnresolvedItem[];
       }
     | {
         done: false;
         question: Awaited<ReturnType<typeof placementAssessmentProgress>>['outstanding'];
         answeredCount: number;
         sourcingNeeded: boolean;
-        unresolved_items: PlacementUnresolvedItem[];
+        unresolved_items?: PlacementUnresolvedItem[];
       };
   /** Present when a held-release was requested; `replayed` marks a repeat call. */
   release: { released: true; replayed: boolean } | null;
@@ -138,7 +153,7 @@ export async function runPlacementAdvanceTx(
           question: progress.outstanding,
           answeredCount,
           sourcingNeeded: false,
-          unresolved_items: unresolved,
+          ...unresolvedField(unresolved),
         },
         release,
       };
@@ -167,7 +182,7 @@ export async function runPlacementAdvanceTx(
           done: true as const,
           reason: termination.reason,
           answeredCount,
-          unresolved_items: unresolved,
+          ...unresolvedField(unresolved),
         },
         release,
       };
@@ -201,7 +216,7 @@ export async function runPlacementAdvanceTx(
         question: next,
         answeredCount,
         sourcingNeeded: next === null,
-        unresolved_items: unresolved,
+        ...unresolvedField(unresolved),
       },
       release,
     };

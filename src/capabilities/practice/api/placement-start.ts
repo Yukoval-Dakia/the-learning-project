@@ -27,7 +27,7 @@ import {
 } from '@/kernel/http';
 import { Placement } from '@/server/session';
 import { loadPlacementSessionForUpdate, placementProbeEnabled } from '@/server/session/placement';
-import { placementNoItem, recordPlacementNoItem } from '../server/placement-advance';
+import { noItemField, placementNoItem, recordPlacementNoItem } from '../server/placement-advance';
 import {
   ensurePlacementAssessment,
   placementAssessmentProgress,
@@ -247,10 +247,9 @@ export async function createPlacementSession(req: Request): Promise<Response> {
       answeredCount: 0,
       sourcingNeeded: question === null,
       starterSupply,
-      // YUK-1405 — a fresh session has no unresolved items yet; the field is
-      // required on the wire contract, so it is emitted explicitly.
-      unresolved_items: [],
-      no_item: question === null ? placementNoItem(starterSupply) : null,
+      // YUK-1405 — a fresh session has nothing unresolved (field omitted);
+      // the typed alternative is present only when no question was served.
+      ...noItemField(question === null ? placementNoItem(starterSupply) : null),
     });
   } catch (err) {
     return errorResponse(err);

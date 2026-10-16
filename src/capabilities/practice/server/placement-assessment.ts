@@ -193,14 +193,15 @@ export async function placementAssessmentProgress(tx: Tx, sessionId: string) {
         // YUK-1405 L1 — the typed exit travels with the held item itself: continue
         // releases it (recorded unresolved, never wrong), end closes the probe and
         // marks it in unresolved_items. Re-derived on every read → refresh-safe.
-        held_exit:
-          phase === 'held'
-            ? {
+        ...(phase === 'held'
+          ? {
+              held_exit: {
                 issuance_id: receipt.issuance_id,
                 continue_url: `/api/placement-sessions/${sessionId}/held-release`,
                 end_url: `/api/placement-sessions/${sessionId}`,
-              }
-            : null,
+              },
+            }
+          : {}),
       },
     });
   }
@@ -336,7 +337,6 @@ export async function ensurePlacementAssessment(
           state: await getIssuanceState(tx, receipt.issuance_id),
           phase: 'answering',
           pending_run: null,
-          held_exit: null,
         },
       });
     }
