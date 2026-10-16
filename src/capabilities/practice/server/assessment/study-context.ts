@@ -2,7 +2,11 @@ import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import Markdown from 'react-markdown';
 import { canonicalHash } from '@/core/migration/canonical';
-import { projectIssuedScoringBasis, projectPracticeIssuance } from '@/core/schema/assessment';
+import {
+  describeSelectItem,
+  projectIssuedScoringBasis,
+  projectPracticeIssuance,
+} from '@/core/schema/assessment';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import type { Db } from '@/db/client';
 import { assessment_issuance, question, question_revision } from '@/db/schema';
@@ -76,7 +80,7 @@ export function projectFrozenStudyContext(
         const slotOptions =
           'options' in slot ? slot.options : slot.kind === 'matching' ? slot.right_options : [];
         const slotItems =
-          slot.kind === 'matching' ? slot.left_items : 'items' in slot ? slot.items : [];
+          slot.kind === 'matching' ? slot.left_items : slot.kind === 'ordering' ? slot.items : [];
         for (const option of slotOptions)
           options.set(option.option_id, `${option.label}. ${option.text}`);
         for (const item of slotItems) items.set(item.item_id, `${item.label}. ${item.text}`);
@@ -104,6 +108,16 @@ export function projectFrozenStudyContext(
           // ADR-0074 D3a 断句：参考 = 接受断点集合（code point 字缝索引）；
           // 对应冻结明文已在 response_spec 槽位里，不在此重建文本。
           return criterion.accepted_positions.map((position) => `断点 ${position}`).join('\n');
+        case 'select_key': {
+          const selectSlot = slots.find((slot) => slot.kind === 'select');
+          return criterion.accepted_item_ids
+            .map((id) => (selectSlot?.kind === 'select' ? describeSelectItem(selectSlot, id) : id))
+            .join('\n');
+        }
+        case 'blank_key':
+          return criterion.key.kind === 'text'
+            ? criterion.key.accepted.join('\n\n')
+            : `${criterion.key.expected}${criterion.key.expected_unit ? ` ${criterion.key.expected_unit}` : ''}`;
         default: {
           const exhaustive: never = criterion;
           return exhaustive;

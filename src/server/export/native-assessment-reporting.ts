@@ -7,6 +7,7 @@ import {
   EvaluationRecord,
   PublishedQuestionRevision,
   SubmissionRecord,
+  describeSelectItem,
   projectPracticeIssuance,
   validateIssuanceBinding,
 } from '@/core/schema/assessment';
@@ -136,7 +137,12 @@ function frozenContext(row: z.infer<typeof RevisionRow>, issued: z.infer<typeof 
   const face = projectPracticeIssuance(revision, issuance);
   const controls = face.response_spec.slots.flatMap((slot) => {
     const options = 'options' in slot ? slot.options : [];
-    const items = 'items' in slot ? slot.items : [];
+    const items = slot.kind === 'ordering' ? slot.items : [];
+    if (slot.kind === 'select') {
+      // 断句题的题面就是冻结明文；只导出字缝描述会丢掉原文。
+      if (slot.text != null) return [slot.text];
+      return slot.items.map((item) => describeSelectItem(slot, item.item_id));
+    }
     if (slot.kind === 'matching')
       return [...slot.left_items, ...slot.right_options].map(
         (item) => `${item.label}. ${item.text}`,
@@ -146,7 +152,9 @@ function frozenContext(row: z.infer<typeof RevisionRow>, issued: z.infer<typeof 
       ...(slot.placement?.label ? [slot.placement.label] : []),
       ...options.map((option) => `${option.label}. ${option.text}`),
       ...items.map((item) => `${item.label}. ${item.text}`),
-      ...(slot.kind === 'numeric' && slot.unit_hint ? [slot.unit_hint] : []),
+      ...((slot.kind === 'numeric' || slot.kind === 'blank') && slot.unit_hint
+        ? [slot.unit_hint]
+        : []),
     ];
   });
   // Reference rendering selects issued units without projecting aggregation.
@@ -169,7 +177,7 @@ function frozenContext(row: z.infer<typeof RevisionRow>, issued: z.infer<typeof 
       const items = new Map(
         slots.flatMap((slot) => {
           const values =
-            'items' in slot ? slot.items : slot.kind === 'matching' ? slot.left_items : [];
+            slot.kind === 'ordering' ? slot.items : slot.kind === 'matching' ? slot.left_items : [];
           return values.map((value) => [value.item_id, `${value.label}. ${value.text}`] as const);
         }),
       );
@@ -194,6 +202,16 @@ function frozenContext(row: z.infer<typeof RevisionRow>, issued: z.infer<typeof 
           return criterion.levels.map((level) => level.descriptor_md).join('\n\n');
         case 'position_set_key':
           return criterion.accepted_positions.map((position) => `断点 ${position}`).join('\n');
+        case 'select_key': {
+          const selectSlot = slots.find((slot) => slot.kind === 'select');
+          return criterion.accepted_item_ids
+            .map((id) => (selectSlot?.kind === 'select' ? describeSelectItem(selectSlot, id) : id))
+            .join('\n');
+        }
+        case 'blank_key':
+          return criterion.key.kind === 'text'
+            ? criterion.key.accepted.join('\n\n')
+            : `${criterion.key.expected}${criterion.key.expected_unit ? ` ${criterion.key.expected_unit}` : ''}`;
         default: {
           const unreachable: never = criterion;
           return unreachable;
@@ -239,7 +257,7 @@ function frozenResponse(
             ? slot.right_options
             : [];
       const items =
-        slot && 'items' in slot ? slot.items : slot?.kind === 'matching' ? slot.left_items : [];
+        slot?.kind === 'ordering' ? slot.items : slot?.kind === 'matching' ? slot.left_items : [];
       const optionText = (id: string) => {
         const option = options.find((option) => option.option_id === id);
         return option ? `${option.label}. ${option.text}` : id;
@@ -272,6 +290,13 @@ function frozenResponse(
           return entry.item_order.map(itemText).join('\n');
         case 'sentence_breaks':
           return entry.positions.map((position) => `断点 ${position}`).join('\n');
+        case 'select':
+          if (entry.state !== 'answered') return entry.state === 'unknown' ? '（无法辨认）' : '';
+          return entry.item_ids
+            .map((id) => (slot?.kind === 'select' ? describeSelectItem(slot, id) : id))
+            .join('\n');
+        case 'blank':
+          return entry.state === 'unknown' ? '（无法辨认）' : entry.text;
         default: {
           const unreachable: never = entry;
           return unreachable;
