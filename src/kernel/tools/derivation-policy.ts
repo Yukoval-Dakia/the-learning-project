@@ -22,6 +22,11 @@ export function derivationToolDenial(
   policy: DerivationPolicyT,
   tool: ToolExecutionGateInput,
 ): string | undefined {
+  // YUK-1398：crisis 回合只出支持模板，任何工具都不该执行；这里兜底拒绝，
+  // 防未来新增执行路径绕过 worker 的确定性分支。
+  if (policy === 'crisis') {
+    return '此消息已转入支持回应模式：本轮不执行任何学习工具。';
+  }
   return policy === 'answer_only' && (tool.effect !== 'read' || !answerOnlyTools.has(tool.name))
     ? ANSWER_ONLY_TOOL_DENIAL
     : undefined;
