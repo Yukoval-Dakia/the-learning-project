@@ -3,7 +3,7 @@ import { projectIssuedScoringBasis } from './evaluation';
 import type { EvaluationRecordT, SubmissionRecordT } from './judgment';
 import { EvaluationInputSnapshot } from './judgment';
 import { SharedMaterialKind, isPublicSharedMaterial } from './materials';
-import { Presentation, prunePresentation } from './presentation';
+import { prunePresentation } from './presentation';
 import { LifecycleQualification, PublishDecision } from './publish';
 import { ResponseSpec } from './response';
 import type { AssessmentIssuanceT, PublishedQuestionRevisionT } from './revision';
@@ -64,8 +64,10 @@ export const PracticeIssuanceDto = z.strictObject({
   /**
    * YUK-1497 —— 冻结展示层剪到发出范围（可选；旧 revision 无此层）。只含
    * 引用与输入绑定，不携带任何私有字段；剪空则缺省（UI 回退逐槽渲染）。
+   * wire 上是不透明 JSON：递归积木树无法经 OpenAPI 生成器保持类型，客户端用
+   * `Presentation.safeParse` 取得 PresentationT（服务端投影前已按同一 schema 校验）。
    */
-  presentation: Presentation.optional(),
+  presentation: z.record(z.string(), z.unknown()).optional(),
   /** Public input requirements, without executor descriptors or marking criteria. */
   response_requirements: z
     .array(
