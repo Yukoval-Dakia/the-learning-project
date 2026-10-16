@@ -54,8 +54,11 @@ type RedactionRule = {
 // Label-anchored rules keep the label and redact only the value span. The
 // value run stops at whitespace, common CJK punctuation, or line end so a
 // following sentence is preserved; parens stay INSIDE the value so class
-// names like 「初三(2)班」 redact whole.
-const LABELED_VALUE = String.raw`[^\s,，。;；:：、<>《》「」]{1,64}`;
+// names like 「初三(2)班」 redact whole. The tempered boundary also stops the
+// value run right before an ADJACENT label (「学校：实验中学（民办）校长：李四」
+// must not swallow the 校长 label into the 学校 value).
+const LABEL_BOUNDARY = String.raw`(?:姓名|学生姓名|考生姓名|名字|就读学校|所在学校|学校|班级|班别|考区|考点|校长|家长姓名|监护人|班主任|任课老师|任课教师|指导老师|辅导员|邮箱|微信号?|QQ号?|qq号?|住址|家庭住址|通讯地址|联系地址|紧急联系人|电话|手机|联系电话|联系方式|家长电话|热线|身份证号?|证件号|学号|考号|准考证号|学籍号|班级排名|年级排名|全校排名|综合排名|排名|名次|年级名次|班级名次|api[-_]?key|access[-_]?token|refresh[-_]?token|secret|password|密码|密钥)`;
+const LABELED_VALUE = String.raw`(?:(?!${LABEL_BOUNDARY}\s*[:：])[^\s,，。;；:：、<>《》「」]){1,64}`;
 
 const RULES: RedactionRule[] = [
   {
