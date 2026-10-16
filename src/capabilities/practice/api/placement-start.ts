@@ -27,11 +27,13 @@ import {
 } from '@/kernel/http';
 import { Placement } from '@/server/session';
 import { loadPlacementSessionForUpdate, placementProbeEnabled } from '@/server/session/placement';
+import { placementNoItem, recordPlacementNoItem } from '../server/placement-advance';
 import {
   ensurePlacementAssessment,
   placementAssessmentProgress,
+  readPlacementSessionInfo,
 } from '../server/placement-assessment';
-import { resolveGoalPlacementScope } from '../server/placement-scope';
+import { resolveGoalPlacementScope, resolveNearbyPlacementScope } from '../server/placement-scope';
 import { resolveLeaningPreferenceKcs, selectNextPlacementItem } from '../server/placement-select';
 import { readPlacementStarterOutcomes } from '../server/question-supply/placement-starter-outcome-reader';
 import { CreatePlacementSessionBodySchema } from './placement-contracts';
@@ -108,7 +110,22 @@ export async function createPlacementSession(req: Request): Promise<Response> {
     // ordering selection first means a selection failure leaves NO orphan 'started' row (nothing
     // is created yet). The only remaining orphan source — a probe started but never answered /
     // ended — is covered by the orphan-sweep follow-up (YUK-470).
-    let first = await selectNextPlacementItem(db, { knowledgeIds, preferKnowledgeIds });
+    // YUK-1405 L2 — before declaring the target cold, also try the SAME-SUBJECT widened
+    // scope: an already-admitted, automatically servable item nearby counts as a real
+    // first item and spares the learner the supply wait entirely.
+    let fallbackKnowledgeIds = await resolveNearbyPlacementScope(
+      db,
+      knowledgeIds,
+      requestedGoal?.subjectId ?? null,
+    );
+    let first =
+      (await selectNextPlacementItem(db, { knowledgeIds, preferKnowledgeIds })) ??
+      (fallbackKnowledgeIds.length > knowledgeIds.length
+        ? await selectNextPlacementItem(db, {
+            knowledgeIds: fallbackKnowledgeIds,
+            preferKnowledgeIds,
+          })
+        : null);
     const claimIds: string[] = [];
     let sessionId: string;
     if (first === null && goalId) {
@@ -139,7 +156,19 @@ export async function createPlacementSession(req: Request): Promise<Response> {
       }));
       // Re-select after Transaction A and immediately before paid admission. A verifier promotion
       // racing the first read must suppress dispatch rather than create unnecessary paid work.
-      first = await selectNextPlacementItem(db, { knowledgeIds, preferKnowledgeIds });
+      fallbackKnowledgeIds = await resolveNearbyPlacementScope(
+        db,
+        knowledgeIds,
+        requestedGoal?.subjectId ?? null,
+      );
+      first =
+        (await selectNextPlacementItem(db, { knowledgeIds, preferKnowledgeIds })) ??
+        (fallbackKnowledgeIds.length > knowledgeIds.length
+          ? await selectNextPlacementItem(db, {
+              knowledgeIds: fallbackKnowledgeIds,
+              preferKnowledgeIds,
+            })
+          : null);
     } else {
       ({ sessionId } = await Placement.startPlacementSession(db, {
         goalId: goalId ?? null,
@@ -186,13 +215,21 @@ export async function createPlacementSession(req: Request): Promise<Response> {
 
     const question = await db.transaction(async (tx) => {
       await loadPlacementSessionForUpdate(tx, sessionId);
+      const info = await readPlacementSessionInfo(tx, sessionId);
       const progress = await placementAssessmentProgress(tx, sessionId);
-      return ensurePlacementAssessment(
+      const next = await ensurePlacementAssessment(
         tx,
         sessionId,
-        { knowledgeIds, preferKnowledgeIds },
+        { knowledgeIds, fallbackKnowledgeIds, preferKnowledgeIds },
         progress,
+        { startedAt: info?.startedAt ?? null },
       );
+      if (next === null) {
+        // YUK-1405 L2 — record the real elapsed time to the first alternative
+        // (once per session; the marker is first-write-wins).
+        await recordPlacementNoItem(tx, sessionId, info?.startedAt ?? null, 0);
+      }
+      return next;
     });
     const starterSupply = await db.transaction(
       (tx) => readPlacementStarterOutcomes(tx, sessionId),
@@ -210,6 +247,10 @@ export async function createPlacementSession(req: Request): Promise<Response> {
       answeredCount: 0,
       sourcingNeeded: question === null,
       starterSupply,
+      // YUK-1405 — a fresh session has no unresolved items yet; the field is
+      // required on the wire contract, so it is emitted explicitly.
+      unresolved_items: [],
+      no_item: question === null ? placementNoItem(starterSupply) : null,
     });
   } catch (err) {
     return errorResponse(err);

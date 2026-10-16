@@ -145,6 +145,8 @@ async function openHistorical() {
     answeredCount: 0,
     sourcingNeeded: false,
     starterSupply: [],
+    unresolved_items: [],
+    no_item: null,
     historicalResponseSpec: issued.practice_dto.response_spec,
     question: {
       questionId: 'q1',
@@ -155,6 +157,7 @@ async function openHistorical() {
         state: await getIssuanceState(db, receipt.issuance_id),
         phase: 'answering' as const,
         pending_run: null,
+        held_exit: null,
       },
     },
   };
