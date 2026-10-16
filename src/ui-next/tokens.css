@@ -41,6 +41,7 @@
   --un-focus: var(--un-accent-strong);
   --un-shadow-float: 0 1px 2px rgb(40 32 24 / 0.06), 0 18px 44px -16px rgb(40 32 24 / 0.3);
   --un-glass-alpha: 86%;
+  --un-scrim: rgb(31 30 29 / 0.28);
   --un-glass-highlight:
     inset 0 1px 0 rgb(255 255 255 / 0.55), inset 0 0 0 1px rgb(255 255 255 / 0.22);
 
@@ -83,13 +84,7 @@
   --un-hit-pointer: 24px;
   --un-icon: 16px;
   --un-hairline: 1px;
-  --un-w-sidebar: 248px;
-  --un-w-sidebar-min: 60px;
-  --un-w-panel: 384px;
   --un-w-prose: 680px;
-  --un-h-topbar: 48px;
-  --un-h-tabbar: 62px;
-  --un-h-tabbar-compact: 48px;
 
   /* Motion (T4): feedback, small UI, interface, panel; two curves plus a soft spring for flights. */
   --un-t-feedback: 90ms;
@@ -101,12 +96,18 @@
   --un-ease-spring-soft: cubic-bezier(0.32, 1.12, 0.48, 1);
   --un-ease-glide: cubic-bezier(0.22, 1, 0.36, 1);
   --un-press-scale: 0.97;
+  /* How far a new view rises as it fades in (0 under reduced motion). */
+  --un-rise: 10px;
 
-  /* Stacking (T7). */
-  --un-z-mascot: 3;
+  /* Stacking (T7): a sticky bar inside the page, the selection bubble, the drawer, a modal. */
+  --un-z-raised: 1;
   --un-z-bubble: 4;
-  --un-z-tabbar: 42;
-  --un-z-capture: 45;
+  --un-z-sheet: 40;
+  --un-z-palette: 50;
+
+  /* Mascot slot widths (B1 pending layer; T10 keeps them named): question pages, desktop / phone. */
+  --un-mascot-read: 128px;
+  --un-mascot-read-phone: 84px;
 }
 
 /* Dark: explicit app theme or an explicit local override. */
@@ -142,6 +143,7 @@
   --un-shadow-float: 0 1px 2px rgb(0 0 0 / 0.4), 0 20px 48px -12px rgb(0 0 0 / 0.6);
   --un-glass-highlight:
     inset 0 1px 0 rgb(255 255 255 / 0.1), inset 0 0 0 1px rgb(255 255 255 / 0.06);
+  --un-scrim: rgb(0 0 0 / 0.5);
 }
 
 /* Dark by system preference when the app has no explicit theme (T6). */
@@ -177,6 +179,7 @@
     --un-shadow-float: 0 1px 2px rgb(0 0 0 / 0.4), 0 20px 48px -12px rgb(0 0 0 / 0.6);
     --un-glass-highlight:
       inset 0 1px 0 rgb(255 255 255 / 0.1), inset 0 0 0 1px rgb(255 255 255 / 0.06);
+    --un-scrim: rgb(0 0 0 / 0.5);
   }
 }
 
@@ -189,6 +192,7 @@
     --un-t-ui: 1ms;
     --un-t-panel: 1ms;
     --un-press-scale: 1;
+    --un-rise: 0px;
   }
 }
 
