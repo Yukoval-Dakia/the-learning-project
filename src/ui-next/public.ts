@@ -6,5 +6,8 @@ import './tokens.css';
 import './components.css';
 
 export { Mascot, type MascotProps } from './mascot/Mascot';
+export { flyQuote } from './motion/flights';
+export { type SharedMorph, useSharedMorph } from './motion/morph';
+export { prefersReducedMotion } from './motion/reduced-motion';
 export * from './primitives';
 export * from './shell';

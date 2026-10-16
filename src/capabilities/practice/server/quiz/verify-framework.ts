@@ -48,6 +48,12 @@ import {
 } from '@/server/ai/provenance';
 import type { Provider } from '@/server/ai/providers';
 import type { SubjectProfile } from '@/subjects/profile';
+
+// YUK-1445 — admission lane 经本模块（既有 server/ai 边持有者）复导出
+// Provider/TaskTextResult，不新增 capability→ai 依赖边。
+export type { TaskTextResult } from '@/server/ai/provenance';
+export type { Provider } from '@/server/ai/providers';
+
 import {
   PlacementStarterAdmissionError,
   PlacementStarterStaleAuthorityError,

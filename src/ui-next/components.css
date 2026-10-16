@@ -358,6 +358,25 @@
   }
 }
 
+/* ── Flights (M4, M6) ────────────────────────────────────
+   Positioned by script (motion/flights.ts) above every layer while they move. Solid, not glass:
+   they are objects in motion. Never under reduced motion (the script lands at once). */
+[data-ui-next] {
+  & .un-quote-ghost {
+    max-width: 320px;
+    padding: 2px var(--un-sp-2);
+    overflow: hidden;
+    border-radius: var(--un-r-1);
+    background: var(--un-accent-soft);
+    color: var(--un-accent-ink);
+    font-size: var(--un-fs-1);
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    box-shadow: 0 8px 22px -8px color-mix(in srgb, var(--un-accent) 55%, transparent);
+    will-change: transform, opacity;
+  }
+}
+
 /* Phone (T8): the smaller slot; the flower stays in the banner and scrolls with it. */
 @media (max-width: 720px) {
   [data-ui-next] .un-mascot {

@@ -10,6 +10,7 @@ import {
   stepsJudgeTaskSpec,
   unitDimensionFallbackTaskSpec,
 } from './judges';
+import { questionAdmissionSolveTaskSpec } from './question-admission-solve';
 import { questionAuthorTaskSpec } from './question-author';
 import { quizGenTaskSpec } from './quiz-generation';
 import { quizPlanTaskSpec } from './quiz-planning';
@@ -50,4 +51,5 @@ export const practiceTaskSpecs = defineOwnedTaskSpecs('practice', {
   SupplyPlanTask: supplyPlanTaskSpec,
   JevScoringDecisionTask: jevScoringDecisionTaskSpec,
   AssessmentRuleJudgeTask: assessmentRuleTaskSpec,
+  QuestionAdmissionSolveTask: questionAdmissionSolveTaskSpec,
 });

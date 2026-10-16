@@ -8,7 +8,7 @@
 // the returned state and wires the returned actions and ref callbacks; it never re-implements
 // any of them.
 
-import { useQuery } from '@tanstack/react-query';
+import { queryOptions, useQuery } from '@tanstack/react-query';
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ResponseSetT, SlotResponseT } from '@/core/schema/assessment';
 import { PartialUnknownJudgeResult } from '@/core/schema/capability';
@@ -361,6 +361,20 @@ function settleWithin(save: Promise<boolean>, ms: number): Promise<boolean> {
 // How long 「返回流」 waits for the last draft save before leaving anyway.
 const BACK_FLUSH_TIMEOUT_MS = 8000;
 
+/**
+ * The practice page's question read: one GET of /api/questions/:id (Practice projection). Shared
+ * with the host's prefetch of the next question (YUK-1473, M13), so the prefetched data lands in
+ * this very cache entry. A read only: issuing the question is the attach-time command below.
+ */
+export function questionDetailQuery(refId: string) {
+  return queryOptions({
+    queryKey: ['question-detail', refId],
+    // Explicit Practice projection lets product-owned diagnostics expose only
+    // learner-safe prompt/options while the question-bank surface remains 404.
+    queryFn: () => getQuestionFull(refId, { surface: 'practice' }),
+  });
+}
+
 export type PracticeToast = (text: string, tone?: PfToast['tone'], icon?: string) => void;
 
 export interface UsePracticeSubmitOptions {
@@ -389,12 +403,7 @@ export function usePracticeSubmit({
   // 题面聚合 /api/questions/:id（getQuestionFull）。注意 getQuestion 与 getQuestionFull 命中同一
   // URL、同一 loadQuestionDetail 全聚合——「轻」query 只是类型窄了子集，服务端并不更省；故这里直接
   // 用全投影，YUK-617 W1 的 timeline 从同一份 data.timeline 白拿，不再二次请求（避免同题双取全聚合）。
-  const qQ = useQuery({
-    queryKey: ['question-detail', item.ref_id],
-    // Explicit Practice projection lets product-owned diagnostics expose only
-    // learner-safe prompt/options while the question-bank surface remains 404.
-    queryFn: () => getQuestionFull(item.ref_id, { surface: 'practice' }),
-  });
+  const qQ = useQuery(questionDetailQuery(item.ref_id));
   // YUK-1051 — 选项身份从数组下标换成内容派生的 stable option id（response-types）：
   // 重渲染 / 草稿恢复 / 复盘里同一选项文本恒同 id；选项数不硬编码（1–9 数字键随选项数）。
   const [nativeResponses, setNativeResponses] = useState<ResponseSetT>({ entries: [] });
