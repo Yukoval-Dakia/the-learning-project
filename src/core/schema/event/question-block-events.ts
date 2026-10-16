@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { QuestionDraftDocument } from '../question-draft';
 import { FigureRef, StructuredQuestion } from '../structured_question';
 import { QuestionBlockRowSnapshot } from './genesis';
 
@@ -54,7 +55,9 @@ export const AffectedBlockSnapshot = z
     block_id: z.string().min(1),
     role: z.enum(['primary', 'merged_source']),
     // primary = merged/after full tree; merged_source = operation-before value (undo, optional).
-    structured: StructuredQuestion.nullable(),
+    // YUK-1468 — v2 草稿文档与 legacy StructuredQuestion 并存（fold VERBATIM 应用，
+    // 不解释文档内容）。
+    structured: z.union([StructuredQuestion, QuestionDraftDocument]).nullable(),
     // only the primary carries figures; the reducer falls back to row.figures when absent (§5.2).
     figures: z.array(FigureRef).nullable().optional(),
     version: z.number().int(),
@@ -95,6 +98,9 @@ export const EditQuestionBlockStructuredExperimental = z
           'set_question_type',
           'split_stem',
           'merge_questions',
+          // YUK-1468 — edit_question save：primary 携带 AFTER 完整 v2 草稿文档
+          // （或经适配的 legacy 树），与既有 op 同一 full-snapshot fold 语义。
+          'edit_draft',
           // NOTE: reassign_figure is intentionally NOT an op here. The live writer emits figure
           // re-pointing as a SEPARATE `figure.reassigned` job event (block-structured-edit.ts:615),
           // NOT through persistStructured / block.structured_edited — so it is not one of this
@@ -199,7 +205,7 @@ export const QuestionBlockCreateExperimental = z
         // reducer reads it VERBATIM as the row's base state — same shape genesis carries.
         row: QuestionBlockRowSnapshot,
         // creation provenance; rescue = overwrite of an existing blockId (fold last-write-wins, §5.2).
-        origin: z.enum(['ocr', 'rescue', 'docx', 'import']),
+        origin: z.enum(['ocr', 'rescue', 'docx', 'import', 'edit_draft']),
       })
       .strict(), // event-contract boundary: a stray key fails loud (like the edit payload + row snapshot)
     caused_by_event_id: z.string().optional(),

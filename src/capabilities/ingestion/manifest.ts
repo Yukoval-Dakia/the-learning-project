@@ -408,44 +408,10 @@ export const ingestionCapability = defineCapability({
         load: () =>
           import('./server/tools/proposal-tools').then((m) => m.proposeRecordPromotionTool),
       },
-      {
-        name: 'update_prompt',
-        load: () =>
-          import('./server/tools/question-block-node-edits').then(
-            (module) => module.updatePromptTool,
-          ),
-      },
-      {
-        name: 'add_option',
-        load: () =>
-          import('./server/tools/question-block-node-edits').then((module) => module.addOptionTool),
-      },
-      {
-        name: 'set_question_type',
-        load: () =>
-          import('./server/tools/question-block-node-edits').then(
-            (module) => module.setQuestionTypeTool,
-          ),
-      },
-      {
-        name: 'split_stem',
-        load: () =>
-          import('./server/tools/question-block-node-edits').then((module) => module.splitStemTool),
-      },
-      {
-        name: 'merge_questions',
-        load: () =>
-          import('./server/tools/question-block-structural-edits').then(
-            (module) => module.mergeQuestionsTool,
-          ),
-      },
-      {
-        name: 'reassign_figure',
-        load: () =>
-          import('./server/tools/question-block-structural-edits').then(
-            (module) => module.reassignFigureTool,
-          ),
-      },
+      // YUK-1468 — 六个窄 question-block 编辑薄壳已退役：草稿编辑统一走
+      // edit_question（v2 文档 ops；practice manifest 注册），提交走
+      // submit_question。纯逻辑保留在 server/block-structured-edit.ts
+      // （proposal accept / auto-enroll / block-assembly 仍用）。
     ],
   },
 });

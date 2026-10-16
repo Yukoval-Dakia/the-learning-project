@@ -862,6 +862,12 @@ export async function acceptQuestionEditProposal(
 ): Promise<QuestionEditAcceptResult> {
   ensureAcceptOnly('question_edit', opts);
   const change = asPlainRecord(proposal.payload.proposed_change);
+  // YUK-1468 — 统一契约提案：proposed_change.edit_request（ops/document/draft_ref
+  // + CAS 令牌）。accept = 重放 ops → draft → 同一 submit gate；legacy 提案
+  // （proposed_change.edit 窄节点 op）仍走旧路径直到存量清空。
+  if (change.edit_request != null) {
+    return acceptUnifiedQuestionEditRequest(db, proposalId, change, proposal, opts);
+  }
   const questionId = requiredString(change.question_id, 'question_id', proposalId);
   const edit = change.edit as QuestionEditOpT | undefined;
   if (!edit || typeof edit !== 'object' || typeof (edit as { op?: unknown }).op !== 'string') {
@@ -1218,5 +1224,212 @@ export async function acceptCauseCategoryProposal(
     kind: 'cause_category',
     rate_event_id: writtenRateEventId,
     category_id: categoryId,
+  };
+}
+
+// =============================================================================
+// YUK-1468 — 统一 edit_question 契约提案 accept（edit_request 形状）
+// =============================================================================
+//
+// Copilot 的 edit_question(save) 落 proposed_change.edit_request =
+// {question_id, ops?, document?, draft_ref?, expected_revision?,
+// expected_draft_version?}。accept = 经同一 ops → draft → submit gate：
+//   1. saveDraftEdit（request_id = proposal-accept:<id> —— 重放幂等）；
+//   2. submitDraftQuestion（同 request_id —— CAS/去重/publish 唯一 seam）；
+//   3. rate(accept) 事件 + proposal decision 信号（与旧路径同生命周期）。
+// CAS 冲突（revision 已动 / draft 版本已动）⇒ 409，proposal 保留 pending。
+
+interface UnifiedEditRequest {
+  question_id?: string | null;
+  ops?: unknown[];
+  document?: unknown;
+  draft_ref?: string;
+  expected_revision?: string | null;
+  expected_draft_version?: number;
+}
+
+async function acceptUnifiedQuestionEditRequest(
+  db: Db,
+  proposalId: string,
+  change: Record<string, unknown>,
+  proposal: ProposalInboxRow,
+  opts: PracticeApplierOpts,
+): Promise<QuestionEditAcceptResult> {
+  const editRequest = change.edit_request as UnifiedEditRequest;
+  const questionId = (editRequest.question_id ?? change.question_id ?? null) as string | null;
+  const actorRef = proposal.actor_ref ?? 'agent:copilot';
+
+  const existingRate = await existingAcceptRate(db, proposalId);
+  if (existingRate) {
+    await ensureProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
+    if (questionId != null) await loadAcceptedQuestionOrThrow(db, proposalId, questionId);
+    return {
+      kind: 'question_edit',
+      rate_event_id: existingRate.id,
+      question_id: questionId ?? 'draft',
+      edit_event_id: null,
+      version: 0,
+      idempotent: true,
+    };
+  }
+
+  // 并发决策锁（与旧路径同机制）——先锁再执行编辑+提交。
+  const concurrentDecision = await db.transaction(async (tx) => {
+    await acquireProposalDecisionLock(tx, proposalId);
+    const decision = await findExistingRateEvent(tx, proposalId);
+    if (decision) {
+      if (decision.decision !== 'accept') {
+        throw new ApiError(
+          'conflict',
+          `proposal ${proposalId} already decided as ${decision.decision}`,
+          409,
+        );
+      }
+      return decision;
+    }
+    const correction = await getCorrectionStatus(tx, proposalId);
+    if (correction.state !== 'active') {
+      throw new ApiError(
+        'conflict',
+        `proposal ${proposalId} is ${correction.state} and cannot be accepted`,
+        409,
+      );
+    }
+    return null;
+  });
+  if (concurrentDecision) {
+    await ensureProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
+    if (questionId != null) await loadAcceptedQuestionOrThrow(db, proposalId, questionId);
+    return {
+      kind: 'question_edit',
+      rate_event_id: concurrentDecision.id,
+      question_id: questionId ?? 'draft',
+      edit_event_id: null,
+      version: 0,
+      idempotent: true,
+    };
+  }
+
+  const { saveDraftEdit, EditQuestionInput } = await import('@/server/questions/edit-question');
+  const { submitDraftQuestion } = await import('@/server/questions/submit-question');
+  const now = new Date();
+  const saveRequestId = `proposal-accept:${proposalId}`;
+  const parsedSave = EditQuestionInput.safeParse({
+    action: 'save',
+    ...(editRequest.ops != null ? { ops: editRequest.ops } : {}),
+    ...(editRequest.document !== undefined ? { document: editRequest.document } : {}),
+    ...(editRequest.draft_ref != null ? { draft_ref: editRequest.draft_ref } : {}),
+    ...(questionId != null ? { question_id: questionId } : {}),
+    ...(editRequest.expected_revision !== undefined
+      ? { expected_revision: editRequest.expected_revision }
+      : {}),
+    ...(editRequest.expected_draft_version !== undefined
+      ? { expected_draft_version: editRequest.expected_draft_version }
+      : {}),
+    request_id: saveRequestId,
+  });
+  if (!parsedSave.success) {
+    throw new ApiError(
+      'validation_error',
+      `proposal ${proposalId} edit_request failed edit_question input validation: ${parsedSave.error.message}`,
+      400,
+    );
+  }
+  const serviceCtx = { actorRef, actorKind: 'user' as const };
+  const saved = await saveDraftEdit(db, { input: parsedSave.data, ctx: serviceCtx });
+  if (saved.status === 'conflict') {
+    throw new ApiError(
+      'conflict',
+      `edit_question save conflict (${saved.reason}): ${saved.detail}`,
+      409,
+    );
+  }
+  if (saved.status === 'rejected') {
+    throw new ApiError(
+      'unprocessable_entity',
+      `edit_question ops rejected: ${saved.issues.map((i) => i.detail).join('; ')}`,
+      422,
+    );
+  }
+  if (saved.status !== 'saved' && saved.status !== 'noop') {
+    throw new ApiError('inconsistent_state', `unexpected save status '${saved.status}'`, 500);
+  }
+
+  // 提交经同一 gate（唯一 publisher seam）；noop 保存且目标为已发布题时也走
+  // submit（草稿可能携带此前未提交的累积编辑）。
+  const submitted = await submitDraftQuestion(
+    db,
+    {
+      draft_ref: saved.draft_ref,
+      expected_draft_version: saved.draft_version,
+      ...(editRequest.expected_revision !== undefined
+        ? { expected_revision: editRequest.expected_revision }
+        : {}),
+      request_id: `proposal-submit:${proposalId}`,
+    },
+    { ...serviceCtx, sessionId: null },
+  );
+  if (submitted.status === 'conflict') {
+    throw new ApiError(
+      'conflict',
+      `submit_question conflict (${submitted.reason}): ${submitted.detail}`,
+      409,
+    );
+  }
+  const resolvedQuestionId = 'question_id' in submitted ? submitted.question_id : questionId;
+  const nowRow =
+    resolvedQuestionId != null
+      ? (await db.select().from(question).where(eq(question.id, resolvedQuestionId)).limit(1))[0]
+      : undefined;
+  const nextVersion = nowRow?.version ?? 0;
+
+  const editEventId = newId();
+  const rateEventId = newId();
+  await db.transaction(async (tx) => {
+    await writeEvent(tx, {
+      id: editEventId,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'experimental:question_structure_edit',
+      subject_kind: 'question',
+      subject_id: resolvedQuestionId ?? 'draft',
+      outcome: 'success',
+      payload: {
+        question_id: resolvedQuestionId,
+        proposal_event_id: proposalId,
+        op: 'edit_request',
+        draft_ref: saved.draft_ref,
+        submit_status: submitted.status,
+        revision_id: 'revision_id' in submitted ? submitted.revision_id : undefined,
+      },
+      caused_by_event_id: proposalId,
+      created_at: now,
+    });
+    await writeEvent(tx, {
+      id: rateEventId,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'rate',
+      subject_kind: 'event',
+      subject_id: proposalId,
+      outcome: 'success',
+      payload: {
+        rating: 'accept',
+        ...(opts.user_note ? { user_note: opts.user_note } : {}),
+        materialized_question_id: resolvedQuestionId,
+        structure_edit_event_id: editEventId,
+      },
+      caused_by_event_id: proposalId,
+      created_at: now,
+    });
+  });
+
+  await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
+  return {
+    kind: 'question_edit',
+    rate_event_id: rateEventId,
+    question_id: resolvedQuestionId ?? 'draft',
+    edit_event_id: editEventId,
+    version: nextVersion,
   };
 }

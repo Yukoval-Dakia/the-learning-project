@@ -390,7 +390,11 @@ export const question_block = pgTable(
     // typecheck + 测试在 Step 1-10 之间全断。改为 nullable（行为：新代码不写、
     // 老代码继续写），DROP 推迟到 Step 11.5 legacy route 迁完之后。
     extracted_prompt_md: text('extracted_prompt_md'),
-    // structured 是 Tencent Mark Agent 返回的递归 StructuredQuestion 树
+    // structured: legacy 递归 StructuredQuestion 树，或 YUK-1468 schema_version-2
+    // 统一草稿文档（isDraftDocumentV2 运行时判别；旧 StructuredQuestion 只作入口
+    // 适配）。TS 类型保守保持 StructuredQuestionT —— 列是 JSONB，v2 文档由
+    // edit_question 写路径 cast 写入；下游 legacy 消费者只接触 legacy 块（v2
+    // 块只经统一编辑/读取面访问）。
     structured: jsonb('structured').$type<StructuredQuestionT>(),
     // figures: 题目附带的图（FigureRef[]）
     figures: jsonb('figures').$type<FigureRefT[]>().notNull().default([]),

@@ -1346,9 +1346,13 @@ export const practiceCapability = defineCapability({
           import('./server/tools/jyeoo-fetch-candidates').then((m) => m.jyeooFetchCandidatesTool),
       },
       {
-        name: 'store_sourced_question',
-        load: () =>
-          import('./server/tools/store-sourced-question').then((m) => m.storeSourcedQuestionTool),
+        name: 'submit_question',
+        load: () => import('./server/tools/submit-question').then((m) => m.submitQuestionTool),
+      },
+      // YUK-1468 — 统一题目编辑面（v2 草稿文档 ops/CAS/幂等/validate/probe）。
+      {
+        name: 'edit_question',
+        load: () => import('./server/tools/edit-question').then((m) => m.editQuestionTool),
       },
       // YUK-988 (Supply-Agent/3) — web 候选生产线 DomainTool（Tavily 检索 +
       // SourcingTask 抽取，candidate-only 不写库）。E3 只注册进 inventory（无任何
@@ -1374,12 +1378,9 @@ export const practiceCapability = defineCapability({
         name: 'write_quiz',
         load: () => import('./server/tools/write-quiz').then((m) => m.writeQuizTool),
       },
-      // ADR-0032 D6-B (YUK-203 lane L6) — active 题 structured 节点编辑 propose
-      // 工具（窄 typed op；accept 经 practice applier + mini verify gate 落地）。
-      {
-        name: 'propose_question_edit',
-        load: () => import('./server/tools/proposal-tools').then((m) => m.proposeQuestionEditTool),
-      },
+      // YUK-1468 — `propose_question_edit` 已退役：Copilot 调 edit_question，
+      // 工具按 caller surface 自动落 question_edit proposal（accept applier
+      // 走同一 ops → submit gate）。
     ],
   },
 });

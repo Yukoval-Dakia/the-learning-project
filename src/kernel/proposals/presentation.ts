@@ -424,6 +424,23 @@ function noteUpdateSummary(change: Record<string, unknown> | null): string | nul
 
 function questionEditSummary(change: QuestionEditChange): ProposalSummaryItem[] {
   const edit = change.edit;
+  // YUK-1468 — 统一契约提案（edit_request）：ops 摘要 + 编辑面目标。
+  if (edit == null) {
+    const request = change.edit_request;
+    if (request != null) {
+      return compact([
+        summaryItem('修改', 'unified edit_question ops'),
+        summaryItem('目标题目', change.question_id ?? '（新草稿）'),
+        summaryItem(
+          '编辑操作',
+          request.ops != null && request.ops.length > 0
+            ? `${request.ops.length} 个 op`
+            : '整文档替换',
+        ),
+      ]);
+    }
+    return compact([summaryItem('修改', 'edit_request')]);
+  }
   const location =
     edit.op === 'edit_node_text' ? null : summaryItem('题面定位', change.node_preview);
   switch (edit.op) {
