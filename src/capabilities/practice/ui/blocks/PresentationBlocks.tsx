@@ -1,0 +1,338 @@
+// YUK-1497 — renders a frozen presentation block tree (spec §1) against the issued public data and
+// the page's draft envelopes. Page-independent: any practice page mounts it with the issuance DTO,
+// its draft entries and an updater. Content blocks reuse the existing renderers (MathMarkdown,
+// StimulusFigure); input blocks are the view-layer blocks in this folder. Branches referencing
+// unissued parts were already pruned by the backend projection; a block whose slot is not in the
+// issued spec renders nothing.
+import type { ReactNode } from 'react';
+
+import type { PublicMaterialViewT, PublicQuestionFaceT } from '@/core/schema/assessment/dto';
+import type { PresentationBlockT, PresentationT } from '@/core/schema/assessment/presentation';
+import type {
+  BlankSlotT,
+  ResponseSlotT,
+  SelectSlotT,
+  SlotResponseT,
+} from '@/core/schema/assessment/response';
+import type { IssuedOptionOrderT } from '@/core/schema/assessment/revision';
+import {
+  type EvidenceAttachment,
+  evidenceKindFromMime,
+} from '@/ui/components/response/response-types';
+import { StimulusFigure } from '@/ui/components/response/StimulusFigure';
+import { MathMarkdown } from '@/ui/lib/math-markdown';
+import { UiNextRoot } from '@/ui-next/public';
+
+import { BlankInputBlock } from './BlankInputBlock';
+import { BreakTapBlock } from './BreakTapBlock';
+import { readBlank, readOpen, readSelect, writeBlank, writeOpen, writeSelect } from './envelope';
+import { FreeAreaBlock } from './FreeAreaBlock';
+import { MatchingColumnsBlock } from './MatchingColumnsBlock';
+import { OptionListBlock } from './OptionListBlock';
+import { OrderingBlock } from './OrderingBlock';
+
+/** The public slice of the issuance the tree needs (PracticeIssuanceDto fields). */
+export interface IssuedFaceData {
+  faces: readonly PublicQuestionFaceT[];
+  materials: readonly PublicMaterialViewT[];
+  slots: readonly ResponseSlotT[];
+  /** The issuance's frozen option order, when the page has it; else the items' order is used. */
+  optionOrder?: readonly IssuedOptionOrderT[];
+}
+
+export type EntriesUpdate = (prev: SlotResponseT[]) => SlotResponseT[];
+
+export interface PresentationBlocksProps {
+  presentation: PresentationT;
+  issued: IssuedFaceData;
+  /** Draft envelopes (ResponseSet.entries). */
+  entries: readonly SlotResponseT[];
+  /**
+   * Receives an updater, not a value, so async edits (an upload finishing later) apply to the
+   * latest draft rather than the one they started from.
+   */
+  onEntriesChange: (update: EntriesUpdate) => void;
+  /** Subject notation for MathMarkdown (server-resolved). */
+  notation?: string | null;
+  disabled?: boolean;
+  submitted?: boolean;
+  /** free_area uploads in flight; join into the page's submit gate. */
+  onUploadingChange?: (uploading: boolean) => void;
+  onPreview?: (assetId: string) => void;
+  className?: string;
+}
+
+const KIND_NAME: Record<string, string> = {
+  option_list: '选项',
+  matching_columns: '配对',
+  break_tap: '断句',
+  ordering: '排序',
+  blank_input: '填空',
+  free_area: '作答区',
+};
+
+export function PresentationBlocks({
+  presentation,
+  issued,
+  entries,
+  onEntriesChange,
+  notation = null,
+  disabled,
+  submitted,
+  onUploadingChange,
+  onPreview,
+  className,
+}: PresentationBlocksProps) {
+  const slotById = new Map(issued.slots.map((slot) => [slot.slot_id, slot] as const));
+  const faceById = new Map(issued.faces.map((face) => [face.part_id, face] as const));
+  const materialById = new Map(issued.materials.map((m) => [m.material_id, m] as const));
+  const orderBySlot = new Map((issued.optionOrder ?? []).map((o) => [o.slot_id, o.option_ids]));
+  const state = { disabled, submitted };
+
+  // question_no + placement.label + kind name, e.g. 「第 3 题 (1) 选项」.
+  const labelFor = (slot: ResponseSlotT, kind: string) => {
+    const no = faceById.get(slot.part_id)?.question_no;
+    return [no ? `第 ${no} 题` : '', slot.placement?.label ?? '', KIND_NAME[kind] ?? '作答']
+      .filter(Boolean)
+      .join(' ');
+  };
+
+  const selectSlot = (slotId: string): SelectSlotT | null => {
+    const slot = slotById.get(slotId);
+    return slot?.kind === 'select' ? slot : null;
+  };
+
+  const onSelect = (slot: SelectSlotT) => (ids: string[]) =>
+    onEntriesChange((prev) => writeSelect(prev, slot, ids));
+
+  const renderBlock = (block: PresentationBlockT): ReactNode => {
+    switch (block.kind) {
+      case 'stack':
+        return (
+          <div key={block.block_id} className="un-blk-stack" data-gap={block.gap ?? 'md'}>
+            {block.children.map(renderBlock)}
+          </div>
+        );
+      case 'passage_layout': {
+        const passage = materialById.get(block.material_ref);
+        return (
+          <div
+            key={block.block_id}
+            className="un-blk-passage"
+            data-layout={block.layout}
+            data-width={block.passage_width ?? 'balanced'}
+          >
+            <section className="un-blk-passage-text" aria-label="阅读材料">
+              {passage ? renderMaterial(passage) : null}
+            </section>
+            <div className="un-blk-passage-questions">{block.children.map(renderBlock)}</div>
+          </div>
+        );
+      }
+      case 'text_math': {
+        const face = block.part_ref ? faceById.get(block.part_ref) : undefined;
+        const material = block.material_ref ? materialById.get(block.material_ref) : undefined;
+        const source = face?.prompt_md ?? material?.content_md;
+        if (source === undefined) return null;
+        return (
+          <MathMarkdown key={block.block_id} className="un-blk-text" notation={notation}>
+            {source}
+          </MathMarkdown>
+        );
+      }
+      case 'figure': {
+        const material = materialById.get(block.material_ref);
+        if (!material) return null;
+        return (
+          <StimulusFigure
+            key={block.block_id}
+            assetId={material.asset_id}
+            caption={material.caption}
+            alt={material.alt_text}
+          />
+        );
+      }
+      case 'custom':
+        // Sandbox blocks are not in this stage: say so plainly instead of hiding the gap.
+        return (
+          <p key={block.block_id} className="un-blk-unsupported">
+            这一部分暂时不能在网页上作答。
+          </p>
+        );
+      case 'option_list': {
+        const slot = selectSlot(block.bind.slot_id);
+        if (!slot) return null;
+        const order = orderBySlot.get(slot.slot_id);
+        const byId = new Map(slot.items.map((item) => [item.item_id, item] as const));
+        const shown = order
+          ? order.flatMap((id) => {
+              const item = byId.get(id);
+              return item ? [item] : [];
+            })
+          : slot.items;
+        return (
+          <OptionListBlock
+            key={block.block_id}
+            label={labelFor(slot, block.kind)}
+            items={shown.map((item) => ({ id: item.item_id, label_md: item.label_md ?? '' }))}
+            pick={slot.pick}
+            layout={block.layout}
+            marker={block.marker}
+            value={readSelect(entries, slot.slot_id)}
+            onChange={onSelect(slot)}
+            notation={notation}
+            {...state}
+          />
+        );
+      }
+      case 'matching_columns': {
+        const slot = selectSlot(block.bind.slot_id);
+        if (!slot) return null;
+        return (
+          <MatchingColumnsBlock
+            key={block.block_id}
+            label={labelFor(slot, block.kind)}
+            left={axis(slot, 'left')}
+            right={axis(slot, 'right')}
+            pairs={slot.items.flatMap((item) => {
+              const left = item.coordinates?.left;
+              const right = item.coordinates?.right;
+              return left && right ? [{ id: item.item_id, left, right }] : [];
+            })}
+            atMost={{
+              left: slot.at_most_per_coordinate?.left,
+              right: slot.at_most_per_coordinate?.right,
+            }}
+            value={readSelect(entries, slot.slot_id)}
+            onChange={onSelect(slot)}
+            notation={notation}
+            {...state}
+          />
+        );
+      }
+      case 'break_tap': {
+        const slot = selectSlot(block.bind.slot_id);
+        if (!slot || slot.text === undefined) return null;
+        return (
+          <BreakTapBlock
+            key={block.block_id}
+            label={labelFor(slot, block.kind)}
+            text={slot.text}
+            gaps={slot.items.flatMap((item) =>
+              item.gap_after_codepoint !== undefined
+                ? [{ id: item.item_id, at: item.gap_after_codepoint }]
+                : [],
+            )}
+            value={readSelect(entries, slot.slot_id)}
+            onChange={onSelect(slot)}
+            {...state}
+          />
+        );
+      }
+      case 'ordering': {
+        const slot = selectSlot(block.bind.slot_id);
+        if (!slot) return null;
+        return (
+          <OrderingBlock
+            key={block.block_id}
+            label={labelFor(slot, block.kind)}
+            positions={axis(slot, 'position')}
+            objects={axis(slot, 'object')}
+            placements={slot.items.flatMap((item) => {
+              const position = item.coordinates?.position;
+              const object = item.coordinates?.object;
+              return position && object ? [{ id: item.item_id, position, object }] : [];
+            })}
+            atMost={{
+              position: slot.at_most_per_coordinate?.position,
+              object: slot.at_most_per_coordinate?.object,
+            }}
+            value={readSelect(entries, slot.slot_id)}
+            onChange={onSelect(slot)}
+            notation={notation}
+            {...state}
+          />
+        );
+      }
+      case 'blank_input': {
+        const slot = slotById.get(block.bind.slot_id);
+        if (slot?.kind !== 'blank') return null;
+        const blank: BlankSlotT = slot;
+        return (
+          <BlankInputBlock
+            key={block.block_id}
+            label={labelFor(blank, block.kind)}
+            value={readBlank(entries, blank.slot_id)}
+            onChange={(text) => onEntriesChange((prev) => writeBlank(prev, blank.slot_id, text))}
+            width={block.width}
+            unitHint={blank.unit_hint}
+            maxChars={blank.max_chars}
+            format={blank.format}
+            notation={notation}
+            {...state}
+          />
+        );
+      }
+      case 'free_area': {
+        const slot = slotById.get(block.bind.slot_id);
+        if (slot?.kind !== 'open_response') return null;
+        const slotId = slot.slot_id;
+        const open = readOpen(entries, slotId);
+        const attachments: EvidenceAttachment[] = open.evidence.map((original) => ({
+          asset_id: original.asset.asset_id,
+          original,
+          kind: evidenceKindFromMime(original.mime_type),
+          slot_ids: [slotId],
+        }));
+        return (
+          <FreeAreaBlock
+            key={block.block_id}
+            label={labelFor(slot, block.kind)}
+            text={open.text_md}
+            onTextChange={(text_md) =>
+              onEntriesChange((prev) =>
+                writeOpen(prev, slotId, { text_md, evidence: readOpen(prev, slotId).evidence }),
+              )
+            }
+            attachments={attachments}
+            onAttachmentsChange={(next) =>
+              onEntriesChange((prev) =>
+                writeOpen(prev, slotId, {
+                  text_md: readOpen(prev, slotId).text_md ?? '',
+                  // Only uploads with a full receipt can go into an immutable submission.
+                  evidence: next.flatMap((a) => (a.original ? [a.original] : [])),
+                }),
+              )
+            }
+            minLines={block.min_lines}
+            notation={notation}
+            onUploadingChange={onUploadingChange}
+            onPreview={onPreview}
+            {...state}
+          />
+        );
+      }
+    }
+  };
+
+  const renderMaterial = (material: PublicMaterialViewT) =>
+    material.content_md !== undefined ? (
+      <MathMarkdown notation={notation}>{material.content_md}</MathMarkdown>
+    ) : (
+      <StimulusFigure
+        assetId={material.asset_id}
+        caption={material.caption}
+        alt={material.alt_text}
+      />
+    );
+
+  return (
+    <UiNextRoot className={['un-blk-tree', className].filter(Boolean).join(' ')}>
+      {renderBlock(presentation.root)}
+    </UiNextRoot>
+  );
+}
+
+function axis(slot: SelectSlotT, name: string) {
+  return (slot.axes?.[name] ?? []).map((entry) => ({ id: entry.id, label_md: entry.label_md }));
+}
