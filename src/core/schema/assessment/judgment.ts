@@ -127,6 +127,40 @@ export const ScoredUnitResult = z.object({
     .object({
       correct_count: z.number().int().min(0),
       total_count: z.number().int().min(1),
+      /** K1 规则给出 unknown 时的原因（YUK-1496）；旧行缺省。 */
+      reason: z.enum(['partial_points_not_printed', 'points_not_printed']).optional(),
+    })
+    .optional(),
+  /**
+   * K1 比较事实（YUK-1496）：set-compare 的计数与命中/错/漏 id，或单空的
+   * correct 与逐字差异；rule_case 是命中的规则分支（下标或 otherwise）。
+   * 仅供依据展示与核验，聚合只读 points_awarded / partial_unknown_points。
+   */
+  comparison: z
+    .object({
+      set: z
+        .object({
+          hit: z.number().int().min(0),
+          wrong: z.number().int().min(0),
+          miss: z.number().int().min(0),
+          picked: z.number().int().min(0),
+          expected: z.number().int().min(0),
+          hit_ids: z.array(z.string()),
+          wrong_ids: z.array(z.string()),
+          miss_ids: z.array(z.string()),
+        })
+        .optional(),
+      correct: z.union([z.literal(0), z.literal(1)]).optional(),
+      char_diff: z
+        .array(
+          z.object({
+            codepoint_offset: z.number().int().min(0),
+            given: z.string(),
+            expected: z.string(),
+          }),
+        )
+        .optional(),
+      rule_case: z.union([z.number().int().min(0), z.literal('otherwise')]),
     })
     .optional(),
   matched: z

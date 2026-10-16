@@ -175,6 +175,87 @@ export const SentenceBreaksSlot = z.object({
   text: z.string().min(1),
 });
 
+// ---------- K1 统一作答（YUK-1496）：select / blank；free 沿用 open_response ----------
+//
+// 新题只用三类作答：select（从公开 universe 中选稳定 item）、blank（一个
+// 单空文本）、free（open_response：文字 + 原始证据）。旧题型槽位只读保留，
+// 供已冻结 revision 回读与重放。
+
+/**
+ * select universe 的一个 item。item_id 是唯一身份；含义由题目定义：
+ *   - 选项：只有 label_md；
+ *   - 关系（配对/排序）：coordinates 指向 axes 中各维度的稳定 id；
+ *   - 断句字缝：gap_after_codepoint 指向 slot.text 的内部字缝（position-gap.ts）。
+ * grader 只比 item_id 集合，不解析 id、标签或坐标。改含义 = 新 item_id。
+ */
+export const SelectItem = z.object({
+  item_id: z.string().min(1),
+  label_md: z.string().optional(),
+  coordinates: z.record(z.string(), z.string().min(1)).optional(),
+  gap_after_codepoint: z.number().int().min(1).optional(),
+});
+export type SelectItemT = z.infer<typeof SelectItem>;
+
+export const SelectAxisEntry = z.object({
+  id: z.string().min(1),
+  label_md: z.string(),
+});
+export type SelectAxisEntryT = z.infer<typeof SelectAxisEntry>;
+
+/**
+ * select：一个模型覆盖单选、多选、判断、配对、断句、排序。
+ * 输入层只拒绝结构违背（未知/重复 item、违反 at_most_per_coordinate）；
+ * 选多、选错、超出印刷数量都是有效作答，交给给分规则（如「超过 3 处 0 分」）。
+ */
+export const SelectSlot = z.object({
+  ...slotBase,
+  kind: z.literal('select'),
+  items: z.array(SelectItem).min(1),
+  /** 关系维度（配对 left/right、排序 position/object）；item.coordinates 引用这里的 id。 */
+  axes: z.record(z.string(), z.array(SelectAxisEntry).min(1)).optional(),
+  /** 每个维度值最多出现几次（一对一配对：{left:1,right:1}）。是输入语义，不是给分规则。 */
+  at_most_per_coordinate: z.record(z.string(), z.number().int().min(1)).optional(),
+  /** 断句的冻结明文；gap item 的字缝按它的 code point 计（同 sentence_breaks）。 */
+  text: z.string().min(1).optional(),
+  /** 渲染提示（单选用 one）；从不校验作答数量。 */
+  pick: z.enum(['one', 'many']).default('many'),
+});
+export type SelectSlotT = z.infer<typeof SelectSlot>;
+
+/**
+ * select item 的可读描述（参考答案展示/导出用；不参与判分）：
+ * 有 label_md 用 label；关系用各维度显示文字以「→」相连；字缝给出前后字。
+ */
+export function describeSelectItem(slot: SelectSlotT, itemId: string): string {
+  const item = slot.items.find((candidate) => candidate.item_id === itemId);
+  if (item == null) return itemId;
+  if (item.label_md) return item.label_md;
+  if (item.coordinates != null) {
+    return Object.entries(item.coordinates)
+      .map(
+        ([axis, value]) =>
+          slot.axes?.[axis]?.find((entry) => entry.id === value)?.label_md ?? value,
+      )
+      .join(' → ');
+  }
+  if (item.gap_after_codepoint != null && slot.text != null) {
+    const chars = [...slot.text];
+    const at = item.gap_after_codepoint;
+    return `${chars.slice(Math.max(0, at - 2), at).join('')}｜${chars.slice(at, at + 2).join('')}`;
+  }
+  return itemId;
+}
+
+/** blank：一个 unit 收一个字符串；多空拆多个 blank。数值/表达式/诗句都是 blank。 */
+export const BlankSlot = z.object({
+  ...slotBase,
+  kind: z.literal('blank'),
+  format: z.enum(['text', 'math']).default('text'),
+  unit_hint: z.string().optional(),
+  max_chars: z.number().int().min(1).optional(),
+});
+export type BlankSlotT = z.infer<typeof BlankSlot>;
+
 export const ResponseSlot = z.discriminatedUnion('kind', [
   SingleChoiceSlot,
   MultiChoiceSlot,
@@ -186,6 +267,8 @@ export const ResponseSlot = z.discriminatedUnion('kind', [
   OrderingSlot,
   OpenResponseSlot,
   SentenceBreaksSlot,
+  SelectSlot,
+  BlankSlot,
 ]);
 export type ResponseSlotT = z.infer<typeof ResponseSlot>;
 
@@ -284,6 +367,29 @@ export const SentenceBreaksResponse = z.object({
   self_confidence: SelfConfidence,
 });
 
+/**
+ * K1 作答状态：answered 有内容；blank 主动交白（内容必须为空）；unknown 是
+ * 字迹/圈选辨认不清（capture 如实上报，内容不作判分依据）。缺条目才是 missing。
+ */
+export const ResponseState = z.enum(['answered', 'blank', 'unknown']);
+export type ResponseStateT = z.infer<typeof ResponseState>;
+
+export const SelectResponse = z.object({
+  slot_id: SlotId,
+  kind: z.literal('select'),
+  state: ResponseState,
+  item_ids: z.array(z.string().min(1)).default([]),
+  self_confidence: SelfConfidence,
+});
+
+export const BlankResponse = z.object({
+  slot_id: SlotId,
+  kind: z.literal('blank'),
+  state: ResponseState,
+  text: z.string().default(''),
+  self_confidence: SelfConfidence,
+});
+
 export const SlotResponse = z.discriminatedUnion('kind', [
   ChoiceResponse,
   TextResponse,
@@ -293,6 +399,8 @@ export const SlotResponse = z.discriminatedUnion('kind', [
   OrderingResponse,
   OpenResponse,
   SentenceBreaksResponse,
+  SelectResponse,
+  BlankResponse,
 ]);
 export type SlotResponseT = z.infer<typeof SlotResponse>;
 
@@ -314,8 +422,106 @@ export interface ResponseSpecIssue {
     | 'cell_references_table'
     | 'duplicate_cell_coord'
     | 'table_bounds'
-    | 'unresolved_part_ref';
+    | 'unresolved_part_ref'
+    | 'select_coordinate_invalid'
+    | 'select_duplicate_relation'
+    | 'select_gap_invalid'
+    | 'select_item_shape_mixed'
+    | 'select_at_most_unknown_axis';
   detail: string;
+}
+
+/**
+ * select 槽自洽（YUK-1496）：item 身份唯一；一个槽内 item 只有一种形态
+ * （选项 / 关系 / 字缝）；关系坐标恰好覆盖全部 axes 且指向声明值、同一坐标
+ * 组合不重复；字缝落在 text 的内部且不重复；at_most 只约束声明过的维度。
+ */
+function validateSelectSlot(slot: SelectSlotT): ResponseSpecIssue[] {
+  const issues: ResponseSpecIssue[] = [];
+  const itemIds = new Set<string>();
+  for (const item of slot.items) {
+    if (itemIds.has(item.item_id)) {
+      issues.push({
+        code: 'duplicate_item_id',
+        detail: `slot '${slot.slot_id}' repeats item_id '${item.item_id}'`,
+      });
+    }
+    itemIds.add(item.item_id);
+  }
+  const relational = slot.items.filter((item) => item.coordinates != null).length;
+  const gaps = slot.items.filter((item) => item.gap_after_codepoint != null).length;
+  const shapes = [relational, gaps].filter((count) => count > 0);
+  if (
+    shapes.length > 1 ||
+    (relational > 0 && relational !== slot.items.length) ||
+    (gaps > 0 && gaps !== slot.items.length)
+  ) {
+    issues.push({
+      code: 'select_item_shape_mixed',
+      detail: `slot '${slot.slot_id}' mixes option, relation and gap items`,
+    });
+  }
+  const axes = slot.axes ?? {};
+  const axisNames = Object.keys(axes);
+  for (const axis of axisNames) {
+    const ids = (axes[axis] ?? []).map((entry) => entry.id);
+    if (new Set(ids).size !== ids.length) {
+      issues.push({
+        code: 'select_coordinate_invalid',
+        detail: `slot '${slot.slot_id}' axis '${axis}' repeats an entry id`,
+      });
+    }
+  }
+  if (relational > 0) {
+    const seenTuples = new Set<string>();
+    for (const item of slot.items) {
+      const coordinates = item.coordinates ?? {};
+      const names = Object.keys(coordinates);
+      const valid =
+        names.length === axisNames.length &&
+        axisNames.every((axis) =>
+          (axes[axis] ?? []).some((entry) => entry.id === coordinates[axis]),
+        );
+      if (!valid) {
+        issues.push({
+          code: 'select_coordinate_invalid',
+          detail: `slot '${slot.slot_id}' item '${item.item_id}' coordinates must name exactly the declared axes with declared values`,
+        });
+        continue;
+      }
+      const tuple = axisNames.map((axis) => `${axis}=${coordinates[axis]}`).join('|');
+      if (seenTuples.has(tuple)) {
+        issues.push({
+          code: 'select_duplicate_relation',
+          detail: `slot '${slot.slot_id}' declares relation ${tuple} under more than one item_id`,
+        });
+      }
+      seenTuples.add(tuple);
+    }
+  }
+  if (gaps > 0) {
+    const seenGaps = new Set<number>();
+    for (const item of slot.items) {
+      const gap = item.gap_after_codepoint;
+      if (gap == null) continue;
+      if (slot.text == null || !isInteriorGap(slot.text, gap) || seenGaps.has(gap)) {
+        issues.push({
+          code: 'select_gap_invalid',
+          detail: `slot '${slot.slot_id}' item '${item.item_id}' gap ${gap} is not a unique interior gap of the frozen text`,
+        });
+      }
+      seenGaps.add(gap);
+    }
+  }
+  for (const axis of Object.keys(slot.at_most_per_coordinate ?? {})) {
+    if (!axisNames.includes(axis)) {
+      issues.push({
+        code: 'select_at_most_unknown_axis',
+        detail: `slot '${slot.slot_id}' at_most_per_coordinate names undeclared axis '${axis}'`,
+      });
+    }
+  }
+  return issues;
 }
 
 /**
@@ -399,6 +605,9 @@ export function validateResponseSpec(
           }
         }
       }
+    }
+    if (slot.kind === 'select') {
+      issues.push(...validateSelectSlot(slot));
     }
     if (structure != null) {
       const partIds = new Set(structure.parts.map((part) => part.part_id));
@@ -498,6 +707,9 @@ export function isBlankSlotResponse(entry: SlotResponseT): boolean {
       return entry.positions.length === 0;
     case 'open':
       return entry.text_md.trim().length === 0 && entry.evidence.length === 0;
+    case 'select':
+    case 'blank':
+      return entry.state === 'blank';
   }
 }
 
@@ -515,7 +727,9 @@ export interface ResponseSetIssue {
     | 'select_count_out_of_bounds'
     | 'duplicate_pair_option'
     | 'position_out_of_range'
-    | 'duplicate_position';
+    | 'duplicate_position'
+    | 'response_state_inconsistent'
+    | 'select_coordinate_overused';
   detail: string;
 }
 
@@ -556,6 +770,8 @@ export function validateResponseSet(
       ordering: 'ordering',
       open_response: 'open',
       sentence_breaks: 'sentence_breaks',
+      select: 'select',
+      blank: 'blank',
     };
     if (slot.kind === 'table') {
       issues.push({
@@ -678,6 +894,51 @@ export function validateResponseSet(
           });
         }
         seenPositions.add(position);
+      }
+    }
+    if (entry.kind === 'select' || entry.kind === 'blank') {
+      // blank 状态必须内容为空；answered 必须有内容。unknown 的内容不作判分依据。
+      const empty = entry.kind === 'select' ? entry.item_ids.length === 0 : entry.text === '';
+      if ((entry.state === 'blank' && !empty) || (entry.state === 'answered' && empty)) {
+        issues.push({
+          code: 'response_state_inconsistent',
+          detail: `slot '${entry.slot_id}' state '${entry.state}' contradicts its content`,
+        });
+      }
+    }
+    if (entry.kind === 'select' && slot.kind === 'select') {
+      // 重复或 universe 外 id 是协议错误，不先去重再判（统一设计 §2）。
+      const itemById = new Map(slot.items.map((item) => [item.item_id, item] as const));
+      const picked = new Set<string>();
+      for (const itemId of entry.item_ids) {
+        if (!itemById.has(itemId)) {
+          issues.push({
+            code: 'unknown_item_id',
+            detail: `slot '${entry.slot_id}' response references unknown item '${itemId}'`,
+          });
+        }
+        if (picked.has(itemId)) {
+          issues.push({
+            code: 'duplicate_selected_option',
+            detail: `slot '${entry.slot_id}' response selects item '${itemId}' more than once`,
+          });
+        }
+        picked.add(itemId);
+      }
+      for (const [axis, limit] of Object.entries(slot.at_most_per_coordinate ?? {})) {
+        const uses = new Map<string, number>();
+        for (const itemId of picked) {
+          const value = itemById.get(itemId)?.coordinates?.[axis];
+          if (value != null) uses.set(value, (uses.get(value) ?? 0) + 1);
+        }
+        for (const [value, count] of uses) {
+          if (count > limit) {
+            issues.push({
+              code: 'select_coordinate_overused',
+              detail: `slot '${entry.slot_id}' uses ${axis}='${value}' ${count} times (at most ${limit})`,
+            });
+          }
+        }
       }
     }
     if (entry.kind === 'ordering' && slot.kind === 'ordering') {

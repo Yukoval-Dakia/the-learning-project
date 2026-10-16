@@ -14,6 +14,7 @@ import {
   type ScoringUnitT,
   type SharedMaterialT,
   type SlotResponseT,
+  describeSelectItem,
   isBlankSlotResponse,
   projectIssuedScoringBasis,
   projectPracticeIssuance,
@@ -109,6 +110,12 @@ function slotFace(slot: ResponseSlotT): string {
     case 'sentence_breaks':
       // 断句槽的题面即冻结明文（ADR-0074 D3a；位置语义见 position-gap.ts）。
       return slot.text;
+    case 'select':
+      return (
+        slot.text ?? slot.items.map((item) => describeSelectItem(slot, item.item_id)).join('；')
+      );
+    case 'blank':
+      return slot.unit_hint ?? '';
     case 'text':
     case 'formula':
     case 'open_response':
@@ -173,6 +180,13 @@ function responseText(slot: ResponseSlotT, entry: SlotResponseT): string {
     case 'sentence_breaks':
       // 断句作答按原位置序呈现（code point 字缝索引，不解读为文字）。
       return entry.positions.map((position) => `#${position}`).join(' ');
+    case 'select':
+      if (entry.state === 'unknown') return '（无法辨认）';
+      return slot.kind === 'select'
+        ? entry.item_ids.map((id) => describeSelectItem(slot, id)).join('；')
+        : '';
+    case 'blank':
+      return entry.state === 'unknown' ? '（无法辨认）' : entry.text;
     default: {
       const exhaustive: never = entry;
       return exhaustive;
