@@ -2,14 +2,14 @@ import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 
-import { RetryableError } from '@/core/schema/structured_question';
+import { PermanentError, RetryableError } from '@/core/schema/structured_question';
 import { source_asset } from '@/db/schema';
 import type { ToolContext } from '@/kernel/tools/types';
 import { TOOL_OUTPUT_IMAGES_FIELD } from '@/kernel/tools/types';
 import { createDirectProviderOperationContext } from '@/server/ai/provider-attempt-runtime';
-import { runGlmLayoutParsingWithAttempt } from '../glm_ocr';
+import { GLM_OCR_PRICE_CNY_PER_MILLION_TOKENS, runGlmLayoutParsingWithAttempt } from '../glm_ocr';
 import { type PixelBBox, cropToPng, probeImage, rotateImage } from '../image-ops';
-import { type SourceAssetRow, persistSourceAsset } from '../persist-image-asset';
+import { type SourceAssetRow, isUniqueViolation, persistSourceAsset } from '../persist-image-asset';
 import { GLM_OCR_MODEL, GLM_OCR_PROVIDER } from '../provider-attempts';
 import { formatAssetRef } from '../source-package';
 import {
@@ -20,6 +20,7 @@ import {
   getR2,
   loadVerifiedAssetBytes,
   requireAssetRef,
+  requireIngestionScope,
 } from './source-tool-support';
 import type { DomainTool } from './types';
 
@@ -60,10 +61,27 @@ function assetRefOutput(row: Pick<SourceAssetRow, 'id' | 'sha256'>): {
   };
 }
 
-/** derived asset id: deterministic over (parent digest, op, args, request_id). */
-function derivedAssetId(parentSha: string, op: string, args: string, requestId?: string): string {
+/** A request_id already produced a derived asset for DIFFERENT inputs. */
+export class DerivedAssetConflictError extends Error {}
+
+/**
+ * Derived asset id: deterministic over (scope, parent ROW id, op, request key).
+ * Row id — not content sha — so an identical upload in a second session can't
+ * adopt another session's derived asset (and its derived_from/page_index).
+ * With a request_id the id keys on the request alone: replaying the same
+ * request_id with DIFFERENT args hits the same id and reports a conflict
+ * (P2-10) instead of forking a sibling asset.
+ */
+function derivedAssetId(
+  scopeId: string,
+  parent: SourceAssetRow,
+  op: string,
+  args: string,
+  requestId?: string,
+): string {
+  const key = requestId ? `req:${requestId}` : `args:${args}`;
   const sha = createHash('sha256')
-    .update(`${parentSha}|${op}|${args}|${requestId ?? ''}`)
+    .update(`${scopeId}|${parent.id}|${op}|${key}`)
     .digest('hex')
     .slice(0, 24);
   return `der_${sha}`;
@@ -75,6 +93,7 @@ async function persistDerivedImage(
   input: {
     bytes: Uint8Array;
     id: string;
+    parentId: string;
     provenance: Record<string, unknown>;
   },
 ): Promise<SourceAssetRow> {
@@ -86,9 +105,18 @@ async function persistDerivedImage(
       .where(eq(source_asset.id, input.id))
       .limit(1);
     if (!row) return null;
+    const derivedFrom = (row.provenance as Record<string, unknown> | null | undefined)
+      ?.derived_from as { asset_id?: unknown } | undefined;
+    // The row must descend from THIS parent — an adopted row whose lineage
+    // points elsewhere is corruption, never an idempotent hit.
+    if (derivedFrom?.asset_id !== input.parentId) {
+      throw new DerivedAssetConflictError(
+        `derived asset '${input.id}' exists with different lineage — this request_id is taken`,
+      );
+    }
     if (row.sha256 !== newSha) {
-      throw new Error(
-        `derived asset '${input.id}' exists with different content — request collision, choose a new request_id`,
+      throw new DerivedAssetConflictError(
+        `request_id already produced a different derived asset ('${input.id}') — choose a new request_id`,
       );
     }
     return row;
@@ -106,8 +134,9 @@ async function persistDerivedImage(
     });
   } catch (err) {
     // Concurrent replay inserted the same deterministic id first — adopt it
-    // when content is byte-identical, fail loudly when it drifted.
-    if (err instanceof Error && /duplicate|unique/i.test(err.message)) {
+    // when lineage + content match. postgres.js wraps the 23505, so walk the
+    // cause chain rather than matching message text.
+    if (isUniqueViolation(err)) {
       const adopted = await adoptIfSame();
       if (adopted) return adopted;
     }
@@ -201,7 +230,7 @@ const CropImageInputSchema = z.object({
 type CropImageInput = z.infer<typeof CropImageInputSchema>;
 
 const CropImageOutputSchema = z.object({
-  status: z.enum(['ok', 'unavailable', 'failed']),
+  status: z.enum(['ok', 'unavailable', 'failed', 'conflict']),
   reason: z.string().nullable(),
   parent: AssetRefOutputSchema.nullable(),
   derived: AssetRefOutputSchema.extend({
@@ -226,6 +255,7 @@ type CropImageOutput = z.infer<typeof CropImageOutputSchema>;
 
 async function executeCropImage(ctx: ToolContext, raw: CropImageInput): Promise<CropImageOutput> {
   const input = CropImageInputSchema.parse(raw);
+  const scopeId = requireIngestionScope(ctx);
   const parent = await requireAssetRef(ctx, input.ref);
   await assertAssetInScope(ctx, parent.id);
   if (!parent.mime_type.startsWith('image/')) {
@@ -255,24 +285,44 @@ async function executeCropImage(ctx: ToolContext, raw: CropImageInput): Promise<
   }
 
   const id = derivedAssetId(
-    parent.sha256,
+    scopeId,
+    parent,
     'crop',
     `${input.bbox.x},${input.bbox.y},${input.bbox.width},${input.bbox.height}`,
     input.request_id,
   );
   const parentProv = parent.provenance as Record<string, unknown> | null;
-  const derived = await persistDerivedImage(ctx, {
-    bytes: cropped.png,
-    id,
-    provenance: {
-      role: 'derived_crop',
-      derived_from: { asset_id: parent.id, digest: `sha256:${parent.sha256}` },
-      op: { kind: 'crop', bbox_px: cropped.bbox, requested_bbox_px: input.bbox },
-      coordinate_space: { asset_id: id },
-      derivation_request: input.request_id ?? null,
-      ...(typeof parentProv?.page_index === 'number' ? { page_index: parentProv.page_index } : {}),
-    },
-  });
+  let derived: SourceAssetRow;
+  try {
+    derived = await persistDerivedImage(ctx, {
+      bytes: cropped.png,
+      id,
+      parentId: parent.id,
+      provenance: {
+        role: 'derived_crop',
+        derived_from: { asset_id: parent.id, digest: `sha256:${parent.sha256}` },
+        op: { kind: 'crop', bbox_px: cropped.bbox, requested_bbox_px: input.bbox },
+        coordinate_space: { asset_id: id },
+        derivation_request: input.request_id ?? null,
+        ...(typeof parentProv?.page_index === 'number'
+          ? { page_index: parentProv.page_index }
+          : {}),
+      },
+    });
+  } catch (err) {
+    if (err instanceof DerivedAssetConflictError) {
+      return {
+        status: 'conflict',
+        reason: err.message,
+        parent: assetRefOutput(parent),
+        derived: null,
+        bbox_px: null,
+        coordinate_space: null,
+        images: [],
+      };
+    }
+    throw err;
+  }
 
   const probe = await probeImage(cropped.png);
   const derivedRef = assetRefOutput(derived);
@@ -321,7 +371,7 @@ const RotateImageInputSchema = z.object({
 type RotateImageInput = z.infer<typeof RotateImageInputSchema>;
 
 const RotateImageOutputSchema = z.object({
-  status: z.enum(['ok', 'unavailable', 'failed']),
+  status: z.enum(['ok', 'unavailable', 'failed', 'conflict']),
   reason: z.string().nullable(),
   parent: AssetRefOutputSchema.nullable(),
   derived: AssetRefOutputSchema.extend({
@@ -348,6 +398,7 @@ async function executeRotateImage(
   raw: RotateImageInput,
 ): Promise<RotateImageOutput> {
   const input = RotateImageInputSchema.parse(raw);
+  const scopeId = requireIngestionScope(ctx);
   const parent = await requireAssetRef(ctx, input.ref);
   await assertAssetInScope(ctx, parent.id);
   if (!parent.mime_type.startsWith('image/')) {
@@ -379,24 +430,44 @@ async function executeRotateImage(
   }
 
   const id = derivedAssetId(
-    parent.sha256,
+    scopeId,
+    parent,
     'rotate',
     `${input.degrees}:${rotated.applied}`,
     input.request_id,
   );
   const parentProv = parent.provenance as Record<string, unknown> | null;
-  const derived = await persistDerivedImage(ctx, {
-    bytes: rotated.bytes,
-    id,
-    provenance: {
-      role: 'derived_rotate',
-      derived_from: { asset_id: parent.id, digest: `sha256:${parent.sha256}` },
-      op: { kind: 'rotate', requested: input.degrees, applied: rotated.applied },
-      coordinate_space: { asset_id: id },
-      derivation_request: input.request_id ?? null,
-      ...(typeof parentProv?.page_index === 'number' ? { page_index: parentProv.page_index } : {}),
-    },
-  });
+  let derived: SourceAssetRow;
+  try {
+    derived = await persistDerivedImage(ctx, {
+      bytes: rotated.bytes,
+      id,
+      parentId: parent.id,
+      provenance: {
+        role: 'derived_rotate',
+        derived_from: { asset_id: parent.id, digest: `sha256:${parent.sha256}` },
+        op: { kind: 'rotate', requested: input.degrees, applied: rotated.applied },
+        coordinate_space: { asset_id: id },
+        derivation_request: input.request_id ?? null,
+        ...(typeof parentProv?.page_index === 'number'
+          ? { page_index: parentProv.page_index }
+          : {}),
+      },
+    });
+  } catch (err) {
+    if (err instanceof DerivedAssetConflictError) {
+      return {
+        status: 'conflict',
+        reason: err.message,
+        parent: assetRefOutput(parent),
+        derived: null,
+        applied: null,
+        coordinate_space: null,
+        images: [],
+      };
+    }
+    throw err;
+  }
 
   const derivedRef = assetRefOutput(derived);
   return {
@@ -497,6 +568,7 @@ async function executeGlmOcr(ctx: ToolContext, raw: GlmOcrInput): Promise<GlmOcr
   if (ctx.providerSessionDeadlineAt === undefined) {
     throw new TypeError('glm_ocr requires a provider session deadline');
   }
+  requireIngestionScope(ctx);
   ctx.signal?.throwIfAborted();
   if (Date.now() >= ctx.providerSessionDeadlineAt) {
     throw new Error('hard_deadline_exceeded');
@@ -561,14 +633,13 @@ async function executeGlmOcr(ctx: ToolContext, raw: GlmOcrInput): Promise<GlmOcr
     page_index: typeof parentProv?.page_index === 'number' ? parentProv.page_index : null,
   };
 
-  const timeoutMs = Math.min(
-    GLM_TOOL_TIMEOUT_MS,
-    Math.max(5_000, ctx.providerSessionDeadlineAt - Date.now()),
-  );
+  // P2-6 — timeout can never exceed the caller's own deadline (an elapsed
+  // deadline already threw hard_deadline_exceeded above).
+  const timeoutMs = Math.min(GLM_TOOL_TIMEOUT_MS, ctx.providerSessionDeadlineAt - Date.now());
   const providerAttempt = createDirectProviderOperationContext({
     db: ctx.db,
     caller: ctx.providerAttemptCaller,
-    deadlineAt: new Date(Date.now() + timeoutMs),
+    deadlineAt: new Date(Math.min(Date.now() + timeoutMs, ctx.providerSessionDeadlineAt)),
     // Deterministic anchor: the same tool call retried maps to the same
     // provider_operation — the lifecycle, not a second mystery row.
     operationAnchor: `glm_ocr:${ctx.taskRunId}:${parent.sha256}:${appliedRegion ? `${appliedRegion.x},${appliedRegion.y},${appliedRegion.width},${appliedRegion.height}` : 'full'}`,
@@ -581,6 +652,9 @@ async function executeGlmOcr(ctx: ToolContext, raw: GlmOcrInput): Promise<GlmOcr
       signal: ctx.signal,
       timeoutMs,
       providerAttempt,
+      // P1-4 — the operation-kind start fence serializes a second dispatch on
+      // this same anchor (unknown-paid 不自动重发).
+      fencedAttempt: true,
     });
     const blocks: GlmOcrBlock[] = [];
     for (const page of response.layout_details ?? []) {
@@ -615,17 +689,41 @@ async function executeGlmOcr(ctx: ToolContext, raw: GlmOcrInput): Promise<GlmOcr
           : null,
       cost:
         usage && typeof usage.total_tokens === 'number'
-          ? { amount: (usage.total_tokens / 1_000_000) * 0.2, currency: 'CNY', basis: 'estimated' }
+          ? {
+              amount: (usage.total_tokens / 1_000_000) * GLM_OCR_PRICE_CNY_PER_MILLION_TOKENS,
+              currency: 'CNY',
+              basis: 'estimated',
+            }
           : null,
       external_request_id: response.request_id ?? null,
     };
   } catch (err) {
-    if (err instanceof Error && err.name === 'AbortError') throw err;
+    // P1-4 — caller cancellation propagates; the bridge handles it. (Wrapped
+    // network/timeout errors carry names like RetryableError, so an
+    // err.name === 'AbortError' check can never fire — test the signal.)
+    if (ctx.signal?.aborted) throw err;
+    const msg = err instanceof Error ? err.message : String(err);
+    if (err instanceof PermanentError) {
+      // A PermanentError either fired BEFORE dispatch (credential fail-fast —
+      // the provider was never called, safe to retry) or the provider itself
+      // answered 4xx (known outcome — billed or not, never auto-redispatch).
+      const notSent = !(process.env.ZHIPU_API_KEY ?? '').trim();
+      return {
+        ...base,
+        status: 'failed',
+        reason: notSent ? msg : `provider_rejected: ${msg}`,
+        retryable: notSent,
+        anchor,
+      };
+    }
+    // RetryableError from timeouts / caller-independent network failures:
+    // the request may have been dispatched and billed — the outcome is
+    // UNKNOWN, so never auto-retry (design §9 unknown-paid 不自动重发).
     return {
       ...base,
       status: 'failed',
-      reason: err instanceof Error ? err.message : String(err),
-      retryable: err instanceof RetryableError,
+      reason: `unknown_outcome — request may have been dispatched and billed; do not re-dispatch without reconciling the provider_attempt row (${err instanceof RetryableError ? 'retryable upstream' : 'unexpected'}): ${msg}`,
+      retryable: false,
       anchor,
     };
   }

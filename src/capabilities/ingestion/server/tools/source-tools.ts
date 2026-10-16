@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { learning_session, source_document } from '@/db/schema';
 
 import { formatAssetRef, readSourcePackage } from '../source-package';
+import { requireIngestionScope } from './source-tool-support';
 import type { DomainTool, ToolContext } from './types';
 
 // YUK-1404 (B2/R2) — read_source: the one text-reading tool for every source
@@ -100,19 +101,16 @@ async function executeReadSource(
 ): Promise<ReadSourceOutput> {
   const input = ReadSourceInputSchema.parse(raw);
 
-  // Scope enforcement: with an ingestion_session scope, document_id must be
-  // the session's own source_document — nothing outside the package is readable.
-  const scope = ctx.scope;
-  if (scope?.kind === 'ingestion_session') {
-    if (!scope.id) throw new Error('ingestion_session scope requires an id');
-    const [session] = await ctx.db
-      .select({ source_document_id: learning_session.source_document_id })
-      .from(learning_session)
-      .where(eq(learning_session.id, scope.id))
-      .limit(1);
-    if (!session?.source_document_id || session.source_document_id !== input.document_id) {
-      throw new Error(`document '${input.document_id}' is outside ingestion_session '${scope.id}'`);
-    }
+  // Scope enforcement (P2-5, fails closed): the bound session's own
+  // source_document is the only document this tool may read.
+  const scopeId = requireIngestionScope(ctx);
+  const [session] = await ctx.db
+    .select({ source_document_id: learning_session.source_document_id })
+    .from(learning_session)
+    .where(eq(learning_session.id, scopeId))
+    .limit(1);
+  if (!session?.source_document_id || session.source_document_id !== input.document_id) {
+    throw new Error(`document '${input.document_id}' is outside ingestion_session '${scopeId}'`);
   }
 
   const [doc] = await ctx.db

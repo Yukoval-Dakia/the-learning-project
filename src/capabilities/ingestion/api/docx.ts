@@ -7,6 +7,7 @@ import { persistDocxPageEvidence } from '@/capabilities/ingestion/server/docx/pe
 import { prepareDocxForConversion } from '@/capabilities/ingestion/server/docx/route-classify';
 import {
   attachWordSourcePackage,
+  markSessionPackageFailed,
   persistPackageMedia,
 } from '@/capabilities/ingestion/server/source-package';
 import { MAX_DOCX_UPLOAD_BYTES } from '@/core/limits';
@@ -92,27 +93,44 @@ export async function POST(req: Request): Promise<Response> {
       // expandPdf equivalent), then run the standard upload+extract flow.
       const evidence = await persistDocxPageEvidence(db, r2, converter, prep.converterBytes);
       // YUK-1404 (B2/R1) — Word goes through pandoc to Markdown on BOTH lines;
-      // a MathType doc additionally carries the rendered page images. Pandoc
-      // runs BEFORE session creation so a conversion failure rejects cleanly
-      // instead of leaving an orphan uploaded session. The legacy pipeline
-      // keeps running untouched — the package is additive.
-      const { markdown, media } = await converter.docxToMarkdown(prep.converterBytes);
+      // a MathType doc additionally carries the rendered page images. Pandoc is
+      // TOLERANT on the visual line (P2-3): a conversion failure must not
+      // reject uploads that the OCR path used to accept — the package simply
+      // attaches without markdown, flagged. The legacy pipeline is untouched.
+      let markdown: string | null = null;
+      let media: { path: string; bytes: Uint8Array }[] = [];
+      let markdownAbsentReason: string | undefined;
+      try {
+        ({ markdown, media } = await converter.docxToMarkdown(prep.converterBytes));
+      } catch (err) {
+        markdownAbsentReason = err instanceof Error ? err.message : String(err);
+        console.warn(
+          `[docx] visual-line pandoc failed (package attaches without markdown): ${markdownAbsentReason}`,
+        );
+      }
       const persisted = await persistPackageMedia(db, r2, media);
       const { sessionId, sourceDocumentId } = await Ingestion.initiateUpload(db, {
         assetIds: evidence.assetIds,
         entrypoint: 'docx',
         externalRefOmission,
       });
-      await attachWordSourcePackage(db, r2, {
-        sourceDocumentId,
-        originalBytes: docxBytes,
-        converterBytes: prep.converterBytes,
-        markdown,
-        media: persisted.media,
-        omittedMedia: persisted.omitted,
-        pageAssetIds: evidence.assetIds,
-        renderedPdfAssetId: evidence.pdfAssetId,
-      });
+      try {
+        await attachWordSourcePackage(db, r2, {
+          sourceDocumentId,
+          originalBytes: docxBytes,
+          converterBytes: prep.converterBytes,
+          markdown,
+          markdownAbsentReason,
+          media: persisted.media,
+          omittedMedia: persisted.omitted,
+          pageAssetIds: evidence.assetIds,
+          renderedPdfAssetId: evidence.pdfAssetId,
+        });
+      } catch (err) {
+        // P2-8 — the session row exists: mark it failed, don't orphan it.
+        await markSessionPackageFailed(db, sessionId, err);
+        throw err;
+      }
       const boss = await getStartedBoss();
       await Ingestion.enqueueExtraction({ db, boss, sessionId });
       return Response.json(
@@ -177,16 +195,22 @@ export async function POST(req: Request): Promise<Response> {
     // YUK-1404 (B2/R1) — attach the unified 'word' source package: original +
     // converter input + source.md + media + page images, with ast1 refs
     // rewritten into body_md. The legacy blocks flow is unchanged.
-    await attachWordSourcePackage(db, r2, {
-      sourceDocumentId,
-      originalBytes: docxBytes,
-      converterBytes: prep.converterBytes,
-      markdown,
-      media: persisted.media,
-      omittedMedia: persisted.omitted,
-      pageAssetIds: evidence.assetIds,
-      renderedPdfAssetId: evidence.pdfAssetId,
-    });
+    try {
+      await attachWordSourcePackage(db, r2, {
+        sourceDocumentId,
+        originalBytes: docxBytes,
+        converterBytes: prep.converterBytes,
+        markdown,
+        media: persisted.media,
+        omittedMedia: persisted.omitted,
+        pageAssetIds: evidence.assetIds,
+        renderedPdfAssetId: evidence.pdfAssetId,
+      });
+    } catch (err) {
+      // P2-8 — the session row exists: mark it failed, don't orphan it.
+      await markSessionPackageFailed(db, sessionId, err);
+      throw err;
+    }
 
     return Response.json(
       { session_id: sessionId, line, page_count: evidence.pageCount },

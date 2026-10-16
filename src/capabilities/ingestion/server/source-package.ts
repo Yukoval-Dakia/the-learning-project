@@ -1,7 +1,7 @@
 import { eq, inArray } from 'drizzle-orm';
 
 import type { Db } from '@/db/client';
-import { source_asset, source_document } from '@/db/schema';
+import { learning_session, source_asset, source_document } from '@/db/schema';
 import type { R2Client } from '@/server/r2';
 import type { PdfPageText } from './pdf-text';
 import { type SourceAssetRow, persistSourceAsset, sha256Hex } from './persist-image-asset';
@@ -178,6 +178,9 @@ export interface SourcePackageV1 {
   document_text_asset_id?: string;
   /** word only: rendered-PDF ancestor of the page images. */
   rendered_pdf_asset_id?: string;
+  /** word only: pandoc failed/tolerated — package has page images + original
+   * but no markdown (P2-3: the upload must stay additive, not reject). */
+  markdown_absent_reason?: string;
 }
 
 export function readSourcePackage(provenance: unknown): SourcePackageV1 | null {
@@ -455,6 +458,8 @@ const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingm
 
 function mediaMime(path: string): string {
   const suffix = path.toLowerCase().split('.').at(-1) ?? '';
+  // svg is deliberately absent: stored/served as octet-stream so an active
+  // markup file can never be rendered as image content (XSS surface).
   return (
     (
       {
@@ -464,7 +469,6 @@ function mediaMime(path: string): string {
         gif: 'image/gif',
         webp: 'image/webp',
         bmp: 'image/bmp',
-        svg: 'image/svg+xml',
       } as Record<string, string>
     )[suffix] ?? 'application/octet-stream'
   );
@@ -500,10 +504,11 @@ export interface PackageMediaResult {
 }
 
 /**
- * Persist pandoc-extracted embedded media. The same per-image byte cap the
- * generic asset route applies is enforced here so an oversized embed can't
- * mint a divergent source_asset; skipped media land in `omitted` (the markdown
- * keeps its original reference — unrewritten, dangling by design).
+ * Persist pandoc-extracted embedded media. The byte cap applies to ALL media
+ * (raster AND opaque binaries like emf/wmf/tiff — an unbounded embed is an
+ * unbounded row either way); skipped media land in `omitted` (the markdown
+ * keeps its original reference — unrewritten, dangling by design). SVG is
+ * stored as octet-stream, never image/svg+xml (P2-4).
  */
 export async function persistPackageMedia(
   db: Db,
@@ -515,7 +520,7 @@ export async function persistPackageMedia(
   const omitted: PackageMediaResult['omitted'] = [];
   for (const m of media) {
     const mime = mediaMime(m.path);
-    if (mime.startsWith('image/') && m.bytes.byteLength > MAX_IMAGE_UPLOAD_BYTES) {
+    if (m.bytes.byteLength > MAX_IMAGE_UPLOAD_BYTES) {
       omitted.push({ path: m.path, reason: `exceeds ${MAX_IMAGE_UPLOAD_BYTES} byte cap` });
       continue;
     }
@@ -536,7 +541,10 @@ export interface AttachWordPackageInput {
   originalBytes: Uint8Array;
   /** Bytes the converter actually saw (may equal originalBytes). */
   converterBytes: Uint8Array;
-  markdown: string;
+  /** pandoc markdown, or null when conversion failed on the tolerant path
+   * (P2-3 — visual-line uploads must keep working without markdown). */
+  markdown: string | null;
+  markdownAbsentReason?: string;
   /** Already-persisted embedded media (persistPackageMedia result). */
   media: PersistedPackageMedia[];
   omittedMedia?: { path: string; reason: string }[];
@@ -586,8 +594,11 @@ export async function attachWordSourcePackage(
     await save(input.converterBytes, 'converter.docx', 'converter_input', DOCX_MIME, 'docx');
   }
 
-  const mdBytes = new TextEncoder().encode(input.markdown);
-  const mdAsset = await save(mdBytes, 'source.md', 'markdown', 'text/markdown', 'text');
+  let mdAsset: SourceAssetRow | null = null;
+  if (input.markdown !== null) {
+    const mdBytes = new TextEncoder().encode(input.markdown);
+    mdAsset = await save(mdBytes, 'source.md', 'markdown', 'text/markdown', 'text');
+  }
 
   const pathToRef = new Map<string, string>();
   for (const m of input.media) {
@@ -631,14 +642,15 @@ export async function attachWordSourcePackage(
     }
   }
 
-  const bodyMd = rewriteMediaRefs(input.markdown, pathToRef);
+  const bodyMd = input.markdown !== null ? rewriteMediaRefs(input.markdown, pathToRef) : null;
   const pkg: SourcePackageV1 = {
     version: 1,
     kind: 'word',
     files,
     pages,
-    document_text_asset_id: mdAsset.id,
+    ...(mdAsset ? { document_text_asset_id: mdAsset.id } : {}),
     ...(input.renderedPdfAssetId ? { rendered_pdf_asset_id: input.renderedPdfAssetId } : {}),
+    ...(input.markdownAbsentReason ? { markdown_absent_reason: input.markdownAbsentReason } : {}),
   };
   const provenance = {
     ...(doc.provenance as Record<string, unknown>),
@@ -650,4 +662,27 @@ export async function attachWordSourcePackage(
     .set({ body_md: bodyMd, provenance, updated_at: new Date() })
     .where(eq(source_document.id, input.sourceDocumentId));
   return pkg;
+}
+
+/**
+ * P2-8 — package attach/materialize runs AFTER the session row exists
+ * (initiateUpload owns its own transaction). A package failure marks the
+ * session `failed` with the reason instead of leaving an `uploaded` orphan
+ * behind a 500. `uploaded → failed` has no guard transition (markExtractionFailed
+ * only covers queued/extracting), so the route writes it directly.
+ */
+export async function markSessionPackageFailed(
+  db: Db,
+  sessionId: string,
+  err: unknown,
+): Promise<void> {
+  const msg = err instanceof Error ? err.message : String(err);
+  await db
+    .update(learning_session)
+    .set({
+      status: 'failed',
+      error_message: `source_package: ${msg.slice(0, 500)}`,
+      updated_at: new Date(),
+    })
+    .where(eq(learning_session.id, sessionId));
 }

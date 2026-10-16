@@ -1,5 +1,8 @@
 import { and, desc, eq, inArray, lt, or, sql } from 'drizzle-orm';
-import { materializeSourcePackage } from '@/capabilities/ingestion/server/source-package';
+import {
+  markSessionPackageFailed,
+  materializeSourcePackage,
+} from '@/capabilities/ingestion/server/source-package';
 import { db } from '@/db/client';
 import { event, learning_session, question_block, source_asset } from '@/db/schema';
 import {
@@ -265,7 +268,13 @@ export async function POST(req: Request): Promise<Response> {
     // assets carry per-page draft stamps; plain photos become an 'images'
     // package. The response contract is unchanged — the package is read back
     // through the session's source_document, not the wire body.
-    await materializeSourcePackage(db, sourceDocumentId);
+    try {
+      await materializeSourcePackage(db, sourceDocumentId);
+    } catch (err) {
+      // P2-8 — the session row exists: mark it failed, don't orphan it.
+      await markSessionPackageFailed(db, sessionId, err);
+      throw err;
+    }
 
     return Response.json({
       session: {

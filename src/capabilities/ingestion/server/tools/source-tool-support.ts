@@ -71,21 +71,30 @@ async function scopedAssetIds(db: Db, sessionId: string): Promise<Set<string> | 
 }
 
 /**
- * Scope enforcement (inventory §5.1.3): when the caller binds
- * ctx.scope={kind:'ingestion_session', id}, an asset is in scope iff it is a
+ * Ingestion tools are granted on ONE surface, which binds
+ * ctx.scope={kind:'ingestion_session', id}. An absent/foreign scope fails
+ * CLOSED — there is no sanctioned unscoped caller.
+ */
+export function requireIngestionScope(ctx: ToolContext): string {
+  const scope = ctx.scope;
+  if (scope?.kind !== 'ingestion_session' || !scope.id) {
+    throw new Error(
+      "this tool requires an ingestion_session scope (ctx.scope={kind:'ingestion_session',id}); absent scope fails closed",
+    );
+  }
+  return scope.id;
+}
+
+/**
+ * Scope enforcement (inventory §5.1.3): an asset is in scope iff it is a
  * package member or a derived asset whose derived_from chain reaches one (≤6
- * hops). No scope → the allowlist is the only gate (documented behavior).
- * A scope that resolves to no session/document fails CLOSED.
+ * hops). A scope that resolves to no session/document fails CLOSED.
  */
 export async function assertAssetInScope(ctx: ToolContext, assetId: string): Promise<void> {
-  const scope = ctx.scope;
-  if (scope?.kind !== 'ingestion_session') return;
-  if (!scope.id) {
-    throw new Error('ingestion_session scope requires an id');
-  }
-  const ids = await scopedAssetIds(ctx.db, scope.id);
+  const scopeId = requireIngestionScope(ctx);
+  const ids = await scopedAssetIds(ctx.db, scopeId);
   if (ids === null) {
-    throw new Error(`ingestion_session '${scope.id}' has no resolvable source package`);
+    throw new Error(`ingestion_session '${scopeId}' has no resolvable source package`);
   }
 
   let current = assetId;
@@ -104,7 +113,7 @@ export async function assertAssetInScope(ctx: ToolContext, assetId: string): Pro
     }
     current = parent.asset_id;
   }
-  throw new Error(`asset '${assetId}' is outside ingestion_session '${scope.id}'`);
+  throw new Error(`asset '${assetId}' is outside ingestion_session '${scopeId}'`);
 }
 
 /** Load asset bytes from object storage with the sha256 re-verified. */

@@ -21,6 +21,8 @@
 //   5. return an MCP-shaped { content: [{ type: 'text', text: <json> }] }
 //      result the LLM can read.
 
+import { createHash } from 'node:crypto';
+
 import { createId } from '@paralleldrive/cuid2';
 import { readDerivationPolicy } from '@/core/schema/derivation-policy';
 import { writeEvent } from '@/kernel/events';
@@ -398,6 +400,15 @@ async function resolveOutputImages(
     }
     if (!loaded) {
       blocks.push(note(`asset '${assetRef.asset_id}' digest did not verify or bytes are missing`));
+      continue;
+    }
+    // The loader checks row-digest + byte length, not the served content —
+    // hash the fetched bytes before they reach the model (fail closed on drift).
+    const servedSha = createHash('sha256').update(loaded.bytes).digest('hex');
+    if (servedSha !== assetRef.digest.toLowerCase().replace(/^sha256:/, '')) {
+      blocks.push(
+        note(`asset '${assetRef.asset_id}' served bytes do not match the requested digest`),
+      );
       continue;
     }
     if (!loaded.mime_type.startsWith('image/')) {

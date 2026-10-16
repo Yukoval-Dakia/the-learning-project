@@ -196,6 +196,30 @@ export async function executeGlmOcrWireAttemptResult<T>(
   return { value: result.value, attemptId: result.attemptId, operationId: context.operationId };
 }
 
+/**
+ * YUK-1404 (B2/R5 P1-4) — the glm_ocr TOOL's wire descriptor. Same lane and
+ * operation kind (honest billing attribution), but `providerStartFence:
+ * 'operation_kind'` serializes dispatch on the same operation anchor: a second
+ * call while a prior attempt's lease is live is fenced instead of double-
+ * dispatching an unknown-paid request (design §9: unknown-paid 不自动重发).
+ */
+const GLM_OCR_TOOL_ATTEMPT_DESCRIPTOR = {
+  ...GLM_OCR_ATTEMPT_DESCRIPTOR,
+  providerStartFence: 'operation_kind' as const,
+};
+
+export async function executeGlmOcrToolWireAttemptResult<T>(
+  context: OcrPageProviderContext,
+  execute: (attempt: OcrPageProviderAttemptControl) => Promise<T>,
+): Promise<{ value: T; attemptId: string; operationId: string }> {
+  const result = await executeDirectProviderAttempt(
+    context,
+    GLM_OCR_TOOL_ATTEMPT_DESCRIPTOR,
+    execute,
+  );
+  return { value: result.value, attemptId: result.attemptId, operationId: context.operationId };
+}
+
 export async function executeTencentOcrSubmit(input: {
   readonly db: Db;
   readonly pageOperationId: string;

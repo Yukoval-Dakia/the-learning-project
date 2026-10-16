@@ -6,8 +6,14 @@ import type { Db } from '@/db/client';
 import { source_asset } from '@/db/schema';
 import type { R2Client } from '@/server/r2';
 
-import { clampPixelBBox, normalizedToPixel } from './image-ops';
-import { type SourceAssetRow, persistSourceAsset, sha256Hex } from './persist-image-asset';
+import { clampPixelBBox, normalizedToPixel, probeImage } from './image-ops';
+import {
+  type SourceAssetRow,
+  isUniqueViolation,
+  lockImageStorageKey,
+  persistSourceAsset,
+  sha256Hex,
+} from './persist-image-asset';
 
 /**
  * 单张题目图（"figure"）裁剪后的元信息——未挂归属。 attach_confidence /
@@ -72,20 +78,52 @@ async function persistFigureCrop(
     },
   };
 
-  // Idempotent re-run: an existing row with the same content serves the crop;
-  // a row with different bytes under the same deterministic id is corruption.
+  // A prior pass may already have registered this deterministic id. Same
+  // content → replay adopts the row. Different content = the session was
+  // retried after OCR produced different boxes: the pre-registration path
+  // simply overwrote the figures/ object, so we keep that overwrite — now
+  // registered: advisory lock + put + row update in one transaction.
   const [existing] = await db
     .select()
     .from(source_asset)
     .where(eq(source_asset.id, input.id))
     .limit(1);
   if (existing) {
-    if (existing.storage_key !== storageKey || existing.sha256 !== sha) {
+    if (existing.storage_key !== storageKey) {
       throw new Error(
-        `figure asset '${input.id}' exists with different content (sha256 ${existing.sha256} vs ${sha})`,
+        `figure asset '${input.id}' exists under key '${existing.storage_key}', expected '${storageKey}'`,
       );
     }
-    return existing;
+    if (existing.sha256 === sha) return existing;
+    const dims = await probeImage(input.png);
+    const oldBytes = await r2.get(storageKey);
+    try {
+      return await db.transaction(async (tx) => {
+        await lockImageStorageKey(tx, storageKey);
+        // Row update BEFORE put: a put failure rolls the row back, so the
+        // registered sha can never drift from the served bytes. A post-put
+        // commit failure restores the previous object below.
+        const [updated] = await tx
+          .update(source_asset)
+          .set({
+            mime_type: 'image/png',
+            byte_size: input.png.byteLength,
+            sha256: sha,
+            width: dims?.width ?? null,
+            height: dims?.height ?? null,
+            provenance,
+          })
+          .where(eq(source_asset.id, input.id))
+          .returning();
+        await r2.put(storageKey, input.png, 'image/png');
+        return updated;
+      });
+    } catch (err) {
+      if (oldBytes) {
+        await r2.put(storageKey, oldBytes, existing.mime_type).catch(() => {});
+      }
+      throw err;
+    }
   }
   try {
     return await persistSourceAsset(db, r2, {
@@ -99,8 +137,9 @@ async function persistFigureCrop(
     });
   } catch (err) {
     // Concurrent retry inserted the same deterministic id first — re-read and
-    // verify it holds identical content before adopting it.
-    if (err instanceof Error && /duplicate|unique/i.test(err.message)) {
+    // verify it holds identical content before adopting it. postgres.js wraps
+    // the 23505, so walk the cause chain rather than matching message text.
+    if (isUniqueViolation(err)) {
       const [row] = await db
         .select()
         .from(source_asset)

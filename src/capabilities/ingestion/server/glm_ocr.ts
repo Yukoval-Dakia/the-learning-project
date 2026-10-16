@@ -2,6 +2,7 @@ import { PermanentError, RetryableError } from '@/core/schema/structured_questio
 import {
   type OcrPageProviderAttemptControl,
   type OcrPageProviderContext,
+  executeGlmOcrToolWireAttemptResult,
   executeGlmOcrWireAttemptResult,
 } from './provider-attempts';
 
@@ -28,7 +29,9 @@ import {
 const GLM_LAYOUT_PARSING_URL = 'https://open.bigmodel.cn/api/paas/v4/layout_parsing';
 const GLM_MODEL = 'glm-ocr';
 const DEFAULT_TIMEOUT_MS = 120_000;
-const GLM_OCR_PRICE_CNY_PER_MILLION_TOKENS = 0.2;
+/** Billable: 0.2 元/百万 tokens (input = output price). Exported for the
+ * glm_ocr tool's echoed cost estimate (same single source). */
+export const GLM_OCR_PRICE_CNY_PER_MILLION_TOKENS = 0.2;
 
 /** One layout block GLM returns per page (markdown text or figure region). */
 export type GlmLayoutBlock = {
@@ -76,6 +79,13 @@ export type GlmOcrParams = {
   timeoutMs?: number;
   /** Stable extraction-page operation context; omitted by parser/no-wire fakes. */
   providerAttempt?: OcrPageProviderContext;
+  /**
+   * YUK-1404 (B2/R5 P1-4) — when true the wire attempt runs under the
+   * operation-kind start fence (tool surface): a second call on the same
+   * operation anchor is fenced instead of re-dispatching an unknown-paid
+   * request. Pipeline callers leave it off.
+   */
+  fencedAttempt?: boolean;
 };
 
 /** Minimal shape of a GLM JSON error body (`{ error: { code, message } }`). */
@@ -253,7 +263,9 @@ export async function runGlmLayoutParsingWithAttempt(
   if (!params.providerAttempt) {
     return { response: await executeRequest(), attemptId: null };
   }
-  const result = await executeGlmOcrWireAttemptResult(params.providerAttempt, executeRequest);
+  const result = params.fencedAttempt
+    ? await executeGlmOcrToolWireAttemptResult(params.providerAttempt, executeRequest)
+    : await executeGlmOcrWireAttemptResult(params.providerAttempt, executeRequest);
   return { response: result.value, attemptId: result.attemptId };
 }
 

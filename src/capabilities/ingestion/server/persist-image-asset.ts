@@ -31,6 +31,17 @@ export async function lockImageStorageKey(tx: Tx, storageKey: string): Promise<v
   await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${storageKey}, 0))`);
 }
 
+/** postgres.js surfaces unique violations as code '23505' (possibly wrapped by
+ * drizzle); walk the cause chain. Same pattern as copilot_nudge_evaluate.ts. */
+export function isUniqueViolation(err: unknown): boolean {
+  let e: unknown = err;
+  for (let depth = 0; depth < 5 && e !== null && typeof e === 'object'; depth++) {
+    if ((e as { code?: unknown }).code === '23505') return true;
+    e = (e as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
 export async function sha256Hex(bytes: Uint8Array): Promise<string> {
   // Hash the VIEW's bytes, not `bytes.buffer`. A Uint8Array can be a window into
   // a larger (pooled) ArrayBuffer with a non-zero byteOffset / partial byteLength
