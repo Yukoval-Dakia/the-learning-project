@@ -6,6 +6,8 @@
 import { db } from '@/db/client';
 import { ApiError, deprecatedRouteResponse, errorResponse } from '@/kernel/http';
 import { Placement } from '@/server/session';
+import { unresolvedField } from '../server/placement-advance';
+import { readPlacementUnresolvedItems } from '../server/placement-assessment';
 import { type EndPlacementSessionBody, EndPlacementSessionBodySchema } from './placement-contracts';
 
 async function parseBody(req: Request): Promise<EndPlacementSessionBody> {
@@ -50,7 +52,18 @@ export async function POST(req: Request, params: Record<string, string>): Promis
     } else {
       await Placement.abandonPlacementSession(db, id);
     }
-    response = Response.json({ ok: true, status: body.status });
+    // YUK-1405 L1 — the honest end: items closed without a verdict are marked,
+    // not silently dropped (held/pending → awaiting_evaluation; released →
+    // held_released; an issued-but-never-answered card → unanswered).
+    const unresolved_items = await db.transaction((tx) => readPlacementUnresolvedItems(tx, id), {
+      isolationLevel: 'repeatable read',
+      accessMode: 'read only',
+    });
+    response = Response.json({
+      ok: true,
+      status: body.status,
+      ...unresolvedField(unresolved_items),
+    });
   } catch (err) {
     response = errorResponse(err);
   }

@@ -4,6 +4,8 @@ import { db } from '@/db/client';
 import { learning_session } from '@/db/schema';
 import { ApiError, errorResponse } from '@/kernel/http';
 import { Placement } from '@/server/session';
+import { unresolvedField } from '../server/placement-advance';
+import { readPlacementUnresolvedItems } from '../server/placement-assessment';
 import { readPlacementStarterOutcomes } from '../server/question-supply/placement-starter-outcome-reader';
 import { UpdatePlacementSessionBodySchema } from './placement-contracts';
 
@@ -29,7 +31,12 @@ export async function GET(_req: Request, params: Record<string, string>): Promis
         if (!session) {
           throw new ApiError('not_found', `placement session ${params.id} not found`, 404);
         }
-        return { ...session, starterSupply: await readPlacementStarterOutcomes(tx, params.id) };
+        return {
+          ...session,
+          starterSupply: await readPlacementStarterOutcomes(tx, params.id),
+          // YUK-1405 L1 — issued items with no verdict at read time.
+          ...unresolvedField(await readPlacementUnresolvedItems(tx, params.id)),
+        };
       },
       { isolationLevel: 'repeatable read', accessMode: 'read only' },
     );
@@ -57,6 +64,12 @@ export async function PATCH(req: Request, params: Record<string, string>): Promi
       params.id,
       parsed.data.status,
     );
+    // YUK-1405 L1 — the honest end result marks every item that closed without a
+    // verdict (held-release 'end' half lands here: no new route needed).
+    const unresolved_items = await db.transaction(
+      (tx) => readPlacementUnresolvedItems(tx, params.id),
+      { isolationLevel: 'repeatable read', accessMode: 'read only' },
+    );
     return Response.json({
       id: params.id,
       type: 'placement',
@@ -64,6 +77,7 @@ export async function PATCH(req: Request, params: Record<string, string>): Promi
       status: transition.status,
       changed: transition.changed,
       allowed_statuses: transition.allowedStatuses,
+      ...unresolvedField(unresolved_items),
     });
   } catch (err) {
     return errorResponse(err);
