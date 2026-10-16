@@ -429,7 +429,9 @@ export function PracticeSolo({
     const faces = frozen.faces;
     const multiPart = faces.length > 1;
     const lone = !multiPart && figures.length === 1 && figures[0].content_md === undefined;
-    const answering = phase === 'answering' && !submit.pendingRun;
+    // YUK-1501 — an answer already recorded is read-only review: no action bar, so no 提交,
+    // self-rating or ⌘Enter; a plain line says why instead.
+    const answering = phase === 'answering' && !submit.pendingRun && !submit.answerRecorded;
     const answerLocked =
       submit.returning ||
       phase !== 'answering' ||
@@ -675,7 +677,15 @@ export function PracticeSolo({
       judgmentPhase = 'checking';
 
     let result: ReactNode = null;
-    if (submit.pendingRun) {
+    if (submit.answerRecorded && phase === 'answering' && !submit.pendingRun) {
+      result = (
+        <div className="un-ps-result">
+          <p className="un-ps-result-text">
+            这道题已经交过了，这里只能查看当时交的作答，不能再交一次。结果在下面的作答记录里。
+          </p>
+        </div>
+      );
+    } else if (submit.pendingRun) {
       // YUK-1051 — 202-pending: the answer is stored; the same run is polled, never resubmitted.
       result = (
         <div className="un-ps-result">
