@@ -135,11 +135,23 @@ export function decideAutomaticServing(
   const answerSlots = revision.response_spec.slots.filter(
     (slot) => selected.has(slot.part_id) && slot.kind !== 'table',
   );
-  // YUK-1497 —— 有展示层时网页按积木树作答：select/blank 只有被声明式输入积木
-  // 绑定才有输入面；自定义块（沙箱）网页尚不能运行，被它绑定的槽一律没有输入面。
-  // 形状不合格的展示层在这里视为不绑定任何槽（其本身由下方 invalid_presentation 拒绝）。
+  // YUK-1497 —— 展示层形状门先行（review R1）：行读面（revisionRowToContract）对解析
+  // 失败的展示层原样透传而非丢列（丢列 = 静默降级为逐槽渲染的 fail-open）；这里以
+  // invalid_presentation 拒绝，绝不带着坏展示层发题，原因也不被输入面检查盖住。
   const shapedPresentation =
     revision.presentation != null ? Presentation.safeParse(revision.presentation) : null;
+  if (shapedPresentation != null && !shapedPresentation.success) {
+    return {
+      kind: 'unavailable',
+      reason: 'invalid_presentation',
+      detail: `malformed presentation: ${shapedPresentation.error.issues
+        .slice(0, 5)
+        .map((issue) => `${issue.path.join('.')}:${issue.message}`)
+        .join('; ')}`,
+    };
+  }
+  // 有展示层时网页按积木树作答：select/blank 只有被声明式输入积木绑定才有输入面；
+  // 自定义块（沙箱）网页尚不能运行，被它绑定的槽一律没有输入面。
   const binders = shapedPresentation?.success
     ? presentationBinders(shapedPresentation.data)
     : new Map<string, 'block' | 'custom'>();
@@ -173,23 +185,9 @@ export function decideAutomaticServing(
   // YUK-1497 —— 冻结展示层对发出范围校验失败 ⇒ 不可出（发布 barrier 已拒
   // 全量不合格，这里抓剪枝后缺口（如自定义块跨发出/未发出 part）与被绕过
   // barrier 写入的行）。无展示层的旧 revision 不受影响。
-  if (revision.presentation != null) {
-    // 形状门先行（review R1）：行读面（revisionRowToContract）对解析失败的
-    // 展示层原样透传而非丢列（丢列 = 静默降级为逐槽渲染的 fail-open）；
-    // 这里以 invalid_presentation 拒绝，绝不带着坏展示层发题。
-    const shaped = shapedPresentation ?? Presentation.safeParse(revision.presentation);
-    if (!shaped.success) {
-      return {
-        kind: 'unavailable',
-        reason: 'invalid_presentation',
-        detail: `malformed presentation: ${shaped.error.issues
-          .slice(0, 5)
-          .map((issue) => `${issue.path.join('.')}:${issue.message}`)
-          .join('; ')}`,
-      };
-    }
+  if (shapedPresentation?.success) {
     const presentationIssues = validatePresentation(
-      shaped.data,
+      shapedPresentation.data,
       revision.structure,
       revision.response_spec,
       revision.scoring_basis,
