@@ -16,6 +16,7 @@ import { writeJobEvent } from '@/server/events/writer';
 import { writeCopilotInputEvent } from './conversation-writes';
 import { COPILOT_RUN_EVENTS, COPILOT_RUN_TABLE } from './copilot-run-status';
 import { copilotRunTerminalSql } from './copilot-run-terminal-sql';
+import { type CrisisGuardEventInput, writeCrisisGuardEvent } from './crisis-guard';
 import type { ReviewAnswerAttachment } from './practice-port';
 
 export const COPILOT_IDEMPOTENCY_KEY_MAX_LENGTH = 200;
@@ -238,6 +239,12 @@ export async function reserveCopilotDurableAcceptance(
     /** Present only for the session-queue protocol. Legacy test/data seeders may omit it. */
     jobData?: CopilotAcceptedJobData;
     assertActive?: () => void;
+    /**
+     * YUK-1398：危机回合的非身份化守卫事件。命中时与 user_ask 同事务写入，
+     * 回滚同进退；幂等重放（outcome!=='created'）不会重复写。askEventId 由
+     * 本函数回填（= 事务内实际写入的 run id）。
+     */
+    crisisGuard?: Omit<CrisisGuardEventInput, 'askEventId'>;
   },
   deps: {
     boss?: CopilotDispatchBoss;
@@ -282,6 +289,10 @@ export async function reserveCopilotDurableAcceptance(
     });
     input.assertActive?.();
     const bossJobId = copilotBossJobId(runId);
+    // YUK-1398：守卫事件与接纳同事务（仅创建路径；重用/冲突路径不写）。
+    if (input.crisisGuard) {
+      await writeCrisisGuardEvent(tx, { ...input.crisisGuard, askEventId: runId });
+    }
     const [acceptedAsk] = input.reviewAnswer
       ? await tx.select({ payload: event.payload }).from(event).where(eq(event.id, runId))
       : [];

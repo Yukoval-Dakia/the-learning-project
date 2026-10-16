@@ -48,10 +48,13 @@ export async function writeCopilotInputEvent(
     writeFn?: (db: Db | Tx, event: WriteEventInput) => Promise<unknown>;
   },
 ): Promise<string> {
-  if (params.reviewAnswer && params.derivationPolicy === 'answer_only') {
+  // YUK-1398：crisis 与 answer_only 同为受限回合——都不携带 review_answer 接纳。
+  // 未传策略即 allow（fixture / 旧调用方），不能被当成受限回合拒掉。
+  const policy = params.derivationPolicy ?? 'allow';
+  if (params.reviewAnswer && policy !== 'allow') {
     throw new ApiError(
       'validation_error',
-      'review_answer is not supported for answer_only turns',
+      `review_answer is not supported for ${policy} turns`,
       400,
     );
   }
@@ -246,7 +249,7 @@ export async function writeTeachingCopilotReply(
   const { skillContext, skillResult, materializeAskCheckFn, ...commit } = params;
   if (
     params.userAskEventId &&
-    (await readEventDerivationPolicy(db, params.userAskEventId)) === 'answer_only'
+    (await readEventDerivationPolicy(db, params.userAskEventId)) !== 'allow'
   ) {
     throw new Error('仅用于本次回答：不创建教学练习，请重新提交需要用于日常学习的内容。');
   }

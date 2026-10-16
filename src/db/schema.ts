@@ -30,6 +30,7 @@ import type {
   GroupEvidenceT,
   IssuedMaterialBindingT,
   IssuedOptionOrderT,
+  PresentationT,
   QuestionGroupStructureT,
   ResponseSetT,
   ResponseSpecT,
@@ -551,6 +552,9 @@ export const question_revision = pgTable(
     response_spec: jsonb('response_spec').$type<ResponseSpecT>().notNull(),
     scoring_basis: jsonb('scoring_basis').$type<ScoringBasisT>().notNull(),
     execution_plan: jsonb('execution_plan').$type<ExecutionPlanT>().notNull(),
+    // YUK-1497 — 冻结公开展示层（blocks-v1）。可空：旧 revision 无此层；
+    // 含此层的行在发布时已过 validatePresentation 并计入 integrity_digest。
+    presentation: jsonb('presentation').$type<PresentationT>(),
     supersedes_revision_id: text('supersedes_revision_id'),
     availability: text('availability', {
       enum: ['general_pool', 'container_only'],

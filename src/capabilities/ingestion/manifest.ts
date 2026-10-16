@@ -447,6 +447,16 @@ export const ingestionCapability = defineCapability({
             (module) => module.reassignFigureTool,
           ),
       },
+      // YUK-1497 (K5) — 展示层组合工具（spec §5：录入 agent 生成 presentation
+      // 走本工具，与发布同一道绑定校验）。只写 question_block.structured 的
+      // presentation 一个键；仅 ingestion_block_edit surface 授权。
+      {
+        name: 'compose_presentation',
+        load: () =>
+          import('./server/tools/compose-presentation').then(
+            (module) => module.composePresentationTool,
+          ),
+      },
       // YUK-1404 (B2/R2–R5) — the five shared source-package tools. Ownership
       // declaration only; they are granted exclusively on the `ingestion`
       // surface (kernel/tools/allowlists.ts), never on copilot/maintenance.

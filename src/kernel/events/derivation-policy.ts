@@ -35,9 +35,14 @@ export async function readEventDerivationPolicy(
       ? (row.docProvenance as Record<string, unknown>).usage_policy
       : undefined,
   );
-  return own === 'answer_only' || parent === 'answer_only' || doc === 'answer_only'
-    ? 'answer_only'
-    : 'allow';
+  // YUK-1398 + YUK-1408 — strictest wins, value-agnostic. An event-level
+  // 'crisis' is never overridden by a document-level allow; a document-level
+  // 'answer_only' applies when own and parent are allow. Order: own > parent >
+  // doc — an event's own restricted mark propagates over its causal root's.
+  if (own !== 'allow') return own;
+  if (parent !== 'allow') return parent;
+  if (doc !== 'allow') return doc;
+  return 'allow';
 }
 
 /** Apply before LIMIT. Raw user chat readers deliberately do not use this predicate. */
