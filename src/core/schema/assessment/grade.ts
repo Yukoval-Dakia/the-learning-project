@@ -152,7 +152,7 @@ async function numericCorrect(
 ): Promise<0 | 1 | null> {
   const text = raw.normalize('NFKC').trim();
   if (key.expected_unit == null) {
-    if (!PLAIN_NUMBER.test(text)) return null;
+    if (!PLAIN_NUMBER.test(text) || !Number.isFinite(Number(text))) return null;
     return withinTolerance(Number(text), key) ? 1 : 0;
   }
   if (PLAIN_NUMBER.test(text)) return 0;

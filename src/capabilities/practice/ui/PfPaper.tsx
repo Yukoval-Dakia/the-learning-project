@@ -32,11 +32,6 @@ import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { Btn } from '@/ui/primitives/Btn';
 import { Card } from '@/ui/primitives/Card';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
-
-// YUK-784 — 采集判据与装配复用 PfSolo 先例（YUK-444 / #1069），不在本面重写判据：
-// shouldOfferProcessBox 决定过程框挂不挂，buildCaptureFields 负责 trim 判空 + 防御性截断
-// +「空值不发字段」。组件→组件引用，同 PfSolo 引 PfStream.PfSrcBadge 的先例。
-import { buildCaptureFields, shouldOfferProcessBox } from './PfSolo';
 import type { PfToast } from './PracticeFacePage';
 import {
   type PaperDetail,
@@ -50,6 +45,10 @@ import {
   startPaperSession,
   submitPaperSlot,
 } from './practice-api';
+// YUK-784 — 采集判据与装配复用 PfSolo 先例（YUK-444 / #1069），不在本面重写判据：
+// shouldOfferProcessBox 决定过程框挂不挂，buildCaptureFields 负责 trim 判空 + 防御性截断
+// +「空值不发字段」。两者随 PfSolo 的提交引擎移到 use-practice-submit（YUK-1473）。
+import { buildCaptureFields, shouldOfferProcessBox } from './use-practice-submit';
 
 function slotKey(s: PaperSlot): string {
   return `${s.question_id}::${s.part_ref ?? ''}`;

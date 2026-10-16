@@ -15,8 +15,10 @@ import { Route as AgentNotesRouteImport } from './routes/agent-notes'
 import { Route as InboxRouteImport } from './routes/inbox'
 import { Route as MistakesRouteImport } from './routes/mistakes'
 import { Route as NotesRouteImport } from './routes/notes'
+import { Route as PlacementRouteImport } from './routes/placement'
 import { Route as PracticeRouteImport } from './routes/practice'
 import { Route as TodayRouteImport } from './routes/today'
+import { Route as WelcomeRouteImport } from './routes/welcome'
 import { Route as BuildSplatRouteImport } from './routes/[_]build.$'
 import { Route as AdminConfigRouteImport } from './routes/admin.config'
 import { Route as AdminConjectureScoresRouteImport } from './routes/admin.conjecture-scores'
@@ -59,6 +61,11 @@ const NotesRoute = NotesRouteImport.update({
   path: '/notes',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PlacementRoute = PlacementRouteImport.update({
+  id: '/placement',
+  path: '/placement',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PracticeRoute = PracticeRouteImport.update({
   id: '/practice',
   path: '/practice',
@@ -67,6 +74,11 @@ const PracticeRoute = PracticeRouteImport.update({
 const TodayRoute = TodayRouteImport.update({
   id: '/today',
   path: '/today',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const WelcomeRoute = WelcomeRouteImport.update({
+  id: '/welcome',
+  path: '/welcome',
   getParentRoute: () => rootRouteImport,
 } as any)
 const BuildSplatRoute = BuildSplatRouteImport.update({
@@ -132,8 +144,10 @@ export interface FileRoutesByFullPath {
   '/inbox': typeof InboxRoute
   '/mistakes': typeof MistakesRoute
   '/notes': typeof NotesRoute
+  '/placement': typeof PlacementRoute
   '/practice': typeof PracticeRoute
   '/today': typeof TodayRoute
+  '/welcome': typeof WelcomeRoute
   '/_build/$': typeof BuildSplatRoute
   '/admin/config': typeof AdminConfigRoute
   '/admin/conjecture-scores': typeof AdminConjectureScoresRoute
@@ -153,8 +167,10 @@ export interface FileRoutesByTo {
   '/inbox': typeof InboxRoute
   '/mistakes': typeof MistakesRoute
   '/notes': typeof NotesRoute
+  '/placement': typeof PlacementRoute
   '/practice': typeof PracticeRoute
   '/today': typeof TodayRoute
+  '/welcome': typeof WelcomeRoute
   '/_build/$': typeof BuildSplatRoute
   '/admin/config': typeof AdminConfigRoute
   '/admin/conjecture-scores': typeof AdminConjectureScoresRoute
@@ -175,8 +191,10 @@ export interface FileRoutesById {
   '/inbox': typeof InboxRoute
   '/mistakes': typeof MistakesRoute
   '/notes': typeof NotesRoute
+  '/placement': typeof PlacementRoute
   '/practice': typeof PracticeRoute
   '/today': typeof TodayRoute
+  '/welcome': typeof WelcomeRoute
   '/_build/$': typeof BuildSplatRoute
   '/admin/config': typeof AdminConfigRoute
   '/admin/conjecture-scores': typeof AdminConjectureScoresRoute
@@ -198,8 +216,10 @@ export interface FileRouteTypes {
     | '/inbox'
     | '/mistakes'
     | '/notes'
+    | '/placement'
     | '/practice'
     | '/today'
+    | '/welcome'
     | '/_build/$'
     | '/admin/config'
     | '/admin/conjecture-scores'
@@ -219,8 +239,10 @@ export interface FileRouteTypes {
     | '/inbox'
     | '/mistakes'
     | '/notes'
+    | '/placement'
     | '/practice'
     | '/today'
+    | '/welcome'
     | '/_build/$'
     | '/admin/config'
     | '/admin/conjecture-scores'
@@ -240,8 +262,10 @@ export interface FileRouteTypes {
     | '/inbox'
     | '/mistakes'
     | '/notes'
+    | '/placement'
     | '/practice'
     | '/today'
+    | '/welcome'
     | '/_build/$'
     | '/admin/config'
     | '/admin/conjecture-scores'
@@ -262,8 +286,10 @@ export interface RootRouteChildren {
   InboxRoute: typeof InboxRoute
   MistakesRoute: typeof MistakesRoute
   NotesRoute: typeof NotesRoute
+  PlacementRoute: typeof PlacementRoute
   PracticeRoute: typeof PracticeRoute
   TodayRoute: typeof TodayRoute
+  WelcomeRoute: typeof WelcomeRoute
   BuildSplatRoute: typeof BuildSplatRoute
   AdminConfigRoute: typeof AdminConfigRoute
   AdminConjectureScoresRoute: typeof AdminConjectureScoresRoute
@@ -320,6 +346,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof NotesRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/placement': {
+      id: '/placement'
+      path: '/placement'
+      fullPath: '/placement'
+      preLoaderRoute: typeof PlacementRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/practice': {
       id: '/practice'
       path: '/practice'
@@ -332,6 +365,13 @@ declare module '@tanstack/react-router' {
       path: '/today'
       fullPath: '/today'
       preLoaderRoute: typeof TodayRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/welcome': {
+      id: '/welcome'
+      path: '/welcome'
+      fullPath: '/welcome'
+      preLoaderRoute: typeof WelcomeRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_build/$': {
@@ -433,8 +473,10 @@ const rootRouteChildren: RootRouteChildren = {
   InboxRoute: InboxRoute,
   MistakesRoute: MistakesRoute,
   NotesRoute: NotesRoute,
+  PlacementRoute: PlacementRoute,
   PracticeRoute: PracticeRoute,
   TodayRoute: TodayRoute,
+  WelcomeRoute: WelcomeRoute,
   BuildSplatRoute: BuildSplatRoute,
   AdminConfigRoute: AdminConfigRoute,
   AdminConjectureScoresRoute: AdminConjectureScoresRoute,

@@ -1,3 +1,4 @@
+import { unit as parseUnit } from 'mathjs';
 import { z } from 'zod';
 import { ConjectureProbeSpecV2 } from '../business';
 import { isInteriorGap } from './position-gap';
@@ -349,7 +350,8 @@ export interface ScoringBasisIssue {
     | 'no_unit_references_any_slot'
     | 'rule_required'
     | 'rule_forbidden_for_criterion'
-    | 'select_key_requires_one_slot'
+    | 'k1_key_requires_one_slot'
+    | 'blank_key_unit_unsupported'
     | 'rule_metric_not_applicable'
     | 'rule_outcome_not_applicable'
     | 'rule_item_not_in_key'
@@ -695,7 +697,7 @@ function validateK1Unit(unit: ScoringUnitT, referencedSlots: ResponseSlotT[]): S
     );
     if (selectSlots.length !== 1 || unit.slot_refs.length !== 1) {
       issues.push({
-        code: 'select_key_requires_one_slot',
+        code: 'k1_key_requires_one_slot',
         detail: `unit '${unit.scoring_unit_id}' select_key must read exactly one select slot`,
       });
     } else {
@@ -729,6 +731,26 @@ function validateK1Unit(unit: ScoringUnitT, referencedSlots: ResponseSlotT[]): S
             detail: `unit '${unit.scoring_unit_id}' key violates at_most_per_coordinate.${axis}=${limit}`,
           });
         }
+      }
+    }
+  }
+  if (criterion.kind === 'blank_key') {
+    // 判分只读一个作答位：多空必须拆成多个 unit，不能让第二个空被静默忽略。
+    const blankSlots = referencedSlots.filter((slot) => slot.kind === 'blank');
+    if (blankSlots.length !== 1 || unit.slot_refs.length !== 1) {
+      issues.push({
+        code: 'k1_key_requires_one_slot',
+        detail: `unit '${unit.scoring_unit_id}' blank_key must read exactly one blank slot`,
+      });
+    }
+    if (criterion.key.kind === 'numeric' && criterion.key.expected_unit != null) {
+      try {
+        parseUnit(1, criterion.key.expected_unit);
+      } catch {
+        issues.push({
+          code: 'blank_key_unit_unsupported',
+          detail: `unit '${unit.scoring_unit_id}' reference unit '${criterion.key.expected_unit}' cannot be parsed; every answer would stay pending`,
+        });
       }
     }
   }
