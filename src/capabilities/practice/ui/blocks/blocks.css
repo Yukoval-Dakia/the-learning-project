@@ -3,6 +3,98 @@
    motion); keyframes are declared only under no-preference (M3). Phone vs desktop is decided by
    the block's own width (container queries), so a block in a narrow column behaves like a phone. */
 
+/* ── Presentation tree (layout + content blocks) ─────────── */
+[data-ui-next].un-blk-tree {
+  container-type: inline-size;
+  min-width: 0;
+}
+
+[data-ui-next] {
+  & .un-blk-stack {
+    display: grid;
+    gap: var(--un-sp-5);
+    min-width: 0;
+  }
+
+  & .un-blk-stack[data-gap="sm"] {
+    gap: var(--un-sp-3);
+  }
+
+  & .un-blk-stack[data-gap="lg"] {
+    gap: var(--un-sp-7);
+  }
+
+  & .un-blk-text {
+    color: var(--un-text-1);
+    font-size: var(--un-fs-3);
+    line-height: var(--un-lh-prose);
+    overflow-wrap: anywhere;
+  }
+
+  & .un-blk-unsupported {
+    padding: var(--un-sp-3) var(--un-sp-4);
+    border-radius: var(--un-r-1);
+    background: var(--un-bg-sunk);
+    color: var(--un-text-3);
+    font-size: var(--un-fs-2);
+  }
+
+  /* R9: the passage stays on the left, questions on the right; the passage scrolls on its own. */
+  & .un-blk-passage {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: var(--un-sp-6);
+    align-items: start;
+  }
+
+  & .un-blk-passage[data-width="wide"] {
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  }
+
+  & .un-blk-passage[data-layout="passage_top"] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  & .un-blk-passage-text {
+    position: sticky;
+    top: var(--un-sp-4);
+    max-height: calc(100dvh - 2 * var(--un-sp-4));
+    overflow: auto;
+    padding: var(--un-sp-4) var(--un-sp-5);
+    border-radius: var(--un-r-2);
+    background: var(--un-bg-raised);
+    box-shadow: inset 0 0 0 var(--un-hairline) var(--un-line);
+    font-family: var(--un-font-serif);
+    font-size: var(--un-fs-3);
+    line-height: var(--un-lh-prose);
+    overscroll-behavior: contain;
+  }
+
+  & .un-blk-passage[data-layout="passage_top"] .un-blk-passage-text {
+    position: static;
+    max-height: none;
+  }
+
+  & .un-blk-passage-questions {
+    display: grid;
+    gap: var(--un-sp-5);
+    min-width: 0;
+  }
+
+  /* Phone form for passages is still open (R9, §11). Until it is decided the passage sits on top
+     in a capped panel that scrolls on its own, so it stays one gesture away. */
+  @container (max-width: 719px) {
+    & .un-blk-passage {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    & .un-blk-passage-text {
+      position: static;
+      max-height: 40dvh;
+    }
+  }
+}
+
 [data-ui-next] {
   /* ── Shared frame ──────────────────────────────────────── */
   & .un-blk {
