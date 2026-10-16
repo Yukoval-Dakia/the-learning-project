@@ -2,7 +2,7 @@ import { PermanentError, RetryableError } from '@/core/schema/structured_questio
 import {
   type OcrPageProviderAttemptControl,
   type OcrPageProviderContext,
-  executeGlmOcrWireAttempt,
+  executeGlmOcrWireAttemptResult,
 } from './provider-attempts';
 
 /**
@@ -151,8 +151,14 @@ function mapGlmHttpError(
   return new PermanentError(message);
 }
 
-/** Submit one page to GLM layout_parsing and return the parsed JSON. */
-export async function runGlmLayoutParsing(params: GlmOcrParams): Promise<GlmLayoutResponse> {
+/**
+ * YUK-1404 (B2/R5) — same wire call, but the provider-attempt identity rides
+ * along so tool callers can return an honest `run_ref`. `attemptId` is null on
+ * the no-attempt path (parser fakes / raw calls).
+ */
+export async function runGlmLayoutParsingWithAttempt(
+  params: GlmOcrParams,
+): Promise<{ response: GlmLayoutResponse; attemptId: string | null }> {
   // Credential fail-fast, mirroring createOcrClient() in tencent_mark.ts. Throw a
   // clear, actionable Permanent error before any fetch so a misconfigured deploy
   // fails loud (not an opaque 401 deep inside the request).
@@ -244,6 +250,14 @@ export async function runGlmLayoutParsing(params: GlmOcrParams): Promise<GlmLayo
     return parsed;
   };
 
-  if (!params.providerAttempt) return executeRequest();
-  return executeGlmOcrWireAttempt(params.providerAttempt, executeRequest);
+  if (!params.providerAttempt) {
+    return { response: await executeRequest(), attemptId: null };
+  }
+  const result = await executeGlmOcrWireAttemptResult(params.providerAttempt, executeRequest);
+  return { response: result.value, attemptId: result.attemptId };
+}
+
+/** Submit one page to GLM layout_parsing and return the parsed JSON. */
+export async function runGlmLayoutParsing(params: GlmOcrParams): Promise<GlmLayoutResponse> {
+  return (await runGlmLayoutParsingWithAttempt(params)).response;
 }

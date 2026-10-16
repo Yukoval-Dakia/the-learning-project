@@ -25,6 +25,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { readDerivationPolicy } from '@/core/schema/derivation-policy';
 import { writeEvent } from '@/kernel/events';
 import { readEventDerivationPolicy } from '@/kernel/events/derivation-policy';
+import { createAssessmentAssetLoader } from '@/kernel/records/assessment-assets';
 import { derivationToolDenial } from '@/kernel/tools/derivation-policy';
 import {
   type ToolOperationRecord,
@@ -42,8 +43,25 @@ import type {
   ToolExecutionResultObservation,
   ToolMirrorPolicy,
 } from '@/kernel/tools/types';
+import { TOOL_OUTPUT_IMAGES_FIELD } from '@/kernel/tools/types';
 import { setToolCallLogMirroredEventId, writeToolCallLog } from '@/server/ai/log';
 import { getTool } from './registry';
+
+/**
+ * Engine-neutral tool-result content block. The text variant is the MCP-shaped
+ * JSON payload every existing tool produces; the image variant carries real
+ * bytes (base64) resolved from a versioned asset ref — structurally identical
+ * to pi's `ImageContent`, which is what the pi AgentTool mount hands to the
+ * loop (pi-tools.ts passes `content` through verbatim).
+ */
+export type DomainToolResultContent =
+  | { type: 'text'; text: string }
+  | { type: 'image'; data: string; mimeType: string };
+
+/** Cap on resolved image blocks per call — a runaway output can't flood the context. */
+const MAX_TOOL_OUTPUT_IMAGES = 8;
+/** Absolute long-edge cap for the returned view; tools may request smaller. */
+const MAX_TOOL_IMAGE_EDGE = 2048;
 
 /**
  * Decide whether a tool invocation should mirror to the `event` table.
@@ -286,7 +304,7 @@ export async function executeDomainToolCall(
   dt: DomainTool<unknown, unknown>,
   rawArgs: unknown,
   opts: DomainToolCallOptions,
-): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
+): Promise<{ content: DomainToolResultContent[] }> {
   const declared = readDerivationPolicy({ derivation_policy: opts.ctx.derivationPolicy });
   const sourcePolicy = opts.ctx.causedByEventId
     ? await readEventDerivationPolicy(opts.ctx.db, opts.ctx.causedByEventId)
@@ -309,6 +327,7 @@ export async function executeDomainToolCall(
   const gated = await runBeforeExecuteGate(call, parsed);
   const intercepted = applyInterceptInput(call, gated);
   const execution = decorateOutput(intercepted.input, await runExecute(call, intercepted));
+  const images = await resolveOutputImages(call, execution);
   // Failed preparation/execution still goes through every bookkeeping phase.
   await notifyResult(call, intercepted.input, execution);
   const summary = summarizeResult(call, intercepted.input, execution);
@@ -316,7 +335,120 @@ export async function executeDomainToolCall(
   const toolCallLogId = await persistToolCallLog(call, intercepted.input, execution);
   await mirrorToolUse(call, intercepted.input, execution, summary, toolCallLogId);
   await settleExecution(call, execution);
-  return formatToolResponse(intercepted.input, execution, summary);
+  return formatToolResponse(intercepted.input, execution, summary, images);
+}
+
+/**
+ * YUK-1404 (B2/R2) — media output resolution. When a tool's parsed output
+ * carries an `images` array of versioned refs ({asset_id, digest}, optional
+ * max_edge), each ref is loaded through the digest-verifying asset loader and
+ * appended as image content. Bytes never enter tool_call_log or the tool_use
+ * mirror — those persist the parsed output, which contains refs only.
+ *
+ * Resolution failures degrade to a text note (never silent): a declared-but-
+ * unloadable image tells the model the ref exists but bytes could not be
+ * verified/served. Non-image assets (pdf/docx/text) produce the same explicit
+ * note instead of fake content.
+ */
+async function resolveOutputImages(
+  call: ToolCallContext,
+  execution: ExecutionPhase,
+): Promise<DomainToolResultContent[]> {
+  if (!execution.result.ok) return [];
+  const output = execution.output;
+  if (output === null || typeof output !== 'object' || Array.isArray(output)) return [];
+  const declared = (output as Record<string, unknown>)[TOOL_OUTPUT_IMAGES_FIELD];
+  if (!Array.isArray(declared) || declared.length === 0) return [];
+
+  const loader = createAssessmentAssetLoader(call.ctx.db, async (key) => {
+    // Lazy: R2 env is only required when a media-producing tool actually runs.
+    const { getR2 } = await import('@/server/r2');
+    return getR2().get(key);
+  });
+  const signal = call.ctx.signal ?? new AbortController().signal;
+
+  const blocks: DomainToolResultContent[] = [];
+  const entries = declared.slice(0, MAX_TOOL_OUTPUT_IMAGES);
+  for (const entry of entries) {
+    const note = (detail: string): DomainToolResultContent => ({
+      type: 'text' as const,
+      text: JSON.stringify({ image_unavailable: detail }),
+    });
+    const ref =
+      entry !== null &&
+      typeof entry === 'object' &&
+      typeof (entry as { ref?: unknown }).ref === 'object' &&
+      (entry as { ref: unknown }).ref !== null
+        ? (entry as { ref: { asset_id?: unknown; digest?: unknown }; max_edge?: unknown })
+        : null;
+    if (
+      ref === null ||
+      typeof ref.ref.asset_id !== 'string' ||
+      typeof ref.ref.digest !== 'string'
+    ) {
+      blocks.push(note('malformed image ref in tool output'));
+      continue;
+    }
+    const assetRef = { asset_id: ref.ref.asset_id, digest: ref.ref.digest };
+    let loaded: { bytes: Uint8Array; mime_type: string } | null;
+    try {
+      loaded = await loader(assetRef, signal);
+    } catch {
+      loaded = null;
+    }
+    if (!loaded) {
+      blocks.push(note(`asset '${assetRef.asset_id}' digest did not verify or bytes are missing`));
+      continue;
+    }
+    if (!loaded.mime_type.startsWith('image/')) {
+      blocks.push(note(`asset '${assetRef.asset_id}' is ${loaded.mime_type}, not an image`));
+      continue;
+    }
+    let bytes = loaded.bytes;
+    let mimeType = loaded.mime_type;
+    const maxEdge =
+      typeof ref.max_edge === 'number' ? Math.min(ref.max_edge, MAX_TOOL_IMAGE_EDGE) : 0;
+    if (maxEdge > 0) {
+      try {
+        const { default: sharp } = await import('sharp');
+        const meta = await sharp(Buffer.from(bytes)).metadata();
+        if (meta.width && meta.height && Math.max(meta.width, meta.height) > maxEdge) {
+          const format =
+            meta.format === 'jpeg' || meta.format === 'png' || meta.format === 'webp'
+              ? meta.format
+              : 'png';
+          const resized = await sharp(Buffer.from(bytes))
+            .resize({
+              width: meta.width >= meta.height ? maxEdge : undefined,
+              height: meta.height > meta.width ? maxEdge : undefined,
+              fit: 'inside',
+              withoutEnlargement: true,
+            })
+            .toFormat(format)
+            .toBuffer();
+          bytes = new Uint8Array(resized.buffer, resized.byteOffset, resized.byteLength);
+          mimeType = `image/${format}`;
+        }
+      } catch {
+        // A view-time downscale failure falls back to the original bytes — the
+        // content is still honest (same verified asset), just larger.
+      }
+    }
+    blocks.push({
+      type: 'image',
+      data: Buffer.from(bytes).toString('base64'),
+      mimeType,
+    });
+  }
+  if (declared.length > MAX_TOOL_OUTPUT_IMAGES) {
+    blocks.push({
+      type: 'text',
+      text: JSON.stringify({
+        image_unavailable: `${declared.length - MAX_TOOL_OUTPUT_IMAGES} image(s) omitted over the ${MAX_TOOL_OUTPUT_IMAGES}-image per-call cap`,
+      }),
+    });
+  }
+  return blocks;
 }
 
 type PhaseResult<T> =
@@ -722,7 +854,8 @@ function formatToolResponse(
   input: ToolInputState,
   execution: ExecutionPhase,
   summary: string,
-): { content: Array<{ type: 'text'; text: string }> } {
+  images: DomainToolResultContent[],
+): { content: DomainToolResultContent[] } {
   const { correlatedToolUseId } = input;
   const { output, effectContract } = execution;
   const errorReason = errorReasonOf(execution.result);
@@ -746,6 +879,7 @@ function formatToolResponse(
               },
         ),
       },
+      ...images,
     ],
   };
 }

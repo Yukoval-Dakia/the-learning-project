@@ -161,24 +161,39 @@ export function createOcrPageProviderContext(
 export type OcrPageProviderContext = DirectProviderOperationContext;
 export type OcrPageProviderAttemptControl = DirectProviderAttemptControl;
 
+export const GLM_OCR_PROVIDER = 'glm' as const;
+export const GLM_OCR_MODEL = 'glm-ocr' as const;
+
+const GLM_OCR_ATTEMPT_DESCRIPTOR = {
+  provider: GLM_OCR_PROVIDER,
+  model: GLM_OCR_MODEL,
+  lane: GLM_OCR_LAYOUT_PARSING_LANE,
+  protocol: 'http',
+  endpointClass: 'glm.layout-parsing',
+  operationKind: 'ocr_page_fetch',
+  unknownCostCurrency: 'CNY',
+} as const;
+
 export async function executeGlmOcrWireAttempt<T>(
   context: OcrPageProviderContext,
   execute: (attempt: OcrPageProviderAttemptControl) => Promise<T>,
 ): Promise<T> {
-  const result = await executeDirectProviderAttempt(
-    context,
-    {
-      provider: 'glm',
-      model: 'glm-ocr',
-      lane: GLM_OCR_LAYOUT_PARSING_LANE,
-      protocol: 'http',
-      endpointClass: 'glm.layout-parsing',
-      operationKind: 'ocr_page_fetch',
-      unknownCostCurrency: 'CNY',
-    },
-    execute,
-  );
+  const result = await executeGlmOcrWireAttemptResult(context, execute);
   return result.value;
+}
+
+/**
+ * YUK-1404 (B2/R5) — same wire attempt, but returns the attempt identity so a
+ * caller (the glm_ocr tool) can hand the agent an honest `run_ref`. Usage/cost
+ * truth lives on the provider_attempt row under this attemptId; the tool
+ * reports what the wire actually returned and never fabricates cost.
+ */
+export async function executeGlmOcrWireAttemptResult<T>(
+  context: OcrPageProviderContext,
+  execute: (attempt: OcrPageProviderAttemptControl) => Promise<T>,
+): Promise<{ value: T; attemptId: string; operationId: string }> {
+  const result = await executeDirectProviderAttempt(context, GLM_OCR_ATTEMPT_DESCRIPTOR, execute);
+  return { value: result.value, attemptId: result.attemptId, operationId: context.operationId };
 }
 
 export async function executeTencentOcrSubmit(input: {
