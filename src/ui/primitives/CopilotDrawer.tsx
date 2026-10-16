@@ -1,9 +1,11 @@
 // Wave 5 / T-D3/A — generic Copilot Drawer primitive.
 //
 // Slot-based slide-out panel for the global Copilot Dock (mounted app-wide in
-// (app)/layout.tsx — AF S2a; previously page-scoped, now global). Two slots:
-//   • summary  — Coach TodayPlan.daily_focus + review_due + dreaming preview
-//   • chat     — message list + tool-use cards + composer
+// (app)/layout.tsx — AF S2a; previously page-scoped, now global). Slots:
+//   • summary  — compact strip above the conversation (capped at 30vh)
+//   • chat     — message list; the primary region, takes the remaining height
+//   • overlay  — floating layer over summary + chat (e.g. the session list)
+//   • footer   — composer, always pinned at the bottom
 //
 // RTL slide-in (from the right). ESC + outside-click close. Open state is
 // controlled by the parent (explicit user/signal open only). The primitive intentionally
@@ -32,6 +34,11 @@ export interface CopilotDrawerProps {
   summary?: ReactNode;
   /** Chat slot rendered below the summary; usually scrollable. */
   children?: ReactNode;
+  /**
+   * Floating layer laid over the summary + chat region (not the head or the
+   * footer), e.g. a session list. The caller positions it inside that region.
+   */
+  overlay?: ReactNode;
   /** Footer slot for the composer / input. */
   footer?: ReactNode;
   /** Optional aria-label override; defaults to title or 'Copilot 抽屉'. */
@@ -72,6 +79,7 @@ function OpenCopilotDrawer({
   expandable = true,
   summary,
   children,
+  overlay,
   footer,
   ariaLabel,
   trapRef,
@@ -144,20 +152,26 @@ function OpenCopilotDrawer({
             />
           </div>
         </header>
-        {summary ? (
+        {/* Body region: summary on top, the conversation takes the rest. The
+            overlay floats over this region only, so the head and the composer
+            stay reachable while it is open. */}
+        <div className="relative flex min-h-0 flex-1 flex-col">
+          {summary ? (
+            <section
+              data-testid="copilot-drawer-summary"
+              className="max-h-[30vh] shrink-0 overflow-y-auto px-[18px] py-[8px] border-b border-[var(--line-soft)] text-[13px] text-[var(--ink-2)] leading-[1.55]"
+            >
+              {summary}
+            </section>
+          ) : null}
           <section
-            data-testid="copilot-drawer-summary"
-            className="max-h-[45vh] shrink-0 overflow-y-auto px-[18px] py-[12px] border-b border-[var(--line-soft)] text-[13px] text-[var(--ink-2)] leading-[1.55]"
+            data-testid="copilot-drawer-chat"
+            className="min-h-0 flex-1 overflow-y-auto px-[18px] py-[12px] flex flex-col gap-[8px]"
           >
-            {summary}
+            {children}
           </section>
-        ) : null}
-        <section
-          data-testid="copilot-drawer-chat"
-          className="min-h-0 flex-1 overflow-y-auto px-[18px] py-[12px] flex flex-col gap-[8px]"
-        >
-          {children}
-        </section>
+          {overlay}
+        </div>
         {footer ? (
           <footer
             data-testid="copilot-drawer-footer"
