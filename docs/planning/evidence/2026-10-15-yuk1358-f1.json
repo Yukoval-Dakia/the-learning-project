@@ -1,0 +1,39 @@
+{
+  "source": "4d5d3fe79",
+  "receipts": {
+    "before.json": {
+      "path": "/tmp/yuk1358-f1-browser-20261015/before.json",
+      "sha256": "bea73bbbf1075cb868a202240af5d7f23fdb04024b11a97198a1a34cc039c5fc"
+    },
+    "after.json": {
+      "path": "/tmp/yuk1358-f1-browser-20261015/after.json",
+      "sha256": "25da72104a63ee6d846c3fd7ceb6ab1161355fdbc8d6c5f6f328224b455f2aaf"
+    },
+    "candidate.json": {
+      "path": "/tmp/yuk1358-f1-browser-20261015/candidate.json",
+      "sha256": "e5c64237b811a28a5ac2e216cb0a7ba9e1bd46373f19c3ad99eddea630c8a17f"
+    },
+    "cleanup.json": {
+      "path": "/tmp/yuk1358-f1-browser-20261015/cleanup.json",
+      "sha256": "675ad42350dc94688917e525242788e801af200e1dff779c33e46a02a58c95b6"
+    },
+    "cleanup-final.json": {
+      "path": "/tmp/yuk1358-f1-browser-20261015/cleanup-final.json",
+      "sha256": "24b66a97282b9d6f385a1f4adc97098feef271e2f719f146e76a567017138377"
+    },
+    "health.json": {
+      "path": "/tmp/yuk1358-f1-browser-20261015/health.json",
+      "sha256": "4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93"
+    },
+    "unauth.json": {
+      "path": "/tmp/yuk1358-f1-browser-20261015/unauth.json",
+      "sha256": "782eeaa7f1915f6783146f8180751785584f0f24bd4e503165c7fc4a597da600"
+    }
+  },
+  "screenshots": {
+    "gate": "/Users/yuqi/.t3/userdata/browser-artifacts/browser-screenshot-127-0-0-1-mv9krtph-cb0e2bec.png",
+    "welcome": "/Users/yuqi/.t3/userdata/browser-artifacts/browser-screenshot-127-0-0-1-mv9ksa04-05007943.png",
+    "placementNoGoal": "/Users/yuqi/.t3/userdata/browser-artifacts/browser-screenshot-127-0-0-1-mv9kt1hc-05bc2f5a.png",
+    "spaToWelcome": "/Users/yuqi/.t3/userdata/browser-artifacts/browser-screenshot-127-0-0-1-mv9ktjxs-c90ec564.png"
+  }
+}
