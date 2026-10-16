@@ -1202,6 +1202,17 @@ export const practiceCapability = defineCapability({
             (m) => m.buildJudgeCalibrationSampleHandler,
           ),
       },
+      // YUK-1445 — 入库准入（G1 双盲解题一致 + G2 逐单元标定）的 live consumer：
+      // 对既有 draft/revision（question_id 或 revision_id）跑 runQuestionAdmission
+      // 并经发布 seam 落 admitted/withheld/verify_hold + append-only 核验证据。
+      // 单次 admission = 2×solve（+1×crosscheck）LLM 调用 → 'llm' 档；
+      // store_sourced_question 尚未依赖本路径（B1 的 submit_question 接入点）。
+      {
+        name: 'question_admission_run',
+        queue: 'llm',
+        load: () =>
+          import('./jobs/question_admission_run').then((m) => m.buildQuestionAdmissionRunHandler),
+      },
     ],
   },
   // M4-T4 (YUK-319)：proposal kind 归属声明。variant_question / question_draft

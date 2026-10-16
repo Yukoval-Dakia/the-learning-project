@@ -30,7 +30,12 @@ import { event, knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
-import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
+import { publishQuestionGroup, publishQuestionGroupFromRow } from '@/server/questions/publisher';
+
+// YUK-1445 — question_admission_run 经本既有 publish seam 取 publisher API，
+// 不新增 capability→server/questions 依赖边。
+export { publishQuestionGroup, publishQuestionGroupFromRow };
+
 import { type RunTaskFn, runQuizVerify } from '../../jobs/quiz_verify';
 import { runSourceVerify } from '../../jobs/source_verify';
 import { SYNTHETIC_SUBJECT_ROOT_RE } from '../placement-scope';
