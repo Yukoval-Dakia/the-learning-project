@@ -535,6 +535,10 @@ export async function publishQuestionGroup(
     }
     // YUK-1497 —— 展示层绑定校验：与其他契约校验同一道 barrier（spec §3.7：
     // 不合格就不能发布）。先过 zod 形状门（防信任类型直穿），再校验绑定。
+    // review R1：入库与 digest 都落在【解析后的同一对象】（shaped.data）——
+    // 绝不存原始 contract.presentation；digest 对含展示层的契约重算比对，
+    // 不一致即拒发（调用方的 digest 没把展示层算进去 ⇒ fail-loud）。
+    let shapedPresentation: PresentationT | null = null;
     if (contract.presentation != null) {
       const shaped = Presentation.safeParse(contract.presentation);
       if (!shaped.success) {
@@ -558,6 +562,19 @@ export async function publishQuestionGroup(
             .join('; ')}`,
         );
       }
+      const recomputedDigest = contractIntegrityDigest({
+        structure: contract.structure,
+        response_spec: contract.response_spec,
+        scoring_basis: contract.scoring_basis,
+        execution_plan: contract.execution_plan,
+        presentation: shaped.data,
+      });
+      if (recomputedDigest !== contract.integrity_digest) {
+        throw new Error(
+          `publishQuestionGroup: integrity_digest does not cover the presentation layer (recomputed ${recomputedDigest}, input ${contract.integrity_digest})`,
+        );
+      }
+      shapedPresentation = shaped.data;
     }
 
     // 组级串行化：锁根 question 行（发布与编辑同一锁序 question → lifecycle）。
@@ -728,8 +745,10 @@ export async function publishQuestionGroup(
       response_spec: contract.response_spec,
       scoring_basis: contract.scoring_basis,
       execution_plan: contract.execution_plan,
-      // YUK-1497 —— 冻结展示层随 revision 版本化（缺省 NULL）。
-      presentation: (contract.presentation as never) ?? null,
+      // YUK-1497 —— 冻结展示层随 revision 版本化（缺省 NULL）。review R1：
+      // 入库的是 zod 解析后的 shaped.data（与校验、digest 同一对象），
+      // 绝不存未经解析的原始 contract.presentation。
+      presentation: shapedPresentation ?? null,
       supersedes_revision_id: currentRevisionId,
       availability: input.availability,
       published_by: (input.publishedBy as never) ?? null,

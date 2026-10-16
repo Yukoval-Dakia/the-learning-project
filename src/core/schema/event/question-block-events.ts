@@ -95,6 +95,11 @@ export const EditQuestionBlockStructuredExperimental = z
           'set_question_type',
           'split_stem',
           'merge_questions',
+          // YUK-1497 — compose_presentation's structured.presentation write. A single-block
+          // edit like the four above: the primary carries the AFTER tree (presentation riding
+          // inside structured), so the fold's last-write-wins reproduces the row exactly —
+          // without this op a fold/rebuild would silently erase the saved presentation.
+          'set_presentation',
           // NOTE: reassign_figure is intentionally NOT an op here. The live writer emits figure
           // re-pointing as a SEPARATE `figure.reassigned` job event (block-structured-edit.ts:615),
           // NOT through persistStructured / block.structured_edited — so it is not one of this

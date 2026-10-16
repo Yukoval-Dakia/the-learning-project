@@ -2,7 +2,7 @@ import { unit as parseUnit } from 'mathjs';
 import { EvaluationContractError, projectIssuedScoringBasis } from './evaluation';
 import { validateExecutionPlan } from './execution';
 import { isPublicSharedMaterial } from './materials';
-import { validatePresentation } from './presentation';
+import { Presentation, validatePresentation } from './presentation';
 import type { ResponseSlotT } from './response';
 import type { PublishedQuestionRevisionT } from './revision';
 import { validateScoringBasis } from './scoring';
@@ -122,8 +122,22 @@ export function decideAutomaticServing(
   // 全量不合格，这里抓剪枝后缺口（如自定义块跨发出/未发出 part）与被绕过
   // barrier 写入的行）。无展示层的旧 revision 不受影响。
   if (revision.presentation != null) {
+    // 形状门先行（review R1）：行读面（revisionRowToContract）对解析失败的
+    // 展示层原样透传而非丢列（丢列 = 静默降级为逐槽渲染的 fail-open）；
+    // 这里以 invalid_presentation 拒绝，绝不带着坏展示层发题。
+    const shaped = Presentation.safeParse(revision.presentation);
+    if (!shaped.success) {
+      return {
+        kind: 'unavailable',
+        reason: 'invalid_presentation',
+        detail: `malformed presentation: ${shaped.error.issues
+          .slice(0, 5)
+          .map((issue) => `${issue.path.join('.')}:${issue.message}`)
+          .join('; ')}`,
+      };
+    }
     const presentationIssues = validatePresentation(
-      revision.presentation,
+      shaped.data,
       revision.structure,
       revision.response_spec,
       revision.scoring_basis,

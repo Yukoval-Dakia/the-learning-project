@@ -28,7 +28,7 @@ Presentation = {
 | kind | 字段 | 渲染 |
 | --- | --- | --- |
 | `stack` | `children: Block[]`，`gap?: 'sm'\|'md'\|'lg'` | 纵向排列 |
-| `passage_layout` | `material_ref`，`layout: 'passage_left_questions_right'\|'passage_top'`，`passage_width?: 'balanced'\|'wide'`，`children: Block[]` | 文章常驻（文左题右或文上题下）；children 是问题区 |
+| `passage_layout` | `material_ref`（passage 或内联 plaintext 材料），`layout: 'passage_left_questions_right'\|'passage_top'`，`passage_width?: 'balanced'\|'wide'`，`children: Block[]` | 文章常驻（文左题右或文上题下）；children 是问题区（review R1 更正：归一器只铸造内联 plaintext 材料，不产 passage kind，故两者都接受，须带 `content_md` 且公开） |
 | `text_math` | `part_ref` 或 `material_ref`，二选一 | 渲染该 part 的 `prompt_md` 或该材料的 `content_md`（MathMarkdown） |
 | `figure` | `material_ref`（kind=figure） | 渲染已核验的图资产 |
 

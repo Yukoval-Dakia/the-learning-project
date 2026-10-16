@@ -3,7 +3,8 @@
 // 给定 draft question_block 或已发布 revision 的引用 + 一份 presentation 文档：
 //   1. 解析该题的契约（structure / response_spec / scoring_basis）——
 //      revision 直接读冻结字段；draft 经与发布同一 normalizer
-//      （normalizeQuestionGroupToContract）从 structured 树推导（会得到的契约）；
+//      （normalizeQuestionRowToContract，导入块发布走的单行路径）从
+//      structured 树推导（会得到的契约）；
 //   2. 过 zod 形状门 + validatePresentation（与发布 barrier 同一道绑定校验）；
 //   3. 有问题返回 typed issues（不写）；干净时按 save 决定写回 draft 容器
 //      question_block.structured 的【presentation 一个键】—— 其它键一概不碰
@@ -11,14 +12,15 @@
 //
 // revision 不可变：revision 引用只做校验，不接受 save。
 //
-// 写纪律（本工具自查，不经 block-structured-edit 的 canonical event 通道 ——
-// 其 op 枚举/折叠属并行 edit_question lane 所有）：FOR UPDATE 行锁 +
-// version+1；presentation 是 jsonb-internal 草稿键（同 kind 提示先例），
-// 随 import 进入 question.structured，发布时提升为 contract.presentation。
+// 写纪律（review R1）：save 走 block-structured-edit 的 canonical 事件通道
+// （setPresentation → persistStructured：experimental:edit_question_block_structured
+// op=set_presentation + job event + genesis-anchor 检查 + 投影 write-through）——
+// raw tx.update 对 fold 不可见，rebuild 会抹掉展示层；旧的自查 raw 写已删。
 
 import { eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 
+import { setPresentation } from '@/capabilities/ingestion/server/block-structured-edit';
 import { capturedQuestionShape } from '@/capabilities/ingestion/server/captured-question-shape';
 import {
   Presentation,
@@ -27,10 +29,11 @@ import {
   validatePresentation,
 } from '@/core/schema/assessment';
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
+import { structuredToPromptMarkdown } from '@/core/schema/structured_question';
 import type { Db, Tx } from '@/db/client';
 import { question_block, question_revision, source_asset } from '@/db/schema';
-import type { NormalizableQuestionRow, PartRow } from '@/kernel/records/assessment-normalization';
-import { normalizeQuestionGroupToContract } from '@/kernel/records/assessment-normalization';
+import type { NormalizableQuestionRow } from '@/kernel/records/assessment-normalization';
+import { normalizeQuestionRowToContract } from '@/kernel/records/assessment-normalization';
 import type { DomainTool, ToolContext } from './types';
 
 const ComposePresentationInputSchema = z
@@ -75,20 +78,23 @@ const ComposePresentationOutputSchema = z.object({
 });
 type ComposePresentationOutput = z.infer<typeof ComposePresentationOutputSchema>;
 
-/** draft block → normalizer 行投影（与 import/publish 同一形状来源）。 */
-function synthRowsFromBlock(
+/** draft block → normalizer 行投影（与导入/发布同一形状来源，review R1）。 */
+function draftRowProjection(
   blockId: string,
   structured: StructuredQuestionT,
   payload: {
     reference_md: string | null;
     figures: { asset_id: string }[];
   },
-): { root: NormalizableQuestionRow; parts: PartRow[] } {
+): NormalizableQuestionRow {
   const shape = capturedQuestionShape(structured);
-  const root: NormalizableQuestionRow = {
+  return {
     id: blockId,
     kind: shape.kind,
-    prompt_md: structured.prompt_text,
+    // 导入把块铸成 question 行时 prompt_md = structuredToPromptMarkdown(
+    // structured)（auto-enroll / import-completion 同一派生函数），reference_md
+    // 取块列 —— 与发布读到的行逐字同源，stem material id 因此与真实发布一致。
+    prompt_md: structuredToPromptMarkdown(structured),
     reference_md: payload.reference_md,
     rubric_json: null,
     choices_md: shape.choices_md,
@@ -96,25 +102,15 @@ function synthRowsFromBlock(
     structured,
     figures: payload.figures as NormalizableQuestionRow['figures'],
   };
-  const parts: PartRow[] = (structured.sub_questions ?? []).map((sub) => ({
-    id: sub.id,
-    prompt_md: sub.prompt_text,
-    reference_md: null,
-    choices_md: sub.options?.map((option) => option.text) ?? null,
-    structured: sub,
-    figures: [],
-  }));
-  return { root, parts };
 }
 
-/** 与发布同一 normalizer 推导 draft 的（未来）契约；失败返回 null（不伪造）。 */
+/** 与发布同一 normalizer（单行路径）推导 draft 的（未来）契约；失败返回 null（不伪造）。 */
 async function deriveDraftContract(
   db: Db | Tx,
   blockId: string,
   structured: StructuredQuestionT,
   payload: { reference_md: string | null; figures: { asset_id: string }[] },
 ) {
-  const { root, parts } = synthRowsFromBlock(blockId, structured, payload);
   const assetIds = [...new Set(payload.figures.map((figure) => figure.asset_id))];
   const figureDigests: Record<string, string> = {};
   if (assetIds.length > 0) {
@@ -125,10 +121,10 @@ async function deriveDraftContract(
     for (const row of assetRows) figureDigests[row.assetId] = row.sha256;
   }
   try {
-    return normalizeQuestionGroupToContract(
-      { ...root, figureDigests: Object.keys(figureDigests).length > 0 ? figureDigests : null },
-      parts,
-    );
+    return normalizeQuestionRowToContract({
+      ...draftRowProjection(blockId, structured, payload),
+      figureDigests: Object.keys(figureDigests).length > 0 ? figureDigests : null,
+    });
   } catch {
     return null;
   }
@@ -234,20 +230,28 @@ export const composePresentationTool: DomainTool<
       if (input.save !== true) {
         return { status: 'valid' as const, block_id: blockId, issues: [] };
       }
-      const structured: StructuredQuestionT = {
-        ...block.structured,
-        presentation,
-      };
-      const nextVersion = block.version + 1;
-      await tx
-        .update(question_block)
-        .set({ structured, version: nextVersion, updated_at: new Date() })
-        .where(eq(question_block.id, blockId));
+      // review R1 —— save 走 canonical 事件通道（setPresentation →
+      // persistStructured：op=set_presentation 的
+      // experimental:edit_question_block_structured + job event + genesis-anchor
+      // 检查 + 投影 write-through）；raw tx.update 对 fold 不可见，rebuild 会
+      // 静默抹掉展示层。同一事务（savepoint）内执行，校验与写入原子。
+      const saved = await setPresentation(tx, {
+        blockId,
+        structured: { ...block.structured, presentation },
+        actorRef: ctx.callerActor.ref,
+      });
+      if (saved.status !== 'written') {
+        return {
+          status: saved.status as ComposePresentationOutput['status'],
+          block_id: blockId,
+          issues: [],
+        };
+      }
       return {
         status: 'saved' as const,
         block_id: blockId,
         issues: [],
-        block_version: nextVersion,
+        block_version: saved.version,
       };
     });
   },

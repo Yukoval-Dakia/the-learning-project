@@ -305,6 +305,8 @@ export interface PresentationIssue {
     | 'figure_material_kind'
     /** 规则 5：text_math 的 part_ref / material_ref 必须二选一。 */
     | 'text_math_ref_shape'
+    /** 规则 5：passage_layout 材料不是 passage 也不是内联 plaintext。 */
+    | 'passage_material_kind'
     /** 规则 1/3：bind 指向未知槽位（或布局容器槽）。 */
     | 'unresolved_slot_bind'
     /** 规则 3：bind.unit_id 不是声明的计分单元，或 unit.slot_refs 不含该槽。 */
@@ -383,6 +385,8 @@ interface WalkState {
   coverageBinds: PresentationBindT[];
   slotById: Map<string, ResponseSlotT>;
   scopeAnswerableSlotIds: Set<string>;
+  /** 与公开投影同律的范围内计分单元（slot_refs+evidence_slot_refs 全发出）。 */
+  scopeUnitIds: Set<string>;
   breakTapByText: Map<string, BreakTapTextIndex>;
 }
 
@@ -481,6 +485,14 @@ function checkSelectShape(
         detail: `ordering block '${blockId}' requires a select slot with axes exactly {position, object}`,
       });
     }
+    // 与 matching_columns 同律：每个 (position, object) 关系 item 都必须带坐标，
+    // 否则界面无法把作答映射回 item（review R1）。
+    if (!select.items.every((item) => item.coordinates != null)) {
+      issues.push({
+        code: 'slot_shape_incompatible',
+        detail: `ordering block '${blockId}' requires a select slot whose items all carry coordinates`,
+      });
+    }
   }
 }
 
@@ -533,7 +545,11 @@ function validateBind(
       checkSelectShape(state, slot, blockId, inputKind);
     }
   }
-  return state.scopeAnswerableSlotIds.has(bind.slot_id);
+  // 覆盖计数与公开投影的整枝剪除同律（review R1）：槽在发出范围内还不够 ——
+  // bind 的单元也必须存活。单元的 slot_refs/evidence_slot_refs 只要有一个
+  // 不在发出范围内，dto 投影就会剪掉该积木；若此处仍计为覆盖，校验会宣称
+  // 已绑定而学习者看到的 DTO 里没有输入面。
+  return state.scopeAnswerableSlotIds.has(bind.slot_id) && state.scopeUnitIds.has(bind.unit_id);
 }
 
 /** 文本/材料引用解析（规则 5）；presentation 是公开内容 —— 材料必须公开。 */
@@ -572,11 +588,16 @@ function checkMaterialRef(
       });
     }
   }
-  if (options.requirePassage && material.kind !== 'passage') {
-    state.issues.push({
-      code: 'slot_shape_incompatible',
-      detail: `passage_layout block '${blockId}' references material '${materialRef}' of kind '${material.kind}' (expected passage)`,
-    });
+  if (options.requirePassage) {
+    // review R1：normalizer 只铸造 plaintext 内联材料（从不产 passage kind），
+    // passage_layout 接受 passage 或内联 plaintext 材料（spec §1.1 更正）；
+    // 其余 kind 用专门 issue code 拒绝。
+    if (material.kind !== 'passage' && material.kind !== 'plaintext') {
+      state.issues.push({
+        code: 'passage_material_kind',
+        detail: `passage_layout block '${blockId}' references material '${materialRef}' of kind '${material.kind}' (expected passage or inline plaintext)`,
+      });
+    }
   }
   if (options.requireContent && material.content_md == null) {
     state.issues.push({
@@ -716,6 +737,18 @@ export function validatePresentation(
       .filter((slot) => scopeParts.has(slot.part_id) && slot.kind !== 'table')
       .map((slot) => slot.slot_id),
   );
+  // 范围内存活单元：与 dto.ts 公开投影的 scopedUnits 同判据 —— 单元的
+  // slot_refs 与 evidence_slot_refs 全落在发出范围内可作答槽内才存活；
+  // 缺省（发布 barrier 全量口径）时全部 parts 在范围，等价于全部单元。
+  const scopeUnitIds = new Set(
+    scoring_basis.units
+      .filter((unit) =>
+        [...unit.slot_refs, ...unit.evidence_slot_refs].every((id) =>
+          scopeAnswerableSlotIds.has(id),
+        ),
+      )
+      .map((unit) => unit.scoring_unit_id),
+  );
 
   const state: WalkState = {
     issues,
@@ -723,6 +756,7 @@ export function validatePresentation(
     coverageBinds: [],
     slotById,
     scopeAnswerableSlotIds,
+    scopeUnitIds,
     breakTapByText: new Map(),
   };
 
@@ -756,13 +790,17 @@ export function validatePresentation(
 
 /**
  * 纯推导：按题目契约生成一份【合法的】声明式缺省展示 ——
- * stack → 每个 part 一块 text_math → 每个可作答槽按槽形态选一个输入积木：
- *   select{axes:left,right} → matching_columns；select{axes:position,object}
- *   → ordering；select{text} → break_tap；select 纯选项 → option_list；
+ * stack → 每个 part 一块 text_math → 每个可作答槽按【槽形态】选一个输入积木
+ * （review R1：先看 item 形状，再看 axes）：
+ *   gap items（全带 gap_after_codepoint）→ break_tap；
+ *   coordinated items（全带 coordinates）+ axes{left,right} → matching_columns；
+ *   coordinated items + axes{position,object} → ordering；
+ *   plain items（无 coordinates 无 gap）→ option_list；
  *   blank → blank_input；open_response → free_area。
  * unit 取第一个 slot_refs 包含该槽的计分单元。
  * 契约无法用 blocks-v1 表达（旧槽种类、无计分单元、select 形态不可判）时
- * 返回 null —— 不伪造。
+ * 返回 null —— 不伪造；返回前过 validatePresentation 自检，绝不交出
+ * 一个过不了发布 barrier 的缺省（如字缝不在字素簇边界的 break_tap）。
  */
 export function defaultPresentation(
   structure: QuestionGroupStructureT,
@@ -789,17 +827,29 @@ export function defaultPresentation(
           slot.kind === 'select' ? 'select' : slot.kind === 'blank' ? 'blank' : 'free',
       };
       if (slot.kind === 'select') {
-        if (axisNamesExact(slot.axes, ['left', 'right'])) {
-          children.push({ block_id: `blk_${slot.slot_id}`, kind: 'matching_columns', bind });
-          continue;
-        }
-        if (axisNamesExact(slot.axes, ['position', 'object'])) {
-          children.push({ block_id: `blk_${slot.slot_id}`, kind: 'ordering', bind });
-          continue;
-        }
-        if (slot.text != null) {
+        // 先看 item 形状（review R1）—— axes 只在 coordinated 分支里细分。
+        const allGaps =
+          slot.items.length > 0 && slot.items.every((item) => item.gap_after_codepoint != null);
+        const allCoordinated =
+          slot.items.length > 0 && slot.items.every((item) => item.coordinates != null);
+        if (allGaps) {
+          // break_tap 需要冻结明文；缺 text 的槽无法表达（不伪造）。
+          if (slot.text == null) return null;
           children.push({ block_id: `blk_${slot.slot_id}`, kind: 'break_tap', bind });
           continue;
+        }
+        if (allCoordinated) {
+          if (axisNamesExact(slot.axes, ['left', 'right'])) {
+            children.push({ block_id: `blk_${slot.slot_id}`, kind: 'matching_columns', bind });
+            continue;
+          }
+          if (axisNamesExact(slot.axes, ['position', 'object'])) {
+            children.push({ block_id: `blk_${slot.slot_id}`, kind: 'ordering', bind });
+            continue;
+          }
+          // 带 coordinates 但 axes 不是 left/right 或 position/object —— blocks-v1
+          // 没有对应积木，不伪造。
+          return null;
         }
         const plain = slot.items.every(
           (item) => item.coordinates == null && item.gap_after_codepoint == null,
@@ -820,11 +870,15 @@ export function defaultPresentation(
       return null;
     }
   }
-  return {
+  const candidate: PresentationT = {
     schema_version: PRESENTATION_SCHEMA_VERSION,
     renderer_contract: 'blocks-v1',
     root: { block_id: 'blk_root', kind: 'stack', gap: 'md', children },
   };
+  // 绝不交出过不了发布 barrier 的缺省（如字缝不在字素簇边界 / 换行后字缝）。
+  return validatePresentation(candidate, structure, response_spec, scoring_basis).length === 0
+    ? candidate
+    : null;
 }
 
 // ====================================================================
