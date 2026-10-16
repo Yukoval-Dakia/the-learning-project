@@ -11,7 +11,6 @@ import {
   type SourceAssetRow,
   isUniqueViolation,
   lockImageStorageKey,
-  persistSourceAsset,
   sha256Hex,
 } from './persist-image-asset';
 
@@ -78,31 +77,41 @@ async function persistFigureCrop(
     },
   };
 
-  // A prior pass may already have registered this deterministic id. Same
-  // content → replay adopts the row. Different content = the session was
-  // retried after OCR produced different boxes: the pre-registration path
-  // simply overwrote the figures/ object, so we keep that overwrite — now
-  // registered: advisory lock + put + row update in one transaction.
-  const [existing] = await db
-    .select()
-    .from(source_asset)
-    .where(eq(source_asset.id, input.id))
-    .limit(1);
-  if (existing) {
-    if (existing.storage_key !== storageKey) {
-      throw new Error(
-        `figure asset '${input.id}' exists under key '${existing.storage_key}', expected '${storageKey}'`,
-      );
-    }
-    if (existing.sha256 === sha) return existing;
-    const dims = await probeImage(input.png);
-    const oldBytes = await r2.get(storageKey);
-    try {
-      return await db.transaction(async (tx) => {
-        await lockImageStorageKey(tx, storageKey);
-        // Row update BEFORE put: a put failure rolls the row back, so the
-        // registered sha can never drift from the served bytes. A post-put
-        // commit failure restores the previous object below.
+  // A prior pass may already have registered this deterministic id, and
+  // concurrent extractions may be writing different bytes under the same
+  // `<page>-fig-N` identity. The unlocked existence check is racy (Codex
+  // 4292929371): the loser can put its bytes over the winner's object before
+  // its duplicate-id insert fails, leaving the winning row pointing at bytes
+  // with a different SHA. So ALL decisions — re-read, adopt, update, insert —
+  // happen AFTER acquiring the storage-key advisory lock, and the
+  // compensating oldBytes snapshot is taken under the same lock (round-2
+  // P2-1) so a restore can never write stale bytes.
+  const dims = await probeImage(input.png);
+  let oldBytes: Uint8Array | null = null;
+  let overwroteObject = false;
+  try {
+    return await db.transaction(async (tx) => {
+      await lockImageStorageKey(tx, storageKey);
+      const [existing] = await tx
+        .select()
+        .from(source_asset)
+        .where(eq(source_asset.id, input.id))
+        .limit(1);
+      if (existing) {
+        if (existing.storage_key !== storageKey) {
+          throw new Error(
+            `figure asset '${input.id}' exists under key '${existing.storage_key}', expected '${storageKey}'`,
+          );
+        }
+        if (existing.sha256 === sha) return existing;
+        // Same id, different content = the session was retried after OCR
+        // produced different boxes: the pre-registration path simply
+        // overwrote the figures/ object, so we keep that overwrite — now
+        // registered. Row update BEFORE put: a put failure rolls the row
+        // back, so the registered sha can never drift from the served bytes.
+        // A post-put commit failure restores oldBytes below.
+        oldBytes = await r2.get(storageKey);
+        overwroteObject = true;
         const [updated] = await tx
           .update(source_asset)
           .set({
@@ -117,28 +126,58 @@ async function persistFigureCrop(
           .returning();
         await r2.put(storageKey, input.png, 'image/png');
         return updated;
-      });
-    } catch (err) {
-      if (oldBytes) {
-        await r2.put(storageKey, oldBytes, existing.mime_type).catch(() => {});
       }
-      throw err;
-    }
-  }
-  try {
-    return await persistSourceAsset(db, r2, {
-      bytes: input.png,
-      mime: 'image/png',
-      kind: 'image',
-      id: input.id,
-      storageKey,
-      provenance,
-      compensatePutOnInsertFailure: true,
+      // First writer under this key — same protocol as persistSourceAsset:
+      // snapshot whether another row already owns the object before putting,
+      // so a failed insert only deletes bytes nobody owns.
+      const hadOwnerBeforePut =
+        (
+          await tx
+            .select({ id: source_asset.id })
+            .from(source_asset)
+            .where(eq(source_asset.storage_key, storageKey))
+            .limit(1)
+        ).length > 0;
+      await r2.put(storageKey, input.png, 'image/png');
+      try {
+        const [inserted] = await tx
+          .insert(source_asset)
+          .values({
+            id: input.id,
+            kind: 'image',
+            storage_key: storageKey,
+            mime_type: 'image/png',
+            byte_size: input.png.byteLength,
+            sha256: sha,
+            width: dims?.width ?? null,
+            height: dims?.height ?? null,
+            provenance,
+            created_at: new Date(),
+          })
+          .returning();
+        if (!inserted) {
+          throw new Error('persistFigureCrop: INSERT ... RETURNING returned no row');
+        }
+        return inserted;
+      } catch (err) {
+        if (!hadOwnerBeforePut) {
+          try {
+            await r2.delete(storageKey);
+          } catch (cleanupErr) {
+            console.error('[persistFigureCrop] failed to compensate R2 put:', cleanupErr);
+          }
+        }
+        throw err;
+      }
     });
   } catch (err) {
-    // Concurrent retry inserted the same deterministic id first — re-read and
-    // verify it holds identical content before adopting it. postgres.js wraps
-    // the 23505, so walk the cause chain rather than matching message text.
+    if (overwroteObject && oldBytes) {
+      await r2.put(storageKey, oldBytes, 'image/png').catch(() => {});
+    }
+    // A writer outside this lock (different storage key, same id) can still
+    // race the insert — re-read and adopt only on identical registered
+    // content. postgres.js wraps the 23505, so walk the cause chain rather
+    // than matching message text.
     if (isUniqueViolation(err)) {
       const [row] = await db
         .select()

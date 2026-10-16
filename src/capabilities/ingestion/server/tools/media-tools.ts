@@ -601,7 +601,7 @@ async function executeGlmOcr(ctx: ToolContext, raw: GlmOcrInput): Promise<GlmOcr
       anchor: {
         ...assetRefOutput(parent),
         region_px: null,
-        document_id: await findOwningDocument(ctx.db, parent.id),
+        document_id: await findOwningDocument(ctx, parent.id),
         page_index: null,
       },
     };
@@ -621,7 +621,7 @@ async function executeGlmOcr(ctx: ToolContext, raw: GlmOcrInput): Promise<GlmOcr
         anchor: {
           ...assetRefOutput(parent),
           region_px: input.region,
-          document_id: await findOwningDocument(ctx.db, parent.id),
+          document_id: await findOwningDocument(ctx, parent.id),
           page_index: null,
         },
       };
@@ -634,7 +634,7 @@ async function executeGlmOcr(ctx: ToolContext, raw: GlmOcrInput): Promise<GlmOcr
   const anchor = {
     ...assetRefOutput(parent),
     region_px: appliedRegion,
-    document_id: await findOwningDocument(ctx.db, parent.id),
+    document_id: await findOwningDocument(ctx, parent.id),
     page_index: typeof parentProv?.page_index === 'number' ? parentProv.page_index : null,
   };
 

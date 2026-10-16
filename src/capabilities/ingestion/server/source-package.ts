@@ -670,10 +670,17 @@ export async function attachWordSourcePackage(
 
 /**
  * P2-8 — package attach/materialize runs AFTER the session row exists
- * (initiateUpload owns its own transaction). A package failure marks the
- * session `failed` with the reason instead of leaving an `uploaded` orphan
- * behind a 500. `uploaded → failed` has no guard transition (markExtractionFailed
- * only covers queued/extracting), so the route writes it directly.
+ * (initiateUpload owns its own transaction). A package failure must not leave
+ * an `uploaded` orphan behind a 500:
+ *   - pre-output sessions (uploaded/queued/extracting) are marked `failed`
+ *     with the reason. `uploaded → failed` has no guard transition
+ *     (markExtractionFailed only covers queued/extracting), so the route
+ *     writes it directly.
+ *   - sessions that already produced extracted output (extracted/partial/
+ *     reviewed/imported) are never downgraded — imports only admit
+ *     extracted/reviewed, so `failed` would orphan a completed upload behind
+ *     a transient package/R2 error. The failure is recorded on
+ *     `source_document.provenance.source_package_attach_error` instead.
  */
 export async function markSessionPackageFailed(
   db: Db,
@@ -681,6 +688,49 @@ export async function markSessionPackageFailed(
   err: unknown,
 ): Promise<void> {
   const msg = err instanceof Error ? err.message : String(err);
+  const [session] = await db
+    .select({
+      status: learning_session.status,
+      source_document_id: learning_session.source_document_id,
+    })
+    .from(learning_session)
+    .where(eq(learning_session.id, sessionId))
+    .limit(1);
+  if (!session) return;
+  // Codex 4293474481 — sessions that already produced extracted output (the
+  // text-DOCX line commits question_blocks and reaches 'extracted' before the
+  // package attaches) must not be downgraded: imports only admit
+  // extracted/reviewed sessions, so flipping to 'failed' would orphan a
+  // completed upload behind a transient package/R2 failure. Record the attach
+  // failure on the document provenance instead; the original error still
+  // propagates to the caller.
+  if (['extracted', 'partial', 'reviewed', 'imported'].includes(session.status)) {
+    if (session.source_document_id) {
+      try {
+        const [doc] = await db
+          .select({ provenance: source_document.provenance })
+          .from(source_document)
+          .where(eq(source_document.id, session.source_document_id))
+          .limit(1);
+        await db
+          .update(source_document)
+          .set({
+            provenance: {
+              ...((doc?.provenance as Record<string, unknown> | null) ?? {}),
+              source_package_attach_error: msg.slice(0, 500),
+            },
+          })
+          .where(eq(source_document.id, session.source_document_id));
+      } catch {
+        // best-effort marker — the attach error itself is what propagates
+      }
+    }
+    return;
+  }
+  // uploaded/queued/extracting have no extracted output yet: mark the session
+  // failed so it is not left orphaned ('uploaded' -> 'failed' is the only
+  // pre-output transition the guard allows; package materialization sits
+  // outside the guard's coverage, documented in the header comment).
   await db
     .update(learning_session)
     .set({

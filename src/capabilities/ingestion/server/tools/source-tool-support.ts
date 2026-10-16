@@ -123,9 +123,46 @@ export async function loadVerifiedAssetBytes(
   return loadAssetBytesVerified(r2, row);
 }
 
-/** The source_document that owns this asset (via source_asset_ids or package files). */
-export async function findOwningDocument(db: Db, assetId: string): Promise<string | null> {
-  const rows = await db
+/**
+ * The source_document that owns this asset. Codex 4293474471 — embedded
+ * package media and crop/rotate-derived assets are not in
+ * `source_asset_ids`, so the flat membership query reported null. Resolve the
+ * way assertAssetInScope does: package membership + derived_from lineage
+ * back to a package member, then the scoped session's document. Falls back to
+ * the flat membership query for callers outside an ingestion scope.
+ */
+export async function findOwningDocument(
+  ctx: ToolContext,
+  assetId: string,
+): Promise<string | null> {
+  const scopeId = ctx.scope?.kind === 'ingestion_session' ? ctx.scope.id : null;
+  if (scopeId) {
+    const ids = await scopedAssetIds(ctx.db, scopeId);
+    if (ids) {
+      let current = assetId;
+      for (let hop = 0; hop < 6; hop++) {
+        if (ids.has(current)) {
+          const [session] = await ctx.db
+            .select({ source_document_id: learning_session.source_document_id })
+            .from(learning_session)
+            .where(eq(learning_session.id, scopeId))
+            .limit(1);
+          return session?.source_document_id ?? null;
+        }
+        const [row] = await ctx.db
+          .select({ provenance: source_asset.provenance })
+          .from(source_asset)
+          .where(eq(source_asset.id, current))
+          .limit(1);
+        const parent = (row?.provenance as Record<string, unknown> | undefined)?.derived_from as
+          | { asset_id?: unknown }
+          | undefined;
+        if (typeof parent?.asset_id !== 'string' || parent.asset_id === current) break;
+        current = parent.asset_id;
+      }
+    }
+  }
+  const rows = await ctx.db
     .select({ id: source_document.id })
     .from(source_document)
     .where(sql`${source_document.source_asset_ids}::jsonb ? ${assetId}`)

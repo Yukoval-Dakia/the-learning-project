@@ -61,7 +61,7 @@ const ReadSourceOutputSchema = z.object({
 });
 type ReadSourceOutput = z.infer<typeof ReadSourceOutputSchema>;
 
-const PAGE_ANCHOR_RE = /<!-- tlp:page index=(\d+)/g;
+const PAGE_ANCHOR_RE = /<!-- tlp:page index=(\d+).*?-->/g;
 
 /** Slice the anchored body_md down to page `index`'s section. */
 function pageSection(bodyMd: string, pageIndex: number): string | null {
