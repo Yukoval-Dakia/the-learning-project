@@ -164,6 +164,11 @@ export function nativeSlotFieldSpec(slot: ResponseSlotT): ResponseSlotSpec | nul
     // 返回 null（无作答控件），不预留假输入。
     case 'sentence_breaks':
       return null;
+    // YUK-1496 统一作答 select/blank：输入积木由界面线按展示 spec 实现；在那之前
+    // 出题门（serving-admission）扣发这两类，这里如实无控件。
+    case 'select':
+    case 'blank':
+      return null;
     case 'matching':
       return {
         kind: 'matching',
