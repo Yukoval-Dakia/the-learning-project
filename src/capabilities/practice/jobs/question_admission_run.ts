@@ -44,6 +44,7 @@ import {
   FrozenAdmissionInput,
   assertAdmissionDelivery,
   claimAdmissionBatch,
+  completedAdmissionStatus,
 } from '../server/admission/receipt';
 import {
   QUESTION_ADMISSION_POLICY_ID,
@@ -213,7 +214,8 @@ export async function runAdmissionForQuestion(
       historicalTerminal: Boolean(terminal),
     });
   });
-  if (batch.kind === 'applied' || batch.kind === 'historical') return simple('already_verified');
+  if (batch.kind === 'applied') return simple(batch.status);
+  if (batch.kind === 'historical') return simple('already_verified');
   if (batch.kind === 'stale') return simple('stale');
   if (batch.kind === 'held') return simple('pending');
 
@@ -288,21 +290,30 @@ export async function runAdmissionForQuestion(
       if (control.kind === 'fenced')
         throw new Error('Question admission application backend/generation fenced');
       const snapshot = await readPaidEffect(tx, batch.identity);
-      if (snapshot?.state === 'applied') return simple('already_verified');
+      if (snapshot?.state === 'applied')
+        return simple(completedAdmissionStatus(snapshot.application));
       const { root, lifecycle } = await lockAdmissionGroup(tx, rootId);
       const fresh = root ? await loadDefinition(tx, rootId) : null;
       const current =
         root &&
         fresh?.contract.integrity_digest === batch.input.contract.integrity_digest &&
-        (lifecycle?.current_revision_id ?? null) === batch.input.revision_id &&
-        (lifecycle?.scoring_admission_generation ?? 0) === batch.input.admission_generation &&
-        (!lifecycle || isPendingAdmission(lifecycle));
+        (lifecycle?.current_revision_id ?? null) === batch.input.revision_id;
       if (!current) {
         await recordPaidEffectApplication(tx, batch.identity, {
           status: 'stale',
           group_id: rootId,
         });
         return simple('stale');
+      }
+      if (lifecycle && !isPendingAdmission(lifecycle)) {
+        // A hold/retraction/other admission decision blocks application, not the
+        // immutable paid result. Re-pending can replay it under the new generation.
+        await notePaidEffectApplicationFailure(
+          tx,
+          batch.identity,
+          'receipt_waits_for_pending_admission',
+        );
+        return simple('pending');
       }
       const result = receipt.result;
       if (result.status === 'pending')

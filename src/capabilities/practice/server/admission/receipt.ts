@@ -78,6 +78,14 @@ export const AdmissionResultReceipt = z.object({
 });
 export type AdmissionResultReceipt = z.infer<typeof AdmissionResultReceipt>;
 
+/** Terminal application disposition is not necessarily a verified question. */
+export function completedAdmissionStatus(application: unknown) {
+  const { status } = z
+    .object({ status: z.enum(['admitted', 'withheld', 'stale', 'conflict']) })
+    .parse(application);
+  return status === 'stale' || status === 'conflict' ? status : ('already_verified' as const);
+}
+
 export type AdmissionDelivery = { id: string; jobData?: AdmissionJobData };
 
 export async function assertAdmissionDelivery(tx: Tx, delivery: AdmissionDelivery) {
@@ -155,7 +163,13 @@ export async function claimAdmissionBatch(
   const identity = computePaidEffectIdentity(effect);
   const snapshot = existing ? await readPaidEffect(tx, identity) : null;
   if (existing && !snapshot) throw new Error('Frozen admission effect identity mismatch');
-  if (snapshot?.state === 'applied') return { kind: 'applied' as const, input, identity };
+  if (snapshot?.state === 'applied')
+    return {
+      kind: 'applied' as const,
+      input,
+      identity,
+      status: completedAdmissionStatus(snapshot.application),
+    };
   const admission = await admitPaidEffectDeliveryControl(tx, ADMISSION_FAMILY, {
     backend: 'pg-boss',
     deliveryId: delivery.id,

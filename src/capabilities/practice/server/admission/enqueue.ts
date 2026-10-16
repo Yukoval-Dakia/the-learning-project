@@ -39,9 +39,14 @@ export function isPendingAdmission(
   );
 }
 
-function admissionJobId(groupId: string, revisionId: string, digest: string): string {
+function admissionJobId(
+  groupId: string,
+  revisionId: string,
+  digest: string,
+  generation: number,
+): string {
   const hex = createHash('sha256')
-    .update(JSON.stringify([ADMISSION_FAMILY, 1, groupId, revisionId, digest]))
+    .update(JSON.stringify([ADMISSION_FAMILY, 1, groupId, revisionId, digest, generation]))
     .digest('hex');
   const value = `${hex.slice(0, 12)}8${hex.slice(13, 16)}${((Number.parseInt(hex[16], 16) & 3) | 8).toString(16)}${hex.slice(17, 32)}`;
   return `${value.slice(0, 8)}-${value.slice(8, 12)}-${value.slice(12, 16)}-${value.slice(16, 20)}-${value.slice(20)}`;
@@ -90,8 +95,13 @@ export async function enqueuePublishedQuestionAdmission(
     const control = await readPaidEffectControl(tx, ADMISSION_FAMILY);
     if (control.backend !== 'pg-boss')
       throw new Error('Question admission pg-boss producer is fenced');
-    const id = admissionJobId(root.id, revision.revision_id, revision.integrity_digest);
-    await boss.send(
+    const id = admissionJobId(
+      root.id,
+      revision.revision_id,
+      revision.integrity_digest,
+      lifecycle.scoring_admission_generation,
+    );
+    const enqueued = await boss.send(
       ADMISSION_FAMILY,
       {
         question_id: root.id,
@@ -102,6 +112,8 @@ export async function enqueuePublishedQuestionAdmission(
       } satisfies AdmissionJobData,
       { id, db: practiceBossTransaction(tx) },
     );
+    if (enqueued === null)
+      return { status: 'skipped', reason: `admission job already exists: ${id}` };
     return {
       status: 'succeeded',
       detail: { group_id: root.id, revision_id: revision.revision_id, job_id: id },
