@@ -34,3 +34,7 @@
 窗口总 337.405 秒，22:33:16 JST 核 owner/token 后释锁。唯一候选 app 已停止删除；获批 restore/storage 停止保留；旧容器 ID 集合、其余容器 image/start/status/health/ports 及 current-release 均一致。首次清理比较误包含滚动 Health.Log，拒绝释锁；父逐字段确认仅健康探针日志变化后按稳定状态复核，原失败与最终回执均保留。
 
 证据 `/tmp/yuk1358-f1-browser-20261015/`。没有部署 TEST，后续合并须 exact-head CI 与 match-head；上述未验证项仍属 YUK-1358，不能以本片关闭整票。
+
+## 最新 main 组合
+
+正常合入 `797cf17bf`（仅 package/lock 两项开发依赖更新）后，frozen install、typecheck、lint、build 全部 exit 0。日志 `/tmp/yuk1358-f1-final-{install,typecheck,lint,build}.log`。路由产品与原 R1 相比只有格式调整；浏览器证据仍标记为依赖合入前的构建，不倒推为新依赖已实测。
