@@ -3,11 +3,16 @@
 // The live consumer for the admission lane until B1's submit_question wires
 // `runQuestionAdmission` directly. Takes an existing draft/revision id and:
 //   1. loads the question group rows → row-normalizes → admission definition;
-//   2. runs the dual-blind-solve + per-unit calibration lane;
-//   3. persists through the existing publish seam — admitted flips scoring
-//      admission with the resolved contract; withheld keeps the row-truth
-//      contract and appends failed verification evidence; pending (transient)
-//      records suspended + verify_hold (never a fake zero, never minted).
+//   2. idempotency short-circuit: same base digest already admitted (or already
+//      has a passed verification) returns the existing result — no paid solve;
+//   3. runs the dual-blind-solve + per-unit calibration lane;
+//   4. persists through the existing publish seam — admitted flips scoring
+//      admission with the resolved contract AND clears verify_hold
+//      (retraction_hold is never touched by the publisher seam); withheld
+//      keeps the row-truth contract and appends failed verification evidence;
+//      pending (transient) records suspended + verify_hold; CAS conflict /
+//      stale drift return non-retryable results (retries must not re-pay
+//      solves on llm queue retryLimit).
 //
 // store_sourced_question deliberately does NOT call this yet — B1 owns the
 // submit_question call site.
@@ -17,12 +22,13 @@
 //     ('question_admission_run', '{"question_id":"<id>"}');
 // (or enqueue via the app client; real solves consume provider budget.)
 
-import { eq, inArray } from 'drizzle-orm';
+import { desc, eq, inArray } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import type { Db } from '@/db/client';
 import {
   knowledge,
   question,
+  question_admission_verification,
   question_group_lifecycle,
   question_revision,
   source_asset,
@@ -32,14 +38,16 @@ import {
   type PartRow,
   normalizeQuestionGroupToContract,
 } from '@/kernel/records/assessment-normalization';
-import type { Provider } from '@/server/ai/providers';
-import { publishQuestionGroup, publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import { definitionFromContract } from '../server/admission/definition-from-contract';
+import { type Provider, definitionFromContract } from '../server/admission';
 import {
   QUESTION_ADMISSION_POLICY_ID,
   runQuestionAdmission,
 } from '../server/admission/run-admission';
+import {
+  publishQuestionGroup,
+  publishQuestionGroupFromRow,
+} from '../server/quiz/verify-and-promote';
 import { makePracticeTaskTextRunFn } from '../server/task-runtime';
 
 export interface QuestionAdmissionRunData {
@@ -50,7 +58,8 @@ export interface QuestionAdmissionRunData {
 }
 
 export interface QuestionAdmissionRunResult {
-  status: 'admitted' | 'withheld' | 'pending' | 'stale';
+  /** conflict = CAS 撞车（不重试值回 —— 重跑只会再付一次 solve）。 */
+  status: 'admitted' | 'withheld' | 'pending' | 'stale' | 'conflict' | 'already_verified';
   group_id: string;
   revision_id?: string;
   revision_ordinal?: number;
@@ -61,6 +70,11 @@ export interface QuestionAdmissionRunResult {
 const SOLVER2_PROVIDER = process.env.QUESTION_ADMISSION_SOLVER2_PROVIDER as Provider | undefined;
 const SOLVER2_MODEL = process.env.QUESTION_ADMISSION_SOLVER2_MODEL;
 const POLICY_ID = process.env.QUESTION_ADMISSION_POLICY_ID ?? QUESTION_ADMISSION_POLICY_ID;
+/** 如实记录 verifier 形态：未配置 solver2 = 同模型独立上下文，不是异源模型。 */
+const VERIFIER_CONTEXT =
+  SOLVER2_PROVIDER != null || SOLVER2_MODEL != null
+    ? 'independent_model'
+    : 'same_model_isolated_context';
 
 async function loadDefinition(db: Db, rootId: string) {
   const [root] = await db.select().from(question).where(eq(question.id, rootId)).limit(1);
@@ -101,7 +115,7 @@ async function loadDefinition(db: Db, rootId: string) {
       }),
     ),
   );
-  return { root, contract, definition: definitionFromContract(contract) };
+  return { contract, definition: definitionFromContract(contract) };
 }
 
 async function subjectProfileFor(db: Db, rootId: string) {
@@ -150,14 +164,55 @@ export async function runAdmissionForQuestion(
     .limit(1);
   const rootId = supplied?.parentId ?? supplied?.id ?? groupId;
 
-  const { definition } = await loadDefinition(db, rootId);
+  const { contract, definition } = await loadDefinition(db, rootId);
+
+  // ---- 幂等短路（付费 solve 之前）：同 base digest 已有终态 ⇒ 不重付 ----
+  const [lifecycle] = await db
+    .select()
+    .from(question_group_lifecycle)
+    .where(eq(question_group_lifecycle.group_id, rootId))
+    .limit(1);
+  const [latestVerification] = await db
+    .select({
+      outcome: question_admission_verification.outcome,
+      evidence: question_admission_verification.evidence,
+    })
+    .from(question_admission_verification)
+    .innerJoin(
+      question_revision,
+      eq(question_admission_verification.revision_id, question_revision.revision_id),
+    )
+    .where(eq(question_revision.group_id, rootId))
+    .orderBy(desc(question_admission_verification.recorded_at))
+    .limit(1);
+  const baseDigest = contract.integrity_digest;
+  const recordedDigest =
+    latestVerification != null
+      ? ((latestVerification.evidence as Record<string, unknown> | null)?.base_contract_digest ??
+        null)
+      : null;
+  if (
+    latestVerification != null &&
+    recordedDigest === baseDigest &&
+    (lifecycle?.scoring_admission_state === 'admitted' || latestVerification.outcome === 'passed')
+  ) {
+    return {
+      status: 'already_verified',
+      group_id: rootId,
+      ...(lifecycle?.current_revision_id != null
+        ? { revision_id: lifecycle.current_revision_id }
+        : {}),
+      per_unit: [],
+    };
+  }
+
   const subjectProfile = await subjectProfileFor(db, rootId);
   const result = await runQuestionAdmission(definition, {
     db,
     runTask: makePracticeTaskTextRunFn(db),
     subjectProfile,
     solver2:
-      SOLVER2_PROVIDER != null || SOLVER2_MODEL != null
+      VERIFIER_CONTEXT === 'independent_model'
         ? { provider: SOLVER2_PROVIDER, model: SOLVER2_MODEL }
         : null,
     policyId: POLICY_ID,
@@ -185,7 +240,8 @@ export async function runAdmissionForQuestion(
       now,
     });
     if (persisted.status === 'conflict') {
-      throw new Error(`question_admission_run: CAS conflict for group '${rootId}'`);
+      // CAS 撞车 = 终态结果（不重试 —— 重跑会再付一次 solve）。
+      return { status: 'conflict', group_id: rootId, per_unit: perUnit };
     }
     return { status: 'pending', group_id: rootId, per_unit: perUnit };
   }
@@ -211,7 +267,7 @@ export async function runAdmissionForQuestion(
       now,
     });
     if (persisted.status === 'conflict') {
-      throw new Error(`question_admission_run: CAS conflict for group '${rootId}'`);
+      return { status: 'conflict', group_id: rootId, per_unit: perUnit };
     }
     return {
       status: 'withheld',
@@ -277,7 +333,7 @@ export async function runAdmissionForQuestion(
     ) {
       return { status: 'stale' as const };
     }
-    const [lifecycle] = await tx
+    const [lockedLifecycle] = await tx
       .select()
       .from(question_group_lifecycle)
       .where(eq(question_group_lifecycle.group_id, rootId))
@@ -292,10 +348,10 @@ export async function runAdmissionForQuestion(
         execution_plan: resolved.execution_plan,
         integrity_digest: resolved.integrity_digest,
       },
-      expectedCurrentRevision: lifecycle?.current_revision_id ?? null,
-      expectedAdmissionGeneration: lifecycle?.scoring_admission_generation ?? null,
+      expectedCurrentRevision: lockedLifecycle?.current_revision_id ?? null,
+      expectedAdmissionGeneration: lockedLifecycle?.scoring_admission_generation ?? null,
       availability:
-        lifecycle?.availability ??
+        lockedLifecycle?.availability ??
         (lockedRoot.source === 'web_sourced' || lockedRoot.source === 'quiz_gen'
           ? 'general_pool'
           : 'container_only'),
@@ -310,11 +366,16 @@ export async function runAdmissionForQuestion(
               verifier: 'independent_model',
               verified_at: now.toISOString(),
             },
-            note: 'YUK-1445 dual blind solve + frozen probe calibration (question_admission@1)',
+            // verifier enum 只认 independent_model/human —— 实际 solver 拓扑
+            // 如实写进 note 与 verification evidence pack（solver_context）。
+            note: `YUK-1445 dual blind solve + frozen probe calibration (${POLICY_ID}); verifier_context=${VERIFIER_CONTEXT}`,
           },
           model_slice: null,
         },
       },
+      // 准入成功即解除 verify_hold（suspension 维度只清 verify_hold，
+      // retraction_hold 恒保留 —— publisher seam 语义）。
+      suspension: { suspended: false },
       verification: {
         policy_id: result.verification.policy_id,
         outcome: result.verification.outcome,
@@ -330,12 +391,12 @@ export async function runAdmissionForQuestion(
       now,
     });
     if (publishResult.status === 'conflict') {
-      throw new Error(`question_admission_run: CAS conflict for group '${rootId}'`);
+      return { status: 'conflict' as const };
     }
     return publishResult;
   });
-  if (persisted.status === 'stale') {
-    return { status: 'stale', group_id: rootId, per_unit: perUnit };
+  if (persisted.status === 'stale' || persisted.status === 'conflict') {
+    return { status: persisted.status, group_id: rootId, per_unit: perUnit };
   }
   return {
     status: 'admitted',

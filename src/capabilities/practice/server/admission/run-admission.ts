@@ -28,7 +28,6 @@ import type { ScoringRuleT } from '@/core/schema/assessment/scoring-rule';
 import { validateStructure } from '@/core/schema/assessment/structure';
 import type { Db } from '@/db/client';
 import { contractIntegrityDigest } from '@/kernel/records/assessment-normalization';
-import type { Provider } from '@/server/ai/providers';
 import type { SubjectProfile } from '@/subjects/profile';
 import { type PracticeTaskRunFn, makePracticeTaskTextRunFn } from '../task-runtime';
 import {
@@ -43,6 +42,7 @@ import type { AdmissionUnitSpec, QuestionAdmissionDefinition } from './contract'
 import {
   type AdmissionKey,
   type AdmissionSolveReceipt,
+  type Provider,
   type SourceCrosscheckResult,
   type UnitSolveVerdict,
   runDualSolve,
@@ -196,6 +196,8 @@ export async function runQuestionAdmission(
   const policyId = options.policyId ?? QUESTION_ADMISSION_POLICY_ID;
   const now = options.now ?? new Date();
   const runTask = options.runTask ?? makePracticeTaskTextRunFn(options.db);
+  const solverContext =
+    options.solver2 != null ? 'independent_model' : 'same_model_isolated_context';
   const per_unit = new Map<string, UnitAdmissionResult>();
   const evidenceTaskRuns: AdmissionSolveReceipt[] = [];
 
@@ -234,25 +236,29 @@ export async function runQuestionAdmission(
     }
   }
   if (solvableUnits.length === 0) {
-    return finalize(definition, policyId, now, per_unit, evidenceTaskRuns, null, {
+    return finalize(definition, policyId, now, per_unit, evidenceTaskRuns, null, solverContext, {
       status: 'withheld',
       reason: 'no_resolvable_units',
     });
   }
-  let solve: Awaited<ReturnType<typeof runDualSolve>>;
-  try {
-    solve = await runDualSolve(options.db, definition, {
+  let solve: Extract<Awaited<ReturnType<typeof runDualSolve>>, { ok: true }>['result'];
+  {
+    const outcome = await runDualSolve(options.db, definition, {
       runTask,
       subjectProfile: options.subjectProfile,
       solver2: options.solver2 ?? null,
     });
-  } catch (error) {
-    // infra / receipt 密封失败 —— 如实 pending，不伪判、不铸键。
-    return finalize(definition, policyId, now, per_unit, evidenceTaskRuns, null, {
-      status: 'pending',
-      reason: `dual solve failed before a verdict: ${error instanceof Error ? error.message : String(error)}`,
-      transient: true,
-    });
+    if (!outcome.ok) {
+      // infra / receipt 密封失败 —— 如实 pending，不伪判、不铸键；已付费的
+      // solve 收据照样进证据包。
+      evidenceTaskRuns.push(...outcome.receipts);
+      return finalize(definition, policyId, now, per_unit, evidenceTaskRuns, null, solverContext, {
+        status: 'pending',
+        reason: `dual solve failed before a verdict: ${outcome.error}`,
+        transient: true,
+      });
+    }
+    solve = outcome.result;
   }
   evidenceTaskRuns.push(solve.solve_a, solve.solve_b);
   for (const unit of solvableUnits) {
@@ -315,11 +321,20 @@ export async function runQuestionAdmission(
         }
       }
     } catch (error) {
-      return finalize(definition, policyId, now, per_unit, evidenceTaskRuns, crosscheck, {
-        status: 'pending',
-        reason: `source crosscheck failed before a verdict: ${error instanceof Error ? error.message : String(error)}`,
-        transient: true,
-      });
+      return finalize(
+        definition,
+        policyId,
+        now,
+        per_unit,
+        evidenceTaskRuns,
+        crosscheck,
+        solverContext,
+        {
+          status: 'pending',
+          reason: `source crosscheck failed before a verdict: ${error instanceof Error ? error.message : String(error)}`,
+          transient: true,
+        },
+      );
     }
   }
 
@@ -550,11 +565,20 @@ export async function runQuestionAdmission(
     }
   }
   const allAdmitted = definition.units.every((unit) => unitResult(unit).status === 'admitted');
-  return finalize(definition, policyId, now, per_unit, evidenceTaskRuns, crosscheck, {
-    status: allAdmitted ? 'admitted' : 'withheld',
-    ...(allAdmitted ? {} : { reason: 'unit_level_withhold' }),
-    resolved: resolvedContract,
-  });
+  return finalize(
+    definition,
+    policyId,
+    now,
+    per_unit,
+    evidenceTaskRuns,
+    crosscheck,
+    solverContext,
+    {
+      status: allAdmitted ? 'admitted' : 'withheld',
+      ...(allAdmitted ? {} : { reason: 'unit_level_withhold' }),
+      resolved: resolvedContract,
+    },
+  );
 }
 
 function finalize(
@@ -564,6 +588,7 @@ function finalize(
   per_unit: Map<string, UnitAdmissionResult>,
   evidenceTaskRuns: AdmissionSolveReceipt[],
   crosscheck: SourceCrosscheckResult | null,
+  solverContext: string,
   tail: {
     status: 'admitted' | 'withheld' | 'pending';
     reason?: string;
@@ -591,6 +616,8 @@ function finalize(
       source_answer_count: definition.source_answers.length,
     }),
     base_contract_digest: definition.base_contract_digest,
+    /** 如实记录 solver 拓扑：未配置 solver2 = 同模型独立上下文（非异源）。 */
+    solver_context: solverContext,
     /** 本次 admission 实际发生的全部 task runs（solve×2 + crosscheck?）。 */
     task_runs: evidenceTaskRuns.map((receipt) => ({
       task_run_id: receipt.task_run_id,

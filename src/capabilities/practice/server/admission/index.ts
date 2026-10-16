@@ -17,4 +17,4 @@ export {
   QUESTION_ADMISSION_POLICY_ID,
   runQuestionAdmission,
 } from './run-admission';
-export type { AdmissionKey, AdmissionSolveReceipt } from './solve';
+export type { AdmissionKey, AdmissionSolveReceipt, Provider } from './solve';

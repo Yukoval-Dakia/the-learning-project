@@ -1,9 +1,11 @@
 // YUK-1445 (Stage 1 / G1) — dual independent solve + source cross-check.
 //
 // 两次解题互相隔离：各自经 runTask 起全新任务（不复用 session/replay，
-// 第二次看不到第一次输出，也看不到参考答案/学习者作答 —— 输入里根本不携带
-// 这些面）。第二解的模型/提供方可由 caller 覆盖（异源与否是 owner 决策，
-// 配置面在 job 层；缺省同一 registry 模型、独立上下文）。
+// 第二次看不到第一次输出，也看不到参考答案/学习者作答/印出判分规则文本 ——
+// solve 输入里根本不携带这些面：rule_reference.statement_md 等印出文本
+// 只进独立的 source_crosscheck lane）。第二解的模型/提供方可由 caller 覆盖
+// （异源与否是 owner 决策，配置面在 job 层；缺省同一 registry 模型、独立
+// 上下文）。
 //
 // 一致性只比 typed 键（stable id 集合 / 归一化文本集 / 数值+容差），绝不解析
 // 答案文本铸键。印出答案原文只在独立的 source_crosscheck mode 里作交叉核验
@@ -17,9 +19,6 @@ import { describeSelectItem } from '@/core/schema/assessment/response';
 import type { BlankNormalizationT, ScoringUnitCriterionT } from '@/core/schema/assessment/scoring';
 import type { Db } from '@/db/client';
 import { ai_task_runs } from '@/db/schema';
-import type { TaskTextResult } from '@/server/ai/provenance';
-import type { Provider } from '@/server/ai/providers';
-import { taskInputHash } from '@/server/ai/task-input-hash';
 import type { SubjectProfile } from '@/subjects/profile';
 import { parseTaskOutput } from '../../tasks/parse-output';
 import {
@@ -33,8 +32,15 @@ import {
   QuestionAdmissionSourceCrosscheckOutput,
   type QuestionAdmissionSourceCrosscheckOutputT,
 } from '../../tasks/question-admission-solve';
+// YUK-1445 — Provider/TaskTextResult 经 verify-framework（既有 server/ai
+// 边持有者）取，taskInputHash 经 judge-execution-provenance 的既有复导出
+// 取 —— 不新增 capability→server/ai 依赖边（audit:capability-boundaries）。
+import { taskInputHash } from '../judge/judge-execution-provenance';
+import type { Provider, TaskTextResult } from '../quiz/verify-framework';
 import type { PracticeTaskRunFn } from '../task-runtime';
 import type { AdmissionUnitSpec, QuestionAdmissionDefinition } from './contract';
+
+export type { Provider } from '../quiz/verify-framework';
 
 export const QUESTION_ADMISSION_TASK_KIND = 'QuestionAdmissionSolveTask';
 
@@ -80,6 +86,11 @@ export interface DualSolveResult {
   >;
 }
 
+/** 部分失败不丢已付费收据：ok:false 时 receipts 仍带上已完成的 solve。 */
+export type DualSolveOutcome =
+  | { ok: true; result: DualSolveResult }
+  | { ok: false; error: string; receipts: AdmissionSolveReceipt[] };
+
 /** task_run 收据密封：必须存在、成功、kind 匹配、input hash 精确绑定本次请求体。 */
 async function sealTaskRun(
   db: Db,
@@ -119,9 +130,12 @@ async function sealTaskRun(
 function solverUnits(
   definition: QuestionAdmissionDefinition,
   variant: number,
+  opts: { exposePrinted: boolean },
 ): QuestionAdmissionSolveUnitT[] {
   const slotById = new Map(definition.response_spec.slots.map((s) => [s.slot_id, s] as const));
   // unsupported 单元不进 solve 输入（无法升级 —— 它们的判据形态 solver 也出不了）。
+  // exposePrinted=false 时绝不携带印出判分规则/rubric 文本（可能内含答案）——
+  // solve lane 保持零答案面；crosscheck lane 经显式 source_answers 给文本。
   return definition.units
     .filter(
       (unit): unit is AdmissionUnitSpec & { unit_kind: 'select' | 'blank' | 'free' } =>
@@ -146,10 +160,12 @@ function solverUnits(
         part_id: unit.part_id,
         kind: unit.unit_kind,
         printed_points: unit.points,
-        ...(unit.printed_rule_md != null ? { printed_rule_md: unit.printed_rule_md } : {}),
+        ...(opts.exposePrinted && unit.printed_rule_md != null
+          ? { printed_rule_md: unit.printed_rule_md }
+          : {}),
         ...(select != null ? { select } : {}),
         ...(blank != null ? { blank } : {}),
-        ...(unit.unit_kind === 'free' && unit.printed_rule_md != null
+        ...(opts.exposePrinted && unit.unit_kind === 'free' && unit.printed_rule_md != null
           ? { free_rubric_md: unit.printed_rule_md }
           : {}),
       };
@@ -203,13 +219,13 @@ function keysAgree(
   a: AdmissionKey,
   b: AdmissionKey,
   normalization: BlankNormalizationT | null,
-): { agree: boolean; detail?: string } {
+): { agree: boolean; detail?: string; key?: AdmissionKey } {
   if (a.kind !== b.kind) return { agree: false, detail: `key kind ${a.kind} vs ${b.kind}` };
   if (a.kind === 'select' && b.kind === 'select') {
     const sa = [...a.accepted_item_ids].sort();
     const sb = [...b.accepted_item_ids].sort();
     return sa.length === sb.length && sa.every((id, i) => id === sb[i])
-      ? { agree: true }
+      ? { agree: true, key: a }
       : { agree: false, detail: `select key ${sa.join(',')} vs ${sb.join(',')}` };
   }
   if (a.kind === 'blank_text' && b.kind === 'blank_text') {
@@ -227,7 +243,7 @@ function keysAgree(
     // 双方 accepted 的归一化并集一致 = 等价（各自多余变体必须是对方已接受的）。
     const allA = na.every((t) => nb.includes(t));
     const allB = nb.every((t) => na.includes(t));
-    if (allA && allB) return { agree: true };
+    if (allA && allB) return { agree: true, key: a };
     return { agree: false, detail: `blank_text ${na.join('|')} vs ${nb.join('|')}` };
   }
   if (a.kind === 'blank_numeric' && b.kind === 'blank_numeric') {
@@ -237,6 +253,16 @@ function keysAgree(
         detail: `expected_unit ${a.expected_unit ?? '∅'} vs ${b.expected_unit ?? '∅'}`,
       };
     }
+    // 容差同型才可互证：absolute/relative 语义不同型 ⇒ 不视为等价，不合并铸键。
+    if (a.tolerance.kind !== b.tolerance.kind) {
+      return {
+        agree: false,
+        detail: `tolerance kind ${a.tolerance.kind} vs ${b.tolerance.kind}`,
+      };
+    }
+    const tolOf = (t: { value?: number; ratio?: number }) => t.value ?? t.ratio ?? 0;
+    const tolA = tolOf(a.tolerance);
+    const tolB = tolOf(b.tolerance);
     const within = (
       x: number,
       y: number,
@@ -249,9 +275,20 @@ function keysAgree(
           : Math.abs(x - y) / Math.abs(y) <= tolerance.ratio;
     const ok =
       within(a.expected, b.expected, b.tolerance) && within(b.expected, a.expected, a.tolerance);
-    return ok
-      ? { agree: true }
-      : { agree: false, detail: `numeric ${a.expected} vs ${b.expected}` };
+    if (!ok) {
+      return { agree: false, detail: `numeric ${a.expected} vs ${b.expected}` };
+    }
+    // 一致且容差可比 ⇒ 铸更严的一侧（绝不取更宽）。
+    const tighter = tolA <= tolB ? a.tolerance : b.tolerance;
+    const looser = tolA <= tolB ? b.tolerance : a.tolerance;
+    return {
+      agree: true,
+      key: { ...a, tolerance: tighter },
+      detail:
+        tolA === tolB
+          ? undefined
+          : `minted stricter tolerance (kept ${JSON.stringify(tighter)} over ${JSON.stringify(looser)})`,
+    };
   }
   return { agree: false, detail: 'uncomparable key kinds' };
 }
@@ -291,13 +328,18 @@ function seedMatches(seed: ScoringUnitCriterionT, key: AdmissionKey): boolean {
   }
   if (seed.kind === 'blank_key' && key.kind === 'blank_numeric' && seed.key.kind === 'numeric') {
     if ((seed.key.expected_unit ?? null) !== (key.expected_unit ?? null)) return false;
-    const tol = seed.key.tolerance;
+    // 容差同型且不得放宽：key 的容差宽于 seed ⇒ 视为不等价（不 mint 更宽容差）。
+    const seedTol = seed.key.tolerance;
+    if (seedTol.kind !== key.tolerance.kind) return false;
+    const seedBound = seedTol.kind === 'absolute' ? seedTol.value : seedTol.ratio;
+    const keyBound = key.tolerance.kind === 'absolute' ? key.tolerance.value : key.tolerance.ratio;
+    if (keyBound > seedBound) return false;
     const diff = Math.abs(seed.key.expected - key.expected);
-    return tol.kind === 'absolute'
-      ? diff <= tol.value
+    return seedTol.kind === 'absolute'
+      ? diff <= seedTol.value
       : seed.key.expected === 0
         ? diff === 0
-        : diff / Math.abs(seed.key.expected) <= tol.ratio;
+        : diff / Math.abs(seed.key.expected) <= seedTol.ratio;
   }
   return false;
 }
@@ -322,7 +364,8 @@ async function runSolvePass(
 
 /**
  * 双盲独立解题 + （可选）印出答案 crosscheck。
- * 任一求解失败/收据无法密封 ⇒ 抛错（调用方按 pending/infra 处理，pg-boss 重试）。
+ * 任一求解失败/收据无法密封 ⇒ ok:false + 已付费收据（调用方按 pending/infra
+ * 处理，证据不丢）。
  */
 export async function runDualSolve(
   db: Db,
@@ -333,26 +376,54 @@ export async function runDualSolve(
     /** OPEN owner decision：异源与否由配置决定（默认同一配置模型、独立上下文）。 */
     solver2?: { provider?: Provider; model?: string } | null;
   },
-): Promise<DualSolveResult> {
+): Promise<DualSolveOutcome> {
   const parts = solverParts(definition);
-  const unitsA = solverUnits(definition, 0);
+  // solve lane 剥离一切印出判分/答案文本（rule_reference.statement_md 只进
+  // crosscheck）—— 否则对全 rule_reference 判据的存量题，两次"盲"解都在
+  // 看答案，agreement 证明不了任何东西。
+  const unitsA = solverUnits(definition, 0, { exposePrinted: false });
   const payloadA = QuestionAdmissionSolveInput.parse({ mode: 'solve', parts, units: unitsA });
   const payloadB = QuestionAdmissionSolveInput.parse({
     mode: 'solve',
     parts,
-    units: solverUnits(definition, 1),
+    units: solverUnits(definition, 1, { exposePrinted: false }),
   });
 
-  const first = await runSolvePass(db, deps.runTask, deps.subjectProfile, payloadA);
-  const second = await runSolvePass(
-    db,
-    deps.runTask,
-    deps.subjectProfile,
-    payloadB,
-    deps.solver2 ?? undefined,
-  );
+  const receipts: AdmissionSolveReceipt[] = [];
+  let first: { output: QuestionAdmissionSolveOutputT; receipt: AdmissionSolveReceipt };
+  try {
+    first = await runSolvePass(db, deps.runTask, deps.subjectProfile, payloadA);
+  } catch (error) {
+    return {
+      ok: false,
+      error: `solve_a failed: ${error instanceof Error ? error.message : String(error)}`,
+      receipts,
+    };
+  }
+  receipts.push(first.receipt);
+  let second: { output: QuestionAdmissionSolveOutputT; receipt: AdmissionSolveReceipt };
+  try {
+    second = await runSolvePass(
+      db,
+      deps.runTask,
+      deps.subjectProfile,
+      payloadB,
+      deps.solver2 ?? undefined,
+    );
+  } catch (error) {
+    return {
+      ok: false,
+      error: `solve_b failed: ${error instanceof Error ? error.message : String(error)}`,
+      receipts,
+    };
+  }
+  receipts.push(second.receipt);
   if (first.receipt.task_run_id === second.receipt.task_run_id) {
-    throw new Error('question admission solve re-used the same task run for both passes');
+    return {
+      ok: false,
+      error: 'question admission solve re-used the same task run for both passes',
+      receipts,
+    };
   }
 
   const byUnitA = new Map(first.output.units.map((u) => [u.scoring_unit_id, u] as const));
@@ -421,21 +492,21 @@ export async function runDualSolve(
       }
     }
     const agree = keysAgree(keyA, keyB, unit.blank_normalization);
-    if (!agree.agree) {
+    if (!agree.agree || agree.key == null) {
       verdicts.set(unit.scoring_unit_id, {
         status: 'conflict',
         detail: `independent solves disagree: ${agree.detail}`,
       });
       continue;
     }
-    if (unit.seeded_criterion != null && !seedMatches(unit.seeded_criterion, keyA)) {
+    if (unit.seeded_criterion != null && !seedMatches(unit.seeded_criterion, agree.key)) {
       verdicts.set(unit.scoring_unit_id, {
         status: 'seed_mismatch',
         detail: 'agreed key conflicts with the seeded typed criterion',
       });
       continue;
     }
-    verdicts.set(unit.scoring_unit_id, { status: 'agreed', key: keyA });
+    verdicts.set(unit.scoring_unit_id, { status: 'agreed', key: agree.key });
     probeCandidates.set(unit.scoring_unit_id, {
       equivalent_forms: (outA.equivalent_forms ?? []).map((f) => ({
         ...(f.item_ids != null ? { item_ids: f.item_ids } : {}),
@@ -449,10 +520,13 @@ export async function runDualSolve(
     });
   }
   return {
-    verdicts,
-    solve_a: first.receipt,
-    solve_b: second.receipt,
-    probe_candidates: probeCandidates,
+    ok: true,
+    result: {
+      verdicts,
+      solve_a: first.receipt,
+      solve_b: second.receipt,
+      probe_candidates: probeCandidates,
+    },
   };
 }
 
@@ -500,7 +574,8 @@ export async function runSourceCrosscheck(
   const payload = QuestionAdmissionSourceCrosscheckInput.parse({
     mode: 'source_crosscheck',
     parts: solverParts(definition),
-    units: solverUnits(definition, 0),
+    // crosscheck lane：印出文本经显式 source_answers 给，不再经 unit 字段重复。
+    units: solverUnits(definition, 0, { exposePrinted: false }),
     source_answers: definition.source_answers.map((s) => ({
       scoring_unit_id: s.unit_id ?? null,
       reference_md: s.reference_md,
