@@ -424,11 +424,12 @@ function tsqLexeme(term: string): string {
  * 整单召回 0（实测「文言断句 划分句子朗读停顿」= 0 hits）。改为逐词项 OR：
  *   - CJK 连段（≥2 字）→ 相邻 bigram 短语 ('c1' <-> 'c2') …，另附整段 unigram AND
  *     兜底子句 (c1 & c2 & …)：该子句正是旧 plainto 语义——散字共现的旧命中文档
- *     仍必命中，本通道召回是旧集合的严格超集；
+ *     仍必命中，本通道召回是旧集合的超集（唯一例外：单段 ≥33 个不同字时
+ *     FTS_QUERY_TERM_CAP 截断可能裁掉该段的 AND 兜底子句）；
  *   - CJK 单字 → 单字词项；
  *   - 非 CJK 段 → 单词词项（旧语义下这些词被 AND；旧命中的文档含全部词，故任一
  *     OR 词项都在 → 旧命中不失）。
- * 词项去重后截断至 FTS_QUERY_TERM_CAP，| 连接，重叠度交给 ts_rank——词法通道
+ * 词项去重后截断至 FTS_QUERY_TERM_CAP，| 连接，重叠度与邻近度交给 ts_rank_cd（覆盖密度：相邻短语排在散字之前）——词法通道
  * 只负责召回，语义条件本就标注 not_verified，不靠「词项全中」证明。
  */
 export function ftsQueryTerms(queryText: string): string[] {
@@ -759,12 +760,16 @@ async function runSearchBankInSnapshot(
         id: question.id,
         prompt_md: question.prompt_md,
         created_at: question.created_at,
-        rank: sql<number>`ts_rank(${tsvec}, ${tsq})`,
+        rank: sql<number>`ts_rank_cd(${tsvec}, ${tsq})`,
       })
       .from(question)
       .leftJoin(question_group_lifecycle, eq(question_group_lifecycle.group_id, question.id))
       .where(and(where, sql`${tsvec} @@ ${tsq}`))
-      .orderBy(desc(sql`ts_rank(${tsvec}, ${tsq})`), desc(question.created_at), desc(question.id))
+      .orderBy(
+        desc(sql`ts_rank_cd(${tsvec}, ${tsq})`),
+        desc(question.created_at),
+        desc(question.id),
+      )
       .limit(BANK_SEARCH_CHANNEL_CAP + 1);
 
     // ── 通道 B：暴力 pgvector cosine（embed 失败 → 通道不可用，不阻塞 FTS）──
