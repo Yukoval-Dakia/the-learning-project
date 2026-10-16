@@ -28,7 +28,7 @@ export function CopilotSessionPanel({
     <section
       aria-label="Copilot 对话"
       data-testid="copilot-session-panel"
-      className="flex max-h-[240px] flex-col gap-[8px] border-b border-[var(--line-soft)] pb-[10px]"
+      className="flex max-h-[min(60vh,420px)] min-h-0 flex-col gap-[8px]"
     >
       <div className="flex items-center justify-between gap-[8px]">
         <div className="flex items-center gap-[6px] text-[14px] font-medium text-[var(--ink-2)]">
@@ -45,7 +45,7 @@ export function CopilotSessionPanel({
           {creating ? '创建中…' : '新对话'}
         </button>
       </div>
-      <ul className="flex flex-col gap-[4px] overflow-y-auto">
+      <ul className="flex min-h-0 flex-col gap-[4px] overflow-y-auto">
         {sessions.map((session) => {
           const selected = session.id === currentSessionId;
           return (

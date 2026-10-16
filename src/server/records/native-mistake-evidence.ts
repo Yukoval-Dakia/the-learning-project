@@ -114,10 +114,11 @@ function slotFace(slot: ResponseSlotT): string {
       return (
         slot.text ?? slot.items.map((item) => describeSelectItem(slot, item.item_id)).join('；')
       );
+    case 'blank':
+      return slot.unit_hint ?? '';
     case 'text':
     case 'formula':
     case 'open_response':
-    case 'blank':
       return '';
     default: {
       const exhaustive: never = slot;
