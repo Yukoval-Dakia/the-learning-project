@@ -172,6 +172,8 @@ function copilotProgressStage(view: CopilotRunView): CopilotProgressStage {
   return latestSubtask ? progressStageForLabel(latestSubtask.label) : 'generation';
 }
 
+const RESTRICTED_ACCEPTED_POLICIES: ReadonlySet<string> = new Set(['answer_only', 'crisis']);
+
 function supportsAnswerOnly(policies: unknown): boolean {
   const parsed = DerivationPolicy.array().safeParse(policies);
   return parsed.success && parsed.data.includes('answer_only');
@@ -1587,7 +1589,11 @@ export function CopilotDock({ pathname, navigate }: CopilotDockProps) {
             acceptedPolicy = policy.data;
           }
         }
-        if (requestBody.derivation_policy === 'answer_only' && acceptedPolicy !== 'answer_only') {
+        // The server may tighten answer_only to crisis (YUK-1398); both honour the restriction.
+        if (
+          requestBody.derivation_policy === 'answer_only' &&
+          !RESTRICTED_ACCEPTED_POLICIES.has(acceptedPolicy)
+        ) {
           throw new Error('受理用途暂时无法确认，请用原请求恢复。');
         }
         let location = res.headers.get('Location');
