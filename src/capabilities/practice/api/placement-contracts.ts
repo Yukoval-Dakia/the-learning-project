@@ -57,7 +57,9 @@ export const PlacementQuestionSchema = z.object({
     state: IssuanceStateSchema,
     phase: z.enum(['answering', 'retry', 'pending', 'held']),
     pending_run: z.object({ run_id: z.string(), poll_url: z.string() }).nullable(),
-    held_exit: PlacementHeldExitSchema.nullable(),
+    // Optional on the wire type so existing clients/fixtures that build local
+    // results keep compiling; the backend always emits it.
+    held_exit: PlacementHeldExitSchema.nullable().optional(),
   }),
 });
 
@@ -71,9 +73,9 @@ export const PlacementSessionCreatedSchema = z.object({
   // emits this on every successful start/next/detail response.
   starterSupply: z.array(PlacementStarterOutcomeSchema).optional(),
   /** YUK-1405 — always emitted (fresh sessions → []). */
-  unresolved_items: z.array(PlacementUnresolvedItemSchema),
+  unresolved_items: z.array(PlacementUnresolvedItemSchema).optional(),
   /** YUK-1405 L2 — non-null exactly when question is null: the typed alternative. */
-  no_item: PlacementNoItemSchema.nullable(),
+  no_item: PlacementNoItemSchema.nullable().optional(),
 });
 
 export const CreatePlacementQuestionSelectionBodySchema = z.object({
@@ -88,7 +90,7 @@ export const PlacementQuestionSelectionResponseSchema = z.discriminatedUnion('do
     reason: z.enum(['cap', 'se_converged']),
     answeredCount: z.number().int().nonnegative(),
     starterSupply: z.array(PlacementStarterOutcomeSchema).optional(),
-    unresolved_items: z.array(PlacementUnresolvedItemSchema),
+    unresolved_items: z.array(PlacementUnresolvedItemSchema).optional(),
   }),
   z.object({
     done: z.literal(false),
@@ -96,9 +98,9 @@ export const PlacementQuestionSelectionResponseSchema = z.discriminatedUnion('do
     answeredCount: z.number().int().nonnegative(),
     sourcingNeeded: z.boolean(),
     starterSupply: z.array(PlacementStarterOutcomeSchema).optional(),
-    unresolved_items: z.array(PlacementUnresolvedItemSchema),
+    unresolved_items: z.array(PlacementUnresolvedItemSchema).optional(),
     /** YUK-1405 L2 — non-null exactly when question is null: the typed alternative. */
-    no_item: PlacementNoItemSchema.nullable(),
+    no_item: PlacementNoItemSchema.nullable().optional(),
   }),
 ]);
 
@@ -148,7 +150,7 @@ export const PlacementSessionResponseSchema = z.object({
   updated_at: z.string().datetime(),
   starterSupply: z.array(PlacementStarterOutcomeSchema).optional(),
   /** YUK-1405 L1 — items with no verdict at read time (released / awaiting / unanswered). */
-  unresolved_items: z.array(PlacementUnresolvedItemSchema),
+  unresolved_items: z.array(PlacementUnresolvedItemSchema).optional(),
 });
 
 export const PlacementSessionTransitionResponseSchema = z.object({
@@ -159,7 +161,7 @@ export const PlacementSessionTransitionResponseSchema = z.object({
   changed: z.boolean(),
   allowed_statuses: z.array(PlacementSessionStatusSchema),
   /** YUK-1405 L1 — the honest end result: items closed without a verdict. */
-  unresolved_items: z.array(PlacementUnresolvedItemSchema),
+  unresolved_items: z.array(PlacementUnresolvedItemSchema).optional(),
 });
 
 export const PlacementProfileQuerySchema = z.object({ goal: z.string().min(1) });

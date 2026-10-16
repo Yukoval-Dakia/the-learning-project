@@ -21443,7 +21443,7 @@ export interface operations {
                     "application/json": {
                         answeredCount: number;
                         knowledgeIds: string[];
-                        no_item: {
+                        no_item?: {
                             options: ("recheck" | "end")[];
                             preparing_subjects: string[];
                             /** @enum {string} */
@@ -21452,7 +21452,7 @@ export interface operations {
                         question: {
                             assessment: {
                                 evaluation_group_id: string;
-                                held_exit: {
+                                held_exit?: {
                                     continue_url: string;
                                     end_url: string;
                                     issuance_id: string;
@@ -22085,7 +22085,7 @@ export interface operations {
                             state: "unknown";
                             subject_id: string | null;
                         })[];
-                        unresolved_items: {
+                        unresolved_items?: {
                             issuance_id: string;
                             question_id: string;
                             /** @enum {string} */
@@ -22324,7 +22324,7 @@ export interface operations {
                         status: "started" | "completed" | "abandoned";
                         /** @enum {string} */
                         type: "placement";
-                        unresolved_items: {
+                        unresolved_items?: {
                             issuance_id: string;
                             question_id: string;
                             /** @enum {string} */
@@ -22469,7 +22469,7 @@ export interface operations {
                         status: "started" | "completed" | "abandoned";
                         /** @enum {string} */
                         type: "placement";
-                        unresolved_items: {
+                        unresolved_items?: {
                             issuance_id: string;
                             question_id: string;
                             /** @enum {string} */
@@ -22712,7 +22712,7 @@ export interface operations {
                                 state: "unknown";
                                 subject_id: string | null;
                             })[];
-                            unresolved_items: {
+                            unresolved_items?: {
                                 issuance_id: string;
                                 question_id: string;
                                 /** @enum {string} */
@@ -22722,7 +22722,7 @@ export interface operations {
                             answeredCount: number;
                             /** @enum {boolean} */
                             done: false;
-                            no_item: {
+                            no_item?: {
                                 options: ("recheck" | "end")[];
                                 preparing_subjects: string[];
                                 /** @enum {string} */
@@ -22731,7 +22731,7 @@ export interface operations {
                             question: {
                                 assessment: {
                                     evaluation_group_id: string;
-                                    held_exit: {
+                                    held_exit?: {
                                         continue_url: string;
                                         end_url: string;
                                         issuance_id: string;
@@ -23363,7 +23363,7 @@ export interface operations {
                                 state: "unknown";
                                 subject_id: string | null;
                             })[];
-                            unresolved_items: {
+                            unresolved_items?: {
                                 issuance_id: string;
                                 question_id: string;
                                 /** @enum {string} */
@@ -23605,7 +23605,7 @@ export interface operations {
                             state: "unknown";
                             subject_id: string | null;
                         })[];
-                        unresolved_items: {
+                        unresolved_items?: {
                             issuance_id: string;
                             question_id: string;
                             /** @enum {string} */
@@ -23615,7 +23615,7 @@ export interface operations {
                         answeredCount: number;
                         /** @enum {boolean} */
                         done: false;
-                        no_item: {
+                        no_item?: {
                             options: ("recheck" | "end")[];
                             preparing_subjects: string[];
                             /** @enum {string} */
@@ -23624,7 +23624,7 @@ export interface operations {
                         question: {
                             assessment: {
                                 evaluation_group_id: string;
-                                held_exit: {
+                                held_exit?: {
                                     continue_url: string;
                                     end_url: string;
                                     issuance_id: string;
@@ -24256,7 +24256,7 @@ export interface operations {
                             state: "unknown";
                             subject_id: string | null;
                         })[];
-                        unresolved_items: {
+                        unresolved_items?: {
                             issuance_id: string;
                             question_id: string;
                             /** @enum {string} */
@@ -24638,7 +24638,7 @@ export interface operations {
                             state: "unknown";
                             subject_id: string | null;
                         })[];
-                        unresolved_items: {
+                        unresolved_items?: {
                             issuance_id: string;
                             question_id: string;
                             /** @enum {string} */
@@ -24648,7 +24648,7 @@ export interface operations {
                         answeredCount: number;
                         /** @enum {boolean} */
                         done: false;
-                        no_item: {
+                        no_item?: {
                             options: ("recheck" | "end")[];
                             preparing_subjects: string[];
                             /** @enum {string} */
@@ -24657,7 +24657,7 @@ export interface operations {
                         question: {
                             assessment: {
                                 evaluation_group_id: string;
-                                held_exit: {
+                                held_exit?: {
                                     continue_url: string;
                                     end_url: string;
                                     issuance_id: string;
@@ -25289,7 +25289,7 @@ export interface operations {
                             state: "unknown";
                             subject_id: string | null;
                         })[];
-                        unresolved_items: {
+                        unresolved_items?: {
                             issuance_id: string;
                             question_id: string;
                             /** @enum {string} */
@@ -25632,7 +25632,7 @@ export interface operations {
                     "application/json": {
                         answeredCount: number;
                         knowledgeIds: string[];
-                        no_item: {
+                        no_item?: {
                             options: ("recheck" | "end")[];
                             preparing_subjects: string[];
                             /** @enum {string} */
@@ -25641,7 +25641,7 @@ export interface operations {
                         question: {
                             assessment: {
                                 evaluation_group_id: string;
-                                held_exit: {
+                                held_exit?: {
                                     continue_url: string;
                                     end_url: string;
                                     issuance_id: string;
@@ -26274,7 +26274,7 @@ export interface operations {
                             state: "unknown";
                             subject_id: string | null;
                         })[];
-                        unresolved_items: {
+                        unresolved_items?: {
                             issuance_id: string;
                             question_id: string;
                             /** @enum {string} */
