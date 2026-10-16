@@ -895,12 +895,15 @@ export function normalizeQuestionGroupToContract(
   return assemble(root.id, shared.materials, materialIdsByPart, leaves, issues);
 }
 
-/** §3.1 完整性 digest：四层 canonical JSON 的 sha256（顺序固定）。 */
+/** §3.1 完整性 digest：四层 canonical JSON 的 sha256（顺序固定）。
+ * YUK-1497：contract.presentation 存在时计入 canonical —— 缺省完全省略该键，
+ * 旧调用方（无展示层）的 digest 逐字节不变。 */
 export function contractIntegrityDigest(contract: {
   structure: unknown;
   response_spec: unknown;
   scoring_basis: unknown;
   execution_plan: unknown;
+  presentation?: unknown;
 }): string {
   const canonical = JSON.stringify(
     {
@@ -908,6 +911,7 @@ export function contractIntegrityDigest(contract: {
       response_spec: contract.response_spec,
       scoring_basis: contract.scoring_basis,
       execution_plan: contract.execution_plan,
+      ...(contract.presentation != null ? { presentation: contract.presentation } : {}),
     },
     (_key, value) => value,
   );

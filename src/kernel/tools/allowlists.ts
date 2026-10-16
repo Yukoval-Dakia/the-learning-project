@@ -79,6 +79,9 @@ export const PROPOSE_WRITE_TOOLS = [
   'split_stem',
   'merge_questions',
   'reassign_figure',
+  // YUK-1497 (K5) — presentation composition tool; same containment as the six
+  // draft-edit tools above (writes ONE jsonb-internal key of the draft container).
+  'compose_presentation',
   // ADR-0031 / RP-2 (YUK-304 lane B) — copilot 组卷 write: assembles authored
   // (draft-allowed) + existing
   // questions into a runnable tool_quiz paper. Granted to the copilot surfaces
@@ -347,6 +350,9 @@ const INGESTION_BLOCK_EDIT_TOOLS = [
   'split_stem',
   'merge_questions',
   'reassign_figure',
+  // YUK-1497 (K5) — compose_presentation；与上述写工具同面（草稿层），
+  // 别的面不授。
+  'compose_presentation',
 ] as const satisfies readonly DomainToolName[];
 
 export const DOMAIN_TOOL_ALLOWLISTS = {

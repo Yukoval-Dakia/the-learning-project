@@ -3,6 +3,7 @@ import { projectIssuedScoringBasis } from './evaluation';
 import type { EvaluationRecordT, SubmissionRecordT } from './judgment';
 import { EvaluationInputSnapshot } from './judgment';
 import { SharedMaterialKind, isPublicSharedMaterial } from './materials';
+import { Presentation, prunePresentation } from './presentation';
 import { LifecycleQualification, PublishDecision } from './publish';
 import { ResponseSpec } from './response';
 import type { AssessmentIssuanceT, PublishedQuestionRevisionT } from './revision';
@@ -60,6 +61,11 @@ export const PracticeIssuanceDto = z.strictObject({
   faces: z.array(PublicQuestionFace).min(1),
   materials: z.array(PublicMaterialView),
   response_spec: ResponseSpec,
+  /**
+   * YUK-1497 —— 冻结展示层剪到发出范围（可选；旧 revision 无此层）。只含
+   * 引用与输入绑定，不携带任何私有字段；剪空则缺省（UI 回退逐槽渲染）。
+   */
+  presentation: Presentation.optional(),
   /** Public input requirements, without executor descriptors or marking criteria. */
   response_requirements: z
     .array(
@@ -120,6 +126,14 @@ export function projectPracticeIssuance(
       if (slot.kind === 'matching') {
         return { ...slot, right_options: applyServedOrder(slot.right_options, slot.slot_id) };
       }
+      if (slot.kind === 'select' && orderById.has(slot.slot_id)) {
+        // 纯选项 select（YUK-1497）：按冻结顺序呈现；关系/字缝 item 不在 option_order 里。
+        const byId = new Map(slot.items.map((item) => [item.item_id, item] as const));
+        const served = (orderById.get(slot.slot_id) ?? [])
+          .map((itemId) => byId.get(itemId))
+          .filter((item): item is (typeof slot.items)[number] => item != null);
+        return { ...slot, items: served };
+      }
       return slot;
     });
   // P1-B 防御：发出集合内不得出现悬空表格（单元格不在发出集内）——
@@ -150,6 +164,17 @@ export function projectPracticeIssuance(
   const scopedUnits = revision.scoring_basis.units.filter((unit) =>
     [...unit.slot_refs, ...unit.evidence_slot_refs].every((id) => answerableSlotIds.has(id)),
   );
+  // YUK-1497 —— 展示层剪到发出 parts：引用未发出 part/单元/槽/未绑定材料的
+  // 分支整枝去掉（spec §3 末段）；剪空（或本就无层）则不带该字段。
+  const prunedPresentation =
+    revision.presentation != null
+      ? prunePresentation(revision.presentation, {
+          issuedPartIds: boundParts,
+          issuedAnswerableSlotIds: answerableSlotIds,
+          issuedUnitIds: new Set(scopedUnits.map((unit) => unit.scoring_unit_id)),
+          boundPublicMaterialIds: publicMaterialIds,
+        })
+      : null;
   return PracticeIssuanceDto.parse({
     issuance_id: issuance.issuance_id,
     revision_id: revision.revision_id,
@@ -173,6 +198,7 @@ export function projectPracticeIssuance(
     response_spec: {
       slots: projectedSlots,
     },
+    ...(prunedPresentation != null ? { presentation: prunedPresentation } : {}),
     response_requirements: projectedSlots
       .filter((slot) => slot.kind !== 'table')
       .map((slot) => {
