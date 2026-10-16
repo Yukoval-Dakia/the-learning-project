@@ -14,7 +14,6 @@ import './practice-face.css';
 import { PfPaper } from './PfPaper';
 import { PfRetro } from './PfRetro';
 import { PfShelf } from './PfShelf';
-import { PfSolo } from './PfSolo';
 import { PfStream } from './PfStream';
 import {
   type StreamItem,
@@ -23,6 +22,7 @@ import {
   advanceStreamItem,
   getStream,
 } from './practice-api';
+import { PracticeSolo } from './solo/PracticeSolo';
 
 export interface PracticeFacePageProps {
   navigate: (to: string) => void;
@@ -280,7 +280,9 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
   if (mode.kind === 'solo') {
     const pos = items.findIndex((it) => it.id === mode.item.id) + 1;
     body = (
-      <PfSolo
+      // YUK-1473 — the single-question page (layout 纸面) is the only solo view (owner
+      // 2026-10-16: 「纸面 默认新不用开关」); no flag, no layout picker.
+      <PracticeSolo
         // key=item.id：流自动推进换题时强制重挂，判分/作答 state 不跨题残留。
         key={mode.item.id}
         item={mode.item}

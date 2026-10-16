@@ -161,11 +161,14 @@ const placementRoute = createRoute({
 
 // YUK-473 Slice 4 — placement-done 起始档案。placement 的 settling 落到这里
 //（?goal 串过来）；「开始日常练习」→ /today。
-const ProfileRoute = lazyNavigableRoute(loadPlacementProfilePage);
+const ProfileRoute = import.meta.env.PROD
+  ? StartPageEntry
+  : lazyNavigableRoute(loadPlacementProfilePage);
 
 const profileRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: surfacePath('profile'),
+  beforeLoad: startOnboardingBeforeLoad,
   component: ProfileRoute,
 });
 
