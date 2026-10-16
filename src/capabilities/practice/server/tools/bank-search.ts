@@ -12,18 +12,26 @@
 //
 // 教学决策、批改、learner state 一概不碰（硬边界 1/2）。
 
-import { createHash } from 'node:crypto';
-import { type SQL, and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+import { type SQL, and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
+import { stableStringify } from '@/core/migration/canonical';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import { deriveSourceTier } from '@/core/schema/provenance';
 import type { Db, Tx } from '@/db/client';
 import { notDraftPredicate } from '@/db/predicates';
-import { question, question_group_lifecycle, question_revision } from '@/db/schema';
+import {
+  item_calibration,
+  knowledge,
+  question,
+  question_group_lifecycle,
+  question_revision,
+} from '@/db/schema';
 import { toSqlVector } from '@/db/vector';
 import { resolveSubjectKnowledgeIds } from '@/kernel/read-models/knowledge-tree';
 import { embedText } from '@/server/ai/embed';
 import { canonicalKindToPersistedForms } from '@/subjects/question-kind';
+import { questionVectorInvalidReason } from '../../jobs/embed_backfill';
 import { EvidenceDemandV1 } from '../question-supply/evidence-demand';
 import { MATCHER_COSINE_MAX_DISTANCE } from '../quiz/matcher';
 import { encodeBankRef, readBankServableParts, resolveBankRefs } from './bank-ref';
@@ -34,12 +42,57 @@ export const BANK_SEARCH_CHANNEL_CAP = 200;
 /** RRF 常数（标准 k=60；rank 从 1 计）。 */
 export const BANK_SEARCH_RRF_K = 60;
 
+// YUK-1448 — 难度硬过滤。两条基准互斥，绝不混量：
+//   - 'authored'   → question.difficulty（作者难度，1–5 整数，NOT NULL）。
+//   - 'calibrated' → item_calibration(track='hard') 的 effectiveB（COALESCE(b_calib,
+//     b_anchor, b)，logit 尺度）。**校准未知（无 row / effectiveB NULL）的题一律排除**，
+//     绝不退回作者难度冒充校准值（「校准未知不混为作者难度」）。
+export const BankDifficultyFilterSchema = z
+  .object({
+    basis: z.enum(['authored', 'calibrated']),
+    /** [lo, hi] 闭区间；authored 尺度 1–5，calibrated 尺度 logit b。 */
+    range: z.tuple([z.number().finite(), z.number().finite()]),
+  })
+  .strict()
+  .superRefine((filter, ctx) => {
+    const [lo, hi] = filter.range;
+    if (lo > hi) {
+      ctx.addIssue({ code: 'custom', message: 'difficulty.range must satisfy lo <= hi' });
+    }
+    if (filter.basis === 'authored' && (lo < 1 || hi > 5)) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'authored difficulty range must stay within the 1-5 integer scale',
+      });
+    }
+  });
+export type BankDifficultyFilter = z.infer<typeof BankDifficultyFilterSchema>;
+
+/** YUK-1448 — similar_to：以某道题的同版内容向量为向量通道查询向量。 */
+export const BankSimilarToSchema = z
+  .object({
+    /** 当前版本 bank ref（锚必须是 current revision——存量向量反映工作副本当前内容）。 */
+    question_ref: z.string().min(1),
+    aspect: z.literal('content'),
+  })
+  .strict();
+export type BankSimilarTo = z.infer<typeof BankSimilarToSchema>;
+
 export const BankSearchScopeSchema = z
   .object({
     subject: z.string().min(1).optional(),
     kind: z.string().min(1).optional(),
     source: z.string().min(1).optional(),
     within_refs: z.array(z.string().min(1)).max(200).optional(),
+    /** 知识点硬过滤：按真实（live、未归档）科目 KC 解析；未知/已归档 id 显式报错。 */
+    knowledge_ids: z.array(z.string().min(1)).min(1).max(50).optional(),
+    /** 'any'（默认，题含任一 KC）| 'all'（题含全部 KC）。仅在 knowledge_ids 存在时生效。 */
+    knowledge_mode: z.enum(['any', 'all']).optional(),
+    difficulty: BankDifficultyFilterSchema.optional(),
+    /** 学习者侧调用方自带的「已见过」ref 列表；按 question 身份（group root）跨所有
+     * revision 排除。bank 永不查 learner state——排除名单只来自本输入。 */
+    exclude_refs: z.array(z.string().min(1)).min(1).max(200).optional(),
+    similar_to: BankSimilarToSchema.optional(),
     draft_state: z.enum(['all', 'active', 'draft']),
     admission_state: z.enum(['any', 'admitted', 'withheld']),
   })
@@ -64,7 +117,92 @@ export const BankGapRequestSchema = z.object({
   causes: EvidenceDemandV1.shape.causes,
   constraints: BankUnsatisfiedConstraintsSchema,
   required_context: z.array(z.string()),
+  // Retrieval completeness at gap time (mirrors coverage). A truncated pool or an
+  // unavailable channel only proves the search was incomplete, never that the bank
+  // lacks the question — file_bank_gap holds such gaps instead of dispatching them.
+  complete: z.boolean(),
+  retrieval_truncated: z.boolean(),
+  unavailable_channels: z.array(z.enum(['fts', 'vector'])),
+  // YUK-1448 (review P1) — server-minted HMAC-SHA256 over the canonical JSON of this
+  // gap evidence (every field except evidence_mac itself), keyed by the server-only
+  // BANK_GAP_EVIDENCE_SECRET. file_bank_gap refuses to file — let alone dispatch paid
+  // supply — without a valid MAC, so a caller cannot fabricate gap evidence (e.g. a
+  // hand-written complete:true) to trigger paid dispatch. Absent only when the secret
+  // is unconfigured, in which case filing fails closed.
+  evidence_mac: z.string().optional(),
 });
+export type BankGapRequest = z.infer<typeof BankGapRequestSchema>;
+
+// ── gap evidence MAC（YUK-1448 review P1：防伪造检索证据触发付费 dispatch）────────
+
+/** 域分隔前缀：同一 secret 的 MAC 永不与其他用途的 HMAC 输入同形。 */
+const BANK_GAP_EVIDENCE_MAC_DOMAIN = 'bank-gap-evidence:v1:';
+
+/**
+ * Server-only signing secret for bank gap evidence MACs. Follows the
+ * judgeProvenanceSigningSecret precedent (YUK-589): INTERNAL_TOKEN is held by every
+ * browser/API caller, so signing with it would let any client forge gap evidence.
+ * An unconfigured / too-short / INTERNAL_TOKEN-equal secret fails closed (null ⇒
+ * no MAC is minted and file_bank_gap rejects every filing). The key is never
+ * logged or returned.
+ */
+export function bankGapEvidenceSigningSecret(): string | null {
+  const secret = process.env.BANK_GAP_EVIDENCE_SECRET;
+  if (!secret || secret.length === 0) return null;
+  if (secret.length < 32) {
+    console.error(
+      '[bank-gap-evidence] BANK_GAP_EVIDENCE_SECRET is shorter than 32 characters — refusing to use ' +
+        'it. Gap-evidence signing is DISABLED until a sufficiently long server-only secret is set ' +
+        '(openssl rand -hex 32); file_bank_gap rejects every filing while it is unset.',
+    );
+    return null;
+  }
+  if (secret === process.env.INTERNAL_TOKEN) {
+    console.error(
+      '[bank-gap-evidence] BANK_GAP_EVIDENCE_SECRET equals INTERNAL_TOKEN — refusing to use it. ' +
+        'Clients hold INTERNAL_TOKEN, so signing with it lets any caller forge gap evidence. ' +
+        'Gap-evidence signing is DISABLED until a distinct secret is set (openssl rand -hex 32).',
+    );
+    return null;
+  }
+  return secret;
+}
+
+/** Canonical MAC input: every gap-evidence field except evidence_mac itself. */
+function bankGapEvidenceMacPayload(evidence: BankGapRequest): string {
+  const { evidence_mac: _omitted, ...unsigned } = evidence;
+  return BANK_GAP_EVIDENCE_MAC_DOMAIN + stableStringify(unsigned);
+}
+
+/**
+ * Mint the evidence MAC for a freshly built gap_request. Returns null when the
+ * server secret is unconfigured — search still returns the gap (coverage honesty),
+ * but file_bank_gap fails closed on it.
+ */
+export function mintBankGapEvidenceMac(
+  evidence: Omit<BankGapRequest, 'evidence_mac'>,
+): string | null {
+  const secret = bankGapEvidenceSigningSecret();
+  if (secret === null) return null;
+  return createHmac('sha256', secret)
+    .update(bankGapEvidenceMacPayload(evidence as BankGapRequest))
+    .digest('hex');
+}
+
+/**
+ * Verify a caller-supplied gap_request's evidence MAC. Constant-time compare;
+ * missing/invalid MAC or unconfigured secret ⇒ false (fail closed).
+ */
+export function verifyBankGapEvidenceMac(evidence: BankGapRequest): boolean {
+  const secret = bankGapEvidenceSigningSecret();
+  if (secret === null || evidence.evidence_mac === undefined) return false;
+  const expected = Buffer.from(
+    createHmac('sha256', secret).update(bankGapEvidenceMacPayload(evidence)).digest('hex'),
+    'utf8',
+  );
+  const actual = Buffer.from(evidence.evidence_mac, 'utf8');
+  return actual.length === expected.length && timingSafeEqual(actual, expected);
+}
 
 /** 两种调用形态互斥（提案 §6）：新检索（query + scope）或续页（cursor 只续同一次检索）。 */
 export type BankSearchRequest =
@@ -125,6 +263,14 @@ export interface BankSearchOutput {
     kind?: { canonical: string; persisted_forms: string[] };
     source?: string;
     within_refs?: string[];
+    knowledge?: { ids: string[]; mode: 'any' | 'all'; resolved_count: number };
+    difficulty?: {
+      basis: 'authored' | 'calibrated';
+      range: [number, number];
+      scale: 'authored_1_5' | 'calibrated_logit_b';
+    };
+    exclude_refs?: { refs: string[]; excluded_question_ids: number };
+    similar_to?: { question_ref: string; aspect: 'content'; vector_available: boolean };
     draft_state: BankSearchScope['draft_state'];
     admission_state: BankSearchScope['admission_state'];
   };
@@ -265,10 +411,18 @@ interface ResolvedScope {
   subjectKnowledgeIds?: string[];
   kindForms?: string[];
   withinRevisionIds?: string[];
+  /** 去重后的 KC 硬过滤集（已验证全部为 live KC）。 */
+  knowledgeFilterIds?: string[];
+  /** KC 过滤语义：缺省 'any'。仅在 knowledgeFilterIds 存在时读。 */
+  knowledgeFilterMode: 'any' | 'all';
+  /** exclude_refs 解析出的 question 身份（group root id）集合。 */
+  excludedQuestionIds?: string[];
+  /** similar_to 锚的 question 身份（group root id）。 */
+  similarToGroupId?: string;
 }
 
 async function resolveScope(db: Db | Tx, scope: BankSearchScope): Promise<ResolvedScope> {
-  const resolved: ResolvedScope = { scope };
+  const resolved: ResolvedScope = { scope, knowledgeFilterMode: scope.knowledge_mode ?? 'any' };
   if (scope.subject !== undefined) {
     resolved.subjectKnowledgeIds = await resolveSubjectKnowledgeIds(db, scope.subject);
   }
@@ -286,6 +440,57 @@ async function resolveScope(db: Db | Tx, scope: BankSearchScope): Promise<Resolv
       }
       return ref.revision.revision_id;
     });
+  }
+  if (scope.knowledge_ids !== undefined) {
+    // 解析为真实科目 KC：去重后逐 id 校验 live（未归档）。未知/已归档 id 显式报错，
+    // 绝不静默丢弃（静默丢弃 = 有效范围被窄化而调用方不知情）。
+    const requested = [...new Set(scope.knowledge_ids)];
+    const liveRows = await db
+      .select({ id: knowledge.id })
+      .from(knowledge)
+      .where(and(inArray(knowledge.id, requested), isNull(knowledge.archived_at)));
+    const live = new Set(liveRows.map((row) => row.id));
+    const unknown = requested.filter((id) => !live.has(id));
+    if (unknown.length > 0) {
+      throw new Error(
+        `knowledge_ids: not live knowledge components (unknown or archived): ${unknown.join(', ')}`,
+      );
+    }
+    resolved.knowledgeFilterIds = requested;
+  }
+  if (scope.exclude_refs !== undefined) {
+    // 跨所有 revision 按 question 身份（revision.group_id = group root）排除。任意
+    // revision 的 ref 都接受（superseded 也指向同一身份）；解不动/摘要不符显式报错
+    // ——排除名单自身必须可信，否则「排除」变成静默放行。已撤回的组本就被
+    // buildFilters 的 withdrawn 谓词挡在每种 admission_state 之外，跳过即等价排除，
+    // 不让学习者已见列表里的一道撤回题拖垮整次检索。
+    const refs = await resolveBankRefs(db, scope.exclude_refs);
+    const ids = new Set<string>();
+    for (const ref of refs) {
+      if (ref.status === 'withdrawn') continue;
+      if (ref.status !== 'ok') {
+        throw new Error(`exclude_refs: ${ref.raw}: ${ref.status} (${ref.detail})`);
+      }
+      ids.add(ref.revision.group_id);
+    }
+    resolved.excludedQuestionIds = [...ids];
+  }
+  if (scope.similar_to !== undefined) {
+    const [ref] = await resolveBankRefs(db, [scope.similar_to.question_ref]);
+    if (ref == null) {
+      throw new Error(`similar_to: ${scope.similar_to.question_ref}: unresolvable`);
+    }
+    if (ref.status !== 'ok') {
+      throw new Error(
+        `similar_to: ${scope.similar_to.question_ref}: ${ref.status} (${ref.detail})`,
+      );
+    }
+    if (ref.lifecycle?.current_revision_id !== ref.revision.revision_id) {
+      throw new Error(
+        `similar_to: ${scope.similar_to.question_ref}: superseded; the stored content vector reflects the current revision — pass the current ref or read_bank the exact version`,
+      );
+    }
+    resolved.similarToGroupId = ref.revision.group_id;
   }
   return resolved;
 }
@@ -351,6 +556,45 @@ function buildFilters(resolved: ResolvedScope): SQL[] {
   if (scope.source !== undefined) {
     filters.push(sql`(${question.source} = ${scope.source})`);
   }
+  if (resolved.knowledgeFilterIds !== undefined) {
+    // any = 题含任一 KC（逐 id 容器 OR）；all = 题含全部 KC（单容器包含检查）。
+    if (resolved.knowledgeFilterIds.length === 0) {
+      filters.push(sql`false`);
+    } else if (resolved.knowledgeFilterMode === 'all') {
+      filters.push(
+        sql`(${question.knowledge_ids} @> ${JSON.stringify(resolved.knowledgeFilterIds)}::jsonb)`,
+      );
+    } else {
+      const containers = resolved.knowledgeFilterIds.map(
+        (id) => sql`${question.knowledge_ids} @> ${JSON.stringify([id])}::jsonb`,
+      );
+      filters.push(sql`(${sql.join(containers, sql` OR `)})`);
+    }
+  }
+  if (scope.difficulty !== undefined) {
+    const [lo, hi] = scope.difficulty.range;
+    if (scope.difficulty.basis === 'authored') {
+      // 作者难度 1–5 整数（NOT NULL）；闭区间。
+      filters.push(sql`(${question.difficulty} BETWEEN ${lo} AND ${hi})`);
+    } else {
+      // 校准难度：item_calibration(track='hard') 的 effectiveB（logit 尺度）。
+      // 无 row / effectiveB NULL（校准未知）的题被 EXISTS 天然排除——绝不退回作者难度。
+      filters.push(
+        sql`EXISTS (SELECT 1 FROM ${item_calibration} ic WHERE ic.question_id = ${question.id} AND ic.track = 'hard' AND COALESCE(ic.b_calib, ic.b_anchor, ic.b) BETWEEN ${lo} AND ${hi})`,
+      );
+    }
+  }
+  if (resolved.excludedQuestionIds !== undefined) {
+    // 排除在通道层生效（不占召回配额）：被排除身份根本不进候选池。
+    filters.push(
+      resolved.excludedQuestionIds.length === 0
+        ? sql`true`
+        : sql`(${question.id} NOT IN (${sql.join(
+            resolved.excludedQuestionIds.map((id) => sql`${id}`),
+            sql`, `,
+          )}))`,
+    );
+  }
   return filters;
 }
 
@@ -370,9 +614,11 @@ export async function runSearchBank(
   deps: BankSearchDeps = {},
 ): Promise<BankSearchOutput> {
   // Provider attempts write operational receipts, so finish them outside the
-  // read-only bank snapshot. Resuming a cursor never embeds again.
+  // read-only bank snapshot. Resuming a cursor never embeds again. A similar_to
+  // search reuses the anchor question's stored content vector instead of
+  // embedding the query text, so no provider call is made either way.
   let embedded: { vector: number[] } | { error: unknown } | undefined;
-  if (request.form === 'new') {
+  if (request.form === 'new' && request.scope.similar_to === undefined) {
     const embedFn =
       deps.embedFn ??
       ((text: string) =>
@@ -454,13 +700,50 @@ async function runSearchBankInSnapshot(
       .limit(BANK_SEARCH_CHANNEL_CAP + 1);
 
     // ── 通道 B：暴力 pgvector cosine（embed 失败 → 通道不可用，不阻塞 FTS）──
-    const vectorPromise: Promise<{ vector: number[] | null; error?: string }> = deps
-      .embedFn(effectiveQuery)
-      .then((vector) => ({ vector }))
-      .catch((err: unknown) => ({
-        vector: null,
-        error: err instanceof Error ? err.message : String(err),
-      }));
+    // similar_to（YUK-1448）：不嵌查询文本，改用锚题的同版内容向量（快照内读回）。
+    // 锚无向量（从未嵌入/被编辑失效等待回填）→ 通道不可用，FTS 照常——诚实降级，
+    // 绝不退回查询文本向量冒充内容相似。锚题自身仍是合法候选（距离 0 最相似；
+    // 调用方可用 exclude_refs 显式排除）。
+    // 锚向量须与当前 EMBED_VERSION 及锚题当前内容 hash 同版，否则同样视为不可用。
+    let anchorVector: number[] | null = null;
+    let anchorInvalidReason: string | null = null;
+    if (resolved.similarToGroupId !== undefined) {
+      const [anchorRow] = await db
+        .select({
+          embedding: question.embedding,
+          prompt_md: question.prompt_md,
+          reference_md: question.reference_md,
+          choices_md: question.choices_md,
+          embed_version: question.embed_version,
+          embed_content_hash: question.embed_content_hash,
+        })
+        .from(question)
+        .where(eq(question.id, resolved.similarToGroupId))
+        .limit(1);
+      anchorInvalidReason =
+        anchorRow == null
+          ? 'no_vector'
+          : questionVectorInvalidReason({
+              ...anchorRow,
+              dimension: anchorRow.embedding?.length ?? null,
+            });
+      anchorVector = anchorInvalidReason === null ? (anchorRow?.embedding ?? null) : null;
+    }
+    const vectorPromise: Promise<{ vector: number[] | null; error?: string }> =
+      resolved.similarToGroupId !== undefined
+        ? anchorVector != null
+          ? Promise.resolve({ vector: anchorVector })
+          : Promise.resolve({
+              vector: null,
+              error: `similar_to anchor content vector unusable (${anchorInvalidReason}): never embedded, embedded under an older EMBED_VERSION, or invalidated by a content edit; awaiting embed_backfill`,
+            })
+        : deps
+            .embedFn(effectiveQuery)
+            .then((vector) => ({ vector }))
+            .catch((err: unknown) => ({
+              vector: null,
+              error: err instanceof Error ? err.message : String(err),
+            }));
 
     const [ftsAll, vectorResult] = await Promise.all([ftsRowsPromise, vectorPromise]);
 
@@ -653,6 +936,30 @@ async function runSearchBankInSnapshot(
   if (scope.source !== undefined) enforced.push(`source=${scope.source}`);
   if (scope.within_refs !== undefined)
     enforced.push('within_refs (exact current revisions only; empty means empty scope)');
+  if (resolved.knowledgeFilterIds !== undefined) {
+    enforced.push(
+      `knowledge_ids (${resolved.knowledgeFilterIds.length} live KCs) mode=${resolved.knowledgeFilterMode}`,
+    );
+  }
+  if (scope.difficulty !== undefined) {
+    enforced.push(
+      scope.difficulty.basis === 'authored'
+        ? `difficulty basis=authored range=[${scope.difficulty.range[0]}, ${scope.difficulty.range[1]}] (1-5 integer scale)`
+        : `difficulty basis=calibrated range=[${scope.difficulty.range[0]}, ${scope.difficulty.range[1]}] (logit b; questions with unknown calibration are excluded, never mixed with authored difficulty)`,
+    );
+  }
+  if (resolved.excludedQuestionIds !== undefined) {
+    enforced.push(
+      `exclude_refs (${resolved.excludedQuestionIds.length} question identities excluded across all revisions; learner-side supplied)`,
+    );
+  }
+  if (scope.similar_to !== undefined) {
+    enforced.push(
+      unavailable.includes('vector')
+        ? 'similar_to declared but the anchor content vector is missing or not current (vector channel degraded to FTS-only)'
+        : `similar_to=${scope.similar_to.question_ref} aspect=content (anchor's same-version content vector reused as the vector-channel query)`,
+    );
+  }
   enforced.push(`draft_state=${scope.draft_state}`);
   enforced.push(`admission_state=${scope.admission_state}`);
   enforced.push('top-level questions only (composite parts read via their group)');
@@ -666,28 +973,42 @@ async function runSearchBankInSnapshot(
     retrieved_count: confirmedPoolSize,
     reason: 'insufficient_retrieved_candidates' as const,
   };
+  const complete = !hasMore && !retrievalTruncated && unavailable.length === 0;
   const gapRequest =
     verdict === 'enough'
       ? null
-      : BankGapRequestSchema.parse({
-          target_contract: 'EvidenceDemandV1',
-          status: 'needs_agent_context_and_filing_tool',
-          claim: { kind: 'content_coverage', statement: effectiveQuery },
-          inventory_goal: { eligible_count: limit },
-          causes: [{ kind: 'coverage_gap' }],
-          constraints: unsatisfied,
-          required_context: [
-            'demand_id',
-            'policy_version',
-            'subject_id',
-            'claim.knowledge_ids',
-            'evidence',
-            'task',
-            'difficulty',
-            'inventory_goal.horizon_days',
-            'control',
-          ],
-        });
+      : (() => {
+          const unsigned = BankGapRequestSchema.parse({
+            target_contract: 'EvidenceDemandV1',
+            status: 'needs_agent_context_and_filing_tool',
+            claim: { kind: 'content_coverage', statement: effectiveQuery },
+            inventory_goal: { eligible_count: limit },
+            causes: [{ kind: 'coverage_gap' }],
+            constraints: unsatisfied,
+            required_context: [
+              'demand_id',
+              'policy_version',
+              'subject_id',
+              'claim.knowledge_ids',
+              'evidence',
+              'task',
+              'difficulty',
+              'inventory_goal.horizon_days',
+              'control',
+            ],
+            complete,
+            retrieval_truncated: retrievalTruncated,
+            unavailable_channels: unavailable,
+          });
+          // YUK-1448 (review P1) — 把缺口证据绑到本次检索：MAC 由服务端密钥签发，
+          // file_bank_gap 验不过就 rejected，调用方伪造 complete=true 也触发不了
+          // 付费 dispatch。secret 未配置时 gap 照常返回（覆盖诚实），但 filing 端
+          // fail closed。
+          const evidenceMac = mintBankGapEvidenceMac(unsigned);
+          return evidenceMac === null
+            ? unsigned
+            : BankGapRequestSchema.parse({ ...unsigned, evidence_mac: evidenceMac });
+        })();
 
   return {
     scope_applied: {
@@ -704,6 +1025,37 @@ async function runSearchBankInSnapshot(
           : undefined,
       source: scope.source,
       within_refs: scope.within_refs,
+      knowledge:
+        resolved.knowledgeFilterIds !== undefined
+          ? {
+              ids: resolved.knowledgeFilterIds,
+              mode: resolved.knowledgeFilterMode,
+              resolved_count: resolved.knowledgeFilterIds.length,
+            }
+          : undefined,
+      difficulty:
+        scope.difficulty !== undefined
+          ? {
+              basis: scope.difficulty.basis,
+              range: scope.difficulty.range,
+              scale: scope.difficulty.basis === 'authored' ? 'authored_1_5' : 'calibrated_logit_b',
+            }
+          : undefined,
+      exclude_refs:
+        resolved.excludedQuestionIds !== undefined
+          ? {
+              refs: scope.exclude_refs ?? [],
+              excluded_question_ids: resolved.excludedQuestionIds.length,
+            }
+          : undefined,
+      similar_to:
+        scope.similar_to !== undefined
+          ? {
+              question_ref: scope.similar_to.question_ref,
+              aspect: 'content',
+              vector_available: !unavailable.includes('vector'),
+            }
+          : undefined,
       draft_state: scope.draft_state,
       admission_state: scope.admission_state,
     },
@@ -712,6 +1064,11 @@ async function runSearchBankInSnapshot(
       not_verified: [
         'query 语义相关性（排序依据，非逐项保证——候选不等于满足全部语义条件）',
         '未被本通道召回的题不构成「库中没有」',
+        ...(scope.similar_to !== undefined && unavailable.includes('vector')
+          ? [
+              'similar_to 锚题暂无当前同版内容向量（未嵌入、旧 EMBED_VERSION 或被内容编辑失效，待 embed_backfill 回填）——向量通道不可用，本页仅 FTS 召回',
+            ]
+          : []),
       ],
     },
     hits: pageHits,
@@ -724,7 +1081,7 @@ async function runSearchBankInSnapshot(
       page_has_more: hasMore,
       next_cursor: nextCursor,
       unavailable_channels: unavailable,
-      complete: !hasMore && !retrievalTruncated && unavailable.length === 0,
+      complete,
     },
   };
 }
