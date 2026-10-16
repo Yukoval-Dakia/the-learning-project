@@ -4,7 +4,7 @@
 // armed item at a limit of 1 is re-paired, a full target gets a calm caution line with
 // 「改配给 X」 (no shaking). Wide blocks draw curved connectors, only the new one draws in; below
 // 540px (container query) the columns stack, lines give way to matching number chips.
-import { type KeyboardEvent, useCallback, useId, useRef, useState } from 'react';
+import { type KeyboardEvent, type ReactNode, useCallback, useId, useRef, useState } from 'react';
 
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 
@@ -22,8 +22,10 @@ import {
   BlockHead,
   type BlockStateProps,
   type BlockStatus,
+  InlineMd,
   StatusLine,
   blockMode,
+  joinNodes,
   markerText,
   rovingMove,
   shownOutcome,
@@ -99,10 +101,23 @@ export function MatchingColumnsBlock({
     const index = lists[side].findIndex((entry) => entry.id === id);
     return side === 'a' ? String(index + 1) : (markerText('letter', index) ?? '');
   };
-  const text = (side: Side, id: string) =>
-    lists[side].find((entry) => entry.id === id)?.label_md ?? id;
-  const nameOf = (side: Side, id: string) => `${marker(side, id)}「${text(side, id)}」`;
-  const pairName = (item: RelationItem) => `${nameOf('a', item.a)} — ${nameOf('b', item.b)}`;
+  // Names are rendered content (MathMarkdown, whose KaTeX output carries MathML), never the raw
+  // label_md source, so screen readers hear the formula rather than its TeX.
+  const nameOf = (side: Side, id: string): ReactNode => (
+    <>
+      {marker(side, id)}「
+      <InlineMd
+        source={lists[side].find((entry) => entry.id === id)?.label_md ?? id}
+        notation={notation}
+      />
+      」
+    </>
+  );
+  const pairName = (item: RelationItem): ReactNode => (
+    <>
+      {nameOf('a', item.a)} — {nameOf('b', item.b)}
+    </>
+  );
   const partners = (side: Side, id: string) =>
     made.filter((item) => item[side] === id).map((item) => item[other(side)]);
 
@@ -144,41 +159,55 @@ export function MatchingColumnsBlock({
       case 'unavailable':
         setStatus({
           tone: 'caution',
-          text: `${nameOf(armedSide, armedId)} 和 ${nameOf(other(armedSide), targetId)} 不能相连。`,
+          text: (
+            <>
+              {nameOf(armedSide, armedId)} 和 {nameOf(other(armedSide), targetId)} 不能相连。
+            </>
+          ),
         });
         return;
       case 'unlinked':
         onChange(result.next);
-        if (pair) setStatus({ text: `已解除：${pairName(pair)}` });
+        if (pair) setStatus({ text: <>已解除：{pairName(pair)}</> });
         return;
       case 'linked':
         onChange(result.next);
         if (pair) {
           setFresh(pair.id);
           setStatus({
-            text: `已配对：${pairName(pair)}${
-              result.replaced.length
-                ? `（原来配的 ${result.replaced
-                    .map((item) => marker(other(armedSide), item[other(armedSide)]))
-                    .join('、')} 已换掉）`
-                : ''
-            }`,
+            text: (
+              <>
+                已配对：{pairName(pair)}
+                {result.replaced.length
+                  ? `（原来配的 ${result.replaced
+                      .map((item) => marker(other(armedSide), item[other(armedSide)]))
+                      .join('、')} 已换掉）`
+                  : ''}
+              </>
+            ),
           });
         }
         return;
       case 'full': {
         const fullId = result.side === armedSide ? armedId : targetId;
         const limit = limits[result.side] ?? 1;
-        const holders = result.holders
-          .map((item) => nameOf(other(result.side), item[other(result.side)]))
-          .join('、');
+        const holders = joinNodes(
+          result.holders.map((item) => nameOf(other(result.side), item[other(result.side)])),
+          '、',
+        );
         setBlocked(`${result.side}:${fullId}`);
         setStatus({
           tone: 'caution',
           text:
-            limit === 1
-              ? `${nameOf(result.side, fullId)} 已经配给了 ${holders}。本题一项只配一次。`
-              : `${nameOf(result.side, fullId)} 已经配了 ${holders}，本题最多配 ${limit} 项。`,
+            limit === 1 ? (
+              <>
+                {nameOf(result.side, fullId)} 已经配给了 {holders}。本题一项只配一次。
+              </>
+            ) : (
+              <>
+                {nameOf(result.side, fullId)} 已经配了 {holders}，本题最多配 {limit} 项。
+              </>
+            ),
           action: {
             label: `改配给 ${marker(other(result.side), result.side === armedSide ? targetId : armedId)}`,
             run: () => {
@@ -186,7 +215,7 @@ export function MatchingColumnsBlock({
               setBlocked(null);
               if (pair) {
                 setFresh(pair.id);
-                setStatus({ text: `已配对：${pairName(pair)}` });
+                setStatus({ text: <>已配对：{pairName(pair)}</> });
               }
             },
           },
@@ -201,11 +230,11 @@ export function MatchingColumnsBlock({
     setBlocked(null);
     const next = unlinkAll(items, value, side, id);
     if (next.length === made.length) {
-      setStatus({ text: `${nameOf(side, id)} 还没有配对。` });
+      setStatus({ text: <>{nameOf(side, id)} 还没有配对。</> });
       return;
     }
     onChange(next);
-    setStatus({ text: `已解除 ${nameOf(side, id)} 的配对。` });
+    setStatus({ text: <>已解除 {nameOf(side, id)} 的配对。</> });
   };
 
   const activate = (side: Side, id: string) => {
@@ -221,11 +250,16 @@ export function MatchingColumnsBlock({
       const linked = partners(side, id);
       const otherName = side === 'a' ? rightHeading : leftHeading;
       setStatus({
-        text: linked.length
-          ? `已选 ${nameOf(side, id)}，现在配着 ${linked
-              .map((x) => marker(other(side), x))
-              .join('、')}。再点${otherName}一项换配，点原来那项就解除。`
-          : `已选 ${nameOf(side, id)}，再点${otherName}一项。`,
+        text: linked.length ? (
+          <>
+            已选 {nameOf(side, id)}，现在配着 {linked.map((x) => marker(other(side), x)).join('、')}
+            。再点{otherName}一项换配，点原来那项就解除。
+          </>
+        ) : (
+          <>
+            已选 {nameOf(side, id)}，再点{otherName}一项。
+          </>
+        ),
         action: linked.length ? { label: '解除', run: () => unlinkSide(side, id) } : undefined,
       });
       return;
@@ -286,11 +320,19 @@ export function MatchingColumnsBlock({
     const linked = partners(side, entry.id);
     const key = `${side}:${entry.id}`;
     const isArmed = armed?.side === side && armed.id === entry.id;
-    const pairText = linked.length
-      ? `，已配 ${linked.map((x) => nameOf(other(side), x)).join('、')}`
-      : side === 'a'
-        ? '，未配对'
-        : '，未使用';
+    const pairText = linked.length ? (
+      <>
+        ，已配{' '}
+        {joinNodes(
+          linked.map((x) => nameOf(other(side), x)),
+          '、',
+        )}
+      </>
+    ) : side === 'a' ? (
+      '，未配对'
+    ) : (
+      '，未使用'
+    );
     const chips =
       linked.length > 0 ? (
         <span
@@ -400,7 +442,7 @@ export function MatchingColumnsBlock({
         : limits.a === 1
           ? `${leftHeading}每项只配一次`
           : '一项可以配多项';
-  const summary = made.length ? made.map(pairName).join('；') : '还没有配对';
+  const summary = made.length ? joinNodes(made.map(pairName), '；') : '还没有配对';
 
   return (
     <section
@@ -442,9 +484,9 @@ export function MatchingColumnsBlock({
 
       <StatusLine status={status} mode={mode} />
       <footer className="un-blk-foot">
-        <p id={`${uid}-summary`} className="un-sr-only">
+        <div id={`${uid}-summary`} className="un-sr-only">
           当前配对：{summary}
-        </p>
+        </div>
         {interactive ? (
           <button
             type="button"

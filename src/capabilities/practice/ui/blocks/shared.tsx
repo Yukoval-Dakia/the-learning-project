@@ -4,7 +4,33 @@
 // Tokens first: blocks render inside <UiNextRoot> and read its --un-* variables.
 import '@/ui-next/tokens.css';
 import './blocks.css';
-import type { ReactNode } from 'react';
+import { Fragment, type ReactNode } from 'react';
+
+import { MathMarkdown } from '@/ui/lib/math-markdown';
+
+/**
+ * An item label rendered inline inside a sentence (status line, screen-reader text). Accessible
+ * names come from this rendered output, so KaTeX's MathML is what assistive tech reads; raw
+ * label_md never goes into an aria-label or a spoken string.
+ */
+export function InlineMd({ source, notation }: { source: string; notation?: string | null }) {
+  return (
+    <MathMarkdown className="un-blk-inline-md" notation={notation}>
+      {source}
+    </MathMarkdown>
+  );
+}
+
+/** Join rendered nodes with a separator. */
+export function joinNodes(nodes: ReactNode[], separator: string): ReactNode {
+  return nodes.map((node, index) => (
+    // biome-ignore lint/suspicious/noArrayIndexKey: a fixed sentence; position is the identity
+    <Fragment key={index}>
+      {index > 0 ? separator : null}
+      {node}
+    </Fragment>
+  ));
+}
 
 /** Slot-level result after feedback is released. Never per item: the grader only compares sets. */
 export type BlockOutcome = 'correct' | 'not_correct';
@@ -72,7 +98,8 @@ export function BlockHead({
 }
 
 export interface BlockStatus {
-  text: string;
+  /** Rendered content: item names inside it go through InlineMd, never raw label_md. */
+  text: ReactNode;
   tone?: 'caution';
   action?: { label: string; run: () => void };
 }
