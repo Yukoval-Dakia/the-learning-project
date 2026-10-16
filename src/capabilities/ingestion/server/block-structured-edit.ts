@@ -116,7 +116,15 @@ export interface BaseEditParams {
 
 // The 4 single-block structured-rewrite ops (merge_questions is multi-row, handled inline). The
 // canonical edit event's `op` enum (question-block-events.ts) gates fold cardinality.
-type SingleBlockEditOp = 'update_prompt' | 'add_option' | 'set_question_type' | 'split_stem';
+type SingleBlockEditOp =
+  | 'update_prompt'
+  | 'add_option'
+  | 'set_question_type'
+  | 'split_stem'
+  // YUK-1497 — compose_presentation's structured.presentation write (single-block;
+  // the AFTER tree carries the presentation inside `structured`, so the fold
+  // reproduces the row exactly — a raw tx.update here would be erased on rebuild).
+  | 'set_presentation';
 
 // ---------------------------------------------------------------------------
 // Internal: load a draft block FOR UPDATE inside a tx
@@ -474,6 +482,59 @@ export async function splitStem(db: Db, params: SplitStemParams): Promise<EditRe
       currentStatus: block.status,
       currentVersion: block.version,
       figures: nextFigures,
+    });
+    return { status: 'written', version };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// §4.7 setPresentation — compose_presentation's canonical save path (YUK-1497).
+// ---------------------------------------------------------------------------
+
+export interface SetPresentationParams extends BaseEditParams {
+  blockId: string;
+  /** The AFTER full structured tree (presentation already merged into `structured`). */
+  structured: StructuredQuestionT;
+}
+
+export type SetPresentationStatus =
+  | 'written'
+  | 'skipped:not_draft'
+  | 'skipped:block_not_found'
+  | 'skipped:null_structured';
+
+export interface SetPresentationResult {
+  status: SetPresentationStatus;
+  /** Set on `written`; the post-save block version. */
+  version?: number;
+}
+
+/**
+ * Save a validated presentation into `question_block.structured.presentation` via
+ * the SAME canonical channel as the other single-block edits (`persistStructured` →
+ * `experimental:edit_question_block_structured` + job event + genesis-anchor check +
+ * projection write-through). Callers own presentation validation (shape + binding)
+ * BEFORE invoking; this primitive only persists the merged AFTER tree.
+ */
+export async function setPresentation(
+  db: Db | Tx,
+  params: SetPresentationParams,
+): Promise<SetPresentationResult> {
+  return db.transaction(async (tx) => {
+    const block = await loadBlockForUpdate(tx, params.blockId);
+    if (!block) return { status: 'skipped:block_not_found' };
+    if (block.status !== 'draft') return { status: 'skipped:not_draft' };
+    if (!block.structured) return { status: 'skipped:null_structured' };
+
+    const version = await persistStructured(tx, {
+      blockId: params.blockId,
+      structured: params.structured,
+      op: 'set_presentation',
+      jobPayload: { op: 'set_presentation' },
+      actorRef: params.actorRef,
+      actorKind: params.actorKind ?? 'agent',
+      currentStatus: block.status,
+      currentVersion: block.version,
     });
     return { status: 'written', version };
   });

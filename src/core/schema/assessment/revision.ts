@@ -2,7 +2,8 @@ import { z } from 'zod';
 
 import { ExecutionPlan } from './execution';
 import { RevisionId } from './ids';
-import { ResponseSpec } from './response';
+import { Presentation } from './presentation';
+import { type ResponseSlotT, ResponseSpec } from './response';
 import { ScoringBasis } from './scoring';
 import type { QuestionGroupStructureT } from './structure';
 import { QuestionGroupStructure } from './structure';
@@ -31,6 +32,13 @@ export const PublishedQuestionRevision = z.object({
   response_spec: ResponseSpec,
   scoring_basis: ScoringBasis,
   execution_plan: ExecutionPlan,
+  /**
+   * YUK-1497 — 冻结的公开展示层（Generative UI blocks-v1）。可选：旧
+   * revision 无此层，继续用现有逐槽渲染（spec §3.7）。含此层时发布 barrier
+   * 过 validatePresentation，且计入 integrity_digest（缺省不计 —— 旧 digest
+   * 逐字节不变）。
+   */
+  presentation: Presentation.optional(),
   published_at: z.string().datetime(),
   /** 被本版替换的旧 revision；首版为 null。历史提交仍绑定原版（§3.3 表）。 */
   supersedes_revision_id: RevisionId.nullable(),
@@ -93,6 +101,25 @@ export interface IssuanceBindingIssue {
     | 'table_cell_out_of_scope'
     | 'missing_option_order';
   detail: string;
+}
+
+/**
+ * 有呈现顺序的槽及其可排序 id（声明顺序）：单选/多选的选项、配对的右列，以及
+ * YUK-1497 的纯选项 select（item 不带 coordinates / gap）。关系与字缝 item 的
+ * 次序就是题意的一部分，不进 option_order。
+ */
+export function orderableOptionIds(slot: ResponseSlotT): string[] | null {
+  if (slot.kind === 'single_choice' || slot.kind === 'multi_choice') {
+    return slot.options.map((option) => option.option_id);
+  }
+  if (slot.kind === 'matching') return slot.right_options.map((option) => option.option_id);
+  if (
+    slot.kind === 'select' &&
+    slot.items.every((item) => item.coordinates == null && item.gap_after_codepoint == null)
+  ) {
+    return slot.items.map((item) => item.item_id);
+  }
+  return null;
 }
 
 /**
@@ -194,18 +221,12 @@ export function validateIssuanceBinding(
   }
 
   const choiceSlots = revision.response_spec.slots
-    .filter(
-      (slot) =>
-        slot.kind === 'single_choice' || slot.kind === 'multi_choice' || slot.kind === 'matching',
-    )
+    .filter((slot) => orderableOptionIds(slot) != null)
     .filter((slot) => boundParts.has(slot.part_id));
   const orderBySlot = new Map(binding.option_order.map((entry) => [entry.slot_id, entry] as const));
 
   for (const slot of choiceSlots) {
-    const optionIds =
-      slot.kind === 'matching'
-        ? slot.right_options.map((option) => option.option_id)
-        : slot.options.map((option) => option.option_id);
+    const optionIds = orderableOptionIds(slot) ?? [];
     const order = orderBySlot.get(slot.slot_id);
     if (order == null) {
       issues.push({
@@ -290,18 +311,13 @@ export function deriveIssuanceBinding(
   const optionOrder: IssuedOptionOrderT[] = [];
   for (const slot of revision.response_spec.slots) {
     if (!partIdSet.has(slot.part_id)) continue;
-    if (slot.kind !== 'single_choice' && slot.kind !== 'multi_choice' && slot.kind !== 'matching') {
-      continue;
-    }
+    const declared = orderableOptionIds(slot);
+    if (declared == null) continue;
     const override = overrides[slot.slot_id];
     if (override != null) {
       optionOrder.push({ slot_id: slot.slot_id, option_ids: [...override] });
       continue;
     }
-    const declared =
-      slot.kind === 'matching'
-        ? slot.right_options.map((option) => option.option_id)
-        : slot.options.map((option) => option.option_id);
     optionOrder.push({ slot_id: slot.slot_id, option_ids: [...declared] });
   }
   // 覆盖里引用发出范围外/未知槽位的键原样透出 —— validate 统一拒绝。

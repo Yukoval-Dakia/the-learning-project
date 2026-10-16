@@ -702,7 +702,6 @@ export const practiceCapability = defineCapability({
         responses: {
           200: HintRequestResponseSchema,
           ...API_ERROR_RESPONSES,
-          502: ApiErrorResponseSchema,
         },
         successStatus: 200,
         deprecation: {
@@ -737,7 +736,6 @@ export const practiceCapability = defineCapability({
         responses: {
           201: HintRequestResponseSchema,
           ...API_ERROR_RESPONSES,
-          502: ApiErrorResponseSchema,
         },
         successStatus: 201,
         load: () => import('./api/resource-routes').then((m) => m.createHintRequestResource),
