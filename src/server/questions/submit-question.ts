@@ -563,7 +563,7 @@ export async function submitDraftQuestion(
         canonical_content_hash: canonicalHash,
       });
     } else {
-      // 编辑已发布题：更新工作副本投影（内容列），dedup hash 冲突 ⇒ conflict。
+      // 编辑已发布题：dedup hash 冲突 ⇒ conflict。
       const hashHolder = await tx
         .select({ id: question.id })
         .from(question)
@@ -578,20 +578,26 @@ export async function submitDraftQuestion(
           request_id: requestId,
         };
       }
-      await tx
-        .update(question)
-        .set({
-          prompt_md: promptMd,
-          reference_md: referenceMd,
-          choices_md: choicesMd,
-          knowledge_ids: doc.knowledge_ids,
-          structured: structuredProjection,
-          canonical_content_hash: canonicalHash,
-          kind: deriveKind(doc),
-          updated_at: now,
-          version: sql`${question.version} + 1`,
-        })
-        .where(eq(question.id, groupId));
+      // 工作副本行 = 「当前已准入 revision」的投影。admission 未 admitted
+      // 时保留既有 admitted 内容不动（legacy 选择器只认 draft_status /
+      // suspended / withdrawn —— Codex P1：未验证的新 prompt/answer 不得
+      // 抢先被练习池服务）。真正 admitted 时更新内容列。
+      if (admission.admission.state === 'admitted') {
+        await tx
+          .update(question)
+          .set({
+            prompt_md: promptMd,
+            reference_md: referenceMd,
+            choices_md: choicesMd,
+            knowledge_ids: doc.knowledge_ids,
+            structured: structuredProjection,
+            canonical_content_hash: canonicalHash,
+            kind: deriveKind(doc),
+            updated_at: now,
+            version: sql`${question.version} + 1`,
+          })
+          .where(eq(question.id, groupId));
+      }
     }
 
     // ---- 唯一发布 seam ----

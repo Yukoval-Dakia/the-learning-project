@@ -1376,6 +1376,20 @@ async function acceptUnifiedQuestionEditRequest(
       409,
     );
   }
+  // 未发布的 withheld（conversion 未决 / 死 KC / 组级 blocker）= accept 失败：
+  // 不落 structure-edit/accept 事件，如实返回原因。「已发布但 admission
+  // withheld/pending（verify 在途）」不同 —— revision 已铸，照常落事件。
+  if (
+    submitted.status === 'withheld' &&
+    'published' in submitted &&
+    submitted.published === false
+  ) {
+    throw new ApiError(
+      'unprocessable_entity',
+      `submit_question withheld (not published): ${submitted.detail}`,
+      422,
+    );
+  }
   const resolvedQuestionId = 'question_id' in submitted ? submitted.question_id : questionId;
   const nowRow =
     resolvedQuestionId != null

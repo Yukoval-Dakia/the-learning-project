@@ -777,11 +777,11 @@ export async function runReadBank(
     }
 
     const isCurrent = lifecycle?.current_revision_id === revision.revision_id;
+    // withdrawn 组的 revision 一律按历史版本分类（即使 id 还挂在 current —
+    // 撤回覆盖 current 语义：不可再发新 issuance，服务面应视作历史冻结）。
+    const current = isCurrent && !withdrawn;
     const newIssuanceAllowed =
-      isCurrent &&
-      !withdrawn &&
-      lifecycle?.suspended !== true &&
-      lifecycle?.scoring_admission_state === 'admitted';
+      current && lifecycle?.suspended !== true && lifecycle?.scoring_admission_state === 'admitted';
 
     // ── focus：稳定 id 子树（未命中进 unavailable） ──
     const focused: Array<{ target: z.infer<typeof FocusTargetSchema>; node: unknown }> = [];
@@ -802,8 +802,8 @@ export async function runReadBank(
       revision_ordinal: revision.revision_ordinal,
       published_at: revision.published_at.toISOString(),
       supersedes_revision_id: revision.supersedes_revision_id ?? null,
-      current: isCurrent,
-      historical: !isCurrent,
+      current,
+      historical: !current,
       new_issuance_allowed: newIssuanceAllowed,
       lifecycle: {
         availability: lifecycle?.availability ?? null,

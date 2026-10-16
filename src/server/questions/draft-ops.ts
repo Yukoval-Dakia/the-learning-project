@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { VersionedAssetRef } from '@/core/schema/assessment/materials';
 import type { ScoringRuleT } from '@/core/schema/assessment/scoring-rule';
 import { ScoringRule } from '@/core/schema/assessment/scoring-rule';
 import type {
@@ -16,8 +17,10 @@ import {
   DraftSelectItem,
   DraftUnit,
   QuestionDraftDocument,
+  mintDraftAssetId,
   mintDraftItemId,
   mintDraftMaterialId,
+  sha256Hex,
 } from '@/core/schema/question-draft';
 
 // ====================================================================
@@ -207,7 +210,7 @@ const SETTABLE_FIELDS: Record<EditTargetT['kind'], ReadonlySet<string>> = {
     'slot_id',
   ]),
   item: new Set(['label_md', 'coordinates', 'gap_after_codepoint']),
-  material: new Set(['content_md', 'caption', 'alt_text', 'visibility', 'kind']),
+  material: new Set(['content_md', 'caption', 'alt_text', 'visibility', 'kind', 'asset']),
   criterion: new Set(['statement_md', 'max', 'allowed_awards']),
   block: new Set(),
 };
@@ -577,7 +580,44 @@ function applySet(
       }
       case 'material': {
         const material = requireMaterial(doc, target.id);
-        if (field === 'content_md' || field === 'kind') {
+        if (field === 'content_md') {
+          if (value != null && typeof value !== 'string')
+            fail('invalid_value', 'content_md must be a string or null');
+          // 内联文本材料（content 即字节本体）：asset 身份随内容重算 —
+          // 绝不留旧 asset_id/digest 指向旧字节。二进制资产材料：内容改
+          // 必须同 op 附带匹配 asset ref，否则拒绝（asset 不能静默陈旧）。
+          const inline = material.content_md != null || material.asset.asset_id.startsWith('txt_');
+          if (inline) {
+            material.content_md = (value as string | undefined) ?? undefined;
+            material.asset = {
+              asset_id: mintDraftAssetId('txt', material.content_md ?? ''),
+              digest: sha256Hex(material.content_md ?? ''),
+            };
+          } else {
+            const supplied = VersionedAssetRef.safeParse(fields.asset);
+            if (!supplied.success) {
+              fail(
+                'invalid_value',
+                "binary-asset material: content_md edit requires a matching 'asset' ref {asset_id,digest} in the same set op",
+              );
+            }
+            material.content_md = (value as string | undefined) ?? undefined;
+            material.asset = supplied.data;
+          }
+          remintMaterialId(doc, target.id, material);
+          if (material.material_id !== target.id) {
+            identityRemaps.push({ from: target.id, to: material.material_id });
+          }
+        } else if (field === 'asset') {
+          // 显式换字节：校验 {asset_id,digest} 并随资产身份 remint。
+          const parsedRef = VersionedAssetRef.safeParse(value);
+          if (!parsedRef.success) fail('invalid_value', 'asset must be { asset_id, digest }');
+          material.asset = parsedRef.data;
+          remintMaterialId(doc, target.id, material);
+          if (material.material_id !== target.id) {
+            identityRemaps.push({ from: target.id, to: material.material_id });
+          }
+        } else if (field === 'kind') {
           (material as Record<string, unknown>)[field] = value;
           remintMaterialId(doc, target.id, material);
           if (material.material_id !== target.id) {
@@ -1040,6 +1080,15 @@ function textFieldOf(
         get: () => (material as Record<string, unknown>)[field] as string | undefined,
         set: (v) => {
           (material as Record<string, unknown>)[field] = v;
+          // 内联文本材料的 asset 身份 = 内容指纹 —— content_md 改写同步重算，
+          // 不留指向旧字节的 asset_id/digest（二进制材料无 content_md 可达
+          // anchor，replace_text 自限于内联文本）。
+          if (field === 'content_md') {
+            material.asset = {
+              asset_id: mintDraftAssetId('txt', v ?? ''),
+              digest: sha256Hex(v ?? ''),
+            };
+          }
           remintMaterialId(doc, target.id, material);
         },
         material,
