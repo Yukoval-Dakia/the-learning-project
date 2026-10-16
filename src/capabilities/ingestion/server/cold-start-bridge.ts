@@ -25,6 +25,7 @@ import {
 } from '@/core/schema/cold-start-bridge';
 import type { Db } from '@/db/client';
 import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
+import { redactIngestionText } from './privacy-guard';
 
 /** Thrown when the bridge cannot produce a usable result (provider down, unparseable, or out-of-vocabulary subject). */
 export { ColdStartBridgeError };
@@ -62,10 +63,16 @@ export async function runColdStartBridge(
   params: RunColdStartBridgeParams,
 ): Promise<ColdStartBridgeOutputT> {
   const knownSubjects = Array.from(params.knownSubjects);
+  // YUK-1408 — extracted question text is deterministically redacted before the
+  // model sees it; the closed subject vocabulary stays untouched.
   const input: ColdStartBridgeInputT = ColdStartBridgeInput.parse({
-    question_md: params.questionMd,
-    existing_reference_md: params.existingReferenceMd,
-    knowledge_hint: params.knowledgeHint,
+    question_md: redactIngestionText(params.questionMd).text,
+    existing_reference_md:
+      params.existingReferenceMd === null
+        ? null
+        : redactIngestionText(params.existingReferenceMd).text,
+    knowledge_hint:
+      params.knowledgeHint === null ? null : redactIngestionText(params.knowledgeHint).text,
     known_subjects: [...knownSubjects],
   });
 

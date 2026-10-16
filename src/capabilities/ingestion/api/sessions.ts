@@ -261,6 +261,8 @@ export async function POST(req: Request): Promise<Response> {
       // YUK-1404 — canonical learner-selected subject (already validated above);
       // null = no explicit signal, persisted as provenance-key absence.
       learnerSelectedSubjectId: canonicalSubjectId,
+      // YUK-1408 — explicit consent for derived usage; absent = 'allow'.
+      derivationPolicy: body.derivation_policy ?? null,
     });
 
     // YUK-1404 (B2/R1) — materialize the unified source package onto the

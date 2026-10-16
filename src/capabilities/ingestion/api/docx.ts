@@ -11,6 +11,7 @@ import {
   persistPackageMedia,
 } from '@/capabilities/ingestion/server/source-package';
 import { MAX_DOCX_UPLOAD_BYTES } from '@/core/limits';
+import { DerivationPolicy } from '@/core/schema/derivation-policy';
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/kernel/http';
 import { getStartedBoss } from '@/server/boss/client';
@@ -66,6 +67,21 @@ export async function POST(req: Request): Promise<Response> {
       );
     }
 
+    // YUK-1408 — optional consent field ('allow' | 'answer_only'); invalid
+    // values are rejected rather than silently coerced into 'allow'.
+    const rawPolicy = form?.get('derivation_policy');
+    const derivationPolicy =
+      rawPolicy == null || rawPolicy === ''
+        ? null
+        : (DerivationPolicy.safeParse(typeof rawPolicy === 'string' ? rawPolicy : null).data ??
+          (() => {
+            throw new ApiError(
+              'validation_error',
+              `derivation_policy must be 'allow' or 'answer_only'`,
+              400,
+            );
+          })());
+
     const docxBytes = new Uint8Array(await file.arrayBuffer());
     // Deterministic, sub-ms: zip-parse + security preflight + MathType OLE count.
     // YUK-1476 — external NON-hyperlink relationships (header/footer/body) are
@@ -113,6 +129,7 @@ export async function POST(req: Request): Promise<Response> {
         assetIds: evidence.assetIds,
         entrypoint: 'docx',
         externalRefOmission,
+        derivationPolicy,
       });
       try {
         await attachWordSourcePackage(db, r2, {
@@ -190,6 +207,7 @@ export async function POST(req: Request): Promise<Response> {
       // YUK-1476 — honest omission audit (both digests + omitted facts) on the
       // text-line session; only present when the converter input was sanitized.
       externalRefOmission,
+      derivationPolicy,
     });
 
     // YUK-1404 (B2/R1) — attach the unified 'word' source package: original +

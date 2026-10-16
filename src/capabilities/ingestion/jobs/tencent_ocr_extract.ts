@@ -23,6 +23,10 @@ import {
 } from '@/capabilities/ingestion/server/glm_ocr_parser';
 import { writeIngestionOperationEvent } from '@/capabilities/ingestion/server/operation-store';
 import {
+  redactIngestionText,
+  writeIngestionUsageReceipt,
+} from '@/capabilities/ingestion/server/privacy-guard';
+import {
   ProviderAttemptLifecycleError,
   ProviderAttemptResumeConflictError,
   TencentSubmitInProgressError,
@@ -57,6 +61,7 @@ import type { FigureRefT } from '@/core/schema/structured_question';
 import { PermanentError, RetryableError } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import { learning_session, source_asset } from '@/db/schema';
+import { resolveSessionDerivationPolicy } from '@/kernel/read-models/usage-policy';
 import { COPILOT_NUDGE_EVALUATE_QUEUE } from '@/server/boss/queue-names';
 import type { R2Client } from '@/server/r2';
 import { Ingestion } from '@/server/session';
@@ -510,12 +515,18 @@ async function processOneOcrJob(
       bbox: f.source_bbox,
     }));
 
+    // YUK-1408 — deterministic personal-identifier redaction on the extracted
+    // text hint before it leaves for the VLM. The job redacts here so the usage
+    // receipt can record which categories fired; runStructureTask applies the
+    // same redaction internally as a backstop for its other callers.
+    const hintRedaction = redactIngestionText(ocrHintMd);
+
     let structure: StructureResult;
     let usedVlmPath = true;
     try {
       structure = await runStructure({
         pageImages,
-        tencentHintMd: ocrHintMd,
+        tencentHintMd: hintRedaction.text,
         pageCount: assetIds.length,
         preFigures: preFiguresMeta.length > 0 ? preFiguresMeta : undefined,
         db: deps.db,
@@ -631,15 +642,29 @@ async function processOneOcrJob(
       throw new PermanentError('structure produced 0 questions');
     }
 
-    const extractionResult = await deps.db.transaction((tx) =>
-      Ingestion.applyExtractionResult(tx, {
+    const extractionResult = await deps.db.transaction(async (tx) => {
+      const result = await Ingestion.applyExtractionResult(tx, {
         sessionId,
         sourceDocumentId,
         blocks,
         layoutQuality: structure.layout_quality,
         warnings,
-      }),
-    );
+      });
+      // YUK-1408 — per-extraction usage receipt on the source document: records
+      // the policy version, the document's consented usage, the channels that
+      // carried raw vs redacted content, and which redaction categories fired.
+      // Values are never recorded. Atomic with the derived block writes.
+      if (sourceDocumentId) {
+        await writeIngestionUsageReceipt(tx, {
+          sourceDocumentId,
+          sessionId,
+          derivationPolicy: await resolveSessionDerivationPolicy(tx, sessionId),
+          engine,
+          redactedFields: hintRedaction.fields,
+        });
+      }
+      return result;
+    });
 
     // YUK-696: both paid modes are opt-in. Do not even enqueue the worker when
     // both flags are absent/OFF; the extraction remains available for manual review.

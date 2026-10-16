@@ -85,6 +85,7 @@ import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { getKnownSubjects } from '@/subjects/profile';
 import { enrollNativeCapture } from './assessment-capture';
 import { capturedQuestionShape } from './captured-question-shape';
+import { redactIngestionText } from './privacy-guard';
 
 export type AutoEnrollSkipReason = 'flag_off' | 'session_not_found' | 'wrong_status';
 
@@ -356,7 +357,9 @@ export async function runAutoEnrollForSession(
             batchCache: tagBatchCache,
           },
           {
-            questionText: questionMd,
+            // YUK-1408 — the embed step inside tagKnowledge sends this text to a
+            // model; deterministically redact identifiers at the call boundary.
+            questionText: redactIngestionText(questionMd).text,
             knowledgeHint: block.knowledge_hint,
             subjectRootId,
             sourceRef: { kind: 'question_block', id: block.id },
@@ -475,7 +478,10 @@ export async function runAutoEnrollForSession(
       try {
         await writeEventFn(params.db, {
           id: observeEventId(params.sessionId, block.id),
-          session_id: null,
+          // YUK-1408 — bind to the ingestion session so the shared derivation
+          // filter resolves the LIVE source-document usage policy on reads
+          // (the verdict embeds document-derived text in `reasoning`).
+          session_id: params.sessionId,
           actor_kind: 'agent',
           actor_ref: 'workflow_judge',
           action: 'experimental:auto_enroll_observed',

@@ -80,6 +80,7 @@ import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { type R2Client, getR2 } from '@/server/r2';
 import { getKnownSubjects } from '@/subjects/profile';
 import { normalizeToCanonicalKind } from '@/subjects/question-kind';
+import { redactIngestionText } from './privacy-guard';
 
 export interface ImageCandidateAcceptResult {
   kind: 'image_candidate';
@@ -814,7 +815,9 @@ export async function acceptImageCandidateProposal(
             nameKcFn: async () => ({ kc_name: bridge.kc_name }),
           },
           {
-            questionText: promptMd,
+            // YUK-1408 — tagKnowledge embeds this text (a model call); the
+            // deterministic identifier redaction runs at the call boundary.
+            questionText: redactIngestionText(promptMd).text,
             knowledgeHint: block.knowledge_hint,
             subjectRootId,
             sourceRef: { kind: 'image_candidate_proposal', id: proposalId },

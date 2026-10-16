@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { PublicMaterialView } from '@/core/schema/assessment';
+import { DerivationPolicy } from '@/core/schema/derivation-policy';
 
 import {
   CauseCategory,
@@ -26,6 +27,13 @@ export const CreateIngestionSessionBody = z.object({
   // currently selectable subject (aliases canonicalized) or the request is
   // rejected 400 before any source_document / learning_session write.
   subject_id: z.string().nullable().optional(),
+  // YUK-1408 — the learner's consented usage for the uploaded document.
+  // 'allow' (default when absent) lets ingestion-derived records feed
+  // memory/briefs; 'answer_only' stamps every derived event so the shared
+  // derivation filter keeps the document's content out of those channels.
+  // Persisted on source_document.provenance.usage_policy; the consent UI reads
+  // and updates it there.
+  derivation_policy: DerivationPolicy.optional(),
 });
 
 export const IngestionSessionSchema = z
