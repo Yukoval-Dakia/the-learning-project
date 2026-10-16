@@ -65,7 +65,8 @@ export const SANDBOX_CSP =
 
 /**
  * The frame document. The bootstrap waits for the parent's one init message (it carries the
- * port), then calls `globalThis[entry](port, init)`. `code` must come from verifyCode and `entry`
+ * port), posts the fixed string 'ready' on the port (proof this is our shell), then calls
+ * `globalThis[entry](port, init)`; a missing entry function sends nothing, so the host fails it. `code` must come from verifyCode and `entry`
  * must pass isValidEntry.
  */
 export function buildShell(code: string, entry: string): string {
@@ -74,7 +75,8 @@ export function buildShell(code: string, entry: string): string {
     JSON.stringify(entry) +
     ';function onInit(e){if(e.source!==parent||!e.ports||!e.ports[0])return;' +
     "removeEventListener('message',onInit);var fn=globalThis[name];" +
-    "if(typeof fn==='function')fn(e.ports[0],e.data);}" +
+    "if(typeof fn!=='function')return;var port=e.ports[0];port.postMessage('ready');" +
+    'fn(port,e.data);}' +
     "addEventListener('message',onInit);})();";
   return (
     '<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="' +
@@ -207,8 +209,22 @@ const ProposedMessage = z
   .strict();
 export type ProposedEntryT = z.infer<typeof ProposedEntry>;
 
+// Lone UTF-16 surrogates (a regex, not String.isWellFormed: older iPadOS Safari lacks it).
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+
+/** C0/C1 controls other than \n and \t (NUL included), and bidi overrides / isolates. */
+function hasForbiddenChar(text: string): boolean {
+  for (const ch of text) {
+    const c = ch.codePointAt(0) ?? 0;
+    if (c === 0x0a || c === 0x09) continue;
+    if (c < 0x20 || (c >= 0x7f && c <= 0x9f)) return true;
+    if ((c >= 0x202a && c <= 0x202e) || (c >= 0x2066 && c <= 0x2069)) return true;
+  }
+  return false;
+}
+
 function textOk(text: string): boolean {
-  return text.length <= MAX_TEXT_CHARS && !text.includes('\u0000') && text.isWellFormed();
+  return text.length <= MAX_TEXT_CHARS && !LONE_SURROGATE.test(text) && !hasForbiddenChar(text);
 }
 
 function selectOk(slot: SelectSlotT, ids: readonly string[]): boolean {
@@ -300,36 +316,38 @@ export function applyProposed(
 
 // ---------- 「你的作答」 ----------
 
-const OPEN_SUMMARY_CHARS = 80;
+const SUMMARY_CHARS = 80;
+const UNANSWERED = '（未作答）';
+
+/** Plain, bounded summary text: control/format characters become spaces; 80 code points. */
+function clip(text: string): string {
+  const chars = [...text.replace(/[\p{Cc}\p{Cf}]/gu, ' ')];
+  return chars.length > SUMMARY_CHARS
+    ? `${chars.slice(0, SUMMARY_CHARS).join('')}…`
+    : chars.join('');
+}
 
 /**
  * What the parent shows next to 提交 for the custom-bound slots, as plain text built from the
- * draft (only validated answers reach it). The frame cannot shape it.
+ * draft (only validated answers reach it), one item per bound slot; an empty slot (handed in as
+ * blank) reads 「（未作答）」. The frame cannot shape it.
  */
 export function summarizeAnswers(
   binds: readonly PresentationBindT[],
   slotById: ReadonlyMap<string, ResponseSlotT>,
   entries: readonly SlotResponseT[],
 ): string[] {
-  const out: string[] = [];
-  for (const bind of binds) {
+  return binds.map((bind) => {
     const entry = entries.find((e) => e.slot_id === bind.slot_id);
     const slot = slotById.get(bind.slot_id);
     if (entry?.kind === 'select' && slot?.kind === 'select' && entry.item_ids.length > 0) {
       const labels = new Map(
         slot.items.map((item) => [item.item_id, item.label_md ?? item.item_id]),
       );
-      out.push(entry.item_ids.map((id) => labels.get(id) ?? id).join('、'));
-    } else if (entry?.kind === 'blank' && entry.text !== '') {
-      out.push(entry.text);
-    } else if (entry?.kind === 'open' && entry.text_md !== '') {
-      const chars = [...entry.text_md];
-      out.push(
-        chars.length > OPEN_SUMMARY_CHARS
-          ? `${chars.slice(0, OPEN_SUMMARY_CHARS).join('')}…`
-          : entry.text_md,
-      );
+      return clip(entry.item_ids.map((id) => labels.get(id) ?? id).join('、'));
     }
-  }
-  return out;
+    if (entry?.kind === 'blank' && entry.text !== '') return clip(entry.text);
+    if (entry?.kind === 'open' && entry.text_md !== '') return clip(entry.text_md);
+    return UNANSWERED;
+  });
 }

@@ -7,8 +7,9 @@
 // decoded (custom-sandbox.ts). Any failure shows a plain error and keeps the question closed.
 //
 // The frame: sandbox="allow-scripts" only, srcdoc only, fixed height. Its first load hands over
-// one MessageChannel port; any later load is the frame navigating itself, so it is blanked and the
-// block fails. The page listens on that port only, never on window `message`. Everything the frame
+// one MessageChannel port, and the block is ready only once the shell's bootstrap answers 'ready'
+// on it (within 3s, else it fails); any later load is the frame navigating itself, so it is
+// blanked and the block fails. The page listens on that port only, never on window `message`. Everything the frame
 // sends is a proposal: validated whole, then written through the envelope writers.
 //
 // Focus: the frame is inert until the learner starts it (click or the button); focus landing
@@ -46,6 +47,9 @@ interface CodeEntry {
   releaseTimer: ReturnType<typeof setTimeout> | null;
 }
 
+/** How long a loaded frame has to answer with the shell's 'ready' before the block fails. */
+const READY_TIMEOUT_MS = 3000;
+
 const LOADING: CodeState = Object.freeze({ status: 'loading' });
 const FAILED: CodeState = Object.freeze({ status: 'failed' });
 const codeEntries = new Map<string, CodeEntry>();
@@ -58,6 +62,12 @@ function publish(key: string, state: CodeState) {
   for (const listener of storeListeners) listener();
 }
 
+/** Readiness of a verified block's current frame (no-op for any other state). */
+function setFramed(key: string, framed: boolean) {
+  const state = codeEntries.get(key)?.state;
+  if (state?.status === 'verified' && state.framed !== framed) publish(key, { ...state, framed });
+}
+
 /** One store entry per block and frozen code: navigation failures stay with that block. */
 export function sandboxKey(block: CustomBlockT): string {
   const { asset, entry } = block.sandbox;
@@ -66,6 +76,8 @@ export function sandboxKey(block: CustomBlockT): string {
 
 async function readCode(block: CustomBlockT, signal: AbortSignal): Promise<string | null> {
   const { asset, entry, contract } = block.sandbox;
+  // Focus containment needs `inert` (older iPadOS lacks it): no inert, no block.
+  if (!('inert' in HTMLElement.prototype)) return null;
   if (contract !== 'sandbox-v1' || !isValidDigest(asset.digest) || !isValidEntry(entry)) {
     return null;
   }
@@ -146,8 +158,9 @@ function subscribeStore(listener: () => void): () => void {
 }
 
 /**
- * True when every custom block given is verified, its frame has loaded once, and nothing failed
- * (load or navigation). No custom blocks: true. Never starts a read itself.
+ * True when every custom block given is verified, its current frame's shell has answered
+ * 'ready', and nothing failed (load, handshake or navigation). No custom blocks: true. Never
+ * starts a read itself.
  */
 export function useCustomBlocksReady(blocks: readonly CustomBlockT[]): boolean {
   return useSyncExternalStore(
@@ -163,10 +176,22 @@ export function useCustomBlocksReady(blocks: readonly CustomBlockT[]): boolean {
 
 // ---------- frame sessions ----------
 
-/** Per frame element: how many loads it has had, and the page's end of its port. */
+/**
+ * Per frame element: how many loads it has had, the page's end of its port, and whether the
+ * shell's bootstrap has answered 'ready' on that port (proof the first load was our document).
+ */
 interface FrameSession {
   loads: number;
   port: MessagePort | null;
+  ready: boolean;
+  readyTimer: ReturnType<typeof setTimeout> | null;
+}
+
+function closeSession(s: FrameSession) {
+  if (s.readyTimer) clearTimeout(s.readyTimer);
+  s.readyTimer = null;
+  s.port?.close();
+  s.port = null;
 }
 const sessions = new WeakMap<HTMLIFrameElement, FrameSession>();
 
@@ -222,11 +247,33 @@ export function CustomBlock({
       if (!wrap || !active) return undefined;
       wrap.querySelector('iframe')?.focus();
       const owner = wrap.ownerDocument;
+      const view = owner.defaultView;
+      const outside = (event: Event) =>
+        !(event.target instanceof Node) || !wrap.contains(event.target);
       const onFocusIn = (event: FocusEvent) => {
-        if (!(event.target instanceof Node) || !wrap.contains(event.target)) setActive(false);
+        if (outside(event)) setActive(false);
+      };
+      const onPointerDown = (event: PointerEvent) => {
+        if (outside(event)) setActive(false);
+      };
+      // The window also blurs when focus moves into the frame; only leaving the page counts.
+      let blurCheck: ReturnType<typeof setTimeout> | null = null;
+      const onBlur = () => {
+        if (blurCheck) clearTimeout(blurCheck);
+        blurCheck = setTimeout(() => {
+          blurCheck = null;
+          if (!owner.hasFocus()) setActive(false);
+        }, 0);
       };
       owner.addEventListener('focusin', onFocusIn);
-      return () => owner.removeEventListener('focusin', onFocusIn);
+      owner.addEventListener('pointerdown', onPointerDown);
+      view?.addEventListener('blur', onBlur);
+      return () => {
+        owner.removeEventListener('focusin', onFocusIn);
+        owner.removeEventListener('pointerdown', onPointerDown);
+        view?.removeEventListener('blur', onBlur);
+        if (blurCheck) clearTimeout(blurCheck);
+      };
     },
     [active],
   );
@@ -236,12 +283,26 @@ export function CustomBlock({
     if (!frame) return undefined;
     let session = sessions.get(frame);
     if (!session) {
-      session = { loads: 0, port: null };
+      session = { loads: 0, port: null, ready: false, readyTimer: null };
       sessions.set(frame, session);
+      // A new frame element (first mount, or the reload after an unlock) is not ready until its
+      // own shell answers.
+      setFramed(key, false);
     }
     const s = session;
     const onMessage = (event: MessageEvent) => {
-      if (locked || !s.port) return;
+      if (!s.port) return;
+      // The bootstrap's fixed 'ready' comes first; nothing else counts before it, and after it
+      // 'ready' is just an invalid message (not JSON).
+      if (!s.ready) {
+        if (event.data !== 'ready') return;
+        s.ready = true;
+        if (s.readyTimer) clearTimeout(s.readyTimer);
+        s.readyTimer = null;
+        setFramed(key, true);
+        return;
+      }
+      if (locked) return;
       const proposed = validateMessage(event.data, block.binds, slotById);
       if (!proposed) return;
       onEntriesChange((prev) => applyProposed(prev, proposed, slotById), { immediate: true });
@@ -249,8 +310,7 @@ export function CustomBlock({
     if (s.port) {
       if (locked) {
         s.port.postMessage({ type: 'lock' });
-        s.port.close();
-        s.port = null;
+        closeSession(s);
       } else {
         s.port.onmessage = onMessage;
       }
@@ -259,8 +319,7 @@ export function CustomBlock({
       s.loads += 1;
       if (s.loads > 1) {
         // The frame navigated itself: cut it off, blank it once, and fail the block.
-        s.port?.close();
-        s.port = null;
+        closeSession(s);
         if (s.loads === 2) frame.srcdoc = '';
         publish(key, FAILED);
         return;
@@ -271,21 +330,24 @@ export function CustomBlock({
       ]);
       if (locked) {
         channel.port1.close();
-      } else {
-        channel.port1.onmessage = onMessage;
-        s.port = channel.port1;
+        return;
       }
-      const state = codeEntries.get(key)?.state;
-      if (state?.status === 'verified' && !state.framed) publish(key, { ...state, framed: true });
+      channel.port1.onmessage = onMessage;
+      s.port = channel.port1;
+      // A load whose document is not our shell (e.g. replaced by about:blank) never answers.
+      s.readyTimer = setTimeout(() => {
+        s.readyTimer = null;
+        if (s.ready) return;
+        closeSession(s);
+        publish(key, FAILED);
+      }, READY_TIMEOUT_MS);
     };
     frame.addEventListener('load', onLoad);
     return () => {
       frame.removeEventListener('load', onLoad);
       // Unmounted (not just re-attached): close the page's end of the port.
       queueMicrotask(() => {
-        if (frame.isConnected) return;
-        s.port?.close();
-        s.port = null;
+        if (!frame.isConnected) closeSession(s);
       });
     };
   };
