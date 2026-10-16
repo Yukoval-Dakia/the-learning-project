@@ -60,7 +60,7 @@ export interface ApiRouteDecl {
   responses?: Partial<Record<number, ZodTypeAny>>;
   /**
    * HTTP status → response media type(s)。单值或列表（同一 status 多种表示，
-   * 如 /api/assets/[id]/content 的 200 = image/* 与 text/javascript）；缺省
+   * 如 /api/assets/[id]/content 的 200 = image/* 与 text/plain）；缺省
    * application/json；仅在真实响应使用其他表示时声明（例如 Copilot inline
    * 200 = text/event-stream）。
    */

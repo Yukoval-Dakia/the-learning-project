@@ -8,10 +8,12 @@
 // keeps the single-user secret on the server.
 //
 // YUK-1497 (K5 custom block): the same route serves frozen JS code assets
-// (stored mime_type text/javascript) for the sandboxed custom block; the page
-// fetches the bytes, verifies SHA-256 against the presentation digest and only
-// then injects them into a sandboxed iframe. nosniff keeps the stored
-// mime_type authoritative — the browser must never sniff executable content.
+// for the sandboxed custom block; the page only fetch()es the bytes, verifies
+// SHA-256 against the presentation digest and injects them into a sandboxed
+// iframe of its own — the content type is irrelevant to it. Code assets are
+// therefore served INERT: text/plain + nosniff + CSP `sandbox; default-src
+// 'none'`. Serving same-origin text/javascript would let any <script src> on
+// our origin execute agent-generated code with full origin privileges.
 
 import { eq } from 'drizzle-orm';
 
@@ -58,10 +60,15 @@ export async function GET(req: Request, params: Record<string, string>): Promise
     const bytes = await getR2().get(row.storage_key);
     if (!bytes) throw new ApiError('not_found', `asset ${id} bytes missing from R2`, 404);
 
+    // v2 安全裁决：JS 代码资产按惰性字节服务（text/plain + CSP sandbox）；
+    // 其余资产照旧返回存储 mime_type（图片等），nosniff 两者都带。
+    const codeAssetMime =
+      row.mime_type === 'text/javascript' || row.mime_type === 'application/javascript';
     return new Response(new Uint8Array(bytes), {
       status: 200,
       headers: {
-        'Content-Type': row.mime_type,
+        'Content-Type': codeAssetMime ? 'text/plain; charset=utf-8' : row.mime_type,
+        ...(codeAssetMime ? { 'Content-Security-Policy': "sandbox; default-src 'none'" } : {}),
         'Content-Length': String(row.byte_size),
         ...cacheHeaders,
       },

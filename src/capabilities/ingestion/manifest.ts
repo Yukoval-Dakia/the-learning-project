@@ -257,10 +257,10 @@ export const ingestionCapability = defineCapability({
         operationId: 'getAssetContent',
         request: { params: ApiIdParamsSchema },
         responses: { 200: AssetContentResponseSchema, ...API_ERROR_RESPONSES },
-        // YUK-1497（K5 自定义块）：同一 route 也返回冻结 JS 代码资产（存储
-        // mime_type = text/javascript）—— 与图片并列声明，OpenAPI/生成客户端
-        // 才能表达该 200 的两种表示。
-        responseMediaTypes: { 200: ['image/*', 'text/javascript'] },
+        // YUK-1497 v2（K5 自定义块）：同一 route 也服务冻结 JS 代码资产，但
+        // 以惰性表示（text/plain + CSP sandbox，见 handler）—— 与图片并列
+        // 声明，OpenAPI/生成客户端才能表达该 200 的两种表示。
+        responseMediaTypes: { 200: ['image/*', 'text/plain'] },
         successStatus: 200,
         load: () => import('./api/asset-content').then((m) => m.GET),
       },

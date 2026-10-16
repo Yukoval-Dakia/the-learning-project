@@ -163,6 +163,11 @@ export type CustomBlockT = {
     contract: 'sandbox-v1';
   };
   binds: PresentationBindT[];
+  /**
+   * P1 防布局点击劫持：iframe 高度只取块声明，120–720px；缺省由 UI 取
+   * CUSTOM_FRAME_HEIGHT_DEFAULT（320）。iframe 自身永远改不了它。
+   */
+  frame_height_px?: number;
 };
 
 /**
@@ -170,16 +175,53 @@ export type CustomBlockT = {
  * DB 校验（publishQuestionGroup）共用：
  *   - digest 固定 'sha256:' + 64 位小写 hex，必须等于资产行的 sha256
  *     （即 'sha256:' + source_asset.sha256）；'unverified:' 前缀永不可发布。
+ *   - asset_id 内容寻址（v2）：必须等于 'sbx_' + digest hex 前 32 位 ——
+ *     加上资产行 sha256 与字节实测 sha256 相符，id ↔ 字节绑定不可变。
+ *     资产 writer 随 R8（录入 agent）落地：服务端算 sha256、一次写入
+ *     （ON CONFLICT DO NOTHING），本层不建 writer。
  *   - entry 是代码资产定义的全局函数名（非空 JS 标识符，≤64 字符）；宿主在
  *     沙箱内调 globalThis[entry](port)，port 只能为 binds 内槽位交作答条目。
  *   - 代码资产限制在 DB 侧执行（source_asset 行上）：mime ∈
- *     CUSTOM_ASSET_MIME_TYPES，byte_size ≤ CUSTOM_ASSET_MAX_BYTES（256 KiB）。
+ *     CUSTOM_ASSET_MIME_TYPES，byte_size ≤ CUSTOM_ASSET_MAX_BYTES（256 KiB）；
+ *     字节内容另扫描禁序（findCustomCodeForbiddenSequence，发布 barrier 读字节后调）。
  */
 export const CUSTOM_ASSET_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/;
 export const CUSTOM_ENTRY_PATTERN = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
 export const CUSTOM_ENTRY_MAX_LENGTH = 64;
 export const CUSTOM_ASSET_MAX_BYTES = 256 * 1024;
 export const CUSTOM_ASSET_MIME_TYPES = ['text/javascript', 'application/javascript'] as const;
+export const CUSTOM_ASSET_ID_PREFIX = 'sbx_';
+export const CUSTOM_FRAME_HEIGHT_MIN = 120;
+export const CUSTOM_FRAME_HEIGHT_MAX = 720;
+/** 缺省高度只由 UI 采用（块未声明时）；后端不注入缺省值。 */
+export const CUSTOM_FRAME_HEIGHT_DEFAULT = 320;
+
+/** 从合法 digest 推导内容寻址 asset_id（'sbx_' + hex 前 32 位）；digest 不合法返回 null。 */
+export function customAssetIdForDigest(digest: string): string | null {
+  return CUSTOM_ASSET_DIGEST_PATTERN.test(digest)
+    ? `${CUSTOM_ASSET_ID_PREFIX}${digest.slice('sha256:'.length, 'sha256:'.length + 32)}`
+    : null;
+}
+
+/**
+ * §1.3 v2 禁序扫描（纯函数）：代码里出现 `</script`（不分大小写）或 `<!--`
+ * 会提前终止外层 script，发布 barrier 读到字节后必须拒绝
+ * （custom_code_forbidden_sequence）。返回首个命中，干净代码返回 null。
+ */
+export function findCustomCodeForbiddenSequence(code: string): {
+  sequence: string;
+  index: number;
+} | null {
+  const scriptIndex = code.toLowerCase().indexOf('</script');
+  const commentIndex = code.indexOf('<!--');
+  if (scriptIndex === -1) {
+    return commentIndex === -1 ? null : { sequence: '<!--', index: commentIndex };
+  }
+  if (commentIndex === -1 || scriptIndex <= commentIndex) {
+    return { sequence: '</script', index: scriptIndex };
+  }
+  return { sequence: '<!--', index: commentIndex };
+}
 
 /** 积木全集（discriminated on `kind`；kind 白名单即此 union，spec §3 规则 6）。 */
 export type PresentationBlockT =
@@ -291,6 +333,12 @@ export const PresentationBlock: z.ZodType<PresentationBlockT> = z.lazy(() =>
         contract: z.literal('sandbox-v1'),
       }),
       binds: z.array(PresentationBind).min(1),
+      frame_height_px: z
+        .number()
+        .int()
+        .min(CUSTOM_FRAME_HEIGHT_MIN)
+        .max(CUSTOM_FRAME_HEIGHT_MAX)
+        .optional(),
     }),
   ]),
 );
@@ -349,7 +397,13 @@ export interface PresentationIssue {
     /** §1.3 自定义块：entry 不是 ≤64 字符的非空 JS 标识符。 */
     | 'custom_entry_invalid'
     /** §1.3 自定义块：binds 为空（自定义块至少绑定一个作答位）。 */
-    | 'custom_binds_empty';
+    | 'custom_binds_empty'
+    /** §1.3 v2 自定义块：asset_id 不是从 digest 内容寻址推出的 'sbx_'+hex前32位。 */
+    | 'custom_asset_not_content_addressed'
+    /** §1.3 v2 自定义块：frame_height_px 不在 120–720 整数范围（发布 barrier 的 DB 阶段同样拒字节禁序，见 custom_code_forbidden_sequence）。 */
+    | 'custom_frame_height_invalid'
+    /** §1.3 v2 自定义块：代码含 '</script'（不分大小写）或 '<!--'（发布 barrier 读字节后拒；纯层无字节，此处只登记码值）。 */
+    | 'custom_code_forbidden_sequence';
   detail: string;
 }
 
@@ -715,6 +769,7 @@ function walkBlock(
         });
       }
       const digest = block.sandbox.asset.digest;
+      let digestWellFormed = false;
       if (digest.startsWith('unverified:')) {
         issues.push({
           code: 'custom_asset_unverified',
@@ -724,6 +779,18 @@ function walkBlock(
         issues.push({
           code: 'custom_asset_digest_invalid',
           detail: `custom block '${block.block_id}' asset digest '${digest}' must be 'sha256:<64 lowercase hex>' equal to the source_asset sha256`,
+        });
+      } else {
+        digestWellFormed = true;
+      }
+      // v2 内容寻址：asset_id 必须等于 'sbx_' + digest hex 前 32 位（digest
+      // 合法才比对，避免连锁噪声）。配合 DB 侧 sha256 相符 + 字节实测，
+      // id ↔ 字节绑定不可变。
+      const expectedAssetId = customAssetIdForDigest(digest);
+      if (digestWellFormed && expectedAssetId !== block.sandbox.asset.asset_id) {
+        issues.push({
+          code: 'custom_asset_not_content_addressed',
+          detail: `custom block '${block.block_id}' asset_id '${block.sandbox.asset.asset_id}' must be the content-addressed '${expectedAssetId}' ('sbx_' + first 32 hex of the digest)`,
         });
       }
       const entry = block.sandbox.entry;
@@ -737,6 +804,19 @@ function walkBlock(
         issues.push({
           code: 'custom_binds_empty',
           detail: `custom block '${block.block_id}' binds no answerable slot`,
+        });
+      }
+      // v2 防布局点击劫持：高度只取块声明，120–720 整数；缺省由 UI 取 320。
+      const frameHeight = block.frame_height_px;
+      if (
+        frameHeight !== undefined &&
+        (!Number.isInteger(frameHeight) ||
+          frameHeight < CUSTOM_FRAME_HEIGHT_MIN ||
+          frameHeight > CUSTOM_FRAME_HEIGHT_MAX)
+      ) {
+        issues.push({
+          code: 'custom_frame_height_invalid',
+          detail: `custom block '${block.block_id}' frame_height_px ${String(frameHeight)} must be an integer in [${CUSTOM_FRAME_HEIGHT_MIN}, ${CUSTOM_FRAME_HEIGHT_MAX}]`,
         });
       }
       // 自定义块绑定多个作答位；覆盖计数与公开投影同律 —— 任一 bind 落在

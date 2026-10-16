@@ -55,6 +55,7 @@ import {
   CUSTOM_ASSET_MAX_BYTES,
   CUSTOM_ASSET_MIME_TYPES,
   Presentation,
+  findCustomCodeForbiddenSequence,
   validateExecutionPlan,
   validatePresentation,
   validateResponseSpec,
@@ -161,6 +162,13 @@ export interface PublishQuestionGroupInput {
   verification?: AdmissionVerificationWrite;
   /** 发布者 provenance（jsonb published_by；缺省 NULL）。 */
   publishedBy?: unknown;
+  /**
+   * YUK-1497 §1.3 v2 — 资产字节读取（禁序扫描 + 字节实测 sha256 用）。
+   * 传 R2 读函数（如 `(key) => getR2().get(key)`）；kernel 不直接依赖
+   * @/server/r2，组合方在能触达存储的层注入。presentation 含 custom 块时
+   * 必供 —— 缺省 fail-closed 拒发（代码无法核验就不许发布）。
+   */
+  readAssetBytes?: (storageKey: string) => Promise<Uint8Array | null>;
   now: Date;
 }
 
@@ -250,12 +258,23 @@ function collectCustomBlocks(block: PresentationBlockT): CustomBlockT[] {
 /**
  * YUK-1497 §1.3 —— 自定义块资产的 DB 核验（纯层无 IO，只能在这查）：
  * source_asset 行存在、sha256 与 sandbox digest 相符（'sha256:' + 裸 hex）、
- * mime 是 JS、byte_size ≤ 256 KiB。任一失败 fail-closed 抛错拒发 —— 与 figure
- * 材料的 unverified digest 拒绝同口径（自定义代码没有理由更宽）。
+ * mime 是 JS、byte_size ≤ 256 KiB；v2 追加字节级核验 —— 实测 sha256 与
+ * 资产行一致（id ↔ 字节绑定不可变），并扫描禁序（</script / <!--）。
+ * 任一失败 fail-closed 抛错拒发 —— 与 figure 材料的 unverified digest
+ * 拒绝同口径（自定义代码没有理由更宽）。
  */
-async function assertCustomBlockAssets(tx: Tx, presentation: PresentationT): Promise<void> {
+async function assertCustomBlockAssets(
+  tx: Tx,
+  presentation: PresentationT,
+  readAssetBytes: ((storageKey: string) => Promise<Uint8Array | null>) | undefined,
+): Promise<void> {
   const customBlocks = collectCustomBlocks(presentation.root);
   if (customBlocks.length === 0) return;
+  if (readAssetBytes == null) {
+    throw new Error(
+      'publishQuestionGroup: presentation has custom blocks but no readAssetBytes reader was supplied — code cannot be verified, refusing to publish',
+    );
+  }
   const assetIds = [...new Set(customBlocks.map((block) => block.sandbox.asset.asset_id))];
   const assetRows = await tx
     .select({
@@ -263,10 +282,12 @@ async function assertCustomBlockAssets(tx: Tx, presentation: PresentationT): Pro
       sha256: source_asset.sha256,
       mime_type: source_asset.mime_type,
       byte_size: source_asset.byte_size,
+      storage_key: source_asset.storage_key,
     })
     .from(source_asset)
     .where(inArray(source_asset.id, assetIds));
   const assetById = new Map(assetRows.map((row) => [row.id, row] as const));
+  const textDecoder = new TextDecoder();
   for (const block of customBlocks) {
     const { asset_id, digest } = block.sandbox.asset;
     const asset = assetById.get(asset_id);
@@ -288,6 +309,26 @@ async function assertCustomBlockAssets(tx: Tx, presentation: PresentationT): Pro
     if (asset.byte_size > CUSTOM_ASSET_MAX_BYTES) {
       throw new Error(
         `publishQuestionGroup: custom block '${block.block_id}' source_asset '${asset_id}' byte_size ${asset.byte_size} exceeds the ${CUSTOM_ASSET_MAX_BYTES}-byte (256 KiB) limit`,
+      );
+    }
+    // v2：字节级核验 —— 读存储字节（既有 R2 client 经注入的 reader），
+    // 实测 sha256 与资产行一致，再扫禁序。
+    const bytes = await readAssetBytes(asset.storage_key);
+    if (bytes == null) {
+      throw new Error(
+        `publishQuestionGroup: custom block '${block.block_id}' source_asset '${asset_id}' bytes missing from storage (key '${asset.storage_key}')`,
+      );
+    }
+    const measuredSha256 = createHash('sha256').update(bytes).digest('hex');
+    if (measuredSha256 !== asset.sha256) {
+      throw new Error(
+        `publishQuestionGroup: custom block '${block.block_id}' source_asset '${asset_id}' bytes hash to sha256:${measuredSha256}, not the recorded '${asset.sha256}' — id/bytes binding is broken`,
+      );
+    }
+    const forbidden = findCustomCodeForbiddenSequence(textDecoder.decode(bytes));
+    if (forbidden != null) {
+      throw new Error(
+        `publishQuestionGroup: custom_code_forbidden_sequence: custom block '${block.block_id}' code contains '${forbidden.sequence}' at byte offset ${forbidden.index} — refusing to publish`,
       );
     }
   }
@@ -633,9 +674,10 @@ export async function publishQuestionGroup(
         );
       }
       shapedPresentation = shaped.data;
-      // YUK-1497 §1.3 —— 自定义块资产 DB 核验（同 barrier、同事务）：资产
-      // 不存在 / digest 不符 / mime 不是 JS / 超过 256 KiB ⇒ 整组不能发布。
-      await assertCustomBlockAssets(tx, shaped.data);
+      // YUK-1497 §1.3 v2 —— 自定义块资产 DB + 字节核验（同 barrier、同事务）：
+      // 资产不存在 / digest 不符 / mime 不是 JS / 超 256 KiB / 字节缺失或
+      // 实测 sha256 不符 / 含禁序 ⇒ 整组不能发布。
+      await assertCustomBlockAssets(tx, shaped.data, input.readAssetBytes);
     }
 
     // 组级串行化：锁根 question 行（发布与编辑同一锁序 question → lifecycle）。
@@ -929,6 +971,8 @@ export interface PublishFromRowInput {
   verification?: AdmissionVerificationWrite;
   /** 缺省不改；首次发布时 'unbounded'。 */
   claimPolicy?: 'one_time' | 'unbounded';
+  /** YUK-1497 §1.3 v2 — 资产字节读取（透传给 publishQuestionGroup；含 custom 块时必供）。 */
+  readAssetBytes?: (storageKey: string) => Promise<Uint8Array | null>;
   actorRef: string;
   now: Date;
 }
@@ -1105,6 +1149,7 @@ export async function publishQuestionGroupFromRow(
       suspension: input.suspension,
       verification: input.verification,
       claimPolicy: input.claimPolicy,
+      readAssetBytes: input.readAssetBytes,
       actorRef: input.actorRef,
       now: input.now,
     });
