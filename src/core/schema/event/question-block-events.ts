@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { DerivationPolicy } from '../derivation-policy';
 import { FigureRef, StructuredQuestion } from '../structured_question';
 import { QuestionBlockRowSnapshot } from './genesis';
 
@@ -205,6 +206,8 @@ export const QuestionBlockCreateExperimental = z
         row: QuestionBlockRowSnapshot,
         // creation provenance; rescue = overwrite of an existing blockId (fold last-write-wins, §5.2).
         origin: z.enum(['ocr', 'rescue', 'docx', 'import']),
+        // YUK-1408 — inherited source-document usage policy; absent === 'allow'.
+        derivation_policy: DerivationPolicy.optional(),
       })
       .strict(), // event-contract boundary: a stray key fails loud (like the edit payload + row snapshot)
     caused_by_event_id: z.string().optional(),

@@ -86,6 +86,11 @@ const AttemptOnQuestionSchema = z.object({
   subject_id: z.string(),
   outcome: z.enum(['success', 'failure', 'partial']),
   payload: z.object({
+    // YUK-1408 — ingestion-captured attempts inherit the source document's
+    // usage policy (same optional field ToolUseQuery carries). Absent ===
+    // 'allow' legacy default; 'answer_only' keeps the payload out of
+    // memory/brief derivation channels via the shared filter.
+    derivation_policy: DerivationPolicy.optional(),
     answer_md: z.string().nullable(),
     answer_image_refs: z.array(z.string()),
     duration_ms: z.number().int().optional(),
@@ -687,6 +692,9 @@ export const ExtractSourceDocument = z.object({
   subject_id: z.string(),
   outcome: z.enum(['success', 'partial', 'failure']),
   payload: z.object({
+    // YUK-1408 — inherited document usage policy (same optional field the
+    // ToolUseQuery payload carries). Absent === 'allow' legacy default.
+    derivation_policy: DerivationPolicy.optional(),
     structured_block_ids: z.array(z.string()),
     layout_quality: z.enum(['structured', 'partial', 'text_only']),
     warnings: z.array(z.string()),

@@ -1,15 +1,15 @@
 import { createId } from '@paralleldrive/cuid2';
 import { type SQL, and, asc, eq, sql } from 'drizzle-orm';
 import type { PgBoss } from 'pg-boss';
-
+import type { DerivationPolicyT } from '@/core/schema/derivation-policy';
 import type { BBoxT, FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db, Tx } from '@/db/client';
 import { learning_session, question_block } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
+import { USAGE_POLICY_PROVENANCE_KEY } from '@/kernel/read-models/usage-policy';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { writeJobEvent } from '@/server/events/writer';
 import { writeQuestionBlockCreateEvent } from '@/server/projections/question_block-create-event';
-
 import { type DocxExternalRefOmissionFacts, EXTERNAL_REF_OMISSION_NOTICE } from './docx-omission';
 import { assertFromState } from './guards';
 
@@ -656,6 +656,14 @@ export type InitiateUploadParams = {
    * learning_session.warnings field.
    */
   externalRefOmission?: DocxExternalRefOmissionFacts;
+  /**
+   * YUK-1408 — the learner's consented usage for this document
+   * ('allow' derivations vs 'answer_only'). Omitted / null = legacy default
+   * 'allow'; an explicit value is persisted verbatim on
+   * `source_document.provenance.usage_policy` and inherited by every
+   * ingestion-derived event written for this session.
+   */
+  derivationPolicy?: DerivationPolicyT | null;
 };
 
 /**
@@ -692,6 +700,15 @@ export async function initiateUpload(
         entrypoint: params.entrypoint,
         ...(params.learnerSelectedSubjectId
           ? { learner_selected_subject_id: params.learnerSelectedSubjectId }
+          : {}),
+        // YUK-1408 — explicit consent signal rides the same open provenance
+        // record; absence = default 'allow'.
+        ...(params.derivationPolicy
+          ? {
+              [USAGE_POLICY_PROVENANCE_KEY]: {
+                derivation_policy: params.derivationPolicy,
+              },
+            }
           : {}),
         // YUK-1476 — identical provenance shape to the text-line owner
         // (docx-ingestion.ts) so audits read uniformly across both docx lines.

@@ -340,7 +340,10 @@ export function buildMemoryEventIngestHandler(
   return async (jobs) => {
     for (const job of jobs) {
       const row = await loadEvent(db, job.data.event_id);
-      if (row && !allowsDerivation(row.payload)) {
+      // YUK-1408 — the live per-event policy (payload + causal root + bound
+      // source-document usage) instead of the frozen write-time payload stamp:
+      // a consent withdrawal after the event was written still gates it here.
+      if (row && (await readEventDerivationPolicy(db, row.id)) !== 'allow') {
         if (deps.replayGrant) throw new MemoryReconcileHandoffError('restricted operator source');
         continue;
       }
