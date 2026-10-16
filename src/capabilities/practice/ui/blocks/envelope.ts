@@ -8,6 +8,7 @@
 // - submit: a bound blank with no text becomes { state: 'blank', text: '' } (an active blank);
 //   selects and open answers without content stay absent.
 // - self_confidence on an existing entry is carried over untouched.
+// - state is only ever 'answered' or 'blank'; 'unknown' is never produced and never forwarded.
 import type { PresentationBlockT, PresentationT } from '@/core/schema/assessment/presentation';
 import type { ResponseSlotT, SelectSlotT, SlotResponseT } from '@/core/schema/assessment/response';
 
@@ -152,7 +153,10 @@ export function entriesForSubmit(
   entries: readonly SlotResponseT[],
 ): SlotResponseT[] {
   const issued = new Set(slots.map((slot) => slot.slot_id));
-  let out = [...entries];
+  // The web never sends state 'unknown' (capture-side only; the API rejects it). The writers here
+  // only produce 'answered' or 'blank'; an 'unknown' entry carried in from elsewhere is dropped,
+  // i.e. treated as not answered, rather than forwarded.
+  let out = entries.filter((entry) => !('state' in entry) || entry.state !== 'unknown');
   for (const bound of boundSlots(presentation)) {
     if (bound.kind !== 'blank_input' || !issued.has(bound.slot_id)) continue;
     const prev = find(out, bound.slot_id, 'blank');
