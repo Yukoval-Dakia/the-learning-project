@@ -47,6 +47,18 @@ Presentation = {
 | `blank_input` | `blank` | — | `text`（原样，不做归一化） |
 | `free_area` | `free`（即 `open_response` 槽） | — | `text_md` 和照片等附件 |
 
+### 1.2.1 两处精确语义
+
+**break_tap 的字缝位置。**
+- `gap_after_codepoint` 按 Unicode 码点（code point）计数，和 `position-gap.ts` 一致。不按 UTF-16，也不按字素簇。
+- 界面只为 universe 里**声明过**的字缝 item 渲染点选位，不自己枚举全部字缝。
+- 声明的字缝必须落在字素簇边界上；组合字符、emoji 内部不能是字缝。这一条由后端绑定校验拒绝。
+
+**ordering 的关系表达。**
+- 每个可放置的 `(position, object)` 组合是一个 item，可以是全积，也可以是子集。
+- 「一个位置一个对象、一个对象一个位置」写成 `at_most_per_coordinate: {position: 1, object: 1}`。
+- 没排完的作答也合法，缺项计为 miss。
+
 字段：`option_list.layout?: 'vertical'|'grid'|'inline'`、`option_list.marker?: 'letter'|'number'|'none'`、`blank_input.width?: 'sm'|'md'|'lg'`、`free_area.min_lines?: number`。
 - `marker` 只影响显示。item_id 永远不由显示字母推出。
 - 选项显示顺序按 issuance 冻结的 `option_order`。没有 option_order 时按 items 声明顺序。
@@ -85,7 +97,7 @@ Presentation = {
 3. `bind.unit_id` 是一个计分单元，且该单元的 `slot_refs` 包含 `bind.slot_id`。
 4. 输入积木种类与槽形态相容，见 1.2 表的「对槽的要求」。
 5. `part_ref` / `material_ref` 都能解析；figure 材料是已核验的公开材料。
-6. block_id 唯一；kind 在白名单内；`renderer_contract` 是受支持的版本。
+6. block_id 唯一；kind 在白名单内；`renderer_contract` 是受支持的版本。break_tap 绑定的字缝都在字素簇边界上（`Intl.Segmenter`）。
 7. 不合格就不能发布。旧 revision 没有 presentation，继续用现有的逐槽渲染。
 
 公开投影：issuance 只出它发出的 parts。积木树里引用未发出 part 或单元的分支整枝去掉。presentation 只含引用，不需要另做脱敏。
