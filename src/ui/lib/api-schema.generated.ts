@@ -1662,6 +1662,22 @@ export interface paths {
         patch: operations["updatePlacementSession"];
         trace?: never;
     };
+    "/api/placement-sessions/{id}/held-release": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["createPlacementHeldRelease"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/placement-sessions/{id}/question-selections": {
         parameters: {
             query?: never;
@@ -14599,6 +14615,145 @@ export interface operations {
                                     text: string;
                                 }[];
                                 page_index?: number;
+                                presentation?: {
+                                    /** @enum {string} */
+                                    renderer_contract: "blocks-v1";
+                                    root: {
+                                        block_id: string;
+                                        children: unknown[];
+                                        /** @enum {string} */
+                                        gap?: "sm" | "md" | "lg";
+                                        /** @enum {string} */
+                                        kind: "stack";
+                                    } | {
+                                        block_id: string;
+                                        children: unknown[];
+                                        /** @enum {string} */
+                                        kind: "passage_layout";
+                                        /** @enum {string} */
+                                        layout: "passage_left_questions_right" | "passage_top";
+                                        material_ref: string;
+                                        /** @enum {string} */
+                                        passage_width?: "balanced" | "wide";
+                                    } | {
+                                        block_id: string;
+                                        /** @enum {string} */
+                                        kind: "text_math";
+                                        material_ref?: string;
+                                        part_ref?: string;
+                                    } | {
+                                        block_id: string;
+                                        /** @enum {string} */
+                                        kind: "figure";
+                                        material_ref: string;
+                                    } | {
+                                        bind: {
+                                            /** @enum {string} */
+                                            response_class: "select" | "blank" | "free";
+                                            slot_id: string;
+                                            unit_id: string;
+                                        };
+                                        block_id: string;
+                                        /** @enum {string} */
+                                        kind: "option_list";
+                                        /** @enum {string} */
+                                        layout?: "vertical" | "grid" | "inline";
+                                        /** @enum {string} */
+                                        marker?: "letter" | "number" | "none";
+                                        print?: {
+                                            height_mm?: number;
+                                        };
+                                    } | {
+                                        bind: {
+                                            /** @enum {string} */
+                                            response_class: "select" | "blank" | "free";
+                                            slot_id: string;
+                                            unit_id: string;
+                                        };
+                                        block_id: string;
+                                        /** @enum {string} */
+                                        kind: "matching_columns";
+                                        print?: {
+                                            height_mm?: number;
+                                        };
+                                    } | {
+                                        bind: {
+                                            /** @enum {string} */
+                                            response_class: "select" | "blank" | "free";
+                                            slot_id: string;
+                                            unit_id: string;
+                                        };
+                                        block_id: string;
+                                        /** @enum {string} */
+                                        kind: "break_tap";
+                                        print?: {
+                                            height_mm?: number;
+                                        };
+                                    } | {
+                                        bind: {
+                                            /** @enum {string} */
+                                            response_class: "select" | "blank" | "free";
+                                            slot_id: string;
+                                            unit_id: string;
+                                        };
+                                        block_id: string;
+                                        /** @enum {string} */
+                                        kind: "ordering";
+                                        print?: {
+                                            height_mm?: number;
+                                        };
+                                    } | {
+                                        bind: {
+                                            /** @enum {string} */
+                                            response_class: "select" | "blank" | "free";
+                                            slot_id: string;
+                                            unit_id: string;
+                                        };
+                                        block_id: string;
+                                        /** @enum {string} */
+                                        kind: "blank_input";
+                                        print?: {
+                                            height_mm?: number;
+                                        };
+                                        /** @enum {string} */
+                                        width?: "sm" | "md" | "lg";
+                                    } | {
+                                        bind: {
+                                            /** @enum {string} */
+                                            response_class: "select" | "blank" | "free";
+                                            slot_id: string;
+                                            unit_id: string;
+                                        };
+                                        block_id: string;
+                                        /** @enum {string} */
+                                        kind: "free_area";
+                                        min_lines?: number;
+                                        print?: {
+                                            height_mm?: number;
+                                        };
+                                    } | {
+                                        binds: {
+                                            /** @enum {string} */
+                                            response_class: "select" | "blank" | "free";
+                                            slot_id: string;
+                                            unit_id: string;
+                                        }[];
+                                        block_id: string;
+                                        /** @enum {string} */
+                                        kind: "custom";
+                                        sandbox: {
+                                            asset: {
+                                                asset_id: string;
+                                                digest: string;
+                                            };
+                                            /** @enum {string} */
+                                            contract: "sandbox-v1";
+                                            entry: string;
+                                        };
+                                    };
+                                    /** @enum {number} */
+                                    schema_version: 1;
+                                };
                                 prompt_text: string;
                                 question_no?: string;
                                 /** @enum {string} */
@@ -15227,6 +15382,145 @@ export interface operations {
                                 text: string;
                             }[];
                             page_index?: number;
+                            presentation?: {
+                                /** @enum {string} */
+                                renderer_contract: "blocks-v1";
+                                root: {
+                                    block_id: string;
+                                    children: unknown[];
+                                    /** @enum {string} */
+                                    gap?: "sm" | "md" | "lg";
+                                    /** @enum {string} */
+                                    kind: "stack";
+                                } | {
+                                    block_id: string;
+                                    children: unknown[];
+                                    /** @enum {string} */
+                                    kind: "passage_layout";
+                                    /** @enum {string} */
+                                    layout: "passage_left_questions_right" | "passage_top";
+                                    material_ref: string;
+                                    /** @enum {string} */
+                                    passage_width?: "balanced" | "wide";
+                                } | {
+                                    block_id: string;
+                                    /** @enum {string} */
+                                    kind: "text_math";
+                                    material_ref?: string;
+                                    part_ref?: string;
+                                } | {
+                                    block_id: string;
+                                    /** @enum {string} */
+                                    kind: "figure";
+                                    material_ref: string;
+                                } | {
+                                    bind: {
+                                        /** @enum {string} */
+                                        response_class: "select" | "blank" | "free";
+                                        slot_id: string;
+                                        unit_id: string;
+                                    };
+                                    block_id: string;
+                                    /** @enum {string} */
+                                    kind: "option_list";
+                                    /** @enum {string} */
+                                    layout?: "vertical" | "grid" | "inline";
+                                    /** @enum {string} */
+                                    marker?: "letter" | "number" | "none";
+                                    print?: {
+                                        height_mm?: number;
+                                    };
+                                } | {
+                                    bind: {
+                                        /** @enum {string} */
+                                        response_class: "select" | "blank" | "free";
+                                        slot_id: string;
+                                        unit_id: string;
+                                    };
+                                    block_id: string;
+                                    /** @enum {string} */
+                                    kind: "matching_columns";
+                                    print?: {
+                                        height_mm?: number;
+                                    };
+                                } | {
+                                    bind: {
+                                        /** @enum {string} */
+                                        response_class: "select" | "blank" | "free";
+                                        slot_id: string;
+                                        unit_id: string;
+                                    };
+                                    block_id: string;
+                                    /** @enum {string} */
+                                    kind: "break_tap";
+                                    print?: {
+                                        height_mm?: number;
+                                    };
+                                } | {
+                                    bind: {
+                                        /** @enum {string} */
+                                        response_class: "select" | "blank" | "free";
+                                        slot_id: string;
+                                        unit_id: string;
+                                    };
+                                    block_id: string;
+                                    /** @enum {string} */
+                                    kind: "ordering";
+                                    print?: {
+                                        height_mm?: number;
+                                    };
+                                } | {
+                                    bind: {
+                                        /** @enum {string} */
+                                        response_class: "select" | "blank" | "free";
+                                        slot_id: string;
+                                        unit_id: string;
+                                    };
+                                    block_id: string;
+                                    /** @enum {string} */
+                                    kind: "blank_input";
+                                    print?: {
+                                        height_mm?: number;
+                                    };
+                                    /** @enum {string} */
+                                    width?: "sm" | "md" | "lg";
+                                } | {
+                                    bind: {
+                                        /** @enum {string} */
+                                        response_class: "select" | "blank" | "free";
+                                        slot_id: string;
+                                        unit_id: string;
+                                    };
+                                    block_id: string;
+                                    /** @enum {string} */
+                                    kind: "free_area";
+                                    min_lines?: number;
+                                    print?: {
+                                        height_mm?: number;
+                                    };
+                                } | {
+                                    binds: {
+                                        /** @enum {string} */
+                                        response_class: "select" | "blank" | "free";
+                                        slot_id: string;
+                                        unit_id: string;
+                                    }[];
+                                    block_id: string;
+                                    /** @enum {string} */
+                                    kind: "custom";
+                                    sandbox: {
+                                        asset: {
+                                            asset_id: string;
+                                            digest: string;
+                                        };
+                                        /** @enum {string} */
+                                        contract: "sandbox-v1";
+                                        entry: string;
+                                    };
+                                };
+                                /** @enum {number} */
+                                schema_version: 1;
+                            };
                             prompt_text: string;
                             question_no?: string;
                             /** @enum {string} */
@@ -15836,6 +16130,9 @@ export interface operations {
                                 kind: "figure" | "passage" | "table" | "audio" | "video" | "pdf" | "plaintext";
                                 material_id: string;
                             }[];
+                            presentation?: {
+                                [key: string]: unknown;
+                            };
                             response_requirements?: {
                                 evidence_unit_ids: string[];
                                 slot_id: string;
@@ -16111,6 +16408,9 @@ export interface operations {
                                 kind: "figure" | "passage" | "table" | "audio" | "video" | "pdf" | "plaintext";
                                 material_id: string;
                             }[];
+                            presentation?: {
+                                [key: string]: unknown;
+                            };
                             response_requirements?: {
                                 evidence_unit_ids: string[];
                                 slot_id: string;
@@ -16618,6 +16918,9 @@ export interface operations {
                                 kind: "figure" | "passage" | "table" | "audio" | "video" | "pdf" | "plaintext";
                                 material_id: string;
                             }[];
+                            presentation?: {
+                                [key: string]: unknown;
+                            };
                             response_requirements?: {
                                 evidence_unit_ids: string[];
                                 slot_id: string;
@@ -16958,7 +17261,7 @@ export interface operations {
                             submitted_at: string;
                         }[];
                         /** @enum {string|null} */
-                        unavailable_reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | "no_input_renderer" | null;
+                        unavailable_reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | "no_input_renderer" | "invalid_presentation" | null;
                     };
                 };
             };
@@ -20919,6 +21222,9 @@ export interface operations {
                                             kind: "figure" | "passage" | "table" | "audio" | "video" | "pdf" | "plaintext";
                                             material_id: string;
                                         }[];
+                                        presentation?: {
+                                            [key: string]: unknown;
+                                        };
                                         response_requirements?: {
                                             evidence_unit_ids: string[];
                                             slot_id: string;
@@ -21294,7 +21600,7 @@ export interface operations {
                             part_ref: string | null;
                             question_id: string;
                             /** @enum {string} */
-                            reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | "no_input_renderer";
+                            reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | "no_input_renderer" | "invalid_presentation";
                         }[];
                     };
                 };
@@ -21427,9 +21733,20 @@ export interface operations {
                     "application/json": {
                         answeredCount: number;
                         knowledgeIds: string[];
+                        no_item?: {
+                            options: ("recheck" | "end")[];
+                            preparing_subjects: string[];
+                            /** @enum {string} */
+                            reason: "no_servable_item";
+                        } | null;
                         question: {
                             assessment: {
                                 evaluation_group_id: string;
+                                held_exit?: {
+                                    continue_url: string;
+                                    end_url: string;
+                                    issuance_id: string;
+                                } | null;
                                 idempotency_key: string;
                                 issuance_id: string;
                                 pending_run: {
@@ -21606,6 +21923,9 @@ export interface operations {
                                             kind: "figure" | "passage" | "table" | "audio" | "video" | "pdf" | "plaintext";
                                             material_id: string;
                                         }[];
+                                        presentation?: {
+                                            [key: string]: unknown;
+                                        };
                                         response_requirements?: {
                                             evidence_unit_ids: string[];
                                             slot_id: string;
@@ -21946,7 +22266,7 @@ export interface operations {
                                         submitted_at: string;
                                     }[];
                                     /** @enum {string|null} */
-                                    unavailable_reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | "no_input_renderer" | null;
+                                    unavailable_reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | "no_input_renderer" | "invalid_presentation" | null;
                                 };
                                 submission_id: string;
                             };
@@ -21979,7 +22299,7 @@ export interface operations {
                                 issues: {
                                     /** @enum {string} */
                                     code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "[redacted]") | number)[];
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
                                     path_truncated: boolean;
                                 }[];
                                 issues_truncated: boolean;
@@ -22016,7 +22336,7 @@ export interface operations {
                                 issues: {
                                     /** @enum {string} */
                                     code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "[redacted]") | number)[];
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
                                     path_truncated: boolean;
                                 }[];
                                 issues_truncated: boolean;
@@ -22041,7 +22361,7 @@ export interface operations {
                                 issues: {
                                     /** @enum {string} */
                                     code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "[redacted]") | number)[];
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
                                     path_truncated: boolean;
                                 }[];
                                 issues_truncated: boolean;
@@ -22058,6 +22378,12 @@ export interface operations {
                             state: "unknown";
                             subject_id: string | null;
                         })[];
+                        unresolved_items?: {
+                            issuance_id: string;
+                            question_id: string;
+                            /** @enum {string} */
+                            reason: "held_released" | "awaiting_evaluation" | "unanswered";
+                        }[];
                     };
                 };
             };
@@ -22208,7 +22534,7 @@ export interface operations {
                                 issues: {
                                     /** @enum {string} */
                                     code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "[redacted]") | number)[];
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
                                     path_truncated: boolean;
                                 }[];
                                 issues_truncated: boolean;
@@ -22245,7 +22571,7 @@ export interface operations {
                                 issues: {
                                     /** @enum {string} */
                                     code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "[redacted]") | number)[];
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
                                     path_truncated: boolean;
                                 }[];
                                 issues_truncated: boolean;
@@ -22270,7 +22596,7 @@ export interface operations {
                                 issues: {
                                     /** @enum {string} */
                                     code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "[redacted]") | number)[];
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
                                     path_truncated: boolean;
                                 }[];
                                 issues_truncated: boolean;
@@ -22291,6 +22617,12 @@ export interface operations {
                         status: "started" | "completed" | "abandoned";
                         /** @enum {string} */
                         type: "placement";
+                        unresolved_items?: {
+                            issuance_id: string;
+                            question_id: string;
+                            /** @enum {string} */
+                            reason: "held_released" | "awaiting_evaluation" | "unanswered";
+                        }[];
                         /** Format: date-time */
                         updated_at: string;
                     };
@@ -22430,6 +22762,910 @@ export interface operations {
                         status: "started" | "completed" | "abandoned";
                         /** @enum {string} */
                         type: "placement";
+                        unresolved_items?: {
+                            issuance_id: string;
+                            question_id: string;
+                            /** @enum {string} */
+                            reason: "held_released" | "awaiting_evaluation" | "unanswered";
+                        }[];
+                    };
+                };
+            };
+            /** @description Malformed request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description State or version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Semantic validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Rate limited */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    createPlacementHeldRelease: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    issuance_id: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @enum {boolean} */
+                        released: true;
+                        replayed: boolean;
+                        selection: {
+                            answeredCount: number;
+                            /** @enum {boolean} */
+                            done: true;
+                            /** @enum {string} */
+                            reason: "cap" | "se_converged";
+                            starterSupply?: ({
+                                /** @enum {string|null} */
+                                claim_id: null;
+                                /** @enum {string|null} */
+                                failure_reason: null;
+                                goal_id: string | null;
+                                /** @enum {string} */
+                                next_action: "provide_goal" | "source_questions";
+                                semantic_goal_revision_id: string | null;
+                                session_id: string;
+                                /** @enum {string} */
+                                state: "absent";
+                                subject_id: string | null;
+                            } | {
+                                claim_id: string;
+                                failure_reason: ({
+                                    /** @enum {string} */
+                                    code: "schema_invalid";
+                                    issue_count: number;
+                                    issues: {
+                                        /** @enum {string} */
+                                        code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
+                                        path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
+                                        path_truncated: boolean;
+                                    }[];
+                                    issues_truncated: boolean;
+                                } | {
+                                    /** @enum {string} */
+                                    code: "json_invalid" | "json_object_missing" | "underfilled" | "verification_timeout" | "interrupted" | "cost_unknown" | "budget_exhausted" | "delivery_lost" | "authority_unknown" | "unknown";
+                                }) | null;
+                                goal_id: string;
+                                /** @enum {string} */
+                                next_action: "wait_for_supply";
+                                semantic_goal_revision_id: string;
+                                session_id: string;
+                                /** @enum {string} */
+                                state: "pending";
+                                subject_id: string;
+                            } | {
+                                claim_id: string;
+                                /** @enum {string|null} */
+                                failure_reason: null;
+                                goal_id: string;
+                                /** @enum {string} */
+                                next_action: "continue_placement";
+                                semantic_goal_revision_id: string;
+                                session_id: string;
+                                /** @enum {string} */
+                                state: "satisfied";
+                                subject_id: string;
+                            } | {
+                                claim_id: string;
+                                failure_reason: {
+                                    /** @enum {string} */
+                                    code: "schema_invalid";
+                                    issue_count: number;
+                                    issues: {
+                                        /** @enum {string} */
+                                        code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
+                                        path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
+                                        path_truncated: boolean;
+                                    }[];
+                                    issues_truncated: boolean;
+                                } | {
+                                    /** @enum {string} */
+                                    code: "json_invalid" | "json_object_missing" | "underfilled" | "verification_timeout" | "interrupted" | "cost_unknown" | "budget_exhausted" | "delivery_lost" | "authority_unknown" | "unknown";
+                                };
+                                goal_id: string;
+                                /** @enum {string} */
+                                next_action: "review_supply_failure";
+                                semantic_goal_revision_id: string;
+                                session_id: string;
+                                /** @enum {string} */
+                                state: "exhausted";
+                                subject_id: string;
+                            } | {
+                                claim_id: string | null;
+                                failure_reason: {
+                                    /** @enum {string} */
+                                    code: "schema_invalid";
+                                    issue_count: number;
+                                    issues: {
+                                        /** @enum {string} */
+                                        code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
+                                        path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
+                                        path_truncated: boolean;
+                                    }[];
+                                    issues_truncated: boolean;
+                                } | {
+                                    /** @enum {string} */
+                                    code: "json_invalid" | "json_object_missing" | "underfilled" | "verification_timeout" | "interrupted" | "cost_unknown" | "budget_exhausted" | "delivery_lost" | "authority_unknown" | "unknown";
+                                };
+                                goal_id: string | null;
+                                /** @enum {string} */
+                                next_action: "resolve_unknown_outcome";
+                                semantic_goal_revision_id: string | null;
+                                session_id: string;
+                                /** @enum {string} */
+                                state: "unknown";
+                                subject_id: string | null;
+                            })[];
+                            unresolved_items?: {
+                                issuance_id: string;
+                                question_id: string;
+                                /** @enum {string} */
+                                reason: "held_released" | "awaiting_evaluation" | "unanswered";
+                            }[];
+                        } | {
+                            answeredCount: number;
+                            /** @enum {boolean} */
+                            done: false;
+                            no_item?: {
+                                options: ("recheck" | "end")[];
+                                preparing_subjects: string[];
+                                /** @enum {string} */
+                                reason: "no_servable_item";
+                            } | null;
+                            question: {
+                                assessment: {
+                                    evaluation_group_id: string;
+                                    held_exit?: {
+                                        continue_url: string;
+                                        end_url: string;
+                                        issuance_id: string;
+                                    } | null;
+                                    idempotency_key: string;
+                                    issuance_id: string;
+                                    pending_run: {
+                                        poll_url: string;
+                                        run_id: string;
+                                    } | null;
+                                    /** @enum {string} */
+                                    phase: "answering" | "retry" | "pending" | "held";
+                                    state: {
+                                        admission_generation_observed: number | null;
+                                        draft: {
+                                            evaluation_group_ref: string | null;
+                                            group_evidence: {
+                                                evidence: {
+                                                    asset: {
+                                                        asset_id: string;
+                                                        digest: string;
+                                                    };
+                                                    bytes: number;
+                                                    evidence_id: string;
+                                                    /** @enum {string} */
+                                                    kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                                    mime_type: string;
+                                                    /** Format: date-time */
+                                                    uploaded_at: string;
+                                                };
+                                                target: {
+                                                    /** @enum {string} */
+                                                    scope: "all_units";
+                                                } | {
+                                                    /** @enum {string} */
+                                                    scope: "units";
+                                                    scoring_unit_ids: string[];
+                                                };
+                                            }[];
+                                            response_set: {
+                                                /** @default [] */
+                                                entries: ({
+                                                    /** @enum {string} */
+                                                    kind: "choice";
+                                                    /** @default [] */
+                                                    option_ids: string[];
+                                                    self_confidence?: number;
+                                                    slot_id: string;
+                                                } | {
+                                                    /** @enum {string} */
+                                                    kind: "text";
+                                                    self_confidence?: number;
+                                                    slot_id: string;
+                                                    text_md: string;
+                                                } | {
+                                                    /** @enum {string} */
+                                                    kind: "numeric";
+                                                    raw_input?: string;
+                                                    self_confidence?: number;
+                                                    slot_id: string;
+                                                    value: number | null;
+                                                } | {
+                                                    /** @enum {string} */
+                                                    kind: "formula";
+                                                    latex: string;
+                                                    self_confidence?: number;
+                                                    slot_id: string;
+                                                } | {
+                                                    /** @enum {string} */
+                                                    kind: "matching";
+                                                    /** @default [] */
+                                                    pairs: {
+                                                        item_id: string;
+                                                        option_id: string;
+                                                    }[];
+                                                    self_confidence?: number;
+                                                    slot_id: string;
+                                                } | {
+                                                    /** @default [] */
+                                                    item_order: string[];
+                                                    /** @enum {string} */
+                                                    kind: "ordering";
+                                                    self_confidence?: number;
+                                                    slot_id: string;
+                                                } | {
+                                                    /** @default [] */
+                                                    evidence: {
+                                                        asset: {
+                                                            asset_id: string;
+                                                            digest: string;
+                                                        };
+                                                        bytes: number;
+                                                        evidence_id: string;
+                                                        /** @enum {string} */
+                                                        kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                                        mime_type: string;
+                                                        /** Format: date-time */
+                                                        uploaded_at: string;
+                                                    }[];
+                                                    /** @enum {string} */
+                                                    kind: "open";
+                                                    self_confidence?: number;
+                                                    slot_id: string;
+                                                    /** @default  */
+                                                    text_md: string;
+                                                } | {
+                                                    /** @enum {string} */
+                                                    kind: "sentence_breaks";
+                                                    /** @default [] */
+                                                    positions: number[];
+                                                    self_confidence?: number;
+                                                    slot_id: string;
+                                                } | {
+                                                    /** @default [] */
+                                                    item_ids: string[];
+                                                    /** @enum {string} */
+                                                    kind: "select";
+                                                    self_confidence?: number;
+                                                    slot_id: string;
+                                                    /** @enum {string} */
+                                                    state: "answered" | "blank" | "unknown";
+                                                } | {
+                                                    /** @enum {string} */
+                                                    kind: "blank";
+                                                    self_confidence?: number;
+                                                    slot_id: string;
+                                                    /** @enum {string} */
+                                                    state: "answered" | "blank" | "unknown";
+                                                    /** @default  */
+                                                    text: string;
+                                                })[];
+                                            };
+                                            save_epoch: number;
+                                            updated_at: string;
+                                        } | null;
+                                        issuance: {
+                                            binding: {
+                                                /** @default [] */
+                                                material_bindings: {
+                                                    asset_digest: string;
+                                                    material_id: string;
+                                                }[];
+                                                /** @default [] */
+                                                option_order: {
+                                                    option_ids: string[];
+                                                    slot_id: string;
+                                                }[];
+                                                part_ids: string[];
+                                                revision_id: string;
+                                            };
+                                            claim: {
+                                                claimed_by_ref: string | null;
+                                                /** @enum {string} */
+                                                policy: "one_time" | "unbounded";
+                                                /** @enum {string} */
+                                                status: "unclaimed" | "claimed" | "released";
+                                            };
+                                            issuance_id: string;
+                                            /** Format: date-time */
+                                            issued_at: string;
+                                        } | null;
+                                        practice_dto: {
+                                            faces: {
+                                                material_ids: string[];
+                                                part_id: string;
+                                                prompt_md: string;
+                                                question_no?: string;
+                                            }[];
+                                            issuance_id: string;
+                                            /** Format: date-time */
+                                            issued_at: string;
+                                            materials: {
+                                                alt_text?: string;
+                                                asset_id: string;
+                                                caption?: string;
+                                                content_md?: string;
+                                                /** @enum {string} */
+                                                kind: "figure" | "passage" | "table" | "audio" | "video" | "pdf" | "plaintext";
+                                                material_id: string;
+                                            }[];
+                                            presentation?: {
+                                                [key: string]: unknown;
+                                            };
+                                            response_requirements?: {
+                                                evidence_unit_ids: string[];
+                                                slot_id: string;
+                                            }[];
+                                            response_spec: {
+                                                slots: ({
+                                                    /** @enum {string} */
+                                                    kind: "single_choice";
+                                                    options: {
+                                                        label: string;
+                                                        option_id: string;
+                                                        text: string;
+                                                    }[];
+                                                    part_id: string;
+                                                    placement?: {
+                                                        col?: number;
+                                                        label?: string;
+                                                        row?: number;
+                                                    };
+                                                    slot_id: string;
+                                                } | {
+                                                    /** @enum {string} */
+                                                    kind: "multi_choice";
+                                                    max_select: number;
+                                                    min_select: number;
+                                                    options: {
+                                                        label: string;
+                                                        option_id: string;
+                                                        text: string;
+                                                    }[];
+                                                    part_id: string;
+                                                    placement?: {
+                                                        col?: number;
+                                                        label?: string;
+                                                        row?: number;
+                                                    };
+                                                    slot_id: string;
+                                                } | {
+                                                    /** @enum {string} */
+                                                    kind: "text";
+                                                    /** @default false */
+                                                    math_preview: boolean;
+                                                    max_chars?: number;
+                                                    part_id: string;
+                                                    placement?: {
+                                                        col?: number;
+                                                        label?: string;
+                                                        row?: number;
+                                                    };
+                                                    slot_id: string;
+                                                } | {
+                                                    /** @enum {string} */
+                                                    kind: "numeric";
+                                                    part_id: string;
+                                                    placement?: {
+                                                        col?: number;
+                                                        label?: string;
+                                                        row?: number;
+                                                    };
+                                                    precision?: number;
+                                                    slot_id: string;
+                                                    unit_hint?: string;
+                                                } | {
+                                                    /** @enum {string} */
+                                                    kind: "formula";
+                                                    /** @enum {string} */
+                                                    notation: "latex";
+                                                    part_id: string;
+                                                    placement?: {
+                                                        col?: number;
+                                                        label?: string;
+                                                        row?: number;
+                                                    };
+                                                    slot_id: string;
+                                                } | {
+                                                    cells: {
+                                                        col: number;
+                                                        row: number;
+                                                        slot_id: string;
+                                                    }[];
+                                                    column_headers: string[];
+                                                    /** @enum {string} */
+                                                    kind: "table";
+                                                    part_id: string;
+                                                    placement?: {
+                                                        col?: number;
+                                                        label?: string;
+                                                        row?: number;
+                                                    };
+                                                    row_labels: string[];
+                                                    slot_id: string;
+                                                } | {
+                                                    /** @default false */
+                                                    allow_left_unmatched: boolean;
+                                                    has_distractors?: boolean;
+                                                    /** @enum {string} */
+                                                    kind: "matching";
+                                                    left_items: {
+                                                        item_id: string;
+                                                        label: string;
+                                                        text: string;
+                                                    }[];
+                                                    /** @enum {string} */
+                                                    pairing?: "one_to_one" | "many_to_one";
+                                                    part_id: string;
+                                                    placement?: {
+                                                        col?: number;
+                                                        label?: string;
+                                                        row?: number;
+                                                    };
+                                                    right_options: {
+                                                        label: string;
+                                                        option_id: string;
+                                                        text: string;
+                                                    }[];
+                                                    slot_id: string;
+                                                } | {
+                                                    items: {
+                                                        item_id: string;
+                                                        label: string;
+                                                        text: string;
+                                                    }[];
+                                                    /** @enum {string} */
+                                                    kind: "ordering";
+                                                    part_id: string;
+                                                    placement?: {
+                                                        col?: number;
+                                                        label?: string;
+                                                        row?: number;
+                                                    };
+                                                    slot_id: string;
+                                                } | {
+                                                    /** @default [] */
+                                                    accepted_evidence: {
+                                                        allowed_mime_patterns: string[];
+                                                        /** @enum {string} */
+                                                        kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                                        max_bytes: number;
+                                                        requires_security_scan: boolean;
+                                                    }[];
+                                                    /** @default false */
+                                                    evidence_required: boolean;
+                                                    /** @enum {string} */
+                                                    kind: "open_response";
+                                                    max_chars?: number;
+                                                    part_id: string;
+                                                    placement?: {
+                                                        col?: number;
+                                                        label?: string;
+                                                        row?: number;
+                                                    };
+                                                    slot_id: string;
+                                                } | {
+                                                    /** @enum {string} */
+                                                    kind: "sentence_breaks";
+                                                    part_id: string;
+                                                    placement?: {
+                                                        col?: number;
+                                                        label?: string;
+                                                        row?: number;
+                                                    };
+                                                    slot_id: string;
+                                                    text: string;
+                                                } | {
+                                                    at_most_per_coordinate?: {
+                                                        [key: string]: number;
+                                                    };
+                                                    axes?: {
+                                                        [key: string]: {
+                                                            id: string;
+                                                            label_md: string;
+                                                        }[];
+                                                    };
+                                                    items: {
+                                                        coordinates?: {
+                                                            [key: string]: string;
+                                                        };
+                                                        gap_after_codepoint?: number;
+                                                        item_id: string;
+                                                        label_md?: string;
+                                                    }[];
+                                                    /** @enum {string} */
+                                                    kind: "select";
+                                                    part_id: string;
+                                                    /**
+                                                     * @default many
+                                                     * @enum {string}
+                                                     */
+                                                    pick: "one" | "many";
+                                                    placement?: {
+                                                        col?: number;
+                                                        label?: string;
+                                                        row?: number;
+                                                    };
+                                                    slot_id: string;
+                                                    text?: string;
+                                                } | {
+                                                    /**
+                                                     * @default text
+                                                     * @enum {string}
+                                                     */
+                                                    format: "text" | "math";
+                                                    /** @enum {string} */
+                                                    kind: "blank";
+                                                    max_chars?: number;
+                                                    part_id: string;
+                                                    placement?: {
+                                                        col?: number;
+                                                        label?: string;
+                                                        row?: number;
+                                                    };
+                                                    slot_id: string;
+                                                    unit_hint?: string;
+                                                })[];
+                                            };
+                                            revision_id: string;
+                                        } | null;
+                                        submissions: {
+                                            evaluation_group_id: string;
+                                            group_evidence: {
+                                                evidence: {
+                                                    asset: {
+                                                        asset_id: string;
+                                                        digest: string;
+                                                    };
+                                                    bytes: number;
+                                                    evidence_id: string;
+                                                    /** @enum {string} */
+                                                    kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                                    mime_type: string;
+                                                    /** Format: date-time */
+                                                    uploaded_at: string;
+                                                };
+                                                target: {
+                                                    /** @enum {string} */
+                                                    scope: "all_units";
+                                                } | {
+                                                    /** @enum {string} */
+                                                    scope: "units";
+                                                    scoring_unit_ids: string[];
+                                                };
+                                            }[];
+                                            idempotency_key: string;
+                                            response_set: {
+                                                /** @default [] */
+                                                entries: ({
+                                                    /** @enum {string} */
+                                                    kind: "choice";
+                                                    /** @default [] */
+                                                    option_ids: string[];
+                                                    self_confidence?: number;
+                                                    slot_id: string;
+                                                } | {
+                                                    /** @enum {string} */
+                                                    kind: "text";
+                                                    self_confidence?: number;
+                                                    slot_id: string;
+                                                    text_md: string;
+                                                } | {
+                                                    /** @enum {string} */
+                                                    kind: "numeric";
+                                                    raw_input?: string;
+                                                    self_confidence?: number;
+                                                    slot_id: string;
+                                                    value: number | null;
+                                                } | {
+                                                    /** @enum {string} */
+                                                    kind: "formula";
+                                                    latex: string;
+                                                    self_confidence?: number;
+                                                    slot_id: string;
+                                                } | {
+                                                    /** @enum {string} */
+                                                    kind: "matching";
+                                                    /** @default [] */
+                                                    pairs: {
+                                                        item_id: string;
+                                                        option_id: string;
+                                                    }[];
+                                                    self_confidence?: number;
+                                                    slot_id: string;
+                                                } | {
+                                                    /** @default [] */
+                                                    item_order: string[];
+                                                    /** @enum {string} */
+                                                    kind: "ordering";
+                                                    self_confidence?: number;
+                                                    slot_id: string;
+                                                } | {
+                                                    /** @default [] */
+                                                    evidence: {
+                                                        asset: {
+                                                            asset_id: string;
+                                                            digest: string;
+                                                        };
+                                                        bytes: number;
+                                                        evidence_id: string;
+                                                        /** @enum {string} */
+                                                        kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                                        mime_type: string;
+                                                        /** Format: date-time */
+                                                        uploaded_at: string;
+                                                    }[];
+                                                    /** @enum {string} */
+                                                    kind: "open";
+                                                    self_confidence?: number;
+                                                    slot_id: string;
+                                                    /** @default  */
+                                                    text_md: string;
+                                                } | {
+                                                    /** @enum {string} */
+                                                    kind: "sentence_breaks";
+                                                    /** @default [] */
+                                                    positions: number[];
+                                                    self_confidence?: number;
+                                                    slot_id: string;
+                                                } | {
+                                                    /** @default [] */
+                                                    item_ids: string[];
+                                                    /** @enum {string} */
+                                                    kind: "select";
+                                                    self_confidence?: number;
+                                                    slot_id: string;
+                                                    /** @enum {string} */
+                                                    state: "answered" | "blank" | "unknown";
+                                                } | {
+                                                    /** @enum {string} */
+                                                    kind: "blank";
+                                                    self_confidence?: number;
+                                                    slot_id: string;
+                                                    /** @enum {string} */
+                                                    state: "answered" | "blank" | "unknown";
+                                                    /** @default  */
+                                                    text: string;
+                                                })[];
+                                            };
+                                            submission_id: string;
+                                            submitted_at: string;
+                                        }[];
+                                        /** @enum {string|null} */
+                                        unavailable_reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | "no_input_renderer" | "invalid_presentation" | null;
+                                    };
+                                    submission_id: string;
+                                };
+                                questionId: string;
+                                score: number;
+                                /** @enum {string} */
+                                scoreKind: "mfi" | "klp" | "klp_grid";
+                            } | null;
+                            sourcingNeeded: boolean;
+                            starterSupply?: ({
+                                /** @enum {string|null} */
+                                claim_id: null;
+                                /** @enum {string|null} */
+                                failure_reason: null;
+                                goal_id: string | null;
+                                /** @enum {string} */
+                                next_action: "provide_goal" | "source_questions";
+                                semantic_goal_revision_id: string | null;
+                                session_id: string;
+                                /** @enum {string} */
+                                state: "absent";
+                                subject_id: string | null;
+                            } | {
+                                claim_id: string;
+                                failure_reason: ({
+                                    /** @enum {string} */
+                                    code: "schema_invalid";
+                                    issue_count: number;
+                                    issues: {
+                                        /** @enum {string} */
+                                        code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
+                                        path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
+                                        path_truncated: boolean;
+                                    }[];
+                                    issues_truncated: boolean;
+                                } | {
+                                    /** @enum {string} */
+                                    code: "json_invalid" | "json_object_missing" | "underfilled" | "verification_timeout" | "interrupted" | "cost_unknown" | "budget_exhausted" | "delivery_lost" | "authority_unknown" | "unknown";
+                                }) | null;
+                                goal_id: string;
+                                /** @enum {string} */
+                                next_action: "wait_for_supply";
+                                semantic_goal_revision_id: string;
+                                session_id: string;
+                                /** @enum {string} */
+                                state: "pending";
+                                subject_id: string;
+                            } | {
+                                claim_id: string;
+                                /** @enum {string|null} */
+                                failure_reason: null;
+                                goal_id: string;
+                                /** @enum {string} */
+                                next_action: "continue_placement";
+                                semantic_goal_revision_id: string;
+                                session_id: string;
+                                /** @enum {string} */
+                                state: "satisfied";
+                                subject_id: string;
+                            } | {
+                                claim_id: string;
+                                failure_reason: {
+                                    /** @enum {string} */
+                                    code: "schema_invalid";
+                                    issue_count: number;
+                                    issues: {
+                                        /** @enum {string} */
+                                        code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
+                                        path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
+                                        path_truncated: boolean;
+                                    }[];
+                                    issues_truncated: boolean;
+                                } | {
+                                    /** @enum {string} */
+                                    code: "json_invalid" | "json_object_missing" | "underfilled" | "verification_timeout" | "interrupted" | "cost_unknown" | "budget_exhausted" | "delivery_lost" | "authority_unknown" | "unknown";
+                                };
+                                goal_id: string;
+                                /** @enum {string} */
+                                next_action: "review_supply_failure";
+                                semantic_goal_revision_id: string;
+                                session_id: string;
+                                /** @enum {string} */
+                                state: "exhausted";
+                                subject_id: string;
+                            } | {
+                                claim_id: string | null;
+                                failure_reason: {
+                                    /** @enum {string} */
+                                    code: "schema_invalid";
+                                    issue_count: number;
+                                    issues: {
+                                        /** @enum {string} */
+                                        code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
+                                        path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
+                                        path_truncated: boolean;
+                                    }[];
+                                    issues_truncated: boolean;
+                                } | {
+                                    /** @enum {string} */
+                                    code: "json_invalid" | "json_object_missing" | "underfilled" | "verification_timeout" | "interrupted" | "cost_unknown" | "budget_exhausted" | "delivery_lost" | "authority_unknown" | "unknown";
+                                };
+                                goal_id: string | null;
+                                /** @enum {string} */
+                                next_action: "resolve_unknown_outcome";
+                                semantic_goal_revision_id: string | null;
+                                session_id: string;
+                                /** @enum {string} */
+                                state: "unknown";
+                                subject_id: string | null;
+                            })[];
+                            unresolved_items?: {
+                                issuance_id: string;
+                                question_id: string;
+                                /** @enum {string} */
+                                reason: "held_released" | "awaiting_evaluation" | "unanswered";
+                            }[];
+                        };
                     };
                 };
             };
@@ -22586,7 +23822,7 @@ export interface operations {
                                 issues: {
                                     /** @enum {string} */
                                     code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "[redacted]") | number)[];
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
                                     path_truncated: boolean;
                                 }[];
                                 issues_truncated: boolean;
@@ -22623,7 +23859,7 @@ export interface operations {
                                 issues: {
                                     /** @enum {string} */
                                     code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "[redacted]") | number)[];
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
                                     path_truncated: boolean;
                                 }[];
                                 issues_truncated: boolean;
@@ -22648,7 +23884,7 @@ export interface operations {
                                 issues: {
                                     /** @enum {string} */
                                     code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "[redacted]") | number)[];
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
                                     path_truncated: boolean;
                                 }[];
                                 issues_truncated: boolean;
@@ -22665,13 +23901,30 @@ export interface operations {
                             state: "unknown";
                             subject_id: string | null;
                         })[];
+                        unresolved_items?: {
+                            issuance_id: string;
+                            question_id: string;
+                            /** @enum {string} */
+                            reason: "held_released" | "awaiting_evaluation" | "unanswered";
+                        }[];
                     } | {
                         answeredCount: number;
                         /** @enum {boolean} */
                         done: false;
+                        no_item?: {
+                            options: ("recheck" | "end")[];
+                            preparing_subjects: string[];
+                            /** @enum {string} */
+                            reason: "no_servable_item";
+                        } | null;
                         question: {
                             assessment: {
                                 evaluation_group_id: string;
+                                held_exit?: {
+                                    continue_url: string;
+                                    end_url: string;
+                                    issuance_id: string;
+                                } | null;
                                 idempotency_key: string;
                                 issuance_id: string;
                                 pending_run: {
@@ -22848,6 +24101,9 @@ export interface operations {
                                             kind: "figure" | "passage" | "table" | "audio" | "video" | "pdf" | "plaintext";
                                             material_id: string;
                                         }[];
+                                        presentation?: {
+                                            [key: string]: unknown;
+                                        };
                                         response_requirements?: {
                                             evidence_unit_ids: string[];
                                             slot_id: string;
@@ -23188,7 +24444,7 @@ export interface operations {
                                         submitted_at: string;
                                     }[];
                                     /** @enum {string|null} */
-                                    unavailable_reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | "no_input_renderer" | null;
+                                    unavailable_reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | "no_input_renderer" | "invalid_presentation" | null;
                                 };
                                 submission_id: string;
                             };
@@ -23220,7 +24476,7 @@ export interface operations {
                                 issues: {
                                     /** @enum {string} */
                                     code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "[redacted]") | number)[];
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
                                     path_truncated: boolean;
                                 }[];
                                 issues_truncated: boolean;
@@ -23257,7 +24513,7 @@ export interface operations {
                                 issues: {
                                     /** @enum {string} */
                                     code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "[redacted]") | number)[];
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
                                     path_truncated: boolean;
                                 }[];
                                 issues_truncated: boolean;
@@ -23282,7 +24538,7 @@ export interface operations {
                                 issues: {
                                     /** @enum {string} */
                                     code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "[redacted]") | number)[];
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
                                     path_truncated: boolean;
                                 }[];
                                 issues_truncated: boolean;
@@ -23299,6 +24555,12 @@ export interface operations {
                             state: "unknown";
                             subject_id: string | null;
                         })[];
+                        unresolved_items?: {
+                            issuance_id: string;
+                            question_id: string;
+                            /** @enum {string} */
+                            reason: "held_released" | "awaiting_evaluation" | "unanswered";
+                        }[];
                     };
                 };
             };
@@ -23434,6 +24696,12 @@ export interface operations {
                         ok: true;
                         /** @enum {string} */
                         status: "completed" | "abandoned";
+                        unresolved_items?: {
+                            issuance_id: string;
+                            question_id: string;
+                            /** @enum {string} */
+                            reason: "held_released" | "awaiting_evaluation" | "unanswered";
+                        }[];
                     };
                 };
             };
@@ -23590,7 +24858,7 @@ export interface operations {
                                 issues: {
                                     /** @enum {string} */
                                     code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "[redacted]") | number)[];
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
                                     path_truncated: boolean;
                                 }[];
                                 issues_truncated: boolean;
@@ -23627,7 +24895,7 @@ export interface operations {
                                 issues: {
                                     /** @enum {string} */
                                     code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "[redacted]") | number)[];
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
                                     path_truncated: boolean;
                                 }[];
                                 issues_truncated: boolean;
@@ -23652,7 +24920,7 @@ export interface operations {
                                 issues: {
                                     /** @enum {string} */
                                     code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "[redacted]") | number)[];
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
                                     path_truncated: boolean;
                                 }[];
                                 issues_truncated: boolean;
@@ -23669,13 +24937,30 @@ export interface operations {
                             state: "unknown";
                             subject_id: string | null;
                         })[];
+                        unresolved_items?: {
+                            issuance_id: string;
+                            question_id: string;
+                            /** @enum {string} */
+                            reason: "held_released" | "awaiting_evaluation" | "unanswered";
+                        }[];
                     } | {
                         answeredCount: number;
                         /** @enum {boolean} */
                         done: false;
+                        no_item?: {
+                            options: ("recheck" | "end")[];
+                            preparing_subjects: string[];
+                            /** @enum {string} */
+                            reason: "no_servable_item";
+                        } | null;
                         question: {
                             assessment: {
                                 evaluation_group_id: string;
+                                held_exit?: {
+                                    continue_url: string;
+                                    end_url: string;
+                                    issuance_id: string;
+                                } | null;
                                 idempotency_key: string;
                                 issuance_id: string;
                                 pending_run: {
@@ -23852,6 +25137,9 @@ export interface operations {
                                             kind: "figure" | "passage" | "table" | "audio" | "video" | "pdf" | "plaintext";
                                             material_id: string;
                                         }[];
+                                        presentation?: {
+                                            [key: string]: unknown;
+                                        };
                                         response_requirements?: {
                                             evidence_unit_ids: string[];
                                             slot_id: string;
@@ -24192,7 +25480,7 @@ export interface operations {
                                         submitted_at: string;
                                     }[];
                                     /** @enum {string|null} */
-                                    unavailable_reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | "no_input_renderer" | null;
+                                    unavailable_reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | "no_input_renderer" | "invalid_presentation" | null;
                                 };
                                 submission_id: string;
                             };
@@ -24224,7 +25512,7 @@ export interface operations {
                                 issues: {
                                     /** @enum {string} */
                                     code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "[redacted]") | number)[];
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
                                     path_truncated: boolean;
                                 }[];
                                 issues_truncated: boolean;
@@ -24261,7 +25549,7 @@ export interface operations {
                                 issues: {
                                     /** @enum {string} */
                                     code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "[redacted]") | number)[];
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
                                     path_truncated: boolean;
                                 }[];
                                 issues_truncated: boolean;
@@ -24286,7 +25574,7 @@ export interface operations {
                                 issues: {
                                     /** @enum {string} */
                                     code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "[redacted]") | number)[];
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
                                     path_truncated: boolean;
                                 }[];
                                 issues_truncated: boolean;
@@ -24303,6 +25591,12 @@ export interface operations {
                             state: "unknown";
                             subject_id: string | null;
                         })[];
+                        unresolved_items?: {
+                            issuance_id: string;
+                            question_id: string;
+                            /** @enum {string} */
+                            reason: "held_released" | "awaiting_evaluation" | "unanswered";
+                        }[];
                     };
                 };
             };
@@ -24640,9 +25934,20 @@ export interface operations {
                     "application/json": {
                         answeredCount: number;
                         knowledgeIds: string[];
+                        no_item?: {
+                            options: ("recheck" | "end")[];
+                            preparing_subjects: string[];
+                            /** @enum {string} */
+                            reason: "no_servable_item";
+                        } | null;
                         question: {
                             assessment: {
                                 evaluation_group_id: string;
+                                held_exit?: {
+                                    continue_url: string;
+                                    end_url: string;
+                                    issuance_id: string;
+                                } | null;
                                 idempotency_key: string;
                                 issuance_id: string;
                                 pending_run: {
@@ -24819,6 +26124,9 @@ export interface operations {
                                             kind: "figure" | "passage" | "table" | "audio" | "video" | "pdf" | "plaintext";
                                             material_id: string;
                                         }[];
+                                        presentation?: {
+                                            [key: string]: unknown;
+                                        };
                                         response_requirements?: {
                                             evidence_unit_ids: string[];
                                             slot_id: string;
@@ -25159,7 +26467,7 @@ export interface operations {
                                         submitted_at: string;
                                     }[];
                                     /** @enum {string|null} */
-                                    unavailable_reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | "no_input_renderer" | null;
+                                    unavailable_reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | "no_input_renderer" | "invalid_presentation" | null;
                                 };
                                 submission_id: string;
                             };
@@ -25192,7 +26500,7 @@ export interface operations {
                                 issues: {
                                     /** @enum {string} */
                                     code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "[redacted]") | number)[];
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
                                     path_truncated: boolean;
                                 }[];
                                 issues_truncated: boolean;
@@ -25229,7 +26537,7 @@ export interface operations {
                                 issues: {
                                     /** @enum {string} */
                                     code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "[redacted]") | number)[];
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
                                     path_truncated: boolean;
                                 }[];
                                 issues_truncated: boolean;
@@ -25254,7 +26562,7 @@ export interface operations {
                                 issues: {
                                     /** @enum {string} */
                                     code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "[redacted]") | number)[];
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
                                     path_truncated: boolean;
                                 }[];
                                 issues_truncated: boolean;
@@ -25271,6 +26579,12 @@ export interface operations {
                             state: "unknown";
                             subject_id: string | null;
                         })[];
+                        unresolved_items?: {
+                            issuance_id: string;
+                            question_id: string;
+                            /** @enum {string} */
+                            reason: "held_released" | "awaiting_evaluation" | "unanswered";
+                        }[];
                     };
                 };
             };
@@ -25747,6 +27061,9 @@ export interface operations {
                                             kind: "figure" | "passage" | "table" | "audio" | "video" | "pdf" | "plaintext";
                                             material_id: string;
                                         }[];
+                                        presentation?: {
+                                            [key: string]: unknown;
+                                        };
                                         response_requirements?: {
                                             evidence_unit_ids: string[];
                                             slot_id: string;
@@ -26122,7 +27439,7 @@ export interface operations {
                             part_ref: string | null;
                             question_id: string;
                             /** @enum {string} */
-                            reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | "no_input_renderer";
+                            reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | "no_input_renderer" | "invalid_presentation";
                         }[];
                     };
                 };
@@ -32430,6 +33747,35 @@ export interface operations {
                     "application/json": {
                         hint_request_id: string;
                         text_md: string;
+                    } | {
+                        elapsed_ms: number;
+                        help: {
+                            disclosure_md?: string;
+                            /** @enum {boolean} */
+                            generated_on_demand: false;
+                            /** @enum {string} */
+                            kind: "reference" | "deterministic_next_step";
+                            /** @enum {string} */
+                            source: "frozen_revision_solution" | "frozen_scoring_basis" | "legacy_reference_md" | "deterministic";
+                            text_md: string;
+                        };
+                        hint_request_id: string;
+                        /** @enum {string} */
+                        reason: "timeout" | "provider_error" | "parse_failed" | "media_unavailable" | "unknown";
+                        reference_available: boolean;
+                        reference_revealed: boolean;
+                        /** @enum {string} */
+                        status: "fallback";
+                        text_md: string;
+                    } | {
+                        elapsed_ms: number;
+                        hint_request_id: string;
+                        options: ("retry" | "skip")[];
+                        /** @enum {string} */
+                        reason: "timeout" | "provider_error" | "parse_failed" | "media_unavailable" | "unknown";
+                        /** @enum {string} */
+                        status: "unavailable";
+                        text_md: string;
                     };
                 };
             };
@@ -32519,20 +33865,6 @@ export interface operations {
             };
             /** @description Internal error */
             500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Internal error */
-            502: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -37417,6 +38749,35 @@ export interface operations {
                     "application/json": {
                         hint_request_id: string;
                         text_md: string;
+                    } | {
+                        elapsed_ms: number;
+                        help: {
+                            disclosure_md?: string;
+                            /** @enum {boolean} */
+                            generated_on_demand: false;
+                            /** @enum {string} */
+                            kind: "reference" | "deterministic_next_step";
+                            /** @enum {string} */
+                            source: "frozen_revision_solution" | "frozen_scoring_basis" | "legacy_reference_md" | "deterministic";
+                            text_md: string;
+                        };
+                        hint_request_id: string;
+                        /** @enum {string} */
+                        reason: "timeout" | "provider_error" | "parse_failed" | "media_unavailable" | "unknown";
+                        reference_available: boolean;
+                        reference_revealed: boolean;
+                        /** @enum {string} */
+                        status: "fallback";
+                        text_md: string;
+                    } | {
+                        elapsed_ms: number;
+                        hint_request_id: string;
+                        options: ("retry" | "skip")[];
+                        /** @enum {string} */
+                        reason: "timeout" | "provider_error" | "parse_failed" | "media_unavailable" | "unknown";
+                        /** @enum {string} */
+                        status: "unavailable";
+                        text_md: string;
                     };
                 };
             };
@@ -37506,20 +38867,6 @@ export interface operations {
             };
             /** @description Internal error */
             500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Internal error */
-            502: {
                 headers: {
                     [name: string]: unknown;
                 };

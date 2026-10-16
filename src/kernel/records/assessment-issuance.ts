@@ -41,10 +41,15 @@ import { and, eq, inArray, sql } from 'drizzle-orm';
 // jsonb 会重排对象键序 —— 绑定载荷比对必须用 canonical 串化，否则每次重试
 // 都被误判成 issuance_id_conflict（同 judgment.ts 的幂等口径）。
 import { stableStringify } from '@/core/migration/canonical';
-import type { PracticeIssuanceDtoT, PublishedQuestionRevisionT } from '@/core/schema/assessment';
+import type {
+  PracticeIssuanceDtoT,
+  PresentationT,
+  PublishedQuestionRevisionT,
+} from '@/core/schema/assessment';
 import {
   type AssessmentIssuanceT,
   type IssuanceBindingT,
+  Presentation,
   PublishedQuestionRevision,
   decideAutomaticServing,
   deriveIssuanceBinding,
@@ -107,6 +112,19 @@ export function revisionRowToContract(row: RevisionRow): PublishedQuestionRevisi
     response_spec: row.response_spec,
     scoring_basis: row.scoring_basis,
     execution_plan: row.execution_plan,
+    // YUK-1497（review R1）—— 冻结展示层随行映射。非空列必须过
+    // Presentation.safeParse：通过 ⇒ 带 zod 解析后的规范形；失败 ⇒ 原样
+    // 透传（绝不丢列 —— 丢列会让坏展示层静默降级为逐槽渲染，fail-open）。
+    // 消费面 fail-closed：PublishedQuestionRevision.safeParse 拒收整版；
+    // decideAutomaticServing 形状门以 invalid_presentation 拒绝发题。
+    ...(row.presentation != null
+      ? {
+          presentation: (() => {
+            const shaped = Presentation.safeParse(row.presentation);
+            return shaped.success ? shaped.data : (row.presentation as PresentationT);
+          })(),
+        }
+      : {}),
     published_at: row.published_at.toISOString(),
     supersedes_revision_id: row.supersedes_revision_id,
   };
@@ -187,11 +205,19 @@ export async function readAutomaticIssuanceServingDecisions(
       const parsed = PublishedQuestionRevision.safeParse(revisionRowToContract(row));
       const decision: AutomaticServingDecision = parsed.success
         ? decideAutomaticServing(parsed.data, issuance.part_ids, admission)
-        : {
-            kind: 'unavailable',
-            reason: 'invalid_scoring_contract',
-            detail: 'invalid frozen revision',
-          };
+        : row.presentation != null && !Presentation.safeParse(row.presentation).success
+          ? {
+              // review R1 —— 坏展示层不是泛化的 scoring contract 问题：typed
+              // 原因用 invalid_presentation（与 decideAutomaticServing 形状门同枚举）。
+              kind: 'unavailable',
+              reason: 'invalid_presentation',
+              detail: 'malformed frozen presentation',
+            }
+          : {
+              kind: 'unavailable',
+              reason: 'invalid_scoring_contract',
+              detail: 'invalid frozen revision',
+            };
       return [issuance.issuance_id, decision];
     }),
   );

@@ -2,6 +2,7 @@ import { unit as parseUnit } from 'mathjs';
 import { EvaluationContractError, projectIssuedScoringBasis } from './evaluation';
 import { validateExecutionPlan } from './execution';
 import { isPublicSharedMaterial } from './materials';
+import { Presentation, validatePresentation } from './presentation';
 import type { ResponseSlotT } from './response';
 import type { PublishedQuestionRevisionT } from './revision';
 import { type ScoringUnitT, validateScoringBasis } from './scoring';
@@ -19,6 +20,7 @@ export const SERVING_UNAVAILABLE_REASONS = [
   'unsupported_deterministic_input',
   'missing_referenced_figure',
   'no_input_renderer',
+  'invalid_presentation',
 ] as const;
 export type ServingUnavailableReason = (typeof SERVING_UNAVAILABLE_REASONS)[number];
 
@@ -242,6 +244,39 @@ export function decideAutomaticServing(
       reason: 'invalid_scoring_contract',
       detail: 'a selected answer slot has no scoring unit',
     };
+  }
+  // YUK-1497 —— 冻结展示层对发出范围校验失败 ⇒ 不可出（发布 barrier 已拒
+  // 全量不合格，这里抓剪枝后缺口（如自定义块跨发出/未发出 part）与被绕过
+  // barrier 写入的行）。无展示层的旧 revision 不受影响。
+  if (revision.presentation != null) {
+    // 形状门先行（review R1）：行读面（revisionRowToContract）对解析失败的
+    // 展示层原样透传而非丢列（丢列 = 静默降级为逐槽渲染的 fail-open）；
+    // 这里以 invalid_presentation 拒绝，绝不带着坏展示层发题。
+    const shaped = Presentation.safeParse(revision.presentation);
+    if (!shaped.success) {
+      return {
+        kind: 'unavailable',
+        reason: 'invalid_presentation',
+        detail: `malformed presentation: ${shaped.error.issues
+          .slice(0, 5)
+          .map((issue) => `${issue.path.join('.')}:${issue.message}`)
+          .join('; ')}`,
+      };
+    }
+    const presentationIssues = validatePresentation(
+      shaped.data,
+      revision.structure,
+      revision.response_spec,
+      revision.scoring_basis,
+      selectedPartIds,
+    );
+    if (presentationIssues.length > 0) {
+      return {
+        kind: 'unavailable',
+        reason: 'invalid_presentation',
+        detail: presentationIssues.map((issue) => `${issue.code}: ${issue.detail}`).join('; '),
+      };
+    }
   }
   for (const unit of basis.units) {
     const executor = revision.execution_plan.assignments.find((assignment) =>

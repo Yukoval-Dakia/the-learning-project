@@ -70,6 +70,11 @@ function srcMeta(source: string): SrcMeta {
   return meta;
 }
 
+/** YUK-1473 — the `data-morph` key a stream row's title shares with the question page's title (M4). */
+export function practiceMorphKey(itemId: string): string {
+  return `pf-item-${itemId}`;
+}
+
 /** The source's plain label (e.g. for the practice page's eyebrow). */
 export function practiceSourceLabel(source: string): string {
   return srcMeta(source).label;
@@ -212,11 +217,13 @@ export function PfStream({
         (it.item_kind === 'paper' ? it.paper_title : it.knowledge_name) ?? srcMeta(it.source).label;
       const verdict = it.verdict ? STREAM_VERDICT_META[it.verdict] : null;
       return (
-        <div key={it.id} className={cls}>
+        <div key={it.id} className={cls} data-morph-row="">
           <span className="pf-node" />
           <div className="pf-done">
             <PfSrcBadge source={it.source} />
-            <span className="pf-done-kp">{doneAnchor}</span>
+            <span className="pf-done-kp" data-morph={practiceMorphKey(it.id)}>
+              {doneAnchor}
+            </span>
             {verdict && (
               <span className={`badge tone-${it.verdict}`}>
                 <LoomIcon name={verdict.icon} size={11} />
@@ -236,7 +243,12 @@ export function PfStream({
         <div className="pf-item-top">
           <PfSrcBadge source={it.source} />
           {/* 散题卡知识点锚点（设计 pface.css L52 pf-item-kp，15px/600）。 */}
-          {it.item_kind === 'question' && anchor && <span className="pf-item-kp">{anchor}</span>}
+          {it.item_kind === 'question' && anchor && (
+            // YUK-1473 — the shared title (M4): it grows into the question page's title and back.
+            <span className="pf-item-kp" data-morph={practiceMorphKey(it.id)}>
+              {anchor}
+            </span>
+          )}
           <span className="pf-item-kind mono">
             <span className="src-q">{it.item_kind === 'paper' ? '整卷练习' : '单题练习'}</span>
           </span>
@@ -302,7 +314,7 @@ export function PfStream({
     );
 
     return (
-      <div key={it.id} className={cls}>
+      <div key={it.id} className={cls} data-morph-row="">
         <span className="pf-node" />
         {it.item_kind === 'paper' ? <div className="pf-item-stack">{inner}</div> : inner}
       </div>

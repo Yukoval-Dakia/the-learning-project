@@ -576,12 +576,17 @@ export const PROVIDER_LANES = [
         path: 'src/capabilities/ingestion/jobs/tencent_ocr_extract.ts',
         imports: ['@/capabilities/ingestion/server/glm_ocr'],
       },
+      {
+        path: 'src/capabilities/ingestion/server/tools/media-tools.ts',
+        imports: ['@/capabilities/ingestion/server/glm_ocr'],
+      },
     ],
     directImporters: [
       { path: 'src/capabilities/ingestion/jobs/tencent_ocr_extract.ts', kind: 'runtime' },
       { path: 'src/capabilities/ingestion/server/glm_ocr_parser.ts', kind: 'type' },
+      { path: 'src/capabilities/ingestion/server/tools/media-tools.ts', kind: 'runtime' },
     ],
-    roles: ['worker'],
+    roles: ['api', 'worker'],
     provider: 'GLM OCR fixed HTTP endpoint',
     model: 'glm-ocr fixed in source',
     endpointClass: 'GLM layout_parsing POST endpoint',
@@ -607,20 +612,22 @@ export const PROVIDER_LANES = [
     },
     evidence: {
       path: 'src/capabilities/ingestion/server/glm_ocr.ts',
-      calls: ['executeGlmOcrWireAttempt'],
+      calls: ['executeGlmOcrWireAttemptResult', 'executeGlmOcrToolWireAttemptResult'],
       contains: ['recordExternalRequestId', 'reportUsage', 'estimateCost'],
     },
     attemptSemantics: {
-      admittedUnit: 'one synchronous GLM layout_parsing request for one extraction page',
+      admittedUnit:
+        'one synchronous GLM layout_parsing request per extraction page, or per glm_ocr tool invocation (bounded region or full image)',
       transportRetryCount: 0,
       attemptsPerInvocation: {
         kind: 'dynamic',
         multiplierRationale:
-          'the extraction delivery emits one request per page for a runtime page count capped at 15; pg-boss redelivery is accounted separately',
+          'the extraction delivery emits one request per page for a runtime page count capped at 15; the glm_ocr tool emits one fenced request per invocation; pg-boss redelivery is accounted separately',
       },
       durableIdentity:
-        'one provider_attempt per page fetch under a stable session-and-page operation identity',
-      timeout: '120 seconds per page with caller abort composed into the same controller',
+        'one provider_attempt per page fetch under a stable session-and-page operation identity; the tool path anchors on task run + parent sha + region and is start-fenced by operation_kind so a second call on the same anchor does not redispatch',
+      timeout:
+        '120 seconds per page (tool path clamps to the provider session deadline) with caller abort composed into the same controller',
       clientRetry: 'none inside the HTTP client; retryable failures propagate',
       redelivery:
         'the llm worker queue has retryLimit 2; stable page anchors preserve the operation while each actual page retry is a new attempt',

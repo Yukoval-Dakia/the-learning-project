@@ -1,6 +1,6 @@
 {
   "id": "042abc1e-478a-452d-8696-f03f14ae03df",
-  "prevId": "2f532490-c021-48cd-a8c5-6080f1b73dc1",
+  "prevId": "01b9d77d-2676-49ae-bf26-3b96a879dc06",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -11142,6 +11142,12 @@
           "type": "jsonb",
           "primaryKey": false,
           "notNull": true
+        },
+        "presentation": {
+          "name": "presentation",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
         },
         "supersedes_revision_id": {
           "name": "supersedes_revision_id",

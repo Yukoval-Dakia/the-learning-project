@@ -3,7 +3,7 @@
 // Request an escalating Socratic hint for an active solve session. Reuses the
 // teaching orchestrator's TeachingTurnTask, seeded with the worked solution, to
 // return the minimal next step WITHOUT revealing the full solution (spec §3.2).
-import { SolveError, planSolveHint } from '@/capabilities/practice/server/solve-session';
+import { SolveError, planSolveHintOutcome } from '@/capabilities/practice/server/solve-session';
 import { newId } from '@/core/ids';
 import { db } from '@/db/client';
 import { writeEvent } from '@/kernel/events';
@@ -31,7 +31,9 @@ export async function createHintRequest(
     }
     const hintIndex = parsed.data ? parsed.data.hint_index : 0;
 
-    const hint = await planSolveHint({
+    // YUK-1409 T4 — generation failures resolve to typed fallback/unavailable
+    // help instead of an upstream 502; session/state errors keep their status.
+    const outcome = await planSolveHintOutcome({
       db,
       sessionId: sid,
       hintIndex,
@@ -47,10 +49,22 @@ export async function createHintRequest(
       action: 'experimental:hint_request',
       subject_kind: 'question',
       subject_id: id,
-      outcome: 'success',
-      payload: { hint_index: hintIndex },
+      outcome: outcome.status === 'ok' ? 'success' : 'failure',
+      payload: {
+        hint_index: hintIndex,
+        ...(outcome.status === 'ok'
+          ? {}
+          : {
+              status: outcome.status,
+              reason: outcome.reason,
+              ...(outcome.status === 'fallback' ? { help_kind: outcome.help.kind } : {}),
+            }),
+      },
     });
-    return Response.json({ hint_request_id: hintRequestId, text_md: hint.text_md });
+    if (outcome.status === 'ok') {
+      return Response.json({ hint_request_id: hintRequestId, text_md: outcome.text_md });
+    }
+    return Response.json({ hint_request_id: hintRequestId, ...outcome });
   } catch (err) {
     if (err instanceof SolveError) {
       if (err.code === 'session_not_found' || err.code === 'question_not_found') {

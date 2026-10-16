@@ -28,7 +28,7 @@ Presentation = {
 | kind | 字段 | 渲染 |
 | --- | --- | --- |
 | `stack` | `children: Block[]`，`gap?: 'sm'\|'md'\|'lg'` | 纵向排列 |
-| `passage_layout` | `material_ref`，`layout: 'passage_left_questions_right'\|'passage_top'`，`passage_width?: 'balanced'\|'wide'`，`children: Block[]` | 文章常驻（文左题右或文上题下）；children 是问题区 |
+| `passage_layout` | `material_ref`（passage 或内联 plaintext 材料），`layout: 'passage_left_questions_right'\|'passage_top'`，`passage_width?: 'balanced'\|'wide'`，`children: Block[]` | 文章常驻（文左题右或文上题下）；children 是问题区（review R1 更正：归一器只铸造内联 plaintext 材料，不产 passage kind，故两者都接受，须带 `content_md` 且公开） |
 | `text_math` | `part_ref` 或 `material_ref`，二选一 | 渲染该 part 的 `prompt_md` 或该材料的 `content_md`（MathMarkdown） |
 | `figure` | `material_ref`（kind=figure） | 渲染已核验的图资产 |
 
@@ -96,7 +96,9 @@ Presentation = {
 { slot_id, kind: 'open',   text_md, evidence: EvidenceAttachment[] }   // free
 ```
 
-- `blank` 表示学生主动留空，此时内容必须为空。`unknown` 表示拍照或作答卷上看不清，只由回收侧使用，网页不产生。没有条目表示未作答。
+- `blank` 表示学生主动留空，此时内容必须为空。网页「提交整题」时，每个绑定了但空着的作答位都交 `blank`（见 §1.2.2）。
+- `unknown` 表示拍照或作答卷上看不清，只由回收侧使用。网页提交入口会拒收 `unknown`。
+- 没有条目表示未作答，只出现在三种情况：草稿、回收侧没读到某一空、部分发题。
 - 重复或不在 universe 里的 id 是协议错误，提交会被拒绝。选多、选错是有效作答，交给给分规则处理。
 - 一对一配对等结构约束由槽上的 `at_most_per_coordinate` 声明，提交时校验。
 - 同一道题换一种布局（例如 option_list 从 vertical 改成 grid，或断句放进 passage_layout 与否），交出的信封完全相同，判分也相同。

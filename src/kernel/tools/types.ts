@@ -56,6 +56,24 @@ export type ToolMirrorPolicy = 'never' | 'when_user_visible' | 'when_causal' | '
 
 export type ToolCostClass = 'local' | 'cheap_llm' | 'expensive_llm';
 
+/**
+ * YUK-1404 (B2/R2) — media output contract. A DomainTool may declare an
+ * optional `images` array in its OUTPUT: each entry is a versioned asset ref
+ * (asset_id + `sha256:<64hex>` digest). The bridge resolves real bytes through
+ * the digest-verifying asset loader and appends them as image content for the
+ * model; tool_call_log and the tool_use mirror keep only the ref — bytes never
+ * enter logs. `max_edge` down-scales the returned VIEW only (the stored asset
+ * is never mutated). A crop is a separate capability (crop_image mints a new
+ * derived asset), so there is deliberately no view-time region field.
+ */
+export interface ToolImageOutput {
+  readonly ref: { readonly asset_id: string; readonly digest: string };
+  readonly max_edge?: number;
+}
+
+/** The `images` field name a tool's outputSchema may carry. */
+export const TOOL_OUTPUT_IMAGES_FIELD = 'images' as const;
+
 export interface ToolCallerActor {
   kind: 'user' | 'agent' | 'cron' | 'system';
   /** `'agent:copilot'`, `'dreaming'`, `'cron:knowledge_maintenance'`, ... */
@@ -109,6 +127,13 @@ export interface ToolContext {
   /** Absolute caller wall clock propagated into nested central AI work. */
   providerSessionDeadlineAt?: number;
   providerAttemptCaller?: 'api' | 'worker';
+  /**
+   * YUK-1404 (B2/R2) — server-bound runtime scope (e.g.
+   * `{kind:'ingestion_session', id:<sessionId>}`). Tools validate their inputs
+   * against it when present; it is populated by the runner/caller only and can
+   * never arrive via model arguments.
+   */
+  scope?: { readonly kind: string; readonly id?: string };
   taskRunId: string;
   callerActor: ToolCallerActor;
   /** When set, mirror events use this as `caused_by_event_id`. */

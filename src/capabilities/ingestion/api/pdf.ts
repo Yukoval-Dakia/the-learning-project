@@ -1,5 +1,10 @@
 import { renderPdfToPngPages } from '@/capabilities/ingestion/server/pdf-render';
+import { extractPdfTextLayers } from '@/capabilities/ingestion/server/pdf-text';
 import { persistImageAsset } from '@/capabilities/ingestion/server/persist-image-asset';
+import {
+  pdfPageImageProvenance,
+  preparePdfSourceAssets,
+} from '@/capabilities/ingestion/server/source-package';
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/kernel/http';
 import { getR2 } from '@/server/r2';
@@ -60,12 +65,25 @@ export async function POST(req: Request): Promise<Response> {
     const pages = await renderPdfToPngPages(pdfBytes, req.signal);
 
     const r2 = getR2();
+
+    // YUK-1404 (B2/R1) — unified source package: the original PDF and every
+    // page's embedded text layer (when present) are SHA'd source_asset rows.
+    // The draft stamp each page image carries lets session creation assemble
+    // provenance.source_package without any contract change on this route or
+    // on /api/ingestion-sessions.
+    const textLayers = await extractPdfTextLayers(pdfBytes, req.signal);
+    const { stamps } = await preparePdfSourceAssets(db, r2, { pdfBytes, textLayers });
+
     const assetIds: string[] = [];
     // Sequential so page order is preserved in asset_ids (page_index downstream
     // is array-index-driven). Content-addressed dedup: re-rendering the same PDF
     // page yields the same storage_key.
-    for (const page of pages) {
-      const row = await persistImageAsset(db, r2, { bytes: page.png, mime: 'image/png' });
+    for (const [index, page] of pages.entries()) {
+      const row = await persistImageAsset(db, r2, {
+        bytes: page.png,
+        mime: 'image/png',
+        provenance: pdfPageImageProvenance(stamps[index]),
+      });
       assetIds.push(row.id);
     }
 

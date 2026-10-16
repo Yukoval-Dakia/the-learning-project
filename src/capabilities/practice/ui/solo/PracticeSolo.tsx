@@ -20,7 +20,15 @@
 // shell's sticky bars are read through useSyncExternalStore.
 
 import { ArrowLeft, Camera, Lightbulb, MessageSquareQuote, PenLine, Sparkles } from 'lucide-react';
-import { type CSSProperties, type ReactNode, useId, useState, useSyncExternalStore } from 'react';
+import {
+  type CSSProperties,
+  type ReactNode,
+  useCallback,
+  useId,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 import type { PracticeIssuanceDtoT } from '@/core/schema/assessment';
 import { REASONING_TRACE_MAX_LEN } from '@/kernel/limits';
 import { AssetEvidencePreview } from '@/ui/components/response/AssetEvidencePreview';
@@ -43,9 +51,11 @@ import {
   Mascot,
   Segmented,
   UiNextRoot,
+  flyQuote,
+  prefersReducedMotion,
 } from '@/ui-next/public';
 import type { AttemptTimelineEvent } from '../attempt-timeline-adapter';
-import { practiceSourceLabel } from '../PfStream';
+import { practiceMorphKey, practiceSourceLabel } from '../PfStream';
 import type { StreamItem } from '../practice-api';
 import {
   type JudgeFeedback,
@@ -74,6 +84,13 @@ export interface PracticeSoloProps {
   /** YUK-432 — 「返回流」 after an automatic commit: the host marks the item done, then lists. */
   onCommittedBack?: () => void;
   addToast: PracticeToast;
+  /**
+   * YUK-1473 — the host is moving to the next question in place: this question is finished and
+   * stays on screen until the next one is confirmed; every way forward waits, calmly.
+   */
+  advancing?: boolean;
+  /** A result (or the 「already handed in」 line) is on screen: the host may prefetch the next. */
+  onResultShown?: (item: StreamItem) => void;
 }
 
 type MaterialView = PracticeIssuanceDtoT['materials'][number];
@@ -180,20 +197,35 @@ function startAtTop(node: HTMLElement | null) {
   if (node) window.scrollTo({ top: 0, behavior: 'instant' });
 }
 
-/** A block of question text can be quoted into the Copilot drawer's composer (M6 pointer + A4 keyboard). */
-function quoteToCopilot(text: string) {
-  const clipped = clipQuote(text);
-  if (clipped) openCopilot(`「${clipped}」\n`, { send: false });
+/** The Copilot drawer's composer, once it is laid out (the drawer may still be sliding in). */
+function copilotComposer(): HTMLElement | null {
+  const el = document.querySelector<HTMLElement>('[data-testid="copilot-composer-input"]');
+  if (!el) return null;
+  const r = el.getBoundingClientRect();
+  return r.width > 0 && r.height > 0 ? el : null;
 }
 
-function QuoteButton({ text, what }: { text: string; what: string }) {
+/** Where a quote button's text sits on the page: the block it belongs to. */
+const QUOTE_BLOCK = '.un-ps-sheet-q, .un-ps-vpart, .un-ps-passage-block';
+
+function QuoteButton({
+  text,
+  what,
+  onQuote,
+}: {
+  text: string;
+  what: string;
+  onQuote: (text: string, from: DOMRect | null) => void;
+}) {
   if (!text.trim()) return null;
   return (
     <IconButton
       label={`把${what}引用到学习伙伴`}
       className="un-ps-quote-btn"
       icon={<MessageSquareQuote size={14} />}
-      onClick={() => quoteToCopilot(text)}
+      onClick={(e) =>
+        onQuote(text, e.currentTarget.closest(QUOTE_BLOCK)?.getBoundingClientRect() ?? null)
+      }
     />
   );
 }
@@ -264,6 +296,8 @@ export function PracticeSolo({
   onBack,
   onCommittedBack,
   addToast,
+  advancing = false,
+  onResultShown,
 }: PracticeSoloProps) {
   const [coachOpen, setCoachOpen] = useState(false);
   // How many times the hint drawer has been opened; each opening starts a fresh ladder (YUK-1483).
@@ -288,6 +322,57 @@ export function PracticeSolo({
     .map(Number);
   const uid = useId();
   const id = (name: string) => `${uid}-${name}`;
+
+  // ── Quote into the Copilot drawer (M6): the passage lifts off the page and lands in the
+  // composer, tracking it while the drawer opens. The page root owns the flight: its ref
+  // callback's cleanup cancels one still in the air when the question goes away.
+  const pageRoot = useRef<HTMLElement | null>(null);
+  const flight = useRef<(() => void) | null>(null);
+  const attachPage = useCallback((node: HTMLElement | null) => {
+    if (!node) return undefined;
+    pageRoot.current = node;
+    return () => {
+      flight.current?.();
+      flight.current = null;
+      pageRoot.current = null;
+    };
+  }, []);
+  const quoteToCopilot = (text: string, from: DOMRect | null) => {
+    const clipped = clipQuote(text);
+    if (!clipped) return;
+    // M3: a new quote takes over; the one in the air fades where it is.
+    flight.current?.();
+    flight.current = null;
+    openCopilot(`「${clipped}」\n`, { send: false });
+    const scope = pageRoot.current?.closest('[data-ui-next]');
+    // Reduced motion: the quote is simply in the composer.
+    if (!scope || !from || prefersReducedMotion()) return;
+    // The drawer opens on the next render; launch once it has a frame to be measured in.
+    let frame = requestAnimationFrame(() => {
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        flight.current = flyQuote({
+          from,
+          content: clipped,
+          to: copilotComposer,
+          scope,
+          onLand: () => {
+            flight.current = null;
+          },
+        });
+      });
+    });
+    flight.current = () => cancelAnimationFrame(frame);
+  };
+
+  // M13 — once a result is on screen, the host may read the next question ahead (a GET only).
+  // The result section's ref callback says so when it attaches; the host keeps it to once.
+  const reportResult = useCallback(
+    (node: HTMLElement | null) => {
+      if (node) onResultShown?.(item);
+    },
+    [onResultShown, item],
+  );
 
   const { question, issuance, draft, conflict, submit, appeal, handleBack, ...refs } =
     usePracticeSubmit({
@@ -326,7 +411,9 @@ export function PracticeSolo({
           size="sm"
           className="un-ps-back"
           disabled={submit.returning}
-          onClick={() => void handleBack()}
+          // While the host moves on in place, this question is finished (its answer is recorded
+          // and its draft settles on unmount): back just leaves and cancels the move.
+          onClick={() => (advancing ? onBack() : void handleBack())}
         >
           <ArrowLeft size={14} aria-hidden="true" />
           {submit.returning ? '正在保存…' : '返回练习'}
@@ -350,7 +437,11 @@ export function PracticeSolo({
             {practiceSourceLabel(item.source)} · 第 <span className="un-num">{pos}</span> / {total}{' '}
             题{item.estimated_minutes ? ` · 约 ${item.estimated_minutes} 分钟` : ''}
           </p>
-          <h1 className="un-ps-title">{title}</h1>
+          {/* M4: the shared title. It grows out of the stream row, folds back into it, and
+              morphs into the next question's title when the page moves on in place. */}
+          <h1 className="un-ps-title" data-morph={practiceMorphKey(item.id)} tabIndex={-1}>
+            {title}
+          </h1>
           {(labels.length > 0 || state) && (
             <div className="un-ps-chips">
               {labels.map((l) => (
@@ -562,7 +653,11 @@ export function PracticeSolo({
                 {slots.length > 0 && <div className="un-ps-write">{slots.map(renderSlot)}</div>}
               </div>
               <div className="un-ps-vpart-side">
-                <QuoteButton text={`${no} ${face.prompt_md}`} what={`第 ${no} 问`} />
+                <QuoteButton
+                  text={`${no} ${face.prompt_md}`}
+                  what={`第 ${no} 问`}
+                  onQuote={quoteToCopilot}
+                />
               </div>
             </li>
           );
@@ -629,7 +724,7 @@ export function PracticeSolo({
                   key={grade}
                   variant="secondary"
                   size="sm"
-                  disabled={!submit.canSubmit || submit.committing}
+                  disabled={!submit.canSubmit || submit.committing || advancing}
                   onClick={() => void submit.commit({ withAppeal: false, rating: grade })}
                 >
                   {RATING_LABEL[grade]}
@@ -715,8 +810,8 @@ export function PracticeSolo({
               : '这份作答在排队判分，不需要重交。可以先做下一题，结果稍后到。'}
           </p>
           <div className="un-ps-actions">
-            <Button variant="secondary" onClick={onDone}>
-              先继续
+            <Button variant="secondary" disabled={advancing} onClick={onDone}>
+              {advancing ? '下一题准备中…' : '先继续'}
             </Button>
           </div>
         </div>
@@ -819,30 +914,38 @@ export function PracticeSolo({
                     </Button>
                   )}
                 {submit.autoCommitted ? (
-                  <Button variant="primary" disabled={submit.committing} onClick={onDone}>
-                    下一题
+                  <Button
+                    variant="primary"
+                    disabled={submit.committing || advancing}
+                    onClick={onDone}
+                  >
+                    {advancing ? '下一题准备中…' : '下一题'}
                   </Button>
                 ) : unknownScore ? (
                   <Button
                     variant="primary"
-                    disabled={submit.committing}
+                    disabled={submit.committing || advancing}
                     // Required wire fallback only; auto_rate leaves the actual rating to the server.
                     onClick={() =>
                       void submit.commit({ withAppeal: false, rating: 'hard', autoRate: true })
                     }
                   >
-                    {submit.committing ? '正在记下…' : '记下作答，下一题'}
+                    {advancing
+                      ? '下一题准备中…'
+                      : submit.committing
+                        ? '正在记下…'
+                        : '记下作答，下一题'}
                   </Button>
                 ) : (
                   <Button
                     variant="primary"
-                    disabled={submit.committing || !submit.rating}
+                    disabled={submit.committing || advancing || !submit.rating}
                     onClick={() =>
                       submit.rating &&
                       void submit.commit({ withAppeal: false, rating: submit.rating })
                     }
                   >
-                    {submit.committing ? '正在记下…' : '确认，下一题'}
+                    {advancing ? '下一题准备中…' : submit.committing ? '正在记下…' : '确认，下一题'}
                   </Button>
                 )}
                 {/* YUK-432 (FINDING 2) — appeal stays available after an automatic commit when
@@ -882,6 +985,7 @@ export function PracticeSolo({
                       disabled={
                         !appeal.text.trim() ||
                         submit.committing ||
+                        advancing ||
                         (submit.autoCommitted
                           ? !submit.autoCommitJudgeEventId
                           : !submit.rating && !unknownScore)
@@ -920,7 +1024,7 @@ export function PracticeSolo({
               {pos}
             </span>
             {stemBlock}
-            {!multiPart && <QuoteButton text={stemText} what="题目" />}
+            {!multiPart && <QuoteButton text={stemText} what="题目" onQuote={quoteToCopilot} />}
           </div>
         )}
         {conflict && (
@@ -932,7 +1036,12 @@ export function PracticeSolo({
         {extras}
         {actionBar}
         {result && (
-          <section className="un-ps-sheet-result" aria-label="结果" aria-live="polite">
+          <section
+            className="un-ps-sheet-result"
+            aria-label="结果"
+            aria-live="polite"
+            ref={reportResult}
+          >
             {result}
           </section>
         )}
@@ -962,7 +1071,7 @@ export function PracticeSolo({
             <div key={m.material_id} className="un-ps-passage-block">
               <div className="un-ps-passage-head">
                 {m.caption && <p className="un-ps-passage-title">{m.caption}</p>}
-                <QuoteButton text={m.content_md ?? ''} what="这段文章" />
+                <QuoteButton text={m.content_md ?? ''} what="这段文章" onQuote={quoteToCopilot} />
               </div>
               <div data-quotable="">
                 <MathMarkdown notation={notation} className="un-ps-prose">
@@ -984,7 +1093,12 @@ export function PracticeSolo({
 
   return (
     <UiNextRoot className="un-ps-root">
-      <div className="un-ps" style={insets} data-screen-label={`散题作答 · ${item.ref_id}`}>
+      <div
+        className="un-ps"
+        style={insets}
+        data-screen-label={`散题作答 · ${item.ref_id}`}
+        ref={attachPage}
+      >
         <div
           className={
             frozen?.materials.some((m) => m.kind === 'passage')
@@ -993,13 +1107,17 @@ export function PracticeSolo({
           }
         >
           {banner}
-          {body}
+          {/* YUK-1473 — what leaves and arrives when the page moves to the next question in
+              place (advance-motion): everything below the banner. */}
+          <div className="un-ps-swap" data-swap-body="">
+            {body}
+          </div>
         </div>
       </div>
       <QuoteBubble
         selection={quoteSel.selection}
         onQuote={(passage) => {
-          quoteToCopilot(passage.text);
+          quoteToCopilot(passage.text, passage.rect);
           quoteSel.clear();
         }}
       />

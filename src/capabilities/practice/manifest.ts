@@ -53,10 +53,12 @@ import {
   PaperSubmissionResponseSchema,
 } from './api/paper-contracts';
 import {
+  CreatePlacementHeldReleaseBodySchema,
   CreatePlacementQuestionSelectionBodySchema,
   CreatePlacementSessionBodySchema,
   EndPlacementSessionBodySchema,
   LegacyPlacementSessionTransitionResponseSchema,
+  PlacementHeldReleaseResponseSchema,
   PlacementProfileQuerySchema,
   PlacementProfileResponseSchema,
   PlacementQuestionSelectionResponseSchema,
@@ -145,6 +147,11 @@ export const practiceCapability = defineCapability({
       'experimental:assessment_attempt',
       'experimental:assessment_feedback_released',
       'experimental:assessment_placement_issued',
+      // YUK-1405 L1 — learner-released held issuance (recorded unresolved).
+      'experimental:assessment_placement_released',
+      // YUK-1405 L2 — once-per-session marker: first "no servable item" outcome
+      // with the real elapsed session→alternative time.
+      'experimental:assessment_placement_no_item',
       'experimental:judge_calibration_sample',
       'experimental:judge_calibration_run_summary',
       'experimental:hint_request',
@@ -452,6 +459,20 @@ export const practiceCapability = defineCapability({
         successStatus: 200,
         load: () => import('./api/placement-next').then((m) => m.createPlacementQuestionSelection),
       },
+      // YUK-1405 L1 — held item 的「继续」出口：记录未决（不算答错）并推进。
+      // 「结束」出口走 PATCH /api/placement-sessions/[id]（unresolved_items）。
+      {
+        method: 'POST',
+        path: '/api/placement-sessions/[id]/held-release',
+        operationId: 'createPlacementHeldRelease',
+        request: {
+          params: PlacementSessionParamsSchema,
+          body: CreatePlacementHeldReleaseBodySchema,
+        },
+        responses: { 200: PlacementHeldReleaseResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        load: () => import('./api/placement-held-release').then((m) => m.POST),
+      },
       {
         method: 'GET',
         path: '/api/placement-sessions/[id]',
@@ -674,7 +695,6 @@ export const practiceCapability = defineCapability({
         responses: {
           200: HintRequestResponseSchema,
           ...API_ERROR_RESPONSES,
-          502: ApiErrorResponseSchema,
         },
         successStatus: 200,
         deprecation: {
@@ -709,7 +729,6 @@ export const practiceCapability = defineCapability({
         responses: {
           201: HintRequestResponseSchema,
           ...API_ERROR_RESPONSES,
-          502: ApiErrorResponseSchema,
         },
         successStatus: 201,
         load: () => import('./api/resource-routes').then((m) => m.createHintRequestResource),
@@ -1216,6 +1235,17 @@ export const practiceCapability = defineCapability({
             (m) => m.buildJudgeCalibrationSampleHandler,
           ),
       },
+      // YUK-1445 — 入库准入（G1 双盲解题一致 + G2 逐单元标定）的 live consumer：
+      // 对既有 draft/revision（question_id 或 revision_id）跑 runQuestionAdmission
+      // 并经发布 seam 落 admitted/withheld/verify_hold + append-only 核验证据。
+      // 单次 admission = 2×solve（+1×crosscheck）LLM 调用 → 'llm' 档；
+      // store_sourced_question 尚未依赖本路径（B1 的 submit_question 接入点）。
+      {
+        name: 'question_admission_run',
+        queue: 'llm',
+        load: () =>
+          import('./jobs/question_admission_run').then((m) => m.buildQuestionAdmissionRunHandler),
+      },
     ],
   },
   // M4-T4 (YUK-319)：proposal kind 归属声明。variant_question / question_draft
@@ -1383,6 +1413,14 @@ export const practiceCapability = defineCapability({
       {
         name: 'check_bank',
         load: () => import('./server/tools/check-bank').then((m) => m.checkBankTool),
+      },
+      // YUK-1448 (Stage 1 batch D) — search_bank 检索不足时的缺口落单工具：幂等登记
+      // EvidenceDemandV1 + 检索约束到既有供题台账，再走现有 dispatcher；无法落实的
+      // 限制返回 held/unsupported_constraint。授权面：copilot（COPILOT_TOOLS）；
+      // supply_planner 保持只读挂载；不进 Maintenance。
+      {
+        name: 'file_bank_gap',
+        load: () => import('./server/tools/file-bank-gap').then((m) => m.fileBankGapTool),
       },
       {
         name: 'write_quiz',

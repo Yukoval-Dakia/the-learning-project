@@ -27,5 +27,6 @@ export const taskCatalog = composeTaskCatalog(
   // YUK-1047: native frozen-rule pi task → 54.
   // YUK-1047: frozen solve hint vision sibling → 55.
   // YUK-1496: AI rubric 判定任务（C2 model grading）→ 56.
-  56,
+  // YUK-1445: +QuestionAdmissionSolveTask（入库准入双盲解题）→ 57.
+  57,
 );
