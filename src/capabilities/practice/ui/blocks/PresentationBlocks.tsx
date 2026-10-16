@@ -28,6 +28,7 @@ import { UiNextRoot } from '@/ui-next/public';
 
 import { BlankInputBlock } from './BlankInputBlock';
 import { BreakTapBlock } from './BreakTapBlock';
+import { CustomBlock } from './CustomBlock';
 import { readBlank, readOpen, readSelect, writeBlank, writeOpen, writeSelect } from './envelope';
 import { FreeAreaBlock } from './FreeAreaBlock';
 import { MatchingColumnsBlock } from './MatchingColumnsBlock';
@@ -62,13 +63,16 @@ export interface PresentationBlocksProps {
   entries: readonly SlotResponseT[];
   /**
    * Receives an updater, not a value, so async edits (an upload finishing later) apply to the
-   * latest draft rather than the one they started from.
+   * latest draft rather than the one they started from. `immediate`: save now rather than after
+   * the typing debounce (a sandboxed custom block may hang the tab right after answering).
    */
-  onEntriesChange: (update: EntriesUpdate) => void;
+  onEntriesChange: (update: EntriesUpdate, opts?: { immediate?: boolean }) => void;
   /** Subject notation for MathMarkdown (server-resolved). */
   notation?: string | null;
   disabled?: boolean;
   submitted?: boolean;
+  /** A submit is in flight: custom blocks stop taking answers until it settles. */
+  submitting?: boolean;
   /** free_area uploads in flight, per slot; join into the page's submit gate. */
   onUploadingChange?: (slotId: string, uploading: boolean) => void;
   /**
@@ -98,6 +102,7 @@ export function PresentationBlocks({
   notation = null,
   disabled,
   submitted,
+  submitting,
   onUploadingChange,
   unreceipted,
   onUnreceiptedChange,
@@ -182,11 +187,15 @@ export function PresentationBlocks({
         );
       }
       case 'custom':
-        // Sandbox blocks are not in this stage: say so plainly instead of hiding the gap.
         return (
-          <p key={block.block_id} className="un-blk-unsupported">
-            这一部分暂时不能在网页上作答。
-          </p>
+          <CustomBlock
+            key={block.block_id}
+            block={block}
+            slotById={slotById}
+            entries={entries}
+            onEntriesChange={onEntriesChange}
+            locked={!!(disabled || submitted || submitting)}
+          />
         );
       case 'option_list': {
         const slot = selectSlot(block.bind.slot_id);
