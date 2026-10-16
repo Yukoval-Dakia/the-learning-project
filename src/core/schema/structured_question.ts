@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { Presentation, type PresentationT } from './assessment/presentation';
 import { QuestionKind } from './business';
 
 // ---------- BBox：0-1 归一化的轴对齐 bounding box ----------
@@ -137,6 +138,16 @@ export type StructuredQuestionT = {
    * degrades to the Tencent `extraction_evidence.handwriting` signal alone).
    */
   student_answer_present?: boolean;
+  /**
+   * YUK-1497 — 冻结展示层草稿（Generative UI blocks-v1）。只写在【树根】
+   * （一个 block 一份组级 presentation），由 compose_presentation DomainTool
+   * 在 validatePresentation 通过后写入；随 import 进入 question.structured，
+   * 发布时提升为 contract.presentation（同道绑定校验）。jsonb-internal ——
+   * NOT a DDL column，NOT an `audit:schema` business field（同 kind/
+   * student_answer_present 先例）。本字段只被 compose_presentation 添加/读取；
+   * 其它 structured 编辑不得触碰。
+   */
+  presentation?: PresentationT;
 };
 
 export const StructuredQuestion: z.ZodType<StructuredQuestionT> = z.lazy(() =>
@@ -159,6 +170,8 @@ export const StructuredQuestion: z.ZodType<StructuredQuestionT> = z.lazy(() =>
       kind: QuestionKind.optional(),
       // YUK-482 cut ④ — advisory student-work presence flag (jsonb-internal, no DDL).
       student_answer_present: z.boolean().optional(),
+      // YUK-1497 — 冻结展示层草稿（jsonb-internal，仅 compose_presentation 读写）。
+      presentation: Presentation.optional(),
     })
     .refine(
       (q) => {

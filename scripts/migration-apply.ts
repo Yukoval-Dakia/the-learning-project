@@ -366,6 +366,9 @@ export async function loadRevisionContracts(
       response_spec: row.response_spec,
       scoring_basis: row.scoring_basis,
       execution_plan: row.execution_plan,
+      // YUK-1497（review R1）—— 非空展示层随行映射；解析失败由本 safeParse
+      // 拒收整行（fail-closed，绝不静默丢列后继续导入）。
+      ...(row.presentation != null ? { presentation: row.presentation } : {}),
       published_at: row.published_at.toISOString(),
       supersedes_revision_id: row.supersedes_revision_id,
     });
