@@ -363,8 +363,7 @@ function classifyHintFailure(err: unknown, generationAborted: boolean): SolveHin
   // instanceof — importing the error classes would add capability→server
   // dependency edges (audit:capability-boundaries baseline). A miss degrades to
   // 'unknown', which only affects the reason label, never the fallback itself.
-  const record =
-    err !== null && typeof err === 'object' ? (err as Record<string, unknown>) : {};
+  const record = err !== null && typeof err === 'object' ? (err as Record<string, unknown>) : {};
   const name = typeof record.name === 'string' ? record.name : '';
   if (name === 'AgentRunError') {
     return record.subtype === 'budget_timeout' ? 'timeout' : 'provider_error';
