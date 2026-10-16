@@ -31,6 +31,14 @@ export interface PracticeFacePageProps {
   navigate: (to: string) => void;
   getQuery: (key: string) => string | null;
   setQuery: (key: string, value: string | null) => void;
+  /**
+   * YUK-1510 — `?item=`: the stream item whose question is open, so a refresh lands back on it.
+   * The host keeps it out of getQuery, so writing it is never a scope change.
+   */
+  itemParam: string | null;
+  /** Writes `?item=`: 'push' when a question is opened from the list (browser Back returns there). */
+  writeItemParam: (id: string | null, how: 'push' | 'replace') => void;
+  historyBack: () => void;
 }
 
 export interface PfToast {
@@ -87,7 +95,13 @@ function streamForRequestedScope(
 }
 
 // navigate 暂未消费（M3 知识面挂上后，复盘 trace 的知识点链接会用它跳转）。
-export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePageProps) {
+export default function PracticeFacePage({
+  getQuery,
+  setQuery,
+  itemParam,
+  writeItemParam,
+  historyBack,
+}: PracticeFacePageProps) {
   const qc = useQueryClient();
   const [scopeKnowledgeId, setScopeKnowledgeId] = useState<string | null>(() => {
     const value = getQuery('kc')?.trim();
@@ -136,6 +150,12 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
   // list) keeps the top of the page, never the old scope's position.
   const restoreListOnLand = useRef(false);
   const focusTitleOnLand = useRef(false);
+  // YUK-1510 — the open question's `?item=` entry was pushed by opening it from the list, so
+  // leaving it in-page steps back to the list entry instead of stacking another one.
+  const itemEntryPushed = useRef(false);
+  // A question's view went away; the next list to land re-reads the stream unless the page
+  // already does (an in-page exit refreshes it itself).
+  const questionLeft = useRef(false);
   const stopTransition = useCallback(() => {
     for (const step of transition.current) step.stop();
     transition.current = [];
@@ -157,14 +177,31 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
     (node: HTMLDivElement | null) => {
       if (!node) return undefined;
       const view = node.dataset.view;
+      const fromQuestion = questionLeft.current;
+      questionLeft.current = false;
       // Back on the list: return to where the reader was, before paint, so the title can fold
       // back into its row (the flight measures after the first frame).
       if (view === 'list') {
-        if (restoreListOnLand.current && listScroll.current > 0) {
+        const exitedInPage = restoreListOnLand.current;
+        if (exitedInPage && listScroll.current > 0) {
           window.scrollTo({ top: listScroll.current, behavior: 'instant' });
         }
         restoreListOnLand.current = false;
         listScroll.current = 0;
+        // YUK-1510 — no question is open, so the URL names none: a stale `?item=` (not in this
+        // stream) or one left by a scope change is dropped quietly. While the item named on load
+        // is still being looked up (data-opening), it stays.
+        if (!node.dataset.opening) {
+          itemEntryPushed.current = false;
+          if (!exitedInPage && new URLSearchParams(window.location.search).has('item')) {
+            writeItemParam(null, 'replace');
+          }
+        }
+        // Reached by browser Back (not an in-page exit): the list re-reads the stream so an
+        // answer just submitted shows as 已交.
+        if (fromQuestion && !exitedInPage) {
+          void qc.invalidateQueries({ queryKey: ['practice-stream'] });
+        }
       }
       // Arrived in place: the old question's button went with it, so focus goes to the new title.
       if (focusTitleOnLand.current) {
@@ -178,6 +215,7 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
       if (view !== 'solo') return landed;
       return () => {
         landed?.();
+        questionLeft.current = true;
         // YUK-1473 — this question's view is going away. Whatever took it away (back, a scope
         // change through a click, the URL or history — the scope sync resets the page to the
         // list — or the page itself unmounting), a move to the next question that is still on
@@ -190,7 +228,7 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
         setAdvancing(null);
       };
     },
-    [morph, stopTransition],
+    [morph, qc, stopTransition, writeItemParam],
   );
 
   // TanStack Router 会在 search-only navigation 时复用页面实例。壳层传入的 getQuery 会随
@@ -222,6 +260,26 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
   if (streamQ.isError) streamError = streamQ.error as Error;
   else if (streamScopeMismatch && !streamQ.isFetching) streamError = SCOPE_MISMATCH_ERROR;
   const items = useMemo(() => visibleStream?.items ?? [], [visibleStream]);
+
+  // YUK-1510 — the page follows `?item=` when it changes from outside the page: a refresh or
+  // direct link (open that question once this scope's stream is read), browser Back (to the
+  // list) or Forward (back to the question). The page's own writes name the question it already
+  // shows, so they change nothing here. Only an item of the stream for the current scope that is
+  // already started can open; anything else stays on the list, which drops the stale `?item=`.
+  const [followedItem, setFollowedItem] = useState<string | null>(null);
+  const streamRead = visibleStream !== undefined && streamQ.isFetchedAfterMount && !streamQ.isError;
+  if (itemParam !== followedItem && (itemParam === null || streamRead)) {
+    setFollowedItem(itemParam);
+    const target = itemParam === null ? undefined : items.find((it) => it.id === itemParam);
+    if (target?.item_kind === 'question' && target.status === 'in_progress') {
+      if (mode.kind !== 'solo' || mode.item.id !== target.id)
+        setMode({ kind: 'solo', item: target });
+    } else if (mode.kind === 'solo' && mode.item.id !== itemParam) {
+      setMode({ kind: 'list' });
+    }
+  }
+  // The item named on load is still being looked up: the list waits (and keeps `?item=`).
+  const itemOpening = mode.kind === 'list' && itemParam !== null && itemParam !== followedItem;
 
   const addToast = useCallback((text: string, tone?: 'info', icon?: string) => {
     const id = Math.random().toString(36).slice(2);
@@ -288,6 +346,16 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
     setActionFailure(null);
   }, [setQuery]);
 
+  // YUK-1510 — a question opened from the list gets its own history entry, so browser Back from
+  // it returns to the list.
+  const openQuestionUrl = useCallback(
+    (id: string) => {
+      writeItemParam(id, 'push');
+      itemEntryPushed.current = true;
+    },
+    [writeItemParam],
+  );
+
   const openItem = useCallback(
     (item: StreamItem) => {
       if (item.status === 'done') {
@@ -303,6 +371,7 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
           listScroll.current = window.scrollY;
           morph.capture(host.current);
           setMode({ kind: 'solo', item: confirmed });
+          openQuestionUrl(confirmed.id);
         }
       };
 
@@ -313,7 +382,7 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
       }
       void commitStreamItem(item, 'in_progress', '开始练习', enter);
     },
-    [commitStreamItem, morph],
+    [commitStreamItem, morph, openQuestionUrl],
   );
 
   const continueAfterSolo = useCallback(
@@ -330,6 +399,7 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
       if (next?.item_kind === 'question') {
         void commitStreamItem(next, 'in_progress', '开始下一题', (confirmed) => {
           setMode({ kind: 'solo', item: confirmed });
+          openQuestionUrl(confirmed.id);
         });
         return;
       }
@@ -339,7 +409,7 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
         addToast('下一项是今天的卷——卷内不给即时反馈，准备好了再进。', 'info', 'layers');
       }
     },
-    [addToast, commitStreamItem, fetchFreshStream, recordFailure],
+    [addToast, commitStreamItem, fetchFreshStream, openQuestionUrl, recordFailure],
   );
 
   // ── YUK-1473 — 散题完成后原地换下一题（设计稿：流自动推进；M2/M3/M4/M13）。
@@ -366,7 +436,15 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
     restoreListOnLand.current = true;
     setAnnounce('');
     setMode({ kind: 'list' });
-  }, [morph]);
+    // YUK-1510 — the URL stops naming the question: step back to the list's own entry when
+    // opening pushed one, otherwise drop `?item=` in place.
+    if (itemEntryPushed.current) {
+      itemEntryPushed.current = false;
+      historyBack();
+    } else {
+      writeItemParam(null, 'replace');
+    }
+  }, [historyBack, morph, writeItemParam]);
 
   /** The next question replaces the finished one: leave motion, then the swap (one commit). */
   const swapInPlace = useCallback(
@@ -395,8 +473,10 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
           ? { kind: 'solo', item: next }
           : current,
       );
+      // YUK-1510 — the URL follows the question in place (no new history entry).
+      writeItemParam(next.id, 'replace');
     },
-    [endAdvance, morph],
+    [endAdvance, morph, writeItemParam],
   );
 
   const continueInPlace = useCallback(
@@ -445,7 +525,9 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
       // retry (from the list) opens the question once it is started, as before.
       let leftForList = false;
       const started = await commitStreamItem(next, 'in_progress', '开始下一题', (confirmed) => {
-        if (leftForList) setMode({ kind: 'solo', item: confirmed });
+        if (!leftForList) return;
+        setMode({ kind: 'solo', item: confirmed });
+        openQuestionUrl(confirmed.id);
       });
       if (!live()) return;
       if (!started) {
@@ -466,6 +548,7 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
       endAdvance,
       exitToList,
       fetchFreshStream,
+      openQuestionUrl,
       qc,
       recordFailure,
       swapInPlace,
@@ -661,9 +744,12 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
         {/* One root per view (a question, the list, a paper): its ref callback lands the shared
             title, restores the list's scroll and places focus after an in-place move. */}
         <div
-          key={mode.kind === 'solo' ? `solo:${mode.item.id}` : mode.kind}
+          key={
+            mode.kind === 'solo' ? `solo:${mode.item.id}` : itemOpening ? 'list:opening' : mode.kind
+          }
           className="pface-view"
           data-view={mode.kind}
+          data-opening={itemOpening ? '' : undefined}
           ref={landView}
         >
           {body}
