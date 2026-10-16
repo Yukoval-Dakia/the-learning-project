@@ -104,6 +104,10 @@
   --un-z-bubble: 4;
   --un-z-sheet: 40;
   --un-z-palette: 50;
+
+  /* Mascot slot widths (B1 pending layer; T10 keeps them named): question pages, desktop / phone. */
+  --un-mascot-read: 128px;
+  --un-mascot-read-phone: 84px;
 }
 
 /* Dark: explicit app theme or an explicit local override. */

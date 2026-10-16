@@ -300,6 +300,71 @@
   }
 }
 
+/* ── Mascot (B1–B4) ──────────────────────────────────────
+   The flower sits in the banner's flow, so it moves with the banner and never covers the page.
+   Decorative only: no pointer events. The still flower shows until the glass one is ready, then
+   cross-fades; it turns a petal per settle with a CSS transition (instant under reduced motion). */
+[data-ui-next] {
+  & .un-mascot {
+    position: relative;
+    display: block;
+    flex: none;
+    width: var(--un-mascot-read);
+    aspect-ratio: 1;
+    border-radius: 50%;
+    pointer-events: none;
+    user-select: none;
+    /* A faint accent halo behind the flower. */
+    background: radial-gradient(
+      closest-side,
+      color-mix(in srgb, var(--un-accent) 9%, transparent),
+      transparent
+    );
+  }
+
+  & .un-mascot-turn,
+  & .un-mascot-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    transition: opacity var(--un-t-ui) var(--un-ease-glide);
+  }
+
+  & .un-mascot-turn {
+    transform: rotate(var(--un-mascot-turn, 0deg));
+    transition:
+      opacity var(--un-t-ui) var(--un-ease-glide),
+      transform var(--un-t-panel) var(--un-ease-spring);
+  }
+
+  & .un-mascot-still {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+
+  & .un-mascot-canvas {
+    display: block;
+    opacity: 0;
+  }
+
+  & .un-mascot[data-render="gl"] .un-mascot-canvas {
+    opacity: 1;
+  }
+
+  & .un-mascot[data-render="gl"] .un-mascot-turn {
+    opacity: 0;
+  }
+}
+
+/* Phone (T8): the smaller slot; the flower stays in the banner and scrolls with it. */
+@media (max-width: 720px) {
+  [data-ui-next] .un-mascot {
+    width: var(--un-mascot-read-phone);
+  }
+}
+
 /* Keyframe motion only where the reader has not asked for less (M3). */
 @media (prefers-reduced-motion: no-preference) {
   [data-ui-next] {
@@ -314,6 +379,11 @@
 
     & .un-judgment-mark path {
       animation: un-draw var(--un-t-panel) var(--un-ease-glide) 120ms both;
+    }
+
+    /* The still flower spins while the page thinks (B2); one turn about 4.2 s, as in 3D. */
+    & .un-mascot[data-thinking="true"] .un-mascot-still {
+      animation: un-mascot-spin 4.2s linear infinite;
     }
   }
 }
@@ -344,5 +414,11 @@
 @keyframes un-draw {
   from {
     stroke-dashoffset: 12;
+  }
+}
+
+@keyframes un-mascot-spin {
+  to {
+    transform: rotate(1turn);
   }
 }
