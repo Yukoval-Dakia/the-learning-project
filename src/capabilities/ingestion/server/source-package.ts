@@ -686,7 +686,7 @@ export async function markSessionPackageFailed(
   db: Db,
   sessionId: string,
   err: unknown,
-): Promise<void> {
+): Promise<'kept_extracted' | 'marked_failed' | 'missing'> {
   const msg = err instanceof Error ? err.message : String(err);
   const [session] = await db
     .select({
@@ -696,7 +696,7 @@ export async function markSessionPackageFailed(
     .from(learning_session)
     .where(eq(learning_session.id, sessionId))
     .limit(1);
-  if (!session) return;
+  if (!session) return 'missing';
   // Codex 4293474481 — sessions that already produced extracted output (the
   // text-DOCX line commits question_blocks and reaches 'extracted' before the
   // package attaches) must not be downgraded: imports only admit
@@ -725,7 +725,7 @@ export async function markSessionPackageFailed(
         // best-effort marker — the attach error itself is what propagates
       }
     }
-    return;
+    return 'kept_extracted';
   }
   // uploaded/queued/extracting have no extracted output yet: mark the session
   // failed so it is not left orphaned ('uploaded' -> 'failed' is the only
@@ -739,4 +739,5 @@ export async function markSessionPackageFailed(
       updated_at: new Date(),
     })
     .where(eq(learning_session.id, sessionId));
+  return 'marked_failed';
 }

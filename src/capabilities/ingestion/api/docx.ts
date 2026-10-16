@@ -207,9 +207,13 @@ export async function POST(req: Request): Promise<Response> {
         renderedPdfAssetId: evidence.pdfAssetId,
       });
     } catch (err) {
-      // P2-8 — the session row exists: mark it failed, don't orphan it.
-      await markSessionPackageFailed(db, sessionId, err);
-      throw err;
+      // P2-8 — the session row exists: don't orphan it. The text line has
+      // already committed its blocks and reached 'extracted'; the package is
+      // additive, so a package failure there is recorded on the document and
+      // the completed upload still answers 201 (a 500 would invite a duplicate
+      // re-upload). Pre-output sessions are marked failed and the error stands.
+      const outcome = await markSessionPackageFailed(db, sessionId, err);
+      if (outcome !== 'kept_extracted') throw err;
     }
 
     return Response.json(
