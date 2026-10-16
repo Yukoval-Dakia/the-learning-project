@@ -28252,6 +28252,7 @@ export interface operations {
                         };
                         date: string;
                         items: {
+                            answer_recorded: boolean;
                             /** Format: date-time */
                             completed_at: string | null;
                             estimated_minutes: number;
@@ -28418,6 +28419,7 @@ export interface operations {
                         item: {
                             /** @enum {string} */
                             added_by: "composer_nightly" | "composer_live" | "copilot" | "user";
+                            answer_recorded: boolean;
                             /** Format: date-time */
                             completed_at: string | null;
                             /** Format: date-time */
@@ -28581,6 +28583,7 @@ export interface operations {
                         };
                         date: string;
                         items: {
+                            answer_recorded: boolean;
                             /** Format: date-time */
                             completed_at: string | null;
                             estimated_minutes: number;

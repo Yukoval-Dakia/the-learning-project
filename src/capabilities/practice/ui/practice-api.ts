@@ -46,6 +46,8 @@ export interface StreamItem {
   verdict: 'again' | 'hard' | 'good' | null;
   completed_at: string | null;
   total_slots: number | null;
+  /** YUK-1510 — an open question whose answer is already recorded (not marked done yet). */
+  answer_recorded: boolean;
 }
 
 export interface StreamView {
