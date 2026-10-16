@@ -2,6 +2,7 @@ import { unit as parseUnit } from 'mathjs';
 import { EvaluationContractError, projectIssuedScoringBasis } from './evaluation';
 import { validateExecutionPlan } from './execution';
 import { isPublicSharedMaterial } from './materials';
+import type { ResponseSlotT } from './response';
 import type { PublishedQuestionRevisionT } from './revision';
 import { validateScoringBasis } from './scoring';
 
@@ -17,6 +18,7 @@ export const SERVING_UNAVAILABLE_REASONS = [
   'model_admission_unavailable',
   'unsupported_deterministic_input',
   'missing_referenced_figure',
+  'no_input_renderer',
 ] as const;
 export type ServingUnavailableReason = (typeof SERVING_UNAVAILABLE_REASONS)[number];
 
@@ -27,6 +29,21 @@ export type AutomaticServingDecision =
       reason: ServingUnavailableReason;
       detail: string;
     };
+
+/**
+ * 网页作答面已有输入控件的槽位种类（YUK-1496）。没有控件的题后端判得了也不发，
+ * 避免「题出了却没有输入框」。界面线落地某类输入积木时在同一 PR 把它加进来。
+ */
+export const INPUT_RENDERER_SLOT_KINDS: ReadonlySet<ResponseSlotT['kind']> = new Set([
+  'single_choice',
+  'multi_choice',
+  'text',
+  'numeric',
+  'formula',
+  'matching',
+  'ordering',
+  'open_response',
+]);
 
 /** Read-only capability check on the frozen plan, never a publication or model admission. */
 export function decideAutomaticServing(
@@ -82,6 +99,14 @@ export function decideAutomaticServing(
   const answerSlots = revision.response_spec.slots.filter(
     (slot) => selected.has(slot.part_id) && slot.kind !== 'table',
   );
+  const unrenderable = answerSlots.find((slot) => !INPUT_RENDERER_SLOT_KINDS.has(slot.kind));
+  if (unrenderable != null) {
+    return {
+      kind: 'unavailable',
+      reason: 'no_input_renderer',
+      detail: `slot ${unrenderable.slot_id} (${unrenderable.kind}) has no learner input control yet`,
+    };
+  }
   if (
     answerSlots.some((slot) => !basis.units.some((unit) => unit.slot_refs.includes(slot.slot_id)))
   ) {

@@ -10,6 +10,7 @@ import {
   type ModelExecutorT,
   validateExecutionPlan,
 } from './execution';
+import { gradeBlankExactUnit, gradeSelectUnit } from './grade';
 import { type EvaluationInputMember, combineEvaluationMembers } from './group-input';
 import {
   type AggregateOutcomeT,
@@ -538,6 +539,19 @@ async function runDeterministicComparator(
         },
         evidence_citations: [{ slot_id: entry.slot_id }],
       };
+    }
+    // K1（YUK-1496）：比较 → 规则 → 单元结果，见 grade.ts。
+    case 'set_compare': {
+      if (entry.kind !== 'select') {
+        return unjudgeableMismatch(unit, 'slot/entry kind mismatch for select_key');
+      }
+      return gradeSelectUnit(unit, entry);
+    }
+    case 'blank_exact': {
+      if (entry.kind !== 'blank') {
+        return unjudgeableMismatch(unit, 'slot/entry kind mismatch for blank_key');
+      }
+      return gradeBlankExactUnit(unit, entry);
     }
   }
 }

@@ -30,6 +30,9 @@ export const DeterministicComparatorId = z.enum([
   'numeric_unit_conversion',
   'exact_matching_pairs',
   'position_set_rule',
+  // K1（YUK-1496）：新题只用这两个确定性方法；上面四个按题型比较器只读保留。
+  'set_compare',
+  'blank_exact',
 ]);
 export type DeterministicComparatorIdT = z.infer<typeof DeterministicComparatorId>;
 
@@ -43,6 +46,8 @@ export const COMPARATOR_CRITERION: Readonly<
   numeric_unit_conversion: 'numeric_key',
   exact_matching_pairs: 'matching_pairs_key',
   position_set_rule: 'position_set_key',
+  set_compare: 'select_key',
+  blank_exact: 'blank_key',
 };
 
 export const DeterministicExecutor = z.object({

@@ -38,6 +38,8 @@ export const RESPONSE_SLOT_KINDS = ResponseSlot.options.map(
   'ordering',
   'open_response',
   'sentence_breaks',
+  'select',
+  'blank',
 ];
 export type ResponseSlotKindT = (typeof RESPONSE_SLOT_KINDS)[number];
 
@@ -175,6 +177,26 @@ export const CAPABILITY_COVERAGE_MATRIX: readonly ResponsePrimitiveCoverage[] = 
     manual_evidence_required: false,
     notes:
       'ADR-0074 D3a 断句：冻结明文的 code point 字缝点选（position-gap.ts 语义）；position_set_key 判据（接受断点集合 + 题级 typed 规则，私有）由 position_set_rule 确定性判分；无印规则的非精确集合记对数并 needs_review（分数未知不造分）。collectable=partial：R10 字间点选 UI 属界面线，ResponseSet 投递链未接线。',
+  },
+  {
+    slot_kind: 'select',
+    expressible: 'covered',
+    collectable: 'gap',
+    auto_scorable: 'deterministic',
+    deterministic_comparator: 'set_compare',
+    manual_evidence_required: false,
+    notes:
+      'YUK-1496 K1 统一选择：选项、配对关系、断句字缝、排序关系都是稳定 item；select_key + 显式给分规则由 set_compare 判分，规则可给 unknown（不造分）。collectable=gap：网页输入积木未实现，出题门按 INPUT_RENDERER_SLOT_KINDS 扣发。',
+  },
+  {
+    slot_kind: 'blank',
+    expressible: 'covered',
+    collectable: 'gap',
+    auto_scorable: 'deterministic',
+    deterministic_comparator: 'blank_exact',
+    manual_evidence_required: false,
+    notes:
+      'YUK-1496 K1 单空：文本按版本化归一化逐字比较，数值保留容差与单位换算；Jev 等价判断待准入（model_executor）。collectable=gap：网页输入积木未实现，出题门扣发。',
   },
 ];
 

@@ -1,7 +1,8 @@
 import { z } from 'zod';
 import { ConjectureProbeSpecV2 } from '../business';
 import { isInteriorGap } from './position-gap';
-import type { ResponseSlotT, ResponseSpecT } from './response';
+import type { ResponseSlotT, ResponseSpecT, SelectSlotT } from './response';
+import { ScoringRule, validateScoringRule } from './scoring-rule';
 import type { QuestionGroupStructureT } from './structure';
 
 // ====================================================================
@@ -137,6 +138,54 @@ export const HolisticLevelCriterion = z.object({
 });
 export type HolisticLevelCriterionT = z.infer<typeof HolisticLevelCriterion>;
 
+// ---------- K1 统一判据（YUK-1496）：select_key / blank_key ----------
+//
+// 新题只写这两种确定性键；给分全部由 unit.rule（scoring-rule.ts）表达。
+// option_set_key / matching_pairs_key / position_set_key 是被取代的按题型键：
+// 已冻结 revision 原样可读可重放，写入方迁到 select_key 后不再产生新行。
+
+/** select 的正确 item 集合（选项、关系、字缝统一为稳定 item id）。 */
+export const SelectKeyCriterion = z.object({
+  kind: z.literal('select_key'),
+  accepted_item_ids: z.array(z.string().min(1)).min(1),
+});
+export type SelectKeyCriterionT = z.infer<typeof SelectKeyCriterion>;
+
+/**
+ * 单空 exact 的归一化，带版本；不同科目不共享宽松规则（诗词逐字、数学/英语
+ * 可 casefold）。character_variants 是题目显式声明的异体字等价对，缺省为空
+ * —— 诗词错字是否整句零分由题目规则声明，不设全局默认。
+ */
+export const BlankNormalization = z.object({
+  version: z.string().min(1),
+  nfkc: z.boolean().default(false),
+  trim_outer: z.boolean().default(true),
+  casefold: z.boolean().default(false),
+  collapse_whitespace: z.boolean().default(false),
+  ignore_punctuation: z.boolean().default(false),
+  character_variants: z.array(z.tuple([z.string().min(1), z.string().min(1)])).default([]),
+});
+export type BlankNormalizationT = z.infer<typeof BlankNormalization>;
+
+export const BlankKeyCriterion = z.object({
+  kind: z.literal('blank_key'),
+  key: z.discriminatedUnion('kind', [
+    z.object({
+      kind: z.literal('text'),
+      accepted: z.array(z.string().min(1)).min(1),
+      normalization: BlankNormalization,
+    }),
+    /** 数值：保留既有容差与单位换算能力（expected_unit 存在时按 mathjs 换算）。 */
+    z.object({
+      kind: z.literal('numeric'),
+      expected: z.number(),
+      tolerance: NumericKeyCriterion.shape.tolerance,
+      expected_unit: z.string().min(1).optional(),
+    }),
+  ]),
+});
+export type BlankKeyCriterionT = z.infer<typeof BlankKeyCriterion>;
+
 export const ScoringUnitCriterion = z.discriminatedUnion('kind', [
   OptionSetKeyCriterion,
   MatchingPairsKeyCriterion,
@@ -145,6 +194,8 @@ export const ScoringUnitCriterion = z.discriminatedUnion('kind', [
   NumericKeyCriterion,
   RuleReferenceCriterion,
   HolisticLevelCriterion,
+  SelectKeyCriterion,
+  BlankKeyCriterion,
 ]);
 export type ScoringUnitCriterionT = z.infer<typeof ScoringUnitCriterion>;
 
@@ -174,6 +225,11 @@ export const ScoringUnit = z.object({
    * 加法单元禁止携带（validateScoringBasis 强制）。
    */
   level_points: z.record(z.string(), z.number().min(0)).optional(),
+  /**
+   * K1 给分规则（YUK-1496）：select_key / blank_key 单元必填，其余判据禁携。
+   * 规则读比较计数给分；分值未知显式写 unknown，不造分。
+   */
+  rule: ScoringRule.optional(),
 });
 export type ScoringUnitT = z.infer<typeof ScoringUnit>;
 
@@ -246,7 +302,15 @@ export interface ScoringBasisIssue {
     | 'key_rule_points_mismatch'
     | 'key_pairing_violation'
     | 'weights_must_cover_units_exactly'
-    | 'no_unit_references_any_slot';
+    | 'no_unit_references_any_slot'
+    | 'rule_required'
+    | 'rule_forbidden_for_criterion'
+    | 'select_key_requires_one_slot'
+    | 'rule_metric_not_applicable'
+    | 'rule_outcome_not_applicable'
+    | 'rule_item_not_in_key'
+    | 'rule_exceeds_unit_points'
+    | 'rule_key_response_not_full_marks';
   detail: string;
 }
 
@@ -272,6 +336,10 @@ function expectsSlotKinds(
       return ['text', 'open_response'];
     case 'numeric_key':
       return ['numeric'];
+    case 'select_key':
+      return ['select'];
+    case 'blank_key':
+      return ['blank'];
     case 'rule_reference':
     case 'holistic_level':
       return null; // 不限槻位种类（规则/等级可判任意响应）
@@ -460,6 +528,7 @@ export function validateScoringBasis(
         }
       }
     }
+    issues.push(...validateK1Unit(unit, referencedSlots));
     if (unit.criterion.kind === 'holistic_level') {
       if (unit.points !== null) {
         issues.push({
@@ -517,5 +586,90 @@ export function validateScoringBasis(
       });
     }
   }
+  return issues;
+}
+
+/**
+ * K1 单元校验（YUK-1496）：select_key 恰好读一个 select 槽、键 id 都在 universe、
+ * 键本身是合法作答（不违反 at_most_per_coordinate）；select_key/blank_key 必带
+ * 规则且与 points 一致；其余判据不得携带 rule（避免两套给分并存）。
+ */
+function validateK1Unit(unit: ScoringUnitT, referencedSlots: ResponseSlotT[]): ScoringBasisIssue[] {
+  const issues: ScoringBasisIssue[] = [];
+  const criterion = unit.criterion;
+  if (criterion.kind !== 'select_key' && criterion.kind !== 'blank_key') {
+    if (unit.rule != null) {
+      issues.push({
+        code: 'rule_forbidden_for_criterion',
+        detail: `unit '${unit.scoring_unit_id}' criterion '${criterion.kind}' must not carry a K1 rule`,
+      });
+    }
+    return issues;
+  }
+  if (criterion.kind === 'select_key') {
+    const selectSlots = referencedSlots.filter(
+      (slot): slot is SelectSlotT => slot.kind === 'select',
+    );
+    if (selectSlots.length !== 1 || unit.slot_refs.length !== 1) {
+      issues.push({
+        code: 'select_key_requires_one_slot',
+        detail: `unit '${unit.scoring_unit_id}' select_key must read exactly one select slot`,
+      });
+    } else {
+      const slot = selectSlots[0];
+      const itemById = new Map(slot.items.map((item) => [item.item_id, item] as const));
+      const seen = new Set<string>();
+      for (const id of criterion.accepted_item_ids) {
+        if (!itemById.has(id)) {
+          issues.push({
+            code: 'key_item_not_declared',
+            detail: `unit '${unit.scoring_unit_id}' key item '${id}' is not in slot '${slot.slot_id}' universe`,
+          });
+        }
+        if (seen.has(id)) {
+          issues.push({
+            code: 'key_position_duplicated',
+            detail: `unit '${unit.scoring_unit_id}' key lists item '${id}' more than once`,
+          });
+        }
+        seen.add(id);
+      }
+      for (const [axis, limit] of Object.entries(slot.at_most_per_coordinate ?? {})) {
+        const uses = new Map<string, number>();
+        for (const id of seen) {
+          const value = itemById.get(id)?.coordinates?.[axis];
+          if (value != null) uses.set(value, (uses.get(value) ?? 0) + 1);
+        }
+        if ([...uses.values()].some((count) => count > limit)) {
+          issues.push({
+            code: 'key_pairing_violation',
+            detail: `unit '${unit.scoring_unit_id}' key violates at_most_per_coordinate.${axis}=${limit}`,
+          });
+        }
+      }
+    }
+  }
+  if (unit.rule == null) {
+    issues.push({
+      code: 'rule_required',
+      detail: `unit '${unit.scoring_unit_id}' criterion '${criterion.kind}' needs an explicit scoring rule`,
+    });
+    return issues;
+  }
+  if (unit.points == null) return issues; // points_required_for_additive_unit 已报
+  const ruleIssues =
+    criterion.kind === 'select_key'
+      ? validateScoringRule(unit.rule, {
+          unitId: unit.scoring_unit_id,
+          points: unit.points,
+          facts: 'set',
+          keyIds: criterion.accepted_item_ids,
+        })
+      : validateScoringRule(unit.rule, {
+          unitId: unit.scoring_unit_id,
+          points: unit.points,
+          facts: 'single',
+        });
+  issues.push(...ruleIssues);
   return issues;
 }
