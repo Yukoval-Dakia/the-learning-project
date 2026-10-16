@@ -2,7 +2,12 @@ import { unit as parseUnit } from 'mathjs';
 import { EvaluationContractError, projectIssuedScoringBasis } from './evaluation';
 import { validateExecutionPlan } from './execution';
 import { isPublicSharedMaterial } from './materials';
-import { Presentation, validatePresentation } from './presentation';
+import {
+  Presentation,
+  type PresentationBlockT,
+  type PresentationT,
+  validatePresentation,
+} from './presentation';
 import type { ResponseSlotT } from './response';
 import type { PublishedQuestionRevisionT } from './revision';
 import { validateScoringBasis } from './scoring';
@@ -33,8 +38,8 @@ export type AutomaticServingDecision =
     };
 
 /**
- * 网页作答面已有输入控件的槽位种类（YUK-1496）。没有控件的题后端判得了也不发，
- * 避免「题出了却没有输入框」。界面线落地某类输入积木时在同一 PR 把它加进来。
+ * 网页逐槽渲染已有输入控件的槽位种类（YUK-1496）。没有控件的题后端判得了也不发，
+ * 避免「题出了却没有输入框」。只能由展示层积木画出的种类见 BLOCK_INPUT_SLOT_KINDS。
  */
 export const INPUT_RENDERER_SLOT_KINDS: ReadonlySet<ResponseSlotT['kind']> = new Set([
   'single_choice',
@@ -46,6 +51,35 @@ export const INPUT_RENDERER_SLOT_KINDS: ReadonlySet<ResponseSlotT['kind']> = new
   'ordering',
   'open_response',
 ]);
+
+/**
+ * YUK-1497 —— 只能由展示层输入积木画出的槽位种类（spec §4）：没有逐槽控件，
+ * 只有 revision 的 presentation 用声明式输入积木绑定它时才可出。
+ */
+const BLOCK_INPUT_SLOT_KINDS: ReadonlySet<ResponseSlotT['kind']> = new Set(['select', 'blank']);
+
+/** 每个被绑定槽位由谁画：声明式输入积木，或网页尚不能运行的自定义块。 */
+function presentationBinders(presentation: PresentationT): Map<string, 'block' | 'custom'> {
+  const out = new Map<string, 'block' | 'custom'>();
+  const walk = (block: PresentationBlockT): void => {
+    switch (block.kind) {
+      case 'stack':
+      case 'passage_layout':
+        for (const child of block.children) walk(child);
+        return;
+      case 'text_math':
+      case 'figure':
+        return;
+      case 'custom':
+        for (const bind of block.binds) out.set(bind.slot_id, 'custom');
+        return;
+      default:
+        out.set(block.bind.slot_id, 'block');
+    }
+  };
+  walk(presentation.root);
+  return out;
+}
 
 /** Read-only capability check on the frozen plan, never a publication or model admission. */
 export function decideAutomaticServing(
@@ -101,12 +135,30 @@ export function decideAutomaticServing(
   const answerSlots = revision.response_spec.slots.filter(
     (slot) => selected.has(slot.part_id) && slot.kind !== 'table',
   );
-  const unrenderable = answerSlots.find((slot) => !INPUT_RENDERER_SLOT_KINDS.has(slot.kind));
+  // YUK-1497 —— 有展示层时网页按积木树作答：select/blank 只有被声明式输入积木
+  // 绑定才有输入面；自定义块（沙箱）网页尚不能运行，被它绑定的槽一律没有输入面。
+  // 形状不合格的展示层在这里视为不绑定任何槽（其本身由下方 invalid_presentation 拒绝）。
+  const shapedPresentation =
+    revision.presentation != null ? Presentation.safeParse(revision.presentation) : null;
+  const binders = shapedPresentation?.success
+    ? presentationBinders(shapedPresentation.data)
+    : new Map<string, 'block' | 'custom'>();
+  const unrenderable = answerSlots.find((slot) => {
+    const binder = binders.get(slot.slot_id);
+    if (binder === 'custom') return true;
+    if (BLOCK_INPUT_SLOT_KINDS.has(slot.kind)) return binder !== 'block';
+    return !INPUT_RENDERER_SLOT_KINDS.has(slot.kind);
+  });
   if (unrenderable != null) {
     return {
       kind: 'unavailable',
       reason: 'no_input_renderer',
-      detail: `slot ${unrenderable.slot_id} (${unrenderable.kind}) has no learner input control yet`,
+      detail:
+        binders.get(unrenderable.slot_id) === 'custom'
+          ? `slot ${unrenderable.slot_id} (${unrenderable.kind}) is bound by a custom block the web cannot run yet`
+          : BLOCK_INPUT_SLOT_KINDS.has(unrenderable.kind)
+            ? `slot ${unrenderable.slot_id} (${unrenderable.kind}) is not bound by a presentation input block`
+            : `slot ${unrenderable.slot_id} (${unrenderable.kind}) has no learner input control yet`,
     };
   }
   if (
@@ -125,7 +177,7 @@ export function decideAutomaticServing(
     // 形状门先行（review R1）：行读面（revisionRowToContract）对解析失败的
     // 展示层原样透传而非丢列（丢列 = 静默降级为逐槽渲染的 fail-open）；
     // 这里以 invalid_presentation 拒绝，绝不带着坏展示层发题。
-    const shaped = Presentation.safeParse(revision.presentation);
+    const shaped = shapedPresentation ?? Presentation.safeParse(revision.presentation);
     if (!shaped.success) {
       return {
         kind: 'unavailable',
