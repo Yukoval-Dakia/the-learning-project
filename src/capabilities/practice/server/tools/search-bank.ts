@@ -11,7 +11,9 @@ import { z } from 'zod';
 
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 import {
+  BankDifficultyFilterSchema,
   BankGapRequestSchema,
+  BankSimilarToSchema,
   BankUnsatisfiedConstraintsSchema,
   runSearchBank,
 } from './bank-search';
@@ -26,6 +28,18 @@ const SearchBankNewFormSchema = z
     kind: z.string().min(1).optional(),
     source: z.string().min(1).optional(),
     within_refs: z.array(z.string().min(1)).max(200).optional(),
+    /** 知识点硬过滤：全部 id 必须是真实（live、未归档）科目 KC，未知 id 显式报错。 */
+    knowledge_ids: z.array(z.string().min(1)).min(1).max(50).optional(),
+    /** 'any'（默认）= 含任一 KC；'all' = 含全部 KC。仅在 knowledge_ids 存在时生效。 */
+    knowledge_mode: z.enum(['any', 'all']).optional(),
+    /** 难度硬过滤。authored = 作者难度 1–5 整数；calibrated = 标定难度 logit b
+     * （校准未知的题被排除，绝不混入作者难度）。两基准互斥，不可同时给。 */
+    difficulty: BankDifficultyFilterSchema.optional(),
+    /** 调用方自带的「已见过」ref 列表（如学习者已作答题）；按 question 身份跨所有
+     * revision 排除。本工具不查 learner state——名单只来自本输入。 */
+    exclude_refs: z.array(z.string().min(1)).min(1).max(200).optional(),
+    /** 以某道题的内容向量为向量通道查询（锚必须是 current revision 的 ref）。 */
+    similar_to: BankSimilarToSchema.optional(),
     /** 'all'（默认，含未发布 draft——查重需要）| 'active' | 'draft'。 */
     draft_state: z.enum(['all', 'active', 'draft']).default('all'),
     /** 'any'（默认）| 'admitted'（自动可判且可服务）| 'withheld'。 */
@@ -66,6 +80,30 @@ export const SearchBankOutputSchema = z.object({
     kind: z.object({ canonical: z.string(), persisted_forms: z.array(z.string()) }).optional(),
     source: z.string().optional(),
     within_refs: z.array(z.string()).optional(),
+    knowledge: z
+      .object({
+        ids: z.array(z.string()),
+        mode: z.enum(['any', 'all']),
+        resolved_count: z.number().int(),
+      })
+      .optional(),
+    difficulty: z
+      .object({
+        basis: z.enum(['authored', 'calibrated']),
+        range: z.tuple([z.number(), z.number()]),
+        scale: z.enum(['authored_1_5', 'calibrated_logit_b']),
+      })
+      .optional(),
+    exclude_refs: z
+      .object({ refs: z.array(z.string()), excluded_question_ids: z.number().int() })
+      .optional(),
+    similar_to: z
+      .object({
+        question_ref: z.string(),
+        aspect: z.literal('content'),
+        vector_available: z.boolean(),
+      })
+      .optional(),
     draft_state: z.enum(['all', 'active', 'draft']),
     admission_state: z.enum(['any', 'admitted', 'withheld']),
   }),
@@ -135,6 +173,11 @@ async function executeSearchBank(
             kind: input.kind,
             source: input.source,
             within_refs: input.within_refs,
+            knowledge_ids: input.knowledge_ids,
+            knowledge_mode: input.knowledge_mode,
+            difficulty: input.difficulty,
+            exclude_refs: input.exclude_refs,
+            similar_to: input.similar_to,
             draft_state: input.draft_state,
             admission_state: input.admission_state,
           },
@@ -146,7 +189,7 @@ async function executeSearchBank(
 export const searchBankTool: DomainTool<SearchBankInput, SearchBankOutput> = {
   name: 'search_bank',
   description:
-    'Search the question bank for CANDIDATES by natural-language query (Chinese works directly) with deterministic hard filters: subject / kind / source / draft_state (default all — drafts are visible for duplicate-avoidance before authoring) / admission_state (admitted = contains an automatically servable part; automatically_servable_part_ids names the exact eligible parts, not permission to issue the whole group). Full-text + vector recall are fused; results are candidates, NOT a guarantee every semantic condition holds (see requirements.not_verified), and no hits ≠ bank is empty. Each hit carries a versioned ref (read_bank input), a mutable question_id pointer (write_quiz input), and honest missing flags (e.g. no_published_revision on unpublished drafts). within_refs restricts to exact current versions; an empty list is an empty scope, and superseded/unresolvable refs error explicitly. Pagination retains the original bounded candidate snapshot for 15 minutes without repeating retrieval; changed or withdrawn candidates expire the cursor explicitly. Paginate ONLY with the returned cursor — it continues this exact search; a new query or changed filters must start a new search. coverage.verdict (enough/sparse/none) is retrieved candidate quantity, not semantic certification. Sparse/none echoes the whole unsatisfied query+scope combination and a content_coverage EvidenceDemand seed; filing still needs agent context and a gap-filing tool. Results are never padded or hard filters relaxed. coverage.complete tells whether this page exhausts the candidate pool with no channel truncation/unavailability.',
+    'Search the question bank for CANDIDATES by natural-language query (Chinese works directly) with deterministic hard filters: subject / kind / source / knowledge_ids+knowledge_mode (any|all, live subject KCs only — unknown ids error) / difficulty {basis: authored(1-5 integer) | calibrated(logit b; unknown calibration excluded, never mixed with authored)} with range [lo,hi] / exclude_refs (learner-side seen list; excluded by question identity across all revisions — the tool never reads learner state) / similar_to {question_ref, aspect:content} (reuses the anchor current-revision content vector as the vector query; anchor without a vector degrades honestly to FTS) / draft_state (default all — drafts are visible for duplicate-avoidance before authoring) / admission_state (admitted = contains an automatically servable part; automatically_servable_part_ids names the exact eligible parts, not permission to issue the whole group). Full-text + vector recall are fused; results are candidates, NOT a guarantee every semantic condition holds (see requirements.not_verified), and no hits ≠ bank is empty. Each hit carries a versioned ref (read_bank input), a mutable question_id pointer (write_quiz input), and honest missing flags (e.g. no_published_revision on unpublished drafts). within_refs restricts to exact current versions; an empty list is an empty scope, and superseded/unresolvable refs error explicitly. The effective scope (resolved KC counts, difficulty basis+scale, exclusion count, similar_to vector availability) is echoed in scope_applied. Pagination retains the original bounded candidate snapshot for 15 minutes without repeating retrieval; changed or withdrawn candidates expire the cursor explicitly. Paginate ONLY with the returned cursor — it continues this exact search; a new query or changed filters must start a new search. coverage.verdict (enough/sparse/none) is retrieved candidate quantity, not semantic certification. Sparse/none echoes the whole unsatisfied query+scope combination and a content_coverage EvidenceDemand seed; filing still needs agent context and a gap-filing tool. Results are never padded or hard filters relaxed. coverage.complete tells whether this page exhausts the candidate pool with no channel truncation/unavailability.',
   effect: 'read',
   inputSchema: SearchBankInputSchema,
   outputSchema: SearchBankOutputSchema,

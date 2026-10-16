@@ -32,7 +32,10 @@ import { embedHash, knowledgeEmbedText, questionEmbedText } from '@/server/ai/em
 // Bump when the embedder model or the embed-source join rule changes, to trigger
 // a background re-embed of rows stamped with an older version. v2 (YUK-393):
 // KC embed text now folds effective-domain → every existing KC vector is stale.
-const EMBED_VERSION = 2;
+// Exported (YUK-1448): the read-only embedding inventory
+// (server/embedding-inventory.ts) reports per-question staleness against THIS
+// version so the two modules cannot drift.
+export const EMBED_VERSION = 2;
 
 // YUK-393 F2 — bound the parallel effective-domain resolution. Each
 // getEffectiveDomain call issues up to MAX_DEPTH(32) serial SELECTs (one per

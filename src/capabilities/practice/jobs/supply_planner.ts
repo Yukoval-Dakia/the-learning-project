@@ -43,13 +43,17 @@ import {
 } from '../server/question-supply/supply-plan-gate';
 import { discoverSupplyTargets } from '../server/question-supply/target-discovery';
 
-// planner 只挂只读知识图谱面（下钻核实节点）；与 QUIZ_GEN_READ_TOOLS 同集但独立
-// 声明——共享 allowlist 矩阵扩张需显式决策（quiz_gen.ts 同款注释）。
-const SUPPLY_PLANNER_READ_TOOLS = [
+// planner 挂知识图谱只读面（下钻核实节点）+ YUK-1448 缺口落单写工具
+// file_bank_gap（supply agent 面：检索/扫描后把缺口需求幂等登记进供题台账，
+// 复用 dispatcher；此为 supply 域对写工具的显式扩面决策，非共享矩阵默认）。
+// 与 QUIZ_GEN_READ_TOOLS 同集但独立声明——共享 allowlist 矩阵扩张需显式决策
+// （quiz_gen.ts 同款注释）。
+const SUPPLY_PLANNER_TOOLS = [
   'query_knowledge',
   'get_subject_graph_overview',
   'expand_knowledge_subgraph',
   'find_knowledge_paths',
+  'file_bank_gap',
 ] as const satisfies readonly DomainToolName[];
 
 // 照 QUIZ_PLAN_MAX_ATTEMPTS（quiz_gen_plan.ts）：规划至多 2 轮，仍不过 fail closed。
@@ -330,11 +334,11 @@ export async function runSupplyPlanner(
       callerActor: { kind: 'agent', ref: 'supply_planner' },
     },
     serverName: DOMAIN_TOOL_MCP_SERVER_NAME,
-    toolNames: SUPPLY_PLANNER_READ_TOOLS,
+    toolNames: SUPPLY_PLANNER_TOOLS,
     taskKind: 'SupplyPlanTask',
   } satisfies BuildMcpServerOptions;
   const piToolMounts: PiToolMount[] = [piDomainMount(domainMountOptions)];
-  const allowedTools = SUPPLY_PLANNER_READ_TOOLS.map((name) => toMcpAllowedToolName(name));
+  const allowedTools = SUPPLY_PLANNER_TOOLS.map((name) => toMcpAllowedToolName(name));
 
   let plan: SupplyPlanV1T | null = null;
   const planRejections: string[][] = [];
