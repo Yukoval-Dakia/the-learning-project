@@ -50,6 +50,11 @@ export interface CrisisGuardEventInput {
   /** 稳定事件 id（幂等重放不重复写）。 */
   eventId: string;
   now: Date;
+  /**
+   * R1 addendum：危机分类命中时被丢弃的附件类型（目前只有 review_answer）。
+   * 只记类型，不记任何原文/摘要。
+   */
+  droppedAttachmentKind?: 'review_answer';
 }
 
 /**
@@ -77,6 +82,9 @@ export async function writeCrisisGuardEvent(
       guard_version: CRISIS_GUARD_CONFIG_VERSION,
       template_version: template.version,
       template_review_status: template.review_status,
+      ...(input.droppedAttachmentKind
+        ? { dropped_attachment_kind: input.droppedAttachmentKind }
+        : {}),
       // 双保险：事件自身也声明受限用途（其因果根 user_ask 已是 crisis）。
       derivation_policy: 'crisis',
     },
