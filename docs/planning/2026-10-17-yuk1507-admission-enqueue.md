@@ -36,7 +36,7 @@ worker 在 family 锁内校验原 pg-boss delivery 仍 active 且 payload 相等
 
 ## 验证状态与待批准方案
 
-源码类型检查、lint 和 capability 边界 audit 已通过；build/独立初审/远端 exact-head CI 按本片固定版本记录。未写或修改测试，未运行 DB/runtime/provider，不能称自动准入已验收。
+源码类型检查、lint、build、capability 边界和 task census audit 已通过；独立初审进行中，远端 exact-head CI 待 PR。未写或修改测试，未运行 DB/runtime/provider，不能称自动准入已验收。
 
 待 owner 批准的文本测试方案（当前 NOT_RUN，未写代码）：
 
@@ -46,3 +46,15 @@ worker 在 family 锁内校验原 pg-boss delivery 仍 active 且 payload 相等
 4. job 与 publisher 交错：付费后编辑/撤回/owner hold，不发布旧准入；原结果和未决/失效处置保持可读。
 
 真实模型验收、金额预算核对和 TEST 发布另经协调授权；源码/CI 结果不能代替它们。
+
+## 本地证据
+
+已正常合入 main e8eb9fe9f（含 #1737 展示层）；冻结 presentation 随输入保留，发布 resolved contract 时沿用该层并重算完整 digest。
+
+- `/tmp/yuk1507-typecheck-04.log`：exit 0。
+- `/tmp/yuk1507-lint-02.log`：exit 0，现有 176 warnings；最后仅将 retry 配置移入绑定 runner，局部 Biome 通过。
+- `/tmp/yuk1507-build-03.log`：exit 0。
+- `/tmp/yuk1507-boundaries-02.log`：exit 0，baseline 未抬升。
+- `/tmp/yuk1507-task-census-02.log`：exit 0，56 kinds；首次动态包装调用的 census 失败保留在 `-01.log`，未修改 audit。
+
+初版 typecheck 的 nullable revision_id 错误保留在 `/tmp/yuk1507-typecheck-01.log`，已修复；以上不构成 DB、runtime 或 provider PASS。

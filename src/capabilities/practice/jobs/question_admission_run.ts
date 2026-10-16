@@ -224,10 +224,11 @@ export async function runAdmissionForQuestion(
     try {
       const runTask = makePracticeTaskTextRunFn(db, {
         providerSessionDeadlineAt: Date.now() + 15 * 60_000,
+        judgeRetryPolicy: 'none',
       });
       const result = await runQuestionAdmission(definitionFromContract(batch.input.contract), {
         db,
-        runTask: (kind, input, ctx) => runTask(kind, input, { ...ctx, judgeRetryPolicy: 'none' }),
+        runTask,
         subjectProfile: batch.input.subject_profile,
         solver2: batch.input.solver2
           ? {
