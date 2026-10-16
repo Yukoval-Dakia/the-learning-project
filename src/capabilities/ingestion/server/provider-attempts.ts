@@ -14,6 +14,18 @@ import {
 
 export { ProviderAttemptLifecycleError };
 
+// Tool-facing factory: capability tool files reach provider-attempt-runtime
+// through this seam (the module already holds the ingestion -> ai edge) rather
+// than importing '@/server/ai/*' directly.
+export function createIngestionToolProviderContext(input: {
+  readonly db: Db;
+  readonly caller: 'api' | 'worker';
+  readonly deadlineAt: Date;
+  readonly operationAnchor: string;
+}): DirectProviderOperationContext {
+  return createDirectProviderOperationContext(input);
+}
+
 export const GLM_OCR_LAYOUT_PARSING_LANE = 'glm.ocr-layout-parsing';
 export const TENCENT_OCR_QUESTION_MARK_LANE = 'tencent.question-mark-agent';
 export const TENCENT_OCR_SUBMIT_OPERATION_KIND = 'ocr_page_submit';
@@ -161,24 +173,63 @@ export function createOcrPageProviderContext(
 export type OcrPageProviderContext = DirectProviderOperationContext;
 export type OcrPageProviderAttemptControl = DirectProviderAttemptControl;
 
+export const GLM_OCR_PROVIDER = 'glm' as const;
+export const GLM_OCR_MODEL = 'glm-ocr' as const;
+
+const GLM_OCR_ATTEMPT_DESCRIPTOR = {
+  provider: GLM_OCR_PROVIDER,
+  model: GLM_OCR_MODEL,
+  lane: GLM_OCR_LAYOUT_PARSING_LANE,
+  protocol: 'http',
+  endpointClass: 'glm.layout-parsing',
+  operationKind: 'ocr_page_fetch',
+  unknownCostCurrency: 'CNY',
+} as const;
+
 export async function executeGlmOcrWireAttempt<T>(
   context: OcrPageProviderContext,
   execute: (attempt: OcrPageProviderAttemptControl) => Promise<T>,
 ): Promise<T> {
+  const result = await executeGlmOcrWireAttemptResult(context, execute);
+  return result.value;
+}
+
+/**
+ * YUK-1404 (B2/R5) — same wire attempt, but returns the attempt identity so a
+ * caller (the glm_ocr tool) can hand the agent an honest `run_ref`. Usage/cost
+ * truth lives on the provider_attempt row under this attemptId; the tool
+ * reports what the wire actually returned and never fabricates cost.
+ */
+export async function executeGlmOcrWireAttemptResult<T>(
+  context: OcrPageProviderContext,
+  execute: (attempt: OcrPageProviderAttemptControl) => Promise<T>,
+): Promise<{ value: T; attemptId: string; operationId: string }> {
+  const result = await executeDirectProviderAttempt(context, GLM_OCR_ATTEMPT_DESCRIPTOR, execute);
+  return { value: result.value, attemptId: result.attemptId, operationId: context.operationId };
+}
+
+/**
+ * YUK-1404 (B2/R5 P1-4) — the glm_ocr TOOL's wire descriptor. Same lane and
+ * operation kind (honest billing attribution), but `providerStartFence:
+ * 'operation_kind'` serializes dispatch on the same operation anchor: a second
+ * call while a prior attempt's lease is live is fenced instead of double-
+ * dispatching an unknown-paid request (design §9: unknown-paid 不自动重发).
+ */
+const GLM_OCR_TOOL_ATTEMPT_DESCRIPTOR = {
+  ...GLM_OCR_ATTEMPT_DESCRIPTOR,
+  providerStartFence: 'operation_kind' as const,
+};
+
+export async function executeGlmOcrToolWireAttemptResult<T>(
+  context: OcrPageProviderContext,
+  execute: (attempt: OcrPageProviderAttemptControl) => Promise<T>,
+): Promise<{ value: T; attemptId: string; operationId: string }> {
   const result = await executeDirectProviderAttempt(
     context,
-    {
-      provider: 'glm',
-      model: 'glm-ocr',
-      lane: GLM_OCR_LAYOUT_PARSING_LANE,
-      protocol: 'http',
-      endpointClass: 'glm.layout-parsing',
-      operationKind: 'ocr_page_fetch',
-      unknownCostCurrency: 'CNY',
-    },
+    GLM_OCR_TOOL_ATTEMPT_DESCRIPTOR,
     execute,
   );
-  return result.value;
+  return { value: result.value, attemptId: result.attemptId, operationId: context.operationId };
 }
 
 export async function executeTencentOcrSubmit(input: {

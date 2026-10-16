@@ -146,6 +146,31 @@ async function withTmpDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
 
 // ---------- pandoc: docx → gfm markdown + media ----------
 
+// GFM has only decimal ordered lists. Preserve Word's alphabetic option labels
+// before the writer would turn A/B/C/D into 1/2/3/4 (false question boundaries).
+// Salvaged verbatim from the closed PR #1703; the downstream segmenter
+// (markdown-segment.ts OPTION_LINE) already expects `A.`–`D.` labels.
+const PRESERVE_OPTION_LABELS = `
+function OrderedList(list)
+  if list.style ~= 'UpperAlpha' then return nil end
+  local blocks = pandoc.List()
+  for index, item in ipairs(list.content) do
+    local label = list.start + index - 1
+    if label > 26 then return nil end
+    local prefix = {pandoc.Str(string.char(64 + label) .. '.'), pandoc.Space()}
+    if item[1] and (item[1].t == 'Para' or item[1].t == 'Plain') then
+      for _, inline in ipairs(item[1].content) do table.insert(prefix, inline) end
+      blocks:insert(pandoc.Para(prefix))
+      for i = 2, #item do blocks:insert(item[i]) end
+    else
+      blocks:insert(pandoc.Para(prefix))
+      blocks:extend(item)
+    end
+  end
+  return blocks
+end
+`;
+
 async function pandocToMarkdown(
   docxBytes: Uint8Array,
   useDocker: boolean,
@@ -154,6 +179,7 @@ async function pandocToMarkdown(
     const inPath = join(dir, 'in.docx');
     const mdPath = join(dir, 'out.md');
     await fs.writeFile(inPath, docxBytes, { mode: FILE_MODE });
+    await fs.writeFile(join(dir, 'options.lua'), PRESERVE_OPTION_LABELS, { mode: FILE_MODE });
 
     // --extract-media writes images under <dir>/media; markdown references them
     // relative to the output dir.
@@ -170,10 +196,11 @@ async function pandocToMarkdown(
           '-t',
           'gfm',
           '--extract-media=.',
+          '--lua-filter=options.lua',
           '-o',
           'out.md',
         ]
-      : ['in.docx', '-t', 'gfm', '--extract-media=.', '-o', 'out.md'];
+      : ['in.docx', '-t', 'gfm', '--extract-media=.', '--lua-filter=options.lua', '-o', 'out.md'];
     const cmd = useDocker ? 'docker' : 'pandoc';
     // For the binary path, run inside the tmpdir so relative in.docx / out.md
     // resolve; docker mounts the dir at /data with -w, so no cwd needed there.
