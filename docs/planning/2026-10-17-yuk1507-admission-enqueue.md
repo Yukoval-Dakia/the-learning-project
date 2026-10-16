@@ -6,13 +6,13 @@
 
 本片只修改 practice manifest 的新 subscriber 与现有 question_admission_run 条目、该 job，以及 admission 下 enqueue/receipt。无 DDL，复用已纳入备份恢复的 paid_effect/control。注册器、worker、publisher、source_verify、模型路由不改。
 
-与主线 LIGHT PR 同一窗口合并：本片先、LIGHT 后；两者一起交付，不单独部署。LIGHT 将来源核验成功改为 withheld/unverified_rules，并补 admitted 的独立核验门。本片不能替代这个生产者修复。
+与主线 LIGHT #1753 同一窗口合并：本片 #1752 先、#1753 后；两者一起交付，不单独部署。#1753 只将 source_verify 来源核验成功改为 withheld/unverified_rules。发布口强制 admitted 携带已通过独立核验不在这两片内，因既有 fixture 修改需 owner 批准，由主线另交 PR；不能宣称通用发布门已关闭。
 
 ## 触发与锁
 
 experimental:assessment_publish 是既有事务 event outbox。新 subscriber 的既有 bootstrap 跳过当时快照内的历史事件，不扫描存量，不自动回填 52 题。
 
-订阅处理锁序为 paid-effect family → question root → lifecycle。事务内重读当前 revision、withheld/unverified_rules、未撤回/未挂起，再通过同一个 Drizzle 事务发送 pg-boss job。job ID 来自 group/revision/digest/admission generation，payload 额外冻结 admission generation 与 backend generation。同一 generation 的事件重投不会产生第二个 job；临时 hold 后重新 pending 的新 generation 可以入新 job，仍复用同一付费批，不被旧终态队列行堵住。C1 自己的发布事件跳过；来源核验 passed 的发布事件不跳过，因为来源核验不等于解题准入。
+订阅处理锁序为 paid-effect family → question root → lifecycle。事务内重读当前 revision、withheld/unverified_rules、未撤回/未挂起，再通过同一个 Drizzle 事务发送 pg-boss job。job ID 来自 group/revision/digest/admission generation，payload 额外冻结 admission generation 与 backend generation。同一 generation 的事件重投不会产生第二个 job；临时 hold 后重新 pending 的新 generation 可以入新 job，仍复用同一付费批，不被旧终态队列行堵住。C1 自己的发布事件跳过；来源核验 passed 的发布事件不跳过，因为来源核验不等于解题准入。dimension_update=true、revision_id 不变的事件同样处理；不要求 payload 携带 digest，而是读取锁后 current revision。C1 历史短路只认 question_admission evidence pack，不把 source_verify@1/passed 误判成准入已完成。
 
 worker 在 family 锁内校验原 pg-boss delivery 仍 active 且 payload 相等，再取 root/lifecycle 锁、复核版本和准入状态、写 claim。不持数据库事务等待模型。
 
