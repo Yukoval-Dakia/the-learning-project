@@ -7,14 +7,17 @@
 import type { ReactNode } from 'react';
 
 import type { PublicMaterialViewT, PublicQuestionFaceT } from '@/core/schema/assessment/dto';
-import type { PresentationBlockT, PresentationT } from '@/core/schema/assessment/presentation';
+import {
+  Presentation,
+  type PresentationBlockT,
+  type PresentationT,
+} from '@/core/schema/assessment/presentation';
 import type {
   BlankSlotT,
   ResponseSlotT,
   SelectSlotT,
   SlotResponseT,
 } from '@/core/schema/assessment/response';
-import type { IssuedOptionOrderT } from '@/core/schema/assessment/revision';
 import {
   type EvidenceAttachment,
   evidenceKindFromMime,
@@ -35,9 +38,19 @@ import { OrderingBlock } from './OrderingBlock';
 export interface IssuedFaceData {
   faces: readonly PublicQuestionFaceT[];
   materials: readonly PublicMaterialViewT[];
+  /** Issued slots as projected: pure-option items already in frozen order, rendered as-is. */
   slots: readonly ResponseSlotT[];
-  /** The issuance's frozen option order, when the page has it; else the items' order is used. */
-  optionOrder?: readonly IssuedOptionOrderT[];
+}
+
+/**
+ * The wire DTO carries `presentation` as opaque JSON. Parse it with the same schema the server
+ * validated against; null means "render per slot instead" (old revisions, or a payload this
+ * client cannot read).
+ */
+export function parsePresentation(raw: unknown): PresentationT | null {
+  if (raw == null) return null;
+  const parsed = Presentation.safeParse(raw);
+  return parsed.success ? parsed.data : null;
 }
 
 export type EntriesUpdate = (prev: SlotResponseT[]) => SlotResponseT[];
@@ -86,7 +99,6 @@ export function PresentationBlocks({
   const slotById = new Map(issued.slots.map((slot) => [slot.slot_id, slot] as const));
   const faceById = new Map(issued.faces.map((face) => [face.part_id, face] as const));
   const materialById = new Map(issued.materials.map((m) => [m.material_id, m] as const));
-  const orderBySlot = new Map((issued.optionOrder ?? []).map((o) => [o.slot_id, o.option_ids]));
   const state = { disabled, submitted };
 
   // question_no + placement.label + kind name, e.g. 「第 3 题 (1) 选项」.
@@ -162,19 +174,12 @@ export function PresentationBlocks({
       case 'option_list': {
         const slot = selectSlot(block.bind.slot_id);
         if (!slot) return null;
-        const order = orderBySlot.get(slot.slot_id);
-        const byId = new Map(slot.items.map((item) => [item.item_id, item] as const));
-        const shown = order
-          ? order.flatMap((id) => {
-              const item = byId.get(id);
-              return item ? [item] : [];
-            })
-          : slot.items;
+        // The projection already serves pure-option items in the issuance's frozen order.
         return (
           <OptionListBlock
             key={block.block_id}
             label={labelFor(slot, block.kind)}
-            items={shown.map((item) => ({ id: item.item_id, label_md: item.label_md ?? '' }))}
+            items={slot.items.map((item) => ({ id: item.item_id, label_md: item.label_md ?? '' }))}
             pick={slot.pick}
             layout={block.layout}
             marker={block.marker}
