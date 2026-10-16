@@ -242,21 +242,27 @@ export function definitionFromContract(contract: NormalizedContract): QuestionAd
   });
 
   // ---- source_answers：印出答案原文（evidence only）。----
-  // rule_reference.statement_md 承载印刷答案/规则原文；structure.materials 的
-  // 私有 plaintext 材料（normalizer 冻结的 'reference solution'）按 part 归属。
+  // rule_reference.statement_md 仅当其出处是【印出答案原文】才进
+  // source_answers —— rubric/placeholder 来源的 statement 不是答案，拿去做
+  // crosscheck 会把「恰好缺答案」的题（本 lane 要解决的对象）冤杀成
+  // conflict/unknown。出处经 normalizer 的 rule_statement_origins 显式传递；
+  // 未标注的保守排除（不解析 prose）。structure.materials 的私有 plaintext
+  // 材料（normalizer 冻结的 'reference solution'，出自真实 answerTexts）按
+  // part 归属。
   const source_answers: AdmissionSourceAnswer[] = [];
   const seenTexts = new Set<string>();
+  const origins = contract.rule_statement_origins ?? {};
   for (const unit of contract.scoring_basis.units) {
-    if (unit.criterion.kind === 'rule_reference' && unit.criterion.statement_md.trim().length > 0) {
-      const text = unit.criterion.statement_md;
-      if (seenTexts.has(text)) continue;
-      seenTexts.add(text);
-      source_answers.push({
-        unit_id: unit.scoring_unit_id,
-        reference_md: text,
-        locator: unit.criterion.rule_id,
-      });
-    }
+    if (unit.criterion.kind !== 'rule_reference') continue;
+    if (origins[unit.scoring_unit_id] !== 'reference') continue;
+    const text = unit.criterion.statement_md;
+    if (text.trim().length === 0 || seenTexts.has(text)) continue;
+    seenTexts.add(text);
+    source_answers.push({
+      unit_id: unit.scoring_unit_id,
+      reference_md: text,
+      locator: unit.criterion.rule_id,
+    });
   }
   const unitPart = new Map(units.map((unit) => [unit.scoring_unit_id, unit.part_id] as const));
   const unitsByPart = new Map<string, string[]>();

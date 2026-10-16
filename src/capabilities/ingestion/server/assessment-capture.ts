@@ -296,9 +296,10 @@ export async function captureIngestionOriginal(db: Db, input: CaptureInput) {
     page_spans: block.page_spans,
     image_refs: block.image_refs,
     // G8：逐单元捕获也是 capture 身份的一部分 —— 同一块不同的 per-unit
-    // 读数不得复用旧 capture（capture_conflict 如实冲突）。
-    unit_captures: input.unit_captures ?? null,
-    red_ink_preference: input.red_ink_preference ?? null,
+    // 读数不得复用旧 capture（capture_conflict 如实冲突）。仅当调用方真的
+    // 传入才进 digest（缺席时键整体省略，旧 capture 的 digest 逐字节一致）。
+    ...(input.unit_captures != null ? { unit_captures: input.unit_captures } : {}),
+    ...(input.red_ink_preference != null ? { red_ink_preference: input.red_ink_preference } : {}),
   });
   return db.transaction(async (tx) => {
     await acquireLearningStateWriteLock(tx);
