@@ -14,6 +14,7 @@ export type StillReason =
   | 'software-renderer'
   | 'low-power'
   | 'context-lost'
+  | 'shader-failed'
   | 'load-failed';
 
 export interface MascotSupport {

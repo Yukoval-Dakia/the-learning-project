@@ -1,7 +1,7 @@
 import { useId } from 'react';
 
 // The glass pinwheel flower as a still image (B4 fallback). The outline is the same rim the
-// WebGL model sweeps (flower-gl.ts `petalGeometry`): six rounded trapezoids, corners at
+// WebGL model sweeps (flower-gl.ts `petals()`): six rounded trapezoids, corners at
 // 0° / 19° / 54° of each 60° turn on radii 0.87 / 1.37, rounded at 22%, seen face-on with the
 // hub hole of radius 0.22. Each soft ridge follows the model's sweep from the hub out to the
 // broad edge. Inline SVG, so it needs no image request and nothing outside the app's origin (CSP).

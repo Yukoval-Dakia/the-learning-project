@@ -4,22 +4,23 @@
 //
 // Drawing: the still flower shows first. At idle time, if the device can afford it (support.ts),
 // three.js is imported and the glass flower takes over. Under reduced motion, without WebGL, on
-// software rendering or low power, when the import fails or the context is lost, the still flower
-// stays; `data-render` / `data-still-reason` on the root say which and why.
+// software rendering or low power, when the import fails, a shader fails or the context is lost,
+// the still flower stays; `data-render` / `data-still-reason` on the root say which and why.
 //
-// No effects. One runtime per mounted mascot owns everything imperative:
-// - the root's ref callback watches its own `data-thinking` / `data-settle` attributes, so React
-//   props reach the WebGL handle without an effect (thinking spins it; a new settle key turns one
-//   petal, the first value being the baseline);
+// No effects. How many petals the flower has turned is React state, adjusted during render when
+// the props change; it is rendered as `--un-mascot-turn` (the still flower) and `data-turns`.
+// One runtime per mounted mascot owns everything imperative:
+// - the root's ref callback watches its own `data-thinking` / `data-turns` attributes and sends
+//   the current values to the glass flower (level-triggered, so re-sending is harmless);
 // - the canvas's ref callback probes, imports and builds the renderer at idle time, owns the
 //   pointer, theme and context-loss listeners, and disposes all of it when the canvas leaves
 //   (unmount, next question, reduced motion switched on, or a failure);
 // - the render state is an external store read with useSyncExternalStore.
-import { useState, useSyncExternalStore } from 'react';
+import { type CSSProperties, useState, useSyncExternalStore } from 'react';
 import { useReducedMotion } from '../motion/reduced-motion';
 import { FlowerStill } from './FlowerStill';
 import type { FlowerHandle } from './flower-gl';
-import { DEFAULT_REST, lookToward } from './orientation';
+import { DEFAULT_REST, type Orientation, lookToward } from './orientation';
 import { type StillReason, mascotSupport } from './support';
 
 /** CSS px the glass flower is drawn at; the slot scales it down (largest slot 208px). */
@@ -47,6 +48,9 @@ function accentOf(el: Element): string {
   return getComputedStyle(el).getPropertyValue('--un-accent').trim() || FALLBACK_ACCENT;
 }
 
+const sameOrientation = (a: Orientation | null, b: Orientation) =>
+  !!a && a.x === b.x && a.y === b.y && a.z === b.z;
+
 function createMascotRuntime() {
   let state = INITIAL;
   const listeners = new Set<() => void>();
@@ -59,6 +63,7 @@ function createMascotRuntime() {
   };
   const fail = (reason: StillReason) => set({ render: 'still', failed: reason });
   const thinking = () => root?.dataset.thinking === 'true';
+  const turns = () => Number(root?.dataset.turns ?? 0) || 0;
 
   return {
     subscribe(listener: () => void) {
@@ -72,23 +77,11 @@ function createMascotRuntime() {
     attachRoot(node: HTMLElement | null) {
       if (!node) return;
       root = node;
-      let turns = 0;
-      const observer = new MutationObserver((records) => {
-        for (const record of records) {
-          if (record.attributeName === 'data-thinking') gl?.setThinking(thinking());
-          if (record.attributeName === 'data-settle') {
-            const next = node.dataset.settle ?? '';
-            if (!next || next === record.oldValue) continue;
-            turns += 1;
-            node.style.setProperty('--un-mascot-turn', `${turns * 60}deg`);
-            gl?.advance();
-          }
-        }
+      const observer = new MutationObserver(() => {
+        gl?.setThinking(thinking());
+        gl?.setTurns(turns());
       });
-      observer.observe(node, {
-        attributeFilter: ['data-thinking', 'data-settle'],
-        attributeOldValue: true,
-      });
+      observer.observe(node, { attributeFilter: ['data-thinking', 'data-turns'] });
       return () => {
         observer.disconnect();
         if (root === node) root = null;
@@ -102,16 +95,18 @@ function createMascotRuntime() {
       let cancelBuild = () => {};
       let frame = 0;
       let pointer: { x: number; y: number } | null = null;
+      let aimed: Orientation | null = null;
 
-      /** Face the rest angle, turned toward a nearby pointer (B2). */
+      /** Face the rest angle, turned toward a nearby pointer (B2); only when that changes. */
       const aim = () => {
         frame = 0;
         if (!handle) return;
         const r = canvas.getBoundingClientRect();
         const half = r.width / 2;
-        handle.setRotation(
-          lookToward(DEFAULT_REST, pointer, { x: r.left + half, y: r.top + half }, half),
-        );
+        const next = lookToward(DEFAULT_REST, pointer, { x: r.left + half, y: r.top + half }, half);
+        if (sameOrientation(aimed, next)) return;
+        aimed = next;
+        handle.setRotation(next);
       };
       const onMove = (e: PointerEvent) => {
         pointer = { x: e.clientX, y: e.clientY };
@@ -130,20 +125,22 @@ function createMascotRuntime() {
       const themeObserver = new MutationObserver(retint);
       const scheme = window.matchMedia('(prefers-color-scheme: dark)');
 
-      const build = (createFlower: typeof import('./flower-gl').createFlower) => {
+      const build = ({ createFlower, FlowerShaderError }: typeof import('./flower-gl')) => {
         if (cancelled) return;
         try {
           handle = createFlower(canvas, {
             size: MASCOT_CANVAS,
             tint: accentOf(canvas),
             rotation: DEFAULT_REST,
-            onLost: () => fail('context-lost'),
+            turns: turns(),
+            onFail: fail,
           });
-        } catch {
-          fail('no-webgl');
+        } catch (error) {
+          fail(error instanceof FlowerShaderError ? 'shader-failed' : 'no-webgl');
           return;
         }
         gl = handle;
+        aimed = DEFAULT_REST;
         handle.setThinking(thinking());
         window.addEventListener('pointermove', onMove, { passive: true });
         window.addEventListener('pointerdown', onMove, { passive: true });
@@ -165,8 +162,8 @@ function createMascotRuntime() {
           return;
         }
         import('./flower-gl').then(
-          ({ createFlower }) => {
-            if (!cancelled) cancelBuild = idle(() => build(createFlower));
+          (module) => {
+            if (!cancelled) cancelBuild = idle(() => build(module));
           },
           () => {
             if (!cancelled) fail('load-failed');
@@ -196,12 +193,22 @@ function createMascotRuntime() {
   };
 }
 
+/** Petals turned, and what is needed to decide whether the next settle key turns one. */
+interface Settle {
+  key: string;
+  turns: number;
+  thinking: boolean;
+  /** The page thought since the last settle: the next new key is a fresh result. */
+  armed: boolean;
+}
+
 export interface MascotProps {
   /** The page is working on something (e.g. judging): the flower spins like a pinwheel (B2). */
   thinking?: boolean;
   /**
-   * Changes whenever something is recorded: the flower turns one petal forward. The value at
-   * mount is the baseline and does not turn it; an empty value never does.
+   * Identifies what was last recorded. A new non-empty value turns the flower one petal forward
+   * only when the page was thinking since the previous one (a result it just produced); a value
+   * that arrives otherwise (restored data loading, a source switch) only moves the baseline.
    */
   settleKey?: string | null;
   className?: string;
@@ -212,6 +219,25 @@ export function Mascot({ thinking = false, settleKey, className }: MascotProps) 
   const [runtime] = useState(createMascotRuntime);
   const state = useSyncExternalStore(runtime.subscribe, runtime.snapshot, () => INITIAL);
   const reduced = useReducedMotion();
+
+  // Adjust the petal count while rendering when the props changed (no effect, no ref writes).
+  const key = settleKey ?? '';
+  const [settle, setSettle] = useState<Settle>(() => ({ key, turns: 0, thinking, armed: false }));
+  let next = settle;
+  if (thinking !== next.thinking) {
+    next = { ...next, thinking, armed: next.armed || thinking };
+  }
+  if (key !== next.key) {
+    const turn = next.armed && key !== '';
+    next = {
+      ...next,
+      key,
+      turns: turn ? next.turns + 1 : next.turns,
+      armed: key ? false : next.armed,
+    };
+  }
+  if (next !== settle) setSettle(next);
+
   const tryGl = !reduced && state.failed === null;
   const render = tryGl ? state.render : 'still';
   let stillReason: StillReason | undefined;
@@ -222,10 +248,11 @@ export function Mascot({ thinking = false, settleKey, className }: MascotProps) 
       ref={runtime.attachRoot}
       aria-hidden="true"
       className={['un-mascot', className].filter(Boolean).join(' ')}
+      style={{ '--un-mascot-turn': `${next.turns * 60}deg` } as CSSProperties}
       data-render={render}
       data-still-reason={render === 'still' ? stillReason : undefined}
       data-thinking={thinking}
-      data-settle={settleKey ?? ''}
+      data-turns={next.turns}
     >
       <span className="un-mascot-turn">
         <FlowerStill className="un-mascot-still" />

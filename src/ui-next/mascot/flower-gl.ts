@@ -44,8 +44,8 @@ const TURN_RATE = 5.5;
 export interface FlowerHandle {
   setRotation(orientation: Orientation): void;
   setThinking(on: boolean): void;
-  /** Turn one petal forward: something was recorded (B2). */
-  advance(): void;
+  /** Stand `turns` petals forward from the start (B2); idempotent, so it can be re-sent. */
+  setTurns(turns: number): void;
   setTint(accent: string): void;
   dispose(): void;
 }
@@ -57,9 +57,17 @@ export interface FlowerOptions {
   tint: string;
   /** Where the flower faces on its first frame. */
   rotation: Orientation;
-  /** The context was lost (GPU reset, too many contexts): fall back to the still flower. */
-  onLost?: () => void;
+  /** Petals already turned before the glass took over, so it starts where the still one is. */
+  turns?: number;
+  /**
+   * The flower can no longer draw: the context was lost (GPU reset, too many contexts) or a
+   * shader failed to compile later on. Fall back to the still flower.
+   */
+  onFail?: (reason: 'context-lost' | 'shader-failed') => void;
 }
+
+/** Thrown by createFlower when the first frame's shaders fail to compile or link. */
+export class FlowerShaderError extends Error {}
 
 /** A small warm "studio" of emissive panels: something for the glass to reflect and refract. */
 function studio(renderer: WebGLRenderer): Texture {
@@ -80,15 +88,17 @@ function studio(renderer: WebGLRenderer): Texture {
   panel(3, 4, [-5, 1, 0], Math.PI / 2, 0xfff6ec);
   panel(3, 4, [5, 0, -1], -Math.PI / 2, 0xffd9c4);
   const pmrem = new PMREMGenerator(renderer);
-  const texture = pmrem.fromScene(env, 0.05).texture;
-  pmrem.dispose();
-  env.traverse((o) => {
-    if (o instanceof Mesh) {
-      o.geometry.dispose();
-      (o.material as MeshBasicMaterial).dispose();
-    }
-  });
-  return texture;
+  try {
+    return pmrem.fromScene(env, 0.05).texture;
+  } finally {
+    pmrem.dispose();
+    env.traverse((o) => {
+      if (o instanceof Mesh) {
+        o.geometry.dispose();
+        (o.material as MeshBasicMaterial).dispose();
+      }
+    });
+  }
 }
 
 /**
@@ -211,16 +221,46 @@ function tintGlass(material: MeshPhysicalMaterial, accent: string) {
   material.attenuationColor.set(WHITE).lerp(color, 0.14);
 }
 
-/** Build the renderer on `canvas`. Throws if WebGL cannot be created. */
+/**
+ * Build the renderer on `canvas`. Throws if WebGL cannot be created or the first frame's shaders
+ * fail (FlowerShaderError); either way nothing is left holding the context.
+ */
 export function createFlower(canvas: HTMLCanvasElement, options: FlowerOptions): FlowerHandle {
   const renderer = new WebGLRenderer({ canvas, antialias: true, alpha: true });
+  // Everything made after the renderer, released in reverse if building fails part-way.
+  const owned: (() => void)[] = [];
+  try {
+    return assemble(canvas, renderer, options, owned);
+  } catch (error) {
+    for (const release of owned.reverse()) release();
+    renderer.debug.onShaderError = null;
+    renderer.dispose();
+    renderer.forceContextLoss();
+    throw error;
+  }
+}
+
+function assemble(
+  canvas: HTMLCanvasElement,
+  renderer: WebGLRenderer,
+  options: FlowerOptions,
+  owned: (() => void)[],
+): FlowerHandle {
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.setSize(options.size, options.size, false);
   renderer.toneMapping = ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.05;
+  // three only logs a failed compile or link and then draws nothing: catch it instead.
+  let built = false;
+  let shaderFailed = false;
+  renderer.debug.onShaderError = () => {
+    shaderFailed = true;
+    if (built) options.onFail?.('shader-failed');
+  };
 
   const scene = new Scene();
   const environment = studio(renderer);
+  owned.push(() => environment.dispose());
   scene.environment = environment;
   scene.add(new HemisphereLight(WHITE, 0x8a7f72, 0.45));
   const key = new DirectionalLight(0xfff8f0, 1.9);
@@ -233,7 +273,9 @@ export function createFlower(canvas: HTMLCanvasElement, options: FlowerOptions):
   camera.position.set(0, 0, 6.2);
 
   const geometry = petals();
+  owned.push(() => geometry.dispose());
   const material = glass();
+  owned.push(() => material.dispose());
   tintGlass(material, options.tint);
   const flower = new Mesh(geometry, material);
   scene.add(flower);
@@ -242,18 +284,22 @@ export function createFlower(canvas: HTMLCanvasElement, options: FlowerOptions):
   const goal = new Quaternion();
   const twist = new Quaternion();
   const euler = new Euler();
-  let spin = 0;
+  let turned = options.turns ?? 0;
+  let spin = (turned * PETAL) % (Math.PI * 2);
   let thinking = false;
   let frame = 0;
   let last = 0;
   let disposed = false;
 
+  const aimGoal = () => {
+    goal.copy(target);
+    if (spin) goal.multiply(twist.setFromAxisAngle(Z_AXIS, spin));
+  };
   const draw = (now: number) => {
     const dt = Math.min(0.05, (now - (last || now)) / 1000);
     last = now;
     if (thinking) spin = (spin + dt * SPIN_SPEED) % (Math.PI * 2);
-    goal.copy(target);
-    if (spin) goal.multiply(twist.setFromAxisAngle(Z_AXIS, spin));
+    aimGoal();
     flower.quaternion.slerp(goal, 1 - Math.exp(-dt * TURN_RATE));
     renderer.render(scene, camera);
     if (thinking || flower.quaternion.angleTo(goal) > 0.0015) {
@@ -271,15 +317,20 @@ export function createFlower(canvas: HTMLCanvasElement, options: FlowerOptions):
     event.preventDefault();
     cancelAnimationFrame(frame);
     frame = 0;
-    options.onLost?.();
+    options.onFail?.('context-lost');
   };
   canvas.addEventListener('webglcontextlost', onLost);
+  owned.push(() => canvas.removeEventListener('webglcontextlost', onLost));
 
-  // First frame: already facing where the slot asks, rather than turning in from straight-on.
+  // First frame: already facing where the slot asks and turned as far as the still flower was,
+  // rather than turning in from straight-on.
   euler.set(options.rotation.x * DEG, options.rotation.y * DEG, options.rotation.z * DEG);
   target.setFromEuler(euler);
-  flower.quaternion.copy(target);
+  aimGoal();
+  flower.quaternion.copy(goal);
   renderer.render(scene, camera);
+  if (shaderFailed) throw new FlowerShaderError('mascot shader failed to compile');
+  built = true;
 
   return {
     setRotation({ x, y, z }) {
@@ -291,8 +342,10 @@ export function createFlower(canvas: HTMLCanvasElement, options: FlowerOptions):
       thinking = on;
       wake();
     },
-    advance() {
-      spin = (spin + PETAL) % (Math.PI * 2);
+    setTurns(turns) {
+      if (turns === turned) return;
+      spin = (spin + (turns - turned) * PETAL) % (Math.PI * 2);
+      turned = turns;
       wake();
     },
     setTint(accent) {
@@ -302,10 +355,9 @@ export function createFlower(canvas: HTMLCanvasElement, options: FlowerOptions):
     dispose() {
       disposed = true;
       cancelAnimationFrame(frame);
-      canvas.removeEventListener('webglcontextlost', onLost);
-      geometry.dispose();
-      material.dispose();
-      environment.dispose();
+      renderer.debug.onShaderError = null;
+      for (const release of owned.reverse()) release();
+      owned.length = 0;
       renderer.dispose();
       renderer.forceContextLoss();
     },
