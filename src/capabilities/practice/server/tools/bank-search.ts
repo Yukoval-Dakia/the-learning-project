@@ -386,7 +386,7 @@ export function rrfFuse(
   );
 }
 
-// ── CJK 切分（FTS simple 词典对中文无分词，逐字切开后按字 AND 匹配）───────
+// ── CJK 切分（FTS simple 词典对中文无分词：文档侧逐字切，查询侧按词项 OR）───
 
 export const CJK_FTS_SPLIT = '([一-鿿])';
 
@@ -400,8 +400,76 @@ function ftsDocumentExpr(): SQL {
   return sql`regexp_replace(${doc}, ${CJK_FTS_SPLIT}, ${CJK_FTS_REPLACEMENT}, 'g')`;
 }
 
+/** tsquery 词项上限：长查询只取前 N 个词项，防巨型 OR（query 上限 400 字 → 数百 bigram）。 */
+const FTS_QUERY_TERM_CAP = 32;
+
+/** 单字符 CJK 判定（与文档侧 CJK_FTS_SPLIT 同区间 U+4E00–U+9FFF；BMP 内，不误吃代理对半字）。 */
+const CJK_FTS_CHAR = /^[一-鿿]$/u;
+
+/** 非 CJK 段的词项切分：字母/数字/下划线连段为词（近似 simple 解析器的词边界）。 */
+const WORD_RUN = /[\p{L}\p{N}_]+/gu;
+
+/**
+ * tsquery 字面量：单引号包裹，内部单引号与反斜杠双写转义。词项由白名单字符切出，
+ * 本就不含 tsquery 操作符；整条 tsquery 串仍走绑定参数，用户输入永不进语法位。
+ */
+function tsqLexeme(term: string): string {
+  return `'${term.replace(/\\/g, '\\\\').replace(/'/g, "''")}'`;
+}
+
+/**
+ * YUK-1505 — 查询文本 → tsquery OR 词项列表。
+ *
+ * plainto_tsquery 把每个词项 AND 起来：真实中文长查询里只要一个词不在题面，
+ * 整单召回 0（实测「文言断句 划分句子朗读停顿」= 0 hits）。改为逐词项 OR：
+ *   - CJK 连段（≥2 字）→ 相邻 bigram 短语 ('c1' <-> 'c2') …，另附整段 unigram AND
+ *     兜底子句 (c1 & c2 & …)：该子句正是旧 plainto 语义——散字共现的旧命中文档
+ *     仍必命中，本通道召回是旧集合的严格超集；
+ *   - CJK 单字 → 单字词项；
+ *   - 非 CJK 段 → 单词词项（旧语义下这些词被 AND；旧命中的文档含全部词，故任一
+ *     OR 词项都在 → 旧命中不失）。
+ * 词项去重后截断至 FTS_QUERY_TERM_CAP，| 连接，重叠度交给 ts_rank——词法通道
+ * 只负责召回，语义条件本就标注 not_verified，不靠「词项全中」证明。
+ */
+export function ftsQueryTerms(queryText: string): string[] {
+  const terms: string[] = [];
+  let i = 0;
+  while (i < queryText.length) {
+    let j = i + 1;
+    if (CJK_FTS_CHAR.test(queryText[i])) {
+      while (j < queryText.length && CJK_FTS_CHAR.test(queryText[j])) j++;
+      if (j - i === 1) {
+        terms.push(tsqLexeme(queryText[i]));
+      } else {
+        for (let k = i; k + 1 < j; k++) {
+          terms.push(`(${tsqLexeme(queryText[k])} <-> ${tsqLexeme(queryText[k + 1])})`);
+        }
+        terms.push(`(${queryText.slice(i, j).split('').map(tsqLexeme).join(' & ')})`);
+      }
+    } else {
+      while (j < queryText.length && !CJK_FTS_CHAR.test(queryText[j])) j++;
+      for (const match of queryText.slice(i, j).matchAll(WORD_RUN)) {
+        terms.push(tsqLexeme(match[0]));
+      }
+    }
+    i = j;
+  }
+  const seen = new Set<string>();
+  const deduped = terms.filter((term) => {
+    if (seen.has(term)) return false;
+    seen.add(term);
+    return true;
+  });
+  return deduped.slice(0, FTS_QUERY_TERM_CAP);
+}
+
 function ftsQueryExpr(queryText: string): SQL {
-  return sql`plainto_tsquery('simple', regexp_replace(${queryText}, ${CJK_FTS_SPLIT}, ${CJK_FTS_REPLACEMENT}, 'g'))`;
+  const terms = ftsQueryTerms(queryText);
+  if (terms.length === 0) {
+    // 无可检索词项（纯标点/空白）：沿用 plainto——空 tsquery，零命中，同旧行为。
+    return sql`plainto_tsquery('simple', ${queryText})`;
+  }
+  return sql`to_tsquery('simple', ${terms.join(' | ')})`;
 }
 
 // ── 硬过滤（SQL 谓词；全部确定性）─────────────────────────────────────────
