@@ -33747,6 +33747,35 @@ export interface operations {
                     "application/json": {
                         hint_request_id: string;
                         text_md: string;
+                    } | {
+                        elapsed_ms: number;
+                        help: {
+                            disclosure_md?: string;
+                            /** @enum {boolean} */
+                            generated_on_demand: false;
+                            /** @enum {string} */
+                            kind: "reference" | "deterministic_next_step";
+                            /** @enum {string} */
+                            source: "frozen_revision_solution" | "frozen_scoring_basis" | "legacy_reference_md" | "deterministic";
+                            text_md: string;
+                        };
+                        hint_request_id: string;
+                        /** @enum {string} */
+                        reason: "timeout" | "provider_error" | "parse_failed" | "media_unavailable" | "unknown";
+                        reference_available: boolean;
+                        reference_revealed: boolean;
+                        /** @enum {string} */
+                        status: "fallback";
+                        text_md: string;
+                    } | {
+                        elapsed_ms: number;
+                        hint_request_id: string;
+                        options: ("retry" | "skip")[];
+                        /** @enum {string} */
+                        reason: "timeout" | "provider_error" | "parse_failed" | "media_unavailable" | "unknown";
+                        /** @enum {string} */
+                        status: "unavailable";
+                        text_md: string;
                     };
                 };
             };
@@ -33836,20 +33865,6 @@ export interface operations {
             };
             /** @description Internal error */
             500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Internal error */
-            502: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -38734,6 +38749,35 @@ export interface operations {
                     "application/json": {
                         hint_request_id: string;
                         text_md: string;
+                    } | {
+                        elapsed_ms: number;
+                        help: {
+                            disclosure_md?: string;
+                            /** @enum {boolean} */
+                            generated_on_demand: false;
+                            /** @enum {string} */
+                            kind: "reference" | "deterministic_next_step";
+                            /** @enum {string} */
+                            source: "frozen_revision_solution" | "frozen_scoring_basis" | "legacy_reference_md" | "deterministic";
+                            text_md: string;
+                        };
+                        hint_request_id: string;
+                        /** @enum {string} */
+                        reason: "timeout" | "provider_error" | "parse_failed" | "media_unavailable" | "unknown";
+                        reference_available: boolean;
+                        reference_revealed: boolean;
+                        /** @enum {string} */
+                        status: "fallback";
+                        text_md: string;
+                    } | {
+                        elapsed_ms: number;
+                        hint_request_id: string;
+                        options: ("retry" | "skip")[];
+                        /** @enum {string} */
+                        reason: "timeout" | "provider_error" | "parse_failed" | "media_unavailable" | "unknown";
+                        /** @enum {string} */
+                        status: "unavailable";
+                        text_md: string;
                     };
                 };
             };
@@ -38823,20 +38867,6 @@ export interface operations {
             };
             /** @description Internal error */
             500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Internal error */
-            502: {
                 headers: {
                     [name: string]: unknown;
                 };
