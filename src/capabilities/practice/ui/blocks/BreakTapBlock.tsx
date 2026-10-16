@@ -79,8 +79,10 @@ export function BreakTapBlock({
   const unitsBefore = (at: number) => shown.findIndex((unit) => unit.end === at) + 1;
   const around = (at: number) => {
     const n = unitsBefore(at);
-    const before = shown.slice(Math.max(0, n - 4), n).map((unit) => unit.text);
-    const after = shown.slice(n, n + 4).map((unit) => unit.text);
+    // A line break is spoken as a space; a line-end gap sits before the `\n` (spec §1.2.1).
+    const spoken = (unit: Unit) => (unit.text.includes('\n') ? ' ' : unit.text);
+    const before = shown.slice(Math.max(0, n - 4), n).map(spoken);
+    const after = shown.slice(n, n + 4).map(spoken);
     return `「${before.join('')}」与「${after.join('')}」之间`;
   };
 

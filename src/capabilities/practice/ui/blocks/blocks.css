@@ -125,6 +125,13 @@
     margin: 0;
   }
 
+  /* Item labels inside sentences (status line, screen-reader text) stay inline. */
+  & .un-blk-inline-md,
+  & .un-blk-inline-md :where(p) {
+    display: inline;
+    margin: 0;
+  }
+
   /* Shared card surface for tappable items. */
   & :is(.un-blk-opt, .un-blk-match-item, .un-blk-ord-obj, .un-blk-ord-slot) {
     position: relative;
@@ -654,10 +661,42 @@
   /* ── blank_input ───────────────────────────────────────── */
   & .un-blk-blank {
     display: inline-flex;
+    flex-wrap: wrap;
     align-items: baseline;
     gap: var(--un-sp-2);
     max-width: 100%;
     vertical-align: baseline;
+  }
+
+  & .un-blk-blank-count {
+    color: var(--un-text-4);
+    font-size: var(--un-fs-1);
+    white-space: nowrap;
+  }
+
+  /* Over the limit is only marked, never blocked (spec §1.2.2). */
+  & .un-blk-blank[data-over] .un-blk-blank-count {
+    color: var(--un-caution);
+    font-weight: var(--un-fw-medium);
+  }
+
+  & .un-blk-blank-preview {
+    display: grid;
+    flex-basis: 100%;
+    gap: 2px;
+    padding: var(--un-sp-2) var(--un-sp-3);
+    border-radius: var(--un-r-1);
+    background: var(--un-bg-sunk);
+    color: var(--un-text-1);
+  }
+
+  & .un-blk-blank-preview :where(p) {
+    margin: 0;
+  }
+
+  & .un-blk-blank-preview-label {
+    color: var(--un-text-4);
+    font-size: var(--un-fs-1);
   }
 
   & .un-blk-blank-input {

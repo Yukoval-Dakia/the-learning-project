@@ -6,7 +6,7 @@
 // filled position swaps its object out, an object already placed elsewhere moves.
 // Keyboard: the object tray and the positions are two lists, each one tab stop; arrows move inside
 // a list, Enter or Space acts, Delete takes the object out, Escape drops the chosen position.
-import { type KeyboardEvent, useId, useRef, useState } from 'react';
+import { type KeyboardEvent, type ReactNode, useId, useRef, useState } from 'react';
 
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 
@@ -15,8 +15,10 @@ import {
   BlockHead,
   type BlockStateProps,
   type BlockStatus,
+  InlineMd,
   StatusLine,
   blockMode,
+  joinNodes,
   markerText,
   rovingMove,
   shownOutcome,
@@ -92,7 +94,12 @@ export function OrderingBlock({
     ) ?? '';
   const posName = (id: string) => `第 ${posIndex(id) + 1} 位`;
   const objText = (id: string) => objects.find((o) => o.id === id)?.label_md ?? id;
-  const objName = (id: string) => `${objMark(id)}「${objText(id)}」`;
+  // Rendered content, never raw label_md: KaTeX's MathML is what screen readers read.
+  const objName = (id: string): ReactNode => (
+    <>
+      {objMark(id)}「<InlineMd source={objText(id)} notation={notation} />」
+    </>
+  );
   const inSlot = (positionId: string) => made.filter((m) => m.a === positionId);
   const slotsOf = (objectId: string) => made.filter((m) => m.b === objectId);
   const slotFull = (positionId: string) =>
@@ -106,12 +113,22 @@ export function OrderingBlock({
       case 'unavailable':
         setStatus({
           tone: 'caution',
-          text: `${objName(objectId)} 不能放在${posName(positionId)}。`,
+          text: (
+            <>
+              {objName(objectId)} 不能放在{posName(positionId)}。
+            </>
+          ),
         });
         return;
       case 'unlinked':
         onChange(result.next);
-        setStatus({ text: `已从${posName(positionId)}拿出 ${objName(objectId)}。` });
+        setStatus({
+          text: (
+            <>
+              已从{posName(positionId)}拿出 {objName(objectId)}。
+            </>
+          ),
+        });
         return;
       case 'linked': {
         onChange(result.next);
@@ -119,7 +136,12 @@ export function OrderingBlock({
         if (pair) setFresh(pair.id);
         const out = result.replaced.map((m) => objMark(m.b)).join('、');
         setStatus({
-          text: `${objName(objectId)} 放在${posName(positionId)}${out ? `，${out} 退回待放区` : ''}。`,
+          text: (
+            <>
+              {objName(objectId)} 放在{posName(positionId)}
+              {out ? `，${out} 退回待放区` : ''}。
+            </>
+          ),
         });
         return;
       }
@@ -129,7 +151,13 @@ export function OrderingBlock({
         const pair = findPair(items, positionId, objectId);
         if (pair) setFresh(pair.id);
         const from = result.holders.map((m) => posName(m.a)).join('、');
-        setStatus({ text: `${objName(objectId)} 从${from}移到${posName(positionId)}。` });
+        setStatus({
+          text: (
+            <>
+              {objName(objectId)} 从{from}移到{posName(positionId)}。
+            </>
+          ),
+        });
         return;
       }
     }
@@ -144,7 +172,7 @@ export function OrderingBlock({
     }
     if (objectUsedUp(objectId)) {
       onChange(unlinkAll(items, value, 'b', objectId));
-      setStatus({ text: `${objName(objectId)} 已拿回待放区。` });
+      setStatus({ text: <>{objName(objectId)} 已拿回待放区。</> });
       return;
     }
     // Tap-to-place: the first position that is not full and accepts this object.
@@ -157,7 +185,7 @@ export function OrderingBlock({
     if (!target) {
       setStatus({
         tone: 'caution',
-        text: `${objName(objectId)} 没有空位可放。先点一个位置，再点它就能换进去。`,
+        text: <>{objName(objectId)} 没有空位可放。先点一个位置，再点它就能换进去。</>,
       });
       return;
     }
@@ -278,10 +306,12 @@ export function OrderingBlock({
     const slotOutcome = outcome && held.length ? outcome : undefined;
     const content = (
       <>
+        <span className="un-sr-only">{`${posName(position.id)}，`}</span>
         <span className="un-blk-ord-pos" aria-hidden="true">
           <MathMarkdown notation={notation}>{position.label_md}</MathMarkdown>
         </span>
-        <span className="un-blk-ord-drop" aria-hidden="true">
+        {/* The placed object's rendered label is the slot's accessible name. */}
+        <span className="un-blk-ord-drop">
           {held.length ? (
             held.map((m) => (
               <span
@@ -298,13 +328,8 @@ export function OrderingBlock({
               </span>
             ))
           ) : (
-            <span className="un-blk-ord-empty" aria-hidden="true">
-              {isArmed ? '点一个对象放进来' : '空'}
-            </span>
+            <span className="un-blk-ord-empty">{isArmed ? '点一个对象放进来' : '空'}</span>
           )}
-        </span>
-        <span className="un-sr-only">
-          {`${posName(position.id)}，${held.length ? held.map((m) => objName(m.b)).join('、') : '空'}`}
         </span>
       </>
     );
@@ -338,12 +363,23 @@ export function OrderingBlock({
     );
   });
 
-  const summary = positions
-    .map((p) => {
+  const summary = joinNodes(
+    positions.map((p) => {
       const held = inSlot(p.id);
-      return `${posName(p.id)}${held.length ? held.map((m) => objName(m.b)).join('、') : '空'}`;
-    })
-    .join('；');
+      return (
+        <>
+          {posName(p.id)}
+          {held.length
+            ? joinNodes(
+                held.map((m) => objName(m.b)),
+                '、',
+              )
+            : '空'}
+        </>
+      );
+    }),
+    '；',
+  );
 
   return (
     <section
@@ -378,9 +414,9 @@ export function OrderingBlock({
       </div>
       <StatusLine status={status} mode={mode} />
       <footer className="un-blk-foot">
-        <p id={`${uid}-summary`} className="un-sr-only">
+        <div id={`${uid}-summary`} className="un-sr-only">
           当前顺序：{summary}
-        </p>
+        </div>
         {interactive ? (
           <button
             type="button"
