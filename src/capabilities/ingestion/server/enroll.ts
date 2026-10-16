@@ -34,7 +34,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { loadAttemptQuestionSnapshot } from '@/capabilities/practice/public';
 import type { Tx } from '@/db/client';
 import { writeEvent } from '@/kernel/events';
-import { resolveDocumentUsage } from '@/kernel/read-models/usage-policy';
+import { type DocumentUsage, resolveDocumentUsage } from '@/kernel/read-models/usage-policy';
 import { createLearningRecord } from '@/kernel/records/queries';
 
 /** The capture outcome signal. `unanswered` = item/material (no attempt). */
@@ -65,6 +65,14 @@ export interface EnrollCapturedBlockInput {
   captureMode: 'text' | 'image' | 'paper' | 'voice' | 'url' | 'mixed';
   /** Source document the capture came from. */
   sourceDocumentId: string;
+  /**
+   * YUK-1408 / R1 P2-3 — the document's resolved usage (policy + bound
+   * ingestion session). Per-SESSION data: callers enrolling a block batch
+   * MUST resolve it once and pass it down (the fallback lookup below is the
+   * single-block convenience path — batch callers passing nothing would pay
+   * an unindexed learning_session lookup per block).
+   */
+  docUsage?: DocumentUsage;
   /** Wall-clock timestamp shared with the route's batch. */
   now: Date;
   /**
@@ -126,7 +134,7 @@ export async function enrollCapturedBlock(
   // payload reads, and carrying the bound ingestion `session_id` lets the
   // shared derivation filter resolve the LIVE document policy so a consent
   // withdrawal after import still excludes them.
-  const docUsage = await resolveDocumentUsage(tx, input.sourceDocumentId);
+  const docUsage = input.docUsage ?? (await resolveDocumentUsage(tx, input.sourceDocumentId));
   const derivationPolicy = docUsage.policy;
   const policyField = derivationPolicy === 'allow' ? {} : { derivation_policy: derivationPolicy };
 

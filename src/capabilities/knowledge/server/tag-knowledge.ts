@@ -37,6 +37,7 @@ import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { writeEvent } from '@/kernel/events';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
+import { resolveSessionDerivationPolicy } from '@/kernel/read-models/usage-policy';
 import {
   type EmbedProviderAttemptOptions,
   embedText,
@@ -102,6 +103,15 @@ export interface TagKnowledgeInput {
   questionText: string;
   /** Soft topic hint from extraction (non-authoritative), or null. */
   knowledgeHint?: string | null;
+  /**
+   * YUK-1408 — the ingestion session this question text came from, when the
+   * caller is an ingestion path (auto-enroll / image-candidate). Bound onto the
+   * audit events so the shared derivation filter resolves the LIVE
+   * source-document usage policy and the payload carries the write-time stamp.
+   * Omitted by non-ingestion callers: today's behaviour (session_id null, no
+   * policy stamp) is preserved.
+   */
+  sessionId?: string | null;
   /** Resolved subject root id — `seed:<subjectId>:root`. The PROPOSE parent. */
   subjectRootId: string;
   /** Closed subject-id vocabulary (anti-hallucination for the naming invoker). */
@@ -165,6 +175,16 @@ export async function tagKnowledge(
   const knownSubjects = input.knownSubjects?.length ? input.knownSubjects : getKnownSubjects();
   const knowledgeHint = input.knowledgeHint ?? null;
 
+  // YUK-1408 — when the caller threads the ingestion session, both audit events
+  // inherit the source document's consented usage: the write-time stamp covers
+  // payload readers, and binding session_id lets the shared derivation filter
+  // resolve the LIVE document policy (consent withdrawal stays retroactive).
+  const sessionId = input.sessionId ?? null;
+  const derivationPolicy = sessionId
+    ? await resolveSessionDerivationPolicy(db, sessionId)
+    : 'allow';
+  const policyField = derivationPolicy === 'allow' ? {} : { derivation_policy: derivationPolicy };
+
   // (1) embed the question text → query vector.
   const qvec = await embedFn(
     questionEmbedText({ prompt_md: input.questionText, reference_md: null, choices_md: null }),
@@ -217,7 +237,7 @@ export async function tagKnowledge(
     try {
       await writeEvent(db, {
         id: newId(),
-        session_id: null,
+        session_id: sessionId,
         actor_kind: 'agent',
         actor_ref: 'tag_knowledge',
         action: 'experimental:auto_tag_kc_matched',
@@ -228,6 +248,7 @@ export async function tagKnowledge(
           source: 'tag_knowledge',
           subject_root_id: input.subjectRootId,
           source_ref: input.sourceRef ?? null,
+          ...policyField,
           threshold,
           primary_knowledge_id: nearest.knowledge_id,
           matches: matchingCandidates.map((c) => ({
@@ -287,7 +308,7 @@ export async function tagKnowledge(
     });
     await writeEvent(tx, {
       id: newId(),
-      session_id: null,
+      session_id: sessionId,
       actor_kind: 'agent',
       actor_ref: 'tag_knowledge',
       action: 'experimental:auto_tag_kc_created',
@@ -309,6 +330,7 @@ export async function tagKnowledge(
         // node honestly unapproved for the review flow that reads it later.
         approval_status: 'pending',
         reasoning: `unified tagging auto-created KC "${kc_name}" under ${input.subjectRootId} (no live KC within matchThreshold()=${threshold}); pending owner review, applied as ${createdId}`,
+        ...policyField,
       },
       caused_by_event_id: null,
       task_run_id: null,

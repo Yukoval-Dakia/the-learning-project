@@ -73,16 +73,23 @@ const RULES: RedactionRule[] = [
   {
     field: 'credential',
     pattern: new RegExp(
-      String.raw`(?:api[-_]?key|access[-_]?token|refresh[-_]?token|secret|password|密码|密钥)\s*[=:：]\s*${LABELED_VALUE}`,
+      String.raw`((?:api[-_]?key|access[-_]?token|refresh[-_]?token|secret|password|密码|密钥)\s*[=:：]\s*)${LABELED_VALUE}`,
       'gi',
     ),
   },
   { field: 'email', pattern: /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g },
-  // Mainland mobile numbers. Format-strong, no label required.
-  { field: 'phone', pattern: /(?<!\d)(?:\+?86[-\s]?)?1[3-9]\d{9}(?!\d)/g },
+  // Mainland mobile numbers — only separator-marked forms without a label
+  // (138-0013-8000 / 138 0013 8000 / +86-138-0013-8000). A BARE 11-digit run
+  // starting 13-19 stays: it is indistinguishable from an arithmetic operand
+  // (「计算 13800138000 除以 7」). Labeled digits hit the labeled rule below.
   {
     field: 'phone',
-    pattern: /((?:电话|手机|联系电话|联系方式|家长电话|热线)\s*[:：]?\s*)\+?\d[\d\s-]{5,19}\d/g,
+    pattern: /(?<![\d-])(?:\+?86[-\s])?1[3-9]\d[-\s]\d{4}[-\s]\d{4}(?!\d)/g,
+  },
+  {
+    field: 'phone',
+    pattern:
+      /((?:手机号?码?|电话号码?|联系电话|联系方式|家长电话|热线|Tel|tel|TEL)\s*(?:是)?\s*[:：]?\s*)\+?\d[\d\s-]{5,19}\d/g,
   },
   // Chinese 18-digit resident ID (final char may be X). Format-strong.
   { field: 'id_number', pattern: /(?<![\dA-Za-z])\d{17}[\dXx](?![\dA-Za-z])/g },
@@ -120,6 +127,13 @@ export interface IngestionRedactionResult {
   text: string;
   /** Sorted unique categories that fired. Empty when nothing was redacted. */
   fields: IngestionRedactionField[];
+  /**
+   * P2 (R1 fix) — mutated-span count per category that fired. NUMBERS ONLY —
+   * the receipt records these so silent degradation (e.g. the docx text lane,
+   * which never text-redacts) shows up as an unexplained zero vs the expected
+   * count. Redacted values are never recorded.
+   */
+  counts: Partial<Record<IngestionRedactionField, number>>;
 }
 
 /**
@@ -127,17 +141,21 @@ export interface IngestionRedactionResult {
  * re-running on redacted output is a no-op (the marker matches no rule).
  */
 export function redactIngestionText(text: string): IngestionRedactionResult {
-  const fired = new Set<IngestionRedactionField>();
+  const fired = new Map<IngestionRedactionField, number>();
   let out = text;
   for (const rule of RULES) {
     rule.pattern.lastIndex = 0;
     out = out.replace(rule.pattern, (_match, label?: string) => {
-      fired.add(rule.field);
+      fired.set(rule.field, (fired.get(rule.field) ?? 0) + 1);
       // Labeled rules capture the label in group 1 and keep it.
       return typeof label === 'string' ? `${label}${REDACTED}` : REDACTED;
     });
   }
-  return { text: out, fields: [...fired].sort() };
+  return {
+    text: out,
+    fields: [...fired.keys()].sort(),
+    counts: Object.fromEntries(fired) as Partial<Record<IngestionRedactionField, number>>,
+  };
 }
 
 export interface IngestionUsageReceipt {
@@ -149,6 +167,8 @@ export interface IngestionUsageReceipt {
   engine: string;
   /** Categories that actually fired on the extraction text this run. */
   redactedFields: IngestionRedactionField[];
+  /** Mutated-span count per category — numbers only, never values. */
+  redactionCounts?: Partial<Record<IngestionRedactionField, number>>;
   now?: Date;
 }
 
@@ -184,6 +204,7 @@ export async function writeIngestionUsageReceipt(
         extracted_text: 'redacted',
       },
       redacted_fields: input.redactedFields,
+      redaction_counts: input.redactionCounts ?? {},
     },
     caused_by_event_id: null,
     task_run_id: null,

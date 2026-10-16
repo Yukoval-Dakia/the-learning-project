@@ -817,8 +817,14 @@ export async function acceptImageCandidateProposal(
           {
             // YUK-1408 — tagKnowledge embeds this text (a model call); the
             // deterministic identifier redaction runs at the call boundary.
+            // The hint is redacted as well so what the audit event stores
+            // matches the model-facing contract. This path is a web-image
+            // proposal accept — it owns no ingestion session, so the events
+            // keep the non-ingestion shape (session_id null).
             questionText: redactIngestionText(promptMd).text,
-            knowledgeHint: block.knowledge_hint,
+            knowledgeHint: block.knowledge_hint
+              ? redactIngestionText(block.knowledge_hint).text
+              : block.knowledge_hint,
             subjectRootId,
             sourceRef: { kind: 'image_candidate_proposal', id: proposalId },
           },

@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import { PublicMaterialView } from '@/core/schema/assessment';
-import { DerivationPolicy } from '@/core/schema/derivation-policy';
 
 import {
   CauseCategory,
@@ -18,6 +17,15 @@ import {
   MultipartFilePartSchema,
 } from '@/kernel/http-contracts';
 
+/**
+ * YUK-1408 — the client-facing consent enum for upload routes. Intentionally a
+ * LOCAL literal, NOT the shared `DerivationPolicy` schema: ingestion callers
+ * may only ever declare 'allow' | 'answer_only'. If the shared enum later
+ * widens (e.g. with 'crisis'), client-sent values here must still be rejected
+ * — crisis is a system-write state, never a client consent choice.
+ */
+export const IngestionDerivationPolicy = z.enum(['allow', 'answer_only']);
+
 export const CreateIngestionSessionBody = z.object({
   entrypoint: IngestionEntrypoint,
   asset_ids: z.array(z.string().min(1)).min(1).max(MAX_PDF_PAGES),
@@ -33,7 +41,7 @@ export const CreateIngestionSessionBody = z.object({
   // derivation filter keeps the document's content out of those channels.
   // Persisted on source_document.provenance.usage_policy; the consent UI reads
   // and updates it there.
-  derivation_policy: DerivationPolicy.optional(),
+  derivation_policy: IngestionDerivationPolicy.optional(),
 });
 
 export const IngestionSessionSchema = z
@@ -60,6 +68,13 @@ export const IngestionOperationSchema = z
 
 /** Runtime FormData carries a File; OpenAPI renders the shared marker as format: binary. */
 export const MultipartFileUploadSchema = z.object({ file: MultipartFilePartSchema }).passthrough();
+
+// YUK-1408 — the docx multipart accepts an optional consent field alongside the
+// file part so the OpenAPI client declares it (the route validates + rejects
+// unknown values; the catchall stays for other form parts).
+export const MultipartDocxUploadSchema = MultipartFileUploadSchema.extend({
+  derivation_policy: IngestionDerivationPolicy.optional(),
+});
 
 export const SourceAssetSchema = z
   .object({

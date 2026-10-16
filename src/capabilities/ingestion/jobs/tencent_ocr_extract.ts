@@ -661,6 +661,7 @@ async function processOneOcrJob(
           derivationPolicy: await resolveSessionDerivationPolicy(tx, sessionId),
           engine,
           redactedFields: hintRedaction.fields,
+          redactionCounts: hintRedaction.counts,
         });
       }
       return result;

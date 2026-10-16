@@ -27,6 +27,7 @@ import {
   LegacyRescueResponseSchema,
   MistakeListQuerySchema,
   MistakeListResponseSchema,
+  MultipartDocxUploadSchema,
   MultipartFileUploadSchema,
   PdfExpansionResponseSchema,
   RevertAutoEnrolledBlockBodySchema,
@@ -116,7 +117,7 @@ export const ingestionCapability = defineCapability({
         path: '/api/ingestion/docx',
         operationId: 'createIngestionFromDocx',
         request: {
-          body: MultipartFileUploadSchema,
+          body: MultipartDocxUploadSchema,
           bodyMediaType: 'multipart/form-data',
         },
         responses: { 201: DocxIngestionResponseSchema, ...API_ERROR_RESPONSES },

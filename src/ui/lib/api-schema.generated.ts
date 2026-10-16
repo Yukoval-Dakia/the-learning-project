@@ -13641,6 +13641,8 @@ export interface operations {
                 "application/json": {
                     asset_ids: string[];
                     /** @enum {string} */
+                    derivation_policy?: "allow" | "answer_only";
+                    /** @enum {string} */
                     entrypoint: "vision_single" | "vision_paper" | "docx";
                     subject_id?: string | null;
                 };
@@ -14040,6 +14042,8 @@ export interface operations {
             content: {
                 "application/json": {
                     asset_ids: string[];
+                    /** @enum {string} */
+                    derivation_policy?: "allow" | "answer_only";
                     /** @enum {string} */
                     entrypoint: "vision_single" | "vision_paper" | "docx";
                     subject_id?: string | null;
@@ -15511,6 +15515,8 @@ export interface operations {
         requestBody: {
             content: {
                 "multipart/form-data": {
+                    /** @enum {string} */
+                    derivation_policy?: "allow" | "answer_only";
                     /**
                      * Format: binary
                      * @description Binary HTTP content

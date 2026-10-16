@@ -11,13 +11,13 @@ import {
   persistPackageMedia,
 } from '@/capabilities/ingestion/server/source-package';
 import { MAX_DOCX_UPLOAD_BYTES } from '@/core/limits';
-import { DerivationPolicy } from '@/core/schema/derivation-policy';
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/kernel/http';
 import { getStartedBoss } from '@/server/boss/client';
 import { getR2 } from '@/server/r2';
 import { Ingestion } from '@/server/session';
 import { initiateDocxTextUpload } from '@/server/session/docx-ingestion';
+import { IngestionDerivationPolicy } from './contracts';
 
 // YUK-258 — DOCX ingestion endpoint. ONE .docx multipart upload → classify into
 // text / visual line → build a ready-to-review ingestion session.
@@ -73,7 +73,8 @@ export async function POST(req: Request): Promise<Response> {
     const derivationPolicy =
       rawPolicy == null || rawPolicy === ''
         ? null
-        : (DerivationPolicy.safeParse(typeof rawPolicy === 'string' ? rawPolicy : null).data ??
+        : (IngestionDerivationPolicy.safeParse(typeof rawPolicy === 'string' ? rawPolicy : null)
+            .data ??
           (() => {
             throw new ApiError(
               'validation_error',
