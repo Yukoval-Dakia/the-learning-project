@@ -72,6 +72,8 @@ import {
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import {
+  type NormalizedContract,
+  type PartRow,
   contractIntegrityDigest,
   normalizeQuestionGroupToContract,
 } from './assessment-normalization';
@@ -853,6 +855,86 @@ export async function publishQuestionGroup(
   });
 }
 
+// ─── 组契约快照（组根行 + live parts → row-normalized 契约的唯一加载口） ─────
+
+export interface QuestionGroupContractSnapshot {
+  rootId: string;
+  root: typeof question.$inferSelect;
+  /** 全部物理 part（含 tombstone —— 供 publisher 的撤回判定）。 */
+  partRows: PartRow[];
+  /** 排除 archived/dismissed 的可服务 part（契约成员）。 */
+  liveParts: PartRow[];
+  contract: NormalizedContract;
+}
+
+/**
+ * 组根行 + 物理 parts + figure 资产 digest → row-normalized 契约的【唯一】加载口。
+ * publishQuestionGroupFromRow、YUK-1507 的 C1 独立准入守卫（source_verify）与
+ * question_admission_run.loadDefinition 必须看到 byte-identical 的
+ * integrity_digest —— base_contract_digest 的可比性前提；三处只允许经本口（或经
+ * 逐字段对照确认等价的既有实现）构建，不得再各自拷贝装配逻辑。
+ *
+ * lockRoot（缺省 true，publisher 的 P1-1 惯例）：先 FOR UPDATE 锁组根行，再做组
+ * 快照读；调用方已持有根行锁（source_verify 守卫）或把漂移交给后续 drift check
+ * （admission job）时传 false。
+ */
+export async function loadQuestionGroupContractSnapshot(
+  db: Db | Tx,
+  rootId: string,
+  opts?: { lockRoot?: boolean },
+): Promise<QuestionGroupContractSnapshot> {
+  const rootSelect = db.select().from(question).where(eq(question.id, rootId));
+  const root = (
+    await (opts?.lockRoot === false ? rootSelect.limit(1) : rootSelect.for('update').limit(1))
+  )[0];
+  if (!root) {
+    throw new Error(`loadQuestionGroupContractSnapshot: group root question '${rootId}' not found`);
+  }
+  // tombstoned part（archived/dismissed）不是可服务组员 —— 组契约排除之
+  //（child archive ⇒ 组内容变化 ⇒ 新 revision，P2 组语义）。
+  const partRows = await db
+    .select({
+      id: question.id,
+      kind: question.kind,
+      judge_kind_override: question.judge_kind_override,
+      prompt_md: question.prompt_md,
+      reference_md: question.reference_md,
+      choices_md: question.choices_md,
+      structured: question.structured,
+      figures: question.figures,
+      metadata: question.metadata,
+    })
+    .from(question)
+    .where(eq(question.parent_question_id, root.id))
+    .orderBy(question.part_index);
+
+  const liveParts = partRows.filter((p) => {
+    const meta = p.metadata as Record<string, unknown> | null;
+    return meta?.archived_at == null && meta?.dismissed_at == null;
+  });
+
+  // figure 实内容 digest 核验（root + parts 全部 figure 资产）：来自 asset
+  // store 元数据（source_asset.sha256，裸 hex）。无核验值 ⇒ normalizer 如实
+  // 标 unverified + conversion issue（不伪造 digest）。
+  const figureAssetIds = new Set<string>();
+  for (const f of root.figures ?? []) figureAssetIds.add(f.asset_id);
+  for (const p of liveParts) for (const f of p.figures ?? []) figureAssetIds.add(f.asset_id);
+  const figureDigests: Record<string, string> = {};
+  if (figureAssetIds.size > 0) {
+    const assetRows = await db
+      .select({ assetId: source_asset.id, sha256: source_asset.sha256 })
+      .from(source_asset)
+      .where(inArray(source_asset.id, [...figureAssetIds]));
+    for (const assetRow of assetRows) figureDigests[assetRow.assetId] = assetRow.sha256;
+  }
+
+  const contract = normalizeQuestionGroupToContract(
+    { ...(root as Parameters<typeof normalizeQuestionGroupToContract>[0]), figureDigests },
+    liveParts,
+  );
+  return { rootId: root.id, root, partRows, liveParts, contract };
+}
+
 // ─── 从 legacy 行发布（加载 + 归一 + 发布 的便捷 seam） ─────
 
 export interface PublishFromRowInput {
@@ -903,42 +985,10 @@ export async function publishQuestionGroupFromRow(
       throw new Error(`publishQuestionGroupFromRow: root question '${input.rootId}' not found`);
     }
     const effectiveRootId = supplied.parentId ?? supplied.id;
-    const root = (
-      await tx
-        .select()
-        .from(question)
-        .where(eq(question.id, effectiveRootId))
-        .for('update')
-        .limit(1)
-    )[0];
-    if (!root) {
-      throw new Error(
-        `publishQuestionGroupFromRow: group root question '${effectiveRootId}' not found`,
-      );
-    }
-    const rootId = root.id;
-    // tombstoned part（archived/dismissed）不是可服务组员 —— 组契约排除之
-    //（child archive ⇒ 组内容变化 ⇒ 新 revision，P2 组语义）。
-    const partRows = await tx
-      .select({
-        id: question.id,
-        kind: question.kind,
-        judge_kind_override: question.judge_kind_override,
-        prompt_md: question.prompt_md,
-        reference_md: question.reference_md,
-        choices_md: question.choices_md,
-        structured: question.structured,
-        figures: question.figures,
-        metadata: question.metadata,
-      })
-      .from(question)
-      .where(eq(question.parent_question_id, rootId))
-      .orderBy(question.part_index);
-
-    const liveParts = partRows.filter((p) => {
-      const meta = p.metadata as Record<string, unknown> | null;
-      return meta?.archived_at == null && meta?.dismissed_at == null;
-    });
+    // P1-1 锁序（root FOR UPDATE → 快照读）与本 seam 的契约构建都收在
+    // loadQuestionGroupContractSnapshot（唯一加载口）。
+    const snapshot = await loadQuestionGroupContractSnapshot(tx, effectiveRootId);
+    const { rootId, root, partRows, liveParts, contract } = snapshot;
 
     // 全部子 part 已 tombstone ⇒ 组无可发布成员：不铸空组 revision，只落
     // lifecycle 撤回维度（P2 组语义；历史 revision/摘要保留）。
@@ -946,36 +996,6 @@ export async function publishQuestionGroupFromRow(
       await archiveGroupLifecycle(tx, rootId, input.now);
       return { status: 'withdrawn', group_id: rootId } satisfies PublishQuestionGroupResult;
     }
-
-    // figure 实内容 digest 核验（root + parts 全部 figure 资产）：来自 asset
-    // store 元数据（source_asset.sha256，裸 hex）。无核验值 ⇒ normalizer 如实
-    // 标 unverified + conversion issue（不伪造 digest）。
-    const figureAssetIds = new Set<string>();
-    for (const f of root.figures ?? []) figureAssetIds.add(f.asset_id);
-    for (const p of liveParts) for (const f of p.figures ?? []) figureAssetIds.add(f.asset_id);
-    const figureDigests: Record<string, string> = {};
-    if (figureAssetIds.size > 0) {
-      const assetRows = await tx
-        .select({ assetId: source_asset.id, sha256: source_asset.sha256 })
-        .from(source_asset)
-        .where(inArray(source_asset.id, [...figureAssetIds]));
-      for (const assetRow of assetRows) figureDigests[assetRow.assetId] = assetRow.sha256;
-    }
-
-    const contract = normalizeQuestionGroupToContract(
-      { ...(root as Parameters<typeof normalizeQuestionGroupToContract>[0]), figureDigests },
-      liveParts.map((p) => ({
-        id: p.id,
-        kind: p.kind,
-        judge_kind_override: p.judge_kind_override,
-        metadata: p.metadata,
-        prompt_md: p.prompt_md,
-        reference_md: p.reference_md,
-        choices_md: p.choices_md,
-        structured: p.structured,
-        figures: p.figures,
-      })),
-    );
 
     const [lifecycle] = await tx
       .select()
