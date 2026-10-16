@@ -42,7 +42,13 @@ export function useSharedMorph(): SharedMorph {
     if (!node) return undefined;
     const fresh = snapshot.current;
     snapshot.current = null;
-    if (fresh) taken.current.set(node, fresh);
+    if (fresh) {
+      const kept = taken.current;
+      kept.set(node, fresh);
+      // A StrictMode re-attach happens in the same commit; by the next frame the flight has been
+      // handed over, so the entry goes (a later re-attach must not replay an old flight).
+      requestAnimationFrame(() => kept.delete(node));
+    }
     const flight = fresh ?? taken.current.get(node) ?? null;
     // Without a capture (first view, a plain view change) this only cancels older flights.
     return playMorphsAfterPaint(node, flight);

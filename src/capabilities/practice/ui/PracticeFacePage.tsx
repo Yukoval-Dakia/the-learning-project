@@ -56,17 +56,6 @@ const SCOPE_MISMATCH_ERROR = new Error('练习范围与请求不一致，请重�
 /** If the next question's text is still not read after this long, move on and let it load there. */
 const NEXT_READY_FALLBACK_MS = 8000;
 
-/**
- * YUK-1473 — the practice scope as the address bar holds it right now (`kc`, normalised as the
- * page reads it on mount). Every way the scope changes goes through the URL first: 返回今日流
- * (`setQuery('kc', null)` replaces the entry synchronously), an edited URL, history back/forward.
- * Read only from commands, never during render; a move to the next question compares it with the
- * token it started under and drops itself if they differ.
- */
-function currentScopeToken(): string | null {
-  return new URLSearchParams(window.location.search).get('kc')?.trim() || null;
-}
-
 function replaceConfirmedItem(view: StreamView | undefined, confirmed: StreamItem) {
   if (!view) return view;
   const items = view.items.map((item) => (item.id === confirmed.id ? confirmed : item));
@@ -121,14 +110,13 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
   const [actionFailure, setActionFailure] = useState<StreamActionFailure | null>(null);
 
   // ── YUK-1473 — moving on, in place (see advanceInPlace). One move at a time: `advancingRef`
-  // turns away repeated presses, `advanceSeq` lets going back cancel a move still on its way, the
-  // scope token (currentScopeToken) drops a move whose scope changed, and `transition` holds the
-  // running leave motion so back can stop it.
+  // turns away repeated presses; `advanceSeq` is bumped by anything that ends a move on its way
+  // (back, the question's view root detaching — which every scope change causes — or the page
+  // unmounting), and every await of the move re-checks it; `transition` holds the running leave
+  // motion so it can be stopped.
   // The question being moved on from (its id), so only that question shows 下一题准备中….
   const [advancing, setAdvancing] = useState<string | null>(null);
   const advancingRef = useRef(false);
-  // The scope token of the move on its way (written by the command that starts it).
-  const advanceToken = useRef<string | null>(null);
   const advanceSeq = useRef(0);
   const continuedSeq = useRef(0);
   const transition = useRef<Running[]>([]);
@@ -143,6 +131,10 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
   const morph = useSharedMorph();
   const host = useRef<HTMLDivElement | null>(null);
   const listScroll = useRef(0);
+  // Set by the command that leaves a question for the list (exitToList): only then does the list
+  // return to its old place. A list reached any other way (a scope change resets the page to the
+  // list) keeps the top of the page, never the old scope's position.
+  const restoreListOnLand = useRef(false);
   const focusTitleOnLand = useRef(false);
   const stopTransition = useCallback(() => {
     for (const step of transition.current) step.stop();
@@ -164,10 +156,14 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
   const landView = useCallback(
     (node: HTMLDivElement | null) => {
       if (!node) return undefined;
+      const view = node.dataset.view;
       // Back on the list: return to where the reader was, before paint, so the title can fold
       // back into its row (the flight measures after the first frame).
-      if (node.dataset.view === 'list' && listScroll.current > 0) {
-        window.scrollTo({ top: listScroll.current, behavior: 'instant' });
+      if (view === 'list') {
+        if (restoreListOnLand.current && listScroll.current > 0) {
+          window.scrollTo({ top: listScroll.current, behavior: 'instant' });
+        }
+        restoreListOnLand.current = false;
         listScroll.current = 0;
       }
       // Arrived in place: the old question's button went with it, so focus goes to the new title.
@@ -178,9 +174,23 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
           node.querySelector<HTMLElement>('.un-ps-title')?.focus({ preventScroll: true });
         }
       }
-      return morph.land(node);
+      const landed = morph.land(node);
+      if (view !== 'solo') return landed;
+      return () => {
+        landed?.();
+        // YUK-1473 — this question's view is going away. Whatever took it away (back, a scope
+        // change through a click, the URL or history — the scope sync resets the page to the
+        // list — or the page itself unmounting), a move to the next question that is still on
+        // its way ends here: every await of the move re-checks advanceSeq, so it sends no
+        // further PATCH, runs no glide and never pulls a question back in. After a normal
+        // in-place swap the move has already ended, so this changes nothing.
+        advanceSeq.current += 1;
+        stopTransition();
+        advancingRef.current = false;
+        setAdvancing(null);
+      };
     },
-    [morph],
+    [morph, stopTransition],
   );
 
   // TanStack Router 会在 search-only navigation 时复用页面实例。壳层传入的 getQuery 会随
@@ -350,42 +360,27 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
     endAdvance();
   }, [endAdvance, stopTransition]);
 
-  /**
-   * Whether a move is still the one to land: no newer move or back since it started (seq), and the
-   * scope is still the one it started under (token). A changed scope drops the move here, at the
-   * await point that notices it, and frees the page for the next one.
-   */
-  const stillLive = useCallback(
-    (seq: number, token: string | null) => {
-      if (seq !== advanceSeq.current) return false;
-      if (currentScopeToken() === token) return true;
-      cancelAdvance();
-      return false;
-    },
-    [cancelAdvance],
-  );
-
   /** Leave the question page for the list, folding its title back into its row. */
   const exitToList = useCallback(() => {
     morph.capture(host.current);
+    restoreListOnLand.current = true;
+    setAnnounce('');
     setMode({ kind: 'list' });
   }, [morph]);
 
   /** The next question replaces the finished one: leave motion, then the swap (one commit). */
   const swapInPlace = useCallback(
-    async (done: StreamItem, next: StreamItem, pos: number, seq: number, token: string | null) => {
-      const live = () => stillLive(seq, token);
+    async (done: StreamItem, next: StreamItem, pos: number, seq: number) => {
+      const live = () => seq === advanceSeq.current;
       if (!live()) return;
       if (!prefersReducedMotion()) {
         const steps = [glideToTop(), leaveQuestion(host.current)];
         transition.current = steps;
         await Promise.all(steps.map((step) => step.done));
         if (transition.current === steps) transition.current = [];
-        // Back (or a scope change) during the motion stopped it; nothing else to do.
+        // Back (or the view going away) during the motion stopped it; nothing else to do.
         if (!live()) return;
       }
-      // Right before landing, once more: the scope token, and the mode itself.
-      if (!live()) return;
       // M4 across questions: the finished title morphs into the next one where it stands.
       const from = practiceMorphKey(done.id);
       const to = practiceMorphKey(next.id);
@@ -401,12 +396,12 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
           : current,
       );
     },
-    [endAdvance, morph, stillLive],
+    [endAdvance, morph],
   );
 
   const continueInPlace = useCallback(
-    async (done: StreamItem, seq: number, token: string | null) => {
-      const live = () => stillLive(seq, token);
+    async (done: StreamItem, seq: number) => {
+      const live = () => seq === advanceSeq.current;
       // Only the move that marked the item done continues, once (a retried PATCH included).
       if (continuedSeq.current === seq || !live()) return;
       continuedSeq.current = seq;
@@ -450,8 +445,7 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
       // retry (from the list) opens the question once it is started, as before.
       let leftForList = false;
       const started = await commitStreamItem(next, 'in_progress', '开始下一题', (confirmed) => {
-        if (leftForList && currentScopeToken() === token)
-          setMode({ kind: 'solo', item: confirmed });
+        if (leftForList) setMode({ kind: 'solo', item: confirmed });
       });
       if (!live()) return;
       if (!started) {
@@ -463,7 +457,7 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
       await ready;
       if (!live()) return;
       const pos = fresh.items.findIndex((it) => it.id === started.id) + 1;
-      await swapInPlace(done, started, pos || started.position, seq, token);
+      await swapInPlace(done, started, pos || started.position, seq);
     },
     [
       addToast,
@@ -474,29 +468,22 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
       fetchFreshStream,
       qc,
       recordFailure,
-      stillLive,
       swapInPlace,
     ],
   );
 
   const advanceInPlace = useCallback(
     async (item: StreamItem) => {
-      // Spamming 下一题 / 先继续 moves exactly one question. A move whose scope has changed
-      // since it started no longer counts (stillLive drops it), so it never blocks this one.
-      if (advancingRef.current && stillLive(advanceSeq.current, advanceToken.current)) return;
+      // Spamming 下一题 / 先继续 moves exactly one question.
+      if (advancingRef.current) return;
       advancingRef.current = true;
       setAdvancing(item.id);
       const seq = ++advanceSeq.current;
-      // The scope this move belongs to; checked at every await point and before it lands.
-      const token = currentScopeToken();
-      advanceToken.current = token;
-      const ok = await commitStreamItem(item, 'done', '完成练习', () =>
-        continueInPlace(item, seq, token),
-      );
+      const ok = await commitStreamItem(item, 'done', '完成练习', () => continueInPlace(item, seq));
       // Marking done failed: stay on the question; the error above offers a retry.
       if (!ok && seq === advanceSeq.current) endAdvance();
     },
-    [commitStreamItem, continueInPlace, endAdvance, stillLive],
+    [commitStreamItem, continueInPlace, endAdvance],
   );
 
   // M13 — while a result is on screen, read the next pending question's text ahead: the same
