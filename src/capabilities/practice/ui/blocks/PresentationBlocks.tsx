@@ -109,12 +109,21 @@ export function PresentationBlocks({
   const materialById = new Map(issued.materials.map((m) => [m.material_id, m] as const));
   const state = { disabled, submitted };
 
-  // question_no as-is + placement.label + kind name, e.g. 「(2) ① 选项」 (spec §1.2.2).
-  const labelFor = (slot: ResponseSlotT, kind: string) => {
-    const no = faceById.get(slot.part_id)?.question_no;
-    return [no ?? '', slot.placement?.label ?? '', KIND_NAME[kind] ?? '作答']
+  // question_no as-is + placement.label + kind name, e.g. 「(2) ① 选项」 (spec §1.2.2). Slots that
+  // would share a name (no number, no placement label) get their order, e.g. 「填空 1」「填空 2」.
+  const prefixOf = (slot: ResponseSlotT) =>
+    [faceById.get(slot.part_id)?.question_no ?? '', slot.placement?.label ?? '']
       .filter(Boolean)
       .join(' ');
+  const twins = new Map<string, string[]>();
+  for (const slot of issued.slots) {
+    const key = `${prefixOf(slot)}|${slot.kind}`;
+    twins.set(key, [...(twins.get(key) ?? []), slot.slot_id]);
+  }
+  const labelFor = (slot: ResponseSlotT, kind: string) => {
+    const same = twins.get(`${prefixOf(slot)}|${slot.kind}`) ?? [];
+    const order = same.length > 1 ? String(same.indexOf(slot.slot_id) + 1) : '';
+    return [prefixOf(slot), KIND_NAME[kind] ?? '作答', order].filter(Boolean).join(' ');
   };
 
   const selectSlot = (slotId: string): SelectSlotT | null => {
