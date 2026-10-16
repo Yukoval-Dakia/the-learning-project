@@ -96,6 +96,14 @@ const startDocumentBeforeLoad = import.meta.env.PROD
     }
   : undefined;
 
+const startOnboardingBeforeLoad = import.meta.env.PROD
+  ? ({ preload, location }: { preload: boolean; location: { href: string } }) => {
+      if (preload) return;
+      window.history.replaceState(window.history.state, '', location.href);
+      window.location.reload();
+    }
+  : undefined;
+
 const rootRoute = createRootRoute({ component: RootShell });
 
 // M4-T6 (YUK-319)：工作台上线后 / 落到 /today（旧 SPA 默认 /agent-notes 退位，
@@ -128,7 +136,7 @@ const WelcomeRoute = import.meta.env.PROD ? StartPageEntry : lazyNavigableRoute(
 const welcomeRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: surfacePath('welcome'),
-  beforeLoad: startDocumentBeforeLoad,
+  beforeLoad: startOnboardingBeforeLoad,
   component: WelcomeRoute,
 });
 
@@ -147,7 +155,7 @@ const PlacementRoute = import.meta.env.PROD
 const placementRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: surfacePath('placement'),
-  beforeLoad: startDocumentBeforeLoad,
+  beforeLoad: startOnboardingBeforeLoad,
   component: PlacementRoute,
 });
 
