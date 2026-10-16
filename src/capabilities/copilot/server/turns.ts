@@ -811,7 +811,7 @@ export async function getCopilotReplyPoliciesBeforeAnchor(
     .select({
       id: event.id,
       parentId: parent.id,
-      policy: sql<unknown>`case when coalesce(${parent.payload}->>'derivation_policy', 'allow') = 'answer_only' or coalesce(${event.payload}->>'derivation_policy', 'allow') = 'answer_only' then 'answer_only' else coalesce(${event.payload}->>'derivation_policy', ${parent.payload}->>'derivation_policy', 'allow') end`,
+      policy: sql<unknown>`case when coalesce(${event.payload}->>'derivation_policy', 'allow') <> 'allow' then ${event.payload}->>'derivation_policy' when coalesce(${parent.payload}->>'derivation_policy', 'allow') <> 'allow' then ${parent.payload}->>'derivation_policy' else 'allow' end`,
     })
     .from(event)
     .leftJoin(anchor, eq(anchor.id, opts.anchorEventId ?? ''))

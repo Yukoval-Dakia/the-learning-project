@@ -685,7 +685,9 @@ async function runCopilotRunImpl(params: RunCopilotRunParams): Promise<RunCopilo
     // failed. No terminal means no repair; projection failure cannot undo a
     // paid parent outcome. The existing parent reconciler retries after crashes.
     try {
-      if ((await readEventDerivationPolicy(params.db, params.data.run_id)) !== 'answer_only') {
+      // R1 cleanup：只在 allow 回合结算原生子代理；任何受限用途
+      // （answer_only / crisis）都不该有原生代子代要收敛。
+      if ((await readEventDerivationPolicy(params.db, params.data.run_id)) === 'allow') {
         await reconcileNativeSubagentsForParent(
           params.db,
           params.data.session_id,
@@ -821,12 +823,11 @@ async function executeAcceptedCopilotRun(
   // 模板正文见 src/core/crisis/config.ts（每条带 review_status，当前全部未审定）。
   if (derivationPolicy === 'crisis') {
     const detectionClass = classifyCrisisExpression(data.user_message);
-    // explicit / indirect / none（客户端自送策略的 fail-safe）→ full_support；
-    // quoted_ironic / distress → gentle_checkin（温和确认，不触发完整危机回应）。
-    const template =
-      detectionClass === 'quoted_ironic' || detectionClass === 'distress'
-        ? crisisTemplateForClass(detectionClass)
-        : crisisTemplateForClass('explicit');
+    // 四类各有模板（R1 fix 3 拆分后）；'none'（客户端自送策略的 fail-safe）
+    // 按 explicit → full_support，不过度也不漏。
+    const template = crisisTemplateForClass(
+      detectionClass === 'none' ? 'explicit' : detectionClass,
+    );
     const crisisTaskRunId = `copilot_run_crisis_${runId}`;
     const settlement = await withCopilotExecutionSettlementLock(
       db,
