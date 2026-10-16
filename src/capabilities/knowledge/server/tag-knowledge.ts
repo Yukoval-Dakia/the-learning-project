@@ -11,10 +11,12 @@
 //   3. nearest cosine_distance <= MATCH_THRESHOLD  → kind:'match' (all candidates within)
 //      else                                         → kind:'propose' (mint a child KC)
 //
-// PROPOSE auto-approves the new KC (no human review wall, day-one usable) and writes an
-// AUDIT-ONLY event (`experimental:auto_tag_kc_created`) that is NOT a pending inbox
-// proposal (proposalWhere() in inbox.ts does not fold generic experimental:* actions),
-// mirroring the live cold-start primitive in auto-enroll.ts.
+// PROPOSE mints the new KC immediately (no human review wall, day-one usable — the tag
+// still applies) and writes an AUDIT-ONLY event (`experimental:auto_tag_kc_created`) that
+// is NOT a pending inbox proposal (proposalWhere() in inbox.ts does not fold generic
+// experimental:* actions), mirroring the live cold-start primitive in auto-enroll.ts.
+// YUK-1405: the minted row is `approval_status='pending'` — an agent-invented KC is an
+// unauthorised new knowledge point, honestly marked instead of self-approved.
 //
 // MATCH also writes an AUDIT-ONLY event (`experimental:auto_tag_kc_matched`, YUK-540) —
 // a silent MATCH was previously untraceable even though its knowledge_ids feed
@@ -300,7 +302,13 @@ export async function tagKnowledge(
         name: kc_name,
         knowledge_hint: knowledgeHint,
         generated_by: 'tag_knowledge',
-        reasoning: `unified tagging auto-created KC "${kc_name}" under ${input.subjectRootId} (no live KC within matchThreshold()=${threshold}); auto-approved day-one, applied as ${createdId}`,
+        // YUK-1405 (Stage 1 B6 S5) — an agent-minted KC is an unauthorised new
+        // knowledge point: it lands 'pending' (the reserved AI-review status),
+        // not self-approved. Nothing gates on approval_status today, so the tag
+        // still applies and learning is never blocked; the marker makes the
+        // node honestly unapproved for the review flow that reads it later.
+        approval_status: 'pending',
+        reasoning: `unified tagging auto-created KC "${kc_name}" under ${input.subjectRootId} (no live KC within matchThreshold()=${threshold}); pending owner review, applied as ${createdId}`,
       },
       caused_by_event_id: null,
       task_run_id: null,

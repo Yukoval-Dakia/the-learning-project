@@ -318,7 +318,7 @@ export {
   addPlacementStarterCostComponent,
   addPlacementStarterKnowledgeToExplicitGoal,
   authorizePlacementStarterQuestion,
-  ensurePlacementStarterKnowledgeAndClaim,
+  ensurePlacementStarterAnchorAndClaim,
   markPlacementStarterClaimTerminal,
   materializePlacementStartersForGoal,
   recordPlacementStarterAttempt,

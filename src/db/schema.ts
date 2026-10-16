@@ -91,19 +91,17 @@ export const knowledge = pgTable('knowledge', {
   merged_from: jsonb('merged_from').$type<string[]>().notNull().default([]),
   archived_at: timestamp('archived_at', { withTimezone: true }),
   proposed_by_ai: boolean('proposed_by_ai').notNull().default(false),
-  // RESERVED-FOR-FUTURE (YUK-422 — owner decided to document, not drop). This enum
-  // is INERT today: every row is auto-approved and NOTHING reads it.
-  //   (a) Only 'approved' has a write path — all 6 writers hardcode it (seed.ts,
-  //       knowledge/proposals.ts ×2, orchestrator/learning_intent.ts ×2,
-  //       scripts/seed-synthetic.ts) and the column + KnowledgeInsert both default
-  //       to 'approved'. 'pending' / 'rejected' have NO writer and are unreachable
-  //       by design — they are reserved for an unbuilt AI-review/approval flow where
-  //       AI-proposed knowledge would land as 'pending' → be reviewed → become
-  //       'approved' or 'rejected', and reads would then filter to approved-only.
-  //   (b) There are ZERO readers today: no query filters on this column and nothing
-  //       gates behaviour on it, so the per-enum-value reachability gap is intentional
-  //       (column-level audit:schema passes via the 'approved' write; there is no
-  //       per-enum-value audit). Revisit when the AI-review flow lands.
+  // PARTIALLY INERT (YUK-422 documented the reservation; YUK-1405 armed 'pending').
+  //   (a) 'approved' remains the default and the value every authorized writer
+  //       stamps (seed, subject-root, accepted proposals, placement starter
+  //       anchors). YUK-1405 (Stage 1 B6 S5): `experimental:auto_tag_kc_created`
+  //       events now declare `approval_status:'pending'` — an agent-minted KC is
+  //       an unauthorised new knowledge point and is honestly marked so. The
+  //       fold (core/projections/knowledge.ts) honors ONLY the 'pending' claim.
+  //   (b) There are still ZERO filtering readers: no query gates behaviour on
+  //       this column, so a 'pending' node stays fully usable (tags, mastery,
+  //       placement) — the marker is truthful metadata for the future review
+  //       surface, not a gate. 'rejected' still has no writer.
   //   (c) Tracked in docs/design/2026-05-15-data-assumptions.md (appendix
   //       'knowledge.approval_status' + §6.5 R2).
   approval_status: text('approval_status', {
