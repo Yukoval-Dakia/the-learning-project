@@ -1,4 +1,5 @@
 import { and, desc, eq, inArray, lt, or, sql } from 'drizzle-orm';
+import { materializeSourcePackage } from '@/capabilities/ingestion/server/source-package';
 import { db } from '@/db/client';
 import { event, learning_session, question_block, source_asset } from '@/db/schema';
 import {
@@ -258,6 +259,13 @@ export async function POST(req: Request): Promise<Response> {
       // null = no explicit signal, persisted as provenance-key absence.
       learnerSelectedSubjectId: canonicalSubjectId,
     });
+
+    // YUK-1404 (B2/R1) — materialize the unified source package onto the
+    // session's source_document (body_md + provenance.source_package). PDF page
+    // assets carry per-page draft stamps; plain photos become an 'images'
+    // package. The response contract is unchanged — the package is read back
+    // through the session's source_document, not the wire body.
+    await materializeSourcePackage(db, sourceDocumentId);
 
     return Response.json({
       session: {

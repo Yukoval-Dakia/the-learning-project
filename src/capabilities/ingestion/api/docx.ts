@@ -5,8 +5,11 @@ import {
 } from '@/capabilities/ingestion/server/docx/markdown-segment';
 import { persistDocxPageEvidence } from '@/capabilities/ingestion/server/docx/persist-page-evidence';
 import { prepareDocxForConversion } from '@/capabilities/ingestion/server/docx/route-classify';
-import { persistImageAsset } from '@/capabilities/ingestion/server/persist-image-asset';
-import { MAX_DOCX_UPLOAD_BYTES, MAX_IMAGE_UPLOAD_BYTES } from '@/core/limits';
+import {
+  attachWordSourcePackage,
+  persistPackageMedia,
+} from '@/capabilities/ingestion/server/source-package';
+import { MAX_DOCX_UPLOAD_BYTES } from '@/core/limits';
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/kernel/http';
 import { getStartedBoss } from '@/server/boss/client';
@@ -88,10 +91,25 @@ export async function POST(req: Request): Promise<Response> {
       // Visual line: page images ARE the extract input. Render + persist (=
       // expandPdf equivalent), then run the standard upload+extract flow.
       const evidence = await persistDocxPageEvidence(db, r2, converter, prep.converterBytes);
-      const { sessionId } = await Ingestion.initiateUpload(db, {
+      const { sessionId, sourceDocumentId } = await Ingestion.initiateUpload(db, {
         assetIds: evidence.assetIds,
         entrypoint: 'docx',
         externalRefOmission,
+      });
+      // YUK-1404 (B2/R1) — Word goes through pandoc to Markdown on BOTH lines;
+      // a MathType doc additionally carries the rendered page images. The
+      // legacy pipeline keeps running untouched — the package is additive.
+      const { markdown, media } = await converter.docxToMarkdown(prep.converterBytes);
+      const persisted = await persistPackageMedia(db, r2, media);
+      await attachWordSourcePackage(db, r2, {
+        sourceDocumentId,
+        originalBytes: docxBytes,
+        converterBytes: prep.converterBytes,
+        markdown,
+        media: persisted.media,
+        omittedMedia: persisted.omitted,
+        pageAssetIds: evidence.assetIds,
+        renderedPdfAssetId: evidence.pdfAssetId,
       });
       const boss = await getStartedBoss();
       await Ingestion.enqueueExtraction({ db, boss, sessionId });
@@ -124,22 +142,16 @@ export async function POST(req: Request): Promise<Response> {
     // media path (coderabbit-b: segmentMarkdown looks these up via
     // normalizeMediaPath, so the map key must use the same normalization or refs
     // silently drop when a converter emits './media/…' or an absolute path).
+    // YUK-1404 (B2/R1): shared persistPackageMedia helper — same per-image byte
+    // cap; skipped media are reported via `omitted` and land in the package's
+    // omitted_media provenance instead of a console.warn.
+    const persisted = await persistPackageMedia(db, r2, media);
+    for (const m of persisted.omitted) {
+      console.warn(`[docx] skipping embedded image ${m.path}: ${m.reason}`);
+    }
     const pathToAssetId = new Map<string, string>();
-    for (const m of media) {
-      // codex-4 — enforce the same per-image byte cap the generic asset route
-      // applies (MAX_IMAGE_UPLOAD_BYTES). A .docx under the 20MB cap can embed a
-      // single oversized image (e.g. uncompressed BMP); skip it rather than
-      // create an oversized source_asset that diverges from every other image
-      // path's limit. The block's prompt/options still import — only the
-      // oversized decorative figure is dropped.
-      if (m.bytes.byteLength > MAX_IMAGE_UPLOAD_BYTES) {
-        console.warn(
-          `[docx] skipping embedded image ${m.path}: ${m.bytes.byteLength} bytes exceeds ${MAX_IMAGE_UPLOAD_BYTES} cap`,
-        );
-        continue;
-      }
-      const row = await persistImageAsset(db, r2, { bytes: m.bytes, mime: mimeForMedia(m.path) });
-      pathToAssetId.set(normalizeMediaPath(m.path), row.id);
+    for (const m of persisted.media) {
+      pathToAssetId.set(normalizeMediaPath(m.path), m.asset_id);
     }
 
     // Evidence page images (原图同步存储不变式 — text line也存证).
@@ -152,12 +164,26 @@ export async function POST(req: Request): Promise<Response> {
         .filter((id): id is string => id != null),
     }));
 
-    const { sessionId } = await initiateDocxTextUpload(db, {
+    const { sessionId, sourceDocumentId } = await initiateDocxTextUpload(db, {
       evidenceAssetIds: evidence.assetIds,
       blocks,
       // YUK-1476 — honest omission audit (both digests + omitted facts) on the
       // text-line session; only present when the converter input was sanitized.
       externalRefOmission,
+    });
+
+    // YUK-1404 (B2/R1) — attach the unified 'word' source package: original +
+    // converter input + source.md + media + page images, with ast1 refs
+    // rewritten into body_md. The legacy blocks flow is unchanged.
+    await attachWordSourcePackage(db, r2, {
+      sourceDocumentId,
+      originalBytes: docxBytes,
+      converterBytes: prep.converterBytes,
+      markdown,
+      media: persisted.media,
+      omittedMedia: persisted.omitted,
+      pageAssetIds: evidence.assetIds,
+      renderedPdfAssetId: evidence.pdfAssetId,
     });
 
     return Response.json(
@@ -172,15 +198,4 @@ export async function POST(req: Request): Promise<Response> {
   } catch (err) {
     return errorResponse(err);
   }
-}
-
-// pandoc names media imageN.<ext>; map the common raster extensions to a mime so
-// persistImageAsset stamps the source_asset row correctly. Default to PNG.
-function mimeForMedia(path: string): string {
-  const lower = path.toLowerCase();
-  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
-  if (lower.endsWith('.gif')) return 'image/gif';
-  if (lower.endsWith('.webp')) return 'image/webp';
-  if (lower.endsWith('.bmp')) return 'image/bmp';
-  return 'image/png';
 }

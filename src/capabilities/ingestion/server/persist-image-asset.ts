@@ -58,12 +58,22 @@ async function imageDimensions(bytes: Uint8Array) {
   }
 }
 
-export async function persistImageAsset(
+// YUK-1404 (B2/R1) — generalized write path. Non-image artifacts of a source
+// package (original docx/pdf, converted markdown, per-page text layers) are
+// first-class source_asset rows too: same content-addressed storage_key, same
+// advisory-lock protocol, kind marks the role. `id`/`storageKey` overrides
+// exist for callers that need a deterministic row identity (pipeline figure
+// crops keep their `figures/<page>-fig-N` contract so figure_attach's key
+// check and idempotent re-runs keep working).
+export async function persistSourceAsset(
   db: Db,
   r2: R2Client,
   input: {
     bytes: Uint8Array;
     mime: string;
+    kind: 'image' | 'pdf' | 'text' | 'docx';
+    id?: string;
+    storageKey?: string;
     provenance?: typeof source_asset.$inferInsert.provenance;
     compensatePutOnInsertFailure?: boolean;
   },
@@ -72,13 +82,13 @@ export async function persistImageAsset(
   // Read the exact byte view (including pooled-buffer offsets), without decoding
   // pixels or holding the DB/storage-key lock. Existing unsupported input paths
   // remain accepted with unknown dimensions; never synthesize a size.
-  const dimensions = await imageDimensions(bytes);
+  const dimensions = input.kind === 'image' ? await imageDimensions(bytes) : null;
   const width = dimensions?.width;
   const height = dimensions?.height;
   const sha = await sha256Hex(bytes);
-  const storageKey = `assets/${sha}`;
+  const storageKey = input.storageKey ?? `assets/${sha}`;
 
-  const id = createId();
+  const id = input.id ?? createId();
   const now = new Date();
   const row = await db.transaction(async (tx) => {
     // The key is shared across source_asset rows. Hold one DB advisory lock from before put
@@ -99,7 +109,7 @@ export async function persistImageAsset(
         .insert(source_asset)
         .values({
           id,
-          kind: 'image',
+          kind: input.kind,
           storage_key: storageKey,
           mime_type: mime,
           byte_size: bytes.byteLength,
@@ -128,9 +138,18 @@ export async function persistImageAsset(
   // INSERT ... RETURNING always yields the inserted row, but guard the empty-array
   // case so the Promise<SourceAssetRow> contract can never resolve to undefined.
   if (!row) {
-    throw new Error('persistImageAsset: INSERT ... RETURNING returned no row');
+    throw new Error('persistSourceAsset: INSERT ... RETURNING returned no row');
   }
   return row;
+}
+
+/** Existing image callers retain the same content-addressed owner protocol. */
+export function persistImageAsset(
+  db: Db,
+  r2: R2Client,
+  input: Omit<Parameters<typeof persistSourceAsset>[2], 'kind'>,
+): Promise<SourceAssetRow> {
+  return persistSourceAsset(db, r2, { ...input, kind: 'image' });
 }
 
 /**
