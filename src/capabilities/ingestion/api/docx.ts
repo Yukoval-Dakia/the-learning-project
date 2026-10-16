@@ -91,16 +91,18 @@ export async function POST(req: Request): Promise<Response> {
       // Visual line: page images ARE the extract input. Render + persist (=
       // expandPdf equivalent), then run the standard upload+extract flow.
       const evidence = await persistDocxPageEvidence(db, r2, converter, prep.converterBytes);
+      // YUK-1404 (B2/R1) — Word goes through pandoc to Markdown on BOTH lines;
+      // a MathType doc additionally carries the rendered page images. Pandoc
+      // runs BEFORE session creation so a conversion failure rejects cleanly
+      // instead of leaving an orphan uploaded session. The legacy pipeline
+      // keeps running untouched — the package is additive.
+      const { markdown, media } = await converter.docxToMarkdown(prep.converterBytes);
+      const persisted = await persistPackageMedia(db, r2, media);
       const { sessionId, sourceDocumentId } = await Ingestion.initiateUpload(db, {
         assetIds: evidence.assetIds,
         entrypoint: 'docx',
         externalRefOmission,
       });
-      // YUK-1404 (B2/R1) — Word goes through pandoc to Markdown on BOTH lines;
-      // a MathType doc additionally carries the rendered page images. The
-      // legacy pipeline keeps running untouched — the package is additive.
-      const { markdown, media } = await converter.docxToMarkdown(prep.converterBytes);
-      const persisted = await persistPackageMedia(db, r2, media);
       await attachWordSourcePackage(db, r2, {
         sourceDocumentId,
         originalBytes: docxBytes,

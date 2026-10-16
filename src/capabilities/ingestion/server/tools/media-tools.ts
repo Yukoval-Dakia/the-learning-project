@@ -78,28 +78,41 @@ async function persistDerivedImage(
     provenance: Record<string, unknown>;
   },
 ): Promise<SourceAssetRow> {
-  const [existing] = await ctx.db
-    .select()
-    .from(source_asset)
-    .where(eq(source_asset.id, input.id))
-    .limit(1);
-  if (existing) {
-    const newSha = createHash('sha256').update(input.bytes).digest('hex');
-    if (existing.sha256 !== newSha) {
+  const newSha = createHash('sha256').update(input.bytes).digest('hex');
+  const adoptIfSame = async (): Promise<SourceAssetRow | null> => {
+    const [row] = await ctx.db
+      .select()
+      .from(source_asset)
+      .where(eq(source_asset.id, input.id))
+      .limit(1);
+    if (!row) return null;
+    if (row.sha256 !== newSha) {
       throw new Error(
         `derived asset '${input.id}' exists with different content — request collision, choose a new request_id`,
       );
     }
-    return existing;
+    return row;
+  };
+  const existing = await adoptIfSame();
+  if (existing) return existing;
+  try {
+    return await persistSourceAsset(ctx.db, getR2(), {
+      bytes: input.bytes,
+      mime: 'image/png',
+      kind: 'image',
+      id: input.id,
+      provenance: input.provenance,
+      compensatePutOnInsertFailure: true,
+    });
+  } catch (err) {
+    // Concurrent replay inserted the same deterministic id first — adopt it
+    // when content is byte-identical, fail loudly when it drifted.
+    if (err instanceof Error && /duplicate|unique/i.test(err.message)) {
+      const adopted = await adoptIfSame();
+      if (adopted) return adopted;
+    }
+    throw err;
   }
-  return persistSourceAsset(ctx.db, getR2(), {
-    bytes: input.bytes,
-    mime: 'image/png',
-    kind: 'image',
-    id: input.id,
-    provenance: input.provenance,
-    compensatePutOnInsertFailure: true,
-  });
 }
 
 // ---------------------------------------------------------------- view_image
