@@ -6,6 +6,8 @@ export type { ExpandProps } from './Expand';
 export { Expand } from './Expand';
 export type { IconButtonProps } from './IconButton';
 export { IconButton } from './IconButton';
+export type { JudgmentPhase, JudgmentProps } from './Judgment';
+export { Judgment } from './Judgment';
 export { Kbd } from './Kbd';
 export { RollNumber } from './RollNumber';
 export type { SegmentedOption, SegmentedProps } from './Segmented';

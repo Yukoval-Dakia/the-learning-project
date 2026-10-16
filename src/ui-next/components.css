@@ -539,3 +539,135 @@
     background-color: transparent;
   }
 }
+
+/* ── Judgment (R3): submit → result in one place ─────────
+   One element from 「正在判」 to the settled result; the chip takes the result's tone in place,
+   the mark draws, and the explanation opens beneath it. */
+[data-ui-next] {
+  & .un-judgment {
+    display: grid;
+    grid-template-rows: 1fr;
+  }
+
+  & .un-judgment-inner {
+    display: grid;
+    gap: var(--un-sp-2);
+    min-height: 0;
+    overflow: clip;
+    overflow-clip-margin: 4px;
+  }
+
+  & .un-judgment-line {
+    display: grid;
+    justify-items: start;
+    gap: var(--un-sp-1);
+  }
+
+  /* While checking, a thin line runs beneath the chip (it runs under no-preference only). */
+  & .un-judgment[data-phase="checking"] .un-judgment-line::after {
+    content: "";
+    width: min(240px, 100%);
+    height: var(--un-hairline);
+    background:
+      linear-gradient(90deg, transparent, var(--un-accent), transparent) 30% 0 / 40% 100% no-repeat;
+  }
+
+  & .un-judgment-mark path {
+    stroke-dasharray: 12;
+    stroke-dashoffset: 0;
+  }
+
+  & .un-judgment-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--un-sp-2);
+    min-height: var(--un-h-chip);
+    padding: 0 var(--un-sp-2);
+    border-radius: var(--un-r-1);
+    background: var(--un-bg-sunk);
+    color: var(--un-text-2);
+    font-size: var(--un-fs-1);
+    transition:
+      background-color var(--un-t-ui) var(--un-ease-glide),
+      color var(--un-t-ui) var(--un-ease-glide);
+  }
+
+  & .un-judgment[data-tone="accent"] .un-judgment-chip {
+    background: var(--un-accent-soft);
+    color: var(--un-accent-ink);
+  }
+
+  & .un-judgment[data-tone="positive"] .un-judgment-chip {
+    background: var(--un-positive-soft);
+    color: var(--un-positive);
+  }
+
+  & .un-judgment[data-tone="caution"] .un-judgment-chip {
+    background: var(--un-caution-soft);
+    color: var(--un-caution);
+  }
+
+  & .un-judgment[data-tone="critical"] .un-judgment-chip {
+    background: var(--un-critical-soft);
+    color: var(--un-critical);
+  }
+
+  & .un-judgment-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+
+  & .un-judgment-body {
+    padding-top: var(--un-sp-1);
+    color: var(--un-text-2);
+  }
+}
+
+/* Keyframe motion only where the reader has not asked for less (M3). */
+@media (prefers-reduced-motion: no-preference) {
+  [data-ui-next] {
+    /* A judgment opens its own space before it shows (M9). */
+    & .un-judgment {
+      animation: un-row-open var(--un-t-panel) var(--un-ease-glide) both;
+    }
+
+    & .un-judgment[data-phase="checking"] .un-judgment-line::after {
+      animation: un-sweep 900ms var(--un-ease-glide) infinite;
+    }
+
+    & .un-judgment-mark path {
+      animation: un-draw var(--un-t-panel) var(--un-ease-glide) 120ms both;
+    }
+  }
+}
+
+@keyframes un-page-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--un-rise));
+  }
+}
+
+@keyframes un-row-open {
+  from {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+}
+
+@keyframes un-sweep {
+  from {
+    background-position: -40% 0;
+  }
+  to {
+    background-position: 140% 0;
+  }
+}
+
+@keyframes un-draw {
+  from {
+    stroke-dashoffset: 12;
+  }
+}
