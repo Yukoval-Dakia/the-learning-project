@@ -21,6 +21,7 @@ export * from './judgment';
 export * from './lifecycle';
 export * from './materials';
 export * from './pending';
+export * from './presentation';
 export * from './publish';
 export * from './response';
 export * from './revision';

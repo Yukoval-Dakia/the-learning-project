@@ -271,6 +271,19 @@ export const RevealedAnswerKey = z.discriminatedUnion('criterion_kind', [
     criterion_kind: z.literal('holistic_level'),
     levels: z.array(z.object({ level_id: z.string().min(1), rank: z.number().int().min(0) })),
   }),
+  // K1（YUK-1496）：只揭示键值；给分规则是 marking 政策，原文走 rubric 门。
+  z.object({
+    scoring_unit_id: z.string().min(1),
+    criterion_kind: z.literal('select_key'),
+    accepted_item_ids: z.array(z.string().min(1)),
+  }),
+  z.object({
+    scoring_unit_id: z.string().min(1),
+    criterion_kind: z.literal('blank_key'),
+    accepted_texts: z.array(z.string().min(1)).optional(),
+    expected: z.number().optional(),
+    expected_unit: z.string().min(1).optional(),
+  }),
 ]);
 export type RevealedAnswerKeyT = z.infer<typeof RevealedAnswerKey>;
 
@@ -386,6 +399,25 @@ function revealAnswerKey(
           rank: level.rank,
         })),
       };
+    case 'select_key':
+      return {
+        scoring_unit_id: unit.scoring_unit_id,
+        criterion_kind: 'select_key',
+        accepted_item_ids: criterion.accepted_item_ids,
+      };
+    case 'blank_key':
+      return criterion.key.kind === 'text'
+        ? {
+            scoring_unit_id: unit.scoring_unit_id,
+            criterion_kind: 'blank_key',
+            accepted_texts: criterion.key.accepted,
+          }
+        : {
+            scoring_unit_id: unit.scoring_unit_id,
+            criterion_kind: 'blank_key',
+            expected: criterion.key.expected,
+            expected_unit: criterion.key.expected_unit,
+          };
   }
 }
 
@@ -406,6 +438,10 @@ function revealRubricExplanation(
         .map((level) => `${level.level_id}: ${level.descriptor_md}`)
         .join('\n'),
     };
+  }
+  if (unit.rule?.source != null) {
+    // K1：印刷给分规则原文属 rubric，随 reveal_rubric_explanations 揭示。
+    return { scoring_unit_id: unit.scoring_unit_id, explanation_md: unit.rule.source.statement };
   }
   return null;
 }

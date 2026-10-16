@@ -156,6 +156,15 @@ function projectSlotResponse(entry: SlotResponseT): Record<string, unknown> {
       return { slot_id: entry.slot_id, kind: entry.kind, item_order: entry.item_order };
     case 'open':
       return { slot_id: entry.slot_id, kind: entry.kind, text_md: entry.text_md };
+    case 'select':
+      return {
+        slot_id: entry.slot_id,
+        kind: entry.kind,
+        state: entry.state,
+        item_ids: entry.item_ids,
+      };
+    case 'blank':
+      return { slot_id: entry.slot_id, kind: entry.kind, state: entry.state, text: entry.text };
   }
 }
 
