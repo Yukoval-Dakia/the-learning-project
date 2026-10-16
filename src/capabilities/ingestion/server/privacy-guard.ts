@@ -53,8 +53,9 @@ type RedactionRule = {
 
 // Label-anchored rules keep the label and redact only the value span. The
 // value run stops at whitespace, common CJK punctuation, or line end so a
-// following sentence is preserved.
-const LABELED_VALUE = String.raw`[^\s,，。;；:：、（）()<>《》「」]{1,64}`;
+// following sentence is preserved; parens stay INSIDE the value so class
+// names like 「初三(2)班」 redact whole.
+const LABELED_VALUE = String.raw`[^\s,，。;；:：、<>《》「」]{1,64}`;
 
 const RULES: RedactionRule[] = [
   {
@@ -92,7 +93,7 @@ const RULES: RedactionRule[] = [
   {
     field: 'labeled_identity',
     pattern: new RegExp(
-      String.raw`((?:姓名|学生姓名|考生姓名|名字|就读学校|所在学校|学校|班级|班别|考区|考点)\s*[:：]\s*)${LABELED_VALUE}`,
+      String.raw`((?:姓名|学生姓名|考生姓名|名字|就读学校|所在学校|学校|班级|班别|考区|考点|校长|家长姓名|监护人)\s*[:：]\s*)${LABELED_VALUE}`,
       'g',
     ),
   },
