@@ -53,10 +53,12 @@ import {
   PaperSubmissionResponseSchema,
 } from './api/paper-contracts';
 import {
+  CreatePlacementHeldReleaseBodySchema,
   CreatePlacementQuestionSelectionBodySchema,
   CreatePlacementSessionBodySchema,
   EndPlacementSessionBodySchema,
   LegacyPlacementSessionTransitionResponseSchema,
+  PlacementHeldReleaseResponseSchema,
   PlacementProfileQuerySchema,
   PlacementProfileResponseSchema,
   PlacementQuestionSelectionResponseSchema,
@@ -145,6 +147,11 @@ export const practiceCapability = defineCapability({
       'experimental:assessment_attempt',
       'experimental:assessment_feedback_released',
       'experimental:assessment_placement_issued',
+      // YUK-1405 L1 — learner-released held issuance (recorded unresolved).
+      'experimental:assessment_placement_released',
+      // YUK-1405 L2 — once-per-session marker: first "no servable item" outcome
+      // with the real elapsed session→alternative time.
+      'experimental:assessment_placement_no_item',
       'experimental:judge_calibration_sample',
       'experimental:judge_calibration_run_summary',
       'experimental:hint_request',
@@ -451,6 +458,20 @@ export const practiceCapability = defineCapability({
         responses: { 200: PlacementQuestionSelectionResponseSchema, ...API_ERROR_RESPONSES },
         successStatus: 200,
         load: () => import('./api/placement-next').then((m) => m.createPlacementQuestionSelection),
+      },
+      // YUK-1405 L1 — held item 的「继续」出口：记录未决（不算答错）并推进。
+      // 「结束」出口走 PATCH /api/placement-sessions/[id]（unresolved_items）。
+      {
+        method: 'POST',
+        path: '/api/placement-sessions/[id]/held-release',
+        operationId: 'createPlacementHeldRelease',
+        request: {
+          params: PlacementSessionParamsSchema,
+          body: CreatePlacementHeldReleaseBodySchema,
+        },
+        responses: { 200: PlacementHeldReleaseResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        load: () => import('./api/placement-held-release').then((m) => m.POST),
       },
       {
         method: 'GET',
