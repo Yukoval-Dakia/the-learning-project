@@ -6,6 +6,12 @@
 // all /api/*); the UI fetches via apiFetch → Blob → URL.createObjectURL so
 // the auth header rides naturally. We don't generate a presigned R2 URL —
 // keeps the single-user secret on the server.
+//
+// YUK-1497 (K5 custom block): the same route serves frozen JS code assets
+// (stored mime_type text/javascript) for the sandboxed custom block; the page
+// fetches the bytes, verifies SHA-256 against the presentation digest and only
+// then injects them into a sandboxed iframe. nosniff keeps the stored
+// mime_type authoritative — the browser must never sniff executable content.
 
 import { eq } from 'drizzle-orm';
 
@@ -39,7 +45,12 @@ export async function GET(req: Request, params: Record<string, string>): Promise
     if (!row) throw new ApiError('not_found', `asset ${id} not found`, 404);
 
     const etag = `"${row.sha256}"`;
-    const cacheHeaders = { ETag: etag, 'Cache-Control': 'private, max-age=60' };
+    const cacheHeaders = {
+      ETag: etag,
+      'Cache-Control': 'private, max-age=60',
+      // 存储的 mime_type 是唯一真相 —— 禁止浏览器嗅探成可执行/可渲染的别的类型。
+      'X-Content-Type-Options': 'nosniff',
+    };
     if (matchesIfNoneMatch(req.headers.get('if-none-match'), etag)) {
       return new Response(null, { status: 304, headers: cacheHeaders });
     }

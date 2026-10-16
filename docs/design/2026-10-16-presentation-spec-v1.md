@@ -72,9 +72,12 @@ Presentation = {
 ```
 
 - **运行限制**：无网络、无学习者数据、拿不到私有答案。
-- **资产**：代码作为资产冻结，带 digest，随 presentation 版本化。
+- **资产**：代码作为 `source_asset` 资产冻结，随 presentation 版本化。`digest` 固定为 `sha256:<64 位小写 hex>`，必须等于资产行的 `sha256`（即 `'sha256:' + source_asset.sha256`）；`unverified:` digest 永不可发布。mime 限 `text/javascript` 或 `application/javascript`，`byte_size` ≤ 256 KiB。
+- **代码获取**：复用 `GET /api/assets/[id]/content`，不新建路由。同源、internal token 后面，返回存储字节与存储 `mime_type`，带 `X-Content-Type-Options: nosniff`；OpenAPI 对 200 声明 `image/*` 与 `text/javascript` 两种表示。页面取回字节、核对 SHA-256 与 digest 相符后才注入沙箱 iframe —— 这一步在界面线。
+- **entry**：代码资产定义的一个全局函数名（非空 JS 标识符，≤64 字符）。宿主在沙箱内调 `globalThis[entry](port)`；port 只能为 `binds` 内的槽位交出作答条目。
 - **输出**：只能通过宿主发出与 1.2 相同的作答信封，宿主再按 universe 校验。不返回分数，不查判分。
 - **binds**：一个自定义块可以绑定多个作答位。每个作答位仍然只被一个积木绑定。
+- **校验分工**：纯校验在 `validatePresentation`（`custom_contract_unsupported` / `custom_asset_digest_invalid` / `custom_asset_unverified` / `custom_entry_invalid` / `custom_binds_empty`，加既有 bind 规则：槽存在、response_class 相符、unit 含该槽、覆盖恰一次）；DB 校验在 `publishQuestionGroup` 的 presentation barrier（资产行存在、sha256 与 digest 相符、mime、大小），任一失败整组不能发布。
 - 隔离方式（iframe 或 Worker）由界面线选定。
 
 ### 1.2.2 界面行为约定（10-16 裁决）

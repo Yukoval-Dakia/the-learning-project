@@ -9253,6 +9253,7 @@ export interface operations {
                 };
                 content: {
                     "image/*": string;
+                    "text/javascript": string;
                 };
             };
             /** @description Malformed request */

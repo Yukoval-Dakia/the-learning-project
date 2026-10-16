@@ -165,6 +165,22 @@ export type CustomBlockT = {
   binds: PresentationBindT[];
 };
 
+/**
+ * §1.3 自定义块契约常量 —— 纯层（validatePresentation）与发布 barrier 的
+ * DB 校验（publishQuestionGroup）共用：
+ *   - digest 固定 'sha256:' + 64 位小写 hex，必须等于资产行的 sha256
+ *     （即 'sha256:' + source_asset.sha256）；'unverified:' 前缀永不可发布。
+ *   - entry 是代码资产定义的全局函数名（非空 JS 标识符，≤64 字符）；宿主在
+ *     沙箱内调 globalThis[entry](port)，port 只能为 binds 内槽位交作答条目。
+ *   - 代码资产限制在 DB 侧执行（source_asset 行上）：mime ∈
+ *     CUSTOM_ASSET_MIME_TYPES，byte_size ≤ CUSTOM_ASSET_MAX_BYTES（256 KiB）。
+ */
+export const CUSTOM_ASSET_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/;
+export const CUSTOM_ENTRY_PATTERN = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
+export const CUSTOM_ENTRY_MAX_LENGTH = 64;
+export const CUSTOM_ASSET_MAX_BYTES = 256 * 1024;
+export const CUSTOM_ASSET_MIME_TYPES = ['text/javascript', 'application/javascript'] as const;
+
 /** 积木全集（discriminated on `kind`；kind 白名单即此 union，spec §3 规则 6）。 */
 export type PresentationBlockT =
   | StackBlockT
@@ -323,7 +339,17 @@ export interface PresentationIssue {
     /** 规则 1：发出范围内可作答槽未被绑定。 */
     | 'slot_not_bound'
     /** 规则 1：同一作答位被多个积木/bind 重复绑定。 */
-    | 'slot_double_bound';
+    | 'slot_double_bound'
+    /** §1.3 自定义块：sandbox 契约版本不在白名单。 */
+    | 'custom_contract_unsupported'
+    /** §1.3 自定义块：digest 不是 'sha256:<64 位小写 hex>'（与资产行 sha256 相符由 DB 侧比对）。 */
+    | 'custom_asset_digest_invalid'
+    /** §1.3 自定义块：digest 带 'unverified:' 前缀 —— 未核验资产永不可发布。 */
+    | 'custom_asset_unverified'
+    /** §1.3 自定义块：entry 不是 ≤64 字符的非空 JS 标识符。 */
+    | 'custom_entry_invalid'
+    /** §1.3 自定义块：binds 为空（自定义块至少绑定一个作答位）。 */
+    | 'custom_binds_empty';
   detail: string;
 }
 
@@ -678,6 +704,41 @@ function walkBlock(
       return;
     }
     case 'custom': {
+      // §1.3 纯校验（fail-closed）：契约版本、digest 形状、entry 标识符、
+      // binds 非空。资产行存在性 / sha256 相符 / mime / 大小是 DB 校验，在
+      // publishQuestionGroup 的 presentation barrier 里查（纯层无 IO）。
+      const sandboxContract: string = block.sandbox.contract;
+      if (sandboxContract !== 'sandbox-v1') {
+        issues.push({
+          code: 'custom_contract_unsupported',
+          detail: `custom block '${block.block_id}' sandbox contract '${sandboxContract}' is not supported (sandbox-v1)`,
+        });
+      }
+      const digest = block.sandbox.asset.digest;
+      if (digest.startsWith('unverified:')) {
+        issues.push({
+          code: 'custom_asset_unverified',
+          detail: `custom block '${block.block_id}' carries an unverified asset digest '${digest}' — unverified assets are never publishable`,
+        });
+      } else if (!CUSTOM_ASSET_DIGEST_PATTERN.test(digest)) {
+        issues.push({
+          code: 'custom_asset_digest_invalid',
+          detail: `custom block '${block.block_id}' asset digest '${digest}' must be 'sha256:<64 lowercase hex>' equal to the source_asset sha256`,
+        });
+      }
+      const entry = block.sandbox.entry;
+      if (entry.length > CUSTOM_ENTRY_MAX_LENGTH || !CUSTOM_ENTRY_PATTERN.test(entry)) {
+        issues.push({
+          code: 'custom_entry_invalid',
+          detail: `custom block '${block.block_id}' entry '${entry}' must be a non-empty JavaScript identifier of at most ${CUSTOM_ENTRY_MAX_LENGTH} characters`,
+        });
+      }
+      if (block.binds.length === 0) {
+        issues.push({
+          code: 'custom_binds_empty',
+          detail: `custom block '${block.block_id}' binds no answerable slot`,
+        });
+      }
       // 自定义块绑定多个作答位；覆盖计数与公开投影同律 —— 任一 bind 落在
       // 发出范围外 ⇒ 整块被剪掉，其余 bind 不计入（否则投影会缺输入面）。
       const inScope = block.binds.map((bind) =>

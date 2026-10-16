@@ -43,13 +43,17 @@ import { eq, inArray } from 'drizzle-orm';
 
 import type {
   AdmissionEvidenceT,
+  CustomBlockT,
   ExecutionPlanT,
+  PresentationBlockT,
   PresentationT,
   QuestionGroupStructureT,
   ResponseSpecT,
   ScoringBasisT,
 } from '@/core/schema/assessment';
 import {
+  CUSTOM_ASSET_MAX_BYTES,
+  CUSTOM_ASSET_MIME_TYPES,
   Presentation,
   validateExecutionPlan,
   validatePresentation,
@@ -232,6 +236,60 @@ function assertAdmissionShape(admission: PublishAdmission): void {
 function assertSuspensionShape(suspension: SuspensionUpdate): void {
   if (suspension.suspended && suspension.reason == null) {
     throw new Error('publishQuestionGroup: suspended=true requires a reason (lifecycle CHECK)');
+  }
+}
+
+/** 递归收集 presentation 里的自定义块（spec §1.3 —— DB 资产核验的输入）。 */
+function collectCustomBlocks(block: PresentationBlockT): CustomBlockT[] {
+  if (block.kind === 'stack' || block.kind === 'passage_layout') {
+    return block.children.flatMap(collectCustomBlocks);
+  }
+  return block.kind === 'custom' ? [block] : [];
+}
+
+/**
+ * YUK-1497 §1.3 —— 自定义块资产的 DB 核验（纯层无 IO，只能在这查）：
+ * source_asset 行存在、sha256 与 sandbox digest 相符（'sha256:' + 裸 hex）、
+ * mime 是 JS、byte_size ≤ 256 KiB。任一失败 fail-closed 抛错拒发 —— 与 figure
+ * 材料的 unverified digest 拒绝同口径（自定义代码没有理由更宽）。
+ */
+async function assertCustomBlockAssets(tx: Tx, presentation: PresentationT): Promise<void> {
+  const customBlocks = collectCustomBlocks(presentation.root);
+  if (customBlocks.length === 0) return;
+  const assetIds = [...new Set(customBlocks.map((block) => block.sandbox.asset.asset_id))];
+  const assetRows = await tx
+    .select({
+      id: source_asset.id,
+      sha256: source_asset.sha256,
+      mime_type: source_asset.mime_type,
+      byte_size: source_asset.byte_size,
+    })
+    .from(source_asset)
+    .where(inArray(source_asset.id, assetIds));
+  const assetById = new Map(assetRows.map((row) => [row.id, row] as const));
+  for (const block of customBlocks) {
+    const { asset_id, digest } = block.sandbox.asset;
+    const asset = assetById.get(asset_id);
+    if (asset == null) {
+      throw new Error(
+        `publishQuestionGroup: custom block '${block.block_id}' references unknown source_asset '${asset_id}'`,
+      );
+    }
+    if (`sha256:${asset.sha256}` !== digest) {
+      throw new Error(
+        `publishQuestionGroup: custom block '${block.block_id}' digest '${digest}' does not match source_asset '${asset_id}' sha256 '${asset.sha256}'`,
+      );
+    }
+    if (!(CUSTOM_ASSET_MIME_TYPES as readonly string[]).includes(asset.mime_type)) {
+      throw new Error(
+        `publishQuestionGroup: custom block '${block.block_id}' source_asset '${asset_id}' mime_type '${asset.mime_type}' is not ${CUSTOM_ASSET_MIME_TYPES.join(' or ')}`,
+      );
+    }
+    if (asset.byte_size > CUSTOM_ASSET_MAX_BYTES) {
+      throw new Error(
+        `publishQuestionGroup: custom block '${block.block_id}' source_asset '${asset_id}' byte_size ${asset.byte_size} exceeds the ${CUSTOM_ASSET_MAX_BYTES}-byte (256 KiB) limit`,
+      );
+    }
   }
 }
 
@@ -575,6 +633,9 @@ export async function publishQuestionGroup(
         );
       }
       shapedPresentation = shaped.data;
+      // YUK-1497 §1.3 —— 自定义块资产 DB 核验（同 barrier、同事务）：资产
+      // 不存在 / digest 不符 / mime 不是 JS / 超过 256 KiB ⇒ 整组不能发布。
+      await assertCustomBlockAssets(tx, shaped.data);
     }
 
     // 组级串行化：锁根 question 行（发布与编辑同一锁序 question → lifecycle）。
