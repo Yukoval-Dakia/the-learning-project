@@ -19,7 +19,11 @@ export async function readEventDerivationPolicy(
   if (!row) return 'allow';
   const own = readDerivationPolicy(row.payload);
   const parent = readDerivationPolicy(row.rootPayload);
-  return own === 'answer_only' || parent === 'answer_only' ? 'answer_only' : 'allow';
+  // YUK-1398：任何受限用途（answer_only / crisis）都沿因果根传播；
+  // 自身受限优先（自身是 crisis 而根是 answer_only 时保留自身标记）。
+  if (own !== 'allow') return own;
+  if (parent !== 'allow') return parent;
+  return 'allow';
 }
 
 /** Apply before LIMIT. Raw user chat readers deliberately do not use this predicate. */

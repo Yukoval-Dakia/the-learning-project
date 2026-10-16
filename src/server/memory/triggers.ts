@@ -853,7 +853,7 @@ export function buildMemoryReconcileHandler(
       if (!allowsDerivation(job.data)) continue;
       if (
         job.data.source_event_id &&
-        (await readEventDerivationPolicy(db, job.data.source_event_id)) === 'answer_only'
+        (await readEventDerivationPolicy(db, job.data.source_event_id)) !== 'allow'
       )
         continue;
       // F-1 equivalent — per-job try/catch prevents retry storm.

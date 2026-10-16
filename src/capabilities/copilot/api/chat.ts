@@ -1,6 +1,7 @@
 // POST /api/copilot/chat durably accepts every conversation turn.
 // Disconnects after acceptance only detach the client; the worker owns execution.
 
+import { createId } from '@paralleldrive/cuid2';
 import { ZodError } from 'zod';
 import { CopilotChatRequest } from '@/capabilities/copilot/server/chat-contracts';
 import { writeCopilotReply } from '@/capabilities/copilot/server/conversation-writes';
@@ -32,8 +33,8 @@ import { fromPgBossDrizzleTx, getStartedBoss } from '@/server/boss/client';
 import { writeJobEvent } from '@/server/events/writer';
 import { checkRateLimit } from '@/server/http/rate-limit';
 import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
-
 import { Conversation } from '@/server/session';
+import { classifyCopilotTurn } from '../server/crisis-guard';
 
 // Closes the count-then-enqueue race inside the single Hono API process. A slot
 // moves from this counter into durable job_events once QUEUED is committed.
@@ -198,9 +199,30 @@ async function dispatchAcceptedRun(
 // 签名对齐 kernel RouteHandler 双参形（path 无参数段，_params 不用）。
 export async function POST(req: Request, _params: Record<string, string>): Promise<Response> {
   // Validate before any durable side effect. HTTP owns acceptance, not execution.
+  //
+  // R1 addendum（YUK-1398）：危机分类必须先于 review_answer 契约检查——
+  // 处于危机中的学习者绝不能因为携带附件而收到 400 校验错误而不是支持
+  // 回应。命中危机分类时把 review_answer 从原始 body 中剔除：该回合按普通
+  // 危机回合接纳（不附答案、不判分，worker 出同一条确定性支持模板），守卫
+  // 事件记 dropped_attachment_kind（只记类型，不记原文）。非危机回合不受
+  // 影响，契约行为与之前完全一致。分类是纯函数：同一 body 重放结果相同，
+  // 剔除后的 parsed 与 durableInputHash 保持确定性。
   let parsed: ReturnType<typeof CopilotChatRequest.parse>;
+  let crisisPreClassified: ReturnType<typeof classifyCopilotTurn> | null = null;
+  let droppedReviewAnswer = false;
   try {
-    parsed = CopilotChatRequest.parse(await req.json());
+    let raw: unknown = await req.json();
+    if (raw !== null && typeof raw === 'object' && !Array.isArray(raw)) {
+      const rawBody = raw as Record<string, unknown>;
+      if (typeof rawBody.user_message === 'string') {
+        crisisPreClassified = classifyCopilotTurn(rawBody.user_message);
+        if (crisisPreClassified.forcedPolicy && rawBody.review_answer !== undefined) {
+          droppedReviewAnswer = true;
+          raw = { ...rawBody, review_answer: undefined };
+        }
+      }
+    }
+    parsed = CopilotChatRequest.parse(raw);
   } catch (err) {
     // M5-T3 plan 钉测：schema 校验失败 → 400 validation_error JSON（plan Task 2
     // 单测 + curl 冒烟双钉）。旧栈裸 errorResponse(ZodError) 实回 500 —— 计划与
@@ -301,6 +323,17 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
     // 2) One transaction reserves the stable handle and commits user_ask +
     // QUEUED together. Same key + same normalized input reuses that handle;
     // a changed input is an explicit 409 rather than a second paid run.
+    //
+    // YUK-1398（S2/S3）：接纳点危机分类（确定性词法，无模型调用）。命中时
+    // 服务端强制 derivation_policy='crisis'（覆盖客户端送值）——该回合及其
+    // 回复、镜像经既有 derivation-policy 机制被记忆摄取/简报横幅/画像排除；
+    // 守卫事件与 user_ask 同事务写入。回应模板在 worker 执行层出（见
+    // jobs/copilot_run.ts 的 crisis 分支），本层不产生文案。
+    // R1 addendum：优先用接纳前的预分类（它已驱动附件剔除）；未预分类的奇异
+    // body 由 parse 后文本再分类兑底。
+    const crisis = crisisPreClassified ?? classifyCopilotTurn(parsed.user_message);
+    const acceptedDerivationPolicy =
+      crisis.forcedPolicy ?? parsed.derivation_policy ?? ('allow' as const);
     let reservation: ReserveCopilotDurableAcceptanceResult;
     try {
       reservation = await reserveCopilotDurableAcceptance(
@@ -321,7 +354,7 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
           },
           jobData: {
             user_message: parsed.user_message,
-            derivation_policy: parsed.derivation_policy ?? 'allow',
+            derivation_policy: acceptedDerivationPolicy,
             triggered_by: parsed.triggered_by,
             ...(parsed.chip_kind ? { chip_kind: parsed.chip_kind } : {}),
             ...(parsed.ambient_context ? { ambient: parsed.ambient_context } : {}),
@@ -330,6 +363,27 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
               : {}),
             ...(parsed.skill_context ? { skill_context: parsed.skill_context } : {}),
           },
+          ...(crisis.forcedPolicy
+            ? {
+                crisisGuard: {
+                  sessionId: conv.sessionId,
+                  detectionClass: crisis.detectionClass as Exclude<
+                    typeof crisis.detectionClass,
+                    'none'
+                  >,
+                  entryPoint:
+                    parsed.triggered_by === 'chip'
+                      ? ('copilot_chip' as const)
+                      : ('copilot_chat' as const),
+                  eventId: `crisis_guard_${createId()}`,
+                  now: new Date(),
+                  // R1 addendum：被剔除的附件只记类型，不记内容。
+                  ...(droppedReviewAnswer
+                    ? { droppedAttachmentKind: 'review_answer' as const }
+                    : {}),
+                },
+              }
+            : {}),
           assertActive: () => assertRequestActive(req.signal),
         },
         {

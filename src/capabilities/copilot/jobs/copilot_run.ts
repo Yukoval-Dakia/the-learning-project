@@ -58,6 +58,7 @@ import {
 import { selectAsksWithMaterializingToolCall } from '@/capabilities/copilot/server/materializing-tools';
 import { runTeachingSkill } from '@/capabilities/copilot/server/skills/teaching-skill';
 import { reconcileNativeSubagentsForParent } from '@/capabilities/copilot/server/subagent-mailbox';
+import { classifyCrisisExpression, crisisTemplateForClass } from '@/core/crisis/classify';
 import type { Db, Tx } from '@/db/client';
 import { event, job_events } from '@/db/schema';
 import { readEventDerivationPolicy } from '@/kernel/events/derivation-policy';
@@ -684,7 +685,9 @@ async function runCopilotRunImpl(params: RunCopilotRunParams): Promise<RunCopilo
     // failed. No terminal means no repair; projection failure cannot undo a
     // paid parent outcome. The existing parent reconciler retries after crashes.
     try {
-      if ((await readEventDerivationPolicy(params.db, params.data.run_id)) !== 'answer_only') {
+      // R1 cleanup：只在 allow 回合结算原生子代理；任何受限用途
+      // （answer_only / crisis）都不该有原生代子代要收敛。
+      if ((await readEventDerivationPolicy(params.db, params.data.run_id)) === 'allow') {
         await reconcileNativeSubagentsForParent(
           params.db,
           params.data.session_id,
@@ -811,6 +814,57 @@ async function executeAcceptedCopilotRun(
       throw new DurableTerminalProjectionError(runId, 'failure', projectionErr);
     }
   }
+  // YUK-1398（S3）— crisis 回合的确定性终局：不逃模型、不调工具、不进
+  // 执行 fence。分类在接纳点完成（chat.ts），策略经既有投递链验证送达
+  // （acceptedCopilotDerivationPolicy）；此处用同一确定性词法重选模板
+  // （输入已验证 ask.payload.user_message === data.user_message，同类同案）。
+  // 回复经 persistReply 写入：继承 ask 的 crisis 策略（连同直接上下文被
+  // 一切派生读面排除）；REPLY/DONE 投影带 finish_reason='crisis_template'。
+  // 模板正文见 src/core/crisis/config.ts（每条带 review_status，当前全部未审定）。
+  if (derivationPolicy === 'crisis') {
+    const detectionClass = classifyCrisisExpression(data.user_message);
+    // 四类各有模板（R1 fix 3 拆分后）；'none'（客户端自送策略的 fail-safe）
+    // 按 explicit → full_support，不过度也不漏。
+    const template = crisisTemplateForClass(
+      detectionClass === 'none' ? 'explicit' : detectionClass,
+    );
+    const crisisTaskRunId = `copilot_run_crisis_${runId}`;
+    const settlement = await withCopilotExecutionSettlementLock(
+      db,
+      runId,
+      async (tx, lockedEvents) => {
+        await persistReply(tx, {
+          sessionId: data.session_id,
+          userAskEventId: runId,
+          replyText: template.text_md,
+          actorRef,
+          taskRunId: crisisTaskRunId,
+          outcome: 'success',
+          durableFinishReason: 'crisis_template',
+          now: new Date(),
+        });
+        await projectSuccessfulTerminal(
+          tx,
+          {
+            runId,
+            replyMd: template.text_md,
+            taskRunId: crisisTaskRunId,
+            finishReason: 'crisis_template',
+          },
+          lockedEvents,
+        );
+        return {
+          status: 'done' as const,
+          reply: template.text_md,
+          task_run_id: crisisTaskRunId,
+        };
+      },
+    );
+    return settlement.outcome === 'settled'
+      ? settlement.value
+      : terminalRunResult(settlement.events, crisisTaskRunId);
+  }
+
   // EXECUTION_STARTED is the load-bearing at-most-once fence committed
   // immediately before streamRun below. A redelivery that sees the fence but no
   // durable outcome cannot know whether paid model/tool work committed before a
