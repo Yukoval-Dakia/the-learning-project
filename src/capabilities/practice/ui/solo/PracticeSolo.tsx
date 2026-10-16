@@ -11,7 +11,10 @@
 //   under its own question on ruled lines, a glass action bar floating at the bottom while
 //   answering (T3: a floating layer), then the result settling in place (R3) and the earlier
 //   attempts at the end;
-// - passage items keep the passage pinned left and the questions right (R9).
+// - passage items keep the passage pinned left and the questions right (R9);
+// - a question whose issuance carries a presentation (YUK-1497) is drawn by its block tree
+//   instead: the blocks lay out the text, figures, passage and inputs, and their answers go
+//   through the same draft, autosave and submit engine.
 // The companion stays the global Copilot drawer; where it sits on this page is not decided, so it
 // is not embedded here. Quoting question text puts it in that drawer's composer.
 //
@@ -55,6 +58,7 @@ import {
   prefersReducedMotion,
 } from '@/ui-next/public';
 import type { AttemptTimelineEvent } from '../attempt-timeline-adapter';
+import { PresentationBlocks } from '../blocks/PresentationBlocks';
 import { practiceMorphKey, practiceSourceLabel } from '../PfStream';
 import type { StreamItem } from '../practice-api';
 import {
@@ -1015,10 +1019,42 @@ export function PracticeSolo({
       );
     }
 
+    // YUK-1497 — the frozen presentation draws the whole question; the per-slot drawing above
+    // stays for revisions without one.
+    const blocks = draft.presentation;
+    const blockSheet = blocks ? (
+      <div className="un-ps-sheet-q">
+        <span className="un-ps-mainno un-num" role="img" aria-label={`第 ${pos} 题`}>
+          {pos}
+        </span>
+        <div className="un-ps-stem">
+          <PresentationBlocks
+            presentation={blocks}
+            issued={{ faces, materials: frozen.materials, slots: frozen.response_spec.slots }}
+            entries={draft.responses.entries}
+            onEntriesChange={draft.updateResponses}
+            notation={notation}
+            disabled={answerLocked}
+            submitted={
+              !!ready.accepted ||
+              submit.answerRecorded ||
+              !!submit.pendingRun ||
+              phase !== 'answering'
+            }
+            onUploadingChange={(slotId, on) => draft.trackUpload(`free:${slotId}`, on)}
+            unreceipted={draft.unreceipted}
+            onUnreceiptedChange={draft.setSlotUnreceipted}
+          />
+        </div>
+        <QuoteButton text={stemText} what="题目" onQuote={quoteToCopilot} />
+      </div>
+    ) : null;
+
     const hasStem = !hasPassage || figures.length > 0 || !multiPart;
     const sheet = (
       <article className="un-ps-sheet" aria-label="题目与作答">
-        {hasStem && (
+        {blockSheet}
+        {!blocks && hasStem && (
           <div className="un-ps-sheet-q">
             <span className="un-ps-mainno un-num" role="img" aria-label={`第 ${pos} 题`}>
               {pos}
@@ -1032,7 +1068,7 @@ export function PracticeSolo({
             <DraftConflictPanel view={conflict} />
           </div>
         )}
-        {answerFields}
+        {!blocks && answerFields}
         {extras}
         {actionBar}
         {result && (
@@ -1049,7 +1085,8 @@ export function PracticeSolo({
       </article>
     );
 
-    if (!hasPassage) return sheet;
+    // A block tree places its own passage (passage_layout).
+    if (!hasPassage || blocks) return sheet;
     // R9: the passage stays pinned on the left and scrolls on its own; questions on the right.
     return (
       <div className="un-ps-split" data-pane={pane}>
