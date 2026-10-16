@@ -426,6 +426,7 @@ async function processOneOcrJob(
           pageIndex,
           figureBoxes,
           r2: deps.r2,
+          db: deps.db,
         });
         allPreFigures = allPreFigures.concat(preFigures);
       }

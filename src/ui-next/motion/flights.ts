@@ -1,9 +1,16 @@
-// One-off flights (M3, M4, M6): a shared title grows from where it was into where it lands, and a
-// ghost travels from a rect into a target that may itself be moving. Each answers "where did this
-// come from, where did it go". Interrupting a flight restarts from where the flying copy is right
-// now; a cancelled flight fades where it is instead of arriving. Under reduced motion nothing flies.
-import { DURATION, EASE, Z } from '../tokens';
+// One-off flights (M4, M6): a shared title grows from where it was into where it lands, and a
+// quoted passage travels from the page into a target that may itself be moving. Each answers
+// "where did this come from, where did it go". Interrupting a flight restarts from where the
+// flying copy is right now; a cancelled flight fades where it is instead of arriving (M3).
+// Under reduced motion nothing flies: every change lands at once.
 import { prefersReducedMotion } from './reduced-motion';
+
+/** A flying copy passes over every other layer while it moves (T7). */
+const Z_FLIGHT = 65;
+/** The morph's length (T4: between --un-t-ui and --un-t-panel; one continuous move). */
+const FLIGHT_MS = 540;
+/** Mirrors --un-ease-spring-soft. */
+const EASE_SPRING_SOFT = 'cubic-bezier(0.32, 1.12, 0.48, 1)';
 
 const TEXT_PROPS = [
   'fontFamily',
@@ -34,7 +41,7 @@ function ghostOf(el: HTMLElement, rect: DOMRect, scale = 1): HTMLElement {
     margin: '0',
     padding: '0',
     visibility: 'visible',
-    zIndex: String(Z.toast),
+    zIndex: String(Z_FLIGHT),
     pointerEvents: 'none',
     transformOrigin: '0 0',
     transform: scale === 1 ? '' : `scale(${scale})`,
@@ -42,7 +49,7 @@ function ghostOf(el: HTMLElement, rect: DOMRect, scale = 1): HTMLElement {
   return ghost;
 }
 
-/* ── Shared-element morph ─────────────────────────────── */
+/* ── Shared-element morph (M4) ────────────────────────── */
 
 export interface MorphSnapshot {
   rect: DOMRect;
@@ -59,14 +66,21 @@ function onScreen(rect: DOMRect): boolean {
   return rect.width > 0 && rect.bottom >= 0 && rect.top <= window.innerHeight;
 }
 
-/** Before a change, remember where every `[data-morph]` element under `root` sits. */
-export function snapshotMorphs(root: ParentNode | null): Map<string, MorphSnapshot> {
+/**
+ * Before a change, remember where every `[data-morph]` element under `root` sits. `rename` maps a
+ * key to the key it should land on (e.g. the title of the next question), or drops it (null).
+ */
+export function snapshotMorphs(
+  root: ParentNode | null,
+  rename?: (key: string) => string | null,
+): Map<string, MorphSnapshot> {
   const map = new Map<string, MorphSnapshot>();
-  if (!root) return map;
+  if (!root || prefersReducedMotion()) return map;
   for (const el of root.querySelectorAll<HTMLElement>('[data-morph]')) {
-    const key = el.dataset.morph;
-    if (!key) continue;
-    const inFlight = flying.get(key);
+    const own = el.dataset.morph;
+    const key = own && rename ? rename(own) : own;
+    if (!own || !key) continue;
+    const inFlight = flying.get(own);
     const source = inFlight?.isConnected ? inFlight : el;
     const rect = source.getBoundingClientRect();
     if (!onScreen(rect)) continue;
@@ -81,94 +95,169 @@ export function snapshotMorphs(root: ParentNode | null): Map<string, MorphSnapsh
   return map;
 }
 
-/** After the change, grow each matching `[data-morph]` element out of its remembered spot. */
-export function playMorphs(root: ParentNode | null, snapshot: Map<string, MorphSnapshot> | null) {
-  for (const animation of [...flights]) animation.cancel();
-  if (!root || !snapshot?.size || prefersReducedMotion()) return;
+function scopeOf(el: Element): Element {
+  // Stay inside the ui-next scope so the ghosts keep the scoped styles.
+  return el.closest('[data-ui-next]') ?? document.body;
+}
+
+function hideTarget(target: HTMLElement, key: string) {
+  target.style.visibility = 'hidden';
+  target.dataset.unMorphOwner = key;
+  // A list row's own entrance would move the landing spot mid-flight.
+  const row = target.closest<HTMLElement>('[data-morph-row]');
+  if (row) row.style.animation = 'none';
+}
+
+function showTarget(target: HTMLElement, key: string) {
+  // Only un-hide the target if no newer flight owns it.
+  if (flying.get(key) === undefined && target.dataset.unMorphOwner === key) {
+    target.style.visibility = '';
+    delete target.dataset.unMorphOwner;
+  }
+}
+
+/** Fly one title: the new copy grows out of the old spot while the old copy fades along the path. */
+function launch(target: HTMLElement, key: string, from: MorphSnapshot) {
+  const outgoing = from.ghost;
+  const to = target.getBoundingClientRect();
+  if (!onScreen(to)) {
+    outgoing.remove();
+    showTarget(target, key);
+    return;
+  }
+  const s = from.fontSize / Number.parseFloat(getComputedStyle(target).fontSize);
+  const dx = from.rect.left - to.left;
+  const dy = from.rect.top - to.top;
+  const incoming = ghostOf(target, to);
+  scopeOf(target).append(outgoing, incoming);
+  hideTarget(target, key);
+  const timing: KeyframeAnimationOptions = {
+    duration: FLIGHT_MS,
+    easing: EASE_SPRING_SOFT,
+    fill: 'both',
+  };
+  const grow = incoming.animate(
+    [
+      { transform: `translate(${dx}px, ${dy}px) scale(${s})`, opacity: 0 },
+      { opacity: 1, offset: 0.4 },
+      { transform: 'none', opacity: 1 },
+    ],
+    timing,
+  );
+  const fade = outgoing.animate(
+    [
+      { transform: `scale(${from.scale})`, opacity: 1 },
+      { opacity: 0, offset: 0.4 },
+      { transform: `translate(${-dx}px, ${-dy}px) scale(${from.scale / s})`, opacity: 0 },
+    ],
+    timing,
+  );
+  flights.add(grow);
+  flying.set(key, incoming);
+  const done = () => {
+    flights.delete(grow);
+    if (flying.get(key) === incoming) flying.delete(key);
+    fade.cancel();
+    incoming.remove();
+    outgoing.remove();
+    // cancel/finish fire asynchronously.
+    showTarget(target, key);
+  };
+  grow.onfinish = done;
+  grow.oncancel = done;
+}
+
+function matches(root: ParentNode, snapshot: Map<string, MorphSnapshot>) {
+  const out: { target: HTMLElement; key: string; from: MorphSnapshot }[] = [];
   for (const target of root.querySelectorAll<HTMLElement>('[data-morph]')) {
     const key = target.dataset.morph;
     const from = key ? snapshot.get(key) : undefined;
-    if (!key || !from) continue;
-    const to = target.getBoundingClientRect();
-    if (!onScreen(to)) continue;
-    const s = from.fontSize / Number.parseFloat(getComputedStyle(target).fontSize);
-    const dx = from.rect.left - to.left;
-    const dy = from.rect.top - to.top;
-    const incoming = ghostOf(target, to);
-    const outgoing = from.ghost;
-    // Stay inside the ui-next scope so the ghosts keep the scoped styles.
-    (target.closest('[data-ui-next]') ?? document.body).append(outgoing, incoming);
-    target.style.visibility = 'hidden';
-    target.dataset.unMorphOwner = key;
-    const timing: KeyframeAnimationOptions = {
-      duration: DURATION.flight,
-      easing: EASE.springSoft,
-      fill: 'both',
-    };
-    const grow = incoming.animate(
-      [
-        { transform: `translate(${dx}px, ${dy}px) scale(${s})`, opacity: 0 },
-        { opacity: 1, offset: 0.4 },
-        { transform: 'none', opacity: 1 },
-      ],
-      timing,
-    );
-    const fade = outgoing.animate(
-      [
-        { transform: `scale(${from.scale})`, opacity: 1 },
-        { opacity: 0, offset: 0.4 },
-        { transform: `translate(${-dx}px, ${-dy}px) scale(${from.scale / s})`, opacity: 0 },
-      ],
-      timing,
-    );
-    flights.add(grow);
-    flying.set(key, incoming);
-    const done = () => {
-      flights.delete(grow);
-      if (flying.get(key) === incoming) flying.delete(key);
-      fade.cancel();
-      incoming.remove();
-      outgoing.remove();
-      // cancel/finish fire asynchronously: only un-hide the target if no newer flight owns it.
-      if (flying.get(key) === undefined && target.dataset.unMorphOwner === key) {
-        target.style.visibility = '';
-        delete target.dataset.unMorphOwner;
-      }
-    };
-    grow.onfinish = done;
-    grow.oncancel = done;
+    if (key && from) out.push({ target, key, from });
   }
+  return out;
+}
+
+function dropGhosts(snapshot: Map<string, MorphSnapshot> | null) {
+  for (const from of snapshot?.values() ?? []) from.ghost.remove();
+}
+
+let pending: (() => void) | null = null;
+
+/** Stop every morph: running flights end, a deferred one that has not launched is undone. */
+export function cancelMorphs(): void {
+  pending?.();
+  pending = null;
+  for (const animation of [...flights]) animation.cancel();
+}
+
+/**
+ * After the change, grow each matching `[data-morph]` element under `root` out of its remembered
+ * spot. The landing spots are measured after the new view's first frame, when its layout is done,
+ * so the switch never pays for a forced synchronous layout (M4). Until then the old title holds
+ * its place and the new one stays hidden, so nothing flashes. Returns a cancel function.
+ */
+export function playMorphsAfterPaint(
+  root: ParentNode | null,
+  snapshot: Map<string, MorphSnapshot> | null,
+): () => void {
+  cancelMorphs();
+  if (!root || !snapshot?.size || prefersReducedMotion()) {
+    dropGhosts(snapshot);
+    return () => {};
+  }
+  const found = matches(root, snapshot);
+  const used = new Set(found.map((f) => f.from));
+  for (const from of snapshot.values()) if (!used.has(from)) from.ghost.remove();
+  if (!found.length) return () => {};
+  for (const { target, key, from } of found) {
+    scopeOf(target).append(from.ghost);
+    hideTarget(target, key);
+  }
+  let frame = 0;
+  const undo = () => {
+    if (!frame) return;
+    cancelAnimationFrame(frame);
+    frame = 0;
+    for (const { target, key, from } of found) {
+      from.ghost.remove();
+      showTarget(target, key);
+    }
+  };
+  frame = requestAnimationFrame(() => {
+    // The first callback runs before the new view paints; the second, after it has.
+    frame = requestAnimationFrame(() => {
+      frame = 0;
+      if (pending === undo) pending = null;
+      for (const { target, key, from } of found) {
+        if (target.isConnected) launch(target, key, from);
+        else from.ghost.remove();
+      }
+    });
+  });
+  pending = undo;
+  return () => {
+    if (pending === undo) cancelMorphs();
+  };
 }
 
 /* ── Homing flight ────────────────────────────────────── */
 
-export interface FlyOptions {
+interface FlyOptions {
   from: DOMRect | null | undefined;
   /** The landing element, re-read every frame so a moving target is still hit. */
   to: () => Element | null;
   /** The visual that flies; it is positioned and removed by this function. */
   node: HTMLElement;
-  /** Arc into a pocket and shrink (capture), instead of gliding onto the target's corner. */
-  shrink?: boolean;
-  /** Uniform end scale for a glide (text never stretches). */
-  scale?: number;
-  durationMs?: number;
+  /** Where the flying node is attached (a ui-next scope, so it keeps its styles). */
+  scope: Element;
+  durationMs: number;
   onLand?: () => void;
 }
 
-const easeInOut = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2);
 const easeOut = (t: number) => 1 - (1 - t) ** 3;
 
 /** Returns `cancel`: the ghost fades where it is and `onLand` is not called. */
-export function flyTo({
-  from,
-  to,
-  node,
-  shrink = false,
-  scale = 1,
-  durationMs = 620,
-  onLand,
-}: FlyOptions): () => void {
+function flyTo({ from, to, node, scope, durationMs, onLand }: FlyOptions): () => void {
   if (prefersReducedMotion() || !from || !to()) {
     onLand?.();
     return () => {};
@@ -178,13 +267,11 @@ export function flyTo({
     left: `${from.left}px`,
     top: `${from.top}px`,
     margin: '0',
-    zIndex: String(Z.toast),
+    zIndex: String(Z_FLIGHT),
     pointerEvents: 'none',
     transformOrigin: '0 0',
   });
-  (to()?.closest('[data-ui-next]') ?? document.body).append(node);
-  const w0 = node.offsetWidth || from.width;
-  const h0 = node.offsetHeight || from.height;
+  scope.append(node);
   const start = performance.now();
   let frame = 0;
   let ended = false;
@@ -198,11 +285,16 @@ export function flyTo({
       onLand?.();
       return;
     }
+    if (prefersReducedMotion()) {
+      node.remove();
+      return;
+    }
     const fade = node.animate([{ opacity: node.style.opacity || '1' }, { opacity: 0 }], {
       duration: 180,
       fill: 'forwards',
     });
     fade.onfinish = () => node.remove();
+    fade.oncancel = () => node.remove();
   };
 
   const tick = (now: number) => {
@@ -213,28 +305,10 @@ export function flyTo({
     }
     const r = target.getBoundingClientRect();
     const t = Math.min(1, (now - start) / durationMs);
-    let x: number;
-    let y: number;
-    let k: number;
-    let opacity = 1;
-    if (shrink) {
-      const e = easeInOut(t);
-      const endX = r.left + r.width / 2 - w0 * 0.09;
-      const endY = r.top + r.height / 2 - h0 * 0.09;
-      const ctrlX = (from.left + endX) / 2;
-      const ctrlY = Math.min(from.top, endY) - 80;
-      x = (1 - e) ** 2 * from.left + 2 * (1 - e) * e * ctrlX + e * e * endX;
-      y = (1 - e) ** 2 * from.top + 2 * (1 - e) * e * ctrlY + e * e * endY;
-      k = 1 - 0.82 * e;
-      opacity = t < 0.8 ? 1 : 1 - (t - 0.8) / 0.2;
-    } else {
-      const e = easeOut(t);
-      x = from.left + (r.left - from.left) * e;
-      y = from.top + (r.top - from.top) * e;
-      k = 1 + (scale - 1) * e;
-    }
-    node.style.transform = `translate(${x - from.left}px, ${y - from.top}px) scale(${k})`;
-    node.style.opacity = String(opacity);
+    const e = easeOut(t);
+    const x = from.left + (r.left - from.left) * e;
+    const y = from.top + (r.top - from.top) * e;
+    node.style.transform = `translate(${x - from.left}px, ${y - from.top}px)`;
     if (t < 1) frame = requestAnimationFrame(tick);
     else end(true);
   };
@@ -242,15 +316,53 @@ export function flyTo({
   return () => end(false);
 }
 
-/** A small spring "bump" on whatever received something. */
-export function bump(el: Element | null): void {
-  if (!el || prefersReducedMotion()) return;
-  el.animate(
-    [
-      { transform: 'scale(1)' },
-      { transform: 'scale(1.22)', offset: 0.35 },
-      { transform: 'scale(1)' },
-    ],
-    { duration: 420, easing: EASE.spring },
-  );
+/* ── Quote flight (M6) ────────────────────────────────── */
+
+export interface QuoteFlight {
+  /** Where the quoted passage was on the page (e.g. the selection's bounding rect). */
+  from: DOMRect | null | undefined;
+  /** The quoted text. */
+  content: string;
+  /** Where it lands (a composer); re-read every frame, since a drawer may be opening. */
+  to: () => HTMLElement | null;
+  /** The ui-next scope the flying copy is attached to. */
+  scope: Element;
+  onLand?: () => void;
+}
+
+/**
+ * A passage leaves the page and lands where the quote is written (M6). The landing spot stays
+ * hidden until the copy arrives, so the reader sees one object travel, not two. Reduced motion or
+ * no visible target: it lands at once. Returns `cancel` (the copy fades, the target shows).
+ */
+export function flyQuote({ from, content, to, scope, onLand }: QuoteFlight): () => void {
+  const node = document.createElement('span');
+  node.className = 'un-quote-ghost';
+  node.setAttribute('aria-hidden', 'true');
+  node.textContent = content;
+  const target = prefersReducedMotion() ? null : to();
+  if (target) target.style.visibility = 'hidden';
+  let shown = false;
+  const show = () => {
+    if (shown) return;
+    shown = true;
+    if (target) target.style.visibility = '';
+    const landed = to();
+    if (landed && landed !== target) landed.style.visibility = '';
+  };
+  const cancel = flyTo({
+    from,
+    to,
+    node,
+    scope,
+    durationMs: 700,
+    onLand: () => {
+      show();
+      onLand?.();
+    },
+  });
+  return () => {
+    cancel();
+    show();
+  };
 }

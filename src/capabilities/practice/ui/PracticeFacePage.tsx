@@ -4,18 +4,18 @@
 // 理由与判定）。路由耦合走 props 注入（壳层规则，web/src/router.tsx）。
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useLayoutEffect, useMemo, useState } from 'react';
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Btn } from '@/ui/primitives/Btn';
 import { ErrorState } from '@/ui/primitives/ErrorState';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
+import { prefersReducedMotion, useSharedMorph } from '@/ui-next/public';
 import './practice-face.css';
 
 import { PfPaper } from './PfPaper';
 import { PfRetro } from './PfRetro';
 import { PfShelf } from './PfShelf';
-import { PfSolo } from './PfSolo';
-import { PfStream } from './PfStream';
+import { PfStream, practiceMorphKey } from './PfStream';
 import {
   type StreamItem,
   type StreamStatus,
@@ -23,6 +23,9 @@ import {
   advanceStreamItem,
   getStream,
 } from './practice-api';
+import { type Running, glideToTop, leaveQuestion } from './solo/advance-motion';
+import { PracticeSolo } from './solo/PracticeSolo';
+import { questionDetailQuery } from './use-practice-submit';
 
 export interface PracticeFacePageProps {
   navigate: (to: string) => void;
@@ -49,6 +52,9 @@ interface StreamActionFailure {
 }
 
 const SCOPE_MISMATCH_ERROR = new Error('练习范围与请求不一致，请重试。');
+
+/** If the next question's text is still not read after this long, move on and let it load there. */
+const NEXT_READY_FALLBACK_MS = 8000;
 
 function replaceConfirmedItem(view: StreamView | undefined, confirmed: StreamItem) {
   if (!view) return view;
@@ -103,6 +109,90 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
   const [toasts, setToasts] = useState<PfToast[]>([]);
   const [actionFailure, setActionFailure] = useState<StreamActionFailure | null>(null);
 
+  // ── YUK-1473 — moving on, in place (see advanceInPlace). One move at a time: `advancingRef`
+  // turns away repeated presses; `advanceSeq` is bumped by anything that ends a move on its way
+  // (back, the question's view root detaching — which every scope change causes — or the page
+  // unmounting), and every await of the move re-checks it; `transition` holds the running leave
+  // motion so it can be stopped.
+  // The question being moved on from (its id), so only that question shows 下一题准备中….
+  const [advancing, setAdvancing] = useState<string | null>(null);
+  const advancingRef = useRef(false);
+  const advanceSeq = useRef(0);
+  const continuedSeq = useRef(0);
+  const transition = useRef<Running[]>([]);
+  // Said to screen readers when a question arrives in place.
+  const [announce, setAnnounce] = useState('');
+  // Question texts already read ahead this visit (M13): each next question is prefetched once.
+  const prefetched = useRef(new Set<string>());
+
+  // ── Shared title (M4): a stream row's title grows into the question's title and folds back
+  // into it. `capture` runs in the command that swaps the view; the view root's ref callback
+  // (landView) plays it, restores the list's scroll position and places focus after a move.
+  const morph = useSharedMorph();
+  const host = useRef<HTMLDivElement | null>(null);
+  const listScroll = useRef(0);
+  // Set by the command that leaves a question for the list (exitToList): only then does the list
+  // return to its old place. A list reached any other way (a scope change resets the page to the
+  // list) keeps the top of the page, never the old scope's position.
+  const restoreListOnLand = useRef(false);
+  const focusTitleOnLand = useRef(false);
+  const stopTransition = useCallback(() => {
+    for (const step of transition.current) step.stop();
+    transition.current = [];
+  }, []);
+  const attachHost = useCallback(
+    (node: HTMLDivElement | null) => {
+      if (!node) return undefined;
+      host.current = node;
+      return () => {
+        // The page goes away: a move on its way ends here, with its motion.
+        advanceSeq.current += 1;
+        stopTransition();
+        host.current = null;
+      };
+    },
+    [stopTransition],
+  );
+  const landView = useCallback(
+    (node: HTMLDivElement | null) => {
+      if (!node) return undefined;
+      const view = node.dataset.view;
+      // Back on the list: return to where the reader was, before paint, so the title can fold
+      // back into its row (the flight measures after the first frame).
+      if (view === 'list') {
+        if (restoreListOnLand.current && listScroll.current > 0) {
+          window.scrollTo({ top: listScroll.current, behavior: 'instant' });
+        }
+        restoreListOnLand.current = false;
+        listScroll.current = 0;
+      }
+      // Arrived in place: the old question's button went with it, so focus goes to the new title.
+      if (focusTitleOnLand.current) {
+        focusTitleOnLand.current = false;
+        const active = document.activeElement;
+        if (!active || active === document.body) {
+          node.querySelector<HTMLElement>('.un-ps-title')?.focus({ preventScroll: true });
+        }
+      }
+      const landed = morph.land(node);
+      if (view !== 'solo') return landed;
+      return () => {
+        landed?.();
+        // YUK-1473 — this question's view is going away. Whatever took it away (back, a scope
+        // change through a click, the URL or history — the scope sync resets the page to the
+        // list — or the page itself unmounting), a move to the next question that is still on
+        // its way ends here: every await of the move re-checks advanceSeq, so it sends no
+        // further PATCH, runs no glide and never pulls a question back in. After a normal
+        // in-place swap the move has already ended, so this changes nothing.
+        advanceSeq.current += 1;
+        stopTransition();
+        advancingRef.current = false;
+        setAdvancing(null);
+      };
+    },
+    [morph, stopTransition],
+  );
+
   // TanStack Router 会在 search-only navigation 时复用页面实例。壳层传入的 getQuery 会随
   // location.searchStr 更新；这里同步本地交互状态，确保 kc=a → kc=b 不会继续使用旧 session。
   useLayoutEffect(() => {
@@ -131,6 +221,7 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
   let streamError: Error | null = null;
   if (streamQ.isError) streamError = streamQ.error as Error;
   else if (streamScopeMismatch && !streamQ.isFetching) streamError = SCOPE_MISMATCH_ERROR;
+  const items = useMemo(() => visibleStream?.items ?? [], [visibleStream]);
 
   const addToast = useCallback((text: string, tone?: 'info', icon?: string) => {
     const id = Math.random().toString(36).slice(2);
@@ -169,13 +260,13 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
       status: StreamStatus,
       action: string,
       onConfirmed: (confirmed: StreamItem) => void | Promise<void>,
-    ) {
+    ): Promise<StreamItem | null> {
       let confirmed: StreamItem;
       try {
         ({ item: confirmed } = await advanceStreamItem(item.id, status));
       } catch (error) {
         recordFailure(action, error, () => void commit(item, status, action, onConfirmed));
-        return;
+        return null;
       }
 
       // PATCH 回执是服务端确认态。先写 cache，再做导航或 refresh；后续 GET 即使失败，
@@ -183,6 +274,7 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
       qc.setQueryData<StreamView>(streamQueryKey, (view) => replaceConfirmedItem(view, confirmed));
       setActionFailure(null);
       await onConfirmed(confirmed);
+      return confirmed;
     },
     [qc, recordFailure, streamQueryKey],
   );
@@ -207,6 +299,9 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
         if (confirmed.item_kind === 'paper') {
           setMode({ kind: 'paper', artifactId: confirmed.ref_id });
         } else {
+          // M4: the row's title grows into the question's; the list's place is kept for back.
+          listScroll.current = window.scrollY;
+          morph.capture(host.current);
           setMode({ kind: 'solo', item: confirmed });
         }
       };
@@ -218,7 +313,7 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
       }
       void commitStreamItem(item, 'in_progress', '开始练习', enter);
     },
-    [commitStreamItem],
+    [commitStreamItem, morph],
   );
 
   const continueAfterSolo = useCallback(
@@ -247,53 +342,213 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
     [addToast, commitStreamItem, fetchFreshStream, recordFailure],
   );
 
-  // 散题完成：标 done、推进到下一道 pending 散题（设计稿：流自动推进）。
-  const completeSolo = useCallback(
-    (item: StreamItem) => {
-      void commitStreamItem(item, 'done', '完成练习', async () => {
-        // done 已由 PATCH 确认；后续读下一项失败时退出作答面，但 cache 仍保持 done。
-        setMode({ kind: 'list' });
-        await continueAfterSolo();
-      });
+  // ── YUK-1473 — 散题完成后原地换下一题（设计稿：流自动推进；M2/M3/M4/M13）。
+  // The finished question stays on screen (its way forward reads 下一题准备中…) while the item is
+  // marked done, the stream is read and the next item is started; then its body leaves, the page
+  // glides to the top, and the next question takes its place under a title that morphs in place.
+  // It never passes through the list. Each question is its own PracticeSolo (keyed by item), so
+  // the outgoing one unmounts exactly as before: its draft flushes on unmount and nothing it held
+  // (draft, conflict, judgment, hints, timing, mascot) reaches the next one. The next question is
+  // issued by its own page when it becomes current — never here, never ahead.
+  const endAdvance = useCallback(() => {
+    advancingRef.current = false;
+    setAdvancing(null);
+  }, []);
+  const cancelAdvance = useCallback(() => {
+    advanceSeq.current += 1;
+    stopTransition();
+    endAdvance();
+  }, [endAdvance, stopTransition]);
+
+  /** Leave the question page for the list, folding its title back into its row. */
+  const exitToList = useCallback(() => {
+    morph.capture(host.current);
+    restoreListOnLand.current = true;
+    setAnnounce('');
+    setMode({ kind: 'list' });
+  }, [morph]);
+
+  /** The next question replaces the finished one: leave motion, then the swap (one commit). */
+  const swapInPlace = useCallback(
+    async (done: StreamItem, next: StreamItem, pos: number, seq: number) => {
+      const live = () => seq === advanceSeq.current;
+      if (!live()) return;
+      if (!prefersReducedMotion()) {
+        const steps = [glideToTop(), leaveQuestion(host.current)];
+        transition.current = steps;
+        await Promise.all(steps.map((step) => step.done));
+        if (transition.current === steps) transition.current = [];
+        // Back (or the view going away) during the motion stopped it; nothing else to do.
+        if (!live()) return;
+      }
+      // M4 across questions: the finished title morphs into the next one where it stands.
+      const from = practiceMorphKey(done.id);
+      const to = practiceMorphKey(next.id);
+      morph.capture(host.current, (key) => (key === from ? to : null));
+      focusTitleOnLand.current = true;
+      endAdvance();
+      setAnnounce(`第 ${pos} 题`);
+      // Lands only on the question it is replacing: if anything already moved the page (the
+      // scope sync above resets it to the list), that wins.
+      setMode((current) =>
+        current.kind === 'solo' && current.item.id === done.id
+          ? { kind: 'solo', item: next }
+          : current,
+      );
     },
-    [commitStreamItem, continueAfterSolo],
+    [endAdvance, morph],
+  );
+
+  const continueInPlace = useCallback(
+    async (done: StreamItem, seq: number) => {
+      const live = () => seq === advanceSeq.current;
+      // Only the move that marked the item done continues, once (a retried PATCH included).
+      if (continuedSeq.current === seq || !live()) return;
+      continuedSeq.current = seq;
+      advancingRef.current = true;
+      setAdvancing(done.id);
+
+      let fresh: StreamView;
+      try {
+        fresh = await fetchFreshStream();
+      } catch (error) {
+        if (!live()) return;
+        // done is confirmed and cached; reading the next item failed: leave for the list.
+        endAdvance();
+        exitToList();
+        recordFailure('读取下一项', error, () => void continueAfterSolo());
+        return;
+      }
+      if (!live()) return;
+
+      const next = fresh.items.find((it) => it.status === 'pending');
+      if (next?.item_kind !== 'question') {
+        // The last question (or a paper next): back to the list, as before.
+        endAdvance();
+        exitToList();
+        if (next?.item_kind === 'paper') {
+          addToast('下一项是今天的卷——卷内不给即时反馈，准备好了再进。', 'info', 'layers');
+        }
+        return;
+      }
+
+      // Read the next question's text (a GET; usually already prefetched) while it is started,
+      // so it arrives without a blank wait; after 8s it moves on and loads in place.
+      const ready = Promise.race([
+        qc.ensureQueryData(questionDetailQuery(next.ref_id)).then(
+          () => undefined,
+          () => undefined,
+        ),
+        new Promise<void>((resolve) => setTimeout(resolve, NEXT_READY_FALLBACK_MS)),
+      ]);
+      // If starting it fails, the page leaves for the list and the error offers a retry; that
+      // retry (from the list) opens the question once it is started, as before.
+      let leftForList = false;
+      const started = await commitStreamItem(next, 'in_progress', '开始下一题', (confirmed) => {
+        if (leftForList) setMode({ kind: 'solo', item: confirmed });
+      });
+      if (!live()) return;
+      if (!started) {
+        leftForList = true;
+        endAdvance();
+        exitToList();
+        return;
+      }
+      await ready;
+      if (!live()) return;
+      const pos = fresh.items.findIndex((it) => it.id === started.id) + 1;
+      await swapInPlace(done, started, pos || started.position, seq);
+    },
+    [
+      addToast,
+      commitStreamItem,
+      continueAfterSolo,
+      endAdvance,
+      exitToList,
+      fetchFreshStream,
+      qc,
+      recordFailure,
+      swapInPlace,
+    ],
+  );
+
+  const advanceInPlace = useCallback(
+    async (item: StreamItem) => {
+      // Spamming 下一题 / 先继续 moves exactly one question.
+      if (advancingRef.current) return;
+      advancingRef.current = true;
+      setAdvancing(item.id);
+      const seq = ++advanceSeq.current;
+      const ok = await commitStreamItem(item, 'done', '完成练习', () => continueInPlace(item, seq));
+      // Marking done failed: stay on the question; the error above offers a retry.
+      if (!ok && seq === advanceSeq.current) endAdvance();
+    },
+    [commitStreamItem, continueInPlace, endAdvance],
+  );
+
+  // M13 — while a result is on screen, read the next pending question's text ahead: the same
+  // GET (and cache entry) its page will use. A read only: nothing is started or issued here.
+  const prefetchNext = useCallback(
+    (current: StreamItem) => {
+      const next = items.find(
+        (it) => it.status === 'pending' && it.item_kind === 'question' && it.id !== current.id,
+      );
+      if (!next || prefetched.current.has(next.ref_id)) return;
+      prefetched.current.add(next.ref_id);
+      void qc.prefetchQuery(questionDetailQuery(next.ref_id));
+    },
+    [items, qc],
   );
 
   // YUK-432 (Bugbot FINDING 1) — 客观题自动 commit 后「返回流」的退出。review 已落库 → 该 slot
   // 实质 done，必须标 done（否则留下「已判分但 slot 卡 in_progress」的不一致态）。区别于
-  // completeSolo（「下一项」）：这里**只**标 done + 回列表，不自动推进到下一道 pending——用户按的是
-  // 「返回流」而非「下一项」，自动推进会越权。两条出口（completeSolo / 此处）都让 auto-commit 后的
+  // advanceInPlace（「下一项」）：这里**只**标 done + 回列表，不自动推进到下一道 pending——用户按的是
+  // 「返回流」而非「下一项」，自动推进会越权。两条出口（advanceInPlace / 此处）都让 auto-commit 后的
   // slot 落到一致的 done 态。
   const markSoloDoneAndExit = useCallback(
     (item: StreamItem) => {
       void commitStreamItem(item, 'done', '完成并返回练习流', async () => {
-        setMode({ kind: 'list' });
+        exitToList();
         await refreshStream();
       });
     },
-    [commitStreamItem, refreshStream],
+    [commitStreamItem, exitToList, refreshStream],
   );
-
-  const items = useMemo(() => visibleStream?.items ?? [], [visibleStream]);
 
   let body: React.ReactNode;
   if (mode.kind === 'solo') {
     const pos = items.findIndex((it) => it.id === mode.item.id) + 1;
     body = (
-      <PfSolo
-        // key=item.id：流自动推进换题时强制重挂，判分/作答 state 不跨题残留。
+      // YUK-1473 — the single-question page (layout 纸面) is the only solo view (owner
+      // 2026-10-16: 「纸面 默认新不用开关」); no flag, no layout picker.
+      <PracticeSolo
+        // key=item.id：换题（含原地换下一题）时强制重挂：作答引擎每题一份，旧题照常卸载（草稿
+        // unmount flush），判分/作答/草稿冲突/计时/吉祥物 state 不跨题残留。
         key={mode.item.id}
         item={mode.item}
         sessionId={visibleStream?.scope?.session_id ?? null}
         pos={pos || mode.item.position}
         total={items.length}
-        onDone={() => void completeSolo(mode.item)}
+        advancing={advancing === mode.item.id}
+        onDone={() => void advanceInPlace(mode.item)}
+        onResultShown={prefetchNext}
         onBack={() => {
-          setMode({ kind: 'list' });
+          // Back is never blocked: it also cancels a move to the next question on its way.
+          cancelAdvance();
+          exitToList();
           void refreshStream();
         }}
         // YUK-432 — 客观题自动 commit 后退出回流：标 done（不自动推进），消除卡 in_progress 的 slot。
-        onCommittedBack={() => void markSoloDoneAndExit(mode.item)}
+        // While a move is on its way the item is already being marked done: just leave.
+        onCommittedBack={() => {
+          if (advancing === mode.item.id) {
+            cancelAdvance();
+            exitToList();
+            void refreshStream();
+            return;
+          }
+          void markSoloDoneAndExit(mode.item);
+        }}
         addToast={addToast}
       />
     );
@@ -385,7 +640,9 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
             error={streamError}
             openItem={openItem}
             refresh={refreshStream}
-            updateItem={commitStreamItem}
+            updateItem={async (item, status, action, onConfirmed) => {
+              await commitStreamItem(item, status, action, onConfirmed);
+            }}
             addToast={addToast}
           />
         )}
@@ -395,13 +652,25 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
 
   return (
     <main className="page wide pface-loom">
-      <div className="pface-root">
+      <div className="pface-root" ref={attachHost}>
         <div aria-live="assertive">
           {actionFailure && (
             <ErrorState text={actionFailure.message} onRetry={actionFailure.retry} compact />
           )}
         </div>
-        {body}
+        {/* One root per view (a question, the list, a paper): its ref callback lands the shared
+            title, restores the list's scroll and places focus after an in-place move. */}
+        <div
+          key={mode.kind === 'solo' ? `solo:${mode.item.id}` : mode.kind}
+          className="pface-view"
+          data-view={mode.kind}
+          ref={landView}
+        >
+          {body}
+        </div>
+        <p className="visually-hidden" aria-live="polite">
+          {announce}
+        </p>
       </div>
       {createPortal(
         <div className="pf-toasts" aria-live="polite">

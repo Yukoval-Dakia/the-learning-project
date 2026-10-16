@@ -1,5 +1,8 @@
 import { renderPdfToPngPages } from '@/capabilities/ingestion/server/pdf-render';
-import { persistImageAsset } from '@/capabilities/ingestion/server/persist-image-asset';
+import {
+  persistImageAsset,
+  persistSourceAsset,
+} from '@/capabilities/ingestion/server/persist-image-asset';
 import { MAX_DOCX_PAGES, MAX_PDF_PAGES } from '@/core/limits';
 import type { Db } from '@/db/client';
 import type { R2Client } from '@/server/r2';
@@ -32,6 +35,9 @@ export interface PageEvidence {
   /** source_asset row ids, in page order. */
   assetIds: string[];
   pageCount: number;
+  /** YUK-1404 (B2/R1) — the LibreOffice-rendered PDF itself, persisted as a
+   * kind='pdf' source_asset so the source package keeps every artifact. */
+  pdfAssetId: string;
 }
 
 /**
@@ -62,5 +68,11 @@ export async function persistDocxPageEvidence(
     assetIds.push(row.id);
   }
 
-  return { assetIds, pageCount: pages.length };
+  const pdf = await persistSourceAsset(db, r2, {
+    bytes: pdfBytes,
+    mime: 'application/pdf',
+    kind: 'pdf',
+    provenance: { role: 'rendered_pdf' },
+  });
+  return { assetIds, pageCount: pages.length, pdfAssetId: pdf.id };
 }

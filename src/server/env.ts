@@ -24,6 +24,7 @@ const server = {
   // additionally pins the session `default_transaction_read_only=on` either way.
   AUDIT_READ_DATABASE_URL: z.string().url().optional(),
   BACKUP_IMPORT_MAX_BYTES: optionalString,
+  BANK_GAP_EVIDENCE_SECRET: optionalString,
   B3_GATE_CONFIRM_CLONE: optionalString,
   // YUK-590 parity knob honoured by the pi adapter's retry cap (was the SDK
   // subprocess env; now read in-process — see pi-agent-adapter.ts).

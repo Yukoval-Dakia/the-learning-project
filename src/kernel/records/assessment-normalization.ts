@@ -111,6 +111,11 @@ export interface NormalizedContract {
   group_id: string;
   /** 未决转换项（空 = 全部 part 有可发布品格依据）。 */
   conversion_issues: ConversionIssue[];
+  /** YUK-1445 — rule_reference statement 的出处，按 scoring_unit_id 键控。
+   *  'reference' = 含印出答案原文（可作 source crosscheck 输入）；
+   *  'rubric'/'placeholder' = 非答案文本（rubric 或「无答案」占位），
+   *  消费侧不得当答案用。仅 rule_reference 单元有项。 */
+  rule_statement_origins?: Record<string, 'reference' | 'rubric' | 'placeholder'>;
 }
 
 function shortHash(input: string): string {
@@ -291,6 +296,10 @@ interface LeafScoring {
   acceptedTexts?: string[];
   ruleStatement?: string;
   ruleProvenance?: RuleProvenance;
+  /** buildRuleStatement 的出处标记：'reference' = statement 含印出答案原文；
+   *  'rubric'/'placeholder' = statement 是 rubric/占位文本（绝非答案 ——
+   *  消费侧不得把它当 source answer 用，YUK-1445）。 */
+  ruleStatementOrigin?: 'reference' | 'rubric' | 'placeholder';
   issue?: ConversionIssue;
 }
 
@@ -385,6 +394,7 @@ function normalizeLeafScoring(leaf: LeafInput): LeafScoring {
       criterionKind: 'rule_reference',
       ruleStatement: fallback.statement,
       ruleProvenance: fallback.origin === 'reference' ? leaf.provenance : 'system_proposed',
+      ruleStatementOrigin: fallback.origin,
       issue:
         answerText == null
           ? missingReferenceIssue(leaf)
@@ -420,6 +430,7 @@ function normalizeLeafScoring(leaf: LeafInput): LeafScoring {
       criterionKind: 'rule_reference',
       ruleStatement: fallback.statement,
       ruleProvenance: 'system_proposed', // placeholder/rubric 来源不冒充 official
+      ruleStatementOrigin: fallback.origin,
       issue: missingReferenceIssue(leaf),
     };
   }
@@ -447,6 +458,7 @@ function normalizeLeafScoring(leaf: LeafInput): LeafScoring {
     criterionKind: 'rule_reference',
     ruleStatement: rule.statement,
     ruleProvenance: rule.origin === 'reference' ? leaf.provenance : 'system_proposed',
+    ruleStatementOrigin: rule.origin,
   };
 }
 
@@ -601,6 +613,13 @@ function assemble(
       ...extraIssues,
       ...scorings.flatMap((s) => (s.issue != null ? [s.issue] : [])),
     ],
+    rule_statement_origins: Object.fromEntries(
+      scorings.flatMap((s, i) =>
+        s.ruleStatementOrigin != null
+          ? [[`${leaves[i].partId}::u`, s.ruleStatementOrigin] as const]
+          : [],
+      ),
+    ),
   };
 }
 
