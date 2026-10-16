@@ -1041,7 +1041,9 @@ export function PracticeSolo({
               !!submit.pendingRun ||
               phase !== 'answering'
             }
-            onUploadingChange={draft.setUploading}
+            onUploadingChange={(slotId, on) => draft.trackUpload(`free:${slotId}`, on)}
+            unreceipted={draft.unreceipted}
+            onUnreceiptedChange={draft.setSlotUnreceipted}
           />
         </div>
         <QuoteButton text={stemText} what="题目" onQuote={quoteToCopilot} />

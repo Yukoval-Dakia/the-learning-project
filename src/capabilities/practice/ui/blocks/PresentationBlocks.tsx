@@ -69,8 +69,14 @@ export interface PresentationBlocksProps {
   notation?: string | null;
   disabled?: boolean;
   submitted?: boolean;
-  /** free_area uploads in flight; join into the page's submit gate. */
-  onUploadingChange?: (uploading: boolean) => void;
+  /** free_area uploads in flight, per slot; join into the page's submit gate. */
+  onUploadingChange?: (slotId: string, uploading: boolean) => void;
+  /**
+   * free_area attachments without a full receipt, per slot. They cannot go into the envelope, so
+   * the page holds them: they stay on screen and the page blocks submit while any remain.
+   */
+  unreceipted?: Readonly<Record<string, EvidenceAttachment[]>>;
+  onUnreceiptedChange?: (slotId: string, attachments: EvidenceAttachment[]) => void;
   onPreview?: (assetId: string) => void;
   className?: string;
 }
@@ -93,6 +99,8 @@ export function PresentationBlocks({
   disabled,
   submitted,
   onUploadingChange,
+  unreceipted,
+  onUnreceiptedChange,
   onPreview,
   className,
 }: PresentationBlocksProps) {
@@ -101,10 +109,10 @@ export function PresentationBlocks({
   const materialById = new Map(issued.materials.map((m) => [m.material_id, m] as const));
   const state = { disabled, submitted };
 
-  // question_no + placement.label + kind name, e.g. 「第 3 题 (1) 选项」.
+  // question_no as-is + placement.label + kind name, e.g. 「(2) ① 选项」 (spec §1.2.2).
   const labelFor = (slot: ResponseSlotT, kind: string) => {
     const no = faceById.get(slot.part_id)?.question_no;
-    return [no ? `第 ${no} 题` : '', slot.placement?.label ?? '', KIND_NAME[kind] ?? '作答']
+    return [no ?? '', slot.placement?.label ?? '', KIND_NAME[kind] ?? '作答']
       .filter(Boolean)
       .join(' ');
   };
@@ -283,12 +291,15 @@ export function PresentationBlocks({
         if (slot?.kind !== 'open_response') return null;
         const slotId = slot.slot_id;
         const open = readOpen(entries, slotId);
-        const attachments: EvidenceAttachment[] = open.evidence.map((original) => ({
-          asset_id: original.asset.asset_id,
-          original,
-          kind: evidenceKindFromMime(original.mime_type),
-          slot_ids: [slotId],
-        }));
+        const attachments: EvidenceAttachment[] = [
+          ...open.evidence.map((original) => ({
+            asset_id: original.asset.asset_id,
+            original,
+            kind: evidenceKindFromMime(original.mime_type),
+            slot_ids: [slotId],
+          })),
+          ...(unreceipted?.[slotId] ?? []),
+        ];
         return (
           <FreeAreaBlock
             key={block.block_id}
@@ -300,18 +311,23 @@ export function PresentationBlocks({
               )
             }
             attachments={attachments}
-            onAttachmentsChange={(next) =>
+            onAttachmentsChange={(next) => {
               onEntriesChange((prev) =>
                 writeOpen(prev, slotId, {
                   text_md: readOpen(prev, slotId).text_md ?? '',
                   // Only uploads with a full receipt can go into an immutable submission.
                   evidence: next.flatMap((a) => (a.original ? [a.original] : [])),
                 }),
-              )
-            }
+              );
+              // The rest stay with the page (shown, and blocking submit) instead of vanishing.
+              onUnreceiptedChange?.(
+                slotId,
+                next.filter((a) => !a.original),
+              );
+            }}
             minLines={block.min_lines}
             notation={notation}
-            onUploadingChange={onUploadingChange}
+            onUploadingChange={(on) => onUploadingChange?.(slotId, on)}
             onPreview={onPreview}
             {...state}
           />

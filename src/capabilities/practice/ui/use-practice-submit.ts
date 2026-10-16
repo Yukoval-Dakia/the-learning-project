@@ -393,6 +393,15 @@ export interface UsePracticeSubmitOptions {
   hotkeysSuspended: boolean;
 }
 
+/** A copy of `set` with `key` present or absent; the same set when nothing changes. */
+function withKey(set: ReadonlySet<string>, key: string, on: boolean): ReadonlySet<string> {
+  if (set.has(key) === on) return set;
+  const next = new Set(set);
+  if (on) next.add(key);
+  else next.delete(key);
+  return next;
+}
+
 export function usePracticeSubmit({
   item,
   sessionId,
@@ -415,7 +424,20 @@ export function usePracticeSubmit({
   const [evidence, setEvidence] = useState<EvidenceAttachment[]>([]);
   // YUK-1094 — 附件上传中：上传批次未 settle 前禁止提交，否则判分/提交跑的是旧 evidence
   // （刚选的附件丢掉）。由 EvidenceComposer 的 onUploadingChange 上报。
-  const [uploading, setUploading] = useState(false);
+  // YUK-1497 — a block question has several composers (the page's, plus one per free_area), so
+  // each reports under its own key; 提交 waits until none has an upload in flight.
+  const [uploadsInFlight, setUploadsInFlight] = useState<ReadonlySet<string>>(() => new Set());
+  const uploading = uploadsInFlight.size > 0;
+  const trackUpload = (key: string, on: boolean) =>
+    setUploadsInFlight((prev) => withKey(prev, key, on));
+  const setUploading = (on: boolean) => trackUpload('page', on);
+  // YUK-1497 — free_area attachments that came back without a full receipt, per slot. They stay
+  // visible and block 提交, as the page-level attachments without `original` do.
+  const [unreceipted, setUnreceipted] = useState<Readonly<Record<string, EvidenceAttachment[]>>>(
+    {},
+  );
+  const setSlotUnreceipted = (slotId: string, next: EvidenceAttachment[]) =>
+    setUnreceipted((prev) => ({ ...prev, [slotId]: next }));
   // YUK-1051 — 202-pending：提交被分到 durable lane 时的 run 锚点；轮询直到终态，
   // 绝不重交同一答案。null = 非 pending（同步回执 / 未提交）。
   const [pendingRun, setPendingRun] = useState<{ runId: string; pollUrl: string } | null>(null);
@@ -775,6 +797,7 @@ export function usePracticeSubmit({
     !pendingRun &&
     !uploading &&
     evidence.every((item) => item.original !== undefined) &&
+    Object.values(unreceipted).every((list) => list.length === 0) &&
     (issuanceMode === 'manual'
       ? anyAnswered
       : (!presentation || anyAnswered) &&
@@ -1266,6 +1289,10 @@ export function usePracticeSubmit({
       updateEvidence,
       uploading,
       setUploading,
+      /** YUK-1497 — per-composer upload reporting for presentation blocks (key = slot). */
+      trackUpload,
+      unreceipted,
+      setSlotUnreceipted,
       autosave,
     },
     conflict,
