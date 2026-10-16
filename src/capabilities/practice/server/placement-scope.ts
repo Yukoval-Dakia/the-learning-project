@@ -14,6 +14,7 @@
 
 import type { Db, Tx } from '@/db/client';
 import {
+  batchResolveEffectiveDomains,
   resolveAllActiveKnowledgeIds,
   resolveSubjectKnowledgeIds,
 } from '@/kernel/read-models/knowledge-tree';
@@ -56,6 +57,43 @@ export async function resolveGoalPlacementScope(
     if (contentOnly.length > 0) knowledgeIds = contentOnly;
   }
   return knowledgeIds;
+}
+
+/**
+ * YUK-1405 L2 — the "nearby" scope for a cold placement target: the probe's own KC
+ * set UNIONED with every same-subject KC set the scope touches. Two sources of
+ * subject identity: the probe goal's `subject_id` (when the probe is goal-bound)
+ * and each scope KC's effective domain (subject = derived view, never a column),
+ * so an explicit-knowledgeIds probe with no goal still widens to its own subjects.
+ *
+ * Returns scope ∪ nearby KCs (superset of the input; equal when nothing widens —
+ * e.g. a subject_live probe whose scope IS already the subject set, or a domain
+ * that labels no other nodes). Selection over this set still runs
+ * selectNextPlacementItem → decideAutomaticServing, so widening can only serve an
+ * already-admitted, automatically gradable item — never a non-gradable one.
+ */
+export async function resolveNearbyPlacementScope(
+  db: Db | Tx,
+  knowledgeIds: readonly string[],
+  subjectId?: string | null,
+): Promise<string[]> {
+  const scope = new Set(knowledgeIds.map((k) => k.trim()).filter((k) => k.length > 0));
+  const subjects = new Set<string>();
+  if (subjectId) subjects.add(subjectId);
+  if (scope.size > 0) {
+    const domains = await batchResolveEffectiveDomains(db, [...scope]);
+    for (const domain of domains.values()) {
+      if (domain) subjects.add(domain);
+    }
+  }
+  if (subjects.size === 0) return [...scope];
+  const subjectKcSets = await Promise.all(
+    [...subjects].map((subject) => resolveSubjectKnowledgeIds(db, subject)),
+  );
+  for (const kcSet of subjectKcSets) {
+    for (const id of kcSet) scope.add(id);
+  }
+  return [...scope];
 }
 
 // The seed-root id family ('seed:<subjectId>:root', seed.ts / ensureSubjectRoot). Pattern form

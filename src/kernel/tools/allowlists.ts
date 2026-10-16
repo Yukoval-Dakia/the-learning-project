@@ -51,6 +51,11 @@ export const READ_TOOLS = [
   // YUK-293 — expiring AI-to-AI hints. Granted only to copilot / dreaming /
   // coach below; evaluator and operator surfaces filter it out.
   'read_agent_notes',
+  // YUK-1404 (B2/R2) — ingestion source-package readers. Granted ONLY on the
+  // `ingestion` surface below; the maintenance chokepoint filters them out
+  // (same containment as the draft-structure reader).
+  'read_source',
+  'view_image',
 ] as const;
 
 export const PROPOSE_WRITE_TOOLS = [
@@ -102,6 +107,12 @@ export const PROPOSE_WRITE_TOOLS = [
   // YUK-293 — direct write to the expiring AI hint channel (not learner data,
   // not an inbox proposal). Surface grants remain narrow below.
   'write_agent_note',
+  // YUK-1404 (B2/R3–R5) — ingestion media tools. crop/rotate mint derived
+  // source_asset rows; glm_ocr is a paid provider call (attempt-accounted).
+  // Granted ONLY on the `ingestion` surface below.
+  'crop_image',
+  'rotate_image',
+  'glm_ocr',
   // YUK-1448 (Stage 1 batch D) — search_bank 检索不足时的缺口落单工具（幂等台账
   // 登记 + 既有 dispatcher；held/unsupported_constraint 不静默丢字段）。授权面：
   // 仅 copilot（COPILOT_TOOLS）；supply_planner 保持只读挂载；不进 Maintenance
@@ -131,7 +142,11 @@ export type DomainToolSurface =
   // YUK-195 — question structure-correction surface (agent/user-triggered). Kept
   // separate so copilot / dreaming / coach do NOT get question-mutation tools by
   // default; this is the only surface granting the 6 draft-edit write tools.
-  | 'ingestion_block_edit';
+  | 'ingestion_block_edit'
+  // YUK-1404 (B2/R2) — the ingestion extraction-agent surface. Carries the
+  // five shared source-package tools only; no question-mutation tools, no
+  // bank/record tools.
+  | 'ingestion';
 
 const KNOWLEDGE_REVIEW_TOOLS = [
   'get_subject_graph_overview',
@@ -308,6 +323,8 @@ const MAINTENANCE_READ_TOOLS = READ_TOOLS.filter(
     | 'jyeoo_fetch_candidates'
     | 'web_fetch_candidates'
     | 'read_agent_notes'
+    | 'read_source'
+    | 'view_image'
   > =>
     name !== 'search_memory_facts' &&
     name !== 'search_bank' &&
@@ -318,7 +335,9 @@ const MAINTENANCE_READ_TOOLS = READ_TOOLS.filter(
     name !== 'generate_question_candidate' &&
     name !== 'jyeoo_fetch_candidates' &&
     name !== 'web_fetch_candidates' &&
-    name !== 'read_agent_notes',
+    name !== 'read_agent_notes' &&
+    name !== 'read_source' &&
+    name !== 'view_image',
 );
 
 const MAINTENANCE_TOOLS = [
@@ -349,6 +368,18 @@ const INGESTION_BLOCK_EDIT_TOOLS = [
   'submit_question',
 ] as const satisfies readonly DomainToolName[];
 
+// YUK-1404 (B2/R2–R5) — the ingestion extraction-agent surface: exactly the
+// five shared source-package tools. Scoping INSIDE the tools (ctx.scope) pins
+// reads/writes to the calling session's own package; this list is the only
+// place they are granted.
+const INGESTION_TOOLS = [
+  'read_source',
+  'view_image',
+  'crop_image',
+  'rotate_image',
+  'glm_ocr',
+] as const satisfies readonly DomainToolName[];
+
 export const DOMAIN_TOOL_ALLOWLISTS = {
   knowledge_review: KNOWLEDGE_REVIEW_TOOLS,
   copilot: COPILOT_TOOLS,
@@ -357,6 +388,7 @@ export const DOMAIN_TOOL_ALLOWLISTS = {
   coach: COACH_TOOLS,
   maintenance: MAINTENANCE_TOOLS,
   ingestion_block_edit: INGESTION_BLOCK_EDIT_TOOLS,
+  ingestion: INGESTION_TOOLS,
 } as const satisfies Record<DomainToolSurface, readonly DomainToolName[]>;
 
 export function resolveDomainToolNames(surface: DomainToolSurface): readonly DomainToolName[] {

@@ -1695,7 +1695,22 @@
         "query": [],
         "contentType": "application/json",
         "bodyExample": {},
-        "notes": "先恢复未完成的 issuance。pending/held 不推进、不重交；retry 仅重发已接收的相同原始 response_set、group_evidence、submission_id 和 idempotency_key。answeredCount 按不同 question ID 统计原生和历史参与。有效 head 且结算成功后才选择或结束。 starterSupply 按当前会话 goal 的语义 revision + subject 绑定读取已有 claim：absent/pending/satisfied/exhausted/unknown，含 next_action 和经过限长脱敏的 failure_reason。历史缺失原因保留 unknown；exhausted/unknown 不等于等待。读取不创建 claim、不入队、不重试。此状态不替代未完成的 assessment issuance，也不触发完成/放弃。"
+        "notes": "先恢复未完成的 issuance。pending/held 不推进、不重交；retry 仅重发已接收的相同原始 response_set、group_evidence、submission_id 和 idempotency_key。answeredCount 按不同 question ID 统计原生和历史参与。有效 head 且结算成功后才选择或结束。 starterSupply 按当前会话 goal 的语义 revision + subject 绑定读取已有 claim：absent/pending/satisfied/exhausted/unknown，含 next_action 和经过限长脱敏的 failure_reason。历史缺失原因保留 unknown；exhausted/unknown 不等于等待。读取不创建 claim、不入队、不重试。此状态不替代未完成的 assessment issuance，也不触发完成/放弃。 YUK-1405：held 题的 question.assessment.held_exit 给出 continue_url/end_url；question 为 null 时 no_item 给 typed 替代（preparing_subjects + recheck/end）；unresolved_items 列出无判词的已发题（held_released/awaiting_evaluation/unanswered）。"
+      }
+    ]
+  },
+  {
+    "path": "/api/placement-sessions/:id/held-release",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "释放当前 held 的 placement issuance：记为未决并推进",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "issuance_id": "iss_placement_REPLACE"
+        },
+        "notes": "YUK-1405。body.issuance_id 必须是会话当前 phase=held 的 outstanding issuance（question.assessment.held_exit.continue_url 即为此路由）。释放写一条不可变的 experimental:assessment_placement_released 事件——该题记为未决、永不算答错、永不再发；同一 issuance_id 重复 POST 幂等重放（replayed=true）而非 409，其他 id 返回 409 not_releasable。返回 {released, replayed, selection}，selection 与 question-selections 同形（含 starterSupply/no_item/unresolved_items）。「结束」出口走 PATCH /api/placement-sessions/:id {status:'completed'}，其响应的 unresolved_items 标记所有无判词项。"
       }
     ]
   },

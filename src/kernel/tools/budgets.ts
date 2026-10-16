@@ -98,6 +98,9 @@ export const BUDGETS_BY_SURFACE: Record<DomainToolSurface, ContextBudget> = {
   // budget until it needs an explicit one (no read-heavy fan-out; the 6 write
   // tools are local DB mutations).
   ingestion_block_edit: GENERIC_CONTEXT_BUDGET,
+  // YUK-1404 — ingestion extraction-agent surface: same generic budget (5
+  // tools; the only spend is glm_ocr, which is paid-call attempt-accounted).
+  ingestion: GENERIC_CONTEXT_BUDGET,
 };
 
 export function resolveContextBudget(surface: DomainToolSurface): ContextBudget {

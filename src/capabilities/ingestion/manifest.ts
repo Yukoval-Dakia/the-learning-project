@@ -450,6 +450,29 @@ export const ingestionCapability = defineCapability({
             (module) => module.reassignFigureTool,
           ),
       },
+      // YUK-1404 (B2/R2–R5) — the five shared source-package tools. Ownership
+      // declaration only; they are granted exclusively on the `ingestion`
+      // surface (kernel/tools/allowlists.ts), never on copilot/maintenance.
+      {
+        name: 'read_source',
+        load: () => import('./server/tools/source-tools').then((module) => module.readSourceTool),
+      },
+      {
+        name: 'view_image',
+        load: () => import('./server/tools/media-tools').then((module) => module.viewImageTool),
+      },
+      {
+        name: 'crop_image',
+        load: () => import('./server/tools/media-tools').then((module) => module.cropImageTool),
+      },
+      {
+        name: 'rotate_image',
+        load: () => import('./server/tools/media-tools').then((module) => module.rotateImageTool),
+      },
+      {
+        name: 'glm_ocr',
+        load: () => import('./server/tools/media-tools').then((module) => module.glmOcrTool),
+      },
     ],
   },
 });
