@@ -531,6 +531,21 @@ export function usePracticeSubmit({
   }
   const nativeEvidence = useMemo(() => nativeGroupEvidence(evidence), [evidence]);
   const accepted = issuedState?.submissions[0];
+  // YUK-1501 — an accepted answer that /api/attempts already recorded is read-only review:
+  // nothing on this page may submit it again. Recorded = the question's timeline holds an
+  // attempt for its evaluation group. Accepted alone is not enough: /api/review/advice also
+  // accepts the answer without recording an attempt (「自己评一下」 after a verdict that could
+  // not be graded, or a visit left before rating), and that answer must still be committable.
+  const answerRecorded =
+    !!accepted &&
+    (q?.timeline ?? []).some(
+      (entry) =>
+        entry.kind === 'attempt' &&
+        entry.assessment?.evaluation_group_id === accepted.evaluation_group_id,
+    );
+  // A cached question read may predate the commit (back, then reopen); until it is
+  // refreshed it cannot clear an accepted answer, so submitting waits for it.
+  const acceptedUnconfirmed = !!accepted && (answerRecorded || qQ.isFetching);
   const assessmentInput = {
     issuance_id: issuanceId,
     evaluation_group_id: accepted?.evaluation_group_id ?? `group_stream_${item.id}`,
@@ -696,6 +711,7 @@ export function usePracticeSubmit({
     .join('\n');
   const canSubmit =
     !!frozen &&
+    !acceptedUnconfirmed &&
     !returning &&
     !draftConflict &&
     !judging &&
@@ -895,7 +911,14 @@ export function usePracticeSubmit({
     previewOverride?: JudgePreview;
   }) => {
     const pv = opts.previewOverride ?? preview;
-    if (returningRef.current || !q || (!pv && issuanceMode !== 'manual') || committing) return;
+    if (
+      returningRef.current ||
+      !q ||
+      answerRecorded ||
+      (!pv && issuanceMode !== 'manual') ||
+      committing
+    )
+      return;
     setCommitting(true);
     autosave.hold();
     try {
@@ -1192,6 +1215,8 @@ export function usePracticeSubmit({
     submit: {
       phase,
       canSubmit,
+      /** YUK-1501 — this issuance's answer is already recorded: read-only review. */
+      answerRecorded,
       judging,
       committing,
       returning,
