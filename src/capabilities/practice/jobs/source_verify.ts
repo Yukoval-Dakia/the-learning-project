@@ -36,7 +36,6 @@ import {
 } from '@/capabilities/practice/server/judge/source-grounding-verify';
 import {
   LEGACY_DRAFT_STATUS,
-  MARKING_RULE_PROVENANCE,
   QUESTION_AVAILABILITY,
   SCORING_ADMISSION_STATE,
   SCORING_ADMISSION_WITHHELD_REASON,
@@ -754,26 +753,20 @@ export async function runSourceVerify(
           }
         }
 
-        // YUK-1043 — 统一发布链：verified promote 即 §3.3 的 admission 时刻（同事务）。
-        // web_sourced 参考答案源自原始页面（非 model-proposed）且 tier-2 checks 已对
-        // extract 确定性核验 ⇒ official + 结构校验（publisher 契约校验）+ 无独立模型
-        // 门（independent=null，checks 摘要记入 note —— D1 双门不适用于非模型规则）。
+        // YUK-1043 — 统一发布链：verified promote 同事务重发组 revision。
+        // YUK-1507 — 来源核对通过 ≠ 判分准入。ADR-0073 四源同门：每个计分单元
+        // 要两次独立解题一致 + 逐单元标定才 admitted，这里只有 tier-2 确定性
+        // checks、没有独立核验，所以发布为 withheld(unverified_rules)＝待准入；
+        // question_admission_run（YUK-1445 C1）经 assessment_publish outbox
+        // 订阅自动入队，双解 + 标定通过后才 admitted。
         // 已发布过同内容的组在此只更新 admission 维度（generation+1）。
         // YUK-1045 — suspension:false 清 verify_hold（同版复核通过 ⇒ 幂等恢复，
         // §3.3 表「同版复核通过」行）；retraction_hold 不属本票接线，publisher 恒保留。
         await publishQuestionGroupFromRow(tx, {
           rootId: row.parent_question_id ?? questionId,
           admission: {
-            state: SCORING_ADMISSION_STATE.ADMITTED,
-            evidence: {
-              marking_provenance: MARKING_RULE_PROVENANCE.OFFICIAL,
-              verification: {
-                structural_check_passed: true,
-                independent_verification: null,
-                note: `source_verify tier-2 checks passed (${checks.length})`,
-              },
-              model_slice: null,
-            },
+            state: SCORING_ADMISSION_STATE.WITHHELD,
+            reason: SCORING_ADMISSION_WITHHELD_REASON.UNVERIFIED_RULES,
           },
           suspension: { suspended: false },
           verification: {
