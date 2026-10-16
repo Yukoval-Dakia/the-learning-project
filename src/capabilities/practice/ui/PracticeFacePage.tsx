@@ -188,14 +188,15 @@ export default function PracticeFacePage({
         }
         restoreListOnLand.current = false;
         listScroll.current = 0;
-        // YUK-1510 — no question is open, so the URL names none: a stale `?item=` (not in this
-        // stream) or one left by a scope change is dropped quietly. While the item named on load
-        // is still being looked up (data-opening), it stays.
-        if (!node.dataset.opening) {
-          itemEntryPushed.current = false;
-          if (!exitedInPage && new URLSearchParams(window.location.search).has('item')) {
-            writeItemParam(null, 'replace');
-          }
+        if (!exitedInPage) itemEntryPushed.current = false;
+        // YUK-1510 — the page decided the `?item=` it was following cannot open (not a started
+        // question of this stream): this list root exists for that decision (data-rejected-item),
+        // so drop the param quietly, if the URL still names that item. A list reached any other
+        // way never touches `?item=` (an in-page exit writes the URL itself; on a cold load the
+        // item is still being looked up).
+        const rejected = node.dataset.rejectedItem;
+        if (rejected && new URLSearchParams(window.location.search).get('item') === rejected) {
+          writeItemParam(null, 'replace');
         }
         // Reached by browser Back (not an in-page exit): the list re-reads the stream so an
         // answer just submitted shows as 已交.
@@ -267,15 +268,22 @@ export default function PracticeFacePage({
   // shows, so they change nothing here. Only an item of the stream for the current scope that is
   // already started can open; anything else stays on the list, which drops the stale `?item=`.
   const [followedItem, setFollowedItem] = useState<string | null>(null);
+  // The last `?item=` that could not open; `n` gives each rejection its own list root, so its
+  // ref callback drops the param every time (a second Forward to the same stale item included).
+  const [rejectedItem, setRejectedItem] = useState<{ id: string; n: number } | null>(null);
   const streamRead = visibleStream !== undefined && streamQ.isFetchedAfterMount && !streamQ.isError;
   if (itemParam !== followedItem && (itemParam === null || streamRead)) {
     setFollowedItem(itemParam);
     const target = itemParam === null ? undefined : items.find((it) => it.id === itemParam);
     if (target?.item_kind === 'question' && target.status === 'in_progress') {
+      if (rejectedItem?.id === target.id) setRejectedItem(null);
       if (mode.kind !== 'solo' || mode.item.id !== target.id)
         setMode({ kind: 'solo', item: target });
-    } else if (mode.kind === 'solo' && mode.item.id !== itemParam) {
-      setMode({ kind: 'list' });
+    } else if (itemParam === null) {
+      if (mode.kind === 'solo') setMode({ kind: 'list' });
+    } else if (mode.kind !== 'solo' || mode.item.id !== itemParam) {
+      if (mode.kind === 'solo') setMode({ kind: 'list' });
+      setRejectedItem({ id: itemParam, n: (rejectedItem?.n ?? 0) + 1 });
     }
   }
   // The item named on load is still being looked up: the list waits (and keeps `?item=`).
@@ -598,6 +606,11 @@ export default function PracticeFacePage({
     [commitStreamItem, exitToList, refreshStream],
   );
 
+  let viewKey: string = mode.kind;
+  if (mode.kind === 'solo') viewKey = `solo:${mode.item.id}`;
+  else if (itemOpening) viewKey = 'list:opening';
+  else if (mode.kind === 'list' && rejectedItem) viewKey = `list:rejected:${rejectedItem.n}`;
+
   let body: React.ReactNode;
   if (mode.kind === 'solo') {
     const pos = items.findIndex((it) => it.id === mode.item.id) + 1;
@@ -744,12 +757,11 @@ export default function PracticeFacePage({
         {/* One root per view (a question, the list, a paper): its ref callback lands the shared
             title, restores the list's scroll and places focus after an in-place move. */}
         <div
-          key={
-            mode.kind === 'solo' ? `solo:${mode.item.id}` : itemOpening ? 'list:opening' : mode.kind
-          }
+          key={viewKey}
           className="pface-view"
           data-view={mode.kind}
           data-opening={itemOpening ? '' : undefined}
+          data-rejected-item={mode.kind === 'list' ? rejectedItem?.id : undefined}
           ref={landView}
         >
           {body}
