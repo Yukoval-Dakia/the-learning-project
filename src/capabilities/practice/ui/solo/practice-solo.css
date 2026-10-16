@@ -29,6 +29,10 @@
   max-width: 820px;
   margin: 0 auto;
 }
+/* Everything below the banner: what leaves and arrives on an in-place move (YUK-1473). */
+[data-ui-next] .un-ps-swap {
+  min-width: 0;
+}
 
 /* ── Banner (R2): the way back and the help on one line, then eyebrow, title, chips ── */
 [data-ui-next] .un-ps-banner {

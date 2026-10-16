@@ -44,6 +44,8 @@ const POLICIES: Record<string, ResultPolicy> = {
   search_bank: ['scope_applied', 'requirements', 'coverage'],
   read_bank: [],
   check_bank: ['notes', 'supported_kinds'],
+  // YUK-1448: filing verdict is public; the ledger receipt detail stays agent-facing.
+  file_bank_gap: ['demand_id', 'status', 'deduplicated', 'reason'],
   get_record_context: 'record',
   get_review_due: 'review',
   query_events: 'events',

@@ -26,13 +26,45 @@ import type { Job } from 'pg-boss';
 import type { Db } from '@/db/client';
 import { knowledge, question } from '@/db/schema';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
-import { EMBED_MODEL, type EmbedProviderAttemptOptions, embedMany } from '@/server/ai/embed';
+import {
+  EMBED_DIMS,
+  EMBED_MODEL,
+  type EmbedProviderAttemptOptions,
+  embedMany,
+} from '@/server/ai/embed';
 import { embedHash, knowledgeEmbedText, questionEmbedText } from '@/server/ai/embed-source';
 
 // Bump when the embedder model or the embed-source join rule changes, to trigger
 // a background re-embed of rows stamped with an older version. v2 (YUK-393):
 // KC embed text now folds effective-domain → every existing KC vector is stale.
-const EMBED_VERSION = 2;
+export const EMBED_VERSION = 2;
+
+export type QuestionVectorInvalidReason =
+  | 'no_vector'
+  | 'dimension_mismatch'
+  | 'stale_version'
+  | 'hash_mismatch';
+
+/** YUK-1448 — is a stored question vector usable as-is? Valid only when it is present,
+ *  EMBED_DIMS wide, stamped EMBED_VERSION, and hashed from the row's CURRENT content
+ *  (an edit that has not been re-embedded yet leaves a stale vector). Returns the first
+ *  failing check, or null when valid. Shared by the search_bank similar_to anchor and
+ *  the `pnpm embed:inventory` census so neither drifts from what this job writes. */
+export function questionVectorInvalidReason(row: {
+  prompt_md: string;
+  reference_md: string | null;
+  choices_md: string[] | null;
+  embed_version: number | null;
+  embed_content_hash: string | null;
+  /** Stored vector width; null when the row has no vector. */
+  dimension: number | null;
+}): QuestionVectorInvalidReason | null {
+  if (row.dimension === null) return 'no_vector';
+  if (row.dimension !== EMBED_DIMS) return 'dimension_mismatch';
+  if (row.embed_version !== EMBED_VERSION) return 'stale_version';
+  if (row.embed_content_hash !== embedHash(questionEmbedText(row))) return 'hash_mismatch';
+  return null;
+}
 
 // YUK-393 F2 — bound the parallel effective-domain resolution. Each
 // getEffectiveDomain call issues up to MAX_DEPTH(32) serial SELECTs (one per

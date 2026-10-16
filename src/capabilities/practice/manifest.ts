@@ -1202,6 +1202,17 @@ export const practiceCapability = defineCapability({
             (m) => m.buildJudgeCalibrationSampleHandler,
           ),
       },
+      // YUK-1445 — 入库准入（G1 双盲解题一致 + G2 逐单元标定）的 live consumer：
+      // 对既有 draft/revision（question_id 或 revision_id）跑 runQuestionAdmission
+      // 并经发布 seam 落 admitted/withheld/verify_hold + append-only 核验证据。
+      // 单次 admission = 2×solve（+1×crosscheck）LLM 调用 → 'llm' 档；
+      // store_sourced_question 尚未依赖本路径（B1 的 submit_question 接入点）。
+      {
+        name: 'question_admission_run',
+        queue: 'llm',
+        load: () =>
+          import('./jobs/question_admission_run').then((m) => m.buildQuestionAdmissionRunHandler),
+      },
     ],
   },
   // M4-T4 (YUK-319)：proposal kind 归属声明。variant_question / question_draft
@@ -1373,6 +1384,14 @@ export const practiceCapability = defineCapability({
       {
         name: 'check_bank',
         load: () => import('./server/tools/check-bank').then((m) => m.checkBankTool),
+      },
+      // YUK-1448 (Stage 1 batch D) — search_bank 检索不足时的缺口落单工具：幂等登记
+      // EvidenceDemandV1 + 检索约束到既有供题台账，再走现有 dispatcher；无法落实的
+      // 限制返回 held/unsupported_constraint。授权面：copilot（COPILOT_TOOLS）；
+      // supply_planner 保持只读挂载；不进 Maintenance。
+      {
+        name: 'file_bank_gap',
+        load: () => import('./server/tools/file-bank-gap').then((m) => m.fileBankGapTool),
       },
       {
         name: 'write_quiz',
