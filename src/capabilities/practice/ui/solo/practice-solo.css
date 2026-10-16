@@ -59,6 +59,20 @@
 [data-ui-next] .un-ps-help .un-btn {
   gap: 6px;
 }
+/* Eyebrow, title and chips on the left; the mascot in the banner's slot on the right (B1). */
+[data-ui-next] .un-ps-banner-main {
+  display: flex;
+  align-items: center;
+  gap: var(--un-sp-5);
+  width: 100%;
+}
+[data-ui-next] .un-ps-banner-text {
+  display: grid;
+  flex: 1;
+  gap: var(--un-sp-2);
+  justify-items: start;
+  min-width: 0;
+}
 [data-ui-next] .un-ps-eyebrow {
   margin: 0;
   font-size: var(--un-fs-1);
@@ -1065,6 +1079,9 @@
   }
   [data-ui-next] .un-ps-title {
     font-size: var(--un-fs-4);
+  }
+  [data-ui-next] .un-ps-banner-main {
+    gap: var(--un-sp-3);
   }
   [data-ui-next] .un-ps-sheet {
     gap: var(--un-sp-4);

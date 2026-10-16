@@ -6,6 +6,7 @@
 // Composition (docs/design/2026-10-07-ui-visual-direction.md):
 // - banner (R2): way back, eyebrow (source · position · minutes), serif title, state chips, and
 //   the two ways to get help: 需要提示？ (the hint drawer) and 学习伙伴 (the global Copilot drawer);
+//   the mascot sits at the banner's right in the page's flow (B1; it scrolls with the banner);
 // - one sheet of paper: the question with its number in the gutter, each answer written right
 //   under its own question on ruled lines, a glass action bar floating at the bottom while
 //   answering (T3: a floating layer), then the result settling in place (R3) and the earlier
@@ -39,6 +40,7 @@ import {
   IconButton,
   Judgment,
   type JudgmentPhase,
+  Mascot,
   Segmented,
   UiNextRoot,
 } from '@/ui-next/public';
@@ -126,6 +128,14 @@ function verdictWords(p: JudgeFeedback): { label: string; tone: ChipTone; note: 
   if (p.coarse_outcome === 'correct') return { label: '判为正确', tone: 'positive', note };
   if (p.coarse_outcome === 'partial') return { label: '判为部分正确', tone: 'caution', note };
   return { label: '判为不正确', tone: 'caution', note };
+}
+
+/** A short fingerprint of a verdict: a new one turns the mascot one petal (B2). */
+function verdictKey(p: JudgeFeedback): string {
+  const text = `${p.route}|${p.coarse_outcome}|${p.confidence}|${p.feedback_md ?? ''}`;
+  let hash = 0;
+  for (let i = 0; i < text.length; i++) hash = (Math.imul(hash, 31) + text.charCodeAt(i)) | 0;
+  return `${p.coarse_outcome}:${(hash >>> 0).toString(36)}`;
 }
 
 /** Why this question can't be answered here, in learner words; only the typed code is read. */
@@ -334,19 +344,28 @@ export function PracticeSolo({
           </Button>
         </div>
       </div>
-      <p className="un-ps-eyebrow">
-        {practiceSourceLabel(item.source)} · 第 <span className="un-num">{pos}</span> / {total} 题
-        {item.estimated_minutes ? ` · 约 ${item.estimated_minutes} 分钟` : ''}
-      </p>
-      <h1 className="un-ps-title">{title}</h1>
-      {(labels.length > 0 || state) && (
-        <div className="un-ps-chips">
-          {labels.map((l) => (
-            <Chip key={l.id}>{l.name}</Chip>
-          ))}
-          {state && <Chip tone={state.tone}>{state.label}</Chip>}
+      <div className="un-ps-banner-main">
+        <div className="un-ps-banner-text">
+          <p className="un-ps-eyebrow">
+            {practiceSourceLabel(item.source)} · 第 <span className="un-num">{pos}</span> / {total}{' '}
+            题{item.estimated_minutes ? ` · 约 ${item.estimated_minutes} 分钟` : ''}
+          </p>
+          <h1 className="un-ps-title">{title}</h1>
+          {(labels.length > 0 || state) && (
+            <div className="un-ps-chips">
+              {labels.map((l) => (
+                <Chip key={l.id}>{l.name}</Chip>
+              ))}
+              {state && <Chip tone={state.tone}>{state.label}</Chip>}
+            </div>
+          )}
         </div>
-      )}
+        {/* B1/B2: the mascot spins while 「正在判…」 shows and turns a petal when a result lands. */}
+        <Mascot
+          thinking={phase === 'answering' && submit.judging && !submit.pendingRun}
+          settleKey={displayedPreview ? verdictKey(displayedPreview) : null}
+        />
+      </div>
     </header>
   );
 

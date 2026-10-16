@@ -5,5 +5,6 @@
 import './tokens.css';
 import './components.css';
 
+export { Mascot, type MascotProps } from './mascot/Mascot';
 export * from './primitives';
 export * from './shell';
