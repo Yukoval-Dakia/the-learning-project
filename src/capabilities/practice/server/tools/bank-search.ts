@@ -12,9 +12,10 @@
 //
 // 教学决策、批改、learner state 一概不碰（硬边界 1/2）。
 
-import { createHash } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { type SQL, and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
+import { stableStringify } from '@/core/migration/canonical';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import { deriveSourceTier } from '@/core/schema/provenance';
 import type { Db, Tx } from '@/db/client';
@@ -122,7 +123,86 @@ export const BankGapRequestSchema = z.object({
   complete: z.boolean(),
   retrieval_truncated: z.boolean(),
   unavailable_channels: z.array(z.enum(['fts', 'vector'])),
+  // YUK-1448 (review P1) — server-minted HMAC-SHA256 over the canonical JSON of this
+  // gap evidence (every field except evidence_mac itself), keyed by the server-only
+  // BANK_GAP_EVIDENCE_SECRET. file_bank_gap refuses to file — let alone dispatch paid
+  // supply — without a valid MAC, so a caller cannot fabricate gap evidence (e.g. a
+  // hand-written complete:true) to trigger paid dispatch. Absent only when the secret
+  // is unconfigured, in which case filing fails closed.
+  evidence_mac: z.string().optional(),
 });
+export type BankGapRequest = z.infer<typeof BankGapRequestSchema>;
+
+// ── gap evidence MAC（YUK-1448 review P1：防伪造检索证据触发付费 dispatch）────────
+
+/** 域分隔前缀：同一 secret 的 MAC 永不与其他用途的 HMAC 输入同形。 */
+const BANK_GAP_EVIDENCE_MAC_DOMAIN = 'bank-gap-evidence:v1:';
+
+/**
+ * Server-only signing secret for bank gap evidence MACs. Follows the
+ * judgeProvenanceSigningSecret precedent (YUK-589): INTERNAL_TOKEN is held by every
+ * browser/API caller, so signing with it would let any client forge gap evidence.
+ * An unconfigured / too-short / INTERNAL_TOKEN-equal secret fails closed (null ⇒
+ * no MAC is minted and file_bank_gap rejects every filing). The key is never
+ * logged or returned.
+ */
+export function bankGapEvidenceSigningSecret(): string | null {
+  const secret = process.env.BANK_GAP_EVIDENCE_SECRET;
+  if (!secret || secret.length === 0) return null;
+  if (secret.length < 32) {
+    console.error(
+      '[bank-gap-evidence] BANK_GAP_EVIDENCE_SECRET is shorter than 32 characters — refusing to use ' +
+        'it. Gap-evidence signing is DISABLED until a sufficiently long server-only secret is set ' +
+        '(openssl rand -hex 32); file_bank_gap rejects every filing while it is unset.',
+    );
+    return null;
+  }
+  if (secret === process.env.INTERNAL_TOKEN) {
+    console.error(
+      '[bank-gap-evidence] BANK_GAP_EVIDENCE_SECRET equals INTERNAL_TOKEN — refusing to use it. ' +
+        'Clients hold INTERNAL_TOKEN, so signing with it lets any caller forge gap evidence. ' +
+        'Gap-evidence signing is DISABLED until a distinct secret is set (openssl rand -hex 32).',
+    );
+    return null;
+  }
+  return secret;
+}
+
+/** Canonical MAC input: every gap-evidence field except evidence_mac itself. */
+function bankGapEvidenceMacPayload(evidence: BankGapRequest): string {
+  const { evidence_mac: _omitted, ...unsigned } = evidence;
+  return BANK_GAP_EVIDENCE_MAC_DOMAIN + stableStringify(unsigned);
+}
+
+/**
+ * Mint the evidence MAC for a freshly built gap_request. Returns null when the
+ * server secret is unconfigured — search still returns the gap (coverage honesty),
+ * but file_bank_gap fails closed on it.
+ */
+export function mintBankGapEvidenceMac(
+  evidence: Omit<BankGapRequest, 'evidence_mac'>,
+): string | null {
+  const secret = bankGapEvidenceSigningSecret();
+  if (secret === null) return null;
+  return createHmac('sha256', secret)
+    .update(bankGapEvidenceMacPayload(evidence as BankGapRequest))
+    .digest('hex');
+}
+
+/**
+ * Verify a caller-supplied gap_request's evidence MAC. Constant-time compare;
+ * missing/invalid MAC or unconfigured secret ⇒ false (fail closed).
+ */
+export function verifyBankGapEvidenceMac(evidence: BankGapRequest): boolean {
+  const secret = bankGapEvidenceSigningSecret();
+  if (secret === null || evidence.evidence_mac === undefined) return false;
+  const expected = Buffer.from(
+    createHmac('sha256', secret).update(bankGapEvidenceMacPayload(evidence)).digest('hex'),
+    'utf8',
+  );
+  const actual = Buffer.from(evidence.evidence_mac, 'utf8');
+  return actual.length === expected.length && timingSafeEqual(actual, expected);
+}
 
 /** 两种调用形态互斥（提案 §6）：新检索（query + scope）或续页（cursor 只续同一次检索）。 */
 export type BankSearchRequest =
@@ -897,28 +977,38 @@ async function runSearchBankInSnapshot(
   const gapRequest =
     verdict === 'enough'
       ? null
-      : BankGapRequestSchema.parse({
-          target_contract: 'EvidenceDemandV1',
-          status: 'needs_agent_context_and_filing_tool',
-          claim: { kind: 'content_coverage', statement: effectiveQuery },
-          inventory_goal: { eligible_count: limit },
-          causes: [{ kind: 'coverage_gap' }],
-          constraints: unsatisfied,
-          required_context: [
-            'demand_id',
-            'policy_version',
-            'subject_id',
-            'claim.knowledge_ids',
-            'evidence',
-            'task',
-            'difficulty',
-            'inventory_goal.horizon_days',
-            'control',
-          ],
-          complete,
-          retrieval_truncated: retrievalTruncated,
-          unavailable_channels: unavailable,
-        });
+      : (() => {
+          const unsigned = BankGapRequestSchema.parse({
+            target_contract: 'EvidenceDemandV1',
+            status: 'needs_agent_context_and_filing_tool',
+            claim: { kind: 'content_coverage', statement: effectiveQuery },
+            inventory_goal: { eligible_count: limit },
+            causes: [{ kind: 'coverage_gap' }],
+            constraints: unsatisfied,
+            required_context: [
+              'demand_id',
+              'policy_version',
+              'subject_id',
+              'claim.knowledge_ids',
+              'evidence',
+              'task',
+              'difficulty',
+              'inventory_goal.horizon_days',
+              'control',
+            ],
+            complete,
+            retrieval_truncated: retrievalTruncated,
+            unavailable_channels: unavailable,
+          });
+          // YUK-1448 (review P1) — 把缺口证据绑到本次检索：MAC 由服务端密钥签发，
+          // file_bank_gap 验不过就 rejected，调用方伪造 complete=true 也触发不了
+          // 付费 dispatch。secret 未配置时 gap 照常返回（覆盖诚实），但 filing 端
+          // fail closed。
+          const evidenceMac = mintBankGapEvidenceMac(unsigned);
+          return evidenceMac === null
+            ? unsigned
+            : BankGapRequestSchema.parse({ ...unsigned, evidence_mac: evidenceMac });
+        })();
 
   return {
     scope_applied: {
