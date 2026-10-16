@@ -77,6 +77,40 @@ Presentation = {
 - **binds**：一个自定义块可以绑定多个作答位。每个作答位仍然只被一个积木绑定。
 - 隔离方式（iframe 或 Worker）由界面线选定。
 
+#### 1.3.1 网页宿主协议 sandbox-v1（界面线定，YUK-1497）
+
+隔离方式用 iframe，`sandbox="allow-scripts"`，不给 same-origin，跑在空源里。iframe 里先放禁网 CSP，再放块代码。安全设计与审查记录见 tlp-status `discussions/custom-block-sandbox-plan.md`。
+
+- **入口**：代码里定义一个全局函数，函数名就是 `entry`，必须匹配 `^[A-Za-z_$][A-Za-z0-9_$]{0,63}$`。宿主收到自己的初始化消息后，只调用一次 `globalThis[entry](port, init)`。`port` 是 MessageChannel 的一端，块只能通过它发作答。
+- **init**：结构如下。
+  ```ts
+  { type: 'init', locked: boolean,
+    binds: [{ slot_id, kind: 'select'|'blank'|'open', items?: [{ item_id, label_md? }] }],  // items 只给 select 槽
+    entries: FrameEntry[] }   // 本块自己当前的作答，用于恢复；没有就是空数组
+  ```
+  不含分数、判分、对错、答案，不含学习者身份，也不含其他槽。
+- **块发出的作答**：`port.postMessage(JSON.stringify({ type: 'response', entries: FrameEntry[] }))`。必须发**字符串**，不超过 64 KiB。
+  ```ts
+  FrameEntry =
+    | { slot_id, kind: 'select', state: 'answered'|'blank', item_ids: string[] }
+    | { slot_id, kind: 'blank',  state: 'answered'|'blank', text: string }
+    | { slot_id, kind: 'open',   text_md: string }
+  ```
+- **整条校验**：宿主收到后整条校验，**只要有一处不合格，整条拒收，不做部分应用**。不合格的情形包括：
+  - 有多余的键，或 `type` 不认识；
+  - state 是 `unknown`；
+  - `slot_id` 不在本块的 binds 里；
+  - kind 与 bind 不对应，对应关系为 select↔select、blank↔blank、free↔open_response↔open；
+  - item_id 不在 universe 里，或者重复，或者违反 `at_most_per_coordinate`；
+  - state 为 `blank` 却带了内容；
+  - 文本含 NUL 或孤立代理；
+  - 单段文本超过 20000 字符。
+
+  照片附件不能从块里发，只能走宿主的上传。
+- **锁定**：交卷开始或作答已记录时，宿主发一条 `{ type: 'lock' }`，随即关闭端口，之后收到的消息一律丢弃。如果加载时就处于锁定状态，init 里 `locked: true`，端口立即关闭。块收到锁定后应停止发送。
+- **一次加载**：端口只在 iframe 第一次加载时交出。之后若再次加载，视为自导航：清空 iframe，这一块报加载异常，整题不能提交。
+- **高度**：取块声明里的 `frame_height_px`，范围 120–720，缺省 320。块自己不能改高度。
+
 ### 1.2.2 界面行为约定（10-16 裁决）
 
 - **冲突处理**：ordering 里把已放置的对象移到新位置，直接移动，不弹确认。matching 按 R10，先提示占用，再给「改配给 X」。两者不同是有意的。
