@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { pendingProposalWithCooldown } from '@/kernel/proposals/inbox';
@@ -8,7 +9,7 @@ import {
   probeDraftEdit,
   saveDraftEdit,
   validateDraftEdit,
-} from '@/server/questions/edit-question';
+} from './submit-question';
 
 // ====================================================================
 // YUK-1468 — edit_question DomainTool（统一题目编辑面）
@@ -151,10 +152,9 @@ async function proposeEditRequest(ctx: ToolContext, input: Input): Promise<Outpu
 }
 
 function hashOps(input: Input): string {
-  const json = JSON.stringify({ ops: input.ops, document: input.document });
-  let h = 0;
-  for (let i = 0; i < json.length; i++) h = (h * 31 + json.charCodeAt(i)) | 0;
-  return (h >>> 0).toString(16);
+  // 同内容 ⇒ 同 proposal cooldown key（幂等配对），用 sha256 抗碰撞。
+  const canonical = JSON.stringify({ ops: input.ops, document: input.document });
+  return createHash('sha256').update(canonical).digest('hex').slice(0, 16);
 }
 
 async function resolveDraftQuestionId(ctx: ToolContext, draftRef: string): Promise<string | null> {

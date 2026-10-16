@@ -24,6 +24,7 @@
 //
 // 幂等：request_id 必填；同 id 同内容返回同回执，同 id 不同内容冲突拒绝。
 
+import { createHash } from 'node:crypto';
 import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import type { SendOptions } from 'pg-boss';
@@ -39,9 +40,36 @@ import {
   dispatchPendingVerifyIntents,
   writeVerifyDispatchIntent,
 } from '@/server/boss/verify-dispatch-outbox';
-import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
-import { insertSourcedDraft } from '@/server/questions/sourced-draft-insert';
-import { type SubmitResult, submitDraftQuestion } from '@/server/questions/submit-question';
+
+// capability→questions 边数守恒：统一写口 facade（@/server/questions/submit-question）
+// 是本文件对 questions/* 的唯一 import 边；capability 内部消费方（edit-question
+// 工具、proposal-appliers、store-sourced-question shim）走本文件的下行
+// re-export，不经 facade 重复计数。
+import {
+  type SubmitResult,
+  canonicalJson,
+  claimSubmitRequestId,
+  insertSourcedDraft,
+  publishQuestionGroupFromRow,
+  submitDraftQuestion,
+  writeSubmitReceiptEvent,
+} from '@/server/questions/submit-question';
+
+export type {
+  EditQuestionInputT,
+  EditQuestionResult,
+  SubmitResult,
+} from '@/server/questions/submit-question';
+export {
+  EditQuestionInput,
+  insertSourcedDraft,
+  probeDraftEdit,
+  publishQuestionGroupFromRow,
+  saveDraftEdit,
+  submitDraftQuestion,
+  validateDraftEdit,
+} from '@/server/questions/submit-question';
+
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { SupplyTraceV1 } from '../question-supply/evidence-demand';
 import { cleanupStagedAssets } from '../question-supply/jyeoo-candidates';
@@ -175,8 +203,73 @@ const COMMIT_ROUTE_CONFIG = {
   sourcing_web: { expectedHost: null, mergeActorRef: 'sourcing' },
 } as const;
 
-/** B) 供给候选路径（原 store_sourced_question 语义逐字保留）。 */
+/** B) 供给候选路径（原 store_sourced_question 语义逐字保留）。
+ * request_id 幂等同 draft 路径：锁内 claim；同 id 同内容重放回执，不同内容冲突。 */
 async function executeCandidateSubmit(
+  ctx: Pick<ToolContext, 'db' | 'sessionId' | 'taskRunId' | 'causedByEventId'> & {
+    callerActor?: ToolContext['callerActor'];
+  },
+  input: Input & { candidate: NonNullable<Input['candidate']> },
+  deps: SubmitQuestionDeps,
+): Promise<Output> {
+  const { db } = ctx;
+  const { candidate } = input;
+  const requestId = input.request_id;
+  const fingerprint = `sha256:${createHash('sha256')
+    .update(
+      canonicalJson({
+        candidate: input.candidate,
+        knowledge_ids: input.knowledge_ids,
+        subject_id: input.subject_id,
+        source_route: input.source_route,
+        availability: input.availability,
+      }),
+    )
+    .digest('hex')}`;
+  const claim = await db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${requestId}))`);
+    return claimSubmitRequestId(tx, requestId, fingerprint);
+  });
+  if (claim.status === 'replay') {
+    return { ...(claim.receipt as Output), replayed: true } as Output;
+  }
+  if (claim.status === 'reused') {
+    return {
+      status: 'conflict',
+      reason: 'request_id_reused',
+      detail: `request_id '${requestId}' was used with different content`,
+      request_id: requestId,
+    };
+  }
+  const result = await runCandidateSubmit(ctx, input, deps);
+  // 回执落库：subject=产出的 question（withheld/conflict 无产出 → 候选占位）。
+  await db.transaction((tx) =>
+    writeSubmitReceiptEvent(
+      tx,
+      {
+        kind: 'question',
+        id:
+          'question_id' in result && result.question_id != null
+            ? result.question_id
+            : `candidate:${candidate.candidate_id}`,
+      },
+      requestId,
+      fingerprint,
+      result as SubmitResult,
+      {
+        actorRef: ctx.callerActor?.ref ?? 'agent:submit_question',
+        actorKind: 'agent',
+        sessionId: ctx.sessionId ?? null,
+        taskRunId: ctx.taskRunId,
+        causedByEventId: ctx.causedByEventId ?? null,
+      },
+      new Date(),
+    ),
+  );
+  return result;
+}
+
+async function runCandidateSubmit(
   ctx: Pick<ToolContext, 'db' | 'sessionId' | 'taskRunId' | 'causedByEventId'>,
   input: Input & { candidate: NonNullable<Input['candidate']> },
   deps: SubmitQuestionDeps,
@@ -468,7 +561,14 @@ export async function executeStoreSourcedQuestion(
     }
 > {
   const parsed = inputSchema.parse({
-    request_id: `legacy-${legacyInput.candidate.candidate_id}-${legacyInput.candidate.extraction_hash.slice(7, 23)}`,
+    // 幂等 key = 候选指纹 + 请求内容指纹（KC 集合/归属不同 ⇒ 不同 id，
+    // 避免同 id 异内容误判 request_id_reused）。
+    request_id: `legacy-${legacyInput.candidate.candidate_id}-${legacyInput.candidate.extraction_hash.slice(7, 23)}-${createHash(
+      'sha256',
+    )
+      .update(canonicalJson(legacyInput))
+      .digest('hex')
+      .slice(0, 12)}`,
     source_route: legacyInput.source_route,
     candidate: legacyInput.candidate,
     knowledge_ids: legacyInput.knowledge_ids,

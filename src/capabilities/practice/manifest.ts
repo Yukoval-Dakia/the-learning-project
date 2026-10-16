@@ -1378,9 +1378,14 @@ export const practiceCapability = defineCapability({
         name: 'write_quiz',
         load: () => import('./server/tools/write-quiz').then((m) => m.writeQuizTool),
       },
-      // YUK-1468 — `propose_question_edit` 已退役：Copilot 调 edit_question，
-      // 工具按 caller surface 自动落 question_edit proposal（accept applier
-      // 走同一 ops → submit gate）。
+      // YUK-1468 — `propose_question_edit` 保留在 inventory 但【无 surface
+      // 授权】：Copilot 调 edit_question（工具按 caller surface 自动落
+      // question_edit proposal，accept 走同一 ops→submit gate）。壳模块
+      // 与测试在 owner 批准删除后随独立 PR 清理。
+      {
+        name: 'propose_question_edit',
+        load: () => import('./server/tools/proposal-tools').then((m) => m.proposeQuestionEditTool),
+      },
     ],
   },
 });

@@ -580,6 +580,19 @@ export function draftDocumentToStructuredQuestion(
   doc: QuestionDraftDocumentT,
 ): StructuredQuestionT {
   const leafFor = (part: DraftPartT, role: 'sub' | 'standalone'): StructuredQuestionT => {
+    // part.units[1..] 不得静默丢失 —— 多 unit part 展开为 stem 节点，
+    // 每 unit 一个显式子叶，id 取 `<part_id>__<unit_id>` 稳定坐标。
+    if (part.units.length > 1) {
+      const stemNode: StructuredQuestionT = {
+        id: part.part_id,
+        role: 'stem',
+        ...(part.question_no != null ? { question_no: part.question_no } : {}),
+        prompt_text: part.prompt_md,
+        source: 'agent_edit',
+        sub_questions: part.units.map((unit) => unitLeafFor(part, unit)),
+      };
+      return stemNode;
+    }
     const unit = part.units[0];
     const node: StructuredQuestionT = {
       id: part.part_id,
@@ -625,6 +638,52 @@ export function draftDocumentToStructuredQuestion(
     }
     if (answers.length > 0) node.answers = answers;
     if (part.explanation_md != null) node.analysis = part.explanation_md;
+    return node;
+  };
+
+  const unitLeafFor = (part: DraftPartT, unit: DraftUnitT): StructuredQuestionT => {
+    const node: StructuredQuestionT = {
+      id: `${part.part_id}__${unit.unit_id}`,
+      role: 'sub',
+      prompt_text: part.prompt_md,
+      source: 'agent_edit',
+    };
+    if (unit.response_spec.kind === 'select' && unit.response_spec.items.length > 0) {
+      node.options = unit.response_spec.items.map((item, idx) => ({
+        label: String.fromCharCode(65 + idx),
+        text: item.label_md ?? item.item_id,
+      }));
+    }
+    const answers: string[] = [];
+    if (unit.key?.kind === 'select') {
+      const byId = new Map(
+        unit.response_spec.kind === 'select'
+          ? unit.response_spec.items.map((item) => [item.item_id, item] as const)
+          : [],
+      );
+      const labels = unit.key.accepted_item_ids
+        .map((id) => byId.get(id))
+        .map((item) =>
+          item != null
+            ? unit.response_spec.kind === 'select'
+              ? String.fromCharCode(
+                  65 + unit.response_spec.items.findIndex((i) => i.item_id === item.item_id),
+                )
+              : ''
+            : '',
+        )
+        .filter((label) => label.length > 0);
+      if (labels.length > 0) answers.push(labels.join(''));
+    } else if (unit.key?.kind === 'blank') {
+      answers.push(
+        unit.key.key.kind === 'text'
+          ? unit.key.key.accepted.join(' / ')
+          : String(unit.key.key.value),
+      );
+    } else if (unit.reference_md != null) {
+      answers.push(unit.reference_md);
+    }
+    if (answers.length > 0) node.answers = answers;
     return node;
   };
 

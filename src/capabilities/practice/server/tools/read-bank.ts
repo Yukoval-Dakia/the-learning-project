@@ -24,7 +24,13 @@ import { z } from 'zod';
 
 import { deriveSourceTier } from '@/core/schema/provenance';
 import type { Db } from '@/db/client';
-import { assessment_submission, question, question_revision, source_asset } from '@/db/schema';
+import {
+  assessment_issuance,
+  assessment_submission,
+  question,
+  question_revision,
+  source_asset,
+} from '@/db/schema';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 import {
   bankAssetDigestMatches,
@@ -313,16 +319,21 @@ function projectSlot(slot: SlotLike): z.infer<typeof SlotProjectionSchema> {
 type ReadRole = 'owner' | 'private' | 'restricted';
 
 /**
- * 允许读私有层（rubric/scoring/execution/private 材料）的 agent refs（bare）。
- * user 面与 system 作业默认有私有层；其余 agent 面按 allowlist。
- * answers 层对所有角色开放（助教/练习面需要答案键）。
+ * 允许读私有层（answers 键值 / rubric / scoring / execution / private 材料 /
+ * metadata 工作副本）的 agent refs（bare）。user 面与 system 作业默认有私有层；
+ * 其余 agent 面按 allowlist。in-answer Copilot（'copilot'）保持 restricted ——
+ * 练习对话面不可读答案键。
  */
 const PRIVATE_LAYER_READERS = new Set([
+  // 备题/校正/判分与维护面（author + maintenance 面 → private）。
   'ingestion_block_edit',
   'supply_executor',
   'quiz_verify',
   'judge',
   'question_verify',
+  'maintenance',
+  'knowledge_maintenance',
+  'author_question',
 ]);
 
 function roleForActor(actor: ToolContext['callerActor'] | undefined): ReadRole {
@@ -333,8 +344,16 @@ function roleForActor(actor: ToolContext['callerActor'] | undefined): ReadRole {
   return PRIVATE_LAYER_READERS.has(bare) ? 'private' : 'restricted';
 }
 
-/** 私有 include 层：include 不能升级角色 —— 受限角色请求时如实 denied。 */
-const PRIVATE_INCLUDE_LAYERS = new Set<ReadBankInclude>(['rubric', 'scoring', 'execution']);
+/** 私有 include 层：include 不能升级角色 —— 受限角色请求时如实 denied。
+ * answers 携带 criterion 字面值（select_key/blank_key）；metadata 是未版本化的
+ * 工作副本投影 —— 两者对 restricted 同样私有。 */
+const PRIVATE_INCLUDE_LAYERS = new Set<ReadBankInclude>([
+  'answers',
+  'rubric',
+  'scoring',
+  'execution',
+  'metadata',
+]);
 
 interface ReadCursor {
   v: 1;
@@ -487,6 +506,8 @@ function focusRevisionNode(
 export interface RunReadBankOptions {
   /** 服务端角色裁决（工具层从 ctx.callerActor 解析；缺省 = restricted）。 */
   role?: ReadRole;
+  /** 调用方 actor ref —— submission 归属绑定的比对对象。 */
+  callerRef?: string;
 }
 
 export async function runReadBank(
@@ -509,15 +530,29 @@ export async function runReadBank(
   const cursor = input.extent?.cursor != null ? decodeReadCursor(input.extent.cursor) : null;
   const extentChars = input.extent?.chars;
 
-  // 历史读授权：bound submission —— submission.revision_id 匹配 ref 的 revision。
+  // 历史读授权：bound submission —— 须先验证调用方对该 submission 有读权
+  // （learner/actor 绑定：issuance.claimed_by_ref === caller actor ref），否则
+  // submission_id 不构成撤回 revision 的解锁证据。私有角色本就免检绑定。
   let boundRevisionIds = new Set<string>();
   if (input.submission_id != null) {
-    const subs = await db
-      .select({ revision_id: assessment_submission.revision_id })
+    const [binding] = await db
+      .select({
+        revision_id: assessment_submission.revision_id,
+        claimed_by_ref: assessment_issuance.claimed_by_ref,
+      })
       .from(assessment_submission)
+      .innerJoin(
+        assessment_issuance,
+        eq(assessment_submission.issuance_id, assessment_issuance.issuance_id),
+      )
       .where(eq(assessment_submission.submission_id, input.submission_id))
       .limit(1);
-    boundRevisionIds = new Set(subs.map((s) => s.revision_id));
+    const callerRef = runOpts?.callerRef ?? null;
+    const callerOwnsSubmission =
+      binding != null && callerRef != null && binding.claimed_by_ref === callerRef;
+    if (binding != null && (callerOwnsSubmission || role !== 'restricted')) {
+      boundRevisionIds = new Set([binding.revision_id]);
+    }
   }
 
   // withdrawn 决议先取行（授权 per-ref 复核：bound submission 或私有角色）。
@@ -604,7 +639,8 @@ export async function runReadBank(
     for (const r of rows) currentDigestById.set(r.revision_id, r.digest);
   }
 
-  // 材料资产在场/摘要核验（仅 include.materials 时；coverage 只对请求过的层诚实）。
+  // 材料资产在场/摘要核验：便宜的 IN 查询——任何 include（含 overview 默认）
+  // 都跑，缺图/摘要不符必须进 coverage.unavailable（B0：overview 不得谎报完整）。
   const wantMaterials = include.has('materials');
   const binaryAssetIds = [
     ...new Set(
@@ -615,13 +651,12 @@ export async function runReadBank(
       ),
     ),
   ];
-  const assetRows =
-    wantMaterials && binaryAssetIds.length
-      ? await db
-          .select({ id: source_asset.id, sha256: source_asset.sha256 })
-          .from(source_asset)
-          .where(inArray(source_asset.id, binaryAssetIds))
-      : [];
+  const assetRows = binaryAssetIds.length
+    ? await db
+        .select({ id: source_asset.id, sha256: source_asset.sha256 })
+        .from(source_asset)
+        .where(inArray(source_asset.id, binaryAssetIds))
+    : [];
   const assetById = new Map(assetRows.map((a) => [a.id, a]));
 
   for (const resolution of resolutions) {
@@ -635,7 +670,8 @@ export async function runReadBank(
     }
     const { revision, lifecycle } = resolution;
 
-    // 历史读授权复核：withdrawn 组的读取需 bound submission 或私有角色。
+    // 历史读授权复核：withdrawn 组的读取需 bound（且归属已验证的）submission
+    // 或私有角色。
     const withdrawn = lifecycle?.withdrawn === true;
     if (withdrawn) {
       const authorized = role !== 'restricted' || boundRevisionIds.has(revision.revision_id);
@@ -650,6 +686,23 @@ export async function runReadBank(
     }
     const structure = revision.structure;
     const unavailable: string[] = [];
+
+    // 资产诚实：任何 include 都核验（overview 层也要如实报 missing/digest）。
+    // private 材料对 restricted 是 denied 而非 missing，由下方 denied 行报。
+    for (const m of structure?.materials ?? []) {
+      if (m.content_md != null) continue;
+      if (role === 'restricted' && m.visibility === 'private') continue;
+      const assetRow = assetById.get(m.asset.asset_id);
+      if (assetRow == null) {
+        unavailable.push(
+          `material '${m.material_id}': asset '${m.asset.asset_id}' missing from the asset store`,
+        );
+      } else if (!bankAssetDigestMatches(assetRow.sha256, m.asset.digest)) {
+        unavailable.push(
+          `material '${m.material_id}': stored asset sha256 '${assetRow.sha256}' != revision digest '${m.asset.digest}'`,
+        );
+      }
+    }
     const cursorForRef =
       cursor != null && cursor.ref === resolution.raw && cursor.pin === revision.revision_id
         ? cursor
@@ -679,15 +732,6 @@ export async function runReadBank(
               : assetRow != null
                 ? bankAssetDigestMatches(assetRow.sha256, m.asset.digest)
                 : null;
-            if (!present) {
-              unavailable.push(
-                `material '${m.material_id}': asset '${m.asset.asset_id}' missing from the asset store`,
-              );
-            } else if (digestVerified === false) {
-              unavailable.push(
-                `material '${m.material_id}': stored asset sha256 '${assetRow?.sha256}' != revision digest '${m.asset.digest}'`,
-              );
-            }
             const textExt =
               m.content_md != null
                 ? applyExtent(m.content_md, cursorForRef, extentChars, {
@@ -946,13 +990,16 @@ export async function runReadBank(
 }
 
 async function executeReadBank(ctx: ToolContext, rawInput: ReadBankInput): Promise<ReadBankOutput> {
-  return runReadBank(ctx.db, rawInput, { role: roleForActor(ctx.callerActor) });
+  return runReadBank(ctx.db, rawInput, {
+    role: roleForActor(ctx.callerActor),
+    callerRef: ctx.callerActor?.ref ?? null,
+  });
 }
 
 export const readBankTool: DomainTool<ReadBankInput, ReadBankOutput> = {
   name: 'read_bank',
   description:
-    'Fetch versioned question/group content by bank ref (qrev1:<revision_id>:<digest12> — the `ref` strings search_bank returns). Batch up to 20 refs; each resolves independently (partial success is normal). A ref that cannot be resolved, whose digest no longer matches, or whose group was withdrawn returns an explicit error for that ref — NEVER a silent fallback to latest. Default response is an overview (nav map of part/unit/material/slot stable ids — usable directly as edit_question targets); expand via include layers: content (parts + answer slots) / materials / answers (typed keys) / rubric / scoring (merged answers+rubric+execution) / source / relations / execution / metadata. focus narrows a read to part/unit/material/item/slot subtrees; extent.chars + next_cursor continue long text pinned to the read revision. A withdrawn revision is readable with a bound submission_id (old attempts read their exact frozen revision, marked historical + new_issuance_allowed=false) or a private role. rubric/scoring/execution and private-visibility materials are role-gated by the server — include can never upgrade a role; denied layers are reported in denied_layers.',
+    'Fetch versioned question/group content by bank ref (qrev1:<revision_id>:<digest12> — the `ref` strings search_bank returns). Batch up to 20 refs; each resolves independently (partial success is normal). A ref that cannot be resolved, whose digest no longer matches, or whose group was withdrawn returns an explicit error for that ref — NEVER a silent fallback to latest. Default response is an overview (nav map of part/unit/material/slot stable ids — usable directly as edit_question targets); expand via include layers: content (parts + answer slots) / materials / answers (typed keys) / rubric / scoring (merged answers+rubric+execution) / source / relations / execution / metadata. focus narrows a read to part/unit/material/item/slot subtrees; extent.chars + next_cursor continue long text pinned to the read revision. A withdrawn revision is readable with a bound submission_id (old attempts read their exact frozen revision, marked historical + new_issuance_allowed=false) or a private role. answers/metadata/rubric/scoring/execution and private-visibility materials are role-gated by the server — include can never upgrade a role; denied layers are reported in denied_layers.',
   effect: 'read',
   inputSchema: ReadBankInputSchema,
   outputSchema: ReadBankOutputSchema,

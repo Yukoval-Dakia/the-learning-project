@@ -46,6 +46,18 @@ import { publishQuestionGroup } from '@/server/questions/publisher';
 
 const DRAFT_SUBMIT_ACTION = 'experimental:question_draft_submit';
 
+export type { EditQuestionInputT, EditQuestionResult } from './edit-question';
+export {
+  EditQuestionInput,
+  probeDraftEdit,
+  saveDraftEdit,
+  validateDraftEdit,
+} from './edit-question';
+// YUK-1468 — 统一题目写口 facade：capability 侧只经本模块抵达
+// submit/edit/publish/draft-insert 服务（capability→questions 边数守恒审计）。
+export { publishQuestionGroupFromRow } from './publisher';
+export { insertSourcedDraft } from './sourced-draft-insert';
+
 type BlockRow = typeof question_block.$inferSelect;
 
 export interface SubmitDraftInput {
@@ -90,6 +102,7 @@ export type SubmitResult =
         | 'revision_cas'
         | 'request_id_reused'
         | 'not_a_draft'
+        | 'invalid_request'
         | 'duplicate_exact'
         | 'publish_conflict';
       detail: string;
@@ -120,7 +133,7 @@ interface SubmitContext {
   now?: Date;
 }
 
-function canonicalJson(value: unknown): string {
+export function canonicalJson(value: unknown): string {
   return JSON.stringify(value, (_key, v) =>
     v !== null && typeof v === 'object' && !Array.isArray(v)
       ? Object.keys(v)
@@ -296,12 +309,27 @@ export async function submitDraftQuestion(
     };
   }
   const expectedRevisionRaw = input.expected_revision;
-  const expectedRevisionId =
-    expectedRevisionRaw === undefined
-      ? undefined // 不校验
-      : expectedRevisionRaw === null
-        ? null // 期望尚无已发布 revision
-        : parseExpectedRevision(expectedRevisionRaw);
+  // 校验形状：qrev1:<id>:<digest> 或裸 revision_id；带 ':' 但非 qrev1 或空串
+  // = malformed ⇒ reject（不是 CAS，是请求形状错误）。undefined = 待
+  // doc.base.revision_id 默认填充；null = 期望组尚无已发布 revision。
+  let expectedRevisionId: string | null | undefined;
+  if (expectedRevisionRaw === undefined) {
+    expectedRevisionId = undefined;
+  } else if (expectedRevisionRaw === null) {
+    expectedRevisionId = null;
+  } else if (
+    expectedRevisionRaw.length === 0 ||
+    (expectedRevisionRaw.includes(':') && !expectedRevisionRaw.startsWith('qrev1:'))
+  ) {
+    return {
+      status: 'conflict',
+      reason: 'invalid_request',
+      detail: `malformed expected_revision '${expectedRevisionRaw}' (expected qrev1:<id>:<digest> or a bare revision_id, or null)`,
+      request_id: requestId,
+    };
+  } else {
+    expectedRevisionId = parseExpectedRevision(expectedRevisionRaw);
+  }
 
   // request_id 幂等：同 id 同内容重放返回同回执，不同内容拒绝。
   const fingerprint = `sha256:${createHash('sha256')
@@ -311,24 +339,28 @@ export async function submitDraftQuestion(
         expected_draft_version: input.expected_draft_version,
         expected_revision: expectedRevisionRaw,
         knowledge_ids: input.knowledge_ids,
+        availability: input.availability,
       }),
     )
     .digest('hex')}`;
-  const existing = await findSubmitReceipt(db, requestId);
-  if (existing != null) {
-    if (existing.fingerprint === fingerprint) {
-      return { ...(existing.receipt as SubmitResult), replayed: true };
-    }
-    return {
-      status: 'conflict',
-      reason: 'request_id_reused',
-      detail: `request_id '${requestId}' was used with different content`,
-      request_id: requestId,
-    };
-  }
-
   const now = ctx.now ?? new Date();
   const out = await db.transaction(async (tx): Promise<SubmitResult> => {
+    // request_id 认领原子化：advisory xact lock 串行化同 request_id 并发，
+    // 锁内查重放（原 check-then-act 竞态在锁外）。
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${requestId}))`);
+    const existing = await findSubmitReceipt(tx, requestId);
+    if (existing != null) {
+      if (existing.fingerprint === fingerprint) {
+        return { ...(existing.receipt as SubmitResult), replayed: true };
+      }
+      return {
+        status: 'conflict',
+        reason: 'request_id_reused',
+        detail: `request_id '${requestId}' was used with different content`,
+        request_id: requestId,
+      };
+    }
+
     const [block] = await tx
       .select()
       .from(question_block)
@@ -373,6 +405,11 @@ export async function submitDraftQuestion(
     }
     if (input.knowledge_ids != null) doc.knowledge_ids = input.knowledge_ids;
 
+    // 默认 CAS：draft 钉住的基底 revision 即期望值（防静默 rebase 到未读
+    // 版本）。显式 expected_revision 覆盖；explicit null = 期望尚无版本。
+    const effectiveExpectedRevision =
+      expectedRevisionId !== undefined ? expectedRevisionId : (doc.base?.revision_id ?? undefined);
+
     const groupId = doc.base?.question_id ?? block.imported_question_id ?? createId();
     const contract = draftDocumentToContract(doc, groupId);
 
@@ -395,7 +432,15 @@ export async function submitDraftQuestion(
         })),
         request_id: requestId,
       };
-      await writeSubmitReceipt(tx, block.id, requestId, fingerprint, withheld, ctx, now);
+      await writeSubmitReceiptEvent(
+        tx,
+        { kind: 'question_block', id: block.id },
+        requestId,
+        fingerprint,
+        withheld,
+        ctx,
+        now,
+      );
       return withheld;
     }
 
@@ -407,7 +452,10 @@ export async function submitDraftQuestion(
       .for('update')
       .limit(1);
     const currentRevisionId = lifecycle?.current_revision_id ?? null;
-    if (expectedRevisionId !== undefined && expectedRevisionId !== currentRevisionId) {
+    if (
+      effectiveExpectedRevision !== undefined &&
+      effectiveExpectedRevision !== currentRevisionId
+    ) {
       return {
         status: 'conflict',
         reason: 'revision_cas',
@@ -435,7 +483,15 @@ export async function submitDraftQuestion(
         per_unit: admission.per_unit,
         request_id: requestId,
       };
-      await writeSubmitReceipt(tx, block.id, requestId, fingerprint, withheld, ctx, now);
+      await writeSubmitReceiptEvent(
+        tx,
+        { kind: 'question_block', id: block.id },
+        requestId,
+        fingerprint,
+        withheld,
+        ctx,
+        now,
+      );
       return withheld;
     }
 
@@ -474,7 +530,15 @@ export async function submitDraftQuestion(
           existing_question_id: merged.id,
           request_id: requestId,
         };
-        await writeSubmitReceipt(tx, block.id, requestId, fingerprint, conflict, ctx, now);
+        await writeSubmitReceiptEvent(
+          tx,
+          { kind: 'question_block', id: block.id },
+          requestId,
+          fingerprint,
+          conflict,
+          ctx,
+          now,
+        );
         return conflict;
       }
       await tx.insert(question).values({
@@ -616,7 +680,15 @@ export async function submitDraftQuestion(
       ...(verifyEnqueued != null ? { verify_enqueued: verifyEnqueued } : {}),
       request_id: requestId,
     };
-    await writeSubmitReceipt(tx, block.id, requestId, fingerprint, receipt, ctx, now);
+    await writeSubmitReceiptEvent(
+      tx,
+      { kind: 'question_block', id: block.id },
+      requestId,
+      fingerprint,
+      receipt,
+      ctx,
+      now,
+    );
     return receipt;
   });
 
@@ -688,9 +760,27 @@ async function findSubmitReceipt(
   return { fingerprint: payload.fingerprint, receipt: payload.receipt };
 }
 
-async function writeSubmitReceipt(
+/** request_id 认领（锁内调用方须先取 pg_advisory_xact_lock(hashtext(request_id))）。
+ * 导出供 candidate/compat 提交路径复用同一 claim 纪律。 */
+export async function claimSubmitRequestId(
   tx: Tx,
-  blockId: string,
+  requestId: string,
+  fingerprint: string,
+): Promise<
+  | { status: 'claimed' }
+  | { status: 'replay'; receipt: SubmitResult }
+  | { status: 'reused'; existing: { fingerprint: string } }
+> {
+  const existing = await findSubmitReceipt(tx, requestId);
+  if (existing == null) return { status: 'claimed' };
+  if (existing.fingerprint === fingerprint) return { status: 'replay', receipt: existing.receipt };
+  return { status: 'reused', existing };
+}
+
+/** 提交回执事件：draft 提交 subject=question_block；candidate 提交 subject=question。 */
+export async function writeSubmitReceiptEvent(
+  tx: Tx,
+  subject: { kind: 'question_block' | 'question'; id: string },
   requestId: string,
   fingerprint: string,
   receipt: SubmitResult,
@@ -702,8 +792,8 @@ async function writeSubmitReceipt(
     actor_kind: ctx.actorKind === 'system' ? 'system' : ctx.actorKind,
     actor_ref: ctx.actorRef,
     action: DRAFT_SUBMIT_ACTION,
-    subject_kind: 'question_block',
-    subject_id: blockId,
+    subject_kind: subject.kind,
+    subject_id: subject.id,
     outcome: 'success',
     payload: { request_id: requestId, fingerprint, receipt },
     created_at: now,

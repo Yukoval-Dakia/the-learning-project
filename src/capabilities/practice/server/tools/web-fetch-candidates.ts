@@ -223,7 +223,7 @@ export const webFetchCandidatesTool: DomainTool<Input, Output> = {
   name: 'web_fetch_candidates',
   description:
     '经 Exa web 检索 + SourcingTask 抽取，围绕锚点知识点产出真实考题候选（不写库）。' +
-    '返回候选（含 dedup hash）与图片型候选；提交入库须调 store_sourced_question。' +
+    '返回候选（含 dedup hash）与图片型候选；提交入库须调 submit_question。' +
     'web_search_unavailable 表示 web 路由未配置检索后端；failed 按 failure_class 决定是否重试。',
   effect: 'read',
   inputSchema,

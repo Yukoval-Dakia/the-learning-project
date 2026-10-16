@@ -62,10 +62,17 @@ export const QUESTION_CONTENT_WRITER_REGISTRY: Record<string, QuestionContentWri
     tickets: ['YUK-1043'],
     note: 'legacy dreaming 接受 INSERT ⇒ 同事务首版 admitted（manual+human）—— 可达接受路径不再是无契约写口（§2 矩阵行 13）。',
   },
-  'src/capabilities/practice/server/tools/store-sourced-question.ts': {
+  // store-sourced-question.ts 已降为 shim（YUK-1468），content 写迁往
+  // submit-question.ts（同收敛纪律）。
+  'src/capabilities/practice/server/tools/submit-question.ts': {
     status: 'publisher-converged',
-    tickets: ['YUK-1043'],
+    tickets: ['YUK-1043', 'YUK-1468'],
     note: 'INSERT 走 sourced-draft-insert（converged）；图题事后富集 UPDATE（structured/figures/judge_override/multimodal —— 改变判分输入）之后同事务重发组 revision（复审 P1-6 补齐；纯 metadata 富集 digest 不变 ⇒ 幂等 noop）。',
+  },
+  'src/server/questions/submit-question.ts': {
+    status: 'publisher-converged',
+    tickets: ['YUK-1468'],
+    note: '草稿提交闸：question 行 INSERT/UPDATE（prompt_md/reference_md/choices_md/structured —— v2 文档的 legacy 投影）与 publishQuestionGroup 同事务铸 revision（未决转换 withheld、CAS/dedup 冲突拒绝、admission 维度如实入契约）。',
   },
   'src/server/ai/solution-generate.ts': {
     status: 'publisher-converged',

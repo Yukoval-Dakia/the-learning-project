@@ -996,6 +996,7 @@ function textFieldOf(
   set: (v: string | undefined) => void;
   unit?: DraftUnitT;
   material?: DraftMaterialT;
+  reminted?: () => string | undefined;
 } | null {
   const located = locate(doc, target);
   if (located == null) return null;
@@ -1018,13 +1019,18 @@ function textFieldOf(
     case 'item': {
       const unit = requireUnit(located);
       const item = requireItem(unit, target.id);
+      let remintedId: string | undefined;
       return {
         get: () => item.label_md,
         set: (v) => {
           item.label_md = v;
           const newId = remintItemId(unit, target.id, v ?? item.item_id);
-          if (newId !== target.id) item.item_id = newId;
+          if (newId !== target.id) {
+            item.item_id = newId;
+            remintedId = newId;
+          }
         },
+        reminted: () => remintedId,
         unit,
       };
     }
@@ -1087,11 +1093,15 @@ function applyReplaceText(
   const at = locations[0].offset;
   handle.set(current.slice(0, at) + newText + current.slice(at + oldText.length));
   const remap =
-    target.kind === 'material' &&
-    handle.material != null &&
-    handle.material.material_id !== target.id
-      ? { from: target.id, to: handle.material.material_id }
-      : undefined;
+    target.kind === 'material' && handle.material != null
+      ? handle.material.material_id !== target.id
+        ? { from: target.id, to: handle.material.material_id }
+        : undefined
+      : target.kind === 'item' && handle.reminted?.() != null
+        ? // item label 是派生身份 —— 文本替换触发 remint 时如实上报 remap，
+          // computeInvalidatedScope 随之作废该 unit 的 rule 校验。
+          { from: target.id, to: handle.reminted() as string }
+        : undefined;
   changes.push({
     op: 'replace_text',
     target,
@@ -1372,6 +1382,68 @@ const RULE_AFFECTING = new Set([
 const METHOD_AFFECTING = new Set(['method']);
 const RETRIEVAL_FIELDS = new Set(['knowledge_ids', 'explanation_md', 'kind']);
 const PRESENTATION_AFFECTING = new Set(['block', 'presentation']);
+
+/** CAS 冲突的 relevant_changes：如实返回 ops 目标在服务端现值。
+ * field = '<kind>:<id>[.<op-field>]'；current = 现值（不存在 ⇒ null）。 */
+export function relevantChangesForOps(
+  doc: QuestionDraftDocumentT,
+  ops: EditOpT[] | undefined,
+): { field: string; current: unknown }[] {
+  const out: { field: string; current: unknown }[] = [];
+  for (const op of ops ?? []) {
+    const target = 'target' in op ? op.target : null;
+    if (target == null) continue;
+    const targetId = 'id' in target ? target.id : 'root';
+    const located = locate(doc, target);
+    const node = nodeOfLocated(doc, target, located);
+    const fieldNames =
+      op.op === 'set'
+        ? Object.keys(op.fields)
+        : op.op === 'clear' || op.op === 'replace_text'
+          ? [op.field]
+          : null;
+    if (fieldNames == null) {
+      out.push({ field: `${target.kind}:${targetId}`, current: node ?? null });
+      continue;
+    }
+    for (const fieldName of fieldNames) {
+      out.push({
+        field: `${target.kind}:${targetId}.${fieldName}`,
+        current: node != null ? ((node as Record<string, unknown>)[fieldName] ?? null) : null,
+      });
+    }
+  }
+  return out;
+}
+
+/** target → 服务端现有节点（仅 relevant_changes 用；找不到 ⇒ null）。 */
+function nodeOfLocated(
+  doc: QuestionDraftDocumentT,
+  target: EditTargetT,
+  located: Located | null,
+): unknown {
+  if (located == null) return null;
+  switch (target.kind) {
+    case 'question':
+      return doc;
+    case 'part':
+      return located.part ?? null;
+    case 'unit':
+      return located.unit ?? null;
+    case 'item':
+      return (
+        (located.unit?.response_spec.kind === 'select'
+          ? located.unit.response_spec.items.find((i) => i.item_id === target.id)
+          : null) ?? null
+      );
+    case 'criterion':
+      return located.unit?.rubric?.criteria?.find((cr) => cr.criterion_id === target.id) ?? null;
+    case 'material':
+      return doc.materials.find((m) => m.material_id === target.id) ?? null;
+    case 'block':
+      return findPresentationBlock(doc.presentation, target.id) ?? null;
+  }
+}
 
 export function computeInvalidatedScope(changes: AppliedChange[]): InvalidatedScope {
   const solve = new Set<string>();

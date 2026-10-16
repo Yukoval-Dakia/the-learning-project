@@ -1310,8 +1310,8 @@ async function acceptUnifiedQuestionEditRequest(
     };
   }
 
-  const { saveDraftEdit, EditQuestionInput } = await import('@/server/questions/edit-question');
-  const { submitDraftQuestion } = await import('@/server/questions/submit-question');
+  const { saveDraftEdit, EditQuestionInput } = await import('./tools/submit-question');
+  const { submitDraftQuestion } = await import('./tools/submit-question');
   const now = new Date();
   const saveRequestId = `proposal-accept:${proposalId}`;
   const parsedSave = EditQuestionInput.safeParse({

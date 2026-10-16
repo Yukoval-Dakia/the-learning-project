@@ -718,7 +718,8 @@ export function draftCanonicalContentHash(doc: QuestionDraftDocumentT): string {
     knowledge_ids: [...doc.knowledge_ids].sort(),
     source: doc.source ?? null,
   });
-  return `sha256:${createHash('sha256').update(canonical).digest('hex')}`;
+  // 列约定为裸 hex（extraction_hash.slice('sha256:'.length) 同款）—— 不带前缀。
+  return createHash('sha256').update(canonical).digest('hex');
 }
 
 export { isDraftDocumentV2 };

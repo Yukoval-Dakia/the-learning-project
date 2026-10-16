@@ -4,6 +4,7 @@ import { and, desc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { newId } from '@/core/ids';
 import {
+  EvaluationContractError,
   type PublishedQuestionRevisionT,
   type SlotResponseT,
   type SubmissionRecordT,
@@ -46,6 +47,7 @@ import {
   type OpIssue,
   applyEditOps,
   computeInvalidatedScope,
+  relevantChangesForOps,
 } from '@/server/questions/draft-ops';
 
 // ====================================================================
@@ -97,11 +99,23 @@ export function parseDraftRef(raw: string): { blockId: string; version: number }
  * 本地解析避免 server → capability 深层 import —— bank-ref.ts 本身是
  * practice 工具面，本侧只解析引用不执行完整 bank-ref 解析。）
  */
-function resolveExpectedRevisionId(raw: string | null | undefined): string | null | undefined {
-  if (raw == null) return undefined;
-  const refParts = raw.split(':');
-  if (refParts.length === 3 && refParts[0] === 'qrev1') return refParts[1];
-  return /^[a-z0-9]{10,}$/.test(raw) ? raw : undefined;
+/** expected_revision 解析：undefined = 未给（后由 doc.base.revision_id 默认
+ * 填充）；null = 期望组尚无已发布 revision；qrev1 或裸 id 形状有效；其余 =
+ * malformed（请求形状错误，如实拒绝而非静默放宽 CAS）。 */
+function parseExpectedRevisionToken(
+  raw: string | null | undefined,
+): { value: string | null | undefined } | { invalid: string } {
+  if (raw === undefined) return { value: undefined };
+  if (raw === null) return { value: null };
+  if (raw.startsWith('qrev1:')) {
+    const parts = raw.split(':');
+    if (parts.length === 3 && parts[1].length > 0) return { value: parts[1] };
+    return { invalid: `malformed qrev1 ref '${raw}'` };
+  }
+  if (raw.includes(':')) return { invalid: `malformed expected_revision '${raw}'` };
+  return /^[a-z0-9]{10,}$/.test(raw)
+    ? { value: raw }
+    : { invalid: `malformed expected_revision '${raw}'` };
 }
 
 // ---------- 输入 ----------
@@ -333,6 +347,14 @@ async function findReceipt(
 
 // ---------- save ----------
 
+/** 事务内返回 conflict/rejected 须回滚（防孤儿草稿行）时抛出的哨兵。 */
+class TxAbort extends Error {
+  constructor(public readonly result: EditQuestionResult) {
+    super('tx-abort');
+    this.name = 'TxAbort';
+  }
+}
+
 export interface SaveDraftParams {
   input: EditQuestionInputT;
   ctx: EditContext;
@@ -515,181 +537,254 @@ export async function saveDraftEdit(db: Db, params: SaveDraftParams): Promise<Ed
   }
 
   const fingerprint = requestFingerprint({ ...input, action: 'save' });
-  const existing = await findReceipt(db, requestId);
-  if (existing != null) {
-    if (existing.fingerprint === fingerprint) {
-      return { ...(existing.receipt as EditQuestionResult), replayed: true } as EditQuestionResult;
-    }
-    return {
-      status: 'conflict',
-      reason: 'request_id_reused',
-      detail: `request_id '${requestId}' was used with different content`,
-      request_id: requestId,
-    };
-  }
 
-  const result = await db.transaction(async (tx): Promise<EditQuestionResult> => {
-    const now = ctx.now ?? new Date();
-    // ---- 解析目标草稿 ----
-    let block: BlockRow;
-    let created = false;
-    let draftRefVersion: number | undefined;
-    if (hasDocument) {
-      const parsedDoc = QuestionDraftDocument.safeParse(input.document);
-      if (!parsedDoc.success) {
+  let result: EditQuestionResult;
+  try {
+    result = await db.transaction(async (tx): Promise<EditQuestionResult> => {
+      const now = ctx.now ?? new Date();
+      // request_id 认领原子化：advisory xact lock 串行化同 request_id 并发，
+      // 锁内查重放（原 check-then-act 竞态在锁外）。
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${requestId}))`);
+      const existing = await findReceipt(tx, requestId);
+      if (existing != null) {
+        if (existing.fingerprint === fingerprint) {
+          return {
+            ...(existing.receipt as EditQuestionResult),
+            replayed: true,
+          } as EditQuestionResult;
+        }
         return {
-          status: 'rejected',
-          reason: 'document failed schema validation',
-          issues: [{ code: 'invalid_document', detail: parsedDoc.error.message }],
+          status: 'conflict',
+          reason: 'request_id_reused',
+          detail: `request_id '${requestId}' was used with different content`,
           request_id: requestId,
         };
       }
-      const imported = parsedDoc.data.base?.question_id ?? null;
-      block = await createDraftBlock(tx, {
-        doc: parsedDoc.data,
-        importedQuestionId: imported,
-        ctx,
-      });
-      created = true;
-    } else if (hasDraftRef) {
-      const draftRef = input.draft_ref;
-      if (draftRef == null) {
-        return {
-          status: 'rejected',
-          reason: 'ops require draft_ref or question_id',
-          issues: [{ code: 'invalid_request', detail: 'ops require draft_ref or question_id' }],
-          request_id: requestId,
-        };
+      // ---- 解析目标草稿 ----
+      let block: BlockRow;
+      let created = false;
+      let draftRefVersion: number | undefined;
+      if (hasDocument) {
+        const parsedDoc = QuestionDraftDocument.safeParse(input.document);
+        if (!parsedDoc.success) {
+          return {
+            status: 'rejected',
+            reason: 'document failed schema validation',
+            issues: [{ code: 'invalid_document', detail: parsedDoc.error.message }],
+            request_id: requestId,
+          };
+        }
+        const imported = parsedDoc.data.base?.question_id ?? null;
+        block = await createDraftBlock(tx, {
+          doc: parsedDoc.data,
+          importedQuestionId: imported,
+          ctx,
+        });
+        created = true;
+      } else if (hasDraftRef) {
+        const draftRef = input.draft_ref;
+        if (draftRef == null) {
+          return {
+            status: 'rejected',
+            reason: 'ops require draft_ref or question_id',
+            issues: [{ code: 'invalid_request', detail: 'ops require draft_ref or question_id' }],
+            request_id: requestId,
+          };
+        }
+        const parsed = parseDraftRef(draftRef);
+        if (parsed == null) {
+          return {
+            status: 'rejected',
+            reason: `invalid draft_ref '${input.draft_ref}'`,
+            issues: [
+              {
+                code: 'invalid_draft_ref',
+                detail: `expected ${DRAFT_REF_VERSION}:<block>:<version>`,
+              },
+            ],
+            request_id: requestId,
+          };
+        }
+        draftRefVersion = parsed.version;
+        const loaded = await loadDraftBlock(tx, parsed.blockId);
+        if (loaded == null) {
+          return {
+            status: 'conflict',
+            reason: 'not_a_draft',
+            detail: `draft '${parsed.blockId}' not found`,
+            request_id: requestId,
+          };
+        }
+        block = loaded;
+      } else {
+        const questionId = input.question_id;
+        if (questionId == null) {
+          return {
+            status: 'rejected',
+            reason: 'ops require draft_ref or question_id',
+            issues: [{ code: 'invalid_request', detail: 'ops require draft_ref or question_id' }],
+            request_id: requestId,
+          };
+        }
+        const ensured = await ensureDraftForQuestion(tx, questionId, ctx);
+        if ('error' in ensured) {
+          return {
+            status: 'rejected',
+            reason: ensured.error,
+            issues: [{ code: 'target_not_found', detail: ensured.error }],
+            request_id: requestId,
+          };
+        }
+        block = ensured.block;
+        created = ensured.created;
       }
-      const parsed = parseDraftRef(draftRef);
-      if (parsed == null) {
-        return {
-          status: 'rejected',
-          reason: `invalid draft_ref '${input.draft_ref}'`,
-          issues: [
-            {
-              code: 'invalid_draft_ref',
-              detail: `expected ${DRAFT_REF_VERSION}:<block>:<version>`,
-            },
-          ],
-          request_id: requestId,
-        };
-      }
-      draftRefVersion = parsed.version;
-      const loaded = await loadDraftBlock(tx, parsed.blockId);
-      if (loaded == null) {
+
+      // ---- CAS ----
+      if (block.status !== 'draft') {
         return {
           status: 'conflict',
           reason: 'not_a_draft',
-          detail: `draft '${parsed.blockId}' not found`,
+          detail: `draft '${block.id}' has status '${block.status}' (already submitted/retired)`,
           request_id: requestId,
         };
       }
-      block = loaded;
-    } else {
-      const questionId = input.question_id;
-      if (questionId == null) {
-        return {
-          status: 'rejected',
-          reason: 'ops require draft_ref or question_id',
-          issues: [{ code: 'invalid_request', detail: 'ops require draft_ref or question_id' }],
-          request_id: requestId,
-        };
-      }
-      const ensured = await ensureDraftForQuestion(tx, questionId, ctx);
-      if ('error' in ensured) {
-        return {
-          status: 'rejected',
-          reason: ensured.error,
-          issues: [{ code: 'target_not_found', detail: ensured.error }],
-          request_id: requestId,
-        };
-      }
-      block = ensured.block;
-      created = ensured.created;
-    }
-
-    // ---- CAS ----
-    if (block.status !== 'draft') {
-      return {
-        status: 'conflict',
-        reason: 'not_a_draft',
-        detail: `draft '${block.id}' has status '${block.status}' (already submitted/retired)`,
-        request_id: requestId,
-      };
-    }
-    const expectedDraftVersion = input.expected_draft_version ?? draftRefVersion;
-    if (!created && expectedDraftVersion != null && block.version !== expectedDraftVersion) {
-      return {
-        status: 'conflict',
-        reason: 'draft_version_cas',
-        detail: `draft '${block.id}' version is ${block.version}, expected ${expectedDraftVersion}`,
-        current_draft_ref: encodeDraftRef(block.id, block.version),
-        current_draft_version: block.version,
-        request_id: requestId,
-      };
-    }
-
-    const docBefore = documentOf(block);
-    if (docBefore == null) {
-      return {
-        status: 'rejected',
-        reason: 'draft has no editable structured content',
-        issues: [{ code: 'not_a_draft', detail: 'block.structured is null or unrecognized' }],
-        request_id: requestId,
-      };
-    }
-
-    // expected_revision：编辑已发布题时钉住基底 revision。
-    const expectedRevisionId = resolveExpectedRevisionId(input.expected_revision);
-    const groupId = docBefore.base?.question_id ?? block.imported_question_id;
-    let currentRevisionId: string | null = null;
-    if (groupId != null || expectedRevisionId !== undefined) {
-      const group = groupId != null ? await currentGroupRevision(tx, groupId) : null;
-      currentRevisionId = group?.revisionId ?? null;
-      if (expectedRevisionId !== undefined && expectedRevisionId !== currentRevisionId) {
+      const expectedDraftVersion = input.expected_draft_version ?? draftRefVersion;
+      if (!created && expectedDraftVersion != null && block.version !== expectedDraftVersion) {
+        const currentDoc = documentOf(block);
         return {
           status: 'conflict',
-          reason: 'revision_cas',
-          detail: `group '${groupId ?? '?'}' current revision is ${currentRevisionId ?? 'none'}, expected ${expectedRevisionId ?? 'none'}`,
+          reason: 'draft_version_cas',
+          detail: `draft '${block.id}' version is ${block.version}, expected ${expectedDraftVersion}`,
           current_draft_ref: encodeDraftRef(block.id, block.version),
           current_draft_version: block.version,
-          current_revision_ref: currentRevisionId,
+          ...(currentDoc != null
+            ? { relevant_changes: relevantChangesForOps(currentDoc, input.ops) }
+            : {}),
           request_id: requestId,
         };
       }
-    }
 
-    // ---- 应用 ops ----
-    const applied = hasOps ? applyEditOps(docBefore, input.ops ?? []) : null;
-    if (applied != null && !applied.ok) {
-      return {
-        status: 'rejected',
-        reason: 'ops failed',
-        issues: opIssues(applied.issues),
-        request_id: requestId,
-      };
-    }
-    const docAfter = applied?.ok === true ? applied.document : docBefore;
-    const changes = applied?.ok === true ? applied.changes : [];
-    const noop = applied?.ok === true ? applied.noop : false;
+      const docBefore = documentOf(block);
+      if (docBefore == null) {
+        return {
+          status: 'rejected',
+          reason: 'draft has no editable structured content',
+          issues: [{ code: 'not_a_draft', detail: 'block.structured is null or unrecognized' }],
+          request_id: requestId,
+        };
+      }
 
-    // 草稿的 doc.base 回填（首次针对已发布题的草稿）。
-    if (docAfter.base == null && block.imported_question_id != null) {
-      docAfter.base = { question_id: block.imported_question_id, revision_id: currentRevisionId };
-    }
+      // expected_revision：编辑已发布题时钉住基底 revision。
+      const expectedParsed = parseExpectedRevisionToken(input.expected_revision);
+      if ('invalid' in expectedParsed) {
+        // 草稿可能已创建 ⇒ 回滚不留孤儿。
+        throw new TxAbort({
+          status: 'rejected',
+          reason: expectedParsed.invalid,
+          issues: [{ code: 'invalid_request', detail: expectedParsed.invalid }],
+          request_id: requestId,
+        });
+      }
+      // 默认 CAS：draft 钉住的基底 revision 即期望值（防静默 rebase 到未读版本）。
+      const expectedRevisionId =
+        expectedParsed.value !== undefined
+          ? expectedParsed.value
+          : (docBefore.base?.revision_id ?? undefined);
+      const groupId = docBefore.base?.question_id ?? block.imported_question_id;
+      let currentRevisionId: string | null = null;
+      if (groupId != null || expectedRevisionId !== undefined) {
+        const group = groupId != null ? await currentGroupRevision(tx, groupId) : null;
+        currentRevisionId = group?.revisionId ?? null;
+        if (expectedRevisionId !== undefined && expectedRevisionId !== currentRevisionId) {
+          // 冲突发生在草稿创建之后 ⇒ 须回滚事务，不留孤儿草稿行。
+          throw new TxAbort({
+            status: 'conflict',
+            reason: 'revision_cas',
+            detail: `group '${groupId ?? '?'}' current revision is ${currentRevisionId ?? 'none'}, expected ${expectedRevisionId ?? 'none'}`,
+            current_draft_ref: encodeDraftRef(block.id, block.version),
+            current_draft_version: block.version,
+            current_revision_ref: currentRevisionId,
+            relevant_changes: relevantChangesForOps(docBefore, input.ops),
+            request_id: requestId,
+          });
+        }
+      }
 
-    const issues = publishIssues(docAfter, groupId ?? `draft-${block.id}`);
-    const publishable = issues.length === 0;
-    const invalidated = computeInvalidatedScope(changes);
+      // ---- 应用 ops ----
+      const applied = hasOps ? applyEditOps(docBefore, input.ops ?? []) : null;
+      if (applied != null && !applied.ok) {
+        // 草稿可能已创建 ⇒ 回滚不留孤儿；原子批量语义（错写零）。
+        throw new TxAbort({
+          status: 'rejected',
+          reason: 'ops failed',
+          issues: opIssues(applied.issues),
+          request_id: requestId,
+        });
+      }
+      const docAfter = applied?.ok === true ? applied.document : docBefore;
+      const changes = applied?.ok === true ? applied.changes : [];
+      const noop = applied?.ok === true ? applied.noop : false;
 
-    if (noop && hasOps) {
+      // 草稿的 doc.base 回填（首次针对已发布题的草稿）。
+      if (docAfter.base == null && block.imported_question_id != null) {
+        docAfter.base = { question_id: block.imported_question_id, revision_id: currentRevisionId };
+      }
+
+      const issues = publishIssues(docAfter, groupId ?? `draft-${block.id}`);
+      const publishable = issues.length === 0;
+      const invalidated = computeInvalidatedScope(changes);
+
+      if (noop && hasOps) {
+        const receipt: EditQuestionResult = {
+          status: 'noop',
+          draft_ref: encodeDraftRef(block.id, block.version),
+          draft_version: block.version,
+          ...(groupId != null ? { question_id: groupId } : {}),
+          changes: [],
+          publishable,
+          issues,
+          invalidated,
+          request_id: requestId,
+        };
+        await writeReceiptEvent(tx, block.id, requestId, fingerprint, receipt, ctx, now);
+        return receipt;
+      }
+
+      // ---- 持久化（canonical event + 写通） ----
+      const nextVersion = block.version + 1;
+      await writeEvent(tx, {
+        id: newId(),
+        // canonical 事件 schema actor_kind 只有 agent|user —— system 调用按 agent 承载。
+        actor_kind: ctx.actorKind === 'user' ? 'user' : 'agent',
+        actor_ref: ctx.actorRef,
+        action: DRAFT_EDIT_ACTION,
+        subject_kind: 'question_block',
+        subject_id: block.id,
+        outcome: 'success',
+        payload: {
+          op: 'edit_draft',
+          affected_blocks: [
+            {
+              block_id: block.id,
+              role: 'primary',
+              structured: docAfter,
+              version: nextVersion,
+              status: block.status,
+            },
+          ],
+        },
+        created_at: now,
+        ingest_at: now,
+      });
+      await projectQuestionBlockGuarded(tx, block.id);
+
       const receipt: EditQuestionResult = {
-        status: 'noop',
-        draft_ref: encodeDraftRef(block.id, block.version),
-        draft_version: block.version,
+        status: 'saved',
+        draft_ref: encodeDraftRef(block.id, nextVersion),
+        draft_version: nextVersion,
         ...(groupId != null ? { question_id: groupId } : {}),
-        changes: [],
+        current_published_ref: currentRevisionId,
+        changes,
         publishable,
         issues,
         invalidated,
@@ -697,51 +792,11 @@ export async function saveDraftEdit(db: Db, params: SaveDraftParams): Promise<Ed
       };
       await writeReceiptEvent(tx, block.id, requestId, fingerprint, receipt, ctx, now);
       return receipt;
-    }
-
-    // ---- 持久化（canonical event + 写通） ----
-    const nextVersion = block.version + 1;
-    await writeEvent(tx, {
-      id: newId(),
-      // canonical 事件 schema actor_kind 只有 agent|user —— system 调用按 agent 承载。
-      actor_kind: ctx.actorKind === 'user' ? 'user' : 'agent',
-      actor_ref: ctx.actorRef,
-      action: DRAFT_EDIT_ACTION,
-      subject_kind: 'question_block',
-      subject_id: block.id,
-      outcome: 'success',
-      payload: {
-        op: 'edit_draft',
-        affected_blocks: [
-          {
-            block_id: block.id,
-            role: 'primary',
-            structured: docAfter,
-            version: nextVersion,
-            status: block.status,
-          },
-        ],
-      },
-      created_at: now,
-      ingest_at: now,
     });
-    await projectQuestionBlockGuarded(tx, block.id);
-
-    const receipt: EditQuestionResult = {
-      status: 'saved',
-      draft_ref: encodeDraftRef(block.id, nextVersion),
-      draft_version: nextVersion,
-      ...(groupId != null ? { question_id: groupId } : {}),
-      current_published_ref: currentRevisionId,
-      changes,
-      publishable,
-      issues,
-      invalidated,
-      request_id: requestId,
-    };
-    await writeReceiptEvent(tx, block.id, requestId, fingerprint, receipt, ctx, now);
-    return receipt;
-  });
+  } catch (err) {
+    if (err instanceof TxAbort) return err.result;
+    throw err;
+  }
   return result;
 }
 
@@ -881,6 +936,16 @@ export async function probeDraftEdit(
         issues: [{ code: 'target_not_found', detail: `draft '${parsed.blockId}' not found` }],
       };
     }
+    if (block.version !== parsed.version) {
+      // 钉住的版本已漂移：probe 不得对未读版本放行。
+      return {
+        status: 'conflict',
+        reason: 'draft_version_cas',
+        detail: `draft '${block.id}' version is ${block.version}, expected ${parsed.version}`,
+        current_draft_ref: encodeDraftRef(block.id, block.version),
+        current_draft_version: block.version,
+      };
+    }
     doc = documentOf(block);
     draftRef = encodeDraftRef(block.id, block.version);
     groupId = doc?.base?.question_id ?? block.imported_question_id ?? groupId;
@@ -965,14 +1030,32 @@ export async function probeDraftEdit(
       });
       continue;
     }
-    const out = await evaluateSubmissionCore({
-      evaluation_id: `probe-eval-${createId()}`,
-      submission,
-      revision: syntheticRevision,
-      issued_part_ids: contract.structure.parts.map((p) => p.part_id),
-      attempt: 1,
-      // probe 不注入 model_executor —— 模型方法如实未决（绝不冒充判分）。
-    });
+    let out: Awaited<ReturnType<typeof evaluateSubmissionCore>>;
+    try {
+      out = await evaluateSubmissionCore({
+        evaluation_id: `probe-eval-${createId()}`,
+        submission,
+        revision: syntheticRevision,
+        issued_part_ids: contract.structure.parts.map((p) => p.part_id),
+        attempt: 1,
+        // probe 不注入 model_executor —— 模型方法如实未决（绝不冒充判分）。
+      });
+    } catch (err) {
+      // 契约错误（EvaluationContractError 等）⇒ 该 case 失败如实上报，不抛穿 probe。
+      if (err instanceof EvaluationContractError) {
+        cases.push({
+          probe_id: probe.probe_id,
+          unit_id: unitId,
+          actual: { status: 'failed', detail: err.message, error_code: err.code },
+          expected: expectedOf(probe),
+          matches: false,
+          method_fingerprint: '',
+          run_refs: [`probe-run:${submission.submission_id}`],
+        });
+        continue;
+      }
+      throw err;
+    }
     const fingerprint = methodFingerprint(
       unitInfo?.unit,
       unitId != null

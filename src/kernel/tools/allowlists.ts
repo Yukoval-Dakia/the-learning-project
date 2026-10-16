@@ -71,11 +71,22 @@ export const PROPOSE_WRITE_TOOLS = [
   // lane B) the knowledge|material draft-question generation.
   'author_question',
   // YUK-1468 — 统一题目编辑/提交面（schema-v2 草稿文档 + ops/CAS/幂等 +
-  // validate/probe）。六个窄 question-block 薄壳（update_prompt/add_option/
-  // set_question_type/split_stem/merge_questions/reassign_figure）已退役并入
-  // edit_question；copilot 面 save 自动落 question_edit proposal。
+  // validate/probe）。copilot 面 save 自动落 question_edit proposal。
   'edit_question',
   'submit_question',
+  // YUK-1468 — 六个窄薄壳与窄 propose 工具【仍在 inventory（manifest 注册、
+  // DomainToolName 合法）但无任何 surface 授权】：下方各 surface 数组均不
+  // 授它们，模块与测试随 owner 批准后的独立删除 PR 清理。
+  'update_prompt',
+  'add_option',
+  'set_question_type',
+  'split_stem',
+  'merge_questions',
+  'reassign_figure',
+  'propose_question_edit',
+  // store_sourced_question 同由 submit_question 接管（内部函数 compat 仍在，
+  // 工具名保留在 inventory 供 plan-executor/测试 import 解析；无 surface 授权）。
+  'store_sourced_question',
   // ADR-0031 / RP-2 (YUK-304 lane B) — copilot 组卷 write: assembles authored
   // (draft-allowed) + existing
   // questions into a runnable tool_quiz paper. Granted to the copilot surfaces
