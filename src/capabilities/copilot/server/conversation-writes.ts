@@ -49,10 +49,12 @@ export async function writeCopilotInputEvent(
   },
 ): Promise<string> {
   // YUK-1398：crisis 与 answer_only 同为受限回合——都不携带 review_answer 接纳。
-  if (params.reviewAnswer && params.derivationPolicy !== 'allow') {
+  // 未传策略即 allow（fixture / 旧调用方），不能被当成受限回合拒掉。
+  const policy = params.derivationPolicy ?? 'allow';
+  if (params.reviewAnswer && policy !== 'allow') {
     throw new ApiError(
       'validation_error',
-      'review_answer is not supported for restricted turns',
+      `review_answer is not supported for ${policy} turns`,
       400,
     );
   }
