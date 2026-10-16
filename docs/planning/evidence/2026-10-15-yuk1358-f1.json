@@ -35,5 +35,22 @@
     "welcome": "/Users/yuqi/.t3/userdata/browser-artifacts/browser-screenshot-127-0-0-1-mv9ksa04-05007943.png",
     "placementNoGoal": "/Users/yuqi/.t3/userdata/browser-artifacts/browser-screenshot-127-0-0-1-mv9kt1hc-05bc2f5a.png",
     "spaToWelcome": "/Users/yuqi/.t3/userdata/browser-artifacts/browser-screenshot-127-0-0-1-mv9ktjxs-c90ec564.png"
+  },
+  "documentNavigationRepair": {
+    "source": "7fbfb860a6a522b8f425125a7bf89caba22c1b42",
+    "placement": "PASS: new document, query/hash, no-goal prompt",
+    "welcome": "NOT_VERIFIED: stable after capture missing",
+    "reviewR2": "NONE (static)",
+    "receipts": {
+      "navigation-observations.json": {
+        "path": "/tmp/yuk1358-f1-reload-verified-20261016/navigation-observations.json",
+        "sha256": "7803b3cff0fa04cb318cc80a0817d708dfef96882182084884a7da38de848afe"
+      },
+      "cleanup.json": {
+        "path": "/tmp/yuk1358-f1-reload-verified-20261016/cleanup.json",
+        "sha256": "7f4167d832afbf71d60c602c2641fae84b857ff3fb0b847135e54ca9a418b87d"
+      }
+    },
+    "placementScreenshot": "/Users/yuqi/.t3/userdata/browser-artifacts/browser-screenshot-127-0-0-1-mvaqco0r-212a40ff.png"
   }
 }
