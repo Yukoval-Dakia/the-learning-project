@@ -218,6 +218,9 @@ export interface BankSearchMatchEvidence {
   channel: 'fts' | 'vector';
   /** prompt_md 原文前缀（定位摘录；截断以 … 标记，绝不改写原文）。 */
   excerpt: string;
+  /** fts 命中的强度：'strong' 计入 coverage.verdict；'weak'（只共享个别词项）留在
+   * 候选列表但不抬 verdict。vector 命中恒计入，无此字段。 */
+  strength?: 'strong' | 'weak';
 }
 
 export interface BankSearchHit {
@@ -246,8 +249,11 @@ export interface BankSearchCoverage {
   verdict: 'enough' | 'sparse' | 'none';
   unsatisfied_constraints: Array<z.infer<typeof BankUnsatisfiedConstraintsSchema>>;
   gap_request: z.infer<typeof BankGapRequestSchema> | null;
-  /** 融合候选池的实际数量（有限池，不是语义匹配总数）。 */
+  /** 融合候选池的实际数量（有限池，不是语义匹配总数；含 weak 词法命中）。 */
   candidate_pool_size: number;
+  /** 计入 verdict 的候选数：fts 强命中 ∪ 向量命中。weak 词法命中不计入——
+   * 只靠个别 bigram 碰词的题不能把一个缺题科目顶成 enough/sparse。 */
+  counted_pool_size: number;
   /** 任一通道命中截断上限（翻完本池 ≠ 搜索全库穷尽）。 */
   retrieval_truncated: boolean;
   page_has_more: boolean;
@@ -386,7 +392,7 @@ export function rrfFuse(
   );
 }
 
-// ── CJK 切分（FTS simple 词典对中文无分词，逐字切开后按字 AND 匹配）───────
+// ── CJK 切分（FTS simple 词典对中文无分词：文档侧逐字切，查询侧按词项 OR）───
 
 export const CJK_FTS_SPLIT = '([一-鿿])';
 
@@ -400,8 +406,108 @@ function ftsDocumentExpr(): SQL {
   return sql`regexp_replace(${doc}, ${CJK_FTS_SPLIT}, ${CJK_FTS_REPLACEMENT}, 'g')`;
 }
 
-function ftsQueryExpr(queryText: string): SQL {
-  return sql`plainto_tsquery('simple', regexp_replace(${queryText}, ${CJK_FTS_SPLIT}, ${CJK_FTS_REPLACEMENT}, 'g'))`;
+/** tsquery 词项上限：长查询只取前 N 个词项，防巨型 OR（query 上限 400 字 → 数百 bigram）。 */
+const FTS_QUERY_TERM_CAP = 32;
+
+/** 单字符 CJK 判定（与文档侧 CJK_FTS_SPLIT 同区间 U+4E00–U+9FFF；BMP 内，不误吃代理对半字）。 */
+const CJK_FTS_CHAR = /^[一-鿿]$/u;
+
+/** 非 CJK 段的词项切分：字母/数字/下划线连段为词（近似 simple 解析器的词边界）。 */
+const WORD_RUN = /[\p{L}\p{N}_]+/gu;
+
+/**
+ * tsquery 字面量：单引号包裹，内部单引号与反斜杠双写转义。词项由白名单字符切出，
+ * 本就不含 tsquery 操作符；整条 tsquery 串仍走绑定参数，用户输入永不进语法位。
+ */
+function tsqLexeme(term: string): string {
+  return `'${term.replace(/\\/g, '\\\\').replace(/'/g, "''")}'`;
+}
+
+/**
+ * YUK-1505 — 查询文本 → tsquery 词项方案（召回集 + 强度计数集分离）。
+ *
+ * plainto_tsquery 把每个词项 AND 起来：真实中文长查询里只要一个词不在题面，
+ * 整单召回 0（实测「文言断句 划分句子朗读停顿」= 0 hits）。召回侧改为逐词项 OR：
+ *   - CJK 连段（≥2 字）→ 相邻 bigram 短语 ('c1' <-> 'c2') …，另附整段 unigram AND
+ *     兜底子句 (c1 & c2 & …)：散字共现的旧命中文档仍必进候选池；
+ *   - CJK 单字 → 单字词项（只进召回，不计强度）；
+ *   - 非 CJK 段 → 单词词项。
+ * 词项去重后截断至 FTS_QUERY_TERM_CAP，| 连接，重叠度与邻近度交给 ts_rank_cd
+ * （覆盖密度：相邻短语排在散字之前）——词法通道只负责召回。
+ *
+ * 宽召回的代价：任何共享一个 bigram 的题都会进候选池（实测「离子方程式」把全部
+ * 含「方程」的数学题捞成 20 条 enough——库里其实没有离子方程式题，缺口反被掩盖）。
+ * 故每个词法命中再算 strength，弱命中留在 hits 但不计入 verdict（见 ftsChannelExprs）。
+ */
+export interface FtsQueryPlan {
+  /** 召回 OR 词项（去重、封顶）：bigram 短语 + 单字 + 单词 + 每段 unigram-AND 兜底。 */
+  recall: string[];
+  /** 强度计数词项（去重、封顶）：bigram 短语 + 单词词项；不含单字与 AND 兜底。 */
+  counted: string[];
+}
+
+export function ftsQueryPlan(queryText: string): FtsQueryPlan {
+  const counted: string[] = [];
+  /** 只进召回的词项：CJK 单字 + 每段 unigram-AND 兜底（排在 counted 之后，截断先裁它们）。 */
+  const recallTail: string[] = [];
+  let i = 0;
+  while (i < queryText.length) {
+    let j = i + 1;
+    if (CJK_FTS_CHAR.test(queryText[i])) {
+      while (j < queryText.length && CJK_FTS_CHAR.test(queryText[j])) j++;
+      if (j - i === 1) {
+        recallTail.push(tsqLexeme(queryText[i]));
+      } else {
+        for (let k = i; k + 1 < j; k++) {
+          counted.push(`(${tsqLexeme(queryText[k])} <-> ${tsqLexeme(queryText[k + 1])})`);
+        }
+        recallTail.push(`(${queryText.slice(i, j).split('').map(tsqLexeme).join(' & ')})`);
+      }
+    } else {
+      while (j < queryText.length && !CJK_FTS_CHAR.test(queryText[j])) j++;
+      for (const match of queryText.slice(i, j).matchAll(WORD_RUN)) {
+        counted.push(tsqLexeme(match[0]));
+      }
+    }
+    i = j;
+  }
+  const countedDedup = [...new Set(counted)].slice(0, FTS_QUERY_TERM_CAP);
+  const recall = [...new Set([...counted, ...recallTail])].slice(0, FTS_QUERY_TERM_CAP);
+  return { recall, counted: countedDedup };
+}
+
+interface FtsChannelExprs {
+  /** 召回 tsquery（宽 OR；零词项沿用 plainto 空查询，零命中同旧行为）。 */
+  tsq: SQL;
+  /**
+   * 命中强度（strong ⇔ 计入 coverage.verdict）：
+   *   (a) 旧 plainto 语义原样命中——整查询全部字/词共现，短词与散字旧命中不失格；
+   *   (b) counted 词项命中数 ≥ max(2, ceil(N×0.2))——长查询部分覆盖即算强命中。
+   * 只共享 1 个 bigram 的「碰词」命中 → weak：留在候选列表（match_evidence 标注），
+   * 不抬高 verdict，缺题科目照常 mint gap_request。
+   */
+  strong: SQL;
+}
+
+function ftsChannelExprs(queryText: string, tsvec: SQL): FtsChannelExprs {
+  const plan = ftsQueryPlan(queryText);
+  const tsq =
+    plan.recall.length === 0
+      ? sql`plainto_tsquery('simple', ${queryText})`
+      : sql`to_tsquery('simple', ${plan.recall.join(' | ')})`;
+  const legacyTsq = sql`plainto_tsquery('simple', regexp_replace(${queryText}, ${CJK_FTS_SPLIT}, ${CJK_FTS_REPLACEMENT}, 'g'))`;
+  const matchedTerms =
+    plan.counted.length === 0
+      ? sql`0`
+      : sql`(${sql.join(
+          plan.counted.map((term) => sql`((${tsvec} @@ to_tsquery('simple', ${term}))::int)`),
+          sql` + `,
+        )})`;
+  const strongMin = Math.max(2, Math.ceil(plan.counted.length * 0.2));
+  return {
+    tsq,
+    strong: sql<boolean>`((${tsvec} @@ ${legacyTsq}) OR (${matchedTerms} >= ${strongMin}))`,
+  };
 }
 
 // ── 硬过滤（SQL 谓词；全部确定性）─────────────────────────────────────────
@@ -673,6 +779,11 @@ async function runSearchBankInSnapshot(
   const filters = buildFilters(resolved);
   const where = and(...filters);
 
+  // FTS 词法表达式对新检索与 cursor 续页都可用（续页按 cursor.q 重算 strength；
+  // 内容若被改过，snapshot_hash 校验会显式让 cursor 过期）。
+  const tsvec = sql`to_tsvector('simple', ${ftsDocumentExpr()})`;
+  const fts = ftsChannelExprs(effectiveQuery, tsvec);
+
   let fused: RrfFused[];
   let unavailable: BankSearchCoverage['unavailable_channels'];
   let retrievalTruncated: boolean;
@@ -683,20 +794,24 @@ async function runSearchBankInSnapshot(
     unavailable = cursor.unavailable_channels;
     retrievalTruncated = cursor.retrieval_truncated;
   } else {
-    // ── 通道 A：Postgres FTS（simple + CJK 逐字切分）──
-    const tsvec = sql`to_tsvector('simple', ${ftsDocumentExpr()})`;
-    const tsq = ftsQueryExpr(effectiveQuery);
+    // ── 通道 A：Postgres FTS（simple + CJK 逐字切分；宽召回 OR + 命中强度）──
+    // 弱命中排通道尾部：RRF 位置靠后 → 融合序也落在强命中之下（向量救回的除外）。
     const ftsRowsPromise = db
       .select({
         id: question.id,
         prompt_md: question.prompt_md,
         created_at: question.created_at,
-        rank: sql<number>`ts_rank(${tsvec}, ${tsq})`,
+        rank: sql<number>`ts_rank_cd(${tsvec}, ${fts.tsq})`,
       })
       .from(question)
       .leftJoin(question_group_lifecycle, eq(question_group_lifecycle.group_id, question.id))
-      .where(and(where, sql`${tsvec} @@ ${tsq}`))
-      .orderBy(desc(sql`ts_rank(${tsvec}, ${tsq})`), desc(question.created_at), desc(question.id))
+      .where(and(where, sql`${tsvec} @@ ${fts.tsq}`))
+      .orderBy(
+        desc(fts.strong),
+        desc(sql`ts_rank_cd(${tsvec}, ${fts.tsq})`),
+        desc(question.created_at),
+        desc(question.id),
+      )
       .limit(BANK_SEARCH_CHANNEL_CAP + 1);
 
     // ── 通道 B：暴力 pgvector cosine（embed 失败 → 通道不可用，不阻塞 FTS）──
@@ -795,6 +910,8 @@ async function runSearchBankInSnapshot(
   const pageIds = fused.map((hit) => hit.id);
 
   const hits: BankSearchHit[] = [];
+  // 计入 verdict 的候选数：fts 强命中 ∪ 向量命中；weak 词法命中只在列表展示。
+  let countedPoolSize = 0;
   if (pageIds.length > 0) {
     const cardRows = await db
       .select({
@@ -814,6 +931,8 @@ async function runSearchBankInSnapshot(
         lc_suspended: question_group_lifecycle.suspended,
         lc_withdrawn: question_group_lifecycle.withdrawn,
         lc_current_revision_id: question_group_lifecycle.current_revision_id,
+        // 续页路径按 cursor.q 重算；与通道排序用同一表达式，同快照内一致。
+        fts_strong: fts.strong,
       })
       .from(question)
       .leftJoin(question_group_lifecycle, eq(question_group_lifecycle.group_id, question.id))
@@ -855,16 +974,21 @@ async function runSearchBankInSnapshot(
     for (const fusedHit of fused) {
       const row = cardById.get(fusedHit.id);
       if (row == null) continue; // 翻页窗口内被删——如实跳过
+      if (fusedHit.channels.includes('vector') || row.fts_strong === true) countedPoolSize++;
       const currentRevision =
         row.lc_current_revision_id != null
           ? revisionDigestById.get(row.lc_current_revision_id)
           : undefined;
       const missing: string[] = [];
       if (currentRevision == null) missing.push('no_published_revision');
-      const evidence: BankSearchMatchEvidence[] = fusedHit.channels.map((channel) => ({
-        channel: channel as BankSearchMatchEvidence['channel'],
-        excerpt: preview(row.prompt_md, 160),
-      }));
+      const evidence: BankSearchMatchEvidence[] = fusedHit.channels.map(
+        (channel): BankSearchMatchEvidence => ({
+          channel: channel as BankSearchMatchEvidence['channel'],
+          excerpt: preview(row.prompt_md, 160),
+          // vector 命中不带 strength——向量恒计入 verdict；fts 命中按强度标注。
+          ...(channel === 'fts' ? { strength: row.fts_strong ? 'strong' : 'weak' } : {}),
+        }),
+      );
       const { tier, name } = deriveSourceTier({ source: row.source, metadata: row.metadata });
       hits.push({
         ref:
@@ -964,13 +1088,15 @@ async function runSearchBankInSnapshot(
   enforced.push(`admission_state=${scope.admission_state}`);
   enforced.push('top-level questions only (composite parts read via their group)');
 
-  const verdict =
-    confirmedPoolSize === 0 ? 'none' : confirmedPoolSize < limit ? 'sparse' : 'enough';
+  // verdict 只数「能算作主题覆盖」的候选：fts 强命中 + 向量命中。候选池里全
+  // 是碰词的 weak 命中时照旧 none——缺题事实不被宽召回掩盖，gap_request 照发。
+  const verdict = countedPoolSize === 0 ? 'none' : countedPoolSize < limit ? 'sparse' : 'enough';
   const unsatisfied = {
     query: effectiveQuery,
     scope,
     requested_count: limit,
-    retrieved_count: confirmedPoolSize,
+    // retrieved_count = 计入判定的候选数（与 verdict 同口径），不是 hits.length。
+    retrieved_count: countedPoolSize,
     reason: 'insufficient_retrieved_candidates' as const,
   };
   const complete = !hasMore && !retrievalTruncated && unavailable.length === 0;
@@ -1077,6 +1203,7 @@ async function runSearchBankInSnapshot(
       unsatisfied_constraints: verdict === 'enough' ? [] : [unsatisfied],
       gap_request: gapRequest,
       candidate_pool_size: confirmedPoolSize,
+      counted_pool_size: countedPoolSize,
       retrieval_truncated: retrievalTruncated,
       page_has_more: hasMore,
       next_cursor: nextCursor,
