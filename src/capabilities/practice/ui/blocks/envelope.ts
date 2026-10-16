@@ -5,8 +5,9 @@
 // Rules:
 // - select: item_ids go out in universe order (slot.items), whatever the display order was.
 // - autosave: an empty select / blank / open answer writes no entry ("not answered").
-// - submit: a bound blank with no text becomes { state: 'blank', text: '' } (an active blank);
-//   selects and open answers without content stay absent.
+// - submit: every bound select / blank slot still empty goes out as an active blank
+//   ({ state: 'blank' } with no items / text, spec §2); open answers without content stay absent
+//   (the open envelope has no state).
 // - self_confidence on an existing entry is carried over untouched.
 // - state is only ever 'answered' or 'blank'; 'unknown' is never produced and never forwarded.
 import type { PresentationBlockT, PresentationT } from '@/core/schema/assessment/presentation';
@@ -118,6 +119,14 @@ export function writeOpen(
 
 // ---------- submit ----------
 
+/** Input blocks that bind a select slot (spec §1.2). */
+export const SELECT_BLOCK_KINDS: ReadonlySet<PresentationBlockT['kind']> = new Set([
+  'option_list',
+  'matching_columns',
+  'break_tap',
+  'ordering',
+]);
+
 /** Every slot an input block in the tree binds, in tree order. Custom blocks are listed too. */
 export function boundSlots(
   presentation: PresentationT,
@@ -144,8 +153,9 @@ export function boundSlots(
 }
 
 /**
- * The envelope to submit: draft entries plus an explicit `blank` for every bound blank_input that
- * has no text. Only slots in the issued spec are touched.
+ * The envelope to submit: draft entries plus an explicit `blank` for every bound select or
+ * blank_input slot that is still empty. Only slots in the issued spec are touched; slots bound
+ * by a custom block are left alone (the web cannot run those yet).
  */
 export function entriesForSubmit(
   presentation: PresentationT,
@@ -158,16 +168,28 @@ export function entriesForSubmit(
   // i.e. treated as not answered, rather than forwarded.
   let out = entries.filter((entry) => !('state' in entry) || entry.state !== 'unknown');
   for (const bound of boundSlots(presentation)) {
-    if (bound.kind !== 'blank_input' || !issued.has(bound.slot_id)) continue;
-    const prev = find(out, bound.slot_id, 'blank');
-    if (prev && prev.text !== '') continue;
-    out = put(out, bound.slot_id, {
-      slot_id: bound.slot_id,
-      kind: 'blank',
-      state: 'blank',
-      text: '',
-      self_confidence: prev?.self_confidence,
-    });
+    if (!issued.has(bound.slot_id)) continue;
+    if (bound.kind === 'blank_input') {
+      const prev = find(out, bound.slot_id, 'blank');
+      if (prev && prev.text !== '') continue;
+      out = put(out, bound.slot_id, {
+        slot_id: bound.slot_id,
+        kind: 'blank',
+        state: 'blank',
+        text: '',
+        self_confidence: prev?.self_confidence,
+      });
+    } else if (SELECT_BLOCK_KINDS.has(bound.kind)) {
+      const prev = find(out, bound.slot_id, 'select');
+      if (prev && prev.item_ids.length > 0) continue;
+      out = put(out, bound.slot_id, {
+        slot_id: bound.slot_id,
+        kind: 'select',
+        state: 'blank',
+        item_ids: [],
+        self_confidence: prev?.self_confidence,
+      });
+    }
   }
   return out;
 }

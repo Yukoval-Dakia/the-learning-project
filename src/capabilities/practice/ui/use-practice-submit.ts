@@ -24,6 +24,8 @@ import { usePagehideTransition } from '@/ui/hooks/usePagehideTransition';
 import { useResponseDraftAutosave } from '@/ui/hooks/useResponseDraftAutosave';
 import { ApiError } from '@/ui/lib/api';
 import { toAttemptTimelineEvents } from './attempt-timeline-adapter';
+import { SELECT_BLOCK_KINDS, boundSlots, entriesForSubmit } from './blocks/envelope';
+import { type EntriesUpdate, parsePresentation } from './blocks/PresentationBlocks';
 import type { PfToast } from './PracticeFacePage';
 import {
   type JudgePreview,
@@ -522,6 +524,9 @@ export function usePracticeSubmit({
   const issued = issuance?.mode === issuanceMode ? issuance : null;
   const issuedState = issued?.state ?? null;
   const frozen = issuedState?.practice_dto;
+  // YUK-1497 — the issuance's frozen presentation (old revisions have none: drawn per slot).
+  const rawPresentation = frozen?.presentation;
+  const presentation = useMemo(() => parsePresentation(rawPresentation), [rawPresentation]);
   // Save epoch: the restored draft's epoch until the first ACK, then the latest ACK's.
   const [restoredEpoch, setRestoredEpoch] = useState<number | undefined>(undefined);
   const ackedEpoch = useRef<number | undefined>(undefined);
@@ -565,7 +570,18 @@ export function usePracticeSubmit({
     evaluation_group_id: accepted?.evaluation_group_id ?? `group_stream_${item.id}`,
     submission_id: accepted?.submission_id ?? `submission_stream_${item.id}`,
     idempotency_key: accepted?.idempotency_key ?? `submit_stream_${item.id}`,
-    response_set: nativeResponses,
+    // YUK-1497 — a block-drawn question hands in every bound select / blank slot still empty as
+    // an active blank (spec §1.2.2); the draft itself never holds those entries.
+    response_set:
+      presentation && frozen
+        ? {
+            entries: entriesForSubmit(
+              presentation,
+              frozen.response_spec.slots,
+              nativeResponses.entries,
+            ),
+          }
+        : nativeResponses,
     group_evidence: nativeEvidence,
   };
   const draftValue = useMemo(
@@ -659,6 +675,14 @@ export function usePracticeSubmit({
     setNativeResponses(response_set);
     editDraft({ response_set, group_evidence: draft.group_evidence });
   };
+  // YUK-1497 — presentation blocks edit the envelope list through an updater (a block may also
+  // remove its entry: an emptied blank or selection is "not answered" in the draft).
+  const updateNativeResponses = (update: EntriesUpdate) => {
+    const draft = currentDraft();
+    const response_set = { entries: update(draft.response_set.entries) };
+    setNativeResponses(response_set);
+    editDraft({ response_set, group_evidence: draft.group_evidence });
+  };
   const updateEvidence = (next: EvidenceAttachment[]) => {
     setEvidence(next);
     editDraft({
@@ -726,8 +750,24 @@ export function usePracticeSubmit({
       ),
     )
     .join('\n');
+  // YUK-1497 — bound select / blank slots may stay empty on a block-drawn question (they go out
+  // as active blanks), but the answer as a whole may not be empty. A custom (sandbox) block cannot
+  // be drawn yet, so a question with one is never handed in: that would be a partial answer.
+  const bound = presentation ? boundSlots(presentation) : [];
+  const blankableSlotIds = new Set(
+    bound
+      .filter((b) => b.kind === 'blank_input' || SELECT_BLOCK_KINDS.has(b.kind))
+      .map((b) => b.slot_id),
+  );
+  const hasCustomBlock = bound.some((b) => b.kind === 'custom');
+  // A free_area block keeps its photos on the open entry itself; they answer that slot.
+  const entryAnswered = (entry: SlotResponseT | undefined) =>
+    isSlotResponseAnswered(nativeResponseValue(entry)) ||
+    (entry?.kind === 'open' && entry.evidence.length > 0);
+  const anyAnswered = nativeResponses.entries.some(entryAnswered) || nativeEvidence.length > 0;
   const canSubmit =
     !!frozen &&
+    !hasCustomBlock &&
     !acceptedUnconfirmed &&
     !returning &&
     !draftConflict &&
@@ -736,14 +776,14 @@ export function usePracticeSubmit({
     !uploading &&
     evidence.every((item) => item.original !== undefined) &&
     (issuanceMode === 'manual'
-      ? nativeResponses.entries.some((entry) =>
-          isSlotResponseAnswered(nativeResponseValue(entry)),
-        ) || nativeEvidence.length > 0
-      : frozen.response_spec.slots
+      ? anyAnswered
+      : (!presentation || anyAnswered) &&
+        frozen.response_spec.slots
           .filter((slot) => slot.kind !== 'table')
           .every((slot) => {
             const entry = nativeResponses.entries.find((entry) => entry.slot_id === slot.slot_id);
-            if (isSlotResponseAnswered(nativeResponseValue(entry))) return true;
+            if (entryAnswered(entry)) return true;
+            if (blankableSlotIds.has(slot.slot_id)) return true;
             const units = frozen.response_requirements?.find(
               (requirement) => requirement.slot_id === slot.slot_id,
             )?.evidence_unit_ids;
@@ -1219,7 +1259,10 @@ export function usePracticeSubmit({
       responses: nativeResponses,
       evidence,
       isChoice,
+      /** YUK-1497 — the frozen presentation when it parses; null = draw per slot. */
+      presentation,
       updateResponse: updateNativeResponse,
+      updateResponses: updateNativeResponses,
       updateEvidence,
       uploading,
       setUploading,
