@@ -284,6 +284,13 @@ export const RevealedAnswerKey = z.discriminatedUnion('criterion_kind', [
     expected: z.number().optional(),
     expected_unit: z.string().min(1).optional(),
   }),
+  // YUK-1496 C2：rubric 单元只揭示 criterion 身份与满分；statement_md 是
+  // 私有评分细则，走 reveal_rubric_explanations 门（P1-3 同律）。
+  z.object({
+    scoring_unit_id: z.string().min(1),
+    criterion_kind: z.literal('rubric'),
+    criteria: z.array(z.object({ criterion_id: z.string().min(1), max: z.number().min(0) })),
+  }),
 ]);
 export type RevealedAnswerKeyT = z.infer<typeof RevealedAnswerKey>;
 
@@ -418,6 +425,15 @@ function revealAnswerKey(
             expected: criterion.key.expected,
             expected_unit: criterion.key.expected_unit,
           };
+    case 'rubric':
+      return {
+        scoring_unit_id: unit.scoring_unit_id,
+        criterion_kind: 'rubric',
+        criteria: criterion.criteria.map((criterion) => ({
+          criterion_id: criterion.criterion_id,
+          max: criterion.max,
+        })),
+      };
   }
 }
 
@@ -436,6 +452,17 @@ function revealRubricExplanation(
       scoring_unit_id: unit.scoring_unit_id,
       explanation_md: criterion.levels
         .map((level) => `${level.level_id}: ${level.descriptor_md}`)
+        .join('\n'),
+    };
+  }
+  if (criterion.kind === 'rubric') {
+    return {
+      scoring_unit_id: unit.scoring_unit_id,
+      explanation_md: criterion.criteria
+        .map(
+          (criterion) =>
+            `${criterion.criterion_id}（${criterion.max} 分）: ${criterion.statement_md}`,
+        )
         .join('\n'),
     };
   }

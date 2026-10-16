@@ -841,6 +841,13 @@
       "when": 1791711821264,
       "tag": "0119_yuk1355_paid_effect",
       "breakpoints": true
+    },
+    {
+      "idx": 120,
+      "version": "7",
+      "when": 1792142621353,
+      "tag": "0120_yuk1496_model_admission_slice",
+      "breakpoints": true
     }
   ]
 }

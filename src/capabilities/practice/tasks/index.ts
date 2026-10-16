@@ -1,4 +1,5 @@
 import { defineOwnedTaskSpecs } from '@/ai/owned-task-specs';
+import { assessmentRubricTaskSpec } from './assessment-rubric';
 import { assessmentRuleTaskSpec } from './assessment-rule';
 import { attributionRerankTaskSpec, attributionTaskSpec } from './attribution';
 import { causeCategoryProposeTaskSpec } from './cause-category-propose';
@@ -50,4 +51,5 @@ export const practiceTaskSpecs = defineOwnedTaskSpecs('practice', {
   SupplyPlanTask: supplyPlanTaskSpec,
   JevScoringDecisionTask: jevScoringDecisionTaskSpec,
   AssessmentRuleJudgeTask: assessmentRuleTaskSpec,
+  AssessmentRubricJudgeTask: assessmentRubricTaskSpec,
 });

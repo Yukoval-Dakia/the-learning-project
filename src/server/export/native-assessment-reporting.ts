@@ -208,6 +208,15 @@ function frozenContext(row: z.infer<typeof RevisionRow>, issued: z.infer<typeof 
           return criterion.key.kind === 'text'
             ? criterion.key.accepted.join('\n\n')
             : `${criterion.key.expected}${criterion.key.expected_unit ? ` ${criterion.key.expected_unit}` : ''}`;
+        case 'rubric':
+          // YUK-1496 C2：参考 = 逐 criterion 细则 + 可选参考解答。
+          return [
+            ...criterion.criteria.map(
+              (criterion) =>
+                `${criterion.criterion_id}（满分 ${criterion.max}）：${criterion.statement_md}`,
+            ),
+            ...(criterion.reference_md ? [criterion.reference_md] : []),
+          ].join('\n');
         default: {
           const unreachable: never = criterion;
           return unreachable;

@@ -67,6 +67,7 @@ import {
   question_revision,
 } from '@/db/schema';
 import { getEvents, writeEvent } from '@/kernel/events';
+import { resolveModelAdmissionContext } from '@/server/assessment/model-slice-registry';
 
 /** 发题事件 action 名（receipt 即事件载荷；traceable 发题事实）。 */
 export const ASSESSMENT_ISSUANCE_ACTION = 'experimental:assessment_issuance';
@@ -152,12 +153,16 @@ export async function readAutomaticallyServableQuestionIds(
       ),
     );
   const admitted = new Set<string>();
+  // YUK-1496 C2：模型单元的服务判定需要权威切片登记（active 切片 + 当前
+  // 模型 pin）；登记处只读一次，判定的纯性不变。
+  const admission = await resolveModelAdmissionContext(db);
   for (const row of rows) {
     const parsed = PublishedQuestionRevision.safeParse(revisionRowToContract(row.revision));
     if (!parsed.success) continue;
     const revision = parsed.data;
     const partIds = row.parentId ? [row.id] : revision.structure.parts.map((part) => part.part_id);
-    if (decideAutomaticServing(revision, partIds).kind === 'admitted') admitted.add(row.id);
+    if (decideAutomaticServing(revision, partIds, admission).kind === 'admitted')
+      admitted.add(row.id);
   }
   return admitted;
 }
@@ -176,11 +181,12 @@ export async function readAutomaticIssuanceServingDecisions(
       eq(question_revision.revision_id, assessment_issuance.revision_id),
     )
     .where(inArray(assessment_issuance.issuance_id, [...new Set(issuanceIds)]));
+  const admission = await resolveModelAdmissionContext(db);
   return new Map(
     rows.map(({ issuance, revision: row }) => {
       const parsed = PublishedQuestionRevision.safeParse(revisionRowToContract(row));
       const decision: AutomaticServingDecision = parsed.success
-        ? decideAutomaticServing(parsed.data, issuance.part_ids)
+        ? decideAutomaticServing(parsed.data, issuance.part_ids, admission)
         : {
             kind: 'unavailable',
             reason: 'invalid_scoring_contract',
@@ -474,7 +480,8 @@ async function issueAssessmentInternal(
     // Neither manual mode nor a replay authorizes another learner-facing serve
     // of an unsupported frozen contract. Ingestion capture is a separate receipt.
     if (!capture) {
-      const decision = decideAutomaticServing(revision, binding.part_ids);
+      const admission = await resolveModelAdmissionContext(tx);
+      const decision = decideAutomaticServing(revision, binding.part_ids, admission);
       if (decision.kind === 'unavailable') {
         return {
           status: 'not_admitted',

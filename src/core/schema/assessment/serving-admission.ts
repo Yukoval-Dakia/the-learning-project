@@ -4,7 +4,7 @@ import { validateExecutionPlan } from './execution';
 import { isPublicSharedMaterial } from './materials';
 import type { ResponseSlotT } from './response';
 import type { PublishedQuestionRevisionT } from './revision';
-import { validateScoringBasis } from './scoring';
+import { type ScoringUnitT, validateScoringBasis } from './scoring';
 
 /** YUK-1445 —— typed withheld reasons（公共读面安全枚举；detail 只作内部诊断）。
  * 单一来源：wire schema / DTO 共用此 tuple，禁止第二份拷贝。 */
@@ -30,6 +30,94 @@ export type AutomaticServingDecision =
       detail: string;
     };
 
+// ---------- YUK-1496 C2 — 模型准入切片（服务门只读视图） ----------
+
+/** 模型可判的响应类（设计 §4 准入门第 4 步：科目/响应类/任务/模型版本切片）。 */
+export type ModelResponseClass = 'blank' | 'free';
+
+/**
+ * 已准入切片（行真相在 model_admission_slice 表；这是服务门的纯读面）。
+ * holdout_evidence_ref 指向留出题实测证据（逐题一致性 + severe error 记录）。
+ */
+export interface AdmittedModelSliceT {
+  readonly slice_id: string;
+  readonly subject: string;
+  readonly response_class: ModelResponseClass;
+  readonly task_kind: string;
+  readonly model: string;
+  readonly model_version: string;
+  readonly holdout_evidence_ref: string;
+  readonly admitted_at: string;
+  readonly admitted_by: string;
+}
+
+/**
+ * 服务门的模型准入上下文：由调用方从权威登记处解析后传入（门本身保持纯函数，
+ * 不读 DB）。slices 只含 active 切片；current_models 是各 task_kind 当前实际
+ * 会执行的模型 + 版本 pin —— 切片登记的模型与当前 pin 漂移即不再准入。
+ */
+export interface ModelAdmissionContext {
+  readonly slices: ReadonlyMap<string, AdmittedModelSliceT>;
+  readonly current_models: ReadonlyMap<string, { model: string; model_version: string }>;
+}
+
+/** unit 判据 → 响应类；确定性判据不由模型判（返回 null，模型分支 fail-closed）。 */
+export function modelResponseClassForUnit(unit: ScoringUnitT): ModelResponseClass | null {
+  switch (unit.criterion.kind) {
+    case 'blank_key':
+      return 'blank';
+    case 'rubric':
+    case 'rule_reference':
+    case 'holistic_level':
+      return 'free';
+    default:
+      return null;
+  }
+}
+
+/**
+ * 模型单元准入判定（纯函数）：admitted_slice_id 必须解析到一个 active 切片，
+ * 且切片的 task kind / 响应类 / 模型版本与本次执行一致。上下文缺省 = 登记处
+ * 未接线，全部模型单元扣留（YUK-1496 C2 之前的行为）。
+ */
+function checkModelUnitAdmission(
+  unit: ScoringUnitT,
+  executor: Extract<
+    PublishedQuestionRevisionT['execution_plan']['assignments'][number]['executor'],
+    { kind: 'model_executor' }
+  >,
+  admission: ModelAdmissionContext | undefined,
+): string | null {
+  if (executor.admitted_slice_id === null) {
+    return `model_executor slice unadmitted (task ${executor.task_kind})`;
+  }
+  if (admission === undefined) {
+    return `no authoritative model admission for task ${executor.task_kind}, slice ${executor.admitted_slice_id}`;
+  }
+  const slice = admission.slices.get(executor.admitted_slice_id);
+  if (slice === undefined) {
+    return `admitted_slice_id '${executor.admitted_slice_id}' does not resolve to an active slice`;
+  }
+  if (slice.task_kind !== executor.task_kind) {
+    return `slice '${slice.slice_id}' is admitted for task '${slice.task_kind}', not '${executor.task_kind}'`;
+  }
+  const responseClass = modelResponseClassForUnit(unit);
+  if (responseClass === null) {
+    return `criterion '${unit.criterion.kind}' is deterministic-comparator territory, not model-servable`;
+  }
+  if (slice.response_class !== responseClass) {
+    return `slice '${slice.slice_id}' covers response class '${slice.response_class}', not '${responseClass}'`;
+  }
+  const pin = admission.current_models.get(executor.task_kind);
+  if (pin === undefined) {
+    return `no current model pin for task '${executor.task_kind}'`;
+  }
+  if (pin.model !== slice.model || pin.model_version !== slice.model_version) {
+    return `slice '${slice.slice_id}' was admitted for ${slice.model}@${slice.model_version}; current pin is ${pin.model}@${pin.model_version} — re-admission required`;
+  }
+  return null;
+}
+
 /**
  * 网页作答面已有输入控件的槽位种类（YUK-1496）。没有控件的题后端判得了也不发，
  * 避免「题出了却没有输入框」。界面线落地某类输入积木时在同一 PR 把它加进来。
@@ -49,6 +137,7 @@ export const INPUT_RENDERER_SLOT_KINDS: ReadonlySet<ResponseSlotT['kind']> = new
 export function decideAutomaticServing(
   revision: PublishedQuestionRevisionT,
   selectedPartIds: readonly string[],
+  admission?: ModelAdmissionContext,
 ): AutomaticServingDecision {
   const scoringIssues = validateScoringBasis(
     revision.scoring_basis,
@@ -136,14 +225,18 @@ export function decideAutomaticServing(
       };
     }
     if (executor.kind === 'model_executor') {
-      // Production has typed Jev/Pi runners but no authoritative slice-to-task/
-      // criterion admission registry. A nonnull string is not execution authority.
-      // Keep existing evaluation/recovery checks; do not invent serving admission.
-      return {
-        kind: 'unavailable',
-        reason: 'model_admission_unavailable',
-        detail: `no authoritative model admission for task ${executor.task_kind}, slice ${executor.admitted_slice_id ?? 'null'}`,
-      };
+      // YUK-1496 C2：模型单元只在 admitted_slice_id 解析到 active 切片且
+      // task kind / 响应类 / 模型版本三者一致时放行；登记处未接线（无
+      // admission 上下文）时维持旧行为 —— 全部扣留，绝不发明准入。
+      const admissionIssue = checkModelUnitAdmission(unit, executor, admission);
+      if (admissionIssue !== null) {
+        return {
+          kind: 'unavailable',
+          reason: 'model_admission_unavailable',
+          detail: admissionIssue,
+        };
+      }
+      continue;
     }
     const slots = revision.response_spec.slots.filter(
       (slot) => selected.has(slot.part_id) && unit.slot_refs.includes(slot.slot_id),
