@@ -80,7 +80,7 @@ Presentation = {
 - **entry**：代码资产定义的一个全局函数名（非空 JS 标识符，≤64 字符）。宿主在沙箱内调 `globalThis[entry](port)`；port 只能为 `binds` 内的槽位交出作答条目。
 - **输出**：只能通过宿主发出与 1.2 相同的作答信封，宿主再按 universe 校验。不返回分数，不查判分。
 - **binds**：一个自定义块可以绑定多个作答位。每个作答位仍然只被一个积木绑定。
-- **禁序（v2）**：代码含 `</script`（不分大小写）或 `<!--` 会提前终止外层 script —— 发布 barrier 读字节后拒绝（`custom_code_forbidden_sequence`），界面侧同样拒绝加载。
+- **禁序（v2，N4 补充）**：代码含 `</script`（不分大小写）、`<!--` 或 NUL 字节（\u0000）会提前终止/破坏外层 script —— 发布 barrier 读字节后拒绝（`custom_code_forbidden_sequence`，detail 点名命中的序列），界面侧同样拒绝加载。
 - **frame_height_px（v2）**：可选整数，120 ≤ 值 ≤ 720；缺省 UI 取 320。高度只来自块声明，iframe 自身永远改不了它。
 - **校验分工**：纯校验在 `validatePresentation`（`custom_contract_unsupported` / `custom_asset_digest_invalid` / `custom_asset_unverified` / `custom_asset_not_content_addressed` / `custom_entry_invalid` / `custom_binds_empty` / `custom_frame_height_invalid`，加既有 bind 规则：槽存在、response_class 相符、unit 含该槽、覆盖恰一次）；DB + 字节校验在 `publishQuestionGroup` 的 presentation barrier（资产行存在、sha256 与 digest 相符、mime、大小、字节可读且实测 sha256 相符、禁序扫描；字节读取经调用方注入的 `readAssetBytes`（既有 R2 client），含 custom 块而未供 reader 时 fail-closed 拒发），任一失败整组不能发布。
 - 隔离方式（iframe 或 Worker）由界面线选定。

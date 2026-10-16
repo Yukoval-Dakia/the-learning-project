@@ -183,7 +183,8 @@ export type CustomBlockT = {
  *     沙箱内调 globalThis[entry](port)，port 只能为 binds 内槽位交作答条目。
  *   - 代码资产限制在 DB 侧执行（source_asset 行上）：mime ∈
  *     CUSTOM_ASSET_MIME_TYPES，byte_size ≤ CUSTOM_ASSET_MAX_BYTES（256 KiB）；
- *     字节内容另扫描禁序（findCustomCodeForbiddenSequence，发布 barrier 读字节后调）。
+ *     字节内容另扫描禁序（findCustomCodeForbiddenSequence：`</script`、
+ *     `<!--`、NUL 字节；发布 barrier 读字节后调）。
  */
 export const CUSTOM_ASSET_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/;
 export const CUSTOM_ENTRY_PATTERN = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
@@ -204,23 +205,27 @@ export function customAssetIdForDigest(digest: string): string | null {
 }
 
 /**
- * §1.3 v2 禁序扫描（纯函数）：代码里出现 `</script`（不分大小写）或 `<!--`
- * 会提前终止外层 script，发布 barrier 读到字节后必须拒绝
- * （custom_code_forbidden_sequence）。返回首个命中，干净代码返回 null。
+ * §1.3 v2 禁序扫描（纯函数）：代码里出现 `</script`（不分大小写）、`<!--`
+ * 或 NUL 字节（\u0000）会提前终止/破坏外层 script —— 发布 barrier 读到字节
+ * 后必须拒绝（custom_code_forbidden_sequence，detail 点名命中的序列）。
+ * 返回最早命中（sequence 是可打印标签，NUL 显示为 'NUL (U+0000)'），
+ * 干净代码返回 null。
  */
 export function findCustomCodeForbiddenSequence(code: string): {
   sequence: string;
   index: number;
 } | null {
+  const candidates: Array<{ sequence: string; index: number }> = [];
   const scriptIndex = code.toLowerCase().indexOf('</script');
+  if (scriptIndex !== -1) candidates.push({ sequence: '</script', index: scriptIndex });
   const commentIndex = code.indexOf('<!--');
-  if (scriptIndex === -1) {
-    return commentIndex === -1 ? null : { sequence: '<!--', index: commentIndex };
-  }
-  if (commentIndex === -1 || scriptIndex <= commentIndex) {
-    return { sequence: '</script', index: scriptIndex };
-  }
-  return { sequence: '<!--', index: commentIndex };
+  if (commentIndex !== -1) candidates.push({ sequence: '<!--', index: commentIndex });
+  const nulIndex = code.indexOf('\u0000');
+  if (nulIndex !== -1) candidates.push({ sequence: 'NUL (U+0000)', index: nulIndex });
+  if (candidates.length === 0) return null;
+  return candidates.reduce((earliest, candidate) =>
+    candidate.index < earliest.index ? candidate : earliest,
+  );
 }
 
 /** 积木全集（discriminated on `kind`；kind 白名单即此 union，spec §3 规则 6）。 */
