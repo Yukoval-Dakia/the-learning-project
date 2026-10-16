@@ -264,9 +264,9 @@ export function PracticeSolo({
   };
   // YUK-562 — 「写思路」 starts folded.
   const [showTrace, setShowTrace] = useState(false);
-  // The bar's 拍照/附件 control says when an upload is under way.
-  const [uploading, setUploading] = useState(false);
   const [zoomed, setZoomed] = useState<MaterialView | null>(null);
+  // While a layer covers the page (hint drawer, figure zoom), ⌘Enter and the number keys pause.
+  const hotkeysSuspended = coachOpen || zoomed !== null;
   const [pane, setPane] = useState<'passage' | 'questions'>('questions');
   const quoteSel = useQuotableSelection();
   const [shellTop, shellBottom] = useSyncExternalStore(
@@ -287,7 +287,7 @@ export function PracticeSolo({
       onBack,
       onCommittedBack,
       addToast,
-      hotkeysSuspended: coachOpen,
+      hotkeysSuspended,
     });
   const q = question.data;
   const notation = q?.notation ?? null;
@@ -460,7 +460,7 @@ export function PracticeSolo({
             frozen.response_spec.slots.length === 1 &&
             draft.isChoice &&
             phase === 'answering' &&
-            !coachOpen
+            !hotkeysSuspended
           }
           ariaLabel={slot.placement?.label ?? '作答'}
         />
@@ -568,10 +568,7 @@ export function PracticeSolo({
           attachments={draft.evidence}
           onAttachmentsChange={draft.updateEvidence}
           disabled={answerLocked}
-          onUploadingChange={(busy) => {
-            setUploading(busy);
-            draft.setUploading(busy);
-          }}
+          onUploadingChange={draft.setUploading}
           inputId={id('attach')}
           showAddButton={false}
         />
@@ -635,11 +632,11 @@ export function PracticeSolo({
           <Button
             variant="quiet"
             size="sm"
-            disabled={answerLocked || uploading}
+            disabled={answerLocked || draft.uploading}
             onClick={() => document.getElementById(id('attach'))?.click()}
           >
             <Camera size={15} aria-hidden="true" />
-            {uploading ? '上传中…' : '拍照/附件'}
+            {draft.uploading ? '上传中…' : '拍照/附件'}
           </Button>
           {offerTrace && (
             <Button

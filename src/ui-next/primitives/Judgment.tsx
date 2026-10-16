@@ -38,7 +38,7 @@ function Mark({ tone }: { tone: ChipTone }) {
 /**
  * Submit → result in one place (R3, in the spirit of C3). The line opens its own space when it
  * first appears, shows "正在核对" with a running line, then settles in place: the chip takes the
- * result's tone, the mark draws, and the explanation opens below. Announced politely.
+ * result's tone, the mark draws, and the explanation opens below. The host page owns the live region that announces it (one announcement, not two).
  * Judging and explaining stay separate: `label` is the check, `children` the explanation.
  */
 export function Judgment({
@@ -53,7 +53,7 @@ export function Judgment({
   return (
     <div id={id} className="un-judgment" data-phase={phase} data-tone={settled ? tone : 'neutral'}>
       <div className="un-judgment-inner">
-        <p className="un-judgment-line" role="status">
+        <p className="un-judgment-line">
           <span className="un-judgment-chip">
             {settled ? (
               <Mark tone={tone} />

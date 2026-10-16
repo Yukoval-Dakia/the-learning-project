@@ -1184,6 +1184,7 @@ export function usePracticeSubmit({
       isChoice,
       updateResponse: updateNativeResponse,
       updateEvidence,
+      uploading,
       setUploading,
       autosave,
     },
