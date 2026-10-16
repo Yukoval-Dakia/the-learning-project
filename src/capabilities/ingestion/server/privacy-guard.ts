@@ -89,7 +89,7 @@ const RULES: RedactionRule[] = [
   {
     field: 'phone',
     pattern:
-      /((?:手机号?码?|电话号码?|联系电话|联系方式|家长电话|热线|Tel|tel|TEL)\s*(?:是)?\s*[:：]?\s*)\+?\d[\d\s-]{5,19}\d/g,
+      /((?:手机号?码?|电话号?码?|联系电话|联系方式|家长电话|热线|Tel|tel|TEL)\s*(?:是)?\s*[:：]?\s*)\+?\d[\d\s-]{5,19}\d/g,
   },
   // Chinese 18-digit resident ID (final char may be X). Format-strong.
   { field: 'id_number', pattern: /(?<![\dA-Za-z])\d{17}[\dXx](?![\dA-Za-z])/g },
