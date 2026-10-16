@@ -463,6 +463,15 @@ function validateSelectSlot(slot: SelectSlotT): ResponseSpecIssue[] {
   }
   const axes = slot.axes ?? {};
   const axisNames = Object.keys(axes);
+  for (const axis of axisNames) {
+    const ids = (axes[axis] ?? []).map((entry) => entry.id);
+    if (new Set(ids).size !== ids.length) {
+      issues.push({
+        code: 'select_coordinate_invalid',
+        detail: `slot '${slot.slot_id}' axis '${axis}' repeats an entry id`,
+      });
+    }
+  }
   if (relational > 0) {
     const seenTuples = new Set<string>();
     for (const item of slot.items) {

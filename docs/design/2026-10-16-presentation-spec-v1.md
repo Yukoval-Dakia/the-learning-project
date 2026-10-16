@@ -54,6 +54,8 @@ Presentation = {
 - 界面只为 universe 里**声明过**的字缝 item 渲染点选位，不自己枚举全部字缝。
 - 声明的字缝必须落在字素簇边界上；组合字符、emoji 内部不能是字缝。这一条由后端绑定校验拒绝。
 
+- 文本含换行 `\n` 时：紧跟在 `\n` 之后的字缝不合法，它和换行前的那个字缝表示同一个位置，会产生歧义，后端拒绝。行末断句用 `\n` 之前的字缝，界面把它画在行尾。
+
 **ordering 的关系表达。**
 - 每个可放置的 `(position, object)` 组合是一个 item，可以是全积，也可以是子集。
 - 「一个位置一个对象、一个对象一个位置」写成 `at_most_per_coordinate: {position: 1, object: 1}`。
@@ -75,6 +77,15 @@ Presentation = {
 - **binds**：一个自定义块可以绑定多个作答位。每个作答位仍然只被一个积木绑定。
 - 隔离方式（iframe 或 Worker）由界面线选定。
 
+### 1.2.2 界面行为约定（10-16 裁决）
+
+- **冲突处理**：ordering 里把已放置的对象移到新位置，直接移动，不弹确认。matching 按 R10，先提示占用，再给「改配给 X」。两者不同是有意的。
+- **判后对错**：点选积木（option_list / matching_columns / break_tap / ordering）提交后不在积木上着色，按 R10 执行。结果只在题目层面用现有反馈显示，比如徽标、得分和揭示的答案。积木可以留着可选的 `outcome` 参数，做题页不传。
+- **blank 留空**：没有单独的「我留空」按钮。网页提交整题时，空字符串的 blank 交 `state: 'blank'`，和现有文本槽的空串语义一致。自动保存草稿时，空字符串不写条目。`unknown` 只由回收侧产生。
+- **max_chars / format:'math'**：`max_chars` 只显示计数，不阻止输入和提交。`format: 'math'` 在输入框下方用现有 KaTeX 渲染做预览。
+- **读屏名称**：不用 `label_md` 的源码当 aria-label。可访问名称来自渲染后的内容，KaTeX 输出带 MathML，后端不另给纯文本字段。
+- **积木的读屏标签**：由适配层拼成三段：所绑 part 的 `question_no`（如「(2)」），加槽的 `placement.label`（有就加），加积木种类名（选项 / 配对 / 断句 / 排序 / 填空 / 作答区）。
+
 ## 2. 作答信封（网页与 PDF 相同）
 
 作答就是现有 ResponseSet 的条目，定义在 `src/core/schema/assessment/response.ts`：
@@ -85,7 +96,9 @@ Presentation = {
 { slot_id, kind: 'open',   text_md, evidence: EvidenceAttachment[] }   // free
 ```
 
-- `blank` 表示学生主动留空，此时内容必须为空。`unknown` 表示拍照或作答卷上看不清，只由回收侧使用，网页不产生。没有条目表示未作答。
+- `blank` 表示学生主动留空，此时内容必须为空。网页「提交整题」时，每个绑定了但空着的作答位都交 `blank`（见 §1.2.2）。
+- `unknown` 表示拍照或作答卷上看不清，只由回收侧使用。网页提交入口会拒收 `unknown`。
+- 没有条目表示未作答，只出现在三种情况：草稿、回收侧没读到某一空、部分发题。
 - 重复或不在 universe 里的 id 是协议错误，提交会被拒绝。选多、选错是有效作答，交给给分规则处理。
 - 一对一配对等结构约束由槽上的 `at_most_per_coordinate` 声明，提交时校验。
 - 同一道题换一种布局（例如 option_list 从 vertical 改成 grid，或断句放进 passage_layout 与否），交出的信封完全相同，判分也相同。
@@ -97,7 +110,7 @@ Presentation = {
 3. `bind.unit_id` 是一个计分单元，且该单元的 `slot_refs` 包含 `bind.slot_id`。
 4. 输入积木种类与槽形态相容，见 1.2 表的「对槽的要求」。
 5. `part_ref` / `material_ref` 都能解析；figure 材料是已核验的公开材料。
-6. block_id 唯一；kind 在白名单内；`renderer_contract` 是受支持的版本。break_tap 绑定的字缝都在字素簇边界上（`Intl.Segmenter`）。
+6. block_id 唯一；kind 在白名单内；`renderer_contract` 是受支持的版本。break_tap 绑定的字缝都在字素簇边界上（`Intl.Segmenter`），且不紧跟在 `\n` 之后。
 7. 不合格就不能发布。旧 revision 没有 presentation，继续用现有的逐槽渲染。
 
 公开投影：issuance 只出它发出的 parts。积木树里引用未发出 part 或单元的分支整枝去掉。presentation 只含引用，不需要另做脱敏。

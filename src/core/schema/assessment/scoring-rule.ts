@@ -71,15 +71,19 @@ export const RuleOutcome = z.union([
 ]);
 export type RuleOutcomeT = z.infer<typeof RuleOutcome>;
 
-export const ScoringRule = z.object({
-  version: z.literal(1),
-  /** 印刷原文与来源定位；只作核验依据，判分时绝不解析。 */
-  source: z
-    .object({ statement: z.string().min(1), locator: z.string().min(1).optional() })
-    .optional(),
-  cases: z.array(z.object({ when: RuleCondition, award: RuleOutcome })).default([]),
-  otherwise: RuleOutcome,
-});
+// 全部 strict：误写的键（如把 cases 写成 case）必须报错，不能被静默剥离后只剩 otherwise。
+export const ScoringRule = z
+  .object({
+    version: z.literal(1),
+    /** 印刷原文与来源定位；只作核验依据，判分时绝不解析。 */
+    source: z
+      .object({ statement: z.string().min(1), locator: z.string().min(1).optional() })
+      .strict()
+      .optional(),
+    cases: z.array(z.object({ when: RuleCondition, award: RuleOutcome }).strict()).default([]),
+    otherwise: RuleOutcome,
+  })
+  .strict();
 export type ScoringRuleT = z.infer<typeof ScoringRule>;
 
 // ---------- 求值 ----------
@@ -133,8 +137,17 @@ function matches(condition: RuleConditionT, facts: RuleFacts): boolean {
   );
 }
 
+/**
+ * 卷面分值是十进制小数（0.5、0.1……）。乘加后按 1e-9 取整，避免 3×0.1 得出
+ * 0.30000000000000004 而被聚合当成超过满分（发布校验用同一取整）。
+ */
+function roundAward(value: number): number {
+  return Math.round(value * 1e9) / 1e9;
+}
+
 function capped(value: number, cap: number | undefined): number {
-  return cap == null ? value : Math.min(value, cap);
+  const rounded = roundAward(value);
+  return cap == null ? rounded : Math.min(rounded, cap);
 }
 
 function applyOutcome(outcome: RuleOutcomeT, facts: RuleFacts, ref: RuleCaseRef): RuleResult {

@@ -44,12 +44,15 @@ import { eq, inArray } from 'drizzle-orm';
 import type {
   AdmissionEvidenceT,
   ExecutionPlanT,
+  PresentationT,
   QuestionGroupStructureT,
   ResponseSpecT,
   ScoringBasisT,
 } from '@/core/schema/assessment';
 import {
+  Presentation,
   validateExecutionPlan,
+  validatePresentation,
   validateResponseSpec,
   validateScoringBasis,
   validateStructure,
@@ -121,6 +124,12 @@ export interface PublishQuestionGroupInput {
     response_spec: ResponseSpecT;
     scoring_basis: ScoringBasisT;
     execution_plan: ExecutionPlanT;
+    /**
+     * YUK-1497 — 冻结公开展示层（可选）。含此层时：① 必须过 zod 形状门 +
+     * validatePresentation（与其他契约校验同一道 barrier，不合格即拒发）；
+     * ② 计入 integrity_digest（缺省不计 —— 旧 digest 不变）。
+     */
+    presentation?: PresentationT;
     integrity_digest: string;
   };
   /** REQUIRED null-or-id CAS：null = 期望尚无发布；id = 期望替换的当前版本。 */
@@ -524,6 +533,32 @@ export async function publishQuestionGroup(
         `publishQuestionGroup: execution_plan invalid: ${planIssues.map((i) => i.code).join(',')}`,
       );
     }
+    // YUK-1497 —— 展示层绑定校验：与其他契约校验同一道 barrier（spec §3.7：
+    // 不合格就不能发布）。先过 zod 形状门（防信任类型直穿），再校验绑定。
+    if (contract.presentation != null) {
+      const shaped = Presentation.safeParse(contract.presentation);
+      if (!shaped.success) {
+        throw new Error(
+          `publishQuestionGroup: presentation malformed: ${shaped.error.issues
+            .slice(0, 5)
+            .map((issue) => `${issue.path.join('.')}:${issue.message}`)
+            .join('; ')}`,
+        );
+      }
+      const presentationIssues = validatePresentation(
+        shaped.data,
+        contract.structure,
+        contract.response_spec,
+        contract.scoring_basis,
+      );
+      if (presentationIssues.length > 0) {
+        throw new Error(
+          `publishQuestionGroup: presentation invalid: ${presentationIssues
+            .map((issue) => `${issue.code}(${issue.detail})`)
+            .join('; ')}`,
+        );
+      }
+    }
 
     // 组级串行化：锁根 question 行（发布与编辑同一锁序 question → lifecycle）。
     const [root] = await tx
@@ -693,6 +728,8 @@ export async function publishQuestionGroup(
       response_spec: contract.response_spec,
       scoring_basis: contract.scoring_basis,
       execution_plan: contract.execution_plan,
+      // YUK-1497 —— 冻结展示层随 revision 版本化（缺省 NULL）。
+      presentation: (contract.presentation as never) ?? null,
       supersedes_revision_id: currentRevisionId,
       availability: input.availability,
       published_by: (input.publishedBy as never) ?? null,

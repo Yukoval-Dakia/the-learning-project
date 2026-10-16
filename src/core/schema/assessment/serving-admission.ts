@@ -2,6 +2,7 @@ import { unit as parseUnit } from 'mathjs';
 import { EvaluationContractError, projectIssuedScoringBasis } from './evaluation';
 import { validateExecutionPlan } from './execution';
 import { isPublicSharedMaterial } from './materials';
+import { validatePresentation } from './presentation';
 import type { ResponseSlotT } from './response';
 import type { PublishedQuestionRevisionT } from './revision';
 import { validateScoringBasis } from './scoring';
@@ -19,6 +20,7 @@ export const SERVING_UNAVAILABLE_REASONS = [
   'unsupported_deterministic_input',
   'missing_referenced_figure',
   'no_input_renderer',
+  'invalid_presentation',
 ] as const;
 export type ServingUnavailableReason = (typeof SERVING_UNAVAILABLE_REASONS)[number];
 
@@ -115,6 +117,25 @@ export function decideAutomaticServing(
       reason: 'invalid_scoring_contract',
       detail: 'a selected answer slot has no scoring unit',
     };
+  }
+  // YUK-1497 —— 冻结展示层对发出范围校验失败 ⇒ 不可出（发布 barrier 已拒
+  // 全量不合格，这里抓剪枝后缺口（如自定义块跨发出/未发出 part）与被绕过
+  // barrier 写入的行）。无展示层的旧 revision 不受影响。
+  if (revision.presentation != null) {
+    const presentationIssues = validatePresentation(
+      revision.presentation,
+      revision.structure,
+      revision.response_spec,
+      revision.scoring_basis,
+      selectedPartIds,
+    );
+    if (presentationIssues.length > 0) {
+      return {
+        kind: 'unavailable',
+        reason: 'invalid_presentation',
+        detail: presentationIssues.map((issue) => `${issue.code}: ${issue.detail}`).join('; '),
+      };
+    }
   }
   for (const unit of basis.units) {
     const executor = revision.execution_plan.assignments.find((assignment) =>
