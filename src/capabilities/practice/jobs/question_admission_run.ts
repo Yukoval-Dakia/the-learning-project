@@ -27,6 +27,7 @@ import {
 import { ApiError } from '@/kernel/http';
 import {
   type PartRow,
+  contractIntegrityDigest,
   normalizeQuestionGroupToContract,
 } from '@/kernel/records/assessment-normalization';
 import { resolveSubjectProfile } from '@/subjects/profile';
@@ -310,9 +311,19 @@ export async function runAdmissionForQuestion(
       const verifierContext = batch.input.solver2
         ? 'independent_model'
         : 'same_model_isolated_context';
+      // Admission changes scoring, never erases the frozen presentation from main #1737.
+      const contract =
+        admitted && result.resolved
+          ? {
+              ...result.resolved,
+              ...(batch.input.contract.presentation
+                ? { presentation: batch.input.contract.presentation }
+                : {}),
+            }
+          : batch.input.contract;
       const persisted = await publishQuestionGroup(tx, {
         group_id: rootId,
-        contract: admitted && result.resolved ? result.resolved : batch.input.contract,
+        contract: { ...contract, integrity_digest: contractIntegrityDigest(contract) },
         expectedCurrentRevision: batch.input.revision_id,
         expectedAdmissionGeneration: lifecycle?.scoring_admission_generation ?? null,
         availability:

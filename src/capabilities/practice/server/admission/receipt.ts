@@ -5,6 +5,7 @@ import {
   paidEffectJsonEquals,
 } from '@/core/migration/paid-effect-protocol';
 import { ExecutionPlan } from '@/core/schema/assessment/execution';
+import { Presentation } from '@/core/schema/assessment/presentation';
 import { ResponseSpec } from '@/core/schema/assessment/response';
 import { ScoringBasis } from '@/core/schema/assessment/scoring';
 import { QuestionGroupStructure } from '@/core/schema/assessment/structure';
@@ -21,6 +22,7 @@ const Contract = z.object({
   scoring_basis: ScoringBasis,
   execution_plan: ExecutionPlan,
   integrity_digest: z.string().min(1),
+  presentation: Presentation.optional(),
 });
 export const FrozenAdmissionInput = z.object({
   version: z.literal(1),
