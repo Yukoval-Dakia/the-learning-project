@@ -107,8 +107,9 @@
 // response_class × task_kind × model@version) with holdout evidence refs. Admission
 // evidence is authored truth, not derivable operational state; it must survive
 // restore or every AI-grader serving gate silently re-denies. 72 → 73 tables,
-// 4.26 → 4.27.
-export const SCHEMA_VERSION = '4.27';
+// 4.26 → 4.28. 4.27 / migration 0121 are reserved by #1773 (worksheet export),
+// which merges first; this branch takes the next backup version and 0122.
+export const SCHEMA_VERSION = '4.28';
 
 export const SUBSCRIPTION_PROGRESS_TABLES = [
   'event_subscription_checkpoint',
@@ -334,7 +335,8 @@ export const FK_ORDER = [
   // 「哪个判分切片被放行」的来由，非瞬态非派生 → FK_ORDER 非 BACKUP_EXCLUDED。
   // 无 enforced FK（loose text-ref 惯例），位置不受 PG FK 约束；置于末尾附近
   // （provider_attempt 仍保持最后——其注释承诺 remains last，paid-effect 二元组
-  // 亦不可拆）。NEW FK_ORDER table 必 bump：72 → 73 tables，4.26 → 4.27。
+  // 亦不可拆）。NEW FK_ORDER table 必 bump：72 → 73 tables，4.26 → 4.28
+  // （4.27 留给 #1773 worksheet export）。
   'model_admission_slice',
   // No hard FK: restore owning backend/generation before its immutable effects.
   // Missing either table would turn an unknown paid outcome into bootstrap state.

@@ -3,7 +3,7 @@
 // ADR-0073 D2 模型级准入、stage1 G3「已准入判分切片，出题门能认」）
 // ====================================================================
 //
-// 权威记录 = model_admission_slice 表（migration 0121）。本模块提供：
+// 权威记录 = model_admission_slice 表（migration 0122）。本模块提供：
 //   - resolveModelAdmissionContext：服务门读面 —— active 切片 + 当前模型
 //     pin，供 decideAutomaticServing 的 model 分支（纯函数）消费；
 //   - registerModelAdmissionSlice：显式注册（admin/worker），携带留出题实测
