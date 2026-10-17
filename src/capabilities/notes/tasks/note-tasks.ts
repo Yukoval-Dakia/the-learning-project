@@ -4,6 +4,7 @@ import { bodyBlocksToNoteSections } from '@/capabilities/notes/server/body-block
 import { materializeGeneratedBodyBlocks } from '@/capabilities/notes/server/generated-body-blocks';
 import { ArtifactBodyBlocks, NoteVerificationResult } from '@/core/schema/business';
 import type { SubjectProfile } from '@/subjects/profile';
+import { compileNoteGenerateDocument } from './note-generate-document';
 
 export const NoteGenerateOutputSchema = z.object({
   body_blocks: ArtifactBodyBlocks,
@@ -29,28 +30,28 @@ export interface ParsedNoteGenerateOutput {
   sections_count: number;
 }
 
-export function parseNoteGenerateOutput(text: string): ParsedNoteGenerateOutput {
-  const json = parseJsonObject(text, 'parseNoteGenerateOutput');
-  const bodyBlocksParsed = NoteGenerateOutputSchema.safeParse(json);
-  if (bodyBlocksParsed.success) {
-    const bodyBlocks = materializeGeneratedBodyBlocks(bodyBlocksParsed.data.body_blocks);
-    if (bodyBlocks.content.length === 0) {
-      throw new Error(
-        'parseNoteGenerateOutput: body_blocks.content must contain at least one block',
-      );
-    }
-    return {
-      body_blocks: bodyBlocks,
-      blocks_count: bodyBlocks.content.length,
-      sections_count: bodyBlocksToNoteSections(bodyBlocks).length,
-    };
+export function parseNoteGenerateOutput(
+  text: string,
+  artifactType?: string,
+): ParsedNoteGenerateOutput {
+  const compiled = compileNoteGenerateDocument(text, artifactType);
+  const bodyBlocksParsed = NoteGenerateOutputSchema.safeParse({ body_blocks: compiled });
+  if (!bodyBlocksParsed.success) {
+    throw new Error(
+      `parseNoteGenerateOutput: schema invalid: body_blocks=${bodyBlocksParsed.error.issues
+        .map((issue) => issue.message)
+        .join('; ')}`,
+    );
   }
-
-  throw new Error(
-    `parseNoteGenerateOutput: schema invalid: body_blocks=${bodyBlocksParsed.error.issues
-      .map((issue) => issue.message)
-      .join('; ')}`,
-  );
+  const bodyBlocks = materializeGeneratedBodyBlocks(bodyBlocksParsed.data.body_blocks);
+  if (bodyBlocks.content.length === 0) {
+    throw new Error('parseNoteGenerateOutput: body_blocks.content must contain at least one block');
+  }
+  return {
+    body_blocks: bodyBlocks,
+    blocks_count: bodyBlocks.content.length,
+    sections_count: bodyBlocksToNoteSections(bodyBlocks).length,
+  };
 }
 
 export function parseNoteVerificationOutput(text: string): z.infer<typeof NoteVerificationResult> {
@@ -81,26 +82,34 @@ function noteTemplateTable(profile: SubjectProfile): string {
 }
 
 function buildNoteGeneratePrompt(profile: SubjectProfile): string {
-  return `你是${profile.displayName}学习笔记作者。输入 { artifact_id, artifact_type, title, atomic_title, one_line_intent, knowledge_node: { id, name, domain }, knowledge_nodes: [...], parent_hub: { title, summary_md }, related_knowledge_ids: [...] }。${methodologySection(profile)}
-artifact_type 只能是 note_atomic / note_long / note_hub；这是同一个 NoteGenerateTask 内的 type switch。
-严格 JSON 输出（不带 markdown 代码块包裹）：
-{"body_blocks":{"type":"doc","content":[...]}}
+  return `你是${profile.displayName}学习笔记作者。输入 { artifact_id, artifact_type, title, atomic_title, one_line_intent, knowledge_node: { id, name, domain }, knowledge_nodes: [...], parent_hub: { title, summary_md }, related_knowledge_ids: [...], reference_artifacts: [...] }。${methodologySection(profile)}
+artifact_type 只能是 note_atomic / note_long / note_hub。
 
-按 artifact_type 生成 TipTap / ProseMirror JSON body_blocks：
-- note_atomic：至少 5 个 semanticBlock，每种 attrs.semantic_kind 至少 1 个：definition / mechanism / example / pitfall / check。每块正文只写在 content 的 PM 节点中，attrs 只需 semantic_kind。
-- note_long：自由 block tree，可用 heading / paragraph / bulletList / calloutBlock / crossLinkBlock，综合 knowledge_nodes，不强制 semantic_kind。
-- note_hub：短 outline + 主题路线，可加入 crossLinkBlock 串起 atomic / long；不要假装是单知识点 atomic。
+只输出一份 NOTE v1 内容文档。不要输出 JSON，不要输出 TipTap / ProseMirror，不要用 markdown 代码围栏包住整篇。语言规则里提到的 JSON 字段名不是本任务的输出格式。
+公式用 $...$ 或单独占行的 $$；LaTeX 反斜杠只写一个，例如 $\\frac{x^2}{a^2}$，不要写成 JSON 转义。引号用「」或英文双引号，原文照写。
 
-正文使用 text 节点，强调使用 marks，列表保留嵌套结构。reference_artifacts 是服务端提供的真实引用目录：crossLinkBlock 的 artifact_id 必须来自该目录；block_id 只能选对应 blocks 中的 id，也可以省略。目录可能包含尚未生成正文的笔记；只链接，不推断其内容。没有合适目标时省略链接。
-正文块使用 paragraph、heading、bulletList/orderedList/listItem、blockquote、codeBlock、calloutBlock、semanticBlock；行内使用 text/hardBreak 与 bold/italic/code/strike/link marks。数学公式保留为 text 中的原文。autoLinksContainer 由系统维护。
-服务端生成 block id、source_tier、user_verified、version、embedded_check。省略这些元数据和 source_markdown，正文只输出一份。
-JSON 字符串中的双引号、反斜杠与换行必须按 JSON 规则转义；普通引文可用「」避免额外转义。
+格式（标记必须独占一行）：
+NOTE v1
+@type <与输入 artifact_type 完全相同>
+
+note_atomic 必须包含这五段，顺序不限，每段都要有正文：
+@definition
+@mechanism
+@example
+@pitfall
+@check
+
+note_long 与 note_hub 用一段自由正文，不要假装成单知识点 atomic：
+@body
+
+段内可用 # 标题、空行分段、- 或 1. 列表、> 引用、三个反引号代码块。强调可用 **粗体**、_斜体_、\`代码\`。交叉链接必须单独成行，且只能使用 reference_artifacts 里的 id：[[artifact:<artifact_id>]] 或 [[artifact:<artifact_id>#<block_id>|<标题>]]。目录里可以有尚未写正文的笔记；只链接，不推断其内容。没有合适目标就不要写链接，不要编造 id。
+服务端负责 block id、source_tier、user_verified、version、embedded_check、source_markdown。不要输出这些字段，也不要输出 autoLinksContainer。
 
 per-subject semantic_kind 内容模板（definition/mechanism/example/pitfall/check 五维，领域规范见 note skill）：
 
 ${noteTemplateTable(profile)}
 
-- block content 用 paragraph / list 等 PM JSON 节点，不嵌 HTML / 不带代码块包裹
+- 正文写给人读的段落和列表，不嵌 HTML，不用代码围栏包住整篇
 - ${profile.promptFragments.noteExamplePolicy}
 - ${profile.grounding.uncertaintyPolicy}
 - 禁止：套话、营销话语、emoji / 颜文字`;
@@ -132,7 +141,7 @@ export const noteGenerateTaskSpec = {
     prompt: { kind: 'profile', build: buildNoteGeneratePrompt },
   },
   outputSchema: NoteGenerateOutputSchema,
-  parseText: parseNoteGenerateOutput,
+  parseText: (text) => parseNoteGenerateOutput(text),
 } satisfies TaskSpec<unknown, ParsedNoteGenerateOutput>;
 
 export const noteVerifyTaskSpec = {

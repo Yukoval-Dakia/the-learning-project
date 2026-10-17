@@ -1,0 +1,25 @@
+NOTE v1
+@type note_atomic
+
+@definition
+椭圆是平面内到两焦点距离之和为常数 $2a$（$2a>2c$）的点的轨迹。标准方程 $\frac{x^2}{a^2}+\frac{y^2}{b^2}=1$（$a>b>0$），且 $c=\sqrt{a^2-b^2}$。把定义写成"距离之和为 $a$"是错的。
+
+@mechanism
+由 $a^2=b^2+c^2$ 得离心率 $e=\frac{c}{a}=\sqrt{1-\frac{b^2}{a^2}}$。
+
+- 条件：$a>b>0$
+- 目标：用 $a,b$ 表示 $e$
+- 依据：勾股关系后再开方，取正值
+
+$$
+e=\sqrt{1-\frac{b^2}{a^2}}
+$$
+
+@example
+设 $a=2,b=1$。则 $c=\sqrt{3}$，$e=\frac{\sqrt{3}}{2}$。条件是 $a>b>0$，目标是离心率，每一步都用 $c^2=a^2-b^2$。
+
+@pitfall
+漏掉 $a>b>0$，或把 $\sqrt{a^2-b^2}$ 写成 $a-b$。双曲线是距离之差，不能套椭圆的和。
+
+@check
+若 $e=\frac{\sqrt{3}}{2}$ 且 $a=2$，求 $b$。先写 $c=ae$，再用 $b=\sqrt{a^2-c^2}$。

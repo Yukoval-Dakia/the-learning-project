@@ -244,7 +244,7 @@ export async function runNoteGenerate(
         }
       },
     });
-    const parsed = parseNoteGenerateOutput(result.text);
+    const parsed = parseNoteGenerateOutput(result.text, row.type);
     assertNoteGenerationReferences(parsed.body_blocks, referenceArtifacts);
 
     // W3-C1γ — note_generate is a COMPOUND mutation (body_blocks + generation_status='ready' +

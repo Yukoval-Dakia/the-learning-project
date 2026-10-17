@@ -38,6 +38,7 @@ export const fastTestInclude = [
   'src/capabilities/ingestion/server/docx/route-classify.test.ts',
   'src/capabilities/ingestion/server/image-candidate-accept.unit.test.ts',
   'src/capabilities/notes/jobs/note_verify.control.test.ts',
+  'src/capabilities/notes/tasks/note-generate-output.unit.test.ts',
   'src/capabilities/observability/api/backup-import.unit.test.ts',
   'src/capabilities/practice/jobs/judge_calibration_sample.test.ts',
   'src/capabilities/practice/server/calibration-sample-durable-operation.test.ts',
