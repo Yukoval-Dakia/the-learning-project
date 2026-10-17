@@ -1337,6 +1337,54 @@
       ]
     },
     {
+      "name": "ingestion-sessions",
+      "item": [
+        {
+          "name": "POST /api/ingestion-sessions/:id/asks/:ask_id/answers",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{ingestionAskIdempotencyKey}}",
+                "description": "必填；同 ask 同 key 同内容重放返回 202 replayed:true，同 key 不同内容返回 409 idempotency_conflict"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/ingestion-sessions/:id/asks/:ask_id/answers",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "ingestion-sessions", ":id", "asks", ":ask_id", "answers"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                },
+                {
+                  "key": "ask_id",
+                  "value": "REPLACE_ask_id"
+                }
+              ]
+            },
+            "description": "回答录入 agent 的 durable ask（YUK-1522 R8）；同 key 同内容幂等重放\n\n**Path vars:** `:id`, `:ask_id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 202 {accepted, replayed}；已终态（已答/超时）→ 409 ask_already_resolved；选项不存在/空文本/超 500 字/kind 不匹配 → 422 对应 code。需 x-internal-token",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"answer\": {\n    \"kind\": \"choice\",\n    \"option_id\": \"keep_together\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
       "name": "issuances",
       "item": [
         {

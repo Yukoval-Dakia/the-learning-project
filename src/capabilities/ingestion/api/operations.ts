@@ -70,6 +70,7 @@ async function validateSessionState(
 
   const allowedStatuses: Record<IngestionOperationRequestParsed['kind'], string[]> = {
     extract: ['uploaded', 'failed'],
+    agent: ['uploaded', 'failed'],
     import: [...Ingestion.IMPORTABLE_SESSION_STATUSES],
     make_paper: ['imported'],
     rescue: ['partial', 'extracted'],
@@ -110,7 +111,27 @@ async function ensureOperationDispatched(
 
     const boss = await getStartedBoss();
     let jobId: string | null = null;
-    if (request.kind === 'extract') {
+    if (request.kind === 'agent') {
+      const rows = await db
+        .select({ status: learning_session.status })
+        .from(learning_session)
+        .where(and(eq(learning_session.id, sessionId), eq(learning_session.type, 'ingestion')))
+        .limit(1);
+      const status = rows[0]?.status;
+      if (!status) throw new ApiError('not_found', `ingestion session ${sessionId} not found`, 404);
+
+      if (status === 'uploaded' || status === 'failed') {
+        ({ jobId } = await Ingestion.enqueueAgentRun({ db, boss, sessionId, operationId }));
+      } else if (
+        !['queued', 'extracting', 'extracted', 'partial', 'reviewed', 'imported'].includes(status)
+      ) {
+        throw new ApiError(
+          'conflict',
+          `ingestion session ${sessionId} cannot resume agent dispatch from status '${status}'`,
+          409,
+        );
+      }
+    } else if (request.kind === 'extract') {
       const rows = await db
         .select({ status: learning_session.status })
         .from(learning_session)
