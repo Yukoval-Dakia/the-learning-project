@@ -129,9 +129,10 @@ export interface IngestionRedactionResult {
   fields: IngestionRedactionField[];
   /**
    * P2 (R1 fix) — mutated-span count per category that fired. NUMBERS ONLY —
-   * the receipt records these so silent degradation (e.g. the docx text lane,
-   * which never text-redacts) shows up as an unexplained zero vs the expected
-   * count. Redacted values are never recorded.
+   * the receipt records these so silent degradation shows up as an
+   * unexplained zero vs the expected count. Every ingestion lane redacts its
+   * extracted text (the docx text lane too, since #1759). Redacted values are
+   * never recorded.
    */
   counts: Partial<Record<IngestionRedactionField, number>>;
 }

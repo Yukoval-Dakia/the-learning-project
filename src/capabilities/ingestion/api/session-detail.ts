@@ -17,6 +17,13 @@ import { resolveDocumentDerivationPolicy } from '@/kernel/read-models/usage-poli
  * read-parse — rather than silently reporting an empty receipt.
  */
 const UsageReceiptPayloadSchema = z.object({
+  engine: z.string().optional(),
+  channels: z
+    .object({
+      page_images: z.enum(['raw', 'none']),
+      extracted_text: z.enum(['redacted', 'none']),
+    })
+    .optional(),
   redacted_fields: z.array(z.string()),
   redaction_counts: z.record(z.string(), z.number()),
 });
@@ -32,6 +39,10 @@ async function readUsageReceipt(sourceDocumentId: string) {
   const payload = UsageReceiptPayloadSchema.parse(receipt.payload);
   return {
     derivation_policy: await resolveDocumentDerivationPolicy(db, sourceDocumentId),
+    // 学习者需要被如实告知「原图是否原样交给了 AI」：拍照 / PDF 的识别引擎
+    // 必须看原图才能识别（page_images:'raw'），只有识别出的文字会先脱敏。
+    engine: payload.engine ?? null,
+    channels: payload.channels ?? null,
     redacted_fields: payload.redacted_fields,
     redaction_counts: payload.redaction_counts,
     recorded_at: receipt.created_at.toISOString(),
