@@ -462,6 +462,9 @@ function PaperVisit({
   const timingMsRef = useRef<Record<string, number>>({});
   const timingSegmentRef = useRef<{ key: string; startedAt: number } | null>(null);
   const submittedDuringAttemptsRef = useRef<Set<string>>(new Set());
+  // YUK-1490 — render mirror of submittedDuringAttemptsRef (handed in by this visit or found
+  // handed in elsewhere): those questions lock like ones submitted before the visit opened.
+  const [submittedHere, setSubmittedHere] = useState<Record<string, true>>({});
   const componentActiveRef = useRef(false);
   // YUK-1488 — per slot, the text of the newest save the server acknowledged (restored drafts
   // count as acknowledged); dropped when the newest save fails. The unmount flush re-sends a
@@ -642,6 +645,8 @@ function PaperVisit({
     // YUK-1490 — held while the slot waits on the conflict choice: a save now would only draw
     // the same 409, or (after a choice) overwrite the version the learner picks.
     if (conflictsRef.current[key]) return Promise.resolve(false);
+    // A question handed in during this visit (here or elsewhere) has no draft left to save.
+    if (submittedDuringAttemptsRef.current.has(key)) return Promise.resolve(true);
     const refs = imageRefs ?? evidenceIdsForSlot(evidenceRef.current, key);
     const seq = (saveSeq.current[key] ?? 0) + 1;
     saveSeq.current[key] = seq;
@@ -909,8 +914,12 @@ function PaperVisit({
       // when its answer differs from this visit's, show the handed-in answer and stop this
       // 交卷 once, so the learner sees it before the paper completes.
       if (slot.slot_state.submission?.submitted) {
-        submittedDuringAttemptsRef.current.add(key);
-        if (!sameResponses(nativePayloadFor(key)?.response_set, assessment.response_set)) {
+        markSubmittedHere(key);
+        const mine = nativePayloadFor(key);
+        if (
+          !sameResponses(mine?.response_set, assessment.response_set) ||
+          !sameEvidence(mine?.group_evidence ?? [], assessment.group_evidence)
+        ) {
           takeHandedInAnswer(key, slot, assessment);
           changedElsewhere.push(index + 1);
           held = true;
@@ -934,6 +943,13 @@ function PaperVisit({
 
   // A slot handed in elsewhere: show the handed-in answer in place of this visit's (kept below
   // the field as the set-aside copy). Its draft is no longer this visit's to write.
+  // A question this visit handed in, or found handed in elsewhere: no draft of it may be written
+  // again (the ref, for every save path), and its fields lock (the state, for render).
+  const markSubmittedHere = (key: string) => {
+    submittedDuringAttemptsRef.current.add(key);
+    setSubmittedHere((m) => (m[key] ? m : { ...m, [key]: true }));
+  };
+
   const takeHandedInAnswer = (key: string, slot: PaperSlot, assessment: SlotAssessment) => {
     if (saveTimers.current[key]) {
       clearTimeout(saveTimers.current[key]);
@@ -951,6 +967,18 @@ function PaperVisit({
     setAnswers((a) => ({ ...a, [key]: text }));
     nativeResponsesRef.current = { ...nativeResponsesRef.current, [key]: assessment.response_set };
     setNativeResponses(nativeResponsesRef.current);
+    // The handed-in attachments, targets included, as this question's attachments.
+    const nextEvidence = adoptServerEvidence(
+      evidenceRef.current,
+      key,
+      assessment.group_evidence,
+      slots.map(slotKey),
+    );
+    evidenceRef.current = nextEvidence;
+    setEvidence(nextEvidence);
+    keptServerTargets.current[key] = Object.fromEntries(
+      assessment.group_evidence.map((item) => [item.evidence.asset.asset_id, item.target]),
+    );
     ackedAnswers.current[key] = text;
     setSaveFailed((f) => (f[key] ? { ...f, [key]: false } : f));
     if (conflictsRef.current[key]) setConflict(key, null);
@@ -1242,9 +1270,10 @@ function PaperVisit({
   const cur = slots[Math.min(pos, slots.length - 1)];
   const curKey = slotKey(cur);
   const isChoice = (cur.question.choices_md?.length ?? 0) > 0;
-  const submittedKeys = new Set(
-    slots.filter((s) => s.slot_state.submission?.submitted).map(slotKey),
-  );
+  const submittedKeys = new Set([
+    ...slots.filter((s) => s.slot_state.submission?.submitted).map(slotKey),
+    ...Object.keys(submittedHere),
+  ]);
   // YUK-1051 — stable option ids（内容派生）；作答 pip 的「已答」包含绑定到该 slot 的证据。
   const curOptions = optionsFromChoicesMd(cur.question.choices_md ?? [], cur.question_id);
   const curAnswerText = answers[curKey] ?? '';
@@ -1444,7 +1473,7 @@ function PaperVisit({
             ? {}
             : { self_confidence: capture.self_confidence }),
         });
-        submittedDuringAttemptsRef.current.add(key);
+        markSubmittedHere(key);
       }
       await endPaperSession(sid);
       completionCommitted = true;
