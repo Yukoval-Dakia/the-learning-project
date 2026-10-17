@@ -1,5 +1,5 @@
 {
-  "id": "ad263d09-c100-48f4-879b-6c1aef1259a9",
+  "id": "77fc1ba7-1974-40c6-a971-9e4b8c48b391",
   "prevId": "01b9d77d-2676-49ae-bf26-3b96a879dc06",
   "version": "7",
   "dialect": "postgresql",
@@ -13092,6 +13092,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "pdf_digest": {
+          "name": "pdf_digest",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "archived_at": {
           "name": "archived_at",
           "type": "timestamp with time zone",
@@ -13168,7 +13174,7 @@
         },
         "worksheet_export_archive_shape_ck": {
           "name": "worksheet_export_archive_shape_ck",
-          "value": "(\"worksheet_export\".\"archived_at\" IS NULL AND \"worksheet_export\".\"page_count\" IS NULL AND \"worksheet_export\".\"web_only_units\" IS NULL) OR (\"worksheet_export\".\"archived_at\" IS NOT NULL AND \"worksheet_export\".\"page_count\" >= 1 AND \"worksheet_export\".\"web_only_units\" IS NOT NULL)"
+          "value": "(\"worksheet_export\".\"archived_at\" IS NULL AND \"worksheet_export\".\"page_count\" IS NULL AND \"worksheet_export\".\"web_only_units\" IS NULL AND \"worksheet_export\".\"pdf_digest\" IS NULL) OR (\"worksheet_export\".\"archived_at\" IS NOT NULL AND \"worksheet_export\".\"page_count\" >= 1 AND \"worksheet_export\".\"web_only_units\" IS NOT NULL AND \"worksheet_export\".\"pdf_digest\" IS NOT NULL AND \"worksheet_export\".\"pdf_digest\" ~ '^sha256:[0-9a-f]{64}$')"
         }
       },
       "isRLSEnabled": false

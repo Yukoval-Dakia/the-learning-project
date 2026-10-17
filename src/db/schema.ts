@@ -4586,10 +4586,11 @@ export const worksheet_export = pgTable(
       sql`${t.export_token} <> '' AND ${t.short_code} <> '' AND ${t.idempotency_key} <> ''`,
     ),
     // 存档列 write-once 形状：总页数只在存档时出现；存档必须同时冻结总页、
-    // web_only_units 与 PDF digest（对账字段成对落，不允半档）。
+    // web_only_units 与 PDF digest（对账字段成对落，不允半档）。R2 P2：存档侧
+    // 显式 IS NOT NULL —— 正则对 NULL 求值为 NULL，NULL OR FALSE 会穿过 CHECK。
     check(
       'worksheet_export_archive_shape_ck',
-      sql`(${t.archived_at} IS NULL AND ${t.page_count} IS NULL AND ${t.web_only_units} IS NULL AND ${t.pdf_digest} IS NULL) OR (${t.archived_at} IS NOT NULL AND ${t.page_count} >= 1 AND ${t.web_only_units} IS NOT NULL AND ${t.pdf_digest} ~ '^sha256:[0-9a-f]{64}$')`,
+      sql`(${t.archived_at} IS NULL AND ${t.page_count} IS NULL AND ${t.web_only_units} IS NULL AND ${t.pdf_digest} IS NULL) OR (${t.archived_at} IS NOT NULL AND ${t.page_count} >= 1 AND ${t.web_only_units} IS NOT NULL AND ${t.pdf_digest} IS NOT NULL AND ${t.pdf_digest} ~ '^sha256:[0-9a-f]{64}$')`,
     ),
   ],
 );

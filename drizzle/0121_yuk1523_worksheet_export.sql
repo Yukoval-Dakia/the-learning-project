@@ -8,11 +8,12 @@ CREATE TABLE "worksheet_export" (
 	"refused" jsonb DEFAULT '[]'::jsonb NOT NULL,
 	"web_only_units" jsonb,
 	"page_count" integer,
+	"pdf_digest" text,
 	"archived_at" timestamp with time zone,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "worksheet_export_request_digest_ck" CHECK ("worksheet_export"."request_digest" ~ '^sha256:[0-9a-f]{64}$'),
 	CONSTRAINT "worksheet_export_identity_nonempty_ck" CHECK ("worksheet_export"."export_token" <> '' AND "worksheet_export"."short_code" <> '' AND "worksheet_export"."idempotency_key" <> ''),
-	CONSTRAINT "worksheet_export_archive_shape_ck" CHECK (("worksheet_export"."archived_at" IS NULL AND "worksheet_export"."page_count" IS NULL AND "worksheet_export"."web_only_units" IS NULL) OR ("worksheet_export"."archived_at" IS NOT NULL AND "worksheet_export"."page_count" >= 1 AND "worksheet_export"."web_only_units" IS NOT NULL))
+	CONSTRAINT "worksheet_export_archive_shape_ck" CHECK (("worksheet_export"."archived_at" IS NULL AND "worksheet_export"."page_count" IS NULL AND "worksheet_export"."web_only_units" IS NULL AND "worksheet_export"."pdf_digest" IS NULL) OR ("worksheet_export"."archived_at" IS NOT NULL AND "worksheet_export"."page_count" >= 1 AND "worksheet_export"."web_only_units" IS NOT NULL AND "worksheet_export"."pdf_digest" IS NOT NULL AND "worksheet_export"."pdf_digest" ~ '^sha256:[0-9a-f]{64}$'))
 );
 --> statement-breakpoint
 CREATE TABLE "worksheet_export_item" (

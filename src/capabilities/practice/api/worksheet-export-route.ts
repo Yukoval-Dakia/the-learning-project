@@ -8,6 +8,7 @@ import { db } from '@/db/client';
 import { ApiError, errorResponse, resourceResponse } from '@/kernel/http';
 import {
   NoGradeableQuestionsError,
+  RegionMapArchiveConflictError,
   WorksheetIdempotencyRaceError,
   archiveWorksheetRegionMap,
   createWorksheetExport,
@@ -47,8 +48,10 @@ function parseParams<T>(params: Record<string, string>, schema: ZodType<T>): T {
 // ---------- POST /api/worksheet-exports — 创建导出（= 逐题发放） ----------
 
 export async function createWorksheetExportRoute(req: Request): Promise<Response> {
+  let idempotencyKey = '';
   try {
     const body = await parseBody(req, WorksheetExportCreateBodySchema);
+    idempotencyKey = body.idempotency_key;
     let out: Awaited<ReturnType<typeof createWorksheetExport>>;
     try {
       out = await createWorksheetExport(db, body);
@@ -86,6 +89,16 @@ export async function createWorksheetExportRoute(req: Request): Promise<Response
           details: { refused: err.refused },
         },
         { status: 422 },
+      );
+    }
+    // R2 P1：重试后仍同 key 抢插（双重并发窗口）——如实 409 可重试，绝不 500。
+    if (err instanceof WorksheetIdempotencyRaceError) {
+      return errorResponse(
+        new ApiError(
+          'idempotency_race',
+          `concurrent create with idempotency_key '${idempotencyKey || '?'}' — safe to retry`,
+          409,
+        ),
       );
     }
     return errorResponse(err);
@@ -143,6 +156,11 @@ export async function archiveWorksheetRegionMapRoute(
         throw new ApiError('internal_error', 'unexpected region map archive status', 500);
     }
   } catch (err) {
+    // R2 P1：write-once 冲突在域层抛出（事务回滚，无孤儿页行）—— 必须在这里
+    // 映成 409 响应 RETURN 出去；再 throw 会逸出或 500。
+    if (err instanceof RegionMapArchiveConflictError) {
+      return errorResponse(new ApiError('archive_conflict', String(err.message), 409));
+    }
     return errorResponse(err);
   }
 }
