@@ -15,6 +15,10 @@ import {
   CreateMistakeBodySchema,
   CreateMistakeResponseSchema,
   DocxIngestionResponseSchema,
+  IngestionAskAnswerBodySchema,
+  IngestionAskAnswerHeadersSchema,
+  IngestionAskAnswerResponseSchema,
+  IngestionAskParamsSchema,
   IngestionBlocksResponseSchema,
   IngestionEventStreamResponseSchema,
   IngestionEventsHeadersSchema,
@@ -151,6 +155,26 @@ export const ingestionCapability = defineCapability({
         responseMediaTypes: { 200: 'text/event-stream' },
         successStatus: 200,
         load: () => import('./api/events').then((m) => m.GET),
+      },
+      {
+        // YUK-1522 (R8) — durable ask answer acceptance. Body {answer} is the
+        // contract union; Idempotency-Key is a required header (400 when
+        // missing). 202 accept/replay, 409 ask_already_resolved /
+        // idempotency_conflict, 422 contract answer codes.
+        method: 'POST',
+        path: '/api/ingestion-sessions/[id]/asks/[ask_id]/answers',
+        operationId: 'answerIngestionAsk',
+        request: {
+          params: IngestionAskParamsSchema,
+          headers: IngestionAskAnswerHeadersSchema,
+          body: IngestionAskAnswerBodySchema,
+        },
+        responses: {
+          202: IngestionAskAnswerResponseSchema,
+          ...API_ERROR_RESPONSES,
+        },
+        successStatus: 202,
+        load: () => import('./api/ask-answers').then((m) => m.POST),
       },
       {
         method: 'POST',
@@ -330,6 +354,25 @@ export const ingestionCapability = defineCapability({
         queue: 'llm',
         load: () => import('./jobs/auto_enroll').then((m) => m.buildAutoEnrollHandler),
       },
+      // YUK-1522 (R8) — whole-package ingestion agent run. AGENT tier (2h
+      // expire + DLQ); one durable run per session segmented across deliveries
+      // (ask suspension exits the job; answers/timeouts re-dispatch).
+      {
+        name: 'ingestion_agent_run',
+        queue: 'agent',
+        load: () =>
+          import('./jobs/ingestion_agent_run').then((m) => m.buildIngestionAgentRunHandler),
+      },
+      // YUK-1522 (R8) — every-minute ask sweeper: resolves expired asks as
+      // skipped-by-timeout and re-dispatches resume_requested markers that no
+      // running segment followed.
+      {
+        name: 'ingestion_ask_sweep',
+        queue: 'fast',
+        schedule: { cron: '* * * * *', tz: 'Asia/Shanghai' },
+        load: () =>
+          import('./jobs/ingestion_ask_sweep').then((m) => m.buildIngestionAskSweepHandler),
+      },
     ],
   },
   // M4-T4 (YUK-319)：proposal kind 归属声明。block_merge 的 accept applier 真身
@@ -487,6 +530,19 @@ export const ingestionCapability = defineCapability({
       {
         name: 'glm_ocr',
         load: () => import('./server/tools/media-tools').then((module) => module.glmOcrTool),
+      },
+      // YUK-1522 (R8) — the two agent contract tools. Granted ONLY on the
+      // `ingestion` surface (kernel/tools/allowlists.ts): progress events are
+      // the SSE-visible durable stream; asks are durable + resumable, never a
+      // blocked worker.
+      {
+        name: 'report_ingestion_progress',
+        load: () =>
+          import('./server/tools/agent-tools').then((module) => module.reportIngestionProgressTool),
+      },
+      {
+        name: 'ask_learner',
+        load: () => import('./server/tools/agent-tools').then((module) => module.askLearnerTool),
       },
     ],
   },

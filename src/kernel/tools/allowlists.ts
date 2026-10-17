@@ -121,6 +121,12 @@ export const PROPOSE_WRITE_TOOLS = [
   // 仅 copilot（COPILOT_TOOLS）；supply_planner 保持只读挂载；不进 Maintenance
   // （备题/供给域写工具，非运维面）。
   'file_bank_gap',
+  // YUK-1522 (R8) — ingestion agent contract tools. report_ingestion_progress
+  // writes the durable stage/item/error event stream; ask_learner creates and
+  // polls durable learner asks (never blocks). Granted ONLY on the `ingestion`
+  // surface below.
+  'report_ingestion_progress',
+  'ask_learner',
 ] as const;
 
 // YUK-949 — model-authored presentation intent. This is neither a data read nor
@@ -374,16 +380,26 @@ const INGESTION_BLOCK_EDIT_TOOLS = [
   'compose_presentation',
 ] as const satisfies readonly DomainToolName[];
 
-// YUK-1404 (B2/R2–R5) — the ingestion extraction-agent surface: exactly the
-// five shared source-package tools. Scoping INSIDE the tools (ctx.scope) pins
-// reads/writes to the calling session's own package; this list is the only
-// place they are granted.
+// YUK-1404 (B2/R2–R5) — the ingestion extraction-agent surface. Scoping INSIDE
+// the tools (ctx.scope) pins reads/writes to the calling session's own package;
+// this list is the only place they are granted.
+//
+// YUK-1522 (R8) — the R8 agent additionally gets the unified draft lane
+// (edit_question / compose_presentation / submit_question — the same write
+// path as ingestion_block_edit, still withheld-pending-admission) and its two
+// contract tools (progress + durable asks). No bank/record tools.
 const INGESTION_TOOLS = [
   'read_source',
   'view_image',
   'crop_image',
   'rotate_image',
   'glm_ocr',
+  'get_question_block_structure',
+  'edit_question',
+  'compose_presentation',
+  'submit_question',
+  'report_ingestion_progress',
+  'ask_learner',
 ] as const satisfies readonly DomainToolName[];
 
 export const DOMAIN_TOOL_ALLOWLISTS = {
