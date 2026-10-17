@@ -14199,6 +14199,16 @@ export interface operations {
                         } & {
                             [key: string]: unknown;
                         };
+                        usage_receipt: {
+                            /** @enum {string} */
+                            derivation_policy: "allow" | "answer_only";
+                            /** Format: date-time */
+                            recorded_at: string;
+                            redacted_fields: string[];
+                            redaction_counts: {
+                                [key: string]: number;
+                            };
+                        } | null;
                     };
                 };
             };

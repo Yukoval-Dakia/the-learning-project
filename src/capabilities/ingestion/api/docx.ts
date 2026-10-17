@@ -5,6 +5,7 @@ import {
 } from '@/capabilities/ingestion/server/docx/markdown-segment';
 import { persistDocxPageEvidence } from '@/capabilities/ingestion/server/docx/persist-page-evidence';
 import { prepareDocxForConversion } from '@/capabilities/ingestion/server/docx/route-classify';
+import { redactIngestionText } from '@/capabilities/ingestion/server/privacy-guard';
 import {
   attachWordSourcePackage,
   markSessionPackageFailed,
@@ -164,6 +165,11 @@ export async function POST(req: Request): Promise<Response> {
 
     // Text line: pandoc → markdown → segment.
     const { markdown, media } = await converter.docxToMarkdown(prep.converterBytes);
+    // YUK-1408 — usage receipt facts: which redaction categories fire on this
+    // document's extraction text. The markdown itself stays raw (it is the
+    // stored source of record); models only ever see it through the shared
+    // call-site redaction backstops.
+    const receiptRedaction = redactIngestionText(markdown);
     const segmented = segmentMarkdown({
       markdown,
       // The converter media manifest has no dimensions; the noise filter keeps
@@ -209,6 +215,10 @@ export async function POST(req: Request): Promise<Response> {
       // text-line session; only present when the converter input was sanitized.
       externalRefOmission,
       derivationPolicy,
+      usageReceipt: {
+        redactedFields: receiptRedaction.fields,
+        redactionCounts: receiptRedaction.counts,
+      },
     });
 
     // YUK-1404 (B2/R1) — attach the unified 'word' source package: original +
