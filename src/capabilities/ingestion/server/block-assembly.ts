@@ -41,6 +41,7 @@ import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db, Tx } from '@/db/client';
 import { writeBlockMergeProposal } from '@/kernel/proposals/producers';
 import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
+import { redactIngestionText } from './privacy-guard';
 
 // ---------- BlockAssemblyOutput schema (the model's structured output) ----------
 //
@@ -122,9 +123,18 @@ export async function runBlockAssemblyTask(
   // The session entry accepts Db | Tx for proposal writes. AI task audit writes require the
   // root Db; production passes Db here, while transactional callers must inject runTaskFn.
   const runTaskFn = params.runTaskFn ?? makeRunTaskTextFn(params.db as Db);
+  // YUK-1408 — prompt_head is extracted document text headed for the model;
+  // personal identifiers are redacted deterministically before the call.
+  const input: BlockAssemblyInput = {
+    ...params.input,
+    blocks: params.input.blocks.map((block) => ({
+      ...block,
+      prompt_head: redactIngestionText(block.prompt_head).text,
+    })),
+  };
   let llmText: string;
   try {
-    const result = await runTaskFn('BlockAssemblyTask', params.input, params.ctx ?? {});
+    const result = await runTaskFn('BlockAssemblyTask', input, params.ctx ?? {});
     llmText = result.text;
   } catch (err) {
     throw new BlockAssemblyTaskError('BlockAssemblyTask LLM call failed', { cause: err });

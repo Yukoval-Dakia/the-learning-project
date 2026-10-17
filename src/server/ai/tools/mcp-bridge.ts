@@ -24,7 +24,7 @@
 import { createHash } from 'node:crypto';
 
 import { createId } from '@paralleldrive/cuid2';
-import { readDerivationPolicy } from '@/core/schema/derivation-policy';
+import { type DerivationPolicyT, readDerivationPolicy } from '@/core/schema/derivation-policy';
 import { writeEvent } from '@/kernel/events';
 import { readEventDerivationPolicy } from '@/kernel/events/derivation-policy';
 import { createAssessmentAssetLoader } from '@/kernel/records/assessment-assets';
@@ -311,8 +311,10 @@ export async function executeDomainToolCall(
   const sourcePolicy = opts.ctx.causedByEventId
     ? await readEventDerivationPolicy(opts.ctx.db, opts.ctx.causedByEventId)
     : declared;
-  const policy =
-    sourcePolicy === 'answer_only' || declared === 'answer_only' ? 'answer_only' : 'allow';
+  // YUK-1398：保留任意受限用途（answer_only / crisis）不塌缩回 allow；
+  // 因果根优先于声明值。
+  const policy: DerivationPolicyT =
+    sourcePolicy !== 'allow' ? sourcePolicy : declared !== 'allow' ? declared : 'allow';
   const call: ToolCallContext = {
     dt,
     opts,

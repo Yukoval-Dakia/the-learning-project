@@ -48,6 +48,7 @@ import { createHash } from 'node:crypto';
 import type {
   ExecutionPlanT,
   NumericKeyCriterionT,
+  PresentationT,
   QuestionGroupStructureT,
   ResponseOptionT,
   ResponseSlotT,
@@ -56,6 +57,7 @@ import type {
 } from '@/core/schema/assessment';
 import {
   ExecutionPlan,
+  Presentation,
   QuestionGroupStructure,
   ResponseSpec,
   ScoringBasis,
@@ -105,6 +107,13 @@ export interface NormalizedContract {
   response_spec: ResponseSpecT;
   scoring_basis: ScoringBasisT;
   execution_plan: ExecutionPlanT;
+  /**
+   * YUK-1497（review R1）—— 从组根 structured.presentation 提升的冻结展示层。
+   * 在 integrity_digest 计算【之前】入位（digest 覆盖该层）；缺省完全省略
+   * —— 无展示层的 revision digest 逐字节不变。发布 seam 会用同一 schema
+   * 重解析并对 digest 重算比对（不一致即拒发）。
+   */
+  presentation?: PresentationT;
   /** 版本化完整性 digest：四层 canonical JSON 的 sha256（§3.1）。 */
   integrity_digest: string;
   /** 本组 root question id（单题 = 自身；part = 父）。 */
@@ -542,6 +551,18 @@ function executorFor(criterionKind: LeafScoring['criterionKind']) {
   }
 }
 
+/**
+ * YUK-1497（review R1）—— 组根 structured.presentation → contract.presentation。
+ * 非空必须过 Presentation.safeParse：通过带 zod 解析后的规范形（digest、
+ * 发布校验与 INSERT 都落在同一对象上）；失败原样透传 —— 发布 barrier 的
+ * 形状门会拒发，绝不静默丢层（丢层会让已保存的展示编辑悄悄变成 noop 发布）。
+ */
+function promoteStructuredPresentation(raw: unknown): PresentationT | undefined {
+  if (raw == null) return undefined;
+  const shaped = Presentation.safeParse(raw);
+  return shaped.success ? shaped.data : (raw as PresentationT);
+}
+
 function assemble(
   groupId: string,
   materials: QuestionGroupStructureT['materials'],
@@ -549,6 +570,7 @@ function assemble(
   materialIdsByPart: string[][],
   leaves: LeafInput[],
   extraIssues: ConversionIssue[],
+  presentation?: PresentationT,
 ): NormalizedContract {
   // Preserve the actual per-part reference bytes for an explicit later reveal.
   // Comparators may extract an answer head, but teaching must not fetch a newer
@@ -602,11 +624,15 @@ function assemble(
     response_spec,
     scoring_basis,
     execution_plan,
+    // review R1 —— 展示层在 digest 计算前入位：digest 与层同版本化；
+    // 无层（undefined）时 contractIntegrityDigest 完全省略该键。
+    ...(presentation != null ? { presentation } : {}),
     integrity_digest: contractIntegrityDigest({
       structure,
       response_spec,
       scoring_basis,
       execution_plan,
+      presentation,
     }),
     group_id: groupId,
     conversion_issues: [
@@ -690,6 +716,8 @@ function normalizeQuestionRowBase(row: NormalizableQuestionRow): NormalizedContr
       leaves.map(() => sharedIds),
       leaves,
       shared.issues,
+      // review R1 —— 组根 structured.presentation 提升入契约（digest 前入位）。
+      promoteStructuredPresentation(structuredRoot.presentation),
     );
   }
 
@@ -718,6 +746,8 @@ function normalizeQuestionRowBase(row: NormalizableQuestionRow): NormalizedContr
       },
     ],
     shared.issues,
+    // 无 structured 的行没有展示层草稿位 —— 无层，digest 逐字节不变。
+    undefined,
   );
 }
 
@@ -911,15 +941,28 @@ export function normalizeQuestionGroupToContract(
       rubric: null, // rubric 是 root 级的；part 无自己的 rubric 列
     };
   });
-  return assemble(root.id, shared.materials, materialIdsByPart, leaves, issues);
+  return assemble(
+    root.id,
+    shared.materials,
+    materialIdsByPart,
+    leaves,
+    issues,
+    // review R1 —— 物理多 part 组同样只从【组根】的 structured.presentation
+    // 提升展示层；part 行自己的 structured 不携带展示层（compose 工具只写
+    // 组根草稿位）。
+    promoteStructuredPresentation(root.structured?.presentation),
+  );
 }
 
-/** §3.1 完整性 digest：四层 canonical JSON 的 sha256（顺序固定）。 */
+/** §3.1 完整性 digest：四层 canonical JSON 的 sha256（顺序固定）。
+ * YUK-1497：contract.presentation 存在时计入 canonical —— 缺省完全省略该键，
+ * 旧调用方（无展示层）的 digest 逐字节不变。 */
 export function contractIntegrityDigest(contract: {
   structure: unknown;
   response_spec: unknown;
   scoring_basis: unknown;
   execution_plan: unknown;
+  presentation?: unknown;
 }): string {
   const canonical = JSON.stringify(
     {
@@ -927,6 +970,7 @@ export function contractIntegrityDigest(contract: {
       response_spec: contract.response_spec,
       scoring_basis: contract.scoring_basis,
       execution_plan: contract.execution_plan,
+      ...(contract.presentation != null ? { presentation: contract.presentation } : {}),
     },
     (_key, value) => value,
   );

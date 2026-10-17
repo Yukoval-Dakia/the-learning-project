@@ -19,6 +19,7 @@ import { useResponseDraftAutosave } from '@/ui/hooks/useResponseDraftAutosave';
 import { ApiError } from '@/ui/lib/api';
 import { uploadAsset } from '@/ui/lib/assets';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
+import { subjectDisplayName } from '@/ui/lib/subject';
 import { Btn } from '@/ui/primitives/Btn';
 import { EmptyState } from '@/ui/primitives/EmptyState';
 import { ErrorState } from '@/ui/primitives/ErrorState';
@@ -27,9 +28,13 @@ import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { SkLines } from '@/ui/primitives/SkLines';
 import { ObSteps } from './ObSteps';
 import type {
+  PlacementHeldExit,
+  PlacementNextResult,
+  PlacementNoItem,
   PlacementQuestionRef,
   PlacementSelfReport,
   PlacementStartResult,
+  PlacementUnresolvedItem,
 } from './placement-api';
 import { type PlacementClient, usePlacementClient } from './placement-client';
 import { type StarterOutcome, starterStatus } from './starter-supply-status';
@@ -47,7 +52,20 @@ function readSelfReport(search: string): PlacementSelfReport {
     pace: VALID_PACES.find((p) => p === sp.get('pace')),
   };
 }
-type Phase = 'loading' | 'answer' | 'sourcing' | 'settling' | 'terminal' | 'nogoal' | 'error';
+type Phase =
+  | 'loading'
+  | 'answer'
+  | 'sourcing'
+  | 'noitem'
+  | 'settling'
+  | 'ended'
+  | 'terminal'
+  | 'nogoal'
+  | 'error';
+// The next step after an answer or a released held question: same shape from both routes.
+type PlacementSelection =
+  | PlacementNextResult
+  | Awaited<ReturnType<PlacementClient['releaseHeldPlacement']>>['selection'];
 // What the current question card lends the exit button: save its draft, and pause or
 // resume its autosave while leaving (the old `!leaving` gate).
 interface ExitSave {
@@ -67,6 +85,9 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
   const [restoreVersion, setRestoreVersion] = useState(0);
   const [errMsg, setErrMsg] = useState<string | null>(null);
   const [supply, setSupply] = useState<StarterOutcome[] | undefined>(undefined);
+  const [noItem, setNoItem] = useState<PlacementNoItem | null>(null);
+  // Questions that closed without a verdict, shown on the end and terminal states.
+  const [unresolved, setUnresolved] = useState<PlacementUnresolvedItem[]>([]);
   const [checking, setChecking] = useState(false);
   const [leaving, setLeaving] = useState(false);
   const [exitFailure, setExitFailure] = useState<{ destination: string; message: string } | null>(
@@ -82,7 +103,7 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
   // One start/resume request per screen instance, reused across StrictMode re-attach;
   // `applied` makes sure its result is applied (URL, phase, settle) exactly once.
   const initialRequest = useRef<{
-    promise: Promise<PlacementStartResult | 'terminal'>;
+    promise: Promise<PlacementStartResult | { terminal: PlacementUnresolvedItem[] }>;
     applied: boolean;
   } | null>(null);
   // True while the screen's root is attached: late completions after leaving do nothing.
@@ -95,20 +116,31 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
   );
   const transition = useCallback(async (status: 'completed' | 'abandoned') => {
     const sid = sessionIdRef.current;
-    if (!sid || !sessionOpenRef.current) return;
-    await transport.current.placementEnd(sid, status, { keepalive: false });
+    if (!sid || !sessionOpenRef.current) return null;
+    const result = await transport.current.placementEnd(sid, status, { keepalive: false });
     sessionOpenRef.current = false;
+    return result;
   }, []);
-  // The last answer is in (or the session needs no more): end the session once and go
-  // to the profile. Called from the events that reveal "done" — never from render.
+  // The last answer is in (or the session needs no more, or the learner chose to end): end
+  // the session once and go to the profile. Called from the events that reveal "done" —
+  // never from render. Questions that closed without a verdict keep the learner here first,
+  // so they see those were not counted.
   const finish = useCallback(() => {
     setQRef(null);
+    setNoItem(null);
     setPhase('settling');
     if (finishing.current) return;
     finishing.current = true;
     void transition('completed')
-      .then(() => {
-        if (activeRef.current) navigate(profileDest());
+      .then((result) => {
+        if (!activeRef.current) return;
+        const items = result?.unresolved_items ?? [];
+        if (items.length > 0) {
+          setUnresolved(items);
+          setPhase('ended');
+          return;
+        }
+        navigate(profileDest());
       })
       .catch((error: unknown) => {
         finishing.current = false;
@@ -117,20 +149,55 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
         setPhase('error');
       });
   }, [navigate, profileDest, transition]);
+  const applySelection = useCallback(
+    (next: PlacementSelection) => {
+      setAnsweredCount(next.answeredCount);
+      setSupply(next.starterSupply);
+      setRestoreVersion((v) => v + 1);
+      if (next.done) {
+        finish();
+      } else {
+        setQRef(next.question);
+        setNoItem(next.no_item ?? null);
+        setPhase(next.question ? 'answer' : next.no_item ? 'noitem' : 'sourcing');
+      }
+    },
+    [finish],
+  );
   const loadNext = useCallback(async () => {
     const sid = sessionIdRef.current;
     if (!sid || !sessionOpenRef.current) return;
-    const next = await transport.current.placementNext(sid);
-    setAnsweredCount(next.answeredCount);
-    setSupply(next.starterSupply);
-    setRestoreVersion((v) => v + 1);
-    if (next.done) {
-      finish();
-    } else {
-      setQRef(next.question);
-      setPhase(next.question ? 'answer' : 'sourcing');
-    }
-  }, [finish]);
+    applySelection(await transport.current.placementNext(sid));
+  }, [applySelection]);
+  // YUK-1405 — 「继续」 on a held question: the release answers with the next step, so the
+  // page moves straight on. A question that is no longer held (409 not_releasable) means
+  // the page is behind: refresh quietly instead of showing an error.
+  const releaseHeld = useCallback(
+    async (exit: PlacementHeldExit) => {
+      try {
+        const sid = sessionIdRef.current;
+        if (!sid || !sessionOpenRef.current) return;
+        const res = await transport.current.releaseHeldPlacement(sid, exit.issuance_id);
+        if (!activeRef.current) return;
+        if (res.selection) applySelection(res.selection);
+        else await loadNext();
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 409 && error.code === 'not_releasable') {
+          await loadNext();
+          return;
+        }
+        throw error;
+      }
+    },
+    [applySelection, loadNext],
+  );
+  const recheck = () => {
+    setChecking(true);
+    setErrMsg(null);
+    void loadNext()
+      .catch((e: unknown) => setErrMsg(e instanceof Error ? e.message : String(e)))
+      .finally(() => setChecking(false));
+  };
 
   // YUK-1483 — the screen's root owns entering placement: when it attaches it resumes the
   // session named in the URL or starts one, once per screen (the request is reused if
@@ -158,7 +225,7 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
             const session = await transport.current.getPlacementSession(existing);
             if (session.goal_id !== goal) throw new Error('定位练习与当前目标不一致。');
             sessionIdRef.current = existing;
-            if (session.status !== 'started') return 'terminal';
+            if (session.status !== 'started') return { terminal: session.unresolved_items ?? [] };
             sessionOpenRef.current = true;
             const next = await transport.current.placementNext(existing);
             if (next.done)
@@ -183,7 +250,8 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
         .then((res) => {
           if (cancelled || request.applied) return;
           request.applied = true;
-          if (res === 'terminal') {
+          if ('terminal' in res) {
+            setUnresolved(res.terminal);
             setPhase('terminal');
             return;
           }
@@ -201,6 +269,10 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
           if (res.question) {
             setQRef(res.question);
             setPhase('answer');
+          } else if (res.no_item) {
+            setQRef(null);
+            setNoItem(res.no_item);
+            setPhase('noitem');
           } else if (res.sourcingNeeded) {
             setQRef(null);
             setPhase('sourcing');
@@ -248,12 +320,14 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
     void leaveProbe('/today');
   };
   const shellExit =
-    phase === 'terminal' || phase === 'nogoal' ? () => navigate('/today') : exitProbe;
+    phase === 'terminal' || phase === 'nogoal' || phase === 'ended'
+      ? () => navigate('/today')
+      : exitProbe;
 
   return (
     <PlacementShell
       answeredCount={answeredCount}
-      done={phase === 'settling'}
+      done={phase === 'settling' || phase === 'ended'}
       onExit={shellExit}
       rootRef={attachScreen}
     >
@@ -300,13 +374,45 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
           <EmptyState
             icon="check"
             title="这次定位练习已结束"
-            text="这次定位练习不会自动重新开始。"
+            text={
+              unresolved.length > 0
+                ? `这次定位练习不会自动重新开始。有 ${unresolved.length} 题没有计入结果，它们不算答错。`
+                : '这次定位练习不会自动重新开始。'
+            }
             action={
               <Btn variant="primary" onClick={() => navigate(profileDest())}>
                 看档案
               </Btn>
             }
           />
+          <UnresolvedNote items={unresolved} />
+        </LoomCard>
+      )}
+      {phase === 'ended' && (
+        <LoomCard pad padLg>
+          <EmptyState
+            icon="check"
+            title="定位练习已结束"
+            text={`有 ${unresolved.length} 题没有计入结果，下面是原因。它们不算答错。`}
+            action={
+              <Btn variant="primary" iconEnd="arrow" onClick={() => navigate(profileDest())}>
+                看档案
+              </Btn>
+            }
+          />
+          <UnresolvedNote items={unresolved} />
+        </LoomCard>
+      )}
+      {phase === 'noitem' && noItem && (
+        <LoomCard pad padLg>
+          <NoItemStatus
+            noItem={noItem}
+            checking={checking}
+            onRecheck={recheck}
+            onEnd={finish}
+            onUpload={() => void leaveProbe('/onboarding/upload')}
+          />
+          {errMsg && <ErrorState text={errMsg} onRetry={recheck} />}
         </LoomCard>
       )}
       {phase === 'sourcing' && (
@@ -314,12 +420,7 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
           <SupplyStatus
             outcomes={supply}
             checking={checking}
-            onRecheck={() => {
-              setChecking(true);
-              void loadNext()
-                .catch((e: unknown) => setErrMsg(e instanceof Error ? e.message : String(e)))
-                .finally(() => setChecking(false));
-            }}
+            onRecheck={recheck}
             onUpload={() => void leaveProbe('/onboarding/upload')}
             onSetGoal={() => void leaveProbe('/welcome')}
           />
@@ -342,6 +443,8 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
             qRef={qRef}
             answeredCount={answeredCount}
             onAccepted={loadNext}
+            onRelease={releaseHeld}
+            onEnd={finish}
             saveForExit={saveForExit}
             leaving={leaving}
             client={transport.current}
@@ -353,6 +456,81 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
         </>
       )}
     </PlacementShell>
+  );
+}
+
+// YUK-1405 — the server has no question it can give right now. Say so plainly, name what is
+// still being prepared, and offer the server's own ways out instead of an endless wait.
+function NoItemStatus({
+  noItem,
+  checking,
+  onRecheck,
+  onEnd,
+  onUpload,
+}: {
+  noItem: PlacementNoItem;
+  checking: boolean;
+  onRecheck: () => void;
+  onEnd: () => void;
+  onUpload: () => void;
+}) {
+  const preparing = [...new Set(noItem.preparing_subjects.map((id) => subjectDisplayName(id)))];
+  return (
+    <div role="status" aria-live="polite">
+      <EmptyState
+        icon="clock"
+        title="暂时没有能出的题"
+        text={
+          preparing.length > 0
+            ? `还在准备${preparing.join('、')}的题。可以过一会儿再检查，也可以先结束定位。`
+            : '目前也没有题在准备。可以先结束定位，或者上传自己的材料，从里面出题。'
+        }
+        action={
+          <div className="ob-pl-foot ob-pl-actions">
+            {noItem.options.includes('recheck') && (
+              <Btn variant="primary" icon="refresh" disabled={checking} onClick={onRecheck}>
+                {checking ? '正在检查…' : '重新检查'}
+              </Btn>
+            )}
+            {noItem.options.includes('end') && (
+              <Btn variant="secondary" disabled={checking} onClick={onEnd}>
+                结束定位
+              </Btn>
+            )}
+          </div>
+        }
+      />
+      {preparing.length === 0 && (
+        <Btn variant="ghost" icon="record" disabled={checking} onClick={onUpload}>
+          上传自己的材料
+        </Btn>
+      )}
+    </div>
+  );
+}
+
+// YUK-1405 — questions that closed without a verdict. They are listed apart and never
+// counted as wrong; the reason says what happened to each.
+const UNRESOLVED_REASON: Record<PlacementUnresolvedItem['reason'], string> = {
+  held_released: '中途放过了',
+  awaiting_evaluation: '还在判分',
+  unanswered: '没有作答',
+};
+function UnresolvedNote({ items }: { items: readonly PlacementUnresolvedItem[] }) {
+  if (items.length === 0) return null;
+  const counts = new Map<PlacementUnresolvedItem['reason'], number>();
+  for (const item of items) counts.set(item.reason, (counts.get(item.reason) ?? 0) + 1);
+  return (
+    <div className="ob-pl-unresolved">
+      <div className="ob-pl-unresolved-h">这几题没有判定</div>
+      <ul>
+        {[...counts].map(([reason, n]) => (
+          <li key={reason}>
+            {UNRESOLVED_REASON[reason]} · {n} 题
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -545,6 +723,8 @@ function PlacementQuestionCard({
   qRef,
   answeredCount,
   onAccepted,
+  onRelease,
+  onEnd,
   saveForExit,
   leaving,
   client,
@@ -553,6 +733,8 @@ function PlacementQuestionCard({
   qRef: PlacementQuestionRef;
   answeredCount: number;
   onAccepted: () => Promise<void>;
+  onRelease: (exit: PlacementHeldExit) => Promise<void>;
+  onEnd: () => void;
   saveForExit: React.MutableRefObject<ExitSave | null>;
   leaving: boolean;
   client: PlacementClient;
@@ -892,6 +1074,20 @@ function PlacementQuestionCard({
       setSubmitting(false);
     }
   };
+  // YUK-1405 — a held question's two exits, offered only when the server sent them.
+  const heldExit = status === 'held' ? (binding.held_exit ?? null) : null;
+  const release = async () => {
+    if (submitting || !heldExit) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      await onRelease(heldExit);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSubmitting(false);
+    }
+  };
   const recover = async () => {
     if (submitting) return;
     setSubmitting(true);
@@ -965,7 +1161,17 @@ function PlacementQuestionCard({
           />
         </>
       )}
-      {error && <ErrorState text={error} />}
+      {error && (
+        <ErrorState
+          text={error}
+          onRetry={heldExit && !submitting ? () => void release() : undefined}
+        />
+      )}
+      {heldExit && (
+        <p className="ob-pl-held-note" role="status">
+          这题的作答已经收到，但现在没法判分。可以先放过它继续下一题，它不会算作答错；也可以现在结束定位。
+        </p>
+      )}
       <div className="ob-pl-foot">
         {status === 'answering' && (
           <Btn
@@ -985,7 +1191,22 @@ function PlacementQuestionCard({
         {(status === 'pending' || status === 'waiting') && (
           <span role="status">作答已接收 · 等待定位结果</span>
         )}
-        {(status === 'held' || status === 'uncertain') && (
+        {heldExit && (
+          <>
+            <Btn
+              variant="primary"
+              iconEnd="arrow"
+              disabled={submitting}
+              onClick={() => void release()}
+            >
+              {submitting ? '正在继续…' : '继续'}
+            </Btn>
+            <Btn variant="secondary" disabled={submitting} onClick={onEnd}>
+              结束定位
+            </Btn>
+          </>
+        )}
+        {!heldExit && (status === 'held' || status === 'uncertain') && (
           <>
             <span role="status">等待确认作答状态</span>
             <Btn variant="secondary" disabled={submitting} onClick={() => void recover()}>

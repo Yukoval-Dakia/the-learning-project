@@ -92,6 +92,9 @@ export const PROPOSE_WRITE_TOOLS = [
   // store_sourced_question 同由 submit_question 接管（内部函数 compat 仍在，
   // 工具名保留在 inventory 供 plan-executor/测试 import 解析；无 surface 授权）。
   'store_sourced_question',
+  // YUK-1497 (K5) — presentation composition tool; same containment as the six
+  // draft-edit tools above (writes ONE jsonb-internal key of the draft container).
+  'compose_presentation',
   // ADR-0031 / RP-2 (YUK-304 lane B) — copilot 组卷 write: assembles authored
   // (draft-allowed) + existing
   // questions into a runnable tool_quiz paper. Granted to the copilot surfaces
@@ -366,6 +369,9 @@ const INGESTION_BLOCK_EDIT_TOOLS = [
   // YUK-1468 — 统一编辑/提交面（六个窄薄壳已并入；draft ops 写 + submit 闸）。
   'edit_question',
   'submit_question',
+  // YUK-1497 (K5) — compose_presentation；与上述写工具同面（草稿层），
+  // 别的面不授。
+  'compose_presentation',
 ] as const satisfies readonly DomainToolName[];
 
 // YUK-1404 (B2/R2–R5) — the ingestion extraction-agent surface: exactly the

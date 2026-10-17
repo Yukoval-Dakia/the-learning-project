@@ -5,6 +5,7 @@ import {
 } from '@/capabilities/ingestion/server/docx/markdown-segment';
 import { persistDocxPageEvidence } from '@/capabilities/ingestion/server/docx/persist-page-evidence';
 import { prepareDocxForConversion } from '@/capabilities/ingestion/server/docx/route-classify';
+import { redactIngestionText } from '@/capabilities/ingestion/server/privacy-guard';
 import {
   attachWordSourcePackage,
   markSessionPackageFailed,
@@ -17,6 +18,7 @@ import { getStartedBoss } from '@/server/boss/client';
 import { getR2 } from '@/server/r2';
 import { Ingestion } from '@/server/session';
 import { initiateDocxTextUpload } from '@/server/session/docx-ingestion';
+import { IngestionDerivationPolicy } from './contracts';
 
 // YUK-258 — DOCX ingestion endpoint. ONE .docx multipart upload → classify into
 // text / visual line → build a ready-to-review ingestion session.
@@ -66,6 +68,22 @@ export async function POST(req: Request): Promise<Response> {
       );
     }
 
+    // YUK-1408 — optional consent field ('allow' | 'answer_only'); invalid
+    // values are rejected rather than silently coerced into 'allow'.
+    const rawPolicy = form?.get('derivation_policy');
+    const derivationPolicy =
+      rawPolicy == null || rawPolicy === ''
+        ? null
+        : (IngestionDerivationPolicy.safeParse(typeof rawPolicy === 'string' ? rawPolicy : null)
+            .data ??
+          (() => {
+            throw new ApiError(
+              'validation_error',
+              `derivation_policy must be 'allow' or 'answer_only'`,
+              400,
+            );
+          })());
+
     const docxBytes = new Uint8Array(await file.arrayBuffer());
     // Deterministic, sub-ms: zip-parse + security preflight + MathType OLE count.
     // YUK-1476 — external NON-hyperlink relationships (header/footer/body) are
@@ -113,6 +131,7 @@ export async function POST(req: Request): Promise<Response> {
         assetIds: evidence.assetIds,
         entrypoint: 'docx',
         externalRefOmission,
+        derivationPolicy,
       });
       try {
         await attachWordSourcePackage(db, r2, {
@@ -146,6 +165,11 @@ export async function POST(req: Request): Promise<Response> {
 
     // Text line: pandoc → markdown → segment.
     const { markdown, media } = await converter.docxToMarkdown(prep.converterBytes);
+    // YUK-1408 — usage receipt facts: which redaction categories fire on this
+    // document's extraction text. The markdown itself stays raw (it is the
+    // stored source of record); models only ever see it through the shared
+    // call-site redaction backstops.
+    const receiptRedaction = redactIngestionText(markdown);
     const segmented = segmentMarkdown({
       markdown,
       // The converter media manifest has no dimensions; the noise filter keeps
@@ -190,6 +214,11 @@ export async function POST(req: Request): Promise<Response> {
       // YUK-1476 — honest omission audit (both digests + omitted facts) on the
       // text-line session; only present when the converter input was sanitized.
       externalRefOmission,
+      derivationPolicy,
+      usageReceipt: {
+        redactedFields: receiptRedaction.fields,
+        redactionCounts: receiptRedaction.counts,
+      },
     });
 
     // YUK-1404 (B2/R1) — attach the unified 'word' source package: original +

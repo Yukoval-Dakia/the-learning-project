@@ -359,10 +359,53 @@ export const CreateHintRequestBodySchema = z.object({
   hint_index: z.number().int().min(0).max(MAX_HINT_INDEX).optional(),
   issuance_id: z.string().min(1).optional(),
 });
-export const HintRequestResponseSchema = z.object({
-  hint_request_id: z.string(),
-  text_md: z.string(),
+// YUK-1409 T4 — generation failures resolve to typed degraded states instead
+// of a 502. Success keeps the original {hint_request_id, text_md} shape.
+export const HintFallbackReasonSchema = z.enum([
+  'timeout',
+  'provider_error',
+  'parse_failed',
+  'media_unavailable',
+  'unknown',
+]);
+export const HintFallbackHelpSchema = z.object({
+  kind: z.enum(['reference', 'deterministic_next_step']),
+  source: z.enum([
+    'frozen_revision_solution',
+    'frozen_scoring_basis',
+    'legacy_reference_md',
+    'deterministic',
+  ]),
+  text_md: z.string().min(1),
+  generated_on_demand: z.literal(false),
+  disclosure_md: z.string().optional(),
 });
+export const HintRequestResponseSchema = z.union([
+  z.object({
+    hint_request_id: z.string(),
+    text_md: z.string(),
+  }),
+  z.object({
+    hint_request_id: z.string(),
+    status: z.literal('fallback'),
+    reason: HintFallbackReasonSchema,
+    help: HintFallbackHelpSchema,
+    /** Legacy {text_md} clients: preface + help.text_md for the deterministic step (help.text_md alone for a reference), so old readers still see it is not an AI hint. */
+    text_md: z.string(),
+    reference_available: z.boolean(),
+    reference_revealed: z.boolean(),
+    elapsed_ms: z.number().int().nonnegative(),
+  }),
+  z.object({
+    hint_request_id: z.string(),
+    status: z.literal('unavailable'),
+    reason: HintFallbackReasonSchema,
+    options: z.array(z.enum(['retry', 'skip'])),
+    /** Honest dead-end message — keeps the pre-union {text_md} client shape working. */
+    text_md: z.string(),
+    elapsed_ms: z.number().int().nonnegative(),
+  }),
+]);
 
 export const SolveSubmissionBodySchema = z.object({
   assessment: CreateSubmissionBodySchema.optional(),

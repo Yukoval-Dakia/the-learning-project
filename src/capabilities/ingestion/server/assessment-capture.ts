@@ -14,6 +14,7 @@ import {
 } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { commitFormalAttempt, recordFormalAttemptCapture, saveSubmission } from '@/kernel/judge';
+import type { DocumentUsage } from '@/kernel/read-models/usage-policy';
 import { withAnswerClass } from '@/kernel/records/answer-class-write';
 import { freezeImageEvidence } from '@/kernel/records/assessment-evidence';
 import { issueCapturedAssessment } from '@/kernel/records/assessment-issuance';
@@ -63,6 +64,12 @@ interface CaptureInput {
   canEnroll: boolean;
   pageRefs: string[];
   now: Date;
+  /**
+   * YUK-1408 / R1 P2-3 — session-level document usage resolved once by the
+   * caller (auto-enroll runs this per-block inside a session batch; the
+   * fallback inside enrollCapturedBlock is a per-call lookup).
+   */
+  docUsage?: DocumentUsage;
   /** G8：逐单元读取结果；缺省 = 旧 flat 路径（wrong_answer_md 单槽）。 */
   unit_captures?: CapturedUnitAnswer[];
   /** 学习者红笔偏好（缺省保守 post_correction）。 */
@@ -515,6 +522,7 @@ export async function enrollNativeCapture(
         knowledgeIds: captured.knowledgeIds,
         captureMode: input.pageRefs.length ? 'image' : 'text',
         sourceDocumentId: captured.sourceDocumentId,
+        docUsage: input.docUsage,
         now: input.now,
         generatedBy: 'workflow_judge',
       });

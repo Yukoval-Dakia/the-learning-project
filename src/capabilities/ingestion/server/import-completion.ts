@@ -32,6 +32,7 @@ import {
   assertCauseAllowedForSubjectProfile,
   resolveSubjectProfileForKnowledgeIds,
 } from '@/kernel/read-models/subject-profile';
+import { resolveDocumentUsage } from '@/kernel/read-models/usage-policy';
 import { writeQuestionBlockCreateEvent } from '@/server/projections/question_block-create-event';
 import { writeQuestionBlockLifecycleEvent } from '@/server/projections/question_block-lifecycle-event';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
@@ -83,6 +84,10 @@ export async function completeIngestionImport(
       );
     }
     const sessionSourceDocumentId: string = session.source_document_id;
+    // YUK-1408 / R1 P2-3 — resolve the document's usage ONCE per session: the
+    // block loop below enrolls N captures, and the per-call resolver would pay
+    // an unindexed learning_session lookup per block.
+    const sessionDocUsage = await resolveDocumentUsage(tx, sessionSourceDocumentId);
 
     const sessionAssetIds = session.source_asset_ids as string[];
     const sessionAssetSet = new Set(sessionAssetIds);
@@ -464,6 +469,7 @@ export async function completeIngestionImport(
         imageRefs: block.image_refs,
         captureMode: block.image_refs.length > 0 ? 'image' : 'text',
         sourceDocumentId: sessionSourceDocumentId,
+        docUsage: sessionDocUsage,
         now,
       });
 

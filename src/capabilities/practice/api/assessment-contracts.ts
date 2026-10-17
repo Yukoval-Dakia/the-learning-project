@@ -47,12 +47,25 @@ export const IssuanceCreatedSchema = z.object({
   admission_generation_observed: z.number().int().nullable(),
 });
 
+/**
+ * 学习者网页提交的作答集（YUK-1496/1497）：`state:'unknown'`（看不清）只由
+ * 作答卷/拍照回收产生，网页作答面不能自称看不清。回收侧直接调领域写入器，
+ * 不经这两个 HTTP 入口。
+ */
+const LearnerResponseSet = ResponseSet.refine(
+  (set) =>
+    set.entries.every(
+      (entry) => (entry.kind !== 'select' && entry.kind !== 'blank') || entry.state !== 'unknown',
+    ),
+  { message: "state 'unknown' is reserved for worksheet/photo capture" },
+);
+
 // ---------- 自动保存草稿（D11：saving/saved/error 仅服务端 ack） ----------
 
 export const SaveResponseDraftBodySchema = z.object({
   /** 草稿声明的联合判分组锚点（paper 联判共享；null/缺省 = 未定组）。 */
   evaluation_group_ref: z.string().min(1).nullable().optional(),
-  response_set: ResponseSet,
+  response_set: LearnerResponseSet,
   group_evidence: z.array(GroupEvidence).default([]),
   /** stale 防线：上次 ack 的 save_epoch；落后于服务端 ⇒ 409。 */
   expected_save_epoch: z.number().int().min(0).optional(),
@@ -82,7 +95,7 @@ export const CreateSubmissionBodySchema = z.object({
   evaluation_group_id: z.string().min(1),
   /** 幂等键：同 (group,key) 重复提交 —— 一致 replay；不同 conflict(409)。 */
   idempotency_key: z.string().min(1),
-  response_set: ResponseSet,
+  response_set: LearnerResponseSet,
   group_evidence: z.array(GroupEvidence).default([]),
 });
 

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { DerivationPolicy } from '../derivation-policy';
 import { QuestionDraftDocument } from '../question-draft';
 import { FigureRef, StructuredQuestion } from '../structured_question';
 import { QuestionBlockRowSnapshot } from './genesis';
@@ -101,6 +102,11 @@ export const EditQuestionBlockStructuredExperimental = z
           // YUK-1468 — edit_question save：primary 携带 AFTER 完整 v2 草稿文档
           // （或经适配的 legacy 树），与既有 op 同一 full-snapshot fold 语义。
           'edit_draft',
+          // YUK-1497 — compose_presentation's structured.presentation write. A single-block
+          // edit like the four above: the primary carries the AFTER tree (presentation riding
+          // inside structured), so the fold's last-write-wins reproduces the row exactly —
+          // without this op a fold/rebuild would silently erase the saved presentation.
+          'set_presentation',
           // NOTE: reassign_figure is intentionally NOT an op here. The live writer emits figure
           // re-pointing as a SEPARATE `figure.reassigned` job event (block-structured-edit.ts:615),
           // NOT through persistStructured / block.structured_edited — so it is not one of this
@@ -206,6 +212,8 @@ export const QuestionBlockCreateExperimental = z
         row: QuestionBlockRowSnapshot,
         // creation provenance; rescue = overwrite of an existing blockId (fold last-write-wins, §5.2).
         origin: z.enum(['ocr', 'rescue', 'docx', 'import', 'edit_draft']),
+        // YUK-1408 — inherited source-document usage policy; absent === 'allow'.
+        derivation_policy: DerivationPolicy.optional(),
       })
       .strict(), // event-contract boundary: a stray key fails loud (like the edit payload + row snapshot)
     caused_by_event_id: z.string().optional(),

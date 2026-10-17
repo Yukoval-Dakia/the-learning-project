@@ -9,7 +9,7 @@ import { openCopilot } from '@/ui/lib/use-copilot-dwell';
 import { Btn } from '@/ui/primitives/Btn';
 import { EmptyState } from '@/ui/primitives/EmptyState';
 import { IconBtn } from '@/ui/primitives/IconBtn';
-import { LoomIcon } from '@/ui/primitives/LoomIcon';
+import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
 
 import type { PfToast } from './PracticeFacePage';
 import {
@@ -237,6 +237,20 @@ export function PfStream({
     }
 
     const isSkipped = it.status === 'skipped';
+    // YUK-1510 — answered but not moved on from yet: opening it shows the recorded answer.
+    const isAnswered = it.item_kind === 'question' && it.answer_recorded;
+    let ctaLabel = '开始作答';
+    let ctaIcon: LoomIconName = 'pencil';
+    if (isSkipped) {
+      ctaLabel = '捡回来';
+      ctaIcon = 'undo';
+    } else if (it.item_kind === 'paper') {
+      ctaLabel = '进入卷';
+      ctaIcon = 'layers';
+    } else if (isAnswered) {
+      ctaLabel = '已交 · 查看';
+      ctaIcon = 'eye';
+    }
     const anchor = it.item_kind === 'paper' ? it.paper_title : it.knowledge_name;
     const inner = (
       <div className="pf-item">
@@ -288,14 +302,14 @@ export function PfStream({
                     ? 'secondary'
                     : 'ghost'
             }
-            icon={isSkipped ? 'undo' : it.item_kind === 'paper' ? 'layers' : 'pencil'}
+            icon={ctaIcon}
             onClick={(e) => {
               e.stopPropagation();
               if (isSkipped) void unskip(it);
               else openItem(it);
             }}
           >
-            {isSkipped ? '捡回来' : it.item_kind === 'paper' ? '进入卷' : '开始作答'}
+            {ctaLabel}
           </Btn>
           {!isSkipped && it.status === 'pending' && it.source !== 'intervention' && (
             <button

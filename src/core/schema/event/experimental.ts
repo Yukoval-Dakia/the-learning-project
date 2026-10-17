@@ -5,6 +5,7 @@ import {
   LearningRecordKind,
   MemoryBriefScopeKey,
 } from '../business';
+import { DerivationPolicy } from '../derivation-policy';
 import { CauseCategory } from './blocks';
 
 /** Canonical action name for mutable question-content audit events. */
@@ -63,6 +64,9 @@ export const RecordCaptureExperimental = z.object({
   subject_id: z.string(),
   outcome: z.literal('success'),
   payload: z.object({
+    // YUK-1408 — ingestion-captured records inherit the source document's
+    // usage policy; absent === 'allow' legacy default.
+    derivation_policy: DerivationPolicy.optional(),
     record_kind: LearningRecordKind,
     activity_kind: LearningRecordActivityKind,
     capture_mode: LearningRecordCaptureMode,

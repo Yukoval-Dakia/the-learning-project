@@ -261,7 +261,7 @@ export async function assembleCopilotRunInput(
     }
   }
   const restrictedCorrectionTarget = params.correctionTargetTurnId
-    ? (await readEventDerivationPolicy(db, params.correctionTargetTurnId)) === 'answer_only'
+    ? (await readEventDerivationPolicy(db, params.correctionTargetTurnId)) !== 'allow'
     : false;
   return {
     derivation_policy: params.derivationPolicy ?? 'allow',

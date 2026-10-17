@@ -429,10 +429,12 @@ async function projectCopilotTurnRows(
       : Promise.resolve([]),
   ]);
   const replyRunIds = new Set(replyRoots.map((root) => root.id));
-  const restrictedRoots = new Set(
+  // YUK-1398：受限根策略投影到回复 turn——answer_only 根回 answer_only（原行为），
+  // crisis 根回 crisis；不再统一塌缩成 answer_only。
+  const restrictedRootPolicies = new Map(
     replyRoots
-      .filter((root) => readDerivationPolicy(root.payload) === 'answer_only')
-      .map((root) => root.id),
+      .filter((root) => readDerivationPolicy(root.payload) !== 'allow')
+      .map((root) => [root.id, readDerivationPolicy(root.payload)] as const),
   );
   // Retracted roots include out-of-window parents: a reply under such a parent is skipped (its parent
   // row isn't loaded, so it renders as a hidden skip, not a tombstone) rather than shown stale.
@@ -506,8 +508,8 @@ async function projectCopilotTurnRows(
       const turn: CopilotTurn = {
         role: 'ai',
         derivation_policy:
-          row.caused_by_event_id && restrictedRoots.has(row.caused_by_event_id)
-            ? 'answer_only'
+          row.caused_by_event_id && restrictedRootPolicies.has(row.caused_by_event_id)
+            ? (restrictedRootPolicies.get(row.caused_by_event_id) as DerivationPolicyT)
             : readDerivationPolicy(payload),
         text,
         at: row.created_at.toISOString(),
@@ -809,7 +811,7 @@ export async function getCopilotReplyPoliciesBeforeAnchor(
     .select({
       id: event.id,
       parentId: parent.id,
-      policy: sql<unknown>`case when coalesce(${parent.payload}->>'derivation_policy', 'allow') = 'answer_only' or coalesce(${event.payload}->>'derivation_policy', 'allow') = 'answer_only' then 'answer_only' else coalesce(${event.payload}->>'derivation_policy', ${parent.payload}->>'derivation_policy', 'allow') end`,
+      policy: sql<unknown>`case when coalesce(${event.payload}->>'derivation_policy', 'allow') <> 'allow' then ${event.payload}->>'derivation_policy' when coalesce(${parent.payload}->>'derivation_policy', 'allow') <> 'allow' then ${parent.payload}->>'derivation_policy' else 'allow' end`,
     })
     .from(event)
     .leftJoin(anchor, eq(anchor.id, opts.anchorEventId ?? ''))
