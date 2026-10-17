@@ -246,7 +246,19 @@ describe('edit/submit question boundary', () => {
               part_id: 'p1',
               prompt_md: '草稿原文：函数值',
               material_ids: [],
-              units: [],
+              units: [
+                {
+                  unit_id: 'u1',
+                  slot_id: 's1',
+                  response_class: 'free',
+                  response_spec: { kind: 'free' },
+                  reference_md: '7',
+                  points: 1,
+                  method: { kind: 'human_review' },
+                  material_refs: [],
+                  metadata: {},
+                },
+              ],
               metadata: {},
             },
           ],
@@ -443,7 +455,7 @@ describe('edit/submit question boundary', () => {
       },
       { ...ACTOR, sessionId: null },
     );
-    expect(submitted.status).toBe('admitted');
+    expect(submitted.status, JSON.stringify(submitted)).toBe('admitted');
 
     const [afterLife] = await db
       .select()
@@ -496,8 +508,8 @@ describe('edit/submit question boundary', () => {
       },
       { ...ACTOR, sessionId: null },
     );
-    expect(first.status).not.toBe('conflict');
-    expect('question_id' in first).toBe(true);
+    expect(first.status, JSON.stringify(first)).not.toBe('conflict');
+    expect('question_id' in first, JSON.stringify(first)).toBe(true);
     if (!('question_id' in first)) return;
     const secondSaved = await saveDraftEdit(db, {
       input: {
@@ -518,9 +530,9 @@ describe('edit/submit question boundary', () => {
       },
       { ...ACTOR, sessionId: null },
     );
-    expect(second.status).toBe('conflict');
+    expect(second.status, JSON.stringify(second)).toBe('conflict');
     if (second.status !== 'conflict') return;
-    expect(second.reason).toBe('duplicate_exact');
+    expect(second.reason, JSON.stringify(second)).toBe('duplicate_exact');
     const keptId = first.question_id;
     if (keptId == null) throw new Error('first submit did not return a question id');
     expect(second.existing_question_id).toBe(keptId);
@@ -557,7 +569,7 @@ describe('edit/submit question boundary', () => {
       },
       { ...ACTOR, sessionId: null },
     );
-    expect(first.status).not.toBe('conflict');
+    expect(first.status, JSON.stringify(first)).not.toBe('conflict');
     const secondSaved = await saveDraftEdit(db, {
       input: {
         action: 'save',
@@ -577,9 +589,9 @@ describe('edit/submit question boundary', () => {
       },
       { ...ACTOR, sessionId: null },
     );
-    expect(second.status).toBe('conflict');
+    expect(second.status, JSON.stringify(second)).toBe('conflict');
     if (second.status !== 'conflict') return;
-    expect(second.reason).toBe('near_dup');
+    expect(second.reason, JSON.stringify(second)).toBe('near_dup');
     const rows = await db.select({ id: question.id }).from(question);
     expect(rows).toHaveLength(1);
   });
@@ -645,7 +657,7 @@ describe('edit/submit question boundary', () => {
       },
       { ...ACTOR, sessionId: null },
     );
-    expect(submitted.status).not.toBe('conflict');
+    expect(submitted.status, JSON.stringify(submitted)).not.toBe('conflict');
     if ('published' in submitted) {
       throw new Error(`choice edit did not publish: ${submitted.detail}`);
     }

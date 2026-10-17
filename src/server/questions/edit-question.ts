@@ -396,15 +396,18 @@ async function currentGroupRevision(
 }
 
 /**
- * 为已发布题找/播种草稿：优先复用 status='draft' 且 imported_question_id=qid
- * 的现有块；否则按当前 revision 播种（无 revision 时按 question 行 legacy
- * 投影建空文档）。返回锁定的块 + 是否本次新建。
+ * 为已发布题找草稿：优先复用 status='draft' 且 imported_question_id=qid
+ * 的现有块；否则按当前 revision 准备种子（无 revision 时按 question 行
+ * 投影）。种子先不落行，调用方算出终态后再铸一条 create 快照。
  */
 async function ensureDraftForQuestion(
   tx: Tx,
   questionId: string,
-  ctx: EditContext,
-): Promise<{ block: BlockRow; created: boolean } | { error: string }> {
+): Promise<
+  | { block: BlockRow }
+  | { seed: QuestionDraftDocumentT; importedQuestionId: string }
+  | { error: string }
+> {
   const [existing] = await tx
     .select()
     .from(question_block)
@@ -414,7 +417,7 @@ async function ensureDraftForQuestion(
     .orderBy(desc(question_block.updated_at))
     .limit(1)
     .for('update');
-  if (existing) return { block: existing, created: false };
+  if (existing) return { block: existing };
 
   const [row] = await tx.select().from(question).where(eq(question.id, questionId)).limit(1);
   if (row == null) return { error: `question '${questionId}' not found` };
@@ -459,12 +462,9 @@ async function ensureDraftForQuestion(
       base: { question_id: questionId, revision_id: null },
     });
   }
-  const created = await createDraftBlock(tx, {
-    doc,
-    importedQuestionId: questionId,
-    ctx,
-  });
-  return { block: created, created: true };
+  // 先不落行。同事务里再写一条编辑事件会和 create 抢同一时间戳，fold 把
+  // create 当整行覆盖，编辑（或版本）会丢。调用方算完终态后再铸一条快照。
+  return { seed: doc, importedQuestionId: questionId };
 }
 
 async function createDraftBlock(
@@ -473,6 +473,8 @@ async function createDraftBlock(
     doc: QuestionDraftDocumentT;
     importedQuestionId: string | null;
     ctx: EditContext;
+    /** 这次保存已经是终态时直接铸这个版本，避免同事务再写一条编辑事件。 */
+    version?: number;
   },
 ): Promise<BlockRow> {
   const now = params.ctx.now ?? new Date();
@@ -492,7 +494,7 @@ async function createDraftBlock(
       imported_question_id: params.importedQuestionId,
       created_at: now,
       updated_at: now,
-      version: 0,
+      version: params.version ?? 0,
     })
     .returning();
   await writeQuestionBlockCreateEvent(tx, {
@@ -565,8 +567,11 @@ export async function saveDraftEdit(db: Db, params: SaveDraftParams): Promise<Ed
         };
       }
       // ---- 解析目标草稿 ----
-      let block: BlockRow;
-      let created = false;
+      // 新建草稿先只准备文档。终态算完后只写一条 create 快照（版本即这次保存）。
+      // 同事务再追加编辑事件时，两条事件时间相同；fold 的 create 是整行覆盖，
+      // 编辑若按 id 排在前面会被跳过，行版本停在 0，回执却写 1。
+      let block: BlockRow | undefined;
+      let pending: { doc: QuestionDraftDocumentT; importedQuestionId: string | null } | undefined;
       let draftRefVersion: number | undefined;
       if (hasDocument) {
         const parsedDoc = QuestionDraftDocument.safeParse(input.document);
@@ -578,13 +583,10 @@ export async function saveDraftEdit(db: Db, params: SaveDraftParams): Promise<Ed
             request_id: requestId,
           };
         }
-        const imported = parsedDoc.data.base?.question_id ?? null;
-        block = await createDraftBlock(tx, {
+        pending = {
           doc: parsedDoc.data,
-          importedQuestionId: imported,
-          ctx: txCtx,
-        });
-        created = true;
+          importedQuestionId: parsedDoc.data.base?.question_id ?? null,
+        };
       } else if (hasDraftRef) {
         const draftRef = input.draft_ref;
         if (draftRef == null) {
@@ -630,7 +632,7 @@ export async function saveDraftEdit(db: Db, params: SaveDraftParams): Promise<Ed
             request_id: requestId,
           };
         }
-        const ensured = await ensureDraftForQuestion(tx, questionId, txCtx);
+        const ensured = await ensureDraftForQuestion(tx, questionId);
         if ('error' in ensured) {
           return {
             status: 'rejected',
@@ -639,12 +641,15 @@ export async function saveDraftEdit(db: Db, params: SaveDraftParams): Promise<Ed
             request_id: requestId,
           };
         }
-        block = ensured.block;
-        created = ensured.created;
+        if ('block' in ensured) {
+          block = ensured.block;
+        } else {
+          pending = { doc: ensured.seed, importedQuestionId: ensured.importedQuestionId };
+        }
       }
 
-      // ---- CAS ----
-      if (block.status !== 'draft') {
+      // ---- CAS（只对已经存在的草稿行） ----
+      if (block != null && block.status !== 'draft') {
         return {
           status: 'conflict',
           reason: 'not_a_draft',
@@ -653,7 +658,7 @@ export async function saveDraftEdit(db: Db, params: SaveDraftParams): Promise<Ed
         };
       }
       const expectedDraftVersion = input.expected_draft_version ?? draftRefVersion;
-      if (!created && expectedDraftVersion != null && block.version !== expectedDraftVersion) {
+      if (block != null && expectedDraftVersion != null && block.version !== expectedDraftVersion) {
         const currentDoc = documentOf(block);
         return {
           status: 'conflict',
@@ -668,7 +673,7 @@ export async function saveDraftEdit(db: Db, params: SaveDraftParams): Promise<Ed
         };
       }
 
-      const docBefore = documentOf(block);
+      const docBefore = block != null ? documentOf(block) : (pending?.doc ?? null);
       if (docBefore == null) {
         return {
           status: 'rejected',
@@ -681,7 +686,6 @@ export async function saveDraftEdit(db: Db, params: SaveDraftParams): Promise<Ed
       // expected_revision：编辑已发布题时钉住基底 revision。
       const expectedParsed = parseExpectedRevisionToken(input.expected_revision);
       if ('invalid' in expectedParsed) {
-        // 草稿可能已创建 ⇒ 回滚不留孤儿。
         throw new TxAbort({
           status: 'rejected',
           reason: expectedParsed.invalid,
@@ -698,19 +702,23 @@ export async function saveDraftEdit(db: Db, params: SaveDraftParams): Promise<Ed
           : docBefore.base.revision_id;
       const expectedRevisionId =
         expectedParsed.value !== undefined ? expectedParsed.value : pinnedBaseRevision;
-      const groupId = docBefore.base?.question_id ?? block.imported_question_id;
+      const importedQuestionId = block?.imported_question_id ?? pending?.importedQuestionId ?? null;
+      const groupId = docBefore.base?.question_id ?? importedQuestionId;
       let currentRevisionId: string | null = null;
       if (groupId != null || expectedRevisionId !== undefined) {
         const group = groupId != null ? await currentGroupRevision(tx, groupId) : null;
         currentRevisionId = group?.revisionId ?? null;
         if (expectedRevisionId !== undefined && expectedRevisionId !== currentRevisionId) {
-          // 冲突发生在草稿创建之后 ⇒ 须回滚事务，不留孤儿草稿行。
           throw new TxAbort({
             status: 'conflict',
             reason: 'revision_cas',
             detail: `group '${groupId ?? '?'}' current revision is ${currentRevisionId ?? 'none'}, expected ${expectedRevisionId ?? 'none'}`,
-            current_draft_ref: encodeDraftRef(block.id, block.version),
-            current_draft_version: block.version,
+            ...(block != null
+              ? {
+                  current_draft_ref: encodeDraftRef(block.id, block.version),
+                  current_draft_version: block.version,
+                }
+              : {}),
             current_revision_ref: currentRevisionId,
             relevant_changes: relevantChangesForOps(docBefore, input.ops),
             request_id: requestId,
@@ -721,7 +729,6 @@ export async function saveDraftEdit(db: Db, params: SaveDraftParams): Promise<Ed
       // ---- 应用 ops ----
       const applied = hasOps ? applyEditOps(docBefore, input.ops ?? []) : null;
       if (applied != null && !applied.ok) {
-        // 草稿可能已创建 ⇒ 回滚不留孤儿；原子批量语义（错写零）。
         throw new TxAbort({
           status: 'rejected',
           reason: 'ops failed',
@@ -734,8 +741,21 @@ export async function saveDraftEdit(db: Db, params: SaveDraftParams): Promise<Ed
       const noop = applied?.ok === true ? applied.noop : false;
 
       // 草稿的 doc.base 回填（首次针对已发布题的草稿）。
-      if (docAfter.base == null && block.imported_question_id != null) {
-        docAfter.base = { question_id: block.imported_question_id, revision_id: currentRevisionId };
+      if (docAfter.base == null && importedQuestionId != null) {
+        docAfter.base = { question_id: importedQuestionId, revision_id: currentRevisionId };
+      }
+
+      // 还没有行：终态直接铸成 create 快照。不再同事务写编辑事件。
+      let fresh = false;
+      if (block == null) {
+        block = await createDraftBlock(tx, {
+          doc: docAfter,
+          importedQuestionId,
+          ctx: txCtx,
+          version: 1,
+        });
+        fresh = true;
+        await projectQuestionBlockGuarded(tx, block.id);
       }
 
       const issues = publishIssues(docAfter, groupId ?? `draft-${block.id}`);
@@ -743,10 +763,12 @@ export async function saveDraftEdit(db: Db, params: SaveDraftParams): Promise<Ed
       const invalidated = computeInvalidatedScope(changes);
 
       if (noop && hasOps) {
+        const foldedNoop = fresh ? await loadDraftBlock(tx, block.id) : block;
+        const noopVersion = foldedNoop?.version ?? block.version;
         const receipt: EditQuestionResult = {
           status: 'noop',
-          draft_ref: encodeDraftRef(block.id, block.version),
-          draft_version: block.version,
+          draft_ref: encodeDraftRef(block.id, noopVersion),
+          draft_version: noopVersion,
           ...(groupId != null ? { question_id: groupId } : {}),
           changes: [],
           publishable,
@@ -758,38 +780,42 @@ export async function saveDraftEdit(db: Db, params: SaveDraftParams): Promise<Ed
         return receipt;
       }
 
-      // ---- 持久化（canonical event + 写通） ----
-      const nextVersion = block.version + 1;
-      await writeEvent(tx, {
-        id: newId(),
-        // canonical 事件 schema actor_kind 只有 agent|user —— system 调用按 agent 承载。
-        actor_kind: ctx.actorKind === 'user' ? 'user' : 'agent',
-        actor_ref: ctx.actorRef,
-        action: DRAFT_EDIT_ACTION,
-        subject_kind: 'question_block',
-        subject_id: block.id,
-        outcome: 'success',
-        payload: {
-          op: 'edit_draft',
-          affected_blocks: [
-            {
-              block_id: block.id,
-              role: 'primary',
-              structured: docAfter,
-              version: nextVersion,
-              status: block.status,
-            },
-          ],
-        },
-        created_at: now,
-        ingest_at: now,
-      });
-      await projectQuestionBlockGuarded(tx, block.id);
+      if (!fresh) {
+        const nextVersion = block.version + 1;
+        await writeEvent(tx, {
+          id: newId(),
+          // canonical 事件 schema actor_kind 只有 agent|user —— system 调用按 agent 承载。
+          actor_kind: ctx.actorKind === 'user' ? 'user' : 'agent',
+          actor_ref: ctx.actorRef,
+          action: DRAFT_EDIT_ACTION,
+          subject_kind: 'question_block',
+          subject_id: block.id,
+          outcome: 'success',
+          payload: {
+            op: 'edit_draft',
+            affected_blocks: [
+              {
+                block_id: block.id,
+                role: 'primary',
+                structured: docAfter,
+                version: nextVersion,
+                status: block.status,
+              },
+            ],
+          },
+          created_at: now,
+          ingest_at: now,
+        });
+        await projectQuestionBlockGuarded(tx, block.id);
+      }
 
+      // 回执版本取 fold 之后的行，避免回执写 1、行仍是 0。
+      const folded = await loadDraftBlock(tx, block.id);
+      const persistedVersion = folded?.version ?? block.version;
       const receipt: EditQuestionResult = {
         status: 'saved',
-        draft_ref: encodeDraftRef(block.id, nextVersion),
-        draft_version: nextVersion,
+        draft_ref: encodeDraftRef(block.id, persistedVersion),
+        draft_version: persistedVersion,
         ...(groupId != null ? { question_id: groupId } : {}),
         current_published_ref: currentRevisionId,
         changes,
