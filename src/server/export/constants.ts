@@ -331,17 +331,18 @@ export const FK_ORDER = [
   'system_config',
   'system_config_journal',
   'system_config_epoch',
-  // No hard FK: restore owning backend/generation before its immutable effects.
-  // Missing either table would turn an unknown paid outcome into bootstrap state.
-  ...PAID_EFFECT_BACKUP_TABLES,
   // YUK-1523 (P5) — 作答卷导出三表：export（页面身份/幂等/拒绝清单）先于
   // item（冻结题目清单）与 region_map_page（按页冻结区域图）。簇内 FK 只有
   // item/page → export（父先子后）；issuance_id 是 loose text-ref，位置不受
-  // PG FK 约束，但语义上紧跟 assessment 簇之后、provider_attempt 之前保持可读。
+  // PG FK 约束，放在 paid-effect 两表之前，使 FK_ORDER 尾部保持 paid_effect_control → paid_effect →
+  // provider_attempt（paid-effect 备份契约断言尾部顺序）；与 paid-effect 无 FK 关系。
   // NEW FK_ORDER tables → bump SCHEMA_VERSION (4.26 → 4.27)。
   'worksheet_export',
   'worksheet_export_item',
   'worksheet_region_map_page',
+  // No hard FK: restore owning backend/generation before its immutable effects.
+  // Missing either table would turn an unknown paid outcome into bootstrap state.
+  ...PAID_EFFECT_BACKUP_TABLES,
   // YUK-851 has no enforced FK, but remains last so durable provider-attempt truth is
   // restored after the current authored/cost parents and rides whole-row schema changes.
   'provider_attempt',
