@@ -14,8 +14,8 @@
 //
 // Focus: the frame is inert until the learner starts it (click or the button); focus landing
 // anywhere else on the page makes it inert again. Focus the frame takes while inert is handed
-// back; once the learner has used this frame, one such steal fails the block. All listeners live
-// in ref callbacks.
+// back; before the learner first uses this frame its third steal fails the block, after that
+// one steal does. All listeners live in ref callbacks.
 import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 
 import type { CustomBlockT } from '@/core/schema/assessment/presentation';
@@ -61,6 +61,11 @@ const MAX_HAND_BACKS = 5;
 const HAND_BACK_WINDOW_MS = 1000;
 const MAX_SLOW_HAND_BACKS = 20;
 const SLOW_HAND_BACK_WINDOW_MS = 30_000;
+/**
+ * Steals a frame may make before the learner first starts it. Real normal blocks measured at most
+ * one (an autofocus / focus() on init); the third fails the block.
+ */
+const MAX_PRE_USE_STEALS = 2;
 
 const LOADING: CodeState = Object.freeze({ status: 'loading' });
 const FAILED: CodeState = Object.freeze({ status: 'failed' });
@@ -191,7 +196,8 @@ export function useCustomBlocksReady(blocks: readonly CustomBlockT[]): boolean {
 /**
  * Per frame element: how many loads it has had, the page's end of its port, whether the
  * shell's bootstrap has answered 'ready' on that port (proof the first load was our document),
- * and whether the learner has started this frame at least once.
+ * whether the learner has started this frame at least once, and how many times it took focus
+ * before that.
  */
 interface FrameSession {
   loads: number;
@@ -199,6 +205,7 @@ interface FrameSession {
   ready: boolean;
   readyTimer: ReturnType<typeof setTimeout> | null;
   used: boolean;
+  preUseSteals: number;
 }
 
 function closeSession(s: FrameSession) {
@@ -300,10 +307,11 @@ export function CustomBlock({
           // Each hand-back blurs the learner's input (breaking IME composition); a frame that
           // keeps taking focus is treated like self-navigation: blank it and fail the block.
           // Keys typed between a steal and its hand-back reach the frame (measured), so once the
-          // learner has used this frame, the first steal fails it; before that (its own focus()
-          // on load is normal) only the two rate limits do.
+          // learner has used this frame, the first steal fails it; before that, its own focus()
+          // on load is normal and the third steal fails it. The two rate limits apply throughout.
           const frame = wrap.querySelector('iframe');
           const session = frame ? sessions.get(frame) : undefined;
+          if (session && !session.used) session.preUseSteals += 1;
           const now = Date.now();
           const recent = handBacks.current.filter((at) => now - at < SLOW_HAND_BACK_WINDOW_MS);
           recent.push(now);
@@ -311,6 +319,7 @@ export function CustomBlock({
           const lastSecond = recent.filter((at) => now - at < HAND_BACK_WINDOW_MS).length;
           const hostile =
             (session?.used === true && !held) ||
+            (session !== undefined && session.preUseSteals > MAX_PRE_USE_STEALS) ||
             lastSecond > MAX_HAND_BACKS ||
             recent.length > MAX_SLOW_HAND_BACKS;
           const back = lastFocus.current;
@@ -385,7 +394,14 @@ export function CustomBlock({
     if (!frame) return undefined;
     let session = sessions.get(frame);
     if (!session) {
-      session = { loads: 0, port: null, ready: false, readyTimer: null, used: false };
+      session = {
+        loads: 0,
+        port: null,
+        ready: false,
+        readyTimer: null,
+        used: false,
+        preUseSteals: 0,
+      };
       sessions.set(frame, session);
       // A new frame element (first mount, or the reload after an unlock) is not ready until its
       // own shell answers.
