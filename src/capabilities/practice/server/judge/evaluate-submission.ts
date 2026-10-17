@@ -56,6 +56,7 @@ import {
 import { withinSessionAdvisoryLock } from '@/db/session-advisory-lock';
 import {
   type ActivateEvaluationRequestT,
+  ModelSliceRegistrationError,
   type SettlementObservers,
   activateEvaluation,
   assertModelAdmissionSliceRegistrable,
@@ -63,6 +64,7 @@ import {
   createPiModelExecutor,
   createRubricModelExecutor,
   currentModelPins,
+  gradingSliceMatchesLivePin,
   learningSettlement,
   lookupGroupSubjects,
   modelSliceIdFor,
@@ -82,6 +84,7 @@ import { createRecordedModelExecutor } from './recorded-model-executor';
 // Native assessment runtime ports are assembled at this existing capability boundary.
 // YUK-1496 C2 — 留出题准入 job 经同一边界读取登记处（不新增跨层边）。
 export {
+  ModelSliceRegistrationError,
   assertModelAdmissionSliceRegistrable,
   currentModelPins,
   lookupGroupSubjects,
@@ -190,7 +193,7 @@ export function createFormalModelExecutor(
 ): ModelUnitExecutorPort {
   const deadlineAt = Date.now() + 90_000;
   let admitted = false;
-  return createRecordedModelExecutor(
+  const recorded = createRecordedModelExecutor(
     db,
     (request, callerSignal, taskRunId) => {
       if (request.executor.task_kind === 'AssessmentRuleJudgeTask') {
@@ -212,6 +215,7 @@ export function createFormalModelExecutor(
           taskRunId,
           maxCostUsdMicros: request.executor.max_cost_usd_micros ?? 0,
           judgeRetryPolicy: admission === 'durable' ? 'none' : undefined,
+          confirmLiveSlice: true,
         })(request, callerSignal);
       }
       return createJevModelExecutor({
@@ -220,6 +224,7 @@ export function createFormalModelExecutor(
         signal,
         taskRunId,
         judgeRetryPolicy: admission === 'durable' ? 'none' : undefined,
+        confirmLiveSlice: true,
       })(request, callerSignal);
     },
     {
@@ -236,6 +241,20 @@ export function createFormalModelExecutor(
       },
     },
   );
+  return async (request, signal) => {
+    const sliceId = request.executor.admitted_slice_id;
+    if (sliceId !== null) {
+      const decision = await gradingSliceMatchesLivePin(db, sliceId, request.executor.task_kind);
+      if (!decision.ok) {
+        return {
+          kind: 'pending',
+          pending: { reason: 'unjudgeable', detail: decision.detail },
+          run_refs: [],
+        };
+      }
+    }
+    return recorded(request, signal);
+  };
 }
 
 /**
@@ -302,6 +321,7 @@ export function resolveModelExecutor(
     ruleThreshold: executor.rule_threshold,
     advancedExecutor: executor.advanced_executor,
     signal: executor.signal,
+    confirmLiveSlice: true,
   });
 }
 

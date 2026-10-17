@@ -46,6 +46,7 @@ import {
   assessmentTraceInput,
   assessmentTraceOutput,
 } from './assessment-trace-content';
+import { gradingSliceMatchesLivePin } from './model-slice-registry';
 
 export const ASSESSMENT_RUBRIC_TASK_KIND = 'AssessmentRubricJudgeTask';
 
@@ -58,6 +59,11 @@ export interface RubricModelExecutorOptions {
   signal?: AbortSignal;
   /** Pre-call durable claim identity supplied by formal entry orchestration. */
   taskRunId?: string;
+  /**
+   * Formal grading re-checks the live pin before any provider call. Admission
+   * runs leave this off: the slice row does not exist until the holdout passes.
+   */
+  confirmLiveSlice?: boolean;
   /** Tests replace bytes/runner boundaries, not frozen interpretation. */
   loadAsset?: AssessmentAssetLoader;
   runTask?: (
@@ -177,6 +183,14 @@ export function createRubricModelExecutor(
         reason: 'unjudgeable',
         detail: 'native rubric assessment task or admitted slice missing',
       });
+    }
+    if (options.confirmLiveSlice) {
+      const decision = await gradingSliceMatchesLivePin(
+        options.db,
+        request.executor.admitted_slice_id,
+        request.executor.task_kind,
+      );
+      if (!decision.ok) return pending({ reason: 'unjudgeable', detail: decision.detail });
     }
     if (request.unit.criterion.kind !== 'rubric') {
       return pending({

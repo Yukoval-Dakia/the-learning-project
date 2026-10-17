@@ -37,6 +37,7 @@ import type { JevSystemOneResponseT } from '@/core/schema/jev-systemone';
 import type { Db } from '@/db/client';
 import { AgentRunError } from '@/server/ai/agent-run-error';
 import { runTypedPrimitiveTask } from '@/server/ai/typed-primitive-runner';
+import { gradingSliceMatchesLivePin } from './model-slice-registry';
 
 const OPENROUTER_KEY_ENV = 'OPENROUTER_API_KEY';
 /** Admission/credentials-adjacent pending when no Jev lane can serve a unit. */
@@ -104,6 +105,11 @@ export interface JevModelExecutorOptions {
   /** Caller cancellation forwarded to the typed runner. */
   readonly signal?: AbortSignal;
   readonly taskRunId?: string;
+  /**
+   * Formal grading re-checks the live pin before any provider call. Admission
+   * runs leave this off: the slice row does not exist until the holdout passes.
+   */
+  readonly confirmLiveSlice?: boolean;
   /** Test seam: replace ONLY the wire transport (never the lifecycle). */
   readonly fetchImpl?: typeof fetch;
   /** Test seam: clock override. */
@@ -442,6 +448,16 @@ export function createJevModelExecutor(options: JevModelExecutorOptions): ModelU
         detail:
           'model_executor slice unadmitted (D17) — the Jev port never serves unadmitted units',
       });
+    }
+    if (options.confirmLiveSlice) {
+      const decision = await gradingSliceMatchesLivePin(
+        options.db,
+        request.executor.admitted_slice_id,
+        request.executor.task_kind,
+      );
+      if (!decision.ok) {
+        return pendingOutcome({ reason: 'unjudgeable', detail: decision.detail });
+      }
     }
     if (request.executor.task_kind !== 'JevScoringDecisionTask') {
       return pendingOutcome({

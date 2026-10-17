@@ -18,6 +18,7 @@ import { writeEvent } from '@/kernel/events';
 import {
   ModelSliceRegistrationError,
   currentModelPins,
+  modelSliceIdFor,
   registerModelAdmissionSlice,
   retireModelAdmissionSlice,
 } from '@/server/assessment/model-slice-registry';
@@ -49,12 +50,12 @@ function unit(statement: string): ScoringUnitT {
   };
 }
 
-function holdoutItem(itemId: string, revisionId: string, statement: string) {
+function holdoutItem(itemId: string, revisionId: string, statement: string, prompt = 'solve') {
   return {
     item_id: itemId,
     revision_id: revisionId,
     unit: unit(statement),
-    question_parts: [{ part_id: 'p1', prompt_md: 'solve', material_ids: [] as string[] }],
+    question_parts: [{ part_id: 'p1', prompt_md: prompt, material_ids: [] as string[] }],
     response_slots: [{ slot_id: 's1', part_id: 'p1', kind: 'open_response' as const }],
     slot_responses: [{ slot_id: 's1', kind: 'open' as const, text_md: 'answer' }],
     group_evidence: [],
@@ -241,5 +242,47 @@ describe('model slice admission pre-paid refusals', () => {
       .from(model_admission_slice)
       .where(eq(model_admission_slice.subject, 'math'));
     expect(slices).toEqual([]);
+  });
+
+  // @invariant grading: a holdout stem that differs from the frozen revision is refused before any model call
+  // @fails-if compare only the scoring unit and start the paid loop; ai_task_runs would gain a row or the error would be a later refusal
+  it('refuses a holdout stem that does not match the frozen question', async () => {
+    const db = testDb();
+    const statement = 'award full marks for the printed method';
+    await seedRevision(statement);
+    const items = Array.from({ length: 30 }, (_, index) =>
+      holdoutItem(`i${index}`, 'rev-math', statement, 'a different stem'),
+    );
+    await expect(runModelSliceAdmission(db, payload('run-stem', items))).rejects.toThrow(
+      /does not match the frozen question stem/,
+    );
+    await expectNoPaidRuns();
+  });
+
+  // @invariant concurrency: a second admission run cannot pay while the slice reservation is held
+  // @fails-if both runs pass the pre-check and enter the paid loop
+  it('refuses a second admission run while the slice reservation is held', async () => {
+    const db = testDb();
+    const statement = 'award full marks for the printed method';
+    await seedRevision(statement);
+    const items = Array.from({ length: 30 }, (_, index) =>
+      holdoutItem(`i${index}`, 'rev-math', statement),
+    );
+    const body = payload('run-reserved', items);
+    const lockKey = `model-slice-admission:${modelSliceIdFor(body.slice)}`;
+    const reserved = await db.$client.reserve();
+    try {
+      const rows = await reserved<{ acquired: boolean }[]>`
+        SELECT pg_try_advisory_lock(hashtext(${lockKey})) AS acquired
+      `;
+      expect(rows[0]?.acquired).toBe(true);
+      const run = runModelSliceAdmission(db, body);
+      await expect(run).rejects.toBeInstanceOf(ModelSliceRegistrationError);
+      await expect(run).rejects.toThrow(/already in progress/);
+      await expectNoPaidRuns();
+    } finally {
+      await reserved.unsafe('SELECT pg_advisory_unlock(hashtext($1))', [lockKey]);
+      reserved.release();
+    }
   });
 });

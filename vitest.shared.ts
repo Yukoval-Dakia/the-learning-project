@@ -240,6 +240,7 @@ export const dbTestInclude = [
   'src/server/artifacts/presence/pg.db.test.ts',
   'src/server/assessment/activate.db.test.ts',
   'src/server/assessment/admission.db.test.ts',
+  'src/server/assessment/grading-slice-admission.db.test.ts',
   'src/server/assessment/model-slice-registry.db.test.ts',
   'src/server/assessment/joint-input.db.test.ts',
   'src/server/assessment/settle.db.test.ts',

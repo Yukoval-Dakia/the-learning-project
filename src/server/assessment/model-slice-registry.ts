@@ -45,6 +45,48 @@ const CURRENT_MODEL_VERSION_PINS: Readonly<Record<string, string>> = {
   AssessmentRubricJudgeTask: ASSESSMENT_RUBRIC_PROMPT_REVISION,
 };
 
+/**
+ * 判分前核对：将要执行的模型对应的切片必须就是 admitted_slice_id，且仍是
+ * active。发题时写入的 id 不够 —— 覆盖 task model、或切片已退役，都会让
+ * 同一次发题在新 pin 下继续付费判分。
+ */
+export async function gradingSliceMatchesLivePin(
+  db: Db | Tx,
+  admittedSliceId: string,
+  taskKind: string,
+): Promise<{ ok: true } | { ok: false; detail: string }> {
+  const pin = currentModelPins().get(taskKind);
+  const pinLabel = pin === undefined ? 'unconfigured' : `${pin.model}@${pin.model_version}`;
+  const [row] = await db
+    .select()
+    .from(model_admission_slice)
+    .where(eq(model_admission_slice.slice_id, admittedSliceId))
+    .limit(1);
+  if (row === undefined || row.status !== 'active') {
+    return {
+      ok: false,
+      detail: `admitted slice '${admittedSliceId}' is not active for the model that would run (${pinLabel})`,
+    };
+  }
+  if (pin === undefined) {
+    return { ok: false, detail: `no current model pin for task '${taskKind}'` };
+  }
+  const liveId = modelSliceIdFor({
+    subject: row.subject,
+    response_class: row.response_class,
+    task_kind: taskKind,
+    model: pin.model,
+    model_version: pin.model_version,
+  });
+  if (liveId !== admittedSliceId) {
+    return {
+      ok: false,
+      detail: `admitted slice '${admittedSliceId}' (${row.model}@${row.model_version}) is not the slice for the model that would run (${pin.model}@${pin.model_version})`,
+    };
+  }
+  return { ok: true };
+}
+
 /** 当前每个可准入 task kind 实际会执行的 (model, model_version)。 */
 export function currentModelPins(): ReadonlyMap<string, { model: string; model_version: string }> {
   const pins = new Map<string, { model: string; model_version: string }>();

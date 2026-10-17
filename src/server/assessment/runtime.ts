@@ -10,6 +10,7 @@ export {
   type RegisterModelAdmissionSliceInput,
   assertModelAdmissionSliceRegistrable,
   currentModelPins,
+  gradingSliceMatchesLivePin,
   lookupGroupSubjects,
   modelSliceIdFor,
   registerModelAdmissionSlice,
