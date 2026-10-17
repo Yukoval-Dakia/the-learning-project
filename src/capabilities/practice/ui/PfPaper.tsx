@@ -819,7 +819,21 @@ function PaperVisit({
   // the known epochs), re-read the paper, and settle every open native slot with the server.
   // true = nothing newer differs, submit as before; false = a slot is now on the conflict choice
   // or the read failed — nothing was sent.
+  // Any unexpected throw counts as a failed check: nothing is submitted and 交卷 can be retried,
+  // so the caller's submitting flag is always released.
   const reconcileBeforeSubmit = async (): Promise<boolean> => {
+    try {
+      return await reconcileBeforeSubmitInner();
+    } catch (err) {
+      console.error('[PfPaper] pre-submit check failed', err);
+      if (componentActiveRef.current) {
+        setSubmitCheckFailed(true);
+        addToast('交卷前没能核对服务器上的草稿，这次没有交——再点一次交卷重试', 'info', 'alert');
+      }
+      return false;
+    }
+  };
+  const reconcileBeforeSubmitInner = async (): Promise<boolean> => {
     await settleInFlightSaves();
     let fresh: PaperDetail;
     try {
