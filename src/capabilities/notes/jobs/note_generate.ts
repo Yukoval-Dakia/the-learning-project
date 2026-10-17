@@ -23,6 +23,13 @@ import {
   isNoteArtifactType,
 } from '@/capabilities/notes/server/note-artifact-types';
 import {
+  NOTE_GENERATION_FALLBACK_ACTOR_REF,
+  buildNoteGenerationFallbackBody,
+  isNoteGenerationFallbackBody,
+  loadNoteGenerationFallbackMaterial,
+  recordNoteFallbackReferenceExposure,
+} from '@/capabilities/notes/server/note-generation-fallback';
+import {
   assertNoteGenerationReferences,
   loadNoteGenerationReferences,
   lockCurrentNoteGenerationReferences,
@@ -332,14 +339,40 @@ export async function runNoteGenerate(
     // retry per policy because we rethrow.
     //
     // W3-C1γ — event-source the failed status flip too (so the fold reproduces generation_status=
-    // 'failed' and NOTHING about artifact stays KNOWN-UNFOLDED). Atomic in its own tx; failure does
-    // NOT bump version. Best-effort: a cleanup throw is logged, never masking the original error
-    // (which is rethrown so pg-boss retries per policy).
+    // 'failed' and NOTHING about artifact stays KNOWN-UNFOLDED). Atomic in its own tx. Best-effort:
+    // a cleanup throw is logged, never masking the original error (which is rethrown so pg-boss
+    // retries per policy). The status flip itself keeps the version; only the YUK-1508 fallback
+    // body write below bumps it (a real content write).
+    //
+    // YUK-1508 — the same failure tx ALSO fills an EMPTY body with the deterministic
+    // fallback (real material only, honestly labelled 「自动生成失败，以下为原材料整理」;
+    // see note-generation-fallback.ts). That write DOES bump version — it is a real
+    // content write through the normal body path (body_blocks_edit + syncBlockRefs +
+    // history entry), so it is replayable and revertible, and a later successful
+    // retry/regeneration replaces it as a normal new version (the marker block goes
+    // away with the full-body replace). Idempotent: a body that is already written
+    // (fallback or not) is never overwritten, so redelivery failures never stack
+    // duplicate versions. The failed run stays failed — nothing here marks it
+    // succeeded; the run row keeps its own runner-owned failure record.
     const failedAt = new Date();
     try {
+      // Frozen/display-grade reads before the tx: knowledge names, hub summary,
+      // sibling excerpts, the frozen issuance (+ reveal-rule check). No locks —
+      // none of these mutate alongside the failure flip.
+      const fallbackMaterial = await loadNoteGenerationFallbackMaterial(db, {
+        id: artifactId,
+        title: row.title,
+        knowledge_ids: row.knowledge_ids,
+        parent_artifact_id: row.parent_artifact_id,
+        attrs: row.attrs,
+      });
       await db.transaction(async (tx) => {
         const beforeRows = await tx
-          .select({ version: artifact.version })
+          .select({
+            version: artifact.version,
+            body_blocks: artifact.body_blocks,
+            history: artifact.history,
+          })
           .from(artifact)
           .where(
             and(
@@ -353,24 +386,97 @@ export async function runNoteGenerate(
           .limit(1);
         const before = beforeRows[0];
         if (!before) return;
-        const rows = await tx
-          .update(artifact)
-          .set({ generation_status: 'failed', updated_at: failedAt })
-          .where(
-            and(
-              eq(artifact.id, artifactId),
-              inArray(artifact.type, NOTE_ARTIFACT_TYPES),
-              eq(artifact.generation_status, 'pending'),
-              isNull(artifact.archived_at),
-            ),
-          )
-          .returning({ id: artifact.id });
-        if (rows.length === 0) return;
+
+        const currentBody = (before.body_blocks ?? null) as { content?: unknown } | null;
+        const bodyIsEmpty =
+          !Array.isArray(currentBody?.content) || currentBody.content.length === 0;
+        const writeFallback = bodyIsEmpty && !isNoteGenerationFallbackBody(currentBody);
+
+        let nextVersion = before.version;
+        const historyAfter = (
+          Array.isArray(before.history) ? before.history : []
+        ) as ArtifactHistoryEntryT[];
+
+        if (writeFallback) {
+          const fallbackBody = buildNoteGenerationFallbackBody(fallbackMaterial);
+          nextVersion = before.version + 1;
+          const fallbackHistoryAfter: ArtifactHistoryEntryT[] = [
+            ...historyAfter,
+            {
+              version: nextVersion,
+              at: failedAt,
+              by: { by: 'system' },
+              summary_md: '生成失败：写入确定性原材料兜底正文（非 AI 生成）',
+              action: 'note_generation_fallback',
+              previous_artifact_version: before.version,
+              next_artifact_version: nextVersion,
+            },
+          ];
+          const rows = await tx
+            .update(artifact)
+            .set({
+              body_blocks: fallbackBody as never,
+              generation_status: 'failed',
+              version: nextVersion,
+              history: fallbackHistoryAfter as never,
+              updated_at: failedAt,
+            })
+            .where(
+              and(
+                eq(artifact.id, artifactId),
+                inArray(artifact.type, NOTE_ARTIFACT_TYPES),
+                eq(artifact.generation_status, 'pending'),
+                eq(artifact.version, before.version),
+                isNull(artifact.archived_at),
+              ),
+            )
+            .returning({ id: artifact.id });
+          if (rows.length === 0) return;
+
+          await syncBlockRefsForArtifact(tx, artifactId, fallbackBody);
+          await emitArtifactBodyBlocksEditEvent(tx, {
+            subjectId: artifactId,
+            previousArtifactVersion: before.version,
+            nextArtifactVersion: nextVersion,
+            bodyBlocks: fallbackBody,
+            previousBodyBlocks: (before.body_blocks ?? null) as ArtifactBodyBlocksT | null,
+            historyAfter: fallbackHistoryAfter,
+            actorKind: 'agent',
+            actorRef: NOTE_GENERATION_FALLBACK_ACTOR_REF,
+            createdAt: failedAt,
+            optOutMemoryIngestion: true,
+          });
+          if (fallbackMaterial.question?.reference_md) {
+            await recordNoteFallbackReferenceExposure(tx, {
+              issuanceId: fallbackMaterial.question.issuance_id,
+              questionId: fallbackMaterial.question.question_id,
+              referenceMd: fallbackMaterial.question.reference_md,
+            });
+          }
+          console.log(
+            `[note_generate] ${artifactId} generation failed; deterministic fallback body written (v${before.version}->v${nextVersion})`,
+          );
+        } else {
+          const rows = await tx
+            .update(artifact)
+            .set({ generation_status: 'failed', updated_at: failedAt })
+            .where(
+              and(
+                eq(artifact.id, artifactId),
+                inArray(artifact.type, NOTE_ARTIFACT_TYPES),
+                eq(artifact.generation_status, 'pending'),
+                isNull(artifact.archived_at),
+              ),
+            )
+            .returning({ id: artifact.id });
+          if (rows.length === 0) return;
+        }
+
         await emitArtifactLifecycleEvent(tx, {
           subjectId: artifactId,
           op: 'set_generation_status',
           generationStatus: 'failed',
-          nextVersion: before.version,
+          nextVersion,
           actorKind: 'agent',
           actorRef: 'note_generate',
           createdAt: failedAt,
