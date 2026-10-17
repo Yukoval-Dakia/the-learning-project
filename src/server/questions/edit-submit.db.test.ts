@@ -22,7 +22,7 @@ import { acceptAiProposal } from '@/server/proposals/actions';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { contractIntegrityDigest, normalizeQuestionRowToContract } from './contract-normalizer';
 import { draftDocumentToContract } from './draft-contract';
-import { saveDraftEdit } from './edit-question';
+import { saveDraftEdit, validateDraftEdit } from './edit-question';
 import { publishQuestionGroup, publishQuestionGroupFromRow } from './publisher';
 import { submitDraftQuestion } from './submit-question';
 
@@ -332,7 +332,10 @@ const BLANK_RULE = {
   otherwise: { points: 0 },
 };
 
-function blankDocument(prompt: string): QuestionDraftDocumentT {
+function blankDocument(
+  prompt: string,
+  accepted: readonly string[] = ['H2O'],
+): QuestionDraftDocumentT {
   return QuestionDraftDocument.parse({
     schema_version: 2,
     parts: [
@@ -348,7 +351,7 @@ function blankDocument(prompt: string): QuestionDraftDocumentT {
             response_spec: { kind: 'blank', format: 'text' },
             key: {
               kind: 'blank',
-              key: { kind: 'text', accepted: ['H2O'], normalization: BLANK_NORM },
+              key: { kind: 'text', accepted: [...accepted], normalization: BLANK_NORM },
             },
             points: 1,
             rule: BLANK_RULE,
@@ -370,11 +373,13 @@ async function publishAdmittedBlank(input: {
   id: string;
   prompt: string;
   knowledgeIds: string[];
+  accepted?: string[];
   blankScoresZero?: boolean;
   aggregation?: { kind: 'capped_sum'; cap: number };
 }): Promise<void> {
   const db = testDb();
-  const doc = blankDocument(input.prompt);
+  const accepted = input.accepted ?? ['H2O'];
+  const doc = blankDocument(input.prompt, accepted);
   doc.knowledge_ids = input.knowledgeIds;
   const contract = draftDocumentToContract(doc, input.id);
   if (contract.conversion_issues.length > 0) {
@@ -394,7 +399,7 @@ async function publishAdmittedBlank(input: {
   await insertQuestion({
     id: input.id,
     prompt: input.prompt,
-    reference: 'H2O',
+    reference: accepted.join(' / '),
     choices: null,
     knowledgeIds: input.knowledgeIds,
   });
@@ -424,6 +429,49 @@ async function publishAdmittedBlank(input: {
   if (published.status !== 'published') {
     throw new Error(`blank fixture publish returned ${published.status}`);
   }
+}
+
+const RULE_REFERENCE = '水的化学式是 H2O。\n\n解析：每个水分子有两个氢。';
+
+/** 旧行格式：参考答案含解析和空行，发布成 text + rule_reference，不能无损往返。 */
+async function publishAdmittedRuleReference(input: {
+  id: string;
+  prompt: string;
+  knowledgeIds: string[];
+}): Promise<{ partId: string; unitId: string }> {
+  const db = testDb();
+  await insertQuestion({
+    id: input.id,
+    prompt: input.prompt,
+    reference: RULE_REFERENCE,
+    choices: null,
+    knowledgeIds: input.knowledgeIds,
+  });
+  const published = await publishQuestionGroupFromRow(db, {
+    rootId: input.id,
+    admission: { state: 'admitted', evidence: ADMITTED },
+    availability: 'general_pool',
+    actorRef: 'test:edit-submit',
+    now: new Date(),
+  });
+  if (published.status !== 'published') {
+    throw new Error(`rule reference fixture publish returned ${published.status}`);
+  }
+  const [revision] = await db
+    .select()
+    .from(question_revision)
+    .where(eq(question_revision.group_id, input.id));
+  const unit = revision.scoring_basis.units[0];
+  const slot = revision.response_spec.slots[0];
+  if (unit?.criterion.kind !== 'rule_reference') {
+    throw new Error(`rule reference fixture criterion is ${unit?.criterion.kind ?? 'missing'}`);
+  }
+  if (slot?.kind !== 'text') {
+    throw new Error(`rule reference fixture slot is ${slot?.kind ?? 'missing'}`);
+  }
+  const partId = revision.structure.parts[0]?.part_id;
+  if (partId == null) throw new Error('rule reference fixture has no part');
+  return { partId, unitId: unit.scoring_unit_id };
 }
 
 /** 旧多选，但选择界是恰好 2，不是默认的 1..选项数。 */
@@ -1802,6 +1850,490 @@ describe('edit/submit question boundary', () => {
     if (graded.status !== 'scored') return;
     expect(graded.points_awarded, JSON.stringify(graded)).toBe(1);
   });
+
+  // @invariant grading: a prompt-only edit of an admitted rule_reference question publishes the new prompt and the stored scoring layers
+  // @fails-if the lossy round trip refuses the edit, or the published revision replaces rule_reference with a rewritten layer
+  it('publishes a prompt typo on an old rule_reference question without rewriting scoring', async () => {
+    const db = testDb();
+    const kc = 'kc-rule-typo';
+    const qid = 'q-rule-typo';
+    await seedKnowledge(kc);
+    const prompt = '旧解答：水的化学式是什么';
+    const { partId } = await publishAdmittedRuleReference({
+      id: qid,
+      prompt,
+      knowledgeIds: [kc],
+    });
+    const [before] = await db
+      .select()
+      .from(question_revision)
+      .where(eq(question_revision.group_id, qid));
+    const saved = await saveDraftEdit(db, {
+      input: {
+        action: 'save',
+        question_id: qid,
+        ops: [
+          {
+            op: 'replace_text',
+            target: { kind: 'part', id: partId },
+            field: 'prompt_md',
+            old: '化学式',
+            new: '分子式',
+          },
+        ],
+        request_id: 'rule-typo-save',
+      },
+      ctx: ACTOR,
+    });
+    expect(saved.status, JSON.stringify(saved)).toBe('saved');
+    if (saved.status !== 'saved') return;
+    const checked = await validateDraftEdit(db, {
+      input: { action: 'validate', draft_ref: saved.draft_ref },
+      ctx: ACTOR,
+    });
+    if (checked.status !== 'validated') throw new Error(JSON.stringify(checked));
+    expect(checked.publishable).toBe(true);
+    const submitted = await submitDraftQuestion(
+      db,
+      {
+        draft_ref: saved.draft_ref,
+        expected_draft_version: saved.draft_version,
+        request_id: 'rule-typo-submit',
+      },
+      { ...ACTOR, sessionId: null },
+    );
+    expect(submitted.status, JSON.stringify(submitted)).toBe('admitted');
+    const revisions = await db
+      .select()
+      .from(question_revision)
+      .where(eq(question_revision.group_id, qid))
+      .orderBy(asc(question_revision.revision_ordinal));
+    expect(revisions).toHaveLength(2);
+    const next = revisions[1];
+    expect(next.structure.parts[0]?.prompt_md).toContain('分子式');
+    expect(next.response_spec).toEqual(before.response_spec);
+    expect(next.scoring_basis).toEqual(before.scoring_basis);
+    expect(next.execution_plan).toEqual(before.execution_plan);
+    const [afterLife] = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, qid));
+    expect(afterLife.scoring_admission_state).toBe('admitted');
+    expect(afterLife.current_revision_id).toBe(next.revision_id);
+    const [row] = await db.select().from(question).where(eq(question.id, qid));
+    expect(row.prompt_md).toContain('分子式');
+  });
+
+  // @invariant grading: converting an old rule_reference unit to a blank key publishes the author's key
+  // @fails-if the lossy round trip refuses a blank conversion that validation calls publishable
+  it('publishes a blank key converted from an old rule_reference question', async () => {
+    const db = testDb();
+    const kc = 'kc-rule-blank';
+    const qid = 'q-rule-blank';
+    await seedKnowledge(kc);
+    const { unitId } = await publishAdmittedRuleReference({
+      id: qid,
+      prompt: '待改成填空：水的化学式是',
+      knowledgeIds: [kc],
+    });
+    const saved = await saveDraftEdit(db, {
+      input: {
+        action: 'save',
+        question_id: qid,
+        ops: [
+          {
+            op: 'set',
+            target: { kind: 'unit', id: unitId },
+            fields: {
+              response_class: 'blank',
+              response_spec: { kind: 'blank', format: 'text' },
+              key: { kind: 'blank', key: { kind: 'text', accepted: ['H2O'] } },
+              method: { kind: 'exact' },
+              rule: BLANK_RULE,
+            },
+          },
+        ],
+        request_id: 'rule-blank-save',
+      },
+      ctx: ACTOR,
+    });
+    expect(saved.status, JSON.stringify(saved)).toBe('saved');
+    if (saved.status !== 'saved') return;
+    const checked = await validateDraftEdit(db, {
+      input: { action: 'validate', draft_ref: saved.draft_ref },
+      ctx: ACTOR,
+    });
+    if (checked.status !== 'validated') throw new Error(JSON.stringify(checked));
+    expect(checked.publishable).toBe(true);
+    const submitted = await submitDraftQuestion(
+      db,
+      {
+        draft_ref: saved.draft_ref,
+        expected_draft_version: saved.draft_version,
+        request_id: 'rule-blank-submit',
+      },
+      { ...ACTOR, sessionId: null },
+    );
+    expect(submitted.status, JSON.stringify(submitted)).toBe('withheld');
+    if (submitted.status !== 'withheld' || 'published' in submitted) {
+      throw new Error(JSON.stringify(submitted));
+    }
+    const [afterLife] = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, qid));
+    const [revision] = await db
+      .select()
+      .from(question_revision)
+      .where(eq(question_revision.revision_id, afterLife.current_revision_id ?? ''));
+    const unit = revision.scoring_basis.units[0];
+    if (unit == null || unit.criterion.kind !== 'blank_key' || unit.criterion.key.kind !== 'text') {
+      throw new Error(`blank conversion published ${unit?.criterion.kind ?? 'nothing'}`);
+    }
+    expect(unit.criterion.key.accepted).toEqual(['H2O']);
+    expect(afterLife.scoring_admission_state).toBe('withheld');
+  });
+
+  // @invariant grading: accepting a copilot prompt edit of an old rule_reference question publishes that prompt
+  // @fails-if accept returns 422 because the stored rule_reference does not round-trip
+  it('accepts a copilot prompt edit of an old rule_reference question', async () => {
+    const db = testDb();
+    const kc = 'kc-rule-accept';
+    const qid = 'q-rule-accept';
+    await seedKnowledge(kc);
+    const { partId } = await publishAdmittedRuleReference({
+      id: qid,
+      prompt: '待接受：水的化学式是什么',
+      knowledgeIds: [kc],
+    });
+    const [before] = await db
+      .select()
+      .from(question_revision)
+      .where(eq(question_revision.group_id, qid));
+    const proposalId = await writeAiProposal(db, {
+      actor_ref: 'agent:copilot',
+      payload: {
+        kind: 'question_edit',
+        target: { subject_kind: 'question', subject_id: qid },
+        reason_md: '改一个错字',
+        evidence_refs: [{ kind: 'question', id: qid }],
+        proposed_change: {
+          question_id: qid,
+          edit_request: {
+            question_id: qid,
+            ops: [
+              {
+                op: 'replace_text',
+                target: { kind: 'part', id: partId },
+                field: 'prompt_md',
+                old: '化学式',
+                new: '分子式',
+              },
+            ],
+          },
+        },
+        rollback_plan: { action: 'dismiss proposal' },
+        cooldown_key: `rule-accept:${qid}`,
+        suggestion_kind: 'proactive',
+      },
+    });
+    await acceptAiProposal(db, proposalId, { decision: 'accept' });
+    const revisions = await db
+      .select()
+      .from(question_revision)
+      .where(eq(question_revision.group_id, qid))
+      .orderBy(asc(question_revision.revision_ordinal));
+    expect(revisions).toHaveLength(2);
+    const next = revisions[1];
+    expect(next.structure.parts[0]?.prompt_md).toContain('分子式');
+    expect(next.response_spec).toEqual(before.response_spec);
+    expect(next.scoring_basis).toEqual(before.scoring_basis);
+    expect(next.execution_plan).toEqual(before.execution_plan);
+  });
+
+  // @invariant grading: correcting the key of a lossy admitted question publishes the new key and keeps capped_sum
+  // @fails-if the lossy round trip refuses the key change and leaves 42 as the live accepted answer
+  it('publishes a corrected key on a lossy admitted blank question', async () => {
+    const db = testDb();
+    const kc = 'kc-key-fix';
+    const qid = 'q-key-fix';
+    await seedKnowledge(kc);
+    await publishAdmittedBlank({
+      id: qid,
+      prompt: '封顶聚合写错了键：答案是',
+      knowledgeIds: [kc],
+      accepted: ['42'],
+      aggregation: { kind: 'capped_sum', cap: 1 },
+    });
+    const saved = await saveDraftEdit(db, {
+      input: {
+        action: 'save',
+        question_id: qid,
+        ops: [
+          {
+            op: 'set',
+            target: { kind: 'unit', id: 'u1' },
+            fields: { key: { kind: 'blank', key: { kind: 'text', accepted: ['43'] } } },
+          },
+        ],
+        request_id: 'key-fix-save',
+      },
+      ctx: ACTOR,
+    });
+    expect(saved.status, JSON.stringify(saved)).toBe('saved');
+    if (saved.status !== 'saved') return;
+    const submitted = await submitDraftQuestion(
+      db,
+      {
+        draft_ref: saved.draft_ref,
+        expected_draft_version: saved.draft_version,
+        request_id: 'key-fix-submit',
+      },
+      { ...ACTOR, sessionId: null },
+    );
+    expect(submitted.status, JSON.stringify(submitted)).toBe('withheld');
+    if (submitted.status !== 'withheld' || 'published' in submitted) {
+      throw new Error(JSON.stringify(submitted));
+    }
+    const [afterLife] = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, qid));
+    expect(afterLife.scoring_admission_state).toBe('withheld');
+    const [revision] = await db
+      .select()
+      .from(question_revision)
+      .where(eq(question_revision.revision_id, afterLife.current_revision_id ?? ''));
+    const unit = revision.scoring_basis.units[0];
+    if (unit == null || unit.criterion.kind !== 'blank_key' || unit.criterion.key.kind !== 'text') {
+      throw new Error(`key fix published ${unit?.criterion.kind ?? 'nothing'}`);
+    }
+    expect(unit.criterion.key.accepted).toEqual(['43']);
+    expect(unit.criterion.key.normalization).toEqual(BLANK_NORM);
+    expect(revision.scoring_basis.aggregation).toEqual({ kind: 'capped_sum', cap: 1 });
+  });
+
+  // @invariant grading: an explicit case_sensitive false overrides an inherited casefold false
+  // @fails-if the key edit is admitted as a noop and h2o still scores 0
+  it('publishes case_sensitive false over an inherited case-sensitive normalisation', async () => {
+    const db = testDb();
+    const kc = 'kc-casefold-override';
+    const qid = 'q-casefold-override';
+    await seedKnowledge(kc);
+    await publishAdmittedBlank({
+      id: qid,
+      prompt: '大小写覆盖：水的化学式是',
+      knowledgeIds: [kc],
+    });
+    const saved = await saveDraftEdit(db, {
+      input: {
+        action: 'save',
+        question_id: qid,
+        ops: [
+          {
+            op: 'set',
+            target: { kind: 'unit', id: 'u1' },
+            fields: {
+              key: {
+                kind: 'blank',
+                key: { kind: 'text', accepted: ['H2O'], case_sensitive: false },
+              },
+            },
+          },
+        ],
+        request_id: 'casefold-override-save',
+      },
+      ctx: ACTOR,
+    });
+    expect(saved.status, JSON.stringify(saved)).toBe('saved');
+    if (saved.status !== 'saved') return;
+    const submitted = await submitDraftQuestion(
+      db,
+      {
+        draft_ref: saved.draft_ref,
+        expected_draft_version: saved.draft_version,
+        request_id: 'casefold-override-submit',
+      },
+      { ...ACTOR, sessionId: null },
+    );
+    expect(submitted.status, JSON.stringify(submitted)).toBe('withheld');
+    if (submitted.status !== 'withheld' || 'published' in submitted) {
+      throw new Error(JSON.stringify(submitted));
+    }
+    const [afterLife] = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, qid));
+    const [revision] = await db
+      .select()
+      .from(question_revision)
+      .where(eq(question_revision.revision_id, afterLife.current_revision_id ?? ''));
+    const unit = revision.scoring_basis.units[0];
+    if (unit == null || unit.criterion.kind !== 'blank_key' || unit.criterion.key.kind !== 'text') {
+      throw new Error(`case override published ${unit?.criterion.kind ?? 'nothing'}`);
+    }
+    expect(unit.criterion.key.normalization.casefold).toBe(true);
+    expect(unit.criterion.key.normalization.nfkc).toBe(true);
+    const graded = await gradeBlankExactUnit(unit, {
+      slot_id: unit.slot_refs[0] ?? 's1',
+      kind: 'blank',
+      state: 'answered',
+      text: 'h2o',
+    });
+    expect(graded.status, JSON.stringify(graded)).toBe('scored');
+    if (graded.status !== 'scored') return;
+    expect(graded.points_awarded, JSON.stringify(graded)).toBe(1);
+  });
+
+  // @invariant grading: an explicit trim false overrides an inherited trim_outer true
+  // @fails-if the key edit is admitted as a noop and a padded answer still scores 1
+  it('publishes trim false over an inherited trimmed normalisation', async () => {
+    const db = testDb();
+    const kc = 'kc-trim-override';
+    const qid = 'q-trim-override';
+    await seedKnowledge(kc);
+    await publishAdmittedBlank({
+      id: qid,
+      prompt: '空白覆盖：水的化学式是',
+      knowledgeIds: [kc],
+    });
+    const saved = await saveDraftEdit(db, {
+      input: {
+        action: 'save',
+        question_id: qid,
+        ops: [
+          {
+            op: 'set',
+            target: { kind: 'unit', id: 'u1' },
+            fields: {
+              key: { kind: 'blank', key: { kind: 'text', accepted: ['H2O'], trim: false } },
+            },
+          },
+        ],
+        request_id: 'trim-override-save',
+      },
+      ctx: ACTOR,
+    });
+    expect(saved.status, JSON.stringify(saved)).toBe('saved');
+    if (saved.status !== 'saved') return;
+    const submitted = await submitDraftQuestion(
+      db,
+      {
+        draft_ref: saved.draft_ref,
+        expected_draft_version: saved.draft_version,
+        request_id: 'trim-override-submit',
+      },
+      { ...ACTOR, sessionId: null },
+    );
+    expect(submitted.status, JSON.stringify(submitted)).toBe('withheld');
+    if (submitted.status !== 'withheld' || 'published' in submitted) {
+      throw new Error(JSON.stringify(submitted));
+    }
+    const [afterLife] = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, qid));
+    const [revision] = await db
+      .select()
+      .from(question_revision)
+      .where(eq(question_revision.revision_id, afterLife.current_revision_id ?? ''));
+    const unit = revision.scoring_basis.units[0];
+    if (unit == null || unit.criterion.kind !== 'blank_key' || unit.criterion.key.kind !== 'text') {
+      throw new Error(`trim override published ${unit?.criterion.kind ?? 'nothing'}`);
+    }
+    expect(unit.criterion.key.normalization.trim_outer).toBe(false);
+    expect(unit.criterion.key.normalization.nfkc).toBe(true);
+    const padded = await gradeBlankExactUnit(unit, {
+      slot_id: unit.slot_refs[0] ?? 's1',
+      kind: 'blank',
+      state: 'answered',
+      text: ' H2O ',
+    });
+    expect(padded.status, JSON.stringify(padded)).toBe('scored');
+    if (padded.status !== 'scored') return;
+    expect(padded.points_awarded, JSON.stringify(padded)).toBe(0);
+    const bare = await gradeBlankExactUnit(unit, {
+      slot_id: unit.slot_refs[0] ?? 's1',
+      kind: 'blank',
+      state: 'answered',
+      text: 'H2O',
+    });
+    expect(bare.status, JSON.stringify(bare)).toBe('scored');
+    if (bare.status !== 'scored') return;
+    expect(bare.points_awarded, JSON.stringify(bare)).toBe(1);
+  });
+
+  // @invariant grading: case_sensitive false together with casefold false is not a publishable key
+  // @fails-if the draft accepts both flags and then drops case_sensitive false
+  it('rejects a blank key that asks to ignore case and also keep case', async () => {
+    const db = testDb();
+    const doc = blankDocument('大小写双关：水的化学式是');
+    const unit = doc.parts[0]?.units[0];
+    if (unit?.key?.kind !== 'blank' || unit.key.key.kind !== 'text') {
+      throw new Error('blank fixture has no text key');
+    }
+    unit.key.key = {
+      kind: 'text',
+      accepted: ['H2O'],
+      case_sensitive: false,
+      normalization: { ...BLANK_NORM, casefold: false },
+    };
+    const saved = await saveDraftEdit(db, {
+      input: { action: 'save', document: doc, request_id: 'casefold-false-conflict-save' },
+      ctx: ACTOR,
+    });
+    expect(saved.status, JSON.stringify(saved)).toBe('rejected');
+    if (saved.status !== 'rejected') return;
+    expect(JSON.stringify(saved.issues)).toContain('casefold false');
+  });
+
+  // @invariant grading: trim false together with trim_outer true is not a publishable key
+  // @fails-if the draft accepts both flags and then drops trim false
+  it('rejects a blank key that asks to keep outer spaces and also trim them', async () => {
+    const db = testDb();
+    const doc = blankDocument('空白双关：水的化学式是');
+    const unit = doc.parts[0]?.units[0];
+    if (unit?.key?.kind !== 'blank' || unit.key.key.kind !== 'text') {
+      throw new Error('blank fixture has no text key');
+    }
+    unit.key.key = {
+      kind: 'text',
+      accepted: ['H2O'],
+      trim: false,
+      normalization: { ...BLANK_NORM, trim_outer: true },
+    };
+    const saved = await saveDraftEdit(db, {
+      input: { action: 'save', document: doc, request_id: 'trim-false-conflict-save' },
+      ctx: ACTOR,
+    });
+    expect(saved.status, JSON.stringify(saved)).toBe('rejected');
+    if (saved.status !== 'rejected') return;
+    expect(JSON.stringify(saved.issues)).toContain('trim_outer true');
+  });
+
+  // @invariant grading: trim true together with trim_outer false is not a publishable key
+  // @fails-if the draft accepts both flags and then drops trim true
+  it('rejects a blank key that asks to trim outer spaces and also keep them', async () => {
+    const db = testDb();
+    const doc = blankDocument('空白反向双关：水的化学式是');
+    const unit = doc.parts[0]?.units[0];
+    if (unit?.key?.kind !== 'blank' || unit.key.key.kind !== 'text') {
+      throw new Error('blank fixture has no text key');
+    }
+    unit.key.key = {
+      kind: 'text',
+      accepted: ['H2O'],
+      trim: true,
+      normalization: { ...BLANK_NORM, trim_outer: false },
+    };
+    const saved = await saveDraftEdit(db, {
+      input: { action: 'save', document: doc, request_id: 'trim-true-conflict-save' },
+      ctx: ACTOR,
+    });
+    expect(saved.status, JSON.stringify(saved)).toBe('rejected');
+    if (saved.status !== 'rejected') return;
+    expect(JSON.stringify(saved.issues)).toContain('trim_outer false');
+  });
 });
 
 async function expectPromptEditLeavesCurrent(input: {
@@ -1840,6 +2372,13 @@ async function expectPromptEditLeavesCurrent(input: {
   });
   expect(saved.status, JSON.stringify(saved)).toBe('saved');
   if (saved.status !== 'saved') return;
+  const checked = await validateDraftEdit(db, {
+    input: { action: 'validate', draft_ref: saved.draft_ref },
+    ctx: ACTOR,
+  });
+  if (checked.status !== 'invalid') throw new Error(JSON.stringify(checked));
+  expect(checked.publishable).toBe(false);
+  expect(checked.issues.map((issue) => issue.code)).toContain('scoring_round_trip_lossy');
   const submitted = await submitDraftQuestion(
     db,
     {

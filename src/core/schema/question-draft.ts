@@ -141,9 +141,34 @@ export const DraftBlankNormalization = z.object({
 export type DraftBlankNormalizationT = z.infer<typeof DraftBlankNormalization>;
 
 /**
+ * 作者显式写下的大小写 / 首尾空白，和归一化段里的 casefold / trim_outer 不能各说各话。
+ * 只在两边都写了且互相否定时拒绝。省略归一化字段不算冲突，提交侧会用作者的布尔盖过去。
+ */
+export function blankTextKeyConflict(key: {
+  case_sensitive?: boolean;
+  trim?: boolean;
+  normalization?: { casefold?: boolean; trim_outer?: boolean };
+}): string | null {
+  if (key.case_sensitive === true && key.normalization?.casefold === true) {
+    return 'case_sensitive true conflicts with normalization.casefold true';
+  }
+  if (key.case_sensitive === false && key.normalization?.casefold === false) {
+    return 'case_sensitive false conflicts with normalization.casefold false';
+  }
+  if (key.trim === false && key.normalization?.trim_outer === true) {
+    return 'trim false conflicts with normalization.trim_outer true';
+  }
+  if (key.trim === true && key.normalization?.trim_outer === false) {
+    return 'trim true conflicts with normalization.trim_outer false';
+  }
+  return null;
+}
+
+/**
  * blank key：文本 or 数值+容差/单位（与契约 BlankKeyCriterion.key 同构，独立声明避免互锁）。
  * case_sensitive 为 true 表示区分大小写；normalization.casefold 为 true 表示折叠大小写。
- * 两个同时为 true 互相矛盾，文档不能通过校验。
+ * trim 为 false 表示保留首尾空白；normalization.trim_outer 为 true 表示去掉。
+ * 两边都写了且互相否定时，文档不能通过校验。
  */
 export const DraftBlankTextKey = z
   .object({
@@ -155,13 +180,13 @@ export const DraftBlankTextKey = z
     normalization: DraftBlankNormalization.optional(),
   })
   .superRefine((key, ctx) => {
-    if (key.case_sensitive === true && key.normalization?.casefold === true) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'case_sensitive true conflicts with normalization.casefold true',
-        path: ['normalization', 'casefold'],
-      });
-    }
+    const conflict = blankTextKeyConflict(key);
+    if (conflict == null) return;
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: conflict,
+      path: ['normalization'],
+    });
   });
 export type DraftBlankTextKeyT = z.infer<typeof DraftBlankTextKey>;
 

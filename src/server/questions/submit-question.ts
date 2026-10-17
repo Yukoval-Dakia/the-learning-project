@@ -52,6 +52,7 @@ import { projectQuestionBlockGuarded } from '@/server/projections/question_block
 import { writeQuestionBlockLifecycleEvent } from '@/server/projections/question_block-lifecycle-event';
 import {
   type DraftContract,
+  applyScoringEditPlan,
   draftCanonicalIdentity,
   draftDocumentToContract,
   revisionToDraftDocument,
@@ -286,6 +287,34 @@ type ScoringRevision = Pick<
  * 题面、展示或材料文本可以变。任一判分层变了，或有 unit 已经不可自动判，
  * 旧证据不再适用，回到 withheld。新题和未准入的组不在这里自动准入。
  */
+function conversionWithheld(contract: DraftContract, requestId: string): SubmitResult {
+  return {
+    status: 'withheld',
+    published: false,
+    detail: 'draft has unresolved conversion issues',
+    issues: contract.conversion_issues.map((i) => ({
+      code: i.code,
+      detail: i.detail,
+      ...(i.part_id != null ? { part_id: i.part_id } : {}),
+      ...(i.unit_id != null ? { unit_id: i.unit_id } : {}),
+    })),
+    per_unit: contract.unit_summary.map((u) => ({
+      unit_id: u.unit_id,
+      status: 'withheld',
+      ...(u.withheld_reason != null ? { reason: u.withheld_reason } : {}),
+    })),
+    request_id: requestId,
+  };
+}
+
+function storedScoringCopied(revision: ScoringRevision, contract: DraftContract): boolean {
+  return (
+    canonicalJson(revision.response_spec) === canonicalJson(contract.response_spec) &&
+    canonicalJson(revision.scoring_basis) === canonicalJson(contract.scoring_basis) &&
+    canonicalJson(revision.execution_plan) === canonicalJson(contract.execution_plan)
+  );
+}
+
 function admissionForContentEdit(
   lifecycle: typeof question_group_lifecycle.$inferSelect | undefined,
   checks: AdmissionCheckResult,
@@ -294,7 +323,11 @@ function admissionForContentEdit(
   knowledgeIds: string[],
 ): PublishAdmission {
   if (lifecycle?.scoring_admission_state !== 'admitted') return checks.admission;
-  if (checks.per_unit.some((unit) => unit.status === 'withheld')) return checks.admission;
+  const copied = revision != null && storedScoringCopied(revision, contract);
+  // 原样拷贝已存判分层时，编码摘要里的 human_review 不是这次编辑新引入的。
+  if (!copied && checks.per_unit.some((unit) => unit.status === 'withheld')) {
+    return checks.admission;
+  }
   if (revision == null || !scoringLayersUnchanged(revision, contract, knowledgeIds)) {
     return checks.admission;
   }
@@ -308,49 +341,19 @@ function admissionForContentEdit(
 }
 
 /**
- * 已存 revision 走草稿往返后丢了或改写了判分字段。这种提交不能铸新 revision：
- * 发布出去的会是被改写过的层。调用方返回未发布的 withheld。
- */
-function scoringRoundTripIssue(
-  revision: ScoringRevision,
-  knowledgeIds: string[],
-): { code: 'scoring_round_trip_lossy'; detail: string } | null {
-  let canonical: DraftContract;
-  try {
-    canonical = draftDocumentToContract(
-      revisionToDraftDocument(revision, { knowledge_ids: knowledgeIds }),
-      revision.group_id,
-    );
-  } catch (err) {
-    return {
-      code: 'scoring_round_trip_lossy',
-      detail:
-        err instanceof Error
-          ? `stored revision did not round-trip: ${err.message}`
-          : 'stored revision did not round-trip',
-    };
-  }
-  if (canonical.conversion_issues.length > 0 || !scoringRoundTripIsFaithful(revision, canonical)) {
-    return {
-      code: 'scoring_round_trip_lossy',
-      detail: 'stored scoring layers do not survive the draft round trip',
-    };
-  }
-  return null;
-}
-
-/**
  * 已存 revision 与这次提交可能不是同一编码：旧行是 option_set_key +
  * single_choice/multi_choice、没有规则；编辑草稿会再编成 select_key + select
- * 并补上印出的规则。先把已存 revision 走同一条草稿往返，再比三层。往返形不成
- * 规范契约，或往返丢掉、改写了已存判分字段时，视为已变（回 withheld）。
- * 往返有损时提交在发布前就返回，不会把改写后的层铸成新 revision。
+ * 并补上印出的规则。先把已存 revision 走同一条草稿往返，再比三层。
+ * 即将发布的三层与已存 revision 逐字节相同（题面编辑原样拷贝）时直接算没变，
+ * 即使草稿往返本身有损。往返形不成规范契约，或往返丢掉、改写了已存判分字段
+ * 且这次发布的层不是那份原件时，视为已变（回 withheld）。
  */
 function scoringLayersUnchanged(
   revision: ScoringRevision,
   contract: DraftContract,
   knowledgeIds: string[],
 ): boolean {
+  if (storedScoringCopied(revision, contract)) return true;
   let canonical: DraftContract;
   try {
     canonical = draftDocumentToContract(
@@ -637,30 +640,13 @@ export async function submitDraftQuestion(
       expectedRevisionId !== undefined ? expectedRevisionId : pinnedBaseRevision;
 
     const groupId = doc.base?.question_id ?? block.imported_question_id ?? createId();
-    const contract = draftDocumentToContract(doc, groupId);
+    let contract = draftDocumentToContract(doc, groupId);
+    const editingExisting = doc.base?.question_id != null || block.imported_question_id != null;
 
-    // 未决转换 ⇒ 不铸 revision（发布侧 validators 会抛）；如实返回 withheld+原因。
-    if (contract.conversion_issues.length > 0) {
-      const withheld: SubmitResult = {
-        status: 'withheld',
-        published: false,
-        detail: 'draft has unresolved conversion issues',
-        issues: contract.conversion_issues.map((i) => ({
-          code: i.code,
-          detail: i.detail,
-          ...(i.part_id != null ? { part_id: i.part_id } : {}),
-          ...(i.unit_id != null ? { unit_id: i.unit_id } : {}),
-        })),
-        per_unit: contract.unit_summary.map((u) => ({
-          unit_id: u.unit_id,
-          status: 'withheld',
-          ...(u.withheld_reason != null ? { reason: u.withheld_reason } : {}),
-        })),
-        request_id: requestId,
-      };
-      // 未发布的 withheld 不写回执。确定性 request_id（proposal-submit）否则会
-      // 重放这次失败，知识点恢复后 accept 仍 422。
-      return withheld;
+    // 新题的未决转换在读组之前就返回。编辑已发布题要等判分计划：原样拷贝
+    // 已存层时，编码器的转换问题不代表即将发布的契约。
+    if (!editingExisting && contract.conversion_issues.length > 0) {
+      return conversionWithheld(contract, requestId);
     }
 
     // 组当前状态（CAS + lifecycle 快照；发布 seam 内部复核同一令牌）。
@@ -752,6 +738,26 @@ export async function submitDraftQuestion(
             .from(question_revision)
             .where(eq(question_revision.revision_id, currentRevisionId))
             .limit(1);
+    if (currentRevision != null) {
+      const applied = applyScoringEditPlan(currentRevision, doc, contract);
+      if (applied.plan.action === 'refuse') {
+        return {
+          status: 'withheld',
+          published: false,
+          detail: applied.plan.detail,
+          issues: [{ code: applied.plan.code, detail: applied.plan.detail }],
+          per_unit: admission.per_unit,
+          request_id: requestId,
+        };
+      }
+      contract = applied.contract;
+    }
+    // 未决转换 ⇒ 不铸 revision。原样拷贝已存层时转换问题已经清掉。
+    // 未发布的 withheld 不写回执。确定性 request_id（proposal-submit）否则会
+    // 重放这次失败，知识点恢复后 accept 仍 422。
+    if (contract.conversion_issues.length > 0) {
+      return conversionWithheld(contract, requestId);
+    }
     const effectiveAdmission = admissionForContentEdit(
       lifecycle,
       admission,
@@ -759,30 +765,14 @@ export async function submitDraftQuestion(
       contract,
       doc.knowledge_ids,
     );
-    if (currentRevision != null) {
-      const roundTripIssue = scoringRoundTripIssue(currentRevision, doc.knowledge_ids);
-      if (roundTripIssue != null) {
-        return {
-          status: 'withheld',
-          published: false,
-          detail: roundTripIssue.detail,
-          issues: [roundTripIssue],
-          per_unit: admission.per_unit,
-          request_id: requestId,
-        };
-      }
-    }
     const presentation = presentationForDraft(doc, contract);
-    const integrityDigest =
-      presentation != null
-        ? contractIntegrityDigest({
-            structure: contract.structure,
-            response_spec: contract.response_spec,
-            scoring_basis: contract.scoring_basis,
-            execution_plan: contract.execution_plan,
-            presentation,
-          })
-        : contract.integrity_digest;
+    const integrityDigest = contractIntegrityDigest({
+      structure: contract.structure,
+      response_spec: contract.response_spec,
+      scoring_basis: contract.scoring_basis,
+      execution_plan: contract.execution_plan,
+      ...(presentation != null ? { presentation } : {}),
+    });
     const barrierIssues = contractBarrierIssues(contract, presentation, effectiveAdmission);
     if (barrierIssues.length > 0) {
       const withheld: SubmitResult = {

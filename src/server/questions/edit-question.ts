@@ -36,6 +36,7 @@ import { writeEvent } from '@/kernel/events';
 import { projectQuestionBlockGuarded } from '@/server/projections/question_block';
 import { writeQuestionBlockCreateEvent } from '@/server/projections/question_block-create-event';
 import {
+  applyScoringEditPlan,
   draftDocumentToContract,
   revisionToDraftDocument,
 } from '@/server/questions/draft-contract';
@@ -296,8 +297,17 @@ function opIssues(issues: OpIssue[]): EditIssue[] {
   }));
 }
 
-function publishIssues(doc: QuestionDraftDocumentT, groupId: string): EditIssue[] {
-  const contract = draftDocumentToContract(doc, groupId);
+function publishIssues(
+  doc: QuestionDraftDocumentT,
+  groupId: string,
+  revision?: typeof question_revision.$inferSelect | null,
+): EditIssue[] {
+  const encoded = draftDocumentToContract(doc, groupId);
+  const applied = applyScoringEditPlan(revision ?? null, doc, encoded);
+  if (applied.plan.action === 'refuse') {
+    return [{ code: applied.plan.code, detail: applied.plan.detail }];
+  }
+  const contract = applied.contract;
   const issues: EditIssue[] = contract.conversion_issues.map((i) => ({
     code: i.code,
     detail: i.detail,
@@ -368,6 +378,26 @@ async function loadDraftBlock(tx: Tx, blockId: string): Promise<BlockRow | undef
     .for('update')
     .limit(1);
   return rows[0];
+}
+
+/** validate 不持锁。有当前 revision 时，发布结论与 submit 用同一份判分计划。 */
+async function currentRevisionForValidate(
+  db: Db,
+  groupId: string | null,
+): Promise<typeof question_revision.$inferSelect | null> {
+  if (groupId == null) return null;
+  const [lifecycle] = await db
+    .select({ revisionId: question_group_lifecycle.current_revision_id })
+    .from(question_group_lifecycle)
+    .where(eq(question_group_lifecycle.group_id, groupId))
+    .limit(1);
+  if (lifecycle?.revisionId == null) return null;
+  const [revisionRow] = await db
+    .select()
+    .from(question_revision)
+    .where(eq(question_revision.revision_id, lifecycle.revisionId))
+    .limit(1);
+  return revisionRow ?? null;
 }
 
 /** 已发布题的当前组 revision（CAS 对照 + 种子来源）。 */
@@ -705,9 +735,11 @@ export async function saveDraftEdit(db: Db, params: SaveDraftParams): Promise<Ed
       const importedQuestionId = block?.imported_question_id ?? pending?.importedQuestionId ?? null;
       const groupId = docBefore.base?.question_id ?? importedQuestionId;
       let currentRevisionId: string | null = null;
+      let currentRevisionRow: typeof question_revision.$inferSelect | null = null;
       if (groupId != null || expectedRevisionId !== undefined) {
         const group = groupId != null ? await currentGroupRevision(tx, groupId) : null;
         currentRevisionId = group?.revisionId ?? null;
+        currentRevisionRow = group?.revisionRow ?? null;
         if (expectedRevisionId !== undefined && expectedRevisionId !== currentRevisionId) {
           throw new TxAbort({
             status: 'conflict',
@@ -758,7 +790,7 @@ export async function saveDraftEdit(db: Db, params: SaveDraftParams): Promise<Ed
         await projectQuestionBlockGuarded(tx, block.id);
       }
 
-      const issues = publishIssues(docAfter, groupId ?? `draft-${block.id}`);
+      const issues = publishIssues(docAfter, groupId ?? `draft-${block.id}`, currentRevisionRow);
       const publishable = issues.length === 0;
       const invalidated = computeInvalidatedScope(changes);
 
@@ -919,7 +951,8 @@ export async function validateDraftEdit(
       draft_ref: draftRef,
     };
   }
-  const issues = publishIssues(doc, groupId ?? 'draft');
+  const revision = await currentRevisionForValidate(db, groupId);
+  const issues = publishIssues(doc, groupId ?? 'draft', revision);
   return {
     status: issues.length === 0 ? 'validated' : 'invalid',
     ...(draftRef != null ? { draft_ref: draftRef } : {}),

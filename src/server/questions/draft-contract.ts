@@ -26,7 +26,11 @@ import type {
   DraftUnitT,
   QuestionDraftDocumentT,
 } from '@/core/schema/question-draft';
-import { isDraftDocumentV2 } from '@/core/schema/question-draft';
+import {
+  QuestionDraftDocument,
+  blankTextKeyConflict,
+  isDraftDocumentV2,
+} from '@/core/schema/question-draft';
 import { contractIntegrityDigest } from '@/kernel/records/assessment-normalization';
 
 // ====================================================================
@@ -268,32 +272,43 @@ function criterionFor(
 }
 
 /**
- * 已带归一化的草稿原样进契约。没带的新题仍用当前默认：v1，nfkc 与折叠空白关闭，
- * 只从 case_sensitive / trim 读大小写和首尾空白。
- * case_sensitive 与 casefold 同时为 true 记为未决，提交不铸 revision。
+ * 已带归一化的草稿带着整段进契约。作者在同一把键上写了 case_sensitive / trim
+ * 时，这两项盖过段内的 casefold / trim_outer。两者互相矛盾则记为未决，提交不铸
+ * revision。没带归一化的新题仍用当前默认：v1，nfkc 与折叠空白关闭。
  */
 function blankTextNormalization(
   key: DraftBlankTextKeyT,
   issues: DraftConversionIssue[],
   loc: { partId: string; unitId: string },
 ): BlankNormalizationT {
-  if (key.case_sensitive === true && key.normalization?.casefold === true) {
+  const conflict = blankTextKeyConflict(key);
+  if (conflict != null) {
     issues.push({
       code: 'rule_invalid',
       part_id: loc.partId,
       unit_id: loc.unitId,
-      detail: `unit '${loc.unitId}' case_sensitive true conflicts with normalization.casefold true`,
+      detail: `unit '${loc.unitId}' ${conflict}`,
     });
   }
-  if (key.normalization != null) return BlankNormalization.parse(key.normalization);
+  if (key.normalization == null) {
+    return BlankNormalization.parse({
+      version: 'v1',
+      nfkc: false,
+      trim_outer: key.trim ?? true,
+      casefold: key.case_sensitive === false,
+      collapse_whitespace: false,
+      ignore_punctuation: false,
+      character_variants: [],
+    });
+  }
+  const parsed = BlankNormalization.parse(key.normalization);
+  if (conflict != null) return parsed;
   return BlankNormalization.parse({
-    version: 'v1',
-    nfkc: false,
-    trim_outer: key.trim ?? true,
-    casefold: key.case_sensitive === false,
-    collapse_whitespace: false,
-    ignore_punctuation: false,
-    character_variants: [],
+    ...parsed,
+    ...(key.case_sensitive === false ? { casefold: true } : {}),
+    ...(key.case_sensitive === true ? { casefold: false } : {}),
+    ...(key.trim === false ? { trim_outer: false } : {}),
+    ...(key.trim === true ? { trim_outer: true } : {}),
   });
 }
 
@@ -936,6 +951,230 @@ export function scoringRoundTripIsFaithful(
     }
   }
   return storedExec.size === nextExec.size;
+}
+
+const SCORING_ROUND_TRIP_LOSSY = {
+  action: 'refuse' as const,
+  code: 'scoring_round_trip_lossy' as const,
+  detail: 'stored scoring layers do not survive the draft round trip',
+};
+
+export type ScoringEditPlan =
+  | { action: 'passthrough' }
+  | { action: 'preserve' }
+  | { action: 'author' }
+  | typeof SCORING_ROUND_TRIP_LOSSY;
+
+type StoredScoringRevision = Pick<
+  PublishedQuestionRevisionT,
+  'revision_id' | 'group_id' | 'structure' | 'response_spec' | 'scoring_basis' | 'execution_plan'
+> & { presentation?: PublishedQuestionRevisionT['presentation'] | null };
+
+function draftUnitsById(doc: QuestionDraftDocumentT): Map<string, DraftUnitT> {
+  const units = new Map<string, DraftUnitT>();
+  for (const part of doc.parts) {
+    for (const unit of part.units) units.set(unit.unit_id, unit);
+  }
+  return units;
+}
+
+function unitScoringSnapshot(unit: DraftUnitT): unknown {
+  return {
+    response_class: unit.response_class,
+    response_spec: unit.response_spec,
+    key: unit.key ?? null,
+    rule: unit.rule ?? null,
+    points: unit.points ?? null,
+    method: unit.method,
+    reference_md: unit.reference_md ?? null,
+    rubric: unit.rubric ?? null,
+    slot_id: unit.slot_id,
+    material_refs: [...unit.material_refs],
+  };
+}
+
+function authorTouchedUnitIds(
+  seeded: QuestionDraftDocumentT,
+  doc: QuestionDraftDocumentT,
+): Set<string> | 'structure' {
+  const before = draftUnitsById(seeded);
+  const after = draftUnitsById(doc);
+  const beforeIds = [...before.keys()].sort();
+  const afterIds = [...after.keys()].sort();
+  if (beforeIds.length !== afterIds.length) return 'structure';
+  if (beforeIds.some((id, index) => id !== afterIds[index])) return 'structure';
+  const touched = new Set<string>();
+  for (const [id, next] of after) {
+    const prev = before.get(id);
+    const prevSnap = prev == null ? null : stableJson(unitScoringSnapshot(prev));
+    if (prevSnap !== stableJson(unitScoringSnapshot(next))) touched.add(id);
+  }
+  return touched;
+}
+
+function storedUnitIsUnrepresentable(revision: StoredScoringRevision): boolean {
+  for (const unit of revision.scoring_basis.units) {
+    const kind = unit.criterion.kind;
+    if (
+      kind === 'rule_reference' ||
+      kind === 'text_key' ||
+      kind === 'numeric_key' ||
+      kind === 'matching_pairs_key' ||
+      kind === 'position_set_key' ||
+      kind === 'holistic_level'
+    ) {
+      return true;
+    }
+  }
+  for (const slot of revision.response_spec.slots) {
+    if (
+      slot.kind !== 'select' &&
+      slot.kind !== 'blank' &&
+      slot.kind !== 'open_response' &&
+      slot.kind !== 'single_choice' &&
+      slot.kind !== 'multi_choice'
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * 已存判分层走草稿往返时会不会丢字段，以及这次编辑有没有亲手改判分。
+ * 作者没改判分、丢的又是编码器硬写的字段（聚合、空白计零、费用上限、选择界）
+ * 时拒绝发布。旧的 rule_reference 一类无法表示的层，题面编辑改为原样拷贝。
+ * 作者改了键或题型时放行，由调用方把作者没碰的依据字段从已存 revision 拷回来。
+ */
+export function scoringEditPlan(
+  revision: StoredScoringRevision,
+  doc: QuestionDraftDocumentT,
+): ScoringEditPlan {
+  let seeded: QuestionDraftDocumentT;
+  try {
+    seeded = QuestionDraftDocument.parse(
+      revisionToDraftDocument(revision, { knowledge_ids: doc.knowledge_ids }),
+    );
+  } catch {
+    return SCORING_ROUND_TRIP_LOSSY;
+  }
+  let canonical: DraftContract;
+  try {
+    canonical = draftDocumentToContract(seeded, revision.group_id);
+  } catch {
+    return authorPlan(revision, seeded, doc, 'unrepresentable');
+  }
+  if (canonical.conversion_issues.length > 0) {
+    return authorPlan(revision, seeded, doc, 'unrepresentable');
+  }
+  if (scoringRoundTripIsFaithful(revision, canonical)) return { action: 'passthrough' };
+  const loss = storedUnitIsUnrepresentable(revision) ? 'unrepresentable' : 'field_drop';
+  return authorPlan(revision, seeded, doc, loss);
+}
+
+function authorPlan(
+  revision: StoredScoringRevision,
+  seeded: QuestionDraftDocumentT,
+  doc: QuestionDraftDocumentT,
+  loss: 'unrepresentable' | 'field_drop',
+): ScoringEditPlan {
+  const touched = authorTouchedUnitIds(seeded, doc);
+  // 单元集合变了就无法原样拷贝已存层，也不再靠编码器重写后发布。
+  if (touched === 'structure') return SCORING_ROUND_TRIP_LOSSY;
+  if (touched.size === 0) {
+    return loss === 'field_drop' ? SCORING_ROUND_TRIP_LOSSY : { action: 'preserve' };
+  }
+  if (dropsUntouchedSlot(revision, seeded, doc, touched)) return SCORING_ROUND_TRIP_LOSSY;
+  return { action: 'author' };
+}
+
+function dropsUntouchedSlot(
+  revision: StoredScoringRevision,
+  seeded: QuestionDraftDocumentT,
+  doc: QuestionDraftDocumentT,
+  touched: Set<string>,
+): boolean {
+  const seededUnits = draftUnitsById(seeded);
+  const docUnits = draftUnitsById(doc);
+  let encoded: DraftContract;
+  try {
+    encoded = draftDocumentToContract(doc, revision.group_id);
+  } catch {
+    return true;
+  }
+  const encodedSlots = new Map(encoded.response_spec.slots.map((slot) => [slot.slot_id, slot]));
+  const storedSlots = new Map(revision.response_spec.slots.map((slot) => [slot.slot_id, slot]));
+  for (const id of touched) {
+    const prev = seededUnits.get(id);
+    const next = docUnits.get(id);
+    if (prev == null || next == null) return true;
+    if (stableJson(prev.response_spec) !== stableJson(next.response_spec)) continue;
+    const storedSlot = storedSlots.get(next.slot_id);
+    const encodedSlot = encodedSlots.get(next.slot_id);
+    if (storedSlot == null || encodedSlot == null) return true;
+    if (storedSlot.kind !== encodedSlot.kind) return true;
+    if (
+      storedSlot.placement != null &&
+      stableJson(storedSlot.placement) !== stableJson(encodedSlot.placement ?? null)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** 作者改了判分单元时，仍把草稿表达不了的依据字段从已存 revision 原样带回。 */
+export function overlayAuthorScoring<T extends DraftContract>(
+  encoded: T,
+  stored: Pick<StoredScoringRevision, 'scoring_basis' | 'execution_plan'>,
+): T {
+  const storedPlan = stored.execution_plan;
+  return {
+    ...encoded,
+    scoring_basis: {
+      ...encoded.scoring_basis,
+      aggregation: stored.scoring_basis.aggregation,
+      blank_scores_zero: stored.scoring_basis.blank_scores_zero,
+    },
+    execution_plan: {
+      ...encoded.execution_plan,
+      plan_version: storedPlan.plan_version,
+      escalation: storedPlan.escalation,
+      ...(storedPlan.max_total_cost_usd_micros != null
+        ? { max_total_cost_usd_micros: storedPlan.max_total_cost_usd_micros }
+        : {}),
+    },
+  };
+}
+
+/**
+ * 提交和校验共用这一步。preserve 用已存的三层判分替换编码器产出，题面仍用草稿。
+ * author 只把聚合、空白计零和计划级字段从已存 revision 拷回。refuse 时契约不动。
+ */
+export function applyScoringEditPlan(
+  revision: StoredScoringRevision | null,
+  doc: QuestionDraftDocumentT,
+  encoded: DraftContract,
+): { contract: DraftContract; plan: ScoringEditPlan } {
+  if (revision == null) return { contract: encoded, plan: { action: 'passthrough' } };
+  const plan = scoringEditPlan(revision, doc);
+  if (plan.action === 'refuse') return { contract: encoded, plan };
+  if (plan.action === 'preserve') {
+    return {
+      plan,
+      contract: {
+        ...encoded,
+        response_spec: revision.response_spec,
+        scoring_basis: revision.scoring_basis,
+        execution_plan: revision.execution_plan,
+        conversion_issues: [],
+      },
+    };
+  }
+  if (plan.action === 'author') {
+    return { plan, contract: overlayAuthorScoring(encoded, revision) };
+  }
+  return { contract: encoded, plan };
 }
 
 // ---------- 与 question.canonical_content_hash 对齐的内容身份 ----------
