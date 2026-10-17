@@ -283,7 +283,13 @@ export default function PracticeFacePage({
   // ref callback drops the param every time (a second Forward to the same stale item included).
   const [rejectedItem, setRejectedItem] = useState<{ id: string; n: number } | null>(null);
   const streamRead = visibleStream !== undefined && streamQ.isFetchedAfterMount && !streamQ.isError;
-  if (itemParam !== followedItem && (itemParam === null || streamRead)) {
+  // YUK-1517 — on a search-only navigation (Back from `?kc=K` to `?item=A`) the new `?item=`
+  // arrives in the same render as the new URL, but `scopeKnowledgeId` still names the old scope
+  // until the scope sync above runs. Judge `?item=` only against the stream of the scope the URL
+  // names now; until then it waits, unfollowed, so the right stream can still open it.
+  const urlScope = getQuery('kc')?.trim() || null;
+  const streamMatchesUrl = urlScope === scopeKnowledgeId;
+  if (itemParam !== followedItem && (itemParam === null || (streamRead && streamMatchesUrl))) {
     setFollowedItem(itemParam);
     const target = itemParam === null ? undefined : items.find((it) => it.id === itemParam);
     if (target?.item_kind === 'question' && target.status === 'in_progress') {
