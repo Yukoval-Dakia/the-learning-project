@@ -15902,3 +15902,9 @@ div.copilot-tool-line.is-static {
   font-size: var(--fs-meta);
   color: var(--ink-3);
 }
+/* YUK-1512 — redaction receipt: one quiet line after extraction. */
+.usage-receipt {
+  margin: var(--s-2) 0 0;
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+}

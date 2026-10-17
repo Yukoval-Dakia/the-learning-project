@@ -31,6 +31,7 @@ import {
   uploadUsageField,
   useUploadUsageChoice,
 } from '@/ui/components/UploadUsagePicker';
+import { UsageReceiptLine, ingestionSessionDetailQuery } from '@/ui/components/UsageReceiptLine';
 import { type ApiSubject, useSubjects } from '@/ui/hooks/useSubjects';
 import { ApiAuthError, ApiError, apiJson } from '@/ui/lib/api';
 import { expandDocx, expandPdf, uploadAsset, useAssetUrl } from '@/ui/lib/assets';
@@ -533,11 +534,12 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
       // 进 landing 快照（banner 随后弹出）；reject/挂死 → 落地卡无 banner，不回退。
       // `cur ?` 守卫：用户已点「继续传」reset 掉 landing 时不复活它。
       if (sessionId) {
-        void apiJson<{ session?: { warnings?: unknown } | null } | null>(
-          `/api/ingestion-sessions/${encodeURIComponent(sessionId)}`,
-        )
+        // YUK-1512 — same session-detail query the receipt line reads; staleTime 0
+        // forces a fresh read after import and refreshes that cache entry.
+        void queryClient
+          .fetchQuery({ ...ingestionSessionDetailQuery(sessionId), staleTime: 0 })
           .then((detail) => {
-            const raw = detail?.session?.warnings;
+            const raw: unknown = detail?.session?.warnings;
             const warnings = Array.isArray(raw)
               ? raw.filter((w): w is string => typeof w === 'string')
               : [];
@@ -702,6 +704,7 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
           navigate={routing.navigate}
           onRecordAnother={reset}
         />
+        <UsageReceiptLine sessionId={sessionId} enabled={false} />
       </Card>
     );
   }
@@ -849,6 +852,7 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
           ) : (
             <SSETimeline events={sse.events} status="closed" />
           )}
+          <UsageReceiptLine sessionId={sessionId} />
           {blocksQ.isLoading && <p style={mutedStyle}>正在加载识别结果…</p>}
           {blocksQ.isError && (
             <p style={errorStyle}>识别结果加载失败：{formatError(blocksQ.error)}</p>
