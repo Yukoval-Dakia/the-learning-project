@@ -355,6 +355,13 @@ export function buildNoteGenerationFallbackBody(
   return { type: 'doc', content: paragraphs } as ArtifactBodyBlocksT;
 }
 
+/** True when the body carries no top-level blocks (null or empty content). */
+export function noteBodyIsEmpty(body: unknown): boolean {
+  if (body === null || typeof body !== 'object') return true;
+  const content = (body as Record<string, unknown>).content;
+  return !Array.isArray(content) || content.length === 0;
+}
+
 /** True when the body already IS a fallback body (the marker block is present). */
 export function isNoteGenerationFallbackBody(body: unknown): boolean {
   if (body === null || typeof body !== 'object') return false;
@@ -375,6 +382,39 @@ export function isNoteGenerationFallbackBody(body: unknown): boolean {
 }
 
 /**
+ * True when the body is the UNTOUCHED fallback: the marker block is present AND
+ * the last history entry is the fallback write itself at the current version.
+ * A learner edit (or any later body write) pushes a newer history entry, so this
+ * flips false the moment anyone touches the fallback — those edits must never
+ * be clobbered by a retry's success body.
+ */
+export function isUntouchedNoteGenerationFallbackBody(
+  body: unknown,
+  history: unknown,
+  version: number,
+): boolean {
+  if (!isNoteGenerationFallbackBody(body)) return false;
+  const entries = Array.isArray(history) ? history : [];
+  const last = entries.length > 0 ? entries[entries.length - 1] : null;
+  if (last === null || typeof last !== 'object') return false;
+  const entry = last as Record<string, unknown>;
+  return entry.action === 'note_generation_fallback' && entry.next_artifact_version === version;
+}
+
+/**
+ * May a generation success body (or a retry reopen) take over this note? Only
+ * when the body is still empty, or it is exactly the untouched fallback.
+ * Anything else is human/agent-authored content the generation must not clobber.
+ */
+export function mayOverwriteNoteBodyForGeneration(
+  body: unknown,
+  history: unknown,
+  version: number,
+): boolean {
+  return noteBodyIsEmpty(body) || isUntouchedNoteGenerationFallbackBody(body, history, version);
+}
+
+/**
  * Record the fallback's serving of an already-revealed frozen reference —
  * SAME event action/payload shape as recordAssistanceExposure
  * (practice/server/assessment/assistance.ts) so exposure accounting and
@@ -382,7 +422,7 @@ export function isNoteGenerationFallbackBody(body: unknown): boolean {
  */
 export async function recordNoteFallbackReferenceExposure(
   tx: Tx,
-  input: { issuanceId: string; questionId: string; referenceMd: string },
+  input: { issuanceId: string; referenceMd: string },
 ): Promise<void> {
   await writeEvent(tx, {
     id: `evt_help_${createId()}`,
