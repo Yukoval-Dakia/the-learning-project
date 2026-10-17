@@ -35,13 +35,13 @@ function buildIngestionAgentPrompt(profile: SubjectProfile): string {
 3. stage=structuring：逐 item 用 edit_question(document) 建草稿，发 item status=structuring + preview_text（从原文摘 ≤100 字，系统会脱敏截到 80 字）。
 4. stage=presenting：对每个草稿调 compose_presentation 生成展示层。
 5. 对每个草稿调 submit_question 提交。成功（withheld/pending）→ 发 item status=withheld；被拒/冲突/失败 → status=failed 并发 error(scope=item, code=structure_failed, retryable=false)。
-6. 全部 item 到终态后发 stage=done 并结束。
+6. 全部 item 到终态后发 stage=done，counts 带 {items_total, items_done, items_withheld, items_failed}，并结束。
 
 铁律：
-- 绝不从页面照抄答案/key：unit.key、reference 一律不写页面印出的答案；学生手写痕迹只是证据不转写。判分由下游 C1 lane 负责，你只提交 method（select→set-compare、blank→exact、free→ai-rubric 或 human_review）。
-- preview_text 只放题目原文节选，不放手写内容、姓名、学校等身份线索。
+- 答案先自己解：结构草稿的 unit.key / reference 必须来自你自己的求解，绝不抄写页面印出的答案或学生手写痕迹——它们只是证据，永远不进入 key。允许 omit key（提交照样 withheld 待 admission 独立判分）。
+- item 上报用 page_index（read_source manifest 的 0 基页索引，系统会转 1 基）。preview_text 只放题目原文节选，不放手写内容、姓名、学校等身份线索。
 - 页/图不可读、裁剪失败、模型问题等局部失败：对该 item 发 status=failed + error(scope=item, retryable 如实填)，继续其它 item；整包不可读才发 error(scope=session)。
-- ask_learner 只在真拿不准时用（如小问归属、材料归属、缺页歧义）。发出后**继续处理其它 item**或结束本轮；绝不在文本里假装等回答。resume 后输入里的 asks 数组带答案或 open 状态，按答案继续该 item。
+- ask_learner 只在真拿不准时用（如小问归属、材料归属、缺页歧义）。placeholder 可省略（系统会按题型补默认文案）。发出后**继续处理其它 item**或结束本轮；绝不在文本里假装等回答。resume 后输入里的 asks 数组带答案或 open 状态，按答案继续该 item。
 - edit_question 返回的 draft_ref 在后续 item 进度上报时带上（draft_ref 字段）；提交成功后带 question_id。
 - 跨页大题必须合成一个 item；不要把同一题拆成多个 item。
 - question_no 是印刷显示号，item_id 是你的稳定身份，两者都用 ASCII。`;

@@ -2,8 +2,9 @@ import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { learning_session, source_document } from '@/db/schema';
-
+import { redactIngestionText } from '../privacy-guard';
 import { formatAssetRef, readSourcePackage } from '../source-package';
+import { recordAgentRedaction } from './redaction-sink';
 import { requireIngestionScope } from './source-tool-support';
 import type { DomainTool, ToolContext } from './types';
 
@@ -12,6 +13,12 @@ import type { DomainTool, ToolContext } from './types';
 // and windowed access to body_md — anchored markdown, so a page read is a
 // slice between <!-- tlp:page index=N --> comments, never a fabricated
 // transcription. There is deliberately no per-format reader.
+//
+// YUK-1522 (R8 R1) — every text window handed to the model is re-redacted
+// through redactIngestionText before it leaves this tool (idempotent on
+// already-redacted body_md; the docx/legacy lanes can hold raw text), and the
+// fired fields/counts fold into the run-scoped redaction sink so the usage
+// receipt's extracted_text:'redacted' claim is true, not nominal.
 
 const MAX_CHARS_HARD_CAP = 24_000;
 const DEFAULT_MAX_CHARS = 12_000;
@@ -93,6 +100,13 @@ function windowText(
     content: slice,
     next_offset: next < content.length ? next : null,
   };
+}
+
+/** Redact a text window for the model and fold the fired rules into the run's sink. */
+function redactedWindow(ctx: ToolContext, window: NonNullable<ReadSourceOutput['text']>) {
+  const redacted = redactIngestionText(window.content);
+  recordAgentRedaction(ctx, redacted);
+  return { ...window, content: redacted.text };
 }
 
 async function executeReadSource(
@@ -179,7 +193,9 @@ async function executeReadSource(
       status: 'ok',
       document_level_text: isWordText,
       manifest,
-      text: isWordText ? windowText(bodyMd, offset, maxChars, 'document', null) : null,
+      text: isWordText
+        ? redactedWindow(ctx, windowText(bodyMd, offset, maxChars, 'document', null))
+        : null,
     };
   }
 
@@ -202,7 +218,9 @@ async function executeReadSource(
       status: isWordText ? 'ok' : 'no_text',
       document_level_text: isWordText,
       manifest,
-      text: isWordText ? windowText(bodyMd, offset, maxChars, 'document', null) : null,
+      text: isWordText
+        ? redactedWindow(ctx, windowText(bodyMd, offset, maxChars, 'document', null))
+        : null,
     };
   }
 
@@ -221,7 +239,7 @@ async function executeReadSource(
     status: 'ok',
     document_level_text: false,
     manifest,
-    text: windowText(section, offset, maxChars, 'page', input.page_index),
+    text: redactedWindow(ctx, windowText(section, offset, maxChars, 'page', input.page_index)),
   };
 }
 

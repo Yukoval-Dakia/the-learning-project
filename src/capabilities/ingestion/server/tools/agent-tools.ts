@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { createAsk, findOpenAskForItem, readAskState } from '../agent/asks';
+import { createAsk, readAskState } from '../agent/asks';
 import {
   INGESTION_AGENT_ITEM_PREVIEW_MAX,
   IngestionAgentErrorCode,
@@ -14,7 +14,8 @@ import {
   writeAgentItemState,
   writeAgentStageEvent,
 } from '../events/agent-progress';
-import { type IngestionRedactionField, redactIngestionText } from '../privacy-guard';
+import { redactIngestionText } from '../privacy-guard';
+import { recordAgentRedaction } from './redaction-sink';
 import { requireIngestionScope } from './source-tool-support';
 import type { DomainTool, ToolContext } from './types';
 
@@ -34,48 +35,20 @@ import type { DomainTool, ToolContext } from './types';
 
 // ---------- redaction accounting (feeds the per-run usage receipt) ----------
 
-export interface AgentRedactionSink {
-  readonly fields: Set<IngestionRedactionField>;
-  readonly counts: Partial<Record<IngestionRedactionField, number>>;
-}
-
-const redactionSinks = new WeakMap<ToolContext, AgentRedactionSink>();
-
-/** Run-scoped accumulator: the orchestrator attaches one sink per segment. */
-export function attachAgentRedactionSink(ctx: ToolContext): AgentRedactionSink {
-  const sink: AgentRedactionSink = { fields: new Set(), counts: {} };
-  redactionSinks.set(ctx, sink);
-  return sink;
-}
-
-function recordRedaction(
-  ctx: ToolContext,
-  result: {
-    fields: IngestionRedactionField[];
-    counts: Partial<Record<IngestionRedactionField, number>>;
-  },
-): void {
-  const sink = redactionSinks.get(ctx);
-  if (sink == null) return;
-  for (const field of result.fields) {
-    sink.fields.add(field);
-    const count = result.counts[field];
-    if (count != null) sink.counts[field] = (sink.counts[field] ?? 0) + count;
-  }
-}
+// The sink itself lives in ./redaction-sink.ts so every text-bearing tool
+// (read_source, glm_ocr, these two) reports into the same run scope.
 
 const StageReportInput = z.object({
   event: z.literal('stage'),
   stage: IngestionAgentStage,
   pages: z.object({ total: z.number().int().min(0), done: z.number().int().min(0) }).optional(),
+  /** Contract keys exactly: {items_total, items_done, items_withheld, items_failed}. */
   counts: z
     .object({
-      segmented: z.number().int().min(0).optional(),
-      structured: z.number().int().min(0).optional(),
-      admitted: z.number().int().min(0).optional(),
-      withheld: z.number().int().min(0).optional(),
-      failed: z.number().int().min(0).optional(),
-      pending_ask: z.number().int().min(0).optional(),
+      items_total: z.number().int().min(0),
+      items_done: z.number().int().min(0),
+      items_withheld: z.number().int().min(0),
+      items_failed: z.number().int().min(0),
     })
     .optional(),
 });
@@ -86,7 +59,9 @@ const ItemReportInput = z.object({
   question_no: z.string().min(1).max(40),
   status: IngestionAgentItemStatus,
   reason: z.string().max(500).optional(),
-  page: z.number().int().min(0).optional(),
+  /** 0-based source page index (same numbering as the read_source manifest);
+   * the server emits the contract's 1-based `page`. */
+  page_index: z.number().int().min(0).optional(),
   /** Excerpt shown to the learner — re-redacted + truncated server-side. */
   preview_text: z.string().max(400).optional(),
   /** Bookkeeping link (not emitted on the UI contract). */
@@ -118,7 +93,7 @@ type ReportProgressOutput = z.infer<typeof ReportProgressOutputSchema>;
 function previewMarkdown(ctx: ToolContext, previewText: string | undefined): string | undefined {
   if (previewText == null) return undefined;
   const redacted = redactIngestionText(previewText);
-  recordRedaction(ctx, { fields: redacted.fields, counts: redacted.counts });
+  recordAgentRedaction(ctx, redacted);
   const compact = redacted.text.replace(/\s+/g, ' ').trim();
   if (compact.length === 0) return undefined;
   return compact.slice(0, INGESTION_AGENT_ITEM_PREVIEW_MAX);
@@ -153,7 +128,7 @@ async function executeReportProgress(
           question_no: input.question_no,
           status: input.status,
           ...(input.reason != null ? { reason: input.reason } : {}),
-          ...(input.page != null ? { page: input.page } : {}),
+          ...(input.page_index != null ? { page: input.page_index + 1 } : {}),
           ...(previewMd != null ? { preview_md: previewMd } : {}),
         });
       }
@@ -186,7 +161,7 @@ async function executeReportProgress(
 export const reportIngestionProgressTool: DomainTool<ReportProgressInput, ReportProgressOutput> = {
   name: 'report_ingestion_progress',
   description:
-    'Emit a durable R8 progress event for this ingestion run: event=stage {stage, pages?, counts?}, event=item {item_id, question_no, status(queued|structuring|solving|calibrating|admitted|withheld|failed), reason?, page?, preview_text?, draft_ref?, question_id?}, or event=error {scope(session|item), item_id?, code(page_unreadable|solve_timeout|model_unavailable|budget_exhausted|crop_failed|worker_lost|structure_failed|ask_expired), retryable}. preview_text is redacted and truncated to 80 chars by the server — never put raw student handwriting or identifiers in it. Call once per transition; every call is a durable job_events row the UI sees immediately.',
+    'Emit a durable R8 progress event for this ingestion run: event=stage {stage, pages?, counts?{items_total,items_done,items_withheld,items_failed}}, event=item {item_id, question_no, status(queued|structuring|solving|calibrating|admitted|withheld|failed), reason?, page_index? (0-based manifest index — the server emits it 1-based), preview_text?, draft_ref?, question_id?}, or event=error {scope(session|item), item_id?, code(page_unreadable|solve_timeout|model_unavailable|budget_exhausted|crop_failed|worker_lost|structure_failed|ask_expired), retryable}. preview_text is redacted and truncated to 80 chars by the server — never put raw student handwriting or identifiers in it. Call once per transition; every call is a durable job_events row the UI sees immediately.',
   effect: 'write',
   inputSchema: ReportProgressInputSchema,
   outputSchema: ReportProgressOutputSchema,
@@ -258,37 +233,31 @@ async function executeAskLearner(
   if (input.answer_kind === 'choice' && (input.options == null || input.options.length < 2)) {
     throw new Error('ask_learner: answer_kind choice requires at least two options');
   }
-  // Idempotent create: a re-segmented/replayed run asking about the same item
-  // returns the still-open ask instead of minting a duplicate.
-  const existing = await findOpenAskForItem(ctx.db, sessionId, input.item_id);
-  if (existing != null) {
-    return { status: 'pending', ask_id: existing.ask_id, expires_at: existing.expires_at };
-  }
   // Learner-facing ask text goes through the same redaction as previews —
   // quoted source text can carry identifiers the page held.
   const promptRedacted = redactIngestionText(input.prompt_md);
-  recordRedaction(ctx, { fields: promptRedacted.fields, counts: promptRedacted.counts });
+  recordAgentRedaction(ctx, promptRedacted);
   const options = input.options?.map((option) => {
     const label = redactIngestionText(option.label_md);
-    recordRedaction(ctx, { fields: label.fields, counts: label.counts });
+    recordAgentRedaction(ctx, label);
     return { id: option.id, label_md: label.text };
   });
-  const placeholder =
-    input.placeholder != null
-      ? (() => {
-          const out = redactIngestionText(input.placeholder as string);
-          recordRedaction(ctx, { fields: out.fields, counts: out.counts });
-          return out.text;
-        })()
-      : undefined;
+  // Contract requires `placeholder`; fill a kind-appropriate default when the
+  // model omits it.
+  const placeholderRaw =
+    input.placeholder ?? (input.answer_kind === 'choice' ? '请选择一项' : '请简要输入你的答案');
+  const placeholderRedacted = redactIngestionText(placeholderRaw);
+  recordAgentRedaction(ctx, placeholderRedacted);
   const contextMd =
     input.context_md != null
       ? (() => {
           const out = redactIngestionText(input.context_md as string);
-          recordRedaction(ctx, { fields: out.fields, counts: out.counts });
+          recordAgentRedaction(ctx, out);
           return out.text;
         })()
       : undefined;
+  // Atomic create-or-adopt: a re-segmented/replayed run asking about the same
+  // item returns the still-open ask instead of minting a duplicate.
   const created = await createAsk(ctx.db, {
     sessionId,
     item_id: input.item_id,
@@ -296,7 +265,7 @@ async function executeAskLearner(
     prompt_md: promptRedacted.text,
     answer_kind: input.answer_kind,
     ...(options != null ? { options } : {}),
-    ...(placeholder != null ? { placeholder } : {}),
+    placeholder: placeholderRedacted.text,
     expires_in_seconds:
       input.expires_in_seconds === undefined
         ? DEFAULT_ASK_EXPIRES_SECONDS

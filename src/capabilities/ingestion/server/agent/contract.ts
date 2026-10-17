@@ -34,16 +34,19 @@ export const IngestionAgentStage = z.enum([
 ]);
 export type IngestionAgentStageT = z.infer<typeof IngestionAgentStage>;
 
+/**
+ * Contract keys, exactly: {items_total, items_done, items_withheld,
+ * items_failed}. No other keys; when `counts` is present all four are.
+ */
 export const IngestionAgentStageCounts = z
   .object({
-    segmented: z.number().int().min(0).optional(),
-    structured: z.number().int().min(0).optional(),
-    admitted: z.number().int().min(0).optional(),
-    withheld: z.number().int().min(0).optional(),
-    failed: z.number().int().min(0).optional(),
-    pending_ask: z.number().int().min(0).optional(),
+    items_total: z.number().int().min(0),
+    items_done: z.number().int().min(0),
+    items_withheld: z.number().int().min(0),
+    items_failed: z.number().int().min(0),
   })
   .strict();
+export type IngestionAgentStageCountsT = z.infer<typeof IngestionAgentStageCounts>;
 
 export const IngestionAgentStagePayload = z
   .object({
@@ -78,8 +81,8 @@ export const IngestionAgentItemPayload = z
     question_no: z.string().min(1),
     status: IngestionAgentItemStatus,
     reason: z.string().optional(),
-    /** 0-based source page. */
-    page: z.number().int().min(0).optional(),
+    /** 1-based source page (contract); the tool accepts the 0-based manifest index and adds 1. */
+    page: z.number().int().min(1).optional(),
     /** Redacted, ≤80 chars — enforced by the emitter, not only this schema. */
     preview_md: z.string().max(80).optional(),
   })
@@ -165,7 +168,8 @@ export const IngestionAgentAskPayload = z
     prompt_md: z.string().min(1),
     answer_kind: IngestionAskAnswerKind,
     options: z.array(IngestionAskOption).optional(),
-    placeholder: z.string().optional(),
+    /** Required by the contract — the server fills a kind-appropriate default. */
+    placeholder: z.string(),
     /** ISO-8601 or null (wait forever). */
     expires_at: z.string().datetime().nullable(),
   })
@@ -195,7 +199,8 @@ export const AskCreatedPayload = z
     prompt_md: z.string().min(1),
     answer_kind: IngestionAskAnswerKind,
     options: z.array(IngestionAskOption).optional(),
-    placeholder: z.string().optional(),
+    /** Required by the contract — defaulted at create when the model omits it. */
+    placeholder: z.string(),
     expires_at: z.string().datetime().nullable(),
     /** Resume bookkeeping for the next run segment; never reaches the UI ask payload. */
     context_md: z.string().optional(),
@@ -242,7 +247,9 @@ export const AgentRunSegmentPayload = z
     trigger: z.enum(['start', 'resume', 'continue']),
     task_run_id: z.string().optional(),
     open_asks: z.array(z.string()).optional(),
-    outcome: z.enum(['running', 'waiting', 'done', 'failed', 'resume_requested']).optional(),
+    outcome: z
+      .enum(['running', 'waiting', 'done', 'failed', 'early_exit', 'resume_requested'])
+      .optional(),
   })
   .strict();
 export type AgentRunSegmentPayloadT = z.infer<typeof AgentRunSegmentPayload>;
