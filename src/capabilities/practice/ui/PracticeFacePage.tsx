@@ -31,6 +31,14 @@ export interface PracticeFacePageProps {
   navigate: (to: string) => void;
   getQuery: (key: string) => string | null;
   setQuery: (key: string, value: string | null) => void;
+  /**
+   * YUK-1510 — `?item=`: the stream item whose question is open, so a refresh lands back on it.
+   * The host keeps it out of getQuery, so writing it is never a scope change.
+   */
+  itemParam: string | null;
+  /** Writes `?item=`: 'push' when a question is opened from the list (browser Back returns there). */
+  writeItemParam: (id: string | null, how: 'push' | 'replace') => void;
+  historyBack: () => void;
 }
 
 export interface PfToast {
@@ -86,8 +94,25 @@ function streamForRequestedScope(
   return stream.scope ? undefined : stream;
 }
 
+/**
+ * YUK-1510 — the live URL, read at the moment of a write: its scope (path plus every param but
+ * `item`) and the item it names. Writes from a flow that started in another scope are dropped.
+ */
+function liveUrl(): { scope: string; item: string | null } {
+  const search = new URLSearchParams(window.location.search);
+  const item = search.get('item');
+  search.delete('item');
+  return { scope: `${window.location.pathname}?${search}`, item };
+}
+
 // navigate 暂未消费（M3 知识面挂上后，复盘 trace 的知识点链接会用它跳转）。
-export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePageProps) {
+export default function PracticeFacePage({
+  getQuery,
+  setQuery,
+  itemParam,
+  writeItemParam,
+  historyBack,
+}: PracticeFacePageProps) {
   const qc = useQueryClient();
   const [scopeKnowledgeId, setScopeKnowledgeId] = useState<string | null>(() => {
     const value = getQuery('kc')?.trim();
@@ -136,6 +161,12 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
   // list) keeps the top of the page, never the old scope's position.
   const restoreListOnLand = useRef(false);
   const focusTitleOnLand = useRef(false);
+  // YUK-1510 — the open question's `?item=` entry was pushed by opening it from the list, so
+  // leaving it in-page steps back to the list entry instead of stacking another one.
+  const itemEntryPushed = useRef(false);
+  // A question's view went away; the next list to land re-reads the stream unless the page
+  // already does (an in-page exit refreshes it itself).
+  const questionLeft = useRef(false);
   const stopTransition = useCallback(() => {
     for (const step of transition.current) step.stop();
     transition.current = [];
@@ -157,14 +188,32 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
     (node: HTMLDivElement | null) => {
       if (!node) return undefined;
       const view = node.dataset.view;
+      const fromQuestion = questionLeft.current;
+      questionLeft.current = false;
       // Back on the list: return to where the reader was, before paint, so the title can fold
       // back into its row (the flight measures after the first frame).
       if (view === 'list') {
-        if (restoreListOnLand.current && listScroll.current > 0) {
+        const exitedInPage = restoreListOnLand.current;
+        if (exitedInPage && listScroll.current > 0) {
           window.scrollTo({ top: listScroll.current, behavior: 'instant' });
         }
         restoreListOnLand.current = false;
         listScroll.current = 0;
+        if (!exitedInPage) itemEntryPushed.current = false;
+        // YUK-1510 — the page decided the `?item=` it was following cannot open (not a started
+        // question of this stream): this list root exists for that decision (data-rejected-item),
+        // so drop the param quietly, if the URL still names that item. A list reached any other
+        // way never touches `?item=` (an in-page exit writes the URL itself; on a cold load the
+        // item is still being looked up).
+        const rejected = node.dataset.rejectedItem;
+        if (rejected && new URLSearchParams(window.location.search).get('item') === rejected) {
+          writeItemParam(null, 'replace');
+        }
+        // Reached by browser Back (not an in-page exit): the list re-reads the stream so an
+        // answer just submitted shows as 已交.
+        if (fromQuestion && !exitedInPage) {
+          void qc.invalidateQueries({ queryKey: ['practice-stream'] });
+        }
       }
       // Arrived in place: the old question's button went with it, so focus goes to the new title.
       if (focusTitleOnLand.current) {
@@ -178,6 +227,7 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
       if (view !== 'solo') return landed;
       return () => {
         landed?.();
+        questionLeft.current = true;
         // YUK-1473 — this question's view is going away. Whatever took it away (back, a scope
         // change through a click, the URL or history — the scope sync resets the page to the
         // list — or the page itself unmounting), a move to the next question that is still on
@@ -190,7 +240,7 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
         setAdvancing(null);
       };
     },
-    [morph, stopTransition],
+    [morph, qc, stopTransition, writeItemParam],
   );
 
   // TanStack Router 会在 search-only navigation 时复用页面实例。壳层传入的 getQuery 会随
@@ -222,6 +272,33 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
   if (streamQ.isError) streamError = streamQ.error as Error;
   else if (streamScopeMismatch && !streamQ.isFetching) streamError = SCOPE_MISMATCH_ERROR;
   const items = useMemo(() => visibleStream?.items ?? [], [visibleStream]);
+
+  // YUK-1510 — the page follows `?item=` when it changes from outside the page: a refresh or
+  // direct link (open that question once this scope's stream is read), browser Back (to the
+  // list) or Forward (back to the question). The page's own writes name the question it already
+  // shows, so they change nothing here. Only an item of the stream for the current scope that is
+  // already started can open; anything else stays on the list, which drops the stale `?item=`.
+  const [followedItem, setFollowedItem] = useState<string | null>(null);
+  // The last `?item=` that could not open; `n` gives each rejection its own list root, so its
+  // ref callback drops the param every time (a second Forward to the same stale item included).
+  const [rejectedItem, setRejectedItem] = useState<{ id: string; n: number } | null>(null);
+  const streamRead = visibleStream !== undefined && streamQ.isFetchedAfterMount && !streamQ.isError;
+  if (itemParam !== followedItem && (itemParam === null || streamRead)) {
+    setFollowedItem(itemParam);
+    const target = itemParam === null ? undefined : items.find((it) => it.id === itemParam);
+    if (target?.item_kind === 'question' && target.status === 'in_progress') {
+      if (rejectedItem?.id === target.id) setRejectedItem(null);
+      if (mode.kind !== 'solo' || mode.item.id !== target.id)
+        setMode({ kind: 'solo', item: target });
+    } else if (itemParam === null) {
+      if (mode.kind === 'solo') setMode({ kind: 'list' });
+    } else if (mode.kind !== 'solo' || mode.item.id !== itemParam) {
+      if (mode.kind === 'solo') setMode({ kind: 'list' });
+      setRejectedItem({ id: itemParam, n: (rejectedItem?.n ?? 0) + 1 });
+    }
+  }
+  // The item named on load is still being looked up: the list waits (and keeps `?item=`).
+  const itemOpening = mode.kind === 'list' && itemParam !== null && itemParam !== followedItem;
 
   const addToast = useCallback((text: string, tone?: 'info', icon?: string) => {
     const id = Math.random().toString(36).slice(2);
@@ -288,6 +365,19 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
     setActionFailure(null);
   }, [setQuery]);
 
+  // YUK-1510 — a question opened from the list gets its own history entry, so browser Back from
+  // it returns to the list.
+  // Only in the scope the opening started in (`scope`), and only if the URL does not name it yet.
+  const openQuestionUrl = useCallback(
+    (id: string, scope: string) => {
+      const here = liveUrl();
+      if (here.scope !== scope || here.item === id) return;
+      writeItemParam(id, 'push');
+      itemEntryPushed.current = true;
+    },
+    [writeItemParam],
+  );
+
   const openItem = useCallback(
     (item: StreamItem) => {
       if (item.status === 'done') {
@@ -295,7 +385,11 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
         return;
       }
 
+      // YUK-1510 — opened from this scope's list; if the scope changes before the start is
+      // confirmed, the question does not open over the new scope.
+      const scope = liveUrl().scope;
       const enter = (confirmed: StreamItem) => {
+        if (liveUrl().scope !== scope) return;
         if (confirmed.item_kind === 'paper') {
           setMode({ kind: 'paper', artifactId: confirmed.ref_id });
         } else {
@@ -303,6 +397,7 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
           listScroll.current = window.scrollY;
           morph.capture(host.current);
           setMode({ kind: 'solo', item: confirmed });
+          openQuestionUrl(confirmed.id, scope);
         }
       };
 
@@ -313,11 +408,12 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
       }
       void commitStreamItem(item, 'in_progress', '开始练习', enter);
     },
-    [commitStreamItem, morph],
+    [commitStreamItem, morph, openQuestionUrl],
   );
 
   const continueAfterSolo = useCallback(
     async function continueNext() {
+      const scope = liveUrl().scope;
       let fresh: StreamView;
       try {
         fresh = await fetchFreshStream();
@@ -329,17 +425,20 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
       const next = fresh.items.find((it) => it.status === 'pending');
       if (next?.item_kind === 'question') {
         void commitStreamItem(next, 'in_progress', '开始下一题', (confirmed) => {
+          if (liveUrl().scope !== scope) return;
           setMode({ kind: 'solo', item: confirmed });
+          openQuestionUrl(confirmed.id, scope);
         });
         return;
       }
 
+      if (liveUrl().scope !== scope) return;
       setMode({ kind: 'list' });
       if (next?.item_kind === 'paper') {
         addToast('下一项是今天的卷——卷内不给即时反馈，准备好了再进。', 'info', 'layers');
       }
     },
-    [addToast, commitStreamItem, fetchFreshStream, recordFailure],
+    [addToast, commitStreamItem, fetchFreshStream, openQuestionUrl, recordFailure],
   );
 
   // ── YUK-1473 — 散题完成后原地换下一题（设计稿：流自动推进；M2/M3/M4/M13）。
@@ -359,19 +458,49 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
     stopTransition();
     endAdvance();
   }, [endAdvance, stopTransition]);
+  // YUK-1510 — a move to the next question is live while it is the latest move AND the URL is
+  // still in the scope it started in. A scope change (click, URL or history) can land before the
+  // question's view detaches; the move ends there through the cancel path, so it sends no further
+  // PATCH, writes no URL and never pulls a question back in.
+  const advanceLive = useCallback(
+    (seq: number, scope: string) => {
+      if (seq !== advanceSeq.current) return false;
+      if (liveUrl().scope === scope) return true;
+      cancelAdvance();
+      return false;
+    },
+    [cancelAdvance],
+  );
 
-  /** Leave the question page for the list, folding its title back into its row. */
-  const exitToList = useCallback(() => {
-    morph.capture(host.current);
-    restoreListOnLand.current = true;
-    setAnnounce('');
-    setMode({ kind: 'list' });
-  }, [morph]);
+  /**
+   * Leave the question page for the list, folding its title back into its row. `scope` is the
+   * URL scope the leaving started in (a click: now; a confirmed PATCH: when it was asked for).
+   */
+  const exitToList = useCallback(
+    (scope: string = liveUrl().scope) => {
+      const here = liveUrl();
+      // YUK-1510 — the URL scope changed on the way (the scope sync already reset the page to
+      // the new scope's list): nothing to leave, and the new scope's URL is never touched.
+      if (here.scope !== scope) return;
+      morph.capture(host.current);
+      restoreListOnLand.current = true;
+      setAnnounce('');
+      setMode({ kind: 'list' });
+      // The URL stops naming the question: step back to the list's own entry when opening
+      // pushed one, otherwise drop `?item=` in place.
+      const pushed = itemEntryPushed.current;
+      itemEntryPushed.current = false;
+      if (here.item === null) return;
+      if (pushed) historyBack();
+      else writeItemParam(null, 'replace');
+    },
+    [historyBack, morph, writeItemParam],
+  );
 
   /** The next question replaces the finished one: leave motion, then the swap (one commit). */
   const swapInPlace = useCallback(
-    async (done: StreamItem, next: StreamItem, pos: number, seq: number) => {
-      const live = () => seq === advanceSeq.current;
+    async (done: StreamItem, next: StreamItem, pos: number, seq: number, scope: string) => {
+      const live = () => advanceLive(seq, scope);
       if (!live()) return;
       if (!prefersReducedMotion()) {
         const steps = [glideToTop(), leaveQuestion(host.current)];
@@ -395,13 +524,18 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
           ? { kind: 'solo', item: next }
           : current,
       );
+      // YUK-1510 — the URL follows the question in place (no new history entry); live() above
+      // has just checked the URL is still in this advance's scope. It replaces only the entry that
+      // still names the question being left, so a Back that already landed on the list entry is
+      // never overwritten.
+      if (liveUrl().item === done.id) writeItemParam(next.id, 'replace');
     },
-    [endAdvance, morph],
+    [advanceLive, endAdvance, morph, writeItemParam],
   );
 
   const continueInPlace = useCallback(
-    async (done: StreamItem, seq: number) => {
-      const live = () => seq === advanceSeq.current;
+    async (done: StreamItem, seq: number, scope: string) => {
+      const live = () => advanceLive(seq, scope);
       // Only the move that marked the item done continues, once (a retried PATCH included).
       if (continuedSeq.current === seq || !live()) return;
       continuedSeq.current = seq;
@@ -415,7 +549,7 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
         if (!live()) return;
         // done is confirmed and cached; reading the next item failed: leave for the list.
         endAdvance();
-        exitToList();
+        exitToList(scope);
         recordFailure('读取下一项', error, () => void continueAfterSolo());
         return;
       }
@@ -425,7 +559,7 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
       if (next?.item_kind !== 'question') {
         // The last question (or a paper next): back to the list, as before.
         endAdvance();
-        exitToList();
+        exitToList(scope);
         if (next?.item_kind === 'paper') {
           addToast('下一项是今天的卷——卷内不给即时反馈，准备好了再进。', 'info', 'layers');
         }
@@ -445,27 +579,31 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
       // retry (from the list) opens the question once it is started, as before.
       let leftForList = false;
       const started = await commitStreamItem(next, 'in_progress', '开始下一题', (confirmed) => {
-        if (leftForList) setMode({ kind: 'solo', item: confirmed });
+        if (!leftForList || liveUrl().scope !== scope) return;
+        setMode({ kind: 'solo', item: confirmed });
+        openQuestionUrl(confirmed.id, scope);
       });
       if (!live()) return;
       if (!started) {
         leftForList = true;
         endAdvance();
-        exitToList();
+        exitToList(scope);
         return;
       }
       await ready;
       if (!live()) return;
       const pos = fresh.items.findIndex((it) => it.id === started.id) + 1;
-      await swapInPlace(done, started, pos || started.position, seq);
+      await swapInPlace(done, started, pos || started.position, seq, scope);
     },
     [
       addToast,
+      advanceLive,
       commitStreamItem,
       continueAfterSolo,
       endAdvance,
       exitToList,
       fetchFreshStream,
+      openQuestionUrl,
       qc,
       recordFailure,
       swapInPlace,
@@ -479,7 +617,11 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
       advancingRef.current = true;
       setAdvancing(item.id);
       const seq = ++advanceSeq.current;
-      const ok = await commitStreamItem(item, 'done', '完成练习', () => continueInPlace(item, seq));
+      // YUK-1510 — the URL scope this move belongs to; see advanceLive.
+      const scope = liveUrl().scope;
+      const ok = await commitStreamItem(item, 'done', '完成练习', () =>
+        continueInPlace(item, seq, scope),
+      );
       // Marking done failed: stay on the question; the error above offers a retry.
       if (!ok && seq === advanceSeq.current) endAdvance();
     },
@@ -507,13 +649,19 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
   // slot 落到一致的 done 态。
   const markSoloDoneAndExit = useCallback(
     (item: StreamItem) => {
+      const scope = liveUrl().scope;
       void commitStreamItem(item, 'done', '完成并返回练习流', async () => {
-        exitToList();
+        exitToList(scope);
         await refreshStream();
       });
     },
     [commitStreamItem, exitToList, refreshStream],
   );
+
+  let viewKey: string = mode.kind;
+  if (mode.kind === 'solo') viewKey = `solo:${mode.item.id}`;
+  else if (itemOpening) viewKey = 'list:opening';
+  else if (mode.kind === 'list' && rejectedItem) viewKey = `list:rejected:${rejectedItem.n}`;
 
   let body: React.ReactNode;
   if (mode.kind === 'solo') {
@@ -661,9 +809,11 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
         {/* One root per view (a question, the list, a paper): its ref callback lands the shared
             title, restores the list's scroll and places focus after an in-place move. */}
         <div
-          key={mode.kind === 'solo' ? `solo:${mode.item.id}` : mode.kind}
+          key={viewKey}
           className="pface-view"
           data-view={mode.kind}
+          data-opening={itemOpening ? '' : undefined}
+          data-rejected-item={mode.kind === 'list' ? rejectedItem?.id : undefined}
           ref={landView}
         >
           {body}

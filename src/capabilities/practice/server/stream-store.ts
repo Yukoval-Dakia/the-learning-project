@@ -32,7 +32,10 @@ import {
   question,
 } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
-import { resolveVerdictsForAttempts } from '@/kernel/read-models/assessment-verdict';
+import {
+  resolveVerdictsForAttempts,
+  resolveVerdictsForNativeAttempts,
+} from '@/kernel/read-models/assessment-verdict';
 import {
   readAutomaticIssuanceServingDecisions,
   readAutomaticallyServableQuestionIds,
@@ -824,6 +827,12 @@ export interface StreamView {
     verdict_effective_state: string | null;
     completed_at: string | null;
     total_slots: number | null;
+    /**
+     * YUK-1510 — an open question whose answer is already recorded (YUK-1501: the attempt is
+     * settled, or its background judge is still queued) but whose row is not marked done yet.
+     * The same rule the question page uses to make the answer read-only.
+     */
+    answer_recorded: boolean;
   }>;
   budget: { pace: DailyPracticePace; minutes: number };
   progress: {
@@ -846,6 +855,7 @@ interface StreamItemMetadata {
   matchedReviewId: string | null;
   completedAt: string | null;
   totalSlots: number | null;
+  answerRecorded: boolean;
 }
 
 const EMPTY_STREAM_ITEM_METADATA: StreamItemMetadata = {
@@ -857,6 +867,7 @@ const EMPTY_STREAM_ITEM_METADATA: StreamItemMetadata = {
   matchedReviewId: null,
   completedAt: null,
   totalSlots: null,
+  answerRecorded: false,
 };
 
 function eventRating(payload: unknown): StreamViewItem['verdict'] {
@@ -974,6 +985,39 @@ async function resolveStreamItemMetadata(
     }
   }
 
+  // YUK-1510 — an in-progress question whose answer is already recorded. Same rule as the
+  // question page (YUK-1501, use-practice-submit answerRecorded): this row's issuance has an
+  // assessment-attempt anchor whose evaluation is settled (an effective evaluation) or whose
+  // judge is still queued (no original evaluation yet). An answer accepted by advice alone, or a
+  // review_required attempt still waiting for a self-rating, is not recorded.
+  const openQuestions = questionRows.filter((row) => row.status === 'in_progress');
+  if (openQuestions.length > 0) {
+    const rowByIssuance = new Map(openQuestions.map((row) => [`iss_stream_${row.id}`, row]));
+    const anchors = await db
+      .select()
+      .from(event)
+      .where(
+        and(
+          eq(event.action, 'experimental:assessment_attempt'),
+          eq(event.subject_kind, 'question'),
+          inArray(event.subject_id, [...new Set(openQuestions.map((row) => row.ref_id))]),
+          inArray(sql<string>`${event.payload}->>'issuance_id'`, [...rowByIssuance.keys()]),
+        ),
+      );
+    if (anchors.length > 0) {
+      const groups = await resolveVerdictsForNativeAttempts(db, anchors);
+      for (const anchor of anchors) {
+        const group = groups.get(anchor.id);
+        if (!group || (group.effective === null && group.original_evaluation_id !== null)) continue;
+        const row = rowByIssuance.get(group.issuance.issuance_id);
+        if (!row || row.ref_id !== anchor.subject_id) continue;
+        const current = metadata.get(row.id) ?? { ...EMPTY_STREAM_ITEM_METADATA };
+        current.answerRecorded = true;
+        metadata.set(row.id, current);
+      }
+    }
+  }
+
   const doneQuestions = questionRows.filter((row) => row.status === 'done');
   if (doneQuestions.length > 0) {
     const firstCreatedAt = new Date(
@@ -1061,6 +1105,7 @@ function toStreamViewItem(row: StreamItemRow, metadata: StreamItemMetadata): Str
     verdict_effective_state: metadata.verdictEffectiveState,
     completed_at: metadata.completedAt,
     total_slots: metadata.totalSlots,
+    answer_recorded: metadata.answerRecorded,
   };
 }
 
