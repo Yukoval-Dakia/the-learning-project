@@ -431,6 +431,105 @@ async function publishAdmittedBlank(input: {
   }
 }
 
+function twoBlankDocument(prompt: string): QuestionDraftDocumentT {
+  const unit = (unitId: string, slotId: string, accepted: string) => ({
+    unit_id: unitId,
+    slot_id: slotId,
+    response_class: 'blank' as const,
+    response_spec: { kind: 'blank' as const, format: 'text' as const },
+    key: {
+      kind: 'blank' as const,
+      key: { kind: 'text' as const, accepted: [accepted], normalization: BLANK_NORM },
+    },
+    points: 1,
+    rule: BLANK_RULE,
+    method: { kind: 'exact' as const },
+    material_refs: [] as string[],
+    metadata: {},
+  });
+  return QuestionDraftDocument.parse({
+    schema_version: 2,
+    parts: [
+      {
+        part_id: 'p1',
+        prompt_md: prompt,
+        material_ids: [],
+        units: [unit('u1', 's1', '1'), unit('u2', 's2', '7')],
+        metadata: {},
+      },
+    ],
+    materials: [],
+    knowledge_ids: [],
+    metadata: {},
+  });
+}
+
+/** 两空已准入题。u1 带槽位 placement，或在归一化上挂编码器不认识的 strip_units。 */
+async function publishAdmittedTwoBlank(input: {
+  id: string;
+  prompt: string;
+  knowledgeIds: string[];
+  firstUnit: 'placement' | 'strip_units';
+}): Promise<void> {
+  const db = testDb();
+  const doc = twoBlankDocument(input.prompt);
+  doc.knowledge_ids = input.knowledgeIds;
+  const contract = draftDocumentToContract(doc, input.id);
+  if (contract.conversion_issues.length > 0) {
+    throw new Error(contract.conversion_issues.map((issue) => issue.detail).join('; '));
+  }
+  if (input.firstUnit === 'placement') {
+    const slot = contract.response_spec.slots.find((item) => item.slot_id === 's1');
+    if (slot == null || slot.kind !== 'blank') throw new Error('two-blank fixture lost u1 slot');
+    slot.placement = { row: 0, col: 1, label: '(1)' };
+  } else {
+    const unit = contract.scoring_basis.units.find((item) => item.scoring_unit_id === 'u1');
+    if (unit == null || unit.criterion.kind !== 'blank_key' || unit.criterion.key.kind !== 'text') {
+      throw new Error('two-blank fixture lost u1 key');
+    }
+    Object.assign(unit.criterion.key.normalization, { strip_units: true });
+  }
+  const presentation = defaultPresentation(
+    contract.structure,
+    contract.response_spec,
+    contract.scoring_basis,
+  );
+  if (presentation == null) throw new Error('two-blank fixture has no presentation');
+  await insertQuestion({
+    id: input.id,
+    prompt: input.prompt,
+    reference: '1 / 7',
+    choices: null,
+    knowledgeIds: input.knowledgeIds,
+  });
+  const published = await publishQuestionGroup(db, {
+    group_id: input.id,
+    contract: {
+      structure: contract.structure,
+      response_spec: contract.response_spec,
+      scoring_basis: contract.scoring_basis,
+      execution_plan: contract.execution_plan,
+      presentation,
+      integrity_digest: contractIntegrityDigest({
+        structure: contract.structure,
+        response_spec: contract.response_spec,
+        scoring_basis: contract.scoring_basis,
+        execution_plan: contract.execution_plan,
+        presentation,
+      }),
+    },
+    expectedCurrentRevision: null,
+    expectedAdmissionGeneration: null,
+    availability: 'general_pool',
+    admission: { state: 'admitted', evidence: ADMITTED },
+    actorRef: 'test:edit-submit',
+    now: new Date(),
+  });
+  if (published.status !== 'published') {
+    throw new Error(`two-blank fixture publish returned ${published.status}`);
+  }
+}
+
 const RULE_REFERENCE = '水的化学式是 H2O。\n\n解析：每个水分子有两个氢。';
 
 /** 旧行格式：参考答案含解析和空行，发布成 text + rule_reference，不能无损往返。 */
@@ -2333,6 +2432,166 @@ describe('edit/submit question boundary', () => {
     expect(saved.status, JSON.stringify(saved)).toBe('rejected');
     if (saved.status !== 'rejected') return;
     expect(JSON.stringify(saved.issues)).toContain('trim_outer false');
+  });
+
+  // @invariant grading: editing one blank's key keeps the other unit's slot placement byte-for-byte
+  // @fails-if the author path re-encodes the untouched unit and publishes a revision that drops its placement
+  it('keeps an untouched blank slot placement when the other unit key changes', async () => {
+    const db = testDb();
+    const kc = 'kc-untouched-placement';
+    const qid = 'q-untouched-placement';
+    await seedKnowledge(kc);
+    const prompt = '两空改第二空：第一空位置要留下';
+    await publishAdmittedTwoBlank({
+      id: qid,
+      prompt,
+      knowledgeIds: [kc],
+      firstUnit: 'placement',
+    });
+    const [beforeLife] = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, qid));
+    const [before] = await db
+      .select()
+      .from(question_revision)
+      .where(eq(question_revision.revision_id, beforeLife.current_revision_id ?? ''));
+    const saved = await saveDraftEdit(db, {
+      input: {
+        action: 'save',
+        question_id: qid,
+        ops: [
+          {
+            op: 'set',
+            target: { kind: 'unit', id: 'u2' },
+            fields: { key: { kind: 'blank', key: { kind: 'text', accepted: ['8'] } } },
+          },
+        ],
+        request_id: 'untouched-placement-save',
+      },
+      ctx: ACTOR,
+    });
+    expect(saved.status, JSON.stringify(saved)).toBe('saved');
+    if (saved.status !== 'saved') return;
+    const submitted = await submitDraftQuestion(
+      db,
+      {
+        draft_ref: saved.draft_ref,
+        expected_draft_version: saved.draft_version,
+        request_id: 'untouched-placement-submit',
+      },
+      { ...ACTOR, sessionId: null },
+    );
+    expect(submitted.status, JSON.stringify(submitted)).toBe('withheld');
+    if (submitted.status !== 'withheld' || 'published' in submitted) {
+      throw new Error(JSON.stringify(submitted));
+    }
+    const [afterLife] = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, qid));
+    const [after] = await db
+      .select()
+      .from(question_revision)
+      .where(eq(question_revision.revision_id, afterLife.current_revision_id ?? ''));
+    const beforeSlot = before.response_spec.slots.find((slot) => slot.slot_id === 's1');
+    const afterSlot = after.response_spec.slots.find((slot) => slot.slot_id === 's1');
+    const beforeUnit = before.scoring_basis.units.find((unit) => unit.scoring_unit_id === 'u1');
+    const afterUnit = after.scoring_basis.units.find((unit) => unit.scoring_unit_id === 'u1');
+    expect(afterSlot).toEqual(beforeSlot);
+    expect(afterUnit).toEqual(beforeUnit);
+    expect(beforeSlot?.placement).toEqual({ row: 0, col: 1, label: '(1)' });
+    const changed = after.scoring_basis.units.find((unit) => unit.scoring_unit_id === 'u2');
+    if (
+      changed == null ||
+      changed.criterion.kind !== 'blank_key' ||
+      changed.criterion.key.kind !== 'text'
+    ) {
+      throw new Error(`u2 published ${changed?.criterion.kind ?? 'nothing'}`);
+    }
+    expect(changed.criterion.key.accepted).toEqual(['8']);
+  });
+
+  // @invariant grading: editing one blank's key keeps an unknown normalisation field on the other unit
+  // @fails-if the author path re-encodes the untouched unit and drops strip_units from the published key
+  it('keeps an untouched blank strip_units field when the other unit key changes', async () => {
+    const db = testDb();
+    const kc = 'kc-untouched-strip';
+    const qid = 'q-untouched-strip';
+    await seedKnowledge(kc);
+    const prompt = '两空改第二空：第一空单位剥离要留下';
+    await publishAdmittedTwoBlank({
+      id: qid,
+      prompt,
+      knowledgeIds: [kc],
+      firstUnit: 'strip_units',
+    });
+    const [beforeLife] = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, qid));
+    const [before] = await db
+      .select()
+      .from(question_revision)
+      .where(eq(question_revision.revision_id, beforeLife.current_revision_id ?? ''));
+    const saved = await saveDraftEdit(db, {
+      input: {
+        action: 'save',
+        question_id: qid,
+        ops: [
+          {
+            op: 'set',
+            target: { kind: 'unit', id: 'u2' },
+            fields: { key: { kind: 'blank', key: { kind: 'text', accepted: ['8'] } } },
+          },
+        ],
+        request_id: 'untouched-strip-save',
+      },
+      ctx: ACTOR,
+    });
+    expect(saved.status, JSON.stringify(saved)).toBe('saved');
+    if (saved.status !== 'saved') return;
+    const submitted = await submitDraftQuestion(
+      db,
+      {
+        draft_ref: saved.draft_ref,
+        expected_draft_version: saved.draft_version,
+        request_id: 'untouched-strip-submit',
+      },
+      { ...ACTOR, sessionId: null },
+    );
+    expect(submitted.status, JSON.stringify(submitted)).toBe('withheld');
+    if (submitted.status !== 'withheld' || 'published' in submitted) {
+      throw new Error(JSON.stringify(submitted));
+    }
+    const [afterLife] = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, qid));
+    const [after] = await db
+      .select()
+      .from(question_revision)
+      .where(eq(question_revision.revision_id, afterLife.current_revision_id ?? ''));
+    const beforeUnit = before.scoring_basis.units.find((unit) => unit.scoring_unit_id === 'u1');
+    const afterUnit = after.scoring_basis.units.find((unit) => unit.scoring_unit_id === 'u1');
+    const beforeSlot = before.response_spec.slots.find((slot) => slot.slot_id === 's1');
+    const afterSlot = after.response_spec.slots.find((slot) => slot.slot_id === 's1');
+    expect(afterUnit).toEqual(beforeUnit);
+    expect(afterSlot).toEqual(beforeSlot);
+    const storedNorm =
+      beforeUnit?.criterion.kind === 'blank_key' && beforeUnit.criterion.key.kind === 'text'
+        ? beforeUnit.criterion.key.normalization
+        : null;
+    expect(storedNorm).toMatchObject({ strip_units: true });
+    const changed = after.scoring_basis.units.find((unit) => unit.scoring_unit_id === 'u2');
+    if (
+      changed == null ||
+      changed.criterion.kind !== 'blank_key' ||
+      changed.criterion.key.kind !== 'text'
+    ) {
+      throw new Error(`u2 published ${changed?.criterion.kind ?? 'nothing'}`);
+    }
+    expect(changed.criterion.key.accepted).toEqual(['8']);
   });
 });
 

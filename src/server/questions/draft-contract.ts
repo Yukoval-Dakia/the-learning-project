@@ -962,7 +962,7 @@ const SCORING_ROUND_TRIP_LOSSY = {
 export type ScoringEditPlan =
   | { action: 'passthrough' }
   | { action: 'preserve' }
-  | { action: 'author' }
+  | { action: 'author'; copyUnitIds: readonly string[] }
   | typeof SCORING_ROUND_TRIP_LOSSY;
 
 type StoredScoringRevision = Pick<
@@ -1044,7 +1044,7 @@ function storedUnitIsUnrepresentable(revision: StoredScoringRevision): boolean {
  * 已存判分层走草稿往返时会不会丢字段，以及这次编辑有没有亲手改判分。
  * 作者没改判分、丢的又是编码器硬写的字段（聚合、空白计零、费用上限、选择界）
  * 时拒绝发布。旧的 rule_reference 一类无法表示的层，题面编辑改为原样拷贝。
- * 作者改了键或题型时放行，由调用方把作者没碰的依据字段从已存 revision 拷回来。
+ * 作者改了键或题型时放行。作者没碰的单元整份拷回已存判分层，不重新编码。
  */
 export function scoringEditPlan(
   revision: StoredScoringRevision,
@@ -1085,7 +1085,10 @@ function authorPlan(
     return loss === 'field_drop' ? SCORING_ROUND_TRIP_LOSSY : { action: 'preserve' };
   }
   if (dropsUntouchedSlot(revision, seeded, doc, touched)) return SCORING_ROUND_TRIP_LOSSY;
-  return { action: 'author' };
+  const copyUnitIds = revision.scoring_basis.units
+    .map((unit) => unit.scoring_unit_id)
+    .filter((id) => !touched.has(id));
+  return { action: 'author', copyUnitIds };
 }
 
 function dropsUntouchedSlot(
@@ -1148,8 +1151,92 @@ export function overlayAuthorScoring<T extends DraftContract>(
 }
 
 /**
+ * 一个执行器只覆盖这一个单元时，才能把已存 assignment 原样换回去。
+ * 共用 assignment 或重复覆盖都无法按单元字节拷贝。
+ */
+function dedicatedAssignmentIndex(
+  assignments: readonly { scoring_unit_ids: readonly string[] }[],
+  unitId: string,
+): number | null {
+  let found: number | null = null;
+  for (let index = 0; index < assignments.length; index += 1) {
+    const ids = assignments[index]?.scoring_unit_ids;
+    if (ids == null || !ids.includes(unitId)) continue;
+    if (found != null || ids.length !== 1) return null;
+    found = index;
+  }
+  return found;
+}
+
+/**
+ * 作者没碰的单元不走编码器。槽、计分单元和专属执行器都换成已存对象。
+ * 槽被改过的单元共用，或执行器不是单单元专属时，返回 null，调用方拒绝发布。
+ */
+function spliceUntouchedUnits(
+  encoded: DraftContract,
+  stored: StoredScoringRevision,
+  copyUnitIds: readonly string[],
+): DraftContract | null {
+  if (copyUnitIds.length === 0) return encoded;
+  const copyIds = new Set(copyUnitIds);
+  const storedUnits = new Map(
+    stored.scoring_basis.units.map((unit) => [unit.scoring_unit_id, unit]),
+  );
+  const encodedUnitIds = new Set(encoded.scoring_basis.units.map((unit) => unit.scoring_unit_id));
+  const storedSlots = new Map(stored.response_spec.slots.map((slot) => [slot.slot_id, slot]));
+  const encodedSlotIds = new Set(encoded.response_spec.slots.map((slot) => slot.slot_id));
+  const touchedSlotIds = new Set<string>();
+  for (const unit of encoded.scoring_basis.units) {
+    if (copyIds.has(unit.scoring_unit_id)) continue;
+    for (const slotId of [...unit.slot_refs, ...unit.evidence_slot_refs]) {
+      touchedSlotIds.add(slotId);
+    }
+  }
+  const slotReplacements = new Map<string, ResponseSlotT>();
+  const unitReplacements = new Map<string, ScoringUnitT>();
+  const assignmentReplacements = new Map<number, ExecutorAssignmentT>();
+  for (const unitId of copyUnitIds) {
+    const storedUnit = storedUnits.get(unitId);
+    if (storedUnit == null || !encodedUnitIds.has(unitId)) return null;
+    for (const slotId of [...storedUnit.slot_refs, ...storedUnit.evidence_slot_refs]) {
+      if (touchedSlotIds.has(slotId)) return null;
+      const storedSlot = storedSlots.get(slotId);
+      if (storedSlot == null || !encodedSlotIds.has(slotId)) return null;
+      slotReplacements.set(slotId, storedSlot);
+    }
+    unitReplacements.set(unitId, storedUnit);
+    const storedIndex = dedicatedAssignmentIndex(stored.execution_plan.assignments, unitId);
+    const encodedIndex = dedicatedAssignmentIndex(encoded.execution_plan.assignments, unitId);
+    if (storedIndex == null || encodedIndex == null) return null;
+    const storedAssignment = stored.execution_plan.assignments[storedIndex];
+    if (storedAssignment == null) return null;
+    assignmentReplacements.set(encodedIndex, storedAssignment);
+  }
+  return {
+    ...encoded,
+    response_spec: {
+      ...encoded.response_spec,
+      slots: encoded.response_spec.slots.map((slot) => slotReplacements.get(slot.slot_id) ?? slot),
+    },
+    scoring_basis: {
+      ...encoded.scoring_basis,
+      units: encoded.scoring_basis.units.map(
+        (unit) => unitReplacements.get(unit.scoring_unit_id) ?? unit,
+      ),
+    },
+    execution_plan: {
+      ...encoded.execution_plan,
+      assignments: encoded.execution_plan.assignments.map(
+        (assignment, index) => assignmentReplacements.get(index) ?? assignment,
+      ),
+    },
+  };
+}
+
+/**
  * 提交和校验共用这一步。preserve 用已存的三层判分替换编码器产出，题面仍用草稿。
- * author 只把聚合、空白计零和计划级字段从已存 revision 拷回。refuse 时契约不动。
+ * author 拷回聚合、空白计零和计划级字段，并把作者没碰的单元原样换回。
+ * 换不回去或 refuse 时不发布。
  */
 export function applyScoringEditPlan(
   revision: StoredScoringRevision | null,
@@ -1172,7 +1259,13 @@ export function applyScoringEditPlan(
     };
   }
   if (plan.action === 'author') {
-    return { plan, contract: overlayAuthorScoring(encoded, revision) };
+    const spliced = spliceUntouchedUnits(
+      overlayAuthorScoring(encoded, revision),
+      revision,
+      plan.copyUnitIds,
+    );
+    if (spliced == null) return { contract: encoded, plan: SCORING_ROUND_TRIP_LOSSY };
+    return { plan, contract: spliced };
   }
   return { contract: encoded, plan };
 }
