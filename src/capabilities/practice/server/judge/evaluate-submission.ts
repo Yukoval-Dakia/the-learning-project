@@ -243,12 +243,15 @@ export function createFormalModelExecutor(
   );
   return async (request, signal) => {
     const sliceId = request.executor.admitted_slice_id;
-    if (sliceId !== null) {
+    // 只有登记处钉了 pin 的 task kind（细则 / Jev）才在付费前复核切片。
+    // AssessmentRuleJudgeTask 不在这张 pin 表里；它的切片 id 是历史占位，
+    // 拦下来会让规则判分在 claim 之前直接扣留。
+    if (sliceId !== null && currentModelPins().has(request.executor.task_kind)) {
       const decision = await gradingSliceMatchesLivePin(db, sliceId, request.executor.task_kind);
       if (!decision.ok) {
         return {
-          kind: 'pending',
-          pending: { reason: 'unjudgeable', detail: decision.detail },
+          kind: 'pending' as const,
+          pending: { reason: 'unjudgeable' as const, detail: decision.detail },
           run_refs: [],
         };
       }
