@@ -224,6 +224,7 @@ export const dbTestInclude = [
   'src/capabilities/practice/server/tools/bank-tools.db.test.ts',
   'src/capabilities/practice/server/tools/store-sourced-question.db.test.ts',
   'src/capabilities/practice/server/tools/write-quiz.test.ts',
+  'src/capabilities/practice/server/worksheet/duplicate-question-region-map.db.test.ts',
   'src/capabilities/shell/api/proposal-decisions.db.test.ts',
   'src/capabilities/shell/api/teaching-brief-ack.db.test.ts',
   'src/capabilities/shell/api/teaching-brief-interaction.db.test.ts',

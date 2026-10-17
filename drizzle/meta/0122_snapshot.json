@@ -1,6 +1,6 @@
 {
   "id": "042abc1e-478a-452d-8696-f03f14ae03df",
-  "prevId": "01b9d77d-2676-49ae-bf26-3b96a879dc06",
+  "prevId": "77fc1ba7-1974-40c6-a971-9e4b8c48b391",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -7384,156 +7384,6 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.model_admission_slice": {
-      "name": "model_admission_slice",
-      "schema": "",
-      "columns": {
-        "slice_id": {
-          "name": "slice_id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "subject": {
-          "name": "subject",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "response_class": {
-          "name": "response_class",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "task_kind": {
-          "name": "task_kind",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "model": {
-          "name": "model",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "model_version": {
-          "name": "model_version",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "holdout_evidence_ref": {
-          "name": "holdout_evidence_ref",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "admitted_by": {
-          "name": "admitted_by",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "admitted_at": {
-          "name": "admitted_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "status": {
-          "name": "status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'active'"
-        }
-      },
-      "indexes": {
-        "model_admission_slice_lookup_idx": {
-          "name": "model_admission_slice_lookup_idx",
-          "columns": [
-            {
-              "expression": "subject",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "response_class",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "task_kind",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "model_admission_slice_natural_key": {
-          "name": "model_admission_slice_natural_key",
-          "columns": [
-            {
-              "expression": "subject",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "response_class",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "task_kind",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "model",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "model_version",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "model_admission_slice_response_class_ck": {
-          "name": "model_admission_slice_response_class_ck",
-          "value": "\"model_admission_slice\".\"response_class\" IN ('blank','free')"
-        },
-        "model_admission_slice_status_ck": {
-          "name": "model_admission_slice_status_ck",
-          "value": "\"model_admission_slice\".\"status\" IN ('active','retired')"
-        }
-      },
-      "isRLSEnabled": false
-    },
     "public.note_verification_claim": {
       "name": "note_verification_claim",
       "schema": "",
@@ -13178,6 +13028,484 @@
         "tool_operation_lease_timeline_ck": {
           "name": "tool_operation_lease_timeline_ck",
           "value": "\"tool_operation\".\"owner_heartbeat_at\" >= \"tool_operation\".\"started_at\"\n        AND \"tool_operation\".\"lease_expires_at\" > \"tool_operation\".\"owner_heartbeat_at\""
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.worksheet_export": {
+      "name": "worksheet_export",
+      "schema": "",
+      "columns": {
+        "export_id": {
+          "name": "export_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "title": {
+          "name": "title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
+        "export_token": {
+          "name": "export_token",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "short_code": {
+          "name": "short_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "idempotency_key": {
+          "name": "idempotency_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "request_digest": {
+          "name": "request_digest",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "refused": {
+          "name": "refused",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
+        "web_only_units": {
+          "name": "web_only_units",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "page_count": {
+          "name": "page_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "pdf_digest": {
+          "name": "pdf_digest",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "archived_at": {
+          "name": "archived_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "worksheet_export_token_uq": {
+          "name": "worksheet_export_token_uq",
+          "columns": [
+            {
+              "expression": "export_token",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "worksheet_export_short_code_uq": {
+          "name": "worksheet_export_short_code_uq",
+          "columns": [
+            {
+              "expression": "short_code",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "worksheet_export_idempotency_key_uq": {
+          "name": "worksheet_export_idempotency_key_uq",
+          "columns": [
+            {
+              "expression": "idempotency_key",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "worksheet_export_request_digest_ck": {
+          "name": "worksheet_export_request_digest_ck",
+          "value": "\"worksheet_export\".\"request_digest\" ~ '^sha256:[0-9a-f]{64}$'"
+        },
+        "worksheet_export_identity_nonempty_ck": {
+          "name": "worksheet_export_identity_nonempty_ck",
+          "value": "\"worksheet_export\".\"export_token\" <> '' AND \"worksheet_export\".\"short_code\" <> '' AND \"worksheet_export\".\"idempotency_key\" <> ''"
+        },
+        "worksheet_export_archive_shape_ck": {
+          "name": "worksheet_export_archive_shape_ck",
+          "value": "(\"worksheet_export\".\"archived_at\" IS NULL AND \"worksheet_export\".\"page_count\" IS NULL AND \"worksheet_export\".\"web_only_units\" IS NULL AND \"worksheet_export\".\"pdf_digest\" IS NULL) OR (\"worksheet_export\".\"archived_at\" IS NOT NULL AND \"worksheet_export\".\"page_count\" >= 1 AND \"worksheet_export\".\"web_only_units\" IS NOT NULL AND \"worksheet_export\".\"pdf_digest\" IS NOT NULL AND \"worksheet_export\".\"pdf_digest\" ~ '^sha256:[0-9a-f]{64}$')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.worksheet_export_item": {
+      "name": "worksheet_export_item",
+      "schema": "",
+      "columns": {
+        "export_id": {
+          "name": "export_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "position": {
+          "name": "position",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "group_id": {
+          "name": "group_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "issuance_id": {
+          "name": "issuance_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "worksheet_export_item_issuance_idx": {
+          "name": "worksheet_export_item_issuance_idx",
+          "columns": [
+            {
+              "expression": "issuance_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "worksheet_export_item_export_id_worksheet_export_export_id_fk": {
+          "name": "worksheet_export_item_export_id_worksheet_export_export_id_fk",
+          "tableFrom": "worksheet_export_item",
+          "tableTo": "worksheet_export",
+          "columnsFrom": [
+            "export_id"
+          ],
+          "columnsTo": [
+            "export_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "worksheet_export_item_issuance_fk": {
+          "name": "worksheet_export_item_issuance_fk",
+          "tableFrom": "worksheet_export_item",
+          "tableTo": "assessment_issuance",
+          "columnsFrom": [
+            "issuance_id"
+          ],
+          "columnsTo": [
+            "issuance_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "worksheet_export_item_export_id_position_pk": {
+          "name": "worksheet_export_item_export_id_position_pk",
+          "columns": [
+            "export_id",
+            "position"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "worksheet_export_item_position_ck": {
+          "name": "worksheet_export_item_position_ck",
+          "value": "\"worksheet_export_item\".\"position\" >= 0"
+        },
+        "worksheet_export_item_identity_nonempty_ck": {
+          "name": "worksheet_export_item_identity_nonempty_ck",
+          "value": "\"worksheet_export_item\".\"group_id\" <> '' AND \"worksheet_export_item\".\"issuance_id\" <> ''"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.worksheet_region_map_page": {
+      "name": "worksheet_region_map_page",
+      "schema": "",
+      "columns": {
+        "export_id": {
+          "name": "export_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "page": {
+          "name": "page",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "page_count": {
+          "name": "page_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "region_map": {
+          "name": "region_map",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "map_digest": {
+          "name": "map_digest",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "archived_at": {
+          "name": "archived_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "worksheet_region_map_page_export_id_worksheet_export_export_id_fk": {
+          "name": "worksheet_region_map_page_export_id_worksheet_export_export_id_fk",
+          "tableFrom": "worksheet_region_map_page",
+          "tableTo": "worksheet_export",
+          "columnsFrom": [
+            "export_id"
+          ],
+          "columnsTo": [
+            "export_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "worksheet_region_map_page_export_id_page_pk": {
+          "name": "worksheet_region_map_page_export_id_page_pk",
+          "columns": [
+            "export_id",
+            "page"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "worksheet_region_map_page_ck": {
+          "name": "worksheet_region_map_page_ck",
+          "value": "\"worksheet_region_map_page\".\"page\" >= 1"
+        },
+        "worksheet_region_map_page_count_ck": {
+          "name": "worksheet_region_map_page_count_ck",
+          "value": "\"worksheet_region_map_page\".\"page_count\" >= 1"
+        },
+        "worksheet_region_map_page_digest_ck": {
+          "name": "worksheet_region_map_page_digest_ck",
+          "value": "\"worksheet_region_map_page\".\"map_digest\" ~ '^sha256:[0-9a-f]{64}$'"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.model_admission_slice": {
+      "name": "model_admission_slice",
+      "schema": "",
+      "columns": {
+        "slice_id": {
+          "name": "slice_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "subject": {
+          "name": "subject",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "response_class": {
+          "name": "response_class",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "task_kind": {
+          "name": "task_kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "model": {
+          "name": "model",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "model_version": {
+          "name": "model_version",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "holdout_evidence_ref": {
+          "name": "holdout_evidence_ref",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "admitted_by": {
+          "name": "admitted_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "admitted_at": {
+          "name": "admitted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'active'"
+        }
+      },
+      "indexes": {
+        "model_admission_slice_lookup_idx": {
+          "name": "model_admission_slice_lookup_idx",
+          "columns": [
+            {
+              "expression": "subject",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "response_class",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "task_kind",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "model_admission_slice_natural_key": {
+          "name": "model_admission_slice_natural_key",
+          "columns": [
+            {
+              "expression": "subject",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "response_class",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "task_kind",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "model",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "model_version",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "model_admission_slice_response_class_ck": {
+          "name": "model_admission_slice_response_class_ck",
+          "value": "\"model_admission_slice\".\"response_class\" IN ('blank','free')"
+        },
+        "model_admission_slice_status_ck": {
+          "name": "model_admission_slice_status_ck",
+          "value": "\"model_admission_slice\".\"status\" IN ('active','retired')"
         }
       },
       "isRLSEnabled": false

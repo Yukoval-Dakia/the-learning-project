@@ -259,6 +259,11 @@ const ALL_TABLES = [
   'assessment_response_draft',
   'evaluation_group',
   'assessment_issuance',
+  // YUK-1523 — 作答卷导出三表。item 外键指向 export 与 assessment_issuance，
+  // page 外键指向 export；不列入则 resetDb 漏清，跨测泄漏导出与区域图。
+  'worksheet_region_map_page',
+  'worksheet_export_item',
+  'worksheet_export',
   'question_admission_verification',
   'question_group_lifecycle',
   'assessment_identity_mapping',
