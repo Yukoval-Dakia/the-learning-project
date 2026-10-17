@@ -175,7 +175,9 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
   const releaseHeld = useCallback(
     async (exit: PlacementHeldExit) => {
       try {
-        const res = await transport.current.releaseHeldPlacement(exit);
+        const sid = sessionIdRef.current;
+        if (!sid || !sessionOpenRef.current) return;
+        const res = await transport.current.releaseHeldPlacement(sid, exit.issuance_id);
         if (!activeRef.current) return;
         if (res.selection) applySelection(res.selection);
         else await loadNext();
@@ -372,7 +374,11 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
           <EmptyState
             icon="check"
             title="这次定位练习已结束"
-            text="这次定位练习不会自动重新开始。"
+            text={
+              unresolved.length > 0
+                ? `这次定位练习不会自动重新开始。有 ${unresolved.length} 题没有计入结果，它们不算答错。`
+                : '这次定位练习不会自动重新开始。'
+            }
             action={
               <Btn variant="primary" onClick={() => navigate(profileDest())}>
                 看档案
