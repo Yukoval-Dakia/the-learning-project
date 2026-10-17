@@ -346,6 +346,8 @@ describe('bank tools boundary invariants (search_bank / read_bank / check_bank)'
     expect(item.coverage.unavailable.join(' ')).toContain('bt_missing_asset');
     const material = (item.materials ?? []).find((m) => m.asset.asset_id === 'bt_missing_asset');
     expect(material?.asset.present).toBe(false);
+    // 缺文件不能被标成已核对；null = 行不在，和「摘要比对通过」区分开。
+    expect(material?.asset.digest_verified).toBeNull();
     // A present verified figure must succeed; this catches prefix-only false gaps.
     await db.insert(source_asset).values({
       id: 'bt_present_asset',
@@ -373,13 +375,20 @@ describe('bank tools boundary invariants (search_bank / read_bank / check_bank)'
     const presentRef = encodeBankRef(presentPub.revision_id, presentPub.revision_digest);
     const presentRead = await readBankTool.execute(
       ctx,
-      readBankTool.inputSchema.parse({ refs: [presentRef] }),
+      // 默认响应是 overview，材料层（含 digest_verified）要显式 include。
+      // coverage 在任何 include 下都报缺口；digest_verified 只在材料层证明
+      // 这份文件被核对过，且裸 sha256 与 sha256: 前缀的版本 digest 视为同一份。
+      readBankTool.inputSchema.parse({ refs: [presentRef], include: ['materials'] }),
     );
     const presentItem = presentRead.items[0];
     expect(presentItem.status).toBe('ok');
     if (presentItem.status !== 'ok') return;
     expect(presentItem.coverage.complete).toBe(true);
-    expect(presentItem.materials?.[0].asset.digest_verified).toBe(true);
+    const presentMaterial = (presentItem.materials ?? []).find(
+      (m) => m.asset.asset_id === 'bt_present_asset',
+    );
+    expect(presentMaterial?.asset.present).toBe(true);
+    expect(presentMaterial?.asset.digest_verified).toBe(true);
     const checked = await checkBankTool.execute(
       ctx,
       checkBankTool.inputSchema.parse({
