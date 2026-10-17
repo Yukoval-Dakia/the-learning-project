@@ -686,10 +686,14 @@ export async function saveDraftEdit(db: Db, params: SaveDraftParams): Promise<Ed
         });
       }
       // 默认 CAS：draft 钉住的基底 revision 即期望值（防静默 rebase 到未读版本）。
+      // base.revision_id 为 null = 建草稿时组尚无已发布版本，保持 null 参与比较；
+      // 字段缺省才是「未钉住」。`?? undefined` 会把 null 当成未钉住而关掉 CAS。
+      const pinnedBaseRevision =
+        docBefore.base == null || docBefore.base.revision_id === undefined
+          ? undefined
+          : docBefore.base.revision_id;
       const expectedRevisionId =
-        expectedParsed.value !== undefined
-          ? expectedParsed.value
-          : (docBefore.base?.revision_id ?? undefined);
+        expectedParsed.value !== undefined ? expectedParsed.value : pinnedBaseRevision;
       const groupId = docBefore.base?.question_id ?? block.imported_question_id;
       let currentRevisionId: string | null = null;
       if (groupId != null || expectedRevisionId !== undefined) {

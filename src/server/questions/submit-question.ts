@@ -407,8 +407,12 @@ export async function submitDraftQuestion(
 
     // 默认 CAS：draft 钉住的基底 revision 即期望值（防静默 rebase 到未读
     // 版本）。显式 expected_revision 覆盖；explicit null = 期望尚无版本。
+    // base.revision_id 为 null 表示建草稿时组尚无已发布版本，必须保持 null
+    // 参与比较。`?? undefined` 会把它当成「未钉住」从而关掉 CAS。
+    const pinnedBaseRevision =
+      doc.base == null || doc.base.revision_id === undefined ? undefined : doc.base.revision_id;
     const effectiveExpectedRevision =
-      expectedRevisionId !== undefined ? expectedRevisionId : (doc.base?.revision_id ?? undefined);
+      expectedRevisionId !== undefined ? expectedRevisionId : pinnedBaseRevision;
 
     const groupId = doc.base?.question_id ?? block.imported_question_id ?? createId();
     const contract = draftDocumentToContract(doc, groupId);
@@ -459,7 +463,7 @@ export async function submitDraftQuestion(
       return {
         status: 'conflict',
         reason: 'revision_cas',
-        detail: `group '${groupId}' current revision is ${currentRevisionId ?? 'none'}, expected ${expectedRevisionId ?? 'none'}`,
+        detail: `group '${groupId}' current revision is ${currentRevisionId ?? 'none'}, expected ${effectiveExpectedRevision ?? 'none'}`,
         current_draft_ref: encodeDraftRef(block.id, block.version),
         current_draft_version: block.version,
         current_revision_ref: currentRevisionId,
