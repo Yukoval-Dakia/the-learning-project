@@ -287,17 +287,18 @@ async function lockAsk(tx: Tx, askId: string): Promise<void> {
   await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`ingestion-ask:${askId}`}))`);
 }
 
+/** Returns the durable resume marker's row id — the intent's identity. */
 async function writeResolution(
   tx: Tx,
   input: { askId: string; state: AskState; answer: IngestionAskAnswerT; via: 'answer' | 'timeout' },
-): Promise<void> {
+): Promise<number> {
   await writeAskResolved(tx, input.askId, { answer: input.answer, via: input.via });
   await writeAgentAskResolvedEvent(tx, input.state.created.session_id, {
     kind: 'ingestion_agent.ask_resolved',
     ask_id: input.askId,
     answer: input.answer,
   });
-  await writeAgentRunSegment(tx, input.state.created.session_id, {
+  return writeAgentRunSegment(tx, input.state.created.session_id, {
     segment: 0,
     trigger: 'resume',
     outcome: 'resume_requested',
@@ -326,44 +327,53 @@ export async function acceptAskAnswer(
 ): Promise<AnswerAskResult> {
   const { sessionId, askId, idempotencyKey, answer } = input;
   const fingerprint = answerFingerprint(answer);
-  const outcome = await db.transaction(async (tx): Promise<AnswerAskResult> => {
-    await lockAsk(tx, askId);
-    const state = await readAskState(tx, askId);
-    if (state == null || state.created.session_id !== sessionId) {
-      throw new ApiError('not_found', `ask '${askId}' not found`, 404);
-    }
-    if (state.claimed != null) {
-      if (state.claimed.idempotency_key === idempotencyKey) {
-        if (state.claimed.fingerprint === fingerprint) {
-          return { accepted: true, replayed: true };
-        }
-        throw new ApiError(
-          'idempotency_conflict',
-          `Idempotency-Key '${idempotencyKey}' was used with a different answer`,
-          409,
-        );
+  const outcome = await db.transaction(
+    async (tx): Promise<{ result: AnswerAskResult; markerId: number | null }> => {
+      await lockAsk(tx, askId);
+      const state = await readAskState(tx, askId);
+      if (state == null || state.created.session_id !== sessionId) {
+        throw new ApiError('not_found', `ask '${askId}' not found`, 404);
       }
-    }
-    if (state.resolved != null) {
-      throw new ApiError('ask_already_resolved', `ask '${askId}' is already resolved`, 409);
-    }
-    const normalized = validateAskAnswer(state.created, answer);
-    await writeAskAnswerClaimed(tx, askId, {
-      idempotency_key: idempotencyKey,
-      fingerprint,
-    });
-    await writeResolution(tx, { askId, state, answer: normalized, via: 'answer' });
-    return { accepted: true, replayed: false };
-  });
-  if (!outcome.replayed) {
-    await enqueueAgentResume(sessionId).catch((err) =>
+      if (state.claimed != null) {
+        if (state.claimed.idempotency_key === idempotencyKey) {
+          if (state.claimed.fingerprint === fingerprint) {
+            return { result: { accepted: true, replayed: true }, markerId: null };
+          }
+          throw new ApiError(
+            'idempotency_conflict',
+            `Idempotency-Key '${idempotencyKey}' was used with a different answer`,
+            409,
+          );
+        }
+      }
+      if (state.resolved != null) {
+        throw new ApiError('ask_already_resolved', `ask '${askId}' is already resolved`, 409);
+      }
+      const normalized = validateAskAnswer(state.created, answer);
+      await writeAskAnswerClaimed(tx, askId, {
+        idempotency_key: idempotencyKey,
+        fingerprint,
+      });
+      const markerId = await writeResolution(tx, {
+        askId,
+        state,
+        answer: normalized,
+        via: 'answer',
+      });
+      return { result: { accepted: true, replayed: false }, markerId };
+    },
+  );
+  if (!outcome.result.replayed) {
+    // Per-intent job id (R3-4): a duplicate send of THIS resume marker no-ops;
+    // a later marker gets a fresh id.
+    await enqueueAgentResume(sessionId, outcome.markerId ?? undefined).catch((err) =>
       console.error('[ingestion-agent] resume enqueue after answer failed', {
         session_id: sessionId,
         error: err,
       }),
     );
   }
-  return outcome;
+  return outcome.result;
 }
 
 /**
@@ -371,22 +381,24 @@ export async function acceptAskAnswer(
  * when the ask was already resolved (first-writer-wins with a racing answer).
  */
 export async function resolveAskByTimeout(db: Db, askId: string): Promise<boolean> {
-  const sessionId = await db.transaction(async (tx): Promise<string | null> => {
-    await lockAsk(tx, askId);
-    const state = await readAskState(tx, askId);
-    if (state == null || state.resolved != null) return null;
-    await writeResolution(tx, {
-      askId,
-      state,
-      answer: { kind: 'skipped', by: 'timeout' },
-      via: 'timeout',
-    });
-    return state.created.session_id;
-  });
-  if (sessionId == null) return false;
-  await enqueueAgentResume(sessionId).catch((err) =>
+  const resolved = await db.transaction(
+    async (tx): Promise<{ sessionId: string; markerId: number } | null> => {
+      await lockAsk(tx, askId);
+      const state = await readAskState(tx, askId);
+      if (state == null || state.resolved != null) return null;
+      const markerId = await writeResolution(tx, {
+        askId,
+        state,
+        answer: { kind: 'skipped', by: 'timeout' },
+        via: 'timeout',
+      });
+      return { sessionId: state.created.session_id, markerId };
+    },
+  );
+  if (resolved == null) return false;
+  await enqueueAgentResume(resolved.sessionId, resolved.markerId).catch((err) =>
     console.error('[ingestion-agent] resume enqueue after timeout failed', {
-      session_id: sessionId,
+      session_id: resolved.sessionId,
       error: err,
     }),
   );
@@ -422,9 +434,12 @@ export async function listExpiredOpenAsks(db: Db, limit = 50): Promise<string[]>
  * followed — the durable backstop for post-commit enqueue failures and the
  * active-run dedup window. Caller still enqueues via a session singleton.
  */
-export async function listPendingResumeSessions(db: Db, limit = 25): Promise<string[]> {
-  const rows = await db.execute<{ business_id: string }>(sql`
-    SELECT business_id
+export async function listPendingResumeSessions(
+  db: Db,
+  limit = 25,
+): Promise<{ session_id: string; marker_id: number }[]> {
+  const rows = await db.execute<{ business_id: string; marker_id: number }>(sql`
+    SELECT business_id, id AS marker_id
     FROM job_events
     WHERE business_table = ${INGESTION_AGENT_RUN_TABLE}
       AND event_type = ${'agent.run_segment'}
@@ -441,7 +456,7 @@ export async function listPendingResumeSessions(db: Db, limit = 25): Promise<str
     ORDER BY id ASC
     LIMIT ${limit}
   `);
-  return rows.map((row) => row.business_id);
+  return rows.map((row) => ({ session_id: row.business_id, marker_id: row.marker_id }));
 }
 
 /**
@@ -449,9 +464,12 @@ export async function listPendingResumeSessions(db: Db, limit = 25): Promise<str
  * early_exit close) that no later `running` segment followed — durable
  * backstop when the continuation enqueue failed (R2-4).
  */
-export async function listPendingContinuationSessions(db: Db, limit = 25): Promise<string[]> {
-  const rows = await db.execute<{ business_id: string }>(sql`
-    SELECT business_id
+export async function listPendingContinuationSessions(
+  db: Db,
+  limit = 25,
+): Promise<{ session_id: string; marker_id: number }[]> {
+  const rows = await db.execute<{ business_id: string; marker_id: number }>(sql`
+    SELECT business_id, id AS marker_id
     FROM job_events
     WHERE business_table = ${INGESTION_AGENT_RUN_TABLE}
       AND event_type = ${'agent.run_segment'}
@@ -468,7 +486,7 @@ export async function listPendingContinuationSessions(db: Db, limit = 25): Promi
     ORDER BY id ASC
     LIMIT ${limit}
   `);
-  return rows.map((row) => row.business_id);
+  return rows.map((row) => ({ session_id: row.business_id, marker_id: row.marker_id }));
 }
 
 /**

@@ -100,7 +100,7 @@ export interface AgentRunDeps {
   /** Verification seam: throw after the claim, before the paid call. */
   readonly throwBeforeModel?: () => void;
   /** Verification seam: replace the continuation send (R2-4 failure-path test). */
-  readonly enqueueContinuation?: (sessionId: string) => Promise<unknown>;
+  readonly enqueueContinuation?: (sessionId: string, intentId: number) => Promise<unknown>;
 }
 
 async function sweepExpiredAsksForSession(db: Db, sessionId: string): Promise<void> {
@@ -247,11 +247,17 @@ function agentInterceptInput(sessionId: string) {
         };
       }
       const next = { ...input };
+      if (ops.length > 0) {
+        // R3-3 belt-and-braces: append a re-stamp op AFTER the model's ops so
+        // the last thing applied before persist is our stamp — no op kind
+        // (incl. whole-document replacement) can leave a foreign source.
+        next.ops = [...ops, { op: 'set', target: { kind: 'question' }, fields: { source: stamp } }];
+      }
       next.request_id = `r8:${sessionId}:edit:${sha256CanonicalJson({
         action: input.action ?? null,
         draft_ref: input.draft_ref ?? null,
         document: input.document ?? null,
-        ops: input.ops ?? null,
+        ops: next.ops ?? input.ops ?? null,
       })}`;
       if (input.document && typeof input.document === 'object') {
         const doc = input.document as Record<string, unknown>;
@@ -694,15 +700,15 @@ async function runSegmentInner(
       // bookkeeping only (early_exit marker), never a session-scope error.
       // R2-4 — the continuation intent is durable and written in the SAME tx as
       // the close: a failed enqueue is recovered by the sweeper's
-      // continue_requested scan, which re-sends with a deterministic job id.
-      await db.transaction(async (tx) => {
+      // continue_requested scan, which re-sends with the same per-intent id.
+      const markerId = await db.transaction(async (tx) => {
         await writeAgentRunSegment(tx, sessionId, {
           segment,
           trigger,
           outcome: 'early_exit',
           ...(taskRunId != null ? { task_run_id: taskRunId } : {}),
         });
-        await writeAgentRunSegment(tx, sessionId, {
+        const continueMarkerId = await writeAgentRunSegment(tx, sessionId, {
           segment: 0,
           trigger: 'continue',
           outcome: 'continue_requested',
@@ -715,9 +721,10 @@ async function runSegmentInner(
           redactionSink,
           segment,
         );
+        return continueMarkerId;
       });
       const enqueueContinuation = deps.enqueueContinuation ?? enqueueAgentContinuation;
-      await enqueueContinuation(sessionId).catch((err) =>
+      await enqueueContinuation(sessionId, markerId).catch((err) =>
         console.error('[ingestion-agent] continuation enqueue failed (sweeper will recover)', {
           session_id: sessionId,
           error: err,

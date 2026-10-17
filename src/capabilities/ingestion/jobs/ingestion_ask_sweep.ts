@@ -43,16 +43,19 @@ export function buildIngestionAskSweepHandler(db: Db) {
       );
     }
     const resumes = await listPendingResumeSessions(db, 25);
-    for (const sessionId of resumes) {
-      await enqueueAgentResume(sessionId).catch((err) =>
-        console.error('[ingestion-ask-sweep] resume dispatch failed', { sessionId, error: err }),
+    for (const entry of resumes) {
+      await enqueueAgentResume(entry.session_id, entry.marker_id).catch((err) =>
+        console.error('[ingestion-ask-sweep] resume dispatch failed', {
+          sessionId: entry.session_id,
+          error: err,
+        }),
       );
     }
     const continuations = await listPendingContinuationSessions(db, 25);
-    for (const sessionId of continuations) {
-      await enqueueAgentContinuation(sessionId).catch((err) =>
+    for (const entry of continuations) {
+      await enqueueAgentContinuation(entry.session_id, entry.marker_id).catch((err) =>
         console.error('[ingestion-ask-sweep] continuation dispatch failed', {
-          sessionId,
+          sessionId: entry.session_id,
           error: err,
         }),
       );
@@ -70,27 +73,28 @@ export function buildIngestionAskSweepHandler(db: Db) {
         );
         continue;
       }
-      await db
+      const resumeMarkerId = await db
         .transaction(async (tx) => {
           await writeAgentRunSegment(tx, entry.session_id, {
             segment: entry.segment,
             trigger: 'resume',
             outcome: 'failed',
           });
-          await writeAgentRunSegment(tx, entry.session_id, {
+          return writeAgentRunSegment(tx, entry.session_id, {
             segment: 0,
             trigger: 'resume',
             outcome: 'resume_requested',
           });
         })
-        .catch((err) =>
+        .catch((err) => {
           console.error('[ingestion-ask-sweep] stale segment close failed', {
             sessionId: entry.session_id,
             segment: entry.segment,
             error: err,
-          }),
-        );
-      await enqueueAgentResume(entry.session_id).catch((err) =>
+          });
+          return null;
+        });
+      await enqueueAgentResume(entry.session_id, resumeMarkerId ?? undefined).catch((err) =>
         console.error('[ingestion-ask-sweep] stale resume dispatch failed', {
           sessionId: entry.session_id,
           error: err,
