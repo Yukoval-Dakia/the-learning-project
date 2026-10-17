@@ -89,9 +89,9 @@ export const PROPOSE_WRITE_TOOLS = [
   'merge_questions',
   'reassign_figure',
   'propose_question_edit',
-  // store_sourced_question 同由 submit_question 接管（内部函数 compat 仍在，
-  // 工具名保留在 inventory 供 plan-executor/测试 import 解析；无 surface 授权）。
-  'store_sourced_question',
+  // store_sourced_question 已由 submit_question 接管，工具名退出 inventory
+  // （plan-executor/测试 import 的是 compat 模块的 executeStoreSourcedQuestion
+  // 函数，不解析工具名）；manifest 不再注册、无 surface 授权。
   // YUK-1497 (K5) — presentation composition tool; same containment as the six
   // draft-edit tools above (writes ONE jsonb-internal key of the draft container).
   'compose_presentation',
