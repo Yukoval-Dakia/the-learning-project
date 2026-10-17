@@ -328,7 +328,7 @@ export type SolveHintOutcome =
       status: 'fallback';
       reason: SolveHintFallbackReason;
       help: SolveHintFallbackHelp;
-      /** Mirrors help.text_md — keeps the pre-union {text_md} client shape working. */
+      /** Legacy {text_md} clients: preface + help.text_md for the deterministic step (help.text_md alone for a reference), so old readers still see it is not an AI hint. */
       text_md: string;
       /** A frozen reference exists for this question (reachable via the reveal path). */
       reference_available: boolean;
