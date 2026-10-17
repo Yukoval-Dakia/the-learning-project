@@ -373,17 +373,28 @@ describe('bank tools boundary invariants (search_bank / read_bank / check_bank)'
     });
     const presentPub = await publishAdmitted('bt_present');
     const presentRef = encodeBankRef(presentPub.revision_id, presentPub.revision_digest);
+    // 默认 overview 不带材料，但任何 include 都核验二进制资产。在场且摘要相符
+    // 时这里必须完整，用来抓住「裸 sha256 对不上 sha256: 前缀」的假缺口。
+    const overview = await readBankTool.execute(
+      ctx,
+      readBankTool.inputSchema.parse({ refs: [presentRef] }),
+    );
+    const overviewItem = overview.items[0];
+    expect(overviewItem.status).toBe('ok');
+    if (overviewItem.status !== 'ok') return;
+    expect(overviewItem.coverage.complete).toBe(true);
+
     const presentRead = await readBankTool.execute(
       ctx,
-      // 默认响应是 overview，材料层（含 digest_verified）要显式 include。
-      // coverage 在任何 include 下都报缺口；digest_verified 只在材料层证明
-      // 这份文件被核对过，且裸 sha256 与 sha256: 前缀的版本 digest 视为同一份。
       readBankTool.inputSchema.parse({ refs: [presentRef], include: ['materials'] }),
     );
     const presentItem = presentRead.items[0];
     expect(presentItem.status).toBe('ok');
     if (presentItem.status !== 'ok') return;
-    expect(presentItem.coverage.complete).toBe(true);
+    // 受限角色要材料层时，私人参考答案会被省略，coverage 因此不完整。
+    // 这不能把在场的图说成缺文件或摘要不符。
+    expect(presentItem.coverage.unavailable.join(' ')).toContain('private material');
+    expect(presentItem.coverage.unavailable.join(' ')).not.toContain('bt_present_asset');
     const presentMaterial = (presentItem.materials ?? []).find(
       (m) => m.asset.asset_id === 'bt_present_asset',
     );
