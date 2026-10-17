@@ -49,6 +49,9 @@ interface CodeEntry {
 
 /** How long a loaded frame has to answer with the shell's 'ready' before the block fails. */
 const READY_TIMEOUT_MS = 3000;
+/** More hand-backs than this inside the window = a frame fighting for focus: fail the block. */
+const MAX_HAND_BACKS = 5;
+const HAND_BACK_WINDOW_MS = 1000;
 
 const LOADING: CodeState = Object.freeze({ status: 'loading' });
 const FAILED: CodeState = Object.freeze({ status: 'failed' });
@@ -247,6 +250,8 @@ export function CustomBlock({
   // Set only by the learner's activation (click / start button), cleared once the active ref
   // callback has moved focus into the frame. Focus reaching the frame without it is the frame's.
   const activating = useRef(false);
+  // Times of recent hand-backs; written only by the hand-back handler.
+  const handBacks = useRef<number[]>([]);
   const activate = () => {
     activating.current = true;
     setActive(true);
@@ -271,6 +276,13 @@ export function CustomBlock({
         // start button, else nowhere (blur).
         const handBack = () => {
           if (activating.current || !wrap.contains(owner.activeElement)) return;
+          // Each hand-back blurs the learner's input (breaking IME composition); a frame that
+          // keeps taking focus is treated like self-navigation: blank it and fail the block.
+          const now = Date.now();
+          const recent = handBacks.current.filter((at) => now - at < HAND_BACK_WINDOW_MS);
+          recent.push(now);
+          handBacks.current = recent;
+          const hostile = recent.length > MAX_HAND_BACKS;
           const back = lastFocus.current;
           if (back?.isConnected && !wrap.contains(back)) back.focus({ preventScroll: true });
           if (wrap.contains(owner.activeElement)) {
@@ -278,17 +290,27 @@ export function CustomBlock({
             if (start) start.focus({ preventScroll: true });
             else (owner.activeElement as HTMLElement | null)?.blur();
           }
+          if (hostile) {
+            const frame = wrap.querySelector('iframe');
+            const session = frame ? sessions.get(frame) : undefined;
+            if (session) closeSession(session);
+            if (frame) frame.srcdoc = '';
+            publish(key, FAILED);
+          }
         };
         // `focus` does not bubble; capture on the wrapper sees it on whichever frame is inside.
         wrap.addEventListener('focus', handBack, true);
         // The window blurs when focus moves into the frame; check where it went.
         view?.addEventListener('blur', handBack);
+        // A steal while the window was in the background shows up when it comes back.
+        view?.addEventListener('focus', handBack);
         // Just deactivated while the frame held focus (or it stole focus in between): hand back now.
         handBack();
         return () => {
           owner.removeEventListener('focusin', onFocusIn);
           wrap.removeEventListener('focus', handBack, true);
           view?.removeEventListener('blur', handBack);
+          view?.removeEventListener('focus', handBack);
         };
       }
 
@@ -315,7 +337,7 @@ export function CustomBlock({
         if (blurCheck) clearTimeout(blurCheck);
       };
     },
-    [active],
+    [active, key],
   );
 
   // Re-attached every render so the port handler and the init always use this render's props.
