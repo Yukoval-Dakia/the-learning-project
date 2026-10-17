@@ -841,6 +841,11 @@ function PaperVisit({
     if (!server || !slot) return;
     nativeEpochs.current[key] = Math.max(nativeEpochs.current[key] ?? 0, server.epoch);
     setConflict(key, null);
+    setDiscarded((d) => {
+      if (!(key in d)) return d;
+      const { [key]: _, ...rest } = d;
+      return rest;
+    });
     void runSave(key, slot.question_id, slot.part_ref, answersRef.current[key] ?? '');
   };
 
@@ -1524,12 +1529,14 @@ function PaperVisit({
         {discarded[curKey] && (
           <DiscardedDraft
             draft={discarded[curKey]}
-            onCopy={(text) =>
-              navigator.clipboard.writeText(text).then(
-                () => addToast('已复制你这次写的', 'info', 'check'),
-                () => addToast('没能复制——可以展开后手动选中文字', 'info', 'alert'),
-              )
-            }
+            onCopy={(text) => {
+              const failed = () => addToast('没能复制——可以展开后手动选中文字', 'info', 'alert');
+              // navigator.clipboard is absent on plain-http LAN pages; calling it would throw.
+              if (!navigator.clipboard) return failed();
+              navigator.clipboard
+                .writeText(text)
+                .then(() => addToast('已复制你这次写的', 'info', 'check'), failed);
+            }}
           />
         )}
         {hasNativeBindings &&
