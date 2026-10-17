@@ -55,7 +55,10 @@ const MODE_TABS = [
 export interface RecordPageProps extends VisionTabRouting {}
 
 export default function RecordPage({ navigate, getQuery, setQuery }: RecordPageProps) {
-  const [mode, setMode] = useState<ModeTab>('manual');
+  // LOFT ONLY: the ingest-progress prototype lives on the 拍试卷 tab.
+  const [mode, setMode] = useState<ModeTab>(() =>
+    getQuery('loft') === 'ingest-progress' ? 'vision_paper' : 'manual',
+  );
   const routing = useMemo(() => ({ navigate, getQuery, setQuery }), [navigate, getQuery, setQuery]);
 
   return (

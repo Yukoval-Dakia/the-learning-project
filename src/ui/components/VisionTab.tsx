@@ -19,6 +19,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { memo, useCallback, useMemo, useRef, useState } from 'react';
 import { QUESTION_KIND_OPTIONS, type QuestionKindOptionId } from '@/core/schema/business';
+import { IngestAgentPanel } from '@/ui/components/IngestAgentPanel';
 import { RecordLanding, knowledgeLabelsFor } from '@/ui/components/RecordLanding';
 import { deriveOptionIds } from '@/ui/components/response/response-types';
 import {
@@ -37,12 +38,19 @@ import { ApiAuthError, ApiError, apiJson } from '@/ui/lib/api';
 import { expandDocx, expandPdf, uploadAsset, useAssetUrl } from '@/ui/lib/assets';
 import { type AutoEnrollObservation, seedBlockForm } from '@/ui/lib/auto-enroll';
 import { causeOptionsForSelectedKnowledge } from '@/ui/lib/cause-options';
+import type { AskAnswer } from '@/ui/lib/ingestion-agent-events';
 import { runIngestionOperation, startIngestionOperation } from '@/ui/lib/ingestion-operations';
 import {
   type ProgressEvent,
   derivePhaseFromEvents,
   latestProgress,
 } from '@/ui/lib/ingestion-phase';
+import {
+  answerLoftAsk,
+  restartLoftReplay,
+  retryLoftItem,
+  useLoftIngestReplay,
+} from '@/ui/lib/loft-ingest-replay';
 import { useIngestionSSE } from '@/ui/lib/sse';
 import { formatRelTime } from '@/ui/lib/utils';
 import { Badge } from '@/ui/primitives/Badge';
@@ -259,6 +267,14 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
   const [seededRows, setSeededRows] = useState<BlockRow[] | null>(null);
 
   const sse = useIngestionSSE(phase === 'extracting' ? sessionId : null);
+  // An R8 agent run speaks ingestion_agent.* events; the old pipeline does not.
+  const agentRun = sse.events.some((e) => e.event_type.startsWith('ingestion_agent.'));
+
+  // LOFT ONLY (never merged): `?loft=ingest-progress` replays a scripted agent run
+  // through the same panel instead of uploading.
+  const [loft] = useState(() => routing.getQuery('loft') === 'ingest-progress');
+  const loftStream = useLoftIngestReplay(loft);
+  const [loftRun, setLoftRun] = useState(0);
 
   // YUK-1483 — settle the extraction from this session's stream snapshot while
   // rendering (React's "adjust state when inputs change" pattern; only this
@@ -690,6 +706,33 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
     [rescueMutate],
   );
 
+  if (loft) {
+    return (
+      <Card pad="lg" className="record-card vision-card">
+        <div className="record-card-head">
+          <h2>整页拍照</h2>
+          <button
+            type="button"
+            className="ia-link"
+            onClick={() => {
+              restartLoftReplay();
+              setLoftRun((n) => n + 1);
+            }}
+          >
+            从头回放
+          </button>
+        </div>
+        <IngestAgentPanel
+          key={loftRun}
+          stream={loftStream}
+          onAnswer={answerLoftAsk}
+          onRetryItem={retryLoftItem}
+        />
+        <p className="ia-loft-label">设计预览：进度和追问为脚本回放，不是真实录入结果</p>
+      </Card>
+    );
+  }
+
   if (landing) {
     // A8 (YUK-354): 批量着陆。知识点来自刚刚提交的表单快照，因此不依赖 import
     // response 重复回传，也不会向用户暴露 wire/后端实现细节。
@@ -829,14 +872,20 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
           {/* Bug A: determinate per-page progress for the visual line (the text line
               is synchronous — no async job — so it shows the direct-completion panel
               below instead). */}
-          {phase === 'extracting' && ingestionLine !== 'text' && (
+          {phase === 'extracting' && agentRun && (
+            <IngestAgentPanel
+              stream={sse}
+              onAnswer={(askId, answer) => postAskAnswer(sessionId, askId, answer)}
+            />
+          )}
+          {phase === 'extracting' && ingestionLine !== 'text' && !agentRun && (
             <ExtractionProgressBar events={sse.events} />
           )}
           {/* YUK-277: the text line has no async extraction job — its blocks are
               already produced. Show a direct-completion summary instead of the
               "SSE · 等待事件…/closed" timeline, which misleads the user into
               thinking something is still running / stuck. */}
-          {ingestionLine === 'text' ? (
+          {agentRun ? null : ingestionLine === 'text' ? (
             <TextLineCompletePanel events={sse.events} blockCount={blocks.length} />
           ) : (
             <SSETimeline events={sse.events} status={sse.status} />
@@ -1503,6 +1552,24 @@ function layoutQualityLabel(quality: string): string {
     text_only: '仅识别到文字',
   };
   return labels[quality] ?? '请复核结果';
+}
+
+/**
+ * PROPOSAL — answer one ingestion_agent.ask. The server records it, emits
+ * `ingestion_agent.ask_resolved` on the same SSE stream, and carries on with the
+ * item. The endpoint does not exist yet (R8).
+ */
+async function postAskAnswer(
+  sessionId: string | null,
+  askId: string,
+  answer: AskAnswer,
+): Promise<void> {
+  if (!sessionId) throw new Error('no session');
+  await apiJson(`/api/ingestion/${sessionId}/asks/${encodeURIComponent(askId)}/answer`, {
+    method: 'POST',
+    headers: { 'Idempotency-Key': `${askId}:${JSON.stringify(answer)}` },
+    body: JSON.stringify({ answer }),
+  });
 }
 
 function FieldLabel({ children }: { children: React.ReactNode }) {
