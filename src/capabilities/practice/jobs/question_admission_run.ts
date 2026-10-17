@@ -41,7 +41,7 @@ import {
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { type Provider, definitionFromContract } from '../server/admission';
 import {
-  QUESTION_ADMISSION_POLICY_ID,
+  resolveQuestionAdmissionPolicyId,
   runQuestionAdmission,
 } from '../server/admission/run-admission';
 import {
@@ -69,7 +69,6 @@ export interface QuestionAdmissionRunResult {
 /** env 配置键（文档化在 PR body；OPEN owner decision 默认同模型独立上下文）。 */
 const SOLVER2_PROVIDER = process.env.QUESTION_ADMISSION_SOLVER2_PROVIDER as Provider | undefined;
 const SOLVER2_MODEL = process.env.QUESTION_ADMISSION_SOLVER2_MODEL;
-const POLICY_ID = process.env.QUESTION_ADMISSION_POLICY_ID ?? QUESTION_ADMISSION_POLICY_ID;
 /** 如实记录 verifier 形态：未配置 solver2 = 同模型独立上下文，不是异源模型。 */
 const VERIFIER_CONTEXT =
   SOLVER2_PROVIDER != null || SOLVER2_MODEL != null
@@ -140,6 +139,7 @@ export async function runAdmissionForQuestion(
   data: QuestionAdmissionRunData,
 ): Promise<QuestionAdmissionRunResult> {
   const now = new Date();
+  const policyId = resolveQuestionAdmissionPolicyId();
   // 解析目标组根：question_id 直接（或子 part 上行）；revision_id → group_id。
   let groupId = data.question_id ?? null;
   if (groupId == null && data.revision_id != null) {
@@ -215,7 +215,7 @@ export async function runAdmissionForQuestion(
       VERIFIER_CONTEXT === 'independent_model'
         ? { provider: SOLVER2_PROVIDER, model: SOLVER2_MODEL }
         : null,
-    policyId: POLICY_ID,
+    policyId,
     now,
   });
 
@@ -368,7 +368,7 @@ export async function runAdmissionForQuestion(
             },
             // verifier enum 只认 independent_model/human —— 实际 solver 拓扑
             // 如实写进 note 与 verification evidence pack（solver_context）。
-            note: `YUK-1445 dual blind solve + frozen probe calibration (${POLICY_ID}); verifier_context=${VERIFIER_CONTEXT}`,
+            note: `YUK-1445 dual blind solve + frozen probe calibration (${policyId}); verifier_context=${VERIFIER_CONTEXT}`,
           },
           model_slice: null,
         },
@@ -385,7 +385,7 @@ export async function runAdmissionForQuestion(
       publishedBy: {
         by: 'system',
         lane: 'question_admission',
-        policy_id: POLICY_ID,
+        policy_id: policyId,
         task_run_ids: result.evidence_refs.task_run_ids,
       },
       now,

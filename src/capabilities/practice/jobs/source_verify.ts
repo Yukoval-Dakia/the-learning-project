@@ -66,7 +66,7 @@ import {
 } from '@/server/questions/publisher';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
 import { normalizeToCanonicalKind } from '@/subjects/question-kind';
-import { QUESTION_ADMISSION_POLICY_ID } from '../server/admission/run-admission';
+import { resolveQuestionAdmissionPolicyId } from '../server/admission/run-admission';
 import { SYNTHETIC_SUBJECT_ROOT_RE } from '../server/placement-scope';
 import { SupplyTraceV1 } from '../server/question-supply/evidence-demand';
 import { lockPlacementSupplyScopes } from '../server/question-supply/placement-supply-lock';
@@ -808,7 +808,7 @@ export async function runSourceVerify(
               .where(
                 and(
                   eq(question_admission_verification.revision_id, lifecycle.current_revision_id),
-                  eq(question_admission_verification.policy_id, QUESTION_ADMISSION_POLICY_ID),
+                  eq(question_admission_verification.policy_id, resolveQuestionAdmissionPolicyId()),
                   eq(question_admission_verification.outcome, 'passed'),
                 ),
               )
