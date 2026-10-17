@@ -67,6 +67,19 @@ export const IngestionSessionResponseSchema = z.object({
  */
 export const IngestionUsageReceiptSchema = z.object({
   derivation_policy: IngestionDerivationPolicy,
+  /** Extraction engine that produced this receipt (e.g. tencent / glm / docx_text). */
+  engine: z.string().nullable(),
+  /**
+   * What left the server for a model on this extraction: `page_images:'raw'`
+   * means the original page image was sent as-is (OCR/VLM must see it);
+   * only the extracted text is redacted. null on a receipt without channels.
+   */
+  channels: z
+    .object({
+      page_images: z.enum(['raw', 'none']),
+      extracted_text: z.enum(['redacted', 'none']),
+    })
+    .nullable(),
   redacted_fields: z.array(z.string()),
   redaction_counts: z.record(z.string(), z.number()),
   recorded_at: z.string().datetime(),

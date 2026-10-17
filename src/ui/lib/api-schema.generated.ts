@@ -14200,8 +14200,15 @@ export interface operations {
                             [key: string]: unknown;
                         };
                         usage_receipt: {
+                            channels: {
+                                /** @enum {string} */
+                                extracted_text: "redacted" | "none";
+                                /** @enum {string} */
+                                page_images: "raw" | "none";
+                            } | null;
                             /** @enum {string} */
                             derivation_policy: "allow" | "answer_only";
+                            engine: string | null;
                             /** Format: date-time */
                             recorded_at: string;
                             redacted_fields: string[];
