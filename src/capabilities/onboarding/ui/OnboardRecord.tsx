@@ -23,6 +23,11 @@ import {
   uploadSubjectField,
   useUploadSubjectChoice,
 } from '@/ui/components/UploadSubjectPicker';
+import {
+  UploadUsagePicker,
+  uploadUsageField,
+  useUploadUsageChoice,
+} from '@/ui/components/UploadUsagePicker';
 import { ApiAuthError, apiJson } from '@/ui/lib/api';
 import { expandDocx, expandPdf, uploadAsset } from '@/ui/lib/assets';
 import { startIngestionOperation } from '@/ui/lib/ingestion-operations';
@@ -135,6 +140,7 @@ export default function OnboardRecord({ navigate }: OnboardRecordProps) {
   }, []);
   const [files, setFiles] = useState<File[]>([]);
   const [uploadSubject, setUploadSubject] = useUploadSubjectChoice();
+  const [uploadUsage, setUploadUsage] = useUploadUsageChoice();
   // The step this page drove itself to; the extraction outcome is derived below.
   const [step, setPhase] = useState<Phase>('idle');
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -234,7 +240,9 @@ export default function OnboardRecord({ navigate }: OnboardRecordProps) {
       // to extracting (no separate /api/ingestion + /extract).
       if (files.length === 1 && isDocx(f0)) {
         setPhase('expanding');
-        const ingested = await expandDocx(f0);
+        const ingested = await expandDocx(f0, {
+          derivationPolicy: uploadUsageField(uploadUsage).derivation_policy,
+        });
         if (!stillHere()) return;
         setSessionId(ingested.session_id);
         setPhase('extracting');
@@ -259,6 +267,7 @@ export default function OnboardRecord({ navigate }: OnboardRecordProps) {
           entrypoint: 'vision_paper',
           asset_ids: assetIds,
           ...uploadSubjectField(uploadSubject),
+          ...uploadUsageField(uploadUsage),
         }),
       });
       await startIngestionOperation(session.session.id, { kind: 'extract' });
@@ -350,6 +359,7 @@ export default function OnboardRecord({ navigate }: OnboardRecordProps) {
             onChange={setUploadSubject}
             docxSelected={files.length === 1 && isDocx(files[0])}
           />
+          <UploadUsagePicker value={uploadUsage} onChange={setUploadUsage} />
           {errorMsg && (
             <div className="ob-inline-err">
               <LoomIcon name="alert" size={14} />

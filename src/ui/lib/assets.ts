@@ -68,9 +68,14 @@ export interface DocxIngested {
 // reason from the server can refine this later (YUK-1476).
 const DOCX_REJECTED_MESSAGE = '这份 Word 文件暂时导不进来。可以把它另存为 PDF 再上传。';
 
-export async function expandDocx(file: File): Promise<DocxIngested> {
+export async function expandDocx(
+  file: File,
+  options: { derivationPolicy?: 'answer_only' } = {},
+): Promise<DocxIngested> {
   const form = new FormData();
   form.append('file', file);
+  // YUK-1512 — the learner's usage choice; absent means 'allow' (server default).
+  if (options.derivationPolicy) form.append('derivation_policy', options.derivationPolicy);
   try {
     const res = await apiFetch('/api/ingestion/docx', { method: 'POST', body: form });
     return (await res.json()) as DocxIngested;
