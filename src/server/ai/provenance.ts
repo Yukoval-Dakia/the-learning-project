@@ -9,6 +9,8 @@ import type { SubjectProfile } from '@/subjects/profile';
 export interface TaskTextResult {
   text: string;
   task_run_id?: string;
+  /** Provider stop reason. `max_tokens` / `length` means the text was cut off. */
+  finishReason?: string;
   cost_usd?: number;
   cost_basis?: 'reported' | 'estimated' | 'unknown';
   cost_ref?: string;
