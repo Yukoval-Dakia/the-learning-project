@@ -2811,6 +2811,117 @@
           "response": []
         }
       ]
+    },
+    {
+      "name": "worksheet-exports",
+      "item": [
+        {
+          "name": "GET /api/worksheet-exports/:token",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/worksheet-exports/:token",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "worksheet-exports", ":token"],
+              "variable": [
+                {
+                  "key": "token",
+                  "value": "REPLACE_token"
+                }
+              ]
+            },
+            "description": "YUK-1523 P5：导出状态读面（渲染器恢复）——issued 冻结坐标 + 公开渲染输入 + 存档页清单\n\n**Path vars:** `:token` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** token 不可猜；无私有答案。404 = token 不存在"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/worksheet-exports/:token/pages/:page",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/worksheet-exports/:token/pages/:page",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "worksheet-exports", ":token", "pages", ":page"],
+              "variable": [
+                {
+                  "key": "token",
+                  "value": "REPLACE_token"
+                },
+                {
+                  "key": "page",
+                  "value": "REPLACE_page"
+                }
+              ]
+            },
+            "description": "YUK-1523 P6 读面：token+页 → 该页冻结区域图与冻结 part/slot/option_order/unit 坐标（回收对位用，无私有答案）\n\n**Path vars:** `:token`, `:page` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 404 not_found=token 不存在；region_map_not_archived=尚未存档；page_out_of_range(404, details.page_count)"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/worksheet-exports",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/worksheet-exports",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "worksheet-exports"]
+            },
+            "description": "YUK-1523 P5：作答卷导出 = 逐题经既有 issueAssessment 发放（G4 门只放可判题，拒掉的题不发并随响应返回 typed 原因）；冻结 parts/材料 digest/option_order，mint export_token/短码\n\n**Notes:** 幂等：同 idempotency_key 同请求 ⇒ replayed(200) 不重发不改冻结；异请求 ⇒ idempotency_conflict(409)。全部题被门拒绝 ⇒ no_gradeable_questions(422)，details.refused 给逐题 typed 原因。返回 issued[]（issuance 冻结坐标 + practice_dto 公开渲染输入 + units 真实计分单元 id）与 refused[]；页面身份码 tlp://ws/v1/<export_token>/<页>/<总页> 由 token 锚定",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"idempotency_key\": \"ws-2026-10-17-001\",\n  \"title\": \"周末卷 · 三角函数\",\n  \"items\": [\n    {\n      \"group_id\": \"REPLACE_group_root_1\"\n    },\n    {\n      \"group_id\": \"REPLACE_group_root_2\",\n      \"part_ids\": [\n        \"p1\"\n      ]\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/worksheet-exports/:token/region-map",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/worksheet-exports/:token/region-map",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "worksheet-exports", ":token", "region-map"],
+              "variable": [
+                {
+                  "key": "token",
+                  "value": "REPLACE_token"
+                }
+              ]
+            },
+            "description": "YUK-1523 P5：区域图存档——界面线与 PDF 同一渲染 pass 量出的区域图整份 POST，后端对冻结发放校验后按页 write-once 存档\n\n**Path vars:** `:token` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 校验：qr payload 逐页=tlp://ws/v1/<token>/<页>/<总页>；每区域引用已发 part/slot/unit；每计分单元恰一着落（区域或 web_only_units，互斥）；choice 选项圈=冻结 option_order 排列；四角 TL/TR/BL 实心 BR 空心；A4。同图重 POST ⇒ existing(200)；异图 ⇒ archive_conflict(409)；校验失败 ⇒ invalid_region_map(422) details.issues",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"schema_version\": 1,\n  \"short_code\": \"REPLACE_short_code_from_create\",\n  \"web_only_units\": [],\n  \"pages\": [\n    {\n      \"page\": 1,\n      \"of\": 1,\n      \"orientation\": \"portrait\",\n      \"size_mm\": {\n        \"w\": 210,\n        \"h\": 297\n      },\n      \"qr\": {\n        \"payload\": \"tlp://ws/v1/REPLACE_token/1/1\",\n        \"mm\": {\n          \"x\": 173,\n          \"y\": 17,\n          \"w\": 13,\n          \"h\": 13\n        }\n      },\n      \"anchors\": {\n        \"tl\": {\n          \"cx\": 8.5,\n          \"cy\": 8.5,\n          \"size\": 5,\n          \"fill\": \"solid\",\n          \"stroke_mm\": null\n        },\n        \"tr\": {\n          \"cx\": 201.5,\n          \"cy\": 8.5,\n          \"size\": 5,\n          \"fill\": \"solid\",\n          \"stroke_mm\": null\n        },\n        \"bl\": {\n          \"cx\": 8.5,\n          \"cy\": 288.5,\n          \"size\": 5,\n          \"fill\": \"solid\",\n          \"stroke_mm\": null\n        },\n        \"br\": {\n          \"cx\": 201.5,\n          \"cy\": 288.5,\n          \"size\": 5,\n          \"fill\": \"hollow\",\n          \"stroke_mm\": 1.2\n        }\n      },\n      \"regions\": [\n        {\n          \"region_id\": \"p1-r1\",\n          \"kind\": \"writing\",\n          \"issuance_id\": \"REPLACE_issuance\",\n          \"slot_id\": \"REPLACE_slot\",\n          \"unit_id\": \"REPLACE_unit\",\n          \"mark\": \"dots\",\n          \"mm\": {\n            \"x\": 24,\n            \"y\": 92,\n            \"w\": 162,\n            \"h\": 138\n          },\n          \"segment_index\": 1\n        }\n      ]\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
     }
   ]
 }

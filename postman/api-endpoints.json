@@ -388,7 +388,9 @@
         "bodyExample": {
           "title": "高中文言文",
           "subjectId": "yuwen",
-          "knowledgeIds": ["kc-1"],
+          "knowledgeIds": [
+            "kc-1"
+          ],
           "declaredStage": "high_school"
         },
         "notes": "冷启入口直写 goal（source=manual），与 ADR-0025 proposal-materialize 路径并存。scope 解析：knowledgeIds 优先，否则 subjectId 经 effective-domain 轴派生；空 scope 允许（冷启 north-star）。title 必填。declaredStage 可选（middle_school|high_school|university|custom，YUK-1009 学习者自述学段，落 goal.declared_stage 供供给侧课程范围约束消费，不作能力判定）。返回 {id,title,subjectId,scopeKnowledgeIds,declaredStage,status}"
@@ -800,7 +802,9 @@
           "prompt_md": "下列句子中「而」字的用法是？",
           "reference_md": "《劝学》原文片段",
           "wrong_answer_md": "我认为是转折用法",
-          "knowledge_ids": ["kid_abc123"],
+          "knowledge_ids": [
+            "kid_abc123"
+          ],
           "cause": {
             "primary_category": "misunderstanding",
             "user_notes": "混淆了顺承与转折"
@@ -977,9 +981,16 @@
           "version": 0,
           "prompt_md": "新题目文本",
           "reference_md": "参考答案",
-          "choices_md": ["A", "B", "C", "D"],
+          "choices_md": [
+            "A",
+            "B",
+            "C",
+            "D"
+          ],
           "difficulty": 3,
-          "knowledge_ids": ["kn_abc"],
+          "knowledge_ids": [
+            "kn_abc"
+          ],
           "kind": "short_answer",
           "draft_status": "active"
         },
@@ -1174,7 +1185,9 @@
         "contentType": "application/json",
         "bodyExample": {
           "goalId": null,
-          "knowledgeIds": ["kc-1"]
+          "knowledgeIds": [
+            "kc-1"
+          ]
         },
         "notes": "dark-ship：gated on PLACEMENT_PROBE_ENABLED（默认 false → 404）。goalId 省略时用 knowledgeIds；二者皆缺/不可解析 → 400。返回 {sessionId, knowledgeIds, question, answeredCount, sourcingNeeded}；question.assessment 包含固定 issuance/提交身份、公开 practice_dto 与恢复状态 starterSupply 按当前会话 goal 的语义 revision + subject 绑定读取已有 claim：absent/pending/satisfied/exhausted/unknown，含 next_action 和经过限长脱敏的 failure_reason。历史缺失原因保留 unknown；exhausted/unknown 不等于等待。读取不创建 claim、不入队、不重试。此状态不替代未完成的 assessment issuance，也不触发完成/放弃。"
       }
@@ -1189,7 +1202,9 @@
         "query": [],
         "contentType": "application/json",
         "bodyExample": {
-          "knowledgeIds": ["kc-1"],
+          "knowledgeIds": [
+            "kc-1"
+          ],
           "cap": 8,
           "seThreshold": null
         },
@@ -1286,7 +1301,10 @@
         "query": [],
         "contentType": "application/json",
         "bodyExample": {
-          "keys": ["task.QuizGenTask.provider", "task.QuizGenTask.model"],
+          "keys": [
+            "task.QuizGenTask.provider",
+            "task.QuizGenTask.model"
+          ],
           "note": "Restore defaults"
         },
         "notes": "需 x-internal-token。按整批删除后的原生组合校验，失败全部回滚。历史journal保留；清理后重新写入revision持续递增。响应与PATCH配置相同。"
@@ -1342,7 +1360,9 @@
         "contentType": "application/json",
         "bodyExample": {
           "group_id": "REPLACE_group_root",
-          "part_ids": ["p1"],
+          "part_ids": [
+            "p1"
+          ],
           "mode": "auto_score",
           "container_occurrence_ref": null,
           "claim": {
@@ -1382,7 +1402,9 @@
               {
                 "slot_id": "p1::r",
                 "kind": "choice",
-                "option_ids": ["opt-a"]
+                "option_ids": [
+                  "opt-a"
+                ]
               }
             ]
           },
@@ -1410,7 +1432,9 @@
               {
                 "slot_id": "p1::r",
                 "kind": "choice",
-                "option_ids": ["opt-a"]
+                "option_ids": [
+                  "opt-a"
+                ]
               }
             ]
           },
@@ -1430,6 +1454,143 @@
         "contentType": null,
         "bodyExample": null,
         "notes": "返回 reference_md（历史未封存时为 null）；返回正文前持久化 answer_help；不读取 current question 参考，不揭示其他 part。一次性诊断及容器发题不从此接口揭示。"
+      }
+    ]
+  },
+  {
+    "path": "/api/worksheet-exports",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "YUK-1523 P5：作答卷导出 = 逐题经既有 issueAssessment 发放（G4 门只放可判题，拒掉的题不发并随响应返回 typed 原因）；冻结 parts/材料 digest/option_order，mint export_token/短码",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "idempotency_key": "ws-2026-10-17-001",
+          "title": "周末卷 · 三角函数",
+          "items": [
+            {
+              "group_id": "REPLACE_group_root_1"
+            },
+            {
+              "group_id": "REPLACE_group_root_2",
+              "part_ids": [
+                "p1"
+              ]
+            }
+          ]
+        },
+        "notes": "幂等：同 idempotency_key 同请求 ⇒ replayed(200) 不重发不改冻结；异请求 ⇒ idempotency_conflict(409)。全部题被门拒绝 ⇒ no_gradeable_questions(422)，details.refused 给逐题 typed 原因。返回 issued[]（issuance 冻结坐标 + practice_dto 公开渲染输入 + units 真实计分单元 id）与 refused[]；页面身份码 tlp://ws/v1/<export_token>/<页>/<总页> 由 token 锚定"
+      }
+    ]
+  },
+  {
+    "path": "/api/worksheet-exports/:token",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "YUK-1523 P5：导出状态读面（渲染器恢复）——issued 冻结坐标 + 公开渲染输入 + 存档页清单",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "token 不可猜；无私有答案。404 = token 不存在"
+      }
+    ]
+  },
+  {
+    "path": "/api/worksheet-exports/:token/region-map",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "YUK-1523 P5：区域图存档——界面线与 PDF 同一渲染 pass 量出的区域图整份 POST，后端对冻结发放校验后按页 write-once 存档",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "schema_version": 1,
+          "short_code": "REPLACE_short_code_from_create",
+          "web_only_units": [],
+          "pages": [
+            {
+              "page": 1,
+              "of": 1,
+              "orientation": "portrait",
+              "size_mm": {
+                "w": 210,
+                "h": 297
+              },
+              "qr": {
+                "payload": "tlp://ws/v1/REPLACE_token/1/1",
+                "mm": {
+                  "x": 173,
+                  "y": 17,
+                  "w": 13,
+                  "h": 13
+                }
+              },
+              "anchors": {
+                "tl": {
+                  "cx": 8.5,
+                  "cy": 8.5,
+                  "size": 5,
+                  "fill": "solid",
+                  "stroke_mm": null
+                },
+                "tr": {
+                  "cx": 201.5,
+                  "cy": 8.5,
+                  "size": 5,
+                  "fill": "solid",
+                  "stroke_mm": null
+                },
+                "bl": {
+                  "cx": 8.5,
+                  "cy": 288.5,
+                  "size": 5,
+                  "fill": "solid",
+                  "stroke_mm": null
+                },
+                "br": {
+                  "cx": 201.5,
+                  "cy": 288.5,
+                  "size": 5,
+                  "fill": "hollow",
+                  "stroke_mm": 1.2
+                }
+              },
+              "regions": [
+                {
+                  "region_id": "p1-r1",
+                  "kind": "writing",
+                  "issuance_id": "REPLACE_issuance",
+                  "slot_id": "REPLACE_slot",
+                  "unit_id": "REPLACE_unit",
+                  "mark": "dots",
+                  "mm": {
+                    "x": 24,
+                    "y": 92,
+                    "w": 162,
+                    "h": 138
+                  },
+                  "segment_index": 1
+                }
+              ]
+            }
+          ]
+        },
+        "notes": "校验：qr payload 逐页=tlp://ws/v1/<token>/<页>/<总页>；每区域引用已发 part/slot/unit；每计分单元恰一着落（区域或 web_only_units，互斥）；choice 选项圈=冻结 option_order 排列；四角 TL/TR/BL 实心 BR 空心；A4。同图重 POST ⇒ existing(200)；异图 ⇒ archive_conflict(409)；校验失败 ⇒ invalid_region_map(422) details.issues"
+      }
+    ]
+  },
+  {
+    "path": "/api/worksheet-exports/:token/pages/:page",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "YUK-1523 P6 读面：token+页 → 该页冻结区域图与冻结 part/slot/option_order/unit 坐标（回收对位用，无私有答案）",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "404 not_found=token 不存在；region_map_not_archived=尚未存档；page_out_of_range(404, details.page_count)"
       }
     ]
   },

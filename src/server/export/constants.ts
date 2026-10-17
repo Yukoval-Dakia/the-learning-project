@@ -103,7 +103,15 @@
 // YUK-766: preserve subscription progress and causal effects; only process claims reset.
 // YUK-1355: preserve paid-effect unknowns, immutable receipts and backend generations.
 // Both durable tables are required even when empty; 4.25 → 4.26.
-export const SCHEMA_VERSION = '4.26';
+// YUK-1523 (P5): worksheet_export / worksheet_export_item / worksheet_region_map_page —
+// the worksheet PDF export triplet (frozen issuance binding, page identity, frozen
+// region maps). Authored export truth: a restore that drops the token→issuance
+// binding or the archived region maps breaks P6 recovery for already-printed
+// sheets, so they ride the wipe-then-restore payload. In-cluster FKs only
+// (item/page → export; issuance_id stays a loose text-ref per assessment_submission
+// convention), so the cluster is self-contained after assessment_issuance.
+// NEW FK_ORDER tables → bump 4.26 → 4.27.
+export const SCHEMA_VERSION = '4.27';
 
 export const SUBSCRIPTION_PROGRESS_TABLES = [
   'event_subscription_checkpoint',
@@ -326,6 +334,14 @@ export const FK_ORDER = [
   // No hard FK: restore owning backend/generation before its immutable effects.
   // Missing either table would turn an unknown paid outcome into bootstrap state.
   ...PAID_EFFECT_BACKUP_TABLES,
+  // YUK-1523 (P5) — 作答卷导出三表：export（页面身份/幂等/拒绝清单）先于
+  // item（冻结题目清单）与 region_map_page（按页冻结区域图）。簇内 FK 只有
+  // item/page → export（父先子后）；issuance_id 是 loose text-ref，位置不受
+  // PG FK 约束，但语义上紧跟 assessment 簇之后、provider_attempt 之前保持可读。
+  // NEW FK_ORDER tables → bump SCHEMA_VERSION (4.26 → 4.27)。
+  'worksheet_export',
+  'worksheet_export_item',
+  'worksheet_region_map_page',
   // YUK-851 has no enforced FK, but remains last so durable provider-attempt truth is
   // restored after the current authored/cost parents and rides whole-row schema changes.
   'provider_attempt',

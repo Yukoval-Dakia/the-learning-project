@@ -115,6 +115,16 @@ import {
   RecomposePracticeStreamBodySchema,
   UpdatePracticeStreamItemBodySchema,
 } from './api/stream-contracts';
+// YUK-1523（P5）— 作答卷 PDF 导出：发放、区域图存档与 P6 读面契约。
+import {
+  WorksheetExportCreateBodySchema,
+  WorksheetExportStateSchema,
+  WorksheetPageParamsSchema,
+  WorksheetPageResponseSchema,
+  WorksheetRegionMapArchiveBody,
+  WorksheetRegionMapArchivedSchema,
+  WorksheetTokenParamsSchema,
+} from './api/worksheet-contracts';
 // YUK-594 (durable judge main path, W1) — judge_run poll-tier status + 202-pending schemas
 // (live in the db-free judge-run-status module so this eager import stays db-light).
 import {
@@ -885,6 +895,62 @@ export const practiceCapability = defineCapability({
         responses: { 200: StudyReferenceResponseSchema, ...API_ERROR_RESPONSES },
         successStatus: 200,
         load: () => import('./api/assessment-route').then((m) => m.revealStudyReference),
+      },
+      // YUK-1523（P5）— 作答卷 PDF 导出。导出 = 逐题经既有 issueAssessment 发放
+      //（G4 门只放可判题，拒掉的题随响应返回 typed 原因）；token/短码是页面
+      // 身份码 tlp://ws/v1/<token>/<页>/<总页> 的锚；同 idempotency_key 重放不重发。
+      {
+        method: 'POST',
+        path: '/api/worksheet-exports',
+        operationId: 'createWorksheetExport',
+        request: { body: WorksheetExportCreateBodySchema },
+        responses: {
+          200: WorksheetExportStateSchema,
+          201: WorksheetExportStateSchema,
+          ...API_ERROR_RESPONSES,
+        },
+        successStatus: [200, 201],
+        load: () =>
+          import('./api/worksheet-export-route').then((m) => m.createWorksheetExportRoute),
+      },
+      {
+        // 渲染器恢复/总览读面（token 不可猜；无私有答案）。
+        method: 'GET',
+        path: '/api/worksheet-exports/[token]',
+        operationId: 'getWorksheetExport',
+        request: { params: WorksheetTokenParamsSchema },
+        responses: { 200: WorksheetExportStateSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        load: () => import('./api/worksheet-export-route').then((m) => m.getWorksheetExportRoute),
+      },
+      {
+        // 区域图存档：界面线与 PDF 同一渲染 pass 量出的区域图 POST 回后端，
+        // 对冻结发放校验后按页 write-once 存档（同图重 POST 幂等）。
+        method: 'POST',
+        path: '/api/worksheet-exports/[token]/region-map',
+        operationId: 'archiveWorksheetRegionMap',
+        request: {
+          params: WorksheetTokenParamsSchema,
+          body: WorksheetRegionMapArchiveBody,
+        },
+        responses: {
+          200: WorksheetRegionMapArchivedSchema,
+          201: WorksheetRegionMapArchivedSchema,
+          ...API_ERROR_RESPONSES,
+        },
+        successStatus: [200, 201],
+        load: () =>
+          import('./api/worksheet-export-route').then((m) => m.archiveWorksheetRegionMapRoute),
+      },
+      {
+        // P6 回读面：token + 页 → issuance id、该页冻结区域图与 part/slot 坐标。
+        method: 'GET',
+        path: '/api/worksheet-exports/[token]/pages/[page]',
+        operationId: 'getWorksheetPage',
+        request: { params: WorksheetPageParamsSchema },
+        responses: { 200: WorksheetPageResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        load: () => import('./api/worksheet-export-route').then((m) => m.getWorksheetPageRoute),
       },
     ],
   },
