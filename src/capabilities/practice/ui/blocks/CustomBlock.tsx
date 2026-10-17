@@ -49,9 +49,15 @@ interface CodeEntry {
 
 /** How long a loaded frame has to answer with the shell's 'ready' before the block fails. */
 const READY_TIMEOUT_MS = 3000;
-/** More hand-backs than this inside the window = a frame fighting for focus: fail the block. */
+/**
+ * A frame fighting for focus fails the block: more hand-backs than MAX_HAND_BACKS inside 1 s (a
+ * fast stealer), or more than MAX_SLOW_HAND_BACKS inside 30 s (a slow one that stays under the
+ * first limit). A normal block causes at most one or two in a session.
+ */
 const MAX_HAND_BACKS = 5;
 const HAND_BACK_WINDOW_MS = 1000;
+const MAX_SLOW_HAND_BACKS = 20;
+const SLOW_HAND_BACK_WINDOW_MS = 30_000;
 
 const LOADING: CodeState = Object.freeze({ status: 'loading' });
 const FAILED: CodeState = Object.freeze({ status: 'failed' });
@@ -281,10 +287,11 @@ export function CustomBlock({
           // Each hand-back blurs the learner's input (breaking IME composition); a frame that
           // keeps taking focus is treated like self-navigation: blank it and fail the block.
           const now = Date.now();
-          const recent = handBacks.current.filter((at) => now - at < HAND_BACK_WINDOW_MS);
+          const recent = handBacks.current.filter((at) => now - at < SLOW_HAND_BACK_WINDOW_MS);
           recent.push(now);
           handBacks.current = recent;
-          const hostile = recent.length > MAX_HAND_BACKS;
+          const lastSecond = recent.filter((at) => now - at < HAND_BACK_WINDOW_MS).length;
+          const hostile = lastSecond > MAX_HAND_BACKS || recent.length > MAX_SLOW_HAND_BACKS;
           const back = lastFocus.current;
           if (back?.isConnected && !wrap.contains(back)) back.focus({ preventScroll: true });
           if (wrap.contains(owner.activeElement)) {
