@@ -606,6 +606,20 @@
   color: var(--ink-4);
 }
 
+.pfp-discarded {
+  display: grid;
+  gap: var(--s-2);
+  margin-top: var(--s-3);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-2);
+  padding: var(--s-2) var(--s-3);
+  color: var(--ink-3);
+}
+.pfp-discarded summary {
+  cursor: pointer;
+  font-size: var(--fs-caption);
+}
+
 /* navigator pips — strictly neutral (§6.4) */
 .pfp-pips {
   display: flex;

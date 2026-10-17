@@ -7,6 +7,7 @@ import type { ResponseSetT, SlotResponseT } from '@/core/schema/assessment';
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useMemo, useRef, useState } from 'react';
+import { stableStringify } from '@/core/migration/stable-stringify';
 import { REASONING_TRACE_MAX_LEN } from '@/kernel/limits';
 import { AssetEvidencePreview } from '@/ui/components/response/AssetEvidencePreview';
 import { ChoiceSetResponse } from '@/ui/components/response/ChoiceSetResponse';
@@ -115,6 +116,15 @@ function serverSlotDraft(slot: PaperSlot, assessment: SlotAssessment): ServerSlo
 
 const sameFiles = (a: readonly string[], b: readonly string[]) =>
   [...a].sort().join() === [...b].sort().join();
+
+// The stored answer itself: content_md is only the client's text rendering of response_set (the
+// server stores whatever text it is sent), so two drafts with the same text can still differ.
+// Entry order and key order carry no meaning here.
+const sameResponses = (a: ResponseSetT | undefined, b: ResponseSetT) => {
+  const canon = (r: ResponseSetT | undefined) =>
+    stableStringify([...(r?.entries ?? [])].sort((x, y) => x.slot_id.localeCompare(y.slot_id)));
+  return canon(a) === canon(b);
+};
 
 // YUK-1490 — 「用服务器上的」: bind exactly the server's attachments to this slot. Other slots
 // keep what they had (an asset that leaves this slot stays bound to the rest of its scope).
@@ -375,6 +385,9 @@ function PaperVisit({
   // held and its fields are locked. The ref mirrors the state for flushes, retries and exit.
   const [conflicts, setConflicts] = useState<Record<string, ServerSlotDraft>>({});
   const conflictsRef = useRef<Record<string, ServerSlotDraft>>({});
+  // YUK-1490 — after 「用服务器上的」 the learner's own text stays readable (and copyable) on that
+  // question until they move to another one. Local only: never saved or sent.
+  const [discarded, setDiscarded] = useState<Record<string, { text: string; files: number }>>({});
   // Disables the retry chip while a retry batch is in flight (avoids redundant PUTs).
   const [retrying, setRetrying] = useState(false);
   // Concurrent draft PUTs for one slot can settle out of order; only the LATEST
@@ -733,46 +746,60 @@ function PaperVisit({
     const fail = () => {
       if (componentActiveRef.current) setSaveFailed((f) => ({ ...f, [key]: true }));
     };
-    const pendingChain = chainedSaves.current[key];
-    if (pendingChain) await chainOrCap(pendingChain);
-    let fresh: PaperDetail;
+    // A late 409 of a visit that already ended (the previous visit's flush) needs no re-read.
+    if (!componentActiveRef.current) return;
+    // Called with void: any throw below must still leave the slot on 保存失败, not on a chip
+    // that claims the draft is being saved.
     try {
-      fresh = await qc.fetchQuery({
-        queryKey: ['paper', artifactId],
-        queryFn: () => getPaperDetail(artifactId),
-        staleTime: 0,
-      });
+      const pendingChain = chainedSaves.current[key];
+      if (pendingChain) await chainOrCap(pendingChain);
+      let fresh: PaperDetail;
+      try {
+        fresh = await qc.fetchQuery({
+          queryKey: ['paper', artifactId],
+          queryFn: () => getPaperDetail(artifactId),
+          staleTime: 0,
+        });
+      } catch (err) {
+        console.error('[PfPaper] stale draft re-read failed', { key, err });
+        fail();
+        return;
+      }
+      // A newer save of the slot owns its flag and epoch now (it may already have passed).
+      if (saveSeq.current[key] !== seq || conflictsRef.current[key]) return;
+      if (!componentActiveRef.current || exitingRef.current || submittingRef.current) return fail();
+      if (submittedDuringAttemptsRef.current.has(key)) return;
+      const local = slots.find((s) => slotKey(s) === key);
+      const slot = fresh.sections.flatMap((s) => s.slots).find((s) => slotKey(s) === key);
+      const assessment = slot?.assessment;
+      if (!local || !slot || !assessment || slot.slot_state.submission?.submitted) return fail();
+      if (assessment.issuance_id !== local.assessment?.issuance_id) return fail();
+      const server = serverSlotDraft(slot, assessment);
+      const text = answersRef.current[key] ?? '';
+      if (server.epoch <= (nativeEpochs.current[key] ?? 0)) {
+        void runSave(key, local.question_id, local.part_ref, text);
+        return;
+      }
+      const payload = nativePayloadFor(key);
+      if (
+        server.text === text &&
+        sameFiles(server.files, savedFilesFor(key)) &&
+        sameResponses(payload?.response_set, server.response_set)
+      ) {
+        nativeEpochs.current[key] = server.epoch;
+        ackedAnswers.current[key] = text;
+        setSaveFailed((f) => (f[key] ? { ...f, [key]: false } : f));
+        return;
+      }
+      if (saveTimers.current[key]) {
+        clearTimeout(saveTimers.current[key]);
+        delete saveTimers.current[key];
+      }
+      setConflict(key, server);
     } catch (err) {
-      console.error('[PfPaper] stale draft re-read failed', { key, err });
+      console.error('[PfPaper] stale draft recheck failed', { key, err });
       fail();
-      return;
     }
-    // A newer save of the slot owns its flag and epoch now (it may already have passed).
-    if (saveSeq.current[key] !== seq || conflictsRef.current[key]) return;
-    if (!componentActiveRef.current || exitingRef.current || submittingRef.current) return fail();
-    if (submittedDuringAttemptsRef.current.has(key)) return;
-    const local = slots.find((s) => slotKey(s) === key);
-    const slot = fresh.sections.flatMap((s) => s.slots).find((s) => slotKey(s) === key);
-    const assessment = slot?.assessment;
-    if (!local || !slot || !assessment || slot.slot_state.submission?.submitted) return fail();
-    if (assessment.issuance_id !== local.assessment?.issuance_id) return fail();
-    const server = serverSlotDraft(slot, assessment);
-    const text = answersRef.current[key] ?? '';
-    if (server.epoch <= (nativeEpochs.current[key] ?? 0)) {
-      void runSave(key, local.question_id, local.part_ref, text);
-      return;
-    }
-    if (server.text === text && sameFiles(server.files, savedFilesFor(key))) {
-      nativeEpochs.current[key] = server.epoch;
-      ackedAnswers.current[key] = text;
-      setSaveFailed((f) => (f[key] ? { ...f, [key]: false } : f));
-      return;
-    }
-    if (saveTimers.current[key]) {
-      clearTimeout(saveTimers.current[key]);
-      delete saveTimers.current[key];
-    }
-    setConflict(key, server);
   };
 
   // 「用服务器上的」: the slot takes the server's text, answer and attachments as its saved
@@ -784,6 +811,11 @@ function PaperVisit({
       clearTimeout(saveTimers.current[key]);
       delete saveTimers.current[key];
     }
+    const mine = {
+      text: answersRef.current[key] ?? '',
+      files: evidenceIdsForSlot(evidenceRef.current, key).length,
+    };
+    if (mine.text || mine.files > 0) setDiscarded((d) => ({ ...d, [key]: mine }));
     answersRef.current[key] = server.text;
     setAnswers((a) => ({ ...a, [key]: server.text }));
     nativeResponsesRef.current = { ...nativeResponsesRef.current, [key]: server.response_set };
@@ -1177,6 +1209,16 @@ function PaperVisit({
     const next = Math.max(0, Math.min(slots.length - 1, n));
     setPos(next);
     if (next === posRef.current) return;
+    const leaving = slots[posRef.current];
+    if (leaving) {
+      const leftKey = slotKey(leaving);
+      setDiscarded((d) => {
+        if (!d[leftKey]) return d;
+        const rest = { ...d };
+        delete rest[leftKey];
+        return rest;
+      });
+    }
     posRef.current = next;
     stopTimingSegment();
     if (sessionRef.current) startCurrentSegment();
@@ -1286,6 +1328,9 @@ function PaperVisit({
         {hasNativeBindings && (
           <SaveStateChip
             state={anySaveFailed ? 'error' : conflictNumbers.length > 0 ? 'conflict' : 'idle'}
+            label={
+              !anySaveFailed && conflictNumbers.length > 0 ? '有题存了两份 · 先选一份' : undefined
+            }
             onRetry={anySaveFailed ? retryFailedSaves : undefined}
             retrying={retrying}
           />
@@ -1476,6 +1521,17 @@ function PaperVisit({
             onUploadingChange={setUploading}
           />
         )}
+        {discarded[curKey] && (
+          <DiscardedDraft
+            draft={discarded[curKey]}
+            onCopy={(text) =>
+              navigator.clipboard.writeText(text).then(
+                () => addToast('已复制你这次写的', 'info', 'check'),
+                () => addToast('没能复制——可以展开后手动选中文字', 'info', 'alert'),
+              )
+            }
+          />
+        )}
         {hasNativeBindings &&
           !isChoice &&
           evidence.length > 0 &&
@@ -1653,5 +1709,33 @@ function PaperDraftConflict({
         </Btn>
       </div>
     </div>
+  );
+}
+
+// YUK-1490 — the learner's own text after they kept the server's version: collapsed under the
+// field, readable and copyable until they leave the question. Never saved.
+function DiscardedDraft({
+  draft,
+  onCopy,
+}: {
+  draft: { text: string; files: number };
+  onCopy: (text: string) => void;
+}) {
+  return (
+    <details className="pfp-discarded">
+      <summary>你这次写的（已放下）</summary>
+      {draft.text && <p className="pfp-conflict-text">{draft.text}</p>}
+      {draft.files > 0 && (
+        <span className="meta">当时另有 {draft.files} 个附件，已不在这道题上</span>
+      )}
+      <span className="meta">只留在这一页，换到别的题就不再显示。</span>
+      {draft.text && (
+        <div>
+          <Btn size="sm" variant="ghost" onClick={() => onCopy(draft.text)}>
+            复制这段
+          </Btn>
+        </div>
+      )}
+    </details>
   );
 }
