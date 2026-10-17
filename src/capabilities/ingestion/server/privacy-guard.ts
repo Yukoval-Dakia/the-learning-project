@@ -182,6 +182,12 @@ export interface IngestionUsageReceipt {
     page_images: 'raw' | 'none';
     extracted_text: 'redacted' | 'none';
   };
+  /**
+   * YUK-1522 (R8) — agent runs receipt PER SEGMENT: a suspended segment's
+   * paid work + redactions are usage too, so every segment terminal emits its
+   * own receipt carrying its own sink. Absent for the single-shot OCR lanes.
+   */
+  segment?: number;
   now?: Date;
 }
 
@@ -218,6 +224,7 @@ export async function writeIngestionUsageReceipt(
       },
       redacted_fields: input.redactedFields,
       redaction_counts: input.redactionCounts ?? {},
+      ...(input.segment !== undefined ? { segment: input.segment } : {}),
     },
     caused_by_event_id: null,
     task_run_id: null,
