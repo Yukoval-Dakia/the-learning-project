@@ -15,7 +15,7 @@
 // 模型，chat rubric 是 prompt 模板修订。pin 漂移 ⇒ 旧切片不再放行（服务门
 // model 分支拒绝），必须重跑留出题重新准入。
 
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray, or } from 'drizzle-orm';
 import { type TaskKind, tasks } from '@/capabilities/task-registry';
 import { canonicalHash } from '@/core/migration/canonical';
 import { ASSESSMENT_RUBRIC_PROMPT_REVISION } from '@/core/schema/assessment/model-decision';
@@ -25,14 +25,18 @@ import type {
   ModelResponseClass,
 } from '@/core/schema/assessment/serving-admission';
 import type { Db, Tx } from '@/db/client';
-import { model_admission_slice } from '@/db/schema';
+import { model_admission_slice, question } from '@/db/schema';
+import { batchResolveEffectiveDomains } from '@/kernel/read-models/knowledge-tree';
 import { JEV_CANONICAL_MODEL } from '@/server/ai/pricing';
+import { resolveConfiguredTaskModel } from '@/server/ai/providers';
+import { resolveSubjectProfile } from '@/subjects/profile';
 
 type SliceRow = typeof model_admission_slice.$inferSelect;
 
 /**
- * 各可准入 task kind 的当前契约版本 pin。模型 id 一律取 task registry 的
- * defaultModel（单一真相源）；这里只钉版本轴。
+ * 各可准入 task kind 的当前契约版本 pin。模型 id 不在这里写死：它必须是
+ * resolveConfiguredTaskModel 将要执行的那个 id（registry 默认、task.<kind>.model、
+ * 全局开关、chat env pin 同一层）。版本轴仍由本表钉住。
  */
 const CURRENT_MODEL_VERSION_PINS: Readonly<Record<string, string>> = {
   // typed lane：canonical 响应模型即版本（wire drift = contract violation）。
@@ -47,7 +51,7 @@ export function currentModelPins(): ReadonlyMap<string, { model: string; model_v
   for (const [kind, version] of Object.entries(CURRENT_MODEL_VERSION_PINS)) {
     const definition = tasks[kind as TaskKind];
     if (definition === undefined) continue;
-    pins.set(kind, { model: definition.defaultModel, model_version: version });
+    pins.set(kind, { model: resolveConfiguredTaskModel(kind as TaskKind), model_version: version });
   }
   return pins;
 }
@@ -78,7 +82,11 @@ export async function resolveModelAdmissionContext(db: Db | Tx): Promise<ModelAd
   };
 }
 
-/** 切片身份 = 自然键的内容寻址（同一切片重复注册幂等）。 */
+/**
+ * 切片身份 = 自然键五字段的内容寻址。只哈希这五字段：证据引用、登记人和
+ * 时间不参与身份，否则登记处存下的 slice_id 与 job 报告的 id 不是同一个，
+ * 引用报告 id 的题会被扣留，付费前预检也找不到已有行。
+ */
 export function modelSliceIdFor(input: {
   subject: string;
   response_class: ModelResponseClass;
@@ -86,7 +94,99 @@ export function modelSliceIdFor(input: {
   model: string;
   model_version: string;
 }): string {
-  return `slice_${canonicalHash(input).slice(0, 32)}`;
+  const identity = {
+    subject: input.subject,
+    response_class: input.response_class,
+    task_kind: input.task_kind,
+    model: input.model,
+    model_version: input.model_version,
+  };
+  return `slice_${canonicalHash(identity).slice(0, 32)}`;
+}
+
+/** 根题 → 学科。与留出题 job 同一座桥：knowledge_ids[0] → effective domain → subject id。 */
+export type GroupSubjectLookup =
+  | { readonly kind: 'subject'; readonly subject: string }
+  | { readonly kind: 'missing_group' }
+  | { readonly kind: 'unlabeled' }
+  | { readonly kind: 'no_domain'; readonly knowledge_id: string };
+
+export async function lookupGroupSubjects(
+  db: Db | Tx,
+  groupIds: readonly string[],
+): Promise<Map<string, GroupSubjectLookup>> {
+  const unique = [...new Set(groupIds)];
+  const out = new Map<string, GroupSubjectLookup>();
+  if (unique.length === 0) return out;
+  const rows = await db
+    .select({ id: question.id, knowledge_ids: question.knowledge_ids })
+    .from(question)
+    .where(inArray(question.id, unique));
+  const knowledgeByGroup = new Map(rows.map((row) => [row.id, row.knowledge_ids[0] ?? null]));
+  const domains = await batchResolveEffectiveDomains(db, [
+    ...new Set([...knowledgeByGroup.values()].filter((id): id is string => id !== null)),
+  ]);
+  for (const groupId of unique) {
+    if (!knowledgeByGroup.has(groupId)) {
+      out.set(groupId, { kind: 'missing_group' });
+      continue;
+    }
+    const knowledgeId = knowledgeByGroup.get(groupId) ?? null;
+    if (knowledgeId === null) {
+      out.set(groupId, { kind: 'unlabeled' });
+      continue;
+    }
+    const domain = domains.get(knowledgeId) ?? null;
+    if (domain === null) {
+      out.set(groupId, { kind: 'no_domain', knowledge_id: knowledgeId });
+      continue;
+    }
+    out.set(groupId, { kind: 'subject', subject: resolveSubjectProfile(domain).id });
+  }
+  return out;
+}
+
+const RETIRED_SLICE_DETAIL = (sliceId: string) =>
+  `slice '${sliceId}' is retired for this model pin; retirement is permanent for the natural key, and a different model version is a different slice`;
+
+/** postgres.js 把 23505 包在 cause 链上；走到唯一约束就认。 */
+function isUniqueViolation(err: unknown): boolean {
+  let current: unknown = err;
+  for (let depth = 0; depth < 5 && current !== null && typeof current === 'object'; depth++) {
+    if ((current as { code?: unknown }).code === '23505') return true;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
+async function findSliceByIdentity(
+  db: Db | Tx,
+  input: {
+    subject: string;
+    response_class: ModelResponseClass;
+    task_kind: string;
+    model: string;
+    model_version: string;
+  },
+): Promise<SliceRow | undefined> {
+  const sliceId = modelSliceIdFor(input);
+  const [existing] = await db
+    .select()
+    .from(model_admission_slice)
+    .where(
+      or(
+        eq(model_admission_slice.slice_id, sliceId),
+        and(
+          eq(model_admission_slice.subject, input.subject),
+          eq(model_admission_slice.response_class, input.response_class),
+          eq(model_admission_slice.task_kind, input.task_kind),
+          eq(model_admission_slice.model, input.model),
+          eq(model_admission_slice.model_version, input.model_version),
+        ),
+      ),
+    )
+    .limit(1);
+  return existing;
 }
 
 export class ModelSliceRegistrationError extends Error {
@@ -126,17 +226,10 @@ export async function assertModelAdmissionSliceRegistrable(
   input: RegisterModelAdmissionSliceInput,
 ): Promise<void> {
   const sliceId = modelSliceIdFor(input);
-  const [existing] = await db
-    .select()
-    .from(model_admission_slice)
-    .where(eq(model_admission_slice.slice_id, sliceId))
-    .limit(1);
+  const existing = await findSliceByIdentity(db, input);
   if (existing === undefined) return;
   if (existing.status === 'retired') {
-    throw new ModelSliceRegistrationError(
-      'slice_retired',
-      `slice '${sliceId}' was retired — re-admission requires a fresh holdout run, not a row rewrite`,
-    );
+    throw new ModelSliceRegistrationError('slice_retired', RETIRED_SLICE_DETAIL(sliceId));
   }
   if (
     existing.holdout_evidence_ref !== input.holdout_evidence_ref ||
@@ -174,17 +267,10 @@ export async function registerModelAdmissionSlice(
     );
   }
   const sliceId = modelSliceIdFor(input);
-  const [existing] = await db
-    .select()
-    .from(model_admission_slice)
-    .where(eq(model_admission_slice.slice_id, sliceId))
-    .limit(1);
+  const existing = await findSliceByIdentity(db, input);
   if (existing !== undefined) {
     if (existing.status === 'retired') {
-      throw new ModelSliceRegistrationError(
-        'slice_retired',
-        `slice '${sliceId}' was retired — re-admission requires a fresh holdout run, not a row rewrite`,
-      );
+      throw new ModelSliceRegistrationError('slice_retired', RETIRED_SLICE_DETAIL(sliceId));
     }
     if (
       existing.holdout_evidence_ref === input.holdout_evidence_ref &&
@@ -198,18 +284,28 @@ export async function registerModelAdmissionSlice(
     );
   }
   const admittedAt = input.admitted_at ?? new Date();
-  await db.insert(model_admission_slice).values({
-    slice_id: sliceId,
-    subject: input.subject,
-    response_class: input.response_class,
-    task_kind: input.task_kind,
-    model: input.model,
-    model_version: input.model_version,
-    holdout_evidence_ref: input.holdout_evidence_ref,
-    admitted_by: input.admitted_by,
-    admitted_at: admittedAt,
-    status: 'active',
-  });
+  try {
+    await db.insert(model_admission_slice).values({
+      slice_id: sliceId,
+      subject: input.subject,
+      response_class: input.response_class,
+      task_kind: input.task_kind,
+      model: input.model,
+      model_version: input.model_version,
+      holdout_evidence_ref: input.holdout_evidence_ref,
+      admitted_by: input.admitted_by,
+      admitted_at: admittedAt,
+      status: 'active',
+    });
+  } catch (error) {
+    if (isUniqueViolation(error)) {
+      throw new ModelSliceRegistrationError(
+        'slice_conflict',
+        `slice '${sliceId}' already exists for this model pin`,
+      );
+    }
+    throw error;
+  }
   return rowToSlice({
     slice_id: sliceId,
     subject: input.subject,

@@ -64,6 +64,7 @@ import {
   createRubricModelExecutor,
   currentModelPins,
   learningSettlement,
+  lookupGroupSubjects,
   modelSliceIdFor,
   registerModelAdmissionSlice,
   snapshotAssessmentLearningScope,
@@ -83,6 +84,7 @@ import { createRecordedModelExecutor } from './recorded-model-executor';
 export {
   assertModelAdmissionSliceRegistrable,
   currentModelPins,
+  lookupGroupSubjects,
   modelSliceIdFor,
   registerModelAdmissionSlice,
   snapshotAssessmentLearningScope,

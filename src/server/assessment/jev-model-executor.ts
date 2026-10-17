@@ -114,10 +114,12 @@ const pendingOutcome = (
   pending: ModelUnitOutcomeT extends never
     ? never
     : Extract<ModelUnitOutcomeT, { kind: 'pending' }>['pending'],
+  paid?: { run_refs: string[]; cost_usd_micros?: number },
 ): ModelUnitOutcomeT => ({
   kind: 'pending',
   pending,
-  run_refs: [],
+  run_refs: paid?.run_refs ?? [],
+  ...(paid?.cost_usd_micros !== undefined ? { cost_usd_micros: paid.cost_usd_micros } : {}),
 });
 
 function entriesForUnit(request: ModelExecutorRequest): SlotResponseT[] {
@@ -267,9 +269,14 @@ function interpretAnswer(
 ): ModelUnitOutcomeT {
   const unit = request.unit;
   const criterion = unit.criterion;
+  const pendingPaid = (pending: Parameters<typeof pendingOutcome>[0]): ModelUnitOutcomeT =>
+    pendingOutcome(pending, {
+      run_refs: runRefs,
+      ...(costMicros !== undefined ? { cost_usd_micros: costMicros } : {}),
+    });
   if (criterion.kind === 'rule_reference' && answer.type === 'noul') {
     if (unit.points == null) {
-      return pendingOutcome({
+      return pendingPaid({
         reason: 'unjudgeable',
         detail: `rule_reference unit '${request.scoring_unit_id}' has no additive points to award`,
       });
@@ -328,19 +335,19 @@ function interpretAnswer(
     // 分值仍由 unit 的 K1 rule 给（模型绝不直接给分）；undecidable 或契约外
     // 类别 → pending，绝不落零分。
     if (unit.rule == null) {
-      return pendingOutcome({
+      return pendingPaid({
         reason: 'unjudgeable',
         detail: `blank_key unit '${request.scoring_unit_id}' has no K1 rule to convert the verdict into points`,
       });
     }
     if (answer.choice === 'undecidable') {
-      return pendingOutcome({
+      return pendingPaid({
         reason: 'unjudgeable',
         detail: 'equivalence_undecidable',
       });
     }
     if (answer.choice !== 'equivalent' && answer.choice !== 'different') {
-      return pendingOutcome({
+      return pendingPaid({
         reason: 'infra_failure',
         retryable: false,
         detail: `typed answer choice '${answer.choice}' is outside the declared equivalence verdict set`,
@@ -350,7 +357,7 @@ function interpretAnswer(
     const ruleResult = evaluateScoringRule(unit.rule, { kind: 'single', correct });
     if (ruleResult.kind !== 'points') {
       // 规则对该判定声明了 unknown（如错答分值未印）—— 诚实 pending，绝不造分。
-      return pendingOutcome({
+      return pendingPaid({
         reason: 'unjudgeable',
         detail: `rule declared unknown (${ruleResult.reason}) for equivalence verdict '${answer.choice}'`,
       });
@@ -365,7 +372,7 @@ function interpretAnswer(
       ...(costMicros !== undefined ? { cost_usd_micros: costMicros } : {}),
     };
   }
-  return pendingOutcome({
+  return pendingPaid({
     reason: 'infra_failure',
     retryable: false,
     detail: `typed answer type '${answer.type}' does not match criterion '${criterion.kind}'`,
@@ -567,18 +574,25 @@ export function createJevModelExecutor(options: JevModelExecutorOptions): ModelU
       return pendingOutcome(pendingState);
     }
 
-    const answer = outcome.output.answers[request.scoring_unit_id];
-    if (answer === undefined) {
-      return pendingOutcome({
-        reason: 'infra_failure',
-        retryable: false,
-        detail: `typed response omitted answer for unit '${request.scoring_unit_id}'`,
-      });
-    }
     const costMicros =
       outcome.cost_usd === undefined
         ? undefined
         : Math.max(0, Math.round(outcome.cost_usd * 1_000_000));
+    const paid = {
+      run_refs: [outcome.task_run_id],
+      ...(costMicros !== undefined ? { cost_usd_micros: costMicros } : {}),
+    };
+    const answer = outcome.output.answers[request.scoring_unit_id];
+    if (answer === undefined) {
+      return pendingOutcome(
+        {
+          reason: 'infra_failure',
+          retryable: false,
+          detail: `typed response omitted answer for unit '${request.scoring_unit_id}'`,
+        },
+        paid,
+      );
+    }
     return interpretAnswer(
       request,
       answer,

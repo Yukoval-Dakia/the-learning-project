@@ -14,7 +14,7 @@
 // 出 > 0（假得分）；参考满分而判出 0（假零分）。pending/无法判定 = 不一致
 // （拉低 agreement），不算 severe —— 诚实 pending 不是判错。
 
-import { inArray } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import { z } from 'zod';
 import { type TaskKind, resolveTaskBudget } from '@/capabilities/task-registry';
@@ -24,20 +24,20 @@ import {
   type ModelExecutorRequest,
   QuestionPart,
   ResponseSlot,
+  ScoringBasis,
   ScoringUnit,
   SharedMaterial,
   SlotResponse,
   modelResponseClassForUnit,
 } from '@/core/schema/assessment';
 import type { Db } from '@/db/client';
-import { question, question_revision } from '@/db/schema';
+import { event, question_revision } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { batchResolveEffectiveDomains } from '@/kernel/read-models/knowledge-tree';
-import { resolveSubjectProfile } from '@/subjects/profile';
 import {
   assertModelAdmissionSliceRegistrable,
   createAdmissionRunExecutor,
   currentModelPins,
+  lookupGroupSubjects,
   modelSliceIdFor,
   registerModelAdmissionSlice,
 } from '../server/judge/evaluate-submission';
@@ -56,6 +56,33 @@ export const MODEL_SLICE_ADMISSION_THRESHOLDS = {
 /** 同一数值口径：卷面十进制分值的二进制表示误差不当差异（与发布校验同律）。 */
 function samePoints(a: number, b: number): boolean {
   return Math.abs(a - b) <= 1e-9 * Math.max(1, Math.abs(a), Math.abs(b));
+}
+
+function assertFrozenUnit(
+  itemId: string,
+  revisionId: string,
+  unit: z.infer<typeof ScoringUnit>,
+  scoringBasis: unknown,
+): void {
+  const parsed = ScoringBasis.safeParse(scoringBasis);
+  if (!parsed.success) {
+    throw new Error(
+      `model_slice_admission_run: item '${itemId}' revision '${revisionId}' has no readable frozen scoring basis`,
+    );
+  }
+  const frozen = parsed.data.units.find(
+    (candidate) => candidate.scoring_unit_id === unit.scoring_unit_id,
+  );
+  if (frozen === undefined) {
+    throw new Error(
+      `model_slice_admission_run: item '${itemId}' unit '${unit.scoring_unit_id}' is not in the frozen scoring basis of revision '${revisionId}'`,
+    );
+  }
+  if (canonicalHash(unit) !== canonicalHash(frozen)) {
+    throw new Error(
+      `model_slice_admission_run: item '${itemId}' unit '${unit.scoring_unit_id}' does not match the frozen scoring basis of revision '${revisionId}'`,
+    );
+  }
 }
 
 const HoldoutItem = z
@@ -87,7 +114,10 @@ const ModelSliceAdmissionRunData = z
         model_version: z.string().min(1),
       })
       .strict(),
-    /** 冻结证明：必须等于 `sha256:${canonicalHash(items)}`，不符即拒跑。 */
+    /**
+     * 冻结证明：必须等于 `sha256:${canonicalHash(调用方给出的 items)}`。
+     * 哈希的是解析前的数组，zod 补上的 group_evidence / materials 默认值不进 digest。
+     */
     holdout_digest: z.string().min(1),
     items: z.array(HoldoutItem).min(1),
     per_item_max_cost_usd_micros: z.number().int().min(1),
@@ -127,15 +157,112 @@ export interface ModelSliceAdmissionRunSummary {
   failures: string[];
 }
 
+function rawHoldoutItems(rawData: unknown): unknown {
+  if (rawData !== null && typeof rawData === 'object' && 'items' in rawData) {
+    return (rawData as { items: unknown }).items;
+  }
+  return undefined;
+}
+
+const StoredAdmissionPayload = z
+  .object({
+    dry_run: z.boolean(),
+    items: z.array(z.object({ agreed: z.boolean() }).passthrough()),
+    agreement_ratio: z.number(),
+    severe_errors: z.number().int(),
+    known_cost_usd_micros: z.number(),
+    unknown_cost_items: z.number().int(),
+    failures: z.array(z.string()),
+  })
+  .passthrough();
+
+async function readAdmissionEvidence(
+  db: Db,
+  evidenceEventId: string,
+): Promise<{ outcome: string | null; payload: unknown } | null> {
+  const [row] = await db
+    .select({ outcome: event.outcome, payload: event.payload })
+    .from(event)
+    .where(eq(event.id, evidenceEventId))
+    .limit(1);
+  return row ?? null;
+}
+
+async function finishFromStoredEvidence(
+  db: Db,
+  stored: { outcome: string | null; payload: unknown },
+  registrationInput: {
+    subject: string;
+    response_class: 'blank' | 'free';
+    task_kind: string;
+    model: string;
+    model_version: string;
+    holdout_evidence_ref: string;
+    admitted_by: string;
+  },
+  sliceId: string,
+  evidenceEventId: string,
+  runId: string,
+): Promise<ModelSliceAdmissionRunSummary> {
+  const parsed = StoredAdmissionPayload.safeParse(stored.payload);
+  if (!parsed.success) {
+    return {
+      run_id: runId,
+      slice_id: sliceId,
+      passed: false,
+      dry_run: true,
+      admitted: false,
+      evidence_event_id: evidenceEventId,
+      items: 0,
+      agreed: 0,
+      agreement_ratio: 0,
+      severe_errors: 0,
+      known_cost_usd_micros: 0,
+      unknown_cost_items: 0,
+      failures: [
+        'stored evidence for this run_id is unreadable; the run was not repeated and the slice was not admitted',
+      ],
+    };
+  }
+  const failures = [...parsed.data.failures];
+  let admitted = false;
+  if (stored.outcome === 'passed' && !parsed.data.dry_run) {
+    try {
+      await registerModelAdmissionSlice(db, registrationInput);
+      admitted = true;
+    } catch (error) {
+      failures.push(
+        `registration refused: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+  return {
+    run_id: runId,
+    slice_id: sliceId,
+    passed: stored.outcome === 'passed',
+    dry_run: parsed.data.dry_run,
+    admitted,
+    evidence_event_id: evidenceEventId,
+    items: parsed.data.items.length,
+    agreed: parsed.data.items.filter((item) => item.agreed).length,
+    agreement_ratio: parsed.data.agreement_ratio,
+    severe_errors: parsed.data.severe_errors,
+    known_cost_usd_micros: parsed.data.known_cost_usd_micros,
+    unknown_cost_items: parsed.data.unknown_cost_items,
+    failures,
+  };
+}
+
 export async function runModelSliceAdmission(
   db: Db,
   rawData: unknown,
 ): Promise<ModelSliceAdmissionRunSummary> {
+  const rawItems = rawHoldoutItems(rawData);
   const data = ModelSliceAdmissionRunData.parse(rawData);
   const failures: string[] = [];
 
-  // 1) 冻结证明：留出题集 digest 不符 = 集合被改动过，拒跑。
-  const actualDigest = `sha256:${canonicalHash(data.items)}`;
+  // 1) 冻结证明：对调用方给出的 items 取哈希，不把 zod 默认值算进去。
+  const actualDigest = `sha256:${canonicalHash(rawItems)}`;
   if (actualDigest !== data.holdout_digest) {
     throw new Error(
       `model_slice_admission_run: holdout set is not frozen — digest ${actualDigest} != declared ${data.holdout_digest}`,
@@ -171,6 +298,20 @@ export async function runModelSliceAdmission(
   //     的证据不可能再用于登记，付费跑它纯属浪费。
   await assertModelAdmissionSliceRegistrable(db, registrationInput);
 
+  // 2c) 同一 run_id 的证据已存在就直接复读。先写者赢：失败的证据不能被后来的
+  //     同 id 成功跑覆盖成准入，也绝不再付一次费。
+  const storedEvidence = await readAdmissionEvidence(db, evidenceEventId);
+  if (storedEvidence !== null) {
+    return finishFromStoredEvidence(
+      db,
+      storedEvidence,
+      registrationInput,
+      sliceId,
+      evidenceEventId,
+      data.run_id,
+    );
+  }
+
   // 3) 留出题集与切片响应类一致 + 规模阈值 + 单元可加性。
   if (data.items.length < MODEL_SLICE_ADMISSION_THRESHOLDS.min_items) {
     throw new Error(
@@ -204,6 +345,7 @@ export async function runModelSliceAdmission(
     .select({
       revision_id: question_revision.revision_id,
       group_id: question_revision.group_id,
+      scoring_basis: question_revision.scoring_basis,
     })
     .from(question_revision)
     .where(
@@ -212,43 +354,35 @@ export async function runModelSliceAdmission(
         data.items.map((item) => item.revision_id),
       ),
     );
-  const groupIdByRevision = new Map(revisionRows.map((row) => [row.revision_id, row.group_id]));
-  const rootRows = await db
-    .select({ id: question.id, knowledge_ids: question.knowledge_ids })
-    .from(question)
-    .where(inArray(question.id, [...new Set(groupIdByRevision.values())]));
-  const firstKnowledgeIdByGroup = new Map(
-    rootRows.map((row) => [row.id, row.knowledge_ids[0] ?? null]),
-  );
-  const domainsByKnowledgeId = await batchResolveEffectiveDomains(
+  const revisionById = new Map(revisionRows.map((row) => [row.revision_id, row]));
+  const subjects = await lookupGroupSubjects(
     db,
-    [...new Set(firstKnowledgeIdByGroup.values())].filter((id): id is string => id !== null),
+    revisionRows.map((row) => row.group_id),
   );
   for (const item of data.items) {
-    const groupId = groupIdByRevision.get(item.revision_id);
-    if (groupId === undefined) {
+    const revision = revisionById.get(item.revision_id);
+    if (revision === undefined) {
       throw new Error(
         `model_slice_admission_run: item '${item.item_id}' revision '${item.revision_id}' does not exist`,
       );
     }
-    const firstKnowledgeId = firstKnowledgeIdByGroup.get(groupId) ?? null;
-    if (firstKnowledgeId === null) {
+    const lookup = subjects.get(revision.group_id);
+    if (lookup === undefined || lookup.kind === 'missing_group' || lookup.kind === 'unlabeled') {
       throw new Error(
-        `model_slice_admission_run: item '${item.item_id}' root question '${groupId}' has no knowledge labeling — a holdout item's subject cannot be resolved`,
+        `model_slice_admission_run: item '${item.item_id}' root question '${revision.group_id}' has no knowledge labeling — a holdout item's subject cannot be resolved`,
       );
     }
-    const domain = domainsByKnowledgeId.get(firstKnowledgeId) ?? null;
-    if (domain === null) {
+    if (lookup.kind === 'no_domain') {
       throw new Error(
-        `model_slice_admission_run: item '${item.item_id}' knowledge '${firstKnowledgeId}' has no resolvable effective domain`,
+        `model_slice_admission_run: item '${item.item_id}' knowledge '${lookup.knowledge_id}' has no resolvable effective domain`,
       );
     }
-    const subject = resolveSubjectProfile(domain).id;
-    if (subject !== data.slice.subject) {
+    if (lookup.subject !== data.slice.subject) {
       throw new Error(
-        `model_slice_admission_run: item '${item.item_id}' resolves to subject '${subject}', not '${data.slice.subject}' — the holdout set does not belong to the slice's subject`,
+        `model_slice_admission_run: item '${item.item_id}' resolves to subject '${lookup.subject}', not '${data.slice.subject}' — the holdout set does not belong to the slice's subject`,
       );
     }
+    assertFrozenUnit(item.item_id, item.revision_id, item.unit, revision.scoring_basis);
   }
 
   // 4) 逐题判分（生产同源端口；每题独立墙钟）。
@@ -375,11 +509,27 @@ export async function runModelSliceAdmission(
     ingest_at: now,
   });
 
-  // 6) 阈值全过且非 dry run 才登记；dry run 永不准入。证据已落账后，登记
-  //    失败是终局的未准入结果（failures 带原因、admitted=false），绝不向队列
-  //    重抛 —— 重抛会让 pg-boss 重跑整段已付费的判分循环。
+  // 6) 只按已落库的证据准入。同 run_id 先写者赢：后来这次就算判过了，只要
+  //    库存的 outcome 不是 passed（或那次是 dry run），就不登记。登记失败是
+  //    终局的未准入结果，绝不向队列重抛 —— 重抛会重跑已付费的判分循环。
+  const storedAfterWrite = await readAdmissionEvidence(db, evidenceEventId);
+  if (storedAfterWrite !== null && storedAfterWrite.outcome !== (passed ? 'passed' : 'failed')) {
+    return finishFromStoredEvidence(
+      db,
+      storedAfterWrite,
+      registrationInput,
+      sliceId,
+      evidenceEventId,
+      data.run_id,
+    );
+  }
+  const storedPayload = StoredAdmissionPayload.safeParse(storedAfterWrite?.payload);
+  const storedAllowsAdmission =
+    storedAfterWrite?.outcome === 'passed' &&
+    storedPayload.success &&
+    storedPayload.data.dry_run === false;
   let admitted = false;
-  if (passed && !data.dry_run) {
+  if (storedAllowsAdmission) {
     try {
       await registerModelAdmissionSlice(db, registrationInput);
       admitted = true;
@@ -388,6 +538,10 @@ export async function runModelSliceAdmission(
         `registration refused: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
+  } else if (passed && !data.dry_run) {
+    failures.push(
+      `stored evidence outcome is '${storedAfterWrite?.outcome ?? 'missing'}'; this run is not admitted`,
+    );
   }
 
   return {

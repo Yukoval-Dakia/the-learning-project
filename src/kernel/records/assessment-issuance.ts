@@ -72,7 +72,15 @@ import {
   question_revision,
 } from '@/db/schema';
 import { getEvents, writeEvent } from '@/kernel/events';
-import { resolveModelAdmissionContext } from '@/server/assessment/model-slice-registry';
+import {
+  type GroupSubjectLookup,
+  lookupGroupSubjects,
+  resolveModelAdmissionContext,
+} from '@/server/assessment/model-slice-registry';
+
+function subjectIdFromLookup(lookup: GroupSubjectLookup | undefined): string | null {
+  return lookup?.kind === 'subject' ? lookup.subject : null;
+}
 
 /** 发题事件 action 名（receipt 即事件载荷；traceable 发题事实）。 */
 export const ASSESSMENT_ISSUANCE_ACTION = 'experimental:assessment_issuance';
@@ -174,12 +182,17 @@ export async function readAutomaticallyServableQuestionIds(
   // YUK-1496 C2：模型单元的服务判定需要权威切片登记（active 切片 + 当前
   // 模型 pin）；登记处只读一次，判定的纯性不变。
   const admission = await resolveModelAdmissionContext(db);
+  const subjects = await lookupGroupSubjects(
+    db,
+    rows.map((row) => row.parentId ?? row.id),
+  );
   for (const row of rows) {
     const parsed = PublishedQuestionRevision.safeParse(revisionRowToContract(row.revision));
     if (!parsed.success) continue;
     const revision = parsed.data;
     const partIds = row.parentId ? [row.id] : revision.structure.parts.map((part) => part.part_id);
-    if (decideAutomaticServing(revision, partIds, admission).kind === 'admitted')
+    const questionSubject = subjectIdFromLookup(subjects.get(row.parentId ?? row.id));
+    if (decideAutomaticServing(revision, partIds, admission, questionSubject).kind === 'admitted')
       admitted.add(row.id);
   }
   return admitted;
@@ -200,11 +213,16 @@ export async function readAutomaticIssuanceServingDecisions(
     )
     .where(inArray(assessment_issuance.issuance_id, [...new Set(issuanceIds)]));
   const admission = await resolveModelAdmissionContext(db);
+  const subjects = await lookupGroupSubjects(
+    db,
+    rows.map(({ revision: row }) => row.group_id),
+  );
   return new Map(
     rows.map(({ issuance, revision: row }) => {
       const parsed = PublishedQuestionRevision.safeParse(revisionRowToContract(row));
+      const questionSubject = subjectIdFromLookup(subjects.get(row.group_id));
       const decision: AutomaticServingDecision = parsed.success
-        ? decideAutomaticServing(parsed.data, issuance.part_ids, admission)
+        ? decideAutomaticServing(parsed.data, issuance.part_ids, admission, questionSubject)
         : row.presentation != null && !Presentation.safeParse(row.presentation).success
           ? {
               // review R1 —— 坏展示层不是泛化的 scoring contract 问题：typed
@@ -507,7 +525,14 @@ async function issueAssessmentInternal(
     // of an unsupported frozen contract. Ingestion capture is a separate receipt.
     if (!capture) {
       const admission = await resolveModelAdmissionContext(tx);
-      const decision = decideAutomaticServing(revision, binding.part_ids, admission);
+      const subjects = await lookupGroupSubjects(tx, [request.group_id]);
+      const questionSubject = subjectIdFromLookup(subjects.get(request.group_id));
+      const decision = decideAutomaticServing(
+        revision,
+        binding.part_ids,
+        admission,
+        questionSubject,
+      );
       if (decision.kind === 'unavailable') {
         return {
           status: 'not_admitted',

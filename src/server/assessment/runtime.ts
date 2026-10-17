@@ -5,10 +5,12 @@ export { createJevModelExecutor } from './jev-model-executor';
 export { snapshotAssessmentLearningScope } from './learning-scope';
 // YUK-1496 C2 — 准入切片登记处（服务门读面 + 显式注册/退役）。
 export {
+  type GroupSubjectLookup,
   ModelSliceRegistrationError,
   type RegisterModelAdmissionSliceInput,
   assertModelAdmissionSliceRegistrable,
   currentModelPins,
+  lookupGroupSubjects,
   modelSliceIdFor,
   registerModelAdmissionSlice,
   resolveModelAdmissionContext,

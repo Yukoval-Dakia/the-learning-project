@@ -122,6 +122,7 @@ function checkModelUnitAdmission(
   >,
   admission: ModelAdmissionContext | undefined,
   slots: readonly ResponseSlotT[],
+  questionSubject: string | null | undefined,
 ): string | null {
   if (executor.admitted_slice_id === null) {
     return `model_executor slice unadmitted (task ${executor.task_kind})`;
@@ -132,6 +133,9 @@ function checkModelUnitAdmission(
   const slice = admission.slices.get(executor.admitted_slice_id);
   if (slice === undefined) {
     return `admitted_slice_id '${executor.admitted_slice_id}' does not resolve to an active slice`;
+  }
+  if (questionSubject == null || slice.subject !== questionSubject) {
+    return `slice '${slice.slice_id}' is admitted for subject '${slice.subject}', not '${questionSubject ?? 'unresolved'}'`;
   }
   if (slice.task_kind !== executor.task_kind) {
     return `slice '${slice.slice_id}' is admitted for task '${slice.task_kind}', not '${executor.task_kind}'`;
@@ -145,6 +149,12 @@ function checkModelUnitAdmission(
   }
   if (!expectedTaskKinds.includes(executor.task_kind)) {
     return `criterion '${unit.criterion.kind}' is not servable by task '${executor.task_kind}' (expected ${expectedTaskKinds.join(' | ')}) — withheld instead of pending forever`;
+  }
+  if (unit.criterion.kind === 'blank_key') {
+    const key = unit.criterion.key;
+    if (key.kind !== 'text' || key.equivalence === undefined) {
+      return `blank_key unit '${unit.scoring_unit_id}' is not Jev-expressible — only a text key with a declared equivalence domain can be model-served`;
+    }
   }
   const responseClass = modelResponseClassForUnit(unit, slots);
   if (responseClass === null) {
@@ -212,6 +222,7 @@ export function decideAutomaticServing(
   revision: PublishedQuestionRevisionT,
   selectedPartIds: readonly string[],
   admission?: ModelAdmissionContext,
+  questionSubject?: string | null,
 ): AutomaticServingDecision {
   const scoringIssues = validateScoringBasis(
     revision.scoring_basis,
@@ -358,6 +369,7 @@ export function decideAutomaticServing(
         executor,
         admission,
         revision.response_spec.slots,
+        questionSubject,
       );
       if (admissionIssue !== null) {
         return {
