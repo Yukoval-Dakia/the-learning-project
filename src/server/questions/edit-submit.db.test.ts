@@ -22,7 +22,7 @@ import { resetDb, testDb } from '../../../tests/helpers/db';
 import { contractIntegrityDigest, normalizeQuestionRowToContract } from './contract-normalizer';
 import { draftDocumentToContract } from './draft-contract';
 import { saveDraftEdit } from './edit-question';
-import { publishQuestionGroup } from './publisher';
+import { publishQuestionGroup, publishQuestionGroupFromRow } from './publisher';
 import { submitDraftQuestion } from './submit-question';
 
 const ADMITTED: AdmissionEvidenceT = {
@@ -254,6 +254,65 @@ async function publishSelect(input: {
   if (published.status !== 'published') {
     throw new Error(`fixture publish returned ${published.status}`);
   }
+}
+
+/** 旧行发布：option_set_key + single_choice/multi_choice，没有印出的规则。 */
+async function publishLegacyAdmittedChoice(input: {
+  id: string;
+  prompt: string;
+  reference: string;
+  choices: string[];
+  knowledgeIds: string[];
+  slotKind: 'single_choice' | 'multi_choice';
+}): Promise<{ partId: string; unitId: string; optionIds: string[]; accepted: string[] }> {
+  const db = testDb();
+  await insertQuestion({
+    id: input.id,
+    prompt: input.prompt,
+    reference: input.reference,
+    choices: input.choices,
+    knowledgeIds: input.knowledgeIds,
+  });
+  const published = await publishQuestionGroupFromRow(db, {
+    rootId: input.id,
+    admission: { state: 'admitted', evidence: ADMITTED },
+    availability: 'general_pool',
+    actorRef: 'test:edit-submit',
+    now: new Date(),
+  });
+  if (published.status !== 'published') {
+    throw new Error(`legacy fixture publish returned ${published.status}`);
+  }
+  const [life] = await db
+    .select()
+    .from(question_group_lifecycle)
+    .where(eq(question_group_lifecycle.group_id, input.id));
+  if (life?.scoring_admission_state !== 'admitted') {
+    throw new Error(`legacy fixture admission is ${life?.scoring_admission_state ?? 'missing'}`);
+  }
+  const [revision] = await db
+    .select()
+    .from(question_revision)
+    .where(eq(question_revision.group_id, input.id));
+  const slot = revision.response_spec.slots[0];
+  const unit = revision.scoring_basis.units[0];
+  if (slot == null || unit == null) throw new Error('legacy fixture has no slot');
+  if (slot.kind !== input.slotKind) {
+    throw new Error(`legacy fixture slot is ${slot.kind}, expected ${input.slotKind}`);
+  }
+  if (unit.criterion.kind !== 'option_set_key') {
+    throw new Error(`legacy fixture criterion is ${unit.criterion.kind}`);
+  }
+  if (unit.rule != null) throw new Error('legacy fixture already carries a rule');
+  const identity = optionIdentity(revision);
+  const partId = revision.structure.parts[0]?.part_id;
+  if (partId == null) throw new Error('legacy fixture has no part');
+  return {
+    partId,
+    unitId: unit.scoring_unit_id,
+    optionIds: identity.ids,
+    accepted: identity.accepted,
+  };
 }
 
 function promptOf(structured: unknown): string {
@@ -1141,6 +1200,195 @@ describe('edit/submit question boundary', () => {
       { ...ACTOR, sessionId: null },
     );
     expect(submitted.status, JSON.stringify(submitted)).not.toBe('conflict');
+  });
+
+  // @invariant grading: a text-only edit of an admitted old-format single_choice question keeps admission and can still be issued
+  // @fails-if raw JSON comparison of option_set_key against the re-encoded select_key contract withholds a prompt-only edit
+  it('keeps admission when only the text of an old-format single choice question changes', async () => {
+    const db = testDb();
+    const kc = 'kc-legacy-single';
+    const qid = 'q-legacy-single';
+    await seedKnowledge(kc);
+    const legacy = await publishLegacyAdmittedChoice({
+      id: qid,
+      prompt: '旧格式单选题：正确的是',
+      reference: 'B',
+      choices: ['甲', '乙', '丙'],
+      knowledgeIds: [kc],
+      slotKind: 'single_choice',
+    });
+    expect(legacy.accepted).toHaveLength(1);
+    const saved = await saveDraftEdit(db, {
+      input: {
+        action: 'save',
+        question_id: qid,
+        ops: [
+          {
+            op: 'replace_text',
+            target: { kind: 'part', id: legacy.partId },
+            field: 'prompt_md',
+            old: '正确的是',
+            new: '恰当的是',
+          },
+        ],
+        request_id: 'legacy-single-save',
+      },
+      ctx: ACTOR,
+    });
+    expect(saved.status, JSON.stringify(saved)).toBe('saved');
+    if (saved.status !== 'saved') return;
+    const submitted = await submitDraftQuestion(
+      db,
+      {
+        draft_ref: saved.draft_ref,
+        expected_draft_version: saved.draft_version,
+        request_id: 'legacy-single-submit',
+      },
+      { ...ACTOR, sessionId: null },
+    );
+    expect(submitted.status, JSON.stringify(submitted)).toBe('admitted');
+    const [afterLife] = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, qid));
+    expect(afterLife.scoring_admission_state).toBe('admitted');
+    const [afterRow] = await db.select().from(question).where(eq(question.id, qid));
+    expect(afterRow.draft_status).not.toBe('draft');
+    expect(afterRow.prompt_md).toContain('恰当的是');
+    const issued = await issueAssessment(db, {
+      group_id: qid,
+      now: new Date(),
+      actorRef: 'test:issue',
+    });
+    expect(issued.status, JSON.stringify(issued)).toBe('issued');
+    expect(await poolFetch(db, { knowledgeId: kc })).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: qid })]),
+    );
+  });
+
+  // @invariant grading: a text-only edit of an admitted old-format multi_choice question keeps admission and can still be issued
+  // @fails-if multi_choice pick and option_set_key are treated as a scoring change after re-encoding to select
+  it('keeps admission when only the text of an old-format multi choice question changes', async () => {
+    const db = testDb();
+    const kc = 'kc-legacy-multi';
+    const qid = 'q-legacy-multi';
+    await seedKnowledge(kc);
+    const legacy = await publishLegacyAdmittedChoice({
+      id: qid,
+      prompt: '旧格式多选题：正确的是',
+      reference: 'AC',
+      choices: ['甲', '乙', '丙'],
+      knowledgeIds: [kc],
+      slotKind: 'multi_choice',
+    });
+    expect(legacy.accepted).toHaveLength(2);
+    const saved = await saveDraftEdit(db, {
+      input: {
+        action: 'save',
+        question_id: qid,
+        ops: [
+          {
+            op: 'replace_text',
+            target: { kind: 'part', id: legacy.partId },
+            field: 'prompt_md',
+            old: '正确的是',
+            new: '恰当的是',
+          },
+        ],
+        request_id: 'legacy-multi-save',
+      },
+      ctx: ACTOR,
+    });
+    expect(saved.status, JSON.stringify(saved)).toBe('saved');
+    if (saved.status !== 'saved') return;
+    const submitted = await submitDraftQuestion(
+      db,
+      {
+        draft_ref: saved.draft_ref,
+        expected_draft_version: saved.draft_version,
+        request_id: 'legacy-multi-submit',
+      },
+      { ...ACTOR, sessionId: null },
+    );
+    expect(submitted.status, JSON.stringify(submitted)).toBe('admitted');
+    const [afterLife] = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, qid));
+    expect(afterLife.scoring_admission_state).toBe('admitted');
+    const [afterRow] = await db.select().from(question).where(eq(question.id, qid));
+    expect(afterRow.draft_status).not.toBe('draft');
+    const issued = await issueAssessment(db, {
+      group_id: qid,
+      now: new Date(),
+      actorRef: 'test:issue',
+    });
+    expect(issued.status, JSON.stringify(issued)).toBe('issued');
+    expect(await poolFetch(db, { knowledgeId: kc })).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: qid })]),
+    );
+  });
+
+  // @invariant grading: changing the answer key of an admitted old-format choice question withholds admission
+  // @fails-if canonical normalization ignores accepted option ids and keeps the previous admission
+  it('withholds an old-format choice question when its answer key changes', async () => {
+    const db = testDb();
+    const kc = 'kc-legacy-key';
+    const qid = 'q-legacy-key';
+    await seedKnowledge(kc);
+    const legacy = await publishLegacyAdmittedChoice({
+      id: qid,
+      prompt: '旧格式单选题改键：正确的是',
+      reference: 'B',
+      choices: ['甲', '乙', '丙'],
+      knowledgeIds: [kc],
+      slotKind: 'single_choice',
+    });
+    const nextKey = legacy.optionIds.find((id) => !legacy.accepted.includes(id));
+    if (nextKey == null) throw new Error('legacy fixture has no alternate option');
+    const saved = await saveDraftEdit(db, {
+      input: {
+        action: 'save',
+        question_id: qid,
+        ops: [
+          {
+            op: 'set',
+            target: { kind: 'unit', id: legacy.unitId },
+            fields: { key: { kind: 'select', accepted_item_ids: [nextKey] } },
+          },
+        ],
+        request_id: 'legacy-key-save',
+      },
+      ctx: ACTOR,
+    });
+    expect(saved.status, JSON.stringify(saved)).toBe('saved');
+    if (saved.status !== 'saved') return;
+    const submitted = await submitDraftQuestion(
+      db,
+      {
+        draft_ref: saved.draft_ref,
+        expected_draft_version: saved.draft_version,
+        request_id: 'legacy-key-submit',
+      },
+      { ...ACTOR, sessionId: null },
+    );
+    expect(submitted.status, JSON.stringify(submitted)).toBe('withheld');
+    const [afterLife] = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, qid));
+    expect(afterLife.scoring_admission_state).toBe('withheld');
+    const [afterRow] = await db.select().from(question).where(eq(question.id, qid));
+    expect(afterRow.draft_status).toBe('draft');
+    const issued = await issueAssessment(db, {
+      group_id: qid,
+      now: new Date(),
+      actorRef: 'test:issue',
+    });
+    expect(issued.status, JSON.stringify(issued)).not.toBe('issued');
+    expect(await poolFetch(db, { knowledgeId: kc })).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: qid })]),
+    );
   });
 });
 

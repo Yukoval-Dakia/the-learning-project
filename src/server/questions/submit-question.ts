@@ -54,6 +54,7 @@ import {
   type DraftContract,
   draftCanonicalIdentity,
   draftDocumentToContract,
+  revisionToDraftDocument,
 } from '@/server/questions/draft-contract';
 import { encodeDraftRef, parseDraftRef } from '@/server/questions/edit-question';
 import { publishQuestionGroup } from '@/server/questions/publisher';
@@ -71,6 +72,8 @@ import { publishQuestionGroup } from '@/server/questions/publisher';
 // 判分准入：runAdmissionChecks 仍只做死 KC 与逐 unit 可判性，不把新题自动
 // 判成 admitted。已经 admitted 的组只有答案键、参考答案、选项、rubric、
 // 评分单元和执行计划都没变时才保留原证据；这些一变就回到 withheld。
+// 比较前把已存 revision 与新契约都归一到同一草稿编码（旧格式
+// option_set_key / single_choice 与再编码后的 select_key / select 才能对齐）。
 // 回执、准入和练习池跟当前 revision 能不能发出走。
 
 const DRAFT_SUBMIT_ACTION = 'experimental:question_draft_submit';
@@ -265,11 +268,16 @@ function draftCarriesFigure(doc: QuestionDraftDocumentT): boolean {
   return doc.materials.some((material) => material.kind === 'figure');
 }
 
-type ScoringRevision = {
-  scoring_basis: unknown;
-  response_spec: unknown;
-  execution_plan: unknown;
-};
+type ScoringRevision = Pick<
+  typeof question_revision.$inferSelect,
+  | 'revision_id'
+  | 'group_id'
+  | 'structure'
+  | 'response_spec'
+  | 'scoring_basis'
+  | 'execution_plan'
+  | 'presentation'
+>;
 
 /**
  * 已准入的组，只有判分层原样时才保留证据。答案键、选项、参考答案、rubric、
@@ -282,10 +290,13 @@ function admissionForContentEdit(
   checks: AdmissionCheckResult,
   revision: ScoringRevision | null,
   contract: DraftContract,
+  knowledgeIds: string[],
 ): PublishAdmission {
   if (lifecycle?.scoring_admission_state !== 'admitted') return checks.admission;
   if (checks.per_unit.some((unit) => unit.status === 'withheld')) return checks.admission;
-  if (revision == null || !scoringLayersUnchanged(revision, contract)) return checks.admission;
+  if (revision == null || !scoringLayersUnchanged(revision, contract, knowledgeIds)) {
+    return checks.admission;
+  }
   const parsed = AdmissionEvidence.safeParse(lifecycle.scoring_admission_evidence);
   if (!parsed.success || parsed.data.verification.structural_check_passed !== true) {
     return checks.admission;
@@ -295,11 +306,31 @@ function admissionForContentEdit(
   return { state: 'admitted', evidence: parsed.data };
 }
 
-function scoringLayersUnchanged(revision: ScoringRevision, contract: DraftContract): boolean {
+/**
+ * 已存 revision 与这次提交可能不是同一编码：旧行是 option_set_key +
+ * single_choice/multi_choice、没有规则；编辑草稿会再编成 select_key + select
+ * 并补上印出的规则。先把已存 revision 走同一条草稿往返，再比三层。往返形不成
+ * 规范契约时视为已变（回 withheld），不放宽比较。
+ */
+function scoringLayersUnchanged(
+  revision: ScoringRevision,
+  contract: DraftContract,
+  knowledgeIds: string[],
+): boolean {
+  let canonical: DraftContract;
+  try {
+    canonical = draftDocumentToContract(
+      revisionToDraftDocument(revision, { knowledge_ids: knowledgeIds }),
+      revision.group_id,
+    );
+  } catch {
+    return false;
+  }
+  if (canonical.conversion_issues.length > 0) return false;
   return (
-    canonicalJson(revision.scoring_basis) === canonicalJson(contract.scoring_basis) &&
-    canonicalJson(revision.response_spec) === canonicalJson(contract.response_spec) &&
-    canonicalJson(revision.execution_plan) === canonicalJson(contract.execution_plan)
+    canonicalJson(canonical.scoring_basis) === canonicalJson(contract.scoring_basis) &&
+    canonicalJson(canonical.response_spec) === canonicalJson(contract.response_spec) &&
+    canonicalJson(canonical.execution_plan) === canonicalJson(contract.execution_plan)
   );
 }
 
@@ -675,9 +706,13 @@ export async function submitDraftQuestion(
         ? []
         : await tx
             .select({
-              scoring_basis: question_revision.scoring_basis,
+              revision_id: question_revision.revision_id,
+              group_id: question_revision.group_id,
+              structure: question_revision.structure,
               response_spec: question_revision.response_spec,
+              scoring_basis: question_revision.scoring_basis,
               execution_plan: question_revision.execution_plan,
+              presentation: question_revision.presentation,
             })
             .from(question_revision)
             .where(eq(question_revision.revision_id, currentRevisionId))
@@ -687,6 +722,7 @@ export async function submitDraftQuestion(
       admission,
       currentRevision ?? null,
       contract,
+      doc.knowledge_ids,
     );
     const presentation = presentationForDraft(doc, contract);
     const integrityDigest =
