@@ -9,6 +9,12 @@ import {
 } from '@/capabilities/practice/public';
 import { newId } from '@/core/ids';
 import {
+  validateExecutionPlan,
+  validateResponseSpec,
+  validateScoringBasis,
+  validateStructure,
+} from '@/core/schema/assessment';
+import {
   Presentation,
   type PresentationT,
   defaultPresentation,
@@ -25,7 +31,13 @@ import {
   structuredQuestionToDraftDocument,
 } from '@/core/schema/question-draft';
 import type { Db, Tx } from '@/db/client';
-import { knowledge, question, question_block, question_group_lifecycle } from '@/db/schema';
+import {
+  knowledge,
+  question,
+  question_block,
+  question_group_lifecycle,
+  question_revision,
+} from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { contractIntegrityDigest } from '@/kernel/records/assessment-normalization';
 import type {
@@ -57,8 +69,9 @@ import { publishQuestionGroup } from '@/server/questions/publisher';
 // 不含 source 与知识点；近似重复用同一 n-gram 阈值。绝不伪造 extraction_hash。
 //
 // 判分准入：runAdmissionChecks 仍只做死 KC 与逐 unit 可判性，不把新题自动
-// 判成 admitted。已经 admitted 的组在内容编辑后保留原证据（练习池与发题
-// 继续一致）；新题和本来 withheld 的组保持 withheld。
+// 判成 admitted。已经 admitted 的组只有答案键、参考答案、选项、rubric、
+// 评分单元和执行计划都没变时才保留原证据；这些一变就回到 withheld。
+// 回执、准入和练习池跟当前 revision 能不能发出走。
 
 const DRAFT_SUBMIT_ACTION = 'experimental:question_draft_submit';
 
@@ -252,12 +265,27 @@ function draftCarriesFigure(doc: QuestionDraftDocumentT): boolean {
   return doc.materials.some((material) => material.kind === 'figure');
 }
 
-/** 已准入的内容编辑保留原证据。新题和未准入的组继续 withheld，不在这里自动准入。 */
+type ScoringRevision = {
+  scoring_basis: unknown;
+  response_spec: unknown;
+  execution_plan: unknown;
+};
+
+/**
+ * 已准入的组，只有判分层原样时才保留证据。答案键、选项、参考答案、rubric、
+ * 评分单元都在 scoring_basis / response_spec 里，判分方式在 execution_plan。
+ * 题面、展示或材料文本可以变。任一判分层变了，或有 unit 已经不可自动判，
+ * 旧证据不再适用，回到 withheld。新题和未准入的组不在这里自动准入。
+ */
 function admissionForContentEdit(
   lifecycle: typeof question_group_lifecycle.$inferSelect | undefined,
   checks: AdmissionCheckResult,
+  revision: ScoringRevision | null,
+  contract: DraftContract,
 ): PublishAdmission {
   if (lifecycle?.scoring_admission_state !== 'admitted') return checks.admission;
+  if (checks.per_unit.some((unit) => unit.status === 'withheld')) return checks.admission;
+  if (revision == null || !scoringLayersUnchanged(revision, contract)) return checks.admission;
   const parsed = AdmissionEvidence.safeParse(lifecycle.scoring_admission_evidence);
   if (!parsed.success || parsed.data.verification.structural_check_passed !== true) {
     return checks.admission;
@@ -265,6 +293,45 @@ function admissionForContentEdit(
   const independent = parsed.data.verification.independent_verification;
   if (independent != null && independent.passed !== true) return checks.admission;
   return { state: 'admitted', evidence: parsed.data };
+}
+
+function scoringLayersUnchanged(revision: ScoringRevision, contract: DraftContract): boolean {
+  return (
+    canonicalJson(revision.scoring_basis) === canonicalJson(contract.scoring_basis) &&
+    canonicalJson(revision.response_spec) === canonicalJson(contract.response_spec) &&
+    canonicalJson(revision.execution_plan) === canonicalJson(contract.execution_plan)
+  );
+}
+
+/** 发布 seam 会抛的契约错误，在调用前收成 withheld。withheld 时未准入的模型执行器是允许的。 */
+function contractBarrierIssues(
+  contract: DraftContract,
+  presentation: PresentationT | null,
+  admission: PublishAdmission,
+): { code: string; detail: string }[] {
+  const issues: { code: string; detail: string }[] = [];
+  const push = (list: { code: string; detail: string }[]) => {
+    for (const issue of list) issues.push({ code: issue.code, detail: issue.detail });
+  };
+  push(validateStructure(contract.structure));
+  push(validateResponseSpec(contract.response_spec, contract.structure));
+  push(validateScoringBasis(contract.scoring_basis, contract.response_spec, contract.structure));
+  push(
+    validateExecutionPlan(contract.execution_plan, contract.scoring_basis).filter(
+      (issue) => !(issue.code === 'unadmitted_model_executor' && admission.state === 'withheld'),
+    ),
+  );
+  if (presentation != null) {
+    push(
+      validatePresentation(
+        presentation,
+        contract.structure,
+        contract.response_spec,
+        contract.scoring_basis,
+      ),
+    );
+  }
+  return issues;
 }
 
 function presentationForDraft(
@@ -318,10 +385,25 @@ async function attributableSourceIssue(
   return null;
 }
 
+function nearDupComparableText(
+  promptMd: string,
+  referenceMd: string | null,
+  choicesMd: readonly string[] | null,
+): string {
+  const choices = (choicesMd ?? [])
+    .map((choice) => choice.trim())
+    .filter((choice) => choice.length > 0);
+  return [promptMd.trim(), referenceMd?.trim() ?? '', ...choices]
+    .filter((part) => part.length > 0)
+    .join('\n');
+}
+
 async function nearDuplicateInKnowledge(
   tx: Tx,
   knowledgeIds: string[],
   promptMd: string,
+  referenceMd: string | null,
+  choicesMd: string[] | null,
   excludeQuestionId: string,
 ): Promise<{ overlap: number; poolSize: number } | null> {
   if (knowledgeIds.length === 0) return null;
@@ -329,14 +411,29 @@ async function nearDuplicateInKnowledge(
     (id) => sql`${question.knowledge_ids} @> ${JSON.stringify([id])}::jsonb`,
   );
   const rows = await tx
-    .select({ id: question.id, prompt_md: question.prompt_md })
+    .select({
+      prompt_md: question.prompt_md,
+      reference_md: question.reference_md,
+      choices_md: question.choices_md,
+    })
     .from(question)
-    .where(and(or(...predicates), ne(question.id, excludeQuestionId)))
+    .where(
+      and(
+        or(...predicates),
+        ne(question.id, excludeQuestionId),
+        sql`(${question.metadata} ->> 'archived_at') IS NULL`,
+        sql`NOT EXISTS (
+          SELECT 1 FROM ${question_group_lifecycle} AS l
+          WHERE l.group_id = COALESCE(${question.parent_question_id}, ${question.id})
+            AND l.withdrawn = true
+        )`,
+      ),
+    )
     .orderBy(desc(question.created_at))
     .limit(NEAR_DUP_POOL_LIMIT);
   const overlap = maxNgramOverlap(
-    promptMd,
-    rows.map((row) => row.prompt_md),
+    nearDupComparableText(promptMd, referenceMd, choicesMd),
+    rows.map((row) => nearDupComparableText(row.prompt_md, row.reference_md, row.choices_md)),
   );
   if (overlap < DEDUP_OVERLAP_THRESHOLD) return null;
   return { overlap, poolSize: rows.length };
@@ -573,7 +670,47 @@ export async function submitDraftQuestion(
       doc.source != null
         ? (SOURCE_KIND_TO_QUESTION_SOURCE[doc.source.kind] ?? 'quiz_gen')
         : (existingRow?.source ?? 'manual');
-    const effectiveAdmission = admissionForContentEdit(lifecycle, admission);
+    const [currentRevision] =
+      currentRevisionId == null
+        ? []
+        : await tx
+            .select({
+              scoring_basis: question_revision.scoring_basis,
+              response_spec: question_revision.response_spec,
+              execution_plan: question_revision.execution_plan,
+            })
+            .from(question_revision)
+            .where(eq(question_revision.revision_id, currentRevisionId))
+            .limit(1);
+    const effectiveAdmission = admissionForContentEdit(
+      lifecycle,
+      admission,
+      currentRevision ?? null,
+      contract,
+    );
+    const presentation = presentationForDraft(doc, contract);
+    const integrityDigest =
+      presentation != null
+        ? contractIntegrityDigest({
+            structure: contract.structure,
+            response_spec: contract.response_spec,
+            scoring_basis: contract.scoring_basis,
+            execution_plan: contract.execution_plan,
+            presentation,
+          })
+        : contract.integrity_digest;
+    const barrierIssues = contractBarrierIssues(contract, presentation, effectiveAdmission);
+    if (barrierIssues.length > 0) {
+      const withheld: SubmitResult = {
+        status: 'withheld',
+        published: false,
+        detail: barrierIssues.map((issue) => `${issue.code}: ${issue.detail}`).join('; '),
+        issues: barrierIssues,
+        per_unit: admission.per_unit,
+        request_id: requestId,
+      };
+      return withheld;
+    }
     if (isNew) {
       // live 去重 claim：canonical hash 占用者存在 ⇒ cross-KC merge（与供给
       // 链同语义）；否则插入新行。
@@ -605,7 +742,14 @@ export async function submitDraftQuestion(
         return conflict;
       }
       if (!draftCarriesFigure(doc)) {
-        const near = await nearDuplicateInKnowledge(tx, doc.knowledge_ids, promptMd, groupId);
+        const near = await nearDuplicateInKnowledge(
+          tx,
+          doc.knowledge_ids,
+          promptMd,
+          referenceMd,
+          choicesMd,
+          groupId,
+        );
         if (near != null) {
           const conflict: SubmitResult = {
             status: 'conflict',
@@ -662,10 +806,10 @@ export async function submitDraftQuestion(
           request_id: requestId,
         };
       }
-      // 工作副本行 = 「当前已准入 revision」的投影。admission 未 admitted
-      // 时保留既有 admitted 内容不动（legacy 选择器只认 draft_status /
-      // suspended / withdrawn —— Codex P1：未验证的新 prompt/answer 不得
-      // 抢先被练习池服务）。真正 admitted 时更新内容列。
+      // 工作副本行 = 「当前已准入 revision」的投影。这次编辑不再可发时，
+      // 内容列保持上一份已准入投影（未验证的新答案不进练习池），并把行标回
+      // draft：练习池只认 draft_status / suspended / withdrawn，不认准入。
+      // 真正 admitted 时才更新内容列。
       if (effectiveAdmission.state === 'admitted') {
         await tx
           .update(question)
@@ -681,21 +825,19 @@ export async function submitDraftQuestion(
             version: sql`${question.version} + 1`,
           })
           .where(eq(question.id, groupId));
+      } else if (lifecycle?.scoring_admission_state === 'admitted') {
+        await tx
+          .update(question)
+          .set({
+            draft_status: 'draft',
+            updated_at: now,
+            version: sql`${question.version} + 1`,
+          })
+          .where(eq(question.id, groupId));
       }
     }
 
     // ---- 唯一发布 seam ----
-    const presentation = presentationForDraft(doc, contract);
-    const integrityDigest =
-      presentation != null
-        ? contractIntegrityDigest({
-            structure: contract.structure,
-            response_spec: contract.response_spec,
-            scoring_basis: contract.scoring_basis,
-            execution_plan: contract.execution_plan,
-            presentation,
-          })
-        : contract.integrity_digest;
     const publishResult = await publishQuestionGroup(tx, {
       group_id: groupId,
       contract: {

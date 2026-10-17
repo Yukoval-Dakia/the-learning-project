@@ -541,12 +541,10 @@ async function issueAssessmentInternal(
 
     // The group-root lock serializes this recheck with publication/withdrawal.
     // Historical replay above keeps its immutable revision and held evidence.
-    // 调用方显式钉住的 revision 只要属于本组就发出（上面已核对组）；只有
-    // 「要当前版」时才在当前版被并发换成另一版时回报 revision_mismatch。
+    // 新发题必须是当前 revision。过期版本（包括调用方显式钉住的旧版）拒绝；
+    // 已有 issuance 的重放在上面返回，不走到这里。
     if (!capture) {
-      if (request.revision_id == null && revisionId !== lifecycle?.current_revision_id) {
-        return { status: 'revision_mismatch' };
-      }
+      if (revisionId !== lifecycle?.current_revision_id) return { status: 'revision_mismatch' };
       if (lifecycle?.scoring_admission_state !== 'admitted') return { status: 'not_admitted' };
     }
 

@@ -98,6 +98,44 @@ function selectDocument(prompt: string, knowledgeId: string | null): QuestionDra
   });
 }
 
+function choiceDocument(
+  prompt: string,
+  knowledgeId: string,
+  sourceRef: string,
+  labels: string[],
+): QuestionDraftDocumentT {
+  const items = labels.map((label, index) => ({ item_id: `opt-${index}`, label_md: label }));
+  return QuestionDraftDocument.parse({
+    schema_version: 2,
+    parts: [
+      {
+        part_id: 'p1',
+        prompt_md: prompt,
+        material_ids: [],
+        units: [
+          {
+            unit_id: 'u1',
+            slot_id: 's1',
+            response_class: 'select',
+            response_spec: { kind: 'select', pick: 'one', items },
+            key: { kind: 'select', accepted_item_ids: [items[1]?.item_id ?? 'opt-1'] },
+            points: 1,
+            rule: CHOICE_RULE,
+            method: { kind: 'set-compare' },
+            material_refs: [],
+            metadata: {},
+          },
+        ],
+        metadata: {},
+      },
+    ],
+    materials: [],
+    knowledge_ids: [knowledgeId],
+    source: { kind: 'generated', ref: sourceRef },
+    metadata: {},
+  });
+}
+
 function freeDocument(
   prompt: string,
   knowledgeId: string,
@@ -140,6 +178,7 @@ async function insertQuestion(input: {
   choices: string[] | null;
   knowledgeIds: string[];
   source?: string;
+  metadata?: Record<string, unknown>;
 }): Promise<void> {
   const now = new Date();
   await testDb()
@@ -153,6 +192,7 @@ async function insertQuestion(input: {
       knowledge_ids: input.knowledgeIds,
       difficulty: 3,
       source: input.source ?? 'manual',
+      ...(input.metadata != null ? { metadata: input.metadata } : {}),
       variant_depth: 0,
       created_at: now,
       updated_at: now,
@@ -398,8 +438,8 @@ describe('edit/submit question boundary', () => {
     expect(revisions[revisions.length - 1].structure.parts[0].prompt_md).toContain('函数值已接受');
   });
 
-  // @invariant grading: a content edit of an admitted question stays issuable, including the previous revision, and the practice pool still returns it
-  // @fails-if submit always publishes withheld admission, or the admitted legacy row is left unchanged while issuance rejects the group
+  // @invariant grading: a prompt-only edit of an admitted question stays issuable on the current revision and in the practice pool
+  // @fails-if submit withholds a scoring-unchanged edit, or the admitted legacy row is left unchanged while issuance rejects the current revision
   it('keeps an admitted question issuable after a content edit', async () => {
     const db = testDb();
     const kc = 'kc-admit';
@@ -475,8 +515,8 @@ describe('edit/submit question boundary', () => {
       now: new Date(),
       actorRef: 'test:issue',
     });
-    expect(current.status).toBe('issued');
-    expect(pinned.status).toBe('issued');
+    expect(current.status, JSON.stringify(current)).toBe('issued');
+    expect(pinned.status, JSON.stringify(pinned)).toBe('revision_mismatch');
     expect(await poolFetch(db, { knowledgeId: kc })).toEqual(
       expect.arrayContaining([expect.objectContaining({ id: qid })]),
     );
@@ -675,6 +715,432 @@ describe('edit/submit question boundary', () => {
     expect(after.texts).toEqual(before.texts);
     expect(after.accepted).toEqual(before.accepted);
     expect(after.accepted.length).toBeGreaterThan(0);
+  });
+
+  // @invariant grading: changing an admitted answer key drops admission instead of copying the old evidence
+  // @fails-if a key edit stays admitted and issuance scores the new key with the previous evidence
+  it('withholds admission when the answer key changes', async () => {
+    const db = testDb();
+    const kc = 'kc-key';
+    const qid = 'q-key';
+    await seedKnowledge(kc);
+    await publishSelect({
+      id: qid,
+      prompt: '已准入选择题：正确的是',
+      knowledgeIds: [kc],
+      admission: 'admitted',
+    });
+    const [beforeLife] = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, qid));
+    const saved = await saveDraftEdit(db, {
+      input: {
+        action: 'save',
+        question_id: qid,
+        ops: [
+          {
+            op: 'set',
+            target: { kind: 'unit', id: 'u1' },
+            fields: { key: { kind: 'select', accepted_item_ids: ['opt-a'] } },
+          },
+        ],
+        request_id: 'key-save',
+      },
+      ctx: ACTOR,
+    });
+    expect(saved.status, JSON.stringify(saved)).toBe('saved');
+    if (saved.status !== 'saved') return;
+    const submitted = await submitDraftQuestion(
+      db,
+      {
+        draft_ref: saved.draft_ref,
+        expected_draft_version: saved.draft_version,
+        request_id: 'key-submit',
+      },
+      { ...ACTOR, sessionId: null },
+    );
+    expect(submitted.status, JSON.stringify(submitted)).toBe('withheld');
+    const [afterLife] = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, qid));
+    expect(afterLife.scoring_admission_state).toBe('withheld');
+    expect(afterLife.scoring_admission_evidence).not.toEqual(beforeLife.scoring_admission_evidence);
+    const issued = await issueAssessment(db, {
+      group_id: qid,
+      now: new Date(),
+      actorRef: 'test:issue',
+    });
+    expect(issued.status, JSON.stringify(issued)).not.toBe('issued');
+  });
+
+  // @invariant grading: an admitted question edited into human review is withheld, leaves the practice pool, and is not issued
+  // @fails-if the receipt stays admitted while issuance refuses the human-review unit and the pool still selects the row
+  it('pulls a human-review edit out of the practice pool', async () => {
+    const db = testDb();
+    const kc = 'kc-human';
+    const qid = 'q-human';
+    await seedKnowledge(kc);
+    await publishSelect({
+      id: qid,
+      prompt: '已准入题改为人工判',
+      knowledgeIds: [kc],
+      admission: 'admitted',
+    });
+    expect(await poolFetch(db, { knowledgeId: kc })).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: qid })]),
+    );
+    const saved = await saveDraftEdit(db, {
+      input: {
+        action: 'save',
+        question_id: qid,
+        ops: [
+          {
+            op: 'set',
+            target: { kind: 'unit', id: 'u1' },
+            fields: { method: { kind: 'human_review' } },
+          },
+        ],
+        request_id: 'human-save',
+      },
+      ctx: ACTOR,
+    });
+    expect(saved.status, JSON.stringify(saved)).toBe('saved');
+    if (saved.status !== 'saved') return;
+    const submitted = await submitDraftQuestion(
+      db,
+      {
+        draft_ref: saved.draft_ref,
+        expected_draft_version: saved.draft_version,
+        request_id: 'human-submit',
+      },
+      { ...ACTOR, sessionId: null },
+    );
+    expect(submitted.status, JSON.stringify(submitted)).toBe('withheld');
+    if ('published' in submitted && submitted.published === false) {
+      throw new Error(`human-review edit did not publish: ${submitted.detail}`);
+    }
+    const [afterLife] = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, qid));
+    expect(afterLife.scoring_admission_state).toBe('withheld');
+    expect(await poolFetch(db, { knowledgeId: kc })).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: qid })]),
+    );
+    const issued = await issueAssessment(db, {
+      group_id: qid,
+      now: new Date(),
+      actorRef: 'test:issue',
+    });
+    expect(issued.status, JSON.stringify(issued)).not.toBe('issued');
+  });
+
+  // @invariant data: a draft the publish seam would throw on returns withheld instead of an exception
+  // @fails-if submit lets publishQuestionGroup throw unadmitted_model_executor or scoring_basis invalid
+  it('returns withheld when the draft is not publishable', async () => {
+    const db = testDb();
+    const kc = 'kc-barrier';
+    await seedKnowledge(kc);
+    const rubricId = 'q-rubric';
+    await publishSelect({
+      id: rubricId,
+      prompt: '改成模型判分的题',
+      knowledgeIds: [kc],
+      admission: 'admitted',
+    });
+    const rubricSaved = await saveDraftEdit(db, {
+      input: {
+        action: 'save',
+        question_id: rubricId,
+        ops: [
+          {
+            op: 'set',
+            target: { kind: 'unit', id: 'u1' },
+            fields: { method: { kind: 'ai-rubric' } },
+          },
+        ],
+        request_id: 'rubric-save',
+      },
+      ctx: ACTOR,
+    });
+    expect(rubricSaved.status, JSON.stringify(rubricSaved)).toBe('saved');
+    if (rubricSaved.status !== 'saved') return;
+    const rubricSubmitted = await submitDraftQuestion(
+      db,
+      {
+        draft_ref: rubricSaved.draft_ref,
+        expected_draft_version: rubricSaved.draft_version,
+        request_id: 'rubric-submit',
+      },
+      { ...ACTOR, sessionId: null },
+    );
+    expect(rubricSubmitted.status, JSON.stringify(rubricSubmitted)).toBe('withheld');
+
+    const ruleId = 'q-rule';
+    await publishSelect({
+      id: ruleId,
+      prompt: '规则指标不适用的题',
+      knowledgeIds: [kc],
+      admission: 'admitted',
+    });
+    const ruleSaved = await saveDraftEdit(db, {
+      input: {
+        action: 'save',
+        question_id: ruleId,
+        ops: [
+          {
+            op: 'set',
+            target: { kind: 'unit', id: 'u1' },
+            fields: {
+              rule: {
+                version: 1,
+                cases: [{ when: { correct: { eq: 1 } }, award: { points: 1 } }],
+                otherwise: { points: 0 },
+              },
+            },
+          },
+        ],
+        request_id: 'rule-save',
+      },
+      ctx: ACTOR,
+    });
+    expect(ruleSaved.status, JSON.stringify(ruleSaved)).toBe('saved');
+    if (ruleSaved.status !== 'saved') return;
+    expect(ruleSaved.publishable).toBe(false);
+    const ruleSubmitted = await submitDraftQuestion(
+      db,
+      {
+        draft_ref: ruleSaved.draft_ref,
+        expected_draft_version: ruleSaved.draft_version,
+        request_id: 'rule-submit',
+      },
+      { ...ACTOR, sessionId: null },
+    );
+    expect(ruleSubmitted.status, JSON.stringify(ruleSubmitted)).toBe('withheld');
+    if (!('published' in ruleSubmitted) || ruleSubmitted.published !== false) {
+      throw new Error(`invalid rule published: ${JSON.stringify(ruleSubmitted)}`);
+    }
+    expect(ruleSubmitted.issues?.map((issue) => issue.code)).toContain(
+      'rule_metric_not_applicable',
+    );
+  });
+
+  // @invariant concurrency: a new issuance cannot pin a superseded revision, while replaying the original issuance still returns it
+  // @fails-if a new issuance of the previous revision succeeds after a newer revision is current
+  it('refuses a new issuance of a superseded revision', async () => {
+    const db = testDb();
+    const kc = 'kc-pin';
+    const qid = 'q-pin';
+    await seedKnowledge(kc);
+    await publishSelect({
+      id: qid,
+      prompt: '钉住旧版的题面写着正确的是',
+      knowledgeIds: [kc],
+      admission: 'admitted',
+    });
+    const issued = await issueAssessment(db, {
+      group_id: qid,
+      issuance_id: 'iss-pin-replay',
+      now: new Date(),
+      actorRef: 'test:issue',
+    });
+    expect(issued.status, JSON.stringify(issued)).toBe('issued');
+    if (issued.status !== 'issued' && issued.status !== 'replayed') return;
+    const previousRevision = issued.issuance.binding.revision_id;
+    const saved = await saveDraftEdit(db, {
+      input: {
+        action: 'save',
+        question_id: qid,
+        ops: [
+          {
+            op: 'replace_text',
+            target: { kind: 'part', id: 'p1' },
+            field: 'prompt_md',
+            old: '正确的是',
+            new: '恰当的是',
+          },
+        ],
+        request_id: 'pin-save',
+      },
+      ctx: ACTOR,
+    });
+    expect(saved.status, JSON.stringify(saved)).toBe('saved');
+    if (saved.status !== 'saved') return;
+    const submitted = await submitDraftQuestion(
+      db,
+      {
+        draft_ref: saved.draft_ref,
+        expected_draft_version: saved.draft_version,
+        request_id: 'pin-submit',
+      },
+      { ...ACTOR, sessionId: null },
+    );
+    expect(submitted.status, JSON.stringify(submitted)).toBe('admitted');
+    const pinned = await issueAssessment(db, {
+      group_id: qid,
+      revision_id: previousRevision,
+      now: new Date(),
+      actorRef: 'test:issue',
+    });
+    expect(pinned.status, JSON.stringify(pinned)).toBe('revision_mismatch');
+    const replayed = await issueAssessment(db, {
+      group_id: qid,
+      issuance_id: 'iss-pin-replay',
+      revision_id: previousRevision,
+      now: new Date(),
+      actorRef: 'test:issue',
+    });
+    expect(replayed.status, JSON.stringify(replayed)).toBe('replayed');
+  });
+
+  // @invariant data: choice questions that share a stem but not their options are not near-duplicates
+  // @fails-if the near-duplicate check compares only the prompt and rejects a different option set
+  it('keeps a shared stem with different choices', async () => {
+    const db = testDb();
+    const kc = 'kc-stem';
+    await seedKnowledge(kc);
+    const stem = '下列关于函数单调性的说法中，正确的是';
+    const firstLabels = [
+      '函数在区间上递增意味着自变量变大时函数值也变大',
+      '函数在区间上递减意味着自变量变大时函数值变小',
+      '常函数在定义域内既递增也递减',
+      '单调区间必须是定义域的子集',
+    ];
+    const otherLabels = [
+      '抛物线开口向上时对称轴左侧递减',
+      '一次函数斜率为负时图像下降',
+      '指数函数底数大于一时整体上升',
+      '对数函数在定义域内可以先增后减',
+    ];
+    const firstSaved = await saveDraftEdit(db, {
+      input: {
+        action: 'save',
+        document: choiceDocument(stem, kc, 'stem-a', firstLabels),
+        request_id: 'stem-save-a',
+      },
+      ctx: ACTOR,
+    });
+    expect(firstSaved.status, JSON.stringify(firstSaved)).toBe('saved');
+    if (firstSaved.status !== 'saved') return;
+    const first = await submitDraftQuestion(
+      db,
+      {
+        draft_ref: firstSaved.draft_ref,
+        expected_draft_version: firstSaved.draft_version,
+        request_id: 'stem-submit-a',
+      },
+      { ...ACTOR, sessionId: null },
+    );
+    expect(first.status, JSON.stringify(first)).not.toBe('conflict');
+    const different = await saveDraftEdit(db, {
+      input: {
+        action: 'save',
+        document: choiceDocument(stem, kc, 'stem-b', otherLabels),
+        request_id: 'stem-save-b',
+      },
+      ctx: ACTOR,
+    });
+    expect(different.status, JSON.stringify(different)).toBe('saved');
+    if (different.status !== 'saved') return;
+    const second = await submitDraftQuestion(
+      db,
+      {
+        draft_ref: different.draft_ref,
+        expected_draft_version: different.draft_version,
+        request_id: 'stem-submit-b',
+      },
+      { ...ACTOR, sessionId: null },
+    );
+    expect(second.status, JSON.stringify(second)).not.toBe('conflict');
+    const nearSaved = await saveDraftEdit(db, {
+      input: {
+        action: 'save',
+        document: choiceDocument(stem.replace('中', '里'), kc, 'stem-c', firstLabels),
+        request_id: 'stem-save-c',
+      },
+      ctx: ACTOR,
+    });
+    expect(nearSaved.status, JSON.stringify(nearSaved)).toBe('saved');
+    if (nearSaved.status !== 'saved') return;
+    const near = await submitDraftQuestion(
+      db,
+      {
+        draft_ref: nearSaved.draft_ref,
+        expected_draft_version: nearSaved.draft_version,
+        request_id: 'stem-submit-c',
+      },
+      { ...ACTOR, sessionId: null },
+    );
+    expect(near.status, JSON.stringify(near)).toBe('conflict');
+    if (near.status !== 'conflict') return;
+    expect(near.reason, JSON.stringify(near)).toBe('near_dup');
+  });
+
+  // @invariant data: withdrawn and archived questions are not near-duplicate neighbors
+  // @fails-if the near-duplicate pool still compares against a withdrawn or archived row
+  it('ignores withdrawn and archived questions when checking near duplicates', async () => {
+    const db = testDb();
+    const kc = 'kc-retired';
+    await seedKnowledge(kc);
+    const stem = '下列关于函数单调性的说法中，正确的是';
+    const labels = [
+      '函数在区间上递增意味着自变量变大时函数值也变大',
+      '函数在区间上递减意味着自变量变大时函数值变小',
+      '常函数在定义域内既递增也递减',
+      '单调区间必须是定义域的子集',
+    ];
+    const now = new Date();
+    await insertQuestion({
+      id: 'q-archived-neighbor',
+      prompt: stem,
+      reference: 'B',
+      choices: labels,
+      knowledgeIds: [kc],
+      metadata: { archived_at: 1 },
+    });
+    await insertQuestion({
+      id: 'q-withdrawn-neighbor',
+      prompt: stem,
+      reference: 'B',
+      choices: labels,
+      knowledgeIds: [kc],
+    });
+    await db.insert(question_group_lifecycle).values({
+      group_id: 'q-withdrawn-neighbor',
+      current_revision_id: null,
+      availability: 'general_pool',
+      scoring_admission_state: 'withheld',
+      scoring_admission_withheld_reason: 'unverified_rules',
+      scoring_admission_generation: 0,
+      claim_policy: 'unbounded',
+      suspended: false,
+      withdrawn: true,
+      withdrawn_at: now,
+      created_at: now,
+      updated_at: now,
+    });
+    const saved = await saveDraftEdit(db, {
+      input: {
+        action: 'save',
+        document: choiceDocument(stem, kc, 'retired-new', labels),
+        request_id: 'retired-save',
+      },
+      ctx: ACTOR,
+    });
+    expect(saved.status, JSON.stringify(saved)).toBe('saved');
+    if (saved.status !== 'saved') return;
+    const submitted = await submitDraftQuestion(
+      db,
+      {
+        draft_ref: saved.draft_ref,
+        expected_draft_version: saved.draft_version,
+        request_id: 'retired-submit',
+      },
+      { ...ACTOR, sessionId: null },
+    );
+    expect(submitted.status, JSON.stringify(submitted)).not.toBe('conflict');
   });
 });
 
