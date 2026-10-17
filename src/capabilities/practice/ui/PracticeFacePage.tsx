@@ -94,6 +94,17 @@ function streamForRequestedScope(
   return stream.scope ? undefined : stream;
 }
 
+/**
+ * YUK-1510 — the live URL, read at the moment of a write: its scope (path plus every param but
+ * `item`) and the item it names. Writes from a flow that started in another scope are dropped.
+ */
+function liveUrl(): { scope: string; item: string | null } {
+  const search = new URLSearchParams(window.location.search);
+  const item = search.get('item');
+  search.delete('item');
+  return { scope: `${window.location.pathname}?${search}`, item };
+}
+
 // navigate 暂未消费（M3 知识面挂上后，复盘 trace 的知识点链接会用它跳转）。
 export default function PracticeFacePage({
   getQuery,
@@ -356,8 +367,11 @@ export default function PracticeFacePage({
 
   // YUK-1510 — a question opened from the list gets its own history entry, so browser Back from
   // it returns to the list.
+  // Only in the scope the opening started in (`scope`), and only if the URL does not name it yet.
   const openQuestionUrl = useCallback(
-    (id: string) => {
+    (id: string, scope: string) => {
+      const here = liveUrl();
+      if (here.scope !== scope || here.item === id) return;
       writeItemParam(id, 'push');
       itemEntryPushed.current = true;
     },
@@ -371,7 +385,11 @@ export default function PracticeFacePage({
         return;
       }
 
+      // YUK-1510 — opened from this scope's list; if the scope changes before the start is
+      // confirmed, the question does not open over the new scope.
+      const scope = liveUrl().scope;
       const enter = (confirmed: StreamItem) => {
+        if (liveUrl().scope !== scope) return;
         if (confirmed.item_kind === 'paper') {
           setMode({ kind: 'paper', artifactId: confirmed.ref_id });
         } else {
@@ -379,7 +397,7 @@ export default function PracticeFacePage({
           listScroll.current = window.scrollY;
           morph.capture(host.current);
           setMode({ kind: 'solo', item: confirmed });
-          openQuestionUrl(confirmed.id);
+          openQuestionUrl(confirmed.id, scope);
         }
       };
 
@@ -395,6 +413,7 @@ export default function PracticeFacePage({
 
   const continueAfterSolo = useCallback(
     async function continueNext() {
+      const scope = liveUrl().scope;
       let fresh: StreamView;
       try {
         fresh = await fetchFreshStream();
@@ -406,12 +425,14 @@ export default function PracticeFacePage({
       const next = fresh.items.find((it) => it.status === 'pending');
       if (next?.item_kind === 'question') {
         void commitStreamItem(next, 'in_progress', '开始下一题', (confirmed) => {
+          if (liveUrl().scope !== scope) return;
           setMode({ kind: 'solo', item: confirmed });
-          openQuestionUrl(confirmed.id);
+          openQuestionUrl(confirmed.id, scope);
         });
         return;
       }
 
+      if (liveUrl().scope !== scope) return;
       setMode({ kind: 'list' });
       if (next?.item_kind === 'paper') {
         addToast('下一项是今天的卷——卷内不给即时反馈，准备好了再进。', 'info', 'layers');
@@ -437,27 +458,49 @@ export default function PracticeFacePage({
     stopTransition();
     endAdvance();
   }, [endAdvance, stopTransition]);
+  // YUK-1510 — a move to the next question is live while it is the latest move AND the URL is
+  // still in the scope it started in. A scope change (click, URL or history) can land before the
+  // question's view detaches; the move ends there through the cancel path, so it sends no further
+  // PATCH, writes no URL and never pulls a question back in.
+  const advanceLive = useCallback(
+    (seq: number, scope: string) => {
+      if (seq !== advanceSeq.current) return false;
+      if (liveUrl().scope === scope) return true;
+      cancelAdvance();
+      return false;
+    },
+    [cancelAdvance],
+  );
 
-  /** Leave the question page for the list, folding its title back into its row. */
-  const exitToList = useCallback(() => {
-    morph.capture(host.current);
-    restoreListOnLand.current = true;
-    setAnnounce('');
-    setMode({ kind: 'list' });
-    // YUK-1510 — the URL stops naming the question: step back to the list's own entry when
-    // opening pushed one, otherwise drop `?item=` in place.
-    if (itemEntryPushed.current) {
+  /**
+   * Leave the question page for the list, folding its title back into its row. `scope` is the
+   * URL scope the leaving started in (a click: now; a confirmed PATCH: when it was asked for).
+   */
+  const exitToList = useCallback(
+    (scope: string = liveUrl().scope) => {
+      const here = liveUrl();
+      // YUK-1510 — the URL scope changed on the way (the scope sync already reset the page to
+      // the new scope's list): nothing to leave, and the new scope's URL is never touched.
+      if (here.scope !== scope) return;
+      morph.capture(host.current);
+      restoreListOnLand.current = true;
+      setAnnounce('');
+      setMode({ kind: 'list' });
+      // The URL stops naming the question: step back to the list's own entry when opening
+      // pushed one, otherwise drop `?item=` in place.
+      const pushed = itemEntryPushed.current;
       itemEntryPushed.current = false;
-      historyBack();
-    } else {
-      writeItemParam(null, 'replace');
-    }
-  }, [historyBack, morph, writeItemParam]);
+      if (here.item === null) return;
+      if (pushed) historyBack();
+      else writeItemParam(null, 'replace');
+    },
+    [historyBack, morph, writeItemParam],
+  );
 
   /** The next question replaces the finished one: leave motion, then the swap (one commit). */
   const swapInPlace = useCallback(
-    async (done: StreamItem, next: StreamItem, pos: number, seq: number) => {
-      const live = () => seq === advanceSeq.current;
+    async (done: StreamItem, next: StreamItem, pos: number, seq: number, scope: string) => {
+      const live = () => advanceLive(seq, scope);
       if (!live()) return;
       if (!prefersReducedMotion()) {
         const steps = [glideToTop(), leaveQuestion(host.current)];
@@ -481,15 +524,16 @@ export default function PracticeFacePage({
           ? { kind: 'solo', item: next }
           : current,
       );
-      // YUK-1510 — the URL follows the question in place (no new history entry).
-      writeItemParam(next.id, 'replace');
+      // YUK-1510 — the URL follows the question in place (no new history entry); live() above
+      // has just checked the URL is still in this advance's scope.
+      if (liveUrl().item !== next.id) writeItemParam(next.id, 'replace');
     },
-    [endAdvance, morph, writeItemParam],
+    [advanceLive, endAdvance, morph, writeItemParam],
   );
 
   const continueInPlace = useCallback(
-    async (done: StreamItem, seq: number) => {
-      const live = () => seq === advanceSeq.current;
+    async (done: StreamItem, seq: number, scope: string) => {
+      const live = () => advanceLive(seq, scope);
       // Only the move that marked the item done continues, once (a retried PATCH included).
       if (continuedSeq.current === seq || !live()) return;
       continuedSeq.current = seq;
@@ -503,7 +547,7 @@ export default function PracticeFacePage({
         if (!live()) return;
         // done is confirmed and cached; reading the next item failed: leave for the list.
         endAdvance();
-        exitToList();
+        exitToList(scope);
         recordFailure('读取下一项', error, () => void continueAfterSolo());
         return;
       }
@@ -513,7 +557,7 @@ export default function PracticeFacePage({
       if (next?.item_kind !== 'question') {
         // The last question (or a paper next): back to the list, as before.
         endAdvance();
-        exitToList();
+        exitToList(scope);
         if (next?.item_kind === 'paper') {
           addToast('下一项是今天的卷——卷内不给即时反馈，准备好了再进。', 'info', 'layers');
         }
@@ -533,24 +577,25 @@ export default function PracticeFacePage({
       // retry (from the list) opens the question once it is started, as before.
       let leftForList = false;
       const started = await commitStreamItem(next, 'in_progress', '开始下一题', (confirmed) => {
-        if (!leftForList) return;
+        if (!leftForList || liveUrl().scope !== scope) return;
         setMode({ kind: 'solo', item: confirmed });
-        openQuestionUrl(confirmed.id);
+        openQuestionUrl(confirmed.id, scope);
       });
       if (!live()) return;
       if (!started) {
         leftForList = true;
         endAdvance();
-        exitToList();
+        exitToList(scope);
         return;
       }
       await ready;
       if (!live()) return;
       const pos = fresh.items.findIndex((it) => it.id === started.id) + 1;
-      await swapInPlace(done, started, pos || started.position, seq);
+      await swapInPlace(done, started, pos || started.position, seq, scope);
     },
     [
       addToast,
+      advanceLive,
       commitStreamItem,
       continueAfterSolo,
       endAdvance,
@@ -570,7 +615,11 @@ export default function PracticeFacePage({
       advancingRef.current = true;
       setAdvancing(item.id);
       const seq = ++advanceSeq.current;
-      const ok = await commitStreamItem(item, 'done', '完成练习', () => continueInPlace(item, seq));
+      // YUK-1510 — the URL scope this move belongs to; see advanceLive.
+      const scope = liveUrl().scope;
+      const ok = await commitStreamItem(item, 'done', '完成练习', () =>
+        continueInPlace(item, seq, scope),
+      );
       // Marking done failed: stay on the question; the error above offers a retry.
       if (!ok && seq === advanceSeq.current) endAdvance();
     },
@@ -598,8 +647,9 @@ export default function PracticeFacePage({
   // slot 落到一致的 done 态。
   const markSoloDoneAndExit = useCallback(
     (item: StreamItem) => {
+      const scope = liveUrl().scope;
       void commitStreamItem(item, 'done', '完成并返回练习流', async () => {
-        exitToList();
+        exitToList(scope);
         await refreshStream();
       });
     },
