@@ -140,15 +140,29 @@ export const DraftBlankNormalization = z.object({
 });
 export type DraftBlankNormalizationT = z.infer<typeof DraftBlankNormalization>;
 
-/** blank key：文本 or 数值+容差/单位（与契约 BlankKeyCriterion.key 同构，独立声明避免互锁）。 */
-export const DraftBlankTextKey = z.object({
-  kind: z.literal('text'),
-  /** 全部可接受文本（与契约 BlankKeyCriterion.accepted 同构）。 */
-  accepted: z.array(z.string().min(1)).min(1),
-  case_sensitive: z.boolean().optional(),
-  trim: z.boolean().optional(),
-  normalization: DraftBlankNormalization.optional(),
-});
+/**
+ * blank key：文本 or 数值+容差/单位（与契约 BlankKeyCriterion.key 同构，独立声明避免互锁）。
+ * case_sensitive 为 true 表示区分大小写；normalization.casefold 为 true 表示折叠大小写。
+ * 两个同时为 true 互相矛盾，文档不能通过校验。
+ */
+export const DraftBlankTextKey = z
+  .object({
+    kind: z.literal('text'),
+    /** 全部可接受文本（与契约 BlankKeyCriterion.accepted 同构）。 */
+    accepted: z.array(z.string().min(1)).min(1),
+    case_sensitive: z.boolean().optional(),
+    trim: z.boolean().optional(),
+    normalization: DraftBlankNormalization.optional(),
+  })
+  .superRefine((key, ctx) => {
+    if (key.case_sensitive === true && key.normalization?.casefold === true) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'case_sensitive true conflicts with normalization.casefold true',
+        path: ['normalization', 'casefold'],
+      });
+    }
+  });
 export type DraftBlankTextKeyT = z.infer<typeof DraftBlankTextKey>;
 
 export const DraftBlankNumericKey = z.object({

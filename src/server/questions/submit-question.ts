@@ -308,10 +308,43 @@ function admissionForContentEdit(
 }
 
 /**
+ * 已存 revision 走草稿往返后丢了或改写了判分字段。这种提交不能铸新 revision：
+ * 发布出去的会是被改写过的层。调用方返回未发布的 withheld。
+ */
+function scoringRoundTripIssue(
+  revision: ScoringRevision,
+  knowledgeIds: string[],
+): { code: 'scoring_round_trip_lossy'; detail: string } | null {
+  let canonical: DraftContract;
+  try {
+    canonical = draftDocumentToContract(
+      revisionToDraftDocument(revision, { knowledge_ids: knowledgeIds }),
+      revision.group_id,
+    );
+  } catch (err) {
+    return {
+      code: 'scoring_round_trip_lossy',
+      detail:
+        err instanceof Error
+          ? `stored revision did not round-trip: ${err.message}`
+          : 'stored revision did not round-trip',
+    };
+  }
+  if (canonical.conversion_issues.length > 0 || !scoringRoundTripIsFaithful(revision, canonical)) {
+    return {
+      code: 'scoring_round_trip_lossy',
+      detail: 'stored scoring layers do not survive the draft round trip',
+    };
+  }
+  return null;
+}
+
+/**
  * 已存 revision 与这次提交可能不是同一编码：旧行是 option_set_key +
  * single_choice/multi_choice、没有规则；编辑草稿会再编成 select_key + select
  * 并补上印出的规则。先把已存 revision 走同一条草稿往返，再比三层。往返形不成
  * 规范契约，或往返丢掉、改写了已存判分字段时，视为已变（回 withheld）。
+ * 往返有损时提交在发布前就返回，不会把改写后的层铸成新 revision。
  */
 function scoringLayersUnchanged(
   revision: ScoringRevision,
@@ -726,6 +759,19 @@ export async function submitDraftQuestion(
       contract,
       doc.knowledge_ids,
     );
+    if (currentRevision != null) {
+      const roundTripIssue = scoringRoundTripIssue(currentRevision, doc.knowledge_ids);
+      if (roundTripIssue != null) {
+        return {
+          status: 'withheld',
+          published: false,
+          detail: roundTripIssue.detail,
+          issues: [roundTripIssue],
+          per_unit: admission.per_unit,
+          request_id: requestId,
+        };
+      }
+    }
     const presentation = presentationForDraft(doc, contract);
     const integrityDigest =
       presentation != null

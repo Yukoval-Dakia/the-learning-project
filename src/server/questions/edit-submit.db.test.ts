@@ -371,6 +371,7 @@ async function publishAdmittedBlank(input: {
   prompt: string;
   knowledgeIds: string[];
   blankScoresZero?: boolean;
+  aggregation?: { kind: 'capped_sum'; cap: number };
 }): Promise<void> {
   const db = testDb();
   const doc = blankDocument(input.prompt);
@@ -382,6 +383,7 @@ async function publishAdmittedBlank(input: {
   const scoring_basis = {
     ...contract.scoring_basis,
     blank_scores_zero: input.blankScoresZero ?? contract.scoring_basis.blank_scores_zero,
+    ...(input.aggregation != null ? { aggregation: input.aggregation } : {}),
   };
   const presentation = defaultPresentation(
     contract.structure,
@@ -422,6 +424,63 @@ async function publishAdmittedBlank(input: {
   if (published.status !== 'published') {
     throw new Error(`blank fixture publish returned ${published.status}`);
   }
+}
+
+/** 旧多选，但选择界是恰好 2，不是默认的 1..选项数。 */
+async function publishAdmittedExactMulti(input: {
+  id: string;
+  prompt: string;
+  knowledgeIds: string[];
+}): Promise<{ partId: string }> {
+  const db = testDb();
+  await insertQuestion({
+    id: input.id,
+    prompt: input.prompt,
+    reference: 'AB',
+    choices: ['甲', '乙', '丙'],
+    knowledgeIds: input.knowledgeIds,
+  });
+  const [row] = await db.select().from(question).where(eq(question.id, input.id));
+  const normalized = normalizeQuestionRowToContract(row);
+  const slot = normalized.response_spec.slots[0];
+  if (slot == null || slot.kind !== 'multi_choice') {
+    throw new Error(`expected multi_choice, got ${slot?.kind ?? 'nothing'}`);
+  }
+  const response_spec = {
+    ...normalized.response_spec,
+    slots: normalized.response_spec.slots.map((item, index) =>
+      index === 0 && item.kind === 'multi_choice'
+        ? { ...item, min_select: 2, max_select: 2 }
+        : item,
+    ),
+  };
+  const published = await publishQuestionGroup(db, {
+    group_id: input.id,
+    contract: {
+      structure: normalized.structure,
+      response_spec,
+      scoring_basis: normalized.scoring_basis,
+      execution_plan: normalized.execution_plan,
+      integrity_digest: contractIntegrityDigest({
+        structure: normalized.structure,
+        response_spec,
+        scoring_basis: normalized.scoring_basis,
+        execution_plan: normalized.execution_plan,
+      }),
+    },
+    expectedCurrentRevision: null,
+    expectedAdmissionGeneration: null,
+    availability: 'general_pool',
+    admission: { state: 'admitted', evidence: ADMITTED },
+    actorRef: 'test:edit-submit',
+    now: new Date(),
+  });
+  if (published.status !== 'published') {
+    throw new Error(`multi fixture publish returned ${published.status}`);
+  }
+  const partId = normalized.structure.parts[0]?.part_id;
+  if (partId == null) throw new Error('multi fixture has no part');
+  return { partId };
 }
 
 function promptOf(structured: unknown): string {
@@ -1572,9 +1631,9 @@ describe('edit/submit question boundary', () => {
     );
   });
 
-  // @invariant grading: a prompt-only edit withholds admission when the stored scoring basis does not survive the round trip
-  // @fails-if a lossy round trip is treated as unchanged and the weakened scoring basis stays admitted
-  it('withholds admission when the round trip drops a scoring field', async () => {
+  // @invariant grading: a prompt-only edit does not publish when blank_scores_zero would flip
+  // @fails-if a lossy round trip still publishes a withheld revision that becomes current and turns blank_scores_zero true
+  it('does not publish when a prompt edit would flip blank_scores_zero', async () => {
     const db = testDb();
     const kc = 'kc-blank-lossy';
     const qid = 'q-blank-lossy';
@@ -1585,25 +1644,122 @@ describe('edit/submit question boundary', () => {
       knowledgeIds: [kc],
       blankScoresZero: false,
     });
-    const [before] = await db
+    await expectPromptEditLeavesCurrent({
+      qid,
+      partId: 'p1',
+      old: '化学式',
+      saveRequest: 'blank-lossy-save',
+      submitRequest: 'blank-lossy-submit',
+    });
+    const [current] = await db
       .select()
       .from(question_revision)
       .where(eq(question_revision.group_id, qid));
-    expect(before.scoring_basis.blank_scores_zero).toBe(false);
+    expect(current.scoring_basis.blank_scores_zero).toBe(false);
+  });
+
+  // @invariant grading: a prompt-only edit does not publish when capped_sum would become sum
+  // @fails-if a lossy round trip publishes a withheld revision whose aggregation is sum
+  it('does not publish when a prompt edit would replace capped_sum with sum', async () => {
+    const db = testDb();
+    const kc = 'kc-capped-sum';
+    const qid = 'q-capped-sum';
+    await seedKnowledge(kc);
+    await publishAdmittedBlank({
+      id: qid,
+      prompt: '封顶聚合的填空：水的化学式是',
+      knowledgeIds: [kc],
+      aggregation: { kind: 'capped_sum', cap: 1 },
+    });
+    await expectPromptEditLeavesCurrent({
+      qid,
+      partId: 'p1',
+      old: '化学式',
+      saveRequest: 'capped-sum-save',
+      submitRequest: 'capped-sum-submit',
+    });
+    const [current] = await db
+      .select()
+      .from(question_revision)
+      .where(eq(question_revision.group_id, qid));
+    expect(current.scoring_basis.aggregation).toEqual({ kind: 'capped_sum', cap: 1 });
+  });
+
+  // @invariant grading: a prompt-only edit does not publish when exact multi_choice bounds would be dropped
+  // @fails-if a lossy round trip publishes a select revision and the exactly-2 bounds are no longer current
+  it('does not publish when a prompt edit would drop exact multi_choice bounds', async () => {
+    const db = testDb();
+    const kc = 'kc-multi-bounds';
+    const qid = 'q-multi-bounds';
+    await seedKnowledge(kc);
+    const { partId } = await publishAdmittedExactMulti({
+      id: qid,
+      prompt: '恰好选两项：正确的是',
+      knowledgeIds: [kc],
+    });
+    await expectPromptEditLeavesCurrent({
+      qid,
+      partId,
+      old: '恰好',
+      saveRequest: 'multi-bounds-save',
+      submitRequest: 'multi-bounds-submit',
+    });
+    const [current] = await db
+      .select()
+      .from(question_revision)
+      .where(eq(question_revision.group_id, qid));
+    const slot = current.response_spec.slots[0];
+    if (slot == null || slot.kind !== 'multi_choice') {
+      throw new Error(`current slot is ${slot?.kind ?? 'missing'}`);
+    }
+    expect(slot.min_select).toBe(2);
+    expect(slot.max_select).toBe(2);
+  });
+
+  // @invariant grading: case_sensitive true together with casefold true is not a publishable key
+  // @fails-if the draft accepts both flags and a case-sensitive answer is graded case-insensitively
+  it('rejects a blank key that is both case sensitive and casefolded', async () => {
+    const db = testDb();
+    const doc = blankDocument('大小写冲突：水的化学式是');
+    const unit = doc.parts[0]?.units[0];
+    if (unit?.key?.kind !== 'blank' || unit.key.key.kind !== 'text') {
+      throw new Error('blank fixture has no text key');
+    }
+    unit.key.key = {
+      kind: 'text',
+      accepted: ['H2O'],
+      case_sensitive: true,
+      normalization: { ...BLANK_NORM, casefold: true },
+    };
+    const saved = await saveDraftEdit(db, {
+      input: { action: 'save', document: doc, request_id: 'casefold-conflict-save' },
+      ctx: ACTOR,
+    });
+    expect(saved.status, JSON.stringify(saved)).toBe('rejected');
+    if (saved.status !== 'rejected') return;
+    expect(JSON.stringify(saved.issues)).toContain('casefold');
+  });
+
+  // @invariant grading: a key edit that omits normalisation keeps the previous revision's normalisation
+  // @fails-if the omitted normalisation falls back to defaults and full-width ＨＯＨ scores 0
+  it('keeps the previous blank normalisation when a key edit omits it', async () => {
+    const db = testDb();
+    const kc = 'kc-blank-inherit';
+    const qid = 'q-blank-inherit';
+    await seedKnowledge(kc);
+    await publishAdmittedBlank({ id: qid, prompt: '沿用归一化：水的化学式是', knowledgeIds: [kc] });
     const saved = await saveDraftEdit(db, {
       input: {
         action: 'save',
         question_id: qid,
         ops: [
           {
-            op: 'replace_text',
-            target: { kind: 'part', id: 'p1' },
-            field: 'prompt_md',
-            old: '化学式',
-            new: '分子式',
+            op: 'set',
+            target: { kind: 'unit', id: 'u1' },
+            fields: { key: { kind: 'blank', key: { kind: 'text', accepted: ['HOH'] } } },
           },
         ],
-        request_id: 'blank-lossy-save',
+        request_id: 'blank-inherit-save',
       },
       ctx: ACTOR,
     });
@@ -1614,24 +1770,103 @@ describe('edit/submit question boundary', () => {
       {
         draft_ref: saved.draft_ref,
         expected_draft_version: saved.draft_version,
-        request_id: 'blank-lossy-submit',
+        request_id: 'blank-inherit-submit',
       },
       { ...ACTOR, sessionId: null },
     );
     expect(submitted.status, JSON.stringify(submitted)).toBe('withheld');
+    if (submitted.status !== 'withheld' || 'published' in submitted) {
+      throw new Error(JSON.stringify(submitted));
+    }
     const [afterLife] = await db
       .select()
       .from(question_group_lifecycle)
       .where(eq(question_group_lifecycle.group_id, qid));
-    expect(afterLife.scoring_admission_state).toBe('withheld');
-    const issued = await issueAssessment(db, {
-      group_id: qid,
-      now: new Date(),
-      actorRef: 'test:issue',
+    const [revision] = await db
+      .select()
+      .from(question_revision)
+      .where(eq(question_revision.revision_id, afterLife.current_revision_id ?? ''));
+    const unit = revision.scoring_basis.units[0];
+    if (unit == null || unit.criterion.kind !== 'blank_key' || unit.criterion.key.kind !== 'text') {
+      throw new Error(`key edit published ${unit?.criterion.kind ?? 'nothing'}`);
+    }
+    expect(unit.criterion.key.accepted).toEqual(['HOH']);
+    expect(unit.criterion.key.normalization).toEqual(BLANK_NORM);
+    const graded = await gradeBlankExactUnit(unit, {
+      slot_id: unit.slot_refs[0] ?? 's1',
+      kind: 'blank',
+      state: 'answered',
+      text: 'ＨＯＨ',
     });
-    expect(issued.status, JSON.stringify(issued)).not.toBe('issued');
+    expect(graded.status, JSON.stringify(graded)).toBe('scored');
+    if (graded.status !== 'scored') return;
+    expect(graded.points_awarded, JSON.stringify(graded)).toBe(1);
   });
 });
+
+async function expectPromptEditLeavesCurrent(input: {
+  qid: string;
+  partId: string;
+  old: string;
+  saveRequest: string;
+  submitRequest: string;
+}): Promise<void> {
+  const db = testDb();
+  const [beforeLife] = await db
+    .select()
+    .from(question_group_lifecycle)
+    .where(eq(question_group_lifecycle.group_id, input.qid));
+  const beforeRevisionId = beforeLife.current_revision_id;
+  const [beforeRevision] = await db
+    .select()
+    .from(question_revision)
+    .where(eq(question_revision.revision_id, beforeRevisionId ?? ''));
+  const saved = await saveDraftEdit(db, {
+    input: {
+      action: 'save',
+      question_id: input.qid,
+      ops: [
+        {
+          op: 'replace_text',
+          target: { kind: 'part', id: input.partId },
+          field: 'prompt_md',
+          old: input.old,
+          new: '已改',
+        },
+      ],
+      request_id: input.saveRequest,
+    },
+    ctx: ACTOR,
+  });
+  expect(saved.status, JSON.stringify(saved)).toBe('saved');
+  if (saved.status !== 'saved') return;
+  const submitted = await submitDraftQuestion(
+    db,
+    {
+      draft_ref: saved.draft_ref,
+      expected_draft_version: saved.draft_version,
+      request_id: input.submitRequest,
+    },
+    { ...ACTOR, sessionId: null },
+  );
+  expect(submitted.status, JSON.stringify(submitted)).toBe('withheld');
+  if (submitted.status !== 'withheld' || !('published' in submitted)) {
+    throw new Error(JSON.stringify(submitted));
+  }
+  expect(submitted.published).toBe(false);
+  expect(submitted.issues.map((issue) => issue.code)).toContain('scoring_round_trip_lossy');
+  const revisions = await db
+    .select()
+    .from(question_revision)
+    .where(eq(question_revision.group_id, input.qid));
+  expect(revisions.map((revision) => revision.revision_id)).toEqual([beforeRevision.revision_id]);
+  const [afterLife] = await db
+    .select()
+    .from(question_group_lifecycle)
+    .where(eq(question_group_lifecycle.group_id, input.qid));
+  expect(afterLife.current_revision_id).toBe(beforeRevisionId);
+  expect(afterLife.scoring_admission_state).toBe('admitted');
+}
 
 function optionIdentity(revision: {
   response_spec: { slots: ReadonlyArray<{ kind: string }> };

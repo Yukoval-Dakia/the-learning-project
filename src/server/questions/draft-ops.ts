@@ -663,6 +663,24 @@ function applySet(
   changes.push({ op: 'set', target, fields: changedFields });
 }
 
+/**
+ * 改键时如果没带归一化，沿用这一单元上已有的归一化。已发布题的草稿是从当前
+ * revision 播种的，所以省略归一化不会掉回 nfkc 关闭的新题默认。
+ */
+function inheritOmittedBlankNormalization(
+  previous: DraftUnitT['key'],
+  next: DraftUnitT['key'],
+): DraftUnitT['key'] {
+  if (next == null || next.kind !== 'blank' || next.key.kind !== 'text') return next;
+  if (next.key.normalization != null) return next;
+  if (previous?.kind !== 'blank' || previous.key.kind !== 'text') return next;
+  if (previous.key.normalization == null) return next;
+  if (next.key.case_sensitive === true && previous.key.normalization.casefold === true) {
+    fail('invalid_value', 'case_sensitive true conflicts with normalization.casefold true');
+  }
+  return { kind: 'blank', key: { ...next.key, normalization: previous.key.normalization } };
+}
+
 function applyUnitSet(unit: DraftUnitT, field: string, value: unknown): void {
   switch (field) {
     case 'points': {
@@ -683,7 +701,7 @@ function applyUnitSet(unit: DraftUnitT, field: string, value: unknown): void {
       }
       const parsed = DraftUnitKey.safeParse(value);
       if (!parsed.success) fail('invalid_value', `invalid key: ${parsed.error.message}`);
-      unit.key = parsed.data;
+      unit.key = inheritOmittedBlankNormalization(unit.key, parsed.data);
       return;
     }
     case 'rule': {

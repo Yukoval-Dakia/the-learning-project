@@ -203,7 +203,10 @@ function criterionFor(
           key: {
             kind: 'text',
             accepted: key.accepted,
-            normalization: blankTextNormalization(key),
+            normalization: blankTextNormalization(key, issues, {
+              partId,
+              unitId: unit.unit_id,
+            }),
           },
         },
         attachRule: true,
@@ -267,8 +270,21 @@ function criterionFor(
 /**
  * 已带归一化的草稿原样进契约。没带的新题仍用当前默认：v1，nfkc 与折叠空白关闭，
  * 只从 case_sensitive / trim 读大小写和首尾空白。
+ * case_sensitive 与 casefold 同时为 true 记为未决，提交不铸 revision。
  */
-function blankTextNormalization(key: DraftBlankTextKeyT): BlankNormalizationT {
+function blankTextNormalization(
+  key: DraftBlankTextKeyT,
+  issues: DraftConversionIssue[],
+  loc: { partId: string; unitId: string },
+): BlankNormalizationT {
+  if (key.case_sensitive === true && key.normalization?.casefold === true) {
+    issues.push({
+      code: 'rule_invalid',
+      part_id: loc.partId,
+      unit_id: loc.unitId,
+      detail: `unit '${loc.unitId}' case_sensitive true conflicts with normalization.casefold true`,
+    });
+  }
   if (key.normalization != null) return BlankNormalization.parse(key.normalization);
   return BlankNormalization.parse({
     version: 'v1',
