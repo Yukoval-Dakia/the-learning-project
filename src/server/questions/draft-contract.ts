@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import type {
   BlankSlotT,
   ExecutionPlanT,
@@ -528,25 +527,42 @@ function draftSpecFromSlot(slot: ResponseSlotT): DraftUnitT['response_spec'] | n
         ...(slot.evidence_required != null ? { evidence_required: slot.evidence_required } : {}),
         ...(slot.max_chars != null ? { max_chars: slot.max_chars } : {}),
       };
+    case 'single_choice':
+      return {
+        kind: 'select',
+        pick: 'one',
+        items: slot.options.map((option) => ({
+          item_id: option.option_id,
+          ...(option.text.length > 0 ? { label_md: option.text } : {}),
+        })),
+      };
+    case 'multi_choice':
+      return {
+        kind: 'select',
+        pick: 'many',
+        items: slot.options.map((option) => ({
+          item_id: option.option_id,
+          ...(option.text.length > 0 ? { label_md: option.text } : {}),
+        })),
+      };
     default:
-      // legacy slot kinds（single_choice/text/numeric/matching/...）—— 以
-      // metadata 如实保留形状说明；映射为最接近的统一类别，原槽字段无法
-      // 还原时调用方会收到 unmapped 标记。
+      // 其余 legacy 槽（text/numeric/matching/...）无法还原成统一类别时留
+      // unmapped 标记。选择题已在上面映成 select。
       return null;
   }
 }
 
 /**
  * 已发布 revision → v2 草稿（编辑已发布题的草稿种子）。part/unit/material
- * 身份原样保留（语义连续性由发布侧 diff 裁决）；legacy slot kinds（非统一
- * 三类）在 unit.metadata.unmapped_slot 留痕，由编辑者改写为统一类别后才可
- * 提交（draftDocumentToContract 不接受 unmapped 标记——见下面提交路径）。
+ * 身份原样保留。选择题（single_choice / multi_choice + option_set_key）映成
+ * select 与答案键；其余无法还原的 legacy 槽在 unit.metadata.unmapped_slot_kind
+ * 留痕，提交前须改写成统一类别。
  */
 export function revisionToDraftDocument(
   revision: Pick<
     PublishedQuestionRevisionT,
     'revision_id' | 'group_id' | 'structure' | 'response_spec' | 'scoring_basis' | 'execution_plan'
-  >,
+  > & { presentation?: PublishedQuestionRevisionT['presentation'] | null },
   opts: { knowledge_ids?: string[] } = {},
 ): QuestionDraftDocumentT {
   const executorByUnit = new Map<string, ExecutorAssignmentT['executor']>();
@@ -579,7 +595,7 @@ export function revisionToDraftDocument(
       unit_id: unit.scoring_unit_id,
       slot_id: slotId ?? `${unit.scoring_unit_id}::r`,
       response_class:
-        slot?.kind === 'select'
+        slot?.kind === 'select' || slot?.kind === 'single_choice' || slot?.kind === 'multi_choice'
           ? 'select'
           : slot?.kind === 'blank'
             ? 'blank'
@@ -595,6 +611,15 @@ export function revisionToDraftDocument(
       metadata:
         slot != null && draftSpecFromSlot(slot) == null ? { unmapped_slot_kind: slot.kind } : {},
     };
+    if (
+      draft.key?.kind === 'select' &&
+      draft.rule == null &&
+      unit.criterion.kind === 'option_set_key'
+    ) {
+      // exact_option_set 是集合相等：全中且无错选得满分，否则 0。补一条印出的
+      // 规则，提交侧才不会把已有选择题判成 missing_rule。
+      draft.rule = printedLegacyChoiceRule(unit.points);
+    }
     if (part != null) {
       part.units.push(draft);
     } else if (partById.has(slot?.part_id ?? '')) {
@@ -625,7 +650,27 @@ export function revisionToDraftDocument(
     })),
     knowledge_ids: opts.knowledge_ids ?? [],
     metadata: {},
+    ...(revision.presentation != null ? { presentation: revision.presentation } : {}),
     base: { question_id: revision.group_id, revision_id: revision.revision_id },
+  };
+}
+
+/** 旧选择题没有 K1 规则对象。集合相等的给分写成显式规则，不靠提交时再猜。 */
+function printedLegacyChoiceRule(points: number | null): NonNullable<DraftUnitT['rule']> {
+  const award = points != null && Number.isFinite(points) && points >= 0 ? points : 0;
+  return {
+    version: 1,
+    source: {
+      statement: '命中全部正确选项且没有错选得满分，否则不得分',
+      locator: 'legacy:option_set_key',
+    },
+    cases: [
+      {
+        when: { wrong: { eq: 0 }, miss: { eq: 0 } },
+        award: { points: award },
+      },
+    ],
+    otherwise: { points: 0 },
   };
 }
 
@@ -634,6 +679,9 @@ function keyAndReferenceFor(
 ): Pick<DraftUnitT, 'key' | 'reference_md' | 'rubric'> {
   if (criterion.kind === 'select_key') {
     return { key: { kind: 'select', accepted_item_ids: criterion.accepted_item_ids } };
+  }
+  if (criterion.kind === 'option_set_key') {
+    return { key: { kind: 'select', accepted_item_ids: [...criterion.accepted_option_ids] } };
   }
   if (criterion.kind === 'blank_key') {
     const key = criterion.key;
@@ -671,6 +719,12 @@ function methodFor(
   executor: ExecutorAssignmentT['executor'] | undefined,
   criterion: ScoringUnitCriterionT,
 ): DraftUnitT['method'] {
+  if (
+    criterion.kind === 'option_set_key' ||
+    (executor?.kind === 'deterministic' && executor.comparator === 'exact_option_set')
+  ) {
+    return { kind: 'set-compare' };
+  }
   if (executor?.kind === 'deterministic') {
     if (executor.comparator === 'set_compare') return { kind: 'set-compare' };
     if (executor.comparator === 'blank_exact') return { kind: 'exact' };
@@ -690,36 +744,81 @@ function methodFor(
     : { kind: 'human_review' };
 }
 
-// ---------- 可复现指纹（非 fetch 来源的去重键；绝不伪造 extraction_hash） ----------
+// ---------- 与 question.canonical_content_hash 对齐的内容身份 ----------
+//
+// 旧供给链的指纹只含 prompt / reference / choices / rubric（外加 composite
+// 判别），不含 source、知识点。草稿提交必须投出同一组字段，精确去重才能
+// 跨来源、跨知识点命中已有行。哈希本身由 canonicalQuestionContentHash 计算。
 
-/** JSON 键序稳定序列化（与 contractIntegrityDigest 同一纪律）。 */
-function canonicalize(value: unknown): string {
-  return JSON.stringify(value, (_key, v) =>
-    v !== null && typeof v === 'object' && !Array.isArray(v)
-      ? Object.keys(v)
-          .sort()
-          .reduce<Record<string, unknown>>((acc, k) => {
-            acc[k] = (v as Record<string, unknown>)[k];
-            return acc;
-          }, {})
-      : v,
-  );
+function projectPrompt(doc: QuestionDraftDocumentT): string {
+  if (doc.parts.length === 1) return doc.parts[0].prompt_md;
+  const stem = doc.parts
+    .flatMap((p) => p.material_ids)
+    .map((id) => doc.materials.find((m) => m.material_id === id))
+    .find((m) => m != null && m.caption === 'stem/shared context');
+  if (stem?.content_md != null) return stem.content_md;
+  return doc.parts
+    .map((p) => p.prompt_md)
+    .filter((t) => t.trim().length > 0)
+    .join('\n\n');
 }
 
-/**
- * 草稿内容指纹 → question.canonical_content_hash。内容寻址：覆盖
- * parts/units/materials/knowledge_ids/source 内容；metadata/presentation 不参与
- * （非判分语义）。同内容 ⇒ 同指纹 ⇒ live 去重 claim。
- */
-export function draftCanonicalContentHash(doc: QuestionDraftDocumentT): string {
-  const canonical = canonicalize({
-    parts: doc.parts,
-    materials: doc.materials.map(contractMaterial),
-    knowledge_ids: [...doc.knowledge_ids].sort(),
-    source: doc.source ?? null,
-  });
-  // 列约定为裸 hex（extraction_hash.slice('sha256:'.length) 同款）—— 不带前缀。
-  return createHash('sha256').update(canonical).digest('hex');
+function projectReference(doc: QuestionDraftDocumentT): string | null {
+  const texts: string[] = [];
+  for (const part of doc.parts) {
+    for (const unit of part.units) {
+      if (unit.key?.kind === 'blank') {
+        texts.push(
+          unit.key.key.kind === 'text'
+            ? unit.key.key.accepted.join(' / ')
+            : String(unit.key.key.value),
+        );
+      } else if (unit.key?.kind === 'select') {
+        const labels = unit.key.accepted_item_ids
+          .map((id) =>
+            unit.response_spec.kind === 'select'
+              ? unit.response_spec.items.findIndex((item) => item.item_id === id)
+              : -1,
+          )
+          .filter((index) => index >= 0)
+          .map((index) => String.fromCharCode(65 + index));
+        if (labels.length > 0) texts.push(labels.join(''));
+      } else if (unit.reference_md != null) {
+        texts.push(unit.reference_md);
+      }
+    }
+  }
+  return texts.length > 0 ? texts.join('\n\n') : null;
+}
+
+function projectChoices(doc: QuestionDraftDocumentT): string[] | null {
+  const unit = doc.parts.flatMap((p) => p.units).find((u) => u.response_spec.kind === 'select');
+  if (unit == null || unit.response_spec.kind !== 'select') return null;
+  return unit.response_spec.items.map((item) => item.label_md ?? item.item_id);
+}
+
+/** 供 canonicalQuestionContentHash 使用的内容身份。source 与知识点不参与。 */
+export function draftCanonicalIdentity(doc: QuestionDraftDocumentT): {
+  promptMd: string;
+  referenceMd: string | null;
+  choicesMd: string[] | null;
+  rubricJson: unknown;
+  composite?: boolean;
+} {
+  const classes = new Set(
+    doc.parts.flatMap((part) => part.units.map((unit) => unit.response_class)),
+  );
+  const composite = doc.parts.length > 1 || classes.size > 1;
+  const rubrics = doc.parts.flatMap((part) =>
+    part.units.map((unit) => unit.rubric).filter((rubric) => rubric != null),
+  );
+  return {
+    promptMd: projectPrompt(doc),
+    referenceMd: projectReference(doc),
+    choicesMd: projectChoices(doc),
+    rubricJson: rubrics.length === 0 ? null : rubrics.length === 1 ? rubrics[0] : rubrics,
+    ...(composite ? { composite: true as const } : {}),
+  };
 }
 
 export { isDraftDocumentV2 };

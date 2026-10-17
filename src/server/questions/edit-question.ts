@@ -542,6 +542,10 @@ export async function saveDraftEdit(db: Db, params: SaveDraftParams): Promise<Ed
   try {
     result = await db.transaction(async (tx): Promise<EditQuestionResult> => {
       const now = ctx.now ?? new Date();
+      // 建草稿的 create 事件必须用这同一个时间。fold 按 created_at 再按 id
+      // 排序，create 是整行 last-write-wins；另取 new Date() 会晚于编辑事件，
+      // 把已应用的 ops 盖回 v0。
+      const txCtx: EditContext = { ...ctx, now };
       // request_id 认领原子化：advisory xact lock 串行化同 request_id 并发，
       // 锁内查重放（原 check-then-act 竞态在锁外）。
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${requestId}))`);
@@ -578,7 +582,7 @@ export async function saveDraftEdit(db: Db, params: SaveDraftParams): Promise<Ed
         block = await createDraftBlock(tx, {
           doc: parsedDoc.data,
           importedQuestionId: imported,
-          ctx,
+          ctx: txCtx,
         });
         created = true;
       } else if (hasDraftRef) {
@@ -626,7 +630,7 @@ export async function saveDraftEdit(db: Db, params: SaveDraftParams): Promise<Ed
             request_id: requestId,
           };
         }
-        const ensured = await ensureDraftForQuestion(tx, questionId, ctx);
+        const ensured = await ensureDraftForQuestion(tx, questionId, txCtx);
         if ('error' in ensured) {
           return {
             status: 'rejected',

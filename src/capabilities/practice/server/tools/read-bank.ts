@@ -19,6 +19,7 @@
 //     assessment_submission）授权的已撤回 revision 仍可读，如实标注
 //     historical + new_issuance_allowed=false。
 
+import { createHash } from 'node:crypto';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
@@ -724,14 +725,18 @@ export async function runReadBank(
       ? (structure?.materials ?? [])
           .filter((m) => role !== 'restricted' || m.visibility !== 'private')
           .map((m) => {
-            const hasInlineContent = m.content_md != null;
+            const inline = m.content_md;
             const assetRow = assetById.get(m.asset.asset_id);
-            const present = hasInlineContent || assetRow != null;
-            const digestVerified = hasInlineContent
-              ? null
-              : assetRow != null
-                ? bankAssetDigestMatches(assetRow.sha256, m.asset.digest)
-                : null;
+            const present = inline != null || assetRow != null;
+            const digestVerified =
+              inline != null
+                ? bankAssetDigestMatches(
+                    createHash('sha256').update(inline).digest('hex'),
+                    m.asset.digest,
+                  )
+                : assetRow != null
+                  ? bankAssetDigestMatches(assetRow.sha256, m.asset.digest)
+                  : null;
             const textExt =
               m.content_md != null
                 ? applyExtent(m.content_md, cursorForRef, extentChars, {

@@ -1,8 +1,20 @@
 import { createHash } from 'node:crypto';
 import { createId } from '@paralleldrive/cuid2';
-import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
-import { mergeExactQuestionDuplicateKnowledgeIds } from '@/capabilities/practice/public';
+import { and, desc, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
+import {
+  DEDUP_OVERLAP_THRESHOLD,
+  canonicalQuestionContentHash,
+  maxNgramOverlap,
+  mergeExactQuestionDuplicateKnowledgeIds,
+} from '@/capabilities/practice/public';
 import { newId } from '@/core/ids';
+import {
+  Presentation,
+  type PresentationT,
+  defaultPresentation,
+  validatePresentation,
+} from '@/core/schema/assessment/presentation';
+import { AdmissionEvidence } from '@/core/schema/assessment/publish';
 import { AgentRef } from '@/core/schema/business';
 import {
   QuestionDraftDocument,
@@ -15,7 +27,11 @@ import {
 import type { Db, Tx } from '@/db/client';
 import { knowledge, question, question_block, question_group_lifecycle } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import type { PublishQuestionGroupResult } from '@/kernel/records/assessment-publication';
+import { contractIntegrityDigest } from '@/kernel/records/assessment-normalization';
+import type {
+  PublishAdmission,
+  PublishQuestionGroupResult,
+} from '@/kernel/records/assessment-publication';
 import {
   dispatchPendingVerifyIntents,
   writeVerifyDispatchIntent,
@@ -23,7 +39,8 @@ import {
 import { projectQuestionBlockGuarded } from '@/server/projections/question_block';
 import { writeQuestionBlockLifecycleEvent } from '@/server/projections/question_block-lifecycle-event';
 import {
-  draftCanonicalContentHash,
+  type DraftContract,
+  draftCanonicalIdentity,
   draftDocumentToContract,
 } from '@/server/questions/draft-contract';
 import { encodeDraftRef, parseDraftRef } from '@/server/questions/edit-question';
@@ -36,13 +53,12 @@ import { publishQuestionGroup } from '@/server/questions/publisher';
 // 唯一提交闸：草稿（v2 文档或 legacy 适配）→ 契约四层 →
 // publishQuestionGroup（唯一 revision writer）。CAS 双令牌沿用发布侧约定：
 // expected_draft_version（block.version）+ expected_revision（组 current
-// revision）。来源指纹：非 fetch 来源用 draftCanonicalContentHash（可复现），
-// 绝不伪造 extraction_hash。
+// revision）。内容指纹与旧供给链相同（prompt/reference/choices/rubric），
+// 不含 source 与知识点；近似重复用同一 n-gram 阈值。绝不伪造 extraction_hash。
 //
-// 判分准入钩子：runAdmissionChecks —— 今天的实现 = 既有 gate 语义（KC 活体
-// + exact-dup claim + 逐 unit 判分可判性；dual independent solve 与 per-unit
-// calibration 由另一 lane 挂同一调用点）。返回 withheld 时给出逐 unit 原因，
-// 绝不发明准入。
+// 判分准入：runAdmissionChecks 仍只做死 KC 与逐 unit 可判性，不把新题自动
+// 判成 admitted。已经 admitted 的组在内容编辑后保留原证据（练习池与发题
+// 继续一致）；新题和本来 withheld 的组保持 withheld。
 
 const DRAFT_SUBMIT_ACTION = 'experimental:question_draft_submit';
 
@@ -104,6 +120,7 @@ export type SubmitResult =
         | 'not_a_draft'
         | 'invalid_request'
         | 'duplicate_exact'
+        | 'near_dup'
         | 'publish_conflict';
       detail: string;
       question_id?: string;
@@ -229,58 +246,100 @@ function deriveKind(doc: QuestionDraftDocumentT): string {
   return 'composite';
 }
 
-function projectPrompt(doc: QuestionDraftDocumentT): string {
-  if (doc.parts.length === 1) return doc.parts[0].prompt_md;
-  const stem = doc.parts
-    .flatMap((p) => p.material_ids)
-    .map((id) => doc.materials.find((m) => m.material_id === id))
-    .find((m) => m != null && m.caption === 'stem/shared context');
-  if (stem?.content_md != null) return stem.content_md;
-  return doc.parts
-    .map((p) => p.prompt_md)
-    .filter((t) => t.trim().length > 0)
-    .join('\n\n');
+const NEAR_DUP_POOL_LIMIT = 100;
+
+function draftCarriesFigure(doc: QuestionDraftDocumentT): boolean {
+  return doc.materials.some((material) => material.kind === 'figure');
 }
 
-function projectReference(doc: QuestionDraftDocumentT): string | null {
-  const texts: string[] = [];
-  for (const part of doc.parts) {
-    for (const unit of part.units) {
-      if (unit.key?.kind === 'blank') {
-        texts.push(
-          unit.key.key.kind === 'text'
-            ? unit.key.key.accepted.join(' / ')
-            : String(unit.key.key.value),
-        );
-      } else if (unit.key?.kind === 'select') {
-        const byId = new Map(
-          unit.response_spec.kind === 'select'
-            ? unit.response_spec.items.map((i) => [i.item_id, i] as const)
-            : [],
-        );
-        const labels = unit.key.accepted_item_ids
-          .map((id) => byId.get(id))
-          .map((item) =>
-            item != null && unit.response_spec.kind === 'select'
-              ? String.fromCharCode(
-                  65 + unit.response_spec.items.findIndex((i) => i.item_id === item.item_id),
-                )
-              : '',
-          )
-          .filter((label) => label.length > 0);
-        if (labels.length > 0) texts.push(labels.join(''));
-      } else if (unit.reference_md != null) {
-        texts.push(unit.reference_md);
-      }
+/** 已准入的内容编辑保留原证据。新题和未准入的组继续 withheld，不在这里自动准入。 */
+function admissionForContentEdit(
+  lifecycle: typeof question_group_lifecycle.$inferSelect | undefined,
+  checks: AdmissionCheckResult,
+): PublishAdmission {
+  if (lifecycle?.scoring_admission_state !== 'admitted') return checks.admission;
+  const parsed = AdmissionEvidence.safeParse(lifecycle.scoring_admission_evidence);
+  if (!parsed.success || parsed.data.verification.structural_check_passed !== true) {
+    return checks.admission;
+  }
+  const independent = parsed.data.verification.independent_verification;
+  if (independent != null && independent.passed !== true) return checks.admission;
+  return { state: 'admitted', evidence: parsed.data };
+}
+
+function presentationForDraft(
+  doc: QuestionDraftDocumentT,
+  contract: DraftContract,
+): PresentationT | null {
+  if (doc.presentation != null) {
+    const shaped = Presentation.safeParse(doc.presentation);
+    if (shaped.success) {
+      const issues = validatePresentation(
+        shaped.data,
+        contract.structure,
+        contract.response_spec,
+        contract.scoring_basis,
+      );
+      if (issues.length === 0) return shaped.data;
     }
   }
-  return texts.length > 0 ? texts.join('\n\n') : null;
+  return defaultPresentation(contract.structure, contract.response_spec, contract.scoring_basis);
 }
 
-function projectChoices(doc: QuestionDraftDocumentT): string[] | null {
-  const unit = doc.parts.flatMap((p) => p.units).find((u) => u.response_spec.kind === 'select');
-  if (unit == null || unit.response_spec.kind !== 'select') return null;
-  return unit.response_spec.items.map((i) => i.label_md ?? i.item_id);
+async function attributableSourceIssue(
+  tx: Tx,
+  doc: QuestionDraftDocumentT,
+  isNew: boolean,
+): Promise<{ code: string; detail: string } | null> {
+  const source = doc.source;
+  if (source == null) {
+    if (!isNew) return null;
+    return { code: 'missing_source', detail: 'document has no attributable source' };
+  }
+  if (source.kind !== 'adapted') return null;
+  const from = source.adapted_from_question_id;
+  if (from == null || from.length === 0) {
+    return {
+      code: 'missing_source',
+      detail: 'adapted source requires adapted_from_question_id',
+    };
+  }
+  const [row] = await tx
+    .select({ id: question.id })
+    .from(question)
+    .where(eq(question.id, from))
+    .limit(1);
+  if (row == null) {
+    return {
+      code: 'missing_source',
+      detail: `adapted_from_question_id '${from}' does not exist`,
+    };
+  }
+  return null;
+}
+
+async function nearDuplicateInKnowledge(
+  tx: Tx,
+  knowledgeIds: string[],
+  promptMd: string,
+  excludeQuestionId: string,
+): Promise<{ overlap: number; poolSize: number } | null> {
+  if (knowledgeIds.length === 0) return null;
+  const predicates = knowledgeIds.map(
+    (id) => sql`${question.knowledge_ids} @> ${JSON.stringify([id])}::jsonb`,
+  );
+  const rows = await tx
+    .select({ id: question.id, prompt_md: question.prompt_md })
+    .from(question)
+    .where(and(or(...predicates), ne(question.id, excludeQuestionId)))
+    .orderBy(desc(question.created_at))
+    .limit(NEAR_DUP_POOL_LIMIT);
+  const overlap = maxNgramOverlap(
+    promptMd,
+    rows.map((row) => row.prompt_md),
+  );
+  if (overlap < DEDUP_OVERLAP_THRESHOLD) return null;
+  return { overlap, poolSize: rows.length };
 }
 
 // ---------- 主入口 ----------
@@ -436,15 +495,8 @@ export async function submitDraftQuestion(
         })),
         request_id: requestId,
       };
-      await writeSubmitReceiptEvent(
-        tx,
-        { kind: 'question_block', id: block.id },
-        requestId,
-        fingerprint,
-        withheld,
-        ctx,
-        now,
-      );
+      // 未发布的 withheld 不写回执。确定性 request_id（proposal-submit）否则会
+      // 重放这次失败，知识点恢复后 accept 仍 422。
       return withheld;
     }
 
@@ -487,34 +539,41 @@ export async function submitDraftQuestion(
         per_unit: admission.per_unit,
         request_id: requestId,
       };
-      await writeSubmitReceiptEvent(
-        tx,
-        { kind: 'question_block', id: block.id },
-        requestId,
-        fingerprint,
-        withheld,
-        ctx,
-        now,
-      );
       return withheld;
     }
 
     // ---- question 工作副本行（投影；revision 才是判分真相） ----
-    const canonicalHash = draftCanonicalContentHash(doc);
+    const identity = draftCanonicalIdentity(doc);
+    const canonicalHash = canonicalQuestionContentHash(identity);
     const structuredProjection = draftDocumentToStructuredQuestion(doc);
-    const questionSource =
-      SOURCE_KIND_TO_QUESTION_SOURCE[doc.source?.kind ?? 'generated'] ?? 'quiz_gen';
-    const promptMd = projectPrompt(doc);
-    const referenceMd = projectReference(doc);
-    const choicesMd = projectChoices(doc);
+    const promptMd = identity.promptMd;
+    const referenceMd = identity.referenceMd;
+    const choicesMd = identity.choicesMd;
     // 工作副本行存在与否决定 insert vs update（lifecycle 为空 ≠ 行不存在：
     // 从未发布过的 legacy 行没有 lifecycle）。
     const [existingRow] = await tx
-      .select({ id: question.id })
+      .select({ id: question.id, source: question.source })
       .from(question)
       .where(eq(question.id, groupId))
       .limit(1);
     const isNew = existingRow == null;
+    const sourceIssue = await attributableSourceIssue(tx, doc, isNew);
+    if (sourceIssue != null) {
+      const withheld: SubmitResult = {
+        status: 'withheld',
+        published: false,
+        detail: sourceIssue.detail,
+        issues: [sourceIssue],
+        per_unit: admission.per_unit,
+        request_id: requestId,
+      };
+      return withheld;
+    }
+    const questionSource =
+      doc.source != null
+        ? (SOURCE_KIND_TO_QUESTION_SOURCE[doc.source.kind] ?? 'quiz_gen')
+        : (existingRow?.source ?? 'manual');
+    const effectiveAdmission = admissionForContentEdit(lifecycle, admission);
     if (isNew) {
       // live 去重 claim：canonical hash 占用者存在 ⇒ cross-KC merge（与供给
       // 链同语义）；否则插入新行。
@@ -544,6 +603,27 @@ export async function submitDraftQuestion(
           now,
         );
         return conflict;
+      }
+      if (!draftCarriesFigure(doc)) {
+        const near = await nearDuplicateInKnowledge(tx, doc.knowledge_ids, promptMd, groupId);
+        if (near != null) {
+          const conflict: SubmitResult = {
+            status: 'conflict',
+            reason: 'near_dup',
+            detail: `n-gram overlap ${near.overlap.toFixed(3)} ≥ ${DEDUP_OVERLAP_THRESHOLD}（KC 池 ${near.poolSize} 题）`,
+            request_id: requestId,
+          };
+          await writeSubmitReceiptEvent(
+            tx,
+            { kind: 'question_block', id: block.id },
+            requestId,
+            fingerprint,
+            conflict,
+            ctx,
+            now,
+          );
+          return conflict;
+        }
       }
       await tx.insert(question).values({
         id: groupId,
@@ -586,7 +666,7 @@ export async function submitDraftQuestion(
       // 时保留既有 admitted 内容不动（legacy 选择器只认 draft_status /
       // suspended / withdrawn —— Codex P1：未验证的新 prompt/answer 不得
       // 抢先被练习池服务）。真正 admitted 时更新内容列。
-      if (admission.admission.state === 'admitted') {
+      if (effectiveAdmission.state === 'admitted') {
         await tx
           .update(question)
           .set({
@@ -605,6 +685,17 @@ export async function submitDraftQuestion(
     }
 
     // ---- 唯一发布 seam ----
+    const presentation = presentationForDraft(doc, contract);
+    const integrityDigest =
+      presentation != null
+        ? contractIntegrityDigest({
+            structure: contract.structure,
+            response_spec: contract.response_spec,
+            scoring_basis: contract.scoring_basis,
+            execution_plan: contract.execution_plan,
+            presentation,
+          })
+        : contract.integrity_digest;
     const publishResult = await publishQuestionGroup(tx, {
       group_id: groupId,
       contract: {
@@ -612,16 +703,18 @@ export async function submitDraftQuestion(
         response_spec: contract.response_spec,
         scoring_basis: contract.scoring_basis,
         execution_plan: contract.execution_plan,
-        integrity_digest: contract.integrity_digest,
+        integrity_digest: integrityDigest,
+        ...(presentation != null ? { presentation } : {}),
       },
       expectedCurrentRevision: currentRevisionId,
       expectedAdmissionGeneration: lifecycle?.scoring_admission_generation ?? null,
       availability:
         input.availability ??
+        lifecycle?.availability ??
         (questionSource === 'web_sourced' || questionSource === 'quiz_gen'
           ? 'general_pool'
           : 'container_only'),
-      admission: admission.admission,
+      admission: effectiveAdmission,
       actorRef: `submit_question:${ctx.actorRef}`,
       publishedBy: AgentRef.parse({ by: 'ai', task_kind: 'submit_question' }),
       now,
@@ -671,7 +764,7 @@ export async function submitDraftQuestion(
     const receipt: SubmitResult = {
       // 状态判别序：withheld（闸拒） > pending（已提交待验证） > admitted。
       status:
-        admission.admission.state === 'withheld'
+        effectiveAdmission.state === 'withheld'
           ? 'withheld'
           : verifyEnqueued === true
             ? 'pending'
