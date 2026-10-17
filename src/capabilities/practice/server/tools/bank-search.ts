@@ -33,8 +33,8 @@ import { embedText } from '@/server/ai/embed';
 import { canonicalKindToPersistedForms } from '@/subjects/question-kind';
 import { questionVectorInvalidReason } from '../../jobs/embed_backfill';
 import { EvidenceDemandV1 } from '../question-supply/evidence-demand';
-import { MATCHER_COSINE_MAX_DISTANCE } from '../quiz/matcher';
 import { encodeBankRef, readBankServableParts, resolveBankRefs } from './bank-ref';
+import { BANK_VECTOR_RETRIEVAL_MAX_DISTANCE, bankVectorCountedRank } from './bank-vector-retrieval';
 
 /** 每个召回通道的截断上限（OOM 保护；命中即 retrieval_truncated=true）。 */
 export const BANK_SEARCH_CHANNEL_CAP = 200;
@@ -219,8 +219,14 @@ export interface BankSearchMatchEvidence {
   /** prompt_md 原文前缀（定位摘录；截断以 … 标记，绝不改写原文）。 */
   excerpt: string;
   /** fts 命中的强度：'strong' 计入 coverage.verdict；'weak'（只共享个别词项）留在
-   * 候选列表但不抬 verdict。vector 命中恒计入，无此字段。 */
+   * 候选列表但不抬 verdict。vector 命见 counted —— 规则见 bank-vector-retrieval.ts。 */
   strength?: 'strong' | 'weak';
+  /** vector 专有：命中时该题向量与查询向量的 cosine 距离（pgvector `<=>`，越小越近）。 */
+  distance?: number;
+  /** vector 专有：是否通过 YUK-1516 检索计入规则（天花板 + top-1 margin）——只有
+   * counted=true 的向量命中抬 coverage.verdict；false = 只在候选列表展示，语义同
+   * fts weak（缺题科目照常 mint gap_request）。 */
+  counted?: boolean;
 }
 
 export interface BankSearchHit {
@@ -251,8 +257,9 @@ export interface BankSearchCoverage {
   gap_request: z.infer<typeof BankGapRequestSchema> | null;
   /** 融合候选池的实际数量（有限池，不是语义匹配总数；含 weak 词法命中）。 */
   candidate_pool_size: number;
-  /** 计入 verdict 的候选数：fts 强命中 ∪ 向量命中。weak 词法命中不计入——
-   * 只靠个别 bigram 碰词的题不能把一个缺题科目顶成 enough/sparse。 */
+  /** 计入 verdict 的候选数：fts 强命中 ∪ 通过检索规则的向量命中（ceiling + top-1
+   * margin，见 bank-vector-retrieval.ts）。weak 词法命中与 counted=false 的向量命中
+   * 不计入——只靠碰词或无 decisive 领先幅度的题不能把缺题科目顶成 enough/sparse。 */
   counted_pool_size: number;
   /** 任一通道命中截断上限（翻完本池 ≠ 搜索全库穷尽）。 */
   retrieval_truncated: boolean;
@@ -292,7 +299,7 @@ export interface BankSearchOutput {
 
 const BankSearchCursorSchema = z
   .object({
-    v: z.literal(2),
+    v: z.literal(3),
     q: z.string().trim().min(1).max(400),
     scope: BankSearchScopeSchema,
     limit: z.number().int().min(1).max(50),
@@ -307,8 +314,29 @@ const BankSearchCursorSchema = z
               .array(z.enum(['fts', 'vector']))
               .min(1)
               .max(2),
+            // YUK-1516 — 向量命中随游标携带检索时的 cosine 距离（vd）与计入规则判定
+            // （vc）：续页不再 embed（无查询向量可重算），match_evidence 的 distance /
+            // counted 只能由游标还原；快照 hash 也因此保持可重算一致。
+            vd: z.number().finite().min(0).max(4).optional(),
+            vc: z.boolean().optional(),
           })
-          .strict(),
+          .strict()
+          .superRefine((entry, ctx) => {
+            const isVector = entry.channels.includes('vector');
+            if (isVector && (entry.vd === undefined || entry.vc === undefined)) {
+              ctx.addIssue({
+                code: 'custom',
+                message:
+                  'pool entries with the vector channel must carry vd (distance) and vc (counted)',
+              });
+            }
+            if (!isVector && (entry.vd !== undefined || entry.vc !== undefined)) {
+              ctx.addIssue({
+                code: 'custom',
+                message: 'pool entries without the vector channel must not carry vd/vc',
+              });
+            }
+          }),
       )
       .max(BANK_SEARCH_CHANNEL_CAP * 2),
     snapshot_hash: z.string().regex(/^[a-f0-9]{64}$/),
@@ -787,12 +815,23 @@ async function runSearchBankInSnapshot(
   let fused: RrfFused[];
   let unavailable: BankSearchCoverage['unavailable_channels'];
   let retrievalTruncated: boolean;
+  // YUK-1516 — 向量命中逐题携带检索时的 cosine 距离与计入规则判定，供
+  // match_evidence / counted_pool_size / 续页游标还原使用（新检索由通道 B 填，
+  // 续页由 cursor.pool 还原——续页不 embed，无查询向量可重算）。
+  let vectorMeta = new Map<string, { distance: number; counted: boolean }>();
   if (cursor) {
     // Resume the original bounded pool. New rows/ranks never replace earlier results,
     // and pagination makes no additional embedding/provider call.
     fused = cursor.pool.map((hit) => ({ ...hit, score: 0 }));
     unavailable = cursor.unavailable_channels;
     retrievalTruncated = cursor.retrieval_truncated;
+    vectorMeta = new Map(
+      cursor.pool.flatMap((hit) =>
+        hit.vd !== undefined && hit.vc !== undefined
+          ? [[hit.id, { distance: hit.vd, counted: hit.vc }]]
+          : [],
+      ),
+    );
   } else {
     // ── 通道 A：Postgres FTS（simple + CJK 逐字切分；宽召回 OR + 命中强度）──
     // 弱命中排通道尾部：RRF 位置靠后 → 融合序也落在强命中之下（向量救回的除外）。
@@ -871,24 +910,31 @@ async function runSearchBankInSnapshot(
     ];
 
     let vectorTruncated = false;
-    let vectorRows: Array<{ id: string; created_at: Date }> = [];
+    let vectorRows: Array<{ id: string; distance: number }> = [];
     if (vectorResult.vector != null) {
       const distanceExpr = sql<number>`(${question.embedding} <=> ${toSqlVector(vectorResult.vector)}::vector)`;
+      // YUK-1516 — 召回取最近 CAP+1 行、不在 SQL 里加距离天花板：判 top-1 margin
+      // 需要全库（硬过滤后）真实的 rank-2，哪怕它落在天花板之外（正确目标的第二名
+      // 往往在 0.6+）。截断只会藏掉第 CAP+1 名之后的名次，rank-1/rank-2 永远在前两行，
+      // 判定不受影响。天花板筛选与计入规则在应用层执行（bank-vector-retrieval.ts）。
       const vecAll = await db
-        .select({ id: question.id, created_at: question.created_at })
+        .select({ id: question.id, distance: distanceExpr })
         .from(question)
         .leftJoin(question_group_lifecycle, eq(question_group_lifecycle.group_id, question.id))
-        .where(
-          and(
-            where,
-            sql`${question.embedding} IS NOT NULL`,
-            sql`${distanceExpr} <= ${MATCHER_COSINE_MAX_DISTANCE}`,
-          ),
-        )
+        .where(and(where, sql`${question.embedding} IS NOT NULL`))
         .orderBy(sql`${distanceExpr} ASC`)
         .limit(BANK_SEARCH_CHANNEL_CAP + 1);
-      vectorTruncated = vecAll.length > BANK_SEARCH_CHANNEL_CAP;
-      vectorRows = vecAll.slice(0, BANK_SEARCH_CHANNEL_CAP);
+      const countedRank = bankVectorCountedRank(vecAll.map((row) => row.distance));
+      const qualified = vecAll.filter((row) => row.distance <= BANK_VECTOR_RETRIEVAL_MAX_DISTANCE);
+      // ⇔ 第 CAP+1 近的题仍在天花板内：天花板内候选 ≥ CAP+1，池被截断。
+      vectorTruncated = qualified.length > BANK_SEARCH_CHANNEL_CAP;
+      vectorRows = qualified.slice(0, BANK_SEARCH_CHANNEL_CAP);
+      vectorMeta = new Map(
+        vectorRows.map((row, i) => [
+          row.id,
+          { distance: row.distance, counted: i === countedRank },
+        ]),
+      );
       channels.push({ name: 'vector', hits: vectorRows.map((r, i) => ({ id: r.id, rank: i })) });
     } else {
       unavailable.push('vector');
@@ -910,7 +956,8 @@ async function runSearchBankInSnapshot(
   const pageIds = fused.map((hit) => hit.id);
 
   const hits: BankSearchHit[] = [];
-  // 计入 verdict 的候选数：fts 强命中 ∪ 向量命中；weak 词法命中只在列表展示。
+  // 计入 verdict 的候选数：fts 强命中 ∪ 通过检索规则的向量命中（counted=true）；
+  // weak 词法命中与 counted=false 的向量命中只在列表展示。
   let countedPoolSize = 0;
   if (pageIds.length > 0) {
     const cardRows = await db
@@ -974,7 +1021,8 @@ async function runSearchBankInSnapshot(
     for (const fusedHit of fused) {
       const row = cardById.get(fusedHit.id);
       if (row == null) continue; // 翻页窗口内被删——如实跳过
-      if (fusedHit.channels.includes('vector') || row.fts_strong === true) countedPoolSize++;
+      const vectorCounted = vectorMeta.get(fusedHit.id)?.counted === true;
+      if (vectorCounted || row.fts_strong === true) countedPoolSize++;
       const currentRevision =
         row.lc_current_revision_id != null
           ? revisionDigestById.get(row.lc_current_revision_id)
@@ -982,12 +1030,23 @@ async function runSearchBankInSnapshot(
       const missing: string[] = [];
       if (currentRevision == null) missing.push('no_published_revision');
       const evidence: BankSearchMatchEvidence[] = fusedHit.channels.map(
-        (channel): BankSearchMatchEvidence => ({
-          channel: channel as BankSearchMatchEvidence['channel'],
-          excerpt: preview(row.prompt_md, 160),
-          // vector 命中不带 strength——向量恒计入 verdict；fts 命中按强度标注。
-          ...(channel === 'fts' ? { strength: row.fts_strong ? 'strong' : 'weak' } : {}),
-        }),
+        (channel): BankSearchMatchEvidence => {
+          if (channel === 'vector') {
+            const meta = vectorMeta.get(fusedHit.id);
+            return {
+              channel: 'vector',
+              excerpt: preview(row.prompt_md, 160),
+              // YUK-1516 — 距离与计入判定随证据器输出；counted=false 的向量命中
+              // 只在候选列表展示（同 fts weak），不抬 verdict。不带 strength。
+              ...(meta !== undefined ? { distance: meta.distance, counted: meta.counted } : {}),
+            };
+          }
+          return {
+            channel: 'fts',
+            excerpt: preview(row.prompt_md, 160),
+            strength: row.fts_strong ? 'strong' : 'weak',
+          };
+        },
       );
       const { tier, name } = deriveSourceTier({ source: row.source, metadata: row.metadata });
       hits.push({
@@ -1030,17 +1089,21 @@ async function runSearchBankInSnapshot(
   const hitIds = new Set(hits.map((hit) => hit.question_id));
   const nextCursor = hasMore
     ? encodeBankSearchCursor({
-        v: 2,
+        v: 3,
         q: effectiveQuery,
         scope,
         limit,
         offset: offset + limit,
         pool: fused
           .filter((hit) => hitIds.has(hit.id))
-          .map(({ id, channels }) => ({
-            id,
-            channels: channels as Array<'fts' | 'vector'>,
-          })),
+          .map((hit) => {
+            const meta = hit.channels.includes('vector') ? vectorMeta.get(hit.id) : undefined;
+            return {
+              id: hit.id,
+              channels: hit.channels as Array<'fts' | 'vector'>,
+              ...(meta !== undefined ? { vd: meta.distance, vc: meta.counted } : {}),
+            };
+          }),
         snapshot_hash: snapshotHash,
         expires_at: cursor?.expires_at ?? Date.now() + 15 * 60_000,
         retrieval_truncated: retrievalTruncated,
@@ -1088,8 +1151,9 @@ async function runSearchBankInSnapshot(
   enforced.push(`admission_state=${scope.admission_state}`);
   enforced.push('top-level questions only (composite parts read via their group)');
 
-  // verdict 只数「能算作主题覆盖」的候选：fts 强命中 + 向量命中。候选池里全
-  // 是碰词的 weak 命中时照旧 none——缺题事实不被宽召回掩盖，gap_request 照发。
+  // verdict 只数「能算作主题覆盖」的候选：fts 强命中 + 通过检索规则（ceiling +
+  // top-1 margin）的向量命中。候选池里全是碰词的 weak 命中、或向量命中无 decisive
+  // 领先幅度时照旧 none——缺题事实不被宽召回掩盖，gap_request 照发。
   const verdict = countedPoolSize === 0 ? 'none' : countedPoolSize < limit ? 'sparse' : 'enough';
   const unsatisfied = {
     query: effectiveQuery,
