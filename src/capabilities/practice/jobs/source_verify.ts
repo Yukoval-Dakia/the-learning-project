@@ -71,6 +71,14 @@ import {
 
 export interface SourceVerifyJobData {
   question_ids: string[];
+  /**
+   * YUK-1514 — owner-initiated recheck (POST .../serving-actions/recheck_source).
+   * The command event id bypasses the terminal-event idempotency guard ONLY
+   * for this command: at most one paid run per command event, because the
+   * guard short-circuits once a terminal event carries the same
+   * recheck_command_event_id.
+   */
+  recheck?: { command_event_id: string };
 }
 
 // Loose run seam (mirrors quiz_verify): the handler + solve-check only consume
@@ -111,6 +119,14 @@ export interface RunSourceVerifyParams {
   // inject a stub to drive grounded / not_grounded / transient without real R2 / VLM spend;
   // production defaults to runSourceGroundingVerify (→ SourceGroundingVerifyTask).
   sourceGroundingFn?: SourceGroundingFn;
+  /**
+   * YUK-1514 — owner recheck command id. When set, the terminal-event guard
+   * below only short-circuits a terminal event that carries THIS id (a
+   * redelivered/replayed command never pays twice); the first run for this
+   * command proceeds past prior terminal events, and the new terminal event
+   * supersedes them for downstream projections (latest wins).
+   */
+  recheckCommandEventId?: string;
 }
 
 export interface RunSourceVerifyResult {
@@ -376,6 +392,9 @@ export async function runSourceVerify(
   // Idempotency: only a TERMINAL verify event short-circuits a re-run (outcome !=
   // 'error'). The catch-bottom writes a TRANSIENT-error event with outcome='error'
   // so a one-off LLM/DB blowup doesn't strand the draft (mirrors quiz_verify).
+  // YUK-1514 — an owner recheck bypasses prior terminal events but stays
+  // claim-scoped: only a terminal event carrying THIS recheck_command_event_id
+  // short-circuits, so a redelivered job / replayed key can never pay twice.
   const existingVerify = await db
     .select({ id: event.id })
     .from(event)
@@ -385,6 +404,9 @@ export async function runSourceVerify(
         eq(event.subject_kind, 'question'),
         eq(event.subject_id, questionId),
         ne(event.outcome, 'error'),
+        params.recheckCommandEventId != null
+          ? sql`${event.payload}->>'recheck_command_event_id' = ${params.recheckCommandEventId}`
+          : sql`true`,
       ),
     )
     .limit(1);
@@ -875,6 +897,11 @@ export async function runSourceVerify(
           question_id: questionId,
           tier: 2,
           promoted: promote,
+          // YUK-1514 — marks this terminal run as the paid attempt of an owner
+          // recheck command; the terminal-event guard is claim-scoped on it.
+          ...(params.recheckCommandEventId != null
+            ? { recheck_command_event_id: params.recheckCommandEventId }
+            : {}),
           // YUK-479 — true when this FAIL demoted a cold-start pre-promoted draft
           // (draft_status active→draft); false on a normal draft FAIL (no-op) and on promote.
           demoted: wasDemoted,
@@ -949,6 +976,9 @@ export async function runSourceVerify(
         outcome: 'error',
         payload: {
           question_id: questionId,
+          ...(params.recheckCommandEventId != null
+            ? { recheck_command_event_id: params.recheckCommandEventId }
+            : {}),
           // YUK-350 (B5 increment C) — unified verify contract shape via the system_error
           // projection: { axes:[], overall:'error', failure_class:'system_error',
           // summary_md, confidence:0 }. failure_class is byte-identical to the prior
@@ -988,8 +1018,14 @@ export function buildSourceVerifyHandler(
         console.warn('[source_verify] job missing question_ids', job.id);
         continue;
       }
+      const recheckCommandEventId = job.data?.recheck?.command_event_id;
       for (const questionId of questionIds) {
-        const result = await runSourceVerify({ db, questionId, runTaskFn });
+        const result = await runSourceVerify({
+          db,
+          questionId,
+          runTaskFn,
+          ...(recheckCommandEventId != null ? { recheckCommandEventId } : {}),
+        });
         console.log(`[source_verify] ${questionId} -> ${result.status}`);
       }
     }

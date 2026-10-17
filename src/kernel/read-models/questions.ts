@@ -464,12 +464,12 @@ async function attachServingToItems(
     for (const child of item.children) flat.push(child);
   };
   for (const item of items) collect(item);
-  const groupOf = (item: QuestionListItem) => item.parent_question_id ?? item.id;
-  const missing = [...new Set(flat.map(groupOf))].filter((id) => !precomputed?.has(id));
+  // Per-ITEM attachment (P1-3): a composite child reports its own per-part
+  // verdict, not the group's shared one.
+  const missing = [...new Set(flat.map((item) => item.id))].filter((id) => !precomputed?.has(id));
   const extra = missing.length > 0 ? await readQuestionServing(db, missing) : null;
   for (const item of flat) {
-    const groupId = groupOf(item);
-    item.serving = precomputed?.get(groupId) ?? extra?.get(groupId) ?? { ...UNKNOWN_SERVING };
+    item.serving = precomputed?.get(item.id) ?? extra?.byId.get(item.id) ?? { ...UNKNOWN_SERVING };
   }
 }
 
@@ -517,11 +517,15 @@ export async function listQuestions(
   let servingById: Map<string, QuestionServing> | undefined;
   let servingCounts: ServingCounts | undefined;
   if (needServingPass) {
-    servingById = await readQuestionServing(
+    const servingRead = await readQuestionServing(
       db,
       derived.map((c) => c.row.id),
     );
-    servingCounts = aggregateServingCounts(servingById.values());
+    servingById = servingRead.byId;
+    servingCounts = aggregateServingCounts(
+      servingRead.byId.values(),
+      servingRead.legacyUnpublished,
+    );
     if (params.notServable) {
       derived = derived.filter((c) => servingById?.get(c.row.id)?.servable === false);
     }
@@ -897,11 +901,15 @@ async function expandRootFamily(
   let servingById: Map<string, QuestionServing> | undefined;
   let servingCounts: ServingCounts | undefined;
   if (needServingPass) {
-    servingById = await readQuestionServing(
+    const servingRead = await readQuestionServing(
       db,
       derived.map((c) => c.row.id),
     );
-    servingCounts = aggregateServingCounts(servingById.values());
+    servingById = servingRead.byId;
+    servingCounts = aggregateServingCounts(
+      servingRead.byId.values(),
+      servingRead.legacyUnpublished,
+    );
     if (params.notServable) {
       derived = derived.filter((c) => servingById?.get(c.row.id)?.servable === false);
     }

@@ -79,6 +79,9 @@ export const QuestionServingSchema = z.object({
 export const QuestionServingCountsSchema = z.object({
   not_servable_total: z.number().int().nonnegative(),
   by_reason: z.record(QuestionHoldReasonSchema, z.number().int().nonnegative()),
+  /** Rows with no lifecycle record (never published) — included in
+   * not_servable_total, excluded from by_reason. Additive optional key. */
+  legacy_unpublished: z.number().int().nonnegative().optional(),
 });
 export const QuestionServingActionParamsSchema = z.object({
   id: z.string().trim().min(1),

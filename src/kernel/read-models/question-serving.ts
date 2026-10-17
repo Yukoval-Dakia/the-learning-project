@@ -17,12 +17,14 @@ import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import {
   type AutomaticServingDecision,
   PublishedQuestionRevision,
+  type PublishedQuestionRevisionT,
   type ServingUnavailableReason,
   decideAutomaticServing,
 } from '@/core/schema/assessment';
 import type { Db, Tx } from '@/db/client';
 import {
   event,
+  paid_effect,
   question,
   question_admission_verification,
   question_group_lifecycle,
@@ -56,6 +58,12 @@ export const SERVING_ACTION_EVENT_ACTION = 'experimental:question_serving_action
 export const SERVING_ADMISSION_JOB = 'question_admission_run' as const;
 export const SERVING_SOURCE_VERIFY_JOB = 'source_verify' as const;
 
+/** paid_effect family of the admission claim (mirrors ADMISSION_FAMILY in
+ * practice/server/admission/enqueue.ts — duplicated as a literal because
+ * kernel may not import capability modules). */
+const PAID_EFFECT_ADMISSION_FAMILY = 'question_admission_run' as const;
+const PAID_EFFECT_ADMISSION_UNIT = 'admission@1' as const;
+
 /** UI contract: awaiting_admission offers no action for the first N hours. */
 export const AWAITING_ADMISSION_REVERIFY_AFTER_MS = 6 * 60 * 60 * 1000;
 
@@ -77,6 +85,9 @@ export interface QuestionServing {
 export interface ServingCounts {
   not_servable_total: number;
   by_reason: Partial<Record<ServingHoldReason, number>>;
+  /** Rows with no lifecycle record at all — counted in not_servable_total and
+   * by_reason-neutral (the contract keeps this key additive/optional). */
+  legacy_unpublished: number;
 }
 
 const NOT_SERVABLE: QuestionServing = {
@@ -124,20 +135,34 @@ type ServingJobRow = Record<string, unknown> & {
   data: unknown;
 };
 
+export interface QuestionServingRead {
+  /** One serving projection per INPUT question id (a part row reports its own
+   * per-part verdict; pending_action stays group-level). */
+  byId: Map<string, QuestionServing>;
+  /** Input ids whose group has no question_group_lifecycle row — never
+   * published (or published before lifecycle existed). Not servable, no
+   * hold_reason, counted in legacy_unpublished. */
+  legacyUnpublished: Set<string>;
+}
+
 /**
- * Batch serving derivation for group-root question ids. A part id resolves to
- * its parent group (parent_question_id ?? id). Returns one entry per INPUT id.
- * Batched — four relation reads + one pgboss probe for any page size.
+ * Batch serving derivation for question ids (roots or parts). A part id
+ * resolves to its parent group (parent_question_id ?? id) for the shared
+ * lifecycle facts, but its servable/hold_reason comes from the issuance
+ * gate's own per-part check — mirroring the real issuance binding: a root is
+ * checked with ONE decideAutomaticServing(revision, allPartIds), a part with
+ * [partId]. Batched — five relation reads + one pgboss probe for any page.
  */
 export async function readQuestionServing(
   db: Db | Tx,
   questionIds: readonly string[],
   options: { now?: Date } = {},
-): Promise<Map<string, QuestionServing>> {
+): Promise<QuestionServingRead> {
   const now = options.now ?? new Date();
   const result = new Map<string, QuestionServing>();
+  const legacyUnpublished = new Set<string>();
   const ids = [...new Set(questionIds)];
-  if (ids.length === 0) return result;
+  if (ids.length === 0) return { byId: result, legacyUnpublished };
 
   const rows = await db
     .select({
@@ -196,6 +221,42 @@ export async function readQuestionServing(
   >();
   for (const row of verifyRows) {
     if (!latestVerifyByGroup.has(row.groupId)) latestVerifyByGroup.set(row.groupId, row);
+  }
+
+  // Applied paid-effect verdicts for the CURRENT revision digest, per group.
+  // reverify cannot change an applied verdict for an identical base — the
+  // claim never re-pays it — so its presence suppresses next_action and turns
+  // a second reverify call into a 409 (the command enforces the same read).
+  const appliedRows = groupIds.length
+    ? await db
+        .select({
+          groupId: paid_effect.entity_id,
+          entityRevision: paid_effect.entity_revision,
+          application: paid_effect.application_json,
+          createdAt: paid_effect.created_at,
+        })
+        .from(paid_effect)
+        .where(
+          and(
+            eq(paid_effect.family, PAID_EFFECT_ADMISSION_FAMILY),
+            inArray(paid_effect.entity_id, groupIds),
+            eq(paid_effect.unit, PAID_EFFECT_ADMISSION_UNIT),
+            eq(paid_effect.state, 'applied'),
+          ),
+        )
+        .orderBy(desc(paid_effect.created_at))
+    : [];
+  const appliedByGroupDigest = new Map<string, { status: string | null }>();
+  for (const row of appliedRows) {
+    const key = `${row.groupId}|${row.entityRevision}`;
+    if (appliedByGroupDigest.has(key)) continue;
+    const status =
+      row.application != null &&
+      typeof row.application === 'object' &&
+      typeof (row.application as Record<string, unknown>).status === 'string'
+        ? ((row.application as Record<string, unknown>).status as string)
+        : null;
+    appliedByGroupDigest.set(key, { status });
   }
 
   // Serving command events per group, newest first — pending_action's event
@@ -261,6 +322,29 @@ export async function readQuestionServing(
     }
   }
 
+  // Parse each current revision's contract once per group — the part scope
+  // differs per item (root = all parts, part = itself) but the frozen contract
+  // parse is shared.
+  const contractByGroup = new Map<
+    string,
+    { allPartIds: string[]; revision: PublishedQuestionRevisionT | null }
+  >();
+  for (const groupId of groupIds) {
+    const lifecycle = lifecycleByGroup.get(groupId);
+    const revision: RevisionRow | undefined = lifecycle?.current_revision_id
+      ? revisionById.get(lifecycle.current_revision_id)
+      : undefined;
+    if (revision == null) {
+      contractByGroup.set(groupId, { allPartIds: [], revision: null });
+      continue;
+    }
+    const parsed = PublishedQuestionRevision.safeParse(revisionRowToContract(revision));
+    contractByGroup.set(groupId, {
+      allPartIds: parsed.success ? parsed.data.structure.parts.map((part) => part.part_id) : [],
+      revision: parsed.success ? parsed.data : null,
+    });
+  }
+
   for (const id of ids) {
     const row = rowById.get(id);
     if (row == null) {
@@ -268,32 +352,43 @@ export async function readQuestionServing(
       continue;
     }
     const groupId = row.parentId ?? id;
+    const partId = row.parentId != null ? id : null;
     const lifecycle = lifecycleByGroup.get(groupId);
-    const revision: RevisionRow | undefined = lifecycle?.current_revision_id
-      ? revisionById.get(lifecycle.current_revision_id)
-      : undefined;
     const latestVerify = latestVerifyByGroup.get(groupId);
     const commands = commandsByGroup.get(groupId);
+    const contractEntry = contractByGroup.get(groupId);
+    const currentDigest = lifecycle?.current_revision_id
+      ? (revisionById.get(lifecycle.current_revision_id)?.integrity_digest ?? null)
+      : null;
+    const applied =
+      currentDigest != null
+        ? (appliedByGroupDigest.get(`${groupId}|${currentDigest}`) ?? null)
+        : null;
+    if (lifecycle == null) legacyUnpublished.add(id);
 
-    // Frozen-plan serving decision (the issuance gate's own read-only check).
-    // Parts are evaluated individually — a group is servable when at least one
-    // part can be issued (check_bank / bank-search precedent).
-    let anyPartServable = false;
-    let firstUnavailableReason: ServingUnavailableReason | null = null;
-    if (revision != null) {
-      const parsed = PublishedQuestionRevision.safeParse(revisionRowToContract(revision));
-      if (!parsed.success) {
-        firstUnavailableReason = 'invalid_presentation';
-      } else {
-        for (const part of parsed.data.structure.parts) {
-          const decision: AutomaticServingDecision = decideAutomaticServing(parsed.data, [
-            part.part_id,
-          ]);
+    // Frozen-plan serving decision for THIS item's issuance scope: the root
+    // is checked once with every part; a part with only itself.
+    let decisionAdmitted = false;
+    let itemUnavailableReason: ServingUnavailableReason | null = null;
+    if (contractEntry != null) {
+      if (contractEntry.revision == null) {
+        itemUnavailableReason = 'invalid_presentation';
+      } else if (lifecycle?.current_revision_id != null) {
+        const scope = partId != null ? [partId] : contractEntry.allPartIds;
+        try {
+          const decision: AutomaticServingDecision = decideAutomaticServing(
+            contractEntry.revision,
+            scope,
+          );
           if (decision.kind === 'admitted') {
-            anyPartServable = true;
-          } else if (firstUnavailableReason == null) {
-            firstUnavailableReason = decision.reason;
+            decisionAdmitted = true;
+          } else {
+            itemUnavailableReason = decision.reason;
           }
+        } catch {
+          // A part_id absent from the frozen contract (tombstoned) or a
+          // projection error is a fail-closed unavailable without an enum name.
+          itemUnavailableReason = null;
         }
       }
     }
@@ -305,7 +400,7 @@ export async function readQuestionServing(
       !lifecycle.suspended &&
       lifecycle.scoring_admission_state === 'admitted' &&
       !isDraft &&
-      anyPartServable;
+      decisionAdmitted;
 
     const sourceCheckFailed =
       latestVerify?.policyId === 'source_verify@1' && latestVerify.outcome === 'failed';
@@ -324,30 +419,49 @@ export async function readQuestionServing(
             : sourceCheckFailed
               ? 'source_check_failed'
               : 'verify_hold';
-      } else if (lifecycle == null || lifecycle.scoring_admission_state === 'withheld') {
-        const withheldReason = lifecycle?.scoring_admission_withheld_reason ?? null;
-        heldSince = latestVerify?.recordedAt ?? lifecycle?.updated_at ?? row.createdAt;
-        if (withheldReason === 'verification_failed') {
-          holdReason = sourceCheckFailed ? 'source_check_failed' : 'admission_failed';
-        } else if (withheldReason === 'no_admitted_executor') {
+      } else if (lifecycle == null) {
+        // Never published — generic hold, no enum name, no action.
+        holdReason = null;
+        heldSince = null;
+      } else if (lifecycle.scoring_admission_state === 'withheld') {
+        const withheldReason = lifecycle.scoring_admission_withheld_reason;
+        if (sourceCheckFailed) {
+          // The last recorded verdict is a failed SOURCE check — diagnosis and
+          // recovery both route through recheck_source.
+          holdReason = 'source_check_failed';
+          heldSince = latestVerify?.recordedAt ?? lifecycle.updated_at;
+        } else if (
+          applied?.status === 'withheld' ||
+          withheldReason === 'verification_failed' ||
+          withheldReason === 'no_admitted_executor'
+        ) {
+          // An applied failed verdict for the current digest keeps the
+          // diagnosis but loses the button — an identical base is never
+          // re-paid, so reverify cannot change it (edit the content).
           holdReason = 'admission_failed';
+          heldSince = latestVerify?.recordedAt ?? lifecycle.updated_at;
         } else if (withheldReason === 'owner_hold') {
           // Deliberate owner withhold — no enum claims it and no release
           // command undoes it; the UI shows the generic "暂不出题" badge.
           holdReason = null;
+          heldSince = lifecycle.updated_at;
         } else {
+          // Pending this verification cycle — held_since is the cycle start
+          // (the re-pend / latest dimension update), not an earlier verify row.
           holdReason = 'awaiting_admission';
+          heldSince = lifecycle.updated_at;
         }
       } else if (isDraft) {
-        // Admission passed but the row is still a draft awaiting promote.
-        holdReason = 'awaiting_admission';
-        heldSince = lifecycle?.updated_at ?? row.createdAt;
+        // Admission passed but the row is still a draft — same generic-hold
+        // treatment as a never-published row: no enum, no dead button.
+        holdReason = null;
+        heldSince = null;
       } else {
         holdReason =
-          firstUnavailableReason != null
-            ? holdReasonForServingDecision(firstUnavailableReason)
+          itemUnavailableReason != null
+            ? holdReasonForServingDecision(itemUnavailableReason)
             : null;
-        heldSince = lifecycle?.updated_at ?? row.createdAt;
+        heldSince = lifecycle.updated_at;
       }
     }
 
@@ -376,10 +490,16 @@ export async function readQuestionServing(
 
     let nextAction: QuestionServing['next_action'] = null;
     if (!servable && pendingAction == null) {
+      // reverify only exists where a claim could still produce a NEW verdict:
+      // a never-run or stuck pending cycle, or an errored/unknown outcome the
+      // paid-effect claim allows to resume. An applied verdict for the current
+      // digest is terminal — the identical base is never re-paid.
+      const mayReverify = applied == null;
       const command: ServingActionCommand | null =
-        holdReason === 'admission_failed'
+        holdReason === 'admission_failed' && mayReverify
           ? 'reverify'
           : holdReason === 'awaiting_admission' &&
+              mayReverify &&
               heldSince != null &&
               now.getTime() - heldSince.getTime() >= AWAITING_ADMISSION_REVERIFY_AFTER_MS
             ? 'reverify'
@@ -402,12 +522,15 @@ export async function readQuestionServing(
     });
   }
 
-  return result;
+  return { byId: result, legacyUnpublished };
 }
 
 /** Pagination-independent counts over a computed serving set. */
-export function aggregateServingCounts(servings: Iterable<QuestionServing>): ServingCounts {
-  const counts: ServingCounts = { not_servable_total: 0, by_reason: {} };
+export function aggregateServingCounts(
+  servings: Iterable<QuestionServing>,
+  legacyUnpublished: Iterable<string> = [],
+): ServingCounts {
+  const counts: ServingCounts = { not_servable_total: 0, by_reason: {}, legacy_unpublished: 0 };
   for (const serving of servings) {
     if (serving.servable) continue;
     counts.not_servable_total += 1;
@@ -415,5 +538,6 @@ export function aggregateServingCounts(servings: Iterable<QuestionServing>): Ser
       counts.by_reason[serving.hold_reason] = (counts.by_reason[serving.hold_reason] ?? 0) + 1;
     }
   }
+  for (const _ of legacyUnpublished) counts.legacy_unpublished += 1;
   return counts;
 }

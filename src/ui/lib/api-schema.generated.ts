@@ -32980,6 +32980,7 @@ export interface operations {
                             by_reason: {
                                 [key: string]: number;
                             };
+                            legacy_unpublished?: number;
                             not_servable_total: number;
                         };
                         total: number;

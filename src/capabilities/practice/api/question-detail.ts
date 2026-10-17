@@ -86,10 +86,10 @@ export async function GET(req: Request, params: Record<string, string>): Promise
     ) {
       throw new ApiError('not_found', `question ${parsed.data.id} not found`, 404);
     }
-    // YUK-1514 — same serving projection as the list items (group-resolved:
-    // a part row reports its group's hold).
+    // YUK-1514 — same serving projection as the list items (a part row reports
+    // its own per-part verdict with the group's shared hold facts).
     const serving =
-      (await readQuestionServing(db, [detail.id])).get(detail.id) ??
+      (await readQuestionServing(db, [detail.id])).byId.get(detail.id) ??
       ({
         servable: false,
         hold_reason: null,

@@ -39,7 +39,7 @@ import { and, desc, eq, sql } from 'drizzle-orm';
 
 import type { Db, Tx } from '@/db/client';
 import { readPaidEffectControl } from '@/db/paid-effect-control';
-import { event, question } from '@/db/schema';
+import { event, paid_effect, question, question_revision } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import {
@@ -48,6 +48,7 @@ import {
   SERVING_ACTION_EVENT_ACTION,
   SERVING_SOURCE_VERIFY_JOB,
   type ServingActionCommand,
+  type ServingHoldReason,
   readQuestionServing,
 } from '@/kernel/read-models/question-serving';
 import {
@@ -154,19 +155,90 @@ async function executeReverify(
   const outcome = await db.transaction(async (tx) => {
     const { root, lifecycle } = await lockAdmissionGroup(tx, groupId);
     if (!root) throw new ApiError('not_found', `question '${groupId}' not found`, 404);
+    const rejected = async (rejectedReason: string, holdReason: ServingHoldReason | null) => {
+      // Every command writes an event — a rejection also consumes the key.
+      await writeServingActionEvent(tx, {
+        eventId,
+        groupId,
+        command: 'reverify',
+        idempotencyKey,
+        accepted: false,
+        holdReason,
+        detail: { rejected_reason: rejectedReason },
+        now,
+      });
+      return { accepted: false, detail: { rejected_reason: rejectedReason } } as const;
+    };
+    const lifecycleHold: ServingHoldReason | null =
+      lifecycle == null || lifecycle.scoring_admission_state !== 'withheld'
+        ? lifecycle?.suspended === true
+          ? lifecycle.suspension_reason === 'retraction_hold'
+            ? 'retraction_hold'
+            : 'verify_hold'
+          : null
+        : lifecycle.suspended
+          ? lifecycle.suspension_reason === 'retraction_hold'
+            ? 'retraction_hold'
+            : 'verify_hold'
+          : lifecycle.scoring_admission_withheld_reason === 'verification_failed' ||
+              lifecycle.scoring_admission_withheld_reason === 'no_admitted_executor'
+            ? 'admission_failed'
+            : 'awaiting_admission';
     if (lifecycle == null || lifecycle.scoring_admission_state !== 'withheld') {
-      return { accepted: false, detail: { rejected_reason: 'not_withheld' } };
+      return rejected('not_withheld', lifecycleHold);
     }
     if (lifecycle.suspended || lifecycle.withdrawn) {
-      return { accepted: false, detail: { rejected_reason: 'suspended_or_withdrawn' } };
+      return rejected('suspended_or_withdrawn', lifecycleHold);
     }
     const withheldReason = lifecycle.scoring_admission_withheld_reason;
+    if (withheldReason === 'owner_hold') {
+      // A deliberate owner withhold is not a verification failure — no
+      // reverify exists for it (projection reports hold_reason:null, no
+      // button; a direct call still fails closed).
+      throw new ApiError(
+        'owner_hold',
+        `question '${groupId}' is withheld by owner decision, not verification`,
+        409,
+      );
+    }
+    // An applied verdict for the CURRENT digest is terminal: the claim never
+    // re-pays an identical base, so reverify cannot change it. No generation
+    // bump, no job.
+    if (lifecycle.current_revision_id != null) {
+      const [currentRev] = await tx
+        .select({ digest: question_revision.integrity_digest })
+        .from(question_revision)
+        .where(eq(question_revision.revision_id, lifecycle.current_revision_id))
+        .limit(1);
+      if (currentRev != null) {
+        const applied = await tx
+          .select({ entityId: paid_effect.entity_id })
+          .from(paid_effect)
+          .where(
+            and(
+              eq(paid_effect.family, ADMISSION_FAMILY),
+              eq(paid_effect.entity_id, groupId),
+              eq(paid_effect.entity_revision, currentRev.digest),
+              eq(paid_effect.unit, 'admission@1'),
+              eq(paid_effect.state, 'applied'),
+            ),
+          )
+          .limit(1);
+        if (applied.length > 0) {
+          throw new ApiError(
+            'unchanged_base_already_verified',
+            `question '${groupId}' already has an applied admission verdict for the current revision`,
+            409,
+          );
+        }
+      }
+    }
     if (
       withheldReason === 'unverified_rules' &&
       now.getTime() - lifecycle.updated_at.getTime() < AWAITING_ADMISSION_REVERIFY_AFTER_MS
     ) {
       // Mirrors next_action: inside the wait window there is no reverify button.
-      return { accepted: false, detail: { rejected_reason: 'within_wait_window' } };
+      return rejected('within_wait_window', 'awaiting_admission');
     }
 
     let publishEventId: string | null = null;
@@ -189,20 +261,15 @@ async function executeReverify(
           409,
         );
       }
-      if (published.status === 'withdrawn') {
-        // Every part tombstoned — the seam withdrew the group inside this tx;
-        // the command honestly reports it cannot re-enter verification.
-        await writeServingActionEvent(tx, {
-          eventId,
-          groupId,
-          command: 'reverify',
-          idempotencyKey,
-          accepted: false,
-          holdReason: 'withdrawn',
-          detail: { rejected_reason: 'group_withdrawn', publish_status: 'withdrawn' },
-          now,
-        });
-        return { accepted: false, detail: { rejected_reason: 'group_withdrawn' } };
+      if (published.status === 'published' || published.status === 'withdrawn') {
+        // Rows drifted past the frozen revision (or every part tombstoned) —
+        // re-pending would mint a new revision or withdraw the group under a
+        // dimension-only command. Same rollback rule as release_verify_hold.
+        throw new ApiError(
+          'conflict',
+          `cannot reverify '${groupId}': group content changed since the held revision (${published.status}) — edit and republish first`,
+          409,
+        );
       }
       publishStatus = published.status;
       publishEventId = 'event_id' in published ? published.event_id : null;
@@ -243,7 +310,7 @@ async function executeReverify(
       now,
     });
     return {
-      accepted: true,
+      accepted: true as const,
       publishEventId,
       publishStatus,
       dispatchGeneration: control.generation,
@@ -291,9 +358,11 @@ async function executeReverify(
 /**
  * recheck_source — re-dispatch source_verify. The outbox intent ledger cannot
  * express a second dispatch for the same (verifier, question), so the command
- * sends straight onto the queue the outbox drains to and records itself in the
- * command event. runSourceVerify's terminal-event guard keeps this a no-cost
- * retry: only error-only prior deliveries actually re-run.
+ * sends straight onto the queue the outbox drains to. The command event is
+ * written BEFORE the job (its deterministic id rides the job as
+ * recheck.command_event_id): runSourceVerify's terminal-event guard bypasses
+ * ONLY for that command, and a second terminal event under the same command
+ * id can never pay twice — replayed keys and redelivered jobs hit the guard.
  */
 async function executeRecheckSource(
   db: Db,
@@ -302,7 +371,7 @@ async function executeRecheckSource(
   idempotencyKey: string,
   now: Date,
 ): Promise<CommandResult> {
-  const serving = (await readQuestionServing(db, [groupId])).get(groupId);
+  const serving = (await readQuestionServing(db, [groupId])).byId.get(groupId);
   if (serving?.hold_reason !== 'source_check_failed') {
     await db.transaction(async (tx) => {
       await writeServingActionEvent(tx, {
@@ -319,9 +388,7 @@ async function executeRecheckSource(
     return { accepted: false, detail: { rejected_reason: 'not_source_check_failed' } };
   }
 
-  const boss = await getPracticeBoss();
   const jobId = randomUUID();
-  await boss.send(SERVING_SOURCE_VERIFY_JOB, { question_ids: [groupId] }, { id: jobId });
   await db.transaction(async (tx) => {
     await writeServingActionEvent(tx, {
       eventId,
@@ -334,6 +401,12 @@ async function executeRecheckSource(
       now,
     });
   });
+  const boss = await getPracticeBoss();
+  await boss.send(
+    SERVING_SOURCE_VERIFY_JOB,
+    { question_ids: [groupId], recheck: { command_event_id: eventId } },
+    { id: jobId },
+  );
   return { accepted: true, detail: { job_id: jobId } };
 }
 
@@ -451,7 +524,7 @@ export async function runServingAction(
     const replayed = await readQuestionServing(db, [input.questionId]);
     return {
       accepted: existing.accepted,
-      serving: replayed.get(input.questionId) ?? {
+      serving: replayed.byId.get(input.questionId) ?? {
         servable: false,
         hold_reason: null,
         held_since: null,
@@ -459,6 +532,32 @@ export async function runServingAction(
         pending_action: null,
       },
     };
+  }
+
+  // P2-1 — an Idempotency-Key is scoped to (question group × command): reusing
+  // the same key on a different command or a different group is a protocol
+  // error, not a fresh command.
+  const reuseRows = await db
+    .select({ subjectId: event.subject_id, payload: event.payload })
+    .from(event)
+    .where(
+      and(
+        eq(event.action, SERVING_ACTION_EVENT_ACTION),
+        sql`${event.payload}->>'idempotency_key' = ${input.idempotencyKey}`,
+      ),
+    );
+  for (const reuse of reuseRows) {
+    const reusedCommand =
+      reuse.payload != null && typeof reuse.payload === 'object'
+        ? (reuse.payload as Record<string, unknown>).command
+        : null;
+    if (reuse.subjectId !== groupId || reusedCommand !== input.command) {
+      throw new ApiError(
+        'idempotency_key_reused',
+        `Idempotency-Key '${input.idempotencyKey}' was already used for a different question or command`,
+        409,
+      );
+    }
   }
 
   const now = new Date();
@@ -472,7 +571,7 @@ export async function runServingAction(
   const servings = await readQuestionServing(db, [input.questionId]);
   return {
     accepted: result.accepted,
-    serving: servings.get(input.questionId) ?? {
+    serving: servings.byId.get(input.questionId) ?? {
       servable: false,
       hold_reason: null,
       held_since: null,
