@@ -360,6 +360,11 @@ export const ingestionCapability = defineCapability({
       {
         name: 'ingestion_agent_run',
         queue: 'agent',
+        // retryCount drives the retries-exhausted terminal write; the
+        // heartbeat tightens a crashed worker's lease on this 2h-expire queue
+        // so the stale-segment sweeper can recover the run sooner.
+        includeMetadata: true,
+        heartbeatSeconds: 300,
         load: () =>
           import('./jobs/ingestion_agent_run').then((m) => m.buildIngestionAgentRunHandler),
       },

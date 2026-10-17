@@ -46,3 +46,14 @@ export function makeRunTaskTextFn(db: Db, baseCtx: RunTaskCallCtx = {}): BoundRu
     };
   };
 }
+
+// YUK-1522 (R8 R1) — the run-outcome failure vocabulary, re-exported at the
+// runner facade so durable job handlers classify by error type instead of
+// matching message text.
+export {
+  AgentRunError,
+  isProviderSessionWallClockBudgetError,
+  isTransientAgentFailure,
+} from './agent-run-error';
+export { ProviderAttemptLifecycleError } from './provider-attempt-lifecycle';
+export { ProviderSessionAdmissionError } from './provider-session-admission';

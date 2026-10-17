@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm';
 
 import type { Db, Tx } from '@/db/client';
+import { writeAgentRunSegment } from '../events/agent-progress';
 import { type SessionAskRow, readSessionAsks } from './asks';
 import {
   AGENT_ITEM_STATE,
@@ -127,6 +128,74 @@ export async function readAgentRunLedger(db: Db | Tx, sessionId: string): Promis
     lastSegment,
     doneEmitted: stage === 'done',
   };
+}
+
+// ---------- segment claim (P1-5 mutual exclusion) ----------
+
+/**
+ * A numbered segment is OPEN while its latest row is outcome:'running' — any
+ * later same-segment row (waiting/done/failed/early_exit) closes it. 'running'
+ * rows older than STALE_SEGMENT_MS belong to crashed deliveries; the sweeper
+ * closes them and they do NOT count as in-flight for exclusion.
+ */
+export const STALE_SEGMENT_MS = 25 * 60_000;
+
+export type SegmentClaim =
+  | { readonly kind: 'busy' }
+  | { readonly kind: 'over_cap'; readonly ledger: AgentRunLedger }
+  | { readonly kind: 'ok'; readonly segment: number; readonly ledger: AgentRunLedger };
+
+/**
+ * Durable per-session mutual exclusion: the advisory lock serializes segment
+ * claims; a session can hold at most one open (fresh, running) segment — a
+ * concurrent delivery exits 'busy' and is skipped, so the paid model loop can
+ * never run twice for the same session.
+ */
+export async function claimRunSegment(
+  tx: Tx,
+  sessionId: string,
+  trigger: 'start' | 'resume' | 'continue',
+  maxSegments: number,
+  staleSegmentMs = STALE_SEGMENT_MS,
+): Promise<SegmentClaim> {
+  await tx.execute(
+    sql`SELECT pg_advisory_xact_lock(hashtext(${`ingestion-agent-run:${sessionId}`}))`,
+  );
+  const rows = await tx.execute<{ payload: Record<string, unknown>; occurred_at: string }>(sql`
+    SELECT payload, occurred_at
+    FROM job_events
+    WHERE business_table = ${INGESTION_AGENT_RUN_TABLE}
+      AND business_id = ${sessionId}
+      AND event_type = ${AGENT_RUN_SEGMENT}
+    ORDER BY id ASC
+  `);
+  const latestBySegment = new Map<number, { outcome: string | null; at: number }>();
+  let maxSegment = 0;
+  for (const row of rows) {
+    const parsed = AgentRunSegmentPayload.safeParse(row.payload);
+    if (!parsed.success || parsed.data.segment < 1) continue;
+    maxSegment = Math.max(maxSegment, parsed.data.segment);
+    latestBySegment.set(parsed.data.segment, {
+      outcome: parsed.data.outcome ?? null,
+      at: new Date(row.occurred_at).getTime(),
+    });
+  }
+  const nowMs = Date.now();
+  const openFresh = [...latestBySegment.values()].some(
+    (seg) => seg.outcome === 'running' && nowMs - seg.at < staleSegmentMs,
+  );
+  if (openFresh) return { kind: 'busy' };
+
+  const ledger = await readAgentRunLedger(tx, sessionId);
+  const segment = maxSegment + 1;
+  if (segment > maxSegments) return { kind: 'over_cap', ledger };
+
+  await writeAgentRunSegment(tx, sessionId, {
+    segment,
+    trigger,
+    outcome: 'running',
+  });
+  return { kind: 'ok', segment, ledger };
 }
 
 /** Latest emitted status for one item, or null when the item was never reported. */

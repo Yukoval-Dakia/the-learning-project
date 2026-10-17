@@ -120,7 +120,8 @@ export interface CreateAskInput {
   readonly prompt_md: string;
   readonly answer_kind: 'choice' | 'short';
   readonly options?: { id: string; label_md: string }[];
-  readonly placeholder?: string;
+  /** Contract-required; the caller (tool boundary) fills the default. */
+  readonly placeholder: string;
   /** Seconds until the system resolves the ask as skipped-by-timeout. */
   readonly expires_in_seconds?: number | null;
   readonly context_md?: string;
@@ -155,17 +156,37 @@ export async function findOpenAskForItem(
   return { ask_id: row.business_id, expires_at: state.created.expires_at };
 }
 
+export interface CreateAskResult {
+  readonly ask_id: string;
+  readonly expires_at: string | null;
+  /** false = an open ask for this item already existed (its id is returned). */
+  readonly created: boolean;
+}
+
+/**
+ * Atomic create-or-adopt: the uniqueness check and the create write run inside
+ * one transaction under a per-(session,item) advisory lock, so two parallel
+ * callers (replayed segment, double tool call) can never mint two open asks
+ * for the same item. `placeholder` is already defaulted by the caller.
+ */
 export async function createAsk(
   db: Db,
   input: CreateAskInput,
   now: Date = new Date(),
-): Promise<{ ask_id: string; expires_at: string | null }> {
+): Promise<CreateAskResult> {
   const expiresAt =
     input.expires_in_seconds == null
       ? null
       : new Date(now.getTime() + input.expires_in_seconds * 1000).toISOString();
   const askId = `ask_${newId()}`;
-  await db.transaction(async (tx) => {
+  return db.transaction(async (tx) => {
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtext(${`ingestion-ask:${input.sessionId}:${input.item_id}`}))`,
+    );
+    const existing = await findOpenAskForItem(tx, input.sessionId, input.item_id);
+    if (existing != null) {
+      return { ask_id: existing.ask_id, expires_at: existing.expires_at, created: false };
+    }
     await writeAskCreated(tx, askId, {
       session_id: input.sessionId,
       item_id: input.item_id,
@@ -173,7 +194,7 @@ export async function createAsk(
       prompt_md: input.prompt_md,
       answer_kind: input.answer_kind,
       ...(input.options != null ? { options: input.options } : {}),
-      ...(input.placeholder != null ? { placeholder: input.placeholder } : {}),
+      placeholder: input.placeholder,
       expires_at: expiresAt,
       ...(input.context_md != null ? { context_md: input.context_md } : {}),
     });
@@ -188,12 +209,12 @@ export async function createAsk(
         prompt_md: input.prompt_md,
         answer_kind: input.answer_kind,
         ...(input.options != null ? { options: input.options } : {}),
-        ...(input.placeholder != null ? { placeholder: input.placeholder } : {}),
+        placeholder: input.placeholder,
         expires_at: expiresAt,
       }),
     );
+    return { ask_id: askId, expires_at: expiresAt, created: true };
   });
-  return { ask_id: askId, expires_at: expiresAt };
 }
 
 // ---------- answer validation ----------
@@ -421,4 +442,37 @@ export async function listPendingResumeSessions(db: Db, limit = 25): Promise<str
     LIMIT ${limit}
   `);
   return rows.map((row) => row.business_id);
+}
+
+/**
+ * Sessions whose latest numbered 'running' segment has no same-segment closer
+ * and is older than `staleBeforeMs` — a segment whose worker died mid-model or
+ * whose post-model bookkeeping crashed (deliberately never retried as a paid
+ * re-run). The sweeper closes it 'failed' and re-dispatches a resume.
+ */
+export async function listStaleRunningSessions(
+  db: Db,
+  staleBeforeMs: number,
+  limit = 25,
+): Promise<{ session_id: string; segment: number }[]> {
+  const rows = await db.execute<{ business_id: string; segment: number }>(sql`
+    SELECT business_id, (payload ->> 'segment')::int AS segment
+    FROM job_events
+    WHERE business_table = ${INGESTION_AGENT_RUN_TABLE}
+      AND event_type = ${'agent.run_segment'}
+      AND payload ->> 'outcome' = 'running'
+      AND (payload ->> 'segment')::int >= 1
+      AND occurred_at < clock_timestamp() - (make_interval(secs => ${staleBeforeMs / 1000}))
+      AND NOT EXISTS (
+        SELECT 1 FROM job_events s
+        WHERE s.business_table = ${INGESTION_AGENT_RUN_TABLE}
+          AND s.business_id = job_events.business_id
+          AND s.event_type = ${'agent.run_segment'}
+          AND s.payload ->> 'segment' = job_events.payload ->> 'segment'
+          AND s.id > job_events.id
+      )
+    ORDER BY id ASC
+    LIMIT ${limit}
+  `);
+  return rows.map((row) => ({ session_id: row.business_id, segment: row.segment }));
 }

@@ -4,7 +4,9 @@ import { type AgentRunDeps, runIngestionAgentSegment } from '../server/agent/run
 
 // YUK-1522 (R8) — pg-boss handler for the whole-package ingestion agent run.
 // Each delivery runs ONE segment; segments suspend on open asks and resume on
-// answer/timeout dispatch (see server/agent/run.ts).
+// answer/timeout dispatch (see server/agent/run.ts). includeMetadata supplies
+// job.retryCount so the segment can write the honest terminal state when the
+// queue's retries are exhausted.
 
 export interface IngestionAgentRunJobData {
   readonly sessionId: string;
@@ -23,6 +25,7 @@ export function buildIngestionAgentRunHandler(db: Db, deps: AgentRunDeps = {}) {
           sessionId,
           trigger: job.data.trigger ?? 'start',
           ...(job.data.operationId != null ? { operationId: job.data.operationId } : {}),
+          retryCount: job.retryCount ?? 0,
         },
         deps,
       );
