@@ -28,6 +28,7 @@ import {
   uploadUsageField,
   useUploadUsageChoice,
 } from '@/ui/components/UploadUsagePicker';
+import { UsageReceiptLine } from '@/ui/components/UsageReceiptLine';
 import { ApiAuthError, apiJson } from '@/ui/lib/api';
 import { expandDocx, expandPdf, uploadAsset } from '@/ui/lib/assets';
 import { startIngestionOperation } from '@/ui/lib/ingestion-operations';
@@ -288,6 +289,7 @@ export default function OnboardRecord({ navigate }: OnboardRecordProps) {
   const reset = () => {
     setFiles([]);
     setUploadSubject(null);
+    setUploadUsage('allow');
     setPhase('idle');
     setSessionId(null);
     setErrorMsg(null);
@@ -393,6 +395,7 @@ export default function OnboardRecord({ navigate }: OnboardRecordProps) {
               </div>
             ))}
           </div>
+          {done && <UsageReceiptLine sessionId={sessionId} />}
           <div className="ob-ing-sse">
             <span className="dot" />
             {done
