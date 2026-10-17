@@ -13,7 +13,9 @@
 // sends is a proposal: validated whole, then written through the envelope writers.
 //
 // Focus: the frame is inert until the learner starts it (click or the button); focus landing
-// anywhere else on the page makes it inert again. All listeners live in ref callbacks.
+// anywhere else on the page makes it inert again. Focus the frame takes while inert is handed
+// back; once the learner has used this frame, one such steal fails the block. All listeners live
+// in ref callbacks.
 import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 
 import type { CustomBlockT } from '@/core/schema/assessment/presentation';
@@ -52,7 +54,8 @@ const READY_TIMEOUT_MS = 3000;
 /**
  * A frame fighting for focus fails the block: more hand-backs than MAX_HAND_BACKS inside 1 s (a
  * fast stealer), or more than MAX_SLOW_HAND_BACKS inside 30 s (a slow one that stays under the
- * first limit). A normal block causes at most one or two in a session.
+ * first limit). These are the nets before first use; after it, a single steal fails the block.
+ * A normal block causes at most one (its own focus() on load) in a session.
  */
 const MAX_HAND_BACKS = 5;
 const HAND_BACK_WINDOW_MS = 1000;
@@ -186,14 +189,16 @@ export function useCustomBlocksReady(blocks: readonly CustomBlockT[]): boolean {
 // ---------- frame sessions ----------
 
 /**
- * Per frame element: how many loads it has had, the page's end of its port, and whether the
- * shell's bootstrap has answered 'ready' on that port (proof the first load was our document).
+ * Per frame element: how many loads it has had, the page's end of its port, whether the
+ * shell's bootstrap has answered 'ready' on that port (proof the first load was our document),
+ * and whether the learner has started this frame at least once.
  */
 interface FrameSession {
   loads: number;
   port: MessagePort | null;
   ready: boolean;
   readyTimer: ReturnType<typeof setTimeout> | null;
+  used: boolean;
 }
 
 function closeSession(s: FrameSession) {
@@ -282,16 +287,32 @@ export function CustomBlock({
         // button, else nowhere (blur). Always one task later: handing back synchronously inside
         // the focus event leaves Chromium with activeElement on the parent input but keystrokes
         // still routed to the frame (measured), and no further events fire after that.
+        // Still in the frame from the active phase (e.g. the learner left the page while it was
+        // live): the hand-backs that move it out are clean-up, not a steal, until focus has been
+        // seen outside the frame once.
+        let held = wrap.contains(owner.activeElement);
         const handBack = () => {
-          if (activating.current || !wrap.contains(owner.activeElement)) return;
+          if (activating.current) return;
+          if (!wrap.contains(owner.activeElement)) {
+            held = false;
+            return;
+          }
           // Each hand-back blurs the learner's input (breaking IME composition); a frame that
           // keeps taking focus is treated like self-navigation: blank it and fail the block.
+          // Keys typed between a steal and its hand-back reach the frame (measured), so once the
+          // learner has used this frame, the first steal fails it; before that (its own focus()
+          // on load is normal) only the two rate limits do.
+          const frame = wrap.querySelector('iframe');
+          const session = frame ? sessions.get(frame) : undefined;
           const now = Date.now();
           const recent = handBacks.current.filter((at) => now - at < SLOW_HAND_BACK_WINDOW_MS);
           recent.push(now);
           handBacks.current = recent;
           const lastSecond = recent.filter((at) => now - at < HAND_BACK_WINDOW_MS).length;
-          const hostile = lastSecond > MAX_HAND_BACKS || recent.length > MAX_SLOW_HAND_BACKS;
+          const hostile =
+            (session?.used === true && !held) ||
+            lastSecond > MAX_HAND_BACKS ||
+            recent.length > MAX_SLOW_HAND_BACKS;
           const back = lastFocus.current;
           if (back?.isConnected && !wrap.contains(back)) back.focus({ preventScroll: true });
           if (wrap.contains(owner.activeElement)) {
@@ -300,8 +321,6 @@ export function CustomBlock({
             else (owner.activeElement as HTMLElement | null)?.blur();
           }
           if (hostile) {
-            const frame = wrap.querySelector('iframe');
-            const session = frame ? sessions.get(frame) : undefined;
             if (session) closeSession(session);
             if (frame) frame.srcdoc = '';
             publish(key, FAILED);
@@ -332,7 +351,10 @@ export function CustomBlock({
         };
       }
 
-      wrap.querySelector('iframe')?.focus();
+      const frame = wrap.querySelector('iframe');
+      const session = frame ? sessions.get(frame) : undefined;
+      if (session) session.used = true;
+      frame?.focus();
       activating.current = false;
       const onPointerDown = (event: PointerEvent) => {
         if (outside(event)) setActive(false);
@@ -363,7 +385,7 @@ export function CustomBlock({
     if (!frame) return undefined;
     let session = sessions.get(frame);
     if (!session) {
-      session = { loads: 0, port: null, ready: false, readyTimer: null };
+      session = { loads: 0, port: null, ready: false, readyTimer: null, used: false };
       sessions.set(frame, session);
       // A new frame element (first mount, or the reload after an unlock) is not ready until its
       // own shell answers.
