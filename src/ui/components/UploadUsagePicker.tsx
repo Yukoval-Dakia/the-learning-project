@@ -16,7 +16,7 @@ const OPTIONS: readonly { value: UploadUsagePolicy; label: string; hint: string 
   {
     value: 'answer_only',
     label: '只用于本题',
-    hint: '只用来生成这道题的答案和判分，不进记忆和总结；不影响做题和判分。',
+    hint: '只用来生成这道题的答案和判分，不会用于长期记忆和学习总结；不影响做题和判分。',
   },
 ];
 
