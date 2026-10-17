@@ -4571,6 +4571,8 @@ export const worksheet_export = pgTable(
     web_only_units: jsonb('web_only_units').$type<string[]>(),
     /** 区域图存档时冻结的总页数（存档前为 NULL）。 */
     page_count: integer('page_count'),
+    /** 与区域图同一渲染 pass 产出的 PDF digest（设计 §4；存档前为 NULL）。 */
+    pdf_digest: text('pdf_digest'),
     archived_at: timestamp('archived_at', { withTimezone: true }),
     created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -4583,11 +4585,11 @@ export const worksheet_export = pgTable(
       'worksheet_export_identity_nonempty_ck',
       sql`${t.export_token} <> '' AND ${t.short_code} <> '' AND ${t.idempotency_key} <> ''`,
     ),
-    // 存档列 write-once 形状：总页数只在存档时出现；存档必须同时冻结总页与
-    // web_only_units（对账字段成对落，不允半档）。
+    // 存档列 write-once 形状：总页数只在存档时出现；存档必须同时冻结总页、
+    // web_only_units 与 PDF digest（对账字段成对落，不允半档）。
     check(
       'worksheet_export_archive_shape_ck',
-      sql`(${t.archived_at} IS NULL AND ${t.page_count} IS NULL AND ${t.web_only_units} IS NULL) OR (${t.archived_at} IS NOT NULL AND ${t.page_count} >= 1 AND ${t.web_only_units} IS NOT NULL)`,
+      sql`(${t.archived_at} IS NULL AND ${t.page_count} IS NULL AND ${t.web_only_units} IS NULL AND ${t.pdf_digest} IS NULL) OR (${t.archived_at} IS NOT NULL AND ${t.page_count} >= 1 AND ${t.web_only_units} IS NOT NULL AND ${t.pdf_digest} ~ '^sha256:[0-9a-f]{64}$')`,
     ),
   ],
 );

@@ -1,0 +1,3 @@
+ALTER TABLE "worksheet_export" DROP CONSTRAINT "worksheet_export_archive_shape_ck";--> statement-breakpoint
+ALTER TABLE "worksheet_export" ADD COLUMN "pdf_digest" text;--> statement-breakpoint
+ALTER TABLE "worksheet_export" ADD CONSTRAINT "worksheet_export_archive_shape_ck" CHECK (("worksheet_export"."archived_at" IS NULL AND "worksheet_export"."page_count" IS NULL AND "worksheet_export"."web_only_units" IS NULL AND "worksheet_export"."pdf_digest" IS NULL) OR ("worksheet_export"."archived_at" IS NOT NULL AND "worksheet_export"."page_count" >= 1 AND "worksheet_export"."web_only_units" IS NOT NULL AND "worksheet_export"."pdf_digest" ~ '^sha256:[0-9a-f]{64}$'));

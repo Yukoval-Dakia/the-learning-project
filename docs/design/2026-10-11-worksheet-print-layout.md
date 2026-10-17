@@ -19,7 +19,7 @@
 
 ## 3. 区域图结构
 
-字段名与功能线 2026-10-11 对齐。顶层：`schema_version`、`short_code`、`issuance_id`、`web_only_units[]`、`pages[]`。每页：`page`、`of`、`orientation`、`size_mm`、`qr { payload, mm }`、`anchors { tl, tr, bl, br }`、`regions[]`。每个区域有稳定的 `region_id`。
+字段名与功能线 2026-10-11 对齐；2026-10-17 R1 修订（YUK-1523）：多题导出每区域各自携带 `issuance_id`（一份作答卷 = 每题一条发放），顶层不再有单一 `issuance_id` 字段；存档体顶层另带 `pdf_digest`（同一次渲染产出的 PDF 的 sha256）。顶层：`schema_version`、`short_code`、`pdf_digest`、`web_only_units[]`、`pages[]`（strict，多余字段拒收）。每页：`page`、`of`、`orientation`、`size_mm`、`qr { payload, mm }`、`anchors { tl, tr, bl, br }`、`regions[]`。每个区域有稳定的 `region_id`。
 
 | kind | 含义 | 携带 |
 |---|---|---|

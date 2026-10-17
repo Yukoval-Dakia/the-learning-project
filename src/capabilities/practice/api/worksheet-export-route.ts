@@ -129,8 +129,6 @@ export async function archiveWorksheetRegionMapRoute(
         });
       case 'not_found':
         throw new ApiError('not_found', `worksheet export '${token}' not found`, 404);
-      case 'archive_conflict':
-        throw new ApiError('archive_conflict', out.detail, 409);
       case 'invalid_map':
         throw new ApiError(
           'invalid_region_map',
@@ -157,14 +155,16 @@ export async function getWorksheetPageRoute(
 ): Promise<Response> {
   try {
     const parsed = parseParams(params, WorksheetPageParamsSchema);
-    const page = Number.parseInt(parsed.page, 10);
-    if (!Number.isInteger(page) || page < 1) {
+    // R1 P2-3：页号必须是严格的十进制正整数（拒绝 "1.5"/"01"/"1e2"/"+1"）——
+    // parseInt 会截断小数点前的字符，不能作形状门。
+    if (!/^[1-9]\d*$/.test(parsed.page)) {
       throw new ApiError(
-        'validation_error',
-        `page '${parsed.page}' is not a positive integer`,
-        400,
+        'page_invalid',
+        `page '${parsed.page}' is not a positive integer page number`,
+        404,
       );
     }
+    const page = Number.parseInt(parsed.page, 10);
     const out = await readWorksheetPage(db, parsed.token, page);
     switch (out.status) {
       case 'ok':

@@ -40834,6 +40834,7 @@ export interface operations {
                             page: number;
                             page_count: number;
                         }[];
+                        pdf_digest: string | null;
                         refused: {
                             group_id: string;
                             issues: string[];
@@ -41142,6 +41143,7 @@ export interface operations {
                             page: number;
                             page_count: number;
                         }[];
+                        pdf_digest: string | null;
                         refused: {
                             group_id: string;
                             issues: string[];
@@ -41561,6 +41563,7 @@ export interface operations {
                             page: number;
                             page_count: number;
                         }[];
+                        pdf_digest: string | null;
                         refused: {
                             group_id: string;
                             issues: string[];
@@ -41995,6 +41998,7 @@ export interface operations {
                             w: number;
                         };
                     }[];
+                    pdf_digest: string;
                     /** @enum {number} */
                     schema_version: 1;
                     short_code: string;
@@ -42017,6 +42021,7 @@ export interface operations {
                             map_digest: string;
                             page: number;
                         }[];
+                        pdf_digest: string;
                         /** @enum {string} */
                         status: "archived" | "existing";
                         web_only_units: string[];
@@ -42037,6 +42042,7 @@ export interface operations {
                             map_digest: string;
                             page: number;
                         }[];
+                        pdf_digest: string;
                         /** @enum {string} */
                         status: "archived" | "existing";
                         web_only_units: string[];

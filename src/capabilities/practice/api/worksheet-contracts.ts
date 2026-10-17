@@ -125,9 +125,15 @@ export const WorksheetPageMap = z.object({
 export type WorksheetPageMapT = z.infer<typeof WorksheetPageMap>;
 
 /** 存档 POST 体：整份区域图（全部页一次提交，与渲染 pass 同源）。 */
-export const WorksheetRegionMapArchiveBody = z.object({
+/** 存档 POST 体：整份区域图（全部页一次提交，与渲染 pass 同源）。
+ *
+ * 顶层 strict（R1 P2-1）：多题导出每区域各自携带 issuance_id，顶层不再有
+ * 单一 issuance_id 字段 —— 遗留顶层字段直接拒收，不静默丢弃。 */
+export const WorksheetRegionMapArchiveBody = z.strictObject({
   schema_version: z.literal(1),
   short_code: z.string().min(1),
+  /** 同一渲染 pass 产出的 PDF digest（设计 §4：随存档冻结，进 write-once 比对）。 */
+  pdf_digest: z.string().regex(/^sha256:[0-9a-f]{64}$/),
   /** 在网页作答（不印作答区）的计分单元 id 清单；导出行 write-once 冻结。 */
   web_only_units: z.array(z.string().min(1)),
   pages: z.array(WorksheetPageMap).min(1),
@@ -193,6 +199,11 @@ export const WorksheetExportStateSchema = z.object({
   title: z.string(),
   /** 区域图存档后非空；存档前 null。 */
   page_count: z.number().int().min(1).nullable(),
+  /** 与区域图同一渲染 pass 产出的 PDF digest（存档后非空）。 */
+  pdf_digest: z
+    .string()
+    .regex(/^sha256:[0-9a-f]{64}$/)
+    .nullable(),
   archived_at: z.string().datetime().nullable(),
   issued: z.array(WorksheetIssuedItemSchema),
   refused: z.array(WorksheetRefusedItemSchema),
@@ -216,6 +227,7 @@ export const WorksheetRegionMapArchivedSchema = z.object({
   export_id: z.string().min(1),
   export_token: z.string().min(1),
   page_count: z.number().int().min(1),
+  pdf_digest: z.string().regex(/^sha256:[0-9a-f]{64}$/),
   web_only_units: z.array(z.string().min(1)),
   pages: z.array(z.object({ page: z.number().int().min(1), map_digest: z.string().min(1) })),
 });

@@ -81,8 +81,16 @@ export type CreateWorksheetExportResult =
 export type ArchiveRegionMapResult =
   | { status: 'archived' | 'existing'; archive: WorksheetRegionMapArchivedT }
   | { status: 'not_found' }
-  | { status: 'archive_conflict'; detail: string }
   | { status: 'invalid_map'; issues: RegionMapIssue[] };
+
+/** 区域图存档冲突（write-once 被打破/并发异图）：抛出 ⇒ 事务回滚 —— 绝不
+ * 从事务内 return（return 会提交已插入的孤儿页行，R1 P1-1）。路由映 409。 */
+export class RegionMapArchiveConflictError extends Error {
+  constructor(detail: string) {
+    super(detail);
+    this.name = 'RegionMapArchiveConflictError';
+  }
+}
 
 export type WorksheetPageResult =
   | { status: 'ok'; page: WorksheetPageResponseT }
@@ -128,7 +136,8 @@ function randomShortCode(): string {
 }
 
 async function mintShortCode(tx: Tx): Promise<string> {
-  // 32^4 ≈ 1e6 空间：查后插 + 唯一索引兜底；5 次不中属异常态，如实上抛。
+  // 32^4 ≈ 1e6 空间：查后插预检缩小窗口；真正的并发碰撞由外层
+  // isMintedIdentityUniqueViolation 有界重试兜住（R1 P2-4），不再变成 500。
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const code = randomShortCode();
     const [hit] = await tx
@@ -213,8 +222,19 @@ async function loadFrozenScopes(
   const scopes: FrozenIssuanceScope[] = [];
   for (const issuanceId of ids) {
     const issuance = issuanceRows.find((row) => row.issuance_id === issuanceId);
+    // R1 P2-7：请求的 issuance 行/pinned revision 缺失 = 跨库破坏 —— fail-loud
+    //（同 buildIssuedItem），绝不静默跳过让区域图校验对着不完整冻结集裁决。
+    if (issuance == null) {
+      throw new Error(
+        `worksheet export: issuance '${issuanceId}' missing while loading frozen scopes`,
+      );
+    }
     const revision = revisionByIssuance.get(issuanceId);
-    if (issuance == null || revision == null) continue; // 调用方给的 id 集合超集时如实跳过
+    if (revision == null) {
+      throw new Error(
+        `worksheet export: pinned revision for issuance '${issuanceId}' missing while loading frozen scopes`,
+      );
+    }
     scopes.push(await buildFrozenScope(issuance, revision));
   }
   return scopes;
@@ -321,6 +341,7 @@ async function buildExportState(
     short_code: row.short_code,
     title: row.title,
     page_count: row.page_count,
+    pdf_digest: row.pdf_digest ?? null,
     archived_at: row.archived_at?.toISOString() ?? null,
     issued,
     refused: row.refused,
@@ -336,6 +357,26 @@ async function buildExportState(
 
 // ---------- 1) 创建导出（= 逐题发放） ----------
 
+/** R1 P2-4：mint 出的 token/短码撞唯一索引（23505，查后插窗口内的并发碰撞）⇒
+ * 整事务重试新身件（有界 3 次）；其他错误原样上抛。idempotency_key 冲突走
+ * onConflictDoNothing，不会出现在这里。 */
+function isMintedIdentityUniqueViolation(error: unknown): boolean {
+  const err = error as {
+    code?: unknown;
+    constraint_name?: unknown;
+    constraint?: unknown;
+    detail?: unknown;
+    message?: unknown;
+  };
+  if (err?.code !== '23505') return false;
+  const haystack = [err.constraint_name, err.constraint, err.detail, err.message]
+    .filter((value): value is string => typeof value === 'string')
+    .join(' ');
+  return /worksheet_export_(token|short_code)_uq/.test(haystack);
+}
+
+const CREATE_IDENTITY_ATTEMPTS = 3;
+
 export async function createWorksheetExport(
   db: Db,
   request: CreateWorksheetExportRequest,
@@ -346,6 +387,23 @@ export async function createWorksheetExport(
     items: request.items,
   });
 
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await createWorksheetExportOnce(db, request, requestDigest);
+    } catch (error) {
+      if (attempt < CREATE_IDENTITY_ATTEMPTS && isMintedIdentityUniqueViolation(error)) {
+        continue; // 新 mint 的 token/短码重试
+      }
+      throw error;
+    }
+  }
+}
+
+async function createWorksheetExportOnce(
+  db: Db,
+  request: CreateWorksheetExportRequest,
+  requestDigest: string,
+): Promise<CreateWorksheetExportResult> {
   return db.transaction(async (tx) => {
     // 幂等锚先行：同 key 已存在 ⇒ 重放/冲突，绝不重发。
     const [existing] = await tx
@@ -483,22 +541,33 @@ export async function archiveWorksheetRegionMap(
   const now = new Date();
 
   return db.transaction(async (tx) => {
+    // R1 P1-1：导出行 FOR UPDATE 串行化同导出的并发存档 —— 后到者在锁上等待，
+    // 醒来后看到 archived_at 已置位，走整份幂等比对（existing）或冲突（回滚），
+    // 不可能各自插入页行留下孤儿。
     const [row] = await tx
       .select()
       .from(worksheet_export)
       .where(eq(worksheet_export.export_token, token))
+      .for('update')
       .limit(1);
     if (row == null) return { status: 'not_found' } as const;
 
     const of = body.pages[0]?.of ?? 0;
-    const pageDigests = body.pages.map((page) => ({
-      page: page.page,
-      page_count: page.of,
-      digest: `sha256:${canonicalHash(page)}`,
-    }));
-    const webOnlyDigest = canonicalHash([...body.web_only_units]);
+    // R1 P2-2：比对与页序无关 —— 两侧都按 page 排序后再比。
+    const pageDigests = [...body.pages]
+      .sort((a, b) => a.page - b.page)
+      .map((page) => ({
+        page: page.page,
+        page_count: page.of,
+        digest: `sha256:${canonicalHash(page)}`,
+      }));
+    // web_only 集合语义：排序后取 digest，与页序/清单顺序无关。
+    const sortedWebOnly = [...new Set(body.web_only_units)].sort();
+    const webOnlyDigest = canonicalHash(sortedWebOnly);
 
-    // 已存档：整份幂等比对（页 digest + web_only 集合）——一致 existing，否则冲突。
+    // 已存档：整份幂等比对（页 digest + web_only 集合 + PDF digest）。
+    // 冲突路径一律抛 RegionMapArchiveConflictError（本分支无写入，回滚是空操作，
+    // 但统一走抛出确保任何后续改动都不会把 return-提交路径带回来）。
     if (row.archived_at != null) {
       const existingPages = await tx
         .select({
@@ -517,8 +586,8 @@ export async function archiveWorksheetRegionMap(
             existing.page_count === pageDigests[index]?.page_count &&
             existing.map_digest === pageDigests[index]?.digest,
         );
-      const sameWebOnly = canonicalHash([...(row.web_only_units ?? [])]) === webOnlyDigest;
-      if (samePages && sameWebOnly) {
+      const sameWebOnly = canonicalHash([...(row.web_only_units ?? [])].sort()) === webOnlyDigest;
+      if (samePages && sameWebOnly && row.pdf_digest === body.pdf_digest) {
         return {
           status: 'existing',
           archive: {
@@ -526,19 +595,18 @@ export async function archiveWorksheetRegionMap(
             export_id: row.export_id,
             export_token: row.export_token,
             page_count: of,
+            pdf_digest: body.pdf_digest,
             web_only_units: [...(row.web_only_units ?? [])],
             pages: pageDigests.map((page) => ({ page: page.page, map_digest: page.digest })),
           },
         } as const;
       }
-      return {
-        status: 'archive_conflict',
-        detail:
-          'region map archive is frozen (write-once): a different map or web_only_units set was already archived for this export',
-      } as const;
+      throw new RegionMapArchiveConflictError(
+        'region map archive is frozen (write-once): a different map, web_only_units set or pdf_digest was already archived for this export',
+      );
     }
 
-    // 对冻结发放校验（纯函数；issues 原样上抛给 422）。
+    // 对冻结发放校验（纯函数；issues 原样上抛给 422）。此分支无写入，可 return。
     const items = await tx
       .select({ issuance_id: worksheet_export_item.issuance_id })
       .from(worksheet_export_item)
@@ -555,15 +623,13 @@ export async function archiveWorksheetRegionMap(
       return { status: 'invalid_map', issues } as const;
     }
 
-    // 按页 write-once 落库 + 导出行存档列一次冻结。
+    // 按页 write-once 落库 + 导出行存档列一次冻结。任何冲突路径抛出 ⇒ 整体
+    // 回滚（含已插入的页行）—— 不存在半档状态。
     const pageByNumber = new Map(body.pages.map((page) => [page.page, page] as const));
     for (const page of pageDigests) {
       const pageMap = pageByNumber.get(page.page);
       if (pageMap == null) {
-        return {
-          status: 'archive_conflict',
-          detail: `page ${page.page} digest carries no map slice`,
-        } as const;
+        throw new RegionMapArchiveConflictError(`page ${page.page} digest carries no map slice`);
       }
       const inserted = await tx
         .insert(worksheet_region_map_page)
@@ -580,32 +646,29 @@ export async function archiveWorksheetRegionMap(
         })
         .returning({ page: worksheet_region_map_page.page });
       if (inserted.length === 0) {
-        return {
-          status: 'archive_conflict',
-          detail: `page ${page.page} already archived with a different map`,
-        } as const;
+        throw new RegionMapArchiveConflictError(
+          `page ${page.page} already archived with a different map`,
+        );
       }
     }
     const finalized = await tx
       .update(worksheet_export)
       .set({
-        web_only_units: [...new Set(body.web_only_units)],
+        web_only_units: sortedWebOnly,
         page_count: of,
+        pdf_digest: body.pdf_digest,
         archived_at: now,
       })
       .where(
         and(
           eq(worksheet_export.export_id, row.export_id),
-          // 只在未存档行上冻结（row.archived_at 为 NULL 分支专用；并发存档互斥）。
+          // 行锁已串行化存档；此谓词是防御性兑底（锁丢失时仍不覆盖已存档行）。
           isNull(worksheet_export.archived_at),
         ),
       )
       .returning({ export_id: worksheet_export.export_id });
     if (finalized.length === 0) {
-      return {
-        status: 'archive_conflict',
-        detail: 'export was archived concurrently',
-      } as const;
+      throw new RegionMapArchiveConflictError('export was archived concurrently');
     }
     return {
       status: 'archived',
@@ -614,7 +677,8 @@ export async function archiveWorksheetRegionMap(
         export_id: row.export_id,
         export_token: row.export_token,
         page_count: of,
-        web_only_units: [...new Set(body.web_only_units)],
+        pdf_digest: body.pdf_digest,
+        web_only_units: sortedWebOnly,
         pages: pageDigests.map((page) => ({ page: page.page, map_digest: page.digest })),
       },
     } as const;

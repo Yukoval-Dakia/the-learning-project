@@ -1549,9 +1549,10 @@
                 }
               ]
             }
-          ]
+          ],
+          "pdf_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         },
-        "notes": "校验：qr payload 逐页=tlp://ws/v1/<token>/<页>/<总页>；每区域引用已发 part/slot/unit；每计分单元恰一着落（区域或 web_only_units，互斥）；choice 选项圈=冻结 option_order 排列；四角 TL/TR/BL 实心 BR 空心；A4。同图重 POST ⇒ existing(200)；异图 ⇒ archive_conflict(409)；校验失败 ⇒ invalid_region_map(422) details.issues"
+        "notes": "校验：qr payload 逐页=tlp://ws/v1/<token>/<页>/<总页>；每区域引用已发 part/slot/unit；每计分单元恰一着落（区域或 web_only_units，互斥）；choice 选项圈=冻结 option_order 排列；四角 TL/TR/BL 实心 BR 空心；A4。同图重 POST ⇒ existing(200)；异图 ⇒ archive_conflict(409)；校验失败 ⇒ invalid_region_map(422) details.issues；顶层 strict（遗留顶层 issuance_id 拒收，多题导出每区域各自带 issuance_id）；pdf_digest（同渲染 pass 的 PDF sha256）随存档冻结并进 write-once 比对"
       }
     ]
   },
