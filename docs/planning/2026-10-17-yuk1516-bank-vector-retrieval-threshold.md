@@ -23,12 +23,19 @@ text-embedding-v4@1024 向量）上实测：
 1. **召回进候选池**：`distance ≤ BANK_VECTOR_RETRIEVAL_MAX_DISTANCE`（0.55，绝对天花板），
    取代查重 0.35 的池门角色。SQL 召回改为取最近 CAP+1 行（不设距离 WHERE）：判 margin
    需要全库真实 rank-2，哪怕它落在天花板之外。
-2. **计入 coverage.verdict**：仅 rank-1，且需 **decisive**——存在 rank-2 且
-   `rank2 − rank1 ≥ BANK_VECTOR_RETRIEVAL_TOP1_MARGIN`（0.15）。
+2. **计入 coverage.verdict**：仅「合格库面」（baseline）上的 rank-1，且需 **decisive**——
+   合格库面上存在 rank-2 且 `rank2 − rank1 ≥ BANK_VECTOR_RETRIEVAL_TOP1_MARGIN`（0.15）。
+   - **margin 基线是全球库面，不是 scoped pool（R1 review P1 修正）**：scope 过滤
+     （subject/kind/source/knowledge/difficulty/within/exclude/draft/admission）若把全局
+     rank-2 竞争者滤出范围，scoped pool 上量出的 margin 会凭空变大，把缺题科目顶成
+     sparse/enough 并吞掉 gap_request。引擎用独立的 `ORDER BY distance LIMIT 2` 基线
+     查询量 margin（谓词来自 `bankVectorBaselinePredicates()`，无 scope 过滤）；scoped
+     命中只有恰为全局 rank-1 且全局 margin ≥ δ 才计入；**池成员资格仍按 scope**。
+     标定脚本的取数共用同一谓词构建器，两边不可能漂移。
    - drop-off 之后（≥δ 落后）的命中不是已证实的主题匹配；rank-1/rank-2 贴成簇
      （margin < δ）时无 decisive 证据——两者都只在候选列表展示
      （`match_evidence.counted=false`，语义同 fts weak），不抬 verdict。
-   - 库内（硬过滤后、带向量）不足两题 ⇒ 无竞争者证据 ⇒ 不计入（保守）。
+   - 合格库面内不足两题 ⇒ 无竞争者证据 ⇒ 不计入（保守）。
 3. 选择 absolute-gap 而非 ratio 的理由：实测证据即以 gap 表述（0.253 vs 0.110，取中带
    0.15）；cosine 距离上 ratio 阈值在小距离端（近重复）与大距离端（压缩）都不稳定。
 
@@ -57,6 +64,7 @@ precision/recall、absent 主题的 false-enough 率与全网格；据此修订�
 ## 已知边界
 
 - cursor schema 升 v3（pool 条目携带 `vd`/`vc`）：续页不 embed，向量距离与计入判定只能
-  由游标还原；v2 游标（15 分钟 TTL）显式过期，重新检索即可。
-- 标定脚本的可见性基线镜像引擎默认面（draft_state='all' + admission_state='any'），
-  无 scope 专属过滤——标定的是向量轴本身。
+  由游标还原；v2 及更早游标（15 分钟 TTL）显式报版本过期/不支持，重新检索即可。
+- 标定脚本与引擎共用 `bankVectorBaselinePredicates()`（合格库面谓词，无 scope 过滤）；
+  脚本取最近 3 行（rank-1/rank-2 判定 + 细节展示），无向量副本在任何 embed 之前拒绝
+  （`count(*)::int`，R1 review P2）。

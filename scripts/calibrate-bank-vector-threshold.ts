@@ -6,9 +6,10 @@
 //   也接受顶层数组形式 [ {…}, … ]。带 `_template: true` 的文件会被拒绝——先填真实标签。
 //
 // 做什么：
-//   1. 逐查询走既有 embedText（DashScope text-embedding-v4@1024，付费调用）；
-//   2. 对库内全部「顶层、未撤回、带向量」的题算 cosine 距离（硬过滤基线镜像引擎
-//      draft_state='all' + admission_state='any' 的默认面，无 scope 专属过滤）；
+//   1. 逐查询走既有 embedText（DashScope text-embedding-v4@1024，付费调用；无向量副本
+//      在任何 embed 之前拒绝）；
+//   2. 对「合格库面」（与引擎 margin 基线共用 bankVectorBaselinePredicates，单一真相）
+//      的题算 cosine 距离（顶层、未撤回、带向量；无 scope 过滤；取最近 3 行）；
 //   3. 对参数网格 {maxDistance × top1Margin} 逐点评测：present 主题的 query 级
 //      precision / recall，absent 主题的 false-enough 率；
 //   4. 打印现行参数（单一真相：与 bank-vector-retrieval.ts 同源常量）的结果 + 全网格 JSON。
@@ -26,6 +27,7 @@ import './load-env';
 
 import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
+import { and, eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 // D3 note: unlike seed-synthetic, this script deliberately does NOT import @/db/client's
@@ -37,9 +39,9 @@ import {
   BANK_VECTOR_RETRIEVAL_PARAMS,
   BANK_VECTOR_RETRIEVAL_RULE_VERSION,
   type BankVectorRetrievalParams,
+  bankVectorBaselinePredicates,
   bankVectorCountedRank,
 } from '@/capabilities/practice/server/tools/bank-vector-retrieval';
-import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import type { Db } from '@/db/client';
 import * as schema from '@/db/schema';
 import { toSqlVector } from '@/db/vector';
@@ -98,26 +100,28 @@ export interface BankDistanceRow {
   readonly distance: number;
 }
 
-/** 与引擎 draft_state='all' + admission_state='any' 相同的可见性基线：
- * 顶层、非固定窗口诊断题、无 dismissed/archived 墓碑、未撤回、带向量。 */
+/** 与引擎 margin 基线共用同一谓词构建器（bankVectorBaselinePredicates，单一真相，
+ * 两边不可能漂移）：顶层、非固定窗口诊断题、无墓碑、未撤回、带向量、无 scope 过滤。
+ * 只取最近 3 行——规则判定只需要 rank-1/rank-2，第三行供 per_query 细节展示。 */
 export async function fetchBankDistances(
-  client: postgres.Sql,
+  db: Db,
   vector: readonly number[],
 ): Promise<BankDistanceRow[]> {
-  const rows = await client<BankDistanceRow[]>`
-    SELECT q.id AS id, left(q.prompt_md, 80) AS prompt_preview,
-           (q.embedding <=> ${toSqlVector([...vector])}::vector) AS distance
-    FROM question q
-    LEFT JOIN question_group_lifecycle lc ON lc.group_id = q.id
-    WHERE q.parent_question_id IS NULL
-      AND q.source <> ${INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE}
-      AND (q.metadata -> 'dismissed_at') IS NULL
-      AND (q.metadata -> 'archived_at') IS NULL
-      AND (lc.withdrawn IS NULL OR lc.withdrawn = false)
-      AND q.embedding IS NOT NULL
-    ORDER BY distance ASC
-  `;
-  return rows;
+  const distanceExpr = sql<number>`(${schema.question.embedding} <=> ${toSqlVector([...vector])}::vector)`;
+  return db
+    .select({
+      id: schema.question.id,
+      prompt_preview: sql<string | null>`left(${schema.question.prompt_md}, 80)`,
+      distance: distanceExpr,
+    })
+    .from(schema.question)
+    .leftJoin(
+      schema.question_group_lifecycle,
+      eq(schema.question_group_lifecycle.group_id, schema.question.id),
+    )
+    .where(and(...bankVectorBaselinePredicates()))
+    .orderBy(sql`${distanceExpr} ASC`)
+    .limit(3);
 }
 
 // ── 网格评测（纯函数；规则本体与引擎同源）────────────────────────────────────
@@ -284,9 +288,11 @@ async function main(): Promise<void> {
   const masked = maskUrl(dbUrl);
   const client = postgres(dbUrl, { max: 2 });
   try {
+    // ::int — postgres-js 把裸 count(*) 递成字符串，字符串永不 === 0，会把无向量副本
+    // 放进付费 embed 阶段（R1 review P2）。归档/诊断面另行如实打印。
     const bankRows = await client<{ total: number; with_vectors: number }[]>`
-      SELECT count(*) FILTER (WHERE q.parent_question_id IS NULL) AS total,
-             count(*) FILTER (WHERE q.parent_question_id IS NULL AND q.embedding IS NOT NULL) AS with_vectors
+      SELECT count(*) FILTER (WHERE q.parent_question_id IS NULL)::int AS total,
+             count(*) FILTER (WHERE q.parent_question_id IS NULL AND q.embedding IS NOT NULL)::int AS with_vectors
       FROM question q
     `;
     const bank = bankRows[0];
@@ -294,11 +300,12 @@ async function main(): Promise<void> {
     console.error(
       `[calibrate] bank: top-level=${bank.total} with-vectors=${bank.with_vectors}; queries=${queries.length} (each = 1 paid embed via embedText)`,
     );
+    // 拒绝必须发生在任何 embed 调用之前——这里是付费阶段前的最后一道闸。
     if (bank.with_vectors === 0) {
       throw new Error('no question carries an embedding — nothing to calibrate');
     }
 
-    // Provider-attempt 记账走同一显式连接（付费留痕；除此以外零写入）。
+    // Provider-attempt 记账与取数走同一显式连接（付费留痕；除此以外零写入）。
     const db = drizzle(client, { schema }) as unknown as Db;
     const embedCache = new Map<string, number[]>();
     const rankings: QueryRanking[] = [];
@@ -312,7 +319,7 @@ async function main(): Promise<void> {
         });
         embedCache.set(entry.query, vector);
       }
-      const rows = await fetchBankDistances(client, vector);
+      const rows = await fetchBankDistances(db, vector);
       rankings.push({
         query: entry.query,
         ...(entry.note !== undefined ? { note: entry.note } : {}),

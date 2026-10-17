@@ -34,7 +34,11 @@ import { canonicalKindToPersistedForms } from '@/subjects/question-kind';
 import { questionVectorInvalidReason } from '../../jobs/embed_backfill';
 import { EvidenceDemandV1 } from '../question-supply/evidence-demand';
 import { encodeBankRef, readBankServableParts, resolveBankRefs } from './bank-ref';
-import { BANK_VECTOR_RETRIEVAL_MAX_DISTANCE, bankVectorCountedRank } from './bank-vector-retrieval';
+import {
+  BANK_VECTOR_RETRIEVAL_MAX_DISTANCE,
+  bankVectorBaselinePredicates,
+  bankVectorCountedRank,
+} from './bank-vector-retrieval';
 
 /** 每个召回通道的截断上限（OOM 保护；命中即 retrieval_truncated=true）。 */
 export const BANK_SEARCH_CHANNEL_CAP = 200;
@@ -367,6 +371,19 @@ export function decodeBankSearchCursor(raw: string): BankSearchCursor {
     parsed = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8'));
   } catch {
     throw new Error('cursor is not a valid bank-search cursor');
+  }
+  // YUK-1516 — v2 及更早游标（不含向量计入元数据）给出可归因的版本错误，而不是笼统的
+  // 「不是合法游标」。保留原前缀，既有调用方/测试的子串匹配不受影响。
+  if (
+    parsed !== null &&
+    typeof parsed === 'object' &&
+    'v' in parsed &&
+    typeof (parsed as { v: unknown }).v === 'number' &&
+    (parsed as { v: number }).v !== 3
+  ) {
+    throw new Error(
+      `cursor is not a valid bank-search cursor: version ${(parsed as { v: number }).v} is expired or unsupported; start a new search`,
+    );
   }
   const result = BankSearchCursorSchema.safeParse(parsed);
   if (!result.success) throw new Error('cursor is not a valid bank-search cursor');
@@ -913,26 +930,43 @@ async function runSearchBankInSnapshot(
     let vectorRows: Array<{ id: string; distance: number }> = [];
     if (vectorResult.vector != null) {
       const distanceExpr = sql<number>`(${question.embedding} <=> ${toSqlVector(vectorResult.vector)}::vector)`;
-      // YUK-1516 — 召回取最近 CAP+1 行、不在 SQL 里加距离天花板：判 top-1 margin
-      // 需要全库（硬过滤后）真实的 rank-2，哪怕它落在天花板之外（正确目标的第二名
-      // 往往在 0.6+）。截断只会藏掉第 CAP+1 名之后的名次，rank-1/rank-2 永远在前两行，
-      // 判定不受影响。天花板筛选与计入规则在应用层执行（bank-vector-retrieval.ts）。
-      const vecAll = await db
-        .select({ id: question.id, distance: distanceExpr })
-        .from(question)
-        .leftJoin(question_group_lifecycle, eq(question_group_lifecycle.group_id, question.id))
-        .where(and(where, sql`${question.embedding} IS NOT NULL`))
-        .orderBy(sql`${distanceExpr} ASC`)
-        .limit(BANK_SEARCH_CHANNEL_CAP + 1);
-      const countedRank = bankVectorCountedRank(vecAll.map((row) => row.distance));
+      // 两个查询分工（YUK-1516，R1 review P1 修正）：
+      //   - scoped pool（下）：召回/池成员资格/逐题距离——scope 过滤全部生效；
+      //   - baseline margin（并行）：只在「合格库面」（bankVectorBaselinePredicates，
+      //     无 scope 过滤）上取 rank-1/rank-2 判 decisive。margin 绝不能算在 scoped
+      //     pool 上：scope 滤掉全局 rank-2 竞争者会凭空制造 decisive margin，把缺题
+      //     科目顶成 sparse/enough 并吞掉 gap_request（false-enough 方向）。
+      // 计入条件 = 该题既是 scoped 池内命中，又恰是 baseline rank-1 且全局 margin ≥ δ。
+      const [vecAll, baselineTop] = await Promise.all([
+        // 召回取最近 CAP+1 行、不在 SQL 里加距离天花板：逐题距离与天花板筛选在应用层
+        // 执行（bank-vector-retrieval.ts）。截断只影响池尾；rank-1/rank-2 判定走
+        // baseline 查询，不受影响。
+        db
+          .select({ id: question.id, distance: distanceExpr })
+          .from(question)
+          .leftJoin(question_group_lifecycle, eq(question_group_lifecycle.group_id, question.id))
+          .where(and(where, sql`${question.embedding} IS NOT NULL`))
+          .orderBy(sql`${distanceExpr} ASC`)
+          .limit(BANK_SEARCH_CHANNEL_CAP + 1),
+        db
+          .select({ id: question.id, distance: distanceExpr })
+          .from(question)
+          .leftJoin(question_group_lifecycle, eq(question_group_lifecycle.group_id, question.id))
+          .where(and(...bankVectorBaselinePredicates()))
+          .orderBy(sql`${distanceExpr} ASC`)
+          .limit(2),
+      ]);
+      const countedRank = bankVectorCountedRank(baselineTop.map((row) => row.distance));
+      const countedId =
+        countedRank === 0 && baselineTop.length > 0 ? (baselineTop[0]?.id ?? null) : null;
       const qualified = vecAll.filter((row) => row.distance <= BANK_VECTOR_RETRIEVAL_MAX_DISTANCE);
       // ⇔ 第 CAP+1 近的题仍在天花板内：天花板内候选 ≥ CAP+1，池被截断。
       vectorTruncated = qualified.length > BANK_SEARCH_CHANNEL_CAP;
       vectorRows = qualified.slice(0, BANK_SEARCH_CHANNEL_CAP);
       vectorMeta = new Map(
-        vectorRows.map((row, i) => [
+        vectorRows.map((row) => [
           row.id,
-          { distance: row.distance, counted: i === countedRank },
+          { distance: row.distance, counted: row.id === countedId },
         ]),
       );
       channels.push({ name: 'vector', hits: vectorRows.map((r, i) => ({ id: r.id, rank: i })) });
