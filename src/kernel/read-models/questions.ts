@@ -51,6 +51,13 @@ import { notDraftPredicate } from '@/db/predicates';
 import { knowledge, question } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { canonicalKindToPersistedForms } from '@/subjects/question-kind';
+import {
+  type QuestionServing,
+  type ServingCounts,
+  UNKNOWN_SERVING,
+  aggregateServingCounts,
+  readQuestionServing,
+} from './question-serving';
 
 // Truncation threshold for list-item `prompt_md` (detail page serves the full
 // text). Keeps the list payload bounded on long prompts. A trailing ellipsis
@@ -121,6 +128,11 @@ export interface ListQuestionsParams {
   // draft exclusion (default false → draft 排除惯例).
   includeDrafts?: boolean;
   draftStatus?: QuestionListDraftStatus;
+  // YUK-1514 — status=not_servable: keep only held questions (serving gate,
+  // in-memory like the tier/family paths — never SQL-paginated).
+  notServable?: boolean;
+  // YUK-1514 — return pagination-independent hold counts alongside the page.
+  includeServingCounts?: boolean;
   // YUK-409 题库面 enrichment opt-in. true → 回填 subject / knowledge_labels /
   // is_composite / children（loom screen-questions 所需的派生量）。只在默认 SQL-
   // 分页 flat 路径生效（题库 UI 唯一走的路径）；tier/family/OOM 路径与 copilot
@@ -168,6 +180,9 @@ export interface QuestionListItem {
   // children: 大题的有序小题（part_index 序）。非大题为 []。小题本身也 enrich（subject/
   //   labels/glyph 所需），但小题不再递归取 children（小题无小题）。
   children: QuestionListItem[];
+  // YUK-1514 — serving hold projection (group-level: a composite child shares
+  // its parent's). Attached by listQuestions' post-pass on every path.
+  serving: QuestionServing;
 }
 
 export interface QuestionFamily {
@@ -193,6 +208,8 @@ export interface ListQuestionsResult {
     has_more: boolean;
     next_cursor: string | null;
   };
+  // YUK-1514 — present only when notServable or includeServingCounts was set.
+  serving_counts?: ServingCounts;
   computed_at_sec: number;
 }
 
@@ -360,6 +377,8 @@ function toListItem(c: DerivedCandidate): QuestionListItem {
     knowledge_labels: null,
     is_composite: false,
     children: [],
+    // Placeholder — listQuestions' attachServing post-pass always overwrites it.
+    serving: { ...UNKNOWN_SERVING },
   };
 }
 
@@ -428,11 +447,41 @@ const emptyResult = (params: ListQuestionsParams): ListQuestionsResult => ({
  *   - groupByFamily: aggregate candidates into families, paginate families.
  *   - otherwise: a flat list (with optional tier filter/sort).
  */
+/**
+ * YUK-1514 — attach the serving projection to every emitted item (top-level,
+ * composite children, family representatives). One batched read per call —
+ * never per item (N+1). `precomputed` (keyed by group id) lets the not_servable
+ * / serving_counts path reuse its full-set derivation instead of re-reading.
+ */
+async function attachServingToItems(
+  db: Db,
+  items: QuestionListItem[],
+  precomputed?: Map<string, QuestionServing>,
+): Promise<void> {
+  const flat: QuestionListItem[] = [];
+  const collect = (item: QuestionListItem) => {
+    flat.push(item);
+    for (const child of item.children) flat.push(child);
+  };
+  for (const item of items) collect(item);
+  const groupOf = (item: QuestionListItem) => item.parent_question_id ?? item.id;
+  const missing = [...new Set(flat.map(groupOf))].filter((id) => !precomputed?.has(id));
+  const extra = missing.length > 0 ? await readQuestionServing(db, missing) : null;
+  for (const item of flat) {
+    const groupId = groupOf(item);
+    item.serving = precomputed?.get(groupId) ?? extra?.get(groupId) ?? { ...UNKNOWN_SERVING };
+  }
+}
+
 export async function listQuestions(
   db: Db,
   params: ListQuestionsParams,
 ): Promise<ListQuestionsResult> {
   const computedAtSec = Math.floor(Date.now() / 1000);
+  // Serving-count requests need the full filtered set in memory (same class of
+  // path as the tier/family aggregation) — the route rejects cursor pagination
+  // for them, so only offset paging reaches this branch.
+  const needServingPass = params.notServable === true || params.includeServingCounts === true;
 
   if (params.expandRoot !== undefined) {
     return expandRootFamily(db, params, computedAtSec);
@@ -440,28 +489,62 @@ export async function listQuestions(
 
   const filters = buildSqlFilters(params);
 
-  // Plain default path (no tier filter, no tier sort, no family aggregation):
-  // created_at is a real column, so this path MUST SQL-paginate (ORDER BY
-  // created_at DESC + LIMIT/OFFSET + a separate COUNT) instead of reusing the
-  // OOM-capped in-memory candidate fetch. The cap only exists for paths that
-  // CANNOT SQL-paginate (tier filter/sort, family aggregation — they need the
-  // full WHERE-hit set in memory, see A1b). Routing the default list through it
-  // would, once the WHERE-hit set exceeds CANDIDATE_CAP, return "the newest page
-  // of the OLDEST 2000 rows" and misreport total as 2000 (plan §risk-table:
-  // "default sort_by falls back to the SQL-pageable created_at path").
+  // Plain default path (no tier filter, no tier sort, no family aggregation,
+  // no serving pass): created_at is a real column, so this path MUST
+  // SQL-paginate (ORDER BY created_at DESC + LIMIT/OFFSET + a separate COUNT)
+  // instead of reusing the OOM-capped in-memory candidate fetch. The cap only
+  // exists for paths that CANNOT SQL-paginate (tier filter/sort, family
+  // aggregation, serving gates — they need the full WHERE-hit set in memory,
+  // see A1b). Routing the default list through it would, once the WHERE-hit
+  // set exceeds CANDIDATE_CAP, return "the newest page of the OLDEST 2000
+  // rows" and misreport total as 2000 (plan §risk-table: "default sort_by
+  // falls back to the SQL-pageable created_at path").
   const tierFiltered = params.sourceTier !== undefined && params.sourceTier.length > 0;
   const tierSorted = params.sortBy === 'source_tier';
-  if (!params.groupByFamily && !tierFiltered && !tierSorted) {
+  if (!params.groupByFamily && !tierFiltered && !tierSorted && !needServingPass) {
     return flatListSqlPaginated(db, filters, params, computedAtSec);
   }
 
   const { rows, truncated } = await fetchCandidates(db, filters);
-  const derived = rows.map(deriveCandidate);
+  let derived = rows.map(deriveCandidate);
 
-  if (params.groupByFamily) {
-    return aggregateFamilies(derived, params, truncated, computedAtSec);
+  // Serving pass runs over the SAME filtered set the producers see — the
+  // producers' own tier filter is idempotent over this pre-filter.
+  if (tierFiltered) {
+    const wanted = new Set<SourceTier>(params.sourceTier as SourceTier[]);
+    derived = derived.filter((c) => wanted.has(c.tier));
   }
-  return flatList(derived, params, truncated, computedAtSec);
+  let servingById: Map<string, QuestionServing> | undefined;
+  let servingCounts: ServingCounts | undefined;
+  if (needServingPass) {
+    servingById = await readQuestionServing(
+      db,
+      derived.map((c) => c.row.id),
+    );
+    servingCounts = aggregateServingCounts(servingById.values());
+    if (params.notServable) {
+      derived = derived.filter((c) => servingById?.get(c.row.id)?.servable === false);
+    }
+  }
+
+  let result = params.groupByFamily
+    ? aggregateFamilies(derived, params, truncated, computedAtSec)
+    : flatList(derived, params, truncated, computedAtSec);
+  if (servingCounts != null) result = { ...result, serving_counts: servingCounts };
+
+  // enrich is page-bounded (≤200); apply it on the in-memory flat page too so
+  // status=not_servable keeps the same bank-UI surface.
+  if (params.enrich && result.families == null && result.items.length > 0) {
+    result = {
+      ...result,
+      items: await enrichItems(db, result.items, params.includeDrafts ?? false),
+    };
+  }
+
+  const attachTargets =
+    result.families != null ? result.families.map((f) => f.representative) : result.items;
+  await attachServingToItems(db, attachTargets, servingById);
+  return result;
 }
 
 interface QuestionCursor {
@@ -600,6 +683,8 @@ async function flatListSqlPaginated(
   // YUK-409 — 题库面 enrichment：subject / knowledge_labels / 大题小题展开。仅本
   // SQL-分页路径（题库 UI 唯一路径）按 page 量（≤200 行）补，绝不入 tier/family 路径。
   if (params.enrich) items = await enrichItems(db, items, params.includeDrafts ?? false);
+  // YUK-1514 — serving projection for page items + any enriched children.
+  await attachServingToItems(db, items);
 
   return {
     items,
@@ -805,7 +890,23 @@ async function expandRootFamily(
   const members = await loadFamilyMembers(db, rootKey, !params.includeDrafts);
   if (members.length === 0) return { ...emptyResult(params), computed_at_sec: computedAtSec };
 
-  const derived = members.map(deriveCandidate);
+  let derived = members.map(deriveCandidate);
+  // YUK-1514 — same serving pass as the flat path: not_servable filters the
+  // family members themselves; counts cover the unfiltered member set.
+  const needServingPass = params.notServable === true || params.includeServingCounts === true;
+  let servingById: Map<string, QuestionServing> | undefined;
+  let servingCounts: ServingCounts | undefined;
+  if (needServingPass) {
+    servingById = await readQuestionServing(
+      db,
+      derived.map((c) => c.row.id),
+    );
+    servingCounts = aggregateServingCounts(servingById.values());
+    if (params.notServable) {
+      derived = derived.filter((c) => servingById?.get(c.row.id)?.servable === false);
+    }
+  }
+
   // depth asc, created_at asc — the family-tree reading order.
   derived.sort((a, b) => {
     if (a.row.variant_depth !== b.row.variant_depth) {
@@ -816,11 +917,14 @@ async function expandRootFamily(
 
   const total = derived.length;
   const page = derived.slice(params.offset, params.offset + params.limit);
+  const items = page.map(toListItem);
+  await attachServingToItems(db, items, servingById);
   return {
-    items: page.map(toListItem),
+    items,
     families: null,
     total,
     truncated: false,
+    ...(servingCounts != null ? { serving_counts: servingCounts } : {}),
     page: pageInfo(total, page.length, params),
     computed_at_sec: computedAtSec,
   };
