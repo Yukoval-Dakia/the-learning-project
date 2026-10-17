@@ -1,4 +1,4 @@
-import { stableStringify } from '../../migration/canonical';
+import { stableStringify } from '../../migration/stable-stringify';
 import type { GroupEvidenceT, SubmissionRecordT } from './judgment';
 import type { EvidenceAttachmentT } from './materials';
 import { type ResponseSetT, validateResponseSet } from './response';
