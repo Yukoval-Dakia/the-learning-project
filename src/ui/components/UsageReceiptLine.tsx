@@ -1,5 +1,5 @@
 // YUK-1512 — the redaction receipt on the upload screens: one quiet line saying which
-// kinds of personal info were taken out of this upload's text before AI read it, and,
+// kinds of personal info were hidden in this upload's recognised text, and,
 // for 'answer_only' material, that it is only used for this question. Fed by the
 // ingestion session detail (GET /api/ingestion-sessions/:id → usage_receipt, YUK-1408);
 // counts only, never the removed text. Renders nothing until the receipt exists.
@@ -47,10 +47,13 @@ export function usageReceiptText(receipt: UsageReceipt): string {
   }
   if (other > 0) parts.push(`${other} 处${OTHER_LABEL}`);
 
+  // Scoped to the recognised text: counts come from the text redaction only (page
+  // images that reach a model are never altered), and are an upper bound of the
+  // spans marked [已隐去], hence 「隐去」 and no stronger claim.
   const redaction =
     parts.length > 0
-      ? `交给 AI 前，这次去掉了 ${parts.join('、')}。`
-      : '没有发现需要去掉的个人信息。';
+      ? `从识别出的文字里隐去了 ${parts.join('、')}；原文件本身不会被改动。`
+      : '识别出的文字里没有发现需要隐去的个人信息。';
   return receipt.derivation_policy === 'answer_only'
     ? `${redaction}这份资料只用于本题。`
     : redaction;
