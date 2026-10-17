@@ -5,7 +5,7 @@ import {
   type ApiRouteDecl,
   type CapabilityManifest,
   apiRequestBodyMediaType,
-  apiResponseMediaType,
+  apiResponseMediaTypes,
   apiSuccessStatuses,
 } from './manifest';
 import { zodToJsonSchemaCompat } from './zod-json-schema';
@@ -70,12 +70,13 @@ function openApiResponses(route: ApiRouteDecl): JsonObject {
       const status = Number(statusText);
       const response: JsonObject = { description: responseDescription(status, successStatuses) };
       if (status !== 204 && schema !== undefined) {
-        const mediaType = apiResponseMediaType(route, status);
-        response.content = {
-          [mediaType]: {
-            schema: toJsonSchema(schema, { binaryFiles: mediaType !== 'application/json' }),
-          },
-        };
+        const mediaTypes = apiResponseMediaTypes(route, status);
+        response.content = Object.fromEntries(
+          mediaTypes.map((mediaType) => [
+            mediaType,
+            { schema: toJsonSchema(schema, { binaryFiles: mediaType !== 'application/json' }) },
+          ]),
+        );
       }
       return [statusText, response];
     }),

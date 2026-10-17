@@ -4,6 +4,7 @@ import type {
   ResponseSlotT,
   SlotResponseT,
 } from '@/core/schema/assessment';
+import { describeSelectItem } from '@/core/schema/assessment/response';
 
 // YUK-1051 — 通用 response 组件族的共享类型与纯函数。
 //
@@ -300,6 +301,12 @@ export function nativeResponseValue(
       };
     case 'ordering':
       return { kind: 'ordering', ordered_ids: entry.item_order };
+    // YUK-1497 — unified envelopes (drawn by presentation blocks): read as a choice / a text so
+    // answered checks and summaries cover them; an active blank reads as empty.
+    case 'select':
+      return { kind: 'choice', option_ids: entry.item_ids };
+    case 'blank':
+      return { kind: 'text', text: entry.text };
   }
 }
 
@@ -341,6 +348,11 @@ export function nativeResponseText(entry: SlotResponseT, spec: ResponseSlotT | u
             : undefined;
         return `${label(left)} → ${label(right)}`;
       })
+      .join('；');
+  }
+  if (entry.kind === 'select') {
+    return entry.item_ids
+      .map((id) => (spec?.kind === 'select' ? describeSelectItem(spec, id) : '原选项不可用'))
       .join('；');
   }
   if (entry.kind === 'ordering') {

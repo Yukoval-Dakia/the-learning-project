@@ -6,6 +6,7 @@ import {
   getPlacementSession,
   placementEnd,
   placementNext,
+  releaseHeldPlacement,
   saveProbeResponseDraft,
   startPlacement,
   submitProbeAnswer,
@@ -19,6 +20,7 @@ export type PlacementClient = {
   startPlacement: typeof startPlacement;
   getPlacementSession: typeof getPlacementSession;
   placementNext: typeof placementNext;
+  releaseHeldPlacement: typeof releaseHeldPlacement;
   placementEnd: (
     sessionId: string,
     status: 'completed' | 'abandoned',
@@ -37,6 +39,7 @@ export const httpPlacementClient: PlacementClient = {
   startPlacement,
   getPlacementSession,
   placementNext,
+  releaseHeldPlacement,
   placementEnd,
   submitProbeAnswer,
   saveResponseDraft: saveProbeResponseDraft,

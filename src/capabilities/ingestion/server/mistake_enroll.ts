@@ -32,6 +32,7 @@ import {
 } from '@/core/schema/mistake_enroll';
 import type { Db } from '@/db/client';
 import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
+import { redactIngestionText } from './privacy-guard';
 
 /**
  * Thrown when the MistakeEnrollTask cannot produce a usable draft (provider
@@ -84,10 +85,15 @@ export async function runMistakeEnrollTask(
 
   let input: MistakeEnrollInputT;
   try {
+    // YUK-1408 — extracted / learner-answer text is deterministically redacted
+    // before the model sees it; the closed cause taxonomy and KC ids are
+    // internal vocabulary and stay untouched.
     input = MistakeEnrollInput.parse({
-      question_md: params.questionMd,
-      reference_md: params.referenceMd ?? null,
-      student_answer_md: params.studentAnswerMd ?? null,
+      question_md: redactIngestionText(params.questionMd).text,
+      reference_md:
+        params.referenceMd == null ? null : redactIngestionText(params.referenceMd).text,
+      student_answer_md:
+        params.studentAnswerMd == null ? null : redactIngestionText(params.studentAnswerMd).text,
       allowed_cause_ids: allowedCauseIds,
       knowledge_ids: params.knowledgeIds ?? [],
     });

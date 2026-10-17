@@ -72,7 +72,30 @@ export async function validateInternalToken(token: string): Promise<void> {
   }
 }
 
+/**
+ * YUK-1520 — the internal token only ever goes to this site. Some URLs come from the
+ * server (poll_url, …); an absolute or protocol-relative value pointing elsewhere is
+ * refused before any request is made, instead of carrying the token off-origin.
+ */
+function assertSameOrigin(input: string): void {
+  if (typeof window === 'undefined') return;
+  let target: URL;
+  try {
+    // Resolve exactly as fetch() does (against the document base).
+    target = new URL(input, document.baseURI);
+  } catch {
+    throw new ApiError('请求地址无效。', 0, 'invalid_request_url');
+  }
+  if (
+    (target.protocol !== 'https:' && target.protocol !== 'http:') ||
+    target.origin !== window.location.origin
+  ) {
+    throw new ApiError('拒绝向本站以外的地址发送请求。', 0, 'cross_origin_request_blocked');
+  }
+}
+
 export async function apiFetch(input: string, init: RequestInit = {}): Promise<Response> {
+  assertSameOrigin(input);
   const token = getInternalToken();
   if (!token) throw new ApiAuthError('未设置 internal token');
   const headers = new Headers(init.headers);

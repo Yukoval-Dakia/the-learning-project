@@ -37,6 +37,7 @@ import {
 import type { Db } from '@/db/client';
 
 import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
+import { redactIngestionText } from './privacy-guard';
 import type { LayoutQuality } from './tencent_mark_parser';
 
 export { StructureOutput, type StructureOutputT, StructureTaskError };
@@ -252,7 +253,10 @@ export async function runStructureTask(params: RunStructureTaskParams): Promise<
   }
 
   const textPayload = JSON.stringify({
-    tencent_hint_md: params.tencentHintMd,
+    // YUK-1408 — the OCR text hint is deterministically redacted before it
+    // reaches the VLM (personal identifiers are never needed for structuring).
+    // The page images stay raw: they are the extraction input itself.
+    tencent_hint_md: redactIngestionText(params.tencentHintMd).text,
     page_count: params.pageCount,
     // YUK-227 S3 Slice A: pass minimal figure metadata so the VLM can self-report
     // figure↔question assignments via figure_ids on StructureNode. Coordinates

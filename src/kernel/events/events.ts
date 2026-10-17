@@ -261,7 +261,10 @@ export interface WriteEventInput {
  * First write wins — a duplicate does NOT overwrite payload.
  */
 function prepareEventInsert(input: WriteEventInput): typeof event.$inferInsert {
-  if (readDerivationPolicy(input.payload) === 'answer_only') {
+  // YUK-1398：受限用途从 answer_only 扩到一切非 allow（含 crisis）——
+  // 危机回合在写入点就退出记忆摄取 outbox 且不带 affected_scopes，
+  // 从不产生 Mem0 add / brief 重算任务；读面谓词是第二层防御。
+  if (readDerivationPolicy(input.payload) !== 'allow') {
     input = { ...input, ingest_at: input.ingest_at ?? new Date(), affected_scopes: [] };
   }
   // parseEvent on a normalised view — Lane B's discriminated union locks

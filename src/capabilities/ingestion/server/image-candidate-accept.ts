@@ -80,6 +80,7 @@ import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { type R2Client, getR2 } from '@/server/r2';
 import { getKnownSubjects } from '@/subjects/profile';
 import { normalizeToCanonicalKind } from '@/subjects/question-kind';
+import { redactIngestionText } from './privacy-guard';
 
 export interface ImageCandidateAcceptResult {
   kind: 'image_candidate';
@@ -814,8 +815,16 @@ export async function acceptImageCandidateProposal(
             nameKcFn: async () => ({ kc_name: bridge.kc_name }),
           },
           {
-            questionText: promptMd,
-            knowledgeHint: block.knowledge_hint,
+            // YUK-1408 — tagKnowledge embeds this text (a model call); the
+            // deterministic identifier redaction runs at the call boundary.
+            // The hint is redacted as well so what the audit event stores
+            // matches the model-facing contract. This path is a web-image
+            // proposal accept — it owns no ingestion session, so the events
+            // keep the non-ingestion shape (session_id null).
+            questionText: redactIngestionText(promptMd).text,
+            knowledgeHint: block.knowledge_hint
+              ? redactIngestionText(block.knowledge_hint).text
+              : block.knowledge_hint,
             subjectRootId,
             sourceRef: { kind: 'image_candidate_proposal', id: proposalId },
           },

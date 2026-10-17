@@ -1103,3 +1103,32 @@
   font-size: var(--fs-caption);
   color: var(--ink-2);
 }
+
+/* YUK-1405 — placement exits: a held question's note, the no-question actions, and the
+   questions that closed without a verdict. */
+.ob-pl-held-note {
+  margin: var(--s-4) 0 0;
+  max-width: var(--cap-prose);
+  font-size: var(--fs-caption);
+  color: var(--ink-2);
+}
+.ob-pl-actions {
+  justify-content: center;
+  margin-top: var(--s-4);
+}
+.ob-pl-unresolved {
+  margin-top: var(--s-5);
+  padding-top: var(--s-4);
+  border-top: 1px solid var(--line-soft);
+  font-size: var(--fs-caption);
+  color: var(--ink-2);
+}
+.ob-pl-unresolved-h {
+  font-weight: 600;
+  color: var(--ink);
+  margin-bottom: var(--s-2);
+}
+.ob-pl-unresolved ul {
+  margin: 0;
+  padding-left: var(--s-5);
+}

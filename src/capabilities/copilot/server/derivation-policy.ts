@@ -17,7 +17,8 @@ export async function acceptedCopilotDerivationPolicy(
     .limit(1);
   const delivered = readDerivationPolicy(data);
   if (!ask) {
-    if (delivered === 'answer_only') throw new Error('restricted Copilot source missing');
+    // YUK-1398：crisis 与 answer_only 同为受限用途——受限投递必须能对上不可变接纳源。
+    if (delivered !== 'allow') throw new Error('restricted Copilot source missing');
     return 'allow'; // Retained pre-anchor jobs only.
   }
   const accepted = readDerivationPolicy(ask.payload);
@@ -41,7 +42,7 @@ export async function acceptedCopilotDerivationPolicy(
       ),
     )
     .limit(1);
-  if ((!queued || queued.payload.job_data === undefined) && accepted === 'answer_only')
+  if ((!queued || queued.payload.job_data === undefined) && accepted !== 'allow')
     throw new Error('restricted Copilot acceptance missing');
   if (
     queued &&

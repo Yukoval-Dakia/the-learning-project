@@ -3,19 +3,25 @@ import { eq } from 'drizzle-orm';
 
 import {
   AUTO_ENROLL_SINGLETON_SECONDS,
+  type IngestionRedactionField,
   autoEnrollJobEnabled,
+  writeIngestionUsageReceipt,
 } from '@/capabilities/ingestion/public';
+import type { DerivationPolicyT } from '@/core/schema/derivation-policy';
 import {
   type StructuredQuestionT,
   structuredToPromptMarkdown,
 } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import { learning_session, question_block, source_document } from '@/db/schema';
+import {
+  USAGE_POLICY_PROVENANCE_KEY,
+  resolveSessionDerivationPolicy,
+} from '@/kernel/read-models/usage-policy';
 import { COPILOT_NUDGE_EVALUATE_QUEUE } from '@/server/boss/queue-names';
 import { writeJobEvent } from '@/server/events/writer';
 import { writeQuestionBlockCreateEvent } from '@/server/projections/question_block-create-event';
 import { type DocxExternalRefOmissionFacts, EXTERNAL_REF_OMISSION_NOTICE } from './docx-omission';
-
 import { writeSessionEvent } from './events';
 
 // YUK-258 — DOCX text-line session lifecycle owner.
@@ -57,6 +63,23 @@ export interface InitiateDocxTextUploadParams {
    * omission audit; no new schema/table, and never the external Target URL.
    */
   externalRefOmission?: DocxExternalRefOmissionFacts;
+  /**
+   * YUK-1408 — the learner's consented usage for this document. Same contract
+   * as Ingestion.initiateUpload: absent = legacy 'allow' default; an explicit
+   * value lands on source_document.provenance.usage_policy.
+   */
+  derivationPolicy?: DerivationPolicyT | null;
+  /**
+   * YUK-1408 (S1 follow-up) — the privacy-guard facts for the usage receipt.
+   * The route runs redactIngestionText over the pandoc markdown (the
+   * extraction text this run) and passes the fired categories + per-category
+   * span counts; this owner writes the receipt inside the same transaction as
+   * the block inserts, mirroring tencent_ocr_extract's apply-time write.
+   */
+  usageReceipt: {
+    redactedFields: IngestionRedactionField[];
+    redactionCounts: Partial<Record<IngestionRedactionField, number>>;
+  };
 }
 
 // Shared with the visual line (Ingestion.initiateUpload) via the zero-dependency
@@ -114,6 +137,14 @@ export async function initiateDocxTextUpload(
       provenance: {
         entrypoint: 'docx',
         line: 'text',
+        // YUK-1408 — explicit consent signal; absence = default 'allow'.
+        ...(params.derivationPolicy
+          ? {
+              [USAGE_POLICY_PROVENANCE_KEY]: {
+                derivation_policy: params.derivationPolicy,
+              },
+            }
+          : {}),
         ...(omission
           ? {
               docx_external_ref_omission: {
@@ -251,6 +282,24 @@ export async function initiateDocxTextUpload(
         warnings,
       },
       created_at: now,
+    });
+
+    // 8. YUK-1408 — per-extraction usage receipt on the source document, the
+    //    text line's equivalent of the OCR job's receipt write (same tx as the
+    //    block writes, policy resolved live off the just-inserted session row).
+    //    No page image leaves for a model on this line — the rendered evidence
+    //    pages are review-UI only — so page_images is honestly 'none';
+    //    extracted text reaches models only through the shared
+    //    redactIngestionText call-site backstops.
+    await writeIngestionUsageReceipt(tx, {
+      sourceDocumentId,
+      sessionId,
+      derivationPolicy: await resolveSessionDerivationPolicy(tx, sessionId),
+      engine: 'docx_text',
+      redactedFields: params.usageReceipt.redactedFields,
+      redactionCounts: params.usageReceipt.redactionCounts,
+      channels: { page_images: 'none', extracted_text: 'redacted' },
+      now,
     });
 
     return { sessionId, sourceDocumentId, blockCount: params.blocks.length };

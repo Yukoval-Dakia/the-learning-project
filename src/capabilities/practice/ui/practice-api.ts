@@ -46,6 +46,8 @@ export interface StreamItem {
   verdict: 'again' | 'hard' | 'good' | null;
   completed_at: string | null;
   total_slots: number | null;
+  /** YUK-1510 — an open question whose answer is already recorded (not marked done yet). */
+  answer_recorded: boolean;
 }
 
 export interface StreamView {
@@ -374,12 +376,17 @@ export const revealStudyReference = (
     method: 'POST',
   });
 
+// YUK-1409 — three-way union: a normal hint (no `status`), a `fallback` with fixed help when the
+// AI hint could not be generated, or `unavailable` with retry/skip. The latter two are not errors.
+export type SolveHintResponse = ApiOperationJsonResponse<'createSolveHintRequest'>;
+export type SolveHintFallbackHelp = Extract<SolveHintResponse, { status: 'fallback' }>['help'];
+
 export const solveHint = (
   questionId: string,
   sessionId: string,
   hintIndex: number,
   issuanceId?: string,
-): Promise<{ text_md: string }> =>
+): Promise<SolveHintResponse> =>
   apiOperationJson('createSolveHintRequest', {
     url: `/api/solve-sessions/${encodeURIComponent(sessionId)}/hint-requests`,
     method: 'POST',

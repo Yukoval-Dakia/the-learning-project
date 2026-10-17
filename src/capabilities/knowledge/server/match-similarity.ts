@@ -79,10 +79,14 @@ export async function matchKnowledgeBySimilarity(
         cosine_distance: distanceExpr,
       })
       .from(knowledge)
-      // Active + embedded only. NOTE: `approval_status` is intentionally NOT filtered — today
-      // every KC is auto-approved ('approved' is the only value with a write path, so it is
-      // inert). When the AI-review/approval flow lands, this MUST add `approval_status =
-      // 'approved'` (latent dep, YUK-489) so unreviewed `pending` KCs aren't matchable. Mirrors
+      // Active + embedded only. NOTE: `approval_status` is intentionally NOT filtered.
+      // YUK-1405 armed 'pending' (auto_tag agent-minted KCs are honestly marked
+      // unapproved) but deliberately did NOT gate reads on it: a pending KC stays
+      // matchable so a second similar question re-uses it instead of minting a
+      // duplicate pending node (kc_dedup_nightly owns merge proposals). If the
+      // review flow later wants 'pending' to mean unusable, this MUST add
+      // `approval_status = 'approved'` (latent dep, YUK-489) — that is a
+      // semantics change, not this filter's current contract. Mirrors
       // poolFetch's documented answer_class deferral.
       .where(and(isNull(knowledge.archived_at), sql`${knowledge.embedding} IS NOT NULL`))
       .orderBy(distanceExpr)
