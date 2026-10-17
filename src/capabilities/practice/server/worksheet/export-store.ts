@@ -354,7 +354,7 @@ export async function createWorksheetExport(
       .where(eq(worksheet_export.idempotency_key, request.idempotency_key))
       .limit(1);
     if (existing != null) {
-      if (existing.request_digest !== requestDigest) {
+      if (existing.request_digest !== `sha256:${requestDigest}`) {
         return { status: 'idempotency_conflict' } as const;
       }
       return {
