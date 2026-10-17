@@ -96,6 +96,7 @@ export function restoreEvidenceFromSlots(slots: readonly PaperSlot[]): EvidenceA
 
 // YUK-1490 — the server's current draft of one slot, read after a stale_draft 409.
 type SlotAssessment = NonNullable<PaperSlot['assessment']>;
+type EvidenceTarget = SlotAssessment['group_evidence'][number]['target'];
 interface ServerSlotDraft {
   text: string;
   files: string[];
@@ -411,6 +412,11 @@ function PaperVisit({
   // question until they move to another one. Local only: never saved or sent.
   // YUK-1521 — the last 交卷 stopped because the server's drafts could not be re-read.
   const [submitCheckFailed, setSubmitCheckFailed] = useState(false);
+  // YUK-1490 — per slot, the attachment targets of the server version the learner kept
+  // (「用服务器上的」). The next save of that slot sends these, not an older local binding.
+  const keptServerTargets = useRef<Record<string, Record<string, EvidenceTarget>>>({});
+  // YUK-1490 — slots found handed in elsewhere at 交卷 with a different answer than this visit's.
+  const [handedInElsewhere, setHandedInElsewhere] = useState<Record<string, true>>({});
   const [discarded, setDiscarded] = useState<Record<string, { text: string; files: number }>>({});
   // Disables the retry chip while a retry batch is in flight (avoids redundant PUTs).
   const [retrying, setRetrying] = useState(false);
@@ -602,9 +608,10 @@ function PaperVisit({
             ? [
                 {
                   evidence: item.original,
-                  target: bound.group_evidence.find(
-                    (saved) => saved.evidence.asset.asset_id === item.asset_id,
-                  )?.target ??
+                  target: keptServerTargets.current[key]?.[item.asset_id] ??
+                    bound.group_evidence.find(
+                      (saved) => saved.evidence.asset.asset_id === item.asset_id,
+                    )?.target ??
                     item.originalTarget ?? { scope: 'all_units' as const },
                 },
               ]
@@ -886,21 +893,68 @@ function PaperVisit({
     setSubmitCheckFailed(false);
     const freshSlots = fresh.sections.flatMap((s) => s.slots);
     let held = false;
-    for (const local of slots) {
+    const changedElsewhere: number[] = [];
+    slots.forEach((local, index) => {
       const key = slotKey(local);
       if (local.slot_state.submission?.submitted || submittedDuringAttemptsRef.current.has(key))
-        continue;
-      if (conflictsRef.current[key]) {
-        held = true;
-        continue;
-      }
+        return;
       const slot = freshSlots.find((s) => slotKey(s) === key);
       const assessment = slot?.assessment;
-      if (!slot || !assessment || slot.slot_state.submission?.submitted) continue;
-      if (assessment.issuance_id !== local.assessment?.issuance_id) continue;
+      if (!slot || !assessment || assessment.issuance_id !== local.assessment?.issuance_id) {
+        if (conflictsRef.current[key]) held = true;
+        return;
+      }
+      // Handed in elsewhere since this visit read the paper: never send it again (a different
+      // payload is an idempotency conflict that would stop every retry). Skip it from now on;
+      // when its answer differs from this visit's, show the handed-in answer and stop this
+      // 交卷 once, so the learner sees it before the paper completes.
+      if (slot.slot_state.submission?.submitted) {
+        submittedDuringAttemptsRef.current.add(key);
+        if (!sameResponses(nativePayloadFor(key)?.response_set, assessment.response_set)) {
+          takeHandedInAnswer(key, slot, assessment);
+          changedElsewhere.push(index + 1);
+          held = true;
+        } else if (conflictsRef.current[key]) setConflict(key, null);
+        return;
+      }
+      if (conflictsRef.current[key]) {
+        held = true;
+        return;
+      }
       if (settleWithServer(key, assessment) === 'conflict') held = true;
-    }
+    });
+    if (changedElsewhere.length > 0)
+      addToast(
+        `第 ${changedElsewhere.join('、')} 题已经在别处交过了，已换成交过的作答——看过后再点交卷`,
+        'info',
+        'alert',
+      );
     return !held;
+  };
+
+  // A slot handed in elsewhere: show the handed-in answer in place of this visit's (kept below
+  // the field as the set-aside copy). Its draft is no longer this visit's to write.
+  const takeHandedInAnswer = (key: string, slot: PaperSlot, assessment: SlotAssessment) => {
+    if (saveTimers.current[key]) {
+      clearTimeout(saveTimers.current[key]);
+      delete saveTimers.current[key];
+    }
+    const mine = {
+      text: answersRef.current[key] ?? '',
+      files: evidenceIdsForSlot(evidenceRef.current, key).length,
+    };
+    if (mine.text || mine.files > 0) setDiscarded((d) => ({ ...d, [key]: mine }));
+    const text =
+      slot.slot_state.submission?.answer_md ??
+      nativeAnswerText(assessment, assessment.response_set);
+    answersRef.current[key] = text;
+    setAnswers((a) => ({ ...a, [key]: text }));
+    nativeResponsesRef.current = { ...nativeResponsesRef.current, [key]: assessment.response_set };
+    setNativeResponses(nativeResponsesRef.current);
+    ackedAnswers.current[key] = text;
+    setSaveFailed((f) => (f[key] ? { ...f, [key]: false } : f));
+    if (conflictsRef.current[key]) setConflict(key, null);
+    setHandedInElsewhere((h) => ({ ...h, [key]: true }));
   };
 
   // 「用服务器上的」: the slot takes the server's text, answer and attachments as its saved
@@ -929,6 +983,9 @@ function PaperVisit({
     );
     evidenceRef.current = nextEvidence;
     setEvidence(nextEvidence);
+    keptServerTargets.current[key] = Object.fromEntries(
+      server.group_evidence.map((item) => [item.evidence.asset.asset_id, item.target]),
+    );
     nativeEpochs.current[key] = Math.max(nativeEpochs.current[key] ?? 0, server.epoch);
     ackedAnswers.current[key] = server.text;
     // A failure flag from an earlier failed re-read is moot: the slot now holds the stored draft.
@@ -1162,6 +1219,7 @@ function PaperVisit({
     const unsavedFailures = slots.filter((s) => {
       if (s.slot_state.submission?.submitted) return false;
       const k = slotKey(s);
+      if (submittedDuringAttemptsRef.current.has(k)) return false;
       // YUK-1490 — a slot left on the conflict choice kept the server's version, not this visit's.
       if (conflictsRef.current[k]) return true;
       const ok = outcome.get(k);
@@ -1533,6 +1591,16 @@ function PaperVisit({
           </>
         )}
 
+        {handedInElsewhere[curKey] && (
+          <div className="pfp-conflict" aria-live="polite">
+            <p className="pfp-conflict-msg">
+              <LoomIcon name="alert" size={14} className="ico" />
+              {discarded[curKey]
+                ? '这道题已经在别处交过了，下面是交过的作答，不能再改。你这次写的放在作答下方「你这次写的（已放下）」里。'
+                : '这道题已经在别处交过了，下面是交过的作答，不能再改。'}
+            </p>
+          </div>
+        )}
         {curConflict && (
           <PaperDraftConflict
             mine={{ text: curAnswerText, files: evidenceIdsForSlot(evidence, curKey).length }}
