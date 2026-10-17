@@ -59,10 +59,12 @@ export interface ApiRouteDecl {
   /** HTTP status → response body schema。错误响应可渐进补齐。 */
   responses?: Partial<Record<number, ZodTypeAny>>;
   /**
-   * HTTP status → response media type。缺省为 application/json；仅在真实响应
-   * 使用其他表示时声明（例如 Copilot inline 200 = text/event-stream）。
+   * HTTP status → response media type(s)。单值或列表（同一 status 多种表示，
+   * 如 /api/assets/[id]/content 的 200 = image/* 与 text/plain）；缺省
+   * application/json；仅在真实响应使用其他表示时声明（例如 Copilot inline
+   * 200 = text/event-stream）。
    */
-  responseMediaTypes?: Partial<Record<number, string>>;
+  responseMediaTypes?: Partial<Record<number, string | readonly string[]>>;
   /** 允许幂等创建等 route 声明多个成功状态（例如 200/201）。 */
   successStatus?: number | readonly number[];
   pagination?: ApiPaginationDecl;
@@ -252,7 +254,14 @@ export function apiSuccessStatuses(route: ApiRouteDecl): number[] {
 }
 
 export function apiResponseMediaType(route: ApiRouteDecl, status: number): string {
-  return route.responseMediaTypes?.[status] ?? 'application/json';
+  return apiResponseMediaTypes(route, status)[0];
+}
+
+/** 一个 status 声明的全部响应 media type（缺省 ['application/json']）。 */
+export function apiResponseMediaTypes(route: ApiRouteDecl, status: number): string[] {
+  const declared = route.responseMediaTypes?.[status];
+  const list = declared == null ? [] : typeof declared === 'string' ? [declared] : [...declared];
+  return list.length > 0 ? list : ['application/json'];
 }
 
 export function apiRequestBodyMediaType(route: ApiRouteDecl): string {
@@ -332,7 +341,7 @@ function validateApiRouteContract(route: ApiRouteDecl): void {
     }
   }
 
-  for (const [rawStatus, mediaType] of Object.entries(route.responseMediaTypes ?? {})) {
+  for (const [rawStatus, declared] of Object.entries(route.responseMediaTypes ?? {})) {
     const status = Number(rawStatus);
     if (!Number.isInteger(status) || status < 100 || status > 599) {
       throw new Error(`api route '${key}' has invalid response media type status ${rawStatus}`);
@@ -345,8 +354,17 @@ function validateApiRouteContract(route: ApiRouteDecl): void {
     if (status === 204) {
       throw new Error(`api route '${key}' cannot declare a response media type for status 204`);
     }
-    if (!isMediaType(mediaType)) {
-      throw new Error(`api route '${key}' has invalid response media type '${mediaType}'`);
+    const mediaTypes =
+      declared == null ? [] : typeof declared === 'string' ? [declared] : [...declared];
+    if (mediaTypes.length === 0) {
+      throw new Error(
+        `api route '${key}' declares an empty response media type list for status ${status}`,
+      );
+    }
+    for (const mediaType of mediaTypes) {
+      if (!isMediaType(mediaType)) {
+        throw new Error(`api route '${key}' has invalid response media type '${mediaType}'`);
+      }
     }
   }
 
