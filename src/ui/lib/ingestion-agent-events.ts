@@ -2,12 +2,16 @@
 // progress panel. The three `ingestion_agent.stage|item|error` shapes are the
 // backend lead's draft contract (tlp-status/discussions/ui-backend-contracts-2026-10-17.md).
 //
-// PROPOSAL (not in the draft yet, marked where used):
-//   - `ingestion_agent.stage.pages?: { total, done }`  — "which page" progress.
-//   - `ingestion_agent.item.page?: number`, `preview_md?: string` — so a row can
-//     say where the question is and what it starts with.
-//   - `ingestion_agent.ask` / `ingestion_agent.ask_resolved` — the agent's
-//     follow-up questions, answered in place (ADR-0074 D5).
+// Lead ruling 2026-10-17 15:33 (same doc, last section; binding once the R8 PR
+// lands) adds:
+//   - `stage.pages?: { total, done }`
+//   - `item.page?` (1-based) and `item.preview_md?` (redacted, ≤80 chars, shown as
+//     plain text)
+//   - `ingestion_agent.ask` {ask_id, item_id, question_no, prompt_md,
+//     answer_kind, options?, placeholder, expires_at} and
+//     `ingestion_agent.ask_resolved` {ask_id, answer} — follow-up questions
+//     answered in place (ADR-0074 D5). An ask counts as answered only on
+//     ask_resolved, never on the POST result.
 //
 // Everything here is a pure fold over the SSE event list; no fetches.
 
@@ -39,10 +43,14 @@ export interface AgentCounts {
   items_failed: number;
 }
 
-/** PROPOSAL — the answer a learner gave, echoed back in `ask_resolved`. */
+/** The answer echoed back in `ask_resolved`; `skipped` is by the learner or by timeout. */
 export type AskAnswer =
   | { kind: 'choice'; option_id: string }
-  | { kind: 'text'; text: string; via_option?: 'none_of_these' };
+  | { kind: 'text'; text: string; via_option?: 'none_of_these' }
+  | { kind: 'skipped'; by: 'learner' | 'timeout' };
+
+/** Server cap on a text answer. */
+export const ASK_TEXT_MAX = 500;
 
 export interface AgentAskOption {
   id: string;
@@ -54,9 +62,11 @@ export interface AgentAsk {
   item_id: string | null;
   question_no: string | null;
   prompt_md: string;
-  kind: 'choice' | 'short';
+  answer_kind: 'choice' | 'short';
   options: AgentAskOption[];
   placeholder: string | null;
+  /** ISO time after which the agent stops waiting; null = waits indefinitely. */
+  expires_at: string | null;
   answer: AskAnswer | null;
 }
 
@@ -105,6 +115,9 @@ function parseAnswer(v: unknown): AskAnswer | null {
     return o.via_option === 'none_of_these'
       ? { kind: 'text', text: o.text, via_option: 'none_of_these' }
       : { kind: 'text', text: o.text };
+  }
+  if (o.kind === 'skipped' && (o.by === 'learner' || o.by === 'timeout')) {
+    return { kind: 'skipped', by: o.by };
   }
   return null;
 }
@@ -177,7 +190,7 @@ export function foldAgentEvents(events: readonly SSEEvent[]): AgentView {
         const id = str(p.ask_id);
         const prompt = str(p.prompt_md);
         if (!id || !prompt) break;
-        const kind = p.kind === 'choice' ? 'choice' : 'short';
+        const answerKind = p.answer_kind === 'choice' ? 'choice' : 'short';
         const options = Array.isArray(p.options)
           ? p.options.flatMap((o) => {
               const r = o as Record<string, unknown>;
@@ -191,9 +204,10 @@ export function foldAgentEvents(events: readonly SSEEvent[]): AgentView {
           item_id: str(p.item_id),
           question_no: str(p.question_no),
           prompt_md: prompt,
-          kind,
+          answer_kind: answerKind,
           options,
           placeholder: str(p.placeholder),
+          expires_at: str(p.expires_at),
           answer: asks.get(id)?.answer ?? null,
         });
         break;
@@ -259,7 +273,7 @@ export function holdReasonCopy(reason: string | null): string {
   return (reason && HOLD_REASON_COPY[reason]) || '暂不出题';
 }
 
-/** PROPOSAL — error codes are not enumerated in the draft; these are guesses to align on. */
+/** Error codes per the lead's ruling; unknown codes get the generic line. */
 const ERROR_COPY: Record<string, string> = {
   page_unreadable: '这一页看不清，换一张更清楚的照片会更好',
   solve_timeout: '解这道题用时太长，没有完成',
@@ -267,7 +281,31 @@ const ERROR_COPY: Record<string, string> = {
   budget_exhausted: '本周的 AI 额度用完了',
   crop_failed: '没能把这道题的图裁出来',
   worker_lost: '后台任务中断了',
+  structure_failed: '没能理清这道题的结构',
+  ask_expired: '追问没等到回答，这道题没法判断',
 };
 export function errorCopy(code: string, scope: 'session' | 'item'): string {
   return ERROR_COPY[code] ?? (scope === 'session' ? '录入中断了' : '这道题处理时出错了');
+}
+
+/** Coarse "stops waiting" line for an ask with expires_at. */
+export function expiresCopy(expiresAt: string, now: number): string | null {
+  const t = Date.parse(expiresAt);
+  if (!Number.isFinite(t)) return null;
+  const minutes = Math.ceil((t - now) / 60_000);
+  if (minutes <= 0) return '马上不再等，会按现有信息处理';
+  return `约 ${minutes} 分钟后不再等，会按现有信息处理`;
+}
+
+/** Inline copy for a rejected answer POST (409 / 422). */
+export function answerRejectCopy(status: number, code: string | undefined): string {
+  if (status === 409) return '这题已经有结果了，正在同步';
+  if (status === 422) {
+    if (code === 'option_not_found' || code === 'invalid_option')
+      return '这个选项已经不在了，换一个试试';
+    if (code === 'answer_too_long') return `最多 ${ASK_TEXT_MAX} 字`;
+    if (code === 'answer_empty') return '先写点内容再确定';
+    return '这个回答没被接受，改一下再试';
+  }
+  return '没有发出去，再试一次';
 }

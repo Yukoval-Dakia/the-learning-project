@@ -875,7 +875,7 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
           {phase === 'extracting' && agentRun && (
             <IngestAgentPanel
               stream={sse}
-              onAnswer={(askId, answer) => postAskAnswer(sessionId, askId, answer)}
+              onAnswer={(askId, answer, key) => postAskAnswer(sessionId, askId, answer, key)}
             />
           )}
           {phase === 'extracting' && ingestionLine !== 'text' && !agentRun && (
@@ -1555,19 +1555,20 @@ function layoutQualityLabel(quality: string): string {
 }
 
 /**
- * PROPOSAL — answer one ingestion_agent.ask. The server records it, emits
- * `ingestion_agent.ask_resolved` on the same SSE stream, and carries on with the
- * item. The endpoint does not exist yet (R8).
+ * Answer one ingestion_agent.ask (lead ruling 2026-10-17, lands with the R8 PR).
+ * 202 {accepted, replayed}; 409 ask_already_resolved / 422 reject with ApiError.
+ * The ask is only "answered" once `ingestion_agent.ask_resolved` arrives.
  */
 async function postAskAnswer(
   sessionId: string | null,
   askId: string,
   answer: AskAnswer,
-): Promise<void> {
+  idempotencyKey: string,
+): Promise<{ accepted: boolean; replayed: boolean }> {
   if (!sessionId) throw new Error('no session');
-  await apiJson(`/api/ingestion/${sessionId}/asks/${encodeURIComponent(askId)}/answer`, {
+  return apiJson(`/api/ingestion-sessions/${sessionId}/asks/${encodeURIComponent(askId)}/answers`, {
     method: 'POST',
-    headers: { 'Idempotency-Key': `${askId}:${JSON.stringify(answer)}` },
+    headers: { 'Idempotency-Key': idempotencyKey },
     body: JSON.stringify({ answer }),
   });
 }

@@ -10,7 +10,8 @@
 // placeholder text below.
 
 import { useSyncExternalStore } from 'react';
-import type { AskAnswer } from './ingestion-agent-events';
+import { ApiError } from './api';
+import { ASK_TEXT_MAX, type AskAnswer } from './ingestion-agent-events';
 import type { UseIngestionSSEResult } from './sse';
 
 interface FixtureItem {
@@ -117,6 +118,37 @@ function at(ms: number, fn: () => void) {
 }
 
 const itemId = (no: string) => `loft-item-${no}`;
+
+// The short ask stops waiting this long after it is asked (demoes a timeout skip).
+const SHORT_ASK_WAIT_MS = 75_000;
+const resolvedAsks = new Set<string>();
+
+/** After an ask resolves, carry the item on: answered → admitted; skipped → per kind. */
+function continueItem(askId: string, answer: AskAnswer) {
+  const ask = [...snapshot.events]
+    .reverse()
+    .find((e) => e.event_type === 'ingestion_agent.ask' && e.payload.ask_id === askId);
+  const no = typeof ask?.payload.question_no === 'string' ? ask.payload.question_no : null;
+  const f = no ? fixture.items.find((i) => i.question_no === no) : undefined;
+  if (!f) return;
+  // A skipped short ask leaves the agent without the missing text: it cannot decide.
+  const cannotDecide = answer.kind === 'skipped' && ask?.payload.answer_kind === 'short';
+  at(900, () => item(f, 'structuring'));
+  if (cannotDecide) {
+    at(2200, () => item(f, 'withheld'));
+    return;
+  }
+  at(2000, () => item(f, 'solving'));
+  at(3200, () => item(f, 'calibrating'));
+  at(4300, () => item(f, 'admitted'));
+}
+
+function resolveAsk(askId: string, answer: AskAnswer) {
+  if (resolvedAsks.has(askId)) return;
+  resolvedAsks.add(askId);
+  emit('ingestion_agent.ask_resolved', { ask_id: askId, answer });
+  continueItem(askId, answer);
+}
 
 function item(f: FixtureItem, status: string, extra: Record<string, unknown> = {}) {
   emit('ingestion_agent.item', {
@@ -225,9 +257,11 @@ function schedule(fx: Fixture) {
       ask_id: 'loft-ask-choice',
       item_id: byNo.has(choiceNo) ? itemId(choiceNo) : null,
       question_no: choiceNo,
-      kind: 'choice',
       prompt_md: fx.asks.choice.prompt_md,
+      answer_kind: 'choice',
       options: fx.asks.choice.options,
+      placeholder: null,
+      expires_at: null,
     }),
   );
   t += 1400;
@@ -237,11 +271,13 @@ function schedule(fx: Fixture) {
       ask_id: 'loft-ask-short',
       item_id: byNo.has(shortNo) ? itemId(shortNo) : null,
       question_no: shortNo,
-      kind: 'short',
       prompt_md: fx.asks.short.prompt_md,
+      answer_kind: 'short',
       placeholder: fx.asks.short.placeholder ?? null,
+      expires_at: new Date(Date.now() + SHORT_ASK_WAIT_MS).toISOString(),
     }),
   );
+  at(t + SHORT_ASK_WAIT_MS, () => resolveAsk('loft-ask-short', { kind: 'skipped', by: 'timeout' }));
   t += 1200;
   at(t, () =>
     emit('ingestion_agent.stage', {
@@ -261,6 +297,7 @@ function start() {
   for (const id of timers) clearTimeout(id);
   timers = [];
   nextEventId = 1;
+  resolvedAsks.clear();
   snapshot = { events: [], status: 'connecting', error: null };
   const gen = generation;
   void loadFixture().then((fx) => {
@@ -308,26 +345,42 @@ export function restartLoftReplay() {
 }
 
 /**
- * Stand-in for the proposed answer POST. The server would accept it, emit
- * `ingestion_agent.ask_resolved`, then carry on with the item.
+ * Stand-in for `POST /api/ingestion-sessions/:id/asks/:ask_id/answers`: validates
+ * like the server (409 / 422), answers 202 {accepted, replayed}, then emits
+ * `ingestion_agent.ask_resolved` on the stream a moment later.
  */
-export function answerLoftAsk(askId: string, answer: AskAnswer): Promise<void> {
-  const ask = [...snapshot.events]
-    .reverse()
-    .find((e) => e.event_type === 'ingestion_agent.ask' && e.payload.ask_id === askId);
-  const no = typeof ask?.payload.question_no === 'string' ? ask.payload.question_no : null;
-  const f = no ? fixture.items.find((i) => i.question_no === no) : undefined;
-  return new Promise((resolve) => {
-    at(700, () => {
-      emit('ingestion_agent.ask_resolved', { ask_id: askId, answer });
-      resolve();
-    });
-    if (f) {
-      at(1600, () => item(f, 'structuring'));
-      at(2700, () => item(f, 'solving'));
-      at(3900, () => item(f, 'calibrating'));
-      at(5000, () => item(f, 'admitted'));
-    }
+const seenKeys = new Set<string>();
+export function answerLoftAsk(
+  askId: string,
+  answer: AskAnswer,
+  idempotencyKey: string,
+): Promise<{ accepted: boolean; replayed: boolean }> {
+  return new Promise((resolve, reject) => {
+    const gen = generation;
+    setTimeout(() => {
+      if (gen !== generation) return;
+      if (seenKeys.has(idempotencyKey)) {
+        resolve({ accepted: true, replayed: true });
+        return;
+      }
+      if (resolvedAsks.has(askId)) {
+        reject(new ApiError('ask already resolved', 409, 'ask_already_resolved'));
+        return;
+      }
+      if (answer.kind === 'text') {
+        if (answer.text.trim() === '') {
+          reject(new ApiError('empty', 422, 'answer_empty'));
+          return;
+        }
+        if (answer.text.length > ASK_TEXT_MAX) {
+          reject(new ApiError('too long', 422, 'answer_too_long'));
+          return;
+        }
+      }
+      seenKeys.add(idempotencyKey);
+      resolve({ accepted: true, replayed: false });
+      at(500, () => resolveAsk(askId, answer));
+    }, 250);
   });
 }
 

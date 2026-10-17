@@ -8,16 +8,20 @@
 // state worth keeping lives in the event stream. Local state is only the
 // learner's unsent drafts and "answer posted, waiting for the server echo".
 
-import { type FormEvent, useState } from 'react';
+import { type FormEvent, useState, useSyncExternalStore } from 'react';
+import { ApiError } from '@/ui/lib/api';
 import {
   AGENT_STAGES,
+  ASK_TEXT_MAX,
   type AgentAsk,
   type AgentItem,
   type AgentView,
   type AskAnswer,
   ITEM_STATUS_LABEL,
   STAGE_LABEL,
+  answerRejectCopy,
   errorCopy,
+  expiresCopy,
   foldAgentEvents,
   holdReasonCopy,
 } from '@/ui/lib/ingestion-agent-events';
@@ -27,13 +31,44 @@ import './ingest-agent-panel.css';
 
 export interface IngestAgentPanelProps {
   stream: UseIngestionSSEResult;
-  /** Posts one answer. Resolves when the server accepted it (the echo comes over SSE). */
-  onAnswer: (askId: string, answer: AskAnswer) => Promise<void>;
+  /**
+   * Posts one answer (202 {accepted, replayed}). Rejects with ApiError on 409 / 422.
+   * The ask only counts as answered once `ask_resolved` arrives on the stream.
+   */
+  onAnswer: (askId: string, answer: AskAnswer, idempotencyKey: string) => Promise<unknown>;
   onRetryItem?: (itemId: string) => void;
   onRetrySession?: () => void;
 }
 
 const NONE_OF_THESE = '__none_of_these__';
+
+// Coarse clock for the "stops waiting in N minutes" line: a 30 s tick, only while
+// some open ask has expires_at. No per-second ticking.
+let coarseNow = Date.now();
+let nowTimer: ReturnType<typeof setInterval> | null = null;
+const nowListeners = new Set<() => void>();
+function subscribeNow(listener: () => void) {
+  nowListeners.add(listener);
+  coarseNow = Date.now();
+  if (!nowTimer) {
+    nowTimer = setInterval(() => {
+      coarseNow = Date.now();
+      for (const l of nowListeners) l();
+    }, 30_000);
+  }
+  return () => {
+    nowListeners.delete(listener);
+    if (nowListeners.size === 0 && nowTimer) {
+      clearInterval(nowTimer);
+      nowTimer = null;
+    }
+  };
+}
+const noopSubscribe = () => () => {};
+const readNow = () => coarseNow;
+function useCoarseNow(active: boolean): number {
+  return useSyncExternalStore(active ? subscribeNow : noopSubscribe, readNow, readNow);
+}
 
 function prefersReducedMotion() {
   return (
@@ -54,6 +89,11 @@ export function IngestAgentPanel({
   const openAskByItem = new Map<string, AgentAsk>();
   for (const a of view.asks) if (!a.answer && a.item_id) openAskByItem.set(a.item_id, a);
   const openAsks = view.asks.filter((a) => !a.answer).length;
+  const skippedByItem = new Map<string, 'learner' | 'timeout'>();
+  for (const a of view.asks) {
+    if (a.item_id && a.answer?.kind === 'skipped') skippedByItem.set(a.item_id, a.answer.by);
+  }
+  const now = useCoarseNow(view.asks.some((a) => !a.answer && a.expires_at));
 
   const jumpTo = (domId: string) => {
     const el = document.getElementById(domId);
@@ -96,13 +136,14 @@ export function IngestAgentPanel({
             {openAsks > 0 ? (
               <span className="ia-section-count">还差 {openAsks} 个</span>
             ) : (
-              <span className="ia-section-count is-done">都答完了</span>
+              <span className="ia-section-count is-done">都处理完了</span>
             )}
           </h3>
           {view.asks.map((a) => (
             <div key={a.ask_id} className="ia-ask-wrap">
               <AskCard
                 ask={a}
+                now={now}
                 flashClass={flashClass(`ia-ask-${a.ask_id}`)}
                 onAnswer={onAnswer}
                 onJumpToItem={a.item_id ? () => jumpTo(`ia-item-${a.item_id}`) : undefined}
@@ -126,6 +167,7 @@ export function IngestAgentPanel({
                     key={it.item_id}
                     item={it}
                     ask={openAskByItem.get(it.item_id)}
+                    skipped={skippedByItem.get(it.item_id) ?? null}
                     flashClass={flashClass(`ia-item-${it.item_id}`)}
                     retrying={retrying[it.item_id] === true && it.status === 'failed'}
                     onRetry={onRetryItem ? () => retryItem(it.item_id) : undefined}
@@ -250,6 +292,7 @@ function groupByPage(items: AgentItem[]): [number | null, AgentItem[]][] {
 function ItemRow({
   item,
   ask,
+  skipped,
   flashClass,
   retrying,
   onRetry,
@@ -257,6 +300,7 @@ function ItemRow({
 }: {
   item: AgentItem;
   ask: AgentAsk | undefined;
+  skipped: 'learner' | 'timeout' | null;
   flashClass: string;
   retrying: boolean;
   onRetry?: () => void;
@@ -287,7 +331,13 @@ function ItemRow({
           </div>
         )}
         {!ask && item.status === 'withheld' && (
-          <p className="ia-row-note">{holdReasonCopy(item.reason)}</p>
+          <p className="ia-row-note">
+            {skipped === 'learner'
+              ? '跳过了追问，按现有信息判断不了，先不出这道题'
+              : skipped === 'timeout'
+                ? '追问没等到回答，按现有信息判断不了，先不出这道题'
+                : holdReasonCopy(item.reason)}
+          </p>
         )}
         {!ask && item.status === 'failed' && (
           <div className="ia-row-note">
@@ -310,48 +360,78 @@ function answerLabel(ask: AgentAsk, answer: AskAnswer): string {
   if (answer.kind === 'choice') {
     return ask.options.find((o) => o.id === answer.option_id)?.label_md ?? '已选择';
   }
+  if (answer.kind === 'skipped') {
+    return answer.by === 'timeout' ? '没等到回答，已按现有信息处理' : '已跳过，会按现有信息处理';
+  }
   return answer.text;
+}
+
+function newIdempotencyKey(): string {
+  return typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
 function AskCard({
   ask,
+  now,
   flashClass,
   onAnswer,
   onJumpToItem,
 }: {
   ask: AgentAsk;
+  now: number;
   flashClass: string;
-  onAnswer: (askId: string, answer: AskAnswer) => Promise<void>;
+  onAnswer: IngestAgentPanelProps['onAnswer'];
   onJumpToItem?: () => void;
 }) {
   const [choice, setChoice] = useState<string | null>(null);
   const [text, setText] = useState('');
-  const [sent, setSent] = useState<AskAnswer | null>(null);
-  const [failed, setFailed] = useState(false);
+  // Posted but not yet echoed by ask_resolved.
+  const [pending, setPending] = useState<AskAnswer | null>(null);
+  const [conflict, setConflict] = useState(false);
+  const [reject, setReject] = useState<string | null>(null);
+  // One key per distinct answer; a retry of the same answer reuses it.
+  const [lastKey, setLastKey] = useState<{ body: string; key: string } | null>(null);
 
   const domId = `ia-ask-${ask.ask_id}`;
-  const shown = ask.answer ?? sent;
-  const needsText = ask.kind === 'short' || choice === NONE_OF_THESE;
-  const ready =
-    ask.kind === 'choice'
-      ? choice !== null && (!needsText || text.trim() !== '')
-      : text.trim() !== '';
+  const needsText = ask.answer_kind === 'short' || choice === NONE_OF_THESE;
+  const textOk = text.trim() !== '' && text.length <= ASK_TEXT_MAX;
+  const ready = ask.answer_kind === 'choice' ? choice !== null && (!needsText || textOk) : textOk;
+
+  const send = (answer: AskAnswer) => {
+    if (pending) return;
+    const body = JSON.stringify(answer);
+    const key = lastKey?.body === body ? lastKey.key : newIdempotencyKey();
+    setLastKey({ body, key });
+    setPending(answer);
+    setConflict(false);
+    setReject(null);
+    onAnswer(ask.ask_id, answer, key).catch((err: unknown) => {
+      if (err instanceof ApiError && err.status === 409) {
+        // Already resolved elsewhere: keep waiting for ask_resolved.
+        setConflict(true);
+        return;
+      }
+      setPending(null);
+      setReject(
+        err instanceof ApiError
+          ? answerRejectCopy(err.status, err.code)
+          : answerRejectCopy(0, undefined),
+      );
+    });
+  };
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    if (!ready || sent) return;
-    const answer: AskAnswer =
-      ask.kind === 'choice' && choice && choice !== NONE_OF_THESE
+    if (!ready) return;
+    send(
+      ask.answer_kind === 'choice' && choice && choice !== NONE_OF_THESE
         ? { kind: 'choice', option_id: choice }
-        : ask.kind === 'choice'
+        : ask.answer_kind === 'choice'
           ? { kind: 'text', text: text.trim(), via_option: 'none_of_these' }
-          : { kind: 'text', text: text.trim() };
-    setSent(answer);
-    setFailed(false);
-    onAnswer(ask.ask_id, answer).catch(() => {
-      setSent(null);
-      setFailed(true);
-    });
+          : { kind: 'text', text: text.trim() },
+    );
   };
 
   const ref = (
@@ -368,22 +448,30 @@ function AskCard({
     </span>
   );
 
+  const shown = ask.answer ?? pending;
   if (shown) {
     const confirmed = ask.answer !== null;
+    const skipped = shown.kind === 'skipped' ? shown.by : null;
+    const state = !confirmed
+      ? conflict
+        ? answerRejectCopy(409, undefined)
+        : '已提交，正在记下'
+      : skipped === 'learner'
+        ? '已跳过'
+        : skipped === 'timeout'
+          ? '已超时'
+          : '已回答';
+    const tone = !confirmed ? 'sending' : skipped ? 'skipped' : 'resolved';
     return (
-      <article
-        id={domId}
-        tabIndex={-1}
-        className={`ia-ask is-${confirmed ? 'resolved' : 'sending'}${flashClass}`}
-      >
+      <article id={domId} tabIndex={-1} className={`ia-ask is-${tone}${flashClass}`}>
         <header className="ia-ask-head">
           {ref}
-          <span className="ia-ask-state">{confirmed ? '已回答' : '已提交，正在记下'}</span>
+          <span className="ia-ask-state">{state}</span>
         </header>
         <p className="ia-ask-prompt is-quiet">{ask.prompt_md}</p>
         <p className="ia-ask-answer">
           <span className="ia-ask-answer-mark" aria-hidden="true">
-            {confirmed ? '✓' : '…'}
+            {!confirmed ? '…' : skipped ? '—' : '✓'}
           </span>
           <span>{answerLabel(ask, shown)}</span>
         </p>
@@ -392,16 +480,19 @@ function AskCard({
   }
 
   const nameId = `${domId}-opt`;
+  const expires = ask.expires_at ? expiresCopy(ask.expires_at, now) : null;
   return (
     <article id={domId} tabIndex={-1} className={`ia-ask is-open${flashClass}`}>
       <header className="ia-ask-head">
         {ref}
-        <span className="ia-ask-state">{ask.kind === 'choice' ? '选一个' : '一句话就好'}</span>
+        <span className="ia-ask-state">
+          {ask.answer_kind === 'choice' ? '选一个' : '一句话就好'}
+        </span>
       </header>
       <form onSubmit={submit} className="ia-ask-form">
         <fieldset className="ia-fieldset">
           <legend className="ia-ask-prompt">{ask.prompt_md}</legend>
-          {ask.kind === 'choice' && (
+          {ask.answer_kind === 'choice' && (
             <div className="ia-opts">
               {[...ask.options, { id: NONE_OF_THESE, label_md: '都不是，我来说' }].map((o) => (
                 <label
@@ -425,22 +516,37 @@ function AskCard({
               className="ia-input"
               type="text"
               value={text}
+              maxLength={ASK_TEXT_MAX}
               onChange={(e) => setText(e.target.value)}
               placeholder={
-                ask.kind === 'short' ? (ask.placeholder ?? '写一句就好') : '说说它属于哪里'
+                ask.answer_kind === 'short' ? (ask.placeholder ?? '写一句就好') : '说说它属于哪里'
               }
-              aria-label={ask.kind === 'short' ? ask.prompt_md : '你的说法'}
+              aria-label={ask.answer_kind === 'short' ? ask.prompt_md : '你的说法'}
               // biome-ignore lint/a11y/noAutofocus: only after the learner picks "都不是"; it is the next step
-              autoFocus={ask.kind === 'choice'}
+              autoFocus={ask.answer_kind === 'choice'}
               enterKeyHint="send"
             />
           )}
         </fieldset>
+        {expires && <p className="ia-ask-expires">{expires}</p>}
         <div className="ia-ask-actions">
-          {failed && <span className="ia-ask-fail">没有发出去，再试一次</span>}
-          <Button size="sm" type="submit" disabled={!ready}>
-            确定
-          </Button>
+          <button
+            type="button"
+            className="ia-link is-quiet"
+            onClick={() => send({ kind: 'skipped', by: 'learner' })}
+          >
+            这题先跳过
+          </button>
+          <span className="ia-ask-actions-end">
+            {reject && (
+              <span className="ia-ask-fail" role="alert">
+                {reject}
+              </span>
+            )}
+            <Button size="sm" type="submit" disabled={!ready}>
+              确定
+            </Button>
+          </span>
         </div>
       </form>
     </article>

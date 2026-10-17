@@ -193,6 +193,10 @@
   border-left-color: var(--good);
   background: var(--paper-raised);
 }
+.ia-ask.is-skipped {
+  border-left-color: var(--line-strong);
+  background: var(--paper-raised);
+}
 .ia-ask:focus-visible {
   box-shadow: var(--shadow-focus);
 }
@@ -317,8 +321,19 @@
 .ia-ask-actions {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: space-between;
   gap: var(--s-3);
+}
+.ia-ask-actions-end {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-3);
+  margin-left: auto;
+}
+.ia-ask-expires {
+  margin: 0;
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
 }
 .ia-ask-fail {
   font-size: var(--fs-caption);
@@ -487,6 +502,11 @@
   text-decoration-color: var(--coral-line);
   text-underline-offset: 3px;
   cursor: pointer;
+}
+.ia-link.is-quiet {
+  color: var(--ink-3);
+  font-weight: 400;
+  text-decoration-color: var(--line-strong);
 }
 .ia-link:hover {
   text-decoration-color: currentColor;
