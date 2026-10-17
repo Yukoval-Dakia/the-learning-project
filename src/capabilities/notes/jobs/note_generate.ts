@@ -10,6 +10,7 @@
 // the broken state instead of stuck-pending. pg-boss retries on throw per
 // queue policy.
 
+import { createHash } from 'node:crypto';
 import { type SQL, and, eq, inArray, isNull } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
@@ -43,7 +44,12 @@ import { parseNoteGenerateOutput } from '@/capabilities/notes/tasks/note-tasks';
 import type { ArtifactBodyBlocksT, ArtifactHistoryEntryT } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact, knowledge } from '@/db/schema';
-import { type TaskTextRunFn, aiAgentRef, costUsdToMicroUsd } from '@/server/ai/provenance';
+import {
+  type TaskTextResult,
+  type TaskTextRunFn,
+  aiAgentRef,
+  costUsdToMicroUsd,
+} from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { resolveNoteSkillDoc } from '@/subjects/note-skills';
 import { resolveSubjectProfile } from '@/subjects/profile';
@@ -60,6 +66,34 @@ type DepsOverride = {
 };
 
 export { parseNoteGenerateOutput } from '@/capabilities/notes/tasks/note-tasks';
+
+const NOTE_GENERATE_RAW_EXCERPT_CHARS = 2_000;
+
+function taskRunIdOf(error: unknown): string | null {
+  if (!error || typeof error !== 'object' || !('taskRunId' in error)) return null;
+  const value = (error as { taskRunId?: unknown }).taskRunId;
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+function annotateNoteGenerateFailure(
+  error: unknown,
+  taskRunId: string | null,
+  rawText: string | undefined,
+): Error {
+  const failure = error instanceof Error ? error : new Error(String(error));
+  const parts: string[] = [];
+  if (taskRunId) parts.push(`task_run_id=${taskRunId}`);
+  if (rawText !== undefined) {
+    const excerpt =
+      rawText.length > NOTE_GENERATE_RAW_EXCERPT_CHARS
+        ? `${rawText.slice(0, NOTE_GENERATE_RAW_EXCERPT_CHARS)}…`
+        : rawText;
+    parts.push(`raw_sha256=${createHash('sha256').update(rawText).digest('hex')}`);
+    parts.push(`raw_excerpt=${JSON.stringify(excerpt)}`);
+  }
+  if (parts.length > 0) failure.message = `${failure.message} (${parts.join(' ')})`;
+  return failure;
+}
 
 export interface RunNoteGenerateParams {
   db: Db;
@@ -208,6 +242,7 @@ export async function runNoteGenerate(
   const parentSummary = (parentHub?.attrs as { summary_md?: string } | null)?.summary_md ?? null;
   const referenceArtifacts = await loadNoteGenerationReferences(db, row);
 
+  let attempt: TaskTextResult | undefined;
   const input = {
     artifact_id: row.id,
     artifact_type: row.type,
@@ -244,7 +279,8 @@ export async function runNoteGenerate(
         }
       },
     });
-    const parsed = parseNoteGenerateOutput(result.text, row.type);
+    attempt = result;
+    const parsed = parseNoteGenerateOutput(result.text, row.type, result.finishReason);
     assertNoteGenerationReferences(parsed.body_blocks, referenceArtifacts);
 
     // W3-C1γ — note_generate is a COMPOUND mutation (body_blocks + generation_status='ready' +
@@ -399,6 +435,8 @@ export async function runNoteGenerate(
       blocks_count: parsed.blocks_count,
     };
   } catch (err) {
+    const taskRunId = attempt?.task_run_id ?? taskRunIdOf(err);
+    const failure = annotateNoteGenerateFailure(err, taskRunId, attempt?.text);
     // Mark failed so UI doesn't sit on "pending" forever; pg-boss will still
     // retry per policy because we rethrow.
     //
@@ -465,6 +503,8 @@ export async function runNoteGenerate(
           nextVersion: before.version,
           actorKind: 'agent',
           actorRef: 'note_generate',
+          taskRunId,
+          costMicroUsd: attempt ? costUsdToMicroUsd(attempt.cost_usd) : null,
           createdAt: failedAt,
         });
         return before.version;
@@ -473,7 +513,7 @@ export async function runNoteGenerate(
       console.error('[note_generate] failed-status cleanup failed for', artifactId, cleanupErr);
     }
 
-    if (flipVersion === null) throw err; // not pending anymore (or flip failed) — nothing to fill
+    if (flipVersion === null) throw failure; // not pending anymore (or flip failed) — nothing to fill
 
     // P1-B — the material load has its OWN guard: a throw here degrades to a
     // status-only flip (logged), never strands the note in 'pending'.
@@ -583,7 +623,7 @@ export async function runNoteGenerate(
         console.error('[note_generate] fallback body write failed for', artifactId, fallbackErr);
       }
     }
-    throw err;
+    throw failure;
   }
 }
 

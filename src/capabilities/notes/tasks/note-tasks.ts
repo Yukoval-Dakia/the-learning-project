@@ -4,7 +4,10 @@ import { bodyBlocksToNoteSections } from '@/capabilities/notes/server/body-block
 import { materializeGeneratedBodyBlocks } from '@/capabilities/notes/server/generated-body-blocks';
 import { ArtifactBodyBlocks, NoteVerificationResult } from '@/core/schema/business';
 import type { SubjectProfile } from '@/subjects/profile';
-import { compileNoteGenerateDocument } from './note-generate-document';
+import {
+  assertNoteGenerateStopReason,
+  compileNoteGenerateDocument,
+} from './note-generate-document';
 
 export const NoteGenerateOutputSchema = z.object({
   body_blocks: ArtifactBodyBlocks,
@@ -33,7 +36,9 @@ export interface ParsedNoteGenerateOutput {
 export function parseNoteGenerateOutput(
   text: string,
   artifactType?: string,
+  finishReason?: string,
 ): ParsedNoteGenerateOutput {
+  assertNoteGenerateStopReason(finishReason);
   const compiled = compileNoteGenerateDocument(text, artifactType);
   const bodyBlocksParsed = NoteGenerateOutputSchema.safeParse({ body_blocks: compiled });
   if (!bodyBlocksParsed.success) {
@@ -85,8 +90,8 @@ function buildNoteGeneratePrompt(profile: SubjectProfile): string {
   return `你是${profile.displayName}学习笔记作者。输入 { artifact_id, artifact_type, title, atomic_title, one_line_intent, knowledge_node: { id, name, domain }, knowledge_nodes: [...], parent_hub: { title, summary_md }, related_knowledge_ids: [...], reference_artifacts: [...] }。${methodologySection(profile)}
 artifact_type 只能是 note_atomic / note_long / note_hub。
 
-只输出一份 NOTE v1 内容文档。不要输出 JSON，不要输出 TipTap / ProseMirror，不要用 markdown 代码围栏包住整篇。语言规则里提到的 JSON 字段名不是本任务的输出格式。
-公式用 $...$ 或单独占行的 $$；LaTeX 反斜杠只写一个，例如 $\\frac{x^2}{a^2}$，不要写成 JSON 转义。引号用「」或英文双引号，原文照写。
+只输出一份 NOTE v1 内容文档。第一行就是 NOTE v1，最后一行就是 @end。不要写开场白，不要在 @end 之后写任何字，也不要把收尾套话写进最后一段。不要输出 JSON，不要输出 TipTap / ProseMirror，不要用 markdown 代码围栏包住整篇。语言规则里提到的 JSON 字段名不是本任务的输出格式。
+公式用 $...$ 或各自独占一行的 $$。多行公式不要把开头的 $$ 和公式写在同一行。LaTeX 反斜杠只写一个，例如 $\\frac{x^2}{a^2}$，不要写成 JSON 转义。引号用「」或英文双引号，原文照写。
 
 格式（标记必须独占一行）：
 NOTE v1
@@ -102,7 +107,9 @@ note_atomic 必须包含这五段，顺序不限，每段都要有正文：
 note_long 与 note_hub 用一段自由正文，不要假装成单知识点 atomic：
 @body
 
-段内可用 # 标题、空行分段、- 或 1. 列表、> 引用、三个反引号代码块。强调可用 **粗体**、_斜体_、\`代码\`。交叉链接必须单独成行，且只能使用 reference_artifacts 里的 id：[[artifact:<artifact_id>]] 或 [[artifact:<artifact_id>#<block_id>|<标题>]]。目录里可以有尚未写正文的笔记；只链接，不推断其内容。没有合适目标就不要写链接，不要编造 id。
+@end
+
+段内可用 # 标题、空行分段、- 或 1. 列表、> 引用、三个反引号代码块。提示块写成 > [!note] 标题，下一行继续 > 正文；tone 只用 note、tip 或 warning。强调可用 **粗体**、两侧有空格的 _斜体_、\`代码\`。标识符里的下划线保持原样。交叉链接必须单独成行，且只能使用 reference_artifacts 里的 id：[[artifact:<artifact_id>]] 或 [[artifact:<artifact_id>#<block_id>|<标题>]]。目录里可以有尚未写正文的笔记；只链接，不推断其内容。没有合适目标就不要写链接，不要编造 id。链接只用 http、https、mailto。
 服务端负责 block id、source_tier、user_verified、version、embedded_check、source_markdown。不要输出这些字段，也不要输出 autoLinksContainer。
 
 per-subject semantic_kind 内容模板（definition/mechanism/example/pitfall/check 五维，领域规范见 note skill）：
@@ -126,6 +133,12 @@ function buildNoteVerifyPrompt(profile: SubjectProfile): string {
 禁止：重写整篇 note、markdown 代码块、JSON 之外的文字。`;
 }
 
+function artifactTypeFromGenerateInput(input: unknown): string | undefined {
+  if (!input || typeof input !== 'object' || !('artifact_type' in input)) return undefined;
+  const value = (input as { artifact_type?: unknown }).artifact_type;
+  return typeof value === 'string' ? value : undefined;
+}
+
 export const noteGenerateTaskSpec = {
   ownership: 'owned',
   definition: {
@@ -141,7 +154,8 @@ export const noteGenerateTaskSpec = {
     prompt: { kind: 'profile', build: buildNoteGeneratePrompt },
   },
   outputSchema: NoteGenerateOutputSchema,
-  parseText: (text) => parseNoteGenerateOutput(text),
+  parseText: (text, context) =>
+    parseNoteGenerateOutput(text, artifactTypeFromGenerateInput(context.input)),
 } satisfies TaskSpec<unknown, ParsedNoteGenerateOutput>;
 
 export const noteVerifyTaskSpec = {

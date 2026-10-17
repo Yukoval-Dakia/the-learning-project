@@ -30,4 +30,82 @@ describe('parseNoteGenerateOutput', () => {
       false,
     );
   });
+
+  // @invariant security: compiling a note cannot stall the worker on an unclosed formula
+  // @fails-if the inline-math matcher retries every split of a backslash run, so a few dozen backslashes block the event loop
+  it('returns within milliseconds for an unclosed formula with hundreds of backslashes', () => {
+    const line = `$$\\begin{aligned}${'\\'.repeat(400)}`;
+    const text = `NOTE v1
+@type note_atomic
+
+@definition
+d
+
+@mechanism
+m
+
+@example
+e
+
+@pitfall
+p
+
+@check
+${line}
+\\end{aligned}
+$$
+@end
+`;
+    const started = performance.now();
+    expect(() => parseNoteGenerateOutput(text, 'note_atomic', 'end_turn')).toThrow(
+      /parseNoteGenerateOutput/,
+    );
+    expect(performance.now() - started).toBeLessThan(100);
+  }, 1_000);
+
+  // @invariant data: a truncated generation is not stored as a finished atomic or long note
+  // @fails-if a note cut off before @end, or stopped for max_tokens or length, is accepted
+  it('rejects a truncated atomic note and a truncated long note', () => {
+    const atomicCut = `NOTE v1
+@type note_atomic
+
+@definition
+椭圆定义 $c=\\sqrt{a^2-b^2}$。
+
+@mechanism
+机制
+
+@example
+例子
+
+@pitfall
+易错
+
+@check
+若 $e=\\frac{\\sqrt{3}}{2}$`;
+    const longDone = `NOTE v1
+@type note_long
+
+@body
+离心率 $e=\\sqrt{1-\\frac{b^2}{a^2}}$。
+
+$$
+\\begin{aligned}
+e &= \\sqrt{1-\\frac{b^2}{a^2}}
+\\end{aligned}
+$$
+@end
+`;
+    expect(() => parseNoteGenerateOutput(atomicCut, 'note_atomic', 'end_turn')).toThrow(/@end/);
+    expect(() =>
+      parseNoteGenerateOutput(longDone.replace('@end\n', ''), 'note_long', 'end_turn'),
+    ).toThrow(/@end/);
+    expect(() => parseNoteGenerateOutput(atomicCut, 'note_atomic', 'max_tokens')).toThrow(
+      /max_tokens/,
+    );
+    expect(() => parseNoteGenerateOutput(longDone, 'note_long', 'length')).toThrow(/length/);
+    expect(parseNoteGenerateOutput(longDone, 'note_long', 'end_turn').blocks_count).toBeGreaterThan(
+      0,
+    );
+  });
 });

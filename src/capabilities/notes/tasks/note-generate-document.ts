@@ -6,6 +6,10 @@ import { type NoteArtifactType, isNoteArtifactType } from '../server/note-artifa
 // illegal escapes and, for the legal ones (`\f` in `\frac`, `\t` in `\theta`),
 // stores a control character instead of the command. The model therefore writes
 // a NOTE v1 document; this compiler is the only reader of that document.
+//
+// Inline math is a linear scan. A regex whose alternatives both match `\`
+// retries every split of an unclosed `$...` run (about 2^n), and that scan
+// sits on the worker event loop, outside the task timeout.
 
 type PmNode = Record<string, unknown>;
 
@@ -13,25 +17,37 @@ const SEMANTIC_KINDS = ['definition', 'mechanism', 'example', 'pitfall', 'check'
 type SemanticKind = (typeof SEMANTIC_KINDS)[number];
 
 const SECTION_NAMES = new Set<string>([...SEMANTIC_KINDS, 'body']);
+const COMPLETE_STOP = new Set(['end_turn', 'stop']);
 
 function fail(message: string): never {
   throw new Error(`parseNoteGenerateOutput: ${message}`);
 }
 
+export function assertNoteGenerateStopReason(finishReason: string | undefined): void {
+  if (finishReason === undefined || COMPLETE_STOP.has(finishReason)) return;
+  fail(`model output stopped at ${finishReason}`);
+}
+
+function stripOuterFence(body: string): string {
+  if (!body.startsWith('```')) return body;
+  const firstBreak = body.indexOf('\n');
+  if (firstBreak === -1 || !body.endsWith('```')) return body;
+  const inner = body.slice(firstBreak + 1, -3).trim();
+  if (inner.startsWith('NOTE v1\n') || inner === 'NOTE v1') return inner;
+  return body;
+}
+
 function unwrapDocument(text: string): string {
-  let body = text
-    .replace(/^\uFEFF/, '')
-    .replace(/\r\n/g, '\n')
-    .trim();
-  const fenced = /^```(?:markdown|md|text)?[^\n]*\n([\s\S]*?)\n```$/.exec(body);
-  if (fenced?.[1]?.includes('\nNOTE v1\n') || fenced?.[1]?.startsWith('NOTE v1\n')) {
-    body = fenced[1].trim();
+  const body = stripOuterFence(
+    text
+      .replace(/^\uFEFF/, '')
+      .replace(/\r\n/g, '\n')
+      .trim(),
+  );
+  if (!body.startsWith('NOTE v1\n') && body !== 'NOTE v1') {
+    fail('expected a NOTE v1 content document');
   }
-  const lines = body.split('\n');
-  const start = lines.findIndex((line) => line.trim() === 'NOTE v1');
-  if (start === -1) fail('expected a NOTE v1 content document');
-  if (start > 30) fail('NOTE v1 header is not at the start of the document');
-  return lines.slice(start).join('\n').trim();
+  return body;
 }
 
 function parseLink(line: string): PmNode | null {
@@ -47,6 +63,18 @@ function parseLink(line: string): PmNode | null {
       ...(match[3]?.trim() ? { title: match[3].trim() } : {}),
     },
   };
+}
+
+function isWordChar(char: string | undefined): boolean {
+  return char !== undefined && /[A-Za-z0-9_]/.test(char);
+}
+
+function isSafeHref(href: string): boolean {
+  if (href.startsWith('#') || (href.startsWith('/') && !href.startsWith('//'))) return true;
+  const scheme = /^[a-z][a-z0-9+.-]*:/i.exec(href);
+  if (!scheme) return true;
+  const name = scheme[0].slice(0, -1).toLowerCase();
+  return name === 'http' || name === 'https' || name === 'mailto';
 }
 
 function parseMarks(text: string): PmNode[] {
@@ -82,9 +110,10 @@ function parseMarks(text: string): PmNode[] {
       i = close;
       continue;
     }
-    if (text[i] === '_' && text[i + 1] !== '_') {
+    if (text[i] === '_' && text[i + 1] !== '_' && !isWordChar(text[i - 1])) {
       const italic = /^_([^_\s]+)_/.exec(text.slice(i));
-      if (italic) {
+      const next = italic ? text[i + italic[0].length] : undefined;
+      if (italic && !isWordChar(next)) {
         flush();
         out.push({ type: 'text', text: italic[1], marks: [{ type: 'italic' }] });
         i += italic[0].length - 1;
@@ -93,7 +122,7 @@ function parseMarks(text: string): PmNode[] {
     }
     if (text[i] === '[') {
       const link = /^\[([^\]]+)\]\(([^)\s]+)\)/.exec(text.slice(i));
-      if (link) {
+      if (link && isSafeHref(link[2])) {
         flush();
         out.push({
           type: 'text',
@@ -110,24 +139,72 @@ function parseMarks(text: string): PmNode[] {
   return out;
 }
 
+function looksLikeMath(interior: string): boolean {
+  if (interior.length === 0 || interior.includes('\n')) return false;
+  if (interior.includes('\\')) return true;
+  return !/[\u3400-\u9fff\u3000-\u303f\uff00-\uffef]/.test(interior);
+}
+
+/** One forward pass. An unclosed `$` advances one character; a backslash pair advances two. */
 function parseInline(input: string): PmNode[] {
   const nodes: PmNode[] = [];
-  const math = /\$\$(?:\\.|[^$])+?\$\$|\$(?:\\.|[^$\n])+?\$/g;
   let last = 0;
-  for (const match of input.matchAll(math)) {
-    const index = match.index ?? 0;
-    if (index > last) nodes.push(...parseMarks(input.slice(last, index)));
-    nodes.push({ type: 'text', text: match[0] });
-    last = index + match[0].length;
+  let i = 0;
+  while (i < input.length) {
+    if (input[i] === '\\') {
+      i += i + 1 < input.length ? 2 : 1;
+      continue;
+    }
+    if (input[i] !== '$') {
+      i += 1;
+      continue;
+    }
+    const display = input[i + 1] === '$';
+    const open = i;
+    const opener = display ? 2 : 1;
+    let j = i + opener;
+    let close = -1;
+    while (j < input.length) {
+      if (input[j] === '\\') {
+        j += j + 1 < input.length ? 2 : 1;
+        continue;
+      }
+      if (!display && input[j] === '\n') break;
+      if (input[j] === '$') {
+        if (!display) {
+          close = j + 1;
+          break;
+        }
+        if (input[j + 1] === '$') {
+          close = j + 2;
+          break;
+        }
+      }
+      j += 1;
+    }
+    const interior = close === -1 ? '' : input.slice(open + opener, close - opener);
+    if (close === -1 || !looksLikeMath(interior)) {
+      i = open + 1;
+      continue;
+    }
+    if (open > last) nodes.push(...parseMarks(input.slice(last, open)));
+    nodes.push({ type: 'text', text: input.slice(open, close) });
+    last = close;
+    i = close;
   }
   if (last < input.length) nodes.push(...parseMarks(input.slice(last)));
   return nodes.filter((node) => node.text !== '');
 }
 
-function paragraph(text: string): PmNode | null {
-  const content = parseInline(text);
-  if (content.length === 0) return null;
-  return { type: 'paragraph', content };
+function paragraphFromLines(lines: string[]): PmNode | null {
+  const content: PmNode[] = [];
+  for (const [index, line] of lines.entries()) {
+    if (index > 0) content.push({ type: 'hardBreak' });
+    content.push(...parseInline(line));
+  }
+  const kept = content.filter((node) => node.type === 'hardBreak' || node.text !== '');
+  if (kept.every((node) => node.type === 'hardBreak')) return null;
+  return { type: 'paragraph', content: kept };
 }
 
 function listMarker(line: string): { indent: number; ordered: boolean; text: string } | null {
@@ -241,16 +318,34 @@ function compileBlocks(src: string): PmNode[] {
       i += 1;
       continue;
     }
+    const callout = /^>\s*\[!([A-Za-z]{1,20})\](?:\s+(.*))?$/.exec(lines[i]);
+    if (callout) {
+      const title = callout[2]?.trim() ?? '';
+      const body: string[] = [];
+      i += 1;
+      while (i < lines.length && lines[i].startsWith('>')) {
+        body.push(lines[i].replace(/^>\s?/, ''));
+        i += 1;
+      }
+      const content = paragraphFromLines(body);
+      if (!content && title.length === 0) fail('empty callout');
+      blocks.push({
+        type: 'calloutBlock',
+        attrs: { tone: callout[1].toLowerCase(), ...(title ? { title } : {}) },
+        ...(content ? { content: [content] } : {}),
+      });
+      continue;
+    }
     if (lines[i].startsWith('>')) {
       const quoted: string[] = [];
       while (i < lines.length && lines[i].startsWith('>')) {
         quoted.push(lines[i].replace(/^>\s?/, ''));
         i += 1;
       }
-      const content = parseInline(quoted.join('\n'));
+      const content = paragraphFromLines(quoted);
       blocks.push({
         type: 'blockquote',
-        content: [content.length > 0 ? { type: 'paragraph', content } : { type: 'paragraph' }],
+        content: [content ?? { type: 'paragraph' }],
       });
       continue;
     }
@@ -271,7 +366,7 @@ function compileBlocks(src: string): PmNode[] {
       para.push(lines[i]);
       i += 1;
     }
-    const node = paragraph(para.join('\n'));
+    const node = paragraphFromLines(para);
     if (node) blocks.push(node);
   }
   return blocks;
@@ -304,21 +399,49 @@ export function compileNoteGenerateDocument(
 
   const sections: Array<{ name: string; body: string }> = [];
   let current: { name: string; lines: string[] } | null = null;
+  let ended = false;
+  let inFence = false;
   for (let i = cursor; i < lines.length; i += 1) {
-    const header = /^@([A-Za-z_]+)\s*$/.exec(lines[i].trim());
+    const line = lines[i] ?? '';
+    const trimmed = line.trim();
+    if (inFence) {
+      if (!current) fail('text before the first section');
+      current.lines.push(line);
+      if (trimmed.startsWith('```')) inFence = false;
+      continue;
+    }
+    if (trimmed.startsWith('```')) {
+      if (!current) fail('text before the first section');
+      inFence = true;
+      current.lines.push(line);
+      continue;
+    }
+    const header = /^@([A-Za-z_]+)\s*$/.exec(trimmed);
     if (header) {
+      if (header[1] === 'end') {
+        if (ended) fail('text after @end');
+        if (current) sections.push({ name: current.name, body: current.lines.join('\n') });
+        current = null;
+        ended = true;
+        continue;
+      }
+      if (ended) fail('text after @end');
       if (!SECTION_NAMES.has(header[1])) fail(`unknown section @${header[1]}`);
       if (current) sections.push({ name: current.name, body: current.lines.join('\n') });
       current = { name: header[1], lines: [] };
       continue;
     }
+    if (ended) {
+      if (trimmed === '') continue;
+      fail('text after @end');
+    }
     if (!current) {
-      if (lines[i].trim() === '') continue;
+      if (trimmed === '') continue;
       fail('text before the first section');
     }
-    current.lines.push(lines[i]);
+    current.lines.push(line);
   }
-  if (current) sections.push({ name: current.name, body: current.lines.join('\n') });
+  if (!ended) fail('missing @end');
   if (sections.length === 0) fail('document has no sections');
   if (declared === 'note_atomic' && sections.some((section) => section.name === 'body')) {
     fail('note_atomic cannot use @body');

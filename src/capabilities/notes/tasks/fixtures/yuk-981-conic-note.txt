@@ -23,3 +23,5 @@ $$
 
 @check
 若 $e=\frac{\sqrt{3}}{2}$ 且 $a=2$，求 $b$。先写 $c=ae$，再用 $b=\sqrt{a^2-c^2}$。
+
+@end
