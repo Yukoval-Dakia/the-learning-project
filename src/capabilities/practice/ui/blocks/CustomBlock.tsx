@@ -14,7 +14,7 @@
 //
 // Focus: the frame is inert until the learner starts it (click or the button); focus landing
 // anywhere else on the page makes it inert again. All listeners live in ref callbacks.
-import { useCallback, useMemo, useState, useSyncExternalStore } from 'react';
+import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 
 import type { CustomBlockT } from '@/core/schema/assessment/presentation';
 import type { ResponseSlotT, SlotResponseT } from '@/core/schema/assessment/response';
@@ -242,17 +242,58 @@ export function CustomBlock({
   }
 
   const [active, setActive] = useState(false);
+  // The last element outside the frame that had focus; written only by the focusin handler.
+  const lastFocus = useRef<HTMLElement | null>(null);
+  // Set only by the learner's activation (click / start button), cleared once the active ref
+  // callback has moved focus into the frame. Focus reaching the frame without it is the frame's.
+  const activating = useRef(false);
+  const activate = () => {
+    activating.current = true;
+    setActive(true);
+  };
   const attachStage = useCallback(
     (wrap: HTMLDivElement | null) => {
-      if (!wrap || !active) return undefined;
-      wrap.querySelector('iframe')?.focus();
+      if (!wrap) return undefined;
       const owner = wrap.ownerDocument;
       const view = owner.defaultView;
       const outside = (event: Event) =>
         !(event.target instanceof Node) || !wrap.contains(event.target);
       const onFocusIn = (event: FocusEvent) => {
-        if (outside(event)) setActive(false);
+        if (!outside(event)) return;
+        if (event.target instanceof HTMLElement) lastFocus.current = event.target;
+        if (active) setActive(false);
       };
+      owner.addEventListener('focusin', onFocusIn);
+
+      if (!active) {
+        // Inactive: `inert` does not stop the frame's own focus() in Chromium, so any focus that
+        // lands in the frame is handed straight back — to the last element outside it, else the
+        // start button, else nowhere (blur).
+        const handBack = () => {
+          if (activating.current || !wrap.contains(owner.activeElement)) return;
+          const back = lastFocus.current;
+          if (back?.isConnected && !wrap.contains(back)) back.focus({ preventScroll: true });
+          if (wrap.contains(owner.activeElement)) {
+            const start = wrap.parentElement?.querySelector<HTMLElement>('.un-blk-custom-start');
+            if (start) start.focus({ preventScroll: true });
+            else (owner.activeElement as HTMLElement | null)?.blur();
+          }
+        };
+        // `focus` does not bubble; capture on the wrapper sees it on whichever frame is inside.
+        wrap.addEventListener('focus', handBack, true);
+        // The window blurs when focus moves into the frame; check where it went.
+        view?.addEventListener('blur', handBack);
+        // Just deactivated while the frame held focus (or it stole focus in between): hand back now.
+        handBack();
+        return () => {
+          owner.removeEventListener('focusin', onFocusIn);
+          wrap.removeEventListener('focus', handBack, true);
+          view?.removeEventListener('blur', handBack);
+        };
+      }
+
+      wrap.querySelector('iframe')?.focus();
+      activating.current = false;
       const onPointerDown = (event: PointerEvent) => {
         if (outside(event)) setActive(false);
       };
@@ -265,7 +306,6 @@ export function CustomBlock({
           if (!owner.hasFocus()) setActive(false);
         }, 0);
       };
-      owner.addEventListener('focusin', onFocusIn);
       owner.addEventListener('pointerdown', onPointerDown);
       view?.addEventListener('blur', onBlur);
       return () => {
@@ -368,6 +408,7 @@ export function CustomBlock({
               <iframe
                 key={frameGen}
                 ref={attachFrame}
+                tabIndex={active ? undefined : -1}
                 title="互动内容"
                 sandbox="allow-scripts"
                 allow=""
@@ -376,7 +417,7 @@ export function CustomBlock({
               />
             </div>
             {!active && (
-              <button type="button" className="un-blk-custom-start" onClick={() => setActive(true)}>
+              <button type="button" className="un-blk-custom-start" onClick={activate}>
                 <span className="un-blk-custom-start-chip un-glass">开始操作这一块</span>
               </button>
             )}
