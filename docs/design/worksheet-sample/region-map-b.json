@@ -1,8 +1,7 @@
 {
   "schema_version": 1,
   "short_code": "TLP-7K2Q",
-  "issuance_id": "iss_sample_placeholder",
-  "note": "sample: issuance, slot, unit and option ids, the export token and short code are placeholders; the export binds real ids, frozen option_order and records PDF + map digests",
+  "pdf_digest": "sha256:<64-hex-of-the-rendered-pdf>",
   "web_only_units": [],
   "pages": [
     {
