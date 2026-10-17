@@ -28,6 +28,7 @@ import { SaveStateChip } from '@/ui/components/response/SaveStateChip';
 import { SelfConfidenceField } from '@/ui/components/response/SelfConfidenceField';
 import { StimulusFigure } from '@/ui/components/response/StimulusFigure';
 import { usePagehideTransition } from '@/ui/hooks/usePagehideTransition';
+import { ApiError } from '@/ui/lib/api';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { Btn } from '@/ui/primitives/Btn';
 import { Card } from '@/ui/primitives/Card';
@@ -90,6 +91,60 @@ export function restoreEvidenceFromSlots(slots: readonly PaperSlot[]): EvidenceA
       slot_ids: allKeys.length > 0 && keys.length === allKeys.length ? null : keys,
     };
   });
+}
+
+// YUK-1490 — the server's current draft of one slot, read after a stale_draft 409.
+type SlotAssessment = NonNullable<PaperSlot['assessment']>;
+interface ServerSlotDraft {
+  text: string;
+  files: string[];
+  epoch: number;
+  response_set: ResponseSetT;
+  group_evidence: SlotAssessment['group_evidence'];
+}
+
+function serverSlotDraft(slot: PaperSlot, assessment: SlotAssessment): ServerSlotDraft {
+  return {
+    text: slot.slot_state.draft?.content_md ?? '',
+    files: assessment.group_evidence.map((item) => item.evidence.asset.asset_id),
+    epoch: assessment.save_epoch,
+    response_set: assessment.response_set,
+    group_evidence: assessment.group_evidence,
+  };
+}
+
+const sameFiles = (a: readonly string[], b: readonly string[]) =>
+  [...a].sort().join() === [...b].sort().join();
+
+// YUK-1490 — 「用服务器上的」: bind exactly the server's attachments to this slot. Other slots
+// keep what they had (an asset that leaves this slot stays bound to the rest of its scope).
+function adoptServerEvidence(
+  evidence: readonly EvidenceAttachment[],
+  key: string,
+  server: SlotAssessment['group_evidence'],
+  allKeys: readonly string[],
+): EvidenceAttachment[] {
+  const serverIds = new Set(server.map((item) => item.evidence.asset.asset_id));
+  const next = evidence.flatMap((a): EvidenceAttachment[] => {
+    const bound = a.slot_ids === null || a.slot_ids.includes(key);
+    if (bound === serverIds.has(a.asset_id)) return [a];
+    if (bound) {
+      const rest = (a.slot_ids ?? allKeys).filter((k) => k !== key);
+      return rest.length > 0 ? [{ ...a, slot_ids: rest }] : [];
+    }
+    const ids = [...(a.slot_ids ?? []), key];
+    return [{ ...a, slot_ids: ids.length === allKeys.length ? null : ids }];
+  });
+  for (const item of server) {
+    if (evidence.some((a) => a.asset_id === item.evidence.asset.asset_id)) continue;
+    next.push({
+      asset_id: item.evidence.asset.asset_id,
+      original: item.evidence,
+      originalTarget: item.target,
+      slot_ids: allKeys.length === 1 ? null : [key],
+    });
+  }
+  return next;
 }
 
 const PAPER_TIMING_STORAGE_VERSION = 1;
@@ -315,6 +370,11 @@ function PaperVisit({
   // 「草稿自动保存」and the exit / foot copy drop their 「进度保留」promise, since the
   // last draft PUT for that slot never landed.
   const [saveFailed, setSaveFailed] = useState<Record<string, boolean>>({});
+  // YUK-1490 — slots whose save met a newer server draft with different content. The server's
+  // version waits on the learner's choice (panel on the slot); meanwhile the slot's autosave is
+  // held and its fields are locked. The ref mirrors the state for flushes, retries and exit.
+  const [conflicts, setConflicts] = useState<Record<string, ServerSlotDraft>>({});
+  const conflictsRef = useRef<Record<string, ServerSlotDraft>>({});
   // Disables the retry chip while a retry batch is in flight (avoids redundant PUTs).
   const [retrying, setRetrying] = useState(false);
   // Concurrent draft PUTs for one slot can settle out of order; only the LATEST
@@ -515,6 +575,18 @@ function PaperVisit({
     };
   };
 
+  const setConflict = (key: string, server: ServerSlotDraft | null) => {
+    const next = { ...conflictsRef.current };
+    if (server) next[key] = server;
+    else delete next[key];
+    conflictsRef.current = next;
+    setConflicts(next);
+  };
+
+  // The attachments a save of this slot would send (same filter as nativePayloadFor).
+  const savedFilesFor = (key: string) =>
+    (nativePayloadFor(key)?.group_evidence ?? []).map((item) => item.evidence.asset.asset_id);
+
   const runSave = (
     key: string,
     questionId: string,
@@ -526,6 +598,9 @@ function PaperVisit({
     // YUK-1487 — this save supersedes one still in flight (pagehide resend): see draftEpoch.
     chained = false,
   ): Promise<boolean> => {
+    // YUK-1490 — held while the slot waits on the conflict choice: a save now would only draw
+    // the same 409, or (after a choice) overwrite the version the learner picks.
+    if (conflictsRef.current[key]) return Promise.resolve(false);
     const refs = imageRefs ?? evidenceIdsForSlot(evidenceRef.current, key);
     const seq = (saveSeq.current[key] ?? 0) + 1;
     saveSeq.current[key] = seq;
@@ -585,7 +660,13 @@ function PaperVisit({
             })
             .catch((err) => {
               console.error('[PfPaper] draft save failed', { key, err });
-              if (isLatest()) markFailed();
+              if (!isLatest()) return false;
+              // YUK-1490 — stale_draft is settled by a re-read rather than shown as 保存失败
+              // straight away (a same-text draft is adopted without the learner noticing).
+              if (err instanceof ApiError && err.status === 409 && err.code === 'stale_draft') {
+                delete ackedAnswers.current[key];
+                void recheckStaleSlot(key, seq);
+              } else markFailed();
               return false;
             });
         } catch (err) {
@@ -636,6 +717,99 @@ function PaperVisit({
     // Track as in-flight so an exit/pagehide during the POST window can await or re-send it.
     inFlightSaves.current.set(key, done);
     return done;
+  };
+
+  // YUK-1490 — the slot's newest save drew stale_draft: the server holds a draft newer than the
+  // epoch this visit knows (typically the previous visit's unmount flush landed after this
+  // visit read the paper). Re-read the paper and settle the slot so later saves can pass:
+  //   - the stored draft is one this visit wrote (its epoch is not past the acked one, e.g. a
+  //     pagehide chain that landed first): re-send the latest text, now at the current epoch;
+  //   - same text and attachments as this visit: adopt the server's epoch silently;
+  //   - different: hold the slot and show both versions until the learner picks one.
+  // A failed read leaves the slot on 保存失败; its retry draws the 409 again and re-reads.
+  // Not after the visit ended or a newer save of the slot went out, nor for a slot submitted
+  // meanwhile.
+  const recheckStaleSlot = async (key: string, seq: number) => {
+    const fail = () => {
+      if (componentActiveRef.current) setSaveFailed((f) => ({ ...f, [key]: true }));
+    };
+    const pendingChain = chainedSaves.current[key];
+    if (pendingChain) await chainOrCap(pendingChain);
+    let fresh: PaperDetail;
+    try {
+      fresh = await qc.fetchQuery({
+        queryKey: ['paper', artifactId],
+        queryFn: () => getPaperDetail(artifactId),
+        staleTime: 0,
+      });
+    } catch (err) {
+      console.error('[PfPaper] stale draft re-read failed', { key, err });
+      fail();
+      return;
+    }
+    // A newer save of the slot owns its flag and epoch now (it may already have passed).
+    if (saveSeq.current[key] !== seq || conflictsRef.current[key]) return;
+    if (!componentActiveRef.current || exitingRef.current || submittingRef.current) return fail();
+    if (submittedDuringAttemptsRef.current.has(key)) return;
+    const local = slots.find((s) => slotKey(s) === key);
+    const slot = fresh.sections.flatMap((s) => s.slots).find((s) => slotKey(s) === key);
+    const assessment = slot?.assessment;
+    if (!local || !slot || !assessment || slot.slot_state.submission?.submitted) return fail();
+    if (assessment.issuance_id !== local.assessment?.issuance_id) return fail();
+    const server = serverSlotDraft(slot, assessment);
+    const text = answersRef.current[key] ?? '';
+    if (server.epoch <= (nativeEpochs.current[key] ?? 0)) {
+      void runSave(key, local.question_id, local.part_ref, text);
+      return;
+    }
+    if (server.text === text && sameFiles(server.files, savedFilesFor(key))) {
+      nativeEpochs.current[key] = server.epoch;
+      ackedAnswers.current[key] = text;
+      setSaveFailed((f) => (f[key] ? { ...f, [key]: false } : f));
+      return;
+    }
+    if (saveTimers.current[key]) {
+      clearTimeout(saveTimers.current[key]);
+      delete saveTimers.current[key];
+    }
+    setConflict(key, server);
+  };
+
+  // 「用服务器上的」: the slot takes the server's text, answer and attachments as its saved
+  // baseline and continues from the server's epoch. Nothing is sent.
+  const keepServerDraft = (key: string) => {
+    const server = conflictsRef.current[key];
+    if (!server) return;
+    if (saveTimers.current[key]) {
+      clearTimeout(saveTimers.current[key]);
+      delete saveTimers.current[key];
+    }
+    answersRef.current[key] = server.text;
+    setAnswers((a) => ({ ...a, [key]: server.text }));
+    nativeResponsesRef.current = { ...nativeResponsesRef.current, [key]: server.response_set };
+    setNativeResponses(nativeResponsesRef.current);
+    const nextEvidence = adoptServerEvidence(
+      evidenceRef.current,
+      key,
+      server.group_evidence,
+      slots.map(slotKey),
+    );
+    evidenceRef.current = nextEvidence;
+    setEvidence(nextEvidence);
+    nativeEpochs.current[key] = Math.max(nativeEpochs.current[key] ?? 0, server.epoch);
+    ackedAnswers.current[key] = server.text;
+    setConflict(key, null);
+  };
+
+  // 「保留我的」: save this visit's text expecting the epoch just read. A write that lands after
+  // that read raises the stored epoch again, so this save draws 409 and the panel returns.
+  const keepMyDraft = (key: string) => {
+    const server = conflictsRef.current[key];
+    const slot = slots.find((s) => slotKey(s) === key);
+    if (!server || !slot) return;
+    nativeEpochs.current[key] = Math.max(nativeEpochs.current[key] ?? 0, server.epoch);
+    setConflict(key, null);
+    void runSave(key, slot.question_id, slot.part_ref, answersRef.current[key] ?? '');
   };
 
   // Epoch a draft save expects. A resend chained past an in-flight save sends acked + 1: the
@@ -848,6 +1022,8 @@ function PaperVisit({
     const unsavedFailures = slots.filter((s) => {
       if (s.slot_state.submission?.submitted) return false;
       const k = slotKey(s);
+      // YUK-1490 — a slot left on the conflict choice kept the server's version, not this visit's.
+      if (conflictsRef.current[k]) return true;
       const ok = outcome.get(k);
       return ok === undefined ? (saveFailed[k] ?? false) : !ok;
     }).length;
@@ -890,6 +1066,10 @@ function PaperVisit({
   // must NOT keep the retry chip lit (submitAll captures the latest answer regardless of
   // whether the draft PUT landed).
   const anySaveFailed = slots.some((s) => saveFailed[slotKey(s)] && !submittedKeys.has(slotKey(s)));
+  const conflictNumbers = slots.flatMap((s, i) => (conflicts[slotKey(s)] ? [i + 1] : []));
+  const curConflict = conflicts[curKey];
+  const answerLocked =
+    !hasNativeBindings || submittedKeys.has(curKey) || exiting || curConflict !== undefined;
   const retryFailedSaves = () => {
     if (retrying) return;
     // Drop failure flags on any slot submitted since it failed, so the chip can't stay
@@ -1006,7 +1186,14 @@ function PaperVisit({
     const sid = sessionRef.current;
     // Mutual exclusion with exitPaper (submittingRef/exitingRef are synchronous): a submit and
     // an exit must not both fire a terminal transition.
-    if (!hasNativeBindings || !sid || submittingRef.current || exitingRef.current || uploading)
+    if (
+      !hasNativeBindings ||
+      !sid ||
+      submittingRef.current ||
+      exitingRef.current ||
+      uploading ||
+      Object.keys(conflictsRef.current).length > 0
+    )
       return;
     submittingRef.current = true;
     setSubmitting(true);
@@ -1087,14 +1274,18 @@ function PaperVisit({
           onClick={exitPaper}
           disabled={exiting || submitting}
         >
-          {exiting ? '保存中…' : anySaveFailed || !hasNativeBindings ? '退出' : '退出 · 进度保留'}
+          {exiting
+            ? '保存中…'
+            : anySaveFailed || conflictNumbers.length > 0 || !hasNativeBindings
+              ? '退出'
+              : '退出 · 进度保留'}
         </Btn>
         <span className="pfp-title">{detail.title}</span>
         {/* YUK-1051 — 保存状态 chip 换成组件族 SaveStateChip（同文案/同重试交互）；
             saved 仅在 server ack 后出现的纪律由组件族承载。 */}
         {hasNativeBindings && (
           <SaveStateChip
-            state={anySaveFailed ? 'error' : 'idle'}
+            state={anySaveFailed ? 'error' : conflictNumbers.length > 0 ? 'conflict' : 'idle'}
             onRetry={anySaveFailed ? retryFailedSaves : undefined}
             retrying={retrying}
           />
@@ -1181,6 +1372,15 @@ function PaperVisit({
           </>
         )}
 
+        {curConflict && (
+          <PaperDraftConflict
+            mine={{ text: curAnswerText, files: evidenceIdsForSlot(evidence, curKey).length }}
+            server={curConflict}
+            onKeepServer={() => keepServerDraft(curKey)}
+            onKeepMine={() => keepMyDraft(curKey)}
+          />
+        )}
+
         {/* YUK-1051 — 作答控件换组件族。§6.4 缓冲反馈：恒 feedback='none'，作答全程
             零对错色（导航 pip 只有「已答」中性墨点）；对错色只属于交卷后的 PfRetro。 */}
         {cur.assessment ? (
@@ -1200,7 +1400,7 @@ function PaperVisit({
                   notation={cur.question.notation}
                   feedback="none"
                   ariaLabel={slot.placement?.label ?? '作答'}
-                  disabled={!hasNativeBindings || submittedKeys.has(curKey) || exiting}
+                  disabled={answerLocked}
                   onChange={(value) => {
                     const updated: SlotResponseT = nativeResponseEntry(slot, value, entry);
                     const response: ResponseSetT = {
@@ -1238,7 +1438,7 @@ function PaperVisit({
               showText={false}
               attachments={evidence}
               onAttachmentsChange={onEvidenceChange}
-              disabled={!hasNativeBindings || submittedKeys.has(curKey) || exiting}
+              disabled={answerLocked}
               onUploadingChange={setUploading}
               slotLabels={Object.fromEntries(
                 slots.map((slot, i) => [slotKey(slot), `第 ${i + 1} 题`]),
@@ -1255,7 +1455,7 @@ function PaperVisit({
               const opt = curOptions.find((o) => o.id === ids[0]);
               setAnswer(opt?.text_md ?? '');
             }}
-            disabled={!hasNativeBindings || submittedKeys.has(curKey) || exiting}
+            disabled={answerLocked}
             notation={cur.question.notation}
             feedback="none"
             ariaLabel="选项"
@@ -1268,7 +1468,7 @@ function PaperVisit({
             onTextChange={setAnswer}
             attachments={evidence}
             onAttachmentsChange={onEvidenceChange}
-            disabled={!hasNativeBindings || submittedKeys.has(curKey) || exiting}
+            disabled={answerLocked}
             notation={cur.question.notation}
             placeholder="写下你的解答。交卷前都可以改。"
             ariaLabel="作答"
@@ -1369,7 +1569,13 @@ function PaperVisit({
               size="sm"
               variant="primary"
               icon="send"
-              disabled={!hasNativeBindings || submitting || exiting || uploading}
+              disabled={
+                !hasNativeBindings ||
+                submitting ||
+                exiting ||
+                uploading ||
+                conflictNumbers.length > 0
+              }
               onClick={() => void submitAll()}
             >
               {submitting ? '判分中…' : '交卷'}
@@ -1383,7 +1589,9 @@ function PaperVisit({
             size="sm"
             variant="primary"
             icon="send"
-            disabled={!hasNativeBindings || submitting || exiting || uploading}
+            disabled={
+              !hasNativeBindings || submitting || exiting || uploading || conflictNumbers.length > 0
+            }
             onClick={() => (unanswered > 0 ? setConfirm(true) : void submitAll())}
           >
             {submitting ? '判分中…' : '交卷 · 统一判分'}
@@ -1393,9 +1601,56 @@ function PaperVisit({
       <div className="key-hints mono" style={{ marginTop: 'var(--s-3)' }}>
         {!hasNativeBindings
           ? '历史作答保留，当前不可提交。'
-          : anySaveFailed
-            ? '有草稿没保存上——退出前先点「保存失败 · 重试」'
-            : '中途退出进度保留 · 交卷后到复盘看逐题判定'}
+          : conflictNumbers.length > 0
+            ? `第 ${conflictNumbers.join('、')} 题服务器上存了另一份作答——先选留哪一份，再交卷`
+            : anySaveFailed
+              ? '有草稿没保存上——退出前先点「保存失败 · 重试」'
+              : '中途退出进度保留 · 交卷后到复盘看逐题判定'}
+      </div>
+    </div>
+  );
+}
+
+// YUK-1490 — one slot's draft conflict: this visit's text and the server's newer draft side by
+// side, with the same two choices (and wording) as the single-question conflict panel.
+function PaperDraftConflict({
+  mine,
+  server,
+  onKeepServer,
+  onKeepMine,
+}: {
+  mine: { text: string; files: number };
+  server: ServerSlotDraft;
+  onKeepServer: () => void;
+  onKeepMine: () => void;
+}) {
+  const side = (label: string, text: string, files: number) => (
+    <div className="pfp-conflict-side">
+      <span className="meta">{label}</span>
+      <p className="pfp-conflict-text" data-empty={text ? undefined : true}>
+        {text || '还没写'}
+      </p>
+      {files > 0 && <span className="meta">另有 {files} 个附件</span>}
+    </div>
+  );
+  return (
+    <div className="pfp-conflict" aria-live="polite">
+      <p className="pfp-conflict-msg">
+        <LoomIcon name="alert" size={14} className="ico" />
+        这道题在别处（比如上次离开时，或另一个标签页）存了另一份作答，你这次写的还没有保存。选一份留下，再接着写。
+      </p>
+      <div className="pfp-conflict-cmp">
+        {side('你这次写的', mine.text, mine.files)}
+        {side('服务器上的', server.text, server.files.length)}
+      </div>
+      <p className="meta">用服务器上的：你这次写的会丢掉。保留我的：服务器上那一份会被替换。</p>
+      <div className="nowrap-meta">
+        <Btn size="sm" variant="secondary" onClick={onKeepServer}>
+          用服务器上的
+        </Btn>
+        <Btn size="sm" variant="primary" onClick={onKeepMine}>
+          保留我的
+        </Btn>
       </div>
     </div>
   );
