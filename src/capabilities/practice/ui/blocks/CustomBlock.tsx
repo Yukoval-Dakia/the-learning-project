@@ -272,8 +272,10 @@ export function CustomBlock({
 
       if (!active) {
         // Inactive: `inert` does not stop the frame's own focus() in Chromium, so any focus that
-        // lands in the frame is handed straight back — to the last element outside it, else the
-        // start button, else nowhere (blur).
+        // lands in the frame is handed back — to the last element outside it, else the start
+        // button, else nowhere (blur). Always one task later: handing back synchronously inside
+        // the focus event leaves Chromium with activeElement on the parent input but keystrokes
+        // still routed to the frame (measured), and no further events fire after that.
         const handBack = () => {
           if (activating.current || !wrap.contains(owner.activeElement)) return;
           // Each hand-back blurs the learner's input (breaking IME composition); a frame that
@@ -298,19 +300,28 @@ export function CustomBlock({
             publish(key, FAILED);
           }
         };
+        let pending: ReturnType<typeof setTimeout> | null = null;
+        const scheduleHandBack = () => {
+          if (pending) return;
+          pending = setTimeout(() => {
+            pending = null;
+            handBack();
+          }, 0);
+        };
         // `focus` does not bubble; capture on the wrapper sees it on whichever frame is inside.
-        wrap.addEventListener('focus', handBack, true);
+        wrap.addEventListener('focus', scheduleHandBack, true);
         // The window blurs when focus moves into the frame; check where it went.
-        view?.addEventListener('blur', handBack);
+        view?.addEventListener('blur', scheduleHandBack);
         // A steal while the window was in the background shows up when it comes back.
-        view?.addEventListener('focus', handBack);
-        // Just deactivated while the frame held focus (or it stole focus in between): hand back now.
-        handBack();
+        view?.addEventListener('focus', scheduleHandBack);
+        // Just deactivated while the frame held focus (or it stole focus in between): hand back.
+        scheduleHandBack();
         return () => {
           owner.removeEventListener('focusin', onFocusIn);
-          wrap.removeEventListener('focus', handBack, true);
-          view?.removeEventListener('blur', handBack);
-          view?.removeEventListener('focus', handBack);
+          wrap.removeEventListener('focus', scheduleHandBack, true);
+          view?.removeEventListener('blur', scheduleHandBack);
+          view?.removeEventListener('focus', scheduleHandBack);
+          if (pending) clearTimeout(pending);
         };
       }
 
