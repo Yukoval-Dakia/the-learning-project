@@ -2104,6 +2104,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/questions/{id}/serving-actions/{command}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["runQuestionServingAction"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/questions/{id}/solve": {
         parameters: {
             query?: never;
@@ -32557,6 +32573,7 @@ export interface operations {
                 expand_root?: string;
                 group_by_family?: boolean;
                 include_drafts?: boolean;
+                include_serving_counts?: boolean;
                 kind?: string;
                 knowledge_id?: string[];
                 limit?: number;
@@ -32566,7 +32583,7 @@ export interface operations {
                 sort_dir?: "asc" | "desc";
                 source?: string;
                 source_tier?: number[];
-                status?: "all" | "active" | "draft";
+                status?: "all" | "active" | "draft" | "not_servable";
                 subject?: string;
                 visual_complexity?: string;
             };
@@ -32603,6 +32620,24 @@ export interface operations {
                                 part_index: number | null;
                                 prompt_md: string;
                                 root_question_id: string | null;
+                                serving: {
+                                    held_since: string | null;
+                                    /** @enum {string|null} */
+                                    hold_reason: "awaiting_admission" | "admission_failed" | "source_check_failed" | "verify_hold" | "retraction_hold" | "no_input_renderer" | "invalid_presentation" | "withdrawn" | null;
+                                    next_action: {
+                                        /** @enum {string} */
+                                        command: "reverify" | "recheck_source" | "release_verify_hold";
+                                        /** @enum {string} */
+                                        method: "POST";
+                                        path: string;
+                                    } | null;
+                                    pending_action: {
+                                        /** @enum {string} */
+                                        command: "reverify" | "recheck_source" | "release_verify_hold";
+                                        since: string;
+                                    } | null;
+                                    servable: boolean;
+                                };
                                 source: string;
                                 source_tier: {
                                     name: string;
@@ -32628,6 +32663,24 @@ export interface operations {
                             part_index: number | null;
                             prompt_md: string;
                             root_question_id: string | null;
+                            serving: {
+                                held_since: string | null;
+                                /** @enum {string|null} */
+                                hold_reason: "awaiting_admission" | "admission_failed" | "source_check_failed" | "verify_hold" | "retraction_hold" | "no_input_renderer" | "invalid_presentation" | "withdrawn" | null;
+                                next_action: {
+                                    /** @enum {string} */
+                                    command: "reverify" | "recheck_source" | "release_verify_hold";
+                                    /** @enum {string} */
+                                    method: "POST";
+                                    path: string;
+                                } | null;
+                                pending_action: {
+                                    /** @enum {string} */
+                                    command: "reverify" | "recheck_source" | "release_verify_hold";
+                                    since: string;
+                                } | null;
+                                servable: boolean;
+                            };
                             source: string;
                             source_tier: {
                                 name: string;
@@ -32658,6 +32711,24 @@ export interface operations {
                                     part_index: number | null;
                                     prompt_md: string;
                                     root_question_id: string | null;
+                                    serving: {
+                                        held_since: string | null;
+                                        /** @enum {string|null} */
+                                        hold_reason: "awaiting_admission" | "admission_failed" | "source_check_failed" | "verify_hold" | "retraction_hold" | "no_input_renderer" | "invalid_presentation" | "withdrawn" | null;
+                                        next_action: {
+                                            /** @enum {string} */
+                                            command: "reverify" | "recheck_source" | "release_verify_hold";
+                                            /** @enum {string} */
+                                            method: "POST";
+                                            path: string;
+                                        } | null;
+                                        pending_action: {
+                                            /** @enum {string} */
+                                            command: "reverify" | "recheck_source" | "release_verify_hold";
+                                            since: string;
+                                        } | null;
+                                        servable: boolean;
+                                    };
                                     source: string;
                                     source_tier: {
                                         name: string;
@@ -32683,6 +32754,24 @@ export interface operations {
                                 part_index: number | null;
                                 prompt_md: string;
                                 root_question_id: string | null;
+                                serving: {
+                                    held_since: string | null;
+                                    /** @enum {string|null} */
+                                    hold_reason: "awaiting_admission" | "admission_failed" | "source_check_failed" | "verify_hold" | "retraction_hold" | "no_input_renderer" | "invalid_presentation" | "withdrawn" | null;
+                                    next_action: {
+                                        /** @enum {string} */
+                                        command: "reverify" | "recheck_source" | "release_verify_hold";
+                                        /** @enum {string} */
+                                        method: "POST";
+                                        path: string;
+                                    } | null;
+                                    pending_action: {
+                                        /** @enum {string} */
+                                        command: "reverify" | "recheck_source" | "release_verify_hold";
+                                        since: string;
+                                    } | null;
+                                    servable: boolean;
+                                };
                                 source: string;
                                 source_tier: {
                                     name: string;
@@ -32718,6 +32807,24 @@ export interface operations {
                                     part_index: number | null;
                                     prompt_md: string;
                                     root_question_id: string | null;
+                                    serving: {
+                                        held_since: string | null;
+                                        /** @enum {string|null} */
+                                        hold_reason: "awaiting_admission" | "admission_failed" | "source_check_failed" | "verify_hold" | "retraction_hold" | "no_input_renderer" | "invalid_presentation" | "withdrawn" | null;
+                                        next_action: {
+                                            /** @enum {string} */
+                                            command: "reverify" | "recheck_source" | "release_verify_hold";
+                                            /** @enum {string} */
+                                            method: "POST";
+                                            path: string;
+                                        } | null;
+                                        pending_action: {
+                                            /** @enum {string} */
+                                            command: "reverify" | "recheck_source" | "release_verify_hold";
+                                            since: string;
+                                        } | null;
+                                        servable: boolean;
+                                    };
                                     source: string;
                                     source_tier: {
                                         name: string;
@@ -32743,6 +32850,24 @@ export interface operations {
                                 part_index: number | null;
                                 prompt_md: string;
                                 root_question_id: string | null;
+                                serving: {
+                                    held_since: string | null;
+                                    /** @enum {string|null} */
+                                    hold_reason: "awaiting_admission" | "admission_failed" | "source_check_failed" | "verify_hold" | "retraction_hold" | "no_input_renderer" | "invalid_presentation" | "withdrawn" | null;
+                                    next_action: {
+                                        /** @enum {string} */
+                                        command: "reverify" | "recheck_source" | "release_verify_hold";
+                                        /** @enum {string} */
+                                        method: "POST";
+                                        path: string;
+                                    } | null;
+                                    pending_action: {
+                                        /** @enum {string} */
+                                        command: "reverify" | "recheck_source" | "release_verify_hold";
+                                        since: string;
+                                    } | null;
+                                    servable: boolean;
+                                };
                                 source: string;
                                 source_tier: {
                                     name: string;
@@ -32775,6 +32900,24 @@ export interface operations {
                                 part_index: number | null;
                                 prompt_md: string;
                                 root_question_id: string | null;
+                                serving: {
+                                    held_since: string | null;
+                                    /** @enum {string|null} */
+                                    hold_reason: "awaiting_admission" | "admission_failed" | "source_check_failed" | "verify_hold" | "retraction_hold" | "no_input_renderer" | "invalid_presentation" | "withdrawn" | null;
+                                    next_action: {
+                                        /** @enum {string} */
+                                        command: "reverify" | "recheck_source" | "release_verify_hold";
+                                        /** @enum {string} */
+                                        method: "POST";
+                                        path: string;
+                                    } | null;
+                                    pending_action: {
+                                        /** @enum {string} */
+                                        command: "reverify" | "recheck_source" | "release_verify_hold";
+                                        since: string;
+                                    } | null;
+                                    servable: boolean;
+                                };
                                 source: string;
                                 source_tier: {
                                     name: string;
@@ -32800,6 +32943,24 @@ export interface operations {
                             part_index: number | null;
                             prompt_md: string;
                             root_question_id: string | null;
+                            serving: {
+                                held_since: string | null;
+                                /** @enum {string|null} */
+                                hold_reason: "awaiting_admission" | "admission_failed" | "source_check_failed" | "verify_hold" | "retraction_hold" | "no_input_renderer" | "invalid_presentation" | "withdrawn" | null;
+                                next_action: {
+                                    /** @enum {string} */
+                                    command: "reverify" | "recheck_source" | "release_verify_hold";
+                                    /** @enum {string} */
+                                    method: "POST";
+                                    path: string;
+                                } | null;
+                                pending_action: {
+                                    /** @enum {string} */
+                                    command: "reverify" | "recheck_source" | "release_verify_hold";
+                                    since: string;
+                                } | null;
+                                servable: boolean;
+                            };
                             source: string;
                             source_tier: {
                                 name: string;
@@ -32814,6 +32975,12 @@ export interface operations {
                             limit: number;
                             next_cursor: string | null;
                             offset: number;
+                        };
+                        serving_counts?: {
+                            by_reason: {
+                                [key: string]: number;
+                            };
+                            not_servable_total: number;
                         };
                         total: number;
                         truncated: boolean;
@@ -33039,6 +33206,24 @@ export interface operations {
                                 mastery: number | null;
                                 name: string | null;
                             }[];
+                        };
+                        serving: {
+                            held_since: string | null;
+                            /** @enum {string|null} */
+                            hold_reason: "awaiting_admission" | "admission_failed" | "source_check_failed" | "verify_hold" | "retraction_hold" | "no_input_renderer" | "invalid_presentation" | "withdrawn" | null;
+                            next_action: {
+                                /** @enum {string} */
+                                command: "reverify" | "recheck_source" | "release_verify_hold";
+                                /** @enum {string} */
+                                method: "POST";
+                                path: string;
+                            } | null;
+                            pending_action: {
+                                /** @enum {string} */
+                                command: "reverify" | "recheck_source" | "release_verify_hold";
+                                since: string;
+                            } | null;
+                            servable: boolean;
                         };
                         source: string;
                         source_ref: string | null;
@@ -33484,6 +33669,149 @@ export interface operations {
                         restored: true;
                     } & {
                         [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Malformed request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description State or version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Semantic validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Rate limited */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    runQuestionServingAction: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path: {
+                command: "reverify" | "recheck_source" | "release_verify_hold";
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        accepted: boolean;
+                        serving: {
+                            held_since: string | null;
+                            /** @enum {string|null} */
+                            hold_reason: "awaiting_admission" | "admission_failed" | "source_check_failed" | "verify_hold" | "retraction_hold" | "no_input_renderer" | "invalid_presentation" | "withdrawn" | null;
+                            next_action: {
+                                /** @enum {string} */
+                                command: "reverify" | "recheck_source" | "release_verify_hold";
+                                /** @enum {string} */
+                                method: "POST";
+                                path: string;
+                            } | null;
+                            pending_action: {
+                                /** @enum {string} */
+                                command: "reverify" | "recheck_source" | "release_verify_hold";
+                                since: string;
+                            } | null;
+                            servable: boolean;
+                        };
                     };
                 };
             };
