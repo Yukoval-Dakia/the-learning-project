@@ -525,8 +525,10 @@ export default function PracticeFacePage({
           : current,
       );
       // YUK-1510 — the URL follows the question in place (no new history entry); live() above
-      // has just checked the URL is still in this advance's scope.
-      if (liveUrl().item !== next.id) writeItemParam(next.id, 'replace');
+      // has just checked the URL is still in this advance's scope. It replaces only the entry that
+      // still names the question being left, so a Back that already landed on the list entry is
+      // never overwritten.
+      if (liveUrl().item === done.id) writeItemParam(next.id, 'replace');
     },
     [advanceLive, endAdvance, morph, writeItemParam],
   );
