@@ -156,6 +156,7 @@ export const dbTestInclude = [
   'src/capabilities/knowledge/server/seed.db.test.ts',
   'src/capabilities/notes/api/hub-dismiss-link.db.test.ts',
   'src/capabilities/notes/jobs/note_verify.db.test.ts',
+  'src/capabilities/notes/jobs/note_generate.db.test.ts',
   'src/capabilities/notes/server/block-refs.db.test.ts',
   'src/capabilities/notes/server/hub-sync-reconciliation.db.test.ts',
   'src/capabilities/notes/server/mastery-progress-subscription.db.test.ts',

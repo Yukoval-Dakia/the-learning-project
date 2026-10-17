@@ -18,6 +18,19 @@ type SemanticKind = (typeof SEMANTIC_KINDS)[number];
 
 const SECTION_NAMES = new Set<string>([...SEMANTIC_KINDS, 'body']);
 const COMPLETE_STOP = new Set(['end_turn', 'stop']);
+const CALLOUT_TONES = new Set(['note', 'tip', 'warning']);
+const TRAILING_CHATTER = [
+  '以上就是这篇',
+  '以上就是本篇',
+  '希望对你有帮助',
+  '希望对你有用',
+  '希望这对你',
+  '如有问题',
+  '如有疑问',
+  '欢迎继续提问',
+  '祝你学习',
+  '祝学习进步',
+];
 
 function fail(message: string): never {
   throw new Error(`parseNoteGenerateOutput: ${message}`);
@@ -70,11 +83,59 @@ function isWordChar(char: string | undefined): boolean {
 }
 
 function isSafeHref(href: string): boolean {
-  if (href.startsWith('#') || (href.startsWith('/') && !href.startsWith('//'))) return true;
+  if (href.startsWith('//')) return false;
+  if (href.startsWith('#') || href.startsWith('/')) return true;
   const scheme = /^[a-z][a-z0-9+.-]*:/i.exec(href);
-  if (!scheme) return true;
+  if (!scheme) return !href.includes(':') && !href.includes('\\');
   const name = scheme[0].slice(0, -1).toLowerCase();
   return name === 'http' || name === 'https' || name === 'mailto';
+}
+
+function readWrapped(
+  text: string,
+  start: number,
+  token: string,
+): { body: string; end: number } | null {
+  if (!text.startsWith(token, start)) return null;
+  const close = text.indexOf(token, start + token.length);
+  if (close === -1) return null;
+  return { body: text.slice(start + token.length, close), end: close + token.length };
+}
+
+/** Href stops at whitespace and brackets, so a run of `[a](` is one forward pass. */
+function readLink(
+  text: string,
+  start: number,
+): { label: string; href: string; end: number } | null {
+  if (text[start] !== '[') return null;
+  let i = start + 1;
+  const labelStart = i;
+  while (i < text.length && text[i] !== ']') i += 1;
+  if (i >= text.length || i === labelStart) return null;
+  const label = text.slice(labelStart, i);
+  i += 1;
+  if (text[i] !== '(') return null;
+  i += 1;
+  const hrefStart = i;
+  while (i < text.length) {
+    const ch = text[i] ?? '';
+    if (ch === ')' || ch === '(' || ch === '[' || ch === ']' || /\s/.test(ch)) break;
+    i += 1;
+  }
+  if (text[i] !== ')' || i === hrefStart) return null;
+  return { label, href: text.slice(hrefStart, i), end: i + 1 };
+}
+
+function readItalic(text: string, start: number): { word: string; end: number } | null {
+  if (text[start] !== '_' || text[start + 1] === '_' || isWordChar(text[start - 1])) return null;
+  let i = start + 1;
+  while (i < text.length) {
+    const ch = text[i] ?? '';
+    if (ch === '_' || /\s/.test(ch)) break;
+    i += 1;
+  }
+  if (text[i] !== '_' || i === start + 1 || isWordChar(text[i + 1])) return null;
+  return { word: text.slice(start + 1, i), end: i + 1 };
 }
 
 function parseMarks(text: string): PmNode[] {
@@ -84,65 +145,104 @@ function parseMarks(text: string): PmNode[] {
     if (buf.length > 0) out.push({ type: 'text', text: buf });
     buf = '';
   };
-  for (let i = 0; i < text.length; i += 1) {
-    const two = text.slice(i, i + 2);
-    const wrapped = two === '**' ? 'bold' : two === '~~' ? 'strike' : null;
-    if (wrapped) {
-      const close = text.indexOf(two, i + 2);
-      if (close === -1) {
-        buf += two;
+  let skipBold = false;
+  let skipStrike = false;
+  let skipCode = false;
+  let skipLinks = false;
+  let i = 0;
+  while (i < text.length) {
+    if (!skipBold && text.startsWith('**', i)) {
+      const wrapped = readWrapped(text, i, '**');
+      if (!wrapped) {
+        skipBold = true;
+        buf += '*';
         i += 1;
         continue;
       }
       flush();
-      out.push({ type: 'text', text: text.slice(i + 2, close), marks: [{ type: wrapped }] });
-      i = close + 1;
+      out.push({ type: 'text', text: wrapped.body, marks: [{ type: 'bold' }] });
+      i = wrapped.end;
       continue;
     }
-    if (text[i] === '`') {
+    if (!skipStrike && text.startsWith('~~', i)) {
+      const wrapped = readWrapped(text, i, '~~');
+      if (!wrapped) {
+        skipStrike = true;
+        buf += '~';
+        i += 1;
+        continue;
+      }
+      flush();
+      out.push({ type: 'text', text: wrapped.body, marks: [{ type: 'strike' }] });
+      i = wrapped.end;
+      continue;
+    }
+    if (!skipCode && text[i] === '`') {
       const close = text.indexOf('`', i + 1);
       if (close === -1) {
+        skipCode = true;
         buf += '`';
+        i += 1;
         continue;
       }
       flush();
       out.push({ type: 'text', text: text.slice(i + 1, close), marks: [{ type: 'code' }] });
-      i = close;
+      i = close + 1;
       continue;
     }
-    if (text[i] === '_' && text[i + 1] !== '_' && !isWordChar(text[i - 1])) {
-      const italic = /^_([^_\s]+)_/.exec(text.slice(i));
-      const next = italic ? text[i + italic[0].length] : undefined;
-      if (italic && !isWordChar(next)) {
-        flush();
-        out.push({ type: 'text', text: italic[1], marks: [{ type: 'italic' }] });
-        i += italic[0].length - 1;
-        continue;
-      }
+    const italic = readItalic(text, i);
+    if (italic) {
+      flush();
+      out.push({ type: 'text', text: italic.word, marks: [{ type: 'italic' }] });
+      i = italic.end;
+      continue;
     }
-    if (text[i] === '[') {
-      const link = /^\[([^\]]+)\]\(([^)\s]+)\)/.exec(text.slice(i));
-      if (link && isSafeHref(link[2])) {
-        flush();
-        out.push({
-          type: 'text',
-          text: link[1],
-          marks: [{ type: 'link', attrs: { href: link[2] } }],
-        });
-        i += link[0].length - 1;
-        continue;
+    if (!skipLinks && text[i] === '[') {
+      if (text.indexOf(']', i + 1) === -1) {
+        skipLinks = true;
+      } else {
+        const link = readLink(text, i);
+        if (link && isSafeHref(link.href)) {
+          flush();
+          out.push({
+            type: 'text',
+            text: link.label,
+            marks: [{ type: 'link', attrs: { href: link.href } }],
+          });
+          i = link.end;
+          continue;
+        }
       }
     }
     buf += text[i];
+    i += 1;
   }
   flush();
   return out;
 }
 
+function dollarPairCount(line: string): number {
+  let count = 0;
+  for (let i = 0; i < line.length; i += 1) {
+    if (line[i] === '\\') {
+      i += 1;
+      continue;
+    }
+    if (line[i] === '$' && line[i + 1] === '$') {
+      count += 1;
+      i += 1;
+    }
+  }
+  return count;
+}
+
 function looksLikeMath(interior: string): boolean {
   if (interior.length === 0 || interior.includes('\n')) return false;
   if (interior.includes('\\')) return true;
-  return !/[\u3400-\u9fff\u3000-\u303f\uff00-\uffef]/.test(interior);
+  // Digit-led spans with a space or CJK punctuation are prices ("$5 and $10"),
+  // not formulas. CJK units ("$v=米/秒$") stay math.
+  if (/^\d/.test(interior) && /[\s\u3000-\u303f\uff00-\uffef]/.test(interior)) return false;
+  return true;
 }
 
 /** One forward pass. An unclosed `$` advances one character; a backslash pair advances two. */
@@ -198,9 +298,29 @@ function parseInline(input: string): PmNode[] {
 
 function paragraphFromLines(lines: string[]): PmNode | null {
   const content: PmNode[] = [];
-  for (const [index, line] of lines.entries()) {
-    if (index > 0) content.push({ type: 'hardBreak' });
-    content.push(...parseInline(line));
+  let started = false;
+  let i = 0;
+  while (i < lines.length) {
+    const open = dollarPairCount(lines[i] ?? '');
+    if (open % 2 === 1) {
+      const span = [lines[i] ?? ''];
+      let depth = 1;
+      i += 1;
+      while (i < lines.length && depth !== 0) {
+        span.push(lines[i] ?? '');
+        depth = (depth + dollarPairCount(lines[i] ?? '')) % 2;
+        i += 1;
+      }
+      if (depth !== 0) fail('unclosed $$ math block');
+      if (started) content.push({ type: 'hardBreak' });
+      content.push({ type: 'text', text: span.join('\n') });
+      started = true;
+      continue;
+    }
+    if (started) content.push({ type: 'hardBreak' });
+    content.push(...parseInline(lines[i] ?? ''));
+    started = true;
+    i += 1;
   }
   const kept = content.filter((node) => node.type === 'hardBreak' || node.text !== '');
   if (kept.every((node) => node.type === 'hardBreak')) return null;
@@ -320,6 +440,8 @@ function compileBlocks(src: string): PmNode[] {
     }
     const callout = /^>\s*\[!([A-Za-z]{1,20})\](?:\s+(.*))?$/.exec(lines[i]);
     if (callout) {
+      const tone = callout[1].toLowerCase();
+      if (!CALLOUT_TONES.has(tone)) fail(`unknown callout tone ${tone}`);
       const title = callout[2]?.trim() ?? '';
       const body: string[] = [];
       i += 1;
@@ -331,7 +453,7 @@ function compileBlocks(src: string): PmNode[] {
       if (!content && title.length === 0) fail('empty callout');
       blocks.push({
         type: 'calloutBlock',
-        attrs: { tone: callout[1].toLowerCase(), ...(title ? { title } : {}) },
+        attrs: { tone, ...(title ? { title } : {}) },
         ...(content ? { content: [content] } : {}),
       });
       continue;
@@ -362,10 +484,15 @@ function compileBlocks(src: string): PmNode[] {
       continue;
     }
     const para: string[] = [];
-    while (i < lines.length && lines[i].trim() !== '' && !isStructural(lines[i])) {
-      para.push(lines[i]);
+    let depth = 0;
+    while (i < lines.length) {
+      const line = lines[i] ?? '';
+      if (depth === 0 && (line.trim() === '' || isStructural(line))) break;
+      para.push(line);
+      depth = (depth + dollarPairCount(line)) % 2;
       i += 1;
     }
+    if (depth !== 0) fail('unclosed $$ math block');
     const node = paragraphFromLines(para);
     if (node) blocks.push(node);
   }
@@ -374,6 +501,24 @@ function compileBlocks(src: string): PmNode[] {
 
 function isSemanticKind(name: string): name is SemanticKind {
   return (SEMANTIC_KINDS as readonly string[]).includes(name);
+}
+
+function isTrailingChatter(line: string): boolean {
+  const trimmed = line.trim();
+  if (trimmed.length === 0 || trimmed.length > 80) return false;
+  if (trimmed.includes('$') || trimmed.includes('\\')) return false;
+  return TRAILING_CHATTER.some((phrase) => trimmed.includes(phrase));
+}
+
+/** Drop closing pleasantries that the model appends to the last section, above @end. */
+function stripTrailingChatter(lines: string[]): string[] {
+  const kept = [...lines];
+  while (kept.length > 0 && kept[kept.length - 1]?.trim() === '') kept.pop();
+  while (kept.length > 0 && isTrailingChatter(kept[kept.length - 1] ?? '')) {
+    kept.pop();
+    while (kept.length > 0 && kept[kept.length - 1]?.trim() === '') kept.pop();
+  }
+  return kept;
 }
 
 /** Compile one model-authored NOTE v1 document into a body the Notes owner materializes. */
@@ -401,6 +546,7 @@ export function compileNoteGenerateDocument(
   let current: { name: string; lines: string[] } | null = null;
   let ended = false;
   let inFence = false;
+  let inDisplay = false;
   for (let i = cursor; i < lines.length; i += 1) {
     const line = lines[i] ?? '';
     const trimmed = line.trim();
@@ -416,11 +562,29 @@ export function compileNoteGenerateDocument(
       current.lines.push(line);
       continue;
     }
+    const dollars = dollarPairCount(line);
+    if (inDisplay) {
+      if (!current) fail('text before the first section');
+      current.lines.push(line);
+      if (dollars % 2 === 1) inDisplay = false;
+      continue;
+    }
+    if (dollars % 2 === 1) {
+      if (!current) fail('text before the first section');
+      inDisplay = true;
+      current.lines.push(line);
+      continue;
+    }
     const header = /^@([A-Za-z_]+)\s*$/.exec(trimmed);
     if (header) {
       if (header[1] === 'end') {
         if (ended) fail('text after @end');
-        if (current) sections.push({ name: current.name, body: current.lines.join('\n') });
+        if (current) {
+          sections.push({
+            name: current.name,
+            body: stripTrailingChatter(current.lines).join('\n'),
+          });
+        }
         current = null;
         ended = true;
         continue;

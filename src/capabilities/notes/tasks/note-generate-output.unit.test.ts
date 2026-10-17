@@ -35,6 +35,7 @@ describe('parseNoteGenerateOutput', () => {
   // @fails-if the inline-math matcher retries every split of a backslash run, so a few dozen backslashes block the event loop
   it('returns within milliseconds for an unclosed formula with hundreds of backslashes', () => {
     const line = `$$\\begin{aligned}${'\\'.repeat(400)}`;
+    const inline = `$\\sqrt{${'\\'.repeat(400)}`;
     const text = `NOTE v1
 @type note_atomic
 
@@ -54,13 +55,13 @@ p
 ${line}
 \\end{aligned}
 $$
+${inline}
 @end
 `;
     const started = performance.now();
-    expect(() => parseNoteGenerateOutput(text, 'note_atomic', 'end_turn')).toThrow(
-      /parseNoteGenerateOutput/,
-    );
+    const parsed = parseNoteGenerateOutput(text, 'note_atomic', 'end_turn');
     expect(performance.now() - started).toBeLessThan(100);
+    expect(parsed.blocks_count).toBeGreaterThan(0);
   }, 1_000);
 
   // @invariant data: a truncated generation is not stored as a finished atomic or long note
