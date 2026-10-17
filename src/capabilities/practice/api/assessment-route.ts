@@ -71,7 +71,7 @@ export async function createIssuance(req: Request): Promise<Response> {
       case 'revision_mismatch':
         throw new ApiError(
           'revision_mismatch',
-          'requested revision does not belong to the group',
+          'requested revision has been superseded or is not current',
           409,
         );
       case 'suspended':
