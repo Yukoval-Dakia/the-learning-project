@@ -370,6 +370,7 @@ async function publishAdmittedBlank(input: {
   id: string;
   prompt: string;
   knowledgeIds: string[];
+  blankScoresZero?: boolean;
 }): Promise<void> {
   const db = testDb();
   const doc = blankDocument(input.prompt);
@@ -378,10 +379,14 @@ async function publishAdmittedBlank(input: {
   if (contract.conversion_issues.length > 0) {
     throw new Error(contract.conversion_issues.map((issue) => issue.detail).join('; '));
   }
+  const scoring_basis = {
+    ...contract.scoring_basis,
+    blank_scores_zero: input.blankScoresZero ?? contract.scoring_basis.blank_scores_zero,
+  };
   const presentation = defaultPresentation(
     contract.structure,
     contract.response_spec,
-    contract.scoring_basis,
+    scoring_basis,
   );
   if (presentation == null) throw new Error('blank fixture has no presentation');
   await insertQuestion({
@@ -396,13 +401,13 @@ async function publishAdmittedBlank(input: {
     contract: {
       structure: contract.structure,
       response_spec: contract.response_spec,
-      scoring_basis: contract.scoring_basis,
+      scoring_basis,
       execution_plan: contract.execution_plan,
       presentation,
       integrity_digest: contractIntegrityDigest({
         structure: contract.structure,
         response_spec: contract.response_spec,
-        scoring_basis: contract.scoring_basis,
+        scoring_basis,
         execution_plan: contract.execution_plan,
         presentation,
       }),
@@ -1578,15 +1583,13 @@ describe('edit/submit question boundary', () => {
       id: qid,
       prompt: '丢失字段的填空：水的化学式是',
       knowledgeIds: [kc],
+      blankScoresZero: false,
     });
     const [before] = await db
       .select()
       .from(question_revision)
       .where(eq(question_revision.group_id, qid));
-    await db
-      .update(question_revision)
-      .set({ scoring_basis: { ...before.scoring_basis, blank_scores_zero: false } })
-      .where(eq(question_revision.revision_id, before.revision_id));
+    expect(before.scoring_basis.blank_scores_zero).toBe(false);
     const saved = await saveDraftEdit(db, {
       input: {
         action: 'save',
