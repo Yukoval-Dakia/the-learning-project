@@ -198,7 +198,10 @@ export async function readQuestionServing(
     if (!latestVerifyByGroup.has(row.groupId)) latestVerifyByGroup.set(row.groupId, row);
   }
 
-  // Latest accepted serving command per group — pending_action's event half.
+  // Serving command events per group, newest first — pending_action's event
+  // half. Kept as a list per group (not just the latest): a later REJECTED or
+  // finished command must not mask an earlier async command whose job is
+  // still in flight.
   const commandRows = groupIds.length
     ? await db
         .select({
@@ -212,15 +215,17 @@ export async function readQuestionServing(
         )
         .orderBy(desc(event.created_at))
     : [];
-  const latestCommandByGroup = new Map<
+  const commandsByGroup = new Map<
     string,
-    { command: ServingActionCommand; accepted: boolean; createdAt: Date }
+    { command: ServingActionCommand; accepted: boolean; createdAt: Date }[]
   >();
   for (const row of commandRows) {
-    if (latestCommandByGroup.has(row.subjectId)) continue;
     const parsed = SERVING_ACTION_PAYLOAD.parse(row.payload);
     if (parsed == null) continue;
-    latestCommandByGroup.set(row.subjectId, { ...parsed, createdAt: row.createdAt });
+    const bucket = commandsByGroup.get(row.subjectId);
+    const entry = { ...parsed, createdAt: row.createdAt };
+    if (bucket) bucket.push(entry);
+    else commandsByGroup.set(row.subjectId, [entry]);
   }
 
   // In-flight queue half of pending_action: an async command stays "submitted"
@@ -234,12 +239,16 @@ export async function readQuestionServing(
       ? await db.execute<{ reg: string | null }>(sql`select to_regclass('pgboss.job') as reg`)
       : [];
   if (pgbossProbe[0]?.reg != null) {
+    const groupParamList = sql.join(
+      groupIds.map((id) => sql`${id}`),
+      sql`, `,
+    );
     const jobRows = await db.execute<ServingJobRow>(sql`
       select name, data from pgboss.job
       where state in ('created','retry','active')
         and (
-          (name = ${SERVING_ADMISSION_JOB} and data->>'question_id' = any(${groupIds}::text[]))
-          or (name = ${SERVING_SOURCE_VERIFY_JOB} and data->'question_ids' ?| ${groupIds}::text[])
+          (name = ${SERVING_ADMISSION_JOB} and data->>'question_id' in (${groupParamList}))
+          or (name = ${SERVING_SOURCE_VERIFY_JOB} and data->'question_ids' ?| array[${groupParamList}])
         )
     `);
     for (const job of jobRows) {
@@ -264,7 +273,7 @@ export async function readQuestionServing(
       ? revisionById.get(lifecycle.current_revision_id)
       : undefined;
     const latestVerify = latestVerifyByGroup.get(groupId);
-    const latestCommand = latestCommandByGroup.get(groupId);
+    const commands = commandsByGroup.get(groupId);
 
     // Frozen-plan serving decision (the issuance gate's own read-only check).
     // Parts are evaluated individually — a group is servable when at least one
@@ -343,19 +352,25 @@ export async function readQuestionServing(
     }
 
     // pending_action = command event + in-flight job. A release_verify_hold is
-    // synchronous, so it never reports pending.
+    // synchronous, so it never reports pending; a rejected command never counts
+    // at all. Scan newest-first and take the first accepted command whose job
+    // is still running.
     let pendingAction: QuestionServing['pending_action'] = null;
-    if (latestCommand?.accepted) {
-      if (latestCommand.command === 'reverify' && inflightAdmission.has(groupId)) {
+    for (const commandEvent of commands ?? []) {
+      if (!commandEvent.accepted) continue;
+      if (commandEvent.command === 'reverify' && inflightAdmission.has(groupId)) {
         pendingAction = {
           command: 'reverify',
-          since: latestCommand.createdAt.toISOString(),
+          since: commandEvent.createdAt.toISOString(),
         };
-      } else if (latestCommand.command === 'recheck_source' && inflightSourceVerify.has(groupId)) {
+        break;
+      }
+      if (commandEvent.command === 'recheck_source' && inflightSourceVerify.has(groupId)) {
         pendingAction = {
           command: 'recheck_source',
-          since: latestCommand.createdAt.toISOString(),
+          since: commandEvent.createdAt.toISOString(),
         };
+        break;
       }
     }
 

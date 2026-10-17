@@ -23,10 +23,12 @@
 //                         runSourceVerify's own terminal-event guard decides
 //                         whether a real (error-only) re-run happens.
 //   release_verify_hold — synchronous: clear suspension through the publisher's
-//                         dimension-only path with the CURRENT revision's stored
-//                         contract (#1753 pattern — digest unchanged ⇒
-//                         admission_updated, never a new revision). The seam's
-//                         suspension resolver never clears retraction_hold.
+//                         row-publish dimension-only path (#1753 semantics —
+//                         admission:'preserve' + suspension:{suspended:false} ⇒
+//                         admission_updated, never a new revision; a drifted
+//                         group rolls the command back instead of minting).
+//                         The seam's suspension resolver never clears
+//                         retraction_hold.
 //
 // Every command writes exactly one experimental:question_serving_action event
 // keyed by Idempotency-Key; a replay returns the recorded accepted flag with a
@@ -37,7 +39,7 @@ import { and, desc, eq, sql } from 'drizzle-orm';
 
 import type { Db, Tx } from '@/db/client';
 import { readPaidEffectControl } from '@/db/paid-effect-control';
-import { event, question, question_revision } from '@/db/schema';
+import { event, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import {
@@ -48,7 +50,6 @@ import {
   type ServingActionCommand,
   readQuestionServing,
 } from '@/kernel/read-models/question-serving';
-import type { WithheldReason } from '@/server/questions/publisher';
 import {
   ADMISSION_FAMILY,
   type AdmissionJobData,
@@ -56,7 +57,7 @@ import {
   lockAdmissionGroup,
 } from './admission/enqueue';
 import { getPracticeBoss } from './queue-runtime';
-import { publishQuestionGroup } from './quiz/verify-and-promote';
+import { publishQuestionGroupFromRow } from './quiz/verify-and-promote';
 
 const ACTOR_REF = 'practice:serving_actions';
 
@@ -171,14 +172,12 @@ async function executeReverify(
     let publishEventId: string | null = null;
     let publishStatus: string | null = null;
     if (withheldReason !== 'unverified_rules') {
-      // Re-pend: dimension-only publish (same digest ⇒ admission_updated) so the
-      // withheld publish event re-enters #1752's enqueue subscription.
-      const published = await publishQuestionGroup(tx, {
-        group_id: groupId,
-        contract: await currentRevisionContract(tx, groupId, lifecycle.current_revision_id),
-        expectedCurrentRevision: lifecycle.current_revision_id,
-        expectedAdmissionGeneration: lifecycle.scoring_admission_generation,
-        availability: lifecycle.availability,
+      // Re-pend through the row-publish seam: it re-normalizes the group contract
+      // canonically (stored JSONB key order cannot reproduce integrity_digest —
+      // the seam's own P2 check throws), emits a fresh withheld publish event,
+      // and enforces admission_updated vs published honestly.
+      const published = await publishQuestionGroupFromRow(tx, {
+        rootId: groupId,
         admission: { state: 'withheld', reason: 'unverified_rules' },
         actorRef: `${ACTOR_REF}:reverify`,
         now,
@@ -189,6 +188,21 @@ async function executeReverify(
           `question '${groupId}' admission state changed concurrently`,
           409,
         );
+      }
+      if (published.status === 'withdrawn') {
+        // Every part tombstoned — the seam withdrew the group inside this tx;
+        // the command honestly reports it cannot re-enter verification.
+        await writeServingActionEvent(tx, {
+          eventId,
+          groupId,
+          command: 'reverify',
+          idempotencyKey,
+          accepted: false,
+          holdReason: 'withdrawn',
+          detail: { rejected_reason: 'group_withdrawn', publish_status: 'withdrawn' },
+          now,
+        });
+        return { accepted: false, detail: { rejected_reason: 'group_withdrawn' } };
       }
       publishStatus = published.status;
       publishEventId = 'event_id' in published ? published.event_id : null;
@@ -274,38 +288,6 @@ async function executeReverify(
   };
 }
 
-/** Current revision's stored contract — verbatim, so the seam's recompute
- * matches its own integrity_digest (the #1753 verify_hold-clear pattern). */
-async function currentRevisionContract(tx: Tx, groupId: string, revisionId: string | null) {
-  if (revisionId == null) {
-    throw new ApiError(
-      'conflict',
-      `question '${groupId}' has no current revision to carry the dimension update`,
-      409,
-    );
-  }
-  const [revision] = await tx
-    .select()
-    .from(question_revision)
-    .where(eq(question_revision.revision_id, revisionId))
-    .limit(1);
-  if (revision == null) {
-    throw new ApiError(
-      'conflict',
-      `question '${groupId}' current revision '${revisionId}' is missing`,
-      409,
-    );
-  }
-  return {
-    structure: revision.structure,
-    response_spec: revision.response_spec,
-    scoring_basis: revision.scoring_basis,
-    execution_plan: revision.execution_plan,
-    ...(revision.presentation != null ? { presentation: revision.presentation } : {}),
-    integrity_digest: revision.integrity_digest,
-  };
-}
-
 /**
  * recheck_source — re-dispatch source_verify. The outbox intent ledger cannot
  * express a second dispatch for the same (verifier, question), so the command
@@ -357,11 +339,14 @@ async function executeRecheckSource(
 
 /**
  * release_verify_hold — synchronous clear through the publisher's
- * dimension-only path (#1753 pattern): the current revision's stored contract
- * is carried verbatim (digest unchanged ⇒ admission_updated, never a new
- * revision) and the admission dimension is echoed from the locked lifecycle.
- * suspension:{suspended:false} resolves to a no-op for any non-verify_hold —
- * retraction_hold can never be cleared here.
+ * dimension-only path (#1753 semantics): admission:'preserve' keeps the
+ * current dimension verbatim, suspension:{suspended:false} clears only
+ * verify_hold (the seam's suspension resolver can never touch
+ * retraction_hold). The row-publish seam re-normalizes canonically, so an
+ * unchanged group is admission_updated with no new revision; a group whose
+ * working-copy rows drifted past the frozen revision would MINT one — the
+ * contract forbids minting here, so the whole command rolls back on that
+ * status instead of silently re-publishing changed content.
  */
 async function executeReleaseVerifyHold(
   db: Db,
@@ -391,27 +376,27 @@ async function executeReleaseVerifyHold(
       return { accepted: false, detail: { rejected_reason: holdReason } };
     }
 
-    const published = await publishQuestionGroup(tx, {
-      group_id: groupId,
-      contract: await currentRevisionContract(tx, groupId, lifecycle.current_revision_id),
-      expectedCurrentRevision: lifecycle.current_revision_id,
-      expectedAdmissionGeneration: lifecycle.scoring_admission_generation,
-      availability: lifecycle.availability,
-      admission:
-        lifecycle.scoring_admission_state === 'admitted'
-          ? {
-              state: 'admitted',
-              evidence: lifecycle.scoring_admission_evidence ?? null,
-            }
-          : {
-              state: 'withheld',
-              reason: (lifecycle.scoring_admission_withheld_reason ??
-                'unverified_rules') as WithheldReason,
-            },
+    const published = await publishQuestionGroupFromRow(tx, {
+      rootId: groupId,
+      // 'preserve' = keep the current admission dimension verbatim; only the
+      // suspension dimension is changing. No verification row is appended —
+      // releasing a hold is an owner action, not a verify pass.
+      admission: { state: 'preserve' },
       suspension: { suspended: false },
       actorRef: `${ACTOR_REF}:release_verify_hold`,
       now,
     });
+    if (published.status === 'published' || published.status === 'withdrawn') {
+      // Content drifted past the frozen revision (or every part tombstoned) —
+      // continuing would mint a new revision / withdraw the group under what
+      // was supposed to be a dimension-only hold release. Roll back the whole
+      // command; the owner can reverify instead.
+      throw new ApiError(
+        'conflict',
+        `cannot release verify_hold on '${groupId}': group content changed since the held revision (${published.status}) — reverify it instead`,
+        409,
+      );
+    }
     if (published.status === 'conflict') {
       throw new ApiError(
         'conflict',
