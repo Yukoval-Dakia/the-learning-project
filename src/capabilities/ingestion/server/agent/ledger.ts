@@ -5,9 +5,13 @@ import { writeAgentRunSegment } from '../events/agent-progress';
 import { type SessionAskRow, readSessionAsks } from './asks';
 import {
   AGENT_ITEM_STATE,
+  AGENT_PAID_ATTEMPT,
   AGENT_RUN_SEGMENT,
+  AGENT_TERMINAL_REQUEST,
   AgentItemStatePayload,
+  AgentPaidAttemptPayload,
   AgentRunSegmentPayload,
+  AgentTerminalRequestPayload,
   INGESTION_AGENT_ITEM,
   INGESTION_AGENT_RUN_TABLE,
   INGESTION_AGENT_STAGE,
@@ -47,6 +51,8 @@ export interface AgentRunLedger {
   /** Latest emitted segment marker. */
   readonly lastSegment: { segment: number; outcome?: string; task_run_id?: string } | null;
   readonly doneEmitted: boolean;
+  /** R2-6: model-declared run-stop request, first marker wins. */
+  readonly terminalRequest: { code: string; reason?: string } | null;
 }
 
 type RawEventRow = {
@@ -68,7 +74,7 @@ export async function readAgentRunLedger(db: Db | Tx, sessionId: string): Promis
     FROM job_events
     WHERE business_table = ${INGESTION_AGENT_RUN_TABLE}
       AND business_id = ${sessionId}
-      AND event_type IN (${AGENT_ITEM_STATE}, ${AGENT_RUN_SEGMENT})
+      AND event_type IN (${AGENT_ITEM_STATE}, ${AGENT_RUN_SEGMENT}, ${AGENT_TERMINAL_REQUEST})
     ORDER BY id ASC
   `);
 
@@ -95,7 +101,18 @@ export async function readAgentRunLedger(db: Db | Tx, sessionId: string): Promis
   }
 
   let lastSegment: AgentRunLedger['lastSegment'] = null;
+  let terminalRequest: AgentRunLedger['terminalRequest'] = null;
   for (const row of runRows) {
+    if (row.event_type === AGENT_TERMINAL_REQUEST) {
+      const parsed = AgentTerminalRequestPayload.safeParse(row.payload);
+      if (parsed.success && terminalRequest == null) {
+        terminalRequest = {
+          code: parsed.data.code,
+          ...(parsed.data.reason != null ? { reason: parsed.data.reason } : {}),
+        };
+      }
+      continue;
+    }
     if (row.event_type === AGENT_ITEM_STATE) {
       const parsed = AgentItemStatePayload.safeParse(row.payload);
       if (!parsed.success) continue;
@@ -127,7 +144,59 @@ export async function readAgentRunLedger(db: Db | Tx, sessionId: string): Promis
     resolvedAsks: asks.filter((ask) => ask.resolved != null),
     lastSegment,
     doneEmitted: stage === 'done',
+    terminalRequest,
   };
+}
+
+/** Cheap terminal-request read for the progress tool's post-request gate. */
+export async function readTerminalRequest(
+  db: Db | Tx,
+  sessionId: string,
+): Promise<{ code: string; reason?: string } | null> {
+  const rows = await db.execute<{ payload: Record<string, unknown> }>(sql`
+    SELECT payload FROM job_events
+    WHERE business_table = ${INGESTION_AGENT_RUN_TABLE}
+      AND business_id = ${sessionId}
+      AND event_type = ${AGENT_TERMINAL_REQUEST}
+    ORDER BY id ASC LIMIT 1
+  `);
+  const parsed = rows[0] == null ? null : AgentTerminalRequestPayload.safeParse(rows[0].payload);
+  return parsed?.success === true
+    ? {
+        code: parsed.data.code,
+        ...(parsed.data.reason != null ? { reason: parsed.data.reason } : {}),
+      }
+    : null;
+}
+
+/**
+ * Paid-attempt state per segment for stale-segment recovery (R2-5):
+ * 'sent' means the model call was dispatched — its provider outcome may be
+ * unknown — so an automatic re-pay is forbidden.
+ */
+export async function readPaidAttempts(
+  db: Db | Tx,
+  sessionId: string,
+): Promise<Map<number, { sent: boolean; settled: boolean; taskRunId?: string }>> {
+  const rows = await db.execute<{ payload: Record<string, unknown> }>(sql`
+    SELECT payload FROM job_events
+    WHERE business_table = ${INGESTION_AGENT_RUN_TABLE}
+      AND business_id = ${sessionId}
+      AND event_type = ${AGENT_PAID_ATTEMPT}
+    ORDER BY id ASC
+  `);
+  const attempts = new Map<number, { sent: boolean; settled: boolean; taskRunId?: string }>();
+  for (const row of rows) {
+    const parsed = AgentPaidAttemptPayload.safeParse(row.payload);
+    if (!parsed.success) continue;
+    const prev = attempts.get(parsed.data.segment) ?? { sent: false, settled: false };
+    attempts.set(parsed.data.segment, {
+      sent: prev.sent || parsed.data.phase === 'sent',
+      settled: prev.settled || parsed.data.phase === 'settled',
+      ...(parsed.data.task_run_id != null ? { taskRunId: parsed.data.task_run_id } : prev),
+    });
+  }
+  return attempts;
 }
 
 // ---------- segment claim (P1-5 mutual exclusion) ----------

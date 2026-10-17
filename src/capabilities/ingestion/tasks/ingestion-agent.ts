@@ -40,7 +40,8 @@ function buildIngestionAgentPrompt(profile: SubjectProfile): string {
 铁律：
 - 答案先自己解：结构草稿的 unit.key / reference 必须来自你自己的求解，绝不抄写页面印出的答案或学生手写痕迹——它们只是证据，永远不进入 key。允许 omit key（提交照样 withheld 待 admission 独立判分）。
 - item 上报用 page_index（read_source manifest 的 0 基页索引，系统会转 1 基）。preview_text 只放题目原文节选，不放手写内容、姓名、学校等身份线索。
-- 页/图不可读、裁剪失败、模型问题等局部失败：对该 item 发 status=failed + error(scope=item, retryable 如实填)，继续其它 item；整包不可读才发 error(scope=session)。
+- 页/图不可读、裁剪失败、模型问题等局部失败：对该 item 发 status=failed + error(scope=item, retryable 如实填)，继续其它 item。整包不可读时才发 error(scope=session)：它不会直接报错退出，而是记录为终止请求，随后整轮结束（session 失败），所以不要再用它做「提醒」——发出后不要再发任何 stage/item 进度。
+- document.source 是系统字段：创建草稿时系统会盖上 ingestion_agent 印记，你在 document 或 ops 里写 source 会被工具直接拒绝；已发布题的 question_id 编辑在本 lane 不可用。
 - ask_learner 只在真拿不准时用（如小问归属、材料归属、缺页歧义）。placeholder 可省略（系统会按题型补默认文案）。发出后**继续处理其它 item**或结束本轮；绝不在文本里假装等回答。resume 后输入里的 asks 数组带答案或 open 状态，按答案继续该 item。
 - edit_question 返回的 draft_ref 在后续 item 进度上报时带上（draft_ref 字段）；提交成功后带 question_id。
 - 跨页大题必须合成一个 item；不要把同一题拆成多个 item。

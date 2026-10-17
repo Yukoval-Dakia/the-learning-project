@@ -2,14 +2,20 @@ import type { Db, Tx } from '@/db/client';
 import { writeJobEvent } from '@/server/events/writer';
 import {
   AGENT_ITEM_STATE,
+  AGENT_PAID_ATTEMPT,
   AGENT_RUN_SEGMENT,
+  AGENT_TERMINAL_REQUEST,
   ASK_ANSWER_CLAIMED,
   ASK_CREATED,
   ASK_RESOLVED,
   AgentItemStatePayload,
   type AgentItemStatePayloadT,
+  AgentPaidAttemptPayload,
+  type AgentPaidAttemptPayloadT,
   AgentRunSegmentPayload,
   type AgentRunSegmentPayloadT,
+  AgentTerminalRequestPayload,
+  type AgentTerminalRequestPayloadT,
   AskCreatedPayload,
   type AskCreatedPayloadT,
   AskResolvedPayload,
@@ -169,4 +175,24 @@ export async function writeAgentRunSegment(
 ): Promise<number> {
   const parsed = AgentRunSegmentPayload.parse(payload);
   return writeRunEvent(tx, sessionId, AGENT_RUN_SEGMENT, parsed);
+}
+
+/** R2-6: model-declared run-stop marker — the orchestrator owns the session error. */
+export async function writeAgentTerminalRequest(
+  tx: Db | Tx,
+  sessionId: string,
+  payload: AgentTerminalRequestPayloadT,
+): Promise<number> {
+  const parsed = AgentTerminalRequestPayload.parse(payload);
+  return writeRunEvent(tx, sessionId, AGENT_TERMINAL_REQUEST, parsed);
+}
+
+/** R2-5: paid-attempt identity — 'sent' before the call, 'settled' after. */
+export async function writeAgentPaidAttempt(
+  tx: Db | Tx,
+  sessionId: string,
+  payload: AgentPaidAttemptPayloadT,
+): Promise<number> {
+  const parsed = AgentPaidAttemptPayload.parse(payload);
+  return writeRunEvent(tx, sessionId, AGENT_PAID_ATTEMPT, parsed);
 }

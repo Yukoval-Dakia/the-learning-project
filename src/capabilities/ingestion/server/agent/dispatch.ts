@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import { getStartedBoss } from '@/server/boss/client';
 
 // YUK-1522 (R8) — pg-boss dispatch seam for the ingestion agent lane. All
@@ -31,6 +33,12 @@ export async function sendAgentRun(payload: AgentRunJobPayload): Promise<string 
   });
 }
 
+/** Deterministic uuid-shaped id — a duplicate send is a true no-op (R2-4). */
+function deterministicJobId(key: string): string {
+  const hex = createHash('sha256').update(key).digest('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+}
+
 /** Enqueue a resume segment for a session whose asks just resolved. */
 export async function enqueueAgentResume(sessionId: string): Promise<string | null> {
   return sendAgentRun({ sessionId, trigger: 'resume' });
@@ -38,5 +46,16 @@ export async function enqueueAgentResume(sessionId: string): Promise<string | nu
 
 /** Enqueue the next segment when a run ended early without open asks. */
 export async function enqueueAgentContinuation(sessionId: string): Promise<string | null> {
-  return sendAgentRun({ sessionId, trigger: 'continue' });
+  const boss = await getStartedBoss();
+  return boss.send(
+    INGESTION_AGENT_RUN_QUEUE,
+    { sessionId, trigger: 'continue' },
+    {
+      // R2-4: the durable continue_requested marker is the intent; this send is
+      // idempotent by job id — the sweeper can re-send the same id forever.
+      id: deterministicJobId(`ingestion-agent-continue:${sessionId}`),
+      singletonKey: `ingestion_agent_run:${sessionId}`,
+      singletonSeconds: RESUME_SINGLETON_SECONDS,
+    },
+  );
 }

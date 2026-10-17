@@ -26,12 +26,18 @@ import { Ingestion } from '@/server/session';
 import {
   writeAgentErrorEvent,
   writeAgentItemEvent,
+  writeAgentPaidAttempt,
   writeAgentRunSegment,
   writeAgentStageEvent,
 } from '../events/agent-progress';
-import { writeIngestionUsageReceipt } from '../privacy-guard';
+import { redactIngestionText, writeIngestionUsageReceipt } from '../privacy-guard';
 import { readSourcePackage } from '../source-package';
-import { type AgentRedactionSink, attachAgentRedactionSink } from '../tools/redaction-sink';
+import {
+  type AgentRedactionSink,
+  attachAgentRedactionSink,
+  detachAgentRedactionSink,
+  recordAgentRedaction,
+} from '../tools/redaction-sink';
 import { listExpiredOpenAsks, readSessionAsks, resolveAskByTimeout } from './asks';
 import type { IngestionAgentErrorCodeT, IngestionAgentStageCountsT } from './contract';
 import { enqueueAgentContinuation } from './dispatch';
@@ -93,6 +99,8 @@ export interface AgentRunDeps {
   readonly throwBeforeBookkeeping?: () => void;
   /** Verification seam: throw after the claim, before the paid call. */
   readonly throwBeforeModel?: () => void;
+  /** Verification seam: replace the continuation send (R2-4 failure-path test). */
+  readonly enqueueContinuation?: (sessionId: string) => Promise<unknown>;
 }
 
 async function sweepExpiredAsksForSession(db: Db, sessionId: string): Promise<void> {
@@ -140,7 +148,12 @@ function classifyRunFailure(err: unknown): { code: IngestionAgentErrorCodeT; ret
   return { code: 'worker_lost', retryable: false };
 }
 
-const EMPTY_SINK: AgentRedactionSink = { fields: new Set(), counts: {} };
+const EMPTY_SINK: AgentRedactionSink = {
+  fields: new Set(),
+  counts: {},
+  countedKeys: new Set(),
+  cache: new Map(),
+};
 
 async function writeRunReceipt(
   tx: Tx,
@@ -178,14 +191,31 @@ function contractCounts(ledger: AgentRunLedger): IngestionAgentStageCountsT {
   };
 }
 
+/** Does this op attempt to write the authority provenance field? (R2-3) */
+function opTouchesSource(op: unknown): boolean {
+  if (op == null || typeof op !== 'object') return false;
+  const o = op as {
+    op?: string;
+    target?: { kind?: string };
+    fields?: Record<string, unknown>;
+    field?: string;
+  };
+  if (o.target?.kind !== 'question') return false;
+  if (o.op === 'set' && o.fields != null && 'source' in o.fields) return true;
+  if ((o.op === 'clear' || o.op === 'replace_text') && o.field === 'source') return true;
+  return false;
+}
+
 /**
  * Deterministic per-run tool-call identity (P1-5.5): a redelivery of the same
  * logical call replays the owner's idempotent write instead of duplicating it.
- * Also stamps every draft created from this surface with its provenance
- * (source.ref = 'ingestion_agent:<session>') so a page-copied key can be
- * traced back to this lane.
+ * Provenance is system-owned here: document seeds are force-stamped
+ * `{kind:'photo_ingest', ref:'ingestion_agent:<session>'}` and any attempt to
+ * set `source` through ops (or seed from a published question) is rejected —
+ * a page-copied key is always traceable back to this lane.
  */
 function agentInterceptInput(sessionId: string) {
+  const stamp = { kind: 'photo_ingest', ref: `ingestion_agent:${sessionId}` };
   return (tool: { name: string; effect: unknown }, args: unknown) => {
     const input = args as Record<string, unknown>;
     if (input == null) return { args };
@@ -196,11 +226,30 @@ function agentInterceptInput(sessionId: string) {
       };
     }
     if (tool.name === 'edit_question') {
+      // R2-3: provenance is system-owned on this lane. Reject (softStop — the
+      // model sees a clear tool error, the tool never runs):
+      //   - ops that set/clear/replace the document 'source' field;
+      //   - edits seeded from a published question (the seed would carry the
+      //     published source over unstamped — this lane owns drafts only).
+      if (input.question_id != null) {
+        return {
+          args,
+          softStop:
+            'edit_question(question_id) is not available on the ingestion lane — create or edit your own drafts via document/draft_ref only',
+        };
+      }
+      const ops = Array.isArray(input.ops) ? (input.ops as unknown[]) : [];
+      if (ops.some(opTouchesSource)) {
+        return {
+          args,
+          softStop:
+            "the 'source' provenance field is system-owned on the ingestion lane (it is stamped ingestion_agent automatically); do not set it",
+        };
+      }
       const next = { ...input };
       next.request_id = `r8:${sessionId}:edit:${sha256CanonicalJson({
         action: input.action ?? null,
         draft_ref: input.draft_ref ?? null,
-        question_id: input.question_id ?? null,
         document: input.document ?? null,
         ops: input.ops ?? null,
       })}`;
@@ -212,11 +261,7 @@ function agentInterceptInput(sessionId: string) {
             : undefined;
         next.document = {
           ...doc,
-          source: {
-            kind: 'photo_ingest',
-            ref: `ingestion_agent:${sessionId}`,
-            ...(typeof modelSource === 'string' ? { note: modelSource } : {}),
-          },
+          source: { ...stamp, ...(typeof modelSource === 'string' ? { note: modelSource } : {}) },
         };
       }
       return { args: next };
@@ -244,7 +289,9 @@ export async function runIngestionAgentSegment(
             kind: 'ingestion_agent.error',
             scope: 'session',
             code: 'worker_lost',
-            retryable: false,
+            // Explicit re-dispatch through the agent op is the honest recovery
+            // path — this delivery pattern exhausted the queue, not the run.
+            retryable: true,
           });
           await Ingestion.markExtractionFailed(
             tx,
@@ -372,22 +419,55 @@ async function runSegmentInner(
     return finalizeRun(db, sessionId, session.source_document_id, ledger, segment, trigger);
   }
 
+  // R2-6 — a pending terminal request (e.g. from a crashed post-model pass)
+  // owns the session error; the run fails before any new paid call.
+  if (ledger.terminalRequest != null) {
+    await db.transaction(async (tx) => {
+      await writeAgentRunSegment(tx, sessionId, { segment, trigger, outcome: 'failed' });
+      await writeAgentErrorEvent(tx, sessionId, {
+        kind: 'ingestion_agent.error',
+        scope: 'session',
+        code: ledger.terminalRequest!.code as IngestionAgentErrorCodeT,
+        retryable: false,
+      });
+      await Ingestion.markExtractionFailed(
+        tx,
+        sessionId,
+        `agent reported the package terminal (${ledger.terminalRequest!.code})`,
+      );
+    });
+    return { outcome: 'failed', error: `terminal_request ${ledger.terminalRequest.code}` };
+  }
+
   const derivationPolicy = await resolveSessionDerivationPolicy(db, sessionId);
 
   // derivation_policy: the shared tool bridge denies every needed tool under
   // 'answer_only'/'crisis' — refuse the paid run honestly at entry rather than
-  // burning a doomed segment. The receipt still records the policy truth.
+  // burning a doomed segment. R2-8: the contract error is emitted too (the
+  // endpoint's 422 is the first line; this is the backstop).
   if (derivationPolicy !== 'allow') {
-    const sink: AgentRedactionSink = { fields: new Set(), counts: {} };
     await db.transaction(async (tx) => {
-      await writeRunReceipt(tx, sessionId, session.source_document_id, derivationPolicy, sink);
+      await writeAgentRunSegment(tx, sessionId, { segment, trigger, outcome: 'failed' });
+      await writeAgentErrorEvent(tx, sessionId, {
+        kind: 'ingestion_agent.error',
+        scope: 'session',
+        code: 'policy_blocked',
+        retryable: false,
+      });
+      await writeRunReceipt(
+        tx,
+        sessionId,
+        session.source_document_id,
+        derivationPolicy,
+        EMPTY_SINK,
+        segment,
+      );
       await Ingestion.markExtractionFailed(
         tx,
         sessionId,
         `usage policy '${derivationPolicy}' does not permit bank ingestion`,
       );
     });
-    await writeAgentRunSegment(db, sessionId, { segment, trigger, outcome: 'failed' });
     return { outcome: 'failed', error: `derivation_policy ${derivationPolicy}` };
   }
 
@@ -415,175 +495,282 @@ async function runSegmentInner(
     scope: { kind: 'ingestion_session', id: sessionId },
     derivationPolicy,
   };
-  const redactionSink: AgentRedactionSink = attachAgentRedactionSink(toolCtx);
-  const mount = piDomainMount({
-    ctx: toolCtx,
-    serverName: DOMAIN_TOOL_MCP_SERVER_NAME,
-    toolNames: resolveDomainToolNames('ingestion'),
-    taskKind: 'IngestionAgentTask',
-    interceptInput: agentInterceptInput(sessionId),
-  });
-
-  const input = buildAgentSegmentInput({
-    sessionId,
-    documentId: session.source_document_id,
-    packageSummary,
-    derivationPolicy,
-    ledger,
-    segment,
-    trigger,
-  });
-
-  let taskRunId: string | undefined;
-  deps.throwBeforeModel?.();
+  const redactionSink: AgentRedactionSink = attachAgentRedactionSink(sessionId);
   try {
-    const result = await runTask('IngestionAgentTask', input, {
-      piToolMounts: [mount],
-      allowedTools: [...resolveMcpAllowedTools('ingestion')],
-      budgetOverride: { maxIterations: SEGMENT_MAX_ITERATIONS, timeoutMs: SEGMENT_TIMEOUT_MS },
-      providerSessionDeadlineAt: providerDeadline,
+    const mount = piDomainMount({
+      ctx: toolCtx,
+      serverName: DOMAIN_TOOL_MCP_SERVER_NAME,
+      toolNames: resolveDomainToolNames('ingestion'),
+      taskKind: 'IngestionAgentTask',
+      interceptInput: agentInterceptInput(sessionId),
     });
-    taskRunId = result.task_run_id;
-  } catch (err) {
-    const { code, retryable } = classifyRunFailure(err);
-    await writeAgentErrorEvent(db, sessionId, {
-      kind: 'ingestion_agent.error',
-      scope: 'session',
-      code,
-      retryable,
-    });
-    await writeAgentRunSegment(db, sessionId, {
+
+    const input = buildAgentSegmentInput({
+      sessionId,
+      documentId: session.source_document_id,
+      packageSummary,
+      derivationPolicy,
+      ledger,
       segment,
       trigger,
-      outcome: 'failed',
-      ...(taskRunId != null ? { task_run_id: taskRunId } : {}),
+      toolCtx,
     });
-    const message = err instanceof Error ? err.message : String(err);
-    // Paid work happened — the receipt is written on failure paths too.
-    await db
-      .transaction(async (tx) => {
-        await writeRunReceipt(
-          tx,
-          sessionId,
-          session.source_document_id,
-          derivationPolicy,
-          redactionSink,
-          segment,
-        );
-        await Ingestion.markExtractionFailed(tx, sessionId, message.slice(0, 500));
-      })
-      .catch((secondary) =>
-        console.error('[ingestion-agent] failed to mark session failed', {
-          session_id: sessionId,
-          error: secondary,
-        }),
-      );
-    return { outcome: 'failed', error: message.slice(0, 500) };
-  }
 
-  // P1-5.3 — bookkeeping after the paid call is isolated: a throw here logs,
-  // leaves the segment 'running' for the stale-segment sweeper to close, and
-  // returns normally so pg-boss never retries the whole PAID segment.
-  try {
-    deps.throwBeforeBookkeeping?.();
-    const after = await readAgentRunLedger(db, sessionId);
-    const afterOpen = after.openAsks.map((ask) => ask.ask_id);
-
-    if (afterOpen.length > 0) {
-      // Per-segment usage receipt: the paid call + this segment's redactions
-      // are usage even though the run is suspended.
-      await db.transaction(async (tx) => {
-        await writeAgentRunSegment(tx, sessionId, {
-          segment,
-          trigger,
-          outcome: 'waiting',
-          open_asks: afterOpen,
-          ...(taskRunId != null ? { task_run_id: taskRunId } : {}),
-        });
-        await writeRunReceipt(
-          tx,
-          sessionId,
-          session.source_document_id,
-          derivationPolicy,
-          redactionSink,
-          segment,
-        );
+    let taskRunId: string | undefined;
+    deps.throwBeforeModel?.();
+    // R2-5 — durable paid-attempt identity BEFORE the call: a stale 'running'
+    // segment with a 'sent' marker can never be auto re-paid (outcome unknown).
+    const attemptRef = `r8:${sessionId}:seg:${segment}`;
+    try {
+      await writeAgentPaidAttempt(db, sessionId, {
+        segment,
+        attempt_ref: attemptRef,
+        phase: 'sent',
       });
-      return { outcome: 'waiting', open_asks: afterOpen, segment };
-    }
-
-    const afterAllTerminal =
-      after.items.length > 0 && after.items.every((item) => isTerminalItemStatus(item.status));
-    if (after.doneEmitted || afterAllTerminal) {
-      // Contract completeness: the agent emits done on a clean finish; when the
-      // ledger proves completion anyway, the orchestrator backfills it.
-      if (!after.doneEmitted) {
-        await writeAgentStageEvent(db, sessionId, {
-          kind: 'ingestion_agent.stage',
-          stage: 'done',
-          counts: contractCounts(after),
-        });
-      }
-      const result = await db.transaction(async (tx) => {
-        const completed = await Ingestion.markAgentRunCompleted(tx, {
-          sessionId,
-          completion: terminalItemCounts(after.items),
-        });
-        await writeRunReceipt(
-          tx,
-          sessionId,
-          session.source_document_id,
-          derivationPolicy,
-          redactionSink,
-          segment,
-        );
-        return completed;
+      const result = await runTask('IngestionAgentTask', input, {
+        piToolMounts: [mount],
+        allowedTools: [...resolveMcpAllowedTools('ingestion')],
+        budgetOverride: { maxIterations: SEGMENT_MAX_ITERATIONS, timeoutMs: SEGMENT_TIMEOUT_MS },
+        providerSessionDeadlineAt: providerDeadline,
+      });
+      taskRunId = result.task_run_id;
+      await writeAgentPaidAttempt(db, sessionId, {
+        segment,
+        attempt_ref: attemptRef,
+        phase: 'settled',
+        ...(taskRunId != null ? { task_run_id: taskRunId } : {}),
+      });
+    } catch (err) {
+      const { code, retryable } = classifyRunFailure(err);
+      await writeAgentErrorEvent(db, sessionId, {
+        kind: 'ingestion_agent.error',
+        scope: 'session',
+        code,
+        retryable,
       });
       await writeAgentRunSegment(db, sessionId, {
         segment,
         trigger,
-        outcome: 'done',
+        outcome: 'failed',
         ...(taskRunId != null ? { task_run_id: taskRunId } : {}),
       });
-      const doneCounts = terminalItemCounts(after.items);
-      return {
-        outcome: 'done',
-        status: result.status,
-        segment,
-        terminal_items: doneCounts.items_terminal,
-        failed_items: doneCounts.items_failed,
-      };
+      const message = err instanceof Error ? err.message : String(err);
+      // Paid work happened — the receipt is written on failure paths too.
+      await db
+        .transaction(async (tx) => {
+          await writeRunReceipt(
+            tx,
+            sessionId,
+            session.source_document_id,
+            derivationPolicy,
+            redactionSink,
+            segment,
+          );
+          await Ingestion.markExtractionFailed(tx, sessionId, message.slice(0, 500));
+        })
+        .catch((secondary) =>
+          console.error('[ingestion-agent] failed to mark session failed', {
+            session_id: sessionId,
+            error: secondary,
+          }),
+        );
+      return { outcome: 'failed', error: message.slice(0, 500) };
     }
 
-    // P1-4 — early exit with no open asks and unfinished items: internal
-    // bookkeeping only (early_exit marker), never a session-scope error. The
-    // self-continuation keeps the run from stranding.
-    await writeAgentRunSegment(db, sessionId, {
-      segment,
-      trigger,
-      outcome: 'early_exit',
-      ...(taskRunId != null ? { task_run_id: taskRunId } : {}),
-    });
-    await enqueueAgentContinuation(sessionId).catch((err) =>
-      console.error('[ingestion-agent] continuation enqueue failed', {
+    // P1-5.3 — bookkeeping after the paid call is isolated: a throw here logs,
+    // leaves the segment 'running' for the stale-segment sweeper to close, and
+    // returns normally so pg-boss never retries the whole PAID segment.
+    try {
+      deps.throwBeforeBookkeeping?.();
+      const after = await readAgentRunLedger(db, sessionId);
+
+      // R2-6 — a model-declared terminal request becomes the session error and
+      // stops the run; it can never coexist with further progress (the tool
+      // itself refuses writes after recording the request).
+      if (after.terminalRequest != null) {
+        await db.transaction(async (tx) => {
+          await writeAgentRunSegment(tx, sessionId, {
+            segment,
+            trigger,
+            outcome: 'failed',
+            ...(taskRunId != null ? { task_run_id: taskRunId } : {}),
+          });
+          await writeAgentErrorEvent(tx, sessionId, {
+            kind: 'ingestion_agent.error',
+            scope: 'session',
+            code: after.terminalRequest!.code as IngestionAgentErrorCodeT,
+            retryable: false,
+          });
+          await writeRunReceipt(
+            tx,
+            sessionId,
+            session.source_document_id,
+            derivationPolicy,
+            redactionSink,
+            segment,
+          );
+          await Ingestion.markExtractionFailed(
+            tx,
+            sessionId,
+            `agent reported the package terminal (${after.terminalRequest!.code})`,
+          );
+        });
+        return {
+          outcome: 'failed',
+          segment,
+          error: `terminal_request ${after.terminalRequest.code}`,
+        };
+      }
+
+      const afterOpen = after.openAsks.map((ask) => ask.ask_id);
+
+      if (afterOpen.length > 0) {
+        // Per-segment usage receipt: the paid call + this segment's redactions
+        // are usage even though the run is suspended.
+        await db.transaction(async (tx) => {
+          await writeAgentRunSegment(tx, sessionId, {
+            segment,
+            trigger,
+            outcome: 'waiting',
+            open_asks: afterOpen,
+            ...(taskRunId != null ? { task_run_id: taskRunId } : {}),
+          });
+          await writeRunReceipt(
+            tx,
+            sessionId,
+            session.source_document_id,
+            derivationPolicy,
+            redactionSink,
+            segment,
+          );
+        });
+        return { outcome: 'waiting', open_asks: afterOpen, segment };
+      }
+
+      const afterAllTerminal =
+        after.items.length > 0 && after.items.every((item) => isTerminalItemStatus(item.status));
+      if (after.doneEmitted || afterAllTerminal) {
+        // Contract completeness: the agent emits done on a clean finish; when the
+        // ledger proves completion anyway, the orchestrator backfills it.
+        if (!after.doneEmitted) {
+          await writeAgentStageEvent(db, sessionId, {
+            kind: 'ingestion_agent.stage',
+            stage: 'done',
+            counts: contractCounts(after),
+          });
+        }
+        const result = await db.transaction(async (tx) => {
+          const completed = await Ingestion.markAgentRunCompleted(tx, {
+            sessionId,
+            completion: terminalItemCounts(after.items),
+          });
+          await writeRunReceipt(
+            tx,
+            sessionId,
+            session.source_document_id,
+            derivationPolicy,
+            redactionSink,
+            segment,
+          );
+          return completed;
+        });
+        await writeAgentRunSegment(db, sessionId, {
+          segment,
+          trigger,
+          outcome: 'done',
+          ...(taskRunId != null ? { task_run_id: taskRunId } : {}),
+        });
+        const doneCounts = terminalItemCounts(after.items);
+        return {
+          outcome: 'done',
+          status: result.status,
+          segment,
+          terminal_items: doneCounts.items_terminal,
+          failed_items: doneCounts.items_failed,
+        };
+      }
+
+      // P1-4 — early exit with no open asks and unfinished items: internal
+      // bookkeeping only (early_exit marker), never a session-scope error.
+      // R2-4 — the continuation intent is durable and written in the SAME tx as
+      // the close: a failed enqueue is recovered by the sweeper's
+      // continue_requested scan, which re-sends with a deterministic job id.
+      await db.transaction(async (tx) => {
+        await writeAgentRunSegment(tx, sessionId, {
+          segment,
+          trigger,
+          outcome: 'early_exit',
+          ...(taskRunId != null ? { task_run_id: taskRunId } : {}),
+        });
+        await writeAgentRunSegment(tx, sessionId, {
+          segment: 0,
+          trigger: 'continue',
+          outcome: 'continue_requested',
+        });
+        await writeRunReceipt(
+          tx,
+          sessionId,
+          session.source_document_id,
+          derivationPolicy,
+          redactionSink,
+          segment,
+        );
+      });
+      const enqueueContinuation = deps.enqueueContinuation ?? enqueueAgentContinuation;
+      await enqueueContinuation(sessionId).catch((err) =>
+        console.error('[ingestion-agent] continuation enqueue failed (sweeper will recover)', {
+          session_id: sessionId,
+          error: err,
+        }),
+      );
+      return { outcome: 'continue', segment };
+    } catch (bookkeepingErr) {
+      console.error('[ingestion-agent] post-model bookkeeping failed — segment left for sweep', {
         session_id: sessionId,
-        error: err,
-      }),
-    );
-    return { outcome: 'continue', segment };
-  } catch (bookkeepingErr) {
-    console.error('[ingestion-agent] post-model bookkeeping failed — segment left for sweep', {
-      session_id: sessionId,
-      segment,
-      task_run_id: taskRunId,
-      error: bookkeepingErr,
-    });
-    return {
-      outcome: 'failed',
-      segment,
-      error: 'post_model_bookkeeping',
-    };
+        segment,
+        task_run_id: taskRunId,
+        error: bookkeepingErr,
+      });
+      return {
+        outcome: 'failed',
+        segment,
+        error: 'post_model_bookkeeping',
+      };
+    }
+  } finally {
+    detachAgentRedactionSink(sessionId);
   }
+}
+
+/**
+ * R2-5 — stale 'running' segment whose paid attempt was already dispatched
+ * ('sent' marker present): the provider outcome is unknown, so NEVER re-pay.
+ * Close the segment, emit the session error (explicit-retry semantics), and
+ * fail the session — the owner re-dispatches through the failed→agent path.
+ */
+export async function failSessionForUnknownPaidAttempt(
+  db: Db,
+  sessionId: string,
+  segment: number,
+): Promise<void> {
+  await db.transaction(async (tx) => {
+    await writeAgentRunSegment(tx, sessionId, {
+      segment,
+      trigger: 'resume',
+      outcome: 'failed',
+    });
+    await writeAgentErrorEvent(tx, sessionId, {
+      kind: 'ingestion_agent.error',
+      scope: 'session',
+      code: 'worker_lost',
+      retryable: true,
+    });
+    await Ingestion.markExtractionFailed(
+      tx,
+      sessionId,
+      'ingestion agent segment paid attempt outcome unknown — re-dispatch the agent op to retry explicitly',
+    );
+  });
 }
 
 /** Complete a run whose ledger already proves terminal — no paid call. */
@@ -642,6 +829,27 @@ interface SegmentInputArgs {
   ledger: AgentRunLedger;
   segment: number;
   trigger: 'start' | 'resume' | 'continue';
+  /** Present on real segments; the resume builder redacts answers through it. */
+  toolCtx?: Parameters<typeof recordAgentRedaction>[0];
+}
+
+/** Redact the free-text part of a resolved answer before it enters the resume input. */
+function redactAskAnswerForInput(
+  ctx: Parameters<typeof recordAgentRedaction>[0] | undefined,
+  answer: unknown,
+): unknown {
+  if (
+    ctx == null ||
+    answer == null ||
+    typeof answer !== 'object' ||
+    (answer as { kind?: string }).kind !== 'text' ||
+    typeof (answer as { text?: unknown }).text !== 'string'
+  ) {
+    return answer;
+  }
+  const redacted = redactIngestionText((answer as { text: string }).text);
+  recordAgentRedaction(ctx, redacted);
+  return { ...(answer as Record<string, unknown>), text: redacted.text };
 }
 
 function buildAgentSegmentInput(args: SegmentInputArgs): string {
@@ -663,7 +871,9 @@ function buildAgentSegmentInput(args: SegmentInputArgs): string {
     answer_kind: ask.created.answer_kind,
     expires_at: ask.created.expires_at,
     ...(ask.created.context_md != null ? { context_md: ask.created.context_md } : {}),
-    resolved: ask.resolved?.answer ?? null,
+    // R2-2: learner answer text is model input — redact it on the resume path
+    // exactly like the ask_learner poll path does.
+    resolved: ask.resolved ? redactAskAnswerForInput(args.toolCtx, ask.resolved.answer) : null,
   }));
   return JSON.stringify({
     task: 'ingest_source_package',

@@ -445,18 +445,60 @@ export async function listPendingResumeSessions(db: Db, limit = 25): Promise<str
 }
 
 /**
+ * Sessions with a `continue_requested` marker (written in the same tx as the
+ * early_exit close) that no later `running` segment followed — durable
+ * backstop when the continuation enqueue failed (R2-4).
+ */
+export async function listPendingContinuationSessions(db: Db, limit = 25): Promise<string[]> {
+  const rows = await db.execute<{ business_id: string }>(sql`
+    SELECT business_id
+    FROM job_events
+    WHERE business_table = ${INGESTION_AGENT_RUN_TABLE}
+      AND event_type = ${'agent.run_segment'}
+      AND payload ->> 'outcome' = 'continue_requested'
+      AND occurred_at > clock_timestamp() - interval '24 hours'
+      AND NOT EXISTS (
+        SELECT 1 FROM job_events s
+        WHERE s.business_table = ${INGESTION_AGENT_RUN_TABLE}
+          AND s.business_id = job_events.business_id
+          AND s.event_type = ${'agent.run_segment'}
+          AND s.payload ->> 'outcome' = 'running'
+          AND s.id > job_events.id
+      )
+    ORDER BY id ASC
+    LIMIT ${limit}
+  `);
+  return rows.map((row) => row.business_id);
+}
+
+/**
  * Sessions whose latest numbered 'running' segment has no same-segment closer
  * and is older than `staleBeforeMs` — a segment whose worker died mid-model or
  * whose post-model bookkeeping crashed (deliberately never retried as a paid
- * re-run). The sweeper closes it 'failed' and re-dispatches a resume.
+ * re-run). `paid_attempt_sent` tells the sweeper whether a paid model call was
+ * already dispatched for the segment: if so its provider outcome is unknown
+ * and the session fails (worker_lost, explicitly retryable) instead of
+ * silently re-paying (R2-5).
  */
 export async function listStaleRunningSessions(
   db: Db,
   staleBeforeMs: number,
   limit = 25,
-): Promise<{ session_id: string; segment: number }[]> {
-  const rows = await db.execute<{ business_id: string; segment: number }>(sql`
-    SELECT business_id, (payload ->> 'segment')::int AS segment
+): Promise<{ session_id: string; segment: number; paid_attempt_sent: boolean }[]> {
+  const rows = await db.execute<{
+    business_id: string;
+    segment: number;
+    paid_attempt_sent: boolean;
+  }>(sql`
+    SELECT business_id, (payload ->> 'segment')::int AS segment,
+      EXISTS (
+        SELECT 1 FROM job_events p
+        WHERE p.business_table = ${INGESTION_AGENT_RUN_TABLE}
+          AND p.business_id = job_events.business_id
+          AND p.event_type = ${'agent.paid_attempt'}
+          AND p.payload ->> 'phase' = 'sent'
+          AND (p.payload ->> 'segment')::int = (job_events.payload ->> 'segment')::int
+      ) AS paid_attempt_sent
     FROM job_events
     WHERE business_table = ${INGESTION_AGENT_RUN_TABLE}
       AND event_type = ${'agent.run_segment'}
@@ -474,5 +516,9 @@ export async function listStaleRunningSessions(
     ORDER BY id ASC
     LIMIT ${limit}
   `);
-  return rows.map((row) => ({ session_id: row.business_id, segment: row.segment }));
+  return rows.map((row) => ({
+    session_id: row.business_id,
+    segment: row.segment,
+    paid_attempt_sent: row.paid_attempt_sent,
+  }));
 }

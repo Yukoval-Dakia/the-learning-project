@@ -6,6 +6,7 @@ import { newId } from '@/core/ids';
 import { db } from '@/db/client';
 import { learning_session } from '@/db/schema';
 import { ApiError, errorResponse } from '@/kernel/http';
+import { resolveSessionDerivationPolicy } from '@/kernel/read-models/usage-policy';
 import { getStartedBoss } from '@/server/boss/client';
 import { Ingestion } from '@/server/session';
 import {
@@ -121,6 +122,17 @@ async function ensureOperationDispatched(
       if (!status) throw new ApiError('not_found', `ingestion session ${sessionId} not found`, 404);
 
       if (status === 'uploaded' || status === 'failed') {
+        // R2-8 — refuse the paid agent lane up front when the document's
+        // strictest derivation policy forbids derivation (answer_only/crisis);
+        // the segment-entry policy_blocked error is the backstop.
+        const policy = await resolveSessionDerivationPolicy(db, sessionId);
+        if (policy !== 'allow') {
+          throw new ApiError(
+            'derivation_policy_forbids_agent',
+            `source usage policy '${policy}' does not permit the ingestion agent`,
+            422,
+          );
+        }
         ({ jobId } = await Ingestion.enqueueAgentRun({ db, boss, sessionId, operationId }));
       } else if (
         !['queued', 'extracting', 'extracted', 'partial', 'reviewed', 'imported'].includes(status)

@@ -3,16 +3,18 @@ import { createAsk, readAskState } from '../agent/asks';
 import {
   INGESTION_AGENT_ITEM_PREVIEW_MAX,
   IngestionAgentErrorCode,
+  type IngestionAgentErrorCodeT,
   IngestionAgentItemStatus,
   IngestionAgentStage,
   IngestionAskOption,
 } from '../agent/contract';
-import { readLatestItemStatus } from '../agent/ledger';
+import { readLatestItemStatus, readTerminalRequest } from '../agent/ledger';
 import {
   writeAgentErrorEvent,
   writeAgentItemEvent,
   writeAgentItemState,
   writeAgentStageEvent,
+  writeAgentTerminalRequest,
 } from '../events/agent-progress';
 import { redactIngestionText } from '../privacy-guard';
 import { recordAgentRedaction } from './redaction-sink';
@@ -105,6 +107,14 @@ async function executeReportProgress(
 ): Promise<ReportProgressOutput> {
   const input = ReportProgressInputSchema.parse(raw);
   const sessionId = requireIngestionScope(ctx);
+  // R2-6: once a terminal request exists, no further progress may coexist
+  // with the session error the orchestrator is about to emit.
+  if (input.event !== 'error' || input.scope !== 'session') {
+    const requested = await readTerminalRequest(ctx.db, sessionId);
+    if (requested != null) {
+      return { emitted: `terminal_request(${requested.code})` };
+    }
+  }
   switch (input.event) {
     case 'stage': {
       const eventId = await writeAgentStageEvent(ctx.db, sessionId, {
@@ -146,6 +156,18 @@ async function executeReportProgress(
       return { emitted: `ingestion_agent.item#${eventId}` };
     }
     case 'error': {
+      // R2-6: the model may only emit item-scope errors. A session-scope
+      // report (e.g. page_unreadable for the whole package) is recorded as a
+      // terminal request; the ORCHESTRATOR emits the session error and fails
+      // the run — a model can never mint the session error itself.
+      if (input.scope === 'session') {
+        await writeAgentTerminalRequest(ctx.db, sessionId, {
+          code: input.code as IngestionAgentErrorCodeT,
+        });
+        return {
+          emitted: `terminal_request(${input.code}) — the run will now end; do not emit further progress`,
+        };
+      }
       const eventId = await writeAgentErrorEvent(ctx.db, sessionId, {
         kind: 'ingestion_agent.error',
         scope: input.scope,
@@ -161,7 +183,7 @@ async function executeReportProgress(
 export const reportIngestionProgressTool: DomainTool<ReportProgressInput, ReportProgressOutput> = {
   name: 'report_ingestion_progress',
   description:
-    'Emit a durable R8 progress event for this ingestion run: event=stage {stage, pages?, counts?{items_total,items_done,items_withheld,items_failed}}, event=item {item_id, question_no, status(queued|structuring|solving|calibrating|admitted|withheld|failed), reason?, page_index? (0-based manifest index — the server emits it 1-based), preview_text?, draft_ref?, question_id?}, or event=error {scope(session|item), item_id?, code(page_unreadable|solve_timeout|model_unavailable|budget_exhausted|crop_failed|worker_lost|structure_failed|ask_expired), retryable}. preview_text is redacted and truncated to 80 chars by the server — never put raw student handwriting or identifiers in it. Call once per transition; every call is a durable job_events row the UI sees immediately.',
+    'Emit a durable R8 progress event for this ingestion run: event=stage {stage, pages?, counts?{items_total,items_done,items_withheld,items_failed}}, event=item {item_id, question_no, status(queued|structuring|solving|calibrating|admitted|withheld|failed), reason?, page_index? (0-based manifest index — the server emits it 1-based), preview_text?, draft_ref?, question_id?}, or event=error {scope, item_id?, code(page_unreadable|solve_timeout|model_unavailable|budget_exhausted|crop_failed|worker_lost|structure_failed|ask_expired|policy_blocked), retryable}. scope=item reports a per-item failure; scope=session does NOT emit the error — it records a terminal request so the run ends cleanly (the orchestrator owns the session error). preview_text is redacted and truncated to 80 chars by the server — never put raw student handwriting or identifiers in it. Call once per transition; every call is a durable job_events row the UI sees immediately.',
   effect: 'write',
   inputSchema: ReportProgressInputSchema,
   outputSchema: ReportProgressOutputSchema,
@@ -212,6 +234,21 @@ type AskLearnerOutput = z.infer<typeof AskLearnerOutputSchema>;
 
 const DEFAULT_ASK_EXPIRES_SECONDS = 1_800;
 
+/** Redact the free-text part of a resolved answer before it enters the model. */
+function redactAskAnswer(ctx: ToolContext, answer: unknown): unknown {
+  if (
+    answer == null ||
+    typeof answer !== 'object' ||
+    (answer as { kind?: string }).kind !== 'text' ||
+    typeof (answer as { text?: unknown }).text !== 'string'
+  ) {
+    return answer;
+  }
+  const redacted = redactIngestionText((answer as { text: string }).text);
+  recordAgentRedaction(ctx, redacted);
+  return { ...(answer as Record<string, unknown>), text: redacted.text };
+}
+
 async function executeAskLearner(
   ctx: ToolContext,
   raw: AskLearnerInput,
@@ -227,7 +264,13 @@ async function executeAskLearner(
     if (state.resolved == null) {
       return { status: 'pending', ask_id: input.ask_id, expires_at: state.created.expires_at };
     }
-    return { status: 'resolved', ask_id: input.ask_id, answer: state.resolved.answer };
+    // R2-2: learner answer text is external input to the model — redact it
+    // like every other text channel (counts fold into the run's sink).
+    return {
+      status: 'resolved',
+      ask_id: input.ask_id,
+      answer: redactAskAnswer(ctx, state.resolved.answer),
+    };
   }
 
   if (input.answer_kind === 'choice' && (input.options == null || input.options.length < 2)) {

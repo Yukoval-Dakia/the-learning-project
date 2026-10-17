@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { learning_session, source_document } from '@/db/schema';
 import { redactIngestionText } from '../privacy-guard';
 import { formatAssetRef, readSourcePackage } from '../source-package';
-import { recordAgentRedaction } from './redaction-sink';
+import { cachedAgentRedaction } from './redaction-sink';
 import { requireIngestionScope } from './source-tool-support';
 import type { DomainTool, ToolContext } from './types';
 
@@ -102,11 +102,16 @@ function windowText(
   };
 }
 
-/** Redact a text window for the model and fold the fired rules into the run's sink. */
-function redactedWindow(ctx: ToolContext, window: NonNullable<ReadSourceOutput['text']>) {
-  const redacted = redactIngestionText(window.content);
-  recordAgentRedaction(ctx, redacted);
-  return { ...window, content: redacted.text };
+/**
+ * R2-1: redact the FULL source text once (page section or whole document),
+ * then window the REDACTED text — never slice raw text. A window that starts
+ * mid-identifier (「电话：」on the previous window boundary) would leak the
+ * bare number if redaction ran on the slice; redacting the whole text keeps
+ * label↔value adjacency intact. Results are cached per run so re-windowing
+ * neither re-pays the regex pass nor double-counts the receipt.
+ */
+function redactedFullText(ctx: ToolContext, cacheKey: string, raw: string): string {
+  return cachedAgentRedaction(ctx, cacheKey, () => redactIngestionText(raw)).text;
 }
 
 async function executeReadSource(
@@ -194,7 +199,13 @@ async function executeReadSource(
       document_level_text: isWordText,
       manifest,
       text: isWordText
-        ? redactedWindow(ctx, windowText(bodyMd, offset, maxChars, 'document', null))
+        ? windowText(
+            redactedFullText(ctx, `doc:${input.document_id}:full`, bodyMd),
+            offset,
+            maxChars,
+            'document',
+            null,
+          )
         : null,
     };
   }
@@ -219,7 +230,13 @@ async function executeReadSource(
       document_level_text: isWordText,
       manifest,
       text: isWordText
-        ? redactedWindow(ctx, windowText(bodyMd, offset, maxChars, 'document', null))
+        ? windowText(
+            redactedFullText(ctx, `doc:${input.document_id}:full`, bodyMd),
+            offset,
+            maxChars,
+            'document',
+            null,
+          )
         : null,
     };
   }
@@ -239,7 +256,13 @@ async function executeReadSource(
     status: 'ok',
     document_level_text: false,
     manifest,
-    text: redactedWindow(ctx, windowText(section, offset, maxChars, 'page', input.page_index)),
+    text: windowText(
+      redactedFullText(ctx, `doc:${input.document_id}:page:${input.page_index}`, section),
+      offset,
+      maxChars,
+      'page',
+      input.page_index,
+    ),
   };
 }
 

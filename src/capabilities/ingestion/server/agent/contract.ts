@@ -102,6 +102,9 @@ export const IngestionAgentErrorCode = z.enum([
   'worker_lost',
   'structure_failed',
   'ask_expired',
+  // R2-8: session refused because the document's derivation policy forbids
+  // the paid agent lane (answer_only / crisis).
+  'policy_blocked',
 ]);
 export type IngestionAgentErrorCodeT = z.infer<typeof IngestionAgentErrorCode>;
 
@@ -242,17 +245,56 @@ export type AgentItemStatePayloadT = z.infer<typeof AgentItemStatePayload>;
 
 export const AgentRunSegmentPayload = z
   .object({
-    /** ≥1 = physical run segment; 0 = out-of-band marker (resume_requested). */
+    /** ≥1 = physical run segment; 0 = out-of-band marker (resume_requested/continue_requested). */
     segment: z.number().int().min(0),
     trigger: z.enum(['start', 'resume', 'continue']),
     task_run_id: z.string().optional(),
     open_asks: z.array(z.string()).optional(),
     outcome: z
-      .enum(['running', 'waiting', 'done', 'failed', 'early_exit', 'resume_requested'])
+      .enum([
+        'running',
+        'waiting',
+        'done',
+        'failed',
+        'early_exit',
+        'resume_requested',
+        'continue_requested',
+      ])
       .optional(),
   })
   .strict();
 export type AgentRunSegmentPayloadT = z.infer<typeof AgentRunSegmentPayload>;
+
+/**
+ * `agent.terminal_request` — model-declared run-stop request (R2-6). The
+ * model may not emit session-scope errors itself; the tool records this
+ * marker instead and the orchestrator emits the session error + fails.
+ */
+export const AGENT_TERMINAL_REQUEST = 'agent.terminal_request' as const;
+export const AgentTerminalRequestPayload = z
+  .object({
+    code: IngestionAgentErrorCode,
+    reason: z.string().optional(),
+  })
+  .strict();
+export type AgentTerminalRequestPayloadT = z.infer<typeof AgentTerminalRequestPayload>;
+
+/**
+ * `agent.paid_attempt` — paid-attempt identity recorded BEFORE the model
+ * call ('sent') and after it returns ('settled', carrying the task_run id).
+ * Stale-segment recovery refuses to auto re-pay when a 'sent' marker exists.
+ */
+export const AGENT_PAID_ATTEMPT = 'agent.paid_attempt' as const;
+export const AgentPaidAttemptPayload = z
+  .object({
+    segment: z.number().int().min(1),
+    /** Deterministic per (session,segment): a redelivery marks the same attempt. */
+    attempt_ref: z.string().min(1),
+    phase: z.enum(['sent', 'settled']),
+    task_run_id: z.string().optional(),
+  })
+  .strict();
+export type AgentPaidAttemptPayloadT = z.infer<typeof AgentPaidAttemptPayload>;
 
 // ---------- wire shapes for the answer endpoint ----------
 
