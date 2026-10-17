@@ -81,11 +81,15 @@ function assertSameOrigin(input: string): void {
   if (typeof window === 'undefined') return;
   let target: URL;
   try {
-    target = new URL(input, window.location.origin);
+    // Resolve exactly as fetch() does (against the document base).
+    target = new URL(input, document.baseURI);
   } catch {
     throw new ApiError('请求地址无效。', 0, 'invalid_request_url');
   }
-  if (target.origin !== window.location.origin) {
+  if (
+    (target.protocol !== 'https:' && target.protocol !== 'http:') ||
+    target.origin !== window.location.origin
+  ) {
     throw new ApiError('拒绝向本站以外的地址发送请求。', 0, 'cross_origin_request_blocked');
   }
 }
