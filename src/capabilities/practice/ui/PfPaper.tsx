@@ -104,9 +104,23 @@ interface ServerSlotDraft {
   group_evidence: SlotAssessment['group_evidence'];
 }
 
-function serverSlotDraft(slot: PaperSlot, assessment: SlotAssessment): ServerSlotDraft {
+// A native slot's answer text, derived from its response_set exactly as the answer field does
+// on every change (entries in stored order, one line each). Native slots carry no draft text on
+// the wire: the paper detail sends slot_state.draft = null and the answer in assessment.
+function nativeAnswerText(assessment: SlotAssessment, responseSet: ResponseSetT): string {
+  return responseSet.entries
+    .map((item) =>
+      nativeResponseText(
+        item,
+        assessment.practice_dto.response_spec.slots.find((field) => field.slot_id === item.slot_id),
+      ),
+    )
+    .join('\n');
+}
+
+function serverSlotDraft(assessment: SlotAssessment): ServerSlotDraft {
   return {
-    text: slot.slot_state.draft?.content_md ?? '',
+    text: nativeAnswerText(assessment, assessment.response_set),
     files: assessment.group_evidence.map((item) => item.evidence.asset.asset_id),
     epoch: assessment.save_epoch,
     response_set: assessment.response_set,
@@ -114,12 +128,16 @@ function serverSlotDraft(slot: PaperSlot, assessment: SlotAssessment): ServerSlo
   };
 }
 
-const sameFiles = (a: readonly string[], b: readonly string[]) =>
-  [...a].sort().join() === [...b].sort().join();
+// The stored answer and attachments themselves (targets included). Entry order and key order
+// carry no meaning here.
+const sameEvidence = (a: SlotAssessment['group_evidence'], b: SlotAssessment['group_evidence']) => {
+  const canon = (g: SlotAssessment['group_evidence']) =>
+    stableStringify(
+      [...g].sort((x, y) => x.evidence.asset.asset_id.localeCompare(y.evidence.asset.asset_id)),
+    );
+  return canon(a) === canon(b);
+};
 
-// The stored answer itself: content_md is only the client's text rendering of response_set (the
-// server stores whatever text it is sent), so two drafts with the same text can still differ.
-// Entry order and key order carry no meaning here.
 const sameResponses = (a: ResponseSetT | undefined, b: ResponseSetT) => {
   const canon = (r: ResponseSetT | undefined) =>
     stableStringify([...(r?.entries ?? [])].sort((x, y) => x.slot_id.localeCompare(y.slot_id)));
@@ -257,7 +275,11 @@ function restorePaperDraft(slots: readonly PaperSlot[]) {
   const nativeEpochs: Record<string, number> = {};
   for (const slot of slots) {
     const key = slotKey(slot);
-    answers[key] = slot.slot_state.submission?.answer_md ?? slot.slot_state.draft?.content_md ?? '';
+    answers[key] =
+      slot.slot_state.submission?.answer_md ??
+      slot.slot_state.draft?.content_md ??
+      // YUK-1490 — a native slot's draft lives in assessment.response_set (draft is null).
+      (slot.assessment ? nativeAnswerText(slot.assessment, slot.assessment.response_set) : '');
     if (slot.assessment) {
       nativeResponses[key] = slot.assessment.response_set;
       nativeEpochs[key] = slot.assessment.save_epoch;
@@ -582,7 +604,8 @@ function PaperVisit({
                   evidence: item.original,
                   target: bound.group_evidence.find(
                     (saved) => saved.evidence.asset.asset_id === item.asset_id,
-                  )?.target ?? { scope: 'all_units' as const },
+                  )?.target ??
+                    item.originalTarget ?? { scope: 'all_units' as const },
                 },
               ]
             : [],
@@ -597,10 +620,6 @@ function PaperVisit({
     conflictsRef.current = next;
     setConflicts(next);
   };
-
-  // The attachments a save of this slot would send (same filter as nativePayloadFor).
-  const savedFilesFor = (key: string) =>
-    (nativePayloadFor(key)?.group_evidence ?? []).map((item) => item.evidence.asset.asset_id);
 
   const runSave = (
     key: string,
@@ -645,7 +664,7 @@ function PaperVisit({
       done = Promise.resolve(false).then(deregister);
     } else {
       // Reads the epoch when it actually sends, so a save queued behind a chain uses its ACK.
-      const send = (): Promise<boolean> => {
+      const send = (resent = false): Promise<boolean> => {
         try {
           return savePaperAnswer(
             artifactId,
@@ -678,10 +697,18 @@ function PaperVisit({
               if (!isLatest()) return false;
               // YUK-1490 — stale_draft is settled by a re-read rather than shown as 保存失败
               // straight away (a same-text draft is adopted without the learner noticing).
-              if (err instanceof ApiError && err.status === 409 && err.code === 'stale_draft') {
+              // The save stays on the in-flight track until the re-read settles it, so exit and
+              // 交卷 wait for (or count) it instead of seeing nothing unsaved.
+              if (
+                !resent &&
+                err instanceof ApiError &&
+                err.status === 409 &&
+                err.code === 'stale_draft'
+              ) {
                 delete ackedAnswers.current[key];
-                void recheckStaleSlot(key, seq);
-              } else markFailed();
+                return recheckStaleSlot(key, seq, () => send(true));
+              }
+              markFailed();
               return false;
             });
         } catch (err) {
@@ -720,7 +747,7 @@ function PaperVisit({
           void runSave(key, slot.question_id, slot.part_ref, answersRef.current[key] ?? '');
         });
       };
-      done = (chained ? send() : waitEarlier().then(send)).then(deregister);
+      done = (chained ? send() : waitEarlier().then(() => send())).then(deregister);
       if (chained) {
         const chain = done;
         chainedSaves.current[key] = chain;
@@ -744,14 +771,19 @@ function PaperVisit({
   // A failed read leaves the slot on 保存失败; its retry draws the 409 again and re-reads.
   // Not after the visit ended or a newer save of the slot went out, nor for a slot submitted
   // meanwhile.
-  const recheckStaleSlot = async (key: string, seq: number) => {
+  const recheckStaleSlot = async (
+    key: string,
+    seq: number,
+    resend: () => Promise<boolean>,
+  ): Promise<boolean> => {
     const fail = () => {
       if (componentActiveRef.current) setSaveFailed((f) => ({ ...f, [key]: true }));
+      return false;
     };
     // A late 409 of a visit that already ended (the previous visit's flush) needs no re-read.
-    if (!componentActiveRef.current) return;
-    // Called with void: any throw below must still leave the slot on 保存失败, not on a chip
-    // that claims the draft is being saved.
+    if (!componentActiveRef.current) return false;
+    // Any throw below must still leave the slot on 保存失败, not on a chip that claims the
+    // draft is being saved.
     try {
       const pendingChain = chainedSaves.current[key];
       if (pendingChain) await chainOrCap(pendingChain);
@@ -764,23 +796,25 @@ function PaperVisit({
         });
       } catch (err) {
         console.error('[PfPaper] stale draft re-read failed', { key, err });
-        fail();
-        return;
+        return fail();
       }
       // A newer save of the slot owns its flag and epoch now (it may already have passed).
-      if (saveSeq.current[key] !== seq || conflictsRef.current[key]) return;
+      if (saveSeq.current[key] !== seq || conflictsRef.current[key]) return false;
       if (!componentActiveRef.current || exitingRef.current || submittingRef.current) return fail();
-      if (submittedDuringAttemptsRef.current.has(key)) return;
+      if (submittedDuringAttemptsRef.current.has(key)) return true;
       const local = slots.find((s) => slotKey(s) === key);
       const slot = fresh.sections.flatMap((s) => s.slots).find((s) => slotKey(s) === key);
       const assessment = slot?.assessment;
       if (!local || !slot || !assessment || slot.slot_state.submission?.submitted) return fail();
       if (assessment.issuance_id !== local.assessment?.issuance_id) return fail();
-      if (settleWithServer(key, slot, assessment) === 'not_newer')
-        void runSave(key, local.question_id, local.part_ref, answersRef.current[key] ?? '');
+      const settled = settleWithServer(key, assessment);
+      // Not newer: the stored draft is this visit's own; send the same save again, once, now
+      // at the current epoch. Adopted: the server already holds this content.
+      if (settled === 'not_newer') return resend();
+      return settled === 'adopted';
     } catch (err) {
       console.error('[PfPaper] stale draft recheck failed', { key, err });
-      fail();
+      return fail();
     }
   };
 
@@ -789,16 +823,15 @@ function PaperVisit({
   // its epoch. Newer and different: hold the slot on the conflict choice.
   const settleWithServer = (
     key: string,
-    slot: PaperSlot,
     assessment: SlotAssessment,
   ): 'not_newer' | 'adopted' | 'conflict' => {
-    const server = serverSlotDraft(slot, assessment);
+    const server = serverSlotDraft(assessment);
     const text = answersRef.current[key] ?? '';
     if (server.epoch <= (nativeEpochs.current[key] ?? 0)) return 'not_newer';
+    const payload = nativePayloadFor(key);
     if (
-      server.text === text &&
-      sameFiles(server.files, savedFilesFor(key)) &&
-      sameResponses(nativePayloadFor(key)?.response_set, server.response_set)
+      sameResponses(payload?.response_set, server.response_set) &&
+      sameEvidence(payload?.group_evidence ?? [], server.group_evidence)
     ) {
       nativeEpochs.current[key] = server.epoch;
       ackedAnswers.current[key] = text;
@@ -865,7 +898,7 @@ function PaperVisit({
       const assessment = slot?.assessment;
       if (!slot || !assessment || slot.slot_state.submission?.submitted) continue;
       if (assessment.issuance_id !== local.assessment?.issuance_id) continue;
-      if (settleWithServer(key, slot, assessment) === 'conflict') held = true;
+      if (settleWithServer(key, assessment) === 'conflict') held = true;
     }
     return !held;
   };
@@ -898,6 +931,8 @@ function PaperVisit({
     setEvidence(nextEvidence);
     nativeEpochs.current[key] = Math.max(nativeEpochs.current[key] ?? 0, server.epoch);
     ackedAnswers.current[key] = server.text;
+    // A failure flag from an earlier failed re-read is moot: the slot now holds the stored draft.
+    setSaveFailed((f) => (f[key] ? { ...f, [key]: false } : f));
     setConflict(key, null);
   };
 
