@@ -13,13 +13,15 @@ import {
 } from '@/kernel/tools/allowlists';
 import {
   AgentRunError,
-  type BoundRunTaskFn,
-  ProviderAttemptLifecycleError,
-  ProviderSessionAdmissionError,
   isProviderSessionWallClockBudgetError,
   isTransientAgentFailure,
-  makeRunTaskFn,
-} from '@/server/ai/runner-fn';
+} from '@/server/ai/agent-run-error';
+import { ProviderAttemptLifecycleError } from '@/server/ai/provider-attempt-lifecycle';
+import { ProviderSessionAdmissionError } from '@/server/ai/provider-session-admission';
+// NOTE: the failure-vocabulary modules are imported from their own files, not
+// runner-fn — re-exporting them there pulls providers→task-catalog→schema into
+// runner-fn's cone and breaks vitest module order (db/schema ↔ generated).
+import { type BoundRunTaskFn, makeRunTaskFn } from '@/server/ai/runner-fn';
 import { piDomainMount } from '@/server/ai/tools/pi-tools';
 import { JOB_RETRY_LIMIT } from '@/server/boss/queue-config';
 import { Ingestion } from '@/server/session';

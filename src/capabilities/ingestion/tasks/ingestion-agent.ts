@@ -54,8 +54,11 @@ export const ingestionAgentTaskSpec = {
     kind: 'IngestionAgentTask',
     description:
       'YUK-1522 (R8) — whole-package ingestion agent. One durable run per ingestion session: reads the source package via shared tools, segments items, structures each into a draft via edit_question, composes presentation, submits via submit_question (always withheld pending admission), emits the R8 progress contract, and raises durable non-blocking asks. Resumed segments rebuild context from the job_events ledger.',
+    // xiaomi mimo-v2.5 is the multimodal lane member — mimo-v2.5-pro is
+    // text-only (catalog: input ['text']) and would fail this task's
+    // vision gate; vision tasks use mimo-v2.5 per server/ai/AGENTS.md.
     defaultProvider: 'xiaomi',
-    defaultModel: 'mimo-v2.5-pro',
+    defaultModel: 'mimo-v2.5',
     budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 120, timeout: 1_200_000 },
     needsToolCall: true,
     isMultimodal: true,
