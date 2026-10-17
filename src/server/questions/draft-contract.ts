@@ -12,12 +12,15 @@ import type {
   SelectSlotT,
 } from '@/core/schema/assessment';
 import {
+  BlankNormalization,
   ExecutionPlan,
   QuestionGroupStructure,
   ResponseSpec,
   ScoringBasis,
 } from '@/core/schema/assessment';
+import type { BlankNormalizationT } from '@/core/schema/assessment/scoring';
 import type {
+  DraftBlankTextKeyT,
   DraftMaterialT,
   DraftPartT,
   DraftUnitT,
@@ -200,15 +203,7 @@ function criterionFor(
           key: {
             kind: 'text',
             accepted: key.accepted,
-            normalization: {
-              version: 'v1',
-              nfkc: false,
-              trim_outer: key.trim ?? true,
-              casefold: key.case_sensitive === false,
-              collapse_whitespace: false,
-              ignore_punctuation: false,
-              character_variants: [],
-            },
+            normalization: blankTextNormalization(key),
           },
         },
         attachRule: true,
@@ -267,6 +262,23 @@ function criterionFor(
     attachRule: false,
     issues,
   };
+}
+
+/**
+ * 已带归一化的草稿原样进契约。没带的新题仍用当前默认：v1，nfkc 与折叠空白关闭，
+ * 只从 case_sensitive / trim 读大小写和首尾空白。
+ */
+function blankTextNormalization(key: DraftBlankTextKeyT): BlankNormalizationT {
+  if (key.normalization != null) return BlankNormalization.parse(key.normalization);
+  return BlankNormalization.parse({
+    version: 'v1',
+    nfkc: false,
+    trim_outer: key.trim ?? true,
+    casefold: key.case_sensitive === false,
+    collapse_whitespace: false,
+    ignore_punctuation: false,
+    character_variants: [],
+  });
 }
 
 function executorFor(unit: DraftUnitT): ExecutorAssignmentT['executor'] {
@@ -693,8 +705,17 @@ function keyAndReferenceFor(
             ? {
                 kind: 'text',
                 accepted: [...key.accepted],
-                ...(key.normalization.casefold ? { case_sensitive: false } : {}),
-                ...(key.normalization.trim_outer === false ? { trim: false } : {}),
+                normalization: {
+                  version: key.normalization.version,
+                  nfkc: key.normalization.nfkc,
+                  trim_outer: key.normalization.trim_outer,
+                  casefold: key.normalization.casefold,
+                  collapse_whitespace: key.normalization.collapse_whitespace,
+                  ignore_punctuation: key.normalization.ignore_punctuation,
+                  character_variants: key.normalization.character_variants.map(
+                    (pair) => [pair[0], pair[1]] as [string, string],
+                  ),
+                },
               }
             : {
                 kind: 'numeric',
@@ -742,6 +763,163 @@ function methodFor(
   return criterion.kind === 'select_key' || criterion.kind === 'blank_key'
     ? { kind: criterion.kind === 'select_key' ? 'set-compare' : 'exact' }
     : { kind: 'human_review' };
+}
+
+function stableJson(value: unknown): string {
+  return JSON.stringify(value, (_key, v) =>
+    v !== null && typeof v === 'object' && !Array.isArray(v)
+      ? Object.keys(v)
+          .sort()
+          .reduce<Record<string, unknown>>((acc, k) => {
+            acc[k] = (v as Record<string, unknown>)[k];
+            return acc;
+          }, {})
+      : v,
+  );
+}
+
+function executorByUnit(plan: ExecutionPlanT): Map<string, ExecutorAssignmentT['executor']> {
+  const out = new Map<string, ExecutorAssignmentT['executor']>();
+  for (const assignment of plan.assignments) {
+    for (const unitId of assignment.scoring_unit_ids) out.set(unitId, assignment.executor);
+  }
+  return out;
+}
+
+function legacyChoiceSlotFaithful(stored: ResponseSlotT, canonical: ResponseSlotT): boolean {
+  if (stored.kind !== 'single_choice' && stored.kind !== 'multi_choice') return false;
+  if (canonical.kind !== 'select') return false;
+  if (stored.placement != null || canonical.placement != null) return false;
+  if (stored.kind === 'multi_choice') {
+    if (stored.min_select !== 1 || stored.max_select !== stored.options.length) return false;
+  }
+  if (canonical.pick !== (stored.kind === 'single_choice' ? 'one' : 'many')) return false;
+  if (
+    canonical.axes != null ||
+    canonical.text != null ||
+    canonical.at_most_per_coordinate != null
+  ) {
+    return false;
+  }
+  if (canonical.items.length !== stored.options.length) return false;
+  return stored.options.every((option, index) => {
+    const item = canonical.items[index];
+    return (
+      item != null && item.item_id === option.option_id && (item.label_md ?? '') === option.text
+    );
+  });
+}
+
+function legacyChoiceUnitFaithful(stored: ScoringUnitT, canonical: ScoringUnitT): boolean {
+  if (stored.criterion.kind !== 'option_set_key' || canonical.criterion.kind !== 'select_key') {
+    return false;
+  }
+  if (
+    stableJson(stored.criterion.accepted_option_ids) !==
+    stableJson(canonical.criterion.accepted_item_ids)
+  ) {
+    return false;
+  }
+  if (stored.points !== canonical.points) return false;
+  if (stableJson(stored.slot_refs) !== stableJson(canonical.slot_refs)) return false;
+  if (stableJson(stored.material_refs) !== stableJson(canonical.material_refs)) return false;
+  if (stored.evidence_slot_refs.length > 0 || canonical.evidence_slot_refs.length > 0) return false;
+  if (stored.requires_group_evidence || canonical.requires_group_evidence) return false;
+  if (stored.level_points != null || canonical.level_points != null) return false;
+  const expectedRule = stored.rule ?? printedLegacyChoiceRule(stored.points);
+  return stableJson(expectedRule) === stableJson(canonical.rule);
+}
+
+/**
+ * 往返必须保住已存判分层。旧选择题改写成 select_key + 印出的集合规则是唯一允许的
+ * 表示变化；答案键、选项文本、分值和默认的单选/全选界都要一致。其余任何字段
+ * 被丢掉或改写都算判分变了。
+ */
+export function scoringRoundTripIsFaithful(
+  stored: Pick<PublishedQuestionRevisionT, 'response_spec' | 'scoring_basis' | 'execution_plan'>,
+  canonical: Pick<DraftContract, 'response_spec' | 'scoring_basis' | 'execution_plan'>,
+): boolean {
+  const storedSlots = new Map(stored.response_spec.slots.map((slot) => [slot.slot_id, slot]));
+  const canonicalSlots = new Map(canonical.response_spec.slots.map((slot) => [slot.slot_id, slot]));
+  if (stableJson([...storedSlots.keys()]) !== stableJson([...canonicalSlots.keys()])) return false;
+  const canonicalUnits = new Map(
+    canonical.scoring_basis.units.map((unit) => [unit.scoring_unit_id, unit]),
+  );
+  if (stored.scoring_basis.units.length !== canonicalUnits.size) return false;
+  const legacyUnitIds = new Set<string>();
+  const legacySlotIds = new Set<string>();
+  for (const storedUnit of stored.scoring_basis.units) {
+    const nextUnit = canonicalUnits.get(storedUnit.scoring_unit_id);
+    const slotId = storedUnit.slot_refs[0];
+    const storedSlot = slotId != null ? storedSlots.get(slotId) : undefined;
+    const nextSlot = slotId != null ? canonicalSlots.get(slotId) : undefined;
+    if (nextUnit == null || storedSlot == null || nextSlot == null) return false;
+    const legacy =
+      storedUnit.criterion.kind === 'option_set_key' &&
+      (storedSlot.kind === 'single_choice' || storedSlot.kind === 'multi_choice');
+    if (legacy) {
+      if (!legacyChoiceUnitFaithful(storedUnit, nextUnit)) return false;
+      if (!legacyChoiceSlotFaithful(storedSlot, nextSlot)) return false;
+      legacyUnitIds.add(storedUnit.scoring_unit_id);
+      legacySlotIds.add(storedSlot.slot_id);
+    } else if (
+      stableJson(storedUnit) !== stableJson(nextUnit) ||
+      stableJson(storedSlot) !== stableJson(nextSlot)
+    ) {
+      return false;
+    }
+  }
+  for (const [slotId, storedSlot] of storedSlots) {
+    const nextSlot = canonicalSlots.get(slotId);
+    if (nextSlot == null) return false;
+    const legacyShape = storedSlot.kind === 'single_choice' || storedSlot.kind === 'multi_choice';
+    if (legacyShape) {
+      if (!legacySlotIds.has(slotId)) return false;
+      continue;
+    }
+    if (stableJson(storedSlot) !== stableJson(nextSlot)) return false;
+  }
+  if (
+    stableJson(stored.scoring_basis.aggregation) !==
+      stableJson(canonical.scoring_basis.aggregation) ||
+    stored.scoring_basis.blank_scores_zero !== canonical.scoring_basis.blank_scores_zero
+  ) {
+    return false;
+  }
+  if (stored.execution_plan.plan_version !== canonical.execution_plan.plan_version) return false;
+  if (
+    stableJson(stored.execution_plan.escalation) !== stableJson(canonical.execution_plan.escalation)
+  ) {
+    return false;
+  }
+  if (
+    (stored.execution_plan.max_total_cost_usd_micros ?? null) !==
+    (canonical.execution_plan.max_total_cost_usd_micros ?? null)
+  ) {
+    return false;
+  }
+  const storedGroups = stored.execution_plan.assignments.map((a) => a.scoring_unit_ids);
+  const nextGroups = canonical.execution_plan.assignments.map((a) => a.scoring_unit_ids);
+  if (stableJson(storedGroups) !== stableJson(nextGroups)) return false;
+  const storedExec = executorByUnit(stored.execution_plan);
+  const nextExec = executorByUnit(canonical.execution_plan);
+  for (const [unitId, executor] of storedExec) {
+    const next = nextExec.get(unitId);
+    if (next == null) return false;
+    if (legacyUnitIds.has(unitId)) {
+      if (
+        next.kind !== 'deterministic' ||
+        next.comparator !== 'set_compare' ||
+        executor.kind !== 'deterministic' ||
+        (executor.comparator !== 'exact_option_set' && executor.comparator !== 'set_compare')
+      ) {
+        return false;
+      }
+    } else if (stableJson(executor) !== stableJson(next)) {
+      return false;
+    }
+  }
+  return storedExec.size === nextExec.size;
 }
 
 // ---------- 与 question.canonical_content_hash 对齐的内容身份 ----------

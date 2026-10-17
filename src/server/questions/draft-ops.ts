@@ -16,6 +16,7 @@ import {
   DraftRubricCriterion,
   DraftSelectItem,
   DraftUnit,
+  DraftUnitKey,
   QuestionDraftDocument,
   mintDraftAssetId,
   mintDraftItemId,
@@ -680,37 +681,7 @@ function applyUnitSet(unit: DraftUnitT, field: string, value: unknown): void {
         unit.key = undefined;
         return;
       }
-      const parsed = z
-        .discriminatedUnion('kind', [
-          z.object({
-            kind: z.literal('select'),
-            accepted_item_ids: z.array(z.string().min(1)).min(1),
-          }),
-          z.object({
-            kind: z.literal('blank'),
-            key: z.union([
-              z.object({
-                kind: z.literal('text'),
-                accepted: z.array(z.string().min(1)).min(1),
-                case_sensitive: z.boolean().optional(),
-                trim: z.boolean().optional(),
-              }),
-              z.object({
-                kind: z.literal('numeric'),
-                value: z.number(),
-                tolerance: z
-                  .discriminatedUnion('kind', [
-                    z.object({ kind: z.literal('absolute'), value: z.number().min(0) }),
-                    z.object({ kind: z.literal('relative'), ratio: z.number().min(0) }),
-                  ])
-                  .optional(),
-                unit: z.string().optional(),
-                equivalent_forms: z.array(z.string()).optional(),
-              }),
-            ]),
-          }),
-        ])
-        .safeParse(value);
+      const parsed = DraftUnitKey.safeParse(value);
       if (!parsed.success) fail('invalid_value', `invalid key: ${parsed.error.message}`);
       unit.key = parsed.data;
       return;

@@ -55,6 +55,7 @@ import {
   draftCanonicalIdentity,
   draftDocumentToContract,
   revisionToDraftDocument,
+  scoringRoundTripIsFaithful,
 } from '@/server/questions/draft-contract';
 import { encodeDraftRef, parseDraftRef } from '@/server/questions/edit-question';
 import { publishQuestionGroup } from '@/server/questions/publisher';
@@ -310,7 +311,7 @@ function admissionForContentEdit(
  * 已存 revision 与这次提交可能不是同一编码：旧行是 option_set_key +
  * single_choice/multi_choice、没有规则；编辑草稿会再编成 select_key + select
  * 并补上印出的规则。先把已存 revision 走同一条草稿往返，再比三层。往返形不成
- * 规范契约时视为已变（回 withheld），不放宽比较。
+ * 规范契约，或往返丢掉、改写了已存判分字段时，视为已变（回 withheld）。
  */
 function scoringLayersUnchanged(
   revision: ScoringRevision,
@@ -327,6 +328,7 @@ function scoringLayersUnchanged(
     return false;
   }
   if (canonical.conversion_issues.length > 0) return false;
+  if (!scoringRoundTripIsFaithful(revision, canonical)) return false;
   return (
     canonicalJson(canonical.scoring_basis) === canonicalJson(contract.scoring_basis) &&
     canonicalJson(canonical.response_spec) === canonicalJson(contract.response_spec) &&

@@ -124,6 +124,22 @@ export const DraftSelectKey = z.object({
 });
 export type DraftSelectKeyT = z.infer<typeof DraftSelectKey>;
 
+/**
+ * 单空文本的归一化。与契约 BlankNormalization 同字段，独立声明避免和评分契约互锁。
+ * 缺省整段时，提交侧沿用新题默认（v1、nfkc/collapse 关）。编辑已发布题时整段原样带上，
+ * 不再用 case_sensitive/trim 这两个布尔去猜其余字段。
+ */
+export const DraftBlankNormalization = z.object({
+  version: z.string().min(1),
+  nfkc: z.boolean().optional(),
+  trim_outer: z.boolean().optional(),
+  casefold: z.boolean().optional(),
+  collapse_whitespace: z.boolean().optional(),
+  ignore_punctuation: z.boolean().optional(),
+  character_variants: z.array(z.tuple([z.string().min(1), z.string().min(1)])).optional(),
+});
+export type DraftBlankNormalizationT = z.infer<typeof DraftBlankNormalization>;
+
 /** blank key：文本 or 数值+容差/单位（与契约 BlankKeyCriterion.key 同构，独立声明避免互锁）。 */
 export const DraftBlankTextKey = z.object({
   kind: z.literal('text'),
@@ -131,6 +147,7 @@ export const DraftBlankTextKey = z.object({
   accepted: z.array(z.string().min(1)).min(1),
   case_sensitive: z.boolean().optional(),
   trim: z.boolean().optional(),
+  normalization: DraftBlankNormalization.optional(),
 });
 export type DraftBlankTextKeyT = z.infer<typeof DraftBlankTextKey>;
 

@@ -5,6 +5,7 @@
 import { asc, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { poolFetch } from '@/capabilities/practice/server/quiz/pool-fetch';
+import { gradeBlankExactUnit } from '@/core/schema/assessment/grade';
 import { defaultPresentation } from '@/core/schema/assessment/presentation';
 import type { AdmissionEvidenceT } from '@/core/schema/assessment/publish';
 import { QuestionDraftDocument, type QuestionDraftDocumentT } from '@/core/schema/question-draft';
@@ -313,6 +314,109 @@ async function publishLegacyAdmittedChoice(input: {
     optionIds: identity.ids,
     accepted: identity.accepted,
   };
+}
+
+const BLANK_NORM = {
+  version: 'blank-norm@1',
+  nfkc: true,
+  trim_outer: true,
+  casefold: false,
+  collapse_whitespace: true,
+  ignore_punctuation: false,
+  character_variants: [] as [string, string][],
+};
+
+const BLANK_RULE = {
+  version: 1 as const,
+  cases: [{ when: { correct: { eq: 1 } }, award: { points: 1 } }],
+  otherwise: { points: 0 },
+};
+
+function blankDocument(prompt: string): QuestionDraftDocumentT {
+  return QuestionDraftDocument.parse({
+    schema_version: 2,
+    parts: [
+      {
+        part_id: 'p1',
+        prompt_md: prompt,
+        material_ids: [],
+        units: [
+          {
+            unit_id: 'u1',
+            slot_id: 's1',
+            response_class: 'blank',
+            response_spec: { kind: 'blank', format: 'text' },
+            key: {
+              kind: 'blank',
+              key: { kind: 'text', accepted: ['H2O'], normalization: BLANK_NORM },
+            },
+            points: 1,
+            rule: BLANK_RULE,
+            method: { kind: 'exact' },
+            material_refs: [],
+            metadata: {},
+          },
+        ],
+        metadata: {},
+      },
+    ],
+    materials: [],
+    knowledge_ids: [],
+    metadata: {},
+  });
+}
+
+async function publishAdmittedBlank(input: {
+  id: string;
+  prompt: string;
+  knowledgeIds: string[];
+}): Promise<void> {
+  const db = testDb();
+  const doc = blankDocument(input.prompt);
+  doc.knowledge_ids = input.knowledgeIds;
+  const contract = draftDocumentToContract(doc, input.id);
+  if (contract.conversion_issues.length > 0) {
+    throw new Error(contract.conversion_issues.map((issue) => issue.detail).join('; '));
+  }
+  const presentation = defaultPresentation(
+    contract.structure,
+    contract.response_spec,
+    contract.scoring_basis,
+  );
+  if (presentation == null) throw new Error('blank fixture has no presentation');
+  await insertQuestion({
+    id: input.id,
+    prompt: input.prompt,
+    reference: 'H2O',
+    choices: null,
+    knowledgeIds: input.knowledgeIds,
+  });
+  const published = await publishQuestionGroup(db, {
+    group_id: input.id,
+    contract: {
+      structure: contract.structure,
+      response_spec: contract.response_spec,
+      scoring_basis: contract.scoring_basis,
+      execution_plan: contract.execution_plan,
+      presentation,
+      integrity_digest: contractIntegrityDigest({
+        structure: contract.structure,
+        response_spec: contract.response_spec,
+        scoring_basis: contract.scoring_basis,
+        execution_plan: contract.execution_plan,
+        presentation,
+      }),
+    },
+    expectedCurrentRevision: null,
+    expectedAdmissionGeneration: null,
+    availability: 'general_pool',
+    admission: { state: 'admitted', evidence: ADMITTED },
+    actorRef: 'test:edit-submit',
+    now: new Date(),
+  });
+  if (published.status !== 'published') {
+    throw new Error(`blank fixture publish returned ${published.status}`);
+  }
 }
 
 function promptOf(structured: unknown): string {
@@ -1389,6 +1493,140 @@ describe('edit/submit question boundary', () => {
     expect(await poolFetch(db, { knowledgeId: kc })).not.toEqual(
       expect.arrayContaining([expect.objectContaining({ id: qid })]),
     );
+  });
+
+  // @invariant grading: a prompt-only edit of an admitted blank question keeps its normalisation and still scores a full-width answer
+  // @fails-if the draft round trip turns nfkc or collapse_whitespace off, so Ｈ2Ｏ scores 0 while admission stays
+  it('keeps blank normalisation and full-width credit after a text-only edit', async () => {
+    const db = testDb();
+    const kc = 'kc-blank-norm';
+    const qid = 'q-blank-norm';
+    await seedKnowledge(kc);
+    const prompt = '旧填空：水的化学式是';
+    await publishAdmittedBlank({ id: qid, prompt, knowledgeIds: [kc] });
+    const saved = await saveDraftEdit(db, {
+      input: {
+        action: 'save',
+        question_id: qid,
+        ops: [
+          {
+            op: 'replace_text',
+            target: { kind: 'part', id: 'p1' },
+            field: 'prompt_md',
+            old: '化学式',
+            new: '分子式',
+          },
+        ],
+        request_id: 'blank-norm-save',
+      },
+      ctx: ACTOR,
+    });
+    expect(saved.status, JSON.stringify(saved)).toBe('saved');
+    if (saved.status !== 'saved') return;
+    const submitted = await submitDraftQuestion(
+      db,
+      {
+        draft_ref: saved.draft_ref,
+        expected_draft_version: saved.draft_version,
+        request_id: 'blank-norm-submit',
+      },
+      { ...ACTOR, sessionId: null },
+    );
+    expect(submitted.status, JSON.stringify(submitted)).toBe('admitted');
+    const [afterLife] = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, qid));
+    expect(afterLife.scoring_admission_state).toBe('admitted');
+    const [revision] = await db
+      .select()
+      .from(question_revision)
+      .where(eq(question_revision.revision_id, afterLife.current_revision_id ?? ''));
+    const unit = revision.scoring_basis.units[0];
+    if (unit == null || unit.criterion.kind !== 'blank_key' || unit.criterion.key.kind !== 'text') {
+      throw new Error(`blank edit published ${unit?.criterion.kind ?? 'nothing'}`);
+    }
+    expect(unit.criterion.key.normalization).toEqual(BLANK_NORM);
+    const graded = await gradeBlankExactUnit(unit, {
+      slot_id: unit.slot_refs[0] ?? 's1',
+      kind: 'blank',
+      state: 'answered',
+      text: 'Ｈ2Ｏ',
+    });
+    expect(graded.status, JSON.stringify(graded)).toBe('scored');
+    if (graded.status !== 'scored') return;
+    expect(graded.points_awarded, JSON.stringify(graded)).toBe(1);
+    const issued = await issueAssessment(db, {
+      group_id: qid,
+      now: new Date(),
+      actorRef: 'test:issue',
+    });
+    expect(issued.status, JSON.stringify(issued)).toBe('issued');
+    expect(await poolFetch(db, { knowledgeId: kc })).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: qid })]),
+    );
+  });
+
+  // @invariant grading: a prompt-only edit withholds admission when the stored scoring basis does not survive the round trip
+  // @fails-if a lossy round trip is treated as unchanged and the weakened scoring basis stays admitted
+  it('withholds admission when the round trip drops a scoring field', async () => {
+    const db = testDb();
+    const kc = 'kc-blank-lossy';
+    const qid = 'q-blank-lossy';
+    await seedKnowledge(kc);
+    await publishAdmittedBlank({
+      id: qid,
+      prompt: '丢失字段的填空：水的化学式是',
+      knowledgeIds: [kc],
+    });
+    const [before] = await db
+      .select()
+      .from(question_revision)
+      .where(eq(question_revision.group_id, qid));
+    await db
+      .update(question_revision)
+      .set({ scoring_basis: { ...before.scoring_basis, blank_scores_zero: false } })
+      .where(eq(question_revision.revision_id, before.revision_id));
+    const saved = await saveDraftEdit(db, {
+      input: {
+        action: 'save',
+        question_id: qid,
+        ops: [
+          {
+            op: 'replace_text',
+            target: { kind: 'part', id: 'p1' },
+            field: 'prompt_md',
+            old: '化学式',
+            new: '分子式',
+          },
+        ],
+        request_id: 'blank-lossy-save',
+      },
+      ctx: ACTOR,
+    });
+    expect(saved.status, JSON.stringify(saved)).toBe('saved');
+    if (saved.status !== 'saved') return;
+    const submitted = await submitDraftQuestion(
+      db,
+      {
+        draft_ref: saved.draft_ref,
+        expected_draft_version: saved.draft_version,
+        request_id: 'blank-lossy-submit',
+      },
+      { ...ACTOR, sessionId: null },
+    );
+    expect(submitted.status, JSON.stringify(submitted)).toBe('withheld');
+    const [afterLife] = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, qid));
+    expect(afterLife.scoring_admission_state).toBe('withheld');
+    const issued = await issueAssessment(db, {
+      group_id: qid,
+      now: new Date(),
+      actorRef: 'test:issue',
+    });
+    expect(issued.status, JSON.stringify(issued)).not.toBe('issued');
   });
 });
 
