@@ -34,6 +34,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { loadAttemptQuestionSnapshot } from '@/capabilities/practice/public';
 import type { Tx } from '@/db/client';
 import { writeEvent } from '@/kernel/events';
+import { type DocumentUsage, resolveDocumentUsage } from '@/kernel/read-models/usage-policy';
 import { createLearningRecord } from '@/kernel/records/queries';
 
 /** The capture outcome signal. `unanswered` = item/material (no attempt). */
@@ -64,6 +65,14 @@ export interface EnrollCapturedBlockInput {
   captureMode: 'text' | 'image' | 'paper' | 'voice' | 'url' | 'mixed';
   /** Source document the capture came from. */
   sourceDocumentId: string;
+  /**
+   * YUK-1408 / R1 P2-3 — the document's resolved usage (policy + bound
+   * ingestion session). Per-SESSION data: callers enrolling a block batch
+   * MUST resolve it once and pass it down (the fallback lookup below is the
+   * single-block convenience path — batch callers passing nothing would pay
+   * an unindexed learning_session lookup per block).
+   */
+  docUsage?: DocumentUsage;
   /** Wall-clock timestamp shared with the route's batch. */
   now: Date;
   /**
@@ -119,6 +128,16 @@ export async function enrollCapturedBlock(
   // events are distinguishable + reversible. See ADR-0026 + lane plan §6.
   const generatedBy: EnrollProvenance = input.generatedBy ?? 'ingestion_capture';
 
+  // YUK-1408 — capture events carry document-derived text (the answer, the
+  // question snapshot) into derivation channels. They inherit the source
+  // document's consented usage: the write-time `derivation_policy` stamp covers
+  // payload reads, and carrying the bound ingestion `session_id` lets the
+  // shared derivation filter resolve the LIVE document policy so a consent
+  // withdrawal after import still excludes them.
+  const docUsage = input.docUsage ?? (await resolveDocumentUsage(tx, input.sourceDocumentId));
+  const derivationPolicy = docUsage.policy;
+  const policyField = derivationPolicy === 'allow' ? {} : { derivation_policy: derivationPolicy };
+
   // ---- unanswered: question/material, no attempt event ----
   if (input.outcome === 'unanswered') {
     const recordId = createId();
@@ -128,7 +147,7 @@ export async function enrollCapturedBlock(
     const captureEventId = createId();
     await writeEvent(tx, {
       id: captureEventId,
-      session_id: null,
+      session_id: docUsage.sessionId,
       actor_kind: 'user',
       actor_ref: 'self',
       action: 'experimental:record_capture',
@@ -142,6 +161,7 @@ export async function enrollCapturedBlock(
         summary_md: input.answerMd.slice(0, 500),
         generated_by: generatedBy,
         enroll_outcome: input.outcome,
+        ...policyField,
       },
       caused_by_event_id: null,
       task_run_id: null,
@@ -167,6 +187,7 @@ export async function enrollCapturedBlock(
       payload: {
         enroll_outcome: input.outcome,
         generated_by: generatedBy,
+        ...policyField,
       },
     });
 
@@ -183,7 +204,7 @@ export async function enrollCapturedBlock(
     const questionSnapshot = await loadAttemptQuestionSnapshot(tx, input.questionId);
     await writeEvent(tx, {
       id: attemptEventId,
-      session_id: null,
+      session_id: docUsage.sessionId,
       actor_kind: 'user',
       actor_ref: 'self',
       action: 'attempt',
@@ -196,6 +217,7 @@ export async function enrollCapturedBlock(
         referenced_knowledge_ids: input.knowledgeIds,
         question_snapshot: questionSnapshot,
         generated_by: generatedBy,
+        ...policyField,
       },
       caused_by_event_id: null,
       task_run_id: null,

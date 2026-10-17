@@ -35,6 +35,9 @@ export const SECURITY_HEADERS = secureHeaders({
     fontSrc: ["'self'", 'data:'],
     formAction: ["'self'"],
     frameAncestors: ["'none'"],
+    // YUK-1497 — explicit, so loosening default-src later cannot widen where frames may load.
+    // The sandboxed custom-block frame is srcdoc-only; nothing else in the app frames content.
+    frameSrc: ["'self'"],
     imgSrc: ["'self'", 'data:', 'blob:'],
     manifestSrc: ["'self'"],
     mediaSrc: ["'self'", 'data:', 'blob:'],

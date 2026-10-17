@@ -48,7 +48,30 @@ const liveSubscriberIdentities = [
   ['agency.probe-publication-serve', 1],
   ['notes.mastery-progress-note-refine', 1],
   ['practice.failure-learning-attempt', 3],
+  ['practice.question-admission-enqueue', 1],
 ];
+const subscriberCount = liveSubscriberIdentities.length;
+const deliveryCount = subscriberCount * statuses.length;
+
+function actionCounts(subscriptions: readonly { actions: readonly string[] }[]) {
+  const counts = new Map<string, number>();
+  for (const sub of subscriptions) {
+    const action = sub.actions[0];
+    counts.set(action, (counts.get(action) ?? 0) + 1);
+  }
+  return counts;
+}
+
+/** Subscribers of one fixture action share one source event. Per-subscriber ids would be
+ * rediscovered by the other subscriber after restore. */
+function fixtureSourceId(
+  sub: { id: string; actions: readonly string[] },
+  label: string,
+  counts: ReadonlyMap<string, number>,
+): string {
+  const action = sub.actions[0];
+  return (counts.get(action) ?? 0) > 1 ? `${action}:${label}` : `${sub.id}:${label}`;
+}
 const collection = 'test_subscription_snapshot_memory';
 const now = new Date('2026-10-04T12:00:00Z');
 const future = new Date('2099-01-01T00:00:00Z');
@@ -110,41 +133,65 @@ async function seedProgress() {
   expect(registry.subscriptions.map((sub) => [sub.id, sub.version])).toEqual(
     liveSubscriberIdentities,
   );
+  const counts = actionCounts(registry.subscriptions);
+  // Bootstrap while no fixture event exists. A later subscriber of the same action would
+  // otherwise mark the earlier events bootstrap_skipped and consume delivery_seq 1..n.
   const leases = [];
   for (const sub of registry.subscriptions) {
     await bootstrapSubscription(db, registry, sub);
     const lease = await claimSubscriptionLease(db, registry, sub, 'pre-restore-worker');
     if (!lease) throw new Error('fixture lease missing');
     leases.push(lease);
+  }
+  const seededActions = new Set<string>();
+  for (const sub of registry.subscriptions) {
+    const action = sub.actions[0];
+    if (seededActions.has(action)) continue;
+    seededActions.add(action);
+    const subscribers = registry.subscriptions.filter((item) => item.actions[0] === action);
+    const rows = [];
     for (const [index, status] of statuses.entries()) {
-      const row = await source(`${sub.id}:${status}`, sub.actions[0]);
-      const terminal = index < 4;
-      await db.insert(delivery).values({
-        subscriber_id: sub.id,
-        subscriber_version: sub.version,
-        source_event_id: row.id,
-        source_dispatch_seq: row.dispatch_seq,
-        delivery_seq: index + 1,
+      rows.push({
+        index,
         status,
-        attempt_count: 2,
-        redrive_count: 1,
-        last_error: 'retained retry history',
-        outcome: terminal ? { status, nested: { proof: [1, 2] } } : null,
-        next_attempt_at: status === 'retry_wait' ? future : null,
-        claim_owner: status === 'claimed' ? lease.claimOwner : null,
-        claim_token: status === 'claimed' ? randomUUID() : null,
-        claim_lease_until: status === 'claimed' ? future : null,
-        claimed_at: status === 'claimed' ? now : null,
-        completed_at: terminal ? now : null,
+        row: await source(fixtureSourceId(sub, status, counts), action),
       });
     }
-    await db
-      .update(checkpoint)
-      .set({ next_delivery_seq: 8 })
-      .where(
-        and(eq(checkpoint.subscriber_id, sub.id), eq(checkpoint.subscriber_version, sub.version)),
-      );
-    await source(`${sub.id}:undiscovered`, sub.actions[0]);
+    await source(fixtureSourceId(sub, 'undiscovered', counts), action);
+    for (const subscriber of subscribers) {
+      const lease = leases.find((item) => item.subscriberId === subscriber.id);
+      if (!lease) throw new Error('fixture lease missing');
+      for (const { index, status, row } of rows) {
+        const terminal = index < 4;
+        await db.insert(delivery).values({
+          subscriber_id: subscriber.id,
+          subscriber_version: subscriber.version,
+          source_event_id: row.id,
+          source_dispatch_seq: row.dispatch_seq,
+          delivery_seq: index + 1,
+          status,
+          attempt_count: 2,
+          redrive_count: 1,
+          last_error: 'retained retry history',
+          outcome: terminal ? { status, nested: { proof: [1, 2] } } : null,
+          next_attempt_at: status === 'retry_wait' ? future : null,
+          claim_owner: status === 'claimed' ? lease.claimOwner : null,
+          claim_token: status === 'claimed' ? randomUUID() : null,
+          claim_lease_until: status === 'claimed' ? future : null,
+          claimed_at: status === 'claimed' ? now : null,
+          completed_at: terminal ? now : null,
+        });
+      }
+      await db
+        .update(checkpoint)
+        .set({ next_delivery_seq: 8 })
+        .where(
+          and(
+            eq(checkpoint.subscriber_id, subscriber.id),
+            eq(checkpoint.subscriber_version, subscriber.version),
+          ),
+        );
+    }
   }
   const notes = registry.subscriptions.find((s) => s.id.startsWith('notes.'));
   if (!notes) throw new Error('notes subscriber missing');
@@ -192,11 +239,13 @@ describe('YUK-766 subscription progress backup', () => {
     await testDb().execute(sql`DROP TABLE IF EXISTS test_subscription_snapshot_memory`);
   });
 
-  it('archives all five live subscriber identities, seven delivery states and effect provenance', async () => {
+  // @invariant data: archive keeps six subscribers, seven states, and one shared publish event
+  // @fails-if omit admission enqueue or split its publish source; lengths or shared ids change
+  it('archives all six live subscriber identities, seven delivery states and effect provenance', async () => {
     const { registry } = await seedProgress();
     const data = decode(await archive());
-    expect(data.event_subscription_checkpoint).toHaveLength(5);
-    expect(data.event_subscription_delivery).toHaveLength(35);
+    expect(data.event_subscription_checkpoint).toHaveLength(subscriberCount);
+    expect(data.event_subscription_delivery).toHaveLength(deliveryCount);
     for (const sub of registry.subscriptions) {
       expect(
         data.event_subscription_checkpoint.find((row) => row.subscriber_id === sub.id),
@@ -211,6 +260,18 @@ describe('YUK-766 subscription progress backup', () => {
           .map((row) => row.status),
       ).toEqual(statuses);
     }
+    const counts = actionCounts(registry.subscriptions);
+    const shared = registry.subscriptions.filter((sub) => (counts.get(sub.actions[0]) ?? 0) > 1);
+    expect(shared.map((sub) => sub.id)).toEqual([
+      'agency.probe-publication-serve',
+      'practice.question-admission-enqueue',
+    ]);
+    const sourceIds = (id: string) =>
+      data.event_subscription_delivery
+        .filter((row) => row.subscriber_id === id)
+        .map((row) => row.source_event_id);
+    expect([...sourceIds(shared[0].id)].sort()).toEqual([...sourceIds(shared[1].id)].sort());
+    expect(new Set(sourceIds(shared[0].id)).size).toBe(statuses.length);
     expect(data.event_subscription_effect).toHaveLength(4);
     expect(data.event_subscription_effect.find((r) => r.status === 'enqueued')).toMatchObject({
       downstream_job_id: 'archived-downstream-job',
@@ -222,6 +283,8 @@ describe('YUK-766 subscription progress backup', () => {
     });
   });
 
+  // @invariant data: restore keeps seven states and discovers one shared publish event once
+  // @fails-if import the other publish subscriber's events; its delivery count exceeds eight
   it('restores progress, fences old leases and preserves terminal/effect idempotency', async () => {
     const db = testDb();
     const { registry, leases, notes } = await seedProgress();
@@ -244,7 +307,7 @@ describe('YUK-766 subscription progress backup', () => {
     const result = await restoreFromArchive({ db, r2: memR2(), bytes: await archive() });
     expect(result).toMatchObject({ status: 200 });
     const checkpoints = await db.select().from(checkpoint);
-    expect(checkpoints).toHaveLength(5);
+    expect(checkpoints).toHaveLength(subscriberCount);
     expect(
       checkpoints
         .map((row) => [row.subscriber_id, row.subscriber_version])
@@ -277,6 +340,7 @@ describe('YUK-766 subscription progress backup', () => {
     expect(replay.status).toBe('already_processed');
     expect(send).not.toHaveBeenCalled();
 
+    const counts = actionCounts(registry.subscriptions);
     for (const sub of registry.subscriptions) {
       await bootstrapSubscription(db, registry, sub);
       const lease = await claimSubscriptionLease(db, registry, sub, 'post-restore-worker');
@@ -306,7 +370,7 @@ describe('YUK-766 subscription progress backup', () => {
       });
       expect(rows[5].next_attempt_at).toEqual(future);
       const first = await claimNextSubscriptionDelivery(db, registry, sub, lease);
-      expect(first?.sourceEventId).toBe(`${sub.id}:claimed`);
+      expect(first?.sourceEventId).toBe(fixtureSourceId(sub, 'claimed', counts));
       if (!first) throw new Error('restored claim missing');
       expect(await completeSubscriptionDelivery(db, first, { status: 'succeeded' })).toBe(true);
       expect(await claimNextSubscriptionDelivery(db, registry, sub, lease)).toBeNull();
@@ -316,13 +380,25 @@ describe('YUK-766 subscription progress backup', () => {
         .where(and(eq(delivery.subscriber_id, sub.id), eq(delivery.status, 'retry_wait')));
       for (const status of ['retry_wait', 'pending']) {
         const claim = await claimNextSubscriptionDelivery(db, registry, sub, lease);
-        expect(claim?.sourceEventId).toBe(`${sub.id}:${status}`);
+        expect(claim?.sourceEventId).toBe(fixtureSourceId(sub, status, counts));
         if (!claim) throw new Error('restored delivery missing');
         await completeSubscriptionDelivery(db, claim, { status: 'succeeded' });
       }
       await discoverSubscriptionDeliveries(db, registry, sub, lease);
       const unseen = await claimNextSubscriptionDelivery(db, registry, sub, lease);
-      expect(unseen?.sourceEventId).toBe(`${sub.id}:undiscovered`);
+      expect(unseen?.sourceEventId).toBe(fixtureSourceId(sub, 'undiscovered', counts));
+      if ((counts.get(sub.actions[0]) ?? 0) > 1) {
+        const discovered = await db
+          .select()
+          .from(delivery)
+          .where(eq(delivery.subscriber_id, sub.id));
+        expect(discovered).toHaveLength(statuses.length + 1);
+        expect(
+          discovered.filter(
+            (row) => row.source_event_id === fixtureSourceId(sub, 'undiscovered', counts),
+          ),
+        ).toHaveLength(1);
+      }
     }
   });
 
@@ -356,12 +432,14 @@ describe('YUK-766 subscription progress backup', () => {
     expect(await testDb().select().from(event).where(eq(event.id, 'live-canary'))).toHaveLength(1);
   });
 
+  // @invariant data: a bad delivery event key rolls back progress and the live canary together
+  // @fails-if commit that restore; the canary is gone or delivery rows no longer match
   it('rolls back progress and business rows together when restored delivery violates its event FK', async () => {
     const db = testDb();
     await seedProgress();
     const bytes = rewrite(await archive(), (data) => {
       const rows = data.event_subscription_delivery;
-      expect(rows).toHaveLength(35);
+      expect(rows).toHaveLength(deliveryCount);
       rows[0].source_dispatch_seq = -1;
     });
     await source('rollback-canary', 'test:canary');

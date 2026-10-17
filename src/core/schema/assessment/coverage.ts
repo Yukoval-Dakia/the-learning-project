@@ -181,22 +181,22 @@ export const CAPABILITY_COVERAGE_MATRIX: readonly ResponsePrimitiveCoverage[] = 
   {
     slot_kind: 'select',
     expressible: 'covered',
-    collectable: 'gap',
+    collectable: 'partial',
     auto_scorable: 'deterministic',
     deterministic_comparator: 'set_compare',
     manual_evidence_required: false,
     notes:
-      'YUK-1496 K1 统一选择：选项、配对关系、断句字缝、排序关系都是稳定 item；select_key + 显式给分规则由 set_compare 判分，规则可给 unknown（不造分）。collectable=gap：网页输入积木未实现，出题门按 INPUT_RENDERER_SLOT_KINDS 扣发。',
+      'YUK-1496 K1 统一选择：选项、配对关系、断句字缝、排序关系都是稳定 item；select_key + 显式给分规则由 set_compare 判分，规则可给 unknown（不造分）。collectable=partial（YUK-1497）：网页由展示层输入积木（option_list / matching_columns / break_tap / ordering）作答并经 ResponseSet 提交；没有展示层、或只被自定义块绑定的槽，出题门以 no_input_renderer 扣发。',
   },
   {
     slot_kind: 'blank',
     expressible: 'covered',
-    collectable: 'gap',
+    collectable: 'partial',
     auto_scorable: 'deterministic',
     deterministic_comparator: 'blank_exact',
     manual_evidence_required: false,
     notes:
-      'YUK-1496 K1 单空：文本按版本化归一化逐字比较，数值保留容差与单位换算；Jev 等价判断待准入（model_executor）。collectable=gap：网页输入积木未实现，出题门扣发。',
+      'YUK-1496 K1 单空：文本按版本化归一化逐字比较，数值保留容差与单位换算；Jev 等价判断待准入（model_executor）。collectable=partial（YUK-1497）：网页由 blank_input 积木作答，整题提交时空着的空交 state=blank；没有展示层、或只被自定义块绑定的槽，出题门以 no_input_renderer 扣发。',
   },
 ];
 

@@ -290,6 +290,14 @@ export function foldKnowledgeNode(
       const parent_id = typeof payload.parent_id === 'string' ? payload.parent_id : null;
       if (parent_id === null) continue;
       row = createRow(fe.subject_id, name, parent_id, null, fe.created_at);
+      // YUK-1405 — an auto_tag create may declare its own approval status (an
+      // agent-minted KC is an unauthorised new knowledge point → 'pending').
+      // Only 'pending' is honored here: no event can self-declare 'approved'
+      // (that stays the createRow default) or 'rejected' (a rejection is a
+      // human decision, not a creation payload).
+      if (payload.approval_status === 'pending') {
+        row = { ...row, approval_status: 'pending' };
+      }
       continue;
     }
 
@@ -424,8 +432,11 @@ export function foldKnowledgeNode(
 }
 
 // createRow — the canonical projected shape an applyProposeNew / applySplit /
-// auto_tag create produces. approval_status is ALWAYS 'approved' (the only value
-// the appliers write). merged_from [], proposed_by_ai true, version
+// auto_tag create produces. approval_status defaults to 'approved' — correct
+// for the accept-path appliers (user-accepted proposals) — while auto_tag
+// creates may override to 'pending' from the event payload (YUK-1405:
+// agent-minted KCs are unauthorised new knowledge points, honestly marked).
+// merged_from [], proposed_by_ai true, version
 // 0, created_at === updated_at === the event time. EXCLUDES embed_* (derived
 // maintenance state, not structural truth — KnowledgeRowSnapshot omits them).
 // `domain` is the root anchor: null for child rows (effective domain resolves

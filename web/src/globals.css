@@ -15860,3 +15860,51 @@ div.copilot-tool-line.is-static {
   font-size: var(--fs-meta);
   color: var(--ink-3);
 }
+
+/* YUK-1512 — how the uploaded material may be used (VisionTab / onboarding upload). */
+.upload-usage {
+  display: grid;
+  gap: var(--s-1);
+  margin: var(--s-3) 0 0;
+  padding: 0;
+  border: 0;
+  min-inline-size: 0;
+}
+.upload-usage > legend {
+  padding: 0;
+}
+.upload-usage-option {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+  cursor: pointer;
+}
+.upload-usage-option > input {
+  margin: 3px 0 0;
+  flex: none;
+}
+.upload-usage:disabled .upload-usage-option {
+  cursor: default;
+  opacity: 0.6;
+}
+.upload-usage-text {
+  display: grid;
+  gap: 2px;
+  min-inline-size: 0;
+}
+.upload-usage-label {
+  color: var(--ink-2);
+}
+.upload-usage-option.is-on .upload-usage-label {
+  color: var(--ink);
+}
+.upload-usage-hint {
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+}
+/* YUK-1512 — redaction receipt: one quiet line after extraction. */
+.usage-receipt {
+  margin: var(--s-2) 0 0;
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+}

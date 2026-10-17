@@ -48,6 +48,22 @@ export const placementNext = (sessionId: string) =>
     body: {},
   });
 
+// YUK-1405 — a held question's way forward: release it (recorded as not judged, never as
+// wrong) and advance. The URL is built here from the session id, like placementEnd: the
+// server's held_exit only signals that the exit is offered, and its URLs are never fetched
+// (they would carry the internal token wherever they point). The issuance id is the server's
+// idempotency key, so a repeated click replays the same result.
+export type PlacementHeldExit = NonNullable<PlacementQuestionRef['assessment']['held_exit']>;
+export const releaseHeldPlacement = (sessionId: string, issuanceId: string) =>
+  apiOperationJson('createPlacementHeldRelease', {
+    url: `/api/placement-sessions/${encodeURIComponent(sessionId)}/held-release`,
+    method: 'POST',
+    body: { issuance_id: issuanceId },
+  });
+
+export type PlacementUnresolvedItem = NonNullable<PlacementStartResult['unresolved_items']>[number];
+export type PlacementNoItem = NonNullable<PlacementStartResult['no_item']>;
+
 export const placementEnd = (
   sessionId: string,
   status: 'completed' | 'abandoned' = 'completed',

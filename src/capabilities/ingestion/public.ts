@@ -25,6 +25,15 @@ export {
   persistImageAsset,
   sha256Hex,
 } from './server/persist-image-asset';
+// YUK-1408 — the docx TEXT-line session owner (src/server/session/
+// docx-ingestion.ts) writes the same usage receipt the OCR job writes; export
+// the writer + its field vocabulary through the public port so no server
+// module deep-imports capability internals.
+export type {
+  IngestionRedactionField,
+  IngestionUsageReceipt,
+} from './server/privacy-guard';
+export { writeIngestionUsageReceipt } from './server/privacy-guard';
 export type { BlockMergeAcceptResult } from './server/proposal-appliers';
 export {
   bodyBlockSummaries,

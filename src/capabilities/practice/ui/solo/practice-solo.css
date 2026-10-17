@@ -609,6 +609,11 @@
 [data-ui-next] .un-ps-submit {
   min-width: 88px;
 }
+[data-ui-next] .un-ps-custom-answer {
+  max-width: 40ch;
+  color: var(--un-text-2);
+  overflow-wrap: anywhere;
+}
 [data-ui-next] .un-ps-bar-save:empty {
   display: none;
 }

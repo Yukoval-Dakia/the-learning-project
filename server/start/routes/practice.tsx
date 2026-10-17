@@ -7,10 +7,28 @@ const Page = lazy(() => loadPracticeFacePage().then((defaultPage) => ({ default:
 function PracticePage() {
   const router = useRouter();
   const searchStr = useRouterState({ select: (state) => state.location.searchStr });
+  // YUK-1510 — `?item=` names the open question. It is not part of the page's scope: getQuery
+  // is built without it, so opening or moving on (which writes it) never looks like a scope change.
+  const search = new URLSearchParams(searchStr);
+  const itemParam = search.get('item');
+  search.delete('item');
+  const scopeSearch = search.toString();
   const getQuery = useCallback(
-    (key: string) => new URLSearchParams(searchStr).get(key),
-    [searchStr],
+    (key: string) => new URLSearchParams(scopeSearch).get(key),
+    [scopeSearch],
   );
+  const writeItemParam = useCallback(
+    (id: string | null, how: 'push' | 'replace') => {
+      const next = new URLSearchParams(window.location.search);
+      if (id === null) next.delete('item');
+      else next.set('item', id);
+      const href = `${window.location.pathname}${next.size ? `?${next}` : ''}`;
+      if (how === 'push') router.history.push(href);
+      else router.history.replace(href);
+    },
+    [router],
+  );
+  const historyBack = useCallback(() => router.history.back(), [router]);
   const setQuery = useCallback(
     (key: string, value: string | null) => {
       const params = new URLSearchParams(window.location.search);
@@ -23,7 +41,14 @@ function PracticePage() {
   return (
     <StartWorkbenchShell pathname="/practice">
       <Suspense>
-        <Page navigate={startNavigate} getQuery={getQuery} setQuery={setQuery} />
+        <Page
+          navigate={startNavigate}
+          getQuery={getQuery}
+          setQuery={setQuery}
+          itemParam={itemParam}
+          writeItemParam={writeItemParam}
+          historyBack={historyBack}
+        />
       </Suspense>
     </StartWorkbenchShell>
   );

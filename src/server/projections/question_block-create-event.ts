@@ -21,6 +21,7 @@ import type { QuestionBlockRowSnapshotT } from '@/core/schema/event/genesis';
 import type { Db, Tx } from '@/db/client';
 import type { question_block } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { resolveSessionDerivationPolicy } from '@/kernel/read-models/usage-policy';
 
 type QuestionBlockRow = typeof question_block.$inferSelect;
 
@@ -66,15 +67,32 @@ export async function writeQuestionBlockCreateEvent(
   tx: Db | Tx,
   params: WriteQuestionBlockCreateEventParams,
 ): Promise<void> {
+  // YUK-1408 — the block snapshot carries extracted document text, so the event
+  // inherits the session's source-document usage policy. 'answer_only' keeps it
+  // out of memory/brief channels through the shared derivation filter. The
+  // ingest_at stamp below already opts the row out of the memory outbox; the
+  // payload marker covers the read-side filters (eventAllowsDerivationSql).
+  const derivationPolicy = params.row.ingestion_session_id
+    ? await resolveSessionDerivationPolicy(tx, params.row.ingestion_session_id)
+    : 'allow';
   await writeEvent(tx, {
     id: newId(),
+    // YUK-1408 — bind the creation event to the ingestion session so the shared
+    // derivation filter can resolve the LIVE source-document usage policy on
+    // reads (consent withdrawal is retroactive via the session→document join,
+    // no event mutation). Nullable column; blocks without a session pass null.
+    session_id: params.row.ingestion_session_id,
     actor_kind: params.actorKind,
     actor_ref: params.actorRef,
     action: 'experimental:question_block_create',
     subject_kind: 'question_block',
     subject_id: params.row.id,
     outcome: 'success',
-    payload: { row: questionBlockRowToSnapshot(params.row), origin: params.origin },
+    payload: {
+      row: questionBlockRowToSnapshot(params.row),
+      origin: params.origin,
+      ...(derivationPolicy === 'allow' ? {} : { derivation_policy: derivationPolicy }),
+    },
     caused_by_event_id: params.causedByEventId ?? undefined,
     created_at: params.now,
     ingest_at: params.now,
