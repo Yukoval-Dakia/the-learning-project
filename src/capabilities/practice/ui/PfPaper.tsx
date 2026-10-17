@@ -387,6 +387,8 @@ function PaperVisit({
   const conflictsRef = useRef<Record<string, ServerSlotDraft>>({});
   // YUK-1490 — after 「用服务器上的」 the learner's own text stays readable (and copyable) on that
   // question until they move to another one. Local only: never saved or sent.
+  // YUK-1521 — the last 交卷 stopped because the server's drafts could not be re-read.
+  const [submitCheckFailed, setSubmitCheckFailed] = useState(false);
   const [discarded, setDiscarded] = useState<Record<string, { text: string; files: number }>>({});
   // Disables the retry chip while a retry batch is in flight (avoids redundant PUTs).
   const [retrying, setRetrying] = useState(false);
@@ -774,32 +776,84 @@ function PaperVisit({
       const assessment = slot?.assessment;
       if (!local || !slot || !assessment || slot.slot_state.submission?.submitted) return fail();
       if (assessment.issuance_id !== local.assessment?.issuance_id) return fail();
-      const server = serverSlotDraft(slot, assessment);
-      const text = answersRef.current[key] ?? '';
-      if (server.epoch <= (nativeEpochs.current[key] ?? 0)) {
-        void runSave(key, local.question_id, local.part_ref, text);
-        return;
-      }
-      const payload = nativePayloadFor(key);
-      if (
-        server.text === text &&
-        sameFiles(server.files, savedFilesFor(key)) &&
-        sameResponses(payload?.response_set, server.response_set)
-      ) {
-        nativeEpochs.current[key] = server.epoch;
-        ackedAnswers.current[key] = text;
-        setSaveFailed((f) => (f[key] ? { ...f, [key]: false } : f));
-        return;
-      }
-      if (saveTimers.current[key]) {
-        clearTimeout(saveTimers.current[key]);
-        delete saveTimers.current[key];
-      }
-      setConflict(key, server);
+      if (settleWithServer(key, slot, assessment) === 'not_newer')
+        void runSave(key, local.question_id, local.part_ref, answersRef.current[key] ?? '');
     } catch (err) {
       console.error('[PfPaper] stale draft recheck failed', { key, err });
       fail();
     }
+  };
+
+  // YUK-1490/1521 — compare one slot with the server's draft just read. Not newer than the epoch
+  // this visit knows: nothing to settle. Newer with the same text, answer and attachments: adopt
+  // its epoch. Newer and different: hold the slot on the conflict choice.
+  const settleWithServer = (
+    key: string,
+    slot: PaperSlot,
+    assessment: SlotAssessment,
+  ): 'not_newer' | 'adopted' | 'conflict' => {
+    const server = serverSlotDraft(slot, assessment);
+    const text = answersRef.current[key] ?? '';
+    if (server.epoch <= (nativeEpochs.current[key] ?? 0)) return 'not_newer';
+    if (
+      server.text === text &&
+      sameFiles(server.files, savedFilesFor(key)) &&
+      sameResponses(nativePayloadFor(key)?.response_set, server.response_set)
+    ) {
+      nativeEpochs.current[key] = server.epoch;
+      ackedAnswers.current[key] = text;
+      setSaveFailed((f) => (f[key] ? { ...f, [key]: false } : f));
+      return 'adopted';
+    }
+    if (saveTimers.current[key]) {
+      clearTimeout(saveTimers.current[key]);
+      delete saveTimers.current[key];
+    }
+    setConflict(key, server);
+    return 'conflict';
+  };
+
+  // YUK-1521 — 交卷 sends each slot's on-screen text with no epoch check, so a slot restored from
+  // a detail read before the previous visit's flush landed (and never edited since) would hand in
+  // the older text. Before anything is sent: let this visit's own saves settle (their ACKs raise
+  // the known epochs), re-read the paper, and settle every open native slot with the server.
+  // true = nothing newer differs, submit as before; false = a slot is now on the conflict choice
+  // or the read failed — nothing was sent.
+  const reconcileBeforeSubmit = async (): Promise<boolean> => {
+    await settleInFlightSaves();
+    let fresh: PaperDetail;
+    try {
+      fresh = await qc.fetchQuery({
+        queryKey: ['paper', artifactId],
+        queryFn: () => getPaperDetail(artifactId),
+        staleTime: 0,
+      });
+    } catch (err) {
+      console.error('[PfPaper] pre-submit re-read failed', err);
+      if (componentActiveRef.current) {
+        setSubmitCheckFailed(true);
+        addToast('交卷前没能核对服务器上的草稿，这次没有交——再点一次交卷重试', 'info', 'alert');
+      }
+      return false;
+    }
+    setSubmitCheckFailed(false);
+    const freshSlots = fresh.sections.flatMap((s) => s.slots);
+    let held = false;
+    for (const local of slots) {
+      const key = slotKey(local);
+      if (local.slot_state.submission?.submitted || submittedDuringAttemptsRef.current.has(key))
+        continue;
+      if (conflictsRef.current[key]) {
+        held = true;
+        continue;
+      }
+      const slot = freshSlots.find((s) => slotKey(s) === key);
+      const assessment = slot?.assessment;
+      if (!slot || !assessment || slot.slot_state.submission?.submitted) continue;
+      if (assessment.issuance_id !== local.assessment?.issuance_id) continue;
+      if (settleWithServer(key, slot, assessment) === 'conflict') held = true;
+    }
+    return !held;
   };
 
   // 「用服务器上的」: the slot takes the server's text, answer and attachments as its saved
@@ -1244,6 +1298,14 @@ function PaperVisit({
       return;
     submittingRef.current = true;
     setSubmitting(true);
+    // YUK-1521 — the pre-submit gate: nothing is sent unless every open slot agrees with the
+    // server's newest draft (or has been adopted). The conflict panel or the toast says why.
+    if (!(await reconcileBeforeSubmit())) {
+      submittingRef.current = false;
+      setSubmitting(false);
+      setConfirm(false);
+      return;
+    }
     stopTimingSegment();
     // Claim the terminal transition before any network request so pagehide cannot
     // race a completion attempt with a competing pause PATCH.
@@ -1666,9 +1728,11 @@ function PaperVisit({
           ? '历史作答保留，当前不可提交。'
           : conflictNumbers.length > 0
             ? `第 ${conflictNumbers.join('、')} 题服务器上存了另一份作答——先选留哪一份，再交卷`
-            : anySaveFailed
-              ? '有草稿没保存上——退出前先点「保存失败 · 重试」'
-              : '中途退出进度保留 · 交卷后到复盘看逐题判定'}
+            : submitCheckFailed
+              ? '交卷前没能核对服务器上的草稿，这次没有交——再点一次交卷重试'
+              : anySaveFailed
+                ? '有草稿没保存上——退出前先点「保存失败 · 重试」'
+                : '中途退出进度保留 · 交卷后到复盘看逐题判定'}
       </div>
     </div>
   );
