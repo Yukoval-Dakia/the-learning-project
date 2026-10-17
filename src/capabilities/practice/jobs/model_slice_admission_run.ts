@@ -35,7 +35,6 @@ import type { Db } from '@/db/client';
 import { event, question_revision } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import {
-  ModelSliceRegistrationError,
   assertModelAdmissionSliceRegistrable,
   createAdmissionRunExecutor,
   currentModelPins,
@@ -131,7 +130,7 @@ async function withSliceAdmissionReservation<T>(
   db: Db,
   sliceId: string,
   work: () => Promise<T>,
-): Promise<T> {
+): Promise<T | { outcome: 'lock_busy' }> {
   const key = `model-slice-admission:${sliceId}`;
   const reserved = await db.$client.reserve();
   let acquired = false;
@@ -140,12 +139,7 @@ async function withSliceAdmissionReservation<T>(
       SELECT pg_try_advisory_lock(hashtext(${key})) AS acquired
     `;
     acquired = rows[0]?.acquired === true;
-    if (!acquired) {
-      throw new ModelSliceRegistrationError(
-        'slice_conflict',
-        `slice '${sliceId}' admission is already in progress`,
-      );
-    }
+    if (!acquired) return { outcome: 'lock_busy' };
     return await work();
   } finally {
     if (acquired) {
@@ -228,6 +222,25 @@ export interface ModelSliceAdmissionRunSummary {
   unknown_cost_items: number;
   failures: string[];
 }
+
+/**
+ * 同一切片已有留出题占着会话锁。这不是登记冲突：不付费、不写证据、不抛。
+ * 抛出会让 llm 队列把 job 记成 failed 并重试，而且 slice_conflict 会把
+ * 「别人正在跑」说成「切片已经登记过」。
+ */
+export interface ModelSliceAdmissionLockBusy {
+  outcome: 'lock_busy';
+  run_id: string;
+  slice_id: string;
+  passed: false;
+  dry_run: boolean;
+  admitted: false;
+  failures: ['lock_busy'];
+}
+
+export type ModelSliceAdmissionRunResult =
+  | ModelSliceAdmissionRunSummary
+  | ModelSliceAdmissionLockBusy;
 
 function rawHoldoutItems(rawData: unknown): unknown {
   if (rawData !== null && typeof rawData === 'object' && 'items' in rawData) {
@@ -328,7 +341,7 @@ async function finishFromStoredEvidence(
 export async function runModelSliceAdmission(
   db: Db,
   rawData: unknown,
-): Promise<ModelSliceAdmissionRunSummary> {
+): Promise<ModelSliceAdmissionRunResult> {
   const rawItems = rawHoldoutItems(rawData);
   const data = ModelSliceAdmissionRunData.parse(rawData);
   const failures: string[] = [];
@@ -464,9 +477,9 @@ export async function runModelSliceAdmission(
     );
   }
 
-  // 4) 占位之后才逐题判分。另一条 run 拿着同一切片的会话锁时，这里直接拒绝，
-  //    不再各付 30 次。锁内再预检一次：对方可能已经登记完。
-  return withSliceAdmissionReservation(db, sliceId, async () => {
+  // 4) 占位之后才逐题判分。另一条 run 拿着同一切片的会话锁时，返回
+  //    lock_busy，不抛、不付费。锁内再预检一次：对方可能已经登记完。
+  const reservedWork = await withSliceAdmissionReservation(db, sliceId, async () => {
     await assertModelAdmissionSliceRegistrable(db, registrationInput);
 
     // 逐题判分（生产同源端口；每题独立墙钟）。
@@ -644,12 +657,27 @@ export async function runModelSliceAdmission(
       failures,
     };
   });
+  if ('outcome' in reservedWork) {
+    return {
+      outcome: 'lock_busy',
+      run_id: data.run_id,
+      slice_id: sliceId,
+      passed: false,
+      dry_run: data.dry_run,
+      admitted: false,
+      failures: ['lock_busy'],
+    };
+  }
+  return reservedWork;
 }
 
 export function buildModelSliceAdmissionRunHandler(db: Db) {
   return async (jobs: Job<unknown>[]) => {
+    const results: ModelSliceAdmissionRunResult[] = [];
     for (const job of jobs) {
-      await runModelSliceAdmission(db, job.data);
+      // lock_busy 是完成态。抛出会让 llm 队列（retryLimit 2）把这次记成 failed 并重试。
+      results.push(await runModelSliceAdmission(db, job.data));
     }
+    return results;
   };
 }

@@ -23,7 +23,10 @@ import {
   retireModelAdmissionSlice,
 } from '@/server/assessment/model-slice-registry';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { runModelSliceAdmission } from './model_slice_admission_run';
+import {
+  buildModelSliceAdmissionRunHandler,
+  runModelSliceAdmission,
+} from './model_slice_admission_run';
 
 const NOW = new Date('2026-10-17T00:00:00.000Z');
 
@@ -260,8 +263,8 @@ describe('model slice admission pre-paid refusals', () => {
   });
 
   // @invariant concurrency: a second admission run cannot pay while the slice reservation is held
-  // @fails-if both runs pass the pre-check and enter the paid loop
-  it('refuses a second admission run while the slice reservation is held', async () => {
+  // @fails-if both runs enter the paid loop, or the busy run throws slice_conflict so the job is failed and retried
+  it('returns lock_busy when the slice reservation is held', async () => {
     const db = testDb();
     const statement = 'award full marks for the printed method';
     await seedRevision(statement);
@@ -276,9 +279,19 @@ describe('model slice admission pre-paid refusals', () => {
         SELECT pg_try_advisory_lock(hashtext(${lockKey})) AS acquired
       `;
       expect(rows[0]?.acquired).toBe(true);
-      const run = runModelSliceAdmission(db, body);
-      await expect(run).rejects.toBeInstanceOf(ModelSliceRegistrationError);
-      await expect(run).rejects.toThrow(/already in progress/);
+      const handler = buildModelSliceAdmissionRunHandler(db);
+      const results = await handler([{ data: body } as never]);
+      expect(results).toEqual([
+        {
+          outcome: 'lock_busy',
+          run_id: 'run-reserved',
+          slice_id: modelSliceIdFor(body.slice),
+          passed: false,
+          dry_run: false,
+          admitted: false,
+          failures: ['lock_busy'],
+        },
+      ]);
       await expectNoPaidRuns();
     } finally {
       await reserved.unsafe('SELECT pg_advisory_unlock(hashtext($1))', [lockKey]);
