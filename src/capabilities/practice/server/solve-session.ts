@@ -538,8 +538,11 @@ async function buildSolveHintFallback(params: {
       elapsed_ms: elapsedMs,
     };
   }
+  // help.text_md 只放下一步本身：新前端自己说明「AI 提示暂时不可用」，
+  // 服务端不再重复那句开场（UI 线 YUK-1409 反馈）。顶层 text_md 是给只读
+  // {text_md} 的旧客户端的兼容字段，保留开场，避免旧前端把它当成 AI 提示。
+  const LEGACY_PREFACE = '提示这次没生成出来 —— 给你一条确定性的下一步（不是 AI 现想的）：';
   const lines = [
-    '提示这次没生成出来 —— 给你一条确定性的下一步（不是 AI 现想的）：',
     hasPrompt
       ? '回到题面，把已知条件和它问的东西各划一遍；卡住多半在读题这一步。'
       : '先想清楚这类题第一步通常做什么（画图 / 列式 / 找等量关系）。',
@@ -553,14 +556,15 @@ async function buildSolveHintFallback(params: {
       '本题有封存参考解 —— 按提示阶梯规则当前阶不在此展开；走「直接看完整解」（记为非独立完成）可查看。',
     );
   }
-  const text_md = lines.join('\n\n');
+  const helpText = lines.join('\n\n');
+  const text_md = `${LEGACY_PREFACE}\n\n${helpText}`;
   if (issuanceId) {
     await recordAssistanceExposure(db, {
       issuanceId,
       questionId,
       kind: 'hint',
       impact: 'unknown',
-      contentDigest: `sha256:${canonicalHash(text_md)}`,
+      contentDigest: `sha256:${canonicalHash(helpText)}`,
     });
   }
   return {
@@ -569,7 +573,7 @@ async function buildSolveHintFallback(params: {
     help: {
       kind: 'deterministic_next_step',
       source: 'deterministic',
-      text_md,
+      text_md: helpText,
       generated_on_demand: false,
       disclosure_md: disclosures.join(' '),
     },
