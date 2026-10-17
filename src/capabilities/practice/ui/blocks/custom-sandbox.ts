@@ -277,10 +277,11 @@ export function validateMessage(
     if (!slot) return null;
     if (entry.kind === 'select') {
       if (slot.kind !== 'select' || !selectOk(slot, entry.item_ids)) return null;
-      if (entry.state === 'blank' && entry.item_ids.length > 0) return null;
+      // The state must match the content: blank carries nothing, answered carries something.
+      if ((entry.state === 'blank') !== (entry.item_ids.length === 0)) return null;
     } else if (entry.kind === 'blank') {
       if (!textOk(entry.text)) return null;
-      if (entry.state === 'blank' && entry.text !== '') return null;
+      if ((entry.state === 'blank') !== (entry.text === '')) return null;
     } else if (!textOk(entry.text_md)) {
       return null;
     }

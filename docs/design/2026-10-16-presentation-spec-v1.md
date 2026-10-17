@@ -111,6 +111,7 @@ Presentation = {
   - kind 与 bind 不对应，对应关系为 select↔select、blank↔blank、free↔open_response↔open；
   - item_id 不在 universe 里，或者重复，或者违反 `at_most_per_coordinate`；
   - state 为 `blank` 却带了内容；
+  - state 为 `answered` 却没有内容：select 的 `item_ids` 为空，或 blank 的 `text` 为空字符串；
   - 文本含孤立代理、C0/C1 控制字符（`\n` 和 `\t` 除外，NUL 也在内），或双向覆盖/隔离字符（U+202A–202E、U+2066–2069）；
   - 单段文本超过 20000 字符。
 
