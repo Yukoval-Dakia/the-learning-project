@@ -50,13 +50,16 @@ export function usageReceiptText(receipt: UsageReceipt): string {
   // Scoped to the recognised text: counts come from the text redaction only (page
   // images that reach a model are never altered), and are an upper bound of the
   // spans marked [已隐去], hence 「隐去」 and no stronger claim.
+  // YUK-1408 (#1760): photo/PDF recognition sends the page image itself to the model,
+  // unaltered; say so plainly. Word text (no image leaves) and unknown channels (null)
+  // keep the text-only wording.
+  const rawImages = receipt.channels?.page_images === 'raw';
   const redaction =
     parts.length > 0
-      ? `从识别出的文字里隐去了 ${parts.join('、')}；原文件本身不会被改动。`
-      : '识别出的文字里没有发现需要隐去的个人信息。';
-  return receipt.derivation_policy === 'answer_only'
-    ? `${redaction}这份资料只用于本题。`
-    : redaction;
+      ? `从识别出的文字里隐去了 ${parts.join('、')}；${rawImages ? '原图会原样交给 AI 识别，不做隐去。' : '原文件本身不会被改动。'}`
+      : `识别出的文字里没有发现需要隐去的个人信息。${rawImages ? '原图会原样交给 AI 识别。' : ''}`;
+  const usage = receipt.derivation_policy === 'answer_only' ? '这份资料只用于本题。' : '';
+  return `${redaction}${usage}`;
 }
 
 export function UsageReceiptLine({
