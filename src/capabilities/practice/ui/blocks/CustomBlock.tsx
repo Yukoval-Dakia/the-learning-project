@@ -295,15 +295,14 @@ export function CustomBlock({
         // the focus event leaves Chromium with activeElement on the parent input but keystrokes
         // still routed to the frame (measured), and no further events fire after that.
         // Still in the frame from the active phase (e.g. the learner left the page while it was
-        // live): the hand-backs that move it out are clean-up, not a steal, until focus has been
-        // seen outside the frame once.
+        // live): the first hand-back after this attach is clean-up, not a steal. One-shot, so a
+        // steal that lands before that hand-back runs cannot extend the exemption.
         let held = wrap.contains(owner.activeElement);
         const handBack = () => {
           if (activating.current) return;
-          if (!wrap.contains(owner.activeElement)) {
-            held = false;
-            return;
-          }
+          const exempt = held;
+          held = false;
+          if (!wrap.contains(owner.activeElement)) return;
           // Each hand-back blurs the learner's input (breaking IME composition); a frame that
           // keeps taking focus is treated like self-navigation: blank it and fail the block.
           // Keys typed between a steal and its hand-back reach the frame (measured), so once the
@@ -318,7 +317,7 @@ export function CustomBlock({
           handBacks.current = recent;
           const lastSecond = recent.filter((at) => now - at < HAND_BACK_WINDOW_MS).length;
           const hostile =
-            (session?.used === true && !held) ||
+            (session?.used === true && !exempt) ||
             (session !== undefined && session.preUseSteals > MAX_PRE_USE_STEALS) ||
             lastSecond > MAX_HAND_BACKS ||
             recent.length > MAX_SLOW_HAND_BACKS;
