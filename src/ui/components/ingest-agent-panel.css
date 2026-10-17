@@ -205,8 +205,8 @@
   color: var(--ink-4);
 }
 .ia-ask-ref {
-  font-family: var(--font-mono);
   font-size: var(--fs-meta);
+  font-variant-numeric: tabular-nums;
   color: var(--ink-3);
 }
 .ia-ask-state {
@@ -528,6 +528,14 @@
   text-align: center;
   pointer-events: none;
   box-shadow: var(--shadow-1);
+}
+@media (max-width: 720px) {
+  /* Sit above the shell's fixed mobile tab bar (~72px). */
+  .ia-loft-label {
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 80px);
+    font-size: 12px;
+    white-space: nowrap;
+  }
 }
 
 /* ── motion: only on change ───────────────────────────── */
