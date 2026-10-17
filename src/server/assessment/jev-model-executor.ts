@@ -32,10 +32,12 @@ import type {
   ModelUnitOutcomeT,
   SlotResponseT,
 } from '@/core/schema/assessment';
+import { evaluateScoringRule } from '@/core/schema/assessment/scoring-rule';
 import type { JevSystemOneResponseT } from '@/core/schema/jev-systemone';
 import type { Db } from '@/db/client';
 import { AgentRunError } from '@/server/ai/agent-run-error';
 import { runTypedPrimitiveTask } from '@/server/ai/typed-primitive-runner';
+import { gradingSliceMatchesLivePin } from './model-slice-registry';
 
 const OPENROUTER_KEY_ENV = 'OPENROUTER_API_KEY';
 /** Admission/credentials-adjacent pending when no Jev lane can serve a unit. */
@@ -103,6 +105,11 @@ export interface JevModelExecutorOptions {
   /** Caller cancellation forwarded to the typed runner. */
   readonly signal?: AbortSignal;
   readonly taskRunId?: string;
+  /**
+   * Formal grading re-checks the live pin before any provider call. Admission
+   * runs leave this off: the slice row does not exist until the holdout passes.
+   */
+  readonly confirmLiveSlice?: boolean;
   /** Test seam: replace ONLY the wire transport (never the lifecycle). */
   readonly fetchImpl?: typeof fetch;
   /** Test seam: clock override. */
@@ -113,10 +120,12 @@ const pendingOutcome = (
   pending: ModelUnitOutcomeT extends never
     ? never
     : Extract<ModelUnitOutcomeT, { kind: 'pending' }>['pending'],
+  paid?: { run_refs: string[]; cost_usd_micros?: number },
 ): ModelUnitOutcomeT => ({
   kind: 'pending',
   pending,
-  run_refs: [],
+  run_refs: paid?.run_refs ?? [],
+  ...(paid?.cost_usd_micros !== undefined ? { cost_usd_micros: paid.cost_usd_micros } : {}),
 });
 
 function entriesForUnit(request: ModelExecutorRequest): SlotResponseT[] {
@@ -225,6 +234,33 @@ function questionsForUnit(
         },
       };
     }
+    case 'blank_key': {
+      // YUK-1496 C2 — 文本空的 Jev 等价判定（统一设计 §4 jev 行 / 附录 A4）。
+      // 只有声明了 equivalence 域的文本空才可由 Jev 判；数值空与未声明等价域
+      // 的文本空是确定性比较器领土（数值/单位严格性不交模型宽松）。
+      const key = criterion.key;
+      if (key.kind !== 'text' || key.equivalence === undefined) {
+        return { unsupported: `${criterion.kind}:${key.kind}` };
+      }
+      return {
+        [request.scoring_unit_id]: {
+          type: 'choice',
+          instructions: [
+            "Judge whether the student's blank answer is equivalent to an accepted reference answer.",
+            `Equivalence domain: ${key.equivalence.domain_md}`,
+            `Equivalence meaning: ${key.equivalence.meaning_md}`,
+            'Judge only within the declared domain; numeric, unit, and interval strictness is not yours to loosen.',
+          ].join(' '),
+          criteria: {
+            equivalent: `The answer is equivalent to one of the accepted answers: ${key.accepted.join(' | ')}`,
+            different:
+              'The answer is decidable within the declared domain and NOT equivalent to any accepted answer',
+            undecidable:
+              'The evidence is insufficient to decide equivalence within the declared domain',
+          },
+        },
+      };
+    }
     default:
       return { unsupported: criterion.kind };
   }
@@ -239,9 +275,14 @@ function interpretAnswer(
 ): ModelUnitOutcomeT {
   const unit = request.unit;
   const criterion = unit.criterion;
+  const pendingPaid = (pending: Parameters<typeof pendingOutcome>[0]): ModelUnitOutcomeT =>
+    pendingOutcome(pending, {
+      run_refs: runRefs,
+      ...(costMicros !== undefined ? { cost_usd_micros: costMicros } : {}),
+    });
   if (criterion.kind === 'rule_reference' && answer.type === 'noul') {
     if (unit.points == null) {
-      return pendingOutcome({
+      return pendingPaid({
         reason: 'unjudgeable',
         detail: `rule_reference unit '${request.scoring_unit_id}' has no additive points to award`,
       });
@@ -295,7 +336,49 @@ function interpretAnswer(
       ...(costMicros !== undefined ? { cost_usd_micros: costMicros } : {}),
     };
   }
-  return pendingOutcome({
+  if (criterion.kind === 'blank_key' && answer.type === 'choice') {
+    // YUK-1496 C2 — Jev 三值等价判定：equivalent/different → correct 1/0，
+    // 分值仍由 unit 的 K1 rule 给（模型绝不直接给分）；undecidable 或契约外
+    // 类别 → pending，绝不落零分。
+    if (unit.rule == null) {
+      return pendingPaid({
+        reason: 'unjudgeable',
+        detail: `blank_key unit '${request.scoring_unit_id}' has no K1 rule to convert the verdict into points`,
+      });
+    }
+    if (answer.choice === 'undecidable') {
+      return pendingPaid({
+        reason: 'unjudgeable',
+        detail: 'equivalence_undecidable',
+      });
+    }
+    if (answer.choice !== 'equivalent' && answer.choice !== 'different') {
+      return pendingPaid({
+        reason: 'infra_failure',
+        retryable: false,
+        detail: `typed answer choice '${answer.choice}' is outside the declared equivalence verdict set`,
+      });
+    }
+    const correct = answer.choice === 'equivalent' ? (1 as const) : (0 as const);
+    const ruleResult = evaluateScoringRule(unit.rule, { kind: 'single', correct });
+    if (ruleResult.kind !== 'points') {
+      // 规则对该判定声明了 unknown（如错答分值未印）—— 诚实 pending，绝不造分。
+      return pendingPaid({
+        reason: 'unjudgeable',
+        detail: `rule declared unknown (${ruleResult.reason}) for equivalence verdict '${answer.choice}'`,
+      });
+    }
+    return {
+      kind: 'scored',
+      points_awarded: ruleResult.points,
+      // Jev typed wire 不携带引文 —— 不补造（§4：只保留 typed 判断）。
+      evidence_citations: [],
+      ...(answer.confidence !== undefined ? { confidence: answer.confidence } : {}),
+      run_refs: runRefs,
+      ...(costMicros !== undefined ? { cost_usd_micros: costMicros } : {}),
+    };
+  }
+  return pendingPaid({
     reason: 'infra_failure',
     retryable: false,
     detail: `typed answer type '${answer.type}' does not match criterion '${criterion.kind}'`,
@@ -366,6 +449,16 @@ export function createJevModelExecutor(options: JevModelExecutorOptions): ModelU
           'model_executor slice unadmitted (D17) — the Jev port never serves unadmitted units',
       });
     }
+    if (options.confirmLiveSlice) {
+      const decision = await gradingSliceMatchesLivePin(
+        options.db,
+        request.executor.admitted_slice_id,
+        request.executor.task_kind,
+      );
+      if (!decision.ok) {
+        return pendingOutcome({ reason: 'unjudgeable', detail: decision.detail });
+      }
+    }
     if (request.executor.task_kind !== 'JevScoringDecisionTask') {
       return pendingOutcome({
         reason: 'unjudgeable',
@@ -413,6 +506,20 @@ export function createJevModelExecutor(options: JevModelExecutorOptions): ModelU
       );
     }
     const entries = entriesForUnit(request);
+    // YUK-1496 C2 — Jev 只判【已读出的文本】；记录为 unreadable 的空作答
+    // 不是模型能挽救的（上游 all-blank 政策已先行处理）。
+    if (request.unit.criterion.kind === 'blank_key') {
+      const unreadable = entries.find(
+        (entry) => entry.kind === 'blank' && entry.state !== 'answered',
+      );
+      if (unreadable !== undefined) {
+        return pendingOutcome({
+          reason: 'unparseable_response',
+          slot_id: unreadable.slot_id,
+          detail: 'blank response was not recorded as readable answered text',
+        });
+      }
+    }
     if (carriesAttachmentEvidence(request)) {
       const escalated = await escalate(request);
       return (
@@ -460,25 +567,48 @@ export function createJevModelExecutor(options: JevModelExecutorOptions): ModelU
     } catch (error) {
       const escalated = await escalate(request);
       if (escalated !== undefined) return escalated;
-      return pendingOutcome({
-        reason: 'infra_failure',
+      // Charge-layer honesty (pi-lane parity): an AgentRunError from the typed
+      // runner means a durable run existed and settled wire attempts at the
+      // reserve — the ai_task_runs ledger keeps the truth, but the charge layer
+      // must not bill possibly-paid spend as free. Charge the published per-unit
+      // reservation when one is declared; without a declared cap the plan-level
+      // pre-check is skipped too, so there is nothing to reserve against.
+      const capMicros = request.executor.max_cost_usd_micros;
+      const pendingState = {
+        reason: 'infra_failure' as const,
         retryable: isTypedRetryable(error),
         detail: `Jev lane failed${error instanceof Error ? `: ${error.message}` : ''}`,
-      });
+      };
+      if (error instanceof AgentRunError && capMicros != null) {
+        return {
+          kind: 'pending',
+          pending: pendingState,
+          run_refs: [],
+          cost_usd_micros: capMicros,
+        };
+      }
+      return pendingOutcome(pendingState);
     }
 
-    const answer = outcome.output.answers[request.scoring_unit_id];
-    if (answer === undefined) {
-      return pendingOutcome({
-        reason: 'infra_failure',
-        retryable: false,
-        detail: `typed response omitted answer for unit '${request.scoring_unit_id}'`,
-      });
-    }
     const costMicros =
       outcome.cost_usd === undefined
         ? undefined
         : Math.max(0, Math.round(outcome.cost_usd * 1_000_000));
+    const paid = {
+      run_refs: [outcome.task_run_id],
+      ...(costMicros !== undefined ? { cost_usd_micros: costMicros } : {}),
+    };
+    const answer = outcome.output.answers[request.scoring_unit_id];
+    if (answer === undefined) {
+      return pendingOutcome(
+        {
+          reason: 'infra_failure',
+          retryable: false,
+          detail: `typed response omitted answer for unit '${request.scoring_unit_id}'`,
+        },
+        paid,
+      );
+    }
     return interpretAnswer(
       request,
       answer,

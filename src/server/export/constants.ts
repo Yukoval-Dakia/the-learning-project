@@ -103,7 +103,13 @@
 // YUK-766: preserve subscription progress and causal effects; only process claims reset.
 // YUK-1355: preserve paid-effect unknowns, immutable receipts and backend generations.
 // Both durable tables are required even when empty; 4.25 → 4.26.
-export const SCHEMA_VERSION = '4.26';
+// YUK-1496: model_admission_slice — admitted model-grading slices (subject ×
+// response_class × task_kind × model@version) with holdout evidence refs. Admission
+// evidence is authored truth, not derivable operational state; it must survive
+// restore or every AI-grader serving gate silently re-denies. 72 → 73 tables,
+// 4.26 → 4.28. 4.27 / migration 0121 are reserved by #1773 (worksheet export),
+// which merges first; this branch takes the next backup version and 0122.
+export const SCHEMA_VERSION = '4.28';
 
 export const SUBSCRIPTION_PROGRESS_TABLES = [
   'event_subscription_checkpoint',
@@ -323,6 +329,15 @@ export const FK_ORDER = [
   'system_config',
   'system_config_journal',
   'system_config_epoch',
+  // YUK-1496 (C2 / ADR-0073 D2): model_admission_slice — AI 判分准入切片台账
+  // （subject × response_class × task_kind × model@model_version + holdout 证据
+  // ref + admitted_by/at + status）。已准入证据是 authored 运营真相：丢了即灭失
+  // 「哪个判分切片被放行」的来由，非瞬态非派生 → FK_ORDER 非 BACKUP_EXCLUDED。
+  // 无 enforced FK（loose text-ref 惯例），位置不受 PG FK 约束；置于末尾附近
+  // （provider_attempt 仍保持最后——其注释承诺 remains last，paid-effect 二元组
+  // 亦不可拆）。NEW FK_ORDER table 必 bump：72 → 73 tables，4.26 → 4.28
+  // （4.27 留给 #1773 worksheet export）。
+  'model_admission_slice',
   // No hard FK: restore owning backend/generation before its immutable effects.
   // Missing either table would turn an unknown paid outcome into bootstrap state.
   ...PAID_EFFECT_BACKUP_TABLES,

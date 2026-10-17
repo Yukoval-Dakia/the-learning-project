@@ -135,7 +135,7 @@ describe('paid-effect durable backup contract', () => {
     const manifest = z
       .object({ schema_version: z.string() })
       .parse(JSON.parse(new TextDecoder().decode(entries['manifest.json'])));
-    expect(manifest.schema_version).toBe('4.26');
+    expect(manifest.schema_version).toBe('4.28');
     expect(FK_ORDER.slice(-3)).toEqual(['paid_effect_control', 'paid_effect', 'provider_attempt']);
     const data = decode(bytes);
     // Compare the real exported payload with complete real PG rows, including
@@ -199,8 +199,8 @@ describe('paid-effect durable backup contract', () => {
   });
 
   // @invariant data: incomplete current-version archives cannot erase durable paid truth
-  // @fails-if absent required keys in an otherwise empty 4.26 archive are treated as empty tables and the live ledger is wiped
-  it('rejects missing paid payload in an empty 4.26 archive before wiping live truth', async () => {
+  // @fails-if absent required keys in an otherwise empty 4.28 archive are treated as empty tables and the live ledger is wiped
+  it('rejects missing paid payload in an empty 4.28 archive before wiping live truth', async () => {
     const db = testDb();
     const bytes = await archive();
     const entries = unzipSync(bytes);
@@ -255,9 +255,9 @@ describe('paid-effect durable backup contract', () => {
       status: 400,
       body: {
         error: 'schema_version_mismatch',
-        expected: '4.26',
+        expected: '4.28',
         got: '4.25',
-        message: 'schema_version mismatch: expected 4.26, got 4.25',
+        message: 'schema_version mismatch: expected 4.28, got 4.25',
       },
     });
     expect(await ledger()).toEqual(before);

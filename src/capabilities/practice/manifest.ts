@@ -1038,6 +1038,20 @@ export const practiceCapability = defineCapability({
             (m) => m.buildStreamComposeNightlyHandler,
           ),
       },
+      // YUK-1496 C2（G3 模型判分准入，migration 线）— 留出题准入 run：冻结
+      // 留出题集（每科 ≥30、带独立参考分）过生产同源判分端口，逐题 agreement
+      // / severe error 落事件证据；阈值全过且非 dry run 才登记已准入切片。
+      // 付费 job（真实模型调用），由 lead 在周预算内触发；无 schedule。
+      {
+        name: 'model_slice_admission_run',
+        queue: 'llm',
+        pollingIntervalSeconds: 2,
+        batchSize: 1,
+        load: () =>
+          import('./jobs/model_slice_admission_run').then(
+            (m) => m.buildModelSliceAdmissionRunHandler,
+          ),
+      },
       // YUK-372 L5 (YUK-361 Phase 8 wire-up) — 供给目标发现 + 派发夜扫。确定性缺口扫描
       // （discoverSupplyTargets，零写零 LLM）→ dispatchSupplyTargets 派到既有 sourcing /
       // quiz_gen 队列或标 manual。排在数据预产链之后跑，让前沿/题池信号已新鲜、缺口判定准

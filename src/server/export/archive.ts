@@ -630,8 +630,9 @@ export async function restoreFromArchive({
     };
   }
 
-  // A 4.26 archive must explicitly carry both durable paid-effect tables, even
-  // when empty. Absence cannot mean bootstrap ownership or permission to resend.
+  // A current-version archive must explicitly carry both durable paid-effect
+  // tables, even when empty. Absence cannot mean bootstrap ownership or
+  // permission to resend.
   const missingPaidEffects = PAID_EFFECT_BACKUP_TABLES.filter(
     (table) => !Object.hasOwn(data, table),
   );
