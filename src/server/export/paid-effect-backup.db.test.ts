@@ -135,7 +135,7 @@ describe('paid-effect durable backup contract', () => {
     const manifest = z
       .object({ schema_version: z.string() })
       .parse(JSON.parse(new TextDecoder().decode(entries['manifest.json'])));
-    expect(manifest.schema_version).toBe('4.26');
+    expect(manifest.schema_version).toBe('4.27');
     expect(FK_ORDER.slice(-3)).toEqual(['paid_effect_control', 'paid_effect', 'provider_attempt']);
     const data = decode(bytes);
     // Compare the real exported payload with complete real PG rows, including
@@ -255,9 +255,9 @@ describe('paid-effect durable backup contract', () => {
       status: 400,
       body: {
         error: 'schema_version_mismatch',
-        expected: '4.26',
+        expected: '4.27',
         got: '4.25',
-        message: 'schema_version mismatch: expected 4.26, got 4.25',
+        message: 'schema_version mismatch: expected 4.27, got 4.25',
       },
     });
     expect(await ledger()).toEqual(before);
