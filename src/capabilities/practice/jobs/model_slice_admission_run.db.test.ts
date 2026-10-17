@@ -153,7 +153,7 @@ describe('model slice admission pre-paid refusals', () => {
     vi.unstubAllEnvs();
   });
 
-  // @invariant idempotency: an active or retired slice is refused before any model call
+  // @invariant concurrency: an active or retired slice is refused before any model call
   // @fails-if the pre-check misses the row and the job continues into the paid loop or a raw unique violation
   it('refuses an existing slice before any paid call', async () => {
     const db = testDb();
@@ -184,7 +184,7 @@ describe('model slice admission pre-paid refusals', () => {
     await expectNoPaidRuns();
   });
 
-  // @invariant idempotency: reusing a run_id whose stored evidence failed does not admit and does not pay again
+  // @invariant concurrency: reusing a run_id whose stored evidence failed does not admit and does not pay again
   // @fails-if ignore the existing event and register from the new verdict, or enter the paid loop
   it('does not admit or pay when the stored evidence for the run id failed', async () => {
     const db = testDb();

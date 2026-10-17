@@ -228,8 +228,6 @@ describe('createJevModelExecutor — Jev lane', () => {
     ).toBeUndefined();
   });
 
-  // @invariant grading: the durable judge transport issues exactly one real typed request — a controlled 503 returns a pending outcome with no lifecycle retry
-  // @fails-if retry the transport on the 503; the fetchImpl called-once and unretried-log assertions fail
   // @invariant grading: a paid Jev pending (undecidable or a rule that declares the points unknown) keeps that call's run id and cost
   // @fails-if drop run_refs or cost_usd_micros on the pending returns inside interpretAnswer; two paid calls would settle as one
   it('keeps the run id and cost when a paid blank verdict stays pending', async () => {
@@ -302,6 +300,8 @@ describe('createJevModelExecutor — Jev lane', () => {
     }
   });
 
+  // @invariant grading: the durable judge transport issues exactly one real typed request — a controlled 503 returns a pending outcome with no lifecycle retry
+  // @fails-if retry the transport on the 503; the fetchImpl called-once and unretried-log assertions fail
   it('durable judge policy reaches the real typed transport with one transient request', async () => {
     const fetchImpl = vi.fn<typeof fetch>(
       async () =>

@@ -3,9 +3,9 @@ import { canonicalHash } from '@/core/migration/canonical';
 import { currentModelPins } from '@/server/assessment/model-slice-registry';
 import { runModelSliceAdmission } from './model_slice_admission_run';
 
-// @invariant grading: the holdout digest is the caller's own item JSON, before zod fills group_evidence and materials
-// @fails-if hash the zod-parsed items; a digest of the raw payload is refused as not frozen before the pin check
 describe('runModelSliceAdmission digest', () => {
+  // @invariant grading: the holdout digest is the caller's own item JSON, before zod fills group_evidence and materials
+  // @fails-if hash the zod-parsed items; a digest of the raw payload is refused as not frozen before the pin check
   it('accepts a digest of the raw items and still refuses a non-current model pin', async () => {
     const pin = currentModelPins().get('JevScoringDecisionTask');
     if (pin === undefined) throw new Error('Jev pin missing');

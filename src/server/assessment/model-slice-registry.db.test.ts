@@ -53,7 +53,7 @@ describe('model admission slice identity', () => {
     expect(row?.slice_id).toBe(stored.slice_id);
   });
 
-  // @invariant idempotency: registering an existing pin with different evidence is a coded refusal, including a row whose slice_id was not the five-field hash
+  // @invariant concurrency: registering an existing pin with different evidence is a coded refusal, including a row whose slice_id was not the five-field hash
   // @fails-if look up only by slice_id or let the natural-key unique index surface as a raw 23505; the second register throws ModelSliceRegistrationError slice_conflict
   it('refuses a second registration of the same pin with different evidence', async () => {
     const db = testDb();
