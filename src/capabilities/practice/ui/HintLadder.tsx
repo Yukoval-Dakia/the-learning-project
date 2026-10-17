@@ -27,8 +27,13 @@ import {
   nextHintStage,
   positionLabel,
 } from './hint-ladder';
-import type { QuestionDetail } from './practice-api';
+import type { QuestionDetail, SolveHintFallbackHelp } from './practice-api';
 import { solveHint, solveStart } from './practice-api';
+
+// YUK-1409 — 一阶拿到的内容：AI 现生成的提示，或 AI 失败时服务端给的固定帮助（fallback）。
+type StageHint = { kind: 'ai'; text: string } | { kind: 'fallback'; help: SolveHintFallbackHelp };
+// AI 失败且没有可替代材料（unavailable）：停在该阶，可重试 / 可跳过；不是错误态。
+type StageUnavailable = { stage: number; text: string; canSkip: boolean };
 
 // 每次打开解题会话都是干净起点：宿主（SoloCoach）按「第几次打开」给本组件 key，重开即
 // 重挂（YUK-1483，取代旧的 open-reset effect）。上一会话还在途的提示请求只会落到已卸载
@@ -57,8 +62,9 @@ export function HintLadder({
   const [sessionId, setSessionId] = useState<string | null>(null);
   // 已揭示的最高 hint 阶索引（-1 = 尚未要任何提示）。H0-H4 走 hint，H5 由 revealedFull 单独管。
   const [reached, setReached] = useState(-1);
-  // 各阶（0-4）已取的提示正文。stageIdx → text_md。
-  const [hints, setHints] = useState<Record<number, string>>({});
+  // 各阶（0-4）已取的提示。stageIdx → AI 提示正文或固定帮助（fallback）。
+  const [hints, setHints] = useState<Record<number, StageHint>>({});
+  const [unavailable, setUnavailable] = useState<StageUnavailable | null>(null);
   const [loading, setLoading] = useState(false);
   // 生成失败的阶索引（-1 = 无失败）；当前阶可重试，不自动跳下一阶。
   const [failAt, setFailAt] = useState(-1);
@@ -84,6 +90,7 @@ export function HintLadder({
     if (loading) return;
     setLoading(true);
     setFailAt(-1);
+    setUnavailable(null);
     try {
       let sid = sessionId;
       if (!sid) {
@@ -91,8 +98,25 @@ export function HintLadder({
         setSessionId(sid);
       }
       const h = await solveHint(question.id, sid, targetIdx, issuanceId ?? undefined);
-      if (h.text_md) {
-        setHints((m) => ({ ...m, [targetIdx]: h.text_md }));
+      // YUK-1409 — unavailable：这一阶没给出任何帮助 → 不算用掉这一阶，停在原位可重试/跳过。
+      if ('status' in h && h.status === 'unavailable') {
+        setUnavailable({
+          stage: targetIdx,
+          text: h.text_md,
+          canSkip: h.options.includes('skip'),
+        });
+        return;
+      }
+      // fallback 也算用掉这一阶：服务端已记下这次求助并给了帮助，阶梯照常前进一格，
+      // 否则「再给一阶」会原地重复请求同一阶。
+      const entry: StageHint | null =
+        'status' in h && h.status === 'fallback'
+          ? { kind: 'fallback', help: h.help }
+          : h.text_md
+            ? { kind: 'ai', text: h.text_md }
+            : null;
+      if (entry) {
+        setHints((m) => ({ ...m, [targetIdx]: entry }));
         setReached(targetIdx);
         // YUK-1051 (D16) — 提示抵达上报（接 seam 时服务端留痕；回调失败不阻梯）。
         try {
@@ -202,7 +226,7 @@ export function HintLadder({
       {/* 已揭示的 hint 阶卡（H0-H4，仅到 reached）。 */}
       {HINT_LADDER.map((s, i) =>
         !s.isFull && i <= reached && hints[i] ? (
-          <HintStageCard key={s.key} stage={s} body={hints[i]} notation={question.notation} />
+          <HintStageCard key={s.key} stage={s} hint={hints[i]} notation={question.notation} />
         ) : null,
       )}
 
@@ -229,6 +253,33 @@ export function HintLadder({
         <div className="ladder-loading">
           <span className="ladder-spin" />
           正在想下一阶提示…
+        </div>
+      )}
+
+      {/* YUK-1409 — AI 暂时给不出、也没有替代材料：中性说明 + 重试同一阶 / 跳过（不是错误态）。 */}
+      {unavailable && !loading && (
+        <div className="ladder-unavail" role="status">
+          <p className="ladder-unavail-msg">{unavailable.text}</p>
+          <div className="ladder-fail-acts">
+            <button
+              type="button"
+              className="ladder-advance"
+              onClick={() => void advance(unavailable.stage)}
+            >
+              <LoomIcon name="refresh" size={13} />
+              重试这一阶
+            </button>
+            {unavailable.canSkip && (
+              <button
+                type="button"
+                className="ladder-escape"
+                onClick={() => setUnavailable(null)}
+                style={{ marginLeft: 0 }}
+              >
+                这一阶先不要
+              </button>
+            )}
+          </div>
         </div>
       )}
 
@@ -296,7 +347,7 @@ export function HintLadder({
       )}
 
       {/* 动作行：再给一阶（+1）· 直接看完整解（逃生口，任意阶一步可达）· 我自己来（交还控制）。 */}
-      {!loading && failAt < 0 && !confirmFull && !atFull && (
+      {!loading && failAt < 0 && !unavailable && !confirmFull && !atFull && (
         <div className="ladder-acts-wrap">
           {next && (
             <p className="ladder-next-note">
@@ -363,13 +414,47 @@ export function HintLadder({
 
 function HintStageCard({
   stage,
-  body,
+  hint,
   notation,
 }: {
   stage: HintStage;
-  body: string;
+  hint: StageHint;
   notation: string | null;
 }) {
+  if (hint.kind === 'fallback') {
+    // YUK-1409 — AI 提示没生成出来时的固定帮助：诚实标明是参考解答还是固定的下一步，
+    // 不展示失败原因与耗时；服务端附带的说明（disclosure_md）必须展示。
+    const isReference = hint.help.kind === 'reference';
+    return (
+      <div className={isReference ? 'ladder-card full' : 'ladder-card'}>
+        <div className="ladder-card-top">
+          <span className="ladder-badge">
+            {stage.key} · {isReference ? '参考解答' : '固定的下一步'}
+          </span>
+          {isReference && (
+            <span className="ladder-noindep">
+              <LoomIcon name="alert" size={12} />
+              非独立完成
+            </span>
+          )}
+        </div>
+        <p className="ladder-fallback-line">
+          {isReference
+            ? 'AI 提示暂时不可用，先给你这道题的参考解答'
+            : 'AI 提示暂时不可用，先给你一个固定的下一步'}
+        </p>
+        <div className="ladder-body">
+          <MathMarkdown notation={notation}>{hint.help.text_md}</MathMarkdown>
+        </div>
+        {hint.help.disclosure_md && (
+          <div className="ladder-empty-s">
+            <MathMarkdown notation={notation}>{hint.help.disclosure_md}</MathMarkdown>
+          </div>
+        )}
+      </div>
+    );
+  }
+  const body = hint.text;
   return (
     <div className="ladder-card">
       <div className="ladder-card-top">
