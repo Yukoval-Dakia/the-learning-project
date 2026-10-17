@@ -34,12 +34,19 @@
 // keyed by Idempotency-Key; a replay returns the recorded accepted flag with a
 // freshly derived serving projection.
 
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { and, desc, eq, sql } from 'drizzle-orm';
+import type { PgBoss } from 'pg-boss';
 
 import type { Db, Tx } from '@/db/client';
 import { readPaidEffectControl } from '@/db/paid-effect-control';
-import { event, paid_effect, question, question_revision } from '@/db/schema';
+import {
+  event,
+  paid_effect,
+  question,
+  question_group_lifecycle,
+  question_revision,
+} from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import {
@@ -72,10 +79,58 @@ function servingActionEventId(
   return `qsact_${digest.slice(0, 48)}`;
 }
 
+/**
+ * Deterministic pg-boss job id (UUID) from a seed. A second `send` with the
+ * same id collides on the PK and adds nothing — crash-safe re-send (P1-B).
+ */
+function deterministicJobId(seed: string): string {
+  const h = createHash('sha256').update(seed).digest('hex');
+  const variant = ((Number.parseInt(h.slice(16, 18), 16) & 0x3f) | 0x80).toString(16);
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-${variant}${h.slice(18, 20)}-${h.slice(20, 32)}`;
+}
+
+const recheckJobId = (eventId: string) => deterministicJobId(`yuk1514:source_verify:${eventId}`);
+const reverifyJobId = (eventId: string) => deterministicJobId(`yuk1514:admission:${eventId}`);
+
+/** pgboss.job row probe — false when the boss schema isn't deployed here. */
+async function bossJobExists(db: Db | Tx, id: string): Promise<boolean> {
+  const probe = await db.execute<{ reg: string | null }>(
+    sql`select to_regclass('pgboss.job') as reg`,
+  );
+  if (probe[0]?.reg == null) return false;
+  const rows = await db.execute<{ id: string }>(
+    sql`select id::text as id from pgboss.job where id = ${id}::uuid limit 1`,
+  );
+  return rows.length > 0;
+}
+
+/** Send-or-no-op on a deterministic job id (a duplicate PK = the send landed). */
+async function sendJobIdempotent(
+  db: Db,
+  boss: PgBoss,
+  name: string,
+  data: object,
+  id: string,
+): Promise<void> {
+  if (await bossJobExists(db, id)) return;
+  try {
+    await boss.send(name, data, { id });
+  } catch (err) {
+    // A concurrent send of the same id raced us — the job exists either way.
+    if (!(await bossJobExists(db, id))) throw err;
+  }
+}
+
+interface ServingCommandEventRecord {
+  accepted: boolean;
+  /** P1-C — a persisted ApiError rejection replays the original status/code. */
+  error: { code: string; status: number; message: string } | null;
+}
+
 async function findServingActionEvent(
   db: Db | Tx,
   eventId: string,
-): Promise<{ accepted: boolean } | null> {
+): Promise<ServingCommandEventRecord | null> {
   const [row] = await db
     .select({ payload: event.payload })
     .from(event)
@@ -83,7 +138,14 @@ async function findServingActionEvent(
     .limit(1);
   if (row == null) return null;
   const payload = row.payload as Record<string, unknown> | null;
-  return { accepted: payload?.accepted === true };
+  const error = payload?.error;
+  return {
+    accepted: payload?.accepted === true,
+    error:
+      error != null && typeof error === 'object'
+        ? (error as { code: string; status: number; message: string })
+        : null,
+  };
 }
 
 async function writeServingActionEvent(
@@ -135,6 +197,12 @@ async function admissionJobInFlight(db: Db | Tx, groupId: string): Promise<boole
 interface CommandResult {
   accepted: boolean;
   detail?: Record<string, unknown>;
+  /**
+   * Post-commit side effect (queue send / enqueue). Runs AFTER the command
+   * event commits — a crash or failed send here is healed by a same-key
+   * replay re-sending the deterministic job id (P1-B).
+   */
+  afterCommit?: () => Promise<void>;
 }
 
 /**
@@ -147,12 +215,13 @@ interface CommandResult {
  */
 async function executeReverify(
   db: Db,
+  tx: Tx,
   groupId: string,
   eventId: string,
   idempotencyKey: string,
   now: Date,
 ): Promise<CommandResult> {
-  const outcome = await db.transaction(async (tx) => {
+  {
     const { root, lifecycle } = await lockAdmissionGroup(tx, groupId);
     if (!root) throw new ApiError('not_found', `question '${groupId}' not found`, 404);
     const rejected = async (rejectedReason: string, holdReason: ServingHoldReason | null) => {
@@ -309,105 +378,129 @@ async function executeReverify(
       },
       now,
     });
+    const publishEventIdFinal = publishEventId;
+    const publishStatusFinal = publishStatus;
+    const dispatchGeneration = control.generation;
+    const revisionId = lifecycle.current_revision_id;
     return {
-      accepted: true as const,
-      publishEventId,
-      publishStatus,
-      dispatchGeneration: control.generation,
-      revisionId: lifecycle.current_revision_id,
+      accepted: true,
+      detail: {
+        repended: withheldReason !== 'unverified_rules',
+        publish_status: publishStatusFinal,
+      },
+      // Post-commit (P1-B): the enqueue runs outside the command tx. The job id
+      // is deterministic from the command event id — a crash between commit and
+      // send, or a failed send, is healed by any same-key replay re-sending the
+      // same job id (a PK-collision re-send adds nothing).
+      afterCommit: () =>
+        dispatchReverifyAdmission(db, {
+          groupId,
+          eventId,
+          publishEventId: publishEventIdFinal,
+          dispatchGeneration,
+          revisionId,
+        }),
     };
-  });
-  if (!outcome.accepted) return { accepted: false, detail: outcome.detail };
+  }
+}
 
-  // Post-commit: enqueue the admission batch through #1752's own mechanism. The
-  // publish event (new or reused) is the delivery source; the subscriber may
-  // race us to the same deterministic job id — both paths are idempotent.
+/**
+ * The post-commit admission dispatch, shared by the accepted path and the
+ * replay-heal path. #1752's enqueue from the publish event is preferred; the
+ * deterministic manual re-dispatch only fires when that path cannot queue.
+ */
+async function dispatchReverifyAdmission(
+  db: Db,
+  args: {
+    groupId: string;
+    eventId: string;
+    publishEventId: string | null;
+    dispatchGeneration: number;
+    revisionId: string | null;
+  },
+): Promise<void> {
   let enqueuedVia: 'publish_event' | 'manual_redispatch' | 'already_queued' | 'none' = 'none';
-  if (outcome.publishEventId != null) {
+  if (args.publishEventId != null) {
     const enqueue = await enqueuePublishedQuestionAdmission(db, {
       subscriberId: 'practice.serving-actions',
       subscriberVersion: 1,
       deliverySeq: '0',
-      sourceEventId: outcome.publishEventId,
+      sourceEventId: args.publishEventId,
     });
     enqueuedVia = enqueue.status === 'succeeded' ? 'publish_event' : 'already_queued';
   }
-  if (enqueuedVia !== 'publish_event' && !(await admissionJobInFlight(db, groupId))) {
+  if (enqueuedVia !== 'publish_event' && !(await admissionJobInFlight(db, args.groupId))) {
     // The deterministic job already ran to completion (or the publish-event row
-    // is absent) — a manual fresh-id re-dispatch onto the same family queue
-    // replays the paid_effect claim under the same locks; identical base never
-    // re-pays.
+    // is absent) — a manual re-dispatch onto the same family queue replays the
+    // paid_effect claim under the same locks; identical base never re-pays.
     const boss = await getPracticeBoss();
     const jobData = {
-      question_id: groupId,
-      ...(outcome.revisionId != null ? { revision_id: outcome.revisionId } : {}),
-      dispatch_generation: outcome.dispatchGeneration,
+      question_id: args.groupId,
+      ...(args.revisionId != null ? { revision_id: args.revisionId } : {}),
+      dispatch_generation: args.dispatchGeneration,
     } satisfies AdmissionJobData;
-    await boss.send(ADMISSION_FAMILY, jobData, { id: randomUUID() });
+    await sendJobIdempotent(db, boss, ADMISSION_FAMILY, jobData, reverifyJobId(args.eventId));
     enqueuedVia = 'manual_redispatch';
   }
-  return {
-    accepted: true,
-    detail: {
-      enqueued_via: enqueuedVia,
-      ...(outcome.publishStatus != null ? { publish_status: outcome.publishStatus } : {}),
-    },
-  };
 }
 
 /**
  * recheck_source — re-dispatch source_verify. The outbox intent ledger cannot
  * express a second dispatch for the same (verifier, question), so the command
  * sends straight onto the queue the outbox drains to. The command event is
- * written BEFORE the job (its deterministic id rides the job as
- * recheck.command_event_id): runSourceVerify's terminal-event guard bypasses
- * ONLY for that command, and a second terminal event under the same command
- * id can never pay twice — replayed keys and redelivered jobs hit the guard.
+ * written BEFORE the job and the job id is deterministic from it (P1-B):
+ * runSourceVerify's terminal-event guard bypasses ONLY for this command, its
+ * paid-effect claim (keyed by command_event_id) admits at most one paid
+ * attempt, and a same-key replay re-sends this exact job id when it is absent.
  */
 async function executeRecheckSource(
   db: Db,
+  tx: Tx,
   groupId: string,
   eventId: string,
   idempotencyKey: string,
   now: Date,
 ): Promise<CommandResult> {
-  const serving = (await readQuestionServing(db, [groupId])).byId.get(groupId);
+  const serving = (await readQuestionServing(tx, [groupId])).byId.get(groupId);
   if (serving?.hold_reason !== 'source_check_failed') {
-    await db.transaction(async (tx) => {
-      await writeServingActionEvent(tx, {
-        eventId,
-        groupId,
-        command: 'recheck_source',
-        idempotencyKey,
-        accepted: false,
-        holdReason: serving?.hold_reason ?? null,
-        detail: { rejected_reason: 'not_source_check_failed' },
-        now,
-      });
-    });
-    return { accepted: false, detail: { rejected_reason: 'not_source_check_failed' } };
-  }
-
-  const jobId = randomUUID();
-  await db.transaction(async (tx) => {
     await writeServingActionEvent(tx, {
       eventId,
       groupId,
       command: 'recheck_source',
       idempotencyKey,
-      accepted: true,
-      holdReason: 'source_check_failed',
-      detail: { job_id: jobId },
+      accepted: false,
+      holdReason: serving?.hold_reason ?? null,
+      detail: { rejected_reason: 'not_source_check_failed' },
       now,
     });
+    return { accepted: false, detail: { rejected_reason: 'not_source_check_failed' } };
+  }
+
+  const jobId = recheckJobId(eventId);
+  await writeServingActionEvent(tx, {
+    eventId,
+    groupId,
+    command: 'recheck_source',
+    idempotencyKey,
+    accepted: true,
+    holdReason: 'source_check_failed',
+    detail: { job_id: jobId },
+    now,
   });
-  const boss = await getPracticeBoss();
-  await boss.send(
-    SERVING_SOURCE_VERIFY_JOB,
-    { question_ids: [groupId], recheck: { command_event_id: eventId } },
-    { id: jobId },
-  );
-  return { accepted: true, detail: { job_id: jobId } };
+  return {
+    accepted: true,
+    detail: { job_id: jobId },
+    afterCommit: async () => {
+      const boss = await getPracticeBoss();
+      await sendJobIdempotent(
+        db,
+        boss,
+        SERVING_SOURCE_VERIFY_JOB,
+        { question_ids: [groupId], recheck: { command_event_id: eventId } },
+        jobId,
+      );
+    },
+  };
 }
 
 /**
@@ -422,13 +515,14 @@ async function executeRecheckSource(
  * status instead of silently re-publishing changed content.
  */
 async function executeReleaseVerifyHold(
-  db: Db,
+  _db: Db,
+  tx: Tx,
   groupId: string,
   eventId: string,
   idempotencyKey: string,
   now: Date,
 ): Promise<CommandResult> {
-  return db.transaction(async (tx) => {
+  {
     const { root, lifecycle } = await lockAdmissionGroup(tx, groupId);
     if (!root) throw new ApiError('not_found', `question '${groupId}' not found`, 404);
     const holdReason =
@@ -488,7 +582,7 @@ async function executeReleaseVerifyHold(
       now,
     });
     return { accepted: true, detail: { publish_status: published.status } };
-  });
+  }
 }
 
 export interface ServingActionResult {
@@ -496,9 +590,89 @@ export interface ServingActionResult {
   serving: QuestionServing;
 }
 
+const UNKNOWN_SERVING: QuestionServing = {
+  servable: false,
+  hold_reason: null,
+  held_since: null,
+  next_action: null,
+  pending_action: null,
+};
+
 /**
- * Command entry. Idempotent per Idempotency-Key: the first execution's event
- * records `accepted`; a replay returns it with a freshly derived serving.
+ * Replay heal (P1-B): an accepted command's send lives outside its tx, so a
+ * crash between the commit and the send would lose the job forever. A same-key
+ * replay re-sends the deterministic job id when the job row is absent; for
+ * reverify it only heals a group still in a pending cycle (an applied verdict
+ * or a moved-on lifecycle means the run already happened).
+ */
+async function ensureCommandDispatched(
+  db: Db,
+  groupId: string,
+  command: ServingActionCommand,
+  eventId: string,
+): Promise<void> {
+  try {
+    if (command === 'recheck_source') {
+      const jobId = recheckJobId(eventId);
+      if (await bossJobExists(db, jobId)) return;
+      const boss = await getPracticeBoss();
+      await sendJobIdempotent(
+        db,
+        boss,
+        SERVING_SOURCE_VERIFY_JOB,
+        { question_ids: [groupId], recheck: { command_event_id: eventId } },
+        jobId,
+      );
+      return;
+    }
+    if (command === 'reverify') {
+      const { byId } = await readQuestionServing(db, [groupId]);
+      const serving = byId.get(groupId);
+      if (serving == null || serving.pending_action != null) return;
+      if (serving.hold_reason !== 'awaiting_admission') return;
+      const [lc] = await db
+        .select({ revision: question_group_lifecycle.current_revision_id })
+        .from(question_group_lifecycle)
+        .where(eq(question_group_lifecycle.group_id, groupId))
+        .limit(1);
+      const [source] = await db
+        .select({ id: event.id })
+        .from(event)
+        .where(
+          and(
+            eq(event.action, 'experimental:assessment_publish'),
+            eq(event.subject_kind, 'question'),
+            eq(event.subject_id, groupId),
+            eq(event.outcome, 'success'),
+            sql`${event.actor_ref} <> 'practice:question_admission'`,
+            sql`${event.payload}->>'admission' = 'withheld'`,
+            sql`${event.payload}->>'revision_id' = ${lc?.revision ?? ''}`,
+          ),
+        )
+        .orderBy(desc(event.created_at))
+        .limit(1);
+      const control = await readPaidEffectControl(db, ADMISSION_FAMILY);
+      await dispatchReverifyAdmission(db, {
+        groupId,
+        eventId,
+        publishEventId: source?.id ?? null,
+        dispatchGeneration: control.generation,
+        revisionId: lc?.revision ?? null,
+      });
+    }
+  } catch (err) {
+    // Heal is best-effort — a failure here is surfaced by the still-present
+    // hold, and the next replay retries.
+    console.error('[serving-actions] replay dispatch heal failed', command, eventId, err);
+  }
+}
+
+/**
+ * Command entry. Idempotent per Idempotency-Key under an advisory lock keyed
+ * by the deterministic event id: a concurrent same-key POST waits for the
+ * winner's commit and replays — it never sends a second job (P1-A). ApiError
+ * rejections are persisted in their own tx (P1-C) so any replay of the key
+ * returns the original status and code forever.
  */
 export async function runServingAction(
   db: Db,
@@ -518,65 +692,103 @@ export async function runServingAction(
   }
   const groupId = row.parentId ?? row.id;
   const eventId = servingActionEventId(groupId, input.command, input.idempotencyKey);
+  const now = new Date();
 
-  const existing = await findServingActionEvent(db, eventId);
-  if (existing != null) {
+  let dispatched:
+    | { kind: 'replay'; existing: ServingCommandEventRecord }
+    | { kind: 'executed'; outcome: CommandResult };
+  try {
+    dispatched = await db.transaction(async (tx) => {
+      await tx.execute(
+        sql`select pg_advisory_xact_lock(hashtextextended(${`yuk1514:serving:${eventId}`}, 0))`,
+      );
+      const existing = await findServingActionEvent(tx, eventId);
+      if (existing != null) return { kind: 'replay' as const, existing };
+
+      // P2-1 — an Idempotency-Key is scoped to (question group × command):
+      // reusing the same key on a different command or a different group is a
+      // protocol error, not a fresh command.
+      const reuseRows = await tx
+        .select({ subjectId: event.subject_id, payload: event.payload })
+        .from(event)
+        .where(
+          and(
+            eq(event.action, SERVING_ACTION_EVENT_ACTION),
+            sql`${event.payload}->>'idempotency_key' = ${input.idempotencyKey}`,
+          ),
+        );
+      for (const reuse of reuseRows) {
+        const reusedCommand =
+          reuse.payload != null && typeof reuse.payload === 'object'
+            ? (reuse.payload as Record<string, unknown>).command
+            : null;
+        if (reuse.subjectId !== groupId || reusedCommand !== input.command) {
+          throw new ApiError(
+            'idempotency_key_reused',
+            `Idempotency-Key '${input.idempotencyKey}' was already used for a different question or command`,
+            409,
+          );
+        }
+      }
+
+      const outcome =
+        input.command === 'reverify'
+          ? await executeReverify(db, tx, groupId, eventId, input.idempotencyKey, now)
+          : input.command === 'recheck_source'
+            ? await executeRecheckSource(db, tx, groupId, eventId, input.idempotencyKey, now)
+            : await executeReleaseVerifyHold(db, tx, groupId, eventId, input.idempotencyKey, now);
+      return { kind: 'executed' as const, outcome };
+    });
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 409) {
+      // P1-C — the mutation tx rolled back; record the rejection outcome in its
+      // own tx so a later replay of this key returns the ORIGINAL 409 rather
+      // than re-executing against changed state.
+      await db.transaction(async (tx) =>
+        writeServingActionEvent(tx, {
+          eventId,
+          groupId,
+          command: input.command,
+          idempotencyKey: input.idempotencyKey,
+          accepted: false,
+          holdReason: null,
+          detail: { error: { code: err.code, status: err.status, message: err.message } },
+          now,
+        }),
+      );
+    }
+    throw err;
+  }
+
+  if (dispatched.kind === 'replay') {
+    const { existing } = dispatched;
+    if (existing.error != null) {
+      throw new ApiError(existing.error.code, existing.error.message, existing.error.status);
+    }
+    if (existing.accepted) {
+      await ensureCommandDispatched(db, groupId, input.command, eventId);
+    }
     const replayed = await readQuestionServing(db, [input.questionId]);
     return {
       accepted: existing.accepted,
-      serving: replayed.byId.get(input.questionId) ?? {
-        servable: false,
-        hold_reason: null,
-        held_since: null,
-        next_action: null,
-        pending_action: null,
-      },
+      serving: replayed.byId.get(input.questionId) ?? UNKNOWN_SERVING,
     };
   }
 
-  // P2-1 — an Idempotency-Key is scoped to (question group × command): reusing
-  // the same key on a different command or a different group is a protocol
-  // error, not a fresh command.
-  const reuseRows = await db
-    .select({ subjectId: event.subject_id, payload: event.payload })
-    .from(event)
-    .where(
-      and(
-        eq(event.action, SERVING_ACTION_EVENT_ACTION),
-        sql`${event.payload}->>'idempotency_key' = ${input.idempotencyKey}`,
-      ),
-    );
-  for (const reuse of reuseRows) {
-    const reusedCommand =
-      reuse.payload != null && typeof reuse.payload === 'object'
-        ? (reuse.payload as Record<string, unknown>).command
-        : null;
-    if (reuse.subjectId !== groupId || reusedCommand !== input.command) {
-      throw new ApiError(
-        'idempotency_key_reused',
-        `Idempotency-Key '${input.idempotencyKey}' was already used for a different question or command`,
-        409,
-      );
+  const { outcome } = dispatched;
+  if (outcome.afterCommit != null) {
+    try {
+      await outcome.afterCommit();
+    } catch (err) {
+      // The command event committed — a failed send is healed by any same-key
+      // replay (deterministic job id, P1-B). Report the recorded outcome; the
+      // hold remains visible until healed.
+      console.error('[serving-actions] post-commit dispatch failed', input.command, eventId, err);
     }
   }
-
-  const now = new Date();
-  const result =
-    input.command === 'reverify'
-      ? await executeReverify(db, groupId, eventId, input.idempotencyKey, now)
-      : input.command === 'recheck_source'
-        ? await executeRecheckSource(db, groupId, eventId, input.idempotencyKey, now)
-        : await executeReleaseVerifyHold(db, groupId, eventId, input.idempotencyKey, now);
-
   const servings = await readQuestionServing(db, [input.questionId]);
   return {
-    accepted: result.accepted,
-    serving: servings.byId.get(input.questionId) ?? {
-      servable: false,
-      hold_reason: null,
-      held_since: null,
-      next_action: null,
-      pending_action: null,
-    },
+    accepted: outcome.accepted,
+    serving: servings.byId.get(input.questionId) ?? UNKNOWN_SERVING,
   };
 }

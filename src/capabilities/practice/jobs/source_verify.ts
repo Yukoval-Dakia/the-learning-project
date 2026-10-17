@@ -35,6 +35,10 @@ import {
   runSourceGroundingVerify,
 } from '@/capabilities/practice/server/judge/source-grounding-verify';
 import {
+  type PaidEffectIdentity,
+  computePaidEffectIdentity,
+} from '@/core/migration/paid-effect-protocol';
+import {
   LEGACY_DRAFT_STATUS,
   MARKING_RULE_PROVENANCE,
   QUESTION_AVAILABILITY,
@@ -46,6 +50,13 @@ import { readDifficultyEvidenceFromMetadata } from '@/core/schema/difficulty-evi
 import { WebSourcedProvenance, deriveSourceTier } from '@/core/schema/provenance';
 import { toUnifiedVerifyResult } from '@/core/schema/verify-contract';
 import type { Db } from '@/db/client';
+import {
+  admitPaidEffectIntent,
+  claimPaidEffectSend,
+  markPaidEffectUnknown,
+  recordPaidEffectApplication,
+  recordPaidEffectResult,
+} from '@/db/paid-effect-store';
 import { notDraftPredicate } from '@/db/predicates';
 import { event, knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
@@ -108,7 +119,11 @@ export type SourceVerifyPerQuestionStatus =
   | 'failed'
   | 'skipped:not_found'
   | 'skipped:not_web_sourced'
-  | 'skipped:already_verified';
+  | 'skipped:already_verified'
+  /** YUK-1514 — a recheck whose durable paid-attempt claim is 'sending' or
+   * 'unknown' (a prior delivery reached the paid call and never committed an
+   * outcome). Never re-paid; the job completes, the hold stays visible. */
+  | 'skipped:claim_held';
 
 export interface RunSourceVerifyParams {
   db: Db;
@@ -127,6 +142,13 @@ export interface RunSourceVerifyParams {
    * supersedes them for downstream projections (latest wins).
    */
   recheckCommandEventId?: string;
+  /**
+   * YUK-1514 — the pg-boss job id that owns this recheck delivery. Becomes the
+   * paid-effect claim's deliveryId: a crash after the paid call but before the
+   * terminal event leaves the claim in 'sending'/'unknown', and a redelivery
+   * under ANY job id is refused — one paid attempt per command event, never two.
+   */
+  recheckDeliveryId?: string;
 }
 
 export interface RunSourceVerifyResult {
@@ -411,6 +433,49 @@ export async function runSourceVerify(
     )
     .limit(1);
   if (existingVerify.length > 0) return { status: 'skipped:already_verified' };
+
+  // YUK-1514 — recheck paid-attempt claim (P1-A): a DURABLE claim scoped to
+  // the command event, taken BEFORE the paid verifier calls. The terminal-event
+  // guard alone could not catch a crash between the paid call and the event
+  // commit — the claim can: 'sending'/'unknown' is never re-paid, the job ends
+  // honestly (hold stays, pending_action clears), and 'receipt_ready'/'applied'
+  // means the run already completed.
+  let recheckClaim: { identity: PaidEffectIdentity; fence: number; deliveryId: string } | null =
+    null;
+  if (params.recheckCommandEventId != null) {
+    const commandEventId = params.recheckCommandEventId;
+    const deliveryId = params.recheckDeliveryId ?? `manual:${commandEventId}`;
+    const claimOutcome = await db.transaction(async (tx) => {
+      const recheckEffect = {
+        family: 'source_verify' as const,
+        entityId: questionId,
+        entityRevision: commandEventId,
+        unit: 'source_verify@1' as const,
+        input: { question_id: questionId, command_event_id: commandEventId },
+      };
+      const admitted = await admitPaidEffectIntent(tx, recheckEffect);
+      if (admitted.kind === 'existing' && admitted.state !== 'pending') {
+        return { kind: 'held' as const, state: admitted.state };
+      }
+      const identity = computePaidEffectIdentity(recheckEffect);
+      const send = await claimPaidEffectSend(tx, identity, {
+        backend: 'pg-boss',
+        deliveryId,
+        leaseExpiresAt: new Date(Date.now() + 60 * 60_000),
+      });
+      if (send.kind !== 'claimed') {
+        return { kind: 'held' as const, state: send.kind === 'refused' ? send.state : 'pending' };
+      }
+      return { kind: 'claimed' as const, identity, fence: send.fence };
+    });
+    if (claimOutcome.kind !== 'claimed') {
+      // 'sending'/'unknown' — a prior delivery reached the paid call and its
+      // outcome is genuinely unknown; never re-pay. The hold stays honest and
+      // the job completes so pending_action clears.
+      return { status: 'skipped:claim_held', checks: [] };
+    }
+    recheckClaim = { identity: claimOutcome.identity, fence: claimOutcome.fence, deliveryId };
+  }
 
   // Resolve subject profile from the first knowledge node (same convention as
   // quiz_gen / quiz_verify).
@@ -884,6 +949,25 @@ export async function runSourceVerify(
         }
       }
 
+      // YUK-1514 — close the recheck paid-attempt claim IN THE SAME tx as the
+      // terminal event + publish: a delivery that gets here is the one that
+      // paid, and the claim reaching 'applied' is the durable proof no later
+      // redelivery may re-pay.
+      if (recheckClaim != null) {
+        await recordPaidEffectResult(
+          tx,
+          recheckClaim.identity,
+          recheckClaim.deliveryId,
+          { status: promote ? 'verified' : 'failed', checks: checks.length },
+          { fence: recheckClaim.fence },
+        );
+        await recordPaidEffectApplication(tx, recheckClaim.identity, {
+          question_id: questionId,
+          command_event_id: params.recheckCommandEventId,
+          status: promote ? 'verified' : 'failed',
+        });
+      }
+
       await writeEvent(tx, {
         id: verifyEventId,
         session_id: null,
@@ -1002,6 +1086,25 @@ export async function runSourceVerify(
     } catch (cleanupErr) {
       console.error('[source_verify] catch-block cleanup failed for', questionId, cleanupErr);
     }
+    // YUK-1514 — the recheck claim reached 'sending' but the run threw: the paid
+    // call may or may not have happened, so the honest terminal state for THIS
+    // attempt is 'unknown' — never re-paid under this command event (a later
+    // command needs a new key → a new claim identity).
+    if (recheckClaim != null) {
+      try {
+        await db.transaction(async (tx) => {
+          await markPaidEffectUnknown(
+            tx,
+            recheckClaim.identity,
+            recheckClaim.deliveryId,
+            `source_verify threw: ${String((err as Error).message ?? err)}`,
+            { fence: recheckClaim.fence },
+          );
+        });
+      } catch (markErr) {
+        console.error('[source_verify] recheck claim mark-unknown failed', questionId, markErr);
+      }
+    }
     throw err;
   }
 }
@@ -1024,7 +1127,9 @@ export function buildSourceVerifyHandler(
           db,
           questionId,
           runTaskFn,
-          ...(recheckCommandEventId != null ? { recheckCommandEventId } : {}),
+          ...(recheckCommandEventId != null
+            ? { recheckCommandEventId, recheckDeliveryId: job.id }
+            : {}),
         });
         console.log(`[source_verify] ${questionId} -> ${result.status}`);
       }
