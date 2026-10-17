@@ -163,12 +163,24 @@ export interface IngestionUsageReceipt {
   sessionId: string;
   /** The derivation policy the document's content was sent under. */
   derivationPolicy: DerivationPolicyT;
-  /** OCR engine that ran ('glm' | 'tencent') — receipt self-describing. */
+  /** OCR engine that ran ('glm' | 'tencent' | 'docx_text') — receipt self-describing. */
   engine: string;
   /** Categories that actually fired on the extraction text this run. */
   redactedFields: IngestionRedactionField[];
   /** Mutated-span count per category — numbers only, never values. */
   redactionCounts?: Partial<Record<IngestionRedactionField, number>>;
+  /**
+   * YUK-1408 (S1 read side) — honest per-path channel accounting. The OCR job
+   * sends raw page images (unredactable) plus redacted text; the docx TEXT
+   * line sends no images to a model at all (evidence renders are review-UI
+   * only) and its text reaches models only via the redactIngestionText
+   * call-site backstops. 'none' = the channel never left the server for a
+   * model on this path. Defaults to the OCR/VLM shape.
+   */
+  channels?: {
+    page_images: 'raw' | 'none';
+    extracted_text: 'redacted' | 'none';
+  };
   now?: Date;
 }
 
@@ -197,7 +209,7 @@ export async function writeIngestionUsageReceipt(
       policy_version: INGESTION_PRIVACY_POLICY_VERSION,
       derivation_policy: input.derivationPolicy,
       engine: input.engine,
-      channels: {
+      channels: input.channels ?? {
         // OCR/VLM engines must see the raw page image to extract at all; only
         // extracted text is redacted before model calls.
         page_images: 'raw',

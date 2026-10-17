@@ -58,6 +58,25 @@ export const IngestionSessionResponseSchema = z.object({
   session: IngestionSessionSchema,
 });
 
+/**
+ * YUK-1408 (S1 read side) — the latest `experimental:ingestion_usage_receipt`
+ * for the session's source_document. `derivation_policy` is the document's
+ * CURRENT live policy (provenance.usage_policy) — a later withdrawal shows
+ * immediately — NOT the policy stamped on the receipt. Counts are numbers
+ * only; redacted values are never on the wire.
+ */
+export const IngestionUsageReceiptSchema = z.object({
+  derivation_policy: IngestionDerivationPolicy,
+  redacted_fields: z.array(z.string()),
+  redaction_counts: z.record(z.string(), z.number()),
+  recorded_at: z.string().datetime(),
+});
+
+export const IngestionSessionDetailResponseSchema = z.object({
+  session: IngestionSessionSchema,
+  usage_receipt: IngestionUsageReceiptSchema.nullable(),
+});
+
 export const IngestionOperationSchema = z
   .object({
     id: z.string(),
