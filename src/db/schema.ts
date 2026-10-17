@@ -4531,9 +4531,8 @@ export const paid_effect = pgTable(
 //     archived_at 在区域图存档时一次写入（write-once：archived_at 置位后
 //     不再变更）。
 //   - worksheet_export_item：导出绑定的冻结题目清单（有序）。issuance_id
-//     是 issueAssessment 实际落库的发放行（loose text-ref，同
-//     assessment_submission 惯例；container_occurrence_ref=
-//     'worksheet:<export_id>' 把发放事件与导出对上）。
+//     外键指向 assessment_issuance（发放行不可删，ON DELETE 保持 no action；
+//     container_occurrence_ref='worksheet:<export_id>' 把发放事件与导出对上）。
 //   - worksheet_region_map_page：界面线渲染器与 PDF 同一渲染 pass 量出的
 //     区域图，按页冻结存档（write-once：PK (export_id, page) 只 INSERT；
 //     同 digest 重 POST 幂等，异 digest 409）。map_digest 是 canonical 串化
@@ -4609,6 +4608,11 @@ export const worksheet_export_item = pgTable(
   (t) => [
     primaryKey({ columns: [t.export_id, t.position] }),
     index('worksheet_export_item_issuance_idx').on(t.issuance_id),
+    foreignKey({
+      columns: [t.issuance_id],
+      foreignColumns: [assessment_issuance.issuance_id],
+      name: 'worksheet_export_item_issuance_fk',
+    }),
     check('worksheet_export_item_position_ck', sql`${t.position} >= 0`),
     check(
       'worksheet_export_item_identity_nonempty_ck',

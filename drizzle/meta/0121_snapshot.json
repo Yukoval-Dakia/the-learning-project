@@ -13238,6 +13238,19 @@
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
+        },
+        "worksheet_export_item_issuance_fk": {
+          "name": "worksheet_export_item_issuance_fk",
+          "tableFrom": "worksheet_export_item",
+          "tableTo": "assessment_issuance",
+          "columnsFrom": [
+            "issuance_id"
+          ],
+          "columnsTo": [
+            "issuance_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {

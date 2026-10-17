@@ -8,9 +8,11 @@
 //   - 页面身份：qr payload 逐页等于 tlp://ws/v1/<token>/<页>/<总页>；
 //   - 区域着落：每个区域引用的 issuance/slot/unit 都在冻结范围内，配对一致
 //     （unit 的 slot_refs 恰含该 slot——G4 门保证已发单元单槽）；
-//   - 全覆盖：每个计分单元要么有 ≥1 个 writing/choice 区域（跨页续写
-//     segment_index 从 1 递增、每页至多一个），要么列在 web_only_units，
-//     二者互斥（回收端区分「不在纸上」与「留空」）；
+//   - 全覆盖：每个（发放, 计分单元）要么有 ≥1 个 writing/choice 区域（同一
+//     发放内跨页续写 segment_index 从 1 递增、每页至多一个），要么该
+//     scoring_unit_id 列在 web_only_units，二者互斥（回收端区分「不在纸上」
+//     与「留空」）。同一道题导出两次时 unit id 相同，段号按发放分开，不能
+//     把另一次发放收成同一次的下一段；
 //   - 选项一致：choice 区域的选项圈恰为该槽冻结 option_order 的排列（按
 //     order 排序后逐位相等）——回收按 option_id 判圈，印错集合即判错题；
 //   - 展示绑定一致：presentation 的 option_list 绑定槽只能出 choice 圈、
@@ -171,18 +173,18 @@ export function validateRegionMapArchive(
     );
   }
 
-  // --- 索引：unit → 期望槽 / 发放；web_only 集合 ---
+  // --- 索引：已发 unit；区域按 (issuance, unit) 归段 ---
+  // 同一道题导出两次时，两次发放的 scoring_unit_id 相同（part 身份来自题行）。
+  // 续写与覆盖按发放分开，否则两份纸上作答会被收成一个单元的跨页续写。
   const scopeByIssuance = new Map(frozen.map((scope) => [scope.issuance_id, scope]));
-  const slotToUnit = new Map<string, { unit_id: string; scope: FrozenIssuanceScope }>();
   const unitIds = new Set<string>();
   for (const scope of frozen) {
-    for (const unit of scope.units) {
-      unitIds.add(unit.scoring_unit_id);
-      for (const slotId of unit.slot_refs) {
-        slotToUnit.set(slotId, { unit_id: unit.scoring_unit_id, scope });
-      }
-    }
+    for (const unit of scope.units) unitIds.add(unit.scoring_unit_id);
   }
+  const issuanceUnitKey = (issuanceId: string, unitId: string): string =>
+    `${issuanceId}\0${unitId}`;
+  // web_only 仍按 scoring_unit_id：共享 unit id 的两次发放列一次即同时覆盖
+  // （打印面由槽种类决定，两次要么都在网页，要么都印在纸上）。纸上区域不走这条键。
   const webOnly = new Set<string>();
   for (const unitId of body.web_only_units) {
     if (webOnly.has(unitId)) {
@@ -196,7 +198,10 @@ export function validateRegionMapArchive(
 
   // --- 逐页版式与区域 ---
   const regionIds = new Set<string>();
-  const regionsByUnit = new Map<string, WorksheetRegionT[]>();
+  const regionsByIssuanceUnit = new Map<
+    string,
+    { issuanceId: string; unitId: string; regions: WorksheetRegionT[] }
+  >();
   for (const page of pages) {
     const { w, h } = page.size_mm;
     // A4 与方向（B 版契约 §1：竖版 210×297，横版 297×210）。
@@ -357,49 +362,58 @@ export function validateRegionMapArchive(
         }
       }
 
-      const list = regionsByUnit.get(regionUnitId) ?? [];
-      list.push(region);
-      regionsByUnit.set(regionUnitId, list);
+      const key = issuanceUnitKey(regionIssuanceId, regionUnitId);
+      const bucket = regionsByIssuanceUnit.get(key);
+      if (bucket == null) {
+        regionsByIssuanceUnit.set(key, {
+          issuanceId: regionIssuanceId,
+          unitId: regionUnitId,
+          regions: [region],
+        });
+      } else {
+        bucket.regions.push(region);
+      }
     }
   }
 
-  // --- 段号：每页每单元至多一个区域；跨页按页序 segment_index = 1..k ---
+  // --- 段号：每个（发放, 单元）每页至多一个区域；跨页按页序 segment_index = 1..k ---
   const pageOf = new Map<string, number>();
   for (const page of pages) {
     for (const region of page.regions) {
       if (region.kind !== 'draft') pageOf.set(region.region_id, page.page);
     }
   }
-  for (const [unitId, regions] of regionsByUnit) {
-    const sorted = [...regions].sort(
+  for (const bucket of regionsByIssuanceUnit.values()) {
+    const sorted = [...bucket.regions].sort(
       (a, b) => (pageOf.get(a.region_id) ?? 0) - (pageOf.get(b.region_id) ?? 0),
     );
     const pagesSeen = new Set<number>();
+    const label = `issuance '${bucket.issuanceId}' unit '${bucket.unitId}'`;
     sorted.forEach((region, index) => {
       const pageNo = pageOf.get(region.region_id) ?? 0;
       if (pagesSeen.has(pageNo)) {
-        push('segment_invalid', `unit '${unitId}' has multiple regions on page ${pageNo}`);
+        push('segment_invalid', `${label} has multiple regions on page ${pageNo}`);
       }
       pagesSeen.add(pageNo);
       if (region.segment_index !== index + 1) {
         push(
           'segment_invalid',
-          `unit '${unitId}': region '${region.region_id}' segment_index ${region.segment_index} != ${index + 1}`,
+          `${label}: region '${region.region_id}' segment_index ${region.segment_index} != ${index + 1}`,
         );
       }
     });
   }
 
-  // --- 全覆盖：每单元恰一着落（区域或 web_only），互斥 ---
+  // --- 全覆盖：每个（发放, 单元）恰一着落（区域或 web_only），互斥 ---
   for (const scope of frozen) {
     for (const unit of scope.units) {
-      const hasRegion = (regionsByUnit.get(unit.scoring_unit_id) ?? []).length > 0;
+      const hasRegion =
+        (regionsByIssuanceUnit.get(issuanceUnitKey(scope.issuance_id, unit.scoring_unit_id))
+          ?.regions.length ?? 0) > 0;
       const isWebOnly = webOnly.has(unit.scoring_unit_id);
+      const covered = `issuance '${scope.issuance_id}' unit '${unit.scoring_unit_id}'`;
       if (hasRegion && isWebOnly) {
-        push(
-          'unit_double_covered',
-          `unit '${unit.scoring_unit_id}' has paper regions and is also web_only`,
-        );
+        push('unit_double_covered', `${covered} has paper regions and is also web_only`);
       }
       if (!hasRegion && !isWebOnly) {
         // 点选/沙箱槽只能 web_only —— 报出真实缺口原因。
@@ -408,13 +422,10 @@ export function validateRegionMapArchive(
         if (surface === 'web_only') {
           push(
             'web_only_required',
-            `unit '${unit.scoring_unit_id}' binds slot '${slotId}' with no paper input — it must be listed in web_only_units`,
+            `${covered} binds slot '${slotId}' with no paper input — it must be listed in web_only_units`,
           );
         } else {
-          push(
-            'unit_not_covered',
-            `unit '${unit.scoring_unit_id}' has no writing/choice region and is not web_only`,
-          );
+          push('unit_not_covered', `${covered} has no writing/choice region and is not web_only`);
         }
       }
     }

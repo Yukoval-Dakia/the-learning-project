@@ -40,6 +40,7 @@ CREATE TABLE "worksheet_region_map_page" (
 );
 --> statement-breakpoint
 ALTER TABLE "worksheet_export_item" ADD CONSTRAINT "worksheet_export_item_export_id_worksheet_export_export_id_fk" FOREIGN KEY ("export_id") REFERENCES "public"."worksheet_export"("export_id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "worksheet_export_item" ADD CONSTRAINT "worksheet_export_item_issuance_fk" FOREIGN KEY ("issuance_id") REFERENCES "public"."assessment_issuance"("issuance_id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "worksheet_region_map_page" ADD CONSTRAINT "worksheet_region_map_page_export_id_worksheet_export_export_id_fk" FOREIGN KEY ("export_id") REFERENCES "public"."worksheet_export"("export_id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 CREATE UNIQUE INDEX "worksheet_export_token_uq" ON "worksheet_export" USING btree ("export_token");--> statement-breakpoint
 CREATE UNIQUE INDEX "worksheet_export_short_code_uq" ON "worksheet_export" USING btree ("short_code");--> statement-breakpoint
