@@ -22,6 +22,7 @@ export const LEARNER_COPY_FILES = [
   'src/capabilities/practice/ui/HintLadder.tsx',
   'src/capabilities/practice/ui/QuestionsPage.tsx',
   'src/capabilities/practice/ui/QuestionDetailPage.tsx',
+  'src/capabilities/practice/ui/ServingHold.tsx',
   'src/capabilities/shell/ui/TodayPage.tsx',
   'src/capabilities/copilot/ui/CopilotDock.tsx',
   'src/capabilities/shell/ui/InboxPage.tsx',
