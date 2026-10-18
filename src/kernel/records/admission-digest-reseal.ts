@@ -5,11 +5,15 @@
 // 但不能靠「解析成功就改写成规范摘要」修：那样会把改过的层封成新的真摘要。
 // 只有某条已知写方键序能把【当前存库的值】重新哈希成库存摘要时，才允许重封。
 
+import { eq } from 'drizzle-orm';
+import type { Db } from '@/db/client';
+import { question_group_lifecycle, question_revision } from '@/db/schema';
 import {
   type PublishedContractSeal,
   contractIntegrityDigest,
   publishedContractSeal,
 } from './assessment-normalization';
+import { type PublishAdmission, publishQuestionGroup } from './assessment-publication';
 
 export interface ContractLayers {
   structure: unknown;
@@ -266,4 +270,173 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+export interface ResealReport {
+  mode: 'dry_run' | 'apply';
+  revisions: number;
+  keep: number;
+  rewrite: number;
+  leave_stale: number;
+  appended: number;
+  rewrite_rows: { revision_id: string; group_id: string; from: string; to: string }[];
+  appended_rows: { group_id: string; from_revision_id: string; to_revision_id: string }[];
+  stale: { revision_id: string; group_id: string }[];
+  conflicts: { group_id: string; revision_id: string; reason: string }[];
+  failed: { group_id: string; revision_id: string; cause: string }[];
+}
+
+export async function resealAdmissionDigests(
+  db: Db,
+  options: { apply: boolean },
+): Promise<ResealReport> {
+  const rows = await db
+    .select({
+      revision_id: question_revision.revision_id,
+      group_id: question_revision.group_id,
+      integrity_digest: question_revision.integrity_digest,
+      structure: question_revision.structure,
+      response_spec: question_revision.response_spec,
+      scoring_basis: question_revision.scoring_basis,
+      execution_plan: question_revision.execution_plan,
+      presentation: question_revision.presentation,
+      availability: question_group_lifecycle.availability,
+      scoring_admission_state: question_group_lifecycle.scoring_admission_state,
+      scoring_admission_evidence: question_group_lifecycle.scoring_admission_evidence,
+      scoring_admission_withheld_reason: question_group_lifecycle.scoring_admission_withheld_reason,
+      scoring_admission_generation: question_group_lifecycle.scoring_admission_generation,
+    })
+    .from(question_revision)
+    .innerJoin(
+      question_group_lifecycle,
+      eq(question_group_lifecycle.current_revision_id, question_revision.revision_id),
+    );
+
+  const report: ResealReport = {
+    mode: options.apply ? 'apply' : 'dry_run',
+    revisions: rows.length,
+    keep: 0,
+    rewrite: 0,
+    leave_stale: 0,
+    appended: 0,
+    rewrite_rows: [],
+    appended_rows: [],
+    stale: [],
+    conflicts: [],
+    failed: [],
+  };
+
+  for (const row of rows) {
+    const decision = resealDecision(
+      classifyStoredRevisionDigest(layersOfStoredRevision(row), row.integrity_digest),
+    );
+    report[decision.action] += 1;
+    if (decision.action === 'leave_stale') {
+      report.stale.push({ revision_id: row.revision_id, group_id: row.group_id });
+      continue;
+    }
+    if (decision.action !== 'rewrite') continue;
+    report.rewrite_rows.push({
+      revision_id: row.revision_id,
+      group_id: row.group_id,
+      from: row.integrity_digest,
+      to: decision.canonical,
+    });
+    if (!options.apply) continue;
+    try {
+      const appended = await appendCanonicalRevision(db, row, decision.canonical);
+      if (appended.revision_id == null) {
+        report.conflicts.push({
+          group_id: row.group_id,
+          revision_id: row.revision_id,
+          reason: appended.reason,
+        });
+        continue;
+      }
+      report.appended += 1;
+      report.appended_rows.push({
+        group_id: row.group_id,
+        from_revision_id: row.revision_id,
+        to_revision_id: appended.revision_id,
+      });
+    } catch (error) {
+      report.failed.push({
+        group_id: row.group_id,
+        revision_id: row.revision_id,
+        cause: errorText(error),
+      });
+    }
+  }
+  return report;
+}
+
+function admissionFor(row: {
+  scoring_admission_state: 'admitted' | 'withheld';
+  scoring_admission_evidence: PublishAdmission['evidence'];
+  scoring_admission_withheld_reason: PublishAdmission['reason'] | null;
+}): PublishAdmission {
+  if (row.scoring_admission_state === 'admitted') {
+    return { state: 'admitted', evidence: row.scoring_admission_evidence };
+  }
+  return { state: 'withheld', reason: row.scoring_admission_withheld_reason ?? undefined };
+}
+
+async function appendCanonicalRevision(
+  db: Db,
+  row: {
+    revision_id: string;
+    group_id: string;
+    structure: unknown;
+    response_spec: unknown;
+    scoring_basis: unknown;
+    execution_plan: unknown;
+    presentation: unknown;
+    availability: 'general_pool' | 'container_only';
+    scoring_admission_state: 'admitted' | 'withheld';
+    scoring_admission_evidence: PublishAdmission['evidence'];
+    scoring_admission_withheld_reason: PublishAdmission['reason'] | null;
+    scoring_admission_generation: number;
+  },
+  canonical: string,
+): Promise<{ revision_id: string | null; reason: string }> {
+  const seal = publishedContractSeal(layersOfStoredRevision(row));
+  const published = await publishQuestionGroup(db, {
+    group_id: row.group_id,
+    contract: {
+      structure: seal.parsed.structure,
+      response_spec: seal.parsed.response_spec,
+      scoring_basis: seal.parsed.scoring_basis,
+      execution_plan: seal.parsed.execution_plan,
+      ...(seal.parsed.presentation != null ? { presentation: seal.parsed.presentation } : {}),
+      integrity_digest: canonical,
+    },
+    expectedCurrentRevision: row.revision_id,
+    expectedAdmissionGeneration: row.scoring_admission_generation,
+    availability: row.availability,
+    admission: admissionFor(row),
+    actorRef: 'reseal:admission-digest',
+    now: new Date(),
+  });
+  if (published.status !== 'published') {
+    return {
+      revision_id: null,
+      reason: published.status === 'conflict' ? published.reason : published.status,
+    };
+  }
+  return { revision_id: published.revision_id, reason: 'published' };
+}
+
+export function errorText(error: unknown): string {
+  const lines: string[] = [];
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+  while (current != null && typeof current === 'object' && !seen.has(current)) {
+    seen.add(current);
+    const record = current as { message?: unknown; code?: unknown; cause?: unknown };
+    const message = typeof record.message === 'string' ? record.message : String(current);
+    const code = typeof record.code === 'string' ? ` [${record.code}]` : '';
+    lines.push(`${message}${code}`);
+    current = record.cause;
+  }
+  return lines.length > 0 ? lines.join('\ncaused by: ') : String(error);
 }
