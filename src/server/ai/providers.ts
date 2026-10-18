@@ -235,40 +235,11 @@ const PROVIDERS: Record<Provider, BoundProviderConfig> = {
     apiKeyEnv: 'OPENCODE_API_KEY',
     description: 'OpenCode Go subscription catalog via the pi execution adapter',
     modelDefaults: {
-      // The lane has no transport-level structured-output contract, and tool
-      // calling stays opt-in per model below: declare both false explicitly
-      // (not 'unknown') so the capability gate rejects with an honest
-      // classification, not a gap.
-      capabilities: { structuredOutput: false, toolCalling: false },
+      // This lane does not send response_format, so catalog structured_output stays off.
+      capabilities: { structuredOutput: false },
       // pi usage.cost is a catalog-rate estimate, not a contractual invoice
       // (design §6 R1): never metered.
       execution: { meteredUsd: false },
-    },
-    models: {
-      // YUK-1021 (921 P2) — evidence-gated toolCalling declarations: a model
-      // flips to true only after a sealed actual-output tool-loop run lands in
-      // docs/planning/evidence/2026-09-21-pi-tool-loop-<model>-actual.json.
-      // The pi catalog JSON carries no tool_call bit, so this binding IS the
-      // authoritative classification for opencode-go.
-      'glm-5.3-flash': { capabilities: { toolCalling: true } },
-      'deepseek-v4-pro': { capabilities: { toolCalling: true } },
-      // YUK-1341 — mimo-v2.6-pro is the post-incident product lane for
-      // CopilotTask and the other needsToolCall kinds (xiaomi mimo-v2.5-pro
-      // hit 402 insufficient_balance). Sealed evidence for this binding:
-      //   docs/planning/evidence/2026-09-21-pi-tool-loop-mimo-v2.6-pro-actual.json
-      //     (production SourcingTask entry + tool_call_log reconciliation,
-      //      2026-10-06T18:02Z)
-      //   docs/planning/evidence/2026-09-21-pi-p3-copilot-mimo-v2.6-pro-actual.json
-      //     (production Copilot two durable turns, 2026-10-06T18:05Z)
-      //   docs/planning/evidence/2026-10-07-yuk1341-synthetic-tool-mimo-v2.6-pro-actual.json
-      //     (PiAgentAdapter + synthetic tool wire proof — the surviving
-      //      artifact is the 2026-10-06T18:07Z post-binding reseal; the harness
-      //      had hardcoded pre-binding labels, superseded in that file's
-      //      `correction` record. The original pre-binding seal was overwritten
-      //      by the reseal and is not recoverable.)
-      // Vision needs no binding here: the native pi catalog declares
-      // input text+image and model-profiles reads it as authoritative.
-      'mimo-v2.6-pro': { capabilities: { toolCalling: true } },
     },
   },
   // YUK-365 — subscription-OAuth lane. Opus 4.8 via the owner's Claude Max
