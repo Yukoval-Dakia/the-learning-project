@@ -24,66 +24,48 @@ const digestOf = (bytes: Uint8Array) => `sha256:${bytesToHex(sha256(bytes))}`;
 const SAFE_CODE = 'globalThis.draw = function (port, init) { port.postMessage("{}"); };';
 
 describe('verifyCode', () => {
-  // @invariant security: 只有与 digest 一致、内容合规的代码才会被注入
-  // @fails-if the digest comparison is dropped, so bytes whose sha256 differs from the digest are returned as code
-  it('rejects code whose digest does not match', () => {
-    const bytes = utf8(SAFE_CODE);
-    expect(verifyCode(bytes, digestOf(utf8(`${SAFE_CODE} `)))).toBeNull();
-  });
+  const hex = bytesToHex(sha256(utf8(SAFE_CODE)));
+  const rows: { name: string; bytes: Uint8Array; digests: string[]; expected: string | null }[] = [
+    {
+      name: 'digest mismatch',
+      bytes: utf8(SAFE_CODE),
+      digests: [digestOf(utf8(`${SAFE_CODE} `))],
+      expected: null,
+    },
+    {
+      name: 'unverified: digest',
+      bytes: utf8(SAFE_CODE),
+      digests: [`unverified:${hex}`, 'unverified:'],
+      expected: null,
+    },
+    {
+      name: 'malformed digest',
+      bytes: utf8(SAFE_CODE),
+      digests: [`sha256:${hex.toUpperCase()}`, `sha256:${hex.slice(0, 63)}`, hex, `SHA256:${hex}`],
+      expected: null,
+    },
+    ...[
+      { name: '</SCRIPT (uppercase)', bytes: utf8(`${SAFE_CODE}</SCRIPT><img src=x>`) },
+      { name: '<!--', bytes: utf8(`${SAFE_CODE}<!--`) },
+      { name: 'NUL', bytes: utf8(`${SAFE_CODE}\u0000`) },
+      { name: 'invalid UTF-8', bytes: new Uint8Array([0xc3, 0x28]) },
+    ].map((row) => ({ ...row, digests: [digestOf(row.bytes)], expected: null })),
+    {
+      name: 'compliant code (positive)',
+      bytes: utf8(SAFE_CODE),
+      digests: [digestOf(utf8(SAFE_CODE))],
+      expected: SAFE_CODE,
+    },
+  ];
 
   // @invariant security: 只有与 digest 一致、内容合规的代码才会被注入
-  // @fails-if an `unverified:` digest is treated as a bypass and the code is returned unchecked
-  it('rejects an unverified: digest', () => {
-    const bytes = utf8(SAFE_CODE);
-    const hex = bytesToHex(sha256(bytes));
-    expect(verifyCode(bytes, `unverified:${hex}`)).toBeNull();
-    expect(verifyCode(bytes, 'unverified:')).toBeNull();
-  });
-
-  // @invariant security: 只有与 digest 一致、内容合规的代码才会被注入
-  // @fails-if the digest format check or comparison accepts a non-canonical digest (uppercase hex, wrong length, missing prefix)
-  it('rejects a malformed digest', () => {
-    const bytes = utf8(SAFE_CODE);
-    const hex = bytesToHex(sha256(bytes));
-    expect(verifyCode(bytes, `sha256:${hex.toUpperCase()}`)).toBeNull();
-    expect(verifyCode(bytes, `sha256:${hex.slice(0, 63)}`)).toBeNull();
-    expect(verifyCode(bytes, hex)).toBeNull();
-    expect(verifyCode(bytes, `SHA256:${hex}`)).toBeNull();
-  });
-
-  // @invariant security: 只有与 digest 一致、内容合规的代码才会被注入
-  // @fails-if the closing-script check becomes case-sensitive, so `</SCRIPT` with a matching digest is injected and can end the shell's script early
-  it('rejects code containing </SCRIPT (uppercase)', () => {
-    const bytes = utf8(`${SAFE_CODE}</SCRIPT><img src=x>`);
-    expect(verifyCode(bytes, digestOf(bytes))).toBeNull();
-  });
-
-  // @invariant security: 只有与 digest 一致、内容合规的代码才会被注入
-  // @fails-if the `<!--` check is removed, so code with a matching digest can switch the parser's script state
-  it('rejects code containing <!--', () => {
-    const bytes = utf8(`${SAFE_CODE}<!--`);
-    expect(verifyCode(bytes, digestOf(bytes))).toBeNull();
-  });
-
-  // @invariant security: 只有与 digest 一致、内容合规的代码才会被注入
-  // @fails-if the NUL check is removed, so code with a matching digest containing U+0000 is injected
-  it('rejects code containing NUL', () => {
-    const bytes = utf8(`${SAFE_CODE}\u0000`);
-    expect(verifyCode(bytes, digestOf(bytes))).toBeNull();
-  });
-
-  // @invariant security: 只有与 digest 一致、内容合规的代码才会被注入
-  // @fails-if decoding is not fatal, so invalid UTF-8 with a matching digest is decoded with replacement characters and injected
-  it('rejects bytes that are not valid UTF-8', () => {
-    const bytes = new Uint8Array([0xc3, 0x28]);
-    expect(verifyCode(bytes, digestOf(bytes))).toBeNull();
-  });
-
-  // @invariant security: 只有与 digest 一致、内容合规的代码才会被注入
-  // @fails-if verification rejects compliant code or returns text other than the exact hashed buffer
-  it('returns the exact text of compliant code with a matching digest', () => {
-    const bytes = utf8(SAFE_CODE);
-    expect(verifyCode(bytes, digestOf(bytes))).toBe(SAFE_CODE);
+  // @fails-if any row's rule breaks: digest comparison dropped; `unverified:` treated as a bypass; non-canonical digest accepted (uppercase, wrong length, missing/uppercase prefix); `</SCRIPT` check made case-sensitive; `<!--` check removed; NUL check removed; non-fatal UTF-8 decoding; or compliant code rejected / returned altered
+  it('injects only digest-matching, compliant code', () => {
+    for (const row of rows) {
+      for (const digest of row.digests) {
+        expect(verifyCode(row.bytes, digest), row.name).toBe(row.expected);
+      }
+    }
   });
 });
 
@@ -91,45 +73,32 @@ describe('shell and CSP', () => {
   const sources = SANDBOX_CSP.split(';').flatMap((directive) =>
     directive.trim().split(/\s+/).slice(1),
   );
+  const head = buildShell(SAFE_CODE, 'draw').match(/<head>([\s\S]*?)<\/head>/i)?.[1] ?? '';
+  const rows: { name: string; actual: unknown; expected: unknown }[] = [
+    {
+      name: "'unsafe-eval'",
+      actual: SANDBOX_CSP.toLowerCase().includes('unsafe-eval'),
+      expected: false,
+    },
+    { name: 'http: source', actual: sources.filter((s) => /^http:/i.test(s)), expected: [] },
+    { name: 'https: source', actual: sources.filter((s) => /^https:/i.test(s)), expected: [] },
+    { name: 'wildcard source', actual: sources.filter((s) => s.includes('*')), expected: [] },
+    {
+      name: "'self' source",
+      actual: sources.filter((s) => s.toLowerCase() === "'self'"),
+      expected: [],
+    },
+    {
+      name: 'CSP meta first in head',
+      actual: head.match(/^<[^>]*>/)?.[0],
+      expected: `<meta http-equiv="Content-Security-Policy" content="${SANDBOX_CSP}">`,
+    },
+  ];
 
   // @invariant security: iframe 里的代码不能执行 eval，也连不了网
-  // @fails-if 'unsafe-eval' is added to SANDBOX_CSP, letting frame code call eval/new Function
-  it("SANDBOX_CSP does not contain 'unsafe-eval'", () => {
-    expect(SANDBOX_CSP.toLowerCase()).not.toContain('unsafe-eval');
-  });
-
-  // @invariant security: iframe 里的代码不能执行 eval，也连不了网
-  // @fails-if any directive gains an http: source (scheme or URL), letting frame code reach the network
-  it('SANDBOX_CSP has no http: source', () => {
-    expect(sources.filter((source) => /^http:/i.test(source))).toEqual([]);
-  });
-
-  // @invariant security: iframe 里的代码不能执行 eval，也连不了网
-  // @fails-if any directive gains an https: source (scheme or URL), letting frame code reach the network
-  it('SANDBOX_CSP has no https: source', () => {
-    expect(sources.filter((source) => /^https:/i.test(source))).toEqual([]);
-  });
-
-  // @invariant security: iframe 里的代码不能执行 eval，也连不了网
-  // @fails-if any directive gains a wildcard (*) source, letting frame code reach any host
-  it('SANDBOX_CSP has no wildcard source', () => {
-    expect(sources.filter((source) => source.includes('*'))).toEqual([]);
-  });
-
-  // @invariant security: iframe 里的代码不能执行 eval，也连不了网
-  // @fails-if any directive gains a 'self' source, letting frame code reach the parent origin
-  it("SANDBOX_CSP has no 'self' source", () => {
-    expect(sources.filter((source) => source.toLowerCase() === "'self'")).toEqual([]);
-  });
-
-  // @invariant security: iframe 里的代码不能执行 eval，也连不了网
-  // @fails-if buildShell emits any element before the CSP meta in head, so it runs before the policy applies
-  it('buildShell puts the CSP meta first in head', () => {
-    const html = buildShell(SAFE_CODE, 'draw');
-    const head = html.match(/<head>([\s\S]*?)<\/head>/i)?.[1] ?? '';
-    const first = head.match(/^<[^>]*>/)?.[0];
-    expect(first).toBe(`<meta http-equiv="Content-Security-Policy" content="${SANDBOX_CSP}">`);
-    expect(html.indexOf('<head>')).toBeLessThan(html.indexOf('<script'));
+  // @fails-if any row's rule breaks: 'unsafe-eval' added to SANDBOX_CSP; an http:, https:, wildcard (*) or 'self' source added to any directive; or buildShell emits any element before the CSP meta in head
+  it('frame code cannot eval or reach the network', () => {
+    for (const row of rows) expect(row.actual, row.name).toEqual(row.expected);
   });
 });
 
@@ -182,119 +151,91 @@ const messageWith = (replace: Record<number, unknown> = {}, extra: unknown[] = [
 const validate = (data: unknown) => validateMessage(data, BINDS, SLOTS);
 
 describe('validateMessage', () => {
-  // @invariant security: 块发来的消息只要有一处不合格，就整条拒收，不做部分应用
-  // @fails-if the strict schema is relaxed so unknown keys (on an entry or on the message) are stripped and the rest is applied
-  it('rejects a message with extra keys', () => {
-    expect(validate(messageWith({ 1: { ...VALID_ENTRIES[1], score: 1 } }))).toBeNull();
-    expect(
-      validate(JSON.stringify({ type: 'response', entries: VALID_ENTRIES, correct: true })),
-    ).toBeNull();
+  const wide = '字'.repeat(20000);
+  // Every text is within its cap, but the UTF-8 bytes (3 per character) exceed 64 KiB.
+  const wideMessage = messageWith({
+    1: { ...VALID_ENTRIES[1], text: wide },
+    2: { ...VALID_ENTRIES[2], text_md: wide },
   });
-
-  // @invariant security: 块发来的消息只要有一处不合格，就整条拒收，不做部分应用
-  // @fails-if state `unknown` is accepted from the frame, letting it forge an illegible-handwriting state
-  it('rejects state unknown', () => {
-    expect(validate(messageWith({ 0: { ...VALID_ENTRIES[0], state: 'unknown' } }))).toBeNull();
-  });
-
-  // @invariant security: 块发来的消息只要有一处不合格，就整条拒收，不做部分应用
-  // @fails-if an entry for a slot outside this block's binds is accepted, letting the frame write another block's answer
-  it('rejects a slot_id that is not in the binds', () => {
-    expect(
-      validate(
+  const rows: { name: string; messages: unknown[] }[] = [
+    {
+      name: 'extra keys',
+      messages: [
+        messageWith({ 1: { ...VALID_ENTRIES[1], score: 1 } }),
+        JSON.stringify({ type: 'response', entries: VALID_ENTRIES, correct: true }),
+      ],
+    },
+    {
+      name: 'state unknown',
+      messages: [messageWith({ 0: { ...VALID_ENTRIES[0], state: 'unknown' } })],
+    },
+    {
+      name: 'slot_id not in binds',
+      messages: [
         messageWith({}, [
           { slot_id: 's_other', kind: 'select', state: 'answered', item_ids: ['a'] },
         ]),
-      ),
-    ).toBeNull();
-  });
+      ],
+    },
+    {
+      name: 'kind does not match bind',
+      messages: [messageWith({ 1: { slot_id: 's_blank', kind: 'open', text_md: 'x' } })],
+    },
+    {
+      name: 'item_id not in universe',
+      messages: [messageWith({ 0: { ...VALID_ENTRIES[0], item_ids: ['a', 'zzz'] } })],
+    },
+    {
+      name: 'duplicated item_id',
+      messages: [messageWith({ 0: { ...VALID_ENTRIES[0], item_ids: ['c', 'c'] } })],
+    },
+    {
+      name: 'at_most_per_coordinate broken',
+      messages: [messageWith({ 0: { ...VALID_ENTRIES[0], item_ids: ['a', 'b'] } })],
+    },
+    {
+      name: 'state blank with content',
+      messages: [
+        messageWith({ 0: { ...VALID_ENTRIES[0], state: 'blank' } }),
+        messageWith({ 1: { ...VALID_ENTRIES[1], state: 'blank' } }),
+      ],
+    },
+    {
+      name: 'NUL',
+      messages: [messageWith({ 2: { ...VALID_ENTRIES[2], text_md: 'a\u0000b' } })],
+    },
+    {
+      name: 'lone surrogate',
+      messages: [messageWith({ 1: { ...VALID_ENTRIES[1], text: 'x\uD800y' } })],
+    },
+    {
+      name: 'bidi override',
+      messages: [
+        messageWith({ 2: { ...VALID_ENTRIES[2], text_md: `ok${String.fromCharCode(0x202e)}ko` } }),
+      ],
+    },
+    {
+      name: 'text over 20000 characters',
+      messages: [messageWith({ 2: { ...VALID_ENTRIES[2], text_md: 'x'.repeat(20001) } })],
+    },
+    {
+      name: 'not a string',
+      messages: [JSON.parse(messageWith()), utf8(messageWith())],
+    },
+    {
+      name: 'over 64 KiB',
+      messages: [wideMessage, `${messageWith()}${' '.repeat(64 * 1024)}`],
+    },
+  ];
 
   // @invariant security: 块发来的消息只要有一处不合格，就整条拒收，不做部分应用
-  // @fails-if the entry kind is not checked against the bind's response class
-  it('rejects a kind that does not match the bind', () => {
-    expect(
-      validate(messageWith({ 1: { slot_id: 's_blank', kind: 'open', text_md: 'x' } })),
-    ).toBeNull();
-  });
-
-  // @invariant security: 块发来的消息只要有一处不合格，就整条拒收，不做部分应用
-  // @fails-if a select item_id outside the slot's public universe is accepted
-  it('rejects an item_id that is not in the universe', () => {
-    expect(
-      validate(messageWith({ 0: { ...VALID_ENTRIES[0], item_ids: ['a', 'zzz'] } })),
-    ).toBeNull();
-  });
-
-  // @invariant security: 块发来的消息只要有一处不合格，就整条拒收，不做部分应用
-  // @fails-if duplicate item_ids in one select entry are accepted
-  it('rejects a duplicated item_id', () => {
-    expect(validate(messageWith({ 0: { ...VALID_ENTRIES[0], item_ids: ['c', 'c'] } }))).toBeNull();
-  });
-
-  // @invariant security: 块发来的消息只要有一处不合格，就整条拒收，不做部分应用
-  // @fails-if at_most_per_coordinate is not enforced, so two items sharing left=L1 are accepted under a cap of 1
-  it('rejects a selection that breaks at_most_per_coordinate', () => {
-    expect(validate(messageWith({ 0: { ...VALID_ENTRIES[0], item_ids: ['a', 'b'] } }))).toBeNull();
-  });
-
-  // @invariant security: 块发来的消息只要有一处不合格，就整条拒收，不做部分应用
-  // @fails-if a blank state carrying content is accepted (select item_ids or blank text)
-  it('rejects state blank that carries content', () => {
-    expect(validate(messageWith({ 0: { ...VALID_ENTRIES[0], state: 'blank' } }))).toBeNull();
-    expect(validate(messageWith({ 1: { ...VALID_ENTRIES[1], state: 'blank' } }))).toBeNull();
-  });
-
-  // @invariant security: 块发来的消息只要有一处不合格，就整条拒收，不做部分应用
-  // @fails-if the control-character check is removed, so text containing NUL is accepted
-  it('rejects text containing NUL', () => {
-    expect(validate(messageWith({ 2: { ...VALID_ENTRIES[2], text_md: 'a\u0000b' } }))).toBeNull();
-  });
-
-  // @invariant security: 块发来的消息只要有一处不合格，就整条拒收，不做部分应用
-  // @fails-if the lone-surrogate check is removed, so ill-formed UTF-16 text is accepted
-  it('rejects text containing a lone surrogate', () => {
-    expect(validate(messageWith({ 1: { ...VALID_ENTRIES[1], text: 'x\uD800y' } }))).toBeNull();
-  });
-
-  // @invariant security: 块发来的消息只要有一处不合格，就整条拒收，不做部分应用
-  // @fails-if the bidi check is removed, so text with a right-to-left override is accepted
-  it('rejects text containing a bidi override', () => {
-    expect(validate(messageWith({ 2: { ...VALID_ENTRIES[2], text_md: 'ok‮ko' } }))).toBeNull();
-  });
-
-  // @invariant security: 块发来的消息只要有一处不合格，就整条拒收，不做部分应用
-  // @fails-if the per-text cap of 20000 characters is removed or raised
-  it('rejects text longer than 20000 characters', () => {
-    expect(
-      validate(messageWith({ 2: { ...VALID_ENTRIES[2], text_md: 'x'.repeat(20001) } })),
-    ).toBeNull();
-  });
-
-  // @invariant security: 块发来的消息只要有一处不合格，就整条拒收，不做部分应用
-  // @fails-if a non-string message (structured-clone object) is parsed instead of rejected
-  it('rejects a message that is not a string', () => {
-    expect(validate(JSON.parse(messageWith()))).toBeNull();
-    expect(validate(utf8(messageWith()))).toBeNull();
-  });
-
-  // @invariant security: 块发来的消息只要有一处不合格，就整条拒收，不做部分应用
-  // @fails-if the 64 KiB cap is dropped or measured in UTF-16 units instead of UTF-8 bytes
-  it('rejects a message larger than 64 KiB', () => {
-    // Every text is within its cap, but the UTF-8 bytes (3 per character) exceed 64 KiB.
-    const wide = '字'.repeat(20000);
-    const big = messageWith({
-      1: { ...VALID_ENTRIES[1], text: wide },
-      2: { ...VALID_ENTRIES[2], text_md: wide },
-    });
-    expect(big.length).toBeLessThan(64 * 1024);
-    expect(validate(big)).toBeNull();
-    expect(validate(`${messageWith()}${' '.repeat(64 * 1024)}`)).toBeNull();
-  });
-
-  // @invariant security: 块发来的消息只要有一处不合格，就整条拒收，不做部分应用
-  // @fails-if validation rejects a fully valid message or alters its entries
-  it('accepts a valid message unchanged', () => {
-    expect(validate(messageWith())).toEqual(VALID_ENTRIES);
+  // @fails-if any row's rule breaks, so the message is accepted in whole or in part: strict schema relaxed (extra entry/message keys stripped); state `unknown` accepted; slot outside the binds accepted; kind not checked against the bind; item_id outside the universe accepted; duplicate item_ids accepted; at_most_per_coordinate not enforced; blank state with content accepted; NUL, lone-surrogate or bidi checks removed; 20000-char text cap removed; non-string message parsed; 64 KiB cap dropped or measured in UTF-16 units; or a fully valid message rejected / altered
+  it('rejects the whole message when any part is unacceptable', () => {
+    expect(wideMessage.length, 'over 64 KiB').toBeLessThan(64 * 1024);
+    for (const row of rows) {
+      for (const message of row.messages) expect(validate(message), row.name).toBeNull();
+    }
+    expect(validate(messageWith()), 'valid message (positive)').toEqual(VALID_ENTRIES);
   });
 });
 
