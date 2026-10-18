@@ -234,6 +234,7 @@ export const dbTestInclude = [
   'src/capabilities/shell/api/teaching-brief-interaction.db.test.ts',
   'src/capabilities/shell/server/teaching-brief-issuance.db.test.ts',
   'src/kernel/events/events.db.test.ts',
+  'src/kernel/records/admission-digest-reseal.db.test.ts',
   'src/kernel/tools/tool-operations.db.test.ts',
   'src/server/advisory-locks.db.test.ts',
   'src/server/ai/provider-attempt-lifecycle.db.test.ts',

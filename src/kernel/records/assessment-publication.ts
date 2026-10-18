@@ -660,6 +660,7 @@ async function publishedLayersChanged(
  * 维度 + generation，不铸新 revision）。
  *
  * P2：integrity_digest 必须是这份契约的规范封存，或旧的 schema 序 / 调用方序封存。
+ * 接受之后新 revision 写规范封印，不把调用方键序原样留下。
  * 同一摘要原样送回不铸新版。摘要不同则只在规范形式相同、且库内摘要仍是该层的
  * 某种封存时不铸新版。structure.group_id 必须与目标 group 一致。
  */
@@ -769,6 +770,7 @@ export async function publishQuestionGroup(
         `publishQuestionGroup: contract layers do not match the published schema: ${detail}`,
       );
     }
+    const integrityDigest = seal.canonical;
 
     // 组级串行化：锁根 question 行（发布与编辑同一锁序 question → lifecycle）。
     const [root] = await tx
@@ -857,21 +859,21 @@ export async function publishQuestionGroup(
           `publishQuestionGroup: integrity_digest mismatch (supplied ${contract.integrity_digest}, canonical ${seal.canonical}) — regenerate the contract via contract-normalizer`,
         );
       }
-      if (sameDocument) {
+      if (current != null && sameDocument) {
         if (lifecycleDimensionsMatch(lifecycle, input)) {
           const noopResult = {
             status: 'noop' as const,
             group_id: groupId,
             current_revision_id: currentRevisionId,
             reason: 'digest_unchanged' as const,
-            revision_digest: contract.integrity_digest,
+            revision_digest: current.digest,
             admission_generation: currentGeneration ?? 0,
           };
           await insertAdmissionVerification(
             tx,
             input,
             currentRevisionId,
-            contract.integrity_digest,
+            current.digest,
             currentGeneration ?? 0,
           );
           return noopResult;
@@ -954,7 +956,7 @@ export async function publishQuestionGroup(
       revision_id: revisionId,
       group_id: groupId,
       revision_ordinal: nextOrdinal,
-      integrity_digest: contract.integrity_digest,
+      integrity_digest: integrityDigest,
       structure: contract.structure,
       response_spec: contract.response_spec,
       scoring_basis: contract.scoring_basis,
@@ -1020,7 +1022,7 @@ export async function publishQuestionGroup(
         revision_id: revisionId,
         revision_ordinal: nextOrdinal,
         supersedes_revision_id: currentRevisionId,
-        integrity_digest: contract.integrity_digest,
+        integrity_digest: integrityDigest,
         availability: input.availability,
         admission: input.admission.state,
         admission_generation: admissionGeneration,
@@ -1047,13 +1049,7 @@ export async function publishQuestionGroup(
       created_at: input.now,
     });
 
-    await insertAdmissionVerification(
-      tx,
-      input,
-      revisionId,
-      contract.integrity_digest,
-      admissionGeneration,
-    );
+    await insertAdmissionVerification(tx, input, revisionId, integrityDigest, admissionGeneration);
 
     return {
       status: 'published',
@@ -1062,7 +1058,7 @@ export async function publishQuestionGroup(
       group_id: groupId,
       event_id: eventId,
       admission_generation: admissionGeneration,
-      revision_digest: contract.integrity_digest,
+      revision_digest: integrityDigest,
     };
   });
 }

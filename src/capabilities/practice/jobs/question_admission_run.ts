@@ -122,9 +122,10 @@ type GradedContract = {
 };
 
 /**
- * The stored digest matches when it is the canonical seal or either legacy
- * seal (schema key order, or the caller/jsonb key order the edit path copies).
- * A stored key that matches none of them is not graded.
+ * Grade the stored revision only when its digest is the canonical seal, or a
+ * legacy seal recomputed from these stored layers (schema key order, or the
+ * stored jsonb key order). A caller-order digest that matches none of those
+ * is not graded.
  */
 function sealedRevisionContract(revision: typeof question_revision.$inferSelect): {
   contract: NormalizedContract;
