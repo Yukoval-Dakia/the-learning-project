@@ -35,8 +35,8 @@ for later cost reconciliation; it does not claim an error is a successful receip
 ## Claim authorization and known verdicts
 
 New policy/unit: `question_admission@2` / `admission@2`. New jobs carry
-`admission_version:2`; storage envelopes retain version 1. Old queued deliveries
-may reconcile existing @1 receipts but cannot send again or initiate @2.
+`admission_version:2`; storage envelopes retain version 1. Old @1 queued deliveries
+turn stale before claiming; they cannot send again or initiate @2.
 
 A version bump is NOT permission to repay unknown work. Ordinary subscriber,
 reverify, source promotion and hold-release jobs have NO marker, so the normal
@@ -62,6 +62,35 @@ verdicts across @1/@2, including the 409 guard. The manual fallback job carries
 version 2 but never receives the lead-only marker. The temporary patch file
 was removed after application.
 
+## Mandatory pre-deploy cutover gate
+
+BEFORE deploying the new app AND worker, remove any
+`QUESTION_ADMISSION_POLICY_ID=...@1` pin from BOTH environments. Do not wait
+until running the reopen script: `resolveQuestionAdmissionPolicyId()` now
+throws for the obsolete pin inside `source_verify`'s promotion transaction,
+which runs after its paid call.
+
+Immediately before cutover, run this exact read-only SQL on the approved TEST
+database and save the result in the private deployment evidence:
+
+```sql
+SELECT count(*) AS receipt_ready_count
+FROM paid_effect
+WHERE family = 'question_admission_run'
+  AND unit = 'admission@1'
+  AND state = 'receipt_ready';
+```
+
+The result MUST be **0**. Otherwise STOP and do not deploy; reconcile the
+receipts first. This is the selected operational gate for cross-version
+receipt recovery, not a new receipt migration. The lead's read-only TEST
+inspection found only five `admission@1|unknown` rows and zero receipt-ready
+rows; the immediate pre-cutover query must reconfirm zero. After deployment,
+old @1 jobs turn stale before claiming, so no new @1 claims are possible.
+The only remaining @1 rows are therefore the five unknowns authorized below.
+The reopen script repeats the receipt-ready count under the family lock and
+refuses before any re-pend if it is nonzero.
+
 ## Lead pre-flight — BEFORE re-pending anything
 
 The script is an explicit TEST operation, not a scheduler or another admission
@@ -71,11 +100,15 @@ It is not executed by this implementation agent.
 1. Use the SAME environment/configuration as the deployed TEST app AND worker.
    Verify `AI_PROVIDER_OVERRIDE=xiaomi-token-plan`,
    `AI_PROVIDER_MODEL=mimo-v2.6-pro`, and the Token Plan endpoint/key. Remove any
-   leftover `QUESTION_ADMISSION_POLICY_ID=...@1` pin in BOTH processes.
+   leftover `QUESTION_ADMISSION_POLICY_ID=...@1` pin in BOTH processes BEFORE
+   DEPLOY, as required by the cutover gate above.
    `QUESTION_ADMISSION_SOLVER2_PROVIDER` / `_MODEL` must both be unset, or their
-   effective pair must resolve to an `openai-completions` model. The script
-   checks catalog metadata, including single-field overrides, without calling
-   the second model. Stop if incompatible; do not spend any of the five attempts.
+   effective pair must resolve to an `openai-completions` model. For BOTH
+   solvers the script also calls the runtime's `assertModelProfileCapabilityFit`
+   with the solve task's real requirements, including `needsToolCall: true`:
+   unknown/false `toolCalling` is refused. It checks catalog/profile metadata,
+   including single-field overrides, without calling the second model.
+   Stop if incompatible; do not spend any of the five attempts.
 2. Make ONE synthetic probe outside `paid_effect`, using the actual output
    schema, forced tool_choice and no retries:
 
@@ -105,7 +138,8 @@ It is not executed by this implementation agent.
 
    The successful probe must be less than one hour old with identical routing
    and schema. This mode makes NO model call itself. Under one family-locked
-   transaction for all five, it checks the exact @1 unknown, absence of @2 and
+   transaction for all five, it first refuses ANY @1 receipt-ready row, then
+   checks the exact @1 unknown, absence of @2 and
    absence of any applied verdict for the base; locks root/lifecycle; loads and
    schema-parses the CURRENT published layers; and verifies the published seal using main's `publishedContractSeal` /
    `publishedSealAccepts` (including supported historical seals).

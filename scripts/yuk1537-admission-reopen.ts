@@ -3,7 +3,7 @@
 // re-pends and enqueues exactly five explicitly named @1 unknown identities.
 import { createHash } from 'node:crypto';
 import { open, readFile } from 'node:fs/promises';
-import { and, eq } from 'drizzle-orm';
+import { and, count, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Provider } from '@/ai/task-spec';
 import {
@@ -20,6 +20,7 @@ import {
   QUESTION_ADMISSION_PAID_UNITS,
 } from '@/core/question-admission-policy';
 import { zodToJsonSchemaCompat } from '@/kernel/zod-json-schema';
+import { assertModelProfileCapabilityFit } from '@/server/ai/model-profiles';
 import { nativePiModel } from '@/server/ai/pi-provider-catalog';
 import { xiaomiTokenPlanBaseUrl } from '@/server/ai/xiaomi-token-plan';
 
@@ -51,17 +52,27 @@ function routing() {
     throw new Error('Require TEST app/worker pin xiaomi-token-plan / mimo-v2.6-pro');
   }
   if (process.env.QUESTION_ADMISSION_POLICY_ID?.trim().endsWith('@1')) {
-    throw new Error('Remove obsolete QUESTION_ADMISSION_POLICY_ID @1 pin before spending');
+    throw new Error('Remove obsolete QUESTION_ADMISSION_POLICY_ID @1 pin before deploy');
   }
   const solver2Provider = process.env.QUESTION_ADMISSION_SOLVER2_PROVIDER;
   const solver2Model = process.env.QUESTION_ADMISSION_SOLVER2_MODEL;
-  if (solver2Provider || solver2Model) {
-    const model = nativePiModel(
+  for (const [solver, provider, model] of [
+    ['Solver A', 'xiaomi-token-plan', 'mimo-v2.6-pro'],
+    [
+      'Solver B',
       (solver2Provider || 'xiaomi-token-plan') as Provider,
       solver2Model || 'mimo-v2.6-pro',
-    );
-    if (model?.api !== 'openai-completions') {
-      throw new Error('Second solver must be unset or resolve to an OpenAI-completions model');
+    ],
+  ] as const) {
+    try {
+      assertModelProfileCapabilityFit(questionAdmissionSolveTaskSpec.definition, provider, model);
+      if (nativePiModel(provider, model)?.api !== 'openai-completions') {
+        throw new Error('Require an OpenAI-completions model');
+      }
+    } catch (error) {
+      throw new Error(
+        `${solver} routing refused before re-pend: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
   return {
@@ -212,6 +223,18 @@ async function reopen(receiptPath: string, manifestPath: string) {
   try {
     const jobs = await db.transaction(async (tx) => {
       await lockPaidEffectControlFamily(tx, ADMISSION_FAMILY);
+      const [legacyReceipts] = await tx
+        .select({ count: count() })
+        .from(paid_effect)
+        .where(
+          and(
+            eq(paid_effect.family, ADMISSION_FAMILY),
+            eq(paid_effect.unit, LEGACY_QUESTION_ADMISSION_PAID_UNIT),
+            eq(paid_effect.state, 'receipt_ready'),
+          ),
+        );
+      if (legacyReceipts.count !== 0)
+        throw new Error('Stop: admission@1 receipt_ready rows must be reconciled before cutover');
       const control = await readPaidEffectControl(tx, ADMISSION_FAMILY);
       if (control.backend !== 'pg-boss') throw new Error('Admission producer fenced');
       const jobs: { group_id: string; job_id: string }[] = [];
