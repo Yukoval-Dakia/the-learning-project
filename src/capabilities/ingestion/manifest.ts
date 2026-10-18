@@ -413,6 +413,10 @@ export const ingestionCapability = defineCapability({
         load: () =>
           import('./server/tools/proposal-tools').then((m) => m.proposeRecordPromotionTool),
       },
+      // YUK-1468 — 六个窄 question-block 编辑薄壳【保留在 inventory 但无任何
+      // surface 授权】：编辑统一走 edit_question，提交走 submit_question。
+      // allowlist 不授它们；注册保留给存量 db 测试与后续删除 PR（owner 批准
+      // 测试删除后清理模块）。纯逻辑留在 server/block-structured-edit.ts。
       {
         name: 'update_prompt',
         load: () =>

@@ -573,6 +573,8 @@ async function issueAssessmentInternal(
 
     // The group-root lock serializes this recheck with publication/withdrawal.
     // Historical replay above keeps its immutable revision and held evidence.
+    // 新发题必须是当前 revision。过期版本（包括调用方显式钉住的旧版）拒绝；
+    // 已有 issuance 的重放在上面返回，不走到这里。
     if (!capture) {
       if (revisionId !== lifecycle?.current_revision_id) return { status: 'revision_mismatch' };
       if (lifecycle?.scoring_admission_state !== 'admitted') return { status: 'not_admitted' };

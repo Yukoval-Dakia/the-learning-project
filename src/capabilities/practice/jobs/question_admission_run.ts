@@ -47,7 +47,7 @@ import {
   completedAdmissionStatus,
 } from '../server/admission/receipt';
 import {
-  QUESTION_ADMISSION_POLICY_ID,
+  resolveQuestionAdmissionPolicyId,
   runQuestionAdmission,
 } from '../server/admission/run-admission';
 import { publishQuestionGroup } from '../server/quiz/verify-and-promote';
@@ -63,7 +63,6 @@ export interface QuestionAdmissionRunResult {
 }
 const SOLVER2_PROVIDER = process.env.QUESTION_ADMISSION_SOLVER2_PROVIDER as Provider | undefined;
 const SOLVER2_MODEL = process.env.QUESTION_ADMISSION_SOLVER2_MODEL;
-const POLICY_ID = process.env.QUESTION_ADMISSION_POLICY_ID ?? QUESTION_ADMISSION_POLICY_ID;
 
 async function loadDefinition(db: Db | Tx, rootId: string) {
   const [root] = await db.select().from(question).where(eq(question.id, rootId)).limit(1);
@@ -201,7 +200,7 @@ export async function runAdmissionForQuestion(
           admission_generation: lifecycle?.scoring_admission_generation ?? 0,
           contract,
           subject_profile: await subjectProfileFor(tx, rootId),
-          policy_id: POLICY_ID,
+          policy_id: resolveQuestionAdmissionPolicyId(),
           solver2:
             SOLVER2_PROVIDER || SOLVER2_MODEL
               ? { provider: SOLVER2_PROVIDER, model: SOLVER2_MODEL }

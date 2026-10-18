@@ -264,12 +264,14 @@ async function seedStagedAsset(
 
 /**
  * 确定性复现 canonical-hash 并发 race：execute 的 db.transaction 调用序固定为
- *   #1 = exact-dup 预检 tx（此刻冲突行尚不存在 → peek 必然 miss → 返回 null）；
- *   #2 = insert+链接+verify-intent tx。
- * 在 #2 的 callback 执行前用原 db 提交一条同 hash 的 winner 行，等价于「预检 miss
+ *   #1 = request_id 幂等 claim；
+ *   #2 = exact-dup 预检 tx（此刻冲突行尚不存在 → peek 必然 miss → 返回 null）；
+ *   #3 = insert+链接+verify-intent tx。
+ * 在 #3 的 callback 执行前用原 db 提交一条同 hash 的 winner 行，等价于「预检 miss
  * 之后、本 tx INSERT 之前另一并发插入已提交获胜」——insertSourcedDraft 的
  * ON CONFLICT DO NOTHING 因而空返回，走真实的 raced_merged 合并路径。
- * （若实现在预检之前新增 transaction 调用，本注入会错位并被测试失败暴露。）
+ * 打在 #2 上只会命中普通 duplicate 文案，不再覆盖并发补偿。
+ * （若实现在 insert 之前再新增 transaction 调用，本注入会错位并被测试失败暴露。）
  */
 function injectHashConflictOnInsertTx(db: Db, inject: () => Promise<unknown>): Db {
   let txCalls = 0;
@@ -278,7 +280,7 @@ function injectHashConflictOnInsertTx(db: Db, inject: () => Promise<unknown>): D
       if (prop === 'transaction') {
         return (cb: (tx: Tx) => Promise<unknown>) => {
           txCalls += 1;
-          const shouldInject = txCalls === 2;
+          const shouldInject = txCalls === 3;
           return target.transaction(async (tx) => {
             if (shouldInject) await inject();
             return cb(tx);
