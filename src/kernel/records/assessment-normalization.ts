@@ -1015,7 +1015,7 @@ export interface PublishedContractSeal {
   canonical: string;
   /** 旧封存：schema 解析对象的键序（zod）。 */
   legacyParsed: string;
-  /** 旧封存：调用方或 jsonb 读出对象的键序。 */
+  /** 旧封存：传进这份函数的对象自己的键序。读库存时这是 jsonb 键序，不是当初调用方的键序。 */
   legacyRaw: string;
 }
 
@@ -1044,6 +1044,10 @@ export function publishedContractSeal(contract: {
   };
 }
 
+/**
+ * 只接受从【这份对象】重算出来的封印：规范摘要、schema 键序、该对象自己的键序。
+ * 值被改过时这三份都会变。调用方键序和存库 jsonb 键序不是同一份，不能在这里另开一档。
+ */
 export function publishedSealAccepts(seal: PublishedContractSeal, digest: string): boolean {
   return digest === seal.canonical || digest === seal.legacyParsed || digest === seal.legacyRaw;
 }
