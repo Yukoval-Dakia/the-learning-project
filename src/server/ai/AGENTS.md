@@ -13,7 +13,7 @@
 | `tools/pi-subagent.ts` | YUK-1022 嵌套子代理：`PiSpawnContract`（`createSpawnDecider` 包成 beforeToolCall 闸）+ `PiSubagentHost`（子 loop 宿主、abort 血统、task_* 帧、usage 归并）+ `Task`/`Agent` AgentTool 构造 |
 | `sdk-types.ts` | YUK-1025 vendored 帧类型：SDKMessage 线形（assistant/result/user/task_*）是 pi 事件的归一化目标形状——纯类型，零运行时依赖 |
 | `sdk-terminal.ts` | 把归一化 assistant/result 帧适配为 lifecycle usage、thinking 元数据与终态证据；不持久化原始 CoT |
-| `providers.ts` | provider 注册表（xiaomi / xiaomi-token-plan / anthropic / zai-coding-cn / opencode-go）+ YUK-924 provider model binding（`models` / `modelDefaults`，config-over-catalog 的 config 层）|
+| `providers.ts` | provider 注册表（xiaomi / xiaomi-token-plan / anthropic / zhipuai-coding-plan / opencode-go）+ YUK-924 provider model binding（`models` / `modelDefaults`，config-over-catalog 的 config 层）|
 | `model-profiles.ts` + `model-catalog.snapshot.json` | YUK-924 ModelProfile 注册表：models.dev 裁剪快照（`pnpm gen:model-catalog` 重生成，运行时零网络）+ binding→catalog→保守默认三层合并 + needsToolCall/isMultimodal fail-closed 能力门 |
 | `log.ts` | run / event 留痕 |
 | `provenance.ts` | source / `last_modified_by` 标记 |
@@ -27,7 +27,7 @@
 ## 关键约束
 - Domain Tool Registry 是源头；pi mount 只是把 registry DomainTool 编译成 `AgentTool`（execute 委托共享的 `executeDomainToolCall` 管线，`tool_call_log`/`tool_use` mirror/`interceptInput`/output-schema 语义不变）。
 - Owner 2026-10-03：旧 Xiaomi/Zhipu Anthropic-compatible 线路已移除。
-  Xiaomi 与 `zai-coding-cn` 使用 pi 原生 OpenAI Completions 预设，保留其
+  Xiaomi 与 `zhipuai-coding-plan` 使用 pi 原生 OpenAI Completions 预设，保留其
   thinking/tool-stream compat；旧 MiMo Pro（xiaomi mimo-v2.5-pro）为纯文本，视觉任务使用 mimo-v2.5。opencode-go 的 mimo-v2.6-pro 为 text+image（native pi catalog）。该 lane 的 toolCalling 来自 models.dev 快照，不来自逐模型 binding。
   Claude 订阅只改变认证，复用原生 anthropic 的目录/协议/compat。
   原始 CoT 不持久化；每次 lifecycle attempt 独占 terminal evidence collector。

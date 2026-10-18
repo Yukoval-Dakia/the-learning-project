@@ -107,7 +107,7 @@ describe('GET /api/admin/config — injected runtime facts over HTTP (real build
       implemented: true,
     });
     expect(byName.has('zhipu')).toBe(false);
-    expect(byName.get('zai-coding-cn')).toMatchObject({
+    expect(byName.get('zhipuai-coding-plan')).toMatchObject({
       pi_provider: 'zai-coding-cn',
       credential_env: 'ZAI_CODING_CN_API_KEY',
     });

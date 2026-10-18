@@ -36,10 +36,10 @@ import { PROVIDER_ATTEMPT_ADMISSION_LANES } from '@/server/ai/provider-attempt-a
 import {
   ANTHROPIC_SUB_DEFAULT_MODEL,
   type Provider,
-  isKnownProvider,
   isProviderImplemented,
   isProviderImplementedForTask,
   providerRequiresExplicitModel,
+  readProviderId,
   resolveGlobalProviderSwitch,
 } from '@/server/ai/providers';
 import { VISION_JUDGE_TASK_KINDS } from '@/server/ai/vision-judge-config';
@@ -99,14 +99,15 @@ function validateStaticSemantics(key: string, value: ConfigValue): void {
   // + 可裸跑（该 lane 不递 model）。
   if (key === 'JUDGE_FALLBACK_PROVIDER') {
     if (typeof value !== 'string' || value === '') return;
-    if (!isKnownProvider(value) || !isProviderImplemented(value)) {
+    const provider = readProviderId(value);
+    if (!provider || !isProviderImplemented(provider)) {
       throw new ApiError(
         'invalid_config_value',
         `JUDGE_FALLBACK_PROVIDER='${value}' is not a wired provider`,
         422,
       );
     }
-    if (providerRequiresExplicitModel(value)) {
+    if (providerRequiresExplicitModel(provider)) {
       throw new ApiError(
         'invalid_config_value',
         `JUDGE_FALLBACK_PROVIDER='${value}' requires an explicit model which the fallback lane never supplies — it would resolve to the registry mimo id and 404`,
@@ -127,10 +128,10 @@ function validateStaticSemantics(key: string, value: ConfigValue): void {
         400,
       );
     }
-    if (!isKnownProvider(value)) {
+    const provider = readProviderId(value);
+    if (!provider) {
       throw new ApiError('invalid_config_value', `${key}='${value}' is not a known provider`, 422);
     }
-    const provider = value as Provider;
     if (!isProviderImplementedForTask(provider, scope as TaskKind)) {
       throw new ApiError(
         'invalid_config_value',
@@ -143,10 +144,10 @@ function validateStaticSemantics(key: string, value: ConfigValue): void {
 
   const l = /^lane\.([^.]+)\.provider$/.exec(key);
   if (l && typeof value === 'string' && value !== '') {
-    if (!isKnownProvider(value)) {
+    const provider = readProviderId(value);
+    if (!provider) {
       throw new ApiError('invalid_config_value', `${key}='${value}' is not a known provider`, 422);
     }
-    const provider = value as Provider;
     if (!isProviderImplemented(provider)) {
       throw new ApiError(
         'invalid_config_value',
@@ -177,14 +178,24 @@ function validateStaticSemantics(key: string, value: ConfigValue): void {
   }
   if (key === 'AI_PROVIDER_SESSION_ADMISSION_POLICIES_JSON') {
     if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+      const seen = new Set<Provider>();
       for (const lane of Object.keys(value)) {
-        if (!isKnownProvider(lane)) {
+        const provider = readProviderId(lane);
+        if (!provider) {
           throw new ApiError(
             'invalid_config_value',
             `${key} contains unknown provider lane '${lane}'`,
             422,
           );
         }
+        if (seen.has(provider)) {
+          throw new ApiError(
+            'invalid_config_value',
+            `${key} contains both '${lane}' and another id for provider '${provider}'`,
+            422,
+          );
+        }
+        seen.add(provider);
       }
     }
     return;
@@ -193,7 +204,8 @@ function validateStaticSemantics(key: string, value: ConfigValue): void {
   // JUDGE_CALIBRATION_REJUDGE_PROVIDER：已知 + implemented（rejudge 有内置默认
   // model，providerRequiresExplicitModel 终态校验在 tx 内做）。
   if (key === 'JUDGE_CALIBRATION_REJUDGE_PROVIDER' && typeof value === 'string' && value !== '') {
-    if (!isKnownProvider(value) || !isProviderImplemented(value)) {
+    const provider = readProviderId(value);
+    if (!provider || !isProviderImplemented(provider)) {
       throw new ApiError(
         'invalid_config_value',
         `JUDGE_CALIBRATION_REJUDGE_PROVIDER='${value}' is not a wired provider`,
@@ -348,20 +360,21 @@ async function validateFinalProviderPairs(
           valueAsNonEmptyString(rowByKey.get('lane.global.model')),
       });
       for (const kind of scopedTasks) {
-        const provider =
+        const rawProvider =
           configuredProvider ??
           global?.provider ??
           valueAsNonEmptyString(rowByKey.get(`task.${kind}.provider`)) ??
           tasks[kind].defaultProvider;
+        const provider = readProviderId(rawProvider);
         const model =
           configuredModel ??
           global?.model ??
           valueAsNonEmptyString(rowByKey.get(`task.${kind}.model`)) ??
           (provider === 'anthropic-sub' ? ANTHROPIC_SUB_DEFAULT_MODEL : tasks[kind].defaultModel);
-        if (!isKnownProvider(provider) || !isProviderImplemented(provider)) {
+        if (!provider || !isProviderImplemented(provider)) {
           throw new ApiError(
             'invalid_config_value',
-            `${scope.label} resolves to an unavailable provider '${provider}'`,
+            `${scope.label} resolves to an unavailable provider '${rawProvider}'`,
             422,
           );
         }
@@ -370,9 +383,10 @@ async function validateFinalProviderPairs(
       continue;
     }
     if (scope.providerKey === 'JUDGE_CALIBRATION_REJUDGE_PROVIDER') {
-      const provider = configuredProvider ?? valueAsNonEmptyString(providerDef?.codeDefault);
+      const rawProvider = configuredProvider ?? valueAsNonEmptyString(providerDef?.codeDefault);
+      const provider = rawProvider ? readProviderId(rawProvider) : undefined;
       const model = configuredModel ?? valueAsNonEmptyString(modelDef?.codeDefault);
-      if (provider && model && isKnownProvider(provider) && isProviderImplemented(provider)) {
+      if (provider && model && isProviderImplemented(provider)) {
         validateNativeModel(scope.label, provider, model, 'SemanticJudgeTask');
       }
       continue;
@@ -396,8 +410,9 @@ async function validateFinalProviderPairs(
         (taskKind ? tasks[taskKind].defaultProvider : undefined));
     const effModel = isGlobal ? globalSwitch?.model : (globalSwitch?.model ?? configuredModel);
     if (effProvider === undefined) continue; // 对解散 → 无事可验
-    if (typeof effProvider === 'string' && isKnownProvider(effProvider)) {
-      const provider = effProvider as Provider;
+    if (typeof effProvider === 'string') {
+      const provider = readProviderId(effProvider);
+      if (!provider) continue;
       if (
         providerRequiresExplicitModel(provider) &&
         effModel === undefined &&

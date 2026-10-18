@@ -24,8 +24,9 @@ non-runner model traffic through pi.
 
 `pi-models.ts` uses pi's `builtinModels()` without rebuilding compatibility
 providers. Provider/model selection chooses the actual native catalog model,
-protocol, compat flags, authentication and headers. Xiaomi and `zai-coding-cn`
-use their native presets; `anthropic-sub` is an authentication lane mapped to
+protocol, compat flags, authentication and headers. Xiaomi and `zhipuai-coding-plan`
+use their native presets; the latter still addresses pi's `zai-coding-cn` catalog id.
+`anthropic-sub` is an authentication lane mapped to
 native `anthropic`, not another protocol implementation. OpenCode Go uses the
 exact `opencode-go` preset, including its User-Agent behavior. The adapter adds
 `x-opencode-session` from the attempt's task-run identity. Swapping only URL/key

@@ -164,7 +164,7 @@ const CATALOG_PROVIDER_BY_INTERNAL: Partial<Record<Provider, string>> = {
   anthropic: 'anthropic',
   'anthropic-sub': 'anthropic',
   xiaomi: 'xiaomi',
-  'zai-coding-cn': 'zhipuai-coding-plan',
+  'zhipuai-coding-plan': 'zhipuai-coding-plan',
   'opencode-go': 'opencode-go',
 };
 

@@ -15,7 +15,9 @@ const catalog: Record<string, Record<string, PiModelMetadata>> = snapshot;
 
 /** OAuth is a credential lane, not a second protocol/model catalog. */
 export function piProviderId(provider: Provider): string {
-  return provider === 'anthropic-sub' ? 'anthropic' : provider;
+  if (provider === 'anthropic-sub') return 'anthropic';
+  if (provider === 'zhipuai-coding-plan') return 'zai-coding-cn';
+  return provider;
 }
 
 export function nativePiModels(

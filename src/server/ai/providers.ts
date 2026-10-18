@@ -25,7 +25,7 @@
 // authMode:'key', set the env-var name + baseURL. Adding a new task: edit
 // registry.ts only.
 
-import type { TaskDefinition } from '@/ai/task-spec';
+import { type TaskDefinition, canonicalProviderName } from '@/ai/task-spec';
 import { type Provider, type TaskKind, tasks } from '@/capabilities/task-registry';
 import { getLaneOverride, getTaskOverride } from '@/core/config/store';
 import type { ProviderModelBinding } from './model-profiles';
@@ -123,7 +123,7 @@ const PROVIDERS: Record<Provider, BoundProviderConfig> = {
       'mimo-v2.6-pro': { capabilities: { toolCalling: true } },
     },
   },
-  'zai-coding-cn': {
+  'zhipuai-coding-plan': {
     authMode: 'key',
     baseUrl: 'https://open.bigmodel.cn/api/coding/paas/v4',
     apiKeyEnv: 'ZAI_CODING_CN_API_KEY',
@@ -311,6 +311,11 @@ export function isKnownProvider(name: string): name is Provider {
   return Object.hasOwn(PROVIDERS, name);
 }
 
+export function readProviderId(name: string): Provider | undefined {
+  const canonical = canonicalProviderName(name);
+  return isKnownProvider(canonical) ? canonical : undefined;
+}
+
 /**
  * YUK-608 — is this provider's credential lane configured in THIS process's env? An
  * OAuth provider needs its `oauthTokenEnv`; a key provider needs its `apiKeyEnv`.
@@ -368,7 +373,7 @@ const IMPLEMENTED_KEY_PROVIDERS: ReadonlySet<Provider> = new Set([
   'anthropic',
   'xiaomi',
   'xiaomi-token-plan',
-  'zai-coding-cn',
+  'zhipuai-coding-plan',
   'opencode-go',
   'openai',
 ]);
@@ -497,8 +502,8 @@ function readEnvOverride(
 ): { provider: Provider; model?: string } | undefined {
   const raw = env.AI_PROVIDER_OVERRIDE;
   if (!raw) return undefined;
-  const provider = raw as Provider;
-  if (!isKnownProvider(provider)) {
+  const provider = readProviderId(raw);
+  if (!provider) {
     throw new Error(
       `AI_PROVIDER_OVERRIDE='${raw}' is not a known provider; expected one of ${Object.keys(PROVIDERS).join(' | ')}`,
     );
@@ -531,12 +536,13 @@ export function resolveGlobalProviderSwitch(
   const env = readEnvOverride(envValues);
   if (env) return env;
   if (!db?.provider) return undefined;
-  if (!isKnownProvider(db.provider)) {
+  const provider = readProviderId(db.provider);
+  if (!provider) {
     throw new Error(
       `lane.global.provider='${db.provider}' (DB config) is not a known provider; expected one of ${Object.keys(PROVIDERS).join(' | ')}`,
     );
   }
-  return { provider: db.provider, model: db.model };
+  return { provider, model: db.model };
 }
 
 /**
@@ -581,20 +587,19 @@ function resolveTaskBinding(
 
   // Chat env pin > explicit arg > DB global > DB per-task > registry.
   // The arg may set only `model`, so fall back through each layer per-field.
+  const dbTaskProvider = dbTaskOverride?.provider
+    ? readProviderId(dbTaskOverride.provider)
+    : undefined;
   if (
     !override?.provider &&
     !globalSwitch?.provider &&
     dbTaskOverride?.provider &&
-    !isKnownProvider(dbTaskOverride.provider)
+    !dbTaskProvider
   ) {
     throw new Error(
-      `task.${kind}.provider='${dbTaskOverride.provider}' is not a native provider; migrate legacy 'zhipu' to 'zai-coding-cn' and choose a model from its pi catalog.`,
+      `task.${kind}.provider='${dbTaskOverride.provider}' is not a native provider; migrate legacy 'zhipu' to 'zhipuai-coding-plan' and choose a model from its pi catalog.`,
     );
   }
-  const dbTaskProvider =
-    dbTaskOverride?.provider && isKnownProvider(dbTaskOverride.provider)
-      ? (dbTaskOverride.provider as Provider)
-      : undefined;
   const providerName: Provider =
     override?.provider ?? globalSwitch?.provider ?? dbTaskProvider ?? def.defaultProvider;
 
