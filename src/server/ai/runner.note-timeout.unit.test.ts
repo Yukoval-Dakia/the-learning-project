@@ -13,8 +13,16 @@ function fakePiAdapter() {
       query: vi.fn(() => {
         return (async function* () {
           yield {
+            type: 'thinking_delta',
+            text: '先核对定义',
+            session_id: 'note',
+            source: 'pi',
+          } as RunnerMessage;
+          yield {
             type: 'text_delta',
             text: '圆锥曲线的定义已经写到这里',
+            session_id: 'note',
+            source: 'pi',
           } as RunnerMessage;
           await new Promise<void>((resolve) => {
             mockPi.release = resolve;
@@ -58,8 +66,8 @@ describe('runTask note generation timeout usage', () => {
     vi.unstubAllEnvs();
   });
 
-  // @invariant data: a timed-out note generation persists the tokens it consumed and a non-zero estimated cost
-  // @fails-if the budget abort settles usage {0,0} or cost_usd 0 after streamed text and no provider usage payload
+  // @invariant data: a timed-out note generation persists the tokens it consumed, including streamed reasoning, and a non-zero estimated cost labelled apart from a settled price
+  // @fails-if the budget abort settles usage {0,0}, drops streamed reasoning, writes the settled pricebook ref, or writes cost_usd 0 after streamed text and no provider usage payload
   it('records estimated usage and model phase timings when the provider sends no final usage', async () => {
     const pending = runTask(
       'NoteGenerateTask',
@@ -78,8 +86,9 @@ describe('runTask note generation timeout usage', () => {
     if (!entry) throw new Error('timed-out attempt was not settled');
     expect(entry.usage.inputTokens + entry.usage.outputTokens).toBeGreaterThan(0);
     expect(entry.usage.usage_basis).toBe('estimated');
-    expect(entry.usage.outputTokens).toBeGreaterThan(0);
+    expect(entry.usage.outputTokens).toBeGreaterThan('圆锥曲线的定义已经写到这里'.length);
     expect(entry.cost_truth.basis).toBe('estimated');
+    expect(entry.cost_truth.ref.startsWith('pricebook-timeout-estimate:')).toBe(true);
     expect(entry.cost_truth.amountUsd).toBeGreaterThan(0);
     expect(entry.usage.phases?.model_total_ms).toEqual(expect.any(Number));
     expect(entry.usage.phases?.model_ttft_ms).toEqual(expect.any(Number));

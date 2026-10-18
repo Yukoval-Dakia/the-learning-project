@@ -1358,6 +1358,17 @@ class PiPreparedQuery implements PreparedExecutionQuery {
         }
         continue;
       }
+      if (
+        event.type === 'message_update' &&
+        event.message.role === 'assistant' &&
+        event.assistantMessageEvent.type === 'thinking_delta'
+      ) {
+        const text = event.assistantMessageEvent.delta;
+        if (text.length > 0 && !this.abort.signal.aborted) {
+          yield { type: 'thinking_delta', text, session_id: this.sessionId, source: 'pi' };
+        }
+        continue;
+      }
       if (event.type === 'message_end' && event.message.role === 'assistant') {
         numTurns += 1;
         yield {

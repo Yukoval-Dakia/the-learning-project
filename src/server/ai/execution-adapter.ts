@@ -61,6 +61,7 @@ export interface ModelBinding {
  */
 export type PiRunnerMessage =
   | { type: 'text_delta'; text: string; session_id: string; source: 'pi' }
+  | { type: 'thinking_delta'; text: string; session_id: string; source: 'pi' }
   | (SDKAssistantMessage & { source: 'pi' })
   | (SDKResultMessage & { source: 'pi' })
   | (SDKUserMessage & { source: 'pi' })

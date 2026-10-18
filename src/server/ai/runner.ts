@@ -79,6 +79,7 @@ import type {
   SDKUserMessage,
 } from './sdk-types';
 import { isSpawnToolName } from './spawn-contract';
+import { addStreamText, emptyStreamTextStats } from './timeout-usage';
 import type { PiSubagentSpec } from './tools/pi-subagent';
 import type { PiToolMount } from './tools/pi-tools';
 
@@ -639,24 +640,26 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
   let stepStartTime = Date.now();
   const modelStarted = Date.now();
   let firstTokenAt: number | undefined;
-  let streamedText = '';
-  const settleAbortUsage = () => {
+  const outputStats = emptyStreamTextStats();
+  const settleAbortUsage = async () => {
     if (args.kind !== 'NoteGenerateTask') return;
     if (!args.lifecycle.aborted || args.lifecycle.sawTerminalResult) return;
-    args.lifecycle.recordAbortedUsage({
+    await args.lifecycle.recordAbortedUsage({
       promptText: args.usagePrompt ?? '',
-      outputText: streamedText,
+      output: outputStats,
     });
   };
 
   try {
     for await (const msg of args.query) {
-      if (msg.type === 'text_delta') {
+      if (msg.type === 'text_delta' || msg.type === 'thinking_delta') {
         if (msg.text) {
-          streamedText += msg.text;
+          addStreamText(outputStats, msg.text);
           firstTokenAt ??= Date.now();
         }
-        if (!args.lifecycle.abortController.signal.aborted) await args.onTextDelta?.(msg.text);
+        if (msg.type === 'text_delta' && !args.lifecycle.abortController.signal.aborted) {
+          await args.onTextDelta?.(msg.text);
+        }
         continue;
       }
       if (args.notifySessionId && msg.type === 'system' && msg.subtype === 'init') {
@@ -726,7 +729,7 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
       break;
     }
   } catch (error) {
-    settleAbortUsage();
+    await settleAbortUsage();
     throw error;
   } finally {
     const endedAt = Date.now();
@@ -739,7 +742,7 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
 
   if (!args.lifecycle.sawTerminalResult) {
     if (args.lifecycle.aborted) {
-      settleAbortUsage();
+      await settleAbortUsage();
       throw new Error(args.abortedWithoutTerminalMessage);
     }
     throw new AgentRunError({

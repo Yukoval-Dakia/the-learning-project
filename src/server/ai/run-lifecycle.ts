@@ -33,6 +33,7 @@ import {
   assertModelProfileCapabilityFit,
   resolveModelProfile,
 } from './model-profiles';
+import { piCatalogCostUsd } from './pi-catalog-cost';
 import type { TokenCounts } from './pricing';
 import {
   ProviderSessionAdmissionError,
@@ -71,7 +72,10 @@ export interface TerminalResultEvidence {
 export type ObservedRunUsage = Pick<
   TerminalResultEvidence,
   'usage' | 'tokenCounts' | 'tokenUsageObserved' | 'costUsd'
->;
+> & {
+  /** Set when tokens and any catalog USD came from an aborted stream, not a final usage payload. */
+  priceOrigin?: 'timeout-estimate';
+};
 
 interface LifecycleConfig<TResult extends LifecycleResult> {
   db: Db;
@@ -264,7 +268,10 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
    * Budget abort with no positive provider usage. Persist a non-zero estimate
    * so the attempt row cannot claim the call was free.
    */
-  recordAbortedUsage(input: { promptText: string; outputText: string }): void {
+  async recordAbortedUsage(input: {
+    promptText: string;
+    output: Parameters<typeof estimateAbortedUsage>[1];
+  }): Promise<void> {
     if (this.terminal) return;
     const observed = this.observedUsage;
     if (
@@ -273,9 +280,18 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
     ) {
       return;
     }
-    const estimate = estimateAbortedUsage(input.promptText, input.outputText);
+    const estimate = estimateAbortedUsage(input.promptText, input.output);
+    const provider = this.resolved.provider;
+    let catalogCost: number | undefined;
+    if (provider === 'opencode-go' || provider === 'openai' || provider === 'xiaomi-token-plan') {
+      const priced = await piCatalogCostUsd(provider, this.resolved.model, estimate).catch(
+        () => null,
+      );
+      if (priced !== null) catalogCost = priced;
+    }
     this.observedUsage = {
       tokenUsageObserved: true,
+      priceOrigin: 'timeout-estimate',
       usage: {
         inputTokens: estimate.inputTokens,
         outputTokens: estimate.outputTokens,
@@ -285,6 +301,7 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
         inputTokens: estimate.inputTokens,
         outputTokens: estimate.outputTokens,
       },
+      ...(catalogCost !== undefined ? { costUsd: catalogCost } : {}),
     };
     this.costTruthCache = undefined;
   }
@@ -306,6 +323,7 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
             tokens: evidence.tokenCounts,
             tokensObserved: evidence.tokenUsageObserved,
             reportedCostUsd: evidence.costUsd,
+            priceOrigin: 'priceOrigin' in evidence ? evidence.priceOrigin : undefined,
           })
         : unknownAttemptCostTruth(this.resolved.provider, this.resolved.model);
     }
