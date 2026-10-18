@@ -251,10 +251,10 @@ export function ServingHoldPanel({
           <span className="qd-hold-title">暂不出题 · {copy.label}</span>
           {waited && <span className="qd-hold-wait">{waited}</span>}
         </div>
-        <div className="qd-hold-explain">
-          {copy.explain}
-          {action == null && pending == null && copy.noActionHint ? ` ${copy.noActionHint}` : ''}
-        </div>
+        <div className="qd-hold-explain">{copy.explain}</div>
+        {action == null && pending == null && copy.noActionHint && (
+          <div className="qd-hold-explain">{copy.noActionHint}</div>
+        )}
         {resultText && (
           <div className="qd-hold-result" role="alert">
             {resultText}
