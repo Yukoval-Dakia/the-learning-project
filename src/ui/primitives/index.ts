@@ -8,6 +8,8 @@ export type { BrandMarkProps } from './BrandMark';
 export { BrandMark } from './BrandMark';
 export type { BtnProps, BtnSize, BtnVariant } from './Btn';
 export { Btn } from './Btn';
+export type { CollapsibleListProps } from './CollapsibleList';
+export { CollapsibleList } from './CollapsibleList';
 export type { EmptyStateProps } from './EmptyState';
 export { EmptyState } from './EmptyState';
 export type { ErrorStateProps } from './ErrorState';

@@ -11,6 +11,7 @@ export const LEARNER_COPY_FILES = [
   'src/ui/shell/AppTopbar.tsx',
   'src/ui/components/VisionTab.tsx',
   'src/ui/components/UsageReceiptLine.tsx',
+  'src/ui/primitives/CollapsibleList.tsx',
   'src/capabilities/ingestion/ui/RecordPage.tsx',
   'src/capabilities/practice/ui/PracticeFacePage.tsx',
   'src/capabilities/practice/ui/PfStream.tsx',
