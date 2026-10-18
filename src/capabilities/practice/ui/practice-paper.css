@@ -121,7 +121,8 @@
   gap: var(--un-sp-4);
 }
 [data-ui-next] .un-pp .un-ps-sheet > .un-pp-extras,
-[data-ui-next] .un-pp .un-ps-sheet > .un-pp-confidence {
+[data-ui-next] .un-pp .un-ps-sheet > .un-pp-confidence,
+[data-ui-next] .un-pp .un-ps-sheet > .pfp-discarded {
   margin-left: var(--un-ps-gutter);
 }
 [data-ui-next] .un-pp-extras {
@@ -431,6 +432,38 @@
     display: flex;
     flex-wrap: wrap;
     gap: var(--un-sp-2);
+  }
+
+  /* The two choices weigh the same (the line above them says what each one costs), so both read
+     as secondary buttons; 交卷 stays the page's only solid button. Also covers the shared Btn
+     markup the conflict panel carries. */
+  & .pfp-conflict .btn,
+  & .pfp-discarded .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--un-sp-1);
+    height: var(--un-h-control-sm);
+    padding: 0 var(--un-sp-3);
+    border: 0;
+    border-radius: var(--un-r-1);
+    background: var(--un-bg-raised);
+    box-shadow: inset 0 0 0 var(--un-hairline) var(--un-line-strong);
+    color: var(--un-text-1);
+    font-family: var(--un-font-sans);
+    font-size: var(--un-fs-1);
+    font-weight: var(--un-fw-medium);
+    letter-spacing: 0;
+  }
+  & .pfp-conflict .btn:hover:not(:disabled),
+  & .pfp-discarded .btn:hover:not(:disabled) {
+    background: var(--un-bg-hover);
+  }
+  & .pfp-discarded .btn-ghost {
+    margin-left: calc(-1 * var(--un-sp-2));
+    padding: 0 var(--un-sp-2);
+    background: transparent;
+    box-shadow: none;
+    color: var(--un-text-2);
   }
 
   /* The text set aside after choosing the server's version: folded under the answer, readable
