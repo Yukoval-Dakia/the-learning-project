@@ -4,10 +4,11 @@ status: accepted
 
 # ADR-0067 — 教研白板与事件例会：教研团协调中心
 
-**Status:** Accepted（设计方向，2026-10-10）；尚未实施。
+**Status:** Accepted（设计方向，2026-10-10；**2026-10-18 修订**：D2/D7 修订、D3/D6 实施时点提前，见文末「Amendment（2026-10-18）」节与 [ADR-0075](0075-agent-harness-contract.md)）；尚未实施。
+**Amended by:** [ADR-0075](0075-agent-harness-contract.md)（Amendment 2026-10-18，YUK-1559：D2 L3 资格门、D7 日上限改报警水位、D3/D6+白板页实施时点提前）。
 **Decision source:** owner 2026-10-10「我们后台有一些定时的agent会进行分析和产出。但是我一直模糊的觉得他们的配合有限，并且定时这种办法不够『智能』，没能更快更准确的抓住信息」，按设计草案推进并转成本 ADR（[YUK-1449](https://linear.app/yukoval-studios/issue/YUK-1449)）。
 **Tracking:** [YUK-1449](https://linear.app/yukoval-studios/issue/YUK-1449)。
-**Related:** ADR-0066（实时自适应学习目标）；ADR-0017（逐事件 memory ingest 先例）；owner 愿景语料 `docs/superpowers/specs/2026-06-18-private-teaching-research-team-vision.md`、`2026-06-18-jiaoyantuan-deliberative-panel-design.md`、`2026-06-18-jiaoyantuan-integration-and-build-start.md`、`docs/design/2026-06-25-recommendation-engine-x-algorithm-mapping.md`；设计草案（细节真相源，绝对 artifact 路径）`/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/yuk1388/stage4/final/teaching-team-design-draft.md`。
+**Related:** ADR-0066（实时自适应学习目标）；[ADR-0075](0075-agent-harness-contract.md)（agent harness 契约，含对本文 D2/D7 的修订与 D3/D6 时点提前）；ADR-0017（逐事件 memory ingest 先例）；owner 愿景语料 `docs/superpowers/specs/2026-06-18-private-teaching-research-team-vision.md`、`2026-06-18-jiaoyantuan-deliberative-panel-design.md`、`2026-06-18-jiaoyantuan-integration-and-build-start.md`、`docs/design/2026-06-25-recommendation-engine-x-algorithm-mapping.md`；设计草案（细节真相源，绝对 artifact 路径）`/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/yuk1388/stage4/final/teaching-team-design-draft.md`。
 
 ## 背景与问题
 
@@ -32,6 +33,8 @@ status: accepted
 
 ### D2 三层触发：例会保留，触发从时钟改为事件阈值，时钟只留真批处理
 
+> **2026-10-18 修订（ADR-0075）：** L3 不再无条件开闸——时钟/DAG 仍是宿主，但每个 L3 节点必须声明 `eligibility` 需求资格门，不合格标 `not_needed`（软依赖语义，不沿用 `skipped` 硬边连坐）。理由：空闲期 97% 的花费正在 L3（Sourcing 占全部美元成本 69%）。详见文末 Amendment。
+
 不是「事件取代时钟」，而是分层（草案 §2.1 修正一）：
 
 - **L1 逐事件确定性反应**：现有事件订阅（探针上架、干预准备、结算聚合）原样保留，不经过会议；
@@ -43,6 +46,8 @@ status: accepted
 owner 愿景中的「教研例会 = sleep-time job」由 L2 承接并改造：`research_meeting_nightly` 的确定性取证与归纳能力保留（YUK-1449 明示「真正的例会保留，改为阈值触发并升级为协调中心」），触发从纯时钟改为 T1/T4 阈值 + 日级兜底。
 
 ### D3 主席 = 教研组长：一次例会恰好一个被验证的决定
+
+> **2026-10-18 修订（ADR-0075 §9 决定 3）：** 本决定内容不变；**实施时点提前**——不等真实使用触发，排在 ADR-0075 P1（边界契约）之后即做。学习层有用性数值在真实使用达到预注册样本量前仍是预注册假设。详见文末 Amendment。
 
 草案的「主席」就是 owner panel 设计的**教研组长（Synthesizer-Judge）**：唯一 writer、structured、SELECT-not-fuse（在发现与候选动作中择一，不融合）、组长经 propose 落 proposal-as-event。每次例会产出**恰好一个决定**（或显式弃权）：封闭决定集（swap_item / adjust_review / serve_probe / defer_with_reason / abstain）、reasons 引用 finding id 与底层事件、预登记 expected_effect、写入后**回读 canonical 练习流验证实际变化——没有改变 = 本次例会失败**，记入失败面（与 YUK-1409 合流），不报成功。这沿用供题链「fail-closed 提交后验证」原则，直接堵死 coach_daily 式 success≠交付。
 
@@ -78,6 +83,8 @@ panel 设计中仍然成立的思想，折进新例会作为主席裁决面的�
 
 ### D7 成本与 veto
 
+> **2026-10-18 修订（ADR-0075）：** 「后台召集合计花费设每日上限、触顶当日不再召集」改为**报警水位（alert-only）**：以需求门控为主，日上限只用于发现事故，不再阻断召集。每次召集调用上限（例会 ≤2、周回顾 ≤3）、每链 kill switch、Copilot 豁免全部保留。详见文末 Amendment。
+
 每次召集有调用上限（例会 ≤2 次模型调用，周回顾 ≤3 次；超过即弃权并记失败面）；后台召集合计花费走 cost_ledger 设每日上限，触顶当日不再召集非安全类例会，具体数值由 owner 定（先量一周现状基线，只低不高）；防抖即省钱；每条触发链独立 kill switch。**Copilot 学习者主动会话不计入、不设上限（YUK-1373 owner 裁决），本设计只约束后台召集。** Owner 否决条件七条见草案 §11（再产出待批阅长文、报成功却无实际变化、费用失控、第二总线、兜底降级成等例会、未批准触碰承重能力、危机或隐私进白板——任一出现即否决本设计）。
 
 ## 硬边界（后果）
@@ -108,9 +115,19 @@ panel 设计中仍然成立的思想，折进新例会作为主席裁决面的�
 
 - 防抖参数初值（连续错几题召集、考试窗口多大、日兜底几点）是工程判断，待真实使用校准。
 - 主席是否处处需要模型：T6 设置变更很可能纯确定性就够；T1「上探针还是给帮助」也许确定性规则更好——先按「能确定性就不调用模型」实施。
-- 每日后台预算数值：现状夜链日均花费基线未量，先量一周再定（owner 定值）。
+- 每日后台预算数值：现状夜链日均花费基线未量，先量一周再定（owner 定值）。**（2026-10-18 修订：该数值现为报警水位，不再是触顶停召集的阻断阈值；仍需量基线后定值。）**
 - A38 EZ 轴信号是否值得恢复：待可靠 RT 与个人对账，可能永久退役。
 - scout 外部取证的独立价值：取决于 census 结果（D4.3）。
 - 白板对 owner 的透明度 UI 形态（管理页形态、是否设「教研白板」页签）：UI 阶段决定，遵循设计 pre-flight。
 - 与 pg-boss→DBOS 家族迁移的交接面：迁移顺序可能调整各阶段落地顺序，不调整处置结论。
 - 真实效果全部未知：没有真实使用前，finding→决定→学习收益的任何数值都是预注册假设，不是承诺。
+
+## Amendment（2026-10-18）—— 需求门控、报警水位与主席层提前（YUK-1559 / ADR-0075）
+
+依据：owner 2026-10-18 19:48 原话「两件都允许 空闲按推荐 主席层也现在做」（harness 重设计稿 §9，normative 真相源 `/Volumes/YukovalSBak/yukoval-projects/tlp-status/discussions/agent-harness-redesign.md`，SHA256 `92f41db2…39a1a`）与 [ADR-0075](0075-agent-harness-contract.md)。三点修订；上文历史决定原文保留，与下列修订冲突的活跃表述以本节为准：
+
+1. **D2 修订——L3 批处理也加 eligibility 资格门。** 「校准、清理、周回顾留在时钟/DAG」仍成立（宿主不变），但每个 L3 节点须声明 `eligibility`，由 orchestrator 在 enqueue 前求值；不合格标新终态 `not_needed` 并在 detail 写原因，下游按软依赖处理（视同 succeeded 但没有新数据，按自身 eligibility 决定，不沿用 `skipped` 硬边连坐）。理由：空闲期 97% 的花费正出在 L3（Sourcing 占全部美元成本 69%，AR 0.3），owner「没人学习时后台自适应降频」直接要求修订（设计稿 §3.6）。活跃度分档（空闲 3 天 / 休眠 14 天，owner 拍板值）与各档行为表见 ADR-0075 D6。
+2. **D7 修订——后台日上限降为报警水位（alert-only）。** 「触顶当日不再召集非安全类例会」废止；以需求门控为主，日上限只用于发现事故，不阻断。保留不变：每次召集的调用上限（例会 ≤2 次模型调用、周回顾 ≤3 次，超过即弃权并记失败面）、每条触发链独立 kill switch、Copilot 学习者主动会话不计入不设上限（YUK-1373）、veto 七条。理由：ADR-0069 D4 已拍板供题花费不设上限；需求门控之后空闲期花费趋近 0，上限只用来发现事故（设计稿 §3.6）。报警水位定值仍按未决问题所述先量一周基线。
+3. **D3/D6 与白板管理页实施时点提前。** owner 决定 3：主席层（D3 主席决定、D6 指标）与白板管理页**现在也做**，不等「owner 恢复真实使用（连续 7 天中 ≥3 天有学习者事件）」触发；排在 ADR-0075 **P1（边界契约）之后**；白板管理页走 UI pre-flight 与 owner 三次设计检查（UI 线）。D3/D6 决策内容不变（恰好一个经回读验证的 typed 决定；按链预注册度量）；学习层有用性数值在真实使用达到预注册样本量前仍是预注册假设——**提前的是实施时点，不是测量结论**。
+
+**以上均为 owner 已批决定与实施排序的落档，不代表任何软件已实现**；实现状态以代码与运行证据为准。
