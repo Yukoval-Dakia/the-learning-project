@@ -171,7 +171,7 @@ const MAX_EXACT_HEAD_LEN = 300;
 // 主解答槽的学习者文本可以是完整推导（"…q=-2，S5=11"）。整段做答案头比较
 // 必然 miss —— 这是 R02 误 0 的机制。本提取器只认【明示终态结论】：
 //   1. 结论标记行/从句：答 / 答案 / 最终答案 / 综上 / 所以 / 因此 / 故 / 即 / ∴；
-//   2. 完整末行 `identifier = value`（单一符号的赋值式，不在任意文字里找等号）。
+//   2. 完整末句 `identifier = value`，或肯定结果词引出的完整句末赋值从句。
 // 多个相互矛盾的明示结论 ⇒ 'ambiguous'（交人工/语义复核，绝不猜）；
 // 找不到任何明示结论 ⇒ 'none'（调用方对过程文本落 pending，不落 0）。
 // 提取到的 value 同时给出 `rhs` 备选（"答：S5=11" 的 "11"），比较面两侧
@@ -189,14 +189,17 @@ export type FinalAnswerExtraction =
 
 // 声明类标记（"答：…"/"答案：…"/"最终答案"/"【答案】"）在任何行都成立 —— 它们
 // 是对最终答案的明示声明，推导中间不会写。结论类标记（所以/因此/故/综上/即/∴）
-// 与尾随等式只看【最后一个非空行】：推导中间步骤会用同一批词写中间结论，
-// 终态结论永远在最后。
+// 与尾随赋值从最终句确定候选；此前不同变量的完整结论赋值属于中间量，
+// 不加入最终答案的候选集。同变量的结论及显式答案声明仍须一致。
 const DECLARATION_LINE_RE =
   /^\s*(?:【\s*(?:答案|答)\s*】|(?:最终答案|答案|答)\s*[：:，,．.\s])\s*(\S.*?)\s*$/u;
 // Only a line/sentence boundary can introduce a conclusion; never a bare
-// copula (为/得/是) or a suffix inside arbitrary prose.
+// copula (为/是) or a suffix inside arbitrary prose.
 const LAST_LINE_CONCLUSION_RE =
   /(?:^|[。；;，,])\s*(?:所以|因此|故|综上(?:所述)?|即|∴)\s*[：:，,]?\s*(\S.*?)\s*$/u;
+// A positive result introducer must start a whole terminal clause. Capture
+// the entire value, then require an identifier assignment; never scan for `=`.
+const TERMINAL_RESULT_CLAUSE_RE = /(?:^|[，,；;])\s*(?:相加|可得|得到|得)\s*(\S.*?)\s*$/u;
 // NFKC maps S₅ / full-width forms to S5 / ASCII. Restrict projection to a
 // complete identifier assignment; e.g. 不是S5=11 cannot yield the suffix 11.
 const FINAL_ASSIGNMENT_RE = /^([A-Za-zΑ-Ωα-ω][A-Za-zΑ-Ωα-ω0-9_]*)\s*=\s*(\S.*?)$/u;
@@ -229,11 +232,15 @@ function candidateValues(raw: string): string[] | null {
 }
 
 export function extractFinalAnswer(text: string): FinalAnswerExtraction {
-  const lines = text
+  // Chinese full stops delimit process sentences, not mathematical tokens.
+  // Explicit answer declarations still own their whole line, including prose
+  // or compound values. Do not split ASCII dots, `!`, operators or tuples.
+  const sentences = text
     .normalize('NFKC')
     .split(/\n+/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
+    .flatMap((line) => (DECLARATION_LINE_RE.test(line) ? [line] : line.split(/。+/)))
+    .map((sentence) => sentence.trim())
+    .filter((sentence) => sentence.length > 0);
   const found: {
     value: string;
     marker: 'answer_marker' | 'conclusion_marker' | 'trailing_equality';
@@ -252,18 +259,58 @@ export function extractFinalAnswer(text: string): FinalAnswerExtraction {
     }
   };
 
-  for (const line of lines) {
-    const declaration = line.match(DECLARATION_LINE_RE);
+  for (const sentence of sentences) {
+    const declaration = sentence.match(DECLARATION_LINE_RE);
     if (declaration?.[1]) collect(declaration[1], 'answer_marker');
   }
-  const lastLine = lines[lines.length - 1];
-  if (lastLine !== undefined) {
-    const conclusion = lastLine.match(LAST_LINE_CONCLUSION_RE);
-    if (conclusion?.[1]) collect(conclusion[1], 'conclusion_marker');
-    // Declarations/conclusions own the entire remaining value. Do not also
-    // search their text for an equality suffix or a second copula candidate.
-    if (!conclusion && !DECLARATION_LINE_RE.test(lastLine) && lastLine.includes('=')) {
-      collect(lastLine, 'trailing_equality');
+  const lastSentence = sentences[sentences.length - 1];
+  if (lastSentence !== undefined) {
+    const declaration = lastSentence.match(DECLARATION_LINE_RE);
+    const result = declaration ? null : lastSentence.match(TERMINAL_RESULT_CLAUSE_RE);
+    const resultAssignment = result?.[1]?.match(FINAL_ASSIGNMENT_RE);
+    const conclusion = lastSentence.match(LAST_LINE_CONCLUSION_RE);
+    const terminalValue =
+      declaration?.[1] ??
+      (resultAssignment
+        ? result?.[1]
+        : (conclusion?.[1] ?? (lastSentence.includes('=') ? lastSentence : undefined)));
+    if (terminalValue !== undefined) {
+      if (!declaration) {
+        collect(
+          terminalValue,
+          resultAssignment || conclusion ? 'conclusion_marker' : 'trailing_equality',
+        );
+      }
+      const terminalVariable = terminalValue.match(FINAL_ASSIGNMENT_RE)?.[1];
+      const priorSentences = sentences.slice(0, -1);
+      if (resultAssignment && result?.index !== undefined && result.index > 0) {
+        priorSentences.push(lastSentence.slice(0, result.index));
+      }
+      for (const sentence of priorSentences) {
+        // Explicit answer declarations already participate unconditionally.
+        if (DECLARATION_LINE_RE.test(sentence)) continue;
+        const priorAssignmentVariable = sentence.match(FINAL_ASSIGNMENT_RE)?.[1];
+        const priorConclusion =
+          sentence.match(LAST_LINE_CONCLUSION_RE)?.[1] ??
+          (terminalVariable &&
+          priorAssignmentVariable &&
+          canonicalFinal(priorAssignmentVariable) === canonicalFinal(terminalVariable)
+            ? sentence
+            : undefined);
+        if (!priorConclusion) continue;
+        const priorVariable = priorConclusion.match(FINAL_ASSIGNMENT_RE)?.[1];
+        if (
+          terminalVariable &&
+          priorVariable &&
+          canonicalFinal(priorVariable) !== canonicalFinal(terminalVariable) &&
+          candidateValues(priorConclusion) !== null
+        ) {
+          continue;
+        }
+        // Same-variable contradictions, opaque conclusions and unsupported
+        // relations/chains cannot be erased by a later matching assignment.
+        collect(priorConclusion, 'conclusion_marker');
+      }
     }
   }
   if (unsafe.length > 0) {

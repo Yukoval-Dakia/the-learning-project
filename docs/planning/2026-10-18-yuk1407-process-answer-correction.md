@@ -29,9 +29,10 @@ declared comparators"），且当前无 text_key 的已准入模型切片（D17�
 `src/core/schema/judge-routing.ts` 的确定性提取合同（parent actual-output
 复核发现 R1 初修仍会误发满分，本次窄修替换该策略，不代表 PR 验收）：
 
-- `extractFinalAnswer(text)` 只接受完整答案声明行，或最后非空行中从
-  行首/中文句号/逗号/分号开始的 `所以/因此/故/综上/即/∴` 结论从句；
-  无标记时只认**完整末行** `identifier = value`。identifier 限 ASCII/希腊
+- `extractFinalAnswer(text)` 接受完整答案声明行，或最终句中从
+  句首/逗号/分号开始的 `所以/因此/故/综上/即/∴` 结论从句；
+  无标记时只认**完整末句** `identifier = value`；新增有肯定结果词引导的
+  完整句末赋值从句，详见文末真实终态修复记录。identifier 限 ASCII/希腊
   字母开头、后续同类字母/数字/下划线；NFKC 使 `S₅＝11` 对应 `S5=11`。
 - 标记后的文本/复合值整体保留。删除 copula 后缀提取与任意 prose 中等式
   子匹配；不把 `答案不为11`、`结果不可能是11`、`前五项和为11` 化为 `11`。
@@ -44,7 +45,9 @@ declared comparators"），且当前无 text_key 的已准入模型切片（D17�
   `extractAnswerHead` 会改变 token（如尾随 `*`、句号），整个提取拒绝为
   `ambiguous`，避免 native `answer_head` 的二次归一化吞掉数学含义。
   `!` 保留为阶乘；`11!` 只可匹配 `11!`，不能匹配 `11`。
-- 多个不相容明示结论 → `ambiguous`；无明确语法 → `none`。
+- 多个不相容的最终答案声明、同变量结论或不可降为中间量的结论 →
+  `ambiguous`；此前不同变量的合法完整结论赋值不作为最终变量的答案。
+  无明确语法 → `none`。
   `isProcessLikeAnswer` 现在也认完整结论标记（含单行 `所以…`）；其 miss
   进入既有 `needs_review`，短裸答案 `11`/`12` 行为不变。
 
@@ -199,7 +202,8 @@ key 除特别注明外为 `11`，满分 1；均 `model_units_invoked=0`。
   `scored 0`，**不是**所有 ambiguous 都被 native 判为 pending。
   `答：前五项和为11` 对 key `11` 同样不猜 copula，短答仍 `scored 0`。
 - 不支持一般代数 LHS、任意 prose 内嵌等式/无边界结论、带边缘 Markdown
-  包装的提取。带尾句号等会被现有 answer-head 改写的提取也保守拒绝；
+  包装的提取。该次窄修对带尾句号等会被现有 answer-head 改写的提取也保守拒绝
+  （中文句号的过程句边界已由文末真实终态修复更新，其他 token 保护保留）；
   可降低自动命中率，不能据此声称完整自然语言/数学表达式等价识别。
 - 这是抽取语法与 native 纯函数 actual-output，不是 DB/worker/浏览器/真实
   学习者验收。无 provider/模型调用，无人工作业纠错执行；不恢复 legacy
@@ -465,3 +469,107 @@ P1-1/P1-2 仍为 sole R2 CLOSED；P1-3 与本次两项回归均待 parent 对最
 无本机 testsuites/DB/queue/worker/services/containers/provider/TEST/paid/QA；原 8d QA
 继续 HOLD，由 parent 对最终 head 更新实际 QA。未委派、未发 R3、未 merge、未写
 Linear/root PLAN/.remember；代码 writer 在交付后释放。
+
+## 真实作答的终态边界修复（2026-10-18；产品范围缺口，非新 review）
+
+实际独占 writer cwd：`/Users/yuqi/.t3/worktrees/the-learning-project/t3-efdff94d`。
+初始为 T3 隔离树，旧协调 HEAD `4aec0845112df6dcda9951de0d64099a675718c8`。
+先 `git fetch origin`；确认已发布 #1797 远端
+`origin/fix/yuk-1407-process-answer-correction` 精确为
+`22a02be1a8799b193792b34e7ce60b24d0fa7c18`，再从该提交创建唯一分支
+`fix/yuk-1407-real-terminal-answer`，不带旧协调分支历史。
+未写原作者树 `t3-eb173c3f` 或父树；仅正常本地 commit，由父 cherry-pick 回原 PR。
+不 push、不新开 PR、不 merge、不委派、不启动 review。
+
+### 父线实际验收输入与失败原因
+
+父提供的真实历史题 `v1zkg2mrb3no3qc9ziv4fhov`，reference `11`，冻结作答全文：
+
+> 由 a(n+1), a(n), a(n+2) 成等差数列，2a(n)=a(n+1)+a(n+2)，两边除以 a(n) 得 2=q+q²。q²+q-2=0，q=1 或 -2；q≠1，所以 q=-2。前五项是1,-2,4,-8,16，相加 S5=11。
+
+父已通过真实 `/api/appeals` → rejudge 得到 pending needs_review，detail 为
+`conflicting explicit final answers (q=-2。前五项是1,-2,4,-8,16,相加 S5=11。)`。
+这是父提供的实际证据，本 lane 未重复页面或 DB 操作。
+
+源码原因是旧结论正则把整条物理行内“所以”之后的所有句子当成一个值；
+`q=-2。…相加 S5=11。` 包含两个等号，`candidateValues` 正确拒绝该复合候选。
+错误在候选边界，而非比较器或申诉执行身份；不能靠取最后等号解决。
+
+### 最小实现与源码论证（不是运行 PASS）
+
+只改 `src/core/schema/judge-routing.ts` 的提取逻辑及本文，不改公开函数签名、
+调用点、比较规则、appeal 身份/CAS/队列/receipt、准入/source_verify、UI/provider。
+不需要新目标变量接口：目标标识符来自有明确末句边界的完整赋值本身。
+
+1. 非答案声明行按换行和中文句号 `。` 识别完整过程句，末句的句号是语法边界。
+   不按 ASCII 小数点、`!`、算符、等号或元组内部逗号拆值；`答/答案/最终答案`
+   声明仍占有原整行，不能把 `答：北京。上海` 截成 `北京`。
+2. 最终句继续接受原完整结论标记或完整赋值；另接受从句首或逗号/分号边界
+   开始，由 `相加/可得/得到/得` 引出的**完整 identifier=value 从句**。
+   肯定结果词本身不提取数字，也不放宽 RHS；整个候选仍经过原
+   `candidateValues`。不是在任意 prose 中搜等号或 copula 后缀。
+3. 此真实输入末句的合法从句为 `相加 S5=11`，所以唯一终态表述为
+   `S5=11` 和其完整 RHS `11`，marker=`conclusion_marker`。此前“所以 q=-2”
+   是不同变量的完整合法赋值，只用于识别中间量，不能加入可匹配候选。
+   因而不会把 key `-2` 作为此作答的最终答案。此为源码推演，未调用提取函数。
+4. 所有显式答案声明无条件参与一致性检查；此前完整同变量赋值、有标记的同变量结论、
+   无法确定变量的完整结论、关系式/连等式不因最后出现可匹配值而消失。
+   例如 `所以 S5=10。S5=11。`、`所以11。因此12` 仍冲突；变量比较沿用
+   既有 NFKC/大小写规范化。新结果从句之前同句内有结论或完整同变量赋值时
+   也保留其冲突检查，不能借 `得 S5=11` 隐藏此前完整的 `S5=10=11`。
+5. 否定句不作 copula/RHS 子匹配：`所以答案不是11`、`所以答案不为11`、
+   `所以结果不可能是11` 仍保留完整字符串；`不是S5=11` 不能匹配完整标识符
+   赋值。关系字符继续拒绝；`S5=11!` 保留 `11!`，不能匹配 `11`；
+   `S5=10=11` / `S5=1+2+8=11` 仍拒绝，不求值。
+   `11*` 等被 answer-head 吞 token 的候选仍整体拒绝。
+6. 父已实测的正例 `将 x=-2 代入 ax-6=2，得 -2a-6=2。\n所以 a=-4`
+   按源码仍只提取末句 `a=-4` / `-4`；前句不进入终态候选。
+   父报告的“判对1分、run_refs=[]”是旧 head 的实际证据，最终 head 仍须父复验。
+
+已读手册及其指向的实际旧 R1/R2：
+`/tmp/yuk1407-pr1797-review-40fc2e64a-r1.md`、
+`/tmp/yuk1407-pr1797-verification-8720150a6-r2.md`。
+本修复维持 R1 否定/比较/矛盾/数字碎片满分防护；不重开 R2 已结案事项，
+不触及其申诉付费恢复风险路径，不宣称旧审查覆盖本次新 diff。
+
+### 限制与父独占验收
+
+不支持任意自然语言最终答案、无边界 prose 内嵌赋值、一般代数 LHS、
+连等式求值、Markdown 边缘包装、单位或数学等价证明。除上述肯定结果词外
+不猜其他 prose；末句没有完整语法就不回退选中间变量。ASCII 尾点仍不擅自
+当句界剥除。显式答案声明行的尾句号仍按原完整值保护，不另做标点清洗。
+此前完整同变量赋值若用另一种表达式（如 `S5=1+2+8` 后再写 `S5=11`），
+没有共同完整候选时也会保守冲突，不用算式求值证明两者等价。
+这是保守的提取语法，不证明整段推导正确，不增加模型或语义 fallback。
+
+本 lane 不新增/修改测试、fixture、断言或合成脚本；不运行 vitest/full tests、
+provider/DB/容器/TEST/服务；无 actual-output/真实页面运行结果。
+真实历史题现时 withheld：不绕过准入，不声称能激活原库 head。
+父须在其独占真实副本窗口核验完整冻结文本提取 `11` 并按原比较器比较，
+以及既有 `a=-4` 正例、否定/比较/阶乘/矛盾/连等式反例；数据 hold 与提取修复
+分开报告。此任务属于既有 YUK-1407 真实验收缺口，无额外新 follow-up；
+Linear/PLAN/.remember 与 PR 的最终验收状态由父协调线统一维护。
+
+### 本机静态检查与交回证据
+
+实际 Node `v26.10.0` / pnpm `11.13.1`。隔离树初始无依赖，
+`pnpm install --offline --frozen-lockfile --ignore-scripts` exit 0，未改 lockfile，
+日志 `/private/tmp/yuk1407-real-terminal-install.log`。以下最终均实际 exit 0：
+
+- `pnpm typecheck` → `/private/tmp/yuk1407-real-terminal-typecheck.log`。
+- `pnpm lint:ratchet` → `/private/tmp/yuk1407-real-terminal-lint-ratchet.log`；
+  179 warnings / 0 infos，210 / 0 基线未改。首次仅一处 regex 常量换行格式错误，
+  已按 Biome 修正；失败日志保留为 `yuk1407-real-terminal-lint-ratchet-initial-failed.log`。
+- `pnpm build` → `/private/tmp/yuk1407-real-terminal-build.log`；
+  SPA / Start / server / worker / migrate 均仅构建，无服务启动。
+- `pnpm audit:structured-judge` → `/private/tmp/yuk1407-real-terminal-audit-structured-judge.log`。
+- `pnpm audit:provider-attempt-truth` → `/private/tmp/yuk1407-real-terminal-audit-provider-attempt-truth.log`。
+- `pnpm audit:architecture-deepening` → `/private/tmp/yuk1407-real-terminal-audit-architecture-deepening.log`。
+- `git diff --check` → `/private/tmp/yuk1407-real-terminal-diff-check.log`。
+- 精确 base 下 tests / `*.test.*` / `*.spec.*` / fixtures 路径 diff 为空，
+  exit 0 → `/private/tmp/yuk1407-real-terminal-tests-unchanged.log`。
+
+完整实际差异将封存 `/private/tmp/yuk1407-real-terminal.patch`，提交身份与 clean-tree
+状态封存 `/private/tmp/yuk1407-real-terminal-delivery.log`。这些静态结果不代表提取
+actual-output、旧库 head 激活、真实 rejudge 或页面验收 PASS。提交后释放本树 writer，
+由父核修并在其独占真实窗口复验，不再自行继续写入。
