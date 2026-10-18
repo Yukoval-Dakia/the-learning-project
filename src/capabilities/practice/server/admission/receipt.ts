@@ -364,6 +364,35 @@ export async function claimAdmissionBatch(
   // never initiate a paid send under the @3 contract.
   if (unit !== QUESTION_ADMISSION_PAID_UNIT || !options.maySend)
     return { kind: 'stale' as const, input, identity };
+  // Legacy receipt fence: a same-base @1/@2 receipt_ready is a paid result still
+  // owed application — a fresh @3 send must hold instead of buying a second
+  // result for content the family already paid for. The entity gate stops at
+  // sending/unknown, so the parked receipt is locked and checked here, inside
+  // the family-locked claim transaction. Every receipt transition goes through
+  // recordPaidEffectResult -> lockRow, which takes the same family advisory and
+  // the row lock first, so this check is atomic with a sending -> receipt_ready
+  // transition: a sending legacy row still hits the entity gate below, and a
+  // receipt recorded in a serialized-earlier transaction is already visible.
+  // The marked @2 -> @3 reopen exempts gate blockers only; it never waives a
+  // recorded receipt. Held claims admit no @3 intent row at all.
+  const [legacyReceipt] = await tx
+    .select({ unit: paid_effect.unit })
+    .from(paid_effect)
+    .where(
+      and(
+        eq(paid_effect.family, effect.family),
+        eq(paid_effect.entity_id, effect.entityId),
+        eq(paid_effect.entity_revision, effect.entityRevision),
+        inArray(paid_effect.unit, [
+          LEGACY_QUESTION_ADMISSION_PAID_UNIT,
+          PREVIOUS_QUESTION_ADMISSION_PAID_UNIT,
+        ]),
+        eq(paid_effect.state, 'receipt_ready'),
+      ),
+    )
+    .for('update')
+    .limit(1);
+  if (legacyReceipt) return { kind: 'held' as const, input, identity };
   await admitPaidEffectIntent(tx, effect);
   const claim = await claimPaidEffectSend(tx, identity, {
     backend: 'pg-boss',

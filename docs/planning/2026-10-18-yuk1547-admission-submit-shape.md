@@ -77,12 +77,24 @@ Stage: **第一天能用**。Refs YUK-1537。
   `admissionJobId` 含 marker digest，重复脚本入队返回 `null` → 抛错。
 - **不同 base/无关 family/digest 错误全部阻塞**：gate 谓词要求同 `entity_revision` +
   family=`question_admission_run` + marker unit=`admission@2` + digest 精确匹配。
+- **运行时 receipt fence（Opus R1 P1）**：entity gate 只看 `sending/unknown`，一个
+  `receipt_ready` 的同 base @1/@2 行（hold 期间回执已落、应用被挂起的付费结果）在
+  marker 之外的 re-pend/`reverify`/release-hold 触发的新 @3 claim 下原本不可见 → 重复
+  付费。现在 claim 在 `admitPaidEffectIntent` 之前以 `SELECT … FOR UPDATE` 锁定检查同
+  family/entity/base 的 @1/@2 `receipt_ready` 行并 `held`。原子性来自既有家族 advisory
+  （claim 事务起点即 `lockPaidEffectControlFamily`，而 `recordPaidEffectResult → lockRow`
+  也以同一家族锁为先）加行锁；`sending` 仍由 entity gate 兜住。marker 豁免不了本 fence；
+  旧版本 job 在 `stale` 分支先行返回、不经过本 fence，本 delivery/本 unit 的 receipt
+  replay 保留、不改写旧行。receipt_ready 行经 owner delivery replay 应用后 → applied
+  扫描 terminal，@3 自然解除，无死端。
 
 ## Pre-deploy gates
 
 1. **旧 unit `receipt_ready` 计数 = 0**：`paid_effect` 中 family=`question_admission_run`、
    unit ∈ {`admission@1`,`admission@2`}、state=`receipt_ready` 必须为 0 —— 未落的收据
-   先人工 reconcile（脚本事务内强制）。
+   先人工 reconcile（脚本事务内强制）。运行时 fence（上节）使任何新 @3 发送在这些行
+   存在时 `held` 而不再付费；census 仍是强制前置，因为 fence 只挡新付费、不替旧回执
+   完成应用，遗留收据仍欠 reconcile。
 2. **Policy-pin 检查**：`QUESTION_ADMISSION_POLICY_ID` 不得 pin `@1`/`@2`；未设 ⇒
    `question_admission@3`。
 3. **Routing pin**：`AI_PROVIDER_OVERRIDE=xiaomi-token-plan` +
@@ -133,4 +145,9 @@ re-pend → `boss.send` 入队 `admission_version:3` + marker。任一校验失�
   lead 执行）；离线 replay 覆盖七项纯逻辑证据（见 PR body）。
 - `tool_call_log` evidence 行写入路径经 typecheck/lint/build 与代码走读核对，未在真实 DB
   运行。
+- 新增 @1/@2 `receipt_ready` 运行时 fence 经 typecheck/lint/build、锁序走读（家族
+  advisory → 行锁，无新 inversion）与既有离线 replay 核对；其并发拦截行为未在真实
+  Postgres 上验证。真实验收以部署后 TEST 跑批对账为准：遗留 receipt_ready 存在期间
+  re-pend 的 @3 job 须 `held`/pending 且不产生新付费行，收据经 owner delivery replay
+  应用后 @3 转 terminal。
 - q31srw8d0u（case b）的 application_json 形状以 10-18 记录重建 matcher，未经真实行验证。
