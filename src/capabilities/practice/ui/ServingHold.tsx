@@ -9,6 +9,7 @@
 // 的 retry 复用同一组 variables），新的一次点击才换新键。后端按键去重，同一次点击最多付费一次。
 
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useRef } from 'react';
 import { ApiError, type ApiOperationParameters, apiOperationJson } from '@/ui/lib/api';
 import { Badge, type BadgeTone } from '@/ui/primitives/Badge';
 import { Btn } from '@/ui/primitives/Btn';
@@ -214,6 +215,8 @@ export function ServingHoldPanel({
   onOpenRetraction: () => void;
 }) {
   const qc = useQueryClient();
+  // 同一轮里连点两次时，按钮还没来得及变灰；这个标记只在点击和请求结束时读写，挡住第二个新 key。
+  const inFlight = useRef(false);
   const mut = useMutation({
     mutationFn: runServingCommand,
     retry: (failureCount, err) => isNetworkFailure(err) && failureCount < 2,
@@ -227,6 +230,9 @@ export function ServingHoldPanel({
     onError: () => {
       void qc.invalidateQueries({ queryKey: ['question-detail', questionId] });
       void qc.invalidateQueries({ queryKey: ['questions-bank'] });
+    },
+    onSettled: () => {
+      inFlight.current = false;
     },
   });
 
@@ -272,13 +278,16 @@ export function ServingHoldPanel({
             variant="secondary"
             icon="refresh"
             disabled={mut.isPending}
-            onClick={() =>
+            onClick={() => {
+              if (inFlight.current || mut.isPending) return;
+              inFlight.current = true;
+              mut.reset();
               mut.mutate({
                 command: action.command,
                 path: action.path,
                 idempotencyKey: crypto.randomUUID(),
-              })
-            }
+              });
+            }}
           >
             {mut.isPending ? '提交中…' : COMMAND_LABEL[action.command]}
           </Btn>
