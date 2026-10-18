@@ -22,6 +22,7 @@
 | `tools/registry.ts` + `tools/register-capability-tools.ts` | 统一 Domain Tool Registry；完整 inventory 由 capability manifests 在进程启动期装配 |
 | `tools/mcp-bridge.ts` | `executeDomainToolCall` 引擎中立共享管线（`tool_call_log`/`tool_use` mirror/`beforeExecute`/`interceptInput`/cancellation）——DomainTool 执行的唯一通道 |
 | `tools/pi-tools.ts` | `PiToolMount` 描述子 + DomainTool→AgentTool 编译 + 远程 MCP→AgentTool 桥 + `piCustomTool` 逃生门 |
+| `tool-param-contract.ts` | YUK-1547/YUK-1559 C1/C6 共享工具参数契约：对 schema 期望 array/object 而模型给 string 的字段做恰好一次严格 `JSON.parse`，仅当结构类型匹配且过该子 schema 才采纳；修复失败抛 `[tool_param_contract]` isError（不 reach execute）。runtime 在 `pi-agent-adapter` 的 `prepareArguments` 包装统一挂载（pi 在 validateToolArguments 之前调它），preflight `yuk1547-admission-reopen.ts` 复用同一实现 |
 | `../../kernel/tools/allowlists.ts` | surface-specific DomainTool 与 MCP allowlist |
 | `../../capabilities/*/manifest.ts` 的 `copilotTools` | 查工具实现与暴露范围的入口；知识读取、练习供给、Copilot 事件读取等由业务模块拥有，runtime 只装配声明 |
 
@@ -37,6 +38,7 @@
   命名空间名 `<subjectDir>--<pack>`）经 `piSkillDocs` 注入 system prompt；缺包时
   传 undefined，never throws。
 - Read tool 返回语义化上下文（graph path / relation meaning / recent failure evidence）。
+- 工具参数契约（YUK-1547/1559）：structured-submit run 只有一次共享 landing 预算——missing-submit reminder 与 param-contract correction 二选一，不是一个各一次；且 correction 资格以该 turn 原始流式参数为严格 JSON 为前提（preflight 同序）。非 structured 的 root loop 与嵌套子 loop 也共享同一 run 级 correction 额度——第二次 `[tool_param_contract]` 拒绝直接终态，与迭代上限无关。采纳的 string→JSON 修复落 `tool_call_log`（`error_reason='tool_args_coerced'`，只带 tool/path/length，不带 payload），contract 拒绝落 `error_reason='tool_args_contract_failed'` + 递归净化（嵌套/内嵌 JSON 的 credential 字段一并脱敏）后 ≤4KiB 原始参数，`args_source` 区分真实流式字节与 pi 解析重建。
 - Proposal tool 写 `event(action='propose')`；action/write tool 只包装已有 owner service（AttributionTask / VariantGenTask），不能让 LLM 传任意 mutation payload。
 - release-critical FULL 审查的通用 confirmed state machine 仍在 `sealed-validation.ts`；
   collecting runner 额外透传 success `result` 为 `terminalText`，但不解释其结构；

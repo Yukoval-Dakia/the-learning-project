@@ -670,6 +670,42 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
         continue;
       }
 
+      // YUK-1547/YUK-1559 (C1/C6) — pi tool-argument contract telemetry.
+      // 'tool_args_coerced' persists each adopted string→JSON field repair
+      // (tool/path/length only, no payload) so the harness can count
+      // coercions per run; 'tool_args_contract_failed' persists the sanitized
+      // ≤4KiB original arguments of a call rejected at the param-contract
+      // seam (never reached execute). Both land on tool_call_log keyed to
+      // this task_run — the same evidence surface as the structured-submit
+      // failure rows.
+      if (msg.type === 'system' && msg.subtype === 'tool_args_coerced') {
+        await args.lifecycle.recordToolCall({
+          toolName: msg.tool_name,
+          inputJson: { event: 'coerced', tool_call_id: msg.tool_call_id, fields: msg.fields },
+          errorReason: 'tool_args_coerced',
+          iteration,
+          latencyMs: 0,
+        });
+        continue;
+      }
+      if (msg.type === 'system' && msg.subtype === 'tool_args_contract_failed') {
+        await args.lifecycle.recordToolCall({
+          toolName: msg.tool_name,
+          inputJson: {
+            event: 'contract_failed',
+            tool_call_id: msg.tool_call_id,
+            args_source: msg.args_source,
+            raw_arguments: msg.raw_arguments,
+            raw_args_sha256: msg.raw_args_sha256,
+            truncated: msg.truncated,
+          },
+          errorReason: 'tool_args_contract_failed',
+          iteration,
+          latencyMs: 0,
+        });
+        continue;
+      }
+
       if (msg.type === 'assistant') {
         const observedUsage = terminal.observeAssistant(msg);
         if (observedUsage) args.lifecycle.recordObservedUsage(observedUsage);

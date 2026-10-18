@@ -47,6 +47,7 @@ import {
   structuredSubmitSystemSuffix,
   structuredSubmitWireFields,
 } from '@/server/ai/structured-submit';
+import { isToolParamContractError, repairToolArguments } from '@/server/ai/tool-param-contract';
 
 const submit = STRUCTURED_OUTPUT_SUBMIT_TOOL;
 const digest = z.string().regex(/^sha256:[0-9a-f]{64}$/);
@@ -359,7 +360,10 @@ async function runProbe(
         finish_reason?: string;
         message?: {
           content?: unknown;
-          tool_calls?: { function?: { name?: string; arguments?: string } }[];
+          tool_calls?: {
+            id?: string;
+            function?: { name?: string; arguments?: string };
+          }[];
         };
       }[];
     };
@@ -400,10 +404,41 @@ async function runProbe(
     probe.raw_arguments = rawArguments.slice(0, 8000);
     const args: unknown = JSON.parse(rawArguments);
     probe.arguments_was_string = typeof args === 'string';
+    // Shared parameter-contract repair — the SAME seam the pi adapter applies
+    // at prepareArguments for every mounted tool (one strict JSON.parse per
+    // string field whose sub-schema expects array/object). A rejected repair
+    // becomes the probe's single correction turn: the isError feedback is
+    // replayed as the tool-result message and the run's extra-turn bound
+    // (initial + one landing, enforced by requests.length) is shared with the
+    // missing-submit reminder — never one each.
+    let effective: unknown;
+    try {
+      const repaired = repairToolArguments(parameters, args);
+      if (repaired.coercions.length > 0) probe.coerced_fields = repaired.coercions;
+      effective = repaired.args;
+    } catch (error) {
+      if (!isToolParamContractError(error)) throw error;
+      probe.param_contract_rejection = sanitizeProviderErrorText(
+        error instanceof Error ? error.message : String(error),
+        { secrets: [route.apiKey] },
+      );
+      const toolCallId = calls[0]?.id;
+      if ((probe.landing_turn_used as boolean) === true || typeof toolCallId !== 'string') {
+        throw error;
+      }
+      probe.landing_turn_used = true;
+      messages.push(choice.message as Record<string, unknown>, {
+        role: 'tool',
+        tool_call_id: toolCallId,
+        name: submit,
+        content: error instanceof Error ? error.message : String(error),
+      });
+      continue;
+    }
     if (plan.mode === 'solve') {
       // Same parse entry as the solve path (string tolerated at this level), with
       // the repair budget at zero so the probe proves strict schema validity.
-      const output = parseQuestionAdmissionSolveModelOutput(args, [], { remaining: 0 });
+      const output = parseQuestionAdmissionSolveModelOutput(effective, [], { remaining: 0 });
       const answer = output.units[0]?.answer;
       if (
         output.units.length !== 1 ||
@@ -415,7 +450,7 @@ async function runProbe(
         throw new Error('Invalid preflight synthetic answer');
       probe.output = output;
     } else {
-      const output = QuestionAdmissionSourceCrosscheckOutput.parse(args);
+      const output = QuestionAdmissionSourceCrosscheckOutput.parse(effective);
       const entry = output.per_unit[0];
       if (output.per_unit.length !== 1 || entry.scoring_unit_id !== 'u')
         throw new Error('Invalid preflight synthetic crosscheck output');
