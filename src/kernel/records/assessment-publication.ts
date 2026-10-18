@@ -584,7 +584,11 @@ function sameSealedDocument(
   },
   incoming: PublishedContractSeal,
   suppliedDigest: string,
+  suppliedAccepted: boolean,
 ): boolean {
+  // 同一摘要原样送回（夹具再发布、准入回写）时，jsonb 读出的键序经常重算不出
+  // 当初那份摘要。字符串相同且它确实封住了传入层，仍是同一份文档。
+  if (suppliedDigest === stored.digest && suppliedAccepted) return true;
   let storedSeal: PublishedContractSeal;
   try {
     storedSeal = publishedContractSeal({
@@ -599,7 +603,53 @@ function sameSealedDocument(
   }
   if (storedSeal.canonical !== incoming.canonical) return false;
   if (!publishedSealAccepts(storedSeal, stored.digest)) return false;
-  return suppliedDigest === stored.digest || publishedSealAccepts(incoming, suppliedDigest);
+  return suppliedAccepted;
+}
+
+async function publishedLayersChanged(
+  tx: Tx,
+  revisionId: string,
+  incoming: {
+    integrity_digest: string;
+    structure: unknown;
+    response_spec: unknown;
+    scoring_basis: unknown;
+    execution_plan: unknown;
+    presentation?: unknown;
+  },
+): Promise<boolean> {
+  const [stored] = await tx
+    .select({
+      digest: question_revision.integrity_digest,
+      structure: question_revision.structure,
+      response_spec: question_revision.response_spec,
+      scoring_basis: question_revision.scoring_basis,
+      execution_plan: question_revision.execution_plan,
+      presentation: question_revision.presentation,
+    })
+    .from(question_revision)
+    .where(eq(question_revision.revision_id, revisionId))
+    .limit(1);
+  if (stored == null || stored.digest === incoming.integrity_digest) return stored == null;
+  try {
+    const storedSeal = publishedContractSeal({
+      structure: stored.structure,
+      response_spec: stored.response_spec,
+      scoring_basis: stored.scoring_basis,
+      execution_plan: stored.execution_plan,
+      ...(stored.presentation != null ? { presentation: stored.presentation } : {}),
+    });
+    const incomingSeal = publishedContractSeal({
+      structure: incoming.structure,
+      response_spec: incoming.response_spec,
+      scoring_basis: incoming.scoring_basis,
+      execution_plan: incoming.execution_plan,
+      ...(incoming.presentation != null ? { presentation: incoming.presentation } : {}),
+    });
+    return storedSeal.canonical !== incomingSeal.canonical;
+  } catch {
+    return true;
+  }
 }
 
 /**
@@ -610,7 +660,8 @@ function sameSealedDocument(
  * 维度 + generation，不铸新 revision）。
  *
  * P2：integrity_digest 必须是这份契约的规范封存，或旧的 schema 序 / 调用方序封存。
- * 与当前 revision 的规范形式相同则不铸新版。structure.group_id 必须与目标 group 一致。
+ * 同一摘要原样送回不铸新版。摘要不同则只在规范形式相同、且库内摘要仍是该层的
+ * 某种封存时不铸新版。structure.group_id 必须与目标 group 一致。
  */
 export async function publishQuestionGroup(
   db: Db | Tx,
@@ -799,7 +850,8 @@ export async function publishQuestionGroup(
         };
       }
       const sameDocument =
-        current != null && sameSealedDocument(current, seal, contract.integrity_digest);
+        current != null &&
+        sameSealedDocument(current, seal, contract.integrity_digest, suppliedAccepted);
       if (!suppliedAccepted && !sameDocument) {
         throw new Error(
           `publishQuestionGroup: integrity_digest mismatch (supplied ${contract.integrity_digest}, canonical ${seal.canonical}) — regenerate the contract via contract-normalizer`,
@@ -1171,12 +1223,7 @@ export async function publishQuestionGroupFromRow(
     const contentChanged =
       expectedRevision == null ||
       lifecycle == null ||
-      (await tx
-        .select({ digest: question_revision.integrity_digest })
-        .from(question_revision)
-        .where(eq(question_revision.revision_id, expectedRevision))
-        .limit(1)
-        .then((rows) => rows[0]?.digest !== contract.integrity_digest));
+      (await publishedLayersChanged(tx, expectedRevision, contract));
 
     // admission 解析（P1-5）：
     //   - preserve + 内容变更 ⇒ withheld（沿用既有 withheld 原因，没有则

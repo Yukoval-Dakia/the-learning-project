@@ -34,7 +34,7 @@ import {
 import type { Db, Tx } from '@/db/client';
 import { question, question_block, question_group_lifecycle, question_revision } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { contractIntegrityDigest } from '@/kernel/records/assessment-normalization';
+import { publishedContractSeal } from '@/kernel/records/assessment-normalization';
 import type {
   PublishAdmission,
   PublishQuestionGroupResult,
@@ -734,13 +734,6 @@ export async function submitDraftQuestion(
       doc.knowledge_ids,
     );
     const presentation = presentationForDraft(doc, contract);
-    const integrityDigest = contractIntegrityDigest({
-      structure: contract.structure,
-      response_spec: contract.response_spec,
-      scoring_basis: contract.scoring_basis,
-      execution_plan: contract.execution_plan,
-      ...(presentation != null ? { presentation } : {}),
-    });
     const barrierIssues = contractBarrierIssues(contract, presentation, effectiveAdmission);
     if (barrierIssues.length > 0) {
       const withheld: SubmitResult = {
@@ -753,6 +746,13 @@ export async function submitDraftQuestion(
       };
       return withheld;
     }
+    const integrityDigest = publishedContractSeal({
+      structure: contract.structure,
+      response_spec: contract.response_spec,
+      scoring_basis: contract.scoring_basis,
+      execution_plan: contract.execution_plan,
+      ...(presentation != null ? { presentation } : {}),
+    }).canonical;
     if (isNew) {
       // live 去重 claim：canonical hash 占用者存在 ⇒ cross-KC merge（与供给
       // 链同语义）；否则插入新行。
