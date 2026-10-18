@@ -82,7 +82,7 @@ export function piCustomTool(
   serverName: string,
   name: string,
   description: string,
-  schema: Record<string, z.ZodTypeAny>,
+  schema: Record<string, z.ZodTypeAny> | z.ZodTypeAny,
   handler: (
     args: Record<string, unknown>,
   ) => Promise<{ content: { type: 'text'; text: string }[] }>,
@@ -91,11 +91,17 @@ export function piCustomTool(
     name: piToolWireName(serverName, name),
     label: name,
     description,
-    parameters: zodToJsonSchemaCompat(z.object(schema), {
-      io: 'input',
-      reused: 'inline',
-      target: 'draft-07',
-    }) as AgentTool['parameters'],
+    parameters: zodToJsonSchemaCompat(
+      // A full Zod schema is compiled as-is (the tool's parameters ARE that
+      // shape — YUK-1547's envelope-less structured submit); a raw shape keeps
+      // the object wrapper every other caller relies on.
+      schema instanceof z.ZodType ? schema : z.object(schema),
+      {
+        io: 'input',
+        reused: 'inline',
+        target: 'draft-07',
+      },
+    ) as AgentTool['parameters'],
     execute: async (_toolCallId, params) => {
       const result = await handler((params ?? {}) as Record<string, unknown>);
       return { content: result.content, details: null };

@@ -171,8 +171,11 @@ function spliceProvider(text: string, id: string, bucket: TrimmedProvider): stri
   const rendered = renderBucket(bucket);
   const existing = providerSlice(kept, id);
   if (existing) {
+    const at = kept.indexOf(existing);
     const brace = existing.indexOf('{');
-    return kept.replace(existing, `${existing.slice(0, brace)}${rendered}`);
+    return (
+      kept.slice(0, at) + existing.slice(0, brace) + rendered + kept.slice(at + existing.length)
+    );
   }
   const providersKey = '\n  "providers":';
   const keyAt = kept.indexOf(providersKey);

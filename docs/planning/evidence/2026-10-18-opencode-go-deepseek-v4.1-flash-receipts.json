@@ -1,0 +1,89 @@
+{
+  "ticket": "YUK-1547",
+  "captured_at": "2026-10-18T12:55:34Z",
+  "lane": {
+    "provider": "opencode-go",
+    "model": "deepseek-v4.1-flash",
+    "endpoint": "https://opencode.ai/inference/go/openai/v1/chat/completions",
+    "native_reasoning_param": "reasoning_effort",
+    "effort": "high"
+  },
+  "provenance": "Agent-executed paid probes, authorized by the owner for YUK-1547, against the official opencode-go inference endpoint with the newly issued OPENCODE_API_KEY (deployment-20261018f-opencode-key-loxxoajp). Receipts copied verbatim from the sealed NAS artifact directory; they contain no credential material. chat = 1-token completion with reasoning_tokens>0; tool = forced tool_call returning probe_echo(value=ok), finish_reason tool_calls. Both requests carried reasoning_effort=high and the deepseek-format thinking:{type:'enabled'} switch.",
+  "receipts": {
+    "chat": {
+      "run_id": "yuk1547-new-key-chat-59a0c8a1-9a3c-4045-9f16-df9b7b0db797",
+      "provider": "opencode-go",
+      "model": "deepseek-v4.1-flash",
+      "effort": "high",
+      "parameter": "reasoning_effort",
+      "kind": "chat",
+      "url": "https://opencode.ai/inference/go/openai/v1/chat/completions",
+      "max_tokens": 1,
+      "cost_usd": null,
+      "cost_basis": "unknown",
+      "started_at": "2026-10-18T12:55:15.731224+00:00",
+      "request_sha256": "a5ecf9797a141be29542b0ffba9be7ee821c72dcdec7f3a43c5ebed049dee750",
+      "usage": {
+        "prompt_tokens": 33,
+        "completion_tokens": 1,
+        "total_tokens": 34,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 1
+        }
+      },
+      "http_status": 200,
+      "error_type": null,
+      "response_id": "02179232811720085f4608cdee6bbc8f8aaf952504d48fd302027",
+      "response_model": "deepseek-v4.1-flash",
+      "finish_reason": "length",
+      "tool_calls": [],
+      "response_sha256": "e45d7324a26a3ea97c2e5e5128c3e38803a6336fc7bee0595132a1f5d3db60a7",
+      "finished_at": "2026-10-18T12:55:18.399Z"
+    },
+    "tool": {
+      "run_id": "yuk1547-new-key-tool-ceb2aeac-30cc-4f8c-9ab7-557dff76d199",
+      "provider": "opencode-go",
+      "model": "deepseek-v4.1-flash",
+      "effort": "high",
+      "parameter": "reasoning_effort",
+      "kind": "tool",
+      "url": "https://opencode.ai/inference/go/openai/v1/chat/completions",
+      "max_tokens": 256,
+      "cost_usd": null,
+      "cost_basis": "unknown",
+      "started_at": "2026-10-18T12:55:31.156155+00:00",
+      "request_sha256": "148128cbc190b6d6aa7e2f0a0a14b022d272b08fc1a90894f6de9f9b866f51f5",
+      "usage": {
+        "prompt_tokens": 302,
+        "completion_tokens": 46,
+        "total_tokens": 348,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 7
+        }
+      },
+      "http_status": 200,
+      "error_type": null,
+      "response_id": "0217923281327009aa9d0b0344e85196ac345634277259c260ad0",
+      "response_model": "deepseek-v4.1-flash",
+      "finish_reason": "tool_calls",
+      "tool_calls": [
+        {
+          "id": "call_00_o32pnq5f9wqymgdti8o9j0hn",
+          "type": "function",
+          "function": {
+            "name": "probe_echo",
+            "arguments": "{\"value\": \"ok\"}"
+          }
+        }
+      ],
+      "response_sha256": "53b427b20f0b9d2a6f555447384fd587d5312cba85f3901d0b8380f4cb3985bd",
+      "finished_at": "2026-10-18T12:55:34.638Z"
+    }
+  }
+}

@@ -84,8 +84,10 @@ export interface PaidEffectSendClaimDelivery {
   readonly leaseExpiresAt: Date;
   /** Original dispatch generation; required for both backends after bootstrap. */
   readonly generation?: number | null;
-  /** Lead-only @1 unknown identity authorization, never inferred from the new unit. */
-  readonly admissionUnknownInputDigest?: string;
+  /** Lead-only old-row identity authorization (unit + input digest), never
+   *  inferred from the new unit. YUK-1547: marks the exact @2 row an @3 send
+   *  may re-open (its unknown blocker plus the retained @1 unknown on the base). */
+  readonly admissionReopenMarker?: { unit: string; inputDigest: string };
 }
 
 export type PaidEffectSendClaim =
@@ -168,7 +170,7 @@ async function lockEntityGate(tx: Tx, identity: PaidEffectIdentity): Promise<voi
  * Gate scan under the FIXED predicate (paidEffectGateBlocks): an open
  * sending/unknown effect of the same (family, entityId) blocks this claim
  * UNLESS it is an item_prior_backfill feature rep of the SAME revision, or
- * the exact owner-authorized YUK-1537 @1 unknown -> @2 contract upgrade.
+ * the exact owner-authorized YUK-1547 @2 -> @3 contract upgrade.
  * Same revision + same unit
  * + different digest BLOCKS (reconciliation); a different revision BLOCKS
  * (entity-level cross-revision/cross-night). Runs inside the caller's
@@ -177,7 +179,7 @@ async function lockEntityGate(tx: Tx, identity: PaidEffectIdentity): Promise<voi
 async function findGateBlocker(
   tx: Tx,
   identity: PaidEffectIdentity,
-  admissionUnknownInputDigest?: string,
+  admissionReopenMarker?: { unit: string; inputDigest: string },
 ): Promise<PaidEffectIdentity | null> {
   const blockers = await tx
     .select({
@@ -207,16 +209,34 @@ async function findGateBlocker(
           and ${paid_effect.entity_revision} = ${identity.entityRevision}
           and ${paid_effect.unit} <> ${identity.unit}
         )`,
-        // YUK-1537 explicit solve-contract upgrade. This does not replay or
-        // update the blocker; only a new @2 claim for the SAME digest can pass.
+        // YUK-1547 explicit solve-transport upgrade. This does not replay or
+        // update the blocker; only a marked @3 claim for the SAME base can pass:
+        // the marked @2 unknown row (identity match), or the retained @1 unknown
+        // row — the latter only while the named @2 row actually exists, so a
+        // fabricated marker exempts nothing.
         sql`not (
           ${paid_effect.family} = 'question_admission_run'
           and ${identity.family} = 'question_admission_run'
           and ${paid_effect.entity_revision} = ${identity.entityRevision}
           and ${paid_effect.state} = 'unknown'
-          and ${paid_effect.unit} = 'admission@1'
-          and ${identity.unit} = 'admission@2'
-          and ${paid_effect.input_digest} = ${admissionUnknownInputDigest ?? ''}
+          and ${identity.unit} = 'admission@3'
+          and ${admissionReopenMarker?.unit ?? ''} = 'admission@2'
+          and (
+            (${paid_effect.unit} = 'admission@2'
+              and ${paid_effect.input_digest} = ${admissionReopenMarker?.inputDigest ?? ''})
+            or (
+              ${paid_effect.unit} = 'admission@1'
+              and exists (
+                select 1 from paid_effect marked_row
+                where marked_row.family = 'question_admission_run'
+                  and marked_row.entity_id = ${identity.entityId}
+                  and marked_row.entity_revision = ${identity.entityRevision}
+                  and marked_row.unit = 'admission@2'
+                  and marked_row.input_digest = ${admissionReopenMarker?.inputDigest ?? ''}
+                  and marked_row.state in ('unknown', 'applied')
+              )
+            )
+          )
         )`,
       ),
     )
@@ -298,7 +318,7 @@ async function claimLockedRow(
   if (admission.kind === 'fenced') {
     throw new PaidEffectControlFencedError(identity.family, admission.reason, admission.owner);
   }
-  const blockedBy = await findGateBlocker(tx, identity, delivery.admissionUnknownInputDigest);
+  const blockedBy = await findGateBlocker(tx, identity, delivery.admissionReopenMarker);
   if (blockedBy) return { blockedBy };
   const fence = row.fence + 1;
   await tx

@@ -716,6 +716,23 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
         }
         await args.onSuccess?.(msg);
       } else {
+        // YUK-1547 — a failed structured submit keeps its raw arguments as
+        // bounded tool_call_log evidence attached to this task run, so the
+        // paid-effect unknown row can be diagnosed without a provider re-ask.
+        const submitEvidence = (msg as { structured_submit_evidence?: Record<string, unknown> })
+          .structured_submit_evidence;
+        if (submitEvidence != null && typeof submitEvidence === 'object') {
+          await args.lifecycle.recordToolCall({
+            toolName:
+              typeof submitEvidence.tool_name === 'string'
+                ? submitEvidence.tool_name
+                : 'mcp__structured_output__submit',
+            inputJson: submitEvidence,
+            iteration,
+            latencyMs: Date.now() - stepStartTime,
+            errorReason: 'structured_output_submit_arguments_rejected',
+          });
+        }
         args.onResultError?.(msg);
         throw new AgentRunError({
           kind: args.kind,

@@ -5,10 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import { canonicalProviderName } from '@/ai/task-spec';
-import {
-  LEGACY_QUESTION_ADMISSION_POLICY_ID,
-  QUESTION_ADMISSION_POLICY_ID,
-} from '@/core/question-admission-policy';
+import { QUESTION_ADMISSION_POLICY_IDS } from '@/core/question-admission-policy';
 import { LEGACY_DRAFT_STATUS } from '@/core/schema/assessment/lifecycle';
 import type { ResponseSpecT } from '@/core/schema/assessment/response';
 import type { ScoringBasisT } from '@/core/schema/assessment/scoring';
@@ -340,8 +337,7 @@ export async function runAdmissionForQuestion(
         and(
           eq(question_revision.group_id, rootId),
           inArray(question_admission_verification.policy_id, [
-            LEGACY_QUESTION_ADMISSION_POLICY_ID,
-            QUESTION_ADMISSION_POLICY_ID,
+            ...QUESTION_ADMISSION_POLICY_IDS,
             resolveQuestionAdmissionPolicyId(),
           ]),
           sql`${question_admission_verification.evidence}->>'pack' = 'question_admission'`,

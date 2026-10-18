@@ -29,6 +29,8 @@ import { type TaskDefinition, canonicalProviderName } from '@/ai/task-spec';
 import { type Provider, type TaskKind, tasks } from '@/capabilities/task-registry';
 import { getLaneOverride, getTaskOverride } from '@/core/config/store';
 import type { ProviderModelBinding } from './model-profiles';
+import { OPENCODE_GO_OPENAI_BASE_URL } from './opencode-go';
+import { nativePiModel, piProviderId } from './pi-provider-catalog';
 import { xiaomiTokenPlanBaseUrl } from './xiaomi-token-plan';
 
 // YUK-608 — re-export the provider union so override consumers (solve-lane, verify-framework)
@@ -222,16 +224,20 @@ const PROVIDERS: Record<Provider, BoundProviderConfig> = {
       },
     },
   },
-  // YUK-921 P1 — OpenCode Go subscription lane (opencode.ai/zen/go). The
+  // YUK-921 P1 — OpenCode Go subscription lane. The
   // catalog's target models speak openai-completions/openai-responses; served
   // by the pi adapter's builtin 'opencode-go' provider, which owns
   // baseUrl/model catalog/auth. This entry only declares the loom-side
   // credential + capability classification. Every request additionally needs
   // an x-opencode-session header (injected by the pi adapter from the run id —
   // see pi-agent-adapter.ts).
+  // YUK-1547 — pi-ai 1.1.0's builtin catalog still points the OpenAI-API
+  // family at the legacy /zen/go/v1; OPENCODE_GO_OPENAI_BASE_URL is the single
+  // official-endpoint source that pi-models.ts and pi-provider-catalog.ts
+  // rebind onto the wire models (chat+tool receipts: HTTP 200).
   'opencode-go': {
     authMode: 'key',
-    baseUrl: 'https://opencode.ai/zen/go',
+    baseUrl: OPENCODE_GO_OPENAI_BASE_URL,
     apiKeyEnv: 'OPENCODE_API_KEY',
     description: 'OpenCode Go subscription catalog via the pi execution adapter',
     modelDefaults: {
@@ -470,6 +476,37 @@ export function crossoverModelForProvider(provider: Provider, kind: TaskKind): s
 }
 
 /**
+ * YUK-1547 — model-native reasoning params resolved from the per-task
+ * `task.<kind>.reasoning` config layer. Keys are the model's own wire
+ * parameter names (DeepSeek `reasoning_effort`); values pass through verbatim
+ * — there is deliberately no unified effort-tier enum or mapping on this path
+ * (owner 2026-10-18: don't force-align effort to preset tiers; validate only
+ * against the values the model itself supports). Companion switches the
+ * model's own compat requires (DeepSeek `thinking:{type:'enabled'}`) are
+ * DERIVED at resolution from the model's thinkingFormat — never configured,
+ * never applied to non-deepseek formats.
+ */
+export interface TaskNativeReasoningParams {
+  readonly reasoning_effort?: string;
+  /** Compat-derived wire switch (deepseek format only today). */
+  readonly thinking?: { readonly type: 'enabled' };
+}
+
+/**
+ * YUK-1547 — which layer produced the resolved provider, frozen at
+ * resolution time and recorded on the run record (`model_profile_resolved`
+ * `selection_rule`) + reopen preflight receipt, so a paid effect can be
+ * proven against the layer that actually selected it.
+ */
+export type TaskSelectionRule =
+  | 'env_pin' // AI_PROVIDER_OVERRIDE env pin replaced the binding
+  | 'task_pair_priority' // task.<kind>.override_global_pin opt-in: complete task pair beat the global pin
+  | 'call_override' // explicit per-call override/provider arg (solver2 env, modelBinding)
+  | 'global_pin' // globalSwitch: AI_PROVIDER_* env or DB lane.global.*
+  | 'task_config' // DB task.<kind>.provider with no pin present
+  | 'registry_default'; // tasks[kind].defaultProvider
+
+/**
  * Resolved provider binding handed to the runner. Discriminated on `authMode`:
  *   - 'key'   → { apiKey, baseUrl? } — the credential value, resolved once here.
  *   - 'oauth' → { apiKey } carries the subscription token VALUE (read once from
@@ -485,6 +522,10 @@ export type ResolvedProvider =
       apiKey: string;
       /** undefined for Anthropic direct (uses the catalog default). */
       baseUrl?: string;
+      /** Per-task model-native reasoning params, validated against the resolved model. */
+      nativeReasoningParams?: TaskNativeReasoningParams;
+      /** Which layer produced this binding — frozen at resolution for run receipts. */
+      selectionRule?: TaskSelectionRule;
     }
   | {
       authMode: 'oauth';
@@ -494,6 +535,10 @@ export type ResolvedProvider =
       apiKey: string;
       /** Env-var NAME the token was read from (diagnostics only). */
       oauthTokenEnv: string;
+      /** Per-task model-native reasoning params, validated against the resolved model. */
+      nativeReasoningParams?: TaskNativeReasoningParams;
+      /** Which layer produced this binding — frozen at resolution for run receipts. */
+      selectionRule?: TaskSelectionRule;
     };
 
 /**
@@ -591,17 +636,37 @@ export function resolveConfiguredTaskModel(kind: TaskKind): string {
 export function resolveTaskBinding(
   kind: TaskKind,
   override?: { provider?: Provider; model?: string },
-): { provider: Provider; model: string } {
+): {
+  provider: Provider;
+  model: string;
+  reasoning?: TaskNativeReasoningParams;
+  selectionRule: TaskSelectionRule;
+} {
   const def = tasks[kind];
+  const dbTaskOverride = getTaskOverride(kind);
+  const typed = 'execution' in def && def.execution === 'typed';
+  // YUK-1547 — per-task explicit opt-in (task.<kind>.override_global_pin=true):
+  // a COMPLETE+legal task.<kind> pair beats the global pin (env AI_PROVIDER_*
+  // AND DB lane.global.*) for this task only. The explicit per-call override
+  // arg still outranks the pair (solver2 env / modelBinding stay usable), and
+  // an opted task with an incomplete or unservable pair is a config error —
+  // never a silent paid fallback to the pinned/default model. Tasks without
+  // the flag keep the old layering byte-for-byte.
+  const taskPairBeatsGlobalPin = dbTaskOverride?.overrideGlobalPin === true && !typed;
+  if (dbTaskOverride?.overrideGlobalPin === true && typed) {
+    throw new Error(
+      `task.${kind}.override_global_pin=true is meaningless on a typed-execution task — there is no chat lane to repoint. Clear the flag.`,
+    );
+  }
+  if (taskPairBeatsGlobalPin) assertOptedTaskPair(kind, dbTaskOverride);
   // Product-wide incident pin must also cover explicit caller/modelBinding routes.
   // Typed primitives have a separate wire contract, not a chat model API.
-  const envPin =
-    'execution' in def && def.execution === 'typed' ? undefined : readEnvOverride(process.env);
+  const envPin = typed || taskPairBeatsGlobalPin ? undefined : readEnvOverride(process.env);
   if (envPin) override = envPin;
-  const globalSwitch = readGlobalProviderSwitch();
-  const dbTaskOverride = getTaskOverride(kind);
+  const globalSwitch = taskPairBeatsGlobalPin ? undefined : readGlobalProviderSwitch();
 
-  // Chat env pin > explicit arg > DB global > DB per-task > registry.
+  // Chat env pin > explicit arg > DB global > DB per-task > registry —
+  // with the opt-in: explicit arg > task pair > registry (global pin skipped).
   // The arg may set only `model`, so fall back through each layer per-field.
   const dbTaskProvider = dbTaskOverride?.provider
     ? readProviderId(dbTaskOverride.provider)
@@ -618,6 +683,17 @@ export function resolveTaskBinding(
   }
   const providerName: Provider =
     override?.provider ?? globalSwitch?.provider ?? dbTaskProvider ?? def.defaultProvider;
+  const selectionRule: TaskSelectionRule = envPin
+    ? 'env_pin'
+    : taskPairBeatsGlobalPin && !override?.provider
+      ? 'task_pair_priority'
+      : override?.provider
+        ? 'call_override'
+        : globalSwitch?.provider
+          ? 'global_pin'
+          : dbTaskProvider
+            ? 'task_config'
+            : 'registry_default';
 
   // Codex review P2 (Finding 4) — the global-switch model guard, now covering
   // BOTH the env pin and DB lane.global pin (identical semantics: the switch is
@@ -652,7 +728,85 @@ export function resolveTaskBinding(
     providerName === 'anthropic-sub' ? ANTHROPIC_SUB_DEFAULT_MODEL : def.defaultModel;
   const modelId =
     override?.model ?? globalSwitch?.model ?? dbTaskOverride?.model ?? subDefaultModel;
-  return { provider: providerName, model: modelId };
+  return {
+    provider: providerName,
+    model: modelId,
+    reasoning: dbTaskOverride?.reasoning,
+    selectionRule,
+  };
+}
+
+/**
+ * YUK-1547 — an opted-in task pair must be complete AND servable for this
+ * task, checked at binding resolution (config error before any attempt/paid
+ * call). Servable = provider implemented for the kind + model present in the
+ * provider's native pi catalog; capability-fit still gates at run start.
+ */
+function assertOptedTaskPair(
+  kind: TaskKind,
+  dbTaskOverride: { provider?: string; model?: string } | undefined,
+): void {
+  const fail = (reason: string): never => {
+    throw new Error(
+      `task.${kind}.override_global_pin=true requires a complete+legal task.<kind> pair — ${reason}. Fix the pair or clear the flag; this opt-in never falls through to the global pin or the registry default.`,
+    );
+  };
+  const provider = dbTaskOverride?.provider;
+  const model = dbTaskOverride?.model;
+  if (typeof provider !== 'string' || provider === '' || !isKnownProvider(provider)) {
+    fail(`task.${kind}.provider='${provider ?? '∅'}' is missing or not a known provider`);
+  }
+  if (typeof model !== 'string' || model === '') {
+    fail(`task.${kind}.model is missing`);
+  }
+  const optedProvider = provider as Provider;
+  const optedModel = model as string;
+  if (!isProviderImplementedForTask(optedProvider, kind)) {
+    fail(`provider '${optedProvider}' is not implemented for task '${kind}'`);
+  }
+  if (!nativePiModel(optedProvider, optedModel)) {
+    fail(`model '${optedModel}' is not in native pi provider '${piProviderId(optedProvider)}'`);
+  }
+}
+
+/**
+ * YUK-1547 — fail-closed validation + compat derivation for per-task native
+ * reasoning params, resolved alongside the provider binding so a bad value is
+ * a config error before any admission row, attempt row, or paid call (same
+ * posture as the credential checks below). `reasoning_effort` is only honest
+ * on an OpenAI-completions reasoning model, and only when the model's OWN
+ * thinkingLevelMap names the value — the model declares its native levels
+ * (e.g. low|high|max for deepseek-v4.1-flash), loom never invents or maps a
+ * tier. Returns the FULL wire param set: for thinkingFormat='deepseek' the
+ * model's own compat requires `thinking:{type:'enabled'}` beside the effort
+ * (the same two fields pi emits from options.reasoningEffort); other formats
+ * add nothing — DeepSeek fields are never imposed on all OpenAI models.
+ */
+function resolveTaskNativeReasoningParams(
+  kind: TaskKind,
+  provider: Provider,
+  model: string,
+  params: TaskNativeReasoningParams | undefined,
+): TaskNativeReasoningParams | undefined {
+  const effort = params?.reasoning_effort;
+  if (effort === undefined) return undefined;
+  const native = nativePiModel(provider, model);
+  if (native?.api !== 'openai-completions' || native.reasoning !== true) {
+    throw new Error(
+      `task.${kind}.reasoning sets reasoning_effort='${effort}', but '${provider}/${model}' is not an OpenAI-completions reasoning model — the param would be dropped or rejected on the wire. Remove the task override or point the task at a lane whose own reasoning parameter is reasoning_effort.`,
+    );
+  }
+  const supported = Object.values(native.thinkingLevelMap ?? {}).filter(
+    (value): value is string => typeof value === 'string',
+  );
+  if (!supported.includes(effort)) {
+    throw new Error(
+      `task.${kind}.reasoning reasoning_effort='${effort}' is not a value '${provider}/${model}' accepts — the model's own thinkingLevelMap declares [${supported.join(', ')}]. Pass one of those values verbatim (no tier mapping).`,
+    );
+  }
+  return native.thinkingFormat === 'deepseek'
+    ? { reasoning_effort: effort, thinking: { type: 'enabled' } }
+    : { reasoning_effort: effort };
 }
 
 /**
@@ -671,7 +825,8 @@ export function resolveTaskProvider(
   kind: TaskKind,
   override?: { provider?: Provider; model?: string },
 ): ResolvedProvider {
-  const { provider: providerName, model: modelId } = resolveTaskBinding(kind, override);
+  const binding = resolveTaskBinding(kind, override);
+  const { provider: providerName, model: modelId } = binding;
 
   const config = PROVIDERS[providerName];
   if (!config) {
@@ -679,6 +834,15 @@ export function resolveTaskProvider(
       `Unknown provider '${providerName}' for task ${kind}; expected one of ${Object.keys(PROVIDERS).join(' | ')}`,
     );
   }
+  const wireReasoning = resolveTaskNativeReasoningParams(
+    kind,
+    providerName,
+    modelId,
+    binding.reasoning,
+  );
+  const nativeReasoning =
+    wireReasoning !== undefined ? { nativeReasoningParams: wireReasoning } : {};
+  const selectionRule = binding.selectionRule;
 
   if (config.authMode === 'oauth') {
     // YUK-365 subscription lane. Fail clearly if the token env is missing so an
@@ -695,6 +859,8 @@ export function resolveTaskProvider(
       model: modelId,
       apiKey: token,
       oauthTokenEnv: config.oauthTokenEnv,
+      selectionRule,
+      ...nativeReasoning,
     };
   }
 
@@ -724,5 +890,7 @@ export function resolveTaskProvider(
     model: modelId,
     apiKey,
     baseUrl: providerName === 'xiaomi-token-plan' ? xiaomiTokenPlanBaseUrl() : config.baseUrl,
+    selectionRule,
+    ...nativeReasoning,
   };
 }

@@ -226,9 +226,11 @@ interface PairScope {
   label: string;
 }
 
-/** 一个被写/被清的 key 属于哪对 provider/model 组；非对键 → null。 */
+/** 一个被写/被清的 key 属于哪对 provider/model 组；非对键 → null。
+ * `task.<kind>.override_global_pin`（YUK-1547）挂在同一组上：flag 写/清
+ * 都要重算该 task 的 pair 终态，免得逐字段变更绕过 pair 校验。 */
 function pairScopeFor(key: string): PairScope | null {
-  const t = /^task\.([^.]+)\.(provider|model)$/.exec(key);
+  const t = /^task\.([^.]+)\.(provider|model|override_global_pin)$/.exec(key);
   if (t) {
     const scope = t[1];
     return {
@@ -297,7 +299,14 @@ async function validateFinalProviderPairs(
     }
   }
   const keys = [
-    ...new Set([...scopes.values()].flatMap((s) => [s.providerKey, s.modelKey])),
+    ...new Set(
+      [...scopes.values()].flatMap((s) => {
+        const taskScope = /^task\.([^.]+)\.provider$/.exec(s.providerKey);
+        return taskScope
+          ? [s.providerKey, s.modelKey, `task.${taskScope[1]}.override_global_pin`]
+          : [s.providerKey, s.modelKey];
+      }),
+    ),
     'lane.global.provider',
     'lane.global.model',
     ...[...solveTasks, ...visionTasks].flatMap((kind) => [
@@ -394,6 +403,30 @@ async function validateFinalProviderPairs(
 
     const isGlobal = scope.providerKey === 'lane.global.provider';
     const typed = taskKind && (tasks[taskKind] as TaskDefinition).execution === 'typed';
+    // YUK-1547 — explicit per-task opt-in: task.<kind>.override_global_pin=true
+    // requires the task's OWN provider+model rows complete+servable — checked
+    // on the tx-final rows so field-by-field writes cannot leave a half pair
+    // behind (a global reset exposing it is validated the same way).
+    if (taskKind && !typed && rowByKey.get(`task.${taskKind}.override_global_pin`) === true) {
+      const provider = configuredProvider;
+      const model = configuredModel;
+      if (!provider || !model) {
+        throw new ApiError(
+          'invalid_config_value',
+          `${scope.label}: task.${taskKind}.override_global_pin=true requires complete task.${taskKind}.provider + .model rows (provider='${provider ?? '∅'}', model='${model ?? '∅'}') — the opt-in never falls through to the global pin`,
+          422,
+        );
+      }
+      if (!isKnownProvider(provider) || !isProviderImplementedForTask(provider, taskKind)) {
+        throw new ApiError(
+          'invalid_config_value',
+          `${scope.label}: task.${taskKind}.override_global_pin=true resolves to provider '${provider}' not implemented for task '${taskKind}'`,
+          422,
+        );
+      }
+      validateNativeModel(scope.label, provider, model, taskKind);
+      continue;
+    }
     const globalSwitch =
       (taskKind && !typed) || isGlobal
         ? resolveGlobalProviderSwitch(env, {
