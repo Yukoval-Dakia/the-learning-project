@@ -1,0 +1,539 @@
+/* YUK-1473 — the whole-paper practice page in 纸面's vocabulary. The page root carries both
+   .un-ps (the single-question page's sheet, ruled answer lines, choice lines, glass bar and
+   states, practice-solo.css) and .un-pp (what only a paper needs, below). Scoped under
+   [data-ui-next]; semantic --un- tokens only (T1).
+   Paper rules: no right/wrong colour anywhere while answering (§6.4: the number strip only says
+   answered or not); caution only where something needs the learner; the hand-in button is the
+   one solid button on the page. Layers (T3): page → sheet (flat) → sticky glass bar. */
+
+/* ── Banner (R2): source, serif title, status chips; the mascot at the right ── */
+[data-ui-next] .un-pp-note {
+  margin: 0;
+  font-size: var(--un-fs-1);
+  line-height: var(--un-lh-ui);
+  color: var(--un-text-3);
+}
+
+/* ── Number strip: one square per question, in the sheet's numbering style.
+   Current: the filled coral square (as the question number on the sheet). Answered: a solid
+   ink ring with a dot under the number. Not answered yet: a dashed ring, nothing inside. ── */
+[data-ui-next] .un-pp-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--un-sp-2);
+  margin: 0;
+  padding: 0;
+}
+[data-ui-next] .un-pp-pip {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  min-width: 30px;
+  height: 30px;
+  padding: 0 6px;
+  box-sizing: border-box;
+  border-radius: 7px;
+  background: transparent;
+  box-shadow: inset 0 0 0 var(--un-hairline) var(--un-line-strong);
+  color: var(--un-text-4);
+  font-size: var(--un-fs-1);
+  font-weight: var(--un-fw-medium);
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    background-color var(--un-t-small) var(--un-ease-glide),
+    box-shadow var(--un-t-small) var(--un-ease-glide),
+    color var(--un-t-small) var(--un-ease-glide);
+}
+/* Not answered: the ring is dashed (an outline drawn on top of the box). */
+[data-ui-next] .un-pp-pip:not([data-answered]):not([aria-selected="true"]) {
+  box-shadow: none;
+  outline: var(--un-hairline) dashed var(--un-line-strong);
+  outline-offset: -1px;
+}
+[data-ui-next] .un-pp-pip:hover {
+  background: var(--un-bg-hover);
+  color: var(--un-text-1);
+}
+[data-ui-next] .un-pp-pip:focus-visible {
+  outline: 2px solid var(--un-focus);
+  outline-offset: 2px;
+}
+[data-ui-next] .un-pp-pip[data-answered] {
+  box-shadow: inset 0 0 0 1.5px var(--un-text-3);
+  color: var(--un-text-1);
+}
+[data-ui-next] .un-pp-pip[data-answered]::after {
+  content: "";
+  position: absolute;
+  bottom: 4px;
+  left: 50%;
+  width: 4px;
+  height: 4px;
+  margin-left: -2px;
+  border-radius: 50%;
+  background: currentColor;
+}
+[data-ui-next] .un-pp-pip[aria-selected="true"] {
+  background: var(--un-accent-strong);
+  box-shadow: none;
+  color: var(--un-text-on-accent);
+  font-weight: var(--un-fw-semibold);
+}
+[data-ui-next] .un-pp-pip[aria-selected="true"]:hover {
+  background: var(--un-accent-strong);
+}
+/* The number lifts a little when a dot sits under it. */
+[data-ui-next] .un-pp-pip[data-answered] > span {
+  transform: translateY(-2px);
+}
+[data-ui-next] .un-pp-strip-key {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--un-sp-3);
+  margin-left: var(--un-sp-2);
+  font-size: var(--un-fs-1);
+  color: var(--un-text-4);
+}
+[data-ui-next] .un-pp-strip-key > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+[data-ui-next] .un-pp-strip-key i {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  box-sizing: border-box;
+  border-radius: 3px;
+}
+[data-ui-next] .un-pp-strip-key i[data-k="answered"] {
+  box-shadow: inset 0 0 0 1.5px var(--un-text-3);
+}
+[data-ui-next] .un-pp-strip-key i[data-k="empty"] {
+  outline: var(--un-hairline) dashed var(--un-line-strong);
+  outline-offset: -1px;
+}
+
+/* ── The sheet: the extra rows a paper question has, in the answer column ── */
+[data-ui-next] .un-pp .un-ps-sheet > .un-pp-extras,
+[data-ui-next] .un-pp .un-ps-sheet > .un-pp-confidence {
+  margin-left: var(--un-ps-gutter);
+}
+[data-ui-next] .un-pp-extras {
+  display: grid;
+  gap: var(--un-sp-3);
+}
+[data-ui-next] .un-pp-extras:empty {
+  display: none;
+}
+
+/* Optional thinking: a quiet text button that opens one ruled field. */
+[data-ui-next] .un-pp-trace-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  justify-self: start;
+  padding: 2px 0;
+  font-size: var(--un-fs-1);
+  color: var(--un-text-3);
+  transition: color var(--un-t-small) var(--un-ease-glide);
+}
+[data-ui-next] .un-pp-trace-toggle:hover {
+  color: var(--un-text-1);
+}
+[data-ui-next] .un-pp .un-pp-trace .un-ps-textarea {
+  min-height: calc(2 * var(--un-ps-line));
+}
+
+/* Attachments: the add button reads like 纸面's quiet tool buttons, not an old ghost button. */
+[data-ui-next] .un-pp {
+  & .rs-attach-addbtn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: var(--un-h-control-sm);
+    padding: 0 var(--un-sp-2);
+    margin-left: calc(-1 * var(--un-sp-2));
+    border: 0;
+    border-radius: var(--un-r-1);
+    background: transparent;
+    box-shadow: none;
+    color: var(--un-text-3);
+    font-family: var(--un-font-sans);
+    font-size: var(--un-fs-1);
+    font-weight: var(--un-fw-medium);
+  }
+  & .rs-attach-addbtn:hover:not(:disabled) {
+    background: var(--un-bg-hover);
+    color: var(--un-text-1);
+  }
+
+  /* Which questions a photo counts for: a quiet tinted panel, sans type. */
+  & .rs-group {
+    margin-top: 0;
+    padding: var(--un-sp-3);
+    border: 0;
+    border-radius: var(--un-r-1);
+    background: var(--un-bg-sunk);
+    font-family: var(--un-font-sans);
+  }
+  & .rs-group-h,
+  & .rs-group-note {
+    font-family: var(--un-font-sans);
+    font-size: var(--un-fs-1);
+    letter-spacing: 0;
+    color: var(--un-text-3);
+  }
+  & .rs-group-slot {
+    border-radius: var(--un-r-1);
+    font-family: var(--un-font-sans);
+    font-size: var(--un-fs-1);
+  }
+}
+
+/* ── Self-rating: one quiet line under the answer. Picking a number tints it coral (soft, never
+   solid: the hand-in button stays the only solid one); 不评 is a text button. ── */
+[data-ui-next] .un-pp-confidence {
+  padding-top: var(--un-sp-4);
+  border-top: var(--un-hairline) dashed var(--un-line);
+}
+[data-ui-next] .un-pp {
+  & .rs-confidence {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--un-sp-2) var(--un-sp-3);
+    margin: 0;
+    font-family: var(--un-font-sans);
+    font-size: var(--un-fs-1);
+    color: var(--un-text-3);
+  }
+  & .rs-confidence-q {
+    font-size: var(--un-fs-2);
+    color: var(--un-text-2);
+  }
+  & .rs-confidence-scale {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  & .rs-confidence-btn {
+    display: inline-grid;
+    place-items: center;
+    width: 30px;
+    min-width: 30px;
+    height: 30px;
+    min-height: 30px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    box-shadow: inset 0 0 0 var(--un-hairline) var(--un-line-strong);
+    color: var(--un-text-2);
+    font-family: var(--un-font-sans);
+    font-size: var(--un-fs-1);
+    font-weight: var(--un-fw-medium);
+    font-variant-numeric: tabular-nums;
+    transition:
+      background-color var(--un-t-small) var(--un-ease-glide),
+      box-shadow var(--un-t-small) var(--un-ease-glide),
+      color var(--un-t-small) var(--un-ease-glide);
+  }
+  & .rs-confidence-btn:hover:not(:disabled) {
+    background: var(--un-bg-hover);
+    color: var(--un-text-1);
+  }
+  & .rs-confidence-btn.is-selected,
+  & .rs-confidence-btn.is-selected:hover:not(:disabled) {
+    background: var(--un-accent-soft);
+    box-shadow: inset 0 0 0 1.5px var(--un-accent);
+    color: var(--un-accent-ink);
+    font-weight: var(--un-fw-semibold);
+  }
+  & .rs-confidence-skip {
+    min-width: 0;
+    min-height: 30px;
+    margin-left: var(--un-sp-1);
+    padding: 0 var(--un-sp-2);
+    border: 0;
+    border-radius: var(--un-r-1);
+    background: transparent;
+    color: var(--un-text-3);
+    font-family: var(--un-font-sans);
+    font-size: var(--un-fs-1);
+  }
+  & .rs-confidence-skip:hover:not(:disabled) {
+    background: var(--un-bg-hover);
+    color: var(--un-text-1);
+  }
+  & .rs-confidence-btn:focus-visible,
+  & .rs-confidence-skip:focus-visible {
+    outline: 2px solid var(--un-focus);
+    outline-offset: 2px;
+  }
+  & .rs-confidence-hint {
+    flex-basis: 100%;
+    font-size: var(--un-fs-1);
+    color: var(--un-text-4);
+  }
+}
+
+/* ── The bar: 纸面's glass bar, across the column (it acts on the whole paper). Row one: turn the
+   page, the count, the save state, then 交卷 at the far end. Row two: one plain line of help. ── */
+[data-ui-next] .un-pp .un-pp-bar {
+  justify-self: stretch;
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 2px var(--un-sp-3);
+  margin-left: 0;
+  padding: 6px 6px 8px var(--un-sp-2);
+  border-radius: var(--un-r-2);
+}
+[data-ui-next] .un-pp-bar-nav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+[data-ui-next] .un-pp-bar-nav .un-btn {
+  gap: var(--un-sp-1);
+  color: var(--un-text-2);
+}
+[data-ui-next] .un-pp-count {
+  padding-left: var(--un-sp-3);
+  border-left: var(--un-hairline) solid var(--un-line);
+  font-size: var(--un-fs-1);
+  color: var(--un-text-2);
+  white-space: nowrap;
+}
+[data-ui-next] .un-pp-count b {
+  font-weight: var(--un-fw-semibold);
+  color: var(--un-text-1);
+}
+[data-ui-next] .un-pp .un-pp-bar .un-ps-bar-save {
+  justify-self: start;
+}
+[data-ui-next] .un-pp-bar-end {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--un-sp-2);
+}
+[data-ui-next] .un-pp-bar .un-btn-primary {
+  min-width: 132px;
+  border-radius: var(--un-r-3);
+}
+[data-ui-next] .un-pp-confirm-q {
+  font-size: var(--un-fs-1);
+  color: var(--un-text-2);
+}
+[data-ui-next] .un-pp-hint {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  padding: 2px var(--un-sp-2) 0;
+  font-size: var(--un-fs-1);
+  line-height: var(--un-lh-ui);
+  color: var(--un-text-4);
+}
+[data-ui-next] .un-pp-hint svg {
+  flex: none;
+  margin-top: 3px;
+}
+[data-ui-next] .un-pp-hint[data-tone="caution"] {
+  color: var(--un-caution);
+}
+
+/* ── Two versions of one answer (draft conflict, YUK-1490): the same soft caution strip as the
+   single-question page, inside the answer column. Handed in elsewhere (message only, nothing to
+   choose) is information, so it is neutral. ── */
+[data-ui-next] .un-pp {
+  & .pfp-conflict {
+    display: grid;
+    gap: var(--un-sp-3);
+    margin: 0 0 0 var(--un-ps-gutter);
+    padding: var(--un-sp-4);
+    border: 0;
+    border-radius: var(--un-r-2);
+    background: var(--un-caution-soft);
+    font-family: var(--un-font-sans);
+  }
+  & .pfp-conflict:not(:has(.pfp-conflict-cmp)) {
+    padding: var(--un-sp-3) var(--un-sp-4);
+    background: var(--un-bg-sunk);
+  }
+  & .pfp-conflict:not(:has(.pfp-conflict-cmp)) .pfp-conflict-msg .ico,
+  & .pfp-conflict:not(:has(.pfp-conflict-cmp)) .pfp-conflict-msg svg {
+    color: var(--un-text-3);
+  }
+  & .pfp-conflict-msg {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--un-sp-2);
+    margin: 0;
+    font-size: var(--un-fs-2);
+    line-height: var(--un-lh-ui);
+    color: var(--un-text-1);
+  }
+  & .pfp-conflict-msg .ico,
+  & .pfp-conflict-msg svg {
+    flex: none;
+    margin-top: 3px;
+    color: var(--un-caution);
+  }
+  & .pfp-conflict-cmp {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--un-sp-3);
+  }
+  & .pfp-conflict-side {
+    display: grid;
+    align-content: start;
+    gap: var(--un-sp-1);
+    min-width: 0;
+    padding: var(--un-sp-3);
+    border: 0;
+    border-radius: var(--un-r-1);
+    background: var(--un-bg-raised);
+  }
+  & .pfp-conflict-text {
+    margin: 0;
+    max-height: 9em;
+    overflow: auto;
+    font-size: var(--un-fs-2);
+    line-height: var(--un-lh-ui);
+    color: var(--un-text-1);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  & .pfp-conflict-text[data-empty] {
+    color: var(--un-text-4);
+  }
+  & .pfp-conflict .meta,
+  & .pfp-discarded .meta {
+    font-family: var(--un-font-sans);
+    font-size: var(--un-fs-1);
+    letter-spacing: 0;
+    color: var(--un-text-3);
+  }
+  & .pfp-conflict .nowrap-meta,
+  & .pfp-conflict .un-ps-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--un-sp-2);
+  }
+
+  /* The text set aside after choosing the server's version: folded under the answer, readable
+     and copyable until the learner leaves the question. */
+  & .pfp-discarded {
+    display: grid;
+    gap: var(--un-sp-2);
+    margin: 0;
+    padding: 0;
+    border: 0;
+    color: var(--un-text-3);
+    font-family: var(--un-font-sans);
+  }
+  & .pfp-discarded > summary {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    justify-self: start;
+    font-size: var(--un-fs-1);
+    color: var(--un-text-3);
+    cursor: pointer;
+    list-style: none;
+  }
+  & .pfp-discarded > summary::-webkit-details-marker {
+    display: none;
+  }
+  & .pfp-discarded > summary::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    margin: 0 2px;
+    border-right: 1.5px solid currentColor;
+    border-bottom: 1.5px solid currentColor;
+    transform: rotate(-45deg);
+    transition: transform var(--un-t-small) var(--un-ease-glide);
+  }
+  & .pfp-discarded[open] > summary::before {
+    transform: rotate(45deg);
+  }
+  & .pfp-discarded > summary:hover {
+    color: var(--un-text-1);
+  }
+  & .pfp-discarded[open] {
+    padding: var(--un-sp-3);
+    border-radius: var(--un-r-1);
+    background: var(--un-bg-sunk);
+  }
+  & .pfp-discarded .pfp-conflict-text {
+    color: var(--un-text-2);
+  }
+}
+
+/* ── States: loading and read error in the page's own shape (M14) ── */
+[data-ui-next] .un-pp-skel-strip {
+  display: flex;
+  gap: var(--un-sp-2);
+}
+[data-ui-next] .un-pp-skel-strip span {
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+  background: var(--un-bg-sunk);
+}
+[data-ui-next] .un-pp-skel-title {
+  display: grid;
+  gap: var(--un-sp-2);
+}
+[data-ui-next] .un-pp-skel-title span {
+  display: block;
+  height: 13px;
+  width: 9em;
+  border-radius: var(--un-r-1);
+  background: var(--un-bg-sunk);
+}
+[data-ui-next] .un-pp-skel-title span:nth-child(2) {
+  height: 30px;
+  width: 14em;
+}
+
+/* Medium widths (iPad): the count and save state keep row one; 交卷 keeps its place at the end. */
+@media (max-width: 1100px) {
+  [data-ui-next] .un-pp .un-pp-bar {
+    grid-template-columns: auto auto minmax(0, 1fr) auto;
+  }
+}
+
+/* Phone (T8): the bar runs edge to edge in two rows (turn the page | hand in), the hint below. */
+@media (max-width: 720px) {
+  [data-ui-next] .un-pp .un-pp-bar {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+  [data-ui-next] .un-pp-count {
+    padding-left: var(--un-sp-2);
+  }
+  [data-ui-next] .un-pp .un-pp-bar .un-ps-bar-save {
+    display: none;
+  }
+  [data-ui-next] .un-pp .un-pp-bar .un-ps-bar-save:has(.rs-save.is-error, .rs-save.is-conflict) {
+    display: inline;
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+  [data-ui-next] .un-pp-strip-key {
+    display: none;
+  }
+  [data-ui-next] .un-pp {
+    & .pfp-conflict-cmp {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+}
