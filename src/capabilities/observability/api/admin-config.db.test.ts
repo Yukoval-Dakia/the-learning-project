@@ -75,6 +75,8 @@ describe('GET /api/admin/config — injected runtime facts over HTTP (real build
     setAdminConfigRuntimeFacts(buildAdminConfigRuntimeFacts);
   });
 
+  // @invariant security: the admin config response names the wired coding-plan lane and never includes credential values
+  // @fails-if the lane is absent under its current id or a stubbed API key is copied into the HTTP body
   it('serves providers[] with presence booleans only (no credential values) and reserved lanes marked unimplemented', async () => {
     vi.stubEnv('XIAOMI_API_KEY', 'sk-http-facts-canary-xiaomi-9f1a');
     vi.stubEnv('XIAOMI_TOKEN_PLAN_API_KEY', 'tp-http-facts-canary-token-plan-7c2e');
