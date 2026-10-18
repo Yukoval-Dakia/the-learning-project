@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import type {
   BlankSlotT,
   ExecutionPlanT,
@@ -13,18 +12,25 @@ import type {
   SelectSlotT,
 } from '@/core/schema/assessment';
 import {
+  BlankNormalization,
   ExecutionPlan,
   QuestionGroupStructure,
   ResponseSpec,
   ScoringBasis,
 } from '@/core/schema/assessment';
+import type { BlankNormalizationT } from '@/core/schema/assessment/scoring';
 import type {
+  DraftBlankTextKeyT,
   DraftMaterialT,
   DraftPartT,
   DraftUnitT,
   QuestionDraftDocumentT,
 } from '@/core/schema/question-draft';
-import { isDraftDocumentV2 } from '@/core/schema/question-draft';
+import {
+  QuestionDraftDocument,
+  blankTextKeyConflict,
+  isDraftDocumentV2,
+} from '@/core/schema/question-draft';
 import { contractIntegrityDigest } from '@/kernel/records/assessment-normalization';
 
 // ====================================================================
@@ -201,15 +207,10 @@ function criterionFor(
           key: {
             kind: 'text',
             accepted: key.accepted,
-            normalization: {
-              version: 'v1',
-              nfkc: false,
-              trim_outer: key.trim ?? true,
-              casefold: key.case_sensitive === false,
-              collapse_whitespace: false,
-              ignore_punctuation: false,
-              character_variants: [],
-            },
+            normalization: blankTextNormalization(key, issues, {
+              partId,
+              unitId: unit.unit_id,
+            }),
           },
         },
         attachRule: true,
@@ -268,6 +269,47 @@ function criterionFor(
     attachRule: false,
     issues,
   };
+}
+
+/**
+ * 已带归一化的草稿带着整段进契约。作者在同一把键上写了 case_sensitive / trim
+ * 时，这两项盖过段内的 casefold / trim_outer。两者互相矛盾则记为未决，提交不铸
+ * revision。没带归一化的新题仍用当前默认：v1，nfkc 与折叠空白关闭。
+ */
+function blankTextNormalization(
+  key: DraftBlankTextKeyT,
+  issues: DraftConversionIssue[],
+  loc: { partId: string; unitId: string },
+): BlankNormalizationT {
+  const conflict = blankTextKeyConflict(key);
+  if (conflict != null) {
+    issues.push({
+      code: 'rule_invalid',
+      part_id: loc.partId,
+      unit_id: loc.unitId,
+      detail: `unit '${loc.unitId}' ${conflict}`,
+    });
+  }
+  if (key.normalization == null) {
+    return BlankNormalization.parse({
+      version: 'v1',
+      nfkc: false,
+      trim_outer: key.trim ?? true,
+      casefold: key.case_sensitive === false,
+      collapse_whitespace: false,
+      ignore_punctuation: false,
+      character_variants: [],
+    });
+  }
+  const parsed = BlankNormalization.parse(key.normalization);
+  if (conflict != null) return parsed;
+  return BlankNormalization.parse({
+    ...parsed,
+    ...(key.case_sensitive === false ? { casefold: true } : {}),
+    ...(key.case_sensitive === true ? { casefold: false } : {}),
+    ...(key.trim === false ? { trim_outer: false } : {}),
+    ...(key.trim === true ? { trim_outer: true } : {}),
+  });
 }
 
 function executorFor(unit: DraftUnitT): ExecutorAssignmentT['executor'] {
@@ -528,25 +570,42 @@ function draftSpecFromSlot(slot: ResponseSlotT): DraftUnitT['response_spec'] | n
         ...(slot.evidence_required != null ? { evidence_required: slot.evidence_required } : {}),
         ...(slot.max_chars != null ? { max_chars: slot.max_chars } : {}),
       };
+    case 'single_choice':
+      return {
+        kind: 'select',
+        pick: 'one',
+        items: slot.options.map((option) => ({
+          item_id: option.option_id,
+          ...(option.text.length > 0 ? { label_md: option.text } : {}),
+        })),
+      };
+    case 'multi_choice':
+      return {
+        kind: 'select',
+        pick: 'many',
+        items: slot.options.map((option) => ({
+          item_id: option.option_id,
+          ...(option.text.length > 0 ? { label_md: option.text } : {}),
+        })),
+      };
     default:
-      // legacy slot kinds（single_choice/text/numeric/matching/...）—— 以
-      // metadata 如实保留形状说明；映射为最接近的统一类别，原槽字段无法
-      // 还原时调用方会收到 unmapped 标记。
+      // 其余 legacy 槽（text/numeric/matching/...）无法还原成统一类别时留
+      // unmapped 标记。选择题已在上面映成 select。
       return null;
   }
 }
 
 /**
  * 已发布 revision → v2 草稿（编辑已发布题的草稿种子）。part/unit/material
- * 身份原样保留（语义连续性由发布侧 diff 裁决）；legacy slot kinds（非统一
- * 三类）在 unit.metadata.unmapped_slot 留痕，由编辑者改写为统一类别后才可
- * 提交（draftDocumentToContract 不接受 unmapped 标记——见下面提交路径）。
+ * 身份原样保留。选择题（single_choice / multi_choice + option_set_key）映成
+ * select 与答案键；其余无法还原的 legacy 槽在 unit.metadata.unmapped_slot_kind
+ * 留痕，提交前须改写成统一类别。
  */
 export function revisionToDraftDocument(
   revision: Pick<
     PublishedQuestionRevisionT,
     'revision_id' | 'group_id' | 'structure' | 'response_spec' | 'scoring_basis' | 'execution_plan'
-  >,
+  > & { presentation?: PublishedQuestionRevisionT['presentation'] | null },
   opts: { knowledge_ids?: string[] } = {},
 ): QuestionDraftDocumentT {
   const executorByUnit = new Map<string, ExecutorAssignmentT['executor']>();
@@ -579,7 +638,7 @@ export function revisionToDraftDocument(
       unit_id: unit.scoring_unit_id,
       slot_id: slotId ?? `${unit.scoring_unit_id}::r`,
       response_class:
-        slot?.kind === 'select'
+        slot?.kind === 'select' || slot?.kind === 'single_choice' || slot?.kind === 'multi_choice'
           ? 'select'
           : slot?.kind === 'blank'
             ? 'blank'
@@ -595,6 +654,15 @@ export function revisionToDraftDocument(
       metadata:
         slot != null && draftSpecFromSlot(slot) == null ? { unmapped_slot_kind: slot.kind } : {},
     };
+    if (
+      draft.key?.kind === 'select' &&
+      draft.rule == null &&
+      unit.criterion.kind === 'option_set_key'
+    ) {
+      // exact_option_set 是集合相等：全中且无错选得满分，否则 0。补一条印出的
+      // 规则，提交侧才不会把已有选择题判成 missing_rule。
+      draft.rule = printedLegacyChoiceRule(unit.points);
+    }
     if (part != null) {
       part.units.push(draft);
     } else if (partById.has(slot?.part_id ?? '')) {
@@ -625,7 +693,27 @@ export function revisionToDraftDocument(
     })),
     knowledge_ids: opts.knowledge_ids ?? [],
     metadata: {},
+    ...(revision.presentation != null ? { presentation: revision.presentation } : {}),
     base: { question_id: revision.group_id, revision_id: revision.revision_id },
+  };
+}
+
+/** 旧选择题没有 K1 规则对象。集合相等的给分写成显式规则，不靠提交时再猜。 */
+function printedLegacyChoiceRule(points: number | null): NonNullable<DraftUnitT['rule']> {
+  const award = points != null && Number.isFinite(points) && points >= 0 ? points : 0;
+  return {
+    version: 1,
+    source: {
+      statement: '命中全部正确选项且没有错选得满分，否则不得分',
+      locator: 'legacy:option_set_key',
+    },
+    cases: [
+      {
+        when: { wrong: { eq: 0 }, miss: { eq: 0 } },
+        award: { points: award },
+      },
+    ],
+    otherwise: { points: 0 },
   };
 }
 
@@ -634,6 +722,9 @@ function keyAndReferenceFor(
 ): Pick<DraftUnitT, 'key' | 'reference_md' | 'rubric'> {
   if (criterion.kind === 'select_key') {
     return { key: { kind: 'select', accepted_item_ids: criterion.accepted_item_ids } };
+  }
+  if (criterion.kind === 'option_set_key') {
+    return { key: { kind: 'select', accepted_item_ids: [...criterion.accepted_option_ids] } };
   }
   if (criterion.kind === 'blank_key') {
     const key = criterion.key;
@@ -645,8 +736,17 @@ function keyAndReferenceFor(
             ? {
                 kind: 'text',
                 accepted: [...key.accepted],
-                ...(key.normalization.casefold ? { case_sensitive: false } : {}),
-                ...(key.normalization.trim_outer === false ? { trim: false } : {}),
+                normalization: {
+                  version: key.normalization.version,
+                  nfkc: key.normalization.nfkc,
+                  trim_outer: key.normalization.trim_outer,
+                  casefold: key.normalization.casefold,
+                  collapse_whitespace: key.normalization.collapse_whitespace,
+                  ignore_punctuation: key.normalization.ignore_punctuation,
+                  character_variants: key.normalization.character_variants.map(
+                    (pair) => [pair[0], pair[1]] as [string, string],
+                  ),
+                },
               }
             : {
                 kind: 'numeric',
@@ -671,6 +771,12 @@ function methodFor(
   executor: ExecutorAssignmentT['executor'] | undefined,
   criterion: ScoringUnitCriterionT,
 ): DraftUnitT['method'] {
+  if (
+    criterion.kind === 'option_set_key' ||
+    (executor?.kind === 'deterministic' && executor.comparator === 'exact_option_set')
+  ) {
+    return { kind: 'set-compare' };
+  }
   if (executor?.kind === 'deterministic') {
     if (executor.comparator === 'set_compare') return { kind: 'set-compare' };
     if (executor.comparator === 'blank_exact') return { kind: 'exact' };
@@ -690,10 +796,7 @@ function methodFor(
     : { kind: 'human_review' };
 }
 
-// ---------- 可复现指纹（非 fetch 来源的去重键；绝不伪造 extraction_hash） ----------
-
-/** JSON 键序稳定序列化（与 contractIntegrityDigest 同一纪律）。 */
-function canonicalize(value: unknown): string {
+function stableJson(value: unknown): string {
   return JSON.stringify(value, (_key, v) =>
     v !== null && typeof v === 'object' && !Array.isArray(v)
       ? Object.keys(v)
@@ -706,20 +809,542 @@ function canonicalize(value: unknown): string {
   );
 }
 
-/**
- * 草稿内容指纹 → question.canonical_content_hash。内容寻址：覆盖
- * parts/units/materials/knowledge_ids/source 内容；metadata/presentation 不参与
- * （非判分语义）。同内容 ⇒ 同指纹 ⇒ live 去重 claim。
- */
-export function draftCanonicalContentHash(doc: QuestionDraftDocumentT): string {
-  const canonical = canonicalize({
-    parts: doc.parts,
-    materials: doc.materials.map(contractMaterial),
-    knowledge_ids: [...doc.knowledge_ids].sort(),
-    source: doc.source ?? null,
+function executorByUnit(plan: ExecutionPlanT): Map<string, ExecutorAssignmentT['executor']> {
+  const out = new Map<string, ExecutorAssignmentT['executor']>();
+  for (const assignment of plan.assignments) {
+    for (const unitId of assignment.scoring_unit_ids) out.set(unitId, assignment.executor);
+  }
+  return out;
+}
+
+function legacyChoiceSlotFaithful(stored: ResponseSlotT, canonical: ResponseSlotT): boolean {
+  if (stored.kind !== 'single_choice' && stored.kind !== 'multi_choice') return false;
+  if (canonical.kind !== 'select') return false;
+  if (stored.placement != null || canonical.placement != null) return false;
+  if (stored.kind === 'multi_choice') {
+    if (stored.min_select !== 1 || stored.max_select !== stored.options.length) return false;
+  }
+  if (canonical.pick !== (stored.kind === 'single_choice' ? 'one' : 'many')) return false;
+  if (
+    canonical.axes != null ||
+    canonical.text != null ||
+    canonical.at_most_per_coordinate != null
+  ) {
+    return false;
+  }
+  if (canonical.items.length !== stored.options.length) return false;
+  return stored.options.every((option, index) => {
+    const item = canonical.items[index];
+    return (
+      item != null && item.item_id === option.option_id && (item.label_md ?? '') === option.text
+    );
   });
-  // 列约定为裸 hex（extraction_hash.slice('sha256:'.length) 同款）—— 不带前缀。
-  return createHash('sha256').update(canonical).digest('hex');
+}
+
+function legacyChoiceUnitFaithful(stored: ScoringUnitT, canonical: ScoringUnitT): boolean {
+  if (stored.criterion.kind !== 'option_set_key' || canonical.criterion.kind !== 'select_key') {
+    return false;
+  }
+  if (
+    stableJson(stored.criterion.accepted_option_ids) !==
+    stableJson(canonical.criterion.accepted_item_ids)
+  ) {
+    return false;
+  }
+  if (stored.points !== canonical.points) return false;
+  if (stableJson(stored.slot_refs) !== stableJson(canonical.slot_refs)) return false;
+  if (stableJson(stored.material_refs) !== stableJson(canonical.material_refs)) return false;
+  if (stored.evidence_slot_refs.length > 0 || canonical.evidence_slot_refs.length > 0) return false;
+  if (stored.requires_group_evidence || canonical.requires_group_evidence) return false;
+  if (stored.level_points != null || canonical.level_points != null) return false;
+  const expectedRule = stored.rule ?? printedLegacyChoiceRule(stored.points);
+  return stableJson(expectedRule) === stableJson(canonical.rule);
+}
+
+/**
+ * 往返必须保住已存判分层。旧选择题改写成 select_key + 印出的集合规则是唯一允许的
+ * 表示变化；答案键、选项文本、分值和默认的单选/全选界都要一致。其余任何字段
+ * 被丢掉或改写都算判分变了。
+ */
+export function scoringRoundTripIsFaithful(
+  stored: Pick<PublishedQuestionRevisionT, 'response_spec' | 'scoring_basis' | 'execution_plan'>,
+  canonical: Pick<DraftContract, 'response_spec' | 'scoring_basis' | 'execution_plan'>,
+): boolean {
+  const storedSlots = new Map(stored.response_spec.slots.map((slot) => [slot.slot_id, slot]));
+  const canonicalSlots = new Map(canonical.response_spec.slots.map((slot) => [slot.slot_id, slot]));
+  if (stableJson([...storedSlots.keys()]) !== stableJson([...canonicalSlots.keys()])) return false;
+  const canonicalUnits = new Map(
+    canonical.scoring_basis.units.map((unit) => [unit.scoring_unit_id, unit]),
+  );
+  if (stored.scoring_basis.units.length !== canonicalUnits.size) return false;
+  const legacyUnitIds = new Set<string>();
+  const legacySlotIds = new Set<string>();
+  for (const storedUnit of stored.scoring_basis.units) {
+    const nextUnit = canonicalUnits.get(storedUnit.scoring_unit_id);
+    const slotId = storedUnit.slot_refs[0];
+    const storedSlot = slotId != null ? storedSlots.get(slotId) : undefined;
+    const nextSlot = slotId != null ? canonicalSlots.get(slotId) : undefined;
+    if (nextUnit == null || storedSlot == null || nextSlot == null) return false;
+    const legacy =
+      storedUnit.criterion.kind === 'option_set_key' &&
+      (storedSlot.kind === 'single_choice' || storedSlot.kind === 'multi_choice');
+    if (legacy) {
+      if (!legacyChoiceUnitFaithful(storedUnit, nextUnit)) return false;
+      if (!legacyChoiceSlotFaithful(storedSlot, nextSlot)) return false;
+      legacyUnitIds.add(storedUnit.scoring_unit_id);
+      legacySlotIds.add(storedSlot.slot_id);
+    } else if (
+      stableJson(storedUnit) !== stableJson(nextUnit) ||
+      stableJson(storedSlot) !== stableJson(nextSlot)
+    ) {
+      return false;
+    }
+  }
+  for (const [slotId, storedSlot] of storedSlots) {
+    const nextSlot = canonicalSlots.get(slotId);
+    if (nextSlot == null) return false;
+    const legacyShape = storedSlot.kind === 'single_choice' || storedSlot.kind === 'multi_choice';
+    if (legacyShape) {
+      if (!legacySlotIds.has(slotId)) return false;
+      continue;
+    }
+    if (stableJson(storedSlot) !== stableJson(nextSlot)) return false;
+  }
+  if (
+    stableJson(stored.scoring_basis.aggregation) !==
+      stableJson(canonical.scoring_basis.aggregation) ||
+    stored.scoring_basis.blank_scores_zero !== canonical.scoring_basis.blank_scores_zero
+  ) {
+    return false;
+  }
+  if (stored.execution_plan.plan_version !== canonical.execution_plan.plan_version) return false;
+  if (
+    stableJson(stored.execution_plan.escalation) !== stableJson(canonical.execution_plan.escalation)
+  ) {
+    return false;
+  }
+  if (
+    (stored.execution_plan.max_total_cost_usd_micros ?? null) !==
+    (canonical.execution_plan.max_total_cost_usd_micros ?? null)
+  ) {
+    return false;
+  }
+  const storedGroups = stored.execution_plan.assignments.map((a) => a.scoring_unit_ids);
+  const nextGroups = canonical.execution_plan.assignments.map((a) => a.scoring_unit_ids);
+  if (stableJson(storedGroups) !== stableJson(nextGroups)) return false;
+  const storedExec = executorByUnit(stored.execution_plan);
+  const nextExec = executorByUnit(canonical.execution_plan);
+  for (const [unitId, executor] of storedExec) {
+    const next = nextExec.get(unitId);
+    if (next == null) return false;
+    if (legacyUnitIds.has(unitId)) {
+      if (
+        next.kind !== 'deterministic' ||
+        next.comparator !== 'set_compare' ||
+        executor.kind !== 'deterministic' ||
+        (executor.comparator !== 'exact_option_set' && executor.comparator !== 'set_compare')
+      ) {
+        return false;
+      }
+    } else if (stableJson(executor) !== stableJson(next)) {
+      return false;
+    }
+  }
+  return storedExec.size === nextExec.size;
+}
+
+const SCORING_ROUND_TRIP_LOSSY = {
+  action: 'refuse' as const,
+  code: 'scoring_round_trip_lossy' as const,
+  detail: 'stored scoring layers do not survive the draft round trip',
+};
+
+export type ScoringEditPlan =
+  | { action: 'passthrough' }
+  | { action: 'preserve' }
+  | { action: 'author'; copyUnitIds: readonly string[] }
+  | typeof SCORING_ROUND_TRIP_LOSSY;
+
+type StoredScoringRevision = Pick<
+  PublishedQuestionRevisionT,
+  'revision_id' | 'group_id' | 'structure' | 'response_spec' | 'scoring_basis' | 'execution_plan'
+> & { presentation?: PublishedQuestionRevisionT['presentation'] | null };
+
+function draftUnitsById(doc: QuestionDraftDocumentT): Map<string, DraftUnitT> {
+  const units = new Map<string, DraftUnitT>();
+  for (const part of doc.parts) {
+    for (const unit of part.units) units.set(unit.unit_id, unit);
+  }
+  return units;
+}
+
+function unitScoringSnapshot(unit: DraftUnitT): unknown {
+  return {
+    response_class: unit.response_class,
+    response_spec: unit.response_spec,
+    key: unit.key ?? null,
+    rule: unit.rule ?? null,
+    points: unit.points ?? null,
+    method: unit.method,
+    reference_md: unit.reference_md ?? null,
+    rubric: unit.rubric ?? null,
+    slot_id: unit.slot_id,
+    material_refs: [...unit.material_refs],
+  };
+}
+
+function authorTouchedUnitIds(
+  seeded: QuestionDraftDocumentT,
+  doc: QuestionDraftDocumentT,
+): Set<string> | 'structure' {
+  const before = draftUnitsById(seeded);
+  const after = draftUnitsById(doc);
+  const beforeIds = [...before.keys()].sort();
+  const afterIds = [...after.keys()].sort();
+  if (beforeIds.length !== afterIds.length) return 'structure';
+  if (beforeIds.some((id, index) => id !== afterIds[index])) return 'structure';
+  const touched = new Set<string>();
+  for (const [id, next] of after) {
+    const prev = before.get(id);
+    const prevSnap = prev == null ? null : stableJson(unitScoringSnapshot(prev));
+    if (prevSnap !== stableJson(unitScoringSnapshot(next))) touched.add(id);
+  }
+  return touched;
+}
+
+function storedUnitIsUnrepresentable(revision: StoredScoringRevision): boolean {
+  for (const unit of revision.scoring_basis.units) {
+    const kind = unit.criterion.kind;
+    if (
+      kind === 'rule_reference' ||
+      kind === 'text_key' ||
+      kind === 'numeric_key' ||
+      kind === 'matching_pairs_key' ||
+      kind === 'position_set_key' ||
+      kind === 'holistic_level'
+    ) {
+      return true;
+    }
+  }
+  for (const slot of revision.response_spec.slots) {
+    if (
+      slot.kind !== 'select' &&
+      slot.kind !== 'blank' &&
+      slot.kind !== 'open_response' &&
+      slot.kind !== 'single_choice' &&
+      slot.kind !== 'multi_choice'
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * 已存判分层走草稿往返时会不会丢字段，以及这次编辑有没有亲手改判分。
+ * 作者没改判分、丢的又是编码器硬写的字段（聚合、空白计零、费用上限、选择界）
+ * 时拒绝发布。旧的 rule_reference 一类无法表示的层，题面编辑改为原样拷贝。
+ * 作者改了键或题型时放行。作者没碰的单元整份拷回已存判分层，不重新编码。
+ */
+export function scoringEditPlan(
+  revision: StoredScoringRevision,
+  doc: QuestionDraftDocumentT,
+): ScoringEditPlan {
+  let seeded: QuestionDraftDocumentT;
+  try {
+    seeded = QuestionDraftDocument.parse(
+      revisionToDraftDocument(revision, { knowledge_ids: doc.knowledge_ids }),
+    );
+  } catch {
+    return SCORING_ROUND_TRIP_LOSSY;
+  }
+  let canonical: DraftContract;
+  try {
+    canonical = draftDocumentToContract(seeded, revision.group_id);
+  } catch {
+    return authorPlan(revision, seeded, doc, 'unrepresentable');
+  }
+  if (canonical.conversion_issues.length > 0) {
+    return authorPlan(revision, seeded, doc, 'unrepresentable');
+  }
+  if (scoringRoundTripIsFaithful(revision, canonical)) return { action: 'passthrough' };
+  const loss = storedUnitIsUnrepresentable(revision) ? 'unrepresentable' : 'field_drop';
+  return authorPlan(revision, seeded, doc, loss);
+}
+
+function authorPlan(
+  revision: StoredScoringRevision,
+  seeded: QuestionDraftDocumentT,
+  doc: QuestionDraftDocumentT,
+  loss: 'unrepresentable' | 'field_drop',
+): ScoringEditPlan {
+  const touched = authorTouchedUnitIds(seeded, doc);
+  // 单元集合变了就无法原样拷贝已存层，也不再靠编码器重写后发布。
+  if (touched === 'structure') return SCORING_ROUND_TRIP_LOSSY;
+  if (touched.size === 0) {
+    return loss === 'field_drop' ? SCORING_ROUND_TRIP_LOSSY : { action: 'preserve' };
+  }
+  if (dropsUntouchedSlot(revision, seeded, doc, touched)) return SCORING_ROUND_TRIP_LOSSY;
+  const copyUnitIds = revision.scoring_basis.units
+    .map((unit) => unit.scoring_unit_id)
+    .filter((id) => !touched.has(id));
+  return { action: 'author', copyUnitIds };
+}
+
+function dropsUntouchedSlot(
+  revision: StoredScoringRevision,
+  seeded: QuestionDraftDocumentT,
+  doc: QuestionDraftDocumentT,
+  touched: Set<string>,
+): boolean {
+  const seededUnits = draftUnitsById(seeded);
+  const docUnits = draftUnitsById(doc);
+  let encoded: DraftContract;
+  try {
+    encoded = draftDocumentToContract(doc, revision.group_id);
+  } catch {
+    return true;
+  }
+  const encodedSlots = new Map(encoded.response_spec.slots.map((slot) => [slot.slot_id, slot]));
+  const storedSlots = new Map(revision.response_spec.slots.map((slot) => [slot.slot_id, slot]));
+  for (const id of touched) {
+    const prev = seededUnits.get(id);
+    const next = docUnits.get(id);
+    if (prev == null || next == null) return true;
+    if (stableJson(prev.response_spec) !== stableJson(next.response_spec)) continue;
+    const storedSlot = storedSlots.get(next.slot_id);
+    const encodedSlot = encodedSlots.get(next.slot_id);
+    if (storedSlot == null || encodedSlot == null) return true;
+    if (storedSlot.kind !== encodedSlot.kind) return true;
+    if (
+      storedSlot.placement != null &&
+      stableJson(storedSlot.placement) !== stableJson(encodedSlot.placement ?? null)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** 作者改了判分单元时，仍把草稿表达不了的依据字段从已存 revision 原样带回。 */
+export function overlayAuthorScoring<T extends DraftContract>(
+  encoded: T,
+  stored: Pick<StoredScoringRevision, 'scoring_basis' | 'execution_plan'>,
+): T {
+  const storedPlan = stored.execution_plan;
+  return {
+    ...encoded,
+    scoring_basis: {
+      ...encoded.scoring_basis,
+      aggregation: stored.scoring_basis.aggregation,
+      blank_scores_zero: stored.scoring_basis.blank_scores_zero,
+    },
+    execution_plan: {
+      ...encoded.execution_plan,
+      plan_version: storedPlan.plan_version,
+      escalation: storedPlan.escalation,
+      ...(storedPlan.max_total_cost_usd_micros != null
+        ? { max_total_cost_usd_micros: storedPlan.max_total_cost_usd_micros }
+        : {}),
+    },
+  };
+}
+
+/**
+ * 一个执行器只覆盖这一个单元时，才能把已存 assignment 原样换回去。
+ * 共用 assignment 或重复覆盖都无法按单元字节拷贝。
+ */
+function dedicatedAssignmentIndex(
+  assignments: readonly { scoring_unit_ids: readonly string[] }[],
+  unitId: string,
+): number | null {
+  let found: number | null = null;
+  for (let index = 0; index < assignments.length; index += 1) {
+    const ids = assignments[index]?.scoring_unit_ids;
+    if (ids == null || !ids.includes(unitId)) continue;
+    if (found != null || ids.length !== 1) return null;
+    found = index;
+  }
+  return found;
+}
+
+/**
+ * 作者没碰的单元不走编码器。槽、计分单元和专属执行器都换成已存对象。
+ * 槽被改过的单元共用，或执行器不是单单元专属时，返回 null，调用方拒绝发布。
+ */
+function spliceUntouchedUnits(
+  encoded: DraftContract,
+  stored: StoredScoringRevision,
+  copyUnitIds: readonly string[],
+): DraftContract | null {
+  if (copyUnitIds.length === 0) return encoded;
+  const copyIds = new Set(copyUnitIds);
+  const storedUnits = new Map(
+    stored.scoring_basis.units.map((unit) => [unit.scoring_unit_id, unit]),
+  );
+  const encodedUnitIds = new Set(encoded.scoring_basis.units.map((unit) => unit.scoring_unit_id));
+  const storedSlots = new Map(stored.response_spec.slots.map((slot) => [slot.slot_id, slot]));
+  const encodedSlotIds = new Set(encoded.response_spec.slots.map((slot) => slot.slot_id));
+  const touchedSlotIds = new Set<string>();
+  for (const unit of encoded.scoring_basis.units) {
+    if (copyIds.has(unit.scoring_unit_id)) continue;
+    for (const slotId of [...unit.slot_refs, ...unit.evidence_slot_refs]) {
+      touchedSlotIds.add(slotId);
+    }
+  }
+  const slotReplacements = new Map<string, ResponseSlotT>();
+  const unitReplacements = new Map<string, ScoringUnitT>();
+  const assignmentReplacements = new Map<number, ExecutorAssignmentT>();
+  for (const unitId of copyUnitIds) {
+    const storedUnit = storedUnits.get(unitId);
+    if (storedUnit == null || !encodedUnitIds.has(unitId)) return null;
+    for (const slotId of [...storedUnit.slot_refs, ...storedUnit.evidence_slot_refs]) {
+      if (touchedSlotIds.has(slotId)) return null;
+      const storedSlot = storedSlots.get(slotId);
+      if (storedSlot == null || !encodedSlotIds.has(slotId)) return null;
+      slotReplacements.set(slotId, storedSlot);
+    }
+    unitReplacements.set(unitId, storedUnit);
+    const storedIndex = dedicatedAssignmentIndex(stored.execution_plan.assignments, unitId);
+    const encodedIndex = dedicatedAssignmentIndex(encoded.execution_plan.assignments, unitId);
+    if (storedIndex == null || encodedIndex == null) return null;
+    const storedAssignment = stored.execution_plan.assignments[storedIndex];
+    if (storedAssignment == null) return null;
+    assignmentReplacements.set(encodedIndex, storedAssignment);
+  }
+  return {
+    ...encoded,
+    response_spec: {
+      ...encoded.response_spec,
+      slots: encoded.response_spec.slots.map((slot) => slotReplacements.get(slot.slot_id) ?? slot),
+    },
+    scoring_basis: {
+      ...encoded.scoring_basis,
+      units: encoded.scoring_basis.units.map(
+        (unit) => unitReplacements.get(unit.scoring_unit_id) ?? unit,
+      ),
+    },
+    execution_plan: {
+      ...encoded.execution_plan,
+      assignments: encoded.execution_plan.assignments.map(
+        (assignment, index) => assignmentReplacements.get(index) ?? assignment,
+      ),
+    },
+  };
+}
+
+/**
+ * 提交和校验共用这一步。preserve 用已存的三层判分替换编码器产出，题面仍用草稿。
+ * author 拷回聚合、空白计零和计划级字段，并把作者没碰的单元原样换回。
+ * 换不回去或 refuse 时不发布。
+ */
+export function applyScoringEditPlan(
+  revision: StoredScoringRevision | null,
+  doc: QuestionDraftDocumentT,
+  encoded: DraftContract,
+): { contract: DraftContract; plan: ScoringEditPlan } {
+  if (revision == null) return { contract: encoded, plan: { action: 'passthrough' } };
+  const plan = scoringEditPlan(revision, doc);
+  if (plan.action === 'refuse') return { contract: encoded, plan };
+  if (plan.action === 'preserve') {
+    return {
+      plan,
+      contract: {
+        ...encoded,
+        response_spec: revision.response_spec,
+        scoring_basis: revision.scoring_basis,
+        execution_plan: revision.execution_plan,
+        conversion_issues: [],
+      },
+    };
+  }
+  if (plan.action === 'author') {
+    const spliced = spliceUntouchedUnits(
+      overlayAuthorScoring(encoded, revision),
+      revision,
+      plan.copyUnitIds,
+    );
+    if (spliced == null) return { contract: encoded, plan: SCORING_ROUND_TRIP_LOSSY };
+    return { plan, contract: spliced };
+  }
+  return { contract: encoded, plan };
+}
+
+// ---------- 与 question.canonical_content_hash 对齐的内容身份 ----------
+//
+// 旧供给链的指纹只含 prompt / reference / choices / rubric（外加 composite
+// 判别），不含 source、知识点。草稿提交必须投出同一组字段，精确去重才能
+// 跨来源、跨知识点命中已有行。哈希本身由 canonicalQuestionContentHash 计算。
+
+function projectPrompt(doc: QuestionDraftDocumentT): string {
+  if (doc.parts.length === 1) return doc.parts[0].prompt_md;
+  const stem = doc.parts
+    .flatMap((p) => p.material_ids)
+    .map((id) => doc.materials.find((m) => m.material_id === id))
+    .find((m) => m != null && m.caption === 'stem/shared context');
+  if (stem?.content_md != null) return stem.content_md;
+  return doc.parts
+    .map((p) => p.prompt_md)
+    .filter((t) => t.trim().length > 0)
+    .join('\n\n');
+}
+
+function projectReference(doc: QuestionDraftDocumentT): string | null {
+  const texts: string[] = [];
+  for (const part of doc.parts) {
+    for (const unit of part.units) {
+      if (unit.key?.kind === 'blank') {
+        texts.push(
+          unit.key.key.kind === 'text'
+            ? unit.key.key.accepted.join(' / ')
+            : String(unit.key.key.value),
+        );
+      } else if (unit.key?.kind === 'select') {
+        const labels = unit.key.accepted_item_ids
+          .map((id) =>
+            unit.response_spec.kind === 'select'
+              ? unit.response_spec.items.findIndex((item) => item.item_id === id)
+              : -1,
+          )
+          .filter((index) => index >= 0)
+          .map((index) => String.fromCharCode(65 + index));
+        if (labels.length > 0) texts.push(labels.join(''));
+      } else if (unit.reference_md != null) {
+        texts.push(unit.reference_md);
+      }
+    }
+  }
+  return texts.length > 0 ? texts.join('\n\n') : null;
+}
+
+function projectChoices(doc: QuestionDraftDocumentT): string[] | null {
+  const unit = doc.parts.flatMap((p) => p.units).find((u) => u.response_spec.kind === 'select');
+  if (unit == null || unit.response_spec.kind !== 'select') return null;
+  return unit.response_spec.items.map((item) => item.label_md ?? item.item_id);
+}
+
+/** 供 canonicalQuestionContentHash 使用的内容身份。source 与知识点不参与。 */
+export function draftCanonicalIdentity(doc: QuestionDraftDocumentT): {
+  promptMd: string;
+  referenceMd: string | null;
+  choicesMd: string[] | null;
+  rubricJson: unknown;
+  composite?: boolean;
+} {
+  const classes = new Set(
+    doc.parts.flatMap((part) => part.units.map((unit) => unit.response_class)),
+  );
+  const composite = doc.parts.length > 1 || classes.size > 1;
+  const rubrics = doc.parts.flatMap((part) =>
+    part.units.map((unit) => unit.rubric).filter((rubric) => rubric != null),
+  );
+  return {
+    promptMd: projectPrompt(doc),
+    referenceMd: projectReference(doc),
+    choicesMd: projectChoices(doc),
+    rubricJson: rubrics.length === 0 ? null : rubrics.length === 1 ? rubrics[0] : rubrics,
+    ...(composite ? { composite: true as const } : {}),
+  };
 }
 
 export { isDraftDocumentV2 };

@@ -9,7 +9,8 @@
 //      原组上；发布前绝不先覆盖已发布投影。
 //      来源：generated / adapted / owner_material / photo_ingest /
 //      jyeoo_fetch / sourcing_web / manual —— 非 fetch 来源用
-//      draftCanonicalContentHash 可复现指纹，绝不伪造 extraction_hash。
+//      canonicalQuestionContentHash（prompt/reference/choices/rubric）做可复现
+//      指纹，不含 source 与知识点，绝不伪造 extraction_hash。
 //
 //   B) 供给候选提交：`candidate`（jyeoo_fetch / sourcing_web 产出）—— 原有
 //      提交链逐字保留：KC 活体 → foreign-host → exact-dup → near-dup →

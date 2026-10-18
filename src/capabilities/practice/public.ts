@@ -70,7 +70,14 @@ export { isLiveQuestionReference } from './server/live-question-reference';
 // seam so server→capability stays public (not deep).
 export { SYNTHETIC_SUBJECT_ROOT_RE } from './server/placement-scope';
 export { loadAttemptQuestionSnapshot } from './server/question-evidence-snapshot';
-export { mergeExactQuestionDuplicateKnowledgeIds } from './server/quiz/content-fingerprint';
+export {
+  DEDUP_OVERLAP_THRESHOLD,
+  maxNgramOverlap,
+} from './server/question-supply/sourced-dedup';
+export {
+  canonicalQuestionContentHash,
+  mergeExactQuestionDuplicateKnowledgeIds,
+} from './server/quiz/content-fingerprint';
 export { resolveSolveOverrideFromEnv } from './server/quiz/solve-lane';
 export {
   runQuestionContentValidation,

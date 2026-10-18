@@ -1,8 +1,26 @@
 import { createHash } from 'node:crypto';
 import { createId } from '@paralleldrive/cuid2';
-import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
-import { mergeExactQuestionDuplicateKnowledgeIds } from '@/capabilities/practice/public';
+import { and, desc, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
+import {
+  DEDUP_OVERLAP_THRESHOLD,
+  canonicalQuestionContentHash,
+  maxNgramOverlap,
+  mergeExactQuestionDuplicateKnowledgeIds,
+} from '@/capabilities/practice/public';
 import { newId } from '@/core/ids';
+import {
+  validateExecutionPlan,
+  validateResponseSpec,
+  validateScoringBasis,
+  validateStructure,
+} from '@/core/schema/assessment';
+import {
+  Presentation,
+  type PresentationT,
+  defaultPresentation,
+  validatePresentation,
+} from '@/core/schema/assessment/presentation';
+import { AdmissionEvidence } from '@/core/schema/assessment/publish';
 import { AgentRef } from '@/core/schema/business';
 import {
   QuestionDraftDocument,
@@ -13,9 +31,19 @@ import {
   structuredQuestionToDraftDocument,
 } from '@/core/schema/question-draft';
 import type { Db, Tx } from '@/db/client';
-import { knowledge, question, question_block, question_group_lifecycle } from '@/db/schema';
+import {
+  knowledge,
+  question,
+  question_block,
+  question_group_lifecycle,
+  question_revision,
+} from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import type { PublishQuestionGroupResult } from '@/kernel/records/assessment-publication';
+import { contractIntegrityDigest } from '@/kernel/records/assessment-normalization';
+import type {
+  PublishAdmission,
+  PublishQuestionGroupResult,
+} from '@/kernel/records/assessment-publication';
 import {
   dispatchPendingVerifyIntents,
   writeVerifyDispatchIntent,
@@ -23,8 +51,12 @@ import {
 import { projectQuestionBlockGuarded } from '@/server/projections/question_block';
 import { writeQuestionBlockLifecycleEvent } from '@/server/projections/question_block-lifecycle-event';
 import {
-  draftCanonicalContentHash,
+  type DraftContract,
+  applyScoringEditPlan,
+  draftCanonicalIdentity,
   draftDocumentToContract,
+  revisionToDraftDocument,
+  scoringRoundTripIsFaithful,
 } from '@/server/questions/draft-contract';
 import { encodeDraftRef, parseDraftRef } from '@/server/questions/edit-question';
 import { publishQuestionGroup } from '@/server/questions/publisher';
@@ -36,13 +68,15 @@ import { publishQuestionGroup } from '@/server/questions/publisher';
 // 唯一提交闸：草稿（v2 文档或 legacy 适配）→ 契约四层 →
 // publishQuestionGroup（唯一 revision writer）。CAS 双令牌沿用发布侧约定：
 // expected_draft_version（block.version）+ expected_revision（组 current
-// revision）。来源指纹：非 fetch 来源用 draftCanonicalContentHash（可复现），
-// 绝不伪造 extraction_hash。
+// revision）。内容指纹与旧供给链相同（prompt/reference/choices/rubric），
+// 不含 source 与知识点；近似重复用同一 n-gram 阈值。绝不伪造 extraction_hash。
 //
-// 判分准入钩子：runAdmissionChecks —— 今天的实现 = 既有 gate 语义（KC 活体
-// + exact-dup claim + 逐 unit 判分可判性；dual independent solve 与 per-unit
-// calibration 由另一 lane 挂同一调用点）。返回 withheld 时给出逐 unit 原因，
-// 绝不发明准入。
+// 判分准入：runAdmissionChecks 仍只做死 KC 与逐 unit 可判性，不把新题自动
+// 判成 admitted。已经 admitted 的组只有答案键、参考答案、选项、rubric、
+// 评分单元和执行计划都没变时才保留原证据；这些一变就回到 withheld。
+// 比较前把已存 revision 与新契约都归一到同一草稿编码（旧格式
+// option_set_key / single_choice 与再编码后的 select_key / select 才能对齐）。
+// 回执、准入和练习池跟当前 revision 能不能发出走。
 
 const DRAFT_SUBMIT_ACTION = 'experimental:question_draft_submit';
 
@@ -104,6 +138,7 @@ export type SubmitResult =
         | 'not_a_draft'
         | 'invalid_request'
         | 'duplicate_exact'
+        | 'near_dup'
         | 'publish_conflict';
       detail: string;
       question_id?: string;
@@ -229,58 +264,248 @@ function deriveKind(doc: QuestionDraftDocumentT): string {
   return 'composite';
 }
 
-function projectPrompt(doc: QuestionDraftDocumentT): string {
-  if (doc.parts.length === 1) return doc.parts[0].prompt_md;
-  const stem = doc.parts
-    .flatMap((p) => p.material_ids)
-    .map((id) => doc.materials.find((m) => m.material_id === id))
-    .find((m) => m != null && m.caption === 'stem/shared context');
-  if (stem?.content_md != null) return stem.content_md;
-  return doc.parts
-    .map((p) => p.prompt_md)
-    .filter((t) => t.trim().length > 0)
-    .join('\n\n');
+const NEAR_DUP_POOL_LIMIT = 100;
+
+function draftCarriesFigure(doc: QuestionDraftDocumentT): boolean {
+  return doc.materials.some((material) => material.kind === 'figure');
 }
 
-function projectReference(doc: QuestionDraftDocumentT): string | null {
-  const texts: string[] = [];
-  for (const part of doc.parts) {
-    for (const unit of part.units) {
-      if (unit.key?.kind === 'blank') {
-        texts.push(
-          unit.key.key.kind === 'text'
-            ? unit.key.key.accepted.join(' / ')
-            : String(unit.key.key.value),
-        );
-      } else if (unit.key?.kind === 'select') {
-        const byId = new Map(
-          unit.response_spec.kind === 'select'
-            ? unit.response_spec.items.map((i) => [i.item_id, i] as const)
-            : [],
-        );
-        const labels = unit.key.accepted_item_ids
-          .map((id) => byId.get(id))
-          .map((item) =>
-            item != null && unit.response_spec.kind === 'select'
-              ? String.fromCharCode(
-                  65 + unit.response_spec.items.findIndex((i) => i.item_id === item.item_id),
-                )
-              : '',
-          )
-          .filter((label) => label.length > 0);
-        if (labels.length > 0) texts.push(labels.join(''));
-      } else if (unit.reference_md != null) {
-        texts.push(unit.reference_md);
-      }
+type ScoringRevision = Pick<
+  typeof question_revision.$inferSelect,
+  | 'revision_id'
+  | 'group_id'
+  | 'structure'
+  | 'response_spec'
+  | 'scoring_basis'
+  | 'execution_plan'
+  | 'presentation'
+>;
+
+/**
+ * 已准入的组，只有判分层原样时才保留证据。答案键、选项、参考答案、rubric、
+ * 评分单元都在 scoring_basis / response_spec 里，判分方式在 execution_plan。
+ * 题面、展示或材料文本可以变。任一判分层变了，或有 unit 已经不可自动判，
+ * 旧证据不再适用，回到 withheld。新题和未准入的组不在这里自动准入。
+ */
+function conversionWithheld(contract: DraftContract, requestId: string): SubmitResult {
+  return {
+    status: 'withheld',
+    published: false,
+    detail: 'draft has unresolved conversion issues',
+    issues: contract.conversion_issues.map((i) => ({
+      code: i.code,
+      detail: i.detail,
+      ...(i.part_id != null ? { part_id: i.part_id } : {}),
+      ...(i.unit_id != null ? { unit_id: i.unit_id } : {}),
+    })),
+    per_unit: contract.unit_summary.map((u) => ({
+      unit_id: u.unit_id,
+      status: 'withheld',
+      ...(u.withheld_reason != null ? { reason: u.withheld_reason } : {}),
+    })),
+    request_id: requestId,
+  };
+}
+
+function storedScoringCopied(revision: ScoringRevision, contract: DraftContract): boolean {
+  return (
+    canonicalJson(revision.response_spec) === canonicalJson(contract.response_spec) &&
+    canonicalJson(revision.scoring_basis) === canonicalJson(contract.scoring_basis) &&
+    canonicalJson(revision.execution_plan) === canonicalJson(contract.execution_plan)
+  );
+}
+
+function admissionForContentEdit(
+  lifecycle: typeof question_group_lifecycle.$inferSelect | undefined,
+  checks: AdmissionCheckResult,
+  revision: ScoringRevision | null,
+  contract: DraftContract,
+  knowledgeIds: string[],
+): PublishAdmission {
+  if (lifecycle?.scoring_admission_state !== 'admitted') return checks.admission;
+  const copied = revision != null && storedScoringCopied(revision, contract);
+  // 原样拷贝已存判分层时，编码摘要里的 human_review 不是这次编辑新引入的。
+  if (!copied && checks.per_unit.some((unit) => unit.status === 'withheld')) {
+    return checks.admission;
+  }
+  if (revision == null || !scoringLayersUnchanged(revision, contract, knowledgeIds)) {
+    return checks.admission;
+  }
+  const parsed = AdmissionEvidence.safeParse(lifecycle.scoring_admission_evidence);
+  if (!parsed.success || parsed.data.verification.structural_check_passed !== true) {
+    return checks.admission;
+  }
+  const independent = parsed.data.verification.independent_verification;
+  if (independent != null && independent.passed !== true) return checks.admission;
+  return { state: 'admitted', evidence: parsed.data };
+}
+
+/**
+ * 已存 revision 与这次提交可能不是同一编码：旧行是 option_set_key +
+ * single_choice/multi_choice、没有规则；编辑草稿会再编成 select_key + select
+ * 并补上印出的规则。先把已存 revision 走同一条草稿往返，再比三层。
+ * 即将发布的三层与已存 revision 逐字节相同（题面编辑原样拷贝）时直接算没变，
+ * 即使草稿往返本身有损。往返形不成规范契约，或往返丢掉、改写了已存判分字段
+ * 且这次发布的层不是那份原件时，视为已变（回 withheld）。
+ */
+function scoringLayersUnchanged(
+  revision: ScoringRevision,
+  contract: DraftContract,
+  knowledgeIds: string[],
+): boolean {
+  if (storedScoringCopied(revision, contract)) return true;
+  let canonical: DraftContract;
+  try {
+    canonical = draftDocumentToContract(
+      revisionToDraftDocument(revision, { knowledge_ids: knowledgeIds }),
+      revision.group_id,
+    );
+  } catch {
+    return false;
+  }
+  if (canonical.conversion_issues.length > 0) return false;
+  if (!scoringRoundTripIsFaithful(revision, canonical)) return false;
+  return (
+    canonicalJson(canonical.scoring_basis) === canonicalJson(contract.scoring_basis) &&
+    canonicalJson(canonical.response_spec) === canonicalJson(contract.response_spec) &&
+    canonicalJson(canonical.execution_plan) === canonicalJson(contract.execution_plan)
+  );
+}
+
+/** 发布 seam 会抛的契约错误，在调用前收成 withheld。withheld 时未准入的模型执行器是允许的。 */
+function contractBarrierIssues(
+  contract: DraftContract,
+  presentation: PresentationT | null,
+  admission: PublishAdmission,
+): { code: string; detail: string }[] {
+  const issues: { code: string; detail: string }[] = [];
+  const push = (list: { code: string; detail: string }[]) => {
+    for (const issue of list) issues.push({ code: issue.code, detail: issue.detail });
+  };
+  push(validateStructure(contract.structure));
+  push(validateResponseSpec(contract.response_spec, contract.structure));
+  push(validateScoringBasis(contract.scoring_basis, contract.response_spec, contract.structure));
+  push(
+    validateExecutionPlan(contract.execution_plan, contract.scoring_basis).filter(
+      (issue) => !(issue.code === 'unadmitted_model_executor' && admission.state === 'withheld'),
+    ),
+  );
+  if (presentation != null) {
+    push(
+      validatePresentation(
+        presentation,
+        contract.structure,
+        contract.response_spec,
+        contract.scoring_basis,
+      ),
+    );
+  }
+  return issues;
+}
+
+function presentationForDraft(
+  doc: QuestionDraftDocumentT,
+  contract: DraftContract,
+): PresentationT | null {
+  if (doc.presentation != null) {
+    const shaped = Presentation.safeParse(doc.presentation);
+    if (shaped.success) {
+      const issues = validatePresentation(
+        shaped.data,
+        contract.structure,
+        contract.response_spec,
+        contract.scoring_basis,
+      );
+      if (issues.length === 0) return shaped.data;
     }
   }
-  return texts.length > 0 ? texts.join('\n\n') : null;
+  return defaultPresentation(contract.structure, contract.response_spec, contract.scoring_basis);
 }
 
-function projectChoices(doc: QuestionDraftDocumentT): string[] | null {
-  const unit = doc.parts.flatMap((p) => p.units).find((u) => u.response_spec.kind === 'select');
-  if (unit == null || unit.response_spec.kind !== 'select') return null;
-  return unit.response_spec.items.map((i) => i.label_md ?? i.item_id);
+async function attributableSourceIssue(
+  tx: Tx,
+  doc: QuestionDraftDocumentT,
+  isNew: boolean,
+): Promise<{ code: string; detail: string } | null> {
+  const source = doc.source;
+  if (source == null) {
+    if (!isNew) return null;
+    return { code: 'missing_source', detail: 'document has no attributable source' };
+  }
+  if (source.kind !== 'adapted') return null;
+  const from = source.adapted_from_question_id;
+  if (from == null || from.length === 0) {
+    return {
+      code: 'missing_source',
+      detail: 'adapted source requires adapted_from_question_id',
+    };
+  }
+  const [row] = await tx
+    .select({ id: question.id })
+    .from(question)
+    .where(eq(question.id, from))
+    .limit(1);
+  if (row == null) {
+    return {
+      code: 'missing_source',
+      detail: `adapted_from_question_id '${from}' does not exist`,
+    };
+  }
+  return null;
+}
+
+function nearDupComparableText(
+  promptMd: string,
+  referenceMd: string | null,
+  choicesMd: readonly string[] | null,
+): string {
+  const choices = (choicesMd ?? [])
+    .map((choice) => choice.trim())
+    .filter((choice) => choice.length > 0);
+  return [promptMd.trim(), referenceMd?.trim() ?? '', ...choices]
+    .filter((part) => part.length > 0)
+    .join('\n');
+}
+
+async function nearDuplicateInKnowledge(
+  tx: Tx,
+  knowledgeIds: string[],
+  promptMd: string,
+  referenceMd: string | null,
+  choicesMd: string[] | null,
+  excludeQuestionId: string,
+): Promise<{ overlap: number; poolSize: number } | null> {
+  if (knowledgeIds.length === 0) return null;
+  const predicates = knowledgeIds.map(
+    (id) => sql`${question.knowledge_ids} @> ${JSON.stringify([id])}::jsonb`,
+  );
+  const rows = await tx
+    .select({
+      prompt_md: question.prompt_md,
+      reference_md: question.reference_md,
+      choices_md: question.choices_md,
+    })
+    .from(question)
+    .where(
+      and(
+        or(...predicates),
+        ne(question.id, excludeQuestionId),
+        sql`(${question.metadata} ->> 'archived_at') IS NULL`,
+        sql`NOT EXISTS (
+          SELECT 1 FROM ${question_group_lifecycle} AS l
+          WHERE l.group_id = COALESCE(${question.parent_question_id}, ${question.id})
+            AND l.withdrawn = true
+        )`,
+      ),
+    )
+    .orderBy(desc(question.created_at))
+    .limit(NEAR_DUP_POOL_LIMIT);
+  const overlap = maxNgramOverlap(
+    nearDupComparableText(promptMd, referenceMd, choicesMd),
+    rows.map((row) => nearDupComparableText(row.prompt_md, row.reference_md, row.choices_md)),
+  );
+  if (overlap < DEDUP_OVERLAP_THRESHOLD) return null;
+  return { overlap, poolSize: rows.length };
 }
 
 // ---------- 主入口 ----------
@@ -407,41 +632,21 @@ export async function submitDraftQuestion(
 
     // 默认 CAS：draft 钉住的基底 revision 即期望值（防静默 rebase 到未读
     // 版本）。显式 expected_revision 覆盖；explicit null = 期望尚无版本。
+    // base.revision_id 为 null 表示建草稿时组尚无已发布版本，必须保持 null
+    // 参与比较。`?? undefined` 会把它当成「未钉住」从而关掉 CAS。
+    const pinnedBaseRevision =
+      doc.base == null || doc.base.revision_id === undefined ? undefined : doc.base.revision_id;
     const effectiveExpectedRevision =
-      expectedRevisionId !== undefined ? expectedRevisionId : (doc.base?.revision_id ?? undefined);
+      expectedRevisionId !== undefined ? expectedRevisionId : pinnedBaseRevision;
 
     const groupId = doc.base?.question_id ?? block.imported_question_id ?? createId();
-    const contract = draftDocumentToContract(doc, groupId);
+    let contract = draftDocumentToContract(doc, groupId);
+    const editingExisting = doc.base?.question_id != null || block.imported_question_id != null;
 
-    // 未决转换 ⇒ 不铸 revision（发布侧 validators 会抛）；如实返回 withheld+原因。
-    if (contract.conversion_issues.length > 0) {
-      const withheld: SubmitResult = {
-        status: 'withheld',
-        published: false,
-        detail: 'draft has unresolved conversion issues',
-        issues: contract.conversion_issues.map((i) => ({
-          code: i.code,
-          detail: i.detail,
-          ...(i.part_id != null ? { part_id: i.part_id } : {}),
-          ...(i.unit_id != null ? { unit_id: i.unit_id } : {}),
-        })),
-        per_unit: contract.unit_summary.map((u) => ({
-          unit_id: u.unit_id,
-          status: 'withheld',
-          ...(u.withheld_reason != null ? { reason: u.withheld_reason } : {}),
-        })),
-        request_id: requestId,
-      };
-      await writeSubmitReceiptEvent(
-        tx,
-        { kind: 'question_block', id: block.id },
-        requestId,
-        fingerprint,
-        withheld,
-        ctx,
-        now,
-      );
-      return withheld;
+    // 新题的未决转换在读组之前就返回。编辑已发布题要等判分计划：原样拷贝
+    // 已存层时，编码器的转换问题不代表即将发布的契约。
+    if (!editingExisting && contract.conversion_issues.length > 0) {
+      return conversionWithheld(contract, requestId);
     }
 
     // 组当前状态（CAS + lifecycle 快照；发布 seam 内部复核同一令牌）。
@@ -459,7 +664,7 @@ export async function submitDraftQuestion(
       return {
         status: 'conflict',
         reason: 'revision_cas',
-        detail: `group '${groupId}' current revision is ${currentRevisionId ?? 'none'}, expected ${expectedRevisionId ?? 'none'}`,
+        detail: `group '${groupId}' current revision is ${currentRevisionId ?? 'none'}, expected ${effectiveExpectedRevision ?? 'none'}`,
         current_draft_ref: encodeDraftRef(block.id, block.version),
         current_draft_version: block.version,
         current_revision_ref: currentRevisionId,
@@ -483,34 +688,103 @@ export async function submitDraftQuestion(
         per_unit: admission.per_unit,
         request_id: requestId,
       };
-      await writeSubmitReceiptEvent(
-        tx,
-        { kind: 'question_block', id: block.id },
-        requestId,
-        fingerprint,
-        withheld,
-        ctx,
-        now,
-      );
       return withheld;
     }
 
     // ---- question 工作副本行（投影；revision 才是判分真相） ----
-    const canonicalHash = draftCanonicalContentHash(doc);
+    const identity = draftCanonicalIdentity(doc);
+    const canonicalHash = canonicalQuestionContentHash(identity);
     const structuredProjection = draftDocumentToStructuredQuestion(doc);
-    const questionSource =
-      SOURCE_KIND_TO_QUESTION_SOURCE[doc.source?.kind ?? 'generated'] ?? 'quiz_gen';
-    const promptMd = projectPrompt(doc);
-    const referenceMd = projectReference(doc);
-    const choicesMd = projectChoices(doc);
+    const promptMd = identity.promptMd;
+    const referenceMd = identity.referenceMd;
+    const choicesMd = identity.choicesMd;
     // 工作副本行存在与否决定 insert vs update（lifecycle 为空 ≠ 行不存在：
     // 从未发布过的 legacy 行没有 lifecycle）。
     const [existingRow] = await tx
-      .select({ id: question.id })
+      .select({ id: question.id, source: question.source })
       .from(question)
       .where(eq(question.id, groupId))
       .limit(1);
     const isNew = existingRow == null;
+    const sourceIssue = await attributableSourceIssue(tx, doc, isNew);
+    if (sourceIssue != null) {
+      const withheld: SubmitResult = {
+        status: 'withheld',
+        published: false,
+        detail: sourceIssue.detail,
+        issues: [sourceIssue],
+        per_unit: admission.per_unit,
+        request_id: requestId,
+      };
+      return withheld;
+    }
+    const questionSource =
+      doc.source != null
+        ? (SOURCE_KIND_TO_QUESTION_SOURCE[doc.source.kind] ?? 'quiz_gen')
+        : (existingRow?.source ?? 'manual');
+    const [currentRevision] =
+      currentRevisionId == null
+        ? []
+        : await tx
+            .select({
+              revision_id: question_revision.revision_id,
+              group_id: question_revision.group_id,
+              structure: question_revision.structure,
+              response_spec: question_revision.response_spec,
+              scoring_basis: question_revision.scoring_basis,
+              execution_plan: question_revision.execution_plan,
+              presentation: question_revision.presentation,
+            })
+            .from(question_revision)
+            .where(eq(question_revision.revision_id, currentRevisionId))
+            .limit(1);
+    if (currentRevision != null) {
+      const applied = applyScoringEditPlan(currentRevision, doc, contract);
+      if (applied.plan.action === 'refuse') {
+        return {
+          status: 'withheld',
+          published: false,
+          detail: applied.plan.detail,
+          issues: [{ code: applied.plan.code, detail: applied.plan.detail }],
+          per_unit: admission.per_unit,
+          request_id: requestId,
+        };
+      }
+      contract = applied.contract;
+    }
+    // 未决转换 ⇒ 不铸 revision。原样拷贝已存层时转换问题已经清掉。
+    // 未发布的 withheld 不写回执。确定性 request_id（proposal-submit）否则会
+    // 重放这次失败，知识点恢复后 accept 仍 422。
+    if (contract.conversion_issues.length > 0) {
+      return conversionWithheld(contract, requestId);
+    }
+    const effectiveAdmission = admissionForContentEdit(
+      lifecycle,
+      admission,
+      currentRevision ?? null,
+      contract,
+      doc.knowledge_ids,
+    );
+    const presentation = presentationForDraft(doc, contract);
+    const integrityDigest = contractIntegrityDigest({
+      structure: contract.structure,
+      response_spec: contract.response_spec,
+      scoring_basis: contract.scoring_basis,
+      execution_plan: contract.execution_plan,
+      ...(presentation != null ? { presentation } : {}),
+    });
+    const barrierIssues = contractBarrierIssues(contract, presentation, effectiveAdmission);
+    if (barrierIssues.length > 0) {
+      const withheld: SubmitResult = {
+        status: 'withheld',
+        published: false,
+        detail: barrierIssues.map((issue) => `${issue.code}: ${issue.detail}`).join('; '),
+        issues: barrierIssues,
+        per_unit: admission.per_unit,
+        request_id: requestId,
+      };
+      return withheld;
+    }
     if (isNew) {
       // live 去重 claim：canonical hash 占用者存在 ⇒ cross-KC merge（与供给
       // 链同语义）；否则插入新行。
@@ -540,6 +814,34 @@ export async function submitDraftQuestion(
           now,
         );
         return conflict;
+      }
+      if (!draftCarriesFigure(doc)) {
+        const near = await nearDuplicateInKnowledge(
+          tx,
+          doc.knowledge_ids,
+          promptMd,
+          referenceMd,
+          choicesMd,
+          groupId,
+        );
+        if (near != null) {
+          const conflict: SubmitResult = {
+            status: 'conflict',
+            reason: 'near_dup',
+            detail: `n-gram overlap ${near.overlap.toFixed(3)} ≥ ${DEDUP_OVERLAP_THRESHOLD}（KC 池 ${near.poolSize} 题）`,
+            request_id: requestId,
+          };
+          await writeSubmitReceiptEvent(
+            tx,
+            { kind: 'question_block', id: block.id },
+            requestId,
+            fingerprint,
+            conflict,
+            ctx,
+            now,
+          );
+          return conflict;
+        }
       }
       await tx.insert(question).values({
         id: groupId,
@@ -578,11 +880,11 @@ export async function submitDraftQuestion(
           request_id: requestId,
         };
       }
-      // 工作副本行 = 「当前已准入 revision」的投影。admission 未 admitted
-      // 时保留既有 admitted 内容不动（legacy 选择器只认 draft_status /
-      // suspended / withdrawn —— Codex P1：未验证的新 prompt/answer 不得
-      // 抢先被练习池服务）。真正 admitted 时更新内容列。
-      if (admission.admission.state === 'admitted') {
+      // 工作副本行 = 「当前已准入 revision」的投影。这次编辑不再可发时，
+      // 内容列保持上一份已准入投影（未验证的新答案不进练习池），并把行标回
+      // draft：练习池只认 draft_status / suspended / withdrawn，不认准入。
+      // 真正 admitted 时才更新内容列。
+      if (effectiveAdmission.state === 'admitted') {
         await tx
           .update(question)
           .set({
@@ -593,6 +895,15 @@ export async function submitDraftQuestion(
             structured: structuredProjection,
             canonical_content_hash: canonicalHash,
             kind: deriveKind(doc),
+            updated_at: now,
+            version: sql`${question.version} + 1`,
+          })
+          .where(eq(question.id, groupId));
+      } else if (lifecycle?.scoring_admission_state === 'admitted') {
+        await tx
+          .update(question)
+          .set({
+            draft_status: 'draft',
             updated_at: now,
             version: sql`${question.version} + 1`,
           })
@@ -608,16 +919,18 @@ export async function submitDraftQuestion(
         response_spec: contract.response_spec,
         scoring_basis: contract.scoring_basis,
         execution_plan: contract.execution_plan,
-        integrity_digest: contract.integrity_digest,
+        integrity_digest: integrityDigest,
+        ...(presentation != null ? { presentation } : {}),
       },
       expectedCurrentRevision: currentRevisionId,
       expectedAdmissionGeneration: lifecycle?.scoring_admission_generation ?? null,
       availability:
         input.availability ??
+        lifecycle?.availability ??
         (questionSource === 'web_sourced' || questionSource === 'quiz_gen'
           ? 'general_pool'
           : 'container_only'),
-      admission: admission.admission,
+      admission: effectiveAdmission,
       actorRef: `submit_question:${ctx.actorRef}`,
       publishedBy: AgentRef.parse({ by: 'ai', task_kind: 'submit_question' }),
       now,
@@ -667,7 +980,7 @@ export async function submitDraftQuestion(
     const receipt: SubmitResult = {
       // 状态判别序：withheld（闸拒） > pending（已提交待验证） > admitted。
       status:
-        admission.admission.state === 'withheld'
+        effectiveAdmission.state === 'withheld'
           ? 'withheld'
           : verifyEnqueued === true
             ? 'pending'

@@ -16,6 +16,7 @@ import {
   DraftRubricCriterion,
   DraftSelectItem,
   DraftUnit,
+  DraftUnitKey,
   QuestionDraftDocument,
   mintDraftAssetId,
   mintDraftItemId,
@@ -662,6 +663,37 @@ function applySet(
   changes.push({ op: 'set', target, fields: changedFields });
 }
 
+/**
+ * 改键时如果没带归一化，沿用这一单元上已有的归一化。已发布题的草稿是从当前
+ * revision 播种的，所以省略归一化不会掉回 nfkc 关闭的新题默认。
+ * 作者这次写明的 case_sensitive / trim 盖过继承来的 casefold / trim_outer。
+ */
+function inheritOmittedBlankNormalization(
+  previous: DraftUnitT['key'],
+  next: DraftUnitT['key'],
+): DraftUnitT['key'] {
+  if (next == null || next.kind !== 'blank' || next.key.kind !== 'text') return next;
+  const inherited =
+    next.key.normalization ??
+    (previous?.kind === 'blank' && previous.key.kind === 'text'
+      ? previous.key.normalization
+      : undefined);
+  if (inherited == null) return next;
+  return {
+    kind: 'blank',
+    key: {
+      ...next.key,
+      normalization: {
+        ...inherited,
+        ...(next.key.case_sensitive === false ? { casefold: true } : {}),
+        ...(next.key.case_sensitive === true ? { casefold: false } : {}),
+        ...(next.key.trim === false ? { trim_outer: false } : {}),
+        ...(next.key.trim === true ? { trim_outer: true } : {}),
+      },
+    },
+  };
+}
+
 function applyUnitSet(unit: DraftUnitT, field: string, value: unknown): void {
   switch (field) {
     case 'points': {
@@ -680,39 +712,9 @@ function applyUnitSet(unit: DraftUnitT, field: string, value: unknown): void {
         unit.key = undefined;
         return;
       }
-      const parsed = z
-        .discriminatedUnion('kind', [
-          z.object({
-            kind: z.literal('select'),
-            accepted_item_ids: z.array(z.string().min(1)).min(1),
-          }),
-          z.object({
-            kind: z.literal('blank'),
-            key: z.union([
-              z.object({
-                kind: z.literal('text'),
-                accepted: z.array(z.string().min(1)).min(1),
-                case_sensitive: z.boolean().optional(),
-                trim: z.boolean().optional(),
-              }),
-              z.object({
-                kind: z.literal('numeric'),
-                value: z.number(),
-                tolerance: z
-                  .discriminatedUnion('kind', [
-                    z.object({ kind: z.literal('absolute'), value: z.number().min(0) }),
-                    z.object({ kind: z.literal('relative'), ratio: z.number().min(0) }),
-                  ])
-                  .optional(),
-                unit: z.string().optional(),
-                equivalent_forms: z.array(z.string()).optional(),
-              }),
-            ]),
-          }),
-        ])
-        .safeParse(value);
+      const parsed = DraftUnitKey.safeParse(value);
       if (!parsed.success) fail('invalid_value', `invalid key: ${parsed.error.message}`);
-      unit.key = parsed.data;
+      unit.key = inheritOmittedBlankNormalization(unit.key, parsed.data);
       return;
     }
     case 'rule': {

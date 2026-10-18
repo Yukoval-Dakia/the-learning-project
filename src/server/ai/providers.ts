@@ -582,21 +582,23 @@ export function hasGlobalProviderOverride(): boolean {
 }
 
 /**
- * Resolve a task to its concrete provider binding.
- *
- * Lookup order（YUK-1007 DB override 层落地后）：
- *   1. Chat process env pin, then explicit `override.provider` / `override.model`
- *   2. 全局 switch：`AI_PROVIDER_OVERRIDE`/`AI_PROVIDER_MODEL` env → DB
- *      `lane.global.*`（owner 裁决：env pin 恒压 DB——它是 incident kill-switch）
- *   3. DB `task.<kind>.provider` / `.model` per-task override（面板写点）
- *   4. Task registry's `defaultProvider` + `defaultModel`
- *
- * Throws if the resolved provider's required env var isn't set.
+ * Model id this task will actually execute. Same layering as
+ * resolveTaskProvider, without reading credentials — the serving gate compares
+ * an admitted slice to this id, so a task.<kind>.model override cannot grade
+ * under a slice that was admitted for a different model.
  */
-export function resolveTaskProvider(
+export function resolveConfiguredTaskModel(kind: TaskKind): string {
+  return resolveTaskBinding(kind).model;
+}
+
+/**
+ * Provider + model a task will execute. Credential checks stay in
+ * resolveTaskProvider so a missing key does not take down the serving gate.
+ */
+function resolveTaskBinding(
   kind: TaskKind,
   override?: { provider?: Provider; model?: string },
-): ResolvedProvider {
+): { provider: Provider; model: string } {
   const def = tasks[kind];
   // Product-wide incident pin must also cover explicit caller/modelBinding routes.
   // Typed primitives have a separate wire contract, not a chat model API.
@@ -658,6 +660,26 @@ export function resolveTaskProvider(
     providerName === 'anthropic-sub' ? ANTHROPIC_SUB_DEFAULT_MODEL : def.defaultModel;
   const modelId =
     override?.model ?? globalSwitch?.model ?? dbTaskOverride?.model ?? subDefaultModel;
+  return { provider: providerName, model: modelId };
+}
+
+/**
+ * Resolve a task to its concrete provider binding.
+ *
+ * Lookup order（YUK-1007 DB override 层落地后）：
+ *   1. Chat process env pin, then explicit `override.provider` / `override.model`
+ *   2. 全局 switch：`AI_PROVIDER_OVERRIDE`/`AI_PROVIDER_MODEL` env → DB
+ *      `lane.global.*`（owner 裁决：env pin 恒压 DB——它是 incident kill-switch）
+ *   3. DB `task.<kind>.provider` / `.model` per-task override（面板写点）
+ *   4. Task registry's `defaultProvider` + `defaultModel`
+ *
+ * Throws if the resolved provider's required env var isn't set.
+ */
+export function resolveTaskProvider(
+  kind: TaskKind,
+  override?: { provider?: Provider; model?: string },
+): ResolvedProvider {
+  const { provider: providerName, model: modelId } = resolveTaskBinding(kind, override);
 
   const config = PROVIDERS[providerName];
   if (!config) {
