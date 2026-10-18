@@ -1,8 +1,3 @@
-import {
-  LEGACY_QUESTION_ADMISSION_POLICY_ID,
-  QUESTION_ADMISSION_POLICY_ID,
-} from '@/core/question-admission-policy';
-import { initialSchedulingState } from '@/server/fsrs/state';
 // YUK-216 S2 slice 2 (题源扩展 Strategy D) — tier-2 source_verify handler.
 //
 // docs/superpowers/specs/2026-06-05-question-source-expansion-design.md §4
@@ -32,12 +27,15 @@ import { initialSchedulingState } from '@/server/fsrs/state';
 import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
-
 import {
   type RunSourceGroundingVerifyParams,
   type SourceGroundingVerifyResult,
   runSourceGroundingVerify,
 } from '@/capabilities/practice/server/judge/source-grounding-verify';
+import {
+  LEGACY_QUESTION_ADMISSION_POLICY_ID,
+  QUESTION_ADMISSION_POLICY_ID,
+} from '@/core/question-admission-policy';
 import {
   LEGACY_DRAFT_STATUS,
   QUESTION_AVAILABILITY,
@@ -62,7 +60,7 @@ import { writeEvent } from '@/kernel/events';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { type TaskTextResult, type TaskTextRunFn, aiAgentRef } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
-import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
+import { getFsrsState, initialSchedulingState, upsertFsrsState } from '@/server/fsrs/state';
 import {
   loadQuestionGroupContractSnapshot,
   publishQuestionGroup,

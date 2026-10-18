@@ -84,6 +84,8 @@ export interface PaidEffectSendClaimDelivery {
   readonly leaseExpiresAt: Date;
   /** Original dispatch generation; required for both backends after bootstrap. */
   readonly generation?: number | null;
+  /** Lead-only @1 unknown identity authorization, never inferred from the new unit. */
+  readonly admissionUnknownInputDigest?: string;
 }
 
 export type PaidEffectSendClaim =
@@ -175,6 +177,7 @@ async function lockEntityGate(tx: Tx, identity: PaidEffectIdentity): Promise<voi
 async function findGateBlocker(
   tx: Tx,
   identity: PaidEffectIdentity,
+  admissionUnknownInputDigest?: string,
 ): Promise<PaidEffectIdentity | null> {
   const blockers = await tx
     .select({
@@ -213,6 +216,7 @@ async function findGateBlocker(
           and ${paid_effect.state} = 'unknown'
           and ${paid_effect.unit} = 'admission@1'
           and ${identity.unit} = 'admission@2'
+          and ${paid_effect.input_digest} = ${admissionUnknownInputDigest ?? ''}
         )`,
       ),
     )
@@ -294,7 +298,7 @@ async function claimLockedRow(
   if (admission.kind === 'fenced') {
     throw new PaidEffectControlFencedError(identity.family, admission.reason, admission.owner);
   }
-  const blockedBy = await findGateBlocker(tx, identity);
+  const blockedBy = await findGateBlocker(tx, identity, delivery.admissionUnknownInputDigest);
   if (blockedBy) return { blockedBy };
   const fence = row.fence + 1;
   await tx

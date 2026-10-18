@@ -1,15 +1,3 @@
-# YUK-1537 implementation handoff — 2026-10-18
-
-Sole writer: this worktree, branch fix/yuk-1537-admission-solve-structured-output; fixed parent 38446bfd254bc6375ae970bc0573c38065302c47 (#1777). Draft base must remain fix/yuk-1468-admission-revision. No push to parent branch, merge, rebase or deployment in this lane.
-
-Admission-only schema tool transport, forced MiMo function, one model turn, one normalization shared across both solves; no paid re-ask. @2 policy/unit/versioned jobs and exact @1 unknown same-base upgrade exception preserve old unknown rows and all fences. Old queue deliveries never initiate @2. Source C1 guard recognizes @1/@2/configured policy. Parent authored key/published-revision/digest/revision-reuse code preserved.
-
-Typecheck/lint (175 warnings)/build and capability-boundaries, architecture-deepening, task-census, schema audits passed. Offline parser, pure gate, terminal frame and actual pi loop with synthetic provider stream exercised; canonical/repairable/truncated each one synthetic request. No test code or suite, real DB, paid provider, TEST or deployment. First build failed with no specific diagnostic while free disk was 291 MiB; retry passed. Own dependency installation initially hit ENOSPC, retry succeeded; no user files deleted.
-
-Lead still owns independent review, rebase/main integration, exact-head CI, TEST five-question actual-output/cost reconciliation and @1 row parity. #1774 serving files absent at mandated parent: apply docs/planning/2026-10-18-yuk1537-serving-rebase.patch after rebase; check both applied-verdict reads and manual fallback version. Exact runbook and text-only invariant test proposal: docs/planning/2026-10-18-yuk1537-admission-structured-output.md. Do not rerun any @2 unknown; no remaining-112 authorization in this lane. Existing YUK-1537 tracks these acceptance obligations; no duplicate issue.
-
----
-
 # YUK-1404 figure main composition — 2026-10-11
 
 PR1657 fixed4c52 exact CI38144495041全绿；正常纳入main eb960c079，仅PLAN/now冲突。图ownership/隐私产品代码与单capture边界测试保留，旧细粒度四tests已删。独立初审/最终R2预算已完成，不启第三审。当前crop producer仍无source_asset SHA登记，旧visibility未知，public withholding不是完整配图交付；同卷actual-output验收仍待。无DB/runtime/provider/paid。

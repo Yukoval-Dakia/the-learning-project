@@ -1,128 +1,144 @@
 # Admission structured output — YUK-1537
 
-Stage: 第一天能用. Fixed parent: PR #1777, `38446bfd254bc6375ae970bc0573c38065302c47`.
-Branch: `fix/yuk-1537-admission-solve-structured-output`; draft base: `fix/yuk-1468-admission-revision`.
+Stage: 第一天能用. Draft PR #1785, branch
+`fix/yuk-1537-admission-solve-structured-output`. Original fixed parent was
+#1777 `38446bfd254bc6375ae970bc0573c38065302c47`; the lead now requires a NORMAL
+merge of latest main and PR base `main`. Never rebase, force push, or replay the
+#1777 commits. Preserve #1787's C1 comparison against the published revision's
+`integrity_digest` when merging `source_verify.ts`.
 
-## Contract and payment
+## Output and repair budget
 
-`QuestionAdmissionSolveTask` alone opts into `structuredOutputMode: 'tool'`.
-The existing `piCustomTool` compiler advertises the Zod schema as native JSON
-Schema arguments to `mcp__structured_output__submit`, wrapped as `{result: ...}`.
-MiMo's OpenAI Completions payload requires that function and disables parallel
-calls. Pi finishes after ONE assistant turn, even if argument validation fails.
-Only one submit call with a non-truncated `toolUse` finish becomes
-`structured_output`; text, duplicate calls, truncation and provider errors fail
-closed. Other task definitions keep their existing execution behavior.
+Only `QuestionAdmissionSolveTask` opts into schema tool output. `piCustomTool`
+compiles the Zod schema into `mcp__structured_output__submit` arguments
+`{result: ...}`. MiMo's OpenAI Completions payload forces that function and
+disables parallel calls. Pi ends after ONE assistant turn, including invalid
+arguments. Text-only, duplicate, truncated and provider-error output fails closed.
+Numeric `expected` is required; `answer.kind` has only the four declared variants.
 
-Each paid admission batch shares ONE deterministic normalization allowance between
-solve A and solve B. Canonical output consumes no allowance. A schema failure may
-normalize the SAME arguments once using #1777's capability-owned mapping; blank
-strings become `{text}`, declared select IDs become `{item_ids}`, and supported
-answer aliases retain the original values. Missing numeric `expected`, unknown
-kinds, conflicting select keys, and malformed JSON never invent a key. Both solve
-calls and the separate source crosscheck disable provider retries; there is no
-paid re-ask. Parse failure stays `pending`, and the winning claim records `unknown`.
+Pi's own `parseStreamingJson` can silently repair malformed tool-call JSON.
+For this task the adapter collects the ORIGINAL `toolcall_delta` bytes and
+requires a strict `JSON.parse` before accepting the terminal result. Missing
+raw deltas or a syntax error rejects the output, even if pi salvaged a valid
+object. Thus no pi syntax repair is accepted; it cannot consume an invisible
+repair in each blind solve. Other tasks retain their existing parser behavior.
 
-The solve contract is `question_admission@2` / paid unit `admission@2`. The frozen
-input/receipt envelope remains version 1 (its storage shape did not change).
-New subscriber jobs carry `admission_version:2`; their deterministic job ID also
-includes contract version 2. Unversioned / version 1 queued deliveries only read
-or apply existing @1 receipts: they cannot send again or initiate @2. A direct
-explicit invocation uses @2. A generation change alone never creates another
-paid identity within either contract version.
+The two blind solves share ONE deterministic normalization allowance for the
+SAME schema-invalid arguments. Canonical output uses none. Supported aliases
+and string equivalents retain the original values; missing numbers, unknown
+kinds, conflicting select keys and malformed JSON never invent a key. There is
+no paid re-ask, and solve/crosscheck provider retries are disabled. A second
+normalization is refused. Failures remain pending/unknown. The job captures
+central runner `taskRunId` on thrown errors as well as successful `task_run_id`,
+and writes all observed IDs into `paid_effect.unresolved_reason` as `task_runs=`
+for later cost reconciliation; it does not claim an error is a successful receipt.
 
-The shared entity gate needs one explicit, directional exception: an old
-`question_admission_run` / `admission@1` **unknown**, for the **same entity and
-base digest**, does not block a NEW `admission@2` claim. Old sending, another
-digest, an @2 unknown, and unrelated families still block. SQL and the pure
-protocol predicate agree. No existing unknown row is updated, settled or deleted.
-The original family-control locks, delivery checks, send CAS and fence remain.
+## Claim authorization and known verdicts
 
-Readers/writers changed: `receipt.ts` chooses the paid unit; `enqueue.ts` versions
-new jobs; `question_admission_run.ts` scopes historical terminal verification by
-policy; `run-admission.ts` stamps @2; `source_verify.ts` preserves current-revision
-C1 passes for @1, @2 and the configured policy with the original digest barrier.
-An explicit environment pin to `question_admission@1` is rejected; unset it.
-Published-revision grading, verbatim authored keys, no-content-change revision
-reuse and digest mismatch rejection from #1777 remain in their existing paths.
+New policy/unit: `question_admission@2` / `admission@2`. New jobs carry
+`admission_version:2`; storage envelopes retain version 1. Old queued deliveries
+may reconcile existing @1 receipts but cannot send again or initiate @2.
 
-## Main integration required after #1777 merges
+A version bump is NOT permission to repay unknown work. Ordinary subscriber,
+reverify, source promotion and hold-release jobs have NO marker, so the normal
+entity gate blocks them on an open @1 unknown. Only the lead's explicit script
+sets `reopen_unknown_input_digest` in a job. Together with the pinned group ID,
+current base digest and old unit `admission@1`, this names the exact old effect.
+The gate allows that specific same-base @1 **unknown** -> @2 transition only
+when the marker equals its input digest. Wrong/absent marker, sending, another
+base, @2 unknown and unrelated families still block. The marker is passed from
+that delivery only, never inferred from a stored @2 input or copied by publishers.
+Marked job IDs include the marker; all deliveries still share ONE @2 paid claim.
 
-#1774's `src/kernel/read-models/question-serving.ts` and
-`src/capabilities/practice/server/serving-actions.ts` do NOT exist on the mandated
-parent. The adjacent `2026-10-18-yuk1537-serving-rebase.patch` is a precise patch
-against fetched main, not an activated reader on this branch. After rebasing:
+An applied verdict from EITHER `admission@1` or `admission@2` for the same base
+is terminal, even on a marked job. The admission receipt check, historical policy
+check and serving readers all recognize both versions. The serving command's
+409 guard does too: an @1 failed verdict cannot gain a reverify button or be
+paid again; @1 admitted evidence is preserved by the C1 digest barrier. Family
+control, delivery equality, send CAS, fence and immutable receipts remain.
 
-```sh
-git apply --check docs/planning/2026-10-18-yuk1537-serving-rebase.patch
-git apply docs/planning/2026-10-18-yuk1537-serving-rebase.patch
-pnpm exec biome check --write src/kernel/read-models/question-serving.ts src/capabilities/practice/server/serving-actions.ts
-```
+During the main merge, apply `2026-10-18-yuk1537-serving-rebase.patch` to make
+both serving applied-verdict reads accept both units and to version the manual
+fallback enqueue. An ordinary fallback never receives the lead-only marker.
 
-It switches BOTH applied-verdict reads to the shared `admission@2` constant and
-versions the manual reverify fallback job as 2. An @2 applied withheld result is
-`admission_failed` without an identical-claim reverify action. Old @1 unknown
-alone remains `awaiting_admission`; an old @1 applied result does not suppress a
-new @2 contract attempt. Existing lifecycle `verification_failed` remains
-`admission_failed`; already admitted @1 questions remain admitted. Do not deploy
-the rebase without applying this patch and rerunning the required checks.
+## Lead pre-flight — BEFORE re-pending anything
 
-## Lead: re-run only the five on TEST
+The script is an explicit TEST operation, not a scheduler or another admission
+path. Its only marker producer is `scripts/yuk1537-admission-reopen.ts`.
+It is not executed by this implementation agent.
 
-1. Obtain the five group IDs from the private `deployment-20261018/backlog-b/`
-   receipts referenced by YUK-1537. Do not put their question text in git.
-2. After #1777 merge, rebase and apply the integration patch above. Independently
-   review, validate, then deploy the SAME revision to TEST app and worker only.
-   Confirm `xiaomi-token-plan/mimo-v2.6-pro`; remove an old policy @1 env pin.
-3. Snapshot the five @1 paid-effect rows (full identity/state/fence/input/result/
-   application/unresolved reason), their current revision IDs/digests and authored
-   keys. Leave these rows untouched. Stop if a group is suspended/withdrawn,
-   its published digest does not match schema-parsed layers, or an @2 sending /
-   unknown claim already exists. An @2 unknown requires reconciliation, not a retry.
-4. Re-pend using the existing **publisher**, never direct lifecycle/paid-effect
-   SQL. Within one transaction, take family control then root/lifecycle locks,
-   load the CURRENT published revision, parse its structure/response/scoring/
-   execution/presentation with their existing Zod schemas, and check
-   `contractIntegrityDigest(layers) === revision.integrity_digest`. Call
-   `publishQuestionGroup(tx, {group_id, contract:{...layers, integrity_digest},
-   expectedCurrentRevision, expectedAdmissionGeneration, availability,
-   admission:{state:'withheld',reason:'unverified_rules'},
-   actorRef:'owner:yuk1537-repend', now:new Date()})`.
-   If it is already withheld/unverified_rules, publish an owner_hold dimension
-   followed by unverified_rules in the SAME transaction, using each returned
-   generation for the next CAS. This produces a fresh outbox event even for an
-   unchanged pending state. Require `admission_updated` and the SAME revision ID
-   at each step; throw/rollback on conflict, published, withdrawn or noop. If the
-   presentation has custom blocks, provide the existing asset byte reader.
-5. Let `practice.question-admission-enqueue` consume the final publish event.
-   Confirm its job pins the same revision/digest, latest admission generation,
-   current dispatch generation and `admission_version:2`. Do not replay an old
-   queue job. The subscriber filters current pending state and creates one
-   deterministic @2 job; duplicate publish events deduplicate to that job.
-6. Let the TEST worker run once. Record both blind solves, optional crosscheck,
-   calibration task-run IDs, exact input/output digests, provider/model and costs
-   (catalog estimated vs unknown stays honest), @2 claim disposition and final
-   per-unit reasons. Require admitted or explained withheld for each of the five;
-   pending/unknown is still a failure requiring investigation. Compare the @1
-   snapshot byte-for-byte; also check authored keys and revision reuse. Only the
-   lead decides when the remaining 112 questions may resume.
+1. Use the SAME environment/configuration as the deployed TEST app AND worker.
+   Verify `AI_PROVIDER_OVERRIDE=xiaomi-token-plan`,
+   `AI_PROVIDER_MODEL=mimo-v2.6-pro`, and the Token Plan endpoint/key. Remove any
+   leftover `QUESTION_ADMISSION_POLICY_ID=...@1` pin in BOTH processes.
+   `QUESTION_ADMISSION_SOLVER2_PROVIDER` / `_MODEL` must both be unset, or their
+   effective pair must resolve to an `openai-completions` model. The script
+   checks catalog metadata, including single-field overrides, without calling
+   the second model. Stop if incompatible; do not spend any of the five attempts.
+2. Make ONE synthetic probe outside `paid_effect`, using the actual output
+   schema, forced tool_choice and no retries:
 
-## Validation and remaining acceptance
+   ```sh
+   pnpm exec tsx scripts/yuk1537-admission-reopen.ts --preflight /private/audit/yuk1537-preflight.json
+   ```
 
-Offline replay uses `/tmp/yuk1537-replay.ts` (not committed). Synthetic cases are
-not real model or DB acceptance. No test files were written/changed and no test
-suite or paid provider was run. Local checks and replay output are recorded in
-the draft PR. Independent review and exact-head CI/TEST acceptance belong to the
-lead; this implementation lane does not merge, rebase or deploy.
+   The call is NOT free: it may consume provider quota, but creates no paid
+   admission claim and uses no real question. It must return HTTP 200 and
+   exactly one completed submit call with strict schema-valid arguments. The
+   script records provider request ID/usage and the synthetic output, not keys
+   or credentials. Existing receipt paths are refused BEFORE sending; a failed
+   attempt also leaves a receipt. Failure stops the operation; no automatic
+   second probe. Lead investigates/replans before permitting another request.
+3. Prepare a PRIVATE JSON array containing exactly the five owner-approved
+   identities from the original backlog-B receipts, one object each:
+   `{"group_id":"...","base_digest":"sha256:...","input_digest":"sha256:..."}`.
+   Do not put the manifest or question text in git. Snapshot each @1 row's full
+   identity/state/fence/input/result/application/reason and authored key/revision.
+   Ensure no @2 effect exists for any group; if one does, stop and reconcile.
+4. Explicitly bind the intended TEST database and run the marked operation:
 
-Text-only test proposal (requires new owner approval before any test code):
-- At the public admission job + real Postgres boundary, use one table-driven
-  invariant case to prove @1 unknown stays byte-identical, explicit @2 same-base
-  upgrade may send once, old delivery and @2 unknown may not send, and competing
-  @2 deliveries preserve CAS/fence ownership. Include receipt reapplication.
-- At the real dual-solve boundary, one deterministic-key case supplies malformed
-  numeric/kind/conflicting-key outputs and verifies pending with no minted key;
-  include the shared one-repair limit across both passes.
-- At the pi execution boundary, one payment-safety case uses a synthetic provider
-  stream to prove one request for valid/invalid/truncated tool outputs and zero
-  SDK retries. Keep the real-model five-question TEST run as separate evidence.
+   ```sh
+   export YUK1537_TEST_DATABASE_URL="$DATABASE_URL" # only after checking this IS TEST
+   pnpm exec tsx scripts/yuk1537-admission-reopen.ts --reopen-approved-five /private/audit/yuk1537-preflight.json /private/audit/yuk1537-five.json
+   ```
+
+   The successful probe must be less than one hour old with identical routing
+   and schema. This mode makes NO model call itself. Under one family-locked
+   transaction for all five, it checks the exact @1 unknown, absence of @2 and
+   absence of any applied verdict for the base; locks root/lifecycle; loads and
+   schema-parses the CURRENT published layers; and recomputes the sealed digest.
+   It publishes owner_hold then unverified_rules, with revision/generation CAS,
+   requiring dimension-only `admission_updated` and the SAME revision. Custom
+   presentation assets use the existing R2 byte reader. It atomically enqueues
+   a pinned version-2 job bearing the exact old input-digest marker. ANY failure
+   rolls back all five publications/jobs. Old paid rows are never updated.
+   Ordinary publish-event jobs may also enqueue after commit; without the
+   marker they remain gated. They cannot obtain another @2 send.
+5. Let the TEST worker run ONCE. Record all task-run IDs, exact revisions,
+   input/output digests, provider/model, honest estimated/unknown costs, @2
+   claim states and per-unit reasons. Require admitted or explained withheld
+   for each of the five. Pending/unknown still fails acceptance; never auto
+   rerun it. Compare @1 snapshots byte-for-byte and confirm authored keys and
+   unchanged-content revision reuse. Lead owns whether the remaining 112 resume.
+
+**Retained obligation:** the five @1 unknown rows stay open even after a marked
+@2 result. Because the exception is same-base only, they WILL block future
+admission sends after content edits change the base digest. Do not delete,
+rewrite or mislabel the old rows to unblock edits. The lead will file the
+reconciliation follow-up; this PR does not solve that separate obligation.
+
+## Evidence and approval boundary
+
+No test code/suite, real DB, TEST provider or Docker/image operation is executed
+by this implementation lane. Typecheck/lint/build, the requested audits and
+uncommitted offline replay are reported in the PR. The lead supplies the R2
+verification review, exact-head CI and real TEST acceptance. Both named
+unapproved test files and `vitest.shared.ts` remain outside this PR's diff.
+
+Text-only test proposal, still requiring owner approval before code:
+- Public admission job + real Postgres: one table-driven payment/CAS case for
+  matching/missing/wrong marker, @1/@2 applied suppression, immutable old rows,
+  concurrent deliveries, @2 unknown refusal and receipt reapplication.
+- Pi/dual-solve boundary: one deterministic-key case for raw JSON salvage
+  rejection, one shared normalization, no fabricated key, and errored task-run
+  IDs preserved in paid-effect reconciliation evidence.

@@ -1,38 +1,49 @@
 --- a/src/kernel/read-models/question-serving.ts
 +++ b/src/kernel/read-models/question-serving.ts
-@@ -12,6 +12,7 @@
- // (no_input_renderer / invalid_presentation), the serving-action command
+@@ -13,6 +13,7 @@
  // event log, and in-flight pg-boss jobs. No parallel state store.
 
-+import { QUESTION_ADMISSION_PAID_UNIT } from '@/core/question-admission-policy';
  import { and, desc, eq, inArray, sql } from 'drizzle-orm';
++import { QUESTION_ADMISSION_PAID_UNITS } from '@/core/question-admission-policy';
 
  import {
+   type AutomaticServingDecision,
 @@ -62,7 +63,7 @@
   * practice/server/admission/enqueue.ts — duplicated as a literal because
   * kernel may not import capability modules). */
  const PAID_EFFECT_ADMISSION_FAMILY = 'question_admission_run' as const;
 -const PAID_EFFECT_ADMISSION_UNIT = 'admission@1' as const;
-+const PAID_EFFECT_ADMISSION_UNIT = QUESTION_ADMISSION_PAID_UNIT;
++const PAID_EFFECT_ADMISSION_UNITS = QUESTION_ADMISSION_PAID_UNITS;
 
  /** UI contract: awaiting_admission offers no action for the first N hours. */
  export const AWAITING_ADMISSION_REVERIFY_AFTER_MS = 6 * 60 * 60 * 1000;
+@@ -240,7 +241,7 @@
+           and(
+             eq(paid_effect.family, PAID_EFFECT_ADMISSION_FAMILY),
+             inArray(paid_effect.entity_id, groupIds),
+-            eq(paid_effect.unit, PAID_EFFECT_ADMISSION_UNIT),
++            inArray(paid_effect.unit, [...PAID_EFFECT_ADMISSION_UNITS]),
+             eq(paid_effect.state, 'applied'),
+           ),
+         )
 --- a/src/capabilities/practice/server/serving-actions.ts
 +++ b/src/capabilities/practice/server/serving-actions.ts
-@@ -34,6 +34,7 @@
- // keyed by Idempotency-Key; a replay returns the recorded accepted flag with a
+@@ -35,7 +35,8 @@
  // freshly derived serving projection.
 
-+import { QUESTION_ADMISSION_CONTRACT_VERSION, QUESTION_ADMISSION_PAID_UNIT } from '@/core/question-admission-policy';
  import { createHash } from 'node:crypto';
- import { and, desc, eq, sql } from 'drizzle-orm';
+-import { and, desc, eq, sql } from 'drizzle-orm';
++import { and, desc, eq, inArray, sql } from 'drizzle-orm';
++import { QUESTION_ADMISSION_CONTRACT_VERSION, QUESTION_ADMISSION_PAID_UNITS } from '@/core/question-admission-policy';
  import type { PgBoss } from 'pg-boss';
+
+ import type { Db, Tx } from '@/db/client';
 @@ -288,7 +289,7 @@
                eq(paid_effect.family, ADMISSION_FAMILY),
                eq(paid_effect.entity_id, groupId),
                eq(paid_effect.entity_revision, currentRev.digest),
 -              eq(paid_effect.unit, 'admission@1'),
-+              eq(paid_effect.unit, QUESTION_ADMISSION_PAID_UNIT),
++              inArray(paid_effect.unit, [...QUESTION_ADMISSION_PAID_UNITS]),
                eq(paid_effect.state, 'applied'),
              ),
            )

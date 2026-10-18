@@ -12,6 +12,11 @@ export const ADMISSION_FAMILY = 'question_admission_run';
 export const AdmissionJobData = z.object({
   /** Absent on old queued deliveries: they may reconcile @1 but never initiate @2. */
   admission_version: z.union([z.literal(1), z.literal(2)]).optional(),
+  /** Lead-only authorization: exact old @1 input digest; ordinary publishers omit it. */
+  reopen_unknown_input_digest: z
+    .string()
+    .regex(/^sha256:[0-9a-f]{64}$/)
+    .optional(),
   question_id: z.string().min(1).optional(),
   revision_id: z.string().min(1).optional(),
   expected_revision_digest: z.string().min(1).optional(),
@@ -42,11 +47,12 @@ export function isPendingAdmission(
   );
 }
 
-function admissionJobId(
+export function admissionJobId(
   groupId: string,
   revisionId: string,
   digest: string,
   generation: number,
+  reopenUnknownInputDigest?: string,
 ): string {
   const hex = createHash('sha256')
     .update(
@@ -57,6 +63,7 @@ function admissionJobId(
         revisionId,
         digest,
         generation,
+        ...(reopenUnknownInputDigest ? [reopenUnknownInputDigest] : []),
       ]),
     )
     .digest('hex');

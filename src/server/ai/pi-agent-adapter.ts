@@ -592,6 +592,8 @@ export function piTerminalResultFrame(args: {
   cappedByMaxTurns?: boolean;
   /** Only the opt-in structured task uses tool arguments as its terminal result. */
   structuredOutputTool?: boolean;
+  /** Reject pi best-effort JSON salvage: original streamed arguments must parse strictly. */
+  invalidStructuredArguments?: boolean;
   /** P3 — nested-child usage rolled into the run's terminal evidence, the
    *  same way the SDK result aggregates subagent tokens into modelUsage. */
   childUsage?: PiChildUsage;
@@ -706,6 +708,7 @@ export function piTerminalResultFrame(args: {
     const call = calls[0];
     const arguments_ = call?.arguments;
     if (
+      args.invalidStructuredArguments ||
       final.stopReason !== 'toolUse' ||
       calls.length !== 1 ||
       call?.name !== STRUCTURED_OUTPUT_TOOL ||
@@ -721,7 +724,7 @@ export function piTerminalResultFrame(args: {
         total_cost_usd: costUsd,
         ...usageParts,
         errors: [
-          'structured output requires exactly one submit tool call with result; no text fallback',
+          'structured output requires exactly one non-truncated submit call with strictly valid raw JSON arguments; no text fallback',
         ],
       } as SDKResultMessage & { source: 'pi' };
     }
@@ -1386,12 +1389,26 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     });
     const stream = this.deps.agentLoop(prompts, context, config, this.abort.signal, this.streamFn);
     let textStreamed = false;
+    const rawToolArguments = new Map<number, string>();
+    let invalidStructuredArguments = false;
     for await (const event of stream) {
       this.observeToolAttempt(event);
       // Frames queued inside the loop (subagent task_*, compact_boundary)
       // surface before the engine event that follows them — matching the SDK
       // wire order where lifecycle frames precede the parent tool_result.
       yield* this.drainFrames();
+      if (
+        structuredOutput &&
+        event.type === 'message_update' &&
+        event.message.role === 'assistant' &&
+        event.assistantMessageEvent.type === 'toolcall_delta'
+      ) {
+        const delta = event.assistantMessageEvent;
+        rawToolArguments.set(
+          delta.contentIndex,
+          (rawToolArguments.get(delta.contentIndex) ?? '') + delta.delta,
+        );
+      }
       if (
         event.type === 'message_update' &&
         event.message.role === 'assistant' &&
@@ -1405,6 +1422,20 @@ class PiPreparedQuery implements PreparedExecutionQuery {
         continue;
       }
       if (event.type === 'message_end' && event.message.role === 'assistant') {
+        if (structuredOutput) {
+          // pi's provider parser may repair malformed tool JSON. That hidden
+          // repair must not consume an untracked allowance in each blind pass.
+          // Reject salvaged output; only strict raw JSON reaches the capability's
+          // single shared normalization budget. Missing raw deltas fail closed.
+          event.message.content.forEach((block, index) => {
+            if (block.type !== 'toolCall') return;
+            try {
+              JSON.parse(rawToolArguments.get(index) ?? '');
+            } catch {
+              invalidStructuredArguments = true;
+            }
+          });
+        }
         numTurns += 1;
         yield {
           ...piAssistantToSdkFrame(event.message as PiAssistantMessage, this.sessionId),
@@ -1434,6 +1465,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       aborted: this.abort.signal.aborted,
       cappedByMaxTurns,
       structuredOutputTool: structuredOutput,
+      invalidStructuredArguments,
       childUsage: this.childUsage,
     });
     if (terminal) yield terminal;

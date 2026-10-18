@@ -1,4 +1,4 @@
-import { and, eq, or, sql } from 'drizzle-orm';
+import { and, eq, inArray, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import {
   computePaidEffectIdentity,
@@ -7,6 +7,7 @@ import {
 import {
   LEGACY_QUESTION_ADMISSION_PAID_UNIT,
   QUESTION_ADMISSION_PAID_UNIT,
+  QUESTION_ADMISSION_PAID_UNITS,
 } from '@/core/question-admission-policy';
 import { ExecutionPlan } from '@/core/schema/assessment/execution';
 import { Presentation } from '@/core/schema/assessment/presentation';
@@ -123,6 +124,37 @@ export async function claimAdmissionBatch(
     delivery.jobData && delivery.jobData.admission_version !== 2
       ? LEGACY_QUESTION_ADMISSION_PAID_UNIT
       : QUESTION_ADMISSION_PAID_UNIT;
+  // An applied verdict from EITHER contract version is terminal for this base.
+  // A marked unknown upgrade cannot override a known paid verdict.
+  const [applied] = await tx
+    .select()
+    .from(paid_effect)
+    .where(
+      and(
+        eq(paid_effect.family, ADMISSION_FAMILY),
+        eq(paid_effect.entity_id, prepared.group_id),
+        eq(paid_effect.entity_revision, prepared.contract.integrity_digest),
+        inArray(paid_effect.unit, [...QUESTION_ADMISSION_PAID_UNITS]),
+        eq(paid_effect.state, 'applied'),
+      ),
+    )
+    .for('update')
+    .limit(1);
+  if (applied) {
+    const input = FrozenAdmissionInput.parse(applied.input_json);
+    return {
+      kind: 'applied' as const,
+      input,
+      identity: computePaidEffectIdentity({
+        family: ADMISSION_FAMILY,
+        entityId: input.group_id,
+        entityRevision: input.contract.integrity_digest,
+        unit: applied.unit,
+        input,
+      }),
+      status: completedAdmissionStatus(applied.application_json),
+    };
+  }
   const scope = and(
     eq(paid_effect.family, ADMISSION_FAMILY),
     eq(paid_effect.entity_id, prepared.group_id),
@@ -203,6 +235,7 @@ export async function claimAdmissionBatch(
     backend: 'pg-boss',
     deliveryId: delivery.id,
     generation: delivery.jobData?.dispatch_generation ?? 0,
+    admissionUnknownInputDigest: delivery.jobData?.reopen_unknown_input_digest,
     leaseExpiresAt: new Date(Date.now() + 60 * 60_000),
   });
   if (claim.kind !== 'claimed') return { kind: 'held' as const, input, identity };
