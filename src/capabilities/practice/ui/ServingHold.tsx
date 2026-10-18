@@ -11,6 +11,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useRef } from 'react';
 import { ApiError, type ApiOperationParameters, apiOperationJson } from '@/ui/lib/api';
+import { randomId } from '@/ui/lib/random-id';
 import { Badge, type BadgeTone } from '@/ui/primitives/Badge';
 import { Btn } from '@/ui/primitives/Btn';
 import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
@@ -280,13 +281,10 @@ export function ServingHoldPanel({
             disabled={mut.isPending}
             onClick={() => {
               if (inFlight.current || mut.isPending) return;
+              const idempotencyKey = randomId();
               inFlight.current = true;
               mut.reset();
-              mut.mutate({
-                command: action.command,
-                path: action.path,
-                idempotencyKey: crypto.randomUUID(),
-              });
+              mut.mutate({ command: action.command, path: action.path, idempotencyKey });
             }}
           >
             {mut.isPending ? '提交中…' : COMMAND_LABEL[action.command]}
