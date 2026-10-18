@@ -308,6 +308,91 @@ export const PROVIDER_LANES = [
     costSupport:
       'operator receipt retains provider request ID, usage, output and error; quota/cost may be consumed; no fabricated free call or successful paid-effect receipt',
   },
+  {
+    id: 'xiaomi.question-admission-reopen-preflight',
+    owner: 'scripts/yuk1547-admission-reopen',
+    disposition: 'exempt',
+    wire: {
+      path: 'scripts/yuk1547-admission-reopen.ts',
+      calls: ['fetch'],
+      contains: ['/chat/completions'],
+    },
+    callers: [{ path: 'scripts/yuk1547-admission-reopen.ts', calls: ['preflight'] }],
+    directImporters: [],
+    roles: ['operator'],
+    provider: 'Xiaomi official Token Plan',
+    model: 'mimo-v2.6-pro only',
+    endpointClass:
+      'manual one-request @3 submit-shape compatibility probe (units at top level, no result envelope)',
+    configuration: {
+      endpoint: {
+        summary: 'same Token Plan /v1 endpoint as TEST app/worker',
+        source: { path: 'scripts/yuk1547-admission-reopen.ts', calls: ['xiaomiTokenPlanBaseUrl'] },
+      },
+      credential: {
+        summary: 'Token Plan server credential, never printed',
+        source: {
+          path: 'scripts/yuk1547-admission-reopen.ts',
+          envReads: ['XIAOMI_TOKEN_PLAN_API_KEY'],
+        },
+      },
+      model: {
+        summary: 'require the explicit TEST pin to mimo-v2.6-pro',
+        source: {
+          path: 'scripts/yuk1547-admission-reopen.ts',
+          envReads: ['AI_PROVIDER_OVERRIDE', 'AI_PROVIDER_MODEL'],
+          literals: ['mimo-v2.6-pro'],
+        },
+      },
+    },
+    evidence: {
+      path: 'scripts/yuk1547-admission-reopen.ts',
+      calls: ['fetch', 'open'],
+      contains: ["'wx'", 'outside_paid_effect: true'],
+    },
+    attemptSemantics: {
+      admittedUnit:
+        'one manually invoked --preflight synthetic question request; reopen mode sends none',
+      durableIdentity:
+        'operator receipt opened exclusively before sending, including failed outcomes; no paid_effect claim',
+      timeout: 'AbortSignal.timeout(120_000), including response body',
+      clientRetry: 'none; native fetch with redirect:error, no retry wrapper',
+      transportRetryCount: 0,
+      attemptsPerInvocation: {
+        kind: 'exact',
+        value: 1,
+        fixedRequestCount: 1,
+        fixedFanOutMultiplier: 1,
+      },
+      redelivery:
+        'none; an existing receipt path is refused before sending; lead investigates failure',
+      fanOut:
+        'one synthetic request only; reopen mode enqueues marked @3 jobs without a model call',
+      evidence: [
+        {
+          path: 'scripts/yuk1547-admission-reopen.ts',
+          calls: ['fetch', 'open', 'AbortSignal.timeout'],
+          contains: ["redirect: 'error'", "'wx'", '120_000'],
+        },
+      ],
+    },
+    exemption: {
+      owner: 'practice/admission lead',
+      reason:
+        'YUK-1547 owner-approved one-off TEST transport preflight gating the marked @3 reopen of exactly five named @2 identities; no product or automatic caller',
+      expiresOn: '2026-12-31',
+      maxAttemptsPerInvocation: 1,
+      timeoutMs: 120_000,
+      clientRetryLimit: 0,
+      evidence: {
+        path: 'scripts/yuk1547-admission-reopen.ts',
+        calls: ['fetch', 'open'],
+        contains: ["'wx'", 'outside_paid_effect: true'],
+      },
+    },
+    costSupport:
+      'operator receipt retains provider request ID, usage, raw arguments, output and error; quota/cost may be consumed; no fabricated free call or successful paid-effect receipt',
+  },
 
   {
     id: 'dashscope.embedding',

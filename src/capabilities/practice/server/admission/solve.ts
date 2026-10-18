@@ -585,10 +585,11 @@ async function runSolvePass(
         receipt = undefined;
       }
     }
-    const marked =
-      (taskRunId != null && !detail.includes(`task_run_id=${taskRunId}`)
+    const marked = `${
+      taskRunId != null && !detail.includes(`task_run_id=${taskRunId}`)
         ? `${detail};task_run_id=${taskRunId}`
-        : detail) + `;raw_args_sha256=${rawArgsDigest}`;
+        : detail
+    };raw_args_sha256=${rawArgsDigest}`;
     throw new UnparsedSolveError(marked, receipt);
   }
 }
