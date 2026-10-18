@@ -95,7 +95,7 @@ const checks: Check[] = [
     name: 'MIMO_VISION_MODEL',
     severity: 'optional',
     value: env.MIMO_VISION_MODEL,
-    defaultNote: 'mimo-v2.5',
+    defaultNote: 'resolved vision-judge task config (see preflight:vision)',
   },
   // Blob (Cloudflare R2) — figure crops + original uploads.
   {

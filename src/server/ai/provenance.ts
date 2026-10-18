@@ -3,6 +3,7 @@ import { sha256CanonicalJson } from '@/kernel/canonical-json';
 
 export { costUsdToMicroUsd, sumAllKnownCostUsd } from '@/kernel/cost';
 
+import { AgentRunError, isProviderSessionWallClockBudgetError } from '@/server/ai/agent-run-error';
 import type { NoteGeneratePhaseTimings } from '@/server/ai/log';
 
 export type { NoteGeneratePhaseTimings };
@@ -50,6 +51,11 @@ export function taskPromptFingerprint(
     task_kind: task,
     system_prompt: getTaskSystemPrompt(task, profile, learnerLocale),
   });
+}
+
+export function isGenerationBudgetTimeout(error: unknown): boolean {
+  if (error instanceof AgentRunError && error.subtype === 'budget_timeout') return true;
+  return isProviderSessionWallClockBudgetError(error);
 }
 
 export function aiAgentRef(

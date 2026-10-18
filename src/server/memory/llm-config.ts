@@ -1,6 +1,7 @@
 import { getLaneOverride } from '@/core/config/store';
 import { nativePiModel } from '@/server/ai/pi-provider-catalog';
 import {
+  LEGACY_GLM_MODEL_ID,
   isOauthProvider,
   providerCredentialEnvName,
   resolveGlobalProviderSwitch,
@@ -24,7 +25,7 @@ export function resolveMemoryLlmConfig(
     return {
       provider: 'glm',
       apiKey,
-      model: env.MEM0_LLM_MODEL?.trim() || 'glm-5.2',
+      model: env.MEM0_LLM_MODEL?.trim() || LEGACY_GLM_MODEL_ID,
       baseURL: env.MEM0_LLM_BASE_URL?.trim() || 'https://open.bigmodel.cn/api/coding/paas/v4',
     };
   }

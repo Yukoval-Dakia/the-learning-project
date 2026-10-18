@@ -9,6 +9,7 @@ import {
 // path (src/server/export/constants.ts) and this live client MUST resolve the same
 // default so a backup restores to the exact table the client reads from (Cursor OCR
 // minor, PR #491: the literal was duplicated in both files).
+import { DASHSCOPE_EMBED_MODEL_ID } from '@/server/ai/providers';
 import { MEM0_COLLECTION_DEFAULT } from '@/server/export/constants';
 import { memoryLlmHeaders, resolveMemoryLlmConfig } from './llm-config';
 
@@ -17,7 +18,6 @@ export { memoryLlmHeaders, resolveMemoryLlmConfig } from './llm-config';
 // The global product pin selects the extraction LLM; embeddings keep their
 // independent model/dimensions and existing pgvector collection (ADR-0017).
 const DEFAULT_COLLECTION = MEM0_COLLECTION_DEFAULT;
-const DEFAULT_EMBEDDING_MODEL = 'text-embedding-v4'; // 阿里百炼 DashScope
 const DEFAULT_EMBEDDING_BASE_URL = 'https://dashscope.aliyuncs.com/compatible-mode/v1'; // 含 /v1
 const DEFAULT_EMBEDDING_DIMS = 1024; // 百炼 v4 推荐性价比维度；embedder 与 vectorStore 必须同值
 const DEFAULT_HISTORY_DB_PATH = '/var/lib/mem0/history.db'; // 绝对路径（默认相对 cwd 多进程踩坑）；prod compose 挂载卷，dev 经 MEM0_HISTORY_DB_PATH 覆盖
@@ -198,7 +198,7 @@ export function createMem0Config(env: Env = process.env): MemoryConfig {
       provider: 'openai', // openai-compat：转发 baseURL → 接百炼 DashScope
       config: {
         apiKey: dashscopeApiKey,
-        model: optionalEnv(env, 'MEM0_EMBEDDING_MODEL', DEFAULT_EMBEDDING_MODEL),
+        model: optionalEnv(env, 'MEM0_EMBEDDING_MODEL', DASHSCOPE_EMBED_MODEL_ID),
         baseURL: optionalEnv(env, 'MEM0_EMBEDDING_BASE_URL', DEFAULT_EMBEDDING_BASE_URL),
         embeddingDims: dims,
       },

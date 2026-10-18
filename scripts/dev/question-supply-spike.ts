@@ -198,7 +198,9 @@ async function main() {
     lines.push('# 自动供给引擎质量 spike 报告');
     lines.push('');
     lines.push(`- 生成时间：${new Date().toISOString()}`);
-    lines.push(`- AI provider：${process.env.AI_PROVIDER_OVERRIDE ?? 'mimo-v2.5 (default)'}`);
+    lines.push(
+      `- AI provider：${process.env.AI_PROVIDER_OVERRIDE ?? '(unset — per-task registry defaults)'}`,
+    );
     lines.push(`- 题目总数（source=quiz_gen）：${qs.length}`);
     lines.push('');
     lines.push('## 总览');

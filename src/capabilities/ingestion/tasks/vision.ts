@@ -63,7 +63,7 @@ export const visionExtractTaskHeavySpec = {
   ownership: 'owned',
   definition: {
     kind: 'VisionExtractTaskHeavy',
-    description: '错题图片 → 切块（heavy / Tier 3 — mimo-v2.5 multimodal manual rescue）',
+    description: '错题图片 → 切块（heavy / Tier 3 — registry-default multimodal manual rescue）',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5',
     budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1, timeout: 90_000 },
