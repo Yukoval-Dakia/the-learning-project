@@ -191,9 +191,10 @@ key 除特别注明外为 `11`，满分 1；均 `model_units_invoked=0`。
 ### 明确限制与验收边界
 
 - **等式链不求值**：`S5=1+2+8=11` 与 `S5=10=11` 都保守 `ambiguous`；
-  不证明每一环等价，不新增数学语义引擎。多行/结论标记过程进入复核。
-- native 原有短答政策保留：裸单行 `x<=11`、`S5=10=11`、
-  `S5=1+2+8=11`、`不是S5=11` 为提取不支持但非过程文本，直接调用观察仍
+  不证明每一环等价，不新增数学语义引擎。父核验后补充：裸单行连等式也是
+  过程作答，提取不支持时必须进入复核，不能因为只有一行就伪造0分。
+- native 原有短答政策保留：裸单行 `x<=11`、`不是S5=11` 为提取不支持但
+  非过程文本，先前直接调用观察仍
   `scored 0`，**不是**所有 ambiguous 都被 native 判为 pending。
   `答：前五项和为11` 对 key `11` 同样不猜 copula，短答仍 `scored 0`。
 - 不支持一般代数 LHS、任意 prose 内嵌等式/无边界结论、带边缘 Markdown
@@ -203,8 +204,8 @@ key 除特别注明外为 `11`，满分 1；均 `model_units_invoked=0`。
   学习者验收。无 provider/模型调用，无人工作业纠错执行；不恢复 legacy
   SemanticJudge fallback、不绕过 admission。语义判分仍延期至 executor +
   admission 切片；人工纠错仍按上方 runbook 人审。
-- 无新增 actionable follow-up；上述是 parent 已明确接受的切片限制与仍待
-  parent 的验收事项。本次按授权不修改 Linear/PLAN/.remember、不发 review
+- 上述限制已报告 parent，整体接受仍需独立验证审及真实页面验收；未称
+  parent 已接受短作答误判。作者按授权不修改 Linear/PLAN/.remember、不发 review
   请求、不 merge、不执行 QA。
 
 ### 本次检查
@@ -220,3 +221,14 @@ key 除特别注明外为 `11`，满分 1；均 `model_units_invoked=0`。
 未写/改测试代码；测试套件 NOT_RUN（owner 指定）。本次完整差异副本：
 `/private/tmp/yuk1407-extraction-repair.patch`；最终提交/推送身份另封存
 `/private/tmp/yuk1407-extraction-repair-delivery.log`。
+
+### 父核验补充：单行连等式
+
+父在作者释放写权后，只补充过程文本判定：含多个等号的单行也属于过程，
+不支持的连等式走 needs_review；未增加连等式求值或语义 fallback。
+直接调用 `evaluateSubmissionCore`（合成冻结输入，无 mock/断言/模型调用）
+实际9条输出在 `/private/tmp/yuk1407-parent-chain-core-output.jsonl`：
+“不为11”“不可能是11”、11! 和两种连等式均 pending；正确过程/答前缀/11
+均得1分；短错答12得0分。每条 `model_units_invoked=0`。
+父 typecheck、lint:ratchet、build、diff check 全部通过，日志前缀
+`/private/tmp/yuk1407-parent-chain-`。这是内核输出观察，真实页面/DB仍未验收。

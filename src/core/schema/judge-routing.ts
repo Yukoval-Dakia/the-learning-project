@@ -306,19 +306,23 @@ const PROCESS_MARKER_RE = /[∵∴⇒→]|解[：:]|步骤|因为[\s\S]{0,80}所
 const PROCESS_ANSWER_MAX_LEN = 120;
 
 /**
- * 过程作答形态判定（保守）：多行、超出短答长度、或含推导标记 ⇒ true。
+ * 过程作答形态判定（保守）：多行、连等式、超出短答长度、或含推导标记 ⇒ true。
  * 只用于「比较不出结果时给 pending 而非 0」的诚实降级边界；提取得到明确
  * 终态的输入不走这里。
  */
 export function isProcessLikeAnswer(text: string): boolean {
   const t = text.trim();
   if (t.length === 0) return false;
+  const normalized = t.normalize('NFKC');
   const nonEmptyLines = t.split(/\n+/).filter((line) => line.trim().length > 0).length;
   return (
     nonEmptyLines > 1 ||
+    // A one-line equality chain is still worked reasoning. If extraction
+    // cannot establish its final answer, preserve review instead of a fake zero.
+    normalized.indexOf('=') !== normalized.lastIndexOf('=') ||
     [...t].length > PROCESS_ANSWER_MAX_LEN ||
     PROCESS_MARKER_RE.test(t) ||
-    LAST_LINE_CONCLUSION_RE.test(t.normalize('NFKC'))
+    LAST_LINE_CONCLUSION_RE.test(normalized)
   );
 }
 
