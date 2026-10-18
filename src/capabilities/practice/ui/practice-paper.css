@@ -117,6 +117,9 @@
 }
 
 /* ── The sheet: the extra rows a paper question has, in the answer column ── */
+[data-ui-next] .un-pp .un-ps-sheet {
+  gap: var(--un-sp-4);
+}
 [data-ui-next] .un-pp .un-ps-sheet > .un-pp-extras,
 [data-ui-next] .un-pp .un-ps-sheet > .un-pp-confidence {
   margin-left: var(--un-ps-gutter);
