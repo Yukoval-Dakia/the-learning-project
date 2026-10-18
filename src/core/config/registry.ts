@@ -486,6 +486,17 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     envParse: stringEnv,
     tier: 'A',
   },
+  // ── legacy GLM 直连 lane（Mem0 + edge/memory reconcile 的回退通道） ───────
+  MEM0_LLM_MODEL: {
+    // YUK-1559：模型 id 只许住 system_config 层——llm-config 改走 getConfig，
+    // 不再写字面量。env '' → 未表达 → codeDefault（与原 `?.trim() || default`
+    // 逐位一致）；DB 行可覆盖（tier A：读点已换 getConfig）。
+    schema: z.string(),
+    codeDefault: 'glm-5.2',
+    envName: 'MEM0_LLM_MODEL',
+    envParse: stringEnv,
+    tier: 'A',
+  },
   // ── 全局 provider pin（owner 裁决：env pin > DB > default） ────────────────
   // 裸 AI_PROVIDER_OVERRIDE / AI_PROVIDER_MODEL 不注册（review P2：resolver 只消费
   // lane.global.*——注册裸键会产生「写进去永不生效」的静默死键）。env 层经

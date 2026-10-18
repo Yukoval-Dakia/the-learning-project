@@ -462,11 +462,12 @@ export const PROVIDER_LANES = [
         },
       },
       model: {
-        summary: 'Global provider model; unpinned MEM0_LLM_MODEL defaults to glm-5.2',
+        summary:
+          'Global provider model; unpinned MEM0_LLM_MODEL resolves via system_config registry codeDefault (YUK-1559)',
         source: {
           path: 'src/server/memory/llm-config.ts',
-          contains: ['env.MEM0_LLM_MODEL', 'model: pin.model'],
-          literals: ['glm-5.2'],
+          contains: ["getConfig('MEM0_LLM_MODEL'", 'model: pin.model'],
+          literals: ['MEM0_LLM_MODEL'],
         },
       },
     },
@@ -616,11 +617,12 @@ export const PROVIDER_LANES = [
         },
       },
       model: {
-        summary: 'Global provider model; unpinned MEM0_LLM_MODEL defaults to glm-5.2',
+        summary:
+          'Global provider model; unpinned MEM0_LLM_MODEL resolves via system_config registry codeDefault (YUK-1559)',
         source: {
           path: 'src/server/memory/llm-config.ts',
-          contains: ['env.MEM0_LLM_MODEL', 'model: pin.model'],
-          literals: ['glm-5.2'],
+          contains: ["getConfig('MEM0_LLM_MODEL'", 'model: pin.model'],
+          literals: ['MEM0_LLM_MODEL'],
         },
       },
     },
@@ -996,11 +998,12 @@ export const PROVIDER_LANES = [
       },
       model: {
         summary:
-          'CLI or MIMO_VISION_MODEL override; product model for Token Plan, legacy mimo-v2.5',
+          'CLI or MIMO_VISION_MODEL override, else resolved vision-judge task route (env pin > lane.vision_judge > registry default; YUK-1559)',
         source: {
           path: 'scripts/preflight-vision.ts',
-          envReads: ['MIMO_VISION_MODEL', 'AI_PROVIDER_MODEL'],
-          literals: ['mimo-v2.5', 'mimo-v2.6-pro'],
+          imports: ['../src/server/ai/providers', '../src/server/ai/vision-judge-config'],
+          calls: ['resolveTaskBinding', 'visionJudgeProviderOverride'],
+          envReads: ['MIMO_VISION_MODEL'],
         },
       },
     },

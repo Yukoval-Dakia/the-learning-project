@@ -1,4 +1,4 @@
-import { getLaneOverride } from '@/core/config/store';
+import { getConfig, getLaneOverride } from '@/core/config/store';
 import { nativePiModel } from '@/server/ai/pi-provider-catalog';
 import {
   isOauthProvider,
@@ -21,10 +21,21 @@ export function resolveMemoryLlmConfig(
   if (!pin) {
     const apiKey = env.ZHIPU_API_KEY?.trim();
     if (!apiKey) throw new Error('Mem0 memory client requires ZHIPU_API_KEY');
+    // YUK-1559 — the legacy GLM model id lives in the system_config layer
+    // (registry codeDefault for MEM0_LLM_MODEL); env '' resolves to it just
+    // like the old `?.trim() || default` chain. A non-string resolved value
+    // means a corrupt manual DB row — fail closed instead of posting a broken
+    // model id.
+    const configuredModel = getConfig('MEM0_LLM_MODEL', env);
+    if (typeof configuredModel !== 'string' || configuredModel === '') {
+      throw new Error(
+        `MEM0_LLM_MODEL resolved to an unusable value (${JSON.stringify(configuredModel)})`,
+      );
+    }
     return {
       provider: 'glm',
       apiKey,
-      model: env.MEM0_LLM_MODEL?.trim() || 'glm-5.2',
+      model: configuredModel,
       baseURL: env.MEM0_LLM_BASE_URL?.trim() || 'https://open.bigmodel.cn/api/coding/paas/v4',
     };
   }

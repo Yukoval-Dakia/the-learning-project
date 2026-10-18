@@ -594,8 +594,10 @@ export function resolveConfiguredTaskModel(kind: TaskKind): string {
 /**
  * Provider + model a task will execute. Credential checks stay in
  * resolveTaskProvider so a missing key does not take down the serving gate.
+ * YUK-1559 — exported so scripts/evals can assert against the resolved task
+ * route instead of pinning a model literal.
  */
-function resolveTaskBinding(
+export function resolveTaskBinding(
   kind: TaskKind,
   override?: { provider?: Provider; model?: string },
 ): { provider: Provider; model: string } {

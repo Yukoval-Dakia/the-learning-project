@@ -3,6 +3,7 @@
 // dark-ship pattern — cron stays registered, handler no-ops, zero spend).
 
 import { getConfig } from '@/core/config/store';
+import { ANTHROPIC_SUB_DEFAULT_MODEL } from '@/server/ai/providers';
 import type { JudgeCalibrationConfig } from '../server/judge-calibration-sample-core';
 
 /** Opt-in dark-ship flag. Handler reads it through the shared runtime-flag grammar. */
@@ -12,7 +13,7 @@ export const JUDGE_CALIBRATION_DEFAULTS: JudgeCalibrationConfig = {
   // The second lane (YUK-365 oauth wiring). Per-task ctx.override only — the
   // global AI_PROVIDER_OVERRIDE is never set or read for routing.
   rejudgeProvider: 'anthropic-sub',
-  rejudgeModel: 'claude-opus-4-8',
+  rejudgeModel: ANTHROPIC_SUB_DEFAULT_MODEL,
   // Per-cron-tick cost gate: default 20 single-shot re-judge calls per run,
   // env-adjustable up to the 50 clamp below (OCR review: the clamp IS the hard
   // ceiling — keep it near the documented default so a misconfigured env var
