@@ -42,23 +42,6 @@
       "contextWindow": 200000,
       "maxTokens": 64000
     },
-    "claude-haiku-5-5": {
-      "api": "anthropic-messages",
-      "baseUrl": "https://api.anthropic.com",
-      "input": ["text", "image"],
-      "reasoning": true,
-      "contextWindow": 1000000,
-      "maxTokens": 128000,
-      "thinkingLevelMap": {
-        "off": null,
-        "minimal": null,
-        "low": "low",
-        "medium": "medium",
-        "high": "high",
-        "xhigh": "xhigh",
-        "max": "max"
-      }
-    },
     "claude-opus-4-5": {
       "api": "anthropic-messages",
       "baseUrl": "https://api.anthropic.com",
@@ -204,7 +187,8 @@
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 1048576,
-      "maxTokens": 131072
+      "maxTokens": 131072,
+      "thinkingFormat": "deepseek"
     },
     "mimo-v2.5-pro": {
       "api": "openai-completions",
@@ -212,7 +196,8 @@
       "input": ["text"],
       "reasoning": true,
       "contextWindow": 1048576,
-      "maxTokens": 131072
+      "maxTokens": 131072,
+      "thinkingFormat": "deepseek"
     },
     "mimo-v2.5-pro-ultraspeed": {
       "api": "openai-completions",
@@ -220,7 +205,8 @@
       "input": ["text"],
       "reasoning": true,
       "contextWindow": 1048576,
-      "maxTokens": 131072
+      "maxTokens": 131072,
+      "thinkingFormat": "deepseek"
     },
     "mimo-v2.6-flash": {
       "api": "openai-completions",
@@ -228,7 +214,8 @@
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 1048576,
-      "maxTokens": 131072
+      "maxTokens": 131072,
+      "thinkingFormat": "deepseek"
     },
     "mimo-v2.6-pro": {
       "api": "openai-completions",
@@ -236,7 +223,8 @@
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 1048576,
-      "maxTokens": 131072
+      "maxTokens": 131072,
+      "thinkingFormat": "deepseek"
     },
     "mimo-v2.6-pro-ultraspeed": {
       "api": "openai-completions",
@@ -244,7 +232,8 @@
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 1048576,
-      "maxTokens": 131072
+      "maxTokens": 131072,
+      "thinkingFormat": "deepseek"
     }
   },
   "zai-coding-cn": {
@@ -254,7 +243,8 @@
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 128000,
-      "maxTokens": 32768
+      "maxTokens": 32768,
+      "thinkingFormat": "zai"
     },
     "glm-5.3": {
       "api": "openai-completions",
@@ -271,7 +261,8 @@
         "high": "high",
         "xhigh": null,
         "max": "max"
-      }
+      },
+      "thinkingFormat": "zai"
     },
     "glm-5.3-flash": {
       "api": "openai-completions",
@@ -288,7 +279,8 @@
         "high": "high",
         "xhigh": null,
         "max": "max"
-      }
+      },
+      "thinkingFormat": "zai"
     },
     "glm-5.3-highspeed": {
       "api": "openai-completions",
@@ -305,22 +297,11 @@
         "high": "high",
         "xhigh": null,
         "max": "max"
-      }
+      },
+      "thinkingFormat": "zai"
     }
   },
   "opencode-go": {
-    "claude-haiku-5-5": {
-      "api": "anthropic-messages",
-      "baseUrl": "https://opencode.ai/zen/go",
-      "input": ["text", "image"],
-      "reasoning": true,
-      "contextWindow": 1000000,
-      "maxTokens": 128000,
-      "thinkingLevelMap": {
-        "xhigh": "xhigh",
-        "max": "max"
-      }
-    },
     "minimax-m3": {
       "api": "anthropic-messages",
       "baseUrl": "https://opencode.ai/zen/go",
@@ -329,23 +310,7 @@
       "contextWindow": 1000000,
       "maxTokens": 131072
     },
-    "qwen3.7-plus": {
-      "api": "anthropic-messages",
-      "baseUrl": "https://opencode.ai/zen/go",
-      "input": ["text", "image"],
-      "reasoning": true,
-      "contextWindow": 1000000,
-      "maxTokens": 65536
-    },
     "qwen3.8-flash": {
-      "api": "anthropic-messages",
-      "baseUrl": "https://opencode.ai/zen/go",
-      "input": ["text", "image"],
-      "reasoning": true,
-      "contextWindow": 1000000,
-      "maxTokens": 131072
-    },
-    "qwen3.8-max": {
       "api": "anthropic-messages",
       "baseUrl": "https://opencode.ai/zen/go",
       "input": ["text", "image"],
@@ -366,7 +331,8 @@
         "medium": null,
         "high": "high",
         "max": "max"
-      }
+      },
+      "thinkingFormat": "deepseek"
     },
     "deepseek-v4-flash-vision-exp": {
       "api": "openai-completions",
@@ -381,7 +347,8 @@
         "medium": null,
         "high": "high",
         "max": "max"
-      }
+      },
+      "thinkingFormat": "deepseek"
     },
     "deepseek-v4-pro": {
       "api": "openai-completions",
@@ -396,7 +363,8 @@
         "medium": null,
         "high": "high",
         "max": "max"
-      }
+      },
+      "thinkingFormat": "deepseek"
     },
     "deepseek-v4.1-flash": {
       "api": "openai-completions",
@@ -413,7 +381,8 @@
         "high": "high",
         "xhigh": null,
         "max": "max"
-      }
+      },
+      "thinkingFormat": "deepseek"
     },
     "glm-5.2": {
       "api": "openai-completions",
@@ -581,22 +550,29 @@
       "contextWindow": 204800,
       "maxTokens": 131072
     },
-    "space-bunny": {
+    "qwen3.7-plus": {
+      "api": "openai-completions",
+      "baseUrl": "https://opencode.ai/zen/go/v1",
+      "input": ["text", "image"],
+      "reasoning": true,
+      "contextWindow": 1000000,
+      "maxTokens": 65536
+    },
+    "qwen3.8-max": {
+      "api": "openai-completions",
+      "baseUrl": "https://opencode.ai/zen/go/v1",
+      "input": ["text", "image"],
+      "reasoning": true,
+      "contextWindow": 1000000,
+      "maxTokens": 131072
+    },
+    "space-bunny-free": {
       "api": "openai-completions",
       "baseUrl": "https://opencode.ai/zen/go/v1",
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 1048576,
-      "maxTokens": 524288,
-      "thinkingLevelMap": {
-        "off": null,
-        "minimal": null,
-        "low": "low",
-        "medium": "medium",
-        "high": "high",
-        "xhigh": "xhigh",
-        "max": "max"
-      }
+      "maxTokens": 524288
     },
     "gpt-5.6-luna": {
       "api": "openai-responses",

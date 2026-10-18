@@ -188,7 +188,7 @@ export function getConfigMany(
   return out;
 }
 
-/** task.<kind>.provider / .model / .budget / .reasoning 四键合取（DB-only 层，§1.5）。 */
+/** task.<kind>.provider / .model / .budget / .reasoning / .override_global_pin 五键合取（DB-only 层，§1.5）。 */
 export function getTaskOverride(kind: string):
   | {
       provider?: string;
@@ -203,17 +203,21 @@ export function getTaskOverride(kind: string):
       reasoning?: {
         reasoning_effort?: string;
       };
+      /** YUK-1547 — 显式 opt-in：task pair 优先于全局 pin（只有 true 生效）。 */
+      overrideGlobalPin?: boolean;
     }
   | undefined {
   const provider = dbValueFor(`task.${kind}.provider`)?.entry?.value;
   const model = dbValueFor(`task.${kind}.model`)?.entry?.value;
   const budget = dbValueFor(`task.${kind}.budget`)?.entry?.value;
   const reasoning = dbValueFor(`task.${kind}.reasoning`)?.entry?.value;
+  const overrideGlobalPin = dbValueFor(`task.${kind}.override_global_pin`)?.entry?.value;
   if (
     provider === undefined &&
     model === undefined &&
     budget === undefined &&
-    reasoning === undefined
+    reasoning === undefined &&
+    overrideGlobalPin === undefined
   )
     return undefined;
   return {
@@ -232,6 +236,7 @@ export function getTaskOverride(kind: string):
     ...(reasoning !== undefined && typeof reasoning === 'object' && reasoning !== null
       ? { reasoning: reasoning as { reasoning_effort?: string } }
       : {}),
+    ...(typeof overrideGlobalPin === 'boolean' ? { overrideGlobalPin } : {}),
   };
 }
 

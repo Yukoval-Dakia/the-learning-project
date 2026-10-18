@@ -48,6 +48,8 @@ export interface ConfigOverride {
   reasoning?: {
     reasoning_effort?: string;
   };
+  /** YUK-1547 — task.<kind>.override_global_pin：显式 opt-in，task pair 优先于全局 pin。 */
+  override_global_pin?: boolean;
 }
 
 export type EnvMode = 'fallback' | 'priority' | 'pinned';
@@ -758,21 +760,22 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
 
 // ─── 动态前缀 key（task.<kind>.* / lane.<lane>.*） ──────────────────────────
 //
-// `task.<kind>.provider` / `.model` / `.budget` / `.reasoning`：52 TaskSpec 的
-// per-task 覆盖，kind 有效性在写端经 src/ai/registry `tasks` 校验
-//（server/write.ts 侧）。`.reasoning` 是模型原生推理参数（YUK-1547）。
+// `task.<kind>.provider` / `.model` / `.budget` / `.reasoning` /
+// `.override_global_pin`：52 TaskSpec 的 per-task 覆盖，kind 有效性在写端经
+// src/ai/registry `tasks` 校验（server/write.ts 侧）。`.reasoning` 是模型原生
+// 推理参数；`.override_global_pin` 是显式 opt-in（YUK-1547）。
 // `lane.<lane>.provider` / `.model`：scoped lane（verify_solve / vision_judge /
 // judge_calibration / global）。
 
 export interface DynamicKeyDef {
   kind: 'task' | 'lane';
-  field: 'provider' | 'model' | 'budget' | 'reasoning';
+  field: 'provider' | 'model' | 'budget' | 'reasoning' | 'override_global_pin';
   /** task → kind；lane → lane id。 */
   scope: string;
 }
 
 export function matchDynamicConfigKey(key: string): DynamicKeyDef | null {
-  const task = /^task\.([^.]+)\.(provider|model|budget|reasoning)$/.exec(key);
+  const task = /^task\.([^.]+)\.(provider|model|budget|reasoning|override_global_pin)$/.exec(key);
   if (task) {
     return { kind: 'task', scope: task[1], field: task[2] as DynamicKeyDef['field'] };
   }
@@ -794,6 +797,9 @@ export function dynamicKeySchema(def: DynamicKeyDef): z.ZodTypeAny | null {
       return budgetOverrideSchema;
     case 'reasoning':
       return taskReasoningSchema;
+    case 'override_global_pin':
+      // 只有显式 true 是 opt-in；false 等同未设（也可走 clear 删行）。
+      return z.boolean();
   }
 }
 

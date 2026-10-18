@@ -16,6 +16,12 @@ export interface PiModelMetadata {
    * task.<kind>.reasoning 校验读的就是它（模型自有值，非统一档位枚举）。
    */
   thinkingLevelMap?: Record<string, string | null>;
+  /**
+   * 模型 compat.thinkingFormat（deepseek/zai/qwen/…）——决定 reasoning_effort
+   * 旁的原生开关形状（deepseek → thinking:{type:'enabled'}），providers.ts
+   * resolveTaskNativeReasoningParams 按它派生 wire 参数集。
+   */
+  thinkingFormat?: string;
 }
 
 const catalog: Record<string, Record<string, PiModelMetadata>> = snapshot;

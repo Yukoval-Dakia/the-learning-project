@@ -8,7 +8,7 @@
     "native_reasoning_param": "reasoning_effort",
     "effort": "high"
   },
-  "provenance": "Owner-run paid probes against the official opencode-go inference endpoint with the newly issued OPENCODE_API_KEY (deployment-20261018f-opencode-key-loxxoajp). Receipts copied verbatim from the sealed NAS artifact directory; they contain no credential material. chat = 1-token completion with reasoning_tokens>0; tool = forced tool_call returning probe_echo(value=ok), finish_reason tool_calls.",
+  "provenance": "Agent-executed paid probes, authorized by the owner for YUK-1547, against the official opencode-go inference endpoint with the newly issued OPENCODE_API_KEY (deployment-20261018f-opencode-key-loxxoajp). Receipts copied verbatim from the sealed NAS artifact directory; they contain no credential material. chat = 1-token completion with reasoning_tokens>0; tool = forced tool_call returning probe_echo(value=ok), finish_reason tool_calls. Both requests carried reasoning_effort=high and the deepseek-format thinking:{type:'enabled'} switch.",
   "receipts": {
     "chat": {
       "run_id": "yuk1547-new-key-chat-59a0c8a1-9a3c-4045-9f16-df9b7b0db797",

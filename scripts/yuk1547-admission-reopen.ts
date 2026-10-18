@@ -30,7 +30,7 @@ import {
 import { zodToJsonSchemaCompat } from '@/kernel/zod-json-schema';
 import { assertModelProfileCapabilityFit } from '@/server/ai/model-profiles';
 import { nativePiModel } from '@/server/ai/pi-provider-catalog';
-import { resolveTaskProvider } from '@/server/ai/providers';
+import { type TaskNativeReasoningParams, resolveTaskProvider } from '@/server/ai/providers';
 
 const submit = 'mcp__structured_output__submit';
 const digest = z.string().regex(/^sha256:[0-9a-f]{64}$/);
@@ -66,8 +66,10 @@ interface ProbeRoute {
   api: string;
   endpoint: string;
   apiKey: string;
-  /** task.<kind>.reasoning resolved params — merged verbatim into the probe body. */
-  nativeReasoning?: { reasoning_effort?: string };
+  /** task.<kind>.reasoning resolved wire params — merged verbatim into the probe body. */
+  nativeReasoning?: TaskNativeReasoningParams;
+  /** Which config layer produced this route (env_pin / task_pair_priority / …). */
+  selectionRule?: string;
   /** opencode-go requires x-opencode-session on every request. */
   sessionHeader?: boolean;
 }
@@ -78,8 +80,11 @@ interface ProbeRoute {
  * task.<kind>.* > registry), read through resolveTaskProvider, NOT a local
  * provider/model literal. Solver B's QUESTION_ADMISSION_SOLVER2_* env is the
  * same override surface the job passes as `override`; unset = same resolved
- * config as Solver A. The DB config layer is hydrated when DATABASE_URL is
- * reachable so task.<kind>.* rows are reflected honestly.
+ * config as Solver A. When DATABASE_URL is set the DB config layer MUST
+ * hydrate — a failed read fails closed before any provider request/reopen
+ * (env-only resolution could select a different model than the configured
+ * pair). When DATABASE_URL is unset the face is env-only and says so in the
+ * receipt's config_db_layer — it never claims TEST config was loaded.
  */
 async function routing(): Promise<{
   routes: ProbeRoute[];
@@ -94,14 +99,17 @@ async function routing(): Promise<{
   }
   let configDbLayer = 'env-only(DATABASE_URL unset)';
   if (process.env.DATABASE_URL) {
+    const { db } = await import('@/db/client');
     try {
-      const { db } = await import('@/db/client');
       const { hydrateConfigFromDb } = await import('@/server/config/hydrate');
       await hydrateConfigFromDb(db);
       closeHydratedDb = () => db.$client.end();
       configDbLayer = 'hydrated';
     } catch (error) {
-      configDbLayer = `unavailable:${error instanceof Error ? error.message : String(error)}`;
+      await db.$client.end().catch(() => {});
+      throw new Error(
+        `DATABASE_URL is set but the DB config layer failed to hydrate — refusing to resolve routing env-only before any provider request or reopen: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
   const solverA = resolveTaskProvider(QUESTION_ADMISSION_TASK_KIND);
@@ -144,6 +152,7 @@ async function routing(): Promise<{
         ...(resolved.nativeReasoningParams
           ? { nativeReasoning: resolved.nativeReasoningParams }
           : {}),
+        ...(resolved.selectionRule ? { selectionRule: resolved.selectionRule } : {}),
         ...(resolved.provider === 'opencode-go' ? { sessionHeader: true } : {}),
       });
     } catch (error) {
@@ -194,6 +203,7 @@ async function preflight(path: string) {
         provider: route.provider,
         model: route.model,
         endpoint: route.endpoint,
+        selection_rule: route.selectionRule,
         ...(route.nativeReasoning ?? {}),
       };
       probes.push(probe);

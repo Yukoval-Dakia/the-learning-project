@@ -19,6 +19,7 @@ const providers = Object.fromEntries(
           contextWindow: model.contextWindow,
           maxTokens: model.maxTokens,
           thinkingLevelMap: model.thinkingLevelMap,
+          thinkingFormat: (model.compat as { thinkingFormat?: string } | undefined)?.thinkingFormat,
         },
       ]),
     ),

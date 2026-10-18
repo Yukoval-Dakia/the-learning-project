@@ -550,6 +550,9 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
         // YUK-1547 — per-task model-native reasoning params resolved from
         // task.<kind>.reasoning (verbatim wire passthrough; null = none).
         native_reasoning_params: this.resolved.nativeReasoningParams ?? null,
+        // YUK-1547 — which config layer produced this binding, frozen at
+        // resolution (opt-in task pair / global pin / call override / …).
+        selection_rule: this.resolved.selectionRule ?? null,
         // YUK-921 §2.1 — adapter selection stays observable on the run record.
         // Post-P4 (YUK-1025) 'pi' is the only legal adapter id; YUK-1049 typed
         // tasks report 'typed' — their transport is the decisions endpoint,
