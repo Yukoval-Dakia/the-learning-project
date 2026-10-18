@@ -106,10 +106,20 @@ export function paginate(
     };
 
     for (const [index, block] of flow.blocks.entries()) {
-      const next = flow.blocks[index + 1];
-      // A header or a stem stays on this page only if what follows can start right after it.
-      const keepsHere = (room: number) =>
-        !block.keepWithNext || !next || canStartIn(next, room - block.heightMm - BLOCK_GAP_MM);
+      // Keep chains are transitive: a header goes here only if the header, every stem chained
+      // after it, and the start of the answer block that ends the chain all fit; otherwise the
+      // whole chain moves to the next page together.
+      const keepsHere = (room: number) => {
+        let chainMm = 0;
+        let tail = index;
+        while (flow.blocks[tail]?.keepWithNext && flow.blocks[tail + 1]) {
+          chainMm += (tail > index ? BLOCK_GAP_MM : 0) + (flow.blocks[tail]?.heightMm ?? 0);
+          tail += 1;
+        }
+        const end = flow.blocks[tail];
+        if (tail === index || !end) return true;
+        return chainMm <= room && canStartIn(end, room - chainMm - BLOCK_GAP_MM);
+      };
 
       if (!block.split) {
         const room = height - used - gap();

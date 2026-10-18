@@ -469,15 +469,59 @@ function measureFlows(
   return { bodyMm, inputs };
 }
 
-/** Every block's bottom stays inside its page body (guards the paginator's arithmetic). */
-function sheetsOverflow(root: HTMLElement): boolean {
-  for (const body of root.querySelectorAll('.ws-body')) {
-    const limit = body.getBoundingClientRect().bottom + PX_TOLERANCE;
-    for (const block of body.querySelectorAll('.ws-blk')) {
-      if (block.getBoundingClientRect().bottom > limit) return true;
+const overflowsX = (element: Element) => element.scrollWidth > element.clientWidth + 1;
+const overflowsY = (element: Element) => element.scrollHeight > element.clientHeight + 1;
+
+/**
+ * Nothing may be clipped off the paper. `.ws-body` is overflow:hidden, so a mismeasured block, a
+ * passage taller than its column, wide content or a body pushed into the footer would otherwise
+ * vanish silently. Returns what overflowed, or null.
+ */
+function sheetsOverflow(root: HTMLElement): string | null {
+  for (const sheet of root.querySelectorAll('[data-ws-page]')) {
+    const page = sheet.getAttribute('data-page');
+    const body = sheet.querySelector('.ws-body');
+    const footer = sheet.querySelector('.ws-ft');
+    if (!body || !footer) return `page ${page}: body or footer missing`;
+    const bodyBox = body.getBoundingClientRect();
+    if (bodyBox.bottom > footer.getBoundingClientRect().top + PX_TOLERANCE) {
+      return `page ${page}: body runs into the footer`;
+    }
+    if (overflowsY(body) || overflowsX(body)) return `page ${page}: body content is clipped`;
+    for (const column of body.querySelectorAll('.ws-split, .ws-passage, .ws-qs')) {
+      if (overflowsX(column) || overflowsY(column)) return `page ${page}: a column is clipped`;
+    }
+    // Direct content of the body and of both columns ends inside the body.
+    for (const element of body.querySelectorAll(
+      ':scope > *, .ws-passage > *, .ws-qs > *, .ws-blk',
+    )) {
+      const box = element.getBoundingClientRect();
+      if (box.bottom > bodyBox.bottom + PX_TOLERANCE || box.right > bodyBox.right + PX_TOLERANCE) {
+        return `page ${page}: content spills out of the body`;
+      }
+      if (element.classList.contains('ws-blk') && overflowsX(element)) {
+        return `page ${page}: a block is wider than its column`;
+      }
     }
   }
-  return false;
+  return null;
+}
+
+/** Every placed key must resolve to a plan block (and every passage page to its item). */
+function unresolvedPlacement(
+  pages: readonly LaidOutPage[],
+  index: Map<string, BlockEntry>,
+  plan: WorksheetPlan,
+): string | null {
+  for (const page of pages) {
+    if (page.passageKey && !plan.items.some((item) => item.passage?.key === page.passageKey)) {
+      return page.passageKey;
+    }
+    for (const placement of page.placements) {
+      if (!index.has(placement.key)) return placement.key;
+    }
+  }
+  return null;
 }
 
 function Sheets({ plan, overlay }: { plan: WorksheetPlan; overlay: boolean }) {
@@ -507,6 +551,11 @@ function Sheets({ plan, overlay }: { plan: WorksheetPlan; overlay: boolean }) {
             setFailure({ code: 'layout_overflow', detail: `block ${result.key} exceeds a page` });
             return;
           }
+          const unresolved = unresolvedPlacement(result.pages, index, plan);
+          if (unresolved) {
+            setFailure({ code: 'layout_overflow', detail: `placement ${unresolved} has no block` });
+            return;
+          }
           setPages(result.pages);
         },
         (error: unknown) => {
@@ -518,7 +567,7 @@ function Sheets({ plan, overlay }: { plan: WorksheetPlan; overlay: boolean }) {
         cancelled = true;
       };
     },
-    [flows, math],
+    [flows, index, plan, math],
   );
 
   // Step 3: the sheets settle; nothing may spill out of a body; then the document is ready.
@@ -529,8 +578,9 @@ function Sheets({ plan, overlay }: { plan: WorksheetPlan; overlay: boolean }) {
       settleSubtree(node, { math, isCancelled: () => cancelled }).then(
         () => {
           if (cancelled) return;
-          if (sheetsOverflow(node)) {
-            setFailure({ code: 'layout_overflow', detail: 'a block spills out of its page body' });
+          const overflow = sheetsOverflow(node);
+          if (overflow) {
+            setFailure({ code: 'layout_overflow', detail: overflow });
             return;
           }
           writeDocState('ready');
@@ -587,7 +637,7 @@ function Sheets({ plan, overlay }: { plan: WorksheetPlan; overlay: boolean }) {
 
       {pages ? (
         <div
-          key={total}
+          key={`${plan.token}:${total}`}
           ref={attachSheets}
           className="ws-sheets"
           data-ws-sheets=""
@@ -601,6 +651,7 @@ function Sheets({ plan, overlay }: { plan: WorksheetPlan; overlay: boolean }) {
               : undefined;
             const blocks = page.placements.map((placement) => {
               const entry = index.get(placement.key);
+              // Unreachable: unresolvedPlacement() fails the layout before pages are set.
               if (!entry) return null;
               return (
                 <div key={`${placement.key}#${placement.segment?.index ?? 1}`} className="ws-blk">
@@ -645,7 +696,8 @@ function Sheets({ plan, overlay }: { plan: WorksheetPlan; overlay: boolean }) {
 function PlannedSheets({ state, overlay }: { state: WorksheetExportStateT; overlay: boolean }) {
   const result = useMemo(() => buildWorksheetPlan(state), [state]);
   if (!result.ok) return <StatusView state="error" code="load_failed" detail={result.detail} />;
-  return <Sheets plan={result.plan} overlay={overlay} />;
+  // Keyed by export: navigating A → B → A with a cached query starts a fresh layout each time.
+  return <Sheets key={state.export_token} plan={result.plan} overlay={overlay} />;
 }
 
 export default function WorksheetPrintPage({
