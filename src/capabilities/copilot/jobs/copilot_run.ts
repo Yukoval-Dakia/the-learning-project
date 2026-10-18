@@ -15,7 +15,6 @@ import { observeTaskOperation } from '@/ai/task-observation';
 import { isDurableWorkerTouchEvent } from '@/capabilities/copilot/durable-pickup';
 import {
   type PreparedCopilotReply,
-  boundCopilotReply,
   writeCopilotReply,
   writeTeachingCopilotReply,
 } from '@/capabilities/copilot/server/conversation-writes';
@@ -1368,14 +1367,10 @@ async function handleDurableFailure(
   } = args;
   const message = String((err as Error)?.message ?? err);
   const failureTaskRunId = taskRunId ?? `copilot_run_exhausted_${runId}`;
-  const reply = boundCopilotReply({
-    text:
-      partialText && partialText.length > 0
-        ? partialText
-        : '这次后台运行没能在预算内收敛完成。可以换个更聚焦的问法再试。',
-    preparedReply,
-    receipt: replyFinalization,
-  });
+  const replyText =
+    partialText && partialText.length > 0
+      ? partialText
+      : '这次后台运行没能在预算内收敛完成。可以换个更聚焦的问法再试。';
   try {
     const markerClaim = await ensureCopilotOutcomeMarker(
       db,
@@ -1384,11 +1379,11 @@ async function handleDurableFailure(
         const { cleanedReply } = await writeCopilotReplyFn(tx, {
           sessionId,
           userAskEventId: runId,
-          replyText: reply.text,
-          preparedReply: reply.preparedReply,
+          replyText,
+          ...(preparedReply ? { preparedReply } : {}),
           actorRef,
           taskRunId: failureTaskRunId,
-          ...(reply.receipt ? { replyFinalization: reply.receipt } : {}),
+          ...(replyFinalization ? { replyFinalization } : {}),
           outcome: 'failure',
           durableFailure: { reason: 'exhausted', error: message },
           now: new Date(),

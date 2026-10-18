@@ -118,28 +118,6 @@ export interface CopilotEvidenceValidationRef {
   comparison_task_run_ids: string[];
 }
 
-/**
- * One reply. Text, prepared bytes, and the finalization digest are kept or
- * dropped together. A digest for a different string is not a digest for this one.
- */
-export function boundCopilotReply(input: {
-  text: string;
-  preparedReply?: PreparedCopilotReply;
-  receipt?: CopilotReplyFinalizationReceipt;
-}): {
-  text: string;
-  preparedReply: PreparedCopilotReply;
-  receipt?: CopilotReplyFinalizationReceipt;
-} {
-  const digest = createHash('sha256').update(input.text, 'utf8').digest('hex');
-  const prepared =
-    input.preparedReply?.text === input.text ? input.preparedReply : { text: input.text };
-  const receipt = input.receipt?.reply_sha256 === digest ? input.receipt : undefined;
-  return receipt
-    ? { text: input.text, preparedReply: prepared, receipt }
-    : { text: input.text, preparedReply: prepared };
-}
-
 export async function writeCopilotReply(
   db: Db | Tx,
   params: {
@@ -183,27 +161,20 @@ export async function writeCopilotReply(
   },
 ): Promise<WriteCopilotReplyResult> {
   const write = params.writeFn ?? writeEvent;
-  if (params.preparedReply && params.preparedReply.text !== params.replyText) {
-    throw new Error('prepared copilot reply bytes do not match replyText');
-  }
-  // Verify the incoming seal before applying the commit-owned storage policy.
-  // Model normalization is already complete; legacy callers only strip markers.
-  // The product policy reseals its own final bytes below, never a stale digest.
   const prepared =
-    params.preparedReply ??
-    ({
-      text: extractPrimaryView(params.replyText, {
-        taskRunId: params.taskRunId,
-      }).text,
-    } satisfies PreparedCopilotReply);
-  if (
-    params.replyFinalization &&
-    params.replyFinalization.reply_sha256 !==
-      createHash('sha256').update(prepared.text, 'utf8').digest('hex')
-  ) {
-    throw new Error('copilot reply finalization digest does not match persisted bytes');
-  }
-  const sealed = sealCommittedPresentationReply(prepared, params.replyFinalization);
+    params.preparedReply?.text === params.replyText
+      ? params.preparedReply
+      : {
+          text: extractPrimaryView(params.replyText, {
+            taskRunId: params.taskRunId,
+          }).text,
+        };
+  const persistedDigest = createHash('sha256').update(prepared.text, 'utf8').digest('hex');
+  const receipt =
+    params.replyFinalization?.reply_sha256 === persistedDigest
+      ? params.replyFinalization
+      : undefined;
+  const sealed = sealCommittedPresentationReply(prepared, receipt);
   const cleanedReply = sealed.preparedReply.text;
   const primaryView = prepared.primaryView;
   // created_at 严格晚于 ask（now + 1ms）：整轮共享一个 now，无偏移则 ask/reply
