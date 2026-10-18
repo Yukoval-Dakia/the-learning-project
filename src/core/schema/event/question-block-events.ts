@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { DerivationPolicy } from '../derivation-policy';
+import { QuestionDraftDocument } from '../question-draft';
 import { FigureRef, StructuredQuestion } from '../structured_question';
 import { QuestionBlockRowSnapshot } from './genesis';
 
@@ -54,7 +56,9 @@ export const AffectedBlockSnapshot = z
     block_id: z.string().min(1),
     role: z.enum(['primary', 'merged_source']),
     // primary = merged/after full tree; merged_source = operation-before value (undo, optional).
-    structured: StructuredQuestion.nullable(),
+    // YUK-1468 — v2 草稿文档与 legacy StructuredQuestion 并存（fold VERBATIM 应用，
+    // 不解释文档内容）。
+    structured: z.union([StructuredQuestion, QuestionDraftDocument]).nullable(),
     // only the primary carries figures; the reducer falls back to row.figures when absent (§5.2).
     figures: z.array(FigureRef).nullable().optional(),
     version: z.number().int(),
@@ -95,6 +99,9 @@ export const EditQuestionBlockStructuredExperimental = z
           'set_question_type',
           'split_stem',
           'merge_questions',
+          // YUK-1468 — edit_question save：primary 携带 AFTER 完整 v2 草稿文档
+          // （或经适配的 legacy 树），与既有 op 同一 full-snapshot fold 语义。
+          'edit_draft',
           // YUK-1497 — compose_presentation's structured.presentation write. A single-block
           // edit like the four above: the primary carries the AFTER tree (presentation riding
           // inside structured), so the fold's last-write-wins reproduces the row exactly —
@@ -204,7 +211,9 @@ export const QuestionBlockCreateExperimental = z
         // reducer reads it VERBATIM as the row's base state — same shape genesis carries.
         row: QuestionBlockRowSnapshot,
         // creation provenance; rescue = overwrite of an existing blockId (fold last-write-wins, §5.2).
-        origin: z.enum(['ocr', 'rescue', 'docx', 'import']),
+        origin: z.enum(['ocr', 'rescue', 'docx', 'import', 'edit_draft']),
+        // YUK-1408 — inherited source-document usage policy; absent === 'allow'.
+        derivation_policy: DerivationPolicy.optional(),
       })
       .strict(), // event-contract boundary: a stray key fails loud (like the edit payload + row snapshot)
     caused_by_event_id: z.string().optional(),

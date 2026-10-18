@@ -2,8 +2,15 @@ import { createHash } from 'node:crypto';
 
 export interface PlacementStarterIdentity {
   digest: string;
+  /**
+   * YUK-1405 — the deterministic per-subject starter anchor node id
+   * (`placement-starter:<subject>`). It no longer encodes the revision digest:
+   * the anchor is shared across goals/revisions and named after the SUBJECT,
+   * never the goal text. The claim's `knowledge_id` holds the RESOLVED anchor
+   * (an explicit-scope KC wins over this fallback) — see
+   * `resolvePlacementStarterAnchor` in placement-starter-store.ts.
+   */
   knowledgeId: string;
-  genesisEventId: string;
   claimId: string;
   demandId: string;
   targetId: string;
@@ -19,8 +26,7 @@ export function placementStarterIdentity(
     .digest('hex');
   return {
     digest,
-    knowledgeId: `goal-kc-v1-${digest.slice(0, 32)}`,
-    genesisEventId: `goal-kc-genesis-v1-${digest}`,
+    knowledgeId: `placement-starter:${subjectId}`,
     claimId: `placement-starter-claim-v1-${digest}`,
     demandId: `demand:placement-starter:v1:${digest}`,
     targetId: `supply-target:placement-starter:v1:${digest}`,

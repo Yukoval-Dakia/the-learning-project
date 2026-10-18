@@ -23,6 +23,7 @@ import {
 import type { Db } from '@/db/client';
 import { knowledge, knowledge_edge } from '@/db/schema';
 import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
+import { redactIngestionText } from './privacy-guard';
 
 /**
  * Thrown when the TaggingTask cannot produce a usable result (provider down,
@@ -147,8 +148,12 @@ export async function runTaggingTask(params: RunTaggingTaskParams): Promise<Tagg
   const grid = await buildTaggingGrid(params.db, params.subjectId);
 
   const input: TaggingInputT = TaggingInputSchema.parse({
-    question_md: params.questionMd,
-    knowledge_hint: params.knowledgeHint,
+    // YUK-1408 — extracted text is deterministically redacted before the model
+    // sees it. The grid (KC names/ids) is internal vocabulary and stays as-is.
+    question_md: redactIngestionText(params.questionMd).text,
+    knowledge_hint: params.knowledgeHint
+      ? redactIngestionText(params.knowledgeHint).text
+      : params.knowledgeHint,
     grid,
   });
 

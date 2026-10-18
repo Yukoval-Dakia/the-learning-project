@@ -26,6 +26,12 @@ import {
   uploadSubjectField,
   useUploadSubjectChoice,
 } from '@/ui/components/UploadSubjectPicker';
+import {
+  UploadUsagePicker,
+  uploadUsageField,
+  useUploadUsageChoice,
+} from '@/ui/components/UploadUsagePicker';
+import { UsageReceiptLine, ingestionSessionDetailQuery } from '@/ui/components/UsageReceiptLine';
 import { type ApiSubject, useSubjects } from '@/ui/hooks/useSubjects';
 import { ApiAuthError, ApiError, apiJson } from '@/ui/lib/api';
 import { expandDocx, expandPdf, uploadAsset, useAssetUrl } from '@/ui/lib/assets';
@@ -218,6 +224,7 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
   const [recovering, setRecovering] = useState(recoveredSessionId !== null);
   const [files, setFiles] = useState<File[]>([]);
   const [uploadSubject, setUploadSubject] = useUploadSubjectChoice();
+  const [uploadUsage, setUploadUsage] = useUploadUsageChoice();
   // When the single picked file is a PDF (vision_paper only), it expands
   // server-side to N page images; pdfPageCount is the count returned by
   // /api/ingestion/pdf, used for the "展开 PDF（N 页）" labels.
@@ -343,7 +350,9 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
         mode === 'vision_paper' && selectedFiles.length === 1 && isDocx(selectedFiles[0]);
       if (docx) {
         setPhase('expanding'); // reuse the expanding phase (label shows 转换 DOCX…)
-        const ingested = await expandDocx(selectedFiles[0]);
+        const ingested = await expandDocx(selectedFiles[0], {
+          derivationPolicy: uploadUsageField(uploadUsage).derivation_policy,
+        });
         setPdfPageCount(ingested.page_count);
         // YUK-277: record the line so the SSE panel can drop the misleading
         // "抽取进度" framing for the synchronous text line. The visual line still
@@ -379,6 +388,7 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
           entrypoint: mode,
           asset_ids: ids,
           ...uploadSubjectField(uploadSubject),
+          ...uploadUsageField(uploadUsage),
         }),
       });
       await startIngestionOperation(session.session.id, { kind: 'extract' });
@@ -524,11 +534,12 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
       // 进 landing 快照（banner 随后弹出）；reject/挂死 → 落地卡无 banner，不回退。
       // `cur ?` 守卫：用户已点「继续传」reset 掉 landing 时不复活它。
       if (sessionId) {
-        void apiJson<{ session?: { warnings?: unknown } | null } | null>(
-          `/api/ingestion-sessions/${encodeURIComponent(sessionId)}`,
-        )
+        // YUK-1512 — same session-detail query the receipt line reads; staleTime 0
+        // forces a fresh read after import and refreshes that cache entry.
+        void queryClient
+          .fetchQuery({ ...ingestionSessionDetailQuery(sessionId), staleTime: 0 })
           .then((detail) => {
-            const raw = detail?.session?.warnings;
+            const raw: unknown = detail?.session?.warnings;
             const warnings = Array.isArray(raw)
               ? raw.filter((w): w is string => typeof w === 'string')
               : [];
@@ -613,6 +624,7 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
     setLanding(null);
     setFiles([]);
     setUploadSubject(null);
+    setUploadUsage('allow');
     setPdfPageCount(null);
     setSessionId(null);
     setIngestionLine(null);
@@ -692,6 +704,7 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
           navigate={routing.navigate}
           onRecordAnother={reset}
         />
+        <UsageReceiptLine sessionId={sessionId} enabled={false} />
       </Card>
     );
   }
@@ -778,6 +791,11 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
             disabled={startMutation.isPending}
             docxSelected={files.length > 0 && isDocx(files[0])}
           />
+          <UploadUsagePicker
+            value={uploadUsage}
+            onChange={setUploadUsage}
+            disabled={startMutation.isPending}
+          />
           {errorMessage && <p style={errorStyle}>{errorMessage}</p>}
           <div style={{ marginTop: 'var(--s-3)', display: 'flex', justifyContent: 'flex-end' }}>
             <Button
@@ -834,6 +852,7 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
           ) : (
             <SSETimeline events={sse.events} status="closed" />
           )}
+          <UsageReceiptLine sessionId={sessionId} />
           {blocksQ.isLoading && <p style={mutedStyle}>正在加载识别结果…</p>}
           {blocksQ.isError && (
             <p style={errorStyle}>识别结果加载失败：{formatError(blocksQ.error)}</p>

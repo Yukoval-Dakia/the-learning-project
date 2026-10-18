@@ -37,7 +37,7 @@ worker 在 family 锁内校验原 pg-boss delivery 仍 active 且 payload 相等
 
 ## 验证状态与待批准方案
 
-源码类型检查、lint、build、capability 边界和 task census audit 已通过；独立初审进行中，远端 exact-head CI 待 PR。未写或修改测试，未运行 DB/runtime/provider，不能称自动准入已验收。
+源码类型检查、lint、build、capability 边界和 task census audit 已通过。独立 R1/R2 已结束。owner 批准后，既有订阅备份 fixture 改为先 bootstrap 全部订阅者，再让同一 action 的订阅者共用源事件；六个身份各保留七种交付状态。下面四项真实边界方案仍是文本，未另写 case。不能称自动准入已验收。
 
 待 owner 批准的文本测试方案（当前 NOT_RUN，未写代码）：
 
@@ -67,4 +67,4 @@ GLM 5.3 max 对 4ff3741b8 报两个 P1，父核真实 pg-boss INSERT 冲突与 p
 1. 队列稳定 ID 缺 generation 会让 stale/completed 旧任务吞掉解除 hold 后的新入队；现加入 admission generation，并对 send=null 如实报告已存在。
 2. 应用时冻结 generation 比较会永久弃用仍有效的已付费收据；现只以内容/revision 判断真 stale，临时生命周期阻挡保留 receipt_ready，锁后当前 generation 用于 CAS。已终态 stale/conflict 不再谎称 already_verified。
 
-唯一 R2 在固定修复版本上进行；没有第三审。DB4 首次 152PASS/4FAIL 是既有订阅备份 fixture 的五订阅清单与逐个 bootstrap 假设，文本修复方案已交 owner 审批，测试文件尚未修改。原日志 `/tmp/yuk1507-pr1752-db4-first.log` 保留；汇总 Gate 仅 DB lane 失败，其余 lane 成功。
+唯一 R2 在固定修复版本上进行；没有第三审。DB4 首次 152PASS/4FAIL 是既有订阅备份 fixture 的五订阅清单与逐个 bootstrap 假设。owner 已批准该 fixture 修复：先 bootstrap 再共用 `experimental:assessment_publish` 源事件，不把计数从 5 改成 6 了事。原日志 `/tmp/yuk1507-pr1752-db4-first.log` 保留。

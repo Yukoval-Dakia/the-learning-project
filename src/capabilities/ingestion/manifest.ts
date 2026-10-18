@@ -19,6 +19,7 @@ import {
   IngestionEventStreamResponseSchema,
   IngestionEventsHeadersSchema,
   IngestionOperationSchema,
+  IngestionSessionDetailResponseSchema,
   IngestionSessionResponseSchema,
   IngestionSessionSchema,
   LegacyExtractionResponseSchema,
@@ -27,6 +28,7 @@ import {
   LegacyRescueResponseSchema,
   MistakeListQuerySchema,
   MistakeListResponseSchema,
+  MultipartDocxUploadSchema,
   MultipartFileUploadSchema,
   PdfExpansionResponseSchema,
   RevertAutoEnrolledBlockBodySchema,
@@ -95,7 +97,7 @@ export const ingestionCapability = defineCapability({
         path: '/api/ingestion-sessions/[id]',
         operationId: 'getIngestionSession',
         request: { params: ApiIdParamsSchema },
-        responses: { 200: IngestionSessionResponseSchema, ...API_ERROR_RESPONSES },
+        responses: { 200: IngestionSessionDetailResponseSchema, ...API_ERROR_RESPONSES },
         successStatus: 200,
         load: () => import('./api/session-detail').then((m) => m.GET),
       },
@@ -116,7 +118,7 @@ export const ingestionCapability = defineCapability({
         path: '/api/ingestion/docx',
         operationId: 'createIngestionFromDocx',
         request: {
-          body: MultipartFileUploadSchema,
+          body: MultipartDocxUploadSchema,
           bodyMediaType: 'multipart/form-data',
         },
         responses: { 201: DocxIngestionResponseSchema, ...API_ERROR_RESPONSES },
@@ -257,7 +259,10 @@ export const ingestionCapability = defineCapability({
         operationId: 'getAssetContent',
         request: { params: ApiIdParamsSchema },
         responses: { 200: AssetContentResponseSchema, ...API_ERROR_RESPONSES },
-        responseMediaTypes: { 200: 'image/*' },
+        // YUK-1497 v2（K5 自定义块）：同一 route 也服务冻结 JS 代码资产，但
+        // 以惰性表示（text/plain + CSP sandbox，见 handler）—— 与图片并列
+        // 声明，OpenAPI/生成客户端才能表达该 200 的两种表示。
+        responseMediaTypes: { 200: ['image/*', 'text/plain', 'application/octet-stream'] },
         successStatus: 200,
         load: () => import('./api/asset-content').then((m) => m.GET),
       },
@@ -408,6 +413,10 @@ export const ingestionCapability = defineCapability({
         load: () =>
           import('./server/tools/proposal-tools').then((m) => m.proposeRecordPromotionTool),
       },
+      // YUK-1468 — 六个窄 question-block 编辑薄壳【保留在 inventory 但无任何
+      // surface 授权】：编辑统一走 edit_question，提交走 submit_question。
+      // allowlist 不授它们；注册保留给存量 db 测试与后续删除 PR（owner 批准
+      // 测试删除后清理模块）。纯逻辑留在 server/block-structured-edit.ts。
       {
         name: 'update_prompt',
         load: () =>

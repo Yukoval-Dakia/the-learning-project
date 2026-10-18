@@ -17,6 +17,7 @@ import { createId } from '@paralleldrive/cuid2';
 
 import type { Db, Tx } from '@/db/client';
 import { writeEvent } from '@/kernel/events';
+import { resolveSessionDerivationPolicy } from '@/kernel/read-models/usage-policy';
 
 export type WriteSessionEventInput = {
   /** Required: chains the event to a learning_session row via event.session_id. */
@@ -36,6 +37,12 @@ export type WriteSessionEventInput = {
     structured_block_ids: string[];
     layout_quality: 'structured' | 'partial' | 'text_only';
     warnings: string[];
+    /**
+     * YUK-1408 — normally resolved from the session's source_document usage
+     * policy automatically. Pass explicitly only when the caller already holds
+     * the resolved policy (avoids a repeated lookup inside loops).
+     */
+    derivation_policy?: 'allow' | 'answer_only';
   };
   caused_by_event_id?: string | null;
   task_run_id?: string | null;
@@ -62,6 +69,17 @@ export async function writeSessionEvent(
   input: WriteSessionEventInput,
 ): Promise<string> {
   const id = createId();
+  // YUK-1408 — ingestion-derived events inherit the source document's consented
+  // usage. When the learner restricted the document to answer_only (or withdrew
+  // consent before this write), the payload carries it and the shared
+  // derivation filter keeps the event out of memory/brief channels. Explicit
+  // payload values win; absent policy resolves to the legacy 'allow' default.
+  const derivationPolicy =
+    input.payload.derivation_policy ?? (await resolveSessionDerivationPolicy(tx, input.session_id));
+  const payload =
+    derivationPolicy === 'allow'
+      ? input.payload
+      : { ...input.payload, derivation_policy: derivationPolicy };
   await writeEvent(tx, {
     id,
     session_id: input.session_id,
@@ -71,7 +89,7 @@ export async function writeSessionEvent(
     subject_kind: input.subject_kind,
     subject_id: input.subject_id,
     outcome: input.outcome,
-    payload: input.payload,
+    payload,
     caused_by_event_id: input.caused_by_event_id ?? null,
     task_run_id: input.task_run_id ?? null,
     cost_micro_usd: input.cost_micro_usd ?? null,

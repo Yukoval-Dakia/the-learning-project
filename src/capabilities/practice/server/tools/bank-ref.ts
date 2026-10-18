@@ -76,10 +76,15 @@ export type BankRefResolution =
 /**
  * 批量解析 refs。每个 ref 独立成败（部分成功合法），顺序与输入一致。
  * 一次查询 revision + lifecycle，批量无 N+1。
+ *
+ * opts.allowWithdrawn（YUK-1468 历史读）：withdrawn 组仍返回 'ok' 决议
+ * （revision 行 + lifecycle 带 withdrawn 标记）——是否授权由调用方决定
+ * （bound submission / 私有角色）；search/check 不传 ⇒ 语义不变。
  */
 export async function resolveBankRefs(
   db: Db | Tx,
   rawRefs: string[],
+  opts?: { allowWithdrawn?: boolean },
 ): Promise<BankRefResolution[]> {
   const parsed = rawRefs.map((raw) => ({ raw, parsed: parseBankRef(raw) }));
 
@@ -129,7 +134,7 @@ export async function resolveBankRefs(
       };
     }
     const lifecycle = lifecyclesByGroup.get(revision.group_id) ?? null;
-    if (lifecycle?.withdrawn === true) {
+    if (lifecycle?.withdrawn === true && opts?.allowWithdrawn !== true) {
       return {
         raw,
         status: 'withdrawn' as const,

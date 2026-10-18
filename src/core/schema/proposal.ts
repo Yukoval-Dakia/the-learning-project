@@ -541,11 +541,26 @@ export const QuestionEditOp = z.discriminatedUnion('op', [
 export type QuestionEditOpT = z.infer<typeof QuestionEditOp>;
 
 export const QuestionEditProposalChange = z.object({
-  question_id: z.string().min(1),
-  edit: QuestionEditOp,
+  // Legacy 提案必带；YUK-1468 新文档提案（document create）落 edit_request 时可为空。
+  question_id: z.string().min(1).optional(),
+  // Legacy narrow op（旧 propose_question_edit 形状；YUK-1468 后新提案走 edit_request）。
+  edit: QuestionEditOp.optional(),
   // Display-only excerpt for the inbox card (the question row is the source of
   // truth — accept re-reads the live tree, never trusts this snapshot).
   node_preview: z.string().optional(),
+  // YUK-1468 — 统一 edit_question 契约提案（新路径优先于窄 edit）：
+  // {ops?, document?, draft_ref?, expected_revision?, expected_draft_version?}。
+  // accept 时经同一 draft ops → submit gate 管线回放。
+  edit_request: z
+    .object({
+      question_id: z.string().optional(),
+      ops: z.array(z.record(z.string(), z.unknown())).optional(),
+      document: z.unknown().optional(),
+      draft_ref: z.string().optional(),
+      expected_revision: z.string().nullable().optional(),
+      expected_draft_version: z.number().int().optional(),
+    })
+    .optional(),
 });
 export type QuestionEditProposalChangeT = z.infer<typeof QuestionEditProposalChange>;
 

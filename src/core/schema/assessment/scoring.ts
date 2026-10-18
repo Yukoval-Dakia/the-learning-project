@@ -175,6 +175,20 @@ export const BlankKeyCriterion = z.object({
       kind: z.literal('text'),
       accepted: z.array(z.string().min(1)).min(1),
       normalization: BlankNormalization,
+      /**
+       * Jev 等价判定的声明域（YUK-1496 C2；统一设计 §4 jev 行 / 附录 A4）：
+       * 声明后该空可路由到 model_executor（Jev 三值判定 equivalent /
+       * different / undecidable）；未声明的文本空只属于 blank_exact 确定性
+       * 比较器。Jev 只判声明域内的等价，单位/数值/开闭区间严格性仍归
+       * 确定性比较，不靠模型宽松放过。
+       */
+      equivalence: z
+        .object({
+          domain_md: z.string().min(1),
+          meaning_md: z.string().min(1),
+        })
+        .strict()
+        .optional(),
     }),
     /** 数值：保留既有容差与单位换算能力（expected_unit 存在时按 mathjs 换算）。 */
     z.object({
@@ -187,6 +201,35 @@ export const BlankKeyCriterion = z.object({
 });
 export type BlankKeyCriterionT = z.infer<typeof BlankKeyCriterion>;
 
+/**
+ * AI rubric（YUK-1496 C2；统一设计 §3 free 段 / §4 ai-rubric 行 / 附录 A5）：
+ * free 单元的逐 criterion 评分细则。每个 criterion 有稳定 ID、说明、满分与
+ * 可给分档位；模型只返回逐 criterion 的 award + 理由 + 证据引用，代码校验
+ * ID/档位/范围并求和 —— 模型不得新增评分点、修改满分或自报总分（输出契约
+ * 里根本没有 total 字段，见 model-decision.ts AssessmentRubricDecision）。
+ * criterion 只是 unit 内部的评分细则：分数仍只落在 unit 上，绝不双重累加。
+ * crossed_out_steps 是冻结政策：'ignore' = 划掉步骤不算瑕疵也不给分；
+ * 'consider' = 划掉步骤纳入评判。reference_md 是参考解答（判分上下文，
+ * 不是学生可见答案键）。
+ */
+export const RubricCriterion = z.object({
+  kind: z.literal('rubric'),
+  criteria: z
+    .array(
+      z.object({
+        criterion_id: z.string().min(1),
+        statement_md: z.string().min(1),
+        max: z.number().min(0),
+        /** 可给分档位（含 0）；必须落在 [0, max] 内（validateScoringBasis 强制）。 */
+        allowed_awards: z.array(z.number().min(0)).min(1),
+      }),
+    )
+    .min(1),
+  crossed_out_steps: z.enum(['ignore', 'consider']),
+  reference_md: z.string().optional(),
+});
+export type RubricCriterionT = z.infer<typeof RubricCriterion>;
+
 export const ScoringUnitCriterion = z.discriminatedUnion('kind', [
   OptionSetKeyCriterion,
   MatchingPairsKeyCriterion,
@@ -195,6 +238,7 @@ export const ScoringUnitCriterion = z.discriminatedUnion('kind', [
   NumericKeyCriterion,
   RuleReferenceCriterion,
   HolisticLevelCriterion,
+  RubricCriterion,
   SelectKeyCriterion,
   BlankKeyCriterion,
 ]);
@@ -312,7 +356,10 @@ export interface ScoringBasisIssue {
     | 'rule_outcome_not_applicable'
     | 'rule_item_not_in_key'
     | 'rule_exceeds_unit_points'
-    | 'rule_key_response_not_full_marks';
+    | 'rule_key_response_not_full_marks'
+    | 'rubric_criterion_duplicated'
+    | 'rubric_award_out_of_range'
+    | 'rubric_points_mismatch';
   detail: string;
 }
 
@@ -344,7 +391,8 @@ function expectsSlotKinds(
       return ['blank'];
     case 'rule_reference':
     case 'holistic_level':
-      return null; // 不限槻位种类（规则/等级可判任意响应）
+    case 'rubric':
+      return null; // 不限槽位种类（规则/等级/rubric 可判任意响应）
   }
 }
 
@@ -531,6 +579,41 @@ export function validateScoringBasis(
       }
     }
     issues.push(...validateK1Unit(unit, referencedSlots));
+    if (unit.criterion.kind === 'rubric') {
+      // YUK-1496 C2 — rubric 发布期校验：criterion id 唯一；可给分档位落在
+      // [0, max]；各 criterion 满分之和必须等于 unit.points（模型只见细则，
+      // 满分一致性在发布 barrier 钉死，判分时代码只求和、不重算满分）。
+      const seenCriteria = new Set<string>();
+      for (const criterion of unit.criterion.criteria) {
+        if (seenCriteria.has(criterion.criterion_id)) {
+          issues.push({
+            code: 'rubric_criterion_duplicated',
+            detail: `unit '${unit.scoring_unit_id}' rubric lists criterion '${criterion.criterion_id}' more than once`,
+          });
+        }
+        seenCriteria.add(criterion.criterion_id);
+        for (const award of criterion.allowed_awards) {
+          if (award < 0 || award > criterion.max) {
+            issues.push({
+              code: 'rubric_award_out_of_range',
+              detail: `unit '${unit.scoring_unit_id}' rubric criterion '${criterion.criterion_id}' allows award ${award} outside [0, ${criterion.max}]`,
+            });
+          }
+        }
+      }
+      if (unit.points != null) {
+        const maxSum = unit.criterion.criteria.reduce(
+          (total, criterion) => total + criterion.max,
+          0,
+        );
+        if (!samePoints(maxSum, unit.points)) {
+          issues.push({
+            code: 'rubric_points_mismatch',
+            detail: `unit '${unit.scoring_unit_id}' rubric criteria maxima sum to ${maxSum} but the unit publishes points=${unit.points} — the rubric must exactly partition the printed unit points`,
+          });
+        }
+      }
+    }
     if (unit.criterion.kind === 'holistic_level') {
       if (unit.points !== null) {
         issues.push({

@@ -51,6 +51,11 @@ import {
 
 export const QUESTION_ADMISSION_POLICY_ID = 'question_admission@1';
 
+/** C1 落库与迟到的 source verify 必须匹配同一个 id，含环境变量覆盖。空串是合法覆盖。 */
+export function resolveQuestionAdmissionPolicyId(): string {
+  return process.env.QUESTION_ADMISSION_POLICY_ID ?? QUESTION_ADMISSION_POLICY_ID;
+}
+
 export interface QuestionAdmissionOptions {
   db: Db;
   /** 缺省 makePracticeTaskTextRunFn(db) —— 测试/编排可注入替代。 */

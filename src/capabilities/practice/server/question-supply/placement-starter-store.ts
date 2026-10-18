@@ -6,18 +6,13 @@ import {
   event,
   goal,
   knowledge,
-  materialized_id_index,
   placement_starter_attempt,
   placement_starter_attempt_question,
   placement_starter_claim,
   placement_starter_cost_component,
 } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
-import {
-  getEffectiveDomain,
-  knowledgeRowToSnapshot,
-  updateGoalScope,
-} from '@/kernel/placement-persistence';
+import { getEffectiveDomain, updateGoalScope } from '@/kernel/placement-persistence';
 import { getDefaultSubjectRegistry, resolveKnownSubjectId } from '@/subjects/profile';
 import type { PlacementStarterIdentity } from './placement-starter-identity';
 import { placementStarterIdentity } from './placement-starter-identity';
@@ -135,15 +130,86 @@ async function resolvePlacementStarterGoalAuthorityFromRow(
   };
 }
 
-export async function ensurePlacementStarterKnowledgeAndClaim(
+/**
+ * YUK-1405 (Stage 1 B6 S5) — the starter-supply anchor is a REAL knowledge
+ * node, never the goal's text. Resolution order:
+ *   1. an explicit-scope goal resolves to its own declared in-subject KCs
+ *      (deterministic: lowest id) — they are already inside the goal's scope;
+ *   2. otherwise the shared per-subject starter node under the subject root
+ *      (`identity.knowledgeId` = `placement-starter:<subject>`) — created once
+ *      and reused across goals/revisions, named after the SUBJECT (e.g.
+ *      「数学·起点测评」), authorised by the learner's placement start.
+ * The per-subject starter node exists because a question's knowledge_ids must
+ * intersect the placement scope to be served, and an empty subject tree has no
+ * content KC to anchor to; anchoring to the bare seed root would produce
+ * questions the subject scope read (which excludes roots) could never serve.
+ *
+ * For explicit goals the resolved anchor that is not already in scope is
+ * unioned into `goal.scope_knowledge_ids` by the caller — the "scope record"
+ * half of the contract (`addPlacementStarterKnowledgeToExplicitGoal`).
+ */
+async function resolvePlacementStarterAnchor(
+  tx: Tx,
+  authority: PlacementStarterGoalAuthority,
+  subjectId: string,
+  rootId: string,
+  rootName: string,
+  now: Date,
+): Promise<string> {
+  if (authority.scopeMode === 'explicit' && authority.scopeKnowledgeIds.length > 0) {
+    const scoped = await tx
+      .select({ id: knowledge.id })
+      .from(knowledge)
+      .where(
+        and(
+          inArray(knowledge.id, authority.scopeKnowledgeIds),
+          isNull(knowledge.archived_at),
+          sql`${knowledge.id} NOT LIKE 'seed:%:root'`,
+        ),
+      );
+    const inSubject: string[] = [];
+    for (const node of scoped) {
+      const domain = await getEffectiveDomain(tx, node.id);
+      if (resolveKnownSubjectId(domain) === subjectId) inSubject.push(node.id);
+    }
+    inSubject.sort();
+    if (inSubject[0]) return inSubject[0];
+  }
+  const anchorId = placementStarterIdentity(
+    authority.semanticGoalRevisionId,
+    subjectId,
+  ).knowledgeId;
+  // Idempotent per-subject anchor creation under the validated root — a
+  // learner-initiated placement flow, so the node is born approved (the
+  // creation is inside an already-authorised plan, not an agent's ad hoc
+  // invention). onExisting='skip' makes repeated/concurrent materialization a
+  // no-op; existing anchors are never rewritten.
+  await createKnowledgeNodeFromEvents(
+    tx,
+    {
+      id: anchorId,
+      name: `${rootName}·起点测评`,
+      domain: null,
+      parent_id: rootId,
+      proposed_by_ai: false,
+      created_at: now,
+    },
+    { actorRef: 'placement_starter', eventId: `placement-starter-genesis:${subjectId}` },
+    'skip',
+  );
+  return anchorId;
+}
+
+export async function ensurePlacementStarterAnchorAndClaim(
   tx: Tx,
   authority: PlacementStarterGoalAuthority,
   subjectId: string,
   now = new Date(),
-): Promise<{ identity: PlacementStarterIdentity; insertedKnowledge: boolean }> {
+): Promise<{ identity: PlacementStarterIdentity; anchorId: string }> {
   const rootId = `seed:${subjectId}:root`;
   const [root] = await tx
     .select({
+      name: knowledge.name,
       domain: knowledge.domain,
       parentId: knowledge.parent_id,
       archivedAt: knowledge.archived_at,
@@ -157,72 +223,15 @@ export async function ensurePlacementStarterKnowledgeAndClaim(
       409,
     );
   }
-  const identity = placementStarterIdentity(authority.semanticGoalRevisionId, subjectId);
-  const inserted = await createKnowledgeNodeFromEvents(
+  const anchorId = await resolvePlacementStarterAnchor(
     tx,
-    {
-      id: identity.knowledgeId,
-      name: authority.title,
-      domain: subjectId,
-      parent_id: rootId,
-      proposed_by_ai: false,
-      created_at: now,
-    },
-    { actorRef: 'placement_starter', eventId: identity.genesisEventId },
-    'skip',
+    authority,
+    subjectId,
+    rootId,
+    root.name,
+    now,
   );
-  if (!inserted) {
-    const [existing] = await tx
-      .select()
-      .from(knowledge)
-      .where(eq(knowledge.id, identity.knowledgeId));
-    if (!existing || existing.domain !== subjectId || existing.parent_id !== rootId) {
-      throw new ApiError(
-        'invariant_conflict',
-        'placement starter knowledge identity collision',
-        409,
-      );
-    }
-    const [anchor] = await tx
-      .select({
-        anchorEventId: materialized_id_index.anchor_event_id,
-        subjectKind: materialized_id_index.subject_kind,
-      })
-      .from(materialized_id_index)
-      .where(eq(materialized_id_index.materialized_id, identity.knowledgeId));
-    const [genesis] = await tx
-      .select({
-        action: event.action,
-        subjectKind: event.subject_kind,
-        subjectId: event.subject_id,
-        payload: event.payload,
-      })
-      .from(event)
-      .where(eq(event.id, identity.genesisEventId));
-    const genesisRow = genesis?.payload.row as Record<string, unknown> | undefined;
-    const expectedGenesisRow = knowledgeRowToSnapshot(existing);
-    if (
-      anchor?.anchorEventId !== identity.genesisEventId ||
-      anchor.subjectKind !== 'knowledge' ||
-      genesis?.action !== 'experimental:genesis' ||
-      genesis.subjectKind !== 'knowledge' ||
-      genesis.subjectId !== identity.knowledgeId ||
-      !genesisRow ||
-      Object.entries(expectedGenesisRow).some(([key, value]) => {
-        const actual = genesisRow[key];
-        if (value instanceof Date) {
-          return new Date(String(actual)).getTime() !== value.getTime();
-        }
-        return JSON.stringify(actual) !== JSON.stringify(value);
-      })
-    ) {
-      throw new ApiError(
-        'invariant_conflict',
-        'placement starter knowledge has a mismatched genesis anchor',
-        409,
-      );
-    }
-  }
+  const identity = placementStarterIdentity(authority.semanticGoalRevisionId, subjectId);
 
   await tx
     .insert(placement_starter_claim)
@@ -232,7 +241,7 @@ export async function ensurePlacementStarterKnowledgeAndClaim(
       goal_id: authority.goalId,
       semantic_goal_revision_id: authority.semanticGoalRevisionId,
       subject_id: subjectId,
-      knowledge_id: identity.knowledgeId,
+      knowledge_id: anchorId,
       demand_id: identity.demandId,
       target_id: identity.targetId,
       status: 'pending_dispatch',
@@ -249,7 +258,7 @@ export async function ensurePlacementStarterKnowledgeAndClaim(
     // is persisted even while an older paid flight exists; its dispatch remains pending and
     // retryable until that old flight terminalizes (YUK-776).
     .onConflictDoNothing();
-  return { identity, insertedKnowledge: Boolean(inserted) };
+  return { identity, anchorId };
 }
 
 export async function materializePlacementStartersForGoal(
@@ -262,21 +271,23 @@ export async function materializePlacementStartersForGoal(
 
   const authority = await resolvePlacementStarterGoalAuthorityFromRow(tx, lockedGoal);
   const identities: PlacementStarterIdentity[] = [];
+  const anchorIds: string[] = [];
   for (const subjectId of authority.subjectIds) {
-    const { identity } = await ensurePlacementStarterKnowledgeAndClaim(
+    const { identity, anchorId } = await ensurePlacementStarterAnchorAndClaim(
       tx,
       authority,
       subjectId,
       now,
     );
     identities.push(identity);
+    anchorIds.push(anchorId);
   }
-  await addPlacementStarterKnowledgeToExplicitGoal(
-    tx,
-    authority.goalId,
-    identities.map((identity) => identity.knowledgeId),
-    now,
-  );
+  // YUK-1405 — for an explicit-scope goal the resolved anchors not already in
+  // scope are unioned into goal.scope_knowledge_ids (the "scope record" half of
+  // the contract; placement_starter_augmentation marks it in the scope event).
+  // Anchors that ARE declared scope KCs are a union no-op. subject_live goals
+  // return early inside (their scope is derived live, never frozen).
+  await addPlacementStarterKnowledgeToExplicitGoal(tx, authority.goalId, anchorIds, now);
   return { authority, identities };
 }
 

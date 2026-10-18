@@ -50,6 +50,8 @@ const PracticeStreamViewItemSchema = z.object({
   verdict_effective_state: z.string().nullable(),
   completed_at: z.string().datetime().nullable(),
   total_slots: z.number().int().nonnegative().nullable(),
+  // YUK-1510 — open question whose answer is already recorded (settled or queued), not yet done.
+  answer_recorded: z.boolean(),
 });
 
 export const PracticeStreamResponseSchema = z.object({
@@ -102,6 +104,8 @@ const PersistedPracticeStreamItemSchema = z.object({
   verdict_effective_state: z.string().nullable(),
   completed_at: z.string().datetime().nullable(),
   total_slots: z.number().int().nonnegative().nullable(),
+  // YUK-1510 — open question whose answer is already recorded (settled or queued), not yet done.
+  answer_recorded: z.boolean(),
 });
 
 export const PracticeStreamItemUpdatedResponseSchema = z.object({

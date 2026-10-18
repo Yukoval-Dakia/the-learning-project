@@ -103,7 +103,19 @@
 // YUK-766: preserve subscription progress and causal effects; only process claims reset.
 // YUK-1355: preserve paid-effect unknowns, immutable receipts and backend generations.
 // Both durable tables are required even when empty; 4.25 → 4.26.
-export const SCHEMA_VERSION = '4.26';
+// YUK-1523 (P5): worksheet_export / worksheet_export_item / worksheet_region_map_page —
+// the worksheet PDF export triplet (frozen issuance binding, page identity, frozen
+// region maps). Authored export truth: a restore that drops the token→issuance
+// binding or the archived region maps breaks P6 recovery for already-printed
+// sheets, so they ride the wipe-then-restore payload. item/page → export, and
+// item.issuance_id → assessment_issuance (that parent is earlier in FK_ORDER).
+// NEW FK_ORDER tables → bump 4.26 → 4.27.
+// YUK-1496: model_admission_slice — admitted model-grading slices (subject ×
+// response_class × task_kind × model@version) with holdout evidence refs. Admission
+// evidence is authored truth, not derivable operational state; it must survive
+// restore or every AI-grader serving gate silently re-denies. Follows the
+// worksheet triplet already on main, so this branch is 4.28 / migration 0122.
+export const SCHEMA_VERSION = '4.28';
 
 export const SUBSCRIPTION_PROGRESS_TABLES = [
   'event_subscription_checkpoint',
@@ -323,6 +335,24 @@ export const FK_ORDER = [
   'system_config',
   'system_config_journal',
   'system_config_epoch',
+  // YUK-1523 (P5) — 作答卷导出三表：export（页面身份/幂等/拒绝清单）先于
+  // item（冻结题目清单）与 region_map_page（按页冻结区域图）。FK：item/page →
+  // export，且 item.issuance_id → assessment_issuance（父表在本簇之前，插入序
+  // 已满足）。放在 paid-effect 两表之前，使 FK_ORDER 尾部保持
+  // paid_effect_control → paid_effect → provider_attempt（paid-effect 备份契约
+  // 断言尾部顺序）；与 paid-effect 无 FK 关系。
+  // NEW FK_ORDER tables → bump SCHEMA_VERSION (4.26 → 4.27)。
+  'worksheet_export',
+  'worksheet_export_item',
+  'worksheet_region_map_page',
+  // YUK-1496 (C2 / ADR-0073 D2): model_admission_slice — AI 判分准入切片台账
+  // （subject × response_class × task_kind × model@model_version + holdout 证据
+  // ref + admitted_by/at + status）。已准入证据是 authored 运营真相：丢了即灭失
+  // 「哪个判分切片被放行」的来由，非瞬态非派生 → FK_ORDER 非 BACKUP_EXCLUDED。
+  // 无 enforced FK（loose text-ref 惯例），位置不受 PG FK 约束；放在 worksheet
+  // 三表之后、paid-effect 之前，使尾部仍是 paid_effect_control → paid_effect →
+  // provider_attempt。NEW FK_ORDER table → SCHEMA_VERSION 4.28 / migration 0122。
+  'model_admission_slice',
   // No hard FK: restore owning backend/generation before its immutable effects.
   // Missing either table would turn an unknown paid outcome into bootstrap state.
   ...PAID_EFFECT_BACKUP_TABLES,

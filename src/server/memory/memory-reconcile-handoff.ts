@@ -89,7 +89,8 @@ export async function dispatchMemoryReconcile(
     readonly mode: MemoryReconcileHandoffMode;
   },
 ): Promise<string | null> {
-  if ((await readEventDerivationPolicy(db, input.sourceEventId)) === 'answer_only') {
+  // YUK-1398：一切受限用途（answer_only / crisis）都不得进入 reconcile。
+  if ((await readEventDerivationPolicy(db, input.sourceEventId)) !== 'allow') {
     throw new MemoryReconcileHandoffError('restricted source cannot reconcile');
   }
   const memories = normalizeReconcileInputs(input.memories);

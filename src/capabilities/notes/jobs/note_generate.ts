@@ -10,6 +10,7 @@
 // the broken state instead of stuck-pending. pg-boss retries on throw per
 // queue policy.
 
+import { createHash } from 'node:crypto';
 import { type SQL, and, eq, inArray, isNull } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
@@ -23,6 +24,14 @@ import {
   isNoteArtifactType,
 } from '@/capabilities/notes/server/note-artifact-types';
 import {
+  NOTE_GENERATION_FALLBACK_ACTOR_REF,
+  buildNoteGenerationFallbackBody,
+  loadNoteGenerationFallbackMaterial,
+  mayOverwriteNoteBodyForGeneration,
+  noteBodyIsEmpty,
+  recordNoteFallbackReferenceExposure,
+} from '@/capabilities/notes/server/note-generation-fallback';
+import {
   assertNoteGenerationReferences,
   loadNoteGenerationReferences,
   lockCurrentNoteGenerationReferences,
@@ -35,7 +44,12 @@ import { parseNoteGenerateOutput } from '@/capabilities/notes/tasks/note-tasks';
 import type { ArtifactBodyBlocksT, ArtifactHistoryEntryT } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact, knowledge } from '@/db/schema';
-import { type TaskTextRunFn, aiAgentRef, costUsdToMicroUsd } from '@/server/ai/provenance';
+import {
+  type TaskTextResult,
+  type TaskTextRunFn,
+  aiAgentRef,
+  costUsdToMicroUsd,
+} from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { resolveNoteSkillDoc } from '@/subjects/note-skills';
 import { resolveSubjectProfile } from '@/subjects/profile';
@@ -53,6 +67,34 @@ type DepsOverride = {
 
 export { parseNoteGenerateOutput } from '@/capabilities/notes/tasks/note-tasks';
 
+const NOTE_GENERATE_RAW_EXCERPT_CHARS = 2_000;
+
+function taskRunIdOf(error: unknown): string | null {
+  if (!error || typeof error !== 'object' || !('taskRunId' in error)) return null;
+  const value = (error as { taskRunId?: unknown }).taskRunId;
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+function annotateNoteGenerateFailure(
+  error: unknown,
+  taskRunId: string | null,
+  rawText: string | undefined,
+): Error {
+  const failure = error instanceof Error ? error : new Error(String(error));
+  const parts: string[] = [];
+  if (taskRunId) parts.push(`task_run_id=${taskRunId}`);
+  if (rawText !== undefined) {
+    const excerpt =
+      rawText.length > NOTE_GENERATE_RAW_EXCERPT_CHARS
+        ? `${rawText.slice(0, NOTE_GENERATE_RAW_EXCERPT_CHARS)}…`
+        : rawText;
+    parts.push(`raw_sha256=${createHash('sha256').update(rawText).digest('hex')}`);
+    parts.push(`raw_excerpt=${JSON.stringify(excerpt)}`);
+  }
+  if (parts.length > 0) failure.message = `${failure.message} (${parts.join(' ')})`;
+  return failure;
+}
+
 export interface RunNoteGenerateParams {
   db: Db;
   artifactId: string;
@@ -60,15 +102,26 @@ export interface RunNoteGenerateParams {
 }
 
 export interface RunNoteGenerateResult {
-  status: 'ready' | 'skipped:not_pending' | 'skipped:not_found' | 'failed';
+  status:
+    | 'ready'
+    | 'skipped:not_pending'
+    | 'skipped:not_found'
+    | 'skipped:learner_edited'
+    | 'failed';
   sections_count?: number;
   blocks_count?: number;
 }
 
-async function reopenFailedGenerationForRetry(db: Db, artifactId: string): Promise<boolean> {
+type ReopenOutcome = 'reopened' | 'absent' | 'refused:learner_edited';
+
+async function reopenFailedGenerationForRetry(db: Db, artifactId: string): Promise<ReopenOutcome> {
   return db.transaction(async (tx) => {
     const rows = await tx
-      .select({ version: artifact.version })
+      .select({
+        version: artifact.version,
+        body_blocks: artifact.body_blocks,
+        history: artifact.history,
+      })
       .from(artifact)
       .where(
         and(
@@ -81,7 +134,14 @@ async function reopenFailedGenerationForRetry(db: Db, artifactId: string): Promi
       .for('update')
       .limit(1);
     const row = rows[0];
-    if (!row) return false;
+    if (!row) return 'absent';
+    // YUK-1508 P1-A — refuse to reopen when the failed body is authored content
+    // that is NOT the untouched fallback (a learner edited the fallback). The
+    // success tx would refuse to place the AI body over it anyway; refusing here
+    // avoids paying for a provider call whose output would be discarded.
+    if (!mayOverwriteNoteBodyForGeneration(row.body_blocks, row.history, row.version)) {
+      return 'refused:learner_edited';
+    }
     const now = new Date();
     const updated = await tx
       .update(artifact)
@@ -95,7 +155,7 @@ async function reopenFailedGenerationForRetry(db: Db, artifactId: string): Promi
         ),
       )
       .returning({ id: artifact.id });
-    if (updated.length !== 1) return false;
+    if (updated.length !== 1) return 'absent';
     await emitArtifactLifecycleEvent(tx, {
       subjectId: artifactId,
       op: 'set_generation_status',
@@ -105,7 +165,7 @@ async function reopenFailedGenerationForRetry(db: Db, artifactId: string): Promi
       actorRef: 'note_generate_retry',
       createdAt: now,
     });
-    return true;
+    return 'reopened';
   });
 }
 
@@ -140,8 +200,12 @@ export async function runNoteGenerate(
   if (!isNoteArtifactType(row.type)) return { status: 'skipped:not_pending' };
   if (row.archived_at !== null) return { status: 'skipped:not_pending' };
   if (row.generation_status === 'failed') {
-    if (!(await reopenFailedGenerationForRetry(db, artifactId))) {
-      return { status: 'skipped:not_pending' };
+    const reopen = await reopenFailedGenerationForRetry(db, artifactId);
+    if (reopen !== 'reopened') {
+      return {
+        status:
+          reopen === 'refused:learner_edited' ? 'skipped:learner_edited' : 'skipped:not_pending',
+      };
     }
   } else if (row.generation_status !== 'pending') {
     return { status: 'skipped:not_pending' };
@@ -178,6 +242,7 @@ export async function runNoteGenerate(
   const parentSummary = (parentHub?.attrs as { summary_md?: string } | null)?.summary_md ?? null;
   const referenceArtifacts = await loadNoteGenerationReferences(db, row);
 
+  let attempt: TaskTextResult | undefined;
   const input = {
     artifact_id: row.id,
     artifact_type: row.type,
@@ -214,7 +279,8 @@ export async function runNoteGenerate(
         }
       },
     });
-    const parsed = parseNoteGenerateOutput(result.text);
+    attempt = result;
+    const parsed = parseNoteGenerateOutput(result.text, row.type, result.finishReason);
     assertNoteGenerationReferences(parsed.body_blocks, referenceArtifacts);
 
     // W3-C1γ — note_generate is a COMPOUND mutation (body_blocks + generation_status='ready' +
@@ -229,7 +295,15 @@ export async function runNoteGenerate(
     const generatedByRef = aiAgentRef('NoteGenerateTask', result);
     // Wrap the body_blocks UPDATE + cross_link index sync + fold events in one tx so the L2 backlink
     // index never lags the AI-authored note (YUK-95 P5) AND a malformed event rolls back the UPDATE.
-    const updated = await db.transaction(async (tx) => {
+    // YUK-1508 P1-A — the tx returns a discriminated outcome: the AI body may ONLY
+    // take over an empty body or the UNTOUCHED fallback. If the learner (or any
+    // other writer) authored content over the fallback, the run must not clobber
+    // it: flip back to failed (version unchanged) and report skipped:learner_edited.
+    type SuccessTxOutcome =
+      | { kind: 'ready'; rows: Array<{ id: string }> }
+      | { kind: 'learner_edited' }
+      | { kind: 'not_pending' };
+    const updated = await db.transaction(async (tx): Promise<SuccessTxOutcome> => {
       const currentReferences = await lockCurrentNoteGenerationReferences(
         tx,
         artifactId,
@@ -256,7 +330,34 @@ export async function runNoteGenerate(
         .for('update')
         .limit(1);
       const before = beforeRows[0];
-      if (!before) return []; // concurrently no longer pending
+      if (!before) return { kind: 'not_pending' }; // concurrently no longer pending
+      if (!mayOverwriteNoteBodyForGeneration(before.body_blocks, before.history, before.version)) {
+        // Authored content over the fallback — keep it. The run's output is
+        // discarded (honestly: status back to failed, version unchanged).
+        const kept = await tx
+          .update(artifact)
+          .set({ generation_status: 'failed', updated_at: now })
+          .where(
+            and(
+              eq(artifact.id, artifactId),
+              inArray(artifact.type, NOTE_ARTIFACT_TYPES),
+              eq(artifact.generation_status, 'pending'),
+              isNull(artifact.archived_at),
+            ),
+          )
+          .returning({ id: artifact.id });
+        if (kept.length === 0) return { kind: 'not_pending' };
+        await emitArtifactLifecycleEvent(tx, {
+          subjectId: artifactId,
+          op: 'set_generation_status',
+          generationStatus: 'failed',
+          nextVersion: before.version,
+          actorKind: 'agent',
+          actorRef: 'note_generate',
+          createdAt: now,
+        });
+        return { kind: 'learner_edited' };
+      }
       const nextVersion = before.version + 1;
       // note_generate does NOT push a history entry — carry the CURRENT history so the body_blocks_edit
       // reducer reproduces the column unchanged (its full-snapshot replace would otherwise blank it).
@@ -283,7 +384,7 @@ export async function runNoteGenerate(
           ),
         )
         .returning({ id: artifact.id });
-      if (rows.length === 0) return [];
+      if (rows.length === 0) return { kind: 'not_pending' };
 
       await syncBlockRefsForArtifact(tx, artifactId, parsed.body_blocks);
 
@@ -315,11 +416,17 @@ export async function runNoteGenerate(
         createdAt: now,
       });
       await writeNoteVerificationIntent(tx, artifactId);
-      return rows;
+      return { kind: 'ready', rows };
     });
 
-    if (updated.length === 0) {
+    if (updated.kind === 'not_pending') {
       return { status: 'skipped:not_pending' };
+    }
+    if (updated.kind === 'learner_edited') {
+      console.log(
+        `[note_generate] ${artifactId} retry output discarded; body carries authored content (skipped:learner_edited)`,
+      );
+      return { status: 'skipped:learner_edited' };
     }
 
     return {
@@ -328,16 +435,39 @@ export async function runNoteGenerate(
       blocks_count: parsed.blocks_count,
     };
   } catch (err) {
+    const taskRunId = attempt?.task_run_id ?? taskRunIdOf(err);
+    const failure = annotateNoteGenerateFailure(err, taskRunId, attempt?.text);
     // Mark failed so UI doesn't sit on "pending" forever; pg-boss will still
     // retry per policy because we rethrow.
     //
     // W3-C1γ — event-source the failed status flip too (so the fold reproduces generation_status=
-    // 'failed' and NOTHING about artifact stays KNOWN-UNFOLDED). Atomic in its own tx; failure does
-    // NOT bump version. Best-effort: a cleanup throw is logged, never masking the original error
-    // (which is rethrown so pg-boss retries per policy).
+    // 'failed' and NOTHING about artifact stays KNOWN-UNFOLDED). Atomic in its own tx. Best-effort:
+    // a cleanup throw is logged, never masking the original error (which is rethrown so pg-boss
+    // retries per policy). The status flip itself keeps the version; only the YUK-1508 fallback
+    // body write below bumps it (a real content write).
+    //
+    // YUK-1508 (P1-B) — TWO transactions, strictly ordered:
+    //   tx1 flips generation_status='failed' (+ lifecycle event) EXACTLY like the
+    //      pre-fallback code — it must be indestructible: nothing about the
+    //      fallback (material load, body build, refs sync, exposure record) can
+    //      prevent it, or the note would sit in 'pending' forever.
+    //   tx2 then fills an EMPTY body with the deterministic fallback (real material
+    //      only, honestly labelled 「自动生成失败，以下为原材料整理」; see
+    //      note-generation-fallback.ts) — gated on status='failed' AND the version
+    //      tx1 observed, so it can never race another writer. That write DOES bump
+    //      version — it is a real content write through the normal body path
+    //      (body_blocks_edit + syncBlockRefs + history entry), so it is replayable
+    //      and revertible, and a later successful retry replaces the UNTOUCHED
+    //      fallback as a normal new version (the marker block goes away with the
+    //      full-body replace; a learner-edited fallback is never clobbered — P1-A).
+    //      Idempotent: a body that is already written is never re-filled. Any tx2
+    //      throw is logged and swallowed — the note honestly stays 'failed' with no
+    //      fallback. The failed run stays failed — nothing here marks it succeeded;
+    //      the run row keeps its own runner-owned failure record.
     const failedAt = new Date();
+    let flipVersion: number | null = null;
     try {
-      await db.transaction(async (tx) => {
+      flipVersion = await db.transaction(async (tx) => {
         const beforeRows = await tx
           .select({ version: artifact.version })
           .from(artifact)
@@ -352,7 +482,7 @@ export async function runNoteGenerate(
           .for('update')
           .limit(1);
         const before = beforeRows[0];
-        if (!before) return;
+        if (!before) return null;
         const rows = await tx
           .update(artifact)
           .set({ generation_status: 'failed', updated_at: failedAt })
@@ -365,7 +495,7 @@ export async function runNoteGenerate(
             ),
           )
           .returning({ id: artifact.id });
-        if (rows.length === 0) return;
+        if (rows.length === 0) return null;
         await emitArtifactLifecycleEvent(tx, {
           subjectId: artifactId,
           op: 'set_generation_status',
@@ -373,13 +503,127 @@ export async function runNoteGenerate(
           nextVersion: before.version,
           actorKind: 'agent',
           actorRef: 'note_generate',
+          taskRunId,
+          costMicroUsd: attempt ? costUsdToMicroUsd(attempt.cost_usd) : null,
           createdAt: failedAt,
         });
+        return before.version;
       });
     } catch (cleanupErr) {
       console.error('[note_generate] failed-status cleanup failed for', artifactId, cleanupErr);
     }
-    throw err;
+
+    if (flipVersion === null) throw failure; // not pending anymore (or flip failed) — nothing to fill
+
+    // P1-B — the material load has its OWN guard: a throw here degrades to a
+    // status-only flip (logged), never strands the note in 'pending'.
+    let fallbackMaterial: Awaited<ReturnType<typeof loadNoteGenerationFallbackMaterial>> | null =
+      null;
+    try {
+      fallbackMaterial = await loadNoteGenerationFallbackMaterial(db, {
+        id: artifactId,
+        title: row.title,
+        knowledge_ids: row.knowledge_ids,
+        parent_artifact_id: row.parent_artifact_id,
+        attrs: row.attrs,
+      });
+    } catch (materialErr) {
+      console.error('[note_generate] fallback material load failed for', artifactId, materialErr);
+    }
+
+    if (fallbackMaterial) {
+      try {
+        const wroteFallback = await db.transaction(async (tx): Promise<boolean> => {
+          const beforeRows = await tx
+            .select({
+              version: artifact.version,
+              body_blocks: artifact.body_blocks,
+              history: artifact.history,
+            })
+            .from(artifact)
+            .where(
+              and(
+                eq(artifact.id, artifactId),
+                inArray(artifact.type, NOTE_ARTIFACT_TYPES),
+                eq(artifact.generation_status, 'failed'),
+                eq(artifact.version, flipVersion),
+                isNull(artifact.archived_at),
+              ),
+            )
+            .for('update')
+            .limit(1);
+          const before = beforeRows[0];
+          if (!before) return false; // raced between tx1 and tx2 — leave it alone
+
+          const bodyIsEmpty = noteBodyIsEmpty(before.body_blocks);
+          if (!bodyIsEmpty) return false; // already filled — idempotent no-op
+
+          const fallbackBody = buildNoteGenerationFallbackBody(fallbackMaterial);
+          const nextVersion = before.version + 1;
+          const fallbackHistoryAfter: ArtifactHistoryEntryT[] = [
+            ...(Array.isArray(before.history) ? before.history : []),
+            {
+              version: nextVersion,
+              at: failedAt,
+              by: { by: 'system' },
+              summary_md: '生成失败：写入确定性原材料兜底正文（非 AI 生成）',
+              action: 'note_generation_fallback',
+              previous_artifact_version: before.version,
+              next_artifact_version: nextVersion,
+            },
+          ];
+          const rows = await tx
+            .update(artifact)
+            .set({
+              body_blocks: fallbackBody as never,
+              version: nextVersion,
+              history: fallbackHistoryAfter as never,
+              updated_at: failedAt,
+            })
+            .where(
+              and(
+                eq(artifact.id, artifactId),
+                eq(artifact.version, before.version),
+                eq(artifact.generation_status, 'failed'),
+                isNull(artifact.archived_at),
+              ),
+            )
+            .returning({ id: artifact.id });
+          if (rows.length === 0) return false;
+
+          await syncBlockRefsForArtifact(tx, artifactId, fallbackBody);
+          await emitArtifactBodyBlocksEditEvent(tx, {
+            subjectId: artifactId,
+            previousArtifactVersion: before.version,
+            nextArtifactVersion: nextVersion,
+            bodyBlocks: fallbackBody,
+            previousBodyBlocks: (before.body_blocks ?? null) as ArtifactBodyBlocksT | null,
+            historyAfter: fallbackHistoryAfter,
+            actorKind: 'agent',
+            actorRef: NOTE_GENERATION_FALLBACK_ACTOR_REF,
+            createdAt: failedAt,
+            optOutMemoryIngestion: true,
+          });
+          if (fallbackMaterial.question?.reference_md) {
+            await recordNoteFallbackReferenceExposure(tx, {
+              issuanceId: fallbackMaterial.question.issuance_id,
+              referenceMd: fallbackMaterial.question.reference_md,
+            });
+          }
+          return true;
+        });
+        if (wroteFallback) {
+          console.log(
+            `[note_generate] ${artifactId} generation failed; deterministic fallback body written (v${flipVersion}->v${flipVersion + 1})`,
+          );
+        }
+      } catch (fallbackErr) {
+        // P1-B — a fallback-write throw must never mask the (already committed)
+        // failed flip nor the original error. The note honestly stays 'failed'.
+        console.error('[note_generate] fallback body write failed for', artifactId, fallbackErr);
+      }
+    }
+    throw failure;
   }
 }
 

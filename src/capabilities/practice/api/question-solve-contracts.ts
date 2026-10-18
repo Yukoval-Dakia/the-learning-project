@@ -448,7 +448,7 @@ export const HintRequestResponseSchema = z.union([
     status: z.literal('fallback'),
     reason: HintFallbackReasonSchema,
     help: HintFallbackHelpSchema,
-    /** Mirrors help.text_md — keeps the pre-union {text_md} client shape working. */
+    /** Legacy {text_md} clients: preface + help.text_md for the deterministic step (help.text_md alone for a reference), so old readers still see it is not an AI hint. */
     text_md: z.string(),
     reference_available: z.boolean(),
     reference_revealed: z.boolean(),

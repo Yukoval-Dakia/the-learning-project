@@ -118,6 +118,16 @@ import {
   RecomposePracticeStreamBodySchema,
   UpdatePracticeStreamItemBodySchema,
 } from './api/stream-contracts';
+// YUK-1523（P5）— 作答卷 PDF 导出：发放、区域图存档与 P6 读面契约。
+import {
+  WorksheetExportCreateBodySchema,
+  WorksheetExportStateSchema,
+  WorksheetPageParamsSchema,
+  WorksheetPageResponseSchema,
+  WorksheetRegionMapArchiveBody,
+  WorksheetRegionMapArchivedSchema,
+  WorksheetTokenParamsSchema,
+} from './api/worksheet-contracts';
 // YUK-594 (durable judge main path, W1) — judge_run poll-tier status + 202-pending schemas
 // (live in the db-free judge-run-status module so this eager import stays db-light).
 import {
@@ -913,6 +923,62 @@ export const practiceCapability = defineCapability({
         successStatus: 200,
         load: () => import('./api/assessment-route').then((m) => m.revealStudyReference),
       },
+      // YUK-1523（P5）— 作答卷 PDF 导出。导出 = 逐题经既有 issueAssessment 发放
+      //（G4 门只放可判题，拒掉的题随响应返回 typed 原因）；token/短码是页面
+      // 身份码 tlp://ws/v1/<token>/<页>/<总页> 的锚；同 idempotency_key 重放不重发。
+      {
+        method: 'POST',
+        path: '/api/worksheet-exports',
+        operationId: 'createWorksheetExport',
+        request: { body: WorksheetExportCreateBodySchema },
+        responses: {
+          200: WorksheetExportStateSchema,
+          201: WorksheetExportStateSchema,
+          ...API_ERROR_RESPONSES,
+        },
+        successStatus: [200, 201],
+        load: () =>
+          import('./api/worksheet-export-route').then((m) => m.createWorksheetExportRoute),
+      },
+      {
+        // 渲染器恢复/总览读面（token 不可猜；无私有答案）。
+        method: 'GET',
+        path: '/api/worksheet-exports/[token]',
+        operationId: 'getWorksheetExport',
+        request: { params: WorksheetTokenParamsSchema },
+        responses: { 200: WorksheetExportStateSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        load: () => import('./api/worksheet-export-route').then((m) => m.getWorksheetExportRoute),
+      },
+      {
+        // 区域图存档：界面线与 PDF 同一渲染 pass 量出的区域图 POST 回后端，
+        // 对冻结发放校验后按页 write-once 存档（同图重 POST 幂等）。
+        method: 'POST',
+        path: '/api/worksheet-exports/[token]/region-map',
+        operationId: 'archiveWorksheetRegionMap',
+        request: {
+          params: WorksheetTokenParamsSchema,
+          body: WorksheetRegionMapArchiveBody,
+        },
+        responses: {
+          200: WorksheetRegionMapArchivedSchema,
+          201: WorksheetRegionMapArchivedSchema,
+          ...API_ERROR_RESPONSES,
+        },
+        successStatus: [200, 201],
+        load: () =>
+          import('./api/worksheet-export-route').then((m) => m.archiveWorksheetRegionMapRoute),
+      },
+      {
+        // P6 回读面：token + 页 → issuance id、该页冻结区域图与 part/slot 坐标。
+        method: 'GET',
+        path: '/api/worksheet-exports/[token]/pages/[page]',
+        operationId: 'getWorksheetPage',
+        request: { params: WorksheetPageParamsSchema },
+        responses: { 200: WorksheetPageResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        load: () => import('./api/worksheet-export-route').then((m) => m.getWorksheetPageRoute),
+      },
     ],
   },
   jobs: {
@@ -1063,6 +1129,20 @@ export const practiceCapability = defineCapability({
         load: () =>
           import('./jobs/practice_stream_compose_nightly').then(
             (m) => m.buildStreamComposeNightlyHandler,
+          ),
+      },
+      // YUK-1496 C2（G3 模型判分准入，migration 线）— 留出题准入 run：冻结
+      // 留出题集（每科 ≥30、带独立参考分）过生产同源判分端口，逐题 agreement
+      // / severe error 落事件证据；阈值全过且非 dry run 才登记已准入切片。
+      // 付费 job（真实模型调用），由 lead 在周预算内触发；无 schedule。
+      {
+        name: 'model_slice_admission_run',
+        queue: 'llm',
+        pollingIntervalSeconds: 2,
+        batchSize: 1,
+        load: () =>
+          import('./jobs/model_slice_admission_run').then(
+            (m) => m.buildModelSliceAdmissionRunHandler,
           ),
       },
       // YUK-372 L5 (YUK-361 Phase 8 wire-up) — 供给目标发现 + 派发夜扫。确定性缺口扫描
@@ -1403,9 +1483,13 @@ export const practiceCapability = defineCapability({
           import('./server/tools/jyeoo-fetch-candidates').then((m) => m.jyeooFetchCandidatesTool),
       },
       {
-        name: 'store_sourced_question',
-        load: () =>
-          import('./server/tools/store-sourced-question').then((m) => m.storeSourcedQuestionTool),
+        name: 'submit_question',
+        load: () => import('./server/tools/submit-question').then((m) => m.submitQuestionTool),
+      },
+      // YUK-1468 — 统一题目编辑面（v2 草稿文档 ops/CAS/幂等/validate/probe）。
+      {
+        name: 'edit_question',
+        load: () => import('./server/tools/edit-question').then((m) => m.editQuestionTool),
       },
       // YUK-988 (Supply-Agent/3) — web 候选生产线 DomainTool（Tavily 检索 +
       // SourcingTask 抽取，candidate-only 不写库）。E3 只注册进 inventory（无任何
@@ -1439,8 +1523,10 @@ export const practiceCapability = defineCapability({
         name: 'write_quiz',
         load: () => import('./server/tools/write-quiz').then((m) => m.writeQuizTool),
       },
-      // ADR-0032 D6-B (YUK-203 lane L6) — active 题 structured 节点编辑 propose
-      // 工具（窄 typed op；accept 经 practice applier + mini verify gate 落地）。
+      // YUK-1468 — `propose_question_edit` 保留在 inventory 但【无 surface
+      // 授权】：Copilot 调 edit_question（工具按 caller surface 自动落
+      // question_edit proposal，accept 走同一 ops→submit gate）。壳模块
+      // 与测试在 owner 批准删除后随独立 PR 清理。
       {
         name: 'propose_question_edit',
         load: () => import('./server/tools/proposal-tools').then((m) => m.proposeQuestionEditTool),

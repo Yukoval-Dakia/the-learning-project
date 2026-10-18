@@ -19,7 +19,7 @@
 
 ## 3. 区域图结构
 
-字段名与功能线 2026-10-11 对齐。顶层：`schema_version`、`short_code`、`issuance_id`、`web_only_units[]`、`pages[]`。每页：`page`、`of`、`orientation`、`size_mm`、`qr { payload, mm }`、`anchors { tl, tr, bl, br }`、`regions[]`。每个区域有稳定的 `region_id`。
+字段名与功能线 2026-10-11 对齐；2026-10-17 R1 修订（YUK-1523）：多题导出每区域各自携带 `issuance_id`（一份作答卷 = 每题一条发放），顶层不再有单一 `issuance_id` 字段；存档体顶层另带 `pdf_digest`（同一次渲染产出的 PDF 的 sha256）。顶层：`schema_version`、`short_code`、`pdf_digest`、`web_only_units[]`、`pages[]`（strict，多余字段拒收）。每页：`page`、`of`、`orientation`、`size_mm`、`qr { payload, mm }`、`anchors { tl, tr, bl, br }`、`regions[]`。每个区域有稳定的 `region_id`。
 
 | kind | 含义 | 携带 |
 |---|---|---|
@@ -28,8 +28,8 @@
 | `draft` | 草稿区，**不判分**，回收时忽略 | `region_id`、`mark`、`mm` |
 
 - **选项一律按 `option_id` 回收**。选项顺序随 issuance 冻结（ADR-0073 option_order），印出的字母和稳定 id 可能不同，回收不能用字母。
-- 一个计分单元跨页续写时，各页各有一个同 `unit_id` 的区域，`segment_index` 从 1 递增，按它拼接。
-- **每个计分单元都必须有着落**：要么在某页有至少一个 `writing`/`choice` 区域，要么列在 `web_only_units[]`（说明在网页作答，如断句的字间点选、配对题的点选）。回收端据此区分「不在纸上」和「留空」，二者不能混同（ADR-0073）。
+- 一个计分单元跨页续写时，各页各有一个同 `issuance_id` + `unit_id` 的区域，`segment_index` 从 1 递增，按它拼接。同一道题在一份导出里出现两次时，两次发放的 `unit_id` 相同，但段号各自从 1 起算；把另一次发放的区域写成同一次发放的下一段会被拒收。
+- **每个（发放, 计分单元）都必须有着落**：要么在某页有至少一个 `writing`/`choice` 区域，要么该 `unit_id` 列在 `web_only_units[]`（说明在网页作答，如断句的字间点选、配对题的点选）。`web_only_units` 按 `unit_id` 计，同一道题的两次出现要么都在网页作答，要么都印在纸上。回收端据此区分「不在纸上」和「留空」，二者不能混同（ADR-0073）。
 - 标号（owner 16:44）：大题＝实心珊瑚色圆角方块；小问、完形的空、作答区标签＝珊瑚色细圆环，同一号码在题干、作答区、文章空位处一致。标号只给人看，回收不依赖它。
 
 ## 4. 导出与回收的分工

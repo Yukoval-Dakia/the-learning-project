@@ -1454,6 +1454,142 @@
     ]
   },
   {
+    "path": "/api/worksheet-exports",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "YUK-1523 P5：作答卷导出 = 逐题经既有 issueAssessment 发放（G4 门只放可判题，拒掉的题不发并随响应返回 typed 原因）；冻结 parts/材料 digest/option_order，mint export_token/短码",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "idempotency_key": "ws-2026-10-17-001",
+          "title": "周末卷 · 三角函数",
+          "items": [
+            {
+              "group_id": "REPLACE_group_root_1"
+            },
+            {
+              "group_id": "REPLACE_group_root_2",
+              "part_ids": ["p1"]
+            }
+          ]
+        },
+        "notes": "幂等：同 idempotency_key 同请求 ⇒ replayed(200) 不重发不改冻结；异请求 ⇒ idempotency_conflict(409)。全部题被门拒绝 ⇒ no_gradeable_questions(422)，details.refused 给逐题 typed 原因。返回 issued[]（issuance 冻结坐标 + practice_dto 公开渲染输入 + units 真实计分单元 id）与 refused[]；页面身份码 tlp://ws/v1/<export_token>/<页>/<总页> 由 token 锚定"
+      }
+    ]
+  },
+  {
+    "path": "/api/worksheet-exports/:token",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "YUK-1523 P5：导出状态读面（渲染器恢复）——issued 冻结坐标 + 公开渲染输入 + 存档页清单",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "token 不可猜；无私有答案。404 = token 不存在"
+      }
+    ]
+  },
+  {
+    "path": "/api/worksheet-exports/:token/region-map",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "YUK-1523 P5：区域图存档——界面线与 PDF 同一渲染 pass 量出的区域图整份 POST，后端对冻结发放校验后按页 write-once 存档",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "schema_version": 1,
+          "short_code": "REPLACE_short_code_from_create",
+          "web_only_units": [],
+          "pages": [
+            {
+              "page": 1,
+              "of": 1,
+              "orientation": "portrait",
+              "size_mm": {
+                "w": 210,
+                "h": 297
+              },
+              "qr": {
+                "payload": "tlp://ws/v1/REPLACE_token/1/1",
+                "mm": {
+                  "x": 173,
+                  "y": 17,
+                  "w": 13,
+                  "h": 13
+                }
+              },
+              "anchors": {
+                "tl": {
+                  "cx": 8.5,
+                  "cy": 8.5,
+                  "size": 5,
+                  "fill": "solid",
+                  "stroke_mm": null
+                },
+                "tr": {
+                  "cx": 201.5,
+                  "cy": 8.5,
+                  "size": 5,
+                  "fill": "solid",
+                  "stroke_mm": null
+                },
+                "bl": {
+                  "cx": 8.5,
+                  "cy": 288.5,
+                  "size": 5,
+                  "fill": "solid",
+                  "stroke_mm": null
+                },
+                "br": {
+                  "cx": 201.5,
+                  "cy": 288.5,
+                  "size": 5,
+                  "fill": "hollow",
+                  "stroke_mm": 1.2
+                }
+              },
+              "regions": [
+                {
+                  "region_id": "p1-r1",
+                  "kind": "writing",
+                  "issuance_id": "REPLACE_issuance",
+                  "slot_id": "REPLACE_slot",
+                  "unit_id": "REPLACE_unit",
+                  "mark": "dots",
+                  "mm": {
+                    "x": 24,
+                    "y": 92,
+                    "w": 162,
+                    "h": 138
+                  },
+                  "segment_index": 1
+                }
+              ]
+            }
+          ],
+          "pdf_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "notes": "校验：qr payload 逐页=tlp://ws/v1/<token>/<页>/<总页>；每区域引用已发 part/slot/unit；每计分单元恰一着落（区域或 web_only_units，互斥）；choice 选项圈=冻结 option_order 排列；四角 TL/TR/BL 实心 BR 空心；A4。同图重 POST ⇒ existing(200)；异图 ⇒ archive_conflict(409)；校验失败 ⇒ invalid_region_map(422) details.issues；顶层 strict（遗留顶层 issuance_id 拒收，多题导出每区域各自带 issuance_id）；pdf_digest（同渲染 pass 的 PDF sha256）随存档冻结并进 write-once 比对"
+      }
+    ]
+  },
+  {
+    "path": "/api/worksheet-exports/:token/pages/:page",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "YUK-1523 P6 读面：token+页 → 该页冻结区域图与冻结 part/slot/option_order/unit 坐标（回收对位用，无私有答案）",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "404 not_found=token 不存在；region_map_not_archived=尚未存档；page_out_of_range(404, details.page_count)"
+      }
+    ]
+  },
+  {
     "path": "/api/attempts",
     "methods": [
       {

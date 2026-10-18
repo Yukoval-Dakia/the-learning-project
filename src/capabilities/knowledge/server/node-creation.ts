@@ -46,6 +46,15 @@ export async function createKnowledgeNodeFromEvents(
       `knowledge ${initial.id} rejected: 'general' is the fallback subject identity, not a node domain`,
     );
   }
+  // YUK-1405 (Stage 1 B6 S5) — genesis-writes-`'approved'` is now a CALLER
+  // contract, not a universal rule: every caller of this seam must be creating
+  // the node inside an owner-authorised plan (seeds, subject roots, accepted
+  // proposal/import paths, the learner-initiated placement starter anchor).
+  // Agent-invented KCs must NOT come through here — `tagKnowledge` declares
+  // `approval_status:'pending'` on its own `experimental:auto_tag_kc_created`
+  // event and the knowledge fold honors only that claim. If a future genesis
+  // caller is ad-hoc rather than owner-authorised, the authorization must be
+  // carried as an explicit argument instead of silently self-approving.
   const row: KnowledgeRowSnapshotT = {
     ...initial,
     domain: canonicalDomain ?? initial.domain,

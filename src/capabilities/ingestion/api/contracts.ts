@@ -17,6 +17,15 @@ import {
   MultipartFilePartSchema,
 } from '@/kernel/http-contracts';
 
+/**
+ * YUK-1408 — the client-facing consent enum for upload routes. Intentionally a
+ * LOCAL literal, NOT the shared `DerivationPolicy` schema: ingestion callers
+ * may only ever declare 'allow' | 'answer_only'. If the shared enum later
+ * widens (e.g. with 'crisis'), client-sent values here must still be rejected
+ * — crisis is a system-write state, never a client consent choice.
+ */
+export const IngestionDerivationPolicy = z.enum(['allow', 'answer_only']);
+
 export const CreateIngestionSessionBody = z.object({
   entrypoint: IngestionEntrypoint,
   asset_ids: z.array(z.string().min(1)).min(1).max(MAX_PDF_PAGES),
@@ -26,6 +35,13 @@ export const CreateIngestionSessionBody = z.object({
   // currently selectable subject (aliases canonicalized) or the request is
   // rejected 400 before any source_document / learning_session write.
   subject_id: z.string().nullable().optional(),
+  // YUK-1408 — the learner's consented usage for the uploaded document.
+  // 'allow' (default when absent) lets ingestion-derived records feed
+  // memory/briefs; 'answer_only' stamps every derived event so the shared
+  // derivation filter keeps the document's content out of those channels.
+  // Persisted on source_document.provenance.usage_policy; the consent UI reads
+  // and updates it there.
+  derivation_policy: IngestionDerivationPolicy.optional(),
 });
 
 export const IngestionSessionSchema = z
@@ -42,6 +58,38 @@ export const IngestionSessionResponseSchema = z.object({
   session: IngestionSessionSchema,
 });
 
+/**
+ * YUK-1408 (S1 read side) — the latest `experimental:ingestion_usage_receipt`
+ * for the session's source_document. `derivation_policy` is the document's
+ * CURRENT live policy (provenance.usage_policy) — a later withdrawal shows
+ * immediately — NOT the policy stamped on the receipt. Counts are numbers
+ * only; redacted values are never on the wire.
+ */
+export const IngestionUsageReceiptSchema = z.object({
+  derivation_policy: IngestionDerivationPolicy,
+  /** Extraction engine that produced this receipt (e.g. tencent / glm / docx_text). */
+  engine: z.string().nullable(),
+  /**
+   * What left the server for a model on this extraction: `page_images:'raw'`
+   * means the original page image was sent as-is (OCR/VLM must see it);
+   * only the extracted text is redacted. null on a receipt without channels.
+   */
+  channels: z
+    .object({
+      page_images: z.enum(['raw', 'none']),
+      extracted_text: z.enum(['redacted', 'none']),
+    })
+    .nullable(),
+  redacted_fields: z.array(z.string()),
+  redaction_counts: z.record(z.string(), z.number()),
+  recorded_at: z.string().datetime(),
+});
+
+export const IngestionSessionDetailResponseSchema = z.object({
+  session: IngestionSessionSchema,
+  usage_receipt: IngestionUsageReceiptSchema.nullable(),
+});
+
 export const IngestionOperationSchema = z
   .object({
     id: z.string(),
@@ -52,6 +100,13 @@ export const IngestionOperationSchema = z
 
 /** Runtime FormData carries a File; OpenAPI renders the shared marker as format: binary. */
 export const MultipartFileUploadSchema = z.object({ file: MultipartFilePartSchema }).passthrough();
+
+// YUK-1408 — the docx multipart accepts an optional consent field alongside the
+// file part so the OpenAPI client declares it (the route validates + rejects
+// unknown values; the catchall stays for other form parts).
+export const MultipartDocxUploadSchema = MultipartFileUploadSchema.extend({
+  derivation_policy: IngestionDerivationPolicy.optional(),
+});
 
 export const SourceAssetSchema = z
   .object({

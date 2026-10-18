@@ -1281,6 +1281,26 @@
   white-space: pre-wrap;
 }
 
+/* YUK-1409 — AI 提示失败时的固定帮助：卡内一行中性说明 */
+.ladder-fallback-line {
+  font: 400 var(--fs-meta) / 1.4 var(--font-sans);
+  color: var(--ink-3);
+  margin-bottom: 6px;
+}
+
+/* YUK-1409 — AI 暂时给不出、也无替代材料：中性面板（不是错误色），可重试 / 跳过 */
+.ladder-unavail {
+  padding: var(--s-3) var(--s-4);
+  border: 1px solid var(--line);
+  background: var(--paper-sunk);
+  border-radius: var(--r-3);
+  margin-bottom: var(--s-2);
+}
+.ladder-unavail-msg {
+  font: 400 var(--fs-caption) / 1.5 var(--font-sans);
+  color: var(--ink-2);
+}
+
 /* 取下一阶 loading */
 .ladder-loading {
   display: flex;
