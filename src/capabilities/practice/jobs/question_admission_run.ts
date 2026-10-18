@@ -4,6 +4,10 @@
 import { randomUUID } from 'node:crypto';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
+import { LEGACY_DRAFT_STATUS } from '@/core/schema/assessment/lifecycle';
+import type { ResponseSpecT } from '@/core/schema/assessment/response';
+import type { ScoringBasisT } from '@/core/schema/assessment/scoring';
+import type { QuestionGroupStructureT } from '@/core/schema/assessment/structure';
 import type { Db, Tx } from '@/db/client';
 import {
   admitPaidEffectDeliveryControl,
@@ -26,12 +30,14 @@ import {
 } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import {
+  type NormalizedContract,
   type PartRow,
   contractIntegrityDigest,
   normalizeQuestionGroupToContract,
 } from '@/kernel/records/assessment-normalization';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { type Provider, definitionFromContract } from '../server/admission';
+import { runQuestionAdmissionChecks } from '../server/admission/checks';
 import {
   ADMISSION_FAMILY,
   AdmissionJobData,
@@ -50,8 +56,9 @@ import {
   resolveQuestionAdmissionPolicyId,
   runQuestionAdmission,
 } from '../server/admission/run-admission';
+import { canonicalQuestionContentHash } from '../server/quiz/content-fingerprint';
 import { publishQuestionGroup } from '../server/quiz/verify-and-promote';
-import { makePracticeTaskTextRunFn } from '../server/task-runtime';
+import { type PracticeTaskRunFn, makePracticeTaskTextRunFn } from '../server/task-runtime';
 
 export type QuestionAdmissionRunData = AdmissionJobData;
 export interface QuestionAdmissionRunResult {
@@ -87,7 +94,7 @@ async function loadDefinition(db: Db | Tx, rootId: string) {
       .where(inArray(source_asset.id, [...figureAssetIds]));
     for (const a of assets) figureDigests[a.assetId] = a.sha256;
   }
-  const contract = normalizeQuestionGroupToContract(
+  return normalizeQuestionGroupToContract(
     { ...(root as Parameters<typeof normalizeQuestionGroupToContract>[0]), figureDigests },
     liveParts.map(
       (p): PartRow => ({
@@ -103,7 +110,133 @@ async function loadDefinition(db: Db | Tx, rootId: string) {
       }),
     ),
   );
-  return { contract, definition: definitionFromContract(contract) };
+}
+
+type GradedContract = {
+  contract: NormalizedContract;
+  revision: typeof question_revision.$inferSelect | null;
+  /** False when the stored layers do not recompute to the revision's integrity digest. */
+  digestMatches: boolean;
+};
+
+/**
+ * Grade the published revision when one exists. The question row is a projection
+ * and its rebuilt contract is a different document. A revision whose layers do
+ * not recompute to the stored digest is not graded.
+ */
+async function loadGradedContract(
+  db: Db | Tx,
+  rootId: string,
+  currentRevisionId: string | null,
+): Promise<GradedContract> {
+  if (currentRevisionId == null) {
+    return { contract: await loadDefinition(db, rootId), revision: null, digestMatches: true };
+  }
+  const [revision] = await db
+    .select()
+    .from(question_revision)
+    .where(eq(question_revision.revision_id, currentRevisionId))
+    .limit(1);
+  if (!revision || revision.group_id !== rootId) {
+    return { contract: await loadDefinition(db, rootId), revision: null, digestMatches: false };
+  }
+  const layers = {
+    structure: revision.structure,
+    response_spec: revision.response_spec,
+    scoring_basis: revision.scoring_basis,
+    execution_plan: revision.execution_plan,
+    ...(revision.presentation != null ? { presentation: revision.presentation } : {}),
+  };
+  return {
+    revision,
+    digestMatches: contractIntegrityDigest(layers) === revision.integrity_digest,
+    contract: {
+      ...layers,
+      integrity_digest: revision.integrity_digest,
+      group_id: revision.group_id,
+      conversion_issues: [],
+    },
+  };
+}
+
+function projectAdmittedQuestionRow(contract: {
+  structure: QuestionGroupStructureT;
+  response_spec: ResponseSpecT;
+  scoring_basis: ScoringBasisT;
+}) {
+  const parts = contract.structure.parts;
+  const promptMd =
+    parts.length === 1
+      ? parts[0].prompt_md
+      : parts
+          .map((part) => part.prompt_md)
+          .filter((text) => text.trim().length > 0)
+          .join('\n\n');
+  const slotById = new Map(contract.response_spec.slots.map((slot) => [slot.slot_id, slot]));
+  const references: string[] = [];
+  for (const unit of contract.scoring_basis.units) {
+    const slot = unit.slot_refs[0] != null ? slotById.get(unit.slot_refs[0]) : undefined;
+    const criterion = unit.criterion;
+    if (criterion.kind === 'blank_key') {
+      references.push(
+        criterion.key.kind === 'text'
+          ? criterion.key.accepted.join(' / ')
+          : String(criterion.key.expected),
+      );
+    } else if (criterion.kind === 'text_key') {
+      references.push(criterion.accepted_texts.join(' / '));
+    } else if (criterion.kind === 'numeric_key') {
+      references.push(String(criterion.expected));
+    } else if (criterion.kind === 'select_key' && slot?.kind === 'select') {
+      const labels = criterion.accepted_item_ids
+        .map((id) => slot.items.findIndex((item) => item.item_id === id))
+        .filter((index) => index >= 0)
+        .map((index) => String.fromCharCode(65 + index));
+      if (labels.length > 0) references.push(labels.join(''));
+    } else if (
+      criterion.kind === 'option_set_key' &&
+      (slot?.kind === 'single_choice' || slot?.kind === 'multi_choice')
+    ) {
+      const labels = criterion.accepted_option_ids
+        .map((id) => slot.options.find((option) => option.option_id === id)?.label)
+        .filter((label): label is string => label != null && label.length > 0);
+      if (labels.length > 0) references.push(labels.join(''));
+    }
+  }
+  const referenceMd = references.length > 0 ? references.join('\n\n') : null;
+  const choiceSlot = contract.response_spec.slots.find(
+    (slot) =>
+      slot.kind === 'select' || slot.kind === 'single_choice' || slot.kind === 'multi_choice',
+  );
+  const choicesMd =
+    choiceSlot?.kind === 'select'
+      ? choiceSlot.items.map((item) => item.label_md ?? item.item_id)
+      : choiceSlot?.kind === 'single_choice' || choiceSlot?.kind === 'multi_choice'
+        ? choiceSlot.options.map((option) => option.text)
+        : null;
+  const slotKinds = new Set(contract.response_spec.slots.map((slot) => slot.kind));
+  const composite = parts.length > 1 || slotKinds.size > 1;
+  const choice =
+    slotKinds.has('select') || slotKinds.has('single_choice') || slotKinds.has('multi_choice');
+  const blank =
+    slotKinds.has('blank') ||
+    slotKinds.has('text') ||
+    slotKinds.has('numeric') ||
+    slotKinds.has('formula');
+  const kind = composite ? 'composite' : choice ? 'choice' : blank ? 'fill_blank' : 'short_answer';
+  return {
+    prompt_md: promptMd,
+    reference_md: referenceMd,
+    choices_md: choicesMd,
+    kind,
+    canonical_content_hash: canonicalQuestionContentHash({
+      promptMd,
+      referenceMd,
+      choicesMd,
+      ...(composite ? { composite: true } : {}),
+    }),
+    draft_status: LEGACY_DRAFT_STATUS.ACTIVE,
+  };
 }
 
 async function subjectProfileFor(db: Db | Tx, rootId: string) {
@@ -127,6 +260,7 @@ export async function runAdmissionForQuestion(
   db: Db,
   suppliedData: QuestionAdmissionRunData,
   delivery: AdmissionDelivery = { id: randomUUID() },
+  deps: { runTask?: PracticeTaskRunFn } = {},
 ): Promise<QuestionAdmissionRunResult> {
   const data = AdmissionJobData.parse(suppliedData);
   let groupId = data.question_id;
@@ -158,13 +292,8 @@ export async function runAdmissionForQuestion(
     await assertAdmissionDelivery(tx, delivery);
     const { root, lifecycle } = await lockAdmissionGroup(tx, rootId);
     if (!root) throw new ApiError('not_found', `question '${rootId}' not found`, 404);
-    const { contract } = await loadDefinition(tx, rootId);
-    const [revision] = lifecycle?.current_revision_id
-      ? await tx
-          .select()
-          .from(question_revision)
-          .where(eq(question_revision.revision_id, lifecycle.current_revision_id))
-      : [];
+    const graded = await loadGradedContract(tx, rootId, lifecycle?.current_revision_id ?? null);
+    const { contract, revision } = graded;
     const [terminal] = await tx
       .select({ id: question_admission_verification.id })
       .from(question_admission_verification)
@@ -182,6 +311,7 @@ export async function runAdmissionForQuestion(
       )
       .limit(1);
     const pinned =
+      graded.digestMatches &&
       (!data.revision_id || revision?.revision_id === data.revision_id) &&
       (!data.expected_revision_digest ||
         revision?.integrity_digest === data.expected_revision_digest) &&
@@ -223,10 +353,12 @@ export async function runAdmissionForQuestion(
     receipt = batch.receipt;
   } else {
     try {
-      const runTask = makePracticeTaskTextRunFn(db, {
-        providerSessionDeadlineAt: Date.now() + 15 * 60_000,
-        judgeRetryPolicy: 'none',
-      });
+      const runTask =
+        deps.runTask ??
+        makePracticeTaskTextRunFn(db, {
+          providerSessionDeadlineAt: Date.now() + 15 * 60_000,
+          judgeRetryPolicy: 'none',
+        });
       const result = await runQuestionAdmission(definitionFromContract(batch.input.contract), {
         db,
         runTask,
@@ -292,10 +424,14 @@ export async function runAdmissionForQuestion(
       if (snapshot?.state === 'applied')
         return simple(completedAdmissionStatus(snapshot.application));
       const { root, lifecycle } = await lockAdmissionGroup(tx, rootId);
-      const fresh = root ? await loadDefinition(tx, rootId) : null;
+      const fresh = root
+        ? await loadGradedContract(tx, rootId, lifecycle?.current_revision_id ?? null)
+        : null;
+      const freshDigest = fresh?.digestMatches ? fresh.contract.integrity_digest : null;
       const current =
-        root &&
-        fresh?.contract.integrity_digest === batch.input.contract.integrity_digest &&
+        root != null &&
+        freshDigest != null &&
+        freshDigest === batch.input.contract.integrity_digest &&
         (lifecycle?.current_revision_id ?? null) === batch.input.revision_id;
       if (!current) {
         await recordPaidEffectApplication(tx, batch.identity, {
@@ -317,7 +453,31 @@ export async function runAdmissionForQuestion(
       const result = receipt.result;
       if (result.status === 'pending')
         throw new Error('Unknown admission result cannot be applied');
-      const admitted = result.status === 'admitted' && result.resolved !== undefined;
+      const decision = await runQuestionAdmissionChecks(tx, {
+        knowledgeIds: root.knowledge_ids ?? [],
+        unitSummary: result.per_unit.map((unit) => ({
+          unit_id: unit.scoring_unit_id,
+          judgeable_today: unit.status !== 'withheld',
+          ...(unit.reason != null ? { withheld_reason: unit.reason } : {}),
+        })),
+        verdict: {
+          status: result.status,
+          per_unit: result.per_unit.map((unit) => ({
+            scoring_unit_id: unit.scoring_unit_id,
+            status: unit.status,
+            ...(unit.reason != null ? { reason: unit.reason } : {}),
+          })),
+        },
+      });
+      if (decision.group_blockers.length > 0) {
+        await notePaidEffectApplicationFailure(
+          tx,
+          batch.identity,
+          decision.group_blockers.map((blocker) => `${blocker.code}: ${blocker.detail}`).join('; '),
+        );
+        return simple('pending');
+      }
+      const admitted = decision.admission.state === 'admitted' && result.resolved !== undefined;
       const now = new Date(receipt.recorded_at);
       const verifierContext = batch.input.solver2
         ? 'independent_model'
@@ -380,6 +540,22 @@ export async function runAdmissionForQuestion(
       });
       const status =
         persisted.status === 'conflict' ? 'conflict' : admitted ? 'admitted' : 'withheld';
+      if (status === 'admitted') {
+        const projected = projectAdmittedQuestionRow(contract);
+        await tx
+          .update(question)
+          .set({
+            prompt_md: projected.prompt_md,
+            reference_md: projected.reference_md,
+            choices_md: projected.choices_md,
+            kind: projected.kind,
+            canonical_content_hash: projected.canonical_content_hash,
+            draft_status: projected.draft_status,
+            updated_at: now,
+            version: sql`${question.version} + 1`,
+          })
+          .where(eq(question.id, rootId));
+      }
       const application: QuestionAdmissionRunResult = {
         status,
         group_id: rootId,

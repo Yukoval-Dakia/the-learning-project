@@ -135,6 +135,142 @@ export const QuestionAdmissionSolveOutput = z.object({
 });
 export type QuestionAdmissionSolveOutputT = z.infer<typeof QuestionAdmissionSolveOutput>;
 
+const SELECT_ANSWER_KINDS = new Set([
+  'select',
+  'choice',
+  'option',
+  'single_choice',
+  'multi_choice',
+]);
+const BLANK_TEXT_ANSWER_KINDS = new Set(['blank_text', 'text', 'string', 'blank']);
+const BLANK_NUMERIC_ANSWER_KINDS = new Set(['blank_numeric', 'numeric', 'number']);
+
+function nonEmptyStrings(value: unknown): string[] | null {
+  if (typeof value === 'string') return value.length > 0 ? [value] : null;
+  if (!Array.isArray(value) || value.length === 0) return null;
+  if (!value.every((item) => typeof item === 'string' && item.length > 0)) return null;
+  return value;
+}
+
+function isTolerance(value: unknown): boolean {
+  if (value == null || typeof value !== 'object' || Array.isArray(value)) return false;
+  const tolerance = value as { kind?: unknown; value?: unknown; ratio?: unknown };
+  if (tolerance.kind === 'absolute')
+    return typeof tolerance.value === 'number' && tolerance.value >= 0;
+  if (tolerance.kind === 'relative')
+    return typeof tolerance.ratio === 'number' && tolerance.ratio >= 0;
+  return false;
+}
+
+function coerceAnswer(answer: unknown, unit: QuestionAdmissionSolveUnitT): unknown {
+  if (answer == null || typeof answer !== 'object' || Array.isArray(answer)) return answer;
+  if (SolvedKey.safeParse(answer).success) return answer;
+  const raw = answer as Record<string, unknown>;
+  const kind = typeof raw.kind === 'string' ? raw.kind : undefined;
+  if (unit.kind === 'select') {
+    if (kind != null && !SELECT_ANSWER_KINDS.has(kind)) return answer;
+    const itemIds = nonEmptyStrings(raw.item_ids ?? raw.accepted_item_ids ?? raw.accepted);
+    if (itemIds == null) return answer;
+    return { kind: 'select', item_ids: itemIds };
+  }
+  if (unit.kind === 'blank') {
+    if (kind != null && BLANK_NUMERIC_ANSWER_KINDS.has(kind)) {
+      if (raw.accepted != null || typeof raw.expected !== 'number' || !isTolerance(raw.tolerance)) {
+        return answer;
+      }
+      return {
+        kind: 'blank_numeric',
+        expected: raw.expected,
+        tolerance: raw.tolerance,
+        ...(typeof raw.expected_unit === 'string' && raw.expected_unit.length > 0
+          ? { expected_unit: raw.expected_unit }
+          : {}),
+      };
+    }
+    if (kind != null && !BLANK_TEXT_ANSWER_KINDS.has(kind)) return answer;
+    if (typeof raw.expected === 'number') return answer;
+    const accepted = nonEmptyStrings(raw.accepted ?? raw.text);
+    if (accepted == null) return answer;
+    return { kind: 'blank_text', accepted };
+  }
+  if (
+    unit.kind === 'free' &&
+    (kind == null || kind === 'free' || kind === 'rubric') &&
+    typeof raw.rubric_md === 'string' &&
+    raw.rubric_md.length > 0
+  ) {
+    return { kind: 'free', rubric_md: raw.rubric_md };
+  }
+  return answer;
+}
+
+function coerceObjectList(
+  value: unknown,
+  unit: QuestionAdmissionSolveUnitT,
+  field: 'equivalent' | 'wrong',
+): unknown {
+  if (!Array.isArray(value) || value.length === 0) return value;
+  if (value.every((item) => item != null && typeof item === 'object' && !Array.isArray(item))) {
+    return value;
+  }
+  if (!value.every((item) => typeof item === 'string' && item.length > 0)) return value;
+  const strings = value as string[];
+  if (unit.kind === 'blank') {
+    return strings.map((text) => ({ text }));
+  }
+  if (unit.kind !== 'select') return value;
+  const universe = new Set(unit.select?.items.map((item) => item.item_id) ?? []);
+  if (field === 'equivalent' && strings.some((item) => !universe.has(item))) return value;
+  if (field === 'wrong' && strings.some((item) => !universe.has(item))) return value;
+  return strings.map((itemId) => ({ item_ids: [itemId] }));
+}
+
+/** Map the shapes real solvers emit onto the typed key. Unmappable values stay put so Zod still rejects them. */
+export function coerceQuestionAdmissionSolveOutput(
+  raw: unknown,
+  units: readonly QuestionAdmissionSolveUnitT[],
+): unknown {
+  if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) return raw;
+  const body = raw as { units?: unknown };
+  if (!Array.isArray(body.units)) return raw;
+  const byId = new Map(units.map((unit) => [unit.scoring_unit_id, unit]));
+  return {
+    ...body,
+    units: body.units.map((unit) => {
+      if (unit == null || typeof unit !== 'object' || Array.isArray(unit)) return unit;
+      const row = { ...(unit as Record<string, unknown>) };
+      const declared =
+        typeof row.scoring_unit_id === 'string' ? byId.get(row.scoring_unit_id) : undefined;
+      if (declared == null) return row;
+      row.answer = coerceAnswer(row.answer, declared);
+      row.equivalent_forms = coerceObjectList(row.equivalent_forms, declared, 'equivalent');
+      row.typical_wrong = coerceObjectList(row.typical_wrong, declared, 'wrong');
+      return row;
+    }),
+  };
+}
+
+function jsonObjectFromModel(raw: unknown): unknown {
+  if (typeof raw !== 'string') return raw;
+  const start = raw.indexOf('{');
+  const end = raw.lastIndexOf('}');
+  if (start === -1 || end < start) return raw;
+  try {
+    return JSON.parse(raw.slice(start, end + 1)) as unknown;
+  } catch {
+    return raw;
+  }
+}
+
+export function parseQuestionAdmissionSolveModelOutput(
+  raw: unknown,
+  units: readonly QuestionAdmissionSolveUnitT[],
+): QuestionAdmissionSolveOutputT {
+  return QuestionAdmissionSolveOutput.parse(
+    coerceQuestionAdmissionSolveOutput(jsonObjectFromModel(raw), units),
+  );
+}
+
 /** 印出答案原文的证据包：仅 cross-check 用，绝不铸键。 */
 export const QuestionAdmissionSourceCrosscheckInput = z.object({
   mode: z.literal('source_crosscheck'),
@@ -187,7 +323,19 @@ Rules:
 - For kind:"free" emit rubric_md: a self-contained marking rubric a grader could apply (advisory only).
 - worked_md: your independent derivation. equivalent_forms: alternative accepted forms not already inside the key (they will be probed and MUST be accepted by the resulting method — only claim true equivalents). typical_wrong: the most common wrong answer forms with a short reason_md; for select give wrong item_id sets, for blank give wrong text.
 - printed_points is supplied by the caller; do not change or invent points.
-Return strict JSON {"units":[{scoring_unit_id,status:"solved"|"unsolvable",reason_md?,answer?,worked_md?,equivalent_forms?,typical_wrong?}]} with one entry per input unit.
+Return strict JSON with one entry per input unit. answer.kind is exactly one of select, blank_text, blank_numeric, free — never text, choice, or option. equivalent_forms and typical_wrong are arrays of objects, never strings.
+{"units":[{
+  "scoring_unit_id":"<the input scoring_unit_id>",
+  "status":"solved",
+  "answer": one of
+    {"kind":"select","item_ids":["<declared item_id>"]},
+    {"kind":"blank_text","accepted":["<reference form>"]},
+    {"kind":"blank_numeric","expected":0,"tolerance":{"kind":"absolute","value":0}},
+    {"kind":"free","rubric_md":"<rubric>"},
+  "equivalent_forms":[{"text":"<blank form>"}] or [{"item_ids":["<declared item_id>"]}],
+  "typical_wrong":[{"text":"<wrong blank>","reason_md":"<why>"}] or [{"item_ids":["<wrong item_id>"],"reason_md":"<why>"}]
+}]}
+Use item_ids, not accepted_item_ids. Omit answer when status is "unsolvable" and set reason_md.
 
 For mode:"source_crosscheck", question contains the same parts/units plus source_answers [{scoring_unit_id, reference_md, locator?}] (the printed answer prose, untrusted evidence — never a key source) and proposals [{scoring_unit_id, answer_summary_md}] (the agreed typed keys, rendered readably). For each proposal compare the meaning of the attributable source answer for that exact unit against the proposed answer. Report conflict if they disagree, unknown if the source is ambiguous, unattributable, unrelated or insufficient, and consistent only when they agree. Do not select, correct or output a key from the source, and never silently resolve a conflict.
 Return only strict JSON {"per_unit":[{scoring_unit_id,status:"consistent"|"conflict"|"unknown",reason_md?}]}.`;
@@ -207,16 +355,23 @@ export const questionAdmissionSolveTaskSpec = {
     prompt: { kind: 'inline', text: PROMPT },
   },
   outputSchema: z.union([QuestionAdmissionSolveOutput, QuestionAdmissionSourceCrosscheckOutput]),
-  parseText: (text, { input }) =>
-    parseTaskOutput(
-      text,
-      'QuestionAdmissionSolveTask',
+  parseText: (text, { input }) => {
+    if (
       typeof input === 'object' &&
-        input != null &&
-        (input as { mode?: string }).mode === 'source_crosscheck'
-        ? QuestionAdmissionSourceCrosscheckOutput
-        : QuestionAdmissionSolveOutput,
-    ),
+      input != null &&
+      (input as { mode?: string }).mode === 'source_crosscheck'
+    ) {
+      return parseTaskOutput(
+        text,
+        'QuestionAdmissionSolveTask',
+        QuestionAdmissionSourceCrosscheckOutput,
+      );
+    }
+    const unitsField =
+      typeof input === 'object' && input != null ? (input as { units?: unknown }).units : undefined;
+    const units = Array.isArray(unitsField) ? (unitsField as QuestionAdmissionSolveUnitT[]) : [];
+    return parseQuestionAdmissionSolveModelOutput(text, units);
+  },
 } satisfies TaskSpec<
   QuestionAdmissionSolveInputT | QuestionAdmissionSourceCrosscheckInputT,
   QuestionAdmissionSolveOutputT | QuestionAdmissionSourceCrosscheckOutputT

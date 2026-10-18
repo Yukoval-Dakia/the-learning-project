@@ -24,13 +24,13 @@ import { parseTaskOutput } from '../../tasks/parse-output';
 import {
   QuestionAdmissionSolveInput,
   type QuestionAdmissionSolveInputT,
-  QuestionAdmissionSolveOutput,
   type QuestionAdmissionSolveOutputT,
   type QuestionAdmissionSolveUnitOutputT,
   type QuestionAdmissionSolveUnitT,
   QuestionAdmissionSourceCrosscheckInput,
   QuestionAdmissionSourceCrosscheckOutput,
   type QuestionAdmissionSourceCrosscheckOutputT,
+  parseQuestionAdmissionSolveModelOutput,
 } from '../../tasks/question-admission-solve';
 // YUK-1445 — Provider/TaskTextResult 经 verify-framework（既有 server/ai
 // 边持有者）取，taskInputHash 经 judge-execution-provenance 的既有复导出
@@ -90,6 +90,16 @@ export interface DualSolveResult {
 export type DualSolveOutcome =
   | { ok: true; result: DualSolveResult }
   | { ok: false; error: string; receipts: AdmissionSolveReceipt[] };
+
+/** Parse failed after the provider returned. The receipt is the paid task run when it can be sealed. */
+class UnparsedSolveError extends Error {
+  readonly receipt?: AdmissionSolveReceipt;
+  constructor(message: string, receipt?: AdmissionSolveReceipt) {
+    super(message);
+    this.name = 'UnparsedSolveError';
+    this.receipt = receipt;
+  }
+}
 
 /** task_run 收据密封：必须存在、成功、kind 匹配、input hash 精确绑定本次请求体。 */
 async function sealTaskRun(
@@ -355,11 +365,27 @@ async function runSolvePass(
     ...(subjectProfile != null ? { subjectProfile } : {}),
     ...(override != null ? { override } : {}),
   });
-  const output =
-    result.structured_output !== undefined
-      ? QuestionAdmissionSolveOutput.parse(result.structured_output)
-      : parseTaskOutput(result.text, QUESTION_ADMISSION_TASK_KIND, QuestionAdmissionSolveOutput);
-  return { output, receipt: await sealTaskRun(db, payload, result, output) };
+  const raw = result.structured_output != null ? result.structured_output : result.text;
+  try {
+    const output = parseQuestionAdmissionSolveModelOutput(raw, payload.units);
+    return { output, receipt: await sealTaskRun(db, payload, result, output) };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    const taskRunId = result.task_run_id;
+    let receipt: AdmissionSolveReceipt | undefined;
+    if (taskRunId != null) {
+      try {
+        receipt = await sealTaskRun(db, payload, result, raw);
+      } catch {
+        receipt = undefined;
+      }
+    }
+    const marked =
+      taskRunId != null && !detail.includes(`task_run_id=${taskRunId}`)
+        ? `${detail};task_run_id=${taskRunId}`
+        : detail;
+    throw new UnparsedSolveError(marked, receipt);
+  }
 }
 
 /**
@@ -394,10 +420,11 @@ export async function runDualSolve(
   try {
     first = await runSolvePass(db, deps.runTask, deps.subjectProfile, payloadA);
   } catch (error) {
+    const receipt = error instanceof UnparsedSolveError ? error.receipt : undefined;
     return {
       ok: false,
       error: `solve_a failed: ${error instanceof Error ? error.message : String(error)}`,
-      receipts,
+      receipts: receipt != null ? [...receipts, receipt] : receipts,
     };
   }
   receipts.push(first.receipt);
@@ -411,10 +438,11 @@ export async function runDualSolve(
       deps.solver2 ?? undefined,
     );
   } catch (error) {
+    const receipt = error instanceof UnparsedSolveError ? error.receipt : undefined;
     return {
       ok: false,
       error: `solve_b failed: ${error instanceof Error ? error.message : String(error)}`,
-      receipts,
+      receipts: receipt != null ? [...receipts, receipt] : receipts,
     };
   }
   receipts.push(second.receipt);
