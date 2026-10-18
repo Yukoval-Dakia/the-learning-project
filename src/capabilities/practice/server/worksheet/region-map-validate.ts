@@ -17,9 +17,10 @@
 //     order 排序后逐位相等）——回收按 option_id 判圈，印错集合即判错题；
 //   - 展示绑定一致：presentation 的 option_list 绑定槽只能出 choice 圈、
 //     blank_input/free_area 只能出 writing 区、点选积木（matching_columns/
-//     break_tap/ordering）与 custom 块绑定槽只能进 web_only_units。旧
-//     revision 无 presentation 时按槽种类推导（single/multi_choice→choice，
-//     text/numeric/formula/open_response→writing，其余→web_only）；
+//     break_tap/ordering）与 custom 块绑定槽只能进 web_only_units。无绑定
+//     信息时按槽种类推导（single/multi_choice→choice；纯选项 select（冻结
+//     option_order）→choice；text/numeric/formula/open_response/blank/free
+//     →writing；其余→web_only）；
 //   - 版式硬约束：A4 尺寸与方向一致、四角标记 TL/TR/BL 实心 BR 空心、
 //     矩形正面积且落在页面毫米内（容差吸收渲染舍入）。
 
@@ -93,19 +94,34 @@ export function presentationBinders(root: PresentationBlockT): Map<string, strin
   return out;
 }
 
-/** 旧 revision（无 presentation / 无绑定积木）按槽种类推导打印面。 */
-function legacySurface(kind: string): SlotPrintSurface {
-  switch (kind) {
+/**
+ * 旧 revision（无 presentation / 无绑定积木）按槽种类推导打印面。
+ * K1 统一槽（YUK-1496/1497）补充：
+ *   - blank：单空本质是书写面 → writing；
+ *   - free：response_class 词表中的自由作答（↔ open_response 槽）→ writing；
+ *   - select：纯选项形（item 无 coordinates/gap）发放时冻结 option_order
+ *     （missing_option_order 强校验；关系/字缝 select 不冻结且多余顺序
+ *     会被 unknown_option_order_slot 拒掉）—— 有冻结顺序即可印选项圈
+ *     → choice，否则 v1 无纸上输入面 → web_only。
+ *     与展示层绑定语义一致：option_list↔choice，
+ *     matching_columns/break_tap/ordering↔web_only。
+ */
+function legacySurface(scope: FrozenIssuanceScope, slotId: string): SlotPrintSurface {
+  switch (scope.slots.get(slotId)?.kind) {
     case 'single_choice':
     case 'multi_choice':
       return 'choice';
+    case 'select':
+      return scope.optionOrder.has(slotId) ? 'choice' : 'web_only';
     case 'text':
     case 'numeric':
     case 'formula':
     case 'open_response':
+    case 'blank':
+    case 'free':
       return 'writing';
     default:
-      // matching / ordering / sentence_breaks / select / table：v1 无纸上输入面。
+      // matching / ordering / sentence_breaks / table：v1 无纸上输入面。
       return 'web_only';
   }
 }
@@ -122,7 +138,7 @@ export function slotSurface(
     if (binder === 'blank_input' || binder === 'free_area') return 'writing';
     return 'web_only';
   }
-  return legacySurface(slot.kind);
+  return legacySurface(scope, slotId);
 }
 
 // ---------- 主校验 ----------
