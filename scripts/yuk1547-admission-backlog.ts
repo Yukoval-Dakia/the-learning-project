@@ -22,6 +22,22 @@
  *   - Unparseable evidence fails closed: ambiguous parse → stop.
  *   - cost_usd=null is UNKNOWN cost (never normalized to zero); unknown runs
  *     count against the hard cap at the configured reserve.
+ *   - Runs are attributed to a send ONLY through the paid receipt's canonical
+ *     ids — `result_json.result.evidence_refs.task_run_ids` (applied /
+ *     receipt_ready) or the trailing `;task_runs=<csv>` marker inside
+ *     `unresolved_reason` (unknown) — never by task_kind + start time. The
+ *     paid row / job is itself bound by (question, revision,
+ *     admission_generation, paid unit); with no bound row or explicit ids the
+ *     send stays unattributed/pending-settlement and foreign-window run cost
+ *     is never written into the question's receipt.
+ *   - The queue gate checks BOTH non-terminal `question_admission_run`
+ *     pg-boss jobs AND unsettled `practice.question-admission-enqueue`
+ *     subscription deliveries (a pending delivery is pre-job paid work). A
+ *     delivery not emitted by this window — matched by persistent event
+ *     identity (event_id recorded at publish, or the payload
+ *     group_id/revision_id/admission_generation triple, never actor_ref or
+ *     time) — blocks the next send. Lookup failures never read as
+ *     queue-empty.
  *   - Already-sent items are explicit: --sent lists ids that must NOT appear in
  *     the manifest (overlap is a hard error — unknown/paid rows never replay).
  *   - Old paid_effect rows and preexisting withheld lifecycle rows are
@@ -70,11 +86,12 @@
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { and, eq, gte, sql } from 'drizzle-orm';
+import { and, eq, gte, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Provider } from '@/ai/task-spec';
 import {
   ADMISSION_FAMILY,
+  admissionJobId,
   lockAdmissionGroup,
 } from '@/capabilities/practice/server/admission/enqueue';
 import { resolveQuestionAdmissionPolicyId } from '@/capabilities/practice/server/admission/run-admission';
@@ -91,6 +108,12 @@ const TASK_KIND = QUESTION_ADMISSION_TASK_KIND;
 const FAMILY = ADMISSION_FAMILY;
 const PAID_UNIT = QUESTION_ADMISSION_PAID_UNIT;
 const ACTOR_REF = 'stage1:backlog_readmission_b_112_20261019';
+// The subscription that turns our publish event into the paid pg-boss job
+// (src/capabilities/practice/manifest.ts — id 'practice.question-admission-enqueue').
+// A non-terminal delivery row is paid work already owed; ALL versions of the
+// subscriber id count (version bumps re-key rows, never settle them).
+const ENQUEUE_SUBSCRIBER_ID = 'practice.question-admission-enqueue';
+const PUBLISH_ACTION = 'experimental:assessment_publish';
 
 // Approved guardrail values for this recovery window (coordination line:
 // per-question >$0.03 stops — the retired $0.01 bound belongs to the sealed
@@ -430,6 +453,10 @@ interface PublishReceipt {
   revision_id: string | null;
   generation: number;
   event_emitted: boolean;
+  /** Transactional-outbox id of the publish event this send emitted — the
+   *  persistent source identity the queue gate owns deliveries by. Null on
+   *  'skipped' (noop publishes emit no event). */
+  event_id: string | null;
 }
 
 async function publishOne(tx: Tx, item: ManifestItem): Promise<PublishReceipt> {
@@ -474,6 +501,7 @@ async function publishOne(tx: Tx, item: ManifestItem): Promise<PublishReceipt> {
     revision_id: lifecycle.current_revision_id,
     generation: lifecycle.scoring_admission_generation,
     event_emitted: result.status === 'admission_updated',
+    event_id: result.status === 'admission_updated' ? result.event_id : null,
   };
 }
 
@@ -488,24 +516,176 @@ interface JobRow {
   retry_count: number;
   created_on: string;
   completed_on: string | null;
+  data: unknown;
 }
 
-async function snapshot(db: Db, groupId: string, sentAtIso: string) {
+interface SubscriptionEvidenceRow {
+  event_id: string;
+  actor_ref: string;
+  event_outcome: string | null;
+  event_created_at: string;
+  admission_generation: string | null;
+  subscriber_version: number | null;
+  delivery_seq: string | null;
+  delivery_status: string | null;
+  attempt_count: number | null;
+  last_error: string | null;
+  discovered_at: string | null;
+  completed_at: string | null;
+}
+
+/** The (question, revision, admission_generation) this send is bound to —
+ *  publish receipt first (actual committed values), manifest item as the
+ *  crash-resume fallback (publishOne asserts the two agree). */
+function expectedSendIdentity(
+  item: ManifestItem,
+  publishReceipt: PublishReceipt | undefined,
+): { revisionId: string; generation: number } {
+  return {
+    revisionId: publishReceipt?.revision_id ?? item.revision_id,
+    generation: publishReceipt?.generation ?? item.generation + 1,
+  };
+}
+
+async function snapshot(
+  db: Db,
+  item: ManifestItem,
+  sentAtIso: string,
+  expected: { revisionId: string; generation: number },
+) {
   const { paid_effect, ai_task_runs } = await import('@/db/schema');
   const paid: PaidRow[] = await db
     .select()
     .from(paid_effect)
-    .where(and(eq(paid_effect.family, FAMILY), eq(paid_effect.entity_id, groupId)));
+    .where(and(eq(paid_effect.family, FAMILY), eq(paid_effect.entity_id, item.id)));
   const jobs = (await db.execute(
-    sql`select id,state,retry_count,created_on,completed_on from pgboss.job where name=${FAMILY} and data->>'question_id'=${groupId} order by created_on`,
+    sql`select id,state,retry_count,created_on,completed_on,data from pgboss.job where name=${FAMILY} and data->>'question_id'=${item.id} order by created_on`,
   )) as unknown as JobRow[];
-  const runs: AiTaskRunRow[] = await db
+  // Candidate window only — forensic evidence for unattributed runs, NEVER
+  // attribution. Canonical linkage comes from the bound paid receipt below.
+  const candidate_runs: AiTaskRunRow[] = await db
     .select()
     .from(ai_task_runs)
     .where(
       and(eq(ai_task_runs.task_kind, TASK_KIND), gte(ai_task_runs.started_at, new Date(sentAtIso))),
     );
-  return { paid, jobs, runs };
+  // This send's publish event → enqueue-subscription delivery, bound by the
+  // payload (group, revision, generation) triple — a triple identifies one
+  // publish act (each publish bumps generation); actor_ref is never used
+  // because it is reused across windows.
+  const subscription = (await db.execute(sql`
+    select e.id as event_id, e.actor_ref, e.outcome as event_outcome,
+           e.created_at as event_created_at,
+           e.payload->>'admission_generation' as admission_generation,
+           d.subscriber_version, d.delivery_seq::text as delivery_seq,
+           d.status as delivery_status, d.attempt_count, d.last_error,
+           d.discovered_at, d.completed_at
+    from event e
+    left join event_subscription_delivery d
+      on d.subscriber_id = ${ENQUEUE_SUBSCRIBER_ID}
+     and d.source_event_id = e.id
+    where e.action = ${PUBLISH_ACTION}
+      and e.payload->>'group_id' = ${item.id}
+      and e.payload->>'revision_id' = ${expected.revisionId}
+      and e.payload->>'admission_generation' = ${String(expected.generation)}
+    order by e.created_at
+  `)) as unknown as SubscriptionEvidenceRow[];
+  return { paid, jobs, candidate_runs, subscription };
+}
+
+/** paid rows bound to THIS send: unit @3 + frozen input carrying the exact
+ *  (group, revision, admission_generation) identity — never the bare group id
+ *  (legacy @1/@2 units and other generations stay out). */
+function boundPaidRows(
+  paid: PaidRow[],
+  item: ManifestItem,
+  expected: { revisionId: string; generation: number },
+): PaidRow[] {
+  return paid.filter((row) => {
+    if (row.unit !== PAID_UNIT) return false;
+    const input = row.input_json as {
+      group_id?: unknown;
+      revision_id?: unknown;
+      admission_generation?: unknown;
+    } | null;
+    return (
+      input?.group_id === item.id &&
+      input?.revision_id === expected.revisionId &&
+      input?.admission_generation === expected.generation
+    );
+  });
+}
+
+/** The producer's canonical failure-side run list: `markPaidEffectUnknown`
+ *  appends `;task_runs=<csv>` at the END of unresolved_reason (see
+ *  question_admission_run.ts markPaidEffectUnknown calls). lastIndexOf is the
+ *  producer marker — it is appended after any message text. */
+function parseTaskRunsMarker(text: string | null | undefined): {
+  present: boolean;
+  ids: string[];
+} {
+  if (!text) return { present: false, ids: [] };
+  const markerAt = text.lastIndexOf('task_runs=');
+  if (markerAt < 0) return { present: false, ids: [] };
+  const csv = text
+    .slice(markerAt + 'task_runs='.length)
+    .split(';')[0]
+    .trim();
+  if (csv === '') return { present: true, ids: [] };
+  return {
+    present: true,
+    ids: csv
+      .split(',')
+      .map((id) => id.trim())
+      .filter((id) => id.length > 0),
+  };
+}
+
+const paidReceiptEvidence = z
+  .object({
+    result: z
+      .object({
+        evidence_refs: z.object({ task_run_ids: z.array(z.string()) }).passthrough(),
+      })
+      .passthrough(),
+  })
+  .passthrough();
+
+/** Canonical task-run ids for ONE bound paid row — applied/receipt_ready read
+ *  result_json.result.evidence_refs.task_run_ids (AdmissionResultReceipt);
+ *  unknown reads the trailing task_runs= marker. Every extraction problem is
+ *  an issue, never silent. */
+function boundRunIds(row: PaidRow): {
+  sources: { source: 'result_json' | 'unresolved_reason'; ids: string[] }[];
+  issues: string[];
+} {
+  const sources: { source: 'result_json' | 'unresolved_reason'; ids: string[] }[] = [];
+  const issues: string[] = [];
+  const rowRef = `${row.unit}/${row.input_digest}`;
+  if (row.result_json != null) {
+    const parsed = paidReceiptEvidence.safeParse(row.result_json);
+    if (!parsed.success) {
+      issues.push(`${rowRef} result_json evidence_refs.task_run_ids unparseable`);
+    } else {
+      sources.push({ source: 'result_json', ids: parsed.data.result.evidence_refs.task_run_ids });
+    }
+  }
+  if (row.state === 'unknown') {
+    const marker = parseTaskRunsMarker(row.unresolved_reason);
+    if (!marker.present) {
+      issues.push(`${rowRef} unknown unresolved_reason has no task_runs= marker`);
+    } else {
+      const malformed = marker.ids.filter((id) => !/^[a-z0-9]+$/i.test(id));
+      if (malformed.length > 0) {
+        issues.push(`${rowRef} task_runs= carries malformed ids: ${malformed.join(',')}`);
+      }
+      sources.push({
+        source: 'unresolved_reason',
+        ids: marker.ids.filter((id) => /^[a-z0-9]+$/i.test(id)),
+      });
+    }
+  }
+  return { sources, issues };
 }
 
 const TERMINAL_JOB_STATES = new Set(['completed', 'failed', 'cancelled']);
@@ -603,6 +783,199 @@ async function checkInvariants(
     }
   }
   return violations;
+}
+
+// ─── enqueue-subscription queue gate ────────────────────────────────────────
+
+/** Persistent event identity of THIS window's sends: event ids recorded in
+ *  publish receipts, plus the payload (group, revision, generation) triple —
+ *  unique per publish act — for receipts written before event_id existed.
+ *  actor_ref is deliberately never part of the match. */
+interface OwnedPublishEvents {
+  eventIds: Set<string>;
+  tripleKeys: Set<string>;
+}
+
+const publishTripleKey = (groupId: string, revisionId: string, generation: number) =>
+  `${groupId}|${revisionId}|${generation}`;
+
+const publishFileRecord = z
+  .object({
+    group_id: z.string(),
+    revision_id: z.string().nullable(),
+    generation: z.number().int().nonnegative(),
+    event_id: z.string().nullable().optional(),
+  })
+  .passthrough();
+
+/** The minimal owned-event set, built from the window's own artifacts:
+ *  publish-<id>.json files plus the embedded publish receipt inside
+ *  question-<id>.json (crash/resume coverage). */
+async function windowOwnedEvents(outDir: string): Promise<OwnedPublishEvents> {
+  const eventIds = new Set<string>();
+  const tripleKeys = new Set<string>();
+  for (const name of await readdir(outDir)) {
+    const isPublish = /^publish-[^/]+\.json$/.test(name);
+    const isReceipt = /^question-[^/]+\.json$/.test(name);
+    if (!isPublish && !isReceipt) continue;
+    const parsed: unknown = await readJson(join(outDir, name));
+    const candidates = isPublish ? [parsed] : [(parsed as { publish?: unknown }).publish];
+    for (const candidate of candidates) {
+      const record = publishFileRecord.safeParse(candidate);
+      if (!record.success) continue;
+      if (record.data.event_id) eventIds.add(record.data.event_id);
+      if (record.data.revision_id !== null) {
+        tripleKeys.add(
+          publishTripleKey(record.data.group_id, record.data.revision_id, record.data.generation),
+        );
+      }
+    }
+  }
+  return { eventIds, tripleKeys };
+}
+
+interface GateDeliveryRow {
+  subscriber_version: number;
+  source_event_id: string;
+  status: string;
+  delivery_seq: string;
+  attempt_count: number;
+  next_attempt_at: string | null;
+  claim_lease_until: string | null;
+  last_error: string | null;
+  discovered_at: string;
+  event_id: string | null;
+  actor_ref: string | null;
+  event_outcome: string | null;
+  event_created_at: string | null;
+  group_id: string | null;
+  revision_id: string | null;
+  admission_generation: string | null;
+}
+
+interface GateEventRow {
+  event_id: string;
+  actor_ref: string | null;
+  event_outcome: string | null;
+  event_created_at: string;
+  group_id: string | null;
+  revision_id: string | null;
+  admission_generation: string | null;
+}
+
+const GATE_EVIDENCE_LIMIT = 30;
+
+/**
+ * Queue-empty gate — non-terminal pgboss jobs AND unsettled enqueue
+ * deliveries (incl. eligible publish events not yet discovered into delivery
+ * rows). Ownership resolves through persistent event identity only:
+ * deliveries/events emitted by THIS window don't block; anything else does —
+ * a row whose source event can't be resolved is foreign, and a failing query
+ * aborts the driver instead of reading as queue-empty.
+ */
+async function admissionQueueGate(
+  db: Db,
+  owned: OwnedPublishEvents,
+): Promise<{ clear: boolean; evidence: Record<string, unknown> }> {
+  const pendingRows = (await db.execute(
+    sql`select count(*)::int as n from pgboss.job where name=${FAMILY} and state in ('created','retry','active')`,
+  )) as unknown as { n: number }[];
+  const pendingJobs = pendingRows[0]?.n ?? 0;
+  const isOwned = (
+    eventId: string,
+    groupId: string | null,
+    revisionId: string | null,
+    generation: string | null,
+  ) =>
+    owned.eventIds.has(eventId) ||
+    (groupId !== null &&
+      revisionId !== null &&
+      generation !== null &&
+      owned.tripleKeys.has(publishTripleKey(groupId, revisionId, Number(generation))));
+  const deliveries = (await db.execute(sql`
+    select d.subscriber_version, d.source_event_id, d.status,
+           d.delivery_seq::text as delivery_seq, d.attempt_count,
+           d.next_attempt_at, d.claim_lease_until, d.last_error, d.discovered_at,
+           e.id as event_id, e.actor_ref, e.outcome as event_outcome,
+           e.created_at as event_created_at,
+           e.payload->>'group_id' as group_id,
+           e.payload->>'revision_id' as revision_id,
+           e.payload->>'admission_generation' as admission_generation
+    from event_subscription_delivery d
+    left join event e
+      on e.id = d.source_event_id and e.dispatch_seq = d.source_dispatch_seq
+    where d.subscriber_id = ${ENQUEUE_SUBSCRIBER_ID}
+      and d.status not in ('bootstrap_skipped','succeeded','skipped','dead_letter')
+    order by d.delivery_seq
+  `)) as unknown as GateDeliveryRow[];
+  // Upstream of delivery rows: eligible publish events the dispatcher has not
+  // discovered yet WILL become deliveries — the same pre-job paid-work hazard
+  // the 2026-10-18 incident rode through (events committed minutes before the
+  // jobs existed). The eligibility filter mirrors enqueue.ts's skip gates; an
+  // event failing them can never create a job and is not unsettled work.
+  const undiscovered = (await db.execute(sql`
+    select e.id as event_id, e.actor_ref, e.outcome as event_outcome,
+           e.created_at as event_created_at,
+           e.payload->>'group_id' as group_id,
+           e.payload->>'revision_id' as revision_id,
+           e.payload->>'admission_generation' as admission_generation
+    from event e
+    where e.action = ${PUBLISH_ACTION}
+      and e.outcome = 'success'
+      and e.actor_ref <> 'practice:question_admission'
+      and e.payload->>'admission' = 'withheld'
+      and not exists (
+        select 1 from event_subscription_delivery d
+        where d.subscriber_id = ${ENQUEUE_SUBSCRIBER_ID}
+          and d.source_event_id = e.id
+      )
+    order by e.dispatch_seq
+  `)) as unknown as GateEventRow[];
+  const deliveryEvidence = deliveries.map((row) => ({
+    source_event_id: row.source_event_id,
+    subscriber_version: row.subscriber_version,
+    delivery_seq: row.delivery_seq,
+    status: row.status,
+    attempt_count: row.attempt_count,
+    next_attempt_at: row.next_attempt_at,
+    claim_lease_until: row.claim_lease_until,
+    last_error: row.last_error,
+    discovered_at: row.discovered_at,
+    event:
+      row.event_id === null
+        ? null
+        : {
+            id: row.event_id,
+            actor_ref: row.actor_ref,
+            outcome: row.event_outcome,
+            created_at: row.event_created_at,
+            group_id: row.group_id,
+            revision_id: row.revision_id,
+            admission_generation: row.admission_generation,
+          },
+    owned: isOwned(row.source_event_id, row.group_id, row.revision_id, row.admission_generation),
+  }));
+  const foreignDeliveries = deliveryEvidence.filter((row) => !row.owned);
+  const undiscoveredEvidence = undiscovered.map((row) => ({
+    ...row,
+    owned: isOwned(row.event_id, row.group_id, row.revision_id, row.admission_generation),
+  }));
+  const foreignUndiscovered = undiscoveredEvidence.filter((row) => !row.owned);
+  const evidence = {
+    pending_jobs: pendingJobs,
+    nonterminal_deliveries: deliveries.length,
+    foreign_deliveries: foreignDeliveries.length,
+    undiscovered_eligible_events: undiscovered.length,
+    foreign_undiscovered_events: foreignUndiscovered.length,
+    deliveries: foreignDeliveries.slice(0, GATE_EVIDENCE_LIMIT),
+    undiscovered_events: foreignUndiscovered.slice(0, GATE_EVIDENCE_LIMIT),
+    owned_event_ids: [...owned.eventIds],
+    owned_triple_count: owned.tripleKeys.size,
+  };
+  return {
+    clear: pendingJobs === 0 && foreignDeliveries.length === 0 && foreignUndiscovered.length === 0,
+    evidence,
+  };
 }
 
 // ─── receipt io ─────────────────────────────────────────────────────────────
@@ -709,8 +1082,31 @@ interface ItemReceipt {
    *  recorded separately: unknown cost is never merged into known spend. */
   cumulative_known_usd: number;
   cumulative_reserve_usd: number;
+  /** Canonical-attributed runs ONLY (ids from the bound paid receipt) — the
+   *  only runs ever charged to this question. */
   runs: (AiTaskRunRow & { http_status?: number; http_error?: HttpEvidence })[];
+  /** Window-candidate runs NOT canonically linked to this send — forensics
+   *  only, never charged, never evidence of completion. */
+  unattributed_runs: (AiTaskRunRow & { http_status?: number; http_error?: HttpEvidence })[];
   jobs: JobRow[];
+  /** This send's publish event → enqueue-subscription delivery evidence —
+   *  why a settle_timeout waited (pending delivery ⇒ pre-job paid work). */
+  subscription: SubscriptionEvidenceRow[];
+  /** The (revision, generation, unit) identity this send settled against and
+   *  where its canonical task-run ids came from. */
+  attribution: {
+    expected_revision_id: string;
+    expected_admission_generation: number;
+    expected_job_id: string;
+    bound_paid_rows: {
+      unit: string;
+      entity_revision: string;
+      input_digest: string;
+      state: string;
+    }[];
+    run_id_sources: { source: 'result_json' | 'unresolved_reason'; ids: string[] }[];
+    issues: string[];
+  };
   alarms: string[];
   settle_timeout: boolean;
   thresholds: Thresholds;
@@ -922,6 +1318,21 @@ async function drive(opts: {
     }
   }
 
+  // Window-open queue gate — before ANY send (incl. resumed windows): a
+  // foreign non-terminal delivery is pre-job paid work already owed. The
+  // 2026-10-18 incident's sourcing_web deliveries sat exactly here while the
+  // jobs-only check passed.
+  {
+    const owned = await windowOwnedEvents(opts.outDir);
+    const gate = await admissionQueueGate(db, owned);
+    if (!gate.clear) {
+      await writeStop(opts.outDir, 'queue_not_empty', { at: 'window_open', ...gate.evidence });
+      throw new Error(
+        `window-open queue gate: foreign unsettled admission work — see ${stopPath(opts.outDir)}`,
+      );
+    }
+  }
+
   const batchSize = opts.thresholds.batchSize;
   const batches = Math.ceil(manifest.length / batchSize);
   const batchNumbers =
@@ -1003,13 +1414,16 @@ async function drive(opts: {
         const intent = await readJson<{ sent_at: string }>(intentFile);
         sentAt = intent.sent_at;
       } else {
-        // Queue-empty gate before the next paid send.
-        const pendingRows = (await db.execute(
-          sql`select count(*)::int as n from pgboss.job where name=${FAMILY} and state in ('created','retry','active')`,
-        )) as unknown as { n: number }[];
-        const pending = pendingRows[0] ?? { n: 0 };
-        if (pending.n > 0) {
-          await writeStop(opts.outDir, 'queue_not_empty', { batch: batchN, pending: pending.n });
+        // Queue-empty gate before the next paid send: non-terminal jobs AND
+        // unsettled enqueue-subscription deliveries not emitted by this
+        // window — a pending delivery is paid work already owed.
+        const gate = await admissionQueueGate(db, await windowOwnedEvents(opts.outDir));
+        if (!gate.clear) {
+          await writeStop(opts.outDir, 'queue_not_empty', {
+            batch: batchN,
+            group_id: item.id,
+            ...gate.evidence,
+          });
           stopped = 'queue_not_empty';
           break;
         }
@@ -1072,20 +1486,47 @@ async function drive(opts: {
         );
       }
 
-      // ── settle: poll DB until paid_effect + jobs are terminal ──
+      // ── settle: poll DB until THIS send's paid row + job are terminal ──
+      // Identity, not group history: the paid row is bound by (unit, frozen
+      // input revision + admission_generation) and the job by
+      // (question, revision, expected generation) — the job id is the same
+      // deterministic admissionJobId the enqueue handler derives.
+      const expected = expectedSendIdentity(item, publishReceipt);
+      const expectedJobId = admissionJobId(
+        item.id,
+        expected.revisionId,
+        item.integrity_digest,
+        expected.generation,
+      );
+      const jobsForThisSend = (jobs: JobRow[]) =>
+        jobs.filter((job) => {
+          const data = job.data as {
+            question_id?: unknown;
+            revision_id?: unknown;
+            expected_admission_generation?: unknown;
+          } | null;
+          return (
+            job.id === expectedJobId ||
+            (data?.question_id === item.id &&
+              data?.revision_id === expected.revisionId &&
+              data?.expected_admission_generation === expected.generation)
+          );
+        });
       const settleDeadline = Date.now() + opts.thresholds.settleTimeoutMs;
       let settled = false;
-      let last = await snapshot(db, item.id, sentAt);
+      let last = await snapshot(db, item, sentAt, expected);
       while (Date.now() < settleDeadline) {
-        last = await snapshot(db, item.id, sentAt);
+        last = await snapshot(db, item, sentAt, expected);
         await writeFile(
           livePath(opts.outDir, item.id),
           JSON.stringify({ at: new Date().toISOString(), ...last }, null, 2),
         );
+        const boundRows = boundPaidRows(last.paid, item, expected);
         const paidTerminal =
-          last.paid.length > 0 && last.paid.every((row) => TERMINAL_PAID_STATES.has(row.state));
+          boundRows.length > 0 && boundRows.every((row) => TERMINAL_PAID_STATES.has(row.state));
+        const sendJobs = jobsForThisSend(last.jobs);
         const jobsTerminal =
-          last.jobs.length > 0 && last.jobs.every((job) => TERMINAL_JOB_STATES.has(job.state));
+          sendJobs.length > 0 && sendJobs.every((job) => TERMINAL_JOB_STATES.has(job.state));
         if (paidTerminal && jobsTerminal) {
           settled = true;
           break;
@@ -1093,15 +1534,60 @@ async function drive(opts: {
         await new Promise((resolve) => setTimeout(resolve, opts.thresholds.pollMs));
       }
 
-      const runs = last.runs.map((run) => {
+      const enrichRun = (run: AiTaskRunRow) => {
         const http = parseProviderHttpError(run.error_message);
         return {
           ...run,
           http_error: http,
           ...(http.kind === 'parsed' ? { http_status: http.http_status } : {}),
         };
-      });
-      const paidRow = last.paid.find((row) => row.unit === PAID_UNIT) ?? last.paid[0];
+      };
+      // Canonical run ids from THIS send's bound paid rows only — applied /
+      // receipt_ready carry result_json.result.evidence_refs.task_run_ids;
+      // unknown carries the trailing ;task_runs=<csv> marker. With no bound
+      // row / no explicit ids the send stays unattributed/pending-settlement:
+      // it never masquerades as $0-paid or complete, and foreign-window runs
+      // are never written into this question's cost.
+      const boundRows = boundPaidRows(last.paid, item, expected);
+      const runIdSources: { source: 'result_json' | 'unresolved_reason'; ids: string[] }[] = [];
+      const attributionIssues: string[] = [];
+      for (const row of boundRows) {
+        const extracted = boundRunIds(row);
+        runIdSources.push(...extracted.sources);
+        attributionIssues.push(...extracted.issues);
+      }
+      const canonicalIds = new Set(runIdSources.flatMap((entry) => entry.ids));
+      const { ai_task_runs } = await import('@/db/schema');
+      const attributedRows =
+        canonicalIds.size > 0
+          ? await db
+              .select()
+              .from(ai_task_runs)
+              .where(inArray(ai_task_runs.id, [...canonicalIds]))
+          : [];
+      const foundIds = new Set(attributedRows.map((run) => run.id));
+      const alarms: string[] = [];
+      for (const id of canonicalIds) {
+        if (!foundIds.has(id)) alarms.push(`attribution:run_row_missing:${id}`);
+      }
+      for (const run of attributedRows) {
+        if (run.task_kind !== TASK_KIND) {
+          alarms.push(`attribution:run_task_kind_mismatch:${run.id}:${run.task_kind}`);
+        }
+        if (run.started_at.getTime() < Date.parse(sentAt)) {
+          alarms.push(`attribution:run_predates_send:${run.id}`);
+        }
+      }
+      for (const issue of attributionIssues) alarms.push(`attribution:${issue}`);
+      const runs = attributedRows.map(enrichRun);
+      const unattributedRuns = last.candidate_runs
+        .filter((run) => !canonicalIds.has(run.id))
+        .map(enrichRun);
+      const paidRow =
+        boundRows.find((row) => TERMINAL_PAID_STATES.has(row.state)) ??
+        boundRows[0] ??
+        last.paid.find((row) => row.unit === PAID_UNIT) ??
+        last.paid[0];
       // The paid-effect failure detail lives in unresolved_reason (not
       // last_error — the sealed window's wrong-field read is why the first
       // round summarized null reasons).
@@ -1115,7 +1601,6 @@ async function drive(opts: {
       const unknownCostRunIds = runs.filter((run) => run.cost_usd === null).map((run) => run.id);
       const costKnownUsd = runs.reduce((sum, run) => sum + (run.cost_usd ?? 0), 0);
 
-      const alarms: string[] = [];
       for (const run of runs) {
         if (
           run.http_error.kind === 'parsed' &&
@@ -1176,7 +1661,22 @@ async function drive(opts: {
         cumulative_known_usd: cumulativeKnown,
         cumulative_reserve_usd: cumulativeReserveUsd,
         runs,
+        unattributed_runs: unattributedRuns,
         jobs: last.jobs,
+        subscription: last.subscription,
+        attribution: {
+          expected_revision_id: expected.revisionId,
+          expected_admission_generation: expected.generation,
+          expected_job_id: expectedJobId,
+          bound_paid_rows: boundRows.map((row) => ({
+            unit: row.unit,
+            entity_revision: row.entity_revision,
+            input_digest: row.input_digest,
+            state: row.state,
+          })),
+          run_id_sources: runIdSources,
+          issues: attributionIssues,
+        },
         alarms,
         settle_timeout: !settled,
         thresholds: opts.thresholds,
