@@ -1,9 +1,11 @@
 /* CollapsibleList toggle (owner 2026-10-18 14:05; design doc L5).
    One quiet text button under a folded list: meta size, tertiary ink, no fill until hover.
    Tokens: ui-next (--un-*) inside [data-ui-next], loom tokens elsewhere (T1).
-   Motion only on change (M1): the chevron turns when the list opens or folds; nothing else moves. */
+   Motion only on change (M1): the chevron turns when the list opens or folds; nothing else moves.
+   `button.cl-toggle` (0,1,1) so it outranks ui-next's `[data-ui-next] :where(button)` reset
+   (0,1,0), which would otherwise hand the toggle the body font size and ink. */
 
-.cl-toggle {
+button.cl-toggle {
   display: inline-flex;
   align-items: center;
   gap: var(--un-sp-1, var(--s-1));
@@ -24,7 +26,7 @@
     color var(--un-t-feedback, var(--dur-fast)) ease-out,
     background-color var(--un-t-feedback, var(--dur-fast)) ease-out;
 }
-.cl-toggle:hover {
+button.cl-toggle:hover {
   color: var(--un-text-2, var(--ink-2));
   background: var(--un-bg-hover, var(--paper-sunk));
 }
