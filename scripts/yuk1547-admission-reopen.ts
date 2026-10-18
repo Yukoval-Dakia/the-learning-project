@@ -92,19 +92,39 @@ async function routing(): Promise<{
   solver2Model: string | undefined;
   policy: string | undefined;
   config_db_layer: string;
+  config_hydration?: { outcome: 'loaded' | 'unchanged'; epoch: number };
 }> {
   const policyPin = process.env.QUESTION_ADMISSION_POLICY_ID?.trim();
   if (policyPin?.endsWith('@1') || policyPin?.endsWith('@2')) {
     throw new Error('Remove obsolete QUESTION_ADMISSION_POLICY_ID @1/@2 pin before deploy');
   }
   let configDbLayer = 'env-only(DATABASE_URL unset)';
+  let configHydration: { outcome: 'loaded' | 'unchanged'; epoch: number } | undefined;
   if (process.env.DATABASE_URL) {
     const { db } = await import('@/db/client');
     try {
       const { hydrateConfigFromDb } = await import('@/server/config/hydrate');
-      await hydrateConfigFromDb(db);
+      const report = await hydrateConfigFromDb(db);
+      // Hydration is deliberately never-throws for app/worker refresh. A
+      // failed DB read returns a report, so catch alone cannot guard a paid
+      // preflight against falling back to an empty or last-good snapshot.
+      if (report.outcome !== 'loaded' && report.outcome !== 'unchanged') {
+        throw new Error(`Config hydration did not succeed: ${report.outcome}`);
+      }
+      const rejectedRouting = report.skipped.filter(
+        ({ key }) =>
+          key.startsWith(`task.${QUESTION_ADMISSION_TASK_KIND}.`) ||
+          key === 'lane.global.provider' ||
+          key === 'lane.global.model',
+      );
+      if (rejectedRouting.length > 0) {
+        throw new Error(
+          `Config hydration rejected routing keys: ${rejectedRouting.map(({ key, reason }) => `${key} (${reason})`).join(', ')}`,
+        );
+      }
       closeHydratedDb = () => db.$client.end();
       configDbLayer = 'hydrated';
+      configHydration = { outcome: report.outcome, epoch: report.epoch };
     } catch (error) {
       await db.$client.end().catch(() => {});
       throw new Error(
@@ -167,11 +187,13 @@ async function routing(): Promise<{
     solver2Model,
     policy: process.env.QUESTION_ADMISSION_POLICY_ID,
     config_db_layer: configDbLayer,
+    ...(configHydration ? { config_hydration: configHydration } : {}),
   };
 }
 
 async function preflight(path: string) {
-  const { routes, solver2Provider, solver2Model, policy, config_db_layer } = await routing();
+  const { routes, solver2Provider, solver2Model, policy, config_db_layer, config_hydration } =
+    await routing();
   // Refuse an existing receipt BEFORE any request. Failed attempts also
   // leave a receipt; this command never retries, overwrites, or reopens a claim.
   const file = await open(path, 'wx');
@@ -188,6 +210,7 @@ async function preflight(path: string) {
     schema_hash: hash(schema),
     outside_paid_effect: true,
     config_db_layer,
+    config_hydration,
     probes: [] as Record<string, unknown>[],
   };
   const probes = receipt.probes as Record<string, unknown>[];
