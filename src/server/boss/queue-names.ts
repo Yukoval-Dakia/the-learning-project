@@ -13,3 +13,10 @@
  * (`copilot_nudge_evaluate.queue.unit.test.ts` asserts it resolves to a registered handler).
  */
 export const COPILOT_NUDGE_EVALUATE_QUEUE = 'copilot_nudge_evaluate';
+
+/**
+ * YUK-1529 — server-side worksheet export render queue. Producer
+ * (worksheet-export-route create/replay) and the practice manifest job decl
+ * share this constant so the enqueue can't silently target a worker-less queue.
+ */
+export const WORKSHEET_RENDER_QUEUE = 'worksheet_render';

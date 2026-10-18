@@ -5,6 +5,10 @@ import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
 
 const optionalDbosLoggers = ['winston', 'winston-transport'];
+// YUK-1529 — playwright-core is only loaded by the pg-boss worker (esbuild
+// external + flat-installed in the worker image); the Start bundle must not
+// inline it or its deep chromium-bidi requires.
+const serverBuildExternals = [...optionalDbosLoggers, 'playwright-core'];
 
 export default defineConfig({
   root: resolve(import.meta.dirname, '../..'),
@@ -20,9 +24,9 @@ export default defineConfig({
   ],
   resolve: { alias: { '@': resolve(import.meta.dirname, '../../src') } },
   // Keep the fetch-style server self-contained for the existing Node/Compose image.
-  ssr: { noExternal: true, external: optionalDbosLoggers },
+  ssr: { noExternal: true, external: serverBuildExternals },
   environments: {
-    ssr: { build: { rolldownOptions: { external: optionalDbosLoggers } } },
+    ssr: { build: { rolldownOptions: { external: serverBuildExternals } } },
   },
   build: { outDir: 'dist/start' },
 });
