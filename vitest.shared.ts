@@ -288,6 +288,7 @@ export const dbTestInclude = [
   'src/server/proposals/edge-decide-advisory-lock.db.test.ts',
   'src/server/proposals/retract-clock.db.test.ts',
   'src/server/proposals/signals.test.ts',
+  'src/server/questions/edit-submit.db.test.ts',
   'src/server/questions/publisher.db.test.ts',
   'src/server/questions/question-generation-grounding.db.test.ts',
   'src/server/questions/write-restore.db.test.ts',

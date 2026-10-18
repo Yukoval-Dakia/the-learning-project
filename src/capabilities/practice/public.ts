@@ -70,7 +70,14 @@ export { isLiveQuestionReference } from './server/live-question-reference';
 // seam so server→capability stays public (not deep).
 export { SYNTHETIC_SUBJECT_ROOT_RE } from './server/placement-scope';
 export { loadAttemptQuestionSnapshot } from './server/question-evidence-snapshot';
-export { mergeExactQuestionDuplicateKnowledgeIds } from './server/quiz/content-fingerprint';
+export {
+  DEDUP_OVERLAP_THRESHOLD,
+  maxNgramOverlap,
+} from './server/question-supply/sourced-dedup';
+export {
+  canonicalQuestionContentHash,
+  mergeExactQuestionDuplicateKnowledgeIds,
+} from './server/quiz/content-fingerprint';
 export { resolveSolveOverrideFromEnv } from './server/quiz/solve-lane';
 export {
   runQuestionContentValidation,
@@ -358,10 +365,13 @@ export {
   MEM0_PRIOR_ITEM_CHAR_CAP,
   SELECTION_ORCHESTRATOR_CANDIDATE_CAP,
 } from './server/selection-constants';
+export { editQuestionTool } from './server/tools/edit-question';
 export { jyeooFetchCandidatesTool } from './server/tools/jyeoo-fetch-candidates';
 // YUK-892 — due-review queue reader for non-LLM read paths (today summary).
 export { executeGetReviewDue } from './server/tools/question-context';
-export { storeSourcedQuestionTool } from './server/tools/store-sourced-question';
+export { submitQuestionTool } from './server/tools/submit-question';
+// YUK-1468 — `store_sourced_question` 工具面已并入 submit_question（旧名不再
+// 注册/授权）；函数级 compat 仍在 ./server/tools/store-sourced-question。
 // YUK-1062 — task composition uses the narrow task-public entry directly.
 export { practiceTaskSpecs } from './task-public';
 export const submitReviewAnswer: typeof import('./server/review-operation').submitReviewAnswer =

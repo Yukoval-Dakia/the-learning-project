@@ -35,7 +35,7 @@ import {
   jyeooBackfillSpawnTimeoutMs,
   matchJyeooKnowledgeHints,
   runJyeooFetchCandidates,
-  storeSourcedQuestionTool,
+  submitQuestionTool,
 } from '@/capabilities/practice/public';
 import { db } from '@/db/client';
 import type { ToolContext } from '@/kernel/tools/types';
@@ -242,7 +242,8 @@ async function main(): Promise<void> {
       attributionState = 'coarse';
     }
 
-    const stored = await storeSourcedQuestionTool.execute(ctx, {
+    const stored = await submitQuestionTool.execute(ctx, {
+      request_id: `jyeoo-backfill-${candidate.candidateId}`,
       source_route: 'jyeoo_fetch',
       candidate: {
         candidate_id: candidate.candidateId,
@@ -259,15 +260,16 @@ async function main(): Promise<void> {
       attribution_state: attributionState,
       subject_id: args.subjectId,
     });
-    if (stored.status === 'inserted') {
+    if (stored.status === 'pending' || stored.status === 'admitted') {
       funnel.inserted += 1;
       console.log(
         `  [inserted] ${stored.question_id} · ${attributionState} · KC=${knowledgeIds.length} · verify=${stored.verify_enqueued ? 'ok' : 'pending'}`,
       );
     } else {
       funnel.rejected += 1;
-      funnel.byReason[stored.reason] = (funnel.byReason[stored.reason] ?? 0) + 1;
-      console.log(`  [rejected:${stored.reason}] ${stored.detail}`);
+      const reason = stored.reason ?? stored.status;
+      funnel.byReason[reason] = (funnel.byReason[reason] ?? 0) + 1;
+      console.log(`  [rejected:${reason}] ${stored.detail ?? ''}`);
     }
   }
   console.log(`[jyeoo:backfill] 完成: ${JSON.stringify(funnel)}`);
