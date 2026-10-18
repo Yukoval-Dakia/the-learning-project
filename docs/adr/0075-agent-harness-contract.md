@@ -5,9 +5,9 @@ status: accepted
 # ADR-0075 — Agent harness 契约：工作单、边界契约、领域写入者、需求门控
 
 **Status:** Accepted（设计方向，2026-10-18，含 owner 当日 19:48 三项决定与 20:20 协调线对照补充 §10）；**尚未实施**——本文是决策落档，不代表任何软件已实现；owner 已批决定与实际实现状态始终分开陈述。
-**Decision source:** owner 2026-10-18「原地打转需要治本」「harness的优化是个系统工程，不是一个guard可解决。没人学习时后台自适应降频。你给的修复票治标不治本」；同日 19:48 原话「**两件都允许 空闲按推荐 主席层也现在做**」（设计稿 §9）；同日 20:20 协调线并入对照补充（设计稿 §10，含 owner 20:11「工具没做统一吗」、20:16 skills/MCP/按需加载指示）。**normative 真相源（仓库外绝对路径）**：`/Volumes/YukovalSBak/yukoval-projects/tlp-status/discussions/agent-harness-redesign.md`（SHA256 `81ae5f55c379f0c933d6c066dbdd0c6562de8c792502af5560e8eada55c52a4f`，615 行，代码基准 `origin/main` @ `9ce433fa2`）。**§9 与 §10 是最新决定，优先级高于正文中的推荐/推迟表述；§10 对 §2/§5 的修订以 §10 条文为准**（本文已消除相互矛盾的有效门槛）；本文与设计稿冲突处，以设计稿（含 §9、§10）为准。
+**Decision source:** owner 2026-10-18「原地打转需要治本」「harness的优化是个系统工程，不是一个guard可解决。没人学习时后台自适应降频。你给的修复票治标不治本」；同日 19:48 原话「**两件都允许 空闲按推荐 主席层也现在做**」（设计稿 §9）；同日 20:20 协调线并入对照补充、20:23 owner 指示 auto-compact（设计稿 §10，含 owner 20:11「工具没做统一吗」、20:16 skills/MCP/按需加载、20:23「auto-compact 也要做，先看开源」）。**normative 真相源（仓库外绝对路径）**：`/Volumes/YukovalSBak/yukoval-projects/tlp-status/discussions/agent-harness-redesign.md`（SHA256 `3b82bd872f16bef1c3cd6111a7538983e0ca9158bc8f48f9761c31df4e820ef5`，622 行，代码基准 `origin/main` @ `9ce433fa2`）。**§9 与 §10 是最新决定，优先级高于正文中的推荐/推迟表述；§10 对 §2/§5 的修订以 §10 条文为准**（本文已消除相互矛盾的有效门槛）；本文与设计稿冲突处，以设计稿（含 §9、§10）为准。
 **Tracking:** [YUK-1559](https://linear.app/yukoval-studios/issue/YUK-1559)（本文档落档）；受处置票据见「票据处置」。
-**Related:** [ADR-0004](0004-pattern-c-two-type-agent-architecture.md)、[ADR-0039](0039-single-orchestrator-action-strength-tiers.md)（A/B/C 出手档）、[ADR-0053](0053-copilot-durable-subagent-mailbox.md)、[ADR-0056](0056-native-task-tool-result-into-live-parent.md)、[ADR-0065](0065-pi-execution-and-conversation-replay.md)、[ADR-0067](0067-teaching-team-whiteboard-and-event-meetings.md)（**Amendment 2026-10-18**，随本文生效）、[ADR-0069](0069-single-supply-agent.md)、[ADR-0072](0072-question-bank-agent-tools.md)；YUK-572 spec `docs/design/2026-07-06-yuk572-agent-meeting-lane-spec.md`；TT 草案（ADR-0067 指定的细节真相源）；工具面清单 `tlp-status/discussions/agent-tools-inventory.md`（INV）；运行审查证据 `tlp-status/review/loom-runs-20261018/`（summary / AR / IR / DJ / TB，本文证据缩写同设计稿）；工具对照 `tlp-status/review/harness-benchmark-20261018/`（tools-vs-notion-linear.md、harness-vs-codex-cli.md @ `8c076942`，§10 的依据）。
+**Related:** [ADR-0004](0004-pattern-c-two-type-agent-architecture.md)、[ADR-0039](0039-single-orchestrator-action-strength-tiers.md)（A/B/C 出手档）、[ADR-0053](0053-copilot-durable-subagent-mailbox.md)、[ADR-0056](0056-native-task-tool-result-into-live-parent.md)、[ADR-0065](0065-pi-execution-and-conversation-replay.md)、[ADR-0067](0067-teaching-team-whiteboard-and-event-meetings.md)（**Amendment 2026-10-18**，随本文生效）、[ADR-0069](0069-single-supply-agent.md)、[ADR-0072](0072-question-bank-agent-tools.md)；YUK-572 spec `docs/design/2026-07-06-yuk572-agent-meeting-lane-spec.md`；TT 草案（ADR-0067 指定的细节真相源）；工具面清单 `tlp-status/discussions/agent-tools-inventory.md`（INV）；运行审查证据 `tlp-status/review/loom-runs-20261018/`（summary / AR / IR / DJ / TB，本文证据缩写同设计稿）；工具对照 `tlp-status/review/harness-benchmark-20261018/`（tools-vs-notion-linear.md、harness-vs-codex-cli.md @ `8c076942`，§10 的依据；context-management-survey.md，§10.5 的依据与其 A1–A9 验收节）。
 
 ## 背景与问题：记账单位是「一次调用有没有返回」，不是「一件工作有没有交付」
 
@@ -74,7 +74,7 @@ status: accepted
 
 landing 有**预算触发与进展触发两个入口（§10.2）**：预算侧照 Codex rollout budget 形状——先提醒剩余，到信封 80% 注入一次收尾（同时收窄工具面），信封 100% 终止；进展侧仍按 stalled→landing 状态机判定。
 
-**上下文窗口检查（§10.2 新增）**：所有多轮任务默认挂现有裁剪（`pi-agent-adapter.ts:955-1019`），送出前规范化历史（Sourcing `mo94wa3t`「75.3 M 后 400」的案例归 C2）。
+**上下文管理与 auto-compact（§10.2 + §10.5，owner 20:23「auto-compact 也要做，先看开源」）。** 调研结论：没有可直接插入 pi 的开源插件；业界做法收敛为「旧工具输出遮蔽为一行占位（保留头部与原始大小），不拆调用-结果配对」；pi-mono coding-agent（MIT）的 compaction 只借摘要提示词与切点规则，**不引入包**；Anthropic 服务端 context editing / `clear_tool_uses` 只对原生 Claude 有效，**不作主方案**。LIGHT（推荐）：新增 `src/server/ai/pi-context-mask.ts` 并扩展 `pi-agent-adapter.ts` 的 `makeTransformContext`——所有多轮任务默认「遮蔽 + 现有裁剪（`pi-agent-adapter.ts:955-1019`）」；切点「粘住」（写回状态或稳定切点），避免每轮滑动打掉 prompt cache（未测，P0 计分板验证）；送出前**历史校验独立实现、独立验收**（`validatePiHistory` 丢弃非零 → `harness_defect`），与窗口控制分开做、分开验收。**§10.5 更正 §10.2**：Sourcing `mo94wa3t` 的 400 实为某条 toolCall 缺函数名的**历史残缺**，不是超窗——不得再用作窗口溢出的证据。FULL：仅 Copilot 在遮蔽之上再加模型摘要；**后台任务不用模型摘要**（外部研究：摘要使任务多跑 13–15%、LLM 压缩多花 24–94% token）。验收指标 **A1–A9**（定义与初值见调研报告验收节：A1 历史类/超窗类 400、A2 峰值提示占比、A3 加权输入 token 同等交付下降、A4 遮蔽后重复抓取、A5 交付不退化、A6 缓存稳定、A7 校验丢弃计数、A8 边界前移次数、A9 仅 FULL 的 Copilot 摘要保真），阈值待 P0 记账数据重定；**归 P2（C2）**。
 
 由此「被杀时丢掉全部已花 token」变成「交出能交的部分」。
 
@@ -185,11 +185,11 @@ owner 2026-10-18 19:48 拍板「两件都允许」。**系统可自行执行、�
 - **P0-a（§10.1，最先修，先于其余阶段）**：bridge 错误补 `isError` 标记（`pi-tools.ts:168`）——今天模型与打转检测都会把失败当成功；RunMonitor 对 `isError` 的依赖以它为前提（见 D2）。产品代码修复由独立 lane 承担，不属于本文档范围。
 - **P0 记账地基**（C6-1/C6-2 + YUK-1557 扩展 + override 带 `expires_at` + 计分板与状态页读取）：计分板对 10-07 至 10-18 重算 M1–M6 与审查报告相差 ≤±2%；TEST 连续 24 h 每条 `ai_task_runs` 有 numTurns 与 cache token（usage 按逐响应落一条，§10.3）、无重复工具行；Exa 进 `tool_call_log`；失败运行 `cost_usd` NULL 为 0。
 - **P1 边界契约**（C1 全部 + YUK-1553 schema/锁/父节点 + 1551 + 1552 + 1534 剩余 + 1555 笔记部分）：组合期契约检查上线（启动时有 `unknown` payload 即失败）；3 晚自然运行 KR 写入成功率 ≥90%、QuizGen 被丢批次 ≤10%、笔记空失败 ≤10%；68 题回放 ≥45 过、原通过题 0 回退；新增同 cooldown_key pending 重复 = 0；TEST 副本并发接受同一学习意图 2 次只生成 1 棵子树；新入库重复率 ≤2%。
-- **P2 工作单**（C2 全部 + YUK-1558 降为外圈 + 1555 Copilot 部分）：先 report-only 观察 3 晚（只记录状态机不干预）再开 stalled/landing；回放集 KR、Copilot S5、Sourcing 长跑三输入重跑 M2 = 0、落入 stalled 的运行 ≥80% 以 landed（含 partial）结束；3 晚自然运行 Sourcing 单次加权 token p95/p99 对 P0 重定的加权信封校验（§10.2，不沿用旧 8 M 绝对值）；M1 ≤ 15%；M7 计数可见。
+- **P2 工作单**（C2 全部 + YUK-1558 降为外圈 + 1555 Copilot 部分 + §10.5 上下文遮蔽/auto-compact 与独立历史校验）：先 report-only 观察 3 晚（只记录状态机不干预）再开 stalled/landing；回放集 KR、Copilot S5、Sourcing 长跑三输入重跑 M2 = 0、落入 stalled 的运行 ≥80% 以 landed（含 partial）结束；3 晚自然运行 Sourcing 单次加权 token p95/p99 对 P0 重定的加权信封校验（§10.2，不沿用旧 8 M 绝对值）；上下文管理按 A1–A9 验收（初值见调研报告验收节，阈值待 P0 数据重定）；M1 ≤ 15%；M7 计数可见。
 - **P3 需求门控**（§3 全部 + `degraded`/`not_needed` 两终态 + 删 `kt_estimate`/`axis` 夜写/`hub_sync` cron）：TEST 至少 3 个空闲档日 M6 ≤ 基线 5% 且 `dag_orchestration_node.detail` 逐节点说明不跑原因；唤醒验收 = coordinator 在 TEST 做一次带测试标记的真实会话（不进记忆），10 分钟内完成「回来即可练」准备（今日安排可出、缺题 KC 收到 GapTicket）；零产出节点不再显示 succeeded。
 - **P4 发现有主、上下文快照、领域写入者**（C3、C4 + YUK-1549 合并 + 1407 闭环部分 + 1554 + 1556）：S5 类事实 1 晚内恰好 1 条 `grading_suspect` finding 且被执行（申诉加重判，或按 D5 进 A 档），之后同 subject 新增 LLM note 为 0；M4 达标；新叶子挂根 = 0（无同科目候选时除外、且必须有对应 finding）；简报无系统流水线叙述、无新学习者证据时重算 0 次；现有重复子树与 33 个重复簇由 Maintenance 各出 1 份变更集提议、owner 一次确认。
 - **主席层提前（§9 决定 3，覆盖原 P5 推迟）**：ADR-0067 **D3 主席决定、D6 指标与白板管理页现在也做**，不等「连续 7 天中 ≥3 天有学习者事件」的使用触发；排在 **P1 之后**；白板管理页走 UI pre-flight 与 owner 三次设计检查。D3/D6 的决策内容不变（恰好一个被回读验证的决定、按链预注册度量）；学习层有用性数值在真实使用达到预注册样本量之前仍是预注册假设——**提前的是实施时点，不是测量结论**。
-- **维持推迟的 FULL 项（§9 未批，不得当作已批推进）**：A 档自动应用的全面铺开（超出 D5 两类）、回放集固化为每次 prompt/模型变更的强制闸、WorldSnapshot 覆盖所有面（含 Copilot 全量）。原触发条件不变。
+- **维持推迟的 FULL 项（§9 未批，不得当作已批推进）**：A 档自动应用的全面铺开（超出 D5 两类）、回放集固化为每次 prompt/模型变更的强制闸、WorldSnapshot 覆盖所有面（含 Copilot 全量）、Copilot 的模型摘要压缩（§10.5 FULL：仅 Copilot、遮蔽之后叠加；后台任务不用，A9 只在该项启动时验收）。原触发条件不变。
 - **顺序依据**（§5.3）：P0 不做则后续验收无数据；P1 先于 P2（工具坏时进展检测只会让失败更早结束、产出不增）；P3 可与 P1/P2 并行（不依赖契约，独立拿到 M6 大部分收益）；P4 依赖 P1 的 Maintenance 工具已修好；**P1/P2 的验收依赖 P0 落地**。各阶段 before/after 指标按 D7 测量纪律执行。
 
 ## 与既有 ADR 的关系（§4.4）
@@ -248,7 +248,8 @@ owner 2026-10-18 19:48 拍板「两件都允许」。**系统可自行执行、�
 - ingestion agent（不在 `ai_task_runs`）与 Copilot 前台交互延迟未评估。
 - P0 之前的历史数据只能部分重算（cache token 永久缺失），基线只能用本次审查数字。
 - Copilot 的 landing 若 owner 日后不同意，可只对 Copilot 关闭 landing、保留缓存返回（§2.2）。
+- auto-compact 切点「粘住」对 prompt cache 的实际效果未测，P0 计分板按 A6 验证（§10.5）。
 
 ## 来源映射（本文 → 设计稿）
 
-D0 ← §2 总原则；D1 ← §2.1 + §10.1（C1-0 统一收尾、C1-6 描述规范、C1-7 读契约、C1-8 按需暴露、C1-9 输出预算、fatal 补类、P0-a）；D2 ← §2.2 + §10.2（加权 token 信封、上下文裁剪、landing 双入口、429/配额终止）；D3 ← §2.3（C3-1…C3-3 + 删除 + guard）；D4 ← §2.4（C4-1…C4-4 + 删除 + guard）；D5 ← §6 决定 1 + §9；D6 ← §3（§3.1–§3.7）+ §9 决定 2；D7 ← §2.5 + §5.1 + §10.3（逐响应 usage、transcript blob）；D8 ← §5.2/§5.3 + §9 决定 3 + §10（P0-a 前置、信封修订）；ADR 关系 ← §4.4；票据处置 ← §4.1–§4.3；根因与证据 ← §1；否决备选 ← §1.2/§4.2/§4.3/§10.4；未决 ← §7。**§9/§10 优先级最高**：正文与之冲突的推荐/推迟/数值（如原 P5 主席层推迟、Sourcing 8 M 输入信封、KR 挂 `MAINTENANCE_TOOLS`）已被覆盖，本文按新条文书写，不保留相互矛盾的有效门槛。
+D0 ← §2 总原则；D1 ← §2.1 + §10.1（C1-0 统一收尾、C1-6 描述规范、C1-7 读契约、C1-8 按需暴露、C1-9 输出预算、fatal 补类、P0-a）；D2 ← §2.2 + §10.2 + §10.5（加权 token 信封、上下文管理与 auto-compact、mo94wa3t 归因更正、landing 双入口、429/配额终止）；D3 ← §2.3（C3-1…C3-3 + 删除 + guard）；D4 ← §2.4（C4-1…C4-4 + 删除 + guard）；D5 ← §6 决定 1 + §9；D6 ← §3（§3.1–§3.7）+ §9 决定 2；D7 ← §2.5 + §5.1 + §10.3（逐响应 usage、transcript blob）；D8 ← §5.2/§5.3 + §9 决定 3 + §10（P0-a 前置、信封修订、A1–A9 归 P2、Copilot 摘要列 FULL 推迟）；ADR 关系 ← §4.4；票据处置 ← §4.1–§4.3；根因与证据 ← §1；否决备选 ← §1.2/§4.2/§4.3/§10.4；未决 ← §7。**§9/§10 优先级最高**：正文与之冲突的推荐/推迟/数值（如原 P5 主席层推迟、Sourcing 8 M 输入信封、KR 挂 `MAINTENANCE_TOOLS`）已被覆盖，本文按新条文书写，不保留相互矛盾的有效门槛。

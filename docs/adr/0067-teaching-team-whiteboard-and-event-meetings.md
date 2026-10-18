@@ -124,7 +124,7 @@ panel 设计中仍然成立的思想，折进新例会作为主席裁决面的�
 
 ## Amendment（2026-10-18）—— 需求门控、报警水位与主席层提前（YUK-1559 / ADR-0075）
 
-依据：owner 2026-10-18 19:48 原话「两件都允许 空闲按推荐 主席层也现在做」（harness 重设计稿 §9，normative 真相源 `/Volumes/YukovalSBak/yukoval-projects/tlp-status/discussions/agent-harness-redesign.md`，SHA256 `81ae5f55…52a4f`，615 行；同日 20:20 增补 §10 对照补充，不影响本 Amendment 三点结论）与 [ADR-0075](0075-agent-harness-contract.md)。三点修订；上文历史决定原文保留，与下列修订冲突的活跃表述以本节为准：
+依据：owner 2026-10-18 19:48 原话「两件都允许 空闲按推荐 主席层也现在做」（harness 重设计稿 §9，normative 真相源 `/Volumes/YukovalSBak/yukoval-projects/tlp-status/discussions/agent-harness-redesign.md`，SHA256 `3b82bd87…0ef5`，622 行；同日 20:20–20:23 增补 §10（含 §10.5 auto-compact）对照补充，不影响本 Amendment 三点结论）与 [ADR-0075](0075-agent-harness-contract.md)。三点修订；上文历史决定原文保留，与下列修订冲突的活跃表述以本节为准：
 
 1. **D2 修订——L3 批处理也加 eligibility 资格门。** 「校准、清理、周回顾留在时钟/DAG」仍成立（宿主不变），但每个 L3 节点须声明 `eligibility`，由 orchestrator 在 enqueue 前求值；不合格标新终态 `not_needed` 并在 detail 写原因，下游按软依赖处理（视同 succeeded 但没有新数据，按自身 eligibility 决定，不沿用 `skipped` 硬边连坐）。理由：空闲期 97% 的花费正出在 L3（Sourcing 占全部美元成本 69%，AR 0.3），owner「没人学习时后台自适应降频」直接要求修订（设计稿 §3.6）。活跃度分档（空闲 3 天 / 休眠 14 天，owner 拍板值）与各档行为表见 ADR-0075 D6。
 2. **D7 修订——后台日上限降为报警水位（alert-only）。** 「触顶当日不再召集非安全类例会」废止；以需求门控为主，日上限只用于发现事故，不阻断。保留不变：每次召集的调用上限（例会 ≤2 次模型调用、周回顾 ≤3 次，超过即弃权并记失败面）、每条触发链独立 kill switch、Copilot 学习者主动会话不计入不设上限（YUK-1373）、veto 七条。理由：ADR-0069 D4 已拍板供题花费不设上限；需求门控之后空闲期花费趋近 0，上限只用来发现事故（设计稿 §3.6）。报警水位定值仍按未决问题所述先量一周基线。
