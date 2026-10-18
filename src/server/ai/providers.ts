@@ -575,7 +575,7 @@ function readEnvOverride(
  * YUK-1007 — 全局 provider pin 的合并层：env（AI_PROVIDER_OVERRIDE，operator
  * 钉死进程，最高优先）> DB `lane.global.provider`/`lane.global.model`（面板
  * 写的 DB 位）。env 缺席时 DB pin 生效；两者都缺席 → undefined。
- * DB 值经 hydrate schema + 写端 isKnownProvider 校验，但手工注入行可能在写端
+ * DB 值经 hydrate schema + 写端 readProviderId 校验，但手工注入行可能在写端
  * 之外落地——这里仍走同一 unknown-name throw（与 env 侧一致的 config-error
  * 语义，让错配立刻可观测而不是静默降级）。
  *
@@ -746,26 +746,26 @@ function assertOptedTaskPair(
   kind: TaskKind,
   dbTaskOverride: { provider?: string; model?: string } | undefined,
 ): void {
-  const fail = (reason: string): never => {
+  function fail(reason: string): never {
     throw new Error(
       `task.${kind}.override_global_pin=true requires a complete+legal task.<kind> pair — ${reason}. Fix the pair or clear the flag; this opt-in never falls through to the global pin or the registry default.`,
     );
-  };
-  const provider = dbTaskOverride?.provider;
+  }
+  const rawProvider = dbTaskOverride?.provider;
   const model = dbTaskOverride?.model;
-  if (typeof provider !== 'string' || provider === '' || !isKnownProvider(provider)) {
-    fail(`task.${kind}.provider='${provider ?? '∅'}' is missing or not a known provider`);
+  const provider =
+    typeof rawProvider === 'string' && rawProvider !== '' ? readProviderId(rawProvider) : undefined;
+  if (!provider) {
+    fail(`task.${kind}.provider='${rawProvider ?? '∅'}' is missing or not a known provider`);
   }
   if (typeof model !== 'string' || model === '') {
     fail(`task.${kind}.model is missing`);
   }
-  const optedProvider = provider as Provider;
-  const optedModel = model as string;
-  if (!isProviderImplementedForTask(optedProvider, kind)) {
-    fail(`provider '${optedProvider}' is not implemented for task '${kind}'`);
+  if (!isProviderImplementedForTask(provider, kind)) {
+    fail(`provider '${rawProvider}' is not implemented for task '${kind}'`);
   }
-  if (!nativePiModel(optedProvider, optedModel)) {
-    fail(`model '${optedModel}' is not in native pi provider '${piProviderId(optedProvider)}'`);
+  if (!nativePiModel(provider, model)) {
+    fail(`model '${model}' is not in native pi provider '${piProviderId(provider)}'`);
   }
 }
 
