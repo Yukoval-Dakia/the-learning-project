@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { NoteGenerationFailureSchema } from '@/capabilities/notes/server/note-generation-failure';
 import {
   ArtifactBodyBlocks,
   ArtifactHistoryEntry,
@@ -113,6 +114,7 @@ export const NotePageResponseSchema = z.object({
   body_blocks: ArtifactBodyBlocksWireSchema.nullable(),
   sections: z.array(NoteSection),
   generation_status: z.string(),
+  generation_failure: NoteGenerationFailureSchema.nullable(),
   verification_status: z.string(),
   verification_summary: NoteVerificationResult.nullable(),
   interactive: z.object({ html: z.string() }).nullable(),
