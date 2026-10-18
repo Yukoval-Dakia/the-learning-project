@@ -24,7 +24,10 @@ import {
   question_group_lifecycle,
   question_revision,
 } from '@/db/schema';
-import { contractIntegrityDigest } from '@/kernel/records/assessment-normalization';
+import {
+  contractIntegrityDigest,
+  publishedContractSeal,
+} from '@/kernel/records/assessment-normalization';
 import type { QuestionGroupContractSnapshot } from '@/kernel/records/assessment-publication';
 import { getFsrsState } from '@/server/fsrs/state';
 import {
@@ -442,7 +445,7 @@ describe('runSourceVerify', () => {
       .from(question_revision)
       .where(eq(question_revision.group_id, qid));
     expect(revisions.map((row) => row.revision_id)).toEqual([admitted.revision_id]);
-    expect(revisions[0]?.integrity_digest).toBe(resolved.integrity_digest);
+    expect(revisions[0]?.integrity_digest).toBe(publishedContractSeal(resolved).canonical);
     expect(revisions[0]?.integrity_digest).not.toBe(baseDigest);
     const publishes = await db
       .select()
