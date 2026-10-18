@@ -1,0 +1,34 @@
+{
+  "src/server/rehearsal/corpus.ts": {
+    "literals": ["mimo-v2.5", "unpriced:xiaomi/mimo-v2.5", "typesafe/jev-1.13"],
+    "reason": "rehearsal fixture: synthetic ai_task_runs/cost_ledger seed rows mirror a historical run ledger; fixtures are read-only evidence, not runtime config",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "fixture permanence — revisit only if the rehearsal corpus is rebuilt",
+      "expected_by": "2027-01-01"
+    }
+  },
+  "scripts/audit-provider-lanes.ts": {
+    "literals": ["glm-ocr-layout-parsing-fetch"],
+    "reason": "audit-internal provider-fetch classification vocabulary — the kind name mirrors the glm.ocr-layout-parsing lane naming; it classifies wire calls, it does not select a runtime model",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "structural: audit taxonomy names embed the lane/model id for readability — revisit only if these kind names start driving runtime routing",
+      "expected_by": "2027-01-01"
+    }
+  },
+  "scripts/provider-lane-inventory.ts": {
+    "literals": ["*"],
+    "reason": "audit:provider-lanes evidence ledger — the literals it quotes are expected-source assertions used to verify each lane's real wiring, not runtime model config",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "structural: lane inventory entries must quote source literals to assert on them",
+      "expected_by": "2027-01-01"
+    }
+  },
+  "scripts/yuk1537-admission-reopen.ts": {
+    "literals": ["*"],
+    "reason": "one-off admission-solve script owned by the #1796 parent lane — its model literals are re-resolved there, out of scope for this worktree",
+    "resolves_when": { "kind": "pr", "ref": "#1796", "expected_by": "2026-12-01" }
+  }
+}

@@ -106,6 +106,7 @@ jobs:
               pnpm audit:flags --strict
               pnpm audit:hub-sync-writers
               pnpm audit:provider-attempt-truth
+              pnpm audit:model-source
     steps:
       - uses: actions/checkout@v5
         with:
