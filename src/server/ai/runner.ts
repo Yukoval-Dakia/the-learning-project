@@ -717,13 +717,11 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
         await args.onSuccess?.(msg);
       } else {
         args.onResultError?.(msg);
-        const stall = 'stall' in msg ? msg.stall : undefined;
         throw new AgentRunError({
           kind: args.kind,
           taskRunId: args.lifecycle.taskRunId,
           subtype: msg.subtype,
           errors: 'errors' in msg && Array.isArray(msg.errors) ? msg.errors : [],
-          ...(stall ? { stall } : {}),
         });
       }
       break;

@@ -170,10 +170,18 @@ export async function writeCopilotReply(
           }).text,
         };
   const persistedDigest = createHash('sha256').update(prepared.text, 'utf8').digest('hex');
-  const receipt =
-    params.replyFinalization?.reply_sha256 === persistedDigest
-      ? params.replyFinalization
-      : undefined;
+  const receiptMatches = params.replyFinalization?.reply_sha256 === persistedDigest;
+  if (params.replyFinalization && !receiptMatches) {
+    console.warn('[writeCopilotReply] dropped finalization receipt', {
+      run_id: params.userAskEventId ?? params.taskRunId,
+      task_run_id: params.taskRunId,
+      reason:
+        params.preparedReply?.text === params.replyText
+          ? 'digest_does_not_match_prepared_text'
+          : 'prepared_text_does_not_match_reply_text',
+    });
+  }
+  const receipt = receiptMatches ? params.replyFinalization : undefined;
   const sealed = sealCommittedPresentationReply(prepared, receipt);
   const cleanedReply = sealed.preparedReply.text;
   const primaryView = prepared.primaryView;

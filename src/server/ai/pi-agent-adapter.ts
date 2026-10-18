@@ -76,13 +76,6 @@ import { createIdleBudgetFetch } from './provider-idle-fetch';
 import type { SDKAssistantMessage, SDKResultMessage, SDKUserMessage } from './sdk-types';
 import { isSpawnToolName } from './spawn-contract';
 import {
-  type ToolStall,
-  type ToolStallTracker,
-  createToolStall,
-  toolStallFinishReason,
-  toolStallReason,
-} from './tool-stall';
-import {
   type PiSubagentHost,
   type PiSubagentSpec,
   buildPiSpawnAgentTools,
@@ -107,10 +100,7 @@ export interface PiAdapterDeps {
   connectRemoteMcp?: typeof connectPiRemoteMcp;
 }
 
-type PiAdapterInit = PiAdapterDeps & {
-  /** Clock for stall detection. Production uses Date.now. */
-  stallNow?: () => number;
-};
+type PiAdapterInit = PiAdapterDeps;
 
 const OPENCODE_SESSION_HEADER = 'x-opencode-session';
 const STRUCTURED_OUTPUT_TOOL = 'mcp__structured_output__submit';
@@ -198,13 +188,6 @@ function estimatePiTokens(messages: readonly AgentMessage[]): number {
     }
   }
   return Math.ceil((chars - cjkChars) / PI_COMPACT_CHARS_PER_TOKEN + cjkChars);
-}
-
-function finishUnlessStalled(stall: ToolStallTracker, inner?: FinishTurn): FinishTurn {
-  return (turn, signal) => {
-    if (stall.stall) return { action: 'end' };
-    return inner?.(turn, signal);
-  };
 }
 
 /** End at the configured ceiling without turning a clean final answer into failure. */
@@ -611,8 +594,6 @@ export function piTerminalResultFrame(args: {
   /** Set when finishTurn hit the configured turn ceiling — the pi
    *  equivalent of the SDK's `error_max_turns` terminal subtype. */
   cappedByMaxTurns?: boolean;
-  /** Set when the loop stopped on a tool stall. Not an abort: the terminal frame still exists. */
-  stall?: ToolStall;
   /** Only the opt-in structured task uses tool arguments as its terminal result. */
   structuredOutputTool?: boolean;
   /** Reject pi best-effort JSON salvage: original streamed arguments must parse strictly. */
@@ -691,18 +672,6 @@ export function piTerminalResultFrame(args: {
       errors: [final?.errorMessage ?? 'pi agent aborted by provider'],
       ...usageParts,
     } as SDKResultMessage & { source: 'pi' };
-  }
-  if (args.stall) {
-    return {
-      ...base,
-      subtype: 'error_during_execution',
-      is_error: true,
-      stop_reason: null,
-      total_cost_usd: costUsd,
-      errors: [toolStallFinishReason(args.stall)],
-      stall: args.stall,
-      ...usageParts,
-    } as SDKResultMessage & { source: 'pi'; stall: ToolStall };
   }
   if (!final) {
     return {
@@ -839,7 +808,6 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     private readonly deps: Required<PiAdapterDeps>,
     tools: AgentTool[],
     private readonly remoteMcpHandles: PiRemoteMcpMountHandle[],
-    private readonly stallNow?: () => number,
   ) {
     this.externalSignal = args.options.abortController?.signal;
     if (this.externalSignal?.aborted) {
@@ -934,27 +902,16 @@ class PiPreparedQuery implements PreparedExecutionQuery {
    * declaration order with first-defined-result short-circuit. `agentType`
    * marks nested calls (reply-finalization marks `root_call` off it).
    */
-  private makeBeforeToolCall(
-    stall: ToolStallTracker,
-    agentType?: string,
-  ): AgentLoopConfig['beforeToolCall'] {
+  private makeBeforeToolCall(agentType?: string): AgentLoopConfig['beforeToolCall'] {
     const piHooks = this.args.piHooks;
     return async ({ toolCall, args: callArgs }: BeforeToolCallContext, signal) => {
       const effectiveSignal = signal ?? this.abort.signal;
-      const hooked = await runPiBeforeToolCall(
+      return runPiBeforeToolCall(
         piHooks,
         { id: toolCall.id, name: toolCall.name, ...(agentType ? { agentType } : {}) },
         (callArgs ?? {}) as Record<string, unknown>,
         effectiveSignal,
       );
-      if (hooked !== undefined) return hooked;
-      const stalled = stall.beforeCall({
-        id: toolCall.id,
-        name: toolCall.name,
-        args: callArgs ?? {},
-      });
-      if (!stalled) return undefined;
-      return { block: true, terminate: true, reason: toolStallReason(stalled) };
     };
   }
 
@@ -1211,20 +1168,18 @@ class PiPreparedQuery implements PreparedExecutionQuery {
           let toolUses = 0;
           let totalTokens = 0;
           let lastToolName: string | undefined;
-          const childStall = createToolStall({ now: this.stallNow });
           const childConfig: AgentLoopConfig = {
             model: childModel,
             ...this.baseLoopConfig(),
             ...(childTools.length > 0 ? { toolExecution: 'sequential' as const } : {}),
-            finishTurn: finishUnlessStalled(
-              childStall,
-              childMaxTurns !== undefined
-                ? turnLimiter(childMaxTurns, () => {
+            ...(childMaxTurns !== undefined
+              ? {
+                  finishTurn: turnLimiter(childMaxTurns, () => {
                     childCapped = true;
-                  })
-                : undefined,
-            ),
-            beforeToolCall: this.makeBeforeToolCall(childStall, subagentType),
+                  }),
+                }
+              : {}),
+            beforeToolCall: this.makeBeforeToolCall(subagentType),
             afterToolCall: this.makeAfterToolCall(subagentType),
           };
 
@@ -1266,16 +1221,6 @@ class PiPreparedQuery implements PreparedExecutionQuery {
             );
             for await (const event of stream) {
               this.observeToolAttempt(event);
-              if (event.type === 'tool_execution_end') childStall.toolSettled(event.toolCallId);
-              if (
-                event.type === 'message_update' &&
-                event.message.role === 'assistant' &&
-                (event.assistantMessageEvent.type === 'text_delta' ||
-                  event.assistantMessageEvent.type === 'thinking_delta' ||
-                  event.assistantMessageEvent.type === 'toolcall_delta')
-              ) {
-                childStall.observeOutput(event.assistantMessageEvent.delta);
-              }
               if (event.type === 'tool_execution_start') {
                 toolUses += 1;
                 lastToolName = event.toolName;
@@ -1420,24 +1365,20 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     // maxTurns=1 task deterministically failed after its first clean turn.
     const maxTurns = typeof options.maxTurns === 'number' ? options.maxTurns : undefined;
     let cappedByMaxTurns = false;
-    const stall = createToolStall({ now: this.stallNow });
     const config: AgentLoopConfig = {
       model: this.model,
       ...this.baseLoopConfig(),
       // SDK in-process MCP tools run serially — pin the same execution mode
       // so batch ordering/tool_call_log sequence can't diverge by engine.
       ...(this.allTools.length > 0 ? { toolExecution: 'sequential' as const } : {}),
-      finishTurn: finishUnlessStalled(
-        stall,
-        structuredOutput
-          ? () => ({ action: 'end' as const })
-          : maxTurns !== undefined
-            ? turnLimiter(maxTurns, () => {
-                cappedByMaxTurns = true;
-              })
-            : undefined,
-      ),
-      beforeToolCall: this.makeBeforeToolCall(stall),
+      finishTurn: structuredOutput
+        ? () => ({ action: 'end' as const })
+        : maxTurns !== undefined
+          ? turnLimiter(maxTurns, () => {
+              cappedByMaxTurns = true;
+            })
+          : undefined,
+      beforeToolCall: this.makeBeforeToolCall(),
       afterToolCall: this.makeAfterToolCall(),
       transformContext: this.makeTransformContext(),
       // YUK-1022 spec §3 P3 — steering/follow-up queue sources wired on the
@@ -1469,7 +1410,6 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     let invalidStructuredArguments = false;
     for await (const event of stream) {
       this.observeToolAttempt(event);
-      if (event.type === 'tool_execution_end') stall.toolSettled(event.toolCallId);
       // Frames queued inside the loop (subagent task_*, compact_boundary)
       // surface before the engine event that follows them — matching the SDK
       // wire order where lifecycle frames precede the parent tool_result.
@@ -1480,7 +1420,6 @@ class PiPreparedQuery implements PreparedExecutionQuery {
         event.assistantMessageEvent.type === 'toolcall_delta'
       ) {
         const delta = event.assistantMessageEvent;
-        stall.observeOutput(delta.delta);
         if (structuredOutput) {
           rawToolArguments.set(
             delta.contentIndex,
@@ -1494,7 +1433,6 @@ class PiPreparedQuery implements PreparedExecutionQuery {
         event.assistantMessageEvent.type === 'text_delta'
       ) {
         const text = event.assistantMessageEvent.delta;
-        stall.observeOutput(text);
         if (text.length > 0 && !this.abort.signal.aborted) {
           textStreamed = true;
           yield { type: 'text_delta', text, session_id: this.sessionId, source: 'pi' };
@@ -1507,7 +1445,6 @@ class PiPreparedQuery implements PreparedExecutionQuery {
         event.assistantMessageEvent.type === 'thinking_delta'
       ) {
         const text = event.assistantMessageEvent.delta;
-        stall.observeOutput(text);
         if (text.length > 0 && !this.abort.signal.aborted) {
           yield { type: 'thinking_delta', text, session_id: this.sessionId, source: 'pi' };
         }
@@ -1555,7 +1492,6 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       // when the caller signal aborts (wired in the constructor) and when
       // close() tears down an in-flight query.
       aborted: this.abort.signal.aborted,
-      ...(stall.stall ? { stall: stall.stall } : {}),
       cappedByMaxTurns,
       structuredOutputTool: structuredOutput,
       invalidStructuredArguments,
@@ -1698,6 +1634,6 @@ export class PiAgentAdapter implements ExecutionAdapter {
         `Task kind '${args.kind}' declares needsToolCall but no pi-visible tools mounted (piToolMounts empty or allowedTools filtered all). Mount domain tools via piDomainMount and/or remote MCP via piRemoteMcpMount.`,
       );
     }
-    return new PiPreparedQuery(args, model, deps, tools, remoteHandles, this.init.stallNow);
+    return new PiPreparedQuery(args, model, deps, tools, remoteHandles);
   }
 }

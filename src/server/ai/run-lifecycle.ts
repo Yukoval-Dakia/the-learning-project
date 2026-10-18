@@ -3,7 +3,6 @@ import type { TaskDefinition } from '@/ai/task-spec';
 import { type TaskKind, tasks } from '@/capabilities/task-registry';
 import type { Db } from '@/db/client';
 import {
-  AgentRunError,
   ProviderSessionWallClockBudgetError,
   RETRY_ELAPSED_CAP_MS,
   isTransientAgentFailure,
@@ -45,8 +44,6 @@ import {
 import { type ResolvedProvider, hasGlobalProviderOverride, resolveTaskProvider } from './providers';
 import { taskInputHash } from './task-input-hash';
 import { estimateAbortedUsage } from './timeout-usage';
-import { toolStallFinishReason } from './tool-stall';
-
 export type LifecycleUsage = AiTaskUsage;
 
 export interface LifecycleResult {
@@ -657,18 +654,9 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
 
   /** Return false when the durable attempt truth could not be settled. */
   async finishFailure(error: unknown, finishReason = 'error'): Promise<boolean> {
-    const stall = error instanceof AgentRunError ? error.stall : undefined;
-    if (stall) {
-      console.info(`[${this.config.logScope}] tool_stall`, {
-        event: 'tool_stall',
-        task_run_id: this.taskRunId,
-        kind: this.kind,
-        stall,
-      });
-    }
     const settled = await this.writeTerminal({
       status: 'failure',
-      finishReason: stall ? toolStallFinishReason(stall) : finishReason,
+      finishReason,
       errorMessage: error instanceof Error ? error.message : String(error),
       outcome: isTransientAgentFailure(error) ? 'failed_retryable' : 'failed_permanent',
     });
