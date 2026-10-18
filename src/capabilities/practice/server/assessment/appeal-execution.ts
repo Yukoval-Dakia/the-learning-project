@@ -34,8 +34,9 @@ function conflict(detail: string): never {
 }
 
 /** Called under assessment-evaluation-group, including by non-appeal allocators.
- * Unsealed reservations and historical claims occupy slots just as sealed candidates do.
- * Reading a native binding reserves its slot; it never grants another run its authority.
+ * Appeal reservations and historical paid claims occupy slots before candidate sealing.
+ * An unclaimed native binding keeps its existing collision policy: an intervening
+ * candidate may occupy that slot, and its recovering owner must then hold, not spend.
  */
 export async function reservedEvaluationAttempt(
   tx: Tx,
@@ -48,19 +49,11 @@ export async function reservedEvaluationAttempt(
     .where(
       and(
         sql`${event.payload}->>'submission_id' = ${submissionId}`,
+        eq(event.subject_kind, 'evaluation_group'),
+        eq(event.subject_id, groupId),
         or(
-          and(
-            eq(event.action, 'experimental:judge_execution_binding'),
-            sql`${event.payload}->>'evaluation_group_id' = ${groupId}`,
-          ),
-          and(
-            eq(event.subject_kind, 'evaluation_group'),
-            eq(event.subject_id, groupId),
-            or(
-              eq(event.action, bindingAction),
-              eq(event.action, 'experimental:assessment_model_claim'),
-            ),
-          ),
+          eq(event.action, bindingAction),
+          eq(event.action, 'experimental:assessment_model_claim'),
         ),
       ),
     );
@@ -126,7 +119,9 @@ export async function bindAppealExecution(
       prior.action !== bindingAction ||
       prior.subject_kind !== 'evaluation_group' ||
       prior.subject_id !== input.evaluation_group_id ||
-      prior.caused_by_event_id !== appeal.id ||
+      // 8d receipts used this exact appeal as parent. Retain them without rewriting;
+      // new operational bindings stay outside the business-resolution child surface.
+      (prior.caused_by_event_id !== null && prior.caused_by_event_id !== appeal.id) ||
       !parsed.success ||
       canonicalHash(BindingIdentity.parse(parsed.data)) !== canonicalHash(identity)
     )
@@ -184,7 +179,9 @@ export async function bindAppealExecution(
     subject_kind: 'evaluation_group',
     subject_id: input.evaluation_group_id,
     outcome: null,
-    caused_by_event_id: appeal.id,
+    // Operational identity is bindingId + the validated appeal/input payload.
+    // Only business resolutions belong to the appeal's caused_by child surface.
+    caused_by_event_id: null,
     payload: binding,
     created_at: now,
     ingest_at: now,

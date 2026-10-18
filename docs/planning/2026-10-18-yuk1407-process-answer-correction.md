@@ -235,7 +235,10 @@ key 除特别注明外为 `11`，满分 1；均 `model_units_invoked=0`。
 `/private/tmp/yuk1407-parent-chain-`。这是内核输出观察，真实页面/DB仍未验收。
 
 
-## 剩余 P1-3 实施计划（sole R2 后；不是新 review round）
+## 8d301cc 的 P1-3 实施记录（sole R2 后；不是新 review round）
+
+以下保留当时计划与静态论证；其中 native reservation 与 binding 因果子链两点
+已被 CI 39118649013 证伪，最终修正与验收边界见下方「CI 回归修复」。
 
 起点 `8720150a65a43c0ae810fee579c8b00ed4611a30`；唯一 writer 为本次 implementation。
 已完整读取 R1 `/tmp/yuk1407-pr1797-review-40fc2e64a-r1.md` 与 sole R2
@@ -358,3 +361,107 @@ containers、provider、paid、TEST、真实页面、真实学习者、QA 均 NO
 合成输出冒充崩溃对账。exact-head CI 本次不等待、不判 PASS；parent 后续读取实际状态。
 P1-3 读写顺序为源码论证；真实 PostgreSQL kill/ack-loss/intervening B、历史 receipt
 对账及重新入队仍需 parent 的受锁真实窗口。整票 YUK-1407 仍未完成。
+
+
+## CI 回归修复（8d301cc 后；implementation，不是 R3）
+
+起点 `8d301cc864f47187338cb191083686c79ceb8740`，同一隔离工作树/分支，唯一产品
+writer。完整读取四处现有断言和相关失败日志：
+`/private/tmp/yuk1407-ci-8d301cc-{db1,db2}.log`、
+`/private/tmp/yuk1407-ci-8d301cc-summary.md`。run `39118649013` attempt 1
+明确 FAILED：DB1/8 三项失败，DB2/8 一项失败；不是 flaky，不重跑 unchanged head。
+父级原指向 8d 的实际 QA 已 HOLD；本次不发 QA、不发 review、不 merge、不改 tracker。
+
+### 两项失败裁决
+
+1. `rejudge.db.test.ts:57,67` 期望一个结果回执，得到两个；`:141` 在 resolution
+   写入失败且 head/theta/cards 回滚后期望零，得到一个。`resolutions(appealId)`
+   读取 appeal 的全部 caused_by 子项；额外项是先行提交的 operational binding。
+   **这是业务结果因果面的污染，不能据此声称结算回滚失败。** 保留 helper 与所有断言。
+2. `tests/dbos-judge/process.db.test.ts:923–956`：native-load-committed 后杀进程，
+   native 已绑定 N、尚无 model claim；原 policy 允许介入的未激活 candidate 占 N，
+   恢复 owner 固定 N 后命中 occupied guard，终态 manual，模型 wire=0。8d 的
+   通用 native-binding floor 把介入者抬到 N+1，恢复 N 反而能花费，wire=3。
+   **这是改变既有 fail-closed collision policy 的产品回归。** 保留 wire=0、
+   单 evaluation、manual 三个断言，不重写 native/DBOS protocol。
+
+### 窄化文件级修复方案（先记录、后产品编辑）
+
+- 仅改 `server/assessment/appeal-execution.ts`：新 binding 的
+  `caused_by_event_id=null`，通过不可变 bindingId 与 payload appeal_event_id、完整
+  input/intent identity 定位。readback 的因果父项只接受 null 或恰为同一 appeal 的
+  旧 8d 格式；action、subject、payload identity 的其他检查原样保留。旧 event 不改写。
+- 同文件的 attempt floor 删除 `experimental:judge_execution_binding` 分支，只保留
+  同 group/submission 的新申诉 binding 与历史 model claim。它仍作用于所有分配者，
+  防止 B 或普通介入 candidate 占用 A 的申诉预留；native 仅 bind、尚未 claim 的
+  槽位重新遵循原有可碰撞/恢复转 manual 的 policy。已有 paid claim 继续避位，
+  无绑定历史申诉的 model hold 仍保留，不能从未知 claim 推导 fresh spend。
+- `evaluate-submission.ts`、`rejudge.ts` 预计只读：binding replay、occupied guard、
+  paid claim/result、精确 resolution action filter 不改。仅在证据要求时改必要接线。
+- 本文及同 draft PR body 更新真实 CI 失败、最终源码顺序、旧 receipt 兼容和静态
+  证据。P1-1/P1-2 保持 R2 CLOSED；P1-3 需修复后 parent 聚焦核验与最终 head QA。
+
+测试/fixture/harness 全部只读，不新增、不删除、不改断言，不跑本机测试套件、DB、
+queue、worker、services、containers、provider、TEST 或 paid action。只跑 typecheck、
+lint:ratchet、build、相关静态 audits 与 git diff；push 触发新 head CI 已获授权。
+
+
+### CI 修复结果与两个不变量的源码证明
+
+本次产品 diff 只有 `assessment/appeal-execution.ts`，调用接线、production handler
+精确 resolution filter、native protocol、occupied guard、extractor 与 frozen CAS 均未改。
+
+- **结果因果面**：新 binding 仍由原 bindingId 定址，payload 的 appeal_event_id、
+  group、submission、完整 revision/member/input snapshot、intent digest、attempt 和
+  首次 admission snapshot 不变。新写入的 caused_by_event_id=null，结果子链只由原
+  resolution writer 写入。其事务成功才产生业务子项；若 resolution writer 抛错，
+  独立提交的 binding 可保留，但不会混入 `resolutions(appealId)`，没有把它解释成
+  rollback 残留。旧 8d receipt 只允许 null 或**恰为同一 appeal id** 的旧 parent，
+  其余 action/subject/payload 身份检查不放宽；不改写旧行，不另铸绑定身份。
+  已存在的 8d 原因果边仍保留，不能声称历史数据已被清理。
+- **native 预 claim crash/collision**：native 首次绑定 N、尚未 claim 就崩溃时，该
+  binding 不再计入额外 attempt floor。现有测试的普通介入 candidate 因而按原策略
+  占 N。native 重开虽会计算一个候选 nextAttempt，`bindJudgeExecution` 仍返回已存
+  N，而不是采用新值；原 `if (binding)` occupied 查询在 evaluateSubmissionCore
+  之前命中 evaluation(submission,N)，抛 attempt_conflict。原 judge_run handler
+  把它当 permanent input_conflict 并记录 manual disposition；恢复不进入模型。
+  因此保护目标仍是 wire=0、一个介入 evaluation、manual，三个原断言完整保留。
+- **新 appeal A/B crash**：申诉绑定和历史 model claim 仍在所有分配者的上界内。
+  A 的绑定 N 先提交，再 claim/pay N；B 看见 A 的申诉 reservation，使用 N+1。
+  A 恢复优先读相同 bindingId，完整输入/意图匹配才返回 N，不采用 B 推高的 max+1。
+  recorded executor 对原 group/submission/N/unit 查同 claim/result：sealed result
+  重放，未知/无效/held 或不同 digest 保持 hold，不另发 paid identity。
+- **历史与 caller 区分**：删除的是 native **仅绑定、未 claim** 的避位行为；真正
+  model claim（无论原 native/appeal caller）仍避位。已有 native owner 重用自己的
+  binding；无 binding 的历史 appeal 若创建后有无法归属的 claim，原持久 model hold
+  判定未变，即便旧 result 已 sealed 也不从 fresh attempt 自动重买。未知 claim 不
+  删除、不重置、不猜到另一 lane；新普通分配不会覆盖其槽位。确定性/人工断言保持原路。
+
+以上为最终源码顺序论证，**不是重跑四条 DB 断言的结果**。测试和 fixture 的
+`git diff --exit-code 8d301cc864f47187338cb191083686c79ceb8740 -- tests
+':(glob)src/**/*.test.ts'` 实际 exit 0，空日志
+`/private/tmp/yuk1407-ci-repair-tests-unchanged.log`；所有测试代码与断言字节未改。
+
+
+### CI 修复本机检查与交付边界
+
+本次以下全部实际 exit 0；日志前缀 `/private/tmp/yuk1407-ci-repair-`：
+
+- `pnpm typecheck` → `typecheck.log`。
+- touched-file Biome → `focused-lint.log`，零 errors/warnings。
+- `pnpm lint:ratchet` → `lint-ratchet.log`，179 warnings / 0 infos，210/0 基线未改。
+- `pnpm build` → `build.log`，只构建，不启动服务。
+- `pnpm audit:schema` → `audit-schema.log`。
+- `pnpm audit:capability-boundaries` → `audit-capability-boundaries.log`。
+- `pnpm audit:architecture-deepening` → `audit-architecture-deepening.log`。
+- `pnpm audit:structured-judge` → `audit-structured-judge.log`。
+- `pnpm audit:provider-attempt-truth` → `audit-provider-attempt-truth.log`。
+- `git diff --check` → `diff-check.log`。
+- 上述 tests/fixture 不变 diff check → `tests-unchanged.log`（空，exit 0）。
+
+不把本机静态通过写成 CI 修复已实测 PASS。原 exact-head 8d 的 CI 已知 FAILED，
+本次只正常 commit/push 新源码、由新 head CI 执行既有断言；不 rerun 原 attempt。
+P1-1/P1-2 仍为 sole R2 CLOSED；P1-3 与本次两项回归均待 parent 对最终产物核验。
+无本机 testsuites/DB/queue/worker/services/containers/provider/TEST/paid/QA；原 8d QA
+继续 HOLD，由 parent 对最终 head 更新实际 QA。未委派、未发 R3、未 merge、未写
+Linear/root PLAN/.remember；代码 writer 在交付后释放。
