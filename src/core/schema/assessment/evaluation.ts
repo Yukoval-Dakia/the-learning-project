@@ -928,7 +928,9 @@ export async function evaluateSubmissionCore(
       continue;
     }
 
-    // model_executor —— D17 准入闸门。
+    // model_executor —— D17 准入闸门。非 null 只说明发题时写过切片 id。
+    // 正式端口在付费调用之前再核对：将要执行的模型对应的切片必须仍是这个
+    // id，且 status 仍是 active；否则端口返回 pending，这里不记自动分。
     if (executor.admitted_slice_id === null) {
       const escalate = plan.escalation.on_unadmitted_model;
       unitResults.push(

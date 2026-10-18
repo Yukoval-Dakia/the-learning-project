@@ -281,6 +281,10 @@ const ALL_TABLES = [
   'system_config',
   'system_config_journal',
   'system_config_epoch',
+  // YUK-1496 — 模型判分准入切片台账。无 enforced FK，不列入会跨测泄漏已注册
+  // 切片（同 mastery_state 一族的 footgun：残留 active 切片会让后续用例的服务门
+  // 误判已准入）。
+  'model_admission_slice',
 ] as const;
 
 export async function resetDb() {
