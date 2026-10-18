@@ -109,8 +109,9 @@ executor + admission 就绪的独立小切片。invoker 不新增语义回退，
     已完成 accept 的重放天然非变异（evaluation_key 重放 + CAS + 确定性事件 id）。
   - durable correction event / accept rate 都不是投递证明：rejudge 路径任何
     重试都先补一遍 singleton enqueue（`singletonKey=correctionEventId`，60s
-    窗口内去重；窗口外 dup job 由 handler `appealAlreadyResolved` + activation
-    CAS 幂等兜底）再判定完成 —— crash 于 event/rate 任一阶段都能安全续投。
+    窗口内去重；窗口外 dup job 由精确 resolution 检查、付费前持久申诉绑定、
+    既有 claim/result 回执及 activation CAS 分别约束）再判定完成。
+    singleton 只压缩投递，不是 exactly-once 证明；crash 恢复身份见下方 P1-3 修复。
 - `acceptSupportedProposalKinds` 纳入 `judge_retraction`，strength C→B
   （人审档位，不是自动执行）；`scripts/audit-architecture-deepening.ts` 的
   `producerOnlyKinds` 同步移除该 kind。
@@ -232,3 +233,128 @@ key 除特别注明外为 `11`，满分 1；均 `model_units_invoked=0`。
 均得1分；短错答12得0分。每条 `model_units_invoked=0`。
 父 typecheck、lint:ratchet、build、diff check 全部通过，日志前缀
 `/private/tmp/yuk1407-parent-chain-`。这是内核输出观察，真实页面/DB仍未验收。
+
+
+## 剩余 P1-3 实施计划（sole R2 后；不是新 review round）
+
+起点 `8720150a65a43c0ae810fee579c8b00ed4611a30`；唯一 writer 为本次 implementation。
+已完整读取 R1 `/tmp/yuk1407-pr1797-review-40fc2e64a-r1.md` 与 sole R2
+`/tmp/yuk1407-pr1797-verification-8720150a6-r2.md`。P1-1 提取器、P1-2
+冻结 head/CAS 已由 R2 CLOSED，保持不动；本次只修 P1-3 的付费恢复身份。
+
+窄化文件级方案（先记录、后产品编辑）：
+
+1. 新增 practice 内 `server/assessment/appeal-execution.ts`：复用 event/writeEvent
+   保存不可变申诉执行绑定（申诉 id + execution key + 完整 member/submission/revision
+   输入 digest + model intent digest + attempt + admission snapshot）。在既有组锁内提交，
+   早于任何 model claim/spend；冲突不覆盖、不换身份。另在分配 attempt 时读取同组同
+   submission 的已存 native binding、申诉 binding、历史 model claim，跳过预留槽位。
+2. `server/judge/evaluate-submission.ts`：保留 sealed evaluation_key replay 优先；
+   在 load transaction 内建立/重用 appeal binding，模型执行使用该固定 attempt，
+   恢复仍交既有 claim/result 回执处理；已占槽位直接 conflict，绝不 fresh identity。
+   admission snapshot 沿用首次绑定。legacy 无 binding 的申诉若创建后出现 model claim，
+   且该 claim 之前没有同组/同 submission/attempt 的 binding，无法证明归属，持久
+   记录 model hold；确定性单元继续正常计算。claim/appeal 的直接
+   因果先后在 SQL 用 dispatch_seq 比较（不用 JS number、不作订阅完整性水位）；
+   不把已 sealed result 误当可再次购买许可，也不猜另一申诉的 claim 归属。
+3. `server/assessment/appeal.ts` 只读：沿用真实 appeal 调用者，不伪造
+   JudgeExecution/pending run，不改已关闭的 head/CAS 或原模型预算/执行策略。
+   `manual_assert` 虽有 review_context，但不调用模型，保留原合同不加模型绑定。
+4. `jobs/rejudge.ts`：已解决仅认 assessment_appeal_resolution 的因果回执；
+   新 binding 挂在 appeal 因果链上，但不是 resolution，不得让重投被提前跳过。
+5. 本文与同 draft PR #1797 body：记录三项 P1 状态、A/B/crash 读写顺序、历史
+   未知的保守处理、允许检查及真实 DB/runtime 证据缺口。parent 负责聚焦核验/QA、
+   Linear 和根文档；review 预算已耗尽，不发 R3。
+
+无 migration、新通用 subsystem、测试代码、临时断言 harness、测试套件、DB/queue/
+worker/services/containers/provider/paid/TEST/QA 操作；不修改排除文件或已有回执。
+静态检查仅 typecheck、lint:ratchet、build 与触及的 schema/capability/architecture/
+structured-judge/provider-attempt-truth audits；这些不能证明 crash DB 行为。
+
+
+### P1-3 实现结果与三项 P1 状态
+
+- **P1-1 CLOSED（sole R2，8720150a6）**：提取器/过程判定本次零修改。
+- **P1-2 CLOSED（sole R2，8720150a6）**：proposal frozen-head/stale CAS 本次零修改。
+- **P1-3 已实现源码修复，待 parent 对该已知项聚焦核验及真实 QA**：本次不是
+  新 review round，也不把静态通过写成 DB/crash 验收通过。initial + sole R2 预算
+  已耗尽；不发 R3、不 merge、不请求 QA、不写 Linear/根 PLAN/.remember。
+
+最终文件只有本文与三个产品文件：
+`src/capabilities/practice/server/assessment/appeal-execution.ts`（新 receipt 与槽位读取）、
+`src/capabilities/practice/server/judge/evaluate-submission.ts`（付费前 live consumer）、
+`src/capabilities/practice/jobs/rejudge.ts`（resolution 精确语义）。
+计划中的 `assessment/appeal.ts` 最终只读，预算/模型策略未变。
+
+#### 稳定身份与落库顺序（source proof，不是运行结果）
+
+1. `evaluate-submission.ts:547–605` 先按 group + evaluation_key 查 sealed candidate，
+   验证同一 intent digest，命中即返回，不再执行模型或分配 attempt。
+2. 未命中时，在既有 assessment-evaluation-group 锁及 load transaction 内，
+   `reservedEvaluationAttempt` 取同 group/submission 的 native binding、申诉 binding、
+   历史 model claim 的 attempt 上界，与 sealed evaluation 上界取 max。所有经该入口
+   的分配者（含另一合法 appeal B、manual_assert、native pending run）避开预留槽位。
+   读取 native binding 仅为避位，不赋予/接管其 run/workflow/send authority。
+3. `bindAppealExecution` 验证真实 appeal action/subject/prior evaluation/group/reason，
+   且 execution_key 必须为 `appeal:${appeal.id}`。不可变 receipt ID 为
+   `evt_appeal_binding_${canonicalHash([group, execution_key])}`；payload 严格校验并冻结
+   appeal id、group、anchor submission、完整 input_snapshot（revision id、member set、
+   issuance 范围、含 revision integrity + 每个 member 冻结输入的 digest）、intent_digest、
+   attempt、初次 admission snapshot 与 model hold 原因。intent_digest 沿既有合同包含
+   input、mode、policy、source、assisted、review_context、asserted results。
+4. **binding load transaction COMMIT → model claim COMMIT → executor → result COMMIT
+   → candidate seal → 原 CAS activation/settlement**。绑定不匹配或槽位被不同 candidate
+   占用即 conflict；不会用新 attempt 重买。binding 的 COMMIT ack 丢失时没有进入执行；
+   重试读同 receipt。模型运行时不持 load transaction；原组 session lock 仍只负责串行。
+5. A 新绑定 N 后 claim/pay，再在 candidate 前崩溃：B 即使早已创建但尚未执行，也
+   会看到 N 的 reservation，分配 N+1；A 的先行 binding 可证明其 claim 归属，因此
+   B 不会仅因 A 的已绑定 claim 被当成历史未知。若 B 终态未决、head 不变，A 重投
+   仍按自身 binding 取 **N**，不取 latest+1。既有 recorded executor 对同
+   group/submission/N/unit 查同 `evt_model_claim_*`/`evt_model_result_*`：有效 result
+   重放；result 缺失/无效、digest 不同或旧 held outcome 均保持非重试未知，不重发。
+   即使 B 已占 N+1、原 A result 已 sealed，也不会形成 A 的第二个付费身份。
+6. candidate 已 sealed、resolution 尚未落库时重投：第 1 步直接重放 candidate，
+   激活仍用原冻结 head；有效 head 已移走仍按既有 CAS conflict，不静默 rebase。
+   binding 的 caused_by_event_id 指向 appeal，但 handler 只把
+   `experimental:assessment_appeal_resolution` 当作已解决，binding 不能吞掉恢复 job。
+
+#### 历史/未知的兼容处理
+
+- 原 claim/result、evaluation、native binding 均不修改、不重置、不覆盖；新 receipt
+  仅由既有 writeEvent 追加，带 ingest_at opt-out，不派生学习记忆。无 schema migration。
+- 历史 appeal 已有同 key sealed candidate：保留原 replay。无 binding 的 appeal，若
+  创建后有同组 model claim 且 claim 前没有该槽位的新申诉 binding，则不能证明它
+  没付过费，持久绑定为 **model hold**；模型端口只返回非重试 infra_failure，无新
+  claim/provider 调用。确定性单元照常计算，manual_assert 继续原合同。
+- 原 R2 旧 A/N → B 把 N seal 成未决 → A 重投的存量形态，也会命中上述历史 hold，
+  包括 A 旧 result 已 sealed 的情况；不猜归属、不以 result 存在推导重新购买许可。
+  held candidate 可有新的候选序号，但该绑定永久禁止模型执行，不作为新付费身份。
+- 只用 SQL dispatch_seq 做 appeal commit → 后续 claim 的**直接因果比较**，不用
+  JavaScript number，也不用它充当订阅完整性水位。只有 claim **之前**的新申诉
+  binding 才能证明归属；后补 binding 不可洗白旧 unknown。旧 native binding 单独
+  不用于证明历史 claim 归属，因为旧分配者可能撞到它尚未 claim 的预留槽位。
+- 保守边界：旧 appeal 创建后若出现无法归属的另一运行 claim，也可能 hold 该
+  appeal 的模型部分，需要显式对账；这是历史信息缺口，不自动归到另一个 lane。
+  新申诉在没有此种历史歧义时继续支持已准入 model regrading；新 A/B 的互相穿插
+  由各自先行绑定区分。不能以清空 binding、claim 或新 operation id 自动恢复 unknown。
+
+#### 本次实际检查与证据界限
+
+以下全部 exit 0，日志前缀 `/private/tmp/yuk1407-paid-binding-`：
+
+- `pnpm typecheck` → `typecheck.log`。
+- touched-file Biome → `focused-lint.log`。
+- `pnpm lint:ratchet` → `lint-ratchet.log`，179 warnings / 0 infos，基线 210 / 0 未动。
+- `pnpm build` → `build.log`（SPA、Start、server、worker、migrate 只构建，不启动）。
+- `pnpm audit:schema` → `audit-schema.log`。
+- `pnpm audit:capability-boundaries` → `audit-capability-boundaries.log`。
+- `pnpm audit:architecture-deepening` → `audit-architecture-deepening.log`。
+- `pnpm audit:structured-judge` → `audit-structured-judge.log`。
+- `pnpm audit:provider-attempt-truth` → `audit-provider-attempt-truth.log`。
+- `git diff --check` → `diff-check.log`。
+
+无新/改测试代码、临时断言 harness 或测试套件执行。DB、queue、worker、services、
+containers、provider、paid、TEST、真实页面、真实学习者、QA 均 NOT_RUN；没有用 CLI
+合成输出冒充崩溃对账。exact-head CI 本次不等待、不判 PASS；parent 后续读取实际状态。
+P1-3 读写顺序为源码论证；真实 PostgreSQL kill/ack-loss/intervening B、历史 receipt
+对账及重新入队仍需 parent 的受锁真实窗口。整票 YUK-1407 仍未完成。
