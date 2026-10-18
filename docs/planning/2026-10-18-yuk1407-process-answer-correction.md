@@ -26,17 +26,27 @@ declared comparators"），且当前无 text_key 的已准入模型切片（D17�
 
 ### A. 确定性终态答案提取（核心修复）
 
-`src/core/schema/judge-routing.ts` 新增：
-- `extractFinalAnswer(text)`：从过程文本提取**明确**终态结论 —
-  显式 `答：/答案：/所以/因此/故/综上/即/∴` 结论标记行、末段结论从句、
-  末行尾随 `X = v` 等式右侧；多个互相矛盾的候选 → `ambiguous`；
-  找不到 → `none`。不含"最后一个数字"之类的弱启发式。
-- **不安全提取守卫（R1 review）**：捕获值含否定（不是/不等/不得/并非）、
-  比较符（< > ≤ ≥ ≠ !=）或行内多重等号（`S5=10=11`）⇒ 整体 `ambiguous`
-  —— 确定性契约无法证明语义时保守未决，绝不把「答案不是11」经 copula
-  剥成「11」给满分，也不把矛盾等式链的末环当终态。
-- `isProcessLikeAnswer(text)`：多行/多句段、含推导标记或超出短答长度的
-  文本视为"过程作答"。
+`src/core/schema/judge-routing.ts` 的确定性提取合同（parent actual-output
+复核发现 R1 初修仍会误发满分，本次窄修替换该策略，不代表 PR 验收）：
+
+- `extractFinalAnswer(text)` 只接受完整答案声明行，或最后非空行中从
+  行首/中文句号/逗号/分号开始的 `所以/因此/故/综上/即/∴` 结论从句；
+  无标记时只认**完整末行** `identifier = value`。identifier 限 ASCII/希腊
+  字母开头、后续同类字母/数字/下划线；NFKC 使 `S₅＝11` 对应 `S5=11`。
+- 标记后的文本/复合值整体保留。删除 copula 后缀提取与任意 prose 中等式
+  子匹配；不把 `答案不为11`、`结果不可能是11`、`前五项和为11` 化为 `11`。
+  这些是可作 exact 比较的**完整字符串**，不是对其肯定/否定语义的判断；
+  与 key `11` 不匹配时由调用方保守处置，不扩大否定词 denylist。
+- 只有整个候选满足单一 `identifier = value` 时，才补充**完整 RHS** 作为
+  等价表述。`S5=11` → `[S5=11,11]`，`S5=11!` → `[S5=11!,11!]`；
+  不截取最后数字/最后等号。比较关系、复合 LHS、等式链均 `ambiguous`。
+- 不剥数学标点、负号、括号、乘号或 Markdown 边缘字符。候选若经既有公开
+  `extractAnswerHead` 会改变 token（如尾随 `*`、句号），整个提取拒绝为
+  `ambiguous`，避免 native `answer_head` 的二次归一化吞掉数学含义。
+  `!` 保留为阶乘；`11!` 只可匹配 `11!`，不能匹配 `11`。
+- 多个不相容明示结论 → `ambiguous`；无明确语法 → `none`。
+  `isProcessLikeAnswer` 现在也认完整结论标记（含单行 `所以…`）；其 miss
+  进入既有 `needs_review`，短裸答案 `11`/`12` 行为不变。
 
 ### B. `exact_text` / `blank_exact` miss 语义（evaluation.ts）
 
@@ -144,3 +154,69 @@ executor + admission 就绪的独立小切片。invoker 不新增语义回退，
 3. 报告形态的 S5=11 误判（effective incorrect）：appeal/correction → 重判
    提取 `11` → correct → 激活替换 head → settlement revert+replay 旧效应 →
    FSRS/θ/掌握度自动重算（既有 replay 闭包，无新机制）。
+
+## 提取器窄修交接（2026-10-18；非新 review round）
+
+唯一 writer 工作树：`/Users/yuqi/.t3/worktrees/the-learning-project/t3-eb173c3f`，
+起始 HEAD `fff33390a3d64c756c4bf771a24166087ecf8c20`，同分支/同 draft PR #1797。
+本次只改 `judge-routing.ts` 与本文；消费者/纠错/CAS/enqueue/准入/AI/UI
+均只读或未触及。原 3 项 P1 的独立最终复核仍由 parent 在真实产物上执行。
+
+### 实际输出证据
+
+以下来自直接调用公开 `extractFinalAnswer` 与 `evaluateSubmissionCore`，
+使用既有 `evaluation.test.ts` fixture 结构的内联 frozen revision/submission，
+未导入或运行测试文件、无 assert/mock、未写任何测试或 harness 文件。
+key 除特别注明外为 `11`，满分 1；均 `model_units_invoked=0`。
+
+- baseline 实际 CLI：`/private/tmp/yuk1407-extraction-repair-before.jsonl`。
+  `答案不为11` / `结果不可能是11` 原来带候选 `11`；`所以11!` 原来只剩
+  `11`；`不是S5=11` 原来也会取到 `11`。parent 原始失败输出保留于
+  `/private/tmp/yuk1407-parent-fff333-extraction.jsonl`。
+- 修复后完整实际 CLI：`/private/tmp/yuk1407-extraction-repair-after.jsonl`。
+  `所以答案不是11` / `所以答案不为11` / `所以结果不可能是11` 只保留完整
+  否定字符串；`所以11!` 保留 `11!`，native 均 `pending needs_review`。
+- `11`、`S5=11`、`答：S5=11`、`推导\nS5=11`、`推导\n所以 S5=11`、
+  `因此 S₅＝11`、完整多行等比数列过程末行 `所以 S5=11` 均 `scored 1`。
+- `推导\nx<=11`、`推导\nS5=10=11`、`推导\n不是S5=11`、
+  矛盾明示答案、无结论过程均 `pending needs_review`，无数字碎片满分。
+- `所以11!`（key `11!`）、`答：S5=11!`（key `11!`）、
+  `答：北京`（key `北京`）、`答：(1,2)`（key `(1,2)`）均 `scored 1`；
+  `所以(11)`、`所以-11`（key `11`）均未匹配，保留括号与负号。
+- `所以11*` / `所以 S5=11*` / `所以 S5=11。` 提取 `ambiguous`、
+  native `pending needs_review`；中间一次实际输出曾暴露 native
+  `answer_head` 对 `11*` 的吞字符，修复前中间日志完整保留为
+  `/private/tmp/yuk1407-extraction-repair-intermediate.jsonl`，不当作最终证据。
+
+### 明确限制与验收边界
+
+- **等式链不求值**：`S5=1+2+8=11` 与 `S5=10=11` 都保守 `ambiguous`；
+  不证明每一环等价，不新增数学语义引擎。多行/结论标记过程进入复核。
+- native 原有短答政策保留：裸单行 `x<=11`、`S5=10=11`、
+  `S5=1+2+8=11`、`不是S5=11` 为提取不支持但非过程文本，直接调用观察仍
+  `scored 0`，**不是**所有 ambiguous 都被 native 判为 pending。
+  `答：前五项和为11` 对 key `11` 同样不猜 copula，短答仍 `scored 0`。
+- 不支持一般代数 LHS、任意 prose 内嵌等式/无边界结论、带边缘 Markdown
+  包装的提取。带尾句号等会被现有 answer-head 改写的提取也保守拒绝；
+  可降低自动命中率，不能据此声称完整自然语言/数学表达式等价识别。
+- 这是抽取语法与 native 纯函数 actual-output，不是 DB/worker/浏览器/真实
+  学习者验收。无 provider/模型调用，无人工作业纠错执行；不恢复 legacy
+  SemanticJudge fallback、不绕过 admission。语义判分仍延期至 executor +
+  admission 切片；人工纠错仍按上方 runbook 人审。
+- 无新增 actionable follow-up；上述是 parent 已明确接受的切片限制与仍待
+  parent 的验收事项。本次按授权不修改 Linear/PLAN/.remember、不发 review
+  请求、不 merge、不执行 QA。
+
+### 本次检查
+
+本次三项均 exit 0（串行，无同时 build）：
+- `pnpm typecheck`：`/private/tmp/yuk1407-extraction-repair-typecheck.log`。
+- `pnpm lint:ratchet`：`/private/tmp/yuk1407-extraction-repair-lint-ratchet.log`；
+  179 warnings / 0 infos，基线 210 / 0，未改基线。
+- `pnpm build`：`/private/tmp/yuk1407-extraction-repair-build.log`。
+
+42 条直接函数实际输出对应 `judge-routing.ts` SHA-256
+`81c40f40d9d6d8a3a4299aaa0508e7ac8264c76a169313745153d8c69fd9cb75`。
+未写/改测试代码；测试套件 NOT_RUN（owner 指定）。本次完整差异副本：
+`/private/tmp/yuk1407-extraction-repair.patch`；最终提交/推送身份另封存
+`/private/tmp/yuk1407-extraction-repair-delivery.log`。

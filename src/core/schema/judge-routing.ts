@@ -171,7 +171,7 @@ const MAX_EXACT_HEAD_LEN = 300;
 // 主解答槽的学习者文本可以是完整推导（"…q=-2，S5=11"）。整段做答案头比较
 // 必然 miss —— 这是 R02 误 0 的机制。本提取器只认【明示终态结论】：
 //   1. 结论标记行/从句：答 / 答案 / 最终答案 / 综上 / 所以 / 因此 / 故 / 即 / ∴；
-//   2. 末行尾随等式 `X = v`（右侧为结论值，左式不允许是比较符复合）。
+//   2. 完整末行 `identifier = value`（单一符号的赋值式，不在任意文字里找等号）。
 // 多个相互矛盾的明示结论 ⇒ 'ambiguous'（交人工/语义复核，绝不猜）；
 // 找不到任何明示结论 ⇒ 'none'（调用方对过程文本落 pending，不落 0）。
 // 提取到的 value 同时给出 `rhs` 备选（"答：S5=11" 的 "11"），比较面两侧
@@ -193,67 +193,59 @@ export type FinalAnswerExtraction =
 // 终态结论永远在最后。
 const DECLARATION_LINE_RE =
   /^\s*(?:【\s*(?:答案|答)\s*】|(?:最终答案|答案|答)\s*[：:，,．.\s])\s*(\S.*?)\s*$/u;
+// Only a line/sentence boundary can introduce a conclusion; never a bare
+// copula (为/得/是) or a suffix inside arbitrary prose.
 const LAST_LINE_CONCLUSION_RE =
-  /^\s*(?:所以|因此|故|综上(?:所述)?|即|∴)\s*[：:，,．.]?\s*(\S.*?)\s*$/u;
-const CONCLUSION_TAIL_RE = /(?:所以|因此|故|即|∴|为)\s*([^.。!！;；，,]+?)\s*[.。!！]?$/u;
-const TRAILING_EQUALITY_RE =
-  /([^<>=!≤≥≠≈∈\s][^<>!≤≥≠≈∈=\n]*?)\s*[=＝]\s*(\S[^=]*?)\s*[.。!！]?\s*$/u;
-const FINAL_TRAILING_PUNCT_RE = /[\s。．.，,；;：:、!！?？*（）()]+$/u;
-const COPULA_RE = /[为得是]\s*(\S[^为得是]*)$/u;
-/**
- * 不安全提取守卫（P1 review）：否定（不是/不等/不得/并非）、比较符（<、>、
- * ≤、≥、≠、!=）与多重等号 —— 确定性契约无法证明其语义的值绝不进 found，
- * 只进 unsafe ⇒ ambiguous（人审裁决）。绝不把「答案不是11」经 copula 剥成
- * 「11」给满分，也不把「x<=11」「S5=10=11」的数字碎片当终态。「S5=31=11」
- * 这类无法证明同值的链式写法同样走 ambiguous —— 保守未决好过凭数字碎片发分。
- */
-const UNSAFE_EXTRACT_RE = /≠|≤|≥|<=|>=|<|>|!=|不[是等得]|并非/u;
+  /(?:^|[。；;，,])\s*(?:所以|因此|故|综上(?:所述)?|即|∴)\s*[：:，,]?\s*(\S.*?)\s*$/u;
+// NFKC maps S₅ / full-width forms to S5 / ASCII. Restrict projection to a
+// complete identifier assignment; e.g. 不是S5=11 cannot yield the suffix 11.
+const FINAL_ASSIGNMENT_RE = /^([A-Za-zΑ-Ωα-ω][A-Za-zΑ-Ωα-ω0-9_]*)\s*=\s*(\S.*?)$/u;
+const COMPARISON_RE = /[<>≤≥≠≈∈]|!=/u;
 
 function canonicalFinal(value: string): string {
-  return value
-    .normalize('NFKC')
-    .replace(FINAL_TRAILING_PUNCT_RE, '')
-    .replace(/^[*_\s]+|[*_\s]+$/g, '')
-    .trim()
-    .toLowerCase();
+  return value.normalize('NFKC').trim().toLowerCase();
 }
 
-/** "S5=11" → ["S5=11","11"]；"前五项和为11" → […,"11"]；否则原值单候选。 */
-function candidateValues(raw: string): string[] {
-  const value = raw.replace(FINAL_TRAILING_PUNCT_RE, '').trim();
+/**
+ * Marked text/compound values are opaque exact strings, never prose to reduce.
+ * Only a whole `identifier = value` adds its COMPLETE RHS as an alternative.
+ * Preserve !, signs, parentheses, multiplication and every other value token;
+ * Do not emit candidates whose existing answer-head normalization would
+ * discard tokens (e.g. an unmatched trailing `*`); refuse instead of letting
+ * that consumer turn an incomplete expression into an accepted fragment.
+ * Unsupported relations/equality chains are unresolved, not last-`=` guesses.
+ */
+function candidateValues(raw: string): string[] | null {
+  const value = raw.trim();
   if (value.length === 0) return [];
+  if (COMPARISON_RE.test(value)) return null;
   const values = [value];
-  const eq = value.match(/[=＝]/);
-  if (eq && eq.index !== undefined && eq.index > 0 && eq.index < value.length - 1) {
-    const rhs = value.slice(eq.index + 1).trim();
-    if (rhs.length > 0 && canonicalFinal(rhs) !== canonicalFinal(value)) values.push(rhs);
+  if (value.includes('=')) {
+    const assignment = value.match(FINAL_ASSIGNMENT_RE);
+    if (!assignment?.[2] || value.indexOf('=') !== value.lastIndexOf('=')) return null;
+    values.push(assignment[2].trim());
   }
-  const copula = value.match(COPULA_RE);
-  if (copula?.[1]) {
-    const tail = copula[1].trim();
-    if (canonicalFinal(tail).length > 0 && !values.includes(tail)) values.push(tail);
-  }
-  return values;
+  return values.every((candidate) => extractAnswerHead(candidate) === candidate) ? values : null;
 }
 
 export function extractFinalAnswer(text: string): FinalAnswerExtraction {
   const lines = text
     .normalize('NFKC')
     .split(/\n+/)
-    .map((line) => line.replace(/^[*_>\s]+|[*_\s]+$/g, '').trim())
+    .map((line) => line.trim())
     .filter((line) => line.length > 0);
   const found: {
     value: string;
     marker: 'answer_marker' | 'conclusion_marker' | 'trailing_equality';
   }[] = [];
-  // 否定/比较/多重等号：无法确定性证明语义 → 永不进 found；存在即整体
-  // ambiguous（人审裁决），即使另有安全候选——安全+不安全并存同样不可裁。
+  // Unsupported syntax invalidates the extraction as a whole, even if
+  // another declaration is usable. No candidate may come from a submatch.
   const unsafe: string[] = [];
   const collect = (
     value: string,
     marker: 'answer_marker' | 'conclusion_marker' | 'trailing_equality',
   ) => {
-    if (UNSAFE_EXTRACT_RE.test(value) || value.indexOf('=') !== value.lastIndexOf('=')) {
+    if (candidateValues(value) === null) {
       unsafe.push(value);
     } else {
       found.push({ value, marker });
@@ -268,14 +260,10 @@ export function extractFinalAnswer(text: string): FinalAnswerExtraction {
   if (lastLine !== undefined) {
     const conclusion = lastLine.match(LAST_LINE_CONCLUSION_RE);
     if (conclusion?.[1]) collect(conclusion[1], 'conclusion_marker');
-    const tail = lastLine.match(CONCLUSION_TAIL_RE);
-    if (tail?.[1]) collect(tail[1], 'conclusion_marker');
-    const equality = lastLine.match(TRAILING_EQUALITY_RE);
-    if (equality?.[2]) {
-      // 行内多重等号（"S5=10=11"）：尾随等式只抓到链条最后一环，无法证明
-      // 各环节同值 → 按 unsafe 处理，绝不把最后一环数字当终态。
-      if (lastLine.split('=').length - 1 > 1) unsafe.push(equality[2]);
-      else collect(equality[2], 'trailing_equality');
+    // Declarations/conclusions own the entire remaining value. Do not also
+    // search their text for an equality suffix or a second copula candidate.
+    if (!conclusion && !DECLARATION_LINE_RE.test(lastLine) && lastLine.includes('=')) {
+      collect(lastLine, 'trailing_equality');
     }
   }
   if (unsafe.length > 0) {
@@ -294,7 +282,7 @@ export function extractFinalAnswer(text: string): FinalAnswerExtraction {
   }[] = found
     .map((entry) => ({
       marker: entry.marker,
-      values: candidateValues(entry.value).filter((v: string) => canonicalFinal(v).length > 0),
+      values: (candidateValues(entry.value) ?? []).filter((v) => canonicalFinal(v).length > 0),
     }))
     .filter((entry) => entry.values.length > 0);
   if (entries.length === 0) return { kind: 'none' };
@@ -326,7 +314,12 @@ export function isProcessLikeAnswer(text: string): boolean {
   const t = text.trim();
   if (t.length === 0) return false;
   const nonEmptyLines = t.split(/\n+/).filter((line) => line.trim().length > 0).length;
-  return nonEmptyLines > 1 || [...t].length > PROCESS_ANSWER_MAX_LEN || PROCESS_MARKER_RE.test(t);
+  return (
+    nonEmptyLines > 1 ||
+    [...t].length > PROCESS_ANSWER_MAX_LEN ||
+    PROCESS_MARKER_RE.test(t) ||
+    LAST_LINE_CONCLUSION_RE.test(t.normalize('NFKC'))
+  );
 }
 
 /**
