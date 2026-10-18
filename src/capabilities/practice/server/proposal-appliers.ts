@@ -1530,8 +1530,11 @@ async function writeCorrectionResolution(
     evaluationId?: string;
   },
 ) {
+  const id = `evt_eval_correction_resolution_${canonicalHash(input.correctionEventId)}`;
+  const [existing] = await db.select({ id: event.id }).from(event).where(eq(event.id, id)).limit(1);
+  if (existing) return;
   await writeEvent(db, {
-    id: `evt_eval_correction_resolution_${canonicalHash(input.correctionEventId)}`,
+    id,
     actor_kind: 'system',
     actor_ref: 'assessment:correction',
     action: 'experimental:assessment_appeal_resolution',
@@ -1734,7 +1737,10 @@ export async function acceptJudgeRetractionProposal(
 
     const existingRate = await existingAcceptRate(db, proposalId);
     const existingCorrection = await findProposalCorrectionEvent(db, proposalId);
-    if (existingRate && existingCorrection) {
+    // rejudge 全链 = 写 correction event + 入队 —— 两者都已存在即幂等完成。
+    // assert 不落这里：它的幂等重放由 evaluateSubmission 的 evaluation_key +
+    // activation CAS + 确定性 resolution 事件保证，重试必须重跑全链。
+    if (correctionKind === 'rejudge' && existingRate && existingCorrection) {
       return {
         kind: 'judge_retraction',
         rate_event_id: existingRate.id,
@@ -1787,15 +1793,17 @@ export async function acceptJudgeRetractionProposal(
         400,
       );
     }
-    const outcome = existingCorrection
-      ? { correctedEvaluationId: '', disposition: 'already_applied' }
-      : await applyManualAssertCorrection(db, {
-          proposalId,
-          evaluationId,
-          correctionEventId,
-          reasonMd,
-          assertedVerdicts,
-        });
+    // assert 幂等：manual_assert 的 evaluation_key（correction:<proposalId>）在
+    // evaluateSubmission 里按 intent_digest 重放同一 candidate；activation CAS
+    // 命中已激活则 already_effective；resolution 事件按确定性 id 只写一次。
+    // 因此即使上一轮在写 correction event 后中途失败，重试仍可安全重跑全链。
+    const outcome = await applyManualAssertCorrection(db, {
+      proposalId,
+      evaluationId,
+      correctionEventId,
+      reasonMd,
+      assertedVerdicts,
+    });
     await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
     return {
       kind: 'judge_retraction',
