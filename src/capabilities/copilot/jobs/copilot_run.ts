@@ -22,6 +22,7 @@ import {
   COPILOT_CANCEL_DRAIN_GRACE_MS,
   type CopilotRunCancellationControl,
   type PersistCopilotRunCancellationArgs,
+  copilotPartialReply,
   createCopilotRunCancellationControl,
   persistCopilotRunCancellationMarker,
 } from '@/capabilities/copilot/server/copilot-run-cancellation';
@@ -939,6 +940,9 @@ async function executeAcceptedCopilotRun(
       ? persistedSdkSessionId
       : undefined;
   let progressChain: Promise<void> = Promise.resolve();
+  let streamedProse = '';
+  const toolSummaries: string[] = [];
+  const partialReply = () => copilotPartialReply({ prose: streamedProse, toolSummaries });
   // Load-bearing execution fence, deliberately placed after every deterministic
   // setup/read and immediately before the only paid/external-effect gateway.
   // The claim rechecks under a per-run transaction lock: two overlapping
@@ -1030,7 +1034,7 @@ async function executeAcceptedCopilotRun(
         providerSessionDeadlineAt: Date.now() + DURABLE_OWNER_SETTLEMENT_BUDGET_MS,
       });
       if ((await cancellationControl.probe()) === 'cancel_requested')
-        return await settleObservedCancellation();
+        return await settleObservedCancellation(partialReply());
       try {
         const markerClaim = await ensureCopilotOutcomeMarker(
           db,
@@ -1054,7 +1058,7 @@ async function executeAcceptedCopilotRun(
               modeState: { skill_turn: committed.skillTurn, skill_context: skillContext },
             };
           },
-          { createCancelled: cancellationMarker() },
+          { createCancelled: cancellationMarker(partialReply()) },
         );
         if (markerClaim.outcome === 'already_terminal')
           return terminalRunResult(markerClaim.events, taskRunId);
@@ -1086,6 +1090,10 @@ async function executeAcceptedCopilotRun(
           ? { subagentsEnabled: params.copilotSubagentEnabled }
           : {}),
         observe: (activity) => {
+          if (activity.kind === 'prose_delta') streamedProse += activity.text;
+          if (activity.kind === 'tool_finished' && activity.summary.trim().length > 0) {
+            toolSummaries.push(`${activity.toolName}: ${activity.summary.trim()}`);
+          }
           if (activity.kind === 'spawn_budget') {
             params.onSpawnBudgetObservation?.(activity.observation);
             return;
@@ -1120,7 +1128,7 @@ async function executeAcceptedCopilotRun(
     const cancellationReply = finalized.accepted ? finalReply : undefined;
     if ((await cancellationControl.probe()) === 'cancel_requested') {
       return await settleObservedCancellation(
-        cancellationReply,
+        cancellationReply ?? partialReply(),
         result.taskRunId,
         finalized.accepted ? finalized.receipt : undefined,
         finalized.accepted ? finalized.preparedReply : undefined,
@@ -1139,14 +1147,14 @@ async function executeAcceptedCopilotRun(
         sessionId: data.session_id,
         actorRef,
         taskRunId: result.taskRunId,
-        partialText: finalReply,
+        partialText: partialReply() ?? finalReply,
         preparedReply,
         projectSuccessfulTerminal,
         projectFailedTerminal,
         writeCopilotReplyFn: persistReply,
         replyFinalization: finalized.receipt,
         createCancelledMarker: cancellationMarker(
-          cancellationReply,
+          cancellationReply ?? partialReply(),
           result.taskRunId,
           finalized.accepted ? finalized.receipt : undefined,
           finalized.accepted ? finalized.preparedReply : undefined,
@@ -1161,13 +1169,13 @@ async function executeAcceptedCopilotRun(
         sessionId: data.session_id,
         actorRef,
         taskRunId: result.taskRunId,
-        partialText: finalReply,
+        partialText: partialReply() ?? finalReply,
         preparedReply,
         projectSuccessfulTerminal,
         projectFailedTerminal,
         writeCopilotReplyFn: persistReply,
         replyFinalization: finalized.receipt,
-        createCancelledMarker: cancellationMarker(),
+        createCancelledMarker: cancellationMarker(partialReply()),
       });
     }
 
@@ -1222,7 +1230,7 @@ async function executeAcceptedCopilotRun(
         },
         {
           createCancelled: cancellationMarker(
-            cancellationReply,
+            cancellationReply ?? partialReply(),
             result.taskRunId,
             finalized.accepted ? finalized.receipt : undefined,
             finalized.accepted ? finalized.preparedReply : undefined,
@@ -1249,7 +1257,7 @@ async function executeAcceptedCopilotRun(
     // 它之外的 throw（装配 / MCP mount / 事件写），或注入 fixture 的 throw（测 MF1/MF2）。
     await drainDeltaChain(progressChain, runId);
     if ((await cancellationControl.probe()) === 'cancel_requested') {
-      return await settleObservedCancellation();
+      return await settleObservedCancellation(partialReply());
     }
     return await handleDurableFailure(db, {
       err,
@@ -1259,7 +1267,7 @@ async function executeAcceptedCopilotRun(
       projectSuccessfulTerminal,
       projectFailedTerminal,
       writeCopilotReplyFn: persistReply,
-      createCancelledMarker: cancellationMarker(),
+      createCancelledMarker: cancellationMarker(partialReply()),
     });
   } finally {
     cancellationControl.dispose();
