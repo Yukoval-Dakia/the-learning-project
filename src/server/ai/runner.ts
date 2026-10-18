@@ -53,8 +53,10 @@ import {
   resolveExecutionAdapter,
 } from './execution-adapter';
 import { type TraceContent, traceMetadata, traceOperation } from './laminar-tracing';
+import type { NoteGeneratePhaseTimings } from './log';
 import { logMissingToolMountsWarning } from './log';
 import type { PiHookBridge } from './pi-hooks';
+import { providerHttpTimeoutMs } from './provider-http-timeout';
 import { PROVIDER_SESSION_SDK_STARTUP_TIMEOUT_MS } from './provider-session-admission';
 import type { ResolvedProvider } from './providers';
 import {
@@ -77,6 +79,7 @@ import type {
   SDKUserMessage,
 } from './sdk-types';
 import { isSpawnToolName } from './spawn-contract';
+import { addStreamText, emptyStreamTextStats } from './timeout-usage';
 import type { PiSubagentSpec } from './tools/pi-subagent';
 import type { PiToolMount } from './tools/pi-tools';
 
@@ -120,6 +123,8 @@ export interface RunTaskResult {
    * on the default mimo lane, YUK-792). Runner never interprets it.
    */
   structured_output?: unknown;
+  /** Present for NoteGenerateTask. Model phases; the job adds parse and DB. */
+  phases?: NoteGeneratePhaseTimings;
 }
 
 export interface CompiledModelPrompt {
@@ -517,6 +522,8 @@ function buildQueryOptions(
     // 'unbounded' removes it entirely (pi mounts no shouldStopAfterTurn).
     maxTurns: budget.maxIterations === 'unbounded' ? undefined : budget.maxIterations || 1,
   };
+  const providerTimeoutMs = providerHttpTimeoutMs(budget.timeout);
+  if (providerTimeoutMs !== undefined) options.providerTimeoutMs = providerTimeoutMs;
   // YUK-923 — reasoning effort tier: per-run modelBinding wins over the
   // task-kind declaration; unset → the provider default applies.
   const reasoningEffort = ctx.modelBinding?.effort ?? declaredDef.reasoningEffort;
@@ -625,85 +632,117 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
   apiErrorMessages?: (msg: SDKSuccessResultMessage) => string[];
   onResultError?: (msg: Exclude<SDKResultMessage, SDKSuccessResultMessage>) => void;
   abortedWithoutTerminalMessage: string;
+  /** System prompt plus user prompt, used only when an abort has no provider usage. */
+  usagePrompt?: string;
 }): Promise<void> {
   const terminal = createSdkTerminalEvidenceCollector();
   let iteration = 0;
   let stepStartTime = Date.now();
+  const modelStarted = Date.now();
+  let firstTokenAt: number | undefined;
+  const outputStats = emptyStreamTextStats();
+  const settleAbortUsage = async () => {
+    if (args.kind !== 'NoteGenerateTask') return;
+    if (!args.lifecycle.aborted || args.lifecycle.sawTerminalResult) return;
+    await args.lifecycle.recordAbortedUsage({
+      promptText: args.usagePrompt ?? '',
+      output: outputStats,
+    });
+  };
 
-  for await (const msg of args.query) {
-    if (msg.type === 'text_delta') {
-      if (!args.lifecycle.abortController.signal.aborted) await args.onTextDelta?.(msg.text);
-      continue;
-    }
-    if (args.notifySessionId && msg.type === 'system' && msg.subtype === 'init') {
-      await notifySdkSessionId(args.ctx, msg);
-    }
-    await notifyTaskEvent(args.ctx, msg);
-
-    if (msg.type === 'system' && msg.subtype === 'compact_boundary') {
-      args.lifecycle.recordObservedUsage(terminal.observeCompaction(msg));
-      continue;
-    }
-
-    if (msg.type === 'assistant') {
-      const observedUsage = terminal.observeAssistant(msg);
-      if (observedUsage) args.lifecycle.recordObservedUsage(observedUsage);
-      await args.onAssistant?.(msg);
-
-      iteration += 1;
-      const stepLatencyMs = Date.now() - stepStartTime;
-      const blocks = (msg.message.content ?? []) as ContentBlock[];
-      for (const block of blocks) {
-        if (block.type !== 'tool_use') continue;
-        if (args.shouldRecordToolCall(block)) {
-          await args.lifecycle.recordToolCall({
-            toolName: block.name,
-            inputJson: (block.input ?? {}) as Record<string, unknown>,
-            iteration,
-            latencyMs: stepLatencyMs,
-          });
+  try {
+    for await (const msg of args.query) {
+      if (msg.type === 'text_delta' || msg.type === 'thinking_delta') {
+        if (msg.text) {
+          addStreamText(outputStats, msg.text);
+          firstTokenAt ??= Date.now();
         }
-        if (args.onToolUse) {
-          try {
-            args.onToolUse(block);
-          } catch {
-            // Visibility failures must never abort paid work.
+        if (msg.type === 'text_delta' && !args.lifecycle.abortController.signal.aborted) {
+          await args.onTextDelta?.(msg.text);
+        }
+        continue;
+      }
+      if (args.notifySessionId && msg.type === 'system' && msg.subtype === 'init') {
+        await notifySdkSessionId(args.ctx, msg);
+      }
+      await notifyTaskEvent(args.ctx, msg);
+
+      if (msg.type === 'system' && msg.subtype === 'compact_boundary') {
+        args.lifecycle.recordObservedUsage(terminal.observeCompaction(msg));
+        continue;
+      }
+
+      if (msg.type === 'assistant') {
+        const observedUsage = terminal.observeAssistant(msg);
+        if (observedUsage) args.lifecycle.recordObservedUsage(observedUsage);
+        await args.onAssistant?.(msg);
+
+        iteration += 1;
+        const stepLatencyMs = Date.now() - stepStartTime;
+        const blocks = (msg.message.content ?? []) as ContentBlock[];
+        for (const block of blocks) {
+          if (block.type !== 'tool_use') continue;
+          if (args.shouldRecordToolCall(block)) {
+            await args.lifecycle.recordToolCall({
+              toolName: block.name,
+              inputJson: (block.input ?? {}) as Record<string, unknown>,
+              iteration,
+              latencyMs: stepLatencyMs,
+            });
+          }
+          if (args.onToolUse) {
+            try {
+              args.onToolUse(block);
+            } catch {
+              // Visibility failures must never abort paid work.
+            }
           }
         }
+        stepStartTime = Date.now();
+        continue;
       }
-      stepStartTime = Date.now();
-      continue;
-    }
 
-    if (msg.type !== 'result') continue;
-    if (args.notifySessionId) await notifySdkSessionId(args.ctx, msg);
-    args.lifecycle.recordTerminalResult(terminal.fromResult(msg));
-    if (msg.subtype === 'success') {
-      if (isApiErrorSuccessResult(msg)) {
-        args.onApiError?.(msg);
+      if (msg.type !== 'result') continue;
+      if (args.notifySessionId) await notifySdkSessionId(args.ctx, msg);
+      args.lifecycle.recordTerminalResult(terminal.fromResult(msg));
+      if (msg.subtype === 'success') {
+        if (isApiErrorSuccessResult(msg)) {
+          args.onApiError?.(msg);
+          throw new AgentRunError({
+            kind: args.kind,
+            taskRunId: args.lifecycle.taskRunId,
+            subtype: 'api_error_result',
+            apiErrorStatus: msg.api_error_status ?? null,
+            errors: args.apiErrorMessages?.(msg) ?? [msg.result ?? ''],
+          });
+        }
+        await args.onSuccess?.(msg);
+      } else {
+        args.onResultError?.(msg);
         throw new AgentRunError({
           kind: args.kind,
           taskRunId: args.lifecycle.taskRunId,
-          subtype: 'api_error_result',
-          apiErrorStatus: msg.api_error_status ?? null,
-          errors: args.apiErrorMessages?.(msg) ?? [msg.result ?? ''],
+          subtype: msg.subtype,
+          errors: 'errors' in msg && Array.isArray(msg.errors) ? msg.errors : [],
         });
       }
-      await args.onSuccess?.(msg);
-    } else {
-      args.onResultError?.(msg);
-      throw new AgentRunError({
-        kind: args.kind,
-        taskRunId: args.lifecycle.taskRunId,
-        subtype: msg.subtype,
-        errors: 'errors' in msg && Array.isArray(msg.errors) ? msg.errors : [],
-      });
+      break;
     }
-    break;
+  } catch (error) {
+    await settleAbortUsage();
+    throw error;
+  } finally {
+    const endedAt = Date.now();
+    args.lifecycle.recordNotePhases({
+      model_total_ms: endedAt - modelStarted,
+      model_ttft_ms: firstTokenAt === undefined ? null : firstTokenAt - modelStarted,
+      stream_ms: firstTokenAt === undefined ? 0 : endedAt - firstTokenAt,
+    });
   }
 
   if (!args.lifecycle.sawTerminalResult) {
     if (args.lifecycle.aborted) {
+      await settleAbortUsage();
       throw new Error(args.abortedWithoutTerminalMessage);
     }
     throw new AgentRunError({
@@ -740,6 +779,7 @@ async function runTaskAttempt(args: {
   modelBinding: RunTaskCtx['modelBinding'];
   onProviderQueryStarted?: () => Promise<void>;
   warnMissingMcp?: boolean;
+  retryCount?: number;
 }): Promise<RunTaskResult> {
   const { kind, actualInput, budget, ctx, lifecycle, modelBinding } = args;
 
@@ -749,6 +789,7 @@ async function runTaskAttempt(args: {
   // lease: blocking this event loop after acquire can delay the first
   // heartbeat beyond its DB-derived deadline even though no provider work has
   // started yet.
+  const promptStarted = Date.now();
   const promptText = ctx.compiledModelPrompt?.text ?? promptFromInput(actualInput);
   const callOptions = buildQueryOptions(
     kind,
@@ -757,6 +798,11 @@ async function runTaskAttempt(args: {
     lifecycle.resolved,
     budget,
   );
+  const usagePrompt = `${typeof callOptions.systemPrompt === 'string' ? callOptions.systemPrompt : ''}\n${typeof promptText === 'string' ? promptText : ''}`;
+  lifecycle.recordNotePhases({
+    prompt_build_ms: Date.now() - promptStarted,
+    retry_count: args.retryCount ?? 0,
+  });
   const consumePreparedQuery = async (q: AsyncIterable<RunnerMessage>) => {
     if (args.warnMissingMcp) {
       logMissingToolMountsWarning({
@@ -792,6 +838,7 @@ async function runTaskAttempt(args: {
         }
       },
       abortedWithoutTerminalMessage: `[${kind}] Agent SDK run aborted (budget timeout) with no terminal result`,
+      usagePrompt,
     });
   };
   await withPreparedExecutionQuery(
@@ -816,6 +863,7 @@ async function runTaskAttempt(args: {
     cost_basis: lifecycle.costBasis,
     cost_ref: lifecycle.costRef,
     structured_output: lifecycle.structuredOutput,
+    ...(lifecycle.usage.phases ? { phases: lifecycle.usage.phases } : {}),
   };
   await lifecycle.finishSuccess(result);
   return result;
@@ -905,6 +953,7 @@ async function runTaskImpl(kind: string, input: unknown, ctx: RunTaskCtx): Promi
           ctx,
           lifecycle,
           modelBinding,
+          retryCount: attempt - 1,
           // needsToolCall with no pi-visible mounts runs tool-less — warn once.
           warnMissingMcp: attempt === 1 && def.needsToolCall && !ctx.piToolMounts?.length,
           onProviderQueryStarted: retrySource

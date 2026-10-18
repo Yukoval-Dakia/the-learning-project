@@ -43,6 +43,7 @@ export function makeRunTaskTextFn(db: Db, baseCtx: RunTaskCallCtx = {}): BoundRu
       cost_basis: result.cost_basis,
       cost_ref: result.cost_ref,
       structured_output: result.structured_output,
+      ...(result.phases ? { phases: result.phases } : {}),
     };
   };
 }
