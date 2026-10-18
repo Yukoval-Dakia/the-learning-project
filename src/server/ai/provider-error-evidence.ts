@@ -41,15 +41,48 @@ export interface ProviderErrorEvidence {
 const SECRET_VALUE_FIELD =
   /"((?:api[-_]?key|access[-_]?token|refresh[-_]?token|id[-_]?token|session[-_]?token|auth[-_]?token|authorization|client[-_]?secret|secret|password|token)[^"\\]*)"(\s*:\s*)"(?:[^"\\]|\\.)*"/gi;
 
+// Plaintext auth headers mirrored into an error body (`X-Api-Key: <key>`,
+// `Authorization=Bearer <key>`, ...) — the JSON field pattern above cannot
+// see unquoted `name: value` forms.
+const PLAINTEXT_AUTH_HEADER =
+  /((?:authorization|x-api-key|api[-_]?key|x-auth-token|proxy-authorization|x-access-token)\s*[:=]\s*)(?:Bearer\s+|Basic\s+)?[^\s'",}\][]+/gi;
+
+/** Request ids are receipts too — sanitize and bound them like the body. */
+export const PROVIDER_ERROR_REQUEST_ID_MAX_BYTES = 128;
+
+export interface ProviderErrorSanitizeOptions {
+  /**
+   * The resolved credential value(s) used for THIS request — verbatim and
+   * JSON-escaped forms are redacted before the generic patterns, because an
+   * error body can echo the key back in arbitrary text (`Invalid API key:
+   * <key>`) where no field-name or token-shape pattern reaches it.
+   */
+  secrets?: readonly string[];
+}
+
 /**
- * Redact credential material from a provider error body. The body is a
- * receipt artifact — an error payload should never echo our secrets, but
- * proxies and SDKs have been known to mirror request fields. Anything the
- * patterns miss stays verbatim: this is a hygiene floor, not a parser.
+ * Redact credential material from provider-produced text. The caller's
+ * actual credential is removed in both its verbatim form and the form it
+ * takes inside a JSON string (`JSON.stringify` escapes `"` / `\` / control
+ * chars), then the generic field/header/token patterns run. Anything the
+ * rules miss stays verbatim: this is a hygiene floor, not a parser.
  */
-export function sanitizeProviderErrorText(text: string): string {
-  return text
+export function sanitizeProviderErrorText(
+  text: string,
+  options?: ProviderErrorSanitizeOptions,
+): string {
+  let out = text;
+  for (const secret of options?.secrets ?? []) {
+    if (secret === '') continue;
+    if (out.includes(secret)) out = out.split(secret).join('[redacted]');
+    const escaped = JSON.stringify(secret).slice(1, -1);
+    if (escaped !== secret && out.includes(escaped)) {
+      out = out.split(escaped).join('[redacted]');
+    }
+  }
+  return out
     .replace(SECRET_VALUE_FIELD, (_match, key: string, sep: string) => `"${key}"${sep}"[redacted]"`)
+    .replace(PLAINTEXT_AUTH_HEADER, (_match, prefix: string) => `${prefix}[redacted]`)
     .replace(/Bearer\s+[^\s"',}]+/g, 'Bearer [redacted]')
     .replace(/\b(?:sk|tp|oat)-[A-Za-z0-9_-]{8,}\b/g, '[redacted]');
 }
@@ -60,12 +93,19 @@ export function sanitizeProviderErrorText(text: string): string {
  */
 export async function readProviderErrorEvidence(
   response: Response,
+  options?: ProviderErrorSanitizeOptions,
 ): Promise<ProviderErrorEvidence> {
   const raw = (await response.text().catch(() => '')).trim();
-  const sanitized = sanitizeProviderErrorText(raw);
+  const sanitized = sanitizeProviderErrorText(raw, options);
   const body = truncateUtf8(sanitized, PROVIDER_ERROR_BODY_MAX_BYTES);
-  const requestId =
+  const requestIdRaw =
     response.headers.get('x-request-id') ?? response.headers.get('request-id') ?? undefined;
+  const requestId = requestIdRaw
+    ? truncateUtf8(
+        sanitizeProviderErrorText(requestIdRaw, options),
+        PROVIDER_ERROR_REQUEST_ID_MAX_BYTES,
+      )
+    : undefined;
   return {
     http_status: response.status,
     ...(requestId ? { request_id: requestId } : {}),
@@ -82,19 +122,30 @@ export async function readProviderErrorEvidence(
  * formatted summary). The LAST non-2xx wins — provider retries may pass
  * several failures before the terminal one the run reports.
  */
-export function createProviderErrorCaptureFetch(base: typeof fetch): {
+export function createProviderErrorCaptureFetch(
+  base: typeof fetch,
+  options?: ProviderErrorSanitizeOptions,
+): {
   fetch: typeof fetch;
   latest(): ProviderErrorEvidence | undefined;
+  /**
+   * The same boundary applied to pi's formatted errorMessage — the driver
+   * may embed the full (unbounded, unsanitized) provider body in it, so a
+   * retained copy must pass through identical sanitize + UTF-8 cap.
+   */
+  sanitize(text: string): string;
 } {
   let latest: ProviderErrorEvidence | undefined;
   return {
     fetch: async (input, init) => {
       const response = await base(input, init);
       if (!response.ok) {
-        latest = await readProviderErrorEvidence(response.clone()).catch(() => latest);
+        latest = await readProviderErrorEvidence(response.clone(), options).catch(() => latest);
       }
       return response;
     },
     latest: () => latest,
+    sanitize: (text) =>
+      truncateUtf8(sanitizeProviderErrorText(text, options), PROVIDER_ERROR_BODY_MAX_BYTES),
   };
 }

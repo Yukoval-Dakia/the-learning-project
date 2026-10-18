@@ -30,7 +30,10 @@ import {
 import { zodToToolParametersSchema } from '@/kernel/zod-json-schema';
 import { assertModelProfileCapabilityFit } from '@/server/ai/model-profiles';
 import { nativePiModel } from '@/server/ai/pi-provider-catalog';
-import { readProviderErrorEvidence } from '@/server/ai/provider-error-evidence';
+import {
+  readProviderErrorEvidence,
+  sanitizeProviderErrorText,
+} from '@/server/ai/provider-error-evidence';
 import { type TaskNativeReasoningParams, resolveTaskProvider } from '@/server/ai/providers';
 
 const submit = 'mcp__structured_output__submit';
@@ -282,7 +285,9 @@ async function preflight(path: string) {
         // error body + status + request id on the receipt, so a refused
         // preflight is diagnosable without a second request. The receipt is
         // written in the finally below before this command exits.
-        probe.provider_error = await readProviderErrorEvidence(response);
+        probe.provider_error = await readProviderErrorEvidence(response, {
+          secrets: [route.apiKey],
+        });
         throw new Error(
           `Preflight HTTP ${response.status} for ${route.provider}/${route.model}; stop before reopening`,
         );
@@ -329,8 +334,17 @@ async function preflight(path: string) {
     receipt.passed = true;
     console.log('PASS: HTTP 200; exactly one submit call; strict schema; no paid_effect created');
   } catch (error) {
-    receipt.error = error instanceof Error ? error.message : String(error);
-    throw error;
+    // The message is written to the receipt AND rethrown to the process-level
+    // console log — run it through the same sanitize boundary against every
+    // probe credential so a provider/SDK error text that echoes a request
+    // value cannot reach either sink. Stack/cause are not receipt-relevant.
+    const secrets = routes.map((route) => route.apiKey);
+    const sanitized = sanitizeProviderErrorText(
+      error instanceof Error ? error.message : String(error),
+      { secrets },
+    );
+    receipt.error = sanitized;
+    throw new Error(sanitized);
   } finally {
     await file.writeFile(JSON.stringify(receipt, null, 2));
     await file.close();

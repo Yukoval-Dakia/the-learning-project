@@ -614,6 +614,11 @@ export function piTerminalResultFrame(args: {
    *  raw non-2xx body (not just pi's formatted errorMessage) reaches
    *  ai_task_runs.error_message and paid_effect.unresolved_reason. */
   providerError?: ProviderErrorEvidence;
+  /** YUK-1559 (C6) — the capture's shared sanitize+bound for retained
+   *  provider text. Applied to pi's errorMessage (errors[0]): the driver can
+   *  embed the full unsanitized body in it, which would otherwise bypass the
+   *  evidence body's credential redaction and 4096B cap. */
+  sanitizeErrorMessage?: (text: string) => string;
   /** P3 — nested-child usage rolled into the run's terminal evidence, the
    *  same way the SDK result aggregates subagent tokens into modelUsage. */
   childUsage?: PiChildUsage;
@@ -663,6 +668,7 @@ export function piTerminalResultFrame(args: {
     args.providerError !== undefined
       ? `provider_http_error=${JSON.stringify(args.providerError)}`
       : undefined;
+  const errorEntry = args.sanitizeErrorMessage ?? ((text: string) => text);
   if (child && (child.input > 0 || child.output > 0)) {
     usageParts.usage.input_tokens += child.input;
     usageParts.usage.output_tokens += child.output;
@@ -693,7 +699,7 @@ export function piTerminalResultFrame(args: {
       stop_reason: null,
       total_cost_usd: costUsd,
       errors: [
-        final?.errorMessage ?? 'pi agent aborted by provider',
+        errorEntry(final?.errorMessage ?? 'pi agent aborted by provider'),
         ...(providerErrorEntry ? [providerErrorEntry] : []),
       ],
       ...usageParts,
@@ -707,7 +713,7 @@ export function piTerminalResultFrame(args: {
       stop_reason: null,
       total_cost_usd: 0,
       errors: [
-        'pi agent_loop ended without an assistant message',
+        errorEntry('pi agent_loop ended without an assistant message'),
         ...(providerErrorEntry ? [providerErrorEntry] : []),
       ],
       ...usageParts,
@@ -732,7 +738,7 @@ export function piTerminalResultFrame(args: {
       stop_reason: null,
       total_cost_usd: costUsd,
       errors: [
-        final.errorMessage ?? 'pi stream error',
+        errorEntry(final.errorMessage ?? 'pi stream error'),
         ...(providerErrorEntry ? [providerErrorEntry] : []),
       ],
       ...usageParts,
@@ -1091,7 +1097,12 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     // it only reads a clone of failing responses. Every loom-registered
     // provider accepts a custom fetch (the same surface providerHttpBudget
     // already uses for long-budget tasks).
-    this.providerErrorCapture ??= createProviderErrorCaptureFetch(http.fetch ?? globalThis.fetch);
+    this.providerErrorCapture ??= createProviderErrorCaptureFetch(
+      http.fetch ?? globalThis.fetch,
+      // The request's resolved credential — verbatim + JSON-escaped forms are
+      // redacted at the shared boundary before any field/header patterns run.
+      { secrets: resolved.apiKey ? [resolved.apiKey] : [] },
+    );
     return {
       // All prompts are standard LLM messages — identity conversion narrowed
       // to the LLM roles the union type needs. UI-only AgentMessages never
@@ -1582,6 +1593,9 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       // YUK-1559 (C6) — the last non-2xx this query's capture fetch saw, if
       // any; the terminal frame appends it to errors[] on failure terminals.
       providerError: this.providerErrorCapture?.latest(),
+      // Same shared boundary on errors[0] — pi's errorMessage can carry the
+      // full unsanitized provider body; it must not bypass redaction/cap.
+      sanitizeErrorMessage: this.providerErrorCapture?.sanitize,
       childUsage: this.childUsage,
     });
     if (terminal) yield terminal;
