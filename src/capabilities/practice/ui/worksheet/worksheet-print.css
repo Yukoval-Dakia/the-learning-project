@@ -63,13 +63,25 @@
   padding: 10mm 0;
 }
 
-/* Hidden measuring stage: same markup at the same widths, out of view. */
-.ws-stage {
+/* Hidden measuring stage: same markup at the same widths, out of view. It must lay out exactly
+   the same under screen and print media (the render job emulates print before loading), so no
+   media query touches it: a zero-size clipping host keeps it invisible and adds no height to the
+   document, hence no extra printed pages. */
+.ws-stage-host {
   position: absolute;
-  left: -10000px;
+  left: 0;
   top: 0;
+  width: 0;
+  height: 0;
+  overflow: hidden;
   visibility: hidden;
   pointer-events: none;
+}
+
+.ws-stage {
+  position: absolute;
+  left: 0;
+  top: 0;
 }
 
 /* Same base typography as .ws-sheet, so a block measures exactly as it prints. */
@@ -658,7 +670,6 @@
     break-after: auto;
   }
 
-  .ws-stage,
   .ws-status,
   .ws-overlay {
     display: none;

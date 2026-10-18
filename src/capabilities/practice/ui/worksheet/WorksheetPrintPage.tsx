@@ -421,25 +421,68 @@ function heightMm(element: Element, scale: number): number {
   return element.getBoundingClientRect().height * scale;
 }
 
+const isPositive = (value: number | undefined): value is number =>
+  value !== undefined && Number.isFinite(value) && value > 0;
+
+const rectOk = (rect: { x: number; y: number; w: number; h: number }) =>
+  [rect.x, rect.y].every(Number.isFinite) && isPositive(rect.w) && isPositive(rect.h);
+
+/** Never report ready with a page or region the archive would reject as empty or NaN. */
+function regionMapProblem(map: WorksheetRegionMapDraft): string | null {
+  if (map.pages.length === 0) return 'no pages measured';
+  for (const page of map.pages) {
+    if (!isPositive(page.size_mm.w) || !isPositive(page.size_mm.h)) {
+      return `page ${page.page}: size is not positive`;
+    }
+    if (!rectOk(page.qr.mm)) return `page ${page.page}: QR box is not positive`;
+    for (const anchor of [page.anchors.tl, page.anchors.tr, page.anchors.bl, page.anchors.br]) {
+      if (!Number.isFinite(anchor.cx) || !Number.isFinite(anchor.cy) || !isPositive(anchor.size)) {
+        return `page ${page.page}: an anchor is not measurable`;
+      }
+    }
+    for (const region of page.regions) {
+      if (!rectOk(region.mm)) return `region ${region.region_id}: rect is not positive`;
+      for (const option of region.options ?? []) {
+        if (!rectOk(option.mm)) return `region ${region.region_id}: an option circle is empty`;
+      }
+    }
+  }
+  return null;
+}
+
 function measureFlows(
   stage: HTMLElement,
   flows: Flow[],
-): { bodyMm: Record<SheetOrientation, number>; inputs: FlowInput[] } | null {
+): { bodyMm: Record<SheetOrientation, number>; inputs: FlowInput[] } | { error: string } {
   const skeleton = (orientation: SheetOrientation) =>
     stage.querySelector<HTMLElement>(`[data-ws-skeleton="${orientation}"]`);
   const portrait = skeleton('portrait');
   const landscape = skeleton('landscape');
-  if (!portrait || !landscape) return null;
+  if (!portrait || !landscape) return { error: 'measuring stage is incomplete' };
   const scale = SHEET_MM.portrait.w / portrait.getBoundingClientRect().width;
+  if (!Number.isFinite(scale) || scale <= 0) return { error: 'measuring stage has no width' };
   const bodyOf = (sheet: HTMLElement) => {
     const body = sheet.querySelector('.ws-body');
     return body ? heightMm(body, scale) : 0;
   };
   const bodyMm = { portrait: bodyOf(portrait), landscape: bodyOf(landscape) };
+  if (!isPositive(bodyMm.portrait) || !isPositive(bodyMm.landscape)) {
+    return { error: 'page body measured as empty' };
+  }
 
   const measuredByKey = new Map<string, number>();
   for (const element of stage.querySelectorAll<HTMLElement>('[data-measure]')) {
     measuredByKey.set(element.getAttribute('data-measure') ?? '', heightMm(element, scale));
+  }
+  // Every block must have a real, positive height; a hidden or unlaid-out stage reads 0 or NaN.
+  for (const flow of flows) {
+    const keys = [
+      ...flow.items.flatMap((item) => item.blocks.map((block) => block.key)),
+      ...(flow.passageItem?.passage ? [flow.passageItem.passage.key] : []),
+    ];
+    for (const key of keys) {
+      if (!isPositive(measuredByKey.get(key))) return { error: `block ${key} measured as empty` };
+    }
   }
   const inputs: FlowInput[] = flows.map((flow) => {
     const blocks: MeasuredBlock[] = [];
@@ -542,8 +585,8 @@ function Sheets({ plan, overlay }: { plan: WorksheetPlan; overlay: boolean }) {
         () => {
           if (cancelled) return;
           const measured = measureFlows(node, flows);
-          if (!measured) {
-            setFailure({ code: 'load_failed', detail: 'measuring stage is incomplete' });
+          if ('error' in measured) {
+            setFailure({ code: 'layout_overflow', detail: measured.error });
             return;
           }
           const result = paginate(measured.inputs, measured.bodyMm);
@@ -583,8 +626,14 @@ function Sheets({ plan, overlay }: { plan: WorksheetPlan; overlay: boolean }) {
             setFailure({ code: 'layout_overflow', detail: overflow });
             return;
           }
+          const map = measureRegionMap(node);
+          const problem = regionMapProblem(map);
+          if (problem) {
+            setFailure({ code: 'layout_overflow', detail: problem });
+            return;
+          }
           writeDocState('ready');
-          if (overlay) setOverlayMap(measureRegionMap(node));
+          if (overlay) setOverlayMap(map);
         },
         (error: unknown) => {
           if (cancelled) return;
@@ -604,33 +653,35 @@ function Sheets({ plan, overlay }: { plan: WorksheetPlan; overlay: boolean }) {
   return (
     <>
       {/* The stage stays mounted: it keeps the image object URLs alive for the sheets. */}
-      <div ref={attachStage} className="ws-stage" aria-hidden="true">
-        <Sheet plan={plan} orientation="portrait" page={1} of={1} measured={false} skeleton />
-        <Sheet plan={plan} orientation="landscape" page={1} of={1} measured={false} skeleton />
-        {flows.map((flow) => (
-          <div key={flow.key} className={`ws-col ws-col-${flow.orientation}`}>
-            {flow.passageItem?.passage ? (
-              <div
-                className="ws-passage ws-col-passage"
-                data-measure={flow.passageItem.passage.key}
-              >
-                <PassageColumn item={flow.passageItem} />
-              </div>
-            ) : null}
-            {flow.items.flatMap((item) =>
-              item.blocks.map((block) => (
-                <div key={block.key} className="ws-blk" data-measure={block.key}>
-                  <BlockView
-                    block={block}
-                    notation={item.notation}
-                    orientation={flow.orientation}
-                    segment={null}
-                  />
+      <div className="ws-stage-host" aria-hidden="true">
+        <div ref={attachStage} className="ws-stage">
+          <Sheet plan={plan} orientation="portrait" page={1} of={1} measured={false} skeleton />
+          <Sheet plan={plan} orientation="landscape" page={1} of={1} measured={false} skeleton />
+          {flows.map((flow) => (
+            <div key={flow.key} className={`ws-col ws-col-${flow.orientation}`}>
+              {flow.passageItem?.passage ? (
+                <div
+                  className="ws-passage ws-col-passage"
+                  data-measure={flow.passageItem.passage.key}
+                >
+                  <PassageColumn item={flow.passageItem} />
                 </div>
-              )),
-            )}
-          </div>
-        ))}
+              ) : null}
+              {flow.items.flatMap((item) =>
+                item.blocks.map((block) => (
+                  <div key={block.key} className="ws-blk" data-measure={block.key}>
+                    <BlockView
+                      block={block}
+                      notation={item.notation}
+                      orientation={flow.orientation}
+                      segment={null}
+                    />
+                  </div>
+                )),
+              )}
+            </div>
+          ))}
+        </div>
       </div>
 
       {pages ? null : <StatusView state="loading" />}
