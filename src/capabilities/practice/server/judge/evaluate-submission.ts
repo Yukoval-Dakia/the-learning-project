@@ -23,6 +23,8 @@ import { observeJudgeProcess } from '../judge-process-observer';
 // 调用 —— typed transport 归 src/server/ai/ 后续 lane（YUK-1049）。
 
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { assessmentRubricInvocationWindowMs } from '@/capabilities/practice/tasks/assessment-rubric-timeout';
+import { resolveTaskBudget } from '@/capabilities/task-registry';
 import {
   evaluationMemberFromRows,
   freezeEvaluationInput,
@@ -184,6 +186,12 @@ export class EvaluateSubmissionError extends Error {
   }
 }
 
+/** 细则判分的墙钟：解析后的单次超时，再加一次超时重试窗口。 */
+export function formalRubricDeadlineAt(now = Date.now()): number {
+  const timeoutMs = resolveTaskBudget('AssessmentRubricJudgeTask').timeout;
+  return now + assessmentRubricInvocationWindowMs(timeoutMs);
+}
+
 /** Published task identity selects a registered native executor; no URL/key override. */
 export function createFormalModelExecutor(
   db: Db,
@@ -210,7 +218,7 @@ export function createFormalModelExecutor(
       if (request.executor.task_kind === 'AssessmentRubricJudgeTask') {
         return createRubricModelExecutor({
           db,
-          deadlineAt,
+          deadlineAt: formalRubricDeadlineAt(),
           signal,
           taskRunId,
           maxCostUsdMicros: request.executor.max_cost_usd_micros ?? 0,

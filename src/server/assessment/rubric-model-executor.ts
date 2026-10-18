@@ -10,12 +10,17 @@
 //   - 图片纪律：prepareAssessmentModelInput 只在原图真实送达（digest 核验
 //     后作为 image block 附上）时才放行；没读到原图不得声称读了 —— 引用未
 //     送达/不存在的证据，或对图片证据附“引文”，一律 pending，不猜分；
-//   - 费用诚实：truth 层（run 台账）unknown 保持 unknown；charge 层
-//     （outcome.cost_usd_micros）对 unknown 成本按整段准入预留 cap 计费 ——
-//     绝不记为零（不虚报已知，也不削弱计划级费用上限）。超 cap ⇒ pending。
+//   - 费用诚实：成功返回但价格 unknown 的调用，charge 层仍按整段 cap 计
+//     （台账保持 unknown，绝不记成免费）。超时没有成交价时不把预留 cap
+//     写成 cost_usd_micros：准入汇总记 unknown。estimated 重试闸门用留出题
+//     实测的单次成功均价。超 cap ⇒ pending。
 // ====================================================================
 
 import { randomUUID } from 'node:crypto';
+import {
+  ASSESSMENT_RUBRIC_TIMEOUT_RETRIES,
+  assessmentRubricTimeoutRetryFits,
+} from '@/capabilities/practice/tasks/assessment-rubric-timeout';
 import { resolveTaskBudget } from '@/capabilities/task-registry';
 import type {
   ModelExecutorRequest,
@@ -27,7 +32,7 @@ import type {
 import { isOriginalEvidenceQuote } from '@/core/schema/assessment/evidence-quote';
 import { AssessmentRubricDecision } from '@/core/schema/assessment/model-decision';
 import type { Db } from '@/db/client';
-import { AgentRunError } from '@/server/ai/agent-run-error';
+import { AgentRunError, isProviderSessionWallClockBudgetError } from '@/server/ai/agent-run-error';
 import {
   isLaminarTracingEnabled,
   traceMetadata,
@@ -170,6 +175,56 @@ function sumValidatedAwards(
   return total;
 }
 
+function attemptRunRefs(
+  prior: readonly string[],
+  result: RunTaskResult | undefined,
+  error: unknown,
+  providerStarted: boolean,
+  taskRunId: string,
+): string[] {
+  const id = result
+    ? result.task_run_id
+    : error instanceof AgentRunError
+      ? error.taskRunId
+      : providerStarted
+        ? taskRunId
+        : undefined;
+  return id === undefined || prior.includes(id) ? [...prior] : [...prior, id];
+}
+
+function reportedTimeoutMicros(error: unknown): number | undefined {
+  if (
+    error instanceof AgentRunError &&
+    error.costUsd !== undefined &&
+    Number.isFinite(error.costUsd) &&
+    error.costUsd >= 0
+  ) {
+    return Math.ceil(error.costUsd * 1_000_000);
+  }
+  return undefined;
+}
+
+function isRubricCallTimeout(
+  error: unknown,
+  attemptSignal: AbortSignal,
+  callerSignals: Array<AbortSignal | undefined>,
+): boolean {
+  if (callerSignals.some((signal) => signal?.aborted)) return false;
+  if (error instanceof AgentRunError && error.subtype === 'budget_timeout') return true;
+  if (isProviderSessionWallClockBudgetError(error)) return true;
+  return attemptSignal.aborted;
+}
+
+/** 有过没有成交价的超时，整题费用就是 unknown，不再把某一次的 cap 写成已知。 */
+function chargedMicros(
+  unknownAttempts: number,
+  knownSpent: number,
+  callCost: number,
+): number | undefined {
+  if (unknownAttempts > 0) return undefined;
+  return knownSpent + callCost;
+}
+
 /** Rubric lane：native pi 任务，按发布细则逐 criterion 判定。 */
 export function createRubricModelExecutor(
   options: RubricModelExecutorOptions,
@@ -217,141 +272,167 @@ export function createRubricModelExecutor(
       options.maxCostUsdMicros,
       Math.floor(budget.maxCost * 1_000_000),
     );
-    const remaining = options.deadlineAt - Date.now();
-    if (cap <= 0 || !Number.isFinite(remaining) || remaining <= 0) {
+    if (cap <= 0) {
       return pending({
         reason: 'unjudgeable',
         detail: 'native model cost or wall-clock budget exhausted',
       });
     }
-    const signal = AbortSignal.any([
-      AbortSignal.timeout(Math.min(remaining, budget.timeout)),
-      ...[options.signal, callerSignal].filter(
-        (value): value is AbortSignal => value !== undefined,
-      ),
-    ]);
-    const taskRunId = options.taskRunId ?? randomUUID();
-    let providerStarted = false;
-    let result: RunTaskResult | undefined;
-    let cost: number | undefined;
-    try {
-      signal.throwIfAborted();
-      const prepared = await prepareAssessmentModelInput(
-        request,
-        options.loadAsset ?? createAssessmentAssetLoader(options.db),
-        signal,
-      );
-      if (!prepared.ok) return pending(prepared.pending);
-      signal.throwIfAborted();
-      const runTask = options.runTask ?? (await import('@/server/ai/runner')).runTask;
-      result = await withinAssessmentSignal(
-        () =>
-          runTask(ASSESSMENT_RUBRIC_TASK_KIND, prepared.input, {
-            db: options.db,
-            judgeRetryPolicy: options.judgeRetryPolicy,
-            taskRunId,
-            signal,
-            laminarContent: isLaminarTracingEnabled()
-              ? { input: assessmentTraceInput(request), output: assessmentTaskTraceOutput }
-              : undefined,
-            providerSessionDeadlineAt: options.deadlineAt,
-            budgetOverride: {
-              maxIterations: budget.maxIterations,
-              timeoutMs: Math.min(budget.timeout, Math.max(1, options.deadlineAt - Date.now())),
-            },
-            beforeProviderQuery: async () => {
-              signal.throwIfAborted();
-              providerStarted = true;
-            },
-          }),
-        signal,
-      );
-      // Unknown cost consumes the full admitted reservation; the runner's ledger
-      // retains unknown vs reported/estimated truth. Never represent it as free.
-      cost =
-        result.cost_usd !== undefined && Number.isFinite(result.cost_usd) && result.cost_usd >= 0
-          ? Math.ceil(result.cost_usd * 1_000_000)
-          : cap;
-      if (cost > cap) {
-        return pending(
-          { reason: 'unjudgeable', detail: 'native model exceeded the admitted call cost cap' },
-          [result.task_run_id],
-          cost,
-        );
-      }
-      const modelResult = result;
-      const decision = AssessmentRubricDecision.parse(
-        modelResult.structured_output ?? JSON.parse(modelResult.text.trim()),
-      );
-      if (decision.kind === 'pending') {
-        return pending(
-          { reason: 'insufficient_evidence', detail: decision.detail },
-          [result.task_run_id],
-          cost,
-        );
-      }
-      const total = sumValidatedAwards(criterion, decision.awards);
-      if (total === null) {
+    const runTask = options.runTask ?? (await import('@/server/ai/runner')).runTask;
+    const loadAsset = options.loadAsset ?? createAssessmentAssetLoader(options.db);
+    let timeoutRetriesLeft = ASSESSMENT_RUBRIC_TIMEOUT_RETRIES;
+    let knownSpent = 0;
+    let unknownAttempts = 0;
+    const priorRefs: string[] = [];
+    for (;;) {
+      const remaining = options.deadlineAt - Date.now();
+      if (!Number.isFinite(remaining) || remaining <= 0) {
         return pending(
           {
             reason: 'unjudgeable',
-            detail:
-              'model awards do not match the published rubric: criterion ids must cover the frozen criteria exactly once and each award must be a declared allowed_awards step',
+            detail: 'native model cost or wall-clock budget exhausted',
           },
-          [result.task_run_id],
-          cost,
+          priorRefs,
+          unknownAttempts === 0 && knownSpent > 0 ? knownSpent : undefined,
         );
       }
-      const wire = JSON.parse(prepared.input.text) as {
-        text_evidence: Array<{ evidence_id: string; text: string }>;
-      };
-      const citations = decision.awards.flatMap((award) => award.evidence_citations);
-      const problem = citationProblem(request, citations, wire.text_evidence);
-      if (problem !== null) {
+      const timeoutMs = Math.min(remaining, budget.timeout);
+      const signal = AbortSignal.any([
+        AbortSignal.timeout(timeoutMs),
+        ...[options.signal, callerSignal].filter(
+          (value): value is AbortSignal => value !== undefined,
+        ),
+      ]);
+      const taskRunId = priorRefs.length === 0 ? (options.taskRunId ?? randomUUID()) : randomUUID();
+      let providerStarted = false;
+      let result: RunTaskResult | undefined;
+      try {
+        signal.throwIfAborted();
+        const prepared = await prepareAssessmentModelInput(request, loadAsset, signal);
+        if (!prepared.ok) return pending(prepared.pending, priorRefs);
+        signal.throwIfAborted();
+        result = await withinAssessmentSignal(
+          () =>
+            runTask(ASSESSMENT_RUBRIC_TASK_KIND, prepared.input, {
+              db: options.db,
+              judgeRetryPolicy: options.judgeRetryPolicy,
+              taskRunId,
+              signal,
+              laminarContent: isLaminarTracingEnabled()
+                ? { input: assessmentTraceInput(request), output: assessmentTaskTraceOutput }
+                : undefined,
+              providerSessionDeadlineAt: options.deadlineAt,
+              budgetOverride: {
+                maxIterations: budget.maxIterations,
+                timeoutMs: Math.min(budget.timeout, Math.max(1, options.deadlineAt - Date.now())),
+              },
+              beforeProviderQuery: async () => {
+                signal.throwIfAborted();
+                providerStarted = true;
+              },
+            }),
+          signal,
+        );
+        // 成功返回但价格 unknown：charge 层仍按整段 cap 计，台账保持 unknown。
+        // 超时不走这里。
+        const callCost =
+          result.cost_usd !== undefined && Number.isFinite(result.cost_usd) && result.cost_usd >= 0
+            ? Math.ceil(result.cost_usd * 1_000_000)
+            : cap;
+        const refs = attemptRunRefs(priorRefs, result, undefined, providerStarted, taskRunId);
+        const settled = chargedMicros(unknownAttempts, knownSpent, callCost);
+        if (callCost > cap || (settled !== undefined && settled > cap)) {
+          return pending(
+            { reason: 'unjudgeable', detail: 'native model exceeded the admitted call cost cap' },
+            refs,
+            settled ?? callCost,
+          );
+        }
+        const modelResult = result;
+        const decision = AssessmentRubricDecision.parse(
+          modelResult.structured_output ?? JSON.parse(modelResult.text.trim()),
+        );
+        if (decision.kind === 'pending') {
+          return pending(
+            { reason: 'insufficient_evidence', detail: decision.detail },
+            refs,
+            settled,
+          );
+        }
+        const total = sumValidatedAwards(criterion, decision.awards);
+        if (total === null) {
+          return pending(
+            {
+              reason: 'unjudgeable',
+              detail:
+                'model awards do not match the published rubric: criterion ids must cover the frozen criteria exactly once and each award must be a declared allowed_awards step',
+            },
+            refs,
+            settled,
+          );
+        }
+        const wire = JSON.parse(prepared.input.text) as {
+          text_evidence: Array<{ evidence_id: string; text: string }>;
+        };
+        const citations = decision.awards.flatMap((award) => award.evidence_citations);
+        const problem = citationProblem(request, citations, wire.text_evidence);
+        if (problem !== null) {
+          return pending(
+            { reason: 'unjudgeable', detail: `model evidence rejected: ${problem}` },
+            refs,
+            settled,
+          );
+        }
+        return {
+          kind: 'scored',
+          points_awarded: total,
+          ...(decision.feedback_md !== undefined ? { feedback_md: decision.feedback_md } : {}),
+          evidence_citations: citations,
+          ...(decision.confidence !== undefined ? { confidence: decision.confidence } : {}),
+          run_refs: refs,
+          ...(settled === undefined ? {} : { cost_usd_micros: settled }),
+        };
+      } catch (error) {
+        const refs = attemptRunRefs(priorRefs, result, error, providerStarted, taskRunId);
+        const timedOut = isRubricCallTimeout(error, signal, [options.signal, callerSignal]);
+        if (timedOut) {
+          const reported = reportedTimeoutMicros(error);
+          if (reported !== undefined) knownSpent += reported;
+          else unknownAttempts += 1;
+          const retryRemaining = options.deadlineAt - Date.now();
+          if (
+            timeoutRetriesLeft > 0 &&
+            retryRemaining > 0 &&
+            assessmentRubricTimeoutRetryFits(knownSpent, unknownAttempts, cap)
+          ) {
+            timeoutRetriesLeft -= 1;
+            priorRefs.splice(0, priorRefs.length, ...refs);
+            continue;
+          }
+          return pending(
+            {
+              reason: 'infra_failure',
+              retryable: false,
+              detail: 'native model deadline/cancellation reached',
+            },
+            refs,
+            unknownAttempts === 0 ? knownSpent : undefined,
+          );
+        }
+        const reported = reportedTimeoutMicros(error);
+        const callCost = reported ?? (providerStarted ? cap : undefined);
         return pending(
-          { reason: 'unjudgeable', detail: `model evidence rejected: ${problem}` },
-          [result.task_run_id],
-          cost,
+          {
+            reason: 'infra_failure',
+            retryable: false,
+            detail: signal.aborted
+              ? 'native model deadline/cancellation reached'
+              : 'native model asset, execution or output validation failed',
+          },
+          refs,
+          callCost === undefined ? undefined : chargedMicros(unknownAttempts, knownSpent, callCost),
         );
       }
-      return {
-        kind: 'scored',
-        points_awarded: total,
-        ...(decision.feedback_md !== undefined ? { feedback_md: decision.feedback_md } : {}),
-        evidence_citations: citations,
-        ...(decision.confidence !== undefined ? { confidence: decision.confidence } : {}),
-        run_refs: [result.task_run_id],
-        cost_usd_micros: cost,
-      };
-    } catch (error) {
-      if (
-        error instanceof AgentRunError &&
-        error.costUsd !== undefined &&
-        Number.isFinite(error.costUsd) &&
-        error.costUsd >= 0
-      ) {
-        cost = Math.ceil(error.costUsd * 1_000_000);
-      }
-      const runRefs = result
-        ? [result.task_run_id]
-        : error instanceof AgentRunError
-          ? [error.taskRunId]
-          : providerStarted
-            ? [taskRunId]
-            : [];
-      return pending(
-        {
-          reason: 'infra_failure',
-          retryable: false,
-          detail: signal.aborted
-            ? 'native model deadline/cancellation reached'
-            : 'native model asset, execution or output validation failed',
-        },
-        runRefs,
-        // Charge-layer parity with the pi lane: an unknown cost after the provider
-        // started consumes the full admitted reservation — never billed as free.
-        cost ?? (providerStarted ? cap : undefined),
-      );
     }
   };
   return (request, callerSignal) =>

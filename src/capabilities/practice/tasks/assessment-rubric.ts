@@ -9,6 +9,7 @@ import {
   AssessmentRubricDecision,
   type AssessmentRubricDecisionT,
 } from '@/core/schema/assessment/model-decision';
+import { assessmentRubricTimeoutFromCensoredHoldout } from './assessment-rubric-timeout';
 import { parseTaskOutput } from './parse-output';
 
 export const assessmentRubricTaskSpec = {
@@ -19,7 +20,13 @@ export const assessmentRubricTaskSpec = {
       'Admitted frozen per-criterion rubric judgment through native pi; awards validated against published allowed steps; no learning writes',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5',
-    budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1, transientRetries: 0, timeout: 90_000 },
+    // 单次超时来自 QA r4 截尾分布，不用 90s。超时重试在执行器里做一次。
+    budget: {
+      ...DEFAULT_TASK_BUDGET,
+      maxIterations: 1,
+      transientRetries: 0,
+      timeout: assessmentRubricTimeoutFromCensoredHoldout(),
+    },
     needsToolCall: false,
     isMultimodal: true,
     allowedTools: [],

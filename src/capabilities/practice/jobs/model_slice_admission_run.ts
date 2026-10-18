@@ -17,11 +17,13 @@
 import { eq, inArray } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import { z } from 'zod';
+import { assessmentRubricInvocationWindowMs } from '@/capabilities/practice/tasks/assessment-rubric-timeout';
 import { type TaskKind, resolveTaskBudget } from '@/capabilities/task-registry';
 import { canonicalHash } from '@/core/migration/canonical';
 import {
   GroupEvidence,
   type ModelExecutorRequest,
+  type ModelUnitOutcomeT,
   QuestionGroupStructure,
   QuestionPart,
   ResponseSlot,
@@ -57,6 +59,81 @@ export const MODEL_SLICE_ADMISSION_THRESHOLDS = {
 /** 同一数值口径：卷面十进制分值的二进制表示误差不当差异（与发布校验同律）。 */
 function samePoints(a: number, b: number): boolean {
   return Math.abs(a - b) <= 1e-9 * Math.max(1, Math.abs(a), Math.abs(b));
+}
+
+/** 细则留出题的墙钟含一次超时重试；其他 task kind 仍是单次 budget.timeout。 */
+export function admissionCallWindowMs(taskKind: string, timeoutMs: number): number {
+  return taskKind === 'AssessmentRubricJudgeTask'
+    ? assessmentRubricInvocationWindowMs(timeoutMs)
+    : timeoutMs;
+}
+
+export function holdoutItemFromOutcome(
+  item: { item_id: string; reference_points: number; unit_points: number | null },
+  outcome: ModelUnitOutcomeT,
+): ModelSliceAdmissionItemResult {
+  if (outcome.kind !== 'scored') {
+    return {
+      item_id: item.item_id,
+      status: 'pending',
+      awarded_points: null,
+      reference_points: item.reference_points,
+      agreed: false,
+      severe_error: false,
+      pending_reason: outcome.pending.reason,
+      run_refs: outcome.run_refs,
+      ...(outcome.cost_usd_micros !== undefined
+        ? { cost_usd_micros: outcome.cost_usd_micros }
+        : {}),
+    };
+  }
+  const awarded = outcome.points_awarded;
+  const unitMax = item.unit_points;
+  const agreed = awarded !== null && samePoints(awarded, item.reference_points);
+  const severe =
+    awarded !== null &&
+    unitMax !== null &&
+    (awarded > unitMax ||
+      (item.reference_points === 0 && awarded > 0) ||
+      (samePoints(item.reference_points, unitMax) && awarded === 0));
+  return {
+    item_id: item.item_id,
+    status: 'scored',
+    awarded_points: awarded,
+    reference_points: item.reference_points,
+    agreed,
+    severe_error: severe,
+    run_refs: outcome.run_refs,
+    ...(outcome.cost_usd_micros !== undefined ? { cost_usd_micros: outcome.cost_usd_micros } : {}),
+  };
+}
+
+export function holdoutRunTally(results: readonly ModelSliceAdmissionItemResult[]): {
+  items: number;
+  agreed: number;
+  agreement_ratio: number;
+  severe_errors: number;
+  known_cost_usd_micros: number;
+  unknown_cost_items: number;
+} {
+  let known = 0;
+  let unknown = 0;
+  let agreed = 0;
+  let severe = 0;
+  for (const result of results) {
+    if (result.agreed) agreed += 1;
+    if (result.severe_error) severe += 1;
+    if (result.cost_usd_micros !== undefined) known += result.cost_usd_micros;
+    else unknown += 1;
+  }
+  return {
+    items: results.length,
+    agreed,
+    agreement_ratio: results.length === 0 ? 0 : agreed / results.length,
+    severe_errors: severe,
+    known_cost_usd_micros: known,
+    unknown_cost_items: unknown,
+  };
 }
 
 function assertFrozenUnit(
@@ -482,16 +559,15 @@ export async function runModelSliceAdmission(
   const reservedWork = await withSliceAdmissionReservation(db, sliceId, async () => {
     await assertModelAdmissionSliceRegistrable(db, registrationInput);
 
-    // 逐题判分（生产同源端口；每题独立墙钟）。
+    // 逐题判分（生产同源端口；每题独立墙钟，细则含一次超时重试窗口）。
     const budget = resolveTaskBudget(data.slice.task_kind as TaskKind);
     const results: ModelSliceAdmissionItemResult[] = [];
     let knownCostMicros = 0;
-    let unknownCostItems = 0;
     for (const item of data.items) {
       const port = createAdmissionRunExecutor(
         db,
         data.slice.task_kind,
-        Date.now() + budget.timeout,
+        Date.now() + admissionCallWindowMs(data.slice.task_kind, budget.timeout),
         data.per_item_max_cost_usd_micros,
       );
       if (port === undefined) {
@@ -521,50 +597,24 @@ export async function runModelSliceAdmission(
         spent_cost_usd_micros: knownCostMicros,
       };
       const outcome = await port(request);
-      if (outcome.cost_usd_micros !== undefined) knownCostMicros += outcome.cost_usd_micros;
-      else unknownCostItems += 1;
-      if (outcome.kind !== 'scored') {
-        results.push({
-          item_id: item.item_id,
-          status: 'pending',
-          awarded_points: null,
-          reference_points: item.reference_points,
-          agreed: false,
-          severe_error: false,
-          pending_reason: outcome.pending.reason,
-          run_refs: outcome.run_refs,
-          ...(outcome.cost_usd_micros !== undefined
-            ? { cost_usd_micros: outcome.cost_usd_micros }
-            : {}),
-        });
-        continue;
-      }
-      const awarded = outcome.points_awarded;
-      const unitMax = item.unit.points;
-      const agreed = awarded !== null && samePoints(awarded, item.reference_points);
-      const severe =
-        awarded !== null &&
-        unitMax !== null &&
-        (awarded > unitMax ||
-          (item.reference_points === 0 && awarded > 0) ||
-          (samePoints(item.reference_points, unitMax) && awarded === 0));
-      results.push({
-        item_id: item.item_id,
-        status: 'scored',
-        awarded_points: awarded,
-        reference_points: item.reference_points,
-        agreed,
-        severe_error: severe,
-        run_refs: outcome.run_refs,
-        ...(outcome.cost_usd_micros !== undefined
-          ? { cost_usd_micros: outcome.cost_usd_micros }
-          : {}),
-      });
+      results.push(
+        holdoutItemFromOutcome(
+          {
+            item_id: item.item_id,
+            reference_points: item.reference_points,
+            unit_points: item.unit.points,
+          },
+          outcome,
+        ),
+      );
+      knownCostMicros = holdoutRunTally(results).known_cost_usd_micros;
     }
 
-    const agreed = results.filter((result) => result.agreed).length;
-    const severeErrors = results.filter((result) => result.severe_error).length;
-    const agreementRatio = results.length === 0 ? 0 : agreed / results.length;
+    const tally = holdoutRunTally(results);
+    const agreed = tally.agreed;
+    const severeErrors = tally.severe_errors;
+    const agreementRatio = tally.agreement_ratio;
+    const unknownCostItems = tally.unknown_cost_items;
     if (severeErrors > MODEL_SLICE_ADMISSION_THRESHOLDS.max_severe_errors) {
       failures.push(
         `severe_errors ${severeErrors} > ${MODEL_SLICE_ADMISSION_THRESHOLDS.max_severe_errors}`,
