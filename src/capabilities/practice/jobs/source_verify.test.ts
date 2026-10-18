@@ -403,7 +403,10 @@ describe('runSourceVerify', () => {
       verification: {
         policy_id: QUESTION_ADMISSION_POLICY_ID,
         outcome: 'passed',
-        evidence: { pack: 'question_admission', base_contract_digest: resolved.integrity_digest },
+        evidence: {
+          pack: 'question_admission',
+          base_contract_digest: publishedContractSeal(resolved).canonical,
+        },
       },
       actorRef: 'practice:question_admission',
       now,
@@ -502,7 +505,10 @@ describe('runSourceVerify', () => {
       verification: {
         policy_id: policyId,
         outcome: 'passed',
-        evidence: { pack: 'question_admission', base_contract_digest: resolved.integrity_digest },
+        evidence: {
+          pack: 'question_admission',
+          base_contract_digest: publishedContractSeal(resolved).canonical,
+        },
       },
       actorRef: 'practice:question_admission',
       now,
