@@ -1,5 +1,6 @@
 import { PermanentError, RetryableError } from '@/core/schema/structured_question';
 import {
+  GLM_OCR_MODEL,
   type OcrPageProviderAttemptControl,
   type OcrPageProviderContext,
   executeGlmOcrToolWireAttemptResult,
@@ -27,7 +28,6 @@ import {
  */
 
 const GLM_LAYOUT_PARSING_URL = 'https://open.bigmodel.cn/api/paas/v4/layout_parsing';
-const GLM_MODEL = 'glm-ocr';
 const DEFAULT_TIMEOUT_MS = 120_000;
 /** Billable: 0.2 元/百万 tokens (input = output price). Exported for the
  * glm_ocr tool's echoed cost estimate (same single source). */
@@ -200,7 +200,7 @@ export async function runGlmLayoutParsingWithAttempt(
           'Content-Type': 'application/json',
           Authorization: `Bearer ${apiKey}`,
         },
-        body: JSON.stringify({ model: GLM_MODEL, file }),
+        body: JSON.stringify({ model: GLM_OCR_MODEL, file }),
         signal: controller.signal,
       });
     } catch (err) {

@@ -354,7 +354,7 @@ export const PROVIDER_LANES = [
     ],
     roles: ['api', 'worker'],
     provider: 'DashScope OpenAI-compatible endpoint; MEM0_EMBEDDING_BASE_URL is env-configurable',
-    model: 'text-embedding-v4 fixed in source',
+    model: 'text-embedding-v4 via provider catalog (DASHSCOPE_EMBED_MODEL_ID)',
     endpointClass: 'OpenAI-compatible embeddings POST /embeddings',
     configuration: {
       endpoint: {
@@ -370,8 +370,13 @@ export const PROVIDER_LANES = [
         source: { path: 'src/server/ai/embed.ts', envReads: ['DASHSCOPE_API_KEY'] },
       },
       model: {
-        summary: 'fixed text-embedding-v4 source literal',
-        source: { path: 'src/server/ai/embed.ts', literals: ['text-embedding-v4'] },
+        summary:
+          'text-embedding-v4 declared in the provider catalog (DASHSCOPE_EMBED_MODEL_ID); embed.ts wires it via EMBED_MODEL',
+        source: {
+          path: 'src/server/ai/embed.ts',
+          contains: ['EMBED_MODEL = DASHSCOPE_EMBED_MODEL_ID', 'model: EMBED_MODEL'],
+          imports: ['./providers'],
+        },
       },
     },
     evidence: {
@@ -462,11 +467,11 @@ export const PROVIDER_LANES = [
         },
       },
       model: {
-        summary: 'Global provider model; unpinned MEM0_LLM_MODEL defaults to glm-5.2',
+        summary:
+          'Global provider model; unpinned MEM0_LLM_MODEL env overrides the provider-catalog lane default (LEGACY_GLM_MODEL_ID, YUK-1559)',
         source: {
           path: 'src/server/memory/llm-config.ts',
-          contains: ['env.MEM0_LLM_MODEL', 'model: pin.model'],
-          literals: ['glm-5.2'],
+          contains: ['env.MEM0_LLM_MODEL', 'LEGACY_GLM_MODEL_ID', 'model: pin.model'],
         },
       },
     },
@@ -616,11 +621,11 @@ export const PROVIDER_LANES = [
         },
       },
       model: {
-        summary: 'Global provider model; unpinned MEM0_LLM_MODEL defaults to glm-5.2',
+        summary:
+          'Global provider model; unpinned MEM0_LLM_MODEL env overrides the provider-catalog lane default (LEGACY_GLM_MODEL_ID, YUK-1559)',
         source: {
           path: 'src/server/memory/llm-config.ts',
-          contains: ['env.MEM0_LLM_MODEL', 'model: pin.model'],
-          literals: ['glm-5.2'],
+          contains: ['env.MEM0_LLM_MODEL', 'LEGACY_GLM_MODEL_ID', 'model: pin.model'],
         },
       },
     },
@@ -691,7 +696,7 @@ export const PROVIDER_LANES = [
     ],
     roles: ['api', 'worker'],
     provider: 'GLM OCR fixed HTTP endpoint',
-    model: 'glm-ocr fixed in source',
+    model: 'glm-ocr via provider catalog (GLM_OCR_MODEL_ID)',
     endpointClass: 'GLM layout_parsing POST endpoint',
     configuration: {
       endpoint: {
@@ -709,8 +714,12 @@ export const PROVIDER_LANES = [
         },
       },
       model: {
-        summary: 'fixed glm-ocr model literal',
-        source: { path: 'src/capabilities/ingestion/server/glm_ocr.ts', literals: ['glm-ocr'] },
+        summary:
+          'glm-ocr declared in the provider catalog (GLM_OCR_MODEL_ID); glm_ocr.ts wires it via GLM_OCR_MODEL',
+        source: {
+          path: 'src/capabilities/ingestion/server/glm_ocr.ts',
+          contains: ['GLM_OCR_MODEL', 'model: GLM_OCR_MODEL'],
+        },
       },
     },
     evidence: {
@@ -817,11 +826,12 @@ export const PROVIDER_LANES = [
       },
       model: {
         summary:
-          'Mem0 LLM uses global product model; dedicated embedding uses MEM0_EMBEDDING_MODEL',
+          'Mem0 LLM uses global product model; dedicated embedding uses MEM0_EMBEDDING_MODEL env over the provider-catalog default (DASHSCOPE_EMBED_MODEL_ID)',
         source: {
           path: 'src/server/memory/client.ts',
           envReads: ['MEM0_EMBEDDING_MODEL'],
-          literals: ['text-embedding-v4'],
+          contains: ['DASHSCOPE_EMBED_MODEL_ID'],
+          imports: ['@/server/ai/providers'],
         },
       },
     },
@@ -996,11 +1006,12 @@ export const PROVIDER_LANES = [
       },
       model: {
         summary:
-          'CLI or MIMO_VISION_MODEL override; product model for Token Plan, legacy mimo-v2.5',
+          'CLI or MIMO_VISION_MODEL override, else resolved vision-judge task route (env pin > lane.vision_judge > registry default; YUK-1559)',
         source: {
           path: 'scripts/preflight-vision.ts',
-          envReads: ['MIMO_VISION_MODEL', 'AI_PROVIDER_MODEL'],
-          literals: ['mimo-v2.5', 'mimo-v2.6-pro'],
+          imports: ['../src/server/ai/providers', '../src/server/ai/vision-judge-config'],
+          calls: ['resolveTaskBinding', 'visionJudgeProviderOverride'],
+          envReads: ['MIMO_VISION_MODEL'],
         },
       },
     },

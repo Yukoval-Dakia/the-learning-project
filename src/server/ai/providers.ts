@@ -279,6 +279,20 @@ export const PROVIDER_MODEL_BINDINGS: Readonly<Record<Provider, ProviderModelBin
  * model override is given. Claude Max defaults to Opus 4.8.
  */
 export const ANTHROPIC_SUB_DEFAULT_MODEL = 'claude-opus-4-8';
+/**
+ * Declared model ids for the direct-provider lanes that don't ride pi — the
+ * catalog role is identical to the binding `models` maps above, so C1-10 keeps
+ * them here rather than scattered in lane clients:
+ *   - LEGACY_GLM_MODEL_ID — Mem0 extraction + edge/memory reconciliation's
+ *     unpinned fallback (glm.* chat-completions lanes, bigmodel endpoint)
+ *   - GLM_OCR_MODEL_ID — glm.ocr-layout-parsing lane (Zhipu layout_parsing)
+ *   - DASHSCOPE_EMBED_MODEL_ID — dashscope.embedding lane (ai/embed.ts) AND
+ *     the Mem0 embedder default (memory/client.ts); the lane keeps its
+ *     dedicated DashScope credential and lane-owned dimensions (1024).
+ */
+export const LEGACY_GLM_MODEL_ID = 'glm-5.2';
+export const GLM_OCR_MODEL_ID = 'glm-ocr';
+export const DASHSCOPE_EMBED_MODEL_ID = 'text-embedding-v4';
 // YUK-1027 — the openai lane's only bound model (PROVIDERS.openai.models key);
 // referenced by crossoverModelForProvider so a provider-only judge override
 // resolves a pair the builtin catalog can actually serve.
@@ -571,8 +585,10 @@ export function resolveConfiguredTaskModel(kind: TaskKind): string {
 /**
  * Provider + model a task will execute. Credential checks stay in
  * resolveTaskProvider so a missing key does not take down the serving gate.
+ * YUK-1559 — exported so scripts/evals can assert against the resolved task
+ * route instead of pinning a model literal.
  */
-function resolveTaskBinding(
+export function resolveTaskBinding(
   kind: TaskKind,
   override?: { provider?: Provider; model?: string },
 ): { provider: Provider; model: string } {

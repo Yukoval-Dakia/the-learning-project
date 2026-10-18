@@ -70,7 +70,7 @@ export const questionAuthorTaskSpec = {
   definition: {
     kind: 'QuestionAuthorTask',
     description:
-      'ADR-0031 / YUK-304 (quiz C→A lane B) — author ONE original draft question seeded by knowledge nodes and/or pasted material. Input = { seed_mode, knowledge_context:[{id,name}], requested_kind?, requested_difficulty?, material:{body_md,title?}? }. Output = strict JSON QuestionAuthorDraft: kind + difficulty + knowledge_ids (echo of seed, re-validated code-side) + a StructuredQuestion tree (材料/阅读 kinds emit stem+sub_questions[]; others a standalone node) + optional choices/judge/rubric. prompt_md/reference_md are DERIVED from the tree at persist time. Single structured-output call (no tool loop, no Tavily — 决定6), mimo-v2.5-pro text. Writes land as draft_status=draft + a question_draft proposal (决定5 proposal-only).',
+      'ADR-0031 / YUK-304 (quiz C→A lane B) — author ONE original draft question seeded by knowledge nodes and/or pasted material. Input = { seed_mode, knowledge_context:[{id,name}], requested_kind?, requested_difficulty?, material:{body_md,title?}? }. Output = strict JSON QuestionAuthorDraft: kind + difficulty + knowledge_ids (echo of seed, re-validated code-side) + a StructuredQuestion tree (材料/阅读 kinds emit stem+sub_questions[]; others a standalone node) + optional choices/judge/rubric. prompt_md/reference_md are DERIVED from the tree at persist time. Single structured-output call (no tool loop, no Tavily — 决定6), registry-default text model. Writes land as draft_status=draft + a question_draft proposal (决定5 proposal-only).',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
     budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1, timeout: 90_000 },
