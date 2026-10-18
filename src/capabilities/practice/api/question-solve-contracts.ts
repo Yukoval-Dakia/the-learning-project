@@ -24,10 +24,13 @@ export const QuestionListQueryFieldsSchema = z.object({
   source_tier: z.array(SourceTierSchema).default([]),
   sort_by: z.enum(['created_at', 'source_tier', 'difficulty']).optional(),
   sort_dir: z.enum(['asc', 'desc']).optional(),
-  status: z.enum(['all', 'active', 'draft']).optional(),
+  // YUK-1514 — 'not_servable' lists only held questions (in-memory serve gate,
+  // not SQL-paginated; cursor pagination is rejected upstream for it).
+  status: z.enum(['all', 'active', 'draft', 'not_servable']).optional(),
   group_by_family: z.boolean().default(false),
   expand_root: z.string().min(1).optional(),
   include_drafts: z.boolean().default(false),
+  include_serving_counts: z.boolean().default(false),
   enrich: z.boolean().default(false),
   limit: z.coerce.number().int().default(50),
   offset: z.coerce.number().int().min(0).default(0),
@@ -44,6 +47,53 @@ export const QuestionListQuerySchema = QuestionListQueryFieldsSchema.refine(
   .refine((value) => !(value.expand_root !== undefined && value.sort_by !== undefined), {
     message: 'expand_root cannot be combined with sort_by',
   });
+
+// ── YUK-1514 — serving hold projection (serving-holds UI contract v2) ────────
+export const QuestionHoldReasonSchema = z.enum([
+  'awaiting_admission',
+  'admission_failed',
+  'source_check_failed',
+  'verify_hold',
+  'retraction_hold',
+  'no_input_renderer',
+  'invalid_presentation',
+  'withdrawn',
+]);
+export const QuestionServingCommandSchema = z.enum([
+  'reverify',
+  'recheck_source',
+  'release_verify_hold',
+]);
+export const QuestionServingActionRefSchema = z.object({
+  command: QuestionServingCommandSchema,
+  method: z.literal('POST'),
+  path: z.string(),
+});
+export const QuestionServingSchema = z.object({
+  servable: z.boolean(),
+  hold_reason: QuestionHoldReasonSchema.nullable(),
+  held_since: z.string().nullable(),
+  next_action: QuestionServingActionRefSchema.nullable(),
+  pending_action: z.object({ command: QuestionServingCommandSchema, since: z.string() }).nullable(),
+});
+export const QuestionServingCountsSchema = z.object({
+  not_servable_total: z.number().int().nonnegative(),
+  by_reason: z.record(QuestionHoldReasonSchema, z.number().int().nonnegative()),
+  /** Rows with no lifecycle record (never published) — included in
+   * not_servable_total, excluded from by_reason. Additive optional key. */
+  legacy_unpublished: z.number().int().nonnegative().optional(),
+});
+export const QuestionServingActionParamsSchema = z.object({
+  id: z.string().trim().min(1),
+  command: QuestionServingCommandSchema,
+});
+export const QuestionServingActionHeadersSchema = z.object({
+  'Idempotency-Key': z.string().min(1).max(200),
+});
+export const QuestionServingActionResponseSchema = z.object({
+  accepted: z.boolean(),
+  serving: QuestionServingSchema,
+});
 
 const QuestionListBaseSchema = z.object({
   id: z.string(),
@@ -64,6 +114,9 @@ const QuestionListBaseSchema = z.object({
   notation: z.string().nullable(),
   knowledge_labels: z.array(z.object({ id: z.string(), name: z.string() })).nullable(),
   is_composite: z.boolean(),
+  // YUK-1514 — every list item carries its serving projection (group-level for
+  // composite children).
+  serving: QuestionServingSchema,
 });
 
 // Composite parts cannot recursively contain parts, so the one-level child
@@ -99,6 +152,9 @@ export const QuestionListResponseSchema = z.object({
   total: z.number().int().nonnegative(),
   truncated: z.boolean(),
   page: QuestionListPageSchema,
+  // YUK-1514 — pagination-independent hold counts; present only when
+  // status=not_servable or include_serving_counts=true.
+  serving_counts: QuestionServingCountsSchema.optional(),
   computed_at_sec: z.number(),
 });
 
@@ -260,6 +316,8 @@ export const QuestionDetailResponseSchema = z
     created_at_sec: z.number(),
     updated_at_sec: z.number(),
     computed_at_sec: z.number(),
+    // YUK-1514 — same serving projection as the list items.
+    serving: QuestionServingSchema,
   })
   .strict();
 

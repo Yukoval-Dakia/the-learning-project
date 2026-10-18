@@ -159,6 +159,25 @@ export const PRUNED_MISCONCEPTION_MODULES = prunedMisconceptionModules;
 
 export const IMPORTED_FETCH_EXCEPTIONS = [
   {
+    path: 'src/server/ai/provider-idle-fetch.ts',
+    source: 'undici',
+    imported: 'fetch',
+    local: 'undiciFetch',
+    owner: 'server/ai',
+    purpose:
+      'YUK-1531 idle-timeout transport for a task budget longer than the OpenAI SDK default; the same Pi request, not a new provider endpoint',
+    expectedCalls: 1,
+    directImporters: [
+      {
+        path: 'src/server/ai/pi-agent-adapter.ts',
+        kind: 'runtime',
+        source: './provider-idle-fetch',
+        imported: 'createIdleBudgetFetch',
+        local: 'createIdleBudgetFetch',
+      },
+    ],
+  },
+  {
     path: 'src/capabilities/ingestion/server/pinned-fetch.ts',
     source: 'undici',
     imported: 'fetch',
