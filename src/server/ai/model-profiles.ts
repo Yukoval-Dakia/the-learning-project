@@ -157,12 +157,15 @@ export interface ModelProfile {
  * has no openai bucket — the pi builtin catalog owns the wire facts, so the
  * openai provider binding carries the complete app-level profile for
  * gpt-6-astra (every field declared explicitly, source:'binding').
+ * 'opencode-go' reads the models.dev opencode-go bucket. toolCalling is that
+ * bucket's tool_call. The binding still owns structuredOutput and meteredUsd.
  */
 const CATALOG_PROVIDER_BY_INTERNAL: Partial<Record<Provider, string>> = {
   anthropic: 'anthropic',
   'anthropic-sub': 'anthropic',
   xiaomi: 'xiaomi',
   'zai-coding-cn': 'zhipuai-coding-plan',
+  'opencode-go': 'opencode-go',
 };
 
 const EFFORT_LEVELS: readonly EffortLevel[] = ['low', 'medium', 'high', 'xhigh', 'max'];

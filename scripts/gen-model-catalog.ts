@@ -9,7 +9,7 @@
  * TRIM (documented per the ticket): the snapshot keeps only
  *   - the catalog providers our internal provider map consumes
  *     (see CATALOG_PROVIDER_BY_INTERNAL in src/server/ai/model-profiles.ts):
- *     anthropic, xiaomi, zhipuai-coding-plan
+ *     anthropic, xiaomi, zhipuai-coding-plan, opencode-go
  *   - per model, only the fields the narrow parse layer consumes:
  *     id, name, last_updated, limit.{context,output}, tool_call,
  *     structured_output, attachment, reasoning, reasoning_options,
@@ -35,7 +35,12 @@ const CATALOG_URL = 'https://models.dev/api.json';
 const SNAPSHOT_RELATIVE_PATH = '../src/server/ai/model-catalog.snapshot.json';
 
 /** Must stay in sync with CATALOG_PROVIDER_BY_INTERNAL in model-profiles.ts. */
-const KEPT_CATALOG_PROVIDERS = ['anthropic', 'xiaomi', 'zhipuai-coding-plan'] as const;
+const KEPT_CATALOG_PROVIDERS = [
+  'anthropic',
+  'xiaomi',
+  'zhipuai-coding-plan',
+  'opencode-go',
+] as const;
 
 const KEPT_MODEL_FIELDS = [
   'id',
