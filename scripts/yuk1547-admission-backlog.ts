@@ -840,6 +840,14 @@ async function windowOwnedEvents(
   const eventIds = new Set<string>();
   const tripleKeys = new Set<string>();
   for (const name of await readdir(outDir)) {
+    if (/^intent-[^/]+\.json$/.test(name)) {
+      const groupId = name.slice('intent-'.length, -'.json'.length);
+      const item = manifestById.get(groupId);
+      if (!item) continue;
+      const expected = await intentExpectedIdentity(outDir, item);
+      tripleKeys.add(publishTripleKey(groupId, expected.revisionId, expected.generation));
+      continue;
+    }
     const isPublish = /^publish-[^/]+\.json$/.test(name);
     const isReceipt = /^question-[^/]+\.json$/.test(name);
     if (!isPublish && !isReceipt) continue;
@@ -854,13 +862,6 @@ async function windowOwnedEvents(
           publishTripleKey(record.data.group_id, record.data.revision_id, record.data.generation),
         );
       }
-    }
-    if (/^intent-[^/]+\.json$/.test(name)) {
-      const groupId = name.slice('intent-'.length, -'.json'.length);
-      const item = manifestById.get(groupId);
-      if (!item) continue;
-      const expected = await intentExpectedIdentity(outDir, item);
-      tripleKeys.add(publishTripleKey(groupId, expected.revisionId, expected.generation));
     }
   }
   return { eventIds, tripleKeys };
