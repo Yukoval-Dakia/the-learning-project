@@ -3,7 +3,7 @@
 // The provider is fake; it only stands in for the model.
 
 import { randomUUID } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { QuestionDraftDocument, type QuestionDraftDocumentT } from '@/core/schema/question-draft';
 import {
@@ -143,9 +143,15 @@ async function submitBlank(input: {
   };
 }
 
+const CHOICE_RULE = {
+  version: 1 as const,
+  cases: [{ when: { wrong: { eq: 0 }, miss: { eq: 0 } }, award: { points: 1 } }],
+  otherwise: { points: 0 },
+};
+
 type SolvePayload = {
   mode?: string;
-  units: { scoring_unit_id: string; kind: string }[];
+  units: { scoring_unit_id: string; kind: string; blank?: { answer_kind?: string } }[];
 };
 
 function fakeSolver(
@@ -184,6 +190,198 @@ function fakeSolver(
       });
     return { text: JSON.stringify(output), task_run_id: id, structured_output: output };
   };
+}
+
+function numericBlankDocument(
+  prompt: string,
+  knowledgeId: string,
+  value: number,
+  sourceRef: string,
+): QuestionDraftDocumentT {
+  return QuestionDraftDocument.parse({
+    schema_version: 2,
+    parts: [
+      {
+        part_id: 'p1',
+        prompt_md: prompt,
+        material_ids: [],
+        units: [
+          {
+            unit_id: 'u1',
+            slot_id: 's1',
+            response_class: 'blank',
+            response_spec: { kind: 'blank', format: 'text' },
+            key: {
+              kind: 'blank',
+              key: { kind: 'numeric', value, tolerance: { kind: 'absolute', value: 0 } },
+            },
+            points: 1,
+            rule: BLANK_RULE,
+            method: { kind: 'exact' },
+            material_refs: [],
+            metadata: {},
+          },
+        ],
+        metadata: {},
+      },
+    ],
+    materials: [],
+    knowledge_ids: [knowledgeId],
+    source: { kind: 'generated', ref: sourceRef },
+    metadata: {},
+  });
+}
+
+function stemDocument(
+  stem: string,
+  knowledgeId: string,
+  sourceRef: string,
+): QuestionDraftDocumentT {
+  const part = (
+    partId: string,
+    unitId: string,
+    slotId: string,
+    prompt: string,
+    accepted: string,
+  ) => ({
+    part_id: partId,
+    prompt_md: prompt,
+    material_ids: ['m-stem'],
+    units: [
+      {
+        unit_id: unitId,
+        slot_id: slotId,
+        response_class: 'blank' as const,
+        response_spec: { kind: 'blank' as const, format: 'text' as const },
+        key: {
+          kind: 'blank' as const,
+          key: { kind: 'text' as const, accepted: [accepted], normalization: BLANK_NORM },
+        },
+        points: 1,
+        rule: BLANK_RULE,
+        method: { kind: 'exact' as const },
+        material_refs: [],
+        metadata: {},
+      },
+    ],
+    metadata: {},
+  });
+  return QuestionDraftDocument.parse({
+    schema_version: 2,
+    parts: [
+      part('p1', 'u1', 's1', '(1) $a+b=$ ____', '5'),
+      part('p2', 'u2', 's2', '(2) $ab=$ ____', '6'),
+    ],
+    materials: [
+      {
+        material_id: 'm-stem',
+        kind: 'plaintext',
+        asset: { asset_id: 'txt_stem', digest: 'sha256:stem' },
+        caption: 'stem/shared context',
+        content_md: stem,
+      },
+    ],
+    knowledge_ids: [knowledgeId],
+    source: { kind: 'generated', ref: sourceRef },
+    metadata: {},
+  });
+}
+
+function selectDocument(
+  prompt: string,
+  knowledgeId: string,
+  sourceRef: string,
+  pick: 'one' | 'many',
+  accepted: string[],
+): QuestionDraftDocumentT {
+  return QuestionDraftDocument.parse({
+    schema_version: 2,
+    parts: [
+      {
+        part_id: 'p1',
+        prompt_md: prompt,
+        material_ids: [],
+        units: [
+          {
+            unit_id: 'u1',
+            slot_id: 's1',
+            response_class: 'select',
+            response_spec: {
+              kind: 'select',
+              pick,
+              items: [
+                { item_id: 'opt-a', label_md: '甲' },
+                { item_id: 'opt-b', label_md: '乙' },
+                { item_id: 'opt-c', label_md: '丙' },
+              ],
+            },
+            key: { kind: 'select', accepted_item_ids: accepted },
+            points: 1,
+            rule: CHOICE_RULE,
+            method: { kind: 'set-compare' },
+            material_refs: [],
+            metadata: {},
+          },
+        ],
+        metadata: {},
+      },
+    ],
+    materials: [],
+    knowledge_ids: [knowledgeId],
+    source: { kind: 'generated', ref: sourceRef },
+    metadata: {},
+  });
+}
+
+function multiSelectDocument(prompt: string, knowledgeId: string, sourceRef: string) {
+  return selectDocument(prompt, knowledgeId, sourceRef, 'many', ['opt-a', 'opt-c']);
+}
+
+function singleSelectDocument(prompt: string, knowledgeId: string, sourceRef: string) {
+  return selectDocument(prompt, knowledgeId, sourceRef, 'one', ['opt-b']);
+}
+
+async function submitDocument(document: QuestionDraftDocumentT, requestId: string) {
+  const db = testDb();
+  const saved = await saveDraftEdit(db, {
+    input: { action: 'save', document, request_id: `${requestId}-save` },
+    ctx: ACTOR,
+  });
+  if (saved.status !== 'saved') throw new Error(JSON.stringify(saved));
+  const submitted = await submitDraftQuestion(
+    db,
+    {
+      draft_ref: saved.draft_ref,
+      expected_draft_version: saved.draft_version,
+      request_id: `${requestId}-submit`,
+    },
+    { ...ACTOR, sessionId: null },
+  );
+  if (
+    submitted.status === 'conflict' ||
+    !('revision_id' in submitted) ||
+    submitted.revision_id == null
+  ) {
+    throw new Error(JSON.stringify(submitted));
+  }
+  const [revision] = await db
+    .select()
+    .from(question_revision)
+    .where(eq(question_revision.revision_id, submitted.revision_id));
+  if (!revision) throw new Error('submit published no revision');
+  return {
+    questionId: submitted.question_id,
+    revisionId: revision.revision_id,
+    digest: revision.integrity_digest,
+  };
+}
+
+async function revisionIds(questionId: string): Promise<string[]> {
+  const rows = await testDb()
+    .select({ id: question_revision.revision_id })
+    .from(question_revision)
+    .where(eq(question_revision.group_id, questionId));
+  return rows.map((row) => row.id);
 }
 
 function solvedBlank(accepted: string, dialect: 'typed' | 'model'): Record<string, unknown> {
@@ -531,5 +729,250 @@ describe('question admission run', () => {
     expect(heldLife.scoring_admission_state).toBe('withheld');
     expect(heldRow.draft_status).toBe('draft');
     expect(await poolFetch(db, { knowledgeId: 'kc-dead' })).toEqual([]);
+  });
+
+  // @invariant grading: a numeric blank equal to the textual key is the same answer, and a different number is not
+  // @fails-if blank_numeric 1024 against text ["1024"] stays withheld, or expected 999 is admitted
+  it('admits the captured numeric blank when it equals the textual key', async () => {
+    const db = testDb();
+    await seedKnowledge('kc-numeric');
+    await seedKnowledge('kc-numeric-wrong');
+    await seedKnowledge('kc-text-on-number');
+    const seen: SolvePayload[] = [];
+    const published = await submitBlank({
+      prompt: '计算 2 的 10 次方，结果是多少？',
+      knowledgeId: 'kc-numeric',
+      accepted: '1024',
+      requestId: 'numeric-shape',
+    });
+    const qaShape = {
+      status: 'solved',
+      answer: { kind: 'blank_numeric', expected: 1024, tolerance: { kind: 'absolute', value: 0 } },
+      equivalent_forms: [],
+      typical_wrong: [],
+    };
+    const admitted = await runPinned(
+      published.questionId,
+      published.revisionId,
+      published.digest,
+      fakeSolver(() => qaShape, seen),
+    );
+    expect(admitted.status).toBe('admitted');
+    expect(seen[0]?.units[0]?.blank?.answer_kind).toBe('blank_text');
+    expect(admitted.revision_id).toBe(published.revisionId);
+    const [row] = await db.select().from(question).where(eq(question.id, published.questionId));
+    expect(row.reference_md).toBe('1024');
+    const [revision] = await db
+      .select()
+      .from(question_revision)
+      .where(eq(question_revision.revision_id, published.revisionId));
+    expect(revision.scoring_basis.units[0]?.criterion).toMatchObject({
+      kind: 'blank_key',
+      key: { kind: 'text', accepted: ['1024'] },
+    });
+
+    const wrong = await submitBlank({
+      prompt: '一个错误的数值不能代替文本键。',
+      knowledgeId: 'kc-numeric-wrong',
+      accepted: '1024',
+      requestId: 'numeric-wrong',
+    });
+    const withheld = await runPinned(
+      wrong.questionId,
+      wrong.revisionId,
+      wrong.digest,
+      fakeSolver(
+        () => ({
+          status: 'solved',
+          answer: {
+            kind: 'blank_numeric',
+            expected: 999,
+            tolerance: { kind: 'absolute', value: 0 },
+          },
+          equivalent_forms: [],
+          typical_wrong: [],
+        }),
+        [],
+      ),
+    );
+    expect(withheld.status).toBe('withheld');
+    const [wrongRow] = await db.select().from(question).where(eq(question.id, wrong.questionId));
+    expect(wrongRow.reference_md).toBe('1024');
+    expect(wrongRow.draft_status).toBe('draft');
+
+    const numericSeed = await submitDocument(
+      numericBlankDocument('把数值键和文本答案对上。', 'kc-text-on-number', 1024, 'text-on-number'),
+      'text-on-number',
+    );
+    const textAdmitted = await runPinned(
+      numericSeed.questionId,
+      numericSeed.revisionId,
+      numericSeed.digest,
+      fakeSolver(() => solvedBlank('1024', 'typed'), []),
+    );
+    expect(textAdmitted.status).toBe('admitted');
+    expect(textAdmitted.revision_id).toBe(numericSeed.revisionId);
+    const [numericRow] = await db
+      .select()
+      .from(question)
+      .where(eq(question.id, numericSeed.questionId));
+    expect(numericRow.reference_md).toBe('1024');
+  });
+
+  // @invariant data: admitting a multi-part question keeps the shared stem in the row identity
+  // @fails-if admission replaces the stem prompt with the sub-part prompts and changes the content hash
+  it('keeps the shared stem and content hash when a multi-part question is admitted', async () => {
+    const db = testDb();
+    await seedKnowledge('kc-stem');
+    const stem = '已知 $a=2$，$b=3$。\n\n(1) $a+b=$ ____\n\n(2) $ab=$ ____';
+    const published = await submitDocument(stemDocument(stem, 'kc-stem', 'stem'), 'stem');
+    const [before] = await db.select().from(question).where(eq(question.id, published.questionId));
+    expect(before.prompt_md).toBe(stem);
+    const admitted = await runPinned(
+      published.questionId,
+      published.revisionId,
+      published.digest,
+      fakeSolver((unitId) => solvedBlank(unitId === 'u1' ? '5' : '6', 'typed'), []),
+    );
+    expect(admitted.status).toBe('admitted');
+    const [row] = await db.select().from(question).where(eq(question.id, published.questionId));
+    expect(row.prompt_md).toBe(stem);
+    expect(row.reference_md).toBe('5\n\n6');
+    expect(row.canonical_content_hash).toBe(before.canonical_content_hash);
+    expect(row.draft_status).toBe('active');
+  });
+
+  // @invariant data: admission does not replace the author's key or mint a revision when the text is unchanged
+  // @fails-if a full-width or reordered model answer is written into the stored key or a new revision
+  it('keeps the author key verbatim and does not open a revision', async () => {
+    const db = testDb();
+    await seedKnowledge('kc-author-blank');
+    await seedKnowledge('kc-author-select');
+    const blank = await submitBlank({
+      prompt: '全角数字不能改写作者的键。',
+      knowledgeId: 'kc-author-blank',
+      accepted: '1024',
+      requestId: 'author-blank',
+    });
+    const blankAdmitted = await runPinned(
+      blank.questionId,
+      blank.revisionId,
+      blank.digest,
+      fakeSolver(
+        () => ({
+          status: 'solved',
+          answer: { kind: 'blank_text', accepted: ['１０２４'] },
+          equivalent_forms: [],
+          typical_wrong: [],
+        }),
+        [],
+      ),
+    );
+    expect(blankAdmitted.status).toBe('admitted');
+    expect(await revisionIds(blank.questionId)).toEqual([blank.revisionId]);
+    const [blankRow] = await db.select().from(question).where(eq(question.id, blank.questionId));
+    expect(blankRow.reference_md).toBe('1024');
+
+    const select = await submitDocument(
+      multiSelectDocument('多选顺序保持作者写法。', 'kc-author-select', 'author-select'),
+      'author-select',
+    );
+    const selectAdmitted = await runPinned(
+      select.questionId,
+      select.revisionId,
+      select.digest,
+      fakeSolver(
+        () => ({
+          status: 'solved',
+          answer: { kind: 'select', item_ids: ['opt-c', 'opt-a'] },
+          equivalent_forms: [],
+          typical_wrong: [],
+        }),
+        [],
+      ),
+    );
+    expect(selectAdmitted.status).toBe('admitted');
+    expect(await revisionIds(select.questionId)).toEqual([select.revisionId]);
+    const [selectRow] = await db.select().from(question).where(eq(question.id, select.questionId));
+    const [selectRevision] = await db
+      .select()
+      .from(question_revision)
+      .where(eq(question_revision.revision_id, select.revisionId));
+    expect(selectRow.reference_md).toBe('AC');
+    expect(selectRevision.scoring_basis.units[0]?.criterion).toMatchObject({
+      kind: 'select_key',
+      accepted_item_ids: ['opt-a', 'opt-c'],
+    });
+  });
+
+  // @invariant data: a stored scoring layer whose digest no longer matches is not graded
+  // @fails-if a tampered key is admitted while the sealed digest stays unchanged
+  it('fails closed when the stored key no longer matches its digest', async () => {
+    const db = testDb();
+    await seedKnowledge('kc-tamper');
+    const published = await submitBlank({
+      prompt: '被改写的存储键不能准入。',
+      knowledgeId: 'kc-tamper',
+      accepted: '1024',
+      requestId: 'tamper',
+    });
+    await db.execute(
+      sql`ALTER TABLE question_revision DISABLE TRIGGER question_revision_immutable`,
+    );
+    try {
+      await db.execute(sql`
+        update question_revision
+        set scoring_basis = jsonb_set(scoring_basis, '{units,0,criterion,key,accepted,0}', '"999"')
+        where revision_id = ${published.revisionId}
+      `);
+      const result = await runPinned(
+        published.questionId,
+        published.revisionId,
+        published.digest,
+        fakeSolver(() => solvedBlank('999', 'typed'), []),
+      );
+      expect(result.status).toBe('stale');
+      expect(await db.select({ id: ai_task_runs.id }).from(ai_task_runs)).toEqual([]);
+      const [row] = await db.select().from(question).where(eq(question.id, published.questionId));
+      expect(row.draft_status).toBe('draft');
+    } finally {
+      await db.execute(
+        sql`ALTER TABLE question_revision ENABLE TRIGGER question_revision_immutable`,
+      );
+    }
+  });
+
+  // @invariant grading: disagreeing item_ids and accepted_item_ids are not a select key
+  // @fails-if item_ids is trusted and the question is admitted while accepted_item_ids names another item
+  it('rejects a select answer whose item id fields disagree', async () => {
+    const db = testDb();
+    await seedKnowledge('kc-conflict');
+    const published = await submitDocument(
+      singleSelectDocument('冲突的选项字段不能准入。', 'kc-conflict', 'conflict'),
+      'conflict',
+    );
+    const result = await runPinned(
+      published.questionId,
+      published.revisionId,
+      published.digest,
+      fakeSolver(
+        () => ({
+          status: 'solved',
+          answer: { kind: 'select', item_ids: ['opt-a'], accepted_item_ids: ['opt-b'] },
+          equivalent_forms: [],
+          typical_wrong: [],
+        }),
+        [],
+      ),
+    );
+    expect(result.status).toBe('pending');
+    const [life] = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, published.questionId));
+    const [row] = await db.select().from(question).where(eq(question.id, published.questionId));
+    expect(life.scoring_admission_state).toBe('withheld');
+    expect(row.draft_status).toBe('draft');
+    expect(await poolFetch(db, { knowledgeId: 'kc-conflict' })).toEqual([]);
   });
 });

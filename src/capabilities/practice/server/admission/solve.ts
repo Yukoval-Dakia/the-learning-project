@@ -163,8 +163,20 @@ function solverUnits(
               })),
             }
           : undefined;
+      const answerKind: 'blank_text' | 'blank_numeric' | undefined =
+        unit.seeded_criterion?.kind === 'blank_key'
+          ? unit.seeded_criterion.key.kind === 'numeric'
+            ? 'blank_numeric'
+            : 'blank_text'
+          : undefined;
       const blank =
-        slot?.kind === 'blank' ? { format: slot.format, unit_hint: slot.unit_hint } : undefined;
+        slot?.kind === 'blank'
+          ? {
+              format: slot.format,
+              ...(slot.unit_hint != null ? { unit_hint: slot.unit_hint } : {}),
+              ...(answerKind != null ? { answer_kind: answerKind } : {}),
+            }
+          : undefined;
       return {
         scoring_unit_id: unit.scoring_unit_id,
         part_id: unit.part_id,
@@ -225,12 +237,67 @@ function validSolveUnitOutput(
   };
 }
 
+const STRICT_BLANK_NUMBER = /^-?(?:0|[1-9]\d*)(?:\.\d+)?$/;
+
+/** A whole decimal token. Exponents, units and leading zeros stay unequal. */
+function parseStrictBlankNumber(text: string): number | null {
+  if (!STRICT_BLANK_NUMBER.test(text)) return null;
+  const value = Number(text);
+  return Number.isFinite(value) ? value : null;
+}
+
+function textEqualsExpected(
+  accepted: readonly string[],
+  expected: number,
+  normalization: BlankNormalizationT | null,
+): boolean {
+  if (accepted.length === 0) return false;
+  const norm = normalization ?? {
+    version: 'n/a',
+    nfkc: false,
+    trim_outer: true,
+    casefold: false,
+    collapse_whitespace: false,
+    ignore_punctuation: false,
+    character_variants: [],
+  };
+  return accepted.every((text) => {
+    const value = parseStrictBlankNumber(normalizeBlankText(text, norm));
+    return value != null && value === expected;
+  });
+}
+
+function bridgeBlankKinds(
+  a: AdmissionKey,
+  b: AdmissionKey,
+  normalization: BlankNormalizationT | null,
+): { agree: boolean; detail?: string; key?: AdmissionKey } | null {
+  const text = a.kind === 'blank_text' ? a : b.kind === 'blank_text' ? b : null;
+  const numeric = a.kind === 'blank_numeric' ? a : b.kind === 'blank_numeric' ? b : null;
+  if (text == null || numeric == null) return null;
+  if (numeric.expected_unit != null) {
+    return { agree: false, detail: 'numeric unit has no textual counterpart' };
+  }
+  if (!textEqualsExpected(text.accepted, numeric.expected, normalization)) {
+    return {
+      agree: false,
+      detail: `blank text/numeric ${text.accepted.join('|')} vs ${numeric.expected}`,
+    };
+  }
+  // Comparison only. A seeded author key replaces this before anything is published.
+  return { agree: true, key: text };
+}
+
 function keysAgree(
   a: AdmissionKey,
   b: AdmissionKey,
   normalization: BlankNormalizationT | null,
 ): { agree: boolean; detail?: string; key?: AdmissionKey } {
-  if (a.kind !== b.kind) return { agree: false, detail: `key kind ${a.kind} vs ${b.kind}` };
+  if (a.kind !== b.kind) {
+    const bridged = bridgeBlankKinds(a, b, normalization);
+    if (bridged != null) return bridged;
+    return { agree: false, detail: `key kind ${a.kind} vs ${b.kind}` };
+  }
   if (a.kind === 'select' && b.kind === 'select') {
     const sa = [...a.accepted_item_ids].sort();
     const sb = [...b.accepted_item_ids].sort();
@@ -323,8 +390,31 @@ function keyFromAnswer(
   }
 }
 
-/** seeded 判据 vs 双解达成键：seed 存在 ⇒ 必须一致才可准入。 */
-function seedMatches(seed: ScoringUnitCriterionT, key: AdmissionKey): boolean {
+/** The author's stored key. Model output is compared against it and never copied over it. */
+function authorAdmissionKey(seed: ScoringUnitCriterionT | null): AdmissionKey | null {
+  if (seed?.kind === 'select_key') {
+    return { kind: 'select', accepted_item_ids: [...seed.accepted_item_ids] };
+  }
+  if (seed?.kind === 'blank_key' && seed.key.kind === 'text') {
+    return { kind: 'blank_text', accepted: [...seed.key.accepted] };
+  }
+  if (seed?.kind === 'blank_key' && seed.key.kind === 'numeric') {
+    return {
+      kind: 'blank_numeric',
+      expected: seed.key.expected,
+      tolerance: seed.key.tolerance,
+      ...(seed.key.expected_unit != null ? { expected_unit: seed.key.expected_unit } : {}),
+    };
+  }
+  return null;
+}
+
+/** seeded 判据 vs 双解达成键：seed 存在 ⇒ 必须一致才可准入。数值与文本只在数值相等时互认。 */
+function seedMatches(
+  seed: ScoringUnitCriterionT,
+  key: AdmissionKey,
+  normalization: BlankNormalizationT | null,
+): boolean {
   if (seed.kind === 'select_key' && key.kind === 'select') {
     const a = [...seed.accepted_item_ids].sort();
     const b = [...key.accepted_item_ids].sort();
@@ -335,6 +425,14 @@ function seedMatches(seed: ScoringUnitCriterionT, key: AdmissionKey): boolean {
     const as = [...new Set(seed.key.accepted.map((t) => normalizeBlankText(t, norm)))].sort();
     const bs = [...new Set(key.accepted.map((t) => normalizeBlankText(t, norm)))].sort();
     return as.length === bs.length && as.every((t, i) => t === bs[i]);
+  }
+  if (seed.kind === 'blank_key' && key.kind === 'blank_numeric' && seed.key.kind === 'text') {
+    if (key.expected_unit != null) return false;
+    return textEqualsExpected(seed.key.accepted, key.expected, seed.key.normalization);
+  }
+  if (seed.kind === 'blank_key' && key.kind === 'blank_text' && seed.key.kind === 'numeric') {
+    if (seed.key.expected_unit != null) return false;
+    return textEqualsExpected(key.accepted, seed.key.expected, normalization);
   }
   if (seed.kind === 'blank_key' && key.kind === 'blank_numeric' && seed.key.kind === 'numeric') {
     if ((seed.key.expected_unit ?? null) !== (key.expected_unit ?? null)) return false;
@@ -527,14 +625,20 @@ export async function runDualSolve(
       });
       continue;
     }
-    if (unit.seeded_criterion != null && !seedMatches(unit.seeded_criterion, agree.key)) {
+    if (
+      unit.seeded_criterion != null &&
+      !seedMatches(unit.seeded_criterion, agree.key, unit.blank_normalization)
+    ) {
       verdicts.set(unit.scoring_unit_id, {
         status: 'seed_mismatch',
         detail: 'agreed key conflicts with the seeded typed criterion',
       });
       continue;
     }
-    verdicts.set(unit.scoring_unit_id, { status: 'agreed', key: agree.key });
+    verdicts.set(unit.scoring_unit_id, {
+      status: 'agreed',
+      key: authorAdmissionKey(unit.seeded_criterion) ?? agree.key,
+    });
     probeCandidates.set(unit.scoring_unit_id, {
       equivalent_forms: (outA.equivalent_forms ?? []).map((f) => ({
         ...(f.item_ids != null ? { item_ids: f.item_ids } : {}),

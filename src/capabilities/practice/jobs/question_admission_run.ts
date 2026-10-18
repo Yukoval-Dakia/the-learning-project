@@ -4,10 +4,15 @@
 import { randomUUID } from 'node:crypto';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
+import { ExecutionPlan } from '@/core/schema/assessment/execution';
 import { LEGACY_DRAFT_STATUS } from '@/core/schema/assessment/lifecycle';
-import type { ResponseSpecT } from '@/core/schema/assessment/response';
-import type { ScoringBasisT } from '@/core/schema/assessment/scoring';
-import type { QuestionGroupStructureT } from '@/core/schema/assessment/structure';
+import { Presentation } from '@/core/schema/assessment/presentation';
+import { ResponseSpec, type ResponseSpecT } from '@/core/schema/assessment/response';
+import { ScoringBasis, type ScoringBasisT } from '@/core/schema/assessment/scoring';
+import {
+  QuestionGroupStructure,
+  type QuestionGroupStructureT,
+} from '@/core/schema/assessment/structure';
 import type { Db, Tx } from '@/db/client';
 import {
   admitPaidEffectDeliveryControl,
@@ -120,11 +125,44 @@ type GradedContract = {
 };
 
 /**
+ * The publisher seals contractIntegrityDigest on the schema-parsed object.
+ * jsonb reorders keys, so hashing the loaded value directly never matches.
+ * Parsing the layers again restores that object. A stored key that no longer
+ * hashes to the sealed digest is not graded.
+ */
+function sealedRevisionContract(revision: typeof question_revision.$inferSelect): {
+  contract: NormalizedContract;
+  digestMatches: boolean;
+} {
+  const structure = QuestionGroupStructure.parse(revision.structure);
+  const response_spec = ResponseSpec.parse(revision.response_spec);
+  const scoring_basis = ScoringBasis.parse(revision.scoring_basis);
+  const execution_plan = ExecutionPlan.parse(revision.execution_plan);
+  const presentation =
+    revision.presentation != null ? Presentation.parse(revision.presentation) : undefined;
+  const layers = {
+    structure,
+    response_spec,
+    scoring_basis,
+    execution_plan,
+    ...(presentation != null ? { presentation } : {}),
+  };
+  const recomputed = contractIntegrityDigest(layers);
+  return {
+    digestMatches: recomputed === revision.integrity_digest,
+    contract: {
+      ...layers,
+      integrity_digest: revision.integrity_digest,
+      group_id: revision.group_id,
+      conversion_issues: [],
+    },
+  };
+}
+
+/**
  * Grade the published revision when one exists. The question row is a projection
- * and its rebuilt contract is a different document. The stored integrity_digest
- * is the identity the publisher sealed at write time. jsonb does not preserve
- * key order, so a digest recomputed from the loaded layers is not that seal.
- * A missing current revision is not graded.
+ * and its rebuilt contract is a different document. A missing current revision,
+ * or a stored layer whose digest no longer matches, is not graded.
  */
 async function loadGradedContract(
   db: Db | Tx,
@@ -142,23 +180,27 @@ async function loadGradedContract(
   if (!revision || revision.group_id !== rootId) {
     return { contract: await loadDefinition(db, rootId), revision: null, digestMatches: false };
   }
-  const layers = {
-    structure: revision.structure,
-    response_spec: revision.response_spec,
-    scoring_basis: revision.scoring_basis,
-    execution_plan: revision.execution_plan,
-    ...(revision.presentation != null ? { presentation: revision.presentation } : {}),
-  };
-  return {
-    revision,
-    digestMatches: true,
-    contract: {
-      ...layers,
-      integrity_digest: revision.integrity_digest,
-      group_id: revision.group_id,
-      conversion_issues: [],
-    },
-  };
+  try {
+    const sealed = sealedRevisionContract(revision);
+    return { revision, ...sealed };
+  } catch {
+    return { contract: await loadDefinition(db, rootId), revision, digestMatches: false };
+  }
+}
+
+/** Same stem rule as submit's projectPrompt: a shared stem is the row prompt. */
+function projectPromptMd(structure: QuestionGroupStructureT): string {
+  const parts = structure.parts;
+  if (parts.length === 1) return parts[0].prompt_md;
+  const stem = parts
+    .flatMap((part) => part.material_ids)
+    .map((id) => structure.materials.find((material) => material.material_id === id))
+    .find((material) => material != null && material.caption === 'stem/shared context');
+  if (stem?.content_md != null) return stem.content_md;
+  return parts
+    .map((part) => part.prompt_md)
+    .filter((text) => text.trim().length > 0)
+    .join('\n\n');
 }
 
 function projectAdmittedQuestionRow(contract: {
@@ -167,13 +209,7 @@ function projectAdmittedQuestionRow(contract: {
   scoring_basis: ScoringBasisT;
 }) {
   const parts = contract.structure.parts;
-  const promptMd =
-    parts.length === 1
-      ? parts[0].prompt_md
-      : parts
-          .map((part) => part.prompt_md)
-          .filter((text) => text.trim().length > 0)
-          .join('\n\n');
+  const promptMd = projectPromptMd(contract.structure);
   const slotById = new Map(contract.response_spec.slots.map((slot) => [slot.slot_id, slot]));
   const references: string[] = [];
   for (const unit of contract.scoring_basis.units) {
@@ -484,16 +520,9 @@ export async function runAdmissionForQuestion(
       const verifierContext = batch.input.solver2
         ? 'independent_model'
         : 'same_model_isolated_context';
-      // Admission changes scoring, never erases the frozen presentation from main #1737.
-      const contract =
-        admitted && result.resolved
-          ? {
-              ...result.resolved,
-              ...(batch.input.contract.presentation
-                ? { presentation: batch.input.contract.presentation }
-                : {}),
-            }
-          : batch.input.contract;
+      // The model key is comparison evidence. Publish the sealed revision so an
+      // unchanged author key does not mint another revision.
+      const contract = batch.input.contract;
       const persisted = await publishQuestionGroup(tx, {
         group_id: rootId,
         contract: { ...contract, integrity_digest: contractIntegrityDigest(contract) },
