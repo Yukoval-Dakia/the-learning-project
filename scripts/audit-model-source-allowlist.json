@@ -8,6 +8,15 @@
       "expected_by": "2027-01-01"
     }
   },
+  "scripts/audit-provider-lanes.ts": {
+    "literals": ["glm-ocr-layout-parsing-fetch"],
+    "reason": "audit-internal provider-fetch classification vocabulary — the kind name mirrors the glm.ocr-layout-parsing lane naming; it classifies wire calls, it does not select a runtime model",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "structural: audit taxonomy names embed the lane/model id for readability — revisit only if these kind names start driving runtime routing",
+      "expected_by": "2027-01-01"
+    }
+  },
   "scripts/provider-lane-inventory.ts": {
     "literals": ["*"],
     "reason": "audit:provider-lanes evidence ledger — the literals it quotes are expected-source assertions used to verify each lane's real wiring, not runtime model config",

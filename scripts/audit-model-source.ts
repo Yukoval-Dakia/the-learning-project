@@ -18,6 +18,10 @@
  * The model set is DERIVED — this file keeps no model list of its own:
  *   - every model id in the native pi provider catalog snapshot
  *   - every model id in the curated models.dev catalog snapshot
+ *   - every model id declared in the provider catalog / pricing files
+ *     (binding `models:` keys, `*MODEL*`/`*PRICE*` declarations) — this covers
+ *     direct-provider lanes (embedding, GLM-OCR, legacy GLM) that are absent
+ *     from the chat snapshots
  *   - every `defaultModel:` literal under src/capabilities/<owner>/tasks/**
  *   - every `*_MODEL` key's `codeDefault` in src/core/config/registry.ts
  *
@@ -169,6 +173,55 @@ function catalogModelIds(): Set<string> {
   return ids;
 }
 
+/**
+ * Declared model ids inside the provider catalog / pricing files: `models:`
+ * binding-map keys and the initializers / property names of `*MODEL*` /
+ * `*PRICE*` declarations. Direct-provider lanes (embeddings, OCR, legacy GLM)
+ * declare their model ids here — without this source the gate cannot see a
+ * re-hard-pinned copy elsewhere.
+ */
+function catalogDeclaredModelIds(): Set<string> {
+  const ids = new Set<string>();
+  const propName = (name: ts.PropertyName | undefined): void => {
+    if (name && (ts.isIdentifier(name) || ts.isStringLiteralLike(name))) ids.add(name.text);
+  };
+  for (const relPath of PROVIDER_CATALOG_FILES) {
+    const file = join(REPO_ROOT, relPath);
+    if (!existsSync(file)) continue;
+    const sourceFile = ts.createSourceFile(
+      file,
+      readFileSync(file, 'utf-8'),
+      ts.ScriptTarget.Latest,
+      true,
+      scriptKind(file),
+    );
+    const visit = (node: ts.Node): void => {
+      if (
+        ts.isPropertyAssignment(node) &&
+        ts.isIdentifier(node.name) &&
+        node.name.text === 'models' &&
+        ts.isObjectLiteralExpression(node.initializer)
+      ) {
+        for (const prop of node.initializer.properties) propName(prop.name);
+      }
+      if (
+        ts.isVariableDeclaration(node) &&
+        ts.isIdentifier(node.name) &&
+        /MODEL|PRICE|PRICING/iu.test(node.name.text)
+      ) {
+        const init = node.initializer;
+        if (init && ts.isStringLiteralLike(init)) ids.add(init.text);
+        if (init && ts.isObjectLiteralExpression(init)) {
+          for (const prop of init.properties) propName(prop.name);
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sourceFile);
+  }
+  return ids;
+}
+
 function taskDefaultModelIds(): Set<string> {
   const ids = new Set<string>();
   const tasksRoot = join(REPO_ROOT, 'src/capabilities');
@@ -315,6 +368,7 @@ function containsModelId(text: string, modelId: string): boolean {
 function main(): void {
   const modelIds = new Set([
     ...catalogModelIds(),
+    ...catalogDeclaredModelIds(),
     ...taskDefaultModelIds(),
     ...registryModelCodeDefaults(),
   ]);
