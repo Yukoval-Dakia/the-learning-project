@@ -2,7 +2,7 @@ import { and, eq } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { job_events } from '@/db/schema';
 import type { PiBeforeToolCall } from '@/server/ai/pi-hooks';
-import { writeCopilotReply } from './conversation-writes';
+import { boundCopilotReply, writeCopilotReply } from './conversation-writes';
 import { COPILOT_RUN_EVENTS, COPILOT_RUN_TABLE } from './copilot-run-status';
 import { MATERIALIZING_TOOL_NAMES } from './materializing-tools';
 import type { CopilotReplyFinalizationReceipt, PreparedCopilotReply } from './reply-finalization';
@@ -60,22 +60,30 @@ export async function persistCopilotRunCancellationMarker(
   tx: Tx,
   args: PersistCopilotRunCancellationArgs,
 ): Promise<PersistedCopilotRunCancellation> {
+  const sealedReply =
+    args.partialText !== undefined && args.preparedReply?.text === args.partialText
+      ? args.partialText
+      : undefined;
   const replyText =
+    sealedReply ??
     copilotPartialReply({ prose: args.partialText, toolSummaries: args.toolSummaries }) ??
     COPILOT_STOPPED_REPLY;
+  const reply = boundCopilotReply({
+    text: replyText,
+    preparedReply: args.preparedReply,
+    receipt: args.replyFinalization,
+  });
   const error = 'copilot run cancelled by user';
   const taskRunId = args.taskRunId ?? `copilot_run_cancelled_${args.runId}`;
   const writeReply = args.writeCopilotReplyFn ?? writeCopilotReply;
   const { cleanedReply } = await writeReply(tx, {
     sessionId: args.sessionId,
     userAskEventId: args.runId,
-    replyText,
-    ...(args.preparedReply?.text === replyText
-      ? { preparedReply: { text: args.preparedReply.text } }
-      : {}),
+    replyText: reply.text,
+    preparedReply: reply.preparedReply,
     actorRef: args.actorRef,
     taskRunId,
-    ...(args.replyFinalization ? { replyFinalization: args.replyFinalization } : {}),
+    ...(reply.receipt ? { replyFinalization: reply.receipt } : {}),
     outcome: 'failure',
     durableFailure: {
       reason: 'cancelled',
