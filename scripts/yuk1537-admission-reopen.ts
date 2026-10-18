@@ -19,11 +19,6 @@ import {
   LEGACY_QUESTION_ADMISSION_PAID_UNIT,
   QUESTION_ADMISSION_PAID_UNITS,
 } from '@/core/question-admission-policy';
-import { ExecutionPlan } from '@/core/schema/assessment/execution';
-import { Presentation } from '@/core/schema/assessment/presentation';
-import { ResponseSpec } from '@/core/schema/assessment/response';
-import { ScoringBasis } from '@/core/schema/assessment/scoring';
-import { QuestionGroupStructure } from '@/core/schema/assessment/structure';
 import { zodToJsonSchemaCompat } from '@/kernel/zod-json-schema';
 import { nativePiModel } from '@/server/ai/pi-provider-catalog';
 import { xiaomiTokenPlanBaseUrl } from '@/server/ai/xiaomi-token-plan';
@@ -209,7 +204,9 @@ async function reopen(receiptPath: string, manifestPath: string) {
     '@/capabilities/practice/server/queue-runtime'
   );
   const { publishQuestionGroup } = await import('@/kernel/records/assessment-publication');
-  const { contractIntegrityDigest } = await import('@/kernel/records/assessment-normalization');
+  const { publishedContractSeal, publishedSealAccepts } = await import(
+    '@/kernel/records/assessment-normalization'
+  );
   const { getR2 } = await import('@/server/r2');
   const boss = await getPracticeBoss();
   try {
@@ -269,17 +266,16 @@ async function reopen(receiptPath: string, manifestPath: string) {
           revision.integrity_digest !== row.base_digest
         )
           throw new Error('Current revision/base mismatch');
-        const layers = {
-          structure: QuestionGroupStructure.parse(revision.structure),
-          response_spec: ResponseSpec.parse(revision.response_spec),
-          scoring_basis: ScoringBasis.parse(revision.scoring_basis),
-          execution_plan: ExecutionPlan.parse(revision.execution_plan),
-          ...(revision.presentation
-            ? { presentation: Presentation.parse(revision.presentation) }
-            : {}),
-        };
-        if (contractIntegrityDigest(layers) !== row.base_digest)
+        const seal = publishedContractSeal({
+          structure: revision.structure,
+          response_spec: revision.response_spec,
+          scoring_basis: revision.scoring_basis,
+          execution_plan: revision.execution_plan,
+          ...(revision.presentation != null ? { presentation: revision.presentation } : {}),
+        });
+        if (!publishedSealAccepts(seal, row.base_digest))
           throw new Error('Published digest mismatch');
+        const layers = seal.parsed;
         let generation = lifecycle.scoring_admission_generation;
         for (const reason of ['owner_hold', 'unverified_rules'] as const) {
           if (

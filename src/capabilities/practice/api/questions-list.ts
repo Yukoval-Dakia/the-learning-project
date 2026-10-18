@@ -70,7 +70,11 @@ export async function GET(req: Request): Promise<Response> {
       (q.group_by_family ||
         q.expand_root !== undefined ||
         q.source_tier.length > 0 ||
-        q.sort_by === 'source_tier')
+        q.sort_by === 'source_tier' ||
+        // YUK-1514 — the serving pass is in-memory over the full filtered set;
+        // cursor paging has no equivalent there.
+        q.status === 'not_servable' ||
+        q.include_serving_counts)
     ) {
       throw new ApiError(
         'invalid_cursor',
@@ -102,7 +106,12 @@ export async function GET(req: Request): Promise<Response> {
       groupByFamily: q.group_by_family,
       expandRoot: q.expand_root,
       includeDrafts: q.include_drafts,
-      draftStatus: q.status as QuestionListDraftStatus | undefined,
+      // YUK-1514 — not_servable keeps both drafts and actives in the held set
+      // (a draft awaiting verification is a live hold reason).
+      draftStatus:
+        q.status === 'not_servable' ? 'all' : (q.status as QuestionListDraftStatus | undefined),
+      notServable: q.status === 'not_servable',
+      includeServingCounts: q.include_serving_counts || q.status === 'not_servable',
       enrich: q.enrich,
       limit,
       offset,

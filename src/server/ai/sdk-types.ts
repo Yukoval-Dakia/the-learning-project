@@ -49,6 +49,11 @@ export interface Options {
    * fail-closed at adapter startup.
    */
   resume?: string;
+  /**
+   * Whole-request HTTP budget passed to the provider client. Longer than the
+   * task abort so the lifecycle, not the SDK's 10-minute default, ends the call.
+   */
+  providerTimeoutMs?: number;
 }
 
 // ---------------------------------------------------------------------------

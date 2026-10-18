@@ -157,6 +157,42 @@
   border-color: var(--coral-line);
 }
 
+/* ── 暂不出题：按原因分布（YUK-1514）────────────────────────── */
+.qb-holdsum {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px var(--s-2);
+  margin: 0 0 var(--s-3);
+}
+.qb-holdsum-l {
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  letter-spacing: var(--ls-wide);
+  color: var(--ink-4);
+  margin-right: 2px;
+}
+.qb-holdsum-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-meta);
+  color: var(--ink-2);
+  padding: 3px 4px 3px 10px;
+  background: var(--paper-sunk);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-pill);
+}
+.qb-holdsum-n {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-3);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  padding: 0 7px;
+}
+
 /* ── filter bar ───────────────────────────────────────────── */
 .qb-filterbar {
   display: flex;
@@ -650,6 +686,56 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
+}
+/* 暂不出题说明条（YUK-1514）：中性软底，原因在前、唯一操作在右。 */
+.qd-hold {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: var(--s-3);
+  padding: var(--s-3) var(--s-4);
+  margin-bottom: var(--s-4);
+  background: var(--paper-sunk);
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+}
+.qd-hold-ico {
+  color: var(--ink-3);
+  flex: none;
+  margin-top: 3px;
+}
+.qd-hold-txt {
+  flex: 1 1 18em;
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  font-size: var(--fs-body);
+  line-height: 1.5;
+}
+.qd-hold-title {
+  color: var(--ink);
+  font-weight: 500;
+}
+.qd-hold-wait {
+  margin-left: var(--s-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+}
+.qd-hold-explain {
+  color: var(--ink-3);
+}
+.qd-hold-result {
+  color: var(--hard-ink);
+}
+.qd-hold-act {
+  display: flex;
+  gap: var(--s-2);
+  flex: none;
+  align-self: center;
+}
+.qd-hold-act:empty {
+  display: none;
 }
 /* 别处有更新版本的提示条（同 .aa-banner 的状态色软底条写法，用 hard 色）。 */
 .qd-stale {

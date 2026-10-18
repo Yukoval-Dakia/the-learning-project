@@ -11,12 +11,14 @@ import type { ToolContext } from '@/kernel/tools/types';
 import { TOOL_OUTPUT_IMAGES_FIELD } from '@/kernel/tools/types';
 import { type PixelBBox, cropToPng, probeImage, rotateImage } from '../image-ops';
 import { type SourceAssetRow, isUniqueViolation, persistSourceAsset } from '../persist-image-asset';
+import { redactIngestionText } from '../privacy-guard';
 import {
   GLM_OCR_MODEL,
   GLM_OCR_PROVIDER,
   createIngestionToolProviderContext,
 } from '../provider-attempts';
 import { formatAssetRef } from '../source-package';
+import { recordAgentRedaction } from './redaction-sink';
 import {
   AssetRefInputSchema,
   PixelBBoxInputSchema,
@@ -664,21 +666,27 @@ async function executeGlmOcr(ctx: ToolContext, raw: GlmOcrInput): Promise<GlmOcr
     const blocks: GlmOcrBlock[] = [];
     for (const page of response.layout_details ?? []) {
       for (const block of page ?? []) {
+        // YUK-1522 (R8 R1) — OCR'd text is extracted text headed for the
+        // model: redact it like read_source does and record the fired rules.
+        const redacted = redactIngestionText(block.content?.trim() ?? '');
+        recordAgentRedaction(ctx, redacted);
         blocks.push({
           label: block.label?.trim() || null,
           native_label: block.native_label?.trim() || null,
           bbox_px: block.bbox_2d ?? null,
-          text: block.content?.trim() ?? '',
+          text: redacted.text,
         });
       }
     }
+    const markdownRedacted = redactIngestionText(response.md_results);
+    recordAgentRedaction(ctx, markdownRedacted);
     const usage = response.usage ?? null;
     return {
       ...base,
       status: 'completed',
       reason: null,
       retryable: false,
-      ocr: { markdown: response.md_results, blocks },
+      ocr: { markdown: markdownRedacted.text, blocks },
       anchor,
       run_ref: attemptId,
       // Cost: the provider_attempt row is the single attempt-truth; here we

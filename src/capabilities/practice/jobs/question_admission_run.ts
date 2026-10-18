@@ -1,7 +1,6 @@
 // YUK-1507 — one durable admission batch per group/base digest.
 // The publisher event outbox enqueues pinned revisions. Queue retries replay a
 // complete result receipt, never paid solves. Unknown batches require reconciliation.
-
 import { randomUUID } from 'node:crypto';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
@@ -9,15 +8,10 @@ import {
   LEGACY_QUESTION_ADMISSION_POLICY_ID,
   QUESTION_ADMISSION_POLICY_ID,
 } from '@/core/question-admission-policy';
-import { ExecutionPlan } from '@/core/schema/assessment/execution';
 import { LEGACY_DRAFT_STATUS } from '@/core/schema/assessment/lifecycle';
-import { Presentation } from '@/core/schema/assessment/presentation';
-import { ResponseSpec, type ResponseSpecT } from '@/core/schema/assessment/response';
-import { ScoringBasis, type ScoringBasisT } from '@/core/schema/assessment/scoring';
-import {
-  QuestionGroupStructure,
-  type QuestionGroupStructureT,
-} from '@/core/schema/assessment/structure';
+import type { ResponseSpecT } from '@/core/schema/assessment/response';
+import type { ScoringBasisT } from '@/core/schema/assessment/scoring';
+import type { QuestionGroupStructureT } from '@/core/schema/assessment/structure';
 import type { Db, Tx } from '@/db/client';
 import {
   admitPaidEffectDeliveryControl,
@@ -42,8 +36,9 @@ import { ApiError } from '@/kernel/http';
 import {
   type NormalizedContract,
   type PartRow,
-  contractIntegrityDigest,
   normalizeQuestionGroupToContract,
+  publishedContractSeal,
+  publishedSealAccepts,
 } from '@/kernel/records/assessment-normalization';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { type Provider, definitionFromContract } from '../server/admission';
@@ -130,33 +125,25 @@ type GradedContract = {
 };
 
 /**
- * The publisher seals contractIntegrityDigest on the schema-parsed object.
- * jsonb reorders keys, so hashing the loaded value directly never matches.
- * Parsing the layers again restores that object. A stored key that no longer
- * hashes to the sealed digest is not graded.
+ * The stored digest matches when it is the canonical seal or either legacy
+ * seal (schema key order, or the caller/jsonb key order the edit path copies).
+ * A stored key that matches none of them is not graded.
  */
 function sealedRevisionContract(revision: typeof question_revision.$inferSelect): {
   contract: NormalizedContract;
   digestMatches: boolean;
 } {
-  const structure = QuestionGroupStructure.parse(revision.structure);
-  const response_spec = ResponseSpec.parse(revision.response_spec);
-  const scoring_basis = ScoringBasis.parse(revision.scoring_basis);
-  const execution_plan = ExecutionPlan.parse(revision.execution_plan);
-  const presentation =
-    revision.presentation != null ? Presentation.parse(revision.presentation) : undefined;
-  const layers = {
-    structure,
-    response_spec,
-    scoring_basis,
-    execution_plan,
-    ...(presentation != null ? { presentation } : {}),
-  };
-  const recomputed = contractIntegrityDigest(layers);
+  const seal = publishedContractSeal({
+    structure: revision.structure,
+    response_spec: revision.response_spec,
+    scoring_basis: revision.scoring_basis,
+    execution_plan: revision.execution_plan,
+    ...(revision.presentation != null ? { presentation: revision.presentation } : {}),
+  });
   return {
-    digestMatches: recomputed === revision.integrity_digest,
+    digestMatches: publishedSealAccepts(seal, revision.integrity_digest),
     contract: {
-      ...layers,
+      ...seal.parsed,
       integrity_digest: revision.integrity_digest,
       group_id: revision.group_id,
       conversion_issues: [],
@@ -554,7 +541,7 @@ export async function runAdmissionForQuestion(
       const contract = batch.input.contract;
       const persisted = await publishQuestionGroup(tx, {
         group_id: rootId,
-        contract: { ...contract, integrity_digest: contractIntegrityDigest(contract) },
+        contract,
         expectedCurrentRevision: batch.input.revision_id,
         expectedAdmissionGeneration: lifecycle?.scoring_admission_generation ?? null,
         availability:

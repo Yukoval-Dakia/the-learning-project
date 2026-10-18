@@ -27,6 +27,9 @@ export const RescueBody = z.object({
  */
 export const IngestionOperationRequest = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('extract') }).strict(),
+  // YUK-1522 (R8) — whole-package agent run (replaces the OCR pipeline for the
+  // new lane; one durable agent job per session).
+  z.object({ kind: z.literal('agent') }).strict(),
   z.object({ kind: z.literal('import'), input: ImportBody }).strict(),
   z
     .object({

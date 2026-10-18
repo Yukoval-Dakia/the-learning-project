@@ -180,19 +180,6 @@ export function freezeProbes(
     } else if (nonKey.length > 0) {
       skip('over_select', 'at_most_per_coordinate forbids the over-selection envelope');
     }
-    for (const form of probeCandidates?.equivalent_forms ?? []) {
-      if (form.item_ids == null) continue;
-      if (form.item_ids.some((id) => !universe.has(id))) {
-        skip('equivalent', 'solver emitted an item id outside the declared universe');
-        continue;
-      }
-      push(
-        'equivalent',
-        { slot_id: slotId, kind: 'select', state: 'answered', item_ids: form.item_ids },
-        ruleExpectation(setFacts(form.item_ids, keyIds), rule),
-        'solver-claimed equivalent form',
-      );
-    }
     for (const wrong of probeCandidates?.typical_wrong ?? []) {
       if (wrong.item_ids == null) continue;
       if (wrong.item_ids.some((id) => !universe.has(id))) {
@@ -251,15 +238,6 @@ export function freezeProbes(
           'declared casefold equivalence',
         );
       }
-    }
-    for (const form of probeCandidates?.equivalent_forms ?? []) {
-      if (form.text == null) continue;
-      push(
-        'equivalent',
-        { slot_id: slotId, kind: 'blank', state: 'answered', text: form.text },
-        ruleExpectation(blankFacts(1), rule),
-        'solver-claimed equivalent form',
-      );
     }
     const wrongs = (probeCandidates?.typical_wrong ?? [])
       .filter((w): w is { text: string; reason_md?: string } => w.text != null)

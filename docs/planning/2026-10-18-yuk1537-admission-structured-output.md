@@ -2,8 +2,7 @@
 
 Stage: 第一天能用. Draft PR #1785, branch
 `fix/yuk-1537-admission-solve-structured-output`. Original fixed parent was
-#1777 `38446bfd254bc6375ae970bc0573c38065302c47`; the lead now requires a NORMAL
-merge of latest main and PR base `main`. Never rebase, force push, or replay the
+#1777 `38446bfd254bc6375ae970bc0573c38065302c47`; latest main was integrated by NORMAL merge; PR base is `main`. Never rebase, force push, or replay the
 #1777 commits. Preserve #1787's C1 comparison against the published revision's
 `integrity_digest` when merging `source_verify.ts`.
 
@@ -57,9 +56,11 @@ check and serving readers all recognize both versions. The serving command's
 paid again; @1 admitted evidence is preserved by the C1 digest barrier. Family
 control, delivery equality, send CAS, fence and immutable receipts remain.
 
-During the main merge, apply `2026-10-18-yuk1537-serving-rebase.patch` to make
-both serving applied-verdict reads accept both units and to version the manual
-fallback enqueue. An ordinary fallback never receives the lead-only marker.
+Main integration is active code: `src/kernel/read-models/question-serving.ts`
+and `src/capabilities/practice/server/serving-actions.ts` both read applied
+verdicts across @1/@2, including the 409 guard. The manual fallback job carries
+version 2 but never receives the lead-only marker. The temporary patch file
+was removed after application.
 
 ## Lead pre-flight — BEFORE re-pending anything
 
@@ -106,7 +107,8 @@ It is not executed by this implementation agent.
    and schema. This mode makes NO model call itself. Under one family-locked
    transaction for all five, it checks the exact @1 unknown, absence of @2 and
    absence of any applied verdict for the base; locks root/lifecycle; loads and
-   schema-parses the CURRENT published layers; and recomputes the sealed digest.
+   schema-parses the CURRENT published layers; and verifies the published seal using main's `publishedContractSeal` /
+   `publishedSealAccepts` (including supported historical seals).
    It publishes owner_hold then unverified_rules, with revision/generation CAS,
    requiring dimension-only `admission_updated` and the SAME revision. Custom
    presentation assets use the existing R2 byte reader. It atomically enqueues

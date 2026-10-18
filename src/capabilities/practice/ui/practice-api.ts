@@ -432,7 +432,10 @@ export interface QBankListFilters {
   difficulties?: number[]; // repeated 1-5, OR semantics.
   knowledgeIds?: string[];
   includeDrafts?: boolean; // 题库面默认 true（状态 tab 需草稿全集 → client 按 draft_status 分）。
-  status?: 'all' | 'active' | 'draft';
+  // YUK-1514 — not_servable = 「暂不出题」页签（含草稿与正式题中所有暂不出给学习者的）。
+  status?: 'all' | 'active' | 'draft' | 'not_servable';
+  /** YUK-1514 — 响应带 serving_counts（页签计数 + 按原因分布）。 */
+  includeServingCounts?: boolean;
   search?: string;
   sortBy?: 'created_at' | 'difficulty';
   sortDir?: 'asc' | 'desc';
@@ -451,6 +454,7 @@ export function buildQuestionsListQuery(filters: QBankListFilters = {}): string 
   for (const k of filters.knowledgeIds ?? []) sp.append('knowledge_id', k);
   if (filters.includeDrafts) sp.set('include_drafts', 'true');
   if (filters.status) sp.set('status', filters.status);
+  if (filters.includeServingCounts) sp.set('include_serving_counts', 'true');
   if (filters.search?.trim()) sp.set('search', filters.search.trim());
   if (filters.sortBy) sp.set('sort_by', filters.sortBy);
   if (filters.sortDir) sp.set('sort_dir', filters.sortDir);

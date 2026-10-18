@@ -81,6 +81,9 @@ import {
   QuestionListQuerySchema,
   QuestionListResponseSchema,
   QuestionParamsSchema,
+  QuestionServingActionHeadersSchema,
+  QuestionServingActionParamsSchema,
+  QuestionServingActionResponseSchema,
   QuestionSolveParamsSchema,
   RestoreQuestionBodySchema,
   RestoreQuestionResponseSchema,
@@ -170,6 +173,9 @@ export const practiceCapability = defineCapability({
       // 面的 enqueueDurableJudge；消费者是 judge_pending_reconcile sweeper 与 submit 的
       // late-arrival guard（server/judge-run-dispatch.ts）。
       'experimental:judge_pending_attempt',
+      // YUK-1514 — serving-hold command ledger (reverify / recheck_source /
+      // release_verify_hold); the per-key idempotency + pending_action anchor.
+      'experimental:question_serving_action',
     ],
   },
   subscriptions: {
@@ -808,6 +814,20 @@ export const practiceCapability = defineCapability({
         responses: { 200: RestoreQuestionResponseSchema, ...API_ERROR_RESPONSES },
         successStatus: 200,
         load: () => import('./api/question-restore').then((m) => m.POST),
+      },
+      {
+        // YUK-1514 — serving-hold release commands (reverify / recheck_source /
+        // release_verify_hold). Idempotency-Key required; {accepted, serving}.
+        method: 'POST',
+        path: '/api/questions/[id]/serving-actions/[command]',
+        operationId: 'runQuestionServingAction',
+        request: {
+          params: QuestionServingActionParamsSchema,
+          headers: QuestionServingActionHeadersSchema,
+        },
+        responses: { 200: QuestionServingActionResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        load: () => import('./api/question-serving-actions').then((m) => m.POST),
       },
       // YUK-605 ① + YUK-555 — owner manual quiz_gen trigger. The consumption entry
       // three code comments + ADR-0038 referenced but that never existed (the only

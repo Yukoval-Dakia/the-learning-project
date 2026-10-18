@@ -3,6 +3,10 @@ import { sha256CanonicalJson } from '@/kernel/canonical-json';
 
 export { costUsdToMicroUsd, sumAllKnownCostUsd } from '@/kernel/cost';
 
+import type { NoteGeneratePhaseTimings } from '@/server/ai/log';
+
+export type { NoteGeneratePhaseTimings };
+
 import type { RunTaskCallCtx } from '@/server/ai/runner-fn';
 import type { SubjectProfile } from '@/subjects/profile';
 
@@ -23,6 +27,8 @@ export interface TaskTextResult {
    * to text — caller must run the text-fallback parse.
    */
   structured_output?: unknown;
+  /** NoteGenerateTask phase timings recorded on the task run. */
+  phases?: NoteGeneratePhaseTimings;
 }
 
 export type TaskTextRunFn = (

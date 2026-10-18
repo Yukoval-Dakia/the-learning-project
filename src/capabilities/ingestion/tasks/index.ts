@@ -1,6 +1,7 @@
 import { defineOwnedTaskSpecs } from '@/ai/owned-task-specs';
 import { blockAssemblyTaskSpec } from './block-assembly';
 import { coldStartPlacementBridgeTaskSpec } from './cold-start-bridge';
+import { ingestionAgentTaskSpec } from './ingestion-agent';
 import { mistakeEnrollTaskSpec } from './mistake-enroll';
 import { profileCriticTaskSpec } from './profile-critic';
 import { structureTaskSpec } from './structure';
@@ -16,4 +17,5 @@ export const ingestionTaskSpecs = defineOwnedTaskSpecs('ingestion', {
   ColdStartPlacementBridgeTask: coldStartPlacementBridgeTaskSpec,
   BlockAssemblyTask: blockAssemblyTaskSpec,
   ProfileCriticTask: profileCriticTaskSpec,
+  IngestionAgentTask: ingestionAgentTaskSpec,
 });

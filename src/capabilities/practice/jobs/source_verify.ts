@@ -33,6 +33,10 @@ import {
   runSourceGroundingVerify,
 } from '@/capabilities/practice/server/judge/source-grounding-verify';
 import {
+  type PaidEffectIdentity,
+  computePaidEffectIdentity,
+} from '@/core/migration/paid-effect-protocol';
+import {
   LEGACY_QUESTION_ADMISSION_POLICY_ID,
   QUESTION_ADMISSION_POLICY_ID,
 } from '@/core/question-admission-policy';
@@ -47,6 +51,13 @@ import { readDifficultyEvidenceFromMetadata } from '@/core/schema/difficulty-evi
 import { WebSourcedProvenance, deriveSourceTier } from '@/core/schema/provenance';
 import { toUnifiedVerifyResult } from '@/core/schema/verify-contract';
 import type { Db } from '@/db/client';
+import {
+  admitPaidEffectIntent,
+  claimPaidEffectSend,
+  markPaidEffectUnknown,
+  recordPaidEffectApplication,
+  recordPaidEffectResult,
+} from '@/db/paid-effect-store';
 import { notDraftPredicate } from '@/db/predicates';
 import {
   event,
@@ -61,11 +72,7 @@ import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { type TaskTextResult, type TaskTextRunFn, aiAgentRef } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { getFsrsState, initialSchedulingState, upsertFsrsState } from '@/server/fsrs/state';
-import {
-  loadQuestionGroupContractSnapshot,
-  publishQuestionGroup,
-  publishQuestionGroupFromRow,
-} from '@/server/questions/publisher';
+import { publishQuestionGroup, publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
 import { normalizeToCanonicalKind } from '@/subjects/question-kind';
 import { resolveQuestionAdmissionPolicyId } from '../server/admission/run-admission';
@@ -84,6 +91,14 @@ import {
 
 export interface SourceVerifyJobData {
   question_ids: string[];
+  /**
+   * YUK-1514 — owner-initiated recheck (POST .../serving-actions/recheck_source).
+   * The command event id bypasses the terminal-event idempotency guard ONLY
+   * for this command: at most one paid run per command event, because the
+   * guard short-circuits once a terminal event carries the same
+   * recheck_command_event_id.
+   */
+  recheck?: { command_event_id: string };
 }
 
 // Loose run seam (mirrors quiz_verify): the handler + solve-check only consume
@@ -113,7 +128,11 @@ export type SourceVerifyPerQuestionStatus =
   | 'failed'
   | 'skipped:not_found'
   | 'skipped:not_web_sourced'
-  | 'skipped:already_verified';
+  | 'skipped:already_verified'
+  /** YUK-1514 — a recheck whose durable paid-attempt claim is 'sending' or
+   * 'unknown' (a prior delivery reached the paid call and never committed an
+   * outcome). Never re-paid; the job completes, the hold stays visible. */
+  | 'skipped:claim_held';
 
 export interface RunSourceVerifyParams {
   db: Db;
@@ -124,6 +143,21 @@ export interface RunSourceVerifyParams {
   // inject a stub to drive grounded / not_grounded / transient without real R2 / VLM spend;
   // production defaults to runSourceGroundingVerify (→ SourceGroundingVerifyTask).
   sourceGroundingFn?: SourceGroundingFn;
+  /**
+   * YUK-1514 — owner recheck command id. When set, the terminal-event guard
+   * below only short-circuits a terminal event that carries THIS id (a
+   * redelivered/replayed command never pays twice); the first run for this
+   * command proceeds past prior terminal events, and the new terminal event
+   * supersedes them for downstream projections (latest wins).
+   */
+  recheckCommandEventId?: string;
+  /**
+   * YUK-1514 — the pg-boss job id that owns this recheck delivery. Becomes the
+   * paid-effect claim's deliveryId: a crash after the paid call but before the
+   * terminal event leaves the claim in 'sending'/'unknown', and a redelivery
+   * under ANY job id is refused — one paid attempt per command event, never two.
+   */
+  recheckDeliveryId?: string;
 }
 
 export interface RunSourceVerifyResult {
@@ -389,6 +423,9 @@ export async function runSourceVerify(
   // Idempotency: only a TERMINAL verify event short-circuits a re-run (outcome !=
   // 'error'). The catch-bottom writes a TRANSIENT-error event with outcome='error'
   // so a one-off LLM/DB blowup doesn't strand the draft (mirrors quiz_verify).
+  // YUK-1514 — an owner recheck bypasses prior terminal events but stays
+  // claim-scoped: only a terminal event carrying THIS recheck_command_event_id
+  // short-circuits, so a redelivered job / replayed key can never pay twice.
   const existingVerify = await db
     .select({ id: event.id })
     .from(event)
@@ -398,10 +435,56 @@ export async function runSourceVerify(
         eq(event.subject_kind, 'question'),
         eq(event.subject_id, questionId),
         ne(event.outcome, 'error'),
+        params.recheckCommandEventId != null
+          ? sql`${event.payload}->>'recheck_command_event_id' = ${params.recheckCommandEventId}`
+          : sql`true`,
       ),
     )
     .limit(1);
   if (existingVerify.length > 0) return { status: 'skipped:already_verified' };
+
+  // YUK-1514 — recheck paid-attempt claim (P1-A): a DURABLE claim scoped to
+  // the command event, taken BEFORE the paid verifier calls. The terminal-event
+  // guard alone could not catch a crash between the paid call and the event
+  // commit — the claim can: 'sending'/'unknown' is never re-paid, the job ends
+  // honestly (hold stays, pending_action clears), and 'receipt_ready'/'applied'
+  // means the run already completed.
+  let recheckClaim: { identity: PaidEffectIdentity; fence: number; deliveryId: string } | null =
+    null;
+  if (params.recheckCommandEventId != null) {
+    const commandEventId = params.recheckCommandEventId;
+    const deliveryId = params.recheckDeliveryId ?? `manual:${commandEventId}`;
+    const claimOutcome = await db.transaction(async (tx) => {
+      const recheckEffect = {
+        family: 'source_verify' as const,
+        entityId: questionId,
+        entityRevision: commandEventId,
+        unit: 'source_verify@1' as const,
+        input: { question_id: questionId, command_event_id: commandEventId },
+      };
+      const admitted = await admitPaidEffectIntent(tx, recheckEffect);
+      if (admitted.kind === 'existing' && admitted.state !== 'pending') {
+        return { kind: 'held' as const, state: admitted.state };
+      }
+      const identity = computePaidEffectIdentity(recheckEffect);
+      const send = await claimPaidEffectSend(tx, identity, {
+        backend: 'pg-boss',
+        deliveryId,
+        leaseExpiresAt: new Date(Date.now() + 60 * 60_000),
+      });
+      if (send.kind !== 'claimed') {
+        return { kind: 'held' as const, state: send.kind === 'refused' ? send.state : 'pending' };
+      }
+      return { kind: 'claimed' as const, identity, fence: send.fence };
+    });
+    if (claimOutcome.kind !== 'claimed') {
+      // 'sending'/'unknown' — a prior delivery reached the paid call and its
+      // outcome is genuinely unknown; never re-pay. The hold stays honest and
+      // the job completes so pending_action clears.
+      return { status: 'skipped:claim_held', checks: [] };
+    }
+    recheckClaim = { identity: claimOutcome.identity, fence: claimOutcome.fence, deliveryId };
+  }
 
   // Resolve subject profile from the first knowledge node (same convention as
   // quiz_gen / quiz_verify).
@@ -732,9 +815,9 @@ export async function runSourceVerify(
       //   2. 【当前 revision】上存在 policy question_admission@1 或 @2、outcome='passed'
       //      的 question_admission_verification 行（不匹配历史其他 revision 的
       //      passed 行）；
-      //   3. 该行 evidence.base_contract_digest === 此刻从行重建的 base 契约
-      //      digest（与 publishQuestionGroupFromRow 同一加载口
-      //      loadQuestionGroupContractSnapshot，byte-identical）。
+      //   3. 该行 evidence.base_contract_digest === 当前已发布 revision 的
+      //      integrity_digest（lifecycle.current_revision_id →
+      //      question_revision.integrity_digest，与 C1 封存的 published contract 一致）。
       // 命中 ⇒ 不调 publishQuestionGroupFromRow：不把 admitted 降回 withheld，
       // 也不把行归一旧 base 重铸到 C1 的 resolved revision 上。其余情况（C1
       // 准入的是更老 base 后行又变了、他 policy 准入、未准入）保持 #1753 原行为。
@@ -826,10 +909,12 @@ export async function runSourceVerify(
                   null)
                 : null;
             if (typeof recordedBaseDigest === 'string') {
-              const snapshot = await loadQuestionGroupContractSnapshot(tx, groupRootId, {
-                lockRoot: false,
-              });
-              if (snapshot.contract.integrity_digest === recordedBaseDigest) {
+              const [publishedRevision] = await tx
+                .select({ integrity_digest: question_revision.integrity_digest })
+                .from(question_revision)
+                .where(eq(question_revision.revision_id, lifecycle.current_revision_id))
+                .limit(1);
+              if (publishedRevision?.integrity_digest === recordedBaseDigest) {
                 keptIndependentAdmissionRevisionId = lifecycle.current_revision_id;
                 // verify_hold 角：跳过发布会丢掉旧分支 suspension:{suspended:false}
                 // 的清挂起效果。C1 admitted 的发布本已清 verify_hold；若此刻仍挂
@@ -991,6 +1076,25 @@ export async function runSourceVerify(
         }
       }
 
+      // YUK-1514 — close the recheck paid-attempt claim IN THE SAME tx as the
+      // terminal event + publish: a delivery that gets here is the one that
+      // paid, and the claim reaching 'applied' is the durable proof no later
+      // redelivery may re-pay.
+      if (recheckClaim != null) {
+        await recordPaidEffectResult(
+          tx,
+          recheckClaim.identity,
+          recheckClaim.deliveryId,
+          { status: promote ? 'verified' : 'failed', checks: checks.length },
+          { fence: recheckClaim.fence },
+        );
+        await recordPaidEffectApplication(tx, recheckClaim.identity, {
+          question_id: questionId,
+          command_event_id: params.recheckCommandEventId,
+          status: promote ? 'verified' : 'failed',
+        });
+      }
+
       await writeEvent(tx, {
         id: verifyEventId,
         session_id: null,
@@ -1004,6 +1108,11 @@ export async function runSourceVerify(
           question_id: questionId,
           tier: 2,
           promoted: promote,
+          // YUK-1514 — marks this terminal run as the paid attempt of an owner
+          // recheck command; the terminal-event guard is claim-scoped on it.
+          ...(params.recheckCommandEventId != null
+            ? { recheck_command_event_id: params.recheckCommandEventId }
+            : {}),
           // YUK-1507 — C1 先行独立准入命中：本次 success 未重发（未把 admitted
           // 降回 withheld，也未把行归一 base 重铸到 C1 的 resolved revision 上）。
           // 只记保留的 revision id，不记任何原文内容。
@@ -1087,6 +1196,9 @@ export async function runSourceVerify(
         outcome: 'error',
         payload: {
           question_id: questionId,
+          ...(params.recheckCommandEventId != null
+            ? { recheck_command_event_id: params.recheckCommandEventId }
+            : {}),
           // YUK-350 (B5 increment C) — unified verify contract shape via the system_error
           // projection: { axes:[], overall:'error', failure_class:'system_error',
           // summary_md, confidence:0 }. failure_class is byte-identical to the prior
@@ -1110,6 +1222,25 @@ export async function runSourceVerify(
     } catch (cleanupErr) {
       console.error('[source_verify] catch-block cleanup failed for', questionId, cleanupErr);
     }
+    // YUK-1514 — the recheck claim reached 'sending' but the run threw: the paid
+    // call may or may not have happened, so the honest terminal state for THIS
+    // attempt is 'unknown' — never re-paid under this command event (a later
+    // command needs a new key → a new claim identity).
+    if (recheckClaim != null) {
+      try {
+        await db.transaction(async (tx) => {
+          await markPaidEffectUnknown(
+            tx,
+            recheckClaim.identity,
+            recheckClaim.deliveryId,
+            `source_verify threw: ${String((err as Error).message ?? err)}`,
+            { fence: recheckClaim.fence },
+          );
+        });
+      } catch (markErr) {
+        console.error('[source_verify] recheck claim mark-unknown failed', questionId, markErr);
+      }
+    }
     throw err;
   }
 }
@@ -1126,8 +1257,16 @@ export function buildSourceVerifyHandler(
         console.warn('[source_verify] job missing question_ids', job.id);
         continue;
       }
+      const recheckCommandEventId = job.data?.recheck?.command_event_id;
       for (const questionId of questionIds) {
-        const result = await runSourceVerify({ db, questionId, runTaskFn });
+        const result = await runSourceVerify({
+          db,
+          questionId,
+          runTaskFn,
+          ...(recheckCommandEventId != null
+            ? { recheckCommandEventId, recheckDeliveryId: job.id }
+            : {}),
+        });
         console.log(`[source_verify] ${questionId} -> ${result.status}`);
       }
     }

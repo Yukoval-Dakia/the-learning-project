@@ -166,9 +166,28 @@ export async function writeAiTaskRunStarted(db: Db, entry: AiTaskRunStartEntry):
   });
 }
 
+/** Millisecond phase timings for one long-note generation. Absent on other tasks. */
+export interface NoteGeneratePhaseTimings {
+  prompt_build_ms?: number;
+  /** Null when the provider sent no token before the call ended. */
+  model_ttft_ms?: number | null;
+  model_total_ms?: number;
+  stream_ms?: number;
+  parse_ms?: number;
+  validation_ms?: number;
+  retry_count?: number;
+  db_write_ms?: number;
+}
+
 export interface AiTaskUsage {
   inputTokens: number;
   outputTokens: number;
+  /**
+   * `estimated` when a budget abort had to infer tokens from the prompt and
+   * any streamed text. Absent when the provider reported the counts.
+   */
+  usage_basis?: 'reported' | 'estimated';
+  phases?: NoteGeneratePhaseTimings;
   /** Metadata-only proof that the SDK returned reasoning blocks; raw CoT is never persisted. */
   thinkingBlocks?: number;
   thinkingCharacters?: number;

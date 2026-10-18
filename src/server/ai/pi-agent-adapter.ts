@@ -71,6 +71,8 @@ import { emitPiAfterToolCall, runPiBeforeToolCall } from './pi-hooks';
 import { createLoomPiModels } from './pi-models';
 import { piProviderId } from './pi-provider-catalog';
 import { hasPiUsageEvidence, withPiUsageEvidence } from './pi-usage-evidence';
+import { UNDICI_DEFAULT_IDLE_TIMEOUT_MS } from './provider-http-timeout';
+import { createIdleBudgetFetch } from './provider-idle-fetch';
 import type { SDKAssistantMessage, SDKResultMessage, SDKUserMessage } from './sdk-types';
 import { isSpawnToolName } from './spawn-contract';
 import {
@@ -796,6 +798,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
   private readonly queuedFrames: RunnerMessage[] = [];
   private readonly childUsage = emptyPiChildUsage();
   private readonly executedToolCalls = new Map<string, number>();
+  private providerHttp: { fetch: typeof fetch; close: () => Promise<void> } | undefined;
 
   constructor(
     private readonly args: ExecutionAdapterStartupArgs,
@@ -1015,10 +1018,24 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     };
   }
 
+  /**
+   * Raise the provider HTTP timer above the task abort. The OpenAI SDK's
+   * 10-minute default, and undici's 5-minute header/body idle timers, would
+   * otherwise cut off a 30-minute note generation. Shorter tasks leave both
+   * alone so they keep `globalThis.fetch`.
+   */
+  private providerHttpBudget(): { timeoutMs?: number; fetch?: typeof fetch } {
+    const timeoutMs = this.args.options.providerTimeoutMs;
+    if (timeoutMs === undefined) return {};
+    if (timeoutMs <= UNDICI_DEFAULT_IDLE_TIMEOUT_MS) return { timeoutMs };
+    this.providerHttp ??= createIdleBudgetFetch(timeoutMs);
+    return { timeoutMs, fetch: this.providerHttp.fetch };
+  }
+
   /** Shared config fields every loop level (root + nested) reuses. */
   private baseLoopConfig(): Pick<
     AgentLoopConfig,
-    'convertToLlm' | 'headers' | 'apiKey' | 'reasoning'
+    'convertToLlm' | 'headers' | 'apiKey' | 'reasoning' | 'timeoutMs' | 'fetch'
   > {
     const { options, resolved, runId } = this.args;
     return {
@@ -1055,6 +1072,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
           ? { maxRetries: piMaxRetries() }
           : {}),
       ...(options.effort !== undefined ? { reasoning: options.effort } : {}),
+      ...this.providerHttpBudget(),
     };
   }
 
@@ -1421,6 +1439,17 @@ class PiPreparedQuery implements PreparedExecutionQuery {
         }
         continue;
       }
+      if (
+        event.type === 'message_update' &&
+        event.message.role === 'assistant' &&
+        event.assistantMessageEvent.type === 'thinking_delta'
+      ) {
+        const text = event.assistantMessageEvent.delta;
+        if (text.length > 0 && !this.abort.signal.aborted) {
+          yield { type: 'thinking_delta', text, session_id: this.sessionId, source: 'pi' };
+        }
+        continue;
+      }
       if (event.type === 'message_end' && event.message.role === 'assistant') {
         if (structuredOutput) {
           // pi's provider parser may repair malformed tool JSON. That hidden
@@ -1476,6 +1505,9 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     // Aborting a finished loop is harmless; for a query in flight it is the
     // cooperative stop that mirrors SDK query.close().
     this.abort.abort();
+    const providerHttp = this.providerHttp;
+    this.providerHttp = undefined;
+    await providerHttp?.close().catch(() => {});
     // Remote MCP clients hold sockets — release them with the session.
     for (const handle of this.remoteMcpHandles) {
       try {
