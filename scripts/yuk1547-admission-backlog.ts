@@ -55,6 +55,13 @@
  *     into the ledger before the first drive — nothing is charged at zero.
  *     Resume re-ajudicates every settled receipt (alarms/timeout) before any
  *     further enqueue.
+ *   - --authorized <a.json> (YUK-1567): the frozen void+successor manifest
+ *     emitted by yuk1547-admission-reopen --execute. Authorized groups are
+ *     verified against the DB at every run (voided rows under the same
+ *     authorization_id, successor paid row, bound job), seeded as in-flight
+ *     intents, and settled by the ordinary path — the driver NEVER republishes
+ *     them. They are exempted from the --sent overlap guard only because the
+ *     authorization IS the re-send evidence; every other overlap stays fatal.
  *
  * Ledger schema (the frozen prior-B artifact — e.g.
  * review/stage1-yuk1547-ledger-20261019/prior-b-ledger.verified.json — plus
@@ -70,9 +77,11 @@
  * duplicate run/count ids, totals finite non-negative.
  *
  * usage:
- *   tsx scripts/yuk1547-admission-backlog.ts check --manifest <m.json> <group_id>
+ *   tsx scripts/yuk1547-admission-backlog.ts check --manifest <m.json>
+ *       [--authorized <a.json>] <group_id>
  *   tsx scripts/yuk1547-admission-backlog.ts drive --manifest <m.json> --out <dir>
  *       --preflight-receipt <path> --ledger <history-ledger.json>
+ *       [--authorized <a.json>]
  *       [--batch N] [--batch-size 20]
  *       [--per-question-usd 0.03] [--cumulative-usd 1] [--hard-cap-usd 3]
  *       [--unknown-reserve-usd 0.01] [--max-unknown-rate 0.1]
@@ -143,6 +152,41 @@ const manifestItem = z.object({
 });
 type ManifestItem = z.infer<typeof manifestItem>;
 const manifestSchema = z.array(manifestItem).nonempty();
+
+// YUK-1567 — the frozen authorization manifest emitted by
+// yuk1547-admission-reopen --execute: the void+successor pairs this window is
+// allowed to treat as its own in-flight sends. Each authorized group's send
+// was already admitted + bound to an exact job id at void time, so the driver
+// never republishes them — it settles their existing delivery under the same
+// STOP/budget/attribution rules as every other send.
+const digestRe = z.string().regex(/^sha256:[0-9a-f]{64}$/);
+const authorizedGroupSchema = z.object({
+  group_id: z.string().min(1),
+  base_digest: digestRe,
+  revision_id: z.string().min(1),
+  admission_generation: z.number().int().nonnegative(),
+  job_id: z.string().min(1),
+  successor: z.object({ unit: z.string().min(1), input_digest: digestRe }),
+  voided: z.array(z.object({ unit: z.string().min(1), input_digest: digestRe })).nonempty(),
+  sent_at: z.string(),
+  owned_events: z
+    .array(
+      z.object({
+        event_id: z.string().min(1),
+        revision_id: z.string().min(1),
+        admission_generation: z.number().int().nonnegative(),
+      }),
+    )
+    .default([]),
+  extra_owned_job_generations: z.array(z.number().int().nonnegative()).default([]),
+  resumed: z.boolean().optional(),
+});
+type AuthorizedGroup = z.infer<typeof authorizedGroupSchema>;
+const authorizedManifestSchema = z.object({
+  authorization_id: z.string().min(1),
+  groups: z.array(authorizedGroupSchema).nonempty(),
+});
+type AuthorizedManifest = z.infer<typeof authorizedManifestSchema>;
 
 /**
  * The fixed historical cost ledger this window must merge — supplied by the
@@ -689,7 +733,7 @@ function boundRunIds(row: PaidRow): {
 }
 
 const TERMINAL_JOB_STATES = new Set(['completed', 'failed', 'cancelled']);
-const TERMINAL_PAID_STATES = new Set(['applied', 'unknown']);
+const TERMINAL_PAID_STATES = new Set(['applied', 'unknown', 'voided']);
 
 // ─── baselines / invariants ─────────────────────────────────────────────────
 
@@ -1115,6 +1159,181 @@ async function admissionQueueGate(
   };
 }
 
+// ─── authorized (void+successor) sends ──────────────────────────────────────
+
+/**
+ * DB-side verification that the frozen authorization is real: every named
+ * voided row is 'voided' under this authorization_id, the authorization rows
+ * exist, the successor paid row exists, and the bound job exists. Shared by
+ * window-open seeding and `check`.
+ */
+async function authorizedBindingFailures(
+  db: Db | Tx,
+  authId: string,
+  entry: AuthorizedGroup,
+): Promise<string[]> {
+  const failures: string[] = [];
+  const { paid_effect, paid_effect_authorization } = await import('@/db/schema');
+  const expectedJob = admissionJobId(
+    entry.group_id,
+    entry.revision_id,
+    entry.base_digest,
+    entry.admission_generation,
+  );
+  if (entry.job_id !== expectedJob) {
+    failures.push(`bound job_id ${entry.job_id} != derived ${expectedJob}`);
+  }
+  const rows = await db
+    .select()
+    .from(paid_effect)
+    .where(and(eq(paid_effect.family, FAMILY), eq(paid_effect.entity_id, entry.group_id)));
+  for (const v of entry.voided) {
+    const row = rows.find((r) => r.unit === v.unit && r.input_digest === v.input_digest);
+    if (!row) {
+      failures.push(`authorized voided row missing: ${v.unit}|${v.input_digest}`);
+      continue;
+    }
+    if (row.state !== 'voided') {
+      failures.push(`authorized voided row ${v.unit}|${v.input_digest} is '${row.state}'`);
+      continue;
+    }
+    const receipt = row.void_json as { authorizationId?: string } | null;
+    if (receipt?.authorizationId !== authId) {
+      failures.push(`voided row ${v.unit}|${v.input_digest} authorization mismatch`);
+    }
+  }
+  const auths = await db
+    .select()
+    .from(paid_effect_authorization)
+    .where(
+      and(
+        eq(paid_effect_authorization.family, FAMILY),
+        eq(paid_effect_authorization.entity_id, entry.group_id),
+      ),
+    );
+  if (auths.filter((a) => a.authorization_id === authId).length < entry.voided.length) {
+    failures.push('authorization rows missing under this authorization_id');
+  }
+  const successor = rows.find(
+    (r) =>
+      r.entity_revision === entry.base_digest &&
+      r.unit === entry.successor.unit &&
+      r.input_digest === entry.successor.input_digest,
+  );
+  if (!successor) failures.push('authorized successor paid row missing');
+  const jobs = (await db.execute(
+    sql`select id from pgboss.job where id = ${entry.job_id}::uuid`,
+  )) as unknown as { id: string }[];
+  if (jobs.length !== 1) failures.push(`bound job ${entry.job_id} missing`);
+  return failures;
+}
+
+/**
+ * Window-open seeding (baseline creation only): verify every authorized send
+ * against the DB, then materialize intent + publish records so the normal
+ * in-flight settle path owns them — the driver NEVER republishes an
+ * authorized group (its send exists, bound to a fixed job id).
+ */
+async function seedAuthorizedSends(
+  db: Db,
+  outDir: string,
+  auth: AuthorizedManifest,
+  manifestById: Map<string, ManifestItem>,
+): Promise<void> {
+  for (const entry of auth.groups) {
+    if (!manifestById.has(entry.group_id)) {
+      throw new Error(`authorized group ${entry.group_id} is not in the manifest`);
+    }
+    const failures = await authorizedBindingFailures(db, auth.authorization_id, entry);
+    if (failures.length > 0) {
+      throw new Error(`authorized ${entry.group_id}: ${failures.join('; ')}`);
+    }
+    const intent = intentPath(outDir, entry.group_id);
+    if (!(await fileExists(intent))) {
+      await writeFile(
+        intent,
+        JSON.stringify({
+          group_id: entry.group_id,
+          batch: 0,
+          index: -1,
+          sent_at: entry.sent_at,
+          authorized: true,
+          job_id: entry.job_id,
+        }),
+      );
+    }
+    const publishFile = join(outDir, `publish-${entry.group_id}.json`);
+    if (!(await fileExists(publishFile))) {
+      const boundEvent = entry.owned_events.find(
+        (e) =>
+          e.admission_generation === entry.admission_generation &&
+          e.revision_id === entry.revision_id,
+      );
+      await writeFile(
+        publishFile,
+        JSON.stringify(
+          {
+            at: entry.sent_at,
+            group_id: entry.group_id,
+            admission: 'authorized',
+            revision_id: entry.revision_id,
+            generation: entry.admission_generation,
+            event_emitted: boundEvent != null,
+            event_id: boundEvent?.event_id ?? null,
+            authorized: true,
+            job_id: entry.job_id,
+          },
+          null,
+          2,
+        ),
+      );
+    }
+  }
+}
+
+/** Queue-gate ownership: every republish event + ghost job the void op made. */
+function authorizedOwnedEvents(auth: AuthorizedManifest | null): OwnedPublishEvents {
+  const eventIds = new Set<string>();
+  const tripleKeys = new Set<string>();
+  for (const g of auth?.groups ?? []) {
+    for (const e of g.owned_events) {
+      eventIds.add(e.event_id);
+      tripleKeys.add(publishTripleKey(g.group_id, e.revision_id, e.admission_generation));
+    }
+    tripleKeys.add(publishTripleKey(g.group_id, g.revision_id, g.admission_generation));
+  }
+  return { eventIds, tripleKeys };
+}
+
+function mergeOwned(a: OwnedPublishEvents, b: OwnedPublishEvents): OwnedPublishEvents {
+  return {
+    eventIds: new Set([...a.eventIds, ...b.eventIds]),
+    tripleKeys: new Set([...a.tripleKeys, ...b.tripleKeys]),
+  };
+}
+
+/** Extra job identities the gate may exempt: ghost jobs (stale generation
+ *  subscribers of the void op's republish events) plus the bound jobs. */
+function authorizedInFlight(
+  auth: AuthorizedManifest | null,
+  manifestById: Map<string, ManifestItem>,
+): InFlightSend[] {
+  const sends: InFlightSend[] = [];
+  for (const g of auth?.groups ?? []) {
+    const item = manifestById.get(g.group_id);
+    if (!item) continue;
+    for (const generation of [...g.extra_owned_job_generations, g.admission_generation]) {
+      sends.push({
+        groupId: g.group_id,
+        revisionId: g.revision_id,
+        generation,
+        digest: item.integrity_digest,
+      });
+    }
+  }
+  return sends;
+}
+
 // ─── receipt io ─────────────────────────────────────────────────────────────
 
 const intentPath = (outDir: string, id: string) => join(outDir, `intent-${id}.json`);
@@ -1360,6 +1579,7 @@ async function drive(opts: {
   preflightReceipt?: string;
   ledgerPath: string;
   sentIdsPath?: string;
+  authorizedPath?: string;
 }): Promise<void> {
   const db = await dbBoot();
   const manifest = await readJson(opts.manifestPath, manifestSchema);
@@ -1373,8 +1593,22 @@ async function drive(opts: {
   if (manifestIds.size !== manifest.length) throw new Error('manifest contains duplicate ids');
   const manifestById = new Map(manifest.map((item) => [item.id, item]));
   const manifestDigest = sha256(manifest);
+  // YUK-1567: sends already admitted + delivery-bound by the void op. The
+  // driver only settles them — it never republishes them.
+  const authorized = opts.authorizedPath
+    ? authorizedManifestSchema.parse(JSON.parse(await readFile(opts.authorizedPath, 'utf8')))
+    : null;
+  const authorizedById = new Map((authorized?.groups ?? []).map((g) => [g.group_id, g]));
+  for (const groupId of authorizedById.keys()) {
+    if (!manifestById.has(groupId)) {
+      throw new Error(`authorized group ${groupId} is not in the manifest`);
+    }
+  }
   const sentIds = opts.sentIdsPath ? await readJson<string[]>(opts.sentIdsPath) : [];
-  const leaked = sentIds.filter((id) => manifestIds.has(id));
+  // The --sent overlap guard holds for every manifest item EXCEPT authorized
+  // re-sends — the frozen authorization is the explicit evidence trail that
+  // this exact previously-sent group may send once more.
+  const leaked = sentIds.filter((id) => manifestIds.has(id) && !authorizedById.has(id));
   if (leaked.length > 0) {
     throw new Error(`already-sent ids present in manifest — never replay: ${leaked.join(', ')}`);
   }
@@ -1456,6 +1690,15 @@ async function drive(opts: {
     }
   }
 
+  // Authorized (void+successor) sends: verify the frozen binding against the
+  // DB and materialize intent + publish records so the ordinary in-flight
+  // settle path owns them. Idempotent — a resumed window re-verifies and
+  // skips existing records.
+  if (authorized) {
+    await seedAuthorizedSends(db, opts.outDir, authorized, manifestById);
+    console.log(JSON.stringify({ event: 'authorized_seeded', groups: [...authorizedById.keys()] }));
+  }
+
   // Window-open queue gate — before ANY send (incl. resumed windows): a
   // foreign non-terminal delivery is pre-job paid work already owed. The
   // 2026-10-18 incident's sourcing_web deliveries sat exactly here while the
@@ -1463,8 +1706,14 @@ async function drive(opts: {
   // sends are NOT foreign — exempting them lets a crash-resumed in-flight
   // send reach its existing-intent settle instead of a permanent STOP.
   {
-    const owned = await windowOwnedEvents(opts.outDir, manifestById);
-    const inFlight = await windowInFlightSends(opts.outDir, manifestById);
+    const owned = mergeOwned(
+      await windowOwnedEvents(opts.outDir, manifestById),
+      authorizedOwnedEvents(authorized),
+    );
+    const inFlight = [
+      ...(await windowInFlightSends(opts.outDir, manifestById)),
+      ...authorizedInFlight(authorized, manifestById),
+    ];
     const gate = await admissionQueueGate(db, owned, { exemptJobs: inFlight });
     if (!gate.clear) {
       await writeStop(opts.outDir, 'queue_not_empty', { at: 'window_open', ...gate.evidence });
@@ -1562,7 +1811,10 @@ async function drive(opts: {
         // NEW publish.
         const gate = await admissionQueueGate(
           db,
-          await windowOwnedEvents(opts.outDir, manifestById),
+          mergeOwned(
+            await windowOwnedEvents(opts.outDir, manifestById),
+            authorizedOwnedEvents(authorized),
+          ),
         );
         if (!gate.clear) {
           await writeStop(opts.outDir, 'queue_not_empty', {
@@ -1637,7 +1889,13 @@ async function drive(opts: {
       // input revision + admission_generation) and the job by
       // (question, revision, expected generation) — the job id is the same
       // deterministic admissionJobId the enqueue handler derives.
-      const expected = expectedSendIdentity(item, publishReceipt);
+      // Authorized sends carry the exact successor identity the void op
+      // bound — revision/generation come from the frozen authorization, not
+      // the manifest generation convention.
+      const authEntry = authorizedById.get(item.id);
+      const expected = authEntry
+        ? { revisionId: authEntry.revision_id, generation: authEntry.admission_generation }
+        : expectedSendIdentity(item, publishReceipt);
       const expectedJobId = admissionJobId(
         item.id,
         expected.revisionId,
@@ -1912,15 +2170,32 @@ async function drive(opts: {
 
 // ─── check (read-only eligibility) ──────────────────────────────────────────
 
-async function check(manifestPath: string, groupId: string): Promise<void> {
+async function check(
+  manifestPath: string,
+  groupId: string,
+  authorizedPath?: string,
+): Promise<void> {
   const db = await dbBoot();
   const manifest = await readJson(manifestPath, manifestSchema);
   const item = manifest.find((entry) => entry.id === groupId);
   if (!item) throw new Error(`manifest has no item ${groupId}`);
-  const failures = await db.transaction(async (tx) => eligibilityFailure(tx, item));
+  const authorized = authorizedPath
+    ? authorizedManifestSchema.parse(JSON.parse(await readFile(authorizedPath, 'utf8')))
+    : null;
+  const authEntry = authorized?.groups.find((g) => g.group_id === groupId);
+  if (authorized && !authEntry) {
+    throw new Error(`group ${groupId} is not in the authorized manifest`);
+  }
+  const failures = await db.transaction(async (tx) =>
+    authEntry
+      ? authorizedBindingFailures(tx, authorized?.authorization_id ?? '', authEntry)
+      : eligibilityFailure(tx, item),
+  );
   console.log(
     JSON.stringify(
-      failures.length === 0 ? { ok: true, group_id: groupId } : { ok: false, failures },
+      failures.length === 0
+        ? { ok: true, group_id: groupId, authorized: authEntry != null }
+        : { ok: false, failures, authorized: authEntry != null },
       null,
       2,
     ),
@@ -1978,7 +2253,7 @@ const positional = rest.filter(
 
 const run =
   command === 'check' && flags.manifest && positional.length === 1
-    ? check(flags.manifest, positional[0])
+    ? check(flags.manifest, positional[0], flags.authorized)
     : command === 'drive' && flags.manifest && flags.out && flags.ledger
       ? drive({
           manifestPath: flags.manifest,
@@ -1990,10 +2265,11 @@ const run =
             ? { preflightReceipt: flags['preflight-receipt'] }
             : {}),
           ...(flags.sent !== undefined ? { sentIdsPath: flags.sent } : {}),
+          ...(flags.authorized !== undefined ? { authorizedPath: flags.authorized } : {}),
         })
       : Promise.reject(
           new Error(
-            'usage: check --manifest <m.json> <group_id> | drive --manifest <m.json> --out <dir> --preflight-receipt <r.json> --ledger <history-ledger.json> [--batch N] [--batch-size 20] [--per-question-usd 0.03] [--cumulative-usd 1] [--hard-cap-usd 3] [--unknown-reserve-usd 0.01] [--max-unknown-rate 0.1] [--sent ids.json]',
+            'usage: check --manifest <m.json> [--authorized <a.json>] <group_id> | drive --manifest <m.json> --out <dir> --preflight-receipt <r.json> --ledger <history-ledger.json> [--batch N] [--batch-size 20] [--per-question-usd 0.03] [--cumulative-usd 1] [--hard-cap-usd 3] [--unknown-reserve-usd 0.01] [--max-unknown-rate 0.1] [--sent ids.json] [--authorized <a.json>]',
           ),
         );
 

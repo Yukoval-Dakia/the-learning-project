@@ -1,21 +1,26 @@
 // Lead-only TEST operation. No automatic caller; no tests or Docker operations.
-// Preflight sends ONE provider request outside paid_effect. Reopen atomically
-// re-pends and enqueues exactly five explicitly named @2 identities —
-// admission@2 rows in state 'unknown', or the single @2 applied row whose
-// verdict withheld on the blank_text-vs-blank_numeric kind-mismatch conflict.
-// Old paid rows are never updated; the marked @3 jobs carry the exact old row
-// identity (unit + input digest) as reopen_paid_effect_identity.
+// Preflight sends ONE provider request outside paid_effect. --plan is a dry,
+// read-only eligibility evaluation that freezes the void+reauthorization
+// manifest. --execute replays that frozen plan inside ONE transaction per run:
+// re-pend (generation bump) → void the explicitly named 'unknown' paid rows
+// under the shared YUK-1567 void+successor protocol → admit the successor
+// intent → enqueue the bound @3 job — all atomically committed. Old paid rows
+// are never updated beyond the protocol's own void transition; the generic
+// paid_effect_authorization rows carry reason/operator/basis and the exact
+// successor delivery binding.
 import { createHash, randomUUID } from 'node:crypto';
-import { open, readFile } from 'node:fs/promises';
-import { and, count, eq, inArray } from 'drizzle-orm';
+import { open, readFile, writeFile } from 'node:fs/promises';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Provider } from '@/ai/task-spec';
 import {
   ADMISSION_FAMILY,
+  type AdmissionJobData,
   admissionJobId,
   lockAdmissionGroup,
 } from '@/capabilities/practice/server/admission/enqueue';
-import { isKindMismatchSolveConflict } from '@/capabilities/practice/server/admission/receipt';
+import { FrozenAdmissionInput } from '@/capabilities/practice/server/admission/receipt';
+import { resolveQuestionAdmissionPolicyId } from '@/capabilities/practice/server/admission/run-admission';
 import { QUESTION_ADMISSION_TASK_KIND } from '@/capabilities/practice/server/admission/solve';
 import {
   QuestionAdmissionSolveInput,
@@ -25,12 +30,11 @@ import {
   questionAdmissionSolveTaskSpec,
 } from '@/capabilities/practice/tasks/question-admission-solve';
 import { getTaskSystemPrompt } from '@/capabilities/task-registry';
-import {
-  LEGACY_QUESTION_ADMISSION_PAID_UNIT,
-  PREVIOUS_QUESTION_ADMISSION_PAID_UNIT,
-  QUESTION_ADMISSION_PAID_UNIT,
-  QUESTION_ADMISSION_PAID_UNITS,
-} from '@/core/question-admission-policy';
+import { computePaidEffectIdentity } from '@/core/migration/paid-effect-protocol';
+import { QUESTION_ADMISSION_POLICY_IDS } from '@/core/question-admission-policy';
+import type { Db, Tx } from '@/db/client';
+import { voidPaidEffectWithSuccessor } from '@/db/paid-effect-store';
+import type { PublishQuestionGroupInput } from '@/kernel/records/assessment-publication';
 import { zodToToolParametersSchema } from '@/kernel/zod-json-schema';
 import { assertModelProfileCapabilityFit } from '@/server/ai/model-profiles';
 import { nativePiModel } from '@/server/ai/pi-provider-catalog';
@@ -48,18 +52,45 @@ import {
   structuredSubmitWireFields,
 } from '@/server/ai/structured-submit';
 import { isToolParamContractError, repairToolArguments } from '@/server/ai/tool-param-contract';
+import { resolveSubjectProfile } from '@/subjects/profile';
 
 const submit = STRUCTURED_OUTPUT_SUBMIT_TOOL;
 const digest = z.string().regex(/^sha256:[0-9a-f]{64}$/);
-const manifestSchema = z
-  .array(
-    z.object({
-      group_id: z.string().min(1),
-      base_digest: digest,
-      input_digest: digest,
-    }),
-  )
-  .length(5);
+const ENQUEUE_SUBSCRIBER_ID = 'practice.question-admission-enqueue';
+const PUBLISH_ACTION = 'experimental:assessment_publish';
+const ACTOR_REF = 'owner:yuk1547-approved-reopen';
+
+/**
+ * Operator-authored void manifest: every 'unknown' blocker on each group must
+ * be named explicitly (unit + input digest + the fence CAS token read at
+ * manifest time). The successor unit is declared per group; the CLI freezes
+ * the successor's full identity from the post-repend generation.
+ */
+const reopenManifestSchema = z.object({
+  authorization_id: z.string().min(1),
+  operator: z.string().min(1),
+  basis: z.string().min(1),
+  reason: z.string().min(1),
+  groups: z
+    .array(
+      z.object({
+        group_id: z.string().min(1),
+        base_digest: digest,
+        successor_unit: z.string().min(1),
+        void: z
+          .array(
+            z.object({
+              unit: z.string().min(1),
+              input_digest: digest,
+              expected_fence: z.number().int().nonnegative(),
+            }),
+          )
+          .nonempty(),
+      }),
+    )
+    .nonempty(),
+});
+type ReopenManifest = z.infer<typeof reopenManifestSchema>;
 const hash = (value: unknown) =>
   `sha256:${createHash('sha256').update(JSON.stringify(value)).digest('hex')}`;
 // YUK-1547 — the submit tool's parameters are the task output schema itself;
@@ -528,7 +559,683 @@ async function preflight(path: string) {
   }
 }
 
-async function reopen(receiptPath: string, manifestPath: string) {
+// ─── generic void + successor reauthorization (YUK-1567) ────────────────────
+
+function requireTestDb(): void {
+  if (
+    !process.env.DATABASE_URL ||
+    process.env.DATABASE_URL !== process.env.YUK1547_TEST_DATABASE_URL
+  ) {
+    throw new Error('Explicitly set YUK1547_TEST_DATABASE_URL to the approved TEST DATABASE_URL');
+  }
+}
+
+interface GroupEval {
+  failures: string[];
+  revisionId: string | null;
+  availability: 'general_pool' | 'container_only' | null;
+  withheldReason: string | null;
+  baseGeneration: number;
+  republishGenerations: number[];
+  ghostGenerations: number[];
+  finalGeneration: number;
+  contractLayers: Record<string, unknown> | null;
+  successorInput: FrozenAdmissionInput | null;
+  successorInputDigest: string | null;
+  jobId: string | null;
+  ghostJobIds: string[];
+  manifestItem: Record<string, unknown> | null;
+}
+
+/**
+ * Freeze the successor's FrozenAdmissionInput exactly the way the job derives
+ * it at claim time — same seal layers, profile, resolved policy and solver2
+ * env. The digest computed here is what the authorization binds and what the
+ * --execute drift check re-verifies before any write.
+ */
+async function buildSuccessorInput(
+  tx: Tx,
+  opts: {
+    groupId: string;
+    baseDigest: string;
+    revisionId: string;
+    generation: number;
+    unit: string;
+  },
+): Promise<{
+  input: FrozenAdmissionInput;
+  identity: ReturnType<typeof computePaidEffectIdentity>;
+  contractLayers: Record<string, unknown>;
+}> {
+  const { knowledge, question, question_revision } = await import('@/db/schema');
+  const { publishedContractSeal, publishedSealAccepts } = await import(
+    '@/kernel/records/assessment-normalization'
+  );
+  const [revision] = await tx
+    .select()
+    .from(question_revision)
+    .where(eq(question_revision.revision_id, opts.revisionId));
+  if (!revision) throw new Error('revision missing while freezing the successor input');
+  const seal = publishedContractSeal({
+    structure: revision.structure,
+    response_spec: revision.response_spec,
+    scoring_basis: revision.scoring_basis,
+    execution_plan: revision.execution_plan,
+    ...(revision.presentation != null ? { presentation: revision.presentation } : {}),
+  });
+  if (!publishedSealAccepts(seal, revision.integrity_digest)) {
+    throw new Error('revision layers no longer seal to the stored digest');
+  }
+  const [row] = await tx
+    .select({ knowledge_ids: question.knowledge_ids })
+    .from(question)
+    .where(eq(question.id, opts.groupId))
+    .limit(1);
+  const first = row?.knowledge_ids?.[0];
+  const [node] = first
+    ? await tx
+        .select({ domain: knowledge.domain })
+        .from(knowledge)
+        .where(eq(knowledge.id, first))
+        .limit(1)
+    : [undefined];
+  const solver2Provider = process.env.QUESTION_ADMISSION_SOLVER2_PROVIDER;
+  const solver2Model = process.env.QUESTION_ADMISSION_SOLVER2_MODEL;
+  const input = FrozenAdmissionInput.parse(
+    JSON.parse(
+      JSON.stringify({
+        version: 1,
+        group_id: opts.groupId,
+        revision_id: opts.revisionId,
+        revision_digest: opts.baseDigest,
+        admission_generation: opts.generation,
+        contract: {
+          ...seal.parsed,
+          integrity_digest: opts.baseDigest,
+          group_id: opts.groupId,
+          conversion_issues: [],
+        },
+        subject_profile: resolveSubjectProfile(node?.domain ?? null),
+        policy_id: resolveQuestionAdmissionPolicyId(),
+        solver2:
+          solver2Provider || solver2Model
+            ? { provider: solver2Provider, model: solver2Model }
+            : null,
+      }),
+    ),
+  );
+  const identity = computePaidEffectIdentity({
+    family: ADMISSION_FAMILY,
+    entityId: opts.groupId,
+    entityRevision: opts.baseDigest,
+    unit: opts.unit,
+    input,
+  });
+  return { input, identity, contractLayers: seal.parsed as Record<string, unknown> };
+}
+
+type ManifestGroup = ReopenManifest['groups'][number];
+
+/**
+ * THE eligibility predicate shared by --plan (read-only) and --execute
+ * (re-verified under the same locks before any write). A group is eligible
+ * only when the manifest names EVERY 'unknown' paid row on the entity with
+ * matching fences, no active/in-flight send exists for it anywhere (sending
+ * row, pending intent, receipt owed application, live job, unsettled
+ * enqueue-subscription delivery, undiscovered publish event), no applied
+ * verdict or terminal verification would resolve the claim without a send,
+ * and the current revision still seals to the manifest's base digest.
+ */
+async function evaluateGroup(tx: Tx, entry: ManifestGroup): Promise<GroupEval> {
+  const failures: string[] = [];
+  const { paid_effect, question_admission_verification, question_revision } = await import(
+    '@/db/schema'
+  );
+  const resolvedPolicy = resolveQuestionAdmissionPolicyId();
+  const evalResult: GroupEval = {
+    failures,
+    revisionId: null,
+    availability: null,
+    withheldReason: null,
+    baseGeneration: 0,
+    republishGenerations: [],
+    ghostGenerations: [],
+    finalGeneration: 0,
+    contractLayers: null,
+    successorInput: null,
+    successorInputDigest: null,
+    jobId: null,
+    ghostJobIds: [],
+    manifestItem: null,
+  };
+  const { root, lifecycle } = await lockAdmissionGroup(tx, entry.group_id);
+  if (!root) {
+    failures.push('group root missing');
+    return evalResult;
+  }
+  if (root.parent_question_id !== null) failures.push('not a group root');
+  if (!lifecycle) {
+    failures.push('lifecycle missing');
+    return evalResult;
+  }
+  if (lifecycle.withdrawn) failures.push('withdrawn');
+  if (lifecycle.suspended) failures.push('suspended');
+  if (lifecycle.scoring_admission_state !== 'withheld') {
+    failures.push(`lifecycle '${lifecycle.scoring_admission_state}' is not withheld`);
+  }
+  if (!lifecycle.current_revision_id) failures.push('no current revision');
+  const [revision] = lifecycle.current_revision_id
+    ? await tx
+        .select()
+        .from(question_revision)
+        .where(eq(question_revision.revision_id, lifecycle.current_revision_id))
+    : [];
+  if (!revision || revision.group_id !== entry.group_id) {
+    failures.push('current revision missing or belongs to another group');
+  } else if (revision.integrity_digest !== entry.base_digest) {
+    failures.push('current revision digest != manifest base_digest');
+  } else {
+    evalResult.revisionId = revision.revision_id;
+  }
+  // Every paid row on the entity is accounted for: named 'unknown' rows are
+  // voided, historical 'voided' rows stay, applied verdicts on OTHER bases are
+  // out of scope — everything else blocks the reauthorization.
+  const effects = await tx
+    .select()
+    .from(paid_effect)
+    .where(and(eq(paid_effect.family, ADMISSION_FAMILY), eq(paid_effect.entity_id, entry.group_id)))
+    .for('update');
+  const voidKeys = new Set(entry.void.map((v) => `${v.unit}|${v.input_digest}`));
+  if (voidKeys.size !== entry.void.length) {
+    failures.push('manifest void list contains duplicate targets');
+  }
+  const seen = new Set<string>();
+  for (const effect of effects) {
+    const key = `${effect.unit}|${effect.input_digest}`;
+    const target = entry.void.find(
+      (v) => v.unit === effect.unit && v.input_digest === effect.input_digest,
+    );
+    if (target) {
+      seen.add(key);
+      if (effect.state !== 'unknown') {
+        failures.push(`void target ${key} is '${effect.state}', not 'unknown'`);
+      } else if (effect.fence !== target.expected_fence) {
+        failures.push(
+          `void target ${key} fence ${effect.fence} != manifest expected_fence ${target.expected_fence}`,
+        );
+      }
+      continue;
+    }
+    if (effect.state === 'voided') continue;
+    if (effect.state === 'applied' && effect.entity_revision !== entry.base_digest) continue;
+    if (effect.state === 'applied') {
+      failures.push(`terminal applied verdict on base: ${key}`);
+    } else {
+      failures.push(`uncovered '${effect.state}' paid row on entity: ${key}`);
+    }
+  }
+  for (const v of entry.void) {
+    if (!seen.has(`${v.unit}|${v.input_digest}`)) {
+      failures.push(`manifest void target missing: ${v.unit}|${v.input_digest}`);
+    }
+  }
+  // No in-flight work may exist for the group: live jobs, unsettled
+  // enqueue-subscription deliveries and undiscovered eligible publish events
+  // all mean a send could still be racing the void.
+  const liveJobs = await tx.execute<{ id: string }>(sql`
+    select id from pgboss.job
+    where name = ${ADMISSION_FAMILY} and data->>'question_id' = ${entry.group_id}
+      and state in ('created','retry','active')`);
+  if (liveJobs.length > 0) {
+    failures.push(`non-terminal admission job(s): ${liveJobs.map((j) => j.id).join(',')}`);
+  }
+  const deliveries = await tx.execute<{ source_event_id: string; status: string }>(sql`
+    select d.source_event_id, d.status::text as status
+    from event_subscription_delivery d
+    join event e on e.id = d.source_event_id and e.dispatch_seq = d.source_dispatch_seq
+    where d.subscriber_id = ${ENQUEUE_SUBSCRIBER_ID}
+      and d.status not in ('bootstrap_skipped','succeeded','skipped','dead_letter')
+      and e.payload->>'group_id' = ${entry.group_id}`);
+  if (deliveries.length > 0) {
+    failures.push(
+      `unsettled enqueue deliveries: ${deliveries.map((d) => `${d.source_event_id}:${d.status}`).join(',')}`,
+    );
+  }
+  const undiscovered = await tx.execute<{ id: string }>(sql`
+    select e.id from event e
+    where e.action = ${PUBLISH_ACTION} and e.outcome = 'success'
+      and e.actor_ref <> 'practice:question_admission'
+      and e.payload->>'admission' = 'withheld'
+      and e.payload->>'group_id' = ${entry.group_id}
+      and not exists (
+        select 1 from event_subscription_delivery d
+        where d.subscriber_id = ${ENQUEUE_SUBSCRIBER_ID} and d.source_event_id = e.id)`);
+  if (undiscovered.length > 0) {
+    failures.push(
+      `undiscovered eligible publish events: ${undiscovered.map((e2) => e2.id).join(',')}`,
+    );
+  }
+  const [terminal] = await tx
+    .select({ id: question_admission_verification.id })
+    .from(question_admission_verification)
+    .innerJoin(
+      question_revision,
+      eq(question_admission_verification.revision_id, question_revision.revision_id),
+    )
+    .where(
+      and(
+        eq(question_revision.group_id, entry.group_id),
+        inArray(question_admission_verification.policy_id, [
+          ...QUESTION_ADMISSION_POLICY_IDS,
+          resolvedPolicy,
+        ]),
+        sql`${question_admission_verification.evidence}->>'pack' = 'question_admission'`,
+        sql`${question_admission_verification.evidence}->>'base_contract_digest' = ${entry.base_digest}`,
+        inArray(question_admission_verification.outcome, ['passed', 'failed', 'suspended']),
+      ),
+    )
+    .limit(1);
+  if (terminal) {
+    failures.push('terminal admission verification on base — the claim would resolve historical');
+  }
+  if (failures.length === 0 && revision && lifecycle.current_revision_id) {
+    const base = lifecycle.scoring_admission_generation;
+    evalResult.baseGeneration = base;
+    evalResult.withheldReason = lifecycle.scoring_admission_withheld_reason;
+    evalResult.availability = lifecycle.availability;
+    // Re-pend bumps generation once per admission update: owner_hold first
+    // (skipped when already owner_hold), then unverified_rules — mirroring the
+    // retired reopen exactly. Each emitted event is subscriber-visible.
+    const dual = lifecycle.scoring_admission_withheld_reason !== 'owner_hold';
+    evalResult.republishGenerations = dual ? [base + 1, base + 2] : [base + 1];
+    evalResult.finalGeneration = base + evalResult.republishGenerations.length;
+    evalResult.ghostGenerations = evalResult.republishGenerations.slice(0, -1);
+    try {
+      const successor = await buildSuccessorInput(tx, {
+        groupId: entry.group_id,
+        baseDigest: entry.base_digest,
+        revisionId: revision.revision_id,
+        generation: evalResult.finalGeneration,
+        unit: entry.successor_unit,
+      });
+      evalResult.contractLayers = successor.contractLayers;
+      evalResult.successorInput = successor.input;
+      evalResult.successorInputDigest = successor.identity.inputDigest;
+    } catch (error) {
+      failures.push(
+        `successor input freeze failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return evalResult;
+    }
+    evalResult.jobId = admissionJobId(
+      entry.group_id,
+      revision.revision_id,
+      entry.base_digest,
+      evalResult.finalGeneration,
+    );
+    evalResult.ghostJobIds = evalResult.ghostGenerations.map((generation) =>
+      admissionJobId(entry.group_id, revision.revision_id, entry.base_digest, generation),
+    );
+    evalResult.manifestItem = {
+      id: entry.group_id,
+      version: root.version,
+      suspended: lifecycle.suspended,
+      created_at: root.created_at.toISOString(),
+      generation: evalResult.finalGeneration,
+      revision_id: revision.revision_id,
+      integrity_digest: entry.base_digest,
+      question_updated_at: root.updated_at.toISOString(),
+      lifecycle_updated_at: lifecycle.updated_at.toISOString(),
+    };
+  }
+  return evalResult;
+}
+
+const planArtifactSchema = z.object({
+  version: z.literal(1),
+  authorization: z.object({
+    authorization_id: z.string().min(1),
+    operator: z.string().min(1),
+    basis: z.string().min(1),
+    reason: z.string().min(1),
+  }),
+  eligible: z.boolean(),
+  groups: z
+    .array(
+      z.object({
+        group_id: z.string().min(1),
+        base_digest: digest,
+        successor_unit: z.string().min(1),
+        eligible: z.boolean(),
+        void: z
+          .array(
+            z.object({
+              unit: z.string().min(1),
+              input_digest: digest,
+              expected_fence: z.number().int().nonnegative(),
+            }),
+          )
+          .nonempty(),
+        republish_generations: z.array(z.number().int().nonnegative()).nonempty(),
+        final_generation: z.number().int().nonnegative(),
+        ghost_generations: z.array(z.number().int().nonnegative()),
+        revision_id: z.string().min(1),
+        successor: z.object({
+          unit: z.string().min(1),
+          entity_revision: digest,
+          input_digest: digest,
+          job_id: z.string().min(1),
+        }),
+        ghost_job_ids: z.array(z.string()),
+      }),
+    )
+    .nonempty(),
+});
+type PlanArtifact = z.infer<typeof planArtifactSchema>;
+type PlanGroup = PlanArtifact['groups'][number];
+
+/** --plan: dry, read-only eligibility evaluation that freezes the manifest. */
+async function plan(manifestPath: string, outPath: string) {
+  requireTestDb();
+  const manifest = reopenManifestSchema.parse(JSON.parse(await readFile(manifestPath, 'utf8')));
+  const { db } = await import('@/db/client');
+  try {
+    const groups = await db.transaction(async (tx) => {
+      const evaluated: GroupEval[] = [];
+      for (const entry of manifest.groups) evaluated.push(await evaluateGroup(tx, entry));
+      return evaluated;
+    });
+    const eligible = groups.every((g) => g.failures.length === 0);
+    const artifact = {
+      version: 1,
+      planned_at: new Date().toISOString(),
+      manifest_sha256: hash(manifest),
+      authorization: {
+        authorization_id: manifest.authorization_id,
+        operator: manifest.operator,
+        basis: manifest.basis,
+        reason: manifest.reason,
+      },
+      eligible,
+      groups: groups.map((g, i) => {
+        const entry = manifest.groups[i];
+        return {
+          group_id: entry.group_id,
+          base_digest: entry.base_digest,
+          successor_unit: entry.successor_unit,
+          eligible: g.failures.length === 0,
+          failures: g.failures,
+          void: entry.void,
+          republish_generations: g.republishGenerations,
+          final_generation: g.finalGeneration,
+          ghost_generations: g.ghostGenerations,
+          revision_id: g.revisionId ?? '',
+          successor:
+            g.successorInputDigest != null && g.jobId != null
+              ? {
+                  unit: entry.successor_unit,
+                  entity_revision: entry.base_digest,
+                  input_digest: g.successorInputDigest,
+                  job_id: g.jobId,
+                }
+              : null,
+          ghost_job_ids: g.ghostJobIds,
+          manifest_item: g.manifestItem,
+        };
+      }),
+    };
+    // A frozen plan is write-once evidence — never overwrite an earlier plan.
+    const file = await open(outPath, 'wx');
+    try {
+      await file.writeFile(JSON.stringify(artifact, null, 2));
+    } finally {
+      await file.close();
+    }
+    console.log(
+      eligible ? `plan OK — wrote ${outPath}` : `plan has ineligible groups — wrote ${outPath}`,
+    );
+    if (!eligible) process.exitCode = 1;
+  } finally {
+    await db.$client.end();
+  }
+}
+
+interface AuthorizedGroupEntry {
+  group_id: string;
+  base_digest: string;
+  revision_id: string;
+  admission_generation: number;
+  job_id: string;
+  successor: { unit: string; input_digest: string };
+  voided: { unit: string; input_digest: string }[];
+  sent_at: string;
+  owned_events: { event_id: string; revision_id: string; admission_generation: number }[];
+  extra_owned_job_generations: number[];
+  resumed?: boolean;
+}
+
+async function executeGroup(
+  tx: Tx,
+  g: PlanGroup,
+  auth: PlanArtifact['authorization'],
+  boss: Awaited<
+    ReturnType<typeof import('@/capabilities/practice/server/queue-runtime').getPracticeBoss>
+  >,
+): Promise<AuthorizedGroupEntry> {
+  const { lockPaidEffectControlFamily, readPaidEffectControl } = await import(
+    '@/db/paid-effect-control'
+  );
+  const { practiceBossTransaction } = await import('@/capabilities/practice/server/queue-runtime');
+  const { publishQuestionGroup } = await import('@/kernel/records/assessment-publication');
+  const { getR2 } = await import('@/server/r2');
+  await lockPaidEffectControlFamily(tx, ADMISSION_FAMILY);
+  // Re-verify EVERYTHING under the locks the write will take — the frozen
+  // plan's fences/identity digests must still hold or the run aborts.
+  const fresh = await evaluateGroup(tx, {
+    group_id: g.group_id,
+    base_digest: g.base_digest,
+    successor_unit: g.successor_unit,
+    void: g.void,
+  });
+  if (fresh.failures.length > 0) {
+    throw new Error(`${g.group_id}: re-verification failed: ${fresh.failures.join('; ')}`);
+  }
+  if (
+    fresh.finalGeneration !== g.final_generation ||
+    fresh.successorInputDigest !== g.successor.input_digest ||
+    fresh.jobId !== g.successor.job_id ||
+    fresh.revisionId !== g.revision_id
+  ) {
+    throw new Error(`${g.group_id}: plan drifted since --plan — re-run --plan`);
+  }
+  const control = await readPaidEffectControl(tx, ADMISSION_FAMILY);
+  if (control.backend !== 'pg-boss') throw new Error('Admission producer fenced');
+  const events: AuthorizedGroupEntry['owned_events'] = [];
+  let generation = fresh.baseGeneration;
+  for (const reason of ['owner_hold', 'unverified_rules'] as const) {
+    if (reason === 'owner_hold' && fresh.withheldReason === 'owner_hold') continue;
+    const published = await publishQuestionGroup(tx, {
+      group_id: g.group_id,
+      contract: {
+        ...(fresh.contractLayers ?? {}),
+        integrity_digest: g.base_digest,
+      } as PublishQuestionGroupInput['contract'],
+      expectedCurrentRevision: fresh.revisionId,
+      expectedAdmissionGeneration: generation,
+      availability: fresh.availability ?? 'general_pool',
+      admission: { state: 'withheld', reason },
+      actorRef: ACTOR_REF,
+      now: new Date(),
+      readAssetBytes: (key) => getR2().get(key),
+    });
+    if (
+      published.status !== 'admission_updated' ||
+      published.current_revision_id !== fresh.revisionId
+    ) {
+      throw new Error('Reopen must be a dimension-only update');
+    }
+    generation = published.admission_generation;
+    events.push({
+      event_id: published.event_id,
+      revision_id: published.current_revision_id ?? (fresh.revisionId as string),
+      admission_generation: generation,
+    });
+  }
+  if (generation !== g.final_generation) {
+    throw new Error(`${g.group_id}: republish generation drifted from the frozen plan`);
+  }
+  if (!fresh.successorInput) throw new Error(`${g.group_id}: successor input missing`);
+  const queued = await boss.send(
+    ADMISSION_FAMILY,
+    {
+      admission_version: 3,
+      question_id: g.group_id,
+      revision_id: fresh.revisionId ?? undefined,
+      expected_revision_digest: g.base_digest,
+      expected_admission_generation: generation,
+      dispatch_generation: control.generation,
+    } satisfies AdmissionJobData,
+    { id: g.successor.job_id, db: practiceBossTransaction(tx) },
+  );
+  if (queued === null) {
+    throw new Error(`bound job ${g.successor.job_id} already exists; inspect instead of replaying`);
+  }
+  // Void + authorize + admit the successor intent — inside this same
+  // transaction so the reservation and the bound job commit together.
+  for (const v of g.void) {
+    await voidPaidEffectWithSuccessor(
+      tx,
+      {
+        family: ADMISSION_FAMILY,
+        entityId: g.group_id,
+        entityRevision: g.base_digest,
+        unit: v.unit,
+        inputDigest: v.input_digest,
+      },
+      {
+        expectedFence: v.expected_fence,
+        authorization: {
+          authorizationId: auth.authorization_id,
+          reason: auth.reason,
+          operator: auth.operator,
+          basis: auth.basis,
+          successorInput: {
+            family: ADMISSION_FAMILY,
+            entityId: g.group_id,
+            entityRevision: g.base_digest,
+            unit: g.successor_unit,
+            input: fresh.successorInput,
+          },
+          successorDelivery: { backend: 'pg-boss', deliveryId: g.successor.job_id },
+        },
+      },
+    );
+  }
+  return {
+    group_id: g.group_id,
+    base_digest: g.base_digest,
+    revision_id: fresh.revisionId ?? '',
+    admission_generation: generation,
+    job_id: g.successor.job_id,
+    successor: { unit: g.successor_unit, input_digest: g.successor.input_digest },
+    voided: g.void.map((v) => ({ unit: v.unit, input_digest: v.input_digest })),
+    sent_at: new Date().toISOString(),
+    owned_events: events,
+    extra_owned_job_generations: fresh.ghostGenerations,
+  };
+}
+
+/** How many manifest void rows are already voided under THIS authorization. */
+async function countAlreadyVoided(db: Db, plan: PlanArtifact): Promise<number> {
+  const { paid_effect } = await import('@/db/schema');
+  let count = 0;
+  for (const g of plan.groups) {
+    const rows = await db
+      .select({
+        unit: paid_effect.unit,
+        input_digest: paid_effect.input_digest,
+        state: paid_effect.state,
+        void_json: paid_effect.void_json,
+      })
+      .from(paid_effect)
+      .where(and(eq(paid_effect.family, ADMISSION_FAMILY), eq(paid_effect.entity_id, g.group_id)));
+    for (const v of g.void) {
+      const row = rows.find((r) => r.unit === v.unit && r.input_digest === v.input_digest);
+      if (
+        row?.state === 'voided' &&
+        (row.void_json as { authorizationId?: string } | null)?.authorizationId ===
+          plan.authorization.authorization_id
+      ) {
+        count += 1;
+      }
+    }
+  }
+  return count;
+}
+
+/**
+ * A committed run that crashed before writing the manifest: all rows are
+ * voided under this authorization, so recover the manifest evidence from the
+ * DB (republish events by group+revision+generation, sent_at from voided_at)
+ * instead of re-mutating.
+ */
+async function recoverAuthorizedGroups(
+  db: Db,
+  plan: PlanArtifact,
+): Promise<AuthorizedGroupEntry[]> {
+  const { paid_effect } = await import('@/db/schema');
+  const results: AuthorizedGroupEntry[] = [];
+  for (const g of plan.groups) {
+    const rows = await db
+      .select({
+        unit: paid_effect.unit,
+        input_digest: paid_effect.input_digest,
+        state: paid_effect.state,
+        voided_at: paid_effect.voided_at,
+        void_json: paid_effect.void_json,
+      })
+      .from(paid_effect)
+      .where(and(eq(paid_effect.family, ADMISSION_FAMILY), eq(paid_effect.entity_id, g.group_id)));
+    const voidedRows = g.void.map((v) =>
+      rows.find((r) => r.unit === v.unit && r.input_digest === v.input_digest),
+    );
+    const sentAt = voidedRows.find((r) => r?.voided_at)?.voided_at?.toISOString();
+    const events = (await db.execute(sql`
+      select e.id as event_id, e.payload->>'revision_id' as revision_id,
+             e.payload->>'admission_generation' as admission_generation
+      from event e
+      where e.action = ${PUBLISH_ACTION} and e.outcome = 'success'
+        and e.payload->>'group_id' = ${g.group_id}
+        and e.payload->>'revision_id' = ${g.revision_id}
+        and e.payload->>'admission_generation' = any(${g.republish_generations.map(String)}::text[])
+      order by e.dispatch_seq`)) as unknown as {
+      event_id: string;
+      revision_id: string;
+      admission_generation: string;
+    }[];
+    results.push({
+      group_id: g.group_id,
+      base_digest: g.base_digest,
+      revision_id: g.revision_id,
+      admission_generation: g.final_generation,
+      job_id: g.successor.job_id,
+      successor: { unit: g.successor_unit, input_digest: g.successor.input_digest },
+      voided: g.void.map((v) => ({ unit: v.unit, input_digest: v.input_digest })),
+      sent_at: sentAt ?? new Date().toISOString(),
+      owned_events: events.map((e) => ({
+        event_id: e.event_id,
+        revision_id: e.revision_id,
+        admission_generation: Number(e.admission_generation),
+      })),
+      extra_owned_job_generations: g.ghost_generations,
+      resumed: true,
+    });
+  }
+  return results;
+}
+
+/** --execute: replay the frozen plan; ONE transaction covers every group. */
+async function execute(planPath: string, receiptPath: string, manifestOutPath: string) {
   const { routeA, routeB, solver2Provider, solver2Model, policy, config_db_layer } =
     await routing();
   const receipt = z
@@ -556,225 +1263,97 @@ async function reopen(receiptPath: string, manifestPath: string) {
   ) {
     throw new Error('Require the successful preflight from this schema/routing within one hour');
   }
-  if (
-    !process.env.DATABASE_URL ||
-    process.env.DATABASE_URL !== process.env.YUK1547_TEST_DATABASE_URL
-  ) {
-    throw new Error('Explicitly set YUK1547_TEST_DATABASE_URL to the approved TEST DATABASE_URL');
+  requireTestDb();
+  const plan = planArtifactSchema.parse(JSON.parse(await readFile(planPath, 'utf8')));
+  if (!plan.eligible || plan.groups.some((g) => !g.eligible || g.successor == null)) {
+    throw new Error('plan has ineligible groups — re-run --plan');
   }
-  const rows = manifestSchema
-    .parse(JSON.parse(await readFile(manifestPath, 'utf8')))
-    .sort((a, b) => a.group_id.localeCompare(b.group_id));
-  if (new Set(rows.map((row) => row.group_id)).size !== 5)
-    throw new Error('Require five distinct approved groups');
   const { db } = await import('@/db/client');
-  const { paid_effect, question_revision } = await import('@/db/schema');
-  const { lockPaidEffectControlFamily, readPaidEffectControl } = await import(
-    '@/db/paid-effect-control'
-  );
-  const { getPracticeBoss, practiceBossTransaction } = await import(
-    '@/capabilities/practice/server/queue-runtime'
-  );
-  const { publishQuestionGroup } = await import('@/kernel/records/assessment-publication');
-  const { publishedContractSeal, publishedSealAccepts } = await import(
-    '@/kernel/records/assessment-normalization'
-  );
-  const { getR2 } = await import('@/server/r2');
+  const { getPracticeBoss } = await import('@/capabilities/practice/server/queue-runtime');
   const boss = await getPracticeBoss();
   try {
-    const jobs = await db.transaction(async (tx) => {
-      await lockPaidEffectControlFamily(tx, ADMISSION_FAMILY);
-      const [oldReceipts] = await tx
-        .select({ count: count() })
-        .from(paid_effect)
-        .where(
-          and(
-            eq(paid_effect.family, ADMISSION_FAMILY),
-            inArray(paid_effect.unit, [
-              LEGACY_QUESTION_ADMISSION_PAID_UNIT,
-              PREVIOUS_QUESTION_ADMISSION_PAID_UNIT,
-            ]),
-            eq(paid_effect.state, 'receipt_ready'),
-          ),
-        );
-      if (oldReceipts.count !== 0)
-        throw new Error(
-          'Stop: admission@1/@2 receipt_ready rows must be reconciled before cutover',
-        );
-      const control = await readPaidEffectControl(tx, ADMISSION_FAMILY);
-      if (control.backend !== 'pg-boss') throw new Error('Admission producer fenced');
-      const jobs: {
-        group_id: string;
-        job_id: string;
-        reopened_via: 'unknown' | 'applied_conflict';
-        old_snapshot: {
-          unit: string;
-          input_digest: string;
-          state: string;
-          application_sha256: string | null;
-        };
-      }[] = [];
-      for (const row of rows) {
-        const { root, lifecycle } = await lockAdmissionGroup(tx, row.group_id);
-        if (
-          !root ||
-          root.parent_question_id ||
-          !lifecycle ||
-          !lifecycle.current_revision_id ||
-          lifecycle.withdrawn ||
-          lifecycle.suspended ||
-          lifecycle.scoring_admission_state !== 'withheld'
-        )
-          throw new Error(`Not an eligible withheld group: ${row.group_id}`);
-        const effects = await tx
-          .select()
-          .from(paid_effect)
-          .where(
-            and(eq(paid_effect.family, ADMISSION_FAMILY), eq(paid_effect.entity_id, row.group_id)),
-          )
-          .for('update');
-        const old = effects.find(
-          (effect) =>
-            effect.unit === PREVIOUS_QUESTION_ADMISSION_PAID_UNIT &&
-            effect.entity_revision === row.base_digest &&
-            effect.input_digest === row.input_digest,
-        );
-        // Snapshot the exact old row BEFORE any re-pend mutation; the row itself
-        // is never updated — this snapshot is the post-run comparison evidence.
-        const oldSnapshot = old
-          ? {
-              unit: old.unit,
-              input_digest: old.input_digest,
-              state: old.state,
-              application_sha256: old.application_json == null ? null : hash(old.application_json),
-            }
-          : null;
-        const reopenedState =
-          old?.state === 'unknown'
-            ? ('unknown' as const)
-            : old?.state === 'applied' && isKindMismatchSolveConflict(old.application_json)
-              ? ('applied_conflict' as const)
-              : null;
-        if (
-          reopenedState == null ||
-          effects.some((effect) => effect.unit === QUESTION_ADMISSION_PAID_UNIT) ||
-          effects.some(
-            (effect) =>
-              effect.entity_revision === row.base_digest &&
-              QUESTION_ADMISSION_PAID_UNITS.includes(
-                effect.unit as (typeof QUESTION_ADMISSION_PAID_UNITS)[number],
-              ) &&
-              effect.state === 'applied' &&
-              !(effect.unit === old?.unit && effect.input_digest === old?.input_digest),
-          )
-        )
-          throw new Error(
-            `Missing exact old @2 row (unknown or applied kind-mismatch conflict), existing @3, or another known verdict: ${row.group_id}`,
-          );
-        const [revision] = await tx
-          .select()
-          .from(question_revision)
-          .where(eq(question_revision.revision_id, lifecycle.current_revision_id));
-        if (
-          !revision ||
-          revision.group_id !== row.group_id ||
-          revision.integrity_digest !== row.base_digest
-        )
-          throw new Error('Current revision/base mismatch');
-        const seal = publishedContractSeal({
-          structure: revision.structure,
-          response_spec: revision.response_spec,
-          scoring_basis: revision.scoring_basis,
-          execution_plan: revision.execution_plan,
-          ...(revision.presentation != null ? { presentation: revision.presentation } : {}),
-        });
-        if (!publishedSealAccepts(seal, row.base_digest))
-          throw new Error('Published digest mismatch');
-        const layers = seal.parsed;
-        let generation = lifecycle.scoring_admission_generation;
-        for (const reason of ['owner_hold', 'unverified_rules'] as const) {
-          if (
-            reason === 'owner_hold' &&
-            lifecycle.scoring_admission_withheld_reason === 'owner_hold'
-          )
-            continue;
-          const published = await publishQuestionGroup(tx, {
-            group_id: row.group_id,
-            contract: { ...layers, integrity_digest: row.base_digest },
-            expectedCurrentRevision: revision.revision_id,
-            expectedAdmissionGeneration: generation,
-            availability: lifecycle.availability,
-            admission: { state: 'withheld', reason },
-            actorRef: 'owner:yuk1547-approved-reopen',
-            now: new Date(),
-            readAssetBytes: (key) => getR2().get(key),
+    // The run commits atomically: either every named row is already voided
+    // under this authorization (crash before the manifest write — recover,
+    // never re-mutate) or none is (execute). A partial count is inconsistent
+    // state that a re-run must NOT paper over.
+    const totalVoid = plan.groups.reduce((sum, g) => sum + g.void.length, 0);
+    const already = await countAlreadyVoided(db, plan);
+    if (already > 0 && already < totalVoid) {
+      throw new Error(
+        `inconsistent partial void state (${already}/${totalVoid} rows voided under ${plan.authorization.authorization_id}) — inspect before retrying`,
+      );
+    }
+    const groups =
+      already === totalVoid
+        ? await recoverAuthorizedGroups(db, plan)
+        : await db.transaction(async (tx) => {
+            const out: AuthorizedGroupEntry[] = [];
+            for (const g of plan.groups)
+              out.push(await executeGroup(tx, g, plan.authorization, boss));
+            return out;
           });
-          if (
-            published.status !== 'admission_updated' ||
-            published.current_revision_id !== revision.revision_id
-          )
-            throw new Error('Reopen must be a dimension-only update');
-          generation = published.admission_generation;
-        }
-        const id = admissionJobId(
-          row.group_id,
-          revision.revision_id,
-          row.base_digest,
-          generation,
-          row.input_digest,
-        );
-        const queued = await boss.send(
-          ADMISSION_FAMILY,
-          {
-            admission_version: 3,
-            question_id: row.group_id,
-            revision_id: revision.revision_id,
-            expected_revision_digest: row.base_digest,
-            expected_admission_generation: generation,
-            dispatch_generation: control.generation,
-            reopen_paid_effect_identity: {
-              unit: 'admission@2',
-              input_digest: row.input_digest,
-            },
-          },
-          { id, db: practiceBossTransaction(tx) },
-        );
-        if (queued === null)
-          throw new Error('Marked job already exists; inspect instead of replaying');
-        jobs.push({
-          group_id: row.group_id,
-          job_id: id,
-          reopened_via: reopenedState,
-          old_snapshot: oldSnapshot as NonNullable<typeof oldSnapshot>,
-        });
-      }
-      return jobs;
-    });
-    console.log(JSON.stringify({ enqueued: jobs, old_paid_rows: 'untouched' }));
+    await writeFile(
+      manifestOutPath,
+      JSON.stringify(
+        {
+          version: 1,
+          authorization_id: plan.authorization.authorization_id,
+          executed_at: new Date().toISOString(),
+          groups,
+        },
+        null,
+        2,
+      ),
+    );
+    console.log(
+      JSON.stringify({
+        authorized: groups.map((g) => `${g.group_id}:${g.job_id}${g.resumed ? ' (resumed)' : ''}`),
+        old_paid_rows: 'voided only via the protocol transition',
+      }),
+    );
   } finally {
     await boss.stop();
     await db.$client.end();
   }
 }
 
-const [mode, path, manifestPath] = process.argv.slice(2);
-if (mode === '--help')
-  console.log(
-    'TEST only: --preflight <new-receipt.json> OR --reopen-approved-five <receipt.json> <private-five-identities.json>. Preflight sends one probe per admission mode (solve per distinct resolved solver lane + one source_crosscheck on the primary lane) using the shared capability-driven submit wire policy. Never retries; no Docker.',
-  );
-else {
-  const run =
-    mode === '--preflight' && path
-      ? preflight(path)
-      : mode === '--reopen-approved-five' && path && manifestPath
-        ? reopen(path, manifestPath)
-        : Promise.reject(new Error('Use --help; explicit mode and paths are required'));
-  run
-    .catch((error) => {
-      console.error(error instanceof Error ? error.message : String(error));
-      process.exitCode = 1;
-    })
-    .finally(async () => {
-      await closeHydratedDb?.().catch(() => {});
-    });
+const [mode, positional, ...flagArgs] = process.argv.slice(2);
+const flags: Record<string, string> = {};
+for (let i = 0; i < flagArgs.length; i += 1) {
+  const arg = flagArgs[i];
+  if (arg.startsWith('--')) {
+    const next = flagArgs[i + 1];
+    if (next !== undefined && !next.startsWith('--')) {
+      flags[arg.slice(2)] = next;
+      i += 1;
+    } else {
+      flags[arg.slice(2)] = 'true';
+    }
+  }
 }
+const run =
+  mode === '--help'
+    ? Promise.resolve(
+        console.log(
+          'TEST only: --preflight <new-receipt.json> | --plan <manifest.json> --out <plan.json> | --execute <plan.json> --preflight-receipt <receipt.json> --manifest-out <authorized.json>. ' +
+            'Preflight sends one probe per admission mode (solve per distinct resolved solver lane + one source_crosscheck on the primary lane). ' +
+            '--plan is read-only and freezes the void+reauthorization manifest; ' +
+            '--execute voids the named unknown rows under the shared successor-authorization protocol and enqueues the bound jobs in one transaction. ' +
+            'Never retries; no Docker.',
+        ),
+      )
+    : mode === '--preflight' && positional
+      ? preflight(positional)
+      : mode === '--plan' && positional && flags.out
+        ? plan(positional, flags.out)
+        : mode === '--execute' && positional && flags['preflight-receipt'] && flags['manifest-out']
+          ? execute(positional, flags['preflight-receipt'], flags['manifest-out'])
+          : Promise.reject(new Error('Use --help; explicit mode and paths are required'));
+run
+  .catch((error) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  })
+  .finally(async () => {
+    await closeHydratedDb?.().catch(() => {});
+  });

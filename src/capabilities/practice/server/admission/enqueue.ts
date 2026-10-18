@@ -12,14 +12,6 @@ export const ADMISSION_FAMILY = 'question_admission_run';
 export const AdmissionJobData = z.object({
   /** Absent on old queued deliveries: they may reconcile old units but never initiate @3. */
   admission_version: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional(),
-  /** Lead-only authorization: the exact old paid-effect row identity (unit +
-   *  input digest) one marked @3 send may re-open; ordinary publishers omit it. */
-  reopen_paid_effect_identity: z
-    .strictObject({
-      unit: z.literal('admission@2'),
-      input_digest: z.string().regex(/^sha256:[0-9a-f]{64}$/),
-    })
-    .optional(),
   question_id: z.string().min(1).optional(),
   revision_id: z.string().min(1).optional(),
   expected_revision_digest: z.string().min(1).optional(),
@@ -55,7 +47,6 @@ export function admissionJobId(
   revisionId: string,
   digest: string,
   generation: number,
-  reopenMarkedInputDigest?: string,
 ): string {
   const hex = createHash('sha256')
     .update(
@@ -66,7 +57,6 @@ export function admissionJobId(
         revisionId,
         digest,
         generation,
-        ...(reopenMarkedInputDigest ? [reopenMarkedInputDigest] : []),
       ]),
     )
     .digest('hex');

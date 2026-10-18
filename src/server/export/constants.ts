@@ -115,7 +115,13 @@
 // evidence is authored truth, not derivable operational state; it must survive
 // restore or every AI-grader serving gate silently re-denies. Follows the
 // worksheet triplet already on main, so this branch is 4.28 / migration 0122.
-export const SCHEMA_VERSION = '4.28';
+// YUK-1567: paid_effect_authorization — durable void+reauthorization receipts
+// (lead-authorized void basis + successor delivery binding). Authored truth a
+// restore must keep: losing it would un-block every entity the authorization
+// still gates while orphaning the voided rows' receipts. FK → paid_effect, so
+// it restores right after its parent inside the paid-effect tail.
+// NEW FK_ORDER table → bump 4.28 → 4.29 (migration 0123).
+export const SCHEMA_VERSION = '4.29';
 
 export const SUBSCRIPTION_PROGRESS_TABLES = [
   'event_subscription_checkpoint',
@@ -123,7 +129,13 @@ export const SUBSCRIPTION_PROGRESS_TABLES = [
   'event_subscription_effect',
 ] as const;
 
-export const PAID_EFFECT_BACKUP_TABLES = ['paid_effect_control', 'paid_effect'] as const;
+export const PAID_EFFECT_BACKUP_TABLES = [
+  'paid_effect_control',
+  'paid_effect',
+  // YUK-1567: FK → paid_effect; authorization truth rides the same wipe/restore
+  // payload as the rows it voids so a restore never un-gates an entity.
+  'paid_effect_authorization',
+] as const;
 
 // Bound inline asset transfers; larger exports use a refs-only ZIP plus an asset sidecar.
 export const MAX_INLINE_ASSETS = 45;
