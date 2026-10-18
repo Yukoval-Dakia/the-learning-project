@@ -12,7 +12,7 @@ import {
   lockAdmissionGroup,
 } from '@/capabilities/practice/server/admission/enqueue';
 import {
-  QuestionAdmissionSolveOutput,
+  parseQuestionAdmissionSolveModelOutput,
   questionAdmissionSolveTaskSpec,
 } from '@/capabilities/practice/tasks/question-admission-solve';
 import {
@@ -113,7 +113,7 @@ async function preflight(path: string) {
           {
             role: 'system',
             content:
-              'Solve this synthetic preflight only: 1+1. Submit one result with scoring_unit_id u, status solved, answer kind blank_numeric, expected 2, tolerance absolute 0, equivalent_forms [], typical_wrong []. Use the submit tool exactly once.',
+              'Solve this synthetic preflight only: 1+1. Use the submit tool exactly once with result = {"units":[{"scoring_unit_id":"u","status":"solved","answer":{"kind":"blank_numeric","expected":2,"tolerance":{"kind":"absolute","value":0}},"equivalent_forms":[],"typical_wrong":[]}]}.',
           },
           {
             role: 'user',
@@ -152,8 +152,15 @@ async function preflight(path: string) {
     ) {
       throw new Error('Preflight requires exactly one choice and one completed submit call');
     }
-    const args = JSON.parse(calls[0].function.arguments ?? '');
-    const output = QuestionAdmissionSolveOutput.parse(args.result);
+    const rawArguments = calls[0].function.arguments ?? '';
+    // Synthetic 1+1 probe only, no question text or credentials: keep the raw
+    // arguments so a failed probe can be diagnosed without a second request.
+    receipt.raw_arguments = rawArguments.slice(0, 8000);
+    const args = JSON.parse(rawArguments);
+    receipt.result_was_string = typeof args.result === 'string';
+    // Same parse entry as the solve path (string unwrap included), with the
+    // repair budget at zero so the probe proves strict schema validity.
+    const output = parseQuestionAdmissionSolveModelOutput(args.result, [], { remaining: 0 });
     const answer = output.units[0]?.answer;
     if (
       output.units.length !== 1 ||
