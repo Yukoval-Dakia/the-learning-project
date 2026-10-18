@@ -98,7 +98,17 @@ const candidateInputSchema = z.object({
     .regex(/^sha256:[0-9a-f]{64}$/, 'extraction_hash 必须是 sha256:<64hex>（fetch 工具产出）'),
   knowledge_hints: z.array(z.string()).default([]),
   source_id: z.string().nullable().default(null),
-  figures: z.array(FigureRef).nullable().default(null),
+  figures: z
+    .array(
+      FigureRef.extend({
+        last_reassigned_at: z.iso
+          .datetime()
+          .transform((value) => new Date(value))
+          .optional(),
+      }),
+    )
+    .nullable()
+    .default(null),
   image_refs: z.array(z.string()).nullable().default(null),
   structured: StructuredQuestion.nullable().default(null),
   staged_asset_ids: z.array(z.string()).default([]),

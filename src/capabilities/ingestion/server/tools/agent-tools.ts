@@ -84,7 +84,34 @@ const ReportProgressInputSchema = z.discriminatedUnion('event', [
   ItemReportInput,
   ErrorReportInput,
 ]);
-type ReportProgressInput = z.infer<typeof ReportProgressInputSchema>;
+
+// pi mount 编译只接受 z.object 顶层（buildPiDomainAgentTools 拒绝 union root）；
+// 声明面对模型放开为并集对象，严格判别仍由 execute 内的 union parse 承担。
+const ReportProgressToolInput = z.object({
+  event: z.enum(['stage', 'item', 'error']),
+  stage: IngestionAgentStage.optional(),
+  pages: z.object({ total: z.number().int().min(0), done: z.number().int().min(0) }).optional(),
+  counts: z
+    .object({
+      items_total: z.number().int().min(0),
+      items_done: z.number().int().min(0),
+      items_withheld: z.number().int().min(0),
+      items_failed: z.number().int().min(0),
+    })
+    .optional(),
+  item_id: z.string().min(1).max(120).optional(),
+  question_no: z.string().min(1).max(40).optional(),
+  status: IngestionAgentItemStatus.optional(),
+  reason: z.string().max(500).optional(),
+  page_index: z.number().int().min(0).optional(),
+  preview_text: z.string().max(400).optional(),
+  draft_ref: z.string().optional(),
+  question_id: z.string().optional(),
+  scope: z.enum(['session', 'item']).optional(),
+  code: IngestionAgentErrorCode.optional(),
+  retryable: z.boolean().optional(),
+});
+type ReportProgressToolInputT = z.infer<typeof ReportProgressToolInput>;
 
 const ReportProgressOutputSchema = z.object({
   emitted: z.string(),
@@ -103,7 +130,7 @@ function previewMarkdown(ctx: ToolContext, previewText: string | undefined): str
 
 async function executeReportProgress(
   ctx: ToolContext,
-  raw: ReportProgressInput,
+  raw: ReportProgressToolInputT,
 ): Promise<ReportProgressOutput> {
   const input = ReportProgressInputSchema.parse(raw);
   const sessionId = requireIngestionScope(ctx);
@@ -180,12 +207,15 @@ async function executeReportProgress(
   }
 }
 
-export const reportIngestionProgressTool: DomainTool<ReportProgressInput, ReportProgressOutput> = {
+export const reportIngestionProgressTool: DomainTool<
+  ReportProgressToolInputT,
+  ReportProgressOutput
+> = {
   name: 'report_ingestion_progress',
   description:
     'Emit a durable R8 progress event for this ingestion run: event=stage {stage, pages?, counts?{items_total,items_done,items_withheld,items_failed}}, event=item {item_id, question_no, status(queued|structuring|solving|calibrating|admitted|withheld|failed), reason?, page_index? (0-based manifest index — the server emits it 1-based), preview_text?, draft_ref?, question_id?}, or event=error {scope, item_id?, code(page_unreadable|solve_timeout|model_unavailable|budget_exhausted|crop_failed|worker_lost|structure_failed|ask_expired|policy_blocked), retryable}. scope=item reports a per-item failure; scope=session does NOT emit the error — it records a terminal request so the run ends cleanly (the orchestrator owns the session error). preview_text is redacted and truncated to 80 chars by the server — never put raw student handwriting or identifiers in it. Call once per transition; every call is a durable job_events row the UI sees immediately.',
   effect: 'write',
-  inputSchema: ReportProgressInputSchema,
+  inputSchema: ReportProgressToolInput,
   outputSchema: ReportProgressOutputSchema,
   costClass: 'local',
   execute: executeReportProgress,
@@ -212,7 +242,21 @@ const AskLearnerInputSchema = z.union([
     context_md: z.string().max(1000).optional(),
   }),
 ]);
-type AskLearnerInput = z.infer<typeof AskLearnerInputSchema>;
+
+// pi mount 编译只接受 z.object 顶层（同 report_ingestion_progress）；ask_id
+// presence 区分 poll/create 的判别由 execute 内的 union parse 承担。
+const AskLearnerToolInput = z.object({
+  ask_id: z.string().min(1).optional(),
+  item_id: z.string().min(1).max(120).optional(),
+  question_no: z.string().min(1).max(40).optional(),
+  prompt_md: z.string().min(1).max(2000).optional(),
+  answer_kind: z.enum(['choice', 'short']).optional(),
+  options: z.array(IngestionAskOption).min(2).max(12).optional(),
+  placeholder: z.string().max(200).optional(),
+  expires_in_seconds: z.number().int().min(30).max(86_400).nullable().optional(),
+  context_md: z.string().max(1000).optional(),
+});
+type AskLearnerToolInputT = z.infer<typeof AskLearnerToolInput>;
 
 const AskLearnerOutputSchema = z.discriminatedUnion('status', [
   z.object({
@@ -251,7 +295,7 @@ function redactAskAnswer(ctx: ToolContext, answer: unknown): unknown {
 
 async function executeAskLearner(
   ctx: ToolContext,
-  raw: AskLearnerInput,
+  raw: AskLearnerToolInputT,
 ): Promise<AskLearnerOutput> {
   const input = AskLearnerInputSchema.parse(raw);
   const sessionId = requireIngestionScope(ctx);
@@ -318,12 +362,12 @@ async function executeAskLearner(
   return { status: 'pending', ask_id: created.ask_id, expires_at: created.expires_at };
 }
 
-export const askLearnerTool: DomainTool<AskLearnerInput, AskLearnerOutput> = {
+export const askLearnerTool: DomainTool<AskLearnerToolInputT, AskLearnerOutput> = {
   name: 'ask_learner',
   description:
     'Ask the learner a question you cannot decide yourself, or poll an existing ask. Create: {item_id, question_no, prompt_md, answer_kind(choice|short), options?[{id,label_md}] (required for choice), placeholder?, expires_in_seconds? (default 1800; null = wait forever), context_md?} → {status:pending, ask_id}. The ask is durable and the learner answers asynchronously — DO NOT stop working: continue with other items, then either poll {ask_id} → {status:pending|resolved,answer} or end your turn (the run resumes automatically when the answer or a timeout lands). Poll: {ask_id}.',
   effect: 'write',
-  inputSchema: AskLearnerInputSchema,
+  inputSchema: AskLearnerToolInput,
   outputSchema: AskLearnerOutputSchema,
   costClass: 'local',
   execute: executeAskLearner,
