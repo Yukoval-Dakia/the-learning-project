@@ -408,19 +408,20 @@ async function validateFinalProviderPairs(
     // on the tx-final rows so field-by-field writes cannot leave a half pair
     // behind (a global reset exposing it is validated the same way).
     if (taskKind && !typed && rowByKey.get(`task.${taskKind}.override_global_pin`) === true) {
-      const provider = configuredProvider;
+      const rawProvider = configuredProvider;
       const model = configuredModel;
-      if (!provider || !model) {
+      if (!rawProvider || !model) {
         throw new ApiError(
           'invalid_config_value',
-          `${scope.label}: task.${taskKind}.override_global_pin=true requires complete task.${taskKind}.provider + .model rows (provider='${provider ?? '∅'}', model='${model ?? '∅'}') — the opt-in never falls through to the global pin`,
+          `${scope.label}: task.${taskKind}.override_global_pin=true requires complete task.${taskKind}.provider + .model rows (provider='${rawProvider ?? '∅'}', model='${model ?? '∅'}') — the opt-in never falls through to the global pin`,
           422,
         );
       }
-      if (!isKnownProvider(provider) || !isProviderImplementedForTask(provider, taskKind)) {
+      const provider = readProviderId(rawProvider);
+      if (!provider || !isProviderImplementedForTask(provider, taskKind)) {
         throw new ApiError(
           'invalid_config_value',
-          `${scope.label}: task.${taskKind}.override_global_pin=true resolves to provider '${provider}' not implemented for task '${taskKind}'`,
+          `${scope.label}: task.${taskKind}.override_global_pin=true resolves to provider '${rawProvider}' not implemented for task '${taskKind}'`,
           422,
         );
       }
