@@ -400,7 +400,7 @@ describe('runSourceVerify', () => {
       verification: {
         policy_id: QUESTION_ADMISSION_POLICY_ID,
         outcome: 'passed',
-        evidence: { pack: 'question_admission', base_contract_digest: baseDigest },
+        evidence: { pack: 'question_admission', base_contract_digest: resolved.integrity_digest },
       },
       actorRef: 'practice:question_admission',
       now,
@@ -472,7 +472,6 @@ describe('runSourceVerify', () => {
     await seedKnowledge('k1');
     const qid = await seedQuestion({ knowledgeIds: ['k1'] });
     const snapshot = await loadQuestionGroupContractSnapshot(db, qid, { lockRoot: false });
-    const baseDigest = snapshot.contract.integrity_digest;
     const resolved = resolvedContract(snapshot.contract);
     const now = new Date('2026-10-17T00:00:00.000Z');
     const admitted = await publishQuestionGroup(db, {
@@ -500,7 +499,7 @@ describe('runSourceVerify', () => {
       verification: {
         policy_id: policyId,
         outcome: 'passed',
-        evidence: { pack: 'question_admission', base_contract_digest: baseDigest },
+        evidence: { pack: 'question_admission', base_contract_digest: resolved.integrity_digest },
       },
       actorRef: 'practice:question_admission',
       now,
