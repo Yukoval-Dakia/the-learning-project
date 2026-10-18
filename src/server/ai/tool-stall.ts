@@ -1,7 +1,7 @@
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
 
-/** Stop before the second consecutive call with the same canonical args. */
-export const TOOL_STALL_SAME_CALL_LIMIT = 2;
+/** The third consecutive identical call stops the run. One repeat can be a retry or a poll. */
+export const TOOL_STALL_SAME_CALL_LIMIT = 3;
 /** Quiet time with no new prose and no in-flight tool. */
 export const TOOL_STALL_NO_PROGRESS_MS = 3 * 60 * 1000;
 
@@ -83,4 +83,12 @@ export function toolStallReason(stall: ToolStall): string {
     return `stalled: same_call ${stall.toolName} x${stall.count}`;
   }
   return `stalled: no_progress ${stall.quietMs}ms`;
+}
+
+/** finish_reason written on the task_run row. */
+export function toolStallFinishReason(stall: ToolStall): string {
+  if (stall.kind === 'same_call') {
+    return `stall:same_call:${stall.toolName}:${stall.count}`;
+  }
+  return `stall:no_progress:${stall.quietMs}`;
 }

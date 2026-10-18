@@ -25,6 +25,7 @@
 
 import { ProviderSessionAdmissionError } from './provider-session-admission';
 import type { SDKMessage } from './sdk-types';
+import type { ToolStall } from './tool-stall';
 
 /** SDKResultError['subtype'] union, spelled out (sdk.d.ts:3538-3556). */
 type SdkResultErrorSubtype =
@@ -74,6 +75,8 @@ export interface AgentRunErrorFields {
   apiErrorStatus?: number | null;
   /** SDKResultError.errors, or [result error text] for api_error_result. */
   errors: string[];
+  /** Set when the terminal frame stopped on a tool stall. */
+  stall?: ToolStall;
   /** Known attempt cost; absent means unknown, not zero. */
   costUsd?: number;
 }
@@ -90,6 +93,7 @@ export class AgentRunError extends Error {
   readonly subtype: AgentFailureSubtype;
   readonly apiErrorStatus?: number | null;
   readonly errors: string[];
+  readonly stall?: ToolStall;
   readonly costUsd?: number;
 
   constructor(fields: AgentRunErrorFields) {
@@ -103,6 +107,7 @@ export class AgentRunError extends Error {
     this.subtype = fields.subtype;
     this.apiErrorStatus = fields.apiErrorStatus;
     this.errors = fields.errors;
+    this.stall = fields.stall;
     this.costUsd = fields.costUsd;
   }
 }

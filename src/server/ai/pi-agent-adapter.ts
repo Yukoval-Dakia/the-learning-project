@@ -75,7 +75,13 @@ import { UNDICI_DEFAULT_IDLE_TIMEOUT_MS } from './provider-http-timeout';
 import { createIdleBudgetFetch } from './provider-idle-fetch';
 import type { SDKAssistantMessage, SDKResultMessage, SDKUserMessage } from './sdk-types';
 import { isSpawnToolName } from './spawn-contract';
-import { type ToolStallTracker, createToolStall, toolStallReason } from './tool-stall';
+import {
+  type ToolStall,
+  type ToolStallTracker,
+  createToolStall,
+  toolStallFinishReason,
+  toolStallReason,
+} from './tool-stall';
 import {
   type PiSubagentHost,
   type PiSubagentSpec,
@@ -605,6 +611,8 @@ export function piTerminalResultFrame(args: {
   /** Set when finishTurn hit the configured turn ceiling — the pi
    *  equivalent of the SDK's `error_max_turns` terminal subtype. */
   cappedByMaxTurns?: boolean;
+  /** Set when the loop stopped on a tool stall. Not an abort: the terminal frame still exists. */
+  stall?: ToolStall;
   /** Only the opt-in structured task uses tool arguments as its terminal result. */
   structuredOutputTool?: boolean;
   /** Reject pi best-effort JSON salvage: original streamed arguments must parse strictly. */
@@ -683,6 +691,18 @@ export function piTerminalResultFrame(args: {
       errors: [final?.errorMessage ?? 'pi agent aborted by provider'],
       ...usageParts,
     } as SDKResultMessage & { source: 'pi' };
+  }
+  if (args.stall) {
+    return {
+      ...base,
+      subtype: 'error_during_execution',
+      is_error: true,
+      stop_reason: null,
+      total_cost_usd: costUsd,
+      errors: [toolStallFinishReason(args.stall)],
+      stall: args.stall,
+      ...usageParts,
+    } as SDKResultMessage & { source: 'pi'; stall: ToolStall };
   }
   if (!final) {
     return {
@@ -1532,6 +1552,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       // when the caller signal aborts (wired in the constructor) and when
       // close() tears down an in-flight query.
       aborted: this.abort.signal.aborted,
+      ...(stall.stall ? { stall: stall.stall } : {}),
       cappedByMaxTurns,
       structuredOutputTool: structuredOutput,
       invalidStructuredArguments,

@@ -23,6 +23,7 @@ import type {
   SDKResultMessage,
   SDKUserMessage,
 } from './sdk-types';
+import type { ToolStall } from './tool-stall';
 import type { PiSubagentSpec } from './tools/pi-subagent';
 import type { PiToolMount } from './tools/pi-tools';
 
@@ -63,7 +64,7 @@ export type PiRunnerMessage =
   | { type: 'text_delta'; text: string; session_id: string; source: 'pi' }
   | { type: 'thinking_delta'; text: string; session_id: string; source: 'pi' }
   | (SDKAssistantMessage & { source: 'pi' })
-  | (SDKResultMessage & { source: 'pi' })
+  | (SDKResultMessage & { source: 'pi'; stall?: ToolStall })
   | (SDKUserMessage & { source: 'pi' })
   | (Extract<SDKMessage, { type: 'system' }> & { source: 'pi' });
 
