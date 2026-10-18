@@ -60,6 +60,7 @@ export const fastTestInclude = [
   'src/capabilities/practice/server/quiz/verify-framework.test.ts',
   'src/capabilities/practice/server/rating-advisor.unit.test.ts',
   'src/capabilities/practice/tasks/evaluation-policy-routing.unit.test.ts',
+  'src/capabilities/practice/ui/blocks/custom-sandbox.test.ts',
   'src/core/capability/judges/exact.test.ts',
   'src/core/capability/judges/unit_dimension.test.ts',
   'src/core/capability/judges/unit_dimension/accelerator.test.ts',
