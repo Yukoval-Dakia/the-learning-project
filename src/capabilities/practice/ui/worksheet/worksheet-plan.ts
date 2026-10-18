@@ -125,10 +125,11 @@ function formatIssueDate(iso: string | undefined): string | null {
   return `${date.getMonth() + 1} 月 ${date.getDate()} 日`;
 }
 
-function isMathSlot(slot: ResponseSlotT, notation: 'katex' | null): boolean {
+/** Dots for maths working; free prose gets lines unless its own question text has a formula. */
+function isMathSlot(slot: ResponseSlotT, partHasMath: boolean): boolean {
   if (slot.kind === 'formula' || slot.kind === 'numeric') return true;
   if (slot.kind === 'blank') return slot.format === 'math';
-  return notation === 'katex';
+  return partHasMath;
 }
 
 function ruledPanel(lines: number): number {
@@ -138,12 +139,12 @@ function ruledPanel(lines: number): number {
 /** Mark and default panel height per slot kind; a presentation print hint overrides the height. */
 function writingShape(
   slot: ResponseSlotT,
-  notation: 'katex' | null,
+  partHasMath: boolean,
   orientation: SheetOrientation,
   hint: { print?: PresentationPrintHintT; minLines?: number } | undefined,
 ): { mark: WritingMark; panelMm: number; label: string } {
   const innerWidth = COLUMN_MM[orientation] - PANEL_INSET_MM * 2;
-  const math = isMathSlot(slot, notation);
+  const math = isMathSlot(slot, partHasMath);
   const unitHint =
     (slot.kind === 'blank' || slot.kind === 'numeric') && slot.unit_hint
       ? `（单位：${slot.unit_hint}）`
@@ -197,7 +198,7 @@ function writingShape(
 function choiceColumns(options: PlanOption[], orientation: SheetOrientation): 1 | 2 | 4 {
   const longest = Math.max(0, ...options.map((option) => [...option.md].length));
   if (orientation === 'landscape') return longest <= 12 ? 2 : 1;
-  if (longest <= 6 && options.length <= 4) return 4;
+  if (longest <= 4 && options.length <= 4) return 4;
   return longest <= 18 ? 2 : 1;
 }
 
@@ -382,7 +383,8 @@ function planItem(
       }
     }
     if (surface === 'writing') {
-      const shape = writingShape(slot, notation, itemOrientation, hint);
+      const partPrompt = faceById.get(slot.part_id)?.prompt_md ?? '';
+      const shape = writingShape(slot, MATH_HINT.test(partPrompt), itemOrientation, hint);
       blocks.push({ type: 'writing', key, issuanceId, slotId, unitIds, ring, ...shape });
       for (const unitId of unitIds) paperUnits.set(unitId, key);
       return;

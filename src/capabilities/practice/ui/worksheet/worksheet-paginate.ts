@@ -62,10 +62,15 @@ export type PaginateResult =
   | { ok: true; pages: LaidOutPage[] }
   | { ok: false; reason: 'layout_overflow'; key: string };
 
-/** Smallest start of a block that must share a page with a keepWithNext block before it. */
-function footprint(block: MeasuredBlock): number {
-  if (!block.split) return block.heightMm;
-  return block.split.labelMm + Math.min(MIN_SEGMENT_MM, block.split.panelMm);
+/**
+ * Whether `block` can start in `room` mm under the same rules the loop below applies: whole, or
+ * (writing panels) cut with both pieces at least MIN_SEGMENT_MM.
+ */
+function canStartIn(block: MeasuredBlock, room: number): boolean {
+  if (block.heightMm <= room) return true;
+  if (!block.split) return false;
+  const first = room - block.split.labelMm;
+  return first >= MIN_SEGMENT_MM && block.split.panelMm - first >= MIN_SEGMENT_MM;
 }
 
 export function paginate(
@@ -102,13 +107,13 @@ export function paginate(
 
     for (const [index, block] of flow.blocks.entries()) {
       const next = flow.blocks[index + 1];
-      const need =
-        block.keepWithNext && next
-          ? block.heightMm + BLOCK_GAP_MM + footprint(next)
-          : block.heightMm;
+      // A header or a stem stays on this page only if what follows can start right after it.
+      const keepsHere = (room: number) =>
+        !block.keepWithNext || !next || canStartIn(next, room - block.heightMm - BLOCK_GAP_MM);
 
       if (!block.split) {
-        if (used + gap() + need <= height) {
+        const room = height - used - gap();
+        if (block.heightMm <= room && keepsHere(room)) {
           place(block.key, block.heightMm, null);
           continue;
         }
