@@ -1,8 +1,8 @@
-import { inArray } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import type { SuggestionKindT } from '@/core/schema/event/known';
 import type { ProposalEvidenceRefT } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
-import { event } from '@/db/schema';
+import { evaluation, event } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { writeAiProposal } from './writer';
 
@@ -437,6 +437,105 @@ export async function writeJudgeRetractionProposal(
       },
       rollback_plan: { action: 'dismiss proposal; target judge remains active' },
       cooldown_key: `judge_retraction:${input.judge_event_id}`,
+    },
+    task_run_id: input.task_run_id ?? null,
+    cost_usd: input.cost_usd,
+    created_at: input.created_at,
+  });
+}
+
+export interface WriteEvaluationCorrectionProposalInput extends CommonProducerInput {
+  actor_ref?: string;
+  /** 目标 evaluation 行（native 评估，非 legacy judge event）。 */
+  evaluation_id: string;
+  /** rejudge = 重评冻结输入走 appeal 链；assert = 人工判定的 unit 结果直接激活。 */
+  correction_kind?: 'rejudge' | 'assert';
+  /** correction_kind='assert' 时必填：每个在判 unit 一条人工判定。 */
+  asserted_verdicts?: { scoring_unit_id: string; verdict: 'correct' | 'incorrect' }[];
+  /** 争议判词快照（coarse_outcome / score / judged_by 等）——提案的 grounding 证据。 */
+  observed?: Record<string, unknown>;
+  /** frozen 提交的 attempt event id（evt_assessment_<submission_id>），作 evidence_ref。 */
+  attempt_event_id?: string | null;
+}
+
+/**
+ * YUK-1407 — agent 发现疑似误判 ⇒ 可逆纠错 proposal（不自动执行）。
+ *
+ * grounding 纪律：目标必须是真实存在的 completed evaluation；proposal 携带该
+ * 评价的判词快照（observed）与 attempt event 证据引用 —— 不是 note 文本里
+ * 的裸 regex。pending 的 evaluation attempt 是可重试 infra 态，不是可纠错的
+ * 判词 → 422。
+ *
+ * accept 语义（practice proposal-accept-applier）：
+ *   - rejudge → 写 `experimental:appeal_request`（expected head = 当前 head）
+ *     入既有异步重判链（rejudge job → 冻结输入重评 → activation CAS →
+ *     settlement replay 回算学习效应）；
+ *   - assert  → 以 asserted_verdicts 同步产出 manual_assert candidate 并激活。
+ * 两条路径都不回写原评价；纠正本身也可再由新 proposal 纠回。
+ */
+export async function writeEvaluationCorrectionProposal(
+  db: DbLike,
+  input: WriteEvaluationCorrectionProposalInput,
+): Promise<string> {
+  const [target] = await db
+    .select({
+      evaluation_id: evaluation.evaluation_id,
+      status: evaluation.status,
+      evaluation_group_id: evaluation.evaluation_group_id,
+      submission_id: evaluation.submission_id,
+    })
+    .from(evaluation)
+    .where(eq(evaluation.evaluation_id, input.evaluation_id))
+    .limit(1);
+  if (!target) {
+    throw new ApiError('not_found', `evaluation ${input.evaluation_id} not found`, 404);
+  }
+  if (target.status !== 'completed') {
+    throw new ApiError(
+      'not_correctable',
+      'a pending evaluation attempt is retryable infra state, not a correctable verdict',
+      422,
+    );
+  }
+  const correctionKind = input.correction_kind ?? 'rejudge';
+  if (
+    correctionKind === 'assert' &&
+    (!Array.isArray(input.asserted_verdicts) || input.asserted_verdicts.length === 0)
+  ) {
+    throw new ApiError(
+      'validation_error',
+      "correction_kind='assert' requires non-empty asserted_verdicts",
+      400,
+    );
+  }
+  const evidenceRefs: ProposalEvidenceRefT[] = [...(input.evidence_refs ?? [])];
+  if (input.attempt_event_id && !evidenceRefs.some((ref) => ref.id === input.attempt_event_id)) {
+    evidenceRefs.unshift({ kind: 'event', id: input.attempt_event_id, event_role: 'judge' });
+  }
+
+  return writeAiProposal(db, {
+    id: input.id,
+    actor_ref: input.actor_ref ?? 'copilot',
+    payload: {
+      kind: 'judge_retraction',
+      target: { subject_kind: 'evaluation', subject_id: input.evaluation_id },
+      reason_md: input.reason_md,
+      evidence_refs: evidenceRefs,
+      suggestion_kind: 'corrective',
+      proposed_change: {
+        evaluation_id: input.evaluation_id,
+        evaluation_group_id: target.evaluation_group_id,
+        submission_id: target.submission_id,
+        correction_kind: correctionKind,
+        ...(input.asserted_verdicts ? { asserted_verdicts: input.asserted_verdicts } : {}),
+        observed: input.observed ?? {},
+        reason_md: input.reason_md,
+      },
+      rollback_plan: {
+        action:
+          'dismiss proposal — no evaluation changes; an accepted correction is itself a new evaluation/correction event and can be re-corrected by a further proposal',
+      },
+      cooldown_key: `judge_retraction:${input.evaluation_id}`,
     },
     task_run_id: input.task_run_id ?? null,
     cost_usd: input.cost_usd,

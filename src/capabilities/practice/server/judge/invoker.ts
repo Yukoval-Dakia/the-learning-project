@@ -428,10 +428,31 @@ export class JudgeInvoker {
       );
     }
 
-    return await runner.run({
+    const runnerResult = await runner.run({
       question: buildLocalJudgeQuestion(input.question, route),
       answer: { content: input.answer_md },
     });
+    // YUK-1407 — 过程作答超出 exact 合同 ⇒ 既有 SemanticJudge 补判（"no new
+    // grader"：这是当前架构里语义判官唯一已接线的位置）。只升级比较器明确
+    // 标注 'process_answer_unresolvable' 的 unsupported；其它 unsupported
+    // （input validation / route 缺失）照旧原样返回。语义判官失败/不可判也
+    // 以 unsupported 如实上报 —— 绝不把"看不懂"落成 0。
+    if (
+      route === 'exact' &&
+      runnerResult.coarse_outcome === 'unsupported' &&
+      runnerResult.evidence_json.reason === 'process_answer_unresolvable'
+    ) {
+      const escalated = await runSemanticJudge({ ...input, runTaskFn });
+      return {
+        ...escalated,
+        evidence_json: {
+          ...escalated.evidence_json,
+          escalated_from: 'exact',
+          exact_evidence: runnerResult.evidence_json,
+        },
+      };
+    }
+    return runnerResult;
   }
 
   private async emitTelemetry(telemetry: JudgeInvocationTelemetry): Promise<void> {
