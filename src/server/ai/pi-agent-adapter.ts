@@ -1667,6 +1667,12 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     const rawToolArguments = new Map<number, string>();
     const streamedArgsByCallId = new Map<string, string>();
     let invalidStructuredArguments = false;
+    // pi's producer only enqueues events; it does not wait for this adapter's
+    // consumer. Gate scheduling on observation of the SAME assistant message
+    // (pi emits and passes the same object to finishTurn), never a default flag.
+    // Root-local state cannot be acknowledged by a nested loop's events.
+    let observedStructuredMessage: PiAssistantMessage | undefined;
+    let acknowledgeStructuredMessage: ((message: PiAssistantMessage) => void) | undefined;
     const config: AgentLoopConfig = {
       model: this.model,
       ...this.baseLoopConfig(),
@@ -1684,7 +1690,30 @@ class PiPreparedQuery implements PreparedExecutionQuery {
             // on an 'auto' lane takes the closing reminder, and a clean submit
             // envelope rejected at the parameter-contract seam takes the
             // correction turn. Total model turns are at most initial + one.
-            finishTurn: (({ message, toolResults }) => {
+            finishTurn: (async ({ message, toolResults }) => {
+              if (observedStructuredMessage !== message && !this.abort.signal.aborted) {
+                await new Promise<void>((resolve) => {
+                  const done = () => {
+                    this.abort.signal.removeEventListener('abort', done);
+                    acknowledgeStructuredMessage = undefined;
+                    resolve();
+                  };
+                  acknowledgeStructuredMessage = (observed) => {
+                    if (observed === message) done();
+                  };
+                  this.abort.signal.addEventListener('abort', done, { once: true });
+                });
+              }
+              // Abort/close releases the wait without scheduling another turn.
+              // Missing or invalid streamed JSON stays terminal before either
+              // landing allowance can be consumed or evidence can be reset.
+              if (
+                this.abort.signal.aborted ||
+                observedStructuredMessage !== message ||
+                invalidStructuredArguments
+              ) {
+                return { action: 'end' as const };
+              }
               const verdict = classifySubmitTurn(
                 {
                   stopReason: message.stopReason,
@@ -1843,6 +1872,8 @@ class PiPreparedQuery implements PreparedExecutionQuery {
               invalidStructuredArguments = true;
             }
           });
+          observedStructuredMessage = event.message;
+          acknowledgeStructuredMessage?.(event.message);
         }
         numTurns += 1;
         yield {

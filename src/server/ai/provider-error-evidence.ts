@@ -135,6 +135,33 @@ const RESIDUAL_CREDENTIAL_PATTERN =
 
 const ARG_EVIDENCE_MAX_DEPTH = 16;
 
+function sanitizeArgumentText(
+  value: string,
+  options: ProviderErrorSanitizeOptions,
+  depth: number,
+): string {
+  const text = sanitizeProviderErrorText(value, options);
+  let inspected = text;
+  for (let level = depth; level <= ARG_EVIDENCE_MAX_DEPTH; level += 1) {
+    // Inspect decoded views too: embedded/malformed text need not start with
+    // a JSON delimiter, and its keys or actual secrets may be JSON-escaped
+    // several times. Keep harmless text's original escaping in the evidence.
+    if (
+      RESIDUAL_CREDENTIAL_PATTERN.test(inspected) ||
+      sanitizeProviderErrorText(inspected, options) !== inspected
+    ) {
+      return '[redacted]';
+    }
+    const decoded = inspected.replace(/\\(?:["\\/bfnrt]|u[\da-fA-F]{4})/g, (encoded) =>
+      JSON.parse(`"${encoded}"`),
+    );
+    if (decoded === inspected) return text;
+    inspected = decoded;
+  }
+  // An unresolved representation at the bound must not retain a credential.
+  return '[redacted]';
+}
+
 function sanitizeArgumentValue(
   value: unknown,
   options: ProviderErrorSanitizeOptions,
@@ -143,20 +170,16 @@ function sanitizeArgumentValue(
   if (depth > ARG_EVIDENCE_MAX_DEPTH) return '[redacted]';
   if (typeof value === 'string') {
     const trimmed = value.trim();
-    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-      // Embedded JSON text — the model serialized a composite inside a string
-      // field. Recurse so inner credential KEYS are redacted even though the
-      // outer text never exposes them unescaped.
+    if (trimmed.startsWith('{') || trimmed.startsWith('[') || trimmed.startsWith('"')) {
+      // Include JSON string literals: each parse unwraps one encoding layer,
+      // sharing the same depth bound as object/array traversal.
       try {
         return JSON.stringify(sanitizeArgumentValue(JSON.parse(value), options, depth + 1));
       } catch {
-        // Malformed embedded JSON: textual passes first, then fail closed if
-        // a credential-looking field remains that no pattern could redact.
-        const text = sanitizeProviderErrorText(value, options);
-        return RESIDUAL_CREDENTIAL_PATTERN.test(text) ? '[redacted]' : text;
+        // All retained string fallbacks share the fail-closed boundary below.
       }
     }
-    return sanitizeProviderErrorText(value, options);
+    return sanitizeArgumentText(value, options, depth);
   }
   if (Array.isArray(value)) {
     return value.map((entry) => sanitizeArgumentValue(entry, options, depth + 1));
@@ -164,7 +187,7 @@ function sanitizeArgumentValue(
   if (value !== null && typeof value === 'object') {
     const out: Record<string, unknown> = {};
     for (const [key, entry] of Object.entries(value)) {
-      out[key] = CREDENTIAL_KEY_NAME.test(key)
+      out[sanitizeArgumentText(key, options, depth)] = CREDENTIAL_KEY_NAME.test(key)
         ? '[redacted]'
         : sanitizeArgumentValue(entry, options, depth + 1);
     }
@@ -203,8 +226,7 @@ export function sanitizeArgumentsEvidenceText(
   try {
     return JSON.stringify(sanitizeArgumentValue(JSON.parse(text), options ?? {}, 0));
   } catch {
-    const sanitized = sanitizeProviderErrorText(text, options);
-    return RESIDUAL_CREDENTIAL_PATTERN.test(sanitized) ? '[redacted]' : sanitized;
+    return sanitizeArgumentText(text, options ?? {}, 0);
   }
 }
 
