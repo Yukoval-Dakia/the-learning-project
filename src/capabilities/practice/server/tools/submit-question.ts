@@ -20,8 +20,8 @@
 //   - withheld：发布了但未准入（verify lane 待跑），或草稿有未决项未发布；
 //   - pending：异步 op（source_verify 派发）挂起；
 //   - conflict：CAS / 去重 claim / request_id 复用；
-//   - admitted：判分准入钩子的 admitted 分支（当前实现不自行 admitted —
-//     dual-solve / calibration lane 挂 runAdmissionChecks 调用点）。
+//   - admitted：判分准入决定的 admitted 分支。提交本身没有裁决，不把新题
+//     标成 admitted；question_admission_run 在双解通过后用同一决定标 admitted。
 //
 // 幂等：request_id 必填；同 id 同内容返回同回执，同 id 不同内容冲突拒绝。
 

@@ -74,6 +74,11 @@ export const QUESTION_CONTENT_WRITER_REGISTRY: Record<string, QuestionContentWri
     tickets: ['YUK-1468'],
     note: '草稿提交闸：question 行 INSERT/UPDATE（prompt_md/reference_md/choices_md/structured —— v2 文档的 legacy 投影）与 publishQuestionGroup 同事务铸 revision（未决转换 withheld、CAS/dedup 冲突拒绝、admission 维度如实入契约）。',
   },
+  'src/capabilities/practice/jobs/question_admission_run.ts': {
+    status: 'publisher-converged',
+    tickets: ['YUK-1468'],
+    note: '准入通过后，同一事务里 publishQuestionGroup 铸 admitted revision，再把 prompt_md/reference_md/choices_md 投影成该 revision。withheld 不改内容列。',
+  },
   'src/server/ai/solution-generate.ts': {
     status: 'publisher-converged',
     tickets: ['YUK-1043'],

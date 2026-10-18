@@ -7,16 +7,25 @@
 // （异源与否是 owner 决策，配置面在 job 层；缺省同一 registry 模型、独立
 // 上下文）。
 //
-// 一致性只比 typed 键（stable id 集合 / 归一化文本集 / 数值+容差），绝不解析
-// 答案文本铸键。印出答案原文只在独立的 source_crosscheck mode 里作交叉核验
-// —— conflict/unknown 都阻断准入。
+// 已有作者键时，模型的最终答案交给这道题的生产判分器决定是否接受。
+// 没有作者键时，两次求解仍只比 typed 键来铸键。印出答案原文只在独立的
+// source_crosscheck mode 里作交叉核验 —— conflict/unknown 都阻断准入。
 
 import { eq } from 'drizzle-orm';
 import { canonicalHash } from '@/core/migration/canonical';
-import { normalizeBlankText } from '@/core/schema/assessment/grade';
+import {
+  gradeBlankExactUnit,
+  gradeSelectUnit,
+  normalizeBlankText,
+} from '@/core/schema/assessment/grade';
+import type { ScoringUnitResultT } from '@/core/schema/assessment/judgment';
 import { isPublicSharedMaterial } from '@/core/schema/assessment/materials';
 import { describeSelectItem } from '@/core/schema/assessment/response';
-import type { BlankNormalizationT, ScoringUnitCriterionT } from '@/core/schema/assessment/scoring';
+import type {
+  BlankNormalizationT,
+  ScoringUnitCriterionT,
+  ScoringUnitT,
+} from '@/core/schema/assessment/scoring';
 import type { Db } from '@/db/client';
 import { ai_task_runs } from '@/db/schema';
 import type { SubjectProfile } from '@/subjects/profile';
@@ -24,13 +33,13 @@ import { parseTaskOutput } from '../../tasks/parse-output';
 import {
   QuestionAdmissionSolveInput,
   type QuestionAdmissionSolveInputT,
-  QuestionAdmissionSolveOutput,
   type QuestionAdmissionSolveOutputT,
   type QuestionAdmissionSolveUnitOutputT,
   type QuestionAdmissionSolveUnitT,
   QuestionAdmissionSourceCrosscheckInput,
   QuestionAdmissionSourceCrosscheckOutput,
   type QuestionAdmissionSourceCrosscheckOutputT,
+  parseQuestionAdmissionSolveModelOutput,
 } from '../../tasks/question-admission-solve';
 // YUK-1445 — Provider/TaskTextResult 经 verify-framework（既有 server/ai
 // 边持有者）取，taskInputHash 经 judge-execution-provenance 的既有复导出
@@ -90,6 +99,16 @@ export interface DualSolveResult {
 export type DualSolveOutcome =
   | { ok: true; result: DualSolveResult }
   | { ok: false; error: string; receipts: AdmissionSolveReceipt[] };
+
+/** Parse failed after the provider returned. The receipt is the paid task run when it can be sealed. */
+class UnparsedSolveError extends Error {
+  readonly receipt?: AdmissionSolveReceipt;
+  constructor(message: string, receipt?: AdmissionSolveReceipt) {
+    super(message);
+    this.name = 'UnparsedSolveError';
+    this.receipt = receipt;
+  }
+}
 
 /** task_run 收据密封：必须存在、成功、kind 匹配、input hash 精确绑定本次请求体。 */
 async function sealTaskRun(
@@ -153,8 +172,20 @@ function solverUnits(
               })),
             }
           : undefined;
+      const answerKind: 'blank_text' | 'blank_numeric' | undefined =
+        unit.seeded_criterion?.kind === 'blank_key'
+          ? unit.seeded_criterion.key.kind === 'numeric'
+            ? 'blank_numeric'
+            : 'blank_text'
+          : undefined;
       const blank =
-        slot?.kind === 'blank' ? { format: slot.format, unit_hint: slot.unit_hint } : undefined;
+        slot?.kind === 'blank'
+          ? {
+              format: slot.format,
+              ...(slot.unit_hint != null ? { unit_hint: slot.unit_hint } : {}),
+              ...(answerKind != null ? { answer_kind: answerKind } : {}),
+            }
+          : undefined;
       return {
         scoring_unit_id: unit.scoring_unit_id,
         part_id: unit.part_id,
@@ -220,7 +251,9 @@ function keysAgree(
   b: AdmissionKey,
   normalization: BlankNormalizationT | null,
 ): { agree: boolean; detail?: string; key?: AdmissionKey } {
-  if (a.kind !== b.kind) return { agree: false, detail: `key kind ${a.kind} vs ${b.kind}` };
+  if (a.kind !== b.kind) {
+    return { agree: false, detail: `key kind ${a.kind} vs ${b.kind}` };
+  }
   if (a.kind === 'select' && b.kind === 'select') {
     const sa = [...a.accepted_item_ids].sort();
     const sb = [...b.accepted_item_ids].sort();
@@ -313,35 +346,107 @@ function keyFromAnswer(
   }
 }
 
-/** seeded 判据 vs 双解达成键：seed 存在 ⇒ 必须一致才可准入。 */
-function seedMatches(seed: ScoringUnitCriterionT, key: AdmissionKey): boolean {
-  if (seed.kind === 'select_key' && key.kind === 'select') {
-    const a = [...seed.accepted_item_ids].sort();
-    const b = [...key.accepted_item_ids].sort();
-    return a.length === b.length && a.every((id, i) => id === b[i]);
+/** The author's stored key. Model output is compared against it and never copied over it. */
+function authorAdmissionKey(seed: ScoringUnitCriterionT | null): AdmissionKey | null {
+  if (seed?.kind === 'select_key') {
+    return { kind: 'select', accepted_item_ids: [...seed.accepted_item_ids] };
   }
-  if (seed.kind === 'blank_key' && key.kind === 'blank_text' && seed.key.kind === 'text') {
-    const norm = seed.key.normalization;
-    const as = [...new Set(seed.key.accepted.map((t) => normalizeBlankText(t, norm)))].sort();
-    const bs = [...new Set(key.accepted.map((t) => normalizeBlankText(t, norm)))].sort();
-    return as.length === bs.length && as.every((t, i) => t === bs[i]);
+  if (seed?.kind === 'blank_key' && seed.key.kind === 'text') {
+    return { kind: 'blank_text', accepted: [...seed.key.accepted] };
   }
-  if (seed.kind === 'blank_key' && key.kind === 'blank_numeric' && seed.key.kind === 'numeric') {
-    if ((seed.key.expected_unit ?? null) !== (key.expected_unit ?? null)) return false;
-    // 容差同型且不得放宽：key 的容差宽于 seed ⇒ 视为不等价（不 mint 更宽容差）。
-    const seedTol = seed.key.tolerance;
-    if (seedTol.kind !== key.tolerance.kind) return false;
-    const seedBound = seedTol.kind === 'absolute' ? seedTol.value : seedTol.ratio;
-    const keyBound = key.tolerance.kind === 'absolute' ? key.tolerance.value : key.tolerance.ratio;
-    if (keyBound > seedBound) return false;
-    const diff = Math.abs(seed.key.expected - key.expected);
-    return seedTol.kind === 'absolute'
-      ? diff <= seedTol.value
-      : seed.key.expected === 0
-        ? diff === 0
-        : diff / Math.abs(seed.key.expected) <= seedTol.ratio;
+  if (seed?.kind === 'blank_key' && seed.key.kind === 'numeric') {
+    return {
+      kind: 'blank_numeric',
+      expected: seed.key.expected,
+      tolerance: seed.key.tolerance,
+      ...(seed.key.expected_unit != null ? { expected_unit: seed.key.expected_unit } : {}),
+    };
   }
-  return false;
+  return null;
+}
+
+function gradingUnit(unit: AdmissionUnitSpec): ScoringUnitT | null {
+  const criterion = unit.seeded_criterion;
+  if (criterion?.kind !== 'select_key' && criterion?.kind !== 'blank_key') return null;
+  const points = unit.points ?? 0;
+  const rule =
+    unit.seeded_rule ??
+    (criterion.kind === 'blank_key'
+      ? {
+          version: 1 as const,
+          cases: [{ when: { correct: { eq: 1 } }, award: { points } }],
+          otherwise: { points: 0 },
+        }
+      : {
+          version: 1 as const,
+          cases: [
+            {
+              when: { all: [{ wrong: { eq: 0 } }, { miss: { eq: 0 } }] },
+              award: { points },
+            },
+          ],
+          otherwise: { points: 0 },
+        });
+  return {
+    scoring_unit_id: unit.scoring_unit_id,
+    slot_refs: unit.slot_refs,
+    material_refs: unit.material_refs,
+    evidence_slot_refs: unit.evidence_slot_refs,
+    requires_group_evidence: unit.requires_group_evidence,
+    criterion,
+    points: unit.points,
+    rule,
+  };
+}
+
+function modelFinalAnswerText(key: AdmissionKey): string | null {
+  if (key.kind === 'blank_text') return key.accepted[0] ?? null;
+  if (key.kind !== 'blank_numeric') return null;
+  return key.expected_unit != null ? `${key.expected} ${key.expected_unit}` : String(key.expected);
+}
+
+function authorKeyAcceptsGrade(result: ScoringUnitResultT, points: number | null): boolean {
+  if (result.status !== 'scored' || result.comparison == null) return false;
+  const { comparison } = result;
+  const keyHit =
+    comparison.correct === 1 ||
+    (comparison.set != null &&
+      comparison.set.expected > 0 &&
+      comparison.set.wrong === 0 &&
+      comparison.set.miss === 0 &&
+      comparison.set.hit === comparison.set.expected);
+  if (!keyHit) return false;
+  if (points == null) return true;
+  return result.points_awarded === points;
+}
+
+/** 作者键是否接受模型的最终答案：走这道题自己的判分器，不另定相等。 */
+async function authorKeyAccepts(unit: AdmissionUnitSpec, key: AdmissionKey): Promise<boolean> {
+  const scoring = gradingUnit(unit);
+  const slotId = unit.slot_refs[0];
+  if (scoring == null || slotId == null) return false;
+  if (key.kind === 'select' && scoring.criterion.kind === 'select_key') {
+    return authorKeyAcceptsGrade(
+      gradeSelectUnit(scoring, {
+        slot_id: slotId,
+        kind: 'select',
+        state: 'answered',
+        item_ids: key.accepted_item_ids,
+      }),
+      unit.points,
+    );
+  }
+  const text = modelFinalAnswerText(key);
+  if (text == null || scoring.criterion.kind !== 'blank_key') return false;
+  return authorKeyAcceptsGrade(
+    await gradeBlankExactUnit(scoring, {
+      slot_id: slotId,
+      kind: 'blank',
+      state: 'answered',
+      text,
+    }),
+    unit.points,
+  );
 }
 
 async function runSolvePass(
@@ -355,11 +460,27 @@ async function runSolvePass(
     ...(subjectProfile != null ? { subjectProfile } : {}),
     ...(override != null ? { override } : {}),
   });
-  const output =
-    result.structured_output !== undefined
-      ? QuestionAdmissionSolveOutput.parse(result.structured_output)
-      : parseTaskOutput(result.text, QUESTION_ADMISSION_TASK_KIND, QuestionAdmissionSolveOutput);
-  return { output, receipt: await sealTaskRun(db, payload, result, output) };
+  const raw = result.structured_output != null ? result.structured_output : result.text;
+  try {
+    const output = parseQuestionAdmissionSolveModelOutput(raw, payload.units);
+    return { output, receipt: await sealTaskRun(db, payload, result, output) };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    const taskRunId = result.task_run_id;
+    let receipt: AdmissionSolveReceipt | undefined;
+    if (taskRunId != null) {
+      try {
+        receipt = await sealTaskRun(db, payload, result, raw);
+      } catch {
+        receipt = undefined;
+      }
+    }
+    const marked =
+      taskRunId != null && !detail.includes(`task_run_id=${taskRunId}`)
+        ? `${detail};task_run_id=${taskRunId}`
+        : detail;
+    throw new UnparsedSolveError(marked, receipt);
+  }
 }
 
 /**
@@ -394,10 +515,11 @@ export async function runDualSolve(
   try {
     first = await runSolvePass(db, deps.runTask, deps.subjectProfile, payloadA);
   } catch (error) {
+    const receipt = error instanceof UnparsedSolveError ? error.receipt : undefined;
     return {
       ok: false,
       error: `solve_a failed: ${error instanceof Error ? error.message : String(error)}`,
-      receipts,
+      receipts: receipt != null ? [...receipts, receipt] : receipts,
     };
   }
   receipts.push(first.receipt);
@@ -411,10 +533,11 @@ export async function runDualSolve(
       deps.solver2 ?? undefined,
     );
   } catch (error) {
+    const receipt = error instanceof UnparsedSolveError ? error.receipt : undefined;
     return {
       ok: false,
       error: `solve_b failed: ${error instanceof Error ? error.message : String(error)}`,
-      receipts,
+      receipts: receipt != null ? [...receipts, receipt] : receipts,
     };
   }
   receipts.push(second.receipt);
@@ -491,27 +614,33 @@ export async function runDualSolve(
         continue;
       }
     }
-    const agree = keysAgree(keyA, keyB, unit.blank_normalization);
-    if (!agree.agree || agree.key == null) {
-      verdicts.set(unit.scoring_unit_id, {
-        status: 'conflict',
-        detail: `independent solves disagree: ${agree.detail}`,
-      });
-      continue;
+    const authorKey = authorAdmissionKey(unit.seeded_criterion);
+    if (unit.seeded_criterion != null) {
+      if (
+        authorKey == null ||
+        !(await authorKeyAccepts(unit, keyA)) ||
+        !(await authorKeyAccepts(unit, keyB))
+      ) {
+        verdicts.set(unit.scoring_unit_id, {
+          status: 'seed_mismatch',
+          detail: 'the author key does not accept the solver answer',
+        });
+        continue;
+      }
+      verdicts.set(unit.scoring_unit_id, { status: 'agreed', key: authorKey });
+    } else {
+      const agree = keysAgree(keyA, keyB, unit.blank_normalization);
+      if (!agree.agree || agree.key == null) {
+        verdicts.set(unit.scoring_unit_id, {
+          status: 'conflict',
+          detail: `independent solves disagree: ${agree.detail}`,
+        });
+        continue;
+      }
+      verdicts.set(unit.scoring_unit_id, { status: 'agreed', key: agree.key });
     }
-    if (unit.seeded_criterion != null && !seedMatches(unit.seeded_criterion, agree.key)) {
-      verdicts.set(unit.scoring_unit_id, {
-        status: 'seed_mismatch',
-        detail: 'agreed key conflicts with the seeded typed criterion',
-      });
-      continue;
-    }
-    verdicts.set(unit.scoring_unit_id, { status: 'agreed', key: agree.key });
     probeCandidates.set(unit.scoring_unit_id, {
-      equivalent_forms: (outA.equivalent_forms ?? []).map((f) => ({
-        ...(f.item_ids != null ? { item_ids: f.item_ids } : {}),
-        ...(f.text != null ? { text: f.text } : {}),
-      })),
+      equivalent_forms: [],
       typical_wrong: (outA.typical_wrong ?? []).map((w) => ({
         ...(w.item_ids != null ? { item_ids: w.item_ids } : {}),
         ...(w.text != null ? { text: w.text } : {}),

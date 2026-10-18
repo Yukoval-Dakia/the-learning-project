@@ -387,7 +387,7 @@ export async function runQuestionAdmission(
           material_refs: unit.material_refs,
           evidence_slot_refs: unit.evidence_slot_refs,
           requires_group_evidence: unit.requires_group_evidence,
-          criterion: criterionFromKey(verdict.key, unit),
+          criterion: unit.seeded_criterion ?? criterionFromKey(verdict.key, unit),
           points: unit.points,
           rule: unit.seeded_rule ?? defaultRuleFor(unit, spec),
         });

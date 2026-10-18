@@ -1,11 +1,12 @@
 import { createHash } from 'node:crypto';
 import { createId } from '@paralleldrive/cuid2';
-import { and, desc, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
+import { and, desc, eq, ne, or, sql } from 'drizzle-orm';
 import {
   DEDUP_OVERLAP_THRESHOLD,
   canonicalQuestionContentHash,
   maxNgramOverlap,
   mergeExactQuestionDuplicateKnowledgeIds,
+  runQuestionAdmissionChecks,
 } from '@/capabilities/practice/public';
 import { newId } from '@/core/ids';
 import {
@@ -31,15 +32,9 @@ import {
   structuredQuestionToDraftDocument,
 } from '@/core/schema/question-draft';
 import type { Db, Tx } from '@/db/client';
-import {
-  knowledge,
-  question,
-  question_block,
-  question_group_lifecycle,
-  question_revision,
-} from '@/db/schema';
+import { question, question_block, question_group_lifecycle, question_revision } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { contractIntegrityDigest } from '@/kernel/records/assessment-normalization';
+import { publishedContractSeal } from '@/kernel/records/assessment-normalization';
 import type {
   PublishAdmission,
   PublishQuestionGroupResult,
@@ -71,9 +66,10 @@ import { publishQuestionGroup } from '@/server/questions/publisher';
 // revision）。内容指纹与旧供给链相同（prompt/reference/choices/rubric），
 // 不含 source 与知识点；近似重复用同一 n-gram 阈值。绝不伪造 extraction_hash。
 //
-// 判分准入：runAdmissionChecks 仍只做死 KC 与逐 unit 可判性，不把新题自动
-// 判成 admitted。已经 admitted 的组只有答案键、参考答案、选项、rubric、
-// 评分单元和执行计划都没变时才保留原证据；这些一变就回到 withheld。
+// 判分准入：提交时没有裁决，新题保持 withheld。question_admission_run 把双解
+// 通过的裁决交给同一决定，通过且知识点仍活着才标 admitted。已经 admitted 的
+// 组只有答案键、参考答案、选项、rubric、评分单元和执行计划都没变时才保留
+// 原证据；这些一变就回到 withheld。
 // 比较前把已存 revision 与新契约都归一到同一草稿编码（旧格式
 // option_set_key / single_choice 与再编码后的 select_key / select 才能对齐）。
 // 回执、准入和练习池跟当前 revision 能不能发出走。
@@ -191,7 +187,6 @@ export interface AdmissionCheckInput {
 }
 
 export interface AdmissionCheckResult {
-  /** 今天的 gate：不自行 admitted —— dual-solve/calibration lane 挂此调用点。 */
   admission:
     | { state: 'withheld'; reason: 'unverified_rules' }
     | { state: 'admitted'; evidence: null };
@@ -201,45 +196,18 @@ export interface AdmissionCheckResult {
 }
 
 /**
- * 判分准入检查。今天是既有 gate 的首个实现：
- *   - 逐 unit：deterministic + 完整 key/rule/points ⇒ judgeable（verifiable
- *     候选，准入仍等 dual-solve lane）；model_executor 无 admitted slice ⇒
- *     'no_admitted_executor'；其余 ⇒ human_review / missing_*。
- *   - 组级：knowledge_ids 活体（死节点 ⇒ blocker，与 store_sourced_question
- *     同语义）。
- * dual independent solve + per-unit calibration 由另一 lane 在本函数内扩展。
+ * 判分准入检查。提交不带裁决：可判的 unit 记 verification_pending，整组
+ * withheld。question_admission_run 把通过的裁决传进同一决定后，活知识点上
+ * 全部 unit admitted 才返回 admitted。死知识点仍是组级 blocker。
  */
 export async function runAdmissionChecks(
   db: Db | Tx,
   input: AdmissionCheckInput,
 ): Promise<AdmissionCheckResult> {
-  const groupBlockers: AdmissionCheckResult['group_blockers'] = [];
-  if (input.knowledgeIds.length > 0) {
-    const liveRows = await db
-      .select({ id: knowledge.id })
-      .from(knowledge)
-      .where(and(inArray(knowledge.id, input.knowledgeIds), isNull(knowledge.archived_at)));
-    const live = new Set(liveRows.map((r) => r.id));
-    const dead = input.knowledgeIds.filter((id) => !live.has(id));
-    if (dead.length > 0) {
-      groupBlockers.push({
-        code: 'dead_knowledge_node',
-        detail: `knowledge ids 不存在或已归档: ${dead.join(', ')}`,
-      });
-    }
-  }
-  const perUnit: SubmitUnitOutcome[] = input.unitSummary.map((u) => ({
-    unit_id: u.unit_id,
-    status: u.judgeable_today ? 'pending' : 'withheld',
-    ...(u.judgeable_today
-      ? { reason: 'verification_pending' }
-      : { reason: u.withheld_reason ?? 'unjudgeable' }),
-  }));
-  return {
-    admission: { state: 'withheld', reason: 'unverified_rules' },
-    per_unit: perUnit,
-    group_blockers: groupBlockers,
-  };
+  return runQuestionAdmissionChecks(db, {
+    knowledgeIds: input.knowledgeIds,
+    unitSummary: input.unitSummary,
+  });
 }
 
 // ---------- question 行投影 ----------
@@ -766,13 +734,6 @@ export async function submitDraftQuestion(
       doc.knowledge_ids,
     );
     const presentation = presentationForDraft(doc, contract);
-    const integrityDigest = contractIntegrityDigest({
-      structure: contract.structure,
-      response_spec: contract.response_spec,
-      scoring_basis: contract.scoring_basis,
-      execution_plan: contract.execution_plan,
-      ...(presentation != null ? { presentation } : {}),
-    });
     const barrierIssues = contractBarrierIssues(contract, presentation, effectiveAdmission);
     if (barrierIssues.length > 0) {
       const withheld: SubmitResult = {
@@ -785,6 +746,13 @@ export async function submitDraftQuestion(
       };
       return withheld;
     }
+    const integrityDigest = publishedContractSeal({
+      structure: contract.structure,
+      response_spec: contract.response_spec,
+      scoring_basis: contract.scoring_basis,
+      execution_plan: contract.execution_plan,
+      ...(presentation != null ? { presentation } : {}),
+    }).canonical;
     if (isNew) {
       // live 去重 claim：canonical hash 占用者存在 ⇒ cross-KC merge（与供给
       // 链同语义）；否则插入新行。
