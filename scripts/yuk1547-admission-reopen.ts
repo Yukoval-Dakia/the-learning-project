@@ -269,6 +269,7 @@ async function runProbe(
   plan: ProbePlan,
   input: unknown,
   parameters: Record<string, unknown>,
+  receiptProbes: Record<string, unknown>[],
 ): Promise<Record<string, unknown>> {
   const { route } = plan;
   const submitPolicy = resolveStructuredSubmitPolicy(route.provider, route.model);
@@ -285,6 +286,9 @@ async function runProbe(
     requests: [] as Record<string, unknown>[],
     landing_turn_used: false,
   };
+  // Attach before sending: the outer finally must retain failure evidence
+  // and any earlier paid turn even when this probe never returns successfully.
+  receiptProbes.push(probe);
   const messages: Record<string, unknown>[] = [
     {
       role: 'system',
@@ -299,6 +303,12 @@ async function runProbe(
     if (requests.length >= 2) {
       throw new Error('preflight probe exceeded its authorized turn bound (initial + one landing)');
     }
+    const reqRecord: Record<string, unknown> = {
+      role: requests.length === 0 ? 'initial' : 'landing',
+      started_at: new Date().toISOString(),
+    };
+    // A transport failure still represents a sent request with unknown cost.
+    requests.push(reqRecord);
     const response = await fetch(`${route.endpoint}/chat/completions`, {
       method: 'POST',
       redirect: 'error',
@@ -329,11 +339,7 @@ async function runProbe(
         ...structuredSubmitWireFields(submitPolicy),
       }),
     });
-    const reqRecord: Record<string, unknown> = {
-      role: requests.length === 0 ? 'initial' : 'landing',
-      http_status: response.status,
-    };
-    requests.push(reqRecord);
+    reqRecord.http_status = response.status;
     if (response.status !== 200) {
       // YUK-1559 (C6) — a non-2xx leaves the sanitized, bounded provider
       // error body + status + request id on the receipt, so a refused
@@ -465,7 +471,7 @@ async function preflight(path: string) {
         plan.mode === 'solve'
           ? QuestionAdmissionSolveInput.parse(SOLVE_PROBE_INPUT)
           : QuestionAdmissionSourceCrosscheckInput.parse(CROSSCHECK_PROBE_INPUT);
-      probes.push(await runProbe(plan, input, schema));
+      await runProbe(plan, input, schema, probes);
     }
     receipt.passed = true;
     console.log('PASS: HTTP 200; exactly one submit call; strict schema; no paid_effect created');
