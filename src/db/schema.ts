@@ -1557,6 +1557,18 @@ export const ai_task_runs = pgTable(
         outputTokens: number;
         thinkingBlocks?: number;
         thinkingCharacters?: number;
+        /** YUK-1531 — estimated when a timeout had no provider usage payload. */
+        usage_basis?: 'reported' | 'estimated';
+        phases?: {
+          prompt_build_ms?: number;
+          model_ttft_ms?: number | null;
+          model_total_ms?: number;
+          stream_ms?: number;
+          parse_ms?: number;
+          validation_ms?: number;
+          retry_count?: number;
+          db_write_ms?: number;
+        };
         /** YUK-1058 — D18 eval 镜像字段（可选；仅 task_kind='D18EvalHarness' 行）。 */
         d18_score?: { points_awarded: number; max_points: number };
         d18_escalated?: boolean;

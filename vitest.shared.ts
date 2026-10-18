@@ -85,6 +85,7 @@ export const fastTestInclude = [
   'src/server/ai/laminar-transcript.test.ts',
   'src/server/ai/pi-agent-adapter.tracing.test.ts',
   'src/server/ai/runner.fallback.test.ts',
+  'src/server/ai/runner.note-timeout.unit.test.ts',
   'src/server/ai/runner.stream-collect.test.ts',
   'src/server/ai/tools/mcp-bridge.test.ts',
   'src/server/ai/tools/pi-tools.test.ts',

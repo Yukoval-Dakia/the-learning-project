@@ -44,6 +44,7 @@ import { parseNoteGenerateOutput } from '@/capabilities/notes/tasks/note-tasks';
 import type { ArtifactBodyBlocksT, ArtifactHistoryEntryT } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact, knowledge } from '@/db/schema';
+import type { NoteGeneratePhaseTimings } from '@/server/ai/log';
 import {
   type TaskTextResult,
   type TaskTextRunFn,
@@ -68,6 +69,34 @@ type DepsOverride = {
 export { parseNoteGenerateOutput } from '@/capabilities/notes/tasks/note-tasks';
 
 const NOTE_GENERATE_RAW_EXCERPT_CHARS = 2_000;
+
+function logNoteGeneratePhases(input: {
+  artifactId: string;
+  taskRunId: string | null;
+  promptBuildMs: number;
+  modelWaitMs: number | null;
+  parseMs: number | null;
+  validationMs: number | null;
+  dbWriteMs: number | null;
+  runnerPhases?: NoteGeneratePhaseTimings;
+}): void {
+  console.info('[note_generate] phase_timings', {
+    event: 'note_generate_phase_timings',
+    artifact_id: input.artifactId,
+    task_run_id: input.taskRunId,
+    phases: {
+      prompt_build_ms: input.promptBuildMs,
+      model_wait_ms: input.modelWaitMs,
+      model_ttft_ms: input.runnerPhases?.model_ttft_ms ?? null,
+      model_total_ms: input.runnerPhases?.model_total_ms ?? null,
+      stream_ms: input.runnerPhases?.stream_ms ?? null,
+      parse_ms: input.parseMs,
+      validation_ms: input.validationMs,
+      retry_count: input.runnerPhases?.retry_count ?? 0,
+      db_write_ms: input.dbWriteMs,
+    },
+  });
+}
 
 function taskRunIdOf(error: unknown): string | null {
   if (!error || typeof error !== 'object' || !('taskRunId' in error)) return null;
@@ -243,6 +272,7 @@ export async function runNoteGenerate(
   const referenceArtifacts = await loadNoteGenerationReferences(db, row);
 
   let attempt: TaskTextResult | undefined;
+  const promptStarted = Date.now();
   const input = {
     artifact_id: row.id,
     artifact_type: row.type,
@@ -255,12 +285,19 @@ export async function runNoteGenerate(
     related_knowledge_ids: row.knowledge_ids.slice(1), // Phase 2.5: mesh-walk for related nodes
     reference_artifacts: referenceArtifacts,
   };
+  const subjectProfile = resolveSubjectProfile(kNode?.domain);
+  const skillDocs = await resolveNoteSkillDoc(subjectProfile.id);
+  const promptBuildMs = Date.now() - promptStarted;
+  let modelWaitMs: number | null = null;
+  let parseMs: number | null = null;
+  let validationMs: number | null = null;
+  let dbWriteMs: number | null = null;
+  const modelStarted = Date.now();
 
   try {
-    const subjectProfile = resolveSubjectProfile(kNode?.domain);
     const result = await runTaskFn('NoteGenerateTask', input, {
       subjectProfile,
-      piSkillDocs: await resolveNoteSkillDoc(subjectProfile.id),
+      piSkillDocs: skillDocs,
       beforeProviderQuery: async () => {
         const activeRows = await db
           .select({ id: artifact.id })
@@ -279,9 +316,14 @@ export async function runNoteGenerate(
         }
       },
     });
+    modelWaitMs = Date.now() - modelStarted;
     attempt = result;
+    const parseStarted = Date.now();
     const parsed = parseNoteGenerateOutput(result.text, row.type, result.finishReason);
+    parseMs = Date.now() - parseStarted;
+    const validationStarted = Date.now();
     assertNoteGenerationReferences(parsed.body_blocks, referenceArtifacts);
+    validationMs = Date.now() - validationStarted;
 
     // W3-C1γ — note_generate is a COMPOUND mutation (body_blocks + generation_status='ready' +
     // verification_status='queued' + generated_by). To make it fold-visible additively it emits TWO
@@ -293,6 +335,7 @@ export async function runNoteGenerate(
     // events opt OUT of memory ingestion (background plumbing).
     const now = new Date();
     const generatedByRef = aiAgentRef('NoteGenerateTask', result);
+    const dbStarted = Date.now();
     // Wrap the body_blocks UPDATE + cross_link index sync + fold events in one tx so the L2 backlink
     // index never lags the AI-authored note (YUK-95 P5) AND a malformed event rolls back the UPDATE.
     // YUK-1508 P1-A — the tx returns a discriminated outcome: the AI body may ONLY
@@ -419,6 +462,18 @@ export async function runNoteGenerate(
       return { kind: 'ready', rows };
     });
 
+    dbWriteMs = Date.now() - dbStarted;
+    logNoteGeneratePhases({
+      artifactId,
+      taskRunId: result.task_run_id ?? null,
+      promptBuildMs,
+      modelWaitMs,
+      parseMs,
+      validationMs,
+      dbWriteMs,
+      runnerPhases: result.phases,
+    });
+
     if (updated.kind === 'not_pending') {
       return { status: 'skipped:not_pending' };
     }
@@ -435,8 +490,10 @@ export async function runNoteGenerate(
       blocks_count: parsed.blocks_count,
     };
   } catch (err) {
+    if (modelWaitMs === null) modelWaitMs = Date.now() - modelStarted;
     const taskRunId = attempt?.task_run_id ?? taskRunIdOf(err);
     const failure = annotateNoteGenerateFailure(err, taskRunId, attempt?.text);
+    const failureDbStarted = Date.now();
     // Mark failed so UI doesn't sit on "pending" forever; pg-boss will still
     // retry per policy because we rethrow.
     //
@@ -513,7 +570,19 @@ export async function runNoteGenerate(
       console.error('[note_generate] failed-status cleanup failed for', artifactId, cleanupErr);
     }
 
-    if (flipVersion === null) throw failure; // not pending anymore (or flip failed) — nothing to fill
+    if (flipVersion === null) {
+      logNoteGeneratePhases({
+        artifactId,
+        taskRunId,
+        promptBuildMs,
+        modelWaitMs,
+        parseMs,
+        validationMs,
+        dbWriteMs: Date.now() - failureDbStarted,
+        runnerPhases: attempt?.phases,
+      });
+      throw failure; // not pending anymore (or flip failed) — nothing to fill
+    }
 
     // P1-B — the material load has its OWN guard: a throw here degrades to a
     // status-only flip (logged), never strands the note in 'pending'.
@@ -623,6 +692,16 @@ export async function runNoteGenerate(
         console.error('[note_generate] fallback body write failed for', artifactId, fallbackErr);
       }
     }
+    logNoteGeneratePhases({
+      artifactId,
+      taskRunId,
+      promptBuildMs,
+      modelWaitMs,
+      parseMs,
+      validationMs,
+      dbWriteMs: Date.now() - failureDbStarted,
+      runnerPhases: attempt?.phases,
+    });
     throw failure;
   }
 }

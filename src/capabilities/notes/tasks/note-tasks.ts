@@ -9,6 +9,16 @@ import {
   compileNoteGenerateDocument,
 } from './note-generate-document';
 
+/**
+ * Long notes do not finish inside the old 90s single-call budget (YUK-1531).
+ * 30 minutes stays under the 1h stuck-run sweeper and the note_generate queue
+ * lease. Operators override it the same way as any other task budget:
+ * `task.NoteGenerateTask.budget.timeout` (milliseconds, still below 1h).
+ * A value above about 54 minutes is refused by provider-session admission,
+ * which reserves wait, startup and abort grace inside that same hour.
+ */
+export const NOTE_GENERATE_TIMEOUT_MS = 30 * 60 * 1000;
+
 export const NoteGenerateOutputSchema = z.object({
   body_blocks: ArtifactBodyBlocks,
 });
@@ -147,7 +157,7 @@ export const noteGenerateTaskSpec = {
       'Phase 2B — 给一个 atomic note 生成 5 种 section（definition/mechanism/example/pitfall/check）',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
-    budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1, timeout: 90_000 },
+    budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1, timeout: NOTE_GENERATE_TIMEOUT_MS },
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],

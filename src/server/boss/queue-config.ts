@@ -16,9 +16,11 @@
 // Tiers (expireInSeconds is the max time a job may stay `active`):
 //   FAST  — sub-second housekeeping (echo / prune_* / promote_idle). Brief floor
 //           of 1h is overkill for these but keeps a single safe minimum.
-//   LLM   — single ~30-90s LLM call handlers (note_*, variant_*, coach_*,
+//   LLM   — single LLM call handlers (note_*, variant_*, coach_*,
 //           session_summary, attribution_followup,
 //           goal_scope, hub_auto_sync, auto_enroll). 1h ceiling.
+//           note_generate's own budget is 30 minutes (YUK-1531); the 1h lease
+//           still covers admission wait, that call, and the fallback write.
 //   AGENT — multi-step tool-calling agents that can legitimately run for many
 //           minutes (quiz_gen / quiz_verify / sourcing / source_verify /
 //           dreaming_nightly / knowledge_maintenance / tencent_ocr). 2h ceiling.

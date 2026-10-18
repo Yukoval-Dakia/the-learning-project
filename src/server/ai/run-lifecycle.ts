@@ -22,6 +22,7 @@ import {
 } from './laminar-tracing';
 import {
   type AiTaskUsage,
+  type NoteGeneratePhaseTimings,
   writeAiTaskAttemptFinished,
   writeAiTaskRunRetried,
   writeAiTaskRunStarted,
@@ -41,6 +42,7 @@ import {
 } from './provider-session-admission';
 import { type ResolvedProvider, hasGlobalProviderOverride, resolveTaskProvider } from './providers';
 import { taskInputHash } from './task-input-hash';
+import { estimateAbortedUsage } from './timeout-usage';
 
 export type LifecycleUsage = AiTaskUsage;
 
@@ -191,6 +193,7 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
   private durableStart = false;
   private trace: TraceSpan | undefined;
   private traceOutcome: 'success' | 'error' | 'cancelled' | 'not_started' = 'not_started';
+  private notePhases: NoteGeneratePhaseTimings | undefined;
 
   withTracing<T>(callback: () => T): T {
     if (!isLaminarTracingEnabled()) return callback();
@@ -245,7 +248,45 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
   }
 
   get usage(): LifecycleUsage {
-    return this.terminal?.usage ?? this.observedUsage?.usage ?? { inputTokens: 0, outputTokens: 0 };
+    const base = this.terminal?.usage ??
+      this.observedUsage?.usage ?? { inputTokens: 0, outputTokens: 0 };
+    if (!this.notePhases) return base;
+    return { ...base, phases: { ...this.notePhases } };
+  }
+
+  /** Long-note phase timings. Other task kinds ignore the call. */
+  recordNotePhases(patch: NoteGeneratePhaseTimings): void {
+    if (this.kind !== 'NoteGenerateTask') return;
+    this.notePhases = { ...this.notePhases, ...patch };
+  }
+
+  /**
+   * Budget abort with no positive provider usage. Persist a non-zero estimate
+   * so the attempt row cannot claim the call was free.
+   */
+  recordAbortedUsage(input: { promptText: string; outputText: string }): void {
+    if (this.terminal) return;
+    const observed = this.observedUsage;
+    if (
+      observed?.tokenUsageObserved === true &&
+      (observed.usage.inputTokens > 0 || observed.usage.outputTokens > 0)
+    ) {
+      return;
+    }
+    const estimate = estimateAbortedUsage(input.promptText, input.outputText);
+    this.observedUsage = {
+      tokenUsageObserved: true,
+      usage: {
+        inputTokens: estimate.inputTokens,
+        outputTokens: estimate.outputTokens,
+        usage_basis: 'estimated',
+      },
+      tokenCounts: {
+        inputTokens: estimate.inputTokens,
+        outputTokens: estimate.outputTokens,
+      },
+    };
+    this.costTruthCache = undefined;
   }
 
   get tokenCounts(): TokenCounts {
@@ -705,6 +746,15 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
     if (this.terminalWriteAttempts.size > 0 && input.status !== 'failure') return false;
     this.terminalWriteAttempts.add(input.status);
     this.terminalWriteInFlight = true;
+    if (this.notePhases) {
+      console.info(`[${this.config.logScope}] note_generate_model_phases`, {
+        event: 'note_generate_model_phases',
+        task_run_id: this.taskRunId,
+        kind: this.kind,
+        phases: this.notePhases,
+        usage_basis: this.usage.usage_basis ?? 'reported',
+      });
+    }
     try {
       const settled = await writeAiTaskAttemptFinished(this.config.db, {
         id: this.taskRunId,
