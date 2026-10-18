@@ -510,7 +510,7 @@ export async function writeEvaluationCorrectionProposal(
   }
   const evidenceRefs: ProposalEvidenceRefT[] = [...(input.evidence_refs ?? [])];
   if (input.attempt_event_id && !evidenceRefs.some((ref) => ref.id === input.attempt_event_id)) {
-    evidenceRefs.unshift({ kind: 'event', id: input.attempt_event_id, event_role: 'judge' });
+    evidenceRefs.unshift({ kind: 'event', id: input.attempt_event_id });
   }
 
   return writeAiProposal(db, {
