@@ -658,9 +658,10 @@ function buildWriteProposalExecutor(db: Db, taskRunId: string) {
 /**
  * The write_proposal mount: a `custom` PiToolMount carrying the executor.
  * Wire name is `mcp__loom__write_proposal` so allowedTools/tool_call_log
- * stay verbatim.
+ * stay verbatim. Exported so audit:tool-params can verify the produced
+ * AgentTool's real converted parameters.
  */
-function buildKnowledgeReviewPiMount(db: Db, taskRunId: string): PiToolMount {
+export function buildKnowledgeReviewPiMount(db: Db, taskRunId: string): PiToolMount {
   const executor = buildWriteProposalExecutor(db, taskRunId);
   return {
     type: 'custom',

@@ -72,6 +72,10 @@ import { emitPiAfterToolCall, runPiBeforeToolCall } from './pi-hooks';
 import { createLoomPiModels } from './pi-models';
 import { piProviderId } from './pi-provider-catalog';
 import { hasPiUsageEvidence, withPiUsageEvidence } from './pi-usage-evidence';
+import {
+  type ProviderErrorEvidence,
+  createProviderErrorCaptureFetch,
+} from './provider-error-evidence';
 import { UNDICI_DEFAULT_IDLE_TIMEOUT_MS } from './provider-http-timeout';
 import { createIdleBudgetFetch } from './provider-idle-fetch';
 import type { SDKAssistantMessage, SDKResultMessage, SDKUserMessage } from './sdk-types';
@@ -605,6 +609,11 @@ export function piTerminalResultFrame(args: {
     raw_args_sha256: string;
     truncated: boolean;
   };
+  /** YUK-1559 (C6) — bounded, sanitized provider error-body capture from the
+   *  query's wrapped fetch. Appended to errors[] on a failed terminal so the
+   *  raw non-2xx body (not just pi's formatted errorMessage) reaches
+   *  ai_task_runs.error_message and paid_effect.unresolved_reason. */
+  providerError?: ProviderErrorEvidence;
   /** P3 — nested-child usage rolled into the run's terminal evidence, the
    *  same way the SDK result aggregates subagent tokens into modelUsage. */
   childUsage?: PiChildUsage;
@@ -647,6 +656,13 @@ export function piTerminalResultFrame(args: {
   const child = args.childUsage;
   const costUsd = (usage?.cost?.total ?? 0) + (child?.costUsd ?? 0);
   const usageParts = piUsageToResultUsage(usage, args.model);
+  // YUK-1559 (C6) — the captured non-2xx body rides as its own errors[] entry
+  // so it survives into error_message / unresolved_reason verbatim; errors[0]
+  // stays pi's own formatted message (a display string, not the raw body).
+  const providerErrorEntry =
+    args.providerError !== undefined
+      ? `provider_http_error=${JSON.stringify(args.providerError)}`
+      : undefined;
   if (child && (child.input > 0 || child.output > 0)) {
     usageParts.usage.input_tokens += child.input;
     usageParts.usage.output_tokens += child.output;
@@ -676,7 +692,10 @@ export function piTerminalResultFrame(args: {
       is_error: true,
       stop_reason: null,
       total_cost_usd: costUsd,
-      errors: [final?.errorMessage ?? 'pi agent aborted by provider'],
+      errors: [
+        final?.errorMessage ?? 'pi agent aborted by provider',
+        ...(providerErrorEntry ? [providerErrorEntry] : []),
+      ],
       ...usageParts,
     } as SDKResultMessage & { source: 'pi' };
   }
@@ -687,7 +706,10 @@ export function piTerminalResultFrame(args: {
       is_error: true,
       stop_reason: null,
       total_cost_usd: 0,
-      errors: ['pi agent_loop ended without an assistant message'],
+      errors: [
+        'pi agent_loop ended without an assistant message',
+        ...(providerErrorEntry ? [providerErrorEntry] : []),
+      ],
       ...usageParts,
     } as SDKResultMessage & { source: 'pi' };
   }
@@ -709,7 +731,10 @@ export function piTerminalResultFrame(args: {
       is_error: true,
       stop_reason: null,
       total_cost_usd: costUsd,
-      errors: [final.errorMessage ?? 'pi stream error'],
+      errors: [
+        final.errorMessage ?? 'pi stream error',
+        ...(providerErrorEntry ? [providerErrorEntry] : []),
+      ],
       ...usageParts,
     } as SDKResultMessage & { source: 'pi' };
   }
@@ -817,6 +842,9 @@ class PiPreparedQuery implements PreparedExecutionQuery {
   private readonly childUsage = emptyPiChildUsage();
   private readonly executedToolCalls = new Map<string, number>();
   private providerHttp: { fetch: typeof fetch; close: () => Promise<void> } | undefined;
+  /** YUK-1559 (C6) — per-query non-2xx capture fetch; created lazily in
+   *  baseLoopConfig once the base fetch (idle-budget or global) is resolved. */
+  private providerErrorCapture: ReturnType<typeof createProviderErrorCaptureFetch> | undefined;
 
   constructor(
     private readonly args: ExecutionAdapterStartupArgs,
@@ -1056,6 +1084,14 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     'convertToLlm' | 'headers' | 'apiKey' | 'reasoning' | 'timeoutMs' | 'fetch'
   > {
     const { options, resolved, runId } = this.args;
+    const http = this.providerHttpBudget();
+    // YUK-1559 (C6) — every provider request in this query funnels through a
+    // capture fetch so a non-2xx leaves a bounded, sanitized body + status +
+    // request id for the terminal error evidence. A transparent passthrough:
+    // it only reads a clone of failing responses. Every loom-registered
+    // provider accepts a custom fetch (the same surface providerHttpBudget
+    // already uses for long-budget tasks).
+    this.providerErrorCapture ??= createProviderErrorCaptureFetch(http.fetch ?? globalThis.fetch);
     return {
       // All prompts are standard LLM messages — identity conversion narrowed
       // to the LLM roles the union type needs. UI-only AgentMessages never
@@ -1090,7 +1126,8 @@ class PiPreparedQuery implements PreparedExecutionQuery {
           ? { maxRetries: piMaxRetries() }
           : {}),
       ...(options.effort !== undefined ? { reasoning: options.effort } : {}),
-      ...this.providerHttpBudget(),
+      ...(http.timeoutMs !== undefined ? { timeoutMs: http.timeoutMs } : {}),
+      fetch: this.providerErrorCapture.fetch,
     };
   }
 
@@ -1542,6 +1579,9 @@ class PiPreparedQuery implements PreparedExecutionQuery {
               ...rawArgumentsEvidence([...rawToolArguments.values()].join('\n')),
             }
           : undefined,
+      // YUK-1559 (C6) — the last non-2xx this query's capture fetch saw, if
+      // any; the terminal frame appends it to errors[] on failure terminals.
+      providerError: this.providerErrorCapture?.latest(),
       childUsage: this.childUsage,
     });
     if (terminal) yield terminal;

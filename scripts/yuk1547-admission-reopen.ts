@@ -27,9 +27,10 @@ import {
   QUESTION_ADMISSION_PAID_UNIT,
   QUESTION_ADMISSION_PAID_UNITS,
 } from '@/core/question-admission-policy';
-import { zodToJsonSchemaCompat } from '@/kernel/zod-json-schema';
+import { zodToToolParametersSchema } from '@/kernel/zod-json-schema';
 import { assertModelProfileCapabilityFit } from '@/server/ai/model-profiles';
 import { nativePiModel } from '@/server/ai/pi-provider-catalog';
+import { readProviderErrorEvidence } from '@/server/ai/provider-error-evidence';
 import { type TaskNativeReasoningParams, resolveTaskProvider } from '@/server/ai/providers';
 
 const submit = 'mcp__structured_output__submit';
@@ -47,7 +48,11 @@ const hash = (value: unknown) =>
   `sha256:${createHash('sha256').update(JSON.stringify(value)).digest('hex')}`;
 // YUK-1547 — the submit tool's parameters are the task output schema itself;
 // the arguments object has `units` at top level, no {result: ...} envelope.
-const schema = zodToJsonSchemaCompat(
+// YUK-1559 — the preflight sends the SAME wire contract piCustomTool mounts:
+// the shared tool-parameters converter declares type:"object" at the root
+// while keeping the object union in anyOf (a bare-anyOf root is a provider
+// 400: 'schema must be a JSON Schema of type: "object"').
+const schema = zodToToolParametersSchema(
   questionAdmissionSolveTaskSpec.definition.structuredOutputSchema,
   {
     io: 'input',
@@ -272,10 +277,16 @@ async function preflight(path: string) {
         }),
       });
       probe.http_status = response.status;
-      if (response.status !== 200)
+      if (response.status !== 200) {
+        // YUK-1559 (C6) — a non-2xx leaves the sanitized, bounded provider
+        // error body + status + request id on the receipt, so a refused
+        // preflight is diagnosable without a second request. The receipt is
+        // written in the finally below before this command exits.
+        probe.provider_error = await readProviderErrorEvidence(response);
         throw new Error(
           `Preflight HTTP ${response.status} for ${route.provider}/${route.model}; stop before reopening`,
         );
+      }
       const body = (await response.json()) as {
         id?: string;
         usage?: unknown;
