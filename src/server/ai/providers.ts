@@ -279,7 +279,21 @@ const PROVIDERS: Record<Provider, BoundProviderConfig> = {
       // evidence on the official endpoint (chat + probe_echo tool_call, both
       // HTTP 200 with reasoning_effort=high) is sealed in
       // docs/planning/evidence/2026-10-18-opencode-go-deepseek-v4.1-flash-receipts.json.
-      'deepseek-v4.1-flash': { capabilities: { toolCalling: true } },
+      // forcedToolChoice=false: with thinking:{type:'enabled'} on the wire the
+      // endpoint returned HTTP 400 "Thinking mode does not support this
+      // tool_choice" on two paid calls (upstream request_id
+      // 6fde3ba6-8f64-4c84-8a3d-5a5e211b430a et al., 2026-10-18 backlog
+      // window) while five calls built by the same harness code path returned
+      // 200. Whether those requests were byte-identical is UNPROVEN — the
+      // successful requests' raw HTTP payloads are not archived (pre-C6 gap),
+      // and "upstream routing" remains a hypothesis, not a confirmed cause.
+      // What is confirmed: loom has exactly one forced named-function
+      // tool_choice construction site (adapter onPayload), and this model
+      // combination produced two measured 400s — so this lane never sends a
+      // forced choice at all.
+      'deepseek-v4.1-flash': {
+        capabilities: { toolCalling: true, forcedToolChoice: false },
+      },
     },
   },
   // YUK-365 — subscription-OAuth lane. Opus 4.8 via the owner's Claude Max
