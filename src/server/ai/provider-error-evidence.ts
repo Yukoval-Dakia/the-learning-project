@@ -116,6 +116,99 @@ export async function readProviderErrorEvidence(
 }
 
 /**
+ * Credential-ish object KEYS — the key-name half of SECRET_VALUE_FIELD,
+ * applied to structured argument values where the text-level pattern cannot
+ * see escaped/nested keys. Failure evidence fails closed: an over-redacted
+ * field name is a lesser cost than a persisted credential.
+ */
+const CREDENTIAL_KEY_NAME =
+  /(?:api[-_]?key|access[-_]?token|refresh[-_]?token|id[-_]?token|session[-_]?token|auth[-_]?token|authorization|client[-_]?secret|secret|password|token|credential|cookie|private[-_]?key)/i;
+
+/**
+ * A credential-looking `name:`/`name=` still present AFTER the textual
+ * passes — the string may be truncated/escaped JSON that neither the JSON
+ * field pattern nor a strict parse could neutralize. Anything matching this
+ * residual pattern fails closed to a whole-string redaction.
+ */
+const RESIDUAL_CREDENTIAL_PATTERN =
+  /(?:api[-_]?key|access[-_]?token|refresh[-_]?token|id[-_]?token|session[-_]?token|auth[-_]?token|authorization|client[-_]?secret|secret|password|token|credential|cookie|private[-_]?key)\s*["'\\]*\s*[:=]/i;
+
+const ARG_EVIDENCE_MAX_DEPTH = 16;
+
+function sanitizeArgumentValue(
+  value: unknown,
+  options: ProviderErrorSanitizeOptions,
+  depth: number,
+): unknown {
+  if (depth > ARG_EVIDENCE_MAX_DEPTH) return '[redacted]';
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      // Embedded JSON text — the model serialized a composite inside a string
+      // field. Recurse so inner credential KEYS are redacted even though the
+      // outer text never exposes them unescaped.
+      try {
+        return JSON.stringify(sanitizeArgumentValue(JSON.parse(value), options, depth + 1));
+      } catch {
+        // Malformed embedded JSON: textual passes first, then fail closed if
+        // a credential-looking field remains that no pattern could redact.
+        const text = sanitizeProviderErrorText(value, options);
+        return RESIDUAL_CREDENTIAL_PATTERN.test(text) ? '[redacted]' : text;
+      }
+    }
+    return sanitizeProviderErrorText(value, options);
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => sanitizeArgumentValue(entry, options, depth + 1));
+  }
+  if (value !== null && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(value)) {
+      out[key] = CREDENTIAL_KEY_NAME.test(key)
+        ? '[redacted]'
+        : sanitizeArgumentValue(entry, options, depth + 1);
+    }
+    return out;
+  }
+  return value;
+}
+
+/**
+ * Recursively sanitize a tool-call ARGUMENTS value for durable failure
+ * evidence (YUK-1559 C6). Unlike `sanitizeProviderErrorText` — a textual
+ * hygiene pass — this walks the parsed structure: credential/auth object
+ * keys are replaced by '[redacted]' at any depth, string fields that embed
+ * JSON are parsed and sanitized INSIDE, and the resolved provider credential
+ * is still removed verbatim and JSON-escaped. Unparseable text that still
+ * shows a credential-looking `key:`/`key=` fails closed to '[redacted]'.
+ */
+export function sanitizeArgumentsEvidence(
+  value: unknown,
+  options?: ProviderErrorSanitizeOptions,
+): unknown {
+  return sanitizeArgumentValue(value, options ?? {}, 0);
+}
+
+/**
+ * The same boundary applied to streamed argument TEXT: a strict-parsable
+ * chunk is sanitized structurally (embedded JSON credentials included) and
+ * re-serialized; unparseable text gets the textual passes plus the residual
+ * credential fail-close. Used for every retained argument representation so
+ * malformed first-turn evidence cannot leak an embedded credential either.
+ */
+export function sanitizeArgumentsEvidenceText(
+  text: string,
+  options?: ProviderErrorSanitizeOptions,
+): string {
+  try {
+    return JSON.stringify(sanitizeArgumentValue(JSON.parse(text), options ?? {}, 0));
+  } catch {
+    const sanitized = sanitizeProviderErrorText(text, options);
+    return RESIDUAL_CREDENTIAL_PATTERN.test(sanitized) ? '[redacted]' : sanitized;
+  }
+}
+
+/**
  * Wrap the provider fetch handed to a pi query: on a non-2xx response the
  * body is cloned and recorded while the original response still reaches the
  * provider SDK untouched (pi's errorMessage continues to render its own

@@ -75,7 +75,8 @@ import { hasPiUsageEvidence, withPiUsageEvidence } from './pi-usage-evidence';
 import {
   type ProviderErrorEvidence,
   createProviderErrorCaptureFetch,
-  sanitizeProviderErrorText,
+  sanitizeArgumentsEvidence,
+  sanitizeArgumentsEvidenceText,
 } from './provider-error-evidence';
 import { UNDICI_DEFAULT_IDLE_TIMEOUT_MS } from './provider-http-timeout';
 import { createIdleBudgetFetch } from './provider-idle-fetch';
@@ -892,7 +893,52 @@ class PiPreparedQuery implements PreparedExecutionQuery {
   /** Latest adopted repair per tool name — the structured-submit terminal
    *  hands the capability what validation actually accepted. */
   private readonly repairedToolArgs = new Map<string, unknown>();
+  /**
+   * YUK-1547 (C1) — ONE run-scoped parameter-contract correction allowance,
+   * shared by this query's root loop AND every nested child loop (spawned
+   * researchers inherit wrapped tools but have no submit landing machine).
+   * A `[tool_param_contract]` rejection may continue once; a second rejection
+   * ends the loop regardless of the caller's iteration ceiling — unbounded
+   * Copilot and maxTurns runs share this budget. On the structured-submit
+   * lane the same allowance is further shared with the missing-submit
+   * reminder via `landingTurnUsed`.
+   */
+  private paramContractCorrectionUsed = false;
   private providerHttp: { fetch: typeof fetch; close: () => Promise<void> } | undefined;
+
+  /**
+   * Per-loop streamed-arguments tracker: `rawByIndex` accumulates this turn's
+   * `toolcall_delta` bytes; `byCallId` binds them to call ids at message_end.
+   * Each agentLoop (root and each nested child) owns its own pair so a
+   * child's turn_start can never erase a parent's in-flight evidence.
+   */
+  private trackStreamedArgs(
+    event: AgentEvent,
+    rawByIndex: Map<number, string>,
+    byCallId: Map<string, string>,
+  ): void {
+    if (event.type === 'turn_start') {
+      rawByIndex.clear();
+      byCallId.clear();
+      return;
+    }
+    if (
+      event.type === 'message_update' &&
+      event.message.role === 'assistant' &&
+      event.assistantMessageEvent.type === 'toolcall_delta'
+    ) {
+      const delta = event.assistantMessageEvent;
+      rawByIndex.set(delta.contentIndex, (rawByIndex.get(delta.contentIndex) ?? '') + delta.delta);
+      return;
+    }
+    if (event.type === 'message_end' && event.message.role === 'assistant') {
+      event.message.content.forEach((block, index) => {
+        if (block.type !== 'toolCall') return;
+        const raw = rawByIndex.get(index);
+        if (raw !== undefined) byCallId.set(block.id, raw);
+      });
+    }
+  }
   /** YUK-1559 (C6) — per-query non-2xx capture fetch; created lazily in
    *  baseLoopConfig once the base fetch (idle-budget or global) is resolved. */
   private providerErrorCapture: ReturnType<typeof createProviderErrorCaptureFetch> | undefined;
@@ -968,7 +1014,10 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     }));
   }
 
-  private observeToolAttempt(event: AgentEvent): void {
+  private observeToolAttempt(
+    event: AgentEvent,
+    streamedArgsByCallId: ReadonlyMap<string, string>,
+  ): void {
     if (event.type === 'tool_execution_start') {
       // Capture the model's original arguments BEFORE prepareArguments repair
       // and pi validation normalization — the C6 evidence baseline. Sanitized
@@ -1012,16 +1061,26 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       pending !== undefined &&
       isToolArgumentContractFailure({ isError: event.isError, content: event.result?.content })
     ) {
-      const sanitized = sanitizeProviderErrorText(JSON.stringify(pending.args ?? null), {
-        secrets: this.args.resolved.apiKey ? [this.args.resolved.apiKey] : [],
-      });
+      const secrets = this.args.resolved.apiKey ? [this.args.resolved.apiKey] : [];
+      // Fidelity: prefer THIS call's exact streamed argument bytes (sanitized
+      // — the recursive pass redacts credential keys even inside embedded
+      // JSON string fields before any serialization/cap). When the stream
+      // never delivered deltas, event.args is a pi-parsed/salvaged object —
+      // label it 'reconstructed' rather than claiming wire fidelity.
+      const streamed = streamedArgsByCallId.get(event.toolCallId);
+      const args_source = streamed !== undefined ? 'streamed' : 'reconstructed';
+      const sanitizedText =
+        streamed !== undefined
+          ? sanitizeArgumentsEvidenceText(streamed, { secrets })
+          : JSON.stringify(sanitizeArgumentsEvidence(pending.args ?? null, { secrets }));
       this.emitFrame({
         source: 'pi',
         type: 'system',
         subtype: 'tool_args_contract_failed',
         tool_name: event.toolName,
         tool_call_id: event.toolCallId,
-        ...rawArgumentsEvidence(sanitized),
+        args_source,
+        ...rawArgumentsEvidence(sanitizedText),
         uuid: randomUUID(),
         session_id: this.sessionId,
       });
@@ -1316,6 +1375,25 @@ class PiPreparedQuery implements PreparedExecutionQuery {
   };
 
   /**
+   * YUK-1547 (C1) — the run-scoped parameter-contract correction gate applied
+   * to EVERY loop this query runs (root and nested children share
+   * `paramContractCorrectionUsed`). A `[tool_param_contract]` isError result
+   * is the correction prompt itself: it may continue ONCE so the model can
+   * re-issue the call; a second rejection ends the loop regardless of the
+   * caller's iteration ceiling — unbounded Copilot and maxTurns runs share
+   * this budget. Clean turns and ordinary valid iterations defer to `inner`.
+   */
+  private contractCorrectionFinishTurn(inner?: FinishTurn): FinishTurn {
+    return (turn, signal) => {
+      if (turn.toolResults.some((result) => isToolParamContractRejection(result))) {
+        if (this.paramContractCorrectionUsed) return { action: 'end' as const };
+        this.paramContractCorrectionUsed = true;
+      }
+      return inner?.(turn, signal);
+    };
+  }
+
+  /**
    * Child tool set: the spec's allowlist over the parent's mounted wire names,
    * minus disallowedTools, minus spawn aliases (depth-one is structural — a
    * child can never see Task/Agent even if its def listed them).
@@ -1377,13 +1455,13 @@ class PiPreparedQuery implements PreparedExecutionQuery {
             model: childModel,
             ...this.baseLoopConfig(),
             ...(childTools.length > 0 ? { toolExecution: 'sequential' as const } : {}),
-            ...(childMaxTurns !== undefined
-              ? {
-                  finishTurn: turnLimiter(childMaxTurns, () => {
+            finishTurn: this.contractCorrectionFinishTurn(
+              childMaxTurns !== undefined
+                ? turnLimiter(childMaxTurns, () => {
                     childCapped = true;
-                  }),
-                }
-              : {}),
+                  })
+                : undefined,
+            ),
             beforeToolCall: this.makeBeforeToolCall(subagentType),
             afterToolCall: this.makeAfterToolCall(subagentType),
           };
@@ -1416,6 +1494,8 @@ class PiPreparedQuery implements PreparedExecutionQuery {
           };
 
           let finalMessages: AgentMessage[] = [];
+          const childRawArgs = new Map<number, string>();
+          const childStreamedArgs = new Map<string, string>();
           try {
             const stream = this.deps.agentLoop(
               [piUserMessage(prompt)],
@@ -1425,7 +1505,8 @@ class PiPreparedQuery implements PreparedExecutionQuery {
               this.streamFn,
             );
             for await (const event of stream) {
-              this.observeToolAttempt(event);
+              this.trackStreamedArgs(event, childRawArgs, childStreamedArgs);
+              this.observeToolAttempt(event, childStreamedArgs);
               if (event.type === 'tool_execution_start') {
                 toolUses += 1;
                 lastToolName = event.toolName;
@@ -1581,6 +1662,11 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     // maxTurns=1 task deterministically failed after its first clean turn.
     const maxTurns = typeof options.maxTurns === 'number' ? options.maxTurns : undefined;
     let cappedByMaxTurns = false;
+    // Per-turn streamed-argument evidence, bound to call ids at message_end;
+    // the strict-JSON flag also gates the parameter-contract correction below.
+    const rawToolArguments = new Map<number, string>();
+    const streamedArgsByCallId = new Map<string, string>();
+    let invalidStructuredArguments = false;
     const config: AgentLoopConfig = {
       model: this.model,
       ...this.baseLoopConfig(),
@@ -1619,12 +1705,19 @@ class PiPreparedQuery implements PreparedExecutionQuery {
               // array/object field whose shared repair failed. The isError
               // tool result itself is the correction prompt; the inner loop
               // continues once inside the SAME run, sharing the single
-              // landing budget with the missing-submit reminder. Truncated,
-              // multi-call, wrong-tool and generic schema-validation turns
-              // stay terminal exactly as PR1806 sealed them.
+              // landing budget with the missing-submit reminder AND the
+              // run-scoped correction allowance nested loops also consume.
+              //
+              // Strict-envelope prerequisite (P1): the correction is only
+              // granted when THIS turn's streamed submit bytes were strictly
+              // valid JSON — a malformed outer envelope salvaged by pi's
+              // parser stays terminal with its retained evidence, identical
+              // to the preflight's strict JSON.parse ordering.
               if (
                 verdict === 'landed' &&
                 !landingTurnUsed &&
+                !this.paramContractCorrectionUsed &&
+                !invalidStructuredArguments &&
                 toolResults.some(
                   (result) =>
                     result.toolName === STRUCTURED_OUTPUT_TOOL &&
@@ -1632,19 +1725,26 @@ class PiPreparedQuery implements PreparedExecutionQuery {
                 )
               ) {
                 landingTurnUsed = true;
+                this.paramContractCorrectionUsed = true;
                 landingConsumer = 'param_contract';
                 return undefined;
               }
               return { action: 'end' as const };
             }) satisfies FinishTurn,
           }
-        : maxTurns !== undefined
-          ? {
-              finishTurn: turnLimiter(maxTurns, () => {
-                cappedByMaxTurns = true;
-              }),
-            }
-          : {}),
+        : {
+            // Every non-structured root loop shares the run-scoped correction
+            // allowance too — an unbounded/maxTurns Copilot loop must not pay
+            // for a second param-contract rejection. The caller's turn ceiling
+            // keeps its normal meaning underneath the gate.
+            finishTurn: this.contractCorrectionFinishTurn(
+              maxTurns !== undefined
+                ? turnLimiter(maxTurns, () => {
+                    cappedByMaxTurns = true;
+                  })
+                : undefined,
+            ),
+          }),
       beforeToolCall: this.makeBeforeToolCall(),
       afterToolCall: this.makeAfterToolCall(),
       transformContext: this.makeTransformContext(),
@@ -1690,34 +1790,21 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     });
     const stream = this.deps.agentLoop(prompts, context, config, this.abort.signal, this.streamFn);
     let textStreamed = false;
-    const rawToolArguments = new Map<number, string>();
-    let invalidStructuredArguments = false;
     for await (const event of stream) {
-      this.observeToolAttempt(event);
+      // A new assistant turn restarts the raw-arguments evidence window:
+      // tool-call content indexes repeat per message, so without the reset a
+      // rejected submit's streamed bytes would concatenate with the corrected
+      // call's and corrupt the strict-JSON check below. Only an ELIGIBLE
+      // continuation reaches a next turn — an invalid-envelope rejection ends
+      // immediately, so a terminal first-turn failure can never be erased by
+      // this reset.
+      this.trackStreamedArgs(event, rawToolArguments, streamedArgsByCallId);
+      if (event.type === 'turn_start') invalidStructuredArguments = false;
+      this.observeToolAttempt(event, streamedArgsByCallId);
       // Frames queued inside the loop (subagent task_*, compact_boundary)
       // surface before the engine event that follows them — matching the SDK
       // wire order where lifecycle frames precede the parent tool_result.
       yield* this.drainFrames();
-      if (structuredOutput && event.type === 'turn_start') {
-        // A new assistant turn restarts the raw-arguments evidence window:
-        // tool-call content indexes repeat per message, so without the reset a
-        // rejected submit's streamed bytes would concatenate with the
-        // corrected call's and corrupt the strict-JSON check below.
-        rawToolArguments.clear();
-        invalidStructuredArguments = false;
-      }
-      if (
-        structuredOutput &&
-        event.type === 'message_update' &&
-        event.message.role === 'assistant' &&
-        event.assistantMessageEvent.type === 'toolcall_delta'
-      ) {
-        const delta = event.assistantMessageEvent;
-        rawToolArguments.set(
-          delta.contentIndex,
-          (rawToolArguments.get(delta.contentIndex) ?? '') + delta.delta,
-        );
-      }
       if (
         event.type === 'message_update' &&
         event.message.role === 'assistant' &&
@@ -1744,9 +1831,10 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       if (event.type === 'message_end' && event.message.role === 'assistant') {
         if (structuredOutput) {
           // pi's provider parser may repair malformed tool JSON. That hidden
-          // repair must not consume an untracked allowance in each blind pass.
-          // Reject salvaged output; only strict raw JSON reaches the capability's
-          // single shared normalization budget. Missing raw deltas fail closed.
+          // repair must not consume an untracked allowance in each blind
+          // pass. Reject salvaged output; only strict raw JSON reaches the
+          // capability's single shared normalization budget. Missing raw
+          // deltas fail closed.
           event.message.content.forEach((block, index) => {
             if (block.type !== 'toolCall') return;
             try {
@@ -1798,7 +1886,18 @@ class PiPreparedQuery implements PreparedExecutionQuery {
         structuredOutput && rawToolArguments.size > 0
           ? {
               tool_name: STRUCTURED_OUTPUT_TOOL,
-              ...rawArgumentsEvidence([...rawToolArguments.values()].join('\n')),
+              // Same C6 safe boundary as the per-call evidence — streamed
+              // bytes can carry escaped credential keys inside embedded JSON
+              // string fields, so they pass the argument sanitizer too.
+              ...rawArgumentsEvidence(
+                [...rawToolArguments.values()]
+                  .map((raw) =>
+                    sanitizeArgumentsEvidenceText(raw, {
+                      secrets: this.args.resolved.apiKey ? [this.args.resolved.apiKey] : [],
+                    }),
+                  )
+                  .join('\n'),
+              ),
             }
           : undefined,
       // YUK-1559 (C6) — the last non-2xx this query's capture fetch saw, if

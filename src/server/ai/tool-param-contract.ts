@@ -336,10 +336,103 @@ function rejectContract(path: string, kinds: Set<'array' | 'object'>): never {
 }
 
 /**
- * Walk `value` against the candidate sub-schemas applying at this position.
- * Returns the original or repaired value; throws ToolParamContractError when a
- * string field REQUIRES repair (some candidate expects a composite and rejects
- * strings) but no candidate's repair succeeds.
+ * Expand a schema node into conjunctive leaf positions: each anyOf/oneOf
+ * member becomes its own position with the node's sibling constraints folded
+ * in via allOf, so a repair decision always validates the WHOLE applicable
+ * sub-schema — discriminators, required fields, and conjunctive constraints —
+ * instead of treating flattened alternative property schemas as independent
+ * repair authorities.
+ */
+function collectConjunctive(
+  node: SchemaNode,
+  defs: Definitions,
+  out: SchemaNode[],
+  seen: Set<SchemaNode>,
+): void {
+  node = resolveNode(node, defs);
+  if (!isNode(node) || seen.has(node)) return;
+  seen.add(node);
+  const unions = unionBranches(node);
+  if (unions.length === 0) {
+    out.push(node);
+    return;
+  }
+  const { anyOf: _anyOf, oneOf: _oneOf, ...rest } = node;
+  const mergedAllOf = branchList(node, 'allOf');
+  for (const branch of unions) {
+    collectConjunctive({ ...rest, allOf: [...mergedAllOf, branch] }, defs, out, new Set(seen));
+  }
+}
+
+/** Exactly one strict JSON.parse for a field, reused across candidates. */
+function parseOnce(value: string): { ok: true; value: unknown } | { ok: false } {
+  try {
+    return { ok: true, value: JSON.parse(value) };
+  } catch {
+    return { ok: false };
+  }
+}
+
+/** Repair the fields of an object value under ONE conjunctive position. */
+function repairObjectFields(
+  value: Record<string, unknown>,
+  position: Record<string, unknown>,
+  path: string,
+  ctx: RepairContext,
+): Record<string, unknown> {
+  let changed = false;
+  const next: Record<string, unknown> = { ...value };
+  for (const key of Object.keys(value)) {
+    const candidates: SchemaNode[] = [];
+    collectPropertySchemas(position, key, ctx.definitions, candidates, new Set());
+    if (candidates.length === 0) continue;
+    const repaired = repairValue(value[key], candidates, path === '' ? key : `${path}.${key}`, ctx);
+    if (repaired !== value[key]) {
+      next[key] = repaired;
+      changed = true;
+    }
+  }
+  return changed ? next : value;
+}
+
+/** Repair the elements of an array value under ONE conjunctive position. */
+function repairArrayElements(
+  value: unknown[],
+  position: Record<string, unknown>,
+  path: string,
+  ctx: RepairContext,
+): unknown[] {
+  let changed = false;
+  const next = value.map((element, index) => {
+    const candidates: SchemaNode[] = [];
+    collectElementSchemas(position, index, ctx.definitions, candidates, new Set());
+    if (candidates.length === 0) return element;
+    const repaired = repairValue(
+      element,
+      candidates,
+      `${path === '' ? '(root)' : path}.${index}`,
+      ctx,
+    );
+    if (repaired !== element) changed = true;
+    return repaired;
+  });
+  return changed ? next : value;
+}
+
+/**
+ * Walk `value` against the sub-schemas applying at this position. Returns the
+ * original or repaired value; throws ToolParamContractError when a string
+ * field REQUIRES repair (some conjunctive candidate expects array/object and
+ * rejects strings) but no candidate's repair succeeds.
+ *
+ * Branch discipline (the union-flattening P1): a value that already validates
+ * under ANY applicable schema is preserved untouched — an already-valid
+ * string in one union branch is never reinterpreted through another branch.
+ * A repair is adopted only when the WHOLE repaired position validates under
+ * the same conjunctive candidate AND under the position's original schema
+ * set (oneOf uniqueness, sibling constraints). A per-position repair that
+ * throws falls through to the next candidate; the first field-level contract
+ * error wins so the model sees the most specific path.
  */
 function repairValue(
   value: unknown,
@@ -347,71 +440,81 @@ function repairValue(
   path: string,
   ctx: RepairContext,
 ): unknown {
+  for (const schema of schemas) {
+    if (subSchemaAccepts(schema, value, ctx.definitions)) return value;
+  }
+  const positions: SchemaNode[] = [];
+  for (const schema of schemas) {
+    collectConjunctive(schema, ctx.definitions, positions, new Set());
+  }
+  const wholeSchemaAccepts = (candidate: SchemaNode, repaired: unknown): boolean =>
+    subSchemaAccepts(candidate, repaired, ctx.definitions) &&
+    schemas.some((schema) => subSchemaAccepts(schema, repaired, ctx.definitions));
+
   if (typeof value === 'string') {
     let required: Set<'array' | 'object'> | undefined;
-    for (const candidate of schemas) {
-      const kinds = expectedCompositeKinds(candidate, ctx.definitions);
-      if (kinds.size === 0 || acceptsString(candidate, ctx.definitions)) continue;
+    let parsed: { ok: true; value: unknown } | { ok: false } | undefined;
+    for (const position of positions) {
+      const kinds = expectedCompositeKinds(position, ctx.definitions);
+      if (kinds.size === 0 || acceptsString(position, ctx.definitions)) continue;
       required ??= kinds;
-      // Exactly ONE strict parse per field — no markdown extraction, no
-      // brace-slicing, no second attempt.
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(value);
-      } catch {
-        continue;
-      }
-      if (![...kinds].some((kind) => structuralMatch(kind, parsed))) continue;
-      if (!subSchemaAccepts(candidate, parsed, ctx.definitions)) continue;
+      if (parsed === undefined) parsed = parseOnce(value);
+      if (!parsed.ok) continue;
+      const parsedValue = parsed.value;
+      if (![...kinds].some((kind) => structuralMatch(kind, parsedValue))) continue;
+      if (!wholeSchemaAccepts(position, parsedValue)) continue;
       ctx.coercions.push({
         field_path: path === '' ? '(root)' : path,
         original_length: value.length,
       });
-      // The adopted value is walked on (nested string fields are their own
-      // one-parse repairs) — the parsed value itself is never re-parsed.
-      return repairValue(parsed, [candidate], path, ctx);
+      return parsedValue;
     }
     if (required !== undefined) rejectContract(path === '' ? '(root)' : path, required);
     return value;
   }
-  if (Array.isArray(value)) {
-    let changed = false;
-    const next = value.map((element, index) => {
-      const candidates: SchemaNode[] = [];
-      for (const schema of schemas)
-        collectElementSchemas(schema, index, ctx.definitions, candidates, new Set());
-      if (candidates.length === 0) return element;
-      const repaired = repairValue(
-        element,
-        candidates,
-        `${path === '' ? '(root)' : path}.${index}`,
-        ctx,
-      );
-      if (repaired !== element) changed = true;
-      return repaired;
-    });
-    return changed ? next : value;
-  }
   if (isNode(value)) {
-    let changed = false;
-    const next: Record<string, unknown> = { ...value };
-    for (const key of Object.keys(value)) {
-      const candidates: SchemaNode[] = [];
-      for (const schema of schemas)
-        collectPropertySchemas(schema, key, ctx.definitions, candidates, new Set());
-      if (candidates.length === 0) continue;
-      const repaired = repairValue(
-        value[key],
-        candidates,
-        path === '' ? key : `${path}.${key}`,
-        ctx,
-      );
-      if (repaired !== value[key]) {
-        next[key] = repaired;
-        changed = true;
+    let firstError: ToolParamContractError | undefined;
+    for (const position of positions) {
+      if (!isNode(position)) continue;
+      const mark = ctx.coercions.length;
+      let next: Record<string, unknown>;
+      try {
+        next = repairObjectFields(value, position, path, ctx);
+      } catch (error) {
+        ctx.coercions.length = mark;
+        if (isToolParamContractError(error)) {
+          firstError ??= error;
+          continue;
+        }
+        throw error;
       }
+      if (next !== value && wholeSchemaAccepts(position, next)) return next;
+      ctx.coercions.length = mark;
     }
-    return changed ? next : value;
+    if (firstError !== undefined) throw firstError;
+    return value;
+  }
+  if (Array.isArray(value)) {
+    let firstError: ToolParamContractError | undefined;
+    for (const position of positions) {
+      if (!isNode(position)) continue;
+      const mark = ctx.coercions.length;
+      let next: unknown[];
+      try {
+        next = repairArrayElements(value, position, path, ctx);
+      } catch (error) {
+        ctx.coercions.length = mark;
+        if (isToolParamContractError(error)) {
+          firstError ??= error;
+          continue;
+        }
+        throw error;
+      }
+      if (next !== value && wholeSchemaAccepts(position, next)) return next;
+      ctx.coercions.length = mark;
+    }
+    if (firstError !== undefined) throw firstError;
+    return value;
   }
   return value;
 }

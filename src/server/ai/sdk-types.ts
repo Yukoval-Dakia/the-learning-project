@@ -302,6 +302,9 @@ export interface SDKToolArgsContractFailedMessage {
   subtype: 'tool_args_contract_failed';
   tool_name: string;
   tool_call_id: string;
+  /** Fidelity label: 'streamed' is the call's actual wire bytes (sanitized);
+   *  'reconstructed' is a serialization of pi's parsed/salvaged arguments. */
+  args_source: 'streamed' | 'reconstructed';
   raw_arguments: string;
   raw_args_sha256: string;
   truncated: boolean;

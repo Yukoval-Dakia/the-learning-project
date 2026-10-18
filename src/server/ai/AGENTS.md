@@ -38,7 +38,7 @@
   命名空间名 `<subjectDir>--<pack>`）经 `piSkillDocs` 注入 system prompt；缺包时
   传 undefined，never throws。
 - Read tool 返回语义化上下文（graph path / relation meaning / recent failure evidence）。
-- 工具参数契约（YUK-1547/1559）：structured-submit run 只有一次共享 landing 预算——missing-submit reminder 与 param-contract correction 二选一，不是一个各一次；采纳的 string→JSON 修复落 `tool_call_log`（`error_reason='tool_args_coerced'`，只带 tool/path/length，不带 payload），contract 拒绝落 `error_reason='tool_args_contract_failed'` + 净化后 ≤4KiB 原始参数。
+- 工具参数契约（YUK-1547/1559）：structured-submit run 只有一次共享 landing 预算——missing-submit reminder 与 param-contract correction 二选一，不是一个各一次；且 correction 资格以该 turn 原始流式参数为严格 JSON 为前提（preflight 同序）。非 structured 的 root loop 与嵌套子 loop 也共享同一 run 级 correction 额度——第二次 `[tool_param_contract]` 拒绝直接终态，与迭代上限无关。采纳的 string→JSON 修复落 `tool_call_log`（`error_reason='tool_args_coerced'`，只带 tool/path/length，不带 payload），contract 拒绝落 `error_reason='tool_args_contract_failed'` + 递归净化（嵌套/内嵌 JSON 的 credential 字段一并脱敏）后 ≤4KiB 原始参数，`args_source` 区分真实流式字节与 pi 解析重建。
 - Proposal tool 写 `event(action='propose')`；action/write tool 只包装已有 owner service（AttributionTask / VariantGenTask），不能让 LLM 传任意 mutation payload。
 - release-critical FULL 审查的通用 confirmed state machine 仍在 `sealed-validation.ts`；
   collecting runner 额外透传 success `result` 为 `terminalText`，但不解释其结构；

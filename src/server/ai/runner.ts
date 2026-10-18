@@ -694,6 +694,7 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
           inputJson: {
             event: 'contract_failed',
             tool_call_id: msg.tool_call_id,
+            args_source: msg.args_source,
             raw_arguments: msg.raw_arguments,
             raw_args_sha256: msg.raw_args_sha256,
             truncated: msg.truncated,
