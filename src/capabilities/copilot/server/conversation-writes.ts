@@ -118,6 +118,28 @@ export interface CopilotEvidenceValidationRef {
   comparison_task_run_ids: string[];
 }
 
+/**
+ * One reply. Text, prepared bytes, and the finalization digest are kept or
+ * dropped together. A digest for a different string is not a digest for this one.
+ */
+export function boundCopilotReply(input: {
+  text: string;
+  preparedReply?: PreparedCopilotReply;
+  receipt?: CopilotReplyFinalizationReceipt;
+}): {
+  text: string;
+  preparedReply: PreparedCopilotReply;
+  receipt?: CopilotReplyFinalizationReceipt;
+} {
+  const digest = createHash('sha256').update(input.text, 'utf8').digest('hex');
+  const prepared =
+    input.preparedReply?.text === input.text ? input.preparedReply : { text: input.text };
+  const receipt = input.receipt?.reply_sha256 === digest ? input.receipt : undefined;
+  return receipt
+    ? { text: input.text, preparedReply: prepared, receipt }
+    : { text: input.text, preparedReply: prepared };
+}
+
 export async function writeCopilotReply(
   db: Db | Tx,
   params: {

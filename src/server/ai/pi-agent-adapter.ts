@@ -1271,7 +1271,8 @@ class PiPreparedQuery implements PreparedExecutionQuery {
                 event.type === 'message_update' &&
                 event.message.role === 'assistant' &&
                 (event.assistantMessageEvent.type === 'text_delta' ||
-                  event.assistantMessageEvent.type === 'thinking_delta')
+                  event.assistantMessageEvent.type === 'thinking_delta' ||
+                  event.assistantMessageEvent.type === 'toolcall_delta')
               ) {
                 childStall.observeOutput(event.assistantMessageEvent.delta);
               }
@@ -1474,16 +1475,18 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       // wire order where lifecycle frames precede the parent tool_result.
       yield* this.drainFrames();
       if (
-        structuredOutput &&
         event.type === 'message_update' &&
         event.message.role === 'assistant' &&
         event.assistantMessageEvent.type === 'toolcall_delta'
       ) {
         const delta = event.assistantMessageEvent;
-        rawToolArguments.set(
-          delta.contentIndex,
-          (rawToolArguments.get(delta.contentIndex) ?? '') + delta.delta,
-        );
+        stall.observeOutput(delta.delta);
+        if (structuredOutput) {
+          rawToolArguments.set(
+            delta.contentIndex,
+            (rawToolArguments.get(delta.contentIndex) ?? '') + delta.delta,
+          );
+        }
       }
       if (
         event.type === 'message_update' &&
