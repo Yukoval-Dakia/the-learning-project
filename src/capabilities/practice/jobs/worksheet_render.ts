@@ -699,6 +699,7 @@ function bboxCenter(bbox: [number, number, number, number]): { x: number; y: num
  * hollow：stroke/fillstroke + INK 描边 + bbox≈方形 3.8mm + 描边宽≈1.2mm。 */
 function measureDrawnAnchors(
   shapes: PaintedShape[],
+  pageWidthPt: number,
   pageHeightPt: number,
   anchors: {
     tl: { cx: number; cy: number; fill: string };
@@ -769,6 +770,19 @@ function measureDrawnAnchors(
     used.add(shape);
     const c = bboxCenter(shape.bbox);
     const centerMm: [number, number] = [c.x / PT_PER_MM, (pageHeightPt - c.y) / PT_PER_MM];
+    // PDF 与区域图可能一起偏移；另用实际纸张边界校验 8.5mm，不能只比较两者。
+    const edgeCenterMm: [number, number] = [
+      corner === 'tr' || corner === 'br' ? pageWidthPt / PT_PER_MM - 8.5 : 8.5,
+      corner === 'bl' || corner === 'br' ? pageHeightPt / PT_PER_MM - 8.5 : 8.5,
+    ];
+    if (
+      Math.abs(centerMm[0] - edgeCenterMm[0]) > ANCHOR_TOLERANCE_MM ||
+      Math.abs(centerMm[1] - edgeCenterMm[1]) > ANCHOR_TOLERANCE_MM
+    ) {
+      throw new WorksheetRenderPermanentError(
+        `worksheet pdf verify: page ${pageNo} drawn anchor ${corner} is not 8.5mm from its page edges`,
+      );
+    }
     const errorMm = Math.max(
       Math.abs(centerMm[0] - expected.cx),
       Math.abs(centerMm[1] - expected.cy),
@@ -910,7 +924,7 @@ function verifyWorksheetPdfInner(
     }
     const { content } = streamObjectContent(text, xref, Number(contentsRef[1]));
     const shapes = interpretPageShapes(content);
-    const anchorMeasurements = measureDrawnAnchors(shapes, mbH, mapPage.anchors, mapPage.page);
+    const anchorMeasurements = measureDrawnAnchors(shapes, mbW, mbH, mapPage.anchors, mapPage.page);
 
     verification.pages.push({
       page: mapPage.page,
