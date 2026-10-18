@@ -280,13 +280,17 @@ const PROVIDERS: Record<Provider, BoundProviderConfig> = {
       // HTTP 200 with reasoning_effort=high) is sealed in
       // docs/planning/evidence/2026-10-18-opencode-go-deepseek-v4.1-flash-receipts.json.
       // forcedToolChoice=false: with thinking:{type:'enabled'} on the wire the
-      // gateway intermittently 400s a forced named tool_choice — observed
-      // "Thinking mode does not support this tool_choice" (upstream
-      // request_id 6fde3ba6-8f64-4c84-8a3d-5a5e211b430a, 2026-10-18 backlog
-      // window; 2 of 7 paid calls failed while 5 identical-shape calls plus
-      // the deploy preflight and 14 five-question calls all returned 200 —
-      // the rejection is real but upstream-routing-dependent, so the runner
-      // never sends the forced choice on this lane at all).
+      // endpoint returned HTTP 400 "Thinking mode does not support this
+      // tool_choice" on two paid calls (upstream request_id
+      // 6fde3ba6-8f64-4c84-8a3d-5a5e211b430a et al., 2026-10-18 backlog
+      // window) while five calls built by the same harness code path returned
+      // 200. Whether those requests were byte-identical is UNPROVEN — the
+      // successful requests' raw HTTP payloads are not archived (pre-C6 gap),
+      // and "upstream routing" remains a hypothesis, not a confirmed cause.
+      // What is confirmed: loom has exactly one forced named-function
+      // tool_choice construction site (adapter onPayload), and this model
+      // combination produced two measured 400s — so this lane never sends a
+      // forced choice at all.
       'deepseek-v4.1-flash': {
         capabilities: { toolCalling: true, forcedToolChoice: false },
       },

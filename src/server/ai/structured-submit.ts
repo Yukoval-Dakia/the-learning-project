@@ -76,3 +76,48 @@ export const STRUCTURED_SUBMIT_REMINDER =
   `You finished without the required tool call. Call ${STRUCTURED_OUTPUT_SUBMIT_TOOL} ` +
   'exactly once now with the complete output object as its arguments (no result envelope). ' +
   'This is the only reminder; the run ends after this turn.';
+
+// ─── bounded submit turn machine ─────────────────────────────────────────────
+//
+// YUK-1547 — ONE shared classification for "did this model turn produce the
+// submit call", consumed by the pi adapter (finishTurn) and the ops preflight
+// (its second, authorized landing request). Any turn carrying tool calls that
+// is not exactly the one landed submit — wrong tool, multiple calls, truncated
+// arguments — is terminal_failure IMMEDIATELY: pi continues the inner loop on
+// truncated calls (failToolCallsFromTruncatedMessage returns
+// terminate=false), so anything else would silently pay for repair turns.
+// A clean text-only end is the only turn allowed exactly one reminder.
+//
+// Turn bound: initial turn + at most one reminder turn. Never more.
+
+export type SubmitTurnVerdict = 'landed' | 'needs_reminder' | 'terminal_failure';
+
+export interface SubmitTurnSignal {
+  /** pi AssistantMessage.stopReason ('stop'|'toolUse'|'length'|'error'|…)
+   *  or a non-stream OpenAI choice finish_reason ('stop'|'tool_calls'|'length'|…). */
+  stopReason: string | undefined;
+  /** Names of toolCall blocks / tool_calls in the turn's message. */
+  toolCallNames: string[];
+}
+
+export function classifySubmitTurn(
+  signal: SubmitTurnSignal,
+  opts: { forced: boolean },
+): SubmitTurnVerdict {
+  const calls = signal.toolCallNames;
+  const landed =
+    (signal.stopReason === 'toolUse' || signal.stopReason === 'tool_calls') &&
+    calls.length === 1 &&
+    calls[0] === STRUCTURED_OUTPUT_SUBMIT_TOOL;
+  if (landed) return 'landed';
+  // Any tool call that is not the clean single submit — wrong tool, extra
+  // calls, truncated 'length' payloads — ends the run with evidence; the pi
+  // inner loop would otherwise continue paying for repair turns.
+  if (calls.length > 0) return 'terminal_failure';
+  // A clean text-only end is the only landing-eligible turn, and only on
+  // 'auto' lanes — a forced lane's text turn is a provider contract violation.
+  if (signal.stopReason === 'stop' || signal.stopReason === 'end_turn') {
+    return opts.forced ? 'terminal_failure' : 'needs_reminder';
+  }
+  return 'terminal_failure';
+}

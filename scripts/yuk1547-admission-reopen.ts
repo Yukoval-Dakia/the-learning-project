@@ -41,6 +41,8 @@ import {
 import { type TaskNativeReasoningParams, resolveTaskProvider } from '@/server/ai/providers';
 import {
   STRUCTURED_OUTPUT_SUBMIT_TOOL,
+  STRUCTURED_SUBMIT_REMINDER,
+  classifySubmitTurn,
   resolveStructuredSubmitPolicy,
   structuredSubmitSystemSuffix,
   structuredSubmitWireFields,
@@ -105,7 +107,8 @@ interface ProbeRoute {
  * receipt's config_db_layer — it never claims TEST config was loaded.
  */
 async function routing(): Promise<{
-  routes: ProbeRoute[];
+  routeA: ProbeRoute;
+  routeB: ProbeRoute;
   solver2Provider: string | undefined;
   solver2Model: string | undefined;
   policy: string | undefined;
@@ -161,8 +164,9 @@ async function routing(): Promise<{
         })
       : solverA;
 
-  const routes: ProbeRoute[] = [];
-  const seen = new Set<string>();
+  // A and B keep their own identities even when they resolve to the same lane —
+  // the preflight owes each solver a real request, not a deduped share.
+  const routes = new Map<'A' | 'B', ProbeRoute>();
   for (const [solver, resolved] of [
     ['A', solverA],
     ['B', solverB],
@@ -177,10 +181,7 @@ async function routing(): Promise<{
       if (native?.api !== 'openai-completions') {
         throw new Error('Require an OpenAI-completions model');
       }
-      const key = `${resolved.provider}/${resolved.model}/${JSON.stringify(resolved.nativeReasoningParams ?? null)}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      routes.push({
+      routes.set(solver, {
         solver,
         provider: resolved.provider,
         model: resolved.model,
@@ -199,8 +200,12 @@ async function routing(): Promise<{
       );
     }
   }
+  const routeA = routes.get('A');
+  const routeB = routes.get('B');
+  if (!routeA || !routeB) throw new Error('solver route resolution incomplete');
   return {
-    routes,
+    routeA,
+    routeB,
     solver2Provider,
     solver2Model,
     policy: process.env.QUESTION_ADMISSION_POLICY_ID,
@@ -246,15 +251,184 @@ const CROSSCHECK_PROBE_INPUT = {
 };
 
 interface ProbePlan {
-  /** Which solver route this probe exercises; B reuses A's route when solver2 is unset. */
+  /** Which solver identity this probe exercises — A and B always each get a real
+   *  request even when they resolve to the same lane. */
   solver: 'A' | 'B';
   mode: 'solve' | 'source_crosscheck';
   route: ProbeRoute;
 }
 
+/**
+ * One bounded submit probe: the initial request plus — only when the shared
+ * turn machine says 'needs_reminder' — exactly one authorized landing request
+ * carrying the verbatim assistant turn back (the same contract the adapter
+ * runs via getFollowUpMessages). 4xx, a malformed/truncated submit, or any
+ * non-clean tool turn fails immediately; nothing retries.
+ */
+async function runProbe(
+  plan: ProbePlan,
+  input: unknown,
+  parameters: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const { route } = plan;
+  const submitPolicy = resolveStructuredSubmitPolicy(route.provider, route.model);
+  const probe: Record<string, unknown> = {
+    solver: plan.solver,
+    mode: plan.mode,
+    provider: route.provider,
+    model: route.model,
+    endpoint: route.endpoint,
+    selection_rule: route.selectionRule,
+    submit_tool_choice: submitPolicy.forced ? 'forced' : 'auto',
+    forced_tool_choice_capability: submitPolicy.capability,
+    ...(route.nativeReasoning ?? {}),
+    requests: [] as Record<string, unknown>[],
+    landing_turn_used: false,
+  };
+  const messages: Record<string, unknown>[] = [
+    {
+      role: 'system',
+      content:
+        getTaskSystemPrompt(QUESTION_ADMISSION_TASK_KIND) +
+        structuredSubmitSystemSuffix(submitPolicy.forced),
+    },
+    { role: 'user', content: JSON.stringify(input) },
+  ];
+  for (;;) {
+    const requests = probe.requests as Record<string, unknown>[];
+    if (requests.length >= 2) {
+      throw new Error('preflight probe exceeded its authorized turn bound (initial + one landing)');
+    }
+    const response = await fetch(`${route.endpoint}/chat/completions`, {
+      method: 'POST',
+      redirect: 'error',
+      signal: AbortSignal.timeout(120_000),
+      headers: {
+        Authorization: `Bearer ${route.apiKey}`,
+        'Content-Type': 'application/json',
+        ...(route.sessionHeader
+          ? { 'x-opencode-session': `question-admission-preflight-${randomUUID()}` }
+          : {}),
+      },
+      body: JSON.stringify({
+        model: route.model,
+        max_tokens: 4096,
+        stream: false,
+        ...(route.nativeReasoning ?? {}),
+        messages,
+        tools: [
+          {
+            type: 'function',
+            function: {
+              name: submit,
+              description: 'Submit the structured output object',
+              parameters,
+            },
+          },
+        ],
+        ...structuredSubmitWireFields(submitPolicy),
+      }),
+    });
+    const reqRecord: Record<string, unknown> = {
+      role: requests.length === 0 ? 'initial' : 'landing',
+      http_status: response.status,
+    };
+    requests.push(reqRecord);
+    if (response.status !== 200) {
+      // YUK-1559 (C6) — a non-2xx leaves the sanitized, bounded provider
+      // error body + status + request id on the receipt, so a refused
+      // preflight is diagnosable without a second request.
+      reqRecord.provider_error = await readProviderErrorEvidence(response, {
+        secrets: [route.apiKey],
+      });
+      probe.http_status = response.status;
+      throw new Error(
+        `Preflight HTTP ${response.status} for ${route.provider}/${route.model} mode=${plan.mode}; stop before reopening`,
+      );
+    }
+    const body = (await response.json()) as {
+      id?: string;
+      usage?: unknown;
+      choices?: {
+        finish_reason?: string;
+        message?: {
+          content?: unknown;
+          tool_calls?: { function?: { name?: string; arguments?: string } }[];
+        };
+      }[];
+    };
+    reqRecord.provider_request_id = body.id;
+    reqRecord.usage = body.usage ?? null;
+    const choice = body.choices?.[0];
+    if (body.choices?.length !== 1 || !choice?.message) {
+      throw new Error('Preflight requires exactly one choice');
+    }
+    const calls = choice.message.tool_calls ?? [];
+    const verdict = classifySubmitTurn(
+      {
+        stopReason: choice.finish_reason,
+        toolCallNames: calls.map((call) => call.function?.name ?? ''),
+      },
+      { forced: submitPolicy.forced },
+    );
+    if (verdict === 'terminal_failure') {
+      probe.http_status = response.status;
+      throw new Error(
+        `Preflight turn terminal_failure: mode=${plan.mode} finish_reason=${choice.finish_reason} tool_calls=${calls.map((c) => c.function?.name).join(',') || 'none'}`,
+      );
+    }
+    if (verdict === 'needs_reminder') {
+      // The assistant turn is carried back verbatim, then the shared reminder —
+      // exactly the adapter's one-landing contract.
+      probe.landing_turn_used = true;
+      messages.push(choice.message as Record<string, unknown>, {
+        role: 'user',
+        content: STRUCTURED_SUBMIT_REMINDER,
+      });
+      continue;
+    }
+    probe.http_status = response.status;
+    const rawArguments = calls[0].function?.arguments ?? '';
+    // Synthetic 1+1 probe only, no question text or credentials: keep the raw
+    // arguments so a failed probe can be diagnosed without a second request.
+    probe.raw_arguments = rawArguments.slice(0, 8000);
+    const args: unknown = JSON.parse(rawArguments);
+    probe.arguments_was_string = typeof args === 'string';
+    if (plan.mode === 'solve') {
+      // Same parse entry as the solve path (string tolerated at this level), with
+      // the repair budget at zero so the probe proves strict schema validity.
+      const output = parseQuestionAdmissionSolveModelOutput(args, [], { remaining: 0 });
+      const answer = output.units[0]?.answer;
+      if (
+        output.units.length !== 1 ||
+        output.units[0].scoring_unit_id !== 'u' ||
+        output.units[0].status !== 'solved' ||
+        answer?.kind !== 'blank_numeric' ||
+        answer.expected !== 2
+      )
+        throw new Error('Invalid preflight synthetic answer');
+      probe.output = output;
+    } else {
+      const output = QuestionAdmissionSourceCrosscheckOutput.parse(args);
+      const entry = output.per_unit[0];
+      if (output.per_unit.length !== 1 || entry.scoring_unit_id !== 'u')
+        throw new Error('Invalid preflight synthetic crosscheck output');
+      probe.output = output;
+    }
+    return probe;
+  }
+}
+
 async function preflight(path: string) {
-  const { routes, solver2Provider, solver2Model, policy, config_db_layer, config_hydration } =
-    await routing();
+  const {
+    routeA,
+    routeB,
+    solver2Provider,
+    solver2Model,
+    policy,
+    config_db_layer,
+    config_hydration,
+  } = await routing();
   // Refuse an existing receipt BEFORE any request. Failed attempts also
   // leave a receipt; this command never retries, overwrites, or reopens a claim.
   const file = await open(path, 'wx');
@@ -262,7 +436,7 @@ async function preflight(path: string) {
     passed: false,
     created_at: new Date().toISOString(),
     routing_hash: hash({
-      routes: routes.map(({ apiKey: _apiKey, ...publicRoute }) => publicRoute),
+      routes: [routeA, routeB].map(({ apiKey: _apiKey, ...publicRoute }) => publicRoute),
       solver2Provider,
       solver2Model,
       policy,
@@ -275,134 +449,23 @@ async function preflight(path: string) {
     probes: [] as Record<string, unknown>[],
   };
   const probes = receipt.probes as Record<string, unknown>[];
-  // One probe per distinct resolved route for mode 'solve' (route B falls back
-  // to A's lane when QUESTION_ADMISSION_SOLVER2_* is unset) plus one
-  // 'source_crosscheck' probe on the primary route — crosscheck never takes a
-  // per-call override in runSourceCrosscheck, so route A IS its lane.
-  const primary = routes[0];
-  const plans: ProbePlan[] = [];
-  for (const route of routes) plans.push({ solver: route.solver, mode: 'solve', route });
-  if (primary) plans.push({ solver: 'A', mode: 'source_crosscheck', route: primary });
+  // One real request per solver identity (A and B keep theirs even on the same
+  // lane) plus one 'source_crosscheck' probe on the primary route — crosscheck
+  // never takes a per-call override in runSourceCrosscheck, so route A IS its
+  // lane. Each probe is the shared bounded submit machine: initial request +
+  // at most one authorized landing turn.
+  const plans: ProbePlan[] = [
+    { solver: 'A', mode: 'solve', route: routeA },
+    { solver: 'B', mode: 'solve', route: routeB },
+    { solver: 'A', mode: 'source_crosscheck', route: routeA },
+  ];
   try {
     for (const plan of plans) {
-      const { route } = plan;
-      const submitPolicy = resolveStructuredSubmitPolicy(route.provider, route.model);
-      const probe: Record<string, unknown> = {
-        solver: plan.solver,
-        mode: plan.mode,
-        provider: route.provider,
-        model: route.model,
-        endpoint: route.endpoint,
-        selection_rule: route.selectionRule,
-        submit_tool_choice: submitPolicy.forced ? 'forced' : 'auto',
-        forced_tool_choice_capability: submitPolicy.capability,
-        ...(route.nativeReasoning ?? {}),
-      };
-      probes.push(probe);
       const input =
         plan.mode === 'solve'
           ? QuestionAdmissionSolveInput.parse(SOLVE_PROBE_INPUT)
           : QuestionAdmissionSourceCrosscheckInput.parse(CROSSCHECK_PROBE_INPUT);
-      const response = await fetch(`${route.endpoint}/chat/completions`, {
-        method: 'POST',
-        redirect: 'error',
-        signal: AbortSignal.timeout(120_000),
-        headers: {
-          Authorization: `Bearer ${route.apiKey}`,
-          'Content-Type': 'application/json',
-          ...(route.sessionHeader
-            ? { 'x-opencode-session': `question-admission-preflight-${randomUUID()}` }
-            : {}),
-        },
-        body: JSON.stringify({
-          model: route.model,
-          max_tokens: 4096,
-          stream: false,
-          ...(route.nativeReasoning ?? {}),
-          messages: [
-            {
-              role: 'system',
-              content:
-                getTaskSystemPrompt(QUESTION_ADMISSION_TASK_KIND) +
-                structuredSubmitSystemSuffix(submitPolicy.forced),
-            },
-            {
-              role: 'user',
-              content: JSON.stringify(input),
-            },
-          ],
-          tools: [
-            {
-              type: 'function',
-              function: {
-                name: submit,
-                description: 'Submit the structured output object',
-                parameters: schema,
-              },
-            },
-          ],
-          ...structuredSubmitWireFields(submitPolicy),
-        }),
-      });
-      probe.http_status = response.status;
-      if (response.status !== 200) {
-        // YUK-1559 (C6) — a non-2xx leaves the sanitized, bounded provider
-        // error body + status + request id on the receipt, so a refused
-        // preflight is diagnosable without a second request. The receipt is
-        // written in the finally below before this command exits.
-        probe.provider_error = await readProviderErrorEvidence(response, {
-          secrets: [route.apiKey],
-        });
-        throw new Error(
-          `Preflight HTTP ${response.status} for ${route.provider}/${route.model} mode=${plan.mode}; stop before reopening`,
-        );
-      }
-      const body = (await response.json()) as {
-        id?: string;
-        usage?: unknown;
-        choices?: {
-          finish_reason?: string;
-          message?: { tool_calls?: { function?: { name?: string; arguments?: string } }[] };
-        }[];
-      };
-      probe.provider_request_id = body.id;
-      probe.usage = body.usage ?? null;
-      const calls = body.choices?.[0]?.message?.tool_calls;
-      if (
-        body.choices?.length !== 1 ||
-        body.choices[0].finish_reason !== 'tool_calls' ||
-        calls?.length !== 1 ||
-        calls[0].function?.name !== submit
-      ) {
-        throw new Error('Preflight requires exactly one choice and one completed submit call');
-      }
-      const rawArguments = calls[0].function.arguments ?? '';
-      // Synthetic 1+1 probe only, no question text or credentials: keep the raw
-      // arguments so a failed probe can be diagnosed without a second request.
-      probe.raw_arguments = rawArguments.slice(0, 8000);
-      const args: unknown = JSON.parse(rawArguments);
-      probe.arguments_was_string = typeof args === 'string';
-      if (plan.mode === 'solve') {
-        // Same parse entry as the solve path (string tolerated at this level), with
-        // the repair budget at zero so the probe proves strict schema validity.
-        const output = parseQuestionAdmissionSolveModelOutput(args, [], { remaining: 0 });
-        const answer = output.units[0]?.answer;
-        if (
-          output.units.length !== 1 ||
-          output.units[0].scoring_unit_id !== 'u' ||
-          output.units[0].status !== 'solved' ||
-          answer?.kind !== 'blank_numeric' ||
-          answer.expected !== 2
-        )
-          throw new Error('Invalid preflight synthetic answer');
-        probe.output = output;
-      } else {
-        const output = QuestionAdmissionSourceCrosscheckOutput.parse(args);
-        const entry = output.per_unit[0];
-        if (output.per_unit.length !== 1 || entry.scoring_unit_id !== 'u')
-          throw new Error('Invalid preflight synthetic crosscheck output');
-        probe.output = output;
-      }
+      probes.push(await runProbe(plan, input, schema));
     }
     receipt.passed = true;
     console.log('PASS: HTTP 200; exactly one submit call; strict schema; no paid_effect created');
@@ -411,7 +474,7 @@ async function preflight(path: string) {
     // console log — run it through the same sanitize boundary against every
     // probe credential so a provider/SDK error text that echoes a request
     // value cannot reach either sink. Stack/cause are not receipt-relevant.
-    const secrets = routes.map((route) => route.apiKey);
+    const secrets = [routeA, routeB].map((route) => route.apiKey);
     const sanitized = sanitizeProviderErrorText(
       error instanceof Error ? error.message : String(error),
       { secrets },
@@ -425,7 +488,8 @@ async function preflight(path: string) {
 }
 
 async function reopen(receiptPath: string, manifestPath: string) {
-  const { routes, solver2Provider, solver2Model, policy, config_db_layer } = await routing();
+  const { routeA, routeB, solver2Provider, solver2Model, policy, config_db_layer } =
+    await routing();
   const receipt = z
     .object({
       passed: z.literal(true),
@@ -441,7 +505,7 @@ async function reopen(receiptPath: string, manifestPath: string) {
     age > 60 * 60_000 ||
     receipt.routing_hash !==
       hash({
-        routes: routes.map(({ apiKey: _apiKey, ...publicRoute }) => publicRoute),
+        routes: [routeA, routeB].map(({ apiKey: _apiKey, ...publicRoute }) => publicRoute),
         solver2Provider,
         solver2Model,
         policy,

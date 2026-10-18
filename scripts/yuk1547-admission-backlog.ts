@@ -30,11 +30,34 @@
  *     baseline 'applied' row changing is an invariant violation.
  *   - Thresholds are explicit CLI config (defaults = approved values) and are
  *     recorded in baseline + every receipt.
+ *   - The historical B spend ledger (--ledger) is REQUIRED and digest-pinned
+ *     in baseline.json: cumulative $1 / hard-cap $3 apply to ledger+window
+ *     merged totals, never to a fresh out-dir alone. entries[] carry per-run
+ *     identity (dedupe: a run is never charged twice) and may carry per-run
+ *     reserve bounds; the total unknown_reserve_usd must cover them. The
+ *     preflight's own requests (incl. landing turns) must already be folded
+ *     into the ledger before the first drive — nothing is charged at zero.
+ *     Resume re-ajudicates every settled receipt (alarms/timeout) before any
+ *     further enqueue.
+ *
+ * Ledger schema (the frozen prior-B artifact — e.g.
+ * review/stage1-yuk1547-ledger-20261019/prior-b-ledger.verified.json — plus
+ * the preflight's own requests folded in before the first drive):
+ *   { "version": <int>, "scope": "...", "generated_at": "...",
+ *     "known_usd_estimated": "<decimal>", "unknown_reserve_usd": "<decimal>",
+ *     "unknown_cost_calls": <int>, "counted_run_ids": [<id>...],
+ *     "entries": [ {"run_id": "<id>", "cost_usd": "<decimal>"|null,
+ *                  "unknown_reserve_usd": "<decimal>"?, ...} ...] }
+ * Money is decimal strings parsed with Number(); extra artifact fields are
+ * passed through. Consistency is enforced: unknown entries ==
+ * unknown_cost_calls, per-entry reserves <= unknown_reserve_usd, no
+ * duplicate run/count ids, totals finite non-negative.
  *
  * usage:
  *   tsx scripts/yuk1547-admission-backlog.ts check --manifest <m.json> <group_id>
  *   tsx scripts/yuk1547-admission-backlog.ts drive --manifest <m.json> --out <dir>
- *       --preflight-receipt <path> [--batch N] [--batch-size 20]
+ *       --preflight-receipt <path> --ledger <history-ledger.json>
+ *       [--batch N] [--batch-size 20]
  *       [--per-question-usd 0.03] [--cumulative-usd 1] [--hard-cap-usd 3]
  *       [--unknown-reserve-usd 0.01] [--max-unknown-rate 0.1]
  *       [--poll-ms 5000] [--settle-timeout-ms 900000] [--sent <ids.json>]
@@ -98,6 +121,94 @@ const manifestItem = z.object({
 type ManifestItem = z.infer<typeof manifestItem>;
 const manifestSchema = z.array(manifestItem).nonempty();
 
+/**
+ * The fixed historical cost ledger this window must merge — supplied by the
+ * operator, pinned by digest inside baseline.json, and REQUIRED (never
+ * defaulted to zero): the $1 cumulative / $3 hard-cap guardrails apply to the
+ * whole B effort, not to the new out-dir.
+ */
+const decimalString = z.string().regex(/^\d+(\.\d+)?$/);
+const ledgerSchema = z
+  .object({
+    version: z.number().int(),
+    scope: z.string().min(1),
+    generated_at: z.string().min(1),
+    /** Historical KNOWN spend (estimated when raw cost was never persisted —
+     *  never silently exact). Decimal string, parsed to number. */
+    known_usd_estimated: decimalString,
+    /** Historical reserve for calls whose raw cost is unknown — recorded as
+     *  RESERVE (each unknown call's existing upper bound), never merged into
+     *  known spend and never recomputed from a uniform per-call rate. */
+    unknown_reserve_usd: decimalString,
+    unknown_cost_calls: z.number().int().nonnegative(),
+    /** Run/request identities already counted in the totals — window
+     *  receipts naming one are skipped so a call is never charged twice. */
+    counted_run_ids: z.array(z.string().min(1)).default([]),
+    /** Per-entry detail: run_id dedupe + per-call reserve bound. */
+    entries: z
+      .array(
+        z
+          .object({
+            run_id: z.string().min(1),
+            cost_usd: decimalString.nullable().optional(),
+            unknown_reserve_usd: decimalString.nullable().optional(),
+          })
+          .passthrough(),
+      )
+      .default([]),
+  })
+  .passthrough();
+type Ledger = z.infer<typeof ledgerSchema>;
+
+interface NormalizedLedger {
+  knownUsd: number;
+  reserveUsd: number;
+  unknownCalls: number;
+  counted: Set<string>;
+  raw: Ledger;
+}
+
+function normalizeLedger(ledger: Ledger): NormalizedLedger {
+  const counted = new Set(ledger.counted_run_ids);
+  if (counted.size !== ledger.counted_run_ids.length) {
+    throw new Error('ledger contains duplicate counted_run_ids');
+  }
+  const entryIds = new Set(ledger.entries.map((entry) => entry.run_id));
+  if (entryIds.size !== ledger.entries.length) {
+    throw new Error('ledger contains duplicate run_id entries');
+  }
+  const unknownEntries = ledger.entries.filter(
+    (entry) => entry.cost_usd === null || entry.cost_usd === undefined,
+  );
+  if (unknownEntries.length !== ledger.unknown_cost_calls) {
+    throw new Error(
+      `ledger inconsistent: ${unknownEntries.length} unknown-cost entries != unknown_cost_calls ${ledger.unknown_cost_calls}`,
+    );
+  }
+  const reserveUsd = Number(ledger.unknown_reserve_usd);
+  const summedEntryReserve = unknownEntries.reduce(
+    (sum, entry) => sum + Number(entry.unknown_reserve_usd ?? '0'),
+    0,
+  );
+  if (summedEntryReserve > reserveUsd + 1e-12) {
+    throw new Error(
+      `ledger inconsistent: per-entry reserves ${summedEntryReserve} exceed unknown_reserve_usd ${reserveUsd}`,
+    );
+  }
+  const knownUsd = Number(ledger.known_usd_estimated);
+  if (
+    !Number.isFinite(knownUsd) ||
+    knownUsd < 0 ||
+    !Number.isFinite(reserveUsd) ||
+    reserveUsd < 0
+  ) {
+    throw new Error('ledger totals must be non-negative finite numbers');
+  }
+  return { knownUsd, reserveUsd, unknownCalls: ledger.unknown_cost_calls, counted, raw: ledger };
+}
+
+const countedRunIds = (ledger: NormalizedLedger) => ledger.counted;
+
 interface Thresholds {
   batchSize: number;
   perQuestionUsd: number;
@@ -118,6 +229,10 @@ interface ExpectedRoute {
 
 const sha256 = (value: unknown) =>
   `sha256:${createHash('sha256').update(JSON.stringify(value)).digest('hex')}`;
+const sha256File = async (path: string) =>
+  `sha256:${createHash('sha256')
+    .update(await readFile(path))
+    .digest('hex')}`;
 
 function canonicalize(value: unknown): unknown {
   if (value instanceof Date) return value.toISOString();
@@ -407,6 +522,14 @@ interface Baseline {
   expected_routes: { solverA: ExpectedRoute; solverB: ExpectedRoute };
   policy_id: string;
   config_epoch: number;
+  ledger: {
+    path: string;
+    sha256: string;
+    source: string;
+    known_usd: number;
+    unknown_reserve_usd: number;
+    entries: number;
+  };
   preflight: { path: string; sha256: string; passed: boolean; probes: unknown };
   paid_baseline: { key: string; state: string; serialized: string }[];
   withheld_baseline: { group_id: string; serialized: string }[];
@@ -576,6 +699,11 @@ interface ItemReceipt {
   reason: string | null;
   cost_known_usd: number;
   unknown_cost_run_ids: string[];
+  /** Ledger-merged window totals at settle time (historical + this window,
+   *  run-id deduped) — the denominators the budget alarms applied. Reserve is
+   *  recorded separately: unknown cost is never merged into known spend. */
+  cumulative_known_usd: number;
+  cumulative_reserve_usd: number;
   runs: (AiTaskRunRow & { http_status?: number; http_error?: HttpEvidence })[];
   jobs: JobRow[];
   alarms: string[];
@@ -588,29 +716,80 @@ const PRE_C6_NOTE =
   'Individual raw HTTP request payloads are not archived (pre-C6 evidence gap); ' +
   'route/native-params truth is the resolved binding + task_run provider/model columns.';
 
-async function loadCumulative(outDir: string): Promise<{
+/**
+ * Scan every settled question receipt in the window: ledger-merged cumulative
+ * cost (deduped by counted_run_ids — a run is never charged twice), plus the
+ * receipts' own alarm/timeout verdicts re-read for resume safety — a written
+ * receipt is never treated as passed just because it exists.
+ */
+async function auditWindowReceipts(
+  outDir: string,
+  ledger: NormalizedLedger,
+  unknownReserveUsd: number,
+): Promise<{
   knownUsd: number;
+  reserveUsd: number;
   unknownCalls: number;
   unknownQuestions: number;
   processed: number;
+  violations: string[];
 }> {
+  const counted = countedRunIds(ledger);
   const files = (await readdir(outDir)).filter((name) => /^question-[^/]+\.json$/.test(name));
-  let knownUsd = 0;
-  let unknownCalls = 0;
+  let windowKnown = 0;
+  let windowUnknownCalls = 0;
   let unknownQuestions = 0;
+  const violations: string[] = [];
   for (const name of files) {
     const receipt = await readJson<ItemReceipt>(join(outDir, name));
-    knownUsd += receipt.cost_known_usd;
-    unknownCalls += receipt.unknown_cost_run_ids.length;
+    for (const run of receipt.runs) {
+      if (counted.has(run.id)) continue;
+      if (run.cost_usd === null) windowUnknownCalls += 1;
+      else windowKnown += run.cost_usd;
+    }
     if (receipt.paid_state === 'unknown') unknownQuestions += 1;
+    if (receipt.alarms.length > 0 || receipt.settle_timeout) {
+      violations.push(
+        `${receipt.group_id}: settled receipt carries unresolved guardrail evidence ` +
+          `(alarms=[${receipt.alarms.join(',')}] settle_timeout=${receipt.settle_timeout})`,
+      );
+    }
   }
-  return { knownUsd, unknownCalls, unknownQuestions, processed: files.length };
+  return {
+    knownUsd: ledger.knownUsd + windowKnown,
+    // Historical reserve carries its own per-run bounds verbatim; only THIS
+    // window's unknown calls are priced at the configured new-window reserve.
+    reserveUsd: ledger.reserveUsd + windowUnknownCalls * unknownReserveUsd,
+    unknownCalls: windowUnknownCalls,
+    unknownQuestions,
+    processed: files.length,
+    violations,
+  };
+}
+
+/** Batch unknown tally over the PLANNED batch slice — the denominator rule is
+ *  `unknown > items.length * maxUnknownRate` against the full planned batch,
+ *  so a partly-settled batch cannot dilute an overrun. */
+async function countBatchReceipts(
+  outDir: string,
+  items: ManifestItem[],
+): Promise<{ processed: number; unknown: number }> {
+  let processed = 0;
+  let unknown = 0;
+  for (const item of items) {
+    const file = receiptPath(outDir, item.id);
+    if (!(await fileExists(file))) continue;
+    processed += 1;
+    const receipt = await readJson<ItemReceipt>(file);
+    if (receipt.paid_state === 'unknown') unknown += 1;
+  }
+  return { processed, unknown };
 }
 
 function evaluateQuestion(
   receipt: Pick<ItemReceipt, 'runs' | 'cost_known_usd'>,
   cumulativeKnownUsd: number,
-  cumulativeUnknownCalls: number,
+  cumulativeReserveUsd: number,
   thresholds: Thresholds,
   expectedPairs: Set<string>,
 ): string[] {
@@ -628,7 +807,7 @@ function evaluateQuestion(
   if (cumulativeKnownUsd > thresholds.cumulativeUsd) {
     alarms.push(`cumulative_cost:$${cumulativeKnownUsd.toFixed(6)}>$${thresholds.cumulativeUsd}`);
   }
-  const boundedTotal = cumulativeKnownUsd + cumulativeUnknownCalls * thresholds.unknownReserveUsd;
+  const boundedTotal = cumulativeKnownUsd + cumulativeReserveUsd;
   if (boundedTotal > thresholds.hardCapUsd) {
     alarms.push(`hard_cap:$${boundedTotal.toFixed(6)}>$${thresholds.hardCapUsd}`);
   }
@@ -641,10 +820,17 @@ async function drive(opts: {
   batch?: number;
   thresholds: Thresholds;
   preflightReceipt?: string;
+  ledgerPath: string;
   sentIdsPath?: string;
 }): Promise<void> {
   const db = await dbBoot();
   const manifest = await readJson(opts.manifestPath, manifestSchema);
+  // The historical B ledger is mandatory input — never default to zero; its
+  // FILE digest is pinned into baseline.json and must match on every later
+  // run (hashing raw bytes so the operator's frozen artifact is pinned
+  // byte-for-byte, not by post-parse key order).
+  const ledger = normalizeLedger(await readJson(opts.ledgerPath, ledgerSchema));
+  const ledgerDigest = await sha256File(opts.ledgerPath);
   const manifestIds = new Set(manifest.map((item) => item.id));
   if (manifestIds.size !== manifest.length) throw new Error('manifest contains duplicate ids');
   const manifestDigest = sha256(manifest);
@@ -691,6 +877,14 @@ async function drive(opts: {
       expected_routes: routes,
       policy_id: policy,
       config_epoch: configEpoch,
+      ledger: {
+        path: opts.ledgerPath,
+        sha256: ledgerDigest,
+        source: ledger.raw.scope,
+        known_usd: ledger.knownUsd,
+        unknown_reserve_usd: ledger.reserveUsd,
+        entries: ledger.counted.size,
+      },
       preflight: {
         path: opts.preflightReceipt,
         sha256: sha256(receipt),
@@ -716,6 +910,11 @@ async function drive(opts: {
     if (stableJson(baseline.thresholds) !== stableJson(opts.thresholds)) {
       throw new Error('threshold flags differ from the recorded baseline thresholds');
     }
+    if (baseline.ledger.sha256 !== ledgerDigest) {
+      throw new Error(
+        `ledger digest mismatch — baseline pins ${baseline.ledger.sha256} (${baseline.ledger.path})`,
+      );
+    }
   }
 
   const batchSize = opts.thresholds.batchSize;
@@ -735,7 +934,9 @@ async function drive(opts: {
       throw new Error(`batch ${batchN - 1} receipt missing — batches run in order`);
     }
 
-    // Batch-open invariant check against the window baseline.
+    // Batch-open invariant check against the window baseline, then re-audit
+    // every already-settled receipt — a crash between receipt write and STOP
+    // write must not resume past a recorded guardrail breach.
     const openViolations = await checkInvariants(db, baseline, manifestIds);
     if (openViolations.length > 0) {
       await writeStop(opts.outDir, 'invariant_violation', {
@@ -743,6 +944,20 @@ async function drive(opts: {
         violations: openViolations,
       });
       throw new Error(`batch ${batchN} open invariants: ${openViolations.join('; ')}`);
+    }
+    const settledAudit = await auditWindowReceipts(
+      opts.outDir,
+      ledger,
+      opts.thresholds.unknownReserveUsd,
+    );
+    if (settledAudit.violations.length > 0) {
+      await writeStop(opts.outDir, 'carried_guardrail', {
+        batch: batchN,
+        violations: settledAudit.violations,
+      });
+      throw new Error(
+        `batch ${batchN} carried guardrail violations: ${settledAudit.violations.join('; ')}`,
+      );
     }
 
     const stats = { items: [] as string[], unknown: 0, knownUsd: 0, unknownCalls: 0 };
@@ -756,8 +971,22 @@ async function drive(opts: {
       }
       const receiptFile = receiptPath(opts.outDir, item.id);
       if (await fileExists(receiptFile)) {
+        // never replay — resume skips the settled item, but a receipt is not a
+        // pass: re-ajudicate its recorded alarms/timeout before moving on so a
+        // crash between receipt write and STOP write cannot continue sending.
+        const settled = await readJson<ItemReceipt>(receiptFile);
+        if (settled.alarms.length > 0 || settled.settle_timeout) {
+          await writeStop(opts.outDir, 'carried_guardrail', {
+            batch: batchN,
+            group_id: item.id,
+            alarms: settled.alarms,
+            settle_timeout: settled.settle_timeout,
+          });
+          stopped = 'carried_guardrail';
+          break;
+        }
         stats.items.push(`${item.id}:already-settled`);
-        continue; // never replay — resume skips the settled item
+        continue;
       }
       const intentFile = intentPath(opts.outDir, item.id);
       const hasIntent = await fileExists(intentFile);
@@ -779,14 +1008,51 @@ async function drive(opts: {
           stopped = 'queue_not_empty';
           break;
         }
-        // Budget gate before enqueue: cumulative already over limit → stop.
-        const cumulative = await loadCumulative(opts.outDir);
+        // Unknown-rate gate before EVERY enqueue: recomputed against the
+        // planned batch denominator, so once an overrun is unrecoverable the
+        // next question is never sent (e.g. 3rd unknown in a 20-item batch).
+        const batchTally = await countBatchReceipts(opts.outDir, items);
+        if (batchTally.unknown > items.length * opts.thresholds.maxUnknownRate) {
+          await writeStop(opts.outDir, 'unknown_rate', {
+            batch: batchN,
+            unknown: batchTally.unknown,
+            denominator: `planned_batch_items=${items.length}`,
+            rate: opts.thresholds.maxUnknownRate,
+          });
+          stopped = 'unknown_rate';
+          break;
+        }
+        // Budget gate before enqueue — ledger-merged totals, never
+        // window-local zero: cumulative >$1 stops, and the hard cap counts
+        // unknown cost at its recorded reserve, not at zero.
+        const cumulative = await auditWindowReceipts(
+          opts.outDir,
+          ledger,
+          opts.thresholds.unknownReserveUsd,
+        );
+        if (cumulative.violations.length > 0) {
+          await writeStop(opts.outDir, 'carried_guardrail', {
+            batch: batchN,
+            violations: cumulative.violations,
+          });
+          stopped = 'carried_guardrail';
+          break;
+        }
         if (cumulative.knownUsd > opts.thresholds.cumulativeUsd) {
           await writeStop(opts.outDir, 'cumulative_cost', {
             batch: batchN,
             cumulative_known_usd: cumulative.knownUsd,
           });
           stopped = 'cumulative_cost';
+          break;
+        }
+        const bounded = cumulative.knownUsd + cumulative.reserveUsd;
+        if (bounded > opts.thresholds.hardCapUsd) {
+          await writeStop(opts.outDir, 'hard_cap', {
+            batch: batchN,
+            bounded_total_usd: bounded,
+          });
+          stopped = 'hard_cap';
           break;
         }
         sentAt = new Date().toISOString();
@@ -867,9 +1133,24 @@ async function drive(opts: {
       }
       if (!settled) alarms.push('settle_timeout');
 
-      const cumulative = await loadCumulative(opts.outDir);
-      const cumulativeKnown = cumulative.knownUsd + costKnownUsd;
-      const cumulativeUnknownCalls = cumulative.unknownCalls + unknownCostRunIds.length;
+      // Ledger-merged cumulative: the audit above already excludes window runs
+      // the ledger counted (run_id dedupe — a run is never charged twice), so
+      // here we only add THIS item's still-uncounted share. Historical reserve
+      // keeps its own per-run bounds; new unknowns use the window reserve.
+      const countedRuns = countedRunIds(ledger); // NormalizedLedger.counted
+      const countedInReceipt = runs.filter((run) => countedRuns.has(run.id));
+      const uncountedCostKnown =
+        costKnownUsd - countedInReceipt.reduce((sum, run) => sum + (run.cost_usd ?? 0), 0);
+      const uncountedReserve =
+        unknownCostRunIds.filter((id) => !countedRuns.has(id)).length *
+        opts.thresholds.unknownReserveUsd;
+      const cumulative = await auditWindowReceipts(
+        opts.outDir,
+        ledger,
+        opts.thresholds.unknownReserveUsd,
+      );
+      const cumulativeKnown = cumulative.knownUsd + uncountedCostKnown;
+      const cumulativeReserveUsd = cumulative.reserveUsd + uncountedReserve;
 
       const receipt: ItemReceipt = {
         group_id: item.id,
@@ -887,6 +1168,8 @@ async function drive(opts: {
         reason: (result?.reason as string | undefined) ?? null,
         cost_known_usd: costKnownUsd,
         unknown_cost_run_ids: unknownCostRunIds,
+        cumulative_known_usd: cumulativeKnown,
+        cumulative_reserve_usd: cumulativeReserveUsd,
         runs,
         jobs: last.jobs,
         alarms,
@@ -899,7 +1182,7 @@ async function drive(opts: {
         ...evaluateQuestion(
           receipt,
           cumulativeKnown,
-          cumulativeUnknownCalls,
+          cumulativeReserveUsd,
           opts.thresholds,
           expectedPairs,
         ),
@@ -931,26 +1214,17 @@ async function drive(opts: {
       });
       stopped = 'invariant_violation';
     }
-    // Unknown-rate guardrail counts EVERY receipted item of this batch slice —
-    // including ones settled by an earlier (interrupted) run of the same batch.
-    let batchProcessed = 0;
-    let batchUnknown = 0;
-    for (const item of items) {
-      const file = receiptPath(opts.outDir, item.id);
-      if (!(await fileExists(file))) continue;
-      batchProcessed += 1;
-      const settled = await readJson<ItemReceipt>(file);
-      if (settled.paid_state === 'unknown') batchUnknown += 1;
-    }
+    // Batch-close unknown-rate guardrail — same planned-batch denominator as
+    // the per-enqueue gate; an all-skipped batch still adjudicates honestly.
+    const batchTally = await countBatchReceipts(opts.outDir, items);
     if (
       stopped === undefined &&
-      batchProcessed > 0 &&
-      batchUnknown > batchProcessed * opts.thresholds.maxUnknownRate
+      batchTally.unknown > items.length * opts.thresholds.maxUnknownRate
     ) {
       await writeStop(opts.outDir, 'unknown_rate', {
         batch: batchN,
-        unknown: batchUnknown,
-        processed: batchProcessed,
+        unknown: batchTally.unknown,
+        denominator: `planned_batch_items=${items.length}`,
         rate: opts.thresholds.maxUnknownRate,
       });
       stopped = 'unknown_rate';
@@ -963,14 +1237,16 @@ async function drive(opts: {
       processed: stats.items,
       counts: {
         sent_this_run: stats.items.filter((e) => !e.endsWith(':already-settled')).length,
-        processed: batchProcessed,
-        unknown: batchUnknown,
+        processed: batchTally.processed,
+        unknown: batchTally.unknown,
+        planned_batch_items: items.length,
         batch_known_usd: stats.knownUsd,
         batch_unknown_calls: stats.unknownCalls,
       },
+      unknown_rate_rule: 'unknown > planned_batch_items * max_unknown_rate',
       invariant_violations: closeViolations,
       thresholds: opts.thresholds,
-      cumulative: await loadCumulative(opts.outDir),
+      cumulative: await auditWindowReceipts(opts.outDir, ledger, opts.thresholds.unknownReserveUsd),
       written_at: new Date().toISOString(),
     };
     await writeFile(batchFile, JSON.stringify(batchReceipt, null, 2));
@@ -1052,10 +1328,11 @@ const positional = rest.filter(
 const run =
   command === 'check' && flags.manifest && positional.length === 1
     ? check(flags.manifest, positional[0])
-    : command === 'drive' && flags.manifest && flags.out
+    : command === 'drive' && flags.manifest && flags.out && flags.ledger
       ? drive({
           manifestPath: flags.manifest,
           outDir: flags.out,
+          ledgerPath: flags.ledger,
           ...(flags.batch !== undefined ? { batch: Number(flags.batch) } : {}),
           thresholds: thresholdsFromFlags(flags),
           ...(flags['preflight-receipt'] !== undefined
@@ -1065,7 +1342,7 @@ const run =
         })
       : Promise.reject(
           new Error(
-            'usage: check --manifest <m.json> <group_id> | drive --manifest <m.json> --out <dir> --preflight-receipt <r.json> [--batch N] [--batch-size 20] [--per-question-usd 0.03] [--cumulative-usd 1] [--hard-cap-usd 3] [--unknown-reserve-usd 0.01] [--max-unknown-rate 0.1] [--sent ids.json]',
+            'usage: check --manifest <m.json> <group_id> | drive --manifest <m.json> --out <dir> --preflight-receipt <r.json> --ledger <history-ledger.json> [--batch N] [--batch-size 20] [--per-question-usd 0.03] [--cumulative-usd 1] [--hard-cap-usd 3] [--unknown-reserve-usd 0.01] [--max-unknown-rate 0.1] [--sent ids.json]',
           ),
         );
 

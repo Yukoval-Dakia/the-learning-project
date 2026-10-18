@@ -83,6 +83,7 @@ import { isSpawnToolName } from './spawn-contract';
 import {
   STRUCTURED_OUTPUT_SUBMIT_TOOL,
   STRUCTURED_SUBMIT_REMINDER,
+  classifySubmitTurn,
   resolveStructuredSubmitPolicy,
   structuredSubmitSystemSuffix,
   structuredSubmitWireFields,
@@ -1483,24 +1484,26 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       ...(this.allTools.length > 0 ? { toolExecution: 'sequential' as const } : {}),
       ...(structuredOutput
         ? {
-            // Forced lanes keep the strict single-turn contract. 'auto' lanes
-            // end on the landed submit call or after the one reminder turn; a
-            // first turn without the submit call falls through to the
-            // follow-up poll below (undefined = normal scheduling).
-            finishTurn: (submitReminderAllowed
-              ? ({ message }) => {
-                  if (message.stopReason === 'error' || message.stopReason === 'aborted') {
-                    return undefined;
-                  }
-                  const calls = message.content.filter((block) => block.type === 'toolCall');
-                  const landed =
-                    message.stopReason === 'toolUse' &&
-                    calls.length === 1 &&
-                    calls[0].name === STRUCTURED_OUTPUT_TOOL;
-                  if (landed || submitReminderUsed) return { action: 'end' as const };
-                  return undefined;
-                }
-              : () => ({ action: 'end' as const })) satisfies FinishTurn,
+            // Bounded submit state machine (structured-submit.ts): 'landed' or
+            // any non-clean turn ends the run — a turn with tool calls that is
+            // not exactly the one submit NEVER continues, because pi would
+            // otherwise pay the tool-result inner loop again (truncated calls
+            // come back terminate=false). Only a clean text-only end on an
+            // 'auto' lane takes the one authorized reminder turn; total model
+            // turns are at most initial + reminder.
+            finishTurn: (({ message }) => {
+              const verdict = classifySubmitTurn(
+                {
+                  stopReason: message.stopReason,
+                  toolCallNames: message.content
+                    .filter((block) => block.type === 'toolCall')
+                    .map((call) => call.name),
+                },
+                { forced: !submitReminderAllowed },
+              );
+              if (verdict === 'needs_reminder' && !submitReminderUsed) return undefined;
+              return { action: 'end' as const };
+            }) satisfies FinishTurn,
           }
         : maxTurns !== undefined
           ? {
