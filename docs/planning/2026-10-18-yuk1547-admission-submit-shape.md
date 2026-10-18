@@ -5,6 +5,21 @@ fail-closed，并保留 YUK-1537（#1785 / #1792）的全部语义。
 
 Stage: **第一天能用**。Refs YUK-1537。
 
+## 最新模型与执行顺序（2026-10-18协调线裁定）
+
+整个 `QuestionAdmissionSolveTask` 切换到 DeepSeek V4.1 Flash，原生参数 `reasoning_effort=high`，
+包括 A、B 两路盲解及同一任务的 `source_crosscheck`。不拆任务、不加任务名硬编码或隐藏模型例外。
+这不是其它 TaskKind 的全局换模，也不触发已 admitted 题或模型 holdout 的重新准入。
+
+新增 adapter/config 切片只做一轮非 Claude 独立审查。其 hydration 假成功 P1 已由父修正并核验：
+`ConfigHydrationReport.outcome` 区分 loaded/unchanged/stale/failed；预检只接受前两者，路由配置行
+被拒绝也停止。其它 app/worker 刷新消费者仍保持原 never-throws/last-good 行为。
+父用现有 CLI 指向关闭的本地数据库端口，观察到显式失败退出且未创建预检回执；未连接 TEST。
+
+协调线最新顺序：父核验、exact-head CI 与其余合入门槛完成后先合入；随后按受锁部署流程加载代码，
+备份并批写四个任务配置键，执行一次预检和被点名的五题 @3 重跑。剩余112题继续暂停。
+新 OPENCODE_API_KEY 已在21:55加载且chat/tool探针均200，本轮不再更换key。
+
 ## 10-18 TEST 运行证据与根因
 
 真实 TEST 跑批（provider `xiaomi-token-plan` / model `mimo-v2.6-pro`，OpenAI-completions API）：
@@ -86,7 +101,7 @@ Stage: **第一天能用**。Refs YUK-1537。
   也以同一家族锁为先）加行锁；`sending` 仍由 entity gate 兜住。marker 豁免不了本 fence；
   旧版本 job 在 `stale` 分支先行返回、不经过本 fence，本 delivery/本 unit 的 receipt
   replay 保留、不改写旧行。receipt_ready 行经 owner delivery replay 应用后 → applied
-  扫描 terminal，@3 自然解除，无死端。
+  扫描 terminal。原回执须经原版本入口人工恢复，@3 不代为应用，不声称自动恢复。
 
 ## Pre-deploy gates
 
@@ -97,9 +112,13 @@ Stage: **第一天能用**。Refs YUK-1537。
    完成应用，遗留收据仍欠 reconcile。
 2. **Policy-pin 检查**：`QUESTION_ADMISSION_POLICY_ID` 不得 pin `@1`/`@2`；未设 ⇒
    `question_admission@3`。
-3. **Routing pin**：`AI_PROVIDER_OVERRIDE=xiaomi-token-plan` +
-   `AI_PROVIDER_MODEL=mimo-v2.6-pro`；solver B 默认同 pin，`assertModelProfileCapabilityFit`
-   + OpenAI-completions 双求解校验。
+3. **任务配置 opt-in**：保留现有全局 env pin，先备份，再用既有配置写口同批写：
+   `task.QuestionAdmissionSolveTask.provider="opencode-go"`、`.model="deepseek-v4.1-flash"`、
+   `.reasoning={"reasoning_effort":"high"}`、`.override_global_pin=true`。
+   flag 与完整合法 pair 才允许覆盖全局 pin；不在代码硬编码任务或模型。
+   A/B/crosscheck 都需读实际解析结果，核 solver2 环境覆盖不会意外选另一模型；未 opt-in 的
+   AttributionRerankTask 等仍按原全局 pin。若模型/参数/选择规则不符，付费前停止。
+   `DATABASE_URL` 已设置时配置加载必须成功，不能把空 hydrated 列表或函数正常返回当作成功。
 4. **Preflight**：`pnpm exec tsx scripts/yuk1547-admission-reopen.ts --preflight <receipt>`
    发一次探测（不改 paid_effect），要求恰好一次 submit call、顶层 `units` 严格过 schema、
    合成答案 `blank_numeric 2`。
@@ -126,6 +145,11 @@ re-pend → `boss.send` 入队 `admission_version:3` + marker。任一校验失�
 - 每条 `@3` 结果记录 exact `entity_revision`/`input_digest`/`output_digest`（paid_effect +
   `ai_task_runs`）；provider/model/task_run id 可从 `tool_call_log` 与 job `task_run_ids`
   对账。
+- 五题回执按 A / B / crosscheck 分开：每次 task_run_id、provider、model、实际下发的原生参数、
+  用量、结果、当次选择规则。没有触发 crosscheck 的题明确记不适用，不补造运行。
+  参数/规则取该次解析冻结的运行证据，不能结束时重读配置。当前 model_profile_resolved 是
+  带 task_run_id 的 console 事件，native 参数/规则尚不是 ai_task_runs 的专用持久化字段；
+  窗口必须封存实际运行事件并与请求/响应、DB 用量记录对账，缺证据就标未验证。
 - 成本如实记录，含 unknown 成本（receipt/attempts 层）。
 - 5 条全部 admitted 或带解释 withheld；任何 `pending`/`unknown` 即为失败，**不自动 rerun**
   —— 回到 owner 裁决。
@@ -141,8 +165,8 @@ re-pend → `boss.send` 入队 `admission_version:3` + marker。任一校验失�
 
 ## 本 PR 未验证项
 
-- 真实 provider 探测与 5 行 reopen 未在本实现 lane 执行（TEST 限定操作，按 runbook 由
-  lead 执行）；离线 replay 覆盖七项纯逻辑证据（见 PR body）。
+- 官方端点的授权 chat/tool 最小探针已200，仅证明端点与工具能力；新代码的正式预检、
+  五题 reopen、MiMo 双编码问题在新模型上的对照尚未执行。此前离线 replay 仅为纯逻辑证据。
 - `tool_call_log` evidence 行写入路径经 typecheck/lint/build 与代码走读核对，未在真实 DB
   运行。
 - 新增 @1/@2 `receipt_ready` 运行时 fence 经 typecheck/lint/build、锁序走读（家族
