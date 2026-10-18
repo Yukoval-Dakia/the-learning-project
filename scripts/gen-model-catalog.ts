@@ -23,7 +23,12 @@
  * Fail-closed: any non-200 response or JSON parse failure exits 1 WITHOUT
  * touching the existing snapshot.
  *
+ * `pnpm gen:model-catalog -- --only <provider>` replaces that one bucket and
+ * leaves every other provider's bytes untouched, including retrieved_at.
+ * A full run still rewrites every kept provider.
+ *
  * Usage: pnpm gen:model-catalog
+ *        pnpm gen:model-catalog -- --only opencode-go
  */
 
 import { execSync } from 'node:child_process';
@@ -60,6 +65,10 @@ interface RawCatalogModel {
   [field: string]: unknown;
 }
 
+interface TrimmedProvider {
+  models: Record<string, Record<string, unknown>>;
+}
+
 function trimModel(id: string, model: RawCatalogModel): Record<string, unknown> {
   const trimmed: Record<string, unknown> = {};
   for (const field of KEPT_MODEL_FIELDS) {
@@ -69,6 +78,118 @@ function trimModel(id: string, model: RawCatalogModel): Record<string, unknown> 
   // keep it explicit so the snapshot is self-describing.
   trimmed.id = id;
   return trimmed;
+}
+
+function onlyProvider(argv: readonly string[]): string | undefined {
+  const index = argv.indexOf('--only');
+  if (index === -1) return undefined;
+  const id = argv[index + 1];
+  if (id === undefined || id.startsWith('-')) {
+    console.error('[gen-model-catalog] --only needs a provider id');
+    process.exit(1);
+  }
+  if (!(KEPT_CATALOG_PROVIDERS as readonly string[]).includes(id)) {
+    console.error(`[gen-model-catalog] --only provider is not kept: ${id}`);
+    process.exit(1);
+  }
+  return id;
+}
+
+function trimProviders(
+  root: Record<string, unknown>,
+  ids: readonly string[],
+): { providers: Record<string, TrimmedProvider>; missing: string[] } {
+  const providers: Record<string, TrimmedProvider> = {};
+  const missing: string[] = [];
+  for (const providerId of ids) {
+    const entry = root[providerId];
+    if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) {
+      missing.push(providerId);
+      continue;
+    }
+    const models = (entry as { models?: unknown }).models;
+    if (models === null || typeof models !== 'object' || Array.isArray(models)) {
+      missing.push(providerId);
+      continue;
+    }
+    const trimmedModels: Record<string, Record<string, unknown>> = {};
+    for (const [modelId, model] of Object.entries(models as Record<string, unknown>)) {
+      if (model === null || typeof model !== 'object' || Array.isArray(model)) continue;
+      trimmedModels[modelId] = trimModel(modelId, model as RawCatalogModel);
+    }
+    providers[providerId] = { models: trimmedModels };
+  }
+  return { providers, missing };
+}
+
+function matchingBrace(text: string, open: number): number {
+  let depth = 0;
+  for (let index = open; index < text.length; index += 1) {
+    const char = text[index];
+    if (char === '{') depth += 1;
+    else if (char === '}') {
+      depth -= 1;
+      if (depth === 0) return index;
+    }
+  }
+  return -1;
+}
+
+/** Key line through the provider object's closing brace, comma excluded. */
+function providerSlice(text: string, id: string): string | undefined {
+  const needle = `\n    ${JSON.stringify(id)}:`;
+  const at = text.indexOf(needle);
+  if (at < 0) return undefined;
+  const open = text.indexOf('{', at);
+  const close = matchingBrace(text, open);
+  if (close < 0) return undefined;
+  return text.slice(at + 1, close + 1);
+}
+
+function renderBucket(bucket: TrimmedProvider): string {
+  const lines = JSON.stringify(bucket, null, 2).split('\n');
+  return [lines[0], ...lines.slice(1).map((line) => `    ${line}`)].join('\n');
+}
+
+function keptProvidersLine(ids: readonly string[]): string {
+  return `"kept_providers": [${ids.map((id) => JSON.stringify(id)).join(', ')}]`;
+}
+
+/**
+ * Insert or replace one provider in the existing snapshot text. Other provider
+ * slices stay byte-identical. retrieved_at stays. Biome runs afterwards.
+ */
+function spliceProvider(text: string, id: string, bucket: TrimmedProvider): string {
+  const kept = text.replace(
+    /"kept_providers": \[[^\]]*\]/,
+    keptProvidersLine(KEPT_CATALOG_PROVIDERS),
+  );
+  if (kept === text) {
+    console.error('[gen-model-catalog] snapshot has no kept_providers line');
+    process.exit(1);
+  }
+  const rendered = renderBucket(bucket);
+  const existing = providerSlice(kept, id);
+  if (existing) {
+    const brace = existing.indexOf('{');
+    return kept.replace(existing, `${existing.slice(0, brace)}${rendered}`);
+  }
+  const providersKey = '\n  "providers":';
+  const keyAt = kept.indexOf(providersKey);
+  const open = kept.indexOf('{', keyAt);
+  const close = matchingBrace(kept, open);
+  if (keyAt < 0 || close < 0) {
+    console.error('[gen-model-catalog] snapshot has no providers object');
+    process.exit(1);
+  }
+  let previous = close - 1;
+  while (previous > open && /\s/.test(kept[previous] ?? '')) previous -= 1;
+  if (kept[previous] !== '}') {
+    console.error('[gen-model-catalog] providers object has no bucket to append after');
+    process.exit(1);
+  }
+  const insertion = `,\n    ${JSON.stringify(id)}: ${rendered}\n  `;
+  return kept.slice(0, previous + 1) + insertion + kept.slice(close);
 }
 
 async function main(): Promise<void> {
@@ -92,43 +213,15 @@ async function main(): Promise<void> {
     process.exit(1);
   }
   const root = parsed as Record<string, unknown>;
-
-  const providers: Record<string, { models: Record<string, Record<string, unknown>> }> = {};
-  const missing: string[] = [];
-  for (const providerId of KEPT_CATALOG_PROVIDERS) {
-    const entry = root[providerId];
-    if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) {
-      missing.push(providerId);
-      continue;
-    }
-    const models = (entry as { models?: unknown }).models;
-    if (models === null || typeof models !== 'object' || Array.isArray(models)) {
-      missing.push(providerId);
-      continue;
-    }
-    const trimmedModels: Record<string, Record<string, unknown>> = {};
-    for (const [modelId, model] of Object.entries(models as Record<string, unknown>)) {
-      if (model === null || typeof model !== 'object' || Array.isArray(model)) continue;
-      trimmedModels[modelId] = trimModel(modelId, model as RawCatalogModel);
-    }
-    providers[providerId] = { models: trimmedModels };
-  }
+  const only = onlyProvider(process.argv);
+  const ids = only === undefined ? KEPT_CATALOG_PROVIDERS : [only];
+  const { providers, missing } = trimProviders(root, ids);
   if (missing.length > 0) {
     console.error(
       `[gen-model-catalog] expected provider(s) missing or malformed in catalog: ${missing.join(', ')}`,
     );
     process.exit(1);
   }
-
-  const snapshot = {
-    _meta: {
-      source: CATALOG_URL,
-      retrieved_at: new Date().toISOString(),
-      trim: 'providers consumed by the internal provider map; per-model fields consumed by the narrow parse in src/server/ai/model-profiles.ts',
-      kept_providers: KEPT_CATALOG_PROVIDERS,
-    },
-    providers,
-  };
 
   const snapshotPath = resolve(dirname(fileURLToPath(import.meta.url)), SNAPSHOT_RELATIVE_PATH);
   const previous = (() => {
@@ -139,7 +232,29 @@ async function main(): Promise<void> {
     }
   })();
   mkdirSync(dirname(snapshotPath), { recursive: true });
-  writeFileSync(snapshotPath, `${JSON.stringify(snapshot, null, 2)}\n`);
+  if (only !== undefined) {
+    if (previous === undefined) {
+      console.error('[gen-model-catalog] --only needs an existing snapshot to splice into');
+      process.exit(1);
+    }
+    const bucket = providers[only];
+    if (bucket === undefined) {
+      console.error(`[gen-model-catalog] trimmed bucket missing: ${only}`);
+      process.exit(1);
+    }
+    writeFileSync(snapshotPath, spliceProvider(previous, only, bucket));
+  } else {
+    const snapshot = {
+      _meta: {
+        source: CATALOG_URL,
+        retrieved_at: new Date().toISOString(),
+        trim: 'providers consumed by the internal provider map; per-model fields consumed by the narrow parse in src/server/ai/model-profiles.ts',
+        kept_providers: KEPT_CATALOG_PROVIDERS,
+      },
+      providers,
+    };
+    writeFileSync(snapshotPath, `${JSON.stringify(snapshot, null, 2)}\n`);
+  }
   // The committed snapshot is biome-formatted (the repo's formatter owns every
   // committed file); reformat in place so a regen cannot introduce format drift.
   try {
@@ -151,13 +266,28 @@ async function main(): Promise<void> {
       '[gen-model-catalog] biome format step failed — run `pnpm exec biome format --write src/server/ai/model-catalog.snapshot.json` before committing',
     );
   }
-  const modelCount = Object.values(providers).reduce(
-    (sum, provider) => sum + Object.keys(provider.models).length,
-    0,
-  );
-  const changed = previous !== readFileSync(snapshotPath, 'utf8');
+  const written = readFileSync(snapshotPath, 'utf8');
+  if (only !== undefined && previous !== undefined) {
+    const beforeIds = Object.keys(
+      (JSON.parse(previous) as { providers?: Record<string, unknown> }).providers ?? {},
+    );
+    const drifted = beforeIds.filter(
+      (id) => id !== only && providerSlice(previous, id) !== providerSlice(written, id),
+    );
+    if (drifted.length > 0) {
+      writeFileSync(snapshotPath, previous);
+      console.error(
+        `[gen-model-catalog] --only ${only} changed other provider bytes: ${drifted.join(', ')}`,
+      );
+      process.exit(1);
+    }
+  }
+  const modelCount = Object.values(
+    (JSON.parse(written) as { providers: Record<string, TrimmedProvider> }).providers,
+  ).reduce((sum, provider) => sum + Object.keys(provider.models).length, 0);
+  const changed = previous !== written;
   console.log(
-    `[gen-model-catalog] ${changed ? 'wrote' : 'snapshot unchanged'} ${snapshotPath} (${KEPT_CATALOG_PROVIDERS.length} providers, ${modelCount} models)`,
+    `[gen-model-catalog] ${changed ? 'wrote' : 'snapshot unchanged'} ${snapshotPath} (${only ?? 'all kept'}, ${modelCount} models)`,
   );
 }
 
