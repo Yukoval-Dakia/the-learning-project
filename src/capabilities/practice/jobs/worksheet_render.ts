@@ -301,13 +301,14 @@ export function canonicalizeWorksheetPdf(pdf: Buffer): Buffer {
 //   1. PDF 页数 === 区域图页数（/Type /Page 对象数与 /Count 双证）。
 //   2. 每页 MediaBox = A4：portrait 595.28×841.89pt、landscape 841.89×595.28pt
 //      （方向以区域图为准），±1pt。
-//   3. 无 shrink-to-fit：缩小不改 DOM 也不改 MediaBox，要看内容流——解
-//      FlateDecode 后读页面前缀的基础变换：Skia 输出形如
-//      `<outer> cm q …re W* n q <inner> cm`（outer .24 × inner 3.125），
-//      前缀里所有 cm 的复合矩阵的 x/y scale 必须是 CSS-px→pt 的 0.75
-//      （±0.5%）；缩小的页 inner factor 被压低（实测 0.24×2.21≈0.53）。
-//      找不到或解不出 → 诚实失败，不放行。
-//   4. 区域图四角定位点各自距页边 8.5mm ±0.5mm。
+//   3. **实测四个画出来的定位点**：有界解释器走页面内容流 —— q/Q 图形状态
+//      栈 + cm 复合全仿射（scale、平移都在内，不猜前缀）——收集 fill/stroke
+//      上色的路径，按 producer contract（worksheet-svg.tsx Anchor：#1f1e1d
+//      的 5mm 实心方块 / BR 1.2mm 描边 3.8mm 空心方块）找出四角锚点，量出
+//      它们在该页 PDF 里的真实中心与尺寸，与区域图登记的 mm 位置逐项对账
+//      （±0.5mm）。shrink/平移/DPI 变化都等价地体现在画出来坐标上 —— 这是
+//      对 PDF↔map 一致性的直接证明，不依赖任何流结构假设。找不齐、形态对
+//      不上、解不出 → 一律诚实失败，不放行。
 //   实测值全部进 job 结果 verification 字段留证。
 
 /** 永久失败：冻结输入（导出行/issuance/页面结构）决定重跑必然同果 —
@@ -316,16 +317,25 @@ export class WorksheetRenderPermanentError extends Error {}
 
 const A4_PORTRAIT_PT = { w: 595.28, h: 841.89 } as const;
 const MEDIA_BOX_TOLERANCE_PT = 1;
-const BASE_SCALE_CSS_PX_TO_PT = 0.75;
-const BASE_SCALE_TOLERANCE = 0.75 * 0.005; // ±0.5%
-const ANCHOR_EDGE_MM = 8.5;
+const PT_PER_MM = 72 / 25.4;
 const ANCHOR_TOLERANCE_MM = 0.5;
+
+export interface WorksheetAnchorMeasurement {
+  corner: 'tl' | 'tr' | 'bl' | 'br';
+  /** PDF 实测中心（页左上角为原点的 mm）。 */
+  center_mm: [number, number];
+  /** 与区域图登记位置的最大坐标偏差（mm）。 */
+  error_mm: number;
+  /** PDF 实测可视边长（mm；hollow 按 path bbox + 描边宽）。 */
+  size_mm: number;
+  kind: 'solid' | 'hollow';
+}
 
 export interface WorksheetPageVerification {
   page: number;
   mediabox_pt: [number, number];
-  base_scale: number;
-  anchor_offsets_mm: { tl: number; tr: number; bl: number; br: number };
+  orientation: string;
+  anchors: WorksheetAnchorMeasurement[];
 }
 
 export interface WorksheetPdfVerification {
@@ -364,56 +374,444 @@ function streamObjectContent(
   return { dict, content: inflateSync(compressed).toString('latin1') };
 }
 
-/** 内容流前缀里的所有 cm 的复合矩阵 —— 前缀 = cm/q/Q/re/W+星号/n/空白/注释
- * 之外的第一个算子。返回 {a,b,c,d}；非对角（旋转/斜切）基阵视为不可判 →
- * 调用方诚实失败。 */
-function contentBaseMatrix(content: string): { a: number; b: number; c: number; d: number } | null {
-  let a = 1;
-  let b = 0;
-  let c = 0;
-  let d = 1;
-  let sawCm = false;
-  let cursor = 0;
-  // Skia 会写 ".23999999" 这种无整数位小数 —— 数字模式必须兼容。
-  const num = '(-?\\d*\\.?\\d+(?:[eE][+-]?\\d+)?)';
-  const cmRe = new RegExp(`^${num}\\s+${num}\\s+${num}\\s+${num}\\s+${num}\\s+${num}\\s+cm\\b`);
-  // 词尾用 lookahead 而非 \b：'W*' 里的 '*' 不是 word char，\b 会让 'W*' 只吃到 'W'。
-  const miscRe = new RegExp(`^(?:q|Q|n|W\\*?|${num}\\s+${num}\\s+${num}\\s+${num}\\s+re)(?=\\s|$)`);
-  for (;;) {
-    const skip = /^(?:\s+|%[^\n]*\n?)/.exec(content.slice(cursor));
-    if (skip != null && skip[0].length > 0) {
-      cursor += skip[0].length;
+// ---- 有界内容流解释器（仅 Skia 输出子集；认不出的形态一律抛错，不放行） ----
+//
+// 全仿射矩阵 {a,b,c,d,e,f}（点变换 [ax+cy+e, bx+dy+f]）+ q/Q 图形状态栈 +
+// 路径累积 + 上色算子。只解释确定语义：cm/q/Q/re/m/l/c/v/y/h/W/W*/n/rg/RG/
+// g/G/k/K/w/BT 之外的着色与路径算子；其它一律「认识 op 但跳过其操作数」或
+// 遇到二元/陌生构造直接抛错。
+
+type Affine = { a: number; b: number; c: number; d: number; e: number; f: number };
+const IDENTITY: Affine = { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 };
+
+/** outer ∘ inner：先 inner 后 outer 的点变换复合。 */
+function compose(outer: Affine, inner: Affine): Affine {
+  return {
+    a: outer.a * inner.a + outer.c * inner.b,
+    b: outer.b * inner.a + outer.d * inner.b,
+    c: outer.a * inner.c + outer.c * inner.d,
+    d: outer.b * inner.c + outer.d * inner.d,
+    e: outer.a * inner.e + outer.c * inner.f + outer.e,
+    f: outer.b * inner.e + outer.d * inner.f + outer.f,
+  };
+}
+
+function apply(m: Affine, x: number, y: number): { x: number; y: number } {
+  return { x: m.a * x + m.c * y + m.e, y: m.b * x + m.d * y + m.f };
+}
+
+interface PaintedShape {
+  kind: 'fill' | 'stroke' | 'fillstroke';
+  /** 设备空间（PDF pt，页左下原点）包围盒 [minX, minY, maxX, maxY]。 */
+  bbox: [number, number, number, number];
+  fillRgb: [number, number, number] | null;
+  strokeRgb: [number, number, number] | null;
+  /** 有效描边宽（pt，已乘 CTM scale）。 */
+  strokeWidthPt: number;
+}
+
+type PdfToken = { t: 'num'; v: number } | { t: 'op'; v: string } | { t: 'other' };
+
+/** 逐 token 扫 Skia 内容流：数字/算子/其它（name、括串、hex、数组、dict）。 */
+function* contentTokens(s: string): Generator<PdfToken, void, void> {
+  let i = 0;
+  while (i < s.length) {
+    const ch = s[i];
+    if (ch === ' ' || ch === '\t' || ch === '\r' || ch === '\n' || ch === '\f' || ch === '\0') {
+      i += 1;
       continue;
     }
-    const rest = content.slice(cursor);
-    const cm = cmRe.exec(rest);
-    if (cm != null) {
-      sawCm = true;
-      // CTM' = M_new × CTM（PDF cm 语义）。
-      const [m, n2, o, p] = [Number(cm[1]), Number(cm[2]), Number(cm[3]), Number(cm[4])];
-      const na = m * a + n2 * c;
-      const nb = m * b + n2 * d;
-      const nc = o * a + p * c;
-      const nd = o * b + p * d;
-      a = na;
-      b = nb;
-      c = nc;
-      d = nd;
-      cursor += cm[0].length;
+    if (ch === '%') {
+      const nl = s.indexOf('\n', i);
+      i = nl < 0 ? s.length : nl + 1;
       continue;
     }
-    const misc = miscRe.exec(rest);
-    if (misc != null) {
-      cursor += misc[0].length;
+    if (ch === '(') {
+      i += 1;
+      let depth = 1;
+      while (i < s.length && depth > 0) {
+        const c = s[i];
+        if (c === '\\') {
+          i += 2;
+          continue;
+        }
+        if (c === '(') depth += 1;
+        else if (c === ')') depth -= 1;
+        i += 1;
+      }
+      if (depth !== 0) throw new Error('worksheet pdf verify: unbalanced literal string');
+      yield { t: 'other' };
       continue;
     }
-    break;
+    if (ch === '<' && s[i + 1] !== '<') {
+      const end = s.indexOf('>', i);
+      if (end < 0) throw new Error('worksheet pdf verify: unterminated hex string');
+      i = end + 1;
+      yield { t: 'other' };
+      continue;
+    }
+    if (ch === '/') {
+      const m = /^\/[^\s<>[\](){}%/]+/.exec(s.slice(i));
+      if (m == null) throw new Error('worksheet pdf verify: malformed name token');
+      i += m[0].length;
+      yield { t: 'other' };
+      continue;
+    }
+    const num = /^-?\d*\.?\d+(?:[eE][+-]?\d+)?/.exec(s.slice(i));
+    if (num != null && num[0].length > 0) {
+      i += num[0].length;
+      yield { t: 'num', v: Number(num[0]) };
+      continue;
+    }
+    const op = /^[A-Za-z*'"!?]+/.exec(s.slice(i));
+    if (op != null) {
+      i += op[0].length;
+      yield { t: 'op', v: op[0] };
+      continue;
+    }
+    // [], <<, >>, 其它单字符 —— 当作非数字操作数吞掉。
+    i += 1;
+    yield { t: 'other' };
   }
-  return sawCm ? { a, b, c, d } : null;
+}
+
+/** 跳过 BI/ID/EI 内联图像块（内容是任意二进制，不进 tokenizer）。 */
+function stripInlineImages(s: string): string {
+  let out = '';
+  let cursor = 0;
+  for (;;) {
+    const bi = s.indexOf('BI', cursor);
+    if (bi < 0) return out + s.slice(cursor);
+    const id = s.indexOf('ID', bi);
+    const ei = id < 0 ? -1 : s.indexOf('EI', id + 2);
+    if (id < 0 || ei < 0) {
+      throw new Error('worksheet pdf verify: unterminated inline image (BI..EI)');
+    }
+    out += `${s.slice(cursor, bi)} `;
+    cursor = ei + 2;
+  }
+}
+
+/** 走完整条内容流，返回全部上色形状（设备 pt 坐标）。 */
+function interpretPageShapes(content: string): PaintedShape[] {
+  const shapes: PaintedShape[] = [];
+  let ctm = IDENTITY;
+  const stack: Affine[] = [];
+  let path: { x: number; y: number }[] = [];
+  let fillRgb: [number, number, number] | null = null;
+  let strokeRgb: [number, number, number] | null = null;
+  let lineWidth = 1;
+  const operands: number[] = [];
+
+  const nums = (n: number, op: string): number[] => {
+    if (operands.length < n) {
+      throw new Error(`worksheet pdf verify: operator ${op} missing operands`);
+    }
+    return operands.splice(operands.length - n, n);
+  };
+  const ctmScale = (): number => {
+    // |M| 的线性尺度（对角或近对角矩阵）。非对角近旋转/斜切时 |det| 仍是面积尺度。
+    return Math.sqrt(Math.abs(ctm.a * ctm.d - ctm.b * ctm.c));
+  };
+  const paint = (kind: PaintedShape['kind']) => {
+    if (path.length === 0) return;
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const p of path) {
+      const q = apply(ctm, p.x, p.y);
+      minX = Math.min(minX, q.x);
+      maxX = Math.max(maxX, q.x);
+      minY = Math.min(minY, q.y);
+      maxY = Math.max(maxY, q.y);
+    }
+    shapes.push({
+      kind,
+      bbox: [minX, minY, maxX, maxY],
+      fillRgb: fillRgb,
+      strokeRgb: strokeRgb,
+      strokeWidthPt: lineWidth * ctmScale(),
+    });
+    path = [];
+  };
+
+  for (const tok of contentTokens(stripInlineImages(content))) {
+    if (tok.t === 'num') {
+      operands.push(tok.v);
+      continue;
+    }
+    if (tok.t === 'other') {
+      // 非数字操作数 —— 保持与数字共栈，ops 需要时按位置取末尾数字。
+      operands.length = 0; // 简化：名字/串/数组出现即视为新 op 序列开始
+      continue;
+    }
+    const op = tok.v;
+    switch (op) {
+      case 'q':
+        stack.push({ ...ctm });
+        break;
+      case 'Q':
+        ctm = stack.pop() ?? IDENTITY;
+        break;
+      case 'cm': {
+        const [a, b, c, d, e, f] = nums(6, op);
+        ctm = compose(ctm, { a, b, c, d, e, f });
+        break;
+      }
+      case 're': {
+        const [x, y, w, h] = nums(4, op);
+        path.push({ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h });
+        break;
+      }
+      case 'm': {
+        const [x, y] = nums(2, op);
+        path.push({ x, y });
+        break;
+      }
+      case 'l': {
+        const [x, y] = nums(2, op);
+        path.push({ x, y });
+        break;
+      }
+      case 'c': {
+        const p = nums(6, op);
+        path.push({ x: p[0], y: p[1] }, { x: p[2], y: p[3] }, { x: p[4], y: p[5] });
+        break;
+      }
+      case 'v':
+      case 'y': {
+        const p = nums(4, op);
+        path.push({ x: p[0], y: p[1] }, { x: p[2], y: p[3] });
+        break;
+      }
+      case 'h':
+        break;
+      case 'W':
+      case 'W*':
+        break;
+      case 'n':
+        path = [];
+        break;
+      case 'f':
+      case 'f*':
+      case 'F':
+        paint('fill');
+        break;
+      case 'S':
+        paint('stroke');
+        break;
+      case 's':
+        paint('stroke');
+        break;
+      case 'B':
+      case 'B*':
+        paint('fillstroke');
+        break;
+      case 'b':
+      case 'b*':
+        paint('fillstroke');
+        break;
+      case 'rg': {
+        const [r, g, b2] = nums(3, op);
+        fillRgb = [r, g, b2];
+        break;
+      }
+      case 'RG': {
+        const [r, g, b2] = nums(3, op);
+        strokeRgb = [r, g, b2];
+        break;
+      }
+      case 'g': {
+        const [v] = nums(1, op);
+        fillRgb = [v, v, v];
+        break;
+      }
+      case 'G': {
+        const [v] = nums(1, op);
+        strokeRgb = [v, v, v];
+        break;
+      }
+      case 'k': {
+        const p = nums(4, op);
+        fillRgb = [
+          Math.max(0, 1 - Math.min(1, p[0] + p[3])),
+          Math.max(0, 1 - Math.min(1, p[1] + p[3])),
+          Math.max(0, 1 - Math.min(1, p[2] + p[3])),
+        ];
+        break;
+      }
+      case 'K': {
+        const p = nums(4, op);
+        strokeRgb = [
+          Math.max(0, 1 - Math.min(1, p[0] + p[3])),
+          Math.max(0, 1 - Math.min(1, p[1] + p[3])),
+          Math.max(0, 1 - Math.min(1, p[2] + p[3])),
+        ];
+        break;
+      }
+      case 'w': {
+        const [v] = nums(1, op);
+        lineWidth = v;
+        break;
+      }
+      case 'd':
+        operands.length = 0; // dash array + phase —— 已随数组 token 进栈，丢弃。
+        break;
+      default:
+        // 认识的非几何 op（BT/ET/文本/字体/资源/Do/gs/sh/MP/BMC/EMC/Tr/Tw…）
+        // 与陌生算子同样处理：清操作数栈，路径与 CTM 不受影响。
+        operands.length = 0;
+        break;
+    }
+  }
+  return shapes;
+}
+
+// ---- Anchor producer contract（ui/worksheet/worksheet-svg.tsx + worksheet-print.css） ----
+// <svg viewBox="0 0 5 5">：TL/TR/BL = <rect 5×5 fill #1f1e1d>（实心），
+// BR = <rect 0.6 0.6 3.8 3.8 stroke #1f1e1d strokeWidth 1.2>（空心）。
+// 每个角锚 DOM 位置 6mm from edge，中心 8.5mm —— 区域图 cx/cy 即其 mm 中心。
+
+const ANCHOR_INK: [number, number, number] = [0.1216, 0.1176, 0.1137]; // #1f1e1d
+const ANCHOR_INK_TOLERANCE = 0.04;
+const ANCHOR_SIZE_PT = 5 * PT_PER_MM; // 14.173pt —— 实心 bbox / 空心外缘
+const ANCHOR_STROKE_INNER_PT = (5 - 1.2) * PT_PER_MM; // 10.77pt —— 空心 path bbox
+const ANCHOR_STROKE_PT = 1.2 * PT_PER_MM; // 3.40pt
+const ANCHOR_SIZE_TOLERANCE_PT = 2; // 名义 5mm ±~0.7mm
+const ANCHOR_CENTER_TOLERANCE_PT = ANCHOR_TOLERANCE_MM * PT_PER_MM;
+
+function rgbClose(a: [number, number, number] | null, b: [number, number, number]): boolean {
+  if (a == null) return false;
+  return (
+    Math.abs(a[0] - b[0]) < ANCHOR_INK_TOLERANCE &&
+    Math.abs(a[1] - b[1]) < ANCHOR_INK_TOLERANCE &&
+    Math.abs(a[2] - b[2]) < ANCHOR_INK_TOLERANCE
+  );
+}
+
+function bboxCenter(bbox: [number, number, number, number]): { x: number; y: number } {
+  return { x: (bbox[0] + bbox[2]) / 2, y: (bbox[1] + bbox[3]) / 2 };
+}
+
+/** 在页面的上色形状中找四角锚点并量其真实中心。
+ * solid：fill/fillstroke + INK + bbox≈方形 5mm。
+ * hollow：stroke/fillstroke + INK 描边 + bbox≈方形 3.8mm + 描边宽≈1.2mm。 */
+function measureDrawnAnchors(
+  shapes: PaintedShape[],
+  pageHeightPt: number,
+  anchors: {
+    tl: { cx: number; cy: number; fill: string };
+    tr: { cx: number; cy: number; fill: string };
+    bl: { cx: number; cy: number; fill: string };
+    br: { cx: number; cy: number; fill: string };
+  },
+  pageNo: number,
+): WorksheetAnchorMeasurement[] {
+  const solids: PaintedShape[] = [];
+  const hollows: PaintedShape[] = [];
+  for (const shape of shapes) {
+    const w = shape.bbox[2] - shape.bbox[0];
+    const h = shape.bbox[3] - shape.bbox[1];
+    const squareish = Math.abs(w - h) < ANCHOR_SIZE_TOLERANCE_PT;
+    if (!squareish) continue;
+    if (
+      (shape.kind === 'fill' || shape.kind === 'fillstroke') &&
+      rgbClose(shape.fillRgb, ANCHOR_INK) &&
+      Math.abs(w - ANCHOR_SIZE_PT) < ANCHOR_SIZE_TOLERANCE_PT
+    ) {
+      solids.push(shape);
+      continue;
+    }
+    if (
+      (shape.kind === 'stroke' || shape.kind === 'fillstroke') &&
+      rgbClose(shape.strokeRgb, ANCHOR_INK) &&
+      Math.abs(w - ANCHOR_STROKE_INNER_PT) < ANCHOR_SIZE_TOLERANCE_PT &&
+      Math.abs(shape.strokeWidthPt - ANCHOR_STROKE_PT) < ANCHOR_SIZE_TOLERANCE_PT
+    ) {
+      hollows.push(shape);
+    }
+  }
+
+  const measurements: WorksheetAnchorMeasurement[] = [];
+  const corners: Array<['tl' | 'tr' | 'bl' | 'br', { cx: number; cy: number; fill: string }]> = [
+    ['tl', anchors.tl],
+    ['tr', anchors.tr],
+    ['bl', anchors.bl],
+    ['br', anchors.br],
+  ];
+  const used = new Set<PaintedShape>();
+  for (const [corner, expected] of corners) {
+    const pool = expected.fill === 'hollow' ? hollows : solids;
+    const expectedXpt = expected.cx * PT_PER_MM;
+    const expectedYpt = pageHeightPt - expected.cy * PT_PER_MM; // map y 自上 → PDF y 自下
+    const matched = pool.filter((shape) => {
+      if (used.has(shape)) return false;
+      const c = bboxCenter(shape.bbox);
+      return (
+        Math.abs(c.x - expectedXpt) <= ANCHOR_CENTER_TOLERANCE_PT &&
+        Math.abs(c.y - expectedYpt) <= ANCHOR_CENTER_TOLERANCE_PT
+      );
+    });
+    if (matched.length === 0) {
+      throw new WorksheetRenderPermanentError(
+        `worksheet pdf verify: page ${pageNo} drawn anchor ${corner} ` +
+          `(expected ${expected.fill} square near [${expected.cx}, ${expected.cy}]mm) ` +
+          `not found among ${solids.length} solid / ${hollows.length} hollow candidates`,
+      );
+    }
+    if (matched.length > 1) {
+      throw new WorksheetRenderPermanentError(
+        `worksheet pdf verify: page ${pageNo} anchor ${corner} matched ${matched.length} drawn shapes — ambiguous`,
+      );
+    }
+    const shape = matched[0];
+    used.add(shape);
+    const c = bboxCenter(shape.bbox);
+    const centerMm: [number, number] = [c.x / PT_PER_MM, (pageHeightPt - c.y) / PT_PER_MM];
+    const errorMm = Math.max(
+      Math.abs(centerMm[0] - expected.cx),
+      Math.abs(centerMm[1] - expected.cy),
+    );
+    if (errorMm > ANCHOR_TOLERANCE_MM) {
+      throw new WorksheetRenderPermanentError(
+        `worksheet pdf verify: page ${pageNo} anchor ${corner} drawn at ` +
+          `[${centerMm[0].toFixed(2)}, ${centerMm[1].toFixed(2)}]mm is ${errorMm.toFixed(2)}mm off the map's ` +
+          `[${expected.cx}, ${expected.cy}]mm`,
+      );
+    }
+    const w = shape.bbox[2] - shape.bbox[0];
+    const sizeMm = (expected.fill === 'hollow' ? w + shape.strokeWidthPt : w) / PT_PER_MM;
+    measurements.push({
+      corner,
+      center_mm: [Number(centerMm[0].toFixed(2)), Number(centerMm[1].toFixed(2))],
+      error_mm: Number(errorMm.toFixed(3)),
+      size_mm: Number(sizeMm.toFixed(2)),
+      kind: expected.fill === 'hollow' ? 'hollow' : 'solid',
+    });
+  }
+  return measurements;
 }
 
 /** 硬校验：canonicalize 后的 PDF 字节 vs 区域图。任何不过 → PermanentError。 */
 export function verifyWorksheetPdf(
+  pdf: Buffer,
+  map: WorksheetRegionMapArchiveBodyT,
+): WorksheetPdfVerification {
+  try {
+    return verifyWorksheetPdfInner(pdf, map);
+  } catch (error) {
+    // 所有解析/解释失败都是确定性（同一字节同一结果）→ 一律永久分类，
+    // 不因 helper 抛的是普通 Error 而漏成 pg-boss 重试。
+    if (error instanceof WorksheetRenderPermanentError) throw error;
+    throw new WorksheetRenderPermanentError(
+      `worksheet pdf verify: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
+  }
+}
+
+function verifyWorksheetPdfInner(
   pdf: Buffer,
   map: WorksheetRegionMapArchiveBodyT,
 ): WorksheetPdfVerification {
@@ -501,7 +899,9 @@ export function verifyWorksheetPdf(
       );
     }
 
-    // (3) 无 shrink-to-fit：内容流基础矩阵 scale ≈ 0.75。
+    // (3) 实测画出来的四角锚点：走完整条内容流（q/Q 栈 + cm 全仿射），
+    // 按 producer contract 找出形状、量中心，与区域图 mm 位置对账 ±0.5mm。
+    // shrink / 平移 / DPI 变化都直接体现在画出来坐标上。
     const contentsRef = /\/Contents\s+(\d+)\s+\d+\s+R/.exec(pageBody);
     if (contentsRef == null) {
       throw new WorksheetRenderPermanentError(
@@ -509,65 +909,14 @@ export function verifyWorksheetPdf(
       );
     }
     const { content } = streamObjectContent(text, xref, Number(contentsRef[1]));
-    const base = contentBaseMatrix(content);
-    if (base == null || Math.abs(base.b) > 1e-6 || Math.abs(base.c) > 1e-6) {
-      throw new WorksheetRenderPermanentError(
-        `worksheet pdf verify: page ${mapPage.page} base transformation matrix is unreadable or rotated`,
-      );
-    }
-    const baseScale = Math.abs(base.a);
-    if (Math.abs(Math.abs(base.d) - baseScale) > 1e-6) {
-      throw new WorksheetRenderPermanentError(
-        `worksheet pdf verify: page ${mapPage.page} base matrix is non-uniform (a=${base.a}, d=${base.d})`,
-      );
-    }
-    if (Math.abs(baseScale - BASE_SCALE_CSS_PX_TO_PT) > BASE_SCALE_TOLERANCE) {
-      throw new WorksheetRenderPermanentError(
-        `worksheet pdf verify: page ${mapPage.page} base scale ${baseScale.toFixed(4)} != ` +
-          `${BASE_SCALE_CSS_PX_TO_PT} ±${(BASE_SCALE_TOLERANCE * 100).toFixed(2)}% ` +
-          '(page was shrunk to fit — the .ws-stage-host removal or page CSS is broken)',
-      );
-    }
-
-    // (4) 区域图四角定位点距页边 8.5mm ±0.5mm。
-    const { w, h } = mapPage.size_mm;
-    const anchorOffsets = {
-      tl: Math.max(
-        Math.abs(mapPage.anchors.tl.cx - ANCHOR_EDGE_MM),
-        Math.abs(mapPage.anchors.tl.cy - ANCHOR_EDGE_MM),
-      ),
-      tr: Math.max(
-        Math.abs(mapPage.anchors.tr.cx - (w - ANCHOR_EDGE_MM)),
-        Math.abs(mapPage.anchors.tr.cy - ANCHOR_EDGE_MM),
-      ),
-      bl: Math.max(
-        Math.abs(mapPage.anchors.bl.cx - ANCHOR_EDGE_MM),
-        Math.abs(mapPage.anchors.bl.cy - (h - ANCHOR_EDGE_MM)),
-      ),
-      br: Math.max(
-        Math.abs(mapPage.anchors.br.cx - (w - ANCHOR_EDGE_MM)),
-        Math.abs(mapPage.anchors.br.cy - (h - ANCHOR_EDGE_MM)),
-      ),
-    };
-    for (const [corner, offset] of Object.entries(anchorOffsets)) {
-      if (offset > ANCHOR_TOLERANCE_MM) {
-        throw new WorksheetRenderPermanentError(
-          `worksheet pdf verify: page ${mapPage.page} anchor ${corner} is ${offset.toFixed(2)}mm ` +
-            `off its ${ANCHOR_EDGE_MM}mm edge offset (tolerance ${ANCHOR_TOLERANCE_MM}mm)`,
-        );
-      }
-    }
+    const shapes = interpretPageShapes(content);
+    const anchorMeasurements = measureDrawnAnchors(shapes, mbH, mapPage.anchors, mapPage.page);
 
     verification.pages.push({
       page: mapPage.page,
       mediabox_pt: [Number(mbW.toFixed(2)), Number(mbH.toFixed(2))],
-      base_scale: Number(baseScale.toFixed(4)),
-      anchor_offsets_mm: {
-        tl: Number(anchorOffsets.tl.toFixed(3)),
-        tr: Number(anchorOffsets.tr.toFixed(3)),
-        bl: Number(anchorOffsets.bl.toFixed(3)),
-        br: Number(anchorOffsets.br.toFixed(3)),
-      },
+      orientation: mapPage.orientation,
+      anchors: anchorMeasurements,
     });
   }
   return verification;
@@ -614,6 +963,10 @@ export async function renderWorksheetPage(
   const appOrigin = resolveRenderOrigin(input.appOrigin);
   const deadlineMs = opts.deadlineMs ?? RENDER_DEADLINE_MS;
   const abortedUrls: string[] = [];
+  // 路由回调内部异常（route.fetch reject 等）。回调不能 throw —— 那会变成
+  // 进程级 unhandledRejection —— 但回调失败意味着渲染可能不完整，必须让
+  // 整段渲染诚实失败，而不是带着缺资源的页面去存档。收进来、收尾裁决。
+  const callbackFailures: string[] = [];
 
   let browser: ChromiumBrowser | null = null;
   let deadlineHit = false;
@@ -639,11 +992,13 @@ export async function renderWorksheetPage(
       try {
         // data:/blob:/about: 不出本进程 —— 站点图床（object URL）与内联资源走这里。
         if (url.startsWith('data:') || url.startsWith('blob:') || url.startsWith('about:')) {
-          return route.continue();
+          // 必须 return await —— 直接 return 未 await 的 promise，其 reject
+          // 会逃出 try/catch 重新变成 unhandled rejection。
+          return await route.continue();
         }
         if (new URL(url).origin !== appOrigin) {
           abortedUrls.push(url);
-          return route.abort('blockedbyclient');
+          return await route.abort('blockedbyclient');
         }
         // maxRedirects: 0 —— Playwright 自动跟随 3xx 时不会再进本 handler，
         // 同源页面 302 到外站会绕过 allowlist。拿原始 3xx 显式裁决 Location；
@@ -654,18 +1009,18 @@ export async function renderWorksheetPage(
           const target = new URL(location, url);
           if (target.origin !== appOrigin) {
             abortedUrls.push(`${url} -> ${target.href}`);
-            return route.abort('blockedbyclient');
+            return await route.abort('blockedbyclient');
           }
         }
-        return route.fulfill({ response });
+        return await route.fulfill({ response });
       } catch (error) {
         // Grok QA P1-2：route.fetch 在 app 不可达时 reject，未接住的回调 reject
         // 会变成 worker 进程的 unhandledRejection → 整个 worker 连同其他队列的
         // in-flight job 一起被杀。catch 住、记录、abort（自身也 guard），让请求
         // 经 page.goto/资源失败走正常诚实失败路径。
-        abortedUrls.push(
-          `${url} (route fetch failed: ${error instanceof Error ? error.message : String(error)})`,
-        );
+        const message = `${url} (route fetch failed: ${error instanceof Error ? error.message : String(error)})`;
+        abortedUrls.push(message);
+        callbackFailures.push(message);
         await route.abort('failed').catch(() => {});
         return undefined;
       }
@@ -703,9 +1058,9 @@ export async function renderWorksheetPage(
             }
           });
         } catch (error) {
-          abortedUrls.push(
-            `ws:${ws.url()} (handler failed: ${error instanceof Error ? error.message : String(error)})`,
-          );
+          const message = `ws:${ws.url()} (handler failed: ${error instanceof Error ? error.message : String(error)})`;
+          abortedUrls.push(message);
+          callbackFailures.push(message);
           try {
             ws.close();
           } catch {
@@ -762,14 +1117,27 @@ export async function renderWorksheetPage(
       throw new Error(message);
     }
 
-    const regionMap = (await page.evaluate(() => {
-      const measure = (window as { __tlpWorksheetRegionMap?: () => unknown })
-        .__tlpWorksheetRegionMap;
-      if (measure == null) {
-        throw new Error('window.__tlpWorksheetRegionMap is not defined on a ready page');
-      }
-      return measure();
-    })) as WorksheetRegionMapDraft;
+    const regionMap = (await page
+      .evaluate(() => {
+        const measure = (window as { __tlpWorksheetRegionMap?: () => unknown })
+          .__tlpWorksheetRegionMap;
+        if (measure == null) {
+          throw new Error('window.__tlpWorksheetRegionMap is not defined on a ready page');
+        }
+        return measure();
+      })
+      .catch((error: unknown) => {
+        // ready 页但没有量图 hook = UI/job 版本错配 —— 确定性，永久分类。
+        if (
+          error instanceof Error &&
+          error.message.includes('__tlpWorksheetRegionMap is not defined')
+        ) {
+          throw new WorksheetRenderPermanentError(
+            'worksheet render: ready page has no __tlpWorksheetRegionMap hook (UI/job version mismatch)',
+          );
+        }
+        throw error;
+      })) as WorksheetRegionMapDraft;
 
     // Grok QA P1-1：隐藏测量区 .ws-stage-host（含 297mm 横向样张）若留在 DOM，
     // Chromium 会把 ≥3 页的卷面 shrink-to-fit ~0.73 —— 区域图仍按 1:1 存，PDF
@@ -789,11 +1157,31 @@ export async function renderWorksheetPage(
       printBackground: true,
       margin: { top: '0', right: '0', bottom: '0', left: '0' },
     });
-    return { pdf: canonicalizeWorksheetPdf(rawPdf), regionMap, abortedUrls };
+    let pdf: Buffer;
+    try {
+      pdf = canonicalizeWorksheetPdf(rawPdf);
+    } catch (error) {
+      // 字节级 canonicalize 失败同样确定性 → 永久分类。
+      throw new WorksheetRenderPermanentError(
+        `worksheet render: pdf canonicalize failed: ` +
+          `${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    if (callbackFailures.length > 0) {
+      throw new Error(
+        `worksheet render: ${callbackFailures.length} route callback failure(s) ` +
+          `— render is untrusted: ${callbackFailures.slice(0, 5).join('; ')}`,
+      );
+    }
+    return { pdf, regionMap, abortedUrls };
   } catch (error) {
-    // 失败路径也带出被拦请求 —— 渲染失败时 result 不落 job.output，
+    // 失败路径也带出被拦请求/回调失败 —— 渲染失败时 result 不落 job.output，
     // 泄漏记录不能随 result 一起丢。
-    const leaks = abortedUrls.length > 0 ? ` [aborted off-origin: ${abortedUrls.join(', ')}]` : '';
+    const leaks =
+      (abortedUrls.length > 0 ? ` [aborted off-origin: ${abortedUrls.join(', ')}]` : '') +
+      (callbackFailures.length > 0
+        ? ` [route callback failures: ${callbackFailures.join('; ')}]`
+        : '');
     if (opts.signal?.aborted) {
       throw new Error(`worksheet render aborted: pg-boss job signal fired${leaks}`, {
         cause: error,
@@ -805,6 +1193,11 @@ export async function renderWorksheetPage(
       });
     }
     if (leaks !== '' && error instanceof Error) {
+      // 追加细节时保持错误类别 —— PermanentError 换成普通 Error 会重新
+      // 打开 pg-boss 重试（确定性失败白跑两次）。
+      if (error instanceof WorksheetRenderPermanentError) {
+        throw new WorksheetRenderPermanentError(`${error.message}${leaks}`, { cause: error });
+      }
       throw new Error(`${error.message}${leaks}`, { cause: error });
     }
     throw error;
