@@ -2,11 +2,13 @@
 /**
  * YUK-1559 (C1-10) — single source of truth for model selection.
  *
- * Model-id string literals may live ONLY in:
- *   1. task definition defaults — src/capabilities/<owner>/tasks/**
- *   2. the provider catalog / pricing layer — the AI catalog files in
- *      PROVIDER_CATALOG_FILES below
- *   3. the system_config layer — src/core/config/registry.ts
+ * Model-id string literals may live ONLY at their default-declaration sites:
+ *   1. `defaultModel:` initializers in task definitions
+ *      (src/capabilities/<owner>/tasks/**)
+ *   2. the provider catalog / pricing files in PROVIDER_CATALOG_FILES below
+ *      (those files ARE the catalog)
+ *   3. `codeDefault:` initializers of `*_MODEL` / `*.model` keys in
+ *      src/core/config/registry.ts (the system_config per-task override layer)
  *
  * Scripts, jobs, preflights and evals must read the resolved task config
  * (resolveTaskBinding / resolveTaskProvider / getConfig) instead of pinning a
@@ -110,7 +112,10 @@ function scriptKind(filename: string): ts.ScriptKind {
 }
 
 /** Every string literal (incl. template-without-substitution) in the file. */
-function stringLiterals(code: string, filename: string): Array<{ text: string; line: number }> {
+function stringLiterals(
+  code: string,
+  filename: string,
+): Array<{ text: string; line: number; node: ts.StringLiteralLike }> {
   const sourceFile = ts.createSourceFile(
     filename,
     code,
@@ -118,11 +123,11 @@ function stringLiterals(code: string, filename: string): Array<{ text: string; l
     true,
     scriptKind(filename),
   );
-  const out: Array<{ text: string; line: number }> = [];
+  const out: Array<{ text: string; line: number; node: ts.StringLiteralLike }> = [];
   const visit = (node: ts.Node): void => {
     if (ts.isStringLiteralLike(node)) {
       const { line } = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
-      out.push({ text: node.text, line: line + 1 });
+      out.push({ text: node.text, line: line + 1, node });
     }
     ts.forEachChild(node, visit);
   };
@@ -265,10 +270,32 @@ function loadAllowlist(): { entries: Record<string, AllowlistEntry>; problems: s
   return { entries, problems };
 }
 
-function allowedFile(path: string): boolean {
-  if (PROVIDER_CATALOG_FILES.has(path) || path === CONFIG_REGISTRY_FILE) return true;
-  // Allowed location (1): task definition defaults.
-  return /^src\/capabilities\/[^/]+\/tasks\//u.test(path);
+/**
+ * Site-level legality — a directory or registry file being "allowed" does NOT
+ * license every literal inside it. Only the default-declaration positions pass:
+ *   - catalog files: the whole file IS the provider catalog / pricing table;
+ *   - registry.ts: a `codeDefault:` initializer under a `*_MODEL` / `*.model` key;
+ *   - tasks/**: a `defaultModel:` initializer.
+ */
+function isAllowedSite(path: string, node: ts.StringLiteralLike): boolean {
+  if (PROVIDER_CATALOG_FILES.has(path)) return true;
+  const parent = node.parent;
+  if (!ts.isPropertyAssignment(parent) || parent.initializer !== node) return false;
+  const keyName =
+    ts.isIdentifier(parent.name) || ts.isStringLiteralLike(parent.name)
+      ? parent.name.text
+      : undefined;
+  if (path === CONFIG_REGISTRY_FILE) {
+    if (keyName !== 'codeDefault') return false;
+    const keyDecl = parent.parent.parent;
+    if (!ts.isPropertyAssignment(keyDecl)) return false;
+    const scope =
+      ts.isIdentifier(keyDecl.name) || ts.isStringLiteralLike(keyDecl.name)
+        ? keyDecl.name.text
+        : undefined;
+    return scope !== undefined && (/_MODEL$/u.test(scope) || /\.model$/u.test(scope));
+  }
+  return /^src\/capabilities\/[^/]+\/tasks\//u.test(path) && keyName === 'defaultModel';
 }
 
 /** The id must sit on a non-alphanumeric boundary — `jo3i` is not the model 'o3'. */
@@ -303,13 +330,13 @@ function main(): void {
   const usedAllowlist = new Set<string>();
   for (const file of files) {
     const path = projectPath(file);
-    if (allowedFile(path)) continue;
     const entry = allowlist[path];
     const exemptAll = entry?.literals?.includes('*') ?? false;
     const exempt = new Set(entry?.literals ?? []);
-    for (const { text, line } of stringLiterals(readFileSync(file, 'utf-8'), file)) {
+    for (const { text, line, node } of stringLiterals(readFileSync(file, 'utf-8'), file)) {
       for (const modelId of modelIds) {
         if (!containsModelId(text, modelId)) continue;
+        if (isAllowedSite(path, node)) continue;
         const finding = { file: path, line, literal: text, modelId };
         if (exemptAll || exempt.has(text)) {
           usedAllowlist.add(path);

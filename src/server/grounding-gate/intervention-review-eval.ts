@@ -90,7 +90,11 @@ export async function collectTaskRunProvenance(
   // (env pin > DB global/task override > registry default), not a pinned
   // literal. Resolved once per task kind; a kind outside the registry or a
   // config that cannot resolve marks the check unresolvable rather than
-  // silently passing.
+  // silently passing. Scope note: every run reaching this collector was
+  // dispatched inside this same eval invocation via observedRunTaskFn /
+  // reviewInterventionPackageCandidate, so the route resolved here IS the
+  // route the runner used — this never retro-judges historical receipts
+  // against a newer default.
   const routeByKind = new Map<string, { provider: string; model: string } | 'unresolvable'>();
   const expectedRoute = (kind: string | null | undefined) => {
     if (!kind || !Object.hasOwn(tasks, kind)) return undefined;

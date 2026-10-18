@@ -463,11 +463,10 @@ export const PROVIDER_LANES = [
       },
       model: {
         summary:
-          'Global provider model; unpinned MEM0_LLM_MODEL resolves via system_config registry codeDefault (YUK-1559)',
+          'Global provider model; unpinned MEM0_LLM_MODEL env overrides the provider-catalog lane default (LEGACY_GLM_MODEL_ID, YUK-1559)',
         source: {
           path: 'src/server/memory/llm-config.ts',
-          contains: ["getConfig('MEM0_LLM_MODEL'", 'model: pin.model'],
-          literals: ['MEM0_LLM_MODEL'],
+          contains: ['env.MEM0_LLM_MODEL', 'LEGACY_GLM_MODEL_ID', 'model: pin.model'],
         },
       },
     },
@@ -618,11 +617,10 @@ export const PROVIDER_LANES = [
       },
       model: {
         summary:
-          'Global provider model; unpinned MEM0_LLM_MODEL resolves via system_config registry codeDefault (YUK-1559)',
+          'Global provider model; unpinned MEM0_LLM_MODEL env overrides the provider-catalog lane default (LEGACY_GLM_MODEL_ID, YUK-1559)',
         source: {
           path: 'src/server/memory/llm-config.ts',
-          contains: ["getConfig('MEM0_LLM_MODEL'", 'model: pin.model'],
-          literals: ['MEM0_LLM_MODEL'],
+          contains: ['env.MEM0_LLM_MODEL', 'LEGACY_GLM_MODEL_ID', 'model: pin.model'],
         },
       },
     },

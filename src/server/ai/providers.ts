@@ -308,6 +308,13 @@ export const PROVIDER_MODEL_BINDINGS: Readonly<Record<Provider, ProviderModelBin
  * model override is given. Claude Max defaults to Opus 4.8.
  */
 export const ANTHROPIC_SUB_DEFAULT_MODEL = 'claude-opus-4-8';
+/**
+ * Model id of the legacy direct-GLM lane (Mem0 extraction + edge/memory
+ * reconciliation's unpinned fallback). Not a pi Provider — the lane posts to
+ * the bigmodel endpoint through executeDirectProviderAttempt — but its
+ * declared model belongs to this catalog like every other lane default.
+ */
+export const LEGACY_GLM_MODEL_ID = 'glm-5.2';
 // YUK-1027 — the openai lane's only bound model (PROVIDERS.openai.models key);
 // referenced by crossoverModelForProvider so a provider-only judge override
 // resolves a pair the builtin catalog can actually serve.

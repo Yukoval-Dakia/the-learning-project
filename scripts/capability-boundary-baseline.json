@@ -13,12 +13,11 @@
     "YUK-1373": "copilot -> ai 18 -> 19 (+1, total 437 -> 438): copilot-execution.ts imports PiAfterToolCall (src/server/ai/pi-hooks) for the remote-MCP tool_finished bridge — remote calls bypass the domain bridge's onToolComplete, so the pi afterToolCall observer is their only completion evidence. Type-only edge, same lane as the existing pi-hooks edges.",
     "YUK-1448": "ADR-0072 LIGHT: practice -> ai 64 -> 65 (+1, total 428 -> 429): bank-search.ts imports @/server/ai/embed — the search_bank vector channel MUST embed the query through the same seam as the pool vectors (matcher §190 铁律; directImporter registered in the provider-lane census, scripts/provider-lane-inventory.ts). Same owner-service lane as matcher/embed_backfill; not an architecture regression.",
     "YUK-1468": "practice -> questions tightened 15 -> 14 (-1, total 429 -> 428): B1 统一写口 — 新 submit/edit 服务经 facade 单口（server/questions/submit-question.ts 再导出 publish/draft-insert/edit 服务），capability 内部消费走 tools/submit-question.ts re-export；旧 store-sourced-question 两条 publisher/SDI 边随 shim 化归 0。",
-    "YUK-1522": "R8 ingestion agent: ingestion -> ai 10 -> 12 (+2: server/agent/run.ts mounts the agent loop via runner-fn.makeRunTaskFn + pi-tools.piDomainMount — the same owner-service seams dreaming/coach use), ingestion -> session 8 -> 9 (+1: run.ts calls the Ingestion.* state guards — single-owner session writes, never raw status updates), ingestion -> boss 6 -> 7 (+1: server/agent/dispatch.ts is the sole boss.send seam for resume/continuation singletons), ingestion -> events 5 -> 6 (+1: server/events/agent-progress.ts emits durable job_events via writeJobEvent — contract event writer, same channel as extraction-progress). total 428 -> 434. R1: ingestion -> boss 7 -> 8 (+1: run.ts reads JOB_RETRY_LIMIT for the retries-exhausted terminal write — a queue-policy constant, not a send path). All are owner-service/facade calls required for a durable agent loop; no deep-import or raw-write bypass. R3/CI-fix: run.ts imports the failure-vocabulary modules (agent-run-error, provider-attempt-lifecycle, provider-session-admission) DIRECTLY instead of a runner-fn re-export — re-exporting them through runner-fn pulled providers→task-catalog→schema barrel into runner-fn's cone and broke a vitest import-order invariant. Same modules, same semantics; +3 same-owner ai edges (ingestion -> ai 12 -> 15, total 434 -> 437).",
-    "YUK-1559": "C1-10 model-source unification: practice -> ai 65 -> 66 (+1, total 437 -> 438): judge-calibration-config.ts reads ANTHROPIC_SUB_DEFAULT_MODEL from the provider catalog instead of pinning the model literal (task defaults / catalog / system_config are the only legal literal sites)."
+    "YUK-1522": "R8 ingestion agent: ingestion -> ai 10 -> 12 (+2: server/agent/run.ts mounts the agent loop via runner-fn.makeRunTaskFn + pi-tools.piDomainMount — the same owner-service seams dreaming/coach use), ingestion -> session 8 -> 9 (+1: run.ts calls the Ingestion.* state guards — single-owner session writes, never raw status updates), ingestion -> boss 6 -> 7 (+1: server/agent/dispatch.ts is the sole boss.send seam for resume/continuation singletons), ingestion -> events 5 -> 6 (+1: server/events/agent-progress.ts emits durable job_events via writeJobEvent — contract event writer, same channel as extraction-progress). total 428 -> 434. R1: ingestion -> boss 7 -> 8 (+1: run.ts reads JOB_RETRY_LIMIT for the retries-exhausted terminal write — a queue-policy constant, not a send path). All are owner-service/facade calls required for a durable agent loop; no deep-import or raw-write bypass. R3/CI-fix: run.ts imports the failure-vocabulary modules (agent-run-error, provider-attempt-lifecycle, provider-session-admission) DIRECTLY instead of a runner-fn re-export — re-exporting them through runner-fn pulled providers→task-catalog→schema barrel into runner-fn's cone and broke a vitest import-order invariant. Same modules, same semantics; +3 same-owner ai edges (ingestion -> ai 12 -> 15, total 434 -> 437)."
   },
   "debts": {
     "capabilityToServer": {
-      "total": 438,
+      "total": 437,
       "byOwnerPair": {
         "agency -> ai": 28,
         "agency -> boss": 10,
@@ -77,7 +76,7 @@
         "observability -> r2": 2,
         "observability -> subjects": 9,
         "practice -> advisory-locks": 5,
-        "practice -> ai": 66,
+        "practice -> ai": 65,
         "practice -> assessment": 1,
         "practice -> boss": 15,
         "practice -> calibration": 3,

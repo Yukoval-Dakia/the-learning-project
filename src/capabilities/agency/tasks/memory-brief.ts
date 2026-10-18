@@ -34,7 +34,7 @@ export const memoryBriefTaskSpec = {
   definition: {
     kind: 'MemoryBriefTask',
     description:
-      'Station 2A (YUK-185, T-37) — per-scope memory brief writer. Input = scopeKey + template + now (ISO age anchor) + capped events[] (newest-first, ≤50, each carrying a top-level outcome (success/failure/partial/null) + a compact { excerpt? } payload projection) + facts[]. Output = strict JSON BriefDraft: 3 time-window markdown summaries (recent_week / recent_months / long_term) + 3 paired evidence_id arrays (subset of input event ids). Single structured-output call (no tool loop), mimo-v2.5-pro text. Drives memory_brief_note rows.',
+      'Station 2A (YUK-185, T-37) — per-scope memory brief writer. Input = scopeKey + template + now (ISO age anchor) + capped events[] (newest-first, ≤50, each carrying a top-level outcome (success/failure/partial/null) + a compact { excerpt? } payload projection) + facts[]. Output = strict JSON BriefDraft: 3 time-window markdown summaries (recent_week / recent_months / long_term) + 3 paired evidence_id arrays (subset of input event ids). Single structured-output call (no tool loop), registry-default text model. Drives memory_brief_note rows.',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
     // YUK-189: 120s (was 60s). The real-LLM demo (scripts/demo-flywheel.ts) hit
