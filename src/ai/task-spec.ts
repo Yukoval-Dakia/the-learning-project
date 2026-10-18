@@ -69,6 +69,8 @@ export interface TaskDefinition {
   readonly reasoningEffort?: EffortLevel;
   readonly invocation?: 'auto' | 'manual_rescue_only';
   readonly structuredOutputSchema?: ZodTypeAny;
+  /** Opt-in single model turn submitting schema-constrained tool arguments. */
+  readonly structuredOutputMode?: 'tool';
 }
 
 export const DEFAULT_TASK_BUDGET: TaskBudget = {

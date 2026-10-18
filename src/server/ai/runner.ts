@@ -116,11 +116,9 @@ export interface RunTaskResult {
   cost_basis: 'reported' | 'estimated' | 'unknown';
   cost_ref: string;
   /**
-   * YUK-299 seam: the structured product an adapter fills in when a
-   * structured-output protocol is honoured. Post-P4 the pi lane has no
-   * outputFormat equivalent — this stays `undefined` and every caller runs
-   * its strict-prompt + Zod text-fallback parse (already the production path
-   * on the default mimo lane, YUK-792). Runner never interprets it.
+   * Adapter-provided product for opt-in schema tool output (YUK-1537).
+   * Legacy tasks retain their text parsing behavior. Runner does not interpret
+   * the product; the capability validates it before any domain publication.
    */
   structured_output?: unknown;
   /** Present for NoteGenerateTask. Model phases; the job adds parse and DB. */

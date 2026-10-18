@@ -157,6 +157,18 @@ function validateDefinition(owner: TaskOwner, key: string, definition: TaskDefin
       throw new Error(`defineOwnedTaskSpecs(${owner}): "${key}" invalid prompt discriminant`);
   }
   if (
+    definition.structuredOutputMode !== undefined &&
+    (definition.structuredOutputMode !== 'tool' ||
+      execution !== 'chat' ||
+      !definition.structuredOutputSchema ||
+      !definition.needsToolCall ||
+      !definition.allowedTools.includes('mcp__structured_output__submit'))
+  ) {
+    throw new Error(
+      `defineOwnedTaskSpecs(${owner}): "${key}" tool output requires chat execution, schema and submit tool`,
+    );
+  }
+  if (
     definition.structuredOutputSchema !== undefined &&
     (typeof definition.structuredOutputSchema !== 'object' ||
       definition.structuredOutputSchema === null ||

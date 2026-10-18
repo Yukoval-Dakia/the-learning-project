@@ -1,4 +1,3 @@
-import { initialSchedulingState } from '@/server/fsrs/state';
 // YUK-216 S2 slice 2 (题源扩展 Strategy D) — tier-2 source_verify handler.
 //
 // docs/superpowers/specs/2026-06-05-question-source-expansion-design.md §4
@@ -28,7 +27,6 @@ import { initialSchedulingState } from '@/server/fsrs/state';
 import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
-
 import {
   type RunSourceGroundingVerifyParams,
   type SourceGroundingVerifyResult,
@@ -38,6 +36,10 @@ import {
   type PaidEffectIdentity,
   computePaidEffectIdentity,
 } from '@/core/migration/paid-effect-protocol';
+import {
+  LEGACY_QUESTION_ADMISSION_POLICY_ID,
+  QUESTION_ADMISSION_POLICY_ID,
+} from '@/core/question-admission-policy';
 import {
   LEGACY_DRAFT_STATUS,
   QUESTION_AVAILABILITY,
@@ -69,7 +71,7 @@ import { writeEvent } from '@/kernel/events';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { type TaskTextResult, type TaskTextRunFn, aiAgentRef } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
-import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
+import { getFsrsState, initialSchedulingState, upsertFsrsState } from '@/server/fsrs/state';
 import { publishQuestionGroup, publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
 import { normalizeToCanonicalKind } from '@/subjects/question-kind';
@@ -810,7 +812,7 @@ export async function runSourceVerify(
       // 与 publisher/C1 一致）读当前维度。三者同时成立时，这份 base 内容已被
       // question_admission_run（YUK-1445 C1）独立准入，本投递不得重发：
       //   1. lifecycle.scoring_admission_state === 'admitted'；
-      //   2. 【当前 revision】上存在 policy question_admission@1、outcome='passed'
+      //   2. 【当前 revision】上存在 policy question_admission@1 或 @2、outcome='passed'
       //      的 question_admission_verification 行（不匹配历史其他 revision 的
       //      passed 行）；
       //   3. 该行 evidence.base_contract_digest === 当前已发布 revision 的
@@ -891,7 +893,11 @@ export async function runSourceVerify(
               .where(
                 and(
                   eq(question_admission_verification.revision_id, lifecycle.current_revision_id),
-                  eq(question_admission_verification.policy_id, resolveQuestionAdmissionPolicyId()),
+                  inArray(question_admission_verification.policy_id, [
+                    LEGACY_QUESTION_ADMISSION_POLICY_ID,
+                    QUESTION_ADMISSION_POLICY_ID,
+                    resolveQuestionAdmissionPolicyId(),
+                  ]),
                   eq(question_admission_verification.outcome, 'passed'),
                 ),
               )
