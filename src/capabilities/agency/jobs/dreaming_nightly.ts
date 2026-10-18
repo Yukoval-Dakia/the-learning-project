@@ -135,13 +135,14 @@ export const DREAMING_OBJECTIVE = `Review recent learning signals with the provi
 //
 // SPEC NOTE (resolved contradiction): the L2 spec §1.2/§3.2 asserts "Dreaming
 // does NOT propose knowledge_edge (DREAMING_TOOLS)". The MERGED code disagrees —
-// DREAMING_TOOLS spreads KNOWLEDGE_REVIEW_TOOLS, which DOES grant
-// propose_knowledge_edge + propose_knowledge_mutation. Code is authoritative
-// (project rule), and the spec's PRINCIPLE is "feed each surface the kinds it can
-// act on". So Dreaming's actable set includes knowledge_edge (relation +
-// top_rubric_gates) and knowledge_node / archive (the knowledge-mutation kinds),
-// alongside its learning-item / record kinds — matching the real surface, not the
-// spec's stale claim. (record_links / record_promotion are the record-tool kinds.)
+// DREAMING_TOOLS grants propose_knowledge_edge + propose_knowledge_mutation
+// (explicit list per YUK-1553 — the knowledge_review surface is not inherited).
+// Code is authoritative (project rule), and the spec's PRINCIPLE is "feed each
+// surface the kinds it can act on". So Dreaming's actable set includes
+// knowledge_edge (relation + top_rubric_gates) and knowledge_node / archive
+// (the knowledge-mutation kinds), alongside its learning-item / record kinds —
+// matching the real surface, not the spec's stale claim. (record_links /
+// record_promotion are the record-tool kinds.)
 const DREAMING_ACTABLE_KINDS = new Set([
   'completion',
   'relearn',
@@ -222,9 +223,9 @@ function buildDreamingInput(
     // scoped to the kinds Dreaming can ACT on (DREAMING_ACTABLE_KINDS). The
     // all-kind RATE above stays the background bias for every kind; the REASON
     // fields (top_dismiss_reasons / top_rubric_gates) are only fed for actable
-    // kinds. knowledge_edge IS actable here — DREAMING_TOOLS spreads
-    // KNOWLEDGE_REVIEW_TOOLS (allowlists.ts), which grants propose_knowledge_edge,
-    // so the edge cell (relation + top_rubric_gates) reaches Dreaming; only kinds
+    // kinds. knowledge_edge IS actable here — DREAMING_TOOLS grants
+    // propose_knowledge_edge (allowlists.ts), so the edge cell (relation +
+    // top_rubric_gates) reaches Dreaming; only kinds
     // outside DREAMING_ACTABLE_KINDS are dropped so no prompt budget is spent on a
     // kind Dreaming cannot propose (spec §3.2). Bounded by
     // PROPOSAL_FEEDBACK_BUDGET.maxKindRelations (the digest is already sorted +

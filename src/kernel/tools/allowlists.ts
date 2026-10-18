@@ -25,16 +25,16 @@ export const READ_TOOLS = [
   // coach / dreaming / copilot below; NOT to evaluator surfaces.
   'search_memory_facts',
   // ADR-0072 LIGHT — 题库 agent 三工具（search/read/check）随各自竖切接入。
-  // 授予 copilot surfaces；备题员面（ADR-0069 第一刀）落地时再扩。Maintenance
-  // chokepoint 下方过滤回（同款 containment —— 扩面归 coordinator）。
+  // 授予 copilot surfaces；备题员面（ADR-0069 第一刀）落地时再扩。其余
+  // surface 均不授权（同款 containment —— 扩面归 coordinator）。
   'search_bank',
   'read_bank',
   'check_bank',
   // ADR-0032 D6-draftread (YUK-203 lane L5) — ingestion draft-layer structure
   // reader (read≡write coordinate fix). Granted ONLY on `ingestion_block_edit`
   // below; it reads the DRAFT pool (question_block.structured) so it MUST NOT
-  // reach the active question face — the MAINTENANCE_READ_TOOLS chokepoint below
-  // filters it back out (same containment as the bank tools).
+  // reach the active question face — no other surface grants it (same
+  // containment as the bank tools).
   'get_question_block_structure',
   // YUK-939 — capability-owned generation-only tools. Neither retains a draft
   // nor writes a proposal; author_question remains the distinct retained path.
@@ -42,18 +42,16 @@ export const READ_TOOLS = [
   'generate_question_candidate',
   // YUK-986 (Supply-Agent/1) — jyeoo grade-route candidate fetch. E1: registry
   // only, NO surface grant (E3/YUK-988 grants the supply-executor surface).
-  // Filtered out of Maintenance below (same containment as generate_* tools).
   'jyeoo_fetch_candidates',
   // YUK-988 (Supply-Agent/3) — web-route candidate fetch (Tavily search +
-  // SourcingTask extraction). E3: registry only, NO surface grant. Filtered out
-  // of Maintenance below (same containment as jyeoo_fetch_candidates).
+  // SourcingTask extraction). E3: registry only, NO surface grant (same
+  // containment as jyeoo_fetch_candidates).
   'web_fetch_candidates',
   // YUK-293 — expiring AI-to-AI hints. Granted only to copilot / dreaming /
   // coach below; evaluator and operator surfaces filter it out.
   'read_agent_notes',
   // YUK-1404 (B2/R2) — ingestion source-package readers. Granted ONLY on the
-  // `ingestion` surface below; the maintenance chokepoint filters them out
-  // (same containment as the draft-structure reader).
+  // `ingestion` surface below (same containment as the draft-structure reader).
   'read_source',
   'view_image',
 ] as const;
@@ -118,7 +116,7 @@ export const PROPOSE_WRITE_TOOLS = [
   'glm_ocr',
   // YUK-1448 (Stage 1 batch D) — search_bank 检索不足时的缺口落单工具（幂等台账
   // 登记 + 既有 dispatcher；held/unsupported_constraint 不静默丢字段）。授权面：
-  // 仅 copilot（COPILOT_TOOLS）；supply_planner 保持只读挂载；不进 Maintenance
+  // 仅 copilot（COPILOT_TOOLS）；supply_planner 保持只读挂载；其余面不授
   // （备题/供给域写工具，非运维面）。
   'file_bank_gap',
   // YUK-1522 (R8) — ingestion agent contract tools. report_ingestion_progress
@@ -147,7 +145,6 @@ export type DomainToolSurface =
   | 'copilot_user_suggested_mistake_action'
   | 'dreaming'
   | 'coach'
-  | 'maintenance'
   // YUK-195 — question structure-correction surface (agent/user-triggered). Kept
   // separate so copilot / dreaming / coach do NOT get question-mutation tools by
   // default; this is the only surface granting the 6 draft-edit write tools.
@@ -157,6 +154,11 @@ export type DomainToolSurface =
   // bank/record tools.
   | 'ingestion';
 
+// YUK-1553 — mounted by KnowledgeReviewTask (review.ts) through the shared
+// DomainTool bridge; the private `mcp__loom__write_proposal` custom tool is
+// retired. Readers stay on the surface so the maintenance model can verify a
+// node's current `version` (the CAS token propose tools require) and existing
+// edges before proposing.
 const KNOWLEDGE_REVIEW_TOOLS = [
   'get_subject_graph_overview',
   'expand_knowledge_subgraph',
@@ -169,9 +171,8 @@ const KNOWLEDGE_REVIEW_TOOLS = [
 
 // M5-T3 / YUK-328 — 完整 DomainTool 归属真相源已移至各包 manifest.copilotTools；
 // 字段名沿用，但 inventory 包含非 Copilot surface 的工具。COPILOT_TOOLS 仍保持
-// 字面量，因为 src/ai/registry.ts（浏览器共享面）import 本文件，不能把
-// @/capabilities 拉进 web bundle（plan 裁决 h）。完整 inventory 与 Copilot 子集的
-// 集合对账均由 src/capabilities/copilot/server/copilot-tools.unit.test.ts 强制。
+// 字面量：src/ai/registry.ts 是浏览器共享面，不能经 import 把 @/capabilities
+// 拉进 web bundle（plan 裁决 h）。
 export const COPILOT_TOOLS = [
   'submit_review_answer',
   'present_primary_view',
@@ -230,7 +231,7 @@ export const COPILOT_TOOLS = [
   // merge; this is the deliberate ADR-0031 surface change, not a violation.
   'write_quiz',
   // ADR-0072 LIGHT — 题库三工具接替已删除的 query_questions 的取题路径（D1：
-  // LIGHT 只切 copilot/备题员两个面；coach/dreaming/maintenance/ingestion_block_edit
+  // LIGHT 只切 copilot/备题员两个面；coach/dreaming/ingestion_block_edit
   // 继续经现有 get_question_context 读取不变）。
   'search_bank',
   'read_bank',
@@ -252,8 +253,22 @@ export const COPILOT_TOOLS = [
   'write_agent_note',
 ] as const satisfies readonly DomainToolName[];
 
+// YUK-1553 / YUK-1559 — Dreaming's grant is now an EXPLICIT list: it must not
+// inherit the knowledge_review surface wholesale (the two surfaces own
+// different boundaries). The names are the same set dreaming_nightly already
+// carried — no new grants, no removals: propose_record_links /
+// propose_record_promotion still have live producers + accept appliers
+// (DREAMING_ACTABLE_KINDS), so they stay until their own cleanup lane lands.
 const DREAMING_TOOLS = [
-  ...KNOWLEDGE_REVIEW_TOOLS,
+  // Knowledge graph readers + proposal writers (the names dreaming actually
+  // uses — shared with, but no longer spread from, knowledge_review).
+  'get_subject_graph_overview',
+  'expand_knowledge_subgraph',
+  'query_knowledge',
+  'find_knowledge_paths',
+  'query_events',
+  'propose_knowledge_edge',
+  'propose_knowledge_mutation',
   'query_records',
   'get_question_context',
   'query_mistakes',
@@ -298,67 +313,6 @@ const COACH_TOOLS = [
   'search_memory_facts',
   'read_agent_notes',
   'write_agent_note',
-] as const satisfies readonly DomainToolName[];
-
-// D7③ (docs/design/2026-06-04-u0-decisions.md) — deny-from-wide: the
-// evaluator/operator surfaces must NOT read memory facts. `search_memory_facts`
-// now lives in READ_TOOLS (granted to coach/dreaming/copilot), so the wide
-// Maintenance read base must filter it back out rather than spreading READ_TOOLS
-// wholesale. This is the single chokepoint keeping Maintenance memory-free.
-//
-// ADR-0032 D9 granted query_questions (since removed — ADR-0072 search_bank
-// replaces it) to the copilot surfaces only; widening maintenance is A2
-// territory, not this lane's call.
-//
-// ADR-0072 LIGHT — the bank tools (search/read/check_bank) follow the same
-// containment: copilot-surface grants only; widening is the coordinator's call.
-//
-// ADR-0032 D6-draftread (YUK-203 lane L5) — `get_question_block_structure` is
-// filtered out for the same reason: it reads the ingestion DRAFT layer and is an
-// `ingestion_block_edit`-only grant. Keeping the chokepoint here stops it leaking
-// onto the operator/evaluator (Maintenance) surface — i.e. the active題面.
-const MAINTENANCE_READ_TOOLS = READ_TOOLS.filter(
-  (
-    name,
-  ): name is Exclude<
-    ReadDomainToolName,
-    | 'search_memory_facts'
-    | 'search_bank'
-    | 'read_bank'
-    | 'check_bank'
-    | 'get_question_block_structure'
-    | 'generate_goal_outline'
-    | 'generate_question_candidate'
-    | 'jyeoo_fetch_candidates'
-    | 'web_fetch_candidates'
-    | 'read_agent_notes'
-    | 'read_source'
-    | 'view_image'
-  > =>
-    name !== 'search_memory_facts' &&
-    name !== 'search_bank' &&
-    name !== 'read_bank' &&
-    name !== 'check_bank' &&
-    name !== 'get_question_block_structure' &&
-    name !== 'generate_goal_outline' &&
-    name !== 'generate_question_candidate' &&
-    name !== 'jyeoo_fetch_candidates' &&
-    name !== 'web_fetch_candidates' &&
-    name !== 'read_agent_notes' &&
-    name !== 'read_source' &&
-    name !== 'view_image',
-);
-
-const MAINTENANCE_TOOLS = [
-  ...MAINTENANCE_READ_TOOLS,
-  'propose_knowledge_edge',
-  'propose_knowledge_mutation',
-  'propose_learning_item_completion',
-  'propose_learning_item_relearn',
-  'propose_learning_item_defer',
-  'propose_learning_item_archive',
-  'propose_record_links',
-  'propose_record_promotion',
 ] as const satisfies readonly DomainToolName[];
 
 // YUK-195 — the question structure-correction surface. Reads enough block /
@@ -408,7 +362,6 @@ export const DOMAIN_TOOL_ALLOWLISTS = {
   copilot_user_suggested_mistake_action: [...COPILOT_TOOLS, 'attribute_mistake', 'propose_variant'],
   dreaming: DREAMING_TOOLS,
   coach: COACH_TOOLS,
-  maintenance: MAINTENANCE_TOOLS,
   ingestion_block_edit: INGESTION_BLOCK_EDIT_TOOLS,
   ingestion: INGESTION_TOOLS,
 } as const satisfies Record<DomainToolSurface, readonly DomainToolName[]>;
