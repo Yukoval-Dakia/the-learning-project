@@ -4,10 +4,10 @@ status: accepted
 
 # ADR-0075 — Agent harness 契约：工作单、边界契约、领域写入者、需求门控
 
-**Status:** Accepted（设计方向，2026-10-18，含 owner 当日 19:48 三项决定）；**尚未实施**——本文是决策落档，不代表任何软件已实现；owner 已批决定与实际实现状态始终分开陈述。
-**Decision source:** owner 2026-10-18「原地打转需要治本」「harness的优化是个系统工程，不是一个guard可解决。没人学习时后台自适应降频。你给的修复票治标不治本」；同日 19:48 原话「**两件都允许 空闲按推荐 主席层也现在做**」（设计稿 §9）。**normative 真相源（仓库外绝对路径）**：`/Volumes/YukovalSBak/yukoval-projects/tlp-status/discussions/agent-harness-redesign.md`（SHA256 `92f41db2b39e6c925aa4bd16b44013faac7ce9630ad03f806583cd1c03239a1a`，587 行，代码基准 `origin/main` @ `9ce433fa2`）。**§9 是最新 owner 决定，优先级高于正文中的推荐/推迟表述**；本文与设计稿冲突处，以设计稿（含 §9）为准。
+**Status:** Accepted（设计方向，2026-10-18，含 owner 当日 19:48 三项决定与 20:20 协调线对照补充 §10）；**尚未实施**——本文是决策落档，不代表任何软件已实现；owner 已批决定与实际实现状态始终分开陈述。
+**Decision source:** owner 2026-10-18「原地打转需要治本」「harness的优化是个系统工程，不是一个guard可解决。没人学习时后台自适应降频。你给的修复票治标不治本」；同日 19:48 原话「**两件都允许 空闲按推荐 主席层也现在做**」（设计稿 §9）；同日 20:20 协调线并入对照补充（设计稿 §10，含 owner 20:11「工具没做统一吗」、20:16 skills/MCP/按需加载指示）。**normative 真相源（仓库外绝对路径）**：`/Volumes/YukovalSBak/yukoval-projects/tlp-status/discussions/agent-harness-redesign.md`（SHA256 `81ae5f55c379f0c933d6c066dbdd0c6562de8c792502af5560e8eada55c52a4f`，615 行，代码基准 `origin/main` @ `9ce433fa2`）。**§9 与 §10 是最新决定，优先级高于正文中的推荐/推迟表述；§10 对 §2/§5 的修订以 §10 条文为准**（本文已消除相互矛盾的有效门槛）；本文与设计稿冲突处，以设计稿（含 §9、§10）为准。
 **Tracking:** [YUK-1559](https://linear.app/yukoval-studios/issue/YUK-1559)（本文档落档）；受处置票据见「票据处置」。
-**Related:** [ADR-0004](0004-pattern-c-two-type-agent-architecture.md)、[ADR-0039](0039-single-orchestrator-action-strength-tiers.md)（A/B/C 出手档）、[ADR-0053](0053-copilot-durable-subagent-mailbox.md)、[ADR-0056](0056-native-task-tool-result-into-live-parent.md)、[ADR-0065](0065-pi-execution-and-conversation-replay.md)、[ADR-0067](0067-teaching-team-whiteboard-and-event-meetings.md)（**Amendment 2026-10-18**，随本文生效）、[ADR-0069](0069-single-supply-agent.md)、[ADR-0072](0072-question-bank-agent-tools.md)；YUK-572 spec `docs/design/2026-07-06-yuk572-agent-meeting-lane-spec.md`；TT 草案（ADR-0067 指定的细节真相源）；工具面清单 `tlp-status/discussions/agent-tools-inventory.md`（INV）；运行审查证据 `tlp-status/review/loom-runs-20261018/`（summary / AR / IR / DJ / TB，本文证据缩写同设计稿）。
+**Related:** [ADR-0004](0004-pattern-c-two-type-agent-architecture.md)、[ADR-0039](0039-single-orchestrator-action-strength-tiers.md)（A/B/C 出手档）、[ADR-0053](0053-copilot-durable-subagent-mailbox.md)、[ADR-0056](0056-native-task-tool-result-into-live-parent.md)、[ADR-0065](0065-pi-execution-and-conversation-replay.md)、[ADR-0067](0067-teaching-team-whiteboard-and-event-meetings.md)（**Amendment 2026-10-18**，随本文生效）、[ADR-0069](0069-single-supply-agent.md)、[ADR-0072](0072-question-bank-agent-tools.md)；YUK-572 spec `docs/design/2026-07-06-yuk572-agent-meeting-lane-spec.md`；TT 草案（ADR-0067 指定的细节真相源）；工具面清单 `tlp-status/discussions/agent-tools-inventory.md`（INV）；运行审查证据 `tlp-status/review/loom-runs-20261018/`（summary / AR / IR / DJ / TB，本文证据缩写同设计稿）；工具对照 `tlp-status/review/harness-benchmark-20261018/`（tools-vs-notion-linear.md、harness-vs-codex-cli.md @ `8c076942`，§10 的依据）。
 
 ## 背景与问题：记账单位是「一次调用有没有返回」，不是「一件工作有没有交付」
 
@@ -35,11 +35,13 @@ status: accepted
 3. **复用现有部件**：DomainTool 注册表、`executeDomainToolCall`、pi 适配器钩子、`structuredOutputTool`、事件脊、proposal、job DAG、`job-yield`、`inventory-projection`；不建没有 live consumer 的子系统。
 4. rewrite-prep §9 八项 pre-AI 承重能力不降级；破坏性操作走 proposal 的内核（ADR-0004/0025）保留，仅 D5 两类 owner 已批的自动动作例外。
 
-### D1 边界契约（C1：工具、输出、门槛）（§2.1）
+### D1 边界契约（C1：工具、输出、门槛）（§2.1 + §10.1）
 
-**C1-1 只保留一个工具平面。** 一切产生领域写入或提议的 agent 工具走 DomainTool 注册表、面级名单和 `executeDomainToolCall`；`piCustomTool` 只留给纯读临时工具与测试。KR 改挂 `MAINTENANCE_TOOLS`（今天没有运行时消费者），用注册表的 `propose_knowledge_mutation`/`propose_knowledge_edge`，删 `review.ts` 的 `WriteProposalSchema` 与 custom mount。远程 MCP（Exa）每次调用补 `recordToolCall`，同进 `tool_call_log` 与 `cost_ledger`（YUK-1557）。**组合期契约检查（结构约束，不是 guard）**：注册时对 `effect ∈ {propose, write, control}` 的工具，`inputSchema` 顶层或一级字段为 `z.unknown()`/`z.any()`/无约束 record 即拒绝启动（做法同 `validateComposition` 拒绝 cron/dependsOn 冲突），让 KR 类事故结构上不可能再发生。
+**C1-0 工具统一收尾（§10.1，owner 20:11「工具没做统一吗」）。** 按能力全量清单收敛：**一个能力一个共享工具**。KnowledgeReview 私有 `write_proposal`（`review.ts`）迁到共享注册表工具后删除；**无运行时消费者的 `MAINTENANCE_TOOLS` 名单删除**——§2.1 原「KR 改挂 `MAINTENANCE_TOOLS`」的路线由本条取代；Dreaming 不再展开继承 `KNOWLEDGE_REVIEW_TOOLS`。
 
-**C1-2 错误要让模型能行动。** 失败结果改固定信封：`{ error_kind: invalid_input|precondition_failed|duplicate|not_found|transient|forbidden, retryable, same_args_will_fail, fix:[{path,expected,received}], existing_ref? }`，在 `phaseError` 一处生成，zod issue 直接映射 `fix`；`tool_call_log` 另记 `error_kind`。**确定性安全修复只做两类且每次记录**：①声明为 object 的字段收到能 JSON.parse 成 object 的字符串，按对象处理；②可选字段收到 `null` 当未填。超出即「猜」，不做。
+**C1-1 只保留一个工具平面。** 一切产生领域写入或提议的 agent 工具走 DomainTool 注册表、面级名单和 `executeDomainToolCall`；`piCustomTool` 只留给纯读临时工具与测试。KR 用注册表的 `propose_knowledge_mutation`/`propose_knowledge_edge`（共享工具，挂载面按 C1-0 收敛，不新增无消费者的工具名单）。远程 MCP（Exa）每次调用补 `recordToolCall`，同进 `tool_call_log` 与 `cost_ledger`（YUK-1557）。**组合期契约检查（结构约束，不是 guard）**：注册时对 `effect ∈ {propose, write, control}` 的工具，`inputSchema` 顶层或一级字段为 `z.unknown()`/`z.any()`/无约束 record 即拒绝启动（做法同 `validateComposition` 拒绝 cron/dependsOn 冲突），让 KR 类事故结构上不可能再发生。
+
+**C1-2 错误要让模型能行动。** 失败结果改固定信封：`{ error_kind: invalid_input|precondition_failed|duplicate|not_found|transient|forbidden|fatal, retryable, same_args_will_fail, fix:[{path,expected,received}], existing_ref? }`，在 `phaseError` 一处生成，zod issue 直接映射 `fix`；`tool_call_log` 另记 `error_kind`。**`fatal` 类（§10.1 补）**：契约坏、TypeError、权限拒绝——直接结束本次运行并生成 `harness_defect` finding，不回喂重试。**P0-a（§10.1，最先修）**：bridge 返回的错误今天没有标 `isError`（`pi-tools.ts:168`），模型与打转检测都会把失败当成功；此修先行，见 D8。**确定性安全修复只做两类且每次记录**：①声明为 object 的字段收到能 JSON.parse 成 object 的字符串，按对象处理；②可选字段收到 `null` 当未填。超出即「猜」，不做。
 
 **C1-3 幂等落在领域键上。** `DomainTool` 增加可选 `idempotencyKey(input)`，一切 propose 工具必须声明；bridge 在 `beforeExecute` 前查 pending，命中返回 `duplicate` + `existing_ref`，不再写入（复用 `pendingProposalWithAnyCooldown`，不建新表）。领域键：knowledge_mutation 的 merge/split/reparent 必须给键；image_candidate 用 URL（替代单次运行内的 `seenCooldownKeys`）；题目入库用 `source_ref` 规范 URL + 全库向量近邻（复用 `bank-search` 向量通道，DJ §2.5 LIGHT），不再只认 `canonical_content_hash` 与「共享知识点」n-gram。**applier 侧**：所有 accept 路径先取 `acquireProposalDecisionLock`、锁内重查 rate；在 applier 注册处做成强制包装，不靠各 applier 自觉（learning_item accept 是当前唯一漏网路径）。
 
@@ -47,32 +49,44 @@ status: accepted
 
 **C1-5 门槛要可校准。** 每道确定性门保留**完整拒绝理由**（修 `source_verify.ts:964,996,1069` 三处丢弃 reason 的 map），并提供「只重放确定性检查」入口：零 AI 成本、**不领付费额度**（DJ §1.3 FULL）。门的误拒率进计分板（用固定 68 题已知真题小集重放）。source_verify 一致性检查算法改 containment：用题干+选项（不含 `reference_md`），两侧先做数学归一化（DJ §1.2 LIGHT）——这是确定性门的算法缺陷，修掉即治本。
 
+**C1-6 描述规范（§10.1）。** 每个工具的描述写明「何时用 / 何时别用 / 下一步去哪（兄弟工具名）/ 一个例子 / 常见错」，长度设上下限（现状从一句话到 3100 字两极分化）。
+
+**C1-7 读工具的「下一步」与字段选择（§10.1）。** 读工具结果给出下一步指向（例：`query_events` 结果不含判分时明确指向 `get_attempt_context`）；支持 `fields` 字段选择与游标 + `hasNextPage` 分页。
+
+**C1-8 按需暴露：工具与技能（§10.1，owner 20:16）。** 每个任务只常驻小核心工具集 + 两个元工具：`find_tools`（按意图检索工具并把选中的加入 `state.tools`）与 `load_skill`（加载版本化技能包：说明、例子、坑，及其携带的工具）。pi-agent-core 已核实支持 `agent.state.tools` 轮次间整组替换、`getSteeringMessages` 注入、`transformContext`、`beforeToolCall`/`afterToolCall` 钩子；今天没有运行中改工具集的用法（Copilot 每轮常驻 35 个工具、8 个从未被调用）。**MCP 继续只做传输层**。验收：Copilot 每轮常驻工具 ≤10、提示 token 下降、未被调用的工具不进上下文。
+
+**C1-9 输出预算（§10.1）。** domain bridge 与 remote MCP（Exa）两个出口都做中段截断并标注原始大小；`tool_call_log` 留全量。
+
 **删除**：KR `write_proposal` 及 custom mount；`DREAMING_TOOLS` 的 `propose_record_links`/`propose_record_promotion`（kind 已 tombstone 却仍在生产，IR F7）；`parseTaskOutput` 在已迁任务上的调用；ServingHold 无条件「重新检查来源」按钮（归界面线）。
 
 **guard 位置（唯一）**：同一 `(tool, args_hash, error_kind)` 在一次运行里第 2 次出现即 `same_args_will_fail=true` 且**不再执行**，返回缓存错误。
 
-### D2 运行契约：给每次运行一张「工作单」（C2）（§2.2）
+### D2 运行契约：给每次运行一张「工作单」（C2）（§2.2 + §10.2）
 
 **C2-1 `TaskDefinition` 增加 `contract` 字段**：`{ deliverable: 'submit'|'tool_effects'|'text', progress: ToolEffectPredicate[], landing: { atFraction: 0.8 }, partial: 'accept'|'reject' }`（后台任务默认 accept）。这是 YUK-572「charter 化」的机器可检查版本；多数单轮任务取默认值不改行为。
 
-**C2-2 RunMonitor 挂 pi 适配器，所有运行都挂**（含子 agent，同一入口）：`makeBeforeToolCall`/`makeAfterToolCall` 无条件组合内建 RunMonitor 再接业务 `piHooks`；`finishTurn` 与 `maxTurns` 解耦；收尾消息经现有未接线的 `getSteeringMessages` 注入。维护四个计数：重复调用 `(tool, input_hash)`（按输入算，输出带 `context_budget` 不可比）、连续无进展轮数（`contract.progress` 不命中）、同类错误（`error_kind+path`）连续次数、累计输入 token。状态机 **progressing → stalled → landing → landed | failed**：
+**C2-2 RunMonitor 挂 pi 适配器，所有运行都挂**（含子 agent，同一入口）：`makeBeforeToolCall`/`makeAfterToolCall` 无条件组合内建 RunMonitor 再接业务 `piHooks`；`finishTurn` 与 `maxTurns` 解耦；收尾消息经现有未接线的 `getSteeringMessages` 注入。RunMonitor 在 P0-a 修好前**不得依赖 pi 的 `isError`**（bridge 错误今天未标记，见 C1-2），或直接解析 bridge 错误信封（§10.2）。维护四个计数：重复调用 `(tool, input_hash)`（按输入算，输出带 `context_budget` 不可比）、连续无进展轮数（`contract.progress` 不命中）、同类错误（`error_kind+path`）连续次数、累计输入 token。状态机 **progressing → stalled → landing → landed | failed**：
 
 - **stalled**：只读重复第 2 次、同类错误第 2 次、或连续 N=3 轮无进展——重复只读不再执行（返回缓存结果并附「结果与之前相同」），注入收尾引导「用已有结果完成交付；缺什么写进 unfinished」；
 - **landing**：stalled 后又 2 轮无进展，或 token/时间用到信封 80%——工具面收窄到只剩 submit，只读面全关；
 - **landed**：submit 成功；允许 `partial: true` 与 `unfinished[]`；
 - **failed**：landing 下 2 轮仍无 submit。
 
+landing 有**预算触发与进展触发两个入口（§10.2）**：预算侧照 Codex rollout budget 形状——先提醒剩余，到信封 80% 注入一次收尾（同时收窄工具面），信封 100% 终止；进展侧仍按 stalled→landing 状态机判定。
+
+**上下文窗口检查（§10.2 新增）**：所有多轮任务默认挂现有裁剪（`pi-agent-adapter.ts:955-1019`），送出前规范化历史（Sourcing `mo94wa3t`「75.3 M 后 400」的案例归 C2）。
+
 由此「被杀时丢掉全部已花 token」变成「交出能交的部分」。
 
 **C2-3 「成功」改成交付语义**：`ai_task_runs` 增加 `outcome ∈ delivered|partial|empty|failed` 与 `yield_units`（迁移只加列，`status` 保留）；由 job 层在下游校验后回填，口径复用并同源于 `job-yield`。DAG 节点 stalled 时改标新终态 **`degraded`**（不再记 succeeded），硬下游视作 soft 依赖：可照跑但记 stale。
 
-**C2-4 信封退为外圈**：`timeout`/`maxIterations`/新增「单次运行输入 token 上限」按 TB §5.2 按任务表设定（例：Sourcing 600 s + 8 M token、KR 600 s + 40 轮），只在 RunMonitor 失效时起作用。聊天车道 `maxCost` 用 token 估价接线（失败运行也计价，补 127 个 NULL）。`system_config` 的 `task.*.budget` 覆盖**必须带 `expires_at`**，过期不采用、状态页显示仍生效的覆盖（TEMP 挂 10 天的事故根源）。provider 冷却：`retry-after` 超 1 小时即在该 provider lane 设冷却标志，后续任务短路。
+**C2-4 信封退为外圈**：`timeout`/`maxIterations` 按 TB §5.2 按任务表起步（例：KR 600 s + 40 轮），只在 RunMonitor 失效时起作用。**token 信封改加权单位（非缓存输入 + 输出，§10.2 修订）**，阈值待 P0 计分板数据重定，**不沿用旧绝对值**——§2.2 的 Sourcing「8 M 输入」例与 §5.3 P2 的「p95 ≤8 M」验收随本条作废，以重定后的加权信封为准。聊天车道 `maxCost` 用 token 估价接线（失败运行也计价，补 127 个 NULL）。`system_config` 的 `task.*.budget` 覆盖**必须带 `expires_at`**，过期不采用、状态页显示仍生效的覆盖（TEMP 挂 10 天的事故根源）。provider/配额冷却：`retry-after` 超 1 小时即在该 provider lane 设冷却标志；**配额耗尽（429 + 长 retry-after）归终止类（§10.2）——写 lane 冷却且 pg-boss 不再重投**。
 
 **Copilot 持久会话（YUK-1373）**：不加数量上限、不加花费上限；RunMonitor 照常——它停的是「同参重复、同错重复、无进展」，不限花费。Copilot 的交付物是给学习者的回答，landing 意味着「基于已有结果回答并说明还缺什么」，不是「已停止」（AR P2-10 的 9 次无回答中 5 次属此类）。owner 若不同意，可只对 Copilot 关 landing、保留缓存返回。
 
 **删除**：「调高上限让真实工作做完」路线（TB 已证不可行）；仅为调查临时解除全部上限（改由计分板供数）。
 
-**guard 位置（YUK-1558 由此降为最外圈）**：同一 `(tool, input_hash)` 实际执行 5 次（缓存返回不算执行）硬停并记 `loop_detected`；单次运行输入 token 超信封 1.5 倍硬停。两者都计入计分板 guard 触发数。
+**guard 位置（YUK-1558 由此降为最外圈）**：同一 `(tool, input_hash)` 实际执行 5 次（缓存返回不算执行）硬停并记 `loop_detected`；单次运行 token 超信封（加权单位）1.5 倍硬停。两者都计入计分板 guard 触发数。
 
 ### D3 全局快照与领域写入者（C3）（§2.3）
 
@@ -82,7 +96,7 @@ status: accepted
 
 | 领域 | 唯一写入者 | 其他 agent |
 |---|---|---|
-| 知识树结构（章级以上 propose_new / merge / split / reparent / archive） | **Maintenance**（KR 挂 `MAINTENANCE_TOOLS`） | Dreaming/Coach 去掉 `propose_knowledge_mutation`，改写 `structure_issue` finding；kc_dedup 结果同样作 finding 交 Maintenance；Copilot 在学习者明确要求时的结构提议保留（学习者发起，YUK-270） |
+| 知识树结构（章级以上 propose_new / merge / split / reparent / archive） | **Maintenance**（KR 经注册表共享 propose 工具接入，挂载面按 C1-0 收敛） | Dreaming/Coach 去掉 `propose_knowledge_mutation`，改写 `structure_issue` finding；kc_dedup 结果同样作 finding 交 Maintenance；Copilot 在学习者明确要求时的结构提议保留（学习者发起，YUK-270） |
 | 新叶子知识点（打标签时） | `tag_knowledge`（保留自动建点） | 父节点默认取同科目最近邻 KC 的父节点；无候选才挂根且同时写 `structure_issue` finding |
 | 学习计划落树 | `learning-intent` accept | 用 `tree_outline` 选现有章（不再固定挂 `seed:<科目>:root`）；加锁见 C1-3 |
 | 知识关系边 | `frontier_fill` + `knowledge_edge_propose` | 去掉 Dreaming/Coach 的 `propose_knowledge_edge`；actor 改真实来源（现写死 `'dreaming'`） |
@@ -142,9 +156,9 @@ owner 2026-10-18 19:48 拍板「两件都允许」。**系统可自行执行、�
 
 **预期效果**（§3.7，预注册假设非承诺）：基线为 10-11 至 10-17 学习者零活动 7 天：402 M 输入 / USD 11.44（约 57 M、USD 1.63 一天）；目标空闲日输入 token ≤ 基线空闲日的 **5%**。
 
-### D7 交付记账与评估（C6）（§2.5、§5.1）
+### D7 交付记账与评估（C6）（§2.5、§5.1、§10.3）
 
-**C6-1 补齐原始记录**（YUK-1557 + TB §6.4）：`usage_json` 增加 `numTurns`、`cacheReadTokens`、`cacheWriteTokens`（适配器已有数，只差落库）；`tool_call_log` 每次调用只留一行；Exa 与入库 agent 的工具调用都记；**失败运行也按 token 计价**（补 127 个 NULL `cost_usd`）；Sourcing 运行与 `supply_executor_*` 建 task_run 关联；笔记、准入等失败状态 lifecycle 一律带 `failure_reason`。
+**C6-1 补齐原始记录**（YUK-1557 + TB §6.4 + §10.3）：`usage_json` 增加 `numTurns`、`cacheReadTokens`、`cacheWriteTokens`（适配器已有数，只差落库）；**逐响应 usage（§10.3）**：每次模型响应记一条 usage（cached / cache_write / output 分开、带轮次号），失败与 abort 也合成终态并估价；**多轮任务 transcript 落 blob（带保留期）并记 `ai_task_runs.transcript_ref`——回放集依赖它**；`tool_call_log` 每次调用只留一行；Exa 与入库 agent 的工具调用都记；**失败运行也按 token 计价**（补 127 个 NULL `cost_usd`）；Sourcing 运行与 `supply_executor_*` 建 task_run 关联；笔记、准入等失败状态 lifecycle 一律带 `failure_reason`。
 
 **C6-2 harness 计分板**：确定性每日汇总 job（挂 observability 已有 cron 宿主，不新建调度），从原始表算 §5.1 指标并按任务、按生产者拆分，写进 `meta:` 投影供状态页（tlp-status）读取；coordinator 每 4 小时巡检，越线走 Linear capture。
 
@@ -164,13 +178,14 @@ owner 2026-10-18 19:48 拍板「两件都允许」。**系统可自行执行、�
 
 **测量纪律**：before/after 均取 TEST 真实运行（夜链自然运行 + 回放集真实 provider 重跑，不用 mock）；每阶段至少观察 3 个完整夜晚或跑完一轮回放集，封存 revision、digest、task-run ID 与费用；付费重跑在 USD 20/周内。**删除**：`kt_estimate_nightly`（写了没人读）、`axis_state_nightly` 夜写、`HUB_SYNC_MODE=off` 时 `hub_sync_recovery` 的每分钟 cron。
 
-### D8 阶段计划与已批范围（§5，经 §9 修订）
+### D8 阶段计划与已批范围（§5，经 §9/§10 修订）
 
 **已批实施范围 = LIGHT（P0–P4）+ 主席层提前**；其余 FULL 项维持推迟。每阶段验收为可量化指标（摘自 §5.3，完整口径以设计稿为准）：
 
-- **P0 记账地基**（C6-1/C6-2 + YUK-1557 扩展 + override 带 `expires_at` + 计分板与状态页读取）：计分板对 10-07 至 10-18 重算 M1–M6 与审查报告相差 ≤±2%；TEST 连续 24 h 每条 `ai_task_runs` 有 numTurns 与 cache token、无重复工具行；Exa 进 `tool_call_log`；失败运行 `cost_usd` NULL 为 0。
+- **P0-a（§10.1，最先修，先于其余阶段）**：bridge 错误补 `isError` 标记（`pi-tools.ts:168`）——今天模型与打转检测都会把失败当成功；RunMonitor 对 `isError` 的依赖以它为前提（见 D2）。产品代码修复由独立 lane 承担，不属于本文档范围。
+- **P0 记账地基**（C6-1/C6-2 + YUK-1557 扩展 + override 带 `expires_at` + 计分板与状态页读取）：计分板对 10-07 至 10-18 重算 M1–M6 与审查报告相差 ≤±2%；TEST 连续 24 h 每条 `ai_task_runs` 有 numTurns 与 cache token（usage 按逐响应落一条，§10.3）、无重复工具行；Exa 进 `tool_call_log`；失败运行 `cost_usd` NULL 为 0。
 - **P1 边界契约**（C1 全部 + YUK-1553 schema/锁/父节点 + 1551 + 1552 + 1534 剩余 + 1555 笔记部分）：组合期契约检查上线（启动时有 `unknown` payload 即失败）；3 晚自然运行 KR 写入成功率 ≥90%、QuizGen 被丢批次 ≤10%、笔记空失败 ≤10%；68 题回放 ≥45 过、原通过题 0 回退；新增同 cooldown_key pending 重复 = 0；TEST 副本并发接受同一学习意图 2 次只生成 1 棵子树；新入库重复率 ≤2%。
-- **P2 工作单**（C2 全部 + YUK-1558 降为外圈 + 1555 Copilot 部分）：先 report-only 观察 3 晚（只记录状态机不干预）再开 stalled/landing；回放集 KR、Copilot S5、Sourcing 长跑三输入重跑 M2 = 0、落入 stalled 的运行 ≥80% 以 landed（含 partial）结束；3 晚自然运行 Sourcing 单次输入 p95 ≤ 8 M、p99 ≤ 信封；M1 ≤ 15%；M7 计数可见。
+- **P2 工作单**（C2 全部 + YUK-1558 降为外圈 + 1555 Copilot 部分）：先 report-only 观察 3 晚（只记录状态机不干预）再开 stalled/landing；回放集 KR、Copilot S5、Sourcing 长跑三输入重跑 M2 = 0、落入 stalled 的运行 ≥80% 以 landed（含 partial）结束；3 晚自然运行 Sourcing 单次加权 token p95/p99 对 P0 重定的加权信封校验（§10.2，不沿用旧 8 M 绝对值）；M1 ≤ 15%；M7 计数可见。
 - **P3 需求门控**（§3 全部 + `degraded`/`not_needed` 两终态 + 删 `kt_estimate`/`axis` 夜写/`hub_sync` cron）：TEST 至少 3 个空闲档日 M6 ≤ 基线 5% 且 `dag_orchestration_node.detail` 逐节点说明不跑原因；唤醒验收 = coordinator 在 TEST 做一次带测试标记的真实会话（不进记忆），10 分钟内完成「回来即可练」准备（今日安排可出、缺题 KC 收到 GapTicket）；零产出节点不再显示 succeeded。
 - **P4 发现有主、上下文快照、领域写入者**（C3、C4 + YUK-1549 合并 + 1407 闭环部分 + 1554 + 1556）：S5 类事实 1 晚内恰好 1 条 `grading_suspect` finding 且被执行（申诉加重判，或按 D5 进 A 档），之后同 subject 新增 LLM note 为 0；M4 达标；新叶子挂根 = 0（无同科目候选时除外、且必须有对应 finding）；简报无系统流水线叙述、无新学习者证据时重算 0 次；现有重复子树与 33 个重复簇由 Maintenance 各出 1 份变更集提议、owner 一次确认。
 - **主席层提前（§9 决定 3，覆盖原 P5 推迟）**：ADR-0067 **D3 主席决定、D6 指标与白板管理页现在也做**，不等「连续 7 天中 ≥3 天有学习者事件」的使用触发；排在 **P1 之后**；白板管理页走 UI pre-flight 与 owner 三次设计检查。D3/D6 的决策内容不变（恰好一个被回读验证的决定、按链预注册度量）；学习层有用性数值在真实使用达到预注册样本量之前仍是预注册假设——**提前的是实施时点，不是测量结论**。
@@ -223,6 +238,7 @@ owner 2026-10-18 19:48 拍板「两件都允许」。**系统可自行执行、�
 - **单独加一层「agent 间协调」**：候选根因 g 不独立——由 C3（快照/单写者）+ C4（发现有主）联合造成，单独加协调层修不了。
 - **YUK-572 的议程权/scout 深化路线**：瓶颈不在议程权与取证深度；更多议程权只会在坏契约上花更多 token；charter 化改为 C2-1 机器可检查契约。
 - **等 shadow 对照翻转**：owner 无真实使用，可预见未来无法裁决；按 ADR-0067 D4 先 census、再 drain、然后删除。
+- **照搬 Codex CLI 机制（§10.4）**：模型自评为主判据、计划工具、后台写摘要压缩、后台 resume、无限重连——都依赖有人在场；且本设计的重复检测、进展检测、领域幂等键与 C3/C4/C5 比 Codex 更严，不得以「业界参考也没有」为由削减。
 
 ## 未决问题（§7）
 
@@ -235,4 +251,4 @@ owner 2026-10-18 19:48 拍板「两件都允许」。**系统可自行执行、�
 
 ## 来源映射（本文 → 设计稿）
 
-D0 ← §2 总原则；D1 ← §2.1（C1-1…C1-5 + 删除 + guard）；D2 ← §2.2（C2-1…C2-4 + Copilot + 删除 + guard）；D3 ← §2.3（C3-1…C3-3 + 删除 + guard）；D4 ← §2.4（C4-1…C4-4 + 删除 + guard）；D5 ← §6 决定 1 + §9；D6 ← §3（§3.1–§3.7）+ §9 决定 2；D7 ← §2.5 + §5.1；D8 ← §5.2/§5.3 + §9 决定 3；ADR 关系 ← §4.4；票据处置 ← §4.1–§4.3；根因与证据 ← §1；否决备选 ← §1.2/§4.2/§4.3；未决 ← §7。**§9 优先级最高**：正文中与之冲突的推荐/推迟表述（如原 P5 主席层推迟）已被 §9 覆盖。
+D0 ← §2 总原则；D1 ← §2.1 + §10.1（C1-0 统一收尾、C1-6 描述规范、C1-7 读契约、C1-8 按需暴露、C1-9 输出预算、fatal 补类、P0-a）；D2 ← §2.2 + §10.2（加权 token 信封、上下文裁剪、landing 双入口、429/配额终止）；D3 ← §2.3（C3-1…C3-3 + 删除 + guard）；D4 ← §2.4（C4-1…C4-4 + 删除 + guard）；D5 ← §6 决定 1 + §9；D6 ← §3（§3.1–§3.7）+ §9 决定 2；D7 ← §2.5 + §5.1 + §10.3（逐响应 usage、transcript blob）；D8 ← §5.2/§5.3 + §9 决定 3 + §10（P0-a 前置、信封修订）；ADR 关系 ← §4.4；票据处置 ← §4.1–§4.3；根因与证据 ← §1；否决备选 ← §1.2/§4.2/§4.3/§10.4；未决 ← §7。**§9/§10 优先级最高**：正文与之冲突的推荐/推迟/数值（如原 P5 主席层推迟、Sourcing 8 M 输入信封、KR 挂 `MAINTENANCE_TOOLS`）已被覆盖，本文按新条文书写，不保留相互矛盾的有效门槛。
