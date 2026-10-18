@@ -50,13 +50,13 @@ import { parseNoteGenerateOutput } from '@/capabilities/notes/tasks/note-tasks';
 import type { ArtifactBodyBlocksT, ArtifactHistoryEntryT } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact, knowledge } from '@/db/schema';
-import { AgentRunError, isProviderSessionWallClockBudgetError } from '@/server/ai/agent-run-error';
 import {
   type NoteGeneratePhaseTimings,
   type TaskTextResult,
   type TaskTextRunFn,
   aiAgentRef,
   costUsdToMicroUsd,
+  isGenerationBudgetTimeout,
 } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { resolveNoteSkillDoc } from '@/subjects/note-skills';
@@ -112,9 +112,7 @@ function taskRunIdOf(error: unknown): string | null {
 }
 
 function noteGenerationFailureKind(error: unknown): NoteGenerationFailure['kind'] {
-  if (error instanceof AgentRunError && error.subtype === 'budget_timeout') return 'timeout';
-  if (isProviderSessionWallClockBudgetError(error)) return 'timeout';
-  return 'model_or_parse';
+  return isGenerationBudgetTimeout(error) ? 'timeout' : 'model_or_parse';
 }
 
 function annotateNoteGenerateFailure(
