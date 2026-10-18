@@ -15,6 +15,10 @@
 // append + lifecycle admission flip) is the caller's publish seam.
 
 import { canonicalHash } from '@/core/migration/canonical';
+import {
+  LEGACY_QUESTION_ADMISSION_POLICY_ID,
+  QUESTION_ADMISSION_POLICY_ID,
+} from '@/core/question-admission-policy';
 import { type ExecutionPlanT, validateExecutionPlan } from '@/core/schema/assessment/execution';
 import { type ResponseSlotT, validateResponseSpec } from '@/core/schema/assessment/response';
 import type { PublishedQuestionRevisionT } from '@/core/schema/assessment/revision';
@@ -49,11 +53,17 @@ import {
   runSourceCrosscheck,
 } from './solve';
 
-export const QUESTION_ADMISSION_POLICY_ID = 'question_admission@1';
+export { QUESTION_ADMISSION_POLICY_ID } from '@/core/question-admission-policy';
 
 /** C1 落库与迟到的 source verify 必须匹配同一个 id，含环境变量覆盖。空串是合法覆盖。 */
 export function resolveQuestionAdmissionPolicyId(): string {
-  return process.env.QUESTION_ADMISSION_POLICY_ID ?? QUESTION_ADMISSION_POLICY_ID;
+  const configured = process.env.QUESTION_ADMISSION_POLICY_ID;
+  if (configured === LEGACY_QUESTION_ADMISSION_POLICY_ID) {
+    throw new Error(
+      'QUESTION_ADMISSION_POLICY_ID=question_admission@1 is obsolete; unset it for the @2 solve contract',
+    );
+  }
+  return configured ?? QUESTION_ADMISSION_POLICY_ID;
 }
 
 export interface QuestionAdmissionOptions {
@@ -198,9 +208,10 @@ export async function runQuestionAdmission(
   definition: QuestionAdmissionDefinition,
   options: QuestionAdmissionOptions,
 ): Promise<QuestionAdmissionResult> {
-  const policyId = options.policyId ?? QUESTION_ADMISSION_POLICY_ID;
+  const policyId = options.policyId ?? resolveQuestionAdmissionPolicyId();
   const now = options.now ?? new Date();
-  const runTask = options.runTask ?? makePracticeTaskTextRunFn(options.db);
+  const runTask =
+    options.runTask ?? makePracticeTaskTextRunFn(options.db, { judgeRetryPolicy: 'none' });
   const solverContext =
     options.solver2 != null ? 'independent_model' : 'same_model_isolated_context';
   const per_unit = new Map<string, UnitAdmissionResult>();

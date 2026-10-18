@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
+import { QUESTION_ADMISSION_CONTRACT_VERSION } from '@/core/question-admission-policy';
 import type { Db, Tx } from '@/db/client';
 import { lockPaidEffectControlFamily, readPaidEffectControl } from '@/db/paid-effect-control';
 import { event, question, question_group_lifecycle, question_revision } from '@/db/schema';
@@ -9,6 +10,13 @@ import { getPracticeBoss, practiceBossTransaction } from '../queue-runtime';
 
 export const ADMISSION_FAMILY = 'question_admission_run';
 export const AdmissionJobData = z.object({
+  /** Absent on old queued deliveries: they may reconcile @1 but never initiate @2. */
+  admission_version: z.union([z.literal(1), z.literal(2)]).optional(),
+  /** Lead-only authorization: exact old @1 input digest; ordinary publishers omit it. */
+  reopen_unknown_input_digest: z
+    .string()
+    .regex(/^sha256:[0-9a-f]{64}$/)
+    .optional(),
   question_id: z.string().min(1).optional(),
   revision_id: z.string().min(1).optional(),
   expected_revision_digest: z.string().min(1).optional(),
@@ -39,14 +47,25 @@ export function isPendingAdmission(
   );
 }
 
-function admissionJobId(
+export function admissionJobId(
   groupId: string,
   revisionId: string,
   digest: string,
   generation: number,
+  reopenUnknownInputDigest?: string,
 ): string {
   const hex = createHash('sha256')
-    .update(JSON.stringify([ADMISSION_FAMILY, 1, groupId, revisionId, digest, generation]))
+    .update(
+      JSON.stringify([
+        ADMISSION_FAMILY,
+        QUESTION_ADMISSION_CONTRACT_VERSION,
+        groupId,
+        revisionId,
+        digest,
+        generation,
+        ...(reopenUnknownInputDigest ? [reopenUnknownInputDigest] : []),
+      ]),
+    )
     .digest('hex');
   const value = `${hex.slice(0, 12)}8${hex.slice(13, 16)}${((Number.parseInt(hex[16], 16) & 3) | 8).toString(16)}${hex.slice(17, 32)}`;
   return `${value.slice(0, 8)}-${value.slice(8, 12)}-${value.slice(12, 16)}-${value.slice(16, 20)}-${value.slice(20)}`;
@@ -104,6 +123,7 @@ export async function enqueuePublishedQuestionAdmission(
     const enqueued = await boss.send(
       ADMISSION_FAMILY,
       {
+        admission_version: QUESTION_ADMISSION_CONTRACT_VERSION,
         question_id: root.id,
         revision_id: revision.revision_id,
         expected_revision_digest: revision.integrity_digest,

@@ -13,6 +13,7 @@
 // event log, and in-flight pg-boss jobs. No parallel state store.
 
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { QUESTION_ADMISSION_PAID_UNITS } from '@/core/question-admission-policy';
 
 import {
   type AutomaticServingDecision,
@@ -62,7 +63,7 @@ export const SERVING_SOURCE_VERIFY_JOB = 'source_verify' as const;
  * practice/server/admission/enqueue.ts — duplicated as a literal because
  * kernel may not import capability modules). */
 const PAID_EFFECT_ADMISSION_FAMILY = 'question_admission_run' as const;
-const PAID_EFFECT_ADMISSION_UNIT = 'admission@1' as const;
+const PAID_EFFECT_ADMISSION_UNITS = QUESTION_ADMISSION_PAID_UNITS;
 
 /** UI contract: awaiting_admission offers no action for the first N hours. */
 export const AWAITING_ADMISSION_REVERIFY_AFTER_MS = 6 * 60 * 60 * 1000;
@@ -240,7 +241,7 @@ export async function readQuestionServing(
           and(
             eq(paid_effect.family, PAID_EFFECT_ADMISSION_FAMILY),
             inArray(paid_effect.entity_id, groupIds),
-            eq(paid_effect.unit, PAID_EFFECT_ADMISSION_UNIT),
+            inArray(paid_effect.unit, [...PAID_EFFECT_ADMISSION_UNITS]),
             eq(paid_effect.state, 'applied'),
           ),
         )

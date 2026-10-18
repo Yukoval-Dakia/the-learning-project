@@ -84,6 +84,8 @@ export interface PaidEffectSendClaimDelivery {
   readonly leaseExpiresAt: Date;
   /** Original dispatch generation; required for both backends after bootstrap. */
   readonly generation?: number | null;
+  /** Lead-only @1 unknown identity authorization, never inferred from the new unit. */
+  readonly admissionUnknownInputDigest?: string;
 }
 
 export type PaidEffectSendClaim =
@@ -165,7 +167,8 @@ async function lockEntityGate(tx: Tx, identity: PaidEffectIdentity): Promise<voi
 /**
  * Gate scan under the FIXED predicate (paidEffectGateBlocks): an open
  * sending/unknown effect of the same (family, entityId) blocks this claim
- * UNLESS it is an item_prior_backfill feature rep of the SAME revision.
+ * UNLESS it is an item_prior_backfill feature rep of the SAME revision, or
+ * the exact owner-authorized YUK-1537 @1 unknown -> @2 contract upgrade.
  * Same revision + same unit
  * + different digest BLOCKS (reconciliation); a different revision BLOCKS
  * (entity-level cross-revision/cross-night). Runs inside the caller's
@@ -174,6 +177,7 @@ async function lockEntityGate(tx: Tx, identity: PaidEffectIdentity): Promise<voi
 async function findGateBlocker(
   tx: Tx,
   identity: PaidEffectIdentity,
+  admissionUnknownInputDigest?: string,
 ): Promise<PaidEffectIdentity | null> {
   const blockers = await tx
     .select({
@@ -202,6 +206,17 @@ async function findGateBlocker(
           and ${identity.unit} ~ ${PAID_EFFECT_PARALLEL_REP_UNIT_PATTERN}
           and ${paid_effect.entity_revision} = ${identity.entityRevision}
           and ${paid_effect.unit} <> ${identity.unit}
+        )`,
+        // YUK-1537 explicit solve-contract upgrade. This does not replay or
+        // update the blocker; only a new @2 claim for the SAME digest can pass.
+        sql`not (
+          ${paid_effect.family} = 'question_admission_run'
+          and ${identity.family} = 'question_admission_run'
+          and ${paid_effect.entity_revision} = ${identity.entityRevision}
+          and ${paid_effect.state} = 'unknown'
+          and ${paid_effect.unit} = 'admission@1'
+          and ${identity.unit} = 'admission@2'
+          and ${paid_effect.input_digest} = ${admissionUnknownInputDigest ?? ''}
         )`,
       ),
     )
@@ -283,7 +298,7 @@ async function claimLockedRow(
   if (admission.kind === 'fenced') {
     throw new PaidEffectControlFencedError(identity.family, admission.reason, admission.owner);
   }
-  const blockedBy = await findGateBlocker(tx, identity);
+  const blockedBy = await findGateBlocker(tx, identity, delivery.admissionUnknownInputDigest);
   if (blockedBy) return { blockedBy };
   const fence = row.fence + 1;
   await tx

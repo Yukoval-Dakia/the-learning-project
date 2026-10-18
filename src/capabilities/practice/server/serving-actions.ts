@@ -35,8 +35,12 @@
 // freshly derived serving projection.
 
 import { createHash } from 'node:crypto';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { PgBoss } from 'pg-boss';
+import {
+  QUESTION_ADMISSION_CONTRACT_VERSION,
+  QUESTION_ADMISSION_PAID_UNITS,
+} from '@/core/question-admission-policy';
 
 import type { Db, Tx } from '@/db/client';
 import { readPaidEffectControl } from '@/db/paid-effect-control';
@@ -288,7 +292,7 @@ async function executeReverify(
               eq(paid_effect.family, ADMISSION_FAMILY),
               eq(paid_effect.entity_id, groupId),
               eq(paid_effect.entity_revision, currentRev.digest),
-              eq(paid_effect.unit, 'admission@1'),
+              inArray(paid_effect.unit, [...QUESTION_ADMISSION_PAID_UNITS]),
               eq(paid_effect.state, 'applied'),
             ),
           )
@@ -435,6 +439,7 @@ async function dispatchReverifyAdmission(
     // paid_effect claim under the same locks; identical base never re-pays.
     const boss = await getPracticeBoss();
     const jobData = {
+      admission_version: QUESTION_ADMISSION_CONTRACT_VERSION,
       question_id: args.groupId,
       ...(args.revisionId != null ? { revision_id: args.revisionId } : {}),
       dispatch_generation: args.dispatchGeneration,
