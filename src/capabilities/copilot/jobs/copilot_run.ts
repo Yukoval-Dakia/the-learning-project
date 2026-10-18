@@ -942,6 +942,8 @@ async function executeAcceptedCopilotRun(
   let progressChain: Promise<void> = Promise.resolve();
   let streamedProse = '';
   const toolSummaries: string[] = [];
+  // User Stop must not seal streamed prose. A cancellation may publish completed
+  // tool summaries; a stall that is not a Stop still uses partialReply.
   const partialReply = () => copilotPartialReply({ prose: streamedProse, toolSummaries });
   // Load-bearing execution fence, deliberately placed after every deterministic
   // setup/read and immediately before the only paid/external-effect gateway.
@@ -984,6 +986,7 @@ async function executeAcceptedCopilotRun(
         ...(providerTaskRunId ? { taskRunId: providerTaskRunId } : {}),
         ...(replyFinalization ? { replyFinalization } : {}),
         ...(preparedReply ? { preparedReply } : {}),
+        toolSummaries,
         checkpointSafe: !cancellationControl.materializingToolStarted,
         writeCopilotReplyFn: persistReply,
       });
@@ -1012,6 +1015,7 @@ async function executeAcceptedCopilotRun(
       ...(providerTaskRunId ? { taskRunId: providerTaskRunId } : {}),
       ...(replyFinalization ? { replyFinalization } : {}),
       ...(preparedReply ? { preparedReply } : {}),
+      toolSummaries,
       checkpointSafe: !cancellationControl.materializingToolStarted,
       projectSuccessfulTerminal,
       projectFailedTerminal,
@@ -1034,7 +1038,7 @@ async function executeAcceptedCopilotRun(
         providerSessionDeadlineAt: Date.now() + DURABLE_OWNER_SETTLEMENT_BUDGET_MS,
       });
       if ((await cancellationControl.probe()) === 'cancel_requested')
-        return await settleObservedCancellation(partialReply());
+        return await settleObservedCancellation();
       try {
         const markerClaim = await ensureCopilotOutcomeMarker(
           db,
@@ -1058,7 +1062,7 @@ async function executeAcceptedCopilotRun(
               modeState: { skill_turn: committed.skillTurn, skill_context: skillContext },
             };
           },
-          { createCancelled: cancellationMarker(partialReply()) },
+          { createCancelled: cancellationMarker() },
         );
         if (markerClaim.outcome === 'already_terminal')
           return terminalRunResult(markerClaim.events, taskRunId);
@@ -1128,7 +1132,7 @@ async function executeAcceptedCopilotRun(
     const cancellationReply = finalized.accepted ? finalReply : undefined;
     if ((await cancellationControl.probe()) === 'cancel_requested') {
       return await settleObservedCancellation(
-        cancellationReply ?? partialReply(),
+        cancellationReply,
         result.taskRunId,
         finalized.accepted ? finalized.receipt : undefined,
         finalized.accepted ? finalized.preparedReply : undefined,
@@ -1154,7 +1158,7 @@ async function executeAcceptedCopilotRun(
         writeCopilotReplyFn: persistReply,
         replyFinalization: finalized.receipt,
         createCancelledMarker: cancellationMarker(
-          cancellationReply ?? partialReply(),
+          cancellationReply,
           result.taskRunId,
           finalized.accepted ? finalized.receipt : undefined,
           finalized.accepted ? finalized.preparedReply : undefined,
@@ -1175,7 +1179,7 @@ async function executeAcceptedCopilotRun(
         projectFailedTerminal,
         writeCopilotReplyFn: persistReply,
         replyFinalization: finalized.receipt,
-        createCancelledMarker: cancellationMarker(partialReply()),
+        createCancelledMarker: cancellationMarker(),
       });
     }
 
@@ -1230,7 +1234,7 @@ async function executeAcceptedCopilotRun(
         },
         {
           createCancelled: cancellationMarker(
-            cancellationReply ?? partialReply(),
+            cancellationReply,
             result.taskRunId,
             finalized.accepted ? finalized.receipt : undefined,
             finalized.accepted ? finalized.preparedReply : undefined,
@@ -1257,7 +1261,7 @@ async function executeAcceptedCopilotRun(
     // 它之外的 throw（装配 / MCP mount / 事件写），或注入 fixture 的 throw（测 MF1/MF2）。
     await drainDeltaChain(progressChain, runId);
     if ((await cancellationControl.probe()) === 'cancel_requested') {
-      return await settleObservedCancellation(partialReply());
+      return await settleObservedCancellation();
     }
     return await handleDurableFailure(db, {
       err,
@@ -1267,7 +1271,7 @@ async function executeAcceptedCopilotRun(
       projectSuccessfulTerminal,
       projectFailedTerminal,
       writeCopilotReplyFn: persistReply,
-      createCancelledMarker: cancellationMarker(partialReply()),
+      createCancelledMarker: cancellationMarker(),
     });
   } finally {
     cancellationControl.dispose();
