@@ -277,9 +277,43 @@ export interface SDKTaskNotificationMessage {
 }
 
 /**
+ * YUK-1547/YUK-1559 (C1) — adopted parameter-contract field repairs: one
+ * string→JSON repair per field that passed the shared sub-schema check.
+ * Metadata only — the payload is never carried on this frame.
+ */
+export interface SDKToolArgsCoercedMessage {
+  type: 'system';
+  subtype: 'tool_args_coerced';
+  tool_name: string;
+  tool_call_id: string;
+  fields: { field_path: string; original_length: number }[];
+  uuid: UUID;
+  session_id: string;
+}
+
+/**
+ * YUK-1559 (C6) — a call rejected at the tool argument contract seam (never
+ * reached execute): the sanitized, ≤4KiB original arguments plus the digest
+ * of the full sanitized text. Emitted by the pi adapter for both its own
+ * parameter-contract rejections and pi's schema-validation failures.
+ */
+export interface SDKToolArgsContractFailedMessage {
+  type: 'system';
+  subtype: 'tool_args_contract_failed';
+  tool_name: string;
+  tool_call_id: string;
+  raw_arguments: string;
+  raw_args_sha256: string;
+  truncated: boolean;
+  uuid: UUID;
+  session_id: string;
+}
+
+/**
  * The normalized frame union the runner consumes. Sized to what the codebase
  * produces/discriminates: assistant, user, result, system init,
- * compact_boundary, and the durable task_* lifecycle frames.
+ * compact_boundary, the durable task_* lifecycle frames, and the
+ * tool-argument contract telemetry frames.
  */
 export type SDKMessage =
   | SDKAssistantMessage
@@ -290,7 +324,9 @@ export type SDKMessage =
   | SDKTaskStartedMessage
   | SDKTaskProgressMessage
   | SDKTaskUpdatedMessage
-  | SDKTaskNotificationMessage;
+  | SDKTaskNotificationMessage
+  | SDKToolArgsCoercedMessage
+  | SDKToolArgsContractFailedMessage;
 
 // ---------------------------------------------------------------------------
 // Nested-agent declarations (callers keep authoring these).

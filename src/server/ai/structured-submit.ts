@@ -56,14 +56,15 @@ export function structuredSubmitWireFields(policy: StructuredSubmitPolicy):
 
 /**
  * System-prompt suffix the adapter appends for structuredOutputMode:'tool'
- * tasks. The forced variant ends after one model turn (unchanged contract);
- * the auto variant may take exactly one reminder turn when the first ends
- * without the submit call.
+ * tasks. Both variants share ONE landing budget: the forced variant's only
+ * extra turn is a parameter-contract correction, and the auto variant's one
+ * extra turn goes to whichever fires first — the missing-submit reminder or
+ * the same correction.
  */
 export function structuredSubmitSystemSuffix(forced: boolean): string {
   return forced
-    ? `\nSubmit exactly one ${STRUCTURED_OUTPUT_SUBMIT_TOOL} tool call whose arguments are the requested output object itself (no result envelope). Do not return JSON as text. This invocation ends after this one model turn, including on invalid arguments; no repair turn is available.`
-    : `\nSubmit exactly one ${STRUCTURED_OUTPUT_SUBMIT_TOOL} tool call whose arguments are the requested output object itself (no result envelope). Do not return JSON as text. If a turn ends without the submit call you get exactly one reminder turn; there is no schema-repair turn.`;
+    ? `\nSubmit exactly one ${STRUCTURED_OUTPUT_SUBMIT_TOOL} tool call whose arguments are the requested output object itself (no result envelope). Do not return JSON as text. This invocation ends after this one model turn; the only extra turn is a single correction if the submit is rejected for malformed argument types (array/object fields must be actual JSON values, not quoted strings).`
+    : `\nSubmit exactly one ${STRUCTURED_OUTPUT_SUBMIT_TOOL} tool call whose arguments are the requested output object itself (no result envelope). Do not return JSON as text. If a turn ends without the submit call, or the submit is rejected for malformed argument types (array/object fields must be actual JSON values, not quoted strings), you get exactly one correction turn total; the run then ends.`;
 }
 
 /**
