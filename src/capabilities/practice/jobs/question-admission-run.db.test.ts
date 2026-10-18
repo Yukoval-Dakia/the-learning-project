@@ -16,6 +16,7 @@ import {
   question_revision,
 } from '@/db/schema';
 import { normalizeQuestionGroupToContract } from '@/kernel/records/assessment-normalization';
+import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
 import { saveDraftEdit } from '@/server/questions/edit-question';
 import { submitDraftQuestion } from '@/server/questions/submit-question';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -974,5 +975,174 @@ describe('question admission run', () => {
     expect(life.scoring_admission_state).toBe('withheld');
     expect(row.draft_status).toBe('draft');
     expect(await poolFetch(db, { knowledgeId: 'kc-conflict' })).toEqual([]);
+  });
+
+  // @invariant grading: the author key accepts a model answer only when this question's grader does
+  // @fails-if text key "1024.0" is admitted for final answer 1024, which gradeBlankExactUnit scores 0
+  it('withholds a non-canonical text key the grader would score as wrong', async () => {
+    const db = testDb();
+    await seedKnowledge('kc-noncanonical');
+    const published = await submitBlank({
+      prompt: '计算 2 的 10 次方，结果是多少？',
+      knowledgeId: 'kc-noncanonical',
+      accepted: '1024.0',
+      requestId: 'noncanonical',
+    });
+    const result = await runPinned(
+      published.questionId,
+      published.revisionId,
+      published.digest,
+      fakeSolver(
+        () => ({
+          status: 'solved',
+          answer: {
+            kind: 'blank_numeric',
+            expected: 1024,
+            tolerance: { kind: 'absolute', value: 0 },
+          },
+          equivalent_forms: [],
+          typical_wrong: [],
+        }),
+        [],
+      ),
+    );
+    expect(result.status).toBe('withheld');
+    const [row] = await db.select().from(question).where(eq(question.id, published.questionId));
+    expect(row.reference_md).toBe('1024.0');
+    expect(row.draft_status).toBe('draft');
+  });
+
+  // @invariant grading: a solver-claimed alternative is not a form the author key must accept
+  // @fails-if equivalent form "5.0" withholds text key "5" when the grader accepts the final answer
+  it('admits the final answer without requiring the solver equivalent form', async () => {
+    const db = testDb();
+    await seedKnowledge('kc-equiv');
+    const published = await submitBlank({
+      prompt: 'x 等于多少？',
+      knowledgeId: 'kc-equiv',
+      accepted: '5',
+      requestId: 'equiv',
+    });
+    const result = await runPinned(
+      published.questionId,
+      published.revisionId,
+      published.digest,
+      fakeSolver(
+        () => ({
+          status: 'solved',
+          answer: { kind: 'blank_text', accepted: ['5'] },
+          equivalent_forms: [{ text: '5.0' }],
+          typical_wrong: [],
+        }),
+        [],
+      ),
+    );
+    expect(result.status).toBe('admitted');
+    expect(result.revision_id).toBe(published.revisionId);
+    const [row] = await db.select().from(question).where(eq(question.id, published.questionId));
+    expect(row.reference_md).toBe('5');
+    expect(row.draft_status).toBe('active');
+  });
+
+  // @invariant data: resubmitting an edited legacy revision admits that revision
+  // @fails-if a rule_reference question edited to blank key H2O is stale and never calls the model
+  it('admits a legacy question after its key is edited and resubmitted', async () => {
+    const db = testDb();
+    const knowledgeId = 'kc-legacy-edit';
+    const questionId = 'q-legacy-edit';
+    await seedKnowledge(knowledgeId);
+    const now = new Date();
+    await db.insert(question).values({
+      id: questionId,
+      kind: 'short_answer',
+      prompt_md: '水的化学式是',
+      reference_md: '水的化学式是 H2O。\n\n解析：每个水分子有两个氢。',
+      choices_md: null,
+      knowledge_ids: [knowledgeId],
+      difficulty: 3,
+      source: 'manual',
+      variant_depth: 0,
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+    const first = await publishQuestionGroupFromRow(db, {
+      rootId: questionId,
+      admission: {
+        state: 'admitted',
+        evidence: {
+          marking_provenance: 'official',
+          verification: { structural_check_passed: true, independent_verification: null },
+          model_slice: null,
+        },
+      },
+      availability: 'general_pool',
+      actorRef: 'test:admission',
+      now,
+    });
+    if (first.status !== 'published') throw new Error(JSON.stringify(first));
+    const [legacy] = await db
+      .select()
+      .from(question_revision)
+      .where(eq(question_revision.revision_id, first.revision_id));
+    const legacyUnit = legacy.scoring_basis.units[0];
+    if (legacyUnit?.criterion.kind !== 'rule_reference') {
+      throw new Error(`legacy criterion is ${legacyUnit?.criterion.kind ?? 'missing'}`);
+    }
+    const saved = await saveDraftEdit(db, {
+      input: {
+        action: 'save',
+        question_id: questionId,
+        ops: [
+          {
+            op: 'set',
+            target: { kind: 'unit', id: legacyUnit.scoring_unit_id },
+            fields: {
+              response_class: 'blank',
+              response_spec: { kind: 'blank', format: 'text' },
+              key: { kind: 'blank', key: { kind: 'text', accepted: ['H2O'] } },
+              method: { kind: 'exact' },
+              rule: BLANK_RULE,
+            },
+          },
+        ],
+        request_id: 'legacy-edit-save',
+      },
+      ctx: ACTOR,
+    });
+    if (saved.status !== 'saved') throw new Error(JSON.stringify(saved));
+    const submitted = await submitDraftQuestion(
+      db,
+      {
+        draft_ref: saved.draft_ref,
+        expected_draft_version: saved.draft_version,
+        request_id: 'legacy-edit-submit',
+      },
+      { ...ACTOR, sessionId: null },
+    );
+    if (
+      submitted.status === 'conflict' ||
+      !('revision_id' in submitted) ||
+      submitted.revision_id == null
+    ) {
+      throw new Error(JSON.stringify(submitted));
+    }
+    expect(submitted.status).toBe('withheld');
+    const [edited] = await db
+      .select()
+      .from(question_revision)
+      .where(eq(question_revision.revision_id, submitted.revision_id));
+    const admitted = await runPinned(
+      questionId,
+      edited.revision_id,
+      edited.integrity_digest,
+      fakeSolver(() => solvedBlank('H2O', 'typed'), []),
+    );
+    expect(admitted.status).toBe('admitted');
+    expect(await db.select({ id: ai_task_runs.id }).from(ai_task_runs)).not.toEqual([]);
+    expect(await revisionIds(questionId)).toHaveLength(2);
+    const [row] = await db.select().from(question).where(eq(question.id, questionId));
+    expect(row.reference_md).toBe('H2O');
+    expect(row.draft_status).toBe('active');
   });
 });

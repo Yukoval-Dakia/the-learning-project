@@ -79,8 +79,10 @@ import { writeEvent } from '@/kernel/events';
 import {
   type NormalizedContract,
   type PartRow,
-  contractIntegrityDigest,
+  type PublishedContractSeal,
   normalizeQuestionGroupToContract,
+  publishedContractSeal,
+  publishedSealAccepts,
 } from './assessment-normalization';
 
 export const ASSESSMENT_PUBLISH_ACTION = 'experimental:assessment_publish' as const;
@@ -571,6 +573,35 @@ function computeIdentityDiff(
   };
 }
 
+function sameSealedDocument(
+  stored: {
+    digest: string;
+    structure: unknown;
+    response_spec: unknown;
+    scoring_basis: unknown;
+    execution_plan: unknown;
+    presentation: unknown;
+  },
+  incoming: PublishedContractSeal,
+  suppliedDigest: string,
+): boolean {
+  let storedSeal: PublishedContractSeal;
+  try {
+    storedSeal = publishedContractSeal({
+      structure: stored.structure,
+      response_spec: stored.response_spec,
+      scoring_basis: stored.scoring_basis,
+      execution_plan: stored.execution_plan,
+      ...(stored.presentation != null ? { presentation: stored.presentation } : {}),
+    });
+  } catch {
+    return false;
+  }
+  if (storedSeal.canonical !== incoming.canonical) return false;
+  if (!publishedSealAccepts(storedSeal, stored.digest)) return false;
+  return suppliedDigest === stored.digest || publishedSealAccepts(incoming, suppliedDigest);
+}
+
 /**
  * 统一发布 seam。db 可传事务句柄（推荐 —— 与调用方的编辑写同事务）或独立
  * Db（publisher 自开顶层事务）。契约校验失败抛错（fail-closed）；CAS 不匹配
@@ -578,8 +609,8 @@ function computeIdentityDiff(
  * 版本 churn）；digest 一致但维度变化返回 'admission_updated'（只更新 lifecycle
  * 维度 + generation，不铸新 revision）。
  *
- * P2：integrity_digest 在 seam 内重算核对（防调用方漂移），structure.group_id
- * 必须与目标 group 一致。
+ * P2：integrity_digest 必须是这份契约的规范封存，或旧的 schema 序 / 调用方序封存。
+ * 与当前 revision 的规范形式相同则不铸新版。structure.group_id 必须与目标 group 一致。
  */
 export async function publishQuestionGroup(
   db: Db | Tx,
@@ -593,13 +624,6 @@ export async function publishQuestionGroup(
   return db.transaction(async (tx) => {
     const { contract, group_id: groupId } = input;
 
-    // P2 —— digest 由 seam 重算（调用方只给契约；digest 不是独立输入）。
-    const recomputed = contractIntegrityDigest(contract);
-    if (recomputed !== contract.integrity_digest) {
-      throw new Error(
-        `publishQuestionGroup: integrity_digest mismatch (supplied ${contract.integrity_digest}, recomputed ${recomputed}) — regenerate the contract via contract-normalizer`,
-      );
-    }
     if (contract.structure.group_id !== groupId) {
       throw new Error(
         `publishQuestionGroup: contract structure.group_id '${contract.structure.group_id}' != target group '${groupId}'`,
@@ -670,23 +694,29 @@ export async function publishQuestionGroup(
             .join('; ')}`,
         );
       }
-      const recomputedDigest = contractIntegrityDigest({
-        structure: contract.structure,
-        response_spec: contract.response_spec,
-        scoring_basis: contract.scoring_basis,
-        execution_plan: contract.execution_plan,
-        presentation: shaped.data,
-      });
-      if (recomputedDigest !== contract.integrity_digest) {
-        throw new Error(
-          `publishQuestionGroup: integrity_digest does not cover the presentation layer (recomputed ${recomputedDigest}, input ${contract.integrity_digest})`,
-        );
-      }
       shapedPresentation = shaped.data;
       // YUK-1497 §1.3 v2 —— 自定义块资产 DB + 字节核验（同 barrier、同事务）：
       // 资产不存在 / digest 不符 / mime 不是 JS / 超 256 KiB / 字节缺失或
       // 实测 sha256 不符 / 含禁序 ⇒ 整组不能发布。
       await assertCustomBlockAssets(tx, shaped.data, input.readAssetBytes);
+    }
+
+    let seal: PublishedContractSeal;
+    let suppliedAccepted: boolean;
+    try {
+      const rawSeal = publishedContractSeal(contract);
+      seal =
+        shapedPresentation == null
+          ? rawSeal
+          : publishedContractSeal({ ...contract, presentation: shapedPresentation });
+      suppliedAccepted =
+        publishedSealAccepts(seal, contract.integrity_digest) ||
+        publishedSealAccepts(rawSeal, contract.integrity_digest);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `publishQuestionGroup: contract layers do not match the published schema: ${detail}`,
+      );
     }
 
     // 组级串行化：锁根 question 行（发布与编辑同一锁序 question → lifecycle）。
@@ -740,6 +770,11 @@ export async function publishQuestionGroup(
     // 不一致时只更新维度（admission generation+1）+ 事件（promote 即此路径：
     // 草稿首版 withheld/unverified_rules → 核验通过后 admitted，内容未变）。
     let nextOrdinal = 1;
+    if (currentRevisionId == null && !suppliedAccepted) {
+      throw new Error(
+        `publishQuestionGroup: integrity_digest mismatch (supplied ${contract.integrity_digest}, canonical ${seal.canonical}) — regenerate the contract via contract-normalizer`,
+      );
+    }
     if (currentRevisionId != null) {
       const [current] = await tx
         .select({
@@ -748,14 +783,29 @@ export async function publishQuestionGroup(
           structure: question_revision.structure,
           response_spec: question_revision.response_spec,
           scoring_basis: question_revision.scoring_basis,
+          execution_plan: question_revision.execution_plan,
+          presentation: question_revision.presentation,
         })
         .from(question_revision)
         .where(eq(question_revision.revision_id, currentRevisionId))
         .limit(1);
       if (current != null) {
-        previousContract = current;
+        previousContract = {
+          structure: current.structure,
+          response_spec: current.response_spec,
+          scoring_basis: current.scoring_basis,
+          ordinal: current.ordinal,
+          digest: current.digest,
+        };
       }
-      if (current?.digest === contract.integrity_digest) {
+      const sameDocument =
+        current != null && sameSealedDocument(current, seal, contract.integrity_digest);
+      if (!suppliedAccepted && !sameDocument) {
+        throw new Error(
+          `publishQuestionGroup: integrity_digest mismatch (supplied ${contract.integrity_digest}, canonical ${seal.canonical}) — regenerate the contract via contract-normalizer`,
+        );
+      }
+      if (sameDocument) {
         if (lifecycleDimensionsMatch(lifecycle, input)) {
           const noopResult = {
             status: 'noop' as const,
