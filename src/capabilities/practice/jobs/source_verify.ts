@@ -59,10 +59,7 @@ import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { type TaskTextResult, type TaskTextRunFn, aiAgentRef } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
-import {
-  publishQuestionGroup,
-  publishQuestionGroupFromRow,
-} from '@/server/questions/publisher';
+import { publishQuestionGroup, publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
 import { normalizeToCanonicalKind } from '@/subjects/question-kind';
 import { resolveQuestionAdmissionPolicyId } from '../server/admission/run-admission';
