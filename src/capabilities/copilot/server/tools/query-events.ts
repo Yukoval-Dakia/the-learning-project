@@ -88,6 +88,7 @@ const OutputSchema = z.object({
     cross_stage_claim_status: z.enum([
       'not_subject_scoped',
       'window_complete',
+      'remaining_window_complete',
       'blocked_more_pages_unread',
     ]),
     required_followup: z.enum(['none', 'continue_with_next_cursor']),
@@ -153,15 +154,22 @@ const DESCRIPTION = [
   'Read paginated action-log history, not current entity inventory. Filters compose exact AND matches.',
   'subjectId is one exact entity id, not a domain; subjectKind further narrows that id.',
   'causedByEventId selects direct children; siblingOfEventId selects the same non-null parent, excluding the focal event.',
-  'required_followup none: this filter window is complete, including zero rows. Answer from these rows. Do not repeat the call.',
+  'required_followup none: do not repeat this filter, including when the page has zero rows. none does not mean this response contains the whole window.',
   'required_followup continue_with_next_cursor: resubmit the same filters with coverage.next_cursor. Do not drop filters or walk other events.',
-  'window_complete: a subject-scoped window is fully returned and does not include causal descendants.',
+  'window_complete: no cursor was passed, and a subject-scoped window is fully returned. It does not include causal descendants.',
+  'remaining_window_complete: a cursor was passed and no further pages remain. coverage.complete_for_window stays false. Do not claim rows before the cursor.',
   'sinceDays is at most 180; limit is 1–50 (default 20).',
 ].join('\n');
 
-/** The only next step after one page: the window is finished, or the same filter continues. */
-function observationStep(input: { subjectScoped: boolean; hasMore: boolean }): {
-  cross_stage_claim_status: 'not_subject_scoped' | 'window_complete' | 'blocked_more_pages_unread';
+type ClaimStatus =
+  | 'not_subject_scoped'
+  | 'window_complete'
+  | 'remaining_window_complete'
+  | 'blocked_more_pages_unread';
+
+/** One page has one next step. A cursor page never claims the rows before it. */
+function observationStep(input: { subjectScoped: boolean; hasMore: boolean; cursor: boolean }): {
+  cross_stage_claim_status: ClaimStatus;
   required_followup: 'none' | 'continue_with_next_cursor';
 } {
   if (input.hasMore) {
@@ -170,9 +178,13 @@ function observationStep(input: { subjectScoped: boolean; hasMore: boolean }): {
       required_followup: 'continue_with_next_cursor',
     };
   }
-  return input.subjectScoped
-    ? { cross_stage_claim_status: 'window_complete', required_followup: 'none' }
-    : { cross_stage_claim_status: 'not_subject_scoped', required_followup: 'none' };
+  if (!input.subjectScoped) {
+    return { cross_stage_claim_status: 'not_subject_scoped', required_followup: 'none' };
+  }
+  if (input.cursor) {
+    return { cross_stage_claim_status: 'remaining_window_complete', required_followup: 'none' };
+  }
+  return { cross_stage_claim_status: 'window_complete', required_followup: 'none' };
 }
 
 async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
@@ -319,6 +331,7 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
   const step = observationStep({
     subjectScoped: filter.subjectId !== undefined,
     hasMore,
+    cursor: input.cursor !== undefined,
   });
   const correctionStatuses = await getCorrectionStatuses(
     ctx.db,
@@ -419,7 +432,9 @@ function summarize(input: Input, output: Output): string {
   const parts: string[] = [
     output.coverage.has_more
       ? `${output.total} rows · more`
-      : `${output.total} rows · window complete`,
+      : output.coverage.complete_for_window
+        ? `${output.total} rows · window complete`
+        : `${output.total} rows · cursor remainder`,
   ];
   if (f.action) parts.push(`action=${f.action}`);
   if (f.actorKind) parts.push(`actor=${f.actorKind}`);

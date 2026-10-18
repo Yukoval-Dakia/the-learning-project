@@ -100,8 +100,6 @@ export interface PiAdapterDeps {
   connectRemoteMcp?: typeof connectPiRemoteMcp;
 }
 
-type PiAdapterInit = PiAdapterDeps;
-
 const OPENCODE_SESSION_HEADER = 'x-opencode-session';
 const STRUCTURED_OUTPUT_TOOL = 'mcp__structured_output__submit';
 
@@ -904,6 +902,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
    */
   private makeBeforeToolCall(agentType?: string): AgentLoopConfig['beforeToolCall'] {
     const piHooks = this.args.piHooks;
+    if (!piHooks?.beforeToolCall?.length) return undefined;
     return async ({ toolCall, args: callArgs }: BeforeToolCallContext, signal) => {
       const effectiveSignal = signal ?? this.abort.signal;
       return runPiBeforeToolCall(
@@ -1371,13 +1370,15 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       // SDK in-process MCP tools run serially — pin the same execution mode
       // so batch ordering/tool_call_log sequence can't diverge by engine.
       ...(this.allTools.length > 0 ? { toolExecution: 'sequential' as const } : {}),
-      finishTurn: structuredOutput
-        ? () => ({ action: 'end' as const })
+      ...(structuredOutput
+        ? { finishTurn: (() => ({ action: 'end' as const })) as FinishTurn }
         : maxTurns !== undefined
-          ? turnLimiter(maxTurns, () => {
-              cappedByMaxTurns = true;
-            })
-          : undefined,
+          ? {
+              finishTurn: turnLimiter(maxTurns, () => {
+                cappedByMaxTurns = true;
+              }),
+            }
+          : {}),
       beforeToolCall: this.makeBeforeToolCall(),
       afterToolCall: this.makeAfterToolCall(),
       transformContext: this.makeTransformContext(),
@@ -1415,17 +1416,16 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       // wire order where lifecycle frames precede the parent tool_result.
       yield* this.drainFrames();
       if (
+        structuredOutput &&
         event.type === 'message_update' &&
         event.message.role === 'assistant' &&
         event.assistantMessageEvent.type === 'toolcall_delta'
       ) {
         const delta = event.assistantMessageEvent;
-        if (structuredOutput) {
-          rawToolArguments.set(
-            delta.contentIndex,
-            (rawToolArguments.get(delta.contentIndex) ?? '') + delta.delta,
-          );
-        }
+        rawToolArguments.set(
+          delta.contentIndex,
+          (rawToolArguments.get(delta.contentIndex) ?? '') + delta.delta,
+        );
       }
       if (
         event.type === 'message_update' &&
@@ -1523,7 +1523,7 @@ export class PiAgentAdapter implements ExecutionAdapter {
   readonly id = 'pi' as const;
   private resolved: Required<PiAdapterDeps> | undefined;
 
-  constructor(private readonly init: PiAdapterInit = {}) {}
+  constructor(private readonly init: PiAdapterDeps = {}) {}
 
   /**
    * Lazy dependency resolution — the module-level PI_ADAPTER singleton must

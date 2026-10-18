@@ -1268,6 +1268,7 @@ async function executeAcceptedCopilotRun(
       runId,
       sessionId: data.session_id,
       actorRef,
+      partialText: partialReply(),
       projectSuccessfulTerminal,
       projectFailedTerminal,
       writeCopilotReplyFn: persistReply,
