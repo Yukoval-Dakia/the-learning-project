@@ -614,12 +614,17 @@ const stopPath = (outDir: string) => join(outDir, 'STOP.json');
 const batchPath = (outDir: string, n: number) => join(outDir, `batch-${n}-receipt.json`);
 const baselinePath = (outDir: string) => join(outDir, 'baseline.json');
 
+// Only ENOENT means "absent". Any other read failure (EACCES on an unreadable
+// STOP.json, EISDIR, EIO, ...) must abort the driver rather than masquerade as
+// "no file" — the 2026-10-18 incident sent two more paid questions because an
+// EACCES on STOP.json was swallowed into false.
 async function fileExists(path: string): Promise<boolean> {
   try {
     await readFile(path);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw error;
   }
 }
 
