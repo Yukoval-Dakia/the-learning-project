@@ -1,4 +1,5 @@
-import { createHash } from 'node:crypto';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 import { z } from 'zod';
 import { EvidenceAcceptanceRule, SharedMaterialKind, VersionedAssetRef } from './assessment';
 // scoring-rule.ts 未入 assessment index barrel —— 直接深引用（只读不修改受保护目录）。
@@ -367,7 +368,7 @@ export function createEmptyDraftDocument(
 // ---------- 稳定身份 mint ----------
 
 function shortHash(input: string): string {
-  return createHash('sha256').update(input).digest('hex').slice(0, 12);
+  return bytesToHex(sha256(utf8ToBytes(input))).slice(0, 12);
 }
 
 /**
@@ -388,7 +389,7 @@ export function mintDraftAssetId(prefix: string, text: string): string {
 }
 
 export function sha256Hex(input: string): string {
-  return `sha256:${createHash('sha256').update(input).digest('hex')}`;
+  return `sha256:${bytesToHex(sha256(utf8ToBytes(input)))}`;
 }
 
 // ---------- legacy StructuredQuestion → 草稿适配器 ----------
