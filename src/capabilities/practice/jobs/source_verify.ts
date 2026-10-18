@@ -70,11 +70,7 @@ import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { type TaskTextResult, type TaskTextRunFn, aiAgentRef } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
-import {
-  loadQuestionGroupContractSnapshot,
-  publishQuestionGroup,
-  publishQuestionGroupFromRow,
-} from '@/server/questions/publisher';
+import { publishQuestionGroup, publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
 import { normalizeToCanonicalKind } from '@/subjects/question-kind';
 import { resolveQuestionAdmissionPolicyId } from '../server/admission/run-admission';
@@ -817,9 +813,9 @@ export async function runSourceVerify(
       //   2. 【当前 revision】上存在 policy question_admission@1、outcome='passed'
       //      的 question_admission_verification 行（不匹配历史其他 revision 的
       //      passed 行）；
-      //   3. 该行 evidence.base_contract_digest === 此刻从行重建的 base 契约
-      //      digest（与 publishQuestionGroupFromRow 同一加载口
-      //      loadQuestionGroupContractSnapshot，byte-identical）。
+      //   3. 该行 evidence.base_contract_digest === 当前已发布 revision 的
+      //      integrity_digest（lifecycle.current_revision_id →
+      //      question_revision.integrity_digest，与 C1 封存的 published contract 一致）。
       // 命中 ⇒ 不调 publishQuestionGroupFromRow：不把 admitted 降回 withheld，
       // 也不把行归一旧 base 重铸到 C1 的 resolved revision 上。其余情况（C1
       // 准入的是更老 base 后行又变了、他 policy 准入、未准入）保持 #1753 原行为。
@@ -907,10 +903,12 @@ export async function runSourceVerify(
                   null)
                 : null;
             if (typeof recordedBaseDigest === 'string') {
-              const snapshot = await loadQuestionGroupContractSnapshot(tx, groupRootId, {
-                lockRoot: false,
-              });
-              if (snapshot.contract.integrity_digest === recordedBaseDigest) {
+              const [publishedRevision] = await tx
+                .select({ integrity_digest: question_revision.integrity_digest })
+                .from(question_revision)
+                .where(eq(question_revision.revision_id, lifecycle.current_revision_id))
+                .limit(1);
+              if (publishedRevision?.integrity_digest === recordedBaseDigest) {
                 keptIndependentAdmissionRevisionId = lifecycle.current_revision_id;
                 // verify_hold 角：跳过发布会丢掉旧分支 suspension:{suspended:false}
                 // 的清挂起效果。C1 admitted 的发布本已清 verify_hold；若此刻仍挂
