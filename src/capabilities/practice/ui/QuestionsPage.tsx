@@ -18,12 +18,14 @@
 //     过滤、搜索、排序一起由 server 在分页前执行，避免只筛已加载页。
 //   • 分页策略 — 每次 20 条 progressive load；response.page.has_more + total 是唯一分页
 //     真相。subject/source/kind/difficulty/knowledge/search/status/sort 均跨页走 server。
+//   • 「暂不出题」页签（YUK-1514）— status=not_servable；页签计数与按原因分布来自一次
+//     include_serving_counts 的轻量查询（与列表同一组筛选，状态轴除外），每行用 Badge 标原因。
 //   • 省略 attempts/review/mistakes/papers 微指示 — 后端 list 投影无这些聚合（detail 才有
 //     timeline/backlinks）；QIndicators 只渲 subject + 知识点 tags，微指示 DEFER（注释标明）。
 //   • ribbon「在复习队列」统计同因后端 list 无 review 聚合 → DEFER，ribbon 改渲「含变体」
 //     替代（真 variant_depth>0 计数），不 fabricate 假复习数。
 
-import { useInfiniteQuery } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { Fragment, memo, useCallback, useMemo, useRef, useState } from 'react';
 import { resolveKnownSubjectId } from '@/subjects/profile';
 import { SubjectFilterTabs } from '@/ui/components/SubjectFilterTabs';
@@ -40,6 +42,7 @@ import { SkLines } from '@/ui/primitives/SkLines';
 import './questions.css';
 
 import { type QBankQuestion, getQuestionsList } from './practice-api';
+import { ServingHoldBadge, ServingHoldBreakdown } from './ServingHold';
 
 // ── 映射（内联 const，对照 data-questions.jsx，但用真 enum）──────────────────
 
@@ -230,6 +233,7 @@ function QIndicators({
       <span style={{ flex: 1 }} />
       {/* 微指示 attempts/review/mistakes/papers DEFER：后端 list 投影无这些聚合
           （detail 才有 timeline/backlinks），不渲也不 fabricate。下一刀接 list 聚合时回填。 */}
+      <ServingHoldBadge serving={q.serving} />
     </div>
   );
 }
@@ -338,7 +342,7 @@ export const QRow = memo(function QRow({
 
 // ── 主面 ───────────────────────────────────────────────────────────────────
 
-type StatusTab = 'all' | 'active' | 'draft';
+type StatusTab = 'all' | 'active' | 'draft' | 'not_servable';
 type SortBy = 'time' | 'diff';
 type SortDir = 'asc' | 'desc';
 
@@ -418,6 +422,34 @@ export default function QuestionsPage({ navigate }: QuestionsPageProps) {
     getNextPageParam: (lastPage) =>
       lastPage.page.has_more ? lastPage.page.offset + lastPage.items.length : undefined,
   });
+
+  // 「暂不出题」页签计数 + 按原因分布：同一组筛选（状态轴除外）只取计数，不随当前页签变。
+  const servingCountsQ = useQuery({
+    queryKey: [
+      'questions-bank',
+      'serving-counts',
+      subject,
+      source,
+      kind,
+      stableDiffs,
+      stableLabels,
+      debouncedQuery,
+    ],
+    queryFn: () =>
+      getQuestionsList({
+        subject: subject === 'all' ? undefined : subject,
+        source: source === 'all' ? undefined : source,
+        kind: kind === 'all' ? undefined : kind,
+        status: 'not_servable',
+        includeServingCounts: true,
+        difficulties: stableDiffs,
+        knowledgeIds: stableLabels,
+        search: debouncedQuery || undefined,
+        includeDrafts: true,
+        limit: 1,
+      }),
+  });
+  const servingCounts = servingCountsQ.data?.serving_counts;
 
   const top = useMemo(() => listQ.data?.pages.flatMap((page) => page.items) ?? [], [listQ.data]);
   const total = listQ.data?.pages[0]?.total ?? 0;
@@ -513,6 +545,7 @@ export default function QuestionsPage({ navigate }: QuestionsPageProps) {
     ['all', '全部'],
     ['active', '正式'],
     ['draft', '草稿'],
+    ['not_servable', '暂不出题'],
   ];
 
   return (
@@ -636,8 +669,16 @@ export default function QuestionsPage({ navigate }: QuestionsPageProps) {
                 aria-selected={status === s}
                 className={`qb-tab${status === s ? ' on' : ''}`}
                 onClick={() => setStatus(s)}
+                aria-label={
+                  s === 'not_servable' && servingCounts
+                    ? `${l}（${servingCounts.not_servable_total}）`
+                    : undefined
+                }
               >
                 {l}
+                {s === 'not_servable' && servingCounts && (
+                  <span className="qb-tab-n">{servingCounts.not_servable_total}</span>
+                )}
               </button>
             ))}
           </div>
@@ -720,8 +761,20 @@ export default function QuestionsPage({ navigate }: QuestionsPageProps) {
             </div>
           )}
 
+          {status === 'not_servable' && servingCounts && (
+            <ServingHoldBreakdown counts={servingCounts} />
+          )}
+
           {/* list / empty states */}
-          {top.length === 0 && activeFilters === 0 ? (
+          {top.length === 0 && status === 'not_servable' && activeFilters === 1 ? (
+            <Card pad="lg">
+              <EmptyState
+                icon="checkCircle"
+                title="没有暂不出题的题目"
+                text="题库里的题目现在都能正常出给你。"
+              />
+            </Card>
+          ) : top.length === 0 && activeFilters === 0 ? (
             <Card pad="lg">
               <EmptyState
                 icon="quiz"
