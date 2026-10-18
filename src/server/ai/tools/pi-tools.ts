@@ -165,7 +165,15 @@ export function buildPiDomainAgentTools(options: BuildMcpServerOptions): AgentTo
             ...(signal ? [{ signal, requestedBy: 'system' as const }] : []),
           ],
         });
-        return { content: result.content, details: null } satisfies AgentToolResult<null>;
+        // YUK-1559 — forward the bridge's authoritative failure flag. pi marks
+        // the tool_result isError from this bit, so gated/refused/soft-stopped/
+        // failed calls surface as errors to the model without throwing (which
+        // would discard content/details).
+        return {
+          content: result.content,
+          details: null,
+          isError: result.isError,
+        } satisfies AgentToolResult<null>;
       },
     } satisfies AgentTool;
   });
