@@ -24,6 +24,12 @@ import {
   isNoteArtifactType,
 } from '@/capabilities/notes/server/note-artifact-types';
 import {
+  type NoteGenerationFailure,
+  attrsClearingGenerationFailure,
+  attrsWithGenerationFailure,
+  noteGenerationFailure,
+} from '@/capabilities/notes/server/note-generation-failure';
+import {
   NOTE_GENERATION_FALLBACK_ACTOR_REF,
   buildNoteGenerationFallbackBody,
   loadNoteGenerationFallbackMaterial,
@@ -50,6 +56,7 @@ import {
   type TaskTextRunFn,
   aiAgentRef,
   costUsdToMicroUsd,
+  isGenerationBudgetTimeout,
 } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { resolveNoteSkillDoc } from '@/subjects/note-skills';
@@ -102,6 +109,10 @@ function taskRunIdOf(error: unknown): string | null {
   if (!error || typeof error !== 'object' || !('taskRunId' in error)) return null;
   const value = (error as { taskRunId?: unknown }).taskRunId;
   return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+function noteGenerationFailureKind(error: unknown): NoteGenerationFailure['kind'] {
+  return isGenerationBudgetTimeout(error) ? 'timeout' : 'model_or_parse';
 }
 
 function annotateNoteGenerateFailure(
@@ -360,6 +371,7 @@ export async function runNoteGenerate(
           version: artifact.version,
           body_blocks: artifact.body_blocks,
           history: artifact.history,
+          attrs: artifact.attrs,
         })
         .from(artifact)
         .where(
@@ -374,6 +386,7 @@ export async function runNoteGenerate(
         .limit(1);
       const before = beforeRows[0];
       if (!before) return { kind: 'not_pending' }; // concurrently no longer pending
+      const clearedFailure = attrsClearingGenerationFailure(before.attrs);
       if (!mayOverwriteNoteBodyForGeneration(before.body_blocks, before.history, before.version)) {
         // Authored content over the fallback — keep it. The run's output is
         // discarded (honestly: status back to failed, version unchanged).
@@ -415,6 +428,7 @@ export async function runNoteGenerate(
           generation_status: 'ready',
           verification_status: 'queued',
           generated_by: { ...generatedByRef } as never,
+          ...(clearedFailure.cleared ? { attrs: clearedFailure.attrs } : {}),
           version: nextVersion,
           updated_at: now,
         })
@@ -451,6 +465,7 @@ export async function runNoteGenerate(
         generationStatus: 'ready',
         verificationStatus: 'queued',
         generatedBy: generatedByRef,
+        ...(clearedFailure.cleared ? { attrs: clearedFailure.attrs } : {}),
         nextVersion,
         actorKind: 'agent',
         actorRef: 'note_generate',
@@ -492,6 +507,11 @@ export async function runNoteGenerate(
   } catch (err) {
     if (modelWaitMs === null) modelWaitMs = Date.now() - modelStarted;
     const taskRunId = attempt?.task_run_id ?? taskRunIdOf(err);
+    const generationFailure = noteGenerationFailure(
+      noteGenerationFailureKind(err),
+      taskRunId,
+      err instanceof Error ? err.message : String(err),
+    );
     const failure = annotateNoteGenerateFailure(err, taskRunId, attempt?.text);
     const failureDbStarted = Date.now();
     // Mark failed so UI doesn't sit on "pending" forever; pg-boss will still
@@ -526,7 +546,7 @@ export async function runNoteGenerate(
     try {
       flipVersion = await db.transaction(async (tx) => {
         const beforeRows = await tx
-          .select({ version: artifact.version })
+          .select({ version: artifact.version, attrs: artifact.attrs })
           .from(artifact)
           .where(
             and(
@@ -540,9 +560,10 @@ export async function runNoteGenerate(
           .limit(1);
         const before = beforeRows[0];
         if (!before) return null;
+        const failedAttrs = attrsWithGenerationFailure(before.attrs, generationFailure);
         const rows = await tx
           .update(artifact)
-          .set({ generation_status: 'failed', updated_at: failedAt })
+          .set({ generation_status: 'failed', attrs: failedAttrs, updated_at: failedAt })
           .where(
             and(
               eq(artifact.id, artifactId),
@@ -557,6 +578,7 @@ export async function runNoteGenerate(
           subjectId: artifactId,
           op: 'set_generation_status',
           generationStatus: 'failed',
+          attrs: failedAttrs,
           nextVersion: before.version,
           actorKind: 'agent',
           actorRef: 'note_generate',
