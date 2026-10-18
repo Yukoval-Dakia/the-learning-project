@@ -242,7 +242,7 @@ export const QuizGenQuestion = z
     // column, and materializes each sub as a question_part child row
     // (parent_question_id + part_index). Unpinned runs must NOT emit it — the
     // handler rejects the batch fail-closed either way.
-    structured: StructuredQuestion.optional(),
+    structured: StructuredQuestion.nullish().transform((value) => value ?? undefined),
   })
   .superRefine((question, ctx) => {
     const judgeKind = defaultJudgeKindForQuestion(question);
