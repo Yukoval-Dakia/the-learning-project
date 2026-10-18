@@ -6158,8 +6158,10 @@ progress {
   /* YUK-297 R4: crisper topbar — more translucent, deeper saturated blur, and a
      calmer hairline (--line-soft) so the chrome recedes against the paper. */
   background: color-mix(in srgb, var(--paper) 78%, transparent);
-  backdrop-filter: blur(16px) saturate(1.4);
+  /* Prefixed first: with the unprefixed line first, the build's CSS minifier keeps only the
+     -webkit- one and Chrome gets no blur (YUK-1473). */
   -webkit-backdrop-filter: blur(16px) saturate(1.4);
+  backdrop-filter: blur(16px) saturate(1.4);
   border-bottom: 1px solid var(--line-soft);
 }
 .crumbs {
@@ -9778,8 +9780,8 @@ button.seg-sm {
   border: 1px solid var(--line-soft);
   border-radius: var(--r-4);
   background: color-mix(in srgb, var(--paper-raised) 82%, transparent);
-  backdrop-filter: blur(16px) saturate(1.4);
   -webkit-backdrop-filter: blur(16px) saturate(1.4);
+  backdrop-filter: blur(16px) saturate(1.4);
   box-shadow: var(--shadow-3);
   animation: copilot-sheet-in var(--dur-fast) var(--ease-out);
 }
