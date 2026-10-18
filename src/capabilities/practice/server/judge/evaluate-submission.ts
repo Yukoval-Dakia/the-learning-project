@@ -23,13 +23,13 @@ import { observeJudgeProcess } from '../judge-process-observer';
 // 调用 —— typed transport 归 src/server/ai/ 后续 lane（YUK-1049）。
 
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
-import { assessmentRubricInvocationWindowMs } from '@/capabilities/practice/tasks/assessment-rubric-timeout';
 import { resolveTaskBudget } from '@/capabilities/task-registry';
 import {
   evaluationMemberFromRows,
   freezeEvaluationInput,
   sameMemberSet,
 } from '@/core/assessment-input';
+import { assessmentRubricInvocationWindowMs } from '@/core/assessment-rubric-timeout';
 import { canonicalHash } from '@/core/migration/canonical';
 import {
   EvaluationContractError,

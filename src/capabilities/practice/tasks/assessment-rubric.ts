@@ -4,12 +4,12 @@
 // 求和全部由代码按发布时冻结的 rubric 校验，输出契约里没有总分字段。
 
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
+import { assessmentRubricTimeoutFromCensoredHoldout } from '@/core/assessment-rubric-timeout';
 import {
   ASSESSMENT_RUBRIC_PROMPT_REVISION,
   AssessmentRubricDecision,
   type AssessmentRubricDecisionT,
 } from '@/core/schema/assessment/model-decision';
-import { assessmentRubricTimeoutFromCensoredHoldout } from './assessment-rubric-timeout';
 import { parseTaskOutput } from './parse-output';
 
 export const assessmentRubricTaskSpec = {

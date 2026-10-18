@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { formalRubricDeadlineAt } from '@/capabilities/practice/server/judge/evaluate-submission';
 import { assessmentRubricTaskSpec } from '@/capabilities/practice/tasks/assessment-rubric';
+import { resolveTaskBudget } from '@/capabilities/task-registry';
 import {
   ASSESSMENT_RUBRIC_ESTIMATED_ATTEMPT_MICROS,
   assessmentRubricInvocationWindowMs,
   assessmentRubricTimeoutFromCensoredHoldout,
-} from '@/capabilities/practice/tasks/assessment-rubric-timeout';
-import { resolveTaskBudget } from '@/capabilities/task-registry';
+} from '@/core/assessment-rubric-timeout';
 import { resetTestConfig, setTestConfig } from '@/core/config/store';
 import type { ModelExecutorRequest, ScoringUnitT } from '@/core/schema/assessment';
 import { AgentRunError } from '@/server/ai/agent-run-error';

@@ -17,11 +17,11 @@
 // ====================================================================
 
 import { randomUUID } from 'node:crypto';
+import { resolveTaskBudget } from '@/capabilities/task-registry';
 import {
   ASSESSMENT_RUBRIC_TIMEOUT_RETRIES,
   assessmentRubricTimeoutRetryFits,
-} from '@/capabilities/practice/tasks/assessment-rubric-timeout';
-import { resolveTaskBudget } from '@/capabilities/task-registry';
+} from '@/core/assessment-rubric-timeout';
 import type {
   ModelExecutorRequest,
   ModelUnitExecutorPort,

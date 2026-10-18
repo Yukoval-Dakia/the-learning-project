@@ -17,8 +17,8 @@
 import { eq, inArray } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import { z } from 'zod';
-import { assessmentRubricInvocationWindowMs } from '@/capabilities/practice/tasks/assessment-rubric-timeout';
 import { type TaskKind, resolveTaskBudget } from '@/capabilities/task-registry';
+import { assessmentRubricInvocationWindowMs } from '@/core/assessment-rubric-timeout';
 import { canonicalHash } from '@/core/migration/canonical';
 import {
   GroupEvidence,
