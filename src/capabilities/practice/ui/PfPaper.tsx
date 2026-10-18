@@ -250,6 +250,12 @@ export function PfPaper(props: PfPaperProps) {
 
   // A visit restores its drafts once at mount, so it mounts only from a detail fetched for
   // this entry; later background refetches never overwrite the live visit.
+  // YUK-1566 — a failed re-read (refocus, after the session opens, the pre-submit check) keeps
+  // the previous data, so a paper already read during this entry stays on screen with a quiet
+  // notice; the read-error view is only for an entry that never got the paper. A detail cached
+  // by an earlier visit does not count (its data predates this entry).
+  const [enteredAt] = useState(() => Date.now());
+  const readThisEntry = detail !== null && detailQ.dataUpdatedAt >= enteredAt;
   if (detailQ.isLoading || !detailQ.isFetchedAfterMount)
     return (
       <PaperFrame>
@@ -271,7 +277,7 @@ export function PfPaper(props: PfPaperProps) {
         </div>
       </PaperFrame>
     );
-  if (detailQ.isError || !detail || slots.length === 0)
+  if ((detailQ.isError && !readThisEntry) || !detail || slots.length === 0)
     return (
       <PaperFrame>
         <div className="un-ps-state" role="alert">
@@ -291,6 +297,7 @@ export function PfPaper(props: PfPaperProps) {
       detail={detail}
       slots={slots}
       clearStaleTiming={occurrence.replaced}
+      refreshFailed={detailQ.isError}
     />
   );
 }
@@ -314,10 +321,12 @@ function PaperVisit({
   detail,
   slots,
   clearStaleTiming,
+  refreshFailed,
 }: PfPaperProps & {
   detail: PaperDetail;
   slots: PaperSlot[];
   clearStaleTiming: boolean;
+  refreshFailed: boolean;
 }) {
   const qc = useQueryClient();
   const hasNativeBindings = slots.every((slot) => slot.assessment != null);
@@ -1159,6 +1168,11 @@ function PaperVisit({
               </div>
               {/* The old full-width 反馈缓冲 strip, now one quiet line; the chip above says it
                   for a paper that can be handed in. */}
+              {refreshFailed && (
+                <p className="un-pp-note" role="status">
+                  刚才没能刷新这张卷，已保留你的作答，可以接着写。
+                </p>
+              )}
               {!hasNativeBindings && (
                 <p className="un-pp-note">
                   {detail.session
