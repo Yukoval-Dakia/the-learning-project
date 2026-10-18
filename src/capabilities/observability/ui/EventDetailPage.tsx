@@ -4,6 +4,7 @@ import { ApiError } from '@/ui/lib/api';
 import { affectedRefsForCorrection } from '@/ui/lib/event-corrections';
 import { formatRelTime } from '@/ui/lib/utils';
 import { Btn } from '@/ui/primitives/Btn';
+import { CollapsibleList } from '@/ui/primitives/CollapsibleList';
 import { EmptyState } from '@/ui/primitives/EmptyState';
 import { ErrorState } from '@/ui/primitives/ErrorState';
 import { LoomBadge } from '@/ui/primitives/LoomBadge';
@@ -139,9 +140,12 @@ function EventChainView({
           <div id="event-effects-heading" className="ev-lane-label meta">
             之后发生 · {chain.caused_events.length} 条
           </div>
-          {chain.caused_events.map((row) => (
-            <ChainEventButton key={row.id} event={row} navigate={navigate} />
-          ))}
+          <CollapsibleList
+            as="div"
+            className="ev-lane"
+            items={chain.caused_events}
+            renderItem={(row) => <ChainEventButton key={row.id} event={row} navigate={navigate} />}
+          />
         </section>
       )}
 
@@ -149,20 +153,24 @@ function EventChainView({
         <section aria-labelledby="event-corrections-heading">
           <SectionLabel count={chain.corrections.length}>纠正记录</SectionLabel>
           <LoomCard pad>
-            {chain.corrections.map((row) => (
-              <button
-                type="button"
-                key={row.id}
-                className="corr-row"
-                onClick={() => navigate(`/events/${encodeURIComponent(row.id)}`)}
-              >
-                <span className="ev-dot" style={{ background: 'var(--good)' }} />
-                <span>{actionLabel(row.action)}</span>
-                <span className="meta" style={{ marginLeft: 'auto' }}>
-                  {formatRelTime(row.created_at)} · {actorMeta(row.actor_kind).label}
-                </span>
-              </button>
-            ))}
+            <CollapsibleList
+              as="div"
+              items={chain.corrections}
+              renderItem={(row) => (
+                <button
+                  type="button"
+                  key={row.id}
+                  className="corr-row"
+                  onClick={() => navigate(`/events/${encodeURIComponent(row.id)}`)}
+                >
+                  <span className="ev-dot" style={{ background: 'var(--good)' }} />
+                  <span>{actionLabel(row.action)}</span>
+                  <span className="meta" style={{ marginLeft: 'auto' }}>
+                    {formatRelTime(row.created_at)} · {actorMeta(row.actor_kind).label}
+                  </span>
+                </button>
+              )}
+            />
           </LoomCard>
         </section>
       )}
