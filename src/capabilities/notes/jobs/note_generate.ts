@@ -44,8 +44,8 @@ import { parseNoteGenerateOutput } from '@/capabilities/notes/tasks/note-tasks';
 import type { ArtifactBodyBlocksT, ArtifactHistoryEntryT } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact, knowledge } from '@/db/schema';
-import type { NoteGeneratePhaseTimings } from '@/server/ai/log';
 import {
+  type NoteGeneratePhaseTimings,
   type TaskTextResult,
   type TaskTextRunFn,
   aiAgentRef,

@@ -520,8 +520,9 @@ function buildQueryOptions(
     // YUK-575 (N5) — durable copilot run overrides the turn ceiling per-call;
     // 'unbounded' removes it entirely (pi mounts no shouldStopAfterTurn).
     maxTurns: budget.maxIterations === 'unbounded' ? undefined : budget.maxIterations || 1,
-    providerTimeoutMs: providerHttpTimeoutMs(budget.timeout),
   };
+  const providerTimeoutMs = providerHttpTimeoutMs(budget.timeout);
+  if (providerTimeoutMs !== undefined) options.providerTimeoutMs = providerTimeoutMs;
   // YUK-923 — reasoning effort tier: per-run modelBinding wins over the
   // task-kind declaration; unset → the provider default applies.
   const reasoningEffort = ctx.modelBinding?.effort ?? declaredDef.reasoningEffort;

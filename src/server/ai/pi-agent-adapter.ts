@@ -55,7 +55,6 @@ import type {
   MutableModels as PiMutableModels,
   Usage as PiUsage,
 } from '@earendil-works/pi-ai';
-import { Agent, fetch as undiciFetch } from 'undici';
 import { tasks } from '@/capabilities/task-registry';
 import { getConfig } from '@/core/config/store';
 import type {
@@ -72,6 +71,7 @@ import { createLoomPiModels } from './pi-models';
 import { piProviderId } from './pi-provider-catalog';
 import { hasPiUsageEvidence, withPiUsageEvidence } from './pi-usage-evidence';
 import { UNDICI_DEFAULT_IDLE_TIMEOUT_MS } from './provider-http-timeout';
+import { createIdleBudgetFetch } from './provider-idle-fetch';
 import type { SDKAssistantMessage, SDKResultMessage, SDKUserMessage } from './sdk-types';
 import { isSpawnToolName } from './spawn-contract';
 import {
@@ -978,24 +978,14 @@ class PiPreparedQuery implements PreparedExecutionQuery {
   /**
    * Raise the provider HTTP timer above the task abort. The OpenAI SDK's
    * 10-minute default, and undici's 5-minute header/body idle timers, would
-   * otherwise cut off a 30-minute note generation.
+   * otherwise cut off a 30-minute note generation. Shorter tasks leave both
+   * alone so they keep `globalThis.fetch`.
    */
   private providerHttpBudget(): { timeoutMs?: number; fetch?: typeof fetch } {
     const timeoutMs = this.args.options.providerTimeoutMs;
     if (timeoutMs === undefined) return {};
     if (timeoutMs <= UNDICI_DEFAULT_IDLE_TIMEOUT_MS) return { timeoutMs };
-    if (!this.providerHttp) {
-      const agent = new Agent({ headersTimeout: timeoutMs, bodyTimeout: timeoutMs });
-      const fetchImpl: typeof fetch = (input, init) =>
-        undiciFetch(input as Parameters<typeof undiciFetch>[0], {
-          ...(init as object),
-          dispatcher: agent,
-        }) as unknown as ReturnType<typeof fetch>;
-      this.providerHttp = {
-        fetch: fetchImpl,
-        close: () => agent.close(),
-      };
-    }
+    this.providerHttp ??= createIdleBudgetFetch(timeoutMs);
     return { timeoutMs, fetch: this.providerHttp.fetch };
   }
 
