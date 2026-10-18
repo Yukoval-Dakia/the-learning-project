@@ -58,6 +58,7 @@ import type {
 import type { TaskDefinition } from '@/ai/task-spec';
 import { tasks } from '@/capabilities/task-registry';
 import { getConfig } from '@/core/config/store';
+import { rawArgumentsEvidence } from '@/core/raw-arguments-evidence';
 import type {
   ExecutionAdapter,
   ExecutionAdapterStartupArgs,
@@ -596,6 +597,14 @@ export function piTerminalResultFrame(args: {
   structuredOutputTool?: boolean;
   /** Reject pi best-effort JSON salvage: original streamed arguments must parse strictly. */
   invalidStructuredArguments?: boolean;
+  /** Bounded raw-arguments evidence carried on the structured-failure terminal so
+   *  the runner can attach it to the task run's tool_call_log. */
+  structuredSubmitEvidence?: {
+    tool_name: string;
+    raw_arguments: string;
+    raw_args_sha256: string;
+    truncated: boolean;
+  };
   /** P3 — nested-child usage rolled into the run's terminal evidence, the
    *  same way the SDK result aggregates subagent tokens into modelUsage. */
   childUsage?: PiChildUsage;
@@ -714,9 +723,7 @@ export function piTerminalResultFrame(args: {
       final.stopReason !== 'toolUse' ||
       calls.length !== 1 ||
       call?.name !== STRUCTURED_OUTPUT_TOOL ||
-      arguments_ == null ||
-      typeof arguments_ !== 'object' ||
-      !('result' in arguments_)
+      arguments_ == null
     ) {
       return {
         ...base,
@@ -725,15 +732,26 @@ export function piTerminalResultFrame(args: {
         stop_reason: null,
         total_cost_usd: costUsd,
         ...usageParts,
+        // The raw-args digest lands in error_message and unresolved_reason so
+        // the truncated tool_call_log evidence can be matched back to this run.
         errors: [
-          'structured output requires exactly one non-truncated submit call with strictly valid raw JSON arguments; no text fallback',
+          'structured output requires exactly one non-truncated submit call with strictly valid raw JSON arguments; no text fallback' +
+            (args.structuredSubmitEvidence
+              ? `;raw_args_sha256=${args.structuredSubmitEvidence.raw_args_sha256}`
+              : ''),
         ],
+        ...(args.structuredSubmitEvidence
+          ? { structured_submit_evidence: args.structuredSubmitEvidence }
+          : {}),
       } as SDKResultMessage & { source: 'pi' };
     }
-    // Preserve the SAME raw arguments even when pi's schema validator rejected
-    // them. The capability owns one bounded deterministic normalization and the
+    // YUK-1547 — the submit call's arguments ARE the structured output (the
+    // task's output schema itself); there is no {result: ...} envelope. Keep
+    // the SAME raw arguments even when pi's schema validator rejected them —
+    // a string where an object is expected still flows through, and the
+    // capability owns the one bounded deterministic normalization plus the
     // final schema check; the loop must never re-ask the provider for a repair.
-    structuredOutput = arguments_.result;
+    structuredOutput = arguments_;
   }
   return {
     ...base,
@@ -1076,8 +1094,44 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     };
   }
 
-  private readonly streamFn: StreamFn = (model, llmContext, streamOptions) =>
-    tracePiStream(
+  private readonly streamFn: StreamFn = (model, llmContext, streamOptions) => {
+    const forceToolSubmit =
+      toolOutputSchema(this.args.kind) !== undefined && model.api === 'openai-completions';
+    // YUK-1547 — per-task model-native reasoning params (resolved +
+    // fail-closed-validated in resolveTaskProvider): pass the model's own
+    // wire parameter (e.g. DeepSeek `reasoning_effort`) through verbatim.
+    // This is NOT the options.effort → pi ThinkingLevel enum path — startup
+    // rejects both being set so the param has exactly one writer.
+    const nativeReasoning = this.args.resolved.nativeReasoningParams;
+    const streamOptionsWithPayload =
+      forceToolSubmit || nativeReasoning
+        ? {
+            ...streamOptions,
+            onPayload: async (payload: unknown, requestModel: PiModel<PiApi>) => {
+              const transformed = await streamOptions?.onPayload?.(payload, requestModel);
+              const body = transformed ?? payload;
+              if (body == null || typeof body !== 'object' || Array.isArray(body)) {
+                throw new Error('structured output requires an object provider payload');
+              }
+              return {
+                ...body,
+                // MiMo Token Plan uses native OpenAI function calling. Require
+                // submission on the wire, not merely in the natural-language prompt.
+                ...(forceToolSubmit
+                  ? {
+                      tool_choice: {
+                        type: 'function',
+                        function: { name: STRUCTURED_OUTPUT_TOOL },
+                      },
+                      parallel_tool_calls: false,
+                    }
+                  : {}),
+                ...nativeReasoning,
+              };
+            },
+          }
+        : streamOptions;
+    return tracePiStream(
       (m, context, options) =>
         withPiUsageEvidence(
           (innerModel, innerContext, innerOptions) =>
@@ -1088,26 +1142,9 @@ class PiPreparedQuery implements PreparedExecutionQuery {
         ),
       model,
       llmContext,
-      toolOutputSchema(this.args.kind) && model.api === 'openai-completions'
-        ? {
-            ...streamOptions,
-            // MiMo Token Plan uses native OpenAI function calling. Require
-            // submission on the wire, not merely in the natural-language prompt.
-            onPayload: async (payload, requestModel) => {
-              const transformed = await streamOptions?.onPayload?.(payload, requestModel);
-              const body = transformed ?? payload;
-              if (body == null || typeof body !== 'object' || Array.isArray(body)) {
-                throw new Error('structured output requires an object provider payload');
-              }
-              return {
-                ...body,
-                tool_choice: { type: 'function', function: { name: STRUCTURED_OUTPUT_TOOL } },
-                parallel_tool_calls: false,
-              };
-            },
-          }
-        : streamOptions,
+      streamOptionsWithPayload,
     );
+  };
 
   /**
    * Child tool set: the spec's allowlist over the parent's mounted wire names,
@@ -1341,7 +1378,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     }
     const structuredOutput = toolOutputSchema(this.args.kind) !== undefined;
     if (structuredOutput) {
-      systemPrompt += `\nSubmit exactly one ${STRUCTURED_OUTPUT_TOOL} tool call with {result: <the requested output object>}. Do not return JSON as text. This invocation ends after this one model turn, including on invalid arguments; no repair turn is available.`;
+      systemPrompt += `\nSubmit exactly one ${STRUCTURED_OUTPUT_TOOL} tool call whose arguments are the requested output object itself (no result envelope). Do not return JSON as text. This invocation ends after this one model turn, including on invalid arguments; no repair turn is available.`;
     }
     const context: AgentContext = {
       // sdkSession→本地回放: durable-turn replay seeds context.messages — the
@@ -1495,6 +1532,16 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       cappedByMaxTurns,
       structuredOutputTool: structuredOutput,
       invalidStructuredArguments,
+      // The original streamed submit bytes survive a structured-parse failure
+      // as bounded tool_call_log evidence (adapter-level failures never reach
+      // the capability, which logs its own view of the payload).
+      structuredSubmitEvidence:
+        structuredOutput && rawToolArguments.size > 0
+          ? {
+              tool_name: STRUCTURED_OUTPUT_TOOL,
+              ...rawArgumentsEvidence([...rawToolArguments.values()].join('\n')),
+            }
+          : undefined,
       childUsage: this.childUsage,
     });
     if (terminal) yield terminal;
@@ -1572,8 +1619,8 @@ export class PiAgentAdapter implements ExecutionAdapter {
         piCustomTool(
           'structured_output',
           'submit',
-          'Submit the final structured result exactly once. No second model turn or paid repair.',
-          { result: outputSchema },
+          'Submit the final structured result exactly once — the call arguments ARE the requested output object. No second model turn or paid repair.',
+          outputSchema,
           async () => ({ content: [{ type: 'text', text: 'Result captured for validation.' }] }),
         ),
       );
@@ -1620,6 +1667,17 @@ export class PiAgentAdapter implements ExecutionAdapter {
     if (!model) {
       throw new Error(
         `pi adapter has no model '${args.resolved.model}' in provider '${args.resolved.provider}' — check the loom pi catalog (pi-models.ts) for the id.`,
+      );
+    }
+    // YUK-1547 — the wire's reasoning_effort must have exactly one writer:
+    // the options.effort tier (pi ThinkingLevel map) and the per-task
+    // native reasoning_effort passthrough both serialize onto the same key.
+    if (
+      args.options.effort !== undefined &&
+      args.resolved.nativeReasoningParams?.reasoning_effort !== undefined
+    ) {
+      throw new Error(
+        `conflicting reasoning params for task '${args.kind}': options.effort='${args.options.effort}' and task.<kind>.reasoning reasoning_effort='${args.resolved.nativeReasoningParams.reasoning_effort}' both target the wire reasoning_effort — keep exactly one source.`,
       );
     }
     const { tools, remoteHandles } = await this.buildTools(args, deps);

@@ -269,6 +269,17 @@ export function coerceQuestionAdmissionSolveOutput(
 
 function jsonObjectFromModel(raw: unknown): unknown {
   if (typeof raw !== 'string') return raw;
+  // MiMo stringifies structured payloads inside tool arguments, so the whole
+  // string is usually exactly one JSON document — strict-parse it first. That
+  // is the honest interpretation of "the model returned a string", and it is
+  // also what keeps a double-encoded submit diagnosable: a strict failure on
+  // `{...} trailing }` preserves the real parse error instead of letting
+  // brace-slicing silently over/under-capture the document boundaries.
+  try {
+    return JSON.parse(raw);
+  } catch {
+    // Fall through to the legacy brace-slice for prose-wrapped JSON.
+  }
   const start = raw.indexOf('{');
   const end = raw.lastIndexOf('}');
   if (start === -1 || end < start) return raw;

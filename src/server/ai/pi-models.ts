@@ -1,3 +1,4 @@
+import { OPENCODE_GO_OPENAI_BASE_URL, isOpenCodeGoOpenAiApi } from './opencode-go';
 import { xiaomiTokenPlanBaseUrl } from './xiaomi-token-plan';
 
 // Native pi presets own protocol, model facts and compat flags. Keep imports
@@ -9,6 +10,28 @@ export async function createLoomPiModels() {
     '@earendil-works/pi-ai/api/openai-completions.lazy'
   );
   const models = builtinModels();
+  // YUK-1547 — pi-ai 1.1.0's builtin opencode-go catalog still serves the
+  // legacy /zen/go/v1 base. Rebind the OpenAI-API family (completions +
+  // responses share one /v1 surface) onto the official endpoint; the literal
+  // lives once in opencode-go.ts. Anthropic-messages models keep their builtin
+  // base — no proven new path this slice. The provider's own stream/auth
+  // wiring (incl. the x-opencode-session header wrapper) is delegated through
+  // untouched; only the model objects' baseUrl changes.
+  const opencodeGo = models.getProvider('opencode-go');
+  if (opencodeGo) {
+    const rebound = opencodeGo
+      .getModels()
+      .map((model) =>
+        isOpenCodeGoOpenAiApi(model.api)
+          ? { ...model, baseUrl: OPENCODE_GO_OPENAI_BASE_URL }
+          : model,
+      );
+    models.setProvider({
+      ...opencodeGo,
+      getModels: () => rebound,
+      ...(opencodeGo.getAllModels ? { getAllModels: () => rebound } : {}),
+    });
+  }
   const baseUrl = xiaomiTokenPlanBaseUrl();
   models.setProvider(
     createProvider({

@@ -308,6 +308,93 @@ export const PROVIDER_LANES = [
     costSupport:
       'operator receipt retains provider request ID, usage, output and error; quota/cost may be consumed; no fabricated free call or successful paid-effect receipt',
   },
+  {
+    id: 'xiaomi.question-admission-reopen-preflight',
+    owner: 'scripts/yuk1547-admission-reopen',
+    disposition: 'exempt',
+    wire: {
+      path: 'scripts/yuk1547-admission-reopen.ts',
+      calls: ['fetch'],
+      contains: ['/chat/completions'],
+    },
+    callers: [{ path: 'scripts/yuk1547-admission-reopen.ts', calls: ['preflight', 'routing'] }],
+    directImporters: [],
+    roles: ['operator'],
+    provider: 'resolved QuestionAdmissionSolveTask provider (no local literal)',
+    model: 'resolved task config model — env pin > solver2 env > DB task.<kind>.* > registry',
+    endpointClass:
+      'manual per-route synthetic @3 submit-shape compatibility probe (units at top level, no result envelope)',
+    configuration: {
+      endpoint: {
+        summary:
+          'resolved model wire baseUrl via nativePiModel — single endpoint literal lives in src/server/ai/opencode-go.ts',
+        source: { path: 'scripts/yuk1547-admission-reopen.ts', calls: ['nativePiModel'] },
+      },
+      credential: {
+        summary: 'resolved lane credential via resolveTaskProvider, never printed',
+        source: {
+          path: 'scripts/yuk1547-admission-reopen.ts',
+          calls: ['resolveTaskProvider'],
+        },
+      },
+      model: {
+        summary:
+          'resolved task config (resolveTaskProvider); QUESTION_ADMISSION_SOLVER2_* env is the solver-B override surface',
+        source: {
+          path: 'scripts/yuk1547-admission-reopen.ts',
+          calls: ['resolveTaskProvider'],
+          envReads: ['QUESTION_ADMISSION_SOLVER2_PROVIDER', 'QUESTION_ADMISSION_SOLVER2_MODEL'],
+        },
+      },
+    },
+    evidence: {
+      path: 'scripts/yuk1547-admission-reopen.ts',
+      calls: ['fetch', 'open'],
+      contains: ["'wx'", 'outside_paid_effect: true'],
+    },
+    attemptSemantics: {
+      admittedUnit:
+        'one manually invoked --preflight synthetic question request on the resolved solver-A lane; reopen mode sends none',
+      durableIdentity:
+        'operator receipt opened exclusively before sending, including failed outcomes; no paid_effect claim',
+      timeout: 'AbortSignal.timeout(120_000), including response body',
+      clientRetry: 'none; native fetch with redirect:error, no retry wrapper',
+      transportRetryCount: 0,
+      attemptsPerInvocation: {
+        kind: 'exact',
+        value: 1,
+        fixedRequestCount: 1,
+        fixedFanOutMultiplier: 1,
+      },
+      redelivery:
+        'none; an existing receipt path is refused before sending; lead investigates failure',
+      fanOut:
+        'one synthetic request on the solver-A route only — a solver2 env naming a different lane is statically validated (capability + wire api) but not probed; reopen mode enqueues marked @3 jobs without a model call',
+      evidence: [
+        {
+          path: 'scripts/yuk1547-admission-reopen.ts',
+          calls: ['fetch', 'open', 'AbortSignal.timeout'],
+          contains: ["redirect: 'error'", "'wx'", '120_000'],
+        },
+      ],
+    },
+    exemption: {
+      owner: 'practice/admission lead',
+      reason:
+        'YUK-1547 owner-approved one-off TEST transport preflight gating the marked @3 reopen of exactly five named @2 identities; no product or automatic caller',
+      expiresOn: '2026-12-31',
+      maxAttemptsPerInvocation: 1,
+      timeoutMs: 120_000,
+      clientRetryLimit: 0,
+      evidence: {
+        path: 'scripts/yuk1547-admission-reopen.ts',
+        calls: ['fetch', 'open'],
+        contains: ["'wx'", 'outside_paid_effect: true'],
+      },
+    },
+    costSupport:
+      'operator receipt retains provider request ID, usage, raw arguments, output and error; quota/cost may be consumed; no fabricated free call or successful paid-effect receipt',
+  },
 
   {
     id: 'dashscope.embedding',
