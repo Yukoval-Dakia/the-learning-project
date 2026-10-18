@@ -73,26 +73,26 @@ export const QuestionAdmissionSolveInput = z.object({
 export type QuestionAdmissionSolveInputT = z.infer<typeof QuestionAdmissionSolveInput>;
 
 const SolvedKey = z.discriminatedUnion('kind', [
-  z.object({
+  z.strictObject({
     kind: z.literal('select'),
     /** 只引用声明过的 item_id；集合语义，顺序无意义。 */
     item_ids: z.array(z.string().min(1)).min(1),
   }),
-  z.object({
+  z.strictObject({
     kind: z.literal('blank_text'),
     /** 所有必须接受的书写形式（等价写法/异体），第一种是参考形。 */
     accepted: z.array(z.string().min(1)).min(1),
   }),
-  z.object({
+  z.strictObject({
     kind: z.literal('blank_numeric'),
     expected: z.number(),
     tolerance: z.discriminatedUnion('kind', [
-      z.object({ kind: z.literal('absolute'), value: z.number().min(0) }),
-      z.object({ kind: z.literal('relative'), ratio: z.number().min(0) }),
+      z.strictObject({ kind: z.literal('absolute'), value: z.number().min(0) }),
+      z.strictObject({ kind: z.literal('relative'), ratio: z.number().min(0) }),
     ]),
     expected_unit: z.string().min(1).optional(),
   }),
-  z.object({
+  z.strictObject({
     kind: z.literal('free'),
     /** 模型自拟 rubric 声明（advisory —— 不入判据；人工复核参考）。 */
     rubric_md: z.string().min(1),
@@ -274,18 +274,26 @@ function jsonObjectFromModel(raw: unknown): unknown {
   if (start === -1 || end < start) return raw;
   try {
     return JSON.parse(raw.slice(start, end + 1)) as unknown;
-  } catch {
-    return raw;
+  } catch (error) {
+    throw new Error(
+      `QuestionAdmissionSolveTask: JSON.parse failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }
 
 export function parseQuestionAdmissionSolveModelOutput(
   raw: unknown,
   units: readonly QuestionAdmissionSolveUnitT[],
+  repairBudget = { remaining: 1 },
 ): QuestionAdmissionSolveOutputT {
-  return QuestionAdmissionSolveOutput.parse(
-    coerceQuestionAdmissionSolveOutput(jsonObjectFromModel(raw), units),
-  );
+  const json = jsonObjectFromModel(raw);
+  const parsed = QuestionAdmissionSolveOutput.safeParse(json);
+  if (parsed.success) return parsed.data;
+  if (repairBudget.remaining <= 0) throw parsed.error;
+  // ONE deterministic normalization across both blind passes in a paid batch.
+  // No syntax guessing, missing numeric values, or new model request.
+  repairBudget.remaining -= 1;
+  return QuestionAdmissionSolveOutput.parse(coerceQuestionAdmissionSolveOutput(json, units));
 }
 
 /** 印出答案原文的证据包：仅 cross-check 用，绝不铸键。 */
@@ -340,7 +348,7 @@ Rules:
 - For kind:"free" emit rubric_md: a self-contained marking rubric a grader could apply (advisory only).
 - worked_md: your independent derivation. equivalent_forms: alternative accepted forms not already inside the key (they will be probed and MUST be accepted by the resulting method — only claim true equivalents). typical_wrong: the most common wrong answer forms with a short reason_md; for select give wrong item_id sets, for blank give wrong text.
 - printed_points is supplied by the caller; do not change or invent points.
-Return strict JSON with one entry per input unit. answer.kind is exactly one of select, blank_text, blank_numeric, free — never text, choice, or option. equivalent_forms and typical_wrong are arrays of objects, never strings.
+Submit one structured result object with one entry per input unit through the provided output tool. answer.kind is exactly one of select, blank_text, blank_numeric, free — never text, choice, or option. equivalent_forms and typical_wrong are arrays of objects, never strings.
 {"units":[{
   "scoring_unit_id":"<the input scoring_unit_id>",
   "status":"solved",
@@ -355,7 +363,7 @@ Return strict JSON with one entry per input unit. answer.kind is exactly one of 
 Use item_ids, not accepted_item_ids. Omit answer when status is "unsolvable" and set reason_md.
 
 For mode:"source_crosscheck", question contains the same parts/units plus source_answers [{scoring_unit_id, reference_md, locator?}] (the printed answer prose, untrusted evidence — never a key source) and proposals [{scoring_unit_id, answer_summary_md}] (the agreed typed keys, rendered readably). For each proposal compare the meaning of the attributable source answer for that exact unit against the proposed answer. Report conflict if they disagree, unknown if the source is ambiguous, unattributable, unrelated or insufficient, and consistent only when they agree. Do not select, correct or output a key from the source, and never silently resolve a conflict.
-Return only strict JSON {"per_unit":[{scoring_unit_id,status:"consistent"|"conflict"|"unknown",reason_md?}]}.`;
+Submit the structured result {"per_unit":[{scoring_unit_id,status:"consistent"|"conflict"|"unknown",reason_md?}]}.`;
 
 export const questionAdmissionSolveTaskSpec = {
   ownership: 'owned',
@@ -366,9 +374,14 @@ export const questionAdmissionSolveTaskSpec = {
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
     budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1, timeout: 120_000 },
-    needsToolCall: false,
+    needsToolCall: true,
     isMultimodal: false,
-    allowedTools: [],
+    allowedTools: ['mcp__structured_output__submit'],
+    structuredOutputMode: 'tool',
+    structuredOutputSchema: z.union([
+      QuestionAdmissionSolveOutput,
+      QuestionAdmissionSourceCrosscheckOutput,
+    ]),
     prompt: { kind: 'inline', text: PROMPT },
   },
   outputSchema: z.union([QuestionAdmissionSolveOutput, QuestionAdmissionSourceCrosscheckOutput]),

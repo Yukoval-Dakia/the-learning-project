@@ -1,0 +1,46 @@
+--- a/src/kernel/read-models/question-serving.ts
++++ b/src/kernel/read-models/question-serving.ts
+@@ -12,6 +12,7 @@
+ // (no_input_renderer / invalid_presentation), the serving-action command
+ // event log, and in-flight pg-boss jobs. No parallel state store.
+
++import { QUESTION_ADMISSION_PAID_UNIT } from '@/core/question-admission-policy';
+ import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+
+ import {
+@@ -62,7 +63,7 @@
+  * practice/server/admission/enqueue.ts — duplicated as a literal because
+  * kernel may not import capability modules). */
+ const PAID_EFFECT_ADMISSION_FAMILY = 'question_admission_run' as const;
+-const PAID_EFFECT_ADMISSION_UNIT = 'admission@1' as const;
++const PAID_EFFECT_ADMISSION_UNIT = QUESTION_ADMISSION_PAID_UNIT;
+
+ /** UI contract: awaiting_admission offers no action for the first N hours. */
+ export const AWAITING_ADMISSION_REVERIFY_AFTER_MS = 6 * 60 * 60 * 1000;
+--- a/src/capabilities/practice/server/serving-actions.ts
++++ b/src/capabilities/practice/server/serving-actions.ts
+@@ -34,6 +34,7 @@
+ // keyed by Idempotency-Key; a replay returns the recorded accepted flag with a
+ // freshly derived serving projection.
+
++import { QUESTION_ADMISSION_CONTRACT_VERSION, QUESTION_ADMISSION_PAID_UNIT } from '@/core/question-admission-policy';
+ import { createHash } from 'node:crypto';
+ import { and, desc, eq, sql } from 'drizzle-orm';
+ import type { PgBoss } from 'pg-boss';
+@@ -288,7 +289,7 @@
+               eq(paid_effect.family, ADMISSION_FAMILY),
+               eq(paid_effect.entity_id, groupId),
+               eq(paid_effect.entity_revision, currentRev.digest),
+-              eq(paid_effect.unit, 'admission@1'),
++              eq(paid_effect.unit, QUESTION_ADMISSION_PAID_UNIT),
+               eq(paid_effect.state, 'applied'),
+             ),
+           )
+@@ -435,6 +436,7 @@
+     // paid_effect claim under the same locks; identical base never re-pays.
+     const boss = await getPracticeBoss();
+     const jobData = {
++      admission_version: QUESTION_ADMISSION_CONTRACT_VERSION,
+       question_id: args.groupId,
+       ...(args.revisionId != null ? { revision_id: args.revisionId } : {}),
+       dispatch_generation: args.dispatchGeneration,

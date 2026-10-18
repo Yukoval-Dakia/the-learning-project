@@ -1,9 +1,11 @@
 // YUK-1507 — one durable admission batch per group/base digest.
 // The publisher event outbox enqueues pinned revisions. Queue retries replay a
 // complete result receipt, never paid solves. Unknown batches require reconciliation.
+
 import { randomUUID } from 'node:crypto';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
+import { LEGACY_QUESTION_ADMISSION_POLICY_ID } from '@/core/question-admission-policy';
 import { ExecutionPlan } from '@/core/schema/assessment/execution';
 import { LEGACY_DRAFT_STATUS } from '@/core/schema/assessment/lifecycle';
 import { Presentation } from '@/core/schema/assessment/presentation';
@@ -342,6 +344,12 @@ export async function runAdmissionForQuestion(
       .where(
         and(
           eq(question_revision.group_id, rootId),
+          eq(
+            question_admission_verification.policy_id,
+            delivery.jobData && delivery.jobData.admission_version !== 2
+              ? LEGACY_QUESTION_ADMISSION_POLICY_ID
+              : resolveQuestionAdmissionPolicyId(),
+          ),
           sql`${question_admission_verification.evidence}->>'pack' = 'question_admission'`,
           sql`${question_admission_verification.evidence}->>'base_contract_digest' = ${contract.integrity_digest}`,
           inArray(question_admission_verification.outcome, ['passed', 'failed', 'suspended']),

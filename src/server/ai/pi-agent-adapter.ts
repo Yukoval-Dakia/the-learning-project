@@ -55,6 +55,7 @@ import type {
   MutableModels as PiMutableModels,
   Usage as PiUsage,
 } from '@earendil-works/pi-ai';
+import type { TaskDefinition } from '@/ai/task-spec';
 import { tasks } from '@/capabilities/task-registry';
 import { getConfig } from '@/core/config/store';
 import type {
@@ -82,6 +83,7 @@ import {
   type PiToolMount,
   buildPiDomainAgentTools,
   connectPiRemoteMcp,
+  piCustomTool,
 } from './tools/pi-tools';
 
 type PiModels = Pick<PiMutableModels, 'getModel' | 'streamSimple'>;
@@ -97,6 +99,12 @@ export interface PiAdapterDeps {
 }
 
 const OPENCODE_SESSION_HEADER = 'x-opencode-session';
+const STRUCTURED_OUTPUT_TOOL = 'mcp__structured_output__submit';
+
+function toolOutputSchema(kind: ExecutionAdapterStartupArgs['kind']) {
+  const definition: TaskDefinition = tasks[kind];
+  return definition.structuredOutputMode === 'tool' ? definition.structuredOutputSchema : undefined;
+}
 
 /**
  * YUK-590 — provider retry cap, preserving the CLAUDE_CODE_MAX_RETRIES env
@@ -582,6 +590,8 @@ export function piTerminalResultFrame(args: {
   /** Set when finishTurn hit the configured turn ceiling — the pi
    *  equivalent of the SDK's `error_max_turns` terminal subtype. */
   cappedByMaxTurns?: boolean;
+  /** Only the opt-in structured task uses tool arguments as its terminal result. */
+  structuredOutputTool?: boolean;
   /** P3 — nested-child usage rolled into the run's terminal evidence, the
    *  same way the SDK result aggregates subagent tokens into modelUsage. */
   childUsage?: PiChildUsage;
@@ -690,6 +700,36 @@ export function piTerminalResultFrame(args: {
       ...usageParts,
     } as SDKResultMessage & { source: 'pi' };
   }
+  let structuredOutput: unknown;
+  if (args.structuredOutputTool) {
+    const calls = final.content.filter((block) => block.type === 'toolCall');
+    const call = calls[0];
+    const arguments_ = call?.arguments;
+    if (
+      final.stopReason !== 'toolUse' ||
+      calls.length !== 1 ||
+      call?.name !== STRUCTURED_OUTPUT_TOOL ||
+      arguments_ == null ||
+      typeof arguments_ !== 'object' ||
+      !('result' in arguments_)
+    ) {
+      return {
+        ...base,
+        subtype: 'error_during_execution',
+        is_error: true,
+        stop_reason: null,
+        total_cost_usd: costUsd,
+        ...usageParts,
+        errors: [
+          'structured output requires exactly one submit tool call with result; no text fallback',
+        ],
+      } as SDKResultMessage & { source: 'pi' };
+    }
+    // Preserve the SAME raw arguments even when pi's schema validator rejected
+    // them. The capability owns one bounded deterministic normalization and the
+    // final schema check; the loop must never re-ask the provider for a repair.
+    structuredOutput = arguments_.result;
+  }
   return {
     ...base,
     subtype: 'success',
@@ -697,7 +737,7 @@ export function piTerminalResultFrame(args: {
     result: assistantText(final),
     stop_reason: piStopReasonToSdk(final.stopReason),
     total_cost_usd: costUsd,
-    structured_output: undefined,
+    structured_output: structuredOutput,
     ...usageParts,
   } as SDKResultMessage & { source: 'pi' };
 }
@@ -1027,7 +1067,25 @@ class PiPreparedQuery implements PreparedExecutionQuery {
         ),
       model,
       llmContext,
-      streamOptions,
+      toolOutputSchema(this.args.kind) && model.api === 'openai-completions'
+        ? {
+            ...streamOptions,
+            // MiMo Token Plan uses native OpenAI function calling. Require
+            // submission on the wire, not merely in the natural-language prompt.
+            onPayload: async (payload, requestModel) => {
+              const transformed = await streamOptions?.onPayload?.(payload, requestModel);
+              const body = transformed ?? payload;
+              if (body == null || typeof body !== 'object' || Array.isArray(body)) {
+                throw new Error('structured output requires an object provider payload');
+              }
+              return {
+                ...body,
+                tool_choice: { type: 'function', function: { name: STRUCTURED_OUTPUT_TOOL } },
+                parallel_tool_calls: false,
+              };
+            },
+          }
+        : streamOptions,
     );
 
   /**
@@ -1260,6 +1318,10 @@ class PiPreparedQuery implements PreparedExecutionQuery {
         .join('\n\n');
       systemPrompt = `${systemPrompt}\n\n${docs}`;
     }
+    const structuredOutput = toolOutputSchema(this.args.kind) !== undefined;
+    if (structuredOutput) {
+      systemPrompt += `\nSubmit exactly one ${STRUCTURED_OUTPUT_TOOL} tool call with {result: <the requested output object>}. Do not return JSON as text. This invocation ends after this one model turn, including on invalid arguments; no repair turn is available.`;
+    }
     const context: AgentContext = {
       // sdkSession→本地回放: durable-turn replay seeds context.messages — the
       // pi equivalent of reattaching an SDK session file.
@@ -1287,13 +1349,15 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       // SDK in-process MCP tools run serially — pin the same execution mode
       // so batch ordering/tool_call_log sequence can't diverge by engine.
       ...(this.allTools.length > 0 ? { toolExecution: 'sequential' as const } : {}),
-      ...(maxTurns !== undefined
-        ? {
-            finishTurn: turnLimiter(maxTurns, () => {
-              cappedByMaxTurns = true;
-            }),
-          }
-        : {}),
+      ...(structuredOutput
+        ? { finishTurn: (() => ({ action: 'end' as const })) as FinishTurn }
+        : maxTurns !== undefined
+          ? {
+              finishTurn: turnLimiter(maxTurns, () => {
+                cappedByMaxTurns = true;
+              }),
+            }
+          : {}),
       beforeToolCall: this.makeBeforeToolCall(),
       afterToolCall: this.makeAfterToolCall(),
       transformContext: this.makeTransformContext(),
@@ -1369,6 +1433,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       // close() tears down an in-flight query.
       aborted: this.abort.signal.aborted,
       cappedByMaxTurns,
+      structuredOutputTool: structuredOutput,
       childUsage: this.childUsage,
     });
     if (terminal) yield terminal;
@@ -1437,6 +1502,18 @@ export class PiAgentAdapter implements ExecutionAdapter {
       : undefined;
     const tools: AgentTool[] = [];
     const remoteHandles: PiRemoteMcpMountHandle[] = [];
+    const outputSchema = toolOutputSchema(args.kind);
+    if (outputSchema) {
+      tools.push(
+        piCustomTool(
+          'structured_output',
+          'submit',
+          'Submit the final structured result exactly once. No second model turn or paid repair.',
+          { result: outputSchema },
+          async () => ({ content: [{ type: 'text', text: 'Result captured for validation.' }] }),
+        ),
+      );
+    }
     try {
       for (const mount of mounts) {
         if (mount.type === 'domain') {

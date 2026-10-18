@@ -80,12 +80,15 @@ const parallelRepUnit = new RegExp(PAID_EFFECT_PARALLEL_REP_UNIT_PATTERN);
 
 /**
  * Open effects gate the entity. Only item_prior_backfill's recognized feature
- * reps of the same revision are parallel siblings. Model/method changes and
- * arbitrary unit strings never bypass an unresolved send.
+ * reps of the same revision are parallel siblings. YUK-1537 additionally
+ * authorizes the exact @1 unknown -> @2 solve contract upgrade on the SAME
+ * revision. Other model/method/unit changes never bypass an unresolved send.
  * The SQL scan uses the same family, pattern, revision and unit predicates.
  */
 export function paidEffectGateBlocks(
-  blocker: Pick<PaidEffectIdentity, 'family' | 'entityRevision' | 'unit'>,
+  blocker: Pick<PaidEffectIdentity, 'family' | 'entityRevision' | 'unit'> & {
+    state?: PaidEffectState;
+  },
   claim: Pick<PaidEffectIdentity, 'family' | 'entityRevision' | 'unit'>,
 ): boolean {
   const siblingUnitOfSameRevision =
@@ -95,7 +98,17 @@ export function paidEffectGateBlocks(
     parallelRepUnit.exec(claim.unit)?.[0] === claim.unit &&
     blocker.entityRevision === claim.entityRevision &&
     blocker.unit !== claim.unit;
-  return !siblingUnitOfSameRevision;
+  // Owner-authorized YUK-1537 contract upgrade, directional and exact. Old
+  // unknown evidence stays unresolved. Sending, other digests, and @2 unknown
+  // never qualify. Missing state fails closed (legacy callers).
+  const admissionContractUpgrade =
+    blocker.family === 'question_admission_run' &&
+    claim.family === 'question_admission_run' &&
+    blocker.entityRevision === claim.entityRevision &&
+    blocker.state === 'unknown' &&
+    blocker.unit === 'admission@1' &&
+    claim.unit === 'admission@2';
+  return !siblingUnitOfSameRevision && !admissionContractUpgrade;
 }
 
 /**

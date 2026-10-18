@@ -1,8 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-11：YUK-1107隔离head f0f2d63bf完整CI三绿166/207/144秒、中位166；唯一验证R2 NONE及逐不变量说明已过。正常纳入main c2新测试规则后，作者代码不变，等待新exact-head CI再合1691。judge阶段诊断仅独立实验，backup等audit/owner，120未达。
+> Linear 是权威 tracker。2026-10-18：YUK-1537 admission 单轮结构化工具输出与 @2 契约已实现；本地静态、构建及离线回放通过。指定 #1777 基线上缺 #1774 serving 文件，rebase 补丁与 TEST 五题步骤已交接；独立 review / exact-head CI / TEST actual-output 由 lead 接续。
 
 ## NOW
+
+- **YUK-1537 / 准入拿到可校验输出**：从 #1777 固定 `38446bfd` 建 `fix/yuk-1537-admission-solve-structured-output`，仅 admission 启用 schema 工具单轮输出，两解共享一次原输出归一化；无付费 re-ask。新 claim `admission@2`，旧 @1 unknown 保留；旧投递不升级。typecheck/lint（175 warnings）/build/四项指定 audit 与离线回放通过；无测试代码/测试 suite/DB/paid/部署。Draft base 为 #1777 分支，lead rebase 后须应用 #1774 两读点和手动入队的补丁，再做独立 review/CI/TEST 五题。[交接](docs/planning/2026-10-18-yuk1537-admission-structured-output.md)。
 
 - **YUK-1404 / native03题图修复**：PR1657 fixed4c52 exact CI38144495041全绿；正常纳入main eb960c079，仅PLAN/now冲突。图ownership/隐私产品代码与单capture边界测试保留，旧细粒度四tests已删。独立初审/最终R2预算已完成，不启第三审。当前crop producer仍无source_asset SHA登记，旧visibility未知，public withholding不是完整配图交付；同卷actual-output验收仍待。无DB/runtime/provider/paid。 [证据](docs/planning/2026-10-11-yuk1404-native03-figure-repair.md)。
 
@@ -31,6 +33,8 @@
 - **本轮已交付 YUK-1392**：PR1619于17:11:43Z合main6aaf8ca89，tree5e8ab973与exact3883903相同；CI37812973662全绿、R1 NONE、threads0。父13unit/22DB、static/build/audits通过，已unwatch/Linear Done。无部署。
 
 ## NEXT
+
+- YUK-1537 lead：#1777 合并后 rebase main，应用 serving-rebase.patch，按交接核验 @1 行不变并仅重开五题 @2；admitted 或有原因 withheld 才能考虑恢复余 112 道。当前仅 draft 交付，不合并/部署，不认领 actual-output 完成。
 
 - Start/judge共享文件边界见[交接](docs/planning/2026-10-09-judge-start-ownership.md)，Start/boot/shutdown由5796独占；judge A/B/C/D由7631接续，迁移号后核。
 

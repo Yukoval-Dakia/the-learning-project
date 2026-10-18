@@ -1,3 +1,7 @@
+import {
+  LEGACY_QUESTION_ADMISSION_POLICY_ID,
+  QUESTION_ADMISSION_POLICY_ID,
+} from '@/core/question-admission-policy';
 import { initialSchedulingState } from '@/server/fsrs/state';
 // YUK-216 S2 slice 2 (题源扩展 Strategy D) — tier-2 source_verify handler.
 //
@@ -727,7 +731,7 @@ export async function runSourceVerify(
       // 与 publisher/C1 一致）读当前维度。三者同时成立时，这份 base 内容已被
       // question_admission_run（YUK-1445 C1）独立准入，本投递不得重发：
       //   1. lifecycle.scoring_admission_state === 'admitted'；
-      //   2. 【当前 revision】上存在 policy question_admission@1、outcome='passed'
+      //   2. 【当前 revision】上存在 policy question_admission@1 或 @2、outcome='passed'
       //      的 question_admission_verification 行（不匹配历史其他 revision 的
       //      passed 行）；
       //   3. 该行 evidence.base_contract_digest === 此刻从行重建的 base 契约
@@ -808,7 +812,11 @@ export async function runSourceVerify(
               .where(
                 and(
                   eq(question_admission_verification.revision_id, lifecycle.current_revision_id),
-                  eq(question_admission_verification.policy_id, resolveQuestionAdmissionPolicyId()),
+                  inArray(question_admission_verification.policy_id, [
+                    LEGACY_QUESTION_ADMISSION_POLICY_ID,
+                    QUESTION_ADMISSION_POLICY_ID,
+                    resolveQuestionAdmissionPolicyId(),
+                  ]),
                   eq(question_admission_verification.outcome, 'passed'),
                 ),
               )

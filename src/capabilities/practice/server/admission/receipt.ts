@@ -4,6 +4,10 @@ import {
   computePaidEffectIdentity,
   paidEffectJsonEquals,
 } from '@/core/migration/paid-effect-protocol';
+import {
+  LEGACY_QUESTION_ADMISSION_PAID_UNIT,
+  QUESTION_ADMISSION_PAID_UNIT,
+} from '@/core/question-admission-policy';
 import { ExecutionPlan } from '@/core/schema/assessment/execution';
 import { Presentation } from '@/core/schema/assessment/presentation';
 import { ResponseSpec } from '@/core/schema/assessment/response';
@@ -115,10 +119,14 @@ export async function claimAdmissionBatch(
   delivery: AdmissionDelivery,
   options: { maySend: boolean; historicalTerminal: boolean },
 ) {
+  const unit =
+    delivery.jobData && delivery.jobData.admission_version !== 2
+      ? LEGACY_QUESTION_ADMISSION_PAID_UNIT
+      : QUESTION_ADMISSION_PAID_UNIT;
   const scope = and(
     eq(paid_effect.family, ADMISSION_FAMILY),
     eq(paid_effect.entity_id, prepared.group_id),
-    eq(paid_effect.unit, 'admission@1'),
+    eq(paid_effect.unit, unit),
   );
   const revisionId = delivery.jobData?.revision_id ?? prepared.revision_id;
   // Prefer the original delivery/revision even if mutable rows changed after payment.
@@ -144,7 +152,7 @@ export async function claimAdmissionBatch(
         eq(paid_effect.family, ADMISSION_FAMILY),
         eq(paid_effect.entity_id, prepared.group_id),
         eq(paid_effect.entity_revision, prepared.contract.integrity_digest),
-        eq(paid_effect.unit, 'admission@1'),
+        eq(paid_effect.unit, unit),
       ),
     )
     .for('update')
@@ -157,7 +165,7 @@ export async function claimAdmissionBatch(
     family: ADMISSION_FAMILY,
     entityId: input.group_id,
     entityRevision: input.contract.integrity_digest,
-    unit: 'admission@1',
+    unit,
     input,
   };
   const identity = computePaidEffectIdentity(effect);
@@ -188,7 +196,8 @@ export async function claimAdmissionBatch(
   if (snapshot?.state === 'sending' || snapshot?.state === 'unknown')
     return { kind: 'held' as const, input, identity };
   if (options.historicalTerminal) return { kind: 'historical' as const, input, identity };
-  if (!options.maySend) return { kind: 'stale' as const, input, identity };
+  if (unit === LEGACY_QUESTION_ADMISSION_PAID_UNIT || !options.maySend)
+    return { kind: 'stale' as const, input, identity };
   await admitPaidEffectIntent(tx, effect);
   const claim = await claimPaidEffectSend(tx, identity, {
     backend: 'pg-boss',

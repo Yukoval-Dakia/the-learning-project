@@ -20,7 +20,6 @@ import type { BlankNormalizationT, ScoringUnitCriterionT } from '@/core/schema/a
 import type { Db } from '@/db/client';
 import { ai_task_runs } from '@/db/schema';
 import type { SubjectProfile } from '@/subjects/profile';
-import { parseTaskOutput } from '../../tasks/parse-output';
 import {
   QuestionAdmissionSolveInput,
   type QuestionAdmissionSolveInputT,
@@ -457,15 +456,20 @@ async function runSolvePass(
   runTask: PracticeTaskRunFn,
   subjectProfile: SubjectProfile | undefined,
   payload: QuestionAdmissionSolveInputT,
+  repairBudget: { remaining: number },
   override?: { provider?: Provider; model?: string },
 ): Promise<{ output: QuestionAdmissionSolveOutputT; receipt: AdmissionSolveReceipt }> {
   const result = await runTask(QUESTION_ADMISSION_TASK_KIND, payload, {
+    judgeRetryPolicy: 'none',
+    budgetOverride: { maxIterations: 1 },
     ...(subjectProfile != null ? { subjectProfile } : {}),
     ...(override != null ? { override } : {}),
   });
   const raw = result.structured_output != null ? result.structured_output : result.text;
   try {
-    const output = parseQuestionAdmissionSolveModelOutput(raw, payload.units);
+    if (result.structured_output == null)
+      throw new Error('missing structured solve output; no text fallback');
+    const output = parseQuestionAdmissionSolveModelOutput(raw, payload.units, repairBudget);
     return { output, receipt: await sealTaskRun(db, payload, result, output) };
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
@@ -513,10 +517,11 @@ export async function runDualSolve(
     units: solverUnits(definition, 1, { exposePrinted: false }),
   });
 
+  const repairBudget = { remaining: 1 };
   const receipts: AdmissionSolveReceipt[] = [];
   let first: { output: QuestionAdmissionSolveOutputT; receipt: AdmissionSolveReceipt };
   try {
-    first = await runSolvePass(db, deps.runTask, deps.subjectProfile, payloadA);
+    first = await runSolvePass(db, deps.runTask, deps.subjectProfile, payloadA, repairBudget);
   } catch (error) {
     const receipt = error instanceof UnparsedSolveError ? error.receipt : undefined;
     return {
@@ -533,6 +538,7 @@ export async function runDualSolve(
       deps.runTask,
       deps.subjectProfile,
       payloadB,
+      repairBudget,
       deps.solver2 ?? undefined,
     );
   } catch (error) {
@@ -719,16 +725,14 @@ export async function runSourceCrosscheck(
     })),
   });
   const result = await deps.runTask(QUESTION_ADMISSION_TASK_KIND, payload, {
+    judgeRetryPolicy: 'none',
+    budgetOverride: { maxIterations: 1 },
     ...(deps.subjectProfile != null ? { subjectProfile: deps.subjectProfile } : {}),
   });
+  if (result.structured_output == null)
+    throw new Error('missing structured crosscheck output; no text fallback');
   const output: QuestionAdmissionSourceCrosscheckOutputT =
-    result.structured_output !== undefined
-      ? QuestionAdmissionSourceCrosscheckOutput.parse(result.structured_output)
-      : parseTaskOutput(
-          result.text,
-          QUESTION_ADMISSION_TASK_KIND,
-          QuestionAdmissionSourceCrosscheckOutput,
-        );
+    QuestionAdmissionSourceCrosscheckOutput.parse(result.structured_output);
   const receipt = await sealTaskRun(db, payload, result, output);
   const per_unit = new Map(
     output.per_unit.map(
