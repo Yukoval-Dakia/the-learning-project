@@ -616,7 +616,7 @@ export const proposeKnowledgeEdgeTool: DomainTool<
 > = {
   name: 'propose_knowledge_edge',
   description:
-    'Propose one knowledge mesh edge change. op="create" (default) proposes a NEW edge from {from_knowledge_id, to_knowledge_id, relation_type, weight?} — validates active same-subject nodes, self loops, duplicate live/pending edges, and parent-only related_to redundancy. op="archive" proposes soft-deleting an EXISTING live edge named by edge_id (no failure evidence required — archiving is the inverse of proposing). Both ops are proposal-only: the user accepts in the inbox; archive sets archived_at, never a hard delete.',
+    'Propose one knowledge mesh edge change. op="create" (default) proposes a NEW edge from {from_knowledge_id, to_knowledge_id, relation_type, weight?} — validates active same-subject nodes, self loops, duplicate live/pending edges, and parent-only related_to redundancy. Agent-proposed creates are rubric-gated: put the supporting attempt/event ids in evidence_event_ids, not just in reasoning. op="archive" proposes soft-deleting an EXISTING live edge named by edge_id (no failure evidence required — archiving is the inverse of proposing). Both ops are proposal-only: the user accepts in the inbox; archive sets archived_at, never a hard delete. Results starting with skipped: mean the proposal was NOT written — do not retry the same change.',
   effect: 'propose',
   inputSchema: ProposeKnowledgeEdgeInputSchema,
   outputSchema: ProposeKnowledgeEdgeOutputSchema,
