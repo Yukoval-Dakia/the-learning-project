@@ -36,10 +36,7 @@ import {
   type PaidEffectIdentity,
   computePaidEffectIdentity,
 } from '@/core/migration/paid-effect-protocol';
-import {
-  LEGACY_QUESTION_ADMISSION_POLICY_ID,
-  QUESTION_ADMISSION_POLICY_ID,
-} from '@/core/question-admission-policy';
+import { QUESTION_ADMISSION_POLICY_IDS } from '@/core/question-admission-policy';
 import {
   LEGACY_DRAFT_STATUS,
   QUESTION_AVAILABILITY,
@@ -894,8 +891,7 @@ export async function runSourceVerify(
                 and(
                   eq(question_admission_verification.revision_id, lifecycle.current_revision_id),
                   inArray(question_admission_verification.policy_id, [
-                    LEGACY_QUESTION_ADMISSION_POLICY_ID,
-                    QUESTION_ADMISSION_POLICY_ID,
+                    ...QUESTION_ADMISSION_POLICY_IDS,
                     resolveQuestionAdmissionPolicyId(),
                   ]),
                   eq(question_admission_verification.outcome, 'passed'),

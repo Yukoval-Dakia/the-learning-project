@@ -5,7 +5,9 @@ import {
   paidEffectJsonEquals,
 } from '@/core/migration/paid-effect-protocol';
 import {
+  type AdmissionReopenMarker,
   LEGACY_QUESTION_ADMISSION_PAID_UNIT,
+  PREVIOUS_QUESTION_ADMISSION_PAID_UNIT,
   QUESTION_ADMISSION_PAID_UNIT,
   QUESTION_ADMISSION_PAID_UNITS,
 } from '@/core/question-admission-policy';
@@ -91,6 +93,78 @@ export function completedAdmissionStatus(application: unknown) {
   return status === 'stale' || status === 'conflict' ? status : ('already_verified' as const);
 }
 
+const KIND_MISMATCH_CONFLICT = /key kind (blank_text vs blank_numeric|blank_numeric vs blank_text)/;
+
+/**
+ * True when an applied admission verdict withheld at least one unit on the
+ * blank kind-mismatch branch of keysAgree (blank_text vs blank_numeric). The
+ * marker check is deliberately narrow: solve_conflict from ANY other branch
+ * keeps the applied row terminal.
+ */
+export function isKindMismatchSolveConflict(application: unknown): boolean {
+  const parsed = z
+    .object({
+      status: z.literal('withheld'),
+      per_unit: z
+        .array(
+          z
+            .object({
+              status: z.string().optional(),
+              reason: z.string().optional(),
+              solve: z
+                .object({ verdict: z.string().optional(), detail: z.string().optional() })
+                .passthrough()
+                .optional(),
+            })
+            .passthrough(),
+        )
+        .optional(),
+    })
+    .passthrough()
+    .safeParse(application);
+  if (!parsed.success) return false;
+  return (parsed.data.per_unit ?? []).some(
+    (unit) =>
+      unit.status === 'withheld' &&
+      unit.reason === 'solve_conflict' &&
+      unit.solve?.verdict === 'conflict' &&
+      KIND_MISMATCH_CONFLICT.test(unit.solve.detail ?? ''),
+  );
+}
+
+/**
+ * The one marked YUK-1547 exception: the named same-base @2 row is an
+ * unresolved unknown send, or an applied verdict withheld on the blank
+ * kind-mismatch conflict. Anything else stays terminal.
+ */
+export function reopenMarkedRowEligibility(row: {
+  state: string;
+  application: unknown;
+}): 'unknown' | 'applied_conflict' | null {
+  if (row.state === 'unknown') return 'unknown';
+  if (row.state === 'applied' && isKindMismatchSolveConflict(row.application)) {
+    return 'applied_conflict';
+  }
+  return null;
+}
+
+/**
+ * Whether an applied verdict stays terminal for a new claim: every applied row
+ * blocks EXCEPT the single marker-named @2 row whose withhold was the blank
+ * kind-mismatch conflict. Without the marker nothing is exempt.
+ */
+export function appliedVerdictBlocksClaim(
+  applied: { unit: string; inputDigest: string; application: unknown },
+  marker: AdmissionReopenMarker | undefined,
+): boolean {
+  return !(
+    marker != null &&
+    applied.unit === marker.unit &&
+    applied.inputDigest === marker.inputDigest &&
+    isKindMismatchSolveConflict(applied.application)
+  );
+}
+
 export type AdmissionDelivery = { id: string; jobData?: AdmissionJobData };
 
 export async function assertAdmissionDelivery(tx: Tx, delivery: AdmissionDelivery) {
@@ -120,13 +194,57 @@ export async function claimAdmissionBatch(
   delivery: AdmissionDelivery,
   options: { maySend: boolean; historicalTerminal: boolean },
 ) {
+  const version = delivery.jobData?.admission_version;
+  // Direct invocations (no jobData) run the current @3 contract; job deliveries
+  // claim their own version's unit. A job carrying no admission_version is an
+  // old queued @1 delivery — it may reconcile @1 but never initiate @3.
   const unit =
-    delivery.jobData && delivery.jobData.admission_version !== 2
-      ? LEGACY_QUESTION_ADMISSION_PAID_UNIT
-      : QUESTION_ADMISSION_PAID_UNIT;
-  // An applied verdict from EITHER contract version is terminal for this base.
-  // A marked unknown upgrade cannot override a known paid verdict.
-  const [applied] = await tx
+    delivery.jobData == null || version === 3
+      ? QUESTION_ADMISSION_PAID_UNIT
+      : version === 2
+        ? PREVIOUS_QUESTION_ADMISSION_PAID_UNIT
+        : LEGACY_QUESTION_ADMISSION_PAID_UNIT;
+  // Lead-only YUK-1547 marker: names the exact same-base @2 row one marked @3
+  // send re-opens. Verified BEFORE any terminal short-circuit — a marker that
+  // names a missing or ineligible row fails the job, and it is never inferred.
+  const markedIdentity = version === 3 ? delivery.jobData?.reopen_paid_effect_identity : undefined;
+  const marker: AdmissionReopenMarker | undefined = markedIdentity
+    ? { unit: markedIdentity.unit, inputDigest: markedIdentity.input_digest }
+    : undefined;
+  let markedEligibility: 'unknown' | 'applied_conflict' | null = null;
+  if (marker) {
+    const [markedRow] = await tx
+      .select()
+      .from(paid_effect)
+      .where(
+        and(
+          eq(paid_effect.family, ADMISSION_FAMILY),
+          eq(paid_effect.entity_id, prepared.group_id),
+          eq(paid_effect.entity_revision, prepared.contract.integrity_digest),
+          eq(paid_effect.unit, marker.unit),
+          eq(paid_effect.input_digest, marker.inputDigest),
+        ),
+      )
+      .for('update')
+      .limit(1);
+    markedEligibility = markedRow
+      ? reopenMarkedRowEligibility({
+          state: markedRow.state,
+          application: markedRow.application_json,
+        })
+      : null;
+    // An applied-but-ordinary verdict falls through to the applied scan below,
+    // which returns the terminal 'applied' — the marker cannot override it.
+    if (markedEligibility == null && markedRow?.state !== 'applied') {
+      throw new Error(
+        `Question admission reopen marker does not name an eligible same-base ${marker.unit} row`,
+      );
+    }
+  }
+  // An applied verdict from ANY contract version is terminal for this base —
+  // except the single lead-marked @2 kind-mismatch solve_conflict reopen, which
+  // is the ONLY applied row this loop may pass over.
+  const appliedRows = await tx
     .select()
     .from(paid_effect)
     .where(
@@ -138,9 +256,20 @@ export async function claimAdmissionBatch(
         eq(paid_effect.state, 'applied'),
       ),
     )
-    .for('update')
-    .limit(1);
-  if (applied) {
+    .for('update');
+  for (const applied of appliedRows) {
+    if (
+      !appliedVerdictBlocksClaim(
+        {
+          unit: applied.unit,
+          inputDigest: applied.input_digest,
+          application: applied.application_json,
+        },
+        marker,
+      )
+    ) {
+      continue;
+    }
     const input = FrozenAdmissionInput.parse(applied.input_json);
     return {
       kind: 'applied' as const,
@@ -227,15 +356,20 @@ export async function claimAdmissionBatch(
   }
   if (snapshot?.state === 'sending' || snapshot?.state === 'unknown')
     return { kind: 'held' as const, input, identity };
-  if (options.historicalTerminal) return { kind: 'historical' as const, input, identity };
-  if (unit === LEGACY_QUESTION_ADMISSION_PAID_UNIT || !options.maySend)
+  // A terminal verification suppresses re-payment — except the marked @2 row
+  // this exact send is authorized to re-open. Normal jobs still see 'historical'.
+  if (options.historicalTerminal && markedEligibility == null)
+    return { kind: 'historical' as const, input, identity };
+  // Old-version deliveries keep reconciling their own unit's rows above but can
+  // never initiate a paid send under the @3 contract.
+  if (unit !== QUESTION_ADMISSION_PAID_UNIT || !options.maySend)
     return { kind: 'stale' as const, input, identity };
   await admitPaidEffectIntent(tx, effect);
   const claim = await claimPaidEffectSend(tx, identity, {
     backend: 'pg-boss',
     deliveryId: delivery.id,
     generation: delivery.jobData?.dispatch_generation ?? 0,
-    admissionUnknownInputDigest: delivery.jobData?.reopen_unknown_input_digest,
+    admissionReopenMarker: marker,
     leaseExpiresAt: new Date(Date.now() + 60 * 60_000),
   });
   if (claim.kind !== 'claimed') return { kind: 'held' as const, input, identity };

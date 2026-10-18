@@ -594,6 +594,9 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
   async recordToolCall(input: {
     toolName: string;
     inputJson: Record<string, unknown>;
+    outputJson?: Record<string, unknown>;
+    /** YUK-1547 — structured-submit evidence on a failed call. */
+    errorReason?: string;
     iteration: number;
     latencyMs: number;
   }): Promise<void> {
@@ -603,7 +606,8 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
         task_kind: this.kind,
         tool_name: input.toolName,
         input_json: input.inputJson,
-        output_json: {},
+        output_json: input.outputJson ?? {},
+        error_reason: input.errorReason,
         iteration: input.iteration,
         latency_ms: input.latencyMs,
         cost: 0,
