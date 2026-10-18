@@ -23,11 +23,13 @@ import { observeJudgeProcess } from '../judge-process-observer';
 // 调用 —— typed transport 归 src/server/ai/ 后续 lane（YUK-1049）。
 
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { resolveTaskBudget } from '@/capabilities/task-registry';
 import {
   evaluationMemberFromRows,
   freezeEvaluationInput,
   sameMemberSet,
 } from '@/core/assessment-input';
+import { assessmentRubricInvocationWindowMs } from '@/core/assessment-rubric-timeout';
 import { canonicalHash } from '@/core/migration/canonical';
 import {
   EvaluationContractError,
@@ -56,11 +58,19 @@ import {
 import { withinSessionAdvisoryLock } from '@/db/session-advisory-lock';
 import {
   type ActivateEvaluationRequestT,
+  ModelSliceRegistrationError,
   type SettlementObservers,
   activateEvaluation,
+  assertModelAdmissionSliceRegistrable,
   createJevModelExecutor,
   createPiModelExecutor,
+  createRubricModelExecutor,
+  currentModelPins,
+  gradingSliceMatchesLivePin,
   learningSettlement,
+  lookupGroupSubjects,
+  modelSliceIdFor,
+  registerModelAdmissionSlice,
   snapshotAssessmentLearningScope,
   withdrawCapturedOccurrence,
 } from '@/server/assessment/runtime';
@@ -74,7 +84,17 @@ import {
 import { createRecordedModelExecutor } from './recorded-model-executor';
 
 // Native assessment runtime ports are assembled at this existing capability boundary.
-export { snapshotAssessmentLearningScope, withdrawCapturedOccurrence };
+// YUK-1496 C2 — 留出题准入 job 经同一边界读取登记处（不新增跨层边）。
+export {
+  ModelSliceRegistrationError,
+  assertModelAdmissionSliceRegistrable,
+  currentModelPins,
+  lookupGroupSubjects,
+  modelSliceIdFor,
+  registerModelAdmissionSlice,
+  snapshotAssessmentLearningScope,
+  withdrawCapturedOccurrence,
+};
 
 /**
  * YUK-1092 — 装配描述符：在本模块组合点按 descriptor 铸
@@ -166,6 +186,12 @@ export class EvaluateSubmissionError extends Error {
   }
 }
 
+/** 细则判分的墙钟：解析后的单次超时，再加一次超时重试窗口。 */
+export function formalRubricDeadlineAt(now = Date.now()): number {
+  const timeoutMs = resolveTaskBudget('AssessmentRubricJudgeTask').timeout;
+  return now + assessmentRubricInvocationWindowMs(timeoutMs);
+}
+
 /** Published task identity selects a registered native executor; no URL/key override. */
 export function createFormalModelExecutor(
   db: Db,
@@ -175,7 +201,7 @@ export function createFormalModelExecutor(
 ): ModelUnitExecutorPort {
   const deadlineAt = Date.now() + 90_000;
   let admitted = false;
-  return createRecordedModelExecutor(
+  const recorded = createRecordedModelExecutor(
     db,
     (request, callerSignal, taskRunId) => {
       if (request.executor.task_kind === 'AssessmentRuleJudgeTask') {
@@ -188,12 +214,25 @@ export function createFormalModelExecutor(
           judgeRetryPolicy: admission === 'durable' ? 'none' : undefined,
         })(request, callerSignal);
       }
+      // YUK-1496 C2 — AI rubric lane（free 单元逐 criterion 评分细则）。
+      if (request.executor.task_kind === 'AssessmentRubricJudgeTask') {
+        return createRubricModelExecutor({
+          db,
+          deadlineAt: formalRubricDeadlineAt(),
+          signal,
+          taskRunId,
+          maxCostUsdMicros: request.executor.max_cost_usd_micros ?? 0,
+          judgeRetryPolicy: admission === 'durable' ? 'none' : undefined,
+          confirmLiveSlice: true,
+        })(request, callerSignal);
+      }
       return createJevModelExecutor({
         db,
         deadlineAt,
         signal,
         taskRunId,
         judgeRetryPolicy: admission === 'durable' ? 'none' : undefined,
+        confirmLiveSlice: true,
       })(request, callerSignal);
     },
     {
@@ -210,6 +249,49 @@ export function createFormalModelExecutor(
       },
     },
   );
+  return async (request, signal) => {
+    const sliceId = request.executor.admitted_slice_id;
+    // 只有登记处钉了 pin 的 task kind（细则 / Jev）才在付费前复核切片。
+    // AssessmentRuleJudgeTask 不在这张 pin 表里；它的切片 id 是历史占位，
+    // 拦下来会让规则判分在 claim 之前直接扣留。
+    if (sliceId !== null && currentModelPins().has(request.executor.task_kind)) {
+      const decision = await gradingSliceMatchesLivePin(db, sliceId, request.executor.task_kind);
+      if (!decision.ok) {
+        return {
+          kind: 'pending' as const,
+          pending: { reason: 'unjudgeable' as const, detail: decision.detail },
+          run_refs: [],
+        };
+      }
+    }
+    return recorded(request, signal);
+  };
+}
+
+/**
+ * YUK-1496 C2 — 留出题准入 run 的执行端口（model_slice_admission_run job）。
+ * 与正式入口同一装配边界，但【不】走 claim/result 存证 —— 准入 run 的证据是
+ * 自身的 run 事件行（逐题 agreement / severe error）+ 各 task_run 台账行，
+ * 不占用评估组的 claim 身份。未注册的判分 task kind ⇒ undefined（调用方拒跑）。
+ */
+export function createAdmissionRunExecutor(
+  db: Db,
+  taskKind: string,
+  deadlineAt: number,
+  maxCostUsdMicros: number,
+): ModelUnitExecutorPort | undefined {
+  if (taskKind === 'AssessmentRubricJudgeTask') {
+    return createRubricModelExecutor({
+      db,
+      deadlineAt,
+      maxCostUsdMicros,
+      judgeRetryPolicy: 'none',
+    });
+  }
+  if (taskKind === 'JevScoringDecisionTask') {
+    return createJevModelExecutor({ db, deadlineAt, judgeRetryPolicy: 'none' });
+  }
+  return undefined;
 }
 
 /**
@@ -250,6 +332,7 @@ export function resolveModelExecutor(
     ruleThreshold: executor.rule_threshold,
     advancedExecutor: executor.advanced_executor,
     signal: executor.signal,
+    confirmLiveSlice: true,
   });
 }
 

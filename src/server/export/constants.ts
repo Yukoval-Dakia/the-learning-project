@@ -110,7 +110,12 @@
 // sheets, so they ride the wipe-then-restore payload. item/page → export, and
 // item.issuance_id → assessment_issuance (that parent is earlier in FK_ORDER).
 // NEW FK_ORDER tables → bump 4.26 → 4.27.
-export const SCHEMA_VERSION = '4.27';
+// YUK-1496: model_admission_slice — admitted model-grading slices (subject ×
+// response_class × task_kind × model@version) with holdout evidence refs. Admission
+// evidence is authored truth, not derivable operational state; it must survive
+// restore or every AI-grader serving gate silently re-denies. Follows the
+// worksheet triplet already on main, so this branch is 4.28 / migration 0122.
+export const SCHEMA_VERSION = '4.28';
 
 export const SUBSCRIPTION_PROGRESS_TABLES = [
   'event_subscription_checkpoint',
@@ -340,6 +345,14 @@ export const FK_ORDER = [
   'worksheet_export',
   'worksheet_export_item',
   'worksheet_region_map_page',
+  // YUK-1496 (C2 / ADR-0073 D2): model_admission_slice — AI 判分准入切片台账
+  // （subject × response_class × task_kind × model@model_version + holdout 证据
+  // ref + admitted_by/at + status）。已准入证据是 authored 运营真相：丢了即灭失
+  // 「哪个判分切片被放行」的来由，非瞬态非派生 → FK_ORDER 非 BACKUP_EXCLUDED。
+  // 无 enforced FK（loose text-ref 惯例），位置不受 PG FK 约束；放在 worksheet
+  // 三表之后、paid-effect 之前，使尾部仍是 paid_effect_control → paid_effect →
+  // provider_attempt。NEW FK_ORDER table → SCHEMA_VERSION 4.28 / migration 0122。
+  'model_admission_slice',
   // No hard FK: restore owning backend/generation before its immutable effects.
   // Missing either table would turn an unknown paid outcome into bootstrap state.
   ...PAID_EFFECT_BACKUP_TABLES,

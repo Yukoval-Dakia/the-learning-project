@@ -694,6 +694,48 @@ export const question_admission_verification = pgTable(
 );
 
 /**
+ * YUK-1496 C2 — 模型判分准入切片登记处（统一设计 §4 准入门第 4 步 / ADR-0073
+ * D2「每科 ≥30 留出题的模型级准入」）。每一行 = 一个 (subject, response_class,
+ * task_kind, model, model_version) 切片经留出题实测后的准入事实，证据引用
+ * holdout_evidence_ref 指向逐题一致性记录（事件 id）。注册是显式 admin/worker
+ * 动作（model_slice_admission_run 或人工），dry run 不落行；退役经显式
+ * status='retired'，绝不物理删除（准入史实保留）。服务门只读 active 行。
+ */
+export const model_admission_slice = pgTable(
+  'model_admission_slice',
+  {
+    slice_id: text('slice_id').primaryKey(),
+    subject: text('subject').notNull(),
+    response_class: text('response_class', { enum: ['blank', 'free'] }).notNull(),
+    /** 注册的判分 task kind（typed task，如 JevScoringDecisionTask）。 */
+    task_kind: text('task_kind').notNull(),
+    /** 准入时实测的模型（请求 pin，如 typesafe/jev-1.13 / mimo-v2.5）。 */
+    model: text('model').notNull(),
+    /** 判分契约版本（typed：canonical 响应模型；chat：prompt 模板修订）。 */
+    model_version: text('model_version').notNull(),
+    /** 留出题实测证据引用（逐题 agreement / severe error 记录的事件 id）。 */
+    holdout_evidence_ref: text('holdout_evidence_ref').notNull(),
+    admitted_by: text('admitted_by').notNull(),
+    admitted_at: timestamp('admitted_at', { withTimezone: true }).notNull(),
+    status: text('status', { enum: ['active', 'retired'] })
+      .notNull()
+      .default('active'),
+  },
+  (t) => [
+    index('model_admission_slice_lookup_idx').on(t.subject, t.response_class, t.task_kind),
+    uniqueIndex('model_admission_slice_natural_key').on(
+      t.subject,
+      t.response_class,
+      t.task_kind,
+      t.model,
+      t.model_version,
+    ),
+    check('model_admission_slice_response_class_ck', sql`${t.response_class} IN ('blank','free')`),
+    check('model_admission_slice_status_ck', sql`${t.status} IN ('active','retired')`),
+  ],
+);
+
+/**
  * 发题（serve-time binding，§3.1）：发题时冻结 revision、目标 part、实际
  * 材料 digest 与选项呈现映射 —— 提交时不得再取 latest。claim 状态在此行
  * （one_time 用于诊断/probe/教学一次性占用；§3.3）。
