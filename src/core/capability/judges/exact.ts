@@ -173,8 +173,8 @@ function run(input: JudgeRunInput): JudgeResultV2T {
 
   // YUK-1407 — 头比较 miss 后确定性抽明示终态再比一次："推导…S5=11" 的 head
   // 是整段推导（无解析 tail），与 "11" 不等 ⇒ 旧行为直接 incorrect。
-  // 提取不到/矛盾/过程文本 miss ⇒ unsupported('process_answer_unresolvable')，
-  // 由调用方（invoker）决定是否升级既有 SemanticJudge —— 不假装 0 分。
+  // 提取不到/矛盾/过程文本 miss ⇒ unsupported('process_answer_unresolvable') ——
+  // 如实上报不假装 0 分；语义升级推迟到 executor+admission 切片（YUK-1407 后续）。
   const finalAnswer = extractFinalAnswer(input.answer.content);
   if (finalAnswer.kind === 'found') {
     const finalHit = finalAnswer.values.some(

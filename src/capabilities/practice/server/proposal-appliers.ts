@@ -44,7 +44,6 @@ import type { Db, Tx } from '@/db/client';
 import {
   cause_category_overlay,
   evaluation,
-  evaluation_effective_head,
   event,
   mistake_variant,
   question,
@@ -1558,6 +1557,8 @@ async function applyManualAssertCorrection(
     correctionEventId: string;
     reasonMd: string;
     assertedVerdicts: { scoring_unit_id: string; verdict: 'correct' | 'incorrect' }[];
+    /** proposal 创建时冻结的 head 期望（P1 review）——CAS 按此比对，不现读。 */
+    expectedHead: { effectiveEvaluationId: string | null; generation: number };
   },
 ): Promise<{ correctedEvaluationId: string; disposition: string }> {
   const { evaluateAttempt } = await import('./judge/evaluation-authority');
@@ -1668,15 +1669,12 @@ async function applyManualAssertCorrection(
   });
   const candidateId = candidate.evaluation.record.evaluation_id;
 
-  const [head] = await db
-    .select()
-    .from(evaluation_effective_head)
-    .where(eq(evaluation_effective_head.evaluation_group_id, original.evaluation_group_id))
-    .limit(1);
+  // P1 review — CAS 期望来自 proposal 冻结快照，不是 accept 时的现值：head
+  // 已移动 ⇒ activation 返回 conflict，重放是非变异性的，绝不覆盖后到的 B。
   const intent = ActivateEvaluationIntent.parse({
     evaluation_id: candidateId,
-    expected_effective_id: head?.effective_evaluation_id ?? null,
-    expected_generation: head?.generation ?? 0,
+    expected_effective_id: input.expectedHead.effectiveEvaluationId,
+    expected_generation: input.expectedHead.generation,
   });
   let disposition: string;
   if (candidate.evaluation.record.status === 'completed') {
@@ -1734,21 +1732,24 @@ export async function acceptJudgeRetractionProposal(
   if (target.subject_kind === 'evaluation') {
     const evaluationId = requiredString(change.evaluation_id, 'evaluation_id', proposalId);
     const correctionKind = change.correction_kind === 'assert' ? 'assert' : 'rejudge';
+    // P1 review — 冻结的 head 期望必须随 proposal 落库（服务端观测，非 agent
+    // 提供）。缺字段 ⇒ 无法证明观察时点，拒绝而不是悄悄按 accept 时的 head
+    // 重订 —— 否则过期提案/重试会把后到的纠错 B 覆盖回 A。
+    const expectedEffectiveId =
+      change.expected_effective_id === null
+        ? null
+        : requiredString(change.expected_effective_id, 'expected_effective_id', proposalId);
+    if (typeof change.expected_generation !== 'number' || change.expected_generation < 0) {
+      throw new ApiError(
+        'validation_error',
+        `proposal ${proposalId} is missing required proposed_change.expected_generation`,
+        400,
+      );
+    }
+    const expectedGeneration = change.expected_generation;
 
     const existingRate = await existingAcceptRate(db, proposalId);
     const existingCorrection = await findProposalCorrectionEvent(db, proposalId);
-    // rejudge 全链 = 写 correction event + 入队 —— 两者都已存在即幂等完成。
-    // assert 不落这里：它的幂等重放由 evaluateSubmission 的 evaluation_key +
-    // activation CAS + 确定性 resolution 事件保证，重试必须重跑全链。
-    if (correctionKind === 'rejudge' && existingRate && existingCorrection) {
-      return {
-        kind: 'judge_retraction',
-        rate_event_id: existingRate.id,
-        correction_event_id: existingCorrection,
-        disposition: 'already_applied',
-        idempotent: true,
-      };
-    }
 
     const { requestEvaluationCorrection } = await import('./assessment/appeal');
     const correctionEventId =
@@ -1757,18 +1758,30 @@ export async function acceptJudgeRetractionProposal(
         evaluation_id: evaluationId,
         reason_md: reasonMd,
         proposal_event_id: proposalId,
+        expected_effective_id: expectedEffectiveId,
+        expected_generation: expectedGeneration,
       }));
 
-    const rate = existingRate
-      ? { rate_event_id: existingRate.id, rate_at: existingRate.created_at }
-      : await writeProposalRateEvent(db, proposalId, 'accept', opts.user_note);
-
     if (correctionKind === 'rejudge') {
-      // enqueue 只在首次写纠错请求时发生；重试（已有 correction event）不重排。
-      if (!existingCorrection) {
-        const enqueue = opts.enqueueRejudge ?? defaultEnqueueRejudge;
-        await enqueue(correctionEventId);
+      // P1 review — durable correction event / accept rate 都不是投递证明：
+      // crash/throw 可能把 job 留在未投态。任何路径都先补一遍 singleton
+      // enqueue —— 60s 窗口内 send 返回 null 不产生 dup job；窗口外的
+      // dup job 由 handler 的 appealAlreadyResolved + activation CAS 幂等
+      // 兜底 —— 之后才判定 done。顺序：correction event → enqueue → rate。
+      const enqueue = opts.enqueueRejudge ?? defaultEnqueueRejudge;
+      await enqueue(correctionEventId);
+      if (existingRate && existingCorrection) {
+        return {
+          kind: 'judge_retraction',
+          rate_event_id: existingRate.id,
+          correction_event_id: existingCorrection,
+          disposition: 'already_applied',
+          idempotent: true,
+        };
       }
+      const rate = existingRate
+        ? { rate_event_id: existingRate.id, rate_at: existingRate.created_at }
+        : await writeProposalRateEvent(db, proposalId, 'accept', opts.user_note);
       await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
       return {
         kind: 'judge_retraction',
@@ -1793,16 +1806,23 @@ export async function acceptJudgeRetractionProposal(
         400,
       );
     }
+    const rate = existingRate
+      ? { rate_event_id: existingRate.id, rate_at: existingRate.created_at }
+      : await writeProposalRateEvent(db, proposalId, 'accept', opts.user_note);
     // assert 幂等：manual_assert 的 evaluation_key（correction:<proposalId>）在
     // evaluateSubmission 里按 intent_digest 重放同一 candidate；activation CAS
-    // 命中已激活则 already_effective；resolution 事件按确定性 id 只写一次。
-    // 因此即使上一轮在写 correction event 后中途失败，重试仍可安全重跑全链。
+    // 以 proposal 冻结期望比对 —— head 已动则 conflict（非变异性），命中已激
+    // 活则 already_effective；resolution 事件按确定性 id 只写一次。
     const outcome = await applyManualAssertCorrection(db, {
       proposalId,
       evaluationId,
       correctionEventId,
       reasonMd,
       assertedVerdicts,
+      expectedHead: {
+        effectiveEvaluationId: expectedEffectiveId,
+        generation: expectedGeneration,
+      },
     });
     await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
     return {

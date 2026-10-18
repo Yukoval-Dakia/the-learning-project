@@ -196,9 +196,18 @@ const DECLARATION_LINE_RE =
 const LAST_LINE_CONCLUSION_RE =
   /^\s*(?:所以|因此|故|综上(?:所述)?|即|∴)\s*[：:，,．.]?\s*(\S.*?)\s*$/u;
 const CONCLUSION_TAIL_RE = /(?:所以|因此|故|即|∴|为)\s*([^.。!！;；，,]+?)\s*[.。!！]?$/u;
-const TRAILING_EQUALITY_RE = /([^<>=!≤≥≠≈∈\s][^=\n]*?)\s*[=＝]\s*(\S[^=]*?)\s*[.。!！]?\s*$/u;
-const FINAL_TRAILING_PUNCT_RE = /[\s。．.，,；;：:、*（）()]+$/u;
+const TRAILING_EQUALITY_RE =
+  /([^<>=!≤≥≠≈∈\s][^<>!≤≥≠≈∈=\n]*?)\s*[=＝]\s*(\S[^=]*?)\s*[.。!！]?\s*$/u;
+const FINAL_TRAILING_PUNCT_RE = /[\s。．.，,；;：:、!！?？*（）()]+$/u;
 const COPULA_RE = /[为得是]\s*(\S[^为得是]*)$/u;
+/**
+ * 不安全提取守卫（P1 review）：否定（不是/不等/不得/并非）、比较符（<、>、
+ * ≤、≥、≠、!=）与多重等号 —— 确定性契约无法证明其语义的值绝不进 found，
+ * 只进 unsafe ⇒ ambiguous（人审裁决）。绝不把「答案不是11」经 copula 剥成
+ * 「11」给满分，也不把「x<=11」「S5=10=11」的数字碎片当终态。「S5=31=11」
+ * 这类无法证明同值的链式写法同样走 ambiguous —— 保守未决好过凭数字碎片发分。
+ */
+const UNSAFE_EXTRACT_RE = /≠|≤|≥|<=|>=|<|>|!=|不[是等得]|并非/u;
 
 function canonicalFinal(value: string): string {
   return value
@@ -237,19 +246,43 @@ export function extractFinalAnswer(text: string): FinalAnswerExtraction {
     value: string;
     marker: 'answer_marker' | 'conclusion_marker' | 'trailing_equality';
   }[] = [];
+  // 否定/比较/多重等号：无法确定性证明语义 → 永不进 found；存在即整体
+  // ambiguous（人审裁决），即使另有安全候选——安全+不安全并存同样不可裁。
+  const unsafe: string[] = [];
+  const collect = (
+    value: string,
+    marker: 'answer_marker' | 'conclusion_marker' | 'trailing_equality',
+  ) => {
+    if (UNSAFE_EXTRACT_RE.test(value) || value.indexOf('=') !== value.lastIndexOf('=')) {
+      unsafe.push(value);
+    } else {
+      found.push({ value, marker });
+    }
+  };
 
   for (const line of lines) {
     const declaration = line.match(DECLARATION_LINE_RE);
-    if (declaration?.[1]) found.push({ value: declaration[1], marker: 'answer_marker' });
+    if (declaration?.[1]) collect(declaration[1], 'answer_marker');
   }
   const lastLine = lines[lines.length - 1];
   if (lastLine !== undefined) {
     const conclusion = lastLine.match(LAST_LINE_CONCLUSION_RE);
-    if (conclusion?.[1]) found.push({ value: conclusion[1], marker: 'conclusion_marker' });
+    if (conclusion?.[1]) collect(conclusion[1], 'conclusion_marker');
     const tail = lastLine.match(CONCLUSION_TAIL_RE);
-    if (tail?.[1]) found.push({ value: tail[1], marker: 'conclusion_marker' });
+    if (tail?.[1]) collect(tail[1], 'conclusion_marker');
     const equality = lastLine.match(TRAILING_EQUALITY_RE);
-    if (equality?.[2]) found.push({ value: equality[2], marker: 'trailing_equality' });
+    if (equality?.[2]) {
+      // 行内多重等号（"S5=10=11"）：尾随等式只抓到链条最后一环，无法证明
+      // 各环节同值 → 按 unsafe 处理，绝不把最后一环数字当终态。
+      if (lastLine.split('=').length - 1 > 1) unsafe.push(equality[2]);
+      else collect(equality[2], 'trailing_equality');
+    }
+  }
+  if (unsafe.length > 0) {
+    return {
+      kind: 'ambiguous',
+      candidates: [...new Set([...found.map((entry) => entry.value), ...unsafe])],
+    };
   }
 
   // 每条提取项展开成规范值集合（"S5=11" → {s5=11,11} —— 同一结论的左右面）。

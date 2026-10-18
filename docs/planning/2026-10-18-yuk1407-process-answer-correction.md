@@ -31,6 +31,10 @@ declared comparators"），且当前无 text_key 的已准入模型切片（D17�
   显式 `答：/答案：/所以/因此/故/综上/即/∴` 结论标记行、末段结论从句、
   末行尾随 `X = v` 等式右侧；多个互相矛盾的候选 → `ambiguous`；
   找不到 → `none`。不含"最后一个数字"之类的弱启发式。
+- **不安全提取守卫（R1 review）**：捕获值含否定（不是/不等/不得/并非）、
+  比较符（< > ≤ ≥ ≠ !=）或行内多重等号（`S5=10=11`）⇒ 整体 `ambiguous`
+  —— 确定性契约无法证明语义时保守未决，绝不把「答案不是11」经 copula
+  剥成「11」给满分，也不把矛盾等式链的末环当终态。
 - `isProcessLikeAnswer(text)`：多行/多句段、含推导标记或超出短答长度的
   文本视为"过程作答"。
 
@@ -62,7 +66,7 @@ declared comparators"），且当前无 text_key 的已准入模型切片（D17�
 （submit 响应 `judge.evidence_json`、judge_run DONE、双轨裁决读模型）。
 confidence 语义不变（确定性=1，未决=0）。
 
-### D. legacy/V2 exact 判官同形修复 + invoker 语义升级
+### D. legacy/V2 exact 判官同形修复（语义升级已推迟）
 
 `src/core/capability/judges/exact.ts` 与
 `src/capabilities/practice/server/judge/exact.ts` 在 head-miss 后同样走
@@ -70,10 +74,9 @@ confidence 语义不变（确定性=1，未决=0）。
 `unsupported`（证据标注 `process_answer_unresolvable`），V1 维持 incorrect
 但 evidence 显式标注（calibration 面可读差异）。
 
-`src/capabilities/practice/server/judge/invoker.ts`：exact 路由返回
-`unsupported` 且原因为 `process_answer_unresolvable` 时，升级为既有
-`runSemanticJudge`（唯一已接线的语义判官；失败→unsupported 如实上报）。
-这是"existing SemanticJudge"在当前架构里唯一可达的位置。
+**语义升级不在本 PR**：coordinator 终态范围 —— SemanticJudge fallback 推迟到
+executor + admission 就绪的独立小切片。invoker 不新增语义回退，
+`process_answer_unresolvable` 如实透传 `unsupported`（诚实未判，不伪零）。
 
 ### E. 可逆纠错 proposal（agent → 人审 → 既有 appeal/replay 链）
 
@@ -83,12 +86,21 @@ confidence 语义不变（确定性=1，未决=0）。
   `evaluation_id`/`correction_kind`(`rejudge`|`assert`)/`reason_md`/
   `observed` 快照/可选 `asserted_unit_results`。
 - 接受面：`judgeRetractionProposalAcceptApplier`（practice proposal-appliers）
-  —— evaluation 目标：写 `experimental:appeal_request`（expected head =
-  **当前** head，允许非 effective 的未决评价）→ `rejudge` job 走既有
+  —— evaluation 目标：写 `experimental:appeal_request` → `rejudge` job 走既有
   异步重判链（rejudgeNativeAppeal 重评冻结输入 → activateSubmissionCandidate
   CAS → settlement replay 自动回算 FSRS/θ/掌握度）；`correction_kind:'assert'`
   时以 `manual_assert` 模式同步产出人工判 candidate 再激活。
   legacy judge-event 目标：写 `correct`/`retract` 事件（既有事件纠偏链）。
+- **并发/重试纪律（R1 review）**：
+  - proposal 创建时在组 advisory lock 下读 `evaluation_effective_head`，把
+    `expected_effective_id`/`expected_generation` 冻结进 proposed_change；
+    accept 与 activation CAS 只认该快照 —— head 已移动 ⇒ `stale_correction_target`
+    拒绝（重报新提案）或 CAS `conflict` 如实返回，绝不静默 rebase 覆盖后到纠错。
+    已完成 accept 的重放天然非变异（evaluation_key 重放 + CAS + 确定性事件 id）。
+  - durable correction event / accept rate 都不是投递证明：rejudge 路径任何
+    重试都先补一遍 singleton enqueue（`singletonKey=correctionEventId`，60s
+    窗口内去重；窗口外 dup job 由 handler `appealAlreadyResolved` + activation
+    CAS 幂等兜底）再判定完成 —— crash 于 event/rate 任一阶段都能安全续投。
 - `acceptSupportedProposalKinds` 纳入 `judge_retraction`，strength C→B
   （人审档位，不是自动执行）；`scripts/audit-architecture-deepening.ts` 的
   `producerOnlyKinds` 同步移除该 kind。

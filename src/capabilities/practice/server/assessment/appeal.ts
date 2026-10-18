@@ -86,6 +86,14 @@ export async function requestEvaluationCorrection(
     evaluation_id: string;
     reason_md?: string;
     proposal_event_id: string;
+    /**
+     * P1 review — proposal 创建时服务端观测的 head 快照。写请求时按组锁校验
+     * 当前 head 仍等于该快照（防过期提案/重试把后落地的纠错 B 覆盖回 A）；
+     * 快照原样入 appeal payload，成为后续 rejudge/activation CAS 的期望。
+     * null/0 = 组无 head（全未决评价也可被纠错）。
+     */
+    expected_effective_id: string | null;
+    expected_generation: number;
   },
 ) {
   const reason = input.reason_md ?? '';
@@ -122,6 +130,16 @@ export async function requestEvaluationCorrection(
       .from(evaluation_effective_head)
       .where(eq(evaluation_effective_head.evaluation_group_id, original.evaluation_group_id))
       .limit(1);
+    if (
+      (head?.effective_evaluation_id ?? null) !== input.expected_effective_id ||
+      (head?.generation ?? 0) !== input.expected_generation
+    ) {
+      throw new ApiError(
+        'stale_correction_target',
+        'the group head moved since the correction proposal was filed — file a fresh proposal against the new head instead of rebasing this one',
+        409,
+      );
+    }
     await writeEvent(tx, {
       id: correctionId,
       actor_kind: 'user',
@@ -134,8 +152,8 @@ export async function requestEvaluationCorrection(
       payload: {
         reason_md: reason,
         evaluation_group_id: original.evaluation_group_id,
-        expected_effective_id: head?.effective_evaluation_id ?? null,
-        expected_generation: head?.generation ?? 0,
+        expected_effective_id: input.expected_effective_id,
+        expected_generation: input.expected_generation,
         proposal_event_id: input.proposal_event_id,
       },
     });

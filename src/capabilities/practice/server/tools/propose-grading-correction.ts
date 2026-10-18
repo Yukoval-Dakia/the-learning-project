@@ -66,6 +66,7 @@ async function executeProposeGradingCorrection(
     .select({
       evaluation_id: evaluation.evaluation_id,
       status: evaluation.status,
+      evaluation_group_id: evaluation.evaluation_group_id,
       submission_id: evaluation.submission_id,
       aggregate: evaluation.aggregate,
       unit_results: evaluation.unit_results,

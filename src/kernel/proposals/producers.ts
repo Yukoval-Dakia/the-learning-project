@@ -1,8 +1,8 @@
-import { eq, inArray } from 'drizzle-orm';
+import { eq, inArray, sql } from 'drizzle-orm';
 import type { SuggestionKindT } from '@/core/schema/event/known';
 import type { ProposalEvidenceRefT } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
-import { evaluation, event } from '@/db/schema';
+import { evaluation, evaluation_effective_head, event } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { writeAiProposal } from './writer';
 
@@ -467,7 +467,8 @@ export interface WriteEvaluationCorrectionProposalInput extends CommonProducerIn
  * 判词 → 422。
  *
  * accept 语义（practice proposal-accept-applier）：
- *   - rejudge → 写 `experimental:appeal_request`（expected head = 当前 head）
+ *   - rejudge → 写 `experimental:appeal_request`（expected head = 本提案创建
+ *     时快照，transport 到 activation CAS —— head 已动则冲突，不静默重订）
  *     入既有异步重判链（rejudge job → 冻结输入重评 → activation CAS →
  *     settlement replay 回算学习效应）；
  *   - assert  → 以 asserted_verdicts 同步产出 manual_assert candidate 并激活。
@@ -477,68 +478,88 @@ export async function writeEvaluationCorrectionProposal(
   db: DbLike,
   input: WriteEvaluationCorrectionProposalInput,
 ): Promise<string> {
-  const [target] = await db
-    .select({
-      evaluation_id: evaluation.evaluation_id,
-      status: evaluation.status,
-      evaluation_group_id: evaluation.evaluation_group_id,
-      submission_id: evaluation.submission_id,
-    })
-    .from(evaluation)
-    .where(eq(evaluation.evaluation_id, input.evaluation_id))
-    .limit(1);
-  if (!target) {
-    throw new ApiError('not_found', `evaluation ${input.evaluation_id} not found`, 404);
-  }
-  if (target.status !== 'completed') {
-    throw new ApiError(
-      'not_correctable',
-      'a pending evaluation attempt is retryable infra state, not a correctable verdict',
-      422,
+  return db.transaction(async (tx) => {
+    const [target] = await tx
+      .select({
+        evaluation_id: evaluation.evaluation_id,
+        status: evaluation.status,
+        evaluation_group_id: evaluation.evaluation_group_id,
+        submission_id: evaluation.submission_id,
+      })
+      .from(evaluation)
+      .where(eq(evaluation.evaluation_id, input.evaluation_id))
+      .limit(1);
+    if (!target) {
+      throw new ApiError('not_found', `evaluation ${input.evaluation_id} not found`, 404);
+    }
+    if (target.status !== 'completed') {
+      throw new ApiError(
+        'not_correctable',
+        'a pending evaluation attempt is retryable infra state, not a correctable verdict',
+        422,
+      );
+    }
+    const correctionKind = input.correction_kind ?? 'rejudge';
+    if (
+      correctionKind === 'assert' &&
+      (!Array.isArray(input.asserted_verdicts) || input.asserted_verdicts.length === 0)
+    ) {
+      throw new ApiError(
+        'validation_error',
+        "correction_kind='assert' requires non-empty asserted_verdicts",
+        400,
+      );
+    }
+    // P1 review — head 快照在组锁下、与 proposal 写入同事务内读取：accept 时
+    // 把该冻结期望运进 correction request 与 activation CAS —— head 已移动
+    // ⇒ 拒绝/冲突，绝不把过期 proposal 静默 rebase 到新 head。服务端派生，
+    // 不可由 agent 提供。null/0 = 组无 head（全未决评价也可被纠错）。
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtext('assessment-evaluation-group'), hashtext(${target.evaluation_group_id}))`,
     );
-  }
-  const correctionKind = input.correction_kind ?? 'rejudge';
-  if (
-    correctionKind === 'assert' &&
-    (!Array.isArray(input.asserted_verdicts) || input.asserted_verdicts.length === 0)
-  ) {
-    throw new ApiError(
-      'validation_error',
-      "correction_kind='assert' requires non-empty asserted_verdicts",
-      400,
-    );
-  }
-  const evidenceRefs: ProposalEvidenceRefT[] = [...(input.evidence_refs ?? [])];
-  if (input.attempt_event_id && !evidenceRefs.some((ref) => ref.id === input.attempt_event_id)) {
-    evidenceRefs.unshift({ kind: 'event', id: input.attempt_event_id });
-  }
+    const [head] = await tx
+      .select()
+      .from(evaluation_effective_head)
+      .where(eq(evaluation_effective_head.evaluation_group_id, target.evaluation_group_id))
+      .limit(1);
+    const expectedHead = {
+      effective_evaluation_id: head?.effective_evaluation_id ?? null,
+      generation: head?.generation ?? 0,
+    };
+    const evidenceRefs: ProposalEvidenceRefT[] = [...(input.evidence_refs ?? [])];
+    if (input.attempt_event_id && !evidenceRefs.some((ref) => ref.id === input.attempt_event_id)) {
+      evidenceRefs.unshift({ kind: 'event', id: input.attempt_event_id });
+    }
 
-  return writeAiProposal(db, {
-    id: input.id,
-    actor_ref: input.actor_ref ?? 'copilot',
-    payload: {
-      kind: 'judge_retraction',
-      target: { subject_kind: 'evaluation', subject_id: input.evaluation_id },
-      reason_md: input.reason_md,
-      evidence_refs: evidenceRefs,
-      suggestion_kind: 'corrective',
-      proposed_change: {
-        evaluation_id: input.evaluation_id,
-        evaluation_group_id: target.evaluation_group_id,
-        submission_id: target.submission_id,
-        correction_kind: correctionKind,
-        ...(input.asserted_verdicts ? { asserted_verdicts: input.asserted_verdicts } : {}),
-        observed: input.observed ?? {},
+    return writeAiProposal(tx, {
+      id: input.id,
+      actor_ref: input.actor_ref ?? 'copilot',
+      payload: {
+        kind: 'judge_retraction',
+        target: { subject_kind: 'evaluation', subject_id: input.evaluation_id },
         reason_md: input.reason_md,
+        evidence_refs: evidenceRefs,
+        suggestion_kind: 'corrective',
+        proposed_change: {
+          evaluation_id: input.evaluation_id,
+          evaluation_group_id: target.evaluation_group_id,
+          submission_id: target.submission_id,
+          correction_kind: correctionKind,
+          expected_effective_id: expectedHead.effective_evaluation_id,
+          expected_generation: expectedHead.generation,
+          ...(input.asserted_verdicts ? { asserted_verdicts: input.asserted_verdicts } : {}),
+          observed: input.observed ?? {},
+          reason_md: input.reason_md,
+        },
+        rollback_plan: {
+          action:
+            'dismiss proposal — no evaluation changes; an accepted correction is itself a new evaluation/correction event and can be re-corrected by a further proposal',
+        },
+        cooldown_key: `judge_retraction:${input.evaluation_id}`,
       },
-      rollback_plan: {
-        action:
-          'dismiss proposal — no evaluation changes; an accepted correction is itself a new evaluation/correction event and can be re-corrected by a further proposal',
-      },
-      cooldown_key: `judge_retraction:${input.evaluation_id}`,
-    },
-    task_run_id: input.task_run_id ?? null,
-    cost_usd: input.cost_usd,
-    created_at: input.created_at,
+      task_run_id: input.task_run_id ?? null,
+      cost_usd: input.cost_usd,
+      created_at: input.created_at,
+    });
   });
 }
