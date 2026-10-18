@@ -8,6 +8,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      # YUK-1529 — 末位 stage 已是 worker（带 Chromium）；不显式 target 会
+      # 构建到 worker。app/migrate/mem0-init 全部钉 runner，保持 app 镜像不变。
+      target: runner
     command: ["node", "dist/migrate.cjs"]
     env_file:
       - .env
@@ -24,6 +27,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      # 见 migrate 上的 YUK-1529 注：必须钉 runner，否则吃到 worker 的
+      # Chromium 层和 worker.cjs CMD。
+      target: runner
     image: the-learning-project-app
     env_file:
       - .env
@@ -71,6 +77,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      # 同上（YUK-1529）：钉 runner。
+      target: runner
     user: "0:0"
     command: ["sh", "-c", "chown -R node:node /var/lib/mem0"]
     volumes:

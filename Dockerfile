@@ -109,8 +109,9 @@ USER node
 CMD ["node", "dist/server.cjs"]
 
 # YUK-1529 — worker 镜像：runner + 无头 Chromium（worksheet_render job 的
-# playwright-core）。app/migrate/mem0-init 仍构建 runner（target 缺省），镜像
-# 不变；只有 compose worker 服务指向本 target。
+# playwright-core）。末位 stage 是 worker，所有用本 Dockerfile 的 compose
+# 服务必须显式钉 target：app/migrate/mem0-init → runner（镜像不变），只有
+# worker 服务 → worker。
 # Chromium 版本由 playwright-core@1.64.0 的 browsers.json 钉死；只装
 # chromium-headless-shell（job 全程无头），不带完整 headed chromium。
 FROM runner AS worker
