@@ -24,6 +24,7 @@ import { db } from '@/db/client';
 import { question } from '@/db/schema';
 import { ApiError, errorResponse } from '@/kernel/http';
 import { assertKnowledgeIdsExist } from '@/kernel/read-models/knowledge-validate';
+import { readQuestionServing } from '@/kernel/read-models/question-serving';
 import { loadQuestionDetail } from '@/server/questions/detail';
 import {
   BLOODLINE_FIELDS,
@@ -85,6 +86,17 @@ export async function GET(req: Request, params: Record<string, string>): Promise
     ) {
       throw new ApiError('not_found', `question ${parsed.data.id} not found`, 404);
     }
+    // YUK-1514 — same serving projection as the list items (a part row reports
+    // its own per-part verdict with the group's shared hold facts).
+    const serving =
+      (await readQuestionServing(db, [detail.id])).byId.get(detail.id) ??
+      ({
+        servable: false,
+        hold_reason: null,
+        held_since: null,
+        next_action: null,
+        pending_action: null,
+      } as const);
     if (detail.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE) {
       const [diagnosticRow] = await db
         .select({
@@ -129,6 +141,7 @@ export async function GET(req: Request, params: Record<string, string>): Promise
         backlinks_by_intent_source: {},
         timeline: [],
         committed_attempt: committedAttempt,
+        serving,
       });
     }
     if (surface === 'practice') {
@@ -140,9 +153,10 @@ export async function GET(req: Request, params: Record<string, string>): Promise
         source_ref: null,
         backlinks: [],
         backlinks_by_intent_source: {},
+        serving,
       });
     }
-    return Response.json(detail);
+    return Response.json({ ...detail, serving });
   } catch (err) {
     return errorResponse(err);
   }
