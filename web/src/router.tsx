@@ -40,6 +40,7 @@ import {
   loadPracticeFacePage,
   loadQuestionDetailPage,
   loadQuestionsPage,
+  loadWorksheetPrintPage,
 } from '@/capabilities/practice/ui-public';
 import { loadCoachHub, loadInboxPage, loadTodayPage } from '@/capabilities/shell/ui-public';
 import { surfacePath } from '@/kernel/ui-surfaces';
@@ -374,6 +375,28 @@ const questionDetailRoute = createRoute({
   component: QuestionDetailRouteC,
 });
 
+// YUK-1528 — 作答卷印刷页。RootShell 对 /print/ 走裸路径（无壳）；渲染任务读
+// <html data-worksheet-state> 与 window.__tlpWorksheetRegionMap()。`?overlay=1` 叠画量出的区域。
+const WorksheetPrintRouteC = lazyRouteComponent(async () => {
+  const WorksheetPrintPage = await loadWorksheetPrintPage();
+
+  function WorksheetPrintRouteComponent() {
+    const { token } = worksheetPrintRoute.useParams();
+    const overlay = useRouterState({
+      select: (state) => new URLSearchParams(state.location.searchStr).get('overlay') === '1',
+    });
+    return <WorksheetPrintPage token={token} overlay={overlay} />;
+  }
+
+  return { default: WorksheetPrintRouteComponent };
+});
+
+const worksheetPrintRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: surfacePath('worksheet-print'),
+  component: WorksheetPrintRouteC,
+});
+
 // M3-T6 (YUK-317) — 知识面：图谱页 + 节点详情页。
 const KnowledgeIndexRoute = lazyNavigableRoute(loadKnowledgePage);
 
@@ -585,6 +608,7 @@ const routeTree = rootRoute.addChildren([
   draftsRoute,
   questionsRoute,
   questionDetailRoute,
+  worksheetPrintRoute,
   knowledgeRoute,
   knowledgeDetailRoute,
   notesRoute,

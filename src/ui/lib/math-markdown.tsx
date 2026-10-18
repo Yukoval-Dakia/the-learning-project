@@ -55,6 +55,15 @@ function loadMathPlugins(): Promise<MathPlugins> {
   return mathPluginsPromise;
 }
 
+/**
+ * Resolves once the KaTeX plugins (and their stylesheet) are loaded, so mounted math renders can
+ * switch from the plain-markdown fallback. Used by the worksheet print page to know when formulas
+ * are typeset before it reports ready (YUK-1528).
+ */
+export function preloadMathPlugins(): Promise<void> {
+  return loadMathPlugins().then(() => undefined);
+}
+
 // A non-browser render (SSR / react-dom/server renderToString, incl. the repo's
 // SSR unit tests) never subscribes, so the lazy client path below never runs.
 // Warm the plugin cache at module evaluation there so KaTeX renders synchronously
