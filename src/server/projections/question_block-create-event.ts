@@ -46,7 +46,7 @@ export interface WriteQuestionBlockCreateEventParams {
   /** The freshly INSERTed/overwritten row, from `.returning()` (the authoritative after-state). */
   row: QuestionBlockRow;
   /** Creation provenance discriminator (design §3 #6). `rescue` overwrites an existing blockId. */
-  origin: 'ocr' | 'rescue' | 'docx' | 'import';
+  origin: 'ocr' | 'rescue' | 'docx' | 'import' | 'edit_draft';
   actorKind: 'agent' | 'user' | 'system';
   actorRef: string;
   /**

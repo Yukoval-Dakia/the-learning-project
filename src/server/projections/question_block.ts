@@ -101,7 +101,9 @@ async function upsertProjectedQuestionBlock(
     source_document_id: projected.source_document_id,
     source_asset_ids: projected.source_asset_ids,
     page_spans: projected.page_spans,
-    structured: projected.structured,
+    // YUK-1468 — 快照结构化内容是 legacy|v2 联合；列运行时存 JSONB（v2 文档
+    // 由编辑面写入），TS 窄类型经 cast 如实透传。
+    structured: projected.structured as typeof question_block.$inferInsert.structured,
     figures: projected.figures,
     layout_quality: projected.layout_quality,
     reference_md: projected.reference_md,

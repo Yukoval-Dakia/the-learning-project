@@ -346,6 +346,8 @@ describe('bank tools boundary invariants (search_bank / read_bank / check_bank)'
     expect(item.coverage.unavailable.join(' ')).toContain('bt_missing_asset');
     const material = (item.materials ?? []).find((m) => m.asset.asset_id === 'bt_missing_asset');
     expect(material?.asset.present).toBe(false);
+    // 缺文件不能被标成已核对；null = 行不在，和「摘要比对通过」区分开。
+    expect(material?.asset.digest_verified).toBeNull();
     // A present verified figure must succeed; this catches prefix-only false gaps.
     await db.insert(source_asset).values({
       id: 'bt_present_asset',
@@ -371,15 +373,33 @@ describe('bank tools boundary invariants (search_bank / read_bank / check_bank)'
     });
     const presentPub = await publishAdmitted('bt_present');
     const presentRef = encodeBankRef(presentPub.revision_id, presentPub.revision_digest);
-    const presentRead = await readBankTool.execute(
+    // 默认 overview 不带材料，但任何 include 都核验二进制资产。在场且摘要相符
+    // 时这里必须完整，用来抓住「裸 sha256 对不上 sha256: 前缀」的假缺口。
+    const overview = await readBankTool.execute(
       ctx,
       readBankTool.inputSchema.parse({ refs: [presentRef] }),
+    );
+    const overviewItem = overview.items[0];
+    expect(overviewItem.status).toBe('ok');
+    if (overviewItem.status !== 'ok') return;
+    expect(overviewItem.coverage.complete).toBe(true);
+
+    const presentRead = await readBankTool.execute(
+      ctx,
+      readBankTool.inputSchema.parse({ refs: [presentRef], include: ['materials'] }),
     );
     const presentItem = presentRead.items[0];
     expect(presentItem.status).toBe('ok');
     if (presentItem.status !== 'ok') return;
-    expect(presentItem.coverage.complete).toBe(true);
-    expect(presentItem.materials?.[0].asset.digest_verified).toBe(true);
+    // 受限角色要材料层时，私人参考答案会被省略，coverage 因此不完整。
+    // 这不能把在场的图说成缺文件或摘要不符。
+    expect(presentItem.coverage.unavailable.join(' ')).toContain('private material');
+    expect(presentItem.coverage.unavailable.join(' ')).not.toContain('bt_present_asset');
+    const presentMaterial = (presentItem.materials ?? []).find(
+      (m) => m.asset.asset_id === 'bt_present_asset',
+    );
+    expect(presentMaterial?.asset.present).toBe(true);
+    expect(presentMaterial?.asset.digest_verified).toBe(true);
     const checked = await checkBankTool.execute(
       ctx,
       checkBankTool.inputSchema.parse({

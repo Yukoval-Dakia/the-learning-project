@@ -177,7 +177,7 @@ export const jyeooFetchCandidatesTool: DomainTool<Input, Output> = {
   name: 'jyeoo_fetch_candidates',
   description:
     '从 jyeoo-rs（菁优网题库，付费账号日预算 40 题）按年级/学科抓取真实考题候选。' +
-    '返回自包含候选（图片已本地化、含 dedup hash），不写库；提交入库须调 store_sourced_question。' +
+    '返回自包含候选（图片已本地化、含 dedup hash），不写库；提交入库须调 submit_question。' +
     'budget_exhausted 时当日勿再调用；failed 按 retryable 决定是否重试。',
   effect: 'read',
   inputSchema,

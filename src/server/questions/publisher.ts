@@ -9,6 +9,7 @@ export type {
   PublishFromRowInput,
   PublishQuestionGroupInput,
   PublishQuestionGroupResult,
+  QuestionGroupContractSnapshot,
   ReplacementMapping,
   RestoreGroupLifecycleResult,
   SuspensionReason,
@@ -18,6 +19,7 @@ export type {
 export {
   ASSESSMENT_PUBLISH_ACTION,
   archiveGroupLifecycle,
+  loadQuestionGroupContractSnapshot,
   publishQuestionGroup,
   publishQuestionGroupFromRow,
   restoreGroupLifecycle,
