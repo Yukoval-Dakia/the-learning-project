@@ -18,9 +18,13 @@ import {
 import { isKindMismatchSolveConflict } from '@/capabilities/practice/server/admission/receipt';
 import { QUESTION_ADMISSION_TASK_KIND } from '@/capabilities/practice/server/admission/solve';
 import {
+  QuestionAdmissionSolveInput,
+  QuestionAdmissionSourceCrosscheckInput,
+  QuestionAdmissionSourceCrosscheckOutput,
   parseQuestionAdmissionSolveModelOutput,
   questionAdmissionSolveTaskSpec,
 } from '@/capabilities/practice/tasks/question-admission-solve';
+import { getTaskSystemPrompt } from '@/capabilities/task-registry';
 import {
   LEGACY_QUESTION_ADMISSION_PAID_UNIT,
   PREVIOUS_QUESTION_ADMISSION_PAID_UNIT,
@@ -35,8 +39,14 @@ import {
   sanitizeProviderErrorText,
 } from '@/server/ai/provider-error-evidence';
 import { type TaskNativeReasoningParams, resolveTaskProvider } from '@/server/ai/providers';
+import {
+  STRUCTURED_OUTPUT_SUBMIT_TOOL,
+  resolveStructuredSubmitPolicy,
+  structuredSubmitSystemSuffix,
+  structuredSubmitWireFields,
+} from '@/server/ai/structured-submit';
 
-const submit = 'mcp__structured_output__submit';
+const submit = STRUCTURED_OUTPUT_SUBMIT_TOOL;
 const digest = z.string().regex(/^sha256:[0-9a-f]{64}$/);
 const manifestSchema = z
   .array(
@@ -199,6 +209,49 @@ async function routing(): Promise<{
   };
 }
 
+/**
+ * Synthetic probe inputs — one per prompt mode the admission lane runs.
+ * The user message is the same JSON.stringify(payload) the runner sends; the
+ * system prompt is the task's own prompt + the shared structured-submit
+ * suffix, so the probe exercises the REAL request contract rather than a
+ * bespoke one.
+ */
+const SOLVE_PROBE_INPUT = {
+  mode: 'solve' as const,
+  parts: [
+    {
+      part_id: 'p',
+      prompt_md:
+        'What is 1+1? scoring_unit_id=u. No other question is supplied. This is a synthetic preflight probe.',
+    },
+  ],
+  units: [
+    {
+      scoring_unit_id: 'u',
+      part_id: 'p',
+      kind: 'blank' as const,
+      printed_points: 1,
+      blank: { format: 'text' as const, answer_kind: 'blank_numeric' as const },
+    },
+  ],
+};
+const CROSSCHECK_PROBE_INPUT = {
+  mode: 'source_crosscheck' as const,
+  parts: SOLVE_PROBE_INPUT.parts,
+  units: SOLVE_PROBE_INPUT.units,
+  source_answers: [
+    { scoring_unit_id: 'u', reference_md: '参考答案：2', locator: 'synthetic printed key' },
+  ],
+  proposals: [{ scoring_unit_id: 'u', answer_summary_md: '数值：2（容差 ±0）' }],
+};
+
+interface ProbePlan {
+  /** Which solver route this probe exercises; B reuses A's route when solver2 is unset. */
+  solver: 'A' | 'B';
+  mode: 'solve' | 'source_crosscheck';
+  route: ProbeRoute;
+}
+
 async function preflight(path: string) {
   const { routes, solver2Provider, solver2Model, policy, config_db_layer, config_hydration } =
     await routing();
@@ -222,22 +275,34 @@ async function preflight(path: string) {
     probes: [] as Record<string, unknown>[],
   };
   const probes = receipt.probes as Record<string, unknown>[];
+  // One probe per distinct resolved route for mode 'solve' (route B falls back
+  // to A's lane when QUESTION_ADMISSION_SOLVER2_* is unset) plus one
+  // 'source_crosscheck' probe on the primary route — crosscheck never takes a
+  // per-call override in runSourceCrosscheck, so route A IS its lane.
+  const primary = routes[0];
+  const plans: ProbePlan[] = [];
+  for (const route of routes) plans.push({ solver: route.solver, mode: 'solve', route });
+  if (primary) plans.push({ solver: 'A', mode: 'source_crosscheck', route: primary });
   try {
-    // Exactly ONE synthetic paid probe on the resolved solver-A lane — the
-    // same wire shape the job will send (model-native reasoning params
-    // included verbatim). A solver2 env naming a different lane gets static
-    // capability/API validation only (routing() above), matching the original
-    // one-request preflight contract.
-    for (const route of routes.slice(0, 1)) {
+    for (const plan of plans) {
+      const { route } = plan;
+      const submitPolicy = resolveStructuredSubmitPolicy(route.provider, route.model);
       const probe: Record<string, unknown> = {
-        solver: route.solver,
+        solver: plan.solver,
+        mode: plan.mode,
         provider: route.provider,
         model: route.model,
         endpoint: route.endpoint,
         selection_rule: route.selectionRule,
+        submit_tool_choice: submitPolicy.forced ? 'forced' : 'auto',
+        forced_tool_choice_capability: submitPolicy.capability,
         ...(route.nativeReasoning ?? {}),
       };
       probes.push(probe);
+      const input =
+        plan.mode === 'solve'
+          ? QuestionAdmissionSolveInput.parse(SOLVE_PROBE_INPUT)
+          : QuestionAdmissionSourceCrosscheckInput.parse(CROSSCHECK_PROBE_INPUT);
       const response = await fetch(`${route.endpoint}/chat/completions`, {
         method: 'POST',
         redirect: 'error',
@@ -258,11 +323,12 @@ async function preflight(path: string) {
             {
               role: 'system',
               content:
-                'Solve this synthetic preflight only: 1+1. Use the submit tool exactly once with arguments {"units":[{"scoring_unit_id":"u","status":"solved","answer":{"kind":"blank_numeric","expected":2,"tolerance":{"kind":"absolute","value":0}},"equivalent_forms":[],"typical_wrong":[]}]}. The arguments ARE the output object: units sits at top level, no result field.',
+                getTaskSystemPrompt(QUESTION_ADMISSION_TASK_KIND) +
+                structuredSubmitSystemSuffix(submitPolicy.forced),
             },
             {
               role: 'user',
-              content: 'What is 1+1? scoring_unit_id=u. No other question is supplied.',
+              content: JSON.stringify(input),
             },
           ],
           tools: [
@@ -275,8 +341,7 @@ async function preflight(path: string) {
               },
             },
           ],
-          tool_choice: { type: 'function', function: { name: submit } },
-          parallel_tool_calls: false,
+          ...structuredSubmitWireFields(submitPolicy),
         }),
       });
       probe.http_status = response.status;
@@ -289,7 +354,7 @@ async function preflight(path: string) {
           secrets: [route.apiKey],
         });
         throw new Error(
-          `Preflight HTTP ${response.status} for ${route.provider}/${route.model}; stop before reopening`,
+          `Preflight HTTP ${response.status} for ${route.provider}/${route.model} mode=${plan.mode}; stop before reopening`,
         );
       }
       const body = (await response.json()) as {
@@ -317,19 +382,27 @@ async function preflight(path: string) {
       probe.raw_arguments = rawArguments.slice(0, 8000);
       const args: unknown = JSON.parse(rawArguments);
       probe.arguments_was_string = typeof args === 'string';
-      // Same parse entry as the solve path (string tolerated at this level), with
-      // the repair budget at zero so the probe proves strict schema validity.
-      const output = parseQuestionAdmissionSolveModelOutput(args, [], { remaining: 0 });
-      const answer = output.units[0]?.answer;
-      if (
-        output.units.length !== 1 ||
-        output.units[0].scoring_unit_id !== 'u' ||
-        output.units[0].status !== 'solved' ||
-        answer?.kind !== 'blank_numeric' ||
-        answer.expected !== 2
-      )
-        throw new Error('Invalid preflight synthetic answer');
-      probe.output = output;
+      if (plan.mode === 'solve') {
+        // Same parse entry as the solve path (string tolerated at this level), with
+        // the repair budget at zero so the probe proves strict schema validity.
+        const output = parseQuestionAdmissionSolveModelOutput(args, [], { remaining: 0 });
+        const answer = output.units[0]?.answer;
+        if (
+          output.units.length !== 1 ||
+          output.units[0].scoring_unit_id !== 'u' ||
+          output.units[0].status !== 'solved' ||
+          answer?.kind !== 'blank_numeric' ||
+          answer.expected !== 2
+        )
+          throw new Error('Invalid preflight synthetic answer');
+        probe.output = output;
+      } else {
+        const output = QuestionAdmissionSourceCrosscheckOutput.parse(args);
+        const entry = output.per_unit[0];
+        if (output.per_unit.length !== 1 || entry.scoring_unit_id !== 'u')
+          throw new Error('Invalid preflight synthetic crosscheck output');
+        probe.output = output;
+      }
     }
     receipt.passed = true;
     console.log('PASS: HTTP 200; exactly one submit call; strict schema; no paid_effect created');
@@ -582,7 +655,7 @@ async function reopen(receiptPath: string, manifestPath: string) {
 const [mode, path, manifestPath] = process.argv.slice(2);
 if (mode === '--help')
   console.log(
-    'TEST only: --preflight <new-receipt.json> OR --reopen-approved-five <receipt.json> <private-five-identities.json>. Never retries; no Docker.',
+    'TEST only: --preflight <new-receipt.json> OR --reopen-approved-five <receipt.json> <private-five-identities.json>. Preflight sends one probe per admission mode (solve per distinct resolved solver lane + one source_crosscheck on the primary lane) using the shared capability-driven submit wire policy. Never retries; no Docker.',
   );
 else {
   const run =

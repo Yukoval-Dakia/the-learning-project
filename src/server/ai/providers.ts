@@ -279,7 +279,17 @@ const PROVIDERS: Record<Provider, BoundProviderConfig> = {
       // evidence on the official endpoint (chat + probe_echo tool_call, both
       // HTTP 200 with reasoning_effort=high) is sealed in
       // docs/planning/evidence/2026-10-18-opencode-go-deepseek-v4.1-flash-receipts.json.
-      'deepseek-v4.1-flash': { capabilities: { toolCalling: true } },
+      // forcedToolChoice=false: with thinking:{type:'enabled'} on the wire the
+      // gateway intermittently 400s a forced named tool_choice — observed
+      // "Thinking mode does not support this tool_choice" (upstream
+      // request_id 6fde3ba6-8f64-4c84-8a3d-5a5e211b430a, 2026-10-18 backlog
+      // window; 2 of 7 paid calls failed while 5 identical-shape calls plus
+      // the deploy preflight and 14 five-question calls all returned 200 —
+      // the rejection is real but upstream-routing-dependent, so the runner
+      // never sends the forced choice on this lane at all).
+      'deepseek-v4.1-flash': {
+        capabilities: { toolCalling: true, forcedToolChoice: false },
+      },
     },
   },
   // YUK-365 — subscription-OAuth lane. Opus 4.8 via the owner's Claude Max

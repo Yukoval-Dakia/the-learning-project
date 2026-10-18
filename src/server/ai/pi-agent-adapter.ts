@@ -81,6 +81,13 @@ import { createIdleBudgetFetch } from './provider-idle-fetch';
 import type { SDKAssistantMessage, SDKResultMessage, SDKUserMessage } from './sdk-types';
 import { isSpawnToolName } from './spawn-contract';
 import {
+  STRUCTURED_OUTPUT_SUBMIT_TOOL,
+  STRUCTURED_SUBMIT_REMINDER,
+  resolveStructuredSubmitPolicy,
+  structuredSubmitSystemSuffix,
+  structuredSubmitWireFields,
+} from './structured-submit';
+import {
   type PiSubagentHost,
   type PiSubagentSpec,
   buildPiSpawnAgentTools,
@@ -106,7 +113,7 @@ export interface PiAdapterDeps {
 }
 
 const OPENCODE_SESSION_HEADER = 'x-opencode-session';
-const STRUCTURED_OUTPUT_TOOL = 'mcp__structured_output__submit';
+const STRUCTURED_OUTPUT_TOOL = STRUCTURED_OUTPUT_SUBMIT_TOOL;
 
 function toolOutputSchema(kind: ExecutionAdapterStartupArgs['kind']) {
   const definition: TaskDefinition = tasks[kind];
@@ -601,6 +608,9 @@ export function piTerminalResultFrame(args: {
   structuredOutputTool?: boolean;
   /** Reject pi best-effort JSON salvage: original streamed arguments must parse strictly. */
   invalidStructuredArguments?: boolean;
+  /** YUK-1547 — 'auto' submit lane already consumed its one closing reminder
+   *  and still produced no submit call; the terminal names that explicitly. */
+  submitReminderExhausted?: boolean;
   /** Bounded raw-arguments evidence carried on the structured-failure terminal so
    *  the runner can attach it to the task run's tool_call_log. */
   structuredSubmitEvidence?: {
@@ -767,6 +777,9 @@ export function piTerminalResultFrame(args: {
         // the truncated tool_call_log evidence can be matched back to this run.
         errors: [
           'structured output requires exactly one non-truncated submit call with strictly valid raw JSON arguments; no text fallback' +
+            (args.submitReminderExhausted
+              ? '; the single closing reminder turn was already consumed without a submit'
+              : '') +
             (args.structuredSubmitEvidence
               ? `;raw_args_sha256=${args.structuredSubmitEvidence.raw_args_sha256}`
               : ''),
@@ -1142,9 +1155,22 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     };
   }
 
+  /**
+   * YUK-1547 — the submit wire policy for this query's resolved lane, read
+   * through the shared capability surface (structured-submit.ts). 'forced'
+   * pins the named tool_choice; a lane whose profile records the forced
+   * choice as wire-rejected (forcedToolChoice:false) degrades to 'auto' +
+   * the single closing reminder wired in iterate().
+   */
+  private structuredSubmitPolicy(model: PiModel<PiApi>) {
+    if (toolOutputSchema(this.args.kind) === undefined || model.api !== 'openai-completions') {
+      return undefined;
+    }
+    return resolveStructuredSubmitPolicy(this.args.resolved.provider, this.args.resolved.model);
+  }
+
   private readonly streamFn: StreamFn = (model, llmContext, streamOptions) => {
-    const forceToolSubmit =
-      toolOutputSchema(this.args.kind) !== undefined && model.api === 'openai-completions';
+    const submitPolicy = this.structuredSubmitPolicy(model);
     // YUK-1547 — per-task model-native reasoning params (resolved +
     // fail-closed-validated in resolveTaskProvider): pass the model's own
     // wire parameter (e.g. DeepSeek `reasoning_effort`) through verbatim.
@@ -1152,7 +1178,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     // rejects both being set so the param has exactly one writer.
     const nativeReasoning = this.args.resolved.nativeReasoningParams;
     const streamOptionsWithPayload =
-      forceToolSubmit || nativeReasoning
+      submitPolicy !== undefined || nativeReasoning
         ? {
             ...streamOptions,
             onPayload: async (payload: unknown, requestModel: PiModel<PiApi>) => {
@@ -1163,17 +1189,11 @@ class PiPreparedQuery implements PreparedExecutionQuery {
               }
               return {
                 ...body,
-                // MiMo Token Plan uses native OpenAI function calling. Require
-                // submission on the wire, not merely in the natural-language prompt.
-                ...(forceToolSubmit
-                  ? {
-                      tool_choice: {
-                        type: 'function',
-                        function: { name: STRUCTURED_OUTPUT_TOOL },
-                      },
-                      parallel_tool_calls: false,
-                    }
-                  : {}),
+                // The structured-submit contract lives on the wire, not merely
+                // in the prompt — forced where the lane accepts it, 'auto'
+                // where the provider rejects a forced choice (one closing
+                // reminder turn then compensates, see iterate()).
+                ...(submitPolicy !== undefined ? structuredSubmitWireFields(submitPolicy) : {}),
                 ...nativeReasoning,
               };
             },
@@ -1425,8 +1445,14 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       systemPrompt = `${systemPrompt}\n\n${docs}`;
     }
     const structuredOutput = toolOutputSchema(this.args.kind) !== undefined;
+    // YUK-1547 — capability-driven submit policy: forced named tool_choice on
+    // lanes that accept it; 'auto' + exactly one closing reminder (C2-landing
+    // shape) where the provider rejects forcing (forcedToolChoice:false).
+    const submitPolicy = structuredOutput ? this.structuredSubmitPolicy(this.model) : undefined;
+    const submitReminderAllowed = submitPolicy !== undefined && !submitPolicy.forced;
+    let submitReminderUsed = false;
     if (structuredOutput) {
-      systemPrompt += `\nSubmit exactly one ${STRUCTURED_OUTPUT_TOOL} tool call whose arguments are the requested output object itself (no result envelope). Do not return JSON as text. This invocation ends after this one model turn, including on invalid arguments; no repair turn is available.`;
+      systemPrompt += structuredSubmitSystemSuffix(submitPolicy?.forced ?? true);
     }
     const context: AgentContext = {
       // sdkSession→本地回放: durable-turn replay seeds context.messages — the
@@ -1456,7 +1482,26 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       // so batch ordering/tool_call_log sequence can't diverge by engine.
       ...(this.allTools.length > 0 ? { toolExecution: 'sequential' as const } : {}),
       ...(structuredOutput
-        ? { finishTurn: (() => ({ action: 'end' as const })) as FinishTurn }
+        ? {
+            // Forced lanes keep the strict single-turn contract. 'auto' lanes
+            // end on the landed submit call or after the one reminder turn; a
+            // first turn without the submit call falls through to the
+            // follow-up poll below (undefined = normal scheduling).
+            finishTurn: (submitReminderAllowed
+              ? ({ message }) => {
+                  if (message.stopReason === 'error' || message.stopReason === 'aborted') {
+                    return undefined;
+                  }
+                  const calls = message.content.filter((block) => block.type === 'toolCall');
+                  const landed =
+                    message.stopReason === 'toolUse' &&
+                    calls.length === 1 &&
+                    calls[0].name === STRUCTURED_OUTPUT_TOOL;
+                  if (landed || submitReminderUsed) return { action: 'end' as const };
+                  return undefined;
+                }
+              : () => ({ action: 'end' as const })) satisfies FinishTurn,
+          }
         : maxTurns !== undefined
           ? {
               finishTurn: turnLimiter(maxTurns, () => {
@@ -1475,8 +1520,24 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       ...(this.args.piQueues?.getSteeringMessages
         ? { getSteeringMessages: this.args.piQueues.getSteeringMessages }
         : {}),
-      ...(this.args.piQueues?.getFollowUpMessages
-        ? { getFollowUpMessages: this.args.piQueues.getFollowUpMessages }
+      ...(submitReminderAllowed || this.args.piQueues?.getFollowUpMessages
+        ? {
+            // The C2-landing reminder fires once when the loop would stop
+            // without the submit call; afterwards (and on forced lanes never)
+            // the caller queue is the only follow-up source. Contract: never
+            // throws — a broken delegate returns [] rather than killing the run.
+            getFollowUpMessages: async () => {
+              if (submitReminderAllowed && !submitReminderUsed) {
+                submitReminderUsed = true;
+                return [piUserMessage(STRUCTURED_SUBMIT_REMINDER)];
+              }
+              try {
+                return (await this.args.piQueues?.getFollowUpMessages?.()) ?? [];
+              } catch {
+                return [];
+              }
+            },
+          }
         : {}),
     };
 
@@ -1583,6 +1644,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       // The original streamed submit bytes survive a structured-parse failure
       // as bounded tool_call_log evidence (adapter-level failures never reach
       // the capability, which logs its own view of the payload).
+      submitReminderExhausted: submitReminderAllowed && submitReminderUsed,
       structuredSubmitEvidence:
         structuredOutput && rawToolArguments.size > 0
           ? {
