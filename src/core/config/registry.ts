@@ -44,6 +44,10 @@ export interface ConfigOverride {
     transientRetries?: number;
     timeout?: number;
   };
+  /** YUK-1547 — task.<kind>.reasoning：模型原生推理参数（键 = wire 参数名）。 */
+  reasoning?: {
+    reasoning_effort?: string;
+  };
 }
 
 export type EnvMode = 'fallback' | 'priority' | 'pinned';
@@ -188,6 +192,21 @@ const budgetOverrideSchema = z
     maxCost: z.number().positive().optional(),
     transientRetries: z.number().int().min(0).optional(),
     timeout: z.number().positive().lt(STUCK_RUN_THRESHOLD_MS).optional(),
+  })
+  .strict();
+
+/**
+ * YUK-1547 — per-task model-native reasoning params. Keys are the model's own
+ * wire parameter names; the value set is validated at resolution time against
+ * the resolved model's own declared levels (providers.ts
+ * assertTaskNativeReasoningParams), never against a loom-wide tier enum. This
+ * slice wires DeepSeek `reasoning_effort` only — new keys are added when their
+ * lane is proven, so the schema stays strict rather than passing typos to the
+ * wire.
+ */
+const taskReasoningSchema = z
+  .object({
+    reasoning_effort: z.string().min(1).optional(),
   })
   .strict();
 
@@ -739,20 +758,21 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
 
 // ─── 动态前缀 key（task.<kind>.* / lane.<lane>.*） ──────────────────────────
 //
-// `task.<kind>.provider` / `.model` / `.budget`：52 TaskSpec 的 per-task 覆盖，
-// kind 有效性在写端经 src/ai/registry `tasks` 校验（server/write.ts 侧）。
+// `task.<kind>.provider` / `.model` / `.budget` / `.reasoning`：52 TaskSpec 的
+// per-task 覆盖，kind 有效性在写端经 src/ai/registry `tasks` 校验
+//（server/write.ts 侧）。`.reasoning` 是模型原生推理参数（YUK-1547）。
 // `lane.<lane>.provider` / `.model`：scoped lane（verify_solve / vision_judge /
 // judge_calibration / global）。
 
 export interface DynamicKeyDef {
   kind: 'task' | 'lane';
-  field: 'provider' | 'model' | 'budget';
+  field: 'provider' | 'model' | 'budget' | 'reasoning';
   /** task → kind；lane → lane id。 */
   scope: string;
 }
 
 export function matchDynamicConfigKey(key: string): DynamicKeyDef | null {
-  const task = /^task\.([^.]+)\.(provider|model|budget)$/.exec(key);
+  const task = /^task\.([^.]+)\.(provider|model|budget|reasoning)$/.exec(key);
   if (task) {
     return { kind: 'task', scope: task[1], field: task[2] as DynamicKeyDef['field'] };
   }
@@ -772,6 +792,8 @@ export function dynamicKeySchema(def: DynamicKeyDef): z.ZodTypeAny | null {
       return z.string();
     case 'budget':
       return budgetOverrideSchema;
+    case 'reasoning':
+      return taskReasoningSchema;
   }
 }
 

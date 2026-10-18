@@ -18,6 +18,7 @@ const providers = Object.fromEntries(
           reasoning: model.reasoning,
           contextWindow: model.contextWindow,
           maxTokens: model.maxTokens,
+          thinkingLevelMap: model.thinkingLevelMap,
         },
       ]),
     ),

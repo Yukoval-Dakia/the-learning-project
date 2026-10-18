@@ -1094,8 +1094,44 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     };
   }
 
-  private readonly streamFn: StreamFn = (model, llmContext, streamOptions) =>
-    tracePiStream(
+  private readonly streamFn: StreamFn = (model, llmContext, streamOptions) => {
+    const forceToolSubmit =
+      toolOutputSchema(this.args.kind) !== undefined && model.api === 'openai-completions';
+    // YUK-1547 — per-task model-native reasoning params (resolved +
+    // fail-closed-validated in resolveTaskProvider): pass the model's own
+    // wire parameter (e.g. DeepSeek `reasoning_effort`) through verbatim.
+    // This is NOT the options.effort → pi ThinkingLevel enum path — startup
+    // rejects both being set so the param has exactly one writer.
+    const nativeReasoning = this.args.resolved.nativeReasoningParams;
+    const streamOptionsWithPayload =
+      forceToolSubmit || nativeReasoning
+        ? {
+            ...streamOptions,
+            onPayload: async (payload: unknown, requestModel: PiModel<PiApi>) => {
+              const transformed = await streamOptions?.onPayload?.(payload, requestModel);
+              const body = transformed ?? payload;
+              if (body == null || typeof body !== 'object' || Array.isArray(body)) {
+                throw new Error('structured output requires an object provider payload');
+              }
+              return {
+                ...body,
+                // MiMo Token Plan uses native OpenAI function calling. Require
+                // submission on the wire, not merely in the natural-language prompt.
+                ...(forceToolSubmit
+                  ? {
+                      tool_choice: {
+                        type: 'function',
+                        function: { name: STRUCTURED_OUTPUT_TOOL },
+                      },
+                      parallel_tool_calls: false,
+                    }
+                  : {}),
+                ...nativeReasoning,
+              };
+            },
+          }
+        : streamOptions;
+    return tracePiStream(
       (m, context, options) =>
         withPiUsageEvidence(
           (innerModel, innerContext, innerOptions) =>
@@ -1106,26 +1142,9 @@ class PiPreparedQuery implements PreparedExecutionQuery {
         ),
       model,
       llmContext,
-      toolOutputSchema(this.args.kind) && model.api === 'openai-completions'
-        ? {
-            ...streamOptions,
-            // MiMo Token Plan uses native OpenAI function calling. Require
-            // submission on the wire, not merely in the natural-language prompt.
-            onPayload: async (payload, requestModel) => {
-              const transformed = await streamOptions?.onPayload?.(payload, requestModel);
-              const body = transformed ?? payload;
-              if (body == null || typeof body !== 'object' || Array.isArray(body)) {
-                throw new Error('structured output requires an object provider payload');
-              }
-              return {
-                ...body,
-                tool_choice: { type: 'function', function: { name: STRUCTURED_OUTPUT_TOOL } },
-                parallel_tool_calls: false,
-              };
-            },
-          }
-        : streamOptions,
+      streamOptionsWithPayload,
     );
+  };
 
   /**
    * Child tool set: the spec's allowlist over the parent's mounted wire names,
@@ -1648,6 +1667,17 @@ export class PiAgentAdapter implements ExecutionAdapter {
     if (!model) {
       throw new Error(
         `pi adapter has no model '${args.resolved.model}' in provider '${args.resolved.provider}' — check the loom pi catalog (pi-models.ts) for the id.`,
+      );
+    }
+    // YUK-1547 — the wire's reasoning_effort must have exactly one writer:
+    // the options.effort tier (pi ThinkingLevel map) and the per-task
+    // native reasoning_effort passthrough both serialize onto the same key.
+    if (
+      args.options.effort !== undefined &&
+      args.resolved.nativeReasoningParams?.reasoning_effort !== undefined
+    ) {
+      throw new Error(
+        `conflicting reasoning params for task '${args.kind}': options.effort='${args.options.effort}' and task.<kind>.reasoning reasoning_effort='${args.resolved.nativeReasoningParams.reasoning_effort}' both target the wire reasoning_effort — keep exactly one source.`,
       );
     }
     const { tools, remoteHandles } = await this.buildTools(args, deps);

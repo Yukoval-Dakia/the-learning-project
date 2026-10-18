@@ -29,6 +29,8 @@ import type { TaskDefinition } from '@/ai/task-spec';
 import { type Provider, type TaskKind, tasks } from '@/capabilities/task-registry';
 import { getLaneOverride, getTaskOverride } from '@/core/config/store';
 import type { ProviderModelBinding } from './model-profiles';
+import { OPENCODE_GO_OPENAI_BASE_URL } from './opencode-go';
+import { nativePiModel } from './pi-provider-catalog';
 import { xiaomiTokenPlanBaseUrl } from './xiaomi-token-plan';
 
 // YUK-608 — re-export the provider union so override consumers (solve-lane, verify-framework)
@@ -222,16 +224,20 @@ const PROVIDERS: Record<Provider, BoundProviderConfig> = {
       },
     },
   },
-  // YUK-921 P1 — OpenCode Go subscription lane (opencode.ai/zen/go). The
+  // YUK-921 P1 — OpenCode Go subscription lane. The
   // catalog's target models speak openai-completions/openai-responses; served
   // by the pi adapter's builtin 'opencode-go' provider, which owns
   // baseUrl/model catalog/auth. This entry only declares the loom-side
   // credential + capability classification. Every request additionally needs
   // an x-opencode-session header (injected by the pi adapter from the run id —
   // see pi-agent-adapter.ts).
+  // YUK-1547 — pi-ai 1.1.0's builtin catalog still points the OpenAI-API
+  // family at the legacy /zen/go/v1; OPENCODE_GO_OPENAI_BASE_URL is the single
+  // official-endpoint source that pi-models.ts and pi-provider-catalog.ts
+  // rebind onto the wire models (chat+tool receipts: HTTP 200).
   'opencode-go': {
     authMode: 'key',
-    baseUrl: 'https://opencode.ai/zen/go',
+    baseUrl: OPENCODE_GO_OPENAI_BASE_URL,
     apiKeyEnv: 'OPENCODE_API_KEY',
     description: 'OpenCode Go subscription catalog via the pi execution adapter',
     modelDefaults: {
@@ -269,6 +275,11 @@ const PROVIDERS: Record<Provider, BoundProviderConfig> = {
       // Vision needs no binding here: the native pi catalog declares
       // input text+image and model-profiles reads it as authoritative.
       'mimo-v2.6-pro': { capabilities: { toolCalling: true } },
+      // YUK-1547 — owner-designated QuestionAdmissionSolveTask lane. Paid
+      // evidence on the official endpoint (chat + probe_echo tool_call, both
+      // HTTP 200 with reasoning_effort=high) is sealed in
+      // docs/planning/evidence/2026-10-18-opencode-go-deepseek-v4.1-flash-receipts.json.
+      'deepseek-v4.1-flash': { capabilities: { toolCalling: true } },
     },
   },
   // YUK-365 — subscription-OAuth lane. Opus 4.8 via the owner's Claude Max
@@ -494,6 +505,18 @@ export function crossoverModelForProvider(provider: Provider, kind: TaskKind): s
 }
 
 /**
+ * YUK-1547 — model-native reasoning params resolved from the per-task
+ * `task.<kind>.reasoning` config layer. Keys are the model's own wire
+ * parameter names (DeepSeek `reasoning_effort`); values pass through verbatim
+ * — there is deliberately no unified effort-tier enum or mapping on this path
+ * (owner 2026-10-18: don't force-align effort to preset tiers; validate only
+ * against the values the model itself supports).
+ */
+export interface TaskNativeReasoningParams {
+  readonly reasoning_effort?: string;
+}
+
+/**
  * Resolved provider binding handed to the runner. Discriminated on `authMode`:
  *   - 'key'   → { apiKey, baseUrl? } — the credential value, resolved once here.
  *   - 'oauth' → { apiKey } carries the subscription token VALUE (read once from
@@ -509,6 +532,8 @@ export type ResolvedProvider =
       apiKey: string;
       /** undefined for Anthropic direct (uses the catalog default). */
       baseUrl?: string;
+      /** Per-task model-native reasoning params, validated against the resolved model. */
+      nativeReasoningParams?: TaskNativeReasoningParams;
     }
   | {
       authMode: 'oauth';
@@ -518,6 +543,8 @@ export type ResolvedProvider =
       apiKey: string;
       /** Env-var NAME the token was read from (diagnostics only). */
       oauthTokenEnv: string;
+      /** Per-task model-native reasoning params, validated against the resolved model. */
+      nativeReasoningParams?: TaskNativeReasoningParams;
     };
 
 /**
@@ -614,7 +641,7 @@ export function resolveConfiguredTaskModel(kind: TaskKind): string {
 export function resolveTaskBinding(
   kind: TaskKind,
   override?: { provider?: Provider; model?: string },
-): { provider: Provider; model: string } {
+): { provider: Provider; model: string; reasoning?: TaskNativeReasoningParams } {
   const def = tasks[kind];
   // Product-wide incident pin must also cover explicit caller/modelBinding routes.
   // Typed primitives have a separate wire contract, not a chat model API.
@@ -676,7 +703,40 @@ export function resolveTaskBinding(
     providerName === 'anthropic-sub' ? ANTHROPIC_SUB_DEFAULT_MODEL : def.defaultModel;
   const modelId =
     override?.model ?? globalSwitch?.model ?? dbTaskOverride?.model ?? subDefaultModel;
-  return { provider: providerName, model: modelId };
+  return { provider: providerName, model: modelId, reasoning: dbTaskOverride?.reasoning };
+}
+
+/**
+ * YUK-1547 — fail-closed check for per-task native reasoning params, resolved
+ * alongside the provider binding so a bad value is a config error before any
+ * admission row, attempt row, or paid call (same posture as the credential
+ * checks below). `reasoning_effort` is only honest on an OpenAI-completions
+ * reasoning model, and only when the model's OWN thinkingLevelMap names the
+ * value — the model declares its native levels (e.g. low|high|max for
+ * deepseek-v4.1-flash), loom never invents or maps a tier.
+ */
+function assertTaskNativeReasoningParams(
+  kind: TaskKind,
+  provider: Provider,
+  model: string,
+  params: TaskNativeReasoningParams | undefined,
+): void {
+  const effort = params?.reasoning_effort;
+  if (effort === undefined) return;
+  const native = nativePiModel(provider, model);
+  if (native?.api !== 'openai-completions' || native.reasoning !== true) {
+    throw new Error(
+      `task.${kind}.reasoning sets reasoning_effort='${effort}', but '${provider}/${model}' is not an OpenAI-completions reasoning model — the param would be dropped or rejected on the wire. Remove the task override or point the task at a lane whose own reasoning parameter is reasoning_effort.`,
+    );
+  }
+  const supported = Object.values(native.thinkingLevelMap ?? {}).filter(
+    (value): value is string => typeof value === 'string',
+  );
+  if (!supported.includes(effort)) {
+    throw new Error(
+      `task.${kind}.reasoning reasoning_effort='${effort}' is not a value '${provider}/${model}' accepts — the model's own thinkingLevelMap declares [${supported.join(', ')}]. Pass one of those values verbatim (no tier mapping).`,
+    );
+  }
 }
 
 /**
@@ -695,7 +755,8 @@ export function resolveTaskProvider(
   kind: TaskKind,
   override?: { provider?: Provider; model?: string },
 ): ResolvedProvider {
-  const { provider: providerName, model: modelId } = resolveTaskBinding(kind, override);
+  const binding = resolveTaskBinding(kind, override);
+  const { provider: providerName, model: modelId } = binding;
 
   const config = PROVIDERS[providerName];
   if (!config) {
@@ -703,6 +764,9 @@ export function resolveTaskProvider(
       `Unknown provider '${providerName}' for task ${kind}; expected one of ${Object.keys(PROVIDERS).join(' | ')}`,
     );
   }
+  const nativeReasoning =
+    binding.reasoning !== undefined ? { nativeReasoningParams: binding.reasoning } : {};
+  assertTaskNativeReasoningParams(kind, providerName, modelId, binding.reasoning);
 
   if (config.authMode === 'oauth') {
     // YUK-365 subscription lane. Fail clearly if the token env is missing so an
@@ -719,6 +783,7 @@ export function resolveTaskProvider(
       model: modelId,
       apiKey: token,
       oauthTokenEnv: config.oauthTokenEnv,
+      ...nativeReasoning,
     };
   }
 
@@ -748,5 +813,6 @@ export function resolveTaskProvider(
     model: modelId,
     apiKey,
     baseUrl: providerName === 'xiaomi-token-plan' ? xiaomiTokenPlanBaseUrl() : config.baseUrl,
+    ...nativeReasoning,
   };
 }

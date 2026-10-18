@@ -188,7 +188,7 @@ export function getConfigMany(
   return out;
 }
 
-/** task.<kind>.provider / .model / .budget 三键合取（DB-only 层，§1.5）。 */
+/** task.<kind>.provider / .model / .budget / .reasoning 四键合取（DB-only 层，§1.5）。 */
 export function getTaskOverride(kind: string):
   | {
       provider?: string;
@@ -199,12 +199,23 @@ export function getTaskOverride(kind: string):
         transientRetries?: number;
         timeout?: number;
       };
+      /** YUK-1547 — 模型原生推理参数（键 = wire 参数名，值原样透传）。 */
+      reasoning?: {
+        reasoning_effort?: string;
+      };
     }
   | undefined {
   const provider = dbValueFor(`task.${kind}.provider`)?.entry?.value;
   const model = dbValueFor(`task.${kind}.model`)?.entry?.value;
   const budget = dbValueFor(`task.${kind}.budget`)?.entry?.value;
-  if (provider === undefined && model === undefined && budget === undefined) return undefined;
+  const reasoning = dbValueFor(`task.${kind}.reasoning`)?.entry?.value;
+  if (
+    provider === undefined &&
+    model === undefined &&
+    budget === undefined &&
+    reasoning === undefined
+  )
+    return undefined;
   return {
     ...(typeof provider === 'string' ? { provider } : {}),
     ...(typeof model === 'string' ? { model } : {}),
@@ -217,6 +228,9 @@ export function getTaskOverride(kind: string):
             timeout?: number;
           },
         }
+      : {}),
+    ...(reasoning !== undefined && typeof reasoning === 'object' && reasoning !== null
+      ? { reasoning: reasoning as { reasoning_effort?: string } }
       : {}),
   };
 }

@@ -6,7 +6,12 @@
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 1000000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": null,
+        "xhigh": "xhigh",
+        "max": "max"
+      }
     },
     "claude-fable-5-1": {
       "api": "anthropic-messages",
@@ -14,7 +19,12 @@
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 1000000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": null,
+        "xhigh": "xhigh",
+        "max": "max"
+      }
     },
     "claude-haiku-4-5": {
       "api": "anthropic-messages",
@@ -31,6 +41,23 @@
       "reasoning": true,
       "contextWindow": 200000,
       "maxTokens": 64000
+    },
+    "claude-haiku-5-5": {
+      "api": "anthropic-messages",
+      "baseUrl": "https://api.anthropic.com",
+      "input": ["text", "image"],
+      "reasoning": true,
+      "contextWindow": 1000000,
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      }
     },
     "claude-opus-4-5": {
       "api": "anthropic-messages",
@@ -54,7 +81,10 @@
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 1000000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "max": "max"
+      }
     },
     "claude-opus-4-7": {
       "api": "anthropic-messages",
@@ -62,7 +92,11 @@
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 1000000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "xhigh": "xhigh",
+        "max": "max"
+      }
     },
     "claude-opus-4-8": {
       "api": "anthropic-messages",
@@ -70,7 +104,11 @@
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 1000000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "xhigh": "xhigh",
+        "max": "max"
+      }
     },
     "claude-opus-5": {
       "api": "anthropic-messages",
@@ -78,7 +116,12 @@
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 1000000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": null,
+        "xhigh": "xhigh",
+        "max": "max"
+      }
     },
     "claude-opus-5-5": {
       "api": "anthropic-messages",
@@ -86,7 +129,16 @@
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 1000000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      }
     },
     "claude-sonnet-4-5": {
       "api": "anthropic-messages",
@@ -110,7 +162,10 @@
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 1000000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "max": "max"
+      }
     },
     "claude-sonnet-5": {
       "api": "anthropic-messages",
@@ -118,7 +173,11 @@
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 1000000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "xhigh": "xhigh",
+        "max": "max"
+      }
     },
     "claude-sonnet-5-5": {
       "api": "anthropic-messages",
@@ -126,7 +185,16 @@
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 1000000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      }
     }
   },
   "xiaomi": {
@@ -194,7 +262,16 @@
       "input": ["text"],
       "reasoning": true,
       "contextWindow": 1000000,
-      "maxTokens": 131072
+      "maxTokens": 131072,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": null,
+        "high": "high",
+        "xhigh": null,
+        "max": "max"
+      }
     },
     "glm-5.3-flash": {
       "api": "openai-completions",
@@ -202,7 +279,16 @@
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 1000000,
-      "maxTokens": 131072
+      "maxTokens": 131072,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": null,
+        "high": "high",
+        "xhigh": null,
+        "max": "max"
+      }
     },
     "glm-5.3-highspeed": {
       "api": "openai-completions",
@@ -210,10 +296,31 @@
       "input": ["text"],
       "reasoning": true,
       "contextWindow": 1000000,
-      "maxTokens": 131072
+      "maxTokens": 131072,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": null,
+        "high": "high",
+        "xhigh": null,
+        "max": "max"
+      }
     }
   },
   "opencode-go": {
+    "claude-haiku-5-5": {
+      "api": "anthropic-messages",
+      "baseUrl": "https://opencode.ai/zen/go",
+      "input": ["text", "image"],
+      "reasoning": true,
+      "contextWindow": 1000000,
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "xhigh": "xhigh",
+        "max": "max"
+      }
+    },
     "minimax-m3": {
       "api": "anthropic-messages",
       "baseUrl": "https://opencode.ai/zen/go",
@@ -222,7 +329,23 @@
       "contextWindow": 1000000,
       "maxTokens": 131072
     },
+    "qwen3.7-plus": {
+      "api": "anthropic-messages",
+      "baseUrl": "https://opencode.ai/zen/go",
+      "input": ["text", "image"],
+      "reasoning": true,
+      "contextWindow": 1000000,
+      "maxTokens": 65536
+    },
     "qwen3.8-flash": {
+      "api": "anthropic-messages",
+      "baseUrl": "https://opencode.ai/zen/go",
+      "input": ["text", "image"],
+      "reasoning": true,
+      "contextWindow": 1000000,
+      "maxTokens": 131072
+    },
+    "qwen3.8-max": {
       "api": "anthropic-messages",
       "baseUrl": "https://opencode.ai/zen/go",
       "input": ["text", "image"],
@@ -236,7 +359,14 @@
       "input": ["text"],
       "reasoning": true,
       "contextWindow": 1000000,
-      "maxTokens": 384000
+      "maxTokens": 384000,
+      "thinkingLevelMap": {
+        "minimal": null,
+        "low": "low",
+        "medium": null,
+        "high": "high",
+        "max": "max"
+      }
     },
     "deepseek-v4-flash-vision-exp": {
       "api": "openai-completions",
@@ -244,7 +374,14 @@
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 1000000,
-      "maxTokens": 384000
+      "maxTokens": 384000,
+      "thinkingLevelMap": {
+        "minimal": null,
+        "low": "low",
+        "medium": null,
+        "high": "high",
+        "max": "max"
+      }
     },
     "deepseek-v4-pro": {
       "api": "openai-completions",
@@ -252,7 +389,14 @@
       "input": ["text"],
       "reasoning": true,
       "contextWindow": 1000000,
-      "maxTokens": 384000
+      "maxTokens": 384000,
+      "thinkingLevelMap": {
+        "minimal": null,
+        "low": null,
+        "medium": null,
+        "high": "high",
+        "max": "max"
+      }
     },
     "deepseek-v4.1-flash": {
       "api": "openai-completions",
@@ -260,7 +404,16 @@
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 1000000,
-      "maxTokens": 384000
+      "maxTokens": 384000,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": null,
+        "high": "high",
+        "xhigh": null,
+        "max": "max"
+      }
     },
     "glm-5.2": {
       "api": "openai-completions",
@@ -268,7 +421,16 @@
       "input": ["text"],
       "reasoning": true,
       "contextWindow": 1000000,
-      "maxTokens": 131072
+      "maxTokens": 131072,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": null,
+        "medium": null,
+        "high": "high",
+        "xhigh": null,
+        "max": "max"
+      }
     },
     "glm-5.3": {
       "api": "openai-completions",
@@ -276,7 +438,16 @@
       "input": ["text"],
       "reasoning": true,
       "contextWindow": 1000000,
-      "maxTokens": 131072
+      "maxTokens": 131072,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": null,
+        "high": "high",
+        "xhigh": null,
+        "max": "max"
+      }
     },
     "glm-5.3-flash": {
       "api": "openai-completions",
@@ -284,7 +455,16 @@
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 1000000,
-      "maxTokens": 131072
+      "maxTokens": 131072,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": null,
+        "high": "high",
+        "xhigh": null,
+        "max": "max"
+      }
     },
     "hy3": {
       "api": "openai-completions",
@@ -292,7 +472,16 @@
       "input": ["text"],
       "reasoning": true,
       "contextWindow": 256000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": "none",
+        "minimal": null,
+        "low": "low",
+        "medium": null,
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      }
     },
     "hy4-preview": {
       "api": "openai-completions",
@@ -300,7 +489,16 @@
       "input": ["text"],
       "reasoning": true,
       "contextWindow": 1024000,
-      "maxTokens": 64000
+      "maxTokens": 64000,
+      "thinkingLevelMap": {
+        "off": "none",
+        "minimal": null,
+        "low": null,
+        "medium": null,
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      }
     },
     "kimi-k2.7-code": {
       "api": "openai-completions",
@@ -316,7 +514,16 @@
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 1048576,
-      "maxTokens": 131072
+      "maxTokens": 131072,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": null,
+        "medium": null,
+        "high": null,
+        "xhigh": null,
+        "max": "max"
+      }
     },
     "longcat-2.0": {
       "api": "openai-completions",
@@ -374,29 +581,22 @@
       "contextWindow": 204800,
       "maxTokens": 131072
     },
-    "qwen3.7-plus": {
-      "api": "openai-completions",
-      "baseUrl": "https://opencode.ai/zen/go/v1",
-      "input": ["text", "image"],
-      "reasoning": true,
-      "contextWindow": 1000000,
-      "maxTokens": 65536
-    },
-    "qwen3.8-max": {
-      "api": "openai-completions",
-      "baseUrl": "https://opencode.ai/zen/go/v1",
-      "input": ["text", "image"],
-      "reasoning": true,
-      "contextWindow": 1000000,
-      "maxTokens": 131072
-    },
-    "space-bunny-free": {
+    "space-bunny": {
       "api": "openai-completions",
       "baseUrl": "https://opencode.ai/zen/go/v1",
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 1048576,
-      "maxTokens": 524288
+      "maxTokens": 524288,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      }
     },
     "gpt-5.6-luna": {
       "api": "openai-responses",
@@ -404,7 +604,16 @@
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 1050000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      }
     },
     "gpt-6-luna": {
       "api": "openai-responses",
@@ -412,7 +621,16 @@
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 1050000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": "none",
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      }
     },
     "grok-4.6": {
       "api": "openai-responses",
@@ -420,7 +638,16 @@
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 500000,
-      "maxTokens": 500000
+      "maxTokens": 500000,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": null
+      }
     },
     "grok-4.7": {
       "api": "openai-responses",
@@ -428,7 +655,16 @@
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 500000,
-      "maxTokens": 500000
+      "maxTokens": 500000,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": null
+      }
     },
     "muse-spark-1.2-contributor": {
       "api": "openai-responses",
@@ -436,7 +672,16 @@
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 1048576,
-      "maxTokens": 131072
+      "maxTokens": 131072,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": "minimal",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": null
+      }
     },
     "muse-spark-1.3-contributor": {
       "api": "openai-responses",
@@ -444,7 +689,16 @@
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 1048576,
-      "maxTokens": 131072
+      "maxTokens": 131072,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": "minimal",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": null
+      }
     }
   },
   "openai": {
@@ -534,7 +788,16 @@
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 400000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": "minimal",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      }
     },
     "gpt-5-chat-latest": {
       "api": "openai-responses",
@@ -542,7 +805,10 @@
       "input": ["text", "image"],
       "reasoning": false,
       "contextWindow": 128000,
-      "maxTokens": 16384
+      "maxTokens": 16384,
+      "thinkingLevelMap": {
+        "off": null
+      }
     },
     "gpt-5-mini": {
       "api": "openai-responses",
@@ -550,7 +816,16 @@
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 400000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": "minimal",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      }
     },
     "gpt-5-nano": {
       "api": "openai-responses",
@@ -558,7 +833,16 @@
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 400000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": "minimal",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      }
     },
     "gpt-5-pro": {
       "api": "openai-responses",
@@ -566,7 +850,16 @@
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 400000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": null,
+        "medium": null,
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      }
     },
     "gpt-5.1": {
       "api": "openai-responses",
@@ -574,7 +867,16 @@
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 400000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": "none",
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      }
     },
     "gpt-5.2": {
       "api": "openai-responses",
@@ -582,7 +884,16 @@
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 400000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": "none",
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": null
+      }
     },
     "gpt-5.2-chat-latest": {
       "api": "openai-responses",
@@ -590,7 +901,16 @@
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 128000,
-      "maxTokens": 16384
+      "maxTokens": 16384,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": null,
+        "medium": "medium",
+        "high": null,
+        "xhigh": "xhigh",
+        "max": null
+      }
     },
     "gpt-5.2-pro": {
       "api": "openai-responses",
@@ -598,7 +918,16 @@
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 400000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": null,
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": null
+      }
     },
     "gpt-5.3-chat-latest": {
       "api": "openai-responses",
@@ -606,7 +935,11 @@
       "input": ["text", "image"],
       "reasoning": false,
       "contextWindow": 128000,
-      "maxTokens": 16384
+      "maxTokens": 16384,
+      "thinkingLevelMap": {
+        "off": null,
+        "xhigh": "xhigh"
+      }
     },
     "gpt-5.3-codex": {
       "api": "openai-responses",
@@ -614,7 +947,16 @@
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 400000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": "none",
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": null
+      }
     },
     "gpt-5.3-codex-spark": {
       "api": "openai-responses",
@@ -622,7 +964,16 @@
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 128000,
-      "maxTokens": 32000
+      "maxTokens": 32000,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": null
+      }
     },
     "gpt-5.4": {
       "api": "openai-responses",
@@ -630,7 +981,16 @@
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 272000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": "none",
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": null
+      }
     },
     "gpt-5.4-mini": {
       "api": "openai-responses",
@@ -638,7 +998,16 @@
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 400000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": "none",
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": null
+      }
     },
     "gpt-5.4-nano": {
       "api": "openai-responses",
@@ -646,7 +1015,16 @@
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 400000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": "none",
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": null
+      }
     },
     "gpt-5.4-pro": {
       "api": "openai-responses",
@@ -654,7 +1032,16 @@
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 1050000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": null,
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": null
+      }
     },
     "gpt-5.5": {
       "api": "openai-responses",
@@ -662,7 +1049,16 @@
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 272000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": "none",
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": null
+      }
     },
     "gpt-5.5-pro": {
       "api": "openai-responses",
@@ -670,7 +1066,16 @@
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 1050000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": null,
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": null
+      }
     },
     "gpt-5.6-luna": {
       "api": "openai-responses",
@@ -678,7 +1083,16 @@
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 272000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": "none",
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      }
     },
     "gpt-5.6-sol": {
       "api": "openai-responses",
@@ -686,7 +1100,16 @@
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 272000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": "none",
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      }
     },
     "gpt-5.6-terra": {
       "api": "openai-responses",
@@ -694,7 +1117,16 @@
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 272000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": "none",
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      }
     },
     "gpt-6-astra": {
       "api": "openai-responses",
@@ -702,7 +1134,16 @@
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 272000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      }
     },
     "gpt-6-luna": {
       "api": "openai-responses",
@@ -710,7 +1151,16 @@
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 272000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": "none",
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      }
     },
     "gpt-6-sol": {
       "api": "openai-responses",
@@ -718,7 +1168,16 @@
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 272000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": "none",
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      }
     },
     "gpt-6.1-sol": {
       "api": "openai-responses",
@@ -726,7 +1185,16 @@
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 272000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      }
     },
     "gpt-daybreak-blue-latest": {
       "api": "openai-responses",
@@ -734,7 +1202,16 @@
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 1050000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": "none",
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      }
     },
     "gpt-daybreak-red-latest": {
       "api": "openai-responses",
@@ -742,7 +1219,16 @@
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 400000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": "none",
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      }
     },
     "gpt-realtime-2.1": {
       "api": "openai-responses",
@@ -750,7 +1236,16 @@
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 128000,
-      "maxTokens": 32000
+      "maxTokens": 32000,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": "minimal",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": null
+      }
     },
     "o1": {
       "api": "openai-responses",
@@ -758,7 +1253,16 @@
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 200000,
-      "maxTokens": 100000
+      "maxTokens": 100000,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      }
     },
     "o1-pro": {
       "api": "openai-responses",
@@ -766,7 +1270,16 @@
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 200000,
-      "maxTokens": 100000
+      "maxTokens": 100000,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      }
     },
     "o3": {
       "api": "openai-responses",
@@ -774,7 +1287,16 @@
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 200000,
-      "maxTokens": 100000
+      "maxTokens": 100000,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      }
     },
     "o3-mini": {
       "api": "openai-responses",
@@ -782,7 +1304,16 @@
       "input": ["text"],
       "reasoning": true,
       "contextWindow": 200000,
-      "maxTokens": 100000
+      "maxTokens": 100000,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      }
     },
     "o3-pro": {
       "api": "openai-responses",
@@ -790,7 +1321,16 @@
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 200000,
-      "maxTokens": 100000
+      "maxTokens": 100000,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      }
     },
     "o4-mini": {
       "api": "openai-responses",
@@ -798,7 +1338,16 @@
       "input": ["text", "image"],
       "reasoning": true,
       "contextWindow": 200000,
-      "maxTokens": 100000
+      "maxTokens": 100000,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      }
     }
   }
 }
