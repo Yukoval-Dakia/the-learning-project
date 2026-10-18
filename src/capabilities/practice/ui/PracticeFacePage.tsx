@@ -805,9 +805,15 @@ export default function PracticeFacePage({
   }
 
   return (
-    // The single-question page (纸面) lays out its own width and padding, as in the loft; the list,
-    // paper and retro views keep the shared page padding.
-    <main className={mode.kind === 'solo' ? 'pface-loom pface-next' : 'page wide pface-loom'}>
+    // The single-question and whole-paper pages (纸面) lay out their own width and padding, as in
+    // the loft; the list and retro views keep the shared page padding.
+    <main
+      className={
+        mode.kind === 'solo' || mode.kind === 'paper'
+          ? 'pface-loom pface-next'
+          : 'page wide pface-loom'
+      }
+    >
       <div className="pface-root" ref={attachHost}>
         <div aria-live="assertive">
           {actionFailure && (

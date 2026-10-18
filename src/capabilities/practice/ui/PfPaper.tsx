@@ -6,7 +6,8 @@ import type { ResponseSetT, SlotResponseT } from '@/core/schema/assessment';
 //（judge-now-show-later，visible_to_user=false 缓冲）+ session end → 可见性解锁。
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { ArrowLeft, ArrowRight, PenLine, TriangleAlert } from 'lucide-react';
+import { type ReactNode, useCallback, useMemo, useRef, useState } from 'react';
 import { REASONING_TRACE_MAX_LEN } from '@/kernel/limits';
 import { AssetEvidencePreview } from '@/ui/components/response/AssetEvidencePreview';
 import { ChoiceSetResponse } from '@/ui/components/response/ChoiceSetResponse';
@@ -29,9 +30,7 @@ import { SelfConfidenceField } from '@/ui/components/response/SelfConfidenceFiel
 import { StimulusFigure } from '@/ui/components/response/StimulusFigure';
 import { usePagehideTransition } from '@/ui/hooks/usePagehideTransition';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
-import { Btn } from '@/ui/primitives/Btn';
-import { Card } from '@/ui/primitives/Card';
-import { LoomIcon } from '@/ui/primitives/LoomIcon';
+import { Button, Chip, Mascot, UiNextRoot } from '@/ui-next/public';
 import type { PfToast } from './PracticeFacePage';
 import {
   type PaperDetail,
@@ -49,6 +48,16 @@ import {
 // shouldOfferProcessBox 决定过程框挂不挂，buildCaptureFields 负责 trim 判空 + 防御性截断
 // +「空值不发字段」。两者随 PfSolo 的提交引擎移到 use-practice-submit（YUK-1473）。
 import { buildCaptureFields, shouldOfferProcessBox } from './use-practice-submit';
+// YUK-1473 — 纸面: the paper page reuses the single-question page's sheet (un-ps-*), plus its own.
+import './solo/practice-solo.css';
+import './practice-paper.css';
+
+// The banner's source line, in the paper shelf's words (PfShelf).
+function paperSourceLabel(intentSource: string): string {
+  if (intentSource === 'ingestion_paper') return '导入';
+  if (intentSource === 'quiz_gen') return '点播';
+  return 'AI 打包';
+}
 
 function slotKey(s: PaperSlot): string {
   return `${s.question_id}::${s.part_ref ?? ''}`;
@@ -242,15 +251,38 @@ export function PfPaper(props: PfPaperProps) {
   // A visit restores its drafts once at mount, so it mounts only from a detail fetched for
   // this entry; later background refetches never overwrite the live visit.
   if (detailQ.isLoading || !detailQ.isFetchedAfterMount)
-    return <p className="quiet-empty">取卷中…</p>;
+    return (
+      <PaperFrame>
+        <div className="un-pp-skel-title" aria-hidden="true">
+          <span />
+          <span />
+        </div>
+        <div className="un-pp-skel-strip" aria-hidden="true">
+          <span />
+          <span />
+          <span />
+        </div>
+        <div className="un-ps-skeleton" role="status" aria-busy="true" aria-label="正在取卷">
+          <span className="un-ps-skel-h" />
+          <span />
+          <span />
+          <span className="un-ps-skel-short" />
+          <span className="un-ps-skel-box" />
+        </div>
+      </PaperFrame>
+    );
   if (detailQ.isError || !detail || slots.length === 0)
     return (
-      <div className="pfp">
-        <Btn size="sm" variant="ghost" icon="arrowL" onClick={() => onExit()}>
-          返回流
-        </Btn>
-        <p className="quiet-empty">卷加载失败或没有题。</p>
-      </div>
+      <PaperFrame>
+        <div className="un-ps-state" role="alert">
+          <p>这张卷没取到，或者里面还没有题。</p>
+          <div className="un-ps-actions">
+            <Button variant="secondary" onClick={() => onExit()}>
+              返回练习
+            </Button>
+          </div>
+        </div>
+      </PaperFrame>
     );
   return (
     <PaperVisit
@@ -260,6 +292,17 @@ export function PfPaper(props: PfPaperProps) {
       slots={slots}
       clearStaleTiming={occurrence.replaced}
     />
+  );
+}
+
+// 纸面's page frame for the paper's loading and error states (the visit draws its own).
+function PaperFrame({ children }: { children: ReactNode }) {
+  return (
+    <UiNextRoot className="un-ps-root">
+      <div className="un-ps un-pp">
+        <div className="un-ps-column">{children}</div>
+      </div>
+    </UiNextRoot>
   );
 }
 
@@ -1077,326 +1120,379 @@ function PaperVisit({
     }
   };
 
+  // 纸面 (YUK-1473): banner → number strip → one sheet for the question on screen → glass bar.
+  // Markup only; every handler and condition below is the pre-纸面 one.
+  const focusNames = [...new Set(detail.sections.flatMap((s) => s.knowledge_focus_names))];
   return (
-    <div className="pfp" data-screen-label={`卷模式 · ${artifactId}`} ref={attachVisit}>
-      <div className="pfp-top" ref={attachTop}>
-        <Btn
-          size="sm"
-          variant="ghost"
-          icon="arrowL"
-          onClick={exitPaper}
-          disabled={exiting || submitting}
-        >
-          {exiting ? '保存中…' : anySaveFailed || !hasNativeBindings ? '退出' : '退出 · 进度保留'}
-        </Btn>
-        <span className="pfp-title">{detail.title}</span>
-        {/* YUK-1051 — 保存状态 chip 换成组件族 SaveStateChip（同文案/同重试交互）；
-            saved 仅在 server ack 后出现的纪律由组件族承载。 */}
-        {hasNativeBindings && (
-          <SaveStateChip
-            state={anySaveFailed ? 'error' : 'idle'}
-            onRetry={anySaveFailed ? retryFailedSaves : undefined}
-            retrying={retrying}
-          />
-        )}
-      </div>
-
-      <div className="pfp-buffer">
-        <LoomIcon name="clock" size={14} className="ico" />
-        <span>
-          {hasNativeBindings
-            ? '反馈缓冲：这张卷不给即时对错——交卷后统一判分。和散题的节奏是反着的，刻意的。'
-            : detail.session
-              ? '这份历史试卷缺少原始发题记录，当前只能查看。'
-              : '正在准备题目，请稍候。'}
-        </span>
-      </div>
-
-      <div className="pfp-pips" role="tablist" aria-label="题目导航">
-        {slots.map((s, i) => {
-          // YUK-1051 — pip 的「已答」中性墨点也把绑定到该 slot 的证据算上（仍零语义色）。
-          const has =
-            (nativeResponses[slotKey(s)]?.entries.some((entry) =>
-              isSlotResponseAnswered(nativeResponseValue(entry)),
-            ) ??
-              false) ||
-            (answers[slotKey(s)] ?? '').trim().length > 0 ||
-            evidenceIdsForSlot(evidence, slotKey(s)).length > 0;
-          return (
-            <button
-              type="button"
-              key={slotKey(s)}
-              role="tab"
-              aria-selected={i === pos}
-              className={`pfp-pip${i === pos ? ' current' : ''}${has ? ' answered' : ''}`}
-              onClick={() => goPos(i)}
-            >
-              {i + 1}
-            </button>
-          );
-        })}
-      </div>
-
-      <Card pad="lg">
-        <div className="nowrap-meta" style={{ marginBottom: 'var(--s-2)' }}>
-          <span className="meta mono">
-            {cur.question_id.slice(0, 12)} · {pos + 1}/{slots.length}
-          </span>
-        </div>
-        {/* YUK-1051 — 结构化配图/共享材料与题面同版渲染（wire image_refs 恢复后）。 */}
-        {cur.assessment ? (
-          <>
-            {cur.assessment.practice_dto.materials.map((material) => (
-              <div key={material.material_id}>
-                {material.content_md !== undefined ? (
-                  <MathMarkdown notation={cur.question.notation}>
-                    {material.content_md}
-                  </MathMarkdown>
-                ) : (
-                  <AssetEvidencePreview
-                    assetId={material.asset_id}
-                    label={material.caption ?? material.alt_text}
-                  />
-                )}
-              </div>
-            ))}
-            {cur.assessment.practice_dto.faces.map((face) => (
-              <MathMarkdown
-                key={face.part_id}
-                notation={cur.question.notation}
-                className="pfs-stem"
-              >
-                {face.prompt_md}
-              </MathMarkdown>
-            ))}
-          </>
-        ) : (
-          <>
-            {(cur.question.image_refs ?? []).map((assetId) => (
-              <StimulusFigure key={assetId} assetId={assetId} />
-            ))}
-            <MathMarkdown notation={cur.question.notation} className="pfs-stem">
-              {cur.question.prompt_md}
-            </MathMarkdown>
-          </>
-        )}
-
-        {/* YUK-1051 — 作答控件换组件族。§6.4 缓冲反馈：恒 feedback='none'，作答全程
-            零对错色（导航 pip 只有「已答」中性墨点）；对错色只属于交卷后的 PfRetro。 */}
-        {cur.assessment ? (
-          <>
-            {cur.assessment.practice_dto.response_spec.slots.map((slot) => {
-              const spec = nativeSlotFieldSpec(slot);
-              if (!spec) return null;
-              const entry = nativeResponses[curKey]?.entries.find(
-                (item) => item.slot_id === slot.slot_id,
-              );
-              return (
-                <ResponseSlotField
-                  key={slot.slot_id}
-                  spec={spec}
-                  value={nativeResponseValue(entry)}
-                  label={slot.placement?.label}
-                  notation={cur.question.notation}
-                  feedback="none"
-                  ariaLabel={slot.placement?.label ?? '作答'}
-                  disabled={!hasNativeBindings || submittedKeys.has(curKey) || exiting}
-                  onChange={(value) => {
-                    const updated: SlotResponseT = nativeResponseEntry(slot, value, entry);
-                    const response: ResponseSetT = {
-                      entries: [
-                        ...(nativeResponsesRef.current[curKey]?.entries ?? []).filter(
-                          (item) => item.slot_id !== slot.slot_id,
-                        ),
-                        updated,
-                      ],
-                    };
-                    nativeResponsesRef.current = {
-                      ...nativeResponsesRef.current,
-                      [curKey]: response,
-                    };
-                    setNativeResponses(nativeResponsesRef.current);
-                    setAnswer(
-                      response.entries
-                        .map((item) =>
-                          nativeResponseText(
-                            item,
-                            cur.assessment?.practice_dto.response_spec.slots.find(
-                              (field) => field.slot_id === item.slot_id,
-                            ),
-                          ),
-                        )
-                        .join('\n'),
-                    );
-                  }}
-                />
-              );
-            })}
-            <EvidenceComposer
-              text=""
-              onTextChange={() => {}}
-              showText={false}
-              attachments={evidence}
-              onAttachmentsChange={onEvidenceChange}
-              disabled={!hasNativeBindings || submittedKeys.has(curKey) || exiting}
-              onUploadingChange={setUploading}
-              slotLabels={Object.fromEntries(
-                slots.map((slot, i) => [slotKey(slot), `第 ${i + 1} 题`]),
-              )}
-            />
-          </>
-        ) : isChoice ? (
-          <ChoiceSetResponse
-            options={curOptions}
-            mode="single"
-            // null = 未作答；草稿文本与选项对不上（遗留数据）→ [] 显式空集合，不假装选中。
-            value={curAnswerText ? curSelectedIds : null}
-            onChange={(ids) => {
-              const opt = curOptions.find((o) => o.id === ids[0]);
-              setAnswer(opt?.text_md ?? '');
-            }}
-            disabled={!hasNativeBindings || submittedKeys.has(curKey) || exiting}
-            notation={cur.question.notation}
-            feedback="none"
-            ariaLabel="选项"
-          />
-        ) : (
-          // 开放作答：通用文字 + 卷级证据附件（默认绑定整组=本卷 evaluation group，
-          // 子集在下方 EvaluationGroupPanel 可改）。
-          <EvidenceComposer
-            text={answers[curKey] ?? ''}
-            onTextChange={setAnswer}
-            attachments={evidence}
-            onAttachmentsChange={onEvidenceChange}
-            disabled={!hasNativeBindings || submittedKeys.has(curKey) || exiting}
-            notation={cur.question.notation}
-            placeholder="写下你的解答。交卷前都可以改。"
-            ariaLabel="作答"
-            slotLabels={Object.fromEntries(slots.map((s, i) => [slotKey(s), `第 ${i + 1} 题`]))}
-            onUploadingChange={setUploading}
-          />
-        )}
-        {hasNativeBindings &&
-          !isChoice &&
-          evidence.length > 0 &&
-          !submittedKeys.has(curKey) &&
-          !exiting && (
-            <EvaluationGroupPanel
-              slots={slots.map((s, i) => ({ id: slotKey(s), label: `第 ${i + 1} 题` }))}
-              attachments={evidence}
-              onAttachmentChange={onEvidenceRebind}
-            />
-          )}
-
-        {/* YUK-784 — 过程框「记下你的思路」扩到组卷面（镜像 PfSolo #1069 先例）：仅开放/文本
-            作答题（shouldOfferProcessBox 复用，不重写判据）、默认折叠 opt-in、零强制——不挡
-            交卷、折叠即跳过、空值不发字段（submitAll 里 buildCaptureFields trim 判空）。与散题
-            不同点：组卷面多题连续作答，采集是 per-slot 状态，换题不丢，交卷时随各自 slot 发出。
-            已提交 slot / 退出 flush 期间不渲染（作答面已冻结，采集无处可挂）。 */}
-        {hasNativeBindings &&
-          shouldOfferProcessBox(isChoice) &&
-          !submittedKeys.has(curKey) &&
-          !exiting && (
-            <div className="pfs-trace">
-              {traceOpen[curKey] ? (
-                <div className="composer pfs-trace-composer">
-                  <textarea
-                    rows={2}
-                    value={trace[curKey] ?? ''}
-                    // 硬闸同 PfSolo：maxLength 挡越界输入撞 400 软死锁，buildCaptureFields
-                    // 发送前再防御性截断兜底粘贴/IME 绕过。
-                    maxLength={REASONING_TRACE_MAX_LEN}
-                    placeholder="随手记下你是怎么想的——不评分，也可以留空。"
-                    onChange={(e) => setTrace((t) => ({ ...t, [curKey]: e.target.value }))}
-                    aria-label="解题思路（可选）"
-                  />
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  className="pfs-trace-toggle"
-                  onClick={() => setTraceOpen((o) => ({ ...o, [curKey]: true }))}
+    <UiNextRoot className="un-ps-root">
+      <div className="un-ps un-pp" data-screen-label={`卷模式 · ${artifactId}`} ref={attachVisit}>
+        <div className="un-ps-column">
+          <div className="un-ps-banner" ref={attachTop}>
+            <div className="un-ps-banner-text">
+              <div className="un-ps-back-row">
+                <Button
+                  variant="quiet"
+                  size="sm"
+                  onClick={exitPaper}
+                  disabled={exiting || submitting}
                 >
-                  ＋ 记下你的思路（可选）
-                </button>
+                  <ArrowLeft size={14} aria-hidden="true" />
+                  {exiting
+                    ? '保存中…'
+                    : anySaveFailed || !hasNativeBindings
+                      ? '退出'
+                      : '退出 · 进度保留'}
+                </Button>
+              </div>
+              <p className="un-ps-eyebrow">
+                {paperSourceLabel(detail.intent_source)} · 整卷
+                {focusNames.length > 0 ? ` · ${focusNames.join('、')}` : ''} · 共{' '}
+                <span className="un-num">{slots.length}</span> 题
+              </p>
+              <h1 className="un-ps-title">{detail.title}</h1>
+              <div className="un-ps-chips">
+                <Chip>
+                  已答 <span className="un-num">{answeredCount}</span> /{' '}
+                  <span className="un-num">{slots.length}</span>
+                </Chip>
+                {hasNativeBindings && <Chip>交卷后统一判分</Chip>}
+              </div>
+              {/* The old full-width 反馈缓冲 strip, now one quiet line; the chip above says it
+                  for a paper that can be handed in. */}
+              {!hasNativeBindings && (
+                <p className="un-pp-note">
+                  {detail.session
+                    ? '这份历史试卷缺少原始发题记录，当前只能查看。'
+                    : '正在准备题目，请稍候。'}
+                </p>
               )}
             </div>
-          )}
-        {hasNativeBindings && !submittedKeys.has(curKey) && !exiting && (
-          <SelfConfidenceField
-            value={selfConfidence[curKey]}
-            onChange={(next) =>
-              setSelfConfidence((values) => {
-                if (next === null) {
-                  const copy = { ...values };
-                  delete copy[curKey];
-                  return copy;
-                }
-                return { ...values, [curKey]: next };
-              })
-            }
-            ariaLabel={`第 ${pos + 1} 题信心自评`}
-          />
-        )}
-      </Card>
+            <Mascot thinking={submitting} />
+          </div>
 
-      <div className="pfp-foot">
-        <Btn
-          size="sm"
-          variant="secondary"
-          icon="arrowL"
-          disabled={pos === 0}
-          onClick={() => goPos(pos - 1)}
-        >
-          上一题
-        </Btn>
-        <Btn
-          size="sm"
-          variant="secondary"
-          iconEnd="arrow"
-          disabled={pos === slots.length - 1}
-          onClick={() => goPos(pos + 1)}
-        >
-          下一题
-        </Btn>
-        <span className="pfp-count tnum">
-          已答 {answeredCount} / {slots.length}
-        </span>
-        {confirm ? (
-          <span className="nowrap-meta">
-            <span className="meta">还有 {unanswered} 题空着——仍要交？</span>
-            <Btn
-              size="sm"
-              variant="primary"
-              icon="send"
-              disabled={!hasNativeBindings || submitting || exiting || uploading}
-              onClick={() => void submitAll()}
-            >
-              {submitting ? '判分中…' : '交卷'}
-            </Btn>
-            <Btn size="sm" variant="ghost" onClick={() => setConfirm(false)}>
-              再看看
-            </Btn>
-          </span>
-        ) : (
-          <Btn
-            size="sm"
-            variant="primary"
-            icon="send"
-            disabled={!hasNativeBindings || submitting || exiting || uploading}
-            onClick={() => (unanswered > 0 ? setConfirm(true) : void submitAll())}
-          >
-            {submitting ? '判分中…' : '交卷 · 统一判分'}
-          </Btn>
-        )}
+          <div className="un-pp-strip" role="tablist" aria-label="题目导航">
+            {slots.map((s, i) => {
+              // YUK-1051 — pip 的「已答」中性墨点也把绑定到该 slot 的证据算上（仍零语义色）。
+              const has =
+                (nativeResponses[slotKey(s)]?.entries.some((entry) =>
+                  isSlotResponseAnswered(nativeResponseValue(entry)),
+                ) ??
+                  false) ||
+                (answers[slotKey(s)] ?? '').trim().length > 0 ||
+                evidenceIdsForSlot(evidence, slotKey(s)).length > 0;
+              return (
+                <button
+                  type="button"
+                  key={slotKey(s)}
+                  role="tab"
+                  aria-selected={i === pos}
+                  aria-label={`第 ${i + 1} 题${has ? '，已答' : '，还没答'}`}
+                  className="un-pp-pip un-num un-hit"
+                  data-answered={has || undefined}
+                  onClick={() => goPos(i)}
+                >
+                  <span>{i + 1}</span>
+                </button>
+              );
+            })}
+            <span className="un-pp-strip-key" aria-hidden="true">
+              <span>
+                <i data-k="answered" />
+                已答
+              </span>
+              <span>
+                <i data-k="empty" />
+                还没答
+              </span>
+            </span>
+          </div>
+
+          <article className="un-ps-sheet" aria-label={`第 ${pos + 1} 题`}>
+            <div className="un-ps-sheet-q">
+              <span className="un-ps-mainno un-num" role="img" aria-label={`第 ${pos + 1} 题`}>
+                {pos + 1}
+              </span>
+              <div className="un-ps-stem">
+                {/* YUK-1051 — 结构化配图/共享材料与题面同版渲染（wire image_refs 恢复后）。 */}
+                {cur.assessment ? (
+                  <>
+                    {cur.assessment.practice_dto.materials.map((material) => (
+                      <div key={material.material_id} className="un-ps-figure">
+                        {material.content_md !== undefined ? (
+                          <MathMarkdown notation={cur.question.notation} className="un-ps-prose">
+                            {material.content_md}
+                          </MathMarkdown>
+                        ) : (
+                          <AssetEvidencePreview
+                            assetId={material.asset_id}
+                            label={material.caption ?? material.alt_text}
+                          />
+                        )}
+                      </div>
+                    ))}
+                    {cur.assessment.practice_dto.faces.map((face) => (
+                      <MathMarkdown
+                        key={face.part_id}
+                        notation={cur.question.notation}
+                        className="un-ps-prose"
+                      >
+                        {face.prompt_md}
+                      </MathMarkdown>
+                    ))}
+                  </>
+                ) : (
+                  <>
+                    {(cur.question.image_refs ?? []).map((assetId) => (
+                      <StimulusFigure key={assetId} assetId={assetId} />
+                    ))}
+                    <MathMarkdown notation={cur.question.notation} className="un-ps-prose">
+                      {cur.question.prompt_md}
+                    </MathMarkdown>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* YUK-1051 — 作答控件换组件族。§6.4 缓冲反馈：恒 feedback='none'，作答全程
+                零对错色（导航 pip 只有「已答」中性墨点）；对错色只属于交卷后的 PfRetro。
+                纸面: written on ruled lines right under the question (.un-ps .rs-textarea). */}
+            <div className="un-ps-write">
+              {cur.assessment ? (
+                <>
+                  {cur.assessment.practice_dto.response_spec.slots.map((slot) => {
+                    const spec = nativeSlotFieldSpec(slot);
+                    if (!spec) return null;
+                    const entry = nativeResponses[curKey]?.entries.find(
+                      (item) => item.slot_id === slot.slot_id,
+                    );
+                    return (
+                      <ResponseSlotField
+                        key={slot.slot_id}
+                        spec={spec}
+                        value={nativeResponseValue(entry)}
+                        label={slot.placement?.label}
+                        notation={cur.question.notation}
+                        feedback="none"
+                        ariaLabel={slot.placement?.label ?? '作答'}
+                        disabled={!hasNativeBindings || submittedKeys.has(curKey) || exiting}
+                        onChange={(value) => {
+                          const updated: SlotResponseT = nativeResponseEntry(slot, value, entry);
+                          const response: ResponseSetT = {
+                            entries: [
+                              ...(nativeResponsesRef.current[curKey]?.entries ?? []).filter(
+                                (item) => item.slot_id !== slot.slot_id,
+                              ),
+                              updated,
+                            ],
+                          };
+                          nativeResponsesRef.current = {
+                            ...nativeResponsesRef.current,
+                            [curKey]: response,
+                          };
+                          setNativeResponses(nativeResponsesRef.current);
+                          setAnswer(
+                            response.entries
+                              .map((item) =>
+                                nativeResponseText(
+                                  item,
+                                  cur.assessment?.practice_dto.response_spec.slots.find(
+                                    (field) => field.slot_id === item.slot_id,
+                                  ),
+                                ),
+                              )
+                              .join('\n'),
+                          );
+                        }}
+                      />
+                    );
+                  })}
+                  <EvidenceComposer
+                    text=""
+                    onTextChange={() => {}}
+                    showText={false}
+                    attachments={evidence}
+                    onAttachmentsChange={onEvidenceChange}
+                    disabled={!hasNativeBindings || submittedKeys.has(curKey) || exiting}
+                    onUploadingChange={setUploading}
+                    slotLabels={Object.fromEntries(
+                      slots.map((slot, i) => [slotKey(slot), `第 ${i + 1} 题`]),
+                    )}
+                  />
+                </>
+              ) : isChoice ? (
+                <ChoiceSetResponse
+                  options={curOptions}
+                  mode="single"
+                  // null = 未作答；草稿文本与选项对不上（遗留数据）→ [] 显式空集合，不假装选中。
+                  value={curAnswerText ? curSelectedIds : null}
+                  onChange={(ids) => {
+                    const opt = curOptions.find((o) => o.id === ids[0]);
+                    setAnswer(opt?.text_md ?? '');
+                  }}
+                  disabled={!hasNativeBindings || submittedKeys.has(curKey) || exiting}
+                  notation={cur.question.notation}
+                  feedback="none"
+                  ariaLabel="选项"
+                />
+              ) : (
+                // 开放作答：通用文字 + 卷级证据附件（默认绑定整组=本卷 evaluation group，
+                // 子集在下方 EvaluationGroupPanel 可改）。
+                <EvidenceComposer
+                  text={answers[curKey] ?? ''}
+                  onTextChange={setAnswer}
+                  attachments={evidence}
+                  onAttachmentsChange={onEvidenceChange}
+                  disabled={!hasNativeBindings || submittedKeys.has(curKey) || exiting}
+                  notation={cur.question.notation}
+                  placeholder="写下你的解答。交卷前都可以改。"
+                  ariaLabel="作答"
+                  slotLabels={Object.fromEntries(
+                    slots.map((s, i) => [slotKey(s), `第 ${i + 1} 题`]),
+                  )}
+                  onUploadingChange={setUploading}
+                />
+              )}
+            </div>
+
+            <div className="un-pp-extras">
+              {hasNativeBindings &&
+                !isChoice &&
+                evidence.length > 0 &&
+                !submittedKeys.has(curKey) &&
+                !exiting && (
+                  <EvaluationGroupPanel
+                    slots={slots.map((s, i) => ({ id: slotKey(s), label: `第 ${i + 1} 题` }))}
+                    attachments={evidence}
+                    onAttachmentChange={onEvidenceRebind}
+                  />
+                )}
+
+              {/* YUK-784 — 过程框「记下你的思路」扩到组卷面（镜像 PfSolo #1069 先例）：仅开放/文本
+                  作答题（shouldOfferProcessBox 复用，不重写判据）、默认折叠 opt-in、零强制——不挡
+                  交卷、折叠即跳过、空值不发字段（submitAll 里 buildCaptureFields trim 判空）。与散题
+                  不同点：组卷面多题连续作答，采集是 per-slot 状态，换题不丢，交卷时随各自 slot 发出。
+                  已提交 slot / 退出 flush 期间不渲染（作答面已冻结，采集无处可挂）。 */}
+              {hasNativeBindings &&
+                shouldOfferProcessBox(isChoice) &&
+                !submittedKeys.has(curKey) &&
+                !exiting && (
+                  <div className="un-pp-trace">
+                    {traceOpen[curKey] ? (
+                      <div className="un-pp-trace-field">
+                        <textarea
+                          className="un-ps-textarea"
+                          rows={2}
+                          value={trace[curKey] ?? ''}
+                          // 硬闸同 PfSolo：maxLength 挡越界输入撞 400 软死锁，buildCaptureFields
+                          // 发送前再防御性截断兜底粘贴/IME 绕过。
+                          maxLength={REASONING_TRACE_MAX_LEN}
+                          placeholder="随手记下你是怎么想的——不评分，也可以留空。"
+                          onChange={(e) => setTrace((t) => ({ ...t, [curKey]: e.target.value }))}
+                          aria-label="解题思路（可选）"
+                        />
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        className="un-pp-trace-toggle un-hit"
+                        onClick={() => setTraceOpen((o) => ({ ...o, [curKey]: true }))}
+                      >
+                        <PenLine size={14} aria-hidden="true" />
+                        记下你的思路（可选）
+                      </button>
+                    )}
+                  </div>
+                )}
+            </div>
+
+            {hasNativeBindings && !submittedKeys.has(curKey) && !exiting && (
+              <div className="un-pp-confidence">
+                <SelfConfidenceField
+                  value={selfConfidence[curKey]}
+                  onChange={(next) =>
+                    setSelfConfidence((values) => {
+                      if (next === null) {
+                        const copy = { ...values };
+                        delete copy[curKey];
+                        return copy;
+                      }
+                      return { ...values, [curKey]: next };
+                    })
+                  }
+                  ariaLabel={`第 ${pos + 1} 题信心自评`}
+                />
+              </div>
+            )}
+          </article>
+
+          {/* 纸面's glass bar (a floating layer, T3), across the column: it acts on the paper. */}
+          {/* biome-ignore lint/a11y/useSemanticElements: a toolbar of buttons, not a form field set. */}
+          <div className="un-ps-bar un-glass un-pp-bar" role="group" aria-label="翻题与交卷">
+            <div className="un-pp-bar-nav">
+              <Button variant="quiet" size="sm" disabled={pos === 0} onClick={() => goPos(pos - 1)}>
+                <ArrowLeft size={14} aria-hidden="true" />
+                上一题
+              </Button>
+              <Button
+                variant="quiet"
+                size="sm"
+                disabled={pos === slots.length - 1}
+                onClick={() => goPos(pos + 1)}
+              >
+                下一题
+                <ArrowRight size={14} aria-hidden="true" />
+              </Button>
+            </div>
+            <span className="un-pp-count un-num">
+              已答 <b>{answeredCount}</b> / {slots.length}
+            </span>
+            {/* YUK-1051 — 保存状态 chip 换成组件族 SaveStateChip（同文案/同重试交互）；
+                saved 仅在 server ack 后出现的纪律由组件族承载。 */}
+            <span className="un-ps-bar-save">
+              {hasNativeBindings && (
+                <SaveStateChip
+                  state={anySaveFailed ? 'error' : 'idle'}
+                  onRetry={anySaveFailed ? retryFailedSaves : undefined}
+                  retrying={retrying}
+                />
+              )}
+            </span>
+            <div className="un-pp-bar-end">
+              {confirm ? (
+                <>
+                  <span className="un-pp-confirm-q">还有 {unanswered} 题空着——仍要交？</span>
+                  <Button variant="quiet" size="sm" onClick={() => setConfirm(false)}>
+                    再看看
+                  </Button>
+                  <Button
+                    variant="primary"
+                    disabled={!hasNativeBindings || submitting || exiting || uploading}
+                    onClick={() => void submitAll()}
+                  >
+                    {submitting ? '判分中…' : '交卷'}
+                  </Button>
+                </>
+              ) : (
+                <Button
+                  variant="primary"
+                  disabled={!hasNativeBindings || submitting || exiting || uploading}
+                  onClick={() => (unanswered > 0 ? setConfirm(true) : void submitAll())}
+                >
+                  {submitting ? '判分中…' : '交卷 · 统一判分'}
+                </Button>
+              )}
+            </div>
+            <p className="un-pp-hint" data-tone={anySaveFailed ? 'caution' : undefined}>
+              {anySaveFailed && <TriangleAlert size={13} aria-hidden="true" />}
+              {!hasNativeBindings
+                ? '历史作答保留，当前不可提交。'
+                : anySaveFailed
+                  ? '有草稿没保存上——退出前先点「保存失败 · 重试」'
+                  : '中途退出进度保留 · 交卷后到复盘看逐题判定'}
+            </p>
+          </div>
+        </div>
       </div>
-      <div className="key-hints mono" style={{ marginTop: 'var(--s-3)' }}>
-        {!hasNativeBindings
-          ? '历史作答保留，当前不可提交。'
-          : anySaveFailed
-            ? '有草稿没保存上——退出前先点「保存失败 · 重试」'
-            : '中途退出进度保留 · 交卷后到复盘看逐题判定'}
-      </div>
-    </div>
+    </UiNextRoot>
   );
 }
