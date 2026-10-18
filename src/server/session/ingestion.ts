@@ -146,6 +146,63 @@ export async function enqueueExtraction(
   });
 }
 
+// ---------- enqueueAgentRun (YUK-1522 R8) ----------
+
+export const INGESTION_AGENT_RUN_QUEUE = 'ingestion_agent_run' as const;
+
+/**
+ * uploaded | failed → queued. Posts an `ingestion_agent_run` pg-boss job for the
+ * R8 agent lane (whole-package agentic ingestion). Same tx/ghost-job semantics
+ * as enqueueExtraction; the only differences are the queue name and the lane
+ * marker on the `ingestion.queued` payload.
+ */
+export async function enqueueAgentRun(
+  params: EnqueueExtractionParams,
+): Promise<{ jobId: string | null }> {
+  return params.db.transaction(async (tx) => {
+    const current = await loadSessionForUpdate(tx, params.sessionId);
+    if (!current) {
+      throw new ApiError('not_found', `learning_session ${params.sessionId} not found`, 404);
+    }
+    assertFromState(
+      current.status,
+      ['uploaded', 'failed'] as const,
+      params.sessionId,
+      'Ingestion.enqueueAgentRun',
+    );
+
+    await tx
+      .update(learning_session)
+      .set({ status: 'queued', updated_at: new Date() })
+      .where(eq(learning_session.id, params.sessionId));
+
+    await writeJobEvent(tx, {
+      business_table: SESSION_TABLE,
+      business_id: params.sessionId,
+      event_type: 'ingestion.queued',
+      payload: { from: current.status, lane: 'agent' },
+    });
+
+    const jobId = params.operationId
+      ? await params.boss.send(
+          INGESTION_AGENT_RUN_QUEUE,
+          { sessionId: params.sessionId, operationId: params.operationId, trigger: 'start' },
+          {
+            singletonKey: params.operationId,
+            singletonSeconds: OPERATION_DISPATCH_SINGLETON_SECONDS,
+          },
+        )
+      : await params.boss.send(INGESTION_AGENT_RUN_QUEUE, {
+          sessionId: params.sessionId,
+          trigger: 'start',
+        });
+    if (!jobId && !params.operationId) {
+      throw new Error('Ingestion.enqueueAgentRun: boss.send returned no jobId');
+    }
+    return { jobId };
+  });
+}
+
 // ---------- markExtractionStarted ----------
 
 /**
@@ -411,6 +468,74 @@ export async function markExtractionFailed(
       created_at: now,
     });
   }
+}
+
+// ---------- markAgentRunCompleted (YUK-1522 R8) ----------
+
+export type AgentRunCompletion = {
+  /** Emitted ingestion_agent.item rows that reached a terminal status. */
+  items_terminal: number;
+  /** Terminal items whose last status is 'failed'. */
+  items_failed: number;
+};
+
+/**
+ * extracting → extracted | partial | failed — terminal status for the R8 agent
+ * lane. The agent writes question drafts / submitted questions via the
+ * edit/submit canonical paths, not question_block rows, so completion is
+ * item-ledger based rather than block based:
+ *   - no terminal items at all            → 'failed'
+ *   - every terminal item failed          → 'failed'
+ *   - some terminal items failed          → 'partial'
+ *   - all terminal items withheld/admitted → 'extracted'
+ * A run suspended on open asks stays 'extracting' (honest in-progress) and is
+ * resumed by the ask answer / timeout lane, so this guard is only called on a
+ * real terminal outcome.
+ */
+export async function markAgentRunCompleted(
+  tx: Db | Tx,
+  params: { sessionId: string; completion: AgentRunCompletion },
+): Promise<{ status: 'extracted' | 'partial' | 'failed' }> {
+  const current = await loadSessionForUpdate(tx, params.sessionId);
+  if (!current) {
+    throw new ApiError('not_found', `learning_session ${params.sessionId} not found`, 404);
+  }
+  assertFromState(
+    current.status,
+    ['extracting'] as const,
+    params.sessionId,
+    'Ingestion.markAgentRunCompleted',
+  );
+
+  const { items_terminal: total, items_failed: failed } = params.completion;
+  const succeeded = total - failed;
+  const nextStatus: 'extracted' | 'partial' | 'failed' =
+    succeeded <= 0 ? 'failed' : failed > 0 ? 'partial' : 'extracted';
+
+  const now = new Date();
+  await tx
+    .update(learning_session)
+    .set({
+      status: nextStatus,
+      ...(nextStatus === 'failed'
+        ? { error_message: 'ingestion agent produced no usable items' }
+        : {}),
+      updated_at: now,
+    })
+    .where(eq(learning_session.id, params.sessionId));
+
+  await writeJobEvent(tx, {
+    business_table: SESSION_TABLE,
+    business_id: params.sessionId,
+    event_type: 'ingestion.agent_run_completed',
+    payload: {
+      status: nextStatus,
+      items_terminal: total,
+      items_failed: failed,
+      lane: 'agent',
+    },
+  });
+  return { status: nextStatus };
 }
 
 // ---------- applyRescue ----------

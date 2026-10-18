@@ -1894,5 +1894,30 @@
         "notes": "返回知识节点读模型。retrievability 为已知数值或 null，未知不转换为 0。retention 保留候选 score/unknown、uncalibrated 与 engineering 标记；FSRS 默认模式保持既有数值。需 x-internal-token。"
       }
     ]
+  },
+  {
+    "path": "/api/ingestion-sessions/:id/asks/:ask_id/answers",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "回答录入 agent 的 durable ask（YUK-1522 R8）；同 key 同内容幂等重放",
+        "query": [],
+        "headers": [
+          {
+            "name": "Idempotency-Key",
+            "value": "{{ingestionAskIdempotencyKey}}",
+            "description": "必填；同 ask 同 key 同内容重放返回 202 replayed:true，同 key 不同内容返回 409 idempotency_conflict"
+          }
+        ],
+        "contentType": "application/json",
+        "bodyExample": {
+          "answer": {
+            "kind": "choice",
+            "option_id": "keep_together"
+          }
+        },
+        "notes": "202 {accepted, replayed}；已终态（已答/超时）→ 409 ask_already_resolved；选项不存在/空文本/超 500 字/kind 不匹配 → 422 对应 code。需 x-internal-token"
+      }
+    ]
   }
 ]

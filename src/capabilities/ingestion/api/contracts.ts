@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import { PublicMaterialView } from '@/core/schema/assessment';
-
 import {
   CauseCategory,
   FigureRef,
@@ -16,6 +15,12 @@ import {
   BinaryResponseSchema,
   MultipartFilePartSchema,
 } from '@/kernel/http-contracts';
+import {
+  IngestionAskAnswerBody,
+  IngestionAskAnswerHeaders,
+  IngestionAskAnswerResponse,
+  IngestionAskParams,
+} from '../server/agent/contract';
 
 /**
  * YUK-1408 — the client-facing consent enum for upload routes. Intentionally a
@@ -333,3 +338,12 @@ export const RevertAutoEnrolledBlockResponseSchema = z.object({
   retractEventId: z.string(),
   retractedEventId: z.string(),
 });
+
+// YUK-1522 (R8) — durable ask answer endpoint wire shapes. The binding
+// definitions live in server/agent/contract.ts (single source for the tool,
+// emitter and route); re-exported here so the api/ contracts file stays the
+// one-stop wire surface.
+export const IngestionAskAnswerBodySchema = IngestionAskAnswerBody;
+export const IngestionAskAnswerResponseSchema = IngestionAskAnswerResponse;
+export const IngestionAskAnswerHeadersSchema = IngestionAskAnswerHeaders;
+export const IngestionAskParamsSchema = IngestionAskParams;

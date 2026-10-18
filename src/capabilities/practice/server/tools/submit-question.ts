@@ -90,6 +90,14 @@ const SOURCED_CREATED_BY_BY_ROUTE = {
 // 旧 handler 同款 pool 上界（source_verify checkDedup 的 LIMIT 先例）。
 const NEAR_DUP_POOL_LIMIT = 100;
 
+// FigureRef.last_reassigned_at 是 z.coerce.date —— 工具的 draft-07 mount
+// schema 里不可表达。wire 面收 ISO 字符串；内部解析换回共享 FigureRef
+//（coerce 兼容 ISO string / Date / epoch），bridge 的首层 parse 与 execute /
+// compat seam 的二次 parse 往返不互锁。
+const CandidateFigureWire = FigureRef.extend({
+  last_reassigned_at: z.iso.datetime().optional(),
+});
+
 const candidateInputSchema = z.object({
   candidate_id: z.string().min(1),
   question: SourcedQuestion,
@@ -98,10 +106,14 @@ const candidateInputSchema = z.object({
     .regex(/^sha256:[0-9a-f]{64}$/, 'extraction_hash 必须是 sha256:<64hex>（fetch 工具产出）'),
   knowledge_hints: z.array(z.string()).default([]),
   source_id: z.string().nullable().default(null),
-  figures: z.array(FigureRef).nullable().default(null),
+  figures: z.array(CandidateFigureWire).nullable().default(null),
   image_refs: z.array(z.string()).nullable().default(null),
   structured: StructuredQuestion.nullable().default(null),
   staged_asset_ids: z.array(z.string()).default([]),
+});
+
+const candidateParsedSchema = candidateInputSchema.extend({
+  figures: z.array(FigureRef).nullable().default(null),
 });
 
 const draftInputSchema = z.object({
@@ -127,6 +139,11 @@ const inputSchema = z
     availability: z.enum(['general_pool', 'container_only']).optional(),
   })
   .strict();
+
+// 执行侧 schema（从不编 JSON Schema）：candidate.figures 回到共享 FigureRef。
+const parsedInputSchema = inputSchema.extend({
+  candidate: candidateParsedSchema.optional(),
+});
 
 const unitOutcomeSchema = z.object({
   unit_id: z.string(),
@@ -164,7 +181,10 @@ const outputSchema = z.object({
   difficulty_evidence: z.unknown().optional(),
 });
 
-type Input = z.infer<typeof inputSchema>;
+type ParsedInput = z.infer<typeof parsedInputSchema>;
+// execute 的实际输入契约 = parsedInputSchema 的输入侧：wire parse 产物（ISO
+// string）与直连调用方已解析的 Date 都收，z.coerce.date 归一。
+type ExecInput = z.input<typeof parsedInputSchema>;
 type Output = z.infer<typeof outputSchema>;
 
 type EnqueueSourceVerifyFn = (questionIds: string[], options?: SendOptions) => Promise<void>;
@@ -210,7 +230,7 @@ async function executeCandidateSubmit(
   ctx: Pick<ToolContext, 'db' | 'sessionId' | 'taskRunId' | 'causedByEventId'> & {
     callerActor?: ToolContext['callerActor'];
   },
-  input: Input & { candidate: NonNullable<Input['candidate']> },
+  input: ParsedInput & { candidate: NonNullable<ParsedInput['candidate']> },
   deps: SubmitQuestionDeps,
 ): Promise<Output> {
   const { db } = ctx;
@@ -272,7 +292,7 @@ async function executeCandidateSubmit(
 
 async function runCandidateSubmit(
   ctx: Pick<ToolContext, 'db' | 'sessionId' | 'taskRunId' | 'causedByEventId'>,
-  input: Input & { candidate: NonNullable<Input['candidate']> },
+  input: ParsedInput & { candidate: NonNullable<ParsedInput['candidate']> },
   deps: SubmitQuestionDeps,
 ): Promise<Output> {
   const { db } = ctx;
@@ -539,7 +559,7 @@ export async function executeStoreSourcedQuestion(
   ctx: Pick<ToolContext, 'db' | 'sessionId' | 'taskRunId' | 'causedByEventId'>,
   legacyInput: {
     source_route: 'jyeoo_fetch' | 'sourcing_web';
-    candidate: z.infer<typeof candidateInputSchema>;
+    candidate: z.infer<typeof candidateParsedSchema>;
     knowledge_ids: string[];
     attribution_state?: 'matched' | 'coarse';
     subject_id: string;
@@ -561,7 +581,7 @@ export async function executeStoreSourcedQuestion(
       existing_question_id: string | null;
     }
 > {
-  const parsed = inputSchema.parse({
+  const parsed = parsedInputSchema.parse({
     // 幂等 key = 候选指纹 + 请求内容指纹（KC 集合/归属不同 ⇒ 不同 id，
     // 避免同 id 异内容误判 request_id_reused）。
     request_id: `legacy-${legacyInput.candidate.candidate_id}-${legacyInput.candidate.extraction_hash.slice(7, 23)}-${createHash(
@@ -608,8 +628,8 @@ export async function executeStoreSourcedQuestion(
   };
 }
 
-async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
-  const input = inputSchema.parse(raw);
+async function execute(ctx: ToolContext, raw: ExecInput): Promise<Output> {
+  const input = parsedInputSchema.parse(raw);
   const hasDraft = input.draft != null;
   const hasCandidate = input.candidate != null;
   if (hasDraft === hasCandidate) {
@@ -658,7 +678,7 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
   return executeCandidateSubmit(ctx, { ...input, candidate }, {});
 }
 
-export const submitQuestionTool: DomainTool<Input, Output> = {
+export const submitQuestionTool: DomainTool<ExecInput, Output> = {
   name: 'submit_question',
   description:
     '统一题目提交闸。draft_ref 提交 v2 草稿文档（或 legacy 适配块）→ 契约四层 → publishQuestionGroup 单一发布 seam；编辑已发布题叠加新 revision 不覆盖原版。来源 generated/adapted/owner_material/photo_ingest/jyeoo_fetch/sourcing_web/manual — 非 fetch 来源用可复现内容指纹，绝不伪造 extraction_hash。也可提交 jyeoo_fetch/sourcing_web 候选（原 store_sourced_question 语义：dedup/KC 活体/verify outbox）。返回 admitted/withheld/conflict/pending + 逐 unit 判分准入原因。request_id 必填幂等；conflict 不重试原请求。',
