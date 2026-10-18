@@ -808,10 +808,35 @@ const publishFileRecord = z
   })
   .passthrough();
 
+/** Expected publish identity for an intent-persisted send: the publish file's
+ *  committed values when present, else manifest-derived (publishOne asserts
+ *  they agree). */
+async function intentExpectedIdentity(
+  outDir: string,
+  item: ManifestItem,
+): Promise<{ revisionId: string; generation: number }> {
+  const path = join(outDir, `publish-${item.id}.json`);
+  if (await fileExists(path)) {
+    const record = publishFileRecord.parse(await readJson(path));
+    if (record.revision_id !== null) {
+      return { revisionId: record.revision_id, generation: record.generation };
+    }
+  }
+  return { revisionId: item.revision_id, generation: item.generation + 1 };
+}
+
 /** The minimal owned-event set, built from the window's own artifacts:
  *  publish-<id>.json files plus the embedded publish receipt inside
- *  question-<id>.json (crash/resume coverage). */
-async function windowOwnedEvents(outDir: string): Promise<OwnedPublishEvents> {
+ *  question-<id>.json (crash/resume coverage), plus intent-persisted sends
+ *  without a publish record (crash between tx commit and file write). An
+ *  intent-derived (group, revision, generation) triple still names this
+ *  window's send — generation uniqueness makes the triple one publish act,
+ *  and owning it only admits THIS item's own in-flight event/delivery; work
+ *  for other groups never matches. */
+async function windowOwnedEvents(
+  outDir: string,
+  manifestById: Map<string, ManifestItem>,
+): Promise<OwnedPublishEvents> {
   const eventIds = new Set<string>();
   const tripleKeys = new Set<string>();
   for (const name of await readdir(outDir)) {
@@ -830,15 +855,64 @@ async function windowOwnedEvents(outDir: string): Promise<OwnedPublishEvents> {
         );
       }
     }
+    if (/^intent-[^/]+\.json$/.test(name)) {
+      const groupId = name.slice('intent-'.length, -'.json'.length);
+      const item = manifestById.get(groupId);
+      if (!item) continue;
+      const expected = await intentExpectedIdentity(outDir, item);
+      tripleKeys.add(publishTripleKey(groupId, expected.revisionId, expected.generation));
+    }
   }
   return { eventIds, tripleKeys };
+}
+
+/** Sends this window persisted (intent file) but never receipted — the
+ *  in-flight identities whose own non-terminal jobs the WINDOW-OPEN gate may
+ *  let through into the existing-intent settle path. New sends never see
+ *  this exemption: their gate counts every non-terminal job. */
+interface InFlightSend {
+  groupId: string;
+  revisionId: string;
+  generation: number;
+  /** Manifest revision integrity_digest — admissionJobId input. */
+  digest: string;
+}
+
+async function windowInFlightSends(
+  outDir: string,
+  manifestById: Map<string, ManifestItem>,
+): Promise<InFlightSend[]> {
+  const sends: InFlightSend[] = [];
+  for (const name of await readdir(outDir)) {
+    if (!/^intent-[^/]+\.json$/.test(name)) continue;
+    const groupId = name.slice('intent-'.length, -'.json'.length);
+    if (await fileExists(receiptPath(outDir, groupId))) continue; // settled — not in-flight
+    const item = manifestById.get(groupId);
+    if (!item) continue; // not this window's manifest — cannot bind → foreign by default
+    const expected = await intentExpectedIdentity(outDir, item);
+    sends.push({
+      groupId,
+      revisionId: expected.revisionId,
+      generation: expected.generation,
+      digest: item.integrity_digest,
+    });
+  }
+  return sends;
+}
+
+interface GateJobRow {
+  id: string;
+  state: string;
+  retry_count: number;
+  created_on: string;
+  data: unknown;
 }
 
 interface GateDeliveryRow {
   subscriber_version: number;
   source_event_id: string;
   status: string;
-  delivery_seq: string;
+  delivery_seq: number;
   attempt_count: number;
   next_attempt_at: string | null;
   claim_lease_until: string | null;
@@ -858,6 +932,7 @@ interface GateEventRow {
   actor_ref: string | null;
   event_outcome: string | null;
   event_created_at: string;
+  dispatch_seq: number;
   group_id: string | null;
   revision_id: string | null;
   admission_generation: string | null;
@@ -865,22 +940,41 @@ interface GateEventRow {
 
 const GATE_EVIDENCE_LIMIT = 30;
 
+/** jsonb columns arrive parsed via the driver; a string payload is parsed
+ *  once, and anything else aborts the gate — a malformed read is never
+ *  treated as queue-empty. */
+function gateJsonColumn<T>(value: unknown, name: string): T[] {
+  const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+  if (!Array.isArray(parsed)) {
+    throw new Error(`queue gate read malformed: ${name} is not an array`);
+  }
+  return parsed as T[];
+}
+
 /**
  * Queue-empty gate — non-terminal pgboss jobs AND unsettled enqueue
  * deliveries (incl. eligible publish events not yet discovered into delivery
- * rows). Ownership resolves through persistent event identity only:
+ * rows), all read inside ONE SQL statement so they share a single READ
+ * COMMITTED snapshot: discovery committing between separate reads must never
+ * make all three look empty (scenario A), and a handler committing a job
+ * plus a terminal delivery between them must never hide the job (scenario
+ * B). Ownership resolves through persistent event identity only:
  * deliveries/events emitted by THIS window don't block; anything else does —
  * a row whose source event can't be resolved is foreign, and a failing query
  * aborts the driver instead of reading as queue-empty.
+ *
+ * `exemptJobs` (window-open only): non-terminal jobs bound — by the same
+ * (group, revision, generation) identity the settle loop uses — to sends
+ * this window already persisted (intent, no receipt). Those are not foreign
+ * work; exempting them keeps the crash-resume path reachable instead of
+ * writing a permanent STOP over our own in-flight send. Callers opening a
+ * NEW send pass no exemptions: every non-terminal job still blocks.
  */
 async function admissionQueueGate(
   db: Db,
   owned: OwnedPublishEvents,
+  opts?: { exemptJobs?: InFlightSend[] },
 ): Promise<{ clear: boolean; evidence: Record<string, unknown> }> {
-  const pendingRows = (await db.execute(
-    sql`select count(*)::int as n from pgboss.job where name=${FAMILY} and state in ('created','retry','active')`,
-  )) as unknown as { n: number }[];
-  const pendingJobs = pendingRows[0]?.n ?? 0;
   const isOwned = (
     eventId: string,
     groupId: string | null,
@@ -892,45 +986,80 @@ async function admissionQueueGate(
       revisionId !== null &&
       generation !== null &&
       owned.tripleKeys.has(publishTripleKey(groupId, revisionId, Number(generation))));
-  const deliveries = (await db.execute(sql`
-    select d.subscriber_version, d.source_event_id, d.status,
-           d.delivery_seq::text as delivery_seq, d.attempt_count,
-           d.next_attempt_at, d.claim_lease_until, d.last_error, d.discovered_at,
-           e.id as event_id, e.actor_ref, e.outcome as event_outcome,
-           e.created_at as event_created_at,
-           e.payload->>'group_id' as group_id,
-           e.payload->>'revision_id' as revision_id,
-           e.payload->>'admission_generation' as admission_generation
-    from event_subscription_delivery d
-    left join event e
-      on e.id = d.source_event_id and e.dispatch_seq = d.source_dispatch_seq
-    where d.subscriber_id = ${ENQUEUE_SUBSCRIBER_ID}
-      and d.status not in ('bootstrap_skipped','succeeded','skipped','dead_letter')
-    order by d.delivery_seq
-  `)) as unknown as GateDeliveryRow[];
-  // Upstream of delivery rows: eligible publish events the dispatcher has not
-  // discovered yet WILL become deliveries — the same pre-job paid-work hazard
-  // the 2026-10-18 incident rode through (events committed minutes before the
-  // jobs existed). The eligibility filter mirrors enqueue.ts's skip gates; an
-  // event failing them can never create a job and is not unsettled work.
-  const undiscovered = (await db.execute(sql`
-    select e.id as event_id, e.actor_ref, e.outcome as event_outcome,
-           e.created_at as event_created_at,
-           e.payload->>'group_id' as group_id,
-           e.payload->>'revision_id' as revision_id,
-           e.payload->>'admission_generation' as admission_generation
-    from event e
-    where e.action = ${PUBLISH_ACTION}
-      and e.outcome = 'success'
-      and e.actor_ref <> 'practice:question_admission'
-      and e.payload->>'admission' = 'withheld'
-      and not exists (
-        select 1 from event_subscription_delivery d
-        where d.subscriber_id = ${ENQUEUE_SUBSCRIBER_ID}
-          and d.source_event_id = e.id
-      )
-    order by e.dispatch_seq
-  `)) as unknown as GateEventRow[];
+  const exemptJobs = opts?.exemptJobs ?? [];
+  const isExemptJob = (job: GateJobRow) =>
+    exemptJobs.some((send) => {
+      const data = job.data as {
+        question_id?: unknown;
+        revision_id?: unknown;
+        expected_admission_generation?: unknown;
+      } | null;
+      return (
+        job.id === admissionJobId(send.groupId, send.revisionId, send.digest, send.generation) ||
+        (data?.question_id === send.groupId &&
+          data?.revision_id === send.revisionId &&
+          data?.expected_admission_generation === send.generation)
+      );
+    });
+  const [row] = (await db.execute(sql`
+    select
+      coalesce((
+        select jsonb_agg(t order by t.created_on)
+        from (
+          select j.id, j.state::text as state, j.retry_count, j.created_on, j.data
+          from pgboss.job j
+          where j.name = ${FAMILY} and j.state in ('created','retry','active')
+        ) t
+      ), '[]'::jsonb) as pending_jobs,
+      coalesce((
+        select jsonb_agg(t order by t.delivery_seq)
+        from (
+          select d.subscriber_version, d.source_event_id, d.status,
+                 d.delivery_seq, d.attempt_count,
+                 d.next_attempt_at, d.claim_lease_until, d.last_error, d.discovered_at,
+                 e.id as event_id, e.actor_ref, e.outcome as event_outcome,
+                 e.created_at as event_created_at,
+                 e.payload->>'group_id' as group_id,
+                 e.payload->>'revision_id' as revision_id,
+                 e.payload->>'admission_generation' as admission_generation
+          from event_subscription_delivery d
+          left join event e
+            on e.id = d.source_event_id and e.dispatch_seq = d.source_dispatch_seq
+          where d.subscriber_id = ${ENQUEUE_SUBSCRIBER_ID}
+            and d.status not in ('bootstrap_skipped','succeeded','skipped','dead_letter')
+        ) t
+      ), '[]'::jsonb) as deliveries,
+      coalesce((
+        select jsonb_agg(t order by t.dispatch_seq)
+        from (
+          select e.id as event_id, e.actor_ref, e.outcome as event_outcome,
+                 e.created_at as event_created_at, e.dispatch_seq,
+                 e.payload->>'group_id' as group_id,
+                 e.payload->>'revision_id' as revision_id,
+                 e.payload->>'admission_generation' as admission_generation
+          from event e
+          where e.action = ${PUBLISH_ACTION}
+            and e.outcome = 'success'
+            and e.actor_ref <> 'practice:question_admission'
+            and e.payload->>'admission' = 'withheld'
+            and not exists (
+              select 1 from event_subscription_delivery d
+              where d.subscriber_id = ${ENQUEUE_SUBSCRIBER_ID}
+                and d.source_event_id = e.id
+            )
+        ) t
+      ), '[]'::jsonb) as undiscovered
+  `)) as unknown as {
+    pending_jobs: unknown;
+    deliveries: unknown;
+    undiscovered: unknown;
+  }[];
+  if (!row) throw new Error('queue gate read returned no row');
+  const pendingJobRows = gateJsonColumn<GateJobRow>(row.pending_jobs, 'pending_jobs');
+  const deliveries = gateJsonColumn<GateDeliveryRow>(row.deliveries, 'deliveries');
+  const undiscovered = gateJsonColumn<GateEventRow>(row.undiscovered, 'undiscovered');
+  const foreignJobs = pendingJobRows.filter((job) => !isExemptJob(job));
+  const ownInFlightJobs = pendingJobRows.filter(isExemptJob);
   const deliveryEvidence = deliveries.map((row) => ({
     source_event_id: row.source_event_id,
     subscriber_version: row.subscriber_version,
@@ -962,7 +1091,11 @@ async function admissionQueueGate(
   }));
   const foreignUndiscovered = undiscoveredEvidence.filter((row) => !row.owned);
   const evidence = {
-    pending_jobs: pendingJobs,
+    pending_jobs: pendingJobRows.length,
+    foreign_pending_jobs: foreignJobs.length,
+    own_inflight_jobs: ownInFlightJobs.length,
+    pending_job_ids: foreignJobs.slice(0, GATE_EVIDENCE_LIMIT).map((job) => job.id),
+    own_inflight_job_ids: ownInFlightJobs.map((job) => job.id),
     nonterminal_deliveries: deliveries.length,
     foreign_deliveries: foreignDeliveries.length,
     undiscovered_eligible_events: undiscovered.length,
@@ -973,7 +1106,10 @@ async function admissionQueueGate(
     owned_triple_count: owned.tripleKeys.size,
   };
   return {
-    clear: pendingJobs === 0 && foreignDeliveries.length === 0 && foreignUndiscovered.length === 0,
+    clear:
+      foreignJobs.length === 0 &&
+      foreignDeliveries.length === 0 &&
+      foreignUndiscovered.length === 0,
     evidence,
   };
 }
@@ -1234,6 +1370,7 @@ async function drive(opts: {
   const ledgerDigest = await sha256File(opts.ledgerPath);
   const manifestIds = new Set(manifest.map((item) => item.id));
   if (manifestIds.size !== manifest.length) throw new Error('manifest contains duplicate ids');
+  const manifestById = new Map(manifest.map((item) => [item.id, item]));
   const manifestDigest = sha256(manifest);
   const sentIds = opts.sentIdsPath ? await readJson<string[]>(opts.sentIdsPath) : [];
   const leaked = sentIds.filter((id) => manifestIds.has(id));
@@ -1321,10 +1458,13 @@ async function drive(opts: {
   // Window-open queue gate — before ANY send (incl. resumed windows): a
   // foreign non-terminal delivery is pre-job paid work already owed. The
   // 2026-10-18 incident's sourcing_web deliveries sat exactly here while the
-  // jobs-only check passed.
+  // jobs-only check passed. Jobs bound to this window's own intent-persisted
+  // sends are NOT foreign — exempting them lets a crash-resumed in-flight
+  // send reach its existing-intent settle instead of a permanent STOP.
   {
-    const owned = await windowOwnedEvents(opts.outDir);
-    const gate = await admissionQueueGate(db, owned);
+    const owned = await windowOwnedEvents(opts.outDir, manifestById);
+    const inFlight = await windowInFlightSends(opts.outDir, manifestById);
+    const gate = await admissionQueueGate(db, owned, { exemptJobs: inFlight });
     if (!gate.clear) {
       await writeStop(opts.outDir, 'queue_not_empty', { at: 'window_open', ...gate.evidence });
       throw new Error(
@@ -1416,8 +1556,13 @@ async function drive(opts: {
       } else {
         // Queue-empty gate before the next paid send: non-terminal jobs AND
         // unsettled enqueue-subscription deliveries not emitted by this
-        // window — a pending delivery is paid work already owed.
-        const gate = await admissionQueueGate(db, await windowOwnedEvents(opts.outDir));
+        // window — a pending delivery is paid work already owed. NO job
+        // exemptions here: every non-terminal job (ours included) blocks a
+        // NEW publish.
+        const gate = await admissionQueueGate(
+          db,
+          await windowOwnedEvents(opts.outDir, manifestById),
+        );
         if (!gate.clear) {
           await writeStop(opts.outDir, 'queue_not_empty', {
             batch: batchN,
