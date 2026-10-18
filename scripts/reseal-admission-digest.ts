@@ -15,6 +15,7 @@
 import './load-env';
 
 import { and, eq } from 'drizzle-orm';
+import { question_revision } from '@/db/schema';
 import {
   classifyStoredRevisionDigest,
   layersOfStoredRevision,
@@ -217,7 +218,6 @@ function runSelfCheck(): void {
 
 async function reportDatabase(): Promise<void> {
   const { db } = await import('@/db/client');
-  const { question_revision } = await import('@/db/schema');
   const rows = await db
     .select({
       revision_id: question_revision.revision_id,
