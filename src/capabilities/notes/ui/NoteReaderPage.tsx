@@ -11,6 +11,7 @@ import { InteractiveArtifactRenderer } from '@/ui/components/InteractiveArtifact
 import { ApiError } from '@/ui/lib/api';
 import { randomId } from '@/ui/lib/random-id';
 import { Btn } from '@/ui/primitives/Btn';
+import { CollapsibleList } from '@/ui/primitives/CollapsibleList';
 import { EmptyState } from '@/ui/primitives/EmptyState';
 import { ErrorState } from '@/ui/primitives/ErrorState';
 import { IconBtn } from '@/ui/primitives/IconBtn';
@@ -528,16 +529,19 @@ export default function NoteReaderPage({
             {note.related_learning_items.length === 0 ? (
               <div className="meta">暂无关联相同知识点的学习项</div>
             ) : (
-              <div className="note-label-list">
-                {note.related_learning_items.map((it) => (
+              <CollapsibleList
+                as="div"
+                className="note-label-list"
+                items={note.related_learning_items}
+                renderItem={(it) => (
                   <div key={it.id} className="note-label-row">
                     <LoomIcon name="items" size={13} />
                     {/* de-wenyan: related-item rows carry no domain → neutral default. */}
                     <span>{it.title}</span>
                     <span className="meta">暂不提供详情页</span>
                   </div>
-                ))}
-              </div>
+                )}
+              />
             )}
           </div>
 
@@ -546,8 +550,12 @@ export default function NoteReaderPage({
               <LoomIcon name="history" size={13} />
               活动 · AI 修订
             </div>
-            <div className="note-versions">
-              {(changesQ.data?.rows ?? []).map((c) => (
+            {/* 最近 3 版在前，其余收进「全部 N 条」（owner 2026-10-18 折叠决定，设计 L5）。 */}
+            <CollapsibleList
+              as="div"
+              className="note-versions"
+              items={changesQ.data?.rows ?? []}
+              renderItem={(c) => (
                 <div key={c.event_id} className={`note-ver${c.undone ? '' : ' is-current'}`}>
                   <span className="note-ver-dot" />
                   <div className="note-ver-body">
@@ -587,11 +595,11 @@ export default function NoteReaderPage({
                     </div>
                   </div>
                 </div>
-              ))}
-              {(changesQ.data?.rows ?? []).length === 0 && (
-                <div className="meta">暂无 AI 修订记录</div>
               )}
-            </div>
+            />
+            {(changesQ.data?.rows ?? []).length === 0 && (
+              <div className="meta">暂无 AI 修订记录</div>
+            )}
           </div>
         </aside>
       </div>

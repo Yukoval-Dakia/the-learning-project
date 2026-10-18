@@ -754,6 +754,10 @@
 [data-ui-next] .un-ps-history li[data-tone="caution"] .un-ps-history-outcome {
   color: var(--un-caution);
 }
+/* The fold toggle lines up with the entries' text, right of the timeline's dots (L5). */
+[data-ui-next] button.un-ps-history-toggle {
+  margin-left: calc(var(--un-sp-5) - var(--un-sp-2));
+}
 [data-ui-next] .un-ps-history-cause {
   color: var(--un-text-2);
 }

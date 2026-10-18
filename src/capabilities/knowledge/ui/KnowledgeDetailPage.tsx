@@ -8,9 +8,9 @@
 // 「复习此点」把明确请求交给现有 Copilot；没有已交付 write path 的 AI 起草不展示假入口。
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
 import { openCopilot } from '@/ui/lib/use-copilot-dwell';
 import { Btn } from '@/ui/primitives/Btn';
+import { CollapsibleList } from '@/ui/primitives/CollapsibleList';
 import { EmptyState } from '@/ui/primitives/EmptyState';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { MasteryRing } from '@/ui/primitives/MasteryRing';
@@ -29,11 +29,6 @@ import { MisconceptionList } from './MisconceptionList';
 import { DiagnosticDrill, NodeComposite, TransferList } from './NodeComposite';
 import { REL_CUE } from './relation-cue';
 import './knowledge.css';
-
-// S8 (YUK-335 audit §3.9)：活动时间线默认只渲前 N 条，其余折叠 —— 防 kd-side
-// 被 30 条无界 event 撑爆（设计源 screen-item-detail 侧栏无长时间线处理，
-// 故按任务用更可控的 count-cap + 查看更多，而非 max-height 渐隐）。
-const TIMELINE_COLLAPSED = 6;
 
 const DECAY_BUCKET_META: Record<
   KnowledgeNodePage['mastery_decay_bucket'],
@@ -152,7 +147,6 @@ export default function KnowledgeDetailPage({
   id: string;
   navigate: (to: string) => void;
 }) {
-  const [timelineOpen, setTimelineOpen] = useState(false);
   const queryClient = useQueryClient();
   // Keep the full route mount-fresh. The drawer alone owns a short staleTime (YUK-334), so
   // navigating here after any cross-surface mutation still performs the existing refetch.
@@ -488,33 +482,37 @@ export default function KnowledgeDetailPage({
                       <LoomIcon name={(BL_META[t]?.icon ?? 'note') as never} size={12} />
                       {BL_META[t]?.label ?? t} · {arr.length}
                     </div>
-                    {arr.map((b) => {
-                      const href = knowledgeBacklinkHref(t, b.from_artifact_id, id);
-                      const rowKey = `${b.from_artifact_id}-${b.from_block_id}`;
-                      const body = (
-                        <span key={`${rowKey}-body`} className="bl-row-main">
-                          <span className="bl-row-t">{b.from_title}</span>
-                          <span className="bl-row-m meta">
-                            {href ? '打开内容' : '当前没有可打开的详情页'}
+                    <CollapsibleList
+                      as="div"
+                      items={arr}
+                      renderItem={(b) => {
+                        const href = knowledgeBacklinkHref(t, b.from_artifact_id, id);
+                        const rowKey = `${b.from_artifact_id}-${b.from_block_id}`;
+                        const body = (
+                          <span key={`${rowKey}-body`} className="bl-row-main">
+                            <span className="bl-row-t">{b.from_title}</span>
+                            <span className="bl-row-m meta">
+                              {href ? '打开内容' : '当前没有可打开的详情页'}
+                            </span>
                           </span>
-                        </span>
-                      );
-                      return href ? (
-                        <button
-                          type="button"
-                          key={rowKey}
-                          className="bl-row"
-                          onClick={() => navigate(href)}
-                        >
-                          {body}
-                          <LoomIcon name="arrow" size={12} className="thread-arrow" />
-                        </button>
-                      ) : (
-                        <div key={rowKey} className="bl-row">
-                          {body}
-                        </div>
-                      );
-                    })}
+                        );
+                        return href ? (
+                          <button
+                            type="button"
+                            key={rowKey}
+                            className="bl-row"
+                            onClick={() => navigate(href)}
+                          >
+                            {body}
+                            <LoomIcon name="arrow" size={12} className="thread-arrow" />
+                          </button>
+                        ) : (
+                          <div key={rowKey} className="bl-row">
+                            {body}
+                          </div>
+                        );
+                      }}
+                    />
                   </div>
                 ))
             )}
@@ -525,69 +523,43 @@ export default function KnowledgeDetailPage({
             {node.timeline.length === 0 ? (
               <div className="quiet-empty">无活动记录</div>
             ) : (
-              (() => {
-                // 倒序已是最近在前（wire 约定）。默认只渲前 TIMELINE_COLLAPSED 条，
-                // 展开后渲全部 —— 防 kd-side 被无界时间线撑爆（S8 audit §3.9）。
-                const shown =
-                  timelineOpen || node.timeline.length <= TIMELINE_COLLAPSED
-                    ? node.timeline
-                    : node.timeline.slice(0, TIMELINE_COLLAPSED);
-                return (
-                  <>
-                    <div className="event-chain">
-                      {shown.map((a, i) => (
-                        <div key={a.event_id} className="event-row">
-                          <span className="event-rail">
-                            <span
-                              className="event-dot"
-                              style={{
-                                background: `var(--${a.outcome === 'failure' ? 'again' : a.outcome === 'success' ? 'good' : 'info'})`,
-                              }}
-                            />
-                            {i < shown.length - 1 && <span className="event-line" />}
-                          </span>
-                          <div className="event-body">
-                            {/* S8 (YUK-335 §2 P3 + 批次乙 review)：人话句是 event row 主叙事行，
-                                走 .kd-event-lead（fs-meta + ink-2，= 设计源 .event-label 权重）
-                                而非 globals .event-note 最弱档；event-head 去掉裸 a.action mono
-                                标签（避免 debug-log 味与人话句重复），只留时间（meta/ink-3，弱于主句）。 */}
-                            <div className="kd-event-lead">{humanizeActivity(a)}</div>
-                            <div className="event-head nowrap-meta">
-                              <span className="meta">
-                                {new Date(a.created_at).toLocaleString('zh-CN', {
-                                  month: 'numeric',
-                                  day: 'numeric',
-                                  hour: '2-digit',
-                                  minute: '2-digit',
-                                })}
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
+              // 倒序已是最近在前（wire 约定）。默认只露最近 3 条，其余收进「全部 N 条」——
+              // 防 kd-side 被无界时间线撑爆（S8 audit §3.9；owner 2026-10-18 折叠决定，设计 L5）。
+              <CollapsibleList
+                as="div"
+                className="event-chain"
+                items={node.timeline}
+                renderItem={(a, i, shownCount) => (
+                  <div key={a.event_id} className="event-row">
+                    <span className="event-rail">
+                      <span
+                        className="event-dot"
+                        style={{
+                          background: `var(--${a.outcome === 'failure' ? 'again' : a.outcome === 'success' ? 'good' : 'info'})`,
+                        }}
+                      />
+                      {i < shownCount - 1 && <span className="event-line" />}
+                    </span>
+                    <div className="event-body">
+                      {/* S8 (YUK-335 §2 P3 + 批次乙 review)：人话句是 event row 主叙事行，
+                            走 .kd-event-lead（fs-meta + ink-2，= 设计源 .event-label 权重）
+                            而非 globals .event-note 最弱档；event-head 去掉裸 a.action mono
+                            标签（避免 debug-log 味与人话句重复），只留时间（meta/ink-3，弱于主句）。 */}
+                      <div className="kd-event-lead">{humanizeActivity(a)}</div>
+                      <div className="event-head nowrap-meta">
+                        <span className="meta">
+                          {new Date(a.created_at).toLocaleString('zh-CN', {
+                            month: 'numeric',
+                            day: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
+                        </span>
+                      </div>
                     </div>
-                    {node.timeline.length > TIMELINE_COLLAPSED && (
-                      <button
-                        type="button"
-                        className="kd-timeline-more"
-                        onClick={() => setTimelineOpen((o) => !o)}
-                      >
-                        {timelineOpen ? (
-                          <>
-                            收起
-                            <LoomIcon name="arrow" size={12} className="kd-timeline-more-up" />
-                          </>
-                        ) : (
-                          <>
-                            查看全部 {node.timeline.length} 条
-                            <LoomIcon name="arrow" size={12} className="kd-timeline-more-down" />
-                          </>
-                        )}
-                      </button>
-                    )}
-                  </>
-                );
-              })()
+                  </div>
+                )}
+              />
             )}
           </div>
         </div>

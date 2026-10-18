@@ -43,6 +43,7 @@ import { SaveStateChip } from '@/ui/components/response/SaveStateChip';
 import { ApiError } from '@/ui/lib/api';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { openCopilot } from '@/ui/lib/use-copilot-dwell';
+import { CollapsibleList } from '@/ui/primitives/CollapsibleList';
 import {
   Button,
   Chip,
@@ -235,7 +236,8 @@ function QuoteButton({
   );
 }
 
-/** The earlier attempts at this question, newest first; a cause seen twice is marked (YUK-617). */
+/** The earlier attempts at this question, newest first, folded to the newest 3; a cause seen twice
+ * across the whole history is marked (YUK-617). */
 function AttemptHistory({
   events,
   headingId,
@@ -255,8 +257,12 @@ function AttemptHistory({
       <h2 id={headingId} className="un-ps-h2">
         作答记录
       </h2>
-      <ol className="un-ps-history">
-        {events.map((e) => {
+      {/* Newest 3 show; the rest fold behind 「全部 N 条」 (owner 2026-10-18, design doc L5). */}
+      <CollapsibleList
+        items={events}
+        className="un-ps-history"
+        toggleClassName="un-ps-history-toggle"
+        renderItem={(e) => {
           const duration = formatDuration(e.duration_ms);
           if (e.kind === 'review') {
             return (
@@ -286,8 +292,8 @@ function AttemptHistory({
               {duration && <span className="un-ps-history-day">{duration}</span>}
             </li>
           );
-        })}
-      </ol>
+        }}
+      />
     </section>
   );
 }
