@@ -33,8 +33,27 @@ export const PAID_EFFECT_STATE_SCHEMA = z.enum([
   'unknown',
   'receipt_ready',
   'applied',
+  'voided',
 ]);
 export type PaidEffectState = z.infer<typeof PAID_EFFECT_STATE_SCHEMA>;
+
+// 'voided' is a terminal RESOLVED state, not an unfinished obligation: a lead
+// explicitly retired an 'unknown' obligation under a recorded authorization
+// (YUK-1567). The row keeps its identity, input, unknown reason and delivery
+// audit forever — void never deletes, never rewrites input/history, and bumps
+// the fence so the old delivery's late receipt/unknown-marking is rejected by
+// the same CAS that protects receipt recording.
+/**
+ * States in which a successor authorization still gates the entity: while the
+ * authorized successor row is missing or in one of these states, ONLY the
+ * bound delivery may claim it and no other claim for the entity may pass.
+ */
+export const PAID_EFFECT_AUTHORIZATION_OPEN_STATES = [
+  'pending',
+  'sending',
+  'unknown',
+  'receipt_ready',
+] as const satisfies readonly PaidEffectState[];
 
 /** Absence of a control row means the bootstrap default owner, never DBOS. */
 export const DEFAULT_PAID_EFFECT_BACKEND: PaidEffectBackend = 'pg-boss';
@@ -80,22 +99,17 @@ const parallelRepUnit = new RegExp(PAID_EFFECT_PARALLEL_REP_UNIT_PATTERN);
 
 /**
  * Open effects gate the entity. Only item_prior_backfill's recognized feature
- * reps of the same revision are parallel siblings. YUK-1547 additionally
- * authorizes an explicitly marked @2 -> @3 contract upgrade on the SAME
- * revision: the marker names the exact old @2 row (unit + input digest), which
- * exempts that @2 unknown blocker AND the retained @1 unknown row on the same
- * base. The store layer additionally requires the marked @2 row to exist —
- * a marker that matches no real row exempts nothing. Other model/method/unit
- * changes never bypass an unresolved send.
+ * reps of the same revision are parallel siblings — every other unresolved
+ * send (including same-unit input changes and any different revision) blocks.
+ * The one sanctioned way past an unresolved blocker is YUK-1567's generic
+ * void + successor authorization, which resolves the old row to 'voided' and
+ * is enforced by the authorization gate in the store layer, never by exempting
+ * a still-open blocker here.
  * The SQL scan uses the same family, pattern, revision and unit predicates.
  */
 export function paidEffectGateBlocks(
-  blocker: Pick<PaidEffectIdentity, 'family' | 'entityRevision' | 'unit'> & {
-    state?: PaidEffectState;
-    inputDigest?: string;
-  },
+  blocker: Pick<PaidEffectIdentity, 'family' | 'entityRevision' | 'unit'>,
   claim: Pick<PaidEffectIdentity, 'family' | 'entityRevision' | 'unit'>,
-  admissionReopenMarker?: { unit: string; inputDigest: string },
 ): boolean {
   const siblingUnitOfSameRevision =
     blocker.family === 'item_prior_backfill' &&
@@ -104,22 +118,7 @@ export function paidEffectGateBlocks(
     parallelRepUnit.exec(claim.unit)?.[0] === claim.unit &&
     blocker.entityRevision === claim.entityRevision &&
     blocker.unit !== claim.unit;
-  // Owner-authorized YUK-1547 contract upgrade, directional and exact. Old
-  // unknown evidence stays unresolved. An exact old @2 input-digest marker is
-  // required; the marker's @2 row must also exist (enforced in the store scan).
-  // Sending, other digests, and @3 unknown never qualify. Missing state fails
-  // closed (legacy callers).
-  const admissionContractUpgrade =
-    blocker.family === 'question_admission_run' &&
-    claim.family === 'question_admission_run' &&
-    blocker.entityRevision === claim.entityRevision &&
-    blocker.state === 'unknown' &&
-    claim.unit === 'admission@3' &&
-    admissionReopenMarker?.unit === 'admission@2' &&
-    ((blocker.unit === 'admission@2' &&
-      blocker.inputDigest === admissionReopenMarker.inputDigest) ||
-      blocker.unit === 'admission@1');
-  return !siblingUnitOfSameRevision && !admissionContractUpgrade;
+  return !siblingUnitOfSameRevision;
 }
 
 /**
@@ -242,6 +241,61 @@ export class PaidEffectApplicationConflictError extends PaidEffectProtocolError 
 
 export class PaidEffectDeliveryConflictError extends PaidEffectProtocolError {
   override name = 'PaidEffectDeliveryConflictError';
+}
+
+/**
+ * A claim reached a successor-authorized identity without the delivery the
+ * authorization names, or a second authorization was attempted over an
+ * already-voided row or an already-bound successor. Fail-closed: the caller's
+ * transaction must abort, never degrade to an unauthorized send.
+ */
+export class PaidEffectAuthorizationError extends PaidEffectProtocolError {
+  override name = 'PaidEffectAuthorizationError';
+}
+
+/**
+ * The delivery binding a void+reauthorization records: the ONE delivery the
+ * authorized successor send may be claimed by. Identity + audit only — it
+ * never takes part in the effect identity, mirroring PaidEffectDeliveryRef.
+ */
+export interface PaidEffectSuccessorDelivery {
+  readonly backend: PaidEffectBackend;
+  /** Exact scheduler delivery id (e.g. pg-boss job id) bound at void time. */
+  readonly deliveryId: string;
+}
+
+/**
+ * Lead authorization for voiding an 'unknown' obligation and binding ONE
+ * successor effect to ONE delivery — the generic YUK-1567 reauthorization
+ * record (never family- or task-specific). All fields are audit truth written
+ * verbatim to paid_effect_authorization and the voided row's receipt.
+ */
+export interface PaidEffectVoidAuthorization {
+  /** Operator-chosen unique id; a replay under the same id is idempotent. */
+  readonly authorizationId: string;
+  /** Why the old unresolved obligation is being voided. */
+  readonly reason: string;
+  /** Who executed the void (operator/actor identity). */
+  readonly operator: string;
+  /** The authorization basis — coordination-line reference for the decision. */
+  readonly basis: string;
+  /** The successor effect's intent input; same (family, entityId) required. */
+  readonly successorInput: PaidEffectInput;
+  /** The exact delivery that may claim the successor send — once, ever. */
+  readonly successorDelivery: PaidEffectSuccessorDelivery;
+}
+
+/** The durable receipt persisted on the voided row's void_json column. */
+export interface PaidEffectVoidReceipt {
+  readonly authorizationId: string;
+  readonly reason: string;
+  readonly operator: string;
+  readonly basis: string;
+  readonly voidedFromState: 'unknown';
+  /** Fence value retired by this void; late writes under it are CAS-rejected. */
+  readonly previousFence: number;
+  readonly successor: PaidEffectIdentity;
+  readonly successorDelivery: PaidEffectSuccessorDelivery;
 }
 
 /** A delivery was fenced by backend control before any paid work started. */

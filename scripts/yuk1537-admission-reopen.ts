@@ -331,13 +331,7 @@ async function reopen(receiptPath: string, manifestPath: string) {
             throw new Error('Reopen must be a dimension-only update');
           generation = published.admission_generation;
         }
-        const id = admissionJobId(
-          row.group_id,
-          revision.revision_id,
-          row.base_digest,
-          generation,
-          row.input_digest,
-        );
+        const id = admissionJobId(row.group_id, revision.revision_id, row.base_digest, generation);
         const queued = await boss.send(
           ADMISSION_FAMILY,
           {
