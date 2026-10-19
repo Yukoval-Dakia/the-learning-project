@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, lt, sql } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
 import { eventAllowsDerivationSql } from '@/kernel/events/derivation-policy';
@@ -17,7 +17,7 @@ export async function loadActivityTier(db: Db, now: Date, before?: Date): Promis
         eq(event.actor_kind, 'user'),
         inArray(event.action, [...LEARNING_EVENT_ACTIONS]),
         eventAllowsDerivationSql(),
-        before ? sql`${event.created_at} < ${before}` : undefined,
+        before ? lt(event.created_at, before) : undefined,
       ),
     );
   return classifyActivityTier({

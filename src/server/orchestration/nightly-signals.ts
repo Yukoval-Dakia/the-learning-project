@@ -1,6 +1,6 @@
 // YUK-1560 — 资格判定的读表侧。一次夜间 tick 读完共享信号，再按 job 投影。
 
-import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, eq, gte, inArray, isNull, lt, sql } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import { notDraftPredicate } from '@/db/predicates';
 import {
@@ -103,17 +103,15 @@ export async function warnDailyCostDoesNotBlock(db: Db, now: Date): Promise<void
   try {
     const start = shanghaiDayStart(now);
     const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
-    const rows = rowsOf<{ currency: string; total: number | string }>(
-      await db.execute(sql`
-        SELECT ${cost_ledger.currency} AS currency,
-               coalesce(sum(${cost_ledger.cost}), 0)::float8 AS total
-        FROM ${cost_ledger}
-        WHERE ${cost_ledger.occurred_at} >= ${start}
-          AND ${cost_ledger.occurred_at} < ${end}
-        GROUP BY ${cost_ledger.currency}
-        ORDER BY ${cost_ledger.currency}
-      `),
-    );
+    const rows = await db
+      .select({
+        currency: cost_ledger.currency,
+        total: sql<number>`coalesce(sum(${cost_ledger.cost}), 0)::float8`,
+      })
+      .from(cost_ledger)
+      .where(and(gte(cost_ledger.occurred_at, start), lt(cost_ledger.occurred_at, end)))
+      .groupBy(cost_ledger.currency)
+      .orderBy(cost_ledger.currency);
     const parts =
       rows.length === 0
         ? 'no rows'
@@ -197,7 +195,7 @@ async function loadLastLearnerEvent(db: Db, before?: Date): Promise<Date | null>
         eq(event.actor_kind, 'user'),
         inArray(event.action, [...LEARNING_EVENT_ACTIONS]),
         eventAllowsDerivationSql(),
-        before ? sql`${event.created_at} < ${before}` : undefined,
+        before ? lt(event.created_at, before) : undefined,
       ),
     );
   return asDate(row?.at);
