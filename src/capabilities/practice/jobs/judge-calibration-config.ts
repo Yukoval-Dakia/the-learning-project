@@ -2,17 +2,13 @@
 // env-overridable; the kill switch is a SEPARATE opt-in using the shared flag grammar (YUK-572
 // dark-ship pattern — cron stays registered, handler no-ops, zero spend).
 
-import { getConfig } from '@/core/config/store';
+import { type ConfigValue, getConfig } from '@/core/config/store';
 import type { JudgeCalibrationConfig } from '../server/judge-calibration-sample-core';
 
 /** Opt-in dark-ship flag. Handler reads it through the shared runtime-flag grammar. */
 export const JUDGE_CALIBRATION_SAMPLING_ENABLED_ENV = 'JUDGE_CALIBRATION_SAMPLING_ENABLED';
 
-export const JUDGE_CALIBRATION_DEFAULTS: JudgeCalibrationConfig = {
-  // The second lane (YUK-365 oauth wiring). Per-task ctx.override only — the
-  // global AI_PROVIDER_OVERRIDE is never set or read for routing.
-  rejudgeProvider: 'anthropic-sub',
-  rejudgeModel: 'claude-opus-4-8',
+export const JUDGE_CALIBRATION_DEFAULTS: Pick<JudgeCalibrationConfig, 'batchMax' | 'windowDays'> = {
   // Per-cron-tick cost gate: default 20 single-shot re-judge calls per run,
   // env-adjustable up to the 50 clamp below (OCR review: the clamp IS the hard
   // ceiling — keep it near the documented default so a misconfigured env var
@@ -21,6 +17,20 @@ export const JUDGE_CALIBRATION_DEFAULTS: JudgeCalibrationConfig = {
   batchMax: 20,
   windowDays: 7,
 };
+
+/**
+ * The rejudge lane's provider/model come from the resolved system_config
+ * overrides (registry codeDefaults when nothing is written) — no duplicate
+ * literal default lives here (YUK-1559 C1-10). A non-string/'' resolved value
+ * means a corrupt manual DB row — fail closed instead of silently drifting
+ * back to a shadow default.
+ */
+function requireConfigString(key: string, value: ConfigValue | undefined): string {
+  if (typeof value !== 'string' || value === '') {
+    throw new Error(`${key} resolved to an unusable value (${JSON.stringify(value)})`);
+  }
+  return value;
+}
 
 export function readJudgeCalibrationConfig(
   env: NodeJS.ProcessEnv = process.env,
@@ -40,14 +50,10 @@ export function readJudgeCalibrationConfig(
   return {
     rejudgeProvider: pin?.provider
       ? pin.provider
-      : typeof rejudgeProvider === 'string' && rejudgeProvider !== ''
-        ? rejudgeProvider
-        : JUDGE_CALIBRATION_DEFAULTS.rejudgeProvider,
+      : requireConfigString('JUDGE_CALIBRATION_REJUDGE_PROVIDER', rejudgeProvider),
     rejudgeModel: pin?.model
       ? pin.model
-      : typeof rejudgeModel === 'string' && rejudgeModel !== ''
-        ? rejudgeModel
-        : JUDGE_CALIBRATION_DEFAULTS.rejudgeModel,
+      : requireConfigString('JUDGE_CALIBRATION_REJUDGE_MODEL', rejudgeModel),
     batchMax:
       typeof batchMax === 'number'
         ? Math.min(50, Math.max(1, batchMax))

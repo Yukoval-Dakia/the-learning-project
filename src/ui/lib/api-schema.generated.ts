@@ -20739,6 +20739,17 @@ export interface operations {
                         }) | null;
                         /** Format: date-time */
                         created_at: string;
+                        generation_failure: ({
+                            detail: string;
+                            /** @enum {string} */
+                            kind: "timeout";
+                            task_run_id: string | null;
+                        } | {
+                            detail: string;
+                            /** @enum {string} */
+                            kind: "model_or_parse";
+                            task_run_id: string | null;
+                        }) | null;
                         generation_status: string;
                         history: ({
                             /** Format: date-time */

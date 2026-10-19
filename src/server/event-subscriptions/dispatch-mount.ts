@@ -6,7 +6,8 @@
 // Shape: load the subscription registry from the manifests once at boot, then a recurring pg-boss
 // job runs one dispatch cycle per tick. Checkpoint leases (claimSubscriptionLease) serialize per
 // subscriber across workers, so the exact cadence is NOT load-bearing and a double-fire is safe —
-// pg-boss's cron floor is 1 minute, which is well within the durable bus's latency budget.
+// pg-boss's cron floor is 1 minute. Each tick drains a bounded slice rather than
+// imposing an additional one-minute delay for EVERY pending delivery.
 
 import type { PgBoss } from 'pg-boss';
 
@@ -34,6 +35,11 @@ export const EVENT_SUBSCRIPTION_DISPATCH_SCHEDULE = {
   note: '仅在存在订阅时挂载；此处为默认调度声明，不代表 worker 已挂载或确认。',
 } as const;
 const DEFAULT_DISPATCH_MAX_ATTEMPTS = 5;
+// YUK-1565: one minute is the idle wake-up floor, not the per-delivery rate.
+// A slice starts no new claims after 30s; an already claimed handler keeps its
+// existing timeout/lease semantics, so this is NOT a 30s hard cycle deadline.
+const MAX_DELIVERIES_PER_SUBSCRIPTION = 100;
+const MAX_DISPATCH_MS = 30_000;
 
 // H2 (Tdx9E) — explicit retry policy for the dispatch queue instead of pg-boss defaults (which would
 // retry a failed cycle immediately ×3 during a DB outage). Reuses the codebase job-retry convention
@@ -79,7 +85,12 @@ export async function mountSubscriptionDispatch(
       // dead-lettered delivery is a real handler failure that needs attention → warn.
       const startedAt = Date.now();
       try {
-        const cycle = await runSubscriptionDispatchCycle(db, registry, { owner, maxAttempts });
+        const cycle = await runSubscriptionDispatchCycle(db, registry, {
+          owner,
+          maxAttempts,
+          maxDeliveriesPerSubscription: MAX_DELIVERIES_PER_SUBSCRIPTION,
+          maxDispatchMs: MAX_DISPATCH_MS,
+        });
         const durationMs = Date.now() - startedAt;
         const log = cycle.deadLettered > 0 ? console.warn : console.info;
         log('[event-subscriptions] dispatch cycle', { ...cycle, durationMs });

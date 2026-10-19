@@ -132,6 +132,18 @@ function charDiff(given: string, expected: string) {
 
 const PLAIN_NUMBER = /^[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?$/u;
 
+/**
+ * 纯数值读取：NFKC + trim + PLAIN_NUMBER + finite —— 不接受千分位/单位/其他形态。
+ * 同一个确定性 parse 既用于判分（numericCorrect），也用于准入双解的跨 kind
+ * 一致性（solve.ts keysAgree）：text 键铸成 numeric 键后，判分读法不变。
+ */
+export function parseBlankNumericText(raw: string): number | null {
+  const text = raw.normalize('NFKC').trim();
+  if (!PLAIN_NUMBER.test(text)) return null;
+  const value = Number(text);
+  return Number.isFinite(value) ? value : null;
+}
+
 function withinTolerance(
   value: number,
   key: Extract<BlankKeyCriterionT['key'], { kind: 'numeric' }>,
@@ -152,8 +164,9 @@ async function numericCorrect(
 ): Promise<0 | 1 | null> {
   const text = raw.normalize('NFKC').trim();
   if (key.expected_unit == null) {
-    if (!PLAIN_NUMBER.test(text) || !Number.isFinite(Number(text))) return null;
-    return withinTolerance(Number(text), key) ? 1 : 0;
+    const value = parseBlankNumericText(raw);
+    if (value == null) return null;
+    return withinTolerance(value, key) ? 1 : 0;
   }
   if (PLAIN_NUMBER.test(text)) return 0;
   const { unit: parseUnit } = await import('mathjs');

@@ -80,13 +80,22 @@ const parallelRepUnit = new RegExp(PAID_EFFECT_PARALLEL_REP_UNIT_PATTERN);
 
 /**
  * Open effects gate the entity. Only item_prior_backfill's recognized feature
- * reps of the same revision are parallel siblings. Model/method changes and
- * arbitrary unit strings never bypass an unresolved send.
+ * reps of the same revision are parallel siblings. YUK-1547 additionally
+ * authorizes an explicitly marked @2 -> @3 contract upgrade on the SAME
+ * revision: the marker names the exact old @2 row (unit + input digest), which
+ * exempts that @2 unknown blocker AND the retained @1 unknown row on the same
+ * base. The store layer additionally requires the marked @2 row to exist —
+ * a marker that matches no real row exempts nothing. Other model/method/unit
+ * changes never bypass an unresolved send.
  * The SQL scan uses the same family, pattern, revision and unit predicates.
  */
 export function paidEffectGateBlocks(
-  blocker: Pick<PaidEffectIdentity, 'family' | 'entityRevision' | 'unit'>,
+  blocker: Pick<PaidEffectIdentity, 'family' | 'entityRevision' | 'unit'> & {
+    state?: PaidEffectState;
+    inputDigest?: string;
+  },
   claim: Pick<PaidEffectIdentity, 'family' | 'entityRevision' | 'unit'>,
+  admissionReopenMarker?: { unit: string; inputDigest: string },
 ): boolean {
   const siblingUnitOfSameRevision =
     blocker.family === 'item_prior_backfill' &&
@@ -95,7 +104,22 @@ export function paidEffectGateBlocks(
     parallelRepUnit.exec(claim.unit)?.[0] === claim.unit &&
     blocker.entityRevision === claim.entityRevision &&
     blocker.unit !== claim.unit;
-  return !siblingUnitOfSameRevision;
+  // Owner-authorized YUK-1547 contract upgrade, directional and exact. Old
+  // unknown evidence stays unresolved. An exact old @2 input-digest marker is
+  // required; the marker's @2 row must also exist (enforced in the store scan).
+  // Sending, other digests, and @3 unknown never qualify. Missing state fails
+  // closed (legacy callers).
+  const admissionContractUpgrade =
+    blocker.family === 'question_admission_run' &&
+    claim.family === 'question_admission_run' &&
+    blocker.entityRevision === claim.entityRevision &&
+    blocker.state === 'unknown' &&
+    claim.unit === 'admission@3' &&
+    admissionReopenMarker?.unit === 'admission@2' &&
+    ((blocker.unit === 'admission@2' &&
+      blocker.inputDigest === admissionReopenMarker.inputDigest) ||
+      blocker.unit === 'admission@1');
+  return !siblingUnitOfSameRevision && !admissionContractUpgrade;
 }
 
 /**

@@ -19,6 +19,10 @@ import {
   resolveOwningLearningItemIds,
 } from '@/capabilities/notes/server/block-refs';
 import { bodyBlocksToNoteSections } from '@/capabilities/notes/server/body-blocks';
+import {
+  type NoteGenerationFailure,
+  readNoteGenerationFailure,
+} from '@/capabilities/notes/server/note-generation-failure';
 import type {
   ArtifactBodyBlocksT,
   ArtifactHistoryEntryT,
@@ -75,6 +79,7 @@ export interface NotePage {
   body_blocks: ArtifactBodyBlocksT | null;
   sections: NotePageSection[];
   generation_status: string;
+  generation_failure: NoteGenerationFailure | null;
   verification_status: string;
   verification_summary: NoteVerificationResultT | null;
   // ADR-0033 — non-null only when type='interactive' (attrs.html feeds the
@@ -175,6 +180,7 @@ export async function loadNotePage(db: Db, noteId: string): Promise<NotePage | n
     body_blocks: note.body_blocks,
     sections,
     generation_status: note.generation_status,
+    generation_failure: readNoteGenerationFailure(note.attrs),
     verification_status: note.verification_status,
     verification_summary: note.verification_summary,
     interactive,

@@ -13,10 +13,12 @@
 
 import { eq } from 'drizzle-orm';
 import { canonicalHash } from '@/core/migration/canonical';
+import { rawArgumentsEvidence } from '@/core/raw-arguments-evidence';
 import {
   gradeBlankExactUnit,
   gradeSelectUnit,
   normalizeBlankText,
+  parseBlankNumericText,
 } from '@/core/schema/assessment/grade';
 import type { ScoringUnitResultT } from '@/core/schema/assessment/judgment';
 import { isPublicSharedMaterial } from '@/core/schema/assessment/materials';
@@ -29,7 +31,6 @@ import type {
 import type { Db } from '@/db/client';
 import { ai_task_runs } from '@/db/schema';
 import type { SubjectProfile } from '@/subjects/profile';
-import { parseTaskOutput } from '../../tasks/parse-output';
 import {
   QuestionAdmissionSolveInput,
   type QuestionAdmissionSolveInputT,
@@ -41,11 +42,11 @@ import {
   type QuestionAdmissionSourceCrosscheckOutputT,
   parseQuestionAdmissionSolveModelOutput,
 } from '../../tasks/question-admission-solve';
-// YUK-1445 — Provider/TaskTextResult 经 verify-framework（既有 server/ai
-// 边持有者）取，taskInputHash 经 judge-execution-provenance 的既有复导出
-// 取 —— 不新增 capability→server/ai 依赖边（audit:capability-boundaries）。
+// YUK-1445 — Provider/TaskTextResult/writeToolCallLog 经 verify-framework（既有
+// server/ai 边持有者）取，taskInputHash 经 judge-execution-provenance 的既有
+// 复导出取 —— 不新增 capability→server/ai 依赖边（audit:capability-boundaries）。
 import { taskInputHash } from '../judge/judge-execution-provenance';
-import type { Provider, TaskTextResult } from '../quiz/verify-framework';
+import { type Provider, type TaskTextResult, writeToolCallLog } from '../quiz/verify-framework';
 import type { PracticeTaskRunFn } from '../task-runtime';
 import type { AdmissionUnitSpec, QuestionAdmissionDefinition } from './contract';
 
@@ -108,6 +109,46 @@ class UnparsedSolveError extends Error {
     this.name = 'UnparsedSolveError';
     this.receipt = receipt;
   }
+}
+
+const SUBMIT_TOOL_NAME = 'mcp__structured_output__submit';
+
+/**
+ * YUK-1547 — when a structured submit reaches the capability but fails the
+ * schema/parse layer, keep the exact submit arguments (bounded) as a
+ * tool_call_log row attached to that task run, and return the full-payload
+ * digest so the thrown error / unresolved_reason can be matched back to it.
+ * The runner records the adapter-level variant (invalid raw wire arguments)
+ * itself; this covers the success-terminal-but-schema-invalid layer only.
+ */
+async function recordSubmitFailureEvidence(
+  db: Db,
+  taskRunId: string | null | undefined,
+  raw: unknown,
+): Promise<string> {
+  const serialized = typeof raw === 'string' ? raw : JSON.stringify(raw ?? null);
+  const evidence = rawArgumentsEvidence(serialized);
+  if (taskRunId == null) return evidence.raw_args_sha256;
+  try {
+    await writeToolCallLog(db, {
+      task_run_id: taskRunId,
+      task_kind: QUESTION_ADMISSION_TASK_KIND,
+      tool_name: SUBMIT_TOOL_NAME,
+      input_json: { ...evidence },
+      output_json: {},
+      error_reason: 'structured_output_parse_failed',
+      iteration: 0,
+      latency_ms: 0,
+      cost: 0,
+    });
+  } catch (error) {
+    // The evidence write must never mask the original parse failure.
+    console.warn('[question_admission] submit failure evidence write failed', {
+      task_run_id: taskRunId,
+      err: error instanceof Error ? error.message : String(error),
+    });
+  }
+  return evidence.raw_args_sha256;
 }
 
 /** task_run 收据密封：必须存在、成功、kind 匹配、input hash 精确绑定本次请求体。 */
@@ -246,20 +287,87 @@ function validSolveUnitOutput(
   };
 }
 
-function keysAgree(
+/** Conflict details stay bounded — they land in withheld evidence and reasons. */
+const DETAIL_VALUE_MAX = 160;
+function boundDetail(value: string, max = DETAIL_VALUE_MAX): string {
+  return value.length <= max ? value : `${value.slice(0, max)}…(+${value.length - max} chars)`;
+}
+
+/** Compact value-level rendering of a key for conflict details. */
+function keyBrief(key: AdmissionKey): string {
+  switch (key.kind) {
+    case 'select':
+      return boundDetail(`select[${key.accepted_item_ids.join(',')}]`);
+    case 'blank_text':
+      return boundDetail(`blank_text[${key.accepted.join('|')}]`);
+    case 'blank_numeric':
+      return `blank_numeric{expected=${key.expected},tolerance=${JSON.stringify(
+        key.tolerance,
+      )},unit=${key.expected_unit ?? '∅'}}`;
+  }
+}
+
+type NumericTolerance = { kind: 'absolute'; value: number } | { kind: 'relative'; ratio: number };
+
+const tolOf = (t: { value?: number; ratio?: number }) => t.value ?? t.ratio ?? 0;
+
+function withinToleranceOf(x: number, expected: number, tolerance: NumericTolerance): boolean {
+  return tolerance.kind === 'absolute'
+    ? Math.abs(x - expected) <= tolerance.value
+    : expected === 0
+      ? x === expected
+      : Math.abs(x - expected) / Math.abs(expected) <= tolerance.ratio;
+}
+
+export function keysAgree(
   a: AdmissionKey,
   b: AdmissionKey,
   normalization: BlankNormalizationT | null,
 ): { agree: boolean; detail?: string; key?: AdmissionKey } {
   if (a.kind !== b.kind) {
-    return { agree: false, detail: `key kind ${a.kind} vs ${b.kind}` };
+    // YUK-1547 — blank_text vs blank_numeric may still describe ONE key: every
+    // accepted text form must read as a plain number under the SAME
+    // deterministic parse the minted numeric key later applies in grading
+    // (parseBlankNumericText; NFKC + trim + plain number, no units/separators),
+    // and each value must land inside the numeric tolerance. A numeric key
+    // carrying expected_unit can never agree — plain-number forms have no unit.
+    const numeric = a.kind === 'blank_numeric' ? a : b.kind === 'blank_numeric' ? b : null;
+    const text = a.kind === 'blank_text' ? a : b.kind === 'blank_text' ? b : null;
+    if (numeric != null && text != null && numeric.expected_unit == null) {
+      const parsed = text.accepted.map((form) => ({ form, value: parseBlankNumericText(form) }));
+      if (
+        parsed.length > 0 &&
+        parsed.every(
+          (entry) =>
+            entry.value != null &&
+            withinToleranceOf(entry.value, numeric.expected, numeric.tolerance),
+        )
+      ) {
+        // Mint the NUMERIC key — its grading read accepts exactly the forms
+        // that just parsed, so admission and grading stay consistent.
+        return {
+          agree: true,
+          key: numeric,
+          detail: `text forms all read as the numeric key: ${boundDetail(
+            text.accepted.join('|'),
+          )} -> ${keyBrief(numeric)}`,
+        };
+      }
+    }
+    return {
+      agree: false,
+      detail: `key kind ${a.kind} vs ${b.kind}: ${keyBrief(a)} vs ${keyBrief(b)}`,
+    };
   }
   if (a.kind === 'select' && b.kind === 'select') {
     const sa = [...a.accepted_item_ids].sort();
     const sb = [...b.accepted_item_ids].sort();
     return sa.length === sb.length && sa.every((id, i) => id === sb[i])
       ? { agree: true, key: a }
-      : { agree: false, detail: `select key ${sa.join(',')} vs ${sb.join(',')}` };
+      : {
+          agree: false,
+          detail: `select key ${boundDetail(sa.join(','))} vs ${boundDetail(sb.join(','))}`,
+        };
   }
   if (a.kind === 'blank_text' && b.kind === 'blank_text') {
     const norm = normalization ?? {
@@ -277,37 +385,30 @@ function keysAgree(
     const allA = na.every((t) => nb.includes(t));
     const allB = nb.every((t) => na.includes(t));
     if (allA && allB) return { agree: true, key: a };
-    return { agree: false, detail: `blank_text ${na.join('|')} vs ${nb.join('|')}` };
+    return {
+      agree: false,
+      detail: `blank_text ${boundDetail(na.join('|'))} vs ${boundDetail(nb.join('|'))}`,
+    };
   }
   if (a.kind === 'blank_numeric' && b.kind === 'blank_numeric') {
     if ((a.expected_unit ?? null) !== (b.expected_unit ?? null)) {
       return {
         agree: false,
-        detail: `expected_unit ${a.expected_unit ?? '∅'} vs ${b.expected_unit ?? '∅'}`,
+        detail: `expected_unit ${a.expected_unit ?? '∅'} vs ${b.expected_unit ?? '∅'}: ${keyBrief(a)} vs ${keyBrief(b)}`,
       };
     }
     // 容差同型才可互证：absolute/relative 语义不同型 ⇒ 不视为等价，不合并铸键。
     if (a.tolerance.kind !== b.tolerance.kind) {
       return {
         agree: false,
-        detail: `tolerance kind ${a.tolerance.kind} vs ${b.tolerance.kind}`,
+        detail: `tolerance kind ${a.tolerance.kind} vs ${b.tolerance.kind}: ${keyBrief(a)} vs ${keyBrief(b)}`,
       };
     }
-    const tolOf = (t: { value?: number; ratio?: number }) => t.value ?? t.ratio ?? 0;
     const tolA = tolOf(a.tolerance);
     const tolB = tolOf(b.tolerance);
-    const within = (
-      x: number,
-      y: number,
-      tolerance: { kind: 'absolute'; value: number } | { kind: 'relative'; ratio: number },
-    ) =>
-      tolerance.kind === 'absolute'
-        ? Math.abs(x - y) <= tolerance.value
-        : y === 0
-          ? x === y
-          : Math.abs(x - y) / Math.abs(y) <= tolerance.ratio;
     const ok =
-      within(a.expected, b.expected, b.tolerance) && within(b.expected, a.expected, a.tolerance);
+      withinToleranceOf(a.expected, b.expected, b.tolerance) &&
+      withinToleranceOf(b.expected, a.expected, a.tolerance);
     if (!ok) {
       return { agree: false, detail: `numeric ${a.expected} vs ${b.expected}` };
     }
@@ -323,7 +424,10 @@ function keysAgree(
           : `minted stricter tolerance (kept ${JSON.stringify(tighter)} over ${JSON.stringify(looser)})`,
     };
   }
-  return { agree: false, detail: 'uncomparable key kinds' };
+  return {
+    agree: false,
+    detail: `uncomparable key kinds: ${keyBrief(a)} vs ${keyBrief(b)}`,
+  };
 }
 
 function keyFromAnswer(
@@ -454,19 +558,25 @@ async function runSolvePass(
   runTask: PracticeTaskRunFn,
   subjectProfile: SubjectProfile | undefined,
   payload: QuestionAdmissionSolveInputT,
+  repairBudget: { remaining: number },
   override?: { provider?: Provider; model?: string },
 ): Promise<{ output: QuestionAdmissionSolveOutputT; receipt: AdmissionSolveReceipt }> {
   const result = await runTask(QUESTION_ADMISSION_TASK_KIND, payload, {
+    judgeRetryPolicy: 'none',
+    budgetOverride: { maxIterations: 1 },
     ...(subjectProfile != null ? { subjectProfile } : {}),
     ...(override != null ? { override } : {}),
   });
   const raw = result.structured_output != null ? result.structured_output : result.text;
   try {
-    const output = parseQuestionAdmissionSolveModelOutput(raw, payload.units);
+    if (result.structured_output == null)
+      throw new Error('missing structured solve output; no text fallback');
+    const output = parseQuestionAdmissionSolveModelOutput(raw, payload.units, repairBudget);
     return { output, receipt: await sealTaskRun(db, payload, result, output) };
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     const taskRunId = result.task_run_id;
+    const rawArgsDigest = await recordSubmitFailureEvidence(db, taskRunId, raw);
     let receipt: AdmissionSolveReceipt | undefined;
     if (taskRunId != null) {
       try {
@@ -475,10 +585,11 @@ async function runSolvePass(
         receipt = undefined;
       }
     }
-    const marked =
+    const marked = `${
       taskRunId != null && !detail.includes(`task_run_id=${taskRunId}`)
         ? `${detail};task_run_id=${taskRunId}`
-        : detail;
+        : detail
+    };raw_args_sha256=${rawArgsDigest}`;
     throw new UnparsedSolveError(marked, receipt);
   }
 }
@@ -510,10 +621,11 @@ export async function runDualSolve(
     units: solverUnits(definition, 1, { exposePrinted: false }),
   });
 
+  const repairBudget = { remaining: 1 };
   const receipts: AdmissionSolveReceipt[] = [];
   let first: { output: QuestionAdmissionSolveOutputT; receipt: AdmissionSolveReceipt };
   try {
-    first = await runSolvePass(db, deps.runTask, deps.subjectProfile, payloadA);
+    first = await runSolvePass(db, deps.runTask, deps.subjectProfile, payloadA, repairBudget);
   } catch (error) {
     const receipt = error instanceof UnparsedSolveError ? error.receipt : undefined;
     return {
@@ -530,6 +642,7 @@ export async function runDualSolve(
       deps.runTask,
       deps.subjectProfile,
       payloadB,
+      repairBudget,
       deps.solver2 ?? undefined,
     );
   } catch (error) {
@@ -716,16 +829,25 @@ export async function runSourceCrosscheck(
     })),
   });
   const result = await deps.runTask(QUESTION_ADMISSION_TASK_KIND, payload, {
+    judgeRetryPolicy: 'none',
+    budgetOverride: { maxIterations: 1 },
     ...(deps.subjectProfile != null ? { subjectProfile: deps.subjectProfile } : {}),
   });
-  const output: QuestionAdmissionSourceCrosscheckOutputT =
-    result.structured_output !== undefined
-      ? QuestionAdmissionSourceCrosscheckOutput.parse(result.structured_output)
-      : parseTaskOutput(
-          result.text,
-          QUESTION_ADMISSION_TASK_KIND,
-          QuestionAdmissionSourceCrosscheckOutput,
-        );
+  let output: QuestionAdmissionSourceCrosscheckOutputT;
+  try {
+    if (result.structured_output == null)
+      throw new Error('missing structured crosscheck output; no text fallback');
+    output = QuestionAdmissionSourceCrosscheckOutput.parse(result.structured_output);
+  } catch (error) {
+    const digest = await recordSubmitFailureEvidence(
+      db,
+      result.task_run_id,
+      result.structured_output,
+    );
+    throw new Error(
+      `${error instanceof Error ? error.message : String(error)};raw_args_sha256=${digest}`,
+    );
+  }
   const receipt = await sealTaskRun(db, payload, result, output);
   const per_unit = new Map(
     output.per_unit.map(

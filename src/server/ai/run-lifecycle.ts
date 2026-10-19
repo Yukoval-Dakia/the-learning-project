@@ -547,6 +547,12 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
         model: this.resolved.model,
         profile_source: this.modelProfile.source,
         reasoning_effort: this.config.modelBinding?.effort ?? declaredDef.reasoningEffort ?? null,
+        // YUK-1547 — per-task model-native reasoning params resolved from
+        // task.<kind>.reasoning (verbatim wire passthrough; null = none).
+        native_reasoning_params: this.resolved.nativeReasoningParams ?? null,
+        // YUK-1547 — which config layer produced this binding, frozen at
+        // resolution (opt-in task pair / global pin / call override / …).
+        selection_rule: this.resolved.selectionRule ?? null,
         // YUK-921 §2.1 — adapter selection stays observable on the run record.
         // Post-P4 (YUK-1025) 'pi' is the only legal adapter id; YUK-1049 typed
         // tasks report 'typed' — their transport is the decisions endpoint,
@@ -594,6 +600,9 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
   async recordToolCall(input: {
     toolName: string;
     inputJson: Record<string, unknown>;
+    outputJson?: Record<string, unknown>;
+    /** YUK-1547 — structured-submit evidence on a failed call. */
+    errorReason?: string;
     iteration: number;
     latencyMs: number;
   }): Promise<void> {
@@ -603,7 +612,8 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
         task_kind: this.kind,
         tool_name: input.toolName,
         input_json: input.inputJson,
-        output_json: {},
+        output_json: input.outputJson ?? {},
+        error_reason: input.errorReason,
         iteration: input.iteration,
         latency_ms: input.latencyMs,
         cost: 0,

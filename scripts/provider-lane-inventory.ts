@@ -226,6 +226,177 @@ export const PROVIDER_RUNTIME_SDK_IMPORTS = [
 
 export const PROVIDER_LANES = [
   {
+    id: 'xiaomi.question-admission-preflight',
+    owner: 'scripts/yuk1537-admission-reopen',
+    disposition: 'exempt',
+    wire: {
+      path: 'scripts/yuk1537-admission-reopen.ts',
+      calls: ['fetch'],
+      contains: ['/chat/completions'],
+    },
+    callers: [{ path: 'scripts/yuk1537-admission-reopen.ts', calls: ['preflight'] }],
+    directImporters: [],
+    roles: ['operator'],
+    provider: 'Xiaomi official Token Plan',
+    model: 'mimo-v2.6-pro only',
+    endpointClass: 'manual one-request structured submit compatibility probe',
+    configuration: {
+      endpoint: {
+        summary: 'same Token Plan /v1 endpoint as TEST app/worker',
+        source: { path: 'scripts/yuk1537-admission-reopen.ts', calls: ['xiaomiTokenPlanBaseUrl'] },
+      },
+      credential: {
+        summary: 'Token Plan server credential, never printed',
+        source: {
+          path: 'scripts/yuk1537-admission-reopen.ts',
+          envReads: ['XIAOMI_TOKEN_PLAN_API_KEY'],
+        },
+      },
+      model: {
+        summary: 'require the explicit TEST pin to mimo-v2.6-pro',
+        source: {
+          path: 'scripts/yuk1537-admission-reopen.ts',
+          envReads: ['AI_PROVIDER_MODEL'],
+          literals: ['mimo-v2.6-pro'],
+        },
+      },
+    },
+    evidence: {
+      path: 'scripts/yuk1537-admission-reopen.ts',
+      calls: ['fetch', 'open'],
+      contains: ["'wx'", 'outside_paid_effect: true'],
+    },
+    attemptSemantics: {
+      admittedUnit:
+        'one manually invoked --preflight synthetic question request; reopen mode sends none',
+      durableIdentity:
+        'operator receipt opened exclusively before sending, including failed outcomes; no paid_effect claim',
+      timeout: 'AbortSignal.timeout(120_000), including response body',
+      clientRetry: 'none; native fetch with redirect:error, no retry wrapper',
+      transportRetryCount: 0,
+      attemptsPerInvocation: {
+        kind: 'exact',
+        value: 1,
+        fixedRequestCount: 1,
+        fixedFanOutMultiplier: 1,
+      },
+      redelivery:
+        'none; an existing receipt path is refused before sending; lead investigates failure',
+      fanOut: 'one synthetic request only; no model call in the five-question enqueue mode',
+      evidence: [
+        {
+          path: 'scripts/yuk1537-admission-reopen.ts',
+          calls: ['fetch', 'open', 'AbortSignal.timeout'],
+          contains: ["redirect: 'error'", "'wx'", '120_000'],
+        },
+      ],
+    },
+    exemption: {
+      owner: 'practice/admission lead',
+      reason:
+        'YUK-1537 owner-requested one-off TEST transport preflight before authorizing exactly five unknown upgrades; no product or automatic caller',
+      expiresOn: '2026-12-31',
+      maxAttemptsPerInvocation: 1,
+      timeoutMs: 120_000,
+      clientRetryLimit: 0,
+      evidence: {
+        path: 'scripts/yuk1537-admission-reopen.ts',
+        calls: ['fetch', 'open'],
+        contains: ["'wx'", 'outside_paid_effect: true'],
+      },
+    },
+    costSupport:
+      'operator receipt retains provider request ID, usage, output and error; quota/cost may be consumed; no fabricated free call or successful paid-effect receipt',
+  },
+  {
+    id: 'xiaomi.question-admission-reopen-preflight',
+    owner: 'scripts/yuk1547-admission-reopen',
+    disposition: 'exempt',
+    wire: {
+      path: 'scripts/yuk1547-admission-reopen.ts',
+      calls: ['fetch'],
+      contains: ['/chat/completions'],
+    },
+    callers: [{ path: 'scripts/yuk1547-admission-reopen.ts', calls: ['preflight', 'routing'] }],
+    directImporters: [],
+    roles: ['operator'],
+    provider: 'resolved QuestionAdmissionSolveTask provider (no local literal)',
+    model: 'resolved task config model — env pin > solver2 env > DB task.<kind>.* > registry',
+    endpointClass:
+      'manual per-route synthetic @3 submit-shape compatibility probe (units at top level, no result envelope)',
+    configuration: {
+      endpoint: {
+        summary:
+          'resolved model wire baseUrl via nativePiModel — single endpoint literal lives in src/server/ai/opencode-go.ts',
+        source: { path: 'scripts/yuk1547-admission-reopen.ts', calls: ['nativePiModel'] },
+      },
+      credential: {
+        summary: 'resolved lane credential via resolveTaskProvider, never printed',
+        source: {
+          path: 'scripts/yuk1547-admission-reopen.ts',
+          calls: ['resolveTaskProvider'],
+        },
+      },
+      model: {
+        summary:
+          'resolved task config (resolveTaskProvider); QUESTION_ADMISSION_SOLVER2_* env is the solver-B override surface',
+        source: {
+          path: 'scripts/yuk1547-admission-reopen.ts',
+          calls: ['resolveTaskProvider'],
+          envReads: ['QUESTION_ADMISSION_SOLVER2_PROVIDER', 'QUESTION_ADMISSION_SOLVER2_MODEL'],
+        },
+      },
+    },
+    evidence: {
+      path: 'scripts/yuk1547-admission-reopen.ts',
+      calls: ['fetch', 'open'],
+      contains: ["'wx'", 'outside_paid_effect: true'],
+    },
+    attemptSemantics: {
+      admittedUnit:
+        'one manually invoked --preflight synthetic question request on the resolved solver-A lane; reopen mode sends none',
+      durableIdentity:
+        'operator receipt opened exclusively before sending, including failed outcomes; no paid_effect claim',
+      timeout: 'AbortSignal.timeout(120_000), including response body',
+      clientRetry: 'none; native fetch with redirect:error, no retry wrapper',
+      transportRetryCount: 0,
+      attemptsPerInvocation: {
+        kind: 'exact',
+        value: 1,
+        fixedRequestCount: 1,
+        fixedFanOutMultiplier: 1,
+      },
+      redelivery:
+        'none; an existing receipt path is refused before sending; lead investigates failure',
+      fanOut:
+        'one synthetic request on the solver-A route only — a solver2 env naming a different lane is statically validated (capability + wire api) but not probed; reopen mode enqueues marked @3 jobs without a model call',
+      evidence: [
+        {
+          path: 'scripts/yuk1547-admission-reopen.ts',
+          calls: ['fetch', 'open', 'AbortSignal.timeout'],
+          contains: ["redirect: 'error'", "'wx'", '120_000'],
+        },
+      ],
+    },
+    exemption: {
+      owner: 'practice/admission lead',
+      reason:
+        'YUK-1547 owner-approved one-off TEST transport preflight gating the marked @3 reopen of exactly five named @2 identities; no product or automatic caller',
+      expiresOn: '2026-12-31',
+      maxAttemptsPerInvocation: 1,
+      timeoutMs: 120_000,
+      clientRetryLimit: 0,
+      evidence: {
+        path: 'scripts/yuk1547-admission-reopen.ts',
+        calls: ['fetch', 'open'],
+        contains: ["'wx'", 'outside_paid_effect: true'],
+      },
+    },
+    costSupport:
+      'operator receipt retains provider request ID, usage, raw arguments, output and error; quota/cost may be consumed; no fabricated free call or successful paid-effect receipt',
+  },
+
+  {
     id: 'dashscope.embedding',
     owner: 'server/ai',
     disposition: 'migrate',
@@ -270,7 +441,7 @@ export const PROVIDER_LANES = [
     ],
     roles: ['api', 'worker'],
     provider: 'DashScope OpenAI-compatible endpoint; MEM0_EMBEDDING_BASE_URL is env-configurable',
-    model: 'text-embedding-v4 fixed in source',
+    model: 'text-embedding-v4 via provider catalog (DASHSCOPE_EMBED_MODEL_ID)',
     endpointClass: 'OpenAI-compatible embeddings POST /embeddings',
     configuration: {
       endpoint: {
@@ -286,8 +457,13 @@ export const PROVIDER_LANES = [
         source: { path: 'src/server/ai/embed.ts', envReads: ['DASHSCOPE_API_KEY'] },
       },
       model: {
-        summary: 'fixed text-embedding-v4 source literal',
-        source: { path: 'src/server/ai/embed.ts', literals: ['text-embedding-v4'] },
+        summary:
+          'text-embedding-v4 declared in the provider catalog (DASHSCOPE_EMBED_MODEL_ID); embed.ts wires it via EMBED_MODEL',
+        source: {
+          path: 'src/server/ai/embed.ts',
+          contains: ['EMBED_MODEL = DASHSCOPE_EMBED_MODEL_ID', 'model: EMBED_MODEL'],
+          imports: ['./providers'],
+        },
       },
     },
     evidence: {
@@ -378,11 +554,11 @@ export const PROVIDER_LANES = [
         },
       },
       model: {
-        summary: 'Global provider model; unpinned MEM0_LLM_MODEL defaults to glm-5.2',
+        summary:
+          'Global provider model; unpinned MEM0_LLM_MODEL env overrides the provider-catalog lane default (LEGACY_GLM_MODEL_ID, YUK-1559)',
         source: {
           path: 'src/server/memory/llm-config.ts',
-          contains: ['env.MEM0_LLM_MODEL', 'model: pin.model'],
-          literals: ['glm-5.2'],
+          contains: ['env.MEM0_LLM_MODEL', 'LEGACY_GLM_MODEL_ID', 'model: pin.model'],
         },
       },
     },
@@ -532,11 +708,11 @@ export const PROVIDER_LANES = [
         },
       },
       model: {
-        summary: 'Global provider model; unpinned MEM0_LLM_MODEL defaults to glm-5.2',
+        summary:
+          'Global provider model; unpinned MEM0_LLM_MODEL env overrides the provider-catalog lane default (LEGACY_GLM_MODEL_ID, YUK-1559)',
         source: {
           path: 'src/server/memory/llm-config.ts',
-          contains: ['env.MEM0_LLM_MODEL', 'model: pin.model'],
-          literals: ['glm-5.2'],
+          contains: ['env.MEM0_LLM_MODEL', 'LEGACY_GLM_MODEL_ID', 'model: pin.model'],
         },
       },
     },
@@ -607,7 +783,7 @@ export const PROVIDER_LANES = [
     ],
     roles: ['api', 'worker'],
     provider: 'GLM OCR fixed HTTP endpoint',
-    model: 'glm-ocr fixed in source',
+    model: 'glm-ocr via provider catalog (GLM_OCR_MODEL_ID)',
     endpointClass: 'GLM layout_parsing POST endpoint',
     configuration: {
       endpoint: {
@@ -625,8 +801,12 @@ export const PROVIDER_LANES = [
         },
       },
       model: {
-        summary: 'fixed glm-ocr model literal',
-        source: { path: 'src/capabilities/ingestion/server/glm_ocr.ts', literals: ['glm-ocr'] },
+        summary:
+          'glm-ocr declared in the provider catalog (GLM_OCR_MODEL_ID); glm_ocr.ts wires it via GLM_OCR_MODEL',
+        source: {
+          path: 'src/capabilities/ingestion/server/glm_ocr.ts',
+          contains: ['GLM_OCR_MODEL', 'model: GLM_OCR_MODEL'],
+        },
       },
     },
     evidence: {
@@ -733,11 +913,12 @@ export const PROVIDER_LANES = [
       },
       model: {
         summary:
-          'Mem0 LLM uses global product model; dedicated embedding uses MEM0_EMBEDDING_MODEL',
+          'Mem0 LLM uses global product model; dedicated embedding uses MEM0_EMBEDDING_MODEL env over the provider-catalog default (DASHSCOPE_EMBED_MODEL_ID)',
         source: {
           path: 'src/server/memory/client.ts',
           envReads: ['MEM0_EMBEDDING_MODEL'],
-          literals: ['text-embedding-v4'],
+          contains: ['DASHSCOPE_EMBED_MODEL_ID'],
+          imports: ['@/server/ai/providers'],
         },
       },
     },
@@ -912,11 +1093,12 @@ export const PROVIDER_LANES = [
       },
       model: {
         summary:
-          'CLI or MIMO_VISION_MODEL override; product model for Token Plan, legacy mimo-v2.5',
+          'CLI or MIMO_VISION_MODEL override, else resolved vision-judge task route (env pin > lane.vision_judge > registry default; YUK-1559)',
         source: {
           path: 'scripts/preflight-vision.ts',
-          envReads: ['MIMO_VISION_MODEL', 'AI_PROVIDER_MODEL'],
-          literals: ['mimo-v2.5', 'mimo-v2.6-pro'],
+          imports: ['../src/server/ai/providers', '../src/server/ai/vision-judge-config'],
+          calls: ['resolveTaskBinding', 'visionJudgeProviderOverride'],
+          envReads: ['MIMO_VISION_MODEL'],
         },
       },
     },

@@ -4,9 +4,9 @@
 // behave exactly as before; only the drawing is new.
 //
 // Composition (docs/design/2026-10-07-ui-visual-direction.md):
-// - banner (R2): way back, eyebrow (source · position · minutes), serif title, state chips, and
-//   the two ways to get help: 需要提示？ (the hint drawer) and 学习伙伴 (the global Copilot drawer);
-//   the mascot sits at the banner's right in the page's flow (B1; it scrolls with the banner);
+// - banner (R2): way back and 需要提示？ (the hint drawer) on one quiet line, eyebrow (source ·
+//   position · minutes), serif title, state chips; the mascot sits at the banner's right in the
+//   page's flow (B1; it scrolls with the banner);
 // - one sheet of paper: the question with its number in the gutter, each answer written right
 //   under its own question on ruled lines, a glass action bar floating at the bottom while
 //   answering (T3: a floating layer), then the result settling in place (R3) and the earlier
@@ -15,14 +15,15 @@
 // - a question whose issuance carries a presentation (YUK-1497) is drawn by its block tree
 //   instead: the blocks lay out the text, figures, passage and inputs, and their answers go
 //   through the same draft, autosave and submit engine.
-// The companion stays the global Copilot drawer; where it sits on this page is not decided, so it
-// is not embedded here. Quoting question text puts it in that drawer's composer.
+// The companion stays the global Copilot drawer, opened from the shell's Copilot button as in 纸面;
+// where it sits on this page is not decided, so it is not embedded here. Quoting question text
+// puts it in that drawer's composer.
 //
 // No effects. Window listeners belong to DOM nodes through ref callbacks (pagehide flush on the
 // answering root, ⌘Enter on the action bar, the selection listener on the quotable root); the
 // shell's sticky bars are read through useSyncExternalStore.
 
-import { ArrowLeft, Camera, Lightbulb, MessageSquareQuote, PenLine, Sparkles } from 'lucide-react';
+import { ArrowLeft, Camera, Lightbulb, MessageSquareQuote, PenLine } from 'lucide-react';
 import {
   type CSSProperties,
   type ReactNode,
@@ -42,6 +43,7 @@ import { SaveStateChip } from '@/ui/components/response/SaveStateChip';
 import { ApiError } from '@/ui/lib/api';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { openCopilot } from '@/ui/lib/use-copilot-dwell';
+import { CollapsibleList } from '@/ui/primitives/CollapsibleList';
 import {
   Button,
   Chip,
@@ -234,7 +236,8 @@ function QuoteButton({
   );
 }
 
-/** The earlier attempts at this question, newest first; a cause seen twice is marked (YUK-617). */
+/** The earlier attempts at this question, newest first, folded to the newest 3; a cause seen twice
+ * across the whole history is marked (YUK-617). */
 function AttemptHistory({
   events,
   headingId,
@@ -254,8 +257,12 @@ function AttemptHistory({
       <h2 id={headingId} className="un-ps-h2">
         作答记录
       </h2>
-      <ol className="un-ps-history">
-        {events.map((e) => {
+      {/* Newest 3 show; the rest fold behind 「全部 N 条」 (owner 2026-10-18, design doc L5). */}
+      <CollapsibleList
+        items={events}
+        className="un-ps-history"
+        toggleClassName="un-ps-history-toggle"
+        renderItem={(e) => {
           const duration = formatDuration(e.duration_ms);
           if (e.kind === 'review') {
             return (
@@ -285,8 +292,8 @@ function AttemptHistory({
               {duration && <span className="un-ps-history-day">{duration}</span>}
             </li>
           );
-        })}
-      </ol>
+        }}
+      />
     </section>
   );
 }
@@ -405,62 +412,56 @@ export function PracticeSolo({
   } else if (q) state = { label: '第一次做' };
   const labels = (q?.labels ?? []).filter((l) => l.name !== title);
 
+  // 纸面's banner: the text column (the way back, eyebrow, title, chips) with the mascot at its
+  // right. 纸面 has no hint entry; 需要提示？ sits beside 返回练习 in the same quiet style, so the
+  // banner keeps 纸面's height. The companion opens from the shell's Copilot button, as in 纸面.
   const banner = (
     <header className="un-ps-banner" ref={startAtTop}>
-      <div className="un-ps-banner-row">
-        {/* YUK-432 — after an automatic commit 「返回」 marks the item done (handleBack). Never
-            blocked by the draft: at most 8s for the last save, then an honest toast (YUK-1489). */}
-        <Button
-          variant="quiet"
-          size="sm"
-          className="un-ps-back"
-          disabled={submit.returning}
-          // While the host moves on in place, this question is finished (its answer is recorded
-          // and its draft settles on unmount): back just leaves and cancels the move.
-          onClick={() => (advancing ? onBack() : void handleBack())}
-        >
-          <ArrowLeft size={14} aria-hidden="true" />
-          {submit.returning ? '正在保存…' : '返回练习'}
-        </Button>
-        <div className="un-ps-help">
+      <div className="un-ps-banner-text">
+        <div className="un-ps-back-row">
+          {/* YUK-432 — after an automatic commit 「返回」 marks the item done (handleBack). Never
+              blocked by the draft: at most 8s for the last save, then an honest toast (YUK-1489). */}
+          <Button
+            variant="quiet"
+            size="sm"
+            disabled={submit.returning}
+            // While the host moves on in place, this question is finished (its answer is recorded
+            // and its draft settles on unmount): back just leaves and cancels the move.
+            onClick={() => (advancing ? onBack() : void handleBack())}
+          >
+            <ArrowLeft size={14} aria-hidden="true" />
+            {submit.returning ? '正在保存…' : '返回练习'}
+          </Button>
           {!question.isInterventionDiagnostic && (
-            <Button variant="secondary" size="sm" onClick={openCoach}>
+            <Button variant="quiet" size="sm" onClick={openCoach}>
               <Lightbulb size={14} aria-hidden="true" />
               需要提示？
             </Button>
           )}
-          <Button variant="quiet" size="sm" onClick={() => openCopilot()}>
-            <Sparkles size={14} aria-hidden="true" />
-            学习伙伴
-          </Button>
         </div>
+        <p className="un-ps-eyebrow">
+          {practiceSourceLabel(item.source)} · 第 <span className="un-num">{pos}</span> / {total} 题
+          {item.estimated_minutes ? ` · 约 ${item.estimated_minutes} 分钟` : ''}
+        </p>
+        {/* M4: the shared title. It grows out of the stream row, folds back into it, and
+            morphs into the next question's title when the page moves on in place. */}
+        <h1 className="un-ps-title" data-morph={practiceMorphKey(item.id)} tabIndex={-1}>
+          {title}
+        </h1>
+        {(labels.length > 0 || state) && (
+          <div className="un-ps-chips">
+            {labels.map((l) => (
+              <Chip key={l.id}>{l.name}</Chip>
+            ))}
+            {state && <Chip tone={state.tone}>{state.label}</Chip>}
+          </div>
+        )}
       </div>
-      <div className="un-ps-banner-main">
-        <div className="un-ps-banner-text">
-          <p className="un-ps-eyebrow">
-            {practiceSourceLabel(item.source)} · 第 <span className="un-num">{pos}</span> / {total}{' '}
-            题{item.estimated_minutes ? ` · 约 ${item.estimated_minutes} 分钟` : ''}
-          </p>
-          {/* M4: the shared title. It grows out of the stream row, folds back into it, and
-              morphs into the next question's title when the page moves on in place. */}
-          <h1 className="un-ps-title" data-morph={practiceMorphKey(item.id)} tabIndex={-1}>
-            {title}
-          </h1>
-          {(labels.length > 0 || state) && (
-            <div className="un-ps-chips">
-              {labels.map((l) => (
-                <Chip key={l.id}>{l.name}</Chip>
-              ))}
-              {state && <Chip tone={state.tone}>{state.label}</Chip>}
-            </div>
-          )}
-        </div>
-        {/* B1/B2: the mascot spins while 「正在判…」 shows and turns a petal when a result lands. */}
-        <Mascot
-          thinking={phase === 'answering' && submit.judging && !submit.pendingRun}
-          settleKey={displayedPreview ? verdictKey(displayedPreview) : null}
-        />
-      </div>
+      {/* B1/B2: the mascot spins while 「正在判…」 shows and turns a petal when a result lands. */}
+      <Mascot
+        thinking={phase === 'answering' && submit.judging && !submit.pendingRun}
+        settleKey={displayedPreview ? verdictKey(displayedPreview) : null}
+      />
     </header>
   );
 
@@ -710,7 +711,8 @@ export function PracticeSolo({
     ) : null;
 
     // While answering: 提交 (or the self-rating), then 拍照/附件 and 写思路. The bar owns the
-    // ⌘/Ctrl+Enter hotkey: it exists only while answering.
+    // ⌘/Ctrl+Enter hotkey: it exists only while answering. As in 纸面, the shortcut is named in the
+    // submit button's title, not in a hint line on the bar.
     const actionBar = answering ? (
       // biome-ignore lint/a11y/useSemanticElements: a toolbar of buttons, not a form field set.
       <div
@@ -782,11 +784,6 @@ export function PracticeSolo({
             <SaveStateChip state={draft.autosave.state} onRetry={draft.autosave.retry} />
           )}
         </span>
-        {ready.mode !== 'manual' && (
-          <span className="un-ps-hint un-ps-keys">
-            {draft.isChoice ? '数字键选 · ⌘Enter 提交' : '⌘Enter 提交'}
-          </span>
-        )}
       </div>
     ) : null;
 

@@ -8,6 +8,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Fragment, useState } from 'react';
 import { formatRelTime } from '@/ui/lib/utils';
 import { Btn } from '@/ui/primitives/Btn';
+import { CollapsibleList } from '@/ui/primitives/CollapsibleList';
 import { LoomBadge } from '@/ui/primitives/LoomBadge';
 import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
@@ -70,8 +71,12 @@ export function AiChangesStrip({ now }: { now: Date }) {
         skeleton={<SkLines rows={2} />}
         empty={<div className="quiet-empty">过去 24 小时没有 AI 改动。</div>}
       >
-        <div className="strip-list">
-          {rows.map((c) => (
+        {/* 最近 3 条在前，其余收进「全部 N 条」（owner 2026-10-18 折叠决定，设计 L5）。 */}
+        <CollapsibleList
+          as="div"
+          className="strip-list"
+          items={rows}
+          renderItem={(c) => (
             <Fragment key={c.event_id}>
               <div className={`strip${c.undone ? ' is-undone' : ''}`}>
                 <span className="strip-lead tone-coral">
@@ -113,8 +118,8 @@ export function AiChangesStrip({ now }: { now: Date }) {
                 </div>
               )}
             </Fragment>
-          ))}
-        </div>
+          )}
+        />
       </Stateful>
     </LoomCard>
   );

@@ -40,6 +40,7 @@ import { formatCnDateOnly } from '@/ui/lib/utils';
 import { Badge, type BadgeTone } from '@/ui/primitives/Badge';
 import { Btn } from '@/ui/primitives/Btn';
 import { Card } from '@/ui/primitives/Card';
+import { CollapsibleList } from '@/ui/primitives/CollapsibleList';
 import { EmptyState } from '@/ui/primitives/EmptyState';
 import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
 import { SkLines } from '@/ui/primitives/SkLines';
@@ -1276,14 +1277,17 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
               </div>
             </div>
             {data.backlinks.length > 0 && (
-              <div className="qd-paperlist">
-                {data.backlinks.map((p) => (
+              <CollapsibleList
+                as="div"
+                className="qd-paperlist"
+                items={data.backlinks}
+                renderItem={(p) => (
                   <div key={p.artifact_id} className="qd-paperrow">
                     <LoomIcon name="doc" size={13} />
                     {p.title}
                   </div>
-                ))}
-              </div>
+                )}
+              />
             )}
             {/* scheduling：每知识点 FSRS due（detail 聚合）；有则展示最近 due。 */}
             {data.scheduling.per_knowledge.some((pk) => pk.due_at_sec != null) && (

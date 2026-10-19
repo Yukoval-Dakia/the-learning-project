@@ -116,11 +116,9 @@ export interface RunTaskResult {
   cost_basis: 'reported' | 'estimated' | 'unknown';
   cost_ref: string;
   /**
-   * YUK-299 seam: the structured product an adapter fills in when a
-   * structured-output protocol is honoured. Post-P4 the pi lane has no
-   * outputFormat equivalent — this stays `undefined` and every caller runs
-   * its strict-prompt + Zod text-fallback parse (already the production path
-   * on the default mimo lane, YUK-792). Runner never interprets it.
+   * Adapter-provided product for opt-in schema tool output (YUK-1537).
+   * Legacy tasks retain their text parsing behavior. Runner does not interpret
+   * the product; the capability validates it before any domain publication.
    */
   structured_output?: unknown;
   /** Present for NoteGenerateTask. Model phases; the job adds parse and DB. */
@@ -672,6 +670,42 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
         continue;
       }
 
+      // YUK-1547/YUK-1559 (C1/C6) — pi tool-argument contract telemetry.
+      // 'tool_args_coerced' persists each adopted string→JSON field repair
+      // (tool/path/length only, no payload) so the harness can count
+      // coercions per run; 'tool_args_contract_failed' persists the sanitized
+      // ≤4KiB original arguments of a call rejected at the param-contract
+      // seam (never reached execute). Both land on tool_call_log keyed to
+      // this task_run — the same evidence surface as the structured-submit
+      // failure rows.
+      if (msg.type === 'system' && msg.subtype === 'tool_args_coerced') {
+        await args.lifecycle.recordToolCall({
+          toolName: msg.tool_name,
+          inputJson: { event: 'coerced', tool_call_id: msg.tool_call_id, fields: msg.fields },
+          errorReason: 'tool_args_coerced',
+          iteration,
+          latencyMs: 0,
+        });
+        continue;
+      }
+      if (msg.type === 'system' && msg.subtype === 'tool_args_contract_failed') {
+        await args.lifecycle.recordToolCall({
+          toolName: msg.tool_name,
+          inputJson: {
+            event: 'contract_failed',
+            tool_call_id: msg.tool_call_id,
+            args_source: msg.args_source,
+            raw_arguments: msg.raw_arguments,
+            raw_args_sha256: msg.raw_args_sha256,
+            truncated: msg.truncated,
+          },
+          errorReason: 'tool_args_contract_failed',
+          iteration,
+          latencyMs: 0,
+        });
+        continue;
+      }
+
       if (msg.type === 'assistant') {
         const observedUsage = terminal.observeAssistant(msg);
         if (observedUsage) args.lifecycle.recordObservedUsage(observedUsage);
@@ -718,6 +752,23 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
         }
         await args.onSuccess?.(msg);
       } else {
+        // YUK-1547 — a failed structured submit keeps its raw arguments as
+        // bounded tool_call_log evidence attached to this task run, so the
+        // paid-effect unknown row can be diagnosed without a provider re-ask.
+        const submitEvidence = (msg as { structured_submit_evidence?: Record<string, unknown> })
+          .structured_submit_evidence;
+        if (submitEvidence != null && typeof submitEvidence === 'object') {
+          await args.lifecycle.recordToolCall({
+            toolName:
+              typeof submitEvidence.tool_name === 'string'
+                ? submitEvidence.tool_name
+                : 'mcp__structured_output__submit',
+            inputJson: submitEvidence,
+            iteration,
+            latencyMs: Date.now() - stepStartTime,
+            errorReason: 'structured_output_submit_arguments_rejected',
+          });
+        }
         args.onResultError?.(msg);
         throw new AgentRunError({
           kind: args.kind,

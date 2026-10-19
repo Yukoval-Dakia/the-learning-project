@@ -4,6 +4,7 @@
 import { randomUUID } from 'node:crypto';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
+import { QUESTION_ADMISSION_POLICY_IDS } from '@/core/question-admission-policy';
 import { LEGACY_DRAFT_STATUS } from '@/core/schema/assessment/lifecycle';
 import type { ResponseSpecT } from '@/core/schema/assessment/response';
 import type { ScoringBasisT } from '@/core/schema/assessment/scoring';
@@ -121,9 +122,10 @@ type GradedContract = {
 };
 
 /**
- * The stored digest matches when it is the canonical seal or either legacy
- * seal (schema key order, or the caller/jsonb key order the edit path copies).
- * A stored key that matches none of them is not graded.
+ * Grade the stored revision only when its digest is the canonical seal, or a
+ * legacy seal recomputed from these stored layers (schema key order, or the
+ * stored jsonb key order). A caller-order digest that matches none of those
+ * is not graded.
  */
 function sealedRevisionContract(revision: typeof question_revision.$inferSelect): {
   contract: NormalizedContract;
@@ -330,6 +332,10 @@ export async function runAdmissionForQuestion(
       .where(
         and(
           eq(question_revision.group_id, rootId),
+          inArray(question_admission_verification.policy_id, [
+            ...QUESTION_ADMISSION_POLICY_IDS,
+            resolveQuestionAdmissionPolicyId(),
+          ]),
           sql`${question_admission_verification.evidence}->>'pack' = 'question_admission'`,
           sql`${question_admission_verification.evidence}->>'base_contract_digest' = ${contract.integrity_digest}`,
           inArray(question_admission_verification.outcome, ['passed', 'failed', 'suspended']),
@@ -374,17 +380,36 @@ export async function runAdmissionForQuestion(
   if (batch.kind === 'stale') return simple('stale');
   if (batch.kind === 'held') return simple('pending');
 
+  const attemptedTaskRunIds = new Set<string>();
   let receipt: AdmissionResultReceipt;
   if (batch.kind === 'receipt') {
     receipt = batch.receipt;
   } else {
     try {
-      const runTask =
+      const executeTask =
         deps.runTask ??
         makePracticeTaskTextRunFn(db, {
           providerSessionDeadlineAt: Date.now() + 15 * 60_000,
           judgeRetryPolicy: 'none',
         });
+      const runTask: PracticeTaskRunFn = async (...args) => {
+        try {
+          const result = await executeTask(...args);
+          if (result.task_run_id) attemptedTaskRunIds.add(result.task_run_id);
+          return result;
+        } catch (error) {
+          // Central runner binds the durable id even to structured terminal /
+          // timeout failures. Keep it on paid_effect, not only in task logs.
+          if (
+            error != null &&
+            typeof error === 'object' &&
+            'taskRunId' in error &&
+            typeof error.taskRunId === 'string'
+          )
+            attemptedTaskRunIds.add(error.taskRunId);
+          throw error;
+        }
+      };
       const result = await runQuestionAdmission(definitionFromContract(batch.input.contract), {
         db,
         runTask,
@@ -405,7 +430,7 @@ export async function runAdmissionForQuestion(
             tx,
             batch.identity,
             delivery.id,
-            `admission_pending:${result.reason ?? 'unsealed_result'};task_runs=${result.evidence_refs.task_run_ids.join(',')}`,
+            `admission_pending:${result.reason ?? 'unsealed_result'};task_runs=${[...new Set([...attemptedTaskRunIds, ...result.evidence_refs.task_run_ids])].join(',')}`,
             { fence: batch.fence },
           ),
         );
@@ -427,7 +452,7 @@ export async function runAdmissionForQuestion(
             tx,
             batch.identity,
             delivery.id,
-            error instanceof Error ? error.message : String(error),
+            `${error instanceof Error ? error.message : String(error)};task_runs=${[...attemptedTaskRunIds].join(',')}`,
             { fence: batch.fence },
           );
         }
