@@ -13,6 +13,9 @@
 // 标 `soft` 的边 → 上游失败下游**照常执行**，orchestrator 在该节点的调度行上记 stale=true
 // 留痕。下游 handler **不会**收到任何 stale 信号，也不因此改变行为（YUK-778：那条
 // `{ stale: true }` job payload 从来没有消费者，已删）——软边的全部含义就是「不阻塞」。
+// not_needed / degraded 不是硬失败：下游不连坐跳过，按自己的资格决定，并记 stale。
+
+import type { NightlyEligibilityFn } from './nightly-eligibility';
 
 /** 一条依赖边的规范形。 */
 export interface JobDependency {
@@ -38,6 +41,8 @@ export interface JobDagMemberInput {
   /** 归属 capability 名，仅用于错误信息可读性。 */
   owner: string;
   dependsOn: readonly JobDependencyDecl[];
+  /** 入队前资格判定。缺省 = 照旧入队。 */
+  eligibility?: NightlyEligibilityFn;
 }
 
 export interface JobDagNode {
@@ -45,6 +50,7 @@ export interface JobDagNode {
   owner: string;
   /** 规范化后的上游边。 */
   deps: Required<JobDependency>[];
+  eligibility?: NightlyEligibilityFn;
 }
 
 export interface JobDag {
@@ -78,6 +84,7 @@ export function buildJobDag(members: readonly JobDagMemberInput[]): JobDag {
       name: m.name,
       owner: m.owner,
       deps: m.dependsOn.map(normalizeJobDependency),
+      ...(m.eligibility ? { eligibility: m.eligibility } : {}),
     });
     dependents.set(m.name, []);
   }

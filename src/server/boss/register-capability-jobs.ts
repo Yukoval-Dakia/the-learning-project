@@ -30,7 +30,7 @@
 import type { PgBoss } from 'pg-boss';
 
 import type { Db } from '@/db/client';
-import type { CapabilityManifest, JobDecl } from '@/kernel/manifest';
+import type { CapabilityManifest, JobDecl, JobHandlerFactory } from '@/kernel/manifest';
 import {
   EXPIRE_AGENT,
   EXPIRE_FAST,
@@ -41,6 +41,26 @@ import {
 } from '@/server/boss/queue-config';
 import { fenceAwareJobHandler } from '@/server/contract-epoch';
 import { startDurableWorker } from '@/server/durable/prune-worker';
+import { loadNightlyContext, noteEligibilitySkip } from '@/server/orchestration/nightly-signals';
+
+function withScheduledEligibility(
+  db: Db,
+  decl: JobDecl,
+  handler: ReturnType<JobHandlerFactory>,
+): ReturnType<JobHandlerFactory> {
+  const decide = decl.schedule ? decl.eligibility : undefined;
+  if (!decide) return handler;
+  return async (jobs) => {
+    const decision = decide(
+      (await loadNightlyContext(db, new Date(), [decl.name])).forJob(decl.name),
+    );
+    if (!decision.run) {
+      noteEligibilitySkip(decl.name, decision);
+      return;
+    }
+    return handler(jobs);
+  };
+}
 
 const EXPIRE_BY_QUEUE = {
   llm: EXPIRE_LLM,
@@ -69,6 +89,8 @@ async function mountJob(boss: PgBoss, db: Db, decl: JobDecl): Promise<void> {
   // src/server/contract-epoch/jobs.ts。
   // Declared worker metadata wins; absent fields keep the uniform 2s/1 recipe
   // (equivalence red line with the retired central registrations).
+  // DAG 成员没有 schedule，资格判定在 orchestrator send 之前。这里只包裸 cron。
+  const handler = withScheduledEligibility(db, decl, factory(db));
   await boss.work(
     decl.name,
     {
@@ -76,7 +98,7 @@ async function mountJob(boss: PgBoss, db: Db, decl: JobDecl): Promise<void> {
       batchSize: decl.batchSize ?? 1,
       ...(decl.includeMetadata !== undefined ? { includeMetadata: decl.includeMetadata } : {}),
     },
-    fenceAwareJobHandler(db, decl.name, factory(db)),
+    fenceAwareJobHandler(db, decl.name, handler),
   );
 
   if (decl.schedule) {

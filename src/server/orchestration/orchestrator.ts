@@ -6,6 +6,7 @@
 //
 // 逐边失败语义：硬边（默认）——上游 failed/skipped → 下游 skipped（留 detail 痕迹）；
 // 软边——上游未 succeeded 但硬上游齐 → 下游照跑，并在**节点行**上记 stale=true。
+// not_needed / degraded 是软终态：不连坐跳过，下游按自己的资格决定，上游没成功则记 stale。
 //
 // YUK-778：软边的 stale 曾**同时**作为 job payload `{ stale: true }` 发给成员 handler。
 // 那条 payload 没有任何 handler 读（两条软边的下游 knowledge_maintenance_nightly /
@@ -30,6 +31,12 @@ import {
   ORCHESTRATOR_TZ,
   TICK_INTERVAL_SECONDS,
 } from './constants';
+import {
+  type NightlyContext,
+  loadNightlyContext,
+  noteEligibilitySkip,
+  warnDailyCostDoesNotBlock,
+} from './nightly-signals';
 import {
   type NodeRow,
   type RunRow,
@@ -103,6 +110,8 @@ export interface AdvanceSummary {
   total: number;
   terminal: number;
   succeeded: number;
+  notNeeded: number;
+  degraded: number;
   failed: number;
   skipped: number;
   enqueued: number;
@@ -179,7 +188,11 @@ async function settleNode(
   db: Db,
   run: RunRow,
   node: NodeRow,
-  input: { status: 'succeeded' | 'failed' | 'skipped'; detail?: string | null; now: Date },
+  input: {
+    status: 'succeeded' | 'failed' | 'skipped' | 'not_needed' | 'degraded';
+    detail?: string | null;
+    now: Date;
+  },
 ): Promise<boolean> {
   const applied = await updateNodeStatus(db, node.id, input);
   if (!applied) return false;
@@ -188,7 +201,7 @@ async function settleNode(
   const line = `[orchestrator] node '${node.job_name}' ${input.status} in run ${run.id} (${run.run_date})${
     input.detail ? `: ${input.detail}` : ''
   }`;
-  if (input.status === 'failed') console.error(line);
+  if (input.status === 'failed' || input.status === 'degraded') console.error(line);
   else console.warn(line);
   return true;
 }
@@ -205,9 +218,11 @@ async function settleNode(
  * （「它在陈旧数据上跑了」），而运维恰恰会据此去查它的产出。措辞必须只声称已证实的那一半。
  */
 function describeNodeCensus(s: AdvanceSummary): string {
-  return `${s.succeeded}/${s.total} succeeded, ${s.failed} failed, ${s.skipped} skipped, ${
-    s.enqueued + s.running
-  } still in flight, ${s.pending} never started, ${s.stale} enqueued despite a non-succeeded soft upstream`;
+  return `${s.succeeded}/${s.total} succeeded, ${s.notNeeded} not_needed, ${s.degraded} degraded, ${
+    s.failed
+  } failed, ${s.skipped} skipped, ${s.enqueued + s.running} still in flight, ${
+    s.pending
+  } never started, ${s.stale} enqueued despite an upstream that did not succeed`;
 }
 
 /**
@@ -244,13 +259,20 @@ export async function advanceRun(deps: AdvanceDeps): Promise<AdvanceSummary> {
   // 同轮齐发错峰计数（review 面板疑点 ②）：每只 job 都是独立 pg-boss 队列 + 独立 worker，
   // batchSize:1 拦不住**跨 job** 并发，故 8 个根会同秒砸向 provider。见 LAYER_STAGGER_SECONDS。
   let enqueuedThisPass = 0;
+  let contextPromise: Promise<NightlyContext> | undefined;
+  const loadContext = () => {
+    contextPromise ??= loadNightlyContext(deps.db, now, [...deps.dag.nodes.keys()]);
+    return contextPromise;
+  };
   for (const [jobName, node] of nodes) {
     if (node.status !== 'pending') continue;
     // 逐节点错误隔离，与步骤①同一韧性模型（YUK-758 review ToTbw）：单节点的 claim / send /
     // updateNodeStatus 抖动不该让**本轮**其余就绪节点全部停摆。注意这与 advanceAndContinue 的
     // 续链保证是**两层**：那层保证「下一拍一定会来」，这层保证「本拍其余节点照推」。
     try {
-      if (await advancePendingNode(deps, jobName, node, nodes, now, enqueuedThisPass)) {
+      if (
+        await advancePendingNode(deps, jobName, node, nodes, now, enqueuedThisPass, loadContext)
+      ) {
         enqueuedThisPass += 1;
       }
     } catch (err) {
@@ -276,6 +298,7 @@ async function advancePendingNode(
   nodes: Map<string, NodeRow>,
   now: Date,
   staggerIndex: number,
+  loadContext: () => Promise<NightlyContext>,
 ): Promise<boolean> {
   {
     const dagNode = deps.dag.nodes.get(jobName);
@@ -328,9 +351,22 @@ async function advancePendingNode(
     const allTerminal = upstreams.every((u) => (u.up ? isTerminalNodeStatus(u.up.status) : u.soft));
     if (!allTerminal) return false;
 
-    // 到此硬上游必全 succeeded（否则被 blocked 拦）。软上游未 succeeded（含缺行）→ stale。
-    // 这个事实只落**节点行**，不进 job payload（YUK-778，理由见文件头）。
-    const stale = upstreams.some((u) => u.soft && (!u.up || u.up.status !== 'succeeded'));
+    if (dagNode.eligibility) {
+      const decision = dagNode.eligibility((await loadContext()).forJob(jobName));
+      if (!decision.run) {
+        noteEligibilitySkip(jobName, decision);
+        await settleNode(deps.db, deps.run, node, {
+          status: 'not_needed',
+          detail: decision.reason,
+          now,
+        });
+        return false;
+      }
+    }
+
+    // 硬上游到这里只可能是 succeeded / not_needed / degraded。软上游未成功、硬上游
+    // not_needed / degraded、或软上游缺行 → stale。事实只落节点行（YUK-778）。
+    const stale = upstreams.some((u) => u.up?.status !== 'succeeded');
 
     // 先原子领取（CAS pending→enqueued），只有赢家 send——杜绝并发 advanceRun 重复付费入队
     //（YUK-758 review ToTaj）。领取失败 = 已被并发调用推进，跳过。
@@ -391,16 +427,13 @@ async function pollInflightNode(
   const job = node.boss_job_id ? await deps.boss.getJobById(node.job_name, node.boss_job_id) : null;
   const jobState = mapBossState(job?.state ?? null);
   if (jobState === 'succeeded') {
-    // YUK-779 — 一个 handler 可以「成功」而**产出为零**：它对 AI 失败的 per-cell /
-    // per-row 吞错在限流风暴下把整批都吞了，job 照常 resolve，节点照常转绿，硬下游
-    // 在空数据上继续跑，而运维看到的是「昨晚一切正常」。handler 把产出报告作为返回值
-    // 交给 pg-boss（存进 job.output），这里读回来盖进节点 detail —— 正面修复那个假象。
-    //
-    // 只**盖 detail**，不改 status：节点仍是 succeeded、硬下游仍照跑。「异常空跑要不要
-    // 直接判 failed（进而让硬下游 skip）」是产品语义决策，见 job-yield.ts 文件末。
+    // YUK-779 / YUK-1560 — handler 可以「成功」而产出为零。yield 档 stalled（试过、
+    // 零成功）落终态 degraded，不再显示 succeeded。yield 档 degraded（有成功、失败
+    // 占多数）仍是 succeeded，detail 保留告警。degraded 是软终态，硬下游不连坐。
+    const report = readJobYieldReport(job?.output);
     await settleNode(deps.db, deps.run, node, {
-      status: 'succeeded',
-      detail: readJobYieldReport(job?.output)?.detail ?? undefined,
+      status: report?.level === 'stalled' ? 'degraded' : 'succeeded',
+      detail: report?.detail ?? undefined,
       now,
     });
   } else if (jobState === 'failed') {
@@ -580,6 +613,8 @@ function summarize(nodes: Map<string, NodeRow>): AdvanceSummary {
     total: 0,
     terminal: 0,
     succeeded: 0,
+    notNeeded: 0,
+    degraded: 0,
     failed: 0,
     skipped: 0,
     enqueued: 0,
@@ -594,6 +629,14 @@ function summarize(nodes: Map<string, NodeRow>): AdvanceSummary {
     switch (node.status) {
       case 'succeeded':
         s.succeeded += 1;
+        s.terminal += 1;
+        break;
+      case 'not_needed':
+        s.notNeeded += 1;
+        s.terminal += 1;
+        break;
+      case 'degraded':
+        s.degraded += 1;
         s.terminal += 1;
         break;
       case 'failed':
@@ -712,6 +755,7 @@ export async function runOrchestratorStart(
       console.log(
         `[orchestrator] run ${run.id} started for ${runDate} (trigger=${trigger}, ${deps.dag.nodes.size} member(s), ${deps.dag.roots.length} root(s))`,
       );
+      await warnDailyCostDoesNotBlock(deps.db, now);
     } else {
       // 撞单飞（并发 start）——采纳赢家的 run。
       run = await getActiveRunForDate(deps.db, runDate);

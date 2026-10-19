@@ -13,12 +13,22 @@ type DbOrTx = Db | Tx;
 
 export type RunTrigger = 'cron' | 'manual';
 export type RunStatus = 'running' | 'completed' | 'abandoned';
-export type NodeStatus = 'pending' | 'enqueued' | 'running' | 'succeeded' | 'failed' | 'skipped';
+export type NodeStatus =
+  | 'pending'
+  | 'enqueued'
+  | 'running'
+  | 'succeeded'
+  | 'failed'
+  | 'skipped'
+  | 'not_needed'
+  | 'degraded';
 
 export const TERMINAL_NODE_STATUSES: ReadonlySet<NodeStatus> = new Set<NodeStatus>([
   'succeeded',
   'failed',
   'skipped',
+  'not_needed',
+  'degraded',
 ]);
 
 export function isTerminalNodeStatus(status: NodeStatus): boolean {
