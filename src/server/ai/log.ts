@@ -119,7 +119,7 @@ export async function writeModelCatalogProbeCost(
     costUsd: number | null;
     costBasis: AttemptCostBasis;
     costRef: string;
-    outcome: 'success' | 'failed_permanent';
+    outcome: 'success' | 'failed_permanent' | 'failed_retryable';
     occurredAt: Date;
   },
 ): Promise<void> {

@@ -1160,7 +1160,7 @@ export const PROVIDER_LANES = [
     callers: [
       {
         path: 'src/server/ai/model-catalog.ts',
-        calls: ['listProviderModels', 'finalizeProviderModelsChecks'],
+        calls: ['listProviderModels', 'collectProviderProbes', 'finalizeProviderModelsChecks'],
       },
     ],
     directImporters: [{ path: 'src/server/ai/model-catalog.ts', kind: 'runtime' }],
@@ -1198,9 +1198,9 @@ export const PROVIDER_LANES = [
       },
     },
     evidence: {
-      path: 'src/server/ai/provider-models-check.ts',
-      calls: ['writeModelCatalogProbeCost'],
-      contains: ['cost_usd='],
+      path: 'src/server/ai/model-catalog.ts',
+      calls: ['writeModelCatalogProbeCost', 'withinSessionAdvisoryLock'],
+      contains: ['model-catalog:refresh'],
     },
     attemptSemantics: {
       admittedUnit:
@@ -1215,11 +1215,12 @@ export const PROVIDER_LANES = [
         'the probe receipt lives on model_catalog_cache.payload.provider_checks; a later refresh copies it and does not send again',
       timeout:
         '15s per /models page and 30s for the probe, both AbortSignal.timeout with redirect error',
-      clientRetry: 'none; 5xx and network stay unreachable and are not stored as a receipt',
+      clientRetry:
+        'none; unsettled 4xx/5xx and network are not stored as a receipt and may be probed again',
       redelivery:
-        'catalog refresh holds pg_advisory_xact_lock so two workers cannot both probe; a ledger write failure still keeps the receipt',
+        'probes run before the session lock; under the lock the refresh re-reads and writes the ledger before the receipt upsert',
       fanOut:
-        'implemented providers are listed in parallel; probes run one provider at a time inside the refresh transaction',
+        'implemented providers are listed in parallel; probes run one provider at a time outside the refresh lock',
       evidence: [
         {
           path: 'src/server/ai/provider-models-check.ts',
@@ -1228,8 +1229,8 @@ export const PROVIDER_LANES = [
         },
         {
           path: 'src/server/ai/model-catalog.ts',
-          calls: ['finalizeProviderModelsChecks'],
-          contains: ["pg_advisory_xact_lock(hashtext('model-catalog:refresh'))"],
+          calls: ['withinSessionAdvisoryLock', 'writeProbeBills'],
+          contains: ["key: 'model-catalog:refresh'"],
         },
       ],
     },

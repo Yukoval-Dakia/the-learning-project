@@ -9,20 +9,24 @@
 // change keeps its previous entry and records capability_changed. Configured
 // providers are also checked against their own /models; that status never
 // drops a catalog model. version covers the merged document and the findings,
-// so an absence-only change still reloads readers.
+// so an absence-only change still reloads readers. Probes run before the
+// refresh lock. The lock covers the re-read, the ledger write, and the receipt.
 
 import { createHash } from 'node:crypto';
-import { eq, like, sql } from 'drizzle-orm';
+import { eq, like } from 'drizzle-orm';
 import type { EffortLevel, Provider } from '@/ai/task-spec';
 import { tasks } from '@/capabilities/task-registry';
 import type { Db, Tx } from '@/db/client';
 import { model_catalog_cache, system_config } from '@/db/schema';
+import { withinSessionAdvisoryLock } from '@/db/session-advisory-lock';
 import rawSnapshot from './model-catalog.snapshot.json' with { type: 'json' };
 import { CATALOG_PROVIDER_BY_INTERNAL } from './model-profiles';
 import {
+  type ProbeLedgerBill,
   type ProviderFetch,
   type ProviderModelsCheck,
   canonicalProviderCheck,
+  collectProviderProbes,
   finalizeProviderModelsChecks,
   listProviderModels,
   parseProviderChecks,
@@ -35,6 +39,7 @@ export const MODEL_CATALOG_REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000;
 export const MODEL_CATALOG_WATCH_INTERVAL_MS = 60_000;
 
 const FETCH_TIMEOUT_MS = 30_000;
+const REFRESH_LOCK_WAIT_MS = 15_000;
 const EFFORT_LEVELS: readonly EffortLevel[] = ['low', 'medium', 'high', 'xhigh', 'max'];
 const ENV_MODEL_KEYS = [
   'AI_PROVIDER_MODEL',
@@ -559,7 +564,6 @@ interface LockedCatalog {
 }
 
 async function lockCatalogRow(tx: Tx): Promise<LockedCatalog> {
-  await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('model-catalog:refresh'))`);
   const rows = await tx
     .select({
       upstream_version: model_catalog_cache.upstream_version,
@@ -589,6 +593,40 @@ async function lockCatalogRow(tx: Tx): Promise<LockedCatalog> {
   };
 }
 
+async function readStoredChecks(db: Db): Promise<readonly ProviderModelsCheck[]> {
+  try {
+    const rows = await db
+      .select({ payload: model_catalog_cache.payload })
+      .from(model_catalog_cache)
+      .where(eq(model_catalog_cache.id, 1))
+      .limit(1);
+    const row = rows[0];
+    if (!row) return [];
+    return parseProviderChecks(row.payload);
+  } catch {
+    return active.providerChecks;
+  }
+}
+
+async function writeProbeBills(
+  db: Db,
+  bills: readonly ProbeLedgerBill[],
+  occurredAt: Date,
+): Promise<void> {
+  if (bills.length === 0) return;
+  const { writeModelCatalogProbeCost } = await import('./log');
+  for (const bill of bills) {
+    try {
+      await writeModelCatalogProbeCost(db, { ...bill, occurredAt });
+    } catch (error) {
+      console.warn(
+        `[model-catalog] probe ledger write failed provider=${bill.provider}`,
+        error instanceof Error ? error.message : error,
+      );
+    }
+  }
+}
+
 function priceProbe(provider: string, model: string, tokensIn: number, tokensOut: number) {
   const catalogProvider = CATALOG_PROVIDER_BY_INTERNAL[provider as Provider];
   const rates = catalogProvider ? catalogModelCost(catalogProvider, model) : undefined;
@@ -605,66 +643,92 @@ export async function refreshModelCatalog(
   const remote = 'error' in pulled ? undefined : pulled;
   const listed = await listProviderModels(fetchCatalog, env);
   const now = options.now?.() ?? new Date();
+  const probes = await collectProviderProbes({
+    fetchImpl: fetchCatalog,
+    env,
+    listed,
+    previous: await readStoredChecks(db),
+  });
 
   try {
-    const written = await db.transaction(async (tx) => {
-      const locked = await lockCatalogRow(tx);
-      const pinned = await readPinnedModelIds(tx);
-      const base = locked.providers ?? active.providers;
-      const merged = remote
-        ? mergeCatalogDocuments(base, remote.providers, pinned)
-        : { providers: base, findings: locked.findings };
-      const checks = await finalizeProviderModelsChecks({
-        db: tx,
-        fetchImpl: fetchCatalog,
-        env,
-        now,
-        catalogProviders: merged.providers,
-        previous: locked.checks,
-        listed,
-        priceProbe,
-      });
-      const idle =
-        remote === undefined &&
-        sameChecks(checks, locked.checks) &&
-        (locked.hasRow || checks.every((check) => check.auth.status === 'unconfigured'));
-      if (idle) return { outcome: 'kept' as const, locked, checks };
-      const version = documentVersion(merged.providers, merged.findings, checks);
-      const upstreamVersion = remote ? remote.upstreamVersion : locked.upstreamVersion;
-      const payload = { providers: merged.providers, provider_checks: checks };
-      await tx
-        .insert(model_catalog_cache)
-        .values({
-          id: 1,
-          fetched_at: now,
-          version,
-          upstream_version: upstreamVersion,
-          source_url: MODEL_CATALOG_URL,
-          payload,
-          findings: merged.findings,
-        })
-        .onConflictDoUpdate({
-          target: model_catalog_cache.id,
-          set: {
-            fetched_at: now,
-            version,
-            upstream_version: upstreamVersion,
-            source_url: MODEL_CATALOG_URL,
-            payload,
-            findings: merged.findings,
-          },
+    const written = await withinSessionAdvisoryLock(
+      db,
+      {
+        key: 'model-catalog:refresh',
+        busy: () => new Error('model catalog refresh lock busy'),
+      },
+      new Date(now.getTime() + REFRESH_LOCK_WAIT_MS),
+      async (lockedDb) => {
+        const planned = await lockedDb.transaction(async (tx) => {
+          const locked = await lockCatalogRow(tx);
+          const pinned = await readPinnedModelIds(tx);
+          const base = locked.providers ?? active.providers;
+          const merged = remote
+            ? mergeCatalogDocuments(base, remote.providers, pinned)
+            : { providers: base, findings: locked.findings };
+          const { checks, bills } = finalizeProviderModelsChecks({
+            now,
+            catalogProviders: merged.providers,
+            previous: locked.checks,
+            listed,
+            probes,
+            priceProbe,
+          });
+          const idle =
+            remote === undefined &&
+            sameChecks(checks, locked.checks) &&
+            (locked.hasRow || checks.every((check) => check.auth.status === 'unconfigured'));
+          return { locked, merged, checks, bills, idle };
         });
-      const next: ActiveCatalog = {
-        origin: remote ? 'remote' : locked.hasRow ? 'cache' : 'snapshot',
-        fetchedAt: now.toISOString(),
-        version,
-        upstreamVersion,
-        providers: merged.providers,
-        findings: merged.findings,
-        providerChecks: checks,
-      };
-      return { outcome: 'stored' as const, next, locked };
-    });
+        await writeProbeBills(lockedDb, planned.bills, now);
+        if (planned.idle) return { outcome: 'kept' as const, locked: planned.locked };
+        const version = documentVersion(
+          planned.merged.providers,
+          planned.merged.findings,
+          planned.checks,
+        );
+        const upstreamVersion = remote ? remote.upstreamVersion : planned.locked.upstreamVersion;
+        const payload = {
+          providers: planned.merged.providers,
+          provider_checks: planned.checks,
+        };
+        await lockedDb.transaction(async (tx) => {
+          await lockCatalogRow(tx);
+          await tx
+            .insert(model_catalog_cache)
+            .values({
+              id: 1,
+              fetched_at: now,
+              version,
+              upstream_version: upstreamVersion,
+              source_url: MODEL_CATALOG_URL,
+              payload,
+              findings: planned.merged.findings,
+            })
+            .onConflictDoUpdate({
+              target: model_catalog_cache.id,
+              set: {
+                fetched_at: now,
+                version,
+                upstream_version: upstreamVersion,
+                source_url: MODEL_CATALOG_URL,
+                payload,
+                findings: planned.merged.findings,
+              },
+            });
+        });
+        const next: ActiveCatalog = {
+          origin: remote ? 'remote' : planned.locked.hasRow ? 'cache' : 'snapshot',
+          fetchedAt: now.toISOString(),
+          version,
+          upstreamVersion,
+          providers: planned.merged.providers,
+          findings: planned.merged.findings,
+          providerChecks: planned.checks,
+        };
+        return { outcome: 'stored' as const, next, locked: planned.locked };
+      },
+    );
     if (written.outcome === 'kept') {
       if ('error' in pulled) return kept(pulled.error, pulled.detail);
       return kept('unreadable', 'refresh produced no write');

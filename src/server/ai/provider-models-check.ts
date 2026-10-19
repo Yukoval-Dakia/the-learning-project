@@ -1,10 +1,10 @@
 // YUK-1563 — per configured provider, GET /models and reconcile with the
 // models.dev bucket. Auth failure and a missing key are statuses. Neither
-// removes a catalog model. Each implemented provider gets at most one 1-token
-// probe; the receipt is what stops the next refresh from probing again.
+// removes a catalog model. Each implemented provider gets at most one auth
+// probe; a stored receipt is what stops the next refresh from probing again.
+// Chat probes ask for 1 token. Responses asks for 16, its API minimum.
 
 import type { Provider } from '@/ai/task-spec';
-import type { Db, Tx } from '@/db/client';
 import { CATALOG_PROVIDER_BY_INTERNAL } from './model-profiles';
 import { ANTHROPIC_SUB_CONTRACT_REF } from './pricing';
 import {
@@ -67,23 +67,34 @@ type ModelsListResult =
   | { status: 'unsupported' }
   | { status: 'unreachable'; detail: string };
 
-type ProbeAttempt =
-  | { status: 'succeeded'; httpStatus: number; tokensIn: number; tokensOut: number }
+/** Probe verdict. Only `accepted` and `auth_failed` become a stored receipt. */
+export type ProbeOutcome =
+  | { kind: 'accepted'; httpStatus: number; tokensIn: number; tokensOut: number }
   | {
-      status: 'auth_failed';
+      kind: 'auth_failed';
       httpStatus: number;
       errorType: string;
       tokensIn: number;
       tokensOut: number;
     }
   | {
-      status: 'failed';
-      httpStatus: number;
-      errorType: string;
+      kind: 'unsettled';
+      httpStatus: number | null;
+      errorType: string | null;
       tokensIn: number;
       tokensOut: number;
-    }
-  | { status: 'unreachable' };
+    };
+
+export interface ProbeLedgerBill {
+  provider: string;
+  model: string;
+  tokensIn: number;
+  tokensOut: number;
+  costUsd: number | null;
+  costBasis: 'estimated' | 'unknown';
+  costRef: string;
+  outcome: 'success' | 'failed_permanent' | 'failed_retryable';
+}
 
 interface ProbeSpec {
   model: string;
@@ -165,6 +176,8 @@ function authHeaders(provider: Provider, credential: string): Record<string, str
     const headers: Record<string, string> = { 'anthropic-version': '2023-06-01' };
     if (provider === 'anthropic-sub' || credential.startsWith('sk-ant-oat')) {
       headers.authorization = `Bearer ${credential}`;
+      // Bearer OAuth tokens are rejected without this beta.
+      headers['anthropic-beta'] = 'oauth-2025-04-20';
     } else {
       headers['x-api-key'] = credential;
     }
@@ -182,24 +195,27 @@ async function readListedIds(
 ): Promise<readonly string[] | undefined> {
   const ids: string[] = [];
   let current: Response | undefined = response;
+  let complete = false;
   for (let page = 0; page < MAX_LIST_PAGES && current; page += 1) {
     const text = await current.text();
     let parsed: unknown;
     try {
       parsed = JSON.parse(text) as unknown;
     } catch {
-      return page === 0 ? undefined : ids;
+      return undefined;
     }
     const root = asJson(parsed);
     const data = root?.data;
-    if (!Array.isArray(data)) return page === 0 ? undefined : ids;
+    if (!Array.isArray(data)) return undefined;
     for (const item of data) {
       const id = asJson(item)?.id;
       if (typeof id === 'string' && id.trim().length > 0) ids.push(id.trim());
     }
-    if (root?.has_more !== true || typeof root.last_id !== 'string' || root.last_id.length === 0) {
+    if (root?.has_more !== true) {
+      complete = true;
       break;
     }
+    if (typeof root.last_id !== 'string' || root.last_id.length === 0) return undefined;
     const next = new URL(current.url);
     next.searchParams.set('after_id', root.last_id);
     try {
@@ -208,12 +224,13 @@ async function readListedIds(
         redirect: 'error',
         signal: AbortSignal.timeout(LIST_TIMEOUT_MS),
       });
-      if (!followed.ok) break;
+      if (!followed.ok) return undefined;
       current = followed;
     } catch {
-      break;
+      return undefined;
     }
   }
+  if (!complete) return undefined;
   return [...new Set(ids)].sort();
 }
 
@@ -276,7 +293,8 @@ function probeBody(spec: ProbeSpec): string {
     });
   }
   if (spec.wire === 'openai-responses') {
-    return JSON.stringify({ model: spec.model, input: 'ping', max_output_tokens: 1 });
+    // Responses rejects max_output_tokens below 16.
+    return JSON.stringify({ model: spec.model, input: 'ping', max_output_tokens: 16 });
   }
   return JSON.stringify({
     model: spec.model,
@@ -296,11 +314,18 @@ async function runProbe(
   provider: Provider,
   fetchImpl: ProviderFetch,
   env: Record<string, string | undefined>,
-): Promise<ProbeAttempt> {
+): Promise<ProbeOutcome> {
   const spec = probeSpec(provider);
   const credential = credentialFor(provider, env);
   const root = providerModelsRoot(provider, env);
-  if (!spec || !credential || !root) return { status: 'unreachable' };
+  const unsettled = {
+    kind: 'unsettled' as const,
+    httpStatus: null,
+    errorType: null,
+    tokensIn: 0,
+    tokensOut: 0,
+  };
+  if (!spec || !credential || !root) return unsettled;
   const headers = { ...authHeaders(provider, credential), 'content-type': 'application/json' };
   try {
     const response = await fetchImpl(probeUrl(root, spec), {
@@ -314,7 +339,7 @@ async function runProbe(
     const usage = readUsage(text);
     if (response.status === 401 || response.status === 403) {
       return {
-        status: 'auth_failed',
+        kind: 'auth_failed',
         httpStatus: response.status,
         errorType: readErrorType(text),
         ...usage,
@@ -322,15 +347,15 @@ async function runProbe(
     }
     if (!response.ok) {
       return {
-        status: 'failed',
+        kind: 'unsettled',
         httpStatus: response.status,
         errorType: readErrorType(text),
         ...usage,
       };
     }
-    return { status: 'succeeded', httpStatus: response.status, ...usage };
+    return { kind: 'accepted', httpStatus: response.status, ...usage };
   } catch {
-    return { status: 'unreachable' };
+    return unsettled;
   }
 }
 
@@ -351,32 +376,32 @@ function reconcile(
   };
 }
 
-function authFromAttempt(attempt: ProbeAttempt): ProviderAuthState | undefined {
-  if (attempt.status === 'unreachable') return undefined;
-  if (attempt.status === 'auth_failed') {
-    return { status: 'auth_failed', httpStatus: attempt.httpStatus, errorType: attempt.errorType };
+function authFromOutcome(outcome: ProbeOutcome): ProviderAuthState | undefined {
+  if (outcome.kind === 'accepted') return { status: 'ok' };
+  if (outcome.kind === 'auth_failed') {
+    return { status: 'auth_failed', httpStatus: outcome.httpStatus, errorType: outcome.errorType };
   }
-  if (attempt.status === 'succeeded') return { status: 'ok' };
-  if (attempt.httpStatus < 500) return { status: 'ok' };
   return undefined;
+}
+
+function decisiveReceipt(probe: ProviderProbeReceipt | undefined): probe is ProviderProbeReceipt {
+  if (!probe) return false;
+  if (probe.status === 'succeeded') return true;
+  return probe.httpStatus === 401 || probe.httpStatus === 403;
 }
 
 function authFromReceipt(probe: ProviderProbeReceipt): ProviderAuthState {
   if (probe.status === 'succeeded') return { status: 'ok' };
-  if (probe.httpStatus === 401 || probe.httpStatus === 403) {
-    return {
-      status: 'auth_failed',
-      httpStatus: probe.httpStatus,
-      errorType: probe.errorType ?? 'unknown',
-    };
-  }
-  if (probe.httpStatus !== null && probe.httpStatus < 500) return { status: 'ok' };
-  return { status: 'unreachable', detail: 'probe' };
+  return {
+    status: 'auth_failed',
+    httpStatus: probe.httpStatus ?? 401,
+    errorType: probe.errorType ?? 'unknown',
+  };
 }
 
 function authState(
   list: ModelsListResult,
-  attempt: ProbeAttempt | undefined,
+  outcome: ProbeOutcome | undefined,
   previous: ProviderModelsCheck | undefined,
 ): ProviderAuthState {
   if (list.status === 'unconfigured') return { status: 'unconfigured' };
@@ -384,39 +409,70 @@ function authState(
     return { status: 'auth_failed', httpStatus: list.httpStatus, errorType: list.errorType };
   }
   if (list.status === 'ok') return { status: 'ok' };
-  const live = attempt ? authFromAttempt(attempt) : undefined;
+  const live = outcome ? authFromOutcome(outcome) : undefined;
   if (live) return live;
-  if (previous?.probe) return authFromReceipt(previous.probe);
+  const receipt = previous?.probe;
+  if (decisiveReceipt(receipt)) return authFromReceipt(receipt);
   if (list.status === 'unsupported') return { status: 'unreachable', detail: 'models_endpoint' };
   return { status: 'unreachable', detail: list.detail };
 }
 
 function shouldProbe(list: ModelsListResult, previous: ProviderModelsCheck | undefined): boolean {
-  if (previous?.probe) return false;
+  if (decisiveReceipt(previous?.probe)) return false;
   if (list.status === 'unconfigured' || list.status === 'auth_failed') return false;
   if (list.status === 'unreachable') return false;
   return true;
 }
 
-function storedProbe(
-  attempt: ProbeAttempt,
+function receiptFor(
+  outcome: Exclude<ProbeOutcome, { kind: 'unsettled' }>,
   model: string,
   at: string,
   price: ProbePrice,
-): ProviderProbeReceipt | undefined {
-  if (attempt.status === 'unreachable') return undefined;
-  if (attempt.status === 'failed' && attempt.httpStatus >= 500) return undefined;
-  const failed = attempt.status !== 'succeeded';
+): ProviderProbeReceipt {
   return {
-    status: failed ? 'failed' : 'succeeded',
+    status: outcome.kind === 'accepted' ? 'succeeded' : 'failed',
     at,
     model,
-    httpStatus: attempt.httpStatus,
-    errorType: attempt.status === 'succeeded' ? null : attempt.errorType,
-    tokensIn: attempt.tokensIn,
-    tokensOut: attempt.tokensOut,
+    httpStatus: outcome.httpStatus,
+    errorType: outcome.kind === 'accepted' ? null : outcome.errorType,
+    tokensIn: outcome.tokensIn,
+    tokensOut: outcome.tokensOut,
     costUsd: price.costUsd,
     costBasis: price.costBasis,
+  };
+}
+
+function ledgerBill(
+  provider: string,
+  outcome: ProbeOutcome,
+  model: string,
+  price: ProbePrice,
+): ProbeLedgerBill | undefined {
+  const consumed = outcome.tokensIn + outcome.tokensOut > 0;
+  if (outcome.kind === 'unsettled') {
+    if (!consumed) return undefined;
+    return {
+      provider,
+      model,
+      tokensIn: outcome.tokensIn,
+      tokensOut: outcome.tokensOut,
+      costUsd: price.costUsd,
+      costBasis: price.costBasis,
+      costRef: price.costRef,
+      outcome: 'failed_retryable',
+    };
+  }
+  if (outcome.kind === 'auth_failed' && !consumed) return undefined;
+  return {
+    provider,
+    model,
+    tokensIn: outcome.tokensIn,
+    tokensOut: outcome.tokensOut,
+    costUsd: price.costUsd,
+    costBasis: price.costBasis,
+    costRef: price.costRef,
+    outcome: outcome.kind === 'accepted' ? 'success' : 'failed_permanent',
   };
 }
 
@@ -524,30 +580,47 @@ export function providerAuthLabel(check: ProviderModelsCheck): string {
   return check.auth.status;
 }
 
-export async function finalizeProviderModelsChecks(input: {
-  db: Db | Tx;
+export async function collectProviderProbes(input: {
   fetchImpl: ProviderFetch;
   env: Record<string, string | undefined>;
+  listed: ReadonlyMap<string, ModelsListResult>;
+  previous: readonly ProviderModelsCheck[];
+}): Promise<ReadonlyMap<string, ProbeOutcome>> {
+  const previousByProvider = new Map(input.previous.map((check) => [check.provider, check]));
+  const probes = new Map<string, ProbeOutcome>();
+  for (const provider of implementedProviderIds()) {
+    if (!probeSpec(provider)) continue;
+    const list = input.listed.get(provider) ?? {
+      status: 'unreachable' as const,
+      detail: 'missing',
+    };
+    if (!shouldProbe(list, previousByProvider.get(provider))) continue;
+    probes.set(provider, await runProbe(provider, input.fetchImpl, input.env));
+  }
+  return probes;
+}
+
+export function finalizeProviderModelsChecks(input: {
   now: Date;
   catalogProviders: ProviderMap;
   previous: readonly ProviderModelsCheck[];
   listed: ReadonlyMap<string, ModelsListResult>;
+  probes: ReadonlyMap<string, ProbeOutcome>;
   priceProbe: (provider: string, model: string, tokensIn: number, tokensOut: number) => ProbePrice;
-}): Promise<ProviderModelsCheck[]> {
+}): { checks: ProviderModelsCheck[]; bills: ProbeLedgerBill[] } {
   const previousByProvider = new Map(input.previous.map((check) => [check.provider, check]));
   const checks: ProviderModelsCheck[] = [];
+  const bills: ProbeLedgerBill[] = [];
   for (const provider of implementedProviderIds()) {
     const list = input.listed.get(provider) ?? {
       status: 'unreachable' as const,
       detail: 'missing',
     };
     const previous = previousByProvider.get(provider);
+    const keptReceipt = decisiveReceipt(previous?.probe) ? previous.probe : undefined;
+    const outcome = keptReceipt ? undefined : input.probes.get(provider);
+    const auth = authState(list, outcome, previous);
     const spec = probeSpec(provider);
-    let attempt: ProbeAttempt | undefined;
-    if (spec && shouldProbe(list, previous)) {
-      attempt = await runProbe(provider, input.fetchImpl, input.env);
-    }
-    const auth = authState(list, attempt, previous);
     const catalogProvider = CATALOG_PROVIDER_BY_INTERNAL[provider] ?? null;
     const keptList = list.status !== 'ok' && auth.status === 'unreachable' ? previous : undefined;
     const listed = list.status === 'ok' ? [...list.ids] : keptList ? [...keptList.listed] : [];
@@ -565,44 +638,21 @@ export async function finalizeProviderModelsChecks(input: {
       catalogOnly: sets.catalogOnly,
       providerOnly: sets.providerOnly,
     };
-    if (previous?.probe) check.probe = copyProbe(previous.probe);
-    else if (attempt && spec) {
-      const tokensIn = attempt.status === 'unreachable' ? 0 : attempt.tokensIn;
-      const tokensOut = attempt.status === 'unreachable' ? 0 : attempt.tokensOut;
-      const price = input.priceProbe(provider, spec.model, tokensIn, tokensOut);
-      const receipt = storedProbe(attempt, spec.model, input.now.toISOString(), price);
-      if (receipt) {
-        check.probe = receipt;
-        const billed = receipt.tokensIn + receipt.tokensOut > 0 || receipt.status === 'succeeded';
-        if (billed) {
-          try {
-            const { writeModelCatalogProbeCost } = await import('./log');
-            await writeModelCatalogProbeCost(input.db, {
-              provider,
-              model: spec.model,
-              tokensIn: receipt.tokensIn,
-              tokensOut: receipt.tokensOut,
-              costUsd: price.costUsd,
-              costBasis: price.costBasis === 'estimated' ? 'estimated' : 'unknown',
-              costRef: price.costRef,
-              outcome: receipt.status === 'succeeded' ? 'success' : 'failed_permanent',
-              occurredAt: input.now,
-            });
-          } catch (error) {
-            console.warn(
-              `[model-catalog] probe ledger write failed provider=${provider}`,
-              error instanceof Error ? error.message : 'unknown',
-            );
-          }
-        }
+    if (keptReceipt) check.probe = copyProbe(keptReceipt);
+    else if (outcome && spec) {
+      const price = input.priceProbe(provider, spec.model, outcome.tokensIn, outcome.tokensOut);
+      if (outcome.kind !== 'unsettled') {
+        check.probe = receiptFor(outcome, spec.model, input.now.toISOString(), price);
         console.info(
-          `[model-catalog] auth probe ${provider}/${spec.model} ${receipt.status} tokens_in=${receipt.tokensIn} tokens_out=${receipt.tokensOut} cost_usd=${receipt.costUsd ?? 'unknown'}`,
+          `[model-catalog] auth probe ${provider}/${spec.model} ${check.probe.status} tokens_in=${outcome.tokensIn} tokens_out=${outcome.tokensOut} cost_usd=${price.costUsd ?? 'unknown'}`,
         );
       }
+      const bill = ledgerBill(provider, outcome, spec.model, price);
+      if (bill) bills.push(bill);
     }
     checks.push(canonicalProviderCheck(check));
   }
-  return checks;
+  return { checks, bills };
 }
 
 export function probePriceFor(
