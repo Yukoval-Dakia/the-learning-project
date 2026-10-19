@@ -1,3 +1,7 @@
+# Architecture deepening — 2026-10-19
+
+Current owner: arch-lead, refactor/yuk-1572-stream-modules, base d41f24213. Six tickets relabelled T3. Grok retains #1830 ratchet writer; semantic alignment posted to PR and YUK-1570. First-three plan approved: docs/planning/2026-10-19-architecture-deepening.md. SWE-2 sole source writer extracts stream-store input/projection; GLM read-only maps SCC. Parent owns docs/review/integration. No tests/DB/Docker/TEST/provider operations. Baseline measured: SCC1/5 members, cap-server443, >1500 files18, baseline141 lines. External bulky evidence approved with permanent retention; old HEAD deletion requires copy/hash/reference inventory and per-batch coordinator review. First evidence PR updates AGENTS for all lanes. Test shrink remains inventory only pending owner approval.
+
 # YUK-1404 figure main composition — 2026-10-11
 
 PR1657 fixed4c52 exact CI38144495041全绿；正常纳入main eb960c079，仅PLAN/now冲突。图ownership/隐私产品代码与单capture边界测试保留，旧细粒度四tests已删。独立初审/最终R2预算已完成，不启第三审。当前crop producer仍无source_asset SHA登记，旧visibility未知，public withholding不是完整配图交付；同卷actual-output验收仍待。无DB/runtime/provider/paid。

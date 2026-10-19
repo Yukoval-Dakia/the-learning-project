@@ -1,8 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-11：YUK-1107隔离head f0f2d63bf完整CI三绿166/207/144秒、中位166；唯一验证R2 NONE及逐不变量说明已过。正常纳入main c2新测试规则后，作者代码不变，等待新exact-head CI再合1691。judge阶段诊断仅独立实验，backup等audit/owner，120未达。
+> Linear 是权威 tracker。2026-10-19：架构深化线独立启动；首片 YUK-1572 拆练习流职责，首三片已获协调线同意；证据外置永久保留已批，测试缩减只做清单。
 
 ## NOW
+
+- **架构深化 / YUK-1572**：`refactor/yuk-1572-stream-modules`，独占 arch-lead；SWE-2 High 拆 stream-store 输入/投影，目标超长18→17，SCC与443边不增加。六票T3，#1830仍由Grok完成；不动其ratchet/baseline。见[首三片计划](docs/planning/2026-10-19-architecture-deepening.md)。
 
 - **YUK-1404 / native03题图修复**：PR1657 fixed4c52 exact CI38144495041全绿；正常纳入main eb960c079，仅PLAN/now冲突。图ownership/隐私产品代码与单capture边界测试保留，旧细粒度四tests已删。独立初审/最终R2预算已完成，不启第三审。当前crop producer仍无source_asset SHA登记，旧visibility未知，public withholding不是完整配图交付；同卷actual-output验收仍待。无DB/runtime/provider/paid。 [证据](docs/planning/2026-10-11-yuk1404-native03-figure-repair.md)。
 
@@ -32,6 +34,8 @@
 
 ## NEXT
 
+- **架构深化**：首片验证/独立审查/精确HEAD CI后推进YUK-1571拆环，再拆intervention职责；每片报告SCC、server边、超长文件及baseline行数。
+
 - Start/judge共享文件边界见[交接](docs/planning/2026-10-09-judge-start-ownership.md)，Start/boot/shutdown由5796独占；judge A/B/C/D由7631接续，迁移号后核。
 
 - PR1625 本轮仅同步 main 并恢复可合并状态；判分 DBOS 家族源码、进程恢复、真实模型和整体迁移退出分开验收。正常 push 后等待新 exact-head CI，不合并 PR。
@@ -44,6 +48,8 @@
 - UI 线：视觉方向已定（#1612、#1627）。#1633 KaTeX、#1634 F06 对比度与 #1642 ≠ 修复（YUK-1446）已于 2026-10-10 20:01 JST 部署到 TEST（main `515669863`），并完成真实页面截图验收。遗留 YUK-1447（等 rehype-katex 升级）。下一步 YUK-1438：等功能线各后端片落地后接入；placement/profile 的 UI 等迁移线给出 Start client 契约。
 
 ## PARKED
+
+- **测试与证据瘦身 / YUK-1580、1579**：测试先做最大15文件与高mock逐case清单交协调线转owner；新批量证据外置永久保留，旧证据复制核hash/建引用后每批交协调线查看再删；第一批证据PR同步AGENTS全线规则。
 
 
 - **YUK-1358/1359已有UI观察**：真实Inbox dismiss后本页499但侧栏500，document reload恢复一致；原onResolve仅本地resolved更新。Google Fonts原import受CSP拦截；fallback可用。记录在现有迁移验收/后续UI边界，不放宽CSP、不冒称本PR修复。
@@ -66,6 +72,8 @@
 - YUK-1325 / PR #1580：保留 `1be38edbc`、`1af72b427`、`3940d61f9`，正常合入 main `8841ce68a` 为 `e484efa60`；359 scoped tests、21 audits、typecheck/lint/build 与 lint ratchet 通过，无 high/critical 依赖告警。开发 transcript 与产品 MiMo/自主交付指导同时保留。writer 已释放，父线程负责最终 SDK/SQL/browser 回放、push、exact-head CI、review replies、Linear 与发布；P2 typed tracing 留 YUK-1339，不启动第三审。详情见 [Laminar 记录](docs/planning/2026-10-06-yuk1325-laminar.md)。旧完成线程越界写入风险仍由父线程独占 watch 约束，平台跟进待去重登记。 最新 main 的前缀 credential P1 修复及73tests记录一并保留；PR父线程仍负责后续验收，此lane无新review。
 
 ## BLOCKED-ON
+
+- **测试修改授权**：未获owner逐批批准，一行测试都不动；不阻塞产品重构。证据外置策略已批准，既有证据每批删除仍待协调线看清单。
 
 - **协调线验收**：第一天能用的时限与 TEST 危机数据清理状态由审计协调线维护；100% 实际出题自动可判已获 owner 确认，不再作为待裁决值。
 
