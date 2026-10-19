@@ -473,6 +473,7 @@ async function runCandidateSubmit(
       canonicalHash,
       vectorNear,
       ingestVector,
+      questionText,
       now,
     });
   }
@@ -681,12 +682,14 @@ async function runCandidateSubmit(
 // KC 活体 / host / exact hash / source-URL / near-dup / vector 判重在
 // runCandidateSubmit 里与旧路径同序位先跑；本函数只管声明文档的建存与提交。
 // 事务边界如实分段（与领域方法既有边界一致，不谎报跨步原子）：
-//   tx1  raced source-URL claim（release 终态草稿）
-//   tx2  saveDraftEdit 内部：request claim + block + create event + 回执
-//   tx3  submitDraftQuestion 内部：request claim + block 锁 + 契约转换 +
-//        admission 检查 + question 行 + publish + verify intent + 回执
-//   tx4  （可选）向量戳投影更新——只碰 embed_* 列，失败由 nightly backfill 兜底
-//   tx5  executeCandidateSubmit 外层：候选级回执
+//   tx1  saveDraftEdit 内部：request claim + block + create event + 回执
+//   tx2  submitDraftQuestion 内部：request claim + block 锁 + 契约转换 +
+//        admission 检查 + 一页一题 URL 终态 claim（R1 F3：与 INSERT 同
+//        tx 持 advisory xact lock）+ exact-merge + question 行 + publish +
+//        verify intent + 回执
+//   tx3  （可选）向量戳投影更新——只写 embed_* + updated_at 且仅当行内
+//        投影与向量真实输入逐字段一致（R1 F4）；abstain 由 backfill 兜底
+//   tx4  executeCandidateSubmit 外层：候选级回执
 // request 派生身份固定为 `${requestId}:save` / `${requestId}:submit`：崩溃
 // 重试时 save 重放同一 draft_ref（不铸新 draft）、submit 幂等重放回执
 // （不重复发布）、外层 requestId 幂等照旧。
@@ -777,6 +780,9 @@ interface DeclaredCandidateRun {
   canonicalHash: string;
   vectorNear: { id: string; similarity: number } | null;
   ingestVector: number[] | null;
+  /** 实际送 embed 的 flat 文本（向量输入身份；R1 F4：只允许它与 stored
+   *  投影一致时才复用向量戳，否则保持未嵌入交给 nightly backfill）。 */
+  questionText: { prompt_md: string; reference_md: string; choices_md: string[] | null };
   now: Date;
 }
 
@@ -796,7 +802,7 @@ async function runDeclaredCandidateSubmit(
   const { candidate } = input;
   const q = candidate.question;
   const requestId = input.request_id;
-  const { knowledgeIds, canonicalHash, vectorNear, ingestVector, now } = run;
+  const { knowledgeIds, canonicalHash, vectorNear, ingestVector, questionText, now } = run;
   const routeConfig = COMMIT_ROUTE_CONFIG[input.source_route];
 
   // typed 路径本片不承载图片/figure 资产绑定（图片候选仍在旧 flat 写口）；
@@ -835,30 +841,6 @@ async function runDeclaredCandidateSubmit(
   const supplyTrace = input.supply_trace
     ? withSupplyTraceDifficultyEvidence(input.supply_trace, difficultyEvidence)
     : undefined;
-
-  // 第二道网址判重（release 终态草稿 claim）：与旧 persist tx 同序位；typed
-  // 链里是 save 前的独立小事务——release 已消费而 save/submit 失败时，重试
-  // 在同 request 身份下重跑本 claim 后继续（不会重复发布）。
-  const raced = await db.transaction((tx) =>
-    claimHttpSourceDuplicate(tx, {
-      sourceUrl: q.source_url,
-      knowledgeIds,
-      actorRef: routeConfig.mergeActorRef,
-      taskRunId: ctx.taskRunId,
-      now,
-      onTerminal: 'release',
-    }),
-  );
-  if (raced != null) {
-    await cleanupStagedForRejected(db, candidate.staged_asset_ids);
-    return {
-      status: 'conflict',
-      reason: 'duplicate_source',
-      detail: `同一来源网址命中既有题 ${raced.existingQuestionId}；目标 KC 已并入`,
-      existing_question_id: raced.existingQuestionId,
-      request_id: requestId,
-    };
-  }
 
   // 向量近重 hold（与旧 flat 链同款：hit 存在且邻居仍可见 → 记 hold 待
   // source_verify 复核；可见性谓词同 ingest-dedup 的 visibleSourceRow）。
@@ -946,6 +928,10 @@ async function runDeclaredCandidateSubmit(
           ...(markupSanitized ? { sourced_markup_sanitized: true } : {}),
         },
         ...(supplyTrace ? { supply_trace: supplyTrace } : {}),
+        // YUK-1568 S3（R1 F3）—— 一页一题 URL 终态 claim 移入 seam 的新组
+        // INSERT 事务（与旧 flat persist tx 同锁域）；独立小事务会把 advisory
+        // xact lock 在真实插入前放掉，并发同页候选双双漏过。
+        source_claim: { source_url: q.source_url, actor_ref: routeConfig.mergeActorRef },
       },
     },
     {
@@ -986,9 +972,13 @@ async function runDeclaredCandidateSubmit(
   }
   const questionId = submit.question_id;
 
-  // 向量戳投影更新（best-effort，独立事务）：只写 embed_* 列——内容与行内
-  // 投影文本对齐后 stamp；未命中/失败由 nightly embed_backfill 兜底，与旧
-  // 路径 ingestVector=null 的 abstain 语义等价。
+  // 向量戳投影更新（best-effort，独立事务）：ingestVector 绑定的是 fetch 时
+  // 实际送 embed 的 flat 文本（questionText）。只在行内投影与【该向量真实
+  // 输入】逐字段一致时才复用——typed 投影常不等于 flat 文本（如 select 的
+  // reference 投影成选项字母），错位把旧向量盖到新 hash 会污染
+  // near-dup/similar_to 且 backfill 不纠正（embed_content_hash 已"有效"）。
+  // 不一致保持未嵌入（abstain），nightly embed_backfill 会按行内文本重算；
+  // 写时再以同内容 CAS 防读写间并发编辑。
   if (ingestVector != null) {
     try {
       const [stored] = await db
@@ -996,12 +986,30 @@ async function runDeclaredCandidateSubmit(
           prompt_md: question.prompt_md,
           reference_md: question.reference_md,
           choices_md: question.choices_md,
+          contentHash: question.canonical_content_hash,
         })
         .from(question)
         .where(eq(question.id, questionId))
         .limit(1);
-      const stamp = stored != null ? questionEmbedStamp(stored, ingestVector) : null;
-      if (stamp != null) {
+      const embedInputMatchesStored =
+        stored != null &&
+        stored.prompt_md === questionText.prompt_md &&
+        (stored.reference_md ?? null) === questionText.reference_md &&
+        JSON.stringify(stored.choices_md ?? null) === JSON.stringify(questionText.choices_md);
+      const stamp = embedInputMatchesStored
+        ? questionEmbedStamp(
+            {
+              prompt_md: stored.prompt_md,
+              reference_md: stored.reference_md,
+              choices_md: stored.choices_md ?? null,
+            },
+            ingestVector,
+          )
+        : null;
+      if (stamp != null && stored != null) {
+        // 同内容 CAS：canonical_content_hash 是仓库既有的内容身份原语（非
+        // 受管内容列）——读写间任何内容编辑都会变 hash，谓词不匹配 ⇒ 零行
+        // 更新，戳不落。
         await db
           .update(question)
           .set({
@@ -1011,7 +1019,12 @@ async function runDeclaredCandidateSubmit(
             embed_content_hash: stamp.embed_content_hash,
             updated_at: now,
           })
-          .where(eq(question.id, questionId));
+          .where(
+            and(
+              eq(question.id, questionId),
+              sql`${question.canonical_content_hash} IS NOT DISTINCT FROM ${stored.contentHash}`,
+            ),
+          );
       }
     } catch (err) {
       console.warn('[submit_question] declared-path embed stamp skipped:', err);

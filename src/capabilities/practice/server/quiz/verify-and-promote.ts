@@ -26,7 +26,7 @@ import {
   QUESTION_AVAILABILITY,
 } from '@/core/schema/assessment/lifecycle';
 import type { Db } from '@/db/client';
-import { event, knowledge, question } from '@/db/schema';
+import { event, knowledge, question, question_group_lifecycle } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
@@ -151,6 +151,22 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
   if (row.parent_question_id != null) {
     return { promoted: false, status: 'skipped:question_part' };
   }
+
+  // YUK-1568 S3（R1 F2）—— owner override 的「被复核对象」身份在行读时
+  // 冻结（当时组 current revision + admission generation）；应用侧 helper
+  // 锁后比对，漂移即抛错回滚——owner 决定不得落到中途换上的新 revision。
+  const [overrideInputLifecycle] = await db
+    .select({
+      revisionId: question_group_lifecycle.current_revision_id,
+      admissionGeneration: question_group_lifecycle.scoring_admission_generation,
+    })
+    .from(question_group_lifecycle)
+    .where(eq(question_group_lifecycle.group_id, questionId))
+    .limit(1);
+  const overrideInput = {
+    revisionId: overrideInputLifecycle?.revisionId ?? null,
+    admissionGeneration: overrideInputLifecycle?.admissionGeneration ?? null,
+  };
 
   // ── override 分支 (skipVerify) ──────────────────────────────────────────────
   // owner 强制启用：不调 run 函数，自己跑 promote (draft→active + FSRS enroll-if-absent +
@@ -311,6 +327,8 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
       // 仍过 publishQuestionGroup 的判分就绪闸（不可判声明 ⇒ 拒发回滚）。
       await publishVerifyLifecycleUpdate(tx, {
         rootId: row.parent_question_id ?? questionId,
+        expectedRevision: overrideInput.revisionId,
+        expectedGeneration: overrideInput.admissionGeneration,
         admission: {
           state: 'admitted',
           evidence: {

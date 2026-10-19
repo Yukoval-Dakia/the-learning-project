@@ -74,6 +74,7 @@ import {
   type PublishAdmission,
   type PublishQuestionGroupResult,
   type SuspensionUpdate,
+  archiveGroupLifecycle,
   loadQuestionGroupContractSnapshot,
   publishQuestionGroup,
   publishQuestionGroupFromRow,
@@ -172,20 +173,29 @@ export interface RunSourceVerifyResult {
 }
 
 /**
- * YUK-1568（第 3 片，S3 处置表 P 分支）—— verify/promote 生命周期维度更新
- * （admission / suspension / verification / availability），不携内容变更。
+ * YUK-1568（第 3 片，S3 处置表 P 分支；R1 F1+F2）—— verify/promote 生命
+ * 周期维度更新（admission / suspension / verification / availability），
+ * 不携内容变更。
  *
- * 当前 revision 携带答案声明（answer_shape/blank_order）时，row 归一不再是
- * 内容权威（publishQuestionGroupFromRow 对这类组本就冲突抛错）：以冻结四层
- * 契约为准走 typed publisher——expectedCurrentRevision 钉住快照声明
- * revision、expectedAdmissionGeneration 钉住锁后 generation；同 digest ⇒
- * 不铸新 revision、四层契约字节级保留；CAS 冲突或任何发布冲突一律抛错
- * 回滚同事务（与 publishQuestionGroupFromRow 的 fail-closed 同款纪律，
- * 不静默吞成 withheld 行写）。
+ * F1（权威选择）：凡组当前有【已发布 revision】，该冻结四层契约就是唯一
+ * 内容权威——typed 候选（含不携 answer_shape/blank_order 的普通 parts）
+ * 的 5 分/规则/unit 身份/points 不在 flat 行投影里，FromRow 重建会丢；
+ * 对 row-归一发布的旧组，冻结层与行归一产物在 converged-writer 不变量下
+ * 本就 digest 相同（生命周期更新更不该借机重铸内容 revision）。
+ * 只有【从未发布】的真 legacy 组（current_revision_id 为空）走 FromRow。
  *
- * 未声明组照旧行归一发布（逐字走旧 seam）。来源核验通过只改
- * admission/suspension/verification 维度——不授予 K1 admitted，不放宽
- * 中央保护（admitted + 声明仍过 publishQuestionGroup 的判分就绪闸）。
+ * F2（核验输入绑定）：expectedRevision / expectedGeneration 是调用方在
+ * 核验【开始时】冻结的「被验证对象」身份（当时的组 current revision +
+ *  admission generation）。本 helper 锁后比对——漂移即抛错回滚同事务，
+ * 绝不把旧核验结果贴到较新 revision / 误清较新屏障。
+ *
+ * 锁序与既有约定一致：root question FOR UPDATE → lifecycle FOR UPDATE
+ * → 发布（publisher 内部 CAS 双令牌另作纵深）。CAS 冲突或任何发布冲突
+ * 一律抛错回滚（与 publishQuestionGroupFromRow 的 fail-closed 同款纪律）。
+ *
+ * 来源核验通过只改 admission/suspension/verification 维度——不授予 K1
+ * admitted，不放宽中央保护（admitted + 声明仍过 publishQuestionGroup 的
+ * 判分就绪闸）。
  */
 export async function publishVerifyLifecycleUpdate(
   tx: Tx,
@@ -195,6 +205,10 @@ export async function publishVerifyLifecycleUpdate(
     availability?: 'general_pool' | 'container_only';
     suspension?: SuspensionUpdate;
     verification?: AdmissionVerificationWrite;
+    /** 核验开始时冻结的组 current revision（null = 当时从未发布）。 */
+    expectedRevision: string | null;
+    /** 核验开始时冻结的 scoring_admission_generation。 */
+    expectedGeneration: number | null;
     actorRef: string;
     now: Date;
   },
@@ -208,8 +222,39 @@ export async function publishVerifyLifecycleUpdate(
     throw new Error(`publishVerifyLifecycleUpdate: root question '${input.rootId}' not found`);
   }
   const groupRootId = supplied.parentId ?? supplied.id;
+  // 唯一加载口（锁序 root FOR UPDATE → 组快照）：partRows/liveParts 的
+  // tombstone 判定语义不在这里复制；declared revision 不可解析仍 fail-loud。
   const snapshot = await loadQuestionGroupContractSnapshot(tx, groupRootId);
-  if (snapshot.declaredRevisionId == null) {
+  const [lifecycle] = await tx
+    .select()
+    .from(question_group_lifecycle)
+    .where(eq(question_group_lifecycle.group_id, groupRootId))
+    .for('update')
+    .limit(1);
+  const currentRevisionId = lifecycle?.current_revision_id ?? null;
+  const currentGeneration = lifecycle?.scoring_admission_generation ?? null;
+  // F2 漂移闸：核验结果只许落在它被算出的那个 revision/generation 上。
+  // （编辑 withheld→withheld 叠新 revision 不翻 question.version，行版本
+  // 检查兜不住——这里按 revision/generation 身份兜底，漂移则整笔回滚。）
+  if (
+    currentRevisionId !== input.expectedRevision ||
+    currentGeneration !== input.expectedGeneration
+  ) {
+    throw new Error(
+      `publishVerifyLifecycleUpdate: verify input drifted for group '${groupRootId}' ` +
+        `(expected revision ${input.expectedRevision ?? 'none'}/gen ${input.expectedGeneration ?? 'none'}, ` +
+        `now ${currentRevisionId ?? 'none'}/${currentGeneration ?? 'none'}) — refusing to apply a stale verify verdict`,
+    );
+  }
+  // 全部子 part 已 tombstone ⇒ 组无可服务成员：与 FromRow 同款的撤回语义
+  // （只落 lifecycle 撤回维度，不铸空组 revision、忽略传入生命周期字段）。
+  // declared 组不能进 FromRow（声明保护在归一前先冲突）→ 此处直接落。
+  if (snapshot.partRows.length > 0 && snapshot.liveParts.length === 0) {
+    await archiveGroupLifecycle(tx, groupRootId, input.now);
+    return { status: 'withdrawn', group_id: groupRootId };
+  }
+  if (currentRevisionId == null) {
+    // 真 legacy：组从未发布（无冻结 revision 可保），行归一发布照旧。
     return publishQuestionGroupFromRow(tx, {
       rootId: groupRootId,
       admission: input.admission,
@@ -220,31 +265,35 @@ export async function publishVerifyLifecycleUpdate(
       now: input.now,
     });
   }
-  const [lifecycle] = await tx
+  const [frozenRevision] = await tx
     .select()
-    .from(question_group_lifecycle)
-    .where(eq(question_group_lifecycle.group_id, snapshot.rootId))
-    .for('update')
+    .from(question_revision)
+    .where(eq(question_revision.revision_id, currentRevisionId))
     .limit(1);
+  if (frozenRevision == null) {
+    throw new Error(
+      `publishVerifyLifecycleUpdate: current revision '${currentRevisionId}' missing for group '${groupRootId}'`,
+    );
+  }
   const [rootRow] = await tx
     .select({ source: question.source })
     .from(question)
-    .where(eq(question.id, snapshot.rootId))
+    .where(eq(question.id, groupRootId))
     .limit(1);
   const result = await publishQuestionGroup(tx, {
-    group_id: snapshot.rootId,
+    group_id: groupRootId,
     contract: {
-      structure: snapshot.contract.structure,
-      response_spec: snapshot.contract.response_spec,
-      scoring_basis: snapshot.contract.scoring_basis,
-      execution_plan: snapshot.contract.execution_plan,
-      ...(snapshot.contract.presentation != null
-        ? { presentation: snapshot.contract.presentation }
-        : {}),
-      integrity_digest: snapshot.contract.integrity_digest,
+      // F1：冻结四层（含 presentation/digest）逐字回送——同 digest ⇒ 不铸
+      // 新 revision；声明与非声明的 typed 契约都被字节级保留。
+      structure: frozenRevision.structure,
+      response_spec: frozenRevision.response_spec,
+      scoring_basis: frozenRevision.scoring_basis,
+      execution_plan: frozenRevision.execution_plan,
+      ...(frozenRevision.presentation != null ? { presentation: frozenRevision.presentation } : {}),
+      integrity_digest: frozenRevision.integrity_digest,
     },
-    expectedCurrentRevision: snapshot.declaredRevisionId,
-    expectedAdmissionGeneration: lifecycle?.scoring_admission_generation ?? null,
+    expectedCurrentRevision: currentRevisionId,
+    expectedAdmissionGeneration: currentGeneration,
     availability:
       input.availability ??
       lifecycle?.availability ??
@@ -259,7 +308,7 @@ export async function publishVerifyLifecycleUpdate(
   });
   if (result.status === 'conflict') {
     throw new Error(
-      `publishVerifyLifecycleUpdate: unexpected ${result.reason} conflict for declared group '${snapshot.rootId}' (revision raced during verify lifecycle update)`,
+      `publishVerifyLifecycleUpdate: unexpected ${result.reason} conflict for group '${groupRootId}' (revision raced during verify lifecycle update)`,
     );
   }
   return result;
@@ -507,6 +556,23 @@ export async function runSourceVerify(
   const row = rows[0];
   if (!row) return { status: 'skipped:not_found' };
   if (row.source !== 'web_sourced') return { status: 'skipped:not_web_sourced' };
+  // YUK-1568 S3（R1 F2）—— 冻结「本次核验实际输入」的组身份：行版本
+  // 检查兜不住 withheld→withheld 草稿编辑（共享 submit 对未准入组不翻
+  // question.version 也不动行投影，但会铸新 revision）。核验结果只能落在
+  // 它被算出的那个 revision/generation 上；应用侧锁后比对，漂移回滚。
+  const verifyInputGroupRootId = row.parent_question_id ?? questionId;
+  const [verifyInputLifecycle] = await db
+    .select({
+      revisionId: question_group_lifecycle.current_revision_id,
+      admissionGeneration: question_group_lifecycle.scoring_admission_generation,
+    })
+    .from(question_group_lifecycle)
+    .where(eq(question_group_lifecycle.group_id, verifyInputGroupRootId))
+    .limit(1);
+  const verifiedIdentity = {
+    revisionId: verifyInputLifecycle?.revisionId ?? null,
+    admissionGeneration: verifyInputLifecycle?.admissionGeneration ?? null,
+  };
   const metadataRaw =
     row.metadata && typeof row.metadata === 'object'
       ? (row.metadata as Record<string, unknown>)
@@ -773,6 +839,8 @@ export async function runSourceVerify(
             // 未声明组照旧行归一（helper 内部分派，fail-closed 不变）。
             await publishVerifyLifecycleUpdate(suspendTx, {
               rootId: groupRootId,
+              expectedRevision: verifiedIdentity.revisionId,
+              expectedGeneration: verifiedIdentity.admissionGeneration,
               admission: {
                 state: SCORING_ADMISSION_STATE.WITHHELD,
                 reason: SCORING_ADMISSION_WITHHELD_REASON.UNVERIFIED_RULES,
@@ -915,6 +983,30 @@ export async function runSourceVerify(
       if (!current || current.version !== row.version) {
         throw new Error(
           `source_verify question ${questionId} changed during verification (expected version ${row.version}, got ${current?.version ?? 'missing'})`,
+        );
+      }
+      // YUK-1568 S3（R1 F2）—— 锁后复核组身份（锁序 root question →
+      // lifecycle 与 publisher/C1 一致）：行版本相同不代表 revision 未变
+      // （withheld→withheld 草稿编辑不翻 version 仍铸新 revision）。与核验
+      // 开始冻结值不符 ⇒ 整笔回滚：本次核验结果不得贴到较新 revision、
+      // 不得误清其 verify_hold，也不得把 demote/suspend 落到没核过的版本上。
+      const [verifyLifecycle] = await tx
+        .select({
+          revisionId: question_group_lifecycle.current_revision_id,
+          generation: question_group_lifecycle.scoring_admission_generation,
+        })
+        .from(question_group_lifecycle)
+        .where(eq(question_group_lifecycle.group_id, row.parent_question_id ?? questionId))
+        .for('update')
+        .limit(1);
+      if (
+        (verifyLifecycle?.revisionId ?? null) !== verifiedIdentity.revisionId ||
+        (verifyLifecycle?.generation ?? null) !== verifiedIdentity.admissionGeneration
+      ) {
+        throw new Error(
+          `source_verify: verify input drifted for question ${questionId} ` +
+            `(expected revision ${verifiedIdentity.revisionId ?? 'none'}/gen ${verifiedIdentity.admissionGeneration ?? 'none'}, ` +
+            `now ${verifyLifecycle?.revisionId ?? 'none'}/${verifyLifecycle?.generation ?? 'none'}) — refusing to apply a stale verify verdict`,
         );
       }
       // YUK-1507 pair-race guard —— promote 成功分支在重发前，同事务锁
@@ -1110,6 +1202,8 @@ export async function runSourceVerify(
           // 保留冻结契约（不铸新 revision、不丢声明、不因核验通过而 admitted）。
           await publishVerifyLifecycleUpdate(tx, {
             rootId: groupRootId,
+            expectedRevision: verifiedIdentity.revisionId,
+            expectedGeneration: verifiedIdentity.admissionGeneration,
             admission: {
               state: SCORING_ADMISSION_STATE.WITHHELD,
               reason: SCORING_ADMISSION_WITHHELD_REASON.UNVERIFIED_RULES,
@@ -1182,6 +1276,8 @@ export async function runSourceVerify(
           // 冻结契约的 typed publisher（helper 内部分派，fail-closed 不变）。
           await publishVerifyLifecycleUpdate(tx, {
             rootId: row.parent_question_id ?? questionId,
+            expectedRevision: verifiedIdentity.revisionId,
+            expectedGeneration: verifiedIdentity.admissionGeneration,
             admission: {
               state: SCORING_ADMISSION_STATE.WITHHELD,
               reason:

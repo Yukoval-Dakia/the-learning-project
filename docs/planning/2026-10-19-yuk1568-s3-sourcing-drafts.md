@@ -49,7 +49,9 @@ SourcingTaskOutput.parts 有声明
                difficulty, metadata={web_sourced provenance, source_ref_kind,
                difficulty_evidence, route meta, hints, attribution, demand,
                supply_trace(折叠), vector hold, markup flag},
-               supply_trace(透传 verify intent)})
+               supply_trace(透传 verify intent),
+               source_claim={source_url, actor_ref}（R1 F3：一页一题 URL
+               终态 claim 与 INSERT 同 tx）})
   → 同事务：question 行 + publishQuestionGroup + verify_dispatch_intent +
     回执 → post-tx dispatchPendingVerifyIntents + canary event
 ```
@@ -73,22 +75,50 @@ conversion_issues → 提交返回 withheld（不铸 revision），草稿保留�
 候选如实 `withheld draft_unpublishable` 回报——**不回退旧 flat 解释器
 补全**。
 
-### verify 面（同 revision 生命周期，P 处置）
+### verify 面（同 revision 生命周期，P 处置；R1 F1+F2 修正）
 
 `source_verify.ts` 新增 `publishVerifyLifecycleUpdate`：
 
-- 未声明组 → 逐字走 `publishQuestionGroupFromRow`（旧行为不变）。
-- 已声明组 → `loadQuestionGroupContractSnapshot` 取冻结四层契约 →
-  `publishQuestionGroup` typed 发布：`expectedCurrentRevision` 钉住声明
-  revision、`expectedAdmissionGeneration` 钉住锁后 generation；同 digest
-  ⇒ 不铸新 revision、声明字节级保留；CAS/发布冲突一律抛错回滚同事务
-  （与 FromRow fail-closed 同款纪律）。
-- 接入 3 处 callsite（transient suspend / 正向 promote / fail-suspend）+
-  `verify-and-promote.ts` owner-override 分支。核验通过只翻
-  admission/suspension/verification 维度——**不授予 K1 admitted**；
-  admitted + 声明仍过 `publishQuestionGroup` 的判分就绪闸（owner override
-  原权限与 manual evidence 不变，不可判声明 ⇒ 拒发回滚）。
-- C1 admission 守卫分支本就以当前 revision 层走 typed publish，无需改。
+- **权威选择（R1 F1）**：凡组当前有已发布 revision，该冻结四层契约即
+  唯一内容权威——typed 候选（含不携 answer_shape/blank_order 的普通
+  parts）的 points/规则/unit 身份不在 flat 行投影里，FromRow 重建会丢；
+  对行归一发布的旧组，冻结层与行归一产物在 converged-writer 不变量下
+  digest 本就相同。**只有从未发布的真 legacy 组**（current_revision_id
+  为空）走 FromRow。不再按「有没有数学声明」分流。
+- **核验输入绑定（R1 F2）**：调用方在核验【开始时】冻结
+  `expectedRevision`（当时的组 current revision，null=未发布）+
+  `expectedGeneration`（admission generation）。helper 内锁序
+  root→lifecycle FOR UPDATE 后比对，漂移即抛错回滚同事务——旧核验
+  结果不得贴到较新 revision、不得误清其 verify_hold。覆盖 transient
+  suspend / passed promote / fail-suspend 与 owner-override 四处；
+  C1-kept 分支由主事务锁后漂移闸一并覆盖（同锁同一 tx）。
+- 撤回语义保留：全部子 part tombstone ⇒ `archiveGroupLifecycle`（与
+  FromRow 同款，declared 组不再被归一前先冲突拦死）。
+- 核验通过只翻 admission/suspension/verification 维度——**不授予 K1
+  admitted**；admitted + 声明仍过 `publishQuestionGroup` 的判分就绪闸
+  （owner override 原权限与 manual evidence 不变）。
+
+### URL 判重（R1 F3 修正）
+
+最终 raced `claimHttpSourceDuplicate`（onTerminal:'release' + KC merge
+原语）移入 shared submit 的新组 INSERT **同一事务**——经
+`SubmitDraftInput.sourced.source_claim`（可信系统字段，不在 tool wire
+schema、仅新组首提交生效）传入，seam 内在 exact-merge 之前执行。
+`pg_advisory_xact_lock` 持到提交：并发同页候选串行化，后到者锁后重查
+命中 → `duplicate_source` 冲突 + 回执。早段 `defer` 预检与旧 flat
+persist 路径原样保留；原语经 `capabilities/practice/public.ts` 单项
+re-export 给 server/questions consumer（既有 server→capability public
+先例同形）。
+
+### embed 戳（R1 F4 修正）
+
+typed 路径不再用「stored 投影 vs stored 投影」的自洽假戳：
+`ingestVector` 绑定的是 fetch 时实际送 embed 的 flat `questionText`；
+只在行内投影与该向量真实输入逐字段一致时才复用（typed 投影常不等于
+flat 文本——select 的 reference 投影成字母键）。写入时再以相同内容
+CAS（prompt_md/reference_md/choices_md IS NOT DISTINCT FROM）防读写间
+并发编辑。不一致保持未嵌入（abstain）——nightly `embed_backfill` 按
+行内文本重算，不产生新付费调用。
 
 ### seam 一处修正
 
@@ -114,27 +144,32 @@ sourcing_web 候选照旧全走旧链——**旧 writer 未为新声明扩展**�
 | request claim/replay（外层 requestId + 派生 `:save`/`:submit`）、availability、draft_status='draft'、durable verify intent + 即时 dispatch、canary `experimental:submit_question` 事件（+draft_block_id） | 保留 |
 | `judge_kind_override` / `rubric_json` / `structured` 行投影 / `kind` 标签 / `image_refs`/`figures`/`staged_asset_ids` | 不注入：typed 契约是权威（judge_kind_override/rubric_json 单值无法如实描述多 unit；structured 列改由 `draftDocumentToStructuredQuestion` 投影；kind 由 `deriveKind`）。声明+图像资产同现显式 `invalid_request`（本片不承载资产绑定，不静默降级） |
 | `insertSourcedDraft` + `publishQuestionGroupFromRow` 对已声明候选的 flat insert+row publish | 删除（该分支不再存在）；旧 writer 仅保留给未声明 caller + fail-closed 守卫 |
-| embed 向量戳 | 保留为 post-submit 投影更新（只写 embed_* + updated_at，hash 对齐行内投影文本；未命中/失败由 nightly backfill 兜底，等价旧 abstain） |
+| embed 向量戳 | R1 F4 修正：仅当行内投影与向量真实输入（flat questionText）逐字段一致才复用戳，写入同内容 CAS；不一致 abstain 交 nightly backfill（不产生新付费调用） |
 
 ## 事务与重放（如实）
 
-- 分段（不谎报跨步原子）：`raced URL claim` → `saveDraftEdit 内 tx` →
-  `submitDraftQuestion 内 tx`（锁 draft、契约转换、admission 检查、行
-  insert、publish、verify intent、回执）→ 可选 embed 更新 → 外层候选
-  回执 tx。save 与 submit 是两笔事务：submit 失败留下可恢复的
+- 分段（不谎报跨步原子）：`saveDraftEdit 内 tx` → `submitDraftQuestion
+  内 tx`（锁 draft、契约转换、admission 检查、**一页一题 URL 终态
+  claim（R1 F3：与 INSERT 同事务持 advisory xact lock）**、exact-merge、
+  行 insert、publish、verify intent、回执）→ 可选 embed 更新 → 外层
+  候选回执 tx。save 与 submit 是两笔事务：submit 失败留下可恢复的
   question_block 草稿（与 edit→submit 工作流同语义）。
 - 派生身份固定 `${requestId}:save` / `${requestId}:submit`：崩溃重试时
   save 幂等重放同一 draft_ref（不铸新 draft）、submit 重放回执（不重复
   发布）；外层 requestId 指纹照旧含整个候选（含 parts）。
-- submit 指纹绑定 `sourced` 的**身份部分**（hash/created_by/difficulty），
-  `metadata` 含 attempt 时间戳（fetched_at 等）不进指纹——否则重试必漂
-  移成 request_id_reused。
+- submit 指纹绑定 `sourced` 的**身份部分**（hash/created_by/difficulty/
+  source_claim），`metadata`/`supply_trace` 含 attempt 时间戳
+  （fetched_at 等）不进指纹——否则重试必漂移成 request_id_reused。
 - `expected_revision:null` + `expected_draft_version=save 回执版本`：新组
   的 CAS 双令牌。
 - 冲突后果：`duplicate_exact`（seam 内 merge claim 复用同一去重原语）、
-  `duplicate_source`（raced claim）、`near_dup`、`*_cas`/`publish_conflict`
-  原样透传；compat `executeStoreSourcedQuestion` 对非五元组 reason 如实
-  透传（detail 同载），与既有放宽同例。
+  `duplicate_source`（seam 内同 tx URL claim）、`near_dup`、
+  `*_cas`/`publish_conflict` 原样透传；compat `executeStoreSourcedQuestion`
+  对非五元组 reason 如实透传（detail 同载），与既有放宽同例。
+- verify 侧（R1 F2）：`runSourceVerify` 在核验开始冻结组 current
+  revision + admission generation；`publishVerifyLifecycleUpdate` 锁后
+  比对，漂移 → 抛错回滚整笔（pg-boss 重试后在新 revision 上重新核验），
+  同 tx 的先写（demote / FSRS enroll / C1-kept 复核记录）一并回滚。
 
 ## 第一天能用
 
@@ -161,17 +196,36 @@ sourcing_web 候选照旧全走旧链——**旧 writer 未为新声明扩展**�
   本 candidate 现有 guard，未扩为修 1569 全部入口。
 - 存量 40 题 / 七题验收 / 存量重新发布（YUK-1573 冻结）：第 4 片独立方案。
 
-## 验证（本机实际执行）
+## 验证（本机实际执行——逐命令如实）
 
-- `pnpm typecheck` exit 0；`pnpm lint` exit 0（179 条预存 warning，本 diff
-  无新增）；`pnpm build` exit 0。
-- audits exit 0：`audit:schema`、`audit:question-writers`（typed 写点均
-  publisher-converged 或 exempt 列）、`audit:capability-boundaries`（债基线
-  精确守恒 443/48，未新增 capability→server 边——facade 复用）、
-  `audit:draft-status`、`audit:draft-status-reads`、`audit:partition`、
-  `audit:profile`、`audit:test-policy`、`audit:task-census`、
-  `audit:structured-judge`。
-- `source_verify.ts` 2 条 `noUnusedImports` 为 base 预存（未因本 diff 新增）。
+R1 修复轮（fix commit）的终态检查全量日志落协调目录（非 tail 截断）：
+`/Volumes/YukovalSBak/yukoval-projects/tlp-status/review/stage1-yuk1568-s3-20261019/fix-check-logs-398520032-r1fix/<cmd>.log`
+（工作树内镜像副本 `/tmp/yuk1568-s3-r1fix-398520032-logs/`）：
+
+| 命令 | exit |
+|---|---|
+| `pnpm typecheck` | 0 |
+| `pnpm lint` | 0（179 条预存 warning；`source_verify.ts` 2 条 noUnusedImports 为 base 预存） |
+| `pnpm build` | 0 |
+| `pnpm audit:schema` | 0 |
+| `pnpm audit:question-writers` | 0（R1 修复中一度触发 UNRESOLVED_PAYLOAD 与 UNCONVERGED——分别改为字面量 `.set()` 与 `canonical_content_hash` CAS 后归零） |
+| `pnpm audit:capability-boundaries` | 0（债基线精确 443/48 不变；`practice/public` 单项 re-export + facade 既有 public 边不构成 deep import） |
+| `pnpm audit:draft-status` | 0 |
+| `pnpm audit:draft-status-reads` | 0 |
+| `pnpm audit:partition` | 0 |
+| `pnpm audit:profile` | 0 |
+| `pnpm audit:test-policy` | 0 |
+| `pnpm audit:task-census` | 0 |
+| `pnpm audit:structured-judge` | 0 |
+
+- **如实撤回**：R1 前的回复中「全部 audit 已过」只对写日志当时的中间态
+  成立；R1 修复轮改动后以本 HEAD 的重跑证据（上表）为准。
+- **超范围记录（不算验收）**：R1 前作者曾以 `tsx -e` 内联调用
+  `draftDocumentToContract` / `revisionToDraftDocument` /
+  `QuestionDraftDocument.safeParse` 观察合成 doc 的声明往返——父已判定该
+  执行超出 brief 允许的「typecheck/lint/build/只读查询」范围；此处仅保留
+  事实记录（观测输出存在会话 transcript，无落盘文件、无断言、无 DB），
+  不作为任何验证证据主张。修复轮遵守禁令，未再做任何此类演练。
 
 ## NOT_RUN（未验证范围，如实）
 

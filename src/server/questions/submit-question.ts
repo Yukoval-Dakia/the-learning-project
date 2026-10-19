@@ -4,6 +4,7 @@ import { and, desc, eq, ne, or, sql } from 'drizzle-orm';
 import {
   DEDUP_OVERLAP_THRESHOLD,
   canonicalQuestionContentHash,
+  claimHttpSourceDuplicate,
   maxNgramOverlap,
   mergeExactQuestionDuplicateKnowledgeIds,
   runQuestionAdmissionChecks,
@@ -127,6 +128,14 @@ export interface SubmitDraftInput {
      *  intent 行——source_verify 的 supply 账本归属依赖它，与旧 flat 链
      *  writeVerifyDispatchIntent(supplyTrace) 同口径）。 */
     supply_trace?: unknown;
+    /** YUK-1568 S3 — 一页一题来源 URL 的终态 claim（onTerminal:'release'
+     *  + KC merge 原语），在【本事务内】与行 INSERT 同锁——并发同 URL 候选
+     *  在 advisory xact lock 上串行化，后到者锁后重查命中既有行。旧 flat
+     *  persist 链同款保护；仅新组首次提交生效。 */
+    source_claim?: {
+      source_url: string;
+      actor_ref: 'sourcing' | 'jyeoo_fetch';
+    };
   };
 }
 
@@ -161,6 +170,7 @@ export type SubmitResult =
         | 'not_a_draft'
         | 'invalid_request'
         | 'duplicate_exact'
+        | 'duplicate_source'
         | 'near_dup'
         | 'publish_conflict';
       detail: string;
@@ -569,6 +579,16 @@ export async function submitDraftQuestion(
                 canonical_content_hash: input.sourced.canonical_content_hash,
                 created_by: input.sourced.created_by,
                 difficulty: input.sourced.difficulty ?? null,
+                // source_claim 是同 request 派生的确定身份（源 URL + 路由
+                // actor），跨重试不漂移——进指纹；metadata/supply_trace 仍排除
+                // （含 attempt 时间戳）。
+                source_claim:
+                  input.sourced.source_claim != null
+                    ? {
+                        source_url: input.sourced.source_claim.source_url,
+                        actor_ref: input.sourced.source_claim.actor_ref,
+                      }
+                    : null,
               }
             : null,
       }),
@@ -812,6 +832,40 @@ export async function submitDraftQuestion(
       ...(presentation != null ? { presentation } : {}),
     }).canonical;
     if (isNew) {
+      // YUK-1568 S3（R1 F3）—— 一页一题来源 URL 的终态 claim 与行 INSERT
+      // 同事务：pg_advisory_xact_lock 持到本事务提交，并发同 URL 候选串行化，
+      // 后到者锁后重查命中本行。复用既有原语（release 终态草稿 + KC merge），
+      // 命中即 duplicate_source 冲突 + 回执（不静默丢 claim）。
+      if (input.sourced?.source_claim != null) {
+        const claimedSource = await claimHttpSourceDuplicate(tx, {
+          sourceUrl: input.sourced.source_claim.source_url,
+          knowledgeIds: doc.knowledge_ids,
+          actorRef: input.sourced.source_claim.actor_ref,
+          taskRunId: ctx.taskRunId,
+          now,
+          onTerminal: 'release',
+        });
+        if (claimedSource != null) {
+          const conflict: SubmitResult = {
+            status: 'conflict',
+            reason: 'duplicate_source',
+            detail: `同一来源网址命中既有题 ${claimedSource.existingQuestionId}；目标 KC 已并入`,
+            question_id: claimedSource.existingQuestionId,
+            existing_question_id: claimedSource.existingQuestionId,
+            request_id: requestId,
+          };
+          await writeSubmitReceiptEvent(
+            tx,
+            { kind: 'question_block', id: block.id },
+            requestId,
+            fingerprint,
+            conflict,
+            ctx,
+            now,
+          );
+          return conflict;
+        }
+      }
       // 供给链注入的 flat 指纹优先于投影身份——与旧 flat 行同一 dedup 口径，
       // 否则选择题等投影后 reference 变化会丢失对既有行的精确去重命中。
       const hashForDedup = input.sourced?.canonical_content_hash ?? canonicalHash;
