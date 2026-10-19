@@ -1,9 +1,12 @@
 # YUK-1577 — advisory-lock 静态盘点与排序证据
 
 > 架构深化线子任务交付文档（修正版，父验收退回 `fc6197324` 后重做）。
-> 当前限制：四项已核实事实错误尚未修正，见 [锁登记顶部](../architecture/advisory-locks.md)；
-> 下一片先修这四项。本记录不能作为完整排序证明。
-> 分支 `refactor/yuk-1577-lock-ownership-registry`，基于 `origin/main@69644912`。
+> 2026-10-20 续片：四项已核实事实错误已按源码 revision `4419f4fbb` 修正
+> （分支 `arch/lock-registry-errata`，原名
+> `docs/yuk-1577-correct-lock-registration`，正常 merge 警示提交
+> `c31424d0`；§9）；R1 复核命中的一处行锁强度误标已在 §10 修正。
+> 本记录仍不是完整排序证明。
+> 原分支 `refactor/yuk-1577-lock-ownership-registry`，基于 `origin/main@69644912`。
 > 登记文档：`docs/architecture/advisory-locks.md`。**无生产代码改动**——首版的
 > registry 模块与 fail-closed 消费面已按 brief 撤回（见 §6 修正记录）。
 
@@ -11,37 +14,44 @@
 
 | 物 | 位置 | 说明 |
 |---|---|---|
-| 锁登记文档 | `docs/architecture/advisory-locks.md` | 覆盖口径、helper 表、79 族紧凑表、排序边摘要、已知边界 |
+| 锁登记文档 | `docs/architecture/advisory-locks.md` | 覆盖口径、helper 表、81 族紧凑表、排序边摘要、已知边界 |
 | 原始证据（仓库外） | `…/YUK-1577/fc619732/raw-lock-sites.txt` | 148 行文本匹配原样 |
 | 站点分类 | `…/fc619732/site-classification.txt` | exec/comment 逐行计数 |
-| 79 族机读表 | `…/fc619732/family-table.md`、`registry-snapshot.ts` | 被撤下的 registry 稿，仅作快照 |
-| 逐边调用链 | `…/fc619732/edge-evidence.md` | 每条边的语句序证据、dyn 标注 |
+| 旧 79 族机读表 | `…/fc619732/family-table.md`、`registry-snapshot.ts` | 被撤下的 registry 稿，仅作快照；含已修错误 |
+| 旧逐边调用链 | `…/fc619732/edge-evidence.md` | 每条边的语句序证据、dyn 标注；含已修错误 |
+| 四事实修正证据 | `…/YUK-1577/4419f4fbb8c93cc5c6b42f08c2e44502a3788a34/four-facts-correction/` | 81 族表、逐边修正、修正清单与 SHA（§9） |
+| R1 P1 修正 overlay | `…/YUK-1577/ecf0bf0269d263442a546310c32ed6cb04c44233/r1-correction/` | session_orphan_control 行锁强度分列后的 edge-evidence 与 SHA（§10） |
 
 ## 2. 口径（修正后，不冒称）
 
 - 文本扫描匹配 **148** 行 = **130 条可执行语句**（120 xact_acquire + 1 try_xact +
   5 try_session + 4 unlock）+ **18 条注释/文档引用**。148 不是"生产站点数"，
   注释从不执行。
-- **79 family** 是本次扫描归并出的 distinct key 模板/命名空间数——分母是本盘点
+- **81 family** 是本次扫描归并出的 distinct key 模板/命名空间数——分母是本盘点
   自身的归并结果，不证明全仓再无其他 advisory 站点（动态 SQL、拼接 SQL、非 ts
-  载体可能漏出文本扫描面，已在文档 §5 列为 unknown）。
+  载体可能漏出文本扫描面，已在文档 §5 列为 unknown）。旧版 79 族因 appeal
+  混族行拆分（#10/#80/#81）+2。
 - helper 转调获取点（`acquireSortedAdvisoryLocks` 11 文件、`acquireLearningStateWriteLock`/
   `withLearningStateLock` ~24 文件等）是"同一语句多处触发"，计族不计站点。
 - 排序边**只录同一 critical section 内的语句序证据**；经动态 dispatch 的边标 dyn。
-  `after` 边集无环只说明"登记的边彼此不构成环"，**不证明** 0 reachable cycles、
-  不证明无反向站点、不证明跨 backend 无互等。
+  **`after` 边集不是无环图**——`instance ⇄ corrections:all` 是已证 2-环（§9-1），
+  已核站点内由 G 共同串行化；边集**不证明** 0 reachable cycles、不证明无
+  反向站点、不证明跨 backend 无互等，亦不构成完整排序证明。
 
-## 3. 顺序登记摘要（已知不准确见登记文档顶部）
+## 3. 顺序登记摘要（四事实已修；限度见 §5/§9）
 
 learning spine：`G → fsrs:*(sorted) → ability_global(sorted)`；
 assessment：`G → group → 行锁 → fsrs:*`；
-intervention：`G → instance → corrections:all → source`；
+intervention：`G → instance → corrections:all → source`（activate）与
+`G → corrections:all → instance`（native review）双向并存，G 共同串行化；
+appeal：`request → group`、激活回调内 `group → resolution`；
 stream：`session(compose-paid) → xact(compose)`、`scope → session-partition`、
-`deliver → compose`；durable：`fence → family-control → tick`；
+`deliver → compose`；durable：install tx `fence → 族控制锁`，runtime tx
+`control 行锁 → tick`（不同事务，不拼同段）；
 paid-effect：`control → identity row → gate`；provider：`op-kind → sorted attempt →
 lane`；小边：probe-question → conjecture-fold → proposal_decision、
 write_quiz → proposal_decision、note_refine effect → product、paper-native →
-attempt-claim、appeal/review-answer → group、serving → admission 行锁。
+attempt-claim、review-answer → group、serving → admission 行锁。
 
 ## 4. R1 纠正：撤回 G/group 互等候选
 
@@ -63,7 +73,7 @@ G :820 位于另一个 export `activateSubmissionCandidate` 的事务 :818。
 - 验证已跑：`git diff --check` 净、`git status` 仅两文档、两恢复文件与 base diff 为空。
 - **NOT_RUN**：typecheck/lint/build 未重跑（改动仅文档与"恢复至已验证 base 状态"的
   代码，无可编译增量）；无测试增删（owner 批准缺席）、无 DB/runtime/provider/paid。
-- 诚实边界：79 族为 self-consistent 分母；动态 key 实例域、`<requestId>`/`<runId>`
+- 诚实边界：81 族为 self-consistent 分母；动态 key 实例域、`<requestId>`/`<runId>`
   同源性、fsrs→group 反向序均列 unknown/no-observed-counterexample（文档 §5）。
 
 ## 6. 修正记录（fc6197324 → 本版）
@@ -93,3 +103,92 @@ G :820 位于另一个 export `activateSubmissionCandidate` 的事务 :818。
 
 仍未证明：动态路径全部排序、共享 key 实例域与行锁交互；族表 sites 的共享 helper
 重复归属口径和旧快照目录命名是 R1 已记录的非阻塞后续，不冒称已修。
+
+## 9. 四事实修正（2026-10-20，分支 `arch/lock-registry-errata`）
+
+修正顶部警示登记的四项事实错误。核对源码 revision
+`4419f4fbb8c93cc5c6b42f08c2e44502a3788a34`（origin/main；所引站点文件与 R1
+核对 revision `2ecfde0840ad3dbf3c60eac6763c604d34aea99e` 逐字节一致，
+`git diff --name-only` 为空）。封存旧件 `fc619732/`、
+`…/2ecfde084…/r1-correction/` 未覆盖，含已修错误作历史反例。
+
+1. **intervention 反边**：`recordNativeInterventionDiagnosticReview`
+   （store.ts:554）同 tx 内 G(:555) → corrections:all(:557) → 内联
+   `withLearningStateLock` 重入 G(:595) → instance(:597)，原"未见反向"撤回。
+   G 共同串行化静态条件：同取 instance+corrections 的已见路径全程持 G（单一
+   xact 键）；无 G 的 corrections 站点（reconcile:212/probe-subscription:115/
+   writeEvents:342）不取 instance，无 G 的 instance 站点（:757）不取
+   corrections → 已核站点内环不可达，不宣称无 runtime 死锁，不再保留
+   "边集无环"措辞。另补 `copilot-execution-settlement → source`
+   （review-answer-consumer.ts:45→47）同 tx 边。
+2. **appeal 拆族**：`evt_native_appeal_<hash>`（#10，appeal.ts:24）、
+   `evt_native_resolution_<hash>`（#80，appeal.ts:78）、`hte(appeal.id,0)`
+   （#81，rejudge.ts:45）分族；`request → group`（:24→:41）、激活回调内
+   `group → resolution`（:155–161→evaluate-submission.ts:833，settle `fsrs:*`
+   条件插入）登记。族总数 79→81。
+3. **durable 分事务**：install tx `fence → (1356,1)/(1355,1)/(1393,1)/
+   session-orphan-install`（无 tick）；runtime tx `control 行锁 → tick/
+   reconcile`（FOR SHARE/UPDATE）。advisory 族控制对与 per-tick 从未同 tx
+   共现，`family-control → per-tick` 拼接撤回，未推断未证跨 tx 边。
+4. **锁空间**：PG 单参签名 `pg_advisory*(key bigint)`（functions-admin
+   §9.28.10）；`hashtext` int4 符号扩展、`hashtextextended` int8、int 字面量
+   同处一个 bigint 锁空间，编码标签不是锁空间；双参 `(integer,integer)`
+   另一空间（pg_locks objsubid 单参=1、双参=2）。全篇 "int4/int8 两空间"
+   表述已改。
+
+证据（仓库外，新目录，未覆盖封存件）：
+`/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1577/4419f4fbb8c93cc5c6b42f08c2e44502a3788a34/four-facts-correction/`
+
+| 文件 | SHA-256 |
+|---|---|
+| `family-table.md`（81 族） | `34f8616c9062d82fc1e6878effe735035fddd7fb3703ab240d17528dcffc1377` |
+| `edge-evidence.md` | `020f9ed77111856f0823612be79b2f32224d69345314d77d3fe28b84a8e05e52` |
+
+> 注：上表 `edge-evidence.md` 的 E6/E9 session-orphan 行锁强度后经 R1 复核
+> 更正（§10）；当前逐边证据以 r1-correction overlay 版为准，上表 SHA 仍对应
+> 封存原件。
+
+验证已跑：源码逐站点读取（上列行号链）、`git diff --name-only` 结转段核对、
+`git diff --check`。**NOT_RUN**：typecheck/lint/build（仅文档改动、无可编译
+增量，父级可补）、全部本地测试（无增删）、DB/TEST/Docker/provider/paid、
+tsx -e/手造输入验证。仍未证：行锁全图、动态 dispatch 全路径、跨 backend
+等待、动态 key 实例域——本片不结清 YUK-1577 完整排序证明。
+
+## 10. R1 P1 修正（2026-10-20，head `ecf0bf026` 之上）
+
+GLM 独立 R1（
+`…/YUK-1577/ecf0bf0269d263442a546310c32ed6cb04c44233/review-r1-glm.md`，
+SHA-256 `be69ecb08fdc65bb0c375e78c3c8d5367e87f0eff762fd48ca151749e5b156eb`）
+核实四项指定修正全部为真，但命中一项本片新引入的登记失实（P1）：§9 的
+edge-evidence E6 与 `advisory-locks.md` 把 session-orphan 全部
+`session_orphan_control` 行锁写成 FOR SHARE；`lockControl`
+（`session-orphan-backend.ts:121-125`）实为 `for update`，其 :199
+（`retireFailedSessionOrphan`）→ tick :226 走的正是该 helper。修正为按
+helper 分列：**FOR SHARE**——consume/tick 四站（family.ts:256/:356/:381/:405
+经 `lockSessionOrphanControl` :184-186）；**FOR UPDATE**——retirement 一站
+（backend.ts:199→:226 经 `lockControl` :121-125）；`lockControl` 另两调用点
+（:159 quiescence、:272 phase change）只持行锁、无 advisory 后继。排序与
+install-vs-runtime 分事务结论不变（UPDATE 强于 SHARE）。源码 revision 不变
+（`4419f4fbb`；本修正只动两文档与仓库外 artifact，`src/` 与 base 一致）。
+
+证据（仓库外 overlay 目录，未覆盖任何封存件）：
+`/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1577/ecf0bf0269d263442a546310c32ed6cb04c44233/r1-correction/`
+
+| 文件 | SHA-256 |
+|---|---|
+| `edge-evidence.md` | `73849eea044365d81785e736e3ec5c4a553236ae65dd4fc0fd904c21f02ae630` |
+
+`family-table.md` 不受 P1 影响（表不含行锁强度），仍用 §9 表 SHA。
+
+R1 另记三项 P2，**不在本片修复范围、交父记录本票**（不冒称已修）：
+judge runtime `judge_run_control → judge-run-claim`
+（judge_pending_reconcile.ts:308→309，族 #31）行锁介导边未登；
+§9 "diff 为空" 缺 "所引站点文件" 范围限定；"补登 request → group"
+新颖性措辞不准（该边旧表已由 #8 after 列承载，本轮新增的是语句序证据与
+`group → resolution`）。
+
+验证已跑：源码核对（session-orphan-backend.ts:121-125/:159/:199/:226/:272、
+session-orphan-family.ts:184-186/:255/:355/:380/:404）、r1-correction 版与
+four-facts 版 `edge-evidence.md` diff 仅含上述分列改动、`git diff --check`。
+**NOT_RUN**：typecheck/lint/build、全部本地测试、DB/TEST/Docker/provider/paid、
+tsx -e/手造输入。仍未证范围与 §9 相同，本片不结清完整排序证明。
