@@ -1,12 +1,13 @@
 // 入库查重（YUK-1552）。精确哈希与同知识点 n-gram 仍在调用方。
-// 这里只补两件事：同一 http(s) 来源网址视为重复；跨知识点向量近重不拒收，
-// 记一笔交给现有草稿待裁决（source_verify → needs_review）。
+// 网址不是题目身份。只有一页一题的来源（目前是菁优网题目详情页）才按规范化网址合并。
+// 多题页面只走精确哈希和向量近重。向量近重不拒收，记一笔交给现有草稿待裁决。
 
 import { and, asc, isNull, ne, sql } from 'drizzle-orm';
-import { mergeKnowledgeForSourceDuplicate } from '@/capabilities/practice/server/quiz/content-fingerprint';
+import { settleOneQuestionPageHit } from '@/capabilities/practice/server/quiz/content-fingerprint';
 import type { Db, Tx } from '@/db/client';
 import { question } from '@/db/schema';
 import { toSqlVector } from '@/db/vector';
+import { JYEOO_SOURCE_HOST } from './jyeoo-supply-config';
 
 declare const HttpSourceRefBrand: unique symbol;
 
@@ -62,10 +63,15 @@ function asHttpSourceRef(value: string): HttpSourceRef {
   return value as HttpSourceRef;
 }
 
+/** 百分号编码的十六进制大小写归一。WHATWG 保留路径里的原始大小写。 */
+function uppercasePercentEncoding(value: string): string {
+  return value.replace(/%[0-9a-fA-F]{2}/g, (hex) => hex.toUpperCase());
+}
+
 /**
  * http(s) 网址的同一性。
  * scheme 与 host 小写、去掉默认端口与 userinfo、去掉 fragment、
- * 非根路径去掉尾斜杠、丢掉跟踪参数、其余 query 按键和值排序。
+ * 非根路径去掉尾斜杠、路径里的百分号编码改为大写、丢掉跟踪参数、其余 query 按键和值排序。
  * 解析失败或不是 http(s) 时返回 null（不参与网址判重）。
  */
 export function normalizeHttpSourceRef(raw: string): HttpSourceRef | null {
@@ -76,10 +82,11 @@ export function normalizeHttpSourceRef(raw: string): HttpSourceRef | null {
     return null;
   }
   if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
-  const pathname =
+  const pathname = uppercasePercentEncoding(
     url.pathname.length > 1 && url.pathname.endsWith('/')
       ? url.pathname.slice(0, -1)
-      : url.pathname;
+      : url.pathname,
+  );
   const params = [...url.searchParams.entries()]
     .filter(([key]) => !isTrackingParam(key))
     .sort((a, b) => (a[0] === b[0] ? a[1].localeCompare(b[1]) : a[0].localeCompare(b[0])));
@@ -93,6 +100,29 @@ export function normalizeHttpSourceRef(raw: string): HttpSourceRef | null {
   return asHttpSourceRef(`${url.protocol}//${url.hostname}${port}${pathname}${query}`);
 }
 
+const JYEOO_DETAIL_PATH = /^\/[^/]+\/ques\/detail\/([^/]+)$/;
+
+/** 一页只对应一道题。目前只有菁优网 `/ques/detail/<id>`。多题页面造不出这个类型。 */
+export interface OneQuestionPage {
+  readonly kind: 'jyeoo_detail';
+  readonly ref: HttpSourceRef;
+  readonly detailId: string;
+}
+
+export function oneQuestionPage(raw: string): OneQuestionPage | null {
+  const ref = normalizeHttpSourceRef(raw);
+  if (ref == null) return null;
+  const url = new URL(ref);
+  if (url.hostname !== JYEOO_SOURCE_HOST) return null;
+  const match = JYEOO_DETAIL_PATH.exec(url.pathname);
+  if (match == null) return null;
+  return { kind: 'jyeoo_detail', ref, detailId: match[1] };
+}
+
+function likeContains(fragment: string): string {
+  return `%${fragment.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
+}
+
 function visibleSourceRow() {
   return and(
     isNull(question.parent_question_id),
@@ -103,7 +133,7 @@ function visibleSourceRow() {
 
 export async function findSameHttpSource(
   db: Db | Tx,
-  source: HttpSourceRef,
+  page: OneQuestionPage,
   excludeQuestionId?: string,
 ): Promise<{ id: string } | null> {
   const rows = await db
@@ -112,7 +142,7 @@ export async function findSameHttpSource(
     .where(
       and(
         visibleSourceRow(),
-        sql`${question.source_ref} IS NOT NULL`,
+        sql`${question.source_ref} ILIKE ${likeContains(`/ques/detail/${page.detailId}`)} ESCAPE '\\'`,
         sql`(
           ${question.metadata}->>'source_ref_kind' = 'url'
           OR ${question.source_ref} ILIKE 'http%'
@@ -123,7 +153,7 @@ export async function findSameHttpSource(
     .orderBy(asc(question.created_at), asc(question.id));
   for (const row of rows) {
     if (row.sourceRef == null) continue;
-    if (normalizeHttpSourceRef(row.sourceRef) === source) return { id: row.id };
+    if (oneQuestionPage(row.sourceRef)?.ref === page.ref) return { id: row.id };
   }
   return null;
 }
@@ -162,7 +192,11 @@ async function lockHttpSourceRef(tx: Tx, source: HttpSourceRef): Promise<void> {
   await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`ingest-source:${source}`}))`);
 }
 
-/** 事务内锁住规范化网址，命中既有题就把知识点并进去。未命中返回 null。 */
+/**
+ * 只对一页一题的网址加锁并查重。多题页面返回 null。
+ * onTerminal=defer 时终态草稿不合并、也不归档（预检）。
+ * onTerminal=release 时在当前事务里放行终态草稿，调用方继续插入。
+ */
 export async function claimHttpSourceDuplicate(
   tx: Tx,
   params: {
@@ -171,21 +205,23 @@ export async function claimHttpSourceDuplicate(
     actorRef: 'sourcing' | 'jyeoo_fetch';
     taskRunId?: string;
     now: Date;
+    onTerminal: 'defer' | 'release';
   },
 ): Promise<{ existingQuestionId: string; addedKnowledgeIds: string[] } | null> {
-  const source = normalizeHttpSourceRef(params.sourceUrl);
-  if (source == null) return null;
-  await lockHttpSourceRef(tx, source);
-  const hit = await findSameHttpSource(tx, source);
+  const page = oneQuestionPage(params.sourceUrl);
+  if (page == null) return null;
+  await lockHttpSourceRef(tx, page.ref);
+  const hit = await findSameHttpSource(tx, page);
   if (hit == null) return null;
-  const merged = await mergeKnowledgeForSourceDuplicate(tx, {
+  const settled = await settleOneQuestionPageHit(tx, {
     questionId: hit.id,
     knowledgeIds: params.knowledgeIds,
     actorRef: params.actorRef,
     taskRunId: params.taskRunId,
     now: params.now,
+    onTerminal: params.onTerminal,
   });
-  return { existingQuestionId: hit.id, addedKnowledgeIds: merged.addedKnowledgeIds };
+  return settled === 'continue' ? null : settled;
 }
 
 export function vectorNearHoldMetadata(hit: {

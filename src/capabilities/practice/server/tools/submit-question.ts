@@ -72,7 +72,7 @@ export {
 } from '@/server/questions/submit-question';
 
 import { resolveSubjectProfile } from '@/subjects/profile';
-import { embedQuestionTextForIngest } from '../../jobs/embed_backfill';
+import { embedQuestionTextForIngest, questionEmbedStamp } from '../../jobs/embed_backfill';
 import { SupplyTraceV1 } from '../question-supply/evidence-demand';
 import {
   claimHttpSourceDuplicate,
@@ -394,6 +394,7 @@ async function runCandidateSubmit(
     actorRef: routeConfig.mergeActorRef,
     taskRunId: ctx.taskRunId,
     now,
+    onTerminal: 'defer' as const,
   };
   const claimedSource = await db.transaction((tx) => claimHttpSourceDuplicate(tx, sourceClaim));
   if (claimedSource != null) {
@@ -426,13 +427,14 @@ async function runCandidateSubmit(
   }
 
   let vectorNear: { id: string; similarity: number } | null = null;
+  let ingestVector: number[] | null = null;
+  const questionText = {
+    prompt_md: candidate.question.prompt_md,
+    reference_md: candidate.question.reference_md,
+    choices_md: candidate.question.choices_md ?? null,
+  };
   try {
-    const questionText = {
-      prompt_md: candidate.question.prompt_md,
-      reference_md: candidate.question.reference_md,
-      choices_md: candidate.question.choices_md ?? null,
-    };
-    const vector = await (
+    ingestVector = await (
       deps.embedIngestText ??
       ((q: typeof questionText) =>
         embedQuestionTextForIngest(q, {
@@ -441,8 +443,9 @@ async function runCandidateSubmit(
           deadlineAt: new Date(Date.now() + 20_000),
         }))
     )(questionText);
-    vectorNear = await findVectorNearDuplicate(db, vector);
+    vectorNear = await findVectorNearDuplicate(db, ingestVector);
   } catch (err) {
+    ingestVector = null;
     console.error('[submit_question] vector near-dup abstained:', err);
   }
 
@@ -466,7 +469,10 @@ async function runCandidateSubmit(
     | { status: 'source_duplicate'; existingId: string };
   try {
     persisted = await db.transaction(async (tx) => {
-      const racedSource = await claimHttpSourceDuplicate(tx, sourceClaim);
+      const racedSource = await claimHttpSourceDuplicate(tx, {
+        ...sourceClaim,
+        onTerminal: 'release',
+      });
       if (racedSource != null) {
         return { status: 'source_duplicate' as const, existingId: racedSource.existingQuestionId };
       }
@@ -486,6 +492,30 @@ async function runCandidateSubmit(
       });
       if (inserted.status === 'raced_merged') return inserted;
 
+      const [storedText] = await tx
+        .select({
+          prompt_md: question.prompt_md,
+          reference_md: question.reference_md,
+          choices_md: question.choices_md,
+        })
+        .from(question)
+        .where(eq(question.id, questionId));
+      const embedStamp =
+        ingestVector != null &&
+        storedText != null &&
+        storedText.prompt_md === questionText.prompt_md &&
+        (storedText.reference_md ?? null) === questionText.reference_md &&
+        JSON.stringify(storedText.choices_md ?? null) === JSON.stringify(questionText.choices_md)
+          ? questionEmbedStamp(
+              {
+                prompt_md: storedText.prompt_md,
+                reference_md: storedText.reference_md,
+                choices_md: storedText.choices_md ?? null,
+              },
+              ingestVector,
+            )
+          : null;
+
       if (hasImages && candidate.figures && candidate.image_refs && candidate.structured) {
         await tx
           .update(question)
@@ -499,6 +529,7 @@ async function runCandidateSubmit(
             structured: { ...candidate.structured, id: questionId },
             metadata: sql`${question.metadata} || ${JSON.stringify(metadataExtras)}::jsonb`,
             updated_at: now,
+            ...(embedStamp ?? {}),
           })
           .where(eq(question.id, questionId));
       } else {
@@ -507,6 +538,7 @@ async function runCandidateSubmit(
           .set({
             metadata: sql`${question.metadata} || ${JSON.stringify(metadataExtras)}::jsonb`,
             updated_at: now,
+            ...(embedStamp ?? {}),
           })
           .where(eq(question.id, questionId));
       }
