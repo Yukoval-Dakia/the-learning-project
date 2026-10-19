@@ -1,6 +1,7 @@
 // One cascade revert. The class depends on action, subject_kind, and edge_op.
 // Anything outside the reversible tables is irreversible, and one such node refuses the whole cascade.
-// state_snapshot restore does not check the live row. This orchestrator does, with exact equality.
+// state_snapshot restore does not check the live row. This orchestrator does.
+// θ̂ uses exact ===. FSRS uses fsrsCardEq on the card scalars.
 // The root checkpoint is applied last, in one transaction.
 
 import { and, eq, inArray } from 'drizzle-orm';
@@ -167,7 +168,10 @@ function classifyRow(row: EventRow): RevertableEffect {
     return { ...base, reversibility: 'event_layer' };
   }
 
-  // Attempts, reviews, judges, and any generate that is not a knowledge edge, including extract and suppress.
+  // Fallback. Everything not listed in a reversible table is irreversible.
+  // extract and suppress are their own actions.
+  // They land here because no reversible table names them.
+  // A generate whose subject is not a knowledge edge lands here for the same reason.
   return { ...base, reversibility: 'irreversible' };
 }
 
@@ -561,7 +565,8 @@ async function assertSnapshotMatchesCurrent(
 }
 
 /**
- * theta_hat is double precision, so === is the comparison.
+ * theta_hat is double precision. The live column and snapshot.after come from the same
+ * computation, and postgres-js round-trips that float without loss, so === does not false-alarm.
  * Rounding both sides would hide a real drift.
  */
 function thetaExactEq(current: number, payloadAfter: number): boolean {
