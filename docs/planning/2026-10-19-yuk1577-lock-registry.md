@@ -1,15 +1,17 @@
 # YUK-1577 — advisory-lock 静态盘点与排序证据
 
 > 架构深化线子任务交付文档（修正版，父验收退回 `fc6197324` 后重做）。
+> 当前限制：四项已核实事实错误尚未修正，见 [锁登记顶部](../architecture/advisory-locks.md)；
+> 下一片先修这四项。本记录不能作为完整排序证明。
 > 分支 `refactor/yuk-1577-lock-ownership-registry`，基于 `origin/main@69644912`。
-> 权威文档：`docs/architecture/advisory-locks.md`。**无生产代码改动**——首版的
+> 登记文档：`docs/architecture/advisory-locks.md`。**无生产代码改动**——首版的
 > registry 模块与 fail-closed 消费面已按 brief 撤回（见 §6 修正记录）。
 
 ## 1. 交付物
 
 | 物 | 位置 | 说明 |
 |---|---|---|
-| 权威锁文档 | `docs/architecture/advisory-locks.md` | 覆盖口径、helper 表、79 族紧凑表、排序边摘要、已知边界 |
+| 锁登记文档 | `docs/architecture/advisory-locks.md` | 覆盖口径、helper 表、79 族紧凑表、排序边摘要、已知边界 |
 | 原始证据（仓库外） | `…/YUK-1577/fc619732/raw-lock-sites.txt` | 148 行文本匹配原样 |
 | 站点分类 | `…/fc619732/site-classification.txt` | exec/comment 逐行计数 |
 | 79 族机读表 | `…/fc619732/family-table.md`、`registry-snapshot.ts` | 被撤下的 registry 稿，仅作快照 |
@@ -29,7 +31,7 @@
   `after` 边集无环只说明"登记的边彼此不构成环"，**不证明** 0 reachable cycles、
   不证明无反向站点、不证明跨 backend 无互等。
 
-## 3. 已证边摘要（详见 edge-evidence.md）
+## 3. 顺序登记摘要（已知不准确见登记文档顶部）
 
 learning spine：`G → fsrs:*(sorted) → ability_global(sorted)`；
 assessment：`G → group → 行锁 → fsrs:*`；
@@ -49,7 +51,7 @@ G :820 位于另一个 export `activateSubmissionCandidate` 的事务 :818。
 不据此登记 deadlock bug。真实的 G→group 激活顺序不变；跨 backend 同组
 等待仍覆盖 model span，其他行锁介导形态未知，无 DB 并发运行证明。
 
-原外部证据保留；纠正 E3x 的新副本和 SHA-256 见权威锁文档 §4。
+原外部证据保留；纠正 E3x 的新副本和 SHA-256 见锁登记文档 §4。
 同时修正扫描正则漏列 plain `pg_advisory_lock`（148 中唯一额外匹配为注释），
 以及 family 71 直接语句数 2→1。生产源码/测试均未变。
 
