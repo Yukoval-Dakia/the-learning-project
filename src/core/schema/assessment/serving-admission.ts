@@ -15,7 +15,7 @@ import {
 import type { ResponseSlotT } from './response';
 import type { PublishedQuestionRevisionT } from './revision';
 import { type ScoringUnitT, validateScoringBasis } from './scoring';
-import { NATIVE_FIELD_SLOT_KIND_SET } from './slot-renderers';
+import { NATIVE_FIELD_SLOT_KIND_SET, PRESENTATION_INPUT_SLOT_KINDS } from './slot-renderers';
 
 /** YUK-1445 —— typed withheld reasons（公共读面安全枚举；detail 只作内部诊断）。
  * 单一来源：wire schema / DTO 共用此 tuple，禁止第二份拷贝。 */
@@ -190,7 +190,9 @@ export const INPUT_RENDERER_SLOT_KINDS: ReadonlySet<ResponseSlotT['kind']> =
  * YUK-1497 —— 只能由展示层输入积木画出的槽位种类（spec §4）：没有逐槽控件，
  * 只有 revision 的 presentation 用声明式输入积木绑定它时才可出。
  */
-const BLOCK_INPUT_SLOT_KINDS: ReadonlySet<ResponseSlotT['kind']> = new Set(['select', 'blank']);
+const BLOCK_INPUT_SLOT_KINDS: ReadonlySet<ResponseSlotT['kind']> = new Set(
+  PRESENTATION_INPUT_SLOT_KINDS,
+);
 
 /** 每个被绑定槽位由谁画：声明式输入积木，或网页尚不能运行的自定义块。 */
 function presentationBinders(presentation: PresentationT): Map<string, 'block' | 'custom'> {

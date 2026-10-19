@@ -33,11 +33,23 @@ export function hasNativeSlotField(slot: ResponseSlotT): slot is NativeFieldSlot
 }
 
 /**
- * 整卷页（PfPaper）能作答的槽位种类。整卷页目前只经 nativeSlotFieldSpec 逐槽画控件、
- * 不渲染展示层，所以恰为原生控件种类；整卷页渲染展示层后只在这里放宽。
+ * 只能由展示层输入积木画出的槽位种类（YUK-1497 spec §4）：出题门要求它们被声明式输入积木
+ * 绑定才发出（被自定义块绑定的一律扣发，直到 YUK-1513）。
  */
-export const WHOLE_PAPER_SLOT_KINDS: ReadonlySet<ResponseSlotT['kind']> =
-  NATIVE_FIELD_SLOT_KIND_SET;
+export const PRESENTATION_INPUT_SLOT_KINDS = [
+  'select',
+  'blank',
+] as const satisfies readonly ResponseSlotT['kind'][];
+
+/**
+ * 整卷页（PfPaper）能作答的槽位种类：原生逐槽控件，加上展示层输入积木画的 select / blank
+ * （YUK-1573：整卷页与单题页用同一个 PresentationBlocks）。发出的 select / blank 槽必被
+ * 声明式积木绑定（出题门），所以整卷页总能画出。
+ */
+export const WHOLE_PAPER_SLOT_KINDS: ReadonlySet<ResponseSlotT['kind']> = new Set([
+  ...NATIVE_FIELD_SLOT_KINDS,
+  ...PRESENTATION_INPUT_SLOT_KINDS,
+]);
 
 /** 整卷开卷/交卷拒绝的 typed 原因码（服务端 409 error 字段；页面按它出学习者文案）。 */
 export const PAPER_MODE_UNSUPPORTED_SLOT_KIND = 'paper_mode_unsupported_slot_kind';
