@@ -3,7 +3,6 @@
 // 记一笔交给现有草稿待裁决（source_verify → needs_review）。
 
 import { and, asc, isNull, ne, sql } from 'drizzle-orm';
-import { QUESTION_EMBED_DIMS } from '@/capabilities/practice/jobs/embed_backfill';
 import { mergeKnowledgeForSourceDuplicate } from '@/capabilities/practice/server/quiz/content-fingerprint';
 import type { Db, Tx } from '@/db/client';
 import { question } from '@/db/schema';
@@ -18,6 +17,9 @@ export type HttpSourceRef = string & { readonly [HttpSourceRefBrand]: true };
 export const VECTOR_NEAR_DUP_MIN_SIMILARITY = 0.93;
 
 const VECTOR_NEAR_DUP_MAX_DISTANCE = 1 - VECTOR_NEAR_DUP_MIN_SIMILARITY;
+
+// question.embedding 是 vector(1024)，与 EMBED_DIMS 对齐。这里不 import embed 模块。
+const QUESTION_EMBED_WIDTH = 1024;
 
 export const VECTOR_NEAR_HOLD_KEY = 'vector_near_dup';
 
@@ -131,7 +133,7 @@ export async function findVectorNearDuplicate(
   vector: number[],
   excludeQuestionId?: string,
 ): Promise<{ id: string; similarity: number } | null> {
-  if (vector.length !== QUESTION_EMBED_DIMS) return null;
+  if (vector.length !== QUESTION_EMBED_WIDTH) return null;
   const distance = sql<number>`${question.embedding} <=> ${toSqlVector(vector)}::vector`;
   const [row] = await db
     .select({ id: question.id, distance })

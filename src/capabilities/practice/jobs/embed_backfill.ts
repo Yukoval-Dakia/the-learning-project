@@ -39,8 +39,6 @@ import { embedHash, knowledgeEmbedText, questionEmbedText } from '@/server/ai/em
 // KC embed text now folds effective-domain → every existing KC vector is stale.
 export const EMBED_VERSION = 2;
 
-export const QUESTION_EMBED_DIMS = EMBED_DIMS;
-
 export async function embedQuestionTextForIngest(
   q: {
     prompt_md: string;
