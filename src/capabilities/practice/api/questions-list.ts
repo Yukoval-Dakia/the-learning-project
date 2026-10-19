@@ -48,6 +48,7 @@ export async function GET(req: Request): Promise<Response> {
       group_by_family: parseBool(sp.get('group_by_family')),
       expand_root: sp.get('expand_root') ?? undefined,
       include_drafts: parseBool(sp.get('include_drafts')),
+      include_serving_counts: parseBool(sp.get('include_serving_counts')),
       enrich: parseBool(sp.get('enrich')),
       limit: sp.get('limit') ?? undefined,
       offset: sp.get('offset') ?? undefined,
@@ -71,8 +72,7 @@ export async function GET(req: Request): Promise<Response> {
         q.expand_root !== undefined ||
         q.source_tier.length > 0 ||
         q.sort_by === 'source_tier' ||
-        // YUK-1514 — the serving pass is in-memory over the full filtered set;
-        // cursor paging has no equivalent there.
+        // Serving requests retain their offset-only API contract.
         q.status === 'not_servable' ||
         q.include_serving_counts)
     ) {
