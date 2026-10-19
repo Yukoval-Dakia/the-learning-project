@@ -1,11 +1,12 @@
 /* YUK-1473 — the single-question practice page, layout 「纸面」 (owner 2026-10-16). Scoped under
    [data-ui-next]; semantic --un- tokens only (T1).
-   The question and the answer read as one sheet of paper: the question number in a left gutter,
+   The page itself is the white paper (owner 2026-10-18, R2: no card on cream): the banner and the
+   question are written straight onto it, the question number in a left gutter,
    each answer written right under its own question on ruled lines (no box; it grows as you
    write), choices as lines of the sheet, a small glass action bar floating at the bottom of the
    screen while answering (a floating layer, T3), then the result and a quiet timeline of earlier
    attempts at the end of the same sheet.
-   Layers (T3, T7): page → sheet (flat, no shadow) → sticky glass bar → selection bubble →
+   Layers (T3, T7): white page (the sheet is flat on it) → sticky glass bar → selection bubble →
    hint drawer → figure zoom. --un-ps-top / --un-ps-bottom: the retained shell's sticky top bar and
    phone tab bar (transitional; measured by the page). */
 
@@ -22,7 +23,12 @@
 
   /* 纸面's page padding (.un-pn-main in layout paper): the page lays out its own width, with no
      shared .page padding around it. */
+  box-sizing: border-box;
   padding: var(--un-sp-5) var(--un-sp-6) var(--un-sp-6);
+  /* The white page fills the retained shell's content area below its top bar, so the paper does
+     not end in a cream band under a short question (R2, owner 2026-10-18). */
+  min-height: calc(100dvh - var(--un-ps-top, 0px));
+  background: var(--un-bg-raised);
 }
 
 [data-ui-next] .un-ps-column {
@@ -84,14 +90,20 @@
   gap: var(--un-sp-1);
 }
 
-/* ── The sheet ── */
+/* ── The sheet: written straight on the white page, no card (R2, owner 2026-10-18). The question
+   number square lines up with the banner's text edge. ── */
 [data-ui-next] .un-ps-sheet {
   display: grid;
   gap: var(--un-sp-5);
-  padding: var(--un-sp-5) var(--un-sp-6) var(--un-sp-5) var(--un-sp-5);
-  border-radius: var(--un-r-2);
-  background: var(--un-bg-raised);
-  box-shadow: 0 0 0 var(--un-hairline) var(--un-line);
+  padding-top: var(--un-sp-6);
+}
+/* 「题目」 section label, as in the prototype's question screen. */
+[data-ui-next] .un-ps-sheet-label {
+  margin: 0 0 calc(-1 * var(--un-sp-2));
+  font-size: var(--un-fs-2);
+  font-weight: var(--un-fw-semibold);
+  line-height: var(--un-lh-tight);
+  color: var(--un-text-1);
 }
 
 /* The stem, with the question square in the gutter. */
@@ -826,13 +838,11 @@
   box-shadow: 0 0 0 var(--un-hairline) var(--un-line);
   color: var(--un-text-2);
 }
+/* Flat on the white page, where the question will be written. */
 [data-ui-next] .un-ps-skeleton {
   display: grid;
   gap: var(--un-sp-3);
-  padding: var(--un-sp-5);
-  border-radius: var(--un-r-2);
-  background: var(--un-bg-raised);
-  box-shadow: 0 0 0 var(--un-hairline) var(--un-line);
+  padding-top: var(--un-sp-6);
 }
 [data-ui-next] .un-ps-skeleton span {
   display: block;
@@ -1061,12 +1071,9 @@
   [data-ui-next] .un-ps-banner {
     gap: var(--un-sp-4);
   }
-  [data-ui-next] .un-ps-sheet {
-    padding: var(--un-sp-5);
-  }
 }
 
-/* ── Phone (T8: ≤ 720px): the sheet runs to the screen edges; the bar floats above the shell's
+/* ── Phone (T8: ≤ 720px): the bar floats above the shell's
    tab bar; the passage is one tap away instead of stacked (R9 phone form undecided, §11). ── */
 @media (max-width: 720px) {
   [data-ui-next] .un-ps {
@@ -1086,8 +1093,7 @@
   }
   [data-ui-next] .un-ps-sheet {
     gap: var(--un-sp-4);
-    margin: 0 calc(-1 * var(--un-sp-2));
-    padding: var(--un-sp-5) var(--un-sp-4) var(--un-sp-5) var(--un-sp-3);
+    padding-top: var(--un-sp-5);
   }
   [data-ui-next] .un-ps-sheet-q,
   [data-ui-next] .un-ps-vpart {
@@ -1122,7 +1128,7 @@
     z-index: var(--un-z-raised);
     display: block;
     padding: var(--un-sp-2) 0;
-    background: var(--un-bg);
+    background: var(--un-bg-raised);
   }
   [data-ui-next] .un-ps-split[data-pane="questions"] .un-ps-passage,
   [data-ui-next] .un-ps-split[data-pane="passage"] .un-ps-questions {
