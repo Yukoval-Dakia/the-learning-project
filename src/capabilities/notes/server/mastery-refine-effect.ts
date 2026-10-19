@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
-import { and, desc, eq, gt, sql } from 'drizzle-orm';
-import type { Tx } from '@/db/client';
+import { and, desc, eq, gt, isNull, sql } from 'drizzle-orm';
+import { DOWNSTREAM_COMPLETION_CONTRACT } from '@/core/event-subscription-effect';
+import type { Db, Tx } from '@/db/client';
 import { event_subscription_effect } from '@/db/schema';
 import { notesBossTransaction } from './boss-port';
 import type { NoteRefineBossSend } from './note-refine-triggers';
@@ -101,6 +102,7 @@ export async function reserveAndEnqueueMasteryRefineEffect(input: {
         'note_refine',
         {
           artifact_id: input.artifactId,
+          effect_id: effectId,
           trigger: {
             kind: 'mastery_change',
             context_md: input.questionId
@@ -139,11 +141,41 @@ export async function reserveAndEnqueueMasteryRefineEffect(input: {
       reserved_at: now,
       enqueued_at: enqueuedAt,
       completed_at: status === 'enqueued' ? null : now,
-      outcome: status === 'enqueued' ? null : { status },
+      outcome:
+        status === 'enqueued'
+          ? { completion_contract: DOWNSTREAM_COMPLETION_CONTRACT }
+          : { status },
       created_at: now,
       updated_at: now,
     })
     .returning();
   if (!inserted[0]) throw new Error('mastery refine effect was not persisted');
   return { status, effectId, effect: inserted[0] };
+}
+
+/** Record the note_refine job's terminal result on its owning effect. */
+export async function recordMasteryRefineEffectCompletion(input: {
+  db: Db | Tx;
+  effectId: string;
+  status: string;
+  now?: Date;
+}): Promise<void> {
+  const now = input.now ?? new Date();
+  await input.db
+    .update(event_subscription_effect)
+    .set({
+      completed_at: now,
+      updated_at: now,
+      outcome: sql`coalesce(${event_subscription_effect.outcome}, '{}'::jsonb) || ${JSON.stringify({
+        completion_contract: DOWNSTREAM_COMPLETION_CONTRACT,
+        status: input.status,
+      })}::jsonb`,
+    })
+    .where(
+      and(
+        eq(event_subscription_effect.id, input.effectId),
+        eq(event_subscription_effect.effect_kind, 'mastery_change'),
+        isNull(event_subscription_effect.completed_at),
+      ),
+    );
 }

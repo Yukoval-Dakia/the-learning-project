@@ -9,6 +9,7 @@ import { downloadZip } from 'client-zip';
 import { getTableColumns, getTableName, isTable, sql } from 'drizzle-orm';
 import { unzipSync } from 'fflate';
 import { getConfigSnapshot } from '@/core/config/store';
+import { hasCompletionContract } from '@/core/event-subscription-effect';
 import type { Db, Tx } from '@/db/client';
 import * as schema from '@/db/schema';
 import { hydrateConfigFromDb } from '@/server/config/hydrate';
@@ -425,7 +426,7 @@ function stringOrNull(value: unknown): string | null {
 function unresolvedEffectReason(status: string | null): string {
   switch (status) {
     case 'enqueued':
-      return 'downstream job was enqueued but the archive has no completion receipt or pg-boss job';
+      return 'downstream job was enqueued under the completion contract but the archive has no completion receipt';
     case 'reserved':
       return 'effect was reserved but never enqueued or completed';
     default:
@@ -436,8 +437,9 @@ function unresolvedEffectReason(status: string | null): string {
 }
 
 /** Effects whose downstream work is not proven settled by this archive. A
- *  non-null completed_at is explicit receipt evidence; current writers only
- *  complete debounced/disabled effects. */
+ *  non-null completed_at is explicit receipt evidence. Enqueued rows written
+ *  before the receipt contract carry no completion fact, so they are not used
+ *  to infer that work is outstanding. */
 function findUnresolvedEffects(
   rows: ReadonlyArray<Record<string, unknown>> | undefined,
 ): UnresolvedEffect[] {
@@ -445,11 +447,9 @@ function findUnresolvedEffects(
   for (const row of rows ?? []) {
     const status = stringOrNull(row.status);
     const settledByStatus = status !== null && EFFECT_STATUS_WITHOUT_DOWNSTREAM_WORK.has(status);
-    const settledByReceipt =
-      (status === 'enqueued' || status === 'reserved') &&
-      row.completed_at !== null &&
-      row.completed_at !== undefined;
-    if (settledByStatus || settledByReceipt) continue;
+    const settledByReceipt = row.completed_at !== null && row.completed_at !== undefined;
+    const legacyEnqueued = status === 'enqueued' && !hasCompletionContract(row.outcome);
+    if (settledByStatus || settledByReceipt || legacyEnqueued) continue;
     unresolved.push({
       id: stringOrNull(row.id),
       effect_kind: stringOrNull(row.effect_kind),
@@ -755,9 +755,9 @@ export async function restoreFromArchive({
     };
   }
 
-  // YUK-1614: an effect can record a queue send, but the logical ZIP contains
-  // no pg-boss rows or downstream completion receipt. Refuse before the
-  // destructive transaction instead of treating "enqueued" as completed.
+  // YUK-1614: a receipt-bearing effect can record a queue send without the
+  // downstream completion receipt; the logical ZIP has no pg-boss rows to
+  // recover it. Refuse before the destructive transaction.
   const unresolvedEffects = findUnresolvedEffects(data.event_subscription_effect);
   if (unresolvedEffects.length > 0) {
     return {
