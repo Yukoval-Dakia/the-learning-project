@@ -26,8 +26,13 @@ import type { Job } from 'pg-boss';
 import type { DispatchResult } from '@/capabilities/practice/public';
 import { dispatchPracticeSupplyTargets as dispatchSupplyTargets } from '@/capabilities/practice/public';
 import { runInventoryShadowDualRead } from '@/capabilities/practice/server/question-supply/inventory-projection';
-import { discoverSupplyTargets } from '@/capabilities/practice/server/question-supply/target-discovery';
+import {
+  type QuestionSupplyTarget,
+  discoverSupplyTargets,
+} from '@/capabilities/practice/server/question-supply/target-discovery';
 import type { Db } from '@/db/client';
+import { type ReturnStockGap, loadReturnStockGaps } from '@/kernel/read-models/return-stock';
+import { loadActivityTier } from '../server/activity-tier';
 import type {
   PlacementStarterRecoveryDeps,
   PlacementStarterRecoveryResult,
@@ -46,6 +51,11 @@ type DepsOverride = {
    * Codex review F3 — 本轮最多派发多少个供给目标（防一次 cron 打爆付费队列）。default 25。
    */
   maxPerRun?: number;
+  /**
+   * 空闲 / 回来唤醒：只派仍缺库存的 frontier_zero 目标，按每个目标自己的缺口数量。
+   * 不用 maxPerRun 把目标个数截断。
+   */
+  returnStock?: boolean;
   /** YUK-761 — 尾部 placement starter 恢复清扫器的注入（DB 测试可注入 fake dispatch / now）。 */
   placementRecovery?: PlacementStarterRecoveryDeps;
 };
@@ -114,27 +124,59 @@ function tallyByStatus(results: DispatchResult[], discovered: number): SupplyTal
   return out;
 }
 
+function emptyTally(discovered = 0): SupplyTally {
+  return {
+    discovered,
+    considered: 0,
+    deferred: discovered,
+    dispatched: 0,
+    manual: 0,
+    skipped: 0,
+    failed: 0,
+  };
+}
+
+/** 每个 frontier_zero 目标只补自己还缺的题数，补满该目标所属缺口即停。 */
+function selectReturnStockTargets(
+  targets: readonly QuestionSupplyTarget[],
+  gaps: readonly ReturnStockGap[],
+): QuestionSupplyTarget[] {
+  const remaining = gaps.map((gap) => ({
+    ids: new Set(gap.knowledgeIds),
+    missing: gap.missing,
+  }));
+  const selected: QuestionSupplyTarget[] = [];
+  for (const target of targets) {
+    if (target.gapKind !== 'frontier_zero') continue;
+    const knowledgeId = target.knowledgeIds[0];
+    if (!knowledgeId) continue;
+    const hits = remaining.filter((gap) => gap.ids.has(knowledgeId) && gap.missing > 0);
+    if (hits.length === 0) continue;
+    const room = Math.max(...hits.map((gap) => gap.missing));
+    const count = Math.min(target.desiredCount, room);
+    if (count <= 0) continue;
+    selected.push(count === target.desiredCount ? target : { ...target, desiredCount: count });
+    for (const gap of hits) gap.missing -= count;
+  }
+  return selected;
+}
+
 async function runSupplyDiscoveryAndDispatch(db: Db, deps: DepsOverride): Promise<SupplyTally> {
-  const maxPerRun = deps.maxPerRun ?? DEFAULT_MAX_PER_RUN;
+  const gaps = deps.returnStock ? await loadReturnStockGaps(db) : [];
+  if (deps.returnStock && gaps.length === 0) return emptyTally();
   const targets = await discoverSupplyTargets(db, undefined, {
     observeInventory: async (input, currentTargets) => {
       await runInventoryShadowDualRead(db, input, currentTargets);
     },
   });
-  if (targets.length === 0) {
-    return {
-      discovered: 0,
-      considered: 0,
-      deferred: 0,
-      dispatched: 0,
-      manual: 0,
-      skipped: 0,
-      failed: 0,
-    };
-  }
+  if (targets.length === 0) return emptyTally();
   // F3 per-run 硬顶：targets 已按 priority 降序（target-discovery.ts），slice top-N 即派最高
   // 优先级的 N 个，其余留下轮（截掉的目标不 dispatch ⇒ 无 fingerprint 落库 ⇒ 无 cooldown 副作用）。
-  const dispatchTargets = targets.slice(0, maxPerRun);
+  // 空闲库存不走这道截断，改按每个目标还缺几题派。
+  const dispatchTargets = deps.returnStock
+    ? selectReturnStockTargets(targets, gaps)
+    : targets.slice(0, deps.maxPerRun ?? DEFAULT_MAX_PER_RUN);
+  if (dispatchTargets.length === 0) return emptyTally(targets.length);
   const results = await dispatchSupplyTargets(db, dispatchTargets, deps.dispatchDeps);
   return tallyByStatus(results, targets.length);
 }
@@ -244,7 +286,19 @@ export function buildQuestionSupplyNightlyHandler(
 ): (jobs: Job<Record<string, never>>[]) => Promise<void> {
   return async () => {
     try {
-      const result = await runQuestionSupplyNightly(db, deps);
+      const returnStock =
+        deps.returnStock === true ||
+        (deps.maxPerRun === undefined && (await loadActivityTier(db, new Date())) === 'idle');
+      const result = await runQuestionSupplyNightly(
+        db,
+        returnStock
+          ? {
+              dispatchDeps: deps.dispatchDeps,
+              placementRecovery: deps.placementRecovery,
+              returnStock: true,
+            }
+          : deps,
+      );
       console.log('[question_supply_nightly] result', result);
       surfacePlacementStarterRecovery(result.placementStarterRecovery, 'supply leg succeeded');
     } catch (err) {

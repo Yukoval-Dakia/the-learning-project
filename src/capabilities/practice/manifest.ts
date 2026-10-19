@@ -6,6 +6,7 @@ import {
   CursorQuerySchema,
 } from '@/kernel/http-contracts';
 import { defineCapability } from '@/kernel/manifest';
+import { LEARNING_EVENT_ACTIONS, nightlyEligibility } from '@/kernel/nightly-eligibility';
 import { uiPagesFor } from '@/kernel/ui-surfaces';
 import { WORKSHEET_RENDER_QUEUE } from '@/server/boss/queue-names';
 import {
@@ -160,6 +161,9 @@ export const practiceCapability = defineCapability({
       'experimental:assessment_activation',
       'experimental:assessment_publish',
       'experimental:assessment_attempt',
+      // 未作答录入与记录捕获写这个事件。声明放在练习侧，回来唤醒才能订阅，
+      // 只挂练习的组合也不会报 undeclared action。
+      'experimental:record_capture',
       'experimental:assessment_feedback_released',
       'experimental:assessment_placement_issued',
       // YUK-1405 L1 — learner-released held issuance (recorded unresolved).
@@ -202,6 +206,13 @@ export const practiceCapability = defineCapability({
           import('./server/failure-learning-subscription').then(
             (m) => m.buildFailureLearningAttemptSubscriber,
           ),
+      },
+      {
+        id: 'practice.learner-return-wake',
+        version: 1,
+        actions: [...LEARNING_EVENT_ACTIONS],
+        load: () =>
+          import('./server/learner-return-wake').then((m) => m.buildLearnerReturnWakeSubscriber),
       },
     ],
   },
@@ -1131,6 +1142,7 @@ export const practiceCapability = defineCapability({
         // 同表 b_calib → item_prior 是 recalibration 的硬上游（写序：种子先、firm 后）。cron 移除。
         name: 'item_prior_backfill',
         dependsOn: [],
+        eligibility: nightlyEligibility('deterministic', { usesModel: true }),
         queue: 'llm',
         load: () =>
           import('./jobs/item_prior_backfill').then((m) => m.buildItemPriorBackfillHandler),
@@ -1149,6 +1161,7 @@ export const practiceCapability = defineCapability({
         // 排在 compose 前是时钟巧合，不作伪边纳入（见 PR 考据表）。cron 移除，orchestrator 触发。
         name: 'practice_stream_compose_nightly',
         dependsOn: ['recalibration_nightly'],
+        eligibility: nightlyEligibility('deterministic', { usesModel: true }),
         queue: 'llm',
         load: () =>
           import('./jobs/practice_stream_compose_nightly').then(
@@ -1196,6 +1209,7 @@ export const practiceCapability = defineCapability({
         //    传递依赖（recalibration ← item_prior），整条标定链齐了才扫。cron 移除。
         name: 'question_supply_nightly',
         dependsOn: ['recalibration_nightly'],
+        eligibility: nightlyEligibility('supply'),
         queue: 'llm',
         load: () =>
           import('./jobs/question_supply_nightly').then((m) => m.buildQuestionSupplyNightlyHandler),
@@ -1210,6 +1224,7 @@ export const practiceCapability = defineCapability({
       {
         name: 'supply_planner',
         schedule: { cron: '50 5 * * *', tz: 'Asia/Shanghai' },
+        eligibility: nightlyEligibility('deterministic', { usesModel: true }),
         queue: 'llm',
         load: () => import('./jobs/supply_planner').then((m) => m.buildSupplyPlannerHandler),
       },
@@ -1223,6 +1238,7 @@ export const practiceCapability = defineCapability({
       {
         name: 'confusable_contrast_nightly',
         schedule: { cron: '20 6 * * *', tz: 'Asia/Shanghai' },
+        eligibility: nightlyEligibility('deterministic', { usesModel: true }),
         queue: 'llm',
         load: () =>
           import('./jobs/confusable_contrast_nightly').then(
@@ -1241,6 +1257,7 @@ export const practiceCapability = defineCapability({
         // 是硬边（同表 b 锚：种子先、firm 后），且是 compose 选题实读的最终标定态上游。cron 移除。
         name: 'recalibration_nightly',
         dependsOn: ['item_prior_backfill'],
+        eligibility: nightlyEligibility('deterministic'),
         queue: 'llm',
         load: () =>
           import('./jobs/recalibration_nightly').then((m) => m.buildRecalibrationNightlyHandler),
@@ -1256,6 +1273,7 @@ export const practiceCapability = defineCapability({
         // knowledge 包）。cron 移除，orchestrator 起步即触发。
         name: 'embed_backfill',
         dependsOn: [],
+        eligibility: nightlyEligibility('hygiene_embed'),
         queue: 'llm',
         load: () => import('./jobs/embed_backfill').then((m) => m.buildEmbedBackfillHandler),
       },
@@ -1275,6 +1293,7 @@ export const practiceCapability = defineCapability({
       {
         name: 'reference_answer_backfill',
         schedule: { cron: '20 5 * * *', tz: 'Asia/Shanghai' },
+        eligibility: nightlyEligibility('deterministic', { usesModel: true }),
         queue: 'llm',
         load: () =>
           import('./jobs/reference_answer_backfill').then(
@@ -1294,46 +1313,14 @@ export const practiceCapability = defineCapability({
         // 为了受锚点统一触发，不是因为有人等它。cron 移除。
         name: 'answer_class_backfill',
         dependsOn: [],
+        eligibility: nightlyEligibility('deterministic'),
         queue: 'llm',
         load: () =>
           import('./jobs/answer_class_backfill').then((m) => m.buildAnswerClassBackfillHandler),
       },
-      // YUK-386 — `kind_cleanup_backfill` 已删除：question.kind 现在是自由文本展示
-      // 标签，不再有「必须收敛到 canonical 词表」的不变量要维护；读侧词表折叠
-      // （canonicalKindToPersistedForms / answerClassCompatible）继续覆盖历史
-      // profile-vocab 标签行。
-      // YUK-348 (B1 four-engine soft-track inc-1, ADR-0035 决定 #3 + 决定 #4 红线) — 软轨 KT
-      // 估计夜扫。每夜扫「有硬轨 item_calibration 行 + 有非空二元作答序列」的非 draft 题，逐题
-      // estimateBkt (纯 BKT forward) → applyKtEstimate 落 item_calibration.kt_json。kt_json 是
-      // **纯持久化 sink，零下游消费者**——不喂 p(L)/调度/显示（PFA 是唯一可信决策信号，决定 #4）；
-      // n=1 下输出多为 prior-echo（预期且正确，价值在管线就位 + 扩多用户期权 + 诊断丰富度，决定 #3）。
-      // cron 10 5 * * * Asia/Shanghai：错在 recalibration 04:50 + answer_class 05:00 之后、compose
-      // 05:30 之前——晚于硬轨数据预产（item_prior 04:20 / recalibration 04:50），让 KT 读到的作答
-      // 序列已新鲜，且不与前两 job 同分钟竞争。queue=llm：与其它慢热 backfill job 同档 DLQ 重试
-      // （KT 估计本身纯 CPU，但与软/慢轨家族同档调度）。runKtEstimateNightly 在 job 顶层调（非
-      // attempt tx 内），per-question try/catch 隔离单题失败，不加 SAVEPOINT（G1）。
-      {
-        name: 'kt_estimate_nightly',
-        schedule: { cron: '10 5 * * *', tz: 'Asia/Shanghai' },
-        queue: 'llm',
-        load: () =>
-          import('./jobs/kt_estimate_nightly').then((m) => m.buildKtEstimateNightlyHandler),
-      },
-      // YUK-445 (A11 — 谨慎 / 速度-精度轴) — EZ-diffusion 描述符夜扫。runAxisStateBatch 折叠
-      // 计分 RT 作答 per 主 KC → 过 usage gate 的 KC upsert (drift_v/boundary_a/ter) 慢变描述符。
-      // 纯描述符，零下游消费者（不喂 p(L)/调度/θ̂；读出只走 placement-profile 显示）——故不触
-      // LIVE 引擎、无 flag。provenance='adaptive'（唯一 live 源）→ 写 boundary_a+ter，drift_v
-      // 留 NULL（自适应选题混淆，A11 硬边界）。cron 40 5 * * * Asia/Shanghai：错在数据预产链
-      // （kt_estimate 05:10 / reference 05:20 / compose 05:30）之后的空槽——A11 只读 durable
-      // attempt event，对选题链无序依赖，晚槽只为避同分钟竞争。queue=llm：与其它慢热 batch 同档
-      // DLQ 重试（本 batch 纯 CPU+DB，无 LLM 调用）。per-KC upsert 独立 try/catch（不加 SAVEPOINT，
-      // 非 attempt tx 内，G1 同 recalibration_nightly）。
-      {
-        name: 'axis_state_nightly',
-        schedule: { cron: '40 5 * * *', tz: 'Asia/Shanghai' },
-        queue: 'llm',
-        load: () => import('./jobs/axis_state_nightly').then((m) => m.buildAxisStateNightlyHandler),
-      },
+      // YUK-1560 — kt_estimate_nightly 与 axis_state_nightly 的 cron 已摘掉。
+      // handler 文件还在，队列名仍留在 epoch 表里，好让已经入队的行有分类。
+      // kt_json 没有读者。learner_axis_state 的显示读还在，停夜写后停在最后一次写入。
       // YUK-573 — judge 校准不同意率采样（report-only，dark-ship）。kill switch
       // JUDGE_CALIBRATION_SAMPLING_ENABLED 默认 OFF（cron 保持注册，handler no-op，
       // 零 spend）。复判走第二 lane（per-call ctx.override=anthropic-sub，绝不翻
@@ -1346,6 +1333,7 @@ export const practiceCapability = defineCapability({
       {
         name: 'judge_calibration_sample',
         schedule: { cron: '10 6 * * *', tz: 'Asia/Shanghai' },
+        eligibility: nightlyEligibility('deterministic', { usesModel: true }),
         queue: 'agent',
         load: () =>
           import('./jobs/judge_calibration_sample').then(
@@ -1357,6 +1345,12 @@ export const practiceCapability = defineCapability({
       // 已知结果经发布 seam 落 admitted/withheld；未知保留 durable obligation。
       // 单次 admission = 2×solve（+1×crosscheck）LLM 调用 → 'llm' 档；
       // pending admission 的发布事件经上方 subscriber 在事务内入队；恢复不重付。
+      {
+        name: 'learner_return_wake',
+        queue: 'llm',
+        load: () =>
+          import('./server/learner-return-wake').then((m) => m.buildLearnerReturnWakeHandler),
+      },
       {
         name: 'question_admission_run',
         queue: 'llm',
