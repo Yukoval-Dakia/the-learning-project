@@ -28,7 +28,7 @@ import {
   mistake_variant,
   question,
 } from '@/db/schema';
-import { ApiError } from '@/kernel/http';
+import { errorResponse } from '@/kernel/http';
 import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
 import { REVIEW_DUE_LIMIT_MAX, type ReviewDueRow, queryReviewDue } from './due-list';
 import { knowledgeLabels } from './knowledge-labels';
@@ -40,6 +40,10 @@ import {
   normalizeDailyPracticePace,
 } from './stream-budget';
 import type { ComposerInputs } from './stream-composer';
+
+// YUK-1572 — knowledgeLabels 事实读取已归 ./knowledge-labels；此 reexport 保持
+//   本模块既有导出面不变（旧 import 路径兼容）。
+export { knowledgeLabels } from './knowledge-labels';
 
 /** 本模块的 DB 句柄：既可是顶层 `db`，也可是事务内 `tx`。 */
 type DbLike = Db | Tx;
@@ -95,39 +99,20 @@ async function questionMixMetadata(
 }
 
 /**
- * YUK-1572 — composer 的 due 页读取与降级边界。
- *
- * 旧路径经 `handleReviewDue(new Request(...))` 再 `Response.json()` 读回：HTTP
- * adapter 把 due 读取的任何失败整形成不含 `rows` 的错误响应，composer 端
- * `rows ?? []` 因此降级为空候选继续收集其它输入。现在直调同一 typed 读取
- * `queryReviewDue`，这条降级契约由输入收集侧显式持有：
- *   - due 页读取失败 → 返回 []（与旧 `rows ?? []` 等价）；
- *   - ApiError 与 errorResponse 一致不记日志；其它错误按 errorResponse 同款
- *     'unhandled error' 形状记录，失败可观测性不丢；
- *   - 序列化往返被取消：旧路径里 Response.json 序列化失败也会走
- *     errorResponse→[]，但 ReviewDueRow 全部来自 Drizzle timestamp/jsonb 投影
- *     （Date、string[]、字符串枚举），不可序列化值在现实中不可达；composer
- *     只消费 question_id / knowledge_ids 两个 JSON 稳定字段；
- *   - 本函数之后的一切查询（intervention 并集、变式、new_check…）仍旧抛出——
- *     降级只覆盖 due 页读取这一步。
- *
- * ADR-0037 H8 (due-must-review) — due is a HARD constraint: the merge engine may
- * reorder / de-emphasize but MUST NOT drop a due item from the queue. So request
- * the due page's FULL ceiling (REVIEW_DUE_LIMIT_MAX, the same clamp the HTTP
- * adapter enforces) rather than a small slice. The old `10` silently dropped due
- * #11+ BEFORE the engine (capacityGuard, which protects due from truncation past
- * capacity) ever saw them — an unenforced invariant (YUK-349).
+ * YUK-1572 — composer 的 due 页读取与降级边界。直调 HTTP adapter 共用的
+ * `queryReviewDue`，请求 due 页 FULL ceiling（REVIEW_DUE_LIMIT_MAX——与 adapter
+ * 同一 clamp 事实；ADR-0037 H8：merge engine 可重排/降权但不得丢 due）。
+ * due 读取失败经 canonical `errorResponse` 整形/记日志（Response 丢弃）后降级
+ * 为 []，与旧 `rows ?? []` 等价；`errorResponse` 自身失败（如 ApiError details
+ * 不可序列化）照旧向外抛。本函数之后的所有查询（intervention 并集、变式、
+ * new_check…）仍抛出——降级只覆盖 due 页读取这一步。
  */
 async function readComposerDueRows(db: DbLike): Promise<ReviewDueRow[]> {
   try {
     const { rows } = await queryReviewDue(db, { limit: REVIEW_DUE_LIMIT_MAX });
     return rows;
   } catch (err) {
-    if (!(err instanceof ApiError)) {
-      const message = err instanceof Error ? err.message : String(err);
-      const stack = err instanceof Error ? err.stack : undefined;
-      console.error('unhandled error', { message, stack, timestamp: new Date().toISOString() });
-    }
+    errorResponse(err);
     return [];
   }
 }
@@ -325,7 +310,7 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
 
   // 标签批量解析（reasoning 模板用）。
   const labelMap = await knowledgeLabels(db, [
-    ...dueRows.flatMap((r) => r.knowledge_ids).slice(0, 50),
+    ...dueRows.flatMap((r) => r.knowledge_ids ?? []).slice(0, 50),
     ...newCheckPairs.map((p) => p.knowledgeId),
     ...frontierPairs.map((p) => p.knowledgeId),
   ]);
@@ -337,7 +322,7 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
       const metadata = mixMetadataByQuestion.get(r.question_id);
       return {
         questionId: r.question_id,
-        knowledgeLabel: r.knowledge_ids.length ? labelMap.get(r.knowledge_ids[0]) : undefined,
+        knowledgeLabel: r.knowledge_ids?.length ? labelMap.get(r.knowledge_ids[0]) : undefined,
         knowledgeId: metadata?.knowledgeId,
         questionKind: metadata?.questionKind,
         source: metadata?.isInterventionDiagnostic ? 'intervention' : 'decay',
