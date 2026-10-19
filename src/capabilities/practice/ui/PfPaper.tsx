@@ -7,6 +7,7 @@ import type { ResponseSetT, SlotResponseT } from '@/core/schema/assessment';
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useMemo, useRef, useState } from 'react';
+import { PAPER_MODE_UNSUPPORTED_SLOT_KIND } from '@/core/schema/assessment/slot-renderers';
 import { REASONING_TRACE_MAX_LEN } from '@/kernel/limits';
 import { AssetEvidencePreview } from '@/ui/components/response/AssetEvidencePreview';
 import { ChoiceSetResponse } from '@/ui/components/response/ChoiceSetResponse';
@@ -28,6 +29,7 @@ import { SaveStateChip } from '@/ui/components/response/SaveStateChip';
 import { SelfConfidenceField } from '@/ui/components/response/SelfConfidenceField';
 import { StimulusFigure } from '@/ui/components/response/StimulusFigure';
 import { usePagehideTransition } from '@/ui/hooks/usePagehideTransition';
+import { ApiError } from '@/ui/lib/api';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { Btn } from '@/ui/primitives/Btn';
 import { Card } from '@/ui/primitives/Card';
@@ -49,6 +51,14 @@ import {
 // shouldOfferProcessBox 决定过程框挂不挂，buildCaptureFields 负责 trim 判空 + 防御性截断
 // +「空值不发字段」。两者随 PfSolo 的提交引擎移到 use-practice-submit（YUK-1473）。
 import { buildCaptureFields, shouldOfferProcessBox } from './use-practice-submit';
+
+// YUK-1573 — the server refuses opening / handing in a whole paper whose issued slots this
+// page cannot draw; the learner answers those questions one by one instead.
+const PAPER_MODE_UNSUPPORTED_COPY = '这份卷暂时不能整卷作答，请逐题作答';
+
+function isPaperModeUnsupported(e: unknown): boolean {
+  return e instanceof ApiError && e.code === PAPER_MODE_UNSUPPORTED_SLOT_KIND;
+}
 
 function slotKey(s: PaperSlot): string {
   return `${s.question_id}::${s.part_ref ?? ''}`;
@@ -455,7 +465,13 @@ function PaperVisit({
             // The open was not accepted: let a later attach of this visit try again.
             sessionStart.current = null;
             if (componentActiveRef.current)
-              addToast(`开卷失败：${(e as Error).message}`, 'info', 'alert');
+              addToast(
+                isPaperModeUnsupported(e)
+                  ? PAPER_MODE_UNSUPPORTED_COPY
+                  : `开卷失败：${(e as Error).message}`,
+                'info',
+                'alert',
+              );
           },
         );
       const onVisibilityChange = () => {
@@ -1070,7 +1086,13 @@ function PaperVisit({
           startTimingSegment(slotKey(current), false);
         }
       }
-      addToast(`交卷失败：${(e as Error).message}`, 'info', 'alert');
+      addToast(
+        isPaperModeUnsupported(e)
+          ? PAPER_MODE_UNSUPPORTED_COPY
+          : `交卷失败：${(e as Error).message}`,
+        'info',
+        'alert',
+      );
     } finally {
       submittingRef.current = false;
       setSubmitting(false);

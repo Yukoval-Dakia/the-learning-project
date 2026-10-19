@@ -1,4 +1,5 @@
 import type { ResponseSlotT } from '@/core/schema/assessment';
+import { hasNativeSlotField } from '@/core/schema/assessment/slot-renderers';
 // YUK-1051 — ResponseSlotField：按槽 spec 分发到通用作答控件的门面组件。
 // 「多空/表格」= 每显式 slot 一个 ResponseSlotField（宿主按行/列/题面定位摆放），
 // 混合响应与整题计分不互相强制一对一（grounding §7.2）。
@@ -143,8 +144,14 @@ export function ResponseSlotField({
   );
 }
 
-/** Native published IDs and displayed labels remain distinct. */
+/**
+ * Native published IDs and displayed labels remain distinct.
+ * 哪些种类有控件只由 slot-renderers.NATIVE_FIELD_SLOT_KINDS 决定（YUK-1573，整卷页守卫与
+ * 出题门同读此表）；收窄后的 switch 必须恰好穷举表内种类，否则编译失败。表外种类（table、
+ * sentence_breaks、select、blank）如实无控件，不预留假输入。
+ */
 export function nativeSlotFieldSpec(slot: ResponseSlotT): ResponseSlotSpec | null {
+  if (!hasNativeSlotField(slot)) return null;
   switch (slot.kind) {
     case 'single_choice':
     case 'multi_choice':
@@ -158,17 +165,6 @@ export function nativeSlotFieldSpec(slot: ResponseSlotT): ResponseSlotSpec | nul
       return { kind: slot.kind };
     case 'open_response':
       return { kind: 'text' };
-    case 'table':
-      return null;
-    // ADR-0074 D3a：断句字间点选编辑器归 R10 UI 线；在它落地前本表单如实
-    // 返回 null（无作答控件），不预留假输入。
-    case 'sentence_breaks':
-      return null;
-    // YUK-1496 统一作答 select/blank：输入积木由界面线按展示 spec 实现；在那之前
-    // 出题门（serving-admission）扣发这两类，这里如实无控件。
-    case 'select':
-    case 'blank':
-      return null;
     case 'matching':
       return {
         kind: 'matching',

@@ -49,8 +49,11 @@ export async function PATCH(req: Request, params: Record<string, string>): Promi
       );
     }
 
-    const transition = await withFrozenPaperReopen(db, params.id, (tx) =>
-      Review.transitionReviewSession(tx, params.id, parsed.data.status),
+    const transition = await withFrozenPaperReopen(
+      db,
+      params.id,
+      (tx) => Review.transitionReviewSession(tx, params.id, parsed.data.status),
+      parsed.data.status === 'started',
     );
     if (transition.changed && transition.status === 'completed') {
       await enqueueReviewSessionSummary(params.id);
