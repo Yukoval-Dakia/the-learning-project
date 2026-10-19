@@ -38,6 +38,11 @@
  *            STOP file: ENOENT means no stop; an existing file or any other
  *            access error fails closed. Checked before any other apply work
  *            and again inside the transaction immediately before publish.
+ *            Serialization: the transaction first takes an operation-scoped
+ *            pg_advisory_xact_lock, so two concurrent applies of this CLI
+ *            (same request across different groups, or simply both groups at
+ *            once) serialize instead of racing past the binding/guard reads;
+ *            row locks still follow the publisher's root → lifecycle order.
  *
  * Idempotency lives in DB truth, not in the local receipt: the minted
  * revision's published_by carries request_id + manifest sha + full old/new
@@ -66,9 +71,10 @@ import { access, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
+import { practiceCapability } from '@/capabilities/practice/manifest';
 import {
   ADMISSION_FAMILY,
   lockAdmissionGroup,
@@ -81,7 +87,7 @@ import type {
   ScoringBasisT,
 } from '@/core/schema/assessment';
 import type { Db, Tx } from '@/db/client';
-import { event, event_subscription_delivery, paid_effect, question_revision } from '@/db/schema';
+import { event, question_revision } from '@/db/schema';
 import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
 import {
   publishedContractSeal,
@@ -101,8 +107,24 @@ import { ASSESSMENT_PUBLISH_ACTION, publishQuestionGroup } from '@/server/questi
 
 const OPERATION = 'yuk1406_select_display_label_repair' as const;
 const ACTOR_REF = 'ops:yuk1406-repair-select-display' as const;
-const ADMISSION_ENQUEUE_SUBSCRIBER = 'practice.question-admission-enqueue' as const;
 const MAX_APPROVED_PATCHES = 3;
+
+// Subscriber identity is bound to the PRODUCTION declaration, not a guess: the
+// guard's delivery anti-join must use the same (subscriber_id,
+// subscriber_version, actions) the live dispatcher drains, so a manifest
+// version bump automatically re-keys this guard instead of silently scanning a
+// stale version's deliveries.
+const admissionEnqueueDecl = practiceCapability.subscriptions?.handlers.find(
+  (handler) => handler.id === 'practice.question-admission-enqueue',
+);
+if (admissionEnqueueDecl == null) {
+  throw new Error(
+    'practice.question-admission-enqueue is missing from the practice capability manifest',
+  );
+}
+const ADMISSION_ENQUEUE_SUBSCRIBER = admissionEnqueueDecl.id;
+const ADMISSION_ENQUEUE_VERSION = admissionEnqueueDecl.version;
+const ADMISSION_ENQUEUE_ACTIONS = admissionEnqueueDecl.actions;
 
 const RepairPatch = z
   .object({
@@ -448,13 +470,24 @@ async function assertOutdirWritable(outDir: string): Promise<void> {
 //
 // Reuses the same probes the serving projection and enqueue lane rely on:
 // pgboss.job in-flight scan, unsettled event_subscription_delivery rows,
-// qualifying withheld publish events with no delivery row yet, and non-terminal
-// paid_effect claims on the admission family. Global scope is deliberate — the
-// approved window covers only these two groups, so concurrent paid work would
-// break the one-at-a-time cost settlement. Manifest-scoped extras: a
-// dead_letter admission delivery or an 'unknown' paid claim on an approved
-// group means THIS window's settlement already failed — the next apply must
-// stop (old unknown rows elsewhere are untouched history and never block).
+// publish events still owed a delivery, and non-terminal paid_effect claims on
+// the admission family. Global scope is deliberate — the approved window
+// covers only these two groups, so concurrent paid work would break the
+// one-at-a-time cost settlement. Manifest-scoped extras: a dead_letter
+// admission delivery or an 'unknown' paid claim on an approved group means
+// THIS window's settlement already failed — the next apply must stop (old
+// unknown rows elsewhere are untouched history and never block).
+//
+// Two correctness properties (PR1832 R1):
+//  - All business probes run as ONE statement, hence one snapshot: a delivery
+//    settling to 'succeeded' while its handler commits a job cannot slip
+//    between sequential reads. The to_regclass probe is schema existence only
+//    — pgboss.job is absent on some ephemeral DBs — never business data.
+//  - The undispatched-event arm mirrors the production dispatcher's discovery
+//    exactly (event.action in the subscriber's declared actions, anti-join on
+//    subscriber_id + subscriber_version). No age bound: pre-bootstrap history
+//    is covered by explicit 'bootstrap_skipped' rows, so ANY event still owed
+//    a delivery — however old — means dispatch is behind and blocks apply.
 
 interface GuardFinding {
   kind:
@@ -471,124 +504,87 @@ async function collectUnsettledAdmissionWork(
   db: Db | Tx,
   manifestGroupIds: readonly string[],
 ): Promise<GuardFinding[]> {
-  const findings: GuardFinding[] = [];
   const groupList = sql.join(
     manifestGroupIds.map((id) => sql`${id}`),
+    sql`, `,
+  );
+  const actionList = sql.join(
+    ADMISSION_ENQUEUE_ACTIONS.map((action) => sql`${action}`),
     sql`, `,
   );
 
   const regclass = await db.execute<{ reg: string | null }>(
     sql`select to_regclass('pgboss.job') as reg`,
   );
-  if (regclass[0]?.reg != null) {
-    const jobs = await db.execute<{ id: string; state: string; question_id: string | null }>(sql`
-      select id::text as id, state, data->>'question_id' as question_id
-      from pgboss.job
-      where name = ${ADMISSION_FAMILY}
-        and state in ('created','retry','active')
-    `);
-    for (const job of jobs) {
-      findings.push({
-        kind: 'inflight_admission_job',
-        detail: `question_admission_run job ${job.id} state=${job.state} group=${job.question_id ?? '?'}`,
-      });
-    }
-  }
-
-  const deliveries = await db.execute<{
-    source_event_id: string;
-    status: string;
-    subject_id: string | null;
-  }>(sql`
-    select d.source_event_id, d.status, e.subject_id
-    from ${event_subscription_delivery} d
-    inner join ${event} e on e.id = d.source_event_id
+  const jobsArm =
+    regclass[0]?.reg != null
+      ? sql`
+    select 'inflight_admission_job'::text as kind,
+           j.id::text || ' ' || j.name || ' state=' || j.state ||
+             ' group=' || coalesce(j.data->>'question_id', '?') as detail
+    from pgboss.job j
+    where j.name = ${ADMISSION_FAMILY}
+      and j.state in ('created','retry','active')
+    union all
+  `
+      : sql``;
+  const manifestScope =
+    manifestGroupIds.length > 0
+      ? sql`
+    union all
+    select 'manifest_dead_letter_delivery',
+           d.source_event_id || ' group=' || coalesce(e.subject_id, '?')
+    from event_subscription_delivery d
+    inner join event e on e.id = d.source_event_id
     where d.subscriber_id = ${ADMISSION_ENQUEUE_SUBSCRIBER}
-      and d.status in ('pending','claimed','retry_wait')
-  `);
-  for (const row of deliveries) {
-    findings.push({
-      kind: 'unsettled_admission_delivery',
-      detail: `delivery ${row.source_event_id} status=${row.status} group=${row.subject_id ?? '?'}`,
-    });
-  }
+      and d.subscriber_version = ${ADMISSION_ENQUEUE_VERSION}
+      and d.status = 'dead_letter'
+      and e.subject_id in (${groupList})
+    union all
+    select 'manifest_unknown_paid_effect',
+           p.entity_id || ' unit=' || p.unit
+    from paid_effect p
+    where p.family = ${ADMISSION_FAMILY}
+      and p.state = 'unknown'
+      and p.entity_id in (${groupList})
+  `
+      : sql``;
 
-  // Withheld publish events qualifying for the enqueue filter that have no
-  // delivery row yet. History predating the subscriber bootstrap never gets
-  // deliveries — bounded to the last 24h where an undiscovered event actually
-  // means "dispatch still owed".
-  const undispatched = await db.execute<{ id: string; subject_id: string | null }>(sql`
-    select e.id, e.subject_id
-    from ${event} e
-    where e.action = ${ASSESSMENT_PUBLISH_ACTION}
-      and e.outcome = 'success'
-      and e.actor_ref <> 'practice:question_admission'
-      and e.payload->>'admission' = 'withheld'
-      and e.created_at > now() - interval '24 hours'
+  const rows = await db.execute<{ kind: string; detail: string }>(sql`
+    ${jobsArm}
+    select 'unsettled_admission_delivery'::text as kind,
+           d.source_event_id || ' status=' || d.status ||
+             ' group=' || coalesce(e.subject_id, '?') as detail
+    from event_subscription_delivery d
+    inner join event e on e.id = d.source_event_id
+    where d.subscriber_id = ${ADMISSION_ENQUEUE_SUBSCRIBER}
+      and d.subscriber_version = ${ADMISSION_ENQUEUE_VERSION}
+      and d.status in ('pending','claimed','retry_wait')
+    union all
+    select 'undispatched_publish_event',
+           e.id || ' group=' || coalesce(e.subject_id, '?') ||
+             ' admission=' || coalesce(e.payload->>'admission', '?')
+    from event e
+    where e.action in (${actionList})
       and not exists (
-        select 1 from ${event_subscription_delivery} d
+        select 1
+        from event_subscription_delivery d
         where d.subscriber_id = ${ADMISSION_ENQUEUE_SUBSCRIBER}
+          and d.subscriber_version = ${ADMISSION_ENQUEUE_VERSION}
           and d.source_event_id = e.id
       )
+    union all
+    select 'open_paid_effect',
+           p.entity_id || ' unit=' || p.unit || ' state=' || p.state
+    from paid_effect p
+    where p.family = ${ADMISSION_FAMILY}
+      and p.state in ('pending','sending','receipt_ready')
+    ${manifestScope}
   `);
-  for (const row of undispatched) {
-    findings.push({
-      kind: 'undispatched_publish_event',
-      detail: `withheld publish event ${row.id} group=${row.subject_id ?? '?'} has no admission delivery row yet`,
-    });
-  }
-
-  const openClaims = await db.execute<{
-    entity_id: string;
-    unit: string;
-    state: string;
-  }>(sql`
-    select entity_id, unit, state
-    from ${paid_effect}
-    where family = ${ADMISSION_FAMILY}
-      and state in ('pending','sending','receipt_ready')
-  `);
-  for (const row of openClaims) {
-    findings.push({
-      kind: 'open_paid_effect',
-      detail: `paid_effect ${row.entity_id} unit=${row.unit} state=${row.state}`,
-    });
-  }
-
-  if (manifestGroupIds.length > 0) {
-    const deadLetters = await db.execute<{
-      source_event_id: string;
-      subject_id: string | null;
-    }>(sql`
-      select d.source_event_id, e.subject_id
-      from ${event_subscription_delivery} d
-      inner join ${event} e on e.id = d.source_event_id
-      where d.subscriber_id = ${ADMISSION_ENQUEUE_SUBSCRIBER}
-        and d.status = 'dead_letter'
-        and e.subject_id in (${groupList})
-    `);
-    for (const row of deadLetters) {
-      findings.push({
-        kind: 'manifest_dead_letter_delivery',
-        detail: `admission delivery ${row.source_event_id} for approved group ${row.subject_id} dead-lettered — this window's enqueue already failed`,
-      });
-    }
-    const unknownClaims = await db.execute<{ entity_id: string; unit: string }>(sql`
-      select entity_id, unit
-      from ${paid_effect}
-      where family = ${ADMISSION_FAMILY}
-        and state = 'unknown'
-        and entity_id in (${groupList})
-    `);
-    for (const row of unknownClaims) {
-      findings.push({
-        kind: 'manifest_unknown_paid_effect',
-        detail: `paid_effect ${row.entity_id} unit=${row.unit} state=unknown — never auto-replayed; settle before the next apply`,
-      });
-    }
-  }
-
-  return findings;
+  return rows.map((row) => ({
+    kind: row.kind as GuardFinding['kind'],
+    detail: row.detail,
+  }));
 }
 
 // ─── Per-group evaluation (shared by plan and apply; runs under the lock) ────
@@ -607,7 +603,7 @@ type Evaluation =
       revision_id: string;
       integrity_digest: string;
       revision_ordinal: number;
-      event_id: string | null;
+      event_id: string;
       admission_generation: number;
       published_at: string;
     }
@@ -671,25 +667,57 @@ function bindingMatches(
   return stableJson(storedPatches) === stableJson(patchProjection);
 }
 
-async function publishEventIdFor(
+/**
+ * Recover the ORIGINAL publish event for a committed repair revision by its
+ * complete identity — never "the latest event on this revision". A later
+ * dimension_update event (e.g. the admission lane re-pending the same digest)
+ * carries the same revision_id, so revision alone is ambiguous. Full binding:
+ * this CLI's actor, outcome='success', payload revision_id + integrity_digest
+ * + supersedes_revision_id + admission_generation + revision_ordinal +
+ * admission='withheld', and NO dimension_update / verification keys. Exactly
+ * one row must match — zero or many fails closed rather than guessing.
+ */
+async function recoverOriginalPublishEvent(
   tx: Tx,
-  groupId: string,
-  revisionId: string,
-): Promise<string | null> {
-  const [row] = await tx
+  args: {
+    groupId: string;
+    revisionId: string;
+    revisionOrdinal: number;
+    integrityDigest: string;
+    supersedesRevisionId: string;
+    admissionGeneration: number;
+  },
+): Promise<{ eventId: string } | { error: string }> {
+  const rows = await tx
     .select({ id: event.id })
     .from(event)
     .where(
       and(
         eq(event.action, ASSESSMENT_PUBLISH_ACTION),
         eq(event.subject_kind, 'question'),
-        eq(event.subject_id, groupId),
-        sql`${event.payload}->>'revision_id' = ${revisionId}`,
+        eq(event.subject_id, args.groupId),
+        eq(event.outcome, 'success'),
+        eq(event.actor_ref, ACTOR_REF),
+        sql`${event.payload}->>'group_id' = ${args.groupId}`,
+        sql`${event.payload}->>'revision_id' = ${args.revisionId}`,
+        sql`${event.payload}->>'revision_ordinal' = ${String(args.revisionOrdinal)}`,
+        sql`${event.payload}->>'integrity_digest' = ${args.integrityDigest}`,
+        sql`${event.payload}->>'supersedes_revision_id' = ${args.supersedesRevisionId}`,
+        sql`${event.payload}->>'admission' = 'withheld'`,
+        sql`${event.payload}->>'admission_generation' = ${String(args.admissionGeneration)}`,
+        sql`${event.payload}->>'dimension_update' is null`,
+        sql`${event.payload}->>'verification' is null`,
       ),
     )
-    .orderBy(desc(event.created_at))
-    .limit(1);
-  return row?.id ?? null;
+    .orderBy(event.id)
+    .limit(2);
+  if (rows.length === 1) return { eventId: rows[0].id };
+  return {
+    error:
+      rows.length === 0
+        ? `original publish event for revision '${args.revisionId}' not found under the full identity binding — fail closed (no event_id will be fabricated)`
+        : `multiple publish events match the full identity binding for revision '${args.revisionId}' — ambiguous, fail closed`,
+  };
 }
 
 async function evaluateGroup(
@@ -750,26 +778,44 @@ async function evaluateGroup(
           manifest: entry,
         })
       ) {
-        const eventId = await publishEventIdFor(tx, entry.group_id, prior.revision_id);
         const storedGeneration =
           typeof binding.new_admission_generation === 'number'
             ? binding.new_admission_generation
             : typeof binding.supersedes?.admission_generation === 'number'
               ? binding.supersedes.admission_generation + 1
               : -1;
-        return {
-          kind: 'already_applied',
-          revision_id: prior.revision_id,
-          integrity_digest: prior.integrity_digest,
-          revision_ordinal: prior.revision_ordinal,
-          event_id: eventId,
-          admission_generation: storedGeneration,
-          published_at: prior.published_at.toISOString(),
-        };
+        if (storedGeneration < 0) {
+          reasons.push(
+            `stored binding for revision '${prior.revision_id}' lacks new_admission_generation — cannot re-bind the original publish event; fail closed`,
+          );
+        } else {
+          const recovered = await recoverOriginalPublishEvent(tx, {
+            groupId: entry.group_id,
+            revisionId: prior.revision_id,
+            revisionOrdinal: prior.revision_ordinal,
+            integrityDigest: prior.integrity_digest,
+            supersedesRevisionId: entry.current_revision_id,
+            admissionGeneration: storedGeneration,
+          });
+          if ('error' in recovered) {
+            reasons.push(recovered.error);
+          } else {
+            return {
+              kind: 'already_applied',
+              revision_id: prior.revision_id,
+              integrity_digest: prior.integrity_digest,
+              revision_ordinal: prior.revision_ordinal,
+              event_id: recovered.eventId,
+              admission_generation: storedGeneration,
+              published_at: prior.published_at.toISOString(),
+            };
+          }
+        }
+      } else {
+        reasons.push(
+          `request_id '${args.requestId}' already published revision '${prior.revision_id}' for '${entry.group_id}' but the stored binding does not match this manifest input — refusing to re-apply`,
+        );
       }
-      reasons.push(
-        `request_id '${args.requestId}' already published revision '${prior.revision_id}' for '${entry.group_id}' but the stored binding does not match this manifest input — refusing to re-apply`,
-      );
     }
   }
 
@@ -972,7 +1018,7 @@ interface ApplyReceipt {
     revision_id: string;
     integrity_digest: string;
     revision_ordinal: number;
-    event_id: string | null;
+    event_id: string;
     admission_generation: number;
     published_at: string;
   };
@@ -1022,6 +1068,14 @@ async function applyGroup(
     | { outcome: 'blocked'; reasons: string[]; guardFindings?: GuardFinding[] };
   try {
     txResult = await db.transaction(async (tx) => {
+      // Operation-scoped transaction advisory lock FIRST — before the request
+      // binding read and the unsettled-work guard. It covers BOTH approved
+      // groups for the whole transaction, so two concurrent applies cannot
+      // both read "no binding / no in-flight work" and double-publish (the
+      // question_revision table has no request_id unique constraint). Held to
+      // commit/rollback. No other writer ever waits on this key, so it cannot
+      // join the root→lifecycle lock graph — it only serializes this CLI.
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${OPERATION}, 0))`);
       const evaluation = await evaluateGroup(tx, {
         group: entry,
         manifestSha,

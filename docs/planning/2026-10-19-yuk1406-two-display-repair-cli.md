@@ -58,8 +58,14 @@ current_integrity_digest/admission_generation/admission_state +
   STOP 只挡本 CLI 的下一次发布，不撤销已提交发布、不截断已入队任务，
   也不是全局付费闸。
 - **输出目录**：apply 前先 `mkdir -p` + 写探针文件证实可写，再进事务。
-- **锁序**：`lockAdmissionGroup`（root question FOR UPDATE → lifecycle
-  FOR UPDATE），与 publisher/准入入队一致。
+- **锁序与共同串行**：apply 事务先取操作级
+  `pg_advisory_xact_lock(hashtextextended(OPERATION,0))`——覆盖本批准集两组，
+  持到提交/回滚。两个并发 apply（同 request 跨组、或两组同时）在
+  binding/guard 读取前就被串行化，不会双双读到「无绑定/无在飞」而重复发布
+  （`question_revision` 无 request_id 唯一约束，故需显式边界）。该行级锁
+  之后仍是 `lockAdmissionGroup`（root question FOR UPDATE → lifecycle
+  FOR UPDATE），与 publisher/准入入队一致；其它写入方不取 advisory key，
+  不构成死锁环。
 - **root 恒等**：`parent_question_id IS NULL`、`source`、`question.version`
   与冻结值逐字相等。
 - **幂等（DB 真相）**：新 revision 的 `published_by` 记录 operation /
@@ -68,6 +74,11 @@ current_integrity_digest/admission_generation/admission_state +
   同一 `request_id` 且绑定逐字段一致 → `already_applied`（返回原 revision/digest/
   event/generation）；request_id 绑到不同组或不同输入 → 拒绝。本地回执丢失、
   后台准入已推进，都不会触发重发布——按 `published_by->>'request_id'` 查回。
+  原发布 event 的找回绑定**完整身份**（本 CLI actor、outcome=success、
+  revision_id、integrity_digest、supersedes_revision_id、revision_ordinal、
+  admission_generation、admission='withheld'，且无 dimension_update/
+  verification 键），唯一匹配才返回；缺失或歧义 fail closed——同 revision
+  的后续 dimension/准入事件不会被误认作原事件。
 - **冻结 CAS**：`lifecycle.current_revision_id`、`scoring_admission_generation`、
   `scoring_admission_state='admitted'`、非 withdrawn/suspended、`revision.integrity_digest`
   全部与冻结值相等；任何漂移拒绝，不临时换最新值。
@@ -78,11 +89,18 @@ current_integrity_digest/admission_generation/admission_state +
 - **只改三处 label**：克隆解析后契约、改值、再 `publishedContractSeal` 得新
   canonical digest；回滚检查（revert 后 canonical 与解析契约相等）证明除批准
   label 外零改动；新 digest 与旧不同（相同拒绝发布）。
-- **未结准入守卫**（发布前，任一条命中即拒发并列出明细）：
+- **未结准入守卫**（发布前，任一条命中即拒发并列出明细）。全部业务探针在
+  **同一条 SQL**（CTE/union）里执行——同一快照，delivery 结算为 succeeded
+  与 handler 提交 job 的交接不会从逐条 READ COMMITTED 间漏过；
+  `to_regclass('pgboss.job')` 只是 schema 存在性探测（无 pgboss 的临时库上
+  跳过该臂），不算业务读。订阅者 (id, version, actions) 直接取自
+  `practiceCapability.subscriptions` 生产声明，版本升级自动换键，不猜。
   - 全局：`pgboss.job` 在飞 `question_admission_run`（created/retry/active）；
-  - 全局：`practice.question-admission-enqueue` 订阅的未结 delivery
-    （pending/claimed/retry_wait）；
-  - 全局：24h 内符合入队过滤的 withheld 发布事件尚无 delivery 行（未派发）；
+  - 全局：该订阅 id+version 的未结 delivery（pending/claimed/retry_wait）；
+  - 全局：该订阅 actions 内、按 (subscriber_id, subscriber_version,
+    source_event_id) 反连接**尚无 delivery 行的发布事件，不限年龄**——
+    与 dispatcher discovery 谓词逐字一致；bootstrap 之前的历史由显式
+    `bootstrap_skipped` 行覆盖，不存在「超龄即视为已派发」的截止；
   - 全局：admission family 非终态 `paid_effect`（pending/sending/receipt_ready）；
   - 本批组：该订阅 dead_letter delivery、该组 `paid_effect state='unknown'`
     ——本窗口结算已失败，下一题停（历史 unknown 不动、不阻塞）。
