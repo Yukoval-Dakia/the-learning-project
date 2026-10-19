@@ -15,6 +15,7 @@
 import type { BetaMessage } from '@anthropic-ai/sdk/resources/beta/messages/messages';
 import type { MessageParam } from '@anthropic-ai/sdk/resources/messages/messages';
 import type { EffortLevel } from '@/ai/task-spec';
+import type { ProviderTransportCollector } from './provider-transport';
 
 type UUID = string;
 
@@ -54,6 +55,13 @@ export interface Options {
    * task abort so the lifecycle, not the SDK's 10-minute default, ends the call.
    */
   providerTimeoutMs?: number;
+  /**
+   * YUK-1630 — the attempt-scoped transport evidence sink the lifecycle owns.
+   * The adapter's provider fetch records per-request wire milestones into it;
+   * the lifecycle folds its snapshot into usage_json on every terminal write,
+   * including abort paths that never produced a result frame.
+   */
+  transportEvidence?: ProviderTransportCollector;
 }
 
 // ---------------------------------------------------------------------------

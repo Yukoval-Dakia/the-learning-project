@@ -767,6 +767,14 @@ function findingsFor(path: string, code: string, facts: SourceFacts): ProviderWi
     if (call === 'fetchImpl' && path === 'src/server/ai/provider-models-check.ts') {
       return [{ kind: 'model-catalog-provider-check-fetch', call, path }];
     }
+    // YUK-1630 — provider-transport forwards to an observer-installed global
+    // fetch (test stub / instrumentation wrapper) when one replaced the
+    // platform fetch; with the platform fetch intact it takes the undici lane
+    // pinned in IMPORTED_FETCH_EXCEPTIONS above. The call is the same
+    // provider wire on either path, not a new lane.
+    if (call === 'fetch' && path === 'src/server/ai/provider-transport.ts') {
+      return [];
+    }
     return [{ kind: 'unclassified-provider-fetch', call, path }];
   });
 }

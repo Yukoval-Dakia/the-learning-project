@@ -159,21 +159,56 @@ export const PRUNED_MISCONCEPTION_MODULES = prunedMisconceptionModules;
 
 export const IMPORTED_FETCH_EXCEPTIONS = [
   {
-    path: 'src/server/ai/provider-idle-fetch.ts',
+    path: 'src/server/ai/provider-transport.ts',
     source: 'undici',
     imported: 'fetch',
     local: 'undiciFetch',
     owner: 'server/ai',
     purpose:
-      'YUK-1531 idle-timeout transport for a task budget longer than the OpenAI SDK default; the same Pi request, not a new provider endpoint',
+      'YUK-1630 budget-derived provider transport: every pi provider request runs an npm-undici Agent whose connect/headers/body timers derive from the resolved task budget, plus per-request wire-milestone evidence; the same Pi request, not a new provider endpoint',
     expectedCalls: 1,
     directImporters: [
       {
         path: 'src/server/ai/pi-agent-adapter.ts',
         kind: 'runtime',
-        source: './provider-idle-fetch',
-        imported: 'createIdleBudgetFetch',
-        local: 'createIdleBudgetFetch',
+        source: './provider-transport',
+        imported: 'createBudgetedProviderFetch',
+        local: 'createBudgetedProviderFetch',
+      },
+      {
+        path: 'src/server/ai/run-lifecycle.ts',
+        kind: 'runtime',
+        source: './provider-transport',
+        imported: 'createProviderTransportCollector',
+        local: 'createProviderTransportCollector',
+      },
+      {
+        path: 'src/server/ai/sdk-types.ts',
+        kind: 'type',
+        source: './provider-transport',
+        imported: '<none>',
+        local: '<none>',
+      },
+      {
+        path: 'src/db/schema.ts',
+        kind: 'type',
+        source: '../server/ai/provider-transport',
+        imported: '<none>',
+        local: '<none>',
+      },
+      {
+        path: 'src/server/ai/log.ts',
+        kind: 'type',
+        source: './provider-transport',
+        imported: '<none>',
+        local: '<none>',
+      },
+      {
+        path: 'src/server/ai/runner.ts',
+        kind: 'type',
+        source: './provider-transport',
+        imported: '<none>',
+        local: '<none>',
       },
     ],
   },

@@ -1,4 +1,5 @@
 import { createId } from '@paralleldrive/cuid2';
+import type { TaskTimeoutSource } from '@/ai/task-budget';
 import type { TaskDefinition } from '@/ai/task-spec';
 import { type TaskKind, tasks } from '@/capabilities/task-registry';
 import type { Db } from '@/db/client';
@@ -41,6 +42,10 @@ import {
   acquireProviderSession,
   resolveProviderSessionAdmissionPlan,
 } from './provider-session-admission';
+import {
+  type ProviderTransportCollector,
+  createProviderTransportCollector,
+} from './provider-transport';
 import { type ResolvedProvider, hasGlobalProviderOverride, resolveTaskProvider } from './providers';
 import { taskInputHash } from './task-input-hash';
 import { estimateAbortedUsage } from './timeout-usage';
@@ -82,6 +87,11 @@ interface LifecycleConfig<TResult extends LifecycleResult> {
   kind: TaskKind;
   taskRunId: string;
   timeoutMs: number;
+  /**
+   * YUK-1630 — which budget layer produced `timeoutMs` ('caller' | 'config' |
+   * 'definition'); forwarded into the transport evidence budget receipt.
+   */
+  timeoutSource?: TaskTimeoutSource;
   /**
    * Optional controller shared with in-process tools spawned by this attempt.
    * The lifecycle remains its owner: provider timeout, lease fencing and caller
@@ -183,6 +193,14 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
    * including `source` ('binding' | 'catalog' | 'defaults') for run metadata.
    */
   readonly modelProfile: ModelProfile;
+  /**
+   * YUK-1630 — this attempt's transport evidence sink. The runner forwards it
+   * to the adapter via `options.transportEvidence`; every provider request the
+   * pi drivers issue records wire milestones into it. Its snapshot rides
+   * `usage_json` on every terminal write — including aborts that never saw a
+   * result frame.
+   */
+  readonly transportEvidence: ProviderTransportCollector;
 
   private timer: ReturnType<typeof setTimeout> | undefined;
   private readonly admissionPlan: ProviderSessionAdmissionPlan;
@@ -241,6 +259,13 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
     );
     this.modelProfile = resolveModelProfile(this.resolved.provider, this.resolved.model);
     this.admissionPlan = resolveProviderSessionAdmissionPlan(this.resolved.provider);
+    this.transportEvidence = createProviderTransportCollector({
+      taskTimeoutMs: config.timeoutMs,
+      ...(config.timeoutSource !== undefined ? { timeoutSource: config.timeoutSource } : {}),
+      ...(config.providerSessionDeadlineAt !== undefined
+        ? { callerDeadlineAt: config.providerSessionDeadlineAt }
+        : {}),
+    });
 
     if (config.signal) {
       if (config.signal.aborted) {
@@ -254,8 +279,12 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
   get usage(): LifecycleUsage {
     const base = this.terminal?.usage ??
       this.observedUsage?.usage ?? { inputTokens: 0, outputTokens: 0 };
-    if (!this.notePhases) return base;
-    return { ...base, phases: { ...this.notePhases } };
+    // YUK-1630 — transport evidence is metadata namespaced beside the token
+    // truth: it never feeds tokenCounts/costTruth, and a usage 0 / cost null
+    // row keeps its meaning (unknown, not free).
+    const transport = this.transportEvidence.snapshot();
+    if (!this.notePhases) return { ...base, transport };
+    return { ...base, phases: { ...this.notePhases }, transport };
   }
 
   /** Long-note phase timings. Other task kinds ignore the call. */
@@ -747,6 +776,7 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
     // setTimeout(Infinity) degenerates to ~1ms (TimeoutInfinityWarning), which
     // would abort the run instantly instead of leaving it unbounded.
     if (!Number.isFinite(timeoutMs)) return;
+    this.transportEvidence.noteExecutionTimeoutMs(timeoutMs);
     this.timer = setTimeout(() => this.abortController.abort(), timeoutMs);
   }
 

@@ -58,6 +58,9 @@ import type { RtCorrectBuffer as RtCorrectBufferJson } from '../core/theta';
 // A4 (YUK-436) — persisted shadow shape for mastery_state.theta_grid_json (type-only,
 // erased at compile; the actual grid math lives in src/core/theta-grid.ts).
 import type { ThetaGridPosterior as ThetaGridPosteriorJson } from '../core/theta-grid';
+// YUK-1630 — ai_task_runs.usage_json.transport persisted shape (type-only;
+// the collector/writer lives with the ai server modules).
+import type { ProviderTransportEvidence } from '../server/ai/provider-transport';
 import type { SerializedQueuedPatch } from '../server/artifacts/presence/types';
 // YUK-599 — trait kind 枚举的单一来源（browser-safe 模块；防 db/subjects 两处漂移）。
 import { SUBJECT_TRAIT_KINDS } from '../subjects/trait-schemas';
@@ -1615,6 +1618,8 @@ export const ai_task_runs = pgTable(
         d18_score?: { points_awarded: number; max_points: number };
         d18_escalated?: boolean;
         d18_latency_ms?: number;
+        /** YUK-1630 — per-attempt provider transport evidence; metadata only. */
+        transport?: ProviderTransportEvidence;
       }>()
       .notNull()
       .default({ inputTokens: 0, outputTokens: 0 }),
