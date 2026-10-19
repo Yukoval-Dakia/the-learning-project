@@ -41,7 +41,7 @@ function buildSourcingPrompt(profile: SubjectProfile): string {
 工作流程：
 1. 检索：用 web_search_exa 找与考点/题型相关的现成练习题页面。
 2. 抽取：用 web_fetch_exa 拉网页正文，从中**逐题**抽出题面、参考答案、选项（若有）。忠实抽取，不要自己改写题意或编造答案。
-3. 结构化：把每道题映射成 SourcedQuestion，标注 kind / 难度 / 它考查的 knowledge_ids（用 knowledge_context 里真实存在的 id）。
+3. 结构化：把每道题映射成 SourcedQuestion，标注 kind / 难度 / 它考查的 knowledge_ids（用 knowledge_context 里真实存在的 id）。题意有明确结构时（多问、多空、确定的作答对象），可另填可选字段 parts 作 typed 声明；结构说不清就只填 flat 字段、不写 parts。
 4. 记录来源（**强制**）：每道题写它来自的 source_url（具体网页 URL）+ source_title（页面标题）。运行时无法从日志恢复你访问了哪些页面——只有写进 source_url 的来源才被记录。漏报 = 该题不可追溯、会被拒收。
 5. 图片型题源（**不要自己抽图**）：当 web_fetch_exa **拿不到题干文本**（返回空/近空正文），但 web_search_exa 的搜索结果表明该 URL 确实含真题（标题/摘要指向练习题/真题/试卷）——说明题干在**图片**里（扫描卷 PNG、图表题等）。这种源**不要**编造文本题、**不要**塞进 questions，改为报进 image_candidates。抽图是用户授权的付费动作，由用户在收件箱里 accept 后才发生，不是你的职责。
 
@@ -58,8 +58,17 @@ function buildSourcingPrompt(profile: SubjectProfile): string {
   "source_url": "题目来自的具体网页 URL",
   "source_title": "该网页标题",
   "extract": "（必填）你从该网页**逐字抽取**的原始题面片段（质检会用它与题面做确定性比对，证明 source_url 真实可追溯；忠实粘贴，勿改写）",
-  "extraction_hash": "(可选) 抽取内容指纹"
+  "extraction_hash": "(可选) 抽取内容指纹",
+  "parts": [DraftPart, ...] // 可选：见下方「typed 声明」。写了就必须是完整 DraftPart 数组；不写整个字段省略。
 }
+
+typed 声明（可选字段 parts，统一草稿结构）：
+- 每个 DraftPart = 一个小问：{"part_id":"p1","prompt_md":"该问题面（忠实原文）","units":[DraftUnit, ...],"blank_order":["本 part 各 blank 槽 slot_id 的逻辑作答序"](可选，多空才填),"question_no":"(1)"(可选),"explanation_md":"解析"(可选)}。
+- 每个 DraftUnit = 一个作答位：{"unit_id":"p1::u1","slot_id":"p1::r1","response_class":"select|blank|free","response_spec":{...},"points":分值(不知道就写 null，禁止编造),"key":答案键(select/blank 有确证才写),"reference_md":"参考答案"(free 用),"rubric":{...}(可选),"method":{"kind":"set-compare|exact|ai-rubric|human_review"},"rule":{"version":1,"cases":[...],"otherwise":{...}}(select/blank 有 key 时必写印出的给分政策，否则该 unit 按未决处理),"material_refs":[],"metadata":{}}。
+- response_spec 三种：select→{"kind":"select","items":[{"item_id":"it_a","label_md":"选项原文"}],"pick":"one|many"}；blank→{"kind":"blank","format":"text|math"(可选),"unit_hint":"单位提示"(可选),"answer_shape":{...}(可选)}；free→{"kind":"free"}。
+- key 两种：select→{"kind":"select","accepted_item_ids":["items 里正确的 item_id"]}；blank→{"kind":"blank","key":{"kind":"text","accepted":["可接受答案原文",...]}|{"kind":"numeric","value":数值,"unit":"单位"(可选),"tolerance":{"kind":"absolute","value":0}(可选)}}。
+- method 对应：select→"set-compare"；blank 文本精确判→"exact"；free 或需要模型判→"ai-rubric"；只能人工评→"human_review"。
+- answer_shape（可选，只给 blank）：{"version":"k1-math-v1","value":{...},"notation":["允许的输入写法"]}。value 五种：{"kind":"number","unit":{"unit":"cm","accepts_bare_number":false}(可选)} / {"kind":"interval_set","binding":"被讨论的变量或量，如 x 或 M-m"} / {"kind":"point","axes":["x","y"]} / {"kind":"affine_line","variables":["x","y"]} / {"kind":"finite_set","item":"number|point|affine_line","order":"unordered","duplicates":"forbidden","axes"|"variables":按 item 必填}。notation 按 kind 选：number→["fraction","decimal"]，interval_set→["interval","inequality","set_builder"]，point→["tuple"]，affine_line→["equation"]，finite_set→["roster","set_builder"]。只声明题意有根据的对象；拿不准就不写 answer_shape。
 
 图片型题源输出形状（SourcingImageCandidate，**可选数组**，没有就省略）：
 {
@@ -85,6 +94,7 @@ function buildSourcingPrompt(profile: SubjectProfile): string {
 - **必填** extract（从 source_url 逐字抽取的原始题面片段）：质检会用它对题面做确定性 grounding 比对，证明来源真实。缺 extract 或 extract 与题面毫无重叠 → 该题被判为来源不可锚定/伪造、拒收。
 - 图片型题源报进 image_candidates，**不要**自己抽图、**不要**为图片源编造文本题。
 - **同一个源不要既报成 question 又报成 image_candidate**：能抽出文本就只放 questions；抽不出文本（图片型）就只放 image_candidates。二选一。
+- typed 声明（parts）只写**题面有根据**的语义：每个小问一个 part、每个作答位一个 unit，题图/分步证明等小问也要如实成 part，不许吞掉。缺分值写 null、缺槽位/答案对象就留缺项——宁可显式缺项（提交时按未决暂扣）也**禁止**猜分隔符拆小问、推分值、盲删选项字母、把多空的作答顺序张冠李戴。flat 字段（prompt_md/reference_md/choices_md）照常必填且与 parts 描述同一道题。
 - 一道题都没找到、且也没有图片型源时，宁可返回空 questions（运行会失败）也不要编题；但只要有图片型源，至少报进 image_candidates。
 - 禁止：emoji、营销话、套话、JSON 之外的文字、用 markdown 代码块包裹整段 JSON。`;
 }

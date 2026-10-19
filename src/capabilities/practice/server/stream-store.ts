@@ -1,45 +1,17 @@
-// M2 (YUK-316) — 流编排器的 IO 壳：输入收集 + StreamPlan 物化 + 读取/推进。
-// 纯函数核心在 stream-composer.ts；本文件只做 DB/handler 编排。
-//
-// 输入信号来源（P2 spec §2.1「due-list 降级为输入信号」）：
-//   - dueItems：内部调用 handleReviewDue（函数调用、零网络）——FSRS 到期投影 +
-//     跨学科 round-robin + goal 软偏置全部复用现行为；旧 /api/review/due 不删。
-//   - variantItems：mistake_variant(status='active') 中 parent 近 7 天有 failure
-//     attempt 的变体（变体轮换的「错题跟练」信号）。
-//   - newCheckItems：open learning_item（pending/in_progress）的 knowledge_ids 中尚无 FSRS 状态行的
-//     知识点（= 学了还没检验），各取一道未排入的题。
-//   - pendingPapers：getPracticeList 的 ready 且未开始 session 的卷。
+// M2 (YUK-316) — 流编排器的 IO 壳：StreamPlan 物化 + 读取/推进编排。
+// 纯函数核心在 stream-composer.ts；候选输入收集在 stream-inputs.ts（YUK-1572 拆出）；
+// 读取投影在 stream-view.ts（YUK-1572 拆出）；本文件只做 DB/handler 编排。
 //
 // opening/closing line：M2 为模板（M4 夜链 AI 化后由 composer_nightly 写入）。
 
-import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, lte, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, isNull, lt, sql } from 'drizzle-orm';
 import { getConfig } from '@/core/config/store';
 import { newId } from '@/core/ids';
-import { LearningItemOpenStatus } from '@/core/schema/business';
-import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import type { Db, Tx } from '@/db/client';
 import { notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
-import {
-  artifact,
-  assessment_submission,
-  event,
-  knowledge,
-  learning_item,
-  learning_session,
-  material_fsrs_state,
-  mistake_variant,
-  practice_stream_item,
-  question,
-} from '@/db/schema';
+import { event, knowledge, learning_session, practice_stream_item, question } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
-import {
-  resolveVerdictsForAttempts,
-  resolveVerdictsForNativeAttempts,
-} from '@/kernel/read-models/assessment-verdict';
-import {
-  readAutomaticIssuanceServingDecisions,
-  readAutomaticallyServableQuestionIds,
-} from '@/kernel/records/assessment-issuance';
+import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
 import { Review } from '@/server/session';
 import {
   type CandidateInput,
@@ -47,10 +19,6 @@ import {
   collectCandidateSignals,
 } from './candidate-signals';
 import { DEFAULT_COMPOSE_LOCK_WAIT_MS, withinComposePaidWorkLock } from './compose-paid-work-lock';
-import { handleReviewDue } from './due-list';
-import { FRONTIER_MAX_ITEMS, learnableFrontier } from './learnable-frontier';
-import { countPaperSlots } from './paper-sections';
-import { getPracticeList } from './practice-read';
 // YUK-474 — 取题瞬间动态供题 refill（池见底补题）。compose 后 best-effort 调用，flag-off 默认 no-op。
 import { type RefillDeps, refillActiveLearningPools } from './question-supply/refill';
 import {
@@ -71,17 +39,28 @@ import {
   statisticalWeights,
   variantReasoning,
 } from './softmax-selection';
-import {
-  type DailyPracticePace,
-  dailyPracticeBudgetMinutes,
-  estimateStreamItemMinutes,
-  fitStreamToTimeBudget,
-  normalizeDailyPracticePace,
-} from './stream-budget';
+import { estimateStreamItemMinutes, fitStreamToTimeBudget } from './stream-budget';
 import { type ComposerInputs, type StreamPlan, composeDailyStream } from './stream-composer';
+import { collectComposerInputs, resolveDailyPracticeBudget } from './stream-inputs';
+import {
+  type StreamScope,
+  type StreamView,
+  buildStreamView,
+  filterProspectiveStreamQuestions,
+} from './stream-view';
 import { rotationClassForKind } from './variant-rotation';
 
 export { streamLocalDate } from './stream-date';
+// YUK-1572 — 候选收集 / 预算解析已迁 stream-inputs.ts，视图类型与单行投影已迁
+//   stream-view.ts；以下 reexport 保持本模块既有导出面不变（既有消费者与测试的
+//   import 路径不动）。
+export {
+  VARIANT_INPUT_LIMIT,
+  collectComposerInputs,
+  resolveDailyPracticeBudget,
+} from './stream-inputs';
+export type { StreamScope, StreamView } from './stream-view';
+export { getStreamViewItem } from './stream-view';
 
 export type StreamItemRow = typeof practice_stream_item.$inferSelect;
 export type StreamItemStatus = StreamItemRow['status'];
@@ -109,314 +88,6 @@ function streamPartitionLockKey(date: string, sessionId?: string | null): string
 
 async function lockDailyStreamPartition(db: DbLike, date: string): Promise<void> {
   await db.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${streamPartitionLockKey(date)}))`);
-}
-
-// ADR-0037 H8 (due-must-review) — due is a HARD constraint: the merge engine may reorder
-// / de-emphasize but MUST NOT drop a due item from the queue. So feed it the /api/review/due
-// endpoint's FULL ceiling (200, the clamp in due-list.ts) rather than a small slice. The
-// old `10` silently dropped due #11+ BEFORE the engine (capacityGuard, which protects due
-// from truncation past capacity) ever saw them — an unenforced invariant (YUK-349).
-const DUE_INPUT_LIMIT = 200;
-const VARIANT_WINDOW_DAYS = 7;
-/** Hard ceiling for mistake variants admitted to one composer/LLM input. */
-export const VARIANT_INPUT_LIMIT = 50;
-
-export async function resolveDailyPracticeBudget(
-  db: DbLike,
-): Promise<{ pace: DailyPracticePace; minutes: number }> {
-  const [latest] = await db
-    .select({ pace: learning_session.placement_pace })
-    .from(learning_session)
-    .where(and(eq(learning_session.type, 'placement'), isNotNull(learning_session.placement_pace)))
-    .orderBy(desc(learning_session.created_at), desc(learning_session.id))
-    .limit(1);
-  const pace = normalizeDailyPracticePace(latest?.pace);
-  return { pace, minutes: dailyPracticeBudgetMinutes(pace) };
-}
-
-async function knowledgeLabels(db: DbLike, ids: string[]): Promise<Map<string, string>> {
-  const unique = [...new Set(ids)].filter(Boolean);
-  if (unique.length === 0) return new Map();
-  const rows = await db
-    .select({ id: knowledge.id, name: knowledge.name })
-    .from(knowledge)
-    .where(inArray(knowledge.id, unique));
-  return new Map(rows.map((r) => [r.id, r.name]));
-}
-
-interface QuestionMixMetadata {
-  knowledgeId?: string;
-  questionKind?: string;
-  isInterventionDiagnostic?: boolean;
-}
-
-async function questionMixMetadata(
-  db: DbLike,
-  ids: string[],
-): Promise<Map<string, QuestionMixMetadata>> {
-  const unique = [...new Set(ids)].filter(Boolean);
-  if (unique.length === 0) return new Map();
-  const rows = await db
-    .select({
-      id: question.id,
-      knowledge_ids: question.knowledge_ids,
-      kind: question.kind,
-      source: question.source,
-    })
-    .from(question)
-    .where(inArray(question.id, unique));
-  return new Map(
-    rows.map((row) => [
-      row.id,
-      {
-        knowledgeId: row.knowledge_ids[0],
-        questionKind: row.kind,
-        isInterventionDiagnostic: row.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
-      } satisfies QuestionMixMetadata,
-    ]),
-  );
-}
-
-export async function collectComposerInputs(db: DbLike, date: string): Promise<ComposerInputs> {
-  // 红线 4（draft 排除契约，YUK-350）：通用练习池的选题候选**必须排除** draft_status='draft'
-  //   （NULL≡active / 'active' 留池，仅排字面 'draft'）。new_check + frontier 共用
-  //   notDraftPredicate（@/db/predicates，三值逻辑安全的单一定义）。
-
-  const dailyBudget = await resolveDailyPracticeBudget(db);
-
-  // 1. FSRS 到期投影 — 经现行 due handler（函数调用）。
-  const dueRes = await handleReviewDue(
-    new Request(`http://internal/api/review/due?limit=${DUE_INPUT_LIMIT}`),
-    { db },
-  );
-  const dueJson = (await dueRes.json()) as {
-    rows?: Array<{ question_id: string; knowledge_ids?: string[] }>;
-  };
-  const cappedDueRows = dueJson.rows ?? [];
-
-  // YUK-792 — intervention diagnostics are an approved learner delivery, not an
-  // optional member of the generic due page. `handleReviewDue` caps that page at
-  // 200, so a diagnostic can otherwise disappear behind an older ordinary
-  // backlog before the composer ever sees (and protects) its `intervention`
-  // source. Read the due intervention subset independently, then prefix-union it
-  // with the capped page. The FSRS row is the activation/scheduling boundary;
-  // draft follow-ups without a row remain invisible.
-  const interventionCandidates = await db
-    .select({
-      question_id: question.id,
-      knowledge_ids: question.knowledge_ids,
-    })
-    .from(material_fsrs_state)
-    .innerJoin(question, eq(question.id, material_fsrs_state.subject_id))
-    .where(
-      and(
-        eq(material_fsrs_state.subject_kind, 'question'),
-        lte(material_fsrs_state.due_at, new Date()),
-        eq(question.source, INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE),
-        notDraftPredicate(question.draft_status),
-      ),
-    )
-    .orderBy(material_fsrs_state.due_at, question.created_at, question.id);
-  const admittedInterventionIds = await readAutomaticallyServableQuestionIds(
-    db,
-    interventionCandidates.map((row) => row.question_id),
-    { includeInterventionDiagnostics: true },
-  );
-  const protectedInterventionRows = interventionCandidates.filter((row) =>
-    admittedInterventionIds.has(row.question_id),
-  );
-  const protectedInterventionIds = new Set(protectedInterventionRows.map((row) => row.question_id));
-  const dueRows = [
-    ...protectedInterventionRows,
-    ...cappedDueRows.filter((row) => !protectedInterventionIds.has(row.question_id)),
-  ];
-
-  // 2. 错题变式 — active 变体，parent 近窗口内有 failure attempt。
-  const since = new Date(Date.now() - VARIANT_WINDOW_DAYS * 24 * 3600 * 1000);
-  const recentFailures = await db
-    .select({ qid: event.subject_id })
-    .from(event)
-    .where(
-      and(
-        eq(event.action, 'attempt'),
-        eq(event.outcome, 'failure'),
-        eq(event.subject_kind, 'question'),
-        gte(event.created_at, since),
-      ),
-    )
-    .orderBy(desc(event.created_at), desc(event.id));
-  const failedQids = [...new Set(recentFailures.map((r) => r.qid))];
-  const variantCandidates =
-    failedQids.length === 0
-      ? []
-      : await db
-          .select({
-            variant_question_id: mistake_variant.variant_question_id,
-            parent_question_id: mistake_variant.parent_question_id,
-          })
-          .from(mistake_variant)
-          .where(
-            and(
-              eq(mistake_variant.status, 'active'),
-              isNotNull(mistake_variant.variant_question_id),
-              inArray(mistake_variant.parent_question_id, failedQids),
-            ),
-          )
-          .orderBy(desc(mistake_variant.created_at), desc(mistake_variant.id));
-  const admittedVariantIds = await readAutomaticallyServableQuestionIds(
-    db,
-    variantCandidates.flatMap((row) => row.variant_question_id ?? []),
-  );
-  const variantRows = variantCandidates
-    .filter(
-      (row) => row.variant_question_id !== null && admittedVariantIds.has(row.variant_question_id),
-    )
-    .slice(0, VARIANT_INPUT_LIMIT);
-
-  // 3. 新学待检 — 尚未开始或正在学习的学习项，其知识点里没有 FSRS 状态行的。
-  const items = await db
-    .select({ knowledge_ids: learning_item.knowledge_ids })
-    .from(learning_item)
-    .where(inArray(learning_item.status, LearningItemOpenStatus.options));
-  const candidateKids = [...new Set(items.flatMap((i) => i.knowledge_ids))];
-  let newCheckPairs: Array<{ questionId: string; knowledgeId: string }> = [];
-  if (candidateKids.length > 0) {
-    const tracked = await db
-      .select({ kid: material_fsrs_state.subject_id })
-      .from(material_fsrs_state)
-      .where(
-        and(
-          eq(material_fsrs_state.subject_kind, 'knowledge'),
-          inArray(material_fsrs_state.subject_id, candidateKids),
-        ),
-      );
-    const trackedSet = new Set(tracked.map((r) => r.kid));
-    const untracked = candidateKids.filter((k) => !trackedSet.has(k));
-    if (untracked.length > 0) {
-      // 每个未检验知识点取一道题（JSONB 包含查询，非 draft 题——见 notDraftPredicate，src/db/predicates.ts）。
-      // new_check 在「KC 还没 material_fsrs_state 行」时触发——此时刚生成的 embedded/teaching
-      // draft 题（container-only）还没被任何 review 路径物化，若不过滤会被这里抓成第一题、暴露
-      // 给用户成普通练习项。
-      for (const kid of untracked) {
-        const candidates = await db
-          .select({ id: question.id })
-          .from(question)
-          .where(
-            and(
-              sql`${question.knowledge_ids} @> ${JSON.stringify([kid])}::jsonb`,
-              notDraftPredicate(question.draft_status),
-              // YUK-1045 — §3.3 契约准入门：suspended/withdrawn 组不作新检选第题。
-              questionSuspendedPredicate(question),
-            ),
-          );
-        const admittedIds = await readAutomaticallyServableQuestionIds(
-          db,
-          candidates.map((row) => row.id),
-        );
-        const q = candidates.find((row) => admittedIds.has(row.id));
-        if (q) newCheckPairs.push({ questionId: q.id, knowledgeId: kid });
-      }
-      newCheckPairs = newCheckPairs.slice(0, 3);
-    }
-  }
-
-  // 4. 当日待做卷 — ready 且未开始 session。
-  const practiceList = await getPracticeList(db);
-  const pendingPapers = practiceList.papers
-    .filter((p) => p.generation_status === 'ready' && p.session === null)
-    .map((p) => ({
-      paperId: p.artifact_id,
-      title: p.title,
-      source:
-        p.intent_source === 'ingestion_paper'
-          ? ('import' as const)
-          : p.intent_source === 'quiz_gen'
-            ? ('on_demand' as const)
-            : ('paper' as const),
-    }));
-
-  // 5. B3 learnable_frontier（YUK-349 #3）——前置全掌握、自身未掌握的「可学前沿」KC，各取
-  //    一道**非 draft** active 题（谓词与 new_check 同形，均 notDraftPredicate——红线 4）。frontier KC 无题 →
-  //    SKIP（不触发供给）。NO-OP：稀疏先决图上 learnableFrontier 返 [] → frontierPairs=[]（
-  //    defer-flip，无 flag——见 learnable-frontier.ts 不变量块）。
-  const frontierKcs = await learnableFrontier(db);
-  const frontierPairs: Array<{ questionId: string; knowledgeId: string }> = [];
-  for (const kc of frontierKcs) {
-    const candidates = await db
-      .select({ id: question.id })
-      .from(question)
-      .where(
-        and(
-          sql`${question.knowledge_ids} @> ${JSON.stringify([kc])}::jsonb`,
-          notDraftPredicate(question.draft_status),
-          // YUK-1045 — §3.3 契约准入门：suspended/withdrawn 组不进 frontier 选题。
-          questionSuspendedPredicate(question),
-        ),
-      )
-      // Deterministic pick (reproducible composition) — the new_check sibling omits this;
-      // frontier is net-new so we make it stable from the start.
-      .orderBy(question.id);
-    const admittedIds = await readAutomaticallyServableQuestionIds(
-      db,
-      candidates.map((row) => row.id),
-    );
-    const q = candidates.find((row) => admittedIds.has(row.id));
-    if (q) frontierPairs.push({ questionId: q.id, knowledgeId: kc });
-    if (frontierPairs.length === FRONTIER_MAX_ITEMS) break;
-  }
-
-  // YUK-673 L3 fatigue/repetition needs stable KC + question-kind identities. Resolve every
-  // question in one bounded batch; the post-filter remains pure and never performs IO itself.
-  const mixMetadataByQuestion = await questionMixMetadata(db, [
-    ...dueRows.map((row) => row.question_id),
-    ...variantRows.flatMap((row) => row.variant_question_id ?? []),
-    ...newCheckPairs.map((pair) => pair.questionId),
-    ...frontierPairs.map((pair) => pair.questionId),
-  ]);
-
-  // 标签批量解析（reasoning 模板用）。
-  const labelMap = await knowledgeLabels(db, [
-    ...dueRows.flatMap((r) => r.knowledge_ids ?? []).slice(0, 50),
-    ...newCheckPairs.map((p) => p.knowledgeId),
-    ...frontierPairs.map((p) => p.knowledgeId),
-  ]);
-
-  return {
-    date,
-    dailyBudgetMinutes: dailyBudget.minutes,
-    dueItems: dueRows.map((r) => {
-      const metadata = mixMetadataByQuestion.get(r.question_id);
-      return {
-        questionId: r.question_id,
-        knowledgeLabel: r.knowledge_ids?.length ? labelMap.get(r.knowledge_ids[0]) : undefined,
-        knowledgeId: metadata?.knowledgeId,
-        questionKind: metadata?.questionKind,
-        source: metadata?.isInterventionDiagnostic ? 'intervention' : 'decay',
-      };
-    }),
-    variantItems: variantRows
-      .filter((v): v is { variant_question_id: string; parent_question_id: string } =>
-        Boolean(v.variant_question_id),
-      )
-      .map((v) => ({
-        questionId: v.variant_question_id,
-        rootQuestionId: v.parent_question_id,
-        ...mixMetadataByQuestion.get(v.variant_question_id),
-      })),
-    newCheckItems: newCheckPairs.map((p) => ({
-      questionId: p.questionId,
-      knowledgeId: p.knowledgeId,
-      knowledgeLabel: labelMap.get(p.knowledgeId),
-      questionKind: mixMetadataByQuestion.get(p.questionId)?.questionKind,
-    })),
-    pendingPapers,
-    frontierItems: frontierPairs.map((p) => ({
-      questionId: p.questionId,
-      knowledgeId: p.knowledgeId,
-      knowledgeLabel: labelMap.get(p.knowledgeId),
-      questionKind: mixMetadataByQuestion.get(p.questionId)?.questionKind,
-    })),
-  };
 }
 
 /** materializeStream 的结果：新增行数 + **本轮真正新插入**的 ref 集合（CLUSTER A 用）。 */
@@ -788,368 +459,6 @@ export async function composeNightly(
   );
 }
 
-export interface StreamScope {
-  kind: 'knowledge';
-  id: string;
-  label: string;
-  /** Server-resolved session identity; null only when viewing an unmaterialized historical scope. */
-  session_id: string | null;
-}
-
-export interface StreamView {
-  date: string;
-  scope: StreamScope | null;
-  opening_line: string;
-  items: Array<{
-    id: string;
-    position: number;
-    item_kind: 'question' | 'paper';
-    ref_id: string;
-    source: StreamItemRow['source'];
-    reasoning: string;
-    status: StreamItemStatus;
-    estimated_minutes: number;
-    knowledge_name: string | null;
-    paper_title: string | null;
-    /**
-     * YUK-1054 — 原始 FSRS rating（immutable 用户自评 rating，写入时即固定，不为
-     * 改判/track 变化）。§9 要求的「原始判轨」对本 surface 就是 review 事件的
-     * 原始 rating；effective judge 判单独经 `verdict_effective` 透出。
-     */
-    verdict: 'again' | 'hard' | 'good' | null;
-    /**
-     * YUK-1054 — 双轨裁决（§9）effective 侧。matched review 的 judge 链解析后
-     * 仍 live 的最新 judge 的 coarse_outcome（'correct'|'partial'|'incorrect'|
-     * 'unsupported'）。无 judge 判或无匹配 review → null。
-     */
-    verdict_effective: string | null;
-    /** effective 判的 chain truth（'active'|'superseded'|…）；与 verdict_effective 同生。 */
-    verdict_effective_state: string | null;
-    completed_at: string | null;
-    total_slots: number | null;
-    /**
-     * YUK-1510 — an open question whose answer is already recorded (YUK-1501: the attempt is
-     * settled, or its background judge is still queued) but whose row is not marked done yet.
-     * The same rule the question page uses to make the answer read-only.
-     */
-    answer_recorded: boolean;
-  }>;
-  budget: { pace: DailyPracticePace; minutes: number };
-  progress: {
-    done: number;
-    total: number;
-    estimated_total_minutes: number;
-    estimated_remaining_minutes: number;
-  };
-}
-
-type StreamViewItem = StreamView['items'][number];
-
-interface StreamItemMetadata {
-  knowledgeName: string | null;
-  paperTitle: string | null;
-  verdict: StreamViewItem['verdict'];
-  verdictEffective: string | null;
-  verdictEffectiveState: string | null;
-  /** Internal: matched review event id (for judge-verdict batch resolution). */
-  matchedReviewId: string | null;
-  completedAt: string | null;
-  totalSlots: number | null;
-  answerRecorded: boolean;
-}
-
-const EMPTY_STREAM_ITEM_METADATA: StreamItemMetadata = {
-  knowledgeName: null,
-  paperTitle: null,
-  verdict: null,
-  verdictEffective: null,
-  verdictEffectiveState: null,
-  matchedReviewId: null,
-  completedAt: null,
-  totalSlots: null,
-  answerRecorded: false,
-};
-
-function eventRating(payload: unknown): StreamViewItem['verdict'] {
-  if (!payload || typeof payload !== 'object') return null;
-  const rating = (payload as Record<string, unknown>).fsrs_rating;
-  return rating === 'again' || rating === 'hard' || rating === 'good' ? rating : null;
-}
-
-function eventStreamItemId(payload: unknown): string | null {
-  if (!payload || typeof payload !== 'object') return null;
-  const id = (payload as Record<string, unknown>).stream_item_id;
-  return typeof id === 'string' && id.length > 0 ? id : null;
-}
-
-/**
- * Batch-enrich persisted stream rows without N+1 queries.
- *
- * Review matching rule:
- *  1. Prefer the immutable review.payload.stream_item_id exact key, additionally
- *     checking question, nullable session and the row lifetime window.
- *  2. Historical reviews pre-YUK-336 have no key. They may match only when exactly
- *     one same-question + same-nullable-session review exists between row creation
- *     and its done timestamp. Ambiguity deliberately returns null rather than
- *     displaying another attempt's judgement.
- */
-async function filterProspectiveStreamQuestions(
-  db: DbLike,
-  rows: StreamItemRow[],
-): Promise<{ rows: StreamItemRow[]; recoveryRowIds: Set<string> }> {
-  const prospective = rows.filter((row) => row.item_kind === 'question' && row.status !== 'done');
-  const issuanceIds = prospective.map((row) => `iss_stream_${row.id}`);
-  const issuedDecisions = await readAutomaticIssuanceServingDecisions(db, issuanceIds);
-  // An unsupported pinned contract withholds new serving, but it does not erase
-  // already-accepted work: when the pinned issuance holds an accepted submission,
-  // the stream row is the only path back into Solo for settlement/recovery, so it
-  // stays visible (same boundary as getIssuanceState — submissions retain their
-  // DTO/history). Unsupported + unanswered rows stay stored yet must never display
-  // as a servable question.
-  const unsupportedIds = issuanceIds.filter(
-    (id) => issuedDecisions.get(id)?.kind === 'unavailable',
-  );
-  const acceptedIds = new Set<string>();
-  if (unsupportedIds.length > 0) {
-    const accepted = await db
-      .select({ issuance_id: assessment_submission.issuance_id })
-      .from(assessment_submission)
-      .where(inArray(assessment_submission.issuance_id, unsupportedIds));
-    for (const row of accepted) acceptedIds.add(row.issuance_id);
-  }
-  const admittedIds = await readAutomaticallyServableQuestionIds(
-    db,
-    prospective.map((row) => row.ref_id),
-    { includeInterventionDiagnostics: true },
-  );
-  const recoveryRowIds = new Set<string>();
-  const kept = rows.filter((row) => {
-    if (row.item_kind !== 'question' || row.status === 'done') return true;
-    const issuanceId = `iss_stream_${row.id}`;
-    if (!issuedDecisions.has(issuanceId)) return admittedIds.has(row.ref_id);
-    if (issuedDecisions.get(issuanceId)?.kind === 'admitted') return true;
-    if (!acceptedIds.has(issuanceId)) return false;
-    recoveryRowIds.add(row.id);
-    return true;
-  });
-  return { rows: kept, recoveryRowIds };
-}
-
-async function resolveStreamItemMetadata(
-  db: DbLike,
-  rows: StreamItemRow[],
-): Promise<Map<string, StreamItemMetadata>> {
-  const metadata = new Map<string, StreamItemMetadata>();
-  for (const row of rows) metadata.set(row.id, { ...EMPTY_STREAM_ITEM_METADATA });
-  if (rows.length === 0) return metadata;
-
-  const questionRows = rows.filter((row) => row.item_kind === 'question');
-  const questionIds = [...new Set(questionRows.map((row) => row.ref_id))];
-  if (questionIds.length > 0) {
-    const questions = await db
-      .select({ id: question.id, knowledge_ids: question.knowledge_ids })
-      .from(question)
-      .where(inArray(question.id, questionIds));
-    const primaryKnowledgeByQuestion = new Map(
-      questions.map((row) => [row.id, row.knowledge_ids[0] ?? null]),
-    );
-    const primaryKnowledgeIds = [
-      ...new Set(
-        [...primaryKnowledgeByQuestion.values()].filter((id): id is string => id !== null),
-      ),
-    ];
-    const names = await knowledgeLabels(db, primaryKnowledgeIds);
-    for (const row of questionRows) {
-      const knowledgeId = primaryKnowledgeByQuestion.get(row.ref_id);
-      const current = metadata.get(row.id) ?? { ...EMPTY_STREAM_ITEM_METADATA };
-      current.knowledgeName = knowledgeId ? (names.get(knowledgeId) ?? null) : null;
-      metadata.set(row.id, current);
-    }
-  }
-
-  const paperRows = rows.filter((row) => row.item_kind === 'paper');
-  const paperIds = [...new Set(paperRows.map((row) => row.ref_id))];
-  if (paperIds.length > 0) {
-    const papers = await db
-      .select({ id: artifact.id, title: artifact.title, tool_state: artifact.tool_state })
-      .from(artifact)
-      .where(inArray(artifact.id, paperIds));
-    const paperById = new Map(papers.map((paper) => [paper.id, paper]));
-    for (const row of paperRows) {
-      const paper = paperById.get(row.ref_id);
-      if (!paper) continue;
-      const current = metadata.get(row.id) ?? { ...EMPTY_STREAM_ITEM_METADATA };
-      current.paperTitle = paper.title;
-      current.totalSlots = countPaperSlots(paper.tool_state);
-      metadata.set(row.id, current);
-    }
-  }
-
-  // YUK-1510 — an in-progress question whose answer is already recorded. Same rule as the
-  // question page (YUK-1501, use-practice-submit answerRecorded): this row's issuance has an
-  // assessment-attempt anchor whose evaluation is settled (an effective evaluation) or whose
-  // judge is still queued (no original evaluation yet). An answer accepted by advice alone, or a
-  // review_required attempt still waiting for a self-rating, is not recorded.
-  const openQuestions = questionRows.filter((row) => row.status === 'in_progress');
-  if (openQuestions.length > 0) {
-    const rowByIssuance = new Map(openQuestions.map((row) => [`iss_stream_${row.id}`, row]));
-    const anchors = await db
-      .select()
-      .from(event)
-      .where(
-        and(
-          eq(event.action, 'experimental:assessment_attempt'),
-          eq(event.subject_kind, 'question'),
-          inArray(event.subject_id, [...new Set(openQuestions.map((row) => row.ref_id))]),
-          inArray(sql<string>`${event.payload}->>'issuance_id'`, [...rowByIssuance.keys()]),
-        ),
-      );
-    if (anchors.length > 0) {
-      const groups = await resolveVerdictsForNativeAttempts(db, anchors);
-      for (const anchor of anchors) {
-        const group = groups.get(anchor.id);
-        if (!group || (group.effective === null && group.original_evaluation_id !== null)) continue;
-        const row = rowByIssuance.get(group.issuance.issuance_id);
-        if (!row || row.ref_id !== anchor.subject_id) continue;
-        const current = metadata.get(row.id) ?? { ...EMPTY_STREAM_ITEM_METADATA };
-        current.answerRecorded = true;
-        metadata.set(row.id, current);
-      }
-    }
-  }
-
-  const doneQuestions = questionRows.filter((row) => row.status === 'done');
-  if (doneQuestions.length > 0) {
-    const firstCreatedAt = new Date(
-      Math.min(...doneQuestions.map((row) => row.created_at.getTime())),
-    );
-    const lastCompletedAt = new Date(
-      Math.max(...doneQuestions.map((row) => row.updated_at.getTime())),
-    );
-    const reviews = await db
-      .select({
-        id: event.id,
-        session_id: event.session_id,
-        subject_id: event.subject_id,
-        payload: event.payload,
-        created_at: event.created_at,
-      })
-      .from(event)
-      .where(
-        and(
-          eq(event.action, 'review'),
-          eq(event.subject_kind, 'question'),
-          inArray(event.subject_id, [...new Set(doneQuestions.map((row) => row.ref_id))]),
-          gte(event.created_at, firstCreatedAt),
-          lte(event.created_at, lastCompletedAt),
-        ),
-      )
-      .orderBy(desc(event.created_at), desc(event.id));
-
-    for (const row of doneQuestions) {
-      const candidates = reviews.filter(
-        (review) =>
-          review.subject_id === row.ref_id &&
-          review.session_id === row.session_id &&
-          review.created_at >= row.created_at &&
-          review.created_at <= row.updated_at,
-      );
-      const exact = candidates.filter((review) => eventStreamItemId(review.payload) === row.id);
-      const legacy = candidates.filter((review) => eventStreamItemId(review.payload) === null);
-      const matched = exact[0] ?? (legacy.length === 1 ? legacy[0] : null);
-      if (!matched) continue;
-      const current = metadata.get(row.id) ?? { ...EMPTY_STREAM_ITEM_METADATA };
-      current.verdict = eventRating(matched.payload);
-      current.completedAt = matched.created_at.toISOString();
-      current.matchedReviewId = matched.id;
-      metadata.set(row.id, current);
-    }
-    // YUK-1054 (§9 dual-track) — matched review 的 judge 链解析（effective 判）。
-    // judge 事件锚 subject_id=<review_event_id>；把 matched review ids 收集成
-    // batch 统一解析，再把每条行的 effective 判写回 metadata。
-    const matchedReviewIds = [
-      ...new Set(
-        [...metadata.values()]
-          .map((m) => m.matchedReviewId)
-          .filter((id): id is string => id !== null),
-      ),
-    ];
-    if (matchedReviewIds.length > 0) {
-      const verdicts = await resolveVerdictsForAttempts(db, matchedReviewIds);
-      for (const current of metadata.values()) {
-        if (current.matchedReviewId === null) continue;
-        const effective = verdicts.get(current.matchedReviewId)?.effective ?? null;
-        current.verdictEffective = effective?.verdict.coarse_outcome ?? null;
-        current.verdictEffectiveState = effective?.correction_state.state ?? null;
-      }
-    }
-  }
-
-  return metadata;
-}
-
-function toStreamViewItem(row: StreamItemRow, metadata: StreamItemMetadata): StreamViewItem {
-  return {
-    id: row.id,
-    position: row.position,
-    item_kind: row.item_kind,
-    ref_id: row.ref_id,
-    source: row.source,
-    reasoning: row.reasoning,
-    status: row.status,
-    estimated_minutes: estimateStreamItemMinutes(row.item_kind),
-    knowledge_name: metadata.knowledgeName,
-    paper_title: metadata.paperTitle,
-    verdict: metadata.verdict,
-    verdict_effective: metadata.verdictEffective,
-    verdict_effective_state: metadata.verdictEffectiveState,
-    completed_at: metadata.completedAt,
-    total_slots: metadata.totalSlots,
-    answer_recorded: metadata.answerRecorded,
-  };
-}
-
-/** Enriched PATCH response item; shares the exact projection used by GET. */
-export async function getStreamViewItem(db: DbLike, row: StreamItemRow): Promise<StreamViewItem> {
-  const metadata = await resolveStreamItemMetadata(db, [row]);
-  return toStreamViewItem(row, metadata.get(row.id) ?? EMPTY_STREAM_ITEM_METADATA);
-}
-
-function buildStreamView(input: {
-  date: string;
-  rows: StreamItemRow[];
-  budget: { pace: DailyPracticePace; minutes: number };
-  scope: StreamScope | null;
-  openingLine: string;
-  metadata: Map<string, StreamItemMetadata>;
-}): StreamView {
-  const { date, rows, budget, scope, openingLine, metadata } = input;
-  const done = rows.filter((row) => row.status === 'done').length;
-  const estimatedTotalMinutes = rows.reduce(
-    (sum, row) => sum + estimateStreamItemMinutes(row.item_kind),
-    0,
-  );
-  const estimatedRemainingMinutes = rows
-    .filter((row) => row.status === 'pending' || row.status === 'in_progress')
-    .reduce((sum, row) => sum + estimateStreamItemMinutes(row.item_kind), 0);
-
-  return {
-    date,
-    scope,
-    opening_line: openingLine,
-    items: rows.map((row) =>
-      toStreamViewItem(row, metadata.get(row.id) ?? EMPTY_STREAM_ITEM_METADATA),
-    ),
-    budget,
-    progress: {
-      done,
-      total: rows.length,
-      estimated_total_minutes: estimatedTotalMinutes,
-      estimated_remaining_minutes: estimatedRemainingMinutes,
-    },
-  };
-}
-
 const SCOPED_QUESTION_LIMIT = 5;
 
 function scopedSessionDateBounds(date: string): { start: Date; end: Date } {
@@ -1328,13 +637,12 @@ async function getKnowledgeScopedStream(
     session_id: sessionId,
   };
   rows = (await filterProspectiveStreamQuestions(db, rows)).rows;
-  const metadata = await resolveStreamItemMetadata(db, rows);
   return buildStreamView({
+    db,
     date,
     rows,
     budget,
     scope,
-    metadata,
     openingLine:
       rows.length === 0
         ? `「${knowledgeRow.name}」暂时没有可练的已发布题目。`
@@ -1480,13 +788,12 @@ export async function getStream(
   }
 
   rows = (await filterProspectiveStreamQuestions(db, rows)).rows;
-  const metadata = await resolveStreamItemMetadata(db, rows);
   return buildStreamView({
+    db,
     date,
     rows,
     budget,
     scope: null,
-    metadata,
     // M2 模板开场白；M4 由 composer_nightly 写 AI 开场白（随流持久化）。
     openingLine:
       rows.length === 0

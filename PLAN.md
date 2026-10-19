@@ -1,10 +1,12 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-19：YUK-1576 暗轨退役已完成本地验证；只交 draft PR，不合并、不部署、不改票状态。其他线的历史交接保留。
+> Linear 是权威 tracker。2026-10-19：架构深化线独立启动；首片 YUK-1572 拆练习流职责，首三片已获协调线同意；证据外置永久保留已批，测试缩减只做清单。
 
 ## NOW
 
-- **YUK-1576 / 暗轨退役**：撤 BKT 夜写注册与 producer、先修风险事件 producer、SRT 分位数暗分支；保留历史数据/解码、先修前沿与当前 θ/PFA/FSRS 路径。typecheck/lint/build、92 unit/79 隔离 DB 用例通过；边界基线 443→440、practice→mastery 18→15。无新增测试。
+- **架构深化 / YUK-1572**：`refactor/yuk-1572-stream-modules`，独占 arch-lead；stream-store 已2120→1427，超长18→17，SCC与443边不变；合成d38e父级typecheck/lint/build/两审计通过；Kimi R1 APPROVE、旧head5c0e CI全绿；整合main2176仅看板冲突，新head验证/CI待完成。六票T3，#1830仍由Grok完成；不动其ratchet/baseline。见[首三片计划](docs/planning/2026-10-19-architecture-deepening.md)。
+
+- **第一天能用 / 题库暂不出题计数（YUK-1525）**：`yuk-1525-serving-counts-sql` 将 lifecycle 理由统一到 SQL，冻结题面继续复用原校验，计数与列表使用同一只读快照。2600 行中，旧列表少算为1846，修后2400，与原投影全库逐行统计一致；窗口外 `q_02600` 可见。无新增测试、UI 改动或付费调用。
 
 - **YUK-1404 / native03题图修复**：PR1657 fixed4c52 exact CI38144495041全绿；正常纳入main eb960c079，仅PLAN/now冲突。图ownership/隐私产品代码与单capture边界测试保留，旧细粒度四tests已删。独立初审/最终R2预算已完成，不启第三审。当前crop producer仍无source_asset SHA登记，旧visibility未知，public withholding不是完整配图交付；同卷actual-output验收仍待。无DB/runtime/provider/paid。 [证据](docs/planning/2026-10-11-yuk1404-native03-figure-repair.md)。
 
@@ -34,7 +36,9 @@
 
 ## NEXT
 
-- **YUK-1576**：交付 `yuk-1576-dark-track-retire` draft PR；部署前由部署负责人停旧 producer、清理旧 schedule/未终任务，再执行 PR 内只读 SQL。此线程不连接 TEST 或部署环境。
+- **架构深化**：首片验证/独立审查/精确HEAD CI后推进YUK-1571拆环，再拆intervention职责；每片报告SCC、server边、超长文件及baseline行数。
+
+- **YUK-1525**：draft PR 交接后，由审查与 exact-head CI 决定是否可转 ready；本次不自动合并。
 
 - Start/judge共享文件边界见[交接](docs/planning/2026-10-09-judge-start-ownership.md)，Start/boot/shutdown由5796独占；judge A/B/C/D由7631接续，迁移号后核。
 
@@ -49,7 +53,8 @@
 
 ## PARKED
 
-- **YUK-1579 / 审计收口**：本次 `audit:fold-writes --strict` 的 8 个违规写点、1 个过期登记与原始基线完全一致，已回填该票评论；不在 YUK-1576 扩修或放宽审计。
+- **测试与证据瘦身 / YUK-1580、1579**：测试先做最大15文件与高mock逐case清单交协调线转owner；新批量证据外置永久保留，旧证据复制核hash/建引用后每批交协调线查看再删；第一批证据PR同步AGENTS全线规则。
+
 
 - **YUK-1358/1359已有UI观察**：真实Inbox dismiss后本页499但侧栏500，document reload恢复一致；原onResolve仅本地resolved更新。Google Fonts原import受CSP拦截；fallback可用。记录在现有迁移验收/后续UI边界，不放宽CSP、不冒称本PR修复。
 - **YUK-1382 / Admin runs未知费用显示**：源码基线fadcb0c87中，observability/ui/admin-runs.tsx:207将nullable cost_usd累加；observability-shared.tsx:11以(value ?? 0).toFixed(4)将未知显示为$0.0000，列表/详情/合计均受影响。已查重并登记Backlog，待验证真实零、全未知、已知+未知；不在1381改UI。此条是源码发现，尚无浏览器验收。
@@ -72,7 +77,9 @@
 
 ## BLOCKED-ON
 
-- **YUK-1576 部署验收**：尚未核验部署库残留 cron/created/retry/active job 与内部 cron dispatch；撤注册不会阻塞其他 worker，但不会自动清除这些记录。留给 PM 部署确认后关票。
+- **测试修改授权**：未获owner逐批批准，一行测试都不动；不阻塞产品重构。证据外置策略已批准，既有证据每批删除仍待协调线看清单。
+
+- **YUK-1525 独立审查**：已尝试调用只读审查工具，但额度限制使其未执行。作者自查和本地实跑不能替代独立审查；此限制记录在 draft PR。
 
 - **协调线验收**：第一天能用的时限与 TEST 危机数据清理状态由审计协调线维护；100% 实际出题自动可判已获 owner 确认，不再作为待裁决值。
 

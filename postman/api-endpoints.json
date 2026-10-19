@@ -930,6 +930,16 @@
             "example": "q_root123"
           },
           {
+            "name": "status",
+            "required": false,
+            "example": "not_servable"
+          },
+          {
+            "name": "include_serving_counts",
+            "required": false,
+            "example": "true"
+          },
+          {
             "name": "include_drafts",
             "required": false,
             "example": "false"

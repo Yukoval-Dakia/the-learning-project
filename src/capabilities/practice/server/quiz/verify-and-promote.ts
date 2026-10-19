@@ -26,7 +26,7 @@ import {
   QUESTION_AVAILABILITY,
 } from '@/core/schema/assessment/lifecycle';
 import type { Db } from '@/db/client';
-import { event, knowledge, question } from '@/db/schema';
+import { event, knowledge, question, question_group_lifecycle } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
@@ -37,7 +37,7 @@ import { publishQuestionGroup, publishQuestionGroupFromRow } from '@/server/ques
 export { publishQuestionGroup, publishQuestionGroupFromRow };
 
 import { type RunTaskFn, runQuizVerify } from '../../jobs/quiz_verify';
-import { runSourceVerify } from '../../jobs/source_verify';
+import { publishVerifyLifecycleUpdate, runSourceVerify } from '../../jobs/source_verify';
 import { SYNTHETIC_SUBJECT_ROOT_RE } from '../placement-scope';
 import { lockPlacementSupplyScopes } from '../question-supply/placement-supply-lock';
 
@@ -124,6 +124,10 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
   const { db, questionId, runTaskFn, skipVerify } = p;
 
   // 一次轻量 SELECT 取 source + draft_status + metadata (派发判别 + override promote 前置守门).
+  // YUK-1568 S3（R1 F2）—— override 的「被复核对象」身份与行依据在同一
+  // 语句快照取得（join lifecycle）：分读会让 owner 决定落到调用中途换上
+  // 的新 revision 上。owner override 不执行模型核验——身份一致即可，不
+  // 虚构 solver 证据。
   const rows = await db
     .select({
       id: question.id,
@@ -132,8 +136,11 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
       knowledge_ids: question.knowledge_ids,
       metadata: question.metadata,
       parent_question_id: question.parent_question_id,
+      lifecycleRevisionId: question_group_lifecycle.current_revision_id,
+      admissionGeneration: question_group_lifecycle.scoring_admission_generation,
     })
     .from(question)
+    .leftJoin(question_group_lifecycle, eq(question_group_lifecycle.group_id, question.id))
     .where(eq(question.id, questionId))
     .limit(1);
   const row = rows[0];
@@ -151,6 +158,12 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
   if (row.parent_question_id != null) {
     return { promoted: false, status: 'skipped:question_part' };
   }
+
+  // 「被复核对象」身份与上方行依据同一语句快照（见上行注释）。
+  const overrideInput = {
+    revisionId: row.lifecycleRevisionId ?? null,
+    admissionGeneration: row.admissionGeneration ?? null,
+  };
 
   // ── override 分支 (skipVerify) ──────────────────────────────────────────────
   // owner 强制启用：不调 run 函数，自己跑 promote (draft→active + FSRS enroll-if-absent +
@@ -306,8 +319,13 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
       // 决定，evidence 如实记录 —— D1：manual ≠ official）。
       // YUK-1045 — suspension:false 清 verify_hold：owner 复核通过即「同版复核
       // 通过」恢复路径（§3.3 表）；retraction_hold 恒保留。
-      await publishQuestionGroupFromRow(tx, {
+      // YUK-1568 P：已声明 revision 走冻结契约的 typed lifecycle 更新（未声明
+      // 组照旧行归一）；manual evidence 与 admitted 语义原样，声明 + admitted
+      // 仍过 publishQuestionGroup 的判分就绪闸（不可判声明 ⇒ 拒发回滚）。
+      await publishVerifyLifecycleUpdate(tx, {
         rootId: row.parent_question_id ?? questionId,
+        expectedRevision: overrideInput.revisionId,
+        expectedGeneration: overrideInput.admissionGeneration,
         admission: {
           state: 'admitted',
           evidence: {

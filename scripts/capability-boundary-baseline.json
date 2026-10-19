@@ -16,11 +16,12 @@
     "YUK-1522": "R8 ingestion agent: ingestion -> ai 10 -> 12 (+2: server/agent/run.ts mounts the agent loop via runner-fn.makeRunTaskFn + pi-tools.piDomainMount — the same owner-service seams dreaming/coach use), ingestion -> session 8 -> 9 (+1: run.ts calls the Ingestion.* state guards — single-owner session writes, never raw status updates), ingestion -> boss 6 -> 7 (+1: server/agent/dispatch.ts is the sole boss.send seam for resume/continuation singletons), ingestion -> events 5 -> 6 (+1: server/events/agent-progress.ts emits durable job_events via writeJobEvent — contract event writer, same channel as extraction-progress). total 428 -> 434. R1: ingestion -> boss 7 -> 8 (+1: run.ts reads JOB_RETRY_LIMIT for the retries-exhausted terminal write — a queue-policy constant, not a send path). All are owner-service/facade calls required for a durable agent loop; no deep-import or raw-write bypass. R3/CI-fix: run.ts imports the failure-vocabulary modules (agent-run-error, provider-attempt-lifecycle, provider-session-admission) DIRECTLY instead of a runner-fn re-export — re-exporting them through runner-fn pulled providers→task-catalog→schema barrel into runner-fn's cone and broke a vitest import-order invariant. Same modules, same semantics; +3 same-owner ai edges (ingestion -> ai 12 -> 15, total 434 -> 437).",
     "YUK-1529": "practice -> boss 15 -> 18 (+3, total 437 -> 441): worksheet-export-route enqueues worksheet_render via getStartedBoss + WORKSHEET_RENDER_QUEUE (same seam as session-end.ts enqueue), and practice manifest JobDecl imports the shared queue name (same as copilot manifest -> queue-names). practice -> r2 2 -> 3 (+1): server/worksheet/pdf-store is the single blob seam — content-addressed PDF put (render job) + read (download route), same edge kind as ingestion -> r2.",
     "YUK-1547": "practice -> ai 65 -> 66 (+1, total 437 -> 438): verify-framework.ts re-exports writeToolCallLog (src/server/ai/log) — structured-submit parse failures keep the bounded raw submit arguments as tool_call_log evidence attached to the task run (admission solve + crosscheck). Same owner-service lane as the file's existing server/ai re-exports (Provider/TaskTextResult); consumers add no new edge.",
-    "YUK-1559": "C1-10 model-source unification: ingestion -> ai 15 -> 16 (+1, total 437 -> 438): provider-attempts.ts reads GLM_OCR_MODEL_ID from the provider catalog (src/server/ai/providers.ts) instead of pinning the glm-ocr literal — direct-lane declared ids belong to the catalog."
+    "YUK-1559": "C1-10 model-source unification: ingestion -> ai 15 -> 16 (+1, total 437 -> 438): provider-attempts.ts reads GLM_OCR_MODEL_ID from the provider catalog (src/server/ai/providers.ts) instead of pinning the glm-ocr literal — direct-lane declared ids belong to the catalog.",
+    "YUK-1567": "practice -> r2 raised 2 -> 3 (+1, total 439 -> 440): admission/reauthorization.ts void-release republish calls publishQuestionGroup, whose declared contract requires an injected readAssetBytes blob reader (refuses custom-block publishes without one); supplying getR2().get is the same caller-injection owner seam as the existing practice -> r2 edges in assets.ts and question-supply/jyeoo-candidates.ts."
   },
   "debts": {
     "capabilityToServer": {
-      "total": 440,
+      "total": 441,
       "byOwnerPair": {
         "agency -> ai": 28,
         "agency -> boss": 10,
@@ -93,7 +94,7 @@
         "practice -> projections": 4,
         "practice -> proposals": 5,
         "practice -> questions": 14,
-        "practice -> r2": 3,
+        "practice -> r2": 4,
         "practice -> runtime-env": 4,
         "practice -> session": 16,
         "shell -> boss": 1,

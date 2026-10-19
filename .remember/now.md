@@ -1,14 +1,16 @@
-# YUK-1576 暗轨退役交接 — 2026-10-19
+# Architecture deepening — 2026-10-19
 
-独立分支 `yuk-1576-dark-track-retire`，仅交 draft PR，`Refs YUK-1576`；不改 Linear 状态，不合并/部署。BKT 夜写、先修风险 producer 与 SRT 分位数分支已删除；表、历史 kt_json/事件解码、先修前沿、当前 θ/PFA/FSRS 与在线 RT 采集保留。删除 7 个专属 case，无新测试。
+Current owner: arch-lead, refactor/yuk-1572-stream-modules, base d41f24213. Six tickets relabelled T3. Grok retains #1830 ratchet writer; semantic alignment posted to PR and YUK-1570. First-three plan approved: docs/planning/2026-10-19-architecture-deepening.md. SWE-2 source writer released at 2cd19533a: stream-store 1427, inputs355, view410; >1500 files17. Merged main615437b76 into d38e72c447; parent typecheck/lint179warnings/full build/boundary+architecture audits exit0. Kimi R1 APPROVE d41..2cd, source unchanged; exact5c0e CI39252986951 SUCCESS. Main2176 integration only PLAN/now conflicts; new synthetic-head checks/CI pending, no new source review needed. Sol independently examines knowledge outbound SCC cut after GLM notes-only impossibility inference was rejected. Parent owns docs/review/integration. No tests/DB/Docker/TEST/provider operations. Baseline measured: SCC1/5 members, cap-server443, >1500 files18, baseline141 lines. External bulky evidence approved with permanent retention; old HEAD deletion requires copy/hash/reference inventory and per-batch coordinator review. First evidence PR updates AGENTS for all lanes. Test shrink remains inventory only pending owner approval.
 
-本地 typecheck/lint/build 通过（lint 179 warnings）；受影响 3 unit 文件 92 例、4 DB 文件 79 例通过。DB 仅用本机 Testcontainers PG16/pgvector；首次健康检查超时，重试时显式运行该容器 pg_isready 健康检查后通过，容器已移除。未连 TEST/部署库，无 UI/provider/付费调用。
+# YUK-1525 题库计数 draft 交接 — 2026-10-19
 
-capability-boundaries、architecture-deepening、schema、partition、task-census、flags、mastery-provenance、relations、test-policy 审计通过。边界基线手动收紧 443→440、18→15。fold-writes strict 的 8 违规+1 stale 与基线相同，已评论回填 YUK-1579，不扩大本票。日志在本工作树 `.amp/in/artifacts/`。
+本 worktree `/workspace/amp/wt/YUK-1525`，分支 `yuk-1525-serving-counts-sql`，只处理 YUK-1525。服务「第一天能用」。SQL 统一 lifecycle 理由，冻结题面按200行分批复用 `decideAutomaticServing`，不复制规则。服务状态计数与列表使用 repeatable-read 只读事务，保留 API 字段与 offset 契约。
 
-撤注册不阻塞其他 pg-boss worker，但旧 schedule 会继续创建无人消费的任务。没有通用退役名单可复用；PR 须附部署前只读 SQL，核 schedule、目标 created/retry/active 任务及 `__pgboss__send-it` 中的目标 dispatch 均为零。先停旧 producer，再由部署负责人处理残留；本线程未执行清理或部署验证。历史数据兼容只核源码，未用部署数据回放。PR/精确 head CI 状态以 GitHub 本分支为准。
+临时 Postgres 17/pgvector 全量迁移后造2600行。旧路径计数1846且最新仅 `q_02000`；修后2400且 `q_02600` 可见。原投影对全库逐行统计为2400，八种理由一致，2600行 serving 投影零差异。翻页、难度/时间排序、tier、family、空集合与 HTTP handler 参数已实跑。原始命令、数据和结果封存在本机 `.amp/in/artifacts/`。没有新测试、完整本机测试、UI 改动或付费调用。
 
-以下保留其他工作线的历史交接，不代表本线程正在推进这些任务。
+仅授权 commit、普通 push、draft PR，未授权本轮 merge 或部署。独立审查工具因额度限制未执行，不能标为通过；后续仍需独立审查与 exact-head CI。Linear 保持未完成，PR 链接与状态以该票交接评论为准。未发现需另建票的范围外缺陷。
+
+以下为其他 lane 的历史交接，不表示本线程接管。
 
 # YUK-1404 figure main composition — 2026-10-11
 
