@@ -77,3 +77,17 @@ G :820 位于另一个 export `activateSubmissionCandidate` 的事务 :818。
 
 不生成 SQL、不改获取/重试/超时/释放语义、不加 runtime consumer/validator、
 不加检查脚本或测试、不动禁改清单文件（paid-effect 链、`src/server/ai`、测试等）。
+
+## 8. 父级收口（2026-10-20）
+
+修复 revision `36ba2b8a2c3a09308d6123a4a048d54685979fbb`：GLM 独立 R1 后
+唯一 R2 已通过，三个证明错误均已纠正；无第三轮。父级 `pnpm typecheck`、
+`pnpm lint`、`pnpm build` 均退出 0（这是对 §5 初版 NOT_RUN 的补充）。
+无生产/测试代码改动，无 DB/运行时/并发锁验证；本片不结清 YUK-1577 的完整排序证明。
+
+- 检查结果：`/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1577/36ba2b8a2c3a09308d6123a4a048d54685979fbb/parent-checks/results.json`，SHA-256 `91b36c6967e508045a0cef81df50da52062fb986d6b874c5043075d3d844cb3f`。
+- R1：`/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1577/2ecfde084/review-r1-glm.md`，SHA-256 `9f703706e215923c925c29268d22b8c48c7e55fa714bf11fa5bb5c3243a7a907`。
+- R2：`/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1577/36ba2b8a2/review-r2-glm.md`，SHA-256 `df1078611c409ec82c5a49a348064a8dc5d46b9eeb19573c521b60f449bc523d`。
+
+仍未证明：动态路径全部排序、共享 key 实例域与行锁交互；族表 sites 的共享 helper
+重复归属口径和旧快照目录命名是 R1 已记录的非阻塞后续，不冒称已修。
