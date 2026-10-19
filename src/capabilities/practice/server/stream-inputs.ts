@@ -6,8 +6,9 @@
 // 与查询组合。
 //
 // 输入信号来源（P2 spec §2.1「due-list 降级为输入信号」）：
-//   - dueItems：内部调用 handleReviewDue（函数调用、零网络）——FSRS 到期投影 +
-//     跨学科 round-robin + goal 软偏置全部复用现行为；旧 /api/review/due 不删。
+//   - dueItems：与 HTTP adapter 共用的 typed due 读取 queryReviewDue——FSRS 到期
+//     投影 + 跨学科 round-robin + goal 软偏置全部复用现行为；读取失败按既有
+//     契约降级为空候选（见 readComposerDueRows）。旧 /api/review/due 不删。
 //   - variantItems：mistake_variant(status='active') 中 parent 近 7 天有 failure
 //     attempt 的变体（变体轮换的「错题跟练」信号）。
 //   - newCheckItems：open learning_item（pending/in_progress）的 knowledge_ids 中尚无 FSRS 状态行的
@@ -21,15 +22,16 @@ import type { Db, Tx } from '@/db/client';
 import { notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
 import {
   event,
-  knowledge,
   learning_item,
   learning_session,
   material_fsrs_state,
   mistake_variant,
   question,
 } from '@/db/schema';
+import { ApiError } from '@/kernel/http';
 import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
-import { handleReviewDue } from './due-list';
+import { REVIEW_DUE_LIMIT_MAX, type ReviewDueRow, queryReviewDue } from './due-list';
+import { knowledgeLabels } from './knowledge-labels';
 import { FRONTIER_MAX_ITEMS, learnableFrontier } from './learnable-frontier';
 import { getPracticeList } from './practice-read';
 import {
@@ -42,12 +44,6 @@ import type { ComposerInputs } from './stream-composer';
 /** 本模块的 DB 句柄：既可是顶层 `db`，也可是事务内 `tx`。 */
 type DbLike = Db | Tx;
 
-// ADR-0037 H8 (due-must-review) — due is a HARD constraint: the merge engine may reorder
-// / de-emphasize but MUST NOT drop a due item from the queue. So feed it the /api/review/due
-// endpoint's FULL ceiling (200, the clamp in due-list.ts) rather than a small slice. The
-// old `10` silently dropped due #11+ BEFORE the engine (capacityGuard, which protects due
-// from truncation past capacity) ever saw them — an unenforced invariant (YUK-349).
-const DUE_INPUT_LIMIT = 200;
 const VARIANT_WINDOW_DAYS = 7;
 /** Hard ceiling for mistake variants admitted to one composer/LLM input. */
 export const VARIANT_INPUT_LIMIT = 50;
@@ -63,20 +59,6 @@ export async function resolveDailyPracticeBudget(
     .limit(1);
   const pace = normalizeDailyPracticePace(latest?.pace);
   return { pace, minutes: dailyPracticeBudgetMinutes(pace) };
-}
-
-/**
- * knowledge id → 显示名批量解析。本模块用它给候选注 reasoning 标签；stream-view 的
- * knowledge_name 投影也经本查询复用同一事实源（view → inputs 单边依赖，无环）。
- */
-export async function knowledgeLabels(db: DbLike, ids: string[]): Promise<Map<string, string>> {
-  const unique = [...new Set(ids)].filter(Boolean);
-  if (unique.length === 0) return new Map();
-  const rows = await db
-    .select({ id: knowledge.id, name: knowledge.name })
-    .from(knowledge)
-    .where(inArray(knowledge.id, unique));
-  return new Map(rows.map((r) => [r.id, r.name]));
 }
 
 interface QuestionMixMetadata {
@@ -112,6 +94,44 @@ async function questionMixMetadata(
   );
 }
 
+/**
+ * YUK-1572 — composer 的 due 页读取与降级边界。
+ *
+ * 旧路径经 `handleReviewDue(new Request(...))` 再 `Response.json()` 读回：HTTP
+ * adapter 把 due 读取的任何失败整形成不含 `rows` 的错误响应，composer 端
+ * `rows ?? []` 因此降级为空候选继续收集其它输入。现在直调同一 typed 读取
+ * `queryReviewDue`，这条降级契约由输入收集侧显式持有：
+ *   - due 页读取失败 → 返回 []（与旧 `rows ?? []` 等价）；
+ *   - ApiError 与 errorResponse 一致不记日志；其它错误按 errorResponse 同款
+ *     'unhandled error' 形状记录，失败可观测性不丢；
+ *   - 序列化往返被取消：旧路径里 Response.json 序列化失败也会走
+ *     errorResponse→[]，但 ReviewDueRow 全部来自 Drizzle timestamp/jsonb 投影
+ *     （Date、string[]、字符串枚举），不可序列化值在现实中不可达；composer
+ *     只消费 question_id / knowledge_ids 两个 JSON 稳定字段；
+ *   - 本函数之后的一切查询（intervention 并集、变式、new_check…）仍旧抛出——
+ *     降级只覆盖 due 页读取这一步。
+ *
+ * ADR-0037 H8 (due-must-review) — due is a HARD constraint: the merge engine may
+ * reorder / de-emphasize but MUST NOT drop a due item from the queue. So request
+ * the due page's FULL ceiling (REVIEW_DUE_LIMIT_MAX, the same clamp the HTTP
+ * adapter enforces) rather than a small slice. The old `10` silently dropped due
+ * #11+ BEFORE the engine (capacityGuard, which protects due from truncation past
+ * capacity) ever saw them — an unenforced invariant (YUK-349).
+ */
+async function readComposerDueRows(db: DbLike): Promise<ReviewDueRow[]> {
+  try {
+    const { rows } = await queryReviewDue(db, { limit: REVIEW_DUE_LIMIT_MAX });
+    return rows;
+  } catch (err) {
+    if (!(err instanceof ApiError)) {
+      const message = err instanceof Error ? err.message : String(err);
+      const stack = err instanceof Error ? err.stack : undefined;
+      console.error('unhandled error', { message, stack, timestamp: new Date().toISOString() });
+    }
+    return [];
+  }
+}
+
 export async function collectComposerInputs(db: DbLike, date: string): Promise<ComposerInputs> {
   // 红线 4（draft 排除契约，YUK-350）：通用练习池的选题候选**必须排除** draft_status='draft'
   //   （NULL≡active / 'active' 留池，仅排字面 'draft'）。new_check + frontier 共用
@@ -119,23 +139,17 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
 
   const dailyBudget = await resolveDailyPracticeBudget(db);
 
-  // 1. FSRS 到期投影 — 经现行 due handler（函数调用）。
-  const dueRes = await handleReviewDue(
-    new Request(`http://internal/api/review/due?limit=${DUE_INPUT_LIMIT}`),
-    { db },
-  );
-  const dueJson = (await dueRes.json()) as {
-    rows?: Array<{ question_id: string; knowledge_ids?: string[] }>;
-  };
-  const cappedDueRows = dueJson.rows ?? [];
+  // 1. FSRS 到期投影 — 与 HTTP adapter 共用的 typed due 读取。
+  const cappedDueRows = await readComposerDueRows(db);
 
   // YUK-792 — intervention diagnostics are an approved learner delivery, not an
-  // optional member of the generic due page. `handleReviewDue` caps that page at
-  // 200, so a diagnostic can otherwise disappear behind an older ordinary
-  // backlog before the composer ever sees (and protects) its `intervention`
-  // source. Read the due intervention subset independently, then prefix-union it
-  // with the capped page. The FSRS row is the activation/scheduling boundary;
-  // draft follow-ups without a row remain invisible.
+  // optional member of the generic due page. The due page is capped at
+  // REVIEW_DUE_LIMIT_MAX (200), so a diagnostic can otherwise disappear behind
+  // an older ordinary backlog before the composer ever sees (and protects) its
+  // `intervention` source. Read the due intervention subset independently, then
+  // prefix-union it with the capped page. The FSRS row is the
+  // activation/scheduling boundary; draft follow-ups without a row remain
+  // invisible.
   const interventionCandidates = await db
     .select({
       question_id: question.id,
@@ -311,7 +325,7 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
 
   // 标签批量解析（reasoning 模板用）。
   const labelMap = await knowledgeLabels(db, [
-    ...dueRows.flatMap((r) => r.knowledge_ids ?? []).slice(0, 50),
+    ...dueRows.flatMap((r) => r.knowledge_ids).slice(0, 50),
     ...newCheckPairs.map((p) => p.knowledgeId),
     ...frontierPairs.map((p) => p.knowledgeId),
   ]);
@@ -323,7 +337,7 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
       const metadata = mixMetadataByQuestion.get(r.question_id);
       return {
         questionId: r.question_id,
-        knowledgeLabel: r.knowledge_ids?.length ? labelMap.get(r.knowledge_ids[0]) : undefined,
+        knowledgeLabel: r.knowledge_ids.length ? labelMap.get(r.knowledge_ids[0]) : undefined,
         knowledgeId: metadata?.knowledgeId,
         questionKind: metadata?.questionKind,
         source: metadata?.isInterventionDiagnostic ? 'intervention' : 'decay',
