@@ -1,10 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-19：架构深化线独立启动；首片 YUK-1572 拆练习流职责，首三片已获协调线同意；证据外置永久保留已批，测试缩减只做清单。
+> Linear 是权威 tracker。2026-10-19：架构首片#1834已合main22b03fd5，局部深化+职责整理；下一片按完整frontier决策归属推进，测试缩减文本已交协调线，未获owner批准不改测试。
 
 ## NOW
 
-- **架构深化 / YUK-1572**：`refactor/yuk-1572-stream-modules`，独占 arch-lead；stream-store 已2120→1427，超长18→17，SCC与443边不变；合成d38e父级typecheck/lint/build/两审计通过；Kimi R1 APPROVE、旧head5c0e CI全绿；整合main2176仅看板冲突，新head验证/CI待完成。六票T3，#1830仍由Grok完成；不动其ratchet/baseline。见[首三片计划](docs/planning/2026-10-19-architecture-deepening.md)。
+- **架构深化 / YUK-1571**：`refactor/yuk-1571-frontier-ownership` 从main22b03fd5开始；frontier闭包/掌握门/三态决策归knowledge，练习配额留practice，原导出兼容，主线已释放写权。#1830合入前不写audit/baseline。首片#1834已合，R1/本地静态构建/exactCI通过。见[计划与Sidekick对照](docs/planning/2026-10-19-architecture-deepening.md)。
 
 - **第一天能用 / 题库暂不出题计数（YUK-1525）**：`yuk-1525-serving-counts-sql` 将 lifecycle 理由统一到 SQL，冻结题面继续复用原校验，计数与列表使用同一只读快照。2600 行中，旧列表少算为1846，修后2400，与原投影全库逐行统计一致；窗口外 `q_02600` 可见。无新增测试、UI 改动或付费调用。
 
@@ -36,7 +36,7 @@
 
 ## NEXT
 
-- **架构深化**：首片验证/独立审查/精确HEAD CI后推进YUK-1571拆环，再拆intervention职责；每片报告SCC、server边、超长文件及baseline行数。
+- **架构深化**：frontier首片完成消费者/兼容边界验证后独立审查与精确HEAD CI；第三片按真实维护收益再选，不默认拆intervention；每片报告SCC、server边、超长文件及baseline行数。
 
 - **YUK-1525**：draft PR 交接后，由审查与 exact-head CI 决定是否可转 ready；本次不自动合并。
 

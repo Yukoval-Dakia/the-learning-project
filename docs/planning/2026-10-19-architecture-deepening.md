@@ -3,8 +3,8 @@
 Owner 2026-10-19 授权独立架构线与功能并行。冻结起点 `d41f24213`；数字是同口径目标，合并时重测 main 与 PR，区分本片 delta 和其他线变动。
 
 1. **练习流职责拆分（YUK-1572）**：从 `practice/server/stream-store.ts` 提取候选输入收集、读取投影两个完整职责；现有编排入口兼容，元数据匹配细节留在投影模块内部。目标：2120 行降至 <1500，全库 >1500 文件 18→17；SCC 1 个/5 成员、capability→server 443、基线文件 141 行保持。不动 `practice/public.ts`、出题/判分/付费链、测试或 UI。
-2. **拆除首组反向 capability 依赖（YUK-1571）**：按调用链定位 knowledge/notes 与 practice 的领域归属错误，迁移完整 owner operation 或收窄现有领域端口；拒绝转发包装与把循环藏到 kernel。目标 cross-capability value 48→≤47，SCC 成员减少或至少移除一条组成环的有向依赖；capability→server ≤443，超长文件 ≤17。具体路径和精确 delta 在首片源码调查后冻结，再与功能线核对。
-3. **再拆一个独立超长领域模块（YUK-1572）**：优先 `core/schema/intervention.ts` 的干预契约职责拆分，按实际消费者划分而非平均分行；不触及测试。目标 2240→每文件 <1500，超长文件 17→16；SCC 与 capability→server 不增加。若第二片暴露可一次消环的完整小切片，优先替换为消环片并向协调线报修订。
+2. **学习前沿的完整决策归属（YUK-1571，Sidekick 复核后的首选）**：将先修闭包、掌握门、overflow/sparse/dense 判别及告警整体归 knowledge；练习容量与选题仍归 practice。实施前确认两个 public 端口及相关文件写入权、旧测试入口兼容、#1830 baseline writer 释放。预计知识两个消费者退出 practice 依赖；精确净边数待所有消费者闭包冻结，不提前承诺 SCC 成员下降。
+3. **按前片所得再选，不默认拆 intervention.ts**：优先比较 A「练习流使用 typed due query，显式保留既有失败降级」与共享笔记投影的实际维护收益；跨域 merge operation 先完成事务/锁/恢复设计和协调裁定，不抢先搬事务。仅因 intervention.ts=2240 行不足以令其优先。
 
 后续顺序：持续拆环至 SCC=0 → capability-owned 模块消除 server 依赖至 ≤300、收窄 practice 公共端口 → 其余超长文件 → 锁登记及获取顺序证明 → 审计合并。UI 文件由 Opus UI 唯一 writer 负责。锁证明须区分静态调用链与未运行的并发验收。
 
@@ -19,3 +19,30 @@ Owner 2026-10-19 授权独立架构线与功能并行。冻结起点 `d41f24213`
 源码 `2cd19533a`，正常合入 main `615437b76` 后验证提交 `d38e72c44710523104a9659965afb15c4fa19a74`：stream-store 2120→1427，输入模块355、投影410；超长18→17，SCC 1/5成员、capability→server443、cross-value48、baseline141行不变。父级 `pnpm typecheck`、`pnpm lint`（179 warnings）、`pnpm build`、`pnpm audit:capability-boundaries`、`pnpm audit:architecture-deepening` 均 exit 0。测试代码零改动；本机测试、DB、运行时、TEST、provider 均 NOT_RUN；独立初审与 exact-head CI 待收齐。
 
 原始日志和指标：`/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1572/d38e72c44710523104a9659965afb15c4fa19a74/`；逐文件 SHA-256 见 `checks-sha256.json`，该索引 SHA-256 `73b7de1807a5076ae427377af020477219ec1b97784db2dffe19894f99a30ec8`。此前 `2cd19533a` 的父级检查被中断，不复用缺失退出状态。
+
+## Sidekick 首轮落实与下一片前后对照（2026-10-19）
+
+首片按**局部深化＋职责整理**交付：view 隐藏 metadata 匹配和两处调用方的中间 map；inputs 主要是既有 collectComposerInputs 的职责迁移，原导出仍在，filter→view 与 recoveryRowIds/预算关系仍横跨模块。2120→1427、超长-1只是辅助结果，不代表整体解耦。
+
+五项标准落点：①每片先列事实与完整操作owner，不让入口重写语义；②至少两个真实变化场景比较需理解/修改的位置；③明确哪些中间态/顺序知识退出调用方，已有封装不冒充新深化；④保留事务、锁序、幂等/失败/恢复owner及证据分层；⑤按维护痛点、风险、写入权调整顺序，数字不替代语义判断。
+
+**首选 frontier，原因与限度**：knowledge 的页面与夜间 bootstrap 目前要依赖 practice 才能解释自己的先修图。拟使 knowledge 拥有“读图→有界闭包→canonical mastery→判别结果”完整只读决策；practice 仅消费可练知识点并施加本身的5题容量。闭包 SQL、掌握门0.7+evidence≥4、冷启动默认、稳定排序、整结果overflow拒绝和单点warn保持原样；这不是检索向量/打标阈值合并。
+
+- 调用方知识前→后：knowledge 两消费者不再知道 practice 公共facade或练习配额；practice 不拥有/解释闭包和掌握公式，只保留既有id消费策略。该算法原本已有封装，所以本片主要收益是正确归属与变化局部性，不能声称从零隐藏了所有复杂度。
+- 真实变化一：改变先修闭包的溢出诊断字段。原需跨 practice算法/public、knowledge rail与nightly 理解判别；之后算法与解释都在knowledge内部，practice若仍消费ids无需修改。真正改行为时仍单独批准，不在本片调参数。
+- 真实变化二：改变每日练习前沿配额/选题排序。原 FRONTIER_MAX_ITEMS 与knowledge闭包契约同文件；之后配额/选题完全留practice，knowledge算法与两个消费者不变。反向，knowledge提出边的bootstrap门不能影响练习配额。
+- 真正退出：practice不再保存闭包/掌握门实现；knowledge两个生产入口退出practice/public。现有测试若仍需旧导出，则明确标为兼容残留，不能把alias当新深模块或宣称旧路径全退役；未获owner批准不修改测试。
+- 状态/失败：只读Db/Tx不增加事务、锁或持久状态；三态不能折叠。nightly对overflow跳过；dense且ids≤floor仍bootstrap；pre-model查询失败继续抛出，不能加吞错。现有manifest贡献路径不变。原query/事务可观察时序与日志逐处对照。
+- 证据：固定base/head源码对照、既有类型/构建/审计和exact-head CI；本机DB/真实图闭包/模型运行NOT_RUN。真实并发、部署、学习效果不得从CI推导。尚缺：最终消费闭包、兼容导出是否阻碍真正退役、功能线writer释放和净边数实测。
+
+**候选A暂排其后**：stream-inputs.ts:123–128构造内部Request、调handleReviewDue再读JSON，已有queryReviewDue可复用。固定limit=200；query本身做1..200 clamp，handler的parseInt对这个固定值不产生差异。但handler catch→errorResponse→没有rows时回退[]，一般错误还会写unhandled error日志，ApiError不写该日志；直接改await query会把原降级改成抛错，不能机械替换。若选A，必须明确练习输入收集拥有降级策略、HTTP handler保留协议整形，并核对序列化失败与后续intervention查询仍抛错的边界；不新增只转发的port。
+
+**跨域merge暂做设计，不改owner**：2026-09-06-business-ownership-and-tests.md:23–25明确Knowledge拥有原子merge事务和receipt；要上移agency须协调裁定。设计须先覆盖proposal锁→全局学习态锁→排序node锁→九面修复顺序→receipt/project同事务，以及sweep/backfill重入、幂等与恢复，不能先搬代码后补证明。
+
+### Frontier 首片实施边界（主线已释放写入权）
+
+分支 `refactor/yuk-1571-frontier-ownership`，从main `22b03fd5` 开始。优先把完整闭包决策并入既有 `knowledge/server/frontier-read.ts`（当前309行，已拥有canonical mastery读取），让graph决策与rail解释同owner；不是为减边新造wrapper。`knowledge/jobs/frontier_fill_nightly.ts`改读本域；`knowledge/public.ts`暴露必要决策端口；practice `learnable-frontier.ts`只保留练习侧5题配额、既有id适配及旧导出兼容，不改practice/public.ts和测试。跨capability目录更新为真实消费者，不改CI语义。预计knowledge→practice少2文件边、practice→knowledge加1，cross-value48→47；practice→mastery少1且knowledge复用现有import，cap-server444→443；SCC仍1/5成员、超长18不变。全部为待实测目标。
+
+`audit-capability-boundaries.ts`及baseline在#1830合入前保持原样；源码可先完成，旧基线因真实下降报错须记为待收紧，不能冒充PASS或绕过门禁。Grok释放后用其已合机制收紧，不另写ratchet。
+
+首片#1834已于13:25:34 UTC合入main22b03fd5：R1 APPROVE，exact2a7d006 CI39257589648全绿，17分钟窗满足。相对新main超长19→18、SCC1→1、server444→444、baseline142→142；主线增加的source_verify1723行与R2边单独归因。
