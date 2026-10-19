@@ -1,4 +1,5 @@
 import type { Provider } from '@/ai/registry';
+import { currentModelCatalog } from './model-catalog';
 import {
   ANTHROPIC_SUB_CONTRACT_REF,
   ATTEMPT_PRICEBOOK_VERSION,
@@ -121,7 +122,7 @@ export function resolveAttemptCostTruth(input: {
     return {
       basis: 'estimated',
       amountUsd: estimated,
-      ref: `${prefix}:${ATTEMPT_PRICEBOOK_VERSION}/${input.provider}/${input.model}`,
+      ref: `${prefix}:${ATTEMPT_PRICEBOOK_VERSION}/${input.provider}/${input.model}@${currentModelCatalog().version}`,
     };
   }
 

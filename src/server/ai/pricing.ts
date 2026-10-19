@@ -15,7 +15,8 @@
 // YUK-924 site 5 — WHICH models carry a local pricebook is no longer a
 // module-local model-id set: membership derives from the ModelProfile registry
 // (`execution.localPricebook` on the xiaomi provider binding in providers.ts —
-// today exactly the mimo-v2.5 pair). Rates are reused from the committed catalog.
+// today exactly the mimo-v2.5 pair). Rates are read from the runtime catalog
+// (cache, else the committed snapshot) at call time.
 //
 // YUK-964: public overseas USD rates checked2026-09-06 against
 // https://mimo.mi.com/docs/en-US/price/pay-as-you-go (updated2026-08-06).
@@ -23,14 +24,8 @@
 // do not maintain a second numeric card. These are estimates, not an account
 // invoice or a claim about a domestic CNY contract. Historical ledgers are untouched.
 
-import modelCatalog from './model-catalog.snapshot.json' with { type: 'json' };
+import { catalogModelCost } from './model-catalog';
 import { resolveModelProfile } from './model-profiles';
-
-/** Per-million-token USD unit prices, split by token type. */
-const MIMO_PRICES = {
-  'mimo-v2.5': modelCatalog.providers.xiaomi.models['mimo-v2.5'].cost,
-  'mimo-v2.5-pro': modelCatalog.providers.xiaomi.models['mimo-v2.5-pro'].cost,
-};
 
 /** Version is embedded in every estimate ref so historical rows stay explainable. */
 export const ATTEMPT_PRICEBOOK_VERSION = '2026-09-06-mimo-public-usd-v2';
@@ -66,7 +61,8 @@ export interface TokenCounts {
 export function localCostUsd(model: string, tokens: TokenCounts): number | null {
   if (!hasLocalPricing(model)) return null;
   if (model !== 'mimo-v2.5' && model !== 'mimo-v2.5-pro') return null;
-  const p = MIMO_PRICES[model];
+  const p = catalogModelCost('xiaomi', model);
+  if (!p) return null;
   const cacheRead = tokens.cacheReadTokens ?? 0;
   const cacheCreation = tokens.cacheCreationTokens ?? 0;
   if (

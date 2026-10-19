@@ -3,8 +3,9 @@
  *
  * Fetches the public models.dev catalog (https://models.dev/api.json) and writes
  * a TRIMMED, reviewable snapshot to src/server/ai/model-catalog.snapshot.json.
- * CI / audits / runtime code read ONLY the committed snapshot — there is NO
- * runtime network fetch (a runtime refresh can be a follow-up if ever needed).
+ * The committed snapshot is the offline floor and the fixture input.
+ * Runtime reads go through src/server/ai/model-catalog.ts, which fetches this
+ * same URL, caches the document, and falls back to the snapshot.
  *
  * TRIM (documented per the ticket): the snapshot keeps only
  *   - the catalog providers our internal provider map consumes

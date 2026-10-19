@@ -752,6 +752,16 @@ function findingsFor(path: string, code: string, facts: SourceFacts): ProviderWi
     }
     if (code.includes('layout_parsing'))
       return [{ kind: 'glm-ocr-layout-parsing-fetch', call, path }];
+    // Public models.dev document (YUK-1563). No credential and no model call.
+    // The split drops the exemption if a second fetch( appears in the file.
+    if (
+      call === 'fetch' &&
+      path === 'src/server/ai/model-catalog.ts' &&
+      code.includes('https://models.dev/api.json') &&
+      code.split('fetch(').length === 2
+    ) {
+      return [];
+    }
     return [{ kind: 'unclassified-provider-fetch', call, path }];
   });
 }
