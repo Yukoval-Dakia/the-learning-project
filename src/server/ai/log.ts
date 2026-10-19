@@ -105,6 +105,42 @@ export async function writeCostLedger(db: DbLike, entry: CostLedgerEntry): Promi
   await insertCostLedger(db, { ...entry, entry_kind: 'legacy' });
 }
 
+/**
+ * One models-catalog auth probe. Uses the attempt columns so an unpriced call
+ * stays `cost = null` instead of a legacy zero. Not a runner task run.
+ */
+export async function writeModelCatalogProbeCost(
+  db: DbLike,
+  entry: {
+    provider: string;
+    model: string;
+    tokensIn: number;
+    tokensOut: number;
+    costUsd: number | null;
+    costBasis: AttemptCostBasis;
+    costRef: string;
+    outcome: 'success' | 'failed_permanent';
+    occurredAt: Date;
+  },
+): Promise<void> {
+  const unknown = entry.costBasis === 'unknown' || entry.costUsd === null;
+  await insertCostLedger(db, {
+    entry_kind: 'attempt',
+    task_run_id: `catalog-probe:${entry.provider}:${entry.occurredAt.toISOString()}`,
+    task_kind: 'model_catalog_auth_probe',
+    provider: entry.provider,
+    model: entry.model,
+    cost: unknown ? null : entry.costUsd,
+    cost_basis: unknown ? 'unknown' : entry.costBasis,
+    cost_ref: entry.costRef,
+    currency: 'USD',
+    tokens_in: entry.tokensIn,
+    tokens_out: entry.tokensOut,
+    outcome: entry.outcome,
+    occurred_at: entry.occurredAt,
+  });
+}
+
 async function insertCostLedger(
   db: DbLike,
   entry:

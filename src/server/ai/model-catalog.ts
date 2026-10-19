@@ -6,16 +6,29 @@
 // pull leaves the active document in place. The stored document is the union of
 // the previous document and the fetch: a model missing from the fetch keeps its
 // previous entry and records model_absent. A selected model whose capabilities
-// change keeps its previous entry and records capability_changed.
+// change keeps its previous entry and records capability_changed. Configured
+// providers are also checked against their own /models; that status never
+// drops a catalog model. version covers the merged document and the findings,
+// so an absence-only change still reloads readers.
 
 import { createHash } from 'node:crypto';
-import { eq, like } from 'drizzle-orm';
-import type { EffortLevel } from '@/ai/task-spec';
+import { eq, like, sql } from 'drizzle-orm';
+import type { EffortLevel, Provider } from '@/ai/task-spec';
 import { tasks } from '@/capabilities/task-registry';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import { model_catalog_cache, system_config } from '@/db/schema';
 import rawSnapshot from './model-catalog.snapshot.json' with { type: 'json' };
 import { CATALOG_PROVIDER_BY_INTERNAL } from './model-profiles';
+import {
+  type ProviderFetch,
+  type ProviderModelsCheck,
+  canonicalProviderCheck,
+  finalizeProviderModelsChecks,
+  listProviderModels,
+  parseProviderChecks,
+  probePriceFor,
+  providerAuthLabel,
+} from './provider-models-check';
 
 export const MODEL_CATALOG_URL = 'https://models.dev/api.json';
 export const MODEL_CATALOG_REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000;
@@ -46,6 +59,7 @@ export interface CatalogMeta {
   version: string;
   upstreamVersion: string;
   findings: readonly CatalogFinding[];
+  providerChecks: readonly ProviderModelsCheck[];
 }
 
 export type CatalogRefreshResult =
@@ -79,13 +93,15 @@ interface ActiveCatalog {
   upstreamVersion: string;
   providers: ProviderMap;
   findings: readonly CatalogFinding[];
+  providerChecks: readonly ProviderModelsCheck[];
 }
 
-export type CatalogFetcher = (url: string, init: { signal: AbortSignal }) => Promise<Response>;
+export type CatalogFetcher = ProviderFetch;
 
 export interface ModelCatalogRefreshOptions {
   fetchCatalog?: CatalogFetcher;
   now?: () => Date;
+  env?: Record<string, string | undefined>;
 }
 
 function asJson(value: unknown): Json | undefined {
@@ -104,6 +120,21 @@ function asPositiveInteger(value: unknown): number | undefined {
 
 function sha256(text: string): string {
   return createHash('sha256').update(text).digest('hex');
+}
+
+/** Hash the merged document together with findings and provider checks. */
+function documentVersion(
+  providers: ProviderMap,
+  findings: readonly CatalogFinding[],
+  checks: readonly ProviderModelsCheck[],
+): string {
+  return sha256(
+    JSON.stringify({
+      checks: checks.map(canonicalProviderCheck),
+      findings,
+      providers,
+    }),
+  );
 }
 
 function isUndefinedTable(err: unknown): boolean {
@@ -223,14 +254,17 @@ function snapshotActive(): ActiveCatalog {
   const providers = providerMapFrom(rawSnapshot) ?? {};
   const retrievedAt = asJson(root?._meta)?.retrieved_at;
   const fetchedAt = typeof retrievedAt === 'string' ? retrievedAt : '1970-01-01T00:00:00.000Z';
-  const version = sha256(JSON.stringify(providers));
+  const findings: CatalogFinding[] = [];
+  const providerChecks: ProviderModelsCheck[] = [];
+  const version = documentVersion(providers, findings, providerChecks);
   return {
     origin: 'snapshot',
     fetchedAt,
     version,
     upstreamVersion: `snapshot:${version}`,
     providers,
-    findings: [],
+    findings,
+    providerChecks,
   };
 }
 
@@ -252,6 +286,7 @@ function metaOf(catalog: ActiveCatalog): CatalogMeta {
     version: catalog.version,
     upstreamVersion: catalog.upstreamVersion,
     findings: catalog.findings,
+    providerChecks: catalog.providerChecks,
   };
 }
 
@@ -284,7 +319,7 @@ function addModelId(ids: Set<string>, value: unknown): void {
   if (trimmed.length > 0) ids.add(trimmed);
 }
 
-async function readPinnedModelIds(db: Db): Promise<ReadonlySet<string>> {
+async function readPinnedModelIds(db: Db | Tx): Promise<ReadonlySet<string>> {
   const ids = new Set<string>();
   for (const task of Object.values(tasks)) addModelId(ids, task.defaultModel);
   for (const key of ENV_MODEL_KEYS) addModelId(ids, process.env[key]);
@@ -367,22 +402,54 @@ function mergeCatalogDocuments(
   return { providers, findings };
 }
 
-function logActive(action: string, catalog: ActiveCatalog): void {
+function findingSignature(finding: CatalogFinding): string {
+  if (finding.kind === 'model_absent') {
+    return `model_absent\t${finding.catalogProvider}\t${finding.model}`;
+  }
+  return `capability_changed\t${finding.catalogProvider}\t${finding.model}\t${finding.fields.join(',')}`;
+}
+
+function logActive(
+  action: string,
+  catalog: ActiveCatalog,
+  previousFindings: readonly CatalogFinding[],
+  previousChecks: readonly ProviderModelsCheck[],
+): void {
+  const auth =
+    catalog.providerChecks.length === 0
+      ? ''
+      : ` auth=${catalog.providerChecks.map((check) => `${check.provider}:${check.auth.status}`).join(',')}`;
   console.info(
-    `[model-catalog] ${action} origin=${catalog.origin} version=${catalog.version} at=${catalog.fetchedAt} findings=${catalog.findings.length}`,
+    `[model-catalog] ${action} origin=${catalog.origin} version=${catalog.version} at=${catalog.fetchedAt} findings=${catalog.findings.length}${auth}`,
   );
+  const seenFindings = new Set(previousFindings.map(findingSignature));
   for (const finding of catalog.findings) {
+    if (seenFindings.has(findingSignature(finding))) continue;
     const fields =
       finding.kind === 'capability_changed' ? ` fields=${finding.fields.join(',')}` : '';
     console.warn(
       `[model-catalog] retained ${finding.catalogProvider}/${finding.model} ${finding.kind}${fields}`,
     );
   }
+  const seenAuth = new Map(
+    previousChecks.map((check) => [check.provider, providerAuthLabel(check)]),
+  );
+  for (const check of catalog.providerChecks) {
+    const label = providerAuthLabel(check);
+    if (!label.startsWith('auth_failed:')) continue;
+    if (seenAuth.get(check.provider) === label) continue;
+    console.warn(`[model-catalog] provider ${check.provider} ${label}`);
+  }
 }
 
-function install(next: ActiveCatalog, action: string): void {
+function install(
+  next: ActiveCatalog,
+  action: string,
+  previousFindings: readonly CatalogFinding[],
+  previousChecks: readonly ProviderModelsCheck[],
+): void {
   active = next;
-  logActive(action, next);
+  logActive(action, next, previousFindings, previousChecks);
 }
 
 function upstreamVersionOf(response: Response, rawBody: string): string {
@@ -449,6 +516,8 @@ export async function hydrateModelCatalog(db: Db): Promise<CatalogMeta> {
     unreadableCacheVersion = undefined;
     const fetchedAt =
       row.fetched_at instanceof Date ? row.fetched_at.toISOString() : String(row.fetched_at);
+    const findings = parseFindings(row.findings);
+    const providerChecks = parseProviderChecks(row.payload);
     install(
       {
         origin: 'cache',
@@ -456,9 +525,12 @@ export async function hydrateModelCatalog(db: Db): Promise<CatalogMeta> {
         version: row.version,
         upstreamVersion: row.upstream_version,
         providers,
-        findings: parseFindings(row.findings),
+        findings,
+        providerChecks,
       },
       'loaded',
+      findings,
+      providerChecks,
     );
   } catch (error) {
     console.warn(
@@ -469,62 +541,136 @@ export async function hydrateModelCatalog(db: Db): Promise<CatalogMeta> {
   return metaOf(active);
 }
 
+function sameChecks(
+  left: readonly ProviderModelsCheck[],
+  right: readonly ProviderModelsCheck[],
+): boolean {
+  const canon = (checks: readonly ProviderModelsCheck[]) =>
+    JSON.stringify(checks.map(canonicalProviderCheck));
+  return canon(left) === canon(right);
+}
+
+interface LockedCatalog {
+  hasRow: boolean;
+  providers: ProviderMap | undefined;
+  findings: CatalogFinding[];
+  checks: ProviderModelsCheck[];
+  upstreamVersion: string;
+}
+
+async function lockCatalogRow(tx: Tx): Promise<LockedCatalog> {
+  await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('model-catalog:refresh'))`);
+  const rows = await tx
+    .select({
+      upstream_version: model_catalog_cache.upstream_version,
+      payload: model_catalog_cache.payload,
+      findings: model_catalog_cache.findings,
+    })
+    .from(model_catalog_cache)
+    .where(eq(model_catalog_cache.id, 1))
+    .limit(1)
+    .for('update');
+  const row = rows[0];
+  if (!row) {
+    return {
+      hasRow: false,
+      providers: undefined,
+      findings: [...active.findings],
+      checks: [...active.providerChecks],
+      upstreamVersion: active.upstreamVersion,
+    };
+  }
+  return {
+    hasRow: true,
+    providers: providerMapFrom(row.payload),
+    findings: parseFindings(row.findings),
+    checks: parseProviderChecks(row.payload),
+    upstreamVersion: row.upstream_version,
+  };
+}
+
+function priceProbe(provider: string, model: string, tokensIn: number, tokensOut: number) {
+  const catalogProvider = CATALOG_PROVIDER_BY_INTERNAL[provider as Provider];
+  const rates = catalogProvider ? catalogModelCost(catalogProvider, model) : undefined;
+  return probePriceFor(provider, model, tokensIn, tokensOut, rates);
+}
+
 export async function refreshModelCatalog(
   db: Db,
   options: ModelCatalogRefreshOptions = {},
 ): Promise<CatalogRefreshResult> {
-  let pinned: ReadonlySet<string>;
-  try {
-    pinned = await readPinnedModelIds(db);
-  } catch (error) {
-    return kept(
-      'unreadable',
-      isUndefinedTable(error)
-        ? 'system_config missing'
-        : error instanceof Error
-          ? error.message
-          : 'pinned models unreadable',
-    );
-  }
-
   const fetchCatalog = options.fetchCatalog ?? ((url, init) => fetch(url, init));
+  const env = options.env ?? process.env;
   const pulled = await pullRemote(fetchCatalog);
-  if ('error' in pulled) return kept(pulled.error, pulled.detail);
-
-  const retained = mergeCatalogDocuments(active.providers, pulled.providers, pinned);
+  const remote = 'error' in pulled ? undefined : pulled;
+  const listed = await listProviderModels(fetchCatalog, env);
   const now = options.now?.() ?? new Date();
-  const version = sha256(JSON.stringify(retained.providers));
-  const next: ActiveCatalog = {
-    origin: 'remote',
-    fetchedAt: now.toISOString(),
-    version,
-    upstreamVersion: pulled.upstreamVersion,
-    providers: retained.providers,
-    findings: retained.findings,
-  };
+
   try {
-    await db
-      .insert(model_catalog_cache)
-      .values({
-        id: 1,
-        fetched_at: now,
-        version,
-        upstream_version: pulled.upstreamVersion,
-        source_url: MODEL_CATALOG_URL,
-        payload: { providers: retained.providers },
-        findings: retained.findings,
-      })
-      .onConflictDoUpdate({
-        target: model_catalog_cache.id,
-        set: {
+    const written = await db.transaction(async (tx) => {
+      const locked = await lockCatalogRow(tx);
+      const pinned = await readPinnedModelIds(tx);
+      const base = locked.providers ?? active.providers;
+      const merged = remote
+        ? mergeCatalogDocuments(base, remote.providers, pinned)
+        : { providers: base, findings: locked.findings };
+      const checks = await finalizeProviderModelsChecks({
+        db: tx,
+        fetchImpl: fetchCatalog,
+        env,
+        now,
+        catalogProviders: merged.providers,
+        previous: locked.checks,
+        listed,
+        priceProbe,
+      });
+      const idle =
+        remote === undefined &&
+        sameChecks(checks, locked.checks) &&
+        (locked.hasRow || checks.every((check) => check.auth.status === 'unconfigured'));
+      if (idle) return { outcome: 'kept' as const, locked, checks };
+      const version = documentVersion(merged.providers, merged.findings, checks);
+      const upstreamVersion = remote ? remote.upstreamVersion : locked.upstreamVersion;
+      const payload = { providers: merged.providers, provider_checks: checks };
+      await tx
+        .insert(model_catalog_cache)
+        .values({
+          id: 1,
           fetched_at: now,
           version,
-          upstream_version: pulled.upstreamVersion,
+          upstream_version: upstreamVersion,
           source_url: MODEL_CATALOG_URL,
-          payload: { providers: retained.providers },
-          findings: retained.findings,
-        },
-      });
+          payload,
+          findings: merged.findings,
+        })
+        .onConflictDoUpdate({
+          target: model_catalog_cache.id,
+          set: {
+            fetched_at: now,
+            version,
+            upstream_version: upstreamVersion,
+            source_url: MODEL_CATALOG_URL,
+            payload,
+            findings: merged.findings,
+          },
+        });
+      const next: ActiveCatalog = {
+        origin: remote ? 'remote' : locked.hasRow ? 'cache' : 'snapshot',
+        fetchedAt: now.toISOString(),
+        version,
+        upstreamVersion,
+        providers: merged.providers,
+        findings: merged.findings,
+        providerChecks: checks,
+      };
+      return { outcome: 'stored' as const, next, locked };
+    });
+    if (written.outcome === 'kept') {
+      if ('error' in pulled) return kept(pulled.error, pulled.detail);
+      return kept('unreadable', 'refresh produced no write');
+    }
+    install(written.next, 'stored', written.locked.findings, written.locked.checks);
+    return { outcome: 'stored', meta: metaOf(written.next) };
   } catch (error) {
     return kept(
       'unreadable',
@@ -535,8 +681,6 @@ export async function refreshModelCatalog(
           : 'cache write failed',
     );
   }
-  install(next, 'stored');
-  return { outcome: 'stored', meta: metaOf(next) };
 }
 
 export function startModelCatalogWatch(

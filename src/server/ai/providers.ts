@@ -417,6 +417,38 @@ export function isProviderImplemented(provider: Provider): boolean {
   return IMPLEMENTED_KEY_PROVIDERS.has(provider) || isOauthProvider(provider);
 }
 
+/** Implemented lanes, stable order. OpenRouter stays out: it is typed-only. */
+export function implementedProviderIds(): readonly Provider[] {
+  return (Object.keys(PROVIDERS) as Provider[])
+    .filter((provider) => isProviderImplemented(provider))
+    .sort();
+}
+
+/**
+ * Root the product actually calls, with `/v1` included, for a provider `/models`
+ * read. Null when the lane has no usable root (bad Token Plan region included).
+ * Directory `api` fields are not consulted here.
+ */
+export function providerModelsRoot(
+  provider: Provider,
+  env: Record<string, string | undefined> = process.env,
+): string | null {
+  if (!isProviderImplemented(provider)) return null;
+  if (provider === 'anthropic' || provider === 'anthropic-sub')
+    return 'https://api.anthropic.com/v1';
+  if (provider === 'openai') return 'https://api.openai.com/v1';
+  if (provider === 'xiaomi-token-plan') {
+    try {
+      return xiaomiTokenPlanBaseUrl(env);
+    } catch {
+      return null;
+    }
+  }
+  const config = PROVIDERS[provider];
+  if (config.authMode !== 'key' || config.baseUrl === undefined) return null;
+  return config.baseUrl.replace(/\/+$/, '');
+}
+
 // YUK-1049 — the openrouter lane is implemented ONLY for typed-execution
 // tasks (execution:'typed'): its wired surface is the native decisions
 // endpoint, not the chat façade pi drives. The lane is deliberately absent
