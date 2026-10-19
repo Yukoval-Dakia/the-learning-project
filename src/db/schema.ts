@@ -4616,6 +4616,9 @@ export const paid_effect_authorization = pgTable(
   (t) => [
     primaryKey({
       columns: [t.family, t.entity_id, t.entity_revision, t.unit, t.input_digest],
+      // Explicit short names: the auto-derived PK/FK names both truncate to the
+      // same 63-byte identifier and collide on ADD CONSTRAINT.
+      name: 'paid_effect_authorization_pk',
     }),
     index('paid_effect_authorization_entity_idx').on(t.family, t.entity_id),
     index('paid_effect_authorization_successor_idx').on(
@@ -4635,6 +4638,7 @@ export const paid_effect_authorization = pgTable(
     ),
     foreignKey({
       columns: [t.family, t.entity_id, t.entity_revision, t.unit, t.input_digest],
+      name: 'paid_effect_authorization_old_effect_fk',
       foreignColumns: [
         paid_effect.family,
         paid_effect.entity_id,

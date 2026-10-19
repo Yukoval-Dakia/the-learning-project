@@ -16,7 +16,7 @@ CREATE TABLE "paid_effect_authorization" (
 	"consumed_delivery_id" text,
 	"consumed_at" timestamp with time zone,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	CONSTRAINT "paid_effect_authorization_family_entity_id_entity_revision_unit_input_digest_pk" PRIMARY KEY("family","entity_id","entity_revision","unit","input_digest"),
+	CONSTRAINT "paid_effect_authorization_pk" PRIMARY KEY("family","entity_id","entity_revision","unit","input_digest"),
 	CONSTRAINT "paid_effect_authorization_digest_ck" CHECK ("paid_effect_authorization"."input_digest" ~ '^sha256:[0-9a-f]{64}$' AND "paid_effect_authorization"."successor_input_digest" ~ '^sha256:[0-9a-f]{64}$'),
 	CONSTRAINT "paid_effect_authorization_nonempty_ck" CHECK ("paid_effect_authorization"."entity_id" <> '' AND "paid_effect_authorization"."entity_revision" <> '' AND "paid_effect_authorization"."unit" <> '' AND "paid_effect_authorization"."authorization_id" <> '' AND "paid_effect_authorization"."successor_entity_revision" <> '' AND "paid_effect_authorization"."successor_unit" <> '' AND "paid_effect_authorization"."successor_delivery_id" <> '' AND "paid_effect_authorization"."reason" <> '' AND "paid_effect_authorization"."operator" <> '' AND "paid_effect_authorization"."basis" <> '')
 );
@@ -25,7 +25,7 @@ ALTER TABLE "paid_effect" DROP CONSTRAINT "paid_effect_state_ck";--> statement-b
 ALTER TABLE "paid_effect" DROP CONSTRAINT "paid_effect_state_shape_ck";--> statement-breakpoint
 ALTER TABLE "paid_effect" ADD COLUMN "voided_at" timestamp with time zone;--> statement-breakpoint
 ALTER TABLE "paid_effect" ADD COLUMN "void_json" jsonb;--> statement-breakpoint
-ALTER TABLE "paid_effect_authorization" ADD CONSTRAINT "paid_effect_authorization_family_entity_id_entity_revision_unit_input_digest_paid_effect_family_entity_id_entity_revision_unit_input_digest_fk" FOREIGN KEY ("family","entity_id","entity_revision","unit","input_digest") REFERENCES "public"."paid_effect"("family","entity_id","entity_revision","unit","input_digest") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "paid_effect_authorization" ADD CONSTRAINT "paid_effect_authorization_old_effect_fk" FOREIGN KEY ("family","entity_id","entity_revision","unit","input_digest") REFERENCES "public"."paid_effect"("family","entity_id","entity_revision","unit","input_digest") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "paid_effect_authorization_entity_idx" ON "paid_effect_authorization" USING btree ("family","entity_id");--> statement-breakpoint
 CREATE INDEX "paid_effect_authorization_successor_idx" ON "paid_effect_authorization" USING btree ("family","entity_id","successor_entity_revision","successor_unit","successor_input_digest");--> statement-breakpoint
 ALTER TABLE "paid_effect" ADD CONSTRAINT "paid_effect_state_ck" CHECK ("paid_effect"."state" IN ('pending','sending','unknown','receipt_ready','applied','voided'));--> statement-breakpoint

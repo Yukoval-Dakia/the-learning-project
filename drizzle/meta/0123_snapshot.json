@@ -1,5 +1,5 @@
 {
-  "id": "1b536b8a-9ff3-4a1e-9808-1b1bc8d2a687",
+  "id": "b7c6fd7e-8212-42e2-af8f-e1ce2ee93bb9",
   "prevId": "042abc1e-478a-452d-8696-f03f14ae03df",
   "version": "7",
   "dialect": "postgresql",
@@ -8127,8 +8127,8 @@
         }
       },
       "foreignKeys": {
-        "paid_effect_authorization_family_entity_id_entity_revision_unit_input_digest_paid_effect_family_entity_id_entity_revision_unit_input_digest_fk": {
-          "name": "paid_effect_authorization_family_entity_id_entity_revision_unit_input_digest_paid_effect_family_entity_id_entity_revision_unit_input_digest_fk",
+        "paid_effect_authorization_old_effect_fk": {
+          "name": "paid_effect_authorization_old_effect_fk",
           "tableFrom": "paid_effect_authorization",
           "tableTo": "paid_effect",
           "columnsFrom": [
@@ -8150,8 +8150,8 @@
         }
       },
       "compositePrimaryKeys": {
-        "paid_effect_authorization_family_entity_id_entity_revision_unit_input_digest_pk": {
-          "name": "paid_effect_authorization_family_entity_id_entity_revision_unit_input_digest_pk",
+        "paid_effect_authorization_pk": {
+          "name": "paid_effect_authorization_pk",
           "columns": [
             "family",
             "entity_id",

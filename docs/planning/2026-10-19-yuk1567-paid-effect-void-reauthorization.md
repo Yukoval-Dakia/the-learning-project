@@ -105,56 +105,64 @@ jobData `reopen_paid_effect_identity` marker 在 gate 里开一个 `@2 → @3` �
 
 ## CLI / 运维接口
 
+共享的 evaluate/release/recover 逻辑住在
+`src/capabilities/practice/server/admission/reauthorization.ts`（practice
+能力包自持；两个 CLI 都是它的 live consumer）。
+
 ### `scripts/yuk1547-admission-reopen.ts`（TEST-only）
 
 - `--preflight <receipt.json>`：保留原 provider 探针（唯一的 provider 调用点；
-  void 执行本身不发 provider 请求）。
+  void 释放本身不发 provider 请求）。
 - `--plan <manifest.json> --out <plan.json>`：**只读** DB 评估 + 冻结写
   plan 工件（`-wx`，不覆盖）。manifest 由 operator 编写：
   `{authorization_id, operator, basis, reason, groups:[{group_id,
   base_digest, successor_unit, void:[{unit, input_digest, expected_fence}]}]}`。
-  每个 group 的资格：manifest 必须覆盖该实体**全部** `unknown` 行（含
-  fence 匹配）；无 `sending`/`pending`/`receipt_ready` 行；无本 base applied
-  verdict；无非终态 admission job / 未决 enqueue delivery / 未发现 publish
-  event；无 terminal verification（否则 claim 直接 'historical'）；
-  lifecycle withheld + current revision == base。plan 记录每组的
-  republish generations、successor input digest、bound job id、ghost job id。
-- `--execute <plan.json> --preflight-receipt <r.json> --manifest-out
-  <authorized.json>`：preflight 一小时内 + `YUK1547_TEST_DATABASE_URL`
-  守卫生效后，**一个事务**内逐 group：重锁 + 重新跑同一套资格评估（plan
-  drift → abort）→ publish owner_hold→unverified_rules（bump generation；
-  中间事件为 ghost delivery/job 的证据源）→ 以
-  `admissionJobId(group, revision, base, finalGeneration)` 为 id 直接
-  `boss.send` 绑定 job（同事务）→ `voidPaidEffectWithSuccessor` 逐行作废
-  + 写授权 + admit successor intent。事务提交后 subscriber 对绑定事件的
-  `boss.send(same id)` 返回 null → delivery 直接 terminal；对 ghost 事件的
-  副本 job 以 stale generation 运行 → `'stale'`，不 spend。
-- **崩溃恢复**：`--execute` 幂等 —— 若全部目标行已在该 `authorization_id`
-  下 `voided`（提交后、manifest 写出前崩溃），从 DB 恢复事件/job 证据重写
-  manifest，绝不重放 mutation；部分作废计数 → 报错人工检查。
-- 输出 `authorized.json`：每 group 记录 bound `(revision_id,
-  admission_generation, job_id)`、successor identity、voided 清单、owned
-  republish events、ghost job generations。
+  每个 group 的资格（`evaluateAdmissionVoidGroup`，与释放路径共用同一判定）：
+  manifest 必须覆盖该实体**全部** `unknown` 行（含 fence 匹配）；无
+  `sending`/`pending`/`receipt_ready` 行；无本 base applied verdict；
+  无非终态 admission job / 未决 enqueue delivery / 未发现 publish event；
+  无 terminal verification（否则 claim 直接 'historical'）；lifecycle
+  withheld + current revision == base。plan 记录每组的 republish
+  generations、successor 完整身份（含冻结 input 作为审计证据）、bound
+  job id、ghost generations/job ids。**本脚本不 enqueue、不 republish、不
+  改 paid_effect** —— 一次 `--execute` 把整批 job 预发出去会让 STOP/预算/
+  unknown 门来不及拦后续付费（审查 P1-2），已由 driver 逐题释放取代。
 
-### `scripts/yuk1547-admission-backlog.ts`
+### `scripts/yuk1547-admission-backlog.ts` —— 逐题释放
 
-- `drive --authorized <a.json>`：验证绑定（voided 行 + authorization_id +
-  successor 行 + bound job 存在）→ 为每组写 intent/publish 记录 → 走普通
-  in-flight settle；**绝不 republish authorized group**。authorized 组对
-  `--sent` overlap guard 的豁免仅以该 manifest 为凭证；其余 overlap 仍 fatal。
-  queue gate 的 owned events 并入授权 manifest 的 owned_events + ghost job
-  generations。`TERMINAL_PAID_STATES` 加入 `voided`。
-- `check --authorized <a.json>`：对 authorized 组做绑定验证而非普通
-  eligibility。
+- `drive --authorized <plan.json>` 消费 plan 工件。启动时只读验证（
+  `authorizedBindingFailures` 按阶段判定）：未释放组 = 目标行仍
+  `unknown` 且 fence 匹配、无授权行、无 successor 行、无 bound job；
+  已释放组 = 全部 `voided` 于该 authorization_id + 授权行 + successor 行 +
+  bound job 存在；**部分作废 = 不一致态，fail**。每次 run 都重验。
+- **每题释放**：authorized 组走到每题 `else` 分支、且 queue gate（空
+  外部队列+未结 delivery，仅豁免 ghost job）/ unknown-rate / 合并账本预算
+  全过之后，才在一个事务内完成：重锁重评估（plan drift → abort）→
+  republish owner_hold→unverified_rules → `boss.send` bound job（
+  `admissionJobId(group, revision, base, finalGeneration)`，同事务）→
+  `voidPaidEffectWithSuccessor` 逐行作废 + 授权 + successor intent。提交
+  后 subscriber 对绑定事件的 `boss.send(same id)` 返回 null → delivery
+  直接 terminal；对 ghost 事件的副本 job 以 stale generation 运行 →
+  `'stale'`，不 spend。未轮到的组保持 `unknown`，无可消费 successor。
+- **恢复**：事务内崩溃全回滚；commit 后、intent 文件写出前崩溃 → 下轮
+  `recoverAdmissionVoidSend` 探针（在 gates 之前运行——已提交的 bound job
+  对 queue gate 是 foreign）从 DB 重建事件/job 证据并只补写文件；intent
+  存在而 receipt 缺失 → 原既有 in-flight settle 路径。
+- authorized 组对 `--sent` overlap guard 的豁免仅以该 manifest 为凭证；
+  其余 overlap 仍 fatal。queue gate owned events 并入 republish 三元组；
+  `TERMINAL_PAID_STATES` 含 `voided`；expected identity 覆盖为冻结的
+  `(revision_id, final_generation)`。
+- `check --authorized <plan.json>`：对 authorized 组做相位感知绑定验证
+  而非普通 eligibility。
 
 ## 恢复 / 验收三场景（文字步骤；父执行真实 DB 验收）
 
-1. **void 事务中崩溃**：`--execute` 中事务回滚 —— paid_effect 行仍为
+1. **driver 释放事务中崩溃**：释放事务回滚 —— paid_effect 行仍为
    `unknown`（state/fence 未变）、无 `paid_effect_authorization` 行、无
    successor pending 行、pgboss.job 无绑定 job、lifecycle generation 未
-   bump、无 publish event。重跑 `--execute`（同 plan）→ 正常完成；
-   若崩溃发生在 commit 后、manifest 写出前 → resume 路径只读恢复证据，
-   不产生第二授权。
+   bump、无 publish event；下一轮 drive 走正常释放。崩溃在 commit 后、
+   intent 写出前 → `recoverAdmissionVoidSend` 探针只读恢复证据并补写
+   intent/publish 文件，不产生第二授权。
 2. **错误 producer/delivery 抢 successor claim**：以非绑定 delivery id 对
    successor identity 调 `claimPaidEffectSend`（或直接让另一个 job 携带该
    身份进入 admission receipt 路径）→ `PaidEffectAuthorizationError`，
