@@ -45,13 +45,13 @@
 
 ## 题库准入与出题
 
-- **准入（admission）/ 待准入**：一道题（题组）必须先通过准入判定，才会被自动出给学习者；`withheld` 期间不进练习池（显式手动挑题练习不受此限）。判分准入状态只有 `admitted` / `withheld` 两种；`withheld` 必须记明原因：`unverified_rules`（规则尚未经双门核验）、`verification_failed`、`no_admitted_executor`、`owner_hold`。判定由准入 job 执行：题目发布后自动排队做准入判定，双解与标定通过后才 `admitted`。网页来源题（`sourcing_web`）来源核对通过、`quiz_verify` 质检通过，都只发布为 `withheld(unverified_rules)`——这种状态叫「待准入」，题库界面显示为「还在检查」——不再直接可出。
-- **暂不出题（serving hold）**：题目被判定暂时不能出给学习者。挂起原因只有 `verify_hold` 与 `retraction_hold`。题库有「暂不出题」页签，按原因给白话标记；页签上的计数与筛选覆盖全库，不只是当前已加载的页。解除命令 `reverify` / `recheck_source` / `release_verify_hold`，经 `POST /api/questions/[id]/serving-actions/[command]`，每个命令都要求 `Idempotency-Key`；`release_verify_hold` 只清 `verify_hold`，不动 `retraction_hold`，`owner_hold` 这类有意扣留没有 reverify。
+- **准入（admission）/ 待准入**：一道题（题组）必须先通过准入判定，才会被自动出给学习者；`withheld` 期间不进练习池。判分准入状态只有 `admitted` / `withheld` 两种；`withheld` 必须记明原因：`unverified_rules`（规则尚未经双门核验）、`verification_failed`、`no_admitted_executor`、`owner_hold`。判定由准入 job 执行：题目发布后自动排队做准入判定，双解与标定通过后才 `admitted`；但声明了尚不支持、未知或损坏的 `answer_shape` 的题会在入队前被拦下，一直停在 `withheld(unverified_rules)`。网页来源题（`sourcing_web`）来源核对通过、`quiz_verify` 质检通过，都只发布为 `withheld(unverified_rules)`——这种状态叫「待准入」，题库界面显示为「还在检查」——不再直接可出。
+- **暂不出题（serving hold）**：题目被判定暂时不能出给学习者。底层挂起（suspension）维度只有 `verify_hold` 与 `retraction_hold` 两个原因；题库「暂不出题」页签展示的暂不出题原因则共 8 种：`awaiting_admission`、`admission_failed`、`source_check_failed`、`verify_hold`、`retraction_hold`、`no_input_renderer`、`invalid_presentation`、`withdrawn`，每种都有对应白话标记；页签上的计数与筛选覆盖全库，不只是当前已加载的页。解除命令 `reverify` / `recheck_source` / `release_verify_hold`，经 `POST /api/questions/[id]/serving-actions/[command]`，每个命令都要求 `Idempotency-Key`；`release_verify_hold` 只清 `verify_hold`，不动 `retraction_hold`，`owner_hold` 这类有意扣留没有 reverify。
 - **付费效果（paid effect）作废与后继重授权**：一次已经付过费的模型调用记为一个「付费效果」，同一效果身份（同一对象、同一版本、同一单元、同一输入）只记一次账，重新投递不会再付一次。结果未知（`unknown`）的效果可由负责人显式作废为终态 `voided`——不删除、不改写输入与历史——并在同一条授权下指定一个后继效果（后继只能由授权里绑定的那次投递认领）。
 
 ## 录入与会话
 
-- **录入会话（ingestion session）**：一次"用户上传一批材料 → 系统抽取 → 落库"的工作单元。状态机：`uploaded` →（用户触发抽取）→ `queued` →（worker 起跑）→ `extracting` → `extracted` / `partial` / `failed`；`extracted` / `partial` 可 `markReviewed()` → `reviewed`（可选步骤，`commitImport()` 也直接接 `extracted` / `partial`）→ **`imported`（终态，只读）**。`failed` 可 `retryExtraction()` 重入 `queued`。所有 transition 由 `src/server/ingestion/session.ts` 单一守卫，五个写入位置（POST /api/ingestion、/extract、handler、/rescue、/import）都走它。**救援是 block-level**：session 状态不变（partial → partial），仅替换单块内容。
+- **录入会话（ingestion session）**：一次"用户上传一批材料 → 系统抽取 → 落库"的工作单元。状态机：`uploaded` →（用户触发抽取）→ `queued` →（worker 起跑）→ `extracting` → `extracted` / `partial` / `failed`；`extracted` / `partial` 可 `markReviewed()` → `reviewed`（可选步骤，`commitImport()` 也直接接 `extracted` / `partial`）→ **`imported`（终态，只读）**。`failed` 可重新入队（`enqueueExtraction()`）回到 `queued`。所有 transition 由 `src/server/session/ingestion.ts` 单一守卫（状态断言在 `src/server/session/guards.ts`）。**救援是 block-level**：session 状态不变（partial → partial），仅替换单块内容。
 - **会话总结（session summary）**：用户主动结束一次学习会话时由 LLM 生成的总结。Phase 1b 新增（架构 review Q1）。
 - **上传材料的使用范围（usage choice）**：学习者上传材料时选择这份资料可以用在哪里：`allow`（**全部使用**，也可进长期记忆、学习总结）或 `answer_only`（**只用于本题**，只用来生成这道题的答案与判分，不进长期记忆与学习总结）。选择记在这份材料上，由它派生的内容都按这一选择处理。
 - **使用回执（usage receipt）**：上传识别后给学习者的一条回执，说明从识别出的文字里隐去了哪些类别的个人信息（只报类别与处数，不报被隐去的值），以及**原图是否原样交给 AI**（拍照 / PDF 必须把原图交给识别引擎，回执明说原图原样交出；Word 文本行不外传图像）。在录入会话详情里可以查看这份回执，Word 文本行也补写回执。
@@ -90,16 +90,16 @@
 
 > 2026-06-08 grill 裁决：「skill」一词此前被过载（审计 AP-4），就地收归单一含义。
 
-- **技能包（skill / SKILL.md）**：可移植的**领域方法论指令包**，位于 `src/subjects/<id>/skills/<name>/SKILL.md`，frontmatter 含 `name` + `description`（description 是模型加载的触发钩子），正文是领域知识/规范（出题、笔记、质检标准等）。经 `ctx.skills` 白名单喂进 Claude Agent SDK，由对应 Task 按需加载。**「skill」在本项目只指这一样东西**——它是「把方法论交给模型按需加载」的知识，**不是**代码路由，**不是**在服务层用 enum 静态分流。现有 6 个：`note-{math,physics,yuwen}`、`quiz-gen-{calculation,reading-comprehension,translation}`，被 NoteGenerate/Verify/Refine 与 QuizGen/QuizVerify/Sourcing 共用。一个对应推论：题型规范（如「文言文阅读 = 原文 + 一组小题」）已住在技能包里，是**真相**；若生成产物没遵循，病灶在落库管线（schema / handler）而非知识层。
-- **行为包（behavior pack，≠ skill）**：`src/server/copilot/skills/{teaching,solve}-skill.ts` 与 `COPILOT_SKILL_KINDS` enum 是**服务层 TS 编排**（组一个 `TeachingTurnTask` 调用、绕开 CopilotTask 自由 loop），曾被冠以「skill」之名（AP-4 术语过载）。**它们不是技能包，停止用 skill 指代。** 一个「模式」本质上拆成三样、各有归处：**方法论 → 技能包**、**确定性副作用 → loop 内工具/effect**、**能力范围 → tool allowlist**；没有第四样需要独立代码路。目标形态：teaching/solve 两个 behavior pack 最终**消解**，不保留为独立构造（迁移路径见 `.omc/research/copilot-implementation-audit-2026-06-07.md` AP-1~AP-4 / Step 0~3）。
+- **技能包（skill / SKILL.md）**：可移植的**领域方法论指令包**，位于 `src/subjects/<id>/skills/<name>/SKILL.md`，frontmatter 含 `name` + `description`（description 是模型加载的触发钩子），正文是领域知识/规范（出题、笔记、质检标准等）。pi 执行引擎没有文件系统 skill loader——调用方（`resolveCopilotSkillDocs` / `resolveNoteSkillDoc` / `resolveQuizGenSkillDocs`）读出 SKILL.md 正文，经 `piSkillDocs` 注入 provider 的 system prompt；缺包时不注入、回退 prompt 散文。跨科共享包放在 `src/subjects/_shared/skills/`。**「skill」在本项目只指这一样东西**——它是「把方法论交给模型按需加载」的知识，**不是**代码路由，**不是**在服务层用 enum 静态分流。现有 8 个：`_shared` 的 `copilot` 与 `quiz-gen`、`note-{math,physics,yuwen}`、`quiz-gen-{calculation,reading-comprehension,translation}`，被 NoteGenerate/Verify/Refine 与 QuizGen/QuizVerify/Sourcing 共用。一个对应推论：题型规范（如「文言文阅读 = 原文 + 一组小题」）已住在技能包里，是**真相**；若生成产物没遵循，病灶在落库管线（schema / handler）而非知识层。
+- **行为包（behavior pack，≠ skill）**：`src/capabilities/copilot/server/skills/{teaching,solve}-skill.ts` 与 `COPILOT_SKILL_CONTEXT_KINDS` enum 是**服务层 TS 编排**（组一个 `TeachingTurnTask` 调用、绕开 CopilotTask 自由 loop），曾被冠以「skill」之名（AP-4 术语过载）。**它们不是技能包，停止用 skill 指代。** 一个「模式」本质上拆成三样、各有归处：**方法论 → 技能包**、**确定性副作用 → loop 内工具/effect**、**能力范围 → tool allowlist**；没有第四样需要独立代码路。目标形态：teaching/solve 两个 behavior pack 最终**消解**，不保留为独立构造（迁移路径见 `.omc/research/copilot-implementation-audit-2026-06-07.md` AP-1~AP-4 / Step 0~3）。
 
 ## 提案中（PROPOSED — 未批准，勿当作已定术语）
 
 > 来源：`docs/planning/2026-09-24-question-assessment-redesign.md` 与 [implementation grounding](docs/planning/2026-09-24-question-assessment-implementation-grounding.md)（YUK-1038）。
-> **owner 已认可五层模型方向并裁决全量迁移（拒绝 LIGHT 分批），但方向认可 ≠ 已实施**：无 schema/数据迁移、无代码实施、无部署。
+> **owner 已认可五层模型方向并裁决全量迁移（拒绝 LIGHT 分批）**：schema 与迁移已落地（`assessment_issuance`、`evaluation_group`、`assessment_submission`、`assessment_response_draft`、`evaluation`、`evaluation_effective_head` 表，见 `drizzle/0104_yuk1044_assessment_contract_truth.sql` 与 `drizzle/0110_yuk1052_response_draft.sql`）。
 > 本节仅登记草案中新出现的候选术语，**不修改也不覆盖**上文任何已批准定义；术语本身仍未定案。
 
 - **响应槽（response slot）**（PROPOSED）：一个可作答小题下学生需要填的单个作答位置（选择集合 / 文本 / 数值 / 匹配对 / 扩展作答）。一个空不是天然一张 question 行，也不是天然一次 attempt。
-- **联合评分组（evaluation group）**（PROPOSED）：需要一起判分的响应槽集合；有依赖的槽要么一起定稿并一起结算，要么在前置缺失时保持 provisional 且不结算。
+- **联合评分组（evaluation group）**（PROPOSED）：需要一起判分的响应槽集合；有依赖的槽要么一起定稿并一起结算，要么在前置缺失时保持 provisional 且不结算。（对应 `evaluation_group` 表。）
 - **评分依据（MarkingSpec）**（PROPOSED）：`reference_md` 之外的评分契约，可组合答案键、得分点与等级量表；每个评分单元只贡献一次分数，响应槽是证据位置而非计分权威；区分来源权威、抽取断言与核验准入。
-- **有效判定（effective judgment）**（PROPOSED）：某次 submission 当前唯一生效的判分结果；候选/影子输出不进普通有效判分通道，接受与替代必须显式。
+- **有效判定（effective judgment）**（PROPOSED）：某次 submission 当前唯一生效的判分结果；候选/影子输出不进普通有效判分通道，接受与替代必须显式。（对应 `evaluation_effective_head` 表。）
