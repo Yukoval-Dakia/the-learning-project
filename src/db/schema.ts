@@ -480,11 +480,11 @@ export const question = pgTable(
     created_at: timestamp('created_at', { withTimezone: true }).notNull(),
     updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
     version: integer('version').notNull().default(0),
-    // YUK-383 Phase 0 — semantic retrieval substrate. Nullable: NULL default for
-    // every existing/new row; only write path is the idempotent nightly
-    // embed_backfill job (UPDATE ... WHERE embedding IS NULL). dims=1024 MUST match
-    // EMBED_DIMS (src/server/ai/embed.ts). Transparent to all current reads (zero
-    // behaviour change). See plan 2026-06-16-phase0-retrieval-substrate.
+    // YUK-383 Phase 0 — semantic retrieval substrate. Nullable. Nightly
+    // embed_backfill fills NULL or stale-version rows. Ingest may also stamp a
+    // vector it already computed (questionEmbedStamp) when the stored text is the
+    // text that was embedded, so backfill does not pay for that row again.
+    // dims=1024 MUST match EMBED_DIMS (src/server/ai/embed.ts).
     embedding: vector(1024),
     embed_model: text('embed_model'),
     embed_version: integer('embed_version'),
