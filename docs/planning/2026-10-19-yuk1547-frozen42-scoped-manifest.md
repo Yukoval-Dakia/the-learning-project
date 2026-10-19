@@ -45,7 +45,10 @@ Date: 2026-10-19. Stage: 第一天能用（W0）/ harness C1·C2·C6. Refs YUK-1
 - Legacy manifest → 旧 actor `stage1:backlog_readmission_b_112_20261019`
   逐字节保留（重开兼容）。
 - Scoped manifest → `scope.actor_ref ?? 'stage1:<scope.id>'`，如实记录本
-  cohort，不冒充 112。
+  cohort，不冒充 112。`scope.actor_ref` 唯一禁止值是保留 job actor
+  `practice:question_admission`（解析期拒绝，先于任何 baseline/intent/发布）：
+  以该 actor 发出的 withheld 事件会被 enqueue handler 无条件 skip，不铸 job，
+  settle_timeout 后 STOP 且题留 withheld。
 - 已核所有窗口归因不依赖 actor：`windowOwnedEvents`（event_id + 三元组）、
   `windowInFlightSends`（intent → 三元组）、queue gate（同上 + 派生绑定）、
   settle 绑定（paid input 身份）全部不使用 actor_ref；enqueue handler 仅对

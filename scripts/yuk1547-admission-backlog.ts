@@ -53,7 +53,10 @@
  *     marking_provenance (plus optional declared state) against the live
  *     DB row — strict equality, no skip/bypass flag, no widened runnable
  *     states — and scopes the publish actor + receipts to the cohort
- *     identity instead of the 112 actor string.
+ *     identity instead of the 112 actor string (scope.actor_ref may be any
+ *     value EXCEPT the reserved job actor 'practice:question_admission',
+ *     which is rejected at parse — a send under it would be skipped by the
+ *     enqueue handler and settle_timeout-STOP with the group withheld).
  *   - Already-sent items are explicit: --sent lists ids that must NOT appear in
  *     the manifest (overlap is a hard error — unknown/paid rows never replay).
  *   - Old paid_effect rows and preexisting withheld lifecycle rows are
@@ -189,7 +192,17 @@ const scopedManifestSchema = z
     scope: z
       .object({
         id: z.string().min(1),
-        actor_ref: z.string().min(1).optional(),
+        // The job actor is reserved: a send published under it is skipped
+        // unconditionally by the enqueue handler (actor check), so no paid
+        // job would ever start — settle_timeout then STOP with the group
+        // left withheld. Reject at parse, before any baseline/intent/publish.
+        actor_ref: z
+          .string()
+          .min(1)
+          .refine((value) => value !== JOB_ACTOR_REF, {
+            message: `scope.actor_ref '${JOB_ACTOR_REF}' is reserved for the admission job — omit actor_ref to publish as stage1:<scope.id>, or choose a non-reserved value`,
+          })
+          .optional(),
       })
       .passthrough(),
     items: z
