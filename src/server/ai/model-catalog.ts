@@ -36,6 +36,7 @@ import {
   paidProbePostings,
   parseProviderChecks,
   probePriceFor,
+  providerAbsenceRevision,
   providerAuthLabel,
 } from './provider-models-check';
 
@@ -425,23 +426,15 @@ function mergeCatalogDocuments(
 }
 
 function reconcileCatalogFindings(
-  base: readonly CatalogFinding[],
+  incoming: readonly CatalogFinding[],
+  previous: readonly CatalogFinding[],
   checks: readonly ProviderModelsCheck[],
   remoteFresh: boolean,
 ): CatalogFinding[] {
-  const listedByProvider = new Map<string, ReadonlySet<string>>();
-  const absentByProvider = new Map<string, readonly string[]>();
-  const unconfigured = new Set<string>();
+  const revisionByProvider = new Map<string, ReturnType<typeof providerAbsenceRevision>>();
   for (const check of checks) {
     if (!check.catalogProvider) continue;
-    if (check.list.status === 'unconfigured' || check.inference.status === 'unconfigured') {
-      unconfigured.add(check.catalogProvider);
-      continue;
-    }
-    if (check.list.status === 'readable') {
-      listedByProvider.set(check.catalogProvider, new Set(check.listed));
-      absentByProvider.set(check.catalogProvider, check.catalogOnly);
-    }
+    revisionByProvider.set(check.catalogProvider, providerAbsenceRevision(check));
   }
   const kept: CatalogFinding[] = [];
   const seen = new Set<string>();
@@ -451,23 +444,22 @@ function reconcileCatalogFindings(
     seen.add(signature);
     kept.push(finding);
   };
-  for (const finding of base) {
-    if (finding.kind === 'capability_changed') {
-      push(finding);
-      continue;
-    }
-    if (finding.source === 'models_dev') {
-      push(finding);
-      continue;
-    }
-    if (unconfigured.has(finding.catalogProvider)) continue;
-    const listed = listedByProvider.get(finding.catalogProvider);
-    if (listed?.has(finding.model)) continue;
-    if (finding.source === 'provider_list') continue;
-    if (!remoteFresh && listed === undefined) push(finding);
+  for (const finding of incoming) {
+    if (finding.kind === 'capability_changed' || finding.source === 'models_dev') push(finding);
   }
-  for (const [catalogProvider, models] of absentByProvider) {
-    for (const model of models) {
+  for (const finding of previous) {
+    if (finding.kind !== 'model_absent' || finding.source === 'models_dev') continue;
+    const revision = revisionByProvider.get(finding.catalogProvider);
+    if (finding.source === 'provider_list') {
+      if (revision?.kind === 'keep') push(finding);
+      continue;
+    }
+    if (revision?.kind === 'clear' || revision?.kind === 'replace') continue;
+    if (!remoteFresh) push(finding);
+  }
+  for (const [catalogProvider, revision] of revisionByProvider) {
+    if (revision.kind !== 'replace') continue;
+    for (const model of revision.models) {
       push({ kind: 'model_absent', catalogProvider, model, source: 'provider_list' });
     }
   }
@@ -846,6 +838,7 @@ export async function refreshModelCatalog(
         if (planned.idle) return { outcome: 'kept' as const, locked: planned.locked };
         const findings = reconcileCatalogFindings(
           planned.merged.findings,
+          planned.locked.findings,
           planned.checks,
           remote !== undefined,
         );

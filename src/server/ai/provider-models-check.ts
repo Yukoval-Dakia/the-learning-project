@@ -48,7 +48,7 @@ export type InferenceAccess =
   | { status: 'unprobed' }
   | { status: 'ok' }
   | { status: 'auth_failed'; httpStatus: number; errorType: string }
-  | { status: 'unsettled' };
+  | { status: 'unsettled'; httpStatus: number | null; errorType: string | null };
 
 /** `known: false` is not zero usage. A known zero is `known: true` with both counts at 0. */
 export type ProbeUsage = { known: true; tokensIn: number; tokensOut: number } | { known: false };
@@ -318,9 +318,14 @@ async function listOne(
     const ids = await readListedIds(fetchImpl, response, headers);
     if (!ids) return { status: 'unreachable', detail: 'unreadable' };
     return { status: 'ok', ids };
-  } catch {
-    return { status: 'unreachable', detail: 'network' };
+  } catch (error) {
+    return { status: 'unreachable', detail: listFailureDetail(error) };
   }
+}
+
+function listFailureDetail(error: unknown): string {
+  const typed = dispatchError(error);
+  return typed === 'unanswered' ? 'network' : typed;
 }
 
 export async function listProviderModels(
@@ -332,8 +337,11 @@ export async function listProviderModels(
     providers.map(async (provider) => {
       try {
         return [provider, await listOne(provider, fetchImpl, env)] as const;
-      } catch {
-        return [provider, { status: 'unreachable', detail: 'network' } as const] as const;
+      } catch (error) {
+        return [
+          provider,
+          { status: 'unreachable' as const, detail: listFailureDetail(error) },
+        ] as const;
       }
     }),
   );
@@ -504,7 +512,11 @@ function inferenceFromOutcome(outcome: ProbeOutcome): InferenceAccess {
   if (outcome.kind === 'auth_failed') {
     return { status: 'auth_failed', httpStatus: outcome.httpStatus, errorType: outcome.errorType };
   }
-  return { status: 'unsettled' };
+  return {
+    status: 'unsettled',
+    httpStatus: outcome.httpStatus,
+    errorType: outcome.errorType,
+  };
 }
 
 function inferenceFromReceipt(probe: ProviderProbeReceipt): InferenceAccess {
@@ -522,7 +534,10 @@ function inferenceAccess(
 ): InferenceAccess {
   if (outcome) return inferenceFromOutcome(outcome);
   if (!held) return { status: 'unprobed' };
-  if (held.status === 'claimed' || held.status === 'unsettled') return { status: 'unsettled' };
+  if (held.status === 'claimed') return { status: 'unsettled', httpStatus: null, errorType: null };
+  if (held.status === 'unsettled') {
+    return { status: 'unsettled', httpStatus: held.httpStatus, errorType: held.errorType };
+  }
   return inferenceFromReceipt(held);
 }
 
@@ -542,10 +557,6 @@ function shouldProbe(
 function receiptTokens(usage: ProbeUsage): { tokensIn: number | null; tokensOut: number | null } {
   if (!usage.known) return { tokensIn: null, tokensOut: null };
   return { tokensIn: usage.tokensIn, tokensOut: usage.tokensOut };
-}
-
-function retryableStatus(status: number | null): boolean {
-  return status === 429 || (status !== null && status >= 500);
 }
 
 function receiptFor(
@@ -577,7 +588,7 @@ function receiptFor(
 function rememberOutcome(outcome: ProbeOutcome): boolean {
   if (outcome.kind === 'accepted' || outcome.kind === 'auth_failed') return true;
   if (outcome.httpStatus === null) return outcome.dispatched;
-  return retryableStatus(outcome.httpStatus);
+  return true;
 }
 
 function billOutcome(kind: ProbeOutcome['kind']): ProbeLedgerBill['outcome'] {
@@ -678,7 +689,13 @@ function copyInference(inference: InferenceAccess): InferenceAccess {
     };
   }
   if (inference.status === 'ok') return { status: 'ok' };
-  if (inference.status === 'unsettled') return { status: 'unsettled' };
+  if (inference.status === 'unsettled') {
+    return {
+      status: 'unsettled',
+      httpStatus: inference.httpStatus,
+      errorType: inference.errorType,
+    };
+  }
   if (inference.status === 'unconfigured') return { status: 'unconfigured' };
   return { status: 'unprobed' };
 }
@@ -724,7 +741,13 @@ function parseInference(value: unknown): InferenceAccess | undefined {
   if (row.status === 'unconfigured') return { status: 'unconfigured' };
   if (row.status === 'unprobed') return { status: 'unprobed' };
   if (row.status === 'ok') return { status: 'ok' };
-  if (row.status === 'unsettled') return { status: 'unsettled' };
+  if (row.status === 'unsettled') {
+    return {
+      status: 'unsettled',
+      httpStatus: typeof row.httpStatus === 'number' ? row.httpStatus : null,
+      errorType: typeof row.errorType === 'string' ? row.errorType : null,
+    };
+  }
   if (row.status === 'auth_failed') {
     const failed = readAuthFailed(row);
     return failed ? { status: 'auth_failed', ...failed } : undefined;
@@ -861,8 +884,16 @@ export function providerAuthLabel(check: ProviderModelsCheck): string {
     return `auth_failed:${check.list.httpStatus}:${check.list.errorType}`;
   }
   if (check.inference.status === 'ok') return 'ok';
+  if (check.list.status === 'readable' && check.inference.status === 'unsettled') {
+    return unsettledLabel(check.inference);
+  }
   if (check.list.status === 'readable') return `inference:${check.inference.status}`;
   return `unreachable:${check.list.detail}`;
+}
+
+function unsettledLabel(access: { httpStatus: number | null; errorType: string | null }): string {
+  if (access.httpStatus === null && access.errorType === null) return 'inference:unsettled';
+  return `inference:unsettled:${access.httpStatus ?? 'none'}:${access.errorType ?? 'unknown'}`;
 }
 
 export function claimDueProbes(input: {
@@ -887,14 +918,15 @@ export function claimDueProbes(input: {
     if (!fingerprint) continue;
     due.push(provider);
     const previous = byProvider.get(provider);
+    const settled = previous?.credentialFingerprint === fingerprint ? previous : undefined;
     byProvider.set(provider, {
       provider,
-      catalogProvider: CATALOG_PROVIDER_BY_INTERNAL[provider] ?? previous?.catalogProvider ?? null,
-      list: previous?.list ?? { status: 'unconfigured' },
-      inference: previous?.inference ?? { status: 'unprobed' },
-      listed: previous?.listed ?? [],
-      catalogOnly: previous?.catalogOnly ?? [],
-      providerOnly: previous?.providerOnly ?? [],
+      catalogProvider: CATALOG_PROVIDER_BY_INTERNAL[provider] ?? settled?.catalogProvider ?? null,
+      list: listAccess(list),
+      inference: { status: 'unsettled', httpStatus: null, errorType: null },
+      listed: settled?.listed ?? [],
+      catalogOnly: settled?.catalogOnly ?? [],
+      providerOnly: settled?.providerOnly ?? [],
       credentialFingerprint: fingerprint,
       probe: {
         status: 'claimed',
@@ -929,6 +961,32 @@ export async function collectProviderProbes(input: {
     probes.set(provider, await runProbe(provider, input.fetchImpl, input.env));
   }
   return probes;
+}
+
+/**
+ * A failed /models read does not revise absence conclusions.
+ * `keep` means this key still has a settled reconciliation. Empty sets mean it does not:
+ * the key was removed, or the stored sets belonged to a different key and were not copied.
+ */
+export type ProviderAbsenceRevision =
+  | { kind: 'replace'; models: readonly string[] }
+  | { kind: 'clear' }
+  | { kind: 'keep' };
+
+export function providerAbsenceRevision(check: ProviderModelsCheck): ProviderAbsenceRevision {
+  if (
+    check.credentialFingerprint === null ||
+    check.list.status === 'unconfigured' ||
+    check.inference.status === 'unconfigured'
+  ) {
+    return { kind: 'clear' };
+  }
+  if (check.list.status === 'readable') {
+    return { kind: 'replace', models: check.catalogOnly };
+  }
+  const settledForThisKey =
+    check.listed.length > 0 || check.catalogOnly.length > 0 || check.providerOnly.length > 0;
+  return settledForThisKey ? { kind: 'keep' } : { kind: 'clear' };
 }
 
 function keptSets(

@@ -1222,7 +1222,7 @@ export const PROVIDER_LANES = [
       timeout:
         '15s per /models page and 30s for the probe, both AbortSignal.timeout with redirect error',
       clientRetry:
-        '429/5xx and a dispatched timeout or socket reset are stored as unsettled and skipped for one hour; a request that never left the process is not stored',
+        '429/5xx, other returned 4xx such as 400/404, and a dispatched timeout or socket reset are stored as unsettled and skipped for one hour; a request that never left the process is not stored',
       redelivery:
         'a claim is written under the session lock before the probe is sent; owed postings are written before the receipt, and still written when the catalog transaction fails',
       fanOut:
