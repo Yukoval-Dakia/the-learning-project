@@ -1,7 +1,7 @@
 // Every step stays in the ephemeral container. Never touch a running compose.
 // Capture, apply, and epoch transitions call the real code in process. Do not parse their stdout.
-// Apply connections use application_name='yuk1057-apply'. Terminate those backends only after a
-// phase ledger row is 'running'. The fence connection is separate, so the orchestrator stays up.
+// Apply connections are tagged. Terminate them only after a phase ledger row is 'running'.
+// The orchestrator's own connection is untagged, and the kill excludes its own backend, so the terminate skips it.
 // Restore-proof is rollback boundary (a), before new writes. Boundary (b) restores an independent
 // database and replays the post-write delta. Legacy epoch_mismatch is asserted in
 // rehearsal.db.test.ts, not here. ready still fences. That quiet window is part of the cutover.
@@ -372,8 +372,9 @@ export async function runRehearsal(opts: RehearsalOptions): Promise<RehearsalRep
         writeFileSync(registryPath, `${JSON.stringify(buildRehearsalRegistry(), null, 2)}\n`);
         artifacts['registry.json'] = registryPath;
 
-        // First apply has no registry, so the baseline stays pending. Terminate every
-        // apply backend mid-run, then rerun the same args until the ledger is completed.
+        // First apply has no registry, so the baseline stays pending.
+        // Killing the connection is the database-side shape of a process crash or a power loss.
+        // Rerun the same args until the ledger is completed.
         const { loadMigrationArtifacts } = await import('../../../scripts/migration-apply');
         const { manifest } = loadMigrationArtifacts(artifactsDir);
         const firstRunId = applyRunIdOf({

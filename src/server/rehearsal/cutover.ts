@@ -184,7 +184,7 @@ export async function simulateStaleWriterLock(
       waitMs = Date.now() - t0;
       timeoutError = err instanceof Error ? err.message : String(err);
     }
-    // Production counterpart: stop the old writer.
+    // Production counterpart: stop the old writer and evict its connection.
     if (stalePid !== null) {
       await db.execute(sql`select pg_terminate_backend(${stalePid})`);
     }
