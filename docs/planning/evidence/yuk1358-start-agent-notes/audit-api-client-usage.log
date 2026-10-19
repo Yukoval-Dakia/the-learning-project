@@ -1,2 +1,0 @@
-$ tsx scripts/audit-api-client-usage.ts
-API client usage audit passed: every capability *-api.ts uses generated operations.

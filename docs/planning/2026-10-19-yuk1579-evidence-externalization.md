@@ -26,16 +26,25 @@ Branch `docs/yuk-1579-evidence-externalization`，base `696449125b53b0c35a210dbc
    无 scripts、无 CI、无测试 fixture、无 runtime 输入消费；
 3. 体量为各家族之最（11.0 MiB，含 4.3MB/3.0MB/1.9MB 三个 runtime tar.gz）。
 
-## 执行的完整操作（rerunnable）
+## 执行的完整操作（rerunnable，已修正）
+
+历史事实：本批实际执行时对干净工作树用 `cp -Rp` 复制到 `$EXT/docs/planning/evidence/`，
+随后逐文件 SHA256 双向 diff 全等。该写法对 head-addressed 封存目录**不是可重跑形式**：
+重跑会静默覆盖已封存字节。以下为修正后的可重跑程序——导出源固定为 git revision
+（不依赖工作树状态），目标按 `<head>/evidence-export` 寻址且**必须不存在**，已存在即
+拒绝；外部布局以仓库路径 `docs/planning/evidence/` 为根镜像。
 
 ```bash
-EXT=/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1579/696449125b53b0c35a210dbc9a57292f014712de/evidence-export
-mkdir -p "$EXT/docs/planning/evidence"
+REV=696449125b53b0c35a210dbc9a57292f014712de   # 固定源 git revision
+DEST=/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1579/$REV/evidence-export
+if [ -e "$DEST" ]; then echo "refuse: $DEST already exists (sealed)" >&2; exit 1; fi
+mkdir -p "$DEST"
 for d in yuk1358-start-event-detail yuk1358-start-notes-list yuk1358-start-agent-notes \
          2026-10-09-yuk1358-start-admin-controls 2026-10-08-yuk1358-start-workbench; do
-  cp -Rp "docs/planning/evidence/$d" "$EXT/docs/planning/evidence/"
+  git archive "$REV" "docs/planning/evidence/$d" | tar -x -C "$DEST"
 done
-# 源/目标各生成逐文件 shasum -a 256 manifest 后 diff —— 全等
+# 在 $DEST/docs/planning/evidence 下生成逐文件 shasum -a 256 manifest（条目相对该目录），
+# 与 git 树同相对路径 manifest diff —— 全等
 ```
 
 源不移动、不删除；未复制 secrets/env（无 .env 文件；secret 模式扫描命中均为
@@ -52,8 +61,10 @@ build 产物 chunk 名与测试名等误报，已逐条人工核过）。
 
 ## 引用地图（引用者 → 批次目录）
 
-叙事引用者（今日全部仍指向 git 内路径，未断链；若协调线批准删除，后续批次 PR
-负责把这些链接改指外置路径或指针文件）：
+叙事引用者（#1839 合入时全部仍指向 git 内路径；批次一删除 PR 已把全部活跃引用
+改指外部封存路径并附逐文件 `sha256`——47 处 markdown 链接 + 1 处行内代码路径 +
+1 处代码块命令路径 + 1 处目录引用；PLAN.md/`.remember/now.md` 经核实只引用叙事
+文档名、不指向被删 evidence 路径，未改动）：
 
 - `PLAN.md`、`.remember/now.md`（看板/交接叙事）
 - `docs/planning/2026-10-09-yuk1358-start-{event-detail,notes-list,agent-notes}-*.md`
@@ -83,10 +94,11 @@ build 产物 chunk 名与测试名等误报，已逐条人工核过）。
 - 失败/事务/锁/兼容行为：无 runtime 代码改动；live seal、fixture、CI 语义、
   git 历史全部原样。
 
-## 提交协调线的 HEAD 删除提案（未执行）
+## 提交协调线的 HEAD 删除提案（已于批次一执行，见末节执行记录）
 
-若批准，从 HEAD 删除以下 5 个 git 路径，共 172 文件 / 11,552,302 字节
-（≈11.0 MiB，`docs/planning/evidence/` 总量的 ~57%）：
+已批准并从 HEAD 删除以下 5 个 git 路径，共 172 文件 / 11,552,302 字节
+（≈11.0 MiB，`docs/planning/evidence/` 总量的 ~57%；口径为 HEAD 工作树字节，
+git 历史对象仍占用，clone/fetch 体积不降）：
 
 | git 路径 | 文件 | 字节 |
 | --- | --- | --- |
@@ -97,7 +109,8 @@ build 产物 chunk 名与测试名等误报，已逐条人工核过）。
 | `docs/planning/evidence/2026-10-08-yuk1358-start-workbench/` | 10 | 171,297 |
 
 复制与核验已完成、指针已建立（本文件 +
-`evidence-export-pointers.md`）。删除执行须另批授权；既有 git 历史不重写。
+`evidence-export-pointers.md`）。删除由协调线按批次批准后执行（批次一已执行，
+见末节）；既有 git 历史不重写。
 
 ## 真实指标与 NOT_RUN
 
@@ -112,3 +125,27 @@ build 产物 chunk 名与测试名等误报，已逐条人工核过）。
   （parent 集成所有）。
 
 父级复核：172/172 文件均 git tracked；source/外部 SHA256 与 manifest 全等，所选五目录无漏项；总计 11,552,302 字节。manifest 路径相对其下的 `docs/planning/evidence/`，复验须先切到该目录，再 `shasum -a 256 -c ../../../SHA256SUMS.txt`。父级原始结果在外部 `evidence-export/parent-verification.json`。
+
+## 批次一 HEAD 删除执行记录（2026-10-20，分支 `docs/yuk-1579-evidence-batch-one`）
+
+协调线批准后由独立 worktree 实施：
+
+- 删除前复核：`SHA256SUMS.txt` 自身 digest `02a483a4841843ace8d7b8fb0f1649d7d94cd1108ecb0903343b2c2b2ad1638e`
+  不变；对封存外部副本 `shasum -a 256 -c` 172/172 OK；对当前 HEAD（`71986f2244`）
+  工作树同 manifest `shasum -a 256 -c` 172/172 OK——HEAD 字节与封存逐文件全等。
+- manifest 恰好 172 条且全部落在批准五目录内，无越界条目；五目录内无 manifest
+  外文件。
+- `git rm -r` 仅删除批准清单 172 文件；无顺带清理。删除后 HEAD 工作树减少
+  11,552,302 字节；git 历史对象仍占用，clone/fetch 体积不降（不修史）。
+- 活跃引用改写：9 篇 `docs/planning/` 叙事文档共 50 处（47 markdown 链接目标改
+  外部绝对路径 + `sha256:` 链接标题取 manifest 逐文件哈希；1 处行内代码路径 +
+  1 处代码块命令路径同样外置并注 SHA-256；1 处目录引用改外部目录并注明 manifest
+  前缀条目数）。每篇文档标题下增一行迁移约定说明。历史叙事保留。
+- `evidence-export-pointers.md` Batch 1 节状态由「未删除」更新为已删除登记；
+  顶部新增「重跑导出只允许写入不存在的新 head-addressed 目标，已存在一律拒绝」。
+- PLAN.md/`.remember/now.md` 不含指向被删 evidence 路径的引用（仅含同名叙事文档
+  链接），按边界未改动。
+- bulk 复核输出（逐文件校验日志、引用清单、删除清单）封存于
+  `architecture-deepening/YUK-1579/696449125b53b0c35a210dbc9a57292f014712de/batch-one-head-removal/`。
+- NOT_RUN：无测试改动；未跑测试/DB/Docker/runtime/provider/付费；未 push/PR/merge
+  （父级验收与独立 review）。
