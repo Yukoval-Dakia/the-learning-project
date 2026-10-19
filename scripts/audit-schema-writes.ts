@@ -15,10 +15,11 @@
 
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import { dirname, join, relative, resolve } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
+import { isDirectCliInvocation, isRecord, walkSourceFiles } from './lib/audit-scan';
 import {
   CONTINUATION_COLUMNS,
   RETIRED_SUBAGENT_COLUMNS,
@@ -544,10 +545,6 @@ const TRIVIAL_FIELDS = new Set(['id', 'created_at', 'updated_at', 'version', 'ar
 const RESOLVE_KINDS = new Set<ResolveKind>(['pr', 'phase', 'manual']);
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 function pad2(value: number): string {
   return String(value).padStart(2, '0');
 }
@@ -853,20 +850,9 @@ function loadAllowlist(): unknown {
   return JSON.parse(readFileSync(ALLOWLIST_PATH, 'utf8'));
 }
 
-function walkFiles(dir: string, out: string[] = []): string[] {
-  if (!existsSync(dir)) return out;
-  for (const entry of readdirSync(dir)) {
-    if (EXCLUDE_DIRS.has(entry)) continue;
-    const p = join(dir, entry);
-    const st = statSync(p);
-    if (st.isDirectory()) {
-      walkFiles(p, out);
-    } else if (/\.tsx?$/.test(entry) && !entry.endsWith('.d.ts')) {
-      out.push(p);
-    }
-  }
-  return out;
-}
+// Shared walker (scripts/lib/audit-scan.ts, YUK-1579). This audit's scan universe:
+// src/ + app/ (historical), tests NOT skipped here (isProductionSource classifies later),
+// .d.ts skipped, absolute paths, missing roots skipped.
 
 // A single drizzle write statement, scoped to the table it targets. `kind`
 // distinguishes INSERT from UPDATE; `payload` is either a direct object literal
@@ -1033,8 +1019,13 @@ export function auditSchemaWrites(
 }
 
 export function audit(repoRoot = REPO_ROOT) {
-  const files: string[] = [];
-  for (const d of SEARCH_DIRS) walkFiles(resolve(repoRoot, d), files);
+  const files = walkSourceFiles(repoRoot, {
+    roots: SEARCH_DIRS,
+    excludeDirs: EXCLUDE_DIRS,
+    skipTests: false,
+    absolute: true,
+    skipMissingRoots: true,
+  });
   return auditSchemaWrites(
     readFileSync(resolve(repoRoot, 'src/db/schema.ts'), 'utf8'),
     new Map(
@@ -1152,6 +1143,6 @@ function main() {
   }
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isDirectCliInvocation(import.meta.url)) {
   main();
 }

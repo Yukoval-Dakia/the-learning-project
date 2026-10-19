@@ -64,9 +64,11 @@
  *   pnpm audit:fold-writes --strict # VIOLATION 或 STALE 即非零 exit（CI gate 模式）
  */
 
-import { type Dirent, readFileSync, readdirSync } from 'node:fs';
-import { dirname, join, relative, resolve } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isDirectCliInvocation, walkSourceFiles } from './lib/audit-scan';
+import { lineOf, stripComments as stripCommentsShared } from './lib/ts-tokenize';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
@@ -396,143 +398,35 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   },
 ];
 
-// ── comment stripping (char-stepped, escape-aware; KEEPS string content) ──────────────────────
+// ── comment stripping (shared lexer view; KEEPS string content) ────────────────────────────
 //
 // Strips line + block comments so a docstring like "// UPDATE question_block: link…" (import.ts) or
 // the projection shells' "DELETE FROM knowledge WHERE id=…" doc lines are NOT mistaken for real
 // writes. STRING CONTENT IS KEPT (unlike audit-mastery-provenance's stripper) because a real raw-SQL
 // write lives INSIDE a string/template (`sql\`UPDATE knowledge…\``) — stripping strings would blind
 // the raw-SQL scan. The Drizzle-form scan is unaffected: `.update(knowledge)` is bare code, never
-// inside a string. Escape/quote state is tracked so a `//` inside a string is not treated as a comment.
-export function stripComments(src: string): string {
-  let out = '';
-  let i = 0;
-  const n = src.length;
-  let inLine = false;
-  let inBlock = false;
-  let inSingle = false;
-  let inDouble = false;
-  let inTemplate = false;
-  while (i < n) {
-    const c = src[i];
-    const next = src[i + 1];
-    if (inLine) {
-      if (c === '\n') {
-        inLine = false;
-        out += c;
-      }
-      i += 1;
-      continue;
-    }
-    if (inBlock) {
-      if (c === '*' && next === '/') {
-        inBlock = false;
-        i += 2;
-        continue;
-      }
-      // Preserve newlines inside block comments so reported line numbers stay aligned with the
-      // ORIGINAL source (a collapsed multi-line block comment would otherwise shift every write
-      // site below it upward).
-      if (c === '\n') out += c;
-      i += 1;
-      continue;
-    }
-    if (inSingle) {
-      out += c;
-      if (c === '\\') {
-        out += next ?? '';
-        i += 2;
-        continue;
-      }
-      if (c === "'") inSingle = false;
-      i += 1;
-      continue;
-    }
-    if (inDouble) {
-      out += c;
-      if (c === '\\') {
-        out += next ?? '';
-        i += 2;
-        continue;
-      }
-      if (c === '"') inDouble = false;
-      i += 1;
-      continue;
-    }
-    if (inTemplate) {
-      out += c;
-      if (c === '\\') {
-        out += next ?? '';
-        i += 2;
-        continue;
-      }
-      if (c === '`') inTemplate = false;
-      i += 1;
-      continue;
-    }
-    // not in any string/comment.
-    if (c === '/' && next === '/') {
-      inLine = true;
-      i += 2;
-      continue;
-    }
-    if (c === '/' && next === '*') {
-      inBlock = true;
-      i += 2;
-      continue;
-    }
-    if (c === "'") {
-      inSingle = true;
-      out += c;
-      i += 1;
-      continue;
-    }
-    if (c === '"') {
-      inDouble = true;
-      out += c;
-      i += 1;
-      continue;
-    }
-    if (c === '`') {
-      inTemplate = true;
-      out += c;
-      i += 1;
-      continue;
-    }
-    out += c;
-    i += 1;
-  }
-  return out;
-}
+// inside a string. Implementation is the shared analyzeSource-derived view in
+// scripts/lib/ts-tokenize.ts (YUK-1579): newlines inside comments are preserved so reported line
+// numbers stay aligned with the ORIGINAL source, escape/quote state is lexer-tracked so a `//`
+// inside a string is not treated as a comment, and — unlike the private state machine this
+// replaced — template `${...}` interpolations are lexed at correct depth (a comment inside an
+// interpolation is now stripped instead of kept; byte-identical output verified on the repo).
+// Re-exported for module-surface compat.
+export { stripCommentsShared as stripComments };
 
 // ── source walk ────────────────────────────────────────────────────────────────────────────────
 
-export function walkSource(root: string, out: string[] = []): string[] {
-  let entries: Dirent[];
-  try {
-    entries = readdirSync(root, { withFileTypes: true });
-  } catch {
-    return out; // a scan root that does not exist (e.g. server/ in a stripped checkout) is skipped.
-  }
-  for (const entry of entries) {
-    if (EXCLUDE_DIRS.has(entry.name)) continue;
-    const abs = join(root, entry.name);
-    if (entry.isDirectory()) {
-      walkSource(abs, out);
-    } else if (
-      entry.isFile() &&
-      (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx')) &&
-      // Mirror the sibling audits: skip test files (a table write in a *.test.ts fixture is not a
-      // production fold mutation) and type declarations.
-      !entry.name.endsWith('.test.ts') &&
-      !entry.name.endsWith('.test.tsx') &&
-      !entry.name.endsWith('.d.ts')
-    ) {
-      const rel = relative(REPO_ROOT, abs);
-      if (!EXCLUDE_FILES.has(rel)) out.push(rel);
-    }
-  }
-  return out;
+// Shared walker (scripts/lib/audit-scan.ts, YUK-1579): src/ + server/, tests and this audit's
+// own files excluded; a scan root that does not exist (e.g. server/ in a stripped checkout)
+// is skipped.
+function listSourceFiles(): string[] {
+  return walkSourceFiles(REPO_ROOT, {
+    roots: SCAN_ROOTS,
+    excludeDirs: EXCLUDE_DIRS,
+    skipTests: true,
+    excludeFiles: EXCLUDE_FILES,
+    skipMissingRoots: true,
+  });
 }
 
 // ── write-site detection ─────────────────────────────────────────────────────────────────────
@@ -576,15 +470,7 @@ export function findWriteSites(
   for (const file of files) {
     const raw = readFile(file);
     if (raw === null) continue;
-    const code = stripComments(raw);
-    // pre-compute line offsets on the stripped source (newlines preserved by the stripper).
-    const lineAt = (index: number): number => {
-      let line = 1;
-      for (let k = 0; k < index && k < code.length; k += 1) {
-        if (code[k] === '\n') line += 1;
-      }
-      return line;
-    };
+    const code = stripCommentsShared(raw);
     DRIZZLE_RE.lastIndex = 0;
     for (const m of code.matchAll(DRIZZLE_RE)) {
       sites.push({
@@ -592,7 +478,9 @@ export function findWriteSites(
         table: m[2] as FoldOwnedTable,
         op: m[1] as WriteSite['op'],
         form: 'drizzle',
-        line: lineAt(m.index ?? 0),
+        // line numbers are 1-based on the stripped source, whose newlines are preserved
+        // so they stay aligned with the original.
+        line: lineOf(code, m.index ?? 0),
       });
     }
     RAW_SQL_RE.lastIndex = 0;
@@ -603,7 +491,7 @@ export function findWriteSites(
         table: m[2] as FoldOwnedTable,
         op: RAW_SQL_OP[kw] ?? 'update',
         form: 'raw-sql',
-        line: lineAt(m.index ?? 0),
+        line: lineOf(code, m.index ?? 0),
       });
     }
   }
@@ -834,8 +722,7 @@ function loadAllowlist(): Allowlist {
 export function auditFoldWrites(): FoldWriteAuditResult {
   const today = new Date().toISOString().slice(0, 10);
 
-  const files: string[] = [];
-  for (const root of SCAN_ROOTS) walkSource(join(REPO_ROOT, root), files);
+  const files = listSourceFiles();
   files.sort();
 
   const sites = findWriteSites(files, readFileOrNull);
@@ -945,6 +832,6 @@ function main(): void {
 
 // CLI-gate (mirrors audit-relations.ts): only run + exit when invoked as a CLI so the self-test can
 // import the pure functions without the top-level scan firing.
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isDirectCliInvocation(import.meta.url)) {
   main();
 }

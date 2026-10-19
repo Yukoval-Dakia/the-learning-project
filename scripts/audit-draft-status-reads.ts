@@ -65,15 +65,20 @@
  * block on pre-existing stragglers and it is what actually closes 红线-4 on the read side.
  */
 
-import { readFileSync, readdirSync } from 'node:fs';
-import { dirname, join, relative, resolve } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { type HygieneIssue, validateAllowlistHygiene } from './audit-draft-status';
+import {
+  type AllowlistEntry,
+  isDirectCliInvocation,
+  loadResolvesWhenAllowlist,
+  walkSourceFiles,
+} from './lib/audit-scan';
 import { analyzeSource, lineOf } from './lib/ts-tokenize';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
-const SRC_ROOT = join(REPO_ROOT, 'src');
 const ALLOWLIST_PATH = join(__dirname, 'audit-draft-status-reads-allowlist.json');
 
 const EXCLUDE_DIRS = new Set(['node_modules', '.next', 'dist', '.git', '.claude', 'drizzle']);
@@ -88,48 +93,14 @@ export const HELPER_SENTINEL = '// AUDIT-DRAFT-READS: canonical-definition';
 // hand-rolled predicate — still gets the hand-rolled part flagged (CodeRabbit YUK-569).
 const HELPER_SQL_INTERPOLATION = /\$\{\s*notDraftPredicate\s*\([^}]*\bdraft_status\b[^}]*\)\s*\}/g;
 
-// ---------- allowlist contract (reuse the INSERT audit's validateAllowlistHygiene) ----------
+// ---------- source walk (mirrors audit-draft-status.ts) ----------
 
-const RESOLVE_KINDS = ['pr', 'phase', 'manual'] as const;
-type ResolveKind = (typeof RESOLVE_KINDS)[number];
-type ResolvesWhen = { kind: ResolveKind; ref: string; expected_by: string };
-type AllowlistEntry = { reason: string; resolves_when: ResolvesWhen };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function loadAllowlist(): { entries: Record<string, AllowlistEntry>; raw: unknown } {
-  const raw = JSON.parse(readFileSync(ALLOWLIST_PATH, 'utf-8')) as unknown;
-  const entries: Record<string, AllowlistEntry> = {};
-  if (isRecord(raw)) {
-    for (const [k, v] of Object.entries(raw)) {
-      if (k.startsWith('_')) continue;
-      entries[k] = v as AllowlistEntry;
-    }
-  }
-  return { entries, raw };
-}
-
-// ---------- source walk (mirrors audit-draft-status.ts:walkSource) ----------
-
-export function walkSource(root: string, out: string[] = []): string[] {
-  for (const entry of readdirSync(root, { withFileTypes: true })) {
-    if (EXCLUDE_DIRS.has(entry.name)) continue;
-    const abs = join(root, entry.name);
-    if (entry.isDirectory()) {
-      walkSource(abs, out);
-    } else if (
-      entry.isFile() &&
-      (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx')) &&
-      !entry.name.endsWith('.test.ts') &&
-      !entry.name.endsWith('.test.tsx') &&
-      !entry.name.endsWith('.d.ts')
-    ) {
-      out.push(relative(REPO_ROOT, abs));
-    }
-  }
-  return out;
+function listSourceFiles(): string[] {
+  return walkSourceFiles(REPO_ROOT, {
+    roots: ['src'],
+    excludeDirs: EXCLUDE_DIRS,
+    skipTests: true,
+  });
 }
 
 // ---------- Engine A shape detection ----------
@@ -326,7 +297,7 @@ export function readFileOrNull(relPath: string): string | null {
 }
 
 function main(): void {
-  const files = walkSource(SRC_ROOT).sort();
+  const files = listSourceFiles().sort();
   const hits: ReadHit[] = [];
   const unknown: UnknownHit[] = [];
   const jsTwins: JsTwin[] = [];
@@ -344,7 +315,7 @@ function main(): void {
   }
 
   const helperDefIssues = checkHelperSentinels(readFileOrNull);
-  const { entries, raw } = loadAllowlist();
+  const { entries, raw } = loadResolvesWhenAllowlist(ALLOWLIST_PATH);
   const result = validateReadGate(hits, unknown, entries, raw, helperDefIssues);
 
   const isJson = process.argv.includes('--json');
@@ -415,6 +386,6 @@ function main(): void {
 
 // CLI-gate (mirrors audit-draft-status.ts / audit-relations.ts): only walk + exit when run as
 // a CLI so the self-test can import the pure functions without the top-level scan firing.
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isDirectCliInvocation(import.meta.url)) {
   main();
 }

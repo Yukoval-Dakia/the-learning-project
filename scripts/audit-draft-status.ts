@@ -36,30 +36,30 @@
  * 详见 docs/design/2026-05-15-data-assumptions.md（draft_status NULL≡active 契约）。
  */
 
-import { readFileSync, readdirSync } from 'node:fs';
-import { dirname, join, relative, resolve } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { analyzeSource, extractObjectBlock } from './lib/ts-tokenize';
+import {
+  type AllowlistEntry,
+  RESOLVE_KINDS,
+  isDirectCliInvocation,
+  isRecord,
+  loadResolvesWhenAllowlist,
+  walkSourceFiles,
+} from './lib/audit-scan';
+import { analyzeSource, extractObjectBlock, lineOf } from './lib/ts-tokenize';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
-const SRC_ROOT = join(REPO_ROOT, 'src');
 const ALLOWLIST_PATH = join(__dirname, 'audit-draft-status-allowlist.json');
 
 const EXCLUDE_DIRS = new Set(['node_modules', '.next', 'dist', '.git', '.claude', 'drizzle']);
 
 // ---------- allowlist contract (mirrors audit-schema-allowlist.json shape) ----------
 
-const RESOLVE_KINDS = ['pr', 'phase', 'manual'] as const;
 type ResolveKind = (typeof RESOLVE_KINDS)[number];
-type ResolvesWhen = { kind: ResolveKind; ref: string; expected_by: string };
-type AllowlistEntry = { reason: string; resolves_when: ResolvesWhen };
 
 export type HygieneIssue = { file: string; problem: string };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 function isIsoDate(value: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
@@ -107,37 +107,16 @@ export function validateAllowlistHygiene(raw: unknown): HygieneIssue[] {
   return issues;
 }
 
-function loadAllowlist(): { entries: Record<string, AllowlistEntry>; raw: unknown } {
-  const raw = JSON.parse(readFileSync(ALLOWLIST_PATH, 'utf-8')) as unknown;
-  const entries: Record<string, AllowlistEntry> = {};
-  if (isRecord(raw)) {
-    for (const [k, v] of Object.entries(raw)) {
-      if (k.startsWith('_')) continue;
-      entries[k] = v as AllowlistEntry;
-    }
-  }
-  return { entries, raw };
-}
-
 // ---------- source walk ----------
 
-export function walkSource(root: string, out: string[] = []): string[] {
-  for (const entry of readdirSync(root, { withFileTypes: true })) {
-    if (EXCLUDE_DIRS.has(entry.name)) continue;
-    const abs = join(root, entry.name);
-    if (entry.isDirectory()) {
-      walkSource(abs, out);
-    } else if (
-      entry.isFile() &&
-      (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx')) &&
-      !entry.name.endsWith('.test.ts') &&
-      !entry.name.endsWith('.test.tsx') &&
-      !entry.name.endsWith('.d.ts')
-    ) {
-      out.push(relative(REPO_ROOT, abs));
-    }
-  }
-  return out;
+// Shared walker (scripts/lib/audit-scan.ts, YUK-1579): src/ only, tests and seed scripts
+// excluded by design (docblock limitation #3).
+function listSourceFiles(): string[] {
+  return walkSourceFiles(REPO_ROOT, {
+    roots: ['src'],
+    excludeDirs: EXCLUDE_DIRS,
+    skipTests: true,
+  });
 }
 
 // extractObjectBlock lives in scripts/lib/ts-tokenize.ts now (shared with the read-side
@@ -188,14 +167,6 @@ const INSERT_HEAD_RE =
 // draft_status as an object KEY (word-boundary, allow quotes), not a substring of
 // another identifier.
 const DRAFT_STATUS_KEY_RE = /(^|[^A-Za-z0-9_])(['"]?)draft_status\2\s*:/;
-
-function lineOf(src: string, idx: number): number {
-  let line = 1;
-  for (let i = 0; i < idx && i < src.length; i += 1) {
-    if (src[i] === '\n') line += 1;
-  }
-  return line;
-}
 
 /**
  * Scan one source file for every `.insert(question).values({ ... })` site, returning
@@ -257,14 +228,14 @@ export function validateDraftGate(
 }
 
 function main(): void {
-  const files = walkSource(SRC_ROOT).sort();
+  const files = listSourceFiles().sort();
   const sites: InsertSite[] = [];
   for (const file of files) {
     const src = readFileSync(join(REPO_ROOT, file), 'utf-8');
     if (!src.includes('.insert(')) continue;
     sites.push(...scanQuestionInserts(file, src));
   }
-  const { entries, raw } = loadAllowlist();
+  const { entries, raw } = loadResolvesWhenAllowlist(ALLOWLIST_PATH);
   const result = validateDraftGate(sites, entries, raw);
 
   const isJson = process.argv.includes('--json');
@@ -304,6 +275,6 @@ function main(): void {
 
 // CLI-gate (mirrors audit-test-partition.ts): only walk + exit when run as a CLI so the
 // self-test can import the pure functions without the top-level scan firing.
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isDirectCliInvocation(import.meta.url)) {
   main();
 }
