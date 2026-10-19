@@ -93,29 +93,30 @@ skill. Common entry points:
 ```bash
 pnpm audit:schema
 pnpm audit:dependencies
+pnpm audit:partition
+pnpm audit:question-writers
 pnpm audit:api-contracts
 pnpm audit:api-client
 pnpm audit:api-client-usage
+pnpm audit:tool-params
 pnpm audit:capability-boundaries
-pnpm audit:provider-lanes
-pnpm audit:partition
-pnpm audit:test-policy
+pnpm audit:architecture-deepening
 pnpm audit:profile
 pnpm audit:learner-copy
 pnpm audit:no-learning-styles
 pnpm audit:structured-judge
+pnpm audit:test-policy
 pnpm audit:task-census
 pnpm audit:draft-status
-pnpm audit:draft-status-reads
-pnpm audit:relations
-pnpm audit:calibration
-pnpm audit:threshold-calibration
-pnpm audit:mastery-provenance
-pnpm audit:fold-writes
-pnpm audit:flags
-pnpm audit:projection
-pnpm audit:golden --kind=<kind>
+pnpm audit:draft-status-reads --strict
+pnpm audit:flags --strict
+pnpm audit:hub-sync-writers
+pnpm audit:provider-attempt-truth
+pnpm audit:model-source
 ```
+
+`pnpm embed:inventory` is a read-only question-vector census (no embedding calls,
+no writes; `scripts/embed-inventory.ts`).
 
 `audit:capability-boundaries` 同时检查 public/ui-public access seam 与三张架构债
 ratchet（capability→server、server→capability deep、cross-capability value/SCC）。
@@ -157,11 +158,12 @@ migration, build and parity lanes. Every code change runs all retained invariant
 the unit/DB lanes; only verified docs-only changes skip them. Each lane computes its plan after checkout, without waiting for a classifier job. DB files run in eight nonempty native Vitest shards; unit files run in two. The exact include lists live in
 `vitest.shared.ts`, and `audit:partition` rejects missing, duplicate or unassigned
 files and direct unmocked DB imports in unit files. The audit lanes run exactly the
-commands listed in `.github/workflows/ci-gate.yml`: schema, dependencies, partition, test-policy,
-question-writers, API-contract, API-client, API-client-usage, capability-boundary,
-architecture-deepening, profile, learner-copy, no-learning-styles, structured-judge,
-task-census, draft-status, strict draft-status-read, strict flags, hub-sync-writer and
-provider-attempt-truth. `audit:provider-lanes` is a local-only census and is not in CI.
+commands listed in `.github/workflows/ci-gate.yml`: schema, dependencies, partition,
+question-writers, API-contract, API-client, API-client-usage, tool-params,
+capability-boundary, architecture-deepening, profile, learner-copy, no-learning-styles,
+structured-judge, test-policy, task-census, draft-status, strict draft-status-read, strict
+flags, hub-sync-writers, provider-attempt-truth and model-source.
+`audit:provider-lanes` is a local-only census and is not in CI.
 The build lane injects secret canaries into the build environment, scans
 both SPA and Start browser artifacts, and verifies frontdoor token/exemptions via
 an isolated listener. The parity lane runs `cargo test` plus the native/WASM/JS
