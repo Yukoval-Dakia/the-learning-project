@@ -1,8 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-11：YUK-1107隔离head f0f2d63bf完整CI三绿166/207/144秒、中位166；唯一验证R2 NONE及逐不变量说明已过。正常纳入main c2新测试规则后，作者代码不变，等待新exact-head CI再合1691。judge阶段诊断仅独立实验，backup等audit/owner，120未达。
+> Linear 是权威 tracker。2026-10-19：YUK-1570 基线收紧与上调理由校验已提交 draft PR1830；不改 Linear 状态，不关闭票，不压降业务依赖。验证与限度见 PR。
 
 ## NOW
+
+- **YUK-1570 / 依赖基线收紧**：[draft PR1830](https://github.com/Yukoval-Dakia/the-learning-project/pull/1830)，分支 `yuk-1570-baseline-ratchet`。本地 typecheck/lint/build、唯一边界测试和审计通过；main 实测 443，practice→ai 66。无理由上调及下降未收紧均 exit 1，`--tighten` 追加日期和旧新值。没有业务依赖压降、DB、UI、付费调用或部署。远端检查见 PR exact head。
 
 - **YUK-1404 / native03题图修复**：PR1657 fixed4c52 exact CI38144495041全绿；正常纳入main eb960c079，仅PLAN/now冲突。图ownership/隐私产品代码与单capture边界测试保留，旧细粒度四tests已删。独立初审/最终R2预算已完成，不启第三审。当前crop producer仍无source_asset SHA登记，旧visibility未知，public withholding不是完整配图交付；同卷actual-output验收仍待。无DB/runtime/provider/paid。 [证据](docs/planning/2026-10-11-yuk1404-native03-figure-repair.md)。
 
@@ -31,6 +33,8 @@
 - **本轮已交付 YUK-1392**：PR1619于17:11:43Z合main6aaf8ca89，tree5e8ab973与exact3883903相同；CI37812973662全绿、R1 NONE、threads0。父13unit/22DB、static/build/audits通过，已unwatch/Linear Done。无部署。
 
 ## NEXT
+
+- YUK-1570 保持 draft，目标总数、期限及实际压降由 PM 另行安排。PR1822 若先合入，保留 main 的 +5 基线并正常整合；不 force push。
 
 - Start/judge共享文件边界见[交接](docs/planning/2026-10-09-judge-start-ownership.md)，Start/boot/shutdown由5796独占；judge A/B/C/D由7631接续，迁移号后核。
 

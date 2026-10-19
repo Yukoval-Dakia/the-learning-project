@@ -771,7 +771,12 @@ export function main(argv = process.argv.slice(2), projectRoot = process.cwd()):
     return;
   }
   if (tighten) {
-    writeFileSync(resolve(projectRoot, BASELINE_PATH), serializeDependencySnapshot(baseline));
+    const formatted = execFileSync(
+      'pnpm',
+      ['exec', 'biome', 'format', '--stdin-file-path', BASELINE_PATH],
+      { cwd: projectRoot, input: serializeDependencySnapshot(baseline), encoding: 'utf8' },
+    );
+    writeFileSync(resolve(projectRoot, BASELINE_PATH), formatted);
   }
   if (!json) {
     const debts = result.dependencySnapshot.debts;

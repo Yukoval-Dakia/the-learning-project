@@ -1,3 +1,20 @@
+# YUK-1570 依赖基线机制 draft 交付 — 2026-10-19
+
+独立 worktree `/workspace/amp/wt/YUK-1570`，分支 `yuk-1570-baseline-ratchet`，
+[draft PR1830](https://github.com/Yukoval-Dakia/the-learning-project/pull/1830)。只交付基线机制，
+不关闭票、不改 Linear 状态、不压降业务依赖、不合并或部署。目标总数和期限归 PM。
+
+main d41f242138ee2336abd9a58bd2e99f3f958b5263 新旧脚本实测 443/0/48，practice→ai 66。
+本地 Node24.0.0、pnpm11.13.1 的 typecheck/lint/build、唯一边界测试、边界审计、test-policy、
+partition 均通过。lint 179 warnings。临时 Git 仓库真实 CLI 拒绝无记录上调、缺退出条件、
+下降未收紧；有理由上调通过，`--tighten` 写入 UTC 日期与 2→1 下调记录，重复运行哈希一致。
+正式 baseline 没有下降，changes 留空，不造记录。日志在本 worktree `.amp/in/artifacts/`，
+可读结果与命令在 PR。远端 CI/review 以 PR exact head 为准，不用本地检查代替。
+
+无本机全量测试、DB、UI、provider 或付费调用。已查 Linear，没有新增范围外 actionable 缺陷，
+实际依赖压降留 PM 后续规划。PR1822 此时仍开放，若先合入保留 main 的 +5 并正常整合，
+不 force push。没有运行服务或持有 runtime 锁。
+
 # YUK-1404 figure main composition — 2026-10-11
 
 PR1657 fixed4c52 exact CI38144495041全绿；正常纳入main eb960c079，仅PLAN/now冲突。图ownership/隐私产品代码与单capture边界测试保留，旧细粒度四tests已删。独立初审/最终R2预算已完成，不启第三审。当前crop producer仍无source_asset SHA登记，旧visibility未知，public withholding不是完整配图交付；同卷actual-output验收仍待。无DB/runtime/provider/paid。

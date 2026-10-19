@@ -1,7 +1,6 @@
 {
   "schemaVersion": 1,
   "edgeUnit": "distinct-source-file-to-resolved-module",
-  "changes": [],
   "notes": {
     "YUK-1022": "copilot -> ai raised 10 -> 16 (+6, total 435 -> 441). Spec-mandated P3 dual-descriptor wiring: copilot-execution/subagents now import the pi lane parallels (pi-hooks, pi-subagent host, execution-adapter lane pin, pi-agent-adapter types) alongside the existing SDK descriptor edges, plus the test seam in copilot_run.test.ts. Ratified per the YUK-921 migration spec; P4 retires the SDK side of these edges.",
     "YUK-1025": "P4 SDK retirement: pi-only edges net agency->ai 27->28 (piCustomTool/pi-subagent/piDomainMount imports replaced the retired SdkMcpServer/buildMcpServerFromRegistry/createSpawnContract edges), copilot->ai 16->18 (execution-adapter ModelBinding + pi-subagent contract), practice->ai 73->65 (output-format.ts + SDK descriptor imports deleted). Total 441->436.",
@@ -19,6 +18,7 @@
     "YUK-1547": "practice -> ai 65 -> 66 (+1, total 437 -> 438): verify-framework.ts re-exports writeToolCallLog (src/server/ai/log) — structured-submit parse failures keep the bounded raw submit arguments as tool_call_log evidence attached to the task run (admission solve + crosscheck). Same owner-service lane as the file's existing server/ai re-exports (Provider/TaskTextResult); consumers add no new edge.",
     "YUK-1559": "C1-10 model-source unification: ingestion -> ai 15 -> 16 (+1, total 437 -> 438): provider-attempts.ts reads GLM_OCR_MODEL_ID from the provider catalog (src/server/ai/providers.ts) instead of pinning the glm-ocr literal — direct-lane declared ids belong to the catalog."
   },
+  "changes": [],
   "debts": {
     "capabilityToServer": {
       "total": 443,
