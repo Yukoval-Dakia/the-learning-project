@@ -6,6 +6,16 @@
 
 本轮隔离 Podman PG `yuk1592-qa-fix-pg`、127.0.0.1:55492，按仓库 migration 初始化，容器与匿名卷已删除。真实 blur handler 对受保护块由连续500变为200，后两项应用、人工块不变、首项保留dead；非法正文也记dead而不500。首项暂时失败后 p4 返回deferred，30分钟后按p1/p2/p3/p4应用；第二项暂时失败只重试后两项。SIGKILL退出137后版本0/待办3/事件0，新进程30分钟后应用3项，再次blur为0。双store并发分别应用2/1项，最终版本3/事件3；历史drainStarted三项跨30分钟也成功。原有presence六项测试、typecheck、lint、build全部exit0。lint179 warnings/0 errors；第一次lint只因未格式化的本地PR快照JSON失败，格式化后复跑通过。原始日志在 `.amp/in/artifacts/qa-fix/`。无付费模型、TEST8787、生产操作或完整本机pnpm test。P3自动夜扫以及死信处置/学习者回执留YUK-1417；Opus防丢数据审查、真页面和版本冲突交互仍待EL/QA，不称整链验收完成。
 
+# YUK-1525 题库计数 draft 交接 — 2026-10-19
+
+本 worktree `/workspace/amp/wt/YUK-1525`，分支 `yuk-1525-serving-counts-sql`，只处理 YUK-1525。服务「第一天能用」。SQL 统一 lifecycle 理由，冻结题面按200行分批复用 `decideAutomaticServing`，不复制规则。服务状态计数与列表使用 repeatable-read 只读事务，保留 API 字段与 offset 契约。
+
+临时 Postgres 17/pgvector 全量迁移后造2600行。旧路径计数1846且最新仅 `q_02000`；修后2400且 `q_02600` 可见。原投影对全库逐行统计为2400，八种理由一致，2600行 serving 投影零差异。翻页、难度/时间排序、tier、family、空集合与 HTTP handler 参数已实跑。原始命令、数据和结果封存在本机 `.amp/in/artifacts/`。没有新测试、完整本机测试、UI 改动或付费调用。
+
+仅授权 commit、普通 push、draft PR，未授权本轮 merge 或部署。独立审查工具因额度限制未执行，不能标为通过；后续仍需独立审查与 exact-head CI。Linear 保持未完成，PR 链接与状态以该票交接评论为准。未发现需另建票的范围外缺陷。
+
+以下为其他 lane 的历史交接，不表示本线程接管。
+
 # YUK-1404 figure main composition — 2026-10-11
 
 PR1657 fixed4c52 exact CI38144495041全绿；正常纳入main eb960c079，仅PLAN/now冲突。图ownership/隐私产品代码与单capture边界测试保留，旧细粒度四tests已删。独立初审/最终R2预算已完成，不启第三审。当前crop producer仍无source_asset SHA登记，旧visibility未知，public withholding不是完整配图交付；同卷actual-output验收仍待。无DB/runtime/provider/paid。
