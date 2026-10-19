@@ -159,10 +159,20 @@ function nativeAnswerText(assessment: SlotAssessment, responseSet: ResponseSetT)
     .join('\n');
 }
 
+// YUK-1573 — attachments a free_area block keeps on its open entry (block-drawn questions).
+function openEntryFileIds(responseSet: ResponseSetT | undefined): string[] {
+  return (responseSet?.entries ?? []).flatMap((entry) =>
+    entry.kind === 'open' ? entry.evidence.map((item) => item.asset.asset_id) : [],
+  );
+}
+
 function serverSlotDraft(assessment: SlotAssessment): ServerSlotDraft {
   return {
     text: nativeAnswerText(assessment, assessment.response_set),
-    files: assessment.group_evidence.map((item) => item.evidence.asset.asset_id),
+    files: [
+      ...assessment.group_evidence.map((item) => item.evidence.asset.asset_id),
+      ...openEntryFileIds(assessment.response_set),
+    ],
     epoch: assessment.save_epoch,
     response_set: assessment.response_set,
     group_evidence: assessment.group_evidence,
@@ -369,9 +379,15 @@ export function PfPaper(props: PfPaperProps) {
 
   // A visit restores its drafts once at mount, so it mounts only from a detail fetched for
   // this entry; later background refetches never overwrite the live visit.
+  // YUK-1566 — a failed re-read (refocus, after the session opens, the pre-submit check) keeps
+  // the previous data, so a paper already read during this entry stays on screen with a quiet
+  // notice; the read-error view is only for an entry that never got the paper. A detail cached
+  // by an earlier visit does not count (its data predates this entry).
+  const [enteredAt] = useState(() => Date.now());
+  const readThisEntry = detail !== null && detailQ.dataUpdatedAt >= enteredAt;
   if (detailQ.isLoading || !detailQ.isFetchedAfterMount)
     return <p className="quiet-empty">取卷中…</p>;
-  if (detailQ.isError || !detail || slots.length === 0)
+  if ((detailQ.isError && !readThisEntry) || !detail || slots.length === 0)
     return (
       <div className="pfp">
         <Btn size="sm" variant="ghost" icon="arrowL" onClick={() => onExit()}>
@@ -387,6 +403,7 @@ export function PfPaper(props: PfPaperProps) {
       detail={detail}
       slots={slots}
       clearStaleTiming={occurrence.replaced}
+      refreshFailed={detailQ.isError}
     />
   );
 }
@@ -399,10 +416,13 @@ function PaperVisit({
   detail,
   slots,
   clearStaleTiming,
+  refreshFailed,
 }: PfPaperProps & {
   detail: PaperDetail;
   slots: PaperSlot[];
   clearStaleTiming: boolean;
+  /** YUK-1566 — the latest re-read failed; the paper read earlier in this entry stays. */
+  refreshFailed: boolean;
 }) {
   const qc = useQueryClient();
   const hasNativeBindings = slots.every((slot) => slot.assessment != null);
@@ -1005,7 +1025,9 @@ function PaperVisit({
       // 交卷 once, so the learner sees it before the paper completes.
       if (slot.slot_state.submission?.submitted) {
         markSubmittedHere(key);
-        const mine = nativePayloadFor(key);
+        // The envelope this visit would hand in (bound empty select / blank slots as active
+        // blanks), which is what a hand-in elsewhere stored.
+        const mine = submitPayloadFor(key);
         if (
           !sameResponses(mine?.response_set, assessment.response_set) ||
           !sameEvidence(mine?.group_evidence ?? [], assessment.group_evidence)
@@ -1040,6 +1062,19 @@ function PaperVisit({
     setSubmittedHere((m) => (m[key] ? m : { ...m, [key]: true }));
   };
 
+  // An upload still running that could land on this question: the page-level composer (its
+  // attachments are paper-wide) or one of the question's blocks. Such an upload writes back the
+  // attachments it started from, so the conflict choice waits until it lands.
+  const uploadRunningOn = (key: string) =>
+    uploading || [...blockUploads].some((k) => k.startsWith(`${key}::`));
+  // The question's block attachments without a receipt are moot once it takes a stored answer.
+  const clearBlockUnreceipted = (key: string) =>
+    setBlockUnreceipted((prev) => {
+      if (!(key in prev)) return prev;
+      const { [key]: _, ...rest } = prev;
+      return rest;
+    });
+
   const takeHandedInAnswer = (key: string, slot: PaperSlot, assessment: SlotAssessment) => {
     if (saveTimers.current[key]) {
       clearTimeout(saveTimers.current[key]);
@@ -1047,7 +1082,9 @@ function PaperVisit({
     }
     const mine = {
       text: answersRef.current[key] ?? '',
-      files: evidenceIdsForSlot(evidenceRef.current, key).length,
+      files:
+        evidenceIdsForSlot(evidenceRef.current, key).length +
+        openEntryFileIds(nativeResponsesRef.current[key]).length,
     };
     if (mine.text || mine.files > 0) setDiscarded((d) => ({ ...d, [key]: mine }));
     const text =
@@ -1072,6 +1109,7 @@ function PaperVisit({
     ackedAnswers.current[key] = text;
     setSaveFailed((f) => (f[key] ? { ...f, [key]: false } : f));
     if (conflictsRef.current[key]) setConflict(key, null);
+    clearBlockUnreceipted(key);
     setHandedInElsewhere((h) => ({ ...h, [key]: true }));
   };
 
@@ -1079,14 +1117,16 @@ function PaperVisit({
   // baseline and continues from the server's epoch. Nothing is sent.
   const keepServerDraft = (key: string) => {
     const server = conflictsRef.current[key];
-    if (!server) return;
+    if (!server || uploadRunningOn(key)) return;
     if (saveTimers.current[key]) {
       clearTimeout(saveTimers.current[key]);
       delete saveTimers.current[key];
     }
     const mine = {
       text: answersRef.current[key] ?? '',
-      files: evidenceIdsForSlot(evidenceRef.current, key).length,
+      files:
+        evidenceIdsForSlot(evidenceRef.current, key).length +
+        openEntryFileIds(nativeResponsesRef.current[key]).length,
     };
     if (mine.text || mine.files > 0) setDiscarded((d) => ({ ...d, [key]: mine }));
     answersRef.current[key] = server.text;
@@ -1108,6 +1148,7 @@ function PaperVisit({
     ackedAnswers.current[key] = server.text;
     // A failure flag from an earlier failed re-read is moot: the slot now holds the stored draft.
     setSaveFailed((f) => (f[key] ? { ...f, [key]: false } : f));
+    clearBlockUnreceipted(key);
     setConflict(key, null);
   };
 
@@ -1116,7 +1157,7 @@ function PaperVisit({
   const keepMyDraft = (key: string) => {
     const server = conflictsRef.current[key];
     const slot = slots.find((s) => slotKey(s) === key);
-    if (!server || !slot) return;
+    if (!server || !slot || uploadRunningOn(key)) return;
     nativeEpochs.current[key] = Math.max(nativeEpochs.current[key] ?? 0, server.epoch);
     setConflict(key, null);
     setDiscarded((d) => {
@@ -1374,9 +1415,14 @@ function PaperVisit({
   );
   const curConflict = conflicts[curKey];
   // One lock for every answer control on the question, blocks included: not bound, handed in
-  // (before this visit, here, or elsewhere), exiting, or waiting on the conflict choice.
+  // (before this visit, here, or elsewhere), exiting, handing in (an upload started now would
+  // miss the submission), or waiting on the conflict choice.
   const answerLocked =
-    !hasNativeBindings || submittedKeys.has(curKey) || exiting || curConflict !== undefined;
+    !hasNativeBindings ||
+    submittedKeys.has(curKey) ||
+    exiting ||
+    submitting ||
+    curConflict !== undefined;
   // YUK-1573 — fail closed: a question whose issued select / blank slot no rendered input block
   // binds (presentation missing, unreadable or pruned) cannot be answered here, so the paper
   // cannot be handed in. Derived from the parsed presentations and the issued slots only.
@@ -1714,6 +1760,13 @@ function PaperVisit({
         </span>
       </div>
 
+      {/* YUK-1566 — a failed pre-submit re-read says so in the foot line and toast instead. */}
+      {refreshFailed && !submitCheckFailed && (
+        <p className="quiet-empty" role="status">
+          刚才没能刷新这张卷，已保留你的作答，可以接着写。
+        </p>
+      )}
+
       <div className="pfp-pips" role="tablist" aria-label="题目导航">
         {slots.map((s, i) => {
           // YUK-1051 — pip 的「已答」中性墨点也把绑定到该 slot 的证据算上（仍零语义色）。
@@ -1820,9 +1873,15 @@ function PaperVisit({
         )}
         {curConflict && (
           <PaperDraftConflict
-            mine={{ text: curAnswerText, files: evidenceIdsForSlot(evidence, curKey).length }}
+            mine={{
+              text: curAnswerText,
+              files:
+                evidenceIdsForSlot(evidence, curKey).length +
+                openEntryFileIds(nativeResponses[curKey]).length,
+            }}
             server={curConflict}
             mathNotation={curPresentation ? cur.question.notation : undefined}
+            uploadRunning={uploadRunningOn(curKey)}
             onKeepServer={() => keepServerDraft(curKey)}
             onKeepMine={() => keepMyDraft(curKey)}
           />
@@ -2072,6 +2131,7 @@ function PaperDraftConflict({
   mine,
   server,
   mathNotation,
+  uploadRunning,
   onKeepServer,
   onKeepMine,
 }: {
@@ -2079,6 +2139,8 @@ function PaperDraftConflict({
   server: ServerSlotDraft;
   /** Set for a block-drawn question: its answer text is option labels / blank text (math). */
   mathNotation?: string | null;
+  /** An upload on this question has not landed: choosing now would let it undo the choice. */
+  uploadRunning: boolean;
   onKeepServer: () => void;
   onKeepMine: () => void;
 }) {
@@ -2101,12 +2163,13 @@ function PaperDraftConflict({
       </div>
       <p className="meta">用服务器上的：你这次写的会丢掉。保留我的：服务器上那一份会被替换。</p>
       <div className="nowrap-meta">
-        <Btn size="sm" variant="secondary" onClick={onKeepServer}>
+        <Btn size="sm" variant="secondary" onClick={onKeepServer} disabled={uploadRunning}>
           用服务器上的
         </Btn>
-        <Btn size="sm" variant="primary" onClick={onKeepMine}>
+        <Btn size="sm" variant="primary" onClick={onKeepMine} disabled={uploadRunning}>
           保留我的
         </Btn>
+        {uploadRunning && <span className="meta">附件还在上传，传完再选</span>}
       </div>
     </div>
   );
