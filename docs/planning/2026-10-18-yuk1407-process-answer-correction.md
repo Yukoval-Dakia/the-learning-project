@@ -573,3 +573,10 @@ Linear/PLAN/.remember 与 PR 的最终验收状态由父协调线统一维护。
 状态封存 `/private/tmp/yuk1407-real-terminal-delivery.log`。这些静态结果不代表提取
 actual-output、旧库 head 激活、真实 rejudge 或页面验收 PASS。提交后释放本树 writer，
 由父核修并在其独占真实窗口复验，不再自行继续写入。
+
+### 接续合并 origin/main（2026-10-19，merge `112b0f319`）
+
+- 新接续分支 `yuk-1407-process-answer-resume` 基于固定原 head `8ffdd3ae6`，merge 最新 `origin/main`（`36b1346a0`）后正常推回 `fix/yuk-1407-process-answer-correction`；唯一冲突文件 `src/core/schema/assessment/evaluation.ts`（3 hunk）。
+- 冲突裁断：全部保留 main 的 YUK-1568 K1 声明契约——`runDeterministicComparator` 增 `declaredShape` 形参、`gradeBlankExactUnit(unit, entry, declaredShape)`、分发点按冻结 slot 查 `answer_shape`；本 PR 的提取拦截挂在未声明文本空路径（`declaredShape == null` 门控），声明槽走共享比较核心 compareDeclaredBlank；`judged_by: executor.comparator` receipt 字段与 main 的声明传递并存。未回退任何 main 新声明。
+- 本机静态门全绿：`pnpm typecheck` / `pnpm lint`（179 warnings，同基线）/ `pnpm build` exit 0；`biome check` 冲突文件 clean。未写/改任何测试，未跑 DB/容器/provider。
+- 未复验：新 head 的 S5=11 / a=-4 真实页面与 DB 复验仍待父获批窗口；真实提取行为未变（拦截条件外加 `declaredShape == null`，未声明槽路径逐字保留）。
