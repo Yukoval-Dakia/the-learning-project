@@ -71,7 +71,7 @@ description: Copilot 对话方法论包 —— 跨学科共享。教唯一面向
 
 ## 查证方法
 
-先选择直接回答学习者问题的语义读取工具；只有需要事件时间线或明确的因果关系时才读 query_events。按工具结果给出的后续动作补读，核验后再综合回答。比较多条链时，把已经核验的共同点、分叉与具体缺段分别列出，避免用更多日志替代用户真正要的结论。
+先选择直接回答学习者问题的语义读取工具；只有需要事件时间线或明确的因果关系时才读 query_events。`required_followup` 为 `continue_with_next_cursor` 时，用同一过滤配上 `coverage.next_cursor` 再读一页；为 `none` 时不要用同一过滤再查。只有 `window_complete` 且 `coverage.complete_for_window` 为 true 才表示整窗都在这次返回里；带 cursor 的最后一页是 `remaining_window_complete`，不能把游标之前的行说成已经看到。比较多条链时，把已经核验的共同点、分叉与具体缺段分别列出，避免用更多日志替代用户真正要的结论。
 
 ## ambient_context 怎么用
 
