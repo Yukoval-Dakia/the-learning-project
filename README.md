@@ -300,7 +300,8 @@ docker compose logs --tail 50 cloudflared
 ```
 
 The compose stack starts `migrate` (one-shot init that applies migrations), `postgres`
-(pgvector image), `app` (Hono :8787), `worker`（`image: the-learning-project-worker` +
+(pgvector image), `app` (Hono :8787), `mem0-init`（one-shot `chown` `mem0data` 卷，供
+worker 写入历史库前修好属主）, `worker`（`image: the-learning-project-worker` +
 `target: worker`，在 runner 上叠加 `playwright-core` 1.64.0 与
 `chromium-headless-shell`，供 `worksheet_render` 使用），and `cloudflared`. The app is
 reachable through the Cloudflare Tunnel; port 8787 is bound only inside the compose
