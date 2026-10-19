@@ -10,7 +10,9 @@
 // providers are also checked against their own /models; that status never
 // drops a catalog model. version covers the merged document and the findings,
 // so an absence-only change still reloads readers. Probes run before the
-// refresh lock. The lock covers the re-read, the ledger write, and the receipt.
+// refresh lock, and the lock wait starts only after they return. A paid probe
+// stays owed until cost_ledger accepts it, including when the lock is busy or
+// the catalog write fails. The receipt is written only after that re-read.
 
 import { createHash } from 'node:crypto';
 import { eq, like } from 'drizzle-orm';
@@ -22,13 +24,14 @@ import { withinSessionAdvisoryLock } from '@/db/session-advisory-lock';
 import rawSnapshot from './model-catalog.snapshot.json' with { type: 'json' };
 import { CATALOG_PROVIDER_BY_INTERNAL } from './model-profiles';
 import {
-  type ProbeLedgerBill,
+  type PaidProbePosting,
   type ProviderFetch,
   type ProviderModelsCheck,
   canonicalProviderCheck,
   collectProviderProbes,
   finalizeProviderModelsChecks,
   listProviderModels,
+  paidProbePostings,
   parseProviderChecks,
   probePriceFor,
   providerAuthLabel,
@@ -608,23 +611,53 @@ async function readStoredChecks(db: Db): Promise<readonly ProviderModelsCheck[]>
   }
 }
 
-async function writeProbeBills(
+// postgres.js may wrap the error. 23505 means this occurredAt row is already booked.
+function isUniqueViolation(error: unknown): boolean {
+  let current: unknown = error;
+  for (let depth = 0; depth < 5 && current !== null && typeof current === 'object'; depth += 1) {
+    if ((current as { code?: unknown }).code === '23505') return true;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
+async function bookPaidProbes(
   db: Db,
-  bills: readonly ProbeLedgerBill[],
+  postings: readonly PaidProbePosting[],
   occurredAt: Date,
-): Promise<void> {
-  if (bills.length === 0) return;
-  const { writeModelCatalogProbeCost } = await import('./log');
-  for (const bill of bills) {
+): Promise<PaidProbePosting[]> {
+  if (!postings.some((posting) => posting.state === 'owed')) return [...postings];
+  let writeModelCatalogProbeCost: typeof import('./log').writeModelCatalogProbeCost;
+  try {
+    ({ writeModelCatalogProbeCost } = await import('./log'));
+  } catch (error) {
+    console.warn(
+      '[model-catalog] probe ledger writer unavailable',
+      error instanceof Error ? error.message : error,
+    );
+    return [...postings];
+  }
+  const settled: PaidProbePosting[] = [];
+  for (const posting of postings) {
+    if (posting.state === 'booked') {
+      settled.push(posting);
+      continue;
+    }
     try {
-      await writeModelCatalogProbeCost(db, { ...bill, occurredAt });
+      await writeModelCatalogProbeCost(db, { ...posting.bill, occurredAt });
+      settled.push({ state: 'booked', bill: posting.bill });
     } catch (error) {
-      console.warn(
-        `[model-catalog] probe ledger write failed provider=${bill.provider}`,
-        error instanceof Error ? error.message : error,
-      );
+      const booked = isUniqueViolation(error);
+      if (!booked) {
+        console.warn(
+          `[model-catalog] probe ledger write failed provider=${posting.bill.provider}`,
+          error instanceof Error ? error.message : error,
+        );
+      }
+      settled.push(booked ? { state: 'booked', bill: posting.bill } : posting);
     }
   }
+  return settled;
 }
 
 function priceProbe(provider: string, model: string, tokensIn: number, tokensOut: number) {
@@ -642,13 +675,14 @@ export async function refreshModelCatalog(
   const pulled = await pullRemote(fetchCatalog);
   const remote = 'error' in pulled ? undefined : pulled;
   const listed = await listProviderModels(fetchCatalog, env);
-  const now = options.now?.() ?? new Date();
   const probes = await collectProviderProbes({
     fetchImpl: fetchCatalog,
     env,
     listed,
     previous: await readStoredChecks(db),
   });
+  const now = options.now?.() ?? new Date();
+  let postings = paidProbePostings(probes, priceProbe);
 
   try {
     const written = await withinSessionAdvisoryLock(
@@ -657,7 +691,7 @@ export async function refreshModelCatalog(
         key: 'model-catalog:refresh',
         busy: () => new Error('model catalog refresh lock busy'),
       },
-      new Date(now.getTime() + REFRESH_LOCK_WAIT_MS),
+      new Date(Date.now() + REFRESH_LOCK_WAIT_MS),
       async (lockedDb) => {
         const planned = await lockedDb.transaction(async (tx) => {
           const locked = await lockCatalogRow(tx);
@@ -666,7 +700,7 @@ export async function refreshModelCatalog(
           const merged = remote
             ? mergeCatalogDocuments(base, remote.providers, pinned)
             : { providers: base, findings: locked.findings };
-          const { checks, bills } = finalizeProviderModelsChecks({
+          const { checks } = finalizeProviderModelsChecks({
             now,
             catalogProviders: merged.providers,
             previous: locked.checks,
@@ -678,9 +712,9 @@ export async function refreshModelCatalog(
             remote === undefined &&
             sameChecks(checks, locked.checks) &&
             (locked.hasRow || checks.every((check) => check.auth.status === 'unconfigured'));
-          return { locked, merged, checks, bills, idle };
+          return { locked, merged, checks, idle };
         });
-        await writeProbeBills(lockedDb, planned.bills, now);
+        postings = await bookPaidProbes(lockedDb, postings, now);
         if (planned.idle) return { outcome: 'kept' as const, locked: planned.locked };
         const version = documentVersion(
           planned.merged.providers,
@@ -744,6 +778,8 @@ export async function refreshModelCatalog(
           ? error.message
           : 'cache write failed',
     );
+  } finally {
+    await bookPaidProbes(db, postings, now);
   }
 }
 

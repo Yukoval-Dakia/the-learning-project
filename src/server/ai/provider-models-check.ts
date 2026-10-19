@@ -96,6 +96,11 @@ export interface ProbeLedgerBill {
   outcome: 'success' | 'failed_permanent' | 'failed_retryable';
 }
 
+/** A probe this process already spent. `owed` has no cost_ledger row yet. */
+export type PaidProbePosting =
+  | { readonly state: 'owed'; readonly bill: ProbeLedgerBill }
+  | { readonly state: 'booked'; readonly bill: ProbeLedgerBill };
+
 interface ProbeSpec {
   model: string;
   wire: 'openai-chat' | 'anthropic-messages' | 'openai-responses';
@@ -476,6 +481,26 @@ function ledgerBill(
   };
 }
 
+export function paidProbePostings(
+  probes: ReadonlyMap<string, ProbeOutcome>,
+  priceProbe: (provider: string, model: string, tokensIn: number, tokensOut: number) => ProbePrice,
+): PaidProbePosting[] {
+  const postings: PaidProbePosting[] = [];
+  for (const [provider, outcome] of probes) {
+    if (!isKnownProvider(provider)) continue;
+    const spec = probeSpec(provider);
+    if (!spec) continue;
+    const bill = ledgerBill(
+      provider,
+      outcome,
+      spec.model,
+      priceProbe(provider, spec.model, outcome.tokensIn, outcome.tokensOut),
+    );
+    if (bill) postings.push({ state: 'owed', bill });
+  }
+  return postings;
+}
+
 function copyProbe(probe: ProviderProbeReceipt): ProviderProbeReceipt {
   return {
     status: probe.status,
@@ -607,10 +632,9 @@ export function finalizeProviderModelsChecks(input: {
   listed: ReadonlyMap<string, ModelsListResult>;
   probes: ReadonlyMap<string, ProbeOutcome>;
   priceProbe: (provider: string, model: string, tokensIn: number, tokensOut: number) => ProbePrice;
-}): { checks: ProviderModelsCheck[]; bills: ProbeLedgerBill[] } {
+}): { checks: ProviderModelsCheck[] } {
   const previousByProvider = new Map(input.previous.map((check) => [check.provider, check]));
   const checks: ProviderModelsCheck[] = [];
-  const bills: ProbeLedgerBill[] = [];
   for (const provider of implementedProviderIds()) {
     const list = input.listed.get(provider) ?? {
       status: 'unreachable' as const,
@@ -647,12 +671,10 @@ export function finalizeProviderModelsChecks(input: {
           `[model-catalog] auth probe ${provider}/${spec.model} ${check.probe.status} tokens_in=${outcome.tokensIn} tokens_out=${outcome.tokensOut} cost_usd=${price.costUsd ?? 'unknown'}`,
         );
       }
-      const bill = ledgerBill(provider, outcome, spec.model, price);
-      if (bill) bills.push(bill);
     }
     checks.push(canonicalProviderCheck(check));
   }
-  return { checks, bills };
+  return { checks };
 }
 
 export function probePriceFor(

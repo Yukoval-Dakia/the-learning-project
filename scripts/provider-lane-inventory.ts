@@ -1160,7 +1160,12 @@ export const PROVIDER_LANES = [
     callers: [
       {
         path: 'src/server/ai/model-catalog.ts',
-        calls: ['listProviderModels', 'collectProviderProbes', 'finalizeProviderModelsChecks'],
+        calls: [
+          'listProviderModels',
+          'collectProviderProbes',
+          'paidProbePostings',
+          'finalizeProviderModelsChecks',
+        ],
       },
     ],
     directImporters: [{ path: 'src/server/ai/model-catalog.ts', kind: 'runtime' }],
@@ -1218,7 +1223,7 @@ export const PROVIDER_LANES = [
       clientRetry:
         'none; unsettled 4xx/5xx and network are not stored as a receipt and may be probed again',
       redelivery:
-        'probes run before the session lock; under the lock the refresh re-reads and writes the ledger before the receipt upsert',
+        'probes run before the session lock and the lock deadline starts after they return; owed postings are written before the receipt, and still written when the lock is busy or the catalog transaction fails',
       fanOut:
         'implemented providers are listed in parallel; probes run one provider at a time outside the refresh lock',
       evidence: [
@@ -1229,7 +1234,7 @@ export const PROVIDER_LANES = [
         },
         {
           path: 'src/server/ai/model-catalog.ts',
-          calls: ['withinSessionAdvisoryLock', 'writeProbeBills'],
+          calls: ['withinSessionAdvisoryLock', 'bookPaidProbes'],
           contains: ["key: 'model-catalog:refresh'"],
         },
       ],
