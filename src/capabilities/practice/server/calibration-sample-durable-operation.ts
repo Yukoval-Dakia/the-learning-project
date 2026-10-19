@@ -31,6 +31,7 @@
 
 import { z } from 'zod';
 import type { Provider } from '@/ai/registry';
+import { canonicalProviderName } from '@/ai/task-spec';
 import { getConfigFlag } from '@/core/config/store';
 import { canonicalHash, stableStringify } from '@/core/migration/canonical';
 import {
@@ -1090,13 +1091,16 @@ export async function buildCalibrationStagedCoreSeams(
   return {
     executeItem: async (item, identity, ctx) => {
       const frozen = structuredClone(item);
+      const frozenProvider = identity.provider;
+      const liveProvider = canonicalProviderName(executionConfig.rejudgeProvider);
+      const recordedConfig = { ...executionConfig, rejudgeProvider: frozenProvider };
       if (
         identity.judgeEventId !== frozen.judgeEventId ||
         identity.inputDigest !== computeCalibrationInputDigest(frozen) ||
-        identity.provider !== executionConfig.rejudgeProvider ||
+        canonicalProviderName(frozenProvider) !== liveProvider ||
         identity.model !== executionConfig.rejudgeModel ||
         identity.workSetId !==
-          computeCalibrationWorkSetId({ anchor: ctx.anchor, cfg: executionConfig })
+          computeCalibrationWorkSetId({ anchor: ctx.anchor, cfg: recordedConfig })
       ) {
         throw new Error('staged execution refused: frozen input/config does not match effect');
       }
@@ -1118,7 +1122,7 @@ export async function buildCalibrationStagedCoreSeams(
         ? trackCalibrationRunnerFailure(injectedRunner, rejected)
         : trackCalibrationRunnerFailure(core.makeJudgeCalibrationRunner(db), rejected);
       const outcome = await core.judgeCalibrationPreparedFace(
-        executionConfig,
+        { ...executionConfig, rejudgeProvider: liveProvider },
         { ...frozen, studentImageRefs: [...frozen.studentImageRefs] },
         { db, judgeFn, runTaskInner: trackedRunner },
       );
@@ -1133,7 +1137,7 @@ export async function buildCalibrationStagedCoreSeams(
           outcome: {
             version: 1,
             prepared_input: preparedInput,
-            config: { ...executionConfig },
+            config: recordedConfig,
             executed_at: executedAt,
             workset_anchor: worksetAnchor,
             lane,

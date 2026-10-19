@@ -40,6 +40,16 @@ export interface ModelProfileCapabilities {
   vision: ModelCapabilityTriState;
   reasoning: ModelCapabilityTriState;
   structuredOutput: ModelCapabilityTriState;
+  /**
+   * YUK-1547 — does this lane's endpoint accept a forced named-function
+   * `tool_choice` on the resolved wire shape (incl. thinking/reasoning params)?
+   * The catalog snapshots carry no such bit, so this is binding-declared only:
+   * 'unknown' keeps the legacy forced-submit posture (no evidence either way);
+   * `false` is an evidence-backed rejection — the runner degrades to
+   * `tool_choice:'auto'` + one closing reminder instead of sending the forced
+   * choice that the provider 400s. `true` is explicit confirmation.
+   */
+  forcedToolChoice: ModelCapabilityTriState;
 }
 
 export interface ModelProfileLimits {
@@ -114,6 +124,7 @@ export interface ProviderModelBinding {
     vision?: boolean;
     reasoning?: boolean;
     structuredOutput?: boolean;
+    forcedToolChoice?: boolean;
   };
   limits?: {
     contextWindowTokens?: number;
@@ -157,12 +168,15 @@ export interface ModelProfile {
  * has no openai bucket — the pi builtin catalog owns the wire facts, so the
  * openai provider binding carries the complete app-level profile for
  * gpt-6-astra (every field declared explicitly, source:'binding').
+ * 'opencode-go' reads the models.dev opencode-go bucket. toolCalling is that
+ * bucket's tool_call. The binding still owns structuredOutput and meteredUsd.
  */
 const CATALOG_PROVIDER_BY_INTERNAL: Partial<Record<Provider, string>> = {
   anthropic: 'anthropic',
   'anthropic-sub': 'anthropic',
   xiaomi: 'xiaomi',
-  'zai-coding-cn': 'zhipuai-coding-plan',
+  'zhipuai-coding-plan': 'zhipuai-coding-plan',
+  'opencode-go': 'opencode-go',
 };
 
 const EFFORT_LEVELS: readonly EffortLevel[] = ['low', 'medium', 'high', 'xhigh', 'max'];
@@ -291,6 +305,9 @@ function applyBindingLayer(profile: ModelProfile, binding: ProviderModelBinding 
     if (caps.structuredOutput !== undefined) {
       profile.capabilities.structuredOutput = caps.structuredOutput;
     }
+    if (caps.forcedToolChoice !== undefined) {
+      profile.capabilities.forcedToolChoice = caps.forcedToolChoice;
+    }
   }
   if (binding.limits) {
     if (binding.limits.contextWindowTokens !== undefined) {
@@ -334,6 +351,7 @@ export function resolveModelProfile(provider: Provider, model: string): ModelPro
       vision: 'unknown',
       reasoning: 'unknown',
       structuredOutput: 'unknown',
+      forcedToolChoice: 'unknown',
     },
     limits: {},
     reasoning: { mode: 'toggle', supportedEfforts: [] },

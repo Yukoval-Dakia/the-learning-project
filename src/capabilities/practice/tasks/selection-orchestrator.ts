@@ -58,7 +58,7 @@ export const selectionOrchestratorTaskSpec = {
   definition: {
     kind: 'SelectionOrchestratorTask',
     description:
-      'YUK-361 Phase 3 (Task 8 L2, ADR-0042 编排档2) — 选题编排器（档2 LLM 主脑）。输入=非到期候选的分桶信号投影（mfi/diagnostic/difficulty_anchor/exam_relevance/misconception_recurrence，buildSelectionOrchestratorInput）+ learner 上下文。输出=每候选 { refId, weight≥0, role, arrangement?, reason }——按教学价值（近-θ̂ 诊断 informativeness、考纲相关、错因复发、变化度、fatigue、learner 叙事连贯——纯 MFI 算不出的）给非到期候选加权 + 排序 + 理由。薄 tempered-softmax sampler（Step C）把 weight → π_i（T>0 保 positivity）。LLM 不碰到期项（due 相对序 + presence 是 L1 确定性契约）。单次结构化输出（无 tool loop，无 Tavily），mimo-v2.5。',
+      'YUK-361 Phase 3 (Task 8 L2, ADR-0042 编排档2) — 选题编排器（档2 LLM 主脑）。输入=非到期候选的分桶信号投影（mfi/diagnostic/difficulty_anchor/exam_relevance/misconception_recurrence，buildSelectionOrchestratorInput）+ learner 上下文。输出=每候选 { refId, weight≥0, role, arrangement?, reason }——按教学价值（近-θ̂ 诊断 informativeness、考纲相关、错因复发、变化度、fatigue、learner 叙事连贯——纯 MFI 算不出的）给非到期候选加权 + 排序 + 理由。薄 tempered-softmax sampler（Step C）把 weight → π_i（T>0 保 positivity）。LLM 不碰到期项（due 相对序 + presence 是 L1 确定性契约）。单次结构化输出（无 tool loop，无 Tavily），registry 默认模型。',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5',
     budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1, timeout: 60_000 },

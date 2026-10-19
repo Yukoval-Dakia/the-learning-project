@@ -4,10 +4,9 @@
 import { randomUUID } from 'node:crypto';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
-import {
-  LEGACY_QUESTION_ADMISSION_POLICY_ID,
-  QUESTION_ADMISSION_POLICY_ID,
-} from '@/core/question-admission-policy';
+import { canonicalProviderName } from '@/ai/task-spec';
+import { QUESTION_ADMISSION_POLICY_IDS } from '@/core/question-admission-policy';
+import { findAnswerShapeDeclarations } from '@/core/schema/assessment/blank-answer-shape';
 import { LEGACY_DRAFT_STATUS } from '@/core/schema/assessment/lifecycle';
 import type { ResponseSpecT } from '@/core/schema/assessment/response';
 import type { ScoringBasisT } from '@/core/schema/assessment/scoring';
@@ -73,7 +72,10 @@ export interface QuestionAdmissionRunResult {
   revision_ordinal?: number;
   per_unit: { scoring_unit_id: string; status: string; reason?: string }[];
 }
-const SOLVER2_PROVIDER = process.env.QUESTION_ADMISSION_SOLVER2_PROVIDER as Provider | undefined;
+const SOLVER2_PROVIDER_RAW = process.env.QUESTION_ADMISSION_SOLVER2_PROVIDER;
+const SOLVER2_PROVIDER = SOLVER2_PROVIDER_RAW
+  ? (canonicalProviderName(SOLVER2_PROVIDER_RAW) as Provider)
+  : undefined;
 const SOLVER2_MODEL = process.env.QUESTION_ADMISSION_SOLVER2_MODEL;
 
 async function loadDefinition(db: Db | Tx, rootId: string) {
@@ -336,8 +338,7 @@ export async function runAdmissionForQuestion(
         and(
           eq(question_revision.group_id, rootId),
           inArray(question_admission_verification.policy_id, [
-            LEGACY_QUESTION_ADMISSION_POLICY_ID,
-            QUESTION_ADMISSION_POLICY_ID,
+            ...QUESTION_ADMISSION_POLICY_IDS,
             resolveQuestionAdmissionPolicyId(),
           ]),
           sql`${question_admission_verification.evidence}->>'pack' = 'question_admission'`,
@@ -374,8 +375,14 @@ export async function runAdmissionForQuestion(
         }),
       ),
     );
+    // YUK-1568（R1 P1-1 纵深防御）：声明 answer_shape 的题没有已准入的数学
+    // 比较器（第 2 片）—— claim/付费发送之前强制关闸，覆盖 enqueue 之外的
+    // manual re-dispatch 与 direct invocation。既有 receipt 的应用与审计
+    //（claim 内 receipt/historical 分支在 maySend 判断之前）不受影响；被拦
+    // 的 claim 以 stale 结束，不产生 paid 行、不重置 authorization。
+    const declaredUnsupported = findAnswerShapeDeclarations(contract.response_spec).length > 0;
     return claimAdmissionBatch(tx, input, delivery, {
-      maySend: pinned && eligible,
+      maySend: pinned && eligible && !declaredUnsupported,
       historicalTerminal: Boolean(terminal),
     });
   });
@@ -421,7 +428,7 @@ export async function runAdmissionForQuestion(
         solver2: batch.input.solver2
           ? {
               ...(batch.input.solver2.provider
-                ? { provider: batch.input.solver2.provider as Provider }
+                ? { provider: canonicalProviderName(batch.input.solver2.provider) as Provider }
                 : {}),
               ...(batch.input.solver2.model ? { model: batch.input.solver2.model } : {}),
             }

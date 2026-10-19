@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { QUESTION_ADMISSION_CONTRACT_VERSION } from '@/core/question-admission-policy';
+import { findAnswerShapeDeclarations } from '@/core/schema/assessment/blank-answer-shape';
 import type { Db, Tx } from '@/db/client';
 import { lockPaidEffectControlFamily, readPaidEffectControl } from '@/db/paid-effect-control';
 import { event, question, question_group_lifecycle, question_revision } from '@/db/schema';
@@ -10,12 +11,15 @@ import { getPracticeBoss, practiceBossTransaction } from '../queue-runtime';
 
 export const ADMISSION_FAMILY = 'question_admission_run';
 export const AdmissionJobData = z.object({
-  /** Absent on old queued deliveries: they may reconcile @1 but never initiate @2. */
-  admission_version: z.union([z.literal(1), z.literal(2)]).optional(),
-  /** Lead-only authorization: exact old @1 input digest; ordinary publishers omit it. */
-  reopen_unknown_input_digest: z
-    .string()
-    .regex(/^sha256:[0-9a-f]{64}$/)
+  /** Absent on old queued deliveries: they may reconcile old units but never initiate @3. */
+  admission_version: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional(),
+  /** Lead-only authorization: the exact old paid-effect row identity (unit +
+   *  input digest) one marked @3 send may re-open; ordinary publishers omit it. */
+  reopen_paid_effect_identity: z
+    .strictObject({
+      unit: z.literal('admission@2'),
+      input_digest: z.string().regex(/^sha256:[0-9a-f]{64}$/),
+    })
     .optional(),
   question_id: z.string().min(1).optional(),
   revision_id: z.string().min(1).optional(),
@@ -52,7 +56,7 @@ export function admissionJobId(
   revisionId: string,
   digest: string,
   generation: number,
-  reopenUnknownInputDigest?: string,
+  reopenMarkedInputDigest?: string,
 ): string {
   const hex = createHash('sha256')
     .update(
@@ -63,7 +67,7 @@ export function admissionJobId(
         revisionId,
         digest,
         generation,
-        ...(reopenUnknownInputDigest ? [reopenUnknownInputDigest] : []),
+        ...(reopenMarkedInputDigest ? [reopenMarkedInputDigest] : []),
       ]),
     )
     .digest('hex');
@@ -111,6 +115,16 @@ export async function enqueuePublishedQuestionAdmission(
       .where(eq(question_revision.revision_id, payload.data.revision_id));
     if (!revision || revision.group_id !== root.id)
       throw new Error('Admission revision binding missing');
+    // YUK-1568（R1 P1-1）：声明 answer_shape 的题在本片没有已准入的数学
+    // 比较器（第 2 片接入）—— 付费双解必须在比较器之前被拦。enqueue 前按
+    // 冻结 revision 探测声明（宽松存在性检查：未知版本也算已声明），命中即
+    // skip 不入队，不给后续 claim/maySend 留第一入口。
+    if (findAnswerShapeDeclarations(revision.response_spec).length > 0) {
+      return {
+        status: 'skipped',
+        reason: `declared answer_shape — comparator pending (YUK-1568 slice 2); revision ${revision.revision_id}`,
+      };
+    }
     const control = await readPaidEffectControl(tx, ADMISSION_FAMILY);
     if (control.backend !== 'pg-boss')
       throw new Error('Question admission pg-boss producer is fenced');
