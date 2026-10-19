@@ -1,6 +1,6 @@
 # YUK-1579 — audit 重复机制归并（修正版）
 
-日期：2026-10-19 · 分支：`refactor/yuk-1579-audit-consolidation`（基 origin/main `696449125`，已普通 merge 至 `4690ef533`）
+日期：2026-10-19 · 分支：`refactor/yuk-1579-audit-consolidation`（基 origin/main `696449125`，已普通 merge 至 `caa27265c`）
 证据（仓库外）：`tlp-audit-artifacts/architecture-deepening/YUK-1579/696449125/{before2,after2,progress.md}`
 本文取代同 PR 内早期版本；早期版本宣称的"唯一 walker/唯一 lexer/净 −160"有计算与事实错误，见 §4。
 
@@ -27,7 +27,7 @@ reads 本就 `import ... from './audit-draft-status'`（YUK-569 先例：validat
 - `lineOf`：draft-status 删私有拷贝（与 ts-tokenize 导出逐字相同）、fold-writes 的 `lineAt`
   闭包改为调用同一导出——纯函数，函数体逐字相同。
 
-**净额（git numstat vs origin/main `4690ef533`）**：scripts +29/−70 = **净 −41**：
+**净额（git numstat vs main `caa27265c`）**：scripts +29/−70 = **净 −41**：
 reads +14/−46、draft-status +9/−14、fold +6/−10；schema-writes / hub-sync-writers /
 ts-tokenize 与 main 逐字节相同；无新增文件。
 
@@ -72,3 +72,5 @@ ts-tokenize 与 main 逐字节相同；无新增文件。
 `pnpm lint` 0（179 warnings = main 基线）；`pnpm build` 0。
 NOT_RUN：完整 `pnpm test`（owner 规则，push 后 exact-head CI Gate 执行）；未写/改任何测试；
 无 DB/Docker/runtime/provider/paid 动作；未 push、未 PR。
+
+父级源码 `8b22c2b95fc28aba8363bbbcc6a6f5f3009425b7` 的 typecheck/lint/build 均 exit0（lint179warnings）。11个既有命令均exit0，10项捕获输出与before2逐字节一致；schema JSON的管道捕获截断为73,728B，改用文件重定向得到202,568B且与before2全等，原失败记录保留，schema源码未改。日志在 `/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1579/8b22c2b95fc28aba8363bbbcc6a6f5f3009425b7/parent/`；checks-sha256.json摘要 `fdc812f268ac26dab3f3a47beb5cc038b60abb7ffc88e1a9da857dbe7f5835e5`。现有语料执行证据不替代代码分支等价论证。
