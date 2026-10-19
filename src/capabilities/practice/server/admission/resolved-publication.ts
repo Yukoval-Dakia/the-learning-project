@@ -19,13 +19,16 @@
 //      layers (a bad explicit layout blocks, never silently replaced);
 //   2. the frozen input's presentation — carried verbatim, same validation;
 //   3. only when NEITHER exists, `defaultPresentation` — the same deterministic
-//      constructor the submit path uses (plain select → option_list, blank →
-//      blank_input, coordinated/gap variants, unit/slot bound; self-validated
-//      and NULL for shapes blocks-v1 cannot express). A serving gate refuses
-//      published select/blank slots with no input block as no_input_renderer —
-//      a contract it cannot render is not a lawful admitted publication, so an
-//      inexpressible shape blocks the build; the receipt is retained, never
-//      swallowed.
+//      constructor the submit path uses — but PRE-GATED to this lane's
+//      approved shapes only: answerable slots must be blank or plain select
+//      (no coordinates / gap_after_codepoint). matching_columns / ordering /
+//      break_tap / custom shapes the constructor could express are explicitly
+//      out of scope and block with the offending slot named. A serving gate
+//      refuses published select/blank slots with no input block as
+//      no_input_renderer — a contract it cannot render is not a lawful
+//      admitted publication.
+//   Documents whose slot set never needs an input block (no select/blank)
+//   keep 'none' — the pre-fix behavior for natively-rendered kinds.
 // The composition is re-sealed canonically — the published digest always
 // covers the presentation that ships.
 
@@ -168,6 +171,32 @@ export function buildResolvedPublishContract(
   ) {
     presentationSource = 'none';
   } else {
+    // Scope gate before the constructor (coordination-approved lane): every
+    // answerable slot must be blank or PLAIN select — items carrying
+    // `coordinates`/`gap_after_codepoint` are matching_columns/ordering/
+    // break_tap shapes and must NOT be auto-generated this round; they need an
+    // explicit presentation. defaultPresentation itself would generate those
+    // variants, so we gate first and never let it widen the scope silently.
+    const offending = resolved.response_spec.slots.find((slot) => {
+      if (slot.kind === 'table') return false; // display-only, needs no input block
+      if (slot.kind === 'blank') return false;
+      if (slot.kind === 'select') {
+        return slot.items.some(
+          (item) => item.coordinates != null || item.gap_after_codepoint != null,
+        );
+      }
+      return true;
+    });
+    if (offending != null) {
+      return {
+        kind: 'blocked',
+        reason:
+          `presentation_default_unsupported_shape: slot '${offending.slot_id}' ` +
+          `(kind=${offending.kind}) is not blank or plain select — non-standard ` +
+          'layouts (matching/ordering/break_tap/custom axes) require an explicit ' +
+          'presentation; default synthesis does not cover them in this lane',
+      };
+    }
     const generated = defaultPresentation(
       resolved.structure,
       resolved.response_spec,

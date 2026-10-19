@@ -40,14 +40,20 @@ zx7n8 保留旧 @1/@2 unknown），其余 42 无当前匹配 paid 证据、不�
    ① resolved 自带 presentation —— 原样保留，先 `validatePresentation` 对**resolved 层**
    校验（坏显式布局 blocked，绝不悄悄替换）；② 冻结输入 presentation —— 原样携带同样
    校验；③ 两者皆无时 `defaultPresentation` —— 与统一 submit 闸（
-   `src/server/questions/submit-question.ts presentationForDraft`）同一确定性构造器：
-   plain select→`option_list`、blank→`blank_input`、coordinated/gap 变体、unit/slot 逐槽
-   绑定；自校验且对 blocks-v1 表达不了的形状（旧槽型、无计分单元、自定义 axes）返回
-   null ⇒ `presentation_default_inexpressible` blocked，receipt 保留不再算 admitted 成功。
-   组合后对全部五层重算 canonical seal；绑定 `presentation_source` 如实记录
+   `src/server/questions/submit-question.ts presentationForDraft`）同一确定性构造器，
+   但**前置形状闸门收窄到本轮批准范围**：可作答槽仅 blank 或 plain select
+   （select items 无 `coordinates`/`gap_after_codepoint`）；配对
+   （matching_columns）、排序（ordering）、断句（break_tap）、自定义 axes 及
+   其他旧槽型一律 `presentation_default_unsupported_shape` blocked 并指名
+   slot id/kind —— 构造器本身能生成这些变体，但本轮不自动产生，需显式
+   presentation。过了形状门仍不可表达（如无计分单元绑定）⇒
+   `presentation_default_inexpressible` blocked。两者皆 blocked 时 receipt
+   保留、不算 admitted 成功。组合后对全部五层重算 canonical seal；绑定
+   `presentation_source` 如实记录
    `resolved`/`carried_from_base`/`deterministic_default`/`none` 四种来源（`none` 仅当
    槽集不含 select/blank —— 即服务门 `BLOCK_INPUT_SLOT_KINDS` 与槽集不相交、原生可渲染
-   时合法；含 select/blank 而表达不了的一律 blocked）。
+   时合法；含 select/blank 而表达不了的一律 blocked）。50 题真实清单全为
+   49 plain select + 1 blank（父已核 `presentation-shape-inventory.json`），无非标准。
 
 4. **终端判定消费者绑定修正。** 两处「该 base 是否已有终局核验」判定从
    `evidence.base_contract_digest`（= 付费输入摘要；resolved 发布后永远不等发布摘要）
