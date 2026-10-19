@@ -54,7 +54,12 @@ import type {
 import {
   CUSTOM_ASSET_MAX_BYTES,
   CUSTOM_ASSET_MIME_TYPES,
+  DECLARED_BLANK_COMPARE_VERSION,
   Presentation,
+  declaredBlankGradeReadiness,
+  describeAnswerShape,
+  findAnswerShapeDeclarations,
+  findBlankOrderDeclarations,
   findCustomCodeForbiddenSequence,
   validateExecutionPlan,
   validatePresentation,
@@ -77,8 +82,12 @@ import {
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import {
-  contractIntegrityDigest,
+  type NormalizedContract,
+  type PartRow,
+  type PublishedContractSeal,
   normalizeQuestionGroupToContract,
+  publishedContractSeal,
+  publishedSealAccepts,
 } from './assessment-normalization';
 
 export const ASSESSMENT_PUBLISH_ACTION = 'experimental:assessment_publish' as const;
@@ -569,6 +578,85 @@ function computeIdentityDiff(
   };
 }
 
+function sameSealedDocument(
+  stored: {
+    digest: string;
+    structure: unknown;
+    response_spec: unknown;
+    scoring_basis: unknown;
+    execution_plan: unknown;
+    presentation: unknown;
+  },
+  incoming: PublishedContractSeal,
+  suppliedDigest: string,
+  suppliedAccepted: boolean,
+): boolean {
+  // 同一摘要原样送回（夹具再发布、准入回写）时，jsonb 读出的键序经常重算不出
+  // 当初那份摘要。字符串相同且它确实封住了传入层，仍是同一份文档。
+  if (suppliedDigest === stored.digest && suppliedAccepted) return true;
+  let storedSeal: PublishedContractSeal;
+  try {
+    storedSeal = publishedContractSeal({
+      structure: stored.structure,
+      response_spec: stored.response_spec,
+      scoring_basis: stored.scoring_basis,
+      execution_plan: stored.execution_plan,
+      ...(stored.presentation != null ? { presentation: stored.presentation } : {}),
+    });
+  } catch {
+    return false;
+  }
+  if (storedSeal.canonical !== incoming.canonical) return false;
+  if (!publishedSealAccepts(storedSeal, stored.digest)) return false;
+  return suppliedAccepted;
+}
+
+async function publishedLayersChanged(
+  tx: Tx,
+  revisionId: string,
+  incoming: {
+    integrity_digest: string;
+    structure: unknown;
+    response_spec: unknown;
+    scoring_basis: unknown;
+    execution_plan: unknown;
+    presentation?: unknown;
+  },
+): Promise<boolean> {
+  const [stored] = await tx
+    .select({
+      digest: question_revision.integrity_digest,
+      structure: question_revision.structure,
+      response_spec: question_revision.response_spec,
+      scoring_basis: question_revision.scoring_basis,
+      execution_plan: question_revision.execution_plan,
+      presentation: question_revision.presentation,
+    })
+    .from(question_revision)
+    .where(eq(question_revision.revision_id, revisionId))
+    .limit(1);
+  if (stored == null || stored.digest === incoming.integrity_digest) return stored == null;
+  try {
+    const storedSeal = publishedContractSeal({
+      structure: stored.structure,
+      response_spec: stored.response_spec,
+      scoring_basis: stored.scoring_basis,
+      execution_plan: stored.execution_plan,
+      ...(stored.presentation != null ? { presentation: stored.presentation } : {}),
+    });
+    const incomingSeal = publishedContractSeal({
+      structure: incoming.structure,
+      response_spec: incoming.response_spec,
+      scoring_basis: incoming.scoring_basis,
+      execution_plan: incoming.execution_plan,
+      ...(incoming.presentation != null ? { presentation: incoming.presentation } : {}),
+    });
+    return storedSeal.canonical !== incomingSeal.canonical;
+  } catch {
+    return true;
+  }
+}
+
 /**
  * 统一发布 seam。db 可传事务句柄（推荐 —— 与调用方的编辑写同事务）或独立
  * Db（publisher 自开顶层事务）。契约校验失败抛错（fail-closed）；CAS 不匹配
@@ -576,8 +664,10 @@ function computeIdentityDiff(
  * 版本 churn）；digest 一致但维度变化返回 'admission_updated'（只更新 lifecycle
  * 维度 + generation，不铸新 revision）。
  *
- * P2：integrity_digest 在 seam 内重算核对（防调用方漂移），structure.group_id
- * 必须与目标 group 一致。
+ * P2：integrity_digest 必须是这份契约的规范封存，或旧的 schema 序 / 调用方序封存。
+ * 接受之后新 revision 写规范封印，不把调用方键序原样留下。
+ * 同一摘要原样送回不铸新版。摘要不同则只在规范形式相同、且库内摘要仍是该层的
+ * 某种封存时不铸新版。structure.group_id 必须与目标 group 一致。
  */
 export async function publishQuestionGroup(
   db: Db | Tx,
@@ -586,18 +676,36 @@ export async function publishQuestionGroup(
   assertAdmissionShape(input.admission);
   if (input.suspension != null) assertSuspensionShape(input.suspension);
 
+  // YUK-1568（第 2 片）：声明了 answer_shape 的 blank 由共享比较核心判定
+  // 判分就绪 —— admitted 发布要求每个已声明槽被支持、被 blank_key unit
+  // 读取且私有键可按声明完整编译（未实现 notation、键冲突、单位缺项均拒
+  // 绝）。直接 typed 调用方、verify promote、校准回写都绕不过这道闸；声明
+  // 题只能以 withheld/暂扣发布，绝不回退普通 exact 自动判分。只拦
+  // answer_shape：blank_order 是展示语义，不触及判分。
+  const declaredShapeSlot = input.contract.response_spec.slots.find(
+    (slot) => slot.kind === 'blank' && slot.answer_shape != null,
+  );
+  if (
+    declaredShapeSlot != null &&
+    declaredShapeSlot.kind === 'blank' &&
+    input.admission.state === 'admitted'
+  ) {
+    const readiness = declaredBlankGradeReadiness(
+      input.contract.response_spec,
+      input.contract.scoring_basis,
+    );
+    if (!readiness.ok) {
+      throw new Error(
+        `publishQuestionGroup: declared answer_shape not gradable — ${readiness.reason} (comparator ${DECLARED_BLANK_COMPARE_VERSION}) — publish the group as withheld; refusing to admit plain-exact auto-grading for a declared blank`,
+      );
+    }
+  }
+
   // Db → 顶层事务；Tx → SAVEPOINT（drizzle 嵌套事务）。两种情况下任一步
   // 失败都整体回滚本次发布的全部写入。
   return db.transaction(async (tx) => {
     const { contract, group_id: groupId } = input;
 
-    // P2 —— digest 由 seam 重算（调用方只给契约；digest 不是独立输入）。
-    const recomputed = contractIntegrityDigest(contract);
-    if (recomputed !== contract.integrity_digest) {
-      throw new Error(
-        `publishQuestionGroup: integrity_digest mismatch (supplied ${contract.integrity_digest}, recomputed ${recomputed}) — regenerate the contract via contract-normalizer`,
-      );
-    }
     if (contract.structure.group_id !== groupId) {
       throw new Error(
         `publishQuestionGroup: contract structure.group_id '${contract.structure.group_id}' != target group '${groupId}'`,
@@ -668,24 +776,31 @@ export async function publishQuestionGroup(
             .join('; ')}`,
         );
       }
-      const recomputedDigest = contractIntegrityDigest({
-        structure: contract.structure,
-        response_spec: contract.response_spec,
-        scoring_basis: contract.scoring_basis,
-        execution_plan: contract.execution_plan,
-        presentation: shaped.data,
-      });
-      if (recomputedDigest !== contract.integrity_digest) {
-        throw new Error(
-          `publishQuestionGroup: integrity_digest does not cover the presentation layer (recomputed ${recomputedDigest}, input ${contract.integrity_digest})`,
-        );
-      }
       shapedPresentation = shaped.data;
       // YUK-1497 §1.3 v2 —— 自定义块资产 DB + 字节核验（同 barrier、同事务）：
       // 资产不存在 / digest 不符 / mime 不是 JS / 超 256 KiB / 字节缺失或
       // 实测 sha256 不符 / 含禁序 ⇒ 整组不能发布。
       await assertCustomBlockAssets(tx, shaped.data, input.readAssetBytes);
     }
+
+    let seal: PublishedContractSeal;
+    let suppliedAccepted: boolean;
+    try {
+      const rawSeal = publishedContractSeal(contract);
+      seal =
+        shapedPresentation == null
+          ? rawSeal
+          : publishedContractSeal({ ...contract, presentation: shapedPresentation });
+      suppliedAccepted =
+        publishedSealAccepts(seal, contract.integrity_digest) ||
+        publishedSealAccepts(rawSeal, contract.integrity_digest);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `publishQuestionGroup: contract layers do not match the published schema: ${detail}`,
+      );
+    }
+    const integrityDigest = seal.canonical;
 
     // 组级串行化：锁根 question 行（发布与编辑同一锁序 question → lifecycle）。
     const [root] = await tx
@@ -738,6 +853,11 @@ export async function publishQuestionGroup(
     // 不一致时只更新维度（admission generation+1）+ 事件（promote 即此路径：
     // 草稿首版 withheld/unverified_rules → 核验通过后 admitted，内容未变）。
     let nextOrdinal = 1;
+    if (currentRevisionId == null && !suppliedAccepted) {
+      throw new Error(
+        `publishQuestionGroup: integrity_digest mismatch (supplied ${contract.integrity_digest}, canonical ${seal.canonical}) — regenerate the contract via contract-normalizer`,
+      );
+    }
     if (currentRevisionId != null) {
       const [current] = await tx
         .select({
@@ -746,28 +866,44 @@ export async function publishQuestionGroup(
           structure: question_revision.structure,
           response_spec: question_revision.response_spec,
           scoring_basis: question_revision.scoring_basis,
+          execution_plan: question_revision.execution_plan,
+          presentation: question_revision.presentation,
         })
         .from(question_revision)
         .where(eq(question_revision.revision_id, currentRevisionId))
         .limit(1);
       if (current != null) {
-        previousContract = current;
+        previousContract = {
+          structure: current.structure,
+          response_spec: current.response_spec,
+          scoring_basis: current.scoring_basis,
+          ordinal: current.ordinal,
+          digest: current.digest,
+        };
       }
-      if (current?.digest === contract.integrity_digest) {
+      const sameDocument =
+        current != null &&
+        sameSealedDocument(current, seal, contract.integrity_digest, suppliedAccepted);
+      if (!suppliedAccepted && !sameDocument) {
+        throw new Error(
+          `publishQuestionGroup: integrity_digest mismatch (supplied ${contract.integrity_digest}, canonical ${seal.canonical}) — regenerate the contract via contract-normalizer`,
+        );
+      }
+      if (current != null && sameDocument) {
         if (lifecycleDimensionsMatch(lifecycle, input)) {
           const noopResult = {
             status: 'noop' as const,
             group_id: groupId,
             current_revision_id: currentRevisionId,
             reason: 'digest_unchanged' as const,
-            revision_digest: contract.integrity_digest,
+            revision_digest: current.digest,
             admission_generation: currentGeneration ?? 0,
           };
           await insertAdmissionVerification(
             tx,
             input,
             currentRevisionId,
-            contract.integrity_digest,
+            current.digest,
             currentGeneration ?? 0,
           );
           return noopResult;
@@ -850,7 +986,7 @@ export async function publishQuestionGroup(
       revision_id: revisionId,
       group_id: groupId,
       revision_ordinal: nextOrdinal,
-      integrity_digest: contract.integrity_digest,
+      integrity_digest: integrityDigest,
       structure: contract.structure,
       response_spec: contract.response_spec,
       scoring_basis: contract.scoring_basis,
@@ -916,7 +1052,7 @@ export async function publishQuestionGroup(
         revision_id: revisionId,
         revision_ordinal: nextOrdinal,
         supersedes_revision_id: currentRevisionId,
-        integrity_digest: contract.integrity_digest,
+        integrity_digest: integrityDigest,
         availability: input.availability,
         admission: input.admission.state,
         admission_generation: admissionGeneration,
@@ -943,13 +1079,7 @@ export async function publishQuestionGroup(
       created_at: input.now,
     });
 
-    await insertAdmissionVerification(
-      tx,
-      input,
-      revisionId,
-      contract.integrity_digest,
-      admissionGeneration,
-    );
+    await insertAdmissionVerification(tx, input, revisionId, integrityDigest, admissionGeneration);
 
     return {
       status: 'published',
@@ -958,9 +1088,176 @@ export async function publishQuestionGroup(
       group_id: groupId,
       event_id: eventId,
       admission_generation: admissionGeneration,
-      revision_digest: contract.integrity_digest,
+      revision_digest: integrityDigest,
     };
   });
+}
+
+// ─── 组契约快照（组根行 + live parts → row-normalized 契约的唯一加载口） ─────
+
+export interface QuestionGroupContractSnapshot {
+  rootId: string;
+  root: typeof question.$inferSelect;
+  /** 全部物理 part（含 tombstone —— 供 publisher 的撤回判定）。 */
+  partRows: PartRow[];
+  /** 排除 archived/dismissed 的可服务 part（契约成员）。 */
+  liveParts: PartRow[];
+  /**
+   * YUK-1568（第 1 片）：当前 revision 已携带答案声明（answer_shape /
+   * blank_order）时非空 —— 此时 contract 是【冻结四层】（typed 权威），
+   * 不再从 flat 行重建；publishQuestionGroupFromRow 对这类组显式冲突。
+   */
+  declaredRevisionId: string | null;
+  contract: NormalizedContract;
+}
+
+/**
+ * 组根行 + 物理 parts + figure 资产 digest → row-normalized 契约的【唯一】加载口。
+ * publishQuestionGroupFromRow、YUK-1507 的 C1 独立准入守卫（source_verify）与
+ * question_admission_run.loadDefinition 必须看到 byte-identical 的
+ * integrity_digest —— base_contract_digest 的可比性前提；三处只允许经本口（或经
+ * 逐字段对照确认等价的既有实现）构建，不得再各自拷贝装配逻辑。
+ *
+ * lockRoot（缺省 true，publisher 的 P1-1 惯例）：先 FOR UPDATE 锁组根行，再做组
+ * 快照读；调用方已持有根行锁（source_verify 守卫）或把漂移交给后续 drift check
+ * （admission job）时传 false。
+ */
+export async function loadQuestionGroupContractSnapshot(
+  db: Db | Tx,
+  rootId: string,
+  opts?: { lockRoot?: boolean },
+): Promise<QuestionGroupContractSnapshot> {
+  const rootSelect = db.select().from(question).where(eq(question.id, rootId));
+  const root = (
+    await (opts?.lockRoot === false ? rootSelect.limit(1) : rootSelect.for('update').limit(1))
+  )[0];
+  if (!root) {
+    throw new Error(`loadQuestionGroupContractSnapshot: group root question '${rootId}' not found`);
+  }
+  // tombstoned part（archived/dismissed）不是可服务组员 —— 组契约排除之
+  //（child archive ⇒ 组内容变化 ⇒ 新 revision，P2 组语义）。
+  const partRows = await db
+    .select({
+      id: question.id,
+      kind: question.kind,
+      judge_kind_override: question.judge_kind_override,
+      prompt_md: question.prompt_md,
+      reference_md: question.reference_md,
+      choices_md: question.choices_md,
+      structured: question.structured,
+      figures: question.figures,
+      metadata: question.metadata,
+    })
+    .from(question)
+    .where(eq(question.parent_question_id, root.id))
+    .orderBy(question.part_index);
+
+  const liveParts = partRows.filter((p) => {
+    const meta = p.metadata as Record<string, unknown> | null;
+    return meta?.archived_at == null && meta?.dismissed_at == null;
+  });
+
+  // ---- YUK-1568（第 1 片）中央保护：已声明 revision 以冻结四层为权威 ----
+  //
+  // 当前 revision 携带 answer_shape / blank_order 时，读取不再从 flat
+  // question / legacy structured 重建（那会掉声明再铸新 revision），而是
+  // 原样返回冻结契约 —— source_verify C1 守卫与 admission loadDefinition
+  // 因此看到与库内一致的 integrity_digest。未支持/坏声明（未知版本、未知
+  // 字段）在这里 fail-loud：拒绝读取，绝不 strip 后回退旧解释。
+  //
+  // 注：这里对 lifecycle 的读不加锁（快照语义）；publisher 调用方随后会
+  // FOR UPDATE 重读并做 CAS —— 声明态若被并发发布改变，CAS 冲突 fail-closed。
+  const [declaredLifecycle] = await db
+    .select({ revisionId: question_group_lifecycle.current_revision_id })
+    .from(question_group_lifecycle)
+    .where(eq(question_group_lifecycle.group_id, root.id))
+    .limit(1);
+  let declaredRevisionId: string | null = null;
+  let frozenContract: NormalizedContract | null = null;
+  if (declaredLifecycle?.revisionId != null) {
+    const [current] = await db
+      .select({
+        revision_id: question_revision.revision_id,
+        integrity_digest: question_revision.integrity_digest,
+        structure: question_revision.structure,
+        response_spec: question_revision.response_spec,
+        scoring_basis: question_revision.scoring_basis,
+        execution_plan: question_revision.execution_plan,
+        presentation: question_revision.presentation,
+      })
+      .from(question_revision)
+      .where(eq(question_revision.revision_id, declaredLifecycle.revisionId))
+      .limit(1);
+    if (current != null) {
+      const shapeDeclarations = findAnswerShapeDeclarations(current.response_spec);
+      const orderDeclarations = findBlankOrderDeclarations(current.structure);
+      if (shapeDeclarations.length > 0 || orderDeclarations.length > 0) {
+        let seal: PublishedContractSeal;
+        try {
+          seal = publishedContractSeal({
+            structure: current.structure,
+            response_spec: current.response_spec,
+            scoring_basis: current.scoring_basis,
+            execution_plan: current.execution_plan,
+            ...(current.presentation != null ? { presentation: current.presentation } : {}),
+          });
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          throw new Error(
+            `loadQuestionGroupContractSnapshot: revision '${current.revision_id}' of group '${root.id}' carries answer declarations this reader cannot parse (${
+              shapeDeclarations
+                .map((d) => `${d.slot_id}:${describeAnswerShape(d.answer_shape)}`)
+                .join(', ') ||
+              `blank_order on ${orderDeclarations.map((d) => d.part_id).join(', ')}`
+            }) — ${detail} — refusing to fall back to the legacy row interpreter`,
+          );
+        }
+        declaredRevisionId = current.revision_id;
+        frozenContract = {
+          structure: seal.parsed.structure,
+          response_spec: seal.parsed.response_spec,
+          scoring_basis: seal.parsed.scoring_basis,
+          execution_plan: seal.parsed.execution_plan,
+          ...(seal.parsed.presentation != null ? { presentation: seal.parsed.presentation } : {}),
+          integrity_digest: current.integrity_digest,
+          group_id: root.id,
+          conversion_issues: [],
+          rule_statement_origins: {},
+        };
+      }
+    }
+  }
+  if (frozenContract != null) {
+    return {
+      rootId: root.id,
+      root,
+      partRows,
+      liveParts,
+      declaredRevisionId,
+      contract: frozenContract,
+    };
+  }
+
+  // figure 实内容 digest 核验（root + parts 全部 figure 资产）：来自 asset
+  // store 元数据（source_asset.sha256，裸 hex）。无核验值 ⇒ normalizer 如实
+  // 标 unverified + conversion issue（不伪造 digest）。
+  const figureAssetIds = new Set<string>();
+  for (const f of root.figures ?? []) figureAssetIds.add(f.asset_id);
+  for (const p of liveParts) for (const f of p.figures ?? []) figureAssetIds.add(f.asset_id);
+  const figureDigests: Record<string, string> = {};
+  if (figureAssetIds.size > 0) {
+    const assetRows = await db
+      .select({ assetId: source_asset.id, sha256: source_asset.sha256 })
+      .from(source_asset)
+      .where(inArray(source_asset.id, [...figureAssetIds]));
+    for (const assetRow of assetRows) figureDigests[assetRow.assetId] = assetRow.sha256;
+  }
+
+  const contract = normalizeQuestionGroupToContract(
+    { ...(root as Parameters<typeof normalizeQuestionGroupToContract>[0]), figureDigests },
+    liveParts,
+  );
+  return { rootId: root.id, root, partRows, liveParts, declaredRevisionId: null, contract };
 }
 
 // ─── 从 legacy 行发布（加载 + 归一 + 发布 的便捷 seam） ─────
@@ -1015,42 +1312,21 @@ export async function publishQuestionGroupFromRow(
       throw new Error(`publishQuestionGroupFromRow: root question '${input.rootId}' not found`);
     }
     const effectiveRootId = supplied.parentId ?? supplied.id;
-    const root = (
-      await tx
-        .select()
-        .from(question)
-        .where(eq(question.id, effectiveRootId))
-        .for('update')
-        .limit(1)
-    )[0];
-    if (!root) {
+    // P1-1 锁序（root FOR UPDATE → 快照读）与本 seam 的契约构建都收在
+    // loadQuestionGroupContractSnapshot（唯一加载口）。
+    const snapshot = await loadQuestionGroupContractSnapshot(tx, effectiveRootId);
+    const { rootId, root, partRows, liveParts, contract } = snapshot;
+
+    // YUK-1568（第 1 片）：当前 revision 已携带答案声明 —— 旧行发布路径没有
+    // typed 变更上下文，从 flat 行重建会掉声明。这里显式冲突并令同事务回滚
+    //（调用方在同事务里先写的行修改一并丢弃，不先写行再吞发布失败）；下一
+    // 步是 edit_question + submit_question。28 处调用方的逐分支迁移（纯状态
+    // 分类经 typed publisher 保契约）属第 3 片，迁移前统一冲突，不放行。
+    if (snapshot.declaredRevisionId != null) {
       throw new Error(
-        `publishQuestionGroupFromRow: group root question '${effectiveRootId}' not found`,
+        `publishQuestionGroupFromRow: group '${rootId}' current revision '${snapshot.declaredRevisionId}' carries YUK-1568 answer declarations (answer_shape/blank_order) — republishing from legacy rows would drop them; edit via edit_question + submit_question instead (row-path migration tracked in YUK-1568 slice 3)`,
       );
     }
-    const rootId = root.id;
-    // tombstoned part（archived/dismissed）不是可服务组员 —— 组契约排除之
-    //（child archive ⇒ 组内容变化 ⇒ 新 revision，P2 组语义）。
-    const partRows = await tx
-      .select({
-        id: question.id,
-        kind: question.kind,
-        judge_kind_override: question.judge_kind_override,
-        prompt_md: question.prompt_md,
-        reference_md: question.reference_md,
-        choices_md: question.choices_md,
-        structured: question.structured,
-        figures: question.figures,
-        metadata: question.metadata,
-      })
-      .from(question)
-      .where(eq(question.parent_question_id, rootId))
-      .orderBy(question.part_index);
-
-    const liveParts = partRows.filter((p) => {
-      const meta = p.metadata as Record<string, unknown> | null;
-      return meta?.archived_at == null && meta?.dismissed_at == null;
-    });
 
     // 全部子 part 已 tombstone ⇒ 组无可发布成员：不铸空组 revision，只落
     // lifecycle 撤回维度（P2 组语义；历史 revision/摘要保留）。
@@ -1058,36 +1334,6 @@ export async function publishQuestionGroupFromRow(
       await archiveGroupLifecycle(tx, rootId, input.now);
       return { status: 'withdrawn', group_id: rootId } satisfies PublishQuestionGroupResult;
     }
-
-    // figure 实内容 digest 核验（root + parts 全部 figure 资产）：来自 asset
-    // store 元数据（source_asset.sha256，裸 hex）。无核验值 ⇒ normalizer 如实
-    // 标 unverified + conversion issue（不伪造 digest）。
-    const figureAssetIds = new Set<string>();
-    for (const f of root.figures ?? []) figureAssetIds.add(f.asset_id);
-    for (const p of liveParts) for (const f of p.figures ?? []) figureAssetIds.add(f.asset_id);
-    const figureDigests: Record<string, string> = {};
-    if (figureAssetIds.size > 0) {
-      const assetRows = await tx
-        .select({ assetId: source_asset.id, sha256: source_asset.sha256 })
-        .from(source_asset)
-        .where(inArray(source_asset.id, [...figureAssetIds]));
-      for (const assetRow of assetRows) figureDigests[assetRow.assetId] = assetRow.sha256;
-    }
-
-    const contract = normalizeQuestionGroupToContract(
-      { ...(root as Parameters<typeof normalizeQuestionGroupToContract>[0]), figureDigests },
-      liveParts.map((p) => ({
-        id: p.id,
-        kind: p.kind,
-        judge_kind_override: p.judge_kind_override,
-        metadata: p.metadata,
-        prompt_md: p.prompt_md,
-        reference_md: p.reference_md,
-        choices_md: p.choices_md,
-        structured: p.structured,
-        figures: p.figures,
-      })),
-    );
 
     const [lifecycle] = await tx
       .select()
@@ -1101,12 +1347,7 @@ export async function publishQuestionGroupFromRow(
     const contentChanged =
       expectedRevision == null ||
       lifecycle == null ||
-      (await tx
-        .select({ digest: question_revision.integrity_digest })
-        .from(question_revision)
-        .where(eq(question_revision.revision_id, expectedRevision))
-        .limit(1)
-        .then((rows) => rows[0]?.digest !== contract.integrity_digest));
+      (await publishedLayersChanged(tx, expectedRevision, contract));
 
     // admission 解析（P1-5）：
     //   - preserve + 内容变更 ⇒ withheld（沿用既有 withheld 原因，没有则

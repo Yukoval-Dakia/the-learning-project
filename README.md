@@ -15,7 +15,7 @@
 | Schema / 校验 | Zod |
 | 数据库 | Postgres（`pgvector/pgvector:pg16`）+ Drizzle ORM（`postgresql` dialect, `postgres` driver） |
 | Blob 存储 | R2 / S3-compatible storage via `@aws-sdk/client-s3` |
-| AI runtime | Pi agent runtime（`@earendil-works/pi-agent-core` in-process agentLoop，`src/server/ai/pi-agent-adapter.ts`）；默认 provider 走 Mimo / 小米（`XIAOMI_API_KEY`，pi 原生 OpenAI Completions），另有 anthropic-sub OAuth / opencode-go / zai-coding-cn lane（`ZAI_CODING_CN_API_KEY`）（`src/server/ai/providers.ts`）。opt-in `openai` lane（`OPENAI_API_KEY`）经 pi builtin provider 走 OpenAI Responses API 服务 gpt-6-astra（YUK-1027，仅显式 binding 可用，生产默认不变） |
+| AI runtime | Pi agent runtime（`@earendil-works/pi-agent-core` in-process agentLoop，`src/server/ai/pi-agent-adapter.ts`）；默认 provider 走 Mimo / 小米（`XIAOMI_API_KEY`，pi 原生 OpenAI Completions），另有 anthropic-sub OAuth / opencode-go / zhipuai-coding-plan lane（`ZAI_CODING_CN_API_KEY`；已存的 `zai-coding-cn` 仍解析到这条 lane）（`src/server/ai/providers.ts`）。opt-in `openai` lane（`OPENAI_API_KEY`）经 pi builtin provider 走 OpenAI Responses API 服务 gpt-6-astra（YUK-1027，仅显式 binding 可用，生产默认不变） |
 | 记忆 / 事实层 | Mem0 (`mem0ai`) + pgvector store；LLM 随产品全局 pin；embedding 为 DashScope `text-embedding-v4`，保留既有维度（ADR-0017） |
 | 富文本编辑 | Tiptap（block-tree note 编辑器，slash / cross-link suggestion） |
 | 数学渲染 | KaTeX + mathjs + `react-markdown` / `remark-math` / `rehype-katex` |
@@ -135,8 +135,9 @@ dev 拓扑必须 api + web + worker 三进程齐活（YUK-321 M5 双进程拓扑
 pnpm smoke:local
 ```
 
-模型能力目录（YUK-924）：`pnpm gen:model-catalog` 从 models.dev 拉取并重写
-`src/server/ai/model-catalog.snapshot.json`（已入仓的裁剪快照；运行时不发网络请求）。
+模型能力目录（YUK-924 / YUK-1563）：worker 启动时和每天从 models.dev 拉取
+`api.json`，写入 `model_catalog_cache`。拉取失败沿用该行；没有该行就用
+`src/server/ai/model-catalog.snapshot.json`。`pnpm gen:model-catalog` 仍重写这份随包快照。
 
 生产 / NAS compose 配置放在 `.env`；host-side local dev 也从 `.env` 的 `POSTGRES_*`
 派生本地连接串。浏览器代码不持有 provider key，所有 AI 调用都通过 Hono route 或

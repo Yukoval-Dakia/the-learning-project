@@ -62,10 +62,27 @@ export const QUESTION_CONTENT_WRITER_REGISTRY: Record<string, QuestionContentWri
     tickets: ['YUK-1043'],
     note: 'legacy dreaming 接受 INSERT ⇒ 同事务首版 admitted（manual+human）—— 可达接受路径不再是无契约写口（§2 矩阵行 13）。',
   },
-  'src/capabilities/practice/server/tools/store-sourced-question.ts': {
+  // store-sourced-question.ts 已降为 shim（YUK-1468），content 写迁往
+  // submit-question.ts（同收敛纪律）。
+  'src/capabilities/practice/server/tools/submit-question.ts': {
     status: 'publisher-converged',
-    tickets: ['YUK-1043'],
+    tickets: ['YUK-1043', 'YUK-1468'],
     note: 'INSERT 走 sourced-draft-insert（converged）；图题事后富集 UPDATE（structured/figures/judge_override/multimodal —— 改变判分输入）之后同事务重发组 revision（复审 P1-6 补齐；纯 metadata 富集 digest 不变 ⇒ 幂等 noop）。',
+  },
+  'src/server/questions/submit-question.ts': {
+    status: 'publisher-converged',
+    tickets: ['YUK-1468'],
+    note: '草稿提交闸：question 行 INSERT/UPDATE（prompt_md/reference_md/choices_md/structured —— v2 文档的 legacy 投影）与 publishQuestionGroup 同事务铸 revision（未决转换 withheld、CAS/dedup 冲突拒绝、admission 维度如实入契约）。',
+  },
+  'src/capabilities/practice/jobs/question_admission_run.ts': {
+    status: 'publisher-converged',
+    tickets: ['YUK-1468', 'YUK-1547'],
+    note: '准入通过后，同一事务里 publishQuestionGroup 铸 admitted revision（YUK-1547：发布付费 resolved 契约而非冻结输入），再把 prompt_md/reference_md/choices_md 投影成该 revision。withheld 不改内容列。',
+  },
+  'src/capabilities/practice/server/admission/resolved-repair.ts': {
+    status: 'publisher-converged',
+    tickets: ['YUK-1547'],
+    note: '免费补发 lane：同事务内 publishQuestionGroup 铸 resolved 契约的新 revision（publisher seam 前置），随后根行投影 prompt_md/reference_md/choices_md 自同一契约。仅经显式 ops manifest + CAS + 回执绑定幂等门；paid_effect 不写。',
   },
   'src/server/ai/solution-generate.ts': {
     status: 'publisher-converged',

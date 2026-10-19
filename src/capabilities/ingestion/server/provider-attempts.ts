@@ -11,6 +11,7 @@ import {
   providerOperationIdForInvocation,
   resolveProviderAttemptAdmission,
 } from '@/server/ai/provider-attempt-runtime';
+import { GLM_OCR_MODEL_ID } from '@/server/ai/providers';
 
 export { ProviderAttemptLifecycleError };
 
@@ -174,7 +175,10 @@ export type OcrPageProviderContext = DirectProviderOperationContext;
 export type OcrPageProviderAttemptControl = DirectProviderAttemptControl;
 
 export const GLM_OCR_PROVIDER = 'glm' as const;
-export const GLM_OCR_MODEL = 'glm-ocr' as const;
+// C1-10: the declared model id lives in the provider catalog
+// (src/server/ai/providers.ts); this module only wires it into the lane
+// descriptor below.
+export const GLM_OCR_MODEL = GLM_OCR_MODEL_ID;
 
 const GLM_OCR_ATTEMPT_DESCRIPTOR = {
   provider: GLM_OCR_PROVIDER,

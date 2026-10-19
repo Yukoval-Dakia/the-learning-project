@@ -6,6 +6,7 @@ import {
   DeclaredStage,
   NoteVerificationResult,
 } from '../business';
+import { QuestionDraftDocument } from '../question-draft';
 import { FigureRef, StructuredQuestion } from '../structured_question';
 
 // ====================================================================
@@ -315,7 +316,8 @@ export const QuestionBlockRowSnapshot = z
     source_document_id: z.string().nullable(), // nullable column
     source_asset_ids: z.array(z.string()), // jsonb string[], default [] at the table
     page_spans: z.array(PageSpan), // jsonb array, default [] — the question_block-distinguishing column
-    structured: StructuredQuestion.nullable(), // nullable jsonb — the recursive StructuredQuestion tree
+    // nullable jsonb — legacy StructuredQuestion tree 或 YUK-1468 v2 草稿文档
+    structured: z.union([StructuredQuestion, QuestionDraftDocument]).nullable(),
     figures: z.array(FigureRef), // jsonb FigureRef[], notNull default []
     layout_quality: z.string(), // free text (notNull default 'structured')
     reference_md: z.string().nullable(), // nullable column

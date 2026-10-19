@@ -1,4 +1,5 @@
 import type { Provider } from '@/ai/registry';
+import { currentModelCatalog } from './model-catalog';
 import {
   ANTHROPIC_SUB_CONTRACT_REF,
   ATTEMPT_PRICEBOOK_VERSION,
@@ -36,6 +37,12 @@ export function resolveAttemptCostTruth(input: {
   /** False when zero counters are placeholders, not observed provider usage. */
   tokensObserved?: boolean;
   reportedCostUsd?: number;
+  /**
+   * `timeout-estimate` means the tokens were inferred from the aborted stream
+   * and any USD figure was priced from the same card as a finished run.
+   * The ref prefix keeps that row distinct from a settled catalog charge.
+   */
+  priceOrigin?: 'provider' | 'timeout-estimate';
 }): AttemptCostTruth {
   if (input.provider === 'anthropic-sub') {
     return {
@@ -59,10 +66,12 @@ export function resolveAttemptCostTruth(input: {
   ) {
     const reported = input.reportedCostUsd;
     if (reported !== undefined && Number.isFinite(reported) && reported >= 0) {
+      const prefix =
+        input.priceOrigin === 'timeout-estimate' ? 'pi-catalog-timeout-estimate' : 'pi-catalog';
       return {
         basis: 'estimated',
         amountUsd: reported,
-        ref: `pi-catalog:${input.provider}/${input.model}`,
+        ref: `${prefix}:${input.provider}/${input.model}`,
       };
     }
     return unknownAttemptCostTruth(input.provider, input.model);
@@ -108,10 +117,12 @@ export function resolveAttemptCostTruth(input: {
     Number.isFinite(estimated) &&
     estimated >= 0
   ) {
+    const prefix =
+      input.priceOrigin === 'timeout-estimate' ? 'pricebook-timeout-estimate' : 'pricebook';
     return {
       basis: 'estimated',
       amountUsd: estimated,
-      ref: `pricebook:${ATTEMPT_PRICEBOOK_VERSION}/${input.provider}/${input.model}`,
+      ref: `${prefix}:${ATTEMPT_PRICEBOOK_VERSION}/${input.provider}/${input.model}@${currentModelCatalog().version}`,
     };
   }
 

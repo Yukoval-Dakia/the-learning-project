@@ -175,6 +175,15 @@ export const UI_SURFACES = [
     activeId: 'questions',
   },
   {
+    // YUK-1528 — 作答卷印刷页：无壳（RootShell 对 /print/ 走裸路径），供渲染任务出 PDF。
+    id: 'worksheet-print',
+    route: '/print/worksheet/$token',
+    owner: 'practice',
+    kind: 'page',
+    title: '作答卷',
+    activeId: 'practice',
+  },
+  {
     id: 'knowledge',
     route: '/knowledge',
     owner: 'knowledge',

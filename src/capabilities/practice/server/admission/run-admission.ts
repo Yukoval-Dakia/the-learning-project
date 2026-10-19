@@ -15,6 +15,12 @@
 // append + lifecycle admission flip) is the caller's publish seam.
 
 import { canonicalHash } from '@/core/migration/canonical';
+import {
+  LEGACY_QUESTION_ADMISSION_POLICY_ID,
+  PREVIOUS_QUESTION_ADMISSION_POLICY_ID,
+  QUESTION_ADMISSION_POLICY_ID,
+} from '@/core/question-admission-policy';
+import { declaredShapeSupport } from '@/core/schema/assessment/blank-answer-compare';
 import { type ExecutionPlanT, validateExecutionPlan } from '@/core/schema/assessment/execution';
 import { type ResponseSlotT, validateResponseSpec } from '@/core/schema/assessment/response';
 import type { PublishedQuestionRevisionT } from '@/core/schema/assessment/revision';
@@ -49,7 +55,21 @@ import {
   runSourceCrosscheck,
 } from './solve';
 
-export const QUESTION_ADMISSION_POLICY_ID = 'question_admission@1';
+export { QUESTION_ADMISSION_POLICY_ID } from '@/core/question-admission-policy';
+
+/** C1 落库与迟到的 source verify 必须匹配同一个 id，含环境变量覆盖。空串是合法覆盖。 */
+export function resolveQuestionAdmissionPolicyId(): string {
+  const configured = process.env.QUESTION_ADMISSION_POLICY_ID;
+  if (
+    configured === LEGACY_QUESTION_ADMISSION_POLICY_ID ||
+    configured === PREVIOUS_QUESTION_ADMISSION_POLICY_ID
+  ) {
+    throw new Error(
+      `QUESTION_ADMISSION_POLICY_ID=${configured} is obsolete; unset it for the @3 solve contract`,
+    );
+  }
+  return configured ?? QUESTION_ADMISSION_POLICY_ID;
+}
 
 export interface QuestionAdmissionOptions {
   db: Db;
@@ -193,9 +213,10 @@ export async function runQuestionAdmission(
   definition: QuestionAdmissionDefinition,
   options: QuestionAdmissionOptions,
 ): Promise<QuestionAdmissionResult> {
-  const policyId = options.policyId ?? QUESTION_ADMISSION_POLICY_ID;
+  const policyId = options.policyId ?? resolveQuestionAdmissionPolicyId();
   const now = options.now ?? new Date();
-  const runTask = options.runTask ?? makePracticeTaskTextRunFn(options.db);
+  const runTask =
+    options.runTask ?? makePracticeTaskTextRunFn(options.db, { judgeRetryPolicy: 'none' });
   const solverContext =
     options.solver2 != null ? 'independent_model' : 'same_model_isolated_context';
   const per_unit = new Map<string, UnitAdmissionResult>();
@@ -217,8 +238,40 @@ export async function runQuestionAdmission(
   };
 
   // ---- 双盲 solve ----
+  // YUK-1568（第 2 片）：声明 answer_shape 但未被共享比较器支持的 blank
+  // 单元在付费 solve 之前扣留（enqueue/maySend 闸之外的第二层 —— 覆盖
+  // submit_question 直接调用与手工 re-dispatch）；已支持声明的单元照常
+  // 进入双解，比较走同一比较核心。
+  const slotShapeOf = (unit: AdmissionUnitSpec) => {
+    const slot = definition.response_spec.slots.find(
+      (candidate) => candidate.slot_id === unit.slot_refs[0],
+    );
+    return slot != null && slot.kind === 'blank' && slot.answer_shape != null
+      ? slot.answer_shape
+      : null;
+  };
+  const declaredUnsupported = new Set<string>();
+  for (const unit of definition.units) {
+    if (unit.unit_kind !== 'blank') continue;
+    const shape = slotShapeOf(unit);
+    if (shape == null) continue;
+    const support = declaredShapeSupport(shape);
+    if (!support.supported) {
+      declaredUnsupported.add(unit.scoring_unit_id);
+      mark(unit, {
+        status: 'withheld',
+        reason: `declared_answer_shape_unsupported: ${support.reason}`,
+        solve: {
+          verdict: 'not_applicable',
+          detail: 'declared answer_shape is not supported by the shared comparator',
+        },
+      });
+    }
+  }
   const solvableUnits = definition.units.filter(
-    (unit) => unit.unit_kind === 'select' || unit.unit_kind === 'blank',
+    (unit) =>
+      (unit.unit_kind === 'select' || unit.unit_kind === 'blank') &&
+      !declaredUnsupported.has(unit.scoring_unit_id),
   );
   for (const unit of definition.units) {
     if (unit.unit_kind === 'unsupported') {
@@ -382,7 +435,7 @@ export async function runQuestionAdmission(
           material_refs: unit.material_refs,
           evidence_slot_refs: unit.evidence_slot_refs,
           requires_group_evidence: unit.requires_group_evidence,
-          criterion: criterionFromKey(verdict.key, unit),
+          criterion: unit.seeded_criterion ?? criterionFromKey(verdict.key, unit),
           points: unit.points,
           rule: unit.seeded_rule ?? defaultRuleFor(unit, spec),
         });
@@ -488,7 +541,7 @@ export async function runQuestionAdmission(
       unit.scoring_unit_id,
       methodFingerprint(resolved, slot, executorFor(unit).comparator),
     );
-    const { probes, skipped } = freezeProbes(
+    const { probes, skipped } = await freezeProbes(
       resolved,
       unit,
       slot,

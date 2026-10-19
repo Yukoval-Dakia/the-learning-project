@@ -31,6 +31,8 @@ import { type Db, db as defaultDb } from '@/db/client';
 import { system_config, system_config_epoch } from '@/db/schema';
 
 export interface ConfigHydrationReport {
+  /** 显式结果：严格的付费预检不能把 never-throws 的正常返回当作加载成功。 */
+  outcome: 'loaded' | 'unchanged' | 'stale' | 'failed';
   /** 本轮载入的 key（schema 通过且非 pinned）。 */
   hydrated: string[];
   skipped: Array<{ key: string; reason: string }>;
@@ -77,6 +79,7 @@ interface RawConfigRow {
  * 链上每一步都是「重新读」，所以即便排队靠后，拿到的也是提交时的最新快照。
  */
 let hydrateChain: Promise<ConfigHydrationReport> = Promise.resolve({
+  outcome: 'failed',
   hydrated: [],
   skipped: [],
   epochUnchanged: false,
@@ -109,6 +112,7 @@ export function hydrateConfigFromDb(db: Db = defaultDb): Promise<ConfigHydration
 
 async function doHydrate(db: Db): Promise<ConfigHydrationReport> {
   const report: ConfigHydrationReport = {
+    outcome: 'failed',
     hydrated: [],
     skipped: [],
     epochUnchanged: false,
@@ -119,6 +123,7 @@ async function doHydrate(db: Db): Promise<ConfigHydrationReport> {
     const dbEpoch = await readDbEpoch(db);
     const current = getConfigSnapshot();
     if (dbEpoch !== null && dbEpoch === current.epoch) {
+      report.outcome = 'unchanged';
       report.epochUnchanged = true;
       report.epoch = dbEpoch;
       return report;
@@ -172,6 +177,7 @@ async function doHydrate(db: Db): Promise<ConfigHydrationReport> {
         publishedEpoch,
       });
       report.staleSkipped = true;
+      report.outcome = 'stale';
       report.epoch = publishedEpoch;
       return report;
     }
@@ -188,6 +194,7 @@ async function doHydrate(db: Db): Promise<ConfigHydrationReport> {
       hydratedAt: new Date().toISOString(),
     });
     report.epoch = snapshot.epoch;
+    report.outcome = 'loaded';
     return report;
   } catch (err) {
     // 42P01（migration 未跑）/ DB down：WARN + 现状即地板（纯 env/code-default）。

@@ -6,6 +6,7 @@ import { newId } from '@/core/ids';
 import { db } from '@/db/client';
 import { learning_session } from '@/db/schema';
 import { ApiError, errorResponse } from '@/kernel/http';
+import { resolveSessionDerivationPolicy } from '@/kernel/read-models/usage-policy';
 import { getStartedBoss } from '@/server/boss/client';
 import { Ingestion } from '@/server/session';
 import {
@@ -70,6 +71,7 @@ async function validateSessionState(
 
   const allowedStatuses: Record<IngestionOperationRequestParsed['kind'], string[]> = {
     extract: ['uploaded', 'failed'],
+    agent: ['uploaded', 'failed'],
     import: [...Ingestion.IMPORTABLE_SESSION_STATUSES],
     make_paper: ['imported'],
     rescue: ['partial', 'extracted'],
@@ -110,7 +112,38 @@ async function ensureOperationDispatched(
 
     const boss = await getStartedBoss();
     let jobId: string | null = null;
-    if (request.kind === 'extract') {
+    if (request.kind === 'agent') {
+      const rows = await db
+        .select({ status: learning_session.status })
+        .from(learning_session)
+        .where(and(eq(learning_session.id, sessionId), eq(learning_session.type, 'ingestion')))
+        .limit(1);
+      const status = rows[0]?.status;
+      if (!status) throw new ApiError('not_found', `ingestion session ${sessionId} not found`, 404);
+
+      if (status === 'uploaded' || status === 'failed') {
+        // R2-8 — refuse the paid agent lane up front when the document's
+        // strictest derivation policy forbids derivation (answer_only/crisis);
+        // the segment-entry policy_blocked error is the backstop.
+        const policy = await resolveSessionDerivationPolicy(db, sessionId);
+        if (policy !== 'allow') {
+          throw new ApiError(
+            'derivation_policy_forbids_agent',
+            `source usage policy '${policy}' does not permit the ingestion agent`,
+            422,
+          );
+        }
+        ({ jobId } = await Ingestion.enqueueAgentRun({ db, boss, sessionId, operationId }));
+      } else if (
+        !['queued', 'extracting', 'extracted', 'partial', 'reviewed', 'imported'].includes(status)
+      ) {
+        throw new ApiError(
+          'conflict',
+          `ingestion session ${sessionId} cannot resume agent dispatch from status '${status}'`,
+          409,
+        );
+      }
+    } else if (request.kind === 'extract') {
       const rows = await db
         .select({ status: learning_session.status })
         .from(learning_session)

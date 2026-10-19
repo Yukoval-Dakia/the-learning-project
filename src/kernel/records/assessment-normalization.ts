@@ -954,8 +954,8 @@ export function normalizeQuestionGroupToContract(
   );
 }
 
-/** §3.1 完整性 digest：四层 canonical JSON 的 sha256（顺序固定）。
- * YUK-1497：contract.presentation 存在时计入 canonical —— 缺省完全省略该键，
+/** §3.1 完整性 digest：四层 JSON 的 sha256。键顺序保持调用方对象的插入顺序。
+ * YUK-1497：contract.presentation 存在时计入 —— 缺省完全省略该键，
  * 旧调用方（无展示层）的 digest 逐字节不变。 */
 export function contractIntegrityDigest(contract: {
   structure: unknown;
@@ -964,15 +964,90 @@ export function contractIntegrityDigest(contract: {
   execution_plan: unknown;
   presentation?: unknown;
 }): string {
-  const canonical = JSON.stringify(
-    {
-      structure: contract.structure,
-      response_spec: contract.response_spec,
-      scoring_basis: contract.scoring_basis,
-      execution_plan: contract.execution_plan,
-      ...(contract.presentation != null ? { presentation: contract.presentation } : {}),
-    },
-    (_key, value) => value,
-  );
+  const canonical = JSON.stringify(contractLayers(contract), (_key, value) => value);
   return `sha256:${createHash('sha256').update(canonical).digest('hex')}`;
+}
+
+function contractLayers(contract: {
+  structure: unknown;
+  response_spec: unknown;
+  scoring_basis: unknown;
+  execution_plan: unknown;
+  presentation?: unknown;
+}): {
+  structure: unknown;
+  response_spec: unknown;
+  scoring_basis: unknown;
+  execution_plan: unknown;
+  presentation?: unknown;
+} {
+  return {
+    structure: contract.structure,
+    response_spec: contract.response_spec,
+    scoring_basis: contract.scoring_basis,
+    execution_plan: contract.execution_plan,
+    ...(contract.presentation != null ? { presentation: contract.presentation } : {}),
+  };
+}
+
+function stableContractJson(value: unknown): string {
+  return JSON.stringify(value, (_key, item) =>
+    item !== null && typeof item === 'object' && !Array.isArray(item)
+      ? Object.keys(item)
+          .sort()
+          .reduce<Record<string, unknown>>((acc, key) => {
+            acc[key] = (item as Record<string, unknown>)[key];
+            return acc;
+          }, {})
+      : item,
+  );
+}
+
+export interface PublishedContractSeal {
+  parsed: {
+    structure: QuestionGroupStructureT;
+    response_spec: ResponseSpecT;
+    scoring_basis: ScoringBasisT;
+    execution_plan: ExecutionPlanT;
+    presentation?: PresentationT;
+  };
+  /** 按发布 schema 解析后再按稳定键序序列化。 */
+  canonical: string;
+  /** 旧封存：schema 解析对象的键序（zod）。 */
+  legacyParsed: string;
+  /** 旧封存：传进这份函数的对象自己的键序。读库存时这是 jsonb 键序，不是当初调用方的键序。 */
+  legacyRaw: string;
+}
+
+/** 发布与准入共用的契约封存。旧 revision 仍可能是 legacyParsed 或 legacyRaw。 */
+export function publishedContractSeal(contract: {
+  structure: unknown;
+  response_spec: unknown;
+  scoring_basis: unknown;
+  execution_plan: unknown;
+  presentation?: unknown;
+}): PublishedContractSeal {
+  const parsed = {
+    structure: QuestionGroupStructure.parse(contract.structure),
+    response_spec: ResponseSpec.parse(contract.response_spec),
+    scoring_basis: ScoringBasis.parse(contract.scoring_basis),
+    execution_plan: ExecutionPlan.parse(contract.execution_plan),
+    ...(contract.presentation != null
+      ? { presentation: Presentation.parse(contract.presentation) }
+      : {}),
+  };
+  return {
+    parsed,
+    canonical: `sha256:${createHash('sha256').update(stableContractJson(parsed)).digest('hex')}`,
+    legacyParsed: contractIntegrityDigest(parsed),
+    legacyRaw: contractIntegrityDigest(contract),
+  };
+}
+
+/**
+ * 只接受从【这份对象】重算出来的封印：规范摘要、schema 键序、该对象自己的键序。
+ * 值被改过时这三份都会变。调用方键序和存库 jsonb 键序不是同一份，不能在这里另开一档。
+ */
+export function publishedSealAccepts(seal: PublishedContractSeal, digest: string): boolean {
+  return digest === seal.canonical || digest === seal.legacyParsed || digest === seal.legacyRaw;
 }

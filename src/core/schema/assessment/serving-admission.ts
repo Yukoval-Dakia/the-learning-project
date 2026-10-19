@@ -1,4 +1,8 @@
 import { unit as parseUnit } from 'mathjs';
+import {
+  DECLARED_BLANK_COMPARE_VERSION,
+  declaredBlankGradeReadiness,
+} from './blank-answer-compare';
 import { EvaluationContractError, projectIssuedScoringBasis } from './evaluation';
 import { validateExecutionPlan } from './execution';
 import { isPublicSharedMaterial } from './materials';
@@ -10,7 +14,7 @@ import {
 } from './presentation';
 import type { ResponseSlotT } from './response';
 import type { PublishedQuestionRevisionT } from './revision';
-import { validateScoringBasis } from './scoring';
+import { type ScoringUnitT, validateScoringBasis } from './scoring';
 
 /** YUK-1445 —— typed withheld reasons（公共读面安全枚举；detail 只作内部诊断）。
  * 单一来源：wire schema / DTO 共用此 tuple，禁止第二份拷贝。 */
@@ -36,6 +40,142 @@ export type AutomaticServingDecision =
       reason: ServingUnavailableReason;
       detail: string;
     };
+
+// ---------- YUK-1496 C2 — 模型准入切片（服务门只读视图） ----------
+
+/** 模型可判的响应类（设计 §4 准入门第 4 步：科目/响应类/任务/模型版本切片）。 */
+export type ModelResponseClass = 'blank' | 'free';
+
+/**
+ * 已准入切片（行真相在 model_admission_slice 表；这是服务门的纯读面）。
+ * holdout_evidence_ref 指向留出题实测证据（逐题一致性 + severe error 记录）。
+ */
+export interface AdmittedModelSliceT {
+  readonly slice_id: string;
+  readonly subject: string;
+  readonly response_class: ModelResponseClass;
+  readonly task_kind: string;
+  readonly model: string;
+  readonly model_version: string;
+  readonly holdout_evidence_ref: string;
+  readonly admitted_at: string;
+  readonly admitted_by: string;
+}
+
+/**
+ * 服务门的模型准入上下文：由调用方从权威登记处解析后传入（门本身保持纯函数，
+ * 不读 DB）。slices 只含 active 切片；current_models 是各 task_kind 当前实际
+ * 会执行的模型 + 版本 pin —— 切片登记的模型与当前 pin 漂移即不再准入。
+ */
+export interface ModelAdmissionContext {
+  readonly slices: ReadonlyMap<string, AdmittedModelSliceT>;
+  readonly current_models: ReadonlyMap<string, { model: string; model_version: string }>;
+}
+
+/**
+ * 判据 → 可服务它的已准入判分 task kinds（与执行器能力精确对齐：rubric
+ * 执行器只判 rubric 判据；Jev typed 线判 rule/level/blank 等价；pi rule 线
+ * 判 rule/level。task kind 字面量镜像 model-slice-registry 的
+ * CURRENT_MODEL_VERSION_PINS —— 只有登记了 pin 的 task kind 才可能有已准入
+ * 切片）。切片判给不能服务该判据的 task ⇒ 服务门扣留，绝不放行后永远 pending。
+ */
+const MODEL_TASK_KINDS_BY_CRITERION: Readonly<Record<string, readonly string[]>> = {
+  rubric: ['AssessmentRubricJudgeTask'],
+  blank_key: ['JevScoringDecisionTask'],
+  rule_reference: ['JevScoringDecisionTask', 'AssessmentRuleJudgeTask'],
+  holistic_level: ['JevScoringDecisionTask', 'AssessmentRuleJudgeTask'],
+};
+
+/**
+ * unit 的响应类由其引用的【作答槽位】决定（K1 统一作答：blank 槽 → 'blank'，
+ * open_response 槽 → 'free'），不由 criterion kind 反推 —— 判据与响应类是两个
+ * 轴，同一判据可挂不同形态的槽。引用槽缺失、为空、混合或旧形态 ⇒ null
+ * （fail-closed，模型分支不放行）。
+ */
+export function modelResponseClassForUnit(
+  unit: ScoringUnitT,
+  slots: readonly ResponseSlotT[],
+): ModelResponseClass | null {
+  if (unit.slot_refs.length === 0) return null;
+  const slotById = new Map(slots.map((slot) => [slot.slot_id, slot]));
+  let responseClass: ModelResponseClass | null = null;
+  for (const slotId of unit.slot_refs) {
+    const slot = slotById.get(slotId);
+    if (slot === undefined) return null;
+    const slotClass =
+      slot.kind === 'blank' ? 'blank' : slot.kind === 'open_response' ? 'free' : null;
+    if (slotClass === null || (responseClass !== null && responseClass !== slotClass)) {
+      return null;
+    }
+    responseClass = slotClass;
+  }
+  return responseClass;
+}
+
+/**
+ * 模型单元准入判定（纯函数）：admitted_slice_id 必须解析到一个 active 切片，
+ * 且切片的 task kind 能服务该判据、响应类与本次执行一致、模型版本与当前
+ * pin 一致。上下文缺省 = 登记处未接线，全部模型单元扣留（YUK-1496 C2 之前
+ * 的行为）。
+ */
+function checkModelUnitAdmission(
+  unit: ScoringUnitT,
+  executor: Extract<
+    PublishedQuestionRevisionT['execution_plan']['assignments'][number]['executor'],
+    { kind: 'model_executor' }
+  >,
+  admission: ModelAdmissionContext | undefined,
+  slots: readonly ResponseSlotT[],
+  questionSubject: string | null | undefined,
+): string | null {
+  if (executor.admitted_slice_id === null) {
+    return `model_executor slice unadmitted (task ${executor.task_kind})`;
+  }
+  if (admission === undefined) {
+    return `no authoritative model admission for task ${executor.task_kind}, slice ${executor.admitted_slice_id}`;
+  }
+  const slice = admission.slices.get(executor.admitted_slice_id);
+  if (slice === undefined) {
+    return `admitted_slice_id '${executor.admitted_slice_id}' does not resolve to an active slice`;
+  }
+  if (questionSubject == null || slice.subject !== questionSubject) {
+    return `slice '${slice.slice_id}' is admitted for subject '${slice.subject}', not '${questionSubject ?? 'unresolved'}'`;
+  }
+  if (slice.task_kind !== executor.task_kind) {
+    return `slice '${slice.slice_id}' is admitted for task '${slice.task_kind}', not '${executor.task_kind}'`;
+  }
+  // 判据 ↔ task kind：一个判给不能服务该判据的 task 的切片必须扣留 ——
+  // 放行只会让执行器永远 pending（rubric 执行器拒非 rubric 判据、Jev 拒
+  // rubric 判据），那是个静默黑洞，不是准入。
+  const expectedTaskKinds = MODEL_TASK_KINDS_BY_CRITERION[unit.criterion.kind];
+  if (expectedTaskKinds === undefined) {
+    return `criterion '${unit.criterion.kind}' is deterministic-comparator territory, not model-servable`;
+  }
+  if (!expectedTaskKinds.includes(executor.task_kind)) {
+    return `criterion '${unit.criterion.kind}' is not servable by task '${executor.task_kind}' (expected ${expectedTaskKinds.join(' | ')}) — withheld instead of pending forever`;
+  }
+  if (unit.criterion.kind === 'blank_key') {
+    const key = unit.criterion.key;
+    if (key.kind !== 'text' || key.equivalence === undefined) {
+      return `blank_key unit '${unit.scoring_unit_id}' is not Jev-expressible — only a text key with a declared equivalence domain can be model-served`;
+    }
+  }
+  const responseClass = modelResponseClassForUnit(unit, slots);
+  if (responseClass === null) {
+    return `unit '${unit.scoring_unit_id}' derives no coherent model response class from its answer slots (uniform blank or open_response required)`;
+  }
+  if (slice.response_class !== responseClass) {
+    return `slice '${slice.slice_id}' covers response class '${slice.response_class}', not '${responseClass}'`;
+  }
+  const pin = admission.current_models.get(executor.task_kind);
+  if (pin === undefined) {
+    return `no current model pin for task '${executor.task_kind}'`;
+  }
+  if (pin.model !== slice.model || pin.model_version !== slice.model_version) {
+    return `slice '${slice.slice_id}' was admitted for ${slice.model}@${slice.model_version}; current pin is ${pin.model}@${pin.model_version} — re-admission required`;
+  }
+  return null;
+}
 
 /**
  * 网页逐槽渲染已有输入控件的槽位种类（YUK-1496）。没有控件的题后端判得了也不发，
@@ -85,6 +225,8 @@ function presentationBinders(presentation: PresentationT): Map<string, 'block' |
 export function decideAutomaticServing(
   revision: PublishedQuestionRevisionT,
   selectedPartIds: readonly string[],
+  admission?: ModelAdmissionContext,
+  questionSubject?: string | null,
 ): AutomaticServingDecision {
   const scoringIssues = validateScoringBasis(
     revision.scoring_basis,
@@ -135,6 +277,23 @@ export function decideAutomaticServing(
   const answerSlots = revision.response_spec.slots.filter(
     (slot) => selected.has(slot.part_id) && slot.kind !== 'table',
   );
+  // YUK-1568（第 2 片）：发出范围内的已声明 blank 槽现在由共享比较核心判定
+  // 判分就绪（声明被支持 + 被 blank_key unit 读取 + 私有键可编译）。任一缺
+  // 项（未知版本、未实现 notation、键冲突、缺判分单元）仍明确拒绝发题，
+  // 绝不回退普通 exact 文本判分。此闸在渲染面检查之前：判不了分比画不出
+  // 更根本。
+  const declaredReadiness = declaredBlankGradeReadiness(
+    revision.response_spec,
+    revision.scoring_basis,
+    selectedPartIds,
+  );
+  if (!declaredReadiness.ok) {
+    return {
+      kind: 'unavailable',
+      reason: 'unsupported_deterministic_input',
+      detail: `declared answer_shape not gradable: ${declaredReadiness.reason} (comparator ${DECLARED_BLANK_COMPARE_VERSION})`,
+    };
+  }
   // YUK-1497 —— 展示层形状门先行（review R1）：行读面（revisionRowToContract）对解析
   // 失败的展示层原样透传而非丢列（丢列 = 静默降级为逐槽渲染的 fail-open）；这里以
   // invalid_presentation 拒绝，绝不带着坏展示层发题，原因也不被输入面检查盖住。
@@ -223,14 +382,24 @@ export function decideAutomaticServing(
       };
     }
     if (executor.kind === 'model_executor') {
-      // Production has typed Jev/Pi runners but no authoritative slice-to-task/
-      // criterion admission registry. A nonnull string is not execution authority.
-      // Keep existing evaluation/recovery checks; do not invent serving admission.
-      return {
-        kind: 'unavailable',
-        reason: 'model_admission_unavailable',
-        detail: `no authoritative model admission for task ${executor.task_kind}, slice ${executor.admitted_slice_id ?? 'null'}`,
-      };
+      // YUK-1496 C2：模型单元只在 admitted_slice_id 解析到 active 切片且
+      // task kind 能服务该判据、响应类 / 模型版本一致时放行；登记处未接线
+      // （无 admission 上下文）时维持旧行为 —— 全部扣留，绝不发明准入。
+      const admissionIssue = checkModelUnitAdmission(
+        unit,
+        executor,
+        admission,
+        revision.response_spec.slots,
+        questionSubject,
+      );
+      if (admissionIssue !== null) {
+        return {
+          kind: 'unavailable',
+          reason: 'model_admission_unavailable',
+          detail: admissionIssue,
+        };
+      }
+      continue;
     }
     const slots = revision.response_spec.slots.filter(
       (slot) => selected.has(slot.part_id) && unit.slot_refs.includes(slot.slot_id),

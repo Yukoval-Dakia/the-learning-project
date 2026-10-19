@@ -1,4 +1,3 @@
-import { initialSchedulingState } from '@/server/fsrs/state';
 // YUK-216 S2 slice 2 (题源扩展 Strategy D) — tier-2 source_verify handler.
 //
 // docs/superpowers/specs/2026-06-05-question-source-expansion-design.md §4
@@ -26,17 +25,20 @@ import { initialSchedulingState } from '@/server/fsrs/state';
 // verify-framework.ts for the full asymmetry rationale before "unifying" the two.
 
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
-
 import {
   type RunSourceGroundingVerifyParams,
   type SourceGroundingVerifyResult,
   runSourceGroundingVerify,
 } from '@/capabilities/practice/server/judge/source-grounding-verify';
 import {
+  type PaidEffectIdentity,
+  computePaidEffectIdentity,
+} from '@/core/migration/paid-effect-protocol';
+import { QUESTION_ADMISSION_POLICY_IDS } from '@/core/question-admission-policy';
+import {
   LEGACY_DRAFT_STATUS,
-  MARKING_RULE_PROVENANCE,
   QUESTION_AVAILABILITY,
   SCORING_ADMISSION_STATE,
   SCORING_ADMISSION_WITHHELD_REASON,
@@ -46,18 +48,34 @@ import { readDifficultyEvidenceFromMetadata } from '@/core/schema/difficulty-evi
 import { WebSourcedProvenance, deriveSourceTier } from '@/core/schema/provenance';
 import { toUnifiedVerifyResult } from '@/core/schema/verify-contract';
 import type { Db } from '@/db/client';
+import {
+  admitPaidEffectIntent,
+  claimPaidEffectSend,
+  markPaidEffectUnknown,
+  recordPaidEffectApplication,
+  recordPaidEffectResult,
+} from '@/db/paid-effect-store';
 import { notDraftPredicate } from '@/db/predicates';
-import { event, knowledge, question } from '@/db/schema';
+import {
+  event,
+  knowledge,
+  question,
+  question_admission_verification,
+  question_group_lifecycle,
+  question_revision,
+} from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { type TaskTextResult, type TaskTextRunFn, aiAgentRef } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
-import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
-import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
+import { getFsrsState, initialSchedulingState, upsertFsrsState } from '@/server/fsrs/state';
+import { publishQuestionGroup, publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
 import { normalizeToCanonicalKind } from '@/subjects/question-kind';
+import { resolveQuestionAdmissionPolicyId } from '../server/admission/run-admission';
 import { SYNTHETIC_SUBJECT_ROOT_RE } from '../server/placement-scope';
 import { SupplyTraceV1 } from '../server/question-supply/evidence-demand';
+import { readVectorNearHold, visibleSourceNeighbor } from '../server/question-supply/ingest-dedup';
 import { lockPlacementSupplyScopes } from '../server/question-supply/placement-supply-lock';
 import { DEDUP_OVERLAP_THRESHOLD, maxNgramOverlap } from '../server/question-supply/sourced-dedup';
 import {
@@ -71,6 +89,14 @@ import {
 
 export interface SourceVerifyJobData {
   question_ids: string[];
+  /**
+   * YUK-1514 — owner-initiated recheck (POST .../serving-actions/recheck_source).
+   * The command event id bypasses the terminal-event idempotency guard ONLY
+   * for this command: at most one paid run per command event, because the
+   * guard short-circuits once a terminal event carries the same
+   * recheck_command_event_id.
+   */
+  recheck?: { command_event_id: string };
 }
 
 // Loose run seam (mirrors quiz_verify): the handler + solve-check only consume
@@ -100,7 +126,11 @@ export type SourceVerifyPerQuestionStatus =
   | 'failed'
   | 'skipped:not_found'
   | 'skipped:not_web_sourced'
-  | 'skipped:already_verified';
+  | 'skipped:already_verified'
+  /** YUK-1514 — a recheck whose durable paid-attempt claim is 'sending' or
+   * 'unknown' (a prior delivery reached the paid call and never committed an
+   * outcome). Never re-paid; the job completes, the hold stays visible. */
+  | 'skipped:claim_held';
 
 export interface RunSourceVerifyParams {
   db: Db;
@@ -111,6 +141,21 @@ export interface RunSourceVerifyParams {
   // inject a stub to drive grounded / not_grounded / transient without real R2 / VLM spend;
   // production defaults to runSourceGroundingVerify (→ SourceGroundingVerifyTask).
   sourceGroundingFn?: SourceGroundingFn;
+  /**
+   * YUK-1514 — owner recheck command id. When set, the terminal-event guard
+   * below only short-circuits a terminal event that carries THIS id (a
+   * redelivered/replayed command never pays twice); the first run for this
+   * command proceeds past prior terminal events, and the new terminal event
+   * supersedes them for downstream projections (latest wins).
+   */
+  recheckCommandEventId?: string;
+  /**
+   * YUK-1514 — the pg-boss job id that owns this recheck delivery. Becomes the
+   * paid-effect claim's deliveryId: a crash after the paid call but before the
+   * terminal event leaves the claim in 'sending'/'unknown', and a redelivery
+   * under ANY job id is refused — one paid attempt per command event, never two.
+   */
+  recheckDeliveryId?: string;
 }
 
 export interface RunSourceVerifyResult {
@@ -376,6 +421,9 @@ export async function runSourceVerify(
   // Idempotency: only a TERMINAL verify event short-circuits a re-run (outcome !=
   // 'error'). The catch-bottom writes a TRANSIENT-error event with outcome='error'
   // so a one-off LLM/DB blowup doesn't strand the draft (mirrors quiz_verify).
+  // YUK-1514 — an owner recheck bypasses prior terminal events but stays
+  // claim-scoped: only a terminal event carrying THIS recheck_command_event_id
+  // short-circuits, so a redelivered job / replayed key can never pay twice.
   const existingVerify = await db
     .select({ id: event.id })
     .from(event)
@@ -385,10 +433,56 @@ export async function runSourceVerify(
         eq(event.subject_kind, 'question'),
         eq(event.subject_id, questionId),
         ne(event.outcome, 'error'),
+        params.recheckCommandEventId != null
+          ? sql`${event.payload}->>'recheck_command_event_id' = ${params.recheckCommandEventId}`
+          : sql`true`,
       ),
     )
     .limit(1);
   if (existingVerify.length > 0) return { status: 'skipped:already_verified' };
+
+  // YUK-1514 — recheck paid-attempt claim (P1-A): a DURABLE claim scoped to
+  // the command event, taken BEFORE the paid verifier calls. The terminal-event
+  // guard alone could not catch a crash between the paid call and the event
+  // commit — the claim can: 'sending'/'unknown' is never re-paid, the job ends
+  // honestly (hold stays, pending_action clears), and 'receipt_ready'/'applied'
+  // means the run already completed.
+  let recheckClaim: { identity: PaidEffectIdentity; fence: number; deliveryId: string } | null =
+    null;
+  if (params.recheckCommandEventId != null) {
+    const commandEventId = params.recheckCommandEventId;
+    const deliveryId = params.recheckDeliveryId ?? `manual:${commandEventId}`;
+    const claimOutcome = await db.transaction(async (tx) => {
+      const recheckEffect = {
+        family: 'source_verify' as const,
+        entityId: questionId,
+        entityRevision: commandEventId,
+        unit: 'source_verify@1' as const,
+        input: { question_id: questionId, command_event_id: commandEventId },
+      };
+      const admitted = await admitPaidEffectIntent(tx, recheckEffect);
+      if (admitted.kind === 'existing' && admitted.state !== 'pending') {
+        return { kind: 'held' as const, state: admitted.state };
+      }
+      const identity = computePaidEffectIdentity(recheckEffect);
+      const send = await claimPaidEffectSend(tx, identity, {
+        backend: 'pg-boss',
+        deliveryId,
+        leaseExpiresAt: new Date(Date.now() + 60 * 60_000),
+      });
+      if (send.kind !== 'claimed') {
+        return { kind: 'held' as const, state: send.kind === 'refused' ? send.state : 'pending' };
+      }
+      return { kind: 'claimed' as const, identity, fence: send.fence };
+    });
+    if (claimOutcome.kind !== 'claimed') {
+      // 'sending'/'unknown' — a prior delivery reached the paid call and its
+      // outcome is genuinely unknown; never re-pay. The hold stays honest and
+      // the job completes so pending_action clears.
+      return { status: 'skipped:claim_held', checks: [] };
+    }
+    recheckClaim = { identity: claimOutcome.identity, fence: claimOutcome.fence, deliveryId };
+  }
 
   // Resolve subject profile from the first knowledge node (same convention as
   // quiz_gen / quiz_verify).
@@ -471,11 +565,17 @@ export async function runSourceVerify(
     // check. It is the SINGLE source for both the grounding-gate trigger below AND the final
     // `promote` (which just ANDs in the grounding verdict) — PR #1063 review thread 3 (was
     // two copy-pasted condition lists).
+    const storedHold = readVectorNearHold(metadataRaw);
+    const vectorNearHold =
+      storedHold != null && (await visibleSourceNeighbor(db, storedHold.neighbor_question_id))
+        ? storedHold
+        : null;
     const otherwisePromotable =
       knowledgeAlive &&
       !unresolvedAnchoredExactMismatch &&
       !imageInputUnavailable &&
-      !checks.some((c) => c.verdict === 'fail');
+      !checks.some((c) => c.verdict === 'fail') &&
+      vectorNearHold == null;
 
     // ---- YUK-230 source-grounding gate (single_source_grounding rows only) ----
     // Runs ONLY when the row is otherwise promotable: a deterministic/solve fail already
@@ -647,7 +747,9 @@ export async function runSourceVerify(
             ? 'tier-2 source verify needs review: prompt image content was unavailable'
             : !knowledgeAlive
               ? 'referenced knowledge point archived after sourcing; not promoted'
-              : 'tier-2 source verify did not promote';
+              : vectorNearHold
+                ? `tier-2 source verify needs review: vector similarity ${vectorNearHold.similarity.toFixed(3)} with ${vectorNearHold.neighbor_question_id}`
+                : 'tier-2 source verify did not promote';
     const unified = toUnifiedVerifyResult({
       source: 'source',
       promote,
@@ -711,6 +813,23 @@ export async function runSourceVerify(
           `source_verify question ${questionId} changed during verification (expected version ${row.version}, got ${current?.version ?? 'missing'})`,
         );
       }
+      // YUK-1507 pair-race guard —— promote 成功分支在重发前，同事务锁
+      // question_group_lifecycle（FOR UPDATE，锁序 root question → lifecycle，
+      // 与 publisher/C1 一致）读当前维度。三者同时成立时，这份 base 内容已被
+      // question_admission_run（YUK-1445 C1）独立准入，本投递不得重发：
+      //   1. lifecycle.scoring_admission_state === 'admitted'；
+      //   2. 【当前 revision】上存在 policy question_admission@1 或 @2、outcome='passed'
+      //      的 question_admission_verification 行（不匹配历史其他 revision 的
+      //      passed 行）；
+      //   3. 该行绑定当前已发布 revision 的 integrity_digest —— 权威绑定取
+      //      publisher 写入的 revision_digest 列（YUK-1547 resolved 发布后
+      //      evidence.base_contract_digest 是付费【输入】摘要，不再等于发布
+      //      摘要）；旧证据字段仅作 base==published 行的兼容回退
+      //      （lifecycle.current_revision_id → question_revision.integrity_digest）。
+      // 命中 ⇒ 不调 publishQuestionGroupFromRow：不把 admitted 降回 withheld，
+      // 也不把行归一旧 base 重铸到 C1 的 resolved revision 上。其余情况（C1
+      // 准入的是更老 base 后行又变了、他 policy 准入、未准入）保持 #1753 原行为。
+      let keptIndependentAdmissionRevisionId: string | null = null;
       if (promote) {
         // Supply scope already locked at the top of this tx (G→row order above).
         await tx
@@ -754,40 +873,155 @@ export async function runSourceVerify(
           }
         }
 
-        // YUK-1043 — 统一发布链：verified promote 即 §3.3 的 admission 时刻（同事务）。
-        // web_sourced 参考答案源自原始页面（非 model-proposed）且 tier-2 checks 已对
-        // extract 确定性核验 ⇒ official + 结构校验（publisher 契约校验）+ 无独立模型
-        // 门（independent=null，checks 摘要记入 note —— D1 双门不适用于非模型规则）。
+        // YUK-1043 — 统一发布链：verified promote 同事务重发组 revision。
+        // YUK-1507 — 来源核对通过 ≠ 判分准入。ADR-0073 四源同门：每个计分单元
+        // 要两次独立解题一致 + 逐单元标定才 admitted，这里只有 tier-2 确定性
+        // checks、没有独立核验，所以发布为 withheld(unverified_rules)＝待准入；
+        // question_admission_run（YUK-1445 C1）经 assessment_publish outbox
+        // 订阅自动入队，双解 + 标定通过后才 admitted。
         // 已发布过同内容的组在此只更新 admission 维度（generation+1）。
         // YUK-1045 — suspension:false 清 verify_hold（同版复核通过 ⇒ 幂等恢复，
         // §3.3 表「同版复核通过」行）；retraction_hold 不属本票接线，publisher 恒保留。
-        await publishQuestionGroupFromRow(tx, {
-          rootId: row.parent_question_id ?? questionId,
-          admission: {
-            state: SCORING_ADMISSION_STATE.ADMITTED,
-            evidence: {
-              marking_provenance: MARKING_RULE_PROVENANCE.OFFICIAL,
-              verification: {
-                structural_check_passed: true,
-                independent_verification: null,
-                note: `source_verify tier-2 checks passed (${checks.length})`,
+        const groupRootId = row.parent_question_id ?? questionId;
+        {
+          const [lifecycle] = await tx
+            .select()
+            .from(question_group_lifecycle)
+            .where(eq(question_group_lifecycle.group_id, groupRootId))
+            .for('update')
+            .limit(1);
+          if (
+            lifecycle != null &&
+            lifecycle.scoring_admission_state === SCORING_ADMISSION_STATE.ADMITTED &&
+            lifecycle.current_revision_id != null
+          ) {
+            const [c1Passed] = await tx
+              .select({
+                evidence: question_admission_verification.evidence,
+                revisionDigest: question_admission_verification.revision_digest,
+              })
+              .from(question_admission_verification)
+              .where(
+                and(
+                  eq(question_admission_verification.revision_id, lifecycle.current_revision_id),
+                  inArray(question_admission_verification.policy_id, [
+                    ...QUESTION_ADMISSION_POLICY_IDS,
+                    resolveQuestionAdmissionPolicyId(),
+                  ]),
+                  eq(question_admission_verification.outcome, 'passed'),
+                ),
+              )
+              .orderBy(desc(question_admission_verification.recorded_at))
+              .limit(1);
+            const recordedBaseDigest =
+              c1Passed != null
+                ? ((c1Passed.evidence as Record<string, unknown> | null)?.base_contract_digest ??
+                  null)
+                : null;
+            if (c1Passed != null) {
+              const [publishedRevision] = await tx
+                .select({ integrity_digest: question_revision.integrity_digest })
+                .from(question_revision)
+                .where(eq(question_revision.revision_id, lifecycle.current_revision_id))
+                .limit(1);
+              // YUK-1547 — after a resolved-contract publication the receipt's
+              // evidence.base_contract_digest is the paid INPUT digest, not the
+              // published digest. The authoritative binding is the row's own
+              // revision_digest (publisher-written = the revision it verified);
+              // the legacy base-contract match stays for rows whose verified
+              // base IS the published document.
+              const boundToCurrent =
+                publishedRevision != null &&
+                (c1Passed.revisionDigest === publishedRevision.integrity_digest ||
+                  publishedRevision.integrity_digest === recordedBaseDigest);
+              if (boundToCurrent) {
+                keptIndependentAdmissionRevisionId = lifecycle.current_revision_id;
+                // verify_hold 角：跳过发布会丢掉旧分支 suspension:{suspended:false}
+                // 的清挂起效果。C1 admitted 的发布本已清 verify_hold；若此刻仍挂
+                // verify_hold（跨 lane 再挂起），经 publisher 既有 dimension-only
+                // 路径清除（digest 不变 ⇒ admission_updated，不铸新 revision），
+                // admission 状态与证据原样保留（显式回传当前 admitted 维度）。
+                if (
+                  lifecycle.suspended === true &&
+                  lifecycle.suspension_reason === SUSPENSION_REASON.VERIFY_HOLD
+                ) {
+                  const currentRevision = (
+                    await tx
+                      .select()
+                      .from(question_revision)
+                      .where(eq(question_revision.revision_id, lifecycle.current_revision_id))
+                      .limit(1)
+                  )[0];
+                  if (currentRevision == null) {
+                    throw new Error(
+                      `source_verify: current revision '${lifecycle.current_revision_id}' missing for group '${groupRootId}'`,
+                    );
+                  }
+                  const cleared = await publishQuestionGroup(tx, {
+                    group_id: groupRootId,
+                    contract: {
+                      structure: currentRevision.structure,
+                      response_spec: currentRevision.response_spec,
+                      scoring_basis: currentRevision.scoring_basis,
+                      execution_plan: currentRevision.execution_plan,
+                      ...(currentRevision.presentation != null
+                        ? { presentation: currentRevision.presentation }
+                        : {}),
+                      integrity_digest: currentRevision.integrity_digest,
+                    },
+                    expectedCurrentRevision: currentRevision.revision_id,
+                    expectedAdmissionGeneration: lifecycle.scoring_admission_generation,
+                    availability: lifecycle.availability,
+                    admission: {
+                      state: 'admitted',
+                      evidence: lifecycle.scoring_admission_evidence ?? null,
+                    },
+                    suspension: { suspended: false },
+                    verification: {
+                      policy_id: 'source_verify@1',
+                      outcome: 'passed',
+                      evidence: {
+                        checks: checks.map((c) => ({ check: c.check, verdict: c.verdict })),
+                        demoted: false,
+                        admission: 'kept_independent_admission',
+                      },
+                    },
+                    actorRef: 'source_verify:promote',
+                    now,
+                  });
+                  if (cleared.status === 'conflict') {
+                    // 锁后读取 ⇒ 不该发生；出现即外部路径越过 seam 写 lifecycle ——
+                    // fail-closed 回滚（同 FromRow 的 conflict 处理）。
+                    throw new Error(
+                      `source_verify: unexpected ${cleared.reason} conflict clearing verify_hold for group '${groupRootId}'`,
+                    );
+                  }
+                }
+              }
+            }
+          }
+        }
+        if (keptIndependentAdmissionRevisionId == null) {
+          await publishQuestionGroupFromRow(tx, {
+            rootId: groupRootId,
+            admission: {
+              state: SCORING_ADMISSION_STATE.WITHHELD,
+              reason: SCORING_ADMISSION_WITHHELD_REASON.UNVERIFIED_RULES,
+            },
+            suspension: { suspended: false },
+            verification: {
+              policy_id: 'source_verify@1',
+              outcome: 'passed',
+              evidence: {
+                checks: checks.map((c) => ({ check: c.check, verdict: c.verdict })),
+                demoted: false,
               },
-              model_slice: null,
             },
-          },
-          suspension: { suspended: false },
-          verification: {
-            policy_id: 'source_verify@1',
-            outcome: 'passed',
-            evidence: {
-              checks: checks.map((c) => ({ check: c.check, verdict: c.verdict })),
-              demoted: false,
-            },
-          },
-          availability: QUESTION_AVAILABILITY.GENERAL_POOL,
-          actorRef: 'source_verify:promote',
-          now,
-        });
+            availability: QUESTION_AVAILABILITY.GENERAL_POOL,
+            actorRef: 'source_verify:promote',
+            now,
+          });
+        }
       } else {
         // ---- YUK-479 — auto-promote one-way gate fix: demote a pre-promoted draft on FAIL. ----
         // The cold-start image-upload path (image-candidate-accept.ts) PRE-PROMOTES a
@@ -862,6 +1096,25 @@ export async function runSourceVerify(
         }
       }
 
+      // YUK-1514 — close the recheck paid-attempt claim IN THE SAME tx as the
+      // terminal event + publish: a delivery that gets here is the one that
+      // paid, and the claim reaching 'applied' is the durable proof no later
+      // redelivery may re-pay.
+      if (recheckClaim != null) {
+        await recordPaidEffectResult(
+          tx,
+          recheckClaim.identity,
+          recheckClaim.deliveryId,
+          { status: promote ? 'verified' : 'failed', checks: checks.length },
+          { fence: recheckClaim.fence },
+        );
+        await recordPaidEffectApplication(tx, recheckClaim.identity, {
+          question_id: questionId,
+          command_event_id: params.recheckCommandEventId,
+          status: promote ? 'verified' : 'failed',
+        });
+      }
+
       await writeEvent(tx, {
         id: verifyEventId,
         session_id: null,
@@ -875,6 +1128,20 @@ export async function runSourceVerify(
           question_id: questionId,
           tier: 2,
           promoted: promote,
+          // YUK-1514 — marks this terminal run as the paid attempt of an owner
+          // recheck command; the terminal-event guard is claim-scoped on it.
+          ...(params.recheckCommandEventId != null
+            ? { recheck_command_event_id: params.recheckCommandEventId }
+            : {}),
+          // YUK-1507 — C1 先行独立准入命中：本次 success 未重发（未把 admitted
+          // 降回 withheld，也未把行归一 base 重铸到 C1 的 resolved revision 上）。
+          // 只记保留的 revision id，不记任何原文内容。
+          ...(keptIndependentAdmissionRevisionId != null
+            ? {
+                admission: 'kept_independent_admission',
+                kept_revision_id: keptIndependentAdmissionRevisionId,
+              }
+            : {}),
           // YUK-479 — true when this FAIL demoted a cold-start pre-promoted draft
           // (draft_status active→draft); false on a normal draft FAIL (no-op) and on promote.
           demoted: wasDemoted,
@@ -949,6 +1216,9 @@ export async function runSourceVerify(
         outcome: 'error',
         payload: {
           question_id: questionId,
+          ...(params.recheckCommandEventId != null
+            ? { recheck_command_event_id: params.recheckCommandEventId }
+            : {}),
           // YUK-350 (B5 increment C) — unified verify contract shape via the system_error
           // projection: { axes:[], overall:'error', failure_class:'system_error',
           // summary_md, confidence:0 }. failure_class is byte-identical to the prior
@@ -972,6 +1242,25 @@ export async function runSourceVerify(
     } catch (cleanupErr) {
       console.error('[source_verify] catch-block cleanup failed for', questionId, cleanupErr);
     }
+    // YUK-1514 — the recheck claim reached 'sending' but the run threw: the paid
+    // call may or may not have happened, so the honest terminal state for THIS
+    // attempt is 'unknown' — never re-paid under this command event (a later
+    // command needs a new key → a new claim identity).
+    if (recheckClaim != null) {
+      try {
+        await db.transaction(async (tx) => {
+          await markPaidEffectUnknown(
+            tx,
+            recheckClaim.identity,
+            recheckClaim.deliveryId,
+            `source_verify threw: ${String((err as Error).message ?? err)}`,
+            { fence: recheckClaim.fence },
+          );
+        });
+      } catch (markErr) {
+        console.error('[source_verify] recheck claim mark-unknown failed', questionId, markErr);
+      }
+    }
     throw err;
   }
 }
@@ -988,8 +1277,16 @@ export function buildSourceVerifyHandler(
         console.warn('[source_verify] job missing question_ids', job.id);
         continue;
       }
+      const recheckCommandEventId = job.data?.recheck?.command_event_id;
       for (const questionId of questionIds) {
-        const result = await runSourceVerify({ db, questionId, runTaskFn });
+        const result = await runSourceVerify({
+          db,
+          questionId,
+          runTaskFn,
+          ...(recheckCommandEventId != null
+            ? { recheckCommandEventId, recheckDeliveryId: job.id }
+            : {}),
+        });
         console.log(`[source_verify] ${questionId} -> ${result.status}`);
       }
     }

@@ -75,15 +75,23 @@ export const PROPOSE_WRITE_TOOLS = [
   // the Failure Learning variant / record→question propose paths and (ADR-0031
   // lane B) the knowledge|material draft-question generation.
   'author_question',
-  // YUK-195 — agent-callable question structure-edit write tools. Operate on the
-  // pre-import draft layer (question_block.structured + figures); only the
-  // `ingestion_block_edit` surface below grants them.
+  // YUK-1468 — 统一题目编辑/提交面（schema-v2 草稿文档 + ops/CAS/幂等 +
+  // validate/probe）。copilot 面 save 自动落 question_edit proposal。
+  'edit_question',
+  'submit_question',
+  // YUK-1468 — 六个窄薄壳与窄 propose 工具【仍在 inventory（manifest 注册、
+  // DomainToolName 合法）但无任何 surface 授权】：下方各 surface 数组均不
+  // 授它们，模块与测试随 owner 批准后的独立删除 PR 清理。
   'update_prompt',
   'add_option',
   'set_question_type',
   'split_stem',
   'merge_questions',
   'reassign_figure',
+  'propose_question_edit',
+  // store_sourced_question 已由 submit_question 接管，工具名退出 inventory
+  // （plan-executor/测试 import 的是 compat 模块的 executeStoreSourcedQuestion
+  // 函数，不解析工具名）；manifest 不再注册、无 surface 授权。
   // YUK-1497 (K5) — presentation composition tool; same containment as the six
   // draft-edit tools above (writes ONE jsonb-internal key of the draft container).
   'compose_presentation',
@@ -99,19 +107,9 @@ export const PROPOSE_WRITE_TOOLS = [
   // only.
   'author_artifact',
   'update_artifact',
-  // ADR-0032 D6-B (YUK-203 lane L6) — propose a narrow, typed node edit to an
-  // ACTIVE question's structured tree (proposal-only; accept applies it behind a
-  // mini verify gate, reversibly). Granted to the copilot surfaces (copilot is
-  // user-driven — editing pooled questions in-conversation is a copilot
-  // capability).
-  'propose_question_edit',
   // YUK-293 — direct write to the expiring AI hint channel (not learner data,
   // not an inbox proposal). Surface grants remain narrow below.
   'write_agent_note',
-  // YUK-986 (Supply-Agent/1) — unified sourced-question commit seam (dedup/verify
-  // authoritative server-side). E1: NO surface grant — server-side executors
-  // (jyeoo:backfill CLI now; supply-executor agent in E3) invoke it directly.
-  'store_sourced_question',
   // YUK-1404 (B2/R3–R5) — ingestion media tools. crop/rotate mint derived
   // source_asset rows; glm_ocr is a paid provider call (attempt-accounted).
   // Granted ONLY on the `ingestion` surface below.
@@ -123,6 +121,12 @@ export const PROPOSE_WRITE_TOOLS = [
   // 仅 copilot（COPILOT_TOOLS）；supply_planner 保持只读挂载；不进 Maintenance
   // （备题/供给域写工具，非运维面）。
   'file_bank_gap',
+  // YUK-1522 (R8) — ingestion agent contract tools. report_ingestion_progress
+  // writes the durable stage/item/error event stream; ask_learner creates and
+  // polls durable learner asks (never blocks). Granted ONLY on the `ingestion`
+  // surface below.
+  'report_ingestion_progress',
+  'ask_learner',
 ] as const;
 
 // YUK-949 — model-authored presentation intent. This is neither a data read nor
@@ -240,13 +244,10 @@ export const COPILOT_TOOLS = [
   // surface gets them.
   'author_artifact',
   'update_artifact',
-  // ADR-0032 D6-B (YUK-203 lane L6) — propose a narrow, typed structured node edit
-  // to an ACTIVE question. effect='propose' (proposal-only; accept applies behind
-  // a mini verify gate, reversibly). The copilot is the user-driven editor of
-  // pooled questions in-conversation, so this lives on the copilot base (the chip
-  // surface inherits via the [...COPILOT_TOOLS, …] spread). No other surface gets
-  // it — operator/planner surfaces do not edit active question structure.
-  'propose_question_edit',
+  // YUK-1468 — Copilot 编辑面：edit_question（ops/document/validate/probe）。
+  // copilot 调 save 时工具按 caller surface 自动落 question_edit proposal
+  // （accept applier 走同一 ops → submit gate）；validate/probe 直出。
+  'edit_question',
   'read_agent_notes',
   'write_agent_note',
 ] as const satisfies readonly DomainToolName[];
@@ -367,31 +368,38 @@ const INGESTION_BLOCK_EDIT_TOOLS = [
   'get_question_context',
   // ADR-0032 D6-draftread (YUK-203 lane L5) — the draft-layer structure reader.
   // Lets the edit agent read the block by node-id (the same coordinate system the
-  // 6 write tools below address) before mutating it. Draft-only; no other surface
+  // edit ops below address) before mutating it. Draft-only; no other surface
   // grants it.
   'get_question_block_structure',
   'query_events',
-  'update_prompt',
-  'add_option',
-  'set_question_type',
-  'split_stem',
-  'merge_questions',
-  'reassign_figure',
+  // YUK-1468 — 统一编辑/提交面（六个窄薄壳已并入；draft ops 写 + submit 闸）。
+  'edit_question',
+  'submit_question',
   // YUK-1497 (K5) — compose_presentation；与上述写工具同面（草稿层），
   // 别的面不授。
   'compose_presentation',
 ] as const satisfies readonly DomainToolName[];
 
-// YUK-1404 (B2/R2–R5) — the ingestion extraction-agent surface: exactly the
-// five shared source-package tools. Scoping INSIDE the tools (ctx.scope) pins
-// reads/writes to the calling session's own package; this list is the only
-// place they are granted.
+// YUK-1404 (B2/R2–R5) — the ingestion extraction-agent surface. Scoping INSIDE
+// the tools (ctx.scope) pins reads/writes to the calling session's own package;
+// this list is the only place they are granted.
+//
+// YUK-1522 (R8) — the R8 agent additionally gets the unified draft lane
+// (edit_question / compose_presentation / submit_question — the same write
+// path as ingestion_block_edit, still withheld-pending-admission) and its two
+// contract tools (progress + durable asks). No bank/record tools.
 const INGESTION_TOOLS = [
   'read_source',
   'view_image',
   'crop_image',
   'rotate_image',
   'glm_ocr',
+  'get_question_block_structure',
+  'edit_question',
+  'compose_presentation',
+  'submit_question',
+  'report_ingestion_progress',
+  'ask_learner',
 ] as const satisfies readonly DomainToolName[];
 
 export const DOMAIN_TOOL_ALLOWLISTS = {

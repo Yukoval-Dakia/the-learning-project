@@ -45,6 +45,8 @@ export type ProviderWireFinding = {
     | 'glm-ocr-layout-parsing-fetch'
     | 'mem0-model-bearing-operation'
     | 'xiaomi-vision-preflight-sdk'
+    | 'question-admission-preflight-fetch'
+    | 'question-admission-reopen-preflight-fetch'
     | 'tencent-question-mark-agent-sdk'
     | 'unclassified-provider-fetch';
   readonly call: string;
@@ -735,6 +737,12 @@ function findingsFor(path: string, code: string, facts: SourceFacts): ProviderWi
       return [{ kind: 'tencent-question-mark-agent-sdk', call, path }];
     }
     if (call !== 'fetch' && call !== 'fetchImpl') return [];
+    if (path === 'scripts/yuk1537-admission-reopen.ts' && code.includes('/chat/completions')) {
+      return [{ kind: 'question-admission-preflight-fetch', call, path }];
+    }
+    if (path === 'scripts/yuk1547-admission-reopen.ts' && code.includes('/chat/completions')) {
+      return [{ kind: 'question-admission-reopen-preflight-fetch', call, path }];
+    }
     if (code.includes('/embeddings')) return [{ kind: 'dashscope-embedding-fetch', call, path }];
     if (code.includes('judgeEdgeReconcile') && code.includes('/chat/completions')) {
       return [{ kind: 'glm-edge-reconcile-fetch', call, path }];
@@ -744,6 +752,16 @@ function findingsFor(path: string, code: string, facts: SourceFacts): ProviderWi
     }
     if (code.includes('layout_parsing'))
       return [{ kind: 'glm-ocr-layout-parsing-fetch', call, path }];
+    // Public models.dev document (YUK-1563). No credential and no model call.
+    // The split drops the exemption if a second fetch( appears in the file.
+    if (
+      call === 'fetch' &&
+      path === 'src/server/ai/model-catalog.ts' &&
+      code.includes('https://models.dev/api.json') &&
+      code.split('fetch(').length === 2
+    ) {
+      return [];
+    }
     return [{ kind: 'unclassified-provider-fetch', call, path }];
   });
 }
@@ -1002,6 +1020,8 @@ function laneForFinding(kind: ProviderWireFinding['kind']): string | undefined {
     'glm-ocr-layout-parsing-fetch': 'glm.ocr-layout-parsing',
     'mem0-model-bearing-operation': 'mem0.event-memory',
     'xiaomi-vision-preflight-sdk': 'xiaomi.vision-preflight',
+    'question-admission-preflight-fetch': 'xiaomi.question-admission-preflight',
+    'question-admission-reopen-preflight-fetch': 'xiaomi.question-admission-reopen-preflight',
     'tencent-question-mark-agent-sdk': 'tencent.question-mark-agent',
   } as const;
   return kind === 'unclassified-provider-fetch' ? undefined : ids[kind];

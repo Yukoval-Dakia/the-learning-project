@@ -15,3 +15,5 @@ export const loadQuestionsPage = () =>
   import('./ui/QuestionsPage').then((module) => module.default);
 export const loadQuestionDetailPage = () =>
   import('./ui/QuestionDetailPage').then((module) => module.default);
+export const loadWorksheetPrintPage = () =>
+  import('./ui/worksheet/WorksheetPrintPage').then((module) => module.default);

@@ -16,6 +16,8 @@
 //   • 变体家族 ←→ family.members（root + variants，is_self 标当前）。
 //   • composite 小题 ←→ parts（part_index 序）；parent 面包屑 ←→ parent_question_id +
 //     part_index。
+//   • 暂不出题（YUK-1514）←→ serving：顶部 Badge 标原因，紧接一条白话说明 + 等待时长 +
+//     next_action 给的唯一按钮（共用 ServingHold.tsx）。
 //   • 关联状态 ←→ timeline（attempt/review 事件）+ backlinks（卷引用 artifact）+
 //     scheduling（FSRS due）。删除约束计数 ←→ DELETE 409 的 associations（attempts/
 //     mistakes/fsrs_cards/paper_refs/children）。
@@ -38,6 +40,7 @@ import { formatCnDateOnly } from '@/ui/lib/utils';
 import { Badge, type BadgeTone } from '@/ui/primitives/Badge';
 import { Btn } from '@/ui/primitives/Btn';
 import { Card } from '@/ui/primitives/Card';
+import { CollapsibleList } from '@/ui/primitives/CollapsibleList';
 import { EmptyState } from '@/ui/primitives/EmptyState';
 import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
 import { SkLines } from '@/ui/primitives/SkLines';
@@ -53,6 +56,7 @@ import {
   getQuestionKnowledgeOptions,
   patchQuestion,
 } from './practice-api';
+import { ServingHoldBadge, ServingHoldPanel } from './ServingHold';
 
 // ── 映射（对照 QuestionsPage / data-questions.jsx，用真 enum）─────────────────
 type Tone = 'neutral' | 'info' | 'coral' | 'good' | 'hard' | 'again';
@@ -791,6 +795,7 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
         <div className="page-head-row">
           <div className="qd-head-meta">
             <Badge tone={status.tone}>{status.label}</Badge>
+            <ServingHoldBadge serving={data.serving} />
             {isComposite && (
               <Badge tone="info">
                 <LoomIcon name="layers" size={12} />
@@ -829,6 +834,19 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
           </div>
         </div>
       </div>
+
+      {/* 暂不出题：白话原因 + 等待时长 + next_action 给的唯一操作（能出题时不渲染）。 */}
+      <ServingHoldPanel
+        key={data.id}
+        questionId={data.id}
+        serving={data.serving}
+        nowMs={detailQ.dataUpdatedAt}
+        onOpenRetraction={() =>
+          document
+            .getElementById('qd-danger-section')
+            ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        }
+      />
 
       {/* 别处有了更新的版本，而这里有未保存的修改：不覆盖，让用户选。 */}
       <div aria-live="polite">
@@ -1259,14 +1277,17 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
               </div>
             </div>
             {data.backlinks.length > 0 && (
-              <div className="qd-paperlist">
-                {data.backlinks.map((p) => (
+              <CollapsibleList
+                as="div"
+                className="qd-paperlist"
+                items={data.backlinks}
+                renderItem={(p) => (
                   <div key={p.artifact_id} className="qd-paperrow">
                     <LoomIcon name="doc" size={13} />
                     {p.title}
                   </div>
-                ))}
-              </div>
+                )}
+              />
             )}
             {/* scheduling：每知识点 FSRS due（detail 聚合）；有则展示最近 due。 */}
             {data.scheduling.per_knowledge.some((pk) => pk.due_at_sec != null) && (
@@ -1295,7 +1316,7 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
             )}
           </Card>
 
-          <div className="qd-sec-h qd-side-heading qd-danger-heading">
+          <div id="qd-danger-section" className="qd-sec-h qd-side-heading qd-danger-heading">
             <LoomIcon name="trash" size={14} />
             删除
           </div>

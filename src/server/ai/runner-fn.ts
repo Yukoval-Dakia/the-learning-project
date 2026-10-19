@@ -43,6 +43,13 @@ export function makeRunTaskTextFn(db: Db, baseCtx: RunTaskCallCtx = {}): BoundRu
       cost_basis: result.cost_basis,
       cost_ref: result.cost_ref,
       structured_output: result.structured_output,
+      ...(result.phases ? { phases: result.phases } : {}),
     };
   };
 }
+
+// YUK-1522 (R8 R1) — the run-outcome failure vocabulary is intentionally NOT
+// re-exported here: agent-run-error/provider-* pull `providers` → the task
+// catalog → the schema barrel into runner-fn's import cone, which creates a
+// vitest-visible cycle through core/schema/generated ↔ db/schema. Callers
+// import the error modules directly.

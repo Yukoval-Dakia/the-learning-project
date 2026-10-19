@@ -22,6 +22,7 @@ import {
 } from './laminar-tracing';
 import {
   type AiTaskUsage,
+  type NoteGeneratePhaseTimings,
   writeAiTaskAttemptFinished,
   writeAiTaskRunRetried,
   writeAiTaskRunStarted,
@@ -32,6 +33,7 @@ import {
   assertModelProfileCapabilityFit,
   resolveModelProfile,
 } from './model-profiles';
+import { piCatalogCostUsd } from './pi-catalog-cost';
 import type { TokenCounts } from './pricing';
 import {
   ProviderSessionAdmissionError,
@@ -41,6 +43,7 @@ import {
 } from './provider-session-admission';
 import { type ResolvedProvider, hasGlobalProviderOverride, resolveTaskProvider } from './providers';
 import { taskInputHash } from './task-input-hash';
+import { estimateAbortedUsage } from './timeout-usage';
 
 export type LifecycleUsage = AiTaskUsage;
 
@@ -69,7 +72,10 @@ export interface TerminalResultEvidence {
 export type ObservedRunUsage = Pick<
   TerminalResultEvidence,
   'usage' | 'tokenCounts' | 'tokenUsageObserved' | 'costUsd'
->;
+> & {
+  /** Set when tokens and any catalog USD came from an aborted stream, not a final usage payload. */
+  priceOrigin?: 'timeout-estimate';
+};
 
 interface LifecycleConfig<TResult extends LifecycleResult> {
   db: Db;
@@ -191,6 +197,7 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
   private durableStart = false;
   private trace: TraceSpan | undefined;
   private traceOutcome: 'success' | 'error' | 'cancelled' | 'not_started' = 'not_started';
+  private notePhases: NoteGeneratePhaseTimings | undefined;
 
   withTracing<T>(callback: () => T): T {
     if (!isLaminarTracingEnabled()) return callback();
@@ -245,7 +252,58 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
   }
 
   get usage(): LifecycleUsage {
-    return this.terminal?.usage ?? this.observedUsage?.usage ?? { inputTokens: 0, outputTokens: 0 };
+    const base = this.terminal?.usage ??
+      this.observedUsage?.usage ?? { inputTokens: 0, outputTokens: 0 };
+    if (!this.notePhases) return base;
+    return { ...base, phases: { ...this.notePhases } };
+  }
+
+  /** Long-note phase timings. Other task kinds ignore the call. */
+  recordNotePhases(patch: NoteGeneratePhaseTimings): void {
+    if (this.kind !== 'NoteGenerateTask') return;
+    this.notePhases = { ...this.notePhases, ...patch };
+  }
+
+  /**
+   * Budget abort with no positive provider usage. Persist a non-zero estimate
+   * so the attempt row cannot claim the call was free.
+   */
+  async recordAbortedUsage(input: {
+    promptText: string;
+    output: Parameters<typeof estimateAbortedUsage>[1];
+  }): Promise<void> {
+    if (this.terminal) return;
+    const observed = this.observedUsage;
+    if (
+      observed?.tokenUsageObserved === true &&
+      (observed.usage.inputTokens > 0 || observed.usage.outputTokens > 0)
+    ) {
+      return;
+    }
+    const estimate = estimateAbortedUsage(input.promptText, input.output);
+    const provider = this.resolved.provider;
+    let catalogCost: number | undefined;
+    if (provider === 'opencode-go' || provider === 'openai' || provider === 'xiaomi-token-plan') {
+      const priced = await piCatalogCostUsd(provider, this.resolved.model, estimate).catch(
+        () => null,
+      );
+      if (priced !== null) catalogCost = priced;
+    }
+    this.observedUsage = {
+      tokenUsageObserved: true,
+      priceOrigin: 'timeout-estimate',
+      usage: {
+        inputTokens: estimate.inputTokens,
+        outputTokens: estimate.outputTokens,
+        usage_basis: 'estimated',
+      },
+      tokenCounts: {
+        inputTokens: estimate.inputTokens,
+        outputTokens: estimate.outputTokens,
+      },
+      ...(catalogCost !== undefined ? { costUsd: catalogCost } : {}),
+    };
+    this.costTruthCache = undefined;
   }
 
   get tokenCounts(): TokenCounts {
@@ -265,6 +323,7 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
             tokens: evidence.tokenCounts,
             tokensObserved: evidence.tokenUsageObserved,
             reportedCostUsd: evidence.costUsd,
+            priceOrigin: 'priceOrigin' in evidence ? evidence.priceOrigin : undefined,
           })
         : unknownAttemptCostTruth(this.resolved.provider, this.resolved.model);
     }
@@ -488,6 +547,12 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
         model: this.resolved.model,
         profile_source: this.modelProfile.source,
         reasoning_effort: this.config.modelBinding?.effort ?? declaredDef.reasoningEffort ?? null,
+        // YUK-1547 — per-task model-native reasoning params resolved from
+        // task.<kind>.reasoning (verbatim wire passthrough; null = none).
+        native_reasoning_params: this.resolved.nativeReasoningParams ?? null,
+        // YUK-1547 — which config layer produced this binding, frozen at
+        // resolution (opt-in task pair / global pin / call override / …).
+        selection_rule: this.resolved.selectionRule ?? null,
         // YUK-921 §2.1 — adapter selection stays observable on the run record.
         // Post-P4 (YUK-1025) 'pi' is the only legal adapter id; YUK-1049 typed
         // tasks report 'typed' — their transport is the decisions endpoint,
@@ -535,6 +600,9 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
   async recordToolCall(input: {
     toolName: string;
     inputJson: Record<string, unknown>;
+    outputJson?: Record<string, unknown>;
+    /** YUK-1547 — structured-submit evidence on a failed call. */
+    errorReason?: string;
     iteration: number;
     latencyMs: number;
   }): Promise<void> {
@@ -544,7 +612,8 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
         task_kind: this.kind,
         tool_name: input.toolName,
         input_json: input.inputJson,
-        output_json: {},
+        output_json: input.outputJson ?? {},
+        error_reason: input.errorReason,
         iteration: input.iteration,
         latency_ms: input.latencyMs,
         cost: 0,
@@ -705,6 +774,15 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
     if (this.terminalWriteAttempts.size > 0 && input.status !== 'failure') return false;
     this.terminalWriteAttempts.add(input.status);
     this.terminalWriteInFlight = true;
+    if (this.notePhases) {
+      console.info(`[${this.config.logScope}] note_generate_model_phases`, {
+        event: 'note_generate_model_phases',
+        task_run_id: this.taskRunId,
+        kind: this.kind,
+        phases: this.notePhases,
+        usage_basis: this.usage.usage_basis ?? 'reported',
+      });
+    }
     try {
       const settled = await writeAiTaskAttemptFinished(this.config.db, {
         id: this.taskRunId,

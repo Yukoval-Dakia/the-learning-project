@@ -21,6 +21,7 @@ vi.mock('@/server/ai/log', () => ({
 }));
 
 import type { ModelExecutorRequest, ScoringUnitT, SlotResponseT } from '@/core/schema/assessment';
+import { ScoringUnit } from '@/core/schema/assessment';
 import { createJevModelExecutor } from './jev-model-executor';
 
 const DEADLINE = Date.now() + 60_000;
@@ -225,6 +226,78 @@ describe('createJevModelExecutor — Jev lane', () => {
     expect(
       out.kind === 'scored' && 'confidence' in out ? out.confidence : undefined,
     ).toBeUndefined();
+  });
+
+  // @invariant grading: a paid Jev pending (undecidable or a rule that declares the points unknown) keeps that call's run id and cost
+  // @fails-if drop run_refs or cost_usd_micros on the pending returns inside interpretAnswer; two paid calls would settle as one
+  it('keeps the run id and cost when a paid blank verdict stays pending', async () => {
+    const pointsRule = {
+      version: 1 as const,
+      cases: [{ when: { correct: { eq: 1 } }, award: { points: 2 } }],
+      otherwise: { points: 0 },
+    };
+    const unknownRule = {
+      version: 1 as const,
+      cases: [
+        {
+          when: { correct: { eq: 1 } },
+          award: { unknown: 'partial_points_not_printed' as const },
+        },
+      ],
+      otherwise: { points: 0 },
+    };
+    const blankRequest = (rule: typeof pointsRule | typeof unknownRule) =>
+      request({
+        unit: ScoringUnit.parse({
+          scoring_unit_id: 'u1',
+          slot_refs: ['s1'],
+          criterion: {
+            kind: 'blank_key',
+            key: {
+              kind: 'text',
+              accepted: ['4'],
+              normalization: { version: 'blank-norm-v1' },
+              equivalence: { domain_md: 'algebraic value', meaning_md: 'the same number' },
+            },
+          },
+          points: 2,
+          rule,
+        }),
+        response_slots: [{ slot_id: 's1', part_id: 'p1', kind: 'blank', format: 'text' }],
+        slot_responses: [{ slot_id: 's1', kind: 'blank', state: 'answered', text: 'four' }],
+      });
+    const cost = Math.round(4.2e-6 * 1_000_000);
+    for (const example of [
+      {
+        rule: pointsRule,
+        choice: 'undecidable',
+        detail: 'equivalence_undecidable',
+      },
+      {
+        rule: unknownRule,
+        choice: 'equivalent',
+        detail: 'partial_points_not_printed',
+      },
+    ]) {
+      const fetchImpl = vi.fn(async () =>
+        responseJson({
+          model: 'typesafe/jev-1.13-20260917',
+          provider: 'TypeSafe',
+          answers: { u1: { type: 'choice', choice: example.choice } },
+          usage: { input_tokens: 80, output_tokens: 6, cost: 4.2e-6 },
+        }),
+      ) as unknown as typeof fetch;
+      const out = await createJevModelExecutor(executorOptions({ fetchImpl }))(
+        blankRequest(example.rule),
+      );
+      expect(out).toMatchObject({
+        kind: 'pending',
+        pending: { detail: expect.stringContaining(example.detail) },
+        cost_usd_micros: cost,
+      });
+      expect(out.run_refs).toHaveLength(1);
+      expect(out.run_refs[0]).toBeTruthy();
+    }
   });
 
   // @invariant grading: the durable judge transport issues exactly one real typed request — a controlled 503 returns a pending outcome with no lifecycle retry

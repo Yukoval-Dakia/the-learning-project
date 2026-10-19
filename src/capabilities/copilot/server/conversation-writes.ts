@@ -161,27 +161,28 @@ export async function writeCopilotReply(
   },
 ): Promise<WriteCopilotReplyResult> {
   const write = params.writeFn ?? writeEvent;
-  if (params.preparedReply && params.preparedReply.text !== params.replyText) {
-    throw new Error('prepared copilot reply bytes do not match replyText');
-  }
-  // Verify the incoming seal before applying the commit-owned storage policy.
-  // Model normalization is already complete; legacy callers only strip markers.
-  // The product policy reseals its own final bytes below, never a stale digest.
   const prepared =
-    params.preparedReply ??
-    ({
-      text: extractPrimaryView(params.replyText, {
-        taskRunId: params.taskRunId,
-      }).text,
-    } satisfies PreparedCopilotReply);
-  if (
-    params.replyFinalization &&
-    params.replyFinalization.reply_sha256 !==
-      createHash('sha256').update(prepared.text, 'utf8').digest('hex')
-  ) {
-    throw new Error('copilot reply finalization digest does not match persisted bytes');
+    params.preparedReply?.text === params.replyText
+      ? params.preparedReply
+      : {
+          text: extractPrimaryView(params.replyText, {
+            taskRunId: params.taskRunId,
+          }).text,
+        };
+  const persistedDigest = createHash('sha256').update(prepared.text, 'utf8').digest('hex');
+  const receiptMatches = params.replyFinalization?.reply_sha256 === persistedDigest;
+  if (params.replyFinalization && !receiptMatches) {
+    console.warn('[writeCopilotReply] dropped finalization receipt', {
+      run_id: params.userAskEventId ?? params.taskRunId,
+      task_run_id: params.taskRunId,
+      reason:
+        params.preparedReply?.text === params.replyText
+          ? 'digest_does_not_match_prepared_text'
+          : 'prepared_text_does_not_match_reply_text',
+    });
   }
-  const sealed = sealCommittedPresentationReply(prepared, params.replyFinalization);
+  const receipt = receiptMatches ? params.replyFinalization : undefined;
+  const sealed = sealCommittedPresentationReply(prepared, receipt);
   const cleanedReply = sealed.preparedReply.text;
   const primaryView = prepared.primaryView;
   // created_at 严格晚于 ask（now + 1ms）：整轮共享一个 now，无偏移则 ask/reply

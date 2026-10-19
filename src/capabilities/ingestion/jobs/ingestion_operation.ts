@@ -28,7 +28,9 @@ function jsonRequest(path: string, body: unknown): Request {
 
 async function executeLegacyOperation(
   sessionId: string,
-  request: Exclude<IngestionOperationRequestParsed, { kind: 'extract' | 'import' }>,
+  // 'agent' is dispatched in the POST handler itself (YUK-1522 R8) — it never
+  // reaches this legacy adapter.
+  request: Exclude<IngestionOperationRequestParsed, { kind: 'extract' | 'import' | 'agent' }>,
 ): Promise<Response> {
   switch (request.kind) {
     case 'make_paper': {
@@ -91,6 +93,24 @@ export function buildIngestionOperationHandler(
           operationId,
           sessionId,
           body: parsed.data.input,
+        });
+        continue;
+      }
+
+      if (parsed.data.kind === 'agent') {
+        // YUK-1522 (R8) — 'agent' is dispatched inline in the POST handler and
+        // has no legacy adapter; a job row for it can only be a stale/foreign
+        // payload, so record honest failure instead of a silent drop.
+        await writeIngestionOperationEvent(db, {
+          operationId,
+          eventType: 'operation.failed',
+          payload: {
+            error: {
+              code: 'invalid_job_payload',
+              message: 'agent operations are dispatched inline, not through ingestion_operation',
+              status: 500,
+            },
+          },
         });
         continue;
       }

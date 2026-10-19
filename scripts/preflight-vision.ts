@@ -10,7 +10,7 @@
  *   XIAOMI_API_KEY, or XIAOMI_TOKEN_PLAN_API_KEY with the Token Plan process pin
  *
  * Optional overrides:
- *   MIMO_VISION_MODEL  (default: mimo-v2.5)
+ *   MIMO_VISION_MODEL  (default: resolved vision-judge task config)
  *   MIMO_VISION_BASE_URL (default: selected Xiaomi lane /anthropic endpoint)
  *
  * Exit codes:
@@ -25,6 +25,8 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { config } from 'dotenv';
+import { resolveTaskBinding } from '../src/server/ai/providers';
+import { visionJudgeProviderOverride } from '../src/server/ai/vision-judge-config';
 import { xiaomiTokenPlanVisionBaseUrl } from '../src/server/ai/xiaomi-token-plan';
 import { preflightVisionOneShot } from './preflight-vision-one-shot';
 
@@ -41,12 +43,21 @@ const baseURL = tokenPlan
   ? xiaomiTokenPlanVisionBaseUrl()
   : (process.env.MIMO_VISION_BASE_URL ?? 'https://api.xiaomimimo.com/anthropic');
 const cliArgModel = process.argv[2];
-const model = tokenPlan
-  ? cliArgModel ||
-    process.env.MIMO_VISION_MODEL?.trim() ||
-    process.env.AI_PROVIDER_MODEL?.trim() ||
-    'mimo-v2.6-pro'
-  : (cliArgModel ?? process.env.MIMO_VISION_MODEL ?? 'mimo-v2.5');
+// YUK-1559 — the default model is the resolved vision-judge task config (env
+// pin > lane.vision_judge override > DB task override > registry default), not
+// a literal. Under a provider pin without a model (e.g. xiaomi-token-plan
+// without AI_PROVIDER_MODEL) the resolution throws the same explicit config
+// error the runner would.
+let resolvedDefaultModel: string;
+try {
+  resolvedDefaultModel = resolveTaskBinding('StepsJudgeTask', visionJudgeProviderOverride()).model;
+} catch (error) {
+  console.error(
+    `FAIL: cannot resolve vision-judge task model: ${error instanceof Error ? error.message : String(error)}`,
+  );
+  process.exit(2);
+}
+const model = cliArgModel ?? process.env.MIMO_VISION_MODEL?.trim() ?? resolvedDefaultModel;
 
 if (!apiKey || apiKey.trim().length === 0) {
   console.error(`FAIL: ${credentialEnv} not set in environment`);

@@ -300,13 +300,27 @@ export interface DomainToolCallOptions {
  * summary → onToolComplete → tool_call_log → tool_use mirror → settle. The pi
  * AgentTool bridge wraps this verbatim via `AgentTool.execute` in
  * pi-tools.ts. Errors never throw — they encode into the returned text
- * payload exactly as the MCP convention requires.
+ * payload exactly as the MCP convention requires, and `isError` carries the
+ * authoritative failure flag (the PhaseResult `ok` bit) so pi can mark the
+ * tool result without parsing the payload text.
  */
+export interface DomainToolCallResult {
+  content: DomainToolResultContent[];
+  /**
+   * True when any pipeline phase failed (input parse, beforeExecute refusal,
+   * interceptInput soft-stop, execute throw, or output-schema violation).
+   * Derived from the phase-tracking `ok` flag — never inferred from the
+   * serialized content — so an error with empty text still marks correctly
+   * and a successful result is never mislabeled.
+   */
+  isError: boolean;
+}
+
 export async function executeDomainToolCall(
   dt: DomainTool<unknown, unknown>,
   rawArgs: unknown,
   opts: DomainToolCallOptions,
-): Promise<{ content: DomainToolResultContent[] }> {
+): Promise<DomainToolCallResult> {
   const declared = readDerivationPolicy({ derivation_policy: opts.ctx.derivationPolicy });
   const sourcePolicy = opts.ctx.causedByEventId
     ? await readEventDerivationPolicy(opts.ctx.db, opts.ctx.causedByEventId)
@@ -868,11 +882,14 @@ function formatToolResponse(
   execution: ExecutionPhase,
   summary: string,
   images: DomainToolResultContent[],
-): { content: DomainToolResultContent[] } {
+): DomainToolCallResult {
   const { correlatedToolUseId } = input;
   const { output, effectContract } = execution;
   const errorReason = errorReasonOf(execution.result);
   return {
+    // YUK-1559 — surface the authoritative phase outcome so engine mounts can
+    // flag the wire-level tool result error instead of inferring it from text.
+    isError: errorReason !== undefined,
     content: [
       {
         type: 'text' as const,

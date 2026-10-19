@@ -799,7 +799,11 @@ export type SubscriptionDispatchCycleResult = {
   lostLease: number;
 };
 
-/** Performs at most one delivery per declared subscriber, with no worker wiring. */
+/**
+ * Drain independent subscriptions concurrently; each retains one lease and one
+ * in-flight handler. Defaults preserve one delivery per subscriber for direct
+ * callers; the production mount opts into a bounded backlog slice.
+ */
 export async function runSubscriptionDispatchCycle(
   db: Db,
   registry: LoadedEventSubscriptionRegistry,
@@ -808,14 +812,18 @@ export async function runSubscriptionDispatchCycle(
     maxAttempts: number;
     handlerTimeoutMs?: number;
     retryDelaySeconds?: number;
+    maxDeliveriesPerSubscription?: number;
+    /** Stop STARTING claims after this budget; never shorten an active handler's timeout. */
+    maxDispatchMs?: number;
   },
 ): Promise<SubscriptionDispatchCycleResult> {
   assertPositiveInteger(options.maxAttempts, 'maxAttempts');
+  const maxDeliveries = options.maxDeliveriesPerSubscription ?? 1;
+  const maxDispatchMs = options.maxDispatchMs ?? 30_000;
+  assertPositiveInteger(maxDeliveries, 'maxDeliveriesPerSubscription');
+  assertPositiveFinite(maxDispatchMs, 'maxDispatchMs');
   if (options.handlerTimeoutMs !== undefined) {
     assertPositiveFinite(options.handlerTimeoutMs, 'handlerTimeoutMs');
-    // G2 (TdYuS) — a caller-provided timeout must ALSO stay below the lease TTL (the module-load
-    // assertion only covers DEFAULT_HANDLER_TIMEOUT_MS), or a slow handler outlives its lease and a
-    // concurrent worker double-processes the delivery.
     if (options.handlerTimeoutMs >= LEASE_TTL_SECONDS * 1000) {
       throw new Error(
         `event subscription dispatch option 'handlerTimeoutMs' (${options.handlerTimeoutMs}ms) must stay below the lease TTL (${LEASE_TTL_SECONDS}s)`,
@@ -826,91 +834,136 @@ export async function runSubscriptionDispatchCycle(
     assertPositiveFinite(options.retryDelaySeconds, 'retryDelaySeconds');
   }
 
-  const result: SubscriptionDispatchCycleResult = {
-    dispatched: 0,
-    succeeded: 0,
-    skipped: 0,
-    retryScheduled: 0,
-    deadLettered: 0,
-    lostLease: 0,
-  };
-
-  for (const subscription of registry.subscriptions) {
-    // YUK-751 (OCR major): per-subscription error boundary. bootstrapSubscription /
-    // claimSubscriptionLease / discoverSubscriptionDeliveries / claimNextSubscriptionDelivery all
-    // sat outside any catch, so one throwing subscriber (declaration-hash mismatch, DB blip, …)
-    // aborted the WHOLE cycle and starved every other subscriber. Isolate each: log + skip, then the
-    // rest still run. The delivery HANDLER keeps its own inner catch (failSubscriptionDelivery
-    // retry/dead-letter semantics); this boundary is for the infra steps around it.
-    try {
-      const bootstrap = await bootstrapSubscription(db, registry, subscription);
-      // YUK-1055 — 版本 bump 翻译了旧 outstanding：日志留痕（观测面）。
-      if (bootstrap.translated > 0 || bootstrap.superseded > 0) {
-        console.info('[event-subscriptions] bootstrap translated outstanding deliveries', {
-          subscriber: `${subscription.id}@v${subscription.version}`,
-          translated: bootstrap.translated,
-          superseded: bootstrap.superseded,
-        });
-      }
-      const lease = await claimSubscriptionLease(db, registry, subscription, options.owner);
-      if (!lease) continue;
+  // The concurrency bound is the declared registry: at most ONE serial slice
+  // per subscriber, independent of backlog size. Cross-worker serialization is
+  // still enforced by each checkpoint lease; no new driver or parallel delivery.
+  const results = await Promise.all(
+    registry.subscriptions.map(async (subscription) => {
+      const startedAt = performance.now();
+      const result: SubscriptionDispatchCycleResult = {
+        dispatched: 0,
+        succeeded: 0,
+        skipped: 0,
+        retryScheduled: 0,
+        deadLettered: 0,
+        lostLease: 0,
+      };
+      let stoppedBecause = 'lease_unavailable';
+      let firstDeliverySeq: string | null = null;
+      let lastDeliverySeq: string | null = null;
       try {
-        await discoverSubscriptionDeliveries(db, registry, subscription, lease);
-        // G1 (TdS7R) — a long discovery can burn most of the checkpoint lease TTL. Renew it before the
-        // claim + handler so they run against a fresh lease window, not one about to expire (which
-        // would phantom lost_lease AFTER the handler's real side effects). Renewal failure = the lease
-        // is already gone → skip this subscriber (the finally still releases best-effort).
-        if (!(await renewSubscriptionLease(db, lease))) continue;
-        const claim = await claimNextSubscriptionDelivery(db, registry, subscription, lease);
-        if (!claim) continue;
-
-        result.dispatched += 1;
-        try {
-          const outcome = await withTimeout(
-            subscription.handler({
-              subscriberId: subscription.id,
-              subscriberVersion: subscription.version,
-              // Serialize the bigint at the handler boundary (manifest contract is a decimal string).
-              deliverySeq: claim.deliverySeq.toString(),
-              sourceEventId: claim.sourceEventId,
-            }),
-            options.handlerTimeoutMs ?? DEFAULT_HANDLER_TIMEOUT_MS,
-            `event subscription '${subscription.id}@v${subscription.version}' handler exceeded ${options.handlerTimeoutMs ?? DEFAULT_HANDLER_TIMEOUT_MS}ms (below lease TTL) — failing delivery for retry to avoid lease-expiry double-processing`,
-          );
-          if (await completeSubscriptionDelivery(db, claim, outcome)) {
-            if (outcome.status === 'succeeded') result.succeeded += 1;
-            else result.skipped += 1;
-          } else {
-            // Lease lost between claim and the terminal write — a peer took over (Tc4HR).
-            result.lostLease += 1;
-          }
-        } catch (error) {
-          const transition = await failSubscriptionDelivery(db, claim, error, options);
-          if (transition === 'retry_wait') result.retryScheduled += 1;
-          else if (transition === 'dead_letter') result.deadLettered += 1;
-          else result.lostLease += 1; // 'lost_lease'
-        }
-      } finally {
-        // G6 (TdYuW) — a release failure must NEVER mask the handler outcome or surface as the cycle's
-        // error; swallow + log (the lease self-expires at its TTL regardless).
-        try {
-          await releaseSubscriptionLease(db, lease);
-        } catch (releaseErr) {
-          console.error('[event-subscriptions] lease release failed (non-fatal)', {
+        const bootstrap = await bootstrapSubscription(db, registry, subscription);
+        if (bootstrap.translated > 0 || bootstrap.superseded > 0) {
+          console.info('[event-subscriptions] bootstrap translated outstanding deliveries', {
             subscriber: `${subscription.id}@v${subscription.version}`,
-            error: releaseErr,
+            translated: bootstrap.translated,
+            superseded: bootstrap.superseded,
           });
         }
-      }
-    } catch (error) {
-      console.error(
-        '[event-subscriptions] subscription dispatch step failed; skipping subscriber',
-        {
+        const lease = await claimSubscriptionLease(db, registry, subscription, options.owner);
+        if (!lease) return result;
+        try {
+          await discoverSubscriptionDeliveries(db, registry, subscription, lease);
+          stoppedBecause = 'delivery_limit';
+          while (result.dispatched < maxDeliveries) {
+            if (performance.now() - startedAt >= maxDispatchMs) {
+              stoppedBecause = 'time_budget';
+              break;
+            }
+            // Discovery and every earlier handler may consume lease time. Renew
+            // before EACH claim, not just once at the start of the batch.
+            if (!(await renewSubscriptionLease(db, lease))) {
+              stoppedBecause = 'lost_checkpoint_lease';
+              break;
+            }
+            if (performance.now() - startedAt >= maxDispatchMs) {
+              stoppedBecause = 'time_budget';
+              break;
+            }
+            const claim = await claimNextSubscriptionDelivery(db, registry, subscription, lease);
+            if (!claim) {
+              // Includes a not-yet-due retry or another still-leased head. Never
+              // scan around it to manufacture throughput or reorder deliveries.
+              stoppedBecause = 'empty_or_blocked';
+              break;
+            }
+            result.dispatched += 1;
+            firstDeliverySeq ??= claim.deliverySeq.toString();
+            lastDeliverySeq = claim.deliverySeq.toString();
+            try {
+              const outcome = await withTimeout(
+                subscription.handler({
+                  subscriberId: subscription.id,
+                  subscriberVersion: subscription.version,
+                  deliverySeq: claim.deliverySeq.toString(),
+                  sourceEventId: claim.sourceEventId,
+                }),
+                options.handlerTimeoutMs ?? DEFAULT_HANDLER_TIMEOUT_MS,
+                `event subscription '${subscription.id}@v${subscription.version}' handler exceeded ${options.handlerTimeoutMs ?? DEFAULT_HANDLER_TIMEOUT_MS}ms (below lease TTL) — failing delivery for retry to avoid lease-expiry double-processing`,
+              );
+              if (await completeSubscriptionDelivery(db, claim, outcome)) {
+                if (outcome.status === 'succeeded') result.succeeded += 1;
+                else result.skipped += 1;
+              } else {
+                result.lostLease += 1;
+                stoppedBecause = 'lost_delivery_lease';
+                break;
+              }
+            } catch (error) {
+              const transition = await failSubscriptionDelivery(db, claim, error, options);
+              if (transition === 'retry_wait') result.retryScheduled += 1;
+              else if (transition === 'dead_letter') result.deadLettered += 1;
+              else result.lostLease += 1;
+              // Even terminal failure ends this slice: a timed-out handler may
+              // still unwind. Do not immediately start another handler behind it.
+              stoppedBecause = transition;
+              break;
+            }
+          }
+        } finally {
+          try {
+            await releaseSubscriptionLease(db, lease);
+          } catch (releaseErr) {
+            console.error('[event-subscriptions] lease release failed (non-fatal)', {
+              subscriber: `${subscription.id}@v${subscription.version}`,
+              error: releaseErr,
+            });
+          }
+        }
+      } catch (error) {
+        stoppedBecause = 'infrastructure_error';
+        console.error(
+          '[event-subscriptions] subscription dispatch step failed; skipping subscriber',
+          {
+            subscriber: `${subscription.id}@v${subscription.version}`,
+            error,
+          },
+        );
+      } finally {
+        console.info('[event-subscriptions] subscriber dispatch slice', {
           subscriber: `${subscription.id}@v${subscription.version}`,
-          error,
-        },
-      );
-    }
-  }
-  return result;
+          ...result,
+          firstDeliverySeq,
+          lastDeliverySeq,
+          durationMs: Math.round(performance.now() - startedAt),
+          stoppedBecause,
+          maxDeliveries,
+          maxDispatchMs,
+        });
+      }
+      return result;
+    }),
+  );
+
+  return results.reduce(
+    (total, result) => ({
+      dispatched: total.dispatched + result.dispatched,
+      succeeded: total.succeeded + result.succeeded,
+      skipped: total.skipped + result.skipped,
+      retryScheduled: total.retryScheduled + result.retryScheduled,
+      deadLettered: total.deadLettered + result.deadLettered,
+      lostLease: total.lostLease + result.lostLease,
+    }),
+    { dispatched: 0, succeeded: 0, skipped: 0, retryScheduled: 0, deadLettered: 0, lostLease: 0 },
+  );
 }

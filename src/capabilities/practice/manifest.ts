@@ -2,10 +2,12 @@ import {
   API_ERROR_RESPONSES,
   ApiErrorResponseSchema,
   ApiIdParamsSchema,
+  BinaryResponseSchema,
   CursorQuerySchema,
 } from '@/kernel/http-contracts';
 import { defineCapability } from '@/kernel/manifest';
 import { uiPagesFor } from '@/kernel/ui-surfaces';
+import { WORKSHEET_RENDER_QUEUE } from '@/server/boss/queue-names';
 import {
   CreateSubmissionBodySchema,
   IssuanceCreatedSchema,
@@ -81,6 +83,9 @@ import {
   QuestionListQuerySchema,
   QuestionListResponseSchema,
   QuestionParamsSchema,
+  QuestionServingActionHeadersSchema,
+  QuestionServingActionParamsSchema,
+  QuestionServingActionResponseSchema,
   QuestionSolveParamsSchema,
   RestoreQuestionBodySchema,
   RestoreQuestionResponseSchema,
@@ -115,6 +120,16 @@ import {
   RecomposePracticeStreamBodySchema,
   UpdatePracticeStreamItemBodySchema,
 } from './api/stream-contracts';
+// YUK-1523（P5）— 作答卷 PDF 导出：发放、区域图存档与 P6 读面契约。
+import {
+  WorksheetExportCreateBodySchema,
+  WorksheetExportStateSchema,
+  WorksheetPageParamsSchema,
+  WorksheetPageResponseSchema,
+  WorksheetRegionMapArchiveBody,
+  WorksheetRegionMapArchivedSchema,
+  WorksheetTokenParamsSchema,
+} from './api/worksheet-contracts';
 // YUK-594 (durable judge main path, W1) — judge_run poll-tier status + 202-pending schemas
 // (live in the db-free judge-run-status module so this eager import stays db-light).
 import {
@@ -160,10 +175,20 @@ export const practiceCapability = defineCapability({
       // 面的 enqueueDurableJudge；消费者是 judge_pending_reconcile sweeper 与 submit 的
       // late-arrival guard（server/judge-run-dispatch.ts）。
       'experimental:judge_pending_attempt',
+      // YUK-1514 — serving-hold command ledger (reverify / recheck_source /
+      // release_verify_hold); the per-key idempotency + pending_action anchor.
+      'experimental:question_serving_action',
     ],
   },
   subscriptions: {
     handlers: [
+      {
+        id: 'practice.question-admission-enqueue',
+        version: 1,
+        actions: ['experimental:assessment_publish'],
+        load: () =>
+          import('./server/admission/enqueue').then((m) => m.buildQuestionAdmissionSubscriber),
+      },
       {
         id: 'practice.failure-learning-attempt',
         version: 3,
@@ -792,6 +817,20 @@ export const practiceCapability = defineCapability({
         successStatus: 200,
         load: () => import('./api/question-restore').then((m) => m.POST),
       },
+      {
+        // YUK-1514 — serving-hold release commands (reverify / recheck_source /
+        // release_verify_hold). Idempotency-Key required; {accepted, serving}.
+        method: 'POST',
+        path: '/api/questions/[id]/serving-actions/[command]',
+        operationId: 'runQuestionServingAction',
+        request: {
+          params: QuestionServingActionParamsSchema,
+          headers: QuestionServingActionHeadersSchema,
+        },
+        responses: { 200: QuestionServingActionResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        load: () => import('./api/question-serving-actions').then((m) => m.POST),
+      },
       // YUK-605 ① + YUK-555 — owner manual quiz_gen trigger. The consumption entry
       // three code comments + ADR-0038 referenced but that never existed (the only
       // enqueue path was the nightly dispatcher). Thin route: real knowledge read
@@ -886,6 +925,75 @@ export const practiceCapability = defineCapability({
         successStatus: 200,
         load: () => import('./api/assessment-route').then((m) => m.revealStudyReference),
       },
+      // YUK-1523（P5）— 作答卷 PDF 导出。导出 = 逐题经既有 issueAssessment 发放
+      //（G4 门只放可判题，拒掉的题随响应返回 typed 原因）；token/短码是页面
+      // 身份码 tlp://ws/v1/<token>/<页>/<总页> 的锚；同 idempotency_key 重放不重发。
+      {
+        method: 'POST',
+        path: '/api/worksheet-exports',
+        operationId: 'createWorksheetExport',
+        request: { body: WorksheetExportCreateBodySchema },
+        responses: {
+          200: WorksheetExportStateSchema,
+          201: WorksheetExportStateSchema,
+          ...API_ERROR_RESPONSES,
+        },
+        successStatus: [200, 201],
+        load: () =>
+          import('./api/worksheet-export-route').then((m) => m.createWorksheetExportRoute),
+      },
+      {
+        // 渲染器恢复/总览读面（token 不可猜；无私有答案）。
+        method: 'GET',
+        path: '/api/worksheet-exports/[token]',
+        operationId: 'getWorksheetExport',
+        request: { params: WorksheetTokenParamsSchema },
+        responses: { 200: WorksheetExportStateSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        load: () => import('./api/worksheet-export-route').then((m) => m.getWorksheetExportRoute),
+      },
+      {
+        // 区域图存档：界面线与 PDF 同一渲染 pass 量出的区域图 POST 回后端，
+        // 对冻结发放校验后按页 write-once 存档（同图重 POST 幂等）。
+        method: 'POST',
+        path: '/api/worksheet-exports/[token]/region-map',
+        operationId: 'archiveWorksheetRegionMap',
+        request: {
+          params: WorksheetTokenParamsSchema,
+          body: WorksheetRegionMapArchiveBody,
+        },
+        responses: {
+          200: WorksheetRegionMapArchivedSchema,
+          201: WorksheetRegionMapArchivedSchema,
+          ...API_ERROR_RESPONSES,
+        },
+        successStatus: [200, 201],
+        load: () =>
+          import('./api/worksheet-export-route').then((m) => m.archiveWorksheetRegionMapRoute),
+      },
+      {
+        // YUK-1529 — 已存档 PDF 下载（content-addressed R2 对象，不可变）。
+        // 未渲染 / blob 缺失分开 404 如实上报。
+        method: 'GET',
+        path: '/api/worksheet-exports/[token]/pdf',
+        operationId: 'getWorksheetExportPdf',
+        request: { params: WorksheetTokenParamsSchema },
+        responses: { 200: BinaryResponseSchema, ...API_ERROR_RESPONSES },
+        responseMediaTypes: { 200: 'application/pdf' },
+        successStatus: 200,
+        load: () =>
+          import('./api/worksheet-export-route').then((m) => m.getWorksheetExportPdfRoute),
+      },
+      {
+        // P6 回读面：token + 页 → issuance id、该页冻结区域图与 part/slot 坐标。
+        method: 'GET',
+        path: '/api/worksheet-exports/[token]/pages/[page]',
+        operationId: 'getWorksheetPage',
+        request: { params: WorksheetPageParamsSchema },
+        responses: { 200: WorksheetPageResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        load: () => import('./api/worksheet-export-route').then((m) => m.getWorksheetPageRoute),
+      },
     ],
   },
   jobs: {
@@ -930,6 +1038,15 @@ export const practiceCapability = defineCapability({
         name: 'variant_verify',
         queue: 'llm',
         load: () => import('./jobs/variant_verify').then((m) => m.buildVariantVerifyHandler),
+      },
+      {
+        // YUK-1529 — 服务端作答卷渲染：无头 Chromium 开 /print/worksheet/<token>，
+        // 同一 pass 量区域图 + page.pdf() → R2（content-addressed）→ #1773
+        // write-once 存档。由 createWorksheetExportRoute（created/replayed）入队。
+        // 'agent' 档：多步浏览器任务，DLQ + 重试兜瞬时失败；不调模型零成本。
+        name: WORKSHEET_RENDER_QUEUE,
+        queue: 'agent',
+        load: () => import('./jobs/worksheet_render').then((m) => m.buildWorksheetRenderHandler),
       },
       {
         // Durable stage 1: classify an active question failure, write the exact
@@ -1036,6 +1153,20 @@ export const practiceCapability = defineCapability({
         load: () =>
           import('./jobs/practice_stream_compose_nightly').then(
             (m) => m.buildStreamComposeNightlyHandler,
+          ),
+      },
+      // YUK-1496 C2（G3 模型判分准入，migration 线）— 留出题准入 run：冻结
+      // 留出题集（每科 ≥30、带独立参考分）过生产同源判分端口，逐题 agreement
+      // / severe error 落事件证据；阈值全过且非 dry run 才登记已准入切片。
+      // 付费 job（真实模型调用），由 lead 在周预算内触发；无 schedule。
+      {
+        name: 'model_slice_admission_run',
+        queue: 'llm',
+        pollingIntervalSeconds: 2,
+        batchSize: 1,
+        load: () =>
+          import('./jobs/model_slice_admission_run').then(
+            (m) => m.buildModelSliceAdmissionRunHandler,
           ),
       },
       // YUK-372 L5 (YUK-361 Phase 8 wire-up) — 供给目标发现 + 派发夜扫。确定性缺口扫描
@@ -1223,9 +1354,9 @@ export const practiceCapability = defineCapability({
       },
       // YUK-1445 — 入库准入（G1 双盲解题一致 + G2 逐单元标定）的 live consumer：
       // 对既有 draft/revision（question_id 或 revision_id）跑 runQuestionAdmission
-      // 并经发布 seam 落 admitted/withheld/verify_hold + append-only 核验证据。
+      // 已知结果经发布 seam 落 admitted/withheld；未知保留 durable obligation。
       // 单次 admission = 2×solve（+1×crosscheck）LLM 调用 → 'llm' 档；
-      // store_sourced_question 尚未依赖本路径（B1 的 submit_question 接入点）。
+      // pending admission 的发布事件经上方 subscriber 在事务内入队；恢复不重付。
       {
         name: 'question_admission_run',
         queue: 'llm',
@@ -1376,9 +1507,13 @@ export const practiceCapability = defineCapability({
           import('./server/tools/jyeoo-fetch-candidates').then((m) => m.jyeooFetchCandidatesTool),
       },
       {
-        name: 'store_sourced_question',
-        load: () =>
-          import('./server/tools/store-sourced-question').then((m) => m.storeSourcedQuestionTool),
+        name: 'submit_question',
+        load: () => import('./server/tools/submit-question').then((m) => m.submitQuestionTool),
+      },
+      // YUK-1468 — 统一题目编辑面（v2 草稿文档 ops/CAS/幂等/validate/probe）。
+      {
+        name: 'edit_question',
+        load: () => import('./server/tools/edit-question').then((m) => m.editQuestionTool),
       },
       // YUK-988 (Supply-Agent/3) — web 候选生产线 DomainTool（Tavily 检索 +
       // SourcingTask 抽取，candidate-only 不写库）。E3 只注册进 inventory（无任何
@@ -1412,8 +1547,10 @@ export const practiceCapability = defineCapability({
         name: 'write_quiz',
         load: () => import('./server/tools/write-quiz').then((m) => m.writeQuizTool),
       },
-      // ADR-0032 D6-B (YUK-203 lane L6) — active 题 structured 节点编辑 propose
-      // 工具（窄 typed op；accept 经 practice applier + mini verify gate 落地）。
+      // YUK-1468 — `propose_question_edit` 保留在 inventory 但【无 surface
+      // 授权】：Copilot 调 edit_question（工具按 caller surface 自动落
+      // question_edit proposal，accept 走同一 ops→submit gate）。壳模块
+      // 与测试在 owner 批准删除后随独立 PR 清理。
       {
         name: 'propose_question_edit',
         load: () => import('./server/tools/proposal-tools').then((m) => m.proposeQuestionEditTool),

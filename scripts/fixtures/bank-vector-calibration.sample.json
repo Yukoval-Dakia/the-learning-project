@@ -1,0 +1,26 @@
+{
+  "_template": true,
+  "_readme": "TEMPLATE for YUK-1516 bank vector threshold calibration (scripts/calibrate-bank-vector-threshold.ts). The two entries below carry the measured distances from the 2026-10 stage-1 review (105-question bank copy) but their expected_question_ids are PLACEHOLDERS — fill in the real question ids from the bank copy, add more labelled queries (aim for a spread of present and absent topics), then DELETE the _template field. A file with _template:true is refused by the script.",
+  "queries": [
+    {
+      "query": "文言断句 划分句子朗读停顿",
+      "expected_question_ids": ["<FILL: question id of the 文言断句 target question>"],
+      "note": "present topic — measured nearest 0.422 (target) / second 0.675 on the 105-question copy; the target must be counted"
+    },
+    {
+      "query": "离子方程式的书写与正误判断",
+      "expected_question_ids": [],
+      "note": "absent topic (bank has no chemistry) — measured nearest 0.436 (unrelated maths) / second 0.546; nothing must be counted"
+    },
+    {
+      "query": "<FILL: another query whose topic IS in the bank>",
+      "expected_question_ids": ["<FILL: expected question id(s)>"],
+      "note": "<FILL: why these ids>"
+    },
+    {
+      "query": "<FILL: another query whose topic is NOT in the bank>",
+      "expected_question_ids": [],
+      "note": "<FILL: why the topic is absent>"
+    }
+  ]
+}

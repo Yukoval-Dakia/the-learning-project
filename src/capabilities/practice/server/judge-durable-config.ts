@@ -6,10 +6,10 @@
 import type { Provider } from '@/ai/registry';
 import { getConfig, getConfigFlag } from '@/core/config/store';
 import {
-  isKnownProvider,
   isProviderImplemented,
   isProviderLaneReady,
   providerRequiresExplicitModel,
+  readProviderId,
 } from '@/server/ai/providers';
 
 /** boss 队列名（handlers.ts 注册 + submit 面 boss.send + status 路由共享）。 */
@@ -61,7 +61,8 @@ export function judgeFallbackProvider(): Provider | undefined {
   // names (openrouter / gateway). On a misconfigured name: DEGRADE (warn + no
   // fallback), never throw — a throw here would land in the handler's catch on the FINAL
   // delivery and be mis-classified retryable.
-  if (!isKnownProvider(raw) || !isProviderImplemented(raw)) {
+  const provider = readProviderId(raw);
+  if (!provider || !isProviderImplemented(provider)) {
     console.warn(
       `[judge_run] ignoring invalid JUDGE_FALLBACK_PROVIDER='${raw}' (not a wired provider) — no cross-provider fallback this run`,
     );
@@ -74,13 +75,13 @@ export function judgeFallbackProvider(): Provider | undefined {
   // Reuse the single-source predicate (YUK-608 / #1062) rather than re-deriving the rule:
   // no model env exists for this fallback, so degrade (warn + no fallback) instead of
   // shipping a guaranteed-failing final retry.
-  if (providerRequiresExplicitModel(raw)) {
+  if (providerRequiresExplicitModel(provider)) {
     console.warn(
       `[judge_run] ignoring JUDGE_FALLBACK_PROVIDER='${raw}' — it requires an explicit model override, which this lane does not supply — no cross-provider fallback this run`,
     );
     return undefined;
   }
-  return raw;
+  return provider;
 }
 
 /**

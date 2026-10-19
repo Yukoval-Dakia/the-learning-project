@@ -259,6 +259,11 @@ const ALL_TABLES = [
   'assessment_response_draft',
   'evaluation_group',
   'assessment_issuance',
+  // YUK-1523 — 作答卷导出三表。item 外键指向 export 与 assessment_issuance，
+  // page 外键指向 export；不列入则 resetDb 漏清，跨测泄漏导出与区域图。
+  'worksheet_region_map_page',
+  'worksheet_export_item',
+  'worksheet_export',
   'question_admission_verification',
   'question_group_lifecycle',
   'assessment_identity_mapping',
@@ -276,6 +281,10 @@ const ALL_TABLES = [
   'system_config',
   'system_config_journal',
   'system_config_epoch',
+  // YUK-1496 — 模型判分准入切片台账。无 enforced FK，不列入会跨测泄漏已注册
+  // 切片（同 mastery_state 一族的 footgun：残留 active 切片会让后续用例的服务门
+  // 误判已准入）。
+  'model_admission_slice',
 ] as const;
 
 export async function resetDb() {

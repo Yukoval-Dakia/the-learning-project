@@ -16,7 +16,7 @@ const EFFORT_LEVELS = new Set<string>(['low', 'medium', 'high', 'xhigh', 'max'])
 const PROVIDERS = new Set<string>([
   'anthropic',
   'xiaomi',
-  'zai-coding-cn',
+  'zhipuai-coding-plan',
   'openrouter',
   'gateway',
   'openai',
@@ -155,6 +155,18 @@ function validateDefinition(owner: TaskOwner, key: string, definition: TaskDefin
       break;
     default:
       throw new Error(`defineOwnedTaskSpecs(${owner}): "${key}" invalid prompt discriminant`);
+  }
+  if (
+    definition.structuredOutputMode !== undefined &&
+    (definition.structuredOutputMode !== 'tool' ||
+      execution !== 'chat' ||
+      !definition.structuredOutputSchema ||
+      !definition.needsToolCall ||
+      !definition.allowedTools.includes('mcp__structured_output__submit'))
+  ) {
+    throw new Error(
+      `defineOwnedTaskSpecs(${owner}): "${key}" tool output requires chat execution, schema and submit tool`,
+    );
   }
   if (
     definition.structuredOutputSchema !== undefined &&

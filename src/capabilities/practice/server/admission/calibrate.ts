@@ -13,6 +13,11 @@
 // rule produces a new method_fingerprint and forces recalibration.
 
 import { canonicalHash } from '@/core/migration/canonical';
+import {
+  DECLARED_BLANK_COMPARE_VERSION,
+  compareDeclaredBlank,
+} from '@/core/schema/assessment/blank-answer-compare';
+import type { BlankAnswerShapeT } from '@/core/schema/assessment/blank-answer-shape';
 import { evaluateSubmissionCore } from '@/core/schema/assessment/evaluation';
 import { compareItemSets } from '@/core/schema/assessment/grade';
 import type { ResponseSlotT, SelectSlotT, SlotResponseT } from '@/core/schema/assessment/response';
@@ -61,12 +66,17 @@ export interface ProbeOutcome {
   ok: boolean;
 }
 
-/** 方法与规则的指纹 —— 任一变化即产生新 fingerprint，旧校准自动失效。 */
+/** 方法与规则的指纹 —— 任一变化即产生新 fingerprint，旧校准自动失效。
+ * YUK-1568（第 2 片）：已声明槽位的指纹携带 answer_shape、其版本与比较器
+ * 版本（声明/绑定/单位语义变化 ⇒ 新指纹 ⇒ 重新标定）；无声明旧单元不携带
+ * 任何新字段，指纹字节不变，旧校准不受影响。 */
 export function methodFingerprint(
   unit: ScoringUnitT,
   slot: ResponseSlotT,
   comparator: string,
 ): string {
+  const declaredShape =
+    slot.kind === 'blank' && slot.answer_shape != null ? slot.answer_shape : null;
   return canonicalHash({
     v: 1,
     scoring_unit_id: unit.scoring_unit_id,
@@ -78,6 +88,13 @@ export function methodFingerprint(
       slot.kind === 'select'
         ? { kind: 'select', items: slot.items.map((i) => i.item_id).sort(), pick: slot.pick }
         : { kind: slot.kind },
+    ...(declaredShape != null
+      ? {
+          answer_shape: declaredShape as unknown as BlankAnswerShapeT,
+          declared_compare_version: DECLARED_BLANK_COMPARE_VERSION,
+          slot_binding: { slot_id: slot.slot_id, part_id: slot.part_id },
+        }
+      : {}),
   });
 }
 
@@ -108,7 +125,7 @@ const blankFacts = (correct: 0 | 1): RuleFacts => ({ kind: 'single', correct });
  * resolved spec 的 select/blank 槽；unit 是 resolved basis 的判据+规则）。
  * 与键归一化等价的 wrong 探针会被跳过（如实记录 skipped）。
  */
-export function freezeProbes(
+export async function freezeProbes(
   unit: ScoringUnitT,
   unitSpec: AdmissionUnitSpec,
   slot: ResponseSlotT,
@@ -118,12 +135,18 @@ export function freezeProbes(
     equivalent_forms?: { item_ids?: string[]; text?: string }[];
     typical_wrong?: { item_ids?: string[]; text?: string; reason_md?: string }[];
   },
-): { probes: AdmissionProbe[]; skipped: { kind: string; reason: string }[] } {
+): Promise<{ probes: AdmissionProbe[]; skipped: { kind: string; reason: string }[] }> {
   const probes: AdmissionProbe[] = [];
   const skipped: { kind: string; reason: string }[] = [];
   const slotId = slot.slot_id;
   const unitId = unit.scoring_unit_id;
   const rule = unit.rule;
+  // YUK-1568 第 2 片：已声明槽的探针纪律 —— 数学语法区分大小写（casefold
+  // 探针不适用）；typical_wrong 先经同一比较核心分诊（读不出的作答不能断言
+  // 计 0，跳过并如实记录）；不再合成 `${reference}x` 式扰动（对声明语法是
+  // unparseable → pending，会制造假校准失败）。
+  const declaredShape =
+    slot.kind === 'blank' && slot.answer_shape != null ? slot.answer_shape : null;
   let seq = 0;
   const push = (
     kind: AdmissionProbe['kind'],
@@ -180,19 +203,6 @@ export function freezeProbes(
     } else if (nonKey.length > 0) {
       skip('over_select', 'at_most_per_coordinate forbids the over-selection envelope');
     }
-    for (const form of probeCandidates?.equivalent_forms ?? []) {
-      if (form.item_ids == null) continue;
-      if (form.item_ids.some((id) => !universe.has(id))) {
-        skip('equivalent', 'solver emitted an item id outside the declared universe');
-        continue;
-      }
-      push(
-        'equivalent',
-        { slot_id: slotId, kind: 'select', state: 'answered', item_ids: form.item_ids },
-        ruleExpectation(setFacts(form.item_ids, keyIds), rule),
-        'solver-claimed equivalent form',
-      );
-    }
     for (const wrong of probeCandidates?.typical_wrong ?? []) {
       if (wrong.item_ids == null) continue;
       if (wrong.item_ids.some((id) => !universe.has(id))) {
@@ -239,32 +249,30 @@ export function freezeProbes(
         );
       }
       if (normalization?.casefold) {
-        push(
-          'equivalent',
-          {
-            slot_id: slotId,
-            kind: 'blank',
-            state: 'answered',
-            text: reference.toUpperCase(),
-          },
-          ruleExpectation(blankFacts(1), rule),
-          'declared casefold equivalence',
-        );
+        if (declaredShape != null) {
+          skip(
+            'equivalent',
+            'declared math syntax is case-sensitive (variables/binding); casefold probe not applicable',
+          );
+        } else {
+          push(
+            'equivalent',
+            {
+              slot_id: slotId,
+              kind: 'blank',
+              state: 'answered',
+              text: reference.toUpperCase(),
+            },
+            ruleExpectation(blankFacts(1), rule),
+            'declared casefold equivalence',
+          );
+        }
       }
-    }
-    for (const form of probeCandidates?.equivalent_forms ?? []) {
-      if (form.text == null) continue;
-      push(
-        'equivalent',
-        { slot_id: slotId, kind: 'blank', state: 'answered', text: form.text },
-        ruleExpectation(blankFacts(1), rule),
-        'solver-claimed equivalent form',
-      );
     }
     const wrongs = (probeCandidates?.typical_wrong ?? [])
       .filter((w): w is { text: string; reason_md?: string } => w.text != null)
       .map((w) => ({ text: w.text, reason: w.reason_md }));
-    if (wrongs.length === 0 && key.kind === 'blank_numeric') {
+    if (wrongs.length === 0 && key.kind === 'blank_numeric' && declaredShape == null) {
       const wrongValue =
         key.tolerance.kind === 'absolute'
           ? key.expected + key.tolerance.value + 1
@@ -273,15 +281,34 @@ export function freezeProbes(
             : key.expected * (1 + key.tolerance.ratio) + 1;
       wrongs.push({ text: String(wrongValue), reason: 'synthesized out-of-tolerance value' });
     }
-    if (wrongs.length === 0 && key.kind === 'blank_text') {
+    if (wrongs.length === 0 && key.kind === 'blank_text' && declaredShape == null) {
       wrongs.push({ text: `${reference}x`, reason: 'synthesized perturbation of the reference' });
     }
     for (const wrong of wrongs) {
+      if (declaredShape != null && slot.kind === 'blank' && unit.criterion.kind === 'blank_key') {
+        // 同一比较核心分诊：读不出的错答 → pending（不能断言计 0，跳过并记
+        // 录）；完整解析且不相等 → 探针断 0；完整解析却相等 → 探针照发并断
+        // 0（它会失败并如实暴露 solver 把等价形态标为错答的分歧）。
+        const triage = await compareDeclaredBlank(declaredShape, unit.criterion.key, wrong.text);
+        if (triage.outcome === 'undecidable') {
+          skip(
+            'typical_wrong',
+            `wrong form unreadable under declared answer_shape (${triage.reason}) — cannot assert scored 0 for an undecidable response`,
+          );
+          continue;
+        }
+      }
       push(
         'typical_wrong',
         { slot_id: slotId, kind: 'blank', state: 'answered', text: wrong.text },
         ruleExpectation(blankFacts(0), rule),
         wrong.reason,
+      );
+    }
+    if (declaredShape != null && wrongs.length === 0) {
+      skip(
+        'typical_wrong',
+        'no wrong form probed for declared answer_shape (no solver-provided readable wrong form; deterministic equality already rejects differing objects)',
       );
     }
   } else {

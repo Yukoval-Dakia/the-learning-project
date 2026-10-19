@@ -1337,6 +1337,54 @@
       ]
     },
     {
+      "name": "ingestion-sessions",
+      "item": [
+        {
+          "name": "POST /api/ingestion-sessions/:id/asks/:ask_id/answers",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{ingestionAskIdempotencyKey}}",
+                "description": "必填；同 ask 同 key 同内容重放返回 202 replayed:true，同 key 不同内容返回 409 idempotency_conflict"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/ingestion-sessions/:id/asks/:ask_id/answers",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "ingestion-sessions", ":id", "asks", ":ask_id", "answers"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                },
+                {
+                  "key": "ask_id",
+                  "value": "REPLACE_ask_id"
+                }
+              ]
+            },
+            "description": "回答录入 agent 的 durable ask（YUK-1522 R8）；同 key 同内容幂等重放\n\n**Path vars:** `:id`, `:ask_id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 202 {accepted, replayed}；已终态（已答/超时）→ 409 ask_already_resolved；选项不存在/空文本/超 500 字/kind 不匹配 → 422 对应 code。需 x-internal-token",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"answer\": {\n    \"kind\": \"choice\",\n    \"option_id\": \"keep_together\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
       "name": "issuances",
       "item": [
         {
@@ -2317,6 +2365,36 @@
           "response": []
         },
         {
+          "name": "POST /api/questions/:id/serving-actions/:command",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "owner-release-001",
+                "description": "必填；同 key 重放返回首次执行记录的 accepted + 实时 serving 投影"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/questions/:id/serving-actions/:command",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "questions", ":id", "serving-actions", ":command"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                },
+                {
+                  "key": "command",
+                  "value": "REPLACE_command"
+                }
+              ]
+            },
+            "description": "解除出题暂挂命令（YUK-1514）：reverify（重入队 C1 准入核验）/ recheck_source（重发 source_verify 来源核验）/ release_verify_hold（同步解除 verify_hold，不碰 retraction_hold，不铸新 revision）\n\n**Path vars:** `:id`, `:command` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** command ∈ {reverify, recheck_source, release_verify_hold}（path enum）；Idempotency-Key 必填（缺省 400）；返回 {accepted, serving}——serving 与 GET /api/questions 列表项同构 {servable, hold_reason, held_since, next_action, pending_action}；accepted=false 表示命令不适用于当前挂起状态（如 release_verify_hold 碰到 retraction_hold / 未挂起）；每次执行写 experimental:question_serving_action 事件审计；需 x-internal-token"
+          },
+          "response": []
+        },
+        {
           "name": "POST /api/questions/quiz-gen",
           "request": {
             "method": "POST",
@@ -2807,6 +2885,137 @@
               "path": ["api", "workbench", "overnight-digest"]
             },
             "description": "昨夜窗 digest 只读读模型（A1 夜窗交班，YUK-520）\n\n**Notes:** 窗口=Asia/Shanghai 日界前一日历日（昨日 00:00 BJT 含 → 今日 00:00 BJT 不含；owner 可调，默认前一日历日）。返回 { window:{from,to}, has_overnight_activity, runs:[{task_kind,count,status_breakdown}], note_changes_count, new_proposals_count, new_conjectures_count, agent_notes_count }。另返回 degraded_kinds 与 cost:{scope:all_activity,records,by_currency,details}。cost覆盖该日全部前台/后台账本记录，按provider/model/lane/task与费用/用量来源分组；reported/estimated/unknown/legacy及币种分开，未知lane/用量保留；记录数不是物理请求数，目录估算不是订阅额度扣减。5 原有事实源任一窗内有事实 → has_overnight_activity=true；费用记录独立在cost中展示，不冒充任务/业务产出（空夜显式信号，与加载中/失败可区分）。new_proposals 不含 conjecture（两数不重叠）。纯读零写；prep-desk confidence/predicted_p 等内部校准数永不过 wire（只取 count）。需 x-internal-token"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "worksheet-exports",
+      "item": [
+        {
+          "name": "GET /api/worksheet-exports/:token",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/worksheet-exports/:token",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "worksheet-exports", ":token"],
+              "variable": [
+                {
+                  "key": "token",
+                  "value": "REPLACE_token"
+                }
+              ]
+            },
+            "description": "YUK-1523 P5：导出状态读面（渲染器恢复）——issued 冻结坐标 + 公开渲染输入 + 存档页清单\n\n**Path vars:** `:token` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** token 不可猜；无私有答案。404 = token 不存在"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/worksheet-exports/:token/pages/:page",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/worksheet-exports/:token/pages/:page",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "worksheet-exports", ":token", "pages", ":page"],
+              "variable": [
+                {
+                  "key": "token",
+                  "value": "REPLACE_token"
+                },
+                {
+                  "key": "page",
+                  "value": "REPLACE_page"
+                }
+              ]
+            },
+            "description": "YUK-1523 P6 读面：token+页 → 该页冻结区域图与冻结 part/slot/option_order/unit 坐标（回收对位用，无私有答案）\n\n**Path vars:** `:token`, `:page` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 404 not_found=token 不存在；region_map_not_archived=尚未存档；page_out_of_range(404, details.page_count)"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/worksheet-exports/:token/pdf",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/worksheet-exports/:token/pdf",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "worksheet-exports", ":token", "pdf"],
+              "variable": [
+                {
+                  "key": "token",
+                  "value": "REPLACE_token"
+                }
+              ]
+            },
+            "description": "YUK-1529：已存档作答卷 PDF 下载——worksheet_render job 渲染后经 #1773 write-once 存档的 content-addressed R2 对象（application/pdf 字节流，ETag=pdf_digest）\n\n**Path vars:** `:token` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 404 not_found=token 不存在；pdf_not_rendered=导出尚无存档 PDF（渲染 job 未完成或失败）；pdf_blob_missing=存档行在但 blob 字节缺失（details 带 blob_key）。200 返回 application/pdf + Content-Disposition attachment"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/worksheet-exports",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/worksheet-exports",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "worksheet-exports"]
+            },
+            "description": "YUK-1523 P5：作答卷导出 = 逐题经既有 issueAssessment 发放（G4 门只放可判题，拒掉的题不发并随响应返回 typed 原因）；冻结 parts/材料 digest/option_order，mint export_token/短码\n\n**Notes:** 幂等：同 idempotency_key 同请求 ⇒ replayed(200) 不重发不改冻结；异请求 ⇒ idempotency_conflict(409)。全部题被门拒绝 ⇒ no_gradeable_questions(422)，details.refused 给逐题 typed 原因。返回 issued[]（issuance 冻结坐标 + practice_dto 公开渲染输入 + units 真实计分单元 id）与 refused[]；页面身份码 tlp://ws/v1/<export_token>/<页>/<总页> 由 token 锚定",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"idempotency_key\": \"ws-2026-10-17-001\",\n  \"title\": \"周末卷 · 三角函数\",\n  \"items\": [\n    {\n      \"group_id\": \"REPLACE_group_root_1\"\n    },\n    {\n      \"group_id\": \"REPLACE_group_root_2\",\n      \"part_ids\": [\n        \"p1\"\n      ]\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/worksheet-exports/:token/region-map",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/worksheet-exports/:token/region-map",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "worksheet-exports", ":token", "region-map"],
+              "variable": [
+                {
+                  "key": "token",
+                  "value": "REPLACE_token"
+                }
+              ]
+            },
+            "description": "YUK-1523 P5：区域图存档——界面线与 PDF 同一渲染 pass 量出的区域图整份 POST，后端对冻结发放校验后按页 write-once 存档\n\n**Path vars:** `:token` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 校验：qr payload 逐页=tlp://ws/v1/<token>/<页>/<总页>；每区域引用已发 part/slot/unit；每计分单元恰一着落（区域或 web_only_units，互斥）；choice 选项圈=冻结 option_order 排列；四角 TL/TR/BL 实心 BR 空心；A4。同图重 POST ⇒ existing(200)；异图 ⇒ archive_conflict(409)；校验失败 ⇒ invalid_region_map(422) details.issues；顶层 strict（遗留顶层 issuance_id 拒收，多题导出每区域各自带 issuance_id）；pdf_digest（同渲染 pass 的 PDF sha256）随存档冻结并进 write-once 比对",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"schema_version\": 1,\n  \"short_code\": \"REPLACE_short_code_from_create\",\n  \"web_only_units\": [],\n  \"pages\": [\n    {\n      \"page\": 1,\n      \"of\": 1,\n      \"orientation\": \"portrait\",\n      \"size_mm\": {\n        \"w\": 210,\n        \"h\": 297\n      },\n      \"qr\": {\n        \"payload\": \"tlp://ws/v1/REPLACE_token/1/1\",\n        \"mm\": {\n          \"x\": 173,\n          \"y\": 17,\n          \"w\": 13,\n          \"h\": 13\n        }\n      },\n      \"anchors\": {\n        \"tl\": {\n          \"cx\": 8.5,\n          \"cy\": 8.5,\n          \"size\": 5,\n          \"fill\": \"solid\",\n          \"stroke_mm\": null\n        },\n        \"tr\": {\n          \"cx\": 201.5,\n          \"cy\": 8.5,\n          \"size\": 5,\n          \"fill\": \"solid\",\n          \"stroke_mm\": null\n        },\n        \"bl\": {\n          \"cx\": 8.5,\n          \"cy\": 288.5,\n          \"size\": 5,\n          \"fill\": \"solid\",\n          \"stroke_mm\": null\n        },\n        \"br\": {\n          \"cx\": 201.5,\n          \"cy\": 288.5,\n          \"size\": 5,\n          \"fill\": \"hollow\",\n          \"stroke_mm\": 1.2\n        }\n      },\n      \"regions\": [\n        {\n          \"region_id\": \"p1-r1\",\n          \"kind\": \"writing\",\n          \"issuance_id\": \"REPLACE_issuance\",\n          \"slot_id\": \"REPLACE_slot\",\n          \"unit_id\": \"REPLACE_unit\",\n          \"mark\": \"dots\",\n          \"mm\": {\n            \"x\": 24,\n            \"y\": 92,\n            \"w\": 162,\n            \"h\": 138\n          },\n          \"segment_index\": 1\n        }\n      ]\n    }\n  ],\n  \"pdf_digest\": \"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
           },
           "response": []
         }

@@ -5,12 +5,21 @@ export type Provider =
   | 'anthropic'
   | 'xiaomi'
   | 'xiaomi-token-plan'
-  | 'zai-coding-cn'
+  | 'zhipuai-coding-plan'
   | 'openrouter'
   | 'gateway'
   | 'openai'
   | 'anthropic-sub'
   | 'opencode-go';
+
+const LEGACY_PROVIDER_IDS = {
+  'zai-coding-cn': 'zhipuai-coding-plan',
+} as const satisfies Record<string, Provider>;
+
+/** Stored config, env, and queued jobs may still name the previous id. */
+export function canonicalProviderName(name: string): string {
+  return LEGACY_PROVIDER_IDS[name as keyof typeof LEGACY_PROVIDER_IDS] ?? name;
+}
 
 export type ModelId = string;
 
@@ -69,6 +78,8 @@ export interface TaskDefinition {
   readonly reasoningEffort?: EffortLevel;
   readonly invocation?: 'auto' | 'manual_rescue_only';
   readonly structuredOutputSchema?: ZodTypeAny;
+  /** Opt-in single model turn submitting schema-constrained tool arguments. */
+  readonly structuredOutputMode?: 'tool';
 }
 
 export const DEFAULT_TASK_BUDGET: TaskBudget = {
