@@ -40,17 +40,25 @@ import { sanitizeProviderErrorText } from './provider-error-evidence';
  * `unknown`/`in_flight`; a later request's `not_sent` never masks an earlier
  * request that did send.
  *
- * Timeout-layer attribution is honest about what the wire can see:
+ * Abort/timeout-layer attribution is honest about what the wire can see:
  * - undici error codes identify connect/headers/body directly.
- * - An abort reaches the wire as the composed signal firing (DOMException
- *   `AbortError` / `UND_ERR_ABORTED`) — `timeout_layer: 'signal'` plus
- *   `signal_initiator` from `abort_initiators`, which the lifecycle records
+ * - `signal_aborted` is emitted ONLY when the request's composed
+ *   AbortSignal observably fired while the wire was live — never inferred
+ *   from an abort-shaped error name/code. `signal_initiator` names the
+ *   initiator from `abort_initiators`, which the lifecycle records
  *   synchronously at the layer that actually called `abort()` (execution
- *   timer, session deadline, caller signal, lease loss, or generic abort).
- *   The OpenAI SDK builds `APIConnectionTimeoutError` OUTSIDE fetch, so the
- *   inner transport never sees it — when no initiator marker precedes the
- *   abort the initiator stays `unknown` rather than being guessed from the
- *   configured timeout value.
+ *   timer, session deadline, caller signal, lease loss, or generic abort);
+ *   `unknown` when none did.
+ * - `timeout_layer: 'signal'` requires positive timeout evidence: an
+ *   observed signal abort attributed to the armed execution timer or the
+ *   caller's session deadline. Every other abort stays unclassified —
+ *   including the bare `AbortError` a successful stream-end body-cancel
+ *   produces (builtin fetch `response.cancel()` surfaces it via
+ *   `onResponseError` without ever firing the composed signal) and the
+ *   SDK's own timer, which wraps its error OUTSIDE fetch.
+ * - Neutral raw error evidence (`last_transport_error`) stays separate
+ *   from the failure summary (`last_failure`, which requires a classified
+ *   timeout layer or substantive non-abort error evidence).
  *
  * The scope of `send_state` is this attempt's provider model-request lane —
  * everything the pi drivers route through `options.fetch` (root loop, nested
@@ -73,14 +81,16 @@ export type TransportTimeoutLayer =
   | 'headers'
   | 'body'
   /**
-   * The SDK whole-request timer. Never produced by wire classification alone:
-   * the SDK wraps its abort into an SDK error type OUTSIDE fetch, so the
-   * transport only observes the composed signal firing.
+   * The SDK whole-request timer. Reserved — never emitted today: the SDK
+   * wraps its abort into an SDK error type OUTSIDE fetch, so an
+   * unattributed signal abort stays unclassified rather than being guessed
+   * as the SDK layer.
    */
   | 'sdk'
   /**
-   * The fetch's composed AbortSignal ended the request. `signal_initiator`
-   * carries which layer initiated it when the lifecycle recorded one.
+   * Positive timeout evidence: an observed composed-AbortSignal abort that
+   * `abort_initiators` attributes to the armed execution timer or the
+   * caller's session deadline. Any other abort is not a timeout layer.
    */
   | 'signal';
 
@@ -147,17 +157,20 @@ export interface ProviderRequestEvidence {
   readonly send_state: RequestSendState;
   readonly timeout_layer?: TransportTimeoutLayer;
   /**
-   * The request's composed AbortSignal fired while the wire was live — tracked
-   * across the whole wire lifecycle, including the post-headers window where
-   * the fetch promise has already resolved.
+   * The request's composed AbortSignal OBSERVABLY fired while the wire was
+   * live — the signal listener ran (or the signal arrived already aborted at
+   * fetch invoke), tracked across the whole wire lifecycle including the
+   * post-headers window where the fetch promise has already resolved. Never
+   * inferred from an abort-shaped error name/code: a bare transport
+   * `AbortError` of unknown origin leaves this unset.
    */
   readonly signal_aborted?: boolean;
   /** Sanitized name/code of `signal.reason` observed at abort time. */
   readonly signal_reason?: { readonly name: string; readonly code?: string | number };
   /**
-   * Which recorded initiator fired no later than this signal abort. `unknown`
-   * when none did — e.g. the SDK's own timer, whose error type only exists
-   * outside the fetch layer.
+   * Which recorded initiator fired no later than this observed signal abort.
+   * `unknown` when none did — e.g. the SDK's own timer, whose error type only
+   * exists outside the fetch layer. Emitted only alongside `signal_aborted`.
    */
   readonly signal_initiator?: TransportAbortInitiator | 'unknown';
   readonly error?: TransportFailureEvidence;
@@ -203,7 +216,31 @@ export interface ProviderTransportEvidence {
     readonly dispatches: number;
     readonly by_state: Record<RequestSendState, number>;
   };
-  /** The most recent failure — survives `requests` truncation. */
+  /**
+   * Neutral raw transport error/abort evidence — the most recent error ANY
+   * request produced, whatever it means: transport failure, attributed
+   * timeout, caller cancellation, or a bare abort of unknown origin (e.g.
+   * the body-cancel a successful SDK stream-end cleanup emits). Survives
+   * `requests` truncation so the final error is never silently dropped; by
+   * itself it is NOT a failure verdict.
+   */
+  readonly last_transport_error?: {
+    readonly seq: number;
+    readonly at?: string;
+    readonly send_state: RequestSendState;
+    /** Emitted only when the composed AbortSignal observably fired. */
+    readonly signal_aborted?: boolean;
+    readonly signal_initiator?: TransportAbortInitiator | 'unknown';
+    readonly signal_reason?: { readonly name: string; readonly code?: string | number };
+    readonly error: TransportFailureEvidence;
+  };
+  /**
+   * The most recent VERIFIED transport/timeout failure — an error carrying
+   * a classified `timeout_layer`, or substantive non-abort evidence
+   * somewhere in its cause chain. A bare abort-only error stays in
+   * `last_transport_error` and never lands here. Survives `requests`
+   * truncation.
+   */
   readonly last_failure?: {
     readonly seq: number;
     readonly at?: string;
@@ -294,6 +331,7 @@ export class ProviderTransportCollector {
     unknown: 0,
     in_flight: 0,
   };
+  private lastTransportError: ProviderTransportEvidence['last_transport_error'];
   private lastFailure: ProviderTransportEvidence['last_failure'];
   private readonly abortInitiators: TransportAbortMarker[] = [];
   /** Lanes observed over ALL requests — survives `records` truncation. */
@@ -407,16 +445,45 @@ export class ProviderTransportCollector {
     }
     const error = record.wireError ?? record.fetchError;
     if (error !== undefined) {
-      const timeoutLayer = classifyTimeoutLayer(error, this.signalAborted(record));
-      this.lastFailure = {
+      const signalObserved = this.signalAborted(record);
+      const initiator = this.signalInitiator(record);
+      const timeoutLayer = classifyTimeoutLayer(error, signalObserved, initiator);
+      const at =
+        record.endedAt !== undefined || record.fetchSettledAt !== undefined
+          ? (record.endedAt ?? record.fetchSettledAt)
+          : undefined;
+      // Neutral raw evidence — EVERY error lands here, truncated records
+      // included, so the final wire error is never silently dropped.
+      this.lastTransportError = {
         seq: record.seq,
-        ...(record.endedAt !== undefined || record.fetchSettledAt !== undefined
-          ? { at: record.endedAt ?? record.fetchSettledAt }
-          : {}),
+        ...(at !== undefined ? { at } : {}),
         send_state: next,
-        ...(timeoutLayer !== undefined ? { timeout_layer: timeoutLayer } : {}),
+        ...(signalObserved ? { signal_aborted: true } : {}),
+        ...(initiator !== undefined ? { signal_initiator: initiator } : {}),
+        ...(record.signalReason !== undefined
+          ? {
+              signal_reason: {
+                name: record.signalReason.name,
+                ...(record.signalReason.code !== undefined
+                  ? { code: record.signalReason.code }
+                  : {}),
+              },
+            }
+          : {}),
         error,
       };
+      // Verified-failure summary: a classified timeout layer or substantive
+      // non-abort evidence. A bare abort-only error (unknown-origin cancel,
+      // caller cancel, SDK stream-end body cleanup) is not a failure.
+      if (timeoutLayer !== undefined || !isBareAbort(error)) {
+        this.lastFailure = {
+          seq: record.seq,
+          ...(at !== undefined ? { at } : {}),
+          send_state: next,
+          ...(timeoutLayer !== undefined ? { timeout_layer: timeoutLayer } : {}),
+          error,
+        };
+      }
     }
   }
 
@@ -445,28 +512,27 @@ export class ProviderTransportCollector {
     return failureEvidence(error, { secrets: this.secrets });
   }
 
+  /**
+   * Only the composed AbortSignal actually firing counts — the listener ran
+   * (or the signal arrived already aborted). An abort-shaped wire/fetch
+   * error alone never claims a signal abort: builtin fetch
+   * `response.cancel()` and SDK stream-end cleanup surface `AbortError`
+   * through `onResponseError` without firing the signal.
+   */
   private signalAborted(record: MutableRequestRecord): boolean {
-    return (
-      record.signalAbortedAt !== undefined || isSignalAbort(record.wireError ?? record.fetchError)
-    );
+    return record.signalAbortedAt !== undefined;
   }
 
   private signalInitiator(
     record: MutableRequestRecord,
   ): TransportAbortInitiator | 'unknown' | undefined {
-    if (!this.signalAborted(record)) return undefined;
-    const abortedAt =
-      record.signalAbortedAt !== undefined ? Date.parse(record.signalAbortedAt) : Number.NaN;
+    if (record.signalAbortedAt === undefined) return undefined;
+    const abortedAt = Date.parse(record.signalAbortedAt);
     // A lifecycle marker recorded no later than the wire abort is positive
     // initiator evidence (the marker is written synchronously before abort()
     // fires). +1ms absorbs same-tick ms rounding; everything else stays
     // 'unknown' — in particular the SDK's own timer, which surfaces only as
     // an SDK error type constructed outside fetch.
-    if (Number.isNaN(abortedAt)) {
-      // Signal-inferred abort without a listener timestamp: only a single
-      // recorded initiator is unambiguous.
-      return this.abortInitiators.length === 1 ? this.abortInitiators[0].kind : 'unknown';
-    }
     let matched: TransportAbortInitiator | undefined;
     for (const marker of this.abortInitiators) {
       if (Date.parse(marker.at) <= abortedAt + 1) matched = marker.kind;
@@ -505,8 +571,9 @@ export class ProviderTransportCollector {
   snapshot(): ProviderTransportEvidence {
     const requests = this.records.map((record): ProviderRequestEvidence => {
       const error = record.wireError ?? record.fetchError;
-      const timeoutLayer = classifyTimeoutLayer(error, this.signalAborted(record));
+      const signalObserved = this.signalAborted(record);
       const initiator = this.signalInitiator(record);
+      const timeoutLayer = classifyTimeoutLayer(error, signalObserved, initiator);
       const lane: TransportLane | undefined =
         record.dispatches > 0
           ? 'undici_agent'
@@ -535,7 +602,7 @@ export class ProviderTransportCollector {
         ...(record.dispatches > 1 ? { dispatches: record.dispatches } : {}),
         send_state: record.state,
         ...(timeoutLayer !== undefined ? { timeout_layer: timeoutLayer } : {}),
-        ...(this.signalAborted(record) ? { signal_aborted: true } : {}),
+        ...(signalObserved ? { signal_aborted: true } : {}),
         ...(record.signalReason !== undefined
           ? {
               signal_reason: {
@@ -593,6 +660,9 @@ export class ProviderTransportCollector {
         dispatches: this.dispatchesSeen,
         by_state: { ...counts },
       },
+      ...(this.lastTransportError !== undefined
+        ? { last_transport_error: this.lastTransportError }
+        : {}),
       ...(this.lastFailure !== undefined ? { last_failure: this.lastFailure } : {}),
       ...(this.abortInitiators.length > 0 ? { abort_initiators: [...this.abortInitiators] } : {}),
       requests,
@@ -609,16 +679,26 @@ export function createProviderTransportCollector(
   return new ProviderTransportCollector(init);
 }
 
-/** Map a failure to the timeout layer that produced it, when identifiable. */
+/**
+ * Map an error to the timeout layer that produced it — positive evidence
+ * only. undici names its own timers directly; the only other admissible
+ * attribution is an observed signal abort the lifecycle synchronously
+ * marked as its armed execution timer or the caller's session deadline.
+ * Anything else (caller cancel, lease loss, generic teardown, SDK cleanup,
+ * abort of unknown origin) stays unclassified rather than guessing.
+ */
 function classifyTimeoutLayer(
   error: TransportFailureEvidence | undefined,
-  signalAborted: boolean,
+  signalObserved: boolean,
+  initiator: TransportAbortInitiator | 'unknown' | undefined,
 ): TransportTimeoutLayer | undefined {
   const codes = errorCodes(error);
   if (codes.has('UND_ERR_CONNECT_TIMEOUT')) return 'connect';
   if (codes.has('UND_ERR_HEADERS_TIMEOUT')) return 'headers';
   if (codes.has('UND_ERR_BODY_TIMEOUT')) return 'body';
-  if (signalAborted || codes.has('UND_ERR_ABORTED')) return 'signal';
+  if (signalObserved && (initiator === 'execution_timeout' || initiator === 'session_deadline')) {
+    return 'signal';
+  }
   return undefined;
 }
 
@@ -633,17 +713,35 @@ function errorCodes(error: TransportFailureEvidence | undefined): Set<string> {
 }
 
 /**
- * The abort surfaces to the wire as the signal reason — a DOMException
- * `AbortError`/`TimeoutError` (numeric `code` 20/23) or undici's UND_ERR_ABORTED.
+ * Abort-family evidence: a DOMException `AbortError`/`TimeoutError`
+ * (numeric `code` 20/23) or undici's UND_ERR_ABORTED. Says nothing about
+ * which layer initiated it — that requires the observed signal +
+ * `abort_initiators` markers.
  */
-function isSignalAbort(error: TransportFailureEvidence | undefined): boolean {
+function isAbortEvidence(error: TransportFailureEvidence): boolean {
+  if (error.name === 'AbortError' || error.name === 'TimeoutError') return true;
+  return (
+    error.code === 20 ||
+    error.code === 23 ||
+    error.code === '20' ||
+    error.code === '23' ||
+    error.code === 'UND_ERR_ABORTED'
+  );
+}
+
+/**
+ * Every link of the cause chain is abort-family → the error is only a
+ * cancellation of unattributed origin, never a verified failure on its own.
+ * Any non-abort link (socket error, refused connect, parse failure, …) is
+ * substantive failure evidence.
+ */
+function isBareAbort(error: TransportFailureEvidence): boolean {
   let current: TransportFailureEvidence | undefined = error;
   while (current !== undefined) {
-    if (current.name === 'AbortError' || current.name === 'TimeoutError') return true;
-    if (current.code === 20 || current.code === 23) return true;
+    if (!isAbortEvidence(current)) return false;
     current = current.cause?.[0];
   }
-  return false;
+  return true;
 }
 
 function failureEvidence(
