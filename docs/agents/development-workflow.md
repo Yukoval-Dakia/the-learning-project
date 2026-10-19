@@ -119,10 +119,21 @@ pnpm audit:golden --kind=<kind>
 
 `audit:capability-boundaries` 同时检查 public/ui-public access seam 与三张架构债
 ratchet（capability→server、server→capability deep、cross-capability value/SCC）。
-机器可读报告用 `pnpm audit:capability-boundaries -- --json`；有意删除依赖后用
-`pnpm audit:capability-boundaries:snapshot` 打印 canonical baseline，再在同一变更中收紧
-`scripts/capability-boundary-baseline.json`。snapshot 命令只打印，不直接覆盖文件；禁止为了让
-新增依赖通过而上调 baseline。
+机器可读报告用 `pnpm audit:capability-boundaries --json`。实测 pair 比基线低时审计失败，
+运行 `pnpm audit:capability-boundaries --tighten` 收紧
+`scripts/capability-boundary-baseline.json`。该命令仅下调，并追加 `changes` 记录：
+`direction: "decrease"`、`debt`、`pair`、UTC `date`、`from`、`to`。
+审计仍有任何错误时不写文件；再次运行不会重复追加记录。SCC 只能缩小，不能自动扩张。
+
+需要上调时，手动追加 `direction: "increase"` 记录，除上述字段外必须填写非空
+`reason` 和 `exitCondition`，并同步 pair 与 total。三类债务都受检查，缺失 pair 按 0 处理。
+CI 从 PR base SHA（push 时为 before SHA）重放新增记录，要求其结果与当前基线一致，
+且旧记录不可删除或改写。历史 `notes` 不追溯补写，也不能代替新上调记录。
+字段检查不判断理由是否充分或退出条件是否达成，这两项仍由 reviewer 判断。
+
+本地默认比较 `git merge-base HEAD origin/main`，也可用 `--base <commit SHA>`。
+CI 必须提供 `CAPABILITY_BASE_SHA`；手动 workflow 使用已有的 `test_policy_base` 输入。
+`pnpm audit:capability-boundaries:snapshot` 仍只打印实测快照，不带变更记录，不能用它覆盖基线。
 
 ### Lint warning ratchet（YUK-909）
 
