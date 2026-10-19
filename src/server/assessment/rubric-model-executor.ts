@@ -1,20 +1,12 @@
-// ====================================================================
-// YUK-1496 C2 — AI rubric model executor：free 单元的逐 criterion 评分细则
-// 判定（统一设计 §3 free 段 / §4 ai-rubric 行 / 附录 A5；ADR-0073 D7
-// 解答/简答/语文阅读）。
+// The model returns one award, a reason, and evidence refs per criterion.
+// Code checks that the ids cover the published rubric and each award is allowed, then sums.
+// There is no total field. A new criterion, a changed max, or a self-reported total is pending.
+// An image counts only after its digest is checked and the bytes ride an image block.
+// A quote on an image, or a ref that was not delivered, is pending. Do not guess the score.
+// A successful call with unknown price is charged at the whole-unit cap. The ledger stays unknown.
+// A timeout with no settled price does not write the reserved cap as cost.
+// The estimated retry gate uses the holdout's mean successful price. Over cap is pending.
 //
-// 纪律（与 pi-model-executor 同律）：
-//   - 模型只返回逐 criterion 的 award + 理由 + 证据引用；代码校验 criterion
-//     id 恰好覆盖发布细则、award ∈ allowed_awards，然后求和 —— 模型不得
-//     新增评分点、修改满分或自报总分（输出契约没有 total 字段）；
-//   - 图片纪律：prepareAssessmentModelInput 只在原图真实送达（digest 核验
-//     后作为 image block 附上）时才放行；没读到原图不得声称读了 —— 引用未
-//     送达/不存在的证据，或对图片证据附“引文”，一律 pending，不猜分；
-//   - 费用诚实：成功返回但价格 unknown 的调用，charge 层仍按整段 cap 计
-//     （台账保持 unknown，绝不记成免费）。超时没有成交价时不把预留 cap
-//     写成 cost_usd_micros：准入汇总记 unknown。estimated 重试闸门用留出题
-//     实测的单次成功均价。超 cap ⇒ pending。
-// ====================================================================
 
 import { randomUUID } from 'node:crypto';
 import { resolveTaskBudget } from '@/capabilities/task-registry';
@@ -89,15 +81,14 @@ const pending = (
   ...(cost === undefined ? {} : { cost_usd_micros: cost }),
 });
 
-/** 档位比对（相对 ε=1e-9）：卷面十进制档位（0.5 等）不因二进制表示误差误判。 */
+/** Decimal awards such as 0.5 must not fail on binary residue. Epsilon is 1e-9. */
 function sameAward(a: number, b: number): boolean {
   return Math.abs(a - b) <= 1e-9 * Math.max(1, Math.abs(a), Math.abs(b));
 }
 
 /**
- * 证据引用核验：引用的 slot / evidence 必须在本次输入里真实存在；quote 必须
- * 是作答原文或已送达文本证据的原句；图片证据只可凭 evidence_id 引用（它真实
- * 随 image block 送达），不得附引文 —— 模型没读到的东西不能声称读过。
+ * A cited slot or evidence must be in this input. A quote must be the answer
+ * or delivered text. Image evidence is cited by id only. A quote would claim the model read pixels.
  */
 function citationProblem(
   request: ModelExecutorRequest,
@@ -152,10 +143,7 @@ function citationProblem(
   return null;
 }
 
-/**
- * 逐 criterion award 校验 + 求和。任何一项不符（未知/缺失/重复 id、档位越界）
- * ⇒ null（调用方落 pending，绝不猜分）。模型输出契约里没有总分字段。
- */
+/** Unknown, missing, repeated, or out-of-range awards return null. The caller pends. Do not guess. */
 function sumValidatedAwards(
   criterion: RubricCriterionT,
   awards: Array<{ criterion_id: string; award: number }>,
@@ -215,7 +203,7 @@ function isRubricCallTimeout(
   return attemptSignal.aborted;
 }
 
-/** 有过没有成交价的超时，整题费用就是 unknown，不再把某一次的 cap 写成已知。 */
+/** One timeout without a settled price makes the whole item unknown. Do not publish a cap as the cost. */
 function chargedMicros(
   unknownAttempts: number,
   knownSpent: number,
@@ -225,7 +213,7 @@ function chargedMicros(
   return knownSpent + callCost;
 }
 
-/** Rubric lane：native pi 任务，按发布细则逐 criterion 判定。 */
+/** Native pi task. One decision per published criterion. */
 export function createRubricModelExecutor(
   options: RubricModelExecutorOptions,
 ): ModelUnitExecutorPort {
@@ -333,8 +321,7 @@ export function createRubricModelExecutor(
             }),
           signal,
         );
-        // 成功返回但价格 unknown：charge 层仍按整段 cap 计，台账保持 unknown。
-        // 超时不走这里。
+        // Success with an unknown price still charges the whole-unit cap. A timeout does not come through here.
         const callCost =
           result.cost_usd !== undefined && Number.isFinite(result.cost_usd) && result.cost_usd >= 0
             ? Math.ceil(result.cost_usd * 1_000_000)

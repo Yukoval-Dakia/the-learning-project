@@ -59,7 +59,10 @@ export interface EphemeralPg {
    * Failure rolls the single transaction back.
    */
   pgRestore(database: string, containerPath: string): Promise<void>;
-  /** Base64 the dump out. The host has no Postgres client. */
+  /**
+   * exec returns stdout as text, so the binary dump has to be base64.
+   * The host has no Postgres client, so the file is copied out of the container.
+   */
   exportDump(containerPath: string, hostPath: string): Promise<void>;
   /** Full scripts/migrate.ts startup path against this database. */
   migrate(database: string): Promise<void>;

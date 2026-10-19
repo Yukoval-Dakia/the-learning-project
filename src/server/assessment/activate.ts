@@ -1,59 +1,21 @@
-// ====================================================================
-// YUK-1045 — activateEvaluation 编排骨架（grounding §4.3 / §11 / §3.3 时点表）
-// ====================================================================
-//
-// 本模块只承载【activation 编排】：锁序 → 校验 → CAS → 原子提交（head +
-// effect receipt 事件）。它不评分、不调模型（模型调用在锁外、由 1047 评估
-// seam 完成并把 completed candidate 写进 evaluation 表后才到达这里）。
-//
-// 锁序（§11「先锁 common learning-write，再一致地锁 submission/head」）：
-//   1. `acquireLearningStateWriteLock`（全局学习写锁 G —— 所有学习态写方先取
-//      它，天然与结算串行化）；
-//   2. 只读 candidate 坐标，取 assessment-evaluation-group advisory 锁；
-//   3. `evaluation` candidate 行锁（FOR UPDATE）；
-//   4. `assessment_submission` 行锁（FOR UPDATE）；
-//   5. `evaluation_effective_head` 行锁（FOR UPDATE —— CAS 串行化点）；
-//   6. `question` 组根行锁（FOR UPDATE —— publish/verify 链在
-//      `publishQuestionGroupFromRow` 内先取同一锁，故 suspension/admission
-//      写与 activation 读在组根行锁上互斥 ⇒ §3.3「发题/激活与 verify 状态
-//      变更串行化」落实为同一锁点，而非额外锁面）。
-//   所有跨域写方都以 G 为第一锁，无主序颠倒 ⇒ 无环。
-//
-// admission 校验（§3.3「已排队/正在评估：可以保存 candidate，activation
-// 重新核对 admission generation」）：
-//   - 组根在组根行锁下读 lifecycle：suspended 或 withdrawn ⇒ stale_admission；
-//   - 自动评分必须有服务端在执行前封存的 admission_snapshot；同 revision、
-//     admitted、同 generation 且无 hold，才可生效。缺证据历史保持 held。
-//   - 请求 generation 仅附加约束，不能覆盖/补造候选证据；无 lifecycle 拒绝。
-//   - D9/D15 显式手动/自评不要求规则准入，仍受现有 hold/withdrawn 守卫。
-//
-// 原子提交（§11「receipt + 学习结算 + effective head + outbox 同事务原子」）：
-//   - 结算经注入端口 `LearningSettlementPort`（YUK-1047 evaluator convergence
-//     的落点；本 lane 不实现 —— blockedBy: YUK-1047）；
-//   - 端口返回的 effect 处置（applied/ineligible/failed_pending）写进
-//     `experimental:assessment_activation` 事件 —— receipt 即事件载荷
-//     （schema 无独立 receipt 表；event 行承担 raw receipt，§11「可选 effect
-//     receipt 不得被吞」⇒ 已执行激活的三种处置均留痕；未执行的尝试
-//     not_completed/head_missing/stale_admission/settlement_unavailable
-//     不产 receipt）；
-//   - head UPDATE 带 expected CAS 谓词做 DB 层兜底（锁内已判，双保险）；
-//   - outbox = 本事件行本身（event 行 + 订阅链即本仓 outbox 形态，见
-//     verify-dispatch-outbox.ts 先例）。
-//
-// 生成单调（generation +1）、ABA 防线（expected_effective_id null-or-id
-// REQUIRED + expected_generation REQUIRED，契约见 core/schema/assessment/
-// ids.ts `ActivateEvaluationIntent`）原样执行。
-//
-// 明示缺口（与 owner 裁决一致地挂账，而非假装已交付）：
-//   - 学习结算实现 = YUK-1047 seam（本模块只定义端口与调用点）；
-//   - 「不可变 digest」在 assessment 侧的可执行面 = 坐标一致性
-//     （submission↔issuance↔revision↔evaluation 复合坐标）；内容 digest
-//     重算（plan_digest vs execution_plan）属 evaluator 写方（1047）语义；
-//   - 同 coarse 不同分值的 meaningful replacement：由 aggregate 表达差异，
-//     本编排不识别分值语义 —— 1047 结算端口负责判定；
-//   - regrade/appeal 的学习效应政策（「regrade 不算额外练习」「不静默覆盖
-//     用户已确认评级」）同样落在结算端口内部。
-// ====================================================================
+// Activation only. Scoring and model calls finish before this, outside the lock.
+// Lock order: learning-state G, the group advisory lock, then FOR UPDATE on the
+// candidate, the submission, the effective head, and the question group root.
+// Every learning writer takes G first, so this order has no cycle.
+// Publish and verify take that same group-root lock, so admission writes and
+// activation reads cannot interleave.
+// Suspended, withdrawn, or a missing lifecycle is stale. An automatic score needs
+// the server-sealed admission snapshot: same revision, admitted, same generation, no hold.
+// A missing snapshot is stale_admission. The request generation cannot invent one.
+// Manual and self-report ratings skip rule admission and still obey hold and withdrawn.
+// The injected port writes learning state on this transaction. It must not call a model
+// or open another transaction. With no port, activation throws and the caller
+// transaction rolls back. No head move, no receipt.
+// applied, ineligible, and failed_pending each leave a receipt event. There is no receipt table.
+// Attempts that never ran do not. The CAS predicate is the database backstop after the in-lock check.
+// The receipt event is the outbox. Generation moves by one. Both expected ids are required.
+// coordinate_mismatch means the submission, issuance, revision, and frozen input do not name one group.
+// Content digest, what a score means, and whether a regrade is extra practice stay inside the port.
 
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
@@ -90,30 +52,23 @@ import {
 import { writeEvent } from '@/kernel/events';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 
-/** receipt 事件 action 名。 */
 export const ASSESSMENT_ACTIVATION_ACTION = 'experimental:assessment_activation';
 export const ASSESSMENT_ACTIVATION_VERSION = 1 as const;
 
-// ---------- 端口与错误 ----------
-
 /**
- * 学习结算处置（§11「可选 effect receipt」三种落地值）。
- *   - applied：学习态（FSRS/θ̂/calibration）已在本事务内写入；
- *   - ineligible：该 evaluation 依政策不产生学习效应（candidate 仍可生效 ——
- *     effective head 前移，receipt 如实记 ineligible）；
- *   - failed_pending：结算未能完成但激活本身有效 —— head 前移 + receipt 记
- *     failed_pending，由上游 replay/重试消费（绝不静默吞掉）。
+ * applied wrote learning state here. ineligible still advances the head and says so.
+ * failed_pending advances the head too. The receipt stays for replay. Do not drop it.
  */
 export type ActivationEffect = 'applied' | 'ineligible' | 'failed_pending';
 
 export interface ActivationSettleInput {
   tx: Tx;
-  /** 锁内读出的已校验上下文（不可变输入）。 */
+  /** Read under the row locks. The port must not re-read a newer row. */
   evaluation: typeof evaluation.$inferSelect;
   submission: typeof assessment_submission.$inferSelect;
   head: typeof evaluation_effective_head.$inferSelect;
   issuance: typeof assessment_issuance.$inferSelect;
-  /** 组根 question id（question_revision.group_id）。 */
+  /** Group root. Admission is read on this row's lock. */
   questionGroupId: string;
   /** Validated complete input scope; legacy single-member fixtures retain their issuance. */
   inputScope?: {
@@ -136,10 +91,9 @@ export interface ActivationSettleInput {
 }
 
 /**
- * 学习结算注入端口（YUK-1047 接缝）：在 activation 事务内执行 FSRS/θ̂/
- * calibration 写入并返回处置。实现者必须【只用 tx 写学习态、不调模型、不
- * 另开事务】。未提供时默认 fail-closed（抛 ActivationSettlementUnavailable
- * ⇒ 全事务回滚，head 不前移、无 receipt —— 绝不假装已结算）。
+ * Writes learning state on the activation transaction and returns the effect.
+ * Use only that tx. Do not call a model or open another transaction.
+ * The default throws, and the caller transaction rolls back.
  */
 export type LearningSettlementPort = (input: ActivationSettleInput) => Promise<ActivationEffect>;
 
@@ -157,19 +111,13 @@ export const settlementUnavailable: LearningSettlementPort = () => {
   throw new ActivationSettlementUnavailable();
 };
 
-// ---------- 输入契约（zod 沿用 REQUIRED-null CAS 语义） ----------
-
 export const ActivateEvaluationRequest = ActivateEvaluationIntent.extend({
   user_rating: FsrsRating.optional(),
-  /**
-   * 调用方的附加 generation 约束。自动评分的权威证据来自 candidate 内
-   * 服务端封存的 admission_snapshot；本字段不能覆盖或补造缺失快照。
-   */
+  /** Extra constraint only. It cannot fill in a missing admission snapshot. */
   admission_generation_observed: z.number().int().min(0).optional(),
 });
 export type ActivateEvaluationRequestT = z.infer<typeof ActivateEvaluationRequest>;
 
-/** 结构化结果。CAS 冲突值原样透传 core `resolveActivationCas` 判定。 */
 export type ActivateEvaluationResult =
   | { status: 'activated'; effect: ActivationEffect; generation: number }
   | { status: 'already_effective'; effect: 'idempotent_replay'; generation: number }
@@ -185,12 +133,9 @@ export type ActivateEvaluationResult =
     }
   | { status: 'cas_conflict'; conflict: 'stale_head' | 'generation_mismatch' };
 
-// ---------- 初始 head（submission/group seam 的同事务原子件） ----------
-
 /**
- * 建 submission/group 时【同事务】插入初始 head 行（§11 首条不变量）。
- * 调用方（1047 的 saveSubmission seam / 测试）必须在自己的事务里调用 ——
- * 本函数不自带事务，保证「submission + group + head」单事务原子。
+ * Insert the first head row. This function opens no transaction.
+ * The caller must already hold the one that inserted the submission and the group.
  */
 export async function insertInitialEvaluationHead(
   tx: Tx,
@@ -204,8 +149,6 @@ export async function insertInitialEvaluationHead(
     updated_at: input.now ?? new Date(),
   });
 }
-
-// ---------- 编排主体 ----------
 
 export async function activateEvaluation(
   tx: Tx,
@@ -222,7 +165,6 @@ export async function activateEvaluation(
   const now = options.now ?? new Date();
   const actorRef = options.actorRef ?? 'assessment:activate';
 
-  // 1) common learning-write lock（锁序第一步）。
   await acquireLearningStateWriteLock(tx);
 
   const [coordinate] = await tx
@@ -248,8 +190,6 @@ export async function activateEvaluation(
     .limit(1);
   if (withdrawal) return { status: 'occurrence_withdrawn' };
 
-  // 2) candidate evaluation 行锁 + 读（先取 opaque id 拿 submission/group
-  //    坐标）。
   const [cand] = await tx
     .select()
     .from(evaluation)
@@ -259,7 +199,7 @@ export async function activateEvaluation(
   if (!cand) return { status: 'not_found' };
   if (cand.status !== 'completed') return { status: 'not_completed' };
 
-  // 3) submission 行锁 + 坐标核对（复合 FK 之外的应用层兜底）。
+  // Beyond the composite foreign key. A matching id can still point at another group.
   const [sub] = await tx
     .select()
     .from(assessment_submission)
@@ -271,7 +211,7 @@ export async function activateEvaluation(
     return { status: 'coordinate_mismatch' };
   }
 
-  // 4) head 行锁（CAS 串行化点）。
+  // CAS serialization point.
   const [head] = await tx
     .select()
     .from(evaluation_effective_head)
@@ -314,7 +254,6 @@ export async function activateEvaluation(
       : FsrsRating.parse(firstChoice)
     : input.user_rating;
 
-  // 5) 幂等重放：candidate 已是当前 effective ⇒ 已结算过，如实返回不重写。
   const cas = resolveActivationCas(
     {
       evaluation_group_id: head.evaluation_group_id,
@@ -330,7 +269,7 @@ export async function activateEvaluation(
   );
   if (!cas.ok) {
     if (cas.conflict === 'already_effective') {
-      // 幂等重放：candidate 已是当前 effective ⇒ 已结算过，如实返回不重写。
+      // Already effective. It was settled. Do not write again.
       return {
         status: 'already_effective',
         effect: 'idempotent_replay',
@@ -340,8 +279,6 @@ export async function activateEvaluation(
     return { status: 'cas_conflict', conflict: cas.conflict };
   }
 
-  // 6) 组根行锁 + admission 校验（§3.3：activation 重核 admission generation；
-  //    suspended/withdrawn 组不得生效评估）。
   const [issuance] = await tx
     .select()
     .from(assessment_issuance)
@@ -413,7 +350,7 @@ export async function activateEvaluation(
     return { status: 'coordinate_mismatch' };
   }
 
-  // 组根行锁 —— 与 publish/verify 生命周期写互斥的线性化点。
+  // Same row lock publish and verify take.
   await tx
     .select({ id: question.id })
     .from(question)
@@ -460,7 +397,6 @@ export async function activateEvaluation(
     }
   }
 
-  // 7) 结算（注入端口；1047 落点）→ head CAS 前移 → receipt 事件，单事务原子。
   const effect = await settle({
     tx,
     evaluation: cand,
@@ -485,7 +421,7 @@ export async function activateEvaluation(
     .where(
       and(
         eq(evaluation_effective_head.evaluation_group_id, head.evaluation_group_id),
-        // DB 层 CAS 兜底：锁内已判，此处防锁外写者。
+        // The row is locked. Refuse the write when the expected id or generation no longer matches.
         input.expected_effective_id === null
           ? isNull(evaluation_effective_head.effective_evaluation_id)
           : eq(evaluation_effective_head.effective_evaluation_id, input.expected_effective_id),
@@ -494,8 +430,7 @@ export async function activateEvaluation(
     )
     .returning({ evaluation_group_id: evaluation_effective_head.evaluation_group_id });
 
-  // YUK-1095 — CAS 谓词实际命中 0 行时绝不能继续写 receipt / 返回 activated：
-  // 锁外写者（或谓词漂移）已使本次前移不成立。按谓词分支如实上报，不产 receipt。
+  // Zero rows means the advance did not happen. Do not write a receipt or report activated.
   if (advanced.length === 0) {
     const [post] = await tx
       .select({ submission_id: evaluation_effective_head.submission_id })
@@ -536,16 +471,10 @@ export async function activateEvaluation(
   return { status: 'activated', effect, generation: nextGeneration };
 }
 
-// ---------- 一次性 claim 到期释放（§3.3「claim 到期恢复不得复活被撤回题」） ----------
-
 /**
- * 释放已占用的 issuance claim（claim_status: claimed → released）。
- *
- * 本函数【只】碰 claim 生命周期列（绑定列由 trigger 冻结），不触碰
- * question/lifecycle —— 题被 verify 撤回后的 lifecycle.suspended 原样保留；
- * 释放出的 issuance 再次走发题读面时由 contract 准入门拦截，不复活撤回题
- * （§3.3）。非 'claimed' 行返回 { released: false }（unclaimed/released 恒
- * 不改动）。
+ * Touches only the claim columns. The binding columns stay frozen by the trigger.
+ * A withdrawn question keeps lifecycle.suspended. The next issue read still refuses it.
+ * Anything other than claimed is left as it is.
  */
 export async function releaseIssuanceClaim(
   tx: Tx,
@@ -563,8 +492,6 @@ export async function releaseIssuanceClaim(
     .returning({ issuance_id: assessment_issuance.issuance_id });
   return { released: rows.length > 0 };
 }
-
-// ---------- 类型再导出（调用方不需要深入 core 文件） ----------
 
 export type {
   EvaluationGroupIdT,
