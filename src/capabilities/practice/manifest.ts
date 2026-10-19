@@ -161,6 +161,9 @@ export const practiceCapability = defineCapability({
       'experimental:assessment_activation',
       'experimental:assessment_publish',
       'experimental:assessment_attempt',
+      // 未作答录入与记录捕获写这个事件。声明放在练习侧，回来唤醒才能订阅，
+      // 只挂练习的组合也不会报 undeclared action。
+      'experimental:record_capture',
       'experimental:assessment_feedback_released',
       'experimental:assessment_placement_issued',
       // YUK-1405 L1 — learner-released held issuance (recorded unresolved).
