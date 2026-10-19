@@ -1,8 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-19：架构深化线独立启动；首片 YUK-1572 拆练习流职责，首三片已获协调线同意；证据外置永久保留已批，测试缩减只做清单。
+> Linear 是权威 tracker。2026-10-19：YUK-1563 第③部分以 draft 交付；能力、限额和默认端点同源运行时目录，第④部分仍在原票。
 
 ## NOW
+
+- **帮助靠谱 / 模型事实同源（YUK-1563 ③）**：`el/yuk-1563` 复用现有目录缓存，Pi 不再覆盖能力/限额/端点，例外集中按 provider/model 记原因。typecheck/lint（179 warnings）/build、provider-lanes/model-source 审计及现有7条 adapter 测试通过。隔离PG刷新保留已选变化并产生有主finding，未选模型即时更新；离线重启读缓存。请求边界实跑输出上限、压缩与非法档位拒绝，无付费调用、UI或测试代码改动。仅授权普通push与draft，不merge/deploy；PR链接及exact-head CI见Linear交接。
 
 - **架构深化 / YUK-1572**：`refactor/yuk-1572-stream-modules`，独占 arch-lead；stream-store 已2120→1427，超长18→17，SCC与443边不变；合成d38e父级typecheck/lint/build/两审计通过；Kimi R1 APPROVE、旧head5c0e CI全绿；整合main2176仅看板冲突，新head验证/CI待完成。六票T3，#1830仍由Grok完成；不动其ratchet/baseline。见[首三片计划](docs/planning/2026-10-19-architecture-deepening.md)。
 
@@ -35,6 +37,8 @@
 - **本轮已交付 YUK-1392**：PR1619于17:11:43Z合main6aaf8ca89，tree5e8ab973与exact3883903相同；CI37812973662全绿、R1 NONE、threads0。父13unit/22DB、static/build/audits通过，已unwatch/Linear Done。无部署。
 
 ## NEXT
+
+- **YUK-1563**：③待独立审查与exact-head CI；④自定义provider仍未实现，不关闭整票。不改provider回退链，旧显式Memory rollback配置保持。
 
 - **架构深化**：首片验证/独立审查/精确HEAD CI后推进YUK-1571拆环，再拆intervention职责；每片报告SCC、server边、超长文件及baseline行数。
 
@@ -76,6 +80,8 @@
 - YUK-1325 / PR #1580：保留 `1be38edbc`、`1af72b427`、`3940d61f9`，正常合入 main `8841ce68a` 为 `e484efa60`；359 scoped tests、21 audits、typecheck/lint/build 与 lint ratchet 通过，无 high/critical 依赖告警。开发 transcript 与产品 MiMo/自主交付指导同时保留。writer 已释放，父线程负责最终 SDK/SQL/browser 回放、push、exact-head CI、review replies、Linear 与发布；P2 typed tracing 留 YUK-1339，不启动第三审。详情见 [Laminar 记录](docs/planning/2026-10-06-yuk1325-laminar.md)。旧完成线程越界写入风险仍由父线程独占 watch 约束，平台跟进待去重登记。 最新 main 的前缀 credential P1 修复及73tests记录一并保留；PR父线程仍负责后续验收，此lane无新review。
 
 ## BLOCKED-ON
+
+- **YUK-1563 独立审查**：工具额度限制，未执行；不以作者自查、离线请求或静态检查代替独立结论，draft明确保留。
 
 - **测试修改授权**：未获owner逐批批准，一行测试都不动；不阻塞产品重构。证据外置策略已批准，既有证据每批删除仍待协调线看清单。
 

@@ -1,3 +1,5 @@
+import { tokenPlanEndpointOverride } from './model-catalog-overrides';
+
 /** Fail visibly if a retained pay-as-you-go override would receive a Token Plan key. */
 function tokenPlanEndpoint(raw: string, envName: string): string {
   const url = new URL(raw);
@@ -13,13 +15,7 @@ function tokenPlanEndpoint(raw: string, envName: string): string {
 export function xiaomiTokenPlanBaseUrl(
   env: Record<string, string | undefined> = process.env,
 ): string {
-  const explicit = env.XIAOMI_TOKEN_PLAN_BASE_URL?.trim();
-  if (explicit) return tokenPlanEndpoint(explicit, 'XIAOMI_TOKEN_PLAN_BASE_URL');
-  const region = env.XIAOMI_TOKEN_PLAN_REGION?.trim() || 'cn';
-  if (region !== 'cn' && region !== 'sgp' && region !== 'ams') {
-    throw new Error('XIAOMI_TOKEN_PLAN_REGION must be cn, sgp, or ams');
-  }
-  return `https://token-plan-${region}.xiaomimimo.com/v1`;
+  return tokenPlanEndpointOverride(env);
 }
 
 /** The operator vision probe uses Messages; product tasks use native pi Completions. */

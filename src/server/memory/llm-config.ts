@@ -1,4 +1,5 @@
 import { getLaneOverride } from '@/core/config/store';
+import { resolveModelProfile } from '@/server/ai/model-profiles';
 import { nativePiModel } from '@/server/ai/pi-provider-catalog';
 import {
   LEGACY_GLM_MODEL_ID,
@@ -22,16 +23,26 @@ export function resolveMemoryLlmConfig(
   if (!pin) {
     const apiKey = env.ZHIPU_API_KEY?.trim();
     if (!apiKey) throw new Error('Mem0 memory client requires ZHIPU_API_KEY');
+    const model = env.MEM0_LLM_MODEL?.trim() || LEGACY_GLM_MODEL_ID;
+    const baseURL =
+      env.MEM0_LLM_BASE_URL?.trim() ||
+      resolveModelProfile('zhipuai-coding-plan', model, env).baseUrl;
+    if (!baseURL) throw new Error('Memory LLM catalog endpoint is unknown');
     return {
       provider: 'glm',
       apiKey,
-      model: env.MEM0_LLM_MODEL?.trim() || LEGACY_GLM_MODEL_ID,
-      baseURL: env.MEM0_LLM_BASE_URL?.trim() || 'https://open.bigmodel.cn/api/coding/paas/v4',
+      model,
+      baseURL,
     };
   }
   const credentialEnv = providerCredentialEnvName(pin.provider);
   const native = pin.model ? nativePiModel(pin.provider, pin.model, env) : undefined;
-  if (isOauthProvider(pin.provider) || native?.api !== 'openai-completions' || !pin.model) {
+  if (
+    isOauthProvider(pin.provider) ||
+    native?.api !== 'openai-completions' ||
+    !native.baseUrl ||
+    !pin.model
+  ) {
     throw new Error(
       `Memory LLM requires a key-auth OpenAI completions model for the global pin (${pin.provider}/${pin.model ?? 'unset'}); no legacy LLM fallback`,
     );

@@ -1,3 +1,13 @@
+# YUK-1563 模型目录第③部分 draft 交接 — 2026-10-19
+
+本 worktree `/workspace/amp/wt/YUK-1563`，分支 `el/yuk-1563`，服务「帮助靠谱」的 C1-10/C4。只改能力、限额、原生推理档位和默认端点的事实来源，复用 #1814/#1820 的缓存/锁/探针。Pi 保留传输协议与兼容处理，手写例外集中到 `model-catalog-overrides.ts`；没有 UI、自定义provider、回退策略或测试代码改动，没有付费调用。
+
+本地 typecheck、lint（179 warnings）、build、provider-lanes/model-source 审计及现有7条 adapter 测试通过。隔离 PG17 从原快照读入后刷新真实 models.dev，已选 Sonnet 保留1M并记 owner=YUK-1563 的变化finding，未选 dated Sonnet 在同一 Pi registry 中更新为200k；task config行不变。禁网新进程读缓存成功。真实 adapter/SDK 请求在 fetch 边界拦截，验证 DeepSeek 新端点和384000输出上限、Astra 128000输出上限、超输入上限及未声明档位的零请求拒绝；620007估算token触发压缩并保留当前指令。没有真实provider输出/鉴权验收，不能称付费smoke通过。原始本机日志在 `.amp/in/artifacts/`，不入git。
+
+独立审查工具因额度限制未执行。仅获授权 commit、普通push、draft PR；不merge/deploy，不force push/rebase。PR用 `Refs YUK-1563`，第④部分留原票，Linear保持未完成。旧显式 `MEM0_LLM_BASE_URL` rollback未迁走，以免本片改回退配置策略。查重后未发现需另开票的新缺陷；审查和exact-head CI状态以原票交接评论及PR为准。
+
+以下为其他 lane 的历史交接，不表示本线程接管。
+
 # Architecture deepening — 2026-10-19
 
 Current owner: arch-lead, refactor/yuk-1572-stream-modules, base d41f24213. Six tickets relabelled T3. Grok retains #1830 ratchet writer; semantic alignment posted to PR and YUK-1570. First-three plan approved: docs/planning/2026-10-19-architecture-deepening.md. SWE-2 source writer released at 2cd19533a: stream-store 1427, inputs355, view410; >1500 files17. Merged main615437b76 into d38e72c447; parent typecheck/lint179warnings/full build/boundary+architecture audits exit0. Kimi R1 APPROVE d41..2cd, source unchanged; exact5c0e CI39252986951 SUCCESS. Main2176 integration only PLAN/now conflicts; new synthetic-head checks/CI pending, no new source review needed. Sol independently examines knowledge outbound SCC cut after GLM notes-only impossibility inference was rejected. Parent owns docs/review/integration. No tests/DB/Docker/TEST/provider operations. Baseline measured: SCC1/5 members, cap-server443, >1500 files18, baseline141 lines. External bulky evidence approved with permanent retention; old HEAD deletion requires copy/hash/reference inventory and per-batch coordinator review. First evidence PR updates AGENTS for all lanes. Test shrink remains inventory only pending owner approval.

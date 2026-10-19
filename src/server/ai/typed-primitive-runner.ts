@@ -51,8 +51,6 @@ import {
 
 /** Worst-case USD reserved per wire attempt when the endpoint's own cost truth is absent. */
 export const TYPED_RESERVE_PER_CALL_USD = 0.005;
-/** Native typed decisions endpoint — NOT the chat completions façade. */
-export const SYSTEMONE_ENDPOINT_URL = 'https://openrouter.ai/api/v1/systemone';
 /** The actual typed transport provider, shared by execution and read-only facts. */
 const TYPED_PRIMITIVE_PROVIDER = 'openrouter' as const;
 /** TypeSafe is the only provider ever allowed to serve this lane. */
@@ -66,7 +64,7 @@ export const TYPESAFE_PROVIDER_CONSTRAINTS = {
 interface RegisteredTypedTask {
   readonly inputSchema: ZodTypeAny;
   readonly outputSchema: ZodTypeAny;
-  readonly endpointUrl: string;
+  readonly endpointPath: string;
   /** Pinned canonical response model; drift ⇒ typed_contract_violation. */
   readonly expectedModel: string;
   /** Pinned response provider tag when the wire carries one. */
@@ -84,7 +82,7 @@ const TYPED_TASKS: Record<string, RegisteredTypedTask> = {
   JevScoringDecisionTask: {
     inputSchema: JevScoringDecisionInput,
     outputSchema: JevSystemOneResponse,
-    endpointUrl: SYSTEMONE_ENDPOINT_URL,
+    endpointPath: 'systemone',
     expectedModel: JEV_CANONICAL_MODEL,
     expectedProvider: 'TypeSafe',
     providerConstraints: TYPESAFE_PROVIDER_CONSTRAINTS,
@@ -256,11 +254,13 @@ export async function runTypedPrimitiveTask<Output = unknown>(
       logScope: ctx.logScope ?? 'typedPrimitive',
     });
     let wireAttempted = false;
+    let endpointUrl: string;
     try {
       const output = await lifecycle.withProviderSession(body, {
         async prepare() {
-          // HTTP has no warm transport: the durable start row still lands
-          // between this hook and run(), keeping admission/attempt ordering.
+          if (lifecycle.resolved.authMode !== 'key' || !lifecycle.resolved.baseUrl)
+            throw new Error('Typed model catalog endpoint is unknown');
+          endpointUrl = `${lifecycle.resolved.baseUrl}/${registration.endpointPath}`;
         },
         async run() {
           await retrySource?.markRetried();
@@ -269,7 +269,7 @@ export async function runTypedPrimitiveTask<Output = unknown>(
           wireAttempted = true;
           let response: Response;
           try {
-            response = await transport(registration.endpointUrl, {
+            response = await transport(endpointUrl, {
               method: 'POST',
               redirect: 'error',
               headers: {

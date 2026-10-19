@@ -138,6 +138,14 @@ pnpm smoke:local
 模型能力目录（YUK-924 / YUK-1563）：worker 启动时和每天从 models.dev 拉取
 `api.json`，写入 `model_catalog_cache`。拉取失败沿用该行；没有该行就用
 `src/server/ai/model-catalog.snapshot.json`。`pnpm gen:model-catalog` 仍重写这份随包快照。
+工具调用、推理及原生档位、输入模态、上下文/输入/输出上限和 API base URL
+统一从该目录读取；Pi 只提供协议与兼容处理，不覆盖这些事实。目录缺项保持 unknown，
+执行缺少必需端点或限额时明确报错。只有目录缺失或实测不符才能在
+`src/server/ai/model-catalog-overrides.ts` 按 provider/model 写明原因后覆盖。
+压缩以输入上限和「上下文减输出上限」的较小值触发，裁剪后再预留一轮输出；
+请求输出不得超过目录上限及估算的剩余上下文。估算不是 provider token 计量。
+刷新不改任务选模；已选模型消失或能力/端点变化保留旧事实，并记录由 YUK-1563
+负责处理的 finding。自定义 provider 配置仍属该票第 ④ 部分，本片未实现。
 
 生产 / NAS compose 配置放在 `.env`；host-side local dev 也从 `.env` 的 `POSTGRES_*`
 派生本地连接串。浏览器代码不持有 provider key，所有 AI 调用都通过 Hono route 或

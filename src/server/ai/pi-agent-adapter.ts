@@ -69,7 +69,7 @@ import type {
 } from './execution-adapter';
 import { startTraceSpan, traceOperation, tracePiStream } from './laminar-tracing';
 import { emitPiAfterToolCall, runPiBeforeToolCall } from './pi-hooks';
-import { createLoomPiModels } from './pi-models';
+import { type LoomPiModel, createLoomPiModels } from './pi-models';
 import { piProviderId } from './pi-provider-catalog';
 import { hasPiUsageEvidence, withPiUsageEvidence } from './pi-usage-evidence';
 import {
@@ -153,22 +153,17 @@ export const PI_SESSION_ID_PREFIX = 'pi:';
 
 /**
  * Rough chars-per-token divisor for the transformContext compaction trigger.
- * The estimate only decides WHEN to prune — the durable evidence is the
- * compact_boundary frame's own pre/post counts, not billing usage.
+ * Used for pruning and request headroom, never billing usage.
  */
 const PI_COMPACT_CHARS_PER_TOKEN = 4;
 /**
  * CJK codepoints estimate to ~1 token each — the repo's own budget note puts
  * 400 CJK chars at ~400–1000 tokens (kernel/tools/budgets.ts), so the generic
  * divisor would undercount a Chinese transcript 4–10× and the window would
- * overflow before the 85% trigger ever fired. Erring toward early compaction
+ * overflow before the compaction trigger ever fired. Erring toward early compaction
  * is the safe direction.
  */
 const PI_COMPACT_CJK_RE = /[\u2E80-\u9FFF\uF900-\uFAFF\uFF00-\uFFEF]/gu;
-/** Compact when estimated context tokens exceed this share of the window. */
-const PI_COMPACT_TRIGGER_RATIO = 0.85;
-/** Prune back to this share of the window (headroom for the reply). */
-const PI_COMPACT_TARGET_RATIO = 0.6;
 
 function piSessionIdFor(optionsResume: string | undefined): string {
   return optionsResume?.startsWith(PI_SESSION_ID_PREFIX)
@@ -945,7 +940,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
 
   constructor(
     private readonly args: ExecutionAdapterStartupArgs,
-    private readonly model: PiModel<PiApi>,
+    private readonly model: LoomPiModel,
     private readonly deps: Required<PiAdapterDeps>,
     tools: AgentTool[],
     private readonly remoteMcpHandles: PiRemoteMcpMountHandle[],
@@ -1183,8 +1178,12 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     const sessionId = this.sessionId;
     const sessionContext = compaction.sessionContext;
     const contextWindow = this.model.contextWindow;
-    const triggerTokens = Math.floor(contextWindow * PI_COMPACT_TRIGGER_RATIO);
-    const targetTokens = Math.floor(contextWindow * PI_COMPACT_TARGET_RATIO);
+    const triggerTokens = Math.min(
+      this.model.maxInputTokens ?? contextWindow,
+      contextWindow - this.model.maxTokens,
+    );
+    // Reserve another output-sized turn after pruning, without a model-specific threshold.
+    const targetTokens = Math.max(0, triggerTokens - this.model.maxTokens);
     const isSessionContextMessage = (message: AgentMessage): boolean =>
       message.role === 'user' &&
       (message.content === sessionContext ||
@@ -1329,7 +1328,14 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     return resolveStructuredSubmitPolicy(this.args.resolved.provider, this.args.resolved.model);
   }
 
-  private readonly streamFn: StreamFn = (model, llmContext, streamOptions) => {
+  private readonly streamFn: StreamFn = (model: LoomPiModel, llmContext, streamOptions) => {
+    const effort = streamOptions?.reasoning;
+    const inputTokens = estimatePiTokens(llmContext.messages);
+    const remaining = model.contextWindow - inputTokens;
+    streamOptions = {
+      ...streamOptions,
+      maxTokens: Math.min(streamOptions?.maxTokens ?? model.maxTokens, model.maxTokens, remaining),
+    };
     const submitPolicy = this.structuredSubmitPolicy(model);
     // YUK-1547 — per-task model-native reasoning params (resolved +
     // fail-closed-validated in resolveTaskProvider): pass the model's own
@@ -1337,28 +1343,37 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     // This is NOT the options.effort → pi ThinkingLevel enum path — startup
     // rejects both being set so the param has exactly one writer.
     const nativeReasoning = this.args.resolved.nativeReasoningParams;
-    const streamOptionsWithPayload =
-      submitPolicy !== undefined || nativeReasoning
-        ? {
-            ...streamOptions,
-            onPayload: async (payload: unknown, requestModel: PiModel<PiApi>) => {
-              const transformed = await streamOptions?.onPayload?.(payload, requestModel);
-              const body = transformed ?? payload;
-              if (body == null || typeof body !== 'object' || Array.isArray(body)) {
-                throw new Error('structured output requires an object provider payload');
-              }
-              return {
-                ...body,
-                // The structured-submit contract lives on the wire, not merely
-                // in the prompt — forced where the lane accepts it, 'auto'
-                // where the provider rejects a forced choice (one closing
-                // reminder turn then compensates, see iterate()).
-                ...(submitPolicy !== undefined ? structuredSubmitWireFields(submitPolicy) : {}),
-                ...nativeReasoning,
-              };
-            },
-          }
-        : streamOptions;
+    const streamOptionsWithPayload = {
+      ...streamOptions,
+      onPayload: async (payload: unknown, requestModel: PiModel<PiApi>) => {
+        // Pi converts onPayload failures into terminal errors; throwing from streamFn crashes its loop.
+        if (
+          effort !== undefined &&
+          model.catalogReasoning &&
+          !model.catalogReasoning.supportedEfforts.includes(effort)
+        ) {
+          throw new Error(
+            `Model '${model.provider}/${model.id}' does not declare reasoning effort '${effort}' in the runtime catalog`,
+          );
+        }
+        if (inputTokens > (model.maxInputTokens ?? model.contextWindow) || remaining <= 0) {
+          throw new Error(
+            `Model '${model.provider}/${model.id}' input exceeds its catalog token limit`,
+          );
+        }
+        const transformed = await streamOptions?.onPayload?.(payload, requestModel);
+        const body = transformed ?? payload;
+        if (submitPolicy === undefined && !nativeReasoning) return body;
+        if (body == null || typeof body !== 'object' || Array.isArray(body)) {
+          throw new Error('structured output requires an object provider payload');
+        }
+        return {
+          ...body,
+          ...(submitPolicy !== undefined ? structuredSubmitWireFields(submitPolicy) : {}),
+          ...nativeReasoning,
+        };
+      },
+    };
     return tracePiStream(
       (m, context, options) =>
         withPiUsageEvidence(
@@ -2061,7 +2076,7 @@ export class PiAgentAdapter implements ExecutionAdapter {
     const model = deps.models.getModel(piProviderId(args.resolved.provider), args.resolved.model);
     if (!model) {
       throw new Error(
-        `pi adapter has no model '${args.resolved.model}' in provider '${args.resolved.provider}' — check the loom pi catalog (pi-models.ts) for the id.`,
+        `pi adapter cannot execute '${args.resolved.provider}/${args.resolved.model}': protocol or required catalog facts (endpoint, reasoning, input modalities, context/output limits) are unknown. Model selection is unchanged.`,
       );
     }
     // YUK-1547 — the wire's reasoning_effort must have exactly one writer:

@@ -537,12 +537,11 @@ export const PROVIDER_LANES = [
     configuration: {
       endpoint: {
         summary:
-          'Global product pin selects native completions baseUrl; legacy unpinned MEM0_LLM_BASE_URL rollback',
+          'Runtime catalog supplies completions baseUrl; legacy unpinned MEM0_LLM_BASE_URL rollback remains explicit',
         source: {
           path: 'src/server/memory/llm-config.ts',
           contains: ['env.MEM0_LLM_BASE_URL', 'baseURL: native.baseUrl'],
-          calls: ['resolveGlobalProviderSwitch', 'nativePiModel'],
-          literals: ['https://open.bigmodel.cn/api/coding/paas/v4'],
+          calls: ['resolveGlobalProviderSwitch', 'nativePiModel', 'resolveModelProfile'],
         },
       },
       credential: {
@@ -691,12 +690,11 @@ export const PROVIDER_LANES = [
     configuration: {
       endpoint: {
         summary:
-          'Global product pin selects native completions baseUrl; legacy unpinned MEM0_LLM_BASE_URL rollback',
+          'Runtime catalog supplies completions baseUrl; legacy unpinned MEM0_LLM_BASE_URL rollback remains explicit',
         source: {
           path: 'src/server/memory/llm-config.ts',
           contains: ['env.MEM0_LLM_BASE_URL', 'baseURL: native.baseUrl'],
-          calls: ['resolveGlobalProviderSwitch', 'nativePiModel'],
-          literals: ['https://open.bigmodel.cn/api/coding/paas/v4'],
+          calls: ['resolveGlobalProviderSwitch', 'nativePiModel', 'resolveModelProfile'],
         },
       },
       credential: {
