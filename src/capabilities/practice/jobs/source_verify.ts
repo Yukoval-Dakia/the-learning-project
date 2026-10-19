@@ -75,7 +75,7 @@ import { normalizeToCanonicalKind } from '@/subjects/question-kind';
 import { resolveQuestionAdmissionPolicyId } from '../server/admission/run-admission';
 import { SYNTHETIC_SUBJECT_ROOT_RE } from '../server/placement-scope';
 import { SupplyTraceV1 } from '../server/question-supply/evidence-demand';
-import { readVectorNearHold } from '../server/question-supply/ingest-dedup';
+import { readVectorNearHold, visibleSourceNeighbor } from '../server/question-supply/ingest-dedup';
 import { lockPlacementSupplyScopes } from '../server/question-supply/placement-supply-lock';
 import { DEDUP_OVERLAP_THRESHOLD, maxNgramOverlap } from '../server/question-supply/sourced-dedup';
 import {
@@ -565,7 +565,11 @@ export async function runSourceVerify(
     // check. It is the SINGLE source for both the grounding-gate trigger below AND the final
     // `promote` (which just ANDs in the grounding verdict) — PR #1063 review thread 3 (was
     // two copy-pasted condition lists).
-    const vectorNearHold = readVectorNearHold(metadataRaw);
+    const storedHold = readVectorNearHold(metadataRaw);
+    const vectorNearHold =
+      storedHold != null && (await visibleSourceNeighbor(db, storedHold.neighbor_question_id))
+        ? storedHold
+        : null;
     const otherwisePromotable =
       knowledgeAlive &&
       !unresolvedAnchoredExactMismatch &&

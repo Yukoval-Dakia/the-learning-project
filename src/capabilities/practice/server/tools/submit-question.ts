@@ -78,6 +78,7 @@ import {
   claimHttpSourceDuplicate,
   findVectorNearDuplicate,
   vectorNearHoldMetadata,
+  visibleSourceNeighbor,
 } from '../question-supply/ingest-dedup';
 import { cleanupStagedAssets } from '../question-supply/jyeoo-candidates';
 import { JYEOO_SOURCE_HOST } from '../question-supply/jyeoo-supply-config';
@@ -461,7 +462,6 @@ async function runCandidateSubmit(
     attribution_state: input.attribution_state,
     ...routeMetadata,
     ...(input.demand_id ? { demand_id: input.demand_id } : {}),
-    ...(vectorNear != null ? vectorNearHoldMetadata(vectorNear) : {}),
   };
 
   let persisted:
@@ -491,6 +491,12 @@ async function runCandidateSubmit(
         now,
       });
       if (inserted.status === 'raced_merged') return inserted;
+
+      const hold =
+        vectorNear != null && (await visibleSourceNeighbor(tx, vectorNear.id))
+          ? vectorNearHoldMetadata(vectorNear)
+          : null;
+      const metadataJson = JSON.stringify({ ...metadataExtras, ...(hold ?? {}) });
 
       const [storedText] = await tx
         .select({
@@ -527,7 +533,7 @@ async function runCandidateSubmit(
             })),
             image_refs: candidate.image_refs,
             structured: { ...candidate.structured, id: questionId },
-            metadata: sql`${question.metadata} || ${JSON.stringify(metadataExtras)}::jsonb`,
+            metadata: sql`${question.metadata} || ${metadataJson}::jsonb`,
             updated_at: now,
             ...(embedStamp ?? {}),
           })
@@ -536,7 +542,7 @@ async function runCandidateSubmit(
         await tx
           .update(question)
           .set({
-            metadata: sql`${question.metadata} || ${JSON.stringify(metadataExtras)}::jsonb`,
+            metadata: sql`${question.metadata} || ${metadataJson}::jsonb`,
             updated_at: now,
             ...(embedStamp ?? {}),
           })

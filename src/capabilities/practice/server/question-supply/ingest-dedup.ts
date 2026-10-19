@@ -2,7 +2,7 @@
 // 网址不是题目身份。只有一页一题的来源（目前是菁优网题目详情页）才按规范化网址合并。
 // 多题页面只走精确哈希和向量近重。向量近重不拒收，记一笔交给现有草稿待裁决。
 
-import { and, asc, isNull, ne, sql } from 'drizzle-orm';
+import { and, asc, eq, isNull, ne, sql } from 'drizzle-orm';
 import { settleOneQuestionPageHit } from '@/capabilities/practice/server/quiz/content-fingerprint';
 import type { Db, Tx } from '@/db/client';
 import { question } from '@/db/schema';
@@ -129,6 +129,16 @@ function visibleSourceRow() {
     sql`(${question.metadata} -> 'archived_at') IS NULL`,
     sql`(${question.metadata} -> 'dismissed_at') IS NULL`,
   );
+}
+
+/** 近重 hold 的邻居。入库写入和 source_verify 重查用同一条可见性。 */
+export async function visibleSourceNeighbor(db: Db | Tx, questionId: string): Promise<boolean> {
+  const [row] = await db
+    .select({ id: question.id })
+    .from(question)
+    .where(and(eq(question.id, questionId), visibleSourceRow()))
+    .limit(1);
+  return row != null;
 }
 
 export async function findSameHttpSource(
