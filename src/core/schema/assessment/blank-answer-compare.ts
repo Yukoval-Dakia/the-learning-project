@@ -209,6 +209,8 @@ const fail = (reason: string): DeclaredParseFailure => ({ ok: false, reason });
  * 2²→22、½→1⁄2、x₀→x0）——那是"先丢语义再猜"。这些字符在规范化【之前】
  * 显式拒绝（准入编译与作答两入口共用本函数），绝不改写后继续解释；
  * 封闭语法解释不了的输入返回 undecidable/invalid 带具体 reason。
+ * 唯一例外：作答入口中声明数值单位（expected_unit）的 lane 走下方
+ * declaredUnitResponseCorruptsValue 的数值区分流，恢复旧 mathjs 单位解析。
  */
 const SEMANTICS_CORRUPTING_NFKC_RE =
   /[\u00b9\u00b2\u00b3\u2070-\u209f\u00bc-\u00be\u2150-\u215f\u2044]/u;
@@ -225,6 +227,41 @@ function normalizeMathInput(raw: string): DeclaredParseResult<string> {
       .replace(/[\u00d7\u00b7]/g, '*')
       .replace(/\s+/g, ''),
   };
+}
+
+/**
+ * R2 单位 lane 分流（仅 compareDeclaredBlank 在 number + 声明 expected_unit
+ * 时使用；准入编译入口不消费作答，不受影响）。
+ *
+ * mathjs Unit.parse 的单位名允许数字（内建 m2=SURFACE、m3=VOLUME），旧路
+ * 径在 convertUnitTo 内部 NFKC 后令 `3 m²`→`3 m2` 正确换算。整串上标拒绝
+ * 先于单位换算运行会把这类旧支持作答全部打成 pending —— R2 判定的回归。
+ *
+ * 但不能直接对带单位作答绕过 raw guard：mathjs 从串首读数值词法区
+ * （[±][0-9.eE] 及前导空白），折叠字符落在该区内或紧邻其后时，NFKC 产物
+ * 并入数值本身 —— `3² m`→`32 m`、`3e² m`→`3e2 m`、`²m`→`2 m`、
+ * `３² m`→`32 m`（全角数字同样属数值区）、`3⁄4`→`3/4` —— 先丢语义再给
+ * 分，与 P1-2 同类，必须仍拒绝。
+ *
+ * 判定：逐折叠字符检查其【之前】的全部 raw 前缀经 NFKC 后是否整段仍属数
+ * 值区字符类 [+-0-9.eE\s]。若是（前缀可含全角数字/±/空白，均折回数值区字
+ * 符），该折叠产物并入 mathjs 读到的值 → 拒绝；若前缀已出现字母/括号等
+ * 非数值区字符（单位 token 已开始），折叠字符只落在单位部分 —— `m²`→`m2`
+ * 正是旧支持的单位写法 —— 原样交给 convertUnitTo/mathjs 决定，不新增任
+ * 何宽容（mathjs 解析失败照旧 unparseable → undecidable，量纲不符照旧
+ * incorrect）。
+ */
+const UNIT_LANE_NUMERIC_ZONE_RE = /^[+\-0-9.eE\s]*$/;
+
+function declaredUnitResponseCorruptsValue(raw: string): boolean {
+  const chars = [...raw];
+  for (let i = 0; i < chars.length; i += 1) {
+    if (!SEMANTICS_CORRUPTING_NFKC_RE.test(chars[i])) continue;
+    if (UNIT_LANE_NUMERIC_ZONE_RE.test(chars.slice(0, i).join('').normalize('NFKC'))) {
+      return true;
+    }
+  }
+  return false;
 }
 
 const POSITIVE_INFINITY_TOKENS = new Set(['+∞', '∞']);
@@ -1009,27 +1046,41 @@ export async function compareDeclaredBlank(
     };
   }
   const norm = normalizeMathInput(rawResponse);
-  if (!norm.ok) return { outcome: 'undecidable', reason: norm.reason };
-  const text = norm.value;
-  if (text.length === 0) return { outcome: 'undecidable', reason: 'empty_response' };
+  if (norm.ok && norm.value.length === 0) {
+    return { outcome: 'undecidable', reason: 'empty_response' };
+  }
 
   if (compiled.kind === 'number_tolerance') {
-    const bare = parseDeclaredNumber(text, shape);
-    if (bare.ok) {
-      const value = ratToNumber(bare.value);
-      if (compiled.expectedUnit == null) {
+    if (norm.ok) {
+      const bare = parseDeclaredNumber(norm.value, shape);
+      if (bare.ok) {
+        const value = ratToNumber(bare.value);
+        if (compiled.expectedUnit == null) {
+          return withinToleranceOf(value, compiled.expected, compiled.tolerance)
+            ? { outcome: 'correct' }
+            : { outcome: 'incorrect' };
+        }
+        // 裸数 + 声明单位：仅 accepts_bare_number 显式允许时按该单位解释。
+        if (!compiled.acceptsBare) return { outcome: 'incorrect', reason: 'missing_unit' };
         return withinToleranceOf(value, compiled.expected, compiled.tolerance)
           ? { outcome: 'correct' }
-          : { outcome: 'incorrect' };
+          : { outcome: 'incorrect', reason: 'missing_unit_value_out_of_tolerance' };
       }
-      // 裸数 + 声明单位：仅 accepts_bare_number 显式允许时按该单位解释。
-      if (!compiled.acceptsBare) return { outcome: 'incorrect', reason: 'missing_unit' };
-      return withinToleranceOf(value, compiled.expected, compiled.tolerance)
-        ? { outcome: 'correct' }
-        : { outcome: 'incorrect', reason: 'missing_unit_value_out_of_tolerance' };
     }
     if (compiled.expectedUnit == null) {
-      return { outcome: 'undecidable', reason: 'numeric_response_unparseable' };
+      return {
+        outcome: 'undecidable',
+        reason: norm.ok ? 'numeric_response_unparseable' : norm.reason,
+      };
+    }
+    // R2 分流：声明单位作答恢复经 convertUnitTo 的原 mathjs 解析（m²/m³
+    // 等旧支持写法），但折叠字符落在数值词法区的输入仍按同一 reason 拒绝
+    // （3² m→32 m 类数值改写绝不放行）；见 declaredUnitResponseCorruptsValue。
+    if (declaredUnitResponseCorruptsValue(rawResponse)) {
+      return {
+        outcome: 'undecidable',
+        reason: 'superscript_subscript_or_vulgar_fraction_not_supported',
+      };
     }
     const converted = await convertUnitTo(rawResponse, compiled.expectedUnit);
     if (!converted.ok && converted.kind === 'unparseable') {
@@ -1040,6 +1091,10 @@ export async function compareDeclaredBlank(
       ? { outcome: 'correct' }
       : { outcome: 'incorrect', reason: 'unit_value_out_of_tolerance' };
   }
+
+  // 其余 lane（无单位 number / 精确对象）保持整串 guard：折叠字符一律拒绝。
+  if (!norm.ok) return { outcome: 'undecidable', reason: norm.reason };
+  const text = norm.value;
 
   if (compiled.kind === 'number_exact_rational') {
     const parsed = parseDeclaredNumber(text, shape);

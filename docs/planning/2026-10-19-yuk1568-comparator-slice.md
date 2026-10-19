@@ -41,6 +41,9 @@ rawResponse)`（设计 §3 拟议接口落地），`DECLARED_BLANK_COMPARE_VERSI
   `accepts_bare_number: true` 时按声明单位解释，否则 incorrect（漏单位=错，与
   既有 numeric 行为一致）。number + text key + 声明单位 → 确定性冲突（文本别名
   无法承载冻结单位语义）。区间/集合成员**不做容差配对**（非传递容差不进集合）。
+  作答中的单位上标写法（`m²`/`m³`）属旧支持语义：折叠字符只保护数值词法区
+  （`3² m`→`32 m` 类仍拒绝），单位 token 已开始后的折叠字符交给原 mathjs
+  解析（R2 分流，见下）。
 
 错误边界（设计 §3 表格落地）：作答解析失败/歧义/超限 → `undecidable`（判分侧
 pending，绝不伪零分）；完整解析但不相等（错值/错端点/缺或多成员/换坐标/开闭不同）
@@ -124,8 +127,10 @@ pending，绝不伪零分）；完整解析但不相等（错值/错端点/缺�
   显式拒绝上标/下标/分数字符（²³¹、ⁿ 类、₀ 类、¼½¾ 类、⁄），返回
   `superscript_subscript_or_vulgar_fraction_not_supported`，绝不丢语义后
   继续猜；② 直线表达式首项之后必须有显式 +/- 分隔，否则
-  `line_term_separator_missing` 拒绝，不再把相邻 token 默认相加。既有单位
-  换算（mathjs lane）未改。
+  `line_term_separator_missing` 拒绝，不再把相邻 token 默认相加。当时记录为
+  "既有单位换算（mathjs lane）未改"——指 convertUnitTo 函数体未改；R2 核实
+  入口整串 guard 先于单位换算运行，已使声明单位作答（`3 m²` 类）回归为
+  pending，该回归在下方 R2 修复中分流处理。
 - **P1-3 连续除法右结合**：`x/2/3` 被词法吞成 `x÷(2/3)=3x/2`。修复：词法层
   给分数 token 打 compound 标记；除法上下文（变量后的除数）遇 compound
   分数即拒绝 `line_consecutive_division_not_supported`（源串必为连续除法，
@@ -137,10 +142,48 @@ pending，绝不伪零分）；完整解析但不相等（错值/错端点/缺�
 `x/2*3` 类除法后接乘的链形不在封闭语法内同样拒绝。以上均 undecidable/invalid
 带具体 reason，准入编译与作答两入口同语义。未扩成通用表达式系统。
 
+## R2 修复记录（同 PR 第三 commit，仅 blank-answer-compare.ts + 本文档）
+
+独立 Codex R2 判 REQUEST_CHANGES（原 P1-1..P1-3 全部 CLOSED，新 P1：1），父
+核实依赖源码成立，本轮已修：
+
+- **R2-P1 单位作答回归**：R1 P1-2 的整串上标拒绝在 `compareDeclaredBlank` 作答
+  入口先于 `convertUnitTo` 运行，使旧支持的声明单位作答变为 pending。触发：
+  `version=k1-math-v1`、`value.kind=number`、`unit.unit=m2`、
+  `accepts_bare_number=false`、私有 numeric key `expected=3`/absolute tol
+  `0.01`/`expected_unit=m2`；作答 `3 m²` 旧路径经 convertUnitTo 内 NFKC 得
+  `3 m2`，mathjs Unit.parse 命中内建 m2（SURFACE）判 correct；R1 后被整串
+  guard 拦为 undecidable → pending。体积 `m³` 同理（内建 m3=VOLUME）。
+- **修法（最小分流，非绕过 guard）**：声明 `expected_unit` 的 number_tolerance
+  lane 改用 `declaredUnitResponseCorruptsValue` 作折叠字符检查——逐折叠字符
+  判定其之前的全部 raw 前缀经 NFKC 后是否整段属数值词法区字符类
+  `[+-0-9.eE\s]`（mathjs 从串首读 `[±][0-9.eE]` 数值区）。落在数值区内或紧
+  邻其后的折叠字符会把产物并入 mathjs 读到的值（`3² m`→`32 m`、
+  `3e² m`→`3e2 m`、`²m`→`2 m`、`３² m`→`32 m`、`3⁄4`→`3/4`），仍按同一
+  `superscript_subscript_or_vulgar_fraction_not_supported` 拒绝；单位 token
+  已开始（前缀含字母/括号等非数值区字符）后的折叠字符只落在单位部分，交给
+  convertUnitTo/mathjs 原样决定——`m²`→`m2` 正是旧支持写法。
+- **保留不变**：R1 P1-1 并集闭性、P1-2 整串 guard 对全部非单位 lane（无单位
+  number 精确/容差路径、interval_set、point、affine_line、finite_set 及准入
+  编译入口）与项间 +/- 要求、P1-3 连续除法拒绝全部原样；`3² m` 类数值改写
+  在带单位作答中同样不得分（undecidable）；accepts_bare_number=false 时裸数
+  仍 incorrect（missing_unit）；量纲不符仍 incorrect；mathjs 不认识的写法仍
+  unparseable → undecidable；容差与 expected_unit 编译约束未动；未声明旧
+  路径不动；grade/admission 共享同一入口。未引入通用表达式系统、注册表或
+  单位特判表。
+
+本机检查（本修复 commit，SWE-2 high 如实记录）：`pnpm exec biome check` 触及
+文件 exit 0；`pnpm typecheck` exit 0；`pnpm lint` exit 0（179 项 warning 全部
+位于本片未触及文件，触及文件 0 hit）；`pnpm build` exit 0（web + server/
+worker/migrate bundle）。本轮未编写/运行任何测试、断言脚本、inline 探针
+或旧 /tmp 脚本；未访问 DB/容器/provider/付费；真实题验收仍按"第二片部署后
+在副本执行"的既定窗口，不因本修复提前或推迟。
+
 ## NOT_RUN / 边界
 
-- 未编写/运行任何测试与断言脚本（owner 规则；早期临时脚本已停、证据保留，
-  见上）。本机不跑 full `pnpm test`，完整 gate 由 exact-head CI 执行。
+- 本轮（R2 修复）未编写/运行任何测试与断言脚本（owner 规则；首版早期临时
+  脚本已停、证据保留，见上"早期临时脚本"节）。本机不跑 full `pnpm test`，
+  完整 gate 由 exact-head CI 执行。
 - 未访问 DB/容器/TEST provider/付费调用；40 存量题与 7 题未动（冻结证据确认
   7 题均为旧单 text 槽，本片不拆题）。
 - 真实题验收时点（协调线最新决定）：**第二片部署后于副本执行**，不等第
