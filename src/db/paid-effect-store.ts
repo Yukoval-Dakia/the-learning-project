@@ -867,11 +867,14 @@ export type PaidEffectCancelOutcome =
  * The event insert and the state CAS commit or roll back TOGETHER — a failed
  * event aborts the transition. Only 'pending' may be cancelled: 'sending' has
  * a live send, 'unknown' is an unresolved obligation (void + successor owns
- * its retirement), and receipts/applied are paid truth. Replaying with the
- * same requestId returns 'already_cancelled' and reuses the stored receipt
- * verbatim — a changed reason/operator/fence under the same id rewrites
- * nothing; replaying under a different requestId throws, never minting a
- * second cancellation event.
+ * its retirement), and receipts/applied are paid truth. The never-sent fence
+ * is literal: BOTH the request's expectedFence and the row's live fence must
+ * be exactly 0 — any advanced fence means a claim already touched the row.
+ * Replaying the request returns 'already_cancelled' with the stored receipt
+ * ONLY when every request field (requestId, reason, operator, basis), the
+ * full identity, and the receipt's previousFence all match; ANY divergence
+ * or a different requestId throws — replay never mints a second event and
+ * never mutates the recorded receipt.
  */
 export async function cancelPaidEffectUnsentIntent(
   tx: Tx,
@@ -879,6 +882,12 @@ export async function cancelPaidEffectUnsentIntent(
   opts: { expectedFence: number; cancellation: PaidEffectCancelRequest },
 ): Promise<PaidEffectCancelOutcome> {
   const request = opts.cancellation;
+  if (opts.expectedFence !== 0) {
+    throw new PaidEffectCancellationError(
+      `paid-effect cancel requires the literal never-sent fence 0; ` +
+        `manifest expected_fence ${opts.expectedFence} is not a valid cancel token`,
+    );
+  }
   // Same pinned order as a claim/void: family advisory → identity row →
   // entity advisory, so a cancel serializes against every real send claim —
   // exactly one of them commits.
@@ -886,7 +895,23 @@ export async function cancelPaidEffectUnsentIntent(
   if (!row) throw new PaidEffectProtocolError('paid-effect row missing');
   const existing = row.cancel_json as PaidEffectCancelReceipt | null;
   if (row.state === 'cancelled') {
-    if (existing?.requestId === request.requestId) {
+    // Replay is identified by the FULL recorded request, not the id alone:
+    // every audit field, the embedded identity, and the retired fence must
+    // match before the stored receipt is returned. Anything else fails
+    // closed — a borrowed request id never laundered through an old receipt.
+    const replayMatches =
+      existing !== null &&
+      existing.requestId === request.requestId &&
+      existing.reason === request.reason &&
+      existing.operator === request.operator &&
+      existing.basis === request.basis &&
+      existing.previousFence === opts.expectedFence &&
+      existing.identity.family === identity.family &&
+      existing.identity.entityId === identity.entityId &&
+      existing.identity.entityRevision === identity.entityRevision &&
+      existing.identity.unit === identity.unit &&
+      existing.identity.inputDigest === identity.inputDigest;
+    if (replayMatches) {
       return {
         kind: 'already_cancelled',
         requestId: request.requestId,
@@ -896,8 +921,9 @@ export async function cancelPaidEffectUnsentIntent(
     }
     throw new PaidEffectCancellationError(
       `paid-effect ${identity.family}/${identity.entityId} is already cancelled under ` +
-        `request ${existing?.requestId ?? '<missing receipt>'}; ` +
-        'refusing a second cancellation event',
+        `request ${existing?.requestId ?? '<missing receipt>'} and the replay ` +
+        `diverges in request fields, identity, or expected fence; ` +
+        'refusing to mint or mutate a cancellation event',
     );
   }
   if (row.state !== 'pending') {
@@ -906,10 +932,10 @@ export async function cancelPaidEffectUnsentIntent(
         `${identity.family}/${identity.entityId} is '${row.state}'`,
     );
   }
-  if (row.fence !== opts.expectedFence) {
+  if (row.fence !== 0) {
     throw new PaidEffectDeliveryConflictError(
-      `paid-effect cancel fence ${opts.expectedFence} is stale for ` +
-        `${identity.family}/${identity.entityId} (row fence ${row.fence})`,
+      `paid-effect cancel requires fence 0 (never claimed); ` +
+        `${identity.family}/${identity.entityId} has row fence ${row.fence}`,
     );
   }
   // The never-sent predicate is verified explicitly, not assumed from the
@@ -1036,8 +1062,9 @@ export interface PaidEffectCancelEligibility {
  *   - no 'sending' sibling exists for the same (family, entityId);
  *   - no non-terminal pg-boss job of the family references the entity;
  *   - no non-terminal event_subscription_delivery references the entity; and
- *   - every declared watch (action, subscriberId) has a delivery row for
- *     every matching event — an undelivered event could still mint work.
+ *   - every declared watch (action, subscriberId, subscriberVersion) has a
+ *     delivery row — at the CURRENT declared version — for every matching
+ *     event; an old-version delivery does not prove this version saw it.
  * Any read failure fails closed (the caller's transaction aborts).
  */
 export async function evaluatePaidEffectCancelEligibility(
@@ -1045,10 +1072,13 @@ export async function evaluatePaidEffectCancelEligibility(
   identity: PaidEffectIdentity,
   opts: {
     expectedFence: number;
-    watch: readonly { action: string; subscriberId: string }[];
+    watch: readonly { action: string; subscriberId: string; subscriberVersion: number }[];
   },
 ): Promise<PaidEffectCancelEligibility> {
   const failures: string[] = [];
+  if (opts.expectedFence !== 0) {
+    failures.push(`expected_fence ${opts.expectedFence} is not the literal never-sent 0`);
+  }
   const rows = await tx
     .select({
       state: paid_effect.state,
@@ -1081,7 +1111,9 @@ export async function evaluatePaidEffectCancelEligibility(
     if (row.state !== 'pending') {
       failures.push(`state '${row.state}' is not 'pending'`);
     }
-    if (row.fence !== opts.expectedFence) {
+    if (row.fence !== 0) {
+      failures.push(`fence ${row.fence} is not the literal never-sent 0`);
+    } else if (row.fence !== opts.expectedFence) {
       failures.push(`fence ${row.fence} != expected_fence ${opts.expectedFence}`);
     }
     const sentEvidence: string[] = [];
@@ -1196,6 +1228,7 @@ export async function evaluatePaidEffectCancelEligibility(
           sql`not exists (
             select 1 from ${event_subscription_delivery} d
             where d.subscriber_id = ${watch.subscriberId}
+              and d.subscriber_version = ${watch.subscriberVersion}
               and d.source_event_id = ${event.id}
               and d.source_dispatch_seq = ${event.dispatch_seq})`,
         ),

@@ -1,5 +1,5 @@
 {
-  "id": "8ab9d177-8447-4dae-ae97-002103c21a4a",
+  "id": "91f9e422-bc0c-4f45-9933-44ff2d4cea69",
   "prevId": "1048eda2-7743-4499-b6ca-5f5339a1cdaf",
   "version": "7",
   "dialect": "postgresql",
@@ -8415,7 +8415,7 @@
         },
         "paid_effect_cancellation_from_ck": {
           "name": "paid_effect_cancellation_from_ck",
-          "value": "\"paid_effect_cancellation\".\"cancelled_from_state\" = 'pending' AND \"paid_effect_cancellation\".\"previous_fence\" >= 0"
+          "value": "\"paid_effect_cancellation\".\"cancelled_from_state\" = 'pending' AND \"paid_effect_cancellation\".\"previous_fence\" = 0"
         }
       },
       "isRLSEnabled": false

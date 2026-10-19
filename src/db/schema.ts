@@ -4715,7 +4715,9 @@ export const paid_effect_cancellation = pgTable(
     ),
     check(
       'paid_effect_cancellation_from_ck',
-      sql`${t.cancelled_from_state} = 'pending' AND ${t.previous_fence} >= 0`,
+      // The never-sent contract is literal: only a fence-0 pending intent may
+      // be cancelled — any advanced fence implies a claim touched the row.
+      sql`${t.cancelled_from_state} = 'pending' AND ${t.previous_fence} = 0`,
     ),
     foreignKey({
       columns: [t.family, t.entity_id, t.entity_revision, t.unit, t.input_digest],

@@ -18,7 +18,7 @@ import { QuestionGroupStructure } from '@/core/schema/assessment/structure';
 import type { Tx } from '@/db/client';
 import { admitPaidEffectDeliveryControl } from '@/db/paid-effect-control';
 import { admitPaidEffectIntent, claimPaidEffectSend, readPaidEffect } from '@/db/paid-effect-store';
-import { paid_effect } from '@/db/schema';
+import { paid_effect, paid_effect_authorization } from '@/db/schema';
 import { SubjectProfileSchema } from '@/subjects/profile';
 import { ADMISSION_FAMILY, type AdmissionJobData } from './enqueue';
 
@@ -281,6 +281,52 @@ export async function claimAdmissionBatch(
     .for('update')
     .limit(1);
   if (legacyReceipt) return { kind: 'held' as const, input, identity };
+  // Sealed-history gate (YUK-1567): a cancelled never-sent intent is the
+  // original admission decision for this base/revision. When no live row
+  // reconciles, a redelivery whose prepared input drifted (admission
+  // generation, subject profile, policy, solver config) computes a NEW input
+  // digest → a fresh paid identity the entity gate would not stop. Cancel
+  // authorizes nothing: the new identity may only send when an existing
+  // paid_effect_authorization explicitly binds it as a successor (the bound
+  // successor's own row normally reconciles above — this exempts exactly the
+  // authorized identity, nothing else). Any other same-revision redelivery
+  // holds. Only 'cancelled' rows of THIS entity+revision gate here — other
+  // revisions and other entities' content are unaffected. Like the legacy
+  // check above, this runs inside the family-locked claim transaction, so a
+  // concurrent cancel cannot commit a 'cancelled' row between this read and
+  // the admit below.
+  if (!existing) {
+    const sealed = await tx
+      .select({ input_digest: paid_effect.input_digest })
+      .from(paid_effect)
+      .where(
+        and(
+          eq(paid_effect.family, effect.family),
+          eq(paid_effect.entity_id, effect.entityId),
+          eq(paid_effect.entity_revision, effect.entityRevision),
+          eq(paid_effect.state, 'cancelled'),
+        ),
+      )
+      .for('update')
+      .limit(4);
+    if (sealed.length > 0) {
+      const [authorizedSuccessor] = await tx
+        .select({ authorization_id: paid_effect_authorization.authorization_id })
+        .from(paid_effect_authorization)
+        .where(
+          and(
+            eq(paid_effect_authorization.family, effect.family),
+            eq(paid_effect_authorization.entity_id, effect.entityId),
+            eq(paid_effect_authorization.successor_entity_revision, identity.entityRevision),
+            eq(paid_effect_authorization.successor_unit, identity.unit),
+            eq(paid_effect_authorization.successor_input_digest, identity.inputDigest),
+          ),
+        )
+        .for('update')
+        .limit(1);
+      if (!authorizedSuccessor) return { kind: 'held' as const, input, identity };
+    }
+  }
   await admitPaidEffectIntent(tx, effect);
   const claim = await claimPaidEffectSend(tx, identity, {
     backend: 'pg-boss',

@@ -14,7 +14,7 @@ CREATE TABLE "paid_effect_cancellation" (
 	CONSTRAINT "paid_effect_cancellation_pk" PRIMARY KEY("family","entity_id","entity_revision","unit","input_digest"),
 	CONSTRAINT "paid_effect_cancellation_digest_ck" CHECK ("paid_effect_cancellation"."input_digest" ~ '^sha256:[0-9a-f]{64}$'),
 	CONSTRAINT "paid_effect_cancellation_nonempty_ck" CHECK ("paid_effect_cancellation"."entity_id" <> '' AND "paid_effect_cancellation"."entity_revision" <> '' AND "paid_effect_cancellation"."unit" <> '' AND "paid_effect_cancellation"."request_id" <> '' AND "paid_effect_cancellation"."reason" <> '' AND "paid_effect_cancellation"."operator" <> '' AND "paid_effect_cancellation"."basis" <> ''),
-	CONSTRAINT "paid_effect_cancellation_from_ck" CHECK ("paid_effect_cancellation"."cancelled_from_state" = 'pending' AND "paid_effect_cancellation"."previous_fence" >= 0)
+	CONSTRAINT "paid_effect_cancellation_from_ck" CHECK ("paid_effect_cancellation"."cancelled_from_state" = 'pending' AND "paid_effect_cancellation"."previous_fence" = 0)
 );
 --> statement-breakpoint
 ALTER TABLE "paid_effect" DROP CONSTRAINT "paid_effect_state_ck";--> statement-breakpoint

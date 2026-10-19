@@ -7,20 +7,28 @@
 //       snapshot and freezes a write-once plan artifact with per-target
 //       eligibility + observed state. Nothing is mutated.
 //   apply <m.json> --out <receipt.json>
-//       Executes ONLY the frozen manifest targets — one transaction per
-//       target: family advisory lock → re-verify eligibility under locks →
-//       cancelPaidEffectUnsentIntent (cancellation event + pending→cancelled
-//       CAS commit or roll back together). Per-target outcomes are recorded
-//       verbatim; a replayed request id reuses the stored receipt, a
-//       different request id on an already-cancelled row fails closed.
+//       Executes ONLY the frozen manifest targets — one SERIALIZABLE
+//       transaction per target: family advisory lock → already-cancelled
+//       strict replay (returns the stored receipt, writes nothing) or, for a
+//       fresh pending row, eligibility re-proof under the snapshot →
+//       cancelPaidEffectUnsentIntent (event + pending→cancelled CAS, atomic).
+//       A serialization conflict fails the target closed — fix the cause and
+//       re-plan; the script never retries or bypasses gates.
 //
 // The manifest is the frozen approval. Every target names the COMPLETE
-// 5-part paid-effect identity plus the fence CAS token — the tool never
-// fishes for paid rows by group, actor, time, or state, and never touches a
-// row outside the listed identities. The agreed CAS is identity + fence +
-// the never-sent predicate, NOT a row-digest comparison: full_row_md5 values
-// recorded before the 0124 columns existed are pre-migration observations
-// and are never used as a compare token.
+// 5-part paid-effect identity plus the literal never-sent fence token 0 —
+// the tool never fishes for paid rows by group, actor, time, or state, and
+// never touches a row outside the listed identities. The agreed CAS is
+// identity + fence 0 + the never-sent predicate, NOT a row-digest
+// comparison: full_row_md5 values recorded before the 0124 columns existed
+// are pre-migration observations and are never used as a compare token.
+//
+// The generic store takes no family knowledge; THIS ops entry is
+// admission-scoped: every target must be family 'question_admission_run' and
+// `watch` must equal — item for item — the admission enqueue pipeline's real
+// subscription declaration (action + subscriber_id + subscriber_version)
+// read from the practice capability manifest at runtime. A missing, empty,
+// or unrelated watch entry refuses before any query.
 //
 // Env: DATABASE_URL must equal YUK1567_DATABASE_URL (explicit approval of the
 // exact deployment DB — mirrors the reopen CLI's TEST guard).
@@ -32,22 +40,25 @@ import { createHash } from 'node:crypto';
 import { open, readFile } from 'node:fs/promises';
 import { sql } from 'drizzle-orm';
 import { z } from 'zod';
+import { practiceCapability } from '@/capabilities/practice/manifest';
 import type { PaidEffectIdentity } from '@/core/migration/paid-effect-protocol';
 import { lockPaidEffectControlFamily } from '@/db/paid-effect-control';
 import {
   cancelPaidEffectUnsentIntent,
   evaluatePaidEffectCancelEligibility,
+  readPaidEffect,
 } from '@/db/paid-effect-store';
 
 const digest = z.string().regex(/^sha256:[0-9a-f]{64}$/);
 
 /**
  * The frozen approval manifest. `request_id` is the operation's idempotency
- * anchor; `watch` declares the (action, subscriber) pairs whose undelivered
- * events could still mint work for the entity — empty means the operator
- * asserts no enqueue pipeline exists for this family. `targets` is the FULL
- * batch scope: apply iterates exactly this list, one transaction each, never
- * anything else.
+ * anchor; `watch` must equal the admission enqueue pipeline's declared
+ * (action, subscriber_id, subscriber_version) set — verified item-by-item
+ * against the live practice capability manifest, never trusted as-written;
+ * `targets` is the FULL batch scope: apply iterates exactly this list, one
+ * transaction each, never anything else. `expected_fence` is the literal 0:
+ * a non-zero fence means a claim already touched the row.
  */
 const cancelManifestSchema = z.object({
   version: z.literal(1),
@@ -60,9 +71,10 @@ const cancelManifestSchema = z.object({
       z.object({
         action: z.string().min(1),
         subscriber_id: z.string().min(1),
+        subscriber_version: z.number().int().positive(),
       }),
     )
-    .default([]),
+    .nonempty(),
   targets: z
     .array(
       z.object({
@@ -71,13 +83,41 @@ const cancelManifestSchema = z.object({
         entity_revision: z.string().min(1),
         unit: z.string().min(1),
         input_digest: digest,
-        expected_fence: z.number().int().nonnegative(),
+        expected_fence: z.literal(0),
       }),
     )
     .nonempty(),
 });
 type CancelManifest = z.infer<typeof cancelManifestSchema>;
 type CancelTarget = CancelManifest['targets'][number];
+type WatchEntry = CancelManifest['watch'][number];
+
+/** The only paid-effect family this ops entry currently supports. */
+const SUPPORTED_FAMILY = 'question_admission_run';
+const ADMISSION_ENQUEUE_SUBSCRIBER = 'practice.question-admission-enqueue';
+
+/**
+ * The required watch set for an admission-family cancel, sourced from the
+ * REAL practice subscription declaration — the (action, subscriber_id,
+ * subscriber_version) triples under which publish events can still mint
+ * admission jobs. If the declaration moves (e.g. a version bump), previously
+ * frozen manifests stop matching and must be re-approved.
+ */
+function requiredAdmissionWatch(): WatchEntry[] {
+  const decl = (practiceCapability.subscriptions?.handlers ?? []).find(
+    (h) => h.id === ADMISSION_ENQUEUE_SUBSCRIBER,
+  );
+  if (!decl) {
+    throw new Error(
+      `practice manifest no longer declares ${ADMISSION_ENQUEUE_SUBSCRIBER}; refusing to prove drainage`,
+    );
+  }
+  return decl.actions.map((action) => ({
+    action,
+    subscriber_id: decl.id,
+    subscriber_version: decl.version,
+  }));
+}
 
 const sha256 = (value: unknown) =>
   `sha256:${createHash('sha256').update(JSON.stringify(value)).digest('hex')}`;
@@ -98,9 +138,15 @@ function identityOf(target: CancelTarget): PaidEffectIdentity {
   };
 }
 
-function assertUniqueTargets(manifest: CancelManifest): void {
+function assertApprovedScope(manifest: CancelManifest): void {
   const seen = new Set<string>();
   for (const target of manifest.targets) {
+    if (target.family !== SUPPORTED_FAMILY) {
+      throw new Error(
+        `unsupported paid-effect family '${target.family}': this ops entry only ` +
+          `cancels ${SUPPORTED_FAMILY} intents; other families need their own approved lane`,
+      );
+    }
     const key = [
       target.family,
       target.entity_id,
@@ -110,6 +156,30 @@ function assertUniqueTargets(manifest: CancelManifest): void {
     ].join('|');
     if (seen.has(key)) throw new Error(`manifest contains duplicate target identity: ${key}`);
     seen.add(key);
+  }
+  // The declared watch set is what can still mint work for the entity; the
+  // frozen manifest must match it item-for-item (action + subscriber +
+  // version) — an omitted, empty, or unrelated entry would silently skip the
+  // undelivered-event proof.
+  const required = requiredAdmissionWatch();
+  const toKey = (w: WatchEntry) => `${w.action}|${w.subscriber_id}|${w.subscriber_version}`;
+  const requiredKeys = new Set(required.map(toKey));
+  const manifestKeys = new Set(manifest.watch.map(toKey));
+  for (const w of required) {
+    if (!manifestKeys.has(toKey(w))) {
+      throw new Error(
+        `manifest watch is missing the declared pipeline ${toKey(w)}; ` +
+          'an unproven enqueue path cannot be skipped',
+      );
+    }
+  }
+  for (const w of manifest.watch) {
+    if (!requiredKeys.has(toKey(w))) {
+      throw new Error(
+        `manifest watch entry ${toKey(w)} is not a declared admission enqueue ` +
+          'pipeline (or names a stale subscriber_version); refuse to attest it',
+      );
+    }
   }
 }
 
@@ -123,10 +193,18 @@ async function writeOnce(path: string, artifact: unknown): Promise<void> {
   }
 }
 
+function toEvalWatch(watch: readonly WatchEntry[]) {
+  return watch.map((w) => ({
+    action: w.action,
+    subscriberId: w.subscriber_id,
+    subscriberVersion: w.subscriber_version,
+  }));
+}
+
 async function plan(manifestPath: string, outPath: string) {
   requireDeploymentDb();
   const manifest = cancelManifestSchema.parse(JSON.parse(await readFile(manifestPath, 'utf8')));
-  assertUniqueTargets(manifest);
+  assertApprovedScope(manifest);
   const { db } = await import('@/db/client');
   try {
     const targets = await db.transaction(async (tx) => {
@@ -145,10 +223,7 @@ async function plan(manifestPath: string, outPath: string) {
           identity,
           eval: await evaluatePaidEffectCancelEligibility(tx, identity, {
             expectedFence: target.expected_fence,
-            watch: manifest.watch.map((w) => ({
-              action: w.action,
-              subscriberId: w.subscriber_id,
-            })),
+            watch: toEvalWatch(manifest.watch),
           }),
         });
       }
@@ -188,7 +263,7 @@ async function plan(manifestPath: string, outPath: string) {
 async function apply(manifestPath: string, outPath: string) {
   requireDeploymentDb();
   const manifest = cancelManifestSchema.parse(JSON.parse(await readFile(manifestPath, 'utf8')));
-  assertUniqueTargets(manifest);
+  assertApprovedScope(manifest);
   const { db } = await import('@/db/client');
   const results: Record<string, unknown>[] = [];
   let allSettled = true;
@@ -197,17 +272,38 @@ async function apply(manifestPath: string, outPath: string) {
       const identity = identityOf(target);
       try {
         const outcome = await db.transaction(async (tx) => {
-          // The family advisory is held for the whole transaction: every
-          // claim, void, or competing cancel for this family serializes
-          // behind it, so the eligibility re-check below cannot be raced past
-          // before commit.
+          // SERIALIZABLE must be the first statement of the tx. Every gate —
+          // row state, binding, live jobs, unsettled deliveries, undelivered
+          // watch events — must read one consistent snapshot: the
+          // event→delivery discovery handoff does NOT take the paid-effect
+          // family advisory, so under READ COMMITTED it could commit between
+          // two of these SELECTs and slip past both. Under SERIALIZABLE such
+          // an interleave aborts this transaction at commit (40001); the
+          // target is recorded failed and the operator re-plans. No retry
+          // loop, no gate bypass — the lock order itself is unchanged.
+          await tx.execute(sql`set transaction isolation level serializable`);
           await lockPaidEffectControlFamily(tx, identity.family);
+          // Replay first, inside the same locked tx: a row already cancelled
+          // under the EXACT same request returns its stored receipt without
+          // re-proving eligibility — the committed result must be
+          // recoverable even if the process died before the artifact write
+          // or new queue work arrived since. A divergent replay conflicts.
+          const snap = await readPaidEffect(tx, identity);
+          if (snap?.state === 'cancelled') {
+            return cancelPaidEffectUnsentIntent(tx, identity, {
+              expectedFence: target.expected_fence,
+              cancellation: {
+                requestId: manifest.request_id,
+                reason: manifest.reason,
+                operator: manifest.operator,
+                basis: manifest.basis,
+              },
+            });
+          }
+          // Fresh cancels only: the never-sent proof gates the write.
           const eligibility = await evaluatePaidEffectCancelEligibility(tx, identity, {
             expectedFence: target.expected_fence,
-            watch: manifest.watch.map((w) => ({
-              action: w.action,
-              subscriberId: w.subscriber_id,
-            })),
+            watch: toEvalWatch(manifest.watch),
           });
           if (!eligibility.eligible) {
             throw new Error(`eligibility re-check failed: ${eligibility.failures.join('; ')}`);
@@ -225,10 +321,11 @@ async function apply(manifestPath: string, outPath: string) {
         results.push({ identity, expected_fence: target.expected_fence, outcome });
       } catch (error) {
         allSettled = false;
+        const code = (error as { code?: string } | null)?.code;
         results.push({
           identity,
           expected_fence: target.expected_fence,
-          outcome: 'failed',
+          outcome: code === '40001' ? 'serialization_conflict' : 'failed',
           error: error instanceof Error ? error.message : String(error),
         });
       }
@@ -277,8 +374,10 @@ const run =
           'Lead-only ops entry for the generic never-sent paid-intent cancel (YUK-1567). ' +
             'plan <m.json> --out <plan.json> is read-only eligibility + plan freeze; ' +
             'apply <m.json> --out <receipt.json> cancels exactly the listed identities ' +
-            '(one transaction each: family advisory → eligibility re-check → event + CAS). ' +
-            'Requires DATABASE_URL === YUK1567_DATABASE_URL. Never enqueues, never calls a provider, no Docker.',
+            '(one SERIALIZABLE tx each: family advisory → strict replay or eligibility re-check ' +
+            '→ event + CAS). Admission family only; watch must match the declared enqueue ' +
+            'subscription item-for-item. Requires DATABASE_URL === YUK1567_DATABASE_URL. ' +
+            'Never enqueues, never calls a provider, no Docker.',
         ),
       )
     : mode === 'plan' && positional && flags.out

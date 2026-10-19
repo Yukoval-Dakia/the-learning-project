@@ -50,10 +50,16 @@ none are scripts.
 2. **Same-request replay.** Re-run `apply` with the identical manifest. Every
    target returns `already_cancelled` with the stored receipt; the cancellation
    table still holds exactly one row per identity; `cancelled_at` unchanged.
+   Also cover the crash window: delete/lose the artifact between commit and
+   file write, re-run with the same manifest to a new `--out` path — the stored
+   result must come back, not a failure.
 
-3. **Altered-request-id replay.** Change only `request_id` in the manifest and
-   re-apply. Each target fails with a `PaidEffectCancellationError`-class message;
-   no second event row; row state unchanged.
+3. **Divergent replay.** Change only `request_id` — or, separately, alter
+   `reason`/`operator`/`basis`/`expected_fence` while keeping the same
+   `request_id` — and re-apply. Each target fails with a
+   `PaidEffectCancellationError`-class message; no second event row; row state
+   and receipt unchanged. A borrowed request id must never launder a mutated
+   request.
 
 4. **Race with a send claim.** On a copy, start a transaction that claims the
    target's send (hold it open), then run `apply` for that target from another
@@ -65,12 +71,18 @@ none are scripts.
 5. **Refusal matrix.** Seed/copy variants and confirm each apply target fails
    with its row unchanged and no event row:
    `sending`/`unknown`/`receipt_ready`/`applied`/`voided` states; `pending` with a
-   non-NULL `delivery_id` (or lease/result/application column); `expected_fence`
-   one behind the live fence; a missing row; a target that is the bound successor
+   non-NULL `delivery_id` (or lease/result/application column); a `pending` row
+   whose live fence is not `0`; a manifest `expected_fence` other than `0`
+   (rejected at parse); a missing row; a target that is the bound successor
    of a `paid_effect_authorization` row; a live `created`/`retry`/`active`
    `pgboss.job` of the family referencing the entity; a `pending`/`claimed`/
    `retry_wait` `event_subscription_delivery` referencing the entity; a watched
-   `action` event with no delivery row.
+   `action` event with no delivery row at the declared `subscriber_version`
+   (a delivery under an older version must NOT satisfy it). Separately, confirm
+   manifest-level refusals before any query: omitted/empty `watch`, a watch
+   triple not equal to the declared `practice.question-admission-enqueue`
+   `(action, subscriber_id, subscriber_version)`, or a target family other than
+   `question_admission_run`.
 
 6. **Event/transition atomicity.** Force the event insert to fail (e.g. pre-create
    a `paid_effect_cancellation` row for the identity on the copy) and apply. The
@@ -89,11 +101,22 @@ none are scripts.
    the manifest reports `4.30`; an archive lacking the paid payload key is
    rejected before any wipe (existing strict behavior, now covering the new key).
 
-9. **Consumer dead-end.** On the copy, drive the admission reconciliation for a
-   cancelled identity: it must hold (no send, no receipt minted). A reauthorization
-   plan over an entity whose history contains cancelled rows proceeds treating
-   them as resolved history — and a cancelled row can never be voided (the void
-   path accepts only `unknown`).
+9. **Serialization-conflict fail-closed.** On the copy, engineer a concurrent
+   event→delivery discovery commit that interleaves between the apply gate
+   reads (or equivalently any write the serializable snapshot conflicts with):
+   the apply transaction aborts `40001`, the target is recorded
+   `serialization_conflict`, the row stays `pending`, no event row exists —
+   then settle the ambient work and re-apply cleanly.
+
+10. **Consumer dead-end.** On the copy, drive the admission reconciliation for a
+    cancelled identity: it must hold (no send, no receipt minted). Then deliver a
+    same-base/revision redelivery whose prepared input drifted (e.g. bumped
+    admission generation): the fresh identity must return `held`, and no new
+    `pending` row may be admitted, unless a `paid_effect_authorization` row
+    explicitly binds that exact identity as successor. A reauthorization plan
+    over an entity whose history contains cancelled rows proceeds treating them
+    as resolved history — and a cancelled row can never be voided (the void
+    path accepts only `unknown`).
 
 ## C. Invariant mapping
 

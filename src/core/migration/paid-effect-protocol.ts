@@ -46,9 +46,10 @@ export type PaidEffectState = z.infer<typeof PAID_EFFECT_STATE_SCHEMA>;
 // the same CAS that protects receipt recording.
 // 'cancelled' is likewise terminal RESOLVED: a lead-authorized cancel retired
 // a 'pending' intent that was NEVER sent (no delivery, no lease, no result, no
-// application, fence 0). Unlike void it binds no successor and authorizes no
-// new send — the cancelled intent is only proven never-spent and sealed under
-// an immutable cancellation event + receipt (YUK-1567).
+// application, fence literally 0 — an advanced fence means a claim touched the
+// row). Unlike void it binds no successor and authorizes no new send — the
+// cancelled intent is only proven never-spent and sealed under an immutable
+// cancellation event + receipt (YUK-1567).
 /**
  * States in which a successor authorization still gates the entity: while the
  * authorized successor row is missing or in one of these states, ONLY the
@@ -313,10 +314,12 @@ export interface PaidEffectVoidReceipt {
  */
 export interface PaidEffectCancelRequest {
   /**
-   * Operator-chosen unique id for this cancellation operation; a replay under
-   * the same id is idempotent and reuses the stored receipt verbatim — a
-   * different reason/operator/fence under the same id may not rewrite the
-   * recorded history, and a second event under a different id is refused.
+   * Operator-chosen unique id for this cancellation operation. Replaying the
+   * request returns the stored receipt ONLY when every field of the replay
+   * (request id, reason, operator, basis, full five-part identity, expected
+   * fence) matches the recorded request exactly; ANY divergence is a
+   * conflict error, and a second event under a different request id is
+   * refused — replay never rewrites history.
    */
   readonly requestId: string;
   /** Why the never-sent intent is being cancelled. */
@@ -344,9 +347,11 @@ export interface PaidEffectCancelReceipt {
 
 /**
  * A cancellation request conflicts with the recorded cancellation event —
- * the row is already cancelled under a DIFFERENT request id. Fail-closed:
- * the caller's transaction must abort, never mint a second cancellation
- * event or rewrite the recorded receipt.
+ * the row is already cancelled and the replay diverges in request id or any
+ * audit field, or the request violates the never-sent contract (e.g. a
+ * non-zero expected fence). Fail-closed: the caller's transaction must
+ * abort, never mint a second cancellation event or rewrite the recorded
+ * receipt.
  */
 export class PaidEffectCancellationError extends PaidEffectProtocolError {
   override name = 'PaidEffectCancellationError';
