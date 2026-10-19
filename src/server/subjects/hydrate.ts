@@ -24,7 +24,7 @@
 //   触发 = restore 使行集收缩）；builtin 四种子永不摘。
 
 import { desc, eq } from 'drizzle-orm';
-import { db as defaultDb } from '@/db/client';
+import { type Db, type Tx, db as defaultDb } from '@/db/client';
 import {
   subject,
   subject_name_claim,
@@ -60,7 +60,9 @@ export {
   isGeneralFallbackFor,
 } from './resolution-cache';
 
-type Db = typeof defaultDb;
+// hydrate 只走 select 读面；Tx 与 Db 查询 API 同形（见 db/client.ts）。YUK-1567：
+// 付费输入冻结要求在调用方自己的事务快照内水合——冻结输入与锁内重验读同一快照。
+type DbOrTx = Db | Tx;
 
 const BUILTIN_ID_SET: ReadonlySet<string> = new Set<string>(BUILTIN_SUBJECT_IDS);
 
@@ -93,7 +95,7 @@ interface TraitRow {
 // 单 trait 的降级链解析。返回 null = custom trait 坏死（收口交给调用方按绑定者
 // origin 分流）。journal 回溯逐行读（revision desc），第一条 safeParse 通过即取。
 async function resolveTraitPayload(
-  db: Db,
+  db: DbOrTx,
   kind: SubjectTraitKind,
   row: TraitRow,
 ): Promise<{ payload: unknown; resolution: TraitResolution } | null> {
@@ -159,7 +161,7 @@ async function resolveTraitPayload(
 }
 
 export async function hydrateSubjectRegistryFromDb(
-  db: Db = defaultDb,
+  db: DbOrTx = defaultDb,
   registry: SubjectRegistry = getDefaultSubjectRegistry(),
 ): Promise<HydrationReport> {
   const report: HydrationReport = { hydrated: [], builtinFloor: [], skipped: [], removed: [] };
@@ -300,7 +302,11 @@ export async function hydrateSubjectRegistryFromDb(
       }
     }
 
-    replaceSubjectTraitResolutions(nextResolutions); // 换引用不改旧对象（v3 §5.1）
+    // resolution-cache 描述的是**全局默认 registry** 的装配溯源；为私有 registry
+    // 水合（YUK-1567：付费输入按 tx 快照冻结）不得把私有快照写进全局读面。
+    if (registry === getDefaultSubjectRegistry()) {
+      replaceSubjectTraitResolutions(nextResolutions); // 换引用不改旧对象（v3 §5.1）
+    }
     return report;
   } catch (err) {
     // 42P01（表未建）/ DB down / 任意异常：WARN + 现状即地板（四代码种子恒在）。

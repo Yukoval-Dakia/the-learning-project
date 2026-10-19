@@ -23,7 +23,7 @@ import {
 import { QUESTION_ADMISSION_POLICY_IDS } from '@/core/question-admission-policy';
 import type { Db, Tx } from '@/db/client';
 import { voidPaidEffectWithSuccessor } from '@/db/paid-effect-store';
-import { resolveSubjectProfile } from '@/subjects/profile';
+import { type SubjectProfile, SubjectRegistry, normalizeSubjectKey } from '@/subjects/profile';
 
 export const ADMISSION_VOID_ACTOR_REF = 'owner:yuk1547-approved-reopen';
 const ENQUEUE_SUBSCRIBER_ID = 'practice.question-admission-enqueue';
@@ -54,6 +54,56 @@ export interface AdmissionVoidEval {
 }
 
 type PracticeBoss = Awaited<ReturnType<typeof getPracticeBoss>>;
+
+/**
+ * Resolve the successor input's subject profile from THIS transaction's DB
+ * snapshot — never the import-time code floor or the mutable global registry.
+ * A private registry is hydrated inside the caller's transaction, so a
+ * concurrent refresh cannot substitute another profile mid-freeze and the
+ * frozen input reads the same snapshot as every lock/fence check around it.
+ * The target subject must have hydrated authoritatively this round: skipped,
+ * builtin-floor, and absent resolution all fail closed because the input
+ * binds a paid identity. A null/empty domain keeps the existing `general`
+ * default semantics (still required to be DB-hydrated); a non-empty domain
+ * resolving to no known subject fails rather than silently freezing `general`.
+ */
+async function resolveSuccessorSubjectProfile(
+  tx: Tx,
+  domain: string | null,
+): Promise<SubjectProfile> {
+  const { hydrateSubjectRegistryFromDb } = await import('@/server/subjects/hydrate');
+  const registry = new SubjectRegistry();
+  const report = await hydrateSubjectRegistryFromDb(tx, registry);
+  const raw = domain?.trim() ?? '';
+  const key = raw ? normalizeSubjectKey(raw) : '';
+  let targetId: string;
+  if (key) {
+    const resolved = registry.resolveKnownSubjectId(key);
+    if (resolved === null) {
+      const skipped = report.skipped.find((s) => normalizeSubjectKey(s.subjectId) === key);
+      throw new Error(
+        skipped
+          ? `domain '${raw}' subject '${skipped.subjectId}' failed hydration: ${skipped.reason}`
+          : `domain '${raw}' resolves to no known subject — refusing to freeze a fallback profile`,
+      );
+    }
+    targetId = resolved;
+  } else {
+    targetId = 'general';
+  }
+  if (!report.hydrated.includes(targetId)) {
+    const reason = report.builtinFloor.includes(targetId)
+      ? 'degraded to builtin code floor'
+      : (report.skipped.find((s) => normalizeSubjectKey(s.subjectId) === targetId)?.reason ??
+        'no hydrated DB subject row');
+    throw new Error(`subject '${targetId}' is not authoritatively hydrated: ${reason}`);
+  }
+  const profile = registry.get(targetId);
+  if (!profile) {
+    throw new Error(`subject '${targetId}' missing from registry after successful hydration`);
+  }
+  return profile;
+}
 
 /**
  * Freeze the successor's FrozenAdmissionInput exactly the way the job derives
@@ -123,7 +173,7 @@ async function buildSuccessorInput(
           group_id: opts.groupId,
           conversion_issues: [],
         },
-        subject_profile: resolveSubjectProfile(node?.domain ?? null),
+        subject_profile: await resolveSuccessorSubjectProfile(tx, node?.domain ?? null),
         policy_id: resolveQuestionAdmissionPolicyId(),
         solver2:
           solver2Provider || solver2Model
