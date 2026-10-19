@@ -1,24 +1,15 @@
-// YUK-440 (A13 typed KC ledger) — single-writer for kc_typed_state.
+// Sole writer of the kc_typed_state projection. Event-derived. Does not write FSRS.
+// Each KC takes an advisory lock in `kc_typed:<subject_kind>:<id>`, a different hashtext
+// namespace from mastery `fsrs:` and `mastery:` locks.
+// `confused-with-X` is committed only when the probe discriminates, recurrence is at least 2,
+// and the other KC is named. Otherwise the cell stays `no-evidence` / `open`.
+// One failed probe can be the misconception or an unrelated cause.
+// `mastered` is not produced here. That flip belongs to the Rust scorer (ADR-0046).
 //
-// The ONLY writer of the kc_typed_state projection. Pure event-derived (no FSRS write —
-// ND-5). Serializes per-KC via an advisory lock in an INDEPENDENT namespace
-// `kc_typed:<subject_kind>:<id>` (distinct hashtext keyspace from mastery_state's
-// `fsrs:`/`mastery:` locks — no collision). §修正-4 gate: `confused-with-X` is committed
-// ONLY when a discriminating probe AND recurrence≥2 confirm it; otherwise the cell stays
-// soft (`no-evidence`, `open`) awaiting a second confirmation — a single failed probe
-// could be the misconception OR an unrelated cause (YUK-344 consistency-gate territory,
-// deliberately conservative in Phase 0). `mastered` is NOT produced here — it is the
-// post-Rust-scorer claim-survival FLIP (ADR-0046), deferred.
-//
-// REACHABILITY TODAY (ADR-0050 §(a), YUK-790): the gate's `confused-with-X` branch is currently
-// unreachable — the sole production caller (`reconcileConjecturePredictions()`) hardcodes
-// `confused_with_kc_id: null`, and the induction schema `ConjectureProposalChange` has no such
-// field to supply, so `nextTypedState` returns the soft cell every time. This is a KNOWN,
-// ledgered state, not an oversight.
-// OWNER RULED 2026-07-25: energize it — execution is **YUK-794**. The fix belongs on the
-// INDUCTION side (name the confused-with KC and validate it), NOT here: keep this branch as the
-// contract the producer must satisfy, and keep the four-way conjunction strict. Relaxing the
-// gate would commit unnamed confusions, which is the exact failure §修正-4 exists to prevent.
+// The `confused-with-X` branch is unreachable from production today. The only caller,
+// reconcileConjecturePredictions, passes a null confused-with KC, and induction has no field
+// to supply one. Naming that KC belongs on the induction side. Keep this conjunction strict.
+// Relaxing it would store an unnamed confusion.
 
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { newId } from '@/core/ids';
@@ -33,13 +24,11 @@ export type Lifecycle = 'open' | 'resolved';
 export const CONFUSED_WITH_RECURRENCE_FLOOR = 2;
 
 export interface NextTypedStateInput {
-  /** the classification a resolved probe proposes. */
   proposed: 'confused-with-X' | 'no-evidence';
-  /** the KC the learner is confused with (required for a confused-with-X commit). */
+  /** Required to commit confused-with-X. Null keeps the cell soft. */
   confused_with_kc_id: string | null;
-  /** the conjecture's probe was discriminating (isolates THIS misconception). */
+  /** True only when the probe isolates this misconception. */
   discriminating: boolean;
-  /** distinct-attempt recurrence backing the conjecture. */
   recurrence_count: number;
 }
 
@@ -50,11 +39,9 @@ export interface NextTypedStateResult {
 }
 
 /**
- * §修正-4 gate (PURE). `confused-with-X` requires a discriminating probe AND
- * recurrence ≥ CONFUSED_WITH_RECURRENCE_FLOOR AND a named confused_with KC; otherwise the
- * cell stays soft (`no-evidence` / `open`). Never produces `mastered` (FLIP is deferred,
- * ADR-0046). NOTE: even post-Rust-scorer, beating baseline only licenses "the qualitative
- * track predicts this learner's probe outcome better" — NOT "misconception confirmed".
+ * `confused-with-X` needs a discriminating probe, recurrence at the floor, and a named KC.
+ * Otherwise the cell stays soft. Never produces `mastered`.
+ * Beating the baseline means the prediction fit this probe better. It does not confirm a misconception.
  */
 export function nextTypedState(input: NextTypedStateInput): NextTypedStateResult {
   if (
@@ -73,26 +60,18 @@ export function nextTypedState(input: NextTypedStateInput): NextTypedStateResult
 }
 
 /**
- * YUK-543 — repair `kc_typed_state` when a KC (`fromId`) is merged into another (`intoId`). Two
- * independent repairs, both on the merge Tx:
- *   1. KEYED ROW (subject_id) — 3-case identity-rename/freeze-and-log (mirrors the mastery/fsrs/axis
- *      retires; NEVER unions evidence or recomputes typed_state — no invented merge math):
- *      neither → 'noop'; only from → RENAME → 'renamed'; both → FREEZE + log → 'frozen'.
- *   2. POINTER (confused_with_kc_id) — ANY row (keyed by any other KC) that says "confused with
- *      fromId" must now say "confused with intoId". A bulk `UPDATE … SET confused_with_kc_id=intoId
- *      WHERE confused_with_kc_id=fromId` applied in ALL 3 cases (the pointer is a soft display ref,
- *      no FK / no unique on it → no 23505). Returned outcome describes the KEYED row only.
- * Takes the module's OWN `kc_typed:<kind>:<id>` advisory-lock namespace for BOTH ids, sorted, so a
- * concurrent probe-resolve upsert serializes against the merge.
+ * Repair typed state when `fromId` is merged into `intoId`. Two repairs, both on the merge transaction.
+ * The keyed row is renamed when only `fromId` exists, frozen when both exist, and left alone when
+ * `fromId` is absent. Evidence is not unioned and the label is not recomputed.
+ * Any row whose confused-with pointer names `fromId` is repointed at `intoId` in every case.
+ * That pointer is a display reference, with no foreign key, so the update cannot hit a unique violation.
+ * The return value describes the keyed row only.
+ * Both ids are locked in this module's `kc_typed` namespace, sorted, so a concurrent upsert waits.
  *
- * KNOWN RESIDUAL RACE (OCR O8, accepted): the pointer rewrite touches rows keyed by OTHER
- * subject_ids (e.g. k_other), whose locks are NOT in the held set — locking them would mean an
- * unbounded lock set over every possible pointer holder, which is a non-starter. A concurrent
- * upsertKcTypedState(k_other) that resolved `confused_with_kc_id` from a stale pre-merge read can
- * therefore re-point at the archived fromId after this repair. Same class as the spec §3 row 5
- * stale-read residual, and bounded the same way: countOrphanSurfaces' kc_typed predicate already
- * includes the `confused_with_kc_id` column (OR branch), so the weekly sweep detects it and the
- * YUK-544 auto-invoke path heals it.
+ * The pointer update also touches rows keyed by other KCs, and those locks are not held.
+ * Locking every possible pointer holder would be an unbounded set. A concurrent upsert that read
+ * the old id can point back at the archived KC after this repair. The weekly orphan sweep already
+ * matches `confused_with_kc_id`, so that stale pointer is detected and healed.
  */
 export async function retireKcTypedStateOnMerge(
   tx: Tx,
@@ -101,7 +80,7 @@ export async function retireKcTypedStateOnMerge(
   subjectKind = 'knowledge',
 ): Promise<'noop' | 'renamed' | 'frozen'> {
   await acquireSortedAdvisoryLocks(tx, `kc_typed:${subjectKind}`, [fromId, intoId]);
-  // Pointer rewrite (independent of the keyed-row case) — soft display ref, always repaired.
+  // Display pointer. Repaired even when the keyed row is a no-op, a rename, or a freeze.
   await tx
     .update(kc_typed_state)
     .set({ confused_with_kc_id: intoId, updated_at: new Date() })
@@ -141,7 +120,7 @@ export interface UpsertKcTypedStateInput {
   confused_with_kc_id?: string | null;
   discriminating: boolean;
   recurrence_count: number;
-  /** event ids backing this update (append-union into evidence_event_ids). */
+  /** Append-unioned into the stored provenance. A replay replace may drop ids instead. */
   evidence_event_ids: string[];
   last_evidence_at: Date;
 }
@@ -149,9 +128,8 @@ export interface UpsertKcTypedStateInput {
 export type ReplaceKcTypedStateInput = Omit<UpsertKcTypedStateInput, 'subject_id' | 'subject_kind'>;
 
 /**
- * Replace one derived cell from a complete replay snapshot. Unlike the append
- * writer below, this writer may remove invalidated provenance or delete the cell
- * when no effective projected evidence remains.
+ * Replace one cell from a complete replay snapshot.
+ * Unlike the append writer below, this may drop provenance or delete the cell when no evidence remains.
  */
 export async function replaceKcTypedState(
   db: Db,
@@ -210,16 +188,13 @@ export async function replaceKcTypedState(
 }
 
 /**
- * Single-writer upsert of one (subject_kind, subject_id) typed-state row. Takes its own
- * advisory lock (independent namespace) so concurrent updates of the same KC serialize
- * with no lost evidence. Append-unions evidence_event_ids; advances last_evidence_at.
- * Purely event-derived — writes NO FSRS / mastery_state state (ND-5).
+ * Upsert one cell. The per-KC lock is how concurrent updates avoid losing provenance.
+ * Evidence ids are append-unioned. Does not write FSRS or mastery.
  */
 export async function upsertKcTypedState(db: Db, input: UpsertKcTypedStateInput): Promise<void> {
   const subjectKind = input.subject_kind ?? 'knowledge';
   await db.transaction(async (tx) => {
-    // Serialize per-KC in an INDEPENDENT namespace (distinct hashtext keyspace → no
-    // collision with mastery_state's fsrs:/mastery: locks). Released at tx commit.
+    // Released at transaction commit. Namespace is not mastery `fsrs:` or `mastery:`.
     await tx.execute(
       sql`SELECT pg_advisory_xact_lock(hashtext(${`kc_typed:${subjectKind}:${input.subject_id}`}))`,
     );
@@ -238,9 +213,7 @@ export async function upsertKcTypedState(db: Db, input: UpsertKcTypedStateInput)
       .limit(1);
     const prevEvidence = existing[0]?.evidence_event_ids ?? [];
     const mergedEvidence = [...new Set([...prevEvidence, ...input.evidence_event_ids])];
-    // last_evidence_at is monotonic — never regress it if an out-of-order write carries an
-    // older timestamp. The §修正-3 projection is in-order single-writer, but GREATEST keeps
-    // it correct (and replayable) under any ordering.
+    // Do not move last_evidence_at backward when an out-of-order write carries an older time.
     const prevLastEvidenceAt = existing[0]?.last_evidence_at ?? null;
     const lastEvidenceAt =
       prevLastEvidenceAt && prevLastEvidenceAt > input.last_evidence_at

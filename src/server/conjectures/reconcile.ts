@@ -1,48 +1,17 @@
-// YUK-440 (A13) U8 — the prediction-grounding RECONCILE loop
-// CONSUMER (U3 serveProbeOnce/answerProbe is the producer). It closes the
-// collect→power loop the roadmap §5 dark-loop tripwire requires: without this,
-// probe outcomes accumulate but no prediction_score ever lands and the typed-ledger
-// never advances = collect-without-power = dead loop (feedback_defer_flip_not_build).
-//
-// Per unprojected probe outcome:
-//   1. join the canonical `experimental:probe_result` event to its conjecture by the
-//      DIRECT `conjecture_event_id` ref (the newer canonical model supersedes the older
-//      "join by KC + window" heuristic — the probe carries the exact proposal id);
-//   2. scorePrediction(predicted_p, baseline_p_at_induction, outcome) — a PROPER-SCORING
-//      comparison (stub; Rust-owned bit-exact later, ADR-0046);
-//   3. upsertKcTypedState — advance the typed-ledger cell, probe-resolution write ONLY,
-//      still soft/structural (written FIRST so the anchor in step 4 implies it advanced);
-//   4. append a deterministic idempotency anchor LAST:
-//      - sequence 1 → `experimental:prediction_score` with the proper score;
-//      - sequence 2 → score-free `experimental:probe_result_projected`.
-//
-// YUK-795 closes the former observation-only gap: prediction_score is consumed by the
-// nightly cause×KC accountability ranker. Repeated misses downweight future
-// conjecture selection and repeated hits boost it. Remaining red lines:
-//   - accountability only reorders conjecture candidates. It never flips mastery,
-//     typed-state labels, or FSRS; Rust-owned numeric windows remain deferred.
-//   - Phase 0 supplies NO `confused_with` KC (the conjecture names none) → the §修正-4
-//     gate keeps every cell SOFT (`no-evidence`/`open`). `mastered` is structurally
-//     unreachable here (upsertKcTypedState never produces it).
-//     ADR-0050 §(a) (YUK-790) makes the consequence explicit, because it was being read as
-//     "no data yet": since this loop is the ONLY production caller of the single-writer
-//     `upsertKcTypedState`, and the `confused_with_kc_id: null` below is hardcoded, no writer
-//     can currently emit `typed_state='confused-with-X'` — the admin panel column and
-//     `get_typed_state` are empty for that reason, not for lack of learner data.
-//     OWNER RULED 2026-07-25: ENERGIZE this rail — execution is **YUK-794**, which must land
-//     the induction side FIRST (extend `ConjectureProposalChange` with `confused_with_kc_id`,
-//     have the induction prompt NAME the second KC, validate that KC exists — the column has
-//     no FK, see the `retireKcTypedStateOnMerge` docblock in typed-state.ts) and only THEN
-//     relax the null below. Do NOT shortcut it by
-//     relaxing the §修正-4 gate: an unnamed confusion is exactly what that gate refuses to
-//     commit, and deleting the requirement would write guesses into a structural state.
-//   - retrievability R(t) is recorded in the derived anchor EVENT (fold-replay needs
-//     it logged), NEVER in the written kc_typed_state (it has no R column).
-//   - this loop NEVER writes FSRS (ND-5): no attempt event, no material_fsrs_state.
-//
-// Escape-hatch (mirrors probe-lifecycle): neither derived anchor action is in
-// RESERVED_EXPERIMENTAL_ACTIONS → both validate via the loose generic ExperimentalEvent
-// with zero schema-file change. Do NOT reserve them.
+// Turns a probe outcome into a prediction score and a typed-state cell.
+// Without it, probe outcomes accumulate and the typed ledger never moves.
+// Joins the probe to its conjecture by conjecture_event_id. Does not guess by KC and time window.
+// Writes the typed-state cell first, then a deterministic anchor, so an anchor means the cell already advanced.
+// Sequence 1 anchors a prediction score. Sequence 2 anchors a score-free projection.
+// The conjecture's predicted probability is calibrated for the first probe only.
+// Accountability may reorder conjecture candidates. It does not flip mastery, typed state, or FSRS.
+// This loop passes a null confused-with KC, so the typed-state gate keeps every cell soft.
+// Do not clear that null from here. Naming the other KC belongs on induction, and the column has no foreign key.
+// This is the only production caller of upsertKcTypedState, so nothing currently writes confused-with-X.
+// An empty admin column is that fact, not missing learner data. `mastered` is unreachable here.
+// Retrievability is stored on the anchor event because replay needs it. kc_typed_state has no such column.
+// Does not write FSRS.
+// Neither anchor action is reserved. Both stay on the loose experimental event. Do not reserve them here.
 
 import { ZodError, z } from 'zod';
 import { getEffectiveProbeResultStatuses } from '@/capabilities/agency/public';
@@ -71,82 +40,71 @@ import {
   upsertKcTypedState,
 } from '@/server/conjectures/typed-state';
 
-/** The U3 producer's outcome event we consume. */
+/** The producer event this loop consumes. */
 const PROBE_RESULT_ACTION = 'experimental:probe_result' as const;
-/** actor_ref stamped on each derived anchor event (same job as the propose half). */
+/** Same actor as the propose half, so a derived anchor is not mistaken for a learner action. */
 const RECONCILE_ACTOR = 'research_meeting' as const;
 
 /**
- * Deterministic id for the prediction_score anchor = `prediction_score:<probe_result_event_id>`.
- * Bound to the probe (not a fresh newId) so two overlapping reconcile runs that both read the
- * same unscored probe (the NOT EXISTS filter only guards the LIST stage, not the write) can
- * never both insert a score event: writeEvent's onConflictDoNothing(event.id) makes the second
- * a no-op = exactly-once per probe, independent of run concurrency.
+ * Stable id `prediction_score:<probe result>`.
+ * The list query's NOT EXISTS check does not cover the write. Two overlapping runs can both
+ * see the same probe. A fresh id would insert two scores. Conflict on this id makes the second a no-op.
  */
 function predictionScoreEventId(probeResultEventId: string): string {
   return `prediction_score:${probeResultEventId}`;
 }
 
-/** Deterministic score-free projection anchor for a recurrence result. */
+/** Stable id for a sequence-2 projection, which has no score of its own. */
 function probeResultProjectedEventId(probeResultEventId: string): string {
   return `probe_result_projected:${probeResultEventId}`;
 }
 
-/** One resolved probe outcome to project (and, only for sequence 1, score). */
+/** One probe outcome that has no anchor yet. Sequence 2 is projected and not scored. */
 export interface UnscoredProbeResult {
   probe_result_event_id: string;
   probe_question_id: string;
-  /** = the conjecture proposal event id (probe_result payload.conjecture_event_id). */
   conjecture_event_id: string;
   outcome: 0 | 1;
   resolution: ProbeResolution;
-  /** R(t) snapshot at judge time, or null. Logged in the anchor event; never written to state. */
+  /** Logged on the anchor event only. Typed state has no column for it. */
   retrievability_at_judge: number | null;
-  /** the probe judging time = the new evidence's timestamp (→ last_evidence_at). */
+  /** Probe time, not the nightly batch time. Becomes last_evidence_at. */
   created_at: Date;
-  /** false for sequence-2 recurrence probes, which have no independent prediction. */
+  /** False for sequence 2. That probe has no probability of its own. */
   prediction_score_eligible?: boolean;
   /**
-   * Immutable v2 recurrence lineage. A terminal sequence-2 result names both
-   * independent probe questions; the score-free projection preserves this so
-   * readers can apply the confirmation to the calibrated sequence-1 score
-   * without inventing a second prediction.
+   * A terminal sequence-2 result names both independent questions.
+   * Readers confirm the sequence-1 score from this list instead of inventing a second prediction.
    */
   independent_probe_question_ids?: string[];
 }
 
-// The reconcile loop issues kc_typed_state writes typed DIRECTLY against the real
-// UpsertKcTypedStateInput (imported above) — no local re-declaration — so the call site stays
-// compile-time-linked to the writer's contract as it evolves. The typed-state boundary
-// (`confused_with_kc_id: null` → soft cell, never `mastered`, no R(t) into written state) is
-// enforced by the values reconcile supplies + the runtime test assertions, not by the type shape.
+// No local copy of the upsert input. A drift in the writer stays a compile error here.
+// The soft cell comes from the null confused-with value this loop passes, not from the type.
 
 export interface ReconcileResult {
-  /** probe outcomes projected this run (sequence 1 also scored). */
+  /** Probe outcomes that received an anchor this run. */
   reconciled: number;
-  /** probe outcomes skipped (dangling / malformed / non-conjecture ref). */
+  /** Dangling, malformed, or non-conjecture refs. A bad row does not abort the run. */
   skipped: number;
 }
 
 export interface ReconcileDeps {
   now?: () => Date;
-  /** Stable nightly execution id for retry-time aggregate count recovery. */
+  /** Stamped on anchors so a retry can recover the nightly aggregate without a second score. */
   executionId?: string;
-  /** unscored probe outcomes (idempotency lives HERE — already-scored probes excluded). */
+  /** Already-anchored probes stay out. That exclusion is what makes a rerun idempotent. */
   listUnscoredProbeResultsFn?: (db: Db) => Promise<UnscoredProbeResult[]>;
-  /** load the conjecture proposal event (writeAiProposal shape: payload.ai_proposal). */
   getEventByIdFn?: (db: Db, id: string) => Promise<{ payload: unknown } | null>;
-  /** Replay already-anchored cells whose source evidence has correction history. */
+  /** Rebuild cells whose source evidence was corrected after the anchor was written. */
   repairCorrectedProjectionsFn?: (db: Db) => Promise<void>;
   writeEventFn?: (db: Db, input: WriteEventInput) => Promise<string>;
   upsertKcTypedStateFn?: (db: Db, input: UpsertKcTypedStateInput) => Promise<void>;
 }
 
 /**
- * Targeted parse-barrier on the 5 conjecture facts the loop needs. A small local
- * schema (NOT the whole proposal payload) is the tighter dependency boundary AND
- * fail-closed: a malformed / out-of-range field drops the probe to `skipped` rather
- * than poisoning a score. recurrence_count mirrors the conjecture floor (>= 2).
+ * Only the five facts this loop scores on. A bad field skips the probe instead of poisoning a score.
+ * recurrence_count stays at the conjecture floor of 2, so a one-off probe cannot enter.
  */
 const ConjectureFactsSchema = z.object({
   knowledge_id: z.string().min(1),
@@ -157,7 +115,7 @@ const ConjectureFactsSchema = z.object({
 });
 type ConjectureFacts = z.infer<typeof ConjectureFactsSchema>;
 
-/** Extract + validate the conjecture facts, or null (skip) for any unsound event. */
+/** Null skips the probe. An unsound proposal must not become a score. */
 function extractConjectureFacts(ev: { payload: unknown } | null): ConjectureFacts | null {
   if (!ev) return null;
   const aiProposal = (
@@ -189,10 +147,9 @@ function projectionAnchor(row: { subject_id: string; payload: unknown }): Projec
 }
 
 async function rebuildTypedStateForKnowledge(db: Db, knowledgeId: string): Promise<void> {
-  // All replay reads precede replaceKcTypedState's per-KC lock. Production schedules
-  // reconciliation as a single pg-boss instance; if that invariant is relaxed, move
-  // these reads under the same transaction + lock so a concurrent anchor cannot land
-  // between the snapshot and replacement.
+  // These reads run before the per-KC lock inside replaceKcTypedState.
+  // Safe while reconciliation is a single pg-boss instance. A second instance could
+  // anchor a probe between this snapshot and the replace. Move the reads under that lock first.
   const anchorRows = await db
     .select({ subject_id: event.subject_id, payload: event.payload })
     .from(event)
@@ -309,24 +266,16 @@ async function defaultRepairCorrectedProjections(db: Db): Promise<void> {
 }
 
 /**
- * Real reader: probe outcomes that have neither a prediction_score nor a score-free
- * projection anchor. The anchor NOT EXISTS filter makes replay idempotent (append-only,
- * never a duplicate). Parse-barrier on the probe_result payload (conjecture ref / outcome /
- * resolution must be sound) drops anomalies silently.
+ * Probe outcomes with neither a prediction score nor a score-free projection anchor.
+ * The missing-anchor filter is what makes a rerun append instead of duplicate.
  *
- * Sequence-2 recurrence probes remain projectable but are marked score-ineligible: the conjecture's
- * `predicted_p` is calibrated for the FIRST probe only. Reusing it for the independent
- * follow-up would fabricate a Brier/log score for a probability the model never supplied.
- * A future follow-up calibration contract may make sequence 2 scoreable explicitly; until
- * then, no score is more truthful than a borrowed score.
+ * Sequence 2 stays in the list and is not scored. Its predicted probability was calibrated
+ * for the first probe. Reusing it would invent a score the model never made.
  *
- * Deliberately UNBOUNDED (no LIMIT): a batch cap + FIFO order would let a head of
- * permanently-unscorable probes (dangling / malformed conjecture, which are `continue`d
- * without writing a terminal marker) starve newer valid probes forever. The unscored set is
- * naturally tiny for the n=1 nightly load — bounded by the ≤3 concurrent-probe cap +
- * owner-paced answering + nightly cadence, each probe ≈ 3 cheap DB ops — so processing all of
- * it keeps the reconcile (which precedes the propose half) from blocking on a starved head. A
- * terminal skip-marker + LIMIT would be the scale-time answer if this ever outgrows n=1.
+ * No LIMIT. Unscorable probes are skipped without a terminal marker, so a capped FIFO queue
+ * would let that head block newer valid probes forever. The set stays small under one learner,
+ * the concurrent-probe cap, and a nightly cadence. A skip marker plus a limit belongs here
+ * only if that assumption breaks.
  */
 async function defaultListUnscoredProbeResults(db: Db): Promise<UnscoredProbeResult[]> {
   const rows = await db
@@ -342,9 +291,8 @@ async function defaultListUnscoredProbeResults(db: Db): Promise<UnscoredProbeRes
     .where(
       and(
         eq(event.action, PROBE_RESULT_ACTION),
-        // A gradable ordinary wrong answer is terminal but deliberately carries
-        // no 0|1 prediction outcome. It must never enter the score/projection
-        // reader or be re-logged as malformed on every nightly reconciliation.
+        // An ordinary wrong answer is terminal and has no 0 or 1 prediction outcome.
+        // Leave it out, or every nightly run logs it again as malformed.
         sql`${event.payload}->>'resolution' IS DISTINCT FROM ${PROBE_NON_EVIDENCE_RESOLUTION}`,
         sql`NOT EXISTS (
           SELECT 1 FROM ${event} anchor
@@ -362,10 +310,8 @@ async function defaultListUnscoredProbeResults(db: Db): Promise<UnscoredProbeRes
     rows.map((row) => row.id),
   );
   for (const r of rows) {
-    // A v2 confirmation is only evidence while both independent supporting
-    // results remain active. Apply that dependency fold before writing the
-    // first projection anchor; otherwise a corrected, never-anchored
-    // preliminary result could leave an invalid terminal projection behind.
+    // A confirmation counts only while both independent results are still active.
+    // Fold that before the first anchor, or a corrected preliminary result leaves a bad projection.
     if (evidenceStatuses.get(r.id) !== 'active') continue;
     const p = r.payload as {
       conjecture_event_id?: unknown;
@@ -378,8 +324,7 @@ async function defaultListUnscoredProbeResults(db: Db): Promise<UnscoredProbeRes
     const outcome = p?.outcome;
     const resolution = p?.resolution;
     const disposition = { outcome, resolution };
-    // Reader-level drops are logged (not just silently `continue`d) so a systemic malformed-
-    // payload bug surfaces in the job log, mirroring the loop-body skip warns.
+    // Log the drop. A silent continue hides a payload that fails the same way every night.
     if (typeof conjectureEventId !== 'string' || conjectureEventId.length === 0) {
       console.warn('[reconcile] dropping malformed probe_result — bad conjecture_event_id', r.id);
       continue;
@@ -407,8 +352,7 @@ async function defaultListUnscoredProbeResults(db: Db): Promise<UnscoredProbeRes
       conjecture_event_id: conjectureEventId,
       outcome: disposition.outcome,
       resolution: disposition.resolution,
-      // R(t) is a probability in [0,1]; coerce NaN / ±Infinity / out-of-range to null so a
-      // malformed value can't poison the LOG event (fail-closed, like the fields above).
+      // A non-finite or out-of-range probability becomes null so it cannot land on the anchor.
       retrievability_at_judge:
         typeof rt === 'number' && Number.isFinite(rt) && rt >= 0 && rt <= 1 ? rt : null,
       created_at: r.created_at,
@@ -423,14 +367,10 @@ async function defaultListUnscoredProbeResults(db: Db): Promise<UnscoredProbeRes
 }
 
 /**
- * Project each unanchored probe outcome into the typed ledger. Sequence 1 is additionally
- * scored against its conjecture prediction; sequence 2 is not. Append the corresponding
- * deterministic anchor LAST (so "anchored ⟹ ledgered" — a partial failure re-processes next
- * run, never drops the ledger advance). Idempotent, append-only,
- * typed-state-inert. The score itself is live input to the YUK-795 ranker. A dangling /
- * malformed / non-conjecture / unreadable conjecture ref is SKIPPED
- * (counted), never thrown — a single bad row must not abort the nightly run (which also
- * gates the propose half). Write faults DO propagate so pg-boss retries (self-healing).
+ * Project each unanchored probe. Sequence 1 is scored. Sequence 2 is not.
+ * The anchor is written last, so a crash retries the ledger write instead of skipping it.
+ * A bad conjecture reference is counted and skipped. One bad row must not abort the night,
+ * because this run also gates the propose half. Write faults propagate so pg-boss retries.
  */
 export async function reconcileConjecturePredictions(
   db: Db,
@@ -463,15 +403,10 @@ export async function reconcileConjecturePredictions(
       skipped += 1;
       continue;
     }
-    // The READ is fail-soft ONLY for a corrupt / unparseable conjecture ROW: the default
-    // getEventById runs the row through parseEvent, which throws a ZodError on schema drift or a
-    // manual DB edit. Narrow to THAT class → counted skip, so one poison-pill row can't abort the
-    // nightly run (which also gates the propose half). Every OTHER read failure — DB /
-    // connection / timeout / a future read-layer error — is RETRYABLE and must PROPAGATE so
-    // pg-boss retries the job; swallowing it would report a failed reconcile as a successful skip
-    // and let the propose half run against stale state (SCF-216 / YUK-1277). The WRITES below are
-    // likewise intentionally NOT caught: a write fault must propagate so pg-boss retries, and the
-    // upsert-before-anchor order (see below) makes that retry self-healing.
+    // Only a ZodError is a counted skip. That is a poison row (schema drift or a hand edit).
+    // A connection, timeout, or other read failure must propagate. Swallowing it would look like
+    // a clean skip and let the propose half run on stale state. Write errors below are also
+    // uncaught. The upsert-then-anchor order makes the retry safe.
     let conjEvent: { payload: unknown } | null;
     try {
       conjEvent = await getEventByIdFn(db, pr.conjecture_event_id);
@@ -488,7 +423,7 @@ export async function reconcileConjecturePredictions(
     }
     const facts = extractConjectureFacts(conjEvent);
     if (!facts) {
-      // Dangling / malformed / non-conjecture ref — a data anomaly, not a job failure.
+      // A data anomaly, not a job failure.
       console.warn(
         '[reconcile] skipping probe_result with no sound conjecture',
         pr.probe_result_event_id,
@@ -503,20 +438,11 @@ export async function reconcileConjecturePredictions(
       ? scorePrediction(facts.predicted_p, facts.baseline_p_at_induction, pr.outcome)
       : null;
 
-    // ORDER IS LOAD-BEARING (idempotency / no silent ledger loss). Advance the typed-ledger
-    // cell FIRST, then write the derived anchor event LAST. The reader excludes a probe IFF
-    // either its prediction_score or score-free projection anchor exists, so the invariant
-    // "anchor exists ⟹ ledger already advanced" holds: a crash/throw between the two
-    // writes leaves the probe unanchored and it is safely re-processed next run — the upsert is
-    // idempotent (set-union evidence_event_ids + GREATEST last_evidence_at + deterministic
-    // nextTypedState), so the re-run is a no-op. Writing the anchor FIRST would permanently
-    // drop the ledger advance on a partial failure.
-    //
-    // (1) typed-ledger cell — probe-resolution write ONLY, still soft. `evidence_for`
-    // intentionally remains `no-evidence`: one within-learner observation is logged and
-    // scored but is not strong enough to mint confused-with-X. Phase 0 names no
-    // confused_with KC → §修正-4 gate also keeps it soft (no-evidence/open). `mastered`
-    // is structurally unreachable; no FSRS (ND-5); no R(t) into written state.
+    // Ledger first, anchor last. The reader skips a probe once either anchor exists.
+    // A crash between the two leaves the probe unanchored, and the upsert is idempotent, so the
+    // retry is a no-op. Writing the anchor first would drop the ledger update on a partial failure.
+    // evidence_for stays no-evidence. One observation is not enough to mint confused-with-X,
+    // and this loop names no other KC.
     await upsertFn(db, {
       subject_id: facts.knowledge_id,
       subject_kind: 'knowledge',
@@ -528,12 +454,9 @@ export async function reconcileConjecturePredictions(
       last_evidence_at: pr.created_at,
     });
 
-    // (2) SET the idempotency anchor (written LAST) — append-only, keyed on the
-    // probe_result id, envelope outcome OMITTED (NOT an attempt; ND-5). Sequence 1 logs
-    // its calibrated comparison; sequence 2 logs provenance only.
+    // Anchor last. Not an attempt, so the envelope carries no outcome. Sequence 2 logs provenance only.
     await writeEventFn(db, {
-      // Deterministic anchor id (NOT newId) — exactly-once per probe even under concurrent
-      // reconcile runs, via writeEvent's onConflictDoNothing(event.id). See helper docblock.
+      // Not newId. Conflict on this id is the exactly-once guarantee.
       id: predictionScoreEligible
         ? predictionScoreEventId(pr.probe_result_event_id)
         : probeResultProjectedEventId(pr.probe_result_event_id),
@@ -550,12 +473,10 @@ export async function reconcileConjecturePredictions(
         outcome: pr.outcome,
         resolution: pr.resolution,
         discriminating: facts.discriminating,
-        // Do not infer a semantic context class from the unique question id:
-        // two authored questions can still test the same representation, and
-        // treating ids as contexts would forge the context-spread stability
-        // gate. The reader conservatively falls back to knowledge_id until an
-        // explicit symbolic/transfer/etc. class is supplied. Likewise, only an
-        // explicit target-error Judge may supply m_diagnostic.
+        // Do not treat the question id as a context class. Two questions can test the same
+        // representation, and that would forge the context-spread gate. The reader falls back
+        // to the knowledge id until an explicit class is supplied. Only an explicit target-error
+        // judgment may set m_diagnostic.
         ...(pr.independent_probe_question_ids && pr.independent_probe_question_ids.length > 0
           ? { independent_probe_question_ids: pr.independent_probe_question_ids }
           : {}),
@@ -569,20 +490,16 @@ export async function reconcileConjecturePredictions(
               skill_score_point: score.skillScorePoint,
             }
           : { projection_kind: 'recurrence_without_prediction' }),
-        // R(t) is recorded on the derived anchor only; the typed-state has no R.
+        // Anchor only. Typed state has no retrievability column.
         retrievability_at_judge: pr.retrievability_at_judge,
         ...(deps.executionId ? { research_meeting_execution_id: deps.executionId } : {}),
       },
       caused_by_event_id: pr.probe_result_event_id,
-      // Preserve the source evidence chronology. A nightly batch can reconcile
-      // several older probe results at one wall-clock instant; stamping all anchors
-      // with `now` would make the accountability fold break ties by opaque ids and
-      // could invert the latest hit/miss streak.
+      // Keep the probe's own time. Stamping every anchor with the batch clock would
+      // let id order invert a hit/miss streak.
       created_at: pr.created_at,
-      // Opt OUT of the memory-ingestion outbox (ADR-0021): a system-derived scoring
-      // event is NOT user activity and must not become a Mem0 memory. A non-NULL ingest_at
-      // stamp opts the row out of the `WHERE ingest_at IS NULL` poller — mirrors the
-      // state_snapshot / genesis / artifact-lifecycle system events.
+      // A non-null ingest_at opts this row out of the memory poller (ADR-0021).
+      // A derived score is not user activity and must not become a memory.
       ingest_at: now,
     });
     reconciled += 1;
