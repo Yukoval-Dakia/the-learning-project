@@ -85,13 +85,28 @@ conversion_issues → 提交返回 withheld（不铸 revision），草稿保留�
   对行归一发布的旧组，冻结层与行归一产物在 converged-writer 不变量下
   digest 本就相同。**只有从未发布的真 legacy 组**（current_revision_id
   为空）走 FromRow。不再按「有没有数学声明」分流。
-- **核验输入绑定（R1 F2）**：调用方在核验【开始时】冻结
-  `expectedRevision`（当时的组 current revision，null=未发布）+
-  `expectedGeneration`（admission generation）。helper 内锁序
-  root→lifecycle FOR UPDATE 后比对，漂移即抛错回滚同事务——旧核验
-  结果不得贴到较新 revision、不得误清其 verify_hold。覆盖 transient
-  suspend / passed promote / fail-suspend 与 owner-override 四处；
-  C1-kept 分支由主事务锁后漂移闸一并覆盖（同锁同一 tx）。
+- **核验输入绑定（R1 F2，真收口）**：`runSourceVerify` 起点用**一条
+  SELECT**（`question` ⋈ `lifecycle`(coalesce(parent,id)=group_id) ⋈
+  `question_revision`）取行 + 组身份 + 冻结 revision——同一语句快照，
+  行内容与 revision/generation 身份不可错位拼装（原实现分读会拼出
+  旧行+新 revision）。组已发布 ⇒ 核验输入（题面/选项/答案/kind）从
+  **该 revision 的权威投影**构造（`revisionToDraftDocument` →
+  `draftCanonicalIdentity` → `deriveKind`，与共享 submit 写行同一组
+  原语，经 seam→tools 既有边再出口，零新增 capability→questions 债）；
+  行只供来源级 provenance（web_sourced/source_ref/metadata）与 plumbing
+  （id/version/draft_status）。无 revision 的真 legacy 组照旧行输入。
+  KC 归属取行（组/行级账本，不在 revision 层）。
+- **有损形状付费前 hold**：投影对核验输入残缺时（scoring unit 多
+  slot_refs、slot kind 不可映射 `unmapped_slot_kind`、多 select unit
+  残缺 choices、select 键引用 spec 外 item），只落
+  `structure_completeness` fail（reason 具名），不跑确定性检查不花
+  solve/grounding——fail 走既有 demote+verify_hold 路径，编辑改形状后
+  可重验恢复（不封死 typed sourcing 可用面）。
+- **应用侧不变**：helper 锁后比对 expectedRevision/expectedGeneration
+  （快照值=被验 revision），漂移抛错回滚；行版本检查、C1 独立证据、
+  promotedElsewhere 语义原样。覆盖 transient/passed/failed/override；
+  C1-kept 由主事务漂移闸覆盖。owner-override 的行依据+lifecycle 身份
+  同样一条 SELECT 快照（不虚构 solver 证据）。
 - 撤回语义保留：全部子 part tombstone ⇒ `archiveGroupLifecycle`（与
   FromRow 同款，declared 组不再被归一前先冲突拦死）。
 - 核验通过只翻 admission/suspension/verification 维度——**不授予 K1
@@ -198,9 +213,11 @@ sourcing_web 候选照旧全走旧链——**旧 writer 未为新声明扩展**�
 
 ## 验证（本机实际执行——逐命令如实）
 
-R1 修复轮（fix commit）的终态检查全量日志落协调目录（非 tail 截断）：
-`/Volumes/YukovalSBak/yukoval-projects/tlp-status/review/stage1-yuk1568-s3-20261019/fix-check-logs-398520032-r1fix/<cmd>.log`
-（工作树内镜像副本 `/tmp/yuk1568-s3-r1fix-398520032-logs/`）：
+R1 修复轮（两轮 fix commit：`fc6d15804` F1/F3/F4 + 本 commit F2 真收口）
+的终态检查全量日志落协调目录（非 tail 截断）：
+`/Volumes/YukovalSBak/yukoval-projects/tlp-status/review/stage1-yuk1568-s3-20261019/fix-check-logs-f2-closure/<cmd>.log`
+（工作树内镜像副本 `/tmp/yuk1568-s3-f2-closure-logs/`；前轮
+`fc6d15804` 日志在 `fix-check-logs-398520032-r1fix/`）：
 
 | 命令 | exit |
 |---|---|

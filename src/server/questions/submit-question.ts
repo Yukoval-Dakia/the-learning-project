@@ -259,7 +259,13 @@ const SOURCE_KIND_TO_QUESTION_SOURCE: Record<string, string> = {
   manual: 'manual',
 };
 
-function deriveKind(doc: QuestionDraftDocumentT): string {
+// YUK-1568 S3（R1 F2）—— capability 侧核验（jobs/source_verify）需要与
+// 插入时同一套 revision→flat 权威投影原语；经本 facade 再出口，工具文件
+// （tools/submit-question.ts）对本模块的已登记 import 边复用，不新增
+// capability→questions 债。
+export { draftCanonicalIdentity, revisionToDraftDocument } from './draft-contract';
+
+export function deriveKind(doc: QuestionDraftDocumentT): string {
   const classes = new Set(doc.parts.flatMap((p) => p.units.map((u) => u.response_class)));
   if (doc.parts.length > 1 || classes.size > 1) return 'composite';
   const only = [...classes][0];

@@ -124,6 +124,10 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
   const { db, questionId, runTaskFn, skipVerify } = p;
 
   // 一次轻量 SELECT 取 source + draft_status + metadata (派发判别 + override promote 前置守门).
+  // YUK-1568 S3（R1 F2）—— override 的「被复核对象」身份与行依据在同一
+  // 语句快照取得（join lifecycle）：分读会让 owner 决定落到调用中途换上
+  // 的新 revision 上。owner override 不执行模型核验——身份一致即可，不
+  // 虚构 solver 证据。
   const rows = await db
     .select({
       id: question.id,
@@ -132,8 +136,11 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
       knowledge_ids: question.knowledge_ids,
       metadata: question.metadata,
       parent_question_id: question.parent_question_id,
+      lifecycleRevisionId: question_group_lifecycle.current_revision_id,
+      admissionGeneration: question_group_lifecycle.scoring_admission_generation,
     })
     .from(question)
+    .leftJoin(question_group_lifecycle, eq(question_group_lifecycle.group_id, question.id))
     .where(eq(question.id, questionId))
     .limit(1);
   const row = rows[0];
@@ -152,20 +159,10 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
     return { promoted: false, status: 'skipped:question_part' };
   }
 
-  // YUK-1568 S3（R1 F2）—— owner override 的「被复核对象」身份在行读时
-  // 冻结（当时组 current revision + admission generation）；应用侧 helper
-  // 锁后比对，漂移即抛错回滚——owner 决定不得落到中途换上的新 revision。
-  const [overrideInputLifecycle] = await db
-    .select({
-      revisionId: question_group_lifecycle.current_revision_id,
-      admissionGeneration: question_group_lifecycle.scoring_admission_generation,
-    })
-    .from(question_group_lifecycle)
-    .where(eq(question_group_lifecycle.group_id, questionId))
-    .limit(1);
+  // 「被复核对象」身份与上方行依据同一语句快照（见上行注释）。
   const overrideInput = {
-    revisionId: overrideInputLifecycle?.revisionId ?? null,
-    admissionGeneration: overrideInputLifecycle?.admissionGeneration ?? null,
+    revisionId: row.lifecycleRevisionId ?? null,
+    admissionGeneration: row.admissionGeneration ?? null,
   };
 
   // ── override 分支 (skipVerify) ──────────────────────────────────────────────

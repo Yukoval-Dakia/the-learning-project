@@ -95,6 +95,14 @@ import {
   checksForTier,
   runSolveCheck,
 } from '../server/quiz/verify-framework';
+// YUK-1568 S3（R1 F2）—— revision→flat 投影原语经同 capability 工具文件
+// 再出口（它对 questions seam 的 import 边已登记），本文件不新增
+// capability→server 债。
+import {
+  deriveKind,
+  draftCanonicalIdentity,
+  revisionToDraftDocument,
+} from '../server/tools/submit-question';
 
 export interface SourceVerifyJobData {
   question_ids: string[];
@@ -552,27 +560,119 @@ export async function runSourceVerify(
 ): Promise<RunSourceVerifyResult> {
   const { db, questionId, runTaskFn } = params;
 
-  const rows = await db.select().from(question).where(eq(question.id, questionId)).limit(1);
-  const row = rows[0];
+  // YUK-1568 S3（R1 F2 真收口）—— 核验输入与身份必须同一快照：
+  // 行内容 + 组 current revision/generation + 对应冻结 revision 行在【同一
+  // 条 SELECT】内读出（单语句一致性；不持锁跨付费调用）。分开读会拼出
+  // 「旧行内容 + 新 revision 身份」——withheld→withheld 编辑铸新 revision
+  // 不动 question 行，检查却在核旧投影、结论又贴新身份。
+  const [snap] = await db
+    .select({
+      row: question,
+      lifecycleRevisionId: question_group_lifecycle.current_revision_id,
+      admissionGeneration: question_group_lifecycle.scoring_admission_generation,
+      frozenRevision: question_revision,
+    })
+    .from(question)
+    .leftJoin(
+      question_group_lifecycle,
+      sql`${question_group_lifecycle.group_id} = coalesce(${question.parent_question_id}, ${question.id})`,
+    )
+    .leftJoin(
+      question_revision,
+      sql`${question_revision.revision_id} = ${question_group_lifecycle.current_revision_id}`,
+    )
+    .where(eq(question.id, questionId))
+    .limit(1);
+  const row = snap?.row;
   if (!row) return { status: 'skipped:not_found' };
   if (row.source !== 'web_sourced') return { status: 'skipped:not_web_sourced' };
-  // YUK-1568 S3（R1 F2）—— 冻结「本次核验实际输入」的组身份：行版本
-  // 检查兜不住 withheld→withheld 草稿编辑（共享 submit 对未准入组不翻
-  // question.version 也不动行投影，但会铸新 revision）。核验结果只能落在
-  // 它被算出的那个 revision/generation 上；应用侧锁后比对，漂移回滚。
-  const verifyInputGroupRootId = row.parent_question_id ?? questionId;
-  const [verifyInputLifecycle] = await db
-    .select({
-      revisionId: question_group_lifecycle.current_revision_id,
-      admissionGeneration: question_group_lifecycle.scoring_admission_generation,
-    })
-    .from(question_group_lifecycle)
-    .where(eq(question_group_lifecycle.group_id, verifyInputGroupRootId))
-    .limit(1);
+  // 核验输入身份 = 快照里的组 current revision + admission generation；
+  // 应用侧（publishVerifyLifecycleUpdate / 主事务漂移闸）锁后比对，漂移回滚。
   const verifiedIdentity = {
-    revisionId: verifyInputLifecycle?.revisionId ?? null,
-    admissionGeneration: verifyInputLifecycle?.admissionGeneration ?? null,
+    revisionId: snap.lifecycleRevisionId ?? null,
+    admissionGeneration: snap.admissionGeneration ?? null,
   };
+  const frozenRevision =
+    verifiedIdentity.revisionId != null &&
+    snap.frozenRevision != null &&
+    snap.frozenRevision.revision_id === verifiedIdentity.revisionId
+      ? snap.frozenRevision
+      : null;
+  if (verifiedIdentity.revisionId != null && frozenRevision == null) {
+    // lifecycle 指向的 revision 行不存在 = 组指针损坏——响铃，不猜内容。
+    throw new Error(
+      `source_verify: lifecycle current revision '${verifiedIdentity.revisionId}' missing for question ${questionId}`,
+    );
+  }
+  // 核验实际输入：组已发布 ⇒ 冻结 revision 是内容权威（行投影可能滞后于
+  // withheld→withheld 编辑）——检查/求解/grounding 消费的
+  // 题面/选项/答案/kind 全部从该 revision 的权威投影构造（与共享 submit
+  // 写行时同一组投影原语：revisionToDraftDocument → draftCanonicalIdentity
+  // → deriveKind）。行只供来源级 provenance（web_sourced/source_ref/
+  // metadata）与 plumbing（id/version/draft_status/parent）。无 revision
+  // 的真 legacy 组照旧行输入。
+  let verifyInput: QuestionRow = row;
+  /** flat 投影对核验有损 ⇒ 付费前明确 hold（原因，见下方 gate）。 */
+  let verifyInputHoldReason: string | null = null;
+  if (frozenRevision != null) {
+    const verifyDoc = revisionToDraftDocument(
+      {
+        revision_id: frozenRevision.revision_id,
+        group_id: frozenRevision.group_id,
+        structure: frozenRevision.structure,
+        response_spec: frozenRevision.response_spec,
+        scoring_basis: frozenRevision.scoring_basis,
+        execution_plan: frozenRevision.execution_plan,
+        presentation: frozenRevision.presentation,
+      },
+      // KC 归属是组/行级账本（claim merge 写行），不在 revision 层——
+      // 快照内的行值即被验对象的 KC 集。
+      { knowledge_ids: row.knowledge_ids ?? [] },
+    );
+    const verifyUnits = verifyDoc.parts.flatMap((part) => part.units);
+    const selectUnits = verifyUnits.filter((u) => u.response_spec.kind === 'select');
+    if (
+      // scoring unit 引用多 slot 时投影只取 slot_refs[0]，其余槽位不进视图。
+      frozenRevision.scoring_basis.units.some((unit) => unit.slot_refs.length > 1)
+    ) {
+      verifyInputHoldReason = 'typed_multi_slot_scoring_unit';
+    } else if (
+      // draftSpecFromSlot 不可映射 → 该 unit 以 {kind:'free'} 兜底 +
+      // metadata.unmapped_slot_kind 显式标记（投影器自身记号，非猜测）。
+      verifyUnits.some(
+        (u) => (u.metadata as Record<string, unknown> | undefined)?.unmapped_slot_kind != null,
+      )
+    ) {
+      verifyInputHoldReason = 'typed_unmapped_slot_kind';
+    } else if (selectUnits.length > 1) {
+      // projectChoices 只取第一个 select unit —— 多 select 槽位喂给
+      // 求解器是残缺选项集。
+      verifyInputHoldReason = 'typed_multi_select_units';
+    } else if (
+      selectUnits.some((u) => {
+        const spec = u.response_spec;
+        return (
+          spec.kind === 'select' &&
+          u.key?.kind === 'select' &&
+          u.key.accepted_item_ids.some(
+            (itemId) => !spec.items.some((item) => item.item_id === itemId),
+          )
+        );
+      })
+    ) {
+      // select 键引用了 spec.items 之外的 item_id —— projectReference 会
+      // 静默丢该键，flat 视图的答案残缺。
+      verifyInputHoldReason = 'typed_select_key_unresolved';
+    }
+    const ident = draftCanonicalIdentity(verifyDoc);
+    verifyInput = {
+      ...row,
+      kind: deriveKind(verifyDoc),
+      prompt_md: ident.promptMd,
+      reference_md: ident.referenceMd,
+      choices_md: ident.choicesMd,
+    };
+  }
   const metadataRaw =
     row.metadata && typeof row.metadata === 'object'
       ? (row.metadata as Record<string, unknown>)
@@ -693,39 +793,52 @@ export async function runSourceVerify(
     let unresolvedAnchoredExactMismatch = false;
     let imageInputUnavailable = false;
 
-    if (tierChecks.includes('structure_completeness')) {
-      checks.push(checkStructureCompleteness(row));
-    }
-    if (tierChecks.includes('source_consistency')) {
-      checks.push(checkSourceConsistency(row));
-    }
-    if (tierChecks.includes('dedup')) {
-      checks.push(await checkDedup(db, row));
-    }
-    if (tierChecks.includes('solve_check')) {
-      const solveQuestion: SolveCheckQuestion = {
-        id: row.id,
-        kind: row.kind,
-        prompt_md: row.prompt_md,
-        reference_md: row.reference_md,
-        choices_md: row.choices_md,
-        judge_kind_override: row.judge_kind_override,
-        rubric_json: row.rubric_json,
-        knowledge_ids: row.knowledge_ids,
-        metadata: (row.metadata ?? null) as Record<string, unknown> | null,
-        image_refs: row.image_refs,
-        figures: row.figures,
-      };
-      const solveResult = await runSolveCheck(solveQuestion, {
-        runTaskFn,
-        profile: { id: subjectProfile.id, full: subjectProfile },
-        db,
-        imageFetchFn: params.imageFetchFn,
+    // R1 F2 —— flat 投影对核验输入有损 ⇒ 付费前明确 hold：只落一条
+    // structure_completeness fail（原因名指到具体有损形状），不跑确定性
+    // 检查不花 solve/grounding——不走「拿残缺视图验一遍」的猜测路径。
+    // fail → 既有 !promote 分支（demote + verify_hold suspend + 证据落账），
+    // 后续编辑改形状后重验可恢复，typed sourcing 的真实可用面不受影响。
+    if (verifyInputHoldReason != null) {
+      checks.push({
+        check: 'structure_completeness',
+        verdict: 'fail',
+        reason: `frozen revision's flat projection is lossy for verification (${verifyInputHoldReason}); refusing to run checks against a partial view — hold until the shape projects losslessly or verify learns typed inputs`,
       });
-      unresolvedAnchoredExactMismatch =
-        solveResult.verdict === 'unsupported' && solveResult.normalized_exact_mismatch === true;
-      imageInputUnavailable = solveResult.image_input_unavailable === true;
-      checks.push(solveCheckToOutcome(solveResult));
+    } else {
+      if (tierChecks.includes('structure_completeness')) {
+        checks.push(checkStructureCompleteness(verifyInput));
+      }
+      if (tierChecks.includes('source_consistency')) {
+        checks.push(checkSourceConsistency(verifyInput));
+      }
+      if (tierChecks.includes('dedup')) {
+        checks.push(await checkDedup(db, verifyInput));
+      }
+      if (tierChecks.includes('solve_check')) {
+        const solveQuestion: SolveCheckQuestion = {
+          id: verifyInput.id,
+          kind: verifyInput.kind,
+          prompt_md: verifyInput.prompt_md,
+          reference_md: verifyInput.reference_md,
+          choices_md: verifyInput.choices_md,
+          judge_kind_override: verifyInput.judge_kind_override,
+          rubric_json: verifyInput.rubric_json,
+          knowledge_ids: verifyInput.knowledge_ids,
+          metadata: (verifyInput.metadata ?? null) as Record<string, unknown> | null,
+          image_refs: verifyInput.image_refs,
+          figures: verifyInput.figures,
+        };
+        const solveResult = await runSolveCheck(solveQuestion, {
+          runTaskFn,
+          profile: { id: subjectProfile.id, full: subjectProfile },
+          db,
+          imageFetchFn: params.imageFetchFn,
+        });
+        unresolvedAnchoredExactMismatch =
+          solveResult.verdict === 'unsupported' && solveResult.normalized_exact_mismatch === true;
+        imageInputUnavailable = solveResult.image_input_unavailable === true;
+        checks.push(solveCheckToOutcome(solveResult));
+      }
     }
 
     // `otherwisePromotable` is the tier-2 promote decision BEFORE the source-grounding gate:
@@ -782,8 +895,8 @@ export async function runSourceVerify(
       try {
         outcome = await groundingFn({
           db,
-          prompt_md: row.prompt_md,
-          reference_md: row.reference_md,
+          prompt_md: verifyInput.prompt_md,
+          reference_md: verifyInput.reference_md,
           sourceAssetId: groundingSourceAssetId,
           subjectProfile,
         });
