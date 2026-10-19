@@ -17,13 +17,15 @@
 // - failed application leaves the row in receipt_ready (readable unfinished
 //   obligation) and the only way forward is replaying the application from the
 //   receipt — there is no path back to a physical send.
-import { type SQL, and, eq, inArray, lt, ne, or, sql } from 'drizzle-orm';
+import { type SQL, and, eq, inArray, isNull, lt, ne, or, sql } from 'drizzle-orm';
 import {
+  PAID_EFFECT_AUTHORIZATION_OPEN_STATES,
   PAID_EFFECT_BACKEND_SCHEMA,
   PAID_EFFECT_ENTITY_GATE_STATES,
   PAID_EFFECT_PARALLEL_REP_UNIT_PATTERN,
   PAID_EFFECT_STATE_SCHEMA,
   PaidEffectApplicationConflictError,
+  PaidEffectAuthorizationError,
   type PaidEffectBackend,
   PaidEffectControlFencedError,
   PaidEffectDeliveryConflictError,
@@ -34,6 +36,8 @@ import {
   PaidEffectReceiptConflictError,
   type PaidEffectReservation,
   type PaidEffectState,
+  type PaidEffectVoidAuthorization,
+  type PaidEffectVoidReceipt,
   canonicalizePaidEffectJson,
   computePaidEffectIdentity,
   paidEffectGateLockKey,
@@ -45,7 +49,7 @@ import {
   admitPaidEffectDeliveryControl,
   lockPaidEffectControlFamily,
 } from '@/db/paid-effect-control';
-import { paid_effect } from '@/db/schema';
+import { paid_effect, paid_effect_authorization } from '@/db/schema';
 
 type PaidEffectRow = typeof paid_effect.$inferSelect;
 
@@ -66,6 +70,8 @@ export interface PaidEffectSnapshot {
   readonly applicationAttempts: number;
   readonly lastApplicationError: string | null;
   readonly unresolvedReason: string | null;
+  readonly voidedAt: Date | null;
+  readonly voidReceipt: unknown;
   readonly createdAt: Date;
   readonly updatedAt: Date;
 }
@@ -84,10 +90,6 @@ export interface PaidEffectSendClaimDelivery {
   readonly leaseExpiresAt: Date;
   /** Original dispatch generation; required for both backends after bootstrap. */
   readonly generation?: number | null;
-  /** Lead-only old-row identity authorization (unit + input digest), never
-   *  inferred from the new unit. YUK-1547: marks the exact @2 row an @3 send
-   *  may re-open (its unknown blocker plus the retained @1 unknown on the base). */
-  readonly admissionReopenMarker?: { unit: string; inputDigest: string };
 }
 
 export type PaidEffectSendClaim =
@@ -140,6 +142,8 @@ function toSnapshot(row: PaidEffectRow): PaidEffectSnapshot {
     applicationAttempts: row.application_attempts,
     lastApplicationError: row.last_application_error,
     unresolvedReason: row.unresolved_reason,
+    voidedAt: row.voided_at,
+    voidReceipt: row.void_json,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -169,8 +173,7 @@ async function lockEntityGate(tx: Tx, identity: PaidEffectIdentity): Promise<voi
 /**
  * Gate scan under the FIXED predicate (paidEffectGateBlocks): an open
  * sending/unknown effect of the same (family, entityId) blocks this claim
- * UNLESS it is an item_prior_backfill feature rep of the SAME revision, or
- * the exact owner-authorized YUK-1547 @2 -> @3 contract upgrade.
+ * UNLESS it is an item_prior_backfill feature rep of the SAME revision.
  * Same revision + same unit
  * + different digest BLOCKS (reconciliation); a different revision BLOCKS
  * (entity-level cross-revision/cross-night). Runs inside the caller's
@@ -179,7 +182,6 @@ async function lockEntityGate(tx: Tx, identity: PaidEffectIdentity): Promise<voi
 async function findGateBlocker(
   tx: Tx,
   identity: PaidEffectIdentity,
-  admissionReopenMarker?: { unit: string; inputDigest: string },
 ): Promise<PaidEffectIdentity | null> {
   const blockers = await tx
     .select({
@@ -208,35 +210,6 @@ async function findGateBlocker(
           and ${identity.unit} ~ ${PAID_EFFECT_PARALLEL_REP_UNIT_PATTERN}
           and ${paid_effect.entity_revision} = ${identity.entityRevision}
           and ${paid_effect.unit} <> ${identity.unit}
-        )`,
-        // YUK-1547 explicit solve-transport upgrade. This does not replay or
-        // update the blocker; only a marked @3 claim for the SAME base can pass:
-        // the marked @2 unknown row (identity match), or the retained @1 unknown
-        // row — the latter only while the named @2 row actually exists, so a
-        // fabricated marker exempts nothing.
-        sql`not (
-          ${paid_effect.family} = 'question_admission_run'
-          and ${identity.family} = 'question_admission_run'
-          and ${paid_effect.entity_revision} = ${identity.entityRevision}
-          and ${paid_effect.state} = 'unknown'
-          and ${identity.unit} = 'admission@3'
-          and ${admissionReopenMarker?.unit ?? ''} = 'admission@2'
-          and (
-            (${paid_effect.unit} = 'admission@2'
-              and ${paid_effect.input_digest} = ${admissionReopenMarker?.inputDigest ?? ''})
-            or (
-              ${paid_effect.unit} = 'admission@1'
-              and exists (
-                select 1 from paid_effect marked_row
-                where marked_row.family = 'question_admission_run'
-                  and marked_row.entity_id = ${identity.entityId}
-                  and marked_row.entity_revision = ${identity.entityRevision}
-                  and marked_row.unit = 'admission@2'
-                  and marked_row.input_digest = ${admissionReopenMarker?.inputDigest ?? ''}
-                  and marked_row.state in ('unknown', 'applied')
-              )
-            )
-          )
         )`,
       ),
     )
@@ -298,6 +271,117 @@ export async function admitPaidEffectIntent(
   return { kind: 'existing', state: PAID_EFFECT_STATE_SCHEMA.parse(row.state) };
 }
 
+type AuthorizationRow = typeof paid_effect_authorization.$inferSelect;
+
+const OPEN_SUCCESSOR_STATES: readonly string[] = PAID_EFFECT_AUTHORIZATION_OPEN_STATES;
+
+function successorIdentityOf(auth: AuthorizationRow): PaidEffectIdentity {
+  return {
+    family: auth.family,
+    entityId: auth.entity_id,
+    entityRevision: auth.successor_entity_revision,
+    unit: auth.successor_unit,
+    inputDigest: auth.successor_input_digest,
+  };
+}
+
+function voidedIdentityOf(auth: AuthorizationRow): PaidEffectIdentity {
+  return {
+    family: auth.family,
+    entityId: auth.entity_id,
+    entityRevision: auth.entity_revision,
+    unit: auth.unit,
+    inputDigest: auth.input_digest,
+  };
+}
+
+function sameIdentity(a: PaidEffectIdentity, b: PaidEffectIdentity): boolean {
+  return (
+    a.family === b.family &&
+    a.entityId === b.entityId &&
+    a.entityRevision === b.entityRevision &&
+    a.unit === b.unit &&
+    a.inputDigest === b.inputDigest
+  );
+}
+
+/**
+ * THE successor-authorization gate (YUK-1567). Runs inside the caller's
+ * transaction after lockEntityGate, serialized by the same family advisory +
+ * entity-gate locks as the void that wrote the authorization. While ANY
+ * authorization for this (family, entityId) is still open — its successor row
+ * missing or not yet terminal — only the authorized successor identity may be
+ * claimed, and only by the exact bound delivery. A claim on the successor
+ * identity under any other delivery throws (fail-closed) so the delivery
+ * visibly fails instead of silently holding a parked intent; a claim on any
+ * other identity is blocked with the voided row named as the blocker.
+ */
+async function checkSuccessorAuthorization(
+  tx: Tx,
+  identity: PaidEffectIdentity,
+  delivery: PaidEffectSendClaimDelivery,
+): Promise<PaidEffectIdentity | null> {
+  const auths = await tx
+    .select()
+    .from(paid_effect_authorization)
+    .where(
+      and(
+        eq(paid_effect_authorization.family, identity.family),
+        eq(paid_effect_authorization.entity_id, identity.entityId),
+      ),
+    )
+    .for('update');
+  for (const auth of auths) {
+    const successor = successorIdentityOf(auth);
+    const [succ] = await tx
+      .select({ state: paid_effect.state })
+      .from(paid_effect)
+      .where(identityWhere(successor))
+      .limit(1);
+    // Missing cannot happen when the void admitted the intent atomically, but
+    // a missing successor must still read as OPEN — never treat absence as
+    // settled and let an unrelated claim through the gate.
+    const open = succ == null || OPEN_SUCCESSOR_STATES.includes(succ.state);
+    if (!open) continue;
+    if (sameIdentity(identity, successor)) {
+      if (
+        delivery.backend !== auth.successor_delivery_backend ||
+        delivery.deliveryId !== auth.successor_delivery_id
+      ) {
+        throw new PaidEffectAuthorizationError(
+          `paid-effect delivery ${delivery.deliveryId} is not the authorized successor delivery ` +
+            `(${auth.successor_delivery_backend}/${auth.successor_delivery_id}) for ` +
+            `${identity.family}/${identity.entityId} under authorization ${auth.authorization_id}`,
+        );
+      }
+      continue;
+    }
+    return voidedIdentityOf(auth);
+  }
+  return null;
+}
+
+/** Audit marker: the bound delivery consumed its authorization on claim. */
+async function markAuthorizationConsumed(
+  tx: Tx,
+  identity: PaidEffectIdentity,
+  delivery: PaidEffectSendClaimDelivery,
+): Promise<void> {
+  await tx
+    .update(paid_effect_authorization)
+    .set({ consumed_at: new Date(), consumed_delivery_id: delivery.deliveryId })
+    .where(
+      and(
+        eq(paid_effect_authorization.family, identity.family),
+        eq(paid_effect_authorization.entity_id, identity.entityId),
+        eq(paid_effect_authorization.successor_entity_revision, identity.entityRevision),
+        eq(paid_effect_authorization.successor_unit, identity.unit),
+        eq(paid_effect_authorization.successor_input_digest, identity.inputDigest),
+        isNull(paid_effect_authorization.consumed_at),
+      ),
+    );
+}
+
 async function claimLockedRow(
   tx: Tx,
   row: PaidEffectRow,
@@ -318,10 +402,12 @@ async function claimLockedRow(
   if (admission.kind === 'fenced') {
     throw new PaidEffectControlFencedError(identity.family, admission.reason, admission.owner);
   }
-  const blockedBy = await findGateBlocker(tx, identity, delivery.admissionReopenMarker);
+  const blockedBy = await findGateBlocker(tx, identity);
   if (blockedBy) return { blockedBy };
+  const authBlocker = await checkSuccessorAuthorization(tx, identity, delivery);
+  if (authBlocker) return { blockedBy: authBlocker };
   const fence = row.fence + 1;
-  await tx
+  const claimed = await tx
     .update(paid_effect)
     .set({
       state: 'sending',
@@ -333,7 +419,18 @@ async function claimLockedRow(
       unresolved_reason: null,
       updated_at: new Date(),
     })
-    .where(and(identityWhere(identity), eq(paid_effect.state, 'pending')));
+    .where(and(identityWhere(identity), eq(paid_effect.state, 'pending')))
+    .returning({ family: paid_effect.family });
+  // The row was locked FOR UPDATE as 'pending', so zero rows means a state we
+  // failed to discriminate — never report a send the CAS did not mint.
+  if (claimed.length !== 1) {
+    throw new PaidEffectProtocolError(
+      `paid-effect claim CAS did not apply for ${identity.family}/${identity.entityId}`,
+    );
+  }
+  // The bound delivery consumed its authorization — record it AFTER the CAS
+  // win so a claim that could not win never marks anything consumed.
+  await markAuthorizationConsumed(tx, identity, delivery);
   return { fence };
 }
 
@@ -404,7 +501,7 @@ export async function reservePaidEffect(
         applied: state === 'applied',
       } as const;
     }
-    if (state === 'sending' || state === 'unknown') {
+    if (state === 'sending' || state === 'unknown' || state === 'voided') {
       return { identity, kind: 'held', state, blockedBy: null } as const;
     }
     const outcome = await claimLockedRow(tx, row, identity, delivery);
@@ -509,6 +606,218 @@ export async function markPaidEffectUnknown(
       updated_at: new Date(),
     })
     .where(and(identityWhere(identity), eq(paid_effect.state, 'sending')));
+}
+
+export type PaidEffectVoidOutcome =
+  | {
+      readonly kind: 'voided';
+      readonly authorizationId: string;
+      readonly voided: PaidEffectIdentity;
+      readonly successor: PaidEffectIdentity;
+      readonly voidedAt: Date;
+      /** New fence on the voided row; late writes under previousFence die. */
+      readonly fence: number;
+    }
+  | {
+      readonly kind: 'already_voided';
+      readonly authorizationId: string;
+      readonly voided: PaidEffectIdentity;
+      readonly successor: PaidEffectIdentity;
+    };
+
+/**
+ * THE manual void + successor reauthorization (YUK-1567). One call, inside the
+ * caller's transaction, atomically:
+ *   1. CAS the locked 'unknown' row to 'voided' (identity + fence; fence
+ *      bumps so the retired delivery's late receipt/unknown-marking is
+ *      rejected by the same owner/fence CAS as every other write),
+ *   2. persist the authorization row (reason / operator / basis / exact
+ *      successor identity / exact bound delivery),
+ *   3. admit the successor's pending intent — so the authorization and its
+ *      reservation commit or roll back TOGETHER and no background claim can
+ *      race into the voided gap.
+ * Only an explicit 'unknown' row may be voided (a 'sending' row has an active
+ * send; 'pending' is an un-sent intent; receipts/applied are paid truth).
+ * Replaying with the same authorizationId returns 'already_voided' and mints
+ * nothing; replaying under a different id is a conflict error, not a second
+ * receipt. Several rows may be voided under ONE authorizationId for the same
+ * successor inside one transaction (multi-blocker entity): the second call
+ * recognizes its own freshly-bound successor and admits nothing twice.
+ */
+export async function voidPaidEffectWithSuccessor(
+  tx: Tx,
+  identity: PaidEffectIdentity,
+  opts: { expectedFence: number; authorization: PaidEffectVoidAuthorization },
+): Promise<PaidEffectVoidOutcome> {
+  const auth = opts.authorization;
+  const successor = computePaidEffectIdentity(auth.successorInput);
+  if (successor.family !== identity.family || successor.entityId !== identity.entityId) {
+    throw new PaidEffectAuthorizationError(
+      'paid-effect void successor must stay within the same family and entity',
+    );
+  }
+  if (sameIdentity(successor, identity)) {
+    throw new PaidEffectAuthorizationError(
+      'paid-effect void successor must be a different identity than the voided row',
+    );
+  }
+  const row = await lockRow(tx, identity);
+  if (!row) throw new PaidEffectProtocolError('paid-effect row missing');
+  const existingReceipt = row.void_json as PaidEffectVoidReceipt | null;
+  if (row.state === 'voided') {
+    if (existingReceipt?.authorizationId === auth.authorizationId) {
+      return {
+        kind: 'already_voided',
+        authorizationId: auth.authorizationId,
+        voided: identity,
+        successor: existingReceipt.successor,
+      };
+    }
+    throw new PaidEffectAuthorizationError(
+      `paid-effect ${identity.family}/${identity.entityId} is already voided under ` +
+        `authorization ${existingReceipt?.authorizationId ?? '<missing receipt>'}; ` +
+        'refusing a second authorization receipt',
+    );
+  }
+  if (row.state !== 'unknown') {
+    throw new PaidEffectProtocolError(
+      `paid-effect void requires an explicit 'unknown' obligation; ` +
+        `${identity.family}/${identity.entityId} is '${row.state}'`,
+    );
+  }
+  if (row.fence !== opts.expectedFence) {
+    throw new PaidEffectDeliveryConflictError(
+      `paid-effect void fence ${opts.expectedFence} is stale for ` +
+        `${identity.family}/${identity.entityId} (row fence ${row.fence})`,
+    );
+  }
+  // Entity-scope mutation: same lock order as a claim (family advisory →
+  // identity row → entity advisory), so the authorization write serializes
+  // against every claim's authorization scan.
+  await lockEntityGate(tx, identity);
+  const [succRow] = await tx
+    .select({ state: paid_effect.state })
+    .from(paid_effect)
+    .where(identityWhere(successor))
+    .for('update')
+    .limit(1);
+  const [priorBinding] = await tx
+    .select()
+    .from(paid_effect_authorization)
+    .where(
+      and(
+        eq(paid_effect_authorization.family, identity.family),
+        eq(paid_effect_authorization.entity_id, identity.entityId),
+        eq(paid_effect_authorization.successor_entity_revision, successor.entityRevision),
+        eq(paid_effect_authorization.successor_unit, successor.unit),
+        eq(paid_effect_authorization.successor_input_digest, successor.inputDigest),
+      ),
+    )
+    .for('update')
+    .limit(1);
+  if (priorBinding) {
+    const ours =
+      priorBinding.authorization_id === auth.authorizationId &&
+      priorBinding.successor_delivery_backend === auth.successorDelivery.backend &&
+      priorBinding.successor_delivery_id === auth.successorDelivery.deliveryId;
+    if (!ours || !succRow || succRow.state !== 'pending') {
+      throw new PaidEffectAuthorizationError(
+        `paid-effect successor for ${identity.family}/${identity.entityId} is already bound ` +
+          'by a different authorization or no longer pending; refusing to re-bind',
+      );
+    }
+    // Same void batch already bound + admitted this successor — continue.
+  } else if (succRow) {
+    throw new PaidEffectAuthorizationError(
+      `paid-effect successor identity for ${identity.family}/${identity.entityId} already ` +
+        'has an effect row; refusing to double-spend the authorized send',
+    );
+  }
+  await tx.insert(paid_effect_authorization).values({
+    family: identity.family,
+    entity_id: identity.entityId,
+    entity_revision: identity.entityRevision,
+    unit: identity.unit,
+    input_digest: identity.inputDigest,
+    authorization_id: auth.authorizationId,
+    successor_entity_revision: successor.entityRevision,
+    successor_unit: successor.unit,
+    successor_input_digest: successor.inputDigest,
+    successor_delivery_backend: auth.successorDelivery.backend,
+    successor_delivery_id: auth.successorDelivery.deliveryId,
+    reason: auth.reason,
+    operator: auth.operator,
+    basis: auth.basis,
+  });
+  if (!priorBinding) {
+    const admission = await admitPaidEffectIntent(tx, auth.successorInput);
+    if (admission.kind !== 'admitted') {
+      throw new PaidEffectProtocolError(
+        'paid-effect void successor intent was not freshly admitted',
+      );
+    }
+  }
+  const now = new Date();
+  const receipt: PaidEffectVoidReceipt = {
+    authorizationId: auth.authorizationId,
+    reason: auth.reason,
+    operator: auth.operator,
+    basis: auth.basis,
+    voidedFromState: 'unknown',
+    previousFence: row.fence,
+    successor,
+    successorDelivery: auth.successorDelivery,
+  };
+  const fence = row.fence + 1;
+  const updated = await tx
+    .update(paid_effect)
+    .set({
+      state: 'voided',
+      fence,
+      voided_at: now,
+      void_json: receipt,
+      updated_at: now,
+    })
+    .where(
+      and(
+        identityWhere(identity),
+        eq(paid_effect.state, 'unknown'),
+        eq(paid_effect.fence, opts.expectedFence),
+      ),
+    )
+    .returning({ family: paid_effect.family });
+  if (updated.length !== 1) {
+    throw new PaidEffectDeliveryConflictError(
+      `paid-effect void CAS did not apply for ${identity.family}/${identity.entityId}`,
+    );
+  }
+  return {
+    kind: 'voided',
+    authorizationId: auth.authorizationId,
+    voided: identity,
+    successor,
+    voidedAt: now,
+    fence,
+  };
+}
+
+/**
+ * All authorization rows for one (family, entityId) — the void CLI's plan and
+ * the driver's verification read; not part of the claim hot path.
+ */
+export async function readPaidEffectAuthorizations(
+  db: Db | Tx,
+  scope: { family: string; entityId: string },
+): Promise<AuthorizationRow[]> {
+  return db
+    .select()
+    .from(paid_effect_authorization)
+    .where(
+      and(
+        eq(paid_effect_authorization.family, scope.family),
+        eq(paid_effect_authorization.entity_id, scope.entityId),
+      ),
+    );
 }
 
 /**
