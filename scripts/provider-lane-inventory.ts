@@ -1148,6 +1148,94 @@ export const PROVIDER_LANES = [
     costSupport:
       'no durable cost row under the explicit support exemption; the dated artifact preserves model, endpoint, duration, outcome, and raw response',
   },
+  {
+    id: 'catalog.provider-models-check',
+    owner: 'server/ai',
+    disposition: 'migrate',
+    wire: {
+      path: 'src/server/ai/provider-models-check.ts',
+      calls: ['fetchImpl', 'fetchImpl', 'fetchImpl'],
+      contains: ['/models', 'max_tokens: 1'],
+    },
+    callers: [
+      {
+        path: 'src/server/ai/model-catalog.ts',
+        calls: ['listProviderModels', 'finalizeProviderModelsChecks'],
+      },
+    ],
+    directImporters: [{ path: 'src/server/ai/model-catalog.ts', kind: 'runtime' }],
+    roles: ['api', 'worker'],
+    provider: 'each implemented provider whose credential is present in this process',
+    model:
+      'one pinned probe model per provider; deepseek-v4.1-flash stays high effort and does not send tool_choice',
+    endpointClass:
+      'credentialed GET /models (paginated) plus one persisted 1-token POST on the product wire',
+    configuration: {
+      endpoint: {
+        summary: 'product wire root from providerModelsRoot; models.dev api fields are not used',
+        source: {
+          path: 'src/server/ai/provider-models-check.ts',
+          imports: ['./providers'],
+          calls: ['providerModelsRoot'],
+        },
+      },
+      credential: {
+        summary: 'lane credential env via providerCredentialEnvName; a missing key is unconfigured',
+        source: {
+          path: 'src/server/ai/provider-models-check.ts',
+          imports: ['./providers'],
+          calls: ['providerCredentialEnvName'],
+        },
+      },
+      model: {
+        summary:
+          'providerAuthProbeModel pins one model per provider; opencode-go probes deepseek-v4.1-flash at high effort',
+        source: {
+          path: 'src/server/ai/provider-models-check.ts',
+          imports: ['./providers'],
+          calls: ['providerAuthProbeModel', 'probeBody'],
+        },
+      },
+    },
+    evidence: {
+      path: 'src/server/ai/provider-models-check.ts',
+      calls: ['writeModelCatalogProbeCost'],
+      contains: ['cost_usd='],
+    },
+    attemptSemantics: {
+      admittedUnit:
+        'one /models page or one 1-token auth probe; a missing key, auth failure, or unreachable list does not call the model',
+      transportRetryCount: 0,
+      attemptsPerInvocation: {
+        kind: 'dynamic',
+        multiplierRationale:
+          'one GET /models per configured provider, plus up to 9 has_more pages, and at most one probe per provider for the life of the stored receipt; unconfigured and auth_failed skip the probe',
+      },
+      durableIdentity:
+        'the probe receipt lives on model_catalog_cache.payload.provider_checks; a later refresh copies it and does not send again',
+      timeout:
+        '15s per /models page and 30s for the probe, both AbortSignal.timeout with redirect error',
+      clientRetry: 'none; 5xx and network stay unreachable and are not stored as a receipt',
+      redelivery:
+        'catalog refresh holds pg_advisory_xact_lock so two workers cannot both probe; a ledger write failure still keeps the receipt',
+      fanOut:
+        'implemented providers are listed in parallel; probes run one provider at a time inside the refresh transaction',
+      evidence: [
+        {
+          path: 'src/server/ai/provider-models-check.ts',
+          calls: ['AbortSignal.timeout', 'runProbe'],
+          contains: ['LIST_TIMEOUT_MS = 15_000', 'PROBE_TIMEOUT_MS = 30_000'],
+        },
+        {
+          path: 'src/server/ai/model-catalog.ts',
+          calls: ['finalizeProviderModelsChecks'],
+          contains: ["pg_advisory_xact_lock(hashtext('model-catalog:refresh'))"],
+        },
+      ],
+    },
+    costSupport:
+      'a billed probe writes one cost_ledger attempt row (task_kind model_catalog_auth_probe) with models.dev rates; anthropic-sub is estimated 0; an unpriced probe stores null rather than a fake zero',
+  },
 ] as const satisfies readonly ProviderLane[];
 
 function missingEvidence(value: SourceEvidence): boolean {

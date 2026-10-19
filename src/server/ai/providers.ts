@@ -417,6 +417,25 @@ export function isProviderImplemented(provider: Provider): boolean {
   return IMPLEMENTED_KEY_PROVIDERS.has(provider) || isOauthProvider(provider);
 }
 
+/**
+ * Model used for the one-token catalog auth probe. This is not a task default:
+ * the probe only checks that the credential is accepted.
+ * opencode-go stays on deepseek-v4.1-flash at high effort, with no tool_choice.
+ */
+const AUTH_PROBE_PIN: Partial<Record<Provider, string>> = {
+  'opencode-go': 'deepseek-v4.1-flash',
+  anthropic: 'claude-haiku-4-5',
+  'anthropic-sub': 'claude-opus-4-8',
+  xiaomi: 'mimo-v2.5',
+  'xiaomi-token-plan': 'mimo-v2.6-pro',
+  'zhipuai-coding-plan': 'glm-5.3-flash',
+  openai: 'gpt-6-astra',
+};
+
+export function providerAuthProbeModel(provider: Provider): string | undefined {
+  return AUTH_PROBE_PIN[provider];
+}
+
 /** Implemented lanes, stable order. OpenRouter stays out: it is typed-only. */
 export function implementedProviderIds(): readonly Provider[] {
   return (Object.keys(PROVIDERS) as Provider[])

@@ -10,6 +10,7 @@ import { ANTHROPIC_SUB_CONTRACT_REF } from './pricing';
 import {
   implementedProviderIds,
   isKnownProvider,
+  providerAuthProbeModel,
   providerCredentialEnvName,
   providerModelsRoot,
 } from './providers';
@@ -91,21 +92,25 @@ interface ProbeSpec {
   extra?: Record<string, unknown>;
 }
 
-const PROBE_SPECS: Partial<Record<Provider, ProbeSpec>> = {
+const PROBE_WIRES: Partial<Record<Provider, ProbeSpec['wire']>> = {
   // Same 1-token shape as the sealed deepseek receipt: reasoning_effort high,
   // thinking enabled, no tool_choice (thinking rejects forced tool_choice).
-  'opencode-go': {
-    model: 'deepseek-v4.1-flash',
-    wire: 'openai-chat',
-    extra: { reasoning_effort: 'high', thinking: { type: 'enabled' } },
-  },
-  anthropic: { model: 'claude-haiku-4-5', wire: 'anthropic-messages' },
-  'anthropic-sub': { model: 'claude-opus-4-8', wire: 'anthropic-messages' },
-  xiaomi: { model: 'mimo-v2.5', wire: 'openai-chat' },
-  'xiaomi-token-plan': { model: 'mimo-v2.6-pro', wire: 'openai-chat' },
-  'zhipuai-coding-plan': { model: 'glm-5.3-flash', wire: 'openai-chat' },
-  openai: { model: 'gpt-6-astra', wire: 'openai-responses' },
+  'opencode-go': 'openai-chat',
+  anthropic: 'anthropic-messages',
+  'anthropic-sub': 'anthropic-messages',
+  xiaomi: 'openai-chat',
+  'xiaomi-token-plan': 'openai-chat',
+  'zhipuai-coding-plan': 'openai-chat',
+  openai: 'openai-responses',
 };
+
+function probeSpec(provider: Provider): ProbeSpec | undefined {
+  const model = providerAuthProbeModel(provider);
+  const wire = PROBE_WIRES[provider];
+  if (!model || !wire) return undefined;
+  if (provider !== 'opencode-go') return { model, wire };
+  return { model, wire, extra: { reasoning_effort: 'high', thinking: { type: 'enabled' } } };
+}
 
 type Json = Record<string, unknown>;
 type ProviderMap = Record<string, Json>;
@@ -292,7 +297,7 @@ async function runProbe(
   fetchImpl: ProviderFetch,
   env: Record<string, string | undefined>,
 ): Promise<ProbeAttempt> {
-  const spec = PROBE_SPECS[provider];
+  const spec = probeSpec(provider);
   const credential = credentialFor(provider, env);
   const root = providerModelsRoot(provider, env);
   if (!spec || !credential || !root) return { status: 'unreachable' };
@@ -537,7 +542,7 @@ export async function finalizeProviderModelsChecks(input: {
       detail: 'missing',
     };
     const previous = previousByProvider.get(provider);
-    const spec = PROBE_SPECS[provider];
+    const spec = probeSpec(provider);
     let attempt: ProbeAttempt | undefined;
     if (spec && shouldProbe(list, previous)) {
       attempt = await runProbe(provider, input.fetchImpl, input.env);
