@@ -1,3 +1,23 @@
+# YUK-1526 关键词 IDF draft 交接 — 2026-10-19
+
+本 worktree `/workspace/amp/wt/YUK-1526`，分支 `yuk-1526-keyword-idf`，只处理本票，交付阶段为第一天能用。交 draft PR，不合并、不部署。产品改动仅 `bank-search.ts`，不改向量通道、UI、测试代码或 schema。
+
+词项以 `{term, weight}` 表示。D 为完整可检索库面的题目数，df 为相同 FTS 文档表达式命中该词项的题目数。权重 `ln((D+1)/(df+0.5))/ln(2*(D+1))`；strong 要求命中权重和达到 `min(查询总权重, max(1, 0.2*查询总权重))`。短查询可凭完整词项命中计入；没有 counted 词项的单字查询保留旧行为。DF 不受 scope、候选上限或向量是否存在影响。游标 v3→v4，旧版本必须重搜；续页重算强度，变化时沿用 snapshot hash 显式过期。
+
+本地 Node 24.22.0、pnpm 11.13.1、隔离 pgvector/pg16 迁移成功。24 题合成库中 22 题包含通用参数/方程/函数，2 题包含椭圆离心率，另 2 题包含赤壁赋意象。真实 `searchBankTool.execute` + 输入输出 schema + PostgreSQL，只有 embedding 被 stub，未调用任何付费 provider。旧源码用临时 bundle 载入，不改工作树。
+
+- 极坐标与参数方程的互化：旧 sparse/22 → 新 none/0；22 个弱候选保留。限制 source 后 sparse/1 → none/0。
+- 椭圆离心率的求解、赤壁赋意象赏析、椭圆：新旧均 sparse/2，各 2 个 strong。
+- 离子方程式、缺失天体物理话题、空 within_refs：均 none/0。
+- 向量最近距离约 0.435、0.464，均 counted=false，新旧一致。分页可续接、v3 明确过期。
+- 初版直接沿用权重门槛 2 曾漏掉赤壁赋；已改为上述权重尺度门槛并重跑同批输入，保留初版失败日志，不以挑选输入掩盖失败。
+
+`pnpm typecheck`、`pnpm lint`（179 warnings/0 errors）、`pnpm build`、`pnpm audit:draft-status-reads --strict` 通过。既有 `bank-tools.db.test.ts` 6/6 通过。默认 `vitest.db.config.ts` 启动遇 Podman healthcheck 超时；临时配置只取消容器创建与 fork URL 改写，指向单独的 `yuk1526_existing_tests` 本地库，原测试正文不变。没有运行完整 pnpm test。
+
+命令与原始输出在本地 `.amp/in/artifacts/`，PR 正文记录结果。真实副本及 39+6 条查询不在此环境，18/18、9/9 召回验收未验证；独立评审及 exact-head CI 留在 PR 阶段，不宣称本票已完成。Linear 查重已确认向量后续为 YUK-1527，重复 tsvector 性能为既有 YUK-1515，均不在本票修复，无需新建 follow-up。
+
+以下为继承的历史交接。
+
 # YUK-1404 figure main composition — 2026-10-11
 
 PR1657 fixed4c52 exact CI38144495041全绿；正常纳入main eb960c079，仅PLAN/now冲突。图ownership/隐私产品代码与单capture边界测试保留，旧细粒度四tests已删。独立初审/最终R2预算已完成，不启第三审。当前crop producer仍无source_asset SHA登记，旧visibility未知，public withholding不是完整配图交付；同卷actual-output验收仍待。无DB/runtime/provider/paid。

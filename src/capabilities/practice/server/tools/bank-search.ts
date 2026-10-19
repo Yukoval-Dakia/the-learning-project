@@ -303,7 +303,7 @@ export interface BankSearchOutput {
 
 const BankSearchCursorSchema = z
   .object({
-    v: z.literal(3),
+    v: z.literal(4),
     q: z.string().trim().min(1).max(400),
     scope: BankSearchScopeSchema,
     limit: z.number().int().min(1).max(50),
@@ -372,14 +372,13 @@ export function decodeBankSearchCursor(raw: string): BankSearchCursor {
   } catch {
     throw new Error('cursor is not a valid bank-search cursor');
   }
-  // YUK-1516 — v2 及更早游标（不含向量计入元数据）给出可归因的版本错误，而不是笼统的
-  // 「不是合法游标」。保留原前缀，既有调用方/测试的子串匹配不受影响。
+  // 计入规则变化后旧游标必须重新检索，不能沿用旧候选池与强度快照。
   if (
     parsed !== null &&
     typeof parsed === 'object' &&
     'v' in parsed &&
     typeof (parsed as { v: unknown }).v === 'number' &&
-    (parsed as { v: number }).v !== 3
+    (parsed as { v: number }).v !== 4
   ) {
     throw new Error(
       `cursor is not a valid bank-search cursor: version ${(parsed as { v: number }).v} is expired or unsupported; start a new search`,
@@ -524,34 +523,69 @@ export function ftsQueryPlan(queryText: string): FtsQueryPlan {
 interface FtsChannelExprs {
   /** 召回 tsquery（宽 OR；零词项沿用 plainto 空查询，零命中同旧行为）。 */
   tsq: SQL;
-  /**
-   * 命中强度（strong ⇔ 计入 coverage.verdict）：
-   *   (a) 旧 plainto 语义原样命中——整查询全部字/词共现，短词与散字旧命中不失格；
-   *   (b) counted 词项命中数 ≥ max(2, ceil(N×0.2))——长查询部分覆盖即算强命中。
-   * 只共享 1 个 bigram 的「碰词」命中 → weak：留在候选列表（match_evidence 标注），
-   * 不抬高 verdict，缺题科目照常 mint gap_request。
-   */
+  /** strong ⇔ 命中 IDF 权重和 ≥ min(查询总权重, max(1, 查询总权重×0.2))。 */
   strong: SQL;
 }
 
-function ftsChannelExprs(queryText: string, tsvec: SQL): FtsChannelExprs {
+async function ftsChannelExprs(
+  db: Db | Tx,
+  queryText: string,
+  tsvec: SQL,
+): Promise<FtsChannelExprs> {
   const plan = ftsQueryPlan(queryText);
   const tsq =
     plan.recall.length === 0
       ? sql`plainto_tsquery('simple', ${queryText})`
       : sql`to_tsquery('simple', ${plan.recall.join(' | ')})`;
-  const legacyTsq = sql`plainto_tsquery('simple', regexp_replace(${queryText}, ${CJK_FTS_SPLIT}, ${CJK_FTS_REPLACEMENT}, 'g'))`;
-  const matchedTerms =
-    plan.counted.length === 0
-      ? sql`0`
-      : sql`(${sql.join(
-          plan.counted.map((term) => sql`((${tsvec} @@ to_tsquery('simple', ${term}))::int)`),
-          sql` + `,
-        )})`;
-  const strongMin = Math.max(2, Math.ceil(plan.counted.length * 0.2));
+  if (plan.counted.length === 0) {
+    const legacyTsq = sql`plainto_tsquery('simple', regexp_replace(${queryText}, ${CJK_FTS_SPLIT}, ${CJK_FTS_REPLACEMENT}, 'g'))`;
+    return { tsq, strong: sql<boolean>`${tsvec} @@ ${legacyTsq}` };
+  }
+
+  // 在完整可检索库面计 DF，不受 scope、召回上限或是否有向量影响。
+  const [stats] = await db
+    .select({
+      documents: sql<number>`count(*)::float8`,
+      frequencies: sql<number[]>`ARRAY[${sql.join(
+        plan.counted.map(
+          (term) =>
+            sql`(count(*) FILTER (WHERE ${tsvec} @@ to_tsquery('simple', ${term})))::float8`,
+        ),
+        sql`, `,
+      )}]`,
+    })
+    .from(question)
+    .leftJoin(question_group_lifecycle, eq(question_group_lifecycle.group_id, question.id))
+    .where(
+      and(
+        ...buildFilters({
+          scope: { draft_state: 'all', admission_state: 'any' },
+          knowledgeFilterMode: 'any',
+        }),
+      ),
+    );
+  // 平滑 IDF / 最大 IDF：未出现词权重 1，遍布全库的词趋近 0。
+  // 保留正权重，使完整命中的短查询仍能达到自身总权重门槛。
+  const weightedTerms = plan.counted.map((term, index) => ({
+    term,
+    weight:
+      Math.log((stats.documents + 1) / (stats.frequencies[index] + 0.5)) /
+      Math.log(2 * (stats.documents + 1)),
+  }));
+  const matchedWeight = sql`(${sql.join(
+    weightedTerms.map(
+      ({ term, weight }) =>
+        sql`((${tsvec} @@ to_tsquery('simple', ${term}))::int * ${weight}::float8)`,
+    ),
+    sql` + `,
+  )})`;
+  const totalWeight = sql`(${sql.join(
+    weightedTerms.map(({ weight }) => sql`${weight}::float8`),
+    sql` + `,
+  )})`;
   return {
     tsq,
-    strong: sql<boolean>`((${tsvec} @@ ${legacyTsq}) OR (${matchedTerms} >= ${strongMin}))`,
+    strong: sql<boolean>`${matchedWeight} >= LEAST(${totalWeight}, GREATEST(1, ${totalWeight} * 0.2))`,
   };
 }
 
@@ -827,7 +861,7 @@ async function runSearchBankInSnapshot(
   // FTS 词法表达式对新检索与 cursor 续页都可用（续页按 cursor.q 重算 strength；
   // 内容若被改过，snapshot_hash 校验会显式让 cursor 过期）。
   const tsvec = sql`to_tsvector('simple', ${ftsDocumentExpr()})`;
-  const fts = ftsChannelExprs(effectiveQuery, tsvec);
+  const fts = await ftsChannelExprs(db, effectiveQuery, tsvec);
 
   let fused: RrfFused[];
   let unavailable: BankSearchCoverage['unavailable_channels'];
@@ -1123,7 +1157,7 @@ async function runSearchBankInSnapshot(
   const hitIds = new Set(hits.map((hit) => hit.question_id));
   const nextCursor = hasMore
     ? encodeBankSearchCursor({
-        v: 3,
+        v: 4,
         q: effectiveQuery,
         scope,
         limit,
