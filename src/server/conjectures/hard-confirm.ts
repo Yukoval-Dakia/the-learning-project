@@ -7,7 +7,7 @@
 // With the hard-confirm flag off, decideDissociation cannot return HARD_CONFIRM.
 // A probe separates the misconception from the baseline, not from a rival misconception.
 // Without a rival-separating probe the verdict stops at EMERGING.
-// Uses the single-probe skill score. The window mean stays in Rust (ADR-0046).
+// Uses the single-probe skill score. The window mean is deferred and not migrated yet (ADR-0046).
 // A soft-to-hard label still needs a fresh owner confirmation. The nightly pass never infers it.
 
 import { and, eq, inArray, sql } from 'drizzle-orm';
@@ -118,7 +118,7 @@ export function isDiscriminatingContext(r: {
 
 /**
  * Crucial only when the probe discriminates, prediction and baseline differ by DELTA_SEP,
- * and this probe beat the baseline. Uses the single-probe skill score, not the Rust window mean.
+ * and this probe beat the baseline. Uses the single-probe skill score. The window mean is deferred, not migrated yet.
  * A null baseline cannot separate.
  */
 export function isCrucial(r: {
@@ -181,7 +181,7 @@ export function summarizeDissociation(records: DissociationRecord[]): Dissociati
  * HARD_CONFIRM licenses a soft-to-hard upgrade. The nightly ranker passes a false owner
  * confirmation, so it can observe EMERGING and cannot mint the hard label.
  * EMERGING means the base gates passed and the flag, the rival probe, or a fresh confirmation is missing.
- * INSUFFICIENT means the base gates failed. Treat that as a skill gap.
+ * INSUFFICIENT means the evidence did not clear the threshold.
  */
 export type DissociationVerdict = 'HARD_CONFIRM' | 'EMERGING' | 'INSUFFICIENT';
 

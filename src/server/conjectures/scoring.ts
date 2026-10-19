@@ -1,6 +1,6 @@
 // Placeholder for the Rust calibration kernel in crates/calibration-native.
 // Three scalars in, four scalars out. No database read and no cohort, so it cannot fit a learner.
-// The window mean that would honestly say "beats baseline" stays in Rust (ADR-0046).
+// The window mean that would honestly say "beats baseline" is deferred. Rust does not have it yet (ADR-0046).
 // Callers may use the sign of this single probe. This function never writes mastery, typed state, or FSRS.
 
 export interface PredictionScore {
@@ -10,7 +10,7 @@ export interface PredictionScore {
   brierBaseline: number;
   /** Log loss of the conjecture on this probe, clamped off 0 and 1. */
   logLossModel: number;
-  /** Single-probe skill. The honest skill score is the Rust window mean. */
+  /** Single-probe skill. The honest window mean is deferred and not migrated yet. */
   skillScorePoint: number;
 }
 
@@ -23,7 +23,7 @@ function clamp01(x: number): number {
 
 /**
  * Score one probe. `outcome` is 1 when the answer is correct.
- * A positive skill score means this probe beat the baseline. The window mean stays in Rust.
+ * A positive skill score means this probe beat the baseline. The window mean is deferred, not migrated yet.
  */
 export function scorePrediction(
   predicted: number,

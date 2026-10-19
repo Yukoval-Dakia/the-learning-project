@@ -6,7 +6,8 @@
 // The conjecture's predicted probability is calibrated for the first probe only.
 // Accountability may reorder conjecture candidates. It does not flip mastery, typed state, or FSRS.
 // This loop passes a null confused-with KC, so the typed-state gate keeps every cell soft.
-// Do not clear that null from here. Naming the other KC belongs on induction, and the column has no foreign key.
+// Do not clear that null until induction names the second KC and verifies it exists.
+// The column has no foreign key, and nextTypedState only checks that the id is truthy.
 // This is the only production caller of upsertKcTypedState, so nothing currently writes confused-with-X.
 // An empty admin column is that fact, not missing learner data. `mastered` is unreachable here.
 // Retrievability is stored on the anchor event because replay needs it. kc_typed_state has no such column.

@@ -4,12 +4,13 @@
 // `confused-with-X` is committed only when the probe discriminates, recurrence is at least 2,
 // and the other KC is named. Otherwise the cell stays `no-evidence` / `open`.
 // One failed probe can be the misconception or an unrelated cause.
-// `mastered` is not produced here. That flip belongs to the Rust scorer (ADR-0046).
+// `mastered` is not produced here. That flip is deferred and not in Rust yet (ADR-0046).
 //
 // The `confused-with-X` branch is unreachable from production today. The only caller,
 // reconcileConjecturePredictions, passes a null confused-with KC, and induction has no field
-// to supply one. Naming that KC belongs on the induction side. Keep this conjunction strict.
-// Relaxing it would store an unnamed confusion.
+// to supply one. Before that null is cleared, induction must name the second KC and verify it
+// exists. nextTypedState only checks that the id is truthy, and the column has no foreign key.
+// Keep this conjunction strict. Relaxing it would store an unnamed confusion.
 
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { newId } from '@/core/ids';
@@ -64,7 +65,7 @@ export function nextTypedState(input: NextTypedStateInput): NextTypedStateResult
  * The keyed row is renamed when only `fromId` exists, frozen when both exist, and left alone when
  * `fromId` is absent. Evidence is not unioned and the label is not recomputed.
  * Any row whose confused-with pointer names `fromId` is repointed at `intoId` in every case.
- * That pointer is a display reference, with no foreign key, so the update cannot hit a unique violation.
+ * confused_with_kc_id is not in any unique constraint, so this update cannot hit one.
  * The return value describes the keyed row only.
  * Both ids are locked in this module's `kc_typed` namespace, sorted, so a concurrent upsert waits.
  *
