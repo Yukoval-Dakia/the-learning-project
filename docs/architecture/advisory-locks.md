@@ -1,8 +1,27 @@
-# Advisory locks — inventory and ordering
+# Advisory locks — 静态登记（排序待核）
 
-> 权威锁文档（YUK-1577）。本文件是**静态盘点**：全仓生产代码 `pg_advisory*` /
-> `pg_try_advisory*` / `pg_advisory_unlock` 文本站点的归并清单，以及按语句序可证的
-> 排序边。它不注册、不校验、不改任何锁行为——生产代码 diff 为 0。
+> **已知不准确（2026-10-20，以下四处尚未修正）**
+>
+> 1. **遗漏反向 intervention 边**：native diagnostic review 存在
+>    `corrections:all → intervention-instance`，与 activate 的顺序相反；两条路径
+>    当前先取 G。下文“未见反向序”不准确，不能据此判断无环。
+> 2. **appeal 混族及缺边**：native appeal、resolution 的 `hashtext` 键与历史
+>    rejudge 的 `hashtextextended` 键被混在同一族；还漏记成功激活回调中的
+>    `group → resolution` 顺序。
+> 3. **durable 跨事务假边**：installer 的 `fence-install → family-control` 和
+>    runtime 的 `control-row → tick` 属于不同事务，不能拼成同一持锁区间的
+>    `family-control → per-tick` 边。
+> 4. **单参锁空间表述错误**：单参数 `hashtext` / 整数字面量与
+>    `hashtextextended` 都进入 bigint 锁空间；只有双整数参数是另一空间。
+>    下文将单参 int4/int8 分为两个空间的表述不准确。
+>
+> 原票与后续修正：[YUK-1577](https://linear.app/yukoval-studios/issue/YUK-1577#comment-cb554f32-4d12-477b-8087-cbb8ab8e1a6b)。
+> 锁线下一片先修这四处，再扩展登记。本文件当前只是**登记**，不是完整排序证明；
+> 不得据下文未修正的图或键空间说明迁移锁顺序。新增声明不表示四处已修复。
+
+> 锁登记文档（YUK-1577）。本文件是**静态盘点**：全仓生产代码 `pg_advisory*` /
+> `pg_try_advisory*` / `pg_advisory_unlock` 文本站点的归并清单，以及待核对的
+> 排序登记。它不注册、不校验、不改任何锁行为——生产代码 diff 为 0。
 >
 > 证据（仓库外，随 head 固化）：
 > `/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1577/fc619732/`
@@ -53,7 +72,7 @@ int8 keyspace——族间仅靠字符串相等面防碰撞，有限哈希碰撞*
 
 ## 3. 族表（79）
 
-`sites` = 直接语句站点计数（含 helper 内语句与 trigger）。`after` = §4 已证边。
+`sites` = 直接语句站点计数（含 helper 内语句与 trigger）。`after` = §4 顺序登记（包含顶部列出的未修正项）。
 
 <!-- 生成自 registry-snapshot.ts；改后请同步外部 artifact -->
 
@@ -139,7 +158,7 @@ int8 keyspace——族间仅靠字符串相等面防碰撞，有限哈希碰撞*
 | 78 | migration-apply-fence | yuk1050:migration-apply | hashtext | session | session-try | 2 |  |
 | 79 | yuk1406-repair-operation | yuk1406_select_display_label_repair | hashtextextended:0 | transaction | xact | 1 |  |
 
-## 4. 排序边（仅录语句序实证）
+## 4. 顺序登记（已知不准确见顶部）
 
 完整逐边调用链以 R1 修正版为准（旧件保留，不覆盖）：
 `/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1577/2ecfde0840ad3dbf3c60eac6763c604d34aea99e/r1-correction/edge-evidence.md`
