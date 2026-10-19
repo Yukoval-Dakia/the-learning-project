@@ -17,6 +17,7 @@ import {
   QuestionGroupStructure,
   ResponseSpec,
   ScoringBasis,
+  declaredShapeSupport,
 } from '@/core/schema/assessment';
 import type { BlankNormalizationT } from '@/core/schema/assessment/scoring';
 import type {
@@ -488,15 +489,22 @@ export function draftDocumentToContract(
       const executor = executorFor(unit);
       assignments.push({ scoring_unit_ids: [unit.unit_id], executor });
       const executorKind = executor.kind;
-      // YUK-1568（第 1 片）：声明了 answer_shape 的 blank 单元尚无已准入的数学
-      // 比较器（第 2 片接入）—— judgeable_today 如实 false，发布制 withheld /
-      // 暂扣，绝不回退普通 exact 自动判分。
-      const shapeDeclared =
+      // YUK-1568（第 2 片）：声明 answer_shape 的 blank 单元由共享比较核心
+      // （blank-answer-compare）判定支持 —— 未实现 notation/未知版本仍
+      // judgeable_today=false 并扣留；已支持声明的可判性回归常规规则
+      //（issues / executor），不再全挡。键与声明的确定性冲突由发布/准入闸
+      //（declaredBlankGradeReadiness / compileDeclaredKey）拒，不在这里猜。
+      const declaredShapeRaw =
         unit.response_class === 'blank' &&
         unit.response_spec.kind === 'blank' &&
-        unit.response_spec.answer_shape != null;
+        unit.response_spec.answer_shape != null
+          ? unit.response_spec.answer_shape
+          : null;
+      const declaredSupport =
+        declaredShapeRaw != null ? declaredShapeSupport(declaredShapeRaw) : null;
+      const shapeUnsupported = declaredSupport != null && !declaredSupport.supported;
       const judgeable =
-        !shapeDeclared &&
+        !shapeUnsupported &&
         built.issues.length === 0 &&
         (executorKind === 'deterministic' ||
           (executorKind === 'model_executor' && executor.admitted_slice_id != null));
@@ -508,8 +516,8 @@ export function draftDocumentToContract(
         ...(judgeable
           ? {}
           : {
-              withheld_reason: shapeDeclared
-                ? 'declared_answer_shape_comparator_pending'
+              withheld_reason: shapeUnsupported
+                ? `declared_answer_shape_unsupported: ${declaredSupport?.supported === false ? declaredSupport.reason : 'unknown'}`
                 : built.issues.length > 0
                   ? built.issues[0].code
                   : executorKind === 'model_executor'

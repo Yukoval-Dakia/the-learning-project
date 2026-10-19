@@ -4,6 +4,7 @@ import { and, desc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { newId } from '@/core/ids';
 import {
+  DECLARED_BLANK_COMPARE_VERSION,
   EvaluationContractError,
   type PublishedQuestionRevisionT,
   type SlotResponseT,
@@ -1123,11 +1124,17 @@ export async function probeDraftEdit(
       }
       throw err;
     }
+    const probeSlot = contract.response_spec.slots.find(
+      (candidate) => candidate.slot_id === slotId,
+    );
     const fingerprint = methodFingerprint(
       unitInfo?.unit,
       unitId != null
         ? contract.scoring_basis.units.find((u) => u.scoring_unit_id === unitId)
         : undefined,
+      probeSlot != null && probeSlot.kind === 'blank' && probeSlot.answer_shape != null
+        ? probeSlot.answer_shape
+        : null,
     );
     const targetResult =
       unitId != null
@@ -1260,12 +1267,22 @@ function slotResponseFor(response: DraftProbeResponseT, slotId: string): SlotRes
 function methodFingerprint(
   unit: DraftUnitForFingerprint | undefined,
   contractUnit: { criterion: unknown; rule?: unknown } | undefined,
+  declaredAnswerShape: unknown,
 ): string {
   const canonical = canonicalJson({
     method: unit?.method ?? null,
     criterion: contractUnit?.criterion ?? null,
     rule: contractUnit?.rule ?? unit?.rule ?? null,
     material_refs: unit?.material_refs ?? [],
+    // YUK-1568 第 2 片：已声明槽位的探针指纹携带 answer_shape 与比较器
+    // 版本（声明/绑定/单位语义变化 ⇒ 新指纹）；无声明草稿不携带任何新字段
+    // —— 旧指纹字节不变，既有校准/复用语义不受影响，不回填历史指纹。
+    ...(declaredAnswerShape != null
+      ? {
+          answer_shape: declaredAnswerShape,
+          declared_compare_version: DECLARED_BLANK_COMPARE_VERSION,
+        }
+      : {}),
   });
   return `sha256:${createHash('sha256').update(canonical).digest('hex').slice(0, 16)}`;
 }
