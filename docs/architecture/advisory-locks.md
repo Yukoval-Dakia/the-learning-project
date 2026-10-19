@@ -1,215 +1,196 @@
 # Advisory locks — inventory and ordering
 
-> Authoritative lock doc (YUK-1577). The machine-readable inventory lives in
-> `src/db/advisory-lock-registry.ts`; this document is the narrative proof: every observed
-> acquisition family, its key encoding, scope, release semantics, and the ordering edges that
-> code actually establishes. Evidence is `path:line` in production code (tests never count).
-> Where an edge is not proven, it is marked unresolved — no total order is invented.
+> 权威锁文档（YUK-1577）。本文件是**静态盘点**：全仓生产代码 `pg_advisory*` /
+> `pg_try_advisory*` / `pg_advisory_unlock` 文本站点的归并清单，以及按语句序可证的
+> 排序边。它不注册、不校验、不改任何锁行为——生产代码 diff 为 0。
+>
+> 证据（仓库外，随 head 固化）：
+> `/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1577/fc619732/`
+> —— `raw-lock-sites.txt`（148 行原始匹配）、`site-classification.txt`
+> （exec/comment 分类）、`family-table.md`（79 行族表）、`edge-evidence.md`
+> （逐边调用链）、`registry-snapshot.ts`（被撤下的机器清单稿）。
 
-## 1. Mechanisms in use
+## 1. 覆盖口径（不冒称全覆盖）
 
-| Mechanism | SQL | Lifetime | Release |
-|---|---|---|---|
-| Transaction advisory | `pg_advisory_xact_lock(…)` | to tx commit/rollback | automatic |
-| Transaction try | `pg_try_advisory_xact_lock(…)` | to tx end | automatic; miss → outcome not block |
-| Session advisory (helper) | `pg_try_advisory_lock(…)` + `pg_advisory_unlock(…)` on a pinned `db.$client.reserve()` | connection-held across many txs | explicit unlock + `reserved.release()` in `finally` |
-| Session advisory (ad hoc) | same, on a manually reserved connection | connection-held | explicit unlock (best-effort catch) |
+文本扫描 `pg_advisory_xact_lock|pg_try_advisory_lock|pg_try_advisory_xact_lock|
+pg_advisory_unlock`（`-g '*.ts'`，排除 `*.test.ts`/`*.spec.ts`/`tests/`）：
 
-Key encodings observed: `hashtext(key)` (int4), `hashtext(ns), hashtext(key)` (int4 pair),
-`hashtextextended(key, salt)` (int8; salts in use: `0`, `1`, `1393`), bare int4 literals
-(`597_001`, `406_440_3`), bare int4 pairs (`(1356,1)`, `(1356,2)`, `(1393,1)`, `(1355,1)`).
+| 类别 | 站点数 |
+|---|---|
+| `pg_advisory_xact_lock` 直接语句 | 120 |
+| `pg_try_advisory_xact_lock` | 1（provider-session-admission.ts:458） |
+| `pg_try_advisory_lock`（session 级） | 5（helper×2、model_slice、migration-apply、rehearsal fence） |
+| `pg_advisory_unlock` | 4（helper×2、model_slice、migration-apply） |
+| 注释/文档引用（非语句） | 18 |
+| **合计** | **148** |
 
-`hashtextextended(key, 0)` int8 keys are a different lock keyspace from `hashtext(key)` int4
-keys — same name string, different lock. The registry records encodings exactly; it does NOT
-normalize them.
+在此之上另有 **helper 转调获取点**（同一 SQL 经函数发出，不计入上表）：
+`acquireSortedAdvisoryLocks` 11 个调用文件、`acquireLearningStateWriteLock` /
+`withLearningStateLock` ~24 个调用文件、`withinSessionAdvisoryLock` 2 个调用文件、
+`acquireProposalDecisionLock` / `lockPaidEffectControlFamily` / `lockEntityGate` /
+`lockProducerFenceInstaller` / `acquireControlPlaneLockSql` 各若干。
+归并后得到 **79 个 family**（§3 表）——分母是"本次扫描归并出的 distinct key
+模板/命名空间数"，不承诺覆盖运行时动态 key 的全部实例域（见 §5 unknown）。
+
+编码面：`hashtext(key)`(int4)、`hashtext(ns),hashtext(key)`(int4 pair)、
+`hashtextextended(key,salt)`(int8；salt ∈ {0,1,1393})、int 字面量
+（`597_001`、`406_440_3`）、int pair 字面量（`(1356,1)`、`(1356,2)`、`(1393,1)`、
+`(1355,1)`）。所有单参 `hashtext` 共享一个 int4 keyspace，所有 `hte(·,0)` 共享一个
+int8 keyspace——族间仅靠字符串相等面防碰撞，有限哈希碰撞**无法**由任何清单消除。
 
 ## 2. Lock helpers
 
-| Helper | File | Role |
+| Helper | 位置 | 语义 |
 |---|---|---|
-| `acquireLearningStateWriteLock` / `withLearningStateLock` | `src/db/learning-state-lock.ts` | Global learning-write lock G (`learning-state:write`). Opens a real tx for `Db`, inline for `Tx`. Re-entrant. |
-| `acquireSortedAdvisoryLocks` | `src/server/advisory-locks.ts` | Sorted per-id `hashtext(<ns>:<id>)` acquire — the consistent-lock-ordering doctrine. Namespaces: `fsrs:knowledge`, `fsrs`, `mastery:ability_global`, `kc_typed:*`, `axis_state:*`, `knowledge_edge`, `knowledge:create`. |
-| `withinSessionAdvisoryLock` | `src/db/session-advisory-lock.ts` | Session-scoped try+retry-until-deadline on a reserved connection; patches `begin`/`savepoint` onto the reserved conn and hands a Drizzle `Db` to `work`. **Fail-closed registry admission since YUK-1577**: unregistered descriptors throw before any reservation. |
-| `acquireProposalDecisionLock` | `src/server/proposals/applier-helpers.ts` | `proposal_decision:<id>` xact lock. |
-| `lockPaidEffectControlFamily` / `lockEntityGate` | `src/db/paid-effect-control.ts` / `src/db/paid-effect-store.ts` | Paid-effect family + entity-gate locks. |
-| `acquireControlPlaneLockSql` | `src/server/subjects/control-plane-lock.ts` | Subject control-plane int literal lock. |
-| `lockProducerFenceInstaller` / `lockSessionOrphan*` / `lockPhase` | `src/server/durable/*` | Durable family install/control/tick locks. |
-| `acquireCopilot*Lock` | `src/capabilities/copilot/server/durable-dispatch.ts` | Copilot dispatch/queue locks. |
-| `streamPartitionLockKey` / `lockDailyStreamPartition` | `src/capabilities/practice/server/stream-store.ts` | `stream:compose:<date>` / `stream:session:<sessionId>`. |
-| `withinComposePaidWorkLock` | `src/capabilities/practice/server/compose-paid-work-lock.ts` | `stream:compose-paid:<date>` session lock. |
-| `acquireProposalDecisionLock`-family callers | see registry `sites` | — |
+| `acquireLearningStateWriteLock` / `withLearningStateLock` | `src/db/learning-state-lock.ts` | G=`hashtext('learning-state:write')` xact；Db 开真 tx、Tx 内联；tx 内可重入 |
+| `acquireSortedAdvisoryLocks` | `src/server/advisory-locks.ts` | `hashtext(<ns>:<id>)` sorted，consistent-ordering 原语 |
+| `withinSessionAdvisoryLock` | `src/db/session-advisory-lock.ts` | reserved conn `pg_try_advisory_lock`+retry 至 deadline；`begin`/`savepoint` 补丁到持锁连接，inner tx 全部跑在同一 backend；finally unlock+release |
+| `acquireProposalDecisionLock` | `src/server/proposals/applier-helpers.ts` | `proposal_decision:<id>` hte0 |
+| `lockPaidEffectControlFamily` / `lockEntityGate` | `src/db/paid-effect-control.ts` / `paid-effect-store.ts` | paid-effect family/entity 锁（只读盘点） |
+| `lockProducerFenceInstaller` 等 | `src/server/durable/*` | durable family install/control/tick |
+| `withinComposePaidWorkLock` | `practice/server/compose-paid-work-lock.ts` | `stream:compose-paid:<date>` session |
+| `acquireControlPlaneLockSql` | `server/subjects/control-plane-lock.ts` | int 597001 |
 
-## 3. Registry
+## 3. 族表（79）
 
-`src/db/advisory-lock-registry.ts` (`ADVISORY_LOCK_REGISTRY`, **79 families**) is the
-descriptive source of truth: `family`, `keyTemplate`, `encoding`, `hashSalt`, `scope`,
-`acquire`, `sites`, `after`, `sessionMatch`, `release`. Live consumers:
+`sites` = 直接语句站点计数（含 helper 内语句与 trigger）。`after` = §4 已证边。
 
-1. `LEARNING_STATE_WRITE_LOCK` is owned by the registry and re-exported unchanged by
-   `src/db/learning-state-lock.ts` — every existing import site keeps working, the SQL
-   statement is identical (`pg_advisory_xact_lock(hashtext('learning-state:write'))`).
-2. `withinSessionAdvisoryLock` calls `requireSessionAdvisoryLockFamily(lock)` **before**
-   reserving a connection. Only three session families exist today and all three are
-   registered: `stream:compose-paid:*` (helper), `assessment-evaluation-group` pair
-   (helper), `model-slice-admission:*` + `yuk1050:migration-apply` (ad-hoc reserved-conn
-   sites, registered for completeness). An unregistered descriptor now throws a coding
-   error instead of silently creating a fifth protocol.
+<!-- 生成自 registry-snapshot.ts；改后请同步外部 artifact -->
 
-## 4. Proven ordering edges
+| # | family | key template | encoding | scope | acquire | sites | after |
+|---|---|---|---|---|---|---|---|
+| 1 | learning-state:write | learning-state:write | hashtext | transaction | xact | 1 |  |
+| 2 | fsrs-subject | fsrs:<kind>:<id> | hashtext | transaction | xact | 5 | learning-state:write, assessment-evaluation-group |
+| 3 | mastery-ability-global | mastery:ability_global:<domain> | hashtext | transaction | xact | 2 | fsrs-subject, learning-state:write |
+| 4 | kc-typed | kc_typed:<subject_kind>:<id> | hashtext | transaction | xact | 3 |  |
+| 5 | axis-state | axis_state:<subject_kind>:<id> | hashtext | transaction | xact | 2 |  |
+| 6 | knowledge-edge | knowledge_edge:<id> | hashtext | transaction | xact | 3 | learning-state:write |
+| 7 | knowledge-create | knowledge:create:<id> | hashtext | transaction | xact | 1 |  |
+| 8 | assessment-evaluation-group | ('assessment-evaluation-group', <evaluation_group_id>) | hashtext-pair | session+transaction | xact | 10 | learning-state:write, assessment-appeal-claim, assessment-review-answer |
+| 9 | assessment-attempt-claim | evt_assessment_<submission_id> | hashtext | transaction | xact | 4 | learning-state:write, paper-native-issuance |
+| 10 | assessment-appeal-claim | evt_native_appeal_<hash> \| evt_native_resolution_<hash> \| hte(<appeal.id>, 0) | hashtext | transaction | xact | 3 |  |
+| 11 | assessment-review-answer | review-answer:<evaluation_group_id>:<idempotency_key> | hashtextextended:0 | transaction | xact | 1 |  |
+| 12 | question-request-claim | <request_id> | hashtext | transaction | xact | 3 |  |
+| 13 | paper-native-issuance | paper-native:<issuance_id> | hashtext | transaction | xact | 1 |  |
+| 14 | paper-review-session | paper-review-session:<paperId> | hashtextextended:0 | transaction | xact | 1 |  |
+| 15 | proposal-decision | proposal_decision:<proposalId> | hashtextextended:0 | transaction | xact | 3 | write-quiz, conjecture-fold |
+| 16 | proposal-signal | <kind>:<cooldown_key> | hashtextextended:0 | transaction | xact | 1 |  |
+| 17 | write-quiz | write_quiz:<taskRunId> | hashtextextended:0 | transaction | xact | 1 |  |
+| 18 | misconception | misc:<misconceptionId> | hashtext | transaction | xact | 2 |  |
+| 19 | intervention-instance | intervention:<interventionId>:<version> | hashtextextended:0 | transaction | xact | 4 | learning-state:write |
+| 20 | intervention-corrections-all | intervention:corrections:all | hashtextextended:0 | transaction | xact | 5 | intervention-instance |
+| 21 | intervention-source | intervention:source:<sourceEventId> | hashtextextended:0 | transaction | xact | 5 | intervention-corrections-all |
+| 22 | intervention-deliver | intervention:deliver:<questionId> | hashtext | transaction | xact | 1 |  |
+| 23 | stream-compose | stream:compose:<date> | hashtext | transaction | xact | 3 | intervention-deliver |
+| 24 | stream-session-partition | stream:session:<sessionId> | hashtext | transaction | xact | 2 | stream-scope |
+| 25 | stream-scope | stream:scope:<date>:<knowledgeId> | hashtext | transaction | xact | 1 |  |
+| 26 | stream-compose-paid | stream:compose-paid:<date> | hashtext | session | session-try-until-deadline | 2 |  |
+| 27 | producer-fence-install | pgboss:producer-fence:install:v1 | hashtextextended:0 | transaction | xact | 5 |  |
+| 28 | judge-family-control | (1356, 1) | int-pair-literal | transaction | xact | 1 | producer-fence-install |
+| 29 | judge-family-reconcile | (1356, 2) | int-pair-literal | transaction | xact | 1 |  |
+| 30 | judge-obligation-claim | <obligation.task_id> | hashtext | transaction | xact | 1 |  |
+| 31 | judge-run-claim | <runId> | hashtext | transaction | xact | 2 |  |
+| 32 | judge-recorded-claim | <claimId> | hashtext | transaction | xact | 1 |  |
+| 33 | prune-family-control | (1355, 1) | int-pair-literal | transaction | xact | 1 | producer-fence-install |
+| 34 | review-orphan-control | (1393, 1) | int-pair-literal | transaction | xact | 1 | producer-fence-install |
+| 35 | review-orphan-tick | hte(<tickId>, 1393) | hashtextextended:1393 | transaction | xact | 3 |  |
+| 36 | session-orphan-install | session-orphan:v1:install | hashtextextended:0 | transaction | xact | 1 | producer-fence-install |
+| 37 | session-orphan-tick | session-orphan:v1:<family>:<tickId> | hashtextextended:0 | transaction | xact | 1 |  |
+| 38 | paid-effect-control | paid-effect:control:v1:<family> | hashtextextended:0 | transaction | xact | 2 |  |
+| 39 | paid-effect-gate | paid-effect:gate:v1:<family>:<entityId> | hashtextextended:0 | transaction | xact | 1 | paid-effect-control |
+| 40 | provider-attempt-operation-kind | provider-attempt-operation-kind:<operationId>:<provider>:<lane>:<operationKind> | hashtextextended:0 | transaction | xact | 1 |  |
+| 41 | provider-attempt | provider-attempt:<attemptId> | hashtextextended:0 | transaction | xact | 5 | provider-attempt-operation-kind |
+| 42 | provider-attempt-lane | provider-attempt-lane:<lane> | hashtextextended:0 | transaction | xact | 2 | provider-attempt |
+| 43 | provider-session-admission | provider-session-admission:<laneId> | hashtextextended:0 | transaction | xact-try | 1 |  |
+| 44 | ingestion-ask | ingestion-ask:<sessionId>:<item_id> \| ingestion-ask:<askId> | hashtext | transaction | xact | 2 |  |
+| 45 | ingestion-agent-run | ingestion-agent-run:<sessionId> | hashtext | transaction | xact | 1 |  |
+| 46 | ingestion-operation | ingestion-operation:<sessionId>:<idempotency_key> | hashtext | transaction | xact | 1 |  |
+| 47 | ingestion-operation-dispatch | ('ingestion-operation-dispatch', <operationId>) | hashtext-pair | transaction | xact | 1 |  |
+| 48 | ingestion-import-settlement | ('ingestion-import-settlement', <operationId>) | hashtext-pair | transaction | xact | 1 |  |
+| 49 | ingestion-paper | ingestion_paper:<sessionId> | hashtextextended:0 | transaction | xact | 1 |  |
+| 50 | image-candidate-accept | image_candidate_accept:<proposalId> | hashtextextended:0 | transaction | xact | 2 |  |
+| 51 | image-asset-storage | <storageKey> | hashtextextended:0 | transaction | xact | 1 |  |
+| 52 | ingest-source-dedup | ingest-source:<source> | hashtext | transaction | xact | 1 |  |
+| 53 | note-refine-trigger | note_refine:<kind>:<artifactId> | hashtext | transaction | xact | 1 |  |
+| 54 | note-refine-effect | note_refine:effect:<attemptEventId>:<artifactId>:mastery_change | hashtext | transaction | xact | 1 |  |
+| 55 | note-refine-product | note_refine:product:<artifactId>:mastery_change | hashtext | transaction | xact | 1 | note-refine-effect |
+| 56 | note-handoff-complete | notes:handoff-complete:<completionId> | hashtextextended:0 | transaction | xact | 1 |  |
+| 57 | artifact-presence | hte(<artifactId>, 0) | hashtextextended:0 | transaction | xact | 3 |  |
+| 58 | copilot-chat-idempotency | copilot-chat:<idempotencyKey> | hashtextextended:0 | transaction | xact | 1 |  |
+| 59 | copilot-session-queue | ('copilot-session-queue', <sessionId>) | hashtext-pair | transaction | xact | 1 |  |
+| 60 | copilot-run-dispatch | ('copilot-run-dispatch', <runId>) | hashtext-pair | transaction | xact | 1 |  |
+| 61 | copilot-execution-settlement | ('copilot-execution-settlement', <runId>) | hashtext-pair | transaction | xact | 1 |  |
+| 62 | copilot-revert | copilot_revert:<checkpointEventId> | hashtextextended:0 | transaction | xact | 1 |  |
+| 63 | copilot-session-selection | copilot:session-selection | hashtext | transaction | xact | 1 |  |
+| 64 | research-meeting-execution | research_meeting_execution:<executionId> | hashtextextended:0 | transaction | xact | 1 |  |
+| 65 | probe-serve-cap | 4064403 | int-literal | transaction | xact | 2 |  |
+| 66 | probe-question | hte(<probeQuestionId>, 0) | hashtextextended:0 | transaction | xact | 3 |  |
+| 67 | conjecture-fold | hte(<conjectureEventId>, 1) | hashtextextended:1 | transaction | xact | 1 | probe-question |
+| 68 | probe-result-claim | hte(<probeResultEventId>, 0) | hashtextextended:0 | transaction | xact | 1 |  |
+| 69 | family-calibration | family_calibration:<familyKey> | hashtext | transaction | xact | 1 |  |
+| 70 | contract-epoch-transition | contract-epoch:transition | hashtext | transaction | xact | 1 |  |
+| 71 | subject-control-plane | 597001 | int-literal | transaction | xact | 2 |  |
+| 72 | serving-command | yuk1514:serving:<eventId> | hashtextextended:0 | transaction | xact | 1 |  |
+| 73 | placement-supply | placement-supply:v1:<knowledgeId> | hashtextextended:0 | transaction | xact | 3 |  |
+| 74 | memory-ingest | memory:ingest:<sourceId> | hashtextextended:0 | transaction | xact | 3 |  |
+| 75 | memory-dispatch | memory:dispatch:<sourceEventId> | hashtextextended:0 | transaction | xact | 2 |  |
+| 76 | memory-operator-request | memory:operator-request:<requestId> | hashtextextended:0 | transaction | xact | 1 |  |
+| 77 | model-slice-admission | model-slice-admission:<sliceId> | hashtext | session | session-try | 1 |  |
+| 78 | migration-apply-fence | yuk1050:migration-apply | hashtext | session | session-try | 2 |  |
+| 79 | yuk1406-repair-operation | yuk1406_select_display_label_repair | hashtextextended:0 | transaction | xact | 1 |  |
 
-`A → B` means: code acquires `A`, then acquires `B` while still holding `A`, in the same
-critical section. These are the edges evidence supports; disjoint families carry no order.
+## 4. 排序边（仅录语句序实证）
 
-### 4.1 Learning-state spine
+完整逐边调用链见外部 `edge-evidence.md`；以下为摘要。**`after` 图无环只说明
+登记的这组边本身无环，不等于"0 reachable cycles"**——经动态 dispatch、跨文件闭包
+与未知运行时路径的边未全证，§5 逐一标注。
 
-```
-event row FOR UPDATE
-  → G (learning-state:write)          [knowledge merge accept: proposals.ts:927 — G taken AFTER
-                                       the propose-event row lock, BEFORE knowledge row locks]
-  → knowledge rows FOR UPDATE         [lockMutationRows]
-  → knowledge_edge sorted advisory    [proposals.ts:522 / edge-topology-write.ts:119]
-  → per-domain retire namespaces      [fsrs:knowledge / kc_typed:* / axis_state:* sorted]
+- **learning spine**：`G → fsrs:<kind>:<id>(sorted) → mastery:ability_global(sorted)`；
+  merge accept：`event row FOR UPDATE → G → knowledge rows → knowledge_edge(sorted) →
+  retire 命名空间`（dyn：applyX 内 retire 顺序按 mutation 分支分发）。
+- **assessment group spine**：`G → group(xact pair) → evaluation/submission/
+  effective_head/group-root 行锁 → fsrs:* → ability_global`（activate.ts:225-235 起；
+  group 锁另有 submit/appeal/review-answer/withdraw/trigger 路径，均未见 group→G 或
+  group→fsrs 的反向语句序）。
+- **intervention**：`G → intervention:<id>:<ver> → corrections:all → source:<eventId>`。
+- **stream**：`session(compose-paid) → xact(compose)`（同一 backend 多 tx，session
+  锁跨 model span）；`scope → session-partition`；`deliver → compose`（5s lock_timeout）。
+- **durable**：`fence-install → family-control(int 对) → per-tick`。
+- **paid-effect**：`control → identity row → gate → control row`（pinned，文件注释）。
+- **provider**：`op-kind → sorted attempt → lane`。
+- 小边：probe-question → conjecture-fold → proposal_decision；write_quiz →
+  proposal_decision(sorted)；note_refine effect → product；paper-native →
+  attempt-claim；G → attempt-claim（capture 路径）；appeal-claim → group；
+  review-answer → group；serving → admission 行锁；control-for-share →
+  session/review-orphan tick。
 
-G → fsrs:<kind>:<id> (sorted) → mastery:ability_global:<domain> (sorted)
-  [updateThetaForAttempt: acquireLearningStateWriteLock → mastery/state.ts:1067 → :1369;
-   settle.ts:1049-1055 same order; cascade-revert.ts:502 → :748 → :749]
-```
+## 5. 已知边界与未决（不冒称证明）
 
-### 4.2 Assessment group spine
+1. **session(group) 与 xact(group) 同键跨模式**（`evaluate-submission.ts:785` vs
+   各 xact 站点）：session 与 xact advisory 共享服务端锁空间；helper 把 inner tx
+   钉在持锁 backend，同 backend 同键 xact 获取不自等；**跨 backend**，另一方的
+   xact(group) 会等待 session(group) 释放，等待域覆盖 model 调用全程。由此静态
+   推导出一个互等形态：A 持 session(group) 且其 sealing tx 等待 G，B 持 G 且其
+   xact(group) 等待 A 的 session 锁——PG deadlock detector 应在一方 abort 解环
+   （错误而非挂死）。**无运行证据**，是否可达取决于同组 deterministic/G 路径
+   与 model span 的时间重叠 → 已列为 coordinated follow-up，文件在禁改清单内
+   未动。
+2. **匿名 int4 claim 族**（`evt_assessment_*`、`evt_native_*`、`<requestId>`、
+   `<runId>`、`<claimId>`、`<task_id>`）：值域格式静态不全证；`<requestId>` 三处
+   是否同源、`<runId>` 两处是否同域均 unknown。共享 keyspace 的异族碰撞无实例
+   证据，也无法由清单排除。
+3. **hte(·,0) 大共享面**：裸 id（probeQuestionId/probeResultEventId/storageKey/
+   artifactId）与带前缀模板同居 int8 空间；实例域 unknown。
+4. **反向序**：`fsrs:* → group`、`corrections:all → intervention-instance` 均未见
+   语句序站点；动态分发路径未逐条展开 → 记 no-observed-counterexample，不记
+   impossible。
+5. **动态 key 实例域**：`ingestion-operation:<session>:<key>`、
+   `<kind>:<cooldownKey>`、scope 变量等模板已证、实例域 unknown。
 
-```
-session pair  ('assessment-evaluation-group', groupId)     [evaluate-submission.ts:785 —
-  → G          held across the whole evaluation incl. model calls]
-  → xact pair  same key pair                                [activate.ts:235 /
-                                                             evaluate-submission.ts:411 /
-                                                             settle.ts:1854 (withdraw)]
-  → evaluation row → submission row → effective_head row → question group root row (FOR UPDATE)
-                                                              [activate.ts doc lines 8-19]
-  → fsrs:<kind>:<id> sorted                                  [settle.ts:1055]
-  → mastery:ability_global sorted                            [via updateThetaForAttempt]
-```
+## 6. session-helper 连接纪律（`withinSessionAdvisoryLock`）
 
-Other paths into the group lock, all consistent with the spine (group lock only ever appears
-AFTER G when both are held; many holders take it alone):
-
-| Holder | Order |
-|---|---|
-| `submit.ts:355` | group only |
-| `appeal.ts:24→41` | `hashtext(evt_native_appeal_*)` → group |
-| `review-operation.ts:399→421` | `review-answer:<g>:<key>` (hte0) → group |
-| `drizzle 0114 trigger` | group inside `assessment_group_input_seal_guard` BEFORE INSERT on submission/evaluation |
-| `failure-learning-{attribution,variant}` | group alone inside their txs |
-
-### 4.3 Intervention corrections
-
-```
-G → intervention:<id>:<version> → intervention:corrections:all → intervention:source:<eventId>
-  [store.ts:352→372→375]
-corrections:all → source:<id> everywhere both appear
-  [events.ts:342→346; probe-result-subscription.ts:115→118; reconcile.ts:212→215]
-```
-
-### 4.4 Practice stream
-
-```
-session('stream:compose-paid:<date>')          [singleFlightCompose — held across two inner txs]
-  → xact('stream:compose:<date>')              [lockDailyStreamPartition, probe + finalize]
-
-'stream:scope:<date>:<kc>' → 'stream:session:<sessionId>'   [stream-store.ts:509→521]
-
-'intervention:deliver:<qId>' → 'stream:compose:<date>'      [intervention-diagnostics.ts:411→413,
-                                                           under SET LOCAL lock_timeout=5s]
-```
-
-### 4.5 Durable family control plane
-
-```
-pgboss:producer-fence:install:v1 → family control → per-tick key
-  [judge: judge-family.ts:42→43 (1356,1) → :103/:443 per-task/run;
-   prune: prune-family.ts:33→34 (1355,1);
-   review-orphan: :336→337 (1393,1); tick via hte(tickId,1393) after control row FOR SHARE;
-   session-orphan: install :338; tick 'session-orphan:v1:<fam>:<tick>' after control FOR SHARE]
-```
-
-### 4.6 Paid-effect admission
-
-```
-paid-effect:control:v1:<family> → identity row FOR UPDATE → paid-effect:gate:v1:<f>:<e>
-  → control row    [paid-effect-store.ts:451 doc + :155→:169 claim order]
-serving-command 'yuk1514:serving:<eventId>' → question root FOR UPDATE
-  → question_group_lifecycle FOR UPDATE          [serving-actions.ts:708 → lockAdmissionGroup]
-```
-
-### 4.7 Provider attempt lane (src/server/ai — read-only reference)
-
-```
-provider-attempt-operation-kind:* → provider-attempt:<id> (sorted candidate set)
-  → provider-attempt-lane:<lane>   [provider-attempt-lifecycle.ts:163→184→530/696]
-provider-session-admission:<lane> — pg_try_advisory_xact_lock under ≤250ms lock_timeout
-  [provider-session-admission.ts:458]
-```
-
-### 4.8 Smaller proven edges
-
-| Edge | Site |
-|---|---|
-| `probe-question` hte(q,0) → `conjecture-fold` hte(evt,1) → `proposal_decision:<evt>` | probe-lifecycle.ts:675→796→(acquireProposalDecisionLock) |
-| `write_quiz:<run>` → `proposal_decision:<id>` sorted → question rows | write-quiz.ts:240→261 |
-| `note_refine:effect:*` → `note_refine:product:*` | mastery-refine-effect.ts:56→73 |
-| `paper-native:<issuance>` → `evt_assessment_<sub>` claim | paper-attempt.ts:87→122 |
-| `lockPaidEffectControlFamily` → `lockAdmissionGroup` rows | resolved-repair.ts:145 |
-
-## 5. Unresolved / disproven edges
-
-- **`fsrs:*` vs `assessment-evaluation-group`**: inside activation the order is G → group →
-  fsrs:* (settle). submit.ts takes group but NOT G; attempt-path callers of
-  `recordFormalAttemptCapture` take `evt_assessment_*` after group or after `paper-native:*`.
-  No site takes fsrs:* then group — consistent, no cycle.
-- **`intervention:<id>:<version>` vs `intervention:corrections:all`**: observed only as
-  instance → global (store.ts, reconcile.ts). No reverse site found — consistent.
-- **`stream:session:*` vs `stream:compose:*`**: they are the same `streamPartitionLockKey`
-  keyspace — `stream:session:<id>` and `stream:compose:<date>` cannot collide unless a
-  sessionId literally equals `compose:<date>` (sessionIds are cuid-like; impossible in
-  practice). No site holds both.
-- **Anonymous `hashtext(<id>)` claims** (`evt_assessment_*`, `evt_native_appeal_*`,
-  `evt_native_resolution_*`, `<requestId>`, `<runId>`, `<claimId>`, `<task_id>`) share one
-  int4 keyspace with all namespaced `hashtext` locks. Collisions across families are
-  theoretically possible (2³² space) but no observed cross-family duplicate key exists;
-  treat each as an independent singleton claim.
-- **`PROBE_SERVE_LOCK_KEY` (4064403)**: literal int4; colliding families would need the same
-  bare integer — none exists. Independent global cap lock.
-
-## 6. Row-lock interactions (non-advisory, part of the same protocols)
-
-- `acceptProposal` (knowledge): propose-event `FOR UPDATE` → G → `lockMutationRows` (sorted
-  knowledge rows) → `knowledge_edge` advisory → retire namespaces. G is deliberately taken
-  AFTER the event row lock (proposals.ts:918-927 comment: taking it inside merge preparation
-  would be too late).
-- `lockAdmissionGroup`: question root `FOR UPDATE` → `question_group_lifecycle` `FOR UPDATE`
-  (fixed order, enqueue.ts:25).
-- Durable family phase reads: control row `FOR SHARE` before tick advisory (review-orphan
-  `lockPhase`, session-orphan `lockSessionOrphanControl`).
-- `paid_effect` claim: family advisory → identity row `FOR UPDATE` → entity advisory →
-  control row.
-
-## 7. Session-advisory connection discipline (`withinSessionAdvisoryLock`)
-
-- Try-with-deadline on a reserved postgres-js connection; a failed try releases the pool
-  slot before a ≤25ms backoff so unrelated queries progress.
-- Timeout mid-`pg_try` still completes the query on the server side; the helper waits for it
-  to settle, unlocks, then releases (`releaseReservedAfterTryLockSettles`).
-- `begin`/`savepoint` are patched onto the reserved connection so `work` gets a Drizzle `Db`
-  whose transactions run on the lock-holding connection.
-- Failure ownership: `busy()` is caller-supplied (503 for compose; `evaluation_busy` for
-  evaluate); unlock failure inside the timed-out path is logged, unlock failure on the normal
-  path propagates after `work` settles.
-
-## 8. Coverage
-
-- Registry denominator: **79 families** covering every production `pg_advisory*` /
-  `pg_try_advisory*` / `pg_advisory_unlock` site found by repo-wide search (raw evidence:
-  `tlp-audit-artifacts/architecture-deepening/YUK-1577/<head>/raw-lock-sites.txt`).
-- Ordering edges proven: 18 edge groups in §4. Unresolved: 0 reachable cycles found;
-  anonymous-int4 collisions noted as theoretical in §5.
-- Off-limits but documented: `src/server/ai/*` (provider-attempt-*, provider-session-admission),
-  `src/db/paid-effect-*.ts` (read for inventory; not modified).
+- try-with-deadline on reserved conn；失败先 release 池槽再 ≤25ms backoff；
+  mid-try 超时等 query settle→unlock→release；
+- `begin`/`savepoint` 补丁到持锁连接 → `work` 的 inner tx 全部在同一 backend；
+- `busy()` 由调用方给（compose=503、evaluate=`evaluation_busy`）；
+  超时路径 unlock 失败仅 log，正常路径 unlock 失败在 work settle 后传播。

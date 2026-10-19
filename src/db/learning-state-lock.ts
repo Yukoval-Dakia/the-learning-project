@@ -1,13 +1,9 @@
 // Shared PostgreSQL transaction lock for assessment and intervention learning writes.
 // This module owns the lock; it has no server or capability runtime dependency.
-// The key literal is owned by the advisory-lock registry (YUK-1577); it is re-exported
-// here unchanged so every existing `learning-state-lock` / `advisory-locks` import site
-// keeps working — the SQL statement, key, and acquisition semantics are identical.
 import { sql } from 'drizzle-orm';
-import { LEARNING_STATE_WRITE_LOCK } from './advisory-lock-registry';
 import type { Db, Tx } from './client';
 
-export { LEARNING_STATE_WRITE_LOCK };
+export const LEARNING_STATE_WRITE_LOCK = 'learning-state:write';
 
 /** Serialize every material_fsrs_state / mastery_state mutation before any row access. */
 export async function acquireLearningStateWriteLock(tx: Tx): Promise<void> {
