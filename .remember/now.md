@@ -1,3 +1,11 @@
+# YUK-1592 笔记 drain writer 交接 — 2026-10-19
+
+独立 worktree `/workspace/amp/wt/YUK-1592`，分支 `yuk-1592-presence-drain`。交付限 draft PR，Linear 保持 In Progress，由 EL 交 QA；不得据本地验证合并或部署，合入前需 Opus 防丢数据审查 + 真页面核对。
+
+上层 task 的 deferred 正常结束，proposal accept 与 hub recovery 不恢复本队列。状态为 pending → draining → terminal dequeue：先提交 drainStarted 标记，再逐项同事务 apply/事件/出队；失败、退出或版本冲突保留义务，draining 不过期，既有 blur 可重试。未开始 drain 的旧 TTL 行为保留。没有新增后台恢复入口、API 合同、migration 或测试代码。
+
+隔离 Podman PG `yuk1592-presence-pg`、127.0.0.1:55492，按仓库 migration 初始化。原代码首项失败后 pending=0；修复后 pending=3。第二项失败后正文版本1/pending2；重试至版本3/pending0/事件3。SIGKILL 退出137后版本0/pending3，跨11分钟重试完成且重复 blur 为0。并发 blur 合计只应用3项。原有 presence 6 tests、typecheck、lint（180 warnings/0 errors）、build 通过；命令和结果随 PR，原始日志 `.amp/in/artifacts/`。容器及匿名卷已删除。无付费模型、TEST8787、生产操作或完整本机 pnpm test。自动夜扫、失败回执、真实页面及版本冲突交互未验收，归 YUK-1417 和本 PR 合入门禁，不称学习者整链完成。
+
 # YUK-1404 figure main composition — 2026-10-11
 
 PR1657 fixed4c52 exact CI38144495041全绿；正常纳入main eb960c079，仅PLAN/now冲突。图ownership/隐私产品代码与单capture边界测试保留，旧细粒度四tests已删。独立初审/最终R2预算已完成，不启第三审。当前crop producer仍无source_asset SHA登记，旧visibility未知，public withholding不是完整配图交付；同卷actual-output验收仍待。无DB/runtime/provider/paid。

@@ -10,9 +10,9 @@
 //   2. `editing_presence.pending`（NON-HUB note-refine defer 队列，保留）—— AI
 //      mutator patch 在编辑期入队、会话全空时 FIFO flush。是否 defer 的判定改由
 //      session presence（上表）驱动；pending 存储仍在本表。陈旧项（> 10min）在
-//      load 时丢弃并 warn，对齐旧 Redis 键 TTL 语义。
+//      load 时丢弃并 warn；已开始 drain 的项保留至事务内完成 apply + 出队。
 //
-// 原子性：note-refine apply（persistNoteRefineApply）一律在事务外（types.ts 契约）。
+// 原子性：drain 的正文、事件与逐项出队共用事务，失败/退出不会清掉剩余义务。
 // 铁律（YUK-324）：jsonb `pending` 经 drizzle 读出已是数组，禁止 JSON.parse。
 
 import { eq, sql } from 'drizzle-orm';
@@ -163,14 +163,9 @@ export class PgPresenceStore implements PresenceStore {
     const now = input.now ?? new Date();
     const at = PgPresenceStore.stamp(input.now);
 
-    // ONE advisory-locked transaction covers the blur, the idle-decision, AND the drain
-    // — closing a TOCTOU window where a concurrent heartbeat (which takes the SAME
-    // advisory lock) could re-activate the artifact between a separate decision txn and
-    // a separate drain txn, so the drain flushed over an active editor. We ALSO re-check
-    // active sessions AFTER taking the pending-row lock (defense against any writer that
-    // bypasses the advisory lock) and skip the flush if newly active. `null` = still
-    // active → no flush; an array (possibly empty) = idle → drained.
-    const drained = await this.db.transaction(async (tx) => {
+    // Admission commits before apply so a failure cannot make this batch eligible
+    // for TTL pruning on its next retry. Each item is still in the durable queue.
+    const pendingCount = await this.db.transaction(async (tx) => {
       await tx.execute(PgPresenceStore.advisoryLock(input.artifactId));
       // Remove exactly this session.
       await tx.execute(sql`
@@ -194,34 +189,68 @@ export class PgPresenceStore implements PresenceStore {
         ) as active
       `);
       if (activeRows[0]?.active === true) return null;
-      if (!row) return [] as SerializedQueuedPatch[];
+      if (!row) return 0;
       const fresh = dropStalePending(row.pending, now, input.artifactId);
       await tx
         .update(editing_presence)
-        .set({ status: 'idle', last_heartbeat_at: now, editing_started_at: null, pending: [] })
+        .set({
+          status: 'idle',
+          last_heartbeat_at: now,
+          editing_started_at: null,
+          pending: fresh.kept.map((queued) => ({ ...queued, drainStarted: true })),
+        })
         .where(eq(editing_presence.artifact_id, input.artifactId));
-      return fresh.kept;
+      return fresh.kept.length;
     });
 
-    if (drained === null) {
+    if (pendingCount === null) {
       // Another session is still editing — leave the queue intact.
       return { artifact_id: input.artifactId, flushed: 0, results: [] };
     }
 
     const results: PersistNoteRefineApplyResult[] = [];
-    for (const queued of drained) {
-      results.push(
-        await persistNoteRefineApply({
-          db: input.db,
+    for (let index = 0; index < pendingCount; index++) {
+      const result = await this.db.transaction(async (tx) => {
+        await tx.execute(PgPresenceStore.advisoryLock(input.artifactId));
+        const [row] = await tx
+          .select()
+          .from(editing_presence)
+          .where(eq(editing_presence.artifact_id, input.artifactId))
+          .for('update')
+          .limit(1);
+        const queued = row?.pending[0];
+        if (!queued?.drainStarted) return null;
+        const activeRows = await tx.execute<{ active: boolean }>(sql`
+          select exists(
+            select 1 from artifact_edit_session
+            where artifact_id = ${input.artifactId}
+              and ${at} - last_heartbeat_at <= ${ACTIVE_SESSION_INTERVAL}
+          ) as active
+        `);
+        if (activeRows[0]?.active === true) return null;
+
+        const applied = await persistNoteRefineApply({
+          db: tx,
           artifactId: input.artifactId,
           patch: queued.patch as QueuedPatch['patch'],
           taskResult: queued.taskResult as QueuedPatch['taskResult'],
           triggerEventId: queued.triggerEventId ?? null,
           now,
-        }),
-      );
+        });
+        // A CAS conflict is retryable, unlike the other terminal no-op results.
+        if (applied.status !== 'skipped:version_conflict') {
+          await tx
+            .update(editing_presence)
+            .set({ pending: row.pending.slice(1) })
+            .where(eq(editing_presence.artifact_id, input.artifactId));
+        }
+        return applied;
+      });
+      if (result === null) break;
+      results.push(result);
+      if (result.status === 'skipped:version_conflict') break;
     }
-    return { artifact_id: input.artifactId, flushed: drained.length, results };
+    return { artifact_id: input.artifactId, flushed: results.length, results };
   }
 
   async getEditingSessionSnapshot(artifactId: string): Promise<EditingSessionSnapshot | null> {
@@ -274,13 +303,12 @@ function dropStalePending(
   let retainedPastTtl = 0;
   for (const item of pending) {
     const pastTtl = now.getTime() - item.queuedAtMs > EDITING_FORCE_APPLY_TIMEOUT_MS;
-    // Mutation-triggered hub sync opts out of the generic force-apply ceiling,
-    // so its durable deferred patch must also survive stale pending pruning
-    // (YUK-768). Every other actor's patch is dropped once past the TTL.
-    if (item.actorRef !== HUB_AUTO_SYNC_ACTOR_REF && pastTtl) {
+    // Admitted drain obligations survive retries, including process restarts.
+    // Hub sync separately opts out of the generic force-apply ceiling (YUK-768).
+    if (!item.drainStarted && item.actorRef !== HUB_AUTO_SYNC_ACTOR_REF && pastTtl) {
       dropped++;
     } else {
-      if (pastTtl) retainedPastTtl++;
+      if (pastTtl && item.actorRef === HUB_AUTO_SYNC_ACTOR_REF) retainedPastTtl++;
       kept.push(item);
     }
   }

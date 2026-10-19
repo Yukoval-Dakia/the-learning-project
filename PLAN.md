@@ -1,8 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-11：YUK-1107隔离head f0f2d63bf完整CI三绿166/207/144秒、中位166；唯一验证R2 NONE及逐不变量说明已过。正常纳入main c2新测试规则后，作者代码不变，等待新exact-head CI再合1691。judge阶段诊断仅独立实验，backup等audit/owner，120未达。
+> Linear 是权威 tracker。2026-10-19：YUK-1592 笔记 drain 修复与隔离 PG 验证完成。本 lane 交付为 draft PR，由 EL 交 QA；合入前仍需 Opus 防丢数据审查和真页面核对。其他 lane 状态沿用各自记录。
 
 ## NOW
+
+- **YUK-1592 / 帮助靠谱：笔记 drain 不丢剩余项**：`yuk-1592-presence-drain` 将已开始 drain 的队列项持久标记，每项正文、事件与出队同事务提交。已排除 task/proposal 自动恢复；首项失败及进程 SIGKILL 均保留三项，跨 TTL 重试与并发 blur 无重复，第二项失败保留后两项。原有 presence 六项测试及 typecheck/lint/build 通过；无新增测试、付费调用、TEST 或生产操作。自有 `yuk1592-presence-pg` 容器与匿名卷已删除。Linear 保持 In Progress；自动夜扫与学习者回执仍属 YUK-1417。
 
 - **YUK-1404 / native03题图修复**：PR1657 fixed4c52 exact CI38144495041全绿；正常纳入main eb960c079，仅PLAN/now冲突。图ownership/隐私产品代码与单capture边界测试保留，旧细粒度四tests已删。独立初审/最终R2预算已完成，不启第三审。当前crop producer仍无source_asset SHA登记，旧visibility未知，public withholding不是完整配图交付；同卷actual-output验收仍待。无DB/runtime/provider/paid。 [证据](docs/planning/2026-10-11-yuk1404-native03-figure-repair.md)。
 

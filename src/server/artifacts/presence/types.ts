@@ -44,6 +44,9 @@ export interface SerializedQueuedPatch {
   taskResult?: unknown;
   triggerEventId: string | null;
   queuedAtMs: number;
+  // Once admitted to a PG drain, keep the obligation through failures/restarts
+  // and TTL pruning until apply and dequeue commit together.
+  drainStarted?: true;
   // Provenance actor of the deferred patch (`event.actor_ref` semantics). Absent
   // for the default note-refine AI mutator. A mutation-triggered hub sync
   // (HUB_AUTO_SYNC_ACTOR_REF) opts out of the generic force-apply ceiling, so a
@@ -120,7 +123,8 @@ export interface PresenceStore {
 
   // Remove the caller's editing session; if no active session remains, flush all
   // pending note-refine patches in FIFO order (otherwise leave them queued for
-  // the session still editing).
+  // the session still editing). PG commits each apply and dequeue together;
+  // failures leave unfinished items durable for a later idle/blur retry.
   markArtifactIdleAndFlush(input: MarkIdleAndFlushInput): Promise<MarkIdleAndFlushResult>;
 
   // Snapshot of the current session, or null if none recorded.
