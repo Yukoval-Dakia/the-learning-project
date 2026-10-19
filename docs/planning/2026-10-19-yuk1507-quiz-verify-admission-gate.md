@@ -35,18 +35,27 @@ lifecycle FOR UPDATE，锁序 root question → lifecycle 与 publisher/C1 一�
 `admitted` + 当前 revision 存在 `question_admission@*`/`passed` 行 + 该行
 `revision_digest` 绑定当前已发布 `integrity_digest`（旧
 `evidence.base_contract_digest` 仅作 base==published 兼容回退，YUK-1547 后它记的是
-付费输入摘要）。
+付费输入摘要）。helper 另收 `newerThanGeneration` 下界：只有 generation 严格
+晚于下界的准入才命中，null = 不设下界。两个分支传的是不同语义，不混用。
 
-- **成功分支命中**：不重发 —— 不把 admitted 降回 withheld，也不把行归一 base
-  重铸到 C1 的 resolved revision 上（重铸还会经 withheld 事件触发一次无收益的
-  重复付费准入）。若仍挂 `verify_hold`（跨 lane 再挂起），走 publisher 既有
+- **成功分支（下界 null，完整性保护）**：任何绑定当前 revision 的 C1 准入都
+  不重发 —— 不把 admitted 降回 withheld，也不把行归一 base 重铸到 C1 的
+  resolved revision 上（重铸还会经 withheld 事件触发一次无收益的重复付费
+  准入）。这不是 stale 判定：即使准入早于本投递，重发同样只会破坏，没有
+  正确结果。若仍挂 `verify_hold`（跨 lane 再挂起），走 publisher 既有
   dimension-only 路径清挂起，admission 维度显式回传原值；CAS conflict
-  fail-closed 回滚。成功事件盖当前 generation + `kept_independent_admission` /
-  `kept_revision_id` 审计标记。
-- **失败/needs_review 分支命中**：`promotedElsewhere` 的 generation 绑定盖不住
-  「A 记 withheld 代 → C1 admitted 推进一代 → 迟到失败投递误判非 stale」这一新
-  交错（旧直准模式下 generation 不被第三方推进，结构上不可能发生）。命中时同样
-  判定 stale：不折叠 admitted、不挂 verify_hold，事件仍如实写。
+  fail-closed 回滚。成功事件盖当前 generation +
+  `kept_independent_admission` / `kept_revision_id` 审计标记。
+- **失败/needs_review 分支（下界 = verify 开工快照，因果绑定 stale 判定）**：
+  `promotedElsewhere` 的 generation 绑定盖不住「A 记 withheld 代 → C1
+  admitted 推进一代 → 迟到失败投递误判非 stale」这一新交错（旧直准模式下
+  generation 不被第三方推进，结构上不可能发生）。但「当前存在绑定 C1
+  passed」本身也不足以证明 stale —— C1 只证判分、不证内容质检；准入可能
+  在 verify 开工前已完成，此时本投递的失败是首次真实判定（Codex R1 P1）。
+  故投递在幂等 guard 后、付费核验前快照 `admissionGenerationAtStart`（非锁
+  读，作开工下界），终态事务锁后仅当绑定准入的 generation 严格更大才判
+  stale：不折叠 admitted、不挂 verify_hold，事件仍如实写。准入先于开工的
+  首次真失败照常走 `suspension(verify_hold)` + `withheld` 发布。
 
 ## 未改语义与边界
 

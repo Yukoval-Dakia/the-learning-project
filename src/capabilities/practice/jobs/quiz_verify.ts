@@ -343,7 +343,12 @@ async function promoteCompositeChildren(
 /**
  * YUK-1507 — 同事务判定组是否已被 C1（question_admission_run）独立准入。
  * 锁序 root question → lifecycle（与 publisher/C1 一致；调用方须已持根行锁）。
- * 三者同真才命中（判据与 source_verify 的 pair-race guard 相同）：
+ * 命中条件（判据与 source_verify 的 pair-race guard 相同，外加 generation 下界）：
+ *   0. lifecycle.scoring_admission_generation 严格大于 `newerThanGeneration`
+ *      （null = 不设下界，任何 admitted 生命周期都算）。调用方在 verify 开工前
+ *      快照 admission generation，只有【晚于快照】的准入决定才证明本投递的
+ *      验证相对较新 admission 决定 stale —— verify 开始前已存在的 admitted
+ *      不提供该证明（C1 只证判分、不证内容质检，首次真失败仍须挂起）。
  *   1. lifecycle.scoring_admission_state === 'admitted'；
  *   2.【当前 revision】上存在 policy question_admission@*、outcome='passed' 的
  *      question_admission_verification 行（不匹配历史其他 revision 的 passed 行）；
@@ -356,6 +361,7 @@ async function promoteCompositeChildren(
 async function readBoundIndependentAdmission(
   tx: Tx,
   groupRootId: string,
+  newerThanGeneration: number | null,
 ): Promise<{
   lifecycle: typeof question_group_lifecycle.$inferSelect;
   revisionId: string;
@@ -369,7 +375,8 @@ async function readBoundIndependentAdmission(
   if (
     lifecycle == null ||
     lifecycle.scoring_admission_state !== SCORING_ADMISSION_STATE.ADMITTED ||
-    lifecycle.current_revision_id == null
+    lifecycle.current_revision_id == null ||
+    (newerThanGeneration != null && lifecycle.scoring_admission_generation <= newerThanGeneration)
   ) {
     return null;
   }
@@ -449,6 +456,21 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
     )
     .limit(1);
   if (existingVerify.length > 0) return { status: 'skipped:already_verified' };
+
+  // YUK-1507 — 准入决定快照：在付费核验开工前记录当前 admission generation。
+  // 失败分支的 stale 判定只认【晚于本快照】的准入决定（锁后证据绑当前
+  // revision 且 generation 严格更大）—— verify 开始前已存在的 admitted 不
+  // 证明本投递 stale（C1 只证判分、不证内容质检；首次真失败仍须真实挂起）。
+  // 放在幂等 guard 之后：走到这里的投递已确定要做本次核验。非锁读是有意的 —
+  // 它只是「开工时点」的下界；权威判定在终态事务内锁后做（generation 单调，
+  // 锁后值严格更大 ⇒ 准入决定确实晚于开工）。
+  const admissionGenerationAtStart = (
+    await db
+      .select({ generation: question_group_lifecycle.scoring_admission_generation })
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, questionId))
+      .limit(1)
+  )[0]?.generation;
 
   // The Q3 handler always writes metadata.quiz_gen on a generated draft. Parse it
   // so we can read source_refs (for the deterministic overlap) + carry it forward
@@ -957,8 +979,9 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
       // 本成功与现行独立准入决定同代绑定，同代 stale 失败投递仍被 promotedElsewhere
       // 挡下；generation 再推进（新 revision 决定）后 shield 自动失效。
       let promotedAdmissionGeneration: number | null = null;
-      // YUK-1507 — C1 先行独立准入命中时记录保留的 revision id（事件审计标记；
-      // 成功分支不重发，失败分支不折叠/挂起）。见下方两处 publish gate。
+      // YUK-1507 — C1 绑定准入命中时记录保留的 revision id（事件审计标记；
+      // 成功分支不重发，失败分支仅在准入决定晚于本投递开工时不折叠/挂起）。
+      // 见下方两处 publish gate。
       let keptIndependentAdmissionRevisionId: string | null = null;
       if (promote) {
         // Supply scope already locked at the top of this tx (G→row order above).
@@ -1045,12 +1068,15 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
         // YUK-1045 — suspension:false 清 verify_hold（同版复核通过 ⇒ 幂等恢复，
         // §3.3 表「同版复核通过」行）；retraction_hold 不属本票接线，publisher 恒保留。
         const groupRootId = row.parent_question_id ?? questionId;
-        // YUK-1507 pair-race guard（同 source_verify 判据）：组已被 C1 独立准入且
-        // 证据绑当前已发布 revision ⇒ 本投递不得重发 —— 不把 admitted 降回
-        // withheld，也不把行归一 base 重铸到 C1 的 resolved revision 上（重铸还会
-        // 经 withheld 事件触发一次无收益的重复付费准入）。其余情况（C1 准入的是
-        // 更老 base 后行又变了、他 policy 准入、未准入）照常走 withheld 发布。
-        const keptAdmission = await readBoundIndependentAdmission(tx, groupRootId);
+        // YUK-1507 pair-race guard（同 source_verify 判据，下界传 null 即不设
+        // 代差要求）：【任何】绑定当前已发布 revision 的 C1 独立准入都不得被重
+        // 发 —— 不把 admitted 降回 withheld，也不把行归一 base 重铸到 C1 的
+        // resolved revision 上（重铸还会经 withheld 事件触发一次无收益的重复
+        // 付费准入）。这是「不重铸现行绑定准入」的完整性保护，与失败分支的
+        // stale 判定（要求准入决定晚于本投递开工）是两种语义，不要混用下界。
+        // 其余情况（C1 准入的是更老 base 后行又变了、他 policy 准入、未准入）
+        // 照常走 withheld 发布。
+        const keptAdmission = await readBoundIndependentAdmission(tx, groupRootId, null);
         if (keptAdmission != null) {
           keptIndependentAdmissionRevisionId = keptAdmission.revisionId;
           promotedAdmissionGeneration = keptAdmission.lifecycle.scoring_admission_generation;
@@ -1167,9 +1193,14 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
         // YUK-1507 — promotedElsewhere 的 generation 绑定盖不住一种新交错：先前
         // 成功投递记的是它写的 withheld generation，C1 admitted 会把 generation
         // 再推进一代 ⇒ 迟到的失败投递看到「无当前代 success」而误判非 stale。
-        // 故另查 live lifecycle：组仍持【绑定当前 revision】的 C1 独立准入 ⇒
-        // 本投递 stale（§3.3 旧验证不改变较新 admission 决定），不折叠 admitted
-        // 也不挂 verify_hold；事件仍如实写（含 kept 审计标记）。
+        // 故另查 live lifecycle，但 stale 判定是因果绑定，不是「当前有 C1
+        // passed」：只有【绑定当前 revision 且 generation 严格晚于本投递开工
+        // 快照（admissionGenerationAtStart）】的准入决定，才证明本投递的验证
+        // 相对较新 admission 决定 stale（§3.3 旧验证不改变较新决定）⇒ 不折叠
+        // admitted 也不挂 verify_hold。verify 开工前已存在的 admitted 不提供
+        // 该证明 —— C1 只证判分、不证内容质检（grounding/copy_safety/
+        // knowledge_hit），本投递若是首次真实核验，其失败仍照常挂起。事件仍
+        // 如实写（含 kept 审计标记，仅当确证 stale 时）。
         const verifyFailed =
           parsed.overall === 'fail' ||
           copySafetyVerdict === 'too_close' ||
@@ -1179,6 +1210,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
           const staleAgainstAdmission = await readBoundIndependentAdmission(
             tx,
             row.parent_question_id ?? questionId,
+            admissionGenerationAtStart ?? null,
           );
           if (staleAgainstAdmission != null) {
             keptIndependentAdmissionRevisionId = staleAgainstAdmission.revisionId;
@@ -1302,9 +1334,10 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
             : {}),
           promoted: promote,
           verification_status: verificationStatus,
-          // YUK-1507 — C1 先行独立准入命中：本次投递未重发/未降级 admitted（成功
-          // 分支未把行归一 base 重铸到 resolved revision；失败分支未折叠/挂起较新
-          // 准入决定）。只记保留的 revision id，不记任何原文内容。
+          // YUK-1507 — C1 绑定准入命中：成功分支未重发/未降级 admitted（不把行
+          // 归一 base 重铸到 resolved revision）；失败分支仅当准入决定确证晚于
+          // 本投递开工（generation > 开工快照）才跳过折叠/挂起。只记保留的
+          // revision id，不记任何原文内容。
           ...(keptIndependentAdmissionRevisionId != null
             ? {
                 admission: 'kept_independent_admission',
