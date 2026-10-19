@@ -188,6 +188,16 @@ jobs:
         with:
           node-version-file: '.node-version'
           cache: 'pnpm'
+      - name: Resolve Circle audit comparison base
+        id: circle_base
+        if: steps.filter.outputs.static_changed != 'false'
+        env:
+          GH_READ_TOKEN: ${{ github.token }}
+          BUILD_HEAD: ${{ github.sha }}
+          BUILD_REF: ${{ github.ref }}
+          BUILD_EVENT: ${{ github.event_name }}
+          PROVIDED_BEFORE: ${{ github.event.before }}
+        run: node scripts/ci/resolve-circle-audit-base.mjs
       - name: Install dependencies
         if: steps.filter.outputs.static_changed != 'false'
         run: pnpm install --frozen-lockfile
@@ -196,7 +206,7 @@ jobs:
       - name: Audits
         if: steps.filter.outputs.static_changed != 'false'
         env:
-          TEST_POLICY_BASE: ${{ inputs.test_policy_base || github.event.pull_request.base.sha || github.event.before }}
+          TEST_POLICY_BASE: ${{ steps.circle_base.outputs.base || inputs.test_policy_base || github.event.pull_request.base.sha || github.event.before }}
         run: |
           pnpm audit:test-policy
           pnpm audit:task-census
