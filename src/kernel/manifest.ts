@@ -7,6 +7,7 @@
 
 import { type ZodTypeAny, z } from 'zod';
 import { type JobDagMemberInput, type JobDependencyDecl, validateJobDag } from './job-dag';
+import type { NightlyEligibilityFn } from './nightly-eligibility';
 import type {
   ProposalAcceptDecl,
   ProposalDismissDecl,
@@ -154,6 +155,11 @@ export interface JobDecl {
    * 纯拓扑算法在 ./job-dag。
    */
   dependsOn?: readonly JobDependencyDecl[];
+  /**
+   * YUK-1560 入队前资格判定。DAG 成员由 orchestrator 在 send 前求值；带 schedule 的
+   * 裸 cron 由注册器在 handler 入口求值。缺省 = 照旧跑。
+   */
+  eligibility?: NightlyEligibilityFn;
   /** 懒加载 handler 工厂（ApiRouteDecl.load 同构语义）；无 load 的 decl 是纯归属元数据，不被挂载。 */
   load?: () => Promise<JobHandlerFactory>;
 }
@@ -425,7 +431,12 @@ export function projectDagMembers(
   for (const cap of capabilities) {
     for (const job of cap.jobs?.handlers ?? []) {
       if (job.dependsOn === undefined) continue;
-      members.push({ name: job.name, owner: cap.name, dependsOn: job.dependsOn });
+      members.push({
+        name: job.name,
+        owner: cap.name,
+        dependsOn: job.dependsOn,
+        ...(job.eligibility ? { eligibility: job.eligibility } : {}),
+      });
     }
   }
   return members;

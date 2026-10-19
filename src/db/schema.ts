@@ -4228,9 +4228,19 @@ export const dag_orchestration_node = pgTable(
     // 图成员 job 名（= boss 队列名 = JobDecl.name）。
     job_name: text('job_name').notNull(),
     // pending（未就绪）| enqueued（已 boss.send，等 pg-boss 消费）| running（pg-boss active）|
-    // succeeded | failed | skipped（硬上游失败/跳过 → 本节点不跑）。
+    // succeeded | failed | skipped（硬上游失败/跳过 → 本节点不跑）|
+    // not_needed（资格判定不跑）| degraded（试过且零成功）。后两者是软终态。
     status: text('status', {
-      enum: ['pending', 'enqueued', 'running', 'succeeded', 'failed', 'skipped'],
+      enum: [
+        'pending',
+        'enqueued',
+        'running',
+        'succeeded',
+        'failed',
+        'skipped',
+        'not_needed',
+        'degraded',
+      ],
     }).notNull(),
     // enqueue 后回填的 pg-boss job id（轮询终态用 boss.getJobById）。
     boss_job_id: text('boss_job_id'),
@@ -4251,7 +4261,7 @@ export const dag_orchestration_node = pgTable(
     // 坏值会破坏推进不变量——CHECK 兜住。
     check(
       'dag_orchestration_node_status_ck',
-      sql`${t.status} IN ('pending','enqueued','running','succeeded','failed','skipped')`,
+      sql`${t.status} IN ('pending','enqueued','running','succeeded','failed','skipped','not_needed','degraded')`,
     ),
   ],
 );
