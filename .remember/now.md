@@ -1,10 +1,6 @@
-# YUK-1592 笔记 drain writer 交接 — 2026-10-19
+# Architecture deepening — 2026-10-19
 
-独立 worktree `/workspace/amp/wt/YUK-1592`，分支 `yuk-1592-presence-drain`。QA 的永久失败堵队和新 patch 插队已修复，继续更新同一 PR #1829。Linear 保持 In Progress，由 EL 交 QA；不得据本地验证合并或部署，合入前需 Opus 防丢数据审查 + 真页面核对。
-
-上层 task 的 deferred 正常结束，proposal accept 与 hub recovery 不恢复本队列。显式类型为 pending/draining/dead，读取时兼容旧 drainStarted JSON。成功时正文、事件和出队同事务提交；暂时失败、退出或版本冲突保留 draining。NoteRefineApplyError 使当前项进入 dead，保留原 patch、来源与错误，后续项继续且 blur 不因此500。dead 不计入 pending_patches，也不再重试。闲置时仍有待办项的新 patch 加到队尾并持久标为 draining，避免插队和TTL丢弃。未开始 drain 的旧 TTL 行为保留。没有新后台恢复入口、API 合同、migration 或测试代码。
-
-本轮隔离 Podman PG `yuk1592-qa-fix-pg`、127.0.0.1:55492，按仓库 migration 初始化，容器与匿名卷已删除。真实 blur handler 对受保护块由连续500变为200，后两项应用、人工块不变、首项保留dead；非法正文也记dead而不500。首项暂时失败后 p4 返回deferred，30分钟后按p1/p2/p3/p4应用；第二项暂时失败只重试后两项。SIGKILL退出137后版本0/待办3/事件0，新进程30分钟后应用3项，再次blur为0。双store并发分别应用2/1项，最终版本3/事件3；历史drainStarted三项跨30分钟也成功。原有presence六项测试、typecheck、lint、build全部exit0。lint179 warnings/0 errors；第一次lint只因未格式化的本地PR快照JSON失败，格式化后复跑通过。原始日志在 `.amp/in/artifacts/qa-fix/`。无付费模型、TEST8787、生产操作或完整本机pnpm test。P3自动夜扫以及死信处置/学习者回执留YUK-1417；Opus防丢数据审查、真页面和版本冲突交互仍待EL/QA，不称整链验收完成。
+Current owner: arch-lead, refactor/yuk-1572-stream-modules, base d41f24213. Six tickets relabelled T3. Grok retains #1830 ratchet writer; semantic alignment posted to PR and YUK-1570. First-three plan approved: docs/planning/2026-10-19-architecture-deepening.md. SWE-2 source writer released at 2cd19533a: stream-store 1427, inputs355, view410; >1500 files17. Merged main615437b76 into d38e72c447; parent typecheck/lint179warnings/full build/boundary+architecture audits exit0. Kimi R1 APPROVE d41..2cd, source unchanged; exact5c0e CI39252986951 SUCCESS. Main2176 integration only PLAN/now conflicts; new synthetic-head checks/CI pending, no new source review needed. Sol independently examines knowledge outbound SCC cut after GLM notes-only impossibility inference was rejected. Parent owns docs/review/integration. No tests/DB/Docker/TEST/provider operations. Baseline measured: SCC1/5 members, cap-server443, >1500 files18, baseline141 lines. External bulky evidence approved with permanent retention; old HEAD deletion requires copy/hash/reference inventory and per-batch coordinator review. First evidence PR updates AGENTS for all lanes. Test shrink remains inventory only pending owner approval.
 
 # YUK-1525 题库计数 draft 交接 — 2026-10-19
 
