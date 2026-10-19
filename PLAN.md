@@ -4,7 +4,7 @@
 
 ## NOW
 
-- **架构深化 / YUK-1571**：frontier draft #1837 c2b80ee，server444→443/cross48→47/SCC不变，R1通过，等#1830独占释放；超过半天上报协调线。迁移规划器#1840已合ee53df413（超长18→17）；typed due完整输入操作#1842已合71986f224，均父静态构建/独立R1/exact-head CI通过，无本机DB/provider。审计去重draft #1843 e9e27972e，scripts净减41，父11命令真实输出核对，SWE-2 MAX初审中。锁登记仅文档，36ba2b8a2纠正虚构G/group环、regex与站点数，GLM唯一R2中。完整操作减边设计GLM继续，FULL事务归属反转只设计待owner；LIGHT共享读照常推进。
+- **架构深化 / YUK-1571**：frontier draft #1837 c2b80ee，server444→443/cross48→47/SCC不变，R1通过，等#1830独占释放；超过半天上报协调线。迁移规划器#1840已合ee53df413（超长18→17）；typed due完整输入操作#1842已合71986f224，均父静态构建/独立R1/exact-head CI通过，无本机DB/provider。审计去重draft #1843 e9e27972e，scripts净减41，父11命令真实输出核对，SWE-2 MAX初审中。锁登记仅文档#1846 d8855feb7，三项纠正已过GLM唯一R2及父静态构建，待CI。完整操作FULL设计补直接调用兼容与receipt顺序待owner；LIGHT三个共享读责任合一PR已派SWE-2 MAX，预计cross减4，保护#1802 review.ts迁移。
 
 - **第一天能用 / 题库暂不出题计数（YUK-1525）**：`yuk-1525-serving-counts-sql` 将 lifecycle 理由统一到 SQL，冻结题面继续复用原校验，计数与列表使用同一只读快照。2600 行中，旧列表少算为1846，修后2400，与原投影全库逐行统计一致；窗口外 `q_02600` 可见。无新增测试、UI 改动或付费调用。
 
