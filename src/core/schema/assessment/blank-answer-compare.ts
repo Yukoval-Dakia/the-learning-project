@@ -204,13 +204,27 @@ const fail = (reason: string): DeclaredParseFailure => ({ ok: false, reason });
  * 判定数学语义前的封闭规范化：NFKC（全角括号/逗号/关系符 → ASCII）、
  * Unicode 减号 → '-'、乘号 → '*'、剥离全部空白（"5 / 2" → "5/2"）。
  * 保号保括号保否定：不删任何非空白字符、不做任何"容错"改写。
+ *
+ * R1 P1-2 修复：NFKC 会把上标/下标/分数字符折叠成普通数字（x²→x2、
+ * 2²→22、½→1⁄2、x₀→x0）——那是"先丢语义再猜"。这些字符在规范化【之前】
+ * 显式拒绝（准入编译与作答两入口共用本函数），绝不改写后继续解释；
+ * 封闭语法解释不了的输入返回 undecidable/invalid 带具体 reason。
  */
-function normalizeMathInput(raw: string): string {
-  return raw
-    .normalize('NFKC')
-    .replace(/\u2212/g, '-')
-    .replace(/[\u00d7\u00b7]/g, '*')
-    .replace(/\s+/g, '');
+const SEMANTICS_CORRUPTING_NFKC_RE =
+  /[\u00b9\u00b2\u00b3\u2070-\u209f\u00bc-\u00be\u2150-\u215f\u2044]/u;
+
+function normalizeMathInput(raw: string): DeclaredParseResult<string> {
+  if (SEMANTICS_CORRUPTING_NFKC_RE.test(raw)) {
+    return fail('superscript_subscript_or_vulgar_fraction_not_supported');
+  }
+  return {
+    ok: true,
+    value: raw
+      .normalize('NFKC')
+      .replace(/\u2212/g, '-')
+      .replace(/[\u00d7\u00b7]/g, '*')
+      .replace(/\s+/g, ''),
+  };
 }
 
 const POSITIVE_INFINITY_TOKENS = new Set(['+∞', '∞']);
@@ -242,7 +256,11 @@ function intervalIsEmpty(iv: Interval): boolean {
   return false;
 }
 
-/** 规范化区间并集：丢空区间、排序、只合并真正相接/重叠的区间（缺点不吞）。 */
+/** 规范化区间并集：丢空区间、排序、只合并真正相接/重叠的区间（缺点不吞）。
+ * R1 P1-1 修复：并集语义下【同下端点的闭性必须合并】——`(0,1)∪[0,2)` 的
+ * 真实并集是 `[0,2)`（含 0），不能只改 hi 丢 loClosed；prev 已覆盖到 +∞ 的
+ * 早 continue 分支同样先合并同下端点闭性（`(0,+∞)∪[0,+∞)=[0,+∞)`）。
+ * 相邻双开区间的缺点仍保留不吞。 */
 function normalizeIntervalUnion(intervals: Interval[]): Interval[] {
   const live = intervals.filter((iv) => !intervalIsEmpty(iv));
   live.sort((x, y) => {
@@ -262,11 +280,22 @@ function normalizeIntervalUnion(intervals: Interval[]): Interval[] {
       out.push({ ...iv });
       continue;
     }
-    if (prev.hi == null) continue; // prev 已覆盖到 +∞：iv 是子集，丢弃
+    // 同下端点：并集下端闭性 = 两侧闭性之或（任一侧含该点则并集含该点）。
+    const mergeLoClosed = () => {
+      if (iv.lo != null && prev.lo != null && ratEq(iv.lo, prev.lo)) {
+        prev.loClosed = prev.loClosed || iv.loClosed;
+      }
+    };
+    if (prev.hi == null) {
+      // prev 已覆盖到 +∞：iv 是子集，但同下端点的闭性仍可能扩大覆盖。
+      mergeLoClosed();
+      continue;
+    }
     const touches =
       iv.lo != null &&
       (ratLt(iv.lo, prev.hi) || (ratEq(iv.lo, prev.hi) && (prev.hiClosed || iv.loClosed)));
     if (touches) {
+      mergeLoClosed();
       if (iv.hi == null) {
         prev.hi = null;
         prev.hiClosed = false;
@@ -482,10 +511,13 @@ function parseDeclaredPoint(
 // ---------- affine_line ----------
 
 type LinearToken =
-  | { type: 'num'; value: Rat }
+  | { type: 'num'; value: Rat; compound: boolean }
   | { type: 'id'; name: string }
   | { type: 'op'; op: string };
 
+/** R1 P1-3：compound 标记该数字 token 是词法层吸收了内部 '/' 的分数
+ * （源串含 "a/b"）。作为【独立系数】合法（3/2x），作为【除法除数】
+ * 意味着源串是连续除法（x/2/3）——结合性有歧义，一律拒绝。 */
 function tokenizeLinear(text: string): DeclaredParseResult<LinearToken[]> {
   const tokens: LinearToken[] = [];
   let i = 0;
@@ -500,13 +532,13 @@ function tokenizeLinear(text: string): DeclaredParseResult<LinearToken[]> {
         while (k < text.length && /[0-9.]/.test(text[k])) k += 1;
         const value = parseRatLiteral(text.slice(i, k));
         if (value == null) return fail(`line_number_unparseable('${text.slice(i, k)}')`);
-        tokens.push({ type: 'num', value });
+        tokens.push({ type: 'num', value, compound: true });
         i = k;
         continue;
       }
       const value = parseRatLiteral(text.slice(i, j));
       if (value == null) return fail(`line_number_unparseable('${text.slice(i, j)}')`);
-      tokens.push({ type: 'num', value });
+      tokens.push({ type: 'num', value, compound: false });
       i = j;
       continue;
     }
@@ -592,6 +624,10 @@ function parseLinearExpression(
         i += 1;
         const d = tokens[i];
         if (d?.type !== 'num' || ratIsZero(d.value)) return fail('line_var_divisor_invalid');
+        // R1 P1-3：除数是词法层吸收了内部 '/' 的分数 token（源串形如 x/2/3）
+        // ——连续除法的结合性有歧义（左结合 x/6 ≠ 右除 x÷(2/3)=3x/2），
+        // 一律拒绝，绝不选括号解释；分数作为【独立系数】（3/2x）仍支持。
+        if (d.compound) return fail('line_consecutive_division_not_supported');
         i += 1;
         coef = ratDiv(coef, d.value);
       } else if (afterId?.type === 'op' && afterId.op === '*') {
@@ -607,16 +643,24 @@ function parseLinearExpression(
     }
     return fail('line_term_shape_invalid');
   };
+  // R1 P1-2：项与项之间必须有显式 +/- 分隔。首个项可以无符号开头，其后
+  // 任何不是 +/- 的 token 直接进入 readTerm 的旧路径会把相邻 token 暗作
+  // 加法（NFKC 把 y=x² 折成 y=x2 后被读成 x+2）——那类输入现在必须拒绝
+  // （line_term_separator_missing → undecidable），绝不猜成加项。
+  let firstTerm = true;
   while (i < tokens.length) {
     const t = tokens[i];
     if (t.type === 'op' && (t.op === '+' || t.op === '-')) {
       i += 1;
       const r = readTerm(t.op === '-' ? -1n : 1n);
       if (!r.ok) return r;
+      firstTerm = false;
       continue;
     }
+    if (!firstTerm) return fail('line_term_separator_missing');
     const r = readTerm(1n);
     if (!r.ok) return r;
+    firstTerm = false;
   }
   if (termCount === 0) return fail('line_expression_empty');
   return { ok: true, value: { a, b, c } };
@@ -870,10 +914,16 @@ export function compileDeclaredKey(
     let value: Rat | null = null;
     for (const alias of key.accepted) {
       const normalized = normalizeMathInput(alias);
-      if (normalized.length > MAX_INPUT_CHARS) {
+      if (!normalized.ok) {
+        return {
+          ok: false,
+          reason: `text alias '${alias}' cannot be read under the declared notation (${normalized.reason})`,
+        };
+      }
+      if (normalized.value.length > MAX_INPUT_CHARS) {
         return { ok: false, reason: `alias length exceeds ${MAX_INPUT_CHARS} chars` };
       }
-      const parsed = parseDeclaredNumber(normalized, shape);
+      const parsed = parseDeclaredNumber(normalized.value, shape);
       if (!parsed.ok) {
         return {
           ok: false,
@@ -901,10 +951,16 @@ export function compileDeclaredKey(
   let canonical: string | null = null;
   for (const alias of key.accepted) {
     const normalized = normalizeMathInput(alias);
-    if (normalized.length > MAX_INPUT_CHARS) {
+    if (!normalized.ok) {
+      return {
+        ok: false,
+        reason: `text alias '${alias}' cannot be read under the declared notation (${normalized.reason})`,
+      };
+    }
+    if (normalized.value.length > MAX_INPUT_CHARS) {
       return { ok: false, reason: `alias length exceeds ${MAX_INPUT_CHARS} chars` };
     }
-    const parsed = parseDeclaredObject(normalized, shape);
+    const parsed = parseDeclaredObject(normalized.value, shape);
     if (!parsed.ok) {
       return {
         ok: false,
@@ -952,7 +1008,9 @@ export async function compareDeclaredBlank(
       reason: `input_too_long(${rawResponse.length}>${MAX_INPUT_CHARS})`,
     };
   }
-  const text = normalizeMathInput(rawResponse);
+  const norm = normalizeMathInput(rawResponse);
+  if (!norm.ok) return { outcome: 'undecidable', reason: norm.reason };
+  const text = norm.value;
   if (text.length === 0) return { outcome: 'undecidable', reason: 'empty_response' };
 
   if (compiled.kind === 'number_tolerance') {

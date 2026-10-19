@@ -83,37 +83,72 @@ pending，绝不伪零分）；完整解析但不相等（错值/错端点/缺�
 才逐 caller 迁移）；free/AI 方法不借此放行；数值/部分分 unknown/旧生命周期原样；
 `format=math`、学科、题面公式仍不构成声明。
 
-## 机械验证记录（本机，2026-10-19）
+## 验证记录
 
-- `pnpm typecheck` exit 0（tsc noEmit ×2）。
-- `pnpm lint` exit 1 —— 9 个 error 全部位于本片未触及文件（agency/scripts/copilot），
-  经 `git stash` 在同 base main 上复跑确认**与 main 完全相同的 9 个 pre-existing
-  error**；本片 14 个触及文件 `biome check` 单独跑 0 error 0 warning。
-- `pnpm build` exit 0（server/worker/migrate bundle；compare 模块 mathjs 仅异步
-  动态 import，与既有 grade.ts 同边，无新静态依赖）。
+### 早期临时脚本（2026-10-19，已停止，证据保留）
+
+- 合入首版（06686a980）前，作者在仓库外 /tmp 写过两个临时脚本并对比较器
+  公开入口实跑：一个 43 项**带断言/期望逐项比较**的检查套件（其中 7 项在首跑
+  抓到真实的分数除法 bug 后修复转绿），一个 6 项 evaluateSubmissionCore 观察
+  脚本（只打印实际结果，无机器断言，判读为符合预期）。**这些脚本未经
+  owner 批准，违反“禁止未批准测试代码（含仓库外）”规则，现已停止创建与
+  运行**；脚本与原始输出（含 RED 首跑）未删改，仅作审查证据，**不构成验收
+  依据**。6 项 e2e 用的是合成 revision，不足 7 题真实入口。
+- 独立 Codex R1（pr1815-implementation-review-r1-codex.md）为纯源码静态审，
+  未执行上述脚本。
+
+### 固定提交 06686a980 的检查（父会 2026-10-19 复核）
+
+- typecheck / lint / lint:ratchet / build 均 exit 0（父会固定该 head 复核）。
+- 作者本机早期 lint 记录另立如下，不与上面混淆：`pnpm lint` exit 1，
+  9 个 error 全部位于本片未触及文件（agency/scripts/copilot），经 `git stash`
+  在同 base main 上复跑确认与 main 相同的 9 个 pre-existing error；触及文件
+  `biome check` 单独跑 0 error 0 warning。
 - audits（exit 0）：schema、capability-boundaries、question-writers、api-client、
   api-client-usage、api-contracts、architecture-deepening、structured-judge、
   tool-params、draft-status、task-census。api-client 无漂移 →
   `api-schema.generated.ts` 本片无需再生成（HTTP 面未变）。
-- 比较核心公开入口实跑（tsx 一次性探针脚本，仓库外 /tmp，未入库）：43 项
-  全过，覆盖验收语义样本 —— u83 定义域并集/闭端点拒/减区间、ocfk `a≤0`（含
-  `a<0` 区分）、nl7 `(5/2,7]`≡`2.5<x≤7`、`[5/2,7]` 拒、ft0 `8/27≤M-m<2`≡
-  `[8/27,2)`、`0.2963`≠`8/27`、`m-M` 不可解析、iqsi 三直线集合（重排/比例/
-  移项/`y=` 形等价；缺/多成员、符号错、`0=0` 拒）、p81 两点（外层无序、换坐标/
-  缺点/重复拒）、`1/3`≠`0.3333`、容差与单位（`3 m` 对、裸 `3` 缺单位错、
-  `0.03m`→cm 对、`3 kg` 量纲错）、相接开区间缺点保留。**此为公开入口机械验证，
-  不是真实题验收**（见 NOT_RUN）。
+- `pnpm build` exit 0（server/worker/migrate bundle；compare 模块 mathjs 仅异步
+  动态 import，与既有 grade.ts 同边，无新静态依赖）。
+
+## R1 修复记录（同 PR 第二 commit，仅 blank-answer-compare.ts + 本文档）
+
+独立 Codex R1 判 REQUEST_CHANGES（3 P1），父逐行核实成立，已修：
+
+- **P1-1 同起点并集丢闭端**：`(0,1)∪[0,2)` 被误判为 `(0,2)`。修复为并集
+  语义正确合并——同下端点闭性取两侧之或（真实并集 `[0,2)`）；prev 覆盖到
+  +∞ 的早 continue 分支同样先合并同下端点闭性（`(0,+∞)∪[0,+∞)=[0,+∞)`）；
+  相邻双开区间缺点保留不变。修的是整条合并路径，非例证特判。
+- **P1-2 缺失项间分隔符 + NFKC 上标语义改写**：`y=x²` 经 NFKC 变 `y=x2` 后
+  被暗作 `x+2`。两层修复：① 规范化入口（准入编译与作答共用）在 NFKC 之前
+  显式拒绝上标/下标/分数字符（²³¹、ⁿ 类、₀ 类、¼½¾ 类、⁄），返回
+  `superscript_subscript_or_vulgar_fraction_not_supported`，绝不丢语义后
+  继续猜；② 直线表达式首项之后必须有显式 +/- 分隔，否则
+  `line_term_separator_missing` 拒绝，不再把相邻 token 默认相加。既有单位
+  换算（mathjs lane）未改。
+- **P1-3 连续除法右结合**：`x/2/3` 被词法吞成 `x÷(2/3)=3x/2`。修复：词法层
+  给分数 token 打 compound 标记；除法上下文（变量后的除数）遇 compound
+  分数即拒绝 `line_consecutive_division_not_supported`（源串必为连续除法，
+  结合性有歧义，不允许任何一种结合）；无歧义的独立分数系数（`3/2x`）与
+  单次 `x/2` 保留。
+
+修复后语法边界/失败 reason（如实）：上标/下标/分数字符一律拒绝；直线项间
+必须 +/- 分隔（`x2`/`2x3y` 类拒）；连续除法（`x/2/3`、`x/3/2` 类）拒绝；
+`x/2*3` 类除法后接乘的链形不在封闭语法内同样拒绝。以上均 undecidable/invalid
+带具体 reason，准入编译与作答两入口同语义。未扩成通用表达式系统。
 
 ## NOT_RUN / 边界
 
-- 未运行任何测试（owner 规则：测试另批文字方案；本机不跑 full `pnpm test`）。
-- 未访问 DB/容器/TEST provider/付费调用；40 存量题与 7 题未动（冻结证据确认 7 题
-  均为旧单 text 槽，本片不拆题）。
-- 真实入口（edit_question → compose → submit → evaluateSubmissionCore）对已声明
-  副本的验收属第 4 片独立批准窗口；本片不以合成例冒充真实题验收。
+- 未编写/运行任何测试与断言脚本（owner 规则；早期临时脚本已停、证据保留，
+  见上）。本机不跑 full `pnpm test`，完整 gate 由 exact-head CI 执行。
+- 未访问 DB/容器/TEST provider/付费调用；40 存量题与 7 题未动（冻结证据确认
+  7 题均为旧单 text 槽，本片不拆题）。
+- 真实题验收时点（协调线最新决定）：**第二片部署后于副本执行**，不等第
+  4 片；具体窗口/资源/存量付费仍待对应审批，尚未获批。本片不以合成例冒充
+  真实题验收。
 - finite_set 的 set_builder 记号、不等式**析取**（`或`）未实现 —— 声明即未支持，
   闸保持关闭（封闭语法，未来片扩展须新比较版本号）。
 - 生产端四入口（sourcing/quiz_gen/录入/编辑提示）迁移是第 3 片；本片不碰
   provider 选型/路由/预算。
-- 合入后新声明题从"只存草稿/暂扣"变为"支持声明可全链准入+判分+发题"，但
-  真实生产证据仍以第 3/4 片交付为准。
+- 合入后新声明题从“只存草稿/暂扣”变为“支持声明可全链准入+判分+发题”，但
+  真实生产证据以后续片与副本验收为准。
