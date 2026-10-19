@@ -812,9 +812,11 @@ export async function runSourceVerify(
       //   2. 【当前 revision】上存在 policy question_admission@1 或 @2、outcome='passed'
       //      的 question_admission_verification 行（不匹配历史其他 revision 的
       //      passed 行）；
-      //   3. 该行 evidence.base_contract_digest === 当前已发布 revision 的
-      //      integrity_digest（lifecycle.current_revision_id →
-      //      question_revision.integrity_digest，与 C1 封存的 published contract 一致）。
+      //   3. 该行绑定当前已发布 revision 的 integrity_digest —— 权威绑定取
+      //      publisher 写入的 revision_digest 列（YUK-1547 resolved 发布后
+      //      evidence.base_contract_digest 是付费【输入】摘要，不再等于发布
+      //      摘要）；旧证据字段仅作 base==published 行的兼容回退
+      //      （lifecycle.current_revision_id → question_revision.integrity_digest）。
       // 命中 ⇒ 不调 publishQuestionGroupFromRow：不把 admitted 降回 withheld，
       // 也不把行归一旧 base 重铸到 C1 的 resolved revision 上。其余情况（C1
       // 准入的是更老 base 后行又变了、他 policy 准入、未准入）保持 #1753 原行为。
@@ -885,7 +887,10 @@ export async function runSourceVerify(
             lifecycle.current_revision_id != null
           ) {
             const [c1Passed] = await tx
-              .select({ evidence: question_admission_verification.evidence })
+              .select({
+                evidence: question_admission_verification.evidence,
+                revisionDigest: question_admission_verification.revision_digest,
+              })
               .from(question_admission_verification)
               .where(
                 and(
@@ -904,13 +909,23 @@ export async function runSourceVerify(
                 ? ((c1Passed.evidence as Record<string, unknown> | null)?.base_contract_digest ??
                   null)
                 : null;
-            if (typeof recordedBaseDigest === 'string') {
+            if (c1Passed != null) {
               const [publishedRevision] = await tx
                 .select({ integrity_digest: question_revision.integrity_digest })
                 .from(question_revision)
                 .where(eq(question_revision.revision_id, lifecycle.current_revision_id))
                 .limit(1);
-              if (publishedRevision?.integrity_digest === recordedBaseDigest) {
+              // YUK-1547 — after a resolved-contract publication the receipt's
+              // evidence.base_contract_digest is the paid INPUT digest, not the
+              // published digest. The authoritative binding is the row's own
+              // revision_digest (publisher-written = the revision it verified);
+              // the legacy base-contract match stays for rows whose verified
+              // base IS the published document.
+              const boundToCurrent =
+                publishedRevision != null &&
+                (c1Passed.revisionDigest === publishedRevision.integrity_digest ||
+                  publishedRevision.integrity_digest === recordedBaseDigest);
+              if (boundToCurrent) {
                 keptIndependentAdmissionRevisionId = lifecycle.current_revision_id;
                 // verify_hold 角：跳过发布会丢掉旧分支 suspension:{suspended:false}
                 // 的清挂起效果。C1 admitted 的发布本已清 verify_hold；若此刻仍挂
