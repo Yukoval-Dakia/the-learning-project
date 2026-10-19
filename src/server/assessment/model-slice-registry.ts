@@ -247,6 +247,8 @@ export interface RegisterModelAdmissionSliceInput {
 /**
  * Check the slice before the paid holdout loop. A retired row, or the same id
  * with different evidence or actor, throws now. An idempotent row, or no row yet, passes.
+ * Skip this and at least 30 paid calls finish before registration refuses them.
+ * That refusal is caught and the job returns, so the queue does not rerun the loop.
  */
 export async function assertModelAdmissionSliceRegistrable(
   db: Db | Tx,

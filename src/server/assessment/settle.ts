@@ -141,6 +141,10 @@ interface SettlementPlan {
   rating: 'again' | 'hard' | 'good' | null;
   /** 'user' = explicit activation choice or manual/self_report provenance. */
   ratingSource: 'verdict' | 'user' | 'none';
+  /**
+   * One knowledge card per non-synthetic KC in this scope. No KC falls back
+   * to the group-root question card. scopeVersion is sealed with the evidence.
+   */
   scopeVersion: number;
   scopeKcIds: string[];
   fsrsSubjects: FsrsSubject[];
