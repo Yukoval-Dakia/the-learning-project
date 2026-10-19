@@ -56,3 +56,9 @@ Owner 2026-10-19 授权独立架构线与功能并行。冻结起点 `d41f24213`
 父级typecheck、lint（179 warnings）、完整build、relations均exit0；mastery-provenance report-only exit0且无flagged，不冒称硬门。snapshot为server443（原444）、cross47（原48），SCC仍1/5成员。architecture audit exit1，五项全部为旧baseline差异，含practice→knowledge3→4；新增边语义为practice消费knowledge真实图决策，同时knowledge两个入口退出practice，数量抵消不替代语义论证。#1830尚未合，本线未写audit-capability/baseline，仍不能开合并绿灯。独立初审进行中；本机测试/DB/运行时/provider NOT_RUN，测试零修改。
 
 证据目录：`/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1571/5fc5bdfec4b536f048fb5d78d9f5995210720d2c/`；逐文件哈希见checks-sha256.json，索引SHA-256 `c1f3570cc7cdbb15f603093be91d876770a2f46d27ad213fad8b38c7ed771d7e`。本片未新增范围外可执行缺陷；修正仅限自身未发布交付，既有report-only治理信号不另开重复票。
+
+### Frontier 初审及回边纠正
+
+R1 Kimi K3在22b03fd5..5fc5bdfec给APPROVE、无P0/P1，但明确新增文件级环knowledge/public→frontier-read→mastery/state→knowledge/public无初始化风险。父不把初始化安全当作架构成功：0c5837e33让mastery/state直接读取现有kernel/read-models/knowledge-tree的同两函数（knowledge/public原本逐字re-export它们），删除该直接回边。此post-review import-only差异由父核对，不冒称R1覆盖，也未重开全量审查。
+
+0c5837e33父typecheck/lint179warnings/fullbuild均exit0，snapshot443/0/47、SCC1/5、超长18；baseline仍142行未改。R1及旧审计日志在5fc5bdfec目录，最新日志在 `/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1571/0c5837e330dc76c1f21d47748c2bf0820f87c0a9/`，checks-sha256.json索引SHA256 `12c28d58a809059a568b13030aa36b2ec4fc0959b20f65687f223d6fb1788716`。待#1830释放后整合收紧与exact-head CI，当前仅可draft，不能merge。
