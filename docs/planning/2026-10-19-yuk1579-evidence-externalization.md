@@ -2,7 +2,7 @@
 
 Branch `docs/yuk-1579-evidence-externalization`，base `696449125b53b0c35a210dbc9a57292f014712de`（origin/main）。
 任务：把历史批量验收证据永久外置到仓库外 artifact 卷；git 只留结论、命令、revision、路径、SHA256。
-历史阶段 #1839 只建立外部副本与规则，未删除 git 内容；2026-10-20 协调线批准
+历史阶段 #1839 只建立外部副本与规则，未删除 git 内容；2026-10-20 JST（UTC+09:00）协调线批准
 首批删除，当前分支已执行（见末节），尚待本 PR 合入 main。
 
 ## 授权与边界
@@ -127,9 +127,14 @@ git 历史对象仍占用，clone/fetch 体积不降）：
 
 父级复核：172/172 文件均 git tracked；source/外部 SHA256 与 manifest 全等，所选五目录无漏项；总计 11,552,302 字节。manifest 路径相对其下的 `docs/planning/evidence/`，复验须先切到该目录，再 `shasum -a 256 -c ../../../SHA256SUMS.txt`。父级原始结果在外部 `evidence-export/parent-verification.json`。
 
-## 批次一 HEAD 删除执行记录（2026-10-20，分支 `docs/yuk-1579-evidence-batch-one`）
+## 批次一 HEAD 删除执行记录（2026-10-20 JST，分支 `docs/yuk-1579-evidence-batch-one`）
 
-协调线批准后由独立 worktree 实施：
+协调线明确批准后才派发独立 worktree 删除任务。此处日期采用 Asia/Tokyo（UTC+09:00）；
+删除提交 `07c26d306bcc2f26c1ed0bf92374fc361dce3bc4` 的 author/committer 时间均为
+`2026-10-20T00:10:48+09:00`（即 `2026-10-19T15:10:48Z`），不是未来日期批准。
+仅限协调线原话所列五目录、172 文件、11,552,302 B；测试/live seal 不在授权内。
+
+执行结果：
 
 - 删除前复核：`SHA256SUMS.txt` 自身 digest `02a483a4841843ace8d7b8fb0f1649d7d94cd1108ecb0903343b2c2b2ad1638e`
   不变；对封存外部副本 `shasum -a 256 -c` 172/172 OK；对当前 HEAD（`71986f2244`）
@@ -147,6 +152,10 @@ git 历史对象仍占用，clone/fetch 体积不降）：
 - PLAN.md/`.remember/now.md` 不含指向被删 evidence 路径的引用（仅含同名叙事文档
   链接），按边界未改动。
 - bulk 复核输出（逐文件校验日志、引用清单、删除清单）封存于
-  `architecture-deepening/YUK-1579/696449125b53b0c35a210dbc9a57292f014712de/batch-one-head-removal/`。
+  `architecture-deepening/YUK-1579/a6bbe45322a1295637b7d0aa3a36889f8276786b/batch-one-head-removal/`。
+  该 head 是本次被审删除树；实际删除提交为 `07c26d306`，删除前树为 `71986f2244`，
+  原导出源为 `696449125`，四者不得混同。旧目录误用了导出源 revision，已保留原件，
+  复制到上述正确 revision 目录后逐文件核对 9/9 SHA 相同；未覆盖任何封存文件。
+  `revision-ledger.json` 记录四个完整 revision 与逐文件摘要，SHA-256 `e477ce9548644ba4b3e18d087e1186476bf40b5b236aa01fc9774b9b950de496`。
 - NOT_RUN：无测试改动；未跑测试/DB/Docker/runtime/provider/付费；未 push/PR/merge
   （父级验收与独立 review）。

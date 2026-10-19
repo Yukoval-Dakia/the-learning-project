@@ -27,7 +27,7 @@
   - `docs/planning/evidence/yuk1358-start-agent-notes/`（56 文件 / 2,853,637 B，PR1622 已合 main 6212a4560）
   - `docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/`（26 文件 / 236,637 B，PR1620 已合 main 10df1a471）
   - `docs/planning/evidence/2026-10-08-yuk1358-start-workbench/`（10 文件 / 171,297 B，PR1609 已合 main 7682618cc）
-- HEAD 删除状态：**已删除**（2026-10-20，分支 `docs/yuk-1579-evidence-batch-one`；
+- HEAD 删除状态：**已删除**（2026-10-20 JST，分支 `docs/yuk-1579-evidence-batch-one`；
   删除前复核 HEAD `71986f2244` 172/172 文件与本 manifest 全等；9 篇叙事文档 50 处
   活跃引用已改指外部路径 + 逐文件 `sha256`；执行记录见
   `docs/planning/2026-10-19-yuk1579-evidence-externalization.md` 末节）。
