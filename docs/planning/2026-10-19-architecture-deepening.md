@@ -13,3 +13,9 @@ Owner 2026-10-19 授权独立架构线与功能并行。冻结起点 `d41f24213`
 **测试缩减文本方案（YUK-1580，未批准实施）**：先对最大 15 个测试文件和 mock 密集文件列出 case→真实边界→五类承重不变量→重复覆盖证据，逐 case 给保留/合并/删除理由与预计行数；先发协调线转 owner，得到明确批准后才动指定 case。第一批不设任意删行配额，不迁移测试以绕过批准。
 
 **证据迁出方案（YUK-1579，协调线已批准）**：新批量日志/JSON/截图放 `/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/<issue>/<head>/`，仓库只保留简短结论、命令、精确 revision、artifact 路径与 SHA-256。既有证据先建引用清单，复制到外部、逐文件核 hash、验证备份/访问与历史引用兼容后，再逐批提出删除清单；不直接清理 git 历史，不删除唯一副本。协调线确认存储与保留策略前不批量迁删。
+
+## 首片验证检查点
+
+源码 `2cd19533a`，正常合入 main `615437b76` 后验证提交 `d38e72c44710523104a9659965afb15c4fa19a74`：stream-store 2120→1427，输入模块355、投影410；超长18→17，SCC 1/5成员、capability→server443、cross-value48、baseline141行不变。父级 `pnpm typecheck`、`pnpm lint`（179 warnings）、`pnpm build`、`pnpm audit:capability-boundaries`、`pnpm audit:architecture-deepening` 均 exit 0。测试代码零改动；本机测试、DB、运行时、TEST、provider 均 NOT_RUN；独立初审与 exact-head CI 待收齐。
+
+原始日志和指标：`/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1572/d38e72c44710523104a9659965afb15c4fa19a74/`；逐文件 SHA-256 见 `checks-sha256.json`，该索引 SHA-256 `73b7de1807a5076ae427377af020477219ec1b97784db2dffe19894f99a30ec8`。此前 `2cd19533a` 的父级检查被中断，不复用缺失退出状态。
