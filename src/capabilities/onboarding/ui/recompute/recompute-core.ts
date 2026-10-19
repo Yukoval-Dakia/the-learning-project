@@ -1,25 +1,15 @@
-// YUK-495 S5 #41 — UI verdict layer over the bit-exact re-derivation core (src/core/recompute).
-//
-// Bridges a placement-profile ProfileKc + the server's sigma_mode → a per-KC verdict the
-// verify components render. The MATH lives in src/core/recompute/derive-profile-kc.ts
-// (deriveProfileKc / compareKc); this is the thin UI-facing adapter (formatting, the
-// per-field diff list, the sigma_mode-aware honesty regime). No IO, no network.
-//
-// sigma_mode regime (the interim honesty, driven by the server payload — see Slice B):
-//   • 'poly'  (POLY_SIGMOID_ENABLED=true)  — server σ IS polySigmoid → the device re-derivation
-//     is bit-exact; compare with Object.is and surface a truthful ✓ 逐位 / ✗ 不符.
-//   • 'libm'  (POLY_SIGMOID_ENABLED=false) — server σ is Math.exp (≤1 ULP off the device's
-//     polySigmoid). An exact compare would scream "drift" on every KC (false alarm), so we
-//     compare at DISPLAY precision (round-2) and label it an honest "预览 · 待 σ 对齐后逐位校验".
-//     A round-2 mismatch in this regime is a real DISPLAY bug → still surfaced as drift.
+// UI verdict over src/core/recompute. No IO.
+// poly: the server sigma is polySigmoid, so Object.is is a real bit match.
+// libm: the server sigma is Math.exp, up to 1 ULP off. An exact compare would
+// mark a tested KC drifted on that gap. Untested KCs stay na, so this regime
+// compares tested KCs at display precision and says preview.
+// A display-precision mismatch is still drift.
 
 import { type DerivedKc, deriveProfileKc } from '@/core/recompute/derive-profile-kc';
 import type { ProfileKc } from '../profile-api';
 import type { CalibrationMaturityResponse } from './calibration-maturity-api';
 
-/** UI gate for the whole #41 verify layer — flipped ON (E1) after US-003 visual acceptance.
- *  The badge runs in the 'libm' preview honesty regime (honest "预览 · 待 σ 对齐") until the
- *  whole-core σ flip POLY_SIGMOID_ENABLED lands — that high-risk prod op is split out to YUK-508. */
+/** On. libm preview stays until POLY_SIGMOID_ENABLED flips. */
 export const RECOMPUTE_BADGE_ENABLED = true;
 
 export type SigmaMode = 'poly' | 'libm';
@@ -152,17 +142,8 @@ export function summarizeRecompute(kcs: ProfileKc[], sigmaMode: SigmaMode): RcSu
 /** Two-decimal display formatter (mirrors the design's rcFmt). */
 export const rcFmt = (v: number | undefined) => (v == null ? '—' : v.toFixed(2));
 
-// ── D2: calibration-maturity reconciliation (YUK-495 S5 #41 #45) ──────────────
-//
-// Unlike the per-KC verify above, the two maturity quantities are BOTH σ-independent:
-//   • firm_count      = a pure integer count (cold_start rule: !cold_start), no σ.
-//   • median_theta_se = median of thetaSe(precision), and thetaSe is pure IEEE
-//     (1/√precision), no σ.
-// So the device re-derivation and the server aggregate are expected to be Object.is
-// EQUAL under both the poly and libm σ regimes — there is no "preview" honesty split
-// here. The maturity badge is therefore a two-state reconciliation: 'match' (bit-for-bit)
-// or 'drift' (a real disagreement). The brief 'running' flash is the useRecompute state
-// machine's, not a third summary outcome.
+// Firm count and median theta SE do not use sigma, so poly and libm both expect Object.is.
+// There is no preview state. running belongs to the flash, not to this summary.
 
 export interface RcMaturitySummary {
   /** 'match' when device re-derivation === server aggregate bit-for-bit, else 'drift'. */
@@ -180,10 +161,8 @@ export interface RcMaturitySummary {
 }
 
 /**
- * Bit-exact mirror of the server's median_theta_se (server/calibration-maturity.ts):
- * sort ascending, then floor-mid midpoint (even ⇒ average of the two central values,
- * odd ⇒ the central value). Empty ⇒ null. Identical ordering + arithmetic ⇒ Object.is
- * with the server aggregate holds.
+ * Same ordering and midpoint as the server median. That is why Object.is can hold.
+ * Even length averages the two central values. Odd length takes the central value. Empty is null.
  */
 function maturityMedian(sorted: number[]): number | null {
   if (sorted.length === 0) return null;
@@ -191,16 +170,10 @@ function maturityMedian(sorted: number[]): number | null {
   return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
 }
 
-/**
- * Re-derive the maturity overview (firm count + median θ̂ SE) from the raw rows and
- * reconcile it against the server aggregate — integer compare on firm, Object.is on the
- * (σ-independent) median. No sigma_mode parameter: neither quantity depends on σ.
- */
+/** Integer compare on firm count. Object.is on the median. Neither quantity uses sigma. */
 export function summarizeMaturity(resp: CalibrationMaturityResponse): RcMaturitySummary {
-  // !cold_start mirrors the server's firm_count (= total − coldStartCount, where
-  // coldStart also covers never-attempted KCs). The prototype's `&& evidence_count > 0` is
-  // dropped: it's redundant (!cold_start ⟹ evidence_count ≥ 4 > 0, so the value is unchanged),
-  // but keeping it would diverge from the server's pure `!cold_start` definition.
+  // Firm count is !cold_start. Never-attempted KCs are cold_start, so they stay out.
+  // The predicate stays the server's. An extra evidence_count check is not part of it.
   const dFirm = resp.rows.filter((r) => !r.cold_start).length;
   const seValues = resp.rows
     .map((r) => r.theta_se)
@@ -211,8 +184,7 @@ export function summarizeMaturity(resp: CalibrationMaturityResponse): RcMaturity
   const sFirm = resp.aggregate.firm_count;
   const sMedian = resp.aggregate.median_theta_se;
   const firmMatch = dFirm === sFirm;
-  // Object.is so null↔null reconciles as match and any float bit-difference surfaces as drift.
-  // (thetaSe = 1/√precision never yields NaN; were it to, identical rows ⇒ Object.is(NaN,NaN) match.)
+  // Object.is so null matches null, and any float bit difference is drift.
   const medianMatch = Object.is(dMedian, sMedian);
 
   return {

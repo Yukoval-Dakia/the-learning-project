@@ -1,21 +1,6 @@
-// Onboarding ②a · upload cold-wrap (YUK-473 Slice 2).
-// Ported from docs/design/loom-refresh/project/screen-onboarding.jsx (OnboardRecord
-// + ObIngest), made real: the prototype mocked ingestion with a setInterval; this
-// drives the LIVE upload→extract pipeline (uploadAsset / expandPdf / expandDocx →
-// POST /api/ingestion → ingestion operation(kind=extract) → useIngestionSSE), styled as the prototype's
-// friendly progress rows. Replaces the Slice-1 UploadStubPage at /onboarding/upload.
-//
-// THIN骨架 (owner 2026-06-21 "Slice 2 收在上传屏接自动入池骨架"): this screen does
-// NOT render VisionTab's per-block review editor. Pool insertion is handled by the
-// EXISTING auto-enroll tail that fans out off the same OCR job
-// (tencent_ocr_extract → boss.send('auto_enroll'), flag WORKFLOW_JUDGE_AUTO_ENROLL_
-// ENABLED; dev .env.local ON, prod default OFF). On a true cold tree the auto-enroll
-// tail routes blocks to manual review (anti-hallucination drops tags) until the
-// cold-start bridge is wired onto the upload path — tracked as YUK-482 (next lane).
-// We therefore word the done-state honestly ("N 题已抽出") rather than claiming
-// "N active". The banner copy is likewise softened: the prototype's "自动归类学科·
-// 挂知识点·补参考答案" + "OCR 默认/VLM 兜底" describe YUK-482's end state + the OCR/
-// VLM ordering decision, neither true on this path today.
+// This screen does not edit blocks. Pool insertion is the auto-enroll tail, which may still
+// send a cold tree to manual review. Done copy counts extracted questions and does not claim
+// they are active.
 
 import { useCallback, useRef, useState } from 'react';
 import {
@@ -42,7 +27,7 @@ import './onboarding.css';
 
 type Phase = 'idle' | 'expanding' | 'uploading' | 'creating' | 'extracting' | 'done' | 'error';
 
-// vision_paper accept set — mirrors VisionTab (images + PDF + DOCX).
+// Same accept set as the vision paper path: images, PDF, and DOCX.
 const ACCEPT =
   'image/png,image/jpeg,image/webp,application/pdf,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 const MAX_FILES = 5;
@@ -64,10 +49,7 @@ interface IngRow {
   meta: string;
 }
 
-// Map the LIVE SSE signal (latestProgress: OCR done/total + structure stage) onto
-// the prototype's three friendly rows. We do NOT show the prototype's 4th row
-// (LLM 归类学科·挂知识点·补参考答案) — that's the auto-enroll tail, which has no SSE
-// event on THIS stream, so faking a row would over-claim (YUK-482).
+// No fourth row. Auto-enroll has no event on this stream, so a row would over-claim.
 function computeRows(
   phase: Phase,
   prog: { done: number; total: number; stage?: string } | null,
@@ -112,7 +94,6 @@ function computeRows(
   ];
 }
 
-// Dropzone label — extracted from a nested ternary (OCR #551: nested ternaries banned).
 function dropzoneTitle(files: File[]): string {
   if (files.length === 0) return '拖照片到此处 · 或点这里上传';
   const f0 = files[0];
@@ -127,14 +108,10 @@ export interface OnboardRecordProps {
 
 export default function OnboardRecord({ navigate }: OnboardRecordProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
-  // OCR review (#551): synchronous re-entrancy lock (state is async → a rapid
-  // double-click could fire two uploads before the button hides).
+  // State updates are async, so a second click can pass before the button hides.
   const inFlightRef = useRef(false);
-  // YUK-1483 — the page's current attachment. The root node's ref callback opens a
-  // fresh token on attach and drops it on detach, so a multi-await `start` chain
-  // whose page went away (e.g. the user hits 跳过 mid-flight) never sets state, and
-  // a chain from an earlier attachment can't write into a later one. Server work
-  // already accepted is not cancelled.
+  // A fresh token on attach, dropped on detach. A chain whose page left does not set state,
+  // and an older chain cannot write into a later attachment. Accepted server work is not cancelled.
   const attachmentRef = useRef<object | null>(null);
   const attachRoot = useCallback((node: HTMLDivElement | null) => {
     attachmentRef.current = node ? {} : null;
@@ -147,11 +124,8 @@ export default function OnboardRecord({ navigate }: OnboardRecordProps) {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [pageError, setErrorMsg] = useState<string | null>(null);
 
-  // Hold the SSE stream open through the extraction outcome as well as 'extracting'.
-  // The session's snapshot (and its replayed `events`) stays the same across the
-  // extracting→done flip, so the done-state "OCR 逐页识别" row keeps its "N 页"
-  // page-count meta (review finding 1). The stream is already closed server-side
-  // post-completion, so this just preserves the last events.
+  // Keep the subscription through the derived outcome. step stays extracting,
+  // so the done row still has the last page-count events.
   const sse = useIngestionSSE(step === 'extracting' ? sessionId : null);
 
   // Terminal SSE → done / error: the first completed/failed event of this session.
@@ -186,10 +160,7 @@ export default function OnboardRecord({ navigate }: OnboardRecordProps) {
     phase === 'creating' ||
     phase === 'extracting';
 
-  // Forward the goal id (threaded via ?goal from Welcome) into placement so the probe
-  // can scope to the goal's KCs (Slice 3 reads it from the query). YUK-480 — also forward the
-  // self-report (leanings + pace) so the upload fork reaches placement with the same ordering/
-  // amount hints as the direct fork (carry-through, no transform).
+  // Carry goal, leanings, and pace through unchanged so both forks scope and order the same way.
   const placementTo = (() => {
     const incoming = new URLSearchParams(window.location.search);
     const out = new URLSearchParams();
@@ -228,8 +199,7 @@ export default function OnboardRecord({ navigate }: OnboardRecordProps) {
   };
 
   const start = async () => {
-    // OCR #551: synchronous re-entrancy lock — a rapid double-click would otherwise
-    // fire two uploads before the idle button hides (state is async).
+    // State updates are async, so a second click can pass before the button hides.
     if (files.length === 0 || inFlightRef.current) return;
     inFlightRef.current = true;
     setErrorMsg(null);
@@ -237,8 +207,7 @@ export default function OnboardRecord({ navigate }: OnboardRecordProps) {
     const stillHere = () => attachment !== null && attachmentRef.current === attachment;
     try {
       const f0 = files[0];
-      // DOCX: self-contained endpoint builds the session server-side; go straight
-      // to extracting (no separate /api/ingestion + /extract).
+      // DOCX builds the session on the server and goes straight to extracting.
       if (files.length === 1 && isDocx(f0)) {
         setPhase('expanding');
         const ingested = await expandDocx(f0, {

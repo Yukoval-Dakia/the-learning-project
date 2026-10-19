@@ -41,8 +41,8 @@ import { type StarterOutcome, starterStatus } from './starter-supply-status';
 import './onboarding.css';
 
 const CAP = 8;
-// YUK-1489 — a save waits at most this long for a pending chained (pagehide) save; past it the
-// save goes out at the current epoch and the server's epoch check catches any clash.
+// A save waits at most this long for a pending pagehide chain.
+// After that it sends at the current epoch, and the server epoch check catches a clash.
 const CHAIN_WAIT_CAP_MS = 8000;
 const VALID_PACES = ['light', 'medium', 'dense'] as const;
 function readSelfReport(search: string): PlacementSelfReport {
@@ -169,9 +169,8 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
     if (!sid || !sessionOpenRef.current) return;
     applySelection(await transport.current.placementNext(sid));
   }, [applySelection]);
-  // YUK-1405 — 「继续」 on a held question: the release answers with the next step, so the
-  // page moves straight on. A question that is no longer held (409 not_releasable) means
-  // the page is behind: refresh quietly instead of showing an error.
+  // Continue on a held question. The release response is the next step.
+  // 409 not_releasable means this page is behind, so refresh instead of showing an error.
   const releaseHeld = useCallback(
     async (exit: PlacementHeldExit) => {
       try {
@@ -199,10 +198,8 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
       .finally(() => setChecking(false));
   };
 
-  // YUK-1483 — the screen's root owns entering placement: when it attaches it resumes the
-  // session named in the URL or starts one, once per screen (the request is reused if
-  // React re-attaches the same screen). Detaching only stops applying late results; it
-  // never ends a session the server already created.
+  // Attach resumes the URL session or starts one, once per screen. Detach stops applying late results.
+  // It does not end a session the server already created.
   const attachScreen = useCallback(
     (node: HTMLDivElement | null) => {
       if (!node) return undefined;
@@ -459,8 +456,7 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
   );
 }
 
-// YUK-1405 — the server has no question it can give right now. Say so plainly, name what is
-// still being prepared, and offer the server's own ways out instead of an endless wait.
+// The server has no question it can give. Name what is still being prepared, and offer its own exits.
 function NoItemStatus({
   noItem,
   checking,
@@ -509,8 +505,7 @@ function NoItemStatus({
   );
 }
 
-// YUK-1405 — questions that closed without a verdict. They are listed apart and never
-// counted as wrong; the reason says what happened to each.
+// Questions that closed without a verdict stay listed apart and are never counted as wrong.
 const UNRESOLVED_REASON: Record<PlacementUnresolvedItem['reason'], string> = {
   held_released: '中途放过了',
   awaiting_evaluation: '还在判分',
@@ -778,12 +773,12 @@ function PlacementQuestionCard({
   const currentValue = useRef(draftValue);
   const savedBytes = useRef(JSON.stringify(draftValue));
   const inFlight = useRef<Promise<void> | null>(null);
-  // YUK-1487 — the pagehide save chained past the in-flight one (resolves true once stored):
+  // The pagehide save that chained past the in-flight one. It resolves true once stored.
   // chainedSave is the latest chain since the current request started (409 supersede check);
   // pendingChain is the same chain until it settles (later saves wait for it).
   const chainedSave = useRef<Promise<boolean> | null>(null);
   const pendingChain = useRef<Promise<boolean> | null>(null);
-  // YUK-1489 — re-saves the current answer after a chain this card stopped waiting for lands
+  // Re-save the current answer after a chain this card stopped waiting for.
   // (see persist). Set while the card is mounted (attachCard); null once it is gone.
   const resaveAfterChain = useRef<(() => void) | null>(null);
   const cappedChains = useRef(new WeakSet<Promise<boolean>>());
@@ -819,7 +814,7 @@ function PlacementQuestionCard({
       // save's own outcome, not this one's), so this request reads the epoch their ACKs left.
       // Sent before the chain's ACK it could land first and then be overwritten by the chain.
       // A chain is only waited for until the cap: a keepalive request that never settles
-      // must not hold submit or exit forever (YUK-1489).
+      // must not hold submit or exit forever.
       const chainDeadline = Date.now() + CHAIN_WAIT_CAP_MS;
       for (;;) {
         if (inFlight.current) {
@@ -887,9 +882,8 @@ function PlacementQuestionCard({
     },
     [binding.issuance_id, binding.evaluation_group_id, client],
   );
-  // YUK-1483 — autosave runs from the edit events below. Edits are only possible while
-  // answering (the fields are disabled otherwise); commit holds autosave and resumes it
-  // if the answer was never dispatched.
+  // Autosave runs from the edit events. Fields are disabled outside answering.
+  // Commit holds autosave and resumes it if the answer was never dispatched.
   const saveDraft = useCallback(
     (value: typeof draftValue, ctx: { keepalive: boolean; chained: boolean }) =>
       persist(value, ctx.keepalive, ctx.chained),
@@ -1074,7 +1068,7 @@ function PlacementQuestionCard({
       setSubmitting(false);
     }
   };
-  // YUK-1405 — a held question's two exits, offered only when the server sent them.
+  // Both exits exist only when the server sent them.
   const heldExit = status === 'held' ? (binding.held_exit ?? null) : null;
   const release = async () => {
     if (submitting || !heldExit) return;

@@ -1,9 +1,4 @@
-// Onboarding ③ · placement probe API client (YUK-473 Slice 3).
-// Wraps the inc-B placement backend (YUK-468): start → next → end, plus a probe
-// answer submit that threads session_id=<probeId> into the shared /api/attempts resource
-// (which runs native activation + θ̂ + FSRS). The probe's
-// answer trail is keyed by that session_id (placement-next.ts counts events WHERE
-// session_id=<probe>), so it MUST be sent or /next can't advance/terminate.
+// The probe answer trail is keyed by session_id. Omit it and the next step cannot advance or end.
 
 import {
   type ApiOperationJsonResponse,
@@ -12,13 +7,11 @@ import {
 } from '@/ui/lib/api';
 import type { SessionTransitionRequestOptions } from '@/ui/lib/session-transition';
 
-// Start/next return the pinned public DTO and its recovery state.
+// Start and next return the pinned public DTO and its recovery state.
 export type PlacementStartResult = ApiOperationJsonResponse<'createPlacementSession'>;
 export type PlacementQuestionRef = NonNullable<PlacementStartResult['question']>;
 
-/** YUK-480 — onboarding self-report carried from the Welcome screen into the probe. Both are
- * ordering/amount-only (leanings → starter-question order, pace → probe count cap) and NEVER
- * feed θ̂/p(L). Optional — a probe started without a self-report behaves exactly as before. */
+/** Leanings order starter questions. Pace caps the probe count. Neither feeds theta or p(L). */
 export type PlacementSelfReport = Pick<
   ApiOperationRequestBody<'createPlacementSession'>,
   'leanings' | 'pace'
@@ -30,8 +23,7 @@ export const startPlacement = (goalId: string, selfReport: PlacementSelfReport =
     method: 'POST',
     body: {
       goalId,
-      // Omit empty leanings / absent pace so the body stays minimal (server treats absent as
-      // "no preference / default cap").
+      // Absent leanings or pace mean no preference and the default cap.
       ...(selfReport.leanings && selfReport.leanings.length > 0
         ? { leanings: selfReport.leanings }
         : {}),
@@ -48,11 +40,9 @@ export const placementNext = (sessionId: string) =>
     body: {},
   });
 
-// YUK-1405 — a held question's way forward: release it (recorded as not judged, never as
-// wrong) and advance. The URL is built here from the session id, like placementEnd: the
-// server's held_exit only signals that the exit is offered, and its URLs are never fetched
-// (they would carry the internal token wherever they point). The issuance id is the server's
-// idempotency key, so a repeated click replays the same result.
+// Release records the question as not judged, never as wrong, then advances.
+// The server's held_exit URLs are not fetched. They would carry the internal token.
+// The issuance id is the idempotency key, so a repeated click replays the same result.
 export type PlacementHeldExit = NonNullable<PlacementQuestionRef['assessment']['held_exit']>;
 export const releaseHeldPlacement = (sessionId: string, issuanceId: string) =>
   apiOperationJson('createPlacementHeldRelease', {
@@ -92,7 +82,7 @@ export interface SubmitProbeAnswerInput {
   latencyMs?: number | null;
 }
 
-// auto_rate keeps the placeholder rating observational. Activation owns θ and FSRS.
+// auto_rate keeps the placeholder rating observational. Activation owns theta and FSRS.
 export const submitProbeAnswer = (input: SubmitProbeAnswerInput) =>
   apiOperationJson('createAttempt', {
     url: '/api/attempts',
@@ -110,12 +100,11 @@ export const submitProbeAnswer = (input: SubmitProbeAnswerInput) =>
     },
   });
 
-// keepalive bodies share a ~64KB page budget and fetch throws on one over it; same cap as
-// practice's draft saver (kept local: onboarding takes no value import from practice).
+// fetch throws on a keepalive body past about 64KB. This cap stays under that.
+// Onboarding does not import practice's cap.
 const KEEPALIVE_MAX_BODY_BYTES = 60_000;
 
-// Probe answer draft: the shared issuance responses resource, same request as practice's saver.
-// YUK-1487 — an oversized keepalive body goes out as a normal (best-effort) fetch instead.
+// An oversized keepalive body goes out as a normal best-effort fetch.
 export const saveProbeResponseDraft = (
   issuanceId: string,
   body: ApiOperationRequestBody<'saveResponseDraft'>,

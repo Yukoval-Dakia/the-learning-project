@@ -1,7 +1,6 @@
-// YUK-1438 — what the placement screen says while it has no question to show.
-// Reads the public `starterSupply` outcomes (YUK-1405, on start / next / detail responses) and
-// turns them into learner wording. Design H5: only a usable result is "ready"; preparing says
-// it cannot start yet; failures and uncertainty name the reason.
+// What the placement screen says while it has no question to show.
+// Only a usable result is ready. Preparing says it cannot start yet.
+// Failures and uncertainty name the reason.
 import type { PlacementStartResult } from './placement-api';
 
 export type StarterOutcome = NonNullable<PlacementStartResult['starterSupply']>[number];

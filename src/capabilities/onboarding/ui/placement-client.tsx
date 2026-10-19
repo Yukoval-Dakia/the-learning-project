@@ -14,8 +14,7 @@ import {
 import { getPlacementProfile } from './profile-api';
 import { getCalibrationMaturity } from './recompute/calibration-maturity-api';
 
-// Placement and profile transports (YUK-1438). The HTTP adapters are the default; the Start
-// shell provides its RPC clients, which carry the same methods and wire types.
+// HTTP adapters are the default. The Start shell may pass RPC clients with the same methods.
 export type PlacementClient = {
   startPlacement: typeof startPlacement;
   getPlacementSession: typeof getPlacementSession;

@@ -219,6 +219,7 @@ function questionsForUnit(
     case 'blank_key': {
       // Only a declared text equivalence domain is Jev's.
       // Numeric blanks, and text blanks with no domain, stay with the comparator.
+      // Numeric and unit strictness is not handed to the model to loosen.
       const key = criterion.key;
       if (key.kind !== 'text' || key.equivalence === undefined) {
         return { unsupported: `${criterion.kind}:${key.kind}` };
