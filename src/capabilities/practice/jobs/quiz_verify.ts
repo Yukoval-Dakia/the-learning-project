@@ -22,6 +22,9 @@ import { initialSchedulingState } from '@/server/fsrs/state';
 //     → promote draft_status 'draft'→'active' + Q6 FSRS enroll (materialize an
 //       initial material_fsrs_state via the existing single-owner enroll path so
 //       the question enters the review pool).
+//     YUK-1507 — promote 不再直接 admitted：发布为 withheld(unverified_rules) 待
+//       准入，由 assessment_publish outbox 订阅触发 C1 双解 + 标定后才 admitted
+//       （serving 读面要求 scoring_admission_state='admitted'，withheld 期间不入池）。
 //   needs_review / fail / too_close
 //     → leave draft_status='draft' (never reaches the pool) with
 //       verification.status='needs_review'|'failed'.
@@ -33,13 +36,13 @@ import { initialSchedulingState } from '@/server/fsrs/state';
 // single-txn persist → writeEvent → catch).
 
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq, ne, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, ne, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
 import { recordQuestionPoolGap } from '@/capabilities/agency/public';
+import { QUESTION_ADMISSION_POLICY_IDS } from '@/core/question-admission-policy';
 import {
   LEGACY_DRAFT_STATUS,
-  MARKING_RULE_PROVENANCE,
   QUESTION_AVAILABILITY,
   SCORING_ADMISSION_STATE,
   SCORING_ADMISSION_WITHHELD_REASON,
@@ -58,7 +61,15 @@ import {
   toUnifiedVerifyResult,
 } from '@/core/schema/verify-contract';
 import type { Db, Tx } from '@/db/client';
-import { event, knowledge, question, question_group_lifecycle, source_document } from '@/db/schema';
+import {
+  event,
+  knowledge,
+  question,
+  question_admission_verification,
+  question_group_lifecycle,
+  question_revision,
+  source_document,
+} from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import {
@@ -69,10 +80,11 @@ import {
 } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
-import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
+import { publishQuestionGroup, publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import type { SubjectQuestionKind } from '@/subjects/profile-schema';
 import { resolveQuizGenSkillDocs } from '@/subjects/quiz-gen-skills';
+import { resolveQuestionAdmissionPolicyId } from '../server/admission/run-admission';
 import { SYNTHETIC_SUBJECT_ROOT_RE } from '../server/placement-scope';
 import { SupplyTraceV1 } from '../server/question-supply/evidence-demand';
 import {
@@ -326,6 +338,73 @@ async function promoteCompositeChildren(
       });
     }
   }
+}
+
+/**
+ * YUK-1507 — 同事务判定组是否已被 C1（question_admission_run）独立准入。
+ * 锁序 root question → lifecycle（与 publisher/C1 一致；调用方须已持根行锁）。
+ * 三者同真才命中（判据与 source_verify 的 pair-race guard 相同）：
+ *   1. lifecycle.scoring_admission_state === 'admitted'；
+ *   2.【当前 revision】上存在 policy question_admission@*、outcome='passed' 的
+ *      question_admission_verification 行（不匹配历史其他 revision 的 passed 行）；
+ *   3. 该行绑定当前已发布 revision 的 integrity_digest —— 权威绑定取 publisher
+ *      写入的 revision_digest 列（YUK-1547 resolved 发布后
+ *      evidence.base_contract_digest 是付费【输入】摘要，不再等于发布摘要）；
+ *      旧证据字段仅作 base==published 行的兼容回退。
+ * 命中 ⇒ 返回锁后 lifecycle 行与当前 revision id；未命中 ⇒ null。
+ */
+async function readBoundIndependentAdmission(
+  tx: Tx,
+  groupRootId: string,
+): Promise<{
+  lifecycle: typeof question_group_lifecycle.$inferSelect;
+  revisionId: string;
+} | null> {
+  const [lifecycle] = await tx
+    .select()
+    .from(question_group_lifecycle)
+    .where(eq(question_group_lifecycle.group_id, groupRootId))
+    .for('update')
+    .limit(1);
+  if (
+    lifecycle == null ||
+    lifecycle.scoring_admission_state !== SCORING_ADMISSION_STATE.ADMITTED ||
+    lifecycle.current_revision_id == null
+  ) {
+    return null;
+  }
+  const revisionId = lifecycle.current_revision_id;
+  const [c1Passed] = await tx
+    .select({
+      evidence: question_admission_verification.evidence,
+      revisionDigest: question_admission_verification.revision_digest,
+    })
+    .from(question_admission_verification)
+    .where(
+      and(
+        eq(question_admission_verification.revision_id, revisionId),
+        inArray(question_admission_verification.policy_id, [
+          ...QUESTION_ADMISSION_POLICY_IDS,
+          resolveQuestionAdmissionPolicyId(),
+        ]),
+        eq(question_admission_verification.outcome, 'passed'),
+      ),
+    )
+    .orderBy(desc(question_admission_verification.recorded_at))
+    .limit(1);
+  if (c1Passed == null) return null;
+  const recordedBaseDigest =
+    (c1Passed.evidence as Record<string, unknown> | null)?.base_contract_digest ?? null;
+  const [publishedRevision] = await tx
+    .select({ integrity_digest: question_revision.integrity_digest })
+    .from(question_revision)
+    .where(eq(question_revision.revision_id, revisionId))
+    .limit(1);
+  const boundToCurrent =
+    publishedRevision != null &&
+    (c1Passed.revisionDigest === publishedRevision.integrity_digest ||
+      publishedRevision.integrity_digest === recordedBaseDigest);
+  return boundToCurrent ? { lifecycle, revisionId } : null;
 }
 
 /**
@@ -874,7 +953,13 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
       }
       // YUK-1095 — 本次 promote 写入后的 admission generation（成功事件盖上，供
       // 并发 promotedElsewhere 判据绑定）；非 promote 路径恒为 null，不落该字段。
+      // YUK-1507 — kept 路径（组已被 C1 独立准入）盖【当前】admission generation：
+      // 本成功与现行独立准入决定同代绑定，同代 stale 失败投递仍被 promotedElsewhere
+      // 挡下；generation 再推进（新 revision 决定）后 shield 自动失效。
       let promotedAdmissionGeneration: number | null = null;
+      // YUK-1507 — C1 先行独立准入命中时记录保留的 revision id（事件审计标记；
+      // 成功分支不重发，失败分支不折叠/挂起）。见下方两处 publish gate。
+      let keptIndependentAdmissionRevisionId: string | null = null;
       if (promote) {
         // Supply scope already locked at the top of this tx (G→row order above).
         // Promote draft→active.
@@ -949,44 +1034,110 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
           verifyEventId,
         });
 
-        // YUK-1043 — 统一发布链：verified promote 即 §3.3 的 admission 时刻
-        //（同事务，位于级联之后 ⇒ 组契约含最终子 part 状态）。quiz_gen 内容为
-        // model-proposed ⇒ D1 双门：结构校验（publisher 契约校验）+ 本 job 的独立
-        // 模型核验均过 ⇒ system_verified 准入（显式非 official）。composite 的
-        // 组根 = 父行；已发布过同内容的组在此只更新 admission 维度（generation+1）。
-        // YUK-1045 — suspension:false 清 verify_hold（同版复核通过 ⇒ 幂等恢复）。
-        const promotePublish = await publishQuestionGroupFromRow(tx, {
-          rootId: row.parent_question_id ?? questionId,
-          admission: {
-            state: SCORING_ADMISSION_STATE.ADMITTED,
-            evidence: {
-              marking_provenance: MARKING_RULE_PROVENANCE.SYSTEM_VERIFIED,
+        // YUK-1043 — 统一发布链：verified promote 同事务重发组 revision（位于级联
+        // 之后 ⇒ 组契约含最终子 part 状态）。composite 的组根 = 父行。
+        // YUK-1507 — 验证通过 ≠ 判分准入（ADR-0073 四源同门：每个计分单元要两次
+        // 独立解题一致 + 逐单元标定才 admitted）。本 job 的独立模型核验只是内容
+        // 质检证据，故发布为 withheld(unverified_rules)＝待准入，保留
+        // quiz_verify@1 的 passed 核验记录；question_admission_run（YUK-1445 C1）
+        // 经 assessment_publish outbox 订阅自动入队，双解 + 标定通过后才
+        // admitted。已发布过同内容的组在此只更新 admission 维度（generation+1）。
+        // YUK-1045 — suspension:false 清 verify_hold（同版复核通过 ⇒ 幂等恢复，
+        // §3.3 表「同版复核通过」行）；retraction_hold 不属本票接线，publisher 恒保留。
+        const groupRootId = row.parent_question_id ?? questionId;
+        // YUK-1507 pair-race guard（同 source_verify 判据）：组已被 C1 独立准入且
+        // 证据绑当前已发布 revision ⇒ 本投递不得重发 —— 不把 admitted 降回
+        // withheld，也不把行归一 base 重铸到 C1 的 resolved revision 上（重铸还会
+        // 经 withheld 事件触发一次无收益的重复付费准入）。其余情况（C1 准入的是
+        // 更老 base 后行又变了、他 policy 准入、未准入）照常走 withheld 发布。
+        const keptAdmission = await readBoundIndependentAdmission(tx, groupRootId);
+        if (keptAdmission != null) {
+          keptIndependentAdmissionRevisionId = keptAdmission.revisionId;
+          promotedAdmissionGeneration = keptAdmission.lifecycle.scoring_admission_generation;
+          // verify_hold 角：C1 admitted 的发布本已清 verify_hold；若此刻仍挂
+          // （跨 lane 再挂起），经 publisher 既有 dimension-only 路径清除（digest
+          // 不变 ⇒ admission_updated，不铸新 revision），admission 状态与证据
+          // 原样保留（显式回传当前 admitted 维度）。
+          if (
+            keptAdmission.lifecycle.suspended === true &&
+            keptAdmission.lifecycle.suspension_reason === SUSPENSION_REASON.VERIFY_HOLD
+          ) {
+            const [currentRevision] = await tx
+              .select()
+              .from(question_revision)
+              .where(eq(question_revision.revision_id, keptAdmission.revisionId))
+              .limit(1);
+            if (currentRevision == null) {
+              throw new Error(
+                `quiz_verify: current revision '${keptAdmission.revisionId}' missing for group '${groupRootId}'`,
+              );
+            }
+            const cleared = await publishQuestionGroup(tx, {
+              group_id: groupRootId,
+              contract: {
+                structure: currentRevision.structure,
+                response_spec: currentRevision.response_spec,
+                scoring_basis: currentRevision.scoring_basis,
+                execution_plan: currentRevision.execution_plan,
+                ...(currentRevision.presentation != null
+                  ? { presentation: currentRevision.presentation }
+                  : {}),
+                integrity_digest: currentRevision.integrity_digest,
+              },
+              expectedCurrentRevision: currentRevision.revision_id,
+              expectedAdmissionGeneration: keptAdmission.lifecycle.scoring_admission_generation,
+              availability: keptAdmission.lifecycle.availability,
+              admission: {
+                state: 'admitted',
+                evidence: keptAdmission.lifecycle.scoring_admission_evidence ?? null,
+              },
+              suspension: { suspended: false },
               verification: {
-                structural_check_passed: true,
-                independent_verification: {
-                  passed: true,
-                  verifier: 'independent_model',
-                  verified_at: now.toISOString(),
+                policy_id: 'quiz_verify@1',
+                outcome: 'passed',
+                evidence: {
+                  overall: parsed.overall,
+                  copy_safety: copySafetyVerdict,
+                  admission: 'kept_independent_admission',
                 },
               },
-              model_slice: null,
+              actorRef: 'quiz_verify:promote',
+              now,
+            });
+            if (cleared.status === 'conflict') {
+              // 锁后读取 ⇒ 不该发生；出现即外部路径越过 seam 写 lifecycle ——
+              // fail-closed 回滚（同 FromRow 的 conflict 处理）。
+              throw new Error(
+                `quiz_verify: unexpected ${cleared.reason} conflict clearing verify_hold for group '${groupRootId}'`,
+              );
+            }
+            if ('admission_generation' in cleared) {
+              promotedAdmissionGeneration = cleared.admission_generation;
+            }
+          }
+        } else {
+          const promotePublish = await publishQuestionGroupFromRow(tx, {
+            rootId: groupRootId,
+            admission: {
+              state: SCORING_ADMISSION_STATE.WITHHELD,
+              reason: SCORING_ADMISSION_WITHHELD_REASON.UNVERIFIED_RULES,
             },
-          },
-          suspension: { suspended: false },
-          verification: {
-            policy_id: 'quiz_verify@1',
-            outcome: 'passed',
-            evidence: {
-              overall: parsed.overall,
-              copy_safety: copySafetyVerdict,
+            suspension: { suspended: false },
+            verification: {
+              policy_id: 'quiz_verify@1',
+              outcome: 'passed',
+              evidence: {
+                overall: parsed.overall,
+                copy_safety: copySafetyVerdict,
+              },
             },
-          },
-          availability: QUESTION_AVAILABILITY.GENERAL_POOL,
-          actorRef: 'quiz_verify:promote',
-          now,
-        });
-        promotedAdmissionGeneration =
-          'admission_generation' in promotePublish ? promotePublish.admission_generation : null;
+            availability: QUESTION_AVAILABILITY.GENERAL_POOL,
+            actorRef: 'quiz_verify:promote',
+            now,
+          });
+          promotedAdmissionGeneration =
+            'admission_generation' in promotePublish ? promotePublish.admission_generation : null;
+        }
       } else {
         // needs_review / fail / too_close / solve_check veto — stay draft, never reaches
         // the pool.
@@ -1013,32 +1164,46 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
         // 时铸 suspended 首版；同版复核通过后 promote 分支（上方）解除挂起。
         // promotedElsewhere ⇒ 并发终验成功已提交 ⇒ 本投递 stale，不翻维度也不写
         // 核验记录（记录诚实归属本轮核验的 generation）。
+        // YUK-1507 — promotedElsewhere 的 generation 绑定盖不住一种新交错：先前
+        // 成功投递记的是它写的 withheld generation，C1 admitted 会把 generation
+        // 再推进一代 ⇒ 迟到的失败投递看到「无当前代 success」而误判非 stale。
+        // 故另查 live lifecycle：组仍持【绑定当前 revision】的 C1 独立准入 ⇒
+        // 本投递 stale（§3.3 旧验证不改变较新 admission 决定），不折叠 admitted
+        // 也不挂 verify_hold；事件仍如实写（含 kept 审计标记）。
         const verifyFailed =
           parsed.overall === 'fail' ||
           copySafetyVerdict === 'too_close' ||
           solveCheckOk === false ||
           teachingQualityOk === false;
         if (!current.promotedElsewhere) {
-          await publishQuestionGroupFromRow(tx, {
-            rootId: row.parent_question_id ?? questionId,
-            admission: {
-              state: SCORING_ADMISSION_STATE.WITHHELD,
-              reason: verifyFailed
-                ? SCORING_ADMISSION_WITHHELD_REASON.VERIFICATION_FAILED
-                : SCORING_ADMISSION_WITHHELD_REASON.UNVERIFIED_RULES,
-            },
-            suspension: { suspended: true, reason: SUSPENSION_REASON.VERIFY_HOLD },
-            verification: {
-              policy_id: 'quiz_verify@1',
-              outcome: verifyFailed ? 'failed' : 'suspended',
-              evidence: {
-                overall: parsed.overall,
-                copy_safety: copySafetyVerdict,
+          const staleAgainstAdmission = await readBoundIndependentAdmission(
+            tx,
+            row.parent_question_id ?? questionId,
+          );
+          if (staleAgainstAdmission != null) {
+            keptIndependentAdmissionRevisionId = staleAgainstAdmission.revisionId;
+          } else {
+            await publishQuestionGroupFromRow(tx, {
+              rootId: row.parent_question_id ?? questionId,
+              admission: {
+                state: SCORING_ADMISSION_STATE.WITHHELD,
+                reason: verifyFailed
+                  ? SCORING_ADMISSION_WITHHELD_REASON.VERIFICATION_FAILED
+                  : SCORING_ADMISSION_WITHHELD_REASON.UNVERIFIED_RULES,
               },
-            },
-            actorRef: 'quiz_verify:suspend',
-            now,
-          });
+              suspension: { suspended: true, reason: SUSPENSION_REASON.VERIFY_HOLD },
+              verification: {
+                policy_id: 'quiz_verify@1',
+                outcome: verifyFailed ? 'failed' : 'suspended',
+                evidence: {
+                  overall: parsed.overall,
+                  copy_safety: copySafetyVerdict,
+                },
+              },
+              actorRef: 'quiz_verify:suspend',
+              now,
+            });
+          }
         }
       }
 
@@ -1137,6 +1302,15 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
             : {}),
           promoted: promote,
           verification_status: verificationStatus,
+          // YUK-1507 — C1 先行独立准入命中：本次投递未重发/未降级 admitted（成功
+          // 分支未把行归一 base 重铸到 resolved revision；失败分支未折叠/挂起较新
+          // 准入决定）。只记保留的 revision id，不记任何原文内容。
+          ...(keptIndependentAdmissionRevisionId != null
+            ? {
+                admission: 'kept_independent_admission',
+                kept_revision_id: keptIndependentAdmissionRevisionId,
+              }
+            : {}),
           ...(promotedAdmissionGeneration != null
             ? { admission_generation: promotedAdmissionGeneration }
             : {}),
