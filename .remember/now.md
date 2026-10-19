@@ -1,3 +1,7 @@
+# Architecture deepening — 2026-10-19
+
+Current owner: arch-lead, refactor/yuk-1572-stream-modules, base d41f24213. Six tickets relabelled T3. Grok retains #1830 ratchet writer; semantic alignment posted to PR and YUK-1570. First-three plan approved: docs/planning/2026-10-19-architecture-deepening.md. SWE-2 source writer released at 2cd19533a: stream-store 1427, inputs355, view410; >1500 files17. Merged main615437b76 into d38e72c447; parent typecheck/lint179warnings/full build/boundary+architecture audits exit0. Kimi R1 APPROVE d41..2cd, source unchanged; exact5c0e CI39252986951 SUCCESS. Main2176 integration only PLAN/now conflicts; new synthetic-head checks/CI pending, no new source review needed. Sol independently examines knowledge outbound SCC cut after GLM notes-only impossibility inference was rejected. Parent owns docs/review/integration. No tests/DB/Docker/TEST/provider operations. Baseline measured: SCC1/5 members, cap-server443, >1500 files18, baseline141 lines. External bulky evidence approved with permanent retention; old HEAD deletion requires copy/hash/reference inventory and per-batch coordinator review. First evidence PR updates AGENTS for all lanes. Test shrink remains inventory only pending owner approval.
+
 # YUK-1525 题库计数 draft 交接 — 2026-10-19
 
 本 worktree `/workspace/amp/wt/YUK-1525`，分支 `yuk-1525-serving-counts-sql`，只处理 YUK-1525。服务「第一天能用」。SQL 统一 lifecycle 理由，冻结题面按200行分批复用 `decideAutomaticServing`，不复制规则。服务状态计数与列表使用 repeatable-read 只读事务，保留 API 字段与 offset 契约。

@@ -334,6 +334,27 @@ jobs:
         with:
           node-version-file: '.node-version'
           cache: 'pnpm'
+      # CircleCI's GHA machine image can inherit root-owned /usr/local Rust homes.
+      # Keep installs and Cargo cache writes owned by this job's unprivileged user.
+      - name: Prepare writable Rust homes
+        if: steps.filter.outputs.parity_changed != 'false'
+        shell: bash
+        run: |
+          set -euo pipefail
+          id
+          for directory in "${RUSTUP_HOME:-$HOME/.rustup}" "${CARGO_HOME:-$HOME/.cargo}"; do
+            if [ -e "$directory" ]; then
+              stat -c '%U:%G %a %n' "$directory"
+            fi
+          done
+          rustup_home="$RUNNER_TEMP/parity-rustup"
+          cargo_home="$RUNNER_TEMP/parity-cargo"
+          mkdir -p "$rustup_home" "$cargo_home"
+          test -w "$rustup_home" && test -w "$cargo_home"
+          echo "RUSTUP_HOME=$rustup_home" >> "$GITHUB_ENV"
+          echo "CARGO_HOME=$cargo_home" >> "$GITHUB_ENV"
+          echo "$cargo_home/bin" >> "$GITHUB_PATH"
+          stat -c '%U:%G %a %n' "$rustup_home" "$cargo_home"
       # stable @ 2026-07-20; pin third-party actions to immutable commits.
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         if: steps.filter.outputs.parity_changed != 'false'
