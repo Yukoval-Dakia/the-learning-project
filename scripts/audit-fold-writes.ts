@@ -67,6 +67,7 @@
 import { type Dirent, readFileSync, readdirSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { lineOf } from './lib/ts-tokenize';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
@@ -577,14 +578,6 @@ export function findWriteSites(
     const raw = readFile(file);
     if (raw === null) continue;
     const code = stripComments(raw);
-    // pre-compute line offsets on the stripped source (newlines preserved by the stripper).
-    const lineAt = (index: number): number => {
-      let line = 1;
-      for (let k = 0; k < index && k < code.length; k += 1) {
-        if (code[k] === '\n') line += 1;
-      }
-      return line;
-    };
     DRIZZLE_RE.lastIndex = 0;
     for (const m of code.matchAll(DRIZZLE_RE)) {
       sites.push({
@@ -592,7 +585,10 @@ export function findWriteSites(
         table: m[2] as FoldOwnedTable,
         op: m[1] as WriteSite['op'],
         form: 'drizzle',
-        line: lineAt(m.index ?? 0),
+        // lineOf (shared with the draft-status audits' ts-tokenize, YUK-1579):
+        // 1-based on the stripped source, whose newlines are preserved so they
+        // stay aligned with the original.
+        line: lineOf(code, m.index ?? 0),
       });
     }
     RAW_SQL_RE.lastIndex = 0;
@@ -603,7 +599,7 @@ export function findWriteSites(
         table: m[2] as FoldOwnedTable,
         op: RAW_SQL_OP[kw] ?? 'update',
         form: 'raw-sql',
-        line: lineAt(m.index ?? 0),
+        line: lineOf(code, m.index ?? 0),
       });
     }
   }
