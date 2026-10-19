@@ -2,6 +2,7 @@
 // env-overridable; the kill switch is a SEPARATE opt-in using the shared flag grammar (YUK-572
 // dark-ship pattern — cron stays registered, handler no-ops, zero spend).
 
+import { canonicalProviderName } from '@/ai/task-spec';
 import { type ConfigValue, getConfig } from '@/core/config/store';
 import type { JudgeCalibrationConfig } from '../server/judge-calibration-sample-core';
 
@@ -48,9 +49,11 @@ export function readJudgeCalibrationConfig(
   const rejudgeProvider = getConfig('JUDGE_CALIBRATION_REJUDGE_PROVIDER', env);
   const rejudgeModel = getConfig('JUDGE_CALIBRATION_REJUDGE_MODEL', env);
   return {
-    rejudgeProvider: pin?.provider
-      ? pin.provider
-      : requireConfigString('JUDGE_CALIBRATION_REJUDGE_PROVIDER', rejudgeProvider),
+    rejudgeProvider: canonicalProviderName(
+      pin?.provider
+        ? pin.provider
+        : requireConfigString('JUDGE_CALIBRATION_REJUDGE_PROVIDER', rejudgeProvider),
+    ),
     rejudgeModel: pin?.model
       ? pin.model
       : requireConfigString('JUDGE_CALIBRATION_REJUDGE_MODEL', rejudgeModel),

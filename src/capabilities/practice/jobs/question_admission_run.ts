@@ -4,6 +4,7 @@
 import { randomUUID } from 'node:crypto';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
+import { canonicalProviderName } from '@/ai/task-spec';
 import { QUESTION_ADMISSION_POLICY_IDS } from '@/core/question-admission-policy';
 import { LEGACY_DRAFT_STATUS } from '@/core/schema/assessment/lifecycle';
 import type { ResponseSpecT } from '@/core/schema/assessment/response';
@@ -70,7 +71,10 @@ export interface QuestionAdmissionRunResult {
   revision_ordinal?: number;
   per_unit: { scoring_unit_id: string; status: string; reason?: string }[];
 }
-const SOLVER2_PROVIDER = process.env.QUESTION_ADMISSION_SOLVER2_PROVIDER as Provider | undefined;
+const SOLVER2_PROVIDER_RAW = process.env.QUESTION_ADMISSION_SOLVER2_PROVIDER;
+const SOLVER2_PROVIDER = SOLVER2_PROVIDER_RAW
+  ? (canonicalProviderName(SOLVER2_PROVIDER_RAW) as Provider)
+  : undefined;
 const SOLVER2_MODEL = process.env.QUESTION_ADMISSION_SOLVER2_MODEL;
 
 async function loadDefinition(db: Db | Tx, rootId: string) {
@@ -417,7 +421,7 @@ export async function runAdmissionForQuestion(
         solver2: batch.input.solver2
           ? {
               ...(batch.input.solver2.provider
-                ? { provider: batch.input.solver2.provider as Provider }
+                ? { provider: canonicalProviderName(batch.input.solver2.provider) as Provider }
                 : {}),
               ...(batch.input.solver2.model ? { model: batch.input.solver2.model } : {}),
             }

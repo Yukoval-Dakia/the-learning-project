@@ -98,7 +98,7 @@ export type RunWebSourcingAgentFn = (params: {
     taskRunId: string;
     causedByEventId: string;
     modelBinding?: {
-      provider?: 'xiaomi' | 'anthropic-sub' | 'anthropic' | 'zai-coding-cn' | 'opencode-go';
+      provider?: 'xiaomi' | 'anthropic-sub' | 'anthropic' | 'zhipuai-coding-plan' | 'opencode-go';
       model?: string;
       adapter?: 'pi';
       effort?: 'low' | 'medium' | 'high';

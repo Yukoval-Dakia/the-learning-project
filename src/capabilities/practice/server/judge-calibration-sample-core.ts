@@ -31,6 +31,7 @@
 
 import { and, eq, gte, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
+import { canonicalProviderName } from '@/ai/task-spec';
 import {
   IMAGE_CONSUMING_JUDGE_ROUTES,
   MODEL_BACKED_JUDGE_ROUTES,
@@ -581,7 +582,9 @@ export async function applyJudgeCalibrationRejudgeSample(
     rejudgeRawOutput: rejudged.rawText,
     visionJudgeProviderAtSample: laneSnapshots.visionJudgeProviderAtSample,
     aiProviderOverrideAtSample: laneSnapshots.aiProviderOverrideAtSample,
-    sameLaneSuspected: inferredOriginalProvider === cfg.rejudgeProvider,
+    sameLaneSuspected:
+      canonicalProviderName(inferredOriginalProvider) ===
+      canonicalProviderName(cfg.rejudgeProvider),
     now,
   });
 }
