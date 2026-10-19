@@ -141,12 +141,11 @@ interface SettlementPlan {
   rating: 'again' | 'hard' | 'good' | null;
   /** 'user' = explicit activation choice or manual/self_report provenance. */
   ratingSource: 'verdict' | 'user' | 'none';
-  /**
-   * One knowledge card per non-synthetic KC in this scope. No KC falls back
-   * to the group-root question card. scopeVersion is sealed with the evidence.
-   */
+  /** Sealed on the settlement evidence. Replay keeps this mapping instead of today's labels. */
   scopeVersion: number;
+  /** Non-synthetic KC ids in this scope. */
   scopeKcIds: string[];
+  /** One knowledge card per scope KC. An empty scope uses the group-root question card. */
   fsrsSubjects: FsrsSubject[];
   kcObservations: KcObservation[];
   theta: ThetaApply | { applied: false; abstainReason: string };

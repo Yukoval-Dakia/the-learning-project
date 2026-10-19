@@ -13,7 +13,7 @@
 // transaction rolls back. No head move, no receipt.
 // applied, ineligible, and failed_pending each leave a receipt event. There is no receipt table.
 // Attempts that never ran do not. The CAS predicate is the database backstop after the in-lock check.
-// The in-lock check is resolveActivationCas in core/schema/assessment/ids.ts.
+// The in-lock check is resolveActivationCas in src/core/schema/assessment/ids.ts.
 // The receipt event is the outbox. Generation moves by one. Both expected ids are required.
 // coordinate_mismatch means the submission, issuance, revision, and frozen input do not name one group.
 // Content digest, what a score means, and whether a regrade is extra practice stay inside the port.
