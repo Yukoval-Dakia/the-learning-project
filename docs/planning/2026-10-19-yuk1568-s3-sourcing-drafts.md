@@ -82,16 +82,17 @@ conversion_issues → 提交返回 withheld（不铸 revision），草稿保留�
 - **权威选择（R1 F1）**：凡组当前有已发布 revision，该冻结四层契约即
   唯一内容权威——typed 候选（含不携 answer_shape/blank_order 的普通
   parts）的 points/规则/unit 身份不在 flat 行投影里，FromRow 重建会丢；
-  对行归一发布的旧组，冻结层与行归一产物在 converged-writer 不变量下
-  digest 本就相同。**只有从未发布的真 legacy 组**（current_revision_id
+  对行归一发布的旧组，冻结层与行归一产物须经现役 publisher 的同一
+  canonical seal 后比较。**只有从未发布的真 legacy 组**（current_revision_id
   为空）走 FromRow。不再按「有没有数学声明」分流。
 - **核验输入绑定（R1 F2 的快照修复，R2 后补内容权威）**：`runSourceVerify` 起点用**一条
   SELECT**（`question` ⋈ `lifecycle`(coalesce(parent,id)=group_id) ⋈
   `question_revision`）取行 + 组身份 + 冻结 revision——同一语句快照，
   行内容与 revision/generation 身份不可错位拼装（原实现分读会拼出
   旧行+新 revision）。组已发布时先用现成
-  `normalizeQuestionRowToContract` 对同快照行重建完整契约，只有
-  integrity digest 等于冻结版且行 image_refs 全属于冻结 figure 材料
+  `normalizeQuestionRowToContract` 对同快照行重建完整契约，再经
+  `publishedContractSeal(...).canonical`（与现役 publisher 完全相同的封存）。
+  只有该 canonical digest 等于冻结版且行 image_refs 全属于冻结 figure 材料
   才复用 legacy 输入。text/numeric/structured 槽因此保留原来的
   checks/solve/grounding，不经过草稿编辑器的 unmapped free 兜底。
   rubric、reference、judge 意图、材料与 structured 内容由发布归一的
@@ -113,11 +114,22 @@ conversion_issues → 提交返回 withheld（不铸 revision），草稿保留�
   KC 归属取行（组/行级账本，不在 revision 层）。
 - **有损形状付费前 hold**：未通过上述 legacy 一致性证明时，投影对核验输入残缺（多 part/unit/slot 边界、scoring unit 多
   slot_refs、slot kind 不可映射 `unmapped_slot_kind`、多 select unit
-  残缺 choices、select 键引用 spec 外 item、未投影材料/证据/presentation，
+  残缺 choices、select 键引用 spec 外 item、未投影材料/证据/非标准 presentation，
   或非选择键的私有评分材料；选择键仅可忽略已具名的私有 rubric/解析），只落
   `structure_completeness` fail（reason 具名），不跑确定性检查不花
   solve/grounding——fail 走既有 demote+verify_hold 路径，编辑改形状后
   可重验恢复（不封死 typed sourcing 可用面）。
+- **标准展示可达（父定向核验后的更正）**：不再按 `presentation != null`
+  整类 hold。复用 `defaultPresentation` 对冻结四层契约生成标准树，只接受
+  stack 内 `text_math(part_ref)` + `option_list` / `blank_input` /
+  `free_area`；再用 `publishedContractSeal` 比较实际冻结树与标准树的
+  canonical 封存。所有 block/ref/bind/顺序/配置都必须相同（包括 part、
+  slot、unit 身份）；jsonb 对象键序不影响比较。标准 select/blank 没有
+  额外材料时可进入检查/solve；custom、material_ref、额外图文、改绑、
+  增删块或非标准树不相等，仍付费前 hold。默认生成器可生成的
+  matching_columns/ordering/break_tap 也不在 flat 可表达白名单内。
+  此展示闸同样约束 legacy 复用分支，不因 row digest 匹配绕开 custom
+  展示。公开材料/figure/证据的独立闸继续保留。
 - **应用侧不变**：helper 锁后比对 expectedRevision/expectedGeneration
   （快照值=被验 revision），漂移抛错回滚；行版本检查、C1 独立证据、
   promotedElsewhere 语义原样。覆盖 transient/passed/failed/override；
@@ -234,7 +246,67 @@ sourcing_web 候选照旧全走旧链——**旧 writer 未为新声明扩展**�
 
 ## 验证（本机实际执行——逐命令如实）
 
-### R2 后定向实现修复（基线 `93344bddc`）
+### 父定向核验后更正（基线 `51967a6ee`）
+
+撤回上一实现对标准展示与 legacy 兼容的完成声明：`51967a6ee` 的
+`presentation != null` 会挡住标准 typed 来源题；且直接将 normalizer
+的键序 digest 与现役库存 canonical digest 比较，不能证明 legacy
+兼容。此次两处修正在同一 `source_verify.ts` 与本文内完成，不新增模块。
+
+静态可达依据（无合成输入/函数演练）：
+
+- **标准 typed select/blank**：`server/questions/submit-question.ts:417–433`
+  的 `presentationForDraft` 在无显式布局时调用
+  `core/schema/assessment/presentation.ts:951–1040` 的 `defaultPresentation`。
+  本核验分支使用同一函数、同一冻结 structure/spec/scoring 生成标准树；
+  普通选项/空的结果是 stack + part_ref 题干 + 同 unit/slot 的
+  option_list/blank_input，属于白名单且 canonical 封存相同，因此不再
+  命中展示 hold。通过其他既有无损闸后，冻结 prompt/choices/key 送入
+  `checksForTier(2)` 与真实 `runSolveCheck`，不是仅解除 hold 后空答案 fallback。
+- **legacy canonical 一致性**：`server/questions/sourced-draft-insert.ts:217–227`
+  调用 `publishQuestionGroupFromRow`；`kernel/records/assessment-publication.ts:1256–1259`
+  以 `normalizeQuestionGroupToContract(root, liveParts)` 构建输入；无物理
+  parts 时 `assessment-normalization.ts:861` 直接返回
+  `normalizeQuestionRowToContract(root)`。publisher 在
+  `assessment-publication.ts:789–803` 调用 `publishedContractSeal` 并取
+  `seal.canonical`，`:989` 原样写入 revision.integrity_digest。本修复
+  也对同快照行归一结果调用这一 `publishedContractSeal(...).canonical`。
+  其实现 `assessment-normalization.ts:1023–1048` 对同四层/可选展示
+  做同 schema parse + stable key JSON + SHA256；未另写 digest 算法。
+  旧的 `contractIntegrityDigest` 仅是 normalizer 提交时兼容 seal，不能
+  直接与现役 canonical 库存比较。图片 digest 仍取该冻结版资产输入。
+- **旧 rubric A / 新 key B**：canonical 封存覆盖 scoring_basis 的真实键，
+  从旧行重建的 A 不等于冻结 B；转冻结投影后 rubric/override 仍明确置空。
+  新标准 presentation 放行不恢复旧 rubric 优先权，不提前修改工作行。
+
+本次全量日志独立保存（上一记录原样保留）：
+`/Volumes/YukovalSBak/yukoval-projects/tlp-status/review/stage1-yuk1568-s3-20261019/r2-fix-codex-logs/presentation-canonical-YpZK0h/`。
+中断后的进程核对：原检查 session 均已不存在，`lsof` 确认原日志无进程
+占用，源码 SHA256 仍为
+`1cc8a9202fba158b96c1f78b8e8141f811a40ef96855a9d0becb931a52cb0064`。
+原 lint 与 question-writers 已取得 exit 0；原 typecheck/build/capability
+audit 的最终退出码未取回，不计作最终通过（原日志保留）。仅后三项
+另启 `*-resumed.log`，并将实际退出码保存到同名 `.exit`，无并发重复。
+最终结果（实际进程退出码）：
+
+| 命令 | exit / 完整日志 |
+|---|---|
+| `pnpm typecheck` | 0 / `typecheck-resumed.log` + `.exit` |
+| `pnpm lint` | 0（179 warnings）/ `lint.log`（中断前已取得退出码） |
+| `pnpm build` | 0 / `build-resumed.log` + `.exit` |
+| `pnpm audit:capability-boundaries` | 0（443/48 不变）/ `audit-capability-boundaries-resumed.log` + `.exit` |
+| `pnpm audit:question-writers` | 0 / `audit-question-writers.log`（中断前已取得退出码） |
+| `git diff --check` | 0 |
+
+`source-change.patch` / `source.sha256` 封存同一源码；中断后未再修改产品代码。
+测试/断言/临时合成脚本（包括仅打印）、DB/容器/provider/runtime/HTTP业务/
+浏览器/运营锁/stock 均 **NOT_RUN**。未新开 review/子代理；保持同 PR draft，
+父继续定向核验与总看板/Linear 收口。
+
+### R2 后首次实现的历史检查（基线 `93344bddc`，结果为 `51967a6ee`）
+
+父随后确认本实现仍有上述标准展示误 hold 与 seal 算法差异，故以下
+检查通过不构成功能完成；当前实现及证据以上节更正为准。
 
 本轮只改 `source_verify.ts` 与本文；没有新投影模块，没有改
 URL/shared submit/embed、owner override、双 CAS、row version 或 C1。

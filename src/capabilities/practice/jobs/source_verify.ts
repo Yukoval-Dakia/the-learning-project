@@ -44,6 +44,7 @@ import {
   SCORING_ADMISSION_WITHHELD_REASON,
   SUSPENSION_REASON,
 } from '@/core/schema/assessment/lifecycle';
+import { defaultPresentation } from '@/core/schema/assessment/presentation';
 import { readDifficultyEvidenceFromMetadata } from '@/core/schema/difficulty-evidence';
 import { WebSourcedProvenance, deriveSourceTier } from '@/core/schema/provenance';
 import { toUnifiedVerifyResult } from '@/core/schema/verify-contract';
@@ -65,7 +66,10 @@ import {
   question_revision,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { normalizeQuestionRowToContract } from '@/kernel/records/assessment-normalization';
+import {
+  normalizeQuestionRowToContract,
+  publishedContractSeal,
+} from '@/kernel/records/assessment-normalization';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { type TaskTextResult, type TaskTextRunFn, aiAgentRef } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
@@ -622,11 +626,32 @@ export async function runSourceVerify(
     ),
   );
   let legacyRowMatchesRevision = false;
+  let presentationProjectsLosslessly = frozenRevision?.presentation == null;
   if (frozenRevision != null) {
+    if (frozenRevision.presentation != null) {
+      const standard = defaultPresentation(
+        frozenRevision.structure,
+        frozenRevision.response_spec,
+        frozenRevision.scoring_basis,
+      );
+      // 只接受现役 producer 的标准呈现：题干 part_ref + 普通选项/空/作答区。
+      // 默认生成器也能输出 matching/order/break_tap；flat choices 不表达它们。
+      // canonical seal 消除 jsonb 键序差异，仍逐字段约束内容引用和作答绑定；
+      // custom、material_ref、增删题干/输入或改绑都不可能与标准树同封存。
+      presentationProjectsLosslessly =
+        standard?.root.kind === 'stack' &&
+        standard.root.children.every((block) =>
+          ['text_math', 'option_list', 'blank_input', 'free_area'].includes(block.kind),
+        ) &&
+        publishedContractSeal(frozenRevision).canonical ===
+          publishedContractSeal({ ...frozenRevision, presentation: standard }).canonical;
+    }
     try {
+      // FromRow publisher 以 normalizer 为输入，但最终存 seal.canonical；
+      // 不能拿 normalizer 的旧键序 integrity_digest 直接与库存 canonical 比。
       legacyRowMatchesRevision =
-        normalizeQuestionRowToContract({ ...row, figureDigests }).integrity_digest ===
-          frozenRevision.integrity_digest &&
+        publishedContractSeal(normalizeQuestionRowToContract({ ...row, figureDigests }))
+          .canonical === frozenRevision.integrity_digest &&
         // structured normalizer 可优先用叶答案/选项，忽略 flat 列。
         // 复用 flat verifier 前，额外证明它实际读取的答案/选项也已封存。
         (row.structured == null ||
@@ -646,7 +671,7 @@ export async function runSourceVerify(
       // 非 legacy / 无法归一不等于一致，继续冻结投影的付费前形状闸。
     }
   }
-  if (frozenRevision != null && legacyRowMatchesRevision) {
+  if (frozenRevision != null && legacyRowMatchesRevision && presentationProjectsLosslessly) {
     // text/numeric/structured legacy 槽不用绕草稿编辑器的 free fallback。
     // reference、rubric、判分意图及材料由完整 digest 证明属于本 revision。
     // 资产来自冻结材料；行级 bbox/placement 未封存，不作 solver 提示。
@@ -714,8 +739,8 @@ export async function runSourceVerify(
       verifyInputHoldReason = 'typed_select_key_unresolved';
     } else if (
       // 已冻结的选择键可直接比较；私有旧 rubric/解析不能抢占它。
-      // 其他材料、证据要求与 presentation 没有这里的无损 flat consumer。
-      frozenRevision.presentation != null ||
+      // 标准展示只引用下面实际投影的题干/选项/槽；其他展示不可静默丢弃。
+      !presentationProjectsLosslessly ||
       frozenRevision.structure.materials.some(
         (m) =>
           m.kind === 'figure' ||
