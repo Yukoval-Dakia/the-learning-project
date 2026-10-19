@@ -8,6 +8,12 @@ import type { ResponseSetT, SlotResponseT } from '@/core/schema/assessment';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { stableStringify } from '@/core/migration/stable-stringify';
+import type { PresentationT } from '@/core/schema/assessment/presentation';
+import type { ResponseSlotT } from '@/core/schema/assessment/response';
+import {
+  PAPER_MODE_UNSUPPORTED_SLOT_KIND,
+  PRESENTATION_INPUT_SLOT_KINDS,
+} from '@/core/schema/assessment/slot-renderers';
 import { REASONING_TRACE_MAX_LEN } from '@/kernel/limits';
 import { AssetEvidencePreview } from '@/ui/components/response/AssetEvidencePreview';
 import { ChoiceSetResponse } from '@/ui/components/response/ChoiceSetResponse';
@@ -34,6 +40,12 @@ import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { Btn } from '@/ui/primitives/Btn';
 import { Card } from '@/ui/primitives/Card';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
+import { boundSlots, entriesForSubmit } from './blocks/envelope';
+import {
+  type EntriesUpdate,
+  PresentationBlocks,
+  parsePresentation,
+} from './blocks/PresentationBlocks';
 import type { PfToast } from './PracticeFacePage';
 import {
   type PaperDetail,
@@ -51,6 +63,34 @@ import {
 // shouldOfferProcessBox 决定过程框挂不挂，buildCaptureFields 负责 trim 判空 + 防御性截断
 // +「空值不发字段」。两者随 PfSolo 的提交引擎移到 use-practice-submit（YUK-1473）。
 import { buildCaptureFields, shouldOfferProcessBox } from './use-practice-submit';
+
+// YUK-1573 — the server refuses opening / handing in a whole paper whose issued slots this
+// page cannot draw; the learner answers those questions one by one instead.
+const PAPER_MODE_UNSUPPORTED_COPY = '这份卷暂时不能整卷作答，请逐题作答';
+
+function isPaperModeUnsupported(e: unknown): boolean {
+  return e instanceof ApiError && e.code === PAPER_MODE_UNSUPPORTED_SLOT_KIND;
+}
+
+function isPresentationInputSlot(slot: ResponseSlotT): boolean {
+  return (PRESENTATION_INPUT_SLOT_KINDS as readonly string[]).includes(slot.kind);
+}
+
+// YUK-1573 — an issued select / blank slot that no declared input block of the matching class
+// binds (custom blocks do not run on this page). True when the presentation is missing too.
+function unboundPresentationInput(
+  issued: readonly ResponseSlotT[],
+  presentation: PresentationT | null,
+): boolean {
+  const drawn = new Set(
+    (presentation ? boundSlots(presentation) : [])
+      .filter((bound) => bound.kind !== 'custom')
+      .map((bound) => `${bound.slot_id}|${bound.response_class}`),
+  );
+  return issued.some(
+    (slot) => isPresentationInputSlot(slot) && !drawn.has(`${slot.slot_id}|${slot.kind}`),
+  );
+}
 
 function slotKey(s: PaperSlot): string {
   return `${s.question_id}::${s.part_ref ?? ''}`;
@@ -368,6 +408,22 @@ function PaperVisit({
   const hasNativeBindings = slots.every((slot) => slot.assessment != null);
   // The visit's restored drafts, computed once at mount (pure).
   const [restored] = useState(() => restorePaperDraft(slots));
+  // YUK-1573 — each question's frozen presentation, parsed once per visit (pure). Only a
+  // question with an issued select / blank slot takes the block path (as on the
+  // single-question page); every other question keeps the per-slot drawing it had before.
+  const [presentations] = useState(
+    () =>
+      new Map(
+        slots.map((slot) => {
+          const issued = slot.assessment?.practice_dto;
+          const needsBlocks = issued?.response_spec.slots.some(isPresentationInputSlot) ?? false;
+          return [
+            slotKey(slot),
+            needsBlocks ? parsePresentation(issued?.presentation) : null,
+          ] as const;
+        }),
+      ),
+  );
   const [pos, setPos] = useState(0);
   // Mirror of `pos` for listeners and the session-ready callback; written by goPos.
   const posRef = useRef(0);
@@ -383,6 +439,14 @@ function PaperVisit({
   // YUK-1094 — 附件上传中：交卷入口并入 upload-pending（disable），否则交卷会以旧 evidence
   // 展开 image_refs（刚上传的附件丢掉）。由 EvidenceComposer 的 onUploadingChange 上报。
   const [uploading, setUploading] = useState(false);
+  // YUK-1573 — uploads in flight inside presentation blocks (free_area), keyed question + slot,
+  // and their attachments that came back without a full receipt (per question, per slot).
+  // Both hold 交卷, as on the single-question page: a submission is immutable, so a photo still
+  // uploading or without a receipt would be lost.
+  const [blockUploads, setBlockUploads] = useState<ReadonlySet<string>>(() => new Set());
+  const [blockUnreceipted, setBlockUnreceipted] = useState<
+    Readonly<Record<string, Readonly<Record<string, EvidenceAttachment[]>>>>
+  >({});
   // answersRef 同款的同步镜像：pagehide/退出 flush 读 ref（渲染闭包可能滞后一拍）。
   // Written by the evidence handlers together with setEvidence.
   const evidenceRef = useRef<EvidenceAttachment[]>(restored.evidence);
@@ -561,7 +625,13 @@ function PaperVisit({
             // The open was not accepted: let a later attach of this visit try again.
             sessionStart.current = null;
             if (componentActiveRef.current)
-              addToast(`开卷失败：${(e as Error).message}`, 'info', 'alert');
+              addToast(
+                isPaperModeUnsupported(e)
+                  ? PAPER_MODE_UNSUPPORTED_COPY
+                  : `开卷失败：${(e as Error).message}`,
+                'info',
+                'alert',
+              );
           },
         );
       const onVisibilityChange = () => {
@@ -629,6 +699,26 @@ function PaperVisit({
     else delete next[key];
     conflictsRef.current = next;
     setConflicts(next);
+  };
+
+  // YUK-1573 — the hand-in payload: the draft payload, and for a block-drawn question every
+  // bound select / blank slot still empty goes out as an active blank (entriesForSubmit, the
+  // same rule as the single-question page). Drafts never hold those blanks.
+  const submitPayloadFor = (key: string) => {
+    const payload = nativePayloadFor(key);
+    const presentation = presentations.get(key);
+    const issued = slots.find((slot) => slotKey(slot) === key)?.assessment?.practice_dto;
+    if (!payload || !presentation || !issued) return payload;
+    return {
+      ...payload,
+      response_set: {
+        entries: entriesForSubmit(
+          presentation,
+          issued.response_spec.slots,
+          payload.response_set.entries,
+        ),
+      },
+    };
   };
 
   const runSave = (
@@ -1277,6 +1367,37 @@ function PaperVisit({
   // YUK-1051 — stable option ids（内容派生）；作答 pip 的「已答」包含绑定到该 slot 的证据。
   const curOptions = optionsFromChoicesMd(cur.question.choices_md ?? [], cur.question_id);
   const curAnswerText = answers[curKey] ?? '';
+  const curPresentation = presentations.get(curKey) ?? null;
+  // Slots an input block of the current question's presentation binds (custom blocks included).
+  const curBlockSlots = new Set(
+    curPresentation ? boundSlots(curPresentation).map((bound) => bound.slot_id) : [],
+  );
+  const curConflict = conflicts[curKey];
+  // One lock for every answer control on the question, blocks included: not bound, handed in
+  // (before this visit, here, or elsewhere), exiting, or waiting on the conflict choice.
+  const answerLocked =
+    !hasNativeBindings || submittedKeys.has(curKey) || exiting || curConflict !== undefined;
+  // YUK-1573 — fail closed: a question whose issued select / blank slot no rendered input block
+  // binds (presentation missing, unreadable or pruned) cannot be answered here, so the paper
+  // cannot be handed in. Derived from the parsed presentations and the issued slots only.
+  const unanswerableKeys = new Set(
+    slots
+      .filter((s) => !submittedKeys.has(slotKey(s)))
+      .filter((s) =>
+        unboundPresentationInput(
+          s.assessment?.practice_dto.response_spec.slots ?? [],
+          presentations.get(slotKey(s)) ?? null,
+        ),
+      )
+      .map(slotKey),
+  );
+  const handInBlocked =
+    uploading ||
+    blockUploads.size > 0 ||
+    Object.values(blockUnreceipted).some((bySlot) =>
+      Object.values(bySlot).some((list) => list.length > 0),
+    ) ||
+    unanswerableKeys.size > 0;
   const curSelectedIds = curOptions.filter((o) => o.text_md === curAnswerText).map((o) => o.id);
   const answeredCount = slots.filter(
     (s) =>
@@ -1294,9 +1415,6 @@ function PaperVisit({
   // whether the draft PUT landed).
   const anySaveFailed = slots.some((s) => saveFailed[slotKey(s)] && !submittedKeys.has(slotKey(s)));
   const conflictNumbers = slots.flatMap((s, i) => (conflicts[slotKey(s)] ? [i + 1] : []));
-  const curConflict = conflicts[curKey];
-  const answerLocked =
-    !hasNativeBindings || submittedKeys.has(curKey) || exiting || curConflict !== undefined;
   const retryFailedSaves = () => {
     if (retrying) return;
     // Drop failure flags on any slot submitted since it failed, so the chip can't stay
@@ -1352,6 +1470,45 @@ function PaperVisit({
       void runSave(key, questionId, partRef, v);
     }, 800);
   };
+
+  // The current question's answer entries change: one path for the per-slot fields and the
+  // presentation blocks (YUK-1573). Mirror into the ref the saves read, then hand the answer
+  // text to setAnswer, which schedules the draft save as before.
+  const updateCurResponses = (update: EntriesUpdate) => {
+    const response: ResponseSetT = {
+      entries: update(nativeResponsesRef.current[curKey]?.entries ?? []),
+    };
+    nativeResponsesRef.current = {
+      ...nativeResponsesRef.current,
+      [curKey]: response,
+    };
+    setNativeResponses(nativeResponsesRef.current);
+    setAnswer(
+      response.entries
+        .map((item) =>
+          nativeResponseText(
+            item,
+            cur.assessment?.practice_dto.response_spec.slots.find(
+              (field) => field.slot_id === item.slot_id,
+            ),
+          ),
+        )
+        .join('\n'),
+    );
+  };
+
+  // Block upload reporting (event handlers only). The question key is bound when the block
+  // renders, so a late upload result lands on the question it started on.
+  const trackBlockUpload = (key: string, on: boolean) =>
+    setBlockUploads((prev) => {
+      if (prev.has(key) === on) return prev;
+      const next = new Set(prev);
+      if (on) next.add(key);
+      else next.delete(key);
+      return next;
+    });
+  const setSlotUnreceipted = (key: string, slotId: string, next: EvidenceAttachment[]) =>
+    setBlockUnreceipted((prev) => ({ ...prev, [key]: { ...prev[key], [slotId]: next } }));
 
   // YUK-1051 — 证据附件的增/删/改绑也要触发草稿自动保存（附件变更不经 setAnswer 的
   // 击键 debounce）。只重存绑定范围实际变化的未提交 slot。
@@ -1428,7 +1585,7 @@ function PaperVisit({
       !sid ||
       submittingRef.current ||
       exitingRef.current ||
-      uploading ||
+      handInBlocked ||
       Object.keys(conflictsRef.current).length > 0
     )
       return;
@@ -1464,7 +1621,7 @@ function PaperVisit({
           question_id: s.question_id,
           part_ref: s.part_ref,
           answer_md: answers[key] ?? '',
-          assessment: nativePayloadFor(key),
+          assessment: submitPayloadFor(key),
           // YUK-1051 — 该 slot 绑定范围内的证据附件随提交冻结（与草稿同源展开）。
           image_refs: evidenceIdsForSlot(evidenceRef.current, key),
           latency_ms: timingMsRef.current[key] ?? 0,
@@ -1502,7 +1659,13 @@ function PaperVisit({
           startTimingSegment(slotKey(current), false);
         }
       }
-      addToast(`交卷失败：${(e as Error).message}`, 'info', 'alert');
+      addToast(
+        isPaperModeUnsupported(e)
+          ? PAPER_MODE_UNSUPPORTED_COPY
+          : `交卷失败：${(e as Error).message}`,
+        'info',
+        'alert',
+      );
     } finally {
       submittingRef.current = false;
       setSubmitting(false);
@@ -1583,7 +1746,32 @@ function PaperVisit({
           </span>
         </div>
         {/* YUK-1051 — 结构化配图/共享材料与题面同版渲染（wire image_refs 恢复后）。 */}
-        {cur.assessment ? (
+        {curPresentation && cur.assessment ? (
+          // YUK-1573 — the frozen presentation draws the whole question (text, figures,
+          // passage and inputs), the same block tree the single-question page mounts.
+          <PresentationBlocks
+            // Block ids repeat across questions: a new question is a fresh tree (focus, armed
+            // picks and upload spinners never carry over).
+            key={curKey}
+            presentation={curPresentation}
+            issued={{
+              faces: cur.assessment.practice_dto.faces,
+              materials: cur.assessment.practice_dto.materials,
+              slots: cur.assessment.practice_dto.response_spec.slots,
+            }}
+            entries={nativeResponses[curKey]?.entries ?? []}
+            onEntriesChange={updateCurResponses}
+            notation={cur.question.notation}
+            // A remounted tree must not start a second upload while one from before the
+            // question switch is still running on this question (it would be dropped).
+            disabled={answerLocked || [...blockUploads].some((k) => k.startsWith(`${curKey}::`))}
+            submitted={submittedKeys.has(curKey)}
+            submitting={submitting}
+            onUploadingChange={(slotId, on) => trackBlockUpload(`${curKey}::${slotId}`, on)}
+            unreceipted={blockUnreceipted[curKey]}
+            onUnreceiptedChange={(slotId, next) => setSlotUnreceipted(curKey, slotId, next)}
+          />
+        ) : cur.assessment ? (
           <>
             {cur.assessment.practice_dto.materials.map((material) => (
               <div key={material.material_id}>
@@ -1634,9 +1822,15 @@ function PaperVisit({
           <PaperDraftConflict
             mine={{ text: curAnswerText, files: evidenceIdsForSlot(evidence, curKey).length }}
             server={curConflict}
+            mathNotation={curPresentation ? cur.question.notation : undefined}
             onKeepServer={() => keepServerDraft(curKey)}
             onKeepMine={() => keepMyDraft(curKey)}
           />
+        )}
+        {unanswerableKeys.has(curKey) && (
+          <p className="quiet-empty" role="status">
+            {PAPER_MODE_UNSUPPORTED_COPY}
+          </p>
         )}
 
         {/* YUK-1051 — 作答控件换组件族。§6.4 缓冲反馈：恒 feedback='none'，作答全程
@@ -1644,6 +1838,8 @@ function PaperVisit({
         {cur.assessment ? (
           <>
             {cur.assessment.practice_dto.response_spec.slots.map((slot) => {
+              // A slot an input block binds is drawn by the block tree above, never twice.
+              if (curBlockSlots.has(slot.slot_id)) return null;
               const spec = nativeSlotFieldSpec(slot);
               if (!spec) return null;
               const entry = nativeResponses[curKey]?.entries.find(
@@ -1661,31 +1857,10 @@ function PaperVisit({
                   disabled={answerLocked}
                   onChange={(value) => {
                     const updated: SlotResponseT = nativeResponseEntry(slot, value, entry);
-                    const response: ResponseSetT = {
-                      entries: [
-                        ...(nativeResponsesRef.current[curKey]?.entries ?? []).filter(
-                          (item) => item.slot_id !== slot.slot_id,
-                        ),
-                        updated,
-                      ],
-                    };
-                    nativeResponsesRef.current = {
-                      ...nativeResponsesRef.current,
-                      [curKey]: response,
-                    };
-                    setNativeResponses(nativeResponsesRef.current);
-                    setAnswer(
-                      response.entries
-                        .map((item) =>
-                          nativeResponseText(
-                            item,
-                            cur.assessment?.practice_dto.response_spec.slots.find(
-                              (field) => field.slot_id === item.slot_id,
-                            ),
-                          ),
-                        )
-                        .join('\n'),
-                    );
+                    updateCurResponses((prev) => [
+                      ...prev.filter((item) => item.slot_id !== slot.slot_id),
+                      updated,
+                    ]);
                   }}
                 />
               );
@@ -1737,6 +1912,7 @@ function PaperVisit({
         {discarded[curKey] && (
           <DiscardedDraft
             draft={discarded[curKey]}
+            mathNotation={curPresentation ? cur.question.notation : undefined}
             onCopy={(text) => {
               const failed = () => addToast('没能复制——可以展开后手动选中文字', 'info', 'alert');
               // navigator.clipboard is absent on plain-http LAN pages; calling it would throw.
@@ -1844,7 +2020,7 @@ function PaperVisit({
                 !hasNativeBindings ||
                 submitting ||
                 exiting ||
-                uploading ||
+                handInBlocked ||
                 conflictNumbers.length > 0
               }
               onClick={() => void submitAll()}
@@ -1861,7 +2037,11 @@ function PaperVisit({
             variant="primary"
             icon="send"
             disabled={
-              !hasNativeBindings || submitting || exiting || uploading || conflictNumbers.length > 0
+              !hasNativeBindings ||
+              submitting ||
+              exiting ||
+              handInBlocked ||
+              conflictNumbers.length > 0
             }
             onClick={() => (unanswered > 0 ? setConfirm(true) : void submitAll())}
           >
@@ -1878,7 +2058,9 @@ function PaperVisit({
               ? '交卷前没能核对服务器上的草稿，这次没有交——再点一次交卷重试'
               : anySaveFailed
                 ? '有草稿没保存上——退出前先点「保存失败 · 重试」'
-                : '中途退出进度保留 · 交卷后到复盘看逐题判定'}
+                : unanswerableKeys.size > 0
+                  ? PAPER_MODE_UNSUPPORTED_COPY
+                  : '中途退出进度保留 · 交卷后到复盘看逐题判定'}
       </div>
     </div>
   );
@@ -1889,20 +2071,21 @@ function PaperVisit({
 function PaperDraftConflict({
   mine,
   server,
+  mathNotation,
   onKeepServer,
   onKeepMine,
 }: {
   mine: { text: string; files: number };
   server: ServerSlotDraft;
+  /** Set for a block-drawn question: its answer text is option labels / blank text (math). */
+  mathNotation?: string | null;
   onKeepServer: () => void;
   onKeepMine: () => void;
 }) {
   const side = (label: string, text: string, files: number) => (
     <div className="pfp-conflict-side">
       <span className="meta">{label}</span>
-      <p className="pfp-conflict-text" data-empty={text ? undefined : true}>
-        {text || '还没写'}
-      </p>
+      <AnswerText text={text} mathNotation={mathNotation} empty="还没写" />
       {files > 0 && <span className="meta">另有 {files} 个附件</span>}
     </div>
   );
@@ -1933,15 +2116,17 @@ function PaperDraftConflict({
 // field, readable and copyable until they leave the question. Never saved.
 function DiscardedDraft({
   draft,
+  mathNotation,
   onCopy,
 }: {
   draft: { text: string; files: number };
+  mathNotation?: string | null;
   onCopy: (text: string) => void;
 }) {
   return (
     <details className="pfp-discarded">
       <summary>你这次写的（已放下）</summary>
-      {draft.text && <p className="pfp-conflict-text">{draft.text}</p>}
+      {draft.text && <AnswerText text={draft.text} mathNotation={mathNotation} />}
       {draft.files > 0 && (
         <span className="meta">当时另有 {draft.files} 个附件，已不在这道题上</span>
       )}
@@ -1954,5 +2139,30 @@ function DiscardedDraft({
         </div>
       )}
     </details>
+  );
+}
+
+// YUK-1573 — one side of a conflict / set-aside answer. A block-drawn question's answer text is
+// its chosen option labels and blank text (often math), so it is typeset; other questions keep
+// the learner's text as plain text.
+function AnswerText({
+  text,
+  mathNotation,
+  empty,
+}: {
+  text: string;
+  mathNotation?: string | null;
+  empty?: string;
+}) {
+  if (text && mathNotation !== undefined)
+    return (
+      <MathMarkdown notation={mathNotation} className="pfp-conflict-text">
+        {text}
+      </MathMarkdown>
+    );
+  return (
+    <p className="pfp-conflict-text" data-empty={text ? undefined : true}>
+      {text || empty}
+    </p>
   );
 }
