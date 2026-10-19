@@ -1,10 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-19：YUK-1570 基线收紧与上调理由校验已提交 draft PR1830；不改 Linear 状态，不关闭票，不压降业务依赖。验证与限度见 PR。
+> Linear 是权威 tracker。2026-10-19：YUK-1570 ready PR1830 修复 QA 打回；上调须真实抵消或记录协调线裁决，理由本身不构成准入。不改 Linear 状态，不关闭票，不压降业务依赖。验证与限度见 PR。
 
 ## NOW
 
-- **YUK-1570 / 依赖基线收紧**：[draft PR1830](https://github.com/Yukoval-Dakia/the-learning-project/pull/1830)，分支 `yuk-1570-baseline-ratchet`。本地 typecheck/lint/build、唯一边界测试和审计通过；main 实测 443，practice→ai 66。无理由上调及下降未收紧均 exit 1，`--tighten` 追加日期和旧新值。没有业务依赖压降、DB、UI、付费调用或部署。远端检查见 PR exact head。
+- **YUK-1570 / 依赖基线收紧**：[ready PR1830](https://github.com/Yukoval-Dakia/the-learning-project/pull/1830)，分支 `yuk-1570-baseline-ratchet`。QA 修复后的 typecheck/lint/build、唯一 CLI 边界测试和 CI 模式审计通过；main 实测 443，practice→ai 66。S7 仅理由上调、虚假抵消均 exit 1；真实抵消和带裁决出处的输入 exit 0。测试在旧实现及 main 上为 RED。没有业务依赖压降、DB、UI、付费调用或部署。远端检查与 QA 复核以新 head 为准。
 
 - **YUK-1404 / native03题图修复**：PR1657 fixed4c52 exact CI38144495041全绿；正常纳入main eb960c079，仅PLAN/now冲突。图ownership/隐私产品代码与单capture边界测试保留，旧细粒度四tests已删。独立初审/最终R2预算已完成，不启第三审。当前crop producer仍无source_asset SHA登记，旧visibility未知，public withholding不是完整配图交付；同卷actual-output验收仍待。无DB/runtime/provider/paid。 [证据](docs/planning/2026-10-11-yuk1404-native03-figure-repair.md)。
 
@@ -34,7 +34,7 @@
 
 ## NEXT
 
-- YUK-1570 保持 draft，目标总数、期限及实际压降由 PM 另行安排。PR1822 若先合入，保留 main 的 +5 基线并正常整合；不 force push。
+- YUK-1570 保持 ready、等待 QA 复核，不合并；目标总数、期限及实际压降由 PM 安排。PR1822 的 +5 须有抵消或基线中的协调线裁决出处；若先合入却缺证明，不能因换 base 而自动豁免，暂停整合并交协调线处理。只用 merge main 保持同分支普通 push，不 force push。
 
 - Start/judge共享文件边界见[交接](docs/planning/2026-10-09-judge-start-ownership.md)，Start/boot/shutdown由5796独占；judge A/B/C/D由7631接续，迁移号后核。
 

@@ -125,11 +125,20 @@ ratchet（capability→server、server→capability deep、cross-capability valu
 `direction: "decrease"`、`debt`、`pair`、UTC `date`、`from`、`to`。
 审计仍有任何错误时不写文件；再次运行不会重复追加记录。SCC 只能缩小，不能自动扩张。
 
-需要上调时，手动追加 `direction: "increase"` 记录，除上述字段外必须填写非空
-`reason` 和 `exitCondition`，并同步 pair 与 total。三类债务都受检查，缺失 pair 按 0 处理。
+基线只降不升，禁止为让新增依赖通过而直接上调 baseline。
+按 YUK-1570 的 2026-10-19 21:21 JST PM 裁决，上调记录除非空 `reason`、
+`exitCondition` 外，必须带以下一种 `justification`，仅有理由不构成准入：
+
+- `{ "kind": "offset" }`：相对同一 PR 的 base，同一债务类别内其他 pair 必须有实测下降，
+  且该类别实测总数不得增加。不能用另一类别的下降、临时降后回涨的记录或只改基线抵消。
+- `{ "kind": "recorded_ruling", "ruling": "<协调线裁决的 HTTP(S) URL>" }`：
+  无抵消例外须在基线文件里保留具体裁决出处，供 reviewer 核验授权是否覆盖本次上调。
+
+同步 pair 与 total，并追加 `direction: "increase"` 记录。三类债务都受检查，缺失 pair 按 0 处理。
 CI 从 PR base SHA（push 时为 before SHA）重放新增记录，要求其结果与当前基线一致，
 且旧记录不可删除或改写。历史 `notes` 不追溯补写，也不能代替新上调记录。
-字段检查不判断理由是否充分或退出条件是否达成，这两项仍由 reviewer 判断。
+CI 检查实测抵消或裁决出处字段，不联网判断裁决的真实性、授权范围及退出条件是否达成。
+这些判断仍由 reviewer 负责。校验错误包含基线文件名及记录路径。
 
 本地默认比较 `git merge-base HEAD origin/main`，也可用 `--base <commit SHA>`。
 CI 必须提供 `CAPABILITY_BASE_SHA`；手动 workflow 使用已有的 `test_policy_base` 输入。

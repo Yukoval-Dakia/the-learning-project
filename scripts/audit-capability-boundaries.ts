@@ -28,6 +28,10 @@ const changeFields = {
   from: countSchema,
   to: countSchema,
 };
+const raiseJustificationSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('offset') }),
+  z.object({ kind: z.literal('recorded_ruling'), ruling: z.url({ protocol: /^https?$/ }) }),
+]);
 const baselineChangeSchema = z
   .discriminatedUnion('direction', [
     z.object({ ...changeFields, direction: z.literal('decrease') }),
@@ -36,10 +40,13 @@ const baselineChangeSchema = z
       direction: z.literal('increase'),
       reason: z.string().trim().min(1),
       exitCondition: z.string().trim().min(1),
+      justification: raiseJustificationSchema,
     }),
   ])
-  .refine((change) =>
-    change.direction === 'increase' ? change.to > change.from : change.to < change.from,
+  .refine(
+    (change) =>
+      change.direction === 'increase' ? change.to > change.from : change.to < change.from,
+    { message: 'decrease requires to < from; increase requires to > from' },
   );
 const baselineSchema = z.object({
   schemaVersion: z.literal(1),
@@ -653,6 +660,20 @@ export function serializeDependencySnapshot(snapshot: DependencySnapshot): strin
   return `${JSON.stringify(snapshot, null, 2)}\n`;
 }
 
+function parseBaseline(text: string, source: string): DependencyBaseline {
+  try {
+    return baselineSchema.parse(JSON.parse(text));
+  } catch (error) {
+    const detail =
+      error instanceof z.ZodError
+        ? error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join('\n')
+        : error instanceof Error
+          ? error.message
+          : String(error);
+    throw new Error(`${source}: ${detail}`);
+  }
+}
+
 function readBaselineBase(projectRoot: string, requested?: string): DependencyBaseline {
   const git = (args: string[]) => execFileSync('git', args, { cwd: projectRoot, encoding: 'utf8' });
   if (process.env.CI && !requested) {
@@ -662,12 +683,13 @@ function readBaselineBase(projectRoot: string, requested?: string): DependencyBa
   if (!/^[a-f0-9]{7,40}$/.test(base) || /^0+$/.test(base)) {
     throw new Error('Baseline comparison requires an existing commit SHA; fetch the base first.');
   }
-  return baselineSchema.parse(JSON.parse(git(['show', `${base}:${BASELINE_PATH}`])));
+  return parseBaseline(git(['show', `${base}:${BASELINE_PATH}`]), `${base}:${BASELINE_PATH}`);
 }
 
 function compareBaselineChanges(
   baseline: DependencyBaseline,
   previous: DependencyBaseline,
+  actual: DependencySnapshot,
 ): Violation[] {
   const violations: Violation[] = [];
   const fail = (source: string, reason: string) =>
@@ -685,6 +707,19 @@ function compareBaselineChanges(
       fail(change.pair, `change.from=${change.from} does not match preceding baseline`);
     }
     counts[change.pair] = change.to;
+    if (change.direction === 'increase' && change.justification.kind === 'offset') {
+      const before = previous.debts[change.debt];
+      const measured = actual.debts[change.debt];
+      const otherPairDecreased = Object.entries(before.byOwnerPair).some(
+        ([pair, count]) => pair !== change.pair && (measured.byOwnerPair[pair] ?? 0) < count,
+      );
+      if (!otherPairDecreased || measured.total > before.total) {
+        fail(
+          change.pair,
+          `${change.debt} offset requires a real decrease in another pair and no net growth from base (${before.total} -> ${measured.total}); otherwise record a coordination ruling`,
+        );
+      }
+    }
   }
   for (const debt of DEBT_KINDS) {
     const before = replayed[debt].byOwnerPair;
@@ -695,7 +730,7 @@ function compareBaselineChanges(
       if (from !== to) {
         fail(
           pair,
-          `${debt} baseline ${from} -> ${to} needs a dated ${to > from ? 'increase record with reason and exitCondition' : 'decrease record'} in changes`,
+          `${debt} baseline ${from} -> ${to} needs a dated ${to > from ? 'increase record with reason, exitCondition and justification' : 'decrease record'} in changes`,
         );
       }
     }
@@ -747,8 +782,9 @@ export function main(argv = process.argv.slice(2), projectRoot = process.cwd()):
     process.stdout.write(serializeDependencySnapshot(result.dependencySnapshot));
     return;
   }
-  const baseline = baselineSchema.parse(
-    JSON.parse(readFileSync(resolve(projectRoot, BASELINE_PATH), 'utf8')),
+  const baseline = parseBaseline(
+    readFileSync(resolve(projectRoot, BASELINE_PATH), 'utf8'),
+    BASELINE_PATH,
   );
   const baseIndex = argv.indexOf('--base');
   if (baseIndex !== -1 && !argv[baseIndex + 1]) throw new Error('--base requires a commit SHA.');
@@ -758,7 +794,7 @@ export function main(argv = process.argv.slice(2), projectRoot = process.cwd()):
   );
   if (tighten) tightenBaseline(baseline, result.dependencySnapshot);
   result.violations.push(
-    ...compareBaselineChanges(baseline, previous),
+    ...compareBaselineChanges(baseline, previous, result.dependencySnapshot),
     ...compareDependencySnapshot(result.dependencySnapshot, baseline),
   );
   result.ok = result.violations.length === 0;
