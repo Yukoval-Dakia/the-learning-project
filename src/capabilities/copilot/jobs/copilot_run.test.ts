@@ -543,6 +543,8 @@ describe('runCopilotRun', () => {
     ]);
   });
 
+  // @invariant concurrency: Stop keeps prose published before cancel and drops prose that arrives after it
+  // @fails-if the durable reply is only the bare stop sentence, or it contains a delta that lost the cancel lock
   it('Stop — pure-text long run keeps displayed prose and drops prose after cancel', async () => {
     const sessionId = 'sess_stop_pure_text_cross_subject';
     await seedCopilotConversation(sessionId);
