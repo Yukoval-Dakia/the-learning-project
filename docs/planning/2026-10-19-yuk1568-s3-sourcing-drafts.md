@@ -92,7 +92,10 @@ conversion_issues → 提交返回 withheld（不铸 revision），草稿保留�
   旧行+新 revision）。组已发布时先用现成
   `normalizeQuestionRowToContract` 对同快照行重建完整契约，再经
   `publishedContractSeal(...).canonical`（与现役 publisher 完全相同的封存）。
-  只有该 canonical digest 等于冻结版且行 image_refs 全属于冻结 figure 材料
+  先对真实冻结内容取 `frozenSeal = publishedContractSeal(frozenRevision)`，
+  以现成 `publishedSealAccepts(frozenSeal, storedDigest)` 验证库存 digest
+  合法（canonical / legacyParsed / legacyRaw）；再要求 row canonical
+  等于 `frozenSeal.canonical`，且行 image_refs 全属于冻结 figure 材料，
   才复用 legacy 输入。text/numeric/structured 槽因此保留原来的
   checks/solve/grounding，不经过草稿编辑器的 unmapped free 兜底。
   rubric、reference、judge 意图、材料与 structured 内容由发布归一的
@@ -245,6 +248,34 @@ sourcing_web 候选照旧全走旧链——**旧 writer 未为新声明扩展**�
 - 存量 40 题 / 七题验收 / 存量重新发布（YUK-1573 冻结）：第 4 片独立方案。
 
 ## 验证（本机实际执行——逐命令如实）
+
+### stored legacy seal 兼容窄修（基线 `82946d570`）
+
+父完成该基线检查并释放占用后，仅调整同一 legacy 一致性判断：现役
+publisher 写 canonical，但合法旧 revision 仍可能存 legacyParsed 或
+legacyRaw，不能直接以 row canonical 与 stored digest 相等作为兼容条件。
+现在先对同快照的真实冻结内容调用 `publishedContractSeal`，再经现成
+`publishedSealAccepts` 验证 stored digest；通过后才将行归一产物的
+canonical 与该冻结内容 canonical 比较。三种合法封存都只指向同份
+内容；非法 stored digest 会令 legacy 一致性为 false，不允许借 row
+canonical 把坏 seal 算成一致。不改库存、receipt、digest 算法或发布器。
+
+标准 defaultPresentation 判断原样保留。旧行 rubric A / 新冻结 key B
+仍因内容 canonical 不同而不能复用行输入，后续冻结投影的
+`rubric_json: null` / `judge_kind_override: null` 也未改动。材料/证据闸、
+单语句快照、双 CAS、row version、C1 与 unknown 不重放均不变。
+
+本次完整日志独立目录：
+`/Volumes/YukovalSBak/yukoval-projects/tlp-status/review/stage1-yuk1568-s3-20261019/r2-fix-codex-logs/legacy-seal-SVoZZX/`。
+实际结果：`pnpm typecheck`、`pnpm lint`（179 warnings）、`pnpm build`、
+`pnpm audit:capability-boundaries`（443/48 不变）、
+`pnpm audit:question-writers` 均 **exit 0**；各完整 `<command>.log` 与
+实际 `<command>.exit` 均在上面独立目录。`git diff --check` exit 0。
+`source-change.patch` / `source.sha256` 封存检查的同一源码，检查后未改。
+只改 `source_verify.ts` 与本文；不新增模块、
+review、测试/断言/合成输入或临时函数脚本。DB/容器/provider/HTTP业务/
+runtime/浏览器/运营锁/stock/CI 查询均 **NOT_RUN**，不 merge/deploy。
+没有本范围以外的新 follow-up；父继续负责定向验收和 Linear/总看板。
 
 ### 父定向核验后更正（基线 `51967a6ee`）
 

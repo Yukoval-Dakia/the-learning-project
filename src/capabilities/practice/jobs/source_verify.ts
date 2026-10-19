@@ -69,6 +69,7 @@ import { writeEvent } from '@/kernel/events';
 import {
   normalizeQuestionRowToContract,
   publishedContractSeal,
+  publishedSealAccepts,
 } from '@/kernel/records/assessment-normalization';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { type TaskTextResult, type TaskTextRunFn, aiAgentRef } from '@/server/ai/provenance';
@@ -647,11 +648,13 @@ export async function runSourceVerify(
           publishedContractSeal({ ...frozenRevision, presentation: standard }).canonical;
     }
     try {
-      // FromRow publisher 以 normalizer 为输入，但最终存 seal.canonical；
-      // 不能拿 normalizer 的旧键序 integrity_digest 直接与库存 canonical 比。
+      // 先验证库存 digest 确实封存这份冻结内容（兼容合法旧键序 seal），
+      // 再按 canonical 内容比较；既不把旧 seal 恒判漂移，也不接受坏 seal。
+      const frozenSeal = publishedContractSeal(frozenRevision);
       legacyRowMatchesRevision =
+        publishedSealAccepts(frozenSeal, frozenRevision.integrity_digest) &&
         publishedContractSeal(normalizeQuestionRowToContract({ ...row, figureDigests }))
-          .canonical === frozenRevision.integrity_digest &&
+          .canonical === frozenSeal.canonical &&
         // structured normalizer 可优先用叶答案/选项，忽略 flat 列。
         // 复用 flat verifier 前，额外证明它实际读取的答案/选项也已封存。
         (row.structured == null ||
