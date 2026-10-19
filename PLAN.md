@@ -1,10 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-19：YUK-1570 ready PR1830 修复 QA 打回；上调须真实抵消或记录协调线裁决，理由本身不构成准入。不改 Linear 状态，不关闭票，不压降业务依赖。验证与限度见 PR。
+> Linear 是权威 tracker。2026-10-19：YUK-1570 ready PR1830 已推 QA 修复，本地 gate 通过；CI 拒绝合成树带入的 main #1811 无记录 +1，待协调线确认裁决出处。不改 Linear 状态，不关闭票，不压降业务依赖。
 
 ## NOW
 
-- **YUK-1570 / 依赖基线收紧**：[ready PR1830](https://github.com/Yukoval-Dakia/the-learning-project/pull/1830)，分支 `yuk-1570-baseline-ratchet`。QA 修复后的 typecheck/lint/build、唯一 CLI 边界测试和 CI 模式审计通过；main 实测 443，practice→ai 66。S7 仅理由上调、虚假抵消均 exit 1；真实抵消和带裁决出处的输入 exit 0。测试在旧实现及 main 上为 RED。没有业务依赖压降、DB、UI、付费调用或部署。远端检查与 QA 复核以新 head 为准。
+- **YUK-1570 / 依赖基线收紧**：[ready PR1830](https://github.com/Yukoval-Dakia/the-learning-project/pull/1830)，分支 `yuk-1570-baseline-ratchet`。QA 修复后的 typecheck/lint/build、唯一 CLI 边界测试和 CI 模式审计通过；原 base 实测 443，practice→ai 66。S7 仅理由上调、虚假抵消均 exit 1；真实抵消和带裁决出处的输入 exit 0。测试在旧实现及 main 上为 RED。CI39254942736 仅架构 lane 失败，合成树含 main #1811 的 practice→r2 3→4，缺上调记录；未放宽门禁。没有业务依赖压降、DB、UI、付费调用或部署。
 
 - **YUK-1404 / native03题图修复**：PR1657 fixed4c52 exact CI38144495041全绿；正常纳入main eb960c079，仅PLAN/now冲突。图ownership/隐私产品代码与单capture边界测试保留，旧细粒度四tests已删。独立初审/最终R2预算已完成，不启第三审。当前crop producer仍无source_asset SHA登记，旧visibility未知，public withholding不是完整配图交付；同卷actual-output验收仍待。无DB/runtime/provider/paid。 [证据](docs/planning/2026-10-11-yuk1404-native03-figure-repair.md)。
 
@@ -70,6 +70,8 @@
 - YUK-1325 / PR #1580：保留 `1be38edbc`、`1af72b427`、`3940d61f9`，正常合入 main `8841ce68a` 为 `e484efa60`；359 scoped tests、21 audits、typecheck/lint/build 与 lint ratchet 通过，无 high/critical 依赖告警。开发 transcript 与产品 MiMo/自主交付指导同时保留。writer 已释放，父线程负责最终 SDK/SQL/browser 回放、push、exact-head CI、review replies、Linear 与发布；P2 typed tracing 留 YUK-1339，不启动第三审。详情见 [Laminar 记录](docs/planning/2026-10-06-yuk1325-laminar.md)。旧完成线程越界写入风险仍由父线程独占 watch 约束，平台跟进待去重登记。 最新 main 的前缀 credential P1 修复及73tests记录一并保留；PR父线程仍负责后续验收，此lane无新review。
 
 ## BLOCKED-ON
+
+- **YUK-1570 / main 新上调的裁决出处**：#1811 已合入 +1，CI 合成树为 444、事件 base 为 443。需协调线确认 YUK-1567 00:26 的历史批准记录能否作为 recorded_ruling 及退出条件，或安排真实抵消；不借换 base 绕过。已在 YUK-1570 留证，不改票状态，不合并 PR1830。
 
 - **协调线验收**：第一天能用的时限与 TEST 危机数据清理状态由审计协调线维护；100% 实际出题自动可判已获 owner 确认，不再作为待裁决值。
 

@@ -13,7 +13,12 @@ lint 179 warnings。测试在旧实现及 main 为 RED，修复后 GREEN。临�
 S7 66→67 仅理由、虚假 offset、纸面下降均 exit 1；真实 notes→ai 8→7 抵消、带裁决出处的
 合成输入均 exit 0；方向错误包含文件与 changes.0 路径。正式 baseline 仍 443/0/48，
 changes 留空，不造记录。日志在 `.amp/in/artifacts/qa-fix/`，命令与限制见 PR。
-远端 CI 与 QA 复核以新 head 为准，旧 90ab91c3 的绿色 CI 不代表本次修复通过。
+产品修复已普通推送 25d28e29727a317620afa356c485e358b42f91ce，CI39254942736 失败。
+仅 architecture lane 失败，其他执行 lane 成功。CI 合成树 3db53a5a5 含 main aa1156f8 的
+#1811/YUK-1567 新增 practice→r2 3→4（总数444），事件 base 仍 d41 的443，缺上调记录。
+YUK-1567 00:26 评论记载旧批准合为444，尚待协调线确认该来源可作为本口径的裁决及退出条件。
+阻塞已留 YUK-1570 评论 6cd6a6bb-a49f-4e60-81cc-d1731f245b47；不伪造授权或仅换 base 绕过。
+远端 CI 失败，QA 复核待进行；旧 90ab91c3 的绿色 CI 不代表本次修复通过。
 
 无本机全量测试、DB、UI、provider 或付费调用。已查 Linear，没有新增范围外 actionable 缺陷，
 实际依赖压降留 PM 后续规划。PR1822 此时仍开放；+5 须有抵消或基线中的协调线裁决出处。
