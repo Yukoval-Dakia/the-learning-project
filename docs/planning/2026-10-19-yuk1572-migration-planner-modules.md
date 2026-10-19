@@ -49,7 +49,7 @@
 ## 指标 delta（真实）
 
 - `apply.ts` 1956 → 1357 行；新模块 281 + 411 行（均 <1500）。
-- 全仓 >1500 文件（含 test/generated）29 → 28；非 test/generated 23 → 22。
+- 沿用本线源码口径：git tracked 的 src/server/web 下 .ts/.tsx，排除 .test./.spec./.generated.，>1500 文件 **18 → 17**。子任务更宽的全仓口径不混入此指标。
 - `pnpm audit:capability-boundaries`：exact 持平 444/0/48；`pnpm audit:architecture-deepening` PASS，SCC 成员与计数不变；新依赖图无环（fidelity→registry 仅 `import type`）。
 
 ## 验证与 NOT_RUN
@@ -59,3 +59,5 @@
 - `pnpm build` PASS（web + server/worker/migrate 三 bundle）
 - `pnpm audit:capability-boundaries`、`pnpm audit:architecture-deepening` PASS
 - **NOT_RUN**：vitest 任何分区（owner 未批准本票测试变更；apply.test.ts 未改未跑，其 import 面经 re-export 逐字保持）、migration CLI、DB、真实 capture、provider/付费、TS↔Rust parity、rehearsal。执行语义与独立复核由父级 review + exact-head CI Gate 承担。
+
+父级复核：源码 `af763a2acf245e3b21c159389440afb2d0c318e0` 的 typecheck、lint（179 warnings）、完整 build 均 exit 0；源树清单确认上述 18→17。原始日志在 `/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1572/af763a2acf245e3b21c159389440afb2d0c318e0/parent/`，`checks-sha256.json` SHA-256 `654e0fd8c7608c98fed3cdbc3efc7c932e1fd57a3c59b9dc13cdabd4f8391913`。这是静态/构建证据，迁移运行与真实数据验收仍 NOT_RUN。
