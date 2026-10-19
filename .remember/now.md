@@ -1,6 +1,6 @@
 # YUK-1621 夜间摘要服务端统计 — 2026-10-20
 
-本 worktree `/workspace/amp/wt/YUK-1621`，分支 `el/yuk-1621`，base `dc42a29e`。`MemoryBriefTask` 只输出三段 prose；服务端按 `created_at` 分 7d/90d/长期桶并写每桶 evidence ids。`SessionSummaryTask` 输入改为服务端 `numeric_summary`（仅有效判分 correct/partial/incorrect；无有效判分时明示），模型只写观察/建议，最终摘要前缀固定。验证：双 tsc、build、task-census/capability-boundaries/architecture-deepening/profile audits 通过；biome 仅既有 178 warnings；本地 replay 证明同输入同桶/同数字、evidence ids 为输入子集、冷 scope 不调模型。未改 UI/DB/schema/provider；无新增测试。
+本 worktree `/workspace/amp/wt/YUK-1621`，分支 `el/yuk-1621`，base `dc42a29e`，PR #1858。`MemoryBriefTask` 只输出三段 prose；服务端按 `created_at` 分 7d/90d/长期桶并写每桶 evidence ids。`SessionSummaryTask` 的数字只来自服务端 `numeric_summary`（本场有效判分；无有效判分时明示），模型只写观察/建议；模型输入不再带原始判分数字或计数。QA r2 修复：删除模型文本正则删数字，改为 prompt 约束；本场错因复用 `effectiveCauseForFailureAttempt` cause policy（用户 cause 优先），只用本场 effective-incorrect review，历史失败不混入；无 label 不输出裸 id；模型空文本保存纯数字摘要并返回 `written:numbers_only`。验证：双 tsc、lint、build；真实 PG16+pgvector 复用 QA harness 覆盖历史 cause、模型自写数字、用户 cause、空模型、冷 session；exact-head CI 待新 push。未改 UI/`.tsx`；无新增测试。
 
 # Architecture deepening — 2026-10-19
 

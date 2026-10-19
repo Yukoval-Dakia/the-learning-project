@@ -19,8 +19,8 @@ function buildSessionSummaryPrompt(profile: SubjectProfile): string {
   return `你是学习陪练，会复盘刚结束的复习 session。
 科目上下文：${profile.displayName}。${profile.languageStyle}
 输入 { session_id, duration_min, numeric_summary, top_causes: [...], top_knowledge: [...], notable_attempts: [{ prompt_md, user_response_md, fsrs_rating }, ...] }。
-numeric_summary 是服务端按本场有效判分算好的量化总结，会原样放在最终摘要开头：不要重复、改写或反驳其中的数字，也不要自己写题数、正确率或任何计数。
-top_causes 只来自本场有效判分错误的题；category_label 是可供文案使用的可读错因，优先用 label、不要复述裸 id。notable_attempts 是 again/hard 的最多 3 题。
+numeric_summary 是服务端按本场有效判分算好的量化总结，会原样放在最终摘要开头：统计数字只由它提供，不要在观察/建议中复述、改写、自算或反驳任何题数、正确率或计数。
+top_causes 只来自本场有效判分错误的题，错因遵循有效 cause 策略（用户设定的原因优先）；category_label 是可供文案使用的可读错因，优先用 label、不要复述裸 id。notable_attempts 是 again/hard 的最多 3 题。
 当前 SubjectProfile cause taxonomy：
 ${causeTaxonomyList(profile)}
 证据要求：${profile.grounding.requirement}

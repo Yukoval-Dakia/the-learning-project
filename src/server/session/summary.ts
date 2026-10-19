@@ -10,9 +10,11 @@
 
 import { and, asc, eq, inArray } from 'drizzle-orm';
 
+import { getFailureAttempts } from '@/capabilities/knowledge/public';
 import type { Db } from '@/db/client';
 import { event, knowledge, learning_session, question } from '@/db/schema';
 import { resolveVerdictsForAttempts } from '@/kernel/read-models/assessment-verdict';
+import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
 import { resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { resolveSubjectProfile } from '@/subjects/profile';
@@ -43,18 +45,6 @@ export function renderSessionNumericSummary(input: {
   const denominator = graded === input.total_reviewed ? '' : `（${graded} 题有效判分）`;
   const cause = input.primary_cause ? `；主要错在 ${input.primary_cause}` : '';
   return `本次复习 ${input.total_reviewed} 题，${pct}% 正确${denominator}${cause}。`;
-}
-
-// The model never owns a number in the stored summary. Drop whole sentences that
-// introduce one instead of leaving dangling digits or a second, conflicting rate.
-const MODEL_NUMERIC_FRAGMENT =
-  /[0-9０-９]|百分之|正确率|错误率|题数|[零〇一二三四五六七八九十百千万两]+(?:题|道|个|次|种|处|倍|%|％)/u;
-
-export function stripModelNumbers(text: string): string {
-  return (text.match(/[^。！？!?；;\n]+[。！？!?；;]?/gu) ?? [])
-    .filter((sentence) => !MODEL_NUMERIC_FRAGMENT.test(sentence))
-    .join('')
-    .trim();
 }
 
 export type RunTaskFn = TaskTextRunFn;
@@ -160,14 +150,33 @@ export async function runSessionSummary(
     reviewEvents.map((r) => r.id),
   );
   const effectiveOutcomeCounts = new Map<string, number>();
-  const causeCounts = new Map<string, number>();
-  for (const verdict of verdictMap.values()) {
+  const sessionFailureIds: string[] = [];
+  for (const [id, verdict] of verdictMap) {
     const effective = verdict.effective?.verdict;
     if (!effective?.coarse_outcome) continue;
     const outcome = effective.coarse_outcome;
     effectiveOutcomeCounts.set(outcome, (effectiveOutcomeCounts.get(outcome) ?? 0) + 1);
-    if (outcome !== 'incorrect') continue;
-    const category = effective.cause?.primary_category;
+    if (outcome === 'incorrect') sessionFailureIds.push(id);
+  }
+
+  // Reuse the shared cause policy (active user_cause wins over agent judge) but
+  // only for this session's effective-incorrect reviews.
+  const questionIds = [...new Set(reviewEvents.map((review) => review.subject_id))];
+  const failures = questionIds.length
+    ? await getFailureAttempts(db, {
+        questionIds,
+        limit: null,
+        includeReviewFailures: true,
+        since: sess.started_at ?? undefined,
+      })
+    : [];
+  const failureById = new Map(failures.map((failure) => [failure.attempt_event_id, failure]));
+  const causeCounts = new Map<string, number>();
+  for (const id of sessionFailureIds) {
+    const failure = failureById.get(id);
+    const category =
+      (failure ? effectiveCauseForFailureAttempt(failure)?.primary_category : null) ??
+      verdictMap.get(id)?.effective?.verdict.cause?.primary_category;
     if (category) causeCounts.set(category, (causeCounts.get(category) ?? 0) + 1);
   }
 
@@ -235,7 +244,7 @@ export async function runSessionSummary(
   };
 
   const result = await runTaskFn('SessionSummaryTask', input, { subjectProfile });
-  const observation = stripModelNumbers(result.text);
+  const observation = result.text.trim();
   // The fixed numeric prefix is never truncated away by an over-long observation.
   const summaryMd = `${numericSummary}${observation}`.slice(0, 240);
 
