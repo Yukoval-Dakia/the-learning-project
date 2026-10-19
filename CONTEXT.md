@@ -41,20 +41,20 @@
 - **梦境流（Dreaming lane）**：夜间 cron 跑的批量任务，挖新知识点 / 调整掌握度 / 提议关联；产出为 `event WHERE action='propose' AND actor_kind='agent' AND actor_ref='dreaming'`。
 - **维护流（Maintenance lane）**：每周 cron 跑的批量任务，复检知识树质量 + 批量生成变体；产出走 MaintenanceSuggestion（含 snapshot + rollback_until）。
 - **记忆（memory / attention prior）**（ADR-0017；治理 2026-06-04 U0 裁决）：双层——Mem0 fact 层（细节，按需检索）+ brief 层（方向感，per-scope 三窗 markdown）。**记忆是注意力先验，不是 SoT**（SoT = event + knowledge_mastery view）；只供 orchestrator 角色（Coach / Dreaming / Copilot）读取，evaluator / operator / 生成类任务（judge、tagging、attribution、ReviewPlanTask、QuizGen、KnowledgeReview）一律不读——个性化信号经 Coach brief 洗过后下传。记忆永不直改 due / mastery / FSRS，永不给判分加偏置。
-- **作答卷导出（worksheet export）**：把一次**发放（issuance）**——逐题经发题门落下的不可变发题记录——导出成可打印的作答卷 PDF；导出回读按冻结发放重建，不重跑发题门。每页带身份：页眉的人读短码 + 「第 x/y 页」，以及内容为 `tlp://ws/v1/<token>/<页>/<总页>` 的二维码。打印页路由 `/print/worksheet/$token`，PDF 由 worker 的 `worksheet_render` job 用无头 Chromium 渲染；同一遍渲染量出的**区域图（region map）**冻结存档，供回收时按坐标对位。
+- **作答卷导出（worksheet export）**：导出作答卷时对每道可判题各落一条**发放（issuance）**——不可变的发题记录（被发题门拒的题不发不导）——再据此生成可打印的作答卷 PDF；回读按这些冻结发放重建，不重跑发题门。每页带身份：页眉的人读短码 + 「第 x/y 页」，以及内容为 `tlp://ws/v1/<token>/<页>/<总页>` 的二维码。打印页路由 `/print/worksheet/$token`，PDF 由 worker 的 `worksheet_render` job 用无头 Chromium 渲染；同一遍渲染量出的**区域图（region map）**冻结存档，供回收时按坐标对位。
 
 ## 题库准入与出题
 
 - **准入（admission）/ 待准入**：一道题（题组）必须先通过准入判定，才会被自动出给学习者；`withheld` 期间不进练习池（显式手动挑题练习不受此限）。判分准入状态只有 `admitted` / `withheld` 两种；`withheld` 必须记明原因：`unverified_rules`（规则尚未经双门核验）、`verification_failed`、`no_admitted_executor`、`owner_hold`。判定由准入 job 执行：题目发布后自动排队做准入判定，双解与标定通过后才 `admitted`。网页来源题（`sourcing_web`）来源核对通过、`quiz_verify` 质检通过，都只发布为 `withheld(unverified_rules)`——这种状态叫「待准入」，题库界面显示为「还在检查」——不再直接可出。
 - **暂不出题（serving hold）**：题目被判定暂时不能出给学习者。挂起原因只有 `verify_hold` 与 `retraction_hold`。题库有「暂不出题」页签，按原因给白话标记；页签上的计数与筛选覆盖全库，不只是当前已加载的页。解除命令 `reverify` / `recheck_source` / `release_verify_hold`，经 `POST /api/questions/[id]/serving-actions/[command]`，每个命令都要求 `Idempotency-Key`；`release_verify_hold` 只清 `verify_hold`，不动 `retraction_hold`，`owner_hold` 这类有意扣留没有 reverify。
-- **付费效果（paid effect）作废与后继重授权**：一次已经付过费的模型调用记为一个「付费效果」，效果身份由输入决定，相同输入只记一次账。结果未知（`unknown`）的效果可由负责人显式作废为终态 `voided`——不删除、不改写输入与历史——并在同一条授权下指定一个后继效果（后继只能由授权里绑定的那次投递认领）。
+- **付费效果（paid effect）作废与后继重授权**：一次已经付过费的模型调用记为一个「付费效果」，同一效果身份（同一对象、同一版本、同一单元、同一输入）只记一次账，重新投递不会再付一次。结果未知（`unknown`）的效果可由负责人显式作废为终态 `voided`——不删除、不改写输入与历史——并在同一条授权下指定一个后继效果（后继只能由授权里绑定的那次投递认领）。
 
 ## 录入与会话
 
 - **录入会话（ingestion session）**：一次"用户上传一批材料 → 系统抽取 → 落库"的工作单元。状态机：`uploaded` →（用户触发抽取）→ `queued` →（worker 起跑）→ `extracting` → `extracted` / `partial` / `failed`；`extracted` / `partial` 可 `markReviewed()` → `reviewed`（可选步骤，`commitImport()` 也直接接 `extracted` / `partial`）→ **`imported`（终态，只读）**。`failed` 可 `retryExtraction()` 重入 `queued`。所有 transition 由 `src/server/ingestion/session.ts` 单一守卫，五个写入位置（POST /api/ingestion、/extract、handler、/rescue、/import）都走它。**救援是 block-level**：session 状态不变（partial → partial），仅替换单块内容。
 - **会话总结（session summary）**：用户主动结束一次学习会话时由 LLM 生成的总结。Phase 1b 新增（架构 review Q1）。
-- **上传材料的使用范围（usage choice）**：学习者上传材料时选择这份资料可以用在哪里：`allow`（**全部使用**，也可进长期记忆、学习总结）或 `answer_only`（**只用于本题**，只用来生成这道题的答案与判分，不进长期记忆与学习总结）。选择落到材料文档的使用政策上，撤回后已派生的事件立即停止进入记忆 / 简报。
-- **使用回执（usage receipt）**：上传识别后给学习者的一条可读回执，说明这批材料被怎么用：跑的是哪个识别引擎、从识别出的文字里隐去了哪些类别的个人信息（只报类别与处数，不报被隐去的值），以及**原图是否原样交给 AI**（拍照 / PDF 必须把原图交给识别引擎，回执明说原图原样交出；Word 文本行不外传图像）。在录入会话详情里可以查看这份回执，Word 文本行也补写回执。
+- **上传材料的使用范围（usage choice）**：学习者上传材料时选择这份资料可以用在哪里：`allow`（**全部使用**，也可进长期记忆、学习总结）或 `answer_only`（**只用于本题**，只用来生成这道题的答案与判分，不进长期记忆与学习总结）。选择记在这份材料上，由它派生的内容都按这一选择处理。
+- **使用回执（usage receipt）**：上传识别后给学习者的一条回执，说明从识别出的文字里隐去了哪些类别的个人信息（只报类别与处数，不报被隐去的值），以及**原图是否原样交给 AI**（拍照 / PDF 必须把原图交给识别引擎，回执明说原图原样交出；Word 文本行不外传图像）。在录入会话详情里可以查看这份回执，Word 文本行也补写回执。
 
 ## 安全
 
