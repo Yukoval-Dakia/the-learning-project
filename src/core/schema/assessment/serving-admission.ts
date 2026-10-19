@@ -1,4 +1,5 @@
 import { unit as parseUnit } from 'mathjs';
+import { describeAnswerShape } from './blank-answer-shape';
 import { EvaluationContractError, projectIssuedScoringBasis } from './evaluation';
 import { validateExecutionPlan } from './execution';
 import { isPublicSharedMaterial } from './materials';
@@ -273,6 +274,19 @@ export function decideAutomaticServing(
   const answerSlots = revision.response_spec.slots.filter(
     (slot) => selected.has(slot.part_id) && slot.kind !== 'table',
   );
+  // YUK-1568（第 1 片）：发出范围内的 blank 槽若声明了 answer_shape，在本片
+  // 没有已准入的数学比较器（第 2 片接入）—— 明确拒绝发题，绝不回退普通
+  // exact 文本判分。此闸在渲染面检查之前：声明题无论渲染状态都不可出。
+  const declaredSlot = answerSlots.find(
+    (slot) => slot.kind === 'blank' && slot.answer_shape != null,
+  );
+  if (declaredSlot != null && declaredSlot.kind === 'blank') {
+    return {
+      kind: 'unavailable',
+      reason: 'unsupported_deterministic_input',
+      detail: `slot ${declaredSlot.slot_id} declares answer_shape (${describeAnswerShape(declaredSlot.answer_shape)}) but the k1 math comparator is not admitted yet (YUK-1568 slice 2) — withholding serving instead of falling back to plain exact text comparison`,
+    };
+  }
   // YUK-1497 —— 展示层形状门先行（review R1）：行读面（revisionRowToContract）对解析
   // 失败的展示层原样透传而非丢列（丢列 = 静默降级为逐槽渲染的 fail-open）；这里以
   // invalid_presentation 拒绝，绝不带着坏展示层发题，原因也不被输入面检查盖住。
