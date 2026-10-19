@@ -21,6 +21,32 @@ import { resolveSubjectProfile } from '@/subjects/profile';
 
 const NOTABLE_LIMIT = 3;
 
+/**
+ * YUK-1621 — deterministic session numbers. Only the effective verdict track is
+ * counted; unjudged reviews stay in the total but not in the accuracy denominator.
+ */
+export function renderSessionNumericSummary(input: {
+  total_reviewed: number;
+  effective_outcomes: Record<string, number>;
+  primary_cause: string | null;
+}): string {
+  let correct = 0;
+  let partial = 0;
+  let incorrect = 0;
+  for (const [outcome, count] of Object.entries(input.effective_outcomes)) {
+    if (!Number.isFinite(count) || count <= 0) continue;
+    if (outcome === 'correct') correct += count;
+    else if (outcome === 'incorrect') incorrect += count;
+    else if (outcome === 'partial' || outcome === 'partial_unknown') partial += count;
+  }
+  const graded = correct + partial + incorrect;
+  if (graded === 0) return `本次复习 ${input.total_reviewed} 题，暂无有效判分。`;
+  const pct = Math.round((correct / graded) * 100);
+  const denominator = graded === input.total_reviewed ? '' : `（${graded} 题有效判分）`;
+  const cause = input.primary_cause ? `；主要错在 ${input.primary_cause}` : '';
+  return `本次复习 ${input.total_reviewed} 题，${pct}% 正确${denominator}${cause}。`;
+}
+
 export type RunTaskFn = TaskTextRunFn;
 
 export interface RunSessionSummaryParams {
@@ -66,7 +92,6 @@ export async function runSessionSummary(
     .select({
       id: event.id,
       subject_id: event.subject_id,
-      outcome: event.outcome,
       payload: event.payload,
       created_at: event.created_at,
     })
@@ -84,17 +109,10 @@ export async function runSessionSummary(
     return { status: 'skipped:no_events' };
   }
 
-  // Stats from review payloads.
-  const ratings = { again: 0, hard: 0, good: 0, easy: 0 };
+  // Knowledge counts from review payloads.
   const knowledgeCounts = new Map<string, number>();
   for (const r of reviewEvents) {
-    const payload = r.payload as {
-      fsrs_rating?: 'again' | 'hard' | 'good' | 'easy';
-      referenced_knowledge_ids?: string[];
-    };
-    if (payload.fsrs_rating && payload.fsrs_rating in ratings) {
-      ratings[payload.fsrs_rating] += 1;
-    }
+    const payload = r.payload as { referenced_knowledge_ids?: string[] };
     for (const k of payload.referenced_knowledge_ids ?? []) {
       knowledgeCounts.set(k, (knowledgeCounts.get(k) ?? 0) + 1);
     }
@@ -174,6 +192,14 @@ export async function runSessionSummary(
     if (oo) originalOutcomeCounts.set(oo, (originalOutcomeCounts.get(oo) ?? 0) + 1);
   }
 
+  // YUK-1621 — all numbers in the final summary come from this template; the
+  // model only writes the observation/advice suffix below it.
+  const numericSummary = renderSessionNumericSummary({
+    total_reviewed: reviewEvents.length,
+    effective_outcomes: Object.fromEntries(effectiveOutcomeCounts),
+    primary_cause: topCauses[0]?.category_label ?? topCauses[0]?.category ?? null,
+  });
+
   // Notable attempts (the again/hard ones, up to NOTABLE_LIMIT) — join question.
   const notable = reviewEvents
     .filter((r) => {
@@ -207,8 +233,7 @@ export async function runSessionSummary(
   const input = {
     session_id: sessionId,
     duration_min: durationMin,
-    total_reviewed: reviewEvents.length,
-    ratings,
+    numeric_summary: numericSummary,
     top_causes: topCauses,
     // YUK-1054 — 双轨：effective 判的 top_causes 之外，附原始判轨道分布。
     top_original_causes: topOriginalCauses,
@@ -223,13 +248,12 @@ export async function runSessionSummary(
   const result = await runTaskFn('SessionSummaryTask', input, {
     subjectProfile: resolveSubjectProfile(firstDomain),
   });
-  // Trim + soft-cap to 240 chars (allows ~120 Chinese chars; prompt asks for
-  // ≤120 but we don't reject — clamp instead so the model occasionally going
-  // slightly over doesn't lose the whole summary).
-  const summaryMd = result.text.trim().slice(0, 240);
-  if (summaryMd.length === 0) {
+  const observation = result.text.trim();
+  if (observation.length === 0) {
     return { status: 'skipped:no_events' };
   }
+  // The fixed numeric prefix is never truncated away by an over-long observation.
+  const summaryMd = `${numericSummary}${observation}`.slice(0, 240);
 
   await db
     .update(learning_session)
