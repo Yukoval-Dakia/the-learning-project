@@ -14,20 +14,32 @@
 //
 // Gates (all fail-closed inside one transaction): family lock → root+lifecycle
 // locks → exact paid row (unit + input_digest + fence, state must be applied)
-// → frozen input / applied application / current revision must still match the
-// manifest's expected revision+digest+generation → the current revision must
-// NOT already carry this receipt's binding (idempotent skip — a bound rerun
-// mints no revision, bumps no generation, emits no event) → group blockers →
-// central publishQuestionGroup CAS. Mismatch, ambiguity, unknown, missing or
-// stale state stops the entry; nothing is guessed.
+// → paid-effect identity RECOMPUTED from input_json (producer recipe, never
+// digest labels alone) → frozen input self-seals via publishedContractSeal →
+// frozen input / applied application / current revision must still match the
+// manifest's expected revision+digest+generation → current revision layers are
+// loaded, sealed, and must equal the frozen input's canonical content → the
+// current revision must NOT already carry this receipt's FULL binding
+// (idempotent skip — a bound rerun mints no revision, bumps no generation,
+// emits no event) → group blockers → central publishQuestionGroup CAS.
+// Mismatch, ambiguity, unknown, missing or stale state stops the entry;
+// nothing is guessed.
 
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import type { PaidEffectIdentity } from '@/core/migration/paid-effect-protocol';
+import { canonicalHash } from '@/core/migration/canonical';
+import {
+  type PaidEffectIdentity,
+  computePaidEffectIdentity,
+} from '@/core/migration/paid-effect-protocol';
 import { SCORING_ADMISSION_STATE } from '@/core/schema/assessment/lifecycle';
 import type { Tx } from '@/db/client';
 import { lockPaidEffectControlFamily } from '@/db/paid-effect-control';
 import { paid_effect, question, question_revision } from '@/db/schema';
+import {
+  publishedContractSeal,
+  publishedSealAccepts,
+} from '@/kernel/records/assessment-normalization';
 import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
 import { runQuestionAdmissionChecks } from './checks';
 import { ADMISSION_FAMILY, lockAdmissionGroup } from './enqueue';
@@ -58,9 +70,9 @@ export const RepairManifestEntry = z.strictObject({
 export type RepairManifestEntry = z.infer<typeof RepairManifestEntry>;
 
 export const REPAIR_SOURCE = 'yuk1547-repair-resolved-contracts';
-/** Distinct actor_ref for audit; re-enqueue is impossible regardless because
- *  the publish event carries admission='admitted' (the subscriber only follows
- *  'withheld' publications) — and the actor clause stays as second fence. */
+/** Distinct actor_ref purely for audit provenance. No-re-enqueue comes from
+ *  the event payload alone: enqueuePublishedQuestionAdmission only follows
+ *  'withheld' publications, and a repair publish is always 'admitted'. */
 export const REPAIR_ACTOR_REF = 'practice:question_admission_repair';
 
 export type RepairEvaluation =
@@ -93,14 +105,21 @@ export interface ReadyRepair {
   retainedUnknownRows: { unit: string; input_digest: string }[];
 }
 
-/** The paid-receipt binding a repaired revision carries on published_by. */
+/** The full paid-receipt binding a repair/normal-path resolved publication
+ *  carries on published_by — every field must match for already_repaired; a
+ *  partial or foreign binding is ambiguous and blocks (never supersede). */
 const RevisionPaidBinding = z
   .object({
     paid_receipt: z
       .object({
+        family: z.string(),
+        entity_id: z.string(),
+        entity_revision: z.string(),
         unit: z.string(),
         input_digest: z.string(),
-        resolved_contract_digest: z.string().optional(),
+        receipt_digest: z.string(),
+        resolved_contract_digest: z.string(),
+        published_contract_digest: z.string(),
       })
       .passthrough(),
   })
@@ -113,8 +132,10 @@ const blocked = (groupId: string, reason: string): RepairEvaluation => ({
 });
 
 /**
- * All reads + locks + fail-closed checks for one manifest entry. Safe to call
- * inside a read-only transaction (plan) — nothing writes here.
+ * All reads + locks + fail-closed checks for one manifest entry. Write-free —
+ * but it takes pg_advisory_xact_lock and FOR UPDATE row locks, so it runs in a
+ * NORMAL transaction (plan mode commits without writes); do NOT run it in a
+ * Postgres READ ONLY transaction, the locks would fail there.
  */
 export async function evaluateResolvedRepair(
   tx: Tx,
@@ -167,6 +188,44 @@ export async function evaluateResolvedRepair(
       'frozen_input_revision_mismatch: paid input names another revision',
     );
 
+  // P1 (Codex R1) — the row's PK columns are claims, not proof: recompute the
+  // paid-effect identity from the parsed input with the SAME recipe
+  // claimAdmissionBatch used at send time (FrozenAdmissionInput.parse →
+  // computePaidEffectIdentity over the parsed object — the schema-stripped
+  // shape is what the producer hashed). Copied digest labels on a
+  // different-content input_json diverge from the stored input_digest.
+  const recomputed = computePaidEffectIdentity({
+    family: ADMISSION_FAMILY,
+    entityId: input.data.group_id,
+    entityRevision: input.data.contract.integrity_digest,
+    unit: paid.unit,
+    input: input.data,
+  });
+  if (
+    recomputed.entityId !== paid.entity_id ||
+    recomputed.entityRevision !== paid.entity_revision ||
+    recomputed.unit !== paid.unit ||
+    recomputed.inputDigest !== paid.input_digest
+  ) {
+    return blocked(
+      entry.group_id,
+      'paid_identity_recompute_mismatch: input_json does not recompute to the row identity',
+    );
+  }
+  // The frozen contract must self-seal — a label copied onto different layers
+  // fails publishedSealAccepts even when the digest string round-trips.
+  let inputSeal: ReturnType<typeof publishedContractSeal>;
+  try {
+    inputSeal = publishedContractSeal(input.data.contract);
+  } catch {
+    return blocked(entry.group_id, 'frozen_input_layers_unparseable');
+  }
+  if (!publishedSealAccepts(inputSeal, input.data.contract.integrity_digest))
+    return blocked(
+      entry.group_id,
+      'frozen_input_seal_mismatch: contract layers do not seal to integrity_digest',
+    );
+
   const receipt = AdmissionResultReceipt.safeParse(paid.result_json);
   if (!receipt.success) return blocked(entry.group_id, 'receipt_unparseable');
   const result = receipt.data.result;
@@ -193,12 +252,18 @@ export async function evaluateResolvedRepair(
     );
   }
 
-  const contract = buildResolvedPublishContract(input.data, result.resolved);
+  let contract: ReturnType<typeof buildResolvedPublishContract>;
+  try {
+    contract = buildResolvedPublishContract(input.data, result.resolved);
+  } catch {
+    return blocked(entry.group_id, 'resolved_contract_unsealable');
+  }
   if (contract.kind === 'blocked') return blocked(entry.group_id, contract.reason);
 
   // ---- idempotency: a binding already on the current revision ends the entry
   // BEFORE the publisher — no revision, no generation bump, no duplicate
-  // verification row. Same document without the binding is ambiguous: stop.
+  // verification row. The check uses REAL content (canonical seal of the
+  // stored layers) and the FULL paid binding — never digest labels alone.
   const currentRevisionId = lifecycle.current_revision_id;
   if (currentRevisionId == null) return blocked(entry.group_id, 'no_current_revision');
   const [currentRevision] = await tx
@@ -206,48 +271,89 @@ export async function evaluateResolvedRepair(
       revision_id: question_revision.revision_id,
       integrity_digest: question_revision.integrity_digest,
       published_by: question_revision.published_by,
+      structure: question_revision.structure,
+      response_spec: question_revision.response_spec,
+      scoring_basis: question_revision.scoring_basis,
+      execution_plan: question_revision.execution_plan,
+      presentation: question_revision.presentation,
     })
     .from(question_revision)
     .where(eq(question_revision.revision_id, currentRevisionId))
     .limit(1);
   if (!currentRevision) return blocked(entry.group_id, 'current_revision_missing');
+  // Same seam as the job's sealedRevisionContract: parse the stored layers and
+  // accept canonical/legacy digest encodings — fail closed, no parallel math.
+  let currentSeal: ReturnType<typeof publishedContractSeal>;
+  try {
+    currentSeal = publishedContractSeal({
+      structure: currentRevision.structure,
+      response_spec: currentRevision.response_spec,
+      scoring_basis: currentRevision.scoring_basis,
+      execution_plan: currentRevision.execution_plan,
+      ...(currentRevision.presentation != null
+        ? { presentation: currentRevision.presentation }
+        : {}),
+    });
+  } catch {
+    return blocked(entry.group_id, 'current_revision_layers_unparseable');
+  }
+  if (!publishedSealAccepts(currentSeal, currentRevision.integrity_digest))
+    return blocked(
+      entry.group_id,
+      'current_revision_unsealed: stored integrity_digest does not seal the stored layers',
+    );
+
   const priorBinding = RevisionPaidBinding.safeParse(currentRevision.published_by);
   if (priorBinding.success) {
     const bound = priorBinding.data.paid_receipt;
-    if (
+    // Full-identity bind: every payment leg + both digests must match the row
+    // and the recomputed receipt hash — a label-equal foreign or partial
+    // binding is ambiguous and blocks.
+    const boundToThisReceipt =
+      bound.family === ADMISSION_FAMILY &&
+      bound.entity_id === entry.group_id &&
+      bound.entity_revision === paid.entity_revision &&
       bound.unit === entry.paid.unit &&
       bound.input_digest === entry.paid.input_digest &&
-      bound.resolved_contract_digest === result.resolved.integrity_digest
-    ) {
-      return currentRevision.integrity_digest === contract.resolved.publishedContractDigest
-        ? {
-            kind: 'already_repaired',
-            groupId: entry.group_id,
-            revisionId: currentRevision.revision_id,
-            revisionDigest: currentRevision.integrity_digest,
-          }
-        : blocked(
-            entry.group_id,
-            'repair_binding_digest_conflict: current revision carries this receipt binding but its digest differs',
-          );
+      bound.receipt_digest === canonicalHash(receipt.data) &&
+      bound.resolved_contract_digest === result.resolved.integrity_digest &&
+      bound.published_contract_digest === currentSeal.canonical &&
+      currentSeal.canonical === contract.resolved.publishedContractDigest;
+    if (boundToThisReceipt) {
+      return {
+        kind: 'already_repaired',
+        groupId: entry.group_id,
+        revisionId: currentRevision.revision_id,
+        revisionDigest: currentRevision.integrity_digest,
+      };
     }
     return blocked(
       entry.group_id,
       'current_revision_bound_to_other_receipt: ambiguous ownership, refusing to supersede',
     );
   }
-  if (currentRevision.integrity_digest === contract.resolved.publishedContractDigest) {
+  if (currentSeal.canonical === contract.resolved.publishedContractDigest) {
     return blocked(
       entry.group_id,
       'same_document_without_receipt_binding: identical document exists but lacks the paid binding',
     );
   }
 
-  // ---- manifest expectations (CAS tokens) ----
+  // ---- manifest expectations (CAS tokens) + before/after content proof ----
   if (currentRevisionId !== entry.expected_current_revision_id)
     return blocked(entry.group_id, 'current_revision_changed');
   if (currentRevision.integrity_digest !== entry.expected_current_revision_digest)
     return blocked(entry.group_id, 'current_digest_mismatch');
+  // BEFORE repair the current document must BE the paid frozen input's
+  // content (canonical seal equality) — only reached when no binding exists;
+  // a repaired rerun never lands here because the binding branch returns
+  // first and the current document is then the RESOLVED document, not the
+  // input. A copied input digest label on different base layers fails here.
+  if (currentSeal.canonical !== inputSeal.canonical)
+    return blocked(
+      entry.group_id,
+      'current_content_differs_from_paid_input: manifest pins the input digest but the stored document is not the paid input',
+    );
   if (lifecycle.scoring_admission_generation !== entry.expected_admission_generation)
     return blocked(
       entry.group_id,

@@ -16,18 +16,21 @@
  * evidence → the group simply stays out of the manifest; an entry whose paid
  * row is missing/unknown/mismatched is blocked, never guessed.
  *
- *   plan   — read-only (default posture). Locks rows in short read
- *            transactions, evaluates every entry, prints disposition plus the
- *            REAL serving-gate count (readAutomaticallyServableQuestionIds —
- *            the same part binding real issuance uses, never an admitted
- *            count). No writes.
+ *   plan   — write-free (default posture). Each entry is evaluated inside a
+ *            normal transaction that briefly takes the family advisory lock +
+ *            FOR UPDATE row locks (NOT a Postgres READ ONLY transaction —
+ *            locks cannot run there), then commits with zero writes. Prints
+ *            disposition plus the REAL serving-gate count
+ *            (readAutomaticallyServableQuestionIds — the same part binding
+ *            real issuance uses, never an admitted count).
  *   apply  — per-entry transaction: evaluate → publish resolved via the
  *            central publisher → project the root row. Requires --reason
  *            (operator justification, recorded in the repair provenance on
  *            published_by) and --out (per-entry repair receipts + summary).
- *            Idempotent: a current revision already bound to this exact
- *            (unit, input_digest, resolved digest) reports already_repaired
- *            and mints nothing.
+ *            Idempotent: a current revision already carrying this receipt's
+ *            FULL binding (family/entity/unit/input_digest/receipt_digest/
+ *            resolved+published digests, canonical seal of the stored layers)
+ *            reports already_repaired and mints nothing.
  *
  * usage:
  *   tsx scripts/yuk1547-repair-resolved-contracts.ts plan  --manifest m.json [--out dir]

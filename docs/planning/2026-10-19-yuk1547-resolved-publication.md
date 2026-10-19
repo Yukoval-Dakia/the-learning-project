@@ -54,21 +54,33 @@ zx7n8 保留旧 @1/@2 unknown），其余 42 无当前匹配 paid 证据、不�
    `scripts/yuk1547-repair-resolved-contracts.ts`（`ops:yuk1547-repair-resolved-contracts`）：
    - manifest 显式逐项绑定：`group_id` + expected current revision id/digest +
      admission generation + 精确付费 identity（`unit`/`input_digest`/`fence`）。
-   - `plan`（默认姿态，只读事务）：逐条给出 ready/already_repaired/blocked+reason，
-     并用 `readAutomaticallyServableQuestionIds` 报**当前真实可发数**（与真实发题同一
+   - `plan`（默认姿态，零字段写入）：逐条在**普通事务**（advisory 锁 +
+     FOR UPDATE 行锁，非 PG READ ONLY 事务）内评估后回滚提交，给出
+     ready/already_repaired/blocked+reason，并用
+     `readAutomaticallyServableQuestionIds` 报**当前真实可发数**（与真实发题同一
      part binding），不以 admitted 计数冒充。
    - `apply` 须 `--reason`（操作者原因进 repair 回执）与 `--out`（逐条 receipt +
      summary.json）。每 entry 独立事务：family 锁 → root/lifecycle 锁 → 精确付费行
-     （state=applied、fence、entity_revision=expected digest）→ 冻结 input/application
-     与当前冻结 revision 绑定核对 → 幂等绑定检查 → manifest CAS → group blockers →
-     中央 `publishQuestionGroup` → 根行投影（同一 resolved 契约）。
-   - **幂等**：当前 revision `published_by.paid_receipt` 已携带同一
-     (unit,input_digest,resolved_digest) 绑定 ⇒ `already_repaired`，publisher 之前返回，
-     不铸 revision、不翻 generation、不追加重复 verification。同文档无绑定 ⇒
-     `same_document_without_receipt_binding` 歧义停。
+     （state=applied、fence、entity_revision=expected digest）→ **从 input_json 重算
+     paid-effect identity**（与 claimAdmissionBatch 同一配方：parse 后
+     `computePaidEffectIdentity`，PK 列只是声明不是证明）→ 冻结 input 契约经
+     `publishedContractSeal`/`publishedSealAccepts` 自封 → 冻结 input/application 与
+     manifest revision 绑定核对 → 读当前 revision **全量 layers**、规范 seal 与
+     存库 digest 双向校验 → 幂等绑定检查 → manifest CAS + **当前内容 canonical seal
+     必须等于冻结 input 内容**（before/after 区分：只在未修过的前置状态要求；
+     修后复跑走绑定分支不会撞此项）→ group blockers → 中央
+     `publishQuestionGroup` → 根行投影（同一 resolved 契约）。
+   - **幂等**：当前 revision `published_by.paid_receipt` 已携带**完整**付费绑定
+     （family/entity_id/entity_revision/unit/input_digest/receipt_digest（按
+     canonicalHash 重算核对）/resolved_contract_digest/published_contract_digest）
+     且存库 layers canonical seal == resolved 发布目标 ⇒ `already_repaired`，
+     publisher 之前返回，不铸 revision、不翻 generation、不追加重复 verification。
+     部分匹配/异主绑定 ⇒ `current_revision_bound_to_other_receipt` 歧义停；
+     同文档无绑定 ⇒ `same_document_without_receipt_binding` 歧义停。
    - **不重复入队**：发布事件 admission='admitted' ≠ 'withheld'，outbox 订阅
-     （enqueue.ts）天然跳过；actor_ref 用 `practice:question_admission_repair` 作第二道
-     区分。不走 claim/send/recordApplication，不 UPDATE 旧付费行。
+     （enqueue.ts `enqueuePublishedQuestionAdmission`）天然跳过 —— 这是唯一机制；
+     `actor_ref='practice:question_admission_repair'` 只作审计区分，**不是**入队闸。
+     不走 claim/send/recordApplication，不 UPDATE 旧付费行。
    - 失配/歧义/unknown/missing/stale/open 同base义务一律 blocked 拒收，不临时猜。
      同 base 的 `sending`/`receipt_ready`/`pending` 行阻塞该条；保留的 `unknown`
      行（如被 @3 取代的旧 @1/@2）不阻塞但逐条记入回执 `retained_unknown_rows`，
@@ -80,8 +92,9 @@ zx7n8 保留旧 @1/@2 unknown），其余 42 无当前匹配 paid 证据、不�
 - `kernel/records/assessment-publication.ts` 与 `enqueue.ts` 均未改动（repair 复用既有
   接缝，无 kernel 变更）。
 - 不引入 #1811（未合、HOLD）的任何代码。
-- 真实数据验收（92 题 apply + 实际可发数）由协调线在副本/TEST 上执行；manifest 名单
-  由父持，不落库入本仓库。
+- 真实数据验收（manifest 精确 50 题 apply + 实际可发数）由协调线在副本/TEST 上执行；
+  42 题无当前匹配 paid 证据（41 旧 quiz_verify@1 + 1 旧 source_verify@1 直 admitted，
+  属 1507 接续的独立来源），不在本 lane。manifest 名单由父持，不落库入本仓库。
 
 ## 本 PR 未验证项（NOT_RUN）
 
