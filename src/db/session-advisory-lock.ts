@@ -1,4 +1,5 @@
 import { drizzle } from 'drizzle-orm/postgres-js';
+import { requireSessionAdvisoryLockFamily } from '@/db/advisory-lock-registry';
 import type { Db } from '@/db/client';
 import * as schema from '@/db/schema';
 
@@ -145,6 +146,10 @@ export async function withinSessionAdvisoryLock<T>(
   deadlineAt: Date,
   work: (lockedDb: Db) => Promise<T>,
 ): Promise<T> {
+  // Fail-closed registry admission (YUK-1577): the descriptor must match a registered
+  // session-lock family BEFORE any connection is reserved. An unregistered key is a
+  // coding error — it throws here rather than surfacing later as `busy()`.
+  requireSessionAdvisoryLockFamily(lock);
   const reserved = await reserveSessionLock(db, lock, deadlineAt);
   // ReservedSql omits options/begin at runtime despite its Sql type; Drizzle requires both.
   reserved.options = db.$client.options;
