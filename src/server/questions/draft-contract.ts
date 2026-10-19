@@ -128,6 +128,8 @@ function slotFor(unit: DraftUnitT, partId: string): ResponseSlotT {
       format: spec.format ?? 'text',
       ...(spec.unit_hint != null ? { unit_hint: spec.unit_hint } : {}),
       ...(spec.max_chars != null ? { max_chars: spec.max_chars } : {}),
+      // YUK-1568：声明原样进冻结槽位（参与 integrity digest）；不注入默认值。
+      ...(spec.answer_shape != null ? { answer_shape: spec.answer_shape } : {}),
     } satisfies BlankSlotT;
   }
   return {
@@ -459,6 +461,8 @@ export function draftDocumentToContract(
       prompt_md: part.prompt_md,
       ...(part.question_no != null ? { question_no: part.question_no } : {}),
       material_ids: part.material_ids,
+      // YUK-1568：显式 blank_order 原样入 structure（交叉校验在发布 barrier）。
+      ...(part.blank_order != null ? { blank_order: part.blank_order } : {}),
     })),
   });
 
@@ -484,7 +488,15 @@ export function draftDocumentToContract(
       const executor = executorFor(unit);
       assignments.push({ scoring_unit_ids: [unit.unit_id], executor });
       const executorKind = executor.kind;
+      // YUK-1568（第 1 片）：声明了 answer_shape 的 blank 单元尚无已准入的数学
+      // 比较器（第 2 片接入）—— judgeable_today 如实 false，发布制 withheld /
+      // 暂扣，绝不回退普通 exact 自动判分。
+      const shapeDeclared =
+        unit.response_class === 'blank' &&
+        unit.response_spec.kind === 'blank' &&
+        unit.response_spec.answer_shape != null;
       const judgeable =
+        !shapeDeclared &&
         built.issues.length === 0 &&
         (executorKind === 'deterministic' ||
           (executorKind === 'model_executor' && executor.admitted_slice_id != null));
@@ -496,8 +508,9 @@ export function draftDocumentToContract(
         ...(judgeable
           ? {}
           : {
-              withheld_reason:
-                built.issues.length > 0
+              withheld_reason: shapeDeclared
+                ? 'declared_answer_shape_comparator_pending'
+                : built.issues.length > 0
                   ? built.issues[0].code
                   : executorKind === 'model_executor'
                     ? 'no_admitted_executor'
@@ -562,6 +575,8 @@ function draftSpecFromSlot(slot: ResponseSlotT): DraftUnitT['response_spec'] | n
         ...(slot.format != null ? { format: slot.format } : {}),
         ...(slot.unit_hint != null ? { unit_hint: slot.unit_hint } : {}),
         ...(slot.max_chars != null ? { max_chars: slot.max_chars } : {}),
+        // YUK-1568：冻结声明原样回草稿（draft→contract→draft 往返保字段）。
+        ...(slot.answer_shape != null ? { answer_shape: slot.answer_shape } : {}),
       };
     case 'open_response':
       return {
@@ -624,6 +639,8 @@ export function revisionToDraftDocument(
       prompt_md: part.prompt_md,
       ...(part.question_no != null ? { question_no: part.question_no } : {}),
       material_ids: [...part.material_ids],
+      // YUK-1568：冻结 blank_order 原样回草稿（编辑已声明题不丢声明）。
+      ...(part.blank_order != null ? { blank_order: [...part.blank_order] } : {}),
       units: [],
       metadata: {},
     });

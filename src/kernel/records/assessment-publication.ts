@@ -55,6 +55,9 @@ import {
   CUSTOM_ASSET_MAX_BYTES,
   CUSTOM_ASSET_MIME_TYPES,
   Presentation,
+  describeAnswerShape,
+  findAnswerShapeDeclarations,
+  findBlankOrderDeclarations,
   findCustomCodeForbiddenSequence,
   validateExecutionPlan,
   validatePresentation,
@@ -671,6 +674,23 @@ export async function publishQuestionGroup(
   assertAdmissionShape(input.admission);
   if (input.suspension != null) assertSuspensionShape(input.suspension);
 
+  // YUK-1568（第 1 片）：声明了 answer_shape 的 blank 尚无已准入的数学比较器
+  //（第 2 片接入）。admitted 被显式拒绝 —— 直接 typed 调用方、verify promote、
+  // 校准回写都绕不过这道闸；声明题只能以 withheld/暂扣发布，绝不回退普通
+  // exact 自动判分。只拦 answer_shape：blank_order 是展示语义，不触及判分。
+  const declaredShapeSlot = input.contract.response_spec.slots.find(
+    (slot) => slot.kind === 'blank' && slot.answer_shape != null,
+  );
+  if (
+    declaredShapeSlot != null &&
+    declaredShapeSlot.kind === 'blank' &&
+    input.admission.state === 'admitted'
+  ) {
+    throw new Error(
+      `publishQuestionGroup: slot '${declaredShapeSlot.slot_id}' declares answer_shape (${describeAnswerShape(declaredShapeSlot.answer_shape)}) but no admitted math comparator exists yet (YUK-1568 slice 2) — publish the group as withheld; refusing to admit plain-exact auto-grading for a declared blank`,
+    );
+  }
+
   // Db → 顶层事务；Tx → SAVEPOINT（drizzle 嵌套事务）。两种情况下任一步
   // 失败都整体回滚本次发布的全部写入。
   return db.transaction(async (tx) => {
@@ -1072,6 +1092,12 @@ export interface QuestionGroupContractSnapshot {
   partRows: PartRow[];
   /** 排除 archived/dismissed 的可服务 part（契约成员）。 */
   liveParts: PartRow[];
+  /**
+   * YUK-1568（第 1 片）：当前 revision 已携带答案声明（answer_shape /
+   * blank_order）时非空 —— 此时 contract 是【冻结四层】（typed 权威），
+   * 不再从 flat 行重建；publishQuestionGroupFromRow 对这类组显式冲突。
+   */
+  declaredRevisionId: string | null;
   contract: NormalizedContract;
 }
 
@@ -1121,6 +1147,87 @@ export async function loadQuestionGroupContractSnapshot(
     return meta?.archived_at == null && meta?.dismissed_at == null;
   });
 
+  // ---- YUK-1568（第 1 片）中央保护：已声明 revision 以冻结四层为权威 ----
+  //
+  // 当前 revision 携带 answer_shape / blank_order 时，读取不再从 flat
+  // question / legacy structured 重建（那会掉声明再铸新 revision），而是
+  // 原样返回冻结契约 —— source_verify C1 守卫与 admission loadDefinition
+  // 因此看到与库内一致的 integrity_digest。未支持/坏声明（未知版本、未知
+  // 字段）在这里 fail-loud：拒绝读取，绝不 strip 后回退旧解释。
+  //
+  // 注：这里对 lifecycle 的读不加锁（快照语义）；publisher 调用方随后会
+  // FOR UPDATE 重读并做 CAS —— 声明态若被并发发布改变，CAS 冲突 fail-closed。
+  const [declaredLifecycle] = await db
+    .select({ revisionId: question_group_lifecycle.current_revision_id })
+    .from(question_group_lifecycle)
+    .where(eq(question_group_lifecycle.group_id, root.id))
+    .limit(1);
+  let declaredRevisionId: string | null = null;
+  let frozenContract: NormalizedContract | null = null;
+  if (declaredLifecycle?.revisionId != null) {
+    const [current] = await db
+      .select({
+        revision_id: question_revision.revision_id,
+        integrity_digest: question_revision.integrity_digest,
+        structure: question_revision.structure,
+        response_spec: question_revision.response_spec,
+        scoring_basis: question_revision.scoring_basis,
+        execution_plan: question_revision.execution_plan,
+        presentation: question_revision.presentation,
+      })
+      .from(question_revision)
+      .where(eq(question_revision.revision_id, declaredLifecycle.revisionId))
+      .limit(1);
+    if (current != null) {
+      const shapeDeclarations = findAnswerShapeDeclarations(current.response_spec);
+      const orderDeclarations = findBlankOrderDeclarations(current.structure);
+      if (shapeDeclarations.length > 0 || orderDeclarations.length > 0) {
+        let seal: PublishedContractSeal;
+        try {
+          seal = publishedContractSeal({
+            structure: current.structure,
+            response_spec: current.response_spec,
+            scoring_basis: current.scoring_basis,
+            execution_plan: current.execution_plan,
+            ...(current.presentation != null ? { presentation: current.presentation } : {}),
+          });
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          throw new Error(
+            `loadQuestionGroupContractSnapshot: revision '${current.revision_id}' of group '${root.id}' carries answer declarations this reader cannot parse (${
+              shapeDeclarations
+                .map((d) => `${d.slot_id}:${describeAnswerShape(d.answer_shape)}`)
+                .join(', ') ||
+              `blank_order on ${orderDeclarations.map((d) => d.part_id).join(', ')}`
+            }) — ${detail} — refusing to fall back to the legacy row interpreter`,
+          );
+        }
+        declaredRevisionId = current.revision_id;
+        frozenContract = {
+          structure: seal.parsed.structure,
+          response_spec: seal.parsed.response_spec,
+          scoring_basis: seal.parsed.scoring_basis,
+          execution_plan: seal.parsed.execution_plan,
+          ...(seal.parsed.presentation != null ? { presentation: seal.parsed.presentation } : {}),
+          integrity_digest: current.integrity_digest,
+          group_id: root.id,
+          conversion_issues: [],
+          rule_statement_origins: {},
+        };
+      }
+    }
+  }
+  if (frozenContract != null) {
+    return {
+      rootId: root.id,
+      root,
+      partRows,
+      liveParts,
+      declaredRevisionId,
+      contract: frozenContract,
+    };
+  }
+
   // figure 实内容 digest 核验（root + parts 全部 figure 资产）：来自 asset
   // store 元数据（source_asset.sha256，裸 hex）。无核验值 ⇒ normalizer 如实
   // 标 unverified + conversion issue（不伪造 digest）。
@@ -1140,7 +1247,7 @@ export async function loadQuestionGroupContractSnapshot(
     { ...(root as Parameters<typeof normalizeQuestionGroupToContract>[0]), figureDigests },
     liveParts,
   );
-  return { rootId: root.id, root, partRows, liveParts, contract };
+  return { rootId: root.id, root, partRows, liveParts, declaredRevisionId: null, contract };
 }
 
 // ─── 从 legacy 行发布（加载 + 归一 + 发布 的便捷 seam） ─────
@@ -1199,6 +1306,17 @@ export async function publishQuestionGroupFromRow(
     // loadQuestionGroupContractSnapshot（唯一加载口）。
     const snapshot = await loadQuestionGroupContractSnapshot(tx, effectiveRootId);
     const { rootId, root, partRows, liveParts, contract } = snapshot;
+
+    // YUK-1568（第 1 片）：当前 revision 已携带答案声明 —— 旧行发布路径没有
+    // typed 变更上下文，从 flat 行重建会掉声明。这里显式冲突并令同事务回滚
+    //（调用方在同事务里先写的行修改一并丢弃，不先写行再吞发布失败）；下一
+    // 步是 edit_question + submit_question。28 处调用方的逐分支迁移（纯状态
+    // 分类经 typed publisher 保契约）属第 3 片，迁移前统一冲突，不放行。
+    if (snapshot.declaredRevisionId != null) {
+      throw new Error(
+        `publishQuestionGroupFromRow: group '${rootId}' current revision '${snapshot.declaredRevisionId}' carries YUK-1568 answer declarations (answer_shape/blank_order) — republishing from legacy rows would drop them; edit via edit_question + submit_question instead (row-path migration tracked in YUK-1568 slice 3)`,
+      );
+    }
 
     // 全部子 part 已 tombstone ⇒ 组无可发布成员：不铸空组 revision，只落
     // lifecycle 撤回维度（P2 组语义；历史 revision/摘要保留）。

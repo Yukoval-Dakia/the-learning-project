@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 import { type SharedMaterialT, isPublicSharedMaterial } from './materials';
-import type { ResponseSlotT, ResponseSpecT } from './response';
+import { type ResponseSlotT, type ResponseSpecT, slotsInDefaultOrder } from './response';
 import type { ScoringBasisT } from './scoring';
 import type { QuestionGroupStructureT } from './structure';
 
@@ -960,8 +960,15 @@ export function defaultPresentation(
       kind: 'text_math',
       part_ref: part.part_id,
     });
-    for (const slot of response_spec.slots) {
-      if (slot.part_id !== part.part_id || slot.kind === 'table') continue;
+    // YUK-1568：声明了 blank_order 的 part，其 blank 输入积木按默认逻辑序生成
+    //（只在各自位置内重排；未声明的 part 保持槽数组序）。显式 K5 布局仍以
+    // block→slot_id 绑定为准，不受默认序影响。
+    const partSlots = slotsInDefaultOrder(
+      response_spec.slots.filter((slot) => slot.part_id === part.part_id),
+      [part],
+    );
+    for (const slot of partSlots) {
+      if (slot.kind === 'table') continue;
       const unit = scoring_basis.units.find((candidate) =>
         candidate.slot_refs.includes(slot.slot_id),
       );

@@ -6,6 +6,7 @@ import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import { canonicalProviderName } from '@/ai/task-spec';
 import { QUESTION_ADMISSION_POLICY_IDS } from '@/core/question-admission-policy';
+import { findAnswerShapeDeclarations } from '@/core/schema/assessment/blank-answer-shape';
 import { LEGACY_DRAFT_STATUS } from '@/core/schema/assessment/lifecycle';
 import type { ResponseSpecT } from '@/core/schema/assessment/response';
 import type { ScoringBasisT } from '@/core/schema/assessment/scoring';
@@ -374,8 +375,14 @@ export async function runAdmissionForQuestion(
         }),
       ),
     );
+    // YUK-1568（R1 P1-1 纵深防御）：声明 answer_shape 的题没有已准入的数学
+    // 比较器（第 2 片）—— claim/付费发送之前强制关闸，覆盖 enqueue 之外的
+    // manual re-dispatch 与 direct invocation。既有 receipt 的应用与审计
+    //（claim 内 receipt/historical 分支在 maySend 判断之前）不受影响；被拦
+    // 的 claim 以 stale 结束，不产生 paid 行、不重置 authorization。
+    const declaredUnsupported = findAnswerShapeDeclarations(contract.response_spec).length > 0;
     return claimAdmissionBatch(tx, input, delivery, {
-      maySend: pinned && eligible,
+      maySend: pinned && eligible && !declaredUnsupported,
       historicalTerminal: Boolean(terminal),
     });
   });
