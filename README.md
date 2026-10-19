@@ -160,7 +160,7 @@ API 与独立 worker 都先由 `server/env.ts` 加载 `.env.local` / `.env`，�
 pnpm typecheck        # tsc --noEmit
 pnpm lint             # biome check .
 pnpm lint:ratchet     # warning/info 总数 ratchet（基线 scripts/lint-baseline.json，只降不升；修完 warning 后 pnpm lint:ratchet:update 重生基线）
-pnpm test             # 全量 umbrella（audit 链 + unit/db/migration）；CI Gate 不调用它，而是跑 .github/workflows/ci-gate.yml 的矩阵（见 docs/agents/development-workflow.md）
+pnpm test             # 全量 umbrella（audit 链 + unit/db/migration）；CI Gate 不调用它，而是跑 .github/workflows/ci-gate.yml 的矩阵（见 docs/agents/development-workflow.md）；本机按 AGENTS.md 只跑 scoped tests
 pnpm audit:schema     # schema write-path 审计（新表/字段必须有 write path）
 pnpm audit:partition  # 测试分区审计（依赖 DB 的测试不得进 unit config）
 pnpm audit:task-census # task registry 的 static caller / compatibility 分类与 wiring、run-log 契约
@@ -215,9 +215,12 @@ Owner 于 2026-10-07 将产品交付与本机运维持续委托给 agent，见[�
    ```
 
    `BANK_GAP_EVIDENCE_SECRET`（app 侧）：`search_bank` 用它给 gap_request 签 MAC，
-   `file_bank_gap` 验 MAC；短于 32 字符视为未设，未设时 `file_bank_gap` 拒绝所有提交。
-   `WORKSHEET_RENDER_APP_ORIGIN`（worker 侧）：`worksheet_render` 打开打印页的 origin；
-   compose 已设 `http://app:8787`，本机 `pnpm worker:dev` 缺省 `http://localhost:5173`。
+   `file_bank_gap` 验 MAC；短于 32 字符或等于 `INTERNAL_TOKEN` 时视为未设，未设时
+   `file_bank_gap` 拒绝所有提交。
+   `WORKSHEET_RENDER_APP_ORIGIN`（worker 侧）：`worksheet_render` 打开打印页的 origin，
+   compose 已设 `http://app:8787`；只有变量完全未设置才缺省 `http://localhost:5173`，
+   照抄 `.env.example` 留空会让 job 报 `WORKSHEET_RENDER_APP_ORIGIN is empty`，
+   本机要么删掉该行要么填值。
 
    `DASHSCOPE_API_KEY` is required as soon as the worker
    processes its first `memory_event_ingest` job (every `writeEvent` enqueues
