@@ -34,6 +34,12 @@ import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { Btn } from '@/ui/primitives/Btn';
 import { Card } from '@/ui/primitives/Card';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
+import { boundSlots, entriesForSubmit } from './blocks/envelope';
+import {
+  type EntriesUpdate,
+  PresentationBlocks,
+  parsePresentation,
+} from './blocks/PresentationBlocks';
 import type { PfToast } from './PracticeFacePage';
 import {
   type PaperDetail,
@@ -290,6 +296,18 @@ function PaperVisit({
   const hasNativeBindings = slots.every((slot) => slot.assessment != null);
   // The visit's restored drafts, computed once at mount (pure).
   const [restored] = useState(() => restorePaperDraft(slots));
+  // YUK-1573 — each question's frozen presentation, parsed once per visit (pure). A question
+  // whose issuance carries one is drawn by its block tree, as on the single-question page;
+  // null = drawn per slot.
+  const [presentations] = useState(
+    () =>
+      new Map(
+        slots.map(
+          (slot) =>
+            [slotKey(slot), parsePresentation(slot.assessment?.practice_dto.presentation)] as const,
+        ),
+      ),
+  );
   const [pos, setPos] = useState(0);
   // Mirror of `pos` for listeners and the session-ready callback; written by goPos.
   const posRef = useRef(0);
@@ -528,6 +546,26 @@ function PaperVisit({
               ]
             : [],
         ),
+    };
+  };
+
+  // YUK-1573 — the hand-in payload: the draft payload, and for a block-drawn question every
+  // bound select / blank slot still empty goes out as an active blank (entriesForSubmit, the
+  // same rule as the single-question page). Drafts never hold those blanks.
+  const submitPayloadFor = (key: string) => {
+    const payload = nativePayloadFor(key);
+    const presentation = presentations.get(key);
+    const issued = slots.find((slot) => slotKey(slot) === key)?.assessment?.practice_dto;
+    if (!payload || !presentation || !issued) return payload;
+    return {
+      ...payload,
+      response_set: {
+        entries: entriesForSubmit(
+          presentation,
+          issued.response_spec.slots,
+          payload.response_set.entries,
+        ),
+      },
     };
   };
 
@@ -890,6 +928,12 @@ function PaperVisit({
   // YUK-1051 — stable option ids（内容派生）；作答 pip 的「已答」包含绑定到该 slot 的证据。
   const curOptions = optionsFromChoicesMd(cur.question.choices_md ?? [], cur.question_id);
   const curAnswerText = answers[curKey] ?? '';
+  const curPresentation = presentations.get(curKey) ?? null;
+  // Slots an input block of the current question's presentation binds (custom blocks included).
+  const curBlockSlots = new Set(
+    curPresentation ? boundSlots(curPresentation).map((bound) => bound.slot_id) : [],
+  );
+  const curLocked = !hasNativeBindings || submittedKeys.has(curKey) || exiting;
   const curSelectedIds = curOptions.filter((o) => o.text_md === curAnswerText).map((o) => o.id);
   const answeredCount = slots.filter(
     (s) =>
@@ -960,6 +1004,32 @@ function PaperVisit({
       delete saveTimers.current[key];
       void runSave(key, questionId, partRef, v);
     }, 800);
+  };
+
+  // The current question's answer entries change: one path for the per-slot fields and the
+  // presentation blocks (YUK-1573). Mirror into the ref the saves read, then hand the answer
+  // text to setAnswer, which schedules the draft save as before.
+  const updateCurResponses = (update: EntriesUpdate) => {
+    const response: ResponseSetT = {
+      entries: update(nativeResponsesRef.current[curKey]?.entries ?? []),
+    };
+    nativeResponsesRef.current = {
+      ...nativeResponsesRef.current,
+      [curKey]: response,
+    };
+    setNativeResponses(nativeResponsesRef.current);
+    setAnswer(
+      response.entries
+        .map((item) =>
+          nativeResponseText(
+            item,
+            cur.assessment?.practice_dto.response_spec.slots.find(
+              (field) => field.slot_id === item.slot_id,
+            ),
+          ),
+        )
+        .join('\n'),
+    );
   };
 
   // YUK-1051 — 证据附件的增/删/改绑也要触发草稿自动保存（附件变更不经 setAnswer 的
@@ -1048,7 +1118,7 @@ function PaperVisit({
           question_id: s.question_id,
           part_ref: s.part_ref,
           answer_md: answers[key] ?? '',
-          assessment: nativePayloadFor(key),
+          assessment: submitPayloadFor(key),
           // YUK-1051 — 该 slot 绑定范围内的证据附件随提交冻结（与草稿同源展开）。
           image_refs: evidenceIdsForSlot(evidenceRef.current, key),
           latency_ms: timingMsRef.current[key] ?? 0,
@@ -1166,7 +1236,24 @@ function PaperVisit({
           </span>
         </div>
         {/* YUK-1051 — 结构化配图/共享材料与题面同版渲染（wire image_refs 恢复后）。 */}
-        {cur.assessment ? (
+        {curPresentation && cur.assessment ? (
+          // YUK-1573 — the frozen presentation draws the whole question (text, figures,
+          // passage and inputs), the same block tree the single-question page mounts.
+          <PresentationBlocks
+            presentation={curPresentation}
+            issued={{
+              faces: cur.assessment.practice_dto.faces,
+              materials: cur.assessment.practice_dto.materials,
+              slots: cur.assessment.practice_dto.response_spec.slots,
+            }}
+            entries={nativeResponses[curKey]?.entries ?? []}
+            onEntriesChange={updateCurResponses}
+            notation={cur.question.notation}
+            disabled={curLocked}
+            submitted={submittedKeys.has(curKey)}
+            submitting={submitting}
+          />
+        ) : cur.assessment ? (
           <>
             {cur.assessment.practice_dto.materials.map((material) => (
               <div key={material.material_id}>
@@ -1208,6 +1295,8 @@ function PaperVisit({
         {cur.assessment ? (
           <>
             {cur.assessment.practice_dto.response_spec.slots.map((slot) => {
+              // A slot an input block binds is drawn by the block tree above, never twice.
+              if (curBlockSlots.has(slot.slot_id)) return null;
               const spec = nativeSlotFieldSpec(slot);
               if (!spec) return null;
               const entry = nativeResponses[curKey]?.entries.find(
@@ -1222,34 +1311,13 @@ function PaperVisit({
                   notation={cur.question.notation}
                   feedback="none"
                   ariaLabel={slot.placement?.label ?? '作答'}
-                  disabled={!hasNativeBindings || submittedKeys.has(curKey) || exiting}
+                  disabled={curLocked}
                   onChange={(value) => {
                     const updated: SlotResponseT = nativeResponseEntry(slot, value, entry);
-                    const response: ResponseSetT = {
-                      entries: [
-                        ...(nativeResponsesRef.current[curKey]?.entries ?? []).filter(
-                          (item) => item.slot_id !== slot.slot_id,
-                        ),
-                        updated,
-                      ],
-                    };
-                    nativeResponsesRef.current = {
-                      ...nativeResponsesRef.current,
-                      [curKey]: response,
-                    };
-                    setNativeResponses(nativeResponsesRef.current);
-                    setAnswer(
-                      response.entries
-                        .map((item) =>
-                          nativeResponseText(
-                            item,
-                            cur.assessment?.practice_dto.response_spec.slots.find(
-                              (field) => field.slot_id === item.slot_id,
-                            ),
-                          ),
-                        )
-                        .join('\n'),
-                    );
+                    updateCurResponses((prev) => [
+                      ...prev.filter((item) => item.slot_id !== slot.slot_id),
+                      updated,
+                    ]);
                   }}
                 />
               );
