@@ -29,7 +29,6 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { collectDrizzleWrites } from './hub-sync-writer-dataflow';
-import { isDirectCliInvocation } from './lib/audit-scan';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
@@ -271,11 +270,6 @@ function listSourceFiles(root: string): string[] {
   return out;
 }
 
-// NOTE (YUK-1579): this statSync-based walker is intentionally NOT migrated to the
-// shared Dirent walker in scripts/lib/audit-scan.ts — statSync FOLLOWS symlinks
-// while Dirent checks skip them, and its test/generated/self-exclusion filters are
-// this audit's own policy. Different traversal semantics, kept local.
-
 /**
  * Scan `root` for hub-sync ownership violations. `allowlist` inventories the
  * known topology writers; anything else is a finding.
@@ -378,6 +372,6 @@ async function main(): Promise<void> {
 }
 
 // Run as CLI only (not when imported by the test).
-if (isDirectCliInvocation(import.meta.url)) {
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   void main();
 }

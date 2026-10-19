@@ -68,17 +68,18 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { type HygieneIssue, validateAllowlistHygiene } from './audit-draft-status';
 import {
   type AllowlistEntry,
-  isDirectCliInvocation,
-  loadResolvesWhenAllowlist,
-  walkSourceFiles,
-} from './lib/audit-scan';
+  type HygieneIssue,
+  loadAllowlist,
+  validateAllowlistHygiene,
+  walkSource,
+} from './audit-draft-status';
 import { analyzeSource, lineOf } from './lib/ts-tokenize';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
+const SRC_ROOT = join(REPO_ROOT, 'src');
 const ALLOWLIST_PATH = join(__dirname, 'audit-draft-status-reads-allowlist.json');
 
 const EXCLUDE_DIRS = new Set(['node_modules', '.next', 'dist', '.git', '.claude', 'drizzle']);
@@ -93,16 +94,11 @@ export const HELPER_SENTINEL = '// AUDIT-DRAFT-READS: canonical-definition';
 // hand-rolled predicate — still gets the hand-rolled part flagged (CodeRabbit YUK-569).
 const HELPER_SQL_INTERPOLATION = /\$\{\s*notDraftPredicate\s*\([^}]*\bdraft_status\b[^}]*\)\s*\}/g;
 
-// ---------- source walk (mirrors audit-draft-status.ts) ----------
+// ---------- source walk ----------
 
-function listSourceFiles(): string[] {
-  return walkSourceFiles(REPO_ROOT, {
-    roots: ['src'],
-    excludeDirs: EXCLUDE_DIRS,
-    excludeFiles: new Set(),
-    ignoreUnreadableDirs: false,
-  });
-}
+// walkSource was a verbatim-identical copy of audit-draft-status's; imported
+// from there since YUK-1579 (same EXCLUDE_DIRS constant, same Dirent
+// semantics, same repo-relative output).
 
 // ---------- Engine A shape detection ----------
 
@@ -298,7 +294,7 @@ export function readFileOrNull(relPath: string): string | null {
 }
 
 function main(): void {
-  const files = listSourceFiles().sort();
+  const files = walkSource(SRC_ROOT).sort();
   const hits: ReadHit[] = [];
   const unknown: UnknownHit[] = [];
   const jsTwins: JsTwin[] = [];
@@ -316,7 +312,7 @@ function main(): void {
   }
 
   const helperDefIssues = checkHelperSentinels(readFileOrNull);
-  const { entries, raw } = loadResolvesWhenAllowlist(ALLOWLIST_PATH);
+  const { entries, raw } = loadAllowlist(ALLOWLIST_PATH);
   const result = validateReadGate(hits, unknown, entries, raw, helperDefIssues);
 
   const isJson = process.argv.includes('--json');
@@ -387,6 +383,6 @@ function main(): void {
 
 // CLI-gate (mirrors audit-draft-status.ts / audit-relations.ts): only walk + exit when run as
 // a CLI so the self-test can import the pure functions without the top-level scan firing.
-if (isDirectCliInvocation(import.meta.url)) {
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main();
 }

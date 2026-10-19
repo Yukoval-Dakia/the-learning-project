@@ -19,7 +19,6 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
-import { isDirectCliInvocation, isRecord } from './lib/audit-scan';
 import {
   CONTINUATION_COLUMNS,
   RETIRED_SUBAGENT_COLUMNS,
@@ -545,6 +544,10 @@ const TRIVIAL_FIELDS = new Set(['id', 'created_at', 'updated_at', 'version', 'ar
 const RESOLVE_KINDS = new Set<ResolveKind>(['pr', 'phase', 'manual']);
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 function pad2(value: number): string {
   return String(value).padStart(2, '0');
 }
@@ -865,12 +868,6 @@ function walkFiles(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-// NOTE (YUK-1579): this statSync-based walker is intentionally NOT migrated to the
-// shared Dirent walker in scripts/lib/audit-scan.ts — statSync FOLLOWS symlinks
-// while Dirent checks skip them, and this audit's test-file classification also
-// happens later (isProductionSource), not in the walk. Different traversal
-// semantics, kept local.
-
 // A single drizzle write statement, scoped to the table it targets. `kind`
 // distinguishes INSERT from UPDATE; `payload` is either a direct object literal
 // or the top-level keys proved by bounded AST construction/caller tracing.
@@ -1155,6 +1152,6 @@ function main() {
   }
 }
 
-if (isDirectCliInvocation(import.meta.url)) {
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main();
 }

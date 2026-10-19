@@ -1,105 +1,74 @@
-# YUK-1579 — audit 扫描器机制归并（draft-status 家族 + schema/fold/hub-sync）
+# YUK-1579 — audit 重复机制归并（修正版）
 
-日期：2026-10-19 · 分支：`refactor/yuk-1579-audit-consolidation`（自 origin/main `696449125` 切出）
-证据目录（仓库外）：`/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1579/696449125/{before,after}/`
+日期：2026-10-19 · 分支：`refactor/yuk-1579-audit-consolidation`（基 origin/main `696449125`，已普通 merge 至 `4690ef533`）
+证据（仓库外）：`tlp-audit-artifacts/architecture-deepening/YUK-1579/696449125/{before2,after2,progress.md}`
+本文取代同 PR 内早期版本；早期版本宣称的"唯一 walker/唯一 lexer/净 −160"有计算与事实错误，见 §4。
 
-## 1. 语义重叠地图（先评估，后动手）
-
-五个 audit 的**策略**各不相同（表/谓词/写者所有权/schema 健康），但它们的**机制**大量重复：
+## 1. 五个 audit 的语义重叠地图
 
 | 重复机制 | draft-status | draft-status-reads | schema-writes | fold-writes | hub-sync-writers |
 |---|---|---|---|---|---|
-| 递归源码 walk | 私有 walkSource | 同一函数的逐字拷贝 | 私有 walkFiles（绝对路径、不跳测试） | 私有 walkSource（自排除） | 私有 listSourceFiles（跳 generated） |
-| 注释/字符串 lexer | ts-tokenize（共享✓） | ts-tokenize（共享✓） | TS compiler AST | **私有 100 行状态机 stripComments** | 私有 codeText（选择性保留字符串，不同策略） |
-| lineOf 行号 | 私有拷贝 | ts-tokenize 共享✓ | — | 内联 lineAt | — |
-| resolves_when allowlist 加载 | 私有 loadAllowlist | 逐字拷贝 | 私有（返回 unknown，不同策略） | 私有（容错回退 {}） | 不同 schema（writers 数组） |
-| isRecord | ✓ | ✓ | ✓ | — | — |
-| CLI-gate 尾部 | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 源码 walk | 私有 walkSource | **逐字拷贝** draft-status 的 | 私有 walkFiles（statSync、跟 symlink、不跳测试） | 同构 walkSource（+自排除+容错缺根） | 私有 listSourceFiles（statSync、跟 symlink、跳 generated） |
+| 注释/字符串 lexer | ts-tokenize 共享 | ts-tokenize 共享 | TS compiler AST | 私有 stripComments 状态机 | 私有 codeText（选择性保留字符串） |
+| lineOf | 私有拷贝（=ts-tokenize 导出） | 已用共享 | — | 内联 lineAt（同实现） | — |
+| resolves_when 加载 | 私有 loadAllowlist | **逐字拷贝**（仅路径常量不同） | 私有（返回 unknown） | 私有（容错回退） | 不同 schema |
+| isRecord / CLI-gate | ✓ | ✓ | ✓ | — / ✓ | — / ✓ |
 
-## 2. 归并的簇（同 PR 内有 5 个 live consumer）
+## 2. 最终交付（仅逐字重复簇，骑现有 seam，无新模块）
 
-新建 `scripts/lib/audit-scan.ts`（145 行）：
+reads 本就 `import ... from './audit-draft-status'`（YUK-569 先例：validateAllowlistHygiene）。
+本轮把 reads 里 draft-status 的三份逐字拷贝改为经该现有 import 边复用：
 
-- **`walkSourceFiles(repoRoot, opts)`** — 唯一的源码遍历器。每个 audit 的扫描宇宙
-  （roots、排除目录、是否跳测试/generated/.d.ts、自排除文件、绝对/相对路径、缺根跳过还是抛错）
-  以显式 options 对象留在各自调用点，互不继承。5 个私有 walker（约 106 行）删除。
-- **`loadResolvesWhenAllowlist(path)`** + `RESOLVE_KINDS/ResolvesWhen/AllowlistEntry` —
-  draft-status 家族两份逐字拷贝的加载器合一。
-- **`isRecord`**（3 拷贝→1）、**`isDirectCliInvocation(metaUrl)`**（5 个 CLI-gate 尾部→1）。
+- `walkSource`：reads 删除 18 行逐字拷贝，import draft-status **既有导出**（两文件 EXCLUDE_DIRS
+  常量逐字相同、同为 Dirent 语义、同为 repo-relative 输出）。
+- `loadAllowlist(path)`：参数化并导出（原 zero-arg 读模块常量）；reads 删 10 行逐字拷贝，
+  传自己的 ALLOWLIST_PATH。readFileSync/JSON.parse 的抛错面不变（同一函数体）。
+- `type AllowlistEntry` + `isRecord`：导出复用，reads 删本地类型块与拷贝。
+- `lineOf`：draft-status 删私有拷贝（与 ts-tokenize 导出逐字相同）、fold-writes 的 `lineAt`
+  闭包改为调用同一导出——纯函数，函数体逐字相同。
 
-`scripts/lib/ts-tokenize.ts` 增加 **`stripComments(src)`** 派生视图：保留字符串内容、保留注释内
-换行（行号对齐），由 `analyzeSource` 的 codeMask/commentMask 直接投影（13 行）。fold-writes
-的 100 行私有状态机删除，改为 `export { stripCommentsShared as stripComments }` 保模块面。
-**一个 lexer 服务 5 个 audit 中的 3 个**（draft-status 两个 + fold-writes）。
+**净额（git numstat vs origin/main `4690ef533`）**：scripts +29/−70 = **净 −41**：
+reads +14/−46、draft-status +9/−14、fold +6/−10；schema-writes / hub-sync-writers /
+ts-tokenize 与 main 逐字节相同；无新增文件。
 
-fold-writes 的 `lineAt` 内联闭包、draft-status 的私有 `lineOf` → 统一用 ts-tokenize 已导出的 `lineOf`。
+## 3. 行为保持（分支级论证，非"当前输出相同"）
 
-**caller knowledge 移除**：各 audit 的 main/auditFoldWrites 不再知道"怎么遍历仓库、怎么剥注释、
-怎么算行号、怎么解析 resolves_when JSON、怎么判断直启 CLI"，只知道自己的扫描策略对象。
+- `walkSource`/`loadAllowlist`/`lineOf`/`isRecord`：reads 调用的是**同一函数体**（原先的逐字
+  拷贝换成原身）。对任意输入等价由构造保证：相同参数→相同执行路径；draft-status 的
+  REPO_ROOT/EXCLUDE_DIRS 与 reads 原常量逐字相同。
+- 缺根/不可读目录、symlink、allowlist 损坏等故障分支：未触碰任何 walker/lexer/加载器本体
+  （schema/hub/fold 的实现与 main 逐字节相同；draft-status 侧仅签名参数化）。
+- 11 个命令变体（5×text、5×JSON、reads --strict）在同一树上原版 vs 归并版输出与退出码
+  逐字节一致（全部 0；fold-writes 的 8 条 main 既有 report-only VIOLATION 原样）。
 
-**旧职责确实被移除（deletion test）**：删掉 audit-scan.ts 则 5 个 audit 全部编译失败（遍历/
-加载/CLI-gate 无处可来）；删掉 ts-tokenize 的 stripComments 则 fold-writes 与 draft 家族同时失去
-词法层。无 pass-through 包装存活（曾保留的 walkSource 委托已删——外部零 consumer，经 grep 验证）。
+## 4. 尝试过并退掉的方案（保留教训）
 
-## 3. 排除项（有证据的不相似面）
+1. **共享 walker（scripts/lib/audit-scan.ts walkSourceFiles + 显式 options）**：把 3 个
+   Dirent walker 合一并显式化各 audit 政策后，模块+接线成本高于删除量（净 +49）；且
+   schema/hub 的 statSync walker **跟随 symlink** 而 Dirent walker 跳过——属审计覆盖行为
+   变化，当前语料 0 符号链接不能证明行为保持。已整体退掉，两 audit 与 main 逐字节相同。
+2. **fold-writes stripComments 改为 ts-tokenize 派生视图**：模板 `${...}` 内插注释剥离、
+   嵌套模板深度两处判定变化，同样是覆盖行为变化。已还原原状态机（与 main 逐字相同，
+  diff 校验过）。
+3. 早期报告的"净 −160"把新增 145 行模块算进删除侧，属计算错误；"删 helper 致编译失败=深度"
+   的 deletion-test 论证不成立（ts-tokenize stripComments 的删除并不影响未使用它的 draft
+   审计）。均已纠正。
 
-- **hub-sync 的 `codeText`（~180 行）不并入 ts-tokenize**：它的策略是*选择性*保留字符串
-  （仅 sql`` 模板、actorRef 字面量、sql.raw 参数），并做 regex 字面量识别与结构性回看
-  （previousWord/isActorRefValue/followsControlCondition）。analyzeSource 的掩码不携带这些
-  上下文；在其上重建需要原样搬移结构回看代码——净删除≈0 且覆盖面有风险。仅其 walker 迁移。
-- **schema-writes 的富版 `validateAllowlistHygiene` 不与 draft-status 的形状校验合并**：前者含
-  过期/12 个月视界/merged-PR git-log/shipped-phase status.md 检查与 9 种 issue code——不同策略
-  含义、不同输出契约（任务红线：不合并不同 policy meaning）。fold-writes 的
-  `validateAllowlistEntry` 同理（消息串与 AllowlistProblem 形状不同）。
-- **两个 `readFileOrNull` 不合并**：reads 版非 ENOENT 重抛、fold 版全吞——故障语义不同，各自保留。
+## 5. 两个维护变更场景（before/after）
 
-## 4. 两个真实维护变更场景（before/after）
+1. **draft-status walker 变更**（如调整排除目录或过滤器）：before 要同步改 reads 的逐字
+   拷贝，漏改即两 audit 扫描宇宙静默分叉；after reads 自动跟随（同一函数）。
+2. **resolves_when 加载约定变更**（如 `_` 前缀规则）：before 双实现各改一份；after 单实现。
 
-1. **新增需剪枝的构建/供应商目录**（如 `.turbo`）：before 要在 5 个文件的 5 个私有 walker 里各改
-   一处，漏一处则该 audit 扫进供应商产物（误报/规模失控）；after 只改各 audit 调用点的
-   excludeDirs 选项，遍历代码只有一份。
-2. **lexer 缺陷修复**（嵌套模板字面量提前终止——旧 fold-writes 状态机的真实缺陷：模板
-   `${...}` 内再出现反引号会提前结束模板态）：before 需在 ts-tokenize 与 fold-writes 两套不同
-   内部实现的词法器里分别修；after 一处 analyzeSource 修复全员受益——本 PR 即免费修掉了该缺陷
-   （当前语料行为不变，见 §6）。
+## 6. 剩余未合的重复（地图结论）
 
-## 5. 保留的行为（故障/兼容）
+五 audit 间其余"相似"均为不同策略或合并不净减：三种 walker 机制（Dirent×2 形、statSync×2）、
+两套 lexer（fold 私有状态机、hub codeText 选择性保留）、四套 allowlist 校验（不同 issue 形状
+与消息契约）。按"不合并不同 policy meaning、不为统一引入净增接口"红线保持本地。
 
-- **缺根语义**：draft 家族 walker 缺根仍抛错（未设 skipMissingRoots）；fold/schema/hub-sync 仍跳过。
-- **allowlist 故障**：draft 家族 JSON.parse 抛错、schema 缺文件返回 {}、fold 记日志回退 {}、
-  hub-sync 带信息抛错——逐一并原样。
-- **exit code 与输出确定性**：11 个命令变体（5×text、5×JSON、reads --strict）输出与退出码
-  全部逐字节一致（全部 0）。fold-writes 在 main 上本就报告 8 条 report-only VIOLATION
-  （含 corpus.ts rehearsal 写点与 edit-question.ts/note-verify-durable-operation.ts）——原样保留，
-  非本重构引入，归 owner 既有漂移。
-- **CI gating 语义零改动**：package.json、workflow、全部测试文件只读未动。
+## 7. 验证与 NOT_RUN
 
-## 6. 覆盖等价性的限定（诚实边界）
-
-- 行走器由 statSync 换 withFileTypes：符号链接语义不同（前者跟随、后者跳过）。已验证
-  src/server/scripts/app 四根下 symlink 数为 0，输出逐字节一致。
-- stripComments 派生视图与旧状态机的两处词法差：模板 `${...}` 内插中的注释现在被正确剥离
-  （旧版保留）；嵌套模板深度现在正确（旧版提前终止）。两形态在当前扫描根下零出现，输出
-  逐字节一致；等价性是**当前语料验证**，非对未来文件的形式证明。
-- pnpm install 噪音：before/draft-status.txt 首行含冷启动 install 日志（102 行），审计正文
-  自 "draft-status gate audit" 起逐字节一致；JSON 完全一致。
-
-## 7. 度量（真实净额）
-
-- 修改 6 文件：+132 / −292（净 −160）；新增 scripts/lib/audit-scan.ts +145；
-  **总计 +277 / −437，净 −160 行**，且每个重复机制现存 exactly once：
-  5 walker→1、fold-writes 100 行状态机→13 行派生视图、3 lineOf→1、2 allowlist 加载器→1、
-  3 isRecord→1、5 CLI-gate→1。
-
-## 8. 验证与 NOT_RUN
-
-已跑（本 worktree，`refactor/yuk-1579-audit-consolidation`）：
-
-- `pnpm audit:draft-status[ --json]`、`pnpm audit:draft-status-reads[ --json][ --strict]`、
-  `pnpm audit:schema[ --json]`、`pnpm audit:fold-writes[ --json]`、`pnpm audit:hub-sync-writers[ --json]`
-  ——与 origin/main 基线（同 worktree、同 HEAD 起点）输出/退出码逐字节一致；
-- `pnpm typecheck` exit 0；`pnpm lint` exit 0（179 warnings = main 既有基线）；
-  `pnpm build` exit 0。
-
-NOT_RUN：完整 `pnpm test`（owner 规则：由 push 后 exact-head CI Gate 执行）；任何测试编写/
-修改（未获批准）；DB/Docker/runtime/provider/paid 动作。父线负责独立 review、PR、CI。
+已跑（最终树）：11 变体同树对照逐字节一致（before2/after2）；`pnpm typecheck` 0；
+`pnpm lint` 0（179 warnings = main 基线）；`pnpm build` 0。
+NOT_RUN：完整 `pnpm test`（owner 规则，push 后 exact-head CI Gate 执行）；未写/改任何测试；
+无 DB/Docker/runtime/provider/paid 动作；未 push、未 PR。

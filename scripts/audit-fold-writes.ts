@@ -64,10 +64,9 @@
  *   pnpm audit:fold-writes --strict # VIOLATION 或 STALE 即非零 exit（CI gate 模式）
  */
 
-import { readFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { type Dirent, readFileSync, readdirSync } from 'node:fs';
+import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isDirectCliInvocation, walkSourceFiles } from './lib/audit-scan';
 import { lineOf } from './lib/ts-tokenize';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -509,16 +508,32 @@ export function stripComments(src: string): string {
 
 // ── source walk ────────────────────────────────────────────────────────────────────────────────
 
-// Shared walker (scripts/lib/audit-scan.ts, YUK-1579): src/ + server/, tests and this audit's
-// own files excluded; a scan root that does not exist (e.g. server/ in a stripped checkout)
-// is skipped.
-function listSourceFiles(): string[] {
-  return walkSourceFiles(REPO_ROOT, {
-    roots: SCAN_ROOTS,
-    excludeDirs: EXCLUDE_DIRS,
-    excludeFiles: EXCLUDE_FILES,
-    ignoreUnreadableDirs: true,
-  });
+export function walkSource(root: string, out: string[] = []): string[] {
+  let entries: Dirent[];
+  try {
+    entries = readdirSync(root, { withFileTypes: true });
+  } catch {
+    return out; // a scan root that does not exist (e.g. server/ in a stripped checkout) is skipped.
+  }
+  for (const entry of entries) {
+    if (EXCLUDE_DIRS.has(entry.name)) continue;
+    const abs = join(root, entry.name);
+    if (entry.isDirectory()) {
+      walkSource(abs, out);
+    } else if (
+      entry.isFile() &&
+      (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx')) &&
+      // Mirror the sibling audits: skip test files (a table write in a *.test.ts fixture is not a
+      // production fold mutation) and type declarations.
+      !entry.name.endsWith('.test.ts') &&
+      !entry.name.endsWith('.test.tsx') &&
+      !entry.name.endsWith('.d.ts')
+    ) {
+      const rel = relative(REPO_ROOT, abs);
+      if (!EXCLUDE_FILES.has(rel)) out.push(rel);
+    }
+  }
+  return out;
 }
 
 // ── write-site detection ─────────────────────────────────────────────────────────────────────
@@ -570,8 +585,9 @@ export function findWriteSites(
         table: m[2] as FoldOwnedTable,
         op: m[1] as WriteSite['op'],
         form: 'drizzle',
-        // line numbers are 1-based on the stripped source, whose newlines are preserved
-        // so they stay aligned with the original.
+        // lineOf (shared with the draft-status audits' ts-tokenize, YUK-1579):
+        // 1-based on the stripped source, whose newlines are preserved so they
+        // stay aligned with the original.
         line: lineOf(code, m.index ?? 0),
       });
     }
@@ -814,7 +830,8 @@ function loadAllowlist(): Allowlist {
 export function auditFoldWrites(): FoldWriteAuditResult {
   const today = new Date().toISOString().slice(0, 10);
 
-  const files = listSourceFiles();
+  const files: string[] = [];
+  for (const root of SCAN_ROOTS) walkSource(join(REPO_ROOT, root), files);
   files.sort();
 
   const sites = findWriteSites(files, readFileOrNull);
@@ -924,6 +941,6 @@ function main(): void {
 
 // CLI-gate (mirrors audit-relations.ts): only run + exit when invoked as a CLI so the self-test can
 // import the pure functions without the top-level scan firing.
-if (isDirectCliInvocation(import.meta.url)) {
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main();
 }
