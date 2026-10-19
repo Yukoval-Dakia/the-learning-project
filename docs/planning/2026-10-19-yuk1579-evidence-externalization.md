@@ -2,7 +2,8 @@
 
 Branch `docs/yuk-1579-evidence-externalization`，base `696449125b53b0c35a210dbc9a57292f014712de`（origin/main）。
 任务：把历史批量验收证据永久外置到仓库外 artifact 卷；git 只留结论、命令、revision、路径、SHA256。
-本批**不删除任何 git 内容**；删除提案交协调线逐批确认（AGENTS.md 新规则）。
+历史阶段 #1839 只建立外部副本与规则，未删除 git 内容；2026-10-20 协调线批准
+首批删除，当前分支已执行（见末节），尚待本 PR 合入 main。
 
 ## 授权与边界
 
@@ -14,10 +15,11 @@ Branch `docs/yuk-1579-evidence-externalization`，base `696449125b53b0c35a210dbc
 
 ## 库存与批次选择
 
-`docs/planning/evidence/` 现有 604 文件 / 20MB（另有 179 个顶层散文件 5.5MB，
+原始基线 `696449125` 的 `docs/planning/evidence/` 库存为 604 文件（包含顶层散文件）；
+下述仅保留批次的精确字节量，避免混用 MB/MiB。顶层散文件中，
 其中 `2026-10-10-pi-tool-loop-*`、`2026-09-19-pi-adapter-*`、`2026-10-18-opencode-go-*`
 被 `src/server/ai/{providers.ts,AGENTS.md,opencode-go.ts}` 引用为 live actual-output
-封存，**本批不纳入删除提案**）。
+封存，**本批不纳入删除提案**。
 
 第一批选 YUK-1358 Start 家族全部 5 个子目录，理由：
 
@@ -35,16 +37,20 @@ Branch `docs/yuk-1579-evidence-externalization`，base `696449125b53b0c35a210dbc
 拒绝；外部布局以仓库路径 `docs/planning/evidence/` 为根镜像。
 
 ```bash
+(
+set -euo pipefail
 REV=696449125b53b0c35a210dbc9a57292f014712de   # 固定源 git revision
 DEST=/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1579/$REV/evidence-export
-if [ -e "$DEST" ]; then echo "refuse: $DEST already exists (sealed)" >&2; exit 1; fi
-mkdir -p "$DEST"
+mkdir -p "$(dirname "$DEST")"
+# 原子创建最终目录；已存在（包括符号链接）就失败，不能覆盖封存内容。
+mkdir "$DEST" || { echo "refuse: cannot create fresh $DEST" >&2; exit 1; }
 for d in yuk1358-start-event-detail yuk1358-start-notes-list yuk1358-start-agent-notes \
          2026-10-09-yuk1358-start-admin-controls 2026-10-08-yuk1358-start-workbench; do
   git archive "$REV" "docs/planning/evidence/$d" | tar -x -C "$DEST"
 done
 # 在 $DEST/docs/planning/evidence 下生成逐文件 shasum -a 256 manifest（条目相对该目录），
 # 与 git 树同相对路径 manifest diff —— 全等
+)
 ```
 
 源不移动、不删除；未复制 secrets/env（无 .env 文件；secret 模式扫描命中均为
@@ -88,16 +94,15 @@ build 产物 chunk 名与测试名等误报，已逐条人工核过）。
 
 - 「caller knowledge removed」：仓库消费者从「须知道 bulk 证据在 git 树内某深层
   路径」变为「只须知道指针文件 + 外部根约定」；接口缩为一条登记行 + 一个 digest。
-- 「old responsibilities actually removed」：git HEAD 的 bulk 字节承载**尚未移除**，
-  这是本批设计如此——child 无删除授权，删除以协调线确认为前置（见下）。
-  本 PR 提议把已批准的外置政策写入 AGENTS，尚未合入生效；不声称此前存在必须入库的规则。
+- 「old responsibilities actually removed」：#1839 仅建立已批准的全线外置规则；
+  本次在协调线逐批批准后，从本分支 HEAD 移除 172 个批量证据文件，保留历史对象。
 - 失败/事务/锁/兼容行为：无 runtime 代码改动；live seal、fixture、CI 语义、
   git 历史全部原样。
 
 ## 提交协调线的 HEAD 删除提案（已于批次一执行，见末节执行记录）
 
 已批准并从 HEAD 删除以下 5 个 git 路径，共 172 文件 / 11,552,302 字节
-（≈11.0 MiB，`docs/planning/evidence/` 总量的 ~57%；口径为 HEAD 工作树字节，
+（≈11.0 MiB；口径为 HEAD 工作树字节，
 git 历史对象仍占用，clone/fetch 体积不降）：
 
 | git 路径 | 文件 | 字节 |
@@ -114,15 +119,11 @@ git 历史对象仍占用，clone/fetch 体积不降）：
 
 ## 真实指标与 NOT_RUN
 
-- 指标：外置 11,552,302 字节 / 172 文件（实测 stat 求和）；本 PR 给 git HEAD 增
-  3 个小文本（AGENTS 规则 + 本文件 + 指针 manifest，约 8KB）；git HEAD 若批准
-  删除批次一可减 11,552,302 字节。不把文件数/体积本身当深化成果，深化在
-  「证据生命周期责任」从 git 树移到外置卷 + 指针。
-- 验证方式：逐文件 SHA256 diff、字节数求和、外部 manifest digest 记录；
-  子任务未跑 build；父级按仓库 pre-PR 规则补跑，结果随 PR 更新。
-- NOT_RUN：未删除任何 git 文件；未跑任何测试/DB/Docker/runtime/provider；
-  未 push；未改 scripts audit 代码（另一 child 所有）；未更新 PLAN.md/.remember
-  （parent 集成所有）。
+- 指标：本分支删除批准清单 172 文件 / 11,552,302 字节，修改 11 份叙事或指针
+  文档；不承诺完整 clone/fetch 缩小。全部生产源码、测试、live seal 保留。
+- 验证：逐文件 SHA256、字节数、删除清单与 manifest 全等、活跃引用和外链哈希。
+- NOT_RUN：未跑测试/DB/Docker/runtime/provider；未部署。本文初版外置记录对应
+  #1839，末节才是本次批准后的删除记录，不能把旧记录当当前未删除状态。
 
 父级复核：172/172 文件均 git tracked；source/外部 SHA256 与 manifest 全等，所选五目录无漏项；总计 11,552,302 字节。manifest 路径相对其下的 `docs/planning/evidence/`，复验须先切到该目录，再 `shasum -a 256 -c ../../../SHA256SUMS.txt`。父级原始结果在外部 `evidence-export/parent-verification.json`。
 

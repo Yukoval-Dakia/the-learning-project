@@ -9,7 +9,7 @@
 重跑导出只允许写入**不存在**的新 head-addressed 目标目录；目标已存在一律拒绝，
 已封存字节永久禁止覆盖。导出源固定为 git revision（`git archive`），不依赖工作树
 状态；外部布局以仓库路径 `docs/planning/evidence/` 为根镜像，manifest 条目键即该
-相对路径。
+下的相对路径（如 `yuk1358-start-event-detail/...`，不含 `docs/planning/evidence/` 前缀）。
 
 ## Batch 1 — YUK-1358 Start 家族验收证据（2026-10-19）
 
