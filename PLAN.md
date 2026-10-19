@@ -4,6 +4,8 @@
 
 ## NOW
 
+- **YUK-1625 / ADR-0043 联合标定修订**：#1855 draft 已开（3 ADR docs-only；Amendment A1–A7 覆盖票上七点，ADR-0035/0042「b 锚死」三处同步修正）；合入前须 owner 经 Suzumiya 转交确认措辞。无代码/测试/schema 改动，typecheck/lint/build 无触及面。
+
 - **架构深化 / YUK-1572**：`refactor/yuk-1572-stream-modules`，独占 arch-lead；stream-store 已2120→1427，超长18→17，SCC与443边不变；合成d38e父级typecheck/lint/build/两审计通过；Kimi R1 APPROVE、旧head5c0e CI全绿；整合main2176仅看板冲突，新head验证/CI待完成。六票T3，#1830仍由Grok完成；不动其ratchet/baseline。见[首三片计划](docs/planning/2026-10-19-architecture-deepening.md)。
 
 - **第一天能用 / 题库暂不出题计数（YUK-1525）**：`yuk-1525-serving-counts-sql` 将 lifecycle 理由统一到 SQL，冻结题面继续复用原校验，计数与列表使用同一只读快照。2600 行中，旧列表少算为1846，修后2400，与原投影全库逐行统计一致；窗口外 `q_02600` 可见。无新增测试、UI 改动或付费调用。
@@ -52,6 +54,8 @@
 - UI 线：视觉方向已定（#1612、#1627）。#1633 KaTeX、#1634 F06 对比度与 #1642 ≠ 修复（YUK-1446）已于 2026-10-10 20:01 JST 部署到 TEST（main `515669863`），并完成真实页面截图验收。遗留 YUK-1447（等 rehype-katex 升级）。下一步 YUK-1438：等功能线各后端片落地后接入；placement/profile 的 UI 等迁移线给出 Start client 契约。
 
 ## PARKED
+
+- **src/server/AGENTS.md `judge/` 行过期**（YUK-1625 探索发现）：WHERE-LOOK 表仍列 `judge/`「判分 service（写 judge event）」，该目录已不存在；判分现落 `src/capabilities/practice/server/judge/`（invoker / route-resolve / evaluate-submission / evaluation-authority）。一行表修订待票，无行为影响。
 
 - **测试与证据瘦身 / YUK-1580、1579**：测试先做最大15文件与高mock逐case清单交协调线转owner；新批量证据外置永久保留，旧证据复制核hash/建引用后每批交协调线查看再删；第一批证据PR同步AGENTS全线规则。
 
