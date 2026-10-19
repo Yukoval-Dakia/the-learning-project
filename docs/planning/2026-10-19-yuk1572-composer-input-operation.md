@@ -27,10 +27,11 @@ HTTP adapter 保留协议整形与错误映射原样。knowledge id→显示名�
 
 | 事件 | 旧路径 | 新路径 |
 |------|--------|--------|
-| queryReviewDue 抛 ApiError | errorResponse→结构化 body（无日志）→`rows` 缺→`[]` | catch→`[]`，同样不记日志 |
-| queryReviewDue 抛普通 Error | errorResponse→`console.error('unhandled error',{message,stack,timestamp})`→500 body→`[]` | catch→同款 `console.error('unhandled error',…)`→`[]` |
-| 成功 | `Response.json({rows})`→`.json()` 取 `question_id`/`knowledge_ids` | 直接用 typed `ReviewDueRow` 同名字段（JSON 稳定字段值相同） |
-| `Response.json` 序列化失败 | errorResponse→`[]` | 不再可达：无序列化往返。ReviewDueRow 全部来自 Drizzle timestamp/jsonb 投影（Date、string[]、字符串枚举），不可序列化值现实不可达（domain 假设，非等价伪装） |
+| queryReviewDue 抛 ApiError | handler catch→errorResponse→结构化 body（无日志）→`rows` 缺→`[]` | catch→同一 `errorResponse(err)`（结构化 body + status/headers/details 照常整形，Response 丢弃）→`[]` |
+| queryReviewDue 抛普通 Error | errorResponse→`console.error('unhandled error',{message,stack,timestamp})`→500 body→`[]` | 同一 `errorResponse(err)`→同款日志→`[]` |
+| errorResponse 自身失败（如 ApiError `details` 不可序列化、Response.json 抛错） | 在 handler catch 内抛出→出 handler→composer 传播 | 在 `readComposerDueRows` catch 内抛出→同样向外传播（不吞） |
+| 成功 | `Response.json({rows})`→`.json()` 取 `question_id`/`knowledge_ids` | 直接用 typed `ReviewDueRow` 同名字段。Domain 假设：被消费两字段类型为 `string`/`string[]`，JSON 往返逐字等价；未以真实请求回放验证 |
+| `Response.json(rows)` 序列化失败 | errorResponse→`[]` | 不再可达：due 行无序列化往返。ReviewDueRow 全部来自 Drizzle timestamp/jsonb 投影（Date、string[]、字符串枚举），不可序列化值现实不可达（domain 假设，非等价伪装） |
 | `.json()` 解析失败 | 不可达（body 由 Response.json 产出） | 不适用 |
 | due 读取之后的所有查询（intervention 候选+准入、变式、new_check、frontier、practiceList、metadata、labels） | 在 collectComposerInputs 体内、无 try/catch→抛出 | 仍在 `readComposerDueRows` 之外→抛出，逐条未动 |
 | tx 内调用（recompose 传 `tx`） | handler 内 catch 后同 tx 继续后续查询；若 PG 事务已 aborted，后续查询抛 abort 错 | 完全相同：catch 边界相同、同一句柄、同一顺序 |
@@ -56,7 +57,8 @@ round-robin/goal 软偏置（queryReviewDue 内部原样）、`resolveDailyPract
 ## 实际移除的旧职责
 
 - stream-inputs：Request 构造、Response.json 解析、`rows?` shape cast、
-  `DUE_INPUT_LIMIT` 字面量、`knowledgeLabels` 函数本体（移出非删）。
+  `DUE_INPUT_LIMIT` 字面量、`knowledgeLabels` 函数本体（迁出至
+  knowledge-labels.ts；本模块经 compat re-export 保留旧导出面）。
 - stream-view：对 `./stream-inputs` 的 import 边解除。
 - due-list：唯一改动是导出 `REVIEW_DUE_LIMIT_MAX` 并在 clamp 使用；无逻辑变更。
 
@@ -68,10 +70,10 @@ round-robin/goal 软偏置（queryReviewDue 内部原样）、`resolveDailyPract
 - 文件边（practice/server 内部）：view→inputs −1；inputs→knowledge-labels +1；
   view→knowledge-labels +1；inputs→due-list 保持 1（同文件不同符号）。
   净 +1 文件边换取 view 对编排模块的解耦。
-- 行数：due-list 705→713；stream-inputs 355→369（净 +14，主要为降级契约
-  注释）；stream-view 410→410；knowledge-labels +26（新文件）。
+- 行数：due-list 705→713；stream-inputs 355→354（净 −1）；stream-view
+  410→410；knowledge-labels +26（新文件）。
 - 指标（同口径）：>1500 源文件 18→18；SCC 1（5 成员）不变；
-  capability→server 444、cross-value 48、baseline 141 行不变
+  capability→server 444、cross-value 48、baseline 142 行不变
   （audit:capability-boundaries exit 0）。
 
 ## 兼容
@@ -83,8 +85,9 @@ round-robin/goal 软偏置（queryReviewDue 内部原样）、`resolveDailyPract
 - stream-store 既有 import/re-export 面不变：`collectComposerInputs`、
   `resolveDailyPracticeBudget`、`VARIANT_INPUT_LIMIT`、`StreamView`/`StreamScope`、
   `buildStreamView`、`filterProspectiveStreamQuestions`、`getStreamViewItem`。
-- `knowledgeLabels` 不再经 stream-inputs 导出：唯一生产消费者 stream-view 已
-  改到新模块；全库 grep 无测试或其它文件引用旧路径。
+- `knowledgeLabels` 仍可从 `./stream-inputs` 导入（compat re-export 指向
+  knowledge-labels.ts 本体）；唯一生产消费者 stream-view 改用新模块路径，
+  旧导出面不缩。
 
 ## 验证（exact commands → 结果）
 
@@ -100,8 +103,8 @@ round-robin/goal 软偏置（queryReviewDue 内部原样）、`resolveDailyPract
   「干预诊断仍可前缀并集」「降级后同 tx 后续查询」等运行时事实为代码级
   同构结论，非实测。
 
-外部日志与逐文件 SHA-256（按验证时源码 commit
-`c1a68eaf541427ba58a6ad7db8a515518b75b337` 命名）：
-`/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1572/c1a68eaf541427ba58a6ad7db8a515518b75b337/`，
+外部日志与逐文件 SHA-256（按父核修正后源码 commit
+`40f056dcfa1e4ed6c87be43072d00b8304f39d75` 命名；首轮 `c1a68eaf` 目录并存）：
+`/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1572/40f056dcfa1e4ed6c87be43072d00b8304f39d75/`，
 `checks-sha256.json` 索引 SHA-256
-`1a222448e8ab113a4ae3fd6fe9b91f165fd1c5e6d745f559a55dc0efe0804127`。
+`2f2dee73c1a967a663f12f164449387ad93e75d3932201f8d869fc98c2259ac6`。
