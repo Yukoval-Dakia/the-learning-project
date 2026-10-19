@@ -1,20 +1,22 @@
-# YUK-1526 关键词 IDF draft 交接 — 2026-10-19
+# YUK-1526 关键词强度与问法词交接 — 2026-10-19
 
-本 worktree `/workspace/amp/wt/YUK-1526`，分支 `yuk-1526-keyword-idf`，只处理本票，交付阶段为第一天能用。交 draft PR，不合并、不部署。产品改动仅 `bank-search.ts`，不改向量通道、UI、测试代码或 schema。
+本 worktree `/workspace/amp/wt/YUK-1526`，分支 `yuk-1526-keyword-idf`，只处理本票，交付阶段为第一天能用。沿用 PR #1824，不合并、不部署，不改 Linear 状态。产品改动仅 `bank-search.ts`，不改召回、向量、UI、测试代码或 schema。
 
-词项以 `{term, weight}` 表示。D 为完整可检索库面的题目数，df 为相同 FTS 文档表达式命中该词项的题目数。权重 `ln((D+1)/(df+0.5))/ln(2*(D+1))`；strong 要求命中权重和达到 `min(查询总权重, max(1, 0.2*查询总权重))`。短查询可凭完整词项命中计入；没有 counted 词项的单字查询保留旧行为。DF 不受 scope、候选上限或向量是否存在影响。游标 v3→v4，旧版本必须重搜；续页重算强度，变化时沿用 snapshot hash 显式过期。
+EL 已批准封闭问法词表。强度侧先用 Intl.Segmenter 分词，精确去掉 as const 集合中的 12 个问法词，再构造去重、封顶的词内短语。没有跨词 bigram，零强度词项的共现回退也只消费过滤后文本。没有新依赖。D 为完整可检索库面的题目数，df 为相同 FTS 文档表达式命中的题目数；权重 `ln((D+1)/(df+0.5))/ln(2*(D+1))` 和门槛 `min(查询总权重, max(1, 0.2*查询总权重))` 均未调整，df=0 仍是负证据。游标 v4→v5，旧版本必须重搜。
 
-本地 Node 24.22.0、pnpm 11.13.1、隔离 pgvector/pg16 迁移成功。24 题合成库中 22 题包含通用参数/方程/函数，2 题包含椭圆离心率，另 2 题包含赤壁赋意象。真实 `searchBankTool.execute` + 输入输出 schema + PostgreSQL，只有 embedding 被 stub，未调用任何付费 provider。旧源码用临时 bundle 载入，不改工作树。
+同一隔离容器 `yuk1526-repair-pg`，Node 24.22.0、pnpm 11.13.1、PG16.15。封存驱动不变，真实 `searchBankTool.execute` 和 SQL，只 stub embedding，$0。base 与候选完整 16 行结果如下分组。
 
-- 极坐标与参数方程的互化：旧 sparse/22 → 新 none/0；22 个弱候选保留。限制 source 后 sparse/1 → none/0。
-- 椭圆离心率的求解、赤壁赋意象赏析、椭圆：新旧均 sparse/2，各 2 个 strong。
-- 离子方程式、缺失天体物理话题、空 within_refs：均 none/0。
-- 向量最近距离约 0.435、0.464，均 counted=false，新旧一致。分页可续接、v3 明确过期。
-- 初版直接沿用权重门槛 2 曾漏掉赤壁赋；已改为上述权重尺度门槛并重跑同批输入，保留初版失败日志，不以挑选输入掩盖失败。
+- 14 题椭圆库，两种问法均 enough/14，当前页 10 strong，与 base 相同。
+- 18/24 题单调性库，QA 四种问法和两个短词控制均 enough/18，当前页 10 strong，与 base 相同。
+- 单题库三种问法均 sparse/1，与 base 相同；此前漏掉的求解、怎么问法恢复。
+- 原 24 题库，极坐标 enough/22→none/0，离子方程式长问法维持 none/0；椭圆长问法、赤壁赋意象、椭圆各维持 sparse/2。
+- v5 重跑完整驱动与升版前结果完全一致；v4 解码明确报 expired/unsupported。
 
-`pnpm typecheck`、`pnpm lint`（179 warnings/0 errors）、`pnpm build`、`pnpm audit:draft-status-reads --strict` 通过。既有 `bank-tools.db.test.ts` 6/6 通过。默认 `vitest.db.config.ts` 启动遇 Podman healthcheck 超时；临时配置只取消容器创建与 fork URL 改写，指向单独的 `yuk1526_existing_tests` 本地库，原测试正文不变。没有运行完整 pnpm test。
+`pnpm typecheck`、`pnpm lint`（179 warnings/0 errors）、`pnpm build` 通过。既有 `bank-tools.db.test.ts` 6/6 通过，包含分页和候选快照失效。临时配置沿用之前封存版本，只取消容器创建与 fork URL 改写，单 worker 指向独立 `yuk1526_existing_tests`；没有修改测试正文或运行完整 pnpm test。
 
-命令与原始输出在本地 `.amp/in/artifacts/`，PR 正文记录结果。真实副本及 39+6 条查询不在此环境，18/18、9/9 召回验收未验证；独立评审及 exact-head CI 留在 PR 阶段，不宣称本票已完成。Linear 查重已确认向量后续为 YUK-1527，重复 tsvector 性能为既有 YUK-1515，均不在本票修复，无需新建 follow-up。
+最终证据为本地 `.amp/in/artifacts/question-words-reproduction.tar.gz`、`repair-base-final.jsonl`、`repair-question-words-v5.jsonl`、`repair-*.log`。前三轮失败补丁及结果保留在旧封存包，不能将旧失败候选当作本轮实现。PR 正文逐词说明问法词选择、列完整对照；exact-head CI 和容器清理结果以 PR 交付评论为准。
+
+真实副本 39+6、18/18 和 9/9 召回仍待外部验收，PR 保持 Refs，不关票。P2 已归 YUK-1515，QA 5k 行平均 6975→11361 ms（+63%）为先前测量，本轮没有重测性能。向量后续是 YUK-1527，本轮无须新建重复 follow-up。
 
 以下为继承的历史交接。
 

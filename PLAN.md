@@ -1,10 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-19：本 worktree 只交付 YUK-1526 关键词 IDF 修复的 draft PR，不合并、不部署；真实副本验收待外部执行。其他票状态保留原记录。
+> Linear 是权威 tracker。2026-10-19：YUK-1526 在原 PR #1824 修复强度分词及问法词误计入；同一 PG 的 16 行对照通过，不合并、不部署，真实副本验收待外部执行。按 owner 要求不改变 Linear 状态。其他票状态保留原记录。
 
 ## NOW
 
-- **第一天能用 / 题库关键词区分度（YUK-1526）**：分支 `yuk-1526-keyword-idf` 只改关键词计入，游标升至 v4，向量规则不变。本地 24 题 Postgres 合成库中，极坐标查询由 sparse/22 变 none/0；椭圆离心率、赤壁赋意象及短查询椭圆各保留 2 个 strong。无新增测试、UI 或付费调用。交 draft PR 评审，不声称真实副本验收完成。
+- **第一天能用 / 题库关键词区分度（YUK-1526）**：分支 `yuk-1526-keyword-idf` 在强度侧用 Intl.Segmenter 和封闭问法词表，IDF 公式、候选召回及向量规则不变，游标 v5。同一 PG16 的 16 行对照中，QA 所有正例不低于 base，极坐标与离子方程式长问法均 none/0，原库三个正例各 2 strong。typecheck/lint/build 和既有 6 项 DB 不变量通过。无新增测试、依赖、UI 或付费调用。PR #1824 保持 Refs，exact-head CI 与评审以 PR 为准，真实副本验收未完成。
 
 - **YUK-1404 / native03题图修复**：PR1657 fixed4c52 exact CI38144495041全绿；正常纳入main eb960c079，仅PLAN/now冲突。图ownership/隐私产品代码与单capture边界测试保留，旧细粒度四tests已删。独立初审/最终R2预算已完成，不启第三审。当前crop producer仍无source_asset SHA登记，旧visibility未知，public withholding不是完整配图交付；同卷actual-output验收仍待。无DB/runtime/provider/paid。 [证据](docs/planning/2026-10-11-yuk1404-native03-figure-repair.md)。
 
@@ -34,7 +34,7 @@
 
 ## NEXT
 
-- YUK-1526 draft 评审后，在真实副本重跑 `stage1-yuk1516-calibration` 的 39 条标注查询和 K7 的 6 条。缺题全部 none，已有话题召回至少调参集 18/18、验证集 9/9；通过后再串行推进 YUK-1527。
+- YUK-1526 代码评审后，在真实副本重跑 `stage1-yuk1516-calibration` 的 39 条标注查询和 K7 的 6 条。缺题全部 none，已有话题召回至少调参集 18/18、验证集 9/9；通过后再串行推进 YUK-1527。
 
 - Start/judge共享文件边界见[交接](docs/planning/2026-10-09-judge-start-ownership.md)，Start/boot/shutdown由5796独占；judge A/B/C/D由7631接续，迁移号后核。
 

@@ -303,7 +303,7 @@ export interface BankSearchOutput {
 
 const BankSearchCursorSchema = z
   .object({
-    v: z.literal(4),
+    v: z.literal(5),
     q: z.string().trim().min(1).max(400),
     scope: BankSearchScopeSchema,
     limit: z.number().int().min(1).max(50),
@@ -378,7 +378,7 @@ export function decodeBankSearchCursor(raw: string): BankSearchCursor {
     typeof parsed === 'object' &&
     'v' in parsed &&
     typeof (parsed as { v: unknown }).v === 'number' &&
-    (parsed as { v: number }).v !== 4
+    (parsed as { v: number }).v !== 5
   ) {
     throw new Error(
       `cursor is not a valid bank-search cursor: version ${(parsed as { v: number }).v} is expired or unsupported; start a new search`,
@@ -527,6 +527,22 @@ interface FtsChannelExprs {
   strong: SQL;
 }
 
+const STRENGTH_WORD_SEGMENTER = new Intl.Segmenter('zh', { granularity: 'word' });
+const STRENGTH_QUESTION_WORDS = new Set<string>([
+  '求法',
+  '求解',
+  '怎么',
+  '如何',
+  '怎样',
+  '方法',
+  '什么',
+  '哪些',
+  '多少',
+  '是否',
+  '为什么',
+  '求',
+] as const);
+
 async function ftsChannelExprs(
   db: Db | Tx,
   queryText: string,
@@ -537,8 +553,22 @@ async function ftsChannelExprs(
     plan.recall.length === 0
       ? sql`plainto_tsquery('simple', ${queryText})`
       : sql`to_tsquery('simple', ${plan.recall.join(' | ')})`;
-  if (plan.counted.length === 0) {
-    const legacyTsq = sql`plainto_tsquery('simple', regexp_replace(${queryText}, ${CJK_FTS_SPLIT}, ${CJK_FTS_REPLACEMENT}, 'g'))`;
+  const topicSegments = Array.from(STRENGTH_WORD_SEGMENTER.segment(queryText))
+    .filter(({ isWordLike, segment }) => isWordLike && !STRENGTH_QUESTION_WORDS.has(segment))
+    .map(({ segment }) => segment);
+  const strengthTerms = [
+    ...new Set(
+      topicSegments
+        .filter((segment) => !CJK_FTS_CHAR.test(segment))
+        .map((segment) =>
+          /^[一-鿿]+$/u.test(segment)
+            ? `(${Array.from(segment).map(tsqLexeme).join(' <-> ')})`
+            : tsqLexeme(segment),
+        ),
+    ),
+  ].slice(0, FTS_QUERY_TERM_CAP);
+  if (strengthTerms.length === 0) {
+    const legacyTsq = sql`plainto_tsquery('simple', regexp_replace(${topicSegments.join(' ')}, ${CJK_FTS_SPLIT}, ${CJK_FTS_REPLACEMENT}, 'g'))`;
     return { tsq, strong: sql<boolean>`${tsvec} @@ ${legacyTsq}` };
   }
 
@@ -547,7 +577,7 @@ async function ftsChannelExprs(
     .select({
       documents: sql<number>`count(*)::float8`,
       frequencies: sql<number[]>`ARRAY[${sql.join(
-        plan.counted.map(
+        strengthTerms.map(
           (term) =>
             sql`(count(*) FILTER (WHERE ${tsvec} @@ to_tsquery('simple', ${term})))::float8`,
         ),
@@ -566,7 +596,7 @@ async function ftsChannelExprs(
     );
   // 平滑 IDF / 最大 IDF：未出现词权重 1，遍布全库的词趋近 0。
   // 保留正权重，使完整命中的短查询仍能达到自身总权重门槛。
-  const weightedTerms = plan.counted.map((term, index) => ({
+  const weightedTerms = strengthTerms.map((term, index) => ({
     term,
     weight:
       Math.log((stats.documents + 1) / (stats.frequencies[index] + 0.5)) /
@@ -1157,7 +1187,7 @@ async function runSearchBankInSnapshot(
   const hitIds = new Set(hits.map((hit) => hit.question_id));
   const nextCursor = hasMore
     ? encodeBankSearchCursor({
-        v: 4,
+        v: 5,
         q: effectiveQuery,
         scope,
         limit,
