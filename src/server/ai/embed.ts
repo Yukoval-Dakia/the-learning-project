@@ -68,70 +68,72 @@ async function embedChunk(
     async (attempt) => {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 15_000);
-      let res: Response;
       try {
-        res = await fetch(`${BASE_URL}/embeddings`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
-          body: JSON.stringify({ model: EMBED_MODEL, input: chunk, dimensions: EMBED_DIMS }),
-          signal: controller.signal,
-        });
+        let res: Response;
+        try {
+          res = await fetch(`${BASE_URL}/embeddings`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
+            body: JSON.stringify({ model: EMBED_MODEL, input: chunk, dimensions: EMBED_DIMS }),
+            signal: controller.signal,
+          });
+        } catch (error) {
+          attempt.markTerminal('failed', 'provider_network_error');
+          throw error;
+        }
+        const headerRequestId = res.headers?.get('x-request-id');
+        if (headerRequestId) await attempt.recordExternalRequestId(headerRequestId);
+        if (!res.ok) {
+          attempt.markTerminal('failed', `provider_http_${res.status}`);
+          throw new Error(`embedMany: DashScope ${res.status} ${await res.text()}`);
+        }
+
+        let json: EmbedResponse;
+        try {
+          json = (await res.json()) as EmbedResponse;
+          if (!headerRequestId && json.id) await attempt.recordExternalRequestId(json.id);
+          const input = json.usage?.prompt_tokens;
+          const total = json.usage?.total_tokens;
+          if (typeof input === 'number' || typeof total === 'number') {
+            attempt.reportUsage({
+              input: typeof input === 'number' ? input : null,
+              output: null,
+              total: typeof total === 'number' ? total : null,
+            });
+          }
+          if (json.data.length !== chunk.length) {
+            throw new Error(
+              `embedMany: DashScope returned ${json.data.length} vectors for ${chunk.length} inputs`,
+            );
+          }
+          const out = new Array<number[]>(chunk.length);
+          for (let i = 0; i < json.data.length; i++) {
+            const item = json.data[i];
+            const pos = typeof item.index === 'number' ? item.index : i;
+            if (pos < 0 || pos >= chunk.length || out[pos] !== undefined) {
+              throw new Error(`embedMany: DashScope returned invalid/duplicate index ${pos}`);
+            }
+            if (
+              !Array.isArray(item.embedding) ||
+              item.embedding.length !== EMBED_DIMS ||
+              item.embedding.some((n) => typeof n !== 'number' || !Number.isFinite(n))
+            ) {
+              throw new Error(`embedMany: DashScope returned invalid embedding at index ${pos}`);
+            }
+            out[pos] = item.embedding;
+          }
+          return out;
+        } catch (error) {
+          attempt.markTerminal('failed', 'provider_response_malformed');
+          throw error;
+        }
       } catch (error) {
-        attempt.markTerminal(
-          error instanceof Error && error.name === 'AbortError' ? 'aborted' : 'failed',
-          error instanceof Error && error.name === 'AbortError'
-            ? 'provider_request_aborted'
-            : 'provider_network_error',
-        );
+        if (error instanceof Error && error.name === 'AbortError') {
+          attempt.markTerminal('aborted', 'provider_request_aborted');
+        }
         throw error;
       } finally {
         clearTimeout(timer);
-      }
-      const headerRequestId = res.headers?.get('x-request-id');
-      if (headerRequestId) await attempt.recordExternalRequestId(headerRequestId);
-      if (!res.ok) {
-        attempt.markTerminal('failed', `provider_http_${res.status}`);
-        throw new Error(`embedMany: DashScope ${res.status} ${await res.text()}`);
-      }
-
-      let json: EmbedResponse;
-      try {
-        json = (await res.json()) as EmbedResponse;
-        if (!headerRequestId && json.id) await attempt.recordExternalRequestId(json.id);
-        const input = json.usage?.prompt_tokens;
-        const total = json.usage?.total_tokens;
-        if (typeof input === 'number' || typeof total === 'number') {
-          attempt.reportUsage({
-            input: typeof input === 'number' ? input : null,
-            output: null,
-            total: typeof total === 'number' ? total : null,
-          });
-        }
-        if (json.data.length !== chunk.length) {
-          throw new Error(
-            `embedMany: DashScope returned ${json.data.length} vectors for ${chunk.length} inputs`,
-          );
-        }
-        const out = new Array<number[]>(chunk.length);
-        for (let i = 0; i < json.data.length; i++) {
-          const item = json.data[i];
-          const pos = typeof item.index === 'number' ? item.index : i;
-          if (pos < 0 || pos >= chunk.length || out[pos] !== undefined) {
-            throw new Error(`embedMany: DashScope returned invalid/duplicate index ${pos}`);
-          }
-          if (
-            !Array.isArray(item.embedding) ||
-            item.embedding.length !== EMBED_DIMS ||
-            item.embedding.some((n) => typeof n !== 'number' || !Number.isFinite(n))
-          ) {
-            throw new Error(`embedMany: DashScope returned invalid embedding at index ${pos}`);
-          }
-          out[pos] = item.embedding;
-        }
-        return out;
-      } catch (error) {
-        attempt.markTerminal('failed', 'provider_response_malformed');
-        throw error;
       }
     },
   );

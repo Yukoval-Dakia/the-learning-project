@@ -24,7 +24,7 @@
 //
 // 不能自动派的路由 → 记 status='manual'（emit + log，不动作），等用户/UI 接手。
 
-import { and, eq, gte, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, sql } from 'drizzle-orm';
 import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
@@ -32,6 +32,7 @@ import { writeEvent } from '@/kernel/events';
 import type { QuizGenJobData } from '@/kernel/quiz-gen-contract';
 import { enqueueSupplyDispatchJob } from '@/kernel/supply-dispatch';
 import { supplyDispatchWebSearchAvailable } from '@/kernel/supply-dispatch-web-search';
+import { getPracticeBoss } from '../queue-runtime';
 import { SupplyTraceV1, type SupplyTraceV1T, buildSupplyTrace } from './evidence-demand';
 import { planSupplyRoutes } from './route-planner';
 import type { QuestionSupplyTarget, SupplyRoute } from './target-discovery';
@@ -162,6 +163,56 @@ async function recentDispatchExists(
     )
     .limit(1);
   return rows.length > 0;
+}
+
+const LIVE_SUPPLY_JOB_STATES: ReadonlySet<string> = new Set(['created', 'retry', 'active']);
+
+function queuedSupplyPromise(
+  payload: unknown,
+): { jobId: string; route: SupplyRoute; count: number } | null {
+  if (!payload || typeof payload !== 'object') return null;
+  const row = payload as Record<string, unknown>;
+  const jobId = row.job_id;
+  const route = row.chosen_route;
+  const count = row.desired_count;
+  if (typeof jobId !== 'string' || jobId.length === 0) return null;
+  if (route !== 'sourcing_web' && route !== 'quiz_gen') return null;
+  if (typeof count !== 'number' || !Number.isInteger(count) || count <= 0) return null;
+  return { jobId, route, count };
+}
+
+/**
+ * 冷却窗内最近一次真派发仍在途时，那次 job 承诺的题数。
+ * 终态、队列里已经没有这张 job、或事件没有 job id，都不是承诺。
+ */
+export async function inFlightSupplyCount(
+  db: Db | Tx,
+  fingerprint: string,
+  cooldownDays: number,
+): Promise<number> {
+  if (cooldownDays <= 0) return 0;
+  const cutoff = new Date(Date.now() - cooldownDays * 24 * 60 * 60 * 1000);
+  const [row] = await db
+    .select({ payload: event.payload })
+    .from(event)
+    .where(
+      and(
+        eq(event.action, 'experimental:question_supply'),
+        gte(event.created_at, cutoff),
+        sql`${event.payload}->>'fingerprint' = ${fingerprint}`,
+        sql`${event.payload}->>'status' = 'dispatched'`,
+      ),
+    )
+    .orderBy(desc(event.created_at))
+    .limit(1);
+  const promise = queuedSupplyPromise(row?.payload);
+  if (!promise) return 0;
+  const queue = AUTO_ROUTE_TO_QUEUE[promise.route];
+  if (!queue) return 0;
+  const boss = await getPracticeBoss();
+  const job = await boss.getJobById(queue, promise.jobId);
+  if (job?.state == null || !LIVE_SUPPLY_JOB_STATES.has(job.state)) return 0;
+  return promise.count;
 }
 
 export interface DispatchDeps {
