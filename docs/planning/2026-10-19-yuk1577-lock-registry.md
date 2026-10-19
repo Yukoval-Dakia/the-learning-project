@@ -41,14 +41,17 @@ lane`；小边：probe-question → conjecture-fold → proposal_decision、
 write_quiz → proposal_decision、note_refine effect → product、paper-native →
 attempt-claim、appeal/review-answer → group、serving → admission 行锁。
 
-## 4. 静态推导的互等形态（P1 候选，未修）
+## 4. R1 纠正：撤回 G/group 互等候选
 
-`evaluate-submission.ts:785` model 路径持 **session(group)** 覆盖 model 调用全程，
-其 sealing tx 内顺序 G → xact(group)（同键同 backend 自重入不等待）；另一 backend
-走 deterministic/G 路径（自带 Tx 或 activate.ts）先持 G 再等 xact(group)——
-两边互等时 PG deadlock detector 应以 abort 解环（错误非挂死）。**无运行证据、
-reachability 未证**；文件在禁改清单，建议父级按 P1 候选立项（Linear 由父级决定），
-验证方案：同组 model span 与 G 持有窗口重叠压测。
+`evaluate-submission.ts` 的 `run` 只含 load → model → seal，seal 不获取 G；
+G :820 位于另一个 export `activateSubmissionCandidate` 的事务 :818。
+原文将相邻函数误当嵌套调用，A 持 session(group) 再等 G 的前提为假，
+不据此登记 deadlock bug。真实的 G→group 激活顺序不变；跨 backend 同组
+等待仍覆盖 model span，其他行锁介导形态未知，无 DB 并发运行证明。
+
+原外部证据保留；纠正 E3x 的新副本和 SHA-256 见权威锁文档 §4。
+同时修正扫描正则漏列 plain `pg_advisory_lock`（148 中唯一额外匹配为注释），
+以及 family 71 直接语句数 2→1。生产源码/测试均未变。
 
 ## 5. 指标与验证
 

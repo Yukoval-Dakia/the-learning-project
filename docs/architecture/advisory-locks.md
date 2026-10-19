@@ -13,7 +13,7 @@
 ## 1. 覆盖口径（不冒称全覆盖）
 
 文本扫描 `pg_advisory_xact_lock|pg_try_advisory_lock|pg_try_advisory_xact_lock|
-pg_advisory_unlock`（`-g '*.ts'`，排除 `*.test.ts`/`*.spec.ts`/`tests/`）：
+pg_advisory_unlock|pg_advisory_lock`（`-g '*.ts'`，排除 `*.test.ts`/`*.spec.ts`/`tests/`）：
 
 | 类别 | 站点数 |
 |---|---|
@@ -129,7 +129,7 @@ int8 keyspace——族间仅靠字符串相等面防碰撞，有限哈希碰撞*
 | 68 | probe-result-claim | hte(<probeResultEventId>, 0) | hashtextextended:0 | transaction | xact | 1 |  |
 | 69 | family-calibration | family_calibration:<familyKey> | hashtext | transaction | xact | 1 |  |
 | 70 | contract-epoch-transition | contract-epoch:transition | hashtext | transaction | xact | 1 |  |
-| 71 | subject-control-plane | 597001 | int-literal | transaction | xact | 2 |  |
+| 71 | subject-control-plane | 597001 | int-literal | transaction | xact | 1 |  |
 | 72 | serving-command | yuk1514:serving:<eventId> | hashtextextended:0 | transaction | xact | 1 |  |
 | 73 | placement-supply | placement-supply:v1:<knowledgeId> | hashtextextended:0 | transaction | xact | 3 |  |
 | 74 | memory-ingest | memory:ingest:<sourceId> | hashtextextended:0 | transaction | xact | 3 |  |
@@ -141,7 +141,10 @@ int8 keyspace——族间仅靠字符串相等面防碰撞，有限哈希碰撞*
 
 ## 4. 排序边（仅录语句序实证）
 
-完整逐边调用链见外部 `edge-evidence.md`；以下为摘要。**`after` 图无环只说明
+完整逐边调用链以 R1 修正版为准（旧件保留，不覆盖）：
+`/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1577/2ecfde0840ad3dbf3c60eac6763c604d34aea99e/r1-correction/edge-evidence.md`
+SHA-256：`98bf4f84be2da50d66d4ea7598df8f12b1aac9847c09fefdd78e1b05cfa6b751`。修正版核对源码 revision
+`2ecfde0840ad3dbf3c60eac6763c604d34aea99e`，仅纠正 E3x；以下为摘要。**`after` 图无环只说明
 登记的这组边本身无环，不等于"0 reachable cycles"**——经动态 dispatch、跨文件闭包
 与未知运行时路径的边未全证，§5 逐一标注。
 
@@ -166,15 +169,14 @@ int8 keyspace——族间仅靠字符串相等面防碰撞，有限哈希碰撞*
 
 ## 5. 已知边界与未决（不冒称证明）
 
-1. **session(group) 与 xact(group) 同键跨模式**（`evaluate-submission.ts:785` vs
-   各 xact 站点）：session 与 xact advisory 共享服务端锁空间；helper 把 inner tx
-   钉在持锁 backend，同 backend 同键 xact 获取不自等；**跨 backend**，另一方的
-   xact(group) 会等待 session(group) 释放，等待域覆盖 model 调用全程。由此静态
-   推导出一个互等形态：A 持 session(group) 且其 sealing tx 等待 G，B 持 G 且其
-   xact(group) 等待 A 的 session 锁——PG deadlock detector 应在一方 abort 解环
-   （错误而非挂死）。**无运行证据**，是否可达取决于同组 deterministic/G 路径
-   与 model span 的时间重叠 → 已列为 coordinated follow-up，文件在禁改清单内
-   未动。
+1. **session(group) 与 xact(group) 同键跨模式**：`evaluate-submission.ts`
+   的 session wrapper (:783–790) 包裹 `run`；load tx :407 首先获取 group :411，
+   model 执行后 seal tx :684 插入候选/读取冲突回放，不获取 G。G :820 属于独立的
+   `activateSubmissionCandidate` 事务 :818，不在 `run` 回调内。因此撤回旧版
+   “A 持 session(group) 再等 G，B 持 G 再等 group”的候选环；A→G 前提为假。
+   `activate.ts:226→235` 的 G→group 顺序保留。跨 backend 同组等待仍覆盖
+   model span；其他行锁介导形态未知，不能据此证明无死锁。**无 DB 运行证据**。
+
 2. **匿名 int4 claim 族**（`evt_assessment_*`、`evt_native_*`、`<requestId>`、
    `<runId>`、`<claimId>`、`<task_id>`）：值域格式静态不全证；`<requestId>` 三处
    是否同源、`<runId>` 两处是否同域均 unknown。共享 keyspace 的异族碰撞无实例
