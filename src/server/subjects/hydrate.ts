@@ -5,19 +5,23 @@
 // read-models 是共享 seam）。本文件保留既有 import 面与行为：
 // - `hydrateSubjectRegistryFromDb` 的 `db` 缺省仍取进程 defaultDb；
 // - `startSubjectRefresh` 的 60s 周期 reconcile 接线不变（worker 用）；
-// - HydrationReport / TraitResolution 读面经 resolution-cache 兼容层再导出。
+// - HydrationReport 保留既有四字段；逐 trait provenance 只在 kernel 读面提供。
+// - TraitResolution 读面经 resolution-cache 兼容层再导出。
 // 水合合同（never-throws 失败矩阵 / 降级链 / reconcileCustomIds 防御网 /
 // strict 消费者读 report.resolutions）见 kernel 模块头注释。
 
 import { type Db, db as defaultDb } from '@/db/client';
 import {
   type DbOrTx,
-  type HydrationReport,
+  type HydrationReport as DetailedHydrationReport,
   hydrateSubjectRegistryFromDb as hydrateRegistry,
 } from '@/kernel/read-models/subject-hydration';
 import { type SubjectRegistry, getDefaultSubjectRegistry } from '@/subjects/profile';
 
-export type { HydrationReport } from '@/kernel/read-models/subject-hydration';
+export type HydrationReport = Pick<
+  DetailedHydrationReport,
+  'hydrated' | 'builtinFloor' | 'skipped' | 'removed'
+>;
 // 缓存与派生的权威在 kernel read-models/subject-trait-resolutions.ts
 // （db-free）；这里经 resolution-cache 兼容层 re-export 维持既有 import 面
 // （hydrate.db.test / 管理读面）不破。
@@ -32,7 +36,8 @@ export async function hydrateSubjectRegistryFromDb(
   db: DbOrTx = defaultDb,
   registry: SubjectRegistry = getDefaultSubjectRegistry(),
 ): Promise<HydrationReport> {
-  return hydrateRegistry(db, registry);
+  const { hydrated, builtinFloor, skipped, removed } = await hydrateRegistry(db, registry);
+  return { hydrated, builtinFloor, skipped, removed };
 }
 
 // worker 60s 周期全量 reconcile（level-triggered 承重路径；app 侧写后即时重装由

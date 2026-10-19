@@ -70,6 +70,9 @@ capability → server/subjects 是 baseline 不允许的边；共享引擎下沉
   defaultDb 缺省、`startSubjectRefresh` 接线、全部 re-export 保持，既有
   boot/refresh/管理写面/脚本/测试导入面不变（observability/shell →
   server/subjects 既有 baseline 边维持原状）。
+  `hydrateSubjectRegistryFromDb` 返回值与 `HydrationReport` 类型只保留原有
+  hydrated / builtinFloor / skipped / removed 四字段；新增 resolutions
+  仅由 kernel 完整报告交给 strict 消费者，避免改变旧调用方返回契约。
 - `kernel/read-models/subject-profile.ts`：新增
   `resolveSubjectProfileStrictLive`——付费缝的唯一 strict 读点；
   reauthorization 经它调用（dynamic import，同文件既有 lazy 风格）。
