@@ -4,7 +4,7 @@
 
 ## NOW
 
-- **架构深化 / YUK-1571**：`refactor/yuk-1571-frontier-ownership` 从main22b03fd5开始；frontier闭包/掌握门/三态决策归knowledge，练习配额留practice，原导出兼容，主线已释放写权。#1830合入前不写audit/baseline。首片#1834已合，R1/本地静态构建/exactCI通过。见[计划与Sidekick对照](docs/planning/2026-10-19-architecture-deepening.md)。
+- **架构深化 / YUK-1571**：`refactor/yuk-1571-frontier-ownership` 从main22b03fd5开始；frontier源码5fc5bdfec已完成（完整决策归knowledge、配额/ids留practice）；父typecheck/lint/build及relations通过，mastery报告无flagged；server444→443、cross48→47，SCC未变。初审进行中，架构audit待baseline收紧仍FAIL。#1830合入前不写audit/baseline。首片#1834已合，R1/本地静态构建/exactCI通过。见[计划与Sidekick对照](docs/planning/2026-10-19-architecture-deepening.md)。
 
 - **第一天能用 / 题库暂不出题计数（YUK-1525）**：`yuk-1525-serving-counts-sql` 将 lifecycle 理由统一到 SQL，冻结题面继续复用原校验，计数与列表使用同一只读快照。2600 行中，旧列表少算为1846，修后2400，与原投影全库逐行统计一致；窗口外 `q_02600` 可见。无新增测试、UI 改动或付费调用。
 

@@ -46,3 +46,13 @@ Owner 2026-10-19 授权独立架构线与功能并行。冻结起点 `d41f24213`
 `audit-capability-boundaries.ts`及baseline在#1830合入前保持原样；源码可先完成，旧基线因真实下降报错须记为待收紧，不能冒充PASS或绕过门禁。Grok释放后用其已合机制收紧，不另写ratchet。
 
 首片#1834已于13:25:34 UTC合入main22b03fd5：R1 APPROVE，exact2a7d006 CI39257589648全绿，17分钟窗满足。相对新main超长19→18、SCC1→1、server444→444、baseline142→142；主线增加的source_verify1723行与R2边单独归因。
+
+### Frontier 源码检查点（待 baseline writer 释放）
+
+源码 `5fc5bdfec`：graph决策实际位于knowledge/frontier-read（634行），practice/learnable-frontier保留5题容量、ids适配及原public兼容（28行）；knowledge公开仅结果类型、判据和完整resolver。旧practice算法实现退出，兼容入口保留；不把兼容alias称作新深模块。两个已知变更场景与上述计划一致。
+
+父发现子交付曾把旧audit的SQL marker留在shim注释使反查通过，已删除该做法并将relations登记改指新真实SQL；mastery字段读取本来已由frontier-read登记覆盖，删旧无读取项。两审计逻辑/准入语义均未改，不能用伪marker当覆盖。
+
+父级typecheck、lint（179 warnings）、完整build、relations均exit0；mastery-provenance report-only exit0且无flagged，不冒称硬门。snapshot为server443（原444）、cross47（原48），SCC仍1/5成员。architecture audit exit1，五项全部为旧baseline差异，含practice→knowledge3→4；新增边语义为practice消费knowledge真实图决策，同时knowledge两个入口退出practice，数量抵消不替代语义论证。#1830尚未合，本线未写audit-capability/baseline，仍不能开合并绿灯。独立初审进行中；本机测试/DB/运行时/provider NOT_RUN，测试零修改。
+
+证据目录：`/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1571/5fc5bdfec4b536f048fb5d78d9f5995210720d2c/`；逐文件哈希见checks-sha256.json，索引SHA-256 `c1f3570cc7cdbb15f603093be91d876770a2f46d27ad213fad8b38c7ed771d7e`。本片未新增范围外可执行缺陷；修正仅限自身未发布交付，既有report-only治理信号不另开重复票。
