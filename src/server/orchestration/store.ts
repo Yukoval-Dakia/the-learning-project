@@ -198,6 +198,15 @@ export async function createRunWithNodes(
   });
 }
 
+export async function loadNode(db: Db, nodeId: string): Promise<NodeRow | null> {
+  const [row] = await db
+    .select()
+    .from(dag_orchestration_node)
+    .where(eq(dag_orchestration_node.id, nodeId))
+    .limit(1);
+  return row ? toNodeRow(row) : null;
+}
+
 /** 载入某 run 全部节点，映射 job_name → 行。 */
 export async function loadNodes(db: Db, runId: string): Promise<Map<string, NodeRow>> {
   const rows = await db
@@ -235,6 +244,26 @@ export async function claimNodePending(
       boss_job_id: input.bossJobId,
       stale: input.stale,
       enqueued_at: now,
+      updated_at: now,
+    })
+    .where(and(eq(dag_orchestration_node.id, nodeId), eq(dag_orchestration_node.status, 'pending')))
+    .returning({ id: dag_orchestration_node.id });
+  return rows.length > 0;
+}
+
+/** 资格跳过只从 pending 落 not_needed。在途节点（enqueued/running）不是本 CAS 的对象。 */
+export async function claimNodeNotNeeded(
+  db: Db,
+  nodeId: string,
+  input: { detail: string; now?: Date },
+): Promise<boolean> {
+  const now = input.now ?? new Date();
+  const rows = await db
+    .update(dag_orchestration_node)
+    .set({
+      status: 'not_needed',
+      detail: input.detail,
+      finished_at: now,
       updated_at: now,
     })
     .where(and(eq(dag_orchestration_node.id, nodeId), eq(dag_orchestration_node.status, 'pending')))

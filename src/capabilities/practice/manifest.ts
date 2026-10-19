@@ -6,7 +6,7 @@ import {
   CursorQuerySchema,
 } from '@/kernel/http-contracts';
 import { defineCapability } from '@/kernel/manifest';
-import { nightlyEligibility } from '@/kernel/nightly-eligibility';
+import { LEARNING_EVENT_ACTIONS, nightlyEligibility } from '@/kernel/nightly-eligibility';
 import { uiPagesFor } from '@/kernel/ui-surfaces';
 import { WORKSHEET_RENDER_QUEUE } from '@/server/boss/queue-names';
 import {
@@ -207,7 +207,7 @@ export const practiceCapability = defineCapability({
       {
         id: 'practice.learner-return-wake',
         version: 1,
-        actions: ['attempt', 'review', 'experimental:assessment_attempt'],
+        actions: [...LEARNING_EVENT_ACTIONS],
         load: () =>
           import('./server/learner-return-wake').then((m) => m.buildLearnerReturnWakeSubscriber),
       },

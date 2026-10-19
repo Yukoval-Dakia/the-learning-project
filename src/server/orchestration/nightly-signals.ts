@@ -1,13 +1,12 @@
 // YUK-1560 — 资格判定的读表侧。一次夜间 tick 读完共享信号，再按 job 投影。
 
-import { and, eq, gte, inArray, isNull, lt, sql } from 'drizzle-orm';
+import { and, eq, gte, inArray, isNull, lt, or, sql } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import { notDraftPredicate } from '@/db/predicates';
 import {
   cost_ledger,
   dag_orchestration_node,
   event,
-  goal,
   knowledge,
   knowledge_edge,
   memory_brief_note,
@@ -20,10 +19,10 @@ import {
   MEMORY_BRIEF_SWEEP_JOB,
   type NightlySignals,
   REFLECTION_BRIEF_SCOPE_KEYS,
-  RETURN_STOCK_QUESTIONS,
   classifyActivityTier,
 } from '@/kernel/nightly-eligibility';
-import { BUILTIN_SUBJECT_ALIASES } from '@/subjects/profile';
+import { loadReturnStockGaps } from '@/kernel/read-models/return-stock';
+import { EMBED_VERSION } from '@/server/ai/embed-source';
 
 const TERMINAL_FOR_HISTORY = ['succeeded', 'failed', 'skipped', 'not_needed', 'degraded'] as const;
 
@@ -180,6 +179,11 @@ async function loadPendingEdgeProposalCount(db: Db): Promise<number> {
               AND rate_event.subject_kind = 'knowledge_edge'
               AND rate_event.caused_by_event_id = propose_event.id
           )
+          AND EXISTS (
+            SELECT 1 FROM ai_task_runs
+            WHERE ai_task_runs.id = propose_event.task_run_id
+              AND ai_task_runs.task_kind = 'FrontierPrerequisiteTask'
+          )
       ) pending_keys
     `),
   );
@@ -214,94 +218,33 @@ async function loadTreeWatermark(db: Db): Promise<Date | null> {
 }
 
 async function loadEmbedPending(db: Db): Promise<boolean> {
+  const questionStale = or(
+    isNull(question.embedding),
+    isNull(question.embed_version),
+    lt(question.embed_version, EMBED_VERSION),
+  );
   const [pendingQuestion] = await db
     .select({ id: question.id })
     .from(question)
-    .where(and(isNull(question.embedding), notDraftPredicate(question.draft_status)))
+    .where(and(questionStale, notDraftPredicate(question.draft_status)))
     .limit(1);
   if (pendingQuestion) return true;
+  const knowledgeStale = or(
+    isNull(knowledge.embedding),
+    isNull(knowledge.embed_version),
+    lt(knowledge.embed_version, EMBED_VERSION),
+  );
   const [pendingKnowledge] = await db
     .select({ id: knowledge.id })
     .from(knowledge)
-    .where(and(isNull(knowledge.embedding), isNull(knowledge.archived_at)))
+    .where(and(knowledgeStale, isNull(knowledge.archived_at)))
     .limit(1);
   return Boolean(pendingKnowledge);
 }
 
-function domainsForSubject(subjectId: string): string[] {
-  return [subjectId, ...(BUILTIN_SUBJECT_ALIASES[subjectId] ?? [])];
-}
-
 async function loadReturnStockShort(db: Db): Promise<boolean> {
-  const goals = await db
-    .select({
-      subjectId: goal.subject_id,
-      scopeMode: goal.scope_mode,
-      scopeKnowledgeIds: goal.scope_knowledge_ids,
-    })
-    .from(goal)
-    .where(eq(goal.status, 'active'));
-  for (const active of goals) {
-    if (active.scopeMode === 'explicit') {
-      if (active.scopeKnowledgeIds.length === 0) continue;
-      const count = await countQuestions(db, active.scopeKnowledgeIds);
-      if (count < RETURN_STOCK_QUESTIONS) return true;
-      continue;
-    }
-    if (!active.subjectId) continue;
-    const domains = domainsForSubject(active.subjectId);
-    const [known] = await db
-      .select({ id: knowledge.id })
-      .from(knowledge)
-      .where(and(isNull(knowledge.archived_at), inArray(knowledge.domain, domains)))
-      .limit(1);
-    if (!known) continue;
-    const count = await countQuestionsForDomains(db, domains);
-    if (count < RETURN_STOCK_QUESTIONS) return true;
-  }
-  return false;
-}
-
-async function countQuestions(db: Db, knowledgeIds: string[]): Promise<number> {
-  const ids = sql.join(
-    knowledgeIds.map((id) => sql`${id}`),
-    sql`, `,
-  );
-  const [row] = await db
-    .select({ n: sql<number>`count(*)::int` })
-    .from(question)
-    .where(
-      and(
-        notDraftPredicate(question.draft_status),
-        sql`EXISTS (
-          SELECT 1 FROM jsonb_array_elements_text(${question.knowledge_ids}) elem
-          WHERE elem IN (${ids})
-        )`,
-      ),
-    );
-  return Number(row?.n ?? 0);
-}
-
-async function countQuestionsForDomains(db: Db, domains: string[]): Promise<number> {
-  const list = sql.join(
-    domains.map((domain) => sql`${domain}`),
-    sql`, `,
-  );
-  const [row] = await db
-    .select({ n: sql<number>`count(*)::int` })
-    .from(question)
-    .where(
-      and(
-        notDraftPredicate(question.draft_status),
-        sql`EXISTS (
-          SELECT 1 FROM ${knowledge} k
-          WHERE k.archived_at IS NULL
-            AND k.domain IN (${list})
-            AND ${question.knowledge_ids} @> jsonb_build_array(k.id)
-        )`,
-      ),
-    );
-  return Number(row?.n ?? 0);
+  const gaps = await loadReturnStockGaps(db);
+  return gaps.length > 0;
 }
 
 interface HistoryRow {

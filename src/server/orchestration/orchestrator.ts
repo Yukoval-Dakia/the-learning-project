@@ -41,6 +41,7 @@ import {
   type NodeRow,
   type RunRow,
   type RunTrigger,
+  claimNodeNotNeeded,
   claimNodePending,
   createRunWithNodes,
   finishRun,
@@ -50,6 +51,7 @@ import {
   insertNodes,
   isTerminalNodeStatus,
   listActiveRuns,
+  loadNode,
   loadNodes,
   updateNodeStatus,
 } from './store';
@@ -355,11 +357,21 @@ async function advancePendingNode(
       const decision = dagNode.eligibility((await loadContext()).forJob(jobName));
       if (!decision.run) {
         noteEligibilitySkip(jobName, decision);
-        await settleNode(deps.db, deps.run, node, {
-          status: 'not_needed',
+        const applied = await claimNodeNotNeeded(deps.db, node.id, {
           detail: decision.reason,
           now,
         });
+        if (!applied) {
+          const fresh = await loadNode(deps.db, node.id);
+          if (fresh) Object.assign(node, fresh);
+          return false;
+        }
+        node.status = 'not_needed';
+        node.detail = decision.reason;
+        node.finished_at = now;
+        console.warn(
+          `[orchestrator] node '${node.job_name}' not_needed in run ${deps.run.id} (${deps.run.run_date}): ${decision.reason}`,
+        );
         return false;
       }
     }

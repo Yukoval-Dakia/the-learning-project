@@ -45,6 +45,9 @@ export const ingestionCapability = defineCapability({
   name: 'ingestion',
   description:
     '录入：任何题目进系统的通道（拍照/PDF/DOCX/手输 → 原图留存 → OCR/VLM 三层提取 → 切块 → 标注 → 入库）。错题是题目的标记不是通道（D11）。',
+  events: {
+    actions: ['experimental:record_capture'],
+  },
   api: {
     // M1-T4 (YUK-314)：所有 route 声明均带 load 懒加载 thunk（manifest 保持纯元数据，
     // unit 分区不拉 db）。[id] 段由
