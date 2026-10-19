@@ -1,22 +1,22 @@
-# YUK-1526 关键词强度与问法词交接 — 2026-10-19
+# YUK-1526 仅库内词项计强度交接 — 2026-10-19
 
 本 worktree `/workspace/amp/wt/YUK-1526`，分支 `yuk-1526-keyword-idf`，只处理本票，交付阶段为第一天能用。沿用 PR #1824，不合并、不部署，不改 Linear 状态。产品改动仅 `bank-search.ts`，不改召回、向量、UI、测试代码或 schema。
 
-EL 已批准封闭问法词表。强度侧先用 Intl.Segmenter 分词，精确去掉 as const 集合中的 12 个问法词，再构造去重、封顶的词内短语。没有跨词 bigram，零强度词项的共现回退也只消费过滤后文本。没有新依赖。D 为完整可检索库面的题目数，df 为相同 FTS 文档表达式命中的题目数；权重 `ln((D+1)/(df+0.5))/ln(2*(D+1))` 和门槛 `min(查询总权重, max(1, 0.2*查询总权重))` 均未调整，df=0 仍是负证据。游标 v4→v5，旧版本必须重搜。
+第四轮 QA 评论 6266903193 已全文阅读，YUK-1526 与 YUK-1448 最新裁决已读取。EL 改为仅 df>0 词项参与分子和门槛，df=0 不再作负证据。已删除封闭问法词表和全字回退，保留 Intl.Segmenter、单字过滤与原 IDF 公式。空观测词项返回 false::boolean，游标 v5→v6。可选 P3 保留单字的尝试导致函数的单调性退化，已撤销；未额外调参。
 
-同一隔离容器 `yuk1526-repair-pg`，Node 24.22.0、pnpm 11.13.1、PG16.15。封存驱动不变，真实 `searchBankTool.execute` 和 SQL，只 stub embedding，$0。base 与候选完整 16 行结果如下分组。
+同一隔离容器 `yuk1526-repair-pg`，Node 24.22.0、PG16.15。沿用并扩展封存驱动，真实 `searchBankTool.execute` 和 SQL，只 stub embedding，$0。同一已写入语料依次跑原 base、QA 打回 head 和本轮候选，共 47 行；图象、数列、8 题方程、26 题无参数方程库是按评论重建，不能称为 QA 原库。
 
-- 14 题椭圆库，两种问法均 enough/14，当前页 10 strong，与 base 相同。
-- 18/24 题单调性库，QA 四种问法和两个短词控制均 enough/18，当前页 10 strong，与 base 相同。
-- 单题库三种问法均 sparse/1，与 base 相同；此前漏掉的求解、怎么问法恢复。
-- 原 24 题库，极坐标 enough/22→none/0，离子方程式长问法维持 none/0；椭圆长问法、赤壁赋意象、椭圆各维持 sparse/2。
-- v5 重跑完整驱动与升版前结果完全一致；v4 解码明确报 expired/unsupported。
+- 椭圆范围、取值范围、问题恢复 enough/14；三角函数图像两问法、前n项和两问法恢复 enough/16。旧 head 均为 none/0。
+- 旧单调性六问法仍 enough/18，单题椭圆三问法仍 sparse/1，原库三个正例各 sparse/2。
+- 指数方程的解法在重建库为 base sparse/5、旧 head none/0、本轮 sparse/2。两道含指数题保留，不能声称计入数全不降或结构化约束都满足。
+- 极坐标和参数方程在原 24 题库仍 enough/22，在 26 题库 enough/24。参数、方程的 df 分别为 22、24，各权重 0.026932、0.024358；坐标 df=0 被排除，门槛等于两词总权重，共现即 strong。按 EL 要求只报告反例，不加特例。
+- 离子方程式长短问法、等比数列求和、量子纠缠及空库五查询均 none/0。P3 解方程仍 sparse/8，未修。
 
-`pnpm typecheck`、`pnpm lint`（179 warnings/0 errors）、`pnpm build` 通过。既有 `bank-tools.db.test.ts` 6/6 通过，包含分页和候选快照失效。临时配置沿用之前封存版本，只取消容器创建与 fork URL 改写，单 worker 指向独立 `yuk1526_existing_tests`；没有修改测试正文或运行完整 pnpm test。
+`pnpm typecheck`、`pnpm lint`（179 warnings/0 errors）、`pnpm build` 通过。既有 `bank-tools.db.test.ts` 6/6 通过，含分页及快照失效。临时配置沿用封存版本，单 worker 使用独立已迁移数据库，没有修改测试代码或运行完整 pnpm test。最终源码 47 行重跑输出一致。
 
-最终证据为本地 `.amp/in/artifacts/question-words-reproduction.tar.gz`、`repair-base-final.jsonl`、`repair-question-words-v5.jsonl`、`repair-*.log`。前三轮失败补丁及结果保留在旧封存包，不能将旧失败候选当作本轮实现。PR 正文逐词说明问法词选择、列完整对照；exact-head CI 和容器清理结果以 PR 交付评论为准。
+最终证据为 `.amp/in/artifacts/df-positive-reproduction.tar.gz`，含同一驱动、种子、三版 bundle、补丁和 `round4-base/rejected/final.jsonl`。静态和 DB 日志为 `round4-*.log`。临时执行脚本归档后移除。PR 正文保留原 Refs 行，更新前提、全表与负例逐词 df/权重；新 head、exact-head CI、评论及容器清理以交付评论为准。
 
-真实副本 39+6、18/18 和 9/9 召回仍待外部验收，PR 保持 Refs，不关票。P2 已归 YUK-1515，QA 5k 行平均 6975→11361 ms（+63%）为先前测量，本轮没有重测性能。向量后续是 YUK-1527，本轮无须新建重复 follow-up。
+PM 10-19 裁决已将主验收改为 YUK-1448 的真实上下文 agent 主动结构化请求，本轮未跑。39+6 只是算法比较，同样未跑。通用词误报未修，不能合并或关票。最新 QA 的 5k 三次均值为 base 7442ms、旧 head 4884ms，旧 +63% 结论已被该次测量替代；本轮未测性能，DF 扫描仍归 YUK-1515，向量后续为 YUK-1527，不建重复票。
 
 以下为继承的历史交接。
 

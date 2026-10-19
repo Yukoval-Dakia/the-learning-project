@@ -1,10 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-19：YUK-1526 在原 PR #1824 修复强度分词及问法词误计入；同一 PG 的 16 行对照通过，不合并、不部署，真实副本验收待外部执行。按 owner 要求不改变 Linear 状态。其他票状态保留原记录。
+> Linear 是权威 tracker。2026-10-19：YUK-1526 在原 PR #1824 按 EL 改为仅 df>0 词项计强度，47 行真实 PG 对照已完成；漏召回恢复，但极坐标及参数方程误报仍在。不合并、不部署、不改变 Linear 状态。其他票状态保留原记录。
 
 ## NOW
 
-- **第一天能用 / 题库关键词区分度（YUK-1526）**：分支 `yuk-1526-keyword-idf` 在强度侧用 Intl.Segmenter 和封闭问法词表，IDF 公式、候选召回及向量规则不变，游标 v5。同一 PG16 的 16 行对照中，QA 所有正例不低于 base，极坐标与离子方程式长问法均 none/0，原库三个正例各 2 strong。typecheck/lint/build 和既有 6 项 DB 不变量通过。无新增测试、依赖、UI 或付费调用。PR #1824 保持 Refs，exact-head CI 与评审以 PR 为准，真实副本验收未完成。
+- **第一天能用 / 题库关键词区分度（YUK-1526）**：分支 `yuk-1526-keyword-idf` 仅 df>0 词项参与命中权重及门槛，删除封闭问法词表，游标 v6；候选召回及向量不改。同一 PG16 的 47 行三版对照中，df=0 正例均不再 none，原库三个正例各 2 strong；极坐标和参数方程仍 enough/22 或 enough/24。指数重建语料 base sparse/5、本轮 sparse/2，不声称计入数全部不降。P3 未修。typecheck/lint/build、既有 6 项 DB 检查通过，无新测试或付费调用。PR 保持原 Refs，exact-head CI 以交付评论为准；未完成 YUK-1448 结构化请求验收。
 
 - **YUK-1404 / native03题图修复**：PR1657 fixed4c52 exact CI38144495041全绿；正常纳入main eb960c079，仅PLAN/now冲突。图ownership/隐私产品代码与单capture边界测试保留，旧细粒度四tests已删。独立初审/最终R2预算已完成，不启第三审。当前crop producer仍无source_asset SHA登记，旧visibility未知，public withholding不是完整配图交付；同卷actual-output验收仍待。无DB/runtime/provider/paid。 [证据](docs/planning/2026-10-11-yuk1404-native03-figure-repair.md)。
 
@@ -34,7 +34,7 @@
 
 ## NEXT
 
-- YUK-1526 代码评审后，在真实副本重跑 `stage1-yuk1516-calibration` 的 39 条标注查询和 K7 的 6 条。缺题全部 none，已有话题召回至少调参集 18/18、验证集 9/9；通过后再串行推进 YUK-1527。
+- YUK-1526 等 QA 在原始种子上复核新 head，并由 EL 裁决残留通用词误报。按 PM 10-19 裁决，主验收遵循 YUK-1448 的 agent 主动结构化请求，不能误报缺题或拿近似题补数；39+6 改作算法比较。YUK-1527 仍为后续向量票。
 
 - Start/judge共享文件边界见[交接](docs/planning/2026-10-09-judge-start-ownership.md)，Start/boot/shutdown由5796独占；judge A/B/C/D由7631接续，迁移号后核。
 
@@ -71,7 +71,7 @@
 
 ## BLOCKED-ON
 
-- YUK-1526 的真实副本与 39+6 条标注查询不在本机；本地合成输入只证明计入规则，不替代 PM 验收。
+- YUK-1526 的真实学习者上下文、结构化请求全链路、真实副本及 39+6 标注集未验证。本地重建语料不等于 QA 原库，亦不能替代 YUK-1448 主验收。
 
 - **协调线验收**：第一天能用的时限与 TEST 危机数据清理状态由审计协调线维护；100% 实际出题自动可判已获 owner 确认，不再作为待裁决值。
 
