@@ -1,20 +1,17 @@
 import { createHash } from 'node:crypto';
-import { eq } from 'drizzle-orm';
 import Markdown from 'react-markdown';
 import { canonicalHash } from '@/core/migration/canonical';
-import {
-  describeSelectItem,
-  projectIssuedScoringBasis,
-  projectPracticeIssuance,
-} from '@/core/schema/assessment';
-import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import type { Db } from '@/db/client';
-import { assessment_issuance, question, question_revision } from '@/db/schema';
+import type { assessment_issuance, question_revision } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import {
   type AssessmentAssetLoader,
   withinAssessmentSignal,
 } from '@/kernel/records/assessment-assets';
+import {
+  loadIssuanceStudyCoordinate,
+  projectFrozenStudyReference,
+} from '@/kernel/records/study-reference';
 import { recordAssistanceExposure } from './assistance';
 import { issuanceRowToContract, revisionRowToContract } from './issue';
 
@@ -24,39 +21,21 @@ export async function loadFrozenStudyContext(
   issuanceId: string,
   questionId?: string,
 ) {
-  const [issuance] = await database
-    .select()
-    .from(assessment_issuance)
-    .where(eq(assessment_issuance.issuance_id, issuanceId))
-    .limit(1);
-  if (!issuance) throw new ApiError('not_found', 'issued assessment not found', 404);
-  const [row] = await database
-    .select()
-    .from(question_revision)
-    .where(eq(question_revision.revision_id, issuance.revision_id))
-    .limit(1);
-  if (
-    !row ||
-    (questionId && row.group_id !== questionId && !issuance.part_ids.includes(questionId))
-  ) {
-    throw new ApiError('coordinate_mismatch', 'question is outside the frozen issuance', 409);
+  const loaded = await loadIssuanceStudyCoordinate(database, issuanceId, questionId);
+  switch (loaded.status) {
+    case 'not_found':
+      throw new ApiError('not_found', 'issued assessment not found', 404);
+    case 'coordinate_mismatch':
+      throw new ApiError('coordinate_mismatch', 'question is outside the frozen issuance', 409);
+    case 'reveal_unavailable':
+      throw new ApiError(
+        'reveal_unavailable',
+        'this assessment does not permit study assistance',
+        409,
+      );
+    case 'assistable':
+      return projectFrozenStudyContext(loaded.revision, loaded.issuance, questionId);
   }
-  const [identity] = await database
-    .select({ source: question.source })
-    .from(question)
-    .where(eq(question.id, questionId ?? row.group_id))
-    .limit(1);
-  if (
-    identity?.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE ||
-    issuance.container_occurrence_ref
-  ) {
-    throw new ApiError(
-      'reveal_unavailable',
-      'this assessment does not permit study assistance',
-      409,
-    );
-  }
-  return projectFrozenStudyContext(row, issuance, questionId);
 }
 
 /** Pure frozen projection; callers enforce their own disclosure boundary. */
@@ -66,102 +45,19 @@ export function projectFrozenStudyContext(
   questionId?: string,
 ) {
   const revision = revisionRowToContract(row);
-  const face = projectPracticeIssuance(revision, issuanceRowToContract(issuance));
-  const basis = projectIssuedScoringBasis(revision, issuance.part_ids);
-  const reference = basis.units
-    .map((unit) => {
-      // Option/item IDs are unique inside a slot, not globally across the issuance.
-      const slots = face.response_spec.slots.filter((slot) =>
-        unit.slot_refs.includes(slot.slot_id),
-      );
-      const options = new Map<string, string>();
-      const items = new Map<string, string>();
-      for (const slot of slots) {
-        const slotOptions =
-          'options' in slot ? slot.options : slot.kind === 'matching' ? slot.right_options : [];
-        const slotItems =
-          slot.kind === 'matching' ? slot.left_items : slot.kind === 'ordering' ? slot.items : [];
-        for (const option of slotOptions)
-          options.set(option.option_id, `${option.label}. ${option.text}`);
-        for (const item of slotItems) items.set(item.item_id, `${item.label}. ${item.text}`);
-      }
-      const criterion = unit.criterion;
-      switch (criterion.kind) {
-        case 'option_set_key':
-          return criterion.accepted_option_ids.map((id) => options.get(id) ?? id).join('\n');
-        case 'matching_pairs_key':
-          return criterion.accepted_pairs
-            .map(
-              (pair) =>
-                `${items.get(pair.item_id) ?? pair.item_id} → ${options.get(pair.option_id) ?? pair.option_id}`,
-            )
-            .join('\n');
-        case 'text_key':
-          return criterion.accepted_texts.join('\n\n');
-        case 'numeric_key':
-          return `${criterion.expected}${criterion.expected_unit ? ` ${criterion.expected_unit}` : ''}`;
-        case 'rule_reference':
-          return criterion.statement_md;
-        case 'holistic_level':
-          return criterion.levels.map((level) => level.descriptor_md).join('\n\n');
-        case 'position_set_key':
-          // ADR-0074 D3a 断句：参考 = 接受断点集合（code point 字缝索引）；
-          // 对应冻结明文已在 response_spec 槽位里，不在此重建文本。
-          return criterion.accepted_positions.map((position) => `断点 ${position}`).join('\n');
-        case 'select_key': {
-          const selectSlot = slots.find((slot) => slot.kind === 'select');
-          return criterion.accepted_item_ids
-            .map((id) => (selectSlot?.kind === 'select' ? describeSelectItem(selectSlot, id) : id))
-            .join('\n');
-        }
-        case 'blank_key':
-          return criterion.key.kind === 'text'
-            ? criterion.key.accepted.join('\n\n')
-            : `${criterion.key.expected}${criterion.key.expected_unit ? ` ${criterion.key.expected_unit}` : ''}`;
-        case 'rubric':
-          // YUK-1496 C2：参考 = 逐 criterion 细则 + 可选参考解答。
-          return [
-            ...criterion.criteria.map(
-              (criterion) =>
-                `${criterion.criterion_id}（满分 ${criterion.max}）：${criterion.statement_md}`,
-            ),
-            ...(criterion.reference_md ? [criterion.reference_md] : []),
-          ].join('\n');
-        default: {
-          const exhaustive: never = criterion;
-          return exhaustive;
-        }
-      }
-    })
-    .join('\n\n');
-  const issuedParts = new Set(issuance.part_ids);
-  const scopedMaterials = new Set(
-    revision.structure.parts
-      .filter((part) => issuedParts.has(part.part_id))
-      .flatMap((part) => part.material_ids),
-  );
-  const solutions = revision.structure.materials.filter(
-    (material) =>
-      scopedMaterials.has(material.material_id) &&
-      /^sol_[0-9a-f]{12}$/.test(material.asset.asset_id),
-  );
-  const solution = solutions
-    .map((material) => material.content_md)
-    .filter(Boolean)
-    .join('\n\n');
+  const projected = projectFrozenStudyReference(revision, issuanceRowToContract(issuance));
   return {
     question_id: questionId ?? row.group_id,
     // Teaching needs the complete served controls/material metadata, not just flattened prose.
-    practice_dto: face,
+    practice_dto: projected.practiceDto,
     public_materials: revision.structure.materials.filter((material) =>
-      face.materials.some((publicMaterial) => publicMaterial.material_id === material.material_id),
+      projected.practiceDto.materials.some(
+        (publicMaterial) => publicMaterial.material_id === material.material_id,
+      ),
     ),
-    prompt_md: [
-      ...face.materials.flatMap((material) => (material.content_md ? [material.content_md] : [])),
-      ...face.faces.map((part) => part.prompt_md),
-    ].join('\n\n'),
-    reference_md: solution || reference || null,
-    solution_md: solution || null,
+    prompt_md: projected.promptMd,
+    reference_md: projected.referenceMd,
+    solution_md: projected.solutionMd,
   };
 }
 
