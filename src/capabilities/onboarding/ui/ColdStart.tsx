@@ -1,4 +1,8 @@
-// TodayPage renders this only when summary.cold_start.is_empty.
+// Cold-start /today intercept hero (YUK-473 Slice 1, truth contract YUK-621).
+// Ported 1:1 from docs/design/loom-refresh/project/screen-onboarding.jsx
+// (ColdToday). Rendered by TodayPage only when summary.cold_start.is_empty.
+// Design note: prototype uses the legacy <Icon>; the real app standardises on
+// <LoomIcon> (same names — see grounding), so we use LoomIcon throughout.
 
 import { BrandMark } from '@/ui/primitives/BrandMark';
 import { Btn } from '@/ui/primitives/Btn';
@@ -36,7 +40,7 @@ export default function ColdStart({ navigate }: ColdStartProps) {
           当前还没有学习目标或可以继续的学习记录
         </div>
       </div>
-      {/* These hints are information for screen readers too, so they stay visible to them. */}
+      {/* 这些行动提示对屏幕阅读器同样有信息价值，不设 aria-hidden。 */}
       <div className="ob-cold-lanes">
         {LANES.map((l) => (
           <div key={l.t} className="ob-cold-lane">

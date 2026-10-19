@@ -1,7 +1,20 @@
-// The band mark is p_l. theta_hat is a logit and cannot sit on a 0..1 bar.
-// The narrative is templated from the projection. There is no model call.
-// Knowledge nodes have no track field, so the category chip is absent.
-// The verify layer re-derives displayed numbers on device and compares them. It does not write.
+// Onboarding ④ · placement-done starter profile (YUK-473 Slice 4).
+// Ported from docs/design/loom-refresh/project/screen-onboarding.jsx (ScreenProfile),
+// made real over GET /api/placement/profile (per-KC mastery_state projection). The
+// placement probe's `settling` lands here (?goal threaded through); "开始日常练习" → /today.
+//
+// DEVIATIONS from the prototype, grounded in the real model:
+//  - The band MARK sits at `p_l` (the 0..1 p(L) point estimate), NOT `theta_hat` — real
+//    theta_hat is a logit (can be negative / >1), so it can't be a 0..1 bar position. The
+//    prototype's mock conflated them; the real 0..1 quantity is p_l (= mastery point).
+//  - Narrative is templated from the data (honest, deterministic) — no AI call. The richer
+//    prototype narrative is a later enrich.
+//  - `track` (KC category chip) is omitted — real knowledge nodes carry no track field yet.
+//
+// YUK-495 #41 — the recompute verify layer (RcVerify bar + per-KC chips + bit-for-bit ledger
+// / drift detail + boundary note) hangs off this screen, gated by RECOMPUTE_BADGE_ENABLED.
+// It re-derives each displayed KC number ON-DEVICE from the raw evidence (recompute-core →
+// src/core/recompute) and checks it against the server. Read-only.
 
 import { useQuery } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
@@ -62,9 +75,11 @@ export interface ProfilePresentation {
 }
 
 /**
- * The evidence-sorted list is capped. weakest comes from the full set by p(L).
- * Their union keeps a highlighted weak point that the cap would hide.
- * Server order of both segments stays. Ids are not repeated.
+ * Reconcile the /today weakest preview with the /profile deep-read surface (YUK-616).
+ *
+ * `kcs` is capped after sorting by evidence, while `weakest` is derived from the full evidenced
+ * set by p(L). Their union keeps the deep-read list compact without making the card's highlighted
+ * weak point disappear. The server order of both segments is preserved and ids are deduplicated.
  */
 export function deriveProfilePresentation(data: PlacementProfile): ProfilePresentation {
   const seen = new Set(data.kcs.map((kc) => kc.id));
@@ -195,8 +210,11 @@ function ProfileBody({
   const [detailOpen, setDetailOpen] = useState(false);
   const showVerify = RECOMPUTE_BADGE_ENABLED && summary !== null;
 
-  // Not in the placement payload. Declared here so hook order survives the early returns.
-  // enabled follows the badge flag. The badge owns its own flash.
+  // D2 (#45) — profile-level calibration-maturity reconciliation. Independent fetch (NOT in
+  // the placement payload), gated by the same RECOMPUTE_BADGE_ENABLED dark-ship flag, so the
+  // query stays disabled until the layer is visually verified. The query + memo are declared
+  // unconditionally here (after ScreenProfile's data-dependent early returns) to keep hook order
+  // stable; RcMaturityBadge owns its own useRecompute internally.
   const { getCalibrationMaturity } = usePlacementProfileClient();
   const maturityQ = useQuery({
     queryKey: ['calibration-maturity'],
@@ -334,15 +352,19 @@ function KcRow({
 }) {
   const untested = !kc.tested || kc.evidence_count === 0;
   const conf = confOf(kc);
-  // Clamp only the drawn position. The mark is still p(L), not the theta logit.
-  // Order the pair so an inverted interval cannot draw a negative width.
+  // Clamp to [0,1] so a stray projection value can't push the band edges or the mark off the
+  // track. The mark stays at p(L) (the documented deviation — band mark = p(L) point estimate,
+  // not theta_hat logit); clamping only guards the rendered position, not which field drives it.
+  // Order the clamped pair so an inverted CI (mastery_hi < mastery_lo from a degenerate
+  // projection) can't yield a negative band width (which CSS silently renders as 0 → the band
+  // vanishes). Well-formed projections always have hi ≥ lo; this just makes the edge robust.
   const rawLo = clamp01(kc.mastery_lo, 0);
   const rawHi = clamp01(kc.mastery_hi, 0);
   const lo = Math.min(rawLo, rawHi);
   const hi = Math.max(rawLo, rawHi);
   const point = clamp01(kc.p_l, lo);
 
-  // Hairline on a KC whose displayed numbers do not re-derive.
+  // YUK-495 #41 — calm ochre hairline on a KC whose displayed numbers don't re-derive.
   const drifted = verdict?.kind === 'drift';
 
   return (

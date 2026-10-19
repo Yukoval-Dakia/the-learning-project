@@ -1,4 +1,7 @@
-// Live mastery projection for the goal. An in-scope KC with no row comes back untested.
+// Onboarding ④ · placement-done profile API client (YUK-473 Slice 4).
+// Reads GET /api/placement/profile?goal=<id> — per-KC mastery over the goal scope,
+// derived from the LIVE mastery_state projection (getMasteryProjection). In-scope KCs
+// with no mastery_state row come back as tested:false (未测).
 
 import { type ApiOperationJsonResponse, apiOperationJson } from '@/ui/lib/api';
 

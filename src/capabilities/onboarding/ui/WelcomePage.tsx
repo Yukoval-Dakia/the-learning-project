@@ -1,6 +1,10 @@
-// Leanings order the probe. Pace caps its length. Neither feeds theta or p(L).
-// Stage is declaredStage on the goal, a curriculum constraint for supply, never a theta prior.
-// The scope hint does not invent a count. scopeKnowledgeIds come from the create response.
+// Onboarding ① · welcome / setup (YUK-473 Slice 1).
+// Ported from docs/design/loom-refresh/project/screen-onboarding.jsx
+// (ScreenWelcome). Self-report (stage / leanings / pace) is local-only and NOT
+// persisted — it only hints later placement ordering (design §6). The goal
+// textarea + subject chips drive the real POST /api/goals on fork click; the
+// authoritative scopeKnowledgeIds come from that response, so the inline scope
+// hint here is a static "已圈定范围" reassurance (we do NOT fabricate a count).
 
 import { useMemo, useRef, useState } from 'react';
 import { createSubjectErrorText, useCreateSubject } from '@/ui/hooks/useCreateSubject';
@@ -13,8 +17,14 @@ import { ObSteps } from './ObSteps';
 import { useGoalClient } from './placement-client';
 import './onboarding.css';
 
-// Chips are read inside the component. A module-level list would freeze before subject hydration.
-// Stage ids are DeclaredStage. Labels stay learner-facing copy.
+// YUK-249 → YUK-598：subject chips 曾是模块级 const（import 期快照，provider 水合
+// 后不更新——v2 §9① WelcomePage:23-24 点名的冻结 bug）。现移入组件体、行驱动
+// （useSubjects：DB selectable 视图，custom 科目即时进 chips；断网退化三 builtin）。
+// `leanings` 值仍是 canonical id——YUK-480 透传合同不变。
+// YUK-1009 — stage ids are the canonical DeclaredStage vocabulary (POST /api/goals
+// declaredStage); labels stay the learner-facing Chinese copy. The chosen id now
+// persists on the created goal (goal.declared_stage) as a curriculum constraint
+// consumed by question supply — still never an ability/θ̂ input.
 const STAGES = [
   { id: 'middle_school', label: '初中' },
   { id: 'high_school', label: '高中' },
@@ -35,25 +45,34 @@ export interface WelcomePageProps {
 
 export default function WelcomePage({ navigate }: WelcomePageProps) {
   const { createGoal } = useGoalClient();
-  // Same rows as the chips, so a custom subject appears without a reload.
+  // YUK-598 — 组件体内取行（模块级冻结修复）；SUBJECTS/LEANINGS 同源。
   const { subjects: subjectRows } = useSubjects();
   const SUBJECTS = listSubjectChoices(subjectRows);
   const LEANINGS = SUBJECTS;
   const hasUnconfiguredSubjects = SUBJECTS.some(
     (subject) => subject.configurationStatus === 'unconfigured',
   );
-  // The choice projection drops isGeneralFallback. Join the raw rows. Only true gets the badge.
+  // YUK-602 §1.2 — 通用模式 badge 的 flag 从原始 subjectRows 按 id join：
+  // listSubjectChoices 只投影 {id,label}，isGeneralFallback 在投影里被丢弃（owner
+  // review P2 点名的断链）。只认 === true（general 的 null 不挂标）。
   const generalFallbackIds = useMemo(
     () => new Set(subjectRows.filter((r) => r.isGeneralFallback === true).map((r) => r.id)),
     [subjectRows],
   );
-  // Leanings and pace size and order the probe. Stage is stored on the goal. None of them feed theta.
+  // 自述（轻 · 仅引导排序）。YUK-480：`leanings` + `pace` 现经 query 透传给 placement
+  // 探针（leanings → 起始题排序偏好、pace → 探针题量），仅 placement session 持有；
+  // 二者只影响排序/题量，绝不喂 θ̂/p(L)。YUK-1009：`stage` 不再是纯显示态——它随
+  // createGoal 落库为 goal.declared_stage（学段/课程范围约束，供供给侧消费，
+  // 例如 jyeoo grade 过滤）；仍绝不喂 θ̂（stage→θ 先验仍是另案 AutoElicit）。
   const [stage, setStage] = useState<StageId | null>(null);
   const [leanings, setLeanings] = useState<string[]>([]);
   const [pace, setPace] = useState<string>('medium');
+  // 目标 · 核心（驱动 POST /api/goals）。
   const [goal, setGoal] = useState('');
   const [subject, setSubject] = useState<string | null>(null);
-  // empty is a missing title. generic is any create failure. An empty scope is allowed, so it is not its own error.
+  // err: false=无错 · 'empty'=未写目标 · 'generic'=建 goal 失败（token/网络/500/校验）。
+  // OCR #551：'scope' 变体已删——goal-create 不再对空 scope 报 400（冷启允许空 scope），
+  // 故不存在「解析不出范围」这条；任何错都归 generic，不误导用户改目标。
   const [err, setErr] = useState<false | 'empty' | 'generic'>(false);
   const [submitting, setSubmitting] = useState(false);
 
@@ -61,7 +80,7 @@ export default function WelcomePage({ navigate }: WelcomePageProps) {
     setLeanings((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
   const goalReady = goal.trim().length >= 2;
 
-  // Both forks create the goal first.
+  // 分叉：primary → 上传材料 · secondary → 起始集（定位）。两条都先建 goal。
   const proceed = async (route: string) => {
     if (!goalReady) {
       setErr('empty');
@@ -71,13 +90,21 @@ export default function WelcomePage({ navigate }: WelcomePageProps) {
     setErr(false);
     setSubmitting(true);
     try {
-      // declaredStage persists on the goal for supply. It is optional.
+      // Thread the new goal id through the flow as `?goal=<id>`: the upload screen
+      // forwards it and the placement probe (Slice 3) reads it to scope the probe.
+      // YUK-1009 — the self-reported stage is no longer display-only: it rides the
+      // SAME create-goal mutation (declaredStage) and persists on goal.declared_stage,
+      // where supply-side consumers (jyeoo grade filter) read it. Optional → nullable.
       const created = await createGoal({
         title: goal.trim(),
         subjectId: subject,
         declaredStage: stage,
       });
-      // Leanings and pace travel as query params. They order and size the probe. They do not feed theta.
+      // YUK-480 — also thread the self-report (leanings + pace) as query params. The placement
+      // probe reads them to ORDER starter questions toward leaning subjects + size the probe by
+      // pace (ordering/amount only — never θ̂). leanings appended only when non-empty; pace is
+      // always present (default 'medium'). URLSearchParams handles encoding. NOTE: these are
+      // existing self-report state being transported — no NEW UI element (no design pre-flight).
       const params = new URLSearchParams();
       params.set('goal', created.id);
       if (leanings.length > 0) params.set('leanings', leanings.join(','));
@@ -85,7 +112,7 @@ export default function WelcomePage({ navigate }: WelcomePageProps) {
       const sep = route.includes('?') ? '&' : '?';
       navigate(`${route}${sep}${params.toString()}`);
     } catch {
-      // An empty scope is allowed, so every failure stays generic.
+      // goal-create 不再对空 scope 报 400（冷启允许）→ 任何失败都归 generic（不误导用户改目标）。
       setErr('generic');
     } finally {
       setSubmitting(false);
@@ -318,15 +345,18 @@ export default function WelcomePage({ navigate }: WelcomePageProps) {
   );
 }
 
-// Collapse uses the form container. An input blur would unmount the confirm button before its click.
-// A pending submit does not collapse. The server owns idempotency and name clashes. This UI does not dedupe.
+// ── YUK-602 §1.1 —— 「+ 新科目」手填入口（design doc 2026-07-11，APPROVED v1.1）──
+// 展示件与状态壳分离：CreateSubjectForm 纯 props（SSR 单测直渲），CreateSubjectChip
+// 持展开/草稿/mutation 状态。交互红线：收起判定以整个表单容器为界（relatedTarget
+// 不在容器内才收）——input 单独 blur 不收，防 blur 先于 click 卸载确认按钮吞掉提交
+// （owner review P2）；提交中不收起。服务端幂等/撞名兜底，UI 零去重零归一。
 
 export interface CreateSubjectFormProps {
   name: string;
   onName: (value: string) => void;
   onSubmit: () => void;
   isPending: boolean;
-  /** Learner-facing create error. null means none. */
+  /** 用户可读错误文案（createSubjectErrorText 产出）；null = 无错。 */
   error: string | null;
 }
 
@@ -386,7 +416,7 @@ export function CreateSubjectChip({ onCreated }: { onCreated: (id: string) => vo
     if (trimmed.length === 0 || mutation.isPending) return;
     mutation.mutate(trimmed, {
       onSuccess: (created) => {
-        // Selecting a typed name happens now. The chip appears after the provider refreshes.
+        // 手填即选中（doc §1.1）；chip 本体经 invalidate → provider 通路出现。
         onCreated(created.id);
         setName('');
         close();

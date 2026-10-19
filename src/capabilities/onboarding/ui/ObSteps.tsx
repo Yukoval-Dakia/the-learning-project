@@ -1,3 +1,8 @@
+// Onboarding shared step rail (YUK-473 Slice 1).
+// Ported 1:1 from docs/design/loom-refresh/project/screen-onboarding.jsx
+// (ObSteps). The four-step flow: 设定 → 备料 → 定位 → 档案. Slice 1 only renders
+// the active="welcome" state; later slices reuse this rail for their steps.
+
 import { Fragment } from 'react';
 
 export type ObStepId = 'welcome' | 'source' | 'placement' | 'profile';
@@ -8,9 +13,11 @@ const STEPS: Array<{ id: ObStepId; n: string; label: string }> = [
   { id: 'placement', n: '3', label: '定位' },
   { id: 'profile', n: '4', label: '档案' },
 ];
-// ORDER is derived from STEPS so a reorder cannot desync the rail.
+// OCR #551: derive ORDER from STEPS so there's a single source of truth (reordering
+// STEPS can't silently desync the rail).
 const ORDER: ObStepId[] = STEPS.map((s) => s.id);
 
+// OCR #551: extracted from a nested ternary (banned by the review checklist).
 function stepCls(si: number, ai: number): string {
   if (si === ai) return 'is-on';
   if (si < ai) return 'is-done';

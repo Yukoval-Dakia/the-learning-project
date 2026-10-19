@@ -1,10 +1,13 @@
-// Read-only verify UI over the real re-derivation in src/core/recompute. No simulated math.
+// YUK-495 S5 #41 — recompute verify layer components (ported from the claude.ai/design
+// recompute-profile.jsx). The simulated Beta-binomial math is REPLACED by the real
+// re-derivation (recompute-core → src/core/recompute). Read-only; renders the verify bar,
+// per-KC chips, the bit-for-bit ledger, the drift detail, and the honesty footnote.
 
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { type RcKcVerdict, type RcMaturitySummary, type RcSummary, rcFmt } from './recompute-core';
 import { type RcState, useRecompute } from './useRecompute';
 
-/** On-device check. No network. */
+/** Offline chip — emphasise the pure on-device, no-network re-derivation. */
 export function RcOffline() {
   return (
     <span className="rc-offline" title="只在此设备核对显示结果">
@@ -14,6 +17,7 @@ export function RcOffline() {
   );
 }
 
+/** per-KC indicator: ✓ re-derived / ✗ drift / no numbers — hidden while idle/running. */
 export function RcKcChip({ state, kind }: { state: RcState; kind: RcKcVerdict['kind'] }) {
   if (state === 'idle' || state === 'running') return null;
   if (kind === 'na') {
@@ -265,12 +269,16 @@ function formatMedianDrift(current: number | null, recomputed: number | null) {
 }
 
 /**
- * Profile-level maturity check. It opens already verifying, because this screen asks
- * how trustworthy the measurement is. Firm count and median theta SE do not depend on
- * sigma, so there is no preview state. Drift is the real compare in summarizeMaturity.
+ * D2 (#45) — calibration-maturity 卡 · profile 级成熟度对账徽章.
+ *
+ * profile 屏是观察面（「这份测量有多可信」），所以 verified ✓ 设成静息态：打开即在本设备
+ * 重导成熟度概览（firm 计数 · 中位 θ̂ SE）并与服务端 aggregate 逐位对账。与 per-KC 的
+ * RcVerify 不同：maturity 两个量都与 σ flag 无关（见 summarizeMaturity），故无 poly/libm
+ * preview 区分——只有 match（逐位）/ drift（不等）/ running 三态，drift 由 summarizeMaturity
+ * 的真实比较得出（非模拟 prop）。
  */
 export function RcMaturityBadge({ summary }: { summary: RcMaturitySummary }) {
-  // Settle on the real reconciliation, not a stand-in.
+  // Own the verify state machine; settle on the REAL reconciliation outcome.
   const { state, run } = useRecompute({ auto: true, outcome: summary.overall });
   const { dFirm, total } = summary;
   const firmMatch = summary.dFirm === summary.sFirm;
