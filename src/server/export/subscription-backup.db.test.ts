@@ -48,6 +48,7 @@ const liveSubscriberIdentities = [
   ['agency.probe-publication-serve', 1],
   ['notes.mastery-progress-note-refine', 1],
   ['practice.failure-learning-attempt', 3],
+  ['practice.learner-return-wake', 1],
   ['practice.question-admission-enqueue', 1],
 ];
 const subscriberCount = liveSubscriberIdentities.length;
@@ -239,9 +240,9 @@ describe('YUK-766 subscription progress backup', () => {
     await testDb().execute(sql`DROP TABLE IF EXISTS test_subscription_snapshot_memory`);
   });
 
-  // @invariant data: archive keeps six subscribers, seven states, and one shared publish event
-  // @fails-if omit admission enqueue or split its publish source; lengths or shared ids change
-  it('archives all six live subscriber identities, seven delivery states and effect provenance', async () => {
+  // @invariant data: archive keeps seven subscribers, seven states, and one shared publish event
+  // @fails-if omit admission enqueue or the return wake, or split the publish source
+  it('archives all seven live subscriber identities, seven delivery states and effect provenance', async () => {
     const { registry } = await seedProgress();
     const data = decode(await archive());
     expect(data.event_subscription_checkpoint).toHaveLength(subscriberCount);
@@ -264,14 +265,17 @@ describe('YUK-766 subscription progress backup', () => {
     const shared = registry.subscriptions.filter((sub) => (counts.get(sub.actions[0]) ?? 0) > 1);
     expect(shared.map((sub) => sub.id)).toEqual([
       'agency.probe-publication-serve',
+      'practice.failure-learning-attempt',
+      'practice.learner-return-wake',
       'practice.question-admission-enqueue',
     ]);
     const sourceIds = (id: string) =>
       data.event_subscription_delivery
         .filter((row) => row.subscriber_id === id)
         .map((row) => row.source_event_id);
-    expect([...sourceIds(shared[0].id)].sort()).toEqual([...sourceIds(shared[1].id)].sort());
-    expect(new Set(sourceIds(shared[0].id)).size).toBe(statuses.length);
+    const publish = ['agency.probe-publication-serve', 'practice.question-admission-enqueue'];
+    expect([...sourceIds(publish[0])].sort()).toEqual([...sourceIds(publish[1])].sort());
+    expect(new Set(sourceIds(publish[0])).size).toBe(statuses.length);
     expect(data.event_subscription_effect).toHaveLength(4);
     expect(data.event_subscription_effect.find((r) => r.status === 'enqueued')).toMatchObject({
       downstream_job_id: 'archived-downstream-job',

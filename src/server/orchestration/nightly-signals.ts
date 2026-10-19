@@ -1,7 +1,6 @@
 // YUK-1560 — 资格判定的读表侧。一次夜间 tick 读完共享信号，再按 job 投影。
 
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
-import { loadPendingEdgeProposalKeys } from '@/capabilities/knowledge/server/propose_edge';
 import type { Db } from '@/db/client';
 import { notDraftPredicate } from '@/db/predicates';
 import {
@@ -53,9 +52,7 @@ export async function loadNightlyContext(
     loadTreeWatermark(db),
     loadEmbedPending(db),
     loadReturnStockShort(db),
-    names.includes('frontier_fill_nightly')
-      ? loadPendingEdgeProposalKeys(db).then((keys) => keys.size)
-      : Promise.resolve(0),
+    names.includes('frontier_fill_nightly') ? loadPendingEdgeProposalCount(db) : Promise.resolve(0),
     loadJobHistory(db, dagNames),
     names.includes(MEMORY_BRIEF_SWEEP_JOB) ? loadBriefWatermark(db) : Promise.resolve(null),
   ]);
@@ -160,6 +157,35 @@ function asDate(value: unknown): Date | null {
   if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
   const parsed = new Date(String(value));
   return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+async function loadPendingEdgeProposalCount(db: Db): Promise<number> {
+  const [row] = rowsOf<{ n: number | string }>(
+    await db.execute(sql`
+      SELECT count(*)::int AS n
+      FROM (
+        SELECT DISTINCT
+          propose_event.payload->>'from_knowledge_id',
+          propose_event.payload->>'to_knowledge_id',
+          propose_event.payload->>'relation_type'
+        FROM event propose_event
+        WHERE propose_event.action = 'propose'
+          AND propose_event.subject_kind = 'knowledge_edge'
+          AND jsonb_typeof(propose_event.payload->'from_knowledge_id') = 'string'
+          AND jsonb_typeof(propose_event.payload->'to_knowledge_id') = 'string'
+          AND jsonb_typeof(propose_event.payload->'relation_type') = 'string'
+          AND (propose_event.payload->'rubric_verdict'->>'ok') IS DISTINCT FROM 'false'
+          AND (propose_event.payload->'topology_verdict'->>'status') IS DISTINCT FROM 'reject'
+          AND NOT EXISTS (
+            SELECT 1 FROM event rate_event
+            WHERE rate_event.action = 'rate'
+              AND rate_event.subject_kind = 'knowledge_edge'
+              AND rate_event.caused_by_event_id = propose_event.id
+          )
+      ) pending_keys
+    `),
+  );
+  return Number(row?.n ?? 0);
 }
 
 async function loadLastLearnerEvent(db: Db, before?: Date): Promise<Date | null> {

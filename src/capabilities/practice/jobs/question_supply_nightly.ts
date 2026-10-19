@@ -29,7 +29,7 @@ import { runInventoryShadowDualRead } from '@/capabilities/practice/server/quest
 import { discoverSupplyTargets } from '@/capabilities/practice/server/question-supply/target-discovery';
 import type { Db } from '@/db/client';
 import { RETURN_STOCK_QUESTIONS } from '@/kernel/nightly-eligibility';
-import { loadNightlyContext } from '@/server/orchestration/nightly-signals';
+import { loadActivityTier } from '../server/activity-tier';
 import type {
   PlacementStarterRecoveryDeps,
   PlacementStarterRecoveryResult,
@@ -247,11 +247,8 @@ export function buildQuestionSupplyNightlyHandler(
   return async () => {
     try {
       let maxPerRun = deps.maxPerRun;
-      if (maxPerRun === undefined) {
-        const tier = (await loadNightlyContext(db, new Date(), ['question_supply_nightly'])).forJob(
-          'question_supply_nightly',
-        ).tier;
-        if (tier === 'idle') maxPerRun = RETURN_STOCK_QUESTIONS;
+      if (maxPerRun === undefined && (await loadActivityTier(db, new Date())) === 'idle') {
+        maxPerRun = RETURN_STOCK_QUESTIONS;
       }
       const result = await runQuestionSupplyNightly(db, {
         ...deps,
