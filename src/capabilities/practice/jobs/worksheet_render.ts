@@ -298,8 +298,12 @@ export function canonicalizeWorksheetPdf(pdf: Buffer): Buffer {
 // 即判渲染失败：不写 blob、不存档。
 //
 // 校验项：
-//   1. PDF 页数 === 区域图页数（/Type /Page 对象数与 /Count 双证）。
-//   2. 每页 MediaBox = A4：portrait 595.28×841.89pt、landscape 841.89×595.28pt
+//   1. PDF 页数 === 区域图页数：页树按规范走 trailer /Root → catalog /Pages →
+//      /Kids 深度优先序取叶子 /Page 序列（任意深度嵌套 —— Skia 多页渲染会产
+//      中间层 /Pages 节点）；每个 /Pages 节点声明的 /Count 与其子树实际叶子
+//      数逐项对账，叶子总数再与区域图页数对账。/MediaBox、/Rotate 沿祖先链
+//      继承；重复/环引用、坏 gen 引用、非 90 倍数或非 0 有效 Rotate 一律抛错。
+//   2. 每页有效 MediaBox = A4：portrait 595.28×841.89pt、landscape 841.89×595.28pt
 //      （方向以区域图为准），±1pt。
 //   3. **实测四个画出来的定位点**：有界解释器走页面内容流 —— q/Q 图形状态
 //      栈 + cm 复合全仿射（scale、平移都在内，不猜前缀）——收集 fill/stroke
@@ -807,6 +811,203 @@ function measureDrawnAnchors(
   return measurements;
 }
 
+// ---- 页树遍历（/Kids 递归序，MediaBox/Rotate 按规范继承） ----
+//
+// Skia 的页树不是恒定的单根：实测 9 页卷子产 root /Pages Kids [中间 /Pages
+// 节点, 末页 /Page]，中间节点再挂 8 个叶子。页序与页数的真相是 trailer
+// /Root → catalog /Pages → /Kids 深度优先序，不是"全文件唯一的 /Pages
+// 对象"。每个 /Pages 节点的 /Count 与其子树实际解析出的叶子数逐项对账；
+// 重复/环引用、悬空/旧代引用、非 90 倍数或非 0 有效 /Rotate（锚点几何定义
+// 在未旋转页面坐标上，旋转页在渲染契约之外）一律诚实失败，不跳过、不猜。
+
+/** 对象体的字典段：' stream' 之前的部分（流字节里可能恰好撞中字典字面量）。 */
+function dictPortion(objectBody: string): string {
+  const streamIdx = objectBody.indexOf(' stream');
+  return streamIdx >= 0 ? objectBody.slice(0, streamIdx) : objectBody;
+}
+
+/** 引用目标一致性：对象须在 xref 且 ref 声明的 gen 与 xref 记录相同 ——
+ * 指向旧代的悬空引用是坏文件，不猜。 */
+function checkRefTarget(xref: ClassicXref, objNum: number, gen: number, what: string): void {
+  const entry = xref.objects.get(objNum);
+  if (entry == null) {
+    throw new WorksheetRenderPermanentError(
+      `worksheet pdf verify: ${what} — object ${objNum} ${gen} R is not in the xref table`,
+    );
+  }
+  if (entry.gen !== gen) {
+    throw new WorksheetRenderPermanentError(
+      `worksheet pdf verify: ${what} — object ${objNum} ${gen} R is a stale generation ` +
+        `(xref records gen ${entry.gen})`,
+    );
+  }
+}
+
+/** /Key N G R 间接引用，缺失即抛错；ref gen 对账走 checkRefTarget。 */
+function requiredIndirectRef(dict: string, key: string, xref: ClassicXref, what: string): number {
+  const ref = new RegExp(`/${key}\\s+(\\d+)\\s+(\\d+)\\s+R\\b`).exec(dict);
+  if (ref == null) {
+    throw new WorksheetRenderPermanentError(
+      `worksheet pdf verify: ${what} has no /${key} indirect ref`,
+    );
+  }
+  const objNum = Number(ref[1]);
+  checkRefTarget(xref, objNum, Number(ref[2]), `${what} /${key}`);
+  return objNum;
+}
+
+/** /MediaBox [llx lly urx ury] — 页树可继承属性（规范 §7.7.3.3 沿祖先链
+ * 解析）。返回 null = 本节点未声明；退化盒是坏文件。 */
+function parseMediaBox(dict: string, what: string): [number, number, number, number] | null {
+  const mb = /\/MediaBox\s*\[\s*(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s*\]/.exec(dict);
+  if (mb == null) return null;
+  const box: [number, number, number, number] = [
+    Number(mb[1]),
+    Number(mb[2]),
+    Number(mb[3]),
+    Number(mb[4]),
+  ];
+  if (!(box[2] > box[0] && box[3] > box[1])) {
+    throw new WorksheetRenderPermanentError(
+      `worksheet pdf verify: ${what} has a degenerate /MediaBox [${box.join(' ')}]`,
+    );
+  }
+  return box;
+}
+
+/** /Rotate N — 可继承属性；规范只允许 90 的倍数，归一到 [0,360)。 */
+function parseRotate(dict: string, what: string): number | null {
+  const rot = /\/Rotate\s+(-?\d+)\b/.exec(dict);
+  if (rot == null) return null;
+  const deg = Number(rot[1]);
+  if (deg % 90 !== 0) {
+    throw new WorksheetRenderPermanentError(
+      `worksheet pdf verify: ${what} /Rotate ${deg} is not a multiple of 90`,
+    );
+  }
+  return ((deg % 360) + 360) % 360;
+}
+
+/** /Kids [ N G R … ] — 数组内只许间接引用；嵌套数组/名字/游离 token = 坏文件。 */
+function parseKidsRefs(dict: string, xref: ClassicXref, what: string): number[] {
+  const kids = /\/Kids\s*\[([^\]]*)\]/.exec(dict);
+  if (kids == null) {
+    throw new WorksheetRenderPermanentError(`worksheet pdf verify: ${what} has no /Kids array`);
+  }
+  const refs: number[] = [];
+  for (const m of kids[1].matchAll(/(\d+)\s+(\d+)\s+R\b/g)) {
+    refs.push(Number(m[1]));
+    checkRefTarget(xref, Number(m[1]), Number(m[2]), `${what} /Kids entry`);
+  }
+  if (kids[1].replace(/\d+\s+\d+\s+R\b/g, ' ').trim() !== '') {
+    throw new WorksheetRenderPermanentError(
+      `worksheet pdf verify: ${what} /Kids holds non-reference tokens`,
+    );
+  }
+  return refs;
+}
+
+interface PageTreeLeaf {
+  objNum: number;
+  /** 页对象字典段（/Contents、继承后仍缺的属性从这里再读）。 */
+  dict: string;
+  /** 有效 /MediaBox（本页或最近祖先）。 */
+  mediaBox: [number, number, number, number];
+}
+
+/** 嵌套深度的硬上限 —— 远超真实页树的层数，超此即坏文件（防栈爆）。 */
+const PAGE_TREE_MAX_DEPTH = 64;
+
+/** trailer /Root → catalog /Pages → /Kids 深度优先序的叶子 /Page 序列
+ * （即 PDF 页序）。/MediaBox、/Rotate 沿祖先链继承；每个 /Pages 节点的
+ * /Count 与其子树实际叶子数逐项对账。 */
+function collectPageTreeLeaves(text: string, xref: ClassicXref): PageTreeLeaf[] {
+  const catalogNum = requiredIndirectRef(xref.trailerDict, 'Root', xref, 'trailer');
+  const catalogDict = dictPortion(objectRegion(text, xref, catalogNum, 'verify').body);
+  if (!/\/Type\s*\/Catalog\b/.test(catalogDict)) {
+    throw new WorksheetRenderPermanentError(
+      `worksheet pdf verify: trailer /Root ${catalogNum} is not a /Type /Catalog`,
+    );
+  }
+  const rootNum = requiredIndirectRef(catalogDict, 'Pages', xref, `catalog ${catalogNum}`);
+
+  const leaves: PageTreeLeaf[] = [];
+  const visited = new Set<number>();
+  const walk = (
+    objNum: number,
+    inheritedBox: [number, number, number, number] | null,
+    inheritedRotate: number | null,
+    depth: number,
+  ): void => {
+    if (depth > PAGE_TREE_MAX_DEPTH) {
+      throw new WorksheetRenderPermanentError(
+        `worksheet pdf verify: page tree deeper than ${PAGE_TREE_MAX_DEPTH} levels`,
+      );
+    }
+    if (!visited.add(objNum)) {
+      throw new WorksheetRenderPermanentError(
+        `worksheet pdf verify: page tree revisits object ${objNum} (cycle or shared node)`,
+      );
+    }
+    const what = `page-tree node ${objNum}`;
+    const dict = dictPortion(objectRegion(text, xref, objNum, 'verify').body);
+    const mediaBox = parseMediaBox(dict, what) ?? inheritedBox;
+    const rotate = parseRotate(dict, what) ?? inheritedRotate;
+    if (/\/Type\s*\/Pages\b/.test(dict)) {
+      const count = /\/Count\s+(-?\d+)\b/.exec(dict);
+      if (count == null) {
+        throw new WorksheetRenderPermanentError(
+          `worksheet pdf verify: ${what} (/Pages) has no /Count`,
+        );
+      }
+      const declared = Number(count[1]);
+      if (declared < 0) {
+        throw new WorksheetRenderPermanentError(
+          `worksheet pdf verify: ${what} (/Pages) declares negative /Count ${declared}`,
+        );
+      }
+      const before = leaves.length;
+      for (const kid of parseKidsRefs(dict, xref, `${what} (/Pages)`)) {
+        walk(kid, mediaBox, rotate, depth + 1);
+      }
+      const actual = leaves.length - before;
+      if (actual !== declared) {
+        throw new WorksheetRenderPermanentError(
+          `worksheet pdf verify: ${what} (/Pages) declares /Count ${declared} ` +
+            `but resolves to ${actual} leaf page(s)`,
+        );
+      }
+      return;
+    }
+    if (/\/Type\s*\/Page\b/.test(dict)) {
+      if (/\/Kids\s*\[/.test(dict)) {
+        throw new WorksheetRenderPermanentError(
+          `worksheet pdf verify: ${what} is a /Page carrying /Kids`,
+        );
+      }
+      if (mediaBox == null) {
+        throw new WorksheetRenderPermanentError(
+          `worksheet pdf verify: ${what} has no /MediaBox on itself or any ancestor`,
+        );
+      }
+      const effectiveRotate = rotate ?? 0;
+      if (effectiveRotate !== 0) {
+        throw new WorksheetRenderPermanentError(
+          `worksheet pdf verify: ${what} effective /Rotate ${effectiveRotate} — rotated ` +
+            'pages shift anchor geometry and are outside the render contract',
+        );
+      }
+      leaves.push({ objNum, dict, mediaBox });
+      return;
+    }
+    throw new WorksheetRenderPermanentError(
+      `worksheet pdf verify: page-tree kid ${objNum} is neither /Type /Page nor /Type /Pages`,
+    );
+  };
+  walk(rootNum, null, null, 0);
+  return leaves;
+}
+
 /** 硬校验：canonicalize 后的 PDF 字节 vs 区域图。任何不过 → PermanentError。 */
 export function verifyWorksheetPdf(
   pdf: Buffer,
@@ -832,73 +1033,30 @@ function verifyWorksheetPdfInner(
   const text = pdf.toString('latin1');
   const xref = parseClassicXref(text, 'verify');
 
-  // --- 页数：/Type /Pages /Count 与 /Type /Page 对象数双证，须等于区域图页数 ---
-  let pagesObjNum: number | null = null;
-  let declaredCount: number | null = null;
-  for (const objNum of xref.objects.keys()) {
-    const body = objectRegion(text, xref, objNum, 'verify').body;
-    // 只看对象字典段 —— 流字节里可能恰好出现 '/Type /Pages' 字面量。
-    const dictPart = body.slice(
-      0,
-      body.indexOf(' stream') >= 0 ? body.indexOf(' stream') : body.length,
-    );
-    if (/\/Type\s*\/Pages\b/.test(dictPart)) {
-      if (pagesObjNum != null) {
-        throw new WorksheetRenderPermanentError(
-          'worksheet pdf verify: multiple /Type /Pages nodes (page tree nesting unsupported)',
-        );
-      }
-      pagesObjNum = objNum;
-      const count = /\/Count\s+(\d+)/.exec(body);
-      const kids = /\/Kids\s*\[([^\]]*)\]/.exec(body);
-      if (count == null || kids == null) {
-        throw new WorksheetRenderPermanentError(
-          'worksheet pdf verify: /Pages node missing /Count or /Kids',
-        );
-      }
-      declaredCount = Number(count[1]);
-    }
-  }
-  if (pagesObjNum == null || declaredCount == null) {
-    throw new WorksheetRenderPermanentError('worksheet pdf verify: no /Type /Pages node found');
-  }
-  const kidsBody = objectRegion(text, xref, pagesObjNum, 'verify').body;
-  const kidRefs = [
-    ...(kidsBody.match(/\/Kids\s*\[([^\]]*)\]/)?.[1] ?? '').matchAll(/(\d+)\s+\d+\s+R/g),
-  ].map((m) => Number(m[1]));
-  if (kidRefs.length !== declaredCount || declaredCount !== map.pages.length) {
+  // --- 页数：页树 /Kids 递归序的叶子数 === 区域图页数（每节点 /Count 已在
+  // 遍历中与子树叶子数对账，这里再做总数对账）。
+  const leaves = collectPageTreeLeaves(text, xref);
+  if (leaves.length !== map.pages.length) {
     throw new WorksheetRenderPermanentError(
-      `worksheet pdf verify: page count mismatch — /Count=${declaredCount}, /Kids=${kidRefs.length}, map=${map.pages.length}`,
+      `worksheet pdf verify: page count mismatch — page tree resolves ` +
+        `${leaves.length} leaf page(s), map=${map.pages.length}`,
     );
   }
 
   const sortedPages = [...map.pages].sort((a, b) => a.page - b.page);
   const verification: WorksheetPdfVerification = {
-    page_count_pdf: declaredCount,
+    page_count_pdf: leaves.length,
     page_count_map: sortedPages.length,
     pages: [],
   };
 
-  for (let i = 0; i < kidRefs.length; i += 1) {
+  for (let i = 0; i < leaves.length; i += 1) {
     const mapPage = sortedPages[i];
-    const pageBody = objectRegion(text, xref, kidRefs[i], 'verify').body;
-    if (!/\/Type\s*\/Page\b/.test(pageBody) || /\/Type\s*\/Pages\b/.test(pageBody)) {
-      throw new WorksheetRenderPermanentError(
-        `worksheet pdf verify: /Kids entry ${kidRefs[i]} is not a /Type /Page object`,
-      );
-    }
+    const pageDict = leaves[i].dict;
 
-    // (2) MediaBox vs A4（方向取区域图）。
-    const mb = /\/MediaBox\s*\[\s*(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s*\]/.exec(
-      pageBody,
-    );
-    if (mb == null) {
-      throw new WorksheetRenderPermanentError(
-        `worksheet pdf verify: page ${mapPage.page} has no /MediaBox`,
-      );
-    }
-    const mbW = Number(mb[3]) - Number(mb[1]);
-    const mbH = Number(mb[4]) - Number(mb[2]);
+    // (2) 有效 MediaBox vs A4（方向取区域图）。
+    const mbW = leaves[i].mediaBox[2] - leaves[i].mediaBox[0];
+    const mbH = leaves[i].mediaBox[3] - leaves[i].mediaBox[1];
     const expected =
       mapPage.orientation === 'landscape'
         ? { w: A4_PORTRAIT_PT.h, h: A4_PORTRAIT_PT.w }
@@ -916,13 +1074,9 @@ function verifyWorksheetPdfInner(
     // (3) 实测画出来的四角锚点：走完整条内容流（q/Q 栈 + cm 全仿射），
     // 按 producer contract 找出形状、量中心，与区域图 mm 位置对账 ±0.5mm。
     // shrink / 平移 / DPI 变化都直接体现在画出来坐标上。
-    const contentsRef = /\/Contents\s+(\d+)\s+\d+\s+R/.exec(pageBody);
-    if (contentsRef == null) {
-      throw new WorksheetRenderPermanentError(
-        `worksheet pdf verify: page ${mapPage.page} has no single /Contents ref`,
-      );
-    }
-    const { content } = streamObjectContent(text, xref, Number(contentsRef[1]));
+    // 渲染契约是单一 /Contents ref —— /Contents 数组不会匹配此引用模式，照抛。
+    const contentsObjNum = requiredIndirectRef(pageDict, 'Contents', xref, `page ${mapPage.page}`);
+    const { content } = streamObjectContent(text, xref, contentsObjNum);
     const shapes = interpretPageShapes(content);
     const anchorMeasurements = measureDrawnAnchors(shapes, mbW, mbH, mapPage.anchors, mapPage.page);
 
