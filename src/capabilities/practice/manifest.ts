@@ -1302,29 +1302,12 @@ export const practiceCapability = defineCapability({
       // 标签，不再有「必须收敛到 canonical 词表」的不变量要维护；读侧词表折叠
       // （canonicalKindToPersistedForms / answerClassCompatible）继续覆盖历史
       // profile-vocab 标签行。
-      // YUK-348 (B1 four-engine soft-track inc-1, ADR-0035 决定 #3 + 决定 #4 红线) — 软轨 KT
-      // 估计夜扫。每夜扫「有硬轨 item_calibration 行 + 有非空二元作答序列」的非 draft 题，逐题
-      // estimateBkt (纯 BKT forward) → applyKtEstimate 落 item_calibration.kt_json。kt_json 是
-      // **纯持久化 sink，零下游消费者**——不喂 p(L)/调度/显示（PFA 是唯一可信决策信号，决定 #4）；
-      // n=1 下输出多为 prior-echo（预期且正确，价值在管线就位 + 扩多用户期权 + 诊断丰富度，决定 #3）。
-      // cron 10 5 * * * Asia/Shanghai：错在 recalibration 04:50 + answer_class 05:00 之后、compose
-      // 05:30 之前——晚于硬轨数据预产（item_prior 04:20 / recalibration 04:50），让 KT 读到的作答
-      // 序列已新鲜，且不与前两 job 同分钟竞争。queue=llm：与其它慢热 backfill job 同档 DLQ 重试
-      // （KT 估计本身纯 CPU，但与软/慢轨家族同档调度）。runKtEstimateNightly 在 job 顶层调（非
-      // attempt tx 内），per-question try/catch 隔离单题失败，不加 SAVEPOINT（G1）。
-      {
-        name: 'kt_estimate_nightly',
-        schedule: { cron: '10 5 * * *', tz: 'Asia/Shanghai' },
-        queue: 'llm',
-        load: () =>
-          import('./jobs/kt_estimate_nightly').then((m) => m.buildKtEstimateNightlyHandler),
-      },
       // YUK-445 (A11 — 谨慎 / 速度-精度轴) — EZ-diffusion 描述符夜扫。runAxisStateBatch 折叠
       // 计分 RT 作答 per 主 KC → 过 usage gate 的 KC upsert (drift_v/boundary_a/ter) 慢变描述符。
       // 纯描述符，零下游消费者（不喂 p(L)/调度/θ̂；读出只走 placement-profile 显示）——故不触
       // LIVE 引擎、无 flag。provenance='adaptive'（唯一 live 源）→ 写 boundary_a+ter，drift_v
       // 留 NULL（自适应选题混淆，A11 硬边界）。cron 40 5 * * * Asia/Shanghai：错在数据预产链
-      // （kt_estimate 05:10 / reference 05:20 / compose 05:30）之后的空槽——A11 只读 durable
+      // （reference 05:20 / compose 05:30）之后的空槽——A11 只读 durable
       // attempt event，对选题链无序依赖，晚槽只为避同分钟竞争。queue=llm：与其它慢热 batch 同档
       // DLQ 重试（本 batch 纯 CPU+DB，无 LLM 调用）。per-KC upsert 独立 try/catch（不加 SAVEPOINT，
       // 非 attempt tx 内，G1 同 recalibration_nightly）。

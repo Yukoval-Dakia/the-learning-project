@@ -1,8 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-11：YUK-1107隔离head f0f2d63bf完整CI三绿166/207/144秒、中位166；唯一验证R2 NONE及逐不变量说明已过。正常纳入main c2新测试规则后，作者代码不变，等待新exact-head CI再合1691。judge阶段诊断仅独立实验，backup等audit/owner，120未达。
+> Linear 是权威 tracker。2026-10-19：YUK-1576 暗轨退役已完成本地验证；只交 draft PR，不合并、不部署、不改票状态。其他线的历史交接保留。
 
 ## NOW
+
+- **YUK-1576 / 暗轨退役**：撤 BKT 夜写注册与 producer、先修风险事件 producer、SRT 分位数暗分支；保留历史数据/解码、先修前沿与当前 θ/PFA/FSRS 路径。typecheck/lint/build、92 unit/79 隔离 DB 用例通过；边界基线 443→440、practice→mastery 18→15。无新增测试。
 
 - **YUK-1404 / native03题图修复**：PR1657 fixed4c52 exact CI38144495041全绿；正常纳入main eb960c079，仅PLAN/now冲突。图ownership/隐私产品代码与单capture边界测试保留，旧细粒度四tests已删。独立初审/最终R2预算已完成，不启第三审。当前crop producer仍无source_asset SHA登记，旧visibility未知，public withholding不是完整配图交付；同卷actual-output验收仍待。无DB/runtime/provider/paid。 [证据](docs/planning/2026-10-11-yuk1404-native03-figure-repair.md)。
 
@@ -32,6 +34,8 @@
 
 ## NEXT
 
+- **YUK-1576**：交付 `yuk-1576-dark-track-retire` draft PR；部署前由部署负责人停旧 producer、清理旧 schedule/未终任务，再执行 PR 内只读 SQL。此线程不连接 TEST 或部署环境。
+
 - Start/judge共享文件边界见[交接](docs/planning/2026-10-09-judge-start-ownership.md)，Start/boot/shutdown由5796独占；judge A/B/C/D由7631接续，迁移号后核。
 
 - PR1625 本轮仅同步 main 并恢复可合并状态；判分 DBOS 家族源码、进程恢复、真实模型和整体迁移退出分开验收。正常 push 后等待新 exact-head CI，不合并 PR。
@@ -45,6 +49,7 @@
 
 ## PARKED
 
+- **YUK-1579 / 审计收口**：本次 `audit:fold-writes --strict` 的 8 个违规写点、1 个过期登记与原始基线完全一致，已回填该票评论；不在 YUK-1576 扩修或放宽审计。
 
 - **YUK-1358/1359已有UI观察**：真实Inbox dismiss后本页499但侧栏500，document reload恢复一致；原onResolve仅本地resolved更新。Google Fonts原import受CSP拦截；fallback可用。记录在现有迁移验收/后续UI边界，不放宽CSP、不冒称本PR修复。
 - **YUK-1382 / Admin runs未知费用显示**：源码基线fadcb0c87中，observability/ui/admin-runs.tsx:207将nullable cost_usd累加；observability-shared.tsx:11以(value ?? 0).toFixed(4)将未知显示为$0.0000，列表/详情/合计均受影响。已查重并登记Backlog，待验证真实零、全未知、已知+未知；不在1381改UI。此条是源码发现，尚无浏览器验收。
@@ -66,6 +71,8 @@
 - YUK-1325 / PR #1580：保留 `1be38edbc`、`1af72b427`、`3940d61f9`，正常合入 main `8841ce68a` 为 `e484efa60`；359 scoped tests、21 audits、typecheck/lint/build 与 lint ratchet 通过，无 high/critical 依赖告警。开发 transcript 与产品 MiMo/自主交付指导同时保留。writer 已释放，父线程负责最终 SDK/SQL/browser 回放、push、exact-head CI、review replies、Linear 与发布；P2 typed tracing 留 YUK-1339，不启动第三审。详情见 [Laminar 记录](docs/planning/2026-10-06-yuk1325-laminar.md)。旧完成线程越界写入风险仍由父线程独占 watch 约束，平台跟进待去重登记。 最新 main 的前缀 credential P1 修复及73tests记录一并保留；PR父线程仍负责后续验收，此lane无新review。
 
 ## BLOCKED-ON
+
+- **YUK-1576 部署验收**：尚未核验部署库残留 cron/created/retry/active job 与内部 cron dispatch；撤注册不会阻塞其他 worker，但不会自动清除这些记录。留给 PM 部署确认后关票。
 
 - **协调线验收**：第一天能用的时限与 TEST 危机数据清理状态由审计协调线维护；100% 实际出题自动可判已获 owner 确认，不再作为待裁决值。
 

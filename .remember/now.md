@@ -1,3 +1,15 @@
+# YUK-1576 暗轨退役交接 — 2026-10-19
+
+独立分支 `yuk-1576-dark-track-retire`，仅交 draft PR，`Refs YUK-1576`；不改 Linear 状态，不合并/部署。BKT 夜写、先修风险 producer 与 SRT 分位数分支已删除；表、历史 kt_json/事件解码、先修前沿、当前 θ/PFA/FSRS 与在线 RT 采集保留。删除 7 个专属 case，无新测试。
+
+本地 typecheck/lint/build 通过（lint 179 warnings）；受影响 3 unit 文件 92 例、4 DB 文件 79 例通过。DB 仅用本机 Testcontainers PG16/pgvector；首次健康检查超时，重试时显式运行该容器 pg_isready 健康检查后通过，容器已移除。未连 TEST/部署库，无 UI/provider/付费调用。
+
+capability-boundaries、architecture-deepening、schema、partition、task-census、flags、mastery-provenance、relations、test-policy 审计通过。边界基线手动收紧 443→440、18→15。fold-writes strict 的 8 违规+1 stale 与基线相同，已评论回填 YUK-1579，不扩大本票。日志在本工作树 `.amp/in/artifacts/`。
+
+撤注册不阻塞其他 pg-boss worker，但旧 schedule 会继续创建无人消费的任务。没有通用退役名单可复用；PR 须附部署前只读 SQL，核 schedule、目标 created/retry/active 任务及 `__pgboss__send-it` 中的目标 dispatch 均为零。先停旧 producer，再由部署负责人处理残留；本线程未执行清理或部署验证。历史数据兼容只核源码，未用部署数据回放。PR/精确 head CI 状态以 GitHub 本分支为准。
+
+以下保留其他工作线的历史交接，不代表本线程正在推进这些任务。
+
 # YUK-1404 figure main composition — 2026-10-11
 
 PR1657 fixed4c52 exact CI38144495041全绿；正常纳入main eb960c079，仅PLAN/now冲突。图ownership/隐私产品代码与单capture边界测试保留，旧细粒度四tests已删。独立初审/最终R2预算已完成，不启第三审。当前crop producer仍无source_asset SHA登记，旧visibility未知，public withholding不是完整配图交付；同卷actual-output验收仍待。无DB/runtime/provider/paid。

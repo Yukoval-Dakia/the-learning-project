@@ -304,7 +304,7 @@ export const SRT_MIN_SIGNAL = 0.15;
  *   explicit-false regression anchor in state.db.test.ts, NOT deleted.
  *
  * Composes orthogonally with SRT_ENABLED (gates whether SRT runs at all), HIERARCHICAL_ELO
- * (gates the θ INPUT), and SRT_D_FROM_QUANTILE (gates the d SCALE). This flag gates only the
+ * (gates the θ INPUT). This flag gates only the
  * time-term WEIGHT, never the binary correctness sign (a wrong answer always pulls θ below a
  * correct one — the SRT_MIN_SIGNAL floor still holds at every weight).
  */
@@ -375,13 +375,8 @@ export function srtOutcome(correct: boolean, d: number, t: number, timeWeight = 
  * fitted parameter — it is owner-controlled and identical across examinees (zero
  * cross-examinee variance, the whole point of collapsing the un-estimable 2PL a into d).
  *
- * Phase-deferred (do NOT build now): a follow-up replaces this with a per-KC rolling
- * RT quantile (e.g. the KC's median/p60 response time) once RT data accumulates — see
- * the YUK-433 follow-up that also flips SRT_ENABLED. Until then every item of a given
- * difficulty shares the seed.
- *
- * NOT stored in / read from kt_json (ADR-0035 red-line: kt_json is a pure persistence
- * sink with zero downstream consumer — d is a pure module constant).
+ * Every item of a given difficulty shares the seed. Historical kt_json and the
+ * correct-RT buffer do not affect this scale.
  */
 export function resolveSrtTimeLimit(difficulty: number): number {
   // difficulty → allotted seconds. Harder items get more time (monotone). Out-of-range
@@ -391,38 +386,6 @@ export function resolveSrtTimeLimit(difficulty: number): number {
   return d ?? 30;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// A1 (YUK-449) — per-KC rolling RT quantile as the SRT design constant d.
-//
-// The population-seeded resolveSrtTimeLimit above is identical across examinees (zero
-// cross-examinee variance — the point of collapsing the un-estimable 2PL a into d), but
-// its d is a COARSE seed. This upgrade derives d from the LEARNER'S OWN answered-correct
-// response times on that KC: a rolling buffer of the last K correct-attempt RTs, with d =
-// the buffer's quantile (median by default). This is n=1 admissible — the quantile is a
-// sufficient statistic of the SINGLE learner's own state (self-RT distribution), NOT a
-// fitted per-item / cross-examinee parameter. Cold start (too few samples) FALLS BACK to
-// the population seed, so the scale anchor never disappears.
-//
-// FLAG: SRT_D_FROM_QUANTILE gates ONLY the d SOURCE (module const, mirrors SRT_ENABLED — NO
-//   config table, NO env). Default false this PR = ship DARK: d stays the population seed,
-//   so the θ̂ math is BYTE-IDENTICAL to today. The buffer COLLECTION is NOT gated by this
-//   flag — it accumulates live whenever SRT runs (so the data exists to justify the flip
-//   later); only the "use the quantile for d" step is deferred behind the flag.
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Master flag for deriving the SRT design constant d from the per-KC rolling RT quantile.
- * **Default false this PR = ship DARK; flip in a follow-up once per-KC RT has accumulated and
- * the audit:calibration forward-AUC shows the quantile-d beats the population-seed-d.**
- *
- * true → resolveSrtTimeLimitFromQuantile(buffer, difficulty) is used at the state.ts / replay
- *   seam (buffer ≥ SRT_RT_MIN_N → quantile d; else population seed).
- * false (DEFAULT) → d = resolveSrtTimeLimit(difficulty) exactly as today → θ̂ BYTE-IDENTICAL.
- *   STILL A VALID BEHAVIOUR (the off path) — exercised by the explicit-false regression anchor
- *   in state.db.test.ts, NOT deleted.
- */
-export const SRT_D_FROM_QUANTILE = false;
-
 /**
  * Ring-buffer capacity: keep the last K answered-correct response times (ms) per KC. Small
  * (n=1, fast adaptation to the learner's current pace) — owner-tunable.
@@ -430,24 +393,10 @@ export const SRT_D_FROM_QUANTILE = false;
 export const SRT_RT_BUFFER_K = 20;
 
 /**
- * Minimum buffered correct-RT samples before the quantile is trusted as d. Below this the
- * cold-start population seed is used (the quantile of < ~8 samples is too noisy). Owner-tunable.
- */
-export const SRT_RT_MIN_N = 8;
-
-/**
- * Which quantile of the per-KC correct-RT buffer becomes d. 0.5 = median (default). p60
- * (0.6) would give a slightly more lenient d (more answers count as "fast"); left as a single
- * owner-tunable knob. In (0,1).
- */
-export const SRT_RT_QUANTILE = 0.5;
-
-/**
  * Persisted shape of `mastery_state.rt_correct_ms` — the per-KC rolling correct-RT ring buffer
  * (the last ≤ SRT_RT_BUFFER_K answered-correct response times, in MILLISECONDS, oldest→newest).
  * Object-wrapped (not a bare array) so a future per-difficulty bucketing refinement can extend
- * it without a column reshape. SHADOW persistence — the buffer feeds ONLY the d source when
- * SRT_D_FROM_QUANTILE flips; it never changes theta_hat (the SoT) while the flag is off.
+ * it without a column reshape. Retained for collection and snapshot restore, not θ̂ estimation.
  */
 export interface RtCorrectBuffer {
   /** last ≤ SRT_RT_BUFFER_K answered-correct RTs in ms, oldest→newest. */
@@ -458,7 +407,7 @@ export interface RtCorrectBuffer {
  * Exact quantile of a numeric sample (linear interpolation between order statistics, the
  * "type-7" / Excel PERCENTILE convention). EXACT (not the P² streaming estimator): the n=1
  * buffers are tiny (≤ SRT_RT_BUFFER_K), so an honest exact quantile beats a streaming
- * approximation. Returns NaN for an empty input (caller must guard via SRT_RT_MIN_N).
+ * approximation. Returns NaN for an empty input.
  *
  * @param values unsorted samples (copied + sorted internally; caller's array is not mutated).
  * @param q in [0,1] (clamped).
@@ -490,32 +439,6 @@ export function pushRtCorrectSample(
   if (!Number.isFinite(sampleMs) || sampleMs <= 0) return [...base];
   const next = [...base, sampleMs];
   return next.length > SRT_RT_BUFFER_K ? next.slice(next.length - SRT_RT_BUFFER_K) : next;
-}
-
-/**
- * Resolve the SRT design constant d (SECONDS) from the per-KC rolling correct-RT buffer,
- * falling back to the population seed when there is not yet enough data (n=1 cold-start anchor
- * never disappears).
- *
- *   buffer has ≥ SRT_RT_MIN_N samples → d = quantile(buffer, SRT_RT_QUANTILE) / 1000 (ms→s).
- *   else (null / too few)             → d = resolveSrtTimeLimit(difficulty)  (population seed).
- *
- * The quantile is computed from the LEARNER'S OWN correct RTs on the KC (self-state) — zero
- * cross-examinee variance, d stays a design constant rather than a fitted a/φ. Samples are ms
- * (the unit responseTimeMs arrives in); d is returned in seconds to match srtOutcome's t.
- * A degenerate quantile (≤ 0 / non-finite — impossible given pushRtCorrectSample's positivity
- * filter, but defensive) also falls back to the seed so d is always a sane positive limit.
- */
-export function resolveSrtTimeLimitFromQuantile(
-  bufferMs: number[] | null | undefined,
-  difficulty: number,
-): number {
-  if (bufferMs && bufferMs.length >= SRT_RT_MIN_N) {
-    const qMs = quantile(bufferMs, SRT_RT_QUANTILE);
-    const dSeconds = qMs / 1000;
-    if (Number.isFinite(dSeconds) && dSeconds > 0) return dSeconds;
-  }
-  return resolveSrtTimeLimit(difficulty);
 }
 
 /**

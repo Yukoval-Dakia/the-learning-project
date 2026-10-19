@@ -382,13 +382,6 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   },
   {
     table: 'item_calibration',
-    file: 'src/server/mastery/kt-calibration.ts',
-    marker: '.update(item_calibration)',
-    role: 'off-path-writer',
-    note: 'applyKtEstimate kt_json UPDATE (OFF-path sole writer — post-anchor writes surface as audit drift, the documented 方案 A boundary).',
-  },
-  {
-    table: 'item_calibration',
     file: 'src/server/mastery/recalibration.ts',
     marker: '.update(item_calibration)',
     role: 'off-path-writer',

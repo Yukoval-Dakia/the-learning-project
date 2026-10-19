@@ -2892,14 +2892,8 @@ export const mastery_state = pgTable(
     // 进 audit-schema allowlist（写路径存在但 inc-1 无 live reader）。
     theta_grid_json: jsonb('theta_grid_json').$type<ThetaGridPosteriorJson>(),
     // A1 (YUK-449) — per-KC rolling correct-RT ring buffer (last ≤ SRT_RT_BUFFER_K answered-
-    // correct response times, ms). The SRT design constant d's QUANTILE source: once
-    // SRT_D_FROM_QUANTILE flips, d = quantile(this buffer) instead of the population seed
-    // (resolveSrtTimeLimit). COLLECTION is LIVE (written on every SRT-eligible correct attempt
-    // so the data exists to justify the flip); the flag only gates the d READ. SHADOW vs
-    // theta_hat: while SRT_D_FROM_QUANTILE is false the buffer never affects θ̂ (byte-identical).
-    // flag-OFF d-read is byte-identical-anchored in state.db.test.ts. Has a live WRITE path
-    // (updateThetaForAttempt upsert → audit:schema sees it as init-only, NOT a stub, so no
-    // allowlist entry); the only READER (resolveSrtTimeLimitFromQuantile) is dark behind the flag.
+    // correct response times, ms). Collection and snapshot restore remain; θ̂ uses only
+    // the population-seeded SRT time limit (YUK-1576).
     rt_correct_ms: jsonb('rt_correct_ms').$type<RtCorrectBufferJson>(),
     // 软轨占位（本 wave 不写，进 audit allowlist，kind:'manual' 解除）:
     // fixed-anchor 慢热校准残差——Wave2 复盘/锚校准路径才写。n=1 结构性受锚质量约束。
