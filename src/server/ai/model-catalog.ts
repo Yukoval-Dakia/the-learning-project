@@ -9,9 +9,9 @@
 // change keeps its previous entry and records capability_changed. Configured
 // providers are also checked against their own /models; that status never
 // drops a catalog model. version covers the merged document and the findings,
-// so an absence-only change still reloads readers. Probes run before the
-// refresh lock, and the lock wait starts only after they return. A paid probe
-// stays owed until cost_ledger accepts it, including when the lock is busy or
+// so an absence-only change still reloads readers. A refresh claims a probe
+// under the lock before sending it, so a second process does not send the same
+// probe. A paid probe stays owed until cost_ledger accepts it, including when
 // the catalog write fails. The receipt is written only after that re-read.
 
 import { createHash } from 'node:crypto';
@@ -28,7 +28,9 @@ import {
   type ProviderFetch,
   type ProviderModelsCheck,
   canonicalProviderCheck,
+  claimDueProbes,
   collectProviderProbes,
+  credentialFingerprints,
   finalizeProviderModelsChecks,
   listProviderModels,
   paidProbePostings,
@@ -53,7 +55,12 @@ const ENV_MODEL_KEYS = [
 export type CatalogOrigin = 'remote' | 'cache' | 'snapshot';
 
 export type CatalogFinding =
-  | { kind: 'model_absent'; catalogProvider: string; model: string }
+  | {
+      kind: 'model_absent';
+      catalogProvider: string;
+      model: string;
+      source: 'models_dev' | 'provider_list' | 'legacy';
+    }
   | {
       kind: 'capability_changed';
       catalogProvider: string;
@@ -246,7 +253,9 @@ function parseFindings(value: unknown): CatalogFinding[] {
     if (typeof catalogProvider !== 'string' || catalogProvider.length === 0) continue;
     if (typeof model !== 'string' || model.length === 0) continue;
     if (row.kind === 'model_absent') {
-      findings.push({ kind: 'model_absent', catalogProvider, model });
+      const source =
+        row.source === 'models_dev' || row.source === 'provider_list' ? row.source : 'legacy';
+      findings.push({ kind: 'model_absent', catalogProvider, model, source });
       continue;
     }
     if (row.kind === 'capability_changed' && Array.isArray(row.fields)) {
@@ -393,7 +402,12 @@ function mergeCatalogDocuments(
       );
       models[modelId] = merged.entry;
       if (merged.kind === 'model_absent') {
-        findings.push({ kind: 'model_absent', catalogProvider: providerId, model: modelId });
+        findings.push({
+          kind: 'model_absent',
+          catalogProvider: providerId,
+          model: modelId,
+          source: 'models_dev',
+        });
       } else if (merged.kind === 'capability_changed') {
         findings.push({
           kind: 'capability_changed',
@@ -410,32 +424,59 @@ function mergeCatalogDocuments(
   return { providers, findings };
 }
 
-function withProviderAbsences(
-  findings: readonly CatalogFinding[],
+function reconcileCatalogFindings(
+  base: readonly CatalogFinding[],
   checks: readonly ProviderModelsCheck[],
+  remoteFresh: boolean,
 ): CatalogFinding[] {
-  const seen = new Set(findings.map(findingSignature));
-  const next = [...findings];
+  const listedByProvider = new Map<string, ReadonlySet<string>>();
+  const absentByProvider = new Map<string, readonly string[]>();
+  const unconfigured = new Set<string>();
   for (const check of checks) {
     if (!check.catalogProvider) continue;
-    for (const model of check.catalogOnly) {
-      const finding: CatalogFinding = {
-        kind: 'model_absent',
-        catalogProvider: check.catalogProvider,
-        model,
-      };
-      const signature = findingSignature(finding);
-      if (seen.has(signature)) continue;
-      seen.add(signature);
-      next.push(finding);
+    if (check.list.status === 'unconfigured' || check.inference.status === 'unconfigured') {
+      unconfigured.add(check.catalogProvider);
+      continue;
+    }
+    if (check.list.status === 'readable') {
+      listedByProvider.set(check.catalogProvider, new Set(check.listed));
+      absentByProvider.set(check.catalogProvider, check.catalogOnly);
     }
   }
-  return next;
+  const kept: CatalogFinding[] = [];
+  const seen = new Set<string>();
+  const push = (finding: CatalogFinding) => {
+    const signature = findingSignature(finding);
+    if (seen.has(signature)) return;
+    seen.add(signature);
+    kept.push(finding);
+  };
+  for (const finding of base) {
+    if (finding.kind === 'capability_changed') {
+      push(finding);
+      continue;
+    }
+    if (finding.source === 'models_dev') {
+      push(finding);
+      continue;
+    }
+    if (unconfigured.has(finding.catalogProvider)) continue;
+    const listed = listedByProvider.get(finding.catalogProvider);
+    if (listed?.has(finding.model)) continue;
+    if (finding.source === 'provider_list') continue;
+    if (!remoteFresh && listed === undefined) push(finding);
+  }
+  for (const [catalogProvider, models] of absentByProvider) {
+    for (const model of models) {
+      push({ kind: 'model_absent', catalogProvider, model, source: 'provider_list' });
+    }
+  }
+  return kept;
 }
 
 function findingSignature(finding: CatalogFinding): string {
   if (finding.kind === 'model_absent') {
-    return `model_absent\t${finding.catalogProvider}\t${finding.model}`;
+    return `model_absent\t${finding.source}\t${finding.catalogProvider}\t${finding.model}`;
   }
   return `capability_changed\t${finding.catalogProvider}\t${finding.model}\t${finding.fields.join(',')}`;
 }
@@ -619,29 +660,24 @@ async function lockCatalogRow(tx: Tx): Promise<LockedCatalog> {
   };
 }
 
-async function readStoredChecks(db: Db): Promise<readonly ProviderModelsCheck[]> {
-  try {
-    const rows = await db
-      .select({ payload: model_catalog_cache.payload })
-      .from(model_catalog_cache)
-      .where(eq(model_catalog_cache.id, 1))
-      .limit(1);
-    const row = rows[0];
-    if (!row) return [];
-    return parseProviderChecks(row.payload);
-  } catch {
-    return active.providerChecks;
-  }
-}
-
-// postgres.js may wrap the error. 23505 means this occurredAt row is already booked.
-function isUniqueViolation(error: unknown): boolean {
+/** 23505 constraint name, '' if unnamed, undefined if this is not a unique violation. */
+function uniqueViolation(error: unknown): string | undefined {
   let current: unknown = error;
-  for (let depth = 0; depth < 5 && current !== null && typeof current === 'object'; depth += 1) {
-    if ((current as { code?: unknown }).code === '23505') return true;
-    current = (current as { cause?: unknown }).cause;
+  for (let depth = 0; depth < 6 && current !== null && typeof current === 'object'; depth += 1) {
+    const row = current as {
+      code?: unknown;
+      constraint_name?: unknown;
+      constraint?: unknown;
+      cause?: unknown;
+    };
+    if (row.code === '23505') {
+      if (typeof row.constraint_name === 'string') return row.constraint_name;
+      if (typeof row.constraint === 'string') return row.constraint;
+      return '';
+    }
+    current = row.cause;
   }
-  return false;
+  return undefined;
 }
 
 async function bookPaidProbes(
@@ -660,6 +696,8 @@ async function bookPaidProbes(
     );
     return [...postings];
   }
+  const write = (posting: PaidProbePosting) =>
+    writeModelCatalogProbeCost(db, { ...posting.bill, occurredAt });
   const settled: PaidProbePosting[] = [];
   for (const posting of postings) {
     if (posting.state === 'booked') {
@@ -667,17 +705,39 @@ async function bookPaidProbes(
       continue;
     }
     try {
-      await writeModelCatalogProbeCost(db, { ...posting.bill, occurredAt });
+      await write(posting);
       settled.push({ state: 'booked', bill: posting.bill });
     } catch (error) {
-      const booked = isUniqueViolation(error);
-      if (!booked) {
+      const constraint = uniqueViolation(error);
+      if (constraint === 'cost_ledger_attempt_task_run_uq') {
+        settled.push({ state: 'booked', bill: posting.bill });
+        continue;
+      }
+      if (constraint === undefined) {
         console.warn(
           `[model-catalog] probe ledger write failed provider=${posting.bill.provider}`,
           error instanceof Error ? error.message : error,
         );
+        settled.push(posting);
+        continue;
       }
-      settled.push(booked ? { state: 'booked', bill: posting.bill } : posting);
+      try {
+        await write(posting);
+        settled.push({ state: 'booked', bill: posting.bill });
+      } catch (retryError) {
+        const again = uniqueViolation(retryError);
+        if (again !== 'cost_ledger_attempt_task_run_uq') {
+          console.warn(
+            `[model-catalog] probe ledger write failed provider=${posting.bill.provider}`,
+            retryError instanceof Error ? retryError.message : retryError,
+          );
+        }
+        settled.push(
+          again === 'cost_ledger_attempt_task_run_uq'
+            ? { state: 'booked', bill: posting.bill }
+            : posting,
+        );
+      }
     }
   }
   return settled;
@@ -698,13 +758,57 @@ export async function refreshModelCatalog(
   const pulled = await pullRemote(fetchCatalog);
   const remote = 'error' in pulled ? undefined : pulled;
   const listed = await listProviderModels(fetchCatalog, env);
-  const probes = await collectProviderProbes({
-    fetchImpl: fetchCatalog,
-    env,
-    listed,
-    previous: await readStoredChecks(db),
-  });
   const now = options.now?.() ?? new Date();
+  const fingerprints = credentialFingerprints(env);
+  let due: readonly string[] = [];
+  try {
+    due = await withinSessionAdvisoryLock(
+      db,
+      {
+        key: 'model-catalog:refresh',
+        busy: () => new Error('model catalog refresh lock busy'),
+      },
+      new Date(Date.now() + REFRESH_LOCK_WAIT_MS),
+      async (lockedDb) =>
+        lockedDb.transaction(async (tx) => {
+          const locked = await lockCatalogRow(tx);
+          const claim = claimDueProbes({
+            now,
+            previous: locked.checks,
+            listed,
+            fingerprints,
+          });
+          if (claim.due.length === 0) return claim.due;
+          const payload = {
+            providers: locked.providers ?? active.providers,
+            provider_checks: claim.checks,
+          };
+          if (locked.hasRow) {
+            await tx
+              .update(model_catalog_cache)
+              .set({ payload })
+              .where(eq(model_catalog_cache.id, 1));
+          } else {
+            await tx.insert(model_catalog_cache).values({
+              id: 1,
+              fetched_at: now,
+              version: active.version,
+              upstream_version: locked.upstreamVersion,
+              source_url: MODEL_CATALOG_URL,
+              payload,
+              findings: locked.findings,
+            });
+          }
+          return claim.due;
+        }),
+    );
+  } catch (error) {
+    return kept(
+      'unreadable',
+      error instanceof Error ? error.message : 'model catalog refresh lock busy',
+    );
+  }
+  const probes = await collectProviderProbes({ fetchImpl: fetchCatalog, env, due });
   let postings = paidProbePostings(probes, priceProbe);
 
   try {
@@ -729,6 +833,7 @@ export async function refreshModelCatalog(
             previous: locked.checks,
             listed,
             probes,
+            fingerprints,
             priceProbe,
           });
           const idle =
@@ -739,7 +844,11 @@ export async function refreshModelCatalog(
         });
         postings = await bookPaidProbes(lockedDb, postings, now);
         if (planned.idle) return { outcome: 'kept' as const, locked: planned.locked };
-        const findings = withProviderAbsences(planned.merged.findings, planned.checks);
+        const findings = reconcileCatalogFindings(
+          planned.merged.findings,
+          planned.checks,
+          remote !== undefined,
+        );
         const version = documentVersion(planned.merged.providers, findings, planned.checks);
         const upstreamVersion = remote ? remote.upstreamVersion : planned.locked.upstreamVersion;
         const payload = {

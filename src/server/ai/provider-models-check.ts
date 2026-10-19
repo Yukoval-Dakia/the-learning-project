@@ -1,9 +1,9 @@
 // YUK-1563 — per configured provider, GET /models and reconcile with the
 // models.dev bucket. Auth failure and a missing key are statuses. Neither
-// removes a catalog model. Each implemented provider gets at most one auth
-// probe; a stored receipt is what stops the next refresh from probing again.
-// Chat probes ask for 1 token. Responses asks for 16, its API minimum.
+// removes a catalog model. A stored probe counts only for the key fingerprint
+// that produced it. Chat probes ask for 1 token. Responses asks for 16, its API minimum.
 
+import { createHash } from 'node:crypto';
 import type { Provider } from '@/ai/task-spec';
 import { CATALOG_PROVIDER_BY_INTERNAL } from './model-profiles';
 import { ANTHROPIC_SUB_CONTRACT_REF } from './pricing';
@@ -23,8 +23,17 @@ export type ProviderFetch = (
 const LIST_TIMEOUT_MS = 15_000;
 const PROBE_TIMEOUT_MS = 30_000;
 const MAX_LIST_PAGES = 10;
+const PROBE_RETRY_BACKOFF_MS = 60 * 60 * 1000;
 const ERROR_TYPE = /^[A-Za-z0-9_.:-]{1,64}$/;
 const SESSION_HEADER = 'catalog-auth-probe';
+const SENT_CODES = new Set([
+  'ECONNRESET',
+  'EPIPE',
+  'ETIMEDOUT',
+  'UND_ERR_SOCKET',
+  'UND_ERR_HEADERS_TIMEOUT',
+  'UND_ERR_BODY_TIMEOUT',
+]);
 
 /** Whether GET /models could be read. Independent of the inference probe. */
 export type ModelListAccess =
@@ -35,6 +44,7 @@ export type ModelListAccess =
 
 /** Whether the 1-token probe could call the model. A readable list does not set this to ok. */
 export type InferenceAccess =
+  | { status: 'unconfigured' }
   | { status: 'unprobed' }
   | { status: 'ok' }
   | { status: 'auth_failed'; httpStatus: number; errorType: string }
@@ -44,7 +54,7 @@ export type InferenceAccess =
 export type ProbeUsage = { known: true; tokensIn: number; tokensOut: number } | { known: false };
 
 export interface ProviderProbeReceipt {
-  status: 'succeeded' | 'failed';
+  status: 'succeeded' | 'failed' | 'unsettled' | 'claimed';
   at: string;
   model: string;
   httpStatus: number | null;
@@ -53,6 +63,8 @@ export interface ProviderProbeReceipt {
   tokensOut: number | null;
   costUsd: number | null;
   costBasis: 'estimated' | 'unknown';
+  /** sha256 prefix of the credential that produced this receipt. */
+  credentialFingerprint: string;
 }
 
 export interface ProviderModelsCheck {
@@ -63,6 +75,8 @@ export interface ProviderModelsCheck {
   listed: readonly string[];
   catalogOnly: readonly string[];
   providerOnly: readonly string[];
+  /** Null when this process has no credential for the provider. */
+  credentialFingerprint: string | null;
   probe?: ProviderProbeReceipt;
 }
 
@@ -93,6 +107,8 @@ export type ProbeOutcome =
       httpStatus: number | null;
       errorType: string | null;
       usage: ProbeUsage;
+      /** The request left this process. A later socket reset or header timeout still counts. */
+      dispatched: boolean;
     };
 
 export interface ProbeLedgerBill {
@@ -154,6 +170,30 @@ function credentialFor(
   const name = providerCredentialEnvName(provider);
   const value = name ? env[name]?.trim() : undefined;
   return value && value.length > 0 ? value : undefined;
+}
+
+/** First 16 hex chars of sha256(secret). Stored instead of the secret. */
+export function credentialFingerprint(secret: string): string {
+  return createHash('sha256').update(secret).digest('hex').slice(0, 16);
+}
+
+export function providerCredentialFingerprint(
+  provider: Provider,
+  env: Record<string, string | undefined>,
+): string | null {
+  const secret = credentialFor(provider, env);
+  return secret ? credentialFingerprint(secret) : null;
+}
+
+export function credentialFingerprints(
+  env: Record<string, string | undefined>,
+): ReadonlyMap<string, string | null> {
+  return new Map(
+    implementedProviderIds().map((provider) => [
+      provider,
+      providerCredentialFingerprint(provider, env),
+    ]),
+  );
 }
 
 function readErrorType(body: string): string {
@@ -334,13 +374,14 @@ async function runProbe(
   const spec = probeSpec(provider);
   const credential = credentialFor(provider, env);
   const root = providerModelsRoot(provider, env);
-  const unreachable = {
+  const notSent = {
     kind: 'unsettled' as const,
     httpStatus: null,
     errorType: null,
     usage: { known: false as const },
+    dispatched: false,
   };
-  if (!spec || !credential || !root) return unreachable;
+  if (!spec || !credential || !root) return notSent;
   const headers = { ...authHeaders(provider, credential), 'content-type': 'application/json' };
   let response: Response;
   try {
@@ -351,8 +392,15 @@ async function runProbe(
       redirect: 'error',
       signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
     });
-  } catch {
-    return unreachable;
+  } catch (error) {
+    if (!requestLeftTheProcess(error)) return notSent;
+    return {
+      kind: 'unsettled',
+      httpStatus: null,
+      errorType: dispatchError(error),
+      usage: { known: false },
+      dispatched: true,
+    };
   }
   let text: string | undefined;
   try {
@@ -366,9 +414,31 @@ async function runProbe(
     return { kind: 'auth_failed', httpStatus: response.status, errorType, usage };
   }
   if (!response.ok) {
-    return { kind: 'unsettled', httpStatus: response.status, errorType, usage };
+    return { kind: 'unsettled', httpStatus: response.status, errorType, usage, dispatched: true };
   }
   return { kind: 'accepted', httpStatus: response.status, usage };
+}
+
+function requestLeftTheProcess(error: unknown): boolean {
+  let current: unknown = error;
+  for (let depth = 0; depth < 6 && current !== null && typeof current === 'object'; depth += 1) {
+    const row = current as { name?: unknown; code?: unknown; cause?: unknown };
+    if (row.name === 'TimeoutError' || row.name === 'AbortError') return true;
+    if (typeof row.code === 'string' && SENT_CODES.has(row.code)) return true;
+    current = row.cause;
+  }
+  return false;
+}
+
+function dispatchError(error: unknown): string {
+  let current: unknown = error;
+  for (let depth = 0; depth < 6 && current !== null && typeof current === 'object'; depth += 1) {
+    const row = current as { name?: unknown; code?: unknown; cause?: unknown };
+    if (typeof row.code === 'string' && ERROR_TYPE.test(row.code)) return row.code;
+    if (typeof row.name === 'string' && ERROR_TYPE.test(row.name)) return row.name;
+    current = row.cause;
+  }
+  return 'unanswered';
 }
 
 function catalogIds(providers: ProviderMap, catalogProvider: string | null): ReadonlySet<string> {
@@ -388,10 +458,35 @@ function reconcile(
   };
 }
 
-function decisiveReceipt(probe: ProviderProbeReceipt | undefined): probe is ProviderProbeReceipt {
-  if (!probe) return false;
-  if (probe.status === 'succeeded') return true;
-  return probe.httpStatus === 401 || probe.httpStatus === 403;
+function sameCredential(
+  receipt: ProviderProbeReceipt | undefined,
+  fingerprint: string | null,
+): receipt is ProviderProbeReceipt {
+  return (
+    fingerprint !== null && receipt !== undefined && receipt.credentialFingerprint === fingerprint
+  );
+}
+
+function holdIsFresh(receipt: ProviderProbeReceipt, now: Date): boolean {
+  const at = Date.parse(receipt.at);
+  return Number.isFinite(at) && now.getTime() < at + PROBE_RETRY_BACKOFF_MS;
+}
+
+/** A receipt blocks another probe only while it still belongs to this key. */
+function blocksProbe(
+  previous: ProviderModelsCheck | undefined,
+  fingerprint: string | null,
+  now: Date,
+): boolean {
+  const receipt = previous?.probe;
+  if (!sameCredential(receipt, fingerprint)) return false;
+  if (receipt.status === 'succeeded') return true;
+  if (receipt.status === 'failed' && (receipt.httpStatus === 401 || receipt.httpStatus === 403)) {
+    return true;
+  }
+  if (receipt.status === 'claimed' || receipt.status === 'unsettled')
+    return holdIsFresh(receipt, now);
+  return false;
 }
 
 function listAccess(list: ModelsListResult): ModelListAccess {
@@ -423,18 +518,24 @@ function inferenceFromReceipt(probe: ProviderProbeReceipt): InferenceAccess {
 
 function inferenceAccess(
   outcome: ProbeOutcome | undefined,
-  previous: ProviderModelsCheck | undefined,
+  held: ProviderProbeReceipt | undefined,
 ): InferenceAccess {
   if (outcome) return inferenceFromOutcome(outcome);
-  const receipt = previous?.probe;
-  if (decisiveReceipt(receipt)) return inferenceFromReceipt(receipt);
-  return previous?.inference ?? { status: 'unprobed' };
+  if (!held) return { status: 'unprobed' };
+  if (held.status === 'claimed' || held.status === 'unsettled') return { status: 'unsettled' };
+  return inferenceFromReceipt(held);
 }
 
-function shouldProbe(list: ModelsListResult, previous: ProviderModelsCheck | undefined): boolean {
-  if (decisiveReceipt(previous?.probe)) return false;
+function shouldProbe(
+  list: ModelsListResult,
+  previous: ProviderModelsCheck | undefined,
+  fingerprint: string | null,
+  now: Date,
+): boolean {
+  if (fingerprint === null) return false;
   if (list.status === 'unconfigured' || list.status === 'auth_failed') return false;
   if (list.status === 'unreachable') return false;
+  if (blocksProbe(previous, fingerprint, now)) return false;
   return true;
 }
 
@@ -443,14 +544,25 @@ function receiptTokens(usage: ProbeUsage): { tokensIn: number | null; tokensOut:
   return { tokensIn: usage.tokensIn, tokensOut: usage.tokensOut };
 }
 
+function retryableStatus(status: number | null): boolean {
+  return status === 429 || (status !== null && status >= 500);
+}
+
 function receiptFor(
-  outcome: Exclude<ProbeOutcome, { kind: 'unsettled' }>,
+  outcome: ProbeOutcome,
   model: string,
   at: string,
   price: ProbePrice,
+  fingerprint: string,
 ): ProviderProbeReceipt {
+  const status =
+    outcome.kind === 'accepted'
+      ? 'succeeded'
+      : outcome.kind === 'auth_failed'
+        ? 'failed'
+        : 'unsettled';
   return {
-    status: outcome.kind === 'accepted' ? 'succeeded' : 'failed',
+    status,
     at,
     model,
     httpStatus: outcome.httpStatus,
@@ -458,7 +570,14 @@ function receiptFor(
     ...receiptTokens(outcome.usage),
     costUsd: price.costUsd,
     costBasis: price.costBasis,
+    credentialFingerprint: fingerprint,
   };
+}
+
+function rememberOutcome(outcome: ProbeOutcome): boolean {
+  if (outcome.kind === 'accepted' || outcome.kind === 'auth_failed') return true;
+  if (outcome.httpStatus === null) return outcome.dispatched;
+  return retryableStatus(outcome.httpStatus);
 }
 
 function billOutcome(kind: ProbeOutcome['kind']): ProbeLedgerBill['outcome'] {
@@ -486,7 +605,9 @@ function ledgerBill(
   model: string,
   price: ProbePrice,
 ): ProbeLedgerBill | undefined {
-  if (outcome.kind === 'unsettled' && outcome.httpStatus === null) return undefined;
+  if (outcome.kind === 'unsettled' && outcome.httpStatus === null && !outcome.dispatched) {
+    return undefined;
+  }
   if (!outcome.usage.known) return unobservedBill(provider, outcome, model);
   const consumed = outcome.usage.tokensIn + outcome.usage.tokensOut > 0;
   if (outcome.kind === 'unsettled' && !consumed) return undefined;
@@ -535,6 +656,7 @@ function copyProbe(probe: ProviderProbeReceipt): ProviderProbeReceipt {
     tokensOut: probe.tokensOut,
     costUsd: probe.costUsd,
     costBasis: probe.costBasis,
+    credentialFingerprint: probe.credentialFingerprint,
   };
 }
 
@@ -557,6 +679,7 @@ function copyInference(inference: InferenceAccess): InferenceAccess {
   }
   if (inference.status === 'ok') return { status: 'ok' };
   if (inference.status === 'unsettled') return { status: 'unsettled' };
+  if (inference.status === 'unconfigured') return { status: 'unconfigured' };
   return { status: 'unprobed' };
 }
 
@@ -569,6 +692,7 @@ export function canonicalProviderCheck(check: ProviderModelsCheck): ProviderMode
     listed: [...check.listed].sort(),
     catalogOnly: [...check.catalogOnly].sort(),
     providerOnly: [...check.providerOnly].sort(),
+    credentialFingerprint: check.credentialFingerprint,
   };
   if (check.probe) stored.probe = copyProbe(check.probe);
   return stored;
@@ -597,6 +721,7 @@ function parseListAccess(value: unknown): ModelListAccess | undefined {
 function parseInference(value: unknown): InferenceAccess | undefined {
   const row = asJson(value);
   if (!row || typeof row.status !== 'string') return undefined;
+  if (row.status === 'unconfigured') return { status: 'unconfigured' };
   if (row.status === 'unprobed') return { status: 'unprobed' };
   if (row.status === 'ok') return { status: 'ok' };
   if (row.status === 'unsettled') return { status: 'unsettled' };
@@ -682,16 +807,27 @@ export function parseProviderChecks(payload: unknown): ProviderModelsCheck[] {
       listed: strings(row.listed),
       catalogOnly: strings(row.catalogOnly),
       providerOnly: strings(row.providerOnly),
+      credentialFingerprint:
+        typeof row.credentialFingerprint === 'string' && row.credentialFingerprint.length > 0
+          ? row.credentialFingerprint
+          : null,
     };
     const probe = asJson(row.probe);
+    const probeStatus = probe?.status;
+    const fingerprint =
+      typeof probe?.credentialFingerprint === 'string' ? probe.credentialFingerprint : '';
     if (
       probe &&
-      (probe.status === 'succeeded' || probe.status === 'failed') &&
+      (probeStatus === 'succeeded' ||
+        probeStatus === 'failed' ||
+        probeStatus === 'unsettled' ||
+        probeStatus === 'claimed') &&
       typeof probe.at === 'string' &&
-      typeof probe.model === 'string'
+      typeof probe.model === 'string' &&
+      fingerprint.length > 0
     ) {
       check.probe = {
-        status: probe.status,
+        status: probeStatus,
         at: probe.at,
         model: probe.model,
         httpStatus: typeof probe.httpStatus === 'number' ? probe.httpStatus : null,
@@ -706,6 +842,7 @@ export function parseProviderChecks(payload: unknown): ProviderModelsCheck[] {
               : 0,
         costUsd: typeof probe.costUsd === 'number' ? probe.costUsd : null,
         costBasis: probe.costBasis === 'estimated' ? 'estimated' : 'unknown',
+        credentialFingerprint: fingerprint,
       };
     }
     checks.push(canonicalProviderCheck(check));
@@ -714,6 +851,9 @@ export function parseProviderChecks(payload: unknown): ProviderModelsCheck[] {
 }
 
 export function providerAuthLabel(check: ProviderModelsCheck): string {
+  if (check.list.status === 'unconfigured' || check.inference.status === 'unconfigured') {
+    return 'unconfigured';
+  }
   if (check.inference.status === 'auth_failed') {
     return `auth_failed:${check.inference.httpStatus}:${check.inference.errorType}`;
   }
@@ -721,29 +861,100 @@ export function providerAuthLabel(check: ProviderModelsCheck): string {
     return `auth_failed:${check.list.httpStatus}:${check.list.errorType}`;
   }
   if (check.inference.status === 'ok') return 'ok';
-  if (check.list.status === 'unconfigured') return 'unconfigured';
   if (check.list.status === 'readable') return `inference:${check.inference.status}`;
   return `unreachable:${check.list.detail}`;
+}
+
+export function claimDueProbes(input: {
+  now: Date;
+  previous: readonly ProviderModelsCheck[];
+  listed: ReadonlyMap<string, ModelsListResult>;
+  fingerprints: ReadonlyMap<string, string | null>;
+}): { checks: ProviderModelsCheck[]; due: readonly string[] } {
+  const previousByProvider = new Map(input.previous.map((check) => [check.provider, check]));
+  const due: string[] = [];
+  const checks = input.previous.map((check) => canonicalProviderCheck(check));
+  const byProvider = new Map(checks.map((check) => [check.provider, check]));
+  for (const provider of implementedProviderIds()) {
+    const spec = probeSpec(provider);
+    if (!spec) continue;
+    const fingerprint = input.fingerprints.get(provider) ?? null;
+    const list = input.listed.get(provider) ?? {
+      status: 'unreachable' as const,
+      detail: 'missing',
+    };
+    if (!shouldProbe(list, previousByProvider.get(provider), fingerprint, input.now)) continue;
+    if (!fingerprint) continue;
+    due.push(provider);
+    const previous = byProvider.get(provider);
+    byProvider.set(provider, {
+      provider,
+      catalogProvider: CATALOG_PROVIDER_BY_INTERNAL[provider] ?? previous?.catalogProvider ?? null,
+      list: previous?.list ?? { status: 'unconfigured' },
+      inference: previous?.inference ?? { status: 'unprobed' },
+      listed: previous?.listed ?? [],
+      catalogOnly: previous?.catalogOnly ?? [],
+      providerOnly: previous?.providerOnly ?? [],
+      credentialFingerprint: fingerprint,
+      probe: {
+        status: 'claimed',
+        at: input.now.toISOString(),
+        model: spec.model,
+        httpStatus: null,
+        errorType: null,
+        tokensIn: null,
+        tokensOut: null,
+        costUsd: null,
+        costBasis: 'unknown',
+        credentialFingerprint: fingerprint,
+      },
+    });
+  }
+  return {
+    checks: [...byProvider.values()].sort((left, right) =>
+      left.provider.localeCompare(right.provider),
+    ),
+    due,
+  };
 }
 
 export async function collectProviderProbes(input: {
   fetchImpl: ProviderFetch;
   env: Record<string, string | undefined>;
-  listed: ReadonlyMap<string, ModelsListResult>;
-  previous: readonly ProviderModelsCheck[];
+  due: readonly string[];
 }): Promise<ReadonlyMap<string, ProbeOutcome>> {
-  const previousByProvider = new Map(input.previous.map((check) => [check.provider, check]));
   const probes = new Map<string, ProbeOutcome>();
-  for (const provider of implementedProviderIds()) {
-    if (!probeSpec(provider)) continue;
-    const list = input.listed.get(provider) ?? {
-      status: 'unreachable' as const,
-      detail: 'missing',
-    };
-    if (!shouldProbe(list, previousByProvider.get(provider))) continue;
+  for (const provider of input.due) {
+    if (!isKnownProvider(provider) || !probeSpec(provider)) continue;
     probes.set(provider, await runProbe(provider, input.fetchImpl, input.env));
   }
   return probes;
+}
+
+function keptSets(
+  list: ModelsListResult,
+  previous: ProviderModelsCheck | undefined,
+  fingerprint: string | null,
+  catalog: ReadonlySet<string>,
+): { listed: string[]; catalogOnly: string[]; providerOnly: string[] } {
+  if (list.status === 'ok') {
+    const listed = [...list.ids];
+    const sets = reconcile(catalog, listed);
+    return { listed, catalogOnly: sets.catalogOnly, providerOnly: sets.providerOnly };
+  }
+  if (
+    previous &&
+    fingerprint !== null &&
+    previous.credentialFingerprint === fingerprint &&
+    list.status !== 'unconfigured'
+  ) {
+    return {
+      listed: [...previous.listed],
+      catalogOnly: [...previous.catalogOnly],
+      providerOnly: [...previous.providerOnly],
+    };
+  }
+  return { listed: [], catalogOnly: [], providerOnly: [] };
 }
 
 export function finalizeProviderModelsChecks(input: {
@@ -752,6 +963,7 @@ export function finalizeProviderModelsChecks(input: {
   previous: readonly ProviderModelsCheck[];
   listed: ReadonlyMap<string, ModelsListResult>;
   probes: ReadonlyMap<string, ProbeOutcome>;
+  fingerprints: ReadonlyMap<string, string | null>;
   priceProbe: (provider: string, model: string, tokensIn: number, tokensOut: number) => ProbePrice;
 }): { checks: ProviderModelsCheck[] } {
   const previousByProvider = new Map(input.previous.map((check) => [check.provider, check]));
@@ -761,29 +973,58 @@ export function finalizeProviderModelsChecks(input: {
       status: 'unreachable' as const,
       detail: 'missing',
     };
+    const fingerprint = input.fingerprints.get(provider) ?? null;
     const previous = previousByProvider.get(provider);
-    const keptReceipt = decisiveReceipt(previous?.probe) ? previous.probe : undefined;
-    const outcome = keptReceipt ? undefined : input.probes.get(provider);
-    const spec = probeSpec(provider);
     const catalogProvider = CATALOG_PROVIDER_BY_INTERNAL[provider] ?? null;
-    const listed = list.status === 'ok' ? [...list.ids] : previous ? [...previous.listed] : [];
-    const sets =
-      list.status === 'ok'
-        ? reconcile(catalogIds(input.catalogProviders, catalogProvider), listed)
-        : previous
-          ? { catalogOnly: [...previous.catalogOnly], providerOnly: [...previous.providerOnly] }
-          : { catalogOnly: [] as string[], providerOnly: [] as string[] };
+    if (fingerprint === null || list.status === 'unconfigured') {
+      checks.push(
+        canonicalProviderCheck({
+          provider,
+          catalogProvider,
+          list: { status: 'unconfigured' },
+          inference: { status: 'unconfigured' },
+          listed: [],
+          catalogOnly: [],
+          providerOnly: [],
+          credentialFingerprint: null,
+        }),
+      );
+      continue;
+    }
+    const receipt = previous?.probe;
+    const bound = sameCredential(receipt, fingerprint) ? receipt : undefined;
+    const permanent =
+      bound?.status === 'succeeded' ||
+      (bound?.status === 'failed' && (bound.httpStatus === 401 || bound.httpStatus === 403));
+    const waiting =
+      bound !== undefined &&
+      (bound.status === 'claimed' || bound.status === 'unsettled') &&
+      holdIsFresh(bound, input.now);
+    const outcome =
+      permanent || (waiting && bound.status !== 'claimed') ? undefined : input.probes.get(provider);
+    const held = outcome ? undefined : permanent || waiting ? bound : undefined;
+    const sets = keptSets(
+      list,
+      previous,
+      fingerprint,
+      catalogIds(input.catalogProviders, catalogProvider),
+    );
+    const listFailed = list.status === 'auth_failed';
     const check: ProviderModelsCheck = {
       provider,
       catalogProvider,
       list: listAccess(list),
-      inference: inferenceAccess(outcome, previous),
-      listed,
+      inference: listFailed
+        ? { status: 'auth_failed', httpStatus: list.httpStatus, errorType: list.errorType }
+        : inferenceAccess(outcome, held),
+      listed: sets.listed,
       catalogOnly: sets.catalogOnly,
       providerOnly: sets.providerOnly,
+      credentialFingerprint: fingerprint,
     };
-    if (keptReceipt) check.probe = copyProbe(keptReceipt);
-    else if (outcome && spec && outcome.kind !== 'unsettled') {
+    const spec = probeSpec(provider);
+    if (!listFailed && held && held.status !== 'claimed') check.probe = copyProbe(held);
+    else if (!listFailed && outcome && spec && rememberOutcome(outcome)) {
       const price = outcome.usage.known
         ? input.priceProbe(provider, spec.model, outcome.usage.tokensIn, outcome.usage.tokensOut)
         : {
@@ -791,13 +1032,15 @@ export function finalizeProviderModelsChecks(input: {
             costBasis: 'unknown' as const,
             costRef: `unobserved:model-catalog-probe/${provider}/${spec.model}`,
           };
-      check.probe = receiptFor(outcome, spec.model, input.now.toISOString(), price);
+      check.probe = receiptFor(outcome, spec.model, input.now.toISOString(), price, fingerprint);
       const tokens = outcome.usage.known
         ? `${outcome.usage.tokensIn}/${outcome.usage.tokensOut}`
         : 'unknown';
       console.info(
         `[model-catalog] auth probe ${provider}/${spec.model} ${check.probe.status} tokens=${tokens} cost_usd=${price.costUsd ?? 'unknown'}`,
       );
+    } else if (!listFailed && waiting && bound?.status === 'claimed' && !outcome) {
+      check.probe = copyProbe(bound);
     }
     checks.push(canonicalProviderCheck(check));
   }

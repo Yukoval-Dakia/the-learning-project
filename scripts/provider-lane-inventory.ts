@@ -1162,6 +1162,7 @@ export const PROVIDER_LANES = [
         path: 'src/server/ai/model-catalog.ts',
         calls: [
           'listProviderModels',
+          'claimDueProbes',
           'collectProviderProbes',
           'paidProbePostings',
           'finalizeProviderModelsChecks',
@@ -1214,18 +1215,18 @@ export const PROVIDER_LANES = [
       attemptsPerInvocation: {
         kind: 'dynamic',
         multiplierRationale:
-          'one GET /models per configured provider, plus up to 9 has_more pages, and at most one probe per provider for the life of the stored receipt; unconfigured and auth_failed skip the probe',
+          'one GET /models per configured provider, plus up to 9 has_more pages, and at most one probe per key fingerprint; a missing key, list auth failure, fresh claim, or fresh unsettled receipt skips the probe',
       },
       durableIdentity:
-        'the probe receipt lives on model_catalog_cache.payload.provider_checks; a later refresh copies it and does not send again',
+        'the probe receipt and credential fingerprint live on model_catalog_cache.payload.provider_checks; a later refresh reuses them only while the fingerprint matches',
       timeout:
         '15s per /models page and 30s for the probe, both AbortSignal.timeout with redirect error',
       clientRetry:
-        'none; unsettled 4xx/5xx and network are not stored as a receipt and may be probed again',
+        '429/5xx and a dispatched timeout or socket reset are stored as unsettled and skipped for one hour; a request that never left the process is not stored',
       redelivery:
-        'probes run before the session lock and the lock deadline starts after they return; owed postings are written before the receipt, and still written when the lock is busy or the catalog transaction fails',
+        'a claim is written under the session lock before the probe is sent; owed postings are written before the receipt, and still written when the catalog transaction fails',
       fanOut:
-        'implemented providers are listed in parallel; probes run one provider at a time outside the refresh lock',
+        'implemented providers are listed in parallel; claimed probes run one provider at a time after the claim lock is released',
       evidence: [
         {
           path: 'src/server/ai/provider-models-check.ts',
