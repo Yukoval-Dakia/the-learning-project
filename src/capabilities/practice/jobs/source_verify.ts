@@ -75,6 +75,7 @@ import { normalizeToCanonicalKind } from '@/subjects/question-kind';
 import { resolveQuestionAdmissionPolicyId } from '../server/admission/run-admission';
 import { SYNTHETIC_SUBJECT_ROOT_RE } from '../server/placement-scope';
 import { SupplyTraceV1 } from '../server/question-supply/evidence-demand';
+import { readVectorNearHold } from '../server/question-supply/ingest-dedup';
 import { lockPlacementSupplyScopes } from '../server/question-supply/placement-supply-lock';
 import { DEDUP_OVERLAP_THRESHOLD, maxNgramOverlap } from '../server/question-supply/sourced-dedup';
 import {
@@ -564,11 +565,13 @@ export async function runSourceVerify(
     // check. It is the SINGLE source for both the grounding-gate trigger below AND the final
     // `promote` (which just ANDs in the grounding verdict) — PR #1063 review thread 3 (was
     // two copy-pasted condition lists).
+    const vectorNearHold = readVectorNearHold(metadataRaw);
     const otherwisePromotable =
       knowledgeAlive &&
       !unresolvedAnchoredExactMismatch &&
       !imageInputUnavailable &&
-      !checks.some((c) => c.verdict === 'fail');
+      !checks.some((c) => c.verdict === 'fail') &&
+      vectorNearHold == null;
 
     // ---- YUK-230 source-grounding gate (single_source_grounding rows only) ----
     // Runs ONLY when the row is otherwise promotable: a deterministic/solve fail already
@@ -740,7 +743,9 @@ export async function runSourceVerify(
             ? 'tier-2 source verify needs review: prompt image content was unavailable'
             : !knowledgeAlive
               ? 'referenced knowledge point archived after sourcing; not promoted'
-              : 'tier-2 source verify did not promote';
+              : vectorNearHold
+                ? `tier-2 source verify needs review: vector similarity ${vectorNearHold.similarity.toFixed(3)} with ${vectorNearHold.neighbor_question_id}`
+                : 'tier-2 source verify did not promote';
     const unified = toUnifiedVerifyResult({
       source: 'source',
       promote,
