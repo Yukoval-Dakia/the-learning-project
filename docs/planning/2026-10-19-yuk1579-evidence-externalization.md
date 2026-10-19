@@ -17,11 +17,11 @@ Branch `docs/yuk-1579-evidence-externalization`，base `696449125b53b0c35a210dbc
 `docs/planning/evidence/` 现有 604 文件 / 20MB（另有 179 个顶层散文件 5.5MB，
 其中 `2026-10-10-pi-tool-loop-*`、`2026-09-19-pi-adapter-*`、`2026-10-18-opencode-go-*`
 被 `src/server/ai/{providers.ts,AGENTS.md,opencode-go.ts}` 引用为 live actual-output
-封存，**永不入删除提案**）。
+封存，**本批不纳入删除提案**）。
 
 第一批选 YUK-1358 Start 家族全部 5 个子目录，理由：
 
-1. 同一 issue 家族、验收全部收口（PR1620/1622/1623/1626 均已合 main，PLAN.md 有据）；
+1. 同一 issue 家族、对应切片已合并（PR1609/1620/1622/1623/1626；不代表 YUK-1358 整体迁移验收完成）；
 2. 全仓引用面仅叙事 markdown（planning docs / PLAN.md / `.remember/now.md`），
    无 scripts、无 CI、无测试 fixture、无 runtime 输入消费；
 3. 体量为各家族之最（11.0 MiB，含 4.3MB/3.0MB/1.9MB 三个 runtime tar.gz）。
@@ -67,12 +67,11 @@ build 产物 chunk 名与测试名等误报，已逐条人工核过）。
 ## 维护场景 before/after（真实场景，非假设量纲）
 
 1. 验收争议复核：此前证明 YUK-1358 event-detail 15 个 DB 测试真实跑过，需要
-   checkout 对应 merged SHA 后在 git 树内翻 68 文件/4.9MB；bulk 字节随每次 clone
-   传输。之后：同一证明在外置卷按 issue+head 定位，`shasum -a 256 -c` 对
+   checkout 对应 merged SHA 后在 git 树内翻 68 文件/4.9MB；历史对象仍属于完整 clone 的内容。之后：同一证明在外置卷按 issue+head 定位，`shasum -a 256 -c` 对
    SHA256SUMS.txt 即可验真，git 内一行指针足够。
 2. 后续 lane 复用旧 runtime 记录：YUK-1359 退出清单工作若需 start-agent-notes
    的 runtime acceptance tar.gz（1.9MB），此前需从 git 对象里捞大二进制；之后
-   直接读外置卷同相对路径（字节级全等已证），HEAD 批准删除后 fetch 不再携带。
+   直接读外置卷同相对路径（字节级全等已证），HEAD 批准删除后工作树不再携带；历史对象仍保留，完整 clone/fetch 体积不据此承诺下降。
 
 ## 责任迁移实况
 
@@ -80,7 +79,7 @@ build 产物 chunk 名与测试名等误报，已逐条人工核过）。
   路径」变为「只须知道指针文件 + 外部根约定」；接口缩为一条登记行 + 一个 digest。
 - 「old responsibilities actually removed」：git HEAD 的 bulk 字节承载**尚未移除**，
   这是本批设计如此——child 无删除授权，删除以协调线确认为前置（见下）。
-  已实际移除的是「新增证据必须进 git」这一默认义务（AGENTS 新规则）。
+  本 PR 提议把已批准的外置政策写入 AGENTS，尚未合入生效；不声称此前存在必须入库的规则。
 - 失败/事务/锁/兼容行为：无 runtime 代码改动；live seal、fixture、CI 语义、
   git 历史全部原样。
 
@@ -97,7 +96,7 @@ build 产物 chunk 名与测试名等误报，已逐条人工核过）。
 | `docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/` | 26 | 236,637 |
 | `docs/planning/evidence/2026-10-08-yuk1358-start-workbench/` | 10 | 171,297 |
 
-前提已满足：外置复制完成、hash 逐文件核验全等、指针引用已建立（本文件 +
+复制与核验已完成、指针已建立（本文件 +
 `evidence-export-pointers.md`）。删除执行须另批授权；既有 git 历史不重写。
 
 ## 真实指标与 NOT_RUN
@@ -107,7 +106,9 @@ build 产物 chunk 名与测试名等误报，已逐条人工核过）。
   删除批次一可减 11,552,302 字节。不把文件数/体积本身当深化成果，深化在
   「证据生命周期责任」从 git 树移到外置卷 + 指针。
 - 验证方式：逐文件 SHA256 diff、字节数求和、外部 manifest digest 记录；
-  本地为 docs-only，未跑 build（无代码面）。
+  子任务未跑 build；父级按仓库 pre-PR 规则补跑，结果随 PR 更新。
 - NOT_RUN：未删除任何 git 文件；未跑任何测试/DB/Docker/runtime/provider；
   未 push；未改 scripts audit 代码（另一 child 所有）；未更新 PLAN.md/.remember
   （parent 集成所有）。
+
+父级复核：172/172 文件均 git tracked；source/外部 SHA256 与 manifest 全等，所选五目录无漏项；总计 11,552,302 字节。manifest 路径相对其下的 `docs/planning/evidence/`，复验须先切到该目录，再 `shasum -a 256 -c ../../../SHA256SUMS.txt`。父级原始结果在外部 `evidence-export/parent-verification.json`。
