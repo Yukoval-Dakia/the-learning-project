@@ -11,7 +11,6 @@
 
 import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 
-import { batchResolveEffectiveDomains, getEffectiveDomain } from '@/capabilities/knowledge/public';
 import {
   GRAPH_LAPLACIAN_ENABLED,
   GRAPH_LAPLACIAN_KAPPA,
@@ -58,6 +57,10 @@ import {
 } from '@/core/theta-grid';
 import type { Db, Tx } from '@/db/client';
 import { item_calibration, knowledge_edge, mastery_state } from '@/db/schema';
+import {
+  batchResolveEffectiveDomains,
+  getEffectiveDomain,
+} from '@/kernel/read-models/knowledge-tree';
 import {
   acquireLearningStateWriteLock,
   acquireSortedAdvisoryLocks,
