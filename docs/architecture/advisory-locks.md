@@ -22,7 +22,12 @@
 > 修正证据（仓库外）：
 > `/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1577/4419f4fbb8c93cc5c6b42f08c2e44502a3788a34/four-facts-correction/`
 > （`family-table.md` 81 族、`edge-evidence.md` 逐边修正、`README.md`
-> 修正清单与 SHA）。封存旧件 `fc619732/` 与
+> 修正清单与 SHA）。其后 R1 复核（
+> `…/ecf0bf0269d263442a546310c32ed6cb04c44233/review-r1-glm.md`）命中一处
+> 新登记失实——session-orphan retirement 路径的 `session_orphan_control`
+> 行锁实为 FOR UPDATE（`lockControl` :121-125）而非 FOR SHARE；修正 overlay
+> 见 `…/ecf0bf0269d263442a546310c32ed6cb04c44233/r1-correction/`，当前
+> `edge-evidence` 以该 overlay 为准（§4 指针）。封存旧件 `fc619732/` 与
 > `…/2ecfde0840ad3dbf3c60eac6763c604d34aea99e/r1-correction/` 含已修错误，
 > 保留为历史反例，不覆盖。
 >
@@ -191,11 +196,17 @@ salt ∈ {0,1,1393})、int 字面量（`597_001`、`406_440_3`）、int pair 字
 
 ## 4. 顺序登记（已修四项；限度见 §5）
 
-完整逐边调用链以 four-facts 修正版为准（旧件保留，不覆盖）：
-`/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1577/4419f4fbb8c93cc5c6b42f08c2e44502a3788a34/four-facts-correction/edge-evidence.md`
-SHA-256：`020f9ed77111856f0823612be79b2f32224d69345314d77d3fe28b84a8e05e52`。核对源码 revision
-`4419f4fbb8c93cc5c6b42f08c2e44502a3788a34`（所引站点文件与 R1 核对 revision
-`2ecfde0840ad3dbf3c60eac6763c604d34aea99e` 逐字节一致；R1 版 SHA-256
+完整逐边调用链以最新修正版为准（旧件保留，不覆盖）：
+`/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1577/ecf0bf0269d263442a546310c32ed6cb04c44233/r1-correction/edge-evidence.md`
+SHA-256：`73849eea044365d81785e736e3ec5c4a553236ae65dd4fc0fd904c21f02ae630`
+——该版 = four-facts 版
+`…/4419f4fbb8c93cc5c6b42f08c2e44502a3788a34/four-facts-correction/edge-evidence.md`
+（SHA-256 `020f9ed77111856f0823612be79b2f32224d69345314d77d3fe28b84a8e05e52`）
+加 R1 P1 修正：E6/E9 的 `session_orphan_control` 行锁按 helper 分列
+FOR SHARE（consume 四站）/ FOR UPDATE（retirement 一站）。核对源码 revision
+`4419f4fbb8c93cc5c6b42f08c2e44502a3788a34`（所引站点文件与首轮 R1 核对
+revision `2ecfde0840ad3dbf3c60eac6763c604d34aea99e` 逐字节一致；其
+edge-evidence 版 SHA-256
 `98bf4f84be2da50d66d4ea7598df8f12b1aac9847c09fefdd78e1b05cfa6b751`，其中 E4/E6/E9/
 未决 1–3、5 已被本版替代，E3x 纠正保留）。以下为摘要。**`after` 边集不是无环图**：
 `instance ⇄ corrections:all` 是已证 2-环（E4），在已核站点内由 G 共同串行化而
@@ -232,7 +243,11 @@ SHA-256：`020f9ed77111856f0823612be79b2f32224d69345314d77d3fe28b84a8e05e52`。�
   （session-orphan-backend.ts:336→338）；install tx 内**不取**任何
   per-tick/reconcile 锁。runtime tx（另一事务，行锁→advisory）：
   `review_orphan_control FOR SHARE/UPDATE → hte(tickId,1393)`（:130/:217/:433 →
-  :133/:218/:461）；`session_orphan_control FOR SHARE → session-orphan-tick`；
+  :133/:218/:461）；`session_orphan_control` 行锁按 helper 分列——
+  consume/tick 四站 `FOR SHARE → session-orphan-tick`
+  （`lockSessionOrphanControl` family.ts:184-186 → :256/:356/:381/:405），
+  retirement 一站 `FOR UPDATE → session-orphan-tick`（`lockControl`
+  backend.ts:121-125，:199 → :226）；
   `judge_run_control FOR SHARE → (1356,2)`（judge_pending_reconcile.ts:60→61）。
   prune runtime 只持 `prune_job_events_control` 行锁，无 advisory 后继。
   advisory 族控制对与 per-tick 从未同 tx 共现；旧版

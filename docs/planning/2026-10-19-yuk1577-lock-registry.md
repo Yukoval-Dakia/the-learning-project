@@ -2,8 +2,10 @@
 
 > 架构深化线子任务交付文档（修正版，父验收退回 `fc6197324` 后重做）。
 > 2026-10-20 续片：四项已核实事实错误已按源码 revision `4419f4fbb` 修正
-> （分支 `docs/yuk-1577-correct-lock-registration`，正常 merge 警示提交
-> `c31424d0`；§9）。本记录仍不是完整排序证明。
+> （分支 `arch/lock-registry-errata`，原名
+> `docs/yuk-1577-correct-lock-registration`，正常 merge 警示提交
+> `c31424d0`；§9）；R1 复核命中的一处行锁强度误标已在 §10 修正。
+> 本记录仍不是完整排序证明。
 > 原分支 `refactor/yuk-1577-lock-ownership-registry`，基于 `origin/main@69644912`。
 > 登记文档：`docs/architecture/advisory-locks.md`。**无生产代码改动**——首版的
 > registry 模块与 fail-closed 消费面已按 brief 撤回（见 §6 修正记录）。
@@ -18,6 +20,7 @@
 | 旧 79 族机读表 | `…/fc619732/family-table.md`、`registry-snapshot.ts` | 被撤下的 registry 稿，仅作快照；含已修错误 |
 | 旧逐边调用链 | `…/fc619732/edge-evidence.md` | 每条边的语句序证据、dyn 标注；含已修错误 |
 | 四事实修正证据 | `…/YUK-1577/4419f4fbb8c93cc5c6b42f08c2e44502a3788a34/four-facts-correction/` | 81 族表、逐边修正、修正清单与 SHA（§9） |
+| R1 P1 修正 overlay | `…/YUK-1577/ecf0bf0269d263442a546310c32ed6cb04c44233/r1-correction/` | session_orphan_control 行锁强度分列后的 edge-evidence 与 SHA（§10） |
 
 ## 2. 口径（修正后，不冒称）
 
@@ -101,7 +104,7 @@ G :820 位于另一个 export `activateSubmissionCandidate` 的事务 :818。
 仍未证明：动态路径全部排序、共享 key 实例域与行锁交互；族表 sites 的共享 helper
 重复归属口径和旧快照目录命名是 R1 已记录的非阻塞后续，不冒称已修。
 
-## 9. 四事实修正（2026-10-20，分支 `docs/yuk-1577-correct-lock-registration`）
+## 9. 四事实修正（2026-10-20，分支 `arch/lock-registry-errata`）
 
 修正顶部警示登记的四项事实错误。核对源码 revision
 `4419f4fbb8c93cc5c6b42f08c2e44502a3788a34`（origin/main；所引站点文件与 R1
@@ -141,8 +144,51 @@ G :820 位于另一个 export `activateSubmissionCandidate` 的事务 :818。
 | `family-table.md`（81 族） | `34f8616c9062d82fc1e6878effe735035fddd7fb3703ab240d17528dcffc1377` |
 | `edge-evidence.md` | `020f9ed77111856f0823612be79b2f32224d69345314d77d3fe28b84a8e05e52` |
 
+> 注：上表 `edge-evidence.md` 的 E6/E9 session-orphan 行锁强度后经 R1 复核
+> 更正（§10）；当前逐边证据以 r1-correction overlay 版为准，上表 SHA 仍对应
+> 封存原件。
+
 验证已跑：源码逐站点读取（上列行号链）、`git diff --name-only` 结转段核对、
 `git diff --check`。**NOT_RUN**：typecheck/lint/build（仅文档改动、无可编译
 增量，父级可补）、全部本地测试（无增删）、DB/TEST/Docker/provider/paid、
 tsx -e/手造输入验证。仍未证：行锁全图、动态 dispatch 全路径、跨 backend
 等待、动态 key 实例域——本片不结清 YUK-1577 完整排序证明。
+
+## 10. R1 P1 修正（2026-10-20，head `ecf0bf026` 之上）
+
+GLM 独立 R1（
+`…/YUK-1577/ecf0bf0269d263442a546310c32ed6cb04c44233/review-r1-glm.md`，
+SHA-256 `be69ecb08fdc65bb0c375e78c3c8d5367e87f0eff762fd48ca151749e5b156eb`）
+核实四项指定修正全部为真，但命中一项本片新引入的登记失实（P1）：§9 的
+edge-evidence E6 与 `advisory-locks.md` 把 session-orphan 全部
+`session_orphan_control` 行锁写成 FOR SHARE；`lockControl`
+（`session-orphan-backend.ts:121-125`）实为 `for update`，其 :199
+（`retireFailedSessionOrphan`）→ tick :226 走的正是该 helper。修正为按
+helper 分列：**FOR SHARE**——consume/tick 四站（family.ts:256/:356/:381/:405
+经 `lockSessionOrphanControl` :184-186）；**FOR UPDATE**——retirement 一站
+（backend.ts:199→:226 经 `lockControl` :121-125）；`lockControl` 另两调用点
+（:159 quiescence、:272 phase change）只持行锁、无 advisory 后继。排序与
+install-vs-runtime 分事务结论不变（UPDATE 强于 SHARE）。源码 revision 不变
+（`4419f4fbb`；本修正只动两文档与仓库外 artifact，`src/` 与 base 一致）。
+
+证据（仓库外 overlay 目录，未覆盖任何封存件）：
+`/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1577/ecf0bf0269d263442a546310c32ed6cb04c44233/r1-correction/`
+
+| 文件 | SHA-256 |
+|---|---|
+| `edge-evidence.md` | `73849eea044365d81785e736e3ec5c4a553236ae65dd4fc0fd904c21f02ae630` |
+
+`family-table.md` 不受 P1 影响（表不含行锁强度），仍用 §9 表 SHA。
+
+R1 另记三项 P2，**不在本片修复范围、交父记录本票**（不冒称已修）：
+judge runtime `judge_run_control → judge-run-claim`
+（judge_pending_reconcile.ts:308→309，族 #31）行锁介导边未登；
+§9 "diff 为空" 缺 "所引站点文件" 范围限定；"补登 request → group"
+新颖性措辞不准（该边旧表已由 #8 after 列承载，本轮新增的是语句序证据与
+`group → resolution`）。
+
+验证已跑：源码核对（session-orphan-backend.ts:121-125/:159/:199/:226/:272、
+session-orphan-family.ts:184-186/:255/:355/:380/:404）、r1-correction 版与
+four-facts 版 `edge-evidence.md` diff 仅含上述分列改动、`git diff --check`。
+**NOT_RUN**：typecheck/lint/build、全部本地测试、DB/TEST/Docker/provider/paid、
+tsx -e/手造输入。仍未证范围与 §9 相同，本片不结清完整排序证明。
