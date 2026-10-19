@@ -47,7 +47,7 @@ function buildQuizGenPrompt(profile: SubjectProfile): string {
 每题输出形状（QuizGenQuestion）：
 {
   "kind": "题面展示标签——优先取惯用标签 ${CANONICAL_QUESTION_KINDS}；其判分类（exact/keyword/semantic/steps）须与 plan.items 对应项一致",
-  "prompt_md": "原创题面 markdown，可含 LaTeX",
+  "prompt_md": "原创题面 markdown；数学式必须显式定界：行内 $...$、独立 $$...$$（\\(...\\)/\\[...\\] 亦可），字面命令放 code",
   "reference_md": "参考答案 + 简短解析",
   "choices_md": ["选项 A 的正文（不含 A. 序号）", "选项 B 的正文（不含 B. 序号）", ...] | null,
   "judge_kind_override": "exact"|"keyword"|"semantic" | null,
@@ -74,14 +74,15 @@ source_pack.tool 如实自报：真的用了 exa 检索才填 "exa"；closed_boo
 - 此时**每道题**都必须携带 structured 字段，root 节点 shape：
   {"id":"占位（服务端会重生成）","role":"stem","prompt_text":"材料/短文 + 导语","sub_questions":[{"id":"占位","role":"sub","prompt_text":"小题题干","question_no":"(1)","options":[{"label":"A","text":"选项正文"}],"answers":["参考答案"],"analysis":"解析"}, ...至少 2 个]}
 - stem.prompt_text：material_grounded 时**只写导语**（如「阅读下面的短文，完成下列小题。」）——真实材料由持久化层从 material.body_md 嵌入，不要把原文抄进 prompt_text；非 material_grounded 时 stem.prompt_text 必须自带完整材料原文（你自己写的短文/语篇），小题才能据此作答。
-- 每个 sub 都是**独立可判**的小题：prompt_text 非空；answers[] 与 analysis 至少其一非空（都没有会被拒收）；选择型小题用 options 数组（label 字母 + text 正文），其余小题写 answers/analysis。sub_questions 至少 2 个。
+- 每个 sub 都是**独立可判**的小题：prompt_text 非空；answers[] 与 analysis 至少其一非空（都没有会被拒收）；选择型小题用 options 数组（label 字母 + text 正文），其余小题写 answers/analysis；sub 的 prompt_text / options[].text / answers / analysis 同样遵守下方「数学定界」规则。sub_questions 至少 2 个。
 - 顶层字段照常填：kind 与 plan 项一致；prompt_md / reference_md 写整题题面与合并答案（持久化以 structured 派生为准，但仍必填）；choices_md 填 null；judge_kind_override 填 "semantic"（本条优先于下方 choice/true_false 等单题 kind 规则——组合题顶层恒为 semantic，小题自己的判分由 sub.options/answers 决定），rubric_json.required_points 必填（列出覆盖各小题的采分点），reference_solution.final_answer 写整题答案概述。
 - 无 structured 的单题输出在 composite_parent_only 下会被**整批拒收**——不允许退化成普通题。
 
 题目要求：
 - kind 以 plan.items 对应项为准（客观选择结构统一用 "choice"）；无论是否偏离 requested_kind，都必须遵循输出的 kind 对应的格式规则。
 - ${profile.promptFragments.checkQuestionPolicy}
-- choice / true_false：judge_kind_override="exact"，给 3–4 个选项；choices_md 每项只写选项正文，禁止带 A./B./C./D. 等字母序号（渲染层按数组索引添加）；reference_md 第一行是正确选项原文。
+- choice / true_false：judge_kind_override="exact"，给 3–4 个选项；choices_md 每项只写选项正文，禁止带 A./B./C./D. 等字母序号（渲染层按数组索引添加）；题面 prompt_md 不要再抄一遍选项内容；reference_md 第一行是正确选项原文。
+- 数学定界（强约束）：每个数学表达式必须自带显式定界——行内用 $...$，独立公式用 $$...$$（已有 \\(...\\)/\\[...\\] 写法可保留）；\\frac、\\dfrac、\\tfrac、\\sqrt 等数学命令禁止裸露在定界之外（渲染端不猜公式边界，裸命令会原样漏出给学习者）。要把命令按字面文本展示时，放行内代码 \`...\` 或代码块。本规则覆盖 prompt_md、choices_md、reference_md 与 structured 各节点的 prompt_text/options[].text/answers/analysis。
 - 最终判分路由为 "exact" 或 "semantic" 时，rubric_json 必填，且 rubric_json.reference_solution 必须同时填写 final_answer 与 answer_equivalents（无额外等价表达时填 []）；expected_signals 至少 1 条。此规则按最终判分路由判断，不只看显式 override：judge_kind_override 省略或为 null 时，choice / true_false → exact，fill_blank 无 keywords → exact（有 keywords → keyword），computation 无 keywords → semantic（有 keywords → keyword），derivation 及 short_answer / reading / translation / essay 等文本题 → semantic。
 - fill_blank：可 exact；多个合理表述时用 "keyword" 并在 rubric_json.keywords 写 1–5 个必中关键词。
 - short_answer / reading / translation / essay：judge_kind_override="semantic"，rubric_json.required_points 必填 1–5 个可核查要点。

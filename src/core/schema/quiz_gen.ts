@@ -12,11 +12,12 @@
 //   2. LLM output shape  — `QuizGenOutput` (what the QuizGenTask agent emits;
 //      the Q3 handler maps it into questions + metadata).
 import { z } from 'zod';
+import { findBareMathCommands } from '../question-math-markdown';
 import { OBJECTIVE_ANSWER_KINDS } from './answer-class';
 import { AgentRef, QuestionKind, Rubric, RubricReferenceSolution } from './business';
 import { ProducerDifficultyEvidence } from './difficulty-evidence';
 import { defaultJudgeKindForQuestion } from './judge-routing';
-import { StructuredQuestion } from './structured_question';
+import { StructuredQuestion, type StructuredQuestionT } from './structured_question';
 
 // Local derivation (judge-routing.ts keeps its own alias for the same reason):
 // the plan artifact below needs the kind union type without a runtime import.
@@ -209,6 +210,62 @@ const QuizGenRubric = Rubric.extend({
   }).optional(),
 });
 
+// YUK-1406 — producer 数学定界契约的 schema 侧接线。真实消费者是 handler 的
+// parseOutput（jobs/quiz_gen.ts: QuizGenOutput.safeParse → placementSchemaFailure
+// /失败事件 → pg-boss 自然重试）与 quizGenTaskSpec.outputSchema；此处 superRefine
+// 命中即整批拒收，错误沿既有 landing 落地，不新增 paid run/重试/fallback。
+// 只查会被渲染的字段：prompt_md / choices_md / reference_md（feedback 阶段经
+// PracticeChoiceOptions.reference 展示）与 structured 各节点 prompt_text /
+// options[].text / answers / analysis（经 structuredToReferenceMarkdown 进参考）。
+// 刻意不查：source_refs（URL/snippet 溯源）、material.body_md（抓取原文，不改
+// source 原文）、rubric_json（judge-only 判据）—— 非渲染字段不递归误检。
+function reportBareMath(
+  ctx: z.RefinementCtx,
+  path: (number | string)[],
+  label: string,
+  markdown: string | null | undefined,
+): void {
+  if (markdown == null) return;
+  const issues = findBareMathCommands(markdown);
+  if (issues.length === 0) return;
+  const first = issues[0];
+  if (first == null) return;
+  const more = issues.length > 1 ? `（该字段共 ${issues.length} 处）` : '';
+  ctx.addIssue({
+    code: z.ZodIssueCode.custom,
+    path,
+    message: `${label}含裸\\${first.command}，请给数学式加$...$，若为字面代码请放code${more}，如：${first.excerpt}`,
+  });
+}
+
+function reportStructuredBareMath(
+  ctx: z.RefinementCtx,
+  node: StructuredQuestionT,
+  labelPrefix: string,
+  basePath: (number | string)[],
+): void {
+  reportBareMath(ctx, [...basePath, 'prompt_text'], `${labelPrefix}prompt_text`, node.prompt_text);
+  node.options?.forEach((option, index) => {
+    reportBareMath(
+      ctx,
+      [...basePath, 'options', index, 'text'],
+      `${labelPrefix}options[${index}].text`,
+      option.text,
+    );
+  });
+  node.answers?.forEach((answer, index) => {
+    reportBareMath(ctx, [...basePath, 'answers', index], `${labelPrefix}answers[${index}]`, answer);
+  });
+  reportBareMath(ctx, [...basePath, 'analysis'], `${labelPrefix}analysis`, node.analysis);
+  node.sub_questions?.forEach((sub, index) => {
+    reportStructuredBareMath(ctx, sub, `${labelPrefix}sub_questions[${index}].`, [
+      ...basePath,
+      'sub_questions',
+      index,
+    ]);
+  });
+}
+
 // Per-question shape. Mirrors the EmbeddedCheck question contract (kind +
 // prompt_md + reference_md + optional choices/judge/rubric) plus QuizGen-only
 // fields: difficulty, knowledge_ids the question targets, and the per-question
@@ -255,6 +312,17 @@ export const QuizGenQuestion = z
         path: ['rubric_json', 'reference_solution'],
         message: 'exact and semantic quiz_gen questions require rubric_json.reference_solution',
       });
+    }
+  })
+  // YUK-1406 — 数学定界契约：裸 \frac/\sqrt 族命令 = 整批拒收（fail-closed）。
+  .superRefine((question, ctx) => {
+    reportBareMath(ctx, ['prompt_md'], 'prompt_md', question.prompt_md);
+    question.choices_md?.forEach((choice, index) => {
+      reportBareMath(ctx, ['choices_md', index], `choices_md[${index}]`, choice);
+    });
+    reportBareMath(ctx, ['reference_md'], 'reference_md', question.reference_md);
+    if (question.structured != null) {
+      reportStructuredBareMath(ctx, question.structured, 'structured.', ['structured']);
     }
   });
 export type QuizGenQuestionT = z.infer<typeof QuizGenQuestion>;
