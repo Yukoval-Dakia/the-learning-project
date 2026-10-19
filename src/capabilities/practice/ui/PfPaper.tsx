@@ -1323,7 +1323,9 @@ function PaperVisit({
             entries={nativeResponses[curKey]?.entries ?? []}
             onEntriesChange={updateCurResponses}
             notation={cur.question.notation}
-            disabled={curLocked}
+            // A remounted tree must not start a second upload while one from before the
+            // question switch is still running on this question (it would be dropped).
+            disabled={curLocked || [...blockUploads].some((k) => k.startsWith(`${curKey}::`))}
             submitted={submittedKeys.has(curKey)}
             submitting={submitting}
             onUploadingChange={(slotId, on) => trackBlockUpload(`${curKey}::${slotId}`, on)}
