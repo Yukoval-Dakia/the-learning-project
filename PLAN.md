@@ -4,7 +4,7 @@
 
 ## NOW
 
-- **架构深化 / YUK-1571**：frontier draft #1837 c2b80ee，server444→443/cross48→47/SCC不变，R1通过，等#1830独占释放；超过半天上报协调线。迁移规划器#1840已合ee53df413（超长18→17）；typed due完整输入操作#1842已合71986f224，均父静态构建/独立R1/exact-head CI通过，无本机DB/provider。审计去重#1843已合3adb1cde4，scripts净减41，SWE-2 MAX R1/父静态构建/11命令输出核对/GH exactCI通过；Circle矩阵漏展开及workspace冲突归YUK1612。锁登记#1846已合4419f4fbb（仅文档）；新增4项事实错误：协调线裁定顶部立即加未修正声明（只文档免审、exactCI后合），下一片先改4项再扩展；不能自称证明。完整操作FULL设计补直接调用兼容与receipt顺序待owner；LIGHT三个共享读责任合一PR已派SWE-2 MAX，预计cross减4，保护#1802 review.ts迁移。
+- **架构深化 / YUK-1571**：frontier draft #1837 c2b80ee，server444→443/cross48→47/SCC不变，R1通过，等#1830独占释放；超过半天上报协调线。迁移规划器#1840已合ee53df413（超长18→17）；typed due完整输入操作#1842已合71986f224，均父静态构建/独立R1/exact-head CI通过，无本机DB/provider。审计去重#1843已合3adb1cde4，scripts净减41，SWE-2 MAX R1/父静态构建/11命令输出核对/GH exactCI通过；Circle矩阵漏展开及workspace冲突归YUK1612。锁登记#1846已合4419f4fbb（仅文档）；新增4项事实错误：协调线裁定顶部立即加未修正声明（只文档免审、exactCI后合），下一片先改4项再扩展；不能自称证明。完整操作FULL设计补直接调用兼容与receipt顺序待owner；LIGHT共享读draft#1852 aab422064，父静态构建通过、实测cross48→43减5，GLM初审中；两架构audit等1830释放后收紧baseline，保护#1802 review.ts。
 
 - **第一天能用 / 题库暂不出题计数（YUK-1525）**：`yuk-1525-serving-counts-sql` 将 lifecycle 理由统一到 SQL，冻结题面继续复用原校验，计数与列表使用同一只读快照。2600 行中，旧列表少算为1846，修后2400，与原投影全库逐行统计一致；窗口外 `q_02600` 可见。无新增测试、UI 改动或付费调用。
 
@@ -53,7 +53,7 @@
 
 ## PARKED
 
-- **测试与证据瘦身 / YUK-1580、1579**：测试19文件469声明逐case清单/B3/B1已交协调线，owner未选前零改动。#1839已建立全线外置规则与永久副本；2026-10-20首批5目录172文件11,552,302B HEAD删除获批，draft#1847 a6bbe4532父逐文件/引用/静态构建核过，GLM初审通过、ready等CI，固定revision/禁止覆盖/引用加SHA。后续批仍须逐批批准。
+- **测试与证据瘦身 / YUK-1580、1579**：测试19文件469声明逐case清单/B3/B1已交协调线，owner未选前零改动。#1839已建立全线外置规则与永久副本；2026-10-20首批5目录172文件11,552,302B HEAD删除获批，ready#1847 eaf565951父逐文件/引用/静态构建核过，初审后修正删除证据revision目录并澄清JST，唯一R2/新CI中，固定revision/禁止覆盖/引用加SHA。后续批仍须逐批批准。
 
 
 - **YUK-1358/1359已有UI观察**：真实Inbox dismiss后本页499但侧栏500，document reload恢复一致；原onResolve仅本地resolved更新。Google Fonts原import受CSP拦截；fallback可用。记录在现有迁移验收/后续UI边界，不放宽CSP、不冒称本PR修复。
