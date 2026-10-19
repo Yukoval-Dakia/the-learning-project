@@ -235,7 +235,10 @@ export async function evaluateAdmissionVoidGroup(
       }
       continue;
     }
-    if (effect.state === 'voided') continue;
+    // Resolved history never blocks a reauthorization: 'voided' rows are
+    // retired obligations and 'cancelled' rows are sealed never-sent intents
+    // (YUK-1567) — neither owes a send nor an application.
+    if (effect.state === 'voided' || effect.state === 'cancelled') continue;
     if (effect.state === 'applied' && effect.entity_revision !== spec.baseDigest) continue;
     if (effect.state === 'applied') {
       failures.push(`terminal applied verdict on base: ${key}`);

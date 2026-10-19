@@ -1,4 +1,4 @@
-import { and, eq, inArray, ne, or, sql } from 'drizzle-orm';
+import { and, eq, inArray, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import {
   computePaidEffectIdentity,
@@ -173,13 +173,14 @@ export async function claimAdmissionBatch(
   // Prefer the original delivery/revision even if mutable rows changed after
   // payment. A voided predecessor shares unit + base with its successor —
   // 'voided' rows are resolved history and are NEVER the row to reconcile.
+  // 'cancelled' rows are likewise sealed never-sent history (YUK-1567).
   const [pinned] = await tx
     .select()
     .from(paid_effect)
     .where(
       and(
         scope,
-        ne(paid_effect.state, 'voided'),
+        inArray(paid_effect.state, ['pending', 'sending', 'unknown', 'receipt_ready', 'applied']),
         or(
           eq(paid_effect.delivery_id, delivery.id),
           ...(revisionId ? [sql`${paid_effect.input_json}->>'revision_id' = ${revisionId}`] : []),
@@ -197,7 +198,7 @@ export async function claimAdmissionBatch(
         eq(paid_effect.entity_id, prepared.group_id),
         eq(paid_effect.entity_revision, prepared.contract.integrity_digest),
         eq(paid_effect.unit, unit),
-        ne(paid_effect.state, 'voided'),
+        inArray(paid_effect.state, ['pending', 'sending', 'unknown', 'receipt_ready', 'applied']),
       ),
     )
     .for('update')
@@ -241,7 +242,8 @@ export async function claimAdmissionBatch(
   if (
     snapshot?.state === 'sending' ||
     snapshot?.state === 'unknown' ||
-    snapshot?.state === 'voided'
+    snapshot?.state === 'voided' ||
+    snapshot?.state === 'cancelled'
   )
     return { kind: 'held' as const, input, identity };
   // A terminal verification suppresses re-payment.
