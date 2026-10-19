@@ -65,6 +65,7 @@ import {
   question_revision,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { normalizeQuestionRowToContract } from '@/kernel/records/assessment-normalization';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { type TaskTextResult, type TaskTextRunFn, aiAgentRef } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
@@ -604,17 +605,58 @@ export async function runSourceVerify(
       `source_verify: lifecycle current revision '${verifiedIdentity.revisionId}' missing for question ${questionId}`,
     );
   }
-  // 核验实际输入：组已发布 ⇒ 冻结 revision 是内容权威（行投影可能滞后于
-  // withheld→withheld 编辑）——检查/求解/grounding 消费的
-  // 题面/选项/答案/kind 全部从该 revision 的权威投影构造（与共享 submit
-  // 写行时同一组投影原语：revisionToDraftDocument → draftCanonicalIdentity
-  // → deriveKind）。行只供来源级 provenance（web_sourced/source_ref/
-  // metadata）与 plumbing（id/version/draft_status/parent）。无 revision
-  // 的真 legacy 组照旧行输入。
+  // 冻结契约是内容权威。legacy 行仅在现成发布 normalizer 能重建同一
+  // integrity digest 时复用；否则只能消费可无损表达的冻结投影。
+  // provenance/KC/plumbing 留在行上，不能因此继承行级答案权威。
   let verifyInput: QuestionRow = row;
   /** flat 投影对核验有损 ⇒ 付费前明确 hold（原因，见下方 gate）。 */
   let verifyInputHoldReason: string | null = null;
+  const frozenFigures =
+    frozenRevision?.structure.materials.filter((m) => m.kind === 'figure') ?? [];
+  // 复用冻结资产 digest 只为重建发布时的归一输入，不查询/冒充新资产核验。
+  const figureDigests = Object.fromEntries(
+    frozenFigures.flatMap((m) =>
+      /^sha256:[a-f0-9]{64}$/i.test(m.asset.digest)
+        ? [[m.asset.asset_id, m.asset.digest.slice('sha256:'.length)]]
+        : [],
+    ),
+  );
+  let legacyRowMatchesRevision = false;
   if (frozenRevision != null) {
+    try {
+      legacyRowMatchesRevision =
+        normalizeQuestionRowToContract({ ...row, figureDigests }).integrity_digest ===
+          frozenRevision.integrity_digest &&
+        // structured normalizer 可优先用叶答案/选项，忽略 flat 列。
+        // 复用 flat verifier 前，额外证明它实际读取的答案/选项也已封存。
+        (row.structured == null ||
+          ((row.reference_md == null ||
+            frozenRevision.structure.materials.some(
+              (m) => m.caption === 'reference solution' && m.content_md === row.reference_md,
+            )) &&
+            ((row.choices_md?.length ?? 0) === 0 ||
+              frozenRevision.response_spec.slots.some(
+                (s) =>
+                  (s.kind === 'single_choice' || s.kind === 'multi_choice') &&
+                  JSON.stringify(s.options.map((o) => o.text)) === JSON.stringify(row.choices_md),
+              )))) &&
+        // image_refs 不在 normalizer 输入内，不能让未封存的资产进入 solver。
+        row.image_refs.every((id) => frozenFigures.some((m) => m.asset.asset_id === id));
+    } catch {
+      // 非 legacy / 无法归一不等于一致，继续冻结投影的付费前形状闸。
+    }
+  }
+  if (frozenRevision != null && legacyRowMatchesRevision) {
+    // text/numeric/structured legacy 槽不用绕草稿编辑器的 free fallback。
+    // reference、rubric、判分意图及材料由完整 digest 证明属于本 revision。
+    // 资产来自冻结材料；行级 bbox/placement 未封存，不作 solver 提示。
+    verifyInput = {
+      ...row,
+      image_refs: frozenFigures.map((m) => m.asset.asset_id),
+      figures: [],
+      structured: null,
+    };
+  } else if (frozenRevision != null) {
     const verifyDoc = revisionToDraftDocument(
       {
         revision_id: frozenRevision.revision_id,
@@ -632,6 +674,13 @@ export async function runSourceVerify(
     const verifyUnits = verifyDoc.parts.flatMap((part) => part.units);
     const selectUnits = verifyUnits.filter((u) => u.response_spec.kind === 'select');
     if (
+      // flat 核验无法保留多 part/unit/slot 的作答边界。
+      verifyDoc.parts.length !== 1 ||
+      verifyUnits.length !== 1 ||
+      frozenRevision.response_spec.slots.length !== 1
+    ) {
+      verifyInputHoldReason = 'typed_multiple_response_boundaries';
+    } else if (
       // scoring unit 引用多 slot 时投影只取 slot_refs[0]，其余槽位不进视图。
       frozenRevision.scoring_basis.units.some((unit) => unit.slot_refs.length > 1)
     ) {
@@ -663,6 +712,34 @@ export async function runSourceVerify(
       // select 键引用了 spec.items 之外的 item_id —— projectReference 会
       // 静默丢该键，flat 视图的答案残缺。
       verifyInputHoldReason = 'typed_select_key_unresolved';
+    } else if (
+      // 已冻结的选择键可直接比较；私有旧 rubric/解析不能抢占它。
+      // 其他材料、证据要求与 presentation 没有这里的无损 flat consumer。
+      frozenRevision.presentation != null ||
+      frozenRevision.structure.materials.some(
+        (m) =>
+          m.kind === 'figure' ||
+          m.visibility !== 'private' ||
+          (m.caption !== 'reference solution' &&
+            m.caption !== 'rubric (authoritative scoring input)'),
+      ) ||
+      frozenRevision.scoring_basis.units.some(
+        (u) =>
+          u.material_refs.length > 0 ||
+          u.evidence_slot_refs.length > 0 ||
+          u.requires_group_evidence,
+      ) ||
+      frozenRevision.response_spec.slots.some(
+        (s) => s.kind === 'open_response' && (s.evidence_required || s.accepted_evidence?.length),
+      )
+    ) {
+      verifyInputHoldReason = 'typed_unprojected_material_or_evidence';
+    } else if (
+      // 非 key 型私有材料可能承载 rubric，不能当普通答案或静默舍弃。
+      frozenRevision.structure.materials.length > 0 &&
+      selectUnits.length === 0
+    ) {
+      verifyInputHoldReason = 'typed_unprojected_private_scoring_material';
     }
     const ident = draftCanonicalIdentity(verifyDoc);
     verifyInput = {
@@ -671,6 +748,11 @@ export async function runSourceVerify(
       prompt_md: ident.promptMd,
       reference_md: ident.referenceMd,
       choices_md: ident.choicesMd,
+      judge_kind_override: null,
+      rubric_json: null,
+      structured: null,
+      image_refs: [],
+      figures: [],
     };
   }
   const metadataRaw =
@@ -824,7 +906,9 @@ export async function runSourceVerify(
           judge_kind_override: verifyInput.judge_kind_override,
           rubric_json: verifyInput.rubric_json,
           knowledge_ids: verifyInput.knowledge_ids,
-          metadata: (verifyInput.metadata ?? null) as Record<string, unknown> | null,
+          // metadata 的来源/KC 账本可留给确定性检查；其中腾讯答案/解析
+          // 提示不在冻结契约内，不能进入该 revision 的独立求解输入。
+          metadata: frozenRevision == null ? verifyInput.metadata : null,
           image_refs: verifyInput.image_refs,
           figures: verifyInput.figures,
         };

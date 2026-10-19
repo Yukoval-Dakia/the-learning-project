@@ -85,20 +85,36 @@ conversion_issues → 提交返回 withheld（不铸 revision），草稿保留�
   对行归一发布的旧组，冻结层与行归一产物在 converged-writer 不变量下
   digest 本就相同。**只有从未发布的真 legacy 组**（current_revision_id
   为空）走 FromRow。不再按「有没有数学声明」分流。
-- **核验输入绑定（R1 F2，真收口）**：`runSourceVerify` 起点用**一条
+- **核验输入绑定（R1 F2 的快照修复，R2 后补内容权威）**：`runSourceVerify` 起点用**一条
   SELECT**（`question` ⋈ `lifecycle`(coalesce(parent,id)=group_id) ⋈
   `question_revision`）取行 + 组身份 + 冻结 revision——同一语句快照，
   行内容与 revision/generation 身份不可错位拼装（原实现分读会拼出
-  旧行+新 revision）。组已发布 ⇒ 核验输入（题面/选项/答案/kind）从
-  **该 revision 的权威投影**构造（`revisionToDraftDocument` →
+  旧行+新 revision）。组已发布时先用现成
+  `normalizeQuestionRowToContract` 对同快照行重建完整契约，只有
+  integrity digest 等于冻结版且行 image_refs 全属于冻结 figure 材料
+  才复用 legacy 输入。text/numeric/structured 槽因此保留原来的
+  checks/solve/grounding，不经过草稿编辑器的 unmapped free 兜底。
+  rubric、reference、judge 意图、材料与 structured 内容由发布归一的
+  完整 digest 证明归属；structured 归一可能优先读叶答案/选项，所以
+  额外检查 flat verifier 实际读取的 reference 字节与 choices 也在冻结
+  材料/槽中，不能借叶内容掩盖被忽略的旧 flat 列。figure digest 仅复用冻结值重建归一输入，
+  不假称重新查询或验证资产。solver 图片 id 从冻结 figure 材料取得，
+  未封存的行级 bbox/placement 不作 figures_hint。
+  不满足证明时，核验输入从**该 revision 的投影**构造（`revisionToDraftDocument` →
   `draftCanonicalIdentity` → `deriveKind`，与共享 submit 写行同一组
   原语，经 seam→tools 既有边再出口，零新增 capability→questions 债）；
-  行只供来源级 provenance（web_sourced/source_ref/metadata）与 plumbing
-  （id/version/draft_status）。无 revision 的真 legacy 组照旧行输入。
+  显式清空旧行 `rubric_json`、`judge_kind_override`、`structured`、
+  `image_refs`、`figures`。例如 key A→B 的 withheld 编辑即使行 rubric
+  仍是 A，也只把冻结 B 送入真实 solve comparison；旧私有 rubric/解析
+  不得优先于冻结选择键。行只供来源级 provenance
+  （web_sourced/source_ref/metadata）与 plumbing（id/version/draft_status）。
+  所有有 revision 的分支均不把未封存的 metadata 答案/解析提示送给
+  solver；来源证据和 KC 校验仍用行账本。无 revision 的真 legacy 组照旧行输入。
   KC 归属取行（组/行级账本，不在 revision 层）。
-- **有损形状付费前 hold**：投影对核验输入残缺时（scoring unit 多
+- **有损形状付费前 hold**：未通过上述 legacy 一致性证明时，投影对核验输入残缺（多 part/unit/slot 边界、scoring unit 多
   slot_refs、slot kind 不可映射 `unmapped_slot_kind`、多 select unit
-  残缺 choices、select 键引用 spec 外 item），只落
+  残缺 choices、select 键引用 spec 外 item、未投影材料/证据/presentation，
+  或非选择键的私有评分材料；选择键仅可忽略已具名的私有 rubric/解析），只落
   `structure_completeness` fail（reason 具名），不跑确定性检查不花
   solve/grounding——fail 走既有 demote+verify_hold 路径，编辑改形状后
   可重验恢复（不封死 typed sourcing 可用面）。
@@ -131,9 +147,12 @@ typed 路径不再用「stored 投影 vs stored 投影」的自洽假戳：
 `ingestVector` 绑定的是 fetch 时实际送 embed 的 flat `questionText`；
 只在行内投影与该向量真实输入逐字段一致时才复用（typed 投影常不等于
 flat 文本——select 的 reference 投影成字母键）。写入时再以相同内容
-CAS（prompt_md/reference_md/choices_md IS NOT DISTINCT FROM）防读写间
-并发编辑。不一致保持未嵌入（abstain）——nightly `embed_backfill` 按
-行内文本重算，不产生新付费调用。
+CAS（`canonical_content_hash IS NOT DISTINCT FROM`）防内容身份变化。
+canonical hash 会归一 whitespace/NFKC/image URL，**不是 exact embed-input
+hash，不能证明任意原始字节变化都使 CAS 失配**。同 canonical 身份的
+原文漂移即使写入旧输入的 exact embed 戳，后续 vector validity 仍以
+`hash_mismatch` 拒绝它。不一致保持未嵌入（abstain）——交既有 nightly
+`embed_backfill` 按行内文本重算；本修复不执行 embed/backfill 付费调用。
 
 ### seam 一处修正
 
@@ -159,7 +178,7 @@ sourcing_web 候选照旧全走旧链——**旧 writer 未为新声明扩展**�
 | request claim/replay（外层 requestId + 派生 `:save`/`:submit`）、availability、draft_status='draft'、durable verify intent + 即时 dispatch、canary `experimental:submit_question` 事件（+draft_block_id） | 保留 |
 | `judge_kind_override` / `rubric_json` / `structured` 行投影 / `kind` 标签 / `image_refs`/`figures`/`staged_asset_ids` | 不注入：typed 契约是权威（judge_kind_override/rubric_json 单值无法如实描述多 unit；structured 列改由 `draftDocumentToStructuredQuestion` 投影；kind 由 `deriveKind`）。声明+图像资产同现显式 `invalid_request`（本片不承载资产绑定，不静默降级） |
 | `insertSourcedDraft` + `publishQuestionGroupFromRow` 对已声明候选的 flat insert+row publish | 删除（该分支不再存在）；旧 writer 仅保留给未声明 caller + fail-closed 守卫 |
-| embed 向量戳 | R1 F4 修正：仅当行内投影与向量真实输入（flat questionText）逐字段一致才复用戳，写入同内容 CAS；不一致 abstain 交 nightly backfill（不产生新付费调用） |
+| embed 向量戳 | R1 F4 修正：仅当行内投影与向量真实输入（flat questionText）逐字段一致才复用戳，写入 canonical 内容身份 CAS（非 exact 字节 CAS）；不一致 abstain 交既有 nightly backfill，本修复不运行付费调用 |
 
 ## 事务与重放（如实）
 
@@ -188,7 +207,9 @@ sourcing_web 候选照旧全走旧链——**旧 writer 未为新声明扩展**�
 
 ## 第一天能用
 
-- 未声明候选（含全部 jyeoo_fetch）：行为逐字节不变。
+- 未声明候选（含全部 jyeoo_fetch）：保留旧生产入口；首次行归一 revision
+  与同快照行一致时保留原来源检查、求解与 grounding 路径，不再被草稿
+  编辑器不支持 text/numeric 的标记终态拒收。
 - 已声明候选：producer→candidate→draft→submit→withheld revision（声明进
   冻结契约、参与 integrity digest）→ durable source_verify intent 即时
   派发 → `draft_status='draft'` + withheld `unverified_rules` pending
@@ -212,6 +233,40 @@ sourcing_web 候选照旧全走旧链——**旧 writer 未为新声明扩展**�
 - 存量 40 题 / 七题验收 / 存量重新发布（YUK-1573 冻结）：第 4 片独立方案。
 
 ## 验证（本机实际执行——逐命令如实）
+
+### R2 后定向实现修复（基线 `93344bddc`）
+
+本轮只改 `source_verify.ts` 与本文；没有新投影模块，没有改
+URL/shared submit/embed、owner override、双 CAS、row version 或 C1。
+原 F1/F3/F4 保持父已确认的静态 closure。F2-R 与 N1 的上述修复为
+源码路径说明，父负责定向核验；R1+R2 预算已用完，未再开 review/子代理。
+
+本轮全量日志独立保存在：
+`/Volumes/YukovalSBak/yukoval-projects/tlp-status/review/stage1-yuk1568-s3-20261019/r2-fix-codex-logs/attempt-20261019-codex/`。
+最终命令结果见下表；下节 R1 表仅是历史证据。
+
+| 本轮命令 | exit / 日志 |
+|---|---|
+| `pnpm install --offline --frozen-lockfile --ignore-scripts` | 0 / `install.log`（仅准备新树依赖，无 lockfile 变更） |
+| `pnpm typecheck` | 0 / `typecheck-sealed.log` |
+| `pnpm lint` | 0（179 warnings）/ `lint-sealed.log` |
+| `pnpm build` | 0 / `build-sealed.log` |
+| `pnpm audit:capability-boundaries` | 0 / `audit-capability-boundaries.log`（443/48 不变） |
+| `pnpm audit:question-writers` | 0 / `audit-question-writers.log` |
+| `git diff --check` | 0 |
+
+保留 `lint.log` 首轮 1 个格式错误及 179 warnings 的失败记录；仅格式修正，
+后续 `lint-final.log` 已 exit 0（179 warnings）。`typecheck.log`、
+`typecheck-final.log` 与 `build.log` 均 exit 0；最后一次材料闸收紧后再跑
+sealed 三检查，以其结果为最终证据。源码封存在 `source-change.patch` /
+`source.sha256`。没有新的可执行 follow-up 超出这两项父已确认问题；
+Linear/总看板与最终验收继续由父线程统一维护，本 writer 不扩 ticket 范围。
+
+没有编写或运行任何测试、断言、临时测试脚本、合成输入或 inline eval。
+DB/容器/provider/HTTP 业务/浏览器/运营锁/stock/实际 sourcing 与 grounding
+均 **NOT_RUN**；没有 merge/deploy，也不声称运行验收。
+
+### R1 历史记录
 
 R1 修复轮（两轮 fix commit：`fc6d15804` F1/F3/F4 + 本 commit F2 真收口）
 的终态检查全量日志落协调目录（非 tail 截断）：
