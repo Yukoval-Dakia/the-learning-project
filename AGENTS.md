@@ -170,6 +170,13 @@ pnpm build
   到 `.remember/` 或 `docs/planning/`；四栏就地改写，不能靠追加对冲。
 - README 是当前 stack 与本地/NAS 入口；runtime 形态改变时同步更新。
 - Single-context domain layout 使用根 `CONTEXT.md` 与 `docs/adr/`。
+- 批量证据外置：新增批量审计/验收证据（日志、tar.gz、截图、actual-output 封存等）
+  永久存放仓库外 `tlp-audit-artifacts/<line-or-issue>/<head>/`（本仓指
+  `/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/`，架构线必须落在其
+  `architecture-deepening/` 子路径下）；git 只保留结论、命令、revision、外部路径与
+  SHA256 摘要。git 历史不重写；把既有批量证据从 HEAD 删除前，必须先完成外置复制、
+  hash 核验并在 git 内建立指针引用，且逐批提交协调线查看——协调线确认该批次前
+  不得删除。仓库内代码/测试仍按各自规则读取所需 fixture，不受本条影响。
 
 ## Linear issue tracking
 
