@@ -21,6 +21,7 @@ import {
   type PersistNoteRefineApplyResult,
   persistNoteRefineApply,
 } from '@/capabilities/notes/public';
+import { NoteRefineApplyError } from '@/core/blocks/apply-note-patch';
 import type { Db } from '@/db/client';
 import { artifact_edit_session, editing_presence } from '@/db/schema';
 
@@ -32,6 +33,7 @@ import {
   HUB_AUTO_SYNC_ACTOR_REF,
   type MarkIdleAndFlushInput,
   type MarkIdleAndFlushResult,
+  type NoteRefineQueueEntry,
   type PresenceStore,
   type QueuedPatch,
   type RecordHeartbeatInput,
@@ -87,20 +89,10 @@ export class PgPresenceStore implements PresenceStore {
   async enqueueOrApplyNoteRefinePatch(input: EnqueueOrApplyInput): Promise<EnqueueOrApplyResult> {
     const now = input.now ?? new Date();
     const at = PgPresenceStore.stamp(now);
-    const item: SerializedQueuedPatch = {
-      patch: input.patch,
-      taskResult: input.taskResult,
-      triggerEventId: input.triggerEventId ?? null,
-      queuedAtMs: now.getTime(),
-    };
 
-    // Serialize the idle-decision AND the enqueue under the SAME shared advisory lock
-    // markArtifactIdleAndFlush takes, then re-check idle INSIDE the lock. This closes a
-    // TOCTOU window: a concurrent blur could otherwise drain+idle the artifact between a
-    // "not idle" read and the append, orphaning the patch in a bag nobody will flush
-    // (later dropped after EDITING_FORCE_APPLY_TIMEOUT_MS). If the blur already landed,
-    // the in-lock re-check sees idle and we apply now instead of deferring.
-    const shouldApply = await this.db.transaction(async (tx) => {
+    // Keep the backlog decision and immediate apply under the drain's lock so a
+    // new writer cannot overtake an unfinished patch between decision and commit.
+    return this.db.transaction(async (tx) => {
       await tx.execute(PgPresenceStore.advisoryLock(input.artifactId));
       const idleRows = await tx.execute<{ idle: boolean }>(sql`
         select not exists(
@@ -109,11 +101,6 @@ export class PgPresenceStore implements PresenceStore {
             and ${at} - last_heartbeat_at <= ${ACTIVE_SESSION_INTERVAL}
         ) as idle
       `);
-      if (idleRows[0]?.idle === true) return true;
-
-      // Actively edited → append to the pending bag under a row lock, dropping any
-      // stale entries first (裁决 i). The bag row carries a vestigial status so the
-      // NOT NULL columns are satisfied; no code reads it for the defer decision.
       const [row] = await tx
         .select()
         .from(editing_presence)
@@ -122,6 +109,24 @@ export class PgPresenceStore implements PresenceStore {
         .limit(1);
       const existing = row?.pending ?? [];
       const fresh = dropStalePending(existing, now, input.artifactId);
+      const idle = idleRows[0]?.idle === true;
+      if (idle && !fresh.kept.some((entry) => entry.state !== 'dead')) {
+        return persistNoteRefineApply({
+          db: tx,
+          artifactId: input.artifactId,
+          patch: input.patch,
+          taskResult: input.taskResult,
+          triggerEventId: input.triggerEventId ?? null,
+          now,
+        });
+      }
+      const item: NoteRefineQueueEntry = {
+        state: idle ? 'draining' : 'pending',
+        patch: input.patch,
+        taskResult: input.taskResult,
+        triggerEventId: input.triggerEventId ?? null,
+        queuedAtMs: now.getTime(),
+      };
       const nextPending = [...fresh.kept, item];
       if (!row) {
         await tx
@@ -143,20 +148,8 @@ export class PgPresenceStore implements PresenceStore {
           .set({ pending: nextPending, last_heartbeat_at: now })
           .where(eq(editing_presence.artifact_id, input.artifactId));
       }
-      return false;
+      return { status: 'deferred', artifact_id: input.artifactId };
     });
-
-    if (shouldApply) {
-      return persistNoteRefineApply({
-        db: input.db,
-        artifactId: input.artifactId,
-        patch: input.patch,
-        taskResult: input.taskResult,
-        triggerEventId: input.triggerEventId ?? null,
-        now,
-      });
-    }
-    return { status: 'deferred', artifact_id: input.artifactId };
   }
 
   async markArtifactIdleAndFlush(input: MarkIdleAndFlushInput): Promise<MarkIdleAndFlushResult> {
@@ -197,10 +190,12 @@ export class PgPresenceStore implements PresenceStore {
           status: 'idle',
           last_heartbeat_at: now,
           editing_started_at: null,
-          pending: fresh.kept.map((queued) => ({ ...queued, drainStarted: true })),
+          pending: fresh.kept.map((queued) =>
+            queued.state === 'pending' ? { ...queued, state: 'draining' } : queued,
+          ),
         })
         .where(eq(editing_presence.artifact_id, input.artifactId));
-      return fresh.kept.length;
+      return fresh.kept.filter((queued) => queued.state !== 'dead').length;
     });
 
     if (pendingCount === null) {
@@ -218,8 +213,10 @@ export class PgPresenceStore implements PresenceStore {
           .where(eq(editing_presence.artifact_id, input.artifactId))
           .for('update')
           .limit(1);
-        const queued = row?.pending[0];
-        if (!queued?.drainStarted) return null;
+        if (!row) return null;
+        const headIndex = row.pending.findIndex((queued) => queued.state !== 'dead');
+        const queued = row.pending[headIndex];
+        if (queued?.state !== 'draining') return null;
         const activeRows = await tx.execute<{ active: boolean }>(sql`
           select exists(
             select 1 from artifact_edit_session
@@ -229,24 +226,45 @@ export class PgPresenceStore implements PresenceStore {
         `);
         if (activeRows[0]?.active === true) return null;
 
-        const applied = await persistNoteRefineApply({
-          db: tx,
-          artifactId: input.artifactId,
-          patch: queued.patch as QueuedPatch['patch'],
-          taskResult: queued.taskResult as QueuedPatch['taskResult'],
-          triggerEventId: queued.triggerEventId ?? null,
-          now,
-        });
+        let applied: PersistNoteRefineApplyResult;
+        try {
+          // Roll back the failed apply before committing its terminal disposition.
+          applied = await tx.transaction((applyTx) =>
+            persistNoteRefineApply({
+              db: applyTx,
+              artifactId: input.artifactId,
+              patch: queued.patch as QueuedPatch['patch'],
+              taskResult: queued.taskResult as QueuedPatch['taskResult'],
+              triggerEventId: queued.triggerEventId ?? null,
+              now,
+            }),
+          );
+        } catch (error) {
+          if (!(error instanceof NoteRefineApplyError)) throw error;
+          const dead: NoteRefineQueueEntry = {
+            ...queued,
+            state: 'dead',
+            failure: { code: error.code, message: error.message, failedAtMs: now.getTime() },
+          };
+          await tx
+            .update(editing_presence)
+            .set({
+              pending: row.pending.map((entry, index) => (index === headIndex ? dead : entry)),
+            })
+            .where(eq(editing_presence.artifact_id, input.artifactId));
+          return { status: 'dead' } as const;
+        }
         // A CAS conflict is retryable, unlike the other terminal no-op results.
         if (applied.status !== 'skipped:version_conflict') {
           await tx
             .update(editing_presence)
-            .set({ pending: row.pending.slice(1) })
+            .set({ pending: row.pending.filter((_, index) => index !== headIndex) })
             .where(eq(editing_presence.artifact_id, input.artifactId));
         }
         return applied;
       });
       if (result === null) break;
+      if (result.status === 'dead') continue;
       results.push(result);
       if (result.status === 'skipped:version_conflict') break;
     }
@@ -281,7 +299,7 @@ export class PgPresenceStore implements PresenceStore {
       // isArtifactIdle is the load-bearing windowed check.
       status: sessions.length > 0 ? 'editing' : 'idle',
       last_heartbeat_at: latest.toISOString(),
-      pending_patches: presence?.pending?.length ?? 0,
+      pending_patches: presence?.pending?.filter((queued) => queued.state !== 'dead').length ?? 0,
     };
   }
 
@@ -297,19 +315,27 @@ function dropStalePending(
   pending: SerializedQueuedPatch[],
   now: Date,
   artifactId: string,
-): { kept: SerializedQueuedPatch[]; dropped: number } {
-  const kept: SerializedQueuedPatch[] = [];
+): { kept: NoteRefineQueueEntry[]; dropped: number } {
+  const kept: NoteRefineQueueEntry[] = [];
   let dropped = 0;
   let retainedPastTtl = 0;
   for (const item of pending) {
-    const pastTtl = now.getTime() - item.queuedAtMs > EDITING_FORCE_APPLY_TIMEOUT_MS;
-    // Admitted drain obligations survive retries, including process restarts.
-    // Hub sync separately opts out of the generic force-apply ceiling (YUK-768).
-    if (!item.drainStarted && item.actorRef !== HUB_AUTO_SYNC_ACTOR_REF && pastTtl) {
+    let entry: NoteRefineQueueEntry;
+    if (item.state === undefined) {
+      const { drainStarted, ...payload } = item;
+      entry = { ...payload, state: drainStarted ? 'draining' : 'pending' };
+    } else {
+      entry = item;
+    }
+    const pastTtl = now.getTime() - entry.queuedAtMs > EDITING_FORCE_APPLY_TIMEOUT_MS;
+    // Neither retry obligations nor dead-letter evidence may expire as pending work.
+    if (entry.state === 'pending' && entry.actorRef !== HUB_AUTO_SYNC_ACTOR_REF && pastTtl) {
       dropped++;
     } else {
-      if (pastTtl && item.actorRef === HUB_AUTO_SYNC_ACTOR_REF) retainedPastTtl++;
-      kept.push(item);
+      if (pastTtl && entry.state !== 'dead' && entry.actorRef === HUB_AUTO_SYNC_ACTOR_REF) {
+        retainedPastTtl++;
+      }
+      kept.push(entry);
     }
   }
   if (dropped > 0) {

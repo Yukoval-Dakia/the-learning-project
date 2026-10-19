@@ -1,10 +1,10 @@
 # YUK-1592 笔记 drain writer 交接 — 2026-10-19
 
-独立 worktree `/workspace/amp/wt/YUK-1592`，分支 `yuk-1592-presence-drain`。交付限 draft PR，Linear 保持 In Progress，由 EL 交 QA；不得据本地验证合并或部署，合入前需 Opus 防丢数据审查 + 真页面核对。
+独立 worktree `/workspace/amp/wt/YUK-1592`，分支 `yuk-1592-presence-drain`。QA 的永久失败堵队和新 patch 插队已修复，继续更新同一 PR #1829。Linear 保持 In Progress，由 EL 交 QA；不得据本地验证合并或部署，合入前需 Opus 防丢数据审查 + 真页面核对。
 
-上层 task 的 deferred 正常结束，proposal accept 与 hub recovery 不恢复本队列。状态为 pending → draining → terminal dequeue：先提交 drainStarted 标记，再逐项同事务 apply/事件/出队；失败、退出或版本冲突保留义务，draining 不过期，既有 blur 可重试。未开始 drain 的旧 TTL 行为保留。没有新增后台恢复入口、API 合同、migration 或测试代码。
+上层 task 的 deferred 正常结束，proposal accept 与 hub recovery 不恢复本队列。显式类型为 pending/draining/dead，读取时兼容旧 drainStarted JSON。成功时正文、事件和出队同事务提交；暂时失败、退出或版本冲突保留 draining。NoteRefineApplyError 使当前项进入 dead，保留原 patch、来源与错误，后续项继续且 blur 不因此500。dead 不计入 pending_patches，也不再重试。闲置时仍有待办项的新 patch 加到队尾并持久标为 draining，避免插队和TTL丢弃。未开始 drain 的旧 TTL 行为保留。没有新后台恢复入口、API 合同、migration 或测试代码。
 
-隔离 Podman PG `yuk1592-presence-pg`、127.0.0.1:55492，按仓库 migration 初始化。原代码首项失败后 pending=0；修复后 pending=3。第二项失败后正文版本1/pending2；重试至版本3/pending0/事件3。SIGKILL 退出137后版本0/pending3，跨11分钟重试完成且重复 blur 为0。并发 blur 合计只应用3项。原有 presence 6 tests、typecheck、lint（180 warnings/0 errors）、build 通过；命令和结果随 PR，原始日志 `.amp/in/artifacts/`。容器及匿名卷已删除。无付费模型、TEST8787、生产操作或完整本机 pnpm test。自动夜扫、失败回执、真实页面及版本冲突交互未验收，归 YUK-1417 和本 PR 合入门禁，不称学习者整链完成。
+本轮隔离 Podman PG `yuk1592-qa-fix-pg`、127.0.0.1:55492，按仓库 migration 初始化，容器与匿名卷已删除。真实 blur handler 对受保护块由连续500变为200，后两项应用、人工块不变、首项保留dead；非法正文也记dead而不500。首项暂时失败后 p4 返回deferred，30分钟后按p1/p2/p3/p4应用；第二项暂时失败只重试后两项。SIGKILL退出137后版本0/待办3/事件0，新进程30分钟后应用3项，再次blur为0。双store并发分别应用2/1项，最终版本3/事件3；历史drainStarted三项跨30分钟也成功。原有presence六项测试、typecheck、lint、build全部exit0。lint179 warnings/0 errors；第一次lint只因未格式化的本地PR快照JSON失败，格式化后复跑通过。原始日志在 `.amp/in/artifacts/qa-fix/`。无付费模型、TEST8787、生产操作或完整本机pnpm test。P3自动夜扫以及死信处置/学习者回执留YUK-1417；Opus防丢数据审查、真页面和版本冲突交互仍待EL/QA，不称整链验收完成。
 
 # YUK-1404 figure main composition — 2026-10-11
 

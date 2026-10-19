@@ -1,4 +1,5 @@
 import type { PersistNoteRefineApplyResult } from '@/capabilities/notes/public';
+import type { NoteRefineApplyError } from '@/core/blocks/apply-note-patch';
 import type { NotePatchT } from '@/core/schema/note-patch';
 import type { Db } from '@/db/client';
 import type { TaskTextResult } from '@/server/ai/provenance';
@@ -34,19 +35,11 @@ export interface QueuedPatch {
   queuedAt: Date;
 }
 
-// Serialized shape used by BOTH cross-process stores (Redis string value +
-// editing_presence.pending jsonb column) — YUK-321 M5 gate option b. Dates
-// travel as ms-since-epoch numbers so the Lua scripts (Redis) and JS (PG)
-// can do arithmetic without date parsing. Lifted here from redis.ts so the PG
-// store shares the exact same serialization shape (subplan §2 偏差 2).
-export interface SerializedQueuedPatch {
+interface QueuedPatchData {
   patch: unknown;
   taskResult?: unknown;
   triggerEventId: string | null;
   queuedAtMs: number;
-  // Once admitted to a PG drain, keep the obligation through failures/restarts
-  // and TTL pruning until apply and dequeue commit together.
-  drainStarted?: true;
   // Provenance actor of the deferred patch (`event.actor_ref` semantics). Absent
   // for the default note-refine AI mutator. A mutation-triggered hub sync
   // (HUB_AUTO_SYNC_ACTOR_REF) opts out of the generic force-apply ceiling, so a
@@ -54,6 +47,21 @@ export interface SerializedQueuedPatch {
   // dropped at the 10-minute TTL like an abandoned note-refine patch.
   actorRef?: string;
 }
+
+export type NoteRefineQueueEntry = QueuedPatchData &
+  (
+    | { state: 'pending' }
+    | { state: 'draining' }
+    | {
+        state: 'dead';
+        failure: { code: NoteRefineApplyError['code']; message: string; failedAtMs: number };
+      }
+  );
+
+// Read historical JSON without losing an already admitted drain obligation.
+export type SerializedQueuedPatch =
+  | NoteRefineQueueEntry
+  | (QueuedPatchData & { state?: undefined; drainStarted?: true });
 
 export interface EditingSessionSnapshot {
   artifact_id: string;
@@ -116,15 +124,14 @@ export interface PresenceStore {
   // cleanup, but correctness never depends on the sweep.
   isArtifactIdle(artifactId: string, now?: Date): Promise<boolean>;
 
-  // Apply the patch immediately when the artifact is idle (or past the
-  // force-apply ceiling); otherwise enqueue it for later flush. The actual DB
-  // write (persistNoteRefineApply) happens outside any atomic section.
+  // PG applies immediately only when idle with no unfinished queue entries.
+  // Otherwise append behind the existing obligations.
   enqueueOrApplyNoteRefinePatch(input: EnqueueOrApplyInput): Promise<EnqueueOrApplyResult>;
 
   // Remove the caller's editing session; if no active session remains, flush all
   // pending note-refine patches in FIFO order (otherwise leave them queued for
   // the session still editing). PG commits each apply and dequeue together;
-  // failures leave unfinished items durable for a later idle/blur retry.
+  // transient failures retain obligations; permanent failures become dead letters.
   markArtifactIdleAndFlush(input: MarkIdleAndFlushInput): Promise<MarkIdleAndFlushResult>;
 
   // Snapshot of the current session, or null if none recorded.
