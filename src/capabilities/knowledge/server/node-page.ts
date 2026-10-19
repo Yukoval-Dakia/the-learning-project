@@ -18,20 +18,22 @@
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 
 import { listKnowledgeEdges } from '@/capabilities/knowledge/server/edges';
-import {
-  type BacklinksByArtifactType,
-  type NoteSummary,
-  getArtifactCorrectionStates,
-  groupBacklinksByArtifactType,
-  interactiveForKnowledge,
-  listBacklinks,
-  notesForKnowledge,
-  resolveOwningLearningItemIds,
-} from '@/capabilities/notes/public';
 import type { ArtifactBodyBlocksT } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact, event, knowledge } from '@/db/schema';
+import {
+  type BacklinksByArtifactType,
+  groupBacklinksByArtifactType,
+  listBacklinks,
+  resolveOwningLearningItemIds,
+} from '@/kernel/read-models/artifact-backlinks';
+import { getArtifactCorrectionStates } from '@/kernel/read-models/artifact-corrections';
 import { isLearnerVisibleKnowledgeId } from '@/kernel/read-models/learner-knowledge-visibility';
+import {
+  type NoteSummary,
+  interactiveForKnowledge,
+  notesForKnowledge,
+} from '@/kernel/read-models/notes-read';
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import { type RetentionReading, getFsrsRetrievabilityByIds } from '@/server/fsrs/state';
 import { getMasteryProjection, getRepresentativeKcBeta } from '@/server/mastery/state';

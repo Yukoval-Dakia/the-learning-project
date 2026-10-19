@@ -22,7 +22,6 @@
 
 import { and, desc, eq, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { readAgentNotes } from '@/capabilities/agency/public';
 import { validateProposalQuality } from '@/capabilities/knowledge/server/rubric-validator';
 import { newId } from '@/core/ids';
 import { isSymmetricKnowledgeRelation } from '@/core/schema/event/blocks';
@@ -38,6 +37,7 @@ import type { AdaptiveGateInput } from '@/kernel/proposals/adaptive-bias';
 import { resolveEdgeGateBump } from '@/kernel/proposals/adaptive-bias';
 import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
 import { writeAiProposal } from '@/kernel/proposals/writer';
+import { readAgentNotes } from '@/kernel/read-models/agent-note-hints';
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
 import { getFailureAttempts } from '@/kernel/read-models/failure-attempts';
 import { PROPOSAL_FEEDBACK_BUDGET, PROPOSAL_GATE_BIAS_CONFIG } from '@/kernel/tools/budgets';
