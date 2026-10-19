@@ -2319,8 +2319,8 @@ export const cost_ledger = pgTable(
     entry_kind: text('entry_kind').notNull().default('legacy'),
     cost_basis: text('cost_basis'),
     cost_ref: text('cost_ref'),
-    tokens_in: integer('tokens_in').notNull(),
-    tokens_out: integer('tokens_out').notNull(),
+    tokens_in: integer('tokens_in'),
+    tokens_out: integer('tokens_out'),
     outcome: text('outcome').notNull().default('success'),
     pgboss_job_id: text('pgboss_job_id'),
     occurred_at: timestamp('occurred_at', { withTimezone: true }).notNull(),
@@ -2334,6 +2334,16 @@ export const cost_ledger = pgTable(
     check(
       'cost_ledger_cost_basis_ck',
       sql`${t.cost_basis} IS NULL OR ${t.cost_basis} IN ('reported','estimated','unknown')`,
+    ),
+    check(
+      'cost_ledger_tokens_pair_ck',
+      sql`(
+        (${t.tokens_in} IS NULL AND ${t.tokens_out} IS NULL)
+        OR (
+          ${t.tokens_in} IS NOT NULL AND ${t.tokens_out} IS NOT NULL
+          AND ${t.tokens_in} >= 0 AND ${t.tokens_out} >= 0
+        )
+      )`,
     ),
     check(
       'cost_ledger_attempt_truth_ck',
@@ -4530,7 +4540,9 @@ export const paid_effect_control = pgTable('paid_effect_control', {
 // machine: pending → sending → (unknown | receipt_ready) → applied, with no
 // path back to pending and no auto-replay from unknown. YUK-1567 adds
 // unknown → voided: a lead-authorized terminal resolution that preserves every
-// evidence column and carries a void receipt (voided_at + void_json).
+// evidence column and carries a void receipt (voided_at + void_json). The same
+// ticket also adds pending → cancelled: a lead-authorized retirement of a
+// never-sent intent (cancelled_at + cancel_json) — no successor, no re-spend.
 export const paid_effect = pgTable(
   'paid_effect',
   {
@@ -4562,6 +4574,8 @@ export const paid_effect = pgTable(
     unresolved_reason: text('unresolved_reason'),
     voided_at: timestamp('voided_at', { withTimezone: true }),
     void_json: jsonb('void_json'),
+    cancelled_at: timestamp('cancelled_at', { withTimezone: true }),
+    cancel_json: jsonb('cancel_json'),
     created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -4570,7 +4584,7 @@ export const paid_effect = pgTable(
     index('paid_effect_obligation_idx').on(t.family, t.state),
     check(
       'paid_effect_state_ck',
-      sql`${t.state} IN ('pending','sending','unknown','receipt_ready','applied','voided')`,
+      sql`${t.state} IN ('pending','sending','unknown','receipt_ready','applied','voided','cancelled')`,
     ),
     check('paid_effect_digest_ck', sql`${t.input_digest} ~ '^sha256:[0-9a-f]{64}$'`),
     check('paid_effect_fence_ck', sql`${t.fence} >= 0`),
@@ -4587,6 +4601,7 @@ export const paid_effect = pgTable(
         OR (${t.state} = 'receipt_ready' AND ${t.result_json} IS NOT NULL AND ${t.result_recorded_at} IS NOT NULL AND ${t.send_lease_expires_at} IS NULL AND ${t.applied_at} IS NULL)
         OR (${t.state} = 'applied' AND ${t.result_json} IS NOT NULL AND ${t.applied_at} IS NOT NULL AND ${t.application_json} IS NOT NULL AND ${t.send_lease_expires_at} IS NULL)
         OR (${t.state} = 'voided' AND ${t.delivery_id} IS NOT NULL AND ${t.delivery_backend} IS NOT NULL AND ${t.unresolved_reason} IS NOT NULL AND ${t.send_lease_expires_at} IS NULL AND ${t.result_json} IS NULL AND ${t.applied_at} IS NULL AND ${t.voided_at} IS NOT NULL AND ${t.void_json} IS NOT NULL)
+        OR (${t.state} = 'cancelled' AND ${t.delivery_id} IS NULL AND ${t.delivery_backend} IS NULL AND ${t.delivery_tick} IS NULL AND ${t.send_lease_expires_at} IS NULL AND ${t.result_json} IS NULL AND ${t.result_recorded_at} IS NULL AND ${t.application_json} IS NULL AND ${t.applied_at} IS NULL AND ${t.unresolved_reason} IS NULL AND ${t.voided_at} IS NULL AND ${t.void_json} IS NULL AND ${t.cancelled_at} IS NOT NULL AND ${t.cancel_json} IS NOT NULL)
       )`,
     ),
     check('paid_effect_application_attempts_ck', sql`${t.application_attempts} >= 0`),
@@ -4649,6 +4664,64 @@ export const paid_effect_authorization = pgTable(
     foreignKey({
       columns: [t.family, t.entity_id, t.entity_revision, t.unit, t.input_digest],
       name: 'paid_effect_authorization_old_effect_fk',
+      foreignColumns: [
+        paid_effect.family,
+        paid_effect.entity_id,
+        paid_effect.entity_revision,
+        paid_effect.unit,
+        paid_effect.input_digest,
+      ],
+    }),
+  ],
+);
+
+// YUK-1567 — one durable cancellation EVENT row per cancelled paid effect
+// (PK = the cancelled identity, so an identity can be cancelled at most once;
+// a second event under a different request_id can never be minted). Several
+// cancelled rows may share one request_id when a single approved operation
+// retires a batch of never-sent intents. The row is audit truth written in
+// the SAME transaction as the paid_effect pending → cancelled CAS — an event
+// failure rolls the state transition back with it. Unlike
+// paid_effect_authorization it binds no successor: cancel authorizes nothing.
+export const paid_effect_cancellation = pgTable(
+  'paid_effect_cancellation',
+  {
+    family: text('family').notNull(),
+    entity_id: text('entity_id').notNull(),
+    entity_revision: text('entity_revision').notNull(),
+    unit: text('unit').notNull(),
+    input_digest: text('input_digest').notNull(),
+    request_id: text('request_id').notNull(),
+    reason: text('reason').notNull(),
+    operator: text('operator').notNull(),
+    basis: text('basis').notNull(),
+    cancelled_from_state: text('cancelled_from_state').notNull(),
+    previous_fence: integer('previous_fence').notNull(),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({
+      columns: [t.family, t.entity_id, t.entity_revision, t.unit, t.input_digest],
+      // Explicit short name so ADD CONSTRAINT never truncates-collides (same
+      // 63-byte identifier discipline as the authorization table).
+      name: 'paid_effect_cancellation_pk',
+    }),
+    index('paid_effect_cancellation_entity_idx').on(t.family, t.entity_id),
+    index('paid_effect_cancellation_request_idx').on(t.request_id),
+    check('paid_effect_cancellation_digest_ck', sql`${t.input_digest} ~ '^sha256:[0-9a-f]{64}$'`),
+    check(
+      'paid_effect_cancellation_nonempty_ck',
+      sql`${t.entity_id} <> '' AND ${t.entity_revision} <> '' AND ${t.unit} <> '' AND ${t.request_id} <> '' AND ${t.reason} <> '' AND ${t.operator} <> '' AND ${t.basis} <> ''`,
+    ),
+    check(
+      'paid_effect_cancellation_from_ck',
+      // The never-sent contract is literal: only a fence-0 pending intent may
+      // be cancelled — any advanced fence implies a claim touched the row.
+      sql`${t.cancelled_from_state} = 'pending' AND ${t.previous_fence} = 0`,
+    ),
+    foreignKey({
+      columns: [t.family, t.entity_id, t.entity_revision, t.unit, t.input_digest],
+      name: 'paid_effect_cancellation_old_effect_fk',
       foreignColumns: [
         paid_effect.family,
         paid_effect.entity_id,

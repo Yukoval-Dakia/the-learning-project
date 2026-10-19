@@ -24,9 +24,9 @@ import {
   readAutomaticIssuanceServingDecisions,
   readAutomaticallyServableQuestionIds,
 } from '@/kernel/records/assessment-issuance';
+import { knowledgeLabels } from './knowledge-labels';
 import { countPaperSlots } from './paper-sections';
 import { type DailyPracticePace, estimateStreamItemMinutes } from './stream-budget';
-import { knowledgeLabels } from './stream-inputs';
 
 /** 本模块的 DB 句柄：既可是顶层 `db`，也可是事务内 `tx`。 */
 type DbLike = Db | Tx;

@@ -214,8 +214,10 @@ export async function collectTaskRunProvenance(
           typeof cost.cost !== 'number' ||
           !Number.isFinite(cost.cost) ||
           cost.cost < 0 ||
+          cost.tokens_in == null ||
           !Number.isInteger(cost.tokens_in) ||
           cost.tokens_in < 0 ||
+          cost.tokens_out == null ||
           !Number.isInteger(cost.tokens_out) ||
           cost.tokens_out < 0
         ) {

@@ -4675,8 +4675,8 @@ export interface operations {
                             provider: string;
                             task_kind: string;
                             task_run_id: string | null;
-                            tokens_in: number;
-                            tokens_out: number;
+                            tokens_in: number | null;
+                            tokens_out: number | null;
                         }[];
                         run: {
                             /** @enum {string|null} */

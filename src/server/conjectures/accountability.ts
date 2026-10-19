@@ -1,10 +1,7 @@
-// YUK-795 — deterministic n=1 prediction accountability.
-//
-// This is deliberately a small ordinal policy, not a fitted calibration model:
-// every score is one within-owner observation, duplicates collapse by the backing
-// probe_result id, and only a repeated same-direction streak changes ranking.
-// Population parameters, posterior odds, and cross-learner estimates do not belong
-// here.
+// Ordinal ranking for one learner. Not a fitted model.
+// Each score is one observation. Duplicates collapse by the backing probe result.
+// Only a repeated same-direction streak changes rank.
+// Population parameters, posteriors, and cross-learner estimates do not belong here.
 
 import { misconceptionHardConfirmEnabled } from '@/capabilities/agency/public';
 import type { Db } from '@/db/client';
