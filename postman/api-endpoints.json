@@ -1577,6 +1577,19 @@
     ]
   },
   {
+    "path": "/api/worksheet-exports/:token/pdf",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "YUK-1529：已存档作答卷 PDF 下载——worksheet_render job 渲染后经 #1773 write-once 存档的 content-addressed R2 对象（application/pdf 字节流，ETag=pdf_digest）",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "404 not_found=token 不存在；pdf_not_rendered=导出尚无存档 PDF（渲染 job 未完成或失败）；pdf_blob_missing=存档行在但 blob 字节缺失（details 带 blob_key）。200 返回 application/pdf + Content-Disposition attachment"
+      }
+    ]
+  },
+  {
     "path": "/api/worksheet-exports/:token/pages/:page",
     "methods": [
       {

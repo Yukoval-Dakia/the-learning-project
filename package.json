@@ -155,6 +155,7 @@
     "parse5": "^8.0.1",
     "pg": "^8.23.1",
     "pg-boss": "^12.36.0",
+    "playwright-core": "1.64.0",
     "postgres": "^3.4.5",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
