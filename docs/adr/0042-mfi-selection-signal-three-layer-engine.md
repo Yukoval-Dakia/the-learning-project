@@ -33,7 +33,7 @@ ADR-0037 拍板了调度合并引擎的**架构裁决**（一 AI 引擎吃 FSRS 
 
 ### 3. MFI = difficulty×p(L) 交叉派生信号，非第三轴
 
-MFI 不是独立第三轴（三轴仍是 R=FSRS when / p(L)+transfer=mastery / difficulty）。MFI 是 `f(b, θ̂)` 的派生计算：b（difficulty 轴，来自 `item_calibration`）× θ̂（p(L) 轴，来自 `mastery_state`）。**载体**：θ̂ 在线更新用 **Elo + b 锚死外部锚**（urnings-elo 核验：MFI 强自适应下 Elo 优于 Urnings——后者 adaptive-selection 校正 O(|items|) + mandatory MH + 闭式 SE 在 n=1 small-N 退化；Elo fixed-adaptive 有 negative bias 但 O(1) 可控）。**recall 类不喂 MFI**（L1 信号源头切断，守 ADR-0030 原题重复 invariant）。**多 KC 题用 θ̂_min**（最薄弱 KC），须与 mastery VIEW 聚合规则协调。
+MFI 不是独立第三轴（三轴仍是 R=FSRS when / p(L)+transfer=mastery / difficulty）。MFI 是 `f(b, θ̂)` 的派生计算：b（difficulty 轴，来自 `item_calibration`）× θ̂（p(L) 轴，来自 `mastery_state`）。**载体**：θ̂ 在线更新用 **Elo + b 先验锚定**（2026-10-19 修订，ADR-0043 Amendment / YUK-1625：b 不再「锚死外部锚」，每题带方差的 agent 先验锚定尺度，b 后验与 θ̂ 联合标定、连续收缩；原「b 锚死」措辞同批修订）（urnings-elo 核验：MFI 强自适应下 Elo 优于 Urnings——后者 adaptive-selection 校正 O(|items|) + mandatory MH + 闭式 SE 在 n=1 small-N 退化；Elo fixed-adaptive 有 negative bias 但 O(1) 可控）。**recall 类不喂 MFI**（L1 信号源头切断，守 ADR-0030 原题重复 invariant）。**多 KC 题用 θ̂_min**（最薄弱 KC），须与 mastery VIEW 聚合规则协调。
 
 ### 4. 运行时形态 = hybrid（决策点 A）
 
@@ -98,7 +98,7 @@ L3 全部职责的穷举；§5 的学习 mix 质量约束仍归确定性 L3，�
 
 **refine 关系**：本 amendment 精化 ADR-0042 §1/§2（L2 从「what+mix+reason」升为「per-candidate 权重」；统计层 = sampler 非 chooser）+ ADR-0037「一个 AI 引擎」→「AI 编排（权重/安排/叙事）+ 统计 sampler（item+π_i）+ 确定性守（信号+铁律）」。
 
-**Urnings-lite sequencing**（roadmap Phase 0 / Task 1）：Urnings 作 uncertainty 方向灵感，**非**当前 production 的 paired-comparison 在线引擎；当前路径 = Elo/MLE θ̂ + θ_precision 不确定性 + b 锚只读 + π_i 持久化，full Urnings deferred 到离线 replay spike（Phase 7）。详见 `docs/design/2026-06-15-urnings-lite-calibration-amendment.md`。
+**Urnings-lite sequencing**（roadmap Phase 0 / Task 1）：Urnings 作 uncertainty 方向灵感，**非**当前 production 的 paired-comparison 在线引擎；当前路径 = Elo/MLE θ̂ + θ_precision 不确定性 + b 锚只读 + π_i 持久化（2026-10-19 修订：b 改先验锚定连续收缩、π_i 不再是进标定的门票——ADR-0043 Amendment），full Urnings deferred 到离线 replay spike（Phase 7）。详见 `docs/design/2026-06-15-urnings-lite-calibration-amendment.md`。
 
 **诚实天花板**：mimo-v2.5 连贯性（LLM 越主导越吃模型推理上限，→ YUK-346 换 GLM 评估的又一理由）；signal-fidelity（信号分桶 high/mid/low 喂 LLM，sampler 用真实数值兜 π_i）；π_i 方差随 T（见旋钮）。
 
@@ -123,7 +123,7 @@ L3 全部职责的穷举；§5 的学习 mix 质量约束仍归确定性 L3，�
 
 **代价 / 风险（诚实标）**
 - **MFI 喂 LLM 失真**：LLM 对 prompt 原始浮点不敏感，MFI 可能「被携带但未被使用」。缓解：order 收回 L1（MFI 进确定性保序）+ prompt 分桶 + 诊断日志记输入最高 MFI vs 输出排名差。
-- **capitalization on chance**（B1 §5.3）：θ̂ 不准 MFI 系统性偏好 a/c 误差题。缓解：b 锚死、θ̂ SE 宽降权、cap 曝光率 + 观测触发率。
+- **capitalization on chance**（B1 §5.3）：θ̂ 不准 MFI 系统性偏好 a/c 误差题。缓解：b 先验锚定（2026-10-19 起后验连续收缩，非锚死——ADR-0043 Amendment）、θ̂ SE 宽降权、cap 曝光率 + 观测触发率。
 - **mastery B1 前偏斜**：未校准 VIEW 对 evidence<3 给保守默认 → frontier KC 读为低掌握 → 巩固偏见反馈循环。缓解：B1 前用 evidence_count 驱动 mix、prompt 传播 is_placeholder。
 - **mem0 软约束不可机械验证**：LLM 可能把 mem0 prior 当硬偏好。缓解：ADVISORY_ONLY 标注 + L3 due presence 唯一硬兜底。
 - **数据前置**：mastery_state + item_calibration 两表 gated B1 载体 wave；过渡用 `question.difficulty`（1-5）+ evidence_count 做 crude MFI 先 prototype。

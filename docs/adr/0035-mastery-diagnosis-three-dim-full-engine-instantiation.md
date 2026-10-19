@@ -35,7 +35,7 @@
 
 5. **慢热自校准四阶段，时间序列不能跳**（Phase 2 §3.3 + B1 §5.2，逐阶段支撑强弱已审计标注）：
    - **① 纯 LLM 先验** —— 全低置信只信相对排序；LLM 不当判分诊断器，只当冷启先验 + 特征抽取（直接 prompt 估难度 `r≈0`，承重源 Acquaye 2026；抽教学特征 `r≈0.78`，Hoyl 2026 NN+IRT；模拟考生 ensemble `r=0.75-0.82`，Acquaye + SMART/Scarlatos 2025 EMNLP CORE-A）。支撑**中（弱地基，预印本为主）**。
-   - **② Elo/Urnings 追 `θ`** —— O(1) 在线更新能力，**锁 item 难度防方差膨胀**（n=1 下 Elo/Urnings 只用 θ-更新半边，item-更新半边必须锁死用外部锚——多 agent 系统的 item 在线更新在 n=1 退化回「b 需 cohort」同一道墙，B1 §5.3 审计 G4）。支撑**强**（Pelánek 2016 + Klinkenberg 2011 Math Garden + Bolsinova et al. 2022 Urnings——非「Brinkhuis & Maris」，作者已订正）。
+   - **② Elo/Urnings 追 `θ`** —— O(1) 在线更新能力，**锁 item 难度防方差膨胀**（n=1 下 Elo/Urnings 只用 θ-更新半边，item-更新半边必须锁死用外部锚——多 agent 系统的 item 在线更新在 n=1 退化回「b 需 cohort」同一道墙，B1 §5.3 审计 G4。**2026-10-19 修订（ADR-0043 Amendment，YUK-1625）**：item 半边不再锁死——每题 b 变为带方差的 agent 先验，先验打破平移不变、承担识别性与方差控制（原由「锁死」承担），b 与 θ̂ 在线联合标定，「需 cohort」的墙由每题先验绕开）。支撑**强**（Pelánek 2016 + Klinkenberg 2011 Math Garden + Bolsinova et al. 2022 Urnings——非「Brinkhuis & Maris」，作者已订正）。
    - **③ fixed-anchor 纠偏 + PPI + 自检** —— owner 客观题确定判分作干净锚，残差 = miscalibration 信号；PPI 数学保证「合成标定 + 真答 ≥ 只用真答」；active learning 选题（Fisher info p≈0.5 + 先验分歧最大）。支撑**强**（PPI/Angelopoulos 2023 Science 逐字核到 + Kolen & Brennan 2004 linking 奠基 + Stocking 1990）。
    - **④ per-knowledge 滚动达标解锁开放题外推** —— **零文献兜底，全栈最薄一环（B1 §7.2 审计 G1）**：降级为「**propose-only + 显式低置信的产品假设**」，外推结果靠 owner 复盘回执（A2 复盘自校准 UI）事后校验，**不当成已标定**。
 
