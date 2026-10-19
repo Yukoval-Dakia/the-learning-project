@@ -54,7 +54,9 @@ import type {
 import {
   CUSTOM_ASSET_MAX_BYTES,
   CUSTOM_ASSET_MIME_TYPES,
+  DECLARED_BLANK_COMPARE_VERSION,
   Presentation,
+  declaredBlankGradeReadiness,
   describeAnswerShape,
   findAnswerShapeDeclarations,
   findBlankOrderDeclarations,
@@ -674,10 +676,12 @@ export async function publishQuestionGroup(
   assertAdmissionShape(input.admission);
   if (input.suspension != null) assertSuspensionShape(input.suspension);
 
-  // YUK-1568（第 1 片）：声明了 answer_shape 的 blank 尚无已准入的数学比较器
-  //（第 2 片接入）。admitted 被显式拒绝 —— 直接 typed 调用方、verify promote、
-  // 校准回写都绕不过这道闸；声明题只能以 withheld/暂扣发布，绝不回退普通
-  // exact 自动判分。只拦 answer_shape：blank_order 是展示语义，不触及判分。
+  // YUK-1568（第 2 片）：声明了 answer_shape 的 blank 由共享比较核心判定
+  // 判分就绪 —— admitted 发布要求每个已声明槽被支持、被 blank_key unit
+  // 读取且私有键可按声明完整编译（未实现 notation、键冲突、单位缺项均拒
+  // 绝）。直接 typed 调用方、verify promote、校准回写都绕不过这道闸；声明
+  // 题只能以 withheld/暂扣发布，绝不回退普通 exact 自动判分。只拦
+  // answer_shape：blank_order 是展示语义，不触及判分。
   const declaredShapeSlot = input.contract.response_spec.slots.find(
     (slot) => slot.kind === 'blank' && slot.answer_shape != null,
   );
@@ -686,9 +690,15 @@ export async function publishQuestionGroup(
     declaredShapeSlot.kind === 'blank' &&
     input.admission.state === 'admitted'
   ) {
-    throw new Error(
-      `publishQuestionGroup: slot '${declaredShapeSlot.slot_id}' declares answer_shape (${describeAnswerShape(declaredShapeSlot.answer_shape)}) but no admitted math comparator exists yet (YUK-1568 slice 2) — publish the group as withheld; refusing to admit plain-exact auto-grading for a declared blank`,
+    const readiness = declaredBlankGradeReadiness(
+      input.contract.response_spec,
+      input.contract.scoring_basis,
     );
+    if (!readiness.ok) {
+      throw new Error(
+        `publishQuestionGroup: declared answer_shape not gradable — ${readiness.reason} (comparator ${DECLARED_BLANK_COMPARE_VERSION}) — publish the group as withheld; refusing to admit plain-exact auto-grading for a declared blank`,
+      );
+    }
   }
 
   // Db → 顶层事务；Tx → SAVEPOINT（drizzle 嵌套事务）。两种情况下任一步

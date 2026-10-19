@@ -1,5 +1,8 @@
 import { unit as parseUnit } from 'mathjs';
-import { describeAnswerShape } from './blank-answer-shape';
+import {
+  DECLARED_BLANK_COMPARE_VERSION,
+  declaredBlankGradeReadiness,
+} from './blank-answer-compare';
 import { EvaluationContractError, projectIssuedScoringBasis } from './evaluation';
 import { validateExecutionPlan } from './execution';
 import { isPublicSharedMaterial } from './materials';
@@ -274,17 +277,21 @@ export function decideAutomaticServing(
   const answerSlots = revision.response_spec.slots.filter(
     (slot) => selected.has(slot.part_id) && slot.kind !== 'table',
   );
-  // YUK-1568（第 1 片）：发出范围内的 blank 槽若声明了 answer_shape，在本片
-  // 没有已准入的数学比较器（第 2 片接入）—— 明确拒绝发题，绝不回退普通
-  // exact 文本判分。此闸在渲染面检查之前：声明题无论渲染状态都不可出。
-  const declaredSlot = answerSlots.find(
-    (slot) => slot.kind === 'blank' && slot.answer_shape != null,
+  // YUK-1568（第 2 片）：发出范围内的已声明 blank 槽现在由共享比较核心判定
+  // 判分就绪（声明被支持 + 被 blank_key unit 读取 + 私有键可编译）。任一缺
+  // 项（未知版本、未实现 notation、键冲突、缺判分单元）仍明确拒绝发题，
+  // 绝不回退普通 exact 文本判分。此闸在渲染面检查之前：判不了分比画不出
+  // 更根本。
+  const declaredReadiness = declaredBlankGradeReadiness(
+    revision.response_spec,
+    revision.scoring_basis,
+    selectedPartIds,
   );
-  if (declaredSlot != null && declaredSlot.kind === 'blank') {
+  if (!declaredReadiness.ok) {
     return {
       kind: 'unavailable',
       reason: 'unsupported_deterministic_input',
-      detail: `slot ${declaredSlot.slot_id} declares answer_shape (${describeAnswerShape(declaredSlot.answer_shape)}) but the k1 math comparator is not admitted yet (YUK-1568 slice 2) — withholding serving instead of falling back to plain exact text comparison`,
+      detail: `declared answer_shape not gradable: ${declaredReadiness.reason} (comparator ${DECLARED_BLANK_COMPARE_VERSION})`,
     };
   }
   // YUK-1497 —— 展示层形状门先行（review R1）：行读面（revisionRowToContract）对解析

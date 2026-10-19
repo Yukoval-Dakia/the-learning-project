@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { QUESTION_ADMISSION_CONTRACT_VERSION } from '@/core/question-admission-policy';
-import { findAnswerShapeDeclarations } from '@/core/schema/assessment/blank-answer-shape';
+import { declaredShapesAllSupported } from '@/core/schema/assessment/blank-answer-compare';
 import type { Db, Tx } from '@/db/client';
 import { lockPaidEffectControlFamily, readPaidEffectControl } from '@/db/paid-effect-control';
 import { event, question, question_group_lifecycle, question_revision } from '@/db/schema';
@@ -115,14 +115,15 @@ export async function enqueuePublishedQuestionAdmission(
       .where(eq(question_revision.revision_id, payload.data.revision_id));
     if (!revision || revision.group_id !== root.id)
       throw new Error('Admission revision binding missing');
-    // YUK-1568（R1 P1-1）：声明 answer_shape 的题在本片没有已准入的数学
-    // 比较器（第 2 片接入）—— 付费双解必须在比较器之前被拦。enqueue 前按
-    // 冻结 revision 探测声明（宽松存在性检查：未知版本也算已声明），命中即
-    // skip 不入队，不给后续 claim/maySend 留第一入口。
-    if (findAnswerShapeDeclarations(revision.response_spec).length > 0) {
+    // YUK-1568（第 2 片）：声明 answer_shape 的题由共享比较核心判定支持后
+    // 才可进入付费双解 —— 未实现 notation、未知/坏声明仍在入队前被拦（宽
+    // 松存在性扫描 + declaredShapesAllSupported：未知版本也算已声明并判
+    // 未支持）。命中即 skip 不入队，不给后续 claim/maySend 留第一入口。
+    const declaredSupport = declaredShapesAllSupported(revision.response_spec);
+    if (!declaredSupport.ok) {
       return {
         status: 'skipped',
-        reason: `declared answer_shape — comparator pending (YUK-1568 slice 2); revision ${revision.revision_id}`,
+        reason: `declared answer_shape unsupported: ${declaredSupport.reason}; revision ${revision.revision_id}`,
       };
     }
     const control = await readPaidEffectControl(tx, ADMISSION_FAMILY);
