@@ -1,5 +1,5 @@
 {
-  "id": "578eb89d-4afe-4aad-8c7e-042b83e2db9c",
+  "id": "1ea4db7f-f189-40e5-bcc1-9b7f95628616",
   "prevId": "d05a0655-0150-4af6-8831-b886905da723",
   "version": "7",
   "dialect": "postgresql",
@@ -2118,7 +2118,7 @@
       "checkConstraints": {
         "dag_orchestration_node_status_ck": {
           "name": "dag_orchestration_node_status_ck",
-          "value": "\"dag_orchestration_node\".\"status\" IN ('pending','enqueued','running','succeeded','failed','skipped','not_needed','degraded')"
+          "value": "\"dag_orchestration_node\".\"status\" IN ('pending','enqueued','running','succeeded','failed','skipped')"
         }
       },
       "isRLSEnabled": false
@@ -7923,6 +7923,18 @@
           "primaryKey": false,
           "notNull": false
         },
+        "voided_at": {
+          "name": "voided_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "void_json": {
+          "name": "void_json",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -7979,7 +7991,7 @@
       "checkConstraints": {
         "paid_effect_state_ck": {
           "name": "paid_effect_state_ck",
-          "value": "\"paid_effect\".\"state\" IN ('pending','sending','unknown','receipt_ready','applied')"
+          "value": "\"paid_effect\".\"state\" IN ('pending','sending','unknown','receipt_ready','applied','voided')"
         },
         "paid_effect_digest_ck": {
           "name": "paid_effect_digest_ck",
@@ -7995,7 +8007,7 @@
         },
         "paid_effect_state_shape_ck": {
           "name": "paid_effect_state_shape_ck",
-          "value": "(\n        (\"paid_effect\".\"state\" = 'pending' AND \"paid_effect\".\"delivery_id\" IS NULL AND \"paid_effect\".\"delivery_backend\" IS NULL AND \"paid_effect\".\"send_lease_expires_at\" IS NULL AND \"paid_effect\".\"result_json\" IS NULL AND \"paid_effect\".\"applied_at\" IS NULL)\n        OR (\"paid_effect\".\"state\" = 'sending' AND \"paid_effect\".\"delivery_id\" IS NOT NULL AND \"paid_effect\".\"delivery_backend\" IS NOT NULL AND \"paid_effect\".\"send_lease_expires_at\" IS NOT NULL AND \"paid_effect\".\"result_json\" IS NULL AND \"paid_effect\".\"applied_at\" IS NULL)\n        OR (\"paid_effect\".\"state\" = 'unknown' AND \"paid_effect\".\"delivery_id\" IS NOT NULL AND \"paid_effect\".\"delivery_backend\" IS NOT NULL AND \"paid_effect\".\"send_lease_expires_at\" IS NULL AND \"paid_effect\".\"result_json\" IS NULL AND \"paid_effect\".\"applied_at\" IS NULL AND \"paid_effect\".\"unresolved_reason\" IS NOT NULL)\n        OR (\"paid_effect\".\"state\" = 'receipt_ready' AND \"paid_effect\".\"result_json\" IS NOT NULL AND \"paid_effect\".\"result_recorded_at\" IS NOT NULL AND \"paid_effect\".\"send_lease_expires_at\" IS NULL AND \"paid_effect\".\"applied_at\" IS NULL)\n        OR (\"paid_effect\".\"state\" = 'applied' AND \"paid_effect\".\"result_json\" IS NOT NULL AND \"paid_effect\".\"applied_at\" IS NOT NULL AND \"paid_effect\".\"application_json\" IS NOT NULL AND \"paid_effect\".\"send_lease_expires_at\" IS NULL)\n      )"
+          "value": "(\n        (\"paid_effect\".\"state\" = 'pending' AND \"paid_effect\".\"delivery_id\" IS NULL AND \"paid_effect\".\"delivery_backend\" IS NULL AND \"paid_effect\".\"send_lease_expires_at\" IS NULL AND \"paid_effect\".\"result_json\" IS NULL AND \"paid_effect\".\"applied_at\" IS NULL)\n        OR (\"paid_effect\".\"state\" = 'sending' AND \"paid_effect\".\"delivery_id\" IS NOT NULL AND \"paid_effect\".\"delivery_backend\" IS NOT NULL AND \"paid_effect\".\"send_lease_expires_at\" IS NOT NULL AND \"paid_effect\".\"result_json\" IS NULL AND \"paid_effect\".\"applied_at\" IS NULL)\n        OR (\"paid_effect\".\"state\" = 'unknown' AND \"paid_effect\".\"delivery_id\" IS NOT NULL AND \"paid_effect\".\"delivery_backend\" IS NOT NULL AND \"paid_effect\".\"send_lease_expires_at\" IS NULL AND \"paid_effect\".\"result_json\" IS NULL AND \"paid_effect\".\"applied_at\" IS NULL AND \"paid_effect\".\"unresolved_reason\" IS NOT NULL)\n        OR (\"paid_effect\".\"state\" = 'receipt_ready' AND \"paid_effect\".\"result_json\" IS NOT NULL AND \"paid_effect\".\"result_recorded_at\" IS NOT NULL AND \"paid_effect\".\"send_lease_expires_at\" IS NULL AND \"paid_effect\".\"applied_at\" IS NULL)\n        OR (\"paid_effect\".\"state\" = 'applied' AND \"paid_effect\".\"result_json\" IS NOT NULL AND \"paid_effect\".\"applied_at\" IS NOT NULL AND \"paid_effect\".\"application_json\" IS NOT NULL AND \"paid_effect\".\"send_lease_expires_at\" IS NULL)\n        OR (\"paid_effect\".\"state\" = 'voided' AND \"paid_effect\".\"delivery_id\" IS NOT NULL AND \"paid_effect\".\"delivery_backend\" IS NOT NULL AND \"paid_effect\".\"unresolved_reason\" IS NOT NULL AND \"paid_effect\".\"send_lease_expires_at\" IS NULL AND \"paid_effect\".\"result_json\" IS NULL AND \"paid_effect\".\"applied_at\" IS NULL AND \"paid_effect\".\"voided_at\" IS NOT NULL AND \"paid_effect\".\"void_json\" IS NOT NULL)\n      )"
         },
         "paid_effect_application_attempts_ck": {
           "name": "paid_effect_application_attempts_ck",
@@ -13566,6 +13578,225 @@
         "worksheet_region_map_page_digest_ck": {
           "name": "worksheet_region_map_page_digest_ck",
           "value": "\"worksheet_region_map_page\".\"map_digest\" ~ '^sha256:[0-9a-f]{64}$'"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.paid_effect_authorization": {
+      "name": "paid_effect_authorization",
+      "schema": "",
+      "columns": {
+        "family": {
+          "name": "family",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "entity_id": {
+          "name": "entity_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "entity_revision": {
+          "name": "entity_revision",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "unit": {
+          "name": "unit",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "input_digest": {
+          "name": "input_digest",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "authorization_id": {
+          "name": "authorization_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "successor_entity_revision": {
+          "name": "successor_entity_revision",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "successor_unit": {
+          "name": "successor_unit",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "successor_input_digest": {
+          "name": "successor_input_digest",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "successor_delivery_backend": {
+          "name": "successor_delivery_backend",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "successor_delivery_id": {
+          "name": "successor_delivery_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "operator": {
+          "name": "operator",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "basis": {
+          "name": "basis",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "consumed_delivery_id": {
+          "name": "consumed_delivery_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "consumed_at": {
+          "name": "consumed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "paid_effect_authorization_entity_idx": {
+          "name": "paid_effect_authorization_entity_idx",
+          "columns": [
+            {
+              "expression": "family",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "entity_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "paid_effect_authorization_successor_idx": {
+          "name": "paid_effect_authorization_successor_idx",
+          "columns": [
+            {
+              "expression": "family",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "entity_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "successor_entity_revision",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "successor_unit",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "successor_input_digest",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "paid_effect_authorization_old_effect_fk": {
+          "name": "paid_effect_authorization_old_effect_fk",
+          "tableFrom": "paid_effect_authorization",
+          "tableTo": "paid_effect",
+          "columnsFrom": [
+            "family",
+            "entity_id",
+            "entity_revision",
+            "unit",
+            "input_digest"
+          ],
+          "columnsTo": [
+            "family",
+            "entity_id",
+            "entity_revision",
+            "unit",
+            "input_digest"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "paid_effect_authorization_pk": {
+          "name": "paid_effect_authorization_pk",
+          "columns": [
+            "family",
+            "entity_id",
+            "entity_revision",
+            "unit",
+            "input_digest"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "paid_effect_authorization_digest_ck": {
+          "name": "paid_effect_authorization_digest_ck",
+          "value": "\"paid_effect_authorization\".\"input_digest\" ~ '^sha256:[0-9a-f]{64}$' AND \"paid_effect_authorization\".\"successor_input_digest\" ~ '^sha256:[0-9a-f]{64}$'"
+        },
+        "paid_effect_authorization_nonempty_ck": {
+          "name": "paid_effect_authorization_nonempty_ck",
+          "value": "\"paid_effect_authorization\".\"entity_id\" <> '' AND \"paid_effect_authorization\".\"entity_revision\" <> '' AND \"paid_effect_authorization\".\"unit\" <> '' AND \"paid_effect_authorization\".\"authorization_id\" <> '' AND \"paid_effect_authorization\".\"successor_entity_revision\" <> '' AND \"paid_effect_authorization\".\"successor_unit\" <> '' AND \"paid_effect_authorization\".\"successor_delivery_id\" <> '' AND \"paid_effect_authorization\".\"reason\" <> '' AND \"paid_effect_authorization\".\"operator\" <> '' AND \"paid_effect_authorization\".\"basis\" <> ''"
         }
       },
       "isRLSEnabled": false

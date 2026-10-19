@@ -198,6 +198,25 @@ export async function readAutomaticallyServableQuestionIds(
   return admitted;
 }
 
+/**
+ * The issuance gate's decision for one (revision, part scope), with the same admission
+ * registry and subject inputs issueAssessment uses. Read-only preflight; no effects.
+ */
+export async function readAutomaticServingDecision(
+  db: Db | Tx,
+  revision: PublishedQuestionRevisionT,
+  partIds: readonly string[],
+): Promise<AutomaticServingDecision> {
+  const admission = await resolveModelAdmissionContext(db);
+  const subjects = await lookupGroupSubjects(db, [revision.group_id]);
+  return decideAutomaticServing(
+    revision,
+    partIds,
+    admission,
+    subjectIdFromLookup(subjects.get(revision.group_id)),
+  );
+}
+
 /** Recovery checks the immutable issued revision, never the current question version. */
 export async function readAutomaticIssuanceServingDecisions(
   db: Db | Tx,

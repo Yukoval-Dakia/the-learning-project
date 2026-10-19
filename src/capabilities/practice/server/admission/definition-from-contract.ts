@@ -79,7 +79,12 @@ function convertSlot(slot: ResponseSlotT): { slot: ResponseSlotT; targetKind: Ad
           kind: 'select',
           items: slot.options.map((option) => ({
             item_id: option.option_id,
-            label_md: `${option.label}. ${option.text}`,
+            // YUK-1406：select.label_md 只写选项原文 —— 渲染层自画 A/B/C 序号
+            // （OptionListBlock 的 mark span / worksheet-plan 的 letterFor），前缀
+            // 会造成双序号（DTO 实证：label_md "C. …" + 渲染端两道序号）。同
+            // draft-contract.ts single/multi→select 与 question-draft 的 label_md
+            // 纯正文约定。item_id/顺序/pick 不变；空正文省略 label_md。
+            ...(option.text.length > 0 ? { label_md: option.text } : {}),
           })),
           pick: 'one',
         },
@@ -94,7 +99,8 @@ function convertSlot(slot: ResponseSlotT): { slot: ResponseSlotT; targetKind: Ad
           kind: 'select',
           items: slot.options.map((option) => ({
             item_id: option.option_id,
-            label_md: `${option.label}. ${option.text}`,
+            // YUK-1406：同 single_choice —— label_md 仅选项原文，序号由渲染层画。
+            ...(option.text.length > 0 ? { label_md: option.text } : {}),
           })),
           pick: 'many',
         },

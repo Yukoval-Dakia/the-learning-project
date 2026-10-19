@@ -12,11 +12,12 @@
 //   2. LLM output shape  — `QuizGenOutput` (what the QuizGenTask agent emits;
 //      the Q3 handler maps it into questions + metadata).
 import { z } from 'zod';
+import { findBareMathCommands } from '../question-math-markdown';
 import { OBJECTIVE_ANSWER_KINDS } from './answer-class';
 import { AgentRef, QuestionKind, Rubric, RubricReferenceSolution } from './business';
 import { ProducerDifficultyEvidence } from './difficulty-evidence';
 import { defaultJudgeKindForQuestion } from './judge-routing';
-import { StructuredQuestion } from './structured_question';
+import { StructuredQuestion, type StructuredQuestionT } from './structured_question';
 
 // Local derivation (judge-routing.ts keeps its own alias for the same reason):
 // the plan artifact below needs the kind union type without a runtime import.
@@ -209,6 +210,64 @@ const QuizGenRubric = Rubric.extend({
   }).optional(),
 });
 
+// YUK-1406 — producer 数学定界契约的 schema 侧接线（R1 修复轮收窄）。
+// 覆盖面只限「显示字段」：prompt_md / choices_md 与 structured 各节点
+// prompt_text / options[].text —— 两处实证缺陷（cooygx C/D、ubm B）均在
+// 选项正文。刻意不查答案值承载字段（R1 P1）：reference_md 与小题
+// answers / analysis 会经 extractAnswerHead / structuredToReferenceMarkdown
+// 进入 exact text_key（assessment-normalization → definition-from-contract
+// blank_key → grade），该链不去数学定界；在这里强制包装/拒收会把显示定界
+// 带进评分键，造成 solve_seed_mismatch 或裸公式正确作答被判错。参考展示
+// 与答案值分离归后续 K1 quiz_gen typed 生产迁移，本片不动评分语义。
+// 落地形态（R1 核实）：handler 为 posthoc safeParse（TaskSpec 无
+// structuredOutputMode，非同 run 结构化反馈）；失败经 placementSchemaFailure
+// 收敛为 code/path（错误文案不透传），pg-boss 既有 retryLimit=2 有界重试会
+// 重新消费付费额度；本片不新增重试/反馈/预算。不查 source_refs /
+// material.body_md / rubric_json 等非渲染字段。
+function reportBareMath(
+  ctx: z.RefinementCtx,
+  path: (number | string)[],
+  label: string,
+  markdown: string | null | undefined,
+): void {
+  if (markdown == null) return;
+  const issues = findBareMathCommands(markdown);
+  if (issues.length === 0) return;
+  const first = issues[0];
+  if (first == null) return;
+  const more = issues.length > 1 ? `（该字段共 ${issues.length} 处）` : '';
+  ctx.addIssue({
+    code: z.ZodIssueCode.custom,
+    path,
+    message: `${label}含裸\\${first.command}，请给数学式加$...$，若为字面代码请放code${more}，如：${first.excerpt}`,
+  });
+}
+
+function reportStructuredBareMath(
+  ctx: z.RefinementCtx,
+  node: StructuredQuestionT,
+  labelPrefix: string,
+  basePath: (number | string)[],
+): void {
+  reportBareMath(ctx, [...basePath, 'prompt_text'], `${labelPrefix}prompt_text`, node.prompt_text);
+  node.options?.forEach((option, index) => {
+    reportBareMath(
+      ctx,
+      [...basePath, 'options', index, 'text'],
+      `${labelPrefix}options[${index}].text`,
+      option.text,
+    );
+  });
+  // R1 P1：answers / analysis 是答案值承载字段（进 exact 参考链），不套显示定界。
+  node.sub_questions?.forEach((sub, index) => {
+    reportStructuredBareMath(ctx, sub, `${labelPrefix}sub_questions[${index}].`, [
+      ...basePath,
+      'sub_questions',
+      index,
+    ]);
+  });
+}
+
 // Per-question shape. Mirrors the EmbeddedCheck question contract (kind +
 // prompt_md + reference_md + optional choices/judge/rubric) plus QuizGen-only
 // fields: difficulty, knowledge_ids the question targets, and the per-question
@@ -255,6 +314,18 @@ export const QuizGenQuestion = z
         path: ['rubric_json', 'reference_solution'],
         message: 'exact and semantic quiz_gen questions require rubric_json.reference_solution',
       });
+    }
+  })
+  // YUK-1406 — 数学定界契约：裸 \frac/\sqrt 族命令 = 整批拒收（fail-closed）。
+  // 仅显示字段（prompt_md / choices_md / structured prompt_text / options[].text）；
+  // reference_md 与 answers/analysis 不查（R1 P1，评分链不去定界）。
+  .superRefine((question, ctx) => {
+    reportBareMath(ctx, ['prompt_md'], 'prompt_md', question.prompt_md);
+    question.choices_md?.forEach((choice, index) => {
+      reportBareMath(ctx, ['choices_md', index], `choices_md[${index}]`, choice);
+    });
+    if (question.structured != null) {
+      reportStructuredBareMath(ctx, question.structured, 'structured.', ['structured']);
     }
   });
 export type QuizGenQuestionT = z.infer<typeof QuizGenQuestion>;

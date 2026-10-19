@@ -13,7 +13,7 @@ import {
   prepareFormalAttemptSubmission,
   recordFormalAttemptCapture,
 } from './attempt';
-import { readPaperAssessmentBinding } from './paper-issuance';
+import { assertIssuedPaperSlotsRenderable, readPaperAssessmentBinding } from './paper-issuance';
 import type { SaveSubmissionRequest } from './submit';
 
 export interface NativePaperAttemptInput {
@@ -50,6 +50,14 @@ export async function submitNativePaperAttempt(db: Db, input: NativePaperAttempt
   ) {
     throw new ApiError('coordinate_mismatch', 'submission differs from the issued paper slot', 409);
   }
+  // YUK-1573 — whole-paper hand-in is refused for every slot of an occurrence whose issued
+  // slots include one the paper page cannot render (no partial hand-in). Reads immutable
+  // issuance/revision rows only, before the capture transaction writes anything.
+  await assertIssuedPaperSlotsRenderable(
+    db,
+    binding.paper_id,
+    binding.slots.map((issued) => issued.issuance_id),
+  );
   const capture = {
     session_id: input.sessionId,
     paper_artifact_id: input.paperArtifactId,

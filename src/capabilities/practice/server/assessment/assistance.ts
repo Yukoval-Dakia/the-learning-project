@@ -1,12 +1,13 @@
-import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
-import { assessment_issuance, event, question_revision } from '@/db/schema';
-import { writeEvent } from '@/kernel/events';
-import { ApiError } from '@/kernel/http';
+import { event } from '@/db/schema';
+import {
+  STUDY_ASSISTANCE_ACTION,
+  type StudyAssistanceImpact,
+  recordStudyAssistanceExposure,
+} from '@/kernel/records/study-reference';
 
-const ACTION = 'experimental:assessment_assistance';
-export type AssistanceImpact = 'answer_help' | 'harmless_clarification' | 'unknown';
+export type AssistanceImpact = StudyAssistanceImpact;
 
 /** Server classification only. A stage number is not evidence of harmlessness. */
 export async function recordAssistanceExposure(
@@ -19,42 +20,9 @@ export async function recordAssistanceExposure(
     contentDigest: string;
   },
 ) {
-  return database.transaction(async (tx) => {
-    // Shares the issuance lock with saveSubmission: the accepted answer snapshots
-    // every exposure already released, without trusting client clocks or flags.
-    const [issuance] = await tx
-      .select()
-      .from(assessment_issuance)
-      .where(eq(assessment_issuance.issuance_id, input.issuanceId))
-      .for('update')
-      .limit(1);
-    if (!issuance) throw new ApiError('not_found', 'issued assessment not found', 404);
-    const [revision] = await tx
-      .select({ group_id: question_revision.group_id })
-      .from(question_revision)
-      .where(eq(question_revision.revision_id, issuance.revision_id))
-      .limit(1);
-    if (
-      !revision ||
-      (revision.group_id !== input.questionId && !issuance.part_ids.includes(input.questionId))
-    ) {
-      throw new ApiError('coordinate_mismatch', 'assistance is outside the frozen issuance', 409);
-    }
-    return writeEvent(tx, {
-      id: `evt_help_${createId()}`,
-      actor_kind: 'system',
-      actor_ref: 'assessment:assistance',
-      action: ACTION,
-      subject_kind: 'issuance',
-      subject_id: input.issuanceId,
-      outcome: null,
-      payload: {
-        version: 1,
-        kind: input.kind,
-        impact: input.impact,
-        content_digest: input.contentDigest,
-      },
-    });
+  return recordStudyAssistanceExposure(database, {
+    ...input,
+    actorRef: 'assessment:assistance',
   });
 }
 
@@ -64,7 +32,7 @@ export async function snapshotIssuanceAssistance(tx: Db | Tx, issuanceId: string
     .from(event)
     .where(
       and(
-        eq(event.action, ACTION),
+        eq(event.action, STUDY_ASSISTANCE_ACTION),
         eq(event.subject_kind, 'issuance'),
         eq(event.subject_id, issuanceId),
       ),
