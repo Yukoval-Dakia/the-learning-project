@@ -1,10 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-19：架构首片#1834已合main22b03fd5，局部深化+职责整理；下一片按完整frontier决策归属推进，测试缩减文本已交协调线，未获owner批准不改测试。
+> Linear 是权威 tracker。2026-10-19：架构线按 owner 上限8条并行；#1834/#1839已合，#1837待基线释放，#1840待独立初审；测试未获owner批准，证据HEAD删除待逐批确认。
 
 ## NOW
 
-- **架构深化 / YUK-1571**：`refactor/yuk-1571-frontier-ownership` 从main22b03fd5开始；frontier源码5fc5bdfec已完成（完整决策归knowledge、配额/ids留practice）；父typecheck/lint/build及relations通过，mastery报告无flagged；server444→443、cross48→47，SCC未变。R1 APPROVE；父0c5837e33去除mastery经knowledge facade回边，重验type/lint/build通过。架构audit待#1830释放后收紧仍FAIL，准备draft。#1830合入前不写audit/baseline。首片#1834已合，R1/本地静态构建/exactCI通过。见[计划与Sidekick对照](docs/planning/2026-10-19-architecture-deepening.md)。
+- **架构深化 / YUK-1571**：frontier draft #1837 c2b80ee，server444→443/cross48→47/SCC不变；R1通过，baseline仍待#1830独占释放。父本地后续仅看板检查点，PR源码未变。迁移纯规划器draft #1840（apply1956→1357，超长18→17）required CI已绿，独立初审中；typed due输入修正版进入初审。锁runtime门禁已撤回为静态登记，正在独立核顺序证据；audit整合与减边大块设计退回纠正。#1839证据规则/指针已合main caa27265c，172文件/11.55MB外部副本验真，源未删。各独立worktree及task见Linear，最多8条（含父集成）。
 
 - **第一天能用 / 题库暂不出题计数（YUK-1525）**：`yuk-1525-serving-counts-sql` 将 lifecycle 理由统一到 SQL，冻结题面继续复用原校验，计数与列表使用同一只读快照。2600 行中，旧列表少算为1846，修后2400，与原投影全库逐行统计一致；窗口外 `q_02600` 可见。无新增测试、UI 改动或付费调用。
 
@@ -36,7 +36,7 @@
 
 ## NEXT
 
-- **架构深化**：frontier首片完成消费者/兼容边界验证后独立审查与精确HEAD CI；第三片按真实维护收益再选，不默认拆intervention；每片报告SCC、server边、超长文件及baseline行数。
+- **架构深化**：按子线完成顺序验收与独立PR，先收尾#1840及typed due；#1830释放后收紧frontier基线。减边只接受完整operation的语义收益，不把路由合文件/重导出计作深化。
 
 - **YUK-1525**：draft PR 交接后，由审查与 exact-head CI 决定是否可转 ready；本次不自动合并。
 
