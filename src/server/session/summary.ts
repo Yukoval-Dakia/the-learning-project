@@ -10,11 +10,9 @@
 
 import { and, asc, eq, inArray } from 'drizzle-orm';
 
-import { getFailureAttempts } from '@/capabilities/knowledge/public';
 import type { Db } from '@/db/client';
 import { event, knowledge, learning_session, question } from '@/db/schema';
 import { resolveVerdictsForAttempts } from '@/kernel/read-models/assessment-verdict';
-import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
 import { resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { resolveSubjectProfile } from '@/subjects/profile';
@@ -47,6 +45,18 @@ export function renderSessionNumericSummary(input: {
   return `本次复习 ${input.total_reviewed} 题，${pct}% 正确${denominator}${cause}。`;
 }
 
+// The model never owns a number in the stored summary. Drop whole sentences that
+// introduce one instead of leaving dangling digits or a second, conflicting rate.
+const MODEL_NUMERIC_FRAGMENT =
+  /[0-9０-９]|百分之|正确率|错误率|题数|[零〇一二三四五六七八九十百千万两]+(?:题|道|个|次|种|处|倍|%|％)/u;
+
+export function stripModelNumbers(text: string): string {
+  return (text.match(/[^。！？!?；;\n]+[。！？!?；;]?/gu) ?? [])
+    .filter((sentence) => !MODEL_NUMERIC_FRAGMENT.test(sentence))
+    .join('')
+    .trim();
+}
+
 export type RunTaskFn = TaskTextRunFn;
 
 export interface RunSessionSummaryParams {
@@ -56,8 +66,18 @@ export interface RunSessionSummaryParams {
 }
 
 export interface RunSessionSummaryResult {
-  /** 'written' = summary saved; 'skipped:<reason>' = no-op (already had a summary, no events, etc.). */
-  status: 'written' | 'skipped:no_session' | 'skipped:no_events' | 'skipped:already_summarized';
+  /**
+   * 'written' = numbers + observation saved;
+   * 'written:numbers_only' = model output had no number-free observation, so only
+   * the deterministic server template was saved;
+   * 'skipped:<reason>' = no-op (already had a summary, no events, etc.).
+   */
+  status:
+    | 'written'
+    | 'written:numbers_only'
+    | 'skipped:no_session'
+    | 'skipped:no_events'
+    | 'skipped:already_summarized';
   summary_md?: string;
 }
 
@@ -131,73 +151,47 @@ export async function runSessionSummary(
           .limit(1)
       )[0]?.domain
     : null;
+  const subjectProfile = resolveSubjectProfile(firstDomain);
 
-  // Cause distribution from original failure attempts joined by reviewed question.
-  // Effective cause policy keeps user-authored cause ahead of agent attribution.
-  const questionIds = Array.from(new Set(reviewEvents.map((r) => r.subject_id)));
-  const causeCounts = new Map<string, number>();
-  const failures = questionIds.length
-    ? await getFailureAttempts(db, { questionIds, limit: null })
-    : [];
-  if (questionIds.length > 0) {
-    for (const failure of failures) {
-      const cat = effectiveCauseForFailureAttempt(failure)?.primary_category;
-      if (cat) causeCounts.set(cat, (causeCounts.get(cat) ?? 0) + 1);
-    }
-  }
-  // YUK-1018 — misc_ category id 的 title 回填，让 summary LLM 写可读结语文案。
-  const topCauseLabels = await resolveMiscCauseLabels(db, [...causeCounts.keys()]);
-  const topCauses = [...causeCounts.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 4)
-    .map(([category, count]) => ({
-      category,
-      category_label: topCauseLabels.get(category) ?? null,
-      count,
-    }));
-
-  // YUK-1054 (§9 dual-track) — 与本 surface 已读 effective cause 并列，把「原始
-  // 判轨」也供 summary LLM 用：top_original_causes = 该题【第一判】的 cause 分布
-  // （不受改判改写），与 effective 并列供 LLM 描述「原始因 vs 当前因」。failures
-  // 仍在楼上已取（failures 块只取过一次，复用同一批）。
-  const originalCauseCounts = new Map<string, number>();
-  // 只在有 judge 的 failure 上统计原始因；effective cause 已在上方统计。
-  for (const failure of failures) {
-    const cat = failure.original_judge?.cause?.primary_category;
-    if (cat) originalCauseCounts.set(cat, (originalCauseCounts.get(cat) ?? 0) + 1);
-  }
-  const topOriginalCauseLabels = await resolveMiscCauseLabels(db, [...originalCauseCounts.keys()]);
-  const topOriginalCauses = [...originalCauseCounts.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 4)
-    .map(([category, count]) => ({
-      category,
-      category_label: topOriginalCauseLabels.get(category) ?? null,
-      count,
-    }));
-
-  // YUK-1054 — verdict 双轨摘要：effective 判 coarse_outcome 分布 + original 判
-  // 分布，供 summary LLM 生成“本周判定 vs 原始判”对比。verdicts 只取有 judge 的
-  // attempt（resolve 的 effective/original 同时存在才是双轨）。
+  // YUK-1621 — session stats and causes both come from THIS session's effective
+  // verdicts. Historical failure attribution is deliberately not mixed in.
   const verdictMap = await resolveVerdictsForAttempts(
     db,
     reviewEvents.map((r) => r.id),
   );
   const effectiveOutcomeCounts = new Map<string, number>();
-  const originalOutcomeCounts = new Map<string, number>();
-  for (const v of verdictMap.values()) {
-    const eo = v.effective?.verdict.coarse_outcome;
-    if (eo) effectiveOutcomeCounts.set(eo, (effectiveOutcomeCounts.get(eo) ?? 0) + 1);
-    const oo = v.original?.verdict.coarse_outcome;
-    if (oo) originalOutcomeCounts.set(oo, (originalOutcomeCounts.get(oo) ?? 0) + 1);
+  const causeCounts = new Map<string, number>();
+  for (const verdict of verdictMap.values()) {
+    const effective = verdict.effective?.verdict;
+    if (!effective?.coarse_outcome) continue;
+    const outcome = effective.coarse_outcome;
+    effectiveOutcomeCounts.set(outcome, (effectiveOutcomeCounts.get(outcome) ?? 0) + 1);
+    if (outcome !== 'incorrect') continue;
+    const category = effective.cause?.primary_category;
+    if (category) causeCounts.set(category, (causeCounts.get(category) ?? 0) + 1);
   }
+
+  // YUK-1018 — misc_ labels; built-in cause labels come from the subject profile
+  // so the fixed sentence never prints a raw category id.
+  const topCauseLabels = await resolveMiscCauseLabels(db, [...causeCounts.keys()]);
+  const profileCauseLabels = new Map(
+    subjectProfile.causeCategories.map((category) => [category.id, category.label]),
+  );
+  const topCauses = [...causeCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 4)
+    .map(([category, count]) => ({
+      category,
+      category_label: topCauseLabels.get(category) ?? profileCauseLabels.get(category) ?? null,
+      count,
+    }));
 
   // YUK-1621 — all numbers in the final summary come from this template; the
   // model only writes the observation/advice suffix below it.
   const numericSummary = renderSessionNumericSummary({
     total_reviewed: reviewEvents.length,
     effective_outcomes: Object.fromEntries(effectiveOutcomeCounts),
-    primary_cause: topCauses[0]?.category_label ?? topCauses[0]?.category ?? null,
+    primary_cause: topCauses[0]?.category_label?.trim() || null,
   });
 
   // Notable attempts (the again/hard ones, up to NOTABLE_LIMIT) — join question.
@@ -234,24 +228,14 @@ export async function runSessionSummary(
     session_id: sessionId,
     duration_min: durationMin,
     numeric_summary: numericSummary,
-    top_causes: topCauses,
-    // YUK-1054 — 双轨：effective 判的 top_causes 之外，附原始判轨道分布。
-    top_original_causes: topOriginalCauses,
-    verdicts: {
-      effective_outcomes: Object.fromEntries(effectiveOutcomeCounts),
-      original_outcomes: Object.fromEntries(originalOutcomeCounts),
-    },
-    top_knowledge: topKnowledge,
+    // Counts stay server-side; the model only needs the ranked, labeled causes.
+    top_causes: topCauses.map(({ category, category_label }) => ({ category, category_label })),
+    top_knowledge: topKnowledge.map(({ id }) => ({ id })),
     notable_attempts: notableAttempts,
   };
 
-  const result = await runTaskFn('SessionSummaryTask', input, {
-    subjectProfile: resolveSubjectProfile(firstDomain),
-  });
-  const observation = result.text.trim();
-  if (observation.length === 0) {
-    return { status: 'skipped:no_events' };
-  }
+  const result = await runTaskFn('SessionSummaryTask', input, { subjectProfile });
+  const observation = stripModelNumbers(result.text);
   // The fixed numeric prefix is never truncated away by an over-long observation.
   const summaryMd = `${numericSummary}${observation}`.slice(0, 240);
 
@@ -260,5 +244,8 @@ export async function runSessionSummary(
     .set({ summary_md: summaryMd, updated_at: new Date() })
     .where(eq(learning_session.id, sessionId));
 
-  return { status: 'written', summary_md: summaryMd };
+  return {
+    status: observation.length > 0 ? 'written' : 'written:numbers_only',
+    summary_md: summaryMd,
+  };
 }

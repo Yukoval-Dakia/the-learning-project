@@ -18,17 +18,17 @@ const DEFAULT_BUDGET = DEFAULT_TASK_BUDGET;
 function buildSessionSummaryPrompt(profile: SubjectProfile): string {
   return `你是学习陪练，会复盘刚结束的复习 session。
 科目上下文：${profile.displayName}。${profile.languageStyle}
-输入 { session_id, duration_min, numeric_summary, top_causes: [...], top_original_causes: [...], verdicts, top_knowledge: [...], notable_attempts: [{ prompt_md, user_response_md, fsrs_rating }, ...] }。
-numeric_summary 是服务端按有效判分算好的量化总结，会原样放在最终摘要开头：不要重复、改写或反驳其中的数字，也不要自己写题数、正确率或计数。
-top_causes 来自 effective cause（active user_cause 优先，否则 latest active judge）；top_causes[].category_label 是 misc_<hash> 类目的可读误区标题，写文案时优先用 label、不要复述裸 id。top_original_causes 与 verdicts 是原始判轨/双轨裁决，仅用于观察差异，不要重算统计。notable_attempts 是 again/hard 的最多 3 题。
+输入 { session_id, duration_min, numeric_summary, top_causes: [...], top_knowledge: [...], notable_attempts: [{ prompt_md, user_response_md, fsrs_rating }, ...] }。
+numeric_summary 是服务端按本场有效判分算好的量化总结，会原样放在最终摘要开头：不要重复、改写或反驳其中的数字，也不要自己写题数、正确率或任何计数。
+top_causes 只来自本场有效判分错误的题；category_label 是可供文案使用的可读错因，优先用 label、不要复述裸 id。notable_attempts 是 again/hard 的最多 3 题。
 当前 SubjectProfile cause taxonomy：
 ${causeTaxonomyList(profile)}
 证据要求：${profile.grounding.requirement}
 学科表达策略：${profile.promptFragments.teachingStyle}
 输出一段 ≤70 字的中文短文（纯文本，不要 JSON / markdown 代码块 / 列表），只写观察和建议两部分，不要写标题：
-1) 模式观察：指 1-2 个具体题或知识点的卡壳，可提原始判与有效判的差异
+1) 模式观察：指 1-2 个具体题或知识点的卡壳
 2) 下次建议：1 句具体可执行的建议，必须贴合本学科的条件、目标、知识点或方法触发信号
-禁止：量化数字、套话（「继续加油」「再接再厉」）、夸夸（「做得很好」）、笼统（「多练习」）。要具体、可执行。`;
+禁止：任何阿拉伯数字、百分比、题数/次数/计数、套话（「继续加油」「再接再厉」）、夸夸（「做得很好」）、笼统（「多练习」）。要具体、可执行。`;
 }
 
 /** Session input contract (runSessionSummary, src/server/session/summary.ts). */
@@ -37,13 +37,8 @@ export interface SessionSummaryInput {
   duration_min: number | null;
   /** Server-rendered fixed numbers; the model only writes observations + advice. */
   numeric_summary: string;
-  top_causes: { category: string; category_label: string | null; count: number }[];
-  top_original_causes: { category: string; category_label: string | null; count: number }[];
-  verdicts: {
-    effective_outcomes: Record<string, number>;
-    original_outcomes: Record<string, number>;
-  };
-  top_knowledge: { id: string; count: number }[];
+  top_causes: { category: string; category_label: string | null }[];
+  top_knowledge: { id: string }[];
   notable_attempts: {
     prompt_md: string;
     user_response_md: string | null;
