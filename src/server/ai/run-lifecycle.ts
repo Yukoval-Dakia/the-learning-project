@@ -44,6 +44,7 @@ import {
 } from './provider-session-admission';
 import {
   type ProviderTransportCollector,
+  type TransportAbortInitiator,
   createProviderTransportCollector,
 } from './provider-transport';
 import { type ResolvedProvider, hasGlobalProviderOverride, resolveTaskProvider } from './providers';
@@ -269,22 +270,41 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
 
     if (config.signal) {
       if (config.signal.aborted) {
-        this.abortController.abort();
+        this.initiateAbort('caller_signal');
       } else {
-        config.signal.addEventListener('abort', () => this.abortController.abort(), { once: true });
+        config.signal.addEventListener('abort', () => this.initiateAbort('caller_signal'), {
+          once: true,
+        });
       }
     }
+  }
+
+  /**
+   * Record which layer initiated the abort synchronously BEFORE the signal
+   * fires, so wire evidence names the real initiator (execution timer,
+   * session deadline, caller signal, lease loss, generic lifecycle abort)
+   * instead of leaving operators to guess from elapsed time. Only the first
+   * abort transition records a marker.
+   */
+  private initiateAbort(kind: TransportAbortInitiator): void {
+    if (!this.abortController.signal.aborted) {
+      this.transportEvidence.noteAbortInitiated(kind);
+    }
+    this.abortController.abort();
   }
 
   get usage(): LifecycleUsage {
     const base = this.terminal?.usage ??
       this.observedUsage?.usage ?? { inputTokens: 0, outputTokens: 0 };
+    const phased = !this.notePhases ? base : { ...base, phases: { ...this.notePhases } };
     // YUK-1630 — transport evidence is metadata namespaced beside the token
     // truth: it never feeds tokenCounts/costTruth, and a usage 0 / cost null
-    // row keeps its meaning (unknown, not free).
-    const transport = this.transportEvidence.snapshot();
-    if (!this.notePhases) return { ...base, transport };
-    return { ...base, phases: { ...this.notePhases }, transport };
+    // row keeps its meaning (unknown, not free). It is attached ONLY when a
+    // consumer armed the controlled pi lane — an unobserved lane (e.g. the
+    // typed-primitive runner's direct POST) must not persist an empty
+    // `requests: []` that would read as false `not_sent` evidence.
+    if (!this.transportEvidence.isArmed) return phased;
+    return { ...phased, transport: this.transportEvidence.snapshot() };
   }
 
   /** Long-note phase timings. Other task kinds ignore the call. */
@@ -441,7 +461,7 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
                     ),
             onLeaseLost: (error) => {
               this.admissionFailure ??= error;
-              this.abortController.abort();
+              this.initiateAbort('lease_lost');
             },
           });
 
@@ -470,7 +490,7 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
         this.config.providerSessionDeadlineAt !== undefined &&
         Date.now() >= this.config.providerSessionDeadlineAt
       ) {
-        this.abortController.abort();
+        this.initiateAbort('session_deadline');
         throw new ProviderSessionWallClockBudgetError(phase);
       }
     };
@@ -486,7 +506,7 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
       const sessionDeadlineElapsed =
         this.config.providerSessionDeadlineAt !== undefined &&
         Date.now() >= this.config.providerSessionDeadlineAt;
-      if (sessionDeadlineElapsed) this.abortController.abort();
+      if (sessionDeadlineElapsed) this.initiateAbort('session_deadline');
       if (this.abortController.signal.aborted) {
         // This can be the ordinary model budget or caller cancellation, not an
         // admission/control-plane failure. Keep it as a plain error so the
@@ -758,7 +778,7 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
 
   abort(): void {
     this.clearExecutionTimer();
-    this.abortController.abort();
+    this.initiateAbort('lifecycle_abort');
   }
 
   private armExecutionTimer(): void {
@@ -768,8 +788,12 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
         ? Number.POSITIVE_INFINITY
         : Math.max(0, this.config.providerSessionDeadlineAt - Date.now());
     const timeoutMs = Math.min(this.config.timeoutMs, deadlineRemainingMs);
+    // The armed timer represents min(task budget, deadline remaining) — name
+    // the initiator by which bound actually governs it.
+    const timeoutInitiator: TransportAbortInitiator =
+      deadlineRemainingMs < this.config.timeoutMs ? 'session_deadline' : 'execution_timeout';
     if (timeoutMs <= 0) {
-      this.abortController.abort();
+      this.initiateAbort(timeoutInitiator);
       return;
     }
     // Non-finite bound = uncapped execution window: skip arming entirely.
@@ -777,7 +801,7 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
     // would abort the run instantly instead of leaving it unbounded.
     if (!Number.isFinite(timeoutMs)) return;
     this.transportEvidence.noteExecutionTimeoutMs(timeoutMs);
-    this.timer = setTimeout(() => this.abortController.abort(), timeoutMs);
+    this.timer = setTimeout(() => this.initiateAbort(timeoutInitiator), timeoutMs);
   }
 
   private clearExecutionTimer(): void {
