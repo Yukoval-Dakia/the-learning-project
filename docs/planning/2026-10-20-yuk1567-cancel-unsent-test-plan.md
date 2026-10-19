@@ -1,11 +1,15 @@
 # YUK-1567 — Cancel Unsent Paid Intents — Test Text Plan (prose only)
 
-Per owner rules and this slice's constraints: **no test file is written or modified
-here**. This document is the approval-required textual plan. Two parts: (A) the
-mechanical version-sync edits the existing backup test needs after the 4.30 bump;
-(B) the real-DB-copy acceptance scenarios for the cancel path. Nothing below is an
-assertion script; each item states the setup, the operation, and the expected
-observable evidence.
+Per owner rules and this slice's constraints this document remains the
+textual plan, not test code. Status of its two parts: **(A)** the mechanical
+version-sync edits below were APPROVED by the coordination line on
+2026-10-20 under the owner10-19 standing list authorization and applied
+verbatim to `src/server/export/paid-effect-backup.db.test.ts` in commit
+`902b266a0` (three line sites only — no case added, removed, or reshaped, no
+fixture touched); **(B)** the real-DB-copy acceptance scenarios remain
+UNAPPROVED text — no assertion or script may be written from them yet.
+Nothing below is an assertion script; each item states the setup, the
+operation, and the expected observable evidence.
 
 ## A. Mechanical version sync — `src/server/export/paid-effect-backup.db.test.ts`
 
@@ -47,12 +51,13 @@ none are scripts.
    historical `unknown` siblings are untouched; `listPaidEffectObligations` no
    longer surfaces the two identities.
 
-2. **Same-request replay.** Re-run `apply` with the identical manifest. Every
+2. **Same-request replay.** Re-run `apply` with the identical manifest AND the
+   identical frozen plan (`--plan` + the recorded `--plan-sha256`). Every
    target returns `already_cancelled` with the stored receipt; the cancellation
    table still holds exactly one row per identity; `cancelled_at` unchanged.
-   Also cover the crash window: delete/lose the artifact between commit and
-   file write, re-run with the same manifest to a new `--out` path — the stored
-   result must come back, not a failure.
+   Also cover the crash window: delete/lose the receipt artifact between commit
+   and file write, re-run with the same manifest and plan to a new `--out`
+   path — the stored result must come back, not a failure.
 
 3. **Divergent replay.** Change only `request_id` — or, separately, alter
    `reason`/`operator`/`basis`/`expected_fence` while keeping the same
@@ -61,14 +66,26 @@ none are scripts.
    and receipt unchanged. A borrowed request id must never launder a mutated
    request.
 
-4. **Race with a send claim.** On a copy, start a transaction that claims the
+4. **Frozen-plan authorization.** Variants that must refuse BEFORE any
+   database connection or target write, with nonzero exit and an error naming
+   the divergence — zero rows touched, no cancellation event: (a) `--plan` or
+   `--plan-sha256` missing/malformed; (b) `--plan-sha256` not equal to the plan
+   file's raw-byte digest; (c) a plan whose `manifest_sha256` does not bind the
+   presented manifest — including a manifest edited to append, replace, or drop
+   a target while reusing the original `request_id`; (d) a plan whose
+   (identity, expected_fence) multiset diverges from the manifest's even by one
+   member; (e) a plan recording any `eligible: false` target. Reusing the
+   original request id must never widen execution scope; the approved plan
+   digest, not the request id, is the authorization.
+
+5. **Race with a send claim.** On a copy, start a transaction that claims the
    target's send (hold it open), then run `apply` for that target from another
    session — the apply target must fail (state not `pending` or eligibility
    refusal), never cancel a live send. Then invert: commit the cancel first, then
    attempt the claim — the claim must observe `cancelled` and refuse to send
    (`held`-class outcome); no provider invocation occurs in either direction.
 
-5. **Refusal matrix.** Seed/copy variants and confirm each apply target fails
+6. **Refusal matrix.** Seed/copy variants and confirm each apply target fails
    with its row unchanged and no event row:
    `sending`/`unknown`/`receipt_ready`/`applied`/`voided` states; `pending` with a
    non-NULL `delivery_id` (or lease/result/application column); a `pending` row
@@ -84,31 +101,31 @@ none are scripts.
    `(action, subscriber_id, subscriber_version)`, or a target family other than
    `question_admission_run`.
 
-6. **Event/transition atomicity.** Force the event insert to fail (e.g. pre-create
+7. **Event/transition atomicity.** Force the event insert to fail (e.g. pre-create
    a `paid_effect_cancellation` row for the identity on the copy) and apply. The
    target transaction rolls back: `paid_effect` row stays `pending`, fence
    unchanged — no cancelled state without its event exists.
 
-7. **Idempotent partial batch.** Make one of two targets ineligible (e.g. give it
+8. **Idempotent partial batch.** Make one of two targets ineligible (e.g. give it
    a live job) and apply the two-target manifest. Result: the eligible target
    settles `cancelled`, the other records `failed` with its failure list, exit
-   non-zero; re-applying the unchanged manifest settles cleanly
-   (`already_cancelled` for the first once the second becomes eligible, or a
-   clean refusal).
+   non-zero; re-applying the unchanged manifest with the same frozen plan
+   settles cleanly (`already_cancelled` for the first once the second becomes
+   eligible, or a clean refusal).
 
-8. **Backup/restore round-trip.** On the copy, export the archive and restore it:
+9. **Backup/restore round-trip.** On the copy, export the archive and restore it:
    the `paid_effect_cancellation` rows and the `cancelled` rows' receipts survive;
    the manifest reports `4.30`; an archive lacking the paid payload key is
    rejected before any wipe (existing strict behavior, now covering the new key).
 
-9. **Serialization-conflict fail-closed.** On the copy, engineer a concurrent
+10. **Serialization-conflict fail-closed.** On the copy, engineer a concurrent
    event→delivery discovery commit that interleaves between the apply gate
    reads (or equivalently any write the serializable snapshot conflicts with):
    the apply transaction aborts `40001`, the target is recorded
    `serialization_conflict`, the row stays `pending`, no event row exists —
    then settle the ambient work and re-apply cleanly.
 
-10. **Consumer dead-end.** On the copy, drive the admission reconciliation for a
+11. **Consumer dead-end.** On the copy, drive the admission reconciliation for a
     cancelled identity: it must hold (no send, no receipt minted). Then deliver a
     same-base/revision redelivery whose prepared input drifted (e.g. bumped
     admission generation): the fresh identity must return `held`, and no new
@@ -120,8 +137,8 @@ none are scripts.
 
 ## C. Invariant mapping
 
-Scenarios 2–4 and 6 map to the AGENTS.md concurrency/lock + data-irreversibility
-invariants (CAS, advisory serialization, atomic event, immutable receipt);
-scenario 8 maps to the restore invariant. If any of these are later implemented as
+Scenarios 2–5 and 7 map to the AGENTS.md concurrency/lock + data-irreversibility
+invariants (CAS, advisory serialization, atomic event, immutable receipt,
+authorized-scope integrity); scenario 9 maps to the restore invariant. If any of these are later implemented as
 real tests, each must declare its `@invariant`/`@fails-if` and run in the DB lane —
 approval for that code is a separate decision, not part of this slice.

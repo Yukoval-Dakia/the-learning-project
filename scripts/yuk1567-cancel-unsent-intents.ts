@@ -6,14 +6,22 @@
 //       READ-ONLY. Evaluates every manifest target inside one repeatable-read
 //       snapshot and freezes a write-once plan artifact with per-target
 //       eligibility + observed state. Nothing is mutated.
-//   apply <m.json> --out <receipt.json>
-//       Executes ONLY the frozen manifest targets — one SERIALIZABLE
-//       transaction per target: family advisory lock → already-cancelled
-//       strict replay (returns the stored receipt, writes nothing) or, for a
-//       fresh pending row, eligibility re-proof under the snapshot →
-//       cancelPaidEffectUnsentIntent (event + pending→cancelled CAS, atomic).
-//       A serialization conflict fails the target closed — fix the cause and
-//       re-plan; the script never retries or bypasses gates.
+//   apply <m.json> --out <receipt.json> --plan <plan.json>
+//          --plan-sha256 sha256:<hex>
+//       Executes ONLY the targets authorized by a FROZEN plan artifact: the
+//       plan file's raw bytes must hash to the independently recorded
+//       --plan-sha256, and the plan must have been produced for THIS exact
+//       manifest (request fields, watch triples, target identity/fence set —
+//       all compared item-for-item). An appended, replaced, dropped, or
+//       reshaped target set refuses before any database connection; the
+//       request_id alone never authorizes an execution scope.
+//       Per authorized target: one SERIALIZABLE transaction — family
+//       advisory lock → already-cancelled strict replay (returns the stored
+//       receipt, writes nothing) or, for a fresh pending row, eligibility
+//       re-proof under the snapshot → cancelPaidEffectUnsentIntent (event +
+//       pending→cancelled CAS, atomic). A serialization conflict fails the
+//       target closed — fix the cause and re-plan; the script never retries
+//       or bypasses gates, and never re-freezes a plan on its own.
 //
 // The manifest is the frozen approval. Every target names the COMPLETE
 // 5-part paid-effect identity plus the literal never-sent fence token 0 —
@@ -51,6 +59,12 @@ import {
 
 const digest = z.string().regex(/^sha256:[0-9a-f]{64}$/);
 
+const watchEntrySchema = z.object({
+  action: z.string().min(1),
+  subscriber_id: z.string().min(1),
+  subscriber_version: z.number().int().positive(),
+});
+
 /**
  * The frozen approval manifest. `request_id` is the operation's idempotency
  * anchor; `watch` must equal the admission enqueue pipeline's declared
@@ -66,15 +80,7 @@ const cancelManifestSchema = z.object({
   operator: z.string().min(1),
   reason: z.string().min(1),
   basis: z.string().min(1),
-  watch: z
-    .array(
-      z.object({
-        action: z.string().min(1),
-        subscriber_id: z.string().min(1),
-        subscriber_version: z.number().int().positive(),
-      }),
-    )
-    .nonempty(),
+  watch: z.array(watchEntrySchema).nonempty(),
   targets: z
     .array(
       z.object({
@@ -121,6 +127,43 @@ function requiredAdmissionWatch(): WatchEntry[] {
 
 const sha256 = (value: unknown) =>
   `sha256:${createHash('sha256').update(JSON.stringify(value)).digest('hex')}`;
+const sha256Bytes = (bytes: Buffer) => `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
+
+/**
+ * The plan artifact this script's `plan` mode writes — and the ONLY scope
+ * `apply` may execute. The plan file's raw bytes are pinned by an
+ * independently recorded digest (`--plan-sha256`); the plan must bind THIS
+ * exact manifest (request fields + watch + full target identity/fence set).
+ */
+const planArtifactSchema = z.object({
+  version: z.literal(1),
+  planned_at: z.string().min(1),
+  manifest_sha256: digest,
+  request: z.object({
+    request_id: z.string().min(1),
+    operator: z.string().min(1),
+    reason: z.string().min(1),
+    basis: z.string().min(1),
+  }),
+  watch: z.array(watchEntrySchema).nonempty(),
+  eligible: z.boolean(),
+  targets: z
+    .array(
+      z.object({
+        identity: z.object({
+          family: z.string().min(1),
+          entityId: z.string().min(1),
+          entityRevision: z.string().min(1),
+          unit: z.string().min(1),
+          inputDigest: digest,
+        }),
+        expected_fence: z.literal(0),
+        eligible: z.boolean(),
+      }),
+    )
+    .nonempty(),
+});
+type PlanArtifact = z.infer<typeof planArtifactSchema>;
 
 function requireDeploymentDb(): void {
   if (!process.env.DATABASE_URL || process.env.DATABASE_URL !== process.env.YUK1567_DATABASE_URL) {
@@ -181,6 +224,125 @@ function assertApprovedScope(manifest: CancelManifest): void {
       );
     }
   }
+}
+
+/**
+ * `apply` may only ever execute the scope a FROZEN plan authorized. The
+ * approved plan digest is pinned OUTSIDE this invocation — recorded in the
+ * frozen ops record / approved command line — so this function takes it as a
+ * parameter and never derives an expected value from the file itself. Every
+ * check below runs BEFORE the database client is even imported: a plan that
+ * fails any of them leaves nothing to clean up.
+ *
+ * Verified, in order (no fallback, no re-freeze, no partial acceptance):
+ *   1. the plan file's RAW BYTES hash to `expectedPlanSha256`;
+ *   2. the file parses and matches the plan artifact schema;
+ *   3. `manifest_sha256` equals the digest of the manifest parsed for THIS
+ *      run — a plan issued for a different manifest never authorizes it;
+ *   4. request_id/operator/reason/basis match the manifest verbatim;
+ *   5. the watch triple set matches item-for-item;
+ *   6. the (identity, expected_fence) multiset matches exactly — same count,
+ *      same members; an appended, replaced, or dropped target refuses;
+ *   7. every plan target recorded `eligible: true` — an eligible-looking
+ *      manifest with an ineligible plan still refuses.
+ */
+async function verifyFrozenPlan(
+  planPath: string,
+  expectedPlanSha256: string,
+  manifest: CancelManifest,
+): Promise<{ plan: PlanArtifact; planSha256: string }> {
+  if (!digest.safeParse(expectedPlanSha256).success) {
+    throw new Error(
+      `--plan-sha256 '${expectedPlanSha256}' is not a sha256: digest; ` +
+        'copy the approved plan hash from the frozen ops record',
+    );
+  }
+  const planBytes = await readFile(planPath);
+  const actualPlanSha256 = sha256Bytes(planBytes);
+  if (actualPlanSha256 !== expectedPlanSha256) {
+    throw new Error(
+      `plan file hash ${actualPlanSha256} != approved ${expectedPlanSha256}; ` +
+        'the plan artifact was altered or the wrong file was passed — refusing to apply',
+    );
+  }
+  let parsed: PlanArtifact;
+  try {
+    parsed = planArtifactSchema.parse(JSON.parse(planBytes.toString('utf8')));
+  } catch (error) {
+    throw new Error(
+      `frozen plan ${planPath} is unreadable or off-schema: ` +
+        (error instanceof Error ? error.message : String(error)),
+    );
+  }
+  if (parsed.manifest_sha256 !== sha256(manifest)) {
+    throw new Error(
+      `plan was issued for manifest ${parsed.manifest_sha256}, ` +
+        `not this manifest ${sha256(manifest)} — refusing to apply a foreign plan`,
+    );
+  }
+  const req = parsed.request;
+  if (
+    req.request_id !== manifest.request_id ||
+    req.operator !== manifest.operator ||
+    req.reason !== manifest.reason ||
+    req.basis !== manifest.basis
+  ) {
+    throw new Error('frozen plan request fields diverge from the manifest — refusing to apply');
+  }
+  const watchKey = (w: WatchEntry) => `${w.action}|${w.subscriber_id}|${w.subscriber_version}`;
+  if (parsed.watch.length !== manifest.watch.length) {
+    throw new Error(
+      `frozen plan declares ${parsed.watch.length} watch entries, ` +
+        `manifest declares ${manifest.watch.length} — scope mismatch`,
+    );
+  }
+  const manifestWatch = new Set(manifest.watch.map(watchKey));
+  for (const w of parsed.watch) {
+    if (!manifestWatch.has(watchKey(w))) {
+      throw new Error(`frozen plan watch ${watchKey(w)} is not in the manifest — scope mismatch`);
+    }
+  }
+  const targetKey = (t: {
+    family: string;
+    entity_id: string;
+    entity_revision: string;
+    unit: string;
+    input_digest: string;
+    expected_fence: number;
+  }) =>
+    `${t.family}|${t.entity_id}|${t.entity_revision}|${t.unit}|${t.input_digest}|${t.expected_fence}`;
+  const planKeys = parsed.targets.map((t) =>
+    targetKey({
+      family: t.identity.family,
+      entity_id: t.identity.entityId,
+      entity_revision: t.identity.entityRevision,
+      unit: t.identity.unit,
+      input_digest: t.identity.inputDigest,
+      expected_fence: t.expected_fence,
+    }),
+  );
+  if (planKeys.length !== manifest.targets.length) {
+    throw new Error(
+      `frozen plan authorizes ${planKeys.length} targets, ` +
+        `manifest lists ${manifest.targets.length} — appended or dropped targets refuse`,
+    );
+  }
+  const counts = new Map<string, number>();
+  for (const k of planKeys) counts.set(k, (counts.get(k) ?? 0) + 1);
+  for (const t of manifest.targets) {
+    const k = targetKey(t);
+    const n = counts.get(k) ?? 0;
+    if (n === 0) {
+      throw new Error(`manifest target ${k} is not authorized by the frozen plan`);
+    }
+    counts.set(k, n - 1);
+  }
+  if (!parsed.eligible || parsed.targets.some((t) => !t.eligible)) {
+    throw new Error(
+      'frozen plan records ineligible targets — re-plan and re-approve before applying',
+    );
+  }
+  return { plan: parsed, planSha256: actualPlanSha256 };
 }
 
 async function writeOnce(path: string, artifact: unknown): Promise<void> {
@@ -260,10 +422,14 @@ async function plan(manifestPath: string, outPath: string) {
   }
 }
 
-async function apply(manifestPath: string, outPath: string) {
+async function apply(manifestPath: string, planPath: string, planSha256: string, outPath: string) {
   requireDeploymentDb();
   const manifest = cancelManifestSchema.parse(JSON.parse(await readFile(manifestPath, 'utf8')));
   assertApprovedScope(manifest);
+  // The frozen plan IS the execution authorization — verify it binds this
+  // exact manifest and scope before the database client is even imported.
+  // request_id is per-identity idempotency metadata, not a batch scope key.
+  const frozen = await verifyFrozenPlan(planPath, planSha256, manifest);
   const { db } = await import('@/db/client');
   const results: Record<string, unknown>[] = [];
   let allSettled = true;
@@ -334,6 +500,8 @@ async function apply(manifestPath: string, outPath: string) {
       version: 1,
       applied_at: new Date().toISOString(),
       manifest_sha256: sha256(manifest),
+      plan_sha256: frozen.planSha256,
+      plan_manifest_sha256: frozen.plan.manifest_sha256,
       request: {
         request_id: manifest.request_id,
         operator: manifest.operator,
@@ -373,18 +541,26 @@ const run =
         console.log(
           'Lead-only ops entry for the generic never-sent paid-intent cancel (YUK-1567). ' +
             'plan <m.json> --out <plan.json> is read-only eligibility + plan freeze; ' +
-            'apply <m.json> --out <receipt.json> cancels exactly the listed identities ' +
-            '(one SERIALIZABLE tx each: family advisory → strict replay or eligibility re-check ' +
-            '→ event + CAS). Admission family only; watch must match the declared enqueue ' +
-            'subscription item-for-item. Requires DATABASE_URL === YUK1567_DATABASE_URL. ' +
+            'apply <m.json> --out <receipt.json> --plan <plan.json> ' +
+            '--plan-sha256 sha256:<approved plan hash> cancels exactly the identities ' +
+            'the verified frozen plan authorizes (one SERIALIZABLE tx each: family ' +
+            'advisory → strict replay or eligibility re-check → event + CAS). ' +
+            'Admission family only; watch must match the declared enqueue subscription ' +
+            'item-for-item. Requires DATABASE_URL === YUK1567_DATABASE_URL. ' +
             'Never enqueues, never calls a provider, no Docker.',
         ),
       )
     : mode === 'plan' && positional && flags.out
       ? plan(positional, flags.out)
-      : mode === 'apply' && positional && flags.out
-        ? apply(positional, flags.out)
-        : Promise.reject(new Error('Use --help; positional manifest and --out are required'));
+      : mode === 'apply' && positional && flags.out && flags.plan && flags['plan-sha256']
+        ? apply(positional, flags.plan, flags['plan-sha256'], flags.out)
+        : Promise.reject(
+            new Error(
+              'Use --help; positional manifest is required. ' +
+                'plan needs --out; apply needs --out, --plan <frozen plan.json>, and ' +
+                '--plan-sha256 sha256:<approved plan hash from the frozen ops record>',
+            ),
+          );
 run.catch((error) => {
   console.error(error instanceof Error ? error.message : String(error));
   process.exitCode = 1;

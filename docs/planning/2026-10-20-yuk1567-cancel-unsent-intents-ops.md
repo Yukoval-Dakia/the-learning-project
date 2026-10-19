@@ -59,14 +59,26 @@ pending ──(never sent, explicit approval, immutable receipt)──▶ cancel
 # then freezes a write-once plan artifact. Mutates nothing.
 tsx scripts/yuk1567-cancel-unsent-intents.ts plan  <manifest.json> --out <plan.json>
 
-# Mutating: one SERIALIZABLE transaction PER TARGET, in manifest order —
-#   set isolation → family advisory lock → already-cancelled strict replay
-#   (read-only return of the stored receipt) or, for a fresh pending row,
-#   eligibility re-check under the same snapshot → cancelPaidEffectUnsentIntent
-#   (event insert + pending→cancelled CAS, atomic).
+# Mutating: executes ONLY the scope a FROZEN plan authorized.
+#   --plan is the artifact written by `plan`; --plan-sha256 is that file's
+#   raw-byte digest as recorded in the frozen ops record / approved command
+#   line — it is NEVER recomputed from the file as its own expected value.
+#   Before the database client is even imported, apply verifies: raw-byte
+#   hash → artifact schema → manifest_sha256 binds THIS manifest → request
+#   fields + watch triples + (identity, expected_fence) multiset match
+#   item-for-item → every plan target recorded eligible. An appended,
+#   replaced, dropped, or foreign plan refuses — the request_id alone never
+#   authorizes an execution scope.
+#   Per authorized target: one SERIALIZABLE transaction — set isolation →
+#   family advisory lock → already-cancelled strict replay (read-only return
+#   of the stored receipt) or, for a fresh pending row, eligibility re-check
+#   under the same snapshot → cancelPaidEffectUnsentIntent (event insert +
+#   pending→cancelled CAS, atomic).
 # A serialization conflict (SQLSTATE 40001) fails that target closed —
-# record, fix the cause, re-plan; the script never retries writes.
-tsx scripts/yuk1567-cancel-unsent-intents.ts apply <manifest.json> --out <receipt.json>
+# record, fix the cause, re-plan; the script never retries writes and never
+# re-freezes a plan on its own.
+tsx scripts/yuk1567-cancel-unsent-intents.ts apply <manifest.json> \
+  --out <receipt.json> --plan <plan.json> --plan-sha256 sha256:<approved plan hash>
 ```
 
 - Both modes require `DATABASE_URL === YUK1567_DATABASE_URL` (explicit operator
@@ -139,8 +151,16 @@ Rules enforced by the CLI / store:
   version. An undelivered event — work that could still mint a claim — fails
   eligibility.
 - One `request_id` covers the whole manifest — the two approved targets are one
-  approved operation. A later apply with a **different** `request_id` or ANY
-  divergent request field on an already-cancelled identity fails closed.
+  approved operation. The request id is per-identity IDEMPOTENCY metadata (it
+  anchors replay detection on a cancelled row); it is NOT a batch-wide
+  authorization key. The EXECUTION scope is authorized only by the verified
+  frozen plan (`--plan` + `--plan-sha256`): a manifest that appends, replaces,
+  or drops a target no longer matches the frozen plan and refuses before any
+  database connection — even under the original request id. Changing the
+  frozen scope requires re-plan AND re-approval; reusing the old request id or
+  recomputing a fresh hash for an edited plan does not carry the approval over.
+  A later apply with a **different** `request_id` or ANY divergent request
+  field on an already-cancelled identity fails closed.
 - The manifest is authored from the **frozen approval evidence**, not discovered by
   the CLI. The CLI never fishes for paid rows by group, actor, time window, or state;
   it only ever reads/writes the exact listed identities (plus entity-scoped *read*
@@ -204,7 +224,10 @@ Collect before `apply` (all of it is in the frozen `plan` artifact + live re-che
 
 ## 8. Evidence — after cancel
 
-The `apply` receipt artifact records, per target, the verbatim
+The `apply` receipt artifact records the verified hashes — `plan_sha256` (the
+raw-byte digest of the frozen plan that authorized this execution, equal to the
+approved `--plan-sha256`), `plan_manifest_sha256` and `manifest_sha256` (the
+parsed-manifest digest both files bind) — plus, per target, the verbatim
 `PaidEffectCancelOutcome`:
 
 - `kind: 'cancelled'`: `fence` (old+1 — the retired fence token), `cancelledAt`,
@@ -223,13 +246,28 @@ The `apply` receipt artifact records, per target, the verbatim
 
 ## 9. Scenario narratives (acceptance evidence, not assertion scripts)
 
-**Same-request replay.** Run `apply` twice with the identical manifest. Second run:
-each target's transaction sees the already-cancelled row under the family lock
+**Same-request replay.** Run `apply` twice with the identical manifest AND the
+identical frozen plan (`--plan` + approved `--plan-sha256`). Second run: each
+target's transaction sees the already-cancelled row under the family lock
 **before** eligibility, strictly compares the recorded receipt against the replayed
 request (request id, reason, operator, basis, full identity, previous fence), and
 returns `already_cancelled` with the stored receipt verbatim; no second event row,
 no writes; exit 0. This also covers crash recovery: a run that committed a target
-but died before/while writing the artifact replays to the same stored result.
+but died before/while writing the artifact replays to the same stored result. A
+fresh target that is still `pending` re-proves eligibility live — changed ambient
+state (new jobs, new deliveries) gates it, but committed history is never
+re-litigated.
+
+**Scope mutation (manifest/plan divergence).** Edit the manifest to append,
+replace, or drop a target — or alter watch/request fields — while reusing the
+original `request_id`, then apply with the original frozen plan. `apply` refuses
+BEFORE any database connection: `manifest_sha256` no longer matches the plan, and
+the (identity, expected_fence) multiset check independently names the divergent
+member. The request id is per-identity idempotency metadata only; it does not
+carry authorization to a new scope. Widening scope requires a new `plan` artifact
+AND a new approval — recomputing a hash for an edited plan file and passing it as
+`--plan-sha256` just pins whatever the operator typed, which is exactly why the
+approved digest must come from the frozen ops record, not from the file.
 
 **Divergent replay.** Any apply that reuses `request_id` but alters `reason`,
 `operator`, `basis`, the identity, or `expected_fence` — or replays under a
@@ -311,8 +349,9 @@ In this slice **none** of the following were run — by design and by instructio
 - Any DB/container/TEST access, provider call, queue/job/worker mutation — `NOT_RUN`.
 - `pnpm test` or any test — `NOT_RUN` (prohibited in this slice).
 - The mechanical test sync in `src/server/export/paid-effect-backup.db.test.ts` —
-  `NOT_RUN`/`NOT_EDITED` (see the separate test-plan document; the three exact line
-  changes are specified there for approval, tests remain untouched here).
+  the three exact line changes were approved by the coordination line
+  (2026-10-20, owner10-19 standing list authorization) and applied verbatim in
+  commit `902b266a0`; the test itself remains `NOT_RUN` here.
 
 Checks actually run are recorded in the PR body / handoff report.
 
@@ -325,11 +364,16 @@ Checks actually run are recorded in the PR body / handoff report.
 3. `YUK1567_DATABASE_URL=<deployment DATABASE_URL> DATABASE_URL=$YUK1567_DATABASE_URL
    tsx scripts/yuk1567-cancel-unsent-intents.ts plan manifest.json --out plan.json`
    → require `eligible: true` on every target; file `plan.json` as pre-evidence.
-4. Same command with `apply` → file `receipt.json` as post-evidence. Per-target
-   `failed` or `serialization_conflict` entries exit non-zero; investigate the
-   recorded error/failures before any retry. A retry with the same `request_id`
-   and identical request fields is safe by construction — a divergent replay
-   fails closed.
+   Then record `sha256sum plan.json` (or `shasum -a 256`) in the frozen ops
+   record — that digest is the approval token `apply` requires as
+   `--plan-sha256`; it must come from the record, never be recomputed ad hoc
+   from a file that could have been edited.
+4. `... apply manifest.json --out receipt.json --plan plan.json
+   --plan-sha256 sha256:<recorded hash>` → file `receipt.json` as post-evidence.
+   A scope/hash divergence refuses before connecting; per-target `failed` or
+   `serialization_conflict` entries exit non-zero — investigate the recorded
+   error/failures before any retry. A retry with the same manifest and the same
+   frozen plan is safe by construction — a divergent replay fails closed.
 5. Post-checks (read-only SQL, operator's own session): rows now `cancelled` with
    `cancelled_at`/`cancel_json` populated; `paid_effect_cancellation` holds exactly
    one row per identity; the historical `unknown` rows for the entities are
