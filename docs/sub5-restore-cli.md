@@ -145,6 +145,9 @@ normal API traffic while the import is running. The archive excludes and transac
 `provider_session_admission`.
 
 Import validates the ZIP, schema version, table names, columns, and row shapes before mutation.
+It also refuses an archive whose event-subscription effect still lacks downstream completion
+evidence: this logical ZIP has no pg-boss jobs, so an enqueued effect cannot be replayed. The
+response is HTTP 400 with `error: "downstream_completion_unproven"` and the effect identity.
 The database replacement itself runs in one transaction: a failure rolls back atomically and
 leaves Postgres unchanged. An archive with inline assets writes R2 after the database commit;
 individual R2 failures therefore appear in `failed_keys` and must be retried.

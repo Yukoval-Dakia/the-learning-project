@@ -60,6 +60,8 @@ Existing checkpoints prevent pending work from being reclassified as bootstrap h
 
 This logical ZIP does not contain pg-boss jobs. A succeeded delivery can mean that
 it enqueued downstream work; an enqueued effect is not proof that the work completed.
+Import refuses before wiping when an effect still lacks downstream completion
+evidence, and reports the effect id with its artifact, attempt and source identity.
 Restoring its ledger does not recreate a missing queue job. Do not delete effect
 records or replay terminal deliveries to force recovery: that can repeat completed
 side effects or paid work. Queue recovery remains an owner-service operation; the

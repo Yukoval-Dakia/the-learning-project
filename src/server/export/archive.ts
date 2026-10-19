@@ -336,6 +336,9 @@ export type RestoreResult =
       column?: string;
       // Set by the YUK-159 per-row shape barrier.
       index?: number;
+      // Set by the YUK-1614 downstream-completion pre-flight (before any wipe).
+      effects?: UnresolvedEffect[];
+      effect_count?: number;
     };
 
 export interface RestoreFromArchiveOpts {
@@ -391,6 +394,74 @@ function mem0RestoreValue(column: string, value: unknown) {
     return sql`${bound}::jsonb`;
   }
   return sql`${value ?? null}`;
+}
+
+// ─── Downstream completion pre-flight (YUK-1614) ───────────────────────────
+//
+// event_subscription_effect records that downstream work was reserved or sent
+// to pg-boss; it is not a completion receipt. pg-boss rows are outside the
+// logical ZIP, so an unresolved effect cannot be replayed on the target.
+const EFFECT_STATUS_WITHOUT_DOWNSTREAM_WORK: ReadonlySet<string> = new Set([
+  'debounced',
+  'disabled',
+]);
+const UNRESOLVED_EFFECT_PREVIEW_LIMIT = 20;
+
+interface UnresolvedEffect {
+  id: string | null;
+  effect_kind: string | null;
+  artifact_id: string | null;
+  attempt_event_id: string | null;
+  source_event_id: string | null;
+  downstream_job_id: string | null;
+  status: string | null;
+  reason: string;
+}
+
+function stringOrNull(value: unknown): string | null {
+  return typeof value === 'string' ? value : null;
+}
+
+function unresolvedEffectReason(status: string | null): string {
+  switch (status) {
+    case 'enqueued':
+      return 'downstream job was enqueued but the archive has no completion receipt or pg-boss job';
+    case 'reserved':
+      return 'effect was reserved but never enqueued or completed';
+    default:
+      return status === null
+        ? 'effect has no status or completion receipt'
+        : `effect status "${status}" is not terminal and has no completion receipt`;
+  }
+}
+
+/** Effects whose downstream work is not proven settled by this archive. A
+ *  non-null completed_at is explicit receipt evidence; current writers only
+ *  complete debounced/disabled effects. */
+function findUnresolvedEffects(
+  rows: ReadonlyArray<Record<string, unknown>> | undefined,
+): UnresolvedEffect[] {
+  const unresolved: UnresolvedEffect[] = [];
+  for (const row of rows ?? []) {
+    const status = stringOrNull(row.status);
+    const settledByStatus = status !== null && EFFECT_STATUS_WITHOUT_DOWNSTREAM_WORK.has(status);
+    const settledByReceipt =
+      (status === 'enqueued' || status === 'reserved') &&
+      row.completed_at !== null &&
+      row.completed_at !== undefined;
+    if (settledByStatus || settledByReceipt) continue;
+    unresolved.push({
+      id: stringOrNull(row.id),
+      effect_kind: stringOrNull(row.effect_kind),
+      artifact_id: stringOrNull(row.artifact_id),
+      attempt_event_id: stringOrNull(row.attempt_event_id),
+      source_event_id: stringOrNull(row.source_event_id),
+      downstream_job_id: stringOrNull(row.downstream_job_id),
+      status,
+      reason: unresolvedEffectReason(status),
+    });
+  }
+  return unresolved;
 }
 
 export async function restoreFromArchive({
@@ -680,6 +751,22 @@ export async function restoreFromArchive({
         error: 'data_validation_failed',
         message: 'Pre-flight validation caught issues; DB was NOT wiped.',
         issues: columnValidationErrors.slice(0, 20),
+      },
+    };
+  }
+
+  // YUK-1614: an effect can record a queue send, but the logical ZIP contains
+  // no pg-boss rows or downstream completion receipt. Refuse before the
+  // destructive transaction instead of treating "enqueued" as completed.
+  const unresolvedEffects = findUnresolvedEffects(data.event_subscription_effect);
+  if (unresolvedEffects.length > 0) {
+    return {
+      status: 400,
+      body: {
+        error: 'downstream_completion_unproven',
+        message: `Archive has ${unresolvedEffects.length} event-subscription effect(s) whose downstream work is not proven complete; the logical ZIP has no pg-boss job or completion receipt for them. DB was NOT wiped. Use a full PostgreSQL backup when queue state must be recovered.`,
+        effect_count: unresolvedEffects.length,
+        effects: unresolvedEffects.slice(0, UNRESOLVED_EFFECT_PREVIEW_LIMIT),
       },
     };
   }

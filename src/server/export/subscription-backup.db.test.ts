@@ -197,7 +197,9 @@ async function seedProgress() {
   const notes = registry.subscriptions.find((s) => s.id.startsWith('notes.'));
   if (!notes) throw new Error('notes subscriber missing');
   const attempt = await source('effect-attempt', 'attempt');
-  for (const status of ['enqueued', 'debounced', 'disabled', 'reserved'] as const) {
+  // YUK-1614: enqueued effects lack downstream completion evidence and are
+  // rejected by import, so the restorable archive carries only settled effects.
+  for (const status of ['debounced', 'disabled'] as const) {
     const artifactId = `backup-note-${status}`;
     await db.insert(artifact).values({
       id: artifactId,
@@ -224,9 +226,8 @@ async function seedProgress() {
       question_id: 'original-question',
       status,
       stable_job_key: `job-key-${status}`,
-      downstream_job_id: status === 'enqueued' ? 'archived-downstream-job' : null,
-      enqueued_at: status === 'enqueued' ? now : null,
-      completed_at: status === 'debounced' || status === 'disabled' ? now : null,
+      downstream_job_id: null,
+      completed_at: now,
       outcome: status === 'disabled' ? { reason: 'disabled at source time' } : null,
     });
   }
@@ -276,10 +277,9 @@ describe('YUK-766 subscription progress backup', () => {
     const publish = ['agency.probe-publication-serve', 'practice.question-admission-enqueue'];
     expect([...sourceIds(publish[0])].sort()).toEqual([...sourceIds(publish[1])].sort());
     expect(new Set(sourceIds(publish[0])).size).toBe(statuses.length);
-    expect(data.event_subscription_effect).toHaveLength(4);
-    expect(data.event_subscription_effect.find((r) => r.status === 'enqueued')).toMatchObject({
-      downstream_job_id: 'archived-downstream-job',
-      completed_at: null,
+    expect(data.event_subscription_effect).toHaveLength(2);
+    expect(data.event_subscription_effect.find((r) => r.status === 'debounced')).toMatchObject({
+      downstream_job_id: null,
       mastery_event_ids: [
         'notes.mastery-progress-note-refine:succeeded',
         'additional-mastery-evidence',
@@ -334,7 +334,7 @@ describe('YUK-766 subscription progress backup', () => {
         tx,
         bossSend: send,
         attemptEventId: 'effect-attempt',
-        artifactId: 'backup-note-enqueued',
+        artifactId: 'backup-note-debounced',
         masteryEventIds: [`${notes.id}:succeeded`],
         subscriberId: notes.id,
         subscriberVersion: notes.version,
