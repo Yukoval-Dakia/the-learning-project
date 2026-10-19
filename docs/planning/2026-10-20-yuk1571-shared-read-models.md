@@ -1,6 +1,6 @@
 # YUK-1571 LIGHT — 共享读模型下沉 `kernel/read-models`（交付记录）
 
-设计稿：`docs/planning/2026-10-19-yuk1571-integrated-operation-cuts.md` §L（L1/L2/L3 三操作合成本单 PR；只读搬迁，无运行时 registry/DI/新机制）。
+协调线已批准的 LIGHT 共享读归属调整：L1/L2/L3 三组读责任合成本单 PR；原本即单实现多消费，不把本片称为新增算法信息隐藏。只读搬迁，无运行时 registry/DI/新机制。FULL merge 所有权方案另待 owner 裁定，与本片无实施依赖。
 
 ## Caller 知识前后对照
 
@@ -23,12 +23,12 @@
 
 ## 两个真实变更场景
 
-1. **改过期/目标代理语义**（如收紧 expires_at 判定）：Before 需同时核对 agency 读实现与 knowledge 评审注入是否分叉；After 改 `agent-note-hints.ts` 单点，review.ts 与 agency 全部消费方（经 compat）同时生效。
-2. **摘要截断或可见性规则调整**（EXCERPT_MAX / learnerVisibleKnowledgeIds 过滤）：Before 需检查 agency/practice 两个能力对 ingestion 读的复制解释是否一致；After 改 `extraction-summary.ts` 单点，三消费方同时生效。
+1. **过期/目标代理规则调整**：前后都只改一个读实现；本片不减少该场景的改动点。变化是读事实归 kernel，knowledge 评审无需再依赖 agency 的写能力公共面，agency 写侧与 board 装配仍归自身。
+2. **知识节点页或 scout 扩展只读投影**：原本经 notes/public，读接口变动需理解 notes 的公共面；现在从职责明确的 kernel 读模块取值，笔记写入/同步仍留 notes。没有消除此前不存在的重复实现；调用方仍须理解自己选择的投影。
 
 ## 行为保持证据
 
-- `kernel/read-models/{notes-read,artifact-corrections,extraction-summary}.ts` 与原文件逐字节一致（`git show HEAD:<orig> | diff - <new>` → IDENTICAL）。
+- `kernel/read-models/{notes-read,artifact-corrections,extraction-summary}.ts` 与原文件逐字节一致（`git show e6ca25b03:<orig> | diff - <new>` → IDENTICAL）。
 - `agent-note-hints.ts`、`artifact-backlinks.ts` 的全部搬迁区间（类型、注释、函数体、SQL）与原文件逐字节一致（python difflib 按行区间对比 → IDENTICAL）。
 - 排序/limit/期限/可见性/父链/null/异常与 SQL 语义零改动；全部纯读，无锁。
 
@@ -51,12 +51,12 @@
 
 - base：`origin/main` e6ca25b03（branch `refactor/yuk-1571-shared-read-models`，独立 worktree `/Users/yuqi/.t3/worktrees/the-learning-project/t3-33f77fae`）
 - head：以 `git rev-parse HEAD` / checkpoint 目录名为准（本文件随 head 提交，不能自含 SHA）
-- 日志与 SHA256：`/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1571/<head-sha>/`
+- 源码 revision `3078acd4f61c38a5695d110b161efc7d5e13311c` 的日志：`/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1571/3078acd4f61c38a5695d110b161efc7d5e13311c/`；`checks-sha256.json` SHA-256 `f29a316df1fe0a76a133be36fecd2abbc79119e75d4ca4faf8ab8887b57d47b8`。
 
 ## Commands（本机已跑）
 
 - `pnpm typecheck` PASS（两 tsconfig）
-- `pnpm lint` PASS（178 warning 全为 main 既有；本批文件 0 error）
+- `pnpm lint` PASS（178 warnings，未将警告总数当作与 main 逐项等价的证明）
 - `pnpm build` PASS（web + server/worker/migrate 三 esbuild 产物）
 - `pnpm audit:capability-boundaries` **EXPECTED-FAIL**（6 条全部是「debt decreased → tighten baseline」delta；`capability-boundary-baseline.json` 归 Grok1830 独占，本 PR 不写）
 - `pnpm audit:architecture-deepening` 同上 6 条 baseline delta；5 条 stale catalog entry 已按本 head 真实边集修正 `scripts/capability-public-read-cycles.ts`（台账非 baseline）
