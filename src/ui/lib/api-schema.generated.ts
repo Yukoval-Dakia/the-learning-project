@@ -16652,6 +16652,7 @@ export interface operations {
                                             kind: "finite_set";
                                             /** @enum {string} */
                                             order: "unordered";
+                                            variables?: string[];
                                         };
                                         /** @enum {string} */
                                         version: "k1-math-v1";
@@ -16966,6 +16967,7 @@ export interface operations {
                                             kind: "finite_set";
                                             /** @enum {string} */
                                             order: "unordered";
+                                            variables?: string[];
                                         };
                                         /** @enum {string} */
                                         version: "k1-math-v1";
@@ -17512,6 +17514,7 @@ export interface operations {
                                             kind: "finite_set";
                                             /** @enum {string} */
                                             order: "unordered";
+                                            variables?: string[];
                                         };
                                         /** @enum {string} */
                                         version: "k1-math-v1";
@@ -21863,6 +21866,7 @@ export interface operations {
                                                         kind: "finite_set";
                                                         /** @enum {string} */
                                                         order: "unordered";
+                                                        variables?: string[];
                                                     };
                                                     /** @enum {string} */
                                                     version: "k1-math-v1";
@@ -22600,6 +22604,7 @@ export interface operations {
                                                         kind: "finite_set";
                                                         /** @enum {string} */
                                                         order: "unordered";
+                                                        variables?: string[];
                                                     };
                                                     /** @enum {string} */
                                                     version: "k1-math-v1";
@@ -23918,6 +23923,7 @@ export interface operations {
                                                             kind: "finite_set";
                                                             /** @enum {string} */
                                                             order: "unordered";
+                                                            variables?: string[];
                                                         };
                                                         /** @enum {string} */
                                                         version: "k1-math-v1";
@@ -24850,6 +24856,7 @@ export interface operations {
                                                         kind: "finite_set";
                                                         /** @enum {string} */
                                                         order: "unordered";
+                                                        variables?: string[];
                                                     };
                                                     /** @enum {string} */
                                                     version: "k1-math-v1";
@@ -25922,6 +25929,7 @@ export interface operations {
                                                         kind: "finite_set";
                                                         /** @enum {string} */
                                                         order: "unordered";
+                                                        variables?: string[];
                                                     };
                                                     /** @enum {string} */
                                                     version: "k1-math-v1";
@@ -26945,6 +26953,7 @@ export interface operations {
                                                         kind: "finite_set";
                                                         /** @enum {string} */
                                                         order: "unordered";
+                                                        variables?: string[];
                                                     };
                                                     /** @enum {string} */
                                                     version: "k1-math-v1";
@@ -27918,6 +27927,7 @@ export interface operations {
                                                         kind: "finite_set";
                                                         /** @enum {string} */
                                                         order: "unordered";
+                                                        variables?: string[];
                                                     };
                                                     /** @enum {string} */
                                                     version: "k1-math-v1";
@@ -41736,6 +41746,7 @@ export interface operations {
                                                 kind: "finite_set";
                                                 /** @enum {string} */
                                                 order: "unordered";
+                                                variables?: string[];
                                             };
                                             /** @enum {string} */
                                             version: "k1-math-v1";
@@ -42081,6 +42092,7 @@ export interface operations {
                                                 kind: "finite_set";
                                                 /** @enum {string} */
                                                 order: "unordered";
+                                                variables?: string[];
                                             };
                                             /** @enum {string} */
                                             version: "k1-math-v1";
@@ -42537,6 +42549,7 @@ export interface operations {
                                                 kind: "finite_set";
                                                 /** @enum {string} */
                                                 order: "unordered";
+                                                variables?: string[];
                                             };
                                             /** @enum {string} */
                                             version: "k1-math-v1";

@@ -13,9 +13,13 @@
 - `answer_shape = { version: "k1-math-v1", value, notation }` 的唯一 Zod 定义；草稿
   （`DraftBlankSpec`）与冻结契约（`BlankSlot`）复用同一 schema，不再出现两套同名字段。
 - `value` 是封闭判别联合：`number`（可选单位输入要求 `{unit, accepts_bare_number}`）、
-  `interval_set`（`binding` 声明被讨论的变量/量表达式）、`point`（`axes` 有序坐标轴）、
-  `affine_line`（`variables` 有序变量）、`finite_set`（`item ∈ number|point|affine_line`、
-  `order:"unordered"`、`duplicates:"forbidden"`；item=point 必须带 `axes`）。
+  `interval_set`（`binding` 声明被讨论的变量/量表达式）、`point`（`axes` 有序坐标轴，
+  元素不重复）、`affine_line`（`variables` 恰两个互不相同的非空有序变量）、
+  `finite_set`（`item ∈ number|point|affine_line`、`order:"unordered"`、
+  `duplicates:"forbidden"`；`item=point` 必须带 `axes`，`item=affine_line` 必须带
+  `variables`（成员直线的有序变量绑定，恰两个且互不相同）；`axes`/`variables`
+  只属于各自 item，其它 item 携带即声明错误 —— R1 P1-2 收口，iqsi 的
+  finite_set(affine_line) 因此可完整声明成员直线绑定）。
 - `notation` 只能在该 value kind 允许的输入语法里选（`NOTATIONS_BY_VALUE_KIND`），
   不是 agent 可提交的正则或代码。
 - 全部 strict 对象 + `version` 字面量：**未知版本/未知字段 parse 直接失败**，不能被
@@ -48,7 +52,16 @@
 
 ### 3. 保护（本片核心）
 
-比较器未到位前，新声明只能存草稿或以 withheld/暂扣发布，**不能发题、不能 admitted**：
+比较器未到位前，新声明只能存草稿或以 withheld/暂扣发布，**不能发题、不能 admitted、
+不能进付费 admission 管线**：
+
+- **付费前闸（R1 P1-1）**：`enqueuePublishedQuestionAdmission` 加载 revision 后用
+  `findAnswerShapeDeclarations` 探测（宽松存在性：未知版本也算已声明），命中即
+  `{status:'skipped', reason:'declared answer_shape — comparator pending…'}` 不入队；
+  `runAdmissionForQuestion` 在 `claimAdmissionBatch` 前对同一 contract 探测，命中强制
+  `maySend=false`（纵深防御，覆盖 manual re-dispatch 与 direct invocation）。既有
+  receipt 应用/审计（claim 内 receipt/historical 分支在 maySend 之前）不受影响，
+  被拦 claim 以 stale 结束，不产生 paid 行、不重置 authorization。
 
 - **submit/typed seam**（`draft-contract.ts`）：声明 blank 单元 `judgeable_today=false`，
   `withheld_reason='declared_answer_shape_comparator_pending'`；提交照常可发布

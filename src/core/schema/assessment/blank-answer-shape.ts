@@ -82,24 +82,28 @@ const PointAnswerShape = z
   })
   .strict();
 
-/** 有理系数一次直线 ax+by+c=0（variables 声明有序变量，如 [x,y]）；仅非零整体比例等价。 */
+/** 有理系数一次直线 ax+by+c=0（variables 声明有序变量，如 [x,y]，恰两个且互不相同）；仅非零整体比例等价。 */
 const AffineLineAnswerShape = z
   .object({
     kind: z.literal('affine_line'),
-    variables: z.array(z.string().min(1)).min(2),
+    variables: z.array(z.string().min(1)).length(2),
   })
   .strict();
 
 /**
  * 列全解集的有限集合：成员是 number / point / affine_line 之一；只在这一层
  * 忽略成员排列（order=unordered）；成员重复被禁止（duplicates=forbidden）。
- * item=point 时必须声明 axes（成员点的维数与坐标轴）。
+ * item=point 时必须声明 axes（成员点的维数与坐标轴，有序且不重复）；
+ * item=affine_line 时必须声明 variables（成员直线的有序变量绑定，恰两个且
+ * 互不相同）。axes / variables 只属于各自的 item，其它 item 携带即声明错误
+ *（R1 P1-2：iqsi 的 finite_set(affine_line) 必须能完整声明成员直线绑定）。
  */
 const FiniteSetAnswerShape = z
   .object({
     kind: z.literal('finite_set'),
     item: z.enum(['number', 'point', 'affine_line']),
     axes: z.array(z.string().min(1)).min(1).optional(),
+    variables: z.array(z.string().min(1)).length(2).optional(),
     order: z.literal('unordered'),
     duplicates: z.literal('forbidden'),
   })
@@ -130,8 +134,10 @@ export const NOTATIONS_BY_VALUE_KIND: Readonly<
 
 /**
  * answer_shape 唯一定义：{version, value, notation}。strict + 逐 kind 校验：
- * notation 必须落在该 kind 允许的语法内；finite_set(point) 必须带 axes，
- * 其余 kind 带 axes 是声明错误（不能 strip 后当没写）。
+ * notation 必须落在该 kind 允许的语法内；axes 只允许 point /
+ * finite_set(point)（有序且不重复）；affine_line 与 finite_set(affine_line)
+ * 的 variables 恰两个互不相同，且 variables 只允许 affine_line item；
+ * 缺绑定或携带不属于该 kind 的字段都是声明错误（不能 strip 后当没写）。
  */
 export const BlankAnswerShape = z
   .object({
@@ -151,14 +157,74 @@ export const BlankAnswerShape = z
         });
       }
     }
-    const hasAxes = shape.value.kind === 'finite_set' && shape.value.axes != null;
-    if (shape.value.kind === 'finite_set' && shape.value.item === 'point' && !hasAxes) {
+    const distinct = (names: readonly string[]): boolean => new Set(names).size === names.length;
+    if (shape.value.kind === 'point' && !distinct(shape.value.axes)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'point axes must be distinct — an ordered coordinate axis may appear at most once',
+        path: ['value', 'axes'],
+      });
+    }
+    if (shape.value.kind === 'affine_line' && !distinct(shape.value.variables)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message:
-          "finite_set of points must declare 'axes' (member dimension and ordered coordinate axes)",
-        path: ['value', 'axes'],
+          "affine_line variables must be exactly two distinct non-empty variable names (e.g. ['x','y']) for ax+by+c=0",
+        path: ['value', 'variables'],
       });
+    }
+    if (shape.value.kind === 'finite_set') {
+      const item = shape.value.item;
+      if (item !== 'point' && shape.value.axes != null) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `finite_set(item='${item}') must not carry 'axes' — axes only declare the member dimension for finite_set(point)`,
+          path: ['value', 'axes'],
+        });
+      }
+      if (item === 'point' && shape.value.axes == null) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message:
+            "finite_set of points must declare 'axes' (member dimension and ordered coordinate axes)",
+          path: ['value', 'axes'],
+        });
+      }
+      if (item === 'point' && shape.value.axes != null && !distinct(shape.value.axes)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message:
+            'finite_set(point) axes must be distinct — an ordered coordinate axis may appear at most once',
+          path: ['value', 'axes'],
+        });
+      }
+      if (item === 'affine_line' && shape.value.variables == null) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message:
+            "finite_set(affine_line) must declare 'variables' — the ordered variable binding of every member line (R1 P1-2)",
+          path: ['value', 'variables'],
+        });
+      }
+      if (
+        item === 'affine_line' &&
+        shape.value.variables != null &&
+        !distinct(shape.value.variables)
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message:
+            "finite_set(affine_line) variables must be exactly two distinct non-empty variable names (e.g. ['x','y'])",
+          path: ['value', 'variables'],
+        });
+      }
+      if (item !== 'affine_line' && shape.value.variables != null) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `finite_set(item='${item}') must not carry 'variables' — variables only bind member lines for finite_set(affine_line)`,
+          path: ['value', 'variables'],
+        });
+      }
     }
   });
 export type BlankAnswerShapeT = z.infer<typeof BlankAnswerShape>;
