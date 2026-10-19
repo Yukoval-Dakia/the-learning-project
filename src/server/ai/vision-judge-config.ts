@@ -37,7 +37,11 @@
 import type { Provider, TaskKind } from '@/capabilities/task-registry';
 import { getLaneOverride } from '@/core/config/store';
 import { resolveModelProfile } from '@/server/ai/model-profiles';
-import { ANTHROPIC_SUB_DEFAULT_MODEL, isOauthProvider } from '@/server/ai/providers';
+import {
+  ANTHROPIC_SUB_DEFAULT_MODEL,
+  isOauthProvider,
+  readProviderId,
+} from '@/server/ai/providers';
 
 /** Live consumers of the vision override; keep validation and read facts aligned. */
 export const VISION_JUDGE_TASK_KINDS = [
@@ -108,8 +112,9 @@ export function visionJudgeProviderOverride(
   // YUK-1007：DB lane 层 > env（传入 env 只作 fallback，DB 写入优先于它——
   // 与 resolveTaskProvider 的全局 OVERRIDE 层一致）。
   const lane = getLaneOverride('vision_judge', env);
-  const provider = lane?.provider;
-  if (!provider) return undefined;
+  const rawProvider = lane?.provider;
+  if (!rawProvider) return undefined;
+  const provider = readProviderId(rawProvider) ?? (rawProvider as Provider);
 
   if (isOAuthLaneProvider(provider as Provider) && !env[OAUTH_TOKEN_ENV]) {
     console.warn(

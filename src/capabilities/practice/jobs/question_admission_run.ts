@@ -2,16 +2,11 @@
 // The publisher event outbox enqueues pinned revisions. Queue retries replay a
 // complete result receipt, never paid solves. Unknown batches require reconciliation.
 import { randomUUID } from 'node:crypto';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, or, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
-import {
-  LEGACY_QUESTION_ADMISSION_POLICY_ID,
-  QUESTION_ADMISSION_POLICY_ID,
-} from '@/core/question-admission-policy';
-import { LEGACY_DRAFT_STATUS } from '@/core/schema/assessment/lifecycle';
-import type { ResponseSpecT } from '@/core/schema/assessment/response';
-import type { ScoringBasisT } from '@/core/schema/assessment/scoring';
-import type { QuestionGroupStructureT } from '@/core/schema/assessment/structure';
+import { canonicalProviderName } from '@/ai/task-spec';
+import { QUESTION_ADMISSION_POLICY_IDS } from '@/core/question-admission-policy';
+import { declaredShapesAllSupported } from '@/core/schema/assessment/blank-answer-compare';
 import type { Db, Tx } from '@/db/client';
 import {
   admitPaidEffectDeliveryControl,
@@ -58,10 +53,14 @@ import {
   completedAdmissionStatus,
 } from '../server/admission/receipt';
 import {
+  admissionCheckVerdict,
+  buildAdmissionPublishInput,
+  projectAdmittedQuestionRow,
+} from '../server/admission/resolved-publication';
+import {
   resolveQuestionAdmissionPolicyId,
   runQuestionAdmission,
 } from '../server/admission/run-admission';
-import { canonicalQuestionContentHash } from '../server/quiz/content-fingerprint';
 import { publishQuestionGroup } from '../server/quiz/verify-and-promote';
 import { type PracticeTaskRunFn, makePracticeTaskTextRunFn } from '../server/task-runtime';
 
@@ -73,7 +72,10 @@ export interface QuestionAdmissionRunResult {
   revision_ordinal?: number;
   per_unit: { scoring_unit_id: string; status: string; reason?: string }[];
 }
-const SOLVER2_PROVIDER = process.env.QUESTION_ADMISSION_SOLVER2_PROVIDER as Provider | undefined;
+const SOLVER2_PROVIDER_RAW = process.env.QUESTION_ADMISSION_SOLVER2_PROVIDER;
+const SOLVER2_PROVIDER = SOLVER2_PROVIDER_RAW
+  ? (canonicalProviderName(SOLVER2_PROVIDER_RAW) as Provider)
+  : undefined;
 const SOLVER2_MODEL = process.env.QUESTION_ADMISSION_SOLVER2_MODEL;
 
 async function loadDefinition(db: Db | Tx, rootId: string) {
@@ -181,95 +183,6 @@ async function loadGradedContract(
   }
 }
 
-/** Same stem rule as submit's projectPrompt: a shared stem is the row prompt. */
-function projectPromptMd(structure: QuestionGroupStructureT): string {
-  const parts = structure.parts;
-  if (parts.length === 1) return parts[0].prompt_md;
-  const stem = parts
-    .flatMap((part) => part.material_ids)
-    .map((id) => structure.materials.find((material) => material.material_id === id))
-    .find((material) => material != null && material.caption === 'stem/shared context');
-  if (stem?.content_md != null) return stem.content_md;
-  return parts
-    .map((part) => part.prompt_md)
-    .filter((text) => text.trim().length > 0)
-    .join('\n\n');
-}
-
-function projectAdmittedQuestionRow(contract: {
-  structure: QuestionGroupStructureT;
-  response_spec: ResponseSpecT;
-  scoring_basis: ScoringBasisT;
-}) {
-  const parts = contract.structure.parts;
-  const promptMd = projectPromptMd(contract.structure);
-  const slotById = new Map(contract.response_spec.slots.map((slot) => [slot.slot_id, slot]));
-  const references: string[] = [];
-  for (const unit of contract.scoring_basis.units) {
-    const slot = unit.slot_refs[0] != null ? slotById.get(unit.slot_refs[0]) : undefined;
-    const criterion = unit.criterion;
-    if (criterion.kind === 'blank_key') {
-      references.push(
-        criterion.key.kind === 'text'
-          ? criterion.key.accepted.join(' / ')
-          : String(criterion.key.expected),
-      );
-    } else if (criterion.kind === 'text_key') {
-      references.push(criterion.accepted_texts.join(' / '));
-    } else if (criterion.kind === 'numeric_key') {
-      references.push(String(criterion.expected));
-    } else if (criterion.kind === 'select_key' && slot?.kind === 'select') {
-      const labels = criterion.accepted_item_ids
-        .map((id) => slot.items.findIndex((item) => item.item_id === id))
-        .filter((index) => index >= 0)
-        .map((index) => String.fromCharCode(65 + index));
-      if (labels.length > 0) references.push(labels.join(''));
-    } else if (
-      criterion.kind === 'option_set_key' &&
-      (slot?.kind === 'single_choice' || slot?.kind === 'multi_choice')
-    ) {
-      const labels = criterion.accepted_option_ids
-        .map((id) => slot.options.find((option) => option.option_id === id)?.label)
-        .filter((label): label is string => label != null && label.length > 0);
-      if (labels.length > 0) references.push(labels.join(''));
-    }
-  }
-  const referenceMd = references.length > 0 ? references.join('\n\n') : null;
-  const choiceSlot = contract.response_spec.slots.find(
-    (slot) =>
-      slot.kind === 'select' || slot.kind === 'single_choice' || slot.kind === 'multi_choice',
-  );
-  const choicesMd =
-    choiceSlot?.kind === 'select'
-      ? choiceSlot.items.map((item) => item.label_md ?? item.item_id)
-      : choiceSlot?.kind === 'single_choice' || choiceSlot?.kind === 'multi_choice'
-        ? choiceSlot.options.map((option) => option.text)
-        : null;
-  const slotKinds = new Set(contract.response_spec.slots.map((slot) => slot.kind));
-  const composite = parts.length > 1 || slotKinds.size > 1;
-  const choice =
-    slotKinds.has('select') || slotKinds.has('single_choice') || slotKinds.has('multi_choice');
-  const blank =
-    slotKinds.has('blank') ||
-    slotKinds.has('text') ||
-    slotKinds.has('numeric') ||
-    slotKinds.has('formula');
-  const kind = composite ? 'composite' : choice ? 'choice' : blank ? 'fill_blank' : 'short_answer';
-  return {
-    prompt_md: promptMd,
-    reference_md: referenceMd,
-    choices_md: choicesMd,
-    kind,
-    canonical_content_hash: canonicalQuestionContentHash({
-      promptMd,
-      referenceMd,
-      choicesMd,
-      ...(composite ? { composite: true } : {}),
-    }),
-    draft_status: LEGACY_DRAFT_STATUS.ACTIVE,
-  };
-}
-
 async function subjectProfileFor(db: Db | Tx, rootId: string) {
   const [row] = await db
     .select({ knowledge_ids: question.knowledge_ids })
@@ -336,12 +249,19 @@ export async function runAdmissionForQuestion(
         and(
           eq(question_revision.group_id, rootId),
           inArray(question_admission_verification.policy_id, [
-            LEGACY_QUESTION_ADMISSION_POLICY_ID,
-            QUESTION_ADMISSION_POLICY_ID,
+            ...QUESTION_ADMISSION_POLICY_IDS,
             resolveQuestionAdmissionPolicyId(),
           ]),
           sql`${question_admission_verification.evidence}->>'pack' = 'question_admission'`,
-          sql`${question_admission_verification.evidence}->>'base_contract_digest' = ${contract.integrity_digest}`,
+          // YUK-1547 — bind the terminal verdict to the CURRENT content through
+          // the publisher-written revision_digest column (authoritative after
+          // resolved-contract publication: the receipt's base_contract_digest
+          // stays the paid INPUT digest), falling back to the legacy evidence
+          // field for rows where base content == published document.
+          or(
+            eq(question_admission_verification.revision_digest, contract.integrity_digest),
+            sql`${question_admission_verification.evidence}->>'base_contract_digest' = ${contract.integrity_digest}`,
+          ),
           inArray(question_admission_verification.outcome, ['passed', 'failed', 'suspended']),
         ),
       )
@@ -374,8 +294,15 @@ export async function runAdmissionForQuestion(
         }),
       ),
     );
+    // YUK-1568（第 2 片）：声明 answer_shape 的题由共享比较核心判定支持后
+    // 才可发起付费 claim —— 未实现 notation、未知/坏声明在 claim/付费发送
+    // 之前强制关闸，覆盖 enqueue 之外的 manual re-dispatch 与 direct
+    // invocation。既有 receipt 的应用与审计（claim 内 receipt/historical 分
+    // 支在 maySend 判断之前）不受影响；被拦的 claim 以 stale 结束，不产生
+    // paid 行、不重置 authorization。
+    const declaredUnsupported = !declaredShapesAllSupported(contract.response_spec).ok;
     return claimAdmissionBatch(tx, input, delivery, {
-      maySend: pinned && eligible,
+      maySend: pinned && eligible && !declaredUnsupported,
       historicalTerminal: Boolean(terminal),
     });
   });
@@ -421,7 +348,7 @@ export async function runAdmissionForQuestion(
         solver2: batch.input.solver2
           ? {
               ...(batch.input.solver2.provider
-                ? { provider: batch.input.solver2.provider as Provider }
+                ? { provider: canonicalProviderName(batch.input.solver2.provider) as Provider }
                 : {}),
               ...(batch.input.solver2.model ? { model: batch.input.solver2.model } : {}),
             }
@@ -510,19 +437,7 @@ export async function runAdmissionForQuestion(
         throw new Error('Unknown admission result cannot be applied');
       const decision = await runQuestionAdmissionChecks(tx, {
         knowledgeIds: root.knowledge_ids ?? [],
-        unitSummary: result.per_unit.map((unit) => ({
-          unit_id: unit.scoring_unit_id,
-          judgeable_today: unit.status !== 'withheld',
-          ...(unit.reason != null ? { withheld_reason: unit.reason } : {}),
-        })),
-        verdict: {
-          status: result.status,
-          per_unit: result.per_unit.map((unit) => ({
-            scoring_unit_id: unit.scoring_unit_id,
-            status: unit.status,
-            ...(unit.reason != null ? { reason: unit.reason } : {}),
-          })),
-        },
+        ...admissionCheckVerdict(result),
       });
       if (decision.group_blockers.length > 0) {
         await notePaidEffectApplicationFailure(
@@ -534,15 +449,17 @@ export async function runAdmissionForQuestion(
       }
       const admitted = decision.admission.state === 'admitted' && result.resolved !== undefined;
       const now = new Date(receipt.recorded_at);
-      const verifierContext = batch.input.solver2
-        ? 'independent_model'
-        : 'same_model_isolated_context';
-      // The model key is comparison evidence. Publish the sealed revision so an
-      // unchanged author key does not mint another revision.
-      const contract = batch.input.contract;
-      const persisted = await publishQuestionGroup(tx, {
-        group_id: rootId,
-        contract,
+      // YUK-1547 — admitted publishes the PAID resolved contract (typed keys /
+      // deterministic executors), bound to its paid_effect row through the
+      // shared builder. Publishing the frozen base input admitted a still
+      // human_review revision; a blocked build keeps the receipt (fail-closed)
+      // instead of degrading to the base document.
+      const built = buildAdmissionPublishInput({
+        groupId: rootId,
+        input: batch.input,
+        identity: batch.identity,
+        receipt,
+        admitted,
         expectedCurrentRevision: batch.input.revision_id,
         expectedAdmissionGeneration: lifecycle?.scoring_admission_generation ?? null,
         availability:
@@ -550,46 +467,18 @@ export async function runAdmissionForQuestion(
           (root.source === 'web_sourced' || root.source === 'quiz_gen'
             ? 'general_pool'
             : 'container_only'),
-        admission: admitted
-          ? {
-              state: 'admitted',
-              evidence: {
-                marking_provenance: 'system_verified',
-                verification: {
-                  structural_check_passed: true,
-                  independent_verification: {
-                    passed: true,
-                    verifier: 'independent_model',
-                    verified_at: receipt.recorded_at,
-                  },
-                  note: `YUK-1445 dual blind solve + frozen probe calibration (${batch.input.policy_id}); verifier_context=${verifierContext}`,
-                },
-                model_slice: null,
-              },
-            }
-          : {
-              state: 'withheld',
-              reason: result.per_unit.some((u) => u.reason === 'no_admitted_executor')
-                ? 'no_admitted_executor'
-                : result.per_unit.some((u) => u.reason?.startsWith('source_crosscheck'))
-                  ? 'verification_failed'
-                  : 'unverified_rules',
-            },
-        ...(admitted ? { suspension: { suspended: false } } : {}),
-        verification: result.verification,
         actorRef: 'practice:question_admission',
-        publishedBy: {
-          by: 'system',
-          lane: 'question_admission',
-          policy_id: batch.input.policy_id,
-          task_run_ids: result.evidence_refs.task_run_ids,
-        },
         now,
       });
+      if (built.kind === 'blocked') {
+        await notePaidEffectApplicationFailure(tx, batch.identity, built.reason);
+        return simple('pending');
+      }
+      const persisted = await publishQuestionGroup(tx, built.publish);
       const status =
         persisted.status === 'conflict' ? 'conflict' : admitted ? 'admitted' : 'withheld';
       if (status === 'admitted') {
-        const projected = projectAdmittedQuestionRow(contract);
+        const projected = projectAdmittedQuestionRow(built.contract);
         await tx
           .update(question)
           .set({

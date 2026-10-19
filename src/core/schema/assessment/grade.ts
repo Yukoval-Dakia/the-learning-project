@@ -1,3 +1,5 @@
+import { compareDeclaredBlank } from './blank-answer-compare';
+import type { BlankAnswerShapeT } from './blank-answer-shape';
 import type { ScoringUnitResultT } from './judgment';
 import type { SlotResponseT } from './response';
 import type { BlankKeyCriterionT, BlankNormalizationT, ScoringUnitT } from './scoring';
@@ -132,6 +134,18 @@ function charDiff(given: string, expected: string) {
 
 const PLAIN_NUMBER = /^[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?$/u;
 
+/**
+ * 纯数值读取：NFKC + trim + PLAIN_NUMBER + finite —— 不接受千分位/单位/其他形态。
+ * 同一个确定性 parse 既用于判分（numericCorrect），也用于准入双解的跨 kind
+ * 一致性（solve.ts keysAgree）：text 键铸成 numeric 键后，判分读法不变。
+ */
+export function parseBlankNumericText(raw: string): number | null {
+  const text = raw.normalize('NFKC').trim();
+  if (!PLAIN_NUMBER.test(text)) return null;
+  const value = Number(text);
+  return Number.isFinite(value) ? value : null;
+}
+
 function withinTolerance(
   value: number,
   key: Extract<BlankKeyCriterionT['key'], { kind: 'numeric' }>,
@@ -152,8 +166,9 @@ async function numericCorrect(
 ): Promise<0 | 1 | null> {
   const text = raw.normalize('NFKC').trim();
   if (key.expected_unit == null) {
-    if (!PLAIN_NUMBER.test(text) || !Number.isFinite(Number(text))) return null;
-    return withinTolerance(Number(text), key) ? 1 : 0;
+    const value = parseBlankNumericText(raw);
+    if (value == null) return null;
+    return withinTolerance(value, key) ? 1 : 0;
   }
   if (PLAIN_NUMBER.test(text)) return 0;
   const { unit: parseUnit } = await import('mathjs');
@@ -172,10 +187,18 @@ async function numericCorrect(
   }
 }
 
-/** 单空 exact：blank 作答对 blank_key，按 unit.rule 给分。 */
+/**
+ * 单空 exact：blank 作答对 blank_key，按 unit.rule 给分。
+ *
+ * declaredShape（YUK-1568 第 2 片）：冻结 slot 声明的 answer_shape（由
+ * evaluation 按主槽位传入）。带声明时走同一共享比较核心 compareDeclaredBlank
+ * （准入 keysAgree / 作者键核验 / 发布闸全部复用它，绝不两套数学）；无声明
+ * 文本/数值完全保持原 normalizeBlankText + numericCorrect 行为。
+ */
 export async function gradeBlankExactUnit(
   unit: ScoringUnitT,
   entry: BlankEntry,
+  declaredShape?: BlankAnswerShapeT,
 ): Promise<ScoringUnitResultT> {
   if (unit.criterion.kind !== 'blank_key' || unit.rule == null) {
     return unjudgeable(unit, 'blank_exact needs blank_key and a rule');
@@ -186,7 +209,16 @@ export async function gradeBlankExactUnit(
   const key = unit.criterion.key;
   let correct: 0 | 1;
   let diff: ReturnType<typeof charDiff>;
-  if (key.kind === 'text') {
+  if (declaredShape != null) {
+    // 声明数学路径：作答与键同一解析器；undecidable（解析失败/歧义/超限/
+    // 键与声明确定性冲突）→ pending，绝不伪零分；完整解析但不相等 →
+    // incorrect，由原 rule 给分。
+    const declared = await compareDeclaredBlank(declaredShape, key, entry.text);
+    if (declared.outcome === 'undecidable') {
+      return unreadable(unit, entry.slot_id, `declared answer_shape: ${declared.reason}`);
+    }
+    correct = declared.outcome === 'correct' ? 1 : 0;
+  } else if (key.kind === 'text') {
     const given = normalizeBlankText(entry.text, key.normalization);
     const accepted = key.accepted.map((text) => normalizeBlankText(text, key.normalization));
     correct = accepted.includes(given) ? 1 : 0;

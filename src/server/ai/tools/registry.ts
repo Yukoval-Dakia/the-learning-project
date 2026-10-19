@@ -10,6 +10,7 @@
 // `__resetRegistryForTests` to keep parallel registration deterministic.
 
 import type { DomainTool, ToolEffect } from '@/kernel/tools/types';
+import { zodToToolParametersSchema } from '@/kernel/zod-json-schema';
 
 const registry = new Map<string, DomainTool<unknown, unknown>>();
 
@@ -22,6 +23,24 @@ export function registerTool<I, O>(tool: DomainTool<I, O>): void {
   if (typeof tool.outputSchema?.safeParse !== 'function') {
     throw new Error(
       `DomainTool '${tool.name}' outputSchema must be a Zod schema with a safeParse method. Got ${String(tool.outputSchema)}.`,
+    );
+  }
+  // YUK-1559 — composition-time contract check on the REAL converted schema:
+  // provider function calling requires a type:"object" parameters root, so an
+  // inputSchema that cannot compile to one (array/primitive/unconstrained
+  // roots) is rejected at registration instead of failing mid-run as a
+  // provider 400. Union-of-objects roots are normalized by the shared
+  // converter; the mount-time z.ZodObject check in buildPiDomainAgentTools is
+  // unchanged.
+  try {
+    zodToToolParametersSchema(tool.inputSchema, {
+      io: 'input',
+      reused: 'inline',
+      target: 'draft-07',
+    });
+  } catch (error) {
+    throw new Error(
+      `DomainTool '${tool.name}' inputSchema cannot compile to an object-root tool parameters schema: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
   if (tool.safeHandoff && tool.effect !== 'read') {

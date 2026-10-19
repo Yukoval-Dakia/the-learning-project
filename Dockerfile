@@ -57,6 +57,16 @@ FROM node:24-bookworm-slim AS pdfiumdeps
 WORKDIR /pdfium
 RUN npm install --omit=dev --no-audit --no-fund @hyzyla/pdfium@3.0.0
 
+# Stage 2.9 (YUK-1529): playwright-core flat install for the worker-only
+# worksheet render job. `build:worker` marks playwright-core external (the job
+# module is only loaded by worker registration), so the shipped dist/worker.cjs
+# resolves it at runtime; pnpm's symlinked layout does not survive a plain COPY
+# — flat npm layout, same reasoning as sharp/mcp/sqlite/pdfium stages. The pin
+# MUST match package.json (aligned with devDependency @playwright/test 1.64.0).
+FROM node:24-bookworm-slim AS pwdeps
+WORKDIR /pw
+RUN npm install --omit=dev --no-audit --no-fund playwright-core@1.64.0
+
 FROM base AS runner
 ENV NODE_ENV=production
 # 文档转换链 + sharp 运行库 —— apt 两层逐字沿旧 runner。
@@ -97,3 +107,20 @@ ENV API_PORT=8787 RW_STATIC_DIR=/app/web/dist
 EXPOSE 8787
 USER node
 CMD ["node", "dist/server.cjs"]
+
+# YUK-1529 — worker 镜像：runner + 无头 Chromium（worksheet_render job 的
+# playwright-core）。末位 stage 是 worker，所有用本 Dockerfile 的 compose
+# 服务必须显式钉 target：app/migrate/mem0-init → runner（镜像不变），只有
+# worker 服务 → worker。
+# Chromium 版本由 playwright-core@1.64.0 的 browsers.json 钉死；只装
+# chromium-headless-shell（job 全程无头），不带完整 headed chromium。
+FROM runner AS worker
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+COPY --from=pwdeps /pw/node_modules/playwright-core ./node_modules/playwright-core
+# `install --with-deps` 下载 browsers.json 钉住的 headless shell 并 apt 装其
+# Debian 运行库 —— 需要 root；装完回到 `node`，运行时仍非 root。
+USER root
+RUN node node_modules/playwright-core/cli.js install --with-deps chromium-headless-shell \
+    && chmod -R a+rX /ms-playwright
+USER node
+CMD ["node", "dist/worker.cjs"]

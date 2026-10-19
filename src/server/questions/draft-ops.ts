@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { BlankAnswerShape } from '@/core/schema/assessment';
 import { VersionedAssetRef } from '@/core/schema/assessment/materials';
 import type { ScoringRuleT } from '@/core/schema/assessment/scoring-rule';
 import { ScoringRule } from '@/core/schema/assessment/scoring-rule';
@@ -197,7 +198,7 @@ const RESERVED_METADATA_KEYS = new Set([
 /** set 允许改写的字段白名单（逐 kind；*_id/结构字段不在列 —— 身份不可改）。 */
 const SETTABLE_FIELDS: Record<EditTargetT['kind'], ReadonlySet<string>> = {
   question: new Set(['source']),
-  part: new Set(['prompt_md', 'question_no', 'explanation_md', 'material_ids']),
+  part: new Set(['prompt_md', 'question_no', 'explanation_md', 'material_ids', 'blank_order']),
   unit: new Set([
     'points',
     'key',
@@ -209,6 +210,7 @@ const SETTABLE_FIELDS: Record<EditTargetT['kind'], ReadonlySet<string>> = {
     'response_spec',
     'response_class',
     'slot_id',
+    'answer_shape',
   ]),
   item: new Set(['label_md', 'coordinates', 'gap_after_codepoint']),
   material: new Set(['content_md', 'caption', 'alt_text', 'visibility', 'kind', 'asset']),
@@ -219,8 +221,16 @@ const SETTABLE_FIELDS: Record<EditTargetT['kind'], ReadonlySet<string>> = {
 /** clear 允许清空的字段 → 空值形状。 */
 const CLEARABLE_FIELDS: Record<EditTargetT['kind'], ReadonlySet<string>> = {
   question: new Set(['knowledge_ids']),
-  part: new Set(['prompt_md', 'question_no', 'explanation_md', 'material_ids']),
-  unit: new Set(['points', 'key', 'reference_md', 'rubric', 'rule', 'material_refs']),
+  part: new Set(['prompt_md', 'question_no', 'explanation_md', 'material_ids', 'blank_order']),
+  unit: new Set([
+    'points',
+    'key',
+    'reference_md',
+    'rubric',
+    'rule',
+    'material_refs',
+    'answer_shape',
+  ]),
   item: new Set(['label_md', 'coordinates', 'gap_after_codepoint']),
   material: new Set(['caption', 'alt_text', 'content_md']),
   criterion: new Set(['statement_md', 'allowed_awards']),
@@ -417,7 +427,12 @@ class OpError extends Error {
 // ---------- 引用完整性与重复身份 ----------
 
 interface DocIntegrityIssue {
-  code: 'unresolved_material_ref' | 'unresolved_key_item' | 'duplicate_id';
+  code:
+    | 'unresolved_material_ref'
+    | 'unresolved_key_item'
+    | 'duplicate_id'
+    | 'unresolved_blank_order_slot'
+    | 'blank_order_coverage';
   detail: string;
 }
 
@@ -443,6 +458,40 @@ function integrityIssues(doc: QuestionDraftDocumentT): DocIntegrityIssue[] {
         issues.push({
           code: 'unresolved_material_ref',
           detail: `part '${part.part_id}' references missing material '${id}'`,
+        });
+      }
+    }
+    // YUK-1568：blank_order 必须恰覆盖本 part 的 blank 槽各一次（不跨 part、
+    // 不指向非 blank 槽、不重复、不缺项）。只认本 part 单元的 slot_id。
+    if (part.blank_order != null) {
+      const seen = new Set<string>();
+      const blankSlotIds = new Set<string>();
+      for (const unit of part.units) {
+        if (unit.response_class === 'blank' && unit.response_spec.kind === 'blank') {
+          blankSlotIds.add(unit.slot_id);
+        }
+      }
+      for (const slotId of part.blank_order) {
+        if (seen.has(slotId)) {
+          issues.push({
+            code: 'duplicate_id',
+            detail: `part '${part.part_id}' blank_order lists slot '${slotId}' more than once`,
+          });
+          continue;
+        }
+        seen.add(slotId);
+        if (!blankSlotIds.has(slotId)) {
+          issues.push({
+            code: 'unresolved_blank_order_slot',
+            detail: `part '${part.part_id}' blank_order references '${slotId}', which is not a blank slot of this part`,
+          });
+        }
+      }
+      const missing = [...blankSlotIds].filter((id) => !seen.has(id));
+      if (missing.length > 0) {
+        issues.push({
+          code: 'blank_order_coverage',
+          detail: `part '${part.part_id}' declares blank_order but does not cover its blank slot(s): ${missing.join(', ')}`,
         });
       }
     }
@@ -541,6 +590,22 @@ function applySet(
           const parsed = z.array(z.string().min(1)).safeParse(value);
           if (!parsed.success) fail('invalid_value', 'material_ids must be string[]');
           part.material_ids = parsed.data;
+        } else if (field === 'blank_order') {
+          // YUK-1568：显式默认逻辑序（slot_id 列表）；null/undefined = 撤销声明。
+          // 交叉引用（恰覆盖本 part blank 槽、不跨 part、不重复）由批末
+          // integrityIssues + 发布 barrier 双层校验。
+          if (value == null) {
+            part.blank_order = undefined;
+          } else {
+            const parsed = z.array(z.string().min(1)).min(1).safeParse(value);
+            if (!parsed.success) {
+              fail(
+                'invalid_value',
+                'blank_order must be a non-empty string[] of slot ids (or null to clear)',
+              );
+            }
+            part.blank_order = parsed.data;
+          }
         } else if (field === 'question_no' || field === 'explanation_md') {
           if (value !== undefined && typeof value !== 'string')
             fail('invalid_value', `${field} must be a string`);
@@ -787,6 +852,30 @@ function applyUnitSet(unit: DraftUnitT, field: string, value: unknown): void {
       unit.response_class = parsed.data;
       return;
     }
+    case 'answer_shape': {
+      // YUK-1568：answer_shape 只属于 blank 作答面；null/undefined = 撤销声明。
+      // 未知版本/字段在 BlankAnswerShape 上 parse 失败 —— 不能 strip 后当未声明。
+      if (unit.response_spec.kind !== 'blank') {
+        fail(
+          'invalid_value',
+          `answer_shape only applies to blank units — unit '${unit.unit_id}' has response_spec.kind '${unit.response_spec.kind}'`,
+        );
+        return;
+      }
+      if (value == null) {
+        unit.response_spec.answer_shape = undefined;
+        return;
+      }
+      const parsed = BlankAnswerShape.safeParse(value);
+      if (!parsed.success) {
+        fail(
+          'invalid_value',
+          `invalid answer_shape: ${parsed.error.issues.map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`).join('; ')}`,
+        );
+      }
+      unit.response_spec.answer_shape = parsed.data;
+      return;
+    }
     default:
       fail('forbidden_field', `field '${field}' cannot be set on a unit`);
   }
@@ -820,7 +909,15 @@ function applyClear(
       const unit = requireUnit(located);
       if (field === 'points') unit.points = null;
       else if (field === 'material_refs') unit.material_refs = [];
-      else (unit as unknown as Record<string, unknown>)[field] = undefined;
+      else if (field === 'answer_shape') {
+        if (unit.response_spec.kind !== 'blank') {
+          fail(
+            'forbidden_field',
+            `answer_shape only applies to blank units — unit '${unit.unit_id}' has response_spec.kind '${unit.response_spec.kind}'`,
+          );
+        }
+        unit.response_spec.answer_shape = undefined;
+      } else (unit as unknown as Record<string, unknown>)[field] = undefined;
       break;
     }
     case 'item': {
@@ -1381,7 +1478,12 @@ export function applyEditOps(doc: QuestionDraftDocumentT, ops: EditOpT[]): Apply
     return {
       ok: false,
       issues: afterIssues.map((i) => ({
-        code: i.code === 'duplicate_id' ? 'duplicate_id' : 'dangling_reference',
+        code:
+          i.code === 'duplicate_id'
+            ? 'duplicate_id'
+            : i.code === 'blank_order_coverage'
+              ? 'invalid_value'
+              : 'dangling_reference',
         detail: i.detail,
       })),
     };
@@ -1420,6 +1522,8 @@ const SOLVE_AFFECTING = new Set([
   'gap_after_codepoint',
   'axes',
   'text',
+  // YUK-1568：答案声明改变响应语义，等同判分输入变化。
+  'answer_shape',
 ]);
 const RULE_AFFECTING = new Set([
   'points',
@@ -1554,6 +1658,11 @@ export function computeInvalidatedScope(changes: AppliedChange[]): InvalidatedSc
       if (METHOD_AFFECTING.has(field) && unitId != null) calibration.add(unitId);
       if (RETRIEVAL_FIELDS.has(field)) retrieval.add(field);
       if (PRESENTATION_AFFECTING.has(field) || target.kind === 'block') presentation = true;
+      // YUK-1568：blank_order 只改默认展示/DTO 顺序与缺省 presentation，不改判分。
+      if (field === 'blank_order') {
+        if (partId != null) display.add(partId);
+        presentation = true;
+      }
       if (target.kind === 'item' || target.kind === 'unit' || target.kind === 'criterion') {
         if (unitId != null && SOLVE_AFFECTING.has(field)) display.add('');
       }

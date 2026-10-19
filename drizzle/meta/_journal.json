@@ -862,6 +862,13 @@
       "when": 1792320000000,
       "tag": "0122_yuk1496_model_admission_slice",
       "breakpoints": true
+    },
+    {
+      "idx": 123,
+      "version": "7",
+      "when": 1792378681253,
+      "tag": "0123_yuk1563_model_catalog_cache",
+      "breakpoints": true
     }
   ]
 }

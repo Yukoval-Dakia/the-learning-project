@@ -148,6 +148,10 @@ const server = {
   WORKFLOW_JUDGE_AUTO_ENROLL_THRESHOLD: optionalString,
   WORKFLOW_JUDGE_OBSERVE_ENABLED: optionalString,
   WORKFLOW_JUDGE_STUDENT_ANSWER_GRADING_ENABLED: optionalString,
+  // YUK-1529 — worksheet_render job 打开的打印页 origin（worker 侧）。生产
+  // compose 显式设 http://app:8787；本地 dev:local 缺省 http://localhost:5173
+  // （vite 同时服务 SPA 并代理 /api）。
+  WORKSHEET_RENDER_APP_ORIGIN: z.string().url().optional(),
   XIAOMI_API_KEY: optionalString,
   XIAOMI_TOKEN_PLAN_API_KEY: optionalString,
   XIAOMI_TOKEN_PLAN_BASE_URL: z.string().url().optional(),

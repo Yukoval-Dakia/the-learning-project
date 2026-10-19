@@ -25,6 +25,14 @@ export const QuestionPart = z.object({
   question_no: z.string().optional(),
   /** 该 part 依赖的共享材料（material_id 引用，validateStructure 校验解析）。 */
   material_ids: z.array(z.string().min(1)).default([]),
+  /**
+   * YUK-1568（第 1 片，可选）：本 part 独立 blank 槽的默认逻辑序（显式
+   * slot_id 列表）。只服务默认展示、DTO 规范顺序与未指定布局的 capture；
+   * 作答身份仍按 slot_id，绝不按序数。缺项/重复/跨 part 由
+   * validateResponseSpec 的 structure+response 交叉校验拒绝（发布 barrier）。
+   * 缺省 = 未声明，旧 part 数组序路径不变。
+   */
+  blank_order: z.array(z.string().min(1)).min(1).optional(),
 });
 export type QuestionPartT = z.infer<typeof QuestionPart>;
 

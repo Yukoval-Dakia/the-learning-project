@@ -26,7 +26,10 @@
 
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import { z } from 'zod';
-import { zodToJsonSchemaCompat } from '@/kernel/zod-json-schema';
+import {
+  ensureToolParametersObjectRoot,
+  zodToToolParametersSchema,
+} from '@/kernel/zod-json-schema';
 import { type BuildMcpServerOptions, executeDomainToolCall } from './mcp-bridge';
 import { getTool } from './registry';
 
@@ -82,7 +85,7 @@ export function piCustomTool(
   serverName: string,
   name: string,
   description: string,
-  schema: Record<string, z.ZodTypeAny>,
+  schema: Record<string, z.ZodTypeAny> | z.ZodTypeAny,
   handler: (
     args: Record<string, unknown>,
   ) => Promise<{ content: { type: 'text'; text: string }[] }>,
@@ -91,11 +94,23 @@ export function piCustomTool(
     name: piToolWireName(serverName, name),
     label: name,
     description,
-    parameters: zodToJsonSchemaCompat(z.object(schema), {
-      io: 'input',
-      reused: 'inline',
-      target: 'draft-07',
-    }) as AgentTool['parameters'],
+    // YUK-1547 — the parameters root must declare type:"object" on the wire:
+    // a union of object branches compiles to a bare anyOf root, which the
+    // provider rejects (400, type:null). zodToToolParametersSchema declares
+    // the object root while keeping the union and every business validation
+    // (required / additionalProperties / the submit arguments staying the
+    // plain output object — no result envelope).
+    parameters: zodToToolParametersSchema(
+      // A full Zod schema is compiled as-is (the tool's parameters ARE that
+      // shape — YUK-1547's envelope-less structured submit); a raw shape keeps
+      // the object wrapper every other caller relies on.
+      schema instanceof z.ZodType ? schema : z.object(schema),
+      {
+        io: 'input',
+        reused: 'inline',
+        target: 'draft-07',
+      },
+    ) as AgentTool['parameters'],
     execute: async (_toolCallId, params) => {
       const result = await handler((params ?? {}) as Record<string, unknown>);
       return { content: result.content, details: null };
@@ -132,7 +147,7 @@ export function buildPiDomainAgentTools(options: BuildMcpServerOptions): AgentTo
         `buildPiDomainAgentTools: tool '${name}' inputSchema must be a z.object(...). Got ${dt.inputSchema.constructor.name}.`,
       );
     }
-    const parameters = zodToJsonSchemaCompat(dt.inputSchema, {
+    const parameters = zodToToolParametersSchema(dt.inputSchema, {
       io: 'input',
       reused: 'inline',
       target: 'draft-07',
@@ -214,17 +229,31 @@ export async function connectPiRemoteMcp(
     const wanted = new Set(mount.toolNames);
     const tools = listed.tools
       .filter((remote) => wanted.has(remote.name))
-      .map(
-        (remote): AgentTool => ({
+      .map((remote): AgentTool => {
+        // MCP tool inputSchema is already plain JSON Schema — pi validates
+        // it through the non-TypeBox path, no translation needed. The same
+        // provider object-root contract still applies (YUK-1547): an
+        // object-union root is normalized like a compiled Zod union; a
+        // genuinely non-object root is a remote contract violation — fail
+        // the mount loudly instead of letting the provider 400 mid-run.
+        let parameters: AgentTool['parameters'];
+        try {
+          parameters = ensureToolParametersObjectRoot(
+            (remote.inputSchema ?? {
+              type: 'object',
+              properties: {},
+            }) as Record<string, unknown>,
+          ) as AgentTool['parameters'];
+        } catch (error) {
+          throw new Error(
+            `remote MCP tool '${mount.serverName}/${remote.name}' declares parameters whose root is not type:"object": ${error instanceof Error ? error.message : String(error)} — fix the remote server's inputSchema or drop the tool from the mount.`,
+          );
+        }
+        return {
           name: piToolWireName(mount.serverName, remote.name),
           label: remote.name,
           description: remote.description ?? '',
-          // MCP tool inputSchema is already plain JSON Schema — pi validates
-          // it through the non-TypeBox path, no translation needed.
-          parameters: (remote.inputSchema ?? {
-            type: 'object',
-            properties: {},
-          }) as AgentTool['parameters'],
+          parameters,
           execute: async (_toolCallId, params) => {
             const res = (await client.callTool({
               name: remote.name,
@@ -252,8 +281,8 @@ export async function connectPiRemoteMcp(
               details: null,
             } satisfies AgentToolResult<null>;
           },
-        }),
-      );
+        };
+      });
     return { tools, close: () => client.close() };
   } catch (err) {
     await client.close().catch(() => {});
