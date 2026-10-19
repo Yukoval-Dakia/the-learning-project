@@ -2611,7 +2611,7 @@
               "host": ["{{baseUrl}}"],
               "path": ["api", "review-sessions"]
             },
-            "description": "创建试卷会话并固定发题绑定\n\n**Notes:** paper_id 可省略以创建普通复习会话；试卷必须已发布，创建会话与固定各槽位绑定在同一事务。新建返回201，复用活动会话返回200；返回 session_id。",
+            "description": "创建试卷会话并固定发题绑定\n\n**Notes:** paper_id 可省略以创建普通复习会话；试卷必须已发布，创建会话与固定各槽位绑定在同一事务。新建返回201，复用活动会话返回200；返回 session_id。 含整卷页还画不了的槽位类型（如 select/blank）的试卷在开卷前即拒绝：paper_mode_unsupported_slot_kind(409)，不写任何会话或发题记录（YUK-1573）。",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"paper_id\": \"REPLACE_paper\"\n}",
@@ -2645,7 +2645,7 @@
                 }
               ]
             },
-            "description": "保存原生试卷作答草稿\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 必须先读取 /api/papers/:id，将该槽位 assessment 的 issuance_id/evaluation_group_id/idempotency_key 和 practice_dto 中的槽位、选项原样用于请求；示例 text 仅适用于对应已发布文本槽位。缺少原始发题绑定返回 historical_unknown(409)，不可在提交时补建历史绑定。 expected_save_epoch 使用最近一次服务端 ack 或详情返回的 save_epoch；过期返回 stale_draft(409)。返回 answer_id/created/save_epoch；恢复以详情 assessment.response_set/group_evidence 为准。",
+            "description": "保存原生试卷作答草稿\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 必须先读取 /api/papers/:id，将该槽位 assessment 的 issuance_id/evaluation_group_id/idempotency_key 和 practice_dto 中的槽位、选项原样用于请求；示例 text 仅适用于对应已发布文本槽位。缺少原始发题绑定返回 historical_unknown(409)，不可在提交时补建历史绑定。 expected_save_epoch 使用最近一次服务端 ack 或详情返回的 save_epoch；过期返回 stale_draft(409)。返回 answer_id/created/save_epoch；恢复以详情 assessment.response_set/group_evidence 为准。 该题含整卷页还画不了的槽位类型时拒绝保存草稿：paper_mode_unsupported_slot_kind(409)，不写草稿（YUK-1573）。",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"paper_id\": \"REPLACE_paper\",\n  \"question_id\": \"REPLACE_question\",\n  \"part_ref\": null,\n  \"content_md\": \"original learner response\",\n  \"input_kind\": \"text\",\n  \"image_refs\": [],\n  \"expected_save_epoch\": 0,\n  \"assessment\": {\n    \"issuance_id\": \"REPLACE_issuance\",\n    \"evaluation_group_id\": \"REPLACE_evaluation_group\",\n    \"idempotency_key\": \"REPLACE_attempt_key\",\n    \"response_set\": {\n      \"entries\": [\n        {\n          \"slot_id\": \"REPLACE_slot\",\n          \"kind\": \"text\",\n          \"text_md\": \"original learner response\"\n        }\n      ]\n    },\n    \"group_evidence\": []\n  }\n}",
@@ -2679,7 +2679,7 @@
                 }
               ]
             },
-            "description": "提交原生试卷作答\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 必须先读取 /api/papers/:id，将该槽位 assessment 的 issuance_id/evaluation_group_id/idempotency_key 和 practice_dto 中的槽位、选项原样用于请求；示例 text 仅适用于对应已发布文本槽位。缺少原始发题绑定返回 historical_unknown(409)，不可在提交时补建历史绑定。 重复请求必须保持原始作答不变；回执投影当前生效候选。缓冲反馈仅返回身份字段和 visible_to_user=false/feedback_buffered=true，不返回 status/coarse_outcome/score。；无印规则的部分正确返回 partial_unknown、score=null 与 typed partial_units 正确数/总数，不补造分数或评级。",
+            "description": "提交原生试卷作答\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 必须先读取 /api/papers/:id，将该槽位 assessment 的 issuance_id/evaluation_group_id/idempotency_key 和 practice_dto 中的槽位、选项原样用于请求；示例 text 仅适用于对应已发布文本槽位。缺少原始发题绑定返回 historical_unknown(409)，不可在提交时补建历史绑定。 重复请求必须保持原始作答不变；回执投影当前生效候选。缓冲反馈仅返回身份字段和 visible_to_user=false/feedback_buffered=true，不返回 status/coarse_outcome/score。；无印规则的部分正确返回 partial_unknown、score=null 与 typed partial_units 正确数/总数，不补造分数或评级。 试卷含整卷页还画不了的槽位类型时，整卷每个槽位的交卷都拒绝：paper_mode_unsupported_slot_kind(409)，不写任何作答（YUK-1573）。",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"paper_id\": \"REPLACE_paper\",\n  \"question_id\": \"REPLACE_question\",\n  \"part_ref\": null,\n  \"answer_md\": \"original learner response\",\n  \"image_refs\": [],\n  \"assessment\": {\n    \"issuance_id\": \"REPLACE_issuance\",\n    \"evaluation_group_id\": \"REPLACE_evaluation_group\",\n    \"idempotency_key\": \"REPLACE_attempt_key\",\n    \"response_set\": {\n      \"entries\": [\n        {\n          \"slot_id\": \"REPLACE_slot\",\n          \"kind\": \"text\",\n          \"text_md\": \"original learner response\"\n        }\n      ]\n    },\n    \"group_evidence\": []\n  }\n}",
