@@ -60,14 +60,13 @@ export async function persistCopilotRunCancellationMarker(
   tx: Tx,
   args: PersistCopilotRunCancellationArgs,
 ): Promise<PersistedCopilotRunCancellation> {
-  const finalizedReply =
+  const replyText =
     args.partialText !== undefined && args.preparedReply?.text === args.partialText
       ? args.partialText
-      : undefined;
-  const replyText =
-    finalizedReply ??
-    copilotPartialReply({ prose: args.partialText, toolSummaries: args.toolSummaries }) ??
-    COPILOT_STOPPED_REPLY;
+      : (copilotPartialReply({
+          prose: args.partialText,
+          toolSummaries: args.toolSummaries,
+        }) ?? COPILOT_STOPPED_REPLY);
   const error = 'copilot run cancelled by user';
   const taskRunId = args.taskRunId ?? `copilot_run_cancelled_${args.runId}`;
   const writeReply = args.writeCopilotReplyFn ?? writeCopilotReply;

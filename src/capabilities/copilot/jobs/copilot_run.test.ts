@@ -543,7 +543,7 @@ describe('runCopilotRun', () => {
     ]);
   });
 
-  it('Stop — pure-text long run aborts without leaking an unsealed partial candidate', async () => {
+  it('Stop — pure-text long run keeps displayed prose and drops prose after cancel', async () => {
     const sessionId = 'sess_stop_pure_text_cross_subject';
     await seedCopilotConversation(sessionId);
     const accepted = await reserveCopilotDurableAcceptance(testDb(), {
@@ -681,9 +681,10 @@ describe('runCopilotRun', () => {
       1,
     );
     expect(events.some((event) => event.event_type === COPILOT_RUN_EVENTS.DONE)).toBe(false);
+    const keptReply = `${partialReply}\n\n上面是已经拿到的结果，结论还没写完。`;
     expect(events.at(-1)?.payload).toMatchObject({
       reason: 'cancelled',
-      reply_md: '已停止这次运行。',
+      reply_md: keptReply,
       checkpoint_event_id: runId,
     });
     const replies = await copilotReplyEvents(sessionId);
@@ -691,7 +692,7 @@ describe('runCopilotRun', () => {
     expect(replies[0]).toMatchObject({
       outcome: 'failure',
       payload: {
-        reply_md: '已停止这次运行。',
+        reply_md: keptReply,
         durable_failure: { reason: 'cancelled' },
       },
     });
@@ -702,12 +703,12 @@ describe('runCopilotRun', () => {
     expect(stopped).toMatchObject({
       phase: 'failed',
       failureReason: 'cancelled',
-      replyText: '已停止这次运行。',
+      replyText: keptReply,
       checkpointEventId: runId,
     });
     const turns = await getRecentCopilotTurns(testDb(), { sessionId });
     expect(turns.filter((turn) => turn.role === 'ai')).toMatchObject([
-      { text: '已停止这次运行。', checkpoint_event_id: runId },
+      { text: keptReply, checkpoint_event_id: runId },
     ]);
     expect(JSON.stringify(events)).not.toContain(queuedReply);
     expect(JSON.stringify(events)).not.toContain(postCancelReply);
@@ -716,7 +717,8 @@ describe('runCopilotRun', () => {
       replies,
       turns,
     });
-    for (const candidate of [partialReply, queuedReply, postCancelReply])
+    expect(durableTerminal).toContain(partialReply);
+    for (const candidate of [queuedReply, postCancelReply])
       expect(durableTerminal).not.toContain(candidate);
   });
 });

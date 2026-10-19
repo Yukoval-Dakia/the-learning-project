@@ -942,9 +942,11 @@ async function executeAcceptedCopilotRun(
   let progressChain: Promise<void> = Promise.resolve();
   let streamedProse = '';
   const toolSummaries: string[] = [];
-  // User Stop must not seal streamed prose. A cancellation may publish completed
-  // tool summaries; a stall that is not a Stop still uses partialReply.
   const partialReply = () => copilotPartialReply({ prose: streamedProse, toolSummaries });
+  const displayedProse = (): string | undefined =>
+    streamedProse.trim().length > 0 ? streamedProse : undefined;
+  const stopPartialText = (explicit?: string): string | undefined =>
+    explicit !== undefined && explicit.length > 0 ? explicit : displayedProse();
   // Load-bearing execution fence, deliberately placed after every deterministic
   // setup/read and immediately before the only paid/external-effect gateway.
   // The claim rechecks under a per-run transaction lock: two overlapping
@@ -977,12 +979,13 @@ async function executeAcceptedCopilotRun(
       replyFinalization?: CopilotReplyFinalizationReceipt,
       preparedReply?: PreparedCopilotReply,
     ) =>
-    (tx: Tx) =>
-      persistCopilotRunCancellationMarker(tx, {
+    (tx: Tx) => {
+      const partial = stopPartialText(partialText);
+      return persistCopilotRunCancellationMarker(tx, {
         runId,
         sessionId: data.session_id,
         actorRef,
-        ...(partialText ? { partialText } : {}),
+        ...(partial ? { partialText: partial } : {}),
         ...(providerTaskRunId ? { taskRunId: providerTaskRunId } : {}),
         ...(replyFinalization ? { replyFinalization } : {}),
         ...(preparedReply ? { preparedReply } : {}),
@@ -990,6 +993,7 @@ async function executeAcceptedCopilotRun(
         checkpointSafe: !cancellationControl.materializingToolStarted,
         writeCopilotReplyFn: persistReply,
       });
+    };
   const settleObservedCancellation = async (
     partialText?: string,
     providerTaskRunId?: string,
@@ -1007,11 +1011,12 @@ async function executeAcceptedCopilotRun(
         writeCopilotReplyFn: persistReply,
       });
     }
+    const stopText = stopPartialText(partialText);
     return handleDurableCancellation(db, {
       runId,
       sessionId: data.session_id,
       actorRef,
-      ...(partialText ? { partialText } : {}),
+      ...(stopText ? { partialText: stopText } : {}),
       ...(providerTaskRunId ? { taskRunId: providerTaskRunId } : {}),
       ...(replyFinalization ? { replyFinalization } : {}),
       ...(preparedReply ? { preparedReply } : {}),
@@ -1094,7 +1099,6 @@ async function executeAcceptedCopilotRun(
           ? { subagentsEnabled: params.copilotSubagentEnabled }
           : {}),
         observe: (activity) => {
-          if (activity.kind === 'prose_delta') streamedProse += activity.text;
           if (activity.kind === 'tool_finished' && activity.summary.trim().length > 0) {
             toolSummaries.push(`${activity.toolName}: ${activity.summary.trim()}`);
           }
@@ -1113,6 +1117,7 @@ async function executeAcceptedCopilotRun(
               await withCopilotExecutionSettlementLock(db, runId, async (tx, events) => {
                 if (hasCancelRequest(events) || (await findPersistedDurableReply(tx, runId)))
                   return;
+                if (activity.kind === 'prose_delta') streamedProse += activity.text;
                 await writeJobEvent(tx, {
                   business_table: COPILOT_RUN_TABLE,
                   business_id: runId,
