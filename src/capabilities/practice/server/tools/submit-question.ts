@@ -71,9 +71,8 @@ export {
   validateDraftEdit,
 } from '@/server/questions/submit-question';
 
-import { embedText } from '@/server/ai/embed';
-import { questionEmbedText } from '@/server/ai/embed-source';
 import { resolveSubjectProfile } from '@/subjects/profile';
+import { embedQuestionTextForIngest } from '../../jobs/embed_backfill';
 import { SupplyTraceV1 } from '../question-supply/evidence-demand';
 import {
   claimHttpSourceDuplicate,
@@ -207,8 +206,12 @@ async function defaultEnqueueSourceVerify(
 
 export interface SubmitQuestionDeps {
   enqueueSourceVerify?: EnqueueSourceVerifyFn;
-  /** 缺省用 search_bank 同一 embedText。失败则向量腿弃权，网址判重仍生效。 */
-  embedIngestText?: (text: string) => Promise<number[]>;
+  /** 缺省用夜间回填同一条 embed 缝。失败则向量腿弃权，网址判重仍生效。 */
+  embedIngestText?: (q: {
+    prompt_md: string;
+    reference_md: string | null;
+    choices_md: string[] | null;
+  }) => Promise<number[]>;
 }
 
 export type StoreSourcedQuestionDeps = SubmitQuestionDeps;
@@ -424,21 +427,20 @@ async function runCandidateSubmit(
 
   let vectorNear: { id: string; similarity: number } | null = null;
   try {
-    const embed =
+    const questionText = {
+      prompt_md: candidate.question.prompt_md,
+      reference_md: candidate.question.reference_md,
+      choices_md: candidate.question.choices_md ?? null,
+    };
+    const vector = await (
       deps.embedIngestText ??
-      ((text: string) =>
-        embedText(text, {
+      ((q: typeof questionText) =>
+        embedQuestionTextForIngest(q, {
           db,
           caller: ctx.taskRunId ? 'worker' : 'api',
           deadlineAt: new Date(Date.now() + 20_000),
-        }));
-    const vector = await embed(
-      questionEmbedText({
-        prompt_md: candidate.question.prompt_md,
-        reference_md: candidate.question.reference_md,
-        choices_md: candidate.question.choices_md ?? null,
-      }),
-    );
+        }))
+    )(questionText);
     vectorNear = await findVectorNearDuplicate(db, vector);
   } catch (err) {
     console.error('[submit_question] vector near-dup abstained:', err);

@@ -39,6 +39,23 @@ import { embedHash, knowledgeEmbedText, questionEmbedText } from '@/server/ai/em
 // KC embed text now folds effective-domain → every existing KC vector is stale.
 export const EMBED_VERSION = 2;
 
+export const QUESTION_EMBED_DIMS = EMBED_DIMS;
+
+export async function embedQuestionTextForIngest(
+  q: {
+    prompt_md: string;
+    reference_md: string | null;
+    choices_md: string[] | null;
+  },
+  providerAttempt: EmbedProviderAttemptOptions,
+): Promise<number[]> {
+  const [vector] = await embedMany([questionEmbedText(q)], providerAttempt);
+  if (vector == null || vector.length !== EMBED_DIMS) {
+    throw new Error('ingest embed returned no usable vector');
+  }
+  return vector;
+}
+
 export type QuestionVectorInvalidReason =
   | 'no_vector'
   | 'dimension_mismatch'

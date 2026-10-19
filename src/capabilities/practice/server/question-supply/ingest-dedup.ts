@@ -2,17 +2,12 @@
 // 这里只补两件事：同一 http(s) 来源网址视为重复；跨知识点向量近重不拒收，
 // 记一笔交给现有草稿待裁决（source_verify → needs_review）。
 
-import { createId } from '@paralleldrive/cuid2';
-import { and, asc, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
-import { SYNTHETIC_SUBJECT_ROOT_RE } from '@/capabilities/practice/server/placement-scope';
-import { QUESTION_EDIT_ACTION } from '@/core/schema/event/experimental';
+import { and, asc, isNull, ne, sql } from 'drizzle-orm';
+import { QUESTION_EMBED_DIMS } from '@/capabilities/practice/jobs/embed_backfill';
+import { mergeKnowledgeForSourceDuplicate } from '@/capabilities/practice/server/quiz/content-fingerprint';
 import type { Db, Tx } from '@/db/client';
-import { knowledge, question } from '@/db/schema';
+import { question } from '@/db/schema';
 import { toSqlVector } from '@/db/vector';
-import { writeEvent } from '@/kernel/events';
-import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
-import { EMBED_DIMS } from '@/server/ai/embed';
-import { enrollFsrsStateIfAbsent, initialSchedulingState } from '@/server/fsrs/state';
 
 declare const HttpSourceRefBrand: unique symbol;
 
@@ -136,7 +131,7 @@ export async function findVectorNearDuplicate(
   vector: number[],
   excludeQuestionId?: string,
 ): Promise<{ id: string; similarity: number } | null> {
-  if (vector.length !== EMBED_DIMS) return null;
+  if (vector.length !== QUESTION_EMBED_DIMS) return null;
   const distance = sql<number>`${question.embedding} <=> ${toSqlVector(vector)}::vector`;
   const [row] = await db
     .select({ id: question.id, distance })
@@ -163,99 +158,6 @@ export async function findVectorNearDuplicate(
 
 async function lockHttpSourceRef(tx: Tx, source: HttpSourceRef): Promise<void> {
   await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`ingest-source:${source}`}))`);
-}
-
-export async function mergeKnowledgeForSourceDuplicate(
-  tx: Tx,
-  params: {
-    questionId: string;
-    knowledgeIds: string[];
-    actorRef: 'sourcing' | 'jyeoo_fetch';
-    taskRunId?: string;
-    now: Date;
-  },
-): Promise<{ addedKnowledgeIds: string[] }> {
-  await acquireLearningStateWriteLock(tx);
-  const [row] = await tx
-    .select({
-      id: question.id,
-      draftStatus: question.draft_status,
-      knowledgeIds: question.knowledge_ids,
-      version: question.version,
-    })
-    .from(question)
-    .where(eq(question.id, params.questionId))
-    .limit(1)
-    .for('update');
-  if (row == null) return { addedKnowledgeIds: [] };
-
-  const requested = [
-    ...new Set(params.knowledgeIds.map((id) => id.trim()).filter((id) => id.length > 0)),
-  ];
-  const liveRows =
-    requested.length > 0
-      ? await tx
-          .select({ id: knowledge.id })
-          .from(knowledge)
-          .where(and(inArray(knowledge.id, requested), isNull(knowledge.archived_at)))
-          .orderBy(knowledge.id)
-          .for('update')
-      : [];
-  const live = new Set(liveRows.map((candidate) => candidate.id));
-  const seen = new Set(row.knowledgeIds);
-  const addedKnowledgeIds: string[] = [];
-  for (const id of requested) {
-    if (!live.has(id) || seen.has(id)) continue;
-    seen.add(id);
-    addedKnowledgeIds.push(id);
-  }
-  if (addedKnowledgeIds.length === 0) return { addedKnowledgeIds };
-
-  const knowledgeIds = [...row.knowledgeIds, ...addedKnowledgeIds];
-  const nextVersion = row.version + 1;
-  await tx
-    .update(question)
-    .set({ knowledge_ids: knowledgeIds, updated_at: params.now, version: nextVersion })
-    .where(eq(question.id, row.id));
-
-  const eventId = createId();
-  const enrolledKnowledgeIds: string[] = [];
-  if (row.draftStatus !== 'draft') {
-    for (const knowledgeId of addedKnowledgeIds) {
-      if (SYNTHETIC_SUBJECT_ROOT_RE.test(knowledgeId)) continue;
-      const enrolled = await enrollFsrsStateIfAbsent(tx, {
-        subject_kind: 'knowledge',
-        subject_id: knowledgeId,
-        ...initialSchedulingState(knowledgeId, params.now),
-        last_review_event_id: eventId,
-      });
-      if (enrolled) enrolledKnowledgeIds.push(knowledgeId);
-    }
-  }
-  await writeEvent(tx, {
-    id: eventId,
-    session_id: null,
-    actor_kind: 'agent',
-    actor_ref: params.actorRef,
-    action: QUESTION_EDIT_ACTION,
-    subject_kind: 'question',
-    subject_id: row.id,
-    outcome: 'success',
-    payload: {
-      question_id: row.id,
-      previous_version: row.version,
-      next_version: nextVersion,
-      before: { knowledge_ids: row.knowledgeIds },
-      after: { knowledge_ids: knowledgeIds },
-      reason: 'same_source_ref',
-      added_knowledge_ids: addedKnowledgeIds,
-      enrolled_knowledge_ids: enrolledKnowledgeIds,
-      task_run_id: params.taskRunId ?? null,
-      preserved_draft_status: row.draftStatus,
-    },
-    created_at: params.now,
-  });
-  return { addedKnowledgeIds };
 }
 
 /** 事务内锁住规范化网址，命中既有题就把知识点并进去。未命中返回 null。 */
