@@ -181,8 +181,6 @@ jobData `reopen_paid_effect_identity` marker 在 gate 里开一个 `@2 → @3` �
   `pnpm build` PASS（web + server/worker/migrate esbuild）。
 - 未运行（按约束）：`pnpm test`、Docker/DB、runtime、provider/paid 请求、
   凭据/本机服务。
-- 需要父裁决的既有测试语义更新：`src/server/export/paid-effect-backup.db.test.ts:139`
-  `FK_ORDER.slice(-3)` 断言应改为尾部
-  `['paid_effect','paid_effect_authorization','provider_attempt']`（或
-  `slice(-4)` 含 `paid_effect_control`）；同文件第 26 行 states 枚举可按需扩
-  `voided`（非必须，不扩不失效）。
+- 既有测试语义待 owner 裁决（本分支不改测试，相关断言当前与新 schema
+  顺序不符在 CI 会失败属已知）：`src/server/export/paid-effect-backup.db.test.ts`
+  第 138/139/260 行的字面量断言方案已提交 owner 决定区，未获批准前保持原样。
