@@ -2,10 +2,12 @@ import {
   API_ERROR_RESPONSES,
   ApiErrorResponseSchema,
   ApiIdParamsSchema,
+  BinaryResponseSchema,
   CursorQuerySchema,
 } from '@/kernel/http-contracts';
 import { defineCapability } from '@/kernel/manifest';
 import { uiPagesFor } from '@/kernel/ui-surfaces';
+import { WORKSHEET_RENDER_QUEUE } from '@/server/boss/queue-names';
 import {
   CreateSubmissionBodySchema,
   IssuanceCreatedSchema,
@@ -970,6 +972,19 @@ export const practiceCapability = defineCapability({
           import('./api/worksheet-export-route').then((m) => m.archiveWorksheetRegionMapRoute),
       },
       {
+        // YUK-1529 — 已存档 PDF 下载（content-addressed R2 对象，不可变）。
+        // 未渲染 / blob 缺失分开 404 如实上报。
+        method: 'GET',
+        path: '/api/worksheet-exports/[token]/pdf',
+        operationId: 'getWorksheetExportPdf',
+        request: { params: WorksheetTokenParamsSchema },
+        responses: { 200: BinaryResponseSchema, ...API_ERROR_RESPONSES },
+        responseMediaTypes: { 200: 'application/pdf' },
+        successStatus: 200,
+        load: () =>
+          import('./api/worksheet-export-route').then((m) => m.getWorksheetExportPdfRoute),
+      },
+      {
         // P6 回读面：token + 页 → issuance id、该页冻结区域图与 part/slot 坐标。
         method: 'GET',
         path: '/api/worksheet-exports/[token]/pages/[page]',
@@ -1023,6 +1038,15 @@ export const practiceCapability = defineCapability({
         name: 'variant_verify',
         queue: 'llm',
         load: () => import('./jobs/variant_verify').then((m) => m.buildVariantVerifyHandler),
+      },
+      {
+        // YUK-1529 — 服务端作答卷渲染：无头 Chromium 开 /print/worksheet/<token>，
+        // 同一 pass 量区域图 + page.pdf() → R2（content-addressed）→ #1773
+        // write-once 存档。由 createWorksheetExportRoute（created/replayed）入队。
+        // 'agent' 档：多步浏览器任务，DLQ + 重试兜瞬时失败；不调模型零成本。
+        name: WORKSHEET_RENDER_QUEUE,
+        queue: 'agent',
+        load: () => import('./jobs/worksheet_render').then((m) => m.buildWorksheetRenderHandler),
       },
       {
         // Durable stage 1: classify an active question failure, write the exact

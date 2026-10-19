@@ -9,6 +9,22 @@ import type { CopilotReplyFinalizationReceipt, PreparedCopilotReply } from './re
 
 export const COPILOT_CANCEL_POLL_INTERVAL_MS = 500;
 export const COPILOT_CANCEL_DRAIN_GRACE_MS = 30_000;
+export const COPILOT_STOPPED_REPLY = '已停止这次运行。';
+const COPILOT_UNFINISHED_NOTE = '上面是已经拿到的结果，结论还没写完。';
+
+/** Prose and completed tool summaries, plus the unfinished note. Undefined when both are empty. */
+export function copilotPartialReply(input: {
+  prose?: string;
+  toolSummaries?: readonly string[];
+}): string | undefined {
+  const prose = input.prose?.trim() ?? '';
+  const lines = (input.toolSummaries ?? [])
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  const body = [prose, lines.join('\n')].filter((part) => part.length > 0).join('\n\n');
+  if (body.length === 0) return undefined;
+  return `${body}\n\n${COPILOT_UNFINISHED_NOTE}`;
+}
 
 export type CopilotCancellationProbeResult = 'clear' | 'cancel_requested' | 'unknown';
 
@@ -17,6 +33,7 @@ export interface PersistCopilotRunCancellationArgs {
   sessionId: string;
   actorRef: string;
   partialText?: string;
+  toolSummaries?: readonly string[];
   /** Actual provider run when stream collection reached a terminal result. */
   taskRunId?: string;
   preparedReply?: PreparedCopilotReply;
@@ -44,7 +61,12 @@ export async function persistCopilotRunCancellationMarker(
   args: PersistCopilotRunCancellationArgs,
 ): Promise<PersistedCopilotRunCancellation> {
   const replyText =
-    args.partialText && args.partialText.length > 0 ? args.partialText : '已停止这次运行。';
+    args.partialText !== undefined && args.preparedReply?.text === args.partialText
+      ? args.partialText
+      : (copilotPartialReply({
+          prose: args.partialText,
+          toolSummaries: args.toolSummaries,
+        }) ?? COPILOT_STOPPED_REPLY);
   const error = 'copilot run cancelled by user';
   const taskRunId = args.taskRunId ?? `copilot_run_cancelled_${args.runId}`;
   const writeReply = args.writeCopilotReplyFn ?? writeCopilotReply;
@@ -52,9 +74,7 @@ export async function persistCopilotRunCancellationMarker(
     sessionId: args.sessionId,
     userAskEventId: args.runId,
     replyText,
-    ...(args.preparedReply?.text === replyText
-      ? { preparedReply: { text: args.preparedReply.text } }
-      : {}),
+    ...(args.preparedReply ? { preparedReply: args.preparedReply } : {}),
     actorRef: args.actorRef,
     taskRunId,
     ...(args.replyFinalization ? { replyFinalization: args.replyFinalization } : {}),

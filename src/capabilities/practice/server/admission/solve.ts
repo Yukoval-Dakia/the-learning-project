@@ -13,10 +13,19 @@
 
 import { eq } from 'drizzle-orm';
 import { canonicalHash } from '@/core/migration/canonical';
+import { rawArgumentsEvidence } from '@/core/raw-arguments-evidence';
+import {
+  type DeclaredPrivateKey,
+  compileDeclaredKey,
+  compiledCanonicalOf,
+  declaredRationalValueOf,
+} from '@/core/schema/assessment/blank-answer-compare';
+import type { BlankAnswerShapeT } from '@/core/schema/assessment/blank-answer-shape';
 import {
   gradeBlankExactUnit,
   gradeSelectUnit,
   normalizeBlankText,
+  parseBlankNumericText,
 } from '@/core/schema/assessment/grade';
 import type { ScoringUnitResultT } from '@/core/schema/assessment/judgment';
 import { isPublicSharedMaterial } from '@/core/schema/assessment/materials';
@@ -40,11 +49,11 @@ import {
   type QuestionAdmissionSourceCrosscheckOutputT,
   parseQuestionAdmissionSolveModelOutput,
 } from '../../tasks/question-admission-solve';
-// YUK-1445 — Provider/TaskTextResult 经 verify-framework（既有 server/ai
-// 边持有者）取，taskInputHash 经 judge-execution-provenance 的既有复导出
-// 取 —— 不新增 capability→server/ai 依赖边（audit:capability-boundaries）。
+// YUK-1445 — Provider/TaskTextResult/writeToolCallLog 经 verify-framework（既有
+// server/ai 边持有者）取，taskInputHash 经 judge-execution-provenance 的既有
+// 复导出取 —— 不新增 capability→server/ai 依赖边（audit:capability-boundaries）。
 import { taskInputHash } from '../judge/judge-execution-provenance';
-import type { Provider, TaskTextResult } from '../quiz/verify-framework';
+import { type Provider, type TaskTextResult, writeToolCallLog } from '../quiz/verify-framework';
 import type { PracticeTaskRunFn } from '../task-runtime';
 import type { AdmissionUnitSpec, QuestionAdmissionDefinition } from './contract';
 
@@ -107,6 +116,46 @@ class UnparsedSolveError extends Error {
     this.name = 'UnparsedSolveError';
     this.receipt = receipt;
   }
+}
+
+const SUBMIT_TOOL_NAME = 'mcp__structured_output__submit';
+
+/**
+ * YUK-1547 — when a structured submit reaches the capability but fails the
+ * schema/parse layer, keep the exact submit arguments (bounded) as a
+ * tool_call_log row attached to that task run, and return the full-payload
+ * digest so the thrown error / unresolved_reason can be matched back to it.
+ * The runner records the adapter-level variant (invalid raw wire arguments)
+ * itself; this covers the success-terminal-but-schema-invalid layer only.
+ */
+async function recordSubmitFailureEvidence(
+  db: Db,
+  taskRunId: string | null | undefined,
+  raw: unknown,
+): Promise<string> {
+  const serialized = typeof raw === 'string' ? raw : JSON.stringify(raw ?? null);
+  const evidence = rawArgumentsEvidence(serialized);
+  if (taskRunId == null) return evidence.raw_args_sha256;
+  try {
+    await writeToolCallLog(db, {
+      task_run_id: taskRunId,
+      task_kind: QUESTION_ADMISSION_TASK_KIND,
+      tool_name: SUBMIT_TOOL_NAME,
+      input_json: { ...evidence },
+      output_json: {},
+      error_reason: 'structured_output_parse_failed',
+      iteration: 0,
+      latency_ms: 0,
+      cost: 0,
+    });
+  } catch (error) {
+    // The evidence write must never mask the original parse failure.
+    console.warn('[question_admission] submit failure evidence write failed', {
+      task_run_id: taskRunId,
+      err: error instanceof Error ? error.message : String(error),
+    });
+  }
+  return evidence.raw_args_sha256;
 }
 
 /** task_run 收据密封：必须存在、成功、kind 匹配、input hash 精确绑定本次请求体。 */
@@ -183,6 +232,9 @@ function solverUnits(
               format: slot.format,
               ...(slot.unit_hint != null ? { unit_hint: slot.unit_hint } : {}),
               ...(answerKind != null ? { answer_kind: answerKind } : {}),
+              // YUK-1568 第 2 片：公开输入语义随 solve 载荷下发（不携带任何
+              // 答案/端点/容差 —— 那些在私有 scoring key 里）。
+              ...(slot.answer_shape != null ? { answer_shape: slot.answer_shape } : {}),
             }
           : undefined;
       return {
@@ -245,20 +297,220 @@ function validSolveUnitOutput(
   };
 }
 
-function keysAgree(
+/** Conflict details stay bounded — they land in withheld evidence and reasons. */
+const DETAIL_VALUE_MAX = 160;
+function boundDetail(value: string, max = DETAIL_VALUE_MAX): string {
+  return value.length <= max ? value : `${value.slice(0, max)}…(+${value.length - max} chars)`;
+}
+
+/** Compact value-level rendering of a key for conflict details. */
+function keyBrief(key: AdmissionKey): string {
+  switch (key.kind) {
+    case 'select':
+      return boundDetail(`select[${key.accepted_item_ids.join(',')}]`);
+    case 'blank_text':
+      return boundDetail(`blank_text[${key.accepted.join('|')}]`);
+    case 'blank_numeric':
+      return `blank_numeric{expected=${key.expected},tolerance=${JSON.stringify(
+        key.tolerance,
+      )},unit=${key.expected_unit ?? '∅'}}`;
+  }
+}
+
+type NumericTolerance = { kind: 'absolute'; value: number } | { kind: 'relative'; ratio: number };
+
+const tolOf = (t: { value?: number; ratio?: number }) => t.value ?? t.ratio ?? 0;
+
+function withinToleranceOf(x: number, expected: number, tolerance: NumericTolerance): boolean {
+  return tolerance.kind === 'absolute'
+    ? Math.abs(x - expected) <= tolerance.value
+    : expected === 0
+      ? x === expected
+      : Math.abs(x - expected) / Math.abs(expected) <= tolerance.ratio;
+}
+
+/** AdmissionKey → 比较核心的私有键读面（select 无对应 —— 声明只在 blank 槽）。 */
+function privateKeyOf(key: AdmissionKey): DeclaredPrivateKey | null {
+  switch (key.kind) {
+    case 'select':
+      return null;
+    case 'blank_text':
+      return { kind: 'text', accepted: key.accepted };
+    case 'blank_numeric':
+      return {
+        kind: 'numeric',
+        expected: key.expected,
+        tolerance: key.tolerance,
+        ...(key.expected_unit != null ? { expected_unit: key.expected_unit } : {}),
+      };
+  }
+}
+
+/**
+ * 已声明槽的 A/B 键一致性（YUK-1568 第 2 片）：两侧【全部】别名经同一
+ * compileDeclaredKey 编译，每个别名必须完整解析且为同一数学对象（别名数
+ * 可不同）；铸出的键携带全部已验证别名 —— 实际 grade 逐一接受。
+ * 返回 null = 交由既有分支（numeric/numeric 容差铸键，单位相容已验）。
+ */
+function declaredKeysAgree(
+  a: AdmissionKey,
+  b: AdmissionKey,
+  shape: BlankAnswerShapeT,
+): { agree: boolean; detail?: string; key?: AdmissionKey } | null {
+  if (a.kind === 'select' || b.kind === 'select') {
+    return { agree: false, detail: 'select key cannot satisfy a declared answer_shape' };
+  }
+  if (a.kind === 'blank_text' && b.kind === 'blank_text') {
+    const privateKeyA = privateKeyOf(a);
+    const privateKeyB = privateKeyOf(b);
+    if (privateKeyA == null || privateKeyB == null) {
+      return { agree: false, detail: 'blank_text keys must carry an accepted alias list' };
+    }
+    const ca = compileDeclaredKey(shape, privateKeyA);
+    const cb = compileDeclaredKey(shape, privateKeyB);
+    if (!ca.ok) {
+      return {
+        agree: false,
+        detail: `solver A aliases invalid under declared shape: ${ca.reason}`,
+      };
+    }
+    if (!cb.ok) {
+      return {
+        agree: false,
+        detail: `solver B aliases invalid under declared shape: ${cb.reason}`,
+      };
+    }
+    const canonicalA = compiledCanonicalOf(ca.compiled);
+    const canonicalB = compiledCanonicalOf(cb.compiled);
+    if (canonicalA == null || canonicalB == null || canonicalA !== canonicalB) {
+      return {
+        agree: false,
+        detail: `independent solves disagree as declared objects: ${canonicalA} vs ${canonicalB}`,
+      };
+    }
+    const accepted = [...a.accepted, ...b.accepted.filter((t) => !a.accepted.includes(t))];
+    return {
+      agree: true,
+      key: { kind: 'blank_text', accepted },
+      detail: `agreed as declared object ${canonicalA} (${accepted.length} validated aliases)`,
+    };
+  }
+  if (a.kind === 'blank_numeric' && b.kind === 'blank_numeric') {
+    if (shape.value.kind !== 'number') {
+      return {
+        agree: false,
+        detail: `numeric keys cannot express declared value kind '${shape.value.kind}'`,
+      };
+    }
+    if (shape.value.unit != null) {
+      const unit = shape.value.unit.unit.normalize('NFKC');
+      const norm = (u?: string): string => (u ?? '').normalize('NFKC');
+      if (norm(a.expected_unit) !== unit || norm(b.expected_unit) !== unit) {
+        return {
+          agree: false,
+          detail: `declared unit '${unit}' vs keys ${a.expected_unit ?? '∅'}/${b.expected_unit ?? '∅'}`,
+        };
+      }
+    }
+    return null; // 单位/形态相容 → 既有容差铸键分支（更严容差侧）。
+  }
+  // 跨 kind（numeric × text）：仅无声明单位的 number 形状；文本侧全部别名
+  // 必须编译为同一精确有理值且落在冻结容差内 —— 铸 numeric 键（判分读法
+  // 逐一接受这些文本形式）。
+  const numeric = a.kind === 'blank_numeric' ? a : b.kind === 'blank_numeric' ? b : null;
+  const text = a.kind === 'blank_text' ? a : b.kind === 'blank_text' ? b : null;
+  if (
+    numeric != null &&
+    text != null &&
+    shape.value.kind === 'number' &&
+    shape.value.unit == null &&
+    numeric.expected_unit == null
+  ) {
+    const privateKey = privateKeyOf(text);
+    if (privateKey == null) {
+      return { agree: false, detail: 'blank_text key must carry an accepted alias list' };
+    }
+    const ct = compileDeclaredKey(shape, privateKey);
+    if (!ct.ok) {
+      return {
+        agree: false,
+        detail: `text aliases invalid under declared number shape: ${ct.reason}`,
+      };
+    }
+    const value = declaredRationalValueOf(ct.compiled);
+    if (value != null && withinToleranceOf(value, numeric.expected, numeric.tolerance)) {
+      return {
+        agree: true,
+        key: numeric,
+        detail: `text forms all read as the declared numeric key: ${boundDetail(text.accepted.join('|'))} -> ${keyBrief(numeric)}`,
+      };
+    }
+    return {
+      agree: false,
+      detail: `declared text aliases (${boundDetail(text.accepted.join('|'))}) disagree with ${keyBrief(numeric)}`,
+    };
+  }
+  return {
+    agree: false,
+    detail: `key kinds ${a.kind}/${b.kind} cannot agree under declared value kind '${shape.value.kind}'`,
+  };
+}
+
+export function keysAgree(
   a: AdmissionKey,
   b: AdmissionKey,
   normalization: BlankNormalizationT | null,
+  shape?: BlankAnswerShapeT | null,
 ): { agree: boolean; detail?: string; key?: AdmissionKey } {
+  if (shape != null) {
+    const declared = declaredKeysAgree(a, b, shape);
+    if (declared != null) return declared;
+    // numeric/numeric 且单位/形态已验相容 → 落到既有容差铸键分支。
+  }
   if (a.kind !== b.kind) {
-    return { agree: false, detail: `key kind ${a.kind} vs ${b.kind}` };
+    // YUK-1547 — blank_text vs blank_numeric may still describe ONE key: every
+    // accepted text form must read as a plain number under the SAME
+    // deterministic parse the minted numeric key later applies in grading
+    // (parseBlankNumericText; NFKC + trim + plain number, no units/separators),
+    // and each value must land inside the numeric tolerance. A numeric key
+    // carrying expected_unit can never agree — plain-number forms have no unit.
+    const numeric = a.kind === 'blank_numeric' ? a : b.kind === 'blank_numeric' ? b : null;
+    const text = a.kind === 'blank_text' ? a : b.kind === 'blank_text' ? b : null;
+    if (numeric != null && text != null && numeric.expected_unit == null) {
+      const parsed = text.accepted.map((form) => ({ form, value: parseBlankNumericText(form) }));
+      if (
+        parsed.length > 0 &&
+        parsed.every(
+          (entry) =>
+            entry.value != null &&
+            withinToleranceOf(entry.value, numeric.expected, numeric.tolerance),
+        )
+      ) {
+        // Mint the NUMERIC key — its grading read accepts exactly the forms
+        // that just parsed, so admission and grading stay consistent.
+        return {
+          agree: true,
+          key: numeric,
+          detail: `text forms all read as the numeric key: ${boundDetail(
+            text.accepted.join('|'),
+          )} -> ${keyBrief(numeric)}`,
+        };
+      }
+    }
+    return {
+      agree: false,
+      detail: `key kind ${a.kind} vs ${b.kind}: ${keyBrief(a)} vs ${keyBrief(b)}`,
+    };
   }
   if (a.kind === 'select' && b.kind === 'select') {
     const sa = [...a.accepted_item_ids].sort();
     const sb = [...b.accepted_item_ids].sort();
     return sa.length === sb.length && sa.every((id, i) => id === sb[i])
       ? { agree: true, key: a }
-      : { agree: false, detail: `select key ${sa.join(',')} vs ${sb.join(',')}` };
+      : {
+          agree: false,
+          detail: `select key ${boundDetail(sa.join(','))} vs ${boundDetail(sb.join(','))}`,
+        };
   }
   if (a.kind === 'blank_text' && b.kind === 'blank_text') {
     const norm = normalization ?? {
@@ -276,37 +528,30 @@ function keysAgree(
     const allA = na.every((t) => nb.includes(t));
     const allB = nb.every((t) => na.includes(t));
     if (allA && allB) return { agree: true, key: a };
-    return { agree: false, detail: `blank_text ${na.join('|')} vs ${nb.join('|')}` };
+    return {
+      agree: false,
+      detail: `blank_text ${boundDetail(na.join('|'))} vs ${boundDetail(nb.join('|'))}`,
+    };
   }
   if (a.kind === 'blank_numeric' && b.kind === 'blank_numeric') {
     if ((a.expected_unit ?? null) !== (b.expected_unit ?? null)) {
       return {
         agree: false,
-        detail: `expected_unit ${a.expected_unit ?? '∅'} vs ${b.expected_unit ?? '∅'}`,
+        detail: `expected_unit ${a.expected_unit ?? '∅'} vs ${b.expected_unit ?? '∅'}: ${keyBrief(a)} vs ${keyBrief(b)}`,
       };
     }
     // 容差同型才可互证：absolute/relative 语义不同型 ⇒ 不视为等价，不合并铸键。
     if (a.tolerance.kind !== b.tolerance.kind) {
       return {
         agree: false,
-        detail: `tolerance kind ${a.tolerance.kind} vs ${b.tolerance.kind}`,
+        detail: `tolerance kind ${a.tolerance.kind} vs ${b.tolerance.kind}: ${keyBrief(a)} vs ${keyBrief(b)}`,
       };
     }
-    const tolOf = (t: { value?: number; ratio?: number }) => t.value ?? t.ratio ?? 0;
     const tolA = tolOf(a.tolerance);
     const tolB = tolOf(b.tolerance);
-    const within = (
-      x: number,
-      y: number,
-      tolerance: { kind: 'absolute'; value: number } | { kind: 'relative'; ratio: number },
-    ) =>
-      tolerance.kind === 'absolute'
-        ? Math.abs(x - y) <= tolerance.value
-        : y === 0
-          ? x === y
-          : Math.abs(x - y) / Math.abs(y) <= tolerance.ratio;
     const ok =
-      within(a.expected, b.expected, b.tolerance) && within(b.expected, a.expected, a.tolerance);
+      withinToleranceOf(a.expected, b.expected, b.tolerance) &&
+      withinToleranceOf(b.expected, a.expected, a.tolerance);
     if (!ok) {
       return { agree: false, detail: `numeric ${a.expected} vs ${b.expected}` };
     }
@@ -322,7 +567,10 @@ function keysAgree(
           : `minted stricter tolerance (kept ${JSON.stringify(tighter)} over ${JSON.stringify(looser)})`,
     };
   }
-  return { agree: false, detail: 'uncomparable key kinds' };
+  return {
+    agree: false,
+    detail: `uncomparable key kinds: ${keyBrief(a)} vs ${keyBrief(b)}`,
+  };
 }
 
 function keyFromAnswer(
@@ -419,8 +667,17 @@ function authorKeyAcceptsGrade(result: ScoringUnitResultT, points: number | null
   return result.points_awarded === points;
 }
 
-/** 作者键是否接受模型的最终答案：走这道题自己的判分器，不另定相等。 */
-async function authorKeyAccepts(unit: AdmissionUnitSpec, key: AdmissionKey): Promise<boolean> {
+/**
+ * 作者键是否接受模型的最终答案：走这道题自己的判分器，不另定相等。
+ * YUK-1568 第 2 片：已声明槽位不只检查模型 accepted[0] —— 模型键与作者键
+ * 的【全部】别名都必须被实际 grade 接受（作者键自身别名的编译完整性在
+ * runDualSolve 的 seed 分支单独校验）。
+ */
+async function authorKeyAccepts(
+  unit: AdmissionUnitSpec,
+  key: AdmissionKey,
+  shape?: BlankAnswerShapeT,
+): Promise<boolean> {
   const scoring = gradingUnit(unit);
   const slotId = unit.slot_refs[0];
   if (scoring == null || slotId == null) return false;
@@ -435,15 +692,26 @@ async function authorKeyAccepts(unit: AdmissionUnitSpec, key: AdmissionKey): Pro
       unit.points,
     );
   }
+  if (scoring.criterion.kind !== 'blank_key') return false;
+  if (shape != null && key.kind === 'blank_text') {
+    for (const alias of key.accepted) {
+      const graded = await gradeBlankExactUnit(
+        scoring,
+        { slot_id: slotId, kind: 'blank', state: 'answered', text: alias },
+        shape,
+      );
+      if (!authorKeyAcceptsGrade(graded, unit.points)) return false;
+    }
+    return true;
+  }
   const text = modelFinalAnswerText(key);
-  if (text == null || scoring.criterion.kind !== 'blank_key') return false;
+  if (text == null) return false;
   return authorKeyAcceptsGrade(
-    await gradeBlankExactUnit(scoring, {
-      slot_id: slotId,
-      kind: 'blank',
-      state: 'answered',
-      text,
-    }),
+    await gradeBlankExactUnit(
+      scoring,
+      { slot_id: slotId, kind: 'blank', state: 'answered', text },
+      shape,
+    ),
     unit.points,
   );
 }
@@ -471,6 +739,7 @@ async function runSolvePass(
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     const taskRunId = result.task_run_id;
+    const rawArgsDigest = await recordSubmitFailureEvidence(db, taskRunId, raw);
     let receipt: AdmissionSolveReceipt | undefined;
     if (taskRunId != null) {
       try {
@@ -479,10 +748,11 @@ async function runSolvePass(
         receipt = undefined;
       }
     }
-    const marked =
+    const marked = `${
       taskRunId != null && !detail.includes(`task_run_id=${taskRunId}`)
         ? `${detail};task_run_id=${taskRunId}`
-        : detail;
+        : detail
+    };raw_args_sha256=${rawArgsDigest}`;
     throw new UnparsedSolveError(marked, receipt);
   }
 }
@@ -621,11 +891,30 @@ export async function runDualSolve(
       }
     }
     const authorKey = authorAdmissionKey(unit.seeded_criterion);
+    // YUK-1568 第 2 片：该槽冻结的 answer_shape（同一比较核心；无声明 → null
+    // → 旧路径逐字不变）。
+    const shapeSlot = definition.response_spec.slots.find((s) => s.slot_id === unit.slot_refs[0]);
+    const declaredShape =
+      shapeSlot != null && shapeSlot.kind === 'blank' && shapeSlot.answer_shape != null
+        ? shapeSlot.answer_shape
+        : null;
     if (unit.seeded_criterion != null) {
+      // 作者键自身别名先过同一编译器：任一别名不完整/互不一致/与声明冲突
+      //（单位缺项等）→ 契约级冲突，不铸键、不进入后续核验。
+      if (declaredShape != null && unit.seeded_criterion.kind === 'blank_key') {
+        const authorCompile = compileDeclaredKey(declaredShape, unit.seeded_criterion.key);
+        if (!authorCompile.ok) {
+          verdicts.set(unit.scoring_unit_id, {
+            status: 'conflict',
+            detail: `author key invalid under declared answer_shape: ${authorCompile.reason}`,
+          });
+          continue;
+        }
+      }
       if (
         authorKey == null ||
-        !(await authorKeyAccepts(unit, keyA)) ||
-        !(await authorKeyAccepts(unit, keyB))
+        !(await authorKeyAccepts(unit, keyA, declaredShape ?? undefined)) ||
+        !(await authorKeyAccepts(unit, keyB, declaredShape ?? undefined))
       ) {
         verdicts.set(unit.scoring_unit_id, {
           status: 'seed_mismatch',
@@ -635,7 +924,7 @@ export async function runDualSolve(
       }
       verdicts.set(unit.scoring_unit_id, { status: 'agreed', key: authorKey });
     } else {
-      const agree = keysAgree(keyA, keyB, unit.blank_normalization);
+      const agree = keysAgree(keyA, keyB, unit.blank_normalization, declaredShape);
       if (!agree.agree || agree.key == null) {
         verdicts.set(unit.scoring_unit_id, {
           status: 'conflict',
@@ -726,10 +1015,21 @@ export async function runSourceCrosscheck(
     budgetOverride: { maxIterations: 1 },
     ...(deps.subjectProfile != null ? { subjectProfile: deps.subjectProfile } : {}),
   });
-  if (result.structured_output == null)
-    throw new Error('missing structured crosscheck output; no text fallback');
-  const output: QuestionAdmissionSourceCrosscheckOutputT =
-    QuestionAdmissionSourceCrosscheckOutput.parse(result.structured_output);
+  let output: QuestionAdmissionSourceCrosscheckOutputT;
+  try {
+    if (result.structured_output == null)
+      throw new Error('missing structured crosscheck output; no text fallback');
+    output = QuestionAdmissionSourceCrosscheckOutput.parse(result.structured_output);
+  } catch (error) {
+    const digest = await recordSubmitFailureEvidence(
+      db,
+      result.task_run_id,
+      result.structured_output,
+    );
+    throw new Error(
+      `${error instanceof Error ? error.message : String(error)};raw_args_sha256=${digest}`,
+    );
+  }
   const receipt = await sealTaskRun(db, payload, result, output);
   const per_unit = new Map(
     output.per_unit.map(

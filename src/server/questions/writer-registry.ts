@@ -76,8 +76,13 @@ export const QUESTION_CONTENT_WRITER_REGISTRY: Record<string, QuestionContentWri
   },
   'src/capabilities/practice/jobs/question_admission_run.ts': {
     status: 'publisher-converged',
-    tickets: ['YUK-1468'],
-    note: '准入通过后，同一事务里 publishQuestionGroup 铸 admitted revision，再把 prompt_md/reference_md/choices_md 投影成该 revision。withheld 不改内容列。',
+    tickets: ['YUK-1468', 'YUK-1547'],
+    note: '准入通过后，同一事务里 publishQuestionGroup 铸 admitted revision（YUK-1547：发布付费 resolved 契约而非冻结输入），再把 prompt_md/reference_md/choices_md 投影成该 revision。withheld 不改内容列。',
+  },
+  'src/capabilities/practice/server/admission/resolved-repair.ts': {
+    status: 'publisher-converged',
+    tickets: ['YUK-1547'],
+    note: '免费补发 lane：同事务内 publishQuestionGroup 铸 resolved 契约的新 revision（publisher seam 前置），随后根行投影 prompt_md/reference_md/choices_md 自同一契约。仅经显式 ops manifest + CAS + 回执绑定幂等门；paid_effect 不写。',
   },
   'src/server/ai/solution-generate.ts': {
     status: 'publisher-converged',

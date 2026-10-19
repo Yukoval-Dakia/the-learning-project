@@ -445,6 +445,10 @@ export const BACKUP_EXCLUDED_TABLES: ReadonlySet<string> = new Set<string>([
   // 非 FK_ORDER → 无 SCHEMA_VERSION bump。
   'migration_apply_run',
   'migration_apply_phase',
+  // YUK-1563: models.dev cache. Refetchable operational state. The committed
+  // snapshot is the floor when the row is absent. A learner restore leaves the
+  // row in place so a retained selected-model entry is not wiped.
+  'model_catalog_cache',
 ]);
 
 // Excluded process/queue state must not survive a restore into another data timeline.

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { BlankAnswerShape, type BlankAnswerShapeT } from './blank-answer-shape';
 import { EvidenceAcceptanceRule, EvidenceAttachment } from './materials';
 import { codePointCount, isInteriorGap } from './position-gap';
 import type { QuestionGroupStructureT } from './structure';
@@ -246,15 +247,20 @@ export function describeSelectItem(slot: SelectSlotT, itemId: string): string {
   return itemId;
 }
 
-/** blank：一个 unit 收一个字符串；多空拆多个 blank。数值/表达式/诗句都是 blank。 */
+/** blank：一个 unit 收一个字符串；多空拆多个 blank。数值/表达式/诗句都是 blank。
+ * answer_shape（YUK-1568，可选）声明这一空回答的数学对象（公开输入语义，
+ * 不携带答案）；缺省 = 未声明，旧题原文本 exact 语义不变。未知版本/字段在
+ * 本 schema 上 parse 失败 —— 读者必须显式拒绝，不能 strip 后当未声明。 */
 export const BlankSlot = z.object({
   ...slotBase,
   kind: z.literal('blank'),
   format: z.enum(['text', 'math']).default('text'),
   unit_hint: z.string().optional(),
   max_chars: z.number().int().min(1).optional(),
+  answer_shape: BlankAnswerShape.optional(),
 });
 export type BlankSlotT = z.infer<typeof BlankSlot>;
+export type { BlankAnswerShapeT };
 
 export const ResponseSlot = z.discriminatedUnion('kind', [
   SingleChoiceSlot,
@@ -427,7 +433,12 @@ export interface ResponseSpecIssue {
     | 'select_duplicate_relation'
     | 'select_gap_invalid'
     | 'select_item_shape_mixed'
-    | 'select_at_most_unknown_axis';
+    | 'select_at_most_unknown_axis'
+    | 'blank_order_unresolved_slot'
+    | 'blank_order_non_blank_slot'
+    | 'blank_order_cross_part'
+    | 'blank_order_duplicate'
+    | 'blank_order_coverage';
   detail: string;
 }
 
@@ -664,6 +675,64 @@ export function validateResponseSpec(
         issues.push({
           code: 'table_bounds',
           detail: `table '${slot.slot_id}' cell (${coord}) outside declared grid`,
+        });
+      }
+    }
+  }
+
+  // 第三遍（YUK-1568）：part.blank_order 与 response 交叉校验 —— 声明的
+  // 默认逻辑序必须恰覆盖本 part 的 blank 槽各一次，不跨 part、不重复、不缺项、
+  // 不指向非 blank 槽。缺项/重复不回退数组序，直接拒绝（发布 barrier / serve
+  // 前置校验都会走到这里；无声明的旧 part 不受影响）。
+  if (structure != null) {
+    const blankSlotIdsByPart = new Map<string, string[]>();
+    for (const slot of spec.slots) {
+      if (slot.kind !== 'blank') continue;
+      const list = blankSlotIdsByPart.get(slot.part_id) ?? [];
+      list.push(slot.slot_id);
+      blankSlotIdsByPart.set(slot.part_id, list);
+    }
+    const slotById = new Map(spec.slots.map((slot) => [slot.slot_id, slot] as const));
+    for (const part of structure.parts) {
+      if (part.blank_order == null) continue;
+      const seen = new Set<string>();
+      for (const slotId of part.blank_order) {
+        if (seen.has(slotId)) {
+          issues.push({
+            code: 'blank_order_duplicate',
+            detail: `part '${part.part_id}' blank_order lists slot '${slotId}' more than once`,
+          });
+          continue;
+        }
+        seen.add(slotId);
+        const slot = slotById.get(slotId);
+        if (slot == null) {
+          issues.push({
+            code: 'blank_order_unresolved_slot',
+            detail: `part '${part.part_id}' blank_order references unknown slot '${slotId}'`,
+          });
+          continue;
+        }
+        if (slot.kind !== 'blank') {
+          issues.push({
+            code: 'blank_order_non_blank_slot',
+            detail: `part '${part.part_id}' blank_order references slot '${slotId}' of kind '${slot.kind}' — only blank slots carry the default logical order`,
+          });
+          continue;
+        }
+        if (slot.part_id !== part.part_id) {
+          issues.push({
+            code: 'blank_order_cross_part',
+            detail: `part '${part.part_id}' blank_order references slot '${slotId}' of another part '${slot.part_id}'`,
+          });
+        }
+      }
+      const partBlanks = blankSlotIdsByPart.get(part.part_id) ?? [];
+      const missing = partBlanks.filter((id) => !seen.has(id));
+      if (missing.length > 0) {
+        issues.push({
+          code: 'blank_order_coverage',
+          detail: `part '${part.part_id}' declares blank_order but does not cover its blank slot(s): ${missing.join(', ')}`,
         });
       }
     }
@@ -984,4 +1053,50 @@ export function scopeResponseSpec(spec: ResponseSpecT, partIds: readonly string[
   return {
     slots: spec.slots.filter((slot) => scope.has(slot.part_id)),
   };
+}
+
+// ---------- blank_order 默认逻辑序投影（YUK-1568 第 1 片） ----------
+
+/**
+ * 把声明的 blank_order 投影成槽位默认顺序（纯函数；展示、公开 DTO 与缺省
+ * presentation 共用）。做法是对每个声明了 blank_order 的 part，只在其 blank
+ * 槽【自己占住的位置】内按声明序重排 —— 其余槽的相对顺序一律不动，未声明
+ * 的 part 与旧 revision 完全 no-op（数组序原样返回）。
+ *
+ * 身份纪律：blank_order 只是默认逻辑序（服务默认展示与 DTO 规范顺序）；
+ * 作答身份永远按 slot_id，绝不按序数。显式 K5 物理布局（presentation /
+ * PDF region map）仍以 block/region → slot_id 绑定为准，placement 从属不变，
+ * 不因本投影改写。
+ */
+export function slotsInDefaultOrder<T extends { slot_id: string; part_id: string; kind: string }>(
+  slots: readonly T[],
+  parts: readonly { part_id: string; blank_order?: readonly string[] }[],
+): T[] {
+  const orderByPart = new Map<string, readonly string[]>();
+  for (const part of parts) {
+    if (part.blank_order == null || part.blank_order.length === 0) continue;
+    orderByPart.set(part.part_id, part.blank_order);
+  }
+  if (orderByPart.size === 0) return [...slots];
+  const out = [...slots];
+  for (const [partId, blankOrder] of orderByPart) {
+    const positions: number[] = [];
+    for (let index = 0; index < out.length; index += 1) {
+      const slot = out[index];
+      if (slot.part_id === partId && slot.kind === 'blank') positions.push(index);
+    }
+    if (positions.length === 0) continue;
+    const rank = new Map(blankOrder.map((slotId, index) => [slotId, index] as const));
+    const reordered = positions
+      .map((position) => out[position])
+      .sort(
+        (a, b) =>
+          (rank.get(a.slot_id) ?? Number.MAX_SAFE_INTEGER) -
+          (rank.get(b.slot_id) ?? Number.MAX_SAFE_INTEGER),
+      );
+    positions.forEach((position, offset) => {
+      out[position] = reordered[offset] as T;
+    });
+  }
+  return out;
 }

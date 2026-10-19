@@ -47,6 +47,7 @@ async function hydrateSubjectsBeforeServe(): Promise<void> {
 // try/catch 双保险。刷新句柄交给 shutdown（server 停下时 clearInterval——dev
 // tsx watch 重启时若不清会漏到旧模块域）。
 let configRefresh: { stop: () => void } | undefined;
+let catalogWatch: { stop: () => void } | undefined;
 async function hydrateConfigBeforeServe(): Promise<void> {
   try {
     const [{ db }, { hydrateConfigFromDb, startConfigRefresh }] = await Promise.all([
@@ -60,6 +61,22 @@ async function hydrateConfigBeforeServe(): Promise<void> {
     configRefresh = startConfigRefresh(db, 15_000);
   } catch (err) {
     console.warn('[rw:api] config hydration failed — serving with env/code-default floor', err);
+  }
+}
+
+async function hydrateModelCatalogBeforeServe(): Promise<void> {
+  try {
+    const [{ db }, { hydrateModelCatalog, startModelCatalogWatch }] = await Promise.all([
+      import('@/db/client'),
+      import('@/server/ai/model-catalog'),
+    ]);
+    const meta = await hydrateModelCatalog(db);
+    console.log(
+      `[rw:api] model catalog origin=${meta.origin} version=${meta.version} at=${meta.fetchedAt} findings=${meta.findings.length}`,
+    );
+    catalogWatch = startModelCatalogWatch(db);
+  } catch (err) {
+    console.warn('[rw:api] model catalog hydration failed — serving snapshot floor', err);
   }
 }
 
@@ -127,6 +144,7 @@ void (async () => {
   await initializeLaminarTracing();
   await hydrateSubjectsBeforeServe();
   await hydrateConfigBeforeServe();
+  await hydrateModelCatalogBeforeServe();
   await registerToolsBeforeServe();
   await recoverToolOperationsBeforeServe();
   await injectAdminConfigFactsBeforeServe();
@@ -159,6 +177,7 @@ void (async () => {
       if (boss) await stopBossGracefully(boss, 'API shutdown');
     } finally {
       configRefresh?.stop();
+      catalogWatch?.stop();
       try {
         await stopListenLoop();
       } finally {

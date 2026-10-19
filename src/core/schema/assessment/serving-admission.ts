@@ -1,4 +1,8 @@
 import { unit as parseUnit } from 'mathjs';
+import {
+  DECLARED_BLANK_COMPARE_VERSION,
+  declaredBlankGradeReadiness,
+} from './blank-answer-compare';
 import { EvaluationContractError, projectIssuedScoringBasis } from './evaluation';
 import { validateExecutionPlan } from './execution';
 import { isPublicSharedMaterial } from './materials';
@@ -273,6 +277,23 @@ export function decideAutomaticServing(
   const answerSlots = revision.response_spec.slots.filter(
     (slot) => selected.has(slot.part_id) && slot.kind !== 'table',
   );
+  // YUK-1568（第 2 片）：发出范围内的已声明 blank 槽现在由共享比较核心判定
+  // 判分就绪（声明被支持 + 被 blank_key unit 读取 + 私有键可编译）。任一缺
+  // 项（未知版本、未实现 notation、键冲突、缺判分单元）仍明确拒绝发题，
+  // 绝不回退普通 exact 文本判分。此闸在渲染面检查之前：判不了分比画不出
+  // 更根本。
+  const declaredReadiness = declaredBlankGradeReadiness(
+    revision.response_spec,
+    revision.scoring_basis,
+    selectedPartIds,
+  );
+  if (!declaredReadiness.ok) {
+    return {
+      kind: 'unavailable',
+      reason: 'unsupported_deterministic_input',
+      detail: `declared answer_shape not gradable: ${declaredReadiness.reason} (comparator ${DECLARED_BLANK_COMPARE_VERSION})`,
+    };
+  }
   // YUK-1497 —— 展示层形状门先行（review R1）：行读面（revisionRowToContract）对解析
   // 失败的展示层原样透传而非丢列（丢列 = 静默降级为逐槽渲染的 fail-open）；这里以
   // invalid_presentation 拒绝，绝不带着坏展示层发题，原因也不被输入面检查盖住。

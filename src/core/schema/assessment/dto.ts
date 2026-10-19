@@ -5,7 +5,7 @@ import { EvaluationInputSnapshot } from './judgment';
 import { SharedMaterialKind, isPublicSharedMaterial } from './materials';
 import { prunePresentation } from './presentation';
 import { LifecycleQualification, PublishDecision } from './publish';
-import { ResponseSpec } from './response';
+import { ResponseSpec, slotsInDefaultOrder } from './response';
 import type { AssessmentIssuanceT, PublishedQuestionRevisionT } from './revision';
 import { PublishedQuestionRevision, validateIssuanceBinding } from './revision';
 
@@ -47,6 +47,11 @@ export const PublicQuestionFace = z.object({
   question_no: z.string().optional(),
   prompt_md: z.string(),
   material_ids: z.array(z.string().min(1)),
+  /**
+   * YUK-1568（第 1 片，可选）：本 part 独立 blank 槽的默认逻辑序（公开展示
+   * 顺序信息，不含任何答案）。作答身份仍按 slot_id；缺省 = 未声明，旧题不变。
+   */
+  blank_order: z.array(z.string().min(1)).optional(),
 });
 export type PublicQuestionFaceT = z.infer<typeof PublicQuestionFace>;
 
@@ -138,6 +143,11 @@ export function projectPracticeIssuance(
       }
       return slot;
     });
+  // YUK-1568：声明了 blank_order 的 part，其 blank 槽在 DTO 里按默认逻辑序
+  // 呈现（只在各自位置内重排；未声明的旧题完全保持数组序）。作答 envelope
+  // 仍按 slot_id 关联，不按序数。
+  const issuedParts = revision.structure.parts.filter((part) => boundParts.has(part.part_id));
+  const orderedSlots = slotsInDefaultOrder(projectedSlots, issuedParts);
   // P1-B 防御：发出集合内不得出现悬空表格（单元格不在发出集内）——
   // 宁可抛错也不产出不可作答/不可校验的 DTO。
   const emittedSlotIds = new Set(projectedSlots.map((slot) => slot.slot_id));
@@ -181,14 +191,15 @@ export function projectPracticeIssuance(
     issuance_id: issuance.issuance_id,
     revision_id: revision.revision_id,
     issued_at: issuance.issued_at,
-    faces: revision.structure.parts
-      .filter((part) => boundParts.has(part.part_id))
-      .map((part) => ({
-        part_id: part.part_id,
-        question_no: part.question_no,
-        prompt_md: part.prompt_md,
-        material_ids: part.material_ids.filter((id) => publicMaterialIds.has(id)),
-      })),
+    faces: issuedParts.map((part) => ({
+      part_id: part.part_id,
+      question_no: part.question_no,
+      prompt_md: part.prompt_md,
+      material_ids: part.material_ids.filter((id) => publicMaterialIds.has(id)),
+      ...(part.blank_order != null
+        ? { blank_order: part.blank_order.filter((id) => answerableSlotIds.has(id)) }
+        : {}),
+    })),
     materials: publicMaterials.map((material) => ({
       material_id: material.material_id,
       kind: material.kind,
@@ -198,10 +209,10 @@ export function projectPracticeIssuance(
       content_md: material.content_md,
     })),
     response_spec: {
-      slots: projectedSlots,
+      slots: orderedSlots,
     },
     ...(prunedPresentation != null ? { presentation: prunedPresentation } : {}),
-    response_requirements: projectedSlots
+    response_requirements: orderedSlots
       .filter((slot) => slot.kind !== 'table')
       .map((slot) => {
         const units = scopedUnits.filter((unit) =>

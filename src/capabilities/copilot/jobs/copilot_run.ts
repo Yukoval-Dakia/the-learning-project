@@ -22,6 +22,7 @@ import {
   COPILOT_CANCEL_DRAIN_GRACE_MS,
   type CopilotRunCancellationControl,
   type PersistCopilotRunCancellationArgs,
+  copilotPartialReply,
   createCopilotRunCancellationControl,
   persistCopilotRunCancellationMarker,
 } from '@/capabilities/copilot/server/copilot-run-cancellation';
@@ -939,6 +940,13 @@ async function executeAcceptedCopilotRun(
       ? persistedSdkSessionId
       : undefined;
   let progressChain: Promise<void> = Promise.resolve();
+  let streamedProse = '';
+  const toolSummaries: string[] = [];
+  const partialReply = () => copilotPartialReply({ prose: streamedProse, toolSummaries });
+  const displayedProse = (): string | undefined =>
+    streamedProse.trim().length > 0 ? streamedProse : undefined;
+  const stopPartialText = (explicit?: string): string | undefined =>
+    explicit !== undefined && explicit.length > 0 ? explicit : displayedProse();
   // Load-bearing execution fence, deliberately placed after every deterministic
   // setup/read and immediately before the only paid/external-effect gateway.
   // The claim rechecks under a per-run transaction lock: two overlapping
@@ -971,18 +979,21 @@ async function executeAcceptedCopilotRun(
       replyFinalization?: CopilotReplyFinalizationReceipt,
       preparedReply?: PreparedCopilotReply,
     ) =>
-    (tx: Tx) =>
-      persistCopilotRunCancellationMarker(tx, {
+    (tx: Tx) => {
+      const partial = stopPartialText(partialText);
+      return persistCopilotRunCancellationMarker(tx, {
         runId,
         sessionId: data.session_id,
         actorRef,
-        ...(partialText ? { partialText } : {}),
+        ...(partial ? { partialText: partial } : {}),
         ...(providerTaskRunId ? { taskRunId: providerTaskRunId } : {}),
         ...(replyFinalization ? { replyFinalization } : {}),
         ...(preparedReply ? { preparedReply } : {}),
+        toolSummaries,
         checkpointSafe: !cancellationControl.materializingToolStarted,
         writeCopilotReplyFn: persistReply,
       });
+    };
   const settleObservedCancellation = async (
     partialText?: string,
     providerTaskRunId?: string,
@@ -1000,14 +1011,16 @@ async function executeAcceptedCopilotRun(
         writeCopilotReplyFn: persistReply,
       });
     }
+    const stopText = stopPartialText(partialText);
     return handleDurableCancellation(db, {
       runId,
       sessionId: data.session_id,
       actorRef,
-      ...(partialText ? { partialText } : {}),
+      ...(stopText ? { partialText: stopText } : {}),
       ...(providerTaskRunId ? { taskRunId: providerTaskRunId } : {}),
       ...(replyFinalization ? { replyFinalization } : {}),
       ...(preparedReply ? { preparedReply } : {}),
+      toolSummaries,
       checkpointSafe: !cancellationControl.materializingToolStarted,
       projectSuccessfulTerminal,
       projectFailedTerminal,
@@ -1086,6 +1099,9 @@ async function executeAcceptedCopilotRun(
           ? { subagentsEnabled: params.copilotSubagentEnabled }
           : {}),
         observe: (activity) => {
+          if (activity.kind === 'tool_finished' && activity.summary.trim().length > 0) {
+            toolSummaries.push(`${activity.toolName}: ${activity.summary.trim()}`);
+          }
           if (activity.kind === 'spawn_budget') {
             params.onSpawnBudgetObservation?.(activity.observation);
             return;
@@ -1101,6 +1117,7 @@ async function executeAcceptedCopilotRun(
               await withCopilotExecutionSettlementLock(db, runId, async (tx, events) => {
                 if (hasCancelRequest(events) || (await findPersistedDurableReply(tx, runId)))
                   return;
+                if (activity.kind === 'prose_delta') streamedProse += activity.text;
                 await writeJobEvent(tx, {
                   business_table: COPILOT_RUN_TABLE,
                   business_id: runId,
@@ -1139,7 +1156,7 @@ async function executeAcceptedCopilotRun(
         sessionId: data.session_id,
         actorRef,
         taskRunId: result.taskRunId,
-        partialText: finalReply,
+        partialText: partialReply() ?? finalReply,
         preparedReply,
         projectSuccessfulTerminal,
         projectFailedTerminal,
@@ -1161,7 +1178,7 @@ async function executeAcceptedCopilotRun(
         sessionId: data.session_id,
         actorRef,
         taskRunId: result.taskRunId,
-        partialText: finalReply,
+        partialText: partialReply() ?? finalReply,
         preparedReply,
         projectSuccessfulTerminal,
         projectFailedTerminal,
@@ -1256,6 +1273,7 @@ async function executeAcceptedCopilotRun(
       runId,
       sessionId: data.session_id,
       actorRef,
+      partialText: partialReply(),
       projectSuccessfulTerminal,
       projectFailedTerminal,
       writeCopilotReplyFn: persistReply,
@@ -1368,12 +1386,10 @@ async function handleDurableFailure(
           sessionId,
           userAskEventId: runId,
           replyText,
-          ...(preparedReply?.text === replyText
-            ? { preparedReply: { text: preparedReply.text } }
-            : {}),
+          ...(preparedReply ? { preparedReply } : {}),
           actorRef,
           taskRunId: failureTaskRunId,
-          replyFinalization,
+          ...(replyFinalization ? { replyFinalization } : {}),
           outcome: 'failure',
           durableFailure: { reason: 'exhausted', error: message },
           now: new Date(),

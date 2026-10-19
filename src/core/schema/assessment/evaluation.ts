@@ -4,6 +4,7 @@ import {
   classifyConjectureProbeResponseFromJudgeMatch,
 } from '../conjecture-probe-response';
 import { extractAnswerHead, extractFinalAnswer, isProcessLikeAnswer } from '../judge-routing';
+import type { BlankAnswerShapeT } from './blank-answer-shape';
 import {
   type DeterministicComparatorIdT,
   type ExecutorDescriptorT,
@@ -294,11 +295,14 @@ function extractUnitSuffix(rawInput: string): string | null {
 }
 
 /** 确定性比较器：单槽命中判定（全对=发布 points，否则 0；无部分分）。
- * 判据/槽位不配对是契约违背 —— 返回 pending unjudgeable，绝不落伪零分。 */
+ * 判据/槽位不配对是契约违背 —— 返回 pending unjudgeable，绝不落伪零分。
+ * declaredShape（YUK-1568 第 2 片）：主槽位冻结的 answer_shape —— 仅有
+ * blank_exact 消费（同一共享比较核心，见 blank-answer-compare.ts）。 */
 async function runDeterministicComparator(
   comparator: DeterministicComparatorIdT,
   unit: ScoringUnitT,
   entry: SlotResponseT,
+  declaredShape?: BlankAnswerShapeT,
 ): Promise<ScoringUnitResultT> {
   const full = unit.points ?? 0;
   switch (comparator) {
@@ -624,9 +628,12 @@ async function runDeterministicComparator(
       // 提取不到/矛盾/过程文本 miss ⇒ pending needs_review，绝不伪零分。
       // 数值空已由 numericCorrect 的 unparseable → pending 覆盖，不动。
       // 本拦截只在分发点运行，不改 grade.ts（该文件有在途 PR 所有权）。
+      // YUK-1568 合入适配：带声明 answer_shape 的槽走共享比较核心
+      // （compareDeclaredBlank），本拦截仅作用于未声明文本空。
       const criterion = unit.criterion;
       const key = criterion.kind === 'blank_key' ? criterion.key : null;
       if (
+        declaredShape == null &&
         key !== null &&
         key.kind === 'text' &&
         unit.rule != null &&
@@ -680,7 +687,7 @@ async function runDeterministicComparator(
           );
         }
       }
-      return gradeBlankExactUnit(unit, entry);
+      return gradeBlankExactUnit(unit, entry, declaredShape);
     }
   }
 }
@@ -1039,7 +1046,21 @@ export async function evaluateSubmissionCore(
         );
         continue;
       }
-      const determined = await runDeterministicComparator(executor.comparator, unit, primaryEntry);
+      // YUK-1568 第 2 片：冻结 slot 声明随比较器分发传入（仅 blank_exact
+      // 消费）；无声明槽传 undefined，保持旧 exact 文本/数值行为逐字不变。
+      const primarySlot = spec.slots.find(
+        (candidate) => candidate.slot_id === primaryEntry.slot_id,
+      );
+      const declaredShape =
+        primarySlot != null && primarySlot.kind === 'blank' && primarySlot.answer_shape != null
+          ? primarySlot.answer_shape
+          : undefined;
+      const determined = await runDeterministicComparator(
+        executor.comparator,
+        unit,
+        primaryEntry,
+        declaredShape,
+      );
       // YUK-1407 — receipt 的 route 真相：回执要能读到实际执行路径。
       unitResults.push({ ...determined, judged_by: executor.comparator });
       continue;

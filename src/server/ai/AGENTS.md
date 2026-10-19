@@ -13,22 +13,24 @@
 | `tools/pi-subagent.ts` | YUK-1022 嵌套子代理：`PiSpawnContract`（`createSpawnDecider` 包成 beforeToolCall 闸）+ `PiSubagentHost`（子 loop 宿主、abort 血统、task_* 帧、usage 归并）+ `Task`/`Agent` AgentTool 构造 |
 | `sdk-types.ts` | YUK-1025 vendored 帧类型：SDKMessage 线形（assistant/result/user/task_*）是 pi 事件的归一化目标形状——纯类型，零运行时依赖 |
 | `sdk-terminal.ts` | 把归一化 assistant/result 帧适配为 lifecycle usage、thinking 元数据与终态证据；不持久化原始 CoT |
-| `providers.ts` | provider 注册表（xiaomi / xiaomi-token-plan / anthropic / zai-coding-cn / opencode-go）+ YUK-924 provider model binding（`models` / `modelDefaults`，config-over-catalog 的 config 层）|
-| `model-profiles.ts` + `model-catalog.snapshot.json` | YUK-924 ModelProfile 注册表：models.dev 裁剪快照（`pnpm gen:model-catalog` 重生成，运行时零网络）+ binding→catalog→保守默认三层合并 + needsToolCall/isMultimodal fail-closed 能力门 |
+| `providers.ts` | provider 注册表（xiaomi / xiaomi-token-plan / anthropic / zhipuai-coding-plan / opencode-go）+ YUK-924 provider model binding（`models` / `modelDefaults`，config-over-catalog 的 config 层）+ YUK-1547 `task.<kind>.reasoning` 解析与模型自有值校验 + `task.<kind>.override_global_pin` opt-in 优先级与 `selectionRule` |
+| `opencode-go.ts` | YUK-1547 opencode-go 官方 OpenAI 端点唯一字面量（`OPENCODE_GO_OPENAI_BASE_URL`）+ OpenAI API 族判定 |
+| `model-profiles.ts` + `model-catalog.ts` + `model-catalog.snapshot.json` | YUK-924/YUK-1563 ModelProfile：运行时 models.dev 目录（库缓存，失败或无行则随包快照）+ binding→catalog→保守默认三层合并 + needsToolCall/isMultimodal fail-closed 能力门。`pnpm gen:model-catalog` 只重写快照 |
 | `log.ts` | run / event 留痕 |
 | `provenance.ts` | source / `last_modified_by` 标记 |
 | `../../capabilities/practice/server/judge/` | Practice 判分实现；题型路由和 TaskSpec 由 Practice 拥有 |
 | `tools/registry.ts` + `tools/register-capability-tools.ts` | 统一 Domain Tool Registry；完整 inventory 由 capability manifests 在进程启动期装配 |
 | `tools/mcp-bridge.ts` | `executeDomainToolCall` 引擎中立共享管线（`tool_call_log`/`tool_use` mirror/`beforeExecute`/`interceptInput`/cancellation）——DomainTool 执行的唯一通道 |
 | `tools/pi-tools.ts` | `PiToolMount` 描述子 + DomainTool→AgentTool 编译 + 远程 MCP→AgentTool 桥 + `piCustomTool` 逃生门 |
+| `tool-param-contract.ts` | YUK-1547/YUK-1559 C1/C6 共享工具参数契约：对 schema 期望 array/object 而模型给 string 的字段做恰好一次严格 `JSON.parse`，仅当结构类型匹配且过该子 schema 才采纳；修复失败抛 `[tool_param_contract]` isError（不 reach execute）。runtime 在 `pi-agent-adapter` 的 `prepareArguments` 包装统一挂载（pi 在 validateToolArguments 之前调它），preflight `yuk1547-admission-reopen.ts` 复用同一实现 |
 | `../../kernel/tools/allowlists.ts` | surface-specific DomainTool 与 MCP allowlist |
 | `../../capabilities/*/manifest.ts` 的 `copilotTools` | 查工具实现与暴露范围的入口；知识读取、练习供给、Copilot 事件读取等由业务模块拥有，runtime 只装配声明 |
 
 ## 关键约束
 - Domain Tool Registry 是源头；pi mount 只是把 registry DomainTool 编译成 `AgentTool`（execute 委托共享的 `executeDomainToolCall` 管线，`tool_call_log`/`tool_use` mirror/`interceptInput`/output-schema 语义不变）。
 - Owner 2026-10-03：旧 Xiaomi/Zhipu Anthropic-compatible 线路已移除。
-  Xiaomi 与 `zai-coding-cn` 使用 pi 原生 OpenAI Completions 预设，保留其
-  thinking/tool-stream compat；旧 MiMo Pro（xiaomi mimo-v2.5-pro）为纯文本，视觉任务使用 mimo-v2.5。opencode-go 的 mimo-v2.6-pro 为 text+image（native pi catalog），工具调用绑定见 YUK-1341。
+  Xiaomi 与 `zhipuai-coding-plan` 使用 pi 原生 OpenAI Completions 预设，保留其
+  thinking/tool-stream compat；旧 MiMo Pro（xiaomi mimo-v2.5-pro）为纯文本，视觉任务使用 mimo-v2.5。opencode-go 的 mimo-v2.6-pro 为 text+image（native pi catalog）。该 lane 的 toolCalling 来自 models.dev 快照，不来自逐模型 binding。
   Claude 订阅只改变认证，复用原生 anthropic 的目录/协议/compat。
   原始 CoT 不持久化；每次 lifecycle attempt 独占 terminal evidence collector。
 - skill 注入面（YUK-1022/P4）：pi 无文件系统 skill loader——调用方把 SKILL.md
@@ -36,6 +38,7 @@
   命名空间名 `<subjectDir>--<pack>`）经 `piSkillDocs` 注入 system prompt；缺包时
   传 undefined，never throws。
 - Read tool 返回语义化上下文（graph path / relation meaning / recent failure evidence）。
+- 工具参数契约（YUK-1547/1559）：structured-submit run 只有一次共享 landing 预算——missing-submit reminder 与 param-contract correction 二选一，不是一个各一次；且 correction 资格以该 turn 原始流式参数为严格 JSON 为前提（preflight 同序）。非 structured 的 root loop 与嵌套子 loop 也共享同一 run 级 correction 额度——第二次 `[tool_param_contract]` 拒绝直接终态，与迭代上限无关。采纳的 string→JSON 修复落 `tool_call_log`（`error_reason='tool_args_coerced'`，只带 tool/path/length，不带 payload），contract 拒绝落 `error_reason='tool_args_contract_failed'` + 递归净化（嵌套/内嵌 JSON 的 credential 字段一并脱敏）后 ≤4KiB 原始参数，`args_source` 区分真实流式字节与 pi 解析重建。
 - Proposal tool 写 `event(action='propose')`；action/write tool 只包装已有 owner service（AttributionTask / VariantGenTask），不能让 LLM 传任意 mutation payload。
 - release-critical FULL 审查的通用 confirmed state machine 仍在 `sealed-validation.ts`；
   collecting runner 额外透传 success `result` 为 `terminalText`，但不解释其结构；
@@ -91,7 +94,11 @@ DashScope。pi cost 只按 catalog 估值记录，不声称是 Token Plan 发票
 - **工具循环**（`tools/pi-tools.ts`）：`ctx.piToolMounts` 三种 mount——`piDomainMount(BuildMcpServerOptions)` 把 registry DomainTool 编译成 `AgentTool`（zod→JSON Schema 薄转换，execute 委托 `executeDomainToolCall`）；`piRemoteMcpMount(serverName, RemoteMcpHttpConfig, toolNames)` 用真 `@modelcontextprotocol/sdk` client 桥远程 MCP（Exa），connect+listTools 失败在 startup 即响；`{type:'custom'}` 逃生门给非 registry 工具（KnowledgeReviewTask 的 `write_proposal`、agency director/evidence servers）。wire name 统一 `mcp__<server>__<tool>`——`allowedTools`/`recordToolCall`/allowlist 语义零漂移。`options.maxTurns`→`finishTurn` 计数→terminal `error_max_turns`——cap 只在 completed turn 带 toolCall（循环本意续跑）时触发；clean end_turn 自然退出报 success（YUK-1026，SDK parity）。
 - **copilot/subagent/compaction 面**（YUK-1022，P4 后为唯一面）：`piHooks`（有序 before 闸 + after 观测器）、`piSessionReplay`（durable turns 回放进 `context.messages`，`pi:<uuid>` 标记复用 `agent_sdk_session_id` 槽）、`piSkillDocs`（SKILL.md 正文拼 systemPrompt）、`piAgents`（深度一嵌套 agentLoop，子 loop 不见 spawn 工具，usage/cost 归并父终态）、`nativeCompaction`（transformContext 85% 触发 prune 至 60% + bounded sessionContext 重注入 + `compact_boundary` 帧）、`piQueues`（steering/follow-up，已接线但零 caller）。嵌套 agent 生命周期帧（task_started/progress/updated）直接喂 `onTaskEvent` durable 投影。
 - **opencode-go 会话头**：每请求必须 `x-opencode-session`，注入 `ai_task_run.id`（attempt 级 fencing 身份）；缺了 endpoint 400 MissingSessionID。key-auth：`OPENCODE_API_KEY`。
-- **能力声明 evidence-gated**：opencode-go 的 pi catalog JSON 不带 `tool_call` 位，`providers.ts` 的 binding 就是权威分类——`modelDefaults.capabilities.toolCalling:false`，逐模型在 `models` 里翻 `true`，且只在 `docs/planning/evidence/2026-09-21-pi-tool-loop-<model>-actual.json` 有封存 run 之后才许声明。当前已验证：glm-5.3-flash（tool loop 实跑但 8 turn 未收敛）、deepseek-v4-pro（全绿）、mimo-v2.6-pro（YUK-1341：SourcingTask tool_call_log 对账 + Copilot P3 双轮生产入口封存为 binding 证据；合成 tool/vision 线材证明 `2026-10-07-yuk1341-synthetic-*` 为 18:07Z 终树复封存、非预绑定封存，首轮预绑定产物已被覆盖，标签更正见各 JSON `correction`）。
+- **opencode-go 官方端点（YUK-1547）**：pi-ai 1.1.0 内置目录仍把 OpenAI 族模型指到旧 `opencode.ai/zen/go/v1`；官方新端点 `https://opencode.ai/inference/go/openai/v1` 的唯一字面量来源是 `opencode-go.ts` 的 `OPENCODE_GO_OPENAI_BASE_URL`。`pi-models.ts` 运行时把 `openai-completions`/`openai-responses` 族 model 对象的 baseUrl 重绑到它，`pi-provider-catalog.ts` 同步读面做同一重绑；`anthropic-messages` 族保持内置 base（本片无实测新路径）。
+- **模型原生推理参数（YUK-1547）**：per-task DB 键 `task.<kind>.reasoning`（strict schema，本片只有 `reasoning_effort`）经 `getTaskOverride` → `resolveTaskProvider` → `ResolvedProvider.nativeReasoningParams` 到 adapter `streamFn` 的 `onPayload` 原样并入请求体。不走 `options.effort` → pi ThinkingLevel 枚举映射；startup 对两路同设 fail-closed。值只按该模型自己 `thinkingLevelMap` 声明的非 null 值校验（deepseek-v4.1-flash：low|high|max），非 openai-completions 推理模型一律 config error；`thinking:{type:'enabled'}` 开关由模型 compat.thinkingFormat='deepseek' 在解析时派生，wire 与 pi `options.reasoningEffort` 的 deepseek 分支产出同形。
+- **per-task opt-in 全局 pin 例外（YUK-1547）**：`task.<kind>.override_global_pin=true` 是显式 opt-in——仅当该 task 的 `task.<kind>.provider`+`.model` pair 完整且可服务（provider 已实现 + 模型在 native catalog）时，该 pair 优先于 env `AI_PROVIDER_*` 与 DB `lane.global.*`；per-call override arg 仍更高；未 opt-in 任务严格保持旧层序；pair 不完整/不可服务 → 明确 config error，不回落到 pin/default。解析结果冻结为 `selection_rule`（env_pin/task_pair_priority/call_override/global_pin/task_config/registry_default），写入 `model_profile_resolved` 与 reopen 预检回执。
+- **能力来自运行时 models.dev 目录**：opencode-go 的 `toolCalling` 取当前目录里该模型的 `tool_call`（`model_catalog_cache`，没有则 `model-catalog.snapshot.json`）。合并顺序仍是 binding、catalog、保守默认。binding 不再写 `toolCalling`。`structuredOutput` 仍由 binding 固定为 false，`execution.meteredUsd` 仍为 false。上一份目录里没有的模型，或条目没有 `tool_call` 布尔值时，能力门保持 fail-closed。新文档里消失的模型保留上一版条目并记 `model_absent`。已选模型能力变化时保留旧条目并记 `capability_changed`。不改 system_config 里的模型 id。`forcedToolChoice` 不在目录里，deepseek-v4.1-flash 仍由 binding 声明为 false。思考强度仍按该模型自己的值透传。
+- **structured-submit wire policy（YUK-1547）**：`structured-submit.ts` 是 submit 契约的唯一判定——`forcedToolChoice` 能力位（binding 声明；catalog 无此字段，'unknown' 保留强制语义）为 `false` 时 `tool_choice:'auto'` + 恰好一次 C2-landing 收尾（pi `getFollowUpMessages`），仍无 submit 则在终态 error 里点名 reminder 已消耗 → pending/unknown；任何带 tool call 的非落地 turn（多 submit/错工具/length 截断）立即终结失败，不经普通 tool-loop 续付费（共享 `classifySubmitTurn` 裁决）。deepseek-v4.1-flash 判 `false`：实测该组合两次 400（"Thinking mode does not support this tool_choice"，request_id 6fde3ba6-8f64-4c84-8a3d-5a5e211b430a 起）；成功请求 raw payload 未归档（C6 缺口），上游根因未证实，只确认 loom 侧唯一 named-function 构造点与两次实测拒绝。A/B/source_crosscheck 共用同一策略，无模式特判。
 - **cost 诚实**：terminal usage 累加本次父loop全部assistant回合，再合入child usage；durable replay不计入本次用量。pi `usage.cost` 是 catalog 费率估值 → `resolveAttemptCostTruth` 落 `estimated` + `pi-catalog:<provider>/<model>` ref，绝不冒名 reported/contractual。
 - **abort 语义**：caller abort / `close()` 不产 terminal frame——lifecycle 的 `aborted` 标志独占取消真相；provider 侧 abort（stopReason='aborted' 且我们没发信号）归一为 `error_during_execution`。`close()` 同时释放远程 MCP client socket。
 - **bundle 边界**：pi 依赖链（aws-sdk/genai/openai 等）+ MCP client 随 server/worker bundle 进 `dist/*.cjs`；`build:migrate` 标 `@earendil-works/*` 与 `@modelcontextprotocol/sdk` external + adapter/桥内 dynamic import——migrate bundle 不含 pi/MCP 代码且永不会 require 它（YUK-988 教训）。

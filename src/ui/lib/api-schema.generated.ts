@@ -2738,6 +2738,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/worksheet-exports/{token}/pdf": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getWorksheetExportPdf"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/worksheet-exports/{token}/region-map": {
         parameters: {
             query?: never;
@@ -16387,6 +16403,7 @@ export interface operations {
                         };
                         practice_dto: {
                             faces: {
+                                blank_order?: string[];
                                 material_ids: string[];
                                 part_id: string;
                                 prompt_md: string;
@@ -16604,6 +16621,42 @@ export interface operations {
                                     slot_id: string;
                                     text?: string;
                                 } | {
+                                    answer_shape?: {
+                                        notation: ("fraction" | "decimal" | "interval" | "inequality" | "set_builder" | "roster" | "tuple" | "equation")[];
+                                        value: {
+                                            /** @enum {string} */
+                                            kind: "number";
+                                            unit?: {
+                                                accepts_bare_number: boolean;
+                                                unit: string;
+                                            };
+                                        } | {
+                                            binding: string;
+                                            /** @enum {string} */
+                                            kind: "interval_set";
+                                        } | {
+                                            axes: string[];
+                                            /** @enum {string} */
+                                            kind: "point";
+                                        } | {
+                                            /** @enum {string} */
+                                            kind: "affine_line";
+                                            variables: string[];
+                                        } | {
+                                            axes?: string[];
+                                            /** @enum {string} */
+                                            duplicates: "forbidden";
+                                            /** @enum {string} */
+                                            item: "number" | "point" | "affine_line";
+                                            /** @enum {string} */
+                                            kind: "finite_set";
+                                            /** @enum {string} */
+                                            order: "unordered";
+                                            variables?: string[];
+                                        };
+                                        /** @enum {string} */
+                                        version: "k1-math-v1";
+                                    };
                                     /**
                                      * @default text
                                      * @enum {string}
@@ -16665,6 +16718,7 @@ export interface operations {
                         };
                         practice_dto: {
                             faces: {
+                                blank_order?: string[];
                                 material_ids: string[];
                                 part_id: string;
                                 prompt_md: string;
@@ -16882,6 +16936,42 @@ export interface operations {
                                     slot_id: string;
                                     text?: string;
                                 } | {
+                                    answer_shape?: {
+                                        notation: ("fraction" | "decimal" | "interval" | "inequality" | "set_builder" | "roster" | "tuple" | "equation")[];
+                                        value: {
+                                            /** @enum {string} */
+                                            kind: "number";
+                                            unit?: {
+                                                accepts_bare_number: boolean;
+                                                unit: string;
+                                            };
+                                        } | {
+                                            binding: string;
+                                            /** @enum {string} */
+                                            kind: "interval_set";
+                                        } | {
+                                            axes: string[];
+                                            /** @enum {string} */
+                                            kind: "point";
+                                        } | {
+                                            /** @enum {string} */
+                                            kind: "affine_line";
+                                            variables: string[];
+                                        } | {
+                                            axes?: string[];
+                                            /** @enum {string} */
+                                            duplicates: "forbidden";
+                                            /** @enum {string} */
+                                            item: "number" | "point" | "affine_line";
+                                            /** @enum {string} */
+                                            kind: "finite_set";
+                                            /** @enum {string} */
+                                            order: "unordered";
+                                            variables?: string[];
+                                        };
+                                        /** @enum {string} */
+                                        version: "k1-math-v1";
+                                    };
                                     /**
                                      * @default text
                                      * @enum {string}
@@ -17175,6 +17265,7 @@ export interface operations {
                         } | null;
                         practice_dto: {
                             faces: {
+                                blank_order?: string[];
                                 material_ids: string[];
                                 part_id: string;
                                 prompt_md: string;
@@ -17392,6 +17483,42 @@ export interface operations {
                                     slot_id: string;
                                     text?: string;
                                 } | {
+                                    answer_shape?: {
+                                        notation: ("fraction" | "decimal" | "interval" | "inequality" | "set_builder" | "roster" | "tuple" | "equation")[];
+                                        value: {
+                                            /** @enum {string} */
+                                            kind: "number";
+                                            unit?: {
+                                                accepts_bare_number: boolean;
+                                                unit: string;
+                                            };
+                                        } | {
+                                            binding: string;
+                                            /** @enum {string} */
+                                            kind: "interval_set";
+                                        } | {
+                                            axes: string[];
+                                            /** @enum {string} */
+                                            kind: "point";
+                                        } | {
+                                            /** @enum {string} */
+                                            kind: "affine_line";
+                                            variables: string[];
+                                        } | {
+                                            axes?: string[];
+                                            /** @enum {string} */
+                                            duplicates: "forbidden";
+                                            /** @enum {string} */
+                                            item: "number" | "point" | "affine_line";
+                                            /** @enum {string} */
+                                            kind: "finite_set";
+                                            /** @enum {string} */
+                                            order: "unordered";
+                                            variables?: string[];
+                                        };
+                                        /** @enum {string} */
+                                        version: "k1-math-v1";
+                                    };
                                     /**
                                      * @default text
                                      * @enum {string}
@@ -20723,6 +20850,17 @@ export interface operations {
                         }) | null;
                         /** Format: date-time */
                         created_at: string;
+                        generation_failure: ({
+                            detail: string;
+                            /** @enum {string} */
+                            kind: "timeout";
+                            task_run_id: string | null;
+                        } | {
+                            detail: string;
+                            /** @enum {string} */
+                            kind: "model_or_parse";
+                            task_run_id: string | null;
+                        }) | null;
                         generation_status: string;
                         history: ({
                             /** Format: date-time */
@@ -21479,6 +21617,7 @@ export interface operations {
                                     issuance_id: string;
                                     practice_dto: {
                                         faces: {
+                                            blank_order?: string[];
                                             material_ids: string[];
                                             part_id: string;
                                             prompt_md: string;
@@ -21696,6 +21835,42 @@ export interface operations {
                                                 slot_id: string;
                                                 text?: string;
                                             } | {
+                                                answer_shape?: {
+                                                    notation: ("fraction" | "decimal" | "interval" | "inequality" | "set_builder" | "roster" | "tuple" | "equation")[];
+                                                    value: {
+                                                        /** @enum {string} */
+                                                        kind: "number";
+                                                        unit?: {
+                                                            accepts_bare_number: boolean;
+                                                            unit: string;
+                                                        };
+                                                    } | {
+                                                        binding: string;
+                                                        /** @enum {string} */
+                                                        kind: "interval_set";
+                                                    } | {
+                                                        axes: string[];
+                                                        /** @enum {string} */
+                                                        kind: "point";
+                                                    } | {
+                                                        /** @enum {string} */
+                                                        kind: "affine_line";
+                                                        variables: string[];
+                                                    } | {
+                                                        axes?: string[];
+                                                        /** @enum {string} */
+                                                        duplicates: "forbidden";
+                                                        /** @enum {string} */
+                                                        item: "number" | "point" | "affine_line";
+                                                        /** @enum {string} */
+                                                        kind: "finite_set";
+                                                        /** @enum {string} */
+                                                        order: "unordered";
+                                                        variables?: string[];
+                                                    };
+                                                    /** @enum {string} */
+                                                    version: "k1-math-v1";
+                                                };
                                                 /**
                                                  * @default text
                                                  * @enum {string}
@@ -22180,6 +22355,7 @@ export interface operations {
                                     } | null;
                                     practice_dto: {
                                         faces: {
+                                            blank_order?: string[];
                                             material_ids: string[];
                                             part_id: string;
                                             prompt_md: string;
@@ -22397,6 +22573,42 @@ export interface operations {
                                                 slot_id: string;
                                                 text?: string;
                                             } | {
+                                                answer_shape?: {
+                                                    notation: ("fraction" | "decimal" | "interval" | "inequality" | "set_builder" | "roster" | "tuple" | "equation")[];
+                                                    value: {
+                                                        /** @enum {string} */
+                                                        kind: "number";
+                                                        unit?: {
+                                                            accepts_bare_number: boolean;
+                                                            unit: string;
+                                                        };
+                                                    } | {
+                                                        binding: string;
+                                                        /** @enum {string} */
+                                                        kind: "interval_set";
+                                                    } | {
+                                                        axes: string[];
+                                                        /** @enum {string} */
+                                                        kind: "point";
+                                                    } | {
+                                                        /** @enum {string} */
+                                                        kind: "affine_line";
+                                                        variables: string[];
+                                                    } | {
+                                                        axes?: string[];
+                                                        /** @enum {string} */
+                                                        duplicates: "forbidden";
+                                                        /** @enum {string} */
+                                                        item: "number" | "point" | "affine_line";
+                                                        /** @enum {string} */
+                                                        kind: "finite_set";
+                                                        /** @enum {string} */
+                                                        order: "unordered";
+                                                        variables?: string[];
+                                                    };
+                                                    /** @enum {string} */
+                                                    version: "k1-math-v1";
+                                                };
                                                 /**
                                                  * @default text
                                                  * @enum {string}
@@ -23462,6 +23674,7 @@ export interface operations {
                                         } | null;
                                         practice_dto: {
                                             faces: {
+                                                blank_order?: string[];
                                                 material_ids: string[];
                                                 part_id: string;
                                                 prompt_md: string;
@@ -23679,6 +23892,42 @@ export interface operations {
                                                     slot_id: string;
                                                     text?: string;
                                                 } | {
+                                                    answer_shape?: {
+                                                        notation: ("fraction" | "decimal" | "interval" | "inequality" | "set_builder" | "roster" | "tuple" | "equation")[];
+                                                        value: {
+                                                            /** @enum {string} */
+                                                            kind: "number";
+                                                            unit?: {
+                                                                accepts_bare_number: boolean;
+                                                                unit: string;
+                                                            };
+                                                        } | {
+                                                            binding: string;
+                                                            /** @enum {string} */
+                                                            kind: "interval_set";
+                                                        } | {
+                                                            axes: string[];
+                                                            /** @enum {string} */
+                                                            kind: "point";
+                                                        } | {
+                                                            /** @enum {string} */
+                                                            kind: "affine_line";
+                                                            variables: string[];
+                                                        } | {
+                                                            axes?: string[];
+                                                            /** @enum {string} */
+                                                            duplicates: "forbidden";
+                                                            /** @enum {string} */
+                                                            item: "number" | "point" | "affine_line";
+                                                            /** @enum {string} */
+                                                            kind: "finite_set";
+                                                            /** @enum {string} */
+                                                            order: "unordered";
+                                                            variables?: string[];
+                                                        };
+                                                        /** @enum {string} */
+                                                        version: "k1-math-v1";
+                                                    };
                                                     /**
                                                      * @default text
                                                      * @enum {string}
@@ -24358,6 +24607,7 @@ export interface operations {
                                     } | null;
                                     practice_dto: {
                                         faces: {
+                                            blank_order?: string[];
                                             material_ids: string[];
                                             part_id: string;
                                             prompt_md: string;
@@ -24575,6 +24825,42 @@ export interface operations {
                                                 slot_id: string;
                                                 text?: string;
                                             } | {
+                                                answer_shape?: {
+                                                    notation: ("fraction" | "decimal" | "interval" | "inequality" | "set_builder" | "roster" | "tuple" | "equation")[];
+                                                    value: {
+                                                        /** @enum {string} */
+                                                        kind: "number";
+                                                        unit?: {
+                                                            accepts_bare_number: boolean;
+                                                            unit: string;
+                                                        };
+                                                    } | {
+                                                        binding: string;
+                                                        /** @enum {string} */
+                                                        kind: "interval_set";
+                                                    } | {
+                                                        axes: string[];
+                                                        /** @enum {string} */
+                                                        kind: "point";
+                                                    } | {
+                                                        /** @enum {string} */
+                                                        kind: "affine_line";
+                                                        variables: string[];
+                                                    } | {
+                                                        axes?: string[];
+                                                        /** @enum {string} */
+                                                        duplicates: "forbidden";
+                                                        /** @enum {string} */
+                                                        item: "number" | "point" | "affine_line";
+                                                        /** @enum {string} */
+                                                        kind: "finite_set";
+                                                        /** @enum {string} */
+                                                        order: "unordered";
+                                                        variables?: string[];
+                                                    };
+                                                    /** @enum {string} */
+                                                    version: "k1-math-v1";
+                                                };
                                                 /**
                                                  * @default text
                                                  * @enum {string}
@@ -25394,6 +25680,7 @@ export interface operations {
                                     } | null;
                                     practice_dto: {
                                         faces: {
+                                            blank_order?: string[];
                                             material_ids: string[];
                                             part_id: string;
                                             prompt_md: string;
@@ -25611,6 +25898,42 @@ export interface operations {
                                                 slot_id: string;
                                                 text?: string;
                                             } | {
+                                                answer_shape?: {
+                                                    notation: ("fraction" | "decimal" | "interval" | "inequality" | "set_builder" | "roster" | "tuple" | "equation")[];
+                                                    value: {
+                                                        /** @enum {string} */
+                                                        kind: "number";
+                                                        unit?: {
+                                                            accepts_bare_number: boolean;
+                                                            unit: string;
+                                                        };
+                                                    } | {
+                                                        binding: string;
+                                                        /** @enum {string} */
+                                                        kind: "interval_set";
+                                                    } | {
+                                                        axes: string[];
+                                                        /** @enum {string} */
+                                                        kind: "point";
+                                                    } | {
+                                                        /** @enum {string} */
+                                                        kind: "affine_line";
+                                                        variables: string[];
+                                                    } | {
+                                                        axes?: string[];
+                                                        /** @enum {string} */
+                                                        duplicates: "forbidden";
+                                                        /** @enum {string} */
+                                                        item: "number" | "point" | "affine_line";
+                                                        /** @enum {string} */
+                                                        kind: "finite_set";
+                                                        /** @enum {string} */
+                                                        order: "unordered";
+                                                        variables?: string[];
+                                                    };
+                                                    /** @enum {string} */
+                                                    version: "k1-math-v1";
+                                                };
                                                 /**
                                                  * @default text
                                                  * @enum {string}
@@ -26381,6 +26704,7 @@ export interface operations {
                                     } | null;
                                     practice_dto: {
                                         faces: {
+                                            blank_order?: string[];
                                             material_ids: string[];
                                             part_id: string;
                                             prompt_md: string;
@@ -26598,6 +26922,42 @@ export interface operations {
                                                 slot_id: string;
                                                 text?: string;
                                             } | {
+                                                answer_shape?: {
+                                                    notation: ("fraction" | "decimal" | "interval" | "inequality" | "set_builder" | "roster" | "tuple" | "equation")[];
+                                                    value: {
+                                                        /** @enum {string} */
+                                                        kind: "number";
+                                                        unit?: {
+                                                            accepts_bare_number: boolean;
+                                                            unit: string;
+                                                        };
+                                                    } | {
+                                                        binding: string;
+                                                        /** @enum {string} */
+                                                        kind: "interval_set";
+                                                    } | {
+                                                        axes: string[];
+                                                        /** @enum {string} */
+                                                        kind: "point";
+                                                    } | {
+                                                        /** @enum {string} */
+                                                        kind: "affine_line";
+                                                        variables: string[];
+                                                    } | {
+                                                        axes?: string[];
+                                                        /** @enum {string} */
+                                                        duplicates: "forbidden";
+                                                        /** @enum {string} */
+                                                        item: "number" | "point" | "affine_line";
+                                                        /** @enum {string} */
+                                                        kind: "finite_set";
+                                                        /** @enum {string} */
+                                                        order: "unordered";
+                                                        variables?: string[];
+                                                    };
+                                                    /** @enum {string} */
+                                                    version: "k1-math-v1";
+                                                };
                                                 /**
                                                  * @default text
                                                  * @enum {string}
@@ -27318,6 +27678,7 @@ export interface operations {
                                     issuance_id: string;
                                     practice_dto: {
                                         faces: {
+                                            blank_order?: string[];
                                             material_ids: string[];
                                             part_id: string;
                                             prompt_md: string;
@@ -27535,6 +27896,42 @@ export interface operations {
                                                 slot_id: string;
                                                 text?: string;
                                             } | {
+                                                answer_shape?: {
+                                                    notation: ("fraction" | "decimal" | "interval" | "inequality" | "set_builder" | "roster" | "tuple" | "equation")[];
+                                                    value: {
+                                                        /** @enum {string} */
+                                                        kind: "number";
+                                                        unit?: {
+                                                            accepts_bare_number: boolean;
+                                                            unit: string;
+                                                        };
+                                                    } | {
+                                                        binding: string;
+                                                        /** @enum {string} */
+                                                        kind: "interval_set";
+                                                    } | {
+                                                        axes: string[];
+                                                        /** @enum {string} */
+                                                        kind: "point";
+                                                    } | {
+                                                        /** @enum {string} */
+                                                        kind: "affine_line";
+                                                        variables: string[];
+                                                    } | {
+                                                        axes?: string[];
+                                                        /** @enum {string} */
+                                                        duplicates: "forbidden";
+                                                        /** @enum {string} */
+                                                        item: "number" | "point" | "affine_line";
+                                                        /** @enum {string} */
+                                                        kind: "finite_set";
+                                                        /** @enum {string} */
+                                                        order: "unordered";
+                                                        variables?: string[];
+                                                    };
+                                                    /** @enum {string} */
+                                                    version: "k1-math-v1";
+                                                };
                                                 /**
                                                  * @default text
                                                  * @enum {string}
@@ -41100,6 +41497,7 @@ export interface operations {
                             position: number;
                             practice_dto: {
                                 faces: {
+                                    blank_order?: string[];
                                     material_ids: string[];
                                     part_id: string;
                                     prompt_md: string;
@@ -41317,6 +41715,42 @@ export interface operations {
                                         slot_id: string;
                                         text?: string;
                                     } | {
+                                        answer_shape?: {
+                                            notation: ("fraction" | "decimal" | "interval" | "inequality" | "set_builder" | "roster" | "tuple" | "equation")[];
+                                            value: {
+                                                /** @enum {string} */
+                                                kind: "number";
+                                                unit?: {
+                                                    accepts_bare_number: boolean;
+                                                    unit: string;
+                                                };
+                                            } | {
+                                                binding: string;
+                                                /** @enum {string} */
+                                                kind: "interval_set";
+                                            } | {
+                                                axes: string[];
+                                                /** @enum {string} */
+                                                kind: "point";
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "affine_line";
+                                                variables: string[];
+                                            } | {
+                                                axes?: string[];
+                                                /** @enum {string} */
+                                                duplicates: "forbidden";
+                                                /** @enum {string} */
+                                                item: "number" | "point" | "affine_line";
+                                                /** @enum {string} */
+                                                kind: "finite_set";
+                                                /** @enum {string} */
+                                                order: "unordered";
+                                                variables?: string[];
+                                            };
+                                            /** @enum {string} */
+                                            version: "k1-math-v1";
+                                        };
                                         /**
                                          * @default text
                                          * @enum {string}
@@ -41409,6 +41843,7 @@ export interface operations {
                             position: number;
                             practice_dto: {
                                 faces: {
+                                    blank_order?: string[];
                                     material_ids: string[];
                                     part_id: string;
                                     prompt_md: string;
@@ -41626,6 +42061,42 @@ export interface operations {
                                         slot_id: string;
                                         text?: string;
                                     } | {
+                                        answer_shape?: {
+                                            notation: ("fraction" | "decimal" | "interval" | "inequality" | "set_builder" | "roster" | "tuple" | "equation")[];
+                                            value: {
+                                                /** @enum {string} */
+                                                kind: "number";
+                                                unit?: {
+                                                    accepts_bare_number: boolean;
+                                                    unit: string;
+                                                };
+                                            } | {
+                                                binding: string;
+                                                /** @enum {string} */
+                                                kind: "interval_set";
+                                            } | {
+                                                axes: string[];
+                                                /** @enum {string} */
+                                                kind: "point";
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "affine_line";
+                                                variables: string[];
+                                            } | {
+                                                axes?: string[];
+                                                /** @enum {string} */
+                                                duplicates: "forbidden";
+                                                /** @enum {string} */
+                                                item: "number" | "point" | "affine_line";
+                                                /** @enum {string} */
+                                                kind: "finite_set";
+                                                /** @enum {string} */
+                                                order: "unordered";
+                                                variables?: string[];
+                                            };
+                                            /** @enum {string} */
+                                            version: "k1-math-v1";
+                                        };
                                         /**
                                          * @default text
                                          * @enum {string}
@@ -41829,6 +42300,7 @@ export interface operations {
                             position: number;
                             practice_dto: {
                                 faces: {
+                                    blank_order?: string[];
                                     material_ids: string[];
                                     part_id: string;
                                     prompt_md: string;
@@ -42046,6 +42518,42 @@ export interface operations {
                                         slot_id: string;
                                         text?: string;
                                     } | {
+                                        answer_shape?: {
+                                            notation: ("fraction" | "decimal" | "interval" | "inequality" | "set_builder" | "roster" | "tuple" | "equation")[];
+                                            value: {
+                                                /** @enum {string} */
+                                                kind: "number";
+                                                unit?: {
+                                                    accepts_bare_number: boolean;
+                                                    unit: string;
+                                                };
+                                            } | {
+                                                binding: string;
+                                                /** @enum {string} */
+                                                kind: "interval_set";
+                                            } | {
+                                                axes: string[];
+                                                /** @enum {string} */
+                                                kind: "point";
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "affine_line";
+                                                variables: string[];
+                                            } | {
+                                                axes?: string[];
+                                                /** @enum {string} */
+                                                duplicates: "forbidden";
+                                                /** @enum {string} */
+                                                item: "number" | "point" | "affine_line";
+                                                /** @enum {string} */
+                                                kind: "finite_set";
+                                                /** @enum {string} */
+                                                order: "unordered";
+                                                variables?: string[];
+                                            };
+                                            /** @enum {string} */
+                                            version: "k1-math-v1";
+                                        };
                                         /**
                                          * @default text
                                          * @enum {string}
@@ -42319,6 +42827,126 @@ export interface operations {
                         };
                         short_code: string;
                     };
+                };
+            };
+            /** @description Malformed request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description State or version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Semantic validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Rate limited */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    getWorksheetExportPdf: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                token: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/pdf": string;
                 };
             };
             /** @description Malformed request */

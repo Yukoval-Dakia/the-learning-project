@@ -1,8 +1,9 @@
 // YUK-383 Phase 0 — domain text embedder. Reuses the same DashScope (Aliyun
-// Bailian) embedding model + dims as the mem0 lane (src/server/memory/client.ts:
-// DEFAULT_EMBEDDING_MODEL / DEFAULT_EMBEDDING_DIMS / DEFAULT_EMBEDDING_BASE_URL),
-// but writes into Drizzle-managed entity-keyed vector(1024) columns instead of the
-// mem0 black-box collection. EMBED_DIMS MUST equal the vector(dims) in schema.ts.
+// Bailian) embedding model + dims as the mem0 lane (src/server/memory/client.ts;
+// the model id is the catalog's DASHSCOPE_EMBED_MODEL_ID, dims/baseURL stay
+// lane-owned env defaults), but writes into Drizzle-managed entity-keyed
+// vector(1024) columns instead of the mem0 black-box collection. EMBED_DIMS MUST
+// equal the vector(dims) in schema.ts.
 
 import {
   type DirectProviderOperationContext,
@@ -10,12 +11,13 @@ import {
   createDirectProviderOperationContext,
   executeDirectProviderAttempt,
 } from './direct-provider-attempt';
+import { DASHSCOPE_EMBED_MODEL_ID } from './providers';
 
 export { isDirectProviderAttemptInvariantError } from './direct-provider-attempt';
 
 export type EmbedProviderAttemptOptions = DirectProviderOperationOptions;
 
-export const EMBED_MODEL = 'text-embedding-v4';
+export const EMBED_MODEL = DASHSCOPE_EMBED_MODEL_ID;
 export const EMBED_DIMS = 1024;
 
 // DashScope text-embedding-v4 (compatible-mode /embeddings) caps each request at

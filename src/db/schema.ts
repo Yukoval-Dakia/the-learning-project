@@ -4701,3 +4701,20 @@ export const worksheet_region_map_page = pgTable(
     check('worksheet_region_map_page_digest_ck', sql`${t.map_digest} ~ '^sha256:[0-9a-f]{64}$'`),
   ],
 );
+
+// YUK-1563: one row, the last models.dev document that parsed. Absent or
+// unreadable → readers stay on the committed snapshot. Refresh never deletes
+// this row on a failed pull.
+export const model_catalog_cache = pgTable(
+  'model_catalog_cache',
+  {
+    id: smallint('id').primaryKey(),
+    fetched_at: timestamp('fetched_at', { withTimezone: true }).notNull(),
+    version: text('version').notNull(),
+    upstream_version: text('upstream_version').notNull(),
+    source_url: text('source_url').notNull(),
+    payload: jsonb('payload').notNull(),
+    findings: jsonb('findings').notNull(),
+  },
+  (t) => [check('model_catalog_cache_singleton', sql`${t.id} = 1`)],
+);

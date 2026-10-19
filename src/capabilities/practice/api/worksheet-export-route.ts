@@ -6,6 +6,8 @@
 import type { ZodType } from 'zod';
 import { db } from '@/db/client';
 import { ApiError, errorResponse, resourceResponse } from '@/kernel/http';
+import { getStartedBoss } from '@/server/boss/client';
+import { WORKSHEET_RENDER_QUEUE } from '@/server/boss/queue-names';
 import {
   NoGradeableQuestionsError,
   RegionMapArchiveConflictError,
@@ -15,6 +17,7 @@ import {
   readWorksheetExport,
   readWorksheetPage,
 } from '../server/worksheet/export-store';
+import { readWorksheetExportPdf } from '../server/worksheet/pdf-store';
 import {
   WorksheetExportCreateBodySchema,
   WorksheetPageParamsSchema,
@@ -66,6 +69,18 @@ export async function createWorksheetExportRoute(req: Request): Promise<Response
     switch (out.status) {
       case 'created':
       case 'replayed':
+        // YUK-1529 — 服务端渲染 job：导出提交后入队（重放也再入队——job 幂等，
+        // 同图同 digest 走 existing，这也是失败渲染的显式重试入口）。
+        // 入队失败不让已提交的导出 500：同一 idempotency_key 重 POST 会重放并再入队。
+        try {
+          const boss = await getStartedBoss();
+          await boss.send(WORKSHEET_RENDER_QUEUE, { export_token: out.state.export_token });
+        } catch (enqueueError) {
+          console.warn(
+            `[worksheet-exports] render enqueue failed for '${out.state.export_token}'`,
+            enqueueError,
+          );
+        }
         return resourceResponse(out.state, {
           outcome: out.status === 'created' ? 'created' : 'existing',
           location: `/api/worksheet-exports/${encodeURIComponent(out.state.export_token)}`,
@@ -161,6 +176,51 @@ export async function archiveWorksheetRegionMapRoute(
     if (err instanceof RegionMapArchiveConflictError) {
       return errorResponse(new ApiError('archive_conflict', String(err.message), 409));
     }
+    return errorResponse(err);
+  }
+}
+
+// ---------- GET /api/worksheet-exports/[token]/pdf — 已存档 PDF 下载 ----------
+
+export async function getWorksheetExportPdfRoute(
+  _req: Request,
+  params: Record<string, string>,
+): Promise<Response> {
+  try {
+    const { token } = parseParams(params, WorksheetTokenParamsSchema);
+    const out = await readWorksheetExportPdf(db, token);
+    switch (out.status) {
+      case 'ok':
+        return new Response(new Uint8Array(out.pdf), {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/pdf',
+            'Content-Length': String(out.pdf.length),
+            'Content-Disposition': `attachment; filename="worksheet-${out.short_code}.pdf"`,
+            // 内容寻址产物不可变：digest 即 key，变了的渲染是另一个对象。
+            ETag: `"${out.pdf_digest}"`,
+            'Cache-Control': 'private, max-age=3600, immutable',
+            'X-Content-Type-Options': 'nosniff',
+          },
+        });
+      case 'not_found':
+        throw new ApiError('not_found', `worksheet export '${token}' not found`, 404);
+      case 'not_rendered':
+        throw new ApiError(
+          'pdf_not_rendered',
+          `worksheet export '${token}' has no archived PDF yet`,
+          404,
+        );
+      case 'blob_missing':
+        throw new ApiError(
+          'pdf_blob_missing',
+          `archived PDF bytes missing from blob storage (key '${out.blob_key}')`,
+          404,
+        );
+      default:
+        throw new ApiError('internal_error', 'unexpected worksheet pdf status', 500);
+    }
+  } catch (err) {
     return errorResponse(err);
   }
 }

@@ -31,10 +31,10 @@
 import { getLaneOverride } from '@/core/config/store';
 import {
   type Provider,
-  isKnownProvider,
   isProviderImplemented,
   isProviderLaneReady,
   providerRequiresExplicitModel,
+  readProviderId,
 } from '@/server/ai/providers';
 
 export const VERIFY_SOLVE_PROVIDER_ENV = 'VERIFY_SOLVE_PROVIDER_OVERRIDE';
@@ -70,41 +70,40 @@ export function resolveSolveOverrideFromEnv(
     // Every fail-open branch below drops the WHOLE override (incl. any model, which was chosen
     // FOR this provider and could 404 on the default lane) and runs solve_check on the default
     // lane. Ordered cheapest-first; all reuse providers.ts predicates (no second hard-coded copy).
-    if (!isKnownProvider(provider)) {
+    const known = readProviderId(provider);
+    if (!known) {
       warn(
         `[quiz_verify] solve_check override provider '${provider}' is not a known provider; solve_check falls back to the default lane`,
       );
       return {};
     }
-    // Narrowed: provider is a Provider from here on.
-    const _providerName: Provider = provider;
-    if (!isProviderImplemented(provider)) {
+    if (!isProviderImplemented(known)) {
       // Reserved-but-not-implemented (openrouter / gateway). resolveTaskProvider would
       // throw at dispatch; reject HERE so verify degrades to the default lane, not to a runtime
       // 'unsupported' after the closed-book checks already passed.
       warn(
-        `[quiz_verify] solve_check 异源 provider '${provider}' is reserved but not implemented; falling back to the default lane`,
+        `[quiz_verify] solve_check 异源 provider '${known}' is reserved but not implemented; falling back to the default lane`,
       );
       return {};
     }
-    if (!isProviderLaneReady(provider)) {
+    if (!isProviderLaneReady(known)) {
       // Credential env absent on this deploy (e.g. the subscription token is not wired here).
       warn(
-        `[quiz_verify] solve_check 异源 lane '${provider}' is not configured (credential env missing); falling back to the default lane`,
+        `[quiz_verify] solve_check 异源 lane '${known}' is not configured (credential env missing); falling back to the default lane`,
       );
       return {};
     }
-    if (!model && providerRequiresExplicitModel(provider)) {
+    if (!model && providerRequiresExplicitModel(known)) {
       // A provider with no runnable built-in default resolves to the registry mimo model id, which
       // its non-mimo endpoint won't accept — an explicit override bypasses resolveTaskProvider's
       // global-switch guard, so catch it here. (xiaomi / anthropic-sub self-supply a runnable
       // default and are exempt.) Require VERIFY_SOLVE_MODEL_OVERRIDE or fail-open to default.
       warn(
-        `[quiz_verify] solve_check 异源 provider '${provider}' needs an explicit ${VERIFY_SOLVE_MODEL_ENV} (its registry default is a mimo model id the endpoint won't accept); falling back to the default lane`,
+        `[quiz_verify] solve_check 异源 provider '${known}' needs an explicit ${VERIFY_SOLVE_MODEL_ENV} (its registry default is a mimo model id the endpoint won't accept); falling back to the default lane`,
       );
       return {};
     }
-    return { provider, ...(model ? { model } : {}) };
+    return { provider: known, ...(model ? { model } : {}) };
   }
 
   // Model-only override (no provider): a same-provider model swap on the default lane.
