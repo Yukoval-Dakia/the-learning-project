@@ -167,14 +167,12 @@ function keptProvidersLine(ids: readonly string[]): string {
  * slices stay byte-identical. retrieved_at stays. Biome runs afterwards.
  */
 function spliceProvider(text: string, id: string, bucket: TrimmedProvider): string {
-  const kept = text.replace(
-    /"kept_providers": \[[^\]]*\]/,
-    keptProvidersLine(KEPT_CATALOG_PROVIDERS),
-  );
-  if (kept === text) {
+  const keptProvidersPattern = /"kept_providers": \[[^\]]*\]/;
+  if (!keptProvidersPattern.test(text)) {
     console.error('[gen-model-catalog] snapshot has no kept_providers line');
     process.exit(1);
   }
+  const kept = text.replace(keptProvidersPattern, keptProvidersLine(KEPT_CATALOG_PROVIDERS));
   const rendered = renderBucket(bucket);
   const existing = providerSlice(kept, id);
   if (existing) {
