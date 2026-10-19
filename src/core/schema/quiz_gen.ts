@@ -210,15 +210,20 @@ const QuizGenRubric = Rubric.extend({
   }).optional(),
 });
 
-// YUK-1406 — producer 数学定界契约的 schema 侧接线。真实消费者是 handler 的
-// parseOutput（jobs/quiz_gen.ts: QuizGenOutput.safeParse → placementSchemaFailure
-// /失败事件 → pg-boss 自然重试）与 quizGenTaskSpec.outputSchema；此处 superRefine
-// 命中即整批拒收，错误沿既有 landing 落地，不新增 paid run/重试/fallback。
-// 只查会被渲染的字段：prompt_md / choices_md / reference_md（feedback 阶段经
-// PracticeChoiceOptions.reference 展示）与 structured 各节点 prompt_text /
-// options[].text / answers / analysis（经 structuredToReferenceMarkdown 进参考）。
-// 刻意不查：source_refs（URL/snippet 溯源）、material.body_md（抓取原文，不改
-// source 原文）、rubric_json（judge-only 判据）—— 非渲染字段不递归误检。
+// YUK-1406 — producer 数学定界契约的 schema 侧接线（R1 修复轮收窄）。
+// 覆盖面只限「显示字段」：prompt_md / choices_md 与 structured 各节点
+// prompt_text / options[].text —— 两处实证缺陷（cooygx C/D、ubm B）均在
+// 选项正文。刻意不查答案值承载字段（R1 P1）：reference_md 与小题
+// answers / analysis 会经 extractAnswerHead / structuredToReferenceMarkdown
+// 进入 exact text_key（assessment-normalization → definition-from-contract
+// blank_key → grade），该链不去数学定界；在这里强制包装/拒收会把显示定界
+// 带进评分键，造成 solve_seed_mismatch 或裸公式正确作答被判错。参考展示
+// 与答案值分离归后续 K1 quiz_gen typed 生产迁移，本片不动评分语义。
+// 落地形态（R1 核实）：handler 为 posthoc safeParse（TaskSpec 无
+// structuredOutputMode，非同 run 结构化反馈）；失败经 placementSchemaFailure
+// 收敛为 code/path（错误文案不透传），pg-boss 既有 retryLimit=2 有界重试会
+// 重新消费付费额度；本片不新增重试/反馈/预算。不查 source_refs /
+// material.body_md / rubric_json 等非渲染字段。
 function reportBareMath(
   ctx: z.RefinementCtx,
   path: (number | string)[],
@@ -253,10 +258,7 @@ function reportStructuredBareMath(
       option.text,
     );
   });
-  node.answers?.forEach((answer, index) => {
-    reportBareMath(ctx, [...basePath, 'answers', index], `${labelPrefix}answers[${index}]`, answer);
-  });
-  reportBareMath(ctx, [...basePath, 'analysis'], `${labelPrefix}analysis`, node.analysis);
+  // R1 P1：answers / analysis 是答案值承载字段（进 exact 参考链），不套显示定界。
   node.sub_questions?.forEach((sub, index) => {
     reportStructuredBareMath(ctx, sub, `${labelPrefix}sub_questions[${index}].`, [
       ...basePath,
@@ -315,12 +317,13 @@ export const QuizGenQuestion = z
     }
   })
   // YUK-1406 — 数学定界契约：裸 \frac/\sqrt 族命令 = 整批拒收（fail-closed）。
+  // 仅显示字段（prompt_md / choices_md / structured prompt_text / options[].text）；
+  // reference_md 与 answers/analysis 不查（R1 P1，评分链不去定界）。
   .superRefine((question, ctx) => {
     reportBareMath(ctx, ['prompt_md'], 'prompt_md', question.prompt_md);
     question.choices_md?.forEach((choice, index) => {
       reportBareMath(ctx, ['choices_md', index], `choices_md[${index}]`, choice);
     });
-    reportBareMath(ctx, ['reference_md'], 'reference_md', question.reference_md);
     if (question.structured != null) {
       reportStructuredBareMath(ctx, question.structured, 'structured.', ['structured']);
     }

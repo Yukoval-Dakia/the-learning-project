@@ -35,33 +35,45 @@ code/prose/已有 math 各安其位。本片是该决策的首片源头修复。
 
 ## 最终行为
 
-### 1. QuizGen producer 数学定界（prompt + outputSchema 双层）
+### 1. QuizGen producer 数学定界（prompt + outputSchema 双层，仅显示字段）
 
-- **Prompt**（`src/capabilities/practice/tasks/quiz-generation.ts`）：新增「数学
-  定界（强约束）」条目——每个数学表达式必须自带 `$...$`（行内）/`$$...$$`
-  （独立）定界，已有 `\(...\)`/`\[...\]` 写法合法可保留；`\frac`/`\dfrac`/
-  `\tfrac`/`\sqrt` 等命令禁止裸露在定界外；字面展示放行内代码或代码块；规则
-  覆盖 `prompt_md`、`choices_md`、`reference_md` 与 `structured` 各节点
-  `prompt_text`/`options[].text`/`answers`/`analysis`。同时明确：题面
-  `prompt_md` 不再抄一遍选项内容（选项由渲染层自行排版画序号）；组合题模式
-  里 sub 各字段同样遵守。
+> **R1 修复轮（Codex gpt-6.1-sol xhigh，REQUEST_CHANGES 1 P1）已收窄**：初版把
+> 强制扩展到了 `reference_md` 与 structured `answers`/`analysis`，而这些字段经
+> `extractAnswerHead` / `structuredToReferenceMarkdown` 进入 exact
+> `text_key`（`assessment-normalization.ts` 铸 accepted_texts；
+> `judge-routing.ts:148-161` 去答案标记/尾解析/强调符但**不去数学定界**；
+> `grade.ts` 按字符串命中）——强制包装会把显示定界带进评分键，造成
+> `solve_seed_mismatch` 拒收合法题或裸公式正确作答被判错。父裁决最小修法：
+> **撤回对答案值承载字段的一切本片新增强制**，不扩全局评分，不改
+> extractAnswerHead / grade / 全局归一化。参考展示与独立答案值的分离归后续
+> **K1 quiz_gen typed 生产迁移**，本片不冒充覆盖。
+
+- **Prompt**（`src/capabilities/practice/tasks/quiz-generation.ts`）：「数学定界
+  （强约束，仅题面与选项的显示字段）」——行内 `$...$` / 独立 `$$...$$`，已有
+  `\(...\)`/`\[...\]` 可保留；`\frac`/`\dfrac`/`\tfrac`/`\sqrt` 等命令禁止
+  裸露在定界外；字面展示放行内代码或代码块；覆盖 `prompt_md`、`choices_md`、
+  `structured` 各节点 `prompt_text`/`options[].text`。**reference_md 与小题
+  answers/analysis 是判分消费的答案值（与 answer_anchor 裸正文同格式），不受
+  本条约束**。题面不另抄选项；组合题 sub 的显示字段同样遵守。
 - **outputSchema**（`src/core/schema/quiz_gen.ts`）：`QuizGenQuestion` 新增
-  superRefine——对上述渲染字段调用共享检查，命中即以字段路径 + 可执行错误
+  superRefine——仅对上述显示字段调用共享检查，命中即以字段路径 + 可执行错误
   拒收，例：`choices_md[2]含裸\frac，请给数学式加$...$，若为字面代码请放code…`。
-  **真实传播链（已核，非声称）**：handler `parseOutput`
-  （`src/capabilities/practice/jobs/quiz_gen.ts:331-334`）`QuizGenOutput.safeParse`
-  失败 → `QuizGenOutputFailure(placementSchemaFailure(...))` 抛出 → handler
-  catch 写失败事件并 re-throw → pg-boss 自然重试；placement 路径经
-  `placementSchemaFailure` 既有终态归类。**不新增** paid run、重试或 fallback；
-  placement-starter 与 admission 的同 run 既有参数修复（jsonrepair 级，仅语法）
-  不变——schema 级违规按既有 fail-closed 落地。
+  **落地形态（R1 核实，如实）**：QuizGen 是 posthoc 解析——provider 返回后
+  handler `parseOutput`（`jobs/quiz_gen.ts`）才 `QuizGenOutput.safeParse`；
+  TaskSpec 无 `structuredOutputMode`/`structuredOutputSchema`，**没有同 run
+  数学反馈/参数修复接线**；失败经 `placementSchemaFailure` 只保留 code/path
+  （本片写的 message/excerpt 不透传）；pg-boss 既有 `retryLimit=2` 有界重试
+  会重走 plan/generate 并**可能再次消费付费额度**。本片不新增重试/反馈/预算，
+  也不声称「免费拒收 / 同 run 修复已接通」。
 - **保护（不误伤）**：math span / 行内 code / 多 backtick 与 tilde fence /
   escaped delimiter（`\$`）/ legacy `\(...\)`/`\[...\]` 均不报；语法取自渲染器
   自己的管线（unified + remark-parse + remark-math，先例
   `src/kernel/proposals/presentation.ts`），legacy 定界用镜像自
   `src/ui/lib/math-markdown.tsx` `LATEX_DELIMITED` 的正则（keep in lockstep）。
   **刻意不查**：`source_refs`（URL/snippet 溯源）、`material.body_md`（抓取
-  原文——不改 source 原文）、`rubric_json`（judge-only 判据）等非渲染字段。
+  原文——不改 source 原文）、`rubric_json`（judge-only 判据）等非渲染字段；
+  **以及答案值承载字段 `reference_md` / structured `answers` / `analysis`
+  （R1 P1 撤回，见上）**。
   **不做**：不为裸串自动补 `$`、不求解、不全局重写数学、不猜公式跨度。
 
 ### 2. legacy single/multi_choice → select 的 label_md 仅原 option.text
@@ -89,26 +101,35 @@ item 顺序派生，与 label_md 内容无关。
 | `practice/ui/worksheet/worksheet-plan.ts:215-221` | `letterFor(order)` 自画 + label_md 为正文 | 双序号消除 |
 | `admission/solve.ts:217-220` | `display_md` 仅显示，判分认 `item_id` | 无 |
 | `admission/resolved-publication.ts:441-446,462-467` | 字母按位置派生；choices_md 取 label_md | 正文更干净 |
-| `ingestion/server/assessment-capture.ts:95-117` | 圈选字母→item 按 label_md **前导 token** 解析 | 见下「未覆盖」 |
+| `ingestion/server/assessment-capture.ts:95-117` | 圈选字母→item 按 label_md **前导 token** 解析 | R1 裁决：未证明本片新增可达回归（见下） |
 
 ## 未覆盖入口 / 已知边界（如实列出，不宣称 1406 全票 Done）
 
-1. **assessment-capture 的 label 解析**（ingestion 线，非本片写权）：纸面圈选
-   字母经 `resolveSelectLabels` 匹配 `label_md` 前导 token；label_md 无前缀后
-   新转换槽位的字母圈选将解析失败 → 落**显式 `unknown`/pending（绝不误判
-   分）**，与 `draft-contract.ts` 已发布的纯正文 select 槽位现状一致。后续若
-   要恢复字母圈选，应由 ingestion 独占 writer 按位置（`letterFor(order)` 反查）
-   解析——已报父核。`item_ids` 直传路径不受影响。
-2. **web_sourced / sourcing 裸公式**（ubm 同缺陷族）：共享检查已就位
+1. **assessment-capture 的 label 解析**（ingestion 线，非本片写权，未改动）：
+   `resolveSelectLabels` 按 label_md 前导 token 解字母的依赖本身脆弱（首 token
+   碰撞时无展示坐标校验，不能笼统保证不误判）。**R1 独立裁决：现役 capture
+   走 `q_capture_*` 先 legacy 发行（同事务 row normalizer 发布，不经本片
+   converter；选择题初始为 legacy single/multi，捕获走 option.label 映射）；
+   capture 重入读 issuance 冻结 revision（非 current），未找到把本片新转换
+   select 送进该函数的真实产品路径——即本片未证明新增可达回归。**旧的脆弱
+   前缀依赖不是本片修复，本片也不改 assessment-capture / slot-renderers。若
+   将来修圈选，须按该张作答卷实际冻结的展示映射（issuance revision /
+   option_order / presentation marker）反查 item_id，不得把字母塞回
+   label_md（R1 建议归属 ingestion capture resolver）。
+2. **答案值字段的定界（R1 撤回项）**：reference_md / structured answers /
+   analysis 的显示包装与评分语义分离归后续 **K1 quiz_gen typed 生产迁移**；
+   在那之前本片对答案字段无任何新增强制，exact 评分语义、extractAnswerHead、
+   grade、全局归一化均未动。
+3. **web_sourced / sourcing 裸公式**（ubm 同缺陷族）：共享检查已就位
    （见下），但 sourcing 侧接线由其独占 writer 后续完成，本片不碰。
-3. **存量题目**：YUK-1573 冻结期间不修存量、不动旧题/paid；两道 DTO 样本
+4. **存量题目**：YUK-1573 冻结期间不修存量、不动旧题/paid；两道 DTO 样本
    （含旧 ttnpco/eya6l 缺定界）保持原样。
-4. **重复题干**：另有样本待查（父线），本片不处理，不用 regex 从 prompt 删
+5. **重复题干**：另有样本待查（父线），本片不处理，不用 regex 从 prompt 删
    选项。
-5. **producer wire 根因**：原模型原始输出仍不可证明存在（初版 provenance 误报
+6. **producer wire 根因**：原模型原始输出仍不可证明存在（初版 provenance 误报
    已更正），本片修的是确定性边界（schema 契约 + 转换），不是对历史 wire 的
    追责。
-6. `embedMaterialInPrompt` 在 parse 后嵌入的 material 原文不带定界时不触发检查
+7. `embedMaterialInPrompt` 在 parse 后嵌入的 material 原文不带定界时不触发检查
    （source 原文不改）——producer 契约只约束 agent 自产字段。
 
 ## 共享 API（后续 sourcing 接入点）
@@ -124,7 +145,8 @@ item 顺序派生，与 label_md 内容无关。
 sourcing 线最小接入点：在其输出 schema 的渲染字段 superRefine 里对每个字段调
 `findBareMathCommands`，用字段路径拼同款可执行错误（参照 quiz_gen.ts 的
 `reportBareMath`/`reportStructuredBareMath` 形状）。**不要复制第二份
-validator，不要造 registry**。
+validator，不要造 registry**。注意同样只接显示字段，不接答案值字段（R1
+P1 同理）。本共享 API 在 R2 关闭前视为未接受状态。
 
 ## NOT_RUN（本片未运行的验证，如实声明）
 
@@ -141,4 +163,14 @@ validator，不要造 registry**。
 
 见交付报告：`pnpm typecheck` / `pnpm lint` / `pnpm build` 与既有 audit 的实际
 exit code（含 `audit:schema`、`audit:question-writers`、
-`audit:capability-boundaries`、`audit:test-policy`）。
+`audit:capability-boundaries`、`audit:test-policy`）。R1 修复轮完整日志落
+`/Volumes/YukovalSBak/yukoval-projects/tlp-status/review/stage1-yuk1406-options-20261019/pr1827-r1-fix-logs/`。
+
+## 修复轮记录
+
+- **R1（fixed fefd9d56b）**：Codex gpt-6.1-sol xhigh，REQUEST_CHANGES，1 P1
+  （显示定界进 exact 键）+ 两项重点疑点裁决（capture 可达性未证明；落地为
+  posthoc 拒收、既有重试可能再付费）。报告：
+  `pr1827-r1-codex-fefd9d56b.md`（同目录）。
+- **R1 修复**：撤回答案值字段新增强制（schema 三处 + prompt 覆盖面两处）、
+  纠正本文档与 PR 的落地 claim；原 5 文件 scope 不变，未新增文件。
