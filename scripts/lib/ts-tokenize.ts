@@ -9,10 +9,6 @@
  * - analyzeSource: whole-file region map (codeMask) + sql`` tagged-template spans, used by
  *   the read-side audit to positively detect F1 pool-visibility predicate shapes while
  *   skipping predicate PROSE in comments/plain strings for free.
- * - stripComments: comment-stripped projection with STRING CONTENT KEPT and newlines
- *   preserved (line numbers stay aligned), used by audit-fold-writes (YUK-1579) for its
- *   raw-SQL write-site scan. Derived from the SAME analyzeSource masks — one lexer —
- *   instead of the second private state machine it used to carry.
  */
 
 /**
@@ -228,29 +224,4 @@ export function lineOf(src: string, idx: number): number {
     if (src[k] === '\n') line += 1;
   }
   return line;
-}
-
-/**
- * Comment-stripped projection of `src`: comment characters are removed (newlines
- * inside comments are kept so line numbers stay aligned with the ORIGINAL source),
- * while STRING and template-literal content is KEPT — a real raw-SQL write lives
- * inside a string/template (`sql`UPDATE knowledge…``), so stripping strings would
- * blind a raw-SQL scan (the fold-writes contract).
- *
- * Derived from analyzeSource's masks, so all masked audits share ONE lexer. Known
- * delta vs the state machine it replaced (audit-fold-writes pre-YUK-1579): a
- * comment inside a template-literal `${...}` interpolation is now correctly
- * stripped (the old machine stopped lexing inside templates and kept it); nested
- * template literals are lexed at correct depth. Neither occurs in the repo's
- * scan roots — verified by byte-identical before/after audit output.
- */
-export function stripComments(src: string): string {
-  const { codeMask, commentMask } = analyzeSource(src);
-  let out = '';
-  for (let i = 0; i < src.length; i += 1) {
-    // keep: real code, string/template text (non-code but not comment), and
-    // newlines inside comments (line alignment).
-    if (codeMask[i] === 1 || commentMask[i] === 0 || src[i] === '\n') out += src[i];
-  }
-  return out;
 }

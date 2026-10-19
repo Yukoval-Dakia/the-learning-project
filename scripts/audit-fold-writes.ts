@@ -68,7 +68,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isDirectCliInvocation, walkSourceFiles } from './lib/audit-scan';
-import { lineOf, stripComments as stripCommentsShared } from './lib/ts-tokenize';
+import { lineOf } from './lib/ts-tokenize';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
@@ -398,21 +398,114 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   },
 ];
 
-// ── comment stripping (shared lexer view; KEEPS string content) ────────────────────────────
+// ── comment stripping (char-stepped, escape-aware; KEEPS string content) ──────────────────────
 //
 // Strips line + block comments so a docstring like "// UPDATE question_block: link…" (import.ts) or
 // the projection shells' "DELETE FROM knowledge WHERE id=…" doc lines are NOT mistaken for real
 // writes. STRING CONTENT IS KEPT (unlike audit-mastery-provenance's stripper) because a real raw-SQL
 // write lives INSIDE a string/template (`sql\`UPDATE knowledge…\``) — stripping strings would blind
 // the raw-SQL scan. The Drizzle-form scan is unaffected: `.update(knowledge)` is bare code, never
-// inside a string. Implementation is the shared analyzeSource-derived view in
-// scripts/lib/ts-tokenize.ts (YUK-1579): newlines inside comments are preserved so reported line
-// numbers stay aligned with the ORIGINAL source, escape/quote state is lexer-tracked so a `//`
-// inside a string is not treated as a comment, and — unlike the private state machine this
-// replaced — template `${...}` interpolations are lexed at correct depth (a comment inside an
-// interpolation is now stripped instead of kept; byte-identical output verified on the repo).
-// Re-exported for module-surface compat.
-export { stripCommentsShared as stripComments };
+// inside a string. Escape/quote state is tracked so a `//` inside a string is not treated as a comment.
+export function stripComments(src: string): string {
+  let out = '';
+  let i = 0;
+  const n = src.length;
+  let inLine = false;
+  let inBlock = false;
+  let inSingle = false;
+  let inDouble = false;
+  let inTemplate = false;
+  while (i < n) {
+    const c = src[i];
+    const next = src[i + 1];
+    if (inLine) {
+      if (c === '\n') {
+        inLine = false;
+        out += c;
+      }
+      i += 1;
+      continue;
+    }
+    if (inBlock) {
+      if (c === '*' && next === '/') {
+        inBlock = false;
+        i += 2;
+        continue;
+      }
+      // Preserve newlines inside block comments so reported line numbers stay aligned with the
+      // ORIGINAL source (a collapsed multi-line block comment would otherwise shift every write
+      // site below it upward).
+      if (c === '\n') out += c;
+      i += 1;
+      continue;
+    }
+    if (inSingle) {
+      out += c;
+      if (c === '\\') {
+        out += next ?? '';
+        i += 2;
+        continue;
+      }
+      if (c === "'") inSingle = false;
+      i += 1;
+      continue;
+    }
+    if (inDouble) {
+      out += c;
+      if (c === '\\') {
+        out += next ?? '';
+        i += 2;
+        continue;
+      }
+      if (c === '"') inDouble = false;
+      i += 1;
+      continue;
+    }
+    if (inTemplate) {
+      out += c;
+      if (c === '\\') {
+        out += next ?? '';
+        i += 2;
+        continue;
+      }
+      if (c === '`') inTemplate = false;
+      i += 1;
+      continue;
+    }
+    // not in any string/comment.
+    if (c === '/' && next === '/') {
+      inLine = true;
+      i += 2;
+      continue;
+    }
+    if (c === '/' && next === '*') {
+      inBlock = true;
+      i += 2;
+      continue;
+    }
+    if (c === "'") {
+      inSingle = true;
+      out += c;
+      i += 1;
+      continue;
+    }
+    if (c === '"') {
+      inDouble = true;
+      out += c;
+      i += 1;
+      continue;
+    }
+    if (c === '`') {
+      inTemplate = true;
+      out += c;
+      i += 1;
+      continue;
+    }
+    out += c;
+    i += 1;
+  }
+  return out;
+}
 
 // ── source walk ────────────────────────────────────────────────────────────────────────────────
 
@@ -423,9 +516,8 @@ function listSourceFiles(): string[] {
   return walkSourceFiles(REPO_ROOT, {
     roots: SCAN_ROOTS,
     excludeDirs: EXCLUDE_DIRS,
-    skipTests: true,
     excludeFiles: EXCLUDE_FILES,
-    skipMissingRoots: true,
+    ignoreUnreadableDirs: true,
   });
 }
 
@@ -470,7 +562,7 @@ export function findWriteSites(
   for (const file of files) {
     const raw = readFile(file);
     if (raw === null) continue;
-    const code = stripCommentsShared(raw);
+    const code = stripComments(raw);
     DRIZZLE_RE.lastIndex = 0;
     for (const m of code.matchAll(DRIZZLE_RE)) {
       sites.push({

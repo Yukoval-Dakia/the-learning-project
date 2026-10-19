@@ -1,74 +1,65 @@
 /**
- * Shared scanner support for the repo's static audit CLIs (YUK-1579).
+ * Shared support for the audit CLIs' verbatim-duplicated plumbing (YUK-1579).
  *
- * Consolidates the FIVE near-copies of "recursively walk the repo's TS sources"
- * that audit-draft-status / audit-draft-status-reads / audit-schema-writes /
- * audit-fold-writes / audit-hub-sync-writers each carried privately, plus the
- * small helpers every one of them re-declared (isRecord, the resolves_when
- * allowlist loader, the run-as-CLI gate). The per-audit POLICY — which roots,
- * which excluded dirs, whether tests/generated files count, absolute vs
- * repo-relative paths — stays at each call site as an explicit options object,
- * so no audit inherits another's scan universe by accident.
+ * Scope is deliberately narrow — only clusters that were LITERAL copies across
+ * the draft-status / draft-status-reads / fold-writes audits:
  *
- * Lexical scanning (comment/string/template awareness) is NOT here: it lives in
- * ./ts-tokenize.ts (analyzeSource + derived views), shared with the draft-status
- * audits since YUK-569 and with audit-fold-writes since YUK-1579.
+ *   walkSourceFiles        the three audits' Dirent-based source walkers
+ *                          (the draft pair's were verbatim copies; fold-writes'
+ *                          adds excludeFiles + unreadable-dir tolerance, both
+ *                          explicit options here)
+ *   loadResolvesWhenAllowlist   the draft pair's verbatim allowlist loaders
+ *   isRecord / isDirectCliInvocation   verbatim micro-helpers repeated in 3/5
+ *                          and 5/5 audits respectively
+ *
+ * NOT here, by rejection (coverage-behavior changes, parent review of
+ * 6a66b12ca): audit-schema-writes' and audit-hub-sync-writers' statSync-based
+ * walkers (they FOLLOW symlinks; the Dirent walker skips them) stay local to
+ * those audits, and fold-writes' private stripComments lexer stays private
+ * (its template-literal handling differs from ts-tokenize's analyzer). Lexical
+ * scanning that IS shared already lives in ./ts-tokenize.ts (YUK-569).
  */
 
-import { type Dirent, readFileSync, readdirSync } from 'node:fs';
+import { readdirSync, readFileSync, type Dirent } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 // ---------- source walk ----------
 
 export type AuditSourceWalkOptions = {
-  /** Repo-relative directories to walk. */
+  /** Repo-relative directories to walk, in order. */
   roots: readonly string[];
-  /** Directory names pruned during the walk (e.g. 'node_modules', 'drizzle'). */
+  /** Directory names pruned during the walk (checked before descending). */
   excludeDirs: ReadonlySet<string>;
+  /** Repo-relative file paths excluded from the scan (an audit's own files). */
+  excludeFiles: ReadonlySet<string>;
   /**
-   * Skip *.test.ts / *.test.tsx. Audits that classify test files later via
-   * their own production-source filter (audit-schema-writes) pass false.
-   * Default false.
+   * true: a directory whose readdirSync fails (missing scan root, unreadable
+   * subtree, ...) is skipped and the walk continues — fold-writes' original
+   * `catch { return out; }` semantics, for every error code.
+   * false: the error propagates unchanged — the draft-status pair's original
+   * behavior (no try/catch at all).
    */
-  skipTests?: boolean;
-  /**
-   * Skip *.generated.ts / *.generated.tsx — type-only documents whose
-   * mega-unions can recurse a scanner into a stack overflow (YUK-1051).
-   * Default false.
-   */
-  skipGenerated?: boolean;
-  /** Skip *.d.ts declaration files. Default true. */
-  skipDeclFiles?: boolean;
-  /** Repo-relative file paths excluded from the scan (an audit's own source). */
-  excludeFiles?: ReadonlySet<string>;
-  /** Return absolute paths instead of repo-relative ones. Default false. */
-  absolute?: boolean;
-  /** Skip (rather than throw on) a walk root that does not exist. Default false. */
-  skipMissingRoots?: boolean;
+  ignoreUnreadableDirs: boolean;
 };
 
-function isTsSource(name: string): boolean {
-  return name.endsWith('.ts') || name.endsWith('.tsx');
-}
-
 /**
- * Walk `opts.roots` under `repoRoot` collecting TS source files, honoring the
- * caller's scan-universe policy. Traversal order is readdirSync order (same as
- * the five walkers this replaces); callers that need determinism sort the
- * result. Pure filesystem walk — no filtering on content.
+ * The walk policy shared verbatim by the three Dirent-walker audits: recurse
+ * with readdirSync({ withFileTypes: true }) (symlink entries are neither file
+ * nor directory, so symlinks are skipped — the original behavior of all
+ * three), collect .ts/.tsx files that are not *.test.ts(x) and not *.d.ts,
+ * returning repo-relative paths in traversal order. All per-audit differences
+ * are explicit required options; nothing is preserved by a default that
+ * happens to match.
  */
 export function walkSourceFiles(repoRoot: string, opts: AuditSourceWalkOptions): string[] {
-  const skipTests = opts.skipTests ?? false;
-  const skipGenerated = opts.skipGenerated ?? false;
-  const skipDeclFiles = opts.skipDeclFiles ?? true;
   const out: string[] = [];
   const walk = (dir: string): void => {
     let entries: Dirent[];
     try {
       entries = readdirSync(dir, { withFileTypes: true });
     } catch (err) {
-      if (opts.skipMissingRoots && (err as NodeJS.ErrnoException).code === 'ENOENT') return;
+      if (opts.ignoreUnreadableDirs) return;
       throw err;
     }
     for (const entry of entries) {
@@ -78,33 +69,21 @@ export function walkSourceFiles(repoRoot: string, opts: AuditSourceWalkOptions):
         walk(abs);
         continue;
       }
-      if (!entry.isFile() || !isTsSource(entry.name)) continue;
-      if (skipTests && (entry.name.endsWith('.test.ts') || entry.name.endsWith('.test.tsx'))) {
-        continue;
-      }
-      if (skipGenerated && /\.generated\.tsx?$/.test(entry.name)) continue;
-      if (skipDeclFiles && entry.name.endsWith('.d.ts')) continue;
-      const rel = relative(repoRoot, abs).split('\\').join('/');
-      if (opts.excludeFiles?.has(rel)) continue;
-      out.push(opts.absolute ? abs : rel);
+      if (!entry.isFile()) continue;
+      const name = entry.name;
+      if (!name.endsWith('.ts') && !name.endsWith('.tsx')) continue;
+      if (name.endsWith('.test.ts') || name.endsWith('.test.tsx')) continue;
+      if (name.endsWith('.d.ts')) continue;
+      const rel = relative(repoRoot, abs);
+      if (opts.excludeFiles.has(rel)) continue;
+      out.push(rel);
     }
   };
   for (const root of opts.roots) walk(resolve(repoRoot, root));
   return out;
 }
 
-// ---------- small shared helpers ----------
-
-export function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-// ---------- resolves_when allowlist contract (draft-status family) ----------
-//
-// Shape contract shared by the draft-status INSERT/READ allowlists: every entry
-// carries a non-empty reason + resolves_when { kind, ref, expected_by }. The
-// RICHER audit-schema-writes validator (expiry horizon, merged-PR git-log check,
-// shipped-phase status.md check) is a different policy and stays local to it.
+// ---------- resolves_when allowlist loading (draft-status family) ----------
 
 export const RESOLVE_KINDS = ['pr', 'phase', 'manual'] as const;
 export type ResolveKind = (typeof RESOLVE_KINDS)[number];
@@ -112,15 +91,14 @@ export type ResolvesWhen = { kind: ResolveKind; ref: string; expected_by: string
 export type AllowlistEntry = { reason: string; resolves_when: ResolvesWhen };
 
 /**
- * Load a resolves_when-shaped allowlist JSON: skips `_`-prefixed comment keys,
- * returns both the typed entries and the raw parsed value (the hygiene
- * validator runs on the raw shape). A missing/corrupt file throws — a gate's
- * allowlist must fail loud, not silently pass empty.
+ * Load a resolves_when-shaped allowlist JSON: readFileSync + JSON.parse (both
+ * throw on failure — a gate's allowlist must fail loud), skip `_`-prefixed
+ * comment keys, return typed entries plus the raw parsed value (shape
+ * validation runs on the raw). Verbatim body of the two loaders it replaced.
  */
-export function loadResolvesWhenAllowlist(path: string): {
-  entries: Record<string, AllowlistEntry>;
-  raw: unknown;
-} {
+export function loadResolvesWhenAllowlist(
+  path: string,
+): { entries: Record<string, AllowlistEntry>; raw: unknown } {
   const raw = JSON.parse(readFileSync(path, 'utf-8')) as unknown;
   const entries: Record<string, AllowlistEntry> = {};
   if (isRecord(raw)) {
@@ -132,13 +110,16 @@ export function loadResolvesWhenAllowlist(path: string): {
   return { entries, raw };
 }
 
-// ---------- CLI gate ----------
+// ---------- micro-helpers ----------
+
+export function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
 
 /**
  * True when this module was invoked directly as a CLI (`tsx scripts/audit-x.ts`)
- * rather than imported. Mirrors the per-audit gate: only walk + exit when run
- * as a CLI so a self-test can import the pure functions without the top-level
- * scan firing.
+ * rather than imported — the exact expression all five audits used at their
+ * tail gate, so the pure functions stay importable without the scan firing.
  */
 export function isDirectCliInvocation(metaUrl: string): boolean {
   return Boolean(process.argv[1] && resolve(process.argv[1]) === fileURLToPath(metaUrl));

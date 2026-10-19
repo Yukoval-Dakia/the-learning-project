@@ -25,11 +25,11 @@
  * audit's own source — which necessarily carries rule marker strings — excluded).
  */
 
-import { readFileSync } from 'node:fs';
-import { dirname, relative, resolve } from 'node:path';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { collectDrizzleWrites } from './hub-sync-writer-dataflow';
-import { isDirectCliInvocation, walkSourceFiles } from './lib/audit-scan';
+import { isDirectCliInvocation } from './lib/audit-scan';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
@@ -245,21 +245,36 @@ function codeText(source: string): string {
 }
 
 function listSourceFiles(root: string): string[] {
-  // Shared walker (scripts/lib/audit-scan.ts, YUK-1579). This audit's scan universe:
-  // src/ + scripts/, tests and generated type-only docs skipped (a .d.ts is still
-  // scanned — it was before too), the audit's own source excluded (it carries rule
-  // marker strings), absolute paths.
-  return walkSourceFiles(root, {
-    roots: SCAN_DIRS,
-    excludeDirs: new Set(['node_modules', 'dist', '.git']),
-    skipTests: true,
-    skipGenerated: true,
-    skipDeclFiles: false,
-    excludeFiles: new Set(['scripts/audit-hub-sync-writers.ts']),
-    absolute: true,
-    skipMissingRoots: true,
-  });
+  const out: string[] = [];
+  const walk = (dir: string) => {
+    if (!existsSync(dir)) return;
+    for (const entry of readdirSync(dir)) {
+      const abs = join(dir, entry);
+      const st = statSync(abs);
+      if (st.isDirectory()) {
+        if (entry === 'node_modules' || entry === 'dist' || entry === '.git') continue;
+        walk(abs);
+        continue;
+      }
+      if (!/\.(ts|tsx)$/.test(entry)) continue;
+      if (/\.(test|db\.test|unit\.test)\.tsx?$/.test(entry)) continue;
+      // Generated artifacts (e.g. api-schema.generated.ts) are type-only
+      // documents — they can never own a hub-sync write path, but their
+      // mega-unions recurse trustedType into a stack overflow (YUK-1051).
+      if (/\.generated\.tsx?$/.test(entry)) continue;
+      // This audit's own source contains rule marker strings and synthetic patterns.
+      if (normalizePath(relative(root, abs)) === 'scripts/audit-hub-sync-writers.ts') continue;
+      out.push(abs);
+    }
+  };
+  for (const d of SCAN_DIRS) walk(join(root, d));
+  return out;
 }
+
+// NOTE (YUK-1579): this statSync-based walker is intentionally NOT migrated to the
+// shared Dirent walker in scripts/lib/audit-scan.ts — statSync FOLLOWS symlinks
+// while Dirent checks skip them, and its test/generated/self-exclusion filters are
+// this audit's own policy. Different traversal semantics, kept local.
 
 /**
  * Scan `root` for hub-sync ownership violations. `allowlist` inventories the

@@ -115,7 +115,8 @@ function listSourceFiles(): string[] {
   return walkSourceFiles(REPO_ROOT, {
     roots: ['src'],
     excludeDirs: EXCLUDE_DIRS,
-    skipTests: true,
+    excludeFiles: new Set(),
+    ignoreUnreadableDirs: false,
   });
 }
 
