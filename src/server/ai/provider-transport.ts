@@ -715,21 +715,21 @@ function toRawHeaders(headers: Record<string, unknown>): Buffer[] {
   return raw;
 }
 
-/** The controller's raw header array when present, else an object→raw conversion. */
+/** Preserve H1 arrays; normalize H2 header objects for the legacy fetch handler. */
 function rawHeaders(controller: Dispatcher.DispatchController, headers: unknown): Buffer[] {
-  const raw = controller.rawHeaders;
-  if (raw !== undefined && raw !== null) return raw as Buffer[];
-  return toRawHeaders((headers ?? {}) as Record<string, unknown>);
+  const raw = controller.rawHeaders ?? headers;
+  if (Array.isArray(raw)) return raw as Buffer[];
+  return toRawHeaders((raw ?? {}) as Record<string, unknown>);
 }
 
 function rawTrailers(
   controller: Dispatcher.DispatchController,
   trailers: unknown,
 ): Buffer[] | null {
-  const raw = controller.rawTrailers;
-  if (raw !== undefined && raw !== null) return raw as Buffer[];
-  if (trailers === undefined || trailers === null) return null;
-  return toRawHeaders(trailers as Record<string, unknown>);
+  const raw = controller.rawTrailers ?? trailers;
+  if (raw === undefined || raw === null) return null;
+  if (Array.isArray(raw)) return raw as Buffer[];
+  return toRawHeaders(raw as Record<string, unknown>);
 }
 
 /**
