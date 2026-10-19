@@ -285,7 +285,7 @@ export class ItemPriorPaidEffectAdapter {
           kind: 'recovery-only',
           identity,
           jobState: job.state,
-          effectState: snapshot?.state ?? null,
+          effectState: snapshot?.state === 'pending' ? 'pending' : null,
         };
       }
       await admitPaidEffectIntent(tx, input);
