@@ -698,6 +698,7 @@ export async function runNoteGenerate(
           if (fallbackMaterial.question?.reference_md) {
             await recordNoteFallbackReferenceExposure(tx, {
               issuanceId: fallbackMaterial.question.issuance_id,
+              questionId: fallbackMaterial.question.question_id,
               referenceMd: fallbackMaterial.question.reference_md,
             });
           }
