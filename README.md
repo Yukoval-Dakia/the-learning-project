@@ -135,8 +135,9 @@ dev 拓扑必须 api + web + worker 三进程齐活（YUK-321 M5 双进程拓扑
 pnpm smoke:local
 ```
 
-模型能力目录（YUK-924）：`pnpm gen:model-catalog` 从 models.dev 拉取并重写
-`src/server/ai/model-catalog.snapshot.json`（已入仓的裁剪快照；运行时不发网络请求）。
+模型能力目录（YUK-924 / YUK-1563）：worker 启动时和每天从 models.dev 拉取
+`api.json`，写入 `model_catalog_cache`。拉取失败沿用该行；没有该行就用
+`src/server/ai/model-catalog.snapshot.json`。`pnpm gen:model-catalog` 仍重写这份随包快照。
 
 生产 / NAS compose 配置放在 `.env`；host-side local dev 也从 `.env` 的 `POSTGRES_*`
 派生本地连接串。浏览器代码不持有 provider key，所有 AI 调用都通过 Hono route 或

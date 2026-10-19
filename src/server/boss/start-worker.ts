@@ -9,6 +9,11 @@ import { capabilities } from '@/capabilities';
 import type { Db } from '@/db/client';
 import { recoverToolOperationsOnBoot } from '@/kernel/tools/tool-operations';
 import { initializeLaminarTracing } from '@/server/ai/laminar-tracing';
+import {
+  MODEL_CATALOG_REFRESH_INTERVAL_MS,
+  hydrateModelCatalog,
+  refreshModelCatalog,
+} from '@/server/ai/model-catalog';
 import { resolveTaskProvider } from '@/server/ai/providers';
 import { createBoss, isQueueCreateRace, markBossStarted } from '@/server/boss/client';
 import { registerHandlers } from '@/server/boss/handlers';
@@ -44,6 +49,7 @@ export async function startBossWorker(
   // YUK-1007 — 首批 config snapshot 入内存（同 never-throws 先例：表未建/DB down →
   // 空快照 = 纯 env 行为，天然回滚位；§5.1 序 4）。
   await hydrateConfigFromDb(db);
+  await hydrateModelCatalog(db);
   // Validate the effective brief lane after config hydration, without a paid call.
   try {
     resolveTaskProvider('MemoryBriefTask');
@@ -136,6 +142,23 @@ export async function startBossWorker(
   // 路径，纯靠此窗收敛，unref 不阻退出）。
   const configRefreshHandle = startConfigRefresh(db, 15_000);
   boss.once('stopped', () => configRefreshHandle.stop());
+  try {
+    const refreshed = await refreshModelCatalog(db);
+    if (refreshed.outcome === 'stored') {
+      console.info(
+        `[worker] model catalog stored version=${refreshed.meta.version} at=${refreshed.meta.fetchedAt}`,
+      );
+    }
+  } catch (err) {
+    console.warn('[worker] model catalog refresh failed (non-fatal)', err);
+  }
+  const catalogRefresh = setInterval(() => {
+    void refreshModelCatalog(db).catch((err) => {
+      console.warn('[worker] model catalog refresh failed (non-fatal)', err);
+    });
+  }, MODEL_CATALOG_REFRESH_INTERVAL_MS);
+  catalogRefresh.unref();
+  boss.once('stopped', () => clearInterval(catalogRefresh));
   // YUK-576 §5.4 — boot-time stuck-run reconcile (PRIMARY trigger): the main
   // stuck cause is a process crash, so the restart converges >1h 'running'
   // ai_task_runs rows within seconds (the 1h threshold guards the previous
