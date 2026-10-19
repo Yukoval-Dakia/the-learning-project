@@ -8,8 +8,9 @@
 import { downloadZip } from 'client-zip';
 import { getTableColumns, getTableName, isTable, sql } from 'drizzle-orm';
 import { unzipSync } from 'fflate';
+import { z } from 'zod';
 import { getConfigSnapshot } from '@/core/config/store';
-import { hasCompletionContract } from '@/core/event-subscription-effect';
+import { readCompletionContract } from '@/core/event-subscription-effect';
 import type { Db, Tx } from '@/db/client';
 import * as schema from '@/db/schema';
 import { hydrateConfigFromDb } from '@/server/config/hydrate';
@@ -407,6 +408,11 @@ const EFFECT_STATUS_WITHOUT_DOWNSTREAM_WORK: ReadonlySet<string> = new Set([
   'disabled',
 ]);
 const UNRESOLVED_EFFECT_PREVIEW_LIMIT = 20;
+// Raw postgres-js exports use a space separator and may abbreviate the UTC offset.
+const completionTimestamp = z
+  .string()
+  .transform((value) => value.replace(' ', 'T').replace(/([+-]\d{2})$/, '$1:00'))
+  .pipe(z.iso.datetime({ offset: true }));
 
 interface UnresolvedEffect {
   id: string | null;
@@ -436,20 +442,29 @@ function unresolvedEffectReason(status: string | null): string {
   }
 }
 
-/** Effects whose downstream work is not proven settled by this archive. A
- *  non-null completed_at is explicit receipt evidence. Enqueued rows written
- *  before the receipt contract carry no completion fact, so they are not used
- *  to infer that work is outstanding. */
+// Only absent contracts are legacy. Old deferred receipts cannot prove completion.
 function findUnresolvedEffects(
   rows: ReadonlyArray<Record<string, unknown>> | undefined,
 ): UnresolvedEffect[] {
   const unresolved: UnresolvedEffect[] = [];
   for (const row of rows ?? []) {
     const status = stringOrNull(row.status);
+    const contract = readCompletionContract(row.outcome);
     const settledByStatus = status !== null && EFFECT_STATUS_WITHOUT_DOWNSTREAM_WORK.has(status);
-    const settledByReceipt = row.completed_at !== null && row.completed_at !== undefined;
-    const legacyEnqueued = status === 'enqueued' && !hasCompletionContract(row.outcome);
-    if (settledByStatus || settledByReceipt || legacyEnqueued) continue;
+    const hasTimestamp = row.completed_at !== null && row.completed_at !== undefined;
+    let reason: string;
+    if (contract.kind === 'invalid') {
+      reason = 'unknown or malformed completion contract';
+    } else if (hasTimestamp && !completionTimestamp.safeParse(row.completed_at).success) {
+      reason = 'completed_at must be a valid timestamp';
+    } else if (contract.kind === 'v1' && contract.status === 'deferred') {
+      reason =
+        'deferred patch is not completed and editing_presence is outside the logical archive';
+    } else {
+      const legacy = contract.kind === 'legacy' && (status === 'enqueued' || status === 'reserved');
+      if (settledByStatus || hasTimestamp || legacy) continue;
+      reason = unresolvedEffectReason(status);
+    }
     unresolved.push({
       id: stringOrNull(row.id),
       effect_kind: stringOrNull(row.effect_kind),
@@ -458,7 +473,7 @@ function findUnresolvedEffects(
       source_event_id: stringOrNull(row.source_event_id),
       downstream_job_id: stringOrNull(row.downstream_job_id),
       status,
-      reason: unresolvedEffectReason(status),
+      reason,
     });
   }
   return unresolved;

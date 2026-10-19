@@ -61,14 +61,17 @@ Existing checkpoints prevent pending work from being reclassified as bootstrap h
 This logical ZIP does not contain pg-boss jobs. A succeeded delivery can mean that
 it enqueued downstream work; an enqueued effect is not proof that the work completed.
 Effects dispatched under the completion-receipt contract get a receipt when their
-downstream job ends. Import refuses before wiping when such an effect has no receipt,
-and reports the effect id with its artifact, attempt and source identity. Older
-enqueued rows predate the contract and carry no completion fact, so they are not
-treated as outstanding. Restoring its ledger does not recreate a missing queue job.
+downstream result is terminal, not deferred. Deferred patches in editing_presence
+are outside this ZIP. Import refuses before wiping when completion is unproven,
+including older false deferred receipts, and reports the effect identity.
+Unknown contracts and malformed completion timestamps also fail before wiping.
+Only an absent contract is legacy; legacy enqueued and reserved rows are not
+treated as outstanding. Restoring the ledger does not recreate a missing queue job.
 Do not delete effect records or replay terminal deliveries to force recovery: that
-can repeat completed side effects or paid work. Queue recovery remains an
-owner-service operation; the existing intervention preparation recovery is not a
-general queue restore.
+can repeat completed side effects or paid work. After a job failure, a deferred drain,
+or a receipt-write failure, the owner must reconcile persisted evidence using
+docs/sub5-restore-cli.md before exporting a new ZIP. Unknown results remain blocked.
+The existing intervention preparation recovery is not a general queue restore.
 Stop writers/workers for a live restore and reconcile operational queues before
 resuming them. Use a full PostgreSQL backup when queue state must also be recovered.
 

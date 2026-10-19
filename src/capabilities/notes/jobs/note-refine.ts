@@ -24,7 +24,7 @@ import type { Job } from 'pg-boss';
 
 import { enqueueOrApplyNoteRefinePatch } from '@/capabilities/notes/server/artifacts/editing-session';
 import { bodyBlocksToBlockSummaries } from '@/capabilities/notes/server/body-blocks';
-import { recordMasteryRefineEffectCompletion } from '@/capabilities/notes/server/mastery-refine-effect';
+import { recordMasteryRefineEffectResult } from '@/capabilities/notes/server/mastery-refine-effect';
 import {
   checkAutoApplyBreaker,
   countRecentAutoApplies,
@@ -404,14 +404,17 @@ export function buildNoteRefineHandler(
         });
         if (data.effect_id) {
           try {
-            await recordMasteryRefineEffectCompletion({
+            await recordMasteryRefineEffectResult({
               db,
               effectId: data.effect_id,
               status: result.status,
             });
           } catch (err) {
             // A missing receipt blocks logical restore, but must not replay paid work.
-            console.error(`[note_refine] completion receipt failed for ${data.effect_id}`, err);
+            console.error(
+              `[note_refine] result receipt failed for ${data.effect_id} (${result.status}); owner reconciliation required: docs/sub5-restore-cli.md`,
+              err,
+            );
           }
         }
         const skippedOps = 'skipped_ops' in result ? (result.skipped_ops ?? 0) : 0;
@@ -419,7 +422,10 @@ export function buildNoteRefineHandler(
           `[note_refine] ${data.artifact_id} → ${result.status}${skippedOps > 0 ? ` (${skippedOps} ghost op(s) skipped)` : ''}`,
         );
       } catch (err) {
-        console.error(`[note_refine] ${data.artifact_id} failed`, err);
+        console.error(
+          `[note_refine] ${data.artifact_id} failed (effect ${data.effect_id ?? 'none'}); after retries, reconcile via docs/sub5-restore-cli.md`,
+          err,
+        );
         throw err;
       }
     }

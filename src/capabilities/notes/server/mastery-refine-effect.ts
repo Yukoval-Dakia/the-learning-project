@@ -3,6 +3,7 @@ import { and, desc, eq, gt, isNull, sql } from 'drizzle-orm';
 import { DOWNSTREAM_COMPLETION_CONTRACT } from '@/core/event-subscription-effect';
 import type { Db, Tx } from '@/db/client';
 import { event_subscription_effect } from '@/db/schema';
+import type { RunNoteRefineResult } from '../jobs/note-refine';
 import { notesBossTransaction } from './boss-port';
 import type { NoteRefineBossSend } from './note-refine-triggers';
 import { NOTE_REFINE_TRIGGER_DEBOUNCE_MS, noteRefineTriggerEnabled } from './note-refine-triggers';
@@ -153,18 +154,18 @@ export async function reserveAndEnqueueMasteryRefineEffect(input: {
   return { status, effectId, effect: inserted[0] };
 }
 
-/** Record the note_refine job's terminal result on its owning effect. */
-export async function recordMasteryRefineEffectCompletion(input: {
+export async function recordMasteryRefineEffectResult(input: {
   db: Db | Tx;
   effectId: string;
-  status: string;
+  status: RunNoteRefineResult['status'];
   now?: Date;
 }): Promise<void> {
   const now = input.now ?? new Date();
   await input.db
     .update(event_subscription_effect)
     .set({
-      completed_at: now,
+      // Deferred patches live outside the logical ZIP, even after the job ends.
+      completed_at: input.status === 'deferred' ? null : now,
       updated_at: now,
       outcome: sql`coalesce(${event_subscription_effect.outcome}, '{}'::jsonb) || ${JSON.stringify({
         completion_contract: DOWNSTREAM_COMPLETION_CONTRACT,
