@@ -1,16 +1,7 @@
-// ====================================================================
-// YUK-1057 — ephemeral Postgres（隔离演练靶库；绝不触碰本机生产 compose）
-// ====================================================================
-//
-// testcontainers 起一次性 pgvector/pgvector:0.8.2-pg16-bookworm（与生产
-// docker-compose.yml 的 postgres 服务同镜像 tag——pin 不变量），默认 db
-// 'test'，pg_dump/pg_restore 在【容器内】执行（本机无 pg 客户端，生产
-// dump 路径也在容器内 —— 与 mac-daily-dump.sh 同构）。
-//
-// 隔离红线：
-//   - 只连容器映射端口（127.0.0.1 随机端口），绝不解析 .env / DATABASE_URL。
-//   - 不启动/停止/触碰 any running compose container。
-//   - pg_dump/pg_restore 全程容器内；dump 以 sha256+base64 出容器落工件目录。
+// One-shot Postgres for a rehearsal. The image tag matches production.
+// Connect only to the container's mapped port.
+// Never read DATABASE_URL, and never touch a running compose container.
+// Dump and restore run inside the container. The host has no Postgres client.
 
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
@@ -22,10 +13,10 @@ import postgres from 'postgres';
 import type { Db } from '@/db/client';
 import * as schema from '@/db/schema';
 
-/** 与 docker-compose.yml postgres.image 同 tag（生产同镜像演练）。 */
+/** Same image tag as the production compose Postgres service. */
 export const REHEARSAL_PG_IMAGE = 'pgvector/pgvector:0.8.2-pg16-bookworm';
 
-// tests/global-setup.ts 同款：OrbStack/Docker Desktop socket 自动探测。
+// Same socket probe as the test setup. A missing socket leaves DOCKER_HOST unset.
 function ensureDockerHost(): void {
   if (process.env.DOCKER_HOST) return;
   const orbstack = join(homedir(), '.orbstack/run/docker.sock');
@@ -41,38 +32,36 @@ function ensureDockerHost(): void {
 
 export interface EphemeralPg {
   container: StartedPostgreSqlContainer;
-  /** 主演练库连接串（sslmode=disable；127.0.0.1 随机端口）。 */
+  /** Main rehearsal database. sslmode=disable on the mapped port. */
   uri: string;
   user: string;
-  /** 容器内默认库名（PostgreSqlContainer 约定 'test'）。 */
+  /** Database name inside the container. */
   database: string;
-  /** 指向同容器内另一 db 的连接串（rollback target 用）。 */
+  /** Same container, another database. Rollback targets use this. */
   urlFor(database: string): string;
-  /** drizzle Db 句柄（schema-bound；调用方负责 close）。 */
+  /** Caller closes the handle. */
   connect(database?: string): { db: Db; close(): Promise<void> };
-  /** 容器内执行命令（stdout/stderr 文本；非零 exitCode 抛错）。 */
+  /** Non-zero exit throws unless allowFail. */
   exec(
     cmd: string[],
     opts?: { allowFail?: boolean },
   ): Promise<{ stdout: string; stderr: string; exitCode: number }>;
-  /** psql 便捷口（ON_ERROR_STOP）。 */
+  /** ON_ERROR_STOP. */
   psql(database: string, sqlText: string): Promise<string>;
   createDatabase(name: string): Promise<void>;
   dropDatabase(name: string): Promise<void>;
   /**
-   * 生产形态 dump：容器内 `pg_dump -Fc`（custom format，与 mac-daily-dump.sh
-   * / `pnpm db:dump` 的 restore 面一致）。dump 落容器内临时路径，sha256 回传。
+   * pg_dump -Fc inside the container. Same custom-format restore surface as pnpm db:dump.
    */
   pgDump(database: string, containerPath: string): Promise<{ sha256: string; bytes: number }>;
   /**
-   * 容器内 `pg_restore`（custom format → 目标库）。`--clean --if-exists`
-   * 清目标库既有对象；单事务 + exit-on-error 失败即整体回滚（与
-   * docs/sub5-restore-cli.md 的生产恢复命令同 flag 集）。
+   * Same flags as the production restore in docs/sub5-restore-cli.md.
+   * Failure rolls the single transaction back.
    */
   pgRestore(database: string, containerPath: string): Promise<void>;
-  /** dump 文件以 base64 出容器 → 工件目录（二进制安全）。 */
+  /** Base64 the dump out. The host has no Postgres client. */
   exportDump(containerPath: string, hostPath: string): Promise<void>;
-  /** 迁移：tsx scripts/migrate.ts（DATABASE_URL=靶库；走完整启动面准备）。 */
+  /** Full scripts/migrate.ts startup path against this database. */
   migrate(database: string): Promise<void>;
   stop(): Promise<void>;
 }
@@ -86,7 +75,7 @@ export async function startEphemeralPg(opts: { database?: string } = {}): Promis
   const user = container.getUsername();
   const mainDb = opts.database ?? container.getDatabase();
   if (mainDb !== container.getDatabase()) {
-    // 非默认库：默认连接面不变，这里先建库（幂等重跑安全）。
+    // Non-default name. Create it on the default connection. Already-exists is a safe rerun.
     const admin = postgres(uri, { max: 1, onnotice: () => {} });
     try {
       await admin.unsafe(`CREATE DATABASE "${mainDb}"`);
@@ -154,7 +143,7 @@ export async function startEphemeralPg(opts: { database?: string } = {}): Promis
       await psql('postgres', `CREATE DATABASE "${name}"`);
     },
     async dropDatabase(name) {
-      // FORCE：终止残留连接（中断的 apply/演练步骤可能留 backend）。
+      // FORCE drops backends an interrupted apply may have left.
       await psql('postgres', `DROP DATABASE IF EXISTS "${name}" WITH (FORCE)`);
     },
     async pgDump(database, containerPath) {
@@ -167,7 +156,7 @@ export async function startEphemeralPg(opts: { database?: string } = {}): Promis
       };
     },
     async pgRestore(database, containerPath) {
-      // 与 docs/sub5-restore-cli.md 的灾难恢复路径同 flag 集：clean + 单事务。
+      // Same flag set as docs/sub5-restore-cli.md. Clean, and one transaction.
       const r = await exec(
         [
           'pg_restore',
@@ -197,9 +186,8 @@ export async function startEphemeralPg(opts: { database?: string } = {}): Promis
       writeFileSync(hostPath, Buffer.from(r.stdout.trim(), 'base64'));
     },
     async migrate(database) {
-      // 完整启动面（drizzle migrations + builtin seed + trait reconcile +
-      // canonical projections + contract epoch marker 读回）—— 与生产
-      // `migrate` init container 同路径（scripts/migrate.ts）。
+      // Same path as the production migrate init container.
+      // DATABASE_URL points at this database only.
       const env = { ...process.env, DATABASE_URL: urlFor(database) };
       await new Promise<void>((resolvePromise, reject) => {
         const child = spawn('pnpm', ['exec', 'tsx', 'scripts/migrate.ts'], {

@@ -1,21 +1,6 @@
-// ====================================================================
-// YUK-1057 — 隔离演练 contract corpus（mock 语料导入 lane 的产物）
-// ====================================================================
-//
-// 三份 question_revision（五层契约形状，与 apply.db.test.ts 的 revisionRow
-// 同型）+ lifecycle + admission verification：
-//   - grp-q-main / rev-q-main       — snapshot_verified 绑定 att-main-1 冻结快照
-//   - grp-q-durable / rev-q-durable — snapshot_verified 绑定 durable pending 快照
-//   - grp-q-solo / rev-q-solo       — question_asserted 绑定 q-solo 的历史记录
-//     （pre-snapshot attempt / solo review 缺冻结快照，唯一合法绑定路径是显式
-//     断言 —— apply.ts resolveAgainstRegistry 的 binding='question_asserted'）。
-// live 发题组不走本文件：post-write-sim.ts 用真实 publishQuestionGroup +
-// normalizeQuestionRowToContract 发布（生产发布路径，不是手写 revision）。
-//
-// registry v2 由 buildRehearsalRegistry() 产出（digest 由 canonicalHash 现算，
-// 不允许手填 —— snapshot_verified 的 digest 必须逐字节等于冻结快照的
-// canonical hash，见 core/migration/apply.ts frozenSnapshotOf /
-// resolveAgainstRegistry）。
+// Mock import-lane revisions for the rehearsal. Live publishes do not use this file.
+// q-solo has no frozen snapshot, so its only legal binding is question_asserted.
+// A snapshot_verified digest is canonicalHash of the frozen snapshot. Do not hand-write it.
 
 import type { RevisionRegistry, RevisionRegistryEntry } from '@/core/migration/apply';
 import { canonicalHash } from '@/core/migration/canonical';
@@ -91,7 +76,7 @@ function revisionRow(seed: RevisionSeed): typeof question_revision.$inferInsert 
   };
 }
 
-/** 种入 corpus 侧（revision + lifecycle admitted + admission verification）。 */
+/** Seed revisions, an admitted lifecycle, and the admission verification. */
 export async function seedContractCorpus(db: Db): Promise<void> {
   const rows: RevisionSeed[] = [
     {
@@ -119,10 +104,10 @@ export async function seedContractCorpus(db: Db): Promise<void> {
       group_id: r.groupId,
       current_revision_id: r.revisionId,
       availability: 'general_pool' as const,
-      // scoring_admission_state='admitted' → issueAssessment auto_score 放行。
+      // admitted lets issueAssessment auto-score.
       scoring_admission_state: 'admitted' as const,
-      // AdmissionEvidence 契约形状（publish.ts）：演练语料用 system_verified
-      // + 通过的独立核验 —— 与语料导入 lane 产物的 admitted 形态一致。
+      // AdmissionEvidence from publish.ts. system_verified plus a passed
+      // independent check matches an imported admitted row.
       scoring_admission_evidence: {
         marking_provenance: 'system_verified' as const,
         verification: {
@@ -158,9 +143,7 @@ export async function seedContractCorpus(db: Db): Promise<void> {
   );
 }
 
-/**
- * 构建 registry v2 工件（snapshot_verified ×2 + question_asserted ×1）。
- */
+/** Two snapshot_verified bindings and one question_asserted. q-solo can only be the latter. */
 export function buildRehearsalRegistry(now = T0): RevisionRegistry {
   const entry = (
     questionId: string,
