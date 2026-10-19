@@ -124,16 +124,9 @@ async function subjectFromAssessment(
   db: Db,
   row: typeof event.$inferSelect,
 ): Promise<string | null> {
-  const revisionId = stringField(row.payload, 'revision_id');
-  let questionId = row.subject_kind === 'question' ? row.subject_id : '';
-  if (revisionId) {
-    const [revision] = await db
-      .select({ group_id: question_revision.group_id })
-      .from(question_revision)
-      .where(eq(question_revision.revision_id, revisionId))
-      .limit(1);
-    if (revision) questionId = revision.group_id;
-  }
+  const answeredPartId = row.subject_kind === 'question' ? row.subject_id : '';
+  const questionId =
+    answeredPartId || (await revisionGroupId(db, stringField(row.payload, 'revision_id')));
   if (!questionId) return null;
   const [item] = await db
     .select({ knowledge_ids: question.knowledge_ids })
@@ -144,6 +137,16 @@ async function subjectFromAssessment(
   if (knowledgeIds.length === 0) return null;
   const subjects = await batchResolveSubjectIds(db, [{ id: row.id, knowledge_ids: knowledgeIds }]);
   return subjects.get(row.id) ?? null;
+}
+
+async function revisionGroupId(db: Db, revisionId: string | null): Promise<string> {
+  if (!revisionId) return '';
+  const [revision] = await db
+    .select({ group_id: question_revision.group_id })
+    .from(question_revision)
+    .where(eq(question_revision.revision_id, revisionId))
+    .limit(1);
+  return revision?.group_id ?? '';
 }
 
 function referencedKnowledgeIds(payload: unknown): string[] {

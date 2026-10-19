@@ -24,14 +24,28 @@
 
 import type { Job } from 'pg-boss';
 import type { DispatchResult } from '@/capabilities/practice/public';
-import { dispatchPracticeSupplyTargets as dispatchSupplyTargets } from '@/capabilities/practice/public';
+import {
+  SUPPLY_DISPATCH_COOLDOWN_DAYS,
+  dispatchPracticeSupplyTarget,
+  dispatchPracticeSupplyTargets as dispatchSupplyTargets,
+  inFlightSupplyCount,
+} from '@/capabilities/practice/public';
+import {
+  buildCoverageEvidenceDemand,
+  evidenceDemandToTargetContext,
+} from '@/capabilities/practice/server/question-supply/evidence-demand';
 import { runInventoryShadowDualRead } from '@/capabilities/practice/server/question-supply/inventory-projection';
 import {
   type QuestionSupplyTarget,
+  computePriority,
   discoverSupplyTargets,
+  targetFingerprint,
 } from '@/capabilities/practice/server/question-supply/target-discovery';
+import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
-import { type ReturnStockGap, loadReturnStockGaps } from '@/kernel/read-models/return-stock';
+import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
+import { loadReturnStockGaps } from '@/kernel/read-models/return-stock';
+import { resolveSubjectProfile } from '@/subjects/profile';
 import { loadActivityTier } from '../server/activity-tier';
 import type {
   PlacementStarterRecoveryDeps,
@@ -52,8 +66,8 @@ type DepsOverride = {
    */
   maxPerRun?: number;
   /**
-   * 空闲 / 回来唤醒：只派仍缺库存的 frontier_zero 目标，按每个目标自己的缺口数量。
-   * 不用 maxPerRun 把目标个数截断。
+   * 空闲 / 回来唤醒：按回归库存缺口派题。数量是补到 RETURN_STOCK 还缺的题，
+   * 不走发现器的深度阈值，也不用 maxPerRun 截断。
    */
   returnStock?: boolean;
   /** YUK-761 — 尾部 placement starter 恢复清扫器的注入（DB 测试可注入 fake dispatch / now）。 */
@@ -136,34 +150,123 @@ function emptyTally(discovered = 0): SupplyTally {
   };
 }
 
-/** 每个 frontier_zero 目标只补自己还缺的题数，补满该目标所属缺口即停。 */
-function selectReturnStockTargets(
-  targets: readonly QuestionSupplyTarget[],
-  gaps: readonly ReturnStockGap[],
-): QuestionSupplyTarget[] {
-  const remaining = gaps.map((gap) => ({
-    ids: new Set(gap.knowledgeIds),
-    missing: gap.missing,
-  }));
-  const selected: QuestionSupplyTarget[] = [];
-  for (const target of targets) {
-    if (target.gapKind !== 'frontier_zero') continue;
-    const knowledgeId = target.knowledgeIds[0];
-    if (!knowledgeId) continue;
-    const hits = remaining.filter((gap) => gap.ids.has(knowledgeId) && gap.missing > 0);
-    if (hits.length === 0) continue;
-    const room = Math.max(...hits.map((gap) => gap.missing));
-    const count = Math.min(target.desiredCount, room);
-    if (count <= 0) continue;
-    selected.push(count === target.desiredCount ? target : { ...target, desiredCount: count });
-    for (const gap of hits) gap.missing -= count;
+function returnStockTarget(
+  subjectId: string,
+  knowledgeId: string,
+  missing: number,
+): QuestionSupplyTarget {
+  // 与普通覆盖补题共用指纹：在途的那次派发算承诺；死掉的冷却不占缺口，改派下一个知识点。
+  const fingerprint = targetFingerprint({
+    subjectId,
+    knowledgeIds: [knowledgeId],
+    kind: 'any',
+    difficultyBand: 'near',
+    gapKind: 'frontier_zero',
+    minSourceTier: 2,
+  });
+  const demand = buildCoverageEvidenceDemand({
+    subjectId,
+    knowledgeIds: [knowledgeId],
+    statement: `return stock for knowledge ${knowledgeId} is short by ${missing}`,
+    eligibleCount: missing,
+  });
+  return {
+    id: newId(),
+    fingerprint,
+    gapKind: 'frontier_zero',
+    subjectId,
+    knowledgeIds: [knowledgeId],
+    kind: 'any',
+    difficultyBand: 'near',
+    desiredCount: missing,
+    minSourceTier: 2,
+    routePreference: [],
+    priority: computePriority('frontier_zero', 0),
+    reason: `return stock for knowledge ${knowledgeId} is short by ${missing}`,
+    constraints: {},
+    context: evidenceDemandToTargetContext(demand),
+  };
+}
+
+async function subjectForReturnStock(
+  db: Db,
+  gapSubjectId: string | null,
+  knowledgeId: string,
+): Promise<string | null> {
+  if (gapSubjectId) return gapSubjectId;
+  try {
+    return resolveSubjectProfile(await getEffectiveDomain(db, knowledgeId)).id;
+  } catch (err) {
+    console.warn(
+      `[question_supply_nightly] return stock has no subject for knowledge ${knowledgeId}`,
+      err,
+    );
+    return null;
   }
-  return selected;
+}
+
+function failedReturnStockDispatch(target: QuestionSupplyTarget, err: unknown): DispatchResult {
+  const message = err instanceof Error ? err.message : String(err);
+  return {
+    targetId: target.id,
+    fingerprint: target.fingerprint,
+    routePlan: [],
+    chosenRoute: null,
+    status: 'failed',
+    jobId: null,
+    stopCondition: `dispatchSupplyTarget threw: ${message}`,
+    reason: target.reason,
+  };
+}
+
+async function returnStockCovered(
+  db: Db,
+  result: DispatchResult,
+  requested: number,
+  cooldownDays: number,
+): Promise<number> {
+  if (result.status === 'dispatched') return requested;
+  if (result.status !== 'skipped' || !result.stopCondition.startsWith('cooldown:')) return 0;
+  const live = await inFlightSupplyCount(db, result.fingerprint, cooldownDays);
+  return Math.min(requested, live);
+}
+
+async function dispatchReturnStock(db: Db, deps: DepsOverride): Promise<SupplyTally> {
+  const gaps = await loadReturnStockGaps(db);
+  if (gaps.length === 0) return emptyTally();
+  const cooldownDays = deps.dispatchDeps?.cooldownDays ?? SUPPLY_DISPATCH_COOLDOWN_DAYS;
+  const results: DispatchResult[] = [];
+  for (const gap of gaps) {
+    let remaining = gap.missing;
+    for (const knowledgeId of [...new Set(gap.knowledgeIds)].sort()) {
+      if (remaining <= 0) break;
+      const subjectId = await subjectForReturnStock(db, gap.subjectId, knowledgeId);
+      if (!subjectId) continue;
+      const target = returnStockTarget(subjectId, knowledgeId, remaining);
+      let result: DispatchResult;
+      try {
+        result = await dispatchPracticeSupplyTarget(db, target, deps.dispatchDeps);
+      } catch (err) {
+        console.error(
+          `[question_supply_nightly] return stock dispatch threw for ${target.fingerprint}`,
+          err,
+        );
+        result = failedReturnStockDispatch(target, err);
+      }
+      results.push(result);
+      remaining -= await returnStockCovered(db, result, remaining, cooldownDays);
+    }
+  }
+  if (results.length === 0) {
+    console.warn(
+      '[question_supply_nightly] return stock is short but no knowledge id could be dispatched',
+    );
+  }
+  return tallyByStatus(results, results.length);
 }
 
 async function runSupplyDiscoveryAndDispatch(db: Db, deps: DepsOverride): Promise<SupplyTally> {
-  const gaps = deps.returnStock ? await loadReturnStockGaps(db) : [];
-  if (deps.returnStock && gaps.length === 0) return emptyTally();
+  if (deps.returnStock) return dispatchReturnStock(db, deps);
   const targets = await discoverSupplyTargets(db, undefined, {
     observeInventory: async (input, currentTargets) => {
       await runInventoryShadowDualRead(db, input, currentTargets);
@@ -172,10 +275,7 @@ async function runSupplyDiscoveryAndDispatch(db: Db, deps: DepsOverride): Promis
   if (targets.length === 0) return emptyTally();
   // F3 per-run 硬顶：targets 已按 priority 降序（target-discovery.ts），slice top-N 即派最高
   // 优先级的 N 个，其余留下轮（截掉的目标不 dispatch ⇒ 无 fingerprint 落库 ⇒ 无 cooldown 副作用）。
-  // 空闲库存不走这道截断，改按每个目标还缺几题派。
-  const dispatchTargets = deps.returnStock
-    ? selectReturnStockTargets(targets, gaps)
-    : targets.slice(0, deps.maxPerRun ?? DEFAULT_MAX_PER_RUN);
+  const dispatchTargets = targets.slice(0, deps.maxPerRun ?? DEFAULT_MAX_PER_RUN);
   if (dispatchTargets.length === 0) return emptyTally(targets.length);
   const results = await dispatchSupplyTargets(db, dispatchTargets, deps.dispatchDeps);
   return tallyByStatus(results, targets.length);
