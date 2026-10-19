@@ -34,12 +34,20 @@ zx7n8 保留旧 @1/@2 unknown），其余 42 无当前匹配 paid 证据、不�
    published-digest 绑定（#1784 机制不变）。链：付费行 → receipt → resolved →
    canonical 发布摘要 → revision，一一对应。
 
-3. **presentation 保留。** `resolved` 不带展示层：冻结输入含 `presentation`（YUK-1497）时
-   原样挂到 resolved 文档上并对**组合**重算 canonical seal —— 绝不静默丢层；
-   publisher 的 `validatePresentation` + 绑定校验对非法嫁接 fail-closed（receipt 保留、
-   记录 `notePaidEffectApplicationFailure`，不吞）。绑定的 `presentation_source`
-   （`resolved`/`carried_from_base`/`none`）如实记录 receipt resolved 摘要与最终发布
-   摘要的差别。
+3. **presentation 三级链。** `resolved` 不带展示层 —— 副本实测（50 题 apply 成功但
+   `issueAssessment` 全拒 `not_admitted:no_input_renderer`，select/blank 槽无展示层输入
+   积木绑定即不可发）证明展示层是 admitted 发布的法律要件。发布文档按序取：
+   ① resolved 自带 presentation —— 原样保留，先 `validatePresentation` 对**resolved 层**
+   校验（坏显式布局 blocked，绝不悄悄替换）；② 冻结输入 presentation —— 原样携带同样
+   校验；③ 两者皆无时 `defaultPresentation` —— 与统一 submit 闸（
+   `src/server/questions/submit-question.ts presentationForDraft`）同一确定性构造器：
+   plain select→`option_list`、blank→`blank_input`、coordinated/gap 变体、unit/slot 逐槽
+   绑定；自校验且对 blocks-v1 表达不了的形状（旧槽型、无计分单元、自定义 axes）返回
+   null ⇒ `presentation_default_inexpressible` blocked，receipt 保留不再算 admitted 成功。
+   组合后对全部五层重算 canonical seal；绑定 `presentation_source` 如实记录
+   `resolved`/`carried_from_base`/`deterministic_default`/`none` 四种来源（`none` 仅当
+   槽集不含 select/blank —— 即服务门 `BLOCK_INPUT_SLOT_KINDS` 与槽集不相交、原生可渲染
+   时合法；含 select/blank 而表达不了的一律 blocked）。
 
 4. **终端判定消费者绑定修正。** 两处「该 base 是否已有终局核验」判定从
    `evidence.base_contract_digest`（= 付费输入摘要；resolved 发布后永远不等发布摘要）
@@ -86,6 +94,30 @@ zx7n8 保留旧 @1/@2 unknown），其余 42 无当前匹配 paid 证据、不�
      行（如被 @3 取代的旧 @1/@2）不阻塞但逐条记入回执 `retained_unknown_rows`，
      永不消费、永不改写。
 
+## 追源：resolved 为何没有 presentation（YUK-1568 第三片 follow-up 清单）
+
+直接缺口：`run-admission.ts`（~L594-605）`resolvedContract` 仅装配
+structure/response_spec/scoring_basis/execution_plan 四层；`ResolvedAdmissionContract`
+与 `definition-from-contract.ts` 的准入定义全程不携带 presentation。
+
+上游缺口（本 PR 不迁）：统一 submit 闸 `submit-question.ts` 的
+`presentationForDraft`（L374 起，显式优先否则 `defaultPresentation`）是唯一展示层
+合成点；所有 `publishQuestionGroupFromRow` 行路径生产者都直通、不合成——该 50
+题的 input 本身无 presentation（web_sourced/jyeoo 草稿走
+`sourced-draft-insert.ts:204/231`，正是 from-row 路径）。同类裸发布口：
+`quiz_gen.ts:1540`、`quiz_verify.ts:958/1022`、`source_verify.ts:663/951`、
+`verify-and-promote.ts:309`、`serving-actions.ts:324/551`、`proposal-appliers.ts`
+×3、`intervention-diagnostics.ts:688`、`probe-lifecycle.ts:225`，及 ingestion 侧
+`auto-enroll.ts:700`、`assessment-capture.ts:390`、`legacy-record-appliers.ts:394`、
+`mistakes.ts:122`、`image-candidate-accept.ts:1006`、`seed-synthetic.ts`。
+
+第三片候选动作（待 coordination 批准，不在本 PR）：
+- 将 `defaultPresentation` 合成收敛进 `publishQuestionGroup`/`publishQuestionGroupFromRow`
+  seam（或让 from-row 先走 typed submit/edit 路径）——一次消除所有裸发布口；
+- `ResolvedAdmissionContract`/`definition-from-contract` 声明 presentation 槽位
+  （resolved 可自带展示层进入第 ① 级）；
+- 存量无展示层 revision 的盘点与处置（属 manifest/协调线范围）。
+
 ## 边界
 
 - 不改 core 比较器、模型、生产端、UI、测试、迁移、`paid_effect` 状态协议。
@@ -96,7 +128,18 @@ zx7n8 保留旧 @1/@2 unknown），其余 42 无当前匹配 paid 证据、不�
   42 题无当前匹配 paid 证据（41 旧 quiz_verify@1 + 1 旧 source_verify@1 直 admitted，
   属 1507 接续的独立来源），不在本 lane。manifest 名单由父持，不落库入本仓库。
 
+## 副本实测记录（协调线，真实失败已封存清理）
+
+- restored copy 上：50 plan ready / 50 apply repaired / 复跑 50 `already_repaired`
+  （幂等 + 四表事件字节不变、172 paid 行与 jobs/schedules 完全不变）—— repair 机制
+  本身验证通过。
+- 但逐题 `issueAssessment` 全部 `not_admitted:no_input_renderer` —— 该 50 的 input 与
+  resolved 均无 presentation，本次 follow-up 以 `deterministic_default` 补上。
+- 证据：
+  `/Volumes/YukovalSBak/yukoval-projects/tlp-local-prod-20260907.sjUaCU/deployment-20261019-yuk1547-p0-restored-copy/{issuance-results.json,repair-apply/summary.json}`。
+- TEST 未补发、未部署；serving gate 未放松。
+
 ## 本 PR 未验证项（NOT_RUN）
 
 - 仅过 typecheck/lint/build 与代码走读；未连接任何 DB、未跑 provider/付费、未部署。
-- repair 的 apply 路径、幂等跳过、servable-after 数值未经真实运行。
+- 带 `deterministic_default` 的发布路径、servable-after 复测需协调线在副本上重跑。
