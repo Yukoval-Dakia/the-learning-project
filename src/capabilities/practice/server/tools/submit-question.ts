@@ -31,7 +31,13 @@ import { and, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import type { SendOptions } from 'pg-boss';
 import { z } from 'zod';
 import { AgentRef } from '@/core/schema/business';
-import { SourcedQuestion } from '@/core/schema/sourcing';
+import {
+  DifficultyEvidence,
+  buildProducerDifficultyEvidence,
+} from '@/core/schema/difficulty-evidence';
+import type { WebSourcedProvenanceT } from '@/core/schema/provenance';
+import { QuestionDraftDocument, type QuestionDraftDocumentT } from '@/core/schema/question-draft';
+import { SourcedQuestion, type SourcedQuestionT } from '@/core/schema/sourcing';
 import { FigureRef, StructuredQuestion } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import { knowledge, question, source_asset } from '@/db/schema';
@@ -51,7 +57,10 @@ import {
   canonicalJson,
   claimSubmitRequestId,
   insertSourcedDraft,
+  parseDraftRef,
   publishQuestionGroupFromRow,
+  sanitizeSourcedMarkup,
+  saveDraftEdit,
   submitDraftQuestion,
   writeSubmitReceiptEvent,
 } from '@/server/questions/submit-question';
@@ -73,7 +82,10 @@ export {
 
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { embedQuestionTextForIngest, questionEmbedStamp } from '../../jobs/embed_backfill';
-import { SupplyTraceV1 } from '../question-supply/evidence-demand';
+import {
+  SupplyTraceV1,
+  withSupplyTraceDifficultyEvidence,
+} from '../question-supply/evidence-demand';
 import {
   claimHttpSourceDuplicate,
   findVectorNearDuplicate,
@@ -450,6 +462,21 @@ async function runCandidateSubmit(
     console.error('[submit_question] vector near-dup abstained:', err);
   }
 
+  // YUK-1568 S3 — 携带 typed 声明（parts/units）的候选走统一草稿链
+  // （saveDraftEdit → submitDraftQuestion），不再 flat insert + row publish；
+  // 上面的 KC 活体/host/exact/source-URL/near/vector 判重原样先跑。
+  // 未声明候选照旧旧 flat 路径（insertSourcedDraft 的 live 无声明 caller）。
+  const declaredParts = candidate.question.parts;
+  if (declaredParts != null && declaredParts.length > 0) {
+    return runDeclaredCandidateSubmit(ctx, input, {
+      knowledgeIds,
+      canonicalHash,
+      vectorNear,
+      ingestVector,
+      now,
+    });
+  }
+
   const questionId = createId();
   const whitelist = (resolveSubjectProfile(input.subject_id).sourceWhitelist ?? []) as string[];
   const routeMetadata =
@@ -644,6 +671,393 @@ async function runCandidateSubmit(
   };
 }
 
+// ── YUK-1568 S3：已声明候选 → 统一草稿链（producer→candidate→draft→submit→revision） ──
+//
+// 携带 parts/units 声明的候选不再经 insertSourcedDraft flat insert +
+// publishQuestionGroupFromRow，而是：
+//   candidate.question.parts → v2 草稿文档 → saveDraftEdit（草稿创建）
+//   → submitDraftQuestion（单一发布 seam；同一事务铸 revision + 写行 +
+//     durable source_verify intent）。
+// KC 活体 / host / exact hash / source-URL / near-dup / vector 判重在
+// runCandidateSubmit 里与旧路径同序位先跑；本函数只管声明文档的建存与提交。
+// 事务边界如实分段（与领域方法既有边界一致，不谎报跨步原子）：
+//   tx1  raced source-URL claim（release 终态草稿）
+//   tx2  saveDraftEdit 内部：request claim + block + create event + 回执
+//   tx3  submitDraftQuestion 内部：request claim + block 锁 + 契约转换 +
+//        admission 检查 + question 行 + publish + verify intent + 回执
+//   tx4  （可选）向量戳投影更新——只碰 embed_* 列，失败由 nightly backfill 兜底
+//   tx5  executeCandidateSubmit 外层：候选级回执
+// request 派生身份固定为 `${requestId}:save` / `${requestId}:submit`：崩溃
+// 重试时 save 重放同一 draft_ref（不铸新 draft）、submit 幂等重放回执
+// （不重复发布）、外层 requestId 幂等照旧。
+
+/** 声明 → v2 草稿文档。内容文本过 ingest markup 清洗（与旧 flat 入库同口径；
+ *  确定性、不改语义）；答案键（accepted/equivalent_forms）同口径清洗——旧
+ *  flat 路径的 reference_md 本就经此清洗后才作判分输入。producer 声明的
+ *  结构/槽位/id/answer_shape/blank_order 逐字保留，不重铸不推断。 */
+function declaredCandidateDocument(
+  q: SourcedQuestionT,
+  sourceRoute: 'jyeoo_fetch' | 'sourcing_web',
+  knowledgeIds: string[],
+): { document: QuestionDraftDocumentT; markupSanitized: boolean } {
+  let markupSanitized = false;
+  const clean = (text: string): string => {
+    const next = sanitizeSourcedMarkup(text);
+    if (next !== text) markupSanitized = true;
+    return next;
+  };
+  const parts = (q.parts ?? []).map((part) => ({
+    ...part,
+    prompt_md: clean(part.prompt_md),
+    ...(part.explanation_md != null ? { explanation_md: clean(part.explanation_md) } : {}),
+    units: part.units.map((unit) => ({
+      ...unit,
+      ...(unit.reference_md != null ? { reference_md: clean(unit.reference_md) } : {}),
+      ...(unit.key?.kind === 'blank'
+        ? {
+            key:
+              unit.key.key.kind === 'text'
+                ? {
+                    ...unit.key,
+                    key: { ...unit.key.key, accepted: unit.key.key.accepted.map(clean) },
+                  }
+                : unit.key.key.equivalent_forms != null
+                  ? {
+                      ...unit.key,
+                      key: {
+                        ...unit.key.key,
+                        equivalent_forms: unit.key.key.equivalent_forms.map(clean),
+                      },
+                    }
+                  : unit.key,
+          }
+        : {}),
+      response_spec:
+        unit.response_spec.kind === 'select'
+          ? {
+              ...unit.response_spec,
+              items: unit.response_spec.items.map((item) => ({
+                ...item,
+                ...(item.label_md != null ? { label_md: clean(item.label_md) } : {}),
+              })),
+              ...(unit.response_spec.text != null ? { text: clean(unit.response_spec.text) } : {}),
+            }
+          : unit.response_spec,
+      ...(unit.rubric != null
+        ? {
+            rubric: {
+              ...unit.rubric,
+              ...(unit.rubric.guidance_md != null
+                ? { guidance_md: clean(unit.rubric.guidance_md) }
+                : {}),
+              criteria: unit.rubric.criteria.map((criterion) => ({
+                ...criterion,
+                ...(criterion.statement_md != null
+                  ? { statement_md: clean(criterion.statement_md) }
+                  : {}),
+              })),
+            },
+          }
+        : {}),
+    })),
+  }));
+  const document = QuestionDraftDocument.parse({
+    schema_version: 2,
+    parts,
+    materials: [],
+    knowledge_ids: knowledgeIds,
+    metadata: {},
+    source: { kind: sourceRoute, ref: q.source_url, note: q.source_title },
+  });
+  return { document, markupSanitized };
+}
+
+interface DeclaredCandidateRun {
+  knowledgeIds: string[];
+  canonicalHash: string;
+  vectorNear: { id: string; similarity: number } | null;
+  ingestVector: number[] | null;
+  now: Date;
+}
+
+/**
+ * 已声明候选的 typed commit。来源核验走共享 seam 的 durable intent（source
+ * 声明在文档里 kind=jyeoo_fetch/sourcing_web → submit 内嵌写
+ * verify_dispatch_intent + 提交后 dispatch）；web_sourced provenance、flat
+ * dedup 指纹、路由 created_by/difficulty 经 `sourced` 系统注入与发布同事务
+ * 落行——source_verify 的确定性来源核对依赖 web_sourced.extract。
+ */
+async function runDeclaredCandidateSubmit(
+  ctx: Pick<ToolContext, 'db' | 'sessionId' | 'taskRunId' | 'causedByEventId'>,
+  input: ParsedInput & { candidate: NonNullable<ParsedInput['candidate']> },
+  run: DeclaredCandidateRun,
+): Promise<Output> {
+  const { db } = ctx;
+  const { candidate } = input;
+  const q = candidate.question;
+  const requestId = input.request_id;
+  const { knowledgeIds, canonicalHash, vectorNear, ingestVector, now } = run;
+  const routeConfig = COMMIT_ROUTE_CONFIG[input.source_route];
+
+  // typed 路径本片不承载图片/figure 资产绑定（图片候选仍在旧 flat 写口）；
+  // 声明+资产同现是 producer/调用方组合错误——显式冲突，不静默丢声明或资产。
+  if (
+    (candidate.image_refs?.length ?? 0) > 0 ||
+    candidate.figures != null ||
+    candidate.structured != null ||
+    candidate.staged_asset_ids.length > 0
+  ) {
+    return {
+      status: 'conflict',
+      reason: 'invalid_request',
+      detail:
+        'declared parts with staged image/figure assets are not supported by the typed candidate submit',
+      request_id: requestId,
+    };
+  }
+
+  const whitelist = (resolveSubjectProfile(input.subject_id).sourceWhitelist ?? []) as string[];
+  const webSourced: WebSourcedProvenanceT = {
+    url: q.source_url,
+    title: q.source_title,
+    fetched_at: now.toISOString(),
+    whitelist_match: matchesWhitelist(q.source_url, whitelist),
+    ...(q.extraction_hash ? { extraction_hash: q.extraction_hash } : {}),
+    extract: q.extract,
+  };
+  const declaredEvidence =
+    q.difficulty_evidence ?? buildProducerDifficultyEvidence(q.difficulty, input.source_route, now);
+  const difficultyEvidence = DifficultyEvidence.parse({
+    ...declaredEvidence,
+    observed_at: declaredEvidence.observed_at ?? now.toISOString(),
+    source_route: declaredEvidence.source_route ?? input.source_route,
+  });
+  const supplyTrace = input.supply_trace
+    ? withSupplyTraceDifficultyEvidence(input.supply_trace, difficultyEvidence)
+    : undefined;
+
+  // 第二道网址判重（release 终态草稿 claim）：与旧 persist tx 同序位；typed
+  // 链里是 save 前的独立小事务——release 已消费而 save/submit 失败时，重试
+  // 在同 request 身份下重跑本 claim 后继续（不会重复发布）。
+  const raced = await db.transaction((tx) =>
+    claimHttpSourceDuplicate(tx, {
+      sourceUrl: q.source_url,
+      knowledgeIds,
+      actorRef: routeConfig.mergeActorRef,
+      taskRunId: ctx.taskRunId,
+      now,
+      onTerminal: 'release',
+    }),
+  );
+  if (raced != null) {
+    await cleanupStagedForRejected(db, candidate.staged_asset_ids);
+    return {
+      status: 'conflict',
+      reason: 'duplicate_source',
+      detail: `同一来源网址命中既有题 ${raced.existingQuestionId}；目标 KC 已并入`,
+      existing_question_id: raced.existingQuestionId,
+      request_id: requestId,
+    };
+  }
+
+  // 向量近重 hold（与旧 flat 链同款：hit 存在且邻居仍可见 → 记 hold 待
+  // source_verify 复核；可见性谓词同 ingest-dedup 的 visibleSourceRow）。
+  const hold =
+    vectorNear != null && (await visibleSourceNeighbor(db, vectorNear.id))
+      ? vectorNearHoldMetadata(vectorNear)
+      : null;
+
+  const { document, markupSanitized } = declaredCandidateDocument(
+    q,
+    input.source_route,
+    knowledgeIds,
+  );
+
+  // ---- save（草稿创建；领域方法内部 advisory lock + request 幂等回执） ----
+  const save = await saveDraftEdit(db, {
+    input: {
+      action: 'save',
+      document,
+      request_id: `${requestId}:save`,
+    },
+    ctx: {
+      actorRef: routeConfig.mergeActorRef,
+      actorKind: 'agent',
+      taskRunId: ctx.taskRunId,
+      sessionId: ctx.sessionId ?? null,
+      now,
+    },
+  });
+  if (save.status !== 'saved' && save.status !== 'noop') {
+    await cleanupStagedForRejected(db, candidate.staged_asset_ids);
+    if (save.status === 'conflict') {
+      return {
+        status: 'conflict',
+        reason: save.reason,
+        detail: save.detail,
+        request_id: requestId,
+      };
+    }
+    if (save.status === 'rejected') {
+      // 声明校验/未决失败 = 候选缺陷：显式冲突拒绝（附逐 unit 原因），
+      // 不回退旧 flat 解释器补全。
+      return {
+        status: 'conflict',
+        reason: 'invalid_declaration',
+        detail: save.reason,
+        issues: save.issues,
+        request_id: requestId,
+      };
+    }
+    return {
+      status: 'conflict',
+      reason: 'invalid_request',
+      detail: `unexpected draft save status '${save.status}'`,
+      request_id: requestId,
+    };
+  }
+
+  // ---- submit（唯一发布 seam；durable verify intent 由 seam 按 source.kind 写） ----
+  const submit = await submitDraftQuestion(
+    db,
+    {
+      draft_ref: save.draft_ref,
+      expected_draft_version: save.draft_version,
+      expected_revision: null,
+      request_id: `${requestId}:submit`,
+      ...(input.availability != null ? { availability: input.availability } : {}),
+      sourced: {
+        canonical_content_hash: canonicalHash,
+        created_by: SOURCED_CREATED_BY_BY_ROUTE[input.source_route],
+        difficulty: q.difficulty,
+        metadata: {
+          web_sourced: webSourced,
+          source_ref_kind: 'url',
+          difficulty_evidence: difficultyEvidence,
+          prompt_image_refs: candidate.image_refs ?? [],
+          knowledge_hints: candidate.knowledge_hints,
+          attribution_state: input.attribution_state,
+          ...(input.source_route === 'jyeoo_fetch'
+            ? { jyeoo: { id: candidate.source_id, candidate_id: candidate.candidate_id } }
+            : { sourcing: { candidate_id: candidate.candidate_id } }),
+          ...(input.demand_id ? { demand_id: input.demand_id } : {}),
+          ...(supplyTrace ? { supply_trace: supplyTrace } : {}),
+          ...(hold ?? {}),
+          ...(markupSanitized ? { sourced_markup_sanitized: true } : {}),
+        },
+        ...(supplyTrace ? { supply_trace: supplyTrace } : {}),
+      },
+    },
+    {
+      actorRef: routeConfig.mergeActorRef,
+      actorKind: 'agent',
+      sessionId: ctx.sessionId ?? null,
+      taskRunId: ctx.taskRunId,
+      causedByEventId: ctx.causedByEventId ?? null,
+      now,
+    },
+  );
+
+  if (submit.status === 'conflict') {
+    await cleanupStagedForRejected(db, candidate.staged_asset_ids);
+    return {
+      status: 'conflict',
+      reason: submit.reason,
+      ...(submit.detail != null ? { detail: submit.detail } : {}),
+      ...(submit.existing_question_id != null
+        ? { existing_question_id: submit.existing_question_id }
+        : {}),
+      request_id: requestId,
+    };
+  }
+  if ('published' in submit) {
+    // 声明缺项/未决（缺 key/分值/槽位/material）→ 不铸 revision，草稿保留
+    // 可修；候选如实 withheld，不回退旧 flat 解释器补全。
+    await cleanupStagedForRejected(db, candidate.staged_asset_ids);
+    return {
+      status: 'withheld',
+      reason: 'draft_unpublishable',
+      detail: submit.detail,
+      ...(submit.issues != null ? { issues: submit.issues } : {}),
+      current_draft_ref: save.draft_ref,
+      current_draft_version: save.draft_version,
+      request_id: requestId,
+    };
+  }
+  const questionId = submit.question_id;
+
+  // 向量戳投影更新（best-effort，独立事务）：只写 embed_* 列——内容与行内
+  // 投影文本对齐后 stamp；未命中/失败由 nightly embed_backfill 兜底，与旧
+  // 路径 ingestVector=null 的 abstain 语义等价。
+  if (ingestVector != null) {
+    try {
+      const [stored] = await db
+        .select({
+          prompt_md: question.prompt_md,
+          reference_md: question.reference_md,
+          choices_md: question.choices_md,
+        })
+        .from(question)
+        .where(eq(question.id, questionId))
+        .limit(1);
+      const stamp = stored != null ? questionEmbedStamp(stored, ingestVector) : null;
+      if (stamp != null) {
+        await db
+          .update(question)
+          .set({
+            embedding: stamp.embedding,
+            embed_model: stamp.embed_model,
+            embed_version: stamp.embed_version,
+            embed_content_hash: stamp.embed_content_hash,
+            updated_at: now,
+          })
+          .where(eq(question.id, questionId));
+      }
+    } catch (err) {
+      console.warn('[submit_question] declared-path embed stamp skipped:', err);
+    }
+  }
+
+  try {
+    await writeEvent(db, {
+      id: createId(),
+      session_id: ctx.sessionId ?? null,
+      actor_kind: 'agent',
+      actor_ref: 'submit_question',
+      action: 'experimental:submit_question',
+      subject_kind: 'question',
+      subject_id: questionId,
+      outcome: 'success',
+      payload: {
+        candidate_id: candidate.candidate_id,
+        source_id: candidate.source_id,
+        source_route: input.source_route,
+        knowledge_ids: knowledgeIds,
+        attribution_state: input.attribution_state,
+        verify_enqueued: submit.verify_enqueued === true,
+        difficulty_evidence: difficultyEvidence,
+        draft_block_id: parseDraftRef(save.draft_ref)?.blockId ?? save.draft_ref,
+        ...(input.demand_id ? { demand_id: input.demand_id } : {}),
+        ...(input.supply_trace ? { supply_trace: input.supply_trace } : {}),
+      },
+      caused_by_event_id: ctx.causedByEventId ?? null,
+      task_run_id: ctx.taskRunId,
+      cost_micro_usd: null,
+      created_at: now,
+    });
+  } catch (eventErr) {
+    console.error('[submit_question] canary event write failed; commit stands:', eventErr);
+  }
+
+  return {
+    status: 'pending',
+    question_id: questionId,
+    verify_enqueued: submit.verify_enqueued === true,
+    difficulty_evidence: difficultyEvidence,
+    request_id: input.request_id,
+  };
+}
+
 /** 被拒/落选候选的 staged 资产即时回收。 */
 async function cleanupStagedForRejected(db: Db, stagedAssetIds: string[]): Promise<void> {
   if (stagedAssetIds.length === 0) return;
@@ -729,6 +1143,10 @@ export async function executeStoreSourcedQuestion(
       difficulty_evidence: out.difficulty_evidence,
     };
   }
+  // reason 的运行时值如实透传（typed 声明路径可能产生 draft_unpublishable /
+  // invalid_declaration / *_cas 等五元组之外的拒绝码；该 as 既有放宽先例
+  // ——'request_id_reused'/'missing_subject_id' 一直这样流过）。真实 reason
+  // 同时进 detail，供 tally/轨迹辨认。
   return {
     status: 'rejected',
     reason: (out.reason ?? 'duplicate_exact') as
@@ -795,7 +1213,7 @@ async function execute(ctx: ToolContext, raw: ExecInput): Promise<Output> {
 export const submitQuestionTool: DomainTool<ExecInput, Output> = {
   name: 'submit_question',
   description:
-    '统一题目提交闸。draft_ref 提交 v2 草稿文档（或 legacy 适配块）→ 契约四层 → publishQuestionGroup 单一发布 seam；编辑已发布题叠加新 revision 不覆盖原版。来源 generated/adapted/owner_material/photo_ingest/jyeoo_fetch/sourcing_web/manual — 非 fetch 来源用可复现内容指纹，绝不伪造 extraction_hash。也可提交 jyeoo_fetch/sourcing_web 候选（原 store_sourced_question 语义：dedup/KC 活体/verify outbox）。返回 admitted/withheld/conflict/pending + 逐 unit 判分准入原因。request_id 必填幂等；conflict 不重试原请求。',
+    '统一题目提交闸。draft_ref 提交 v2 草稿文档（或 legacy 适配块）→ 契约四层 → publishQuestionGroup 单一发布 seam；编辑已发布题叠加新 revision 不覆盖原版。来源 generated/adapted/owner_material/photo_ingest/jyeoo_fetch/sourcing_web/manual — 非 fetch 来源用可复现内容指纹，绝不伪造 extraction_hash。也可提交 jyeoo_fetch/sourcing_web 候选（原 store_sourced_question 语义：dedup/KC 活体/verify outbox）；带 typed parts/units 声明的候选改走统一草稿链 saveDraftEdit→submitDraftQuestion（未声明照旧 flat 路径）。返回 admitted/withheld/conflict/pending + 逐 unit 判分准入原因。request_id 必填幂等；conflict 不重试原请求。',
   effect: 'write',
   inputSchema,
   outputSchema,

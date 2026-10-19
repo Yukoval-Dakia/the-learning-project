@@ -37,7 +37,7 @@ import { publishQuestionGroup, publishQuestionGroupFromRow } from '@/server/ques
 export { publishQuestionGroup, publishQuestionGroupFromRow };
 
 import { type RunTaskFn, runQuizVerify } from '../../jobs/quiz_verify';
-import { runSourceVerify } from '../../jobs/source_verify';
+import { publishVerifyLifecycleUpdate, runSourceVerify } from '../../jobs/source_verify';
 import { SYNTHETIC_SUBJECT_ROOT_RE } from '../placement-scope';
 import { lockPlacementSupplyScopes } from '../question-supply/placement-supply-lock';
 
@@ -306,7 +306,10 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
       // 决定，evidence 如实记录 —— D1：manual ≠ official）。
       // YUK-1045 — suspension:false 清 verify_hold：owner 复核通过即「同版复核
       // 通过」恢复路径（§3.3 表）；retraction_hold 恒保留。
-      await publishQuestionGroupFromRow(tx, {
+      // YUK-1568 P：已声明 revision 走冻结契约的 typed lifecycle 更新（未声明
+      // 组照旧行归一）；manual evidence 与 admitted 语义原样，声明 + admitted
+      // 仍过 publishQuestionGroup 的判分就绪闸（不可判声明 ⇒ 拒发回滚）。
+      await publishVerifyLifecycleUpdate(tx, {
         rootId: row.parent_question_id ?? questionId,
         admission: {
           state: 'admitted',

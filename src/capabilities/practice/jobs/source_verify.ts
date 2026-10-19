@@ -47,7 +47,7 @@ import {
 import { readDifficultyEvidenceFromMetadata } from '@/core/schema/difficulty-evidence';
 import { WebSourcedProvenance, deriveSourceTier } from '@/core/schema/provenance';
 import { toUnifiedVerifyResult } from '@/core/schema/verify-contract';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import {
   admitPaidEffectIntent,
   claimPaidEffectSend,
@@ -69,7 +69,15 @@ import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { type TaskTextResult, type TaskTextRunFn, aiAgentRef } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { getFsrsState, initialSchedulingState, upsertFsrsState } from '@/server/fsrs/state';
-import { publishQuestionGroup, publishQuestionGroupFromRow } from '@/server/questions/publisher';
+import {
+  type AdmissionVerificationWrite,
+  type PublishAdmission,
+  type PublishQuestionGroupResult,
+  type SuspensionUpdate,
+  loadQuestionGroupContractSnapshot,
+  publishQuestionGroup,
+  publishQuestionGroupFromRow,
+} from '@/server/questions/publisher';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
 import { normalizeToCanonicalKind } from '@/subjects/question-kind';
 import { resolveQuestionAdmissionPolicyId } from '../server/admission/run-admission';
@@ -161,6 +169,100 @@ export interface RunSourceVerifyParams {
 export interface RunSourceVerifyResult {
   status: SourceVerifyPerQuestionStatus;
   checks?: CheckOutcome[];
+}
+
+/**
+ * YUK-1568（第 3 片，S3 处置表 P 分支）—— verify/promote 生命周期维度更新
+ * （admission / suspension / verification / availability），不携内容变更。
+ *
+ * 当前 revision 携带答案声明（answer_shape/blank_order）时，row 归一不再是
+ * 内容权威（publishQuestionGroupFromRow 对这类组本就冲突抛错）：以冻结四层
+ * 契约为准走 typed publisher——expectedCurrentRevision 钉住快照声明
+ * revision、expectedAdmissionGeneration 钉住锁后 generation；同 digest ⇒
+ * 不铸新 revision、四层契约字节级保留；CAS 冲突或任何发布冲突一律抛错
+ * 回滚同事务（与 publishQuestionGroupFromRow 的 fail-closed 同款纪律，
+ * 不静默吞成 withheld 行写）。
+ *
+ * 未声明组照旧行归一发布（逐字走旧 seam）。来源核验通过只改
+ * admission/suspension/verification 维度——不授予 K1 admitted，不放宽
+ * 中央保护（admitted + 声明仍过 publishQuestionGroup 的判分就绪闸）。
+ */
+export async function publishVerifyLifecycleUpdate(
+  tx: Tx,
+  input: {
+    rootId: string;
+    admission: PublishAdmission;
+    availability?: 'general_pool' | 'container_only';
+    suspension?: SuspensionUpdate;
+    verification?: AdmissionVerificationWrite;
+    actorRef: string;
+    now: Date;
+  },
+): Promise<PublishQuestionGroupResult> {
+  const [supplied] = await tx
+    .select({ id: question.id, parentId: question.parent_question_id })
+    .from(question)
+    .where(eq(question.id, input.rootId))
+    .limit(1);
+  if (supplied == null) {
+    throw new Error(`publishVerifyLifecycleUpdate: root question '${input.rootId}' not found`);
+  }
+  const groupRootId = supplied.parentId ?? supplied.id;
+  const snapshot = await loadQuestionGroupContractSnapshot(tx, groupRootId);
+  if (snapshot.declaredRevisionId == null) {
+    return publishQuestionGroupFromRow(tx, {
+      rootId: groupRootId,
+      admission: input.admission,
+      ...(input.availability != null ? { availability: input.availability } : {}),
+      ...(input.suspension != null ? { suspension: input.suspension } : {}),
+      ...(input.verification != null ? { verification: input.verification } : {}),
+      actorRef: input.actorRef,
+      now: input.now,
+    });
+  }
+  const [lifecycle] = await tx
+    .select()
+    .from(question_group_lifecycle)
+    .where(eq(question_group_lifecycle.group_id, snapshot.rootId))
+    .for('update')
+    .limit(1);
+  const [rootRow] = await tx
+    .select({ source: question.source })
+    .from(question)
+    .where(eq(question.id, snapshot.rootId))
+    .limit(1);
+  const result = await publishQuestionGroup(tx, {
+    group_id: snapshot.rootId,
+    contract: {
+      structure: snapshot.contract.structure,
+      response_spec: snapshot.contract.response_spec,
+      scoring_basis: snapshot.contract.scoring_basis,
+      execution_plan: snapshot.contract.execution_plan,
+      ...(snapshot.contract.presentation != null
+        ? { presentation: snapshot.contract.presentation }
+        : {}),
+      integrity_digest: snapshot.contract.integrity_digest,
+    },
+    expectedCurrentRevision: snapshot.declaredRevisionId,
+    expectedAdmissionGeneration: lifecycle?.scoring_admission_generation ?? null,
+    availability:
+      input.availability ??
+      lifecycle?.availability ??
+      (rootRow?.source === 'web_sourced' || rootRow?.source === 'quiz_gen'
+        ? QUESTION_AVAILABILITY.GENERAL_POOL
+        : QUESTION_AVAILABILITY.CONTAINER_ONLY),
+    admission: input.admission,
+    ...(input.suspension != null ? { suspension: input.suspension } : {}),
+    ...(input.verification != null ? { verification: input.verification } : {}),
+    actorRef: input.actorRef,
+    now: input.now,
+  });
+  if (result.status === 'conflict') {
+    throw new Error(
+      `publishVerifyLifecycleUpdate: unexpected ${result.reason} conflict for declared group '${snapshot.rootId}' (revision raced during verify lifecycle update)`,
+    );
+  }
+  return result;
 }
 
 // ---------- deterministic checks ----------
@@ -667,7 +769,9 @@ export async function runSourceVerify(
               .update(question)
               .set({ draft_status: LEGACY_DRAFT_STATUS.DRAFT, updated_at: new Date() })
               .where(eq(question.id, questionId));
-            await publishQuestionGroupFromRow(suspendTx, {
+            // YUK-1568 P：已声明 revision 走冻结契约的 typed lifecycle 更新，
+            // 未声明组照旧行归一（helper 内部分派，fail-closed 不变）。
+            await publishVerifyLifecycleUpdate(suspendTx, {
               rootId: groupRootId,
               admission: {
                 state: SCORING_ADMISSION_STATE.WITHHELD,
@@ -1002,7 +1106,9 @@ export async function runSourceVerify(
           }
         }
         if (keptIndependentAdmissionRevisionId == null) {
-          await publishQuestionGroupFromRow(tx, {
+          // YUK-1568 P：正向 promote 同样只翻生命周期维度；已声明 revision
+          // 保留冻结契约（不铸新 revision、不丢声明、不因核验通过而 admitted）。
+          await publishVerifyLifecycleUpdate(tx, {
             rootId: groupRootId,
             admission: {
               state: SCORING_ADMISSION_STATE.WITHHELD,
@@ -1072,7 +1178,9 @@ export async function runSourceVerify(
         // promotedElsewhere ⇒ 本投递 stale：不翻 contract 维度（honest：stale
         // 投递也不写核验记录 —— 记录的是「本版核验结果」，不该落在较新决定上）。
         if (!promotedElsewhere) {
-          await publishQuestionGroupFromRow(tx, {
+          // YUK-1568 P：hold/suspend 只翻生命周期维度；已声明 revision 走
+          // 冻结契约的 typed publisher（helper 内部分派，fail-closed 不变）。
+          await publishVerifyLifecycleUpdate(tx, {
             rootId: row.parent_question_id ?? questionId,
             admission: {
               state: SCORING_ADMISSION_STATE.WITHHELD,

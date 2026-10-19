@@ -79,6 +79,7 @@ const DRAFT_SUBMIT_ACTION = 'experimental:question_draft_submit';
 export type { EditQuestionInputT, EditQuestionResult } from './edit-question';
 export {
   EditQuestionInput,
+  parseDraftRef,
   probeDraftEdit,
   saveDraftEdit,
   validateDraftEdit,
@@ -87,6 +88,7 @@ export {
 // submit/edit/publish/draft-insert 服务（capability→questions 边数守恒审计）。
 export { publishQuestionGroupFromRow } from './publisher';
 export { insertSourcedDraft } from './sourced-draft-insert';
+export { sanitizeSourcedMarkup } from './sourced-markup';
 
 type BlockRow = typeof question_block.$inferSelect;
 
@@ -101,6 +103,31 @@ export interface SubmitDraftInput {
   knowledge_ids?: string[];
   /** 覆盖来源声明（缺省 = 文档 source）。 */
   availability?: 'general_pool' | 'container_only';
+  /**
+   * YUK-1568 S3 — 供给链可信系统注入（sourcing_web / jyeoo_fetch candidate
+   * commit seam）。这些是系统侧组装的行投影与来源证据，不是模型文档字段：
+   * candidate 路径的 web_sourced provenance、供给去重身份（flat 内容指纹）与
+   * 路由 provenance 在【同一发布事务】落 question 行，否则 source_verify 的
+   * 确定性来源核对拿不到 extract。仅新组首次提交生效；对已发布组的编辑提交
+   * 携带即拒绝（不静默丢弃系统注入）。
+   */
+  sourced?: {
+    /** 候选的 flat 内容指纹（extraction_hash 裸 hex；与旧 flat 行
+     *  canonical_content_hash 同一身份，dedup 命中口径不变）。 */
+    canonical_content_hash: string;
+    /** question.created_by（路由身份 ref；与列类型同源——AgentRef jsonb）。 */
+    created_by: (typeof question.$inferInsert)['created_by'];
+    /** question.difficulty（producer 声明难度；缺省列默认 3）。 */
+    difficulty?: number;
+    /** 并入 question.metadata 的系统侧键（web_sourced / source_ref_kind /
+     *  difficulty_evidence / supply_trace / 路由与候选身份 / hints /
+     *  attribution / demand / 向量近重 hold / markup 标记）。 */
+    metadata: Record<string, unknown>;
+    /** 供给链 trace（SupplyTraceV1 payload；不透明透传进 verify_dispatch
+     *  intent 行——source_verify 的 supply 账本归属依赖它，与旧 flat 链
+     *  writeVerifyDispatchIntent(supplyTrace) 同口径）。 */
+    supply_trace?: unknown;
+  };
 }
 
 export interface SubmitUnitOutcome {
@@ -533,6 +560,17 @@ export async function submitDraftQuestion(
         expected_revision: expectedRevisionRaw,
         knowledge_ids: input.knowledge_ids,
         availability: input.availability,
+        // 系统注入的身份部分参与重放绑定（dedup 指纹 / provenance owner /
+        // difficulty）；metadata 是簿记（含 fetched_at/observed_at 等 attempt
+        // 时间戳），跨重试必然漂移，不进指纹——同 request_id 重放须返回同回执。
+        sourced:
+          input.sourced != null
+            ? {
+                canonical_content_hash: input.sourced.canonical_content_hash,
+                created_by: input.sourced.created_by,
+                difficulty: input.sourced.difficulty ?? null,
+              }
+            : null,
       }),
     )
     .digest('hex')}`;
@@ -674,6 +712,26 @@ export async function submitDraftQuestion(
       .where(eq(question.id, groupId))
       .limit(1);
     const isNew = existingRow == null;
+    // 供给链系统注入只对新组首次提交有效；编辑已发布组携带它 = 调用方误用，
+    // 显式冲突拒绝而不是静默丢弃系统注入（sourced-draft-insert 同款纪律）。
+    if (input.sourced != null && !isNew) {
+      const conflict: SubmitResult = {
+        status: 'conflict',
+        reason: 'invalid_request',
+        detail: 'sourced projection is only valid for the first submit of a new group',
+        request_id: requestId,
+      };
+      await writeSubmitReceiptEvent(
+        tx,
+        { kind: 'question_block', id: block.id },
+        requestId,
+        fingerprint,
+        conflict,
+        ctx,
+        now,
+      );
+      return conflict;
+    }
     const sourceIssue = await attributableSourceIssue(tx, doc, isNew);
     if (sourceIssue != null) {
       const withheld: SubmitResult = {
@@ -754,10 +812,13 @@ export async function submitDraftQuestion(
       ...(presentation != null ? { presentation } : {}),
     }).canonical;
     if (isNew) {
+      // 供给链注入的 flat 指纹优先于投影身份——与旧 flat 行同一 dedup 口径，
+      // 否则选择题等投影后 reference 变化会丢失对既有行的精确去重命中。
+      const hashForDedup = input.sourced?.canonical_content_hash ?? canonicalHash;
       // live 去重 claim：canonical hash 占用者存在 ⇒ cross-KC merge（与供给
       // 链同语义）；否则插入新行。
       const merged = await mergeExactQuestionDuplicateKnowledgeIds(tx, {
-        canonicalContentHash: canonicalHash,
+        canonicalContentHash: hashForDedup,
         knowledgeIds: doc.knowledge_ids,
         actorRef: 'sourcing',
         taskRunId: ctx.taskRunId,
@@ -822,15 +883,23 @@ export async function submitDraftQuestion(
         source_ref: doc.source?.ref ?? null,
         draft_status: 'draft',
         structured: structuredProjection,
-        created_by: AgentRef.parse({ by: 'ai', task_kind: 'submit_question' }),
+        // 供给注入的路由 provenance（SourcingTask 等 system ref）；缺省沿用
+        // submit_question 自身 actor——两种都是可信系统侧写入方。
+        created_by:
+          input.sourced?.created_by ?? AgentRef.parse({ by: 'ai', task_kind: 'submit_question' }),
         metadata: {
           draft_block_id: block.id,
           submit_source: doc.source ?? null,
           schema_version: 2,
+          // 系统侧 provenance/供给元数据（web_sourced、difficulty_evidence、
+          // 路由与候选身份、向量近重 hold 等）——同一发布事务落行，
+          // source_verify 的确定性来源核对依赖它。
+          ...(input.sourced?.metadata ?? {}),
         },
         created_at: now,
         updated_at: now,
-        canonical_content_hash: canonicalHash,
+        canonical_content_hash: hashForDedup,
+        ...(input.sourced?.difficulty != null ? { difficulty: input.sourced.difficulty } : {}),
       });
     } else {
       // 编辑已发布题：dedup hash 冲突 ⇒ conflict。
@@ -941,6 +1010,7 @@ export async function submitDraftQuestion(
         questionId: groupId,
         verifier: 'source_verify',
         createdAt: now,
+        ...(input.sourced?.supply_trace != null ? { supplyTrace: input.sourced.supply_trace } : {}),
       });
       verifyEnqueued = true;
     }
@@ -980,7 +1050,11 @@ export async function submitDraftQuestion(
   });
 
   // verify outbox 派发（事务后；失败留 durable intent，不翻转提交结果）。
-  const verifyIntent = out.status === 'pending' && 'question_id' in out ? out.question_id : null;
+  // 派发按「intent 实发」判别而非 receipt.status：新题 admission 恒 withheld
+  // ⇒ receipt 'withheld'，若按 status==='pending' 门槛，sourced 草稿的 intent
+  // 会挂到下一次 worker 启动 recovery 才发——与供给候选链的即时核验不等价。
+  const verifyIntent =
+    'verify_enqueued' in out && out.verify_enqueued === true ? out.question_id : null;
   if (verifyIntent != null) {
     try {
       const dispatch = await dispatchPendingVerifyIntents(db, {

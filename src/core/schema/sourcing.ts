@@ -23,6 +23,7 @@
 import { z } from 'zod';
 import { QuestionKind, Rubric } from './business';
 import { ProducerDifficultyEvidence } from './difficulty-evidence';
+import { DraftPart } from './question-draft';
 
 // ---------- per-question LLM output shape ----------
 //
@@ -63,6 +64,13 @@ export const SourcedQuestion = z.object({
   // fails any web_sourced row lacking a non-empty extract, so the producer must supply
   // it (aligned with WebSourcedProvenance.extract being required).
   extract: z.string().min(1),
+  // YUK-1568 S3 — 可选 typed 声明：同一道题的统一草稿 parts/units，直接复用
+  // question-draft 的 DraftPart（answer_shape 经 DraftBlankSpec、blank_order
+  // 经 DraftPart 携带；不另造评分或 schema 体系）。声明是承诺：producer 只写
+  // 题面有根据的小问/槽位/分值/答案对象，缺小问、缺单位、缺分值、缺槽位保持
+  // 缺项——提交侧按未决处理（withheld），绝不猜分隔符、推分值、吞证明小问。
+  // 字段缺省 = 未声明候选，照旧走旧 flat 入库路径（行为不变）。
+  parts: z.array(DraftPart).min(1).optional(),
 });
 export type SourcedQuestionT = z.infer<typeof SourcedQuestion>;
 
