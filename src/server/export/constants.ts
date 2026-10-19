@@ -120,7 +120,7 @@
 // restore must keep: losing it would un-block every entity the authorization
 // still gates while orphaning the voided rows' receipts. FK → paid_effect, so
 // it restores right after its parent inside the paid-effect tail.
-// NEW FK_ORDER table → bump 4.28 → 4.29 (migration 0123).
+// NEW FK_ORDER table → bump 4.28 → 4.29 (migration 0124).
 export const SCHEMA_VERSION = '4.29';
 
 export const SUBSCRIPTION_PROGRESS_TABLES = [

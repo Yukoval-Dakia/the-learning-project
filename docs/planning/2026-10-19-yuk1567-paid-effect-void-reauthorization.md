@@ -28,7 +28,7 @@ jobData `reopen_paid_effect_identity` marker 在 gate 里开一个 `@2 → @3` �
   `operator` / `basis` / `voidedFromState:'unknown'` / `previousFence` /
   `successor`（完整 successor identity）/ `successorDelivery`
   （backend + delivery id）。
-- 新表 `paid_effect_authorization`（migration `0123`）：PK = 被作废 identity
+- 新表 `paid_effect_authorization`（migration `0124`）：PK = 被作废 identity
   （FK → paid_effect），因此一行至多被授权作废一次。列：
   `authorization_id`（一次决议可作废多行）、`successor_entity_revision` /
   `successor_unit` / `successor_input_digest`（successor 完整身份坐标；

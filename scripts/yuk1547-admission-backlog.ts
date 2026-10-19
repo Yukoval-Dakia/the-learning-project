@@ -1578,18 +1578,27 @@ async function authorizedRelease(
 function authorizedOwnedEvents(auth: AuthorizedManifest | null): OwnedPublishEvents {
   const eventIds = new Set<string>();
   const tripleKeys = new Set<string>();
+  const sends: OwnedPublishEvents['sends'] = [];
   for (const g of auth?.groups ?? []) {
     for (const generation of g.republish_generations) {
       tripleKeys.add(publishTripleKey(g.group_id, g.revision_id, generation));
+      sends.push({ groupId: g.group_id, revisionId: g.revision_id, generation });
     }
   }
-  return { eventIds, tripleKeys };
+  return { eventIds, tripleKeys, sends };
 }
 
 function mergeOwned(a: OwnedPublishEvents, b: OwnedPublishEvents): OwnedPublishEvents {
+  const sends = new Map(
+    [...a.sends, ...b.sends].map((s) => [
+      publishTripleKey(s.groupId, s.revisionId, s.generation),
+      s,
+    ]),
+  );
   return {
     eventIds: new Set([...a.eventIds, ...b.eventIds]),
     tripleKeys: new Set([...a.tripleKeys, ...b.tripleKeys]),
+    sends: [...sends.values()],
   };
 }
 
