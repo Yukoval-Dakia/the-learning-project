@@ -36,16 +36,29 @@
 - **复习（review）**：`event WHERE action='review' AND subject_kind='question'`（用户回答的永远是具体题，event 保持 question-scoped）；FSRS 状态派生到 `material_fsrs_state` 表（每次 review event 同事务写入）。**调度单元是知识点**（ADR-0028，2026-06-04 经 U0 裁决确认）：有 knowledge 标签的题，FSRS 投影按 `(subject_kind='knowledge', subject_id=知识点)` 键；未标注的 legacy 题 fallback 到 question 级投影。
 - **探针（probe）**：复习一个到期知识点时被选中的那道具体题。**题是测量工具，知识点才是调度 / 记忆对象**——同一知识点可由原题、变体或新生成题轮换探测，避免"背答案"。选题 seam 当前为确定性轮换（ADR-0028 决定 #3），规划由 Coach→ReviewPlanTask 流水线接管（仅替换该 seam，不动记忆单元）。
 - **判分（judge）**：评判用户对一道题的答案是否正确，输出分数 + 评语 + 错误细节（写为 judge event）。2026-06-04 U0 裁决：judge event payload 钉 `profile_version` / `capability_ref` / `judge_route`（判时在内存、写时落 event），历史判分的版本上下文从此可重建；rejudge = 新 event，不改写旧结果。
-- **组卷 / 试卷（paper / tool_quiz）**（2026-06-04 U0 裁决 X2）：一组引用题池 question 的练习集，**唯一容器是 `tool_quiz` artifact**（长期存储、knowledge 标签、`metadata.question_ids` 引用题池）——Coach 排期的"今日试卷"、用户按需测验、daily/final/笔记嵌入小测都是它，靠 provenance（plan 引用 / source）区分，**不分裂成第二容器**。做卷中的 attempt 走 `learning_session(type='review')`（复用 pause/resume/abandon）；Coach 的 session 内自适应 = artifact 就地更新 + adaptation event 留痕（`caused_by` 链到触发判分）。今日/往日练习有一级页面可查。
+- **组卷 / 试卷（paper / tool_quiz）**（2026-06-04 U0 裁决 X2）：一组引用题池 question 的练习集，**唯一容器是 `tool_quiz` artifact**（长期存储、knowledge 标签、`metadata.question_ids` 引用题池）——Coach 排期的"今日试卷"、用户按需测验、daily/final/笔记嵌入小测都是它，靠 provenance（plan 引用 / source）区分，**不分裂成第二容器**。做卷中的 attempt 走 `learning_session(type='review')`（复用 pause/resume/abandon）；Coach 的 session 内自适应 = artifact 就地更新 + adaptation event 留痕（`caused_by` 链到触发判分）。今日/往日练习有一级页面可查。从一次发放导出可打印作答卷见本节的**作答卷导出**。
 - **复习规划（review planning）**（2026-06-04 U0 裁决 X3）：两级流水线——**Coach 出战略 brief**（科目配比 / 知识焦点 / 时间盒，住在 TodayPlan 的 `review_session_proposal` 扩展里），**ReviewPlanTask 按 brief 做战术出卷**（从候选池选题/探针、写 plan、session 内 checkpoint 自适应；池子不够时输出 `needs[]` 声明而非自己生成）。记忆（Mem0 / memory brief）只进 Coach、经 brief 下传，**永不直接参与选题**。
 - **梦境流（Dreaming lane）**：夜间 cron 跑的批量任务，挖新知识点 / 调整掌握度 / 提议关联；产出为 `event WHERE action='propose' AND actor_kind='agent' AND actor_ref='dreaming'`。
 - **维护流（Maintenance lane）**：每周 cron 跑的批量任务，复检知识树质量 + 批量生成变体；产出走 MaintenanceSuggestion（含 snapshot + rollback_until）。
 - **记忆（memory / attention prior）**（ADR-0017；治理 2026-06-04 U0 裁决）：双层——Mem0 fact 层（细节，按需检索）+ brief 层（方向感，per-scope 三窗 markdown）。**记忆是注意力先验，不是 SoT**（SoT = event + knowledge_mastery view）；只供 orchestrator 角色（Coach / Dreaming / Copilot）读取，evaluator / operator / 生成类任务（judge、tagging、attribution、ReviewPlanTask、QuizGen、KnowledgeReview）一律不读——个性化信号经 Coach brief 洗过后下传。记忆永不直改 due / mastery / FSRS，永不给判分加偏置。
+- **作答卷导出（worksheet export）**：把一次**发放（issuance）**——逐题经发题门落下的不可变发题记录——导出成可打印的作答卷 PDF；导出回读按冻结发放重建，不重跑发题门。每页带身份：页眉的人读短码 + 「第 x/y 页」，以及内容为 `tlp://ws/v1/<token>/<页>/<总页>` 的二维码。打印页路由 `/print/worksheet/$token`，PDF 由 worker 的 `worksheet_render` job 用无头 Chromium 渲染；同一遍渲染量出的**区域图（region map）**冻结存档，供回收时按坐标对位。
+
+## 题库准入与出题
+
+- **准入（admission）/ 待准入**：一道题（题组）必须先通过准入判定，才会被自动出给学习者；`withheld` 期间不进练习池（显式手动挑题练习不受此限）。判分准入状态只有 `admitted` / `withheld` 两种；`withheld` 必须记明原因：`unverified_rules`（规则尚未经双门核验）、`verification_failed`、`no_admitted_executor`、`owner_hold`。判定由准入 job 执行：题目发布后自动排队做准入判定，双解与标定通过后才 `admitted`。网页来源题（`sourcing_web`）来源核对通过、`quiz_verify` 质检通过，都只发布为 `withheld(unverified_rules)`——这种状态叫「待准入」，题库界面显示为「还在检查」——不再直接可出。
+- **暂不出题（serving hold）**：题目被判定暂时不能出给学习者。挂起原因只有 `verify_hold` 与 `retraction_hold`。题库有「暂不出题」页签，按原因给白话标记；页签上的计数与筛选覆盖全库，不只是当前已加载的页。解除命令 `reverify` / `recheck_source` / `release_verify_hold`，经 `POST /api/questions/[id]/serving-actions/[command]`，每个命令都要求 `Idempotency-Key`；`release_verify_hold` 只清 `verify_hold`，不动 `retraction_hold`，`owner_hold` 这类有意扣留没有 reverify。
+- **付费效果（paid effect）作废与后继重授权**：一次已经付过费的模型调用记为一个「付费效果」，效果身份由输入决定，相同输入只记一次账。结果未知（`unknown`）的效果可由负责人显式作废为终态 `voided`——不删除、不改写输入与历史——并在同一条授权下指定一个后继效果（后继只能由授权里绑定的那次投递认领）。
 
 ## 录入与会话
 
 - **录入会话（ingestion session）**：一次"用户上传一批材料 → 系统抽取 → 落库"的工作单元。状态机：`uploaded` →（用户触发抽取）→ `queued` →（worker 起跑）→ `extracting` → `extracted` / `partial` / `failed`；`extracted` / `partial` 可 `markReviewed()` → `reviewed`（可选步骤，`commitImport()` 也直接接 `extracted` / `partial`）→ **`imported`（终态，只读）**。`failed` 可 `retryExtraction()` 重入 `queued`。所有 transition 由 `src/server/ingestion/session.ts` 单一守卫，五个写入位置（POST /api/ingestion、/extract、handler、/rescue、/import）都走它。**救援是 block-level**：session 状态不变（partial → partial），仅替换单块内容。
 - **会话总结（session summary）**：用户主动结束一次学习会话时由 LLM 生成的总结。Phase 1b 新增（架构 review Q1）。
+- **上传材料的使用范围（usage choice）**：学习者上传材料时选择这份资料可以用在哪里：`allow`（**全部使用**，也可进长期记忆、学习总结）或 `answer_only`（**只用于本题**，只用来生成这道题的答案与判分，不进长期记忆与学习总结）。选择落到材料文档的使用政策上，撤回后已派生的事件立即停止进入记忆 / 简报。
+- **使用回执（usage receipt）**：上传识别后给学习者的一条可读回执，说明这批材料被怎么用：跑的是哪个识别引擎、从识别出的文字里隐去了哪些类别的个人信息（只报类别与处数，不报被隐去的值），以及**原图是否原样交给 AI**（拍照 / PDF 必须把原图交给识别引擎，回执明说原图原样交出；Word 文本行不外传图像）。在录入会话详情里可以查看这份回执，Word 文本行也补写回执。
+
+## 安全
+
+- **危机守卫（crisis guard）**：Copilot 在**接纳点**对用户消息做确定性词法分类（不接模型）；命中时服务端强制把该回合的 `derivation_policy` 设为 `crisis`，覆盖客户端送来的任何值，`answer_only` 回合也可被收紧为 `crisis`。回应不在接纳点生成，而由版本化模板文件给出，每条模板带审定状态 `未审定` / `已审定`（当前全部 `未审定`）。守卫事件 `experimental:crisis_guard` 只记类别、模板版本与入口，**永不写原文**。`crisis` 是受限用途：危机回合在写入点就退出记忆摄取（读写两面都排除），其回复与镜像同样排除。
 
 ## 已批准（approved，2026-05-15 v2 — event-driven 核）
 
