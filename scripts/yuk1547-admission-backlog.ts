@@ -38,6 +38,25 @@
  *     group_id/revision_id/admission_generation triple, never actor_ref or
  *     time) — blocks the next send. Lookup failures never read as
  *     queue-empty.
+ *   - Post-#1816, the paid apply publishes the resolved contract on
+ *     admitted and emits its OWN publish event/delivery (job actor, send
+ *     generation + 1). The gate recognizes that derivative ONLY through
+ *     the paid identity chain in the same SQL snapshot — bound applied @3
+ *     paid row (frozen input = the send's group/revision/generation) whose
+ *     application_json records the event's revision/admission, plus the
+ *     minted revision's published_by.paid_receipt leg for new-revision
+ *     publishes — never by group, actor or time alone.
+ *   - Manifests come in two shapes. The legacy array (112-window) is
+ *     byte-compatible and keeps the hard web_sourced/official checks. The
+ *     versioned scoped shape {version:1, scope:{...}, items:[...]}
+ *     additionally binds each item's expected question.source and
+ *     marking_provenance (plus optional declared state) against the live
+ *     DB row — strict equality, no skip/bypass flag, no widened runnable
+ *     states — and scopes the publish actor + receipts to the cohort
+ *     identity instead of the 112 actor string (scope.actor_ref may be any
+ *     value EXCEPT the reserved job actor 'practice:question_admission',
+ *     which is rejected at parse — a send under it would be skipped by the
+ *     enqueue handler and settle_timeout-STOP with the group withheld).
  *   - Already-sent items are explicit: --sent lists ids that must NOT appear in
  *     the manifest (overlap is a hard error — unknown/paid rows never replay).
  *   - Old paid_effect rows and preexisting withheld lifecycle rows are
@@ -127,7 +146,16 @@ import { type TaskNativeReasoningParams, resolveTaskBinding } from '@/server/ai/
 const TASK_KIND = QUESTION_ADMISSION_TASK_KIND;
 const FAMILY = ADMISSION_FAMILY;
 const PAID_UNIT = QUESTION_ADMISSION_PAID_UNIT;
-const ACTOR_REF = 'stage1:backlog_readmission_b_112_20261019';
+// The 112-window actor string stays for legacy array manifests only. Every
+// window attribution in this driver binds by event_id / the (group, revision,
+// admission_generation) triple / the paid input identity — never by actor_ref
+// (verified: windowOwnedEvents, windowInFlightSends, the queue gate, and the
+// settle binding all ignore it), so a scoped manifest may record its own
+// truthful cohort actor without breaking reopen attribution. The enqueue
+// subscriber only special-cases 'practice:question_admission'; any other
+// actor with admission='withheld' still enqueues normally.
+const LEGACY_ACTOR_REF = 'stage1:backlog_readmission_b_112_20261019';
+const JOB_ACTOR_REF = 'practice:question_admission';
 // The subscription that turns our publish event into the paid pg-boss job
 // (src/capabilities/practice/manifest.ts — id 'practice.question-admission-enqueue').
 // A non-terminal delivery row is paid work already owed; ALL versions of the
@@ -161,8 +189,80 @@ const manifestItem = z.object({
   question_updated_at: z.string().optional(),
   lifecycle_updated_at: z.string().optional(),
 });
-type ManifestItem = z.infer<typeof manifestItem>;
-const manifestSchema = z.array(manifestItem).nonempty();
+/** A manifest row. Scoped manifests additionally REQUIRE per-item declared
+ *  expectations (source / marking_provenance / optional state) — strict
+ *  equality bindings checked against the live DB row at eligibility time.
+ *  Legacy array rows carry none and keep the 112-window hard defaults. */
+type ManifestItem = z.infer<typeof manifestItem> & {
+  source?: string;
+  marking_provenance?: string;
+  state?: string;
+};
+const manifestArraySchema = z.array(manifestItem).nonempty();
+
+/** Versioned explicit-scope manifest: {version: 1, scope: {...}, items: [...]}.
+ *  Every item binds the expected question.source and the lifecycle evidence
+ *  marking_provenance (plus the same id/version/revision/generation/digest
+ *  legs as the legacy row). The whole parsed object — scope included — feeds
+ *  the pinned manifest digest, so scope/actor/extra evidence fields are all
+ *  bound byte-for-byte into baseline.json. */
+const scopedManifestSchema = z
+  .object({
+    version: z.literal(1),
+    scope: z
+      .object({
+        id: z.string().min(1),
+        // The job actor is reserved: a send published under it is skipped
+        // unconditionally by the enqueue handler (actor check), so no paid
+        // job would ever start — settle_timeout then STOP with the group
+        // left withheld. Reject at parse, before any baseline/intent/publish.
+        actor_ref: z
+          .string()
+          .min(1)
+          .refine((value) => value !== JOB_ACTOR_REF, {
+            message: `scope.actor_ref '${JOB_ACTOR_REF}' is reserved for the admission job — omit actor_ref to publish as stage1:<scope.id>, or choose a non-reserved value`,
+          })
+          .optional(),
+      })
+      .passthrough(),
+    items: z
+      .array(
+        manifestItem
+          .extend({
+            source: z.string().min(1),
+            marking_provenance: z.string().min(1),
+            state: z.string().min(1).optional(),
+          })
+          .passthrough(),
+      )
+      .nonempty(),
+  })
+  .passthrough();
+type ManifestScope = z.infer<typeof scopedManifestSchema>['scope'];
+
+interface ResolvedManifest {
+  items: ManifestItem[];
+  /** null = legacy array manifest — the 112-window shape, kept byte-exact
+   *  for reopen compatibility (hard web_sourced/official + legacy actor). */
+  scope: ManifestScope | null;
+}
+
+function parseManifest(parsed: unknown): ResolvedManifest {
+  if (Array.isArray(parsed)) {
+    return { items: manifestArraySchema.parse(parsed), scope: null };
+  }
+  const scoped = scopedManifestSchema.parse(parsed);
+  return { items: scoped.items, scope: scoped.scope };
+}
+
+/** The actor this window's publish events record. Legacy manifests keep the
+ *  112-window string byte-exact; scoped manifests record their own cohort
+ *  identity (scope.actor_ref, else stage1:<scope.id>) so the durable event
+ *  log never masquerades this cohort as the settled 112 window. */
+function manifestActorRef(scope: ManifestScope | null): string {
+  if (scope === null) return LEGACY_ACTOR_REF;
+  return scope.actor_ref ?? `stage1:${scope.id}`;
+}
 
 // YUK-1567 — the frozen void+reauthorization plan emitted by
 // yuk1547-admission-reopen --plan: explicit old 'unknown' row identities +
@@ -475,14 +575,34 @@ async function eligibilityFailure(tx: Tx, item: ManifestItem): Promise<string[]>
     return ['group root missing'];
   }
   if (root.parent_question_id !== null) failures.push('not a group root');
-  if (root.source !== 'web_sourced') failures.push('not web_sourced');
+  // Declared-expectation binding: a scoped item's source/marking_provenance/
+  // state must equal the live DB values byte-for-byte; legacy rows fall back
+  // to the 112-window constants, so reopening an old manifest checks exactly
+  // what the sealed window checked.
+  const expectedSource = item.source ?? 'web_sourced';
+  const expectedProvenance = item.marking_provenance ?? 'official';
+  if (root.source !== expectedSource) {
+    failures.push(`source mismatch: expected '${expectedSource}', saw '${root.source}'`);
+  }
   if (!lifecycle) failures.push('lifecycle missing');
   if (lifecycle) {
     if (lifecycle.withdrawn) failures.push('withdrawn');
     if (lifecycle.suspended) failures.push('suspended');
+    if (lifecycle.suspended !== item.suspended) {
+      failures.push(
+        `suspended flag differs from manifest: expected ${item.suspended}, saw ${lifecycle.suspended}`,
+      );
+    }
     if (lifecycle.scoring_admission_state !== 'admitted') failures.push('not admitted');
-    if (lifecycle.scoring_admission_evidence?.marking_provenance !== 'official') {
-      failures.push('marking_provenance not official');
+    if (item.state !== undefined && lifecycle.scoring_admission_state !== item.state) {
+      failures.push(
+        `state mismatch: expected '${item.state}', saw '${lifecycle.scoring_admission_state}'`,
+      );
+    }
+    if (lifecycle.scoring_admission_evidence?.marking_provenance !== expectedProvenance) {
+      failures.push(
+        `marking_provenance mismatch: expected '${expectedProvenance}', saw '${lifecycle.scoring_admission_evidence?.marking_provenance ?? 'null'}'`,
+      );
     }
     if (lifecycle.scoring_admission_generation !== item.generation) {
       failures.push(
@@ -499,6 +619,15 @@ async function eligibilityFailure(tx: Tx, item: ManifestItem): Promise<string[]>
   const expectedUpdatedMs = manifestTimestampMs(item.question_updated_at);
   if (expectedUpdatedMs !== undefined && root.updated_at.getTime() !== expectedUpdatedMs) {
     failures.push('question updated_at changed');
+  }
+  if (lifecycle) {
+    const expectedLifecycleUpdatedMs = manifestTimestampMs(item.lifecycle_updated_at);
+    if (
+      expectedLifecycleUpdatedMs !== undefined &&
+      lifecycle.updated_at.getTime() !== expectedLifecycleUpdatedMs
+    ) {
+      failures.push('lifecycle updated_at changed');
+    }
   }
   const [revision] = await tx
     .select()
@@ -529,9 +658,12 @@ interface PublishReceipt {
    *  persistent source identity the queue gate owns deliveries by. Null on
    *  'skipped' (noop publishes emit no event). */
   event_id: string | null;
+  /** The actor_ref written onto this send's publish event — the manifest
+   *  scope's cohort identity, never borrowed from another window. */
+  actor_ref: string;
 }
 
-async function publishOne(tx: Tx, item: ManifestItem): Promise<PublishReceipt> {
+async function publishOne(tx: Tx, item: ManifestItem, actorRef: string): Promise<PublishReceipt> {
   await lockPaidEffectControlFamily(tx, FAMILY);
   const control = await readPaidEffectControl(tx, FAMILY);
   if (control.backend !== 'pg-boss') {
@@ -545,7 +677,7 @@ async function publishOne(tx: Tx, item: ManifestItem): Promise<PublishReceipt> {
   const result = await publishQuestionGroupFromRow(tx, {
     rootId: item.id,
     admission: { state: 'withheld', reason: 'unverified_rules' },
-    actorRef: ACTOR_REF,
+    actorRef,
     now: new Date(),
   });
   if (result.status !== 'admission_updated' && result.status !== 'noop') {
@@ -574,6 +706,7 @@ async function publishOne(tx: Tx, item: ManifestItem): Promise<PublishReceipt> {
     generation: lifecycle.scoring_admission_generation,
     event_emitted: result.status === 'admission_updated',
     event_id: result.status === 'admission_updated' ? result.event_id : null,
+    actor_ref: actorRef,
   };
 }
 
@@ -769,6 +902,13 @@ interface Baseline {
   created_at: string;
   manifest_sha256: string;
   manifest_count: number;
+  /** The scoped manifest's scope object verbatim (null on legacy array
+   *  manifests) + the publish actor this window resolved — the cohort
+   *  identity every receipt and publish event records truthfully. Absent on
+   *  baselines written before the scoped protocol; old windows resume
+   *  without it because nothing reads it back. */
+  manifest_scope?: ManifestScope | null;
+  actor_ref?: string;
   sent_ids: string[];
   thresholds: Thresholds;
   expected_routes: { solverA: ExpectedRoute; solverB: ExpectedRoute };
@@ -866,6 +1006,10 @@ async function checkInvariants(
 interface OwnedPublishEvents {
   eventIds: Set<string>;
   tripleKeys: Set<string>;
+  /** The (group, revision, generation) send identities tripleKeys encodes, in
+   *  structured form for the derivative-event binding leg: the paid apply's
+   *  own publish emits on generation+1, so triples alone cannot name it. */
+  sends: { groupId: string; revisionId: string; generation: number }[];
 }
 
 const publishTripleKey = (groupId: string, revisionId: string, generation: number) =>
@@ -911,13 +1055,19 @@ async function windowOwnedEvents(
 ): Promise<OwnedPublishEvents> {
   const eventIds = new Set<string>();
   const tripleKeys = new Set<string>();
+  const sendByKey = new Map<string, { groupId: string; revisionId: string; generation: number }>();
+  const addSend = (groupId: string, revisionId: string, generation: number) => {
+    const key = publishTripleKey(groupId, revisionId, generation);
+    tripleKeys.add(key);
+    sendByKey.set(key, { groupId, revisionId, generation });
+  };
   for (const name of await readdir(outDir)) {
     if (/^intent-[^/]+\.json$/.test(name)) {
       const groupId = name.slice('intent-'.length, -'.json'.length);
       const item = manifestById.get(groupId);
       if (!item) continue;
       const expected = await intentExpectedIdentity(outDir, item);
-      tripleKeys.add(publishTripleKey(groupId, expected.revisionId, expected.generation));
+      addSend(groupId, expected.revisionId, expected.generation);
       continue;
     }
     const isPublish = /^publish-[^/]+\.json$/.test(name);
@@ -930,13 +1080,11 @@ async function windowOwnedEvents(
       if (!record.success) continue;
       if (record.data.event_id) eventIds.add(record.data.event_id);
       if (record.data.revision_id !== null) {
-        tripleKeys.add(
-          publishTripleKey(record.data.group_id, record.data.revision_id, record.data.generation),
-        );
+        addSend(record.data.group_id, record.data.revision_id, record.data.generation);
       }
     }
   }
-  return { eventIds, tripleKeys };
+  return { eventIds, tripleKeys, sends: [...sendByKey.values()] };
 }
 
 /** Sends this window persisted (intent file) but never receipted — the
@@ -1036,6 +1184,29 @@ function gateJsonColumn<T>(value: unknown, name: string): T[] {
  * a row whose source event can't be resolved is foreign, and a failing query
  * aborts the driver instead of reading as queue-empty.
  *
+ * Post-#1816 derivative recognition (paid apply now publishes the resolved
+ * contract on admitted): the paid job's apply step emits its OWN publish
+ * event — actor 'practice:question_admission', a freshly minted revision
+ * (or a dimension_update on the bound one), admission_generation = send
+ * generation + 1 — and the durable subscriber's discovery files a pending
+ * delivery that the handler then settles to 'skipped' (the actor check can
+ * never enqueue). That transient non-terminal delivery is THIS send's
+ * derivative, not foreign work — but only when bound through the paid
+ * identity chain, verified inside the same gate snapshot:
+ *   event(group, revision_id, admission_generation=G+1, supersedes=R|absent,
+ *         actor=practice:question_admission, outcome=success,
+ *         admission = application status)
+ *   = the applied @3 paid row whose frozen input is exactly (group, R, G)
+ *     AND whose application_json records the event's revision/admission,
+ *   and for new-revision publishes additionally the minted
+ *   question_revision.published_by.paid_receipt binds the same paid row
+ *   (unit + input_digest). The apply tx commits the event and
+ *   application_json atomically, so a binding can never observe an event
+ *   its application didn't record. Nothing is exempted by group, actor or
+ *   time alone; a derivative delivery can never become paid work (the
+ *   handler skips the job actor unconditionally), so owning it cannot
+ *   swallow a real unsettled admission.
+ *
  * `exemptJobs` (window-open only): non-terminal jobs bound — by the same
  * (group, revision, generation) identity the settle loop uses — to sends
  * this window already persisted (intent, no receipt). Those are not foreign
@@ -1060,6 +1231,16 @@ async function admissionQueueGate(
       generation !== null &&
       owned.tripleKeys.has(publishTripleKey(groupId, revisionId, Number(generation))));
   const exemptJobs = opts?.exemptJobs ?? [];
+  // The window's own send identities, bound into the derivative-recognition
+  // subquery as data — the join re-derives each leg from paid_effect/event
+  // rows inside the same statement, so the JSON is a filter, not evidence.
+  const sendsJson = JSON.stringify(
+    owned.sends.map((send) => ({
+      group_id: send.groupId,
+      revision_id: send.revisionId,
+      admission_generation: send.generation,
+    })),
+  );
   const isExemptJob = (job: GateJobRow) =>
     exemptJobs.some((send) => {
       const data = job.data as {
@@ -1113,7 +1294,7 @@ async function admissionQueueGate(
           from event e
           where e.action = ${PUBLISH_ACTION}
             and e.outcome = 'success'
-            and e.actor_ref <> 'practice:question_admission'
+            and e.actor_ref <> ${JOB_ACTOR_REF}
             and e.payload->>'admission' = 'withheld'
             and not exists (
               select 1 from event_subscription_delivery d
@@ -1121,16 +1302,62 @@ async function admissionQueueGate(
                 and d.source_event_id = e.id
             )
         ) t
-      ), '[]'::jsonb) as undiscovered
+      ), '[]'::jsonb) as undiscovered,
+      -- Paid-apply derivative events (post-#1816): bound through the SAME
+      -- snapshot to this window's sends by the applied @3 paid row's frozen
+      -- input identity AND its application_json record — never by
+      -- group/actor/time alone. The event and application_json commit in
+      -- one tx, so the binding cannot name an event whose application is
+      -- still unwritten; a send whose paid row is not yet applied derives
+      -- nothing and its deliveries stay foreign.
+      coalesce((
+        select jsonb_agg(t.event_id)
+        from (
+          select distinct e.id as event_id
+          from event e
+          join jsonb_to_recordset(${sendsJson}::jsonb) as s(
+            group_id text, revision_id text, admission_generation integer
+          ) on s.group_id = e.payload->>'group_id'
+          join paid_effect p
+            on p.family = ${FAMILY}
+           and p.entity_id = s.group_id
+           and p.unit = ${PAID_UNIT}
+           and p.state = 'applied'
+           and p.input_json->>'group_id' = s.group_id
+           and p.input_json->>'revision_id' = s.revision_id
+           and (p.input_json->>'admission_generation')::int = s.admission_generation
+           and p.application_json->>'revision_id' = e.payload->>'revision_id'
+           and p.application_json->>'status' = e.payload->>'admission'
+          where e.action = ${PUBLISH_ACTION}
+            and e.outcome = 'success'
+            and e.actor_ref = ${JOB_ACTOR_REF}
+            and (e.payload->>'admission_generation')::int = s.admission_generation + 1
+            and coalesce(e.payload->>'supersedes_revision_id', s.revision_id) = s.revision_id
+            and (
+              e.payload->>'dimension_update' is not null
+              or exists (
+                select 1 from question_revision r
+                where r.revision_id = e.payload->>'revision_id'
+                  and r.group_id = s.group_id
+                  and r.published_by->'paid_receipt'->>'input_digest' = p.input_digest
+                  and r.published_by->'paid_receipt'->>'unit' = p.unit
+              )
+            )
+        ) t
+      ), '[]'::jsonb) as derived_event_ids
   `)) as unknown as {
     pending_jobs: unknown;
     deliveries: unknown;
     undiscovered: unknown;
+    derived_event_ids: unknown;
   }[];
   if (!row) throw new Error('queue gate read returned no row');
   const pendingJobRows = gateJsonColumn<GateJobRow>(row.pending_jobs, 'pending_jobs');
   const deliveries = gateJsonColumn<GateDeliveryRow>(row.deliveries, 'deliveries');
   const undiscovered = gateJsonColumn<GateEventRow>(row.undiscovered, 'undiscovered');
+  const derivedEventIds = new Set(
+    gateJsonColumn<string>(row.derived_event_ids, 'derived_event_ids'),
+  );
   const foreignJobs = pendingJobRows.filter((job) => !isExemptJob(job));
   const ownInFlightJobs = pendingJobRows.filter(isExemptJob);
   const deliveryEvidence = deliveries.map((row) => ({
@@ -1155,12 +1382,16 @@ async function admissionQueueGate(
             revision_id: row.revision_id,
             admission_generation: row.admission_generation,
           },
-    owned: isOwned(row.source_event_id, row.group_id, row.revision_id, row.admission_generation),
+    owned:
+      isOwned(row.source_event_id, row.group_id, row.revision_id, row.admission_generation) ||
+      derivedEventIds.has(row.source_event_id),
   }));
   const foreignDeliveries = deliveryEvidence.filter((row) => !row.owned);
   const undiscoveredEvidence = undiscovered.map((row) => ({
     ...row,
-    owned: isOwned(row.event_id, row.group_id, row.revision_id, row.admission_generation),
+    owned:
+      isOwned(row.event_id, row.group_id, row.revision_id, row.admission_generation) ||
+      derivedEventIds.has(row.event_id),
   }));
   const foreignUndiscovered = undiscoveredEvidence.filter((row) => !row.owned);
   const evidence = {
@@ -1177,6 +1408,7 @@ async function admissionQueueGate(
     undiscovered_events: foreignUndiscovered.slice(0, GATE_EVIDENCE_LIMIT),
     owned_event_ids: [...owned.eventIds],
     owned_triple_count: owned.tripleKeys.size,
+    derived_event_ids: [...derivedEventIds],
   };
   return {
     clear:
@@ -1504,6 +1736,10 @@ interface ItemReceipt {
   index: number;
   started_at: string;
   finished_at: string;
+  /** The manifest scope (verbatim; null on legacy windows) + resolved publish
+   *  actor — the cohort identity this receipt answers for. */
+  scope: ManifestScope | null;
+  actor_ref: string;
   publish?: PublishReceipt;
   paid_state: string;
   unresolved_reason: string | null;
@@ -1660,7 +1896,14 @@ async function drive(opts: {
   authorizedPath?: string;
 }): Promise<void> {
   const db = await dbBoot();
-  const manifest = await readJson(opts.manifestPath, manifestSchema);
+  const manifestRaw = await readJson(opts.manifestPath);
+  const { items: manifest, scope: manifestScope } = parseManifest(manifestRaw);
+  // Digest compat: a legacy array manifest is hashed AFTER zod-strip, exactly
+  // as the sealed 112 window computed it — reopening compares equal. The
+  // scoped shape instead pins the whole parsed input (scope, actor and every
+  // passthrough evidence field included), the strict superset binding.
+  const manifestDigest = manifestScope === null ? sha256(manifest) : sha256(manifestRaw);
+  const actorRef = manifestActorRef(manifestScope);
   // The historical B ledger is mandatory input — never default to zero; its
   // FILE digest is pinned into baseline.json and must match on every later
   // run (hashing raw bytes so the operator's frozen artifact is pinned
@@ -1670,7 +1913,6 @@ async function drive(opts: {
   const manifestIds = new Set(manifest.map((item) => item.id));
   if (manifestIds.size !== manifest.length) throw new Error('manifest contains duplicate ids');
   const manifestById = new Map(manifest.map((item) => [item.id, item]));
-  const manifestDigest = sha256(manifest);
   // YUK-1567: the frozen void+reauthorization plan. NOTHING becomes
   // consumable at parse time — each authorized group is voided + bound +
   // enqueued only inside its own per-question gate turn below.
@@ -1751,6 +1993,8 @@ async function drive(opts: {
       created_at: new Date().toISOString(),
       manifest_sha256: manifestDigest,
       manifest_count: manifest.length,
+      manifest_scope: manifestScope,
+      actor_ref: actorRef,
       sent_ids: sentIds,
       thresholds: opts.thresholds,
       expected_routes: routes,
@@ -2050,7 +2294,7 @@ async function drive(opts: {
             intentFile,
             JSON.stringify({ group_id: item.id, batch: batchN, index: idx, sent_at: sentAt }),
           );
-          publishReceipt = await db.transaction(async (tx) => publishOne(tx, item));
+          publishReceipt = await db.transaction(async (tx) => publishOne(tx, item, actorRef));
           await writeFile(
             join(opts.outDir, `publish-${item.id}.json`),
             JSON.stringify({ at: sentAt, ...publishReceipt }, null, 2),
@@ -2225,6 +2469,8 @@ async function drive(opts: {
         index: idx,
         started_at: sentAt,
         finished_at: new Date().toISOString(),
+        scope: manifestScope,
+        actor_ref: actorRef,
         ...(publishReceipt ? { publish: publishReceipt } : {}),
         paid_state: paidRow?.state ?? 'missing',
         unresolved_reason: unresolvedReason,
@@ -2316,6 +2562,8 @@ async function drive(opts: {
       batch: batchN,
       status: stopped === undefined ? 'passed' : 'stopped',
       stopped_by: stopped ?? null,
+      scope: manifestScope,
+      actor_ref: actorRef,
       processed: stats.items,
       counts: {
         sent_this_run: stats.items.filter((e) => !e.endsWith(':already-settled')).length,
@@ -2349,7 +2597,7 @@ async function check(
   authorizedPath?: string,
 ): Promise<void> {
   const db = await dbBoot();
-  const manifest = await readJson(manifestPath, manifestSchema);
+  const { items: manifest } = parseManifest(await readJson(manifestPath));
   const item = manifest.find((entry) => entry.id === groupId);
   if (!item) throw new Error(`manifest has no item ${groupId}`);
   const authorized = authorizedPath

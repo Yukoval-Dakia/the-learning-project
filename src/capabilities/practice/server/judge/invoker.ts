@@ -16,6 +16,7 @@ import {
   crossoverModelForProvider,
   isKnownProvider,
   isProviderImplemented,
+  readProviderId,
 } from '@/server/ai/providers';
 import { SubjectProfileSchema } from '@/subjects/profile';
 import type { JudgeKind } from '.';
@@ -89,10 +90,13 @@ export const JudgeInvokerInputSchema = z.object({
   durable: z
     .object({
       providerOverride: z
-        .custom<Provider>(
-          (value) =>
-            typeof value === 'string' && isKnownProvider(value) && isProviderImplemented(value),
-          { message: 'providerOverride must be a known, implemented provider' },
+        .preprocess(
+          (value) => (typeof value === 'string' ? (readProviderId(value) ?? value) : value),
+          z.custom<Provider>(
+            (value) =>
+              typeof value === 'string' && isKnownProvider(value) && isProviderImplemented(value),
+            { message: 'providerOverride must be a known, implemented provider' },
+          ),
         )
         .optional(),
     })

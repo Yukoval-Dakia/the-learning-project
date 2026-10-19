@@ -134,6 +134,150 @@ export function combineExactDuplicateKnowledgeIds(
  */
 export const EXACT_DUPLICATE_EVENT_SAMPLE_CAP = 20;
 
+const TERMINAL_VERIFY_ACTION = {
+  quiz_gen: 'experimental:quiz_verify',
+  web_sourced: 'experimental:source_verify',
+} as const;
+
+/** 草稿已经有终态校验事件（outcome 不是 error）时，精确哈希和一页一题网址用同一条放行规则。 */
+export async function terminalVerifiedDraftEventId(
+  tx: Tx,
+  row: { id: string; draftStatus: string | null; source: string },
+): Promise<string | null> {
+  const action =
+    row.source === 'quiz_gen' || row.source === 'web_sourced'
+      ? TERMINAL_VERIFY_ACTION[row.source]
+      : null;
+  if (row.draftStatus !== 'draft' || action == null) return null;
+  const terminal = await tx
+    .select({ id: event.id })
+    .from(event)
+    .where(
+      and(
+        eq(event.action, action),
+        eq(event.subject_kind, 'question'),
+        eq(event.subject_id, row.id),
+        or(isNull(event.outcome), ne(event.outcome, 'error')),
+      ),
+    )
+    .limit(1);
+  return terminal[0]?.id ?? null;
+}
+
+/**
+ * 归档一条终态草稿并放开它的 canonical hash，让修正后的候选能重新插入。
+ * 判定与 mergeExactQuestionDuplicateKnowledgeIds 以前内联的规则是同一个函数。
+ */
+export async function releaseTerminalVerifiedDraft(
+  tx: Tx,
+  row: {
+    id: string;
+    draftStatus: string | null;
+    source: string;
+    metadata: (typeof question.$inferSelect)['metadata'];
+    version: number;
+    canonicalContentHash: string;
+  },
+  params: {
+    actorRef: 'quiz_gen' | 'sourcing' | 'jyeoo_fetch';
+    taskRunId?: string;
+    now: Date;
+  },
+): Promise<{ eventId: string; version: number } | null> {
+  const terminalEventId = await terminalVerifiedDraftEventId(tx, row);
+  if (terminalEventId == null) return null;
+  const nextVersion = row.version + 1;
+  const eventId = createId();
+  const archivedAt = Math.floor(params.now.getTime() / 1000);
+  await tx
+    .update(question)
+    .set({
+      canonical_content_hash: null,
+      metadata: {
+        ...(row.metadata ?? {}),
+        archived_at: archivedAt,
+        archived_reason: 'terminal_draft_superseded_by_reproduction',
+        archived_previous_draft_status: row.draftStatus,
+      },
+      updated_at: params.now,
+      version: nextVersion,
+    })
+    .where(
+      and(eq(question.id, row.id), eq(question.canonical_content_hash, row.canonicalContentHash)),
+    );
+  await writeEvent(tx, {
+    id: eventId,
+    session_id: null,
+    actor_kind: 'agent',
+    actor_ref: params.actorRef,
+    action: QUESTION_EDIT_ACTION,
+    subject_kind: 'question',
+    subject_id: row.id,
+    outcome: 'success',
+    payload: {
+      question_id: row.id,
+      previous_version: row.version,
+      next_version: nextVersion,
+      before: {
+        canonical_content_hash: row.canonicalContentHash,
+        archived_at: null,
+      },
+      after: { canonical_content_hash: null, archived_at: archivedAt },
+      reason: 'terminal_draft_superseded_for_reproduction',
+      terminal_verify_event_id: terminalEventId,
+      task_run_id: params.taskRunId ?? null,
+      preserved_draft_status: row.draftStatus,
+    },
+    created_at: params.now,
+  });
+  return { eventId, version: nextVersion };
+}
+
+/**
+ * 一页一题的网址命中。活题并入知识点。终态草稿在即将插入的事务里放行；
+ * 更早的预检只跳过合并，避免后面的 n-gram 拒绝把旧草稿先归档掉。
+ */
+export async function settleOneQuestionPageHit(
+  tx: Tx,
+  params: {
+    questionId: string;
+    knowledgeIds: string[];
+    actorRef: 'sourcing' | 'jyeoo_fetch';
+    taskRunId?: string;
+    now: Date;
+    onTerminal: 'defer' | 'release';
+  },
+): Promise<'continue' | { existingQuestionId: string; addedKnowledgeIds: string[] }> {
+  await acquireLearningStateWriteLock(tx);
+  const [row] = await tx
+    .select({
+      id: question.id,
+      draftStatus: question.draft_status,
+      source: question.source,
+      metadata: question.metadata,
+      version: question.version,
+      canonicalContentHash: question.canonical_content_hash,
+    })
+    .from(question)
+    .where(eq(question.id, params.questionId))
+    .limit(1)
+    .for('update');
+  if (row == null) return 'continue';
+  const terminalEventId = await terminalVerifiedDraftEventId(tx, row);
+  if (terminalEventId != null) {
+    if (params.onTerminal === 'release' && row.canonicalContentHash != null) {
+      await releaseTerminalVerifiedDraft(
+        tx,
+        { ...row, canonicalContentHash: row.canonicalContentHash },
+        params,
+      );
+    }
+    return 'continue';
+  }
+  const merged = await mergeKnowledgeForSourceDuplicate(tx, params);
+  return { existingQuestionId: row.id, addedKnowledgeIds: merged.addedKnowledgeIds };
+}
+
 /** Reusable active+draft lookup; legacy NULL-hash rows intentionally do not match. */
 export async function findExactQuestionDuplicate(
   db: Db | Tx,
@@ -209,85 +353,30 @@ export async function mergeExactQuestionDuplicateKnowledgeIds(
   // a clean miss rather than inventing a row.
   if (!row) return null;
 
-  const terminalVerifyAction =
-    row.source === 'quiz_gen'
-      ? 'experimental:quiz_verify'
-      : row.source === 'web_sourced'
-        ? 'experimental:source_verify'
-        : null;
-  if (row.draftStatus === 'draft' && terminalVerifyAction) {
-    const terminal = await tx
-      .select({ id: event.id })
-      .from(event)
-      .where(
-        and(
-          eq(event.action, terminalVerifyAction),
-          eq(event.subject_kind, 'question'),
-          eq(event.subject_id, row.id),
-          or(isNull(event.outcome), ne(event.outcome, 'error')),
-        ),
-      )
-      .limit(1);
-    if (terminal.length > 0) {
-      const nextVersion = row.version + 1;
-      const eventId = createId();
-      const archivedAt = Math.floor(params.now.getTime() / 1000);
-      await tx
-        .update(question)
-        .set({
-          canonical_content_hash: null,
-          metadata: {
-            ...(row.metadata ?? {}),
-            archived_at: archivedAt,
-            archived_reason: 'terminal_draft_superseded_by_reproduction',
-            archived_previous_draft_status: row.draftStatus,
-          },
-          updated_at: params.now,
-          version: nextVersion,
-        })
-        .where(
-          and(
-            eq(question.id, row.id),
-            eq(question.canonical_content_hash, params.canonicalContentHash),
-          ),
-        );
-      await writeEvent(tx, {
-        id: eventId,
-        session_id: null,
-        actor_kind: 'agent',
-        actor_ref: params.actorRef,
-        action: QUESTION_EDIT_ACTION,
-        subject_kind: 'question',
-        subject_id: row.id,
-        outcome: 'success',
-        payload: {
-          question_id: row.id,
-          previous_version: row.version,
-          next_version: nextVersion,
-          before: {
-            canonical_content_hash: params.canonicalContentHash,
-            archived_at: null,
-          },
-          after: { canonical_content_hash: null, archived_at: archivedAt },
-          reason: 'terminal_draft_superseded_for_reproduction',
-          terminal_verify_event_id: terminal[0].id,
-          task_run_id: params.taskRunId ?? null,
-          preserved_draft_status: row.draftStatus,
-        },
-        created_at: params.now,
-      });
-      return {
-        ...row,
-        disposition: 'released_terminal_draft',
-        previousKnowledgeIds: row.knowledgeIds,
-        knowledgeIds: row.knowledgeIds,
-        addedKnowledgeIds: [],
-        enrolledKnowledgeIds: [],
-        previousVersion: row.version,
-        version: nextVersion,
-        eventId,
-      };
-    }
+  const released = await releaseTerminalVerifiedDraft(
+    tx,
+    {
+      id: row.id,
+      draftStatus: row.draftStatus,
+      source: row.source,
+      metadata: row.metadata,
+      version: row.version,
+      canonicalContentHash: params.canonicalContentHash,
+    },
+    params,
+  );
+  if (released) {
+    return {
+      ...row,
+      disposition: 'released_terminal_draft',
+      previousKnowledgeIds: row.knowledgeIds,
+      knowledgeIds: row.knowledgeIds,
+      addedKnowledgeIds: [],
+      enrolledKnowledgeIds: [],
+      previousVersion: row.version,
+      version: released.version,
+      eventId: released.eventId,
+    };
   }
 
   const requestedKnowledgeIds = [
@@ -395,4 +484,98 @@ export async function mergeExactQuestionDuplicateKnowledgeIds(
     version: nextVersion,
     eventId,
   };
+}
+
+/** 同一道题的来源网址命中时并入知识点。不改 canonical_content_hash。终态草稿由 releaseTerminalVerifiedDraft 放行，不在这里合并。 */
+export async function mergeKnowledgeForSourceDuplicate(
+  tx: Tx,
+  params: {
+    questionId: string;
+    knowledgeIds: string[];
+    actorRef: 'sourcing' | 'jyeoo_fetch';
+    taskRunId?: string;
+    now: Date;
+  },
+): Promise<{ addedKnowledgeIds: string[] }> {
+  await acquireLearningStateWriteLock(tx);
+  const [row] = await tx
+    .select({
+      id: question.id,
+      draftStatus: question.draft_status,
+      knowledgeIds: question.knowledge_ids,
+      version: question.version,
+    })
+    .from(question)
+    .where(eq(question.id, params.questionId))
+    .limit(1)
+    .for('update');
+  if (row == null) return { addedKnowledgeIds: [] };
+
+  const requested = [
+    ...new Set(params.knowledgeIds.map((id) => id.trim()).filter((id) => id.length > 0)),
+  ];
+  const liveRows =
+    requested.length > 0
+      ? await tx
+          .select({ id: knowledge.id })
+          .from(knowledge)
+          .where(and(inArray(knowledge.id, requested), isNull(knowledge.archived_at)))
+          .orderBy(knowledge.id)
+          .for('update')
+      : [];
+  const live = new Set(liveRows.map((candidate) => candidate.id));
+  const seen = new Set(row.knowledgeIds);
+  const addedKnowledgeIds: string[] = [];
+  for (const id of requested) {
+    if (!live.has(id) || seen.has(id)) continue;
+    seen.add(id);
+    addedKnowledgeIds.push(id);
+  }
+  if (addedKnowledgeIds.length === 0) return { addedKnowledgeIds };
+
+  const knowledgeIds = [...row.knowledgeIds, ...addedKnowledgeIds];
+  const nextVersion = row.version + 1;
+  await tx
+    .update(question)
+    .set({ knowledge_ids: knowledgeIds, updated_at: params.now, version: nextVersion })
+    .where(eq(question.id, row.id));
+
+  const eventId = createId();
+  const enrolledKnowledgeIds: string[] = [];
+  if (row.draftStatus !== 'draft') {
+    for (const knowledgeId of addedKnowledgeIds) {
+      if (SYNTHETIC_SUBJECT_ROOT_RE.test(knowledgeId)) continue;
+      const enrolled = await enrollFsrsStateIfAbsent(tx, {
+        subject_kind: 'knowledge',
+        subject_id: knowledgeId,
+        ...initialSchedulingState(knowledgeId, params.now),
+        last_review_event_id: eventId,
+      });
+      if (enrolled) enrolledKnowledgeIds.push(knowledgeId);
+    }
+  }
+  await writeEvent(tx, {
+    id: eventId,
+    session_id: null,
+    actor_kind: 'agent',
+    actor_ref: params.actorRef,
+    action: QUESTION_EDIT_ACTION,
+    subject_kind: 'question',
+    subject_id: row.id,
+    outcome: 'success',
+    payload: {
+      question_id: row.id,
+      previous_version: row.version,
+      next_version: nextVersion,
+      before: { knowledge_ids: row.knowledgeIds },
+      after: { knowledge_ids: knowledgeIds },
+      reason: 'same_source_ref',
+      added_knowledge_ids: addedKnowledgeIds,
+      enrolled_knowledge_ids: enrolledKnowledgeIds,
+      task_run_id: params.taskRunId ?? null,
+      preserved_draft_status: row.draftStatus,
+    },
+    created_at: params.now,
+  });
+  return { addedKnowledgeIds };
 }

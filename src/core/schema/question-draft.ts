@@ -1,7 +1,12 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 import { z } from 'zod';
-import { EvidenceAcceptanceRule, SharedMaterialKind, VersionedAssetRef } from './assessment';
+import {
+  BlankAnswerShape,
+  EvidenceAcceptanceRule,
+  SharedMaterialKind,
+  VersionedAssetRef,
+} from './assessment';
 // scoring-rule.ts 未入 assessment index barrel —— 直接深引用（只读不修改受保护目录）。
 import { ScoringRule } from './assessment/scoring-rule';
 import type { FigureRefT, StructuredQuestionT } from './structured_question';
@@ -89,11 +94,18 @@ export const DraftSelectSpec = z.object({
 });
 export type DraftSelectSpecT = z.infer<typeof DraftSelectSpec>;
 
+/**
+ * blank 作答面。answer_shape（YUK-1568，可选）声明这一空回答的数学对象
+ * （公开输入语义；唯一定义在 assessment/blank-answer-shape.ts）。缺省 =
+ * 未声明，不注入默认值，旧文本 exact 语义与 digest 不变；未知版本/字段
+ * 在 schema 上 parse 失败，保存被拒 —— 不能 strip 后当未声明。
+ */
 export const DraftBlankSpec = z.object({
   kind: z.literal('blank'),
   format: z.enum(['text', 'math']).optional(),
   unit_hint: z.string().optional(),
   max_chars: z.number().int().min(1).optional(),
+  answer_shape: BlankAnswerShape.optional(),
 });
 export type DraftBlankSpecT = z.infer<typeof DraftBlankSpec>;
 
@@ -275,6 +287,12 @@ export const DraftPart = z.object({
   /** 该 part 直接引用的共享材料。 */
   material_ids: z.array(z.string().min(1)).default([]),
   units: z.array(DraftUnit).default([]),
+  /**
+   * YUK-1568（第 1 片，可选）：本 part 独立 blank 槽的默认逻辑序（显式
+   * slot_id 列表，恰覆盖本 part 的 blank 槽各一次；交叉校验在发布 barrier）。
+   * 缺省 = 未声明，不注入默认值，旧文档 JSON/digest 不变。
+   */
+  blank_order: z.array(z.string().min(1)).min(1).optional(),
   /** 解析/讲解文本（公开）。 */
   explanation_md: z.string().optional(),
   metadata: DraftMetadata.default({}),

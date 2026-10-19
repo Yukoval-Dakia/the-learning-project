@@ -15,6 +15,7 @@ export const LEARNER_COPY_FILES = [
   'src/capabilities/ingestion/ui/RecordPage.tsx',
   'src/capabilities/practice/ui/PracticeFacePage.tsx',
   'src/capabilities/practice/ui/PfStream.tsx',
+  'src/capabilities/practice/ui/PfPaper.tsx',
   'src/capabilities/practice/ui/solo/PracticeSolo.tsx',
   'src/capabilities/practice/ui/solo/DraftConflictPanel.tsx',
   'src/capabilities/practice/ui/solo/SoloCoach.tsx',

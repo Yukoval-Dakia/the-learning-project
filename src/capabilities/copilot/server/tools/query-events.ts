@@ -71,6 +71,7 @@ const EventRowSchema = z.object({
 });
 
 const OutputSchema = z.object({
+  required_followup: z.enum(['none', 'continue_with_next_cursor']),
   events: z.array(EventRowSchema),
   // Compatibility: this remains the number of rows in this page, never the
   // number of all matching rows. Use coverage.has_more before claiming full coverage.
@@ -86,20 +87,11 @@ const OutputSchema = z.object({
     causal_descendants_included: z.literal(false).nullable(),
     cross_stage_claim_status: z.enum([
       'not_subject_scoped',
-      'blocked_subject_id_only_filter_required',
-      'blocked_relation_without_subject_filter_required',
-      'blocked_cross_subject_relation_followup_required',
+      'window_complete',
+      'remaining_window_complete',
       'blocked_more_pages_unread',
-      'requires_complete_pagination_chain',
     ]),
-    required_followup: z.enum([
-      'none',
-      'repeat_with_subject_id_only',
-      'repeat_with_relation_only_without_subject_id',
-      'follow_causal_relations_from_returned_events',
-      'follow_next_cursor_aggregate_then_follow_causal_relations',
-      'verify_complete_pagination_chain_then_follow_causal_relations',
-    ]),
+    required_followup: z.enum(['none', 'continue_with_next_cursor']),
   }),
   match_semantics: z.object({
     filters: z.literal('and'),
@@ -162,9 +154,38 @@ const DESCRIPTION = [
   'Read paginated action-log history, not current entity inventory. Filters compose exact AND matches.',
   'subjectId is one exact entity id, not a domain; subjectKind further narrows that id.',
   'causedByEventId selects direct children; siblingOfEventId selects the same non-null parent, excluding the focal event.',
-  'Use coverage.next_cursor with unchanged filters to continue. sinceDays is at most 180; limit is 1–50 (default 20).',
-  'Returned match_semantics, subject_scope.required_followup, claim_boundaries, coverage and correction_state define the usable evidence.',
+  'required_followup none: do not repeat this filter, including when the page has zero rows. none does not mean this response contains the whole window.',
+  'required_followup continue_with_next_cursor: resubmit the same filters with coverage.next_cursor. Do not drop filters or walk other events.',
+  'window_complete: no cursor was passed, and a subject-scoped window is fully returned. It does not include causal descendants.',
+  'remaining_window_complete: a cursor was passed and no further pages remain. coverage.complete_for_window stays false. Do not claim rows before the cursor.',
+  'sinceDays is at most 180; limit is 1–50 (default 20).',
 ].join('\n');
+
+type ClaimStatus =
+  | 'not_subject_scoped'
+  | 'window_complete'
+  | 'remaining_window_complete'
+  | 'blocked_more_pages_unread';
+
+/** One page has one next step. A cursor page never claims the rows before it. */
+function observationStep(input: { subjectScoped: boolean; hasMore: boolean; cursor: boolean }): {
+  cross_stage_claim_status: ClaimStatus;
+  required_followup: 'none' | 'continue_with_next_cursor';
+} {
+  if (input.hasMore) {
+    return {
+      cross_stage_claim_status: 'blocked_more_pages_unread',
+      required_followup: 'continue_with_next_cursor',
+    };
+  }
+  if (!input.subjectScoped) {
+    return { cross_stage_claim_status: 'not_subject_scoped', required_followup: 'none' };
+  }
+  if (input.cursor) {
+    return { cross_stage_claim_status: 'remaining_window_complete', required_followup: 'none' };
+  }
+  return { cross_stage_claim_status: 'window_complete', required_followup: 'none' };
+}
 
 async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
   const input = InputSchema.parse(raw);
@@ -307,48 +328,18 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
   const hasMore = candidateRows.length > limit;
   const rows = candidateRows.slice(0, limit);
   const lastRow = rows.at(-1);
-  const hasRelationFilter =
-    filter.causedByEventId !== undefined || filter.siblingOfEventId !== undefined;
-  const hasCrossStageNarrowingFilter =
-    filter.eventId !== undefined ||
-    filter.actorKind !== undefined ||
-    filter.actorRef !== undefined ||
-    filter.action !== undefined ||
-    filter.subjectKind !== undefined ||
-    filter.outcome !== undefined ||
-    filter.sinceDays !== undefined;
-  const crossStageClaimStatus: z.infer<
-    typeof OutputSchema
-  >['subject_scope']['cross_stage_claim_status'] = !filter.subjectId
-    ? 'not_subject_scoped'
-    : hasRelationFilter
-      ? 'blocked_relation_without_subject_filter_required'
-      : hasCrossStageNarrowingFilter
-        ? 'blocked_subject_id_only_filter_required'
-        : input.cursor
-          ? 'requires_complete_pagination_chain'
-          : hasMore
-            ? 'blocked_more_pages_unread'
-            : 'blocked_cross_subject_relation_followup_required';
-  const requiredCrossStageFollowup: z.infer<
-    typeof OutputSchema
-  >['subject_scope']['required_followup'] = !filter.subjectId
-    ? 'none'
-    : hasRelationFilter
-      ? 'repeat_with_relation_only_without_subject_id'
-      : hasCrossStageNarrowingFilter
-        ? 'repeat_with_subject_id_only'
-        : input.cursor
-          ? 'verify_complete_pagination_chain_then_follow_causal_relations'
-          : hasMore
-            ? 'follow_next_cursor_aggregate_then_follow_causal_relations'
-            : 'follow_causal_relations_from_returned_events';
+  const step = observationStep({
+    subjectScoped: filter.subjectId !== undefined,
+    hasMore,
+    cursor: input.cursor !== undefined,
+  });
   const correctionStatuses = await getCorrectionStatuses(
     ctx.db,
     rows.map((row) => row.id),
   );
 
   return OutputSchema.parse({
+    required_followup: step.required_followup,
     events: rows.map((r) => {
       const correction = correctionStatuses.get(r.id);
       return {
@@ -387,8 +378,8 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
       subject_kind: filter.subjectKind ?? null,
       all_subject_kinds_included: filter.subjectId ? filter.subjectKind === undefined : null,
       causal_descendants_included: filter.subjectId ? false : null,
-      cross_stage_claim_status: crossStageClaimStatus,
-      required_followup: requiredCrossStageFollowup,
+      cross_stage_claim_status: step.cross_stage_claim_status,
+      required_followup: step.required_followup,
     },
     match_semantics: {
       filters: 'and',
@@ -438,14 +429,19 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
 
 function summarize(input: Input, output: Output): string {
   const f = input.filter ?? {};
-  const parts: string[] = [`${output.total} rows`];
+  const parts: string[] = [
+    output.coverage.has_more
+      ? `${output.total} rows · more`
+      : output.coverage.complete_for_window
+        ? `${output.total} rows · window complete`
+        : `${output.total} rows · cursor remainder`,
+  ];
   if (f.action) parts.push(`action=${f.action}`);
   if (f.actorKind) parts.push(`actor=${f.actorKind}`);
   if (f.subjectKind) parts.push(`subj=${f.subjectKind}`);
   if (f.causedByEventId) parts.push(`caused_by=${f.causedByEventId.slice(0, 8)}…`);
   if (f.siblingOfEventId) parts.push(`sibling_of=${f.siblingOfEventId.slice(0, 8)}…`);
   if (f.sinceDays) parts.push(`since≤${f.sinceDays}d`);
-  if (output.coverage.has_more) parts.push('more');
   return `events · ${parts.join(' · ')}`;
 }
 

@@ -5,11 +5,12 @@ import { canonicalHash } from '@/core/migration/canonical';
 import type { ActivateEvaluationIntentT, PracticeIssuanceDtoT } from '@/core/schema/assessment';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import type { Db } from '@/db/client';
-import { artifact, event, question } from '@/db/schema';
+import { artifact, question } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { REASONING_TRACE_MAX_LEN } from '@/kernel/limits';
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import { createAssessmentLearningRecord } from '@/kernel/records/queries';
+import { hasPriorSolutionExposure } from '@/kernel/records/study-reference';
 import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
 import { sanitizeJsonStringLiterals } from '@/server/orchestrator/json-sanitize';
 import { Tutor } from '@/server/session';
@@ -374,24 +375,6 @@ function classifyHintFailure(err: unknown, generationAborted: boolean): SolveHin
   }
   if (name === 'AbortError' || name === 'TimeoutError') return 'timeout';
   return 'unknown';
-}
-
-/** Was the issuance's full solution already revealed via the dedicated reveal
- * path? Exposure is recorded per-issuance (the reveal route's own granularity),
- * so a prior reveal makes re-serving the frozen reference non-disclosing. */
-async function hasPriorSolutionExposure(db: Db, issuanceId: string): Promise<boolean> {
-  const rows = await db
-    .select({ id: event.id })
-    .from(event)
-    .where(
-      and(
-        eq(event.action, 'experimental:assessment_assistance'),
-        eq(event.subject_id, issuanceId),
-        sql`${event.payload}->>'kind' = 'solution'`,
-      ),
-    )
-    .limit(1);
-  return rows.length > 0;
 }
 
 function bodyBlocksExcerpt(value: unknown, maxLength = 280): string | null {

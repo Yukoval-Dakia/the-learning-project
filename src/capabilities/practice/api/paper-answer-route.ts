@@ -8,7 +8,10 @@ import { db } from '@/db/client';
 import { answer, learning_session } from '@/db/schema';
 import { ApiError, deprecatedRouteResponse, errorResponse } from '@/kernel/http';
 import { autosaveAnswerDraft } from '../server/answer-draft';
-import { readPaperAssessmentBinding } from '../server/assessment/paper-issuance';
+import {
+  assertIssuedPaperSlotsRenderable,
+  readPaperAssessmentBinding,
+} from '../server/assessment/paper-issuance';
 import { saveResponseDraft } from '../server/assessment/submit';
 import { LegacyPaperAnswerDraftBodySchema } from './paper-contracts';
 
@@ -78,6 +81,9 @@ export async function createAnswerDraft(
         ) {
           throw new ApiError('coordinate_mismatch', 'draft does not match issued paper slot', 409);
         }
+        // YUK-1573 — a slot the paper page cannot render takes no paper draft; refused
+        // before saveResponseDraft / autosaveAnswerDraft write anything.
+        await assertIssuedPaperSlotsRenderable(tx, paperArtifactId, [slot.issuance_id]);
         const saved = await saveResponseDraft(tx, {
           issuance_id: assessment.issuance_id,
           evaluation_group_ref: assessment.evaluation_group_id,

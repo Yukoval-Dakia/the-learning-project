@@ -72,7 +72,14 @@ export {
 } from '@/server/questions/submit-question';
 
 import { resolveSubjectProfile } from '@/subjects/profile';
+import { embedQuestionTextForIngest, questionEmbedStamp } from '../../jobs/embed_backfill';
 import { SupplyTraceV1 } from '../question-supply/evidence-demand';
+import {
+  claimHttpSourceDuplicate,
+  findVectorNearDuplicate,
+  vectorNearHoldMetadata,
+  visibleSourceNeighbor,
+} from '../question-supply/ingest-dedup';
 import { cleanupStagedAssets } from '../question-supply/jyeoo-candidates';
 import { JYEOO_SOURCE_HOST } from '../question-supply/jyeoo-supply-config';
 import {
@@ -200,6 +207,12 @@ async function defaultEnqueueSourceVerify(
 
 export interface SubmitQuestionDeps {
   enqueueSourceVerify?: EnqueueSourceVerifyFn;
+  /** 缺省用夜间回填同一条 embed 缝。失败则向量腿弃权，网址判重仍生效。 */
+  embedIngestText?: (q: {
+    prompt_md: string;
+    reference_md: string | null;
+    choices_md: string[] | null;
+  }) => Promise<number[]>;
 }
 
 export type StoreSourcedQuestionDeps = SubmitQuestionDeps;
@@ -376,6 +389,26 @@ async function runCandidateSubmit(
     };
   }
 
+  const sourceClaim = {
+    sourceUrl: candidate.question.source_url,
+    knowledgeIds,
+    actorRef: routeConfig.mergeActorRef,
+    taskRunId: ctx.taskRunId,
+    now,
+    onTerminal: 'defer' as const,
+  };
+  const claimedSource = await db.transaction((tx) => claimHttpSourceDuplicate(tx, sourceClaim));
+  if (claimedSource != null) {
+    await cleanupStagedForRejected(db, candidate.staged_asset_ids);
+    return {
+      status: 'conflict',
+      reason: 'duplicate_source',
+      detail: `同一来源网址命中既有题 ${claimedSource.existingQuestionId}；目标 KC 已并入`,
+      existing_question_id: claimedSource.existingQuestionId,
+      request_id: input.request_id,
+    };
+  }
+
   const hasImages = (candidate.image_refs?.length ?? 0) > 0;
   if (!hasImages) {
     const pool = await fetchNearDupPool(db, knowledgeIds);
@@ -394,6 +427,29 @@ async function runCandidateSubmit(
     }
   }
 
+  let vectorNear: { id: string; similarity: number } | null = null;
+  let ingestVector: number[] | null = null;
+  const questionText = {
+    prompt_md: candidate.question.prompt_md,
+    reference_md: candidate.question.reference_md,
+    choices_md: candidate.question.choices_md ?? null,
+  };
+  try {
+    ingestVector = await (
+      deps.embedIngestText ??
+      ((q: typeof questionText) =>
+        embedQuestionTextForIngest(q, {
+          db,
+          caller: ctx.taskRunId ? 'worker' : 'api',
+          deadlineAt: new Date(Date.now() + 20_000),
+        }))
+    )(questionText);
+    vectorNear = await findVectorNearDuplicate(db, ingestVector);
+  } catch (err) {
+    ingestVector = null;
+    console.error('[submit_question] vector near-dup abstained:', err);
+  }
+
   const questionId = createId();
   const whitelist = (resolveSubjectProfile(input.subject_id).sourceWhitelist ?? []) as string[];
   const routeMetadata =
@@ -408,9 +464,18 @@ async function runCandidateSubmit(
     ...(input.demand_id ? { demand_id: input.demand_id } : {}),
   };
 
-  let persisted: Awaited<ReturnType<typeof insertSourcedDraft>>;
+  let persisted:
+    | Awaited<ReturnType<typeof insertSourcedDraft>>
+    | { status: 'source_duplicate'; existingId: string };
   try {
     persisted = await db.transaction(async (tx) => {
+      const racedSource = await claimHttpSourceDuplicate(tx, {
+        ...sourceClaim,
+        onTerminal: 'release',
+      });
+      if (racedSource != null) {
+        return { status: 'source_duplicate' as const, existingId: racedSource.existingQuestionId };
+      }
       const inserted = await insertSourcedDraft(tx, {
         id: questionId,
         q: candidate.question,
@@ -427,6 +492,36 @@ async function runCandidateSubmit(
       });
       if (inserted.status === 'raced_merged') return inserted;
 
+      const hold =
+        vectorNear != null && (await visibleSourceNeighbor(tx, vectorNear.id))
+          ? vectorNearHoldMetadata(vectorNear)
+          : null;
+      const metadataJson = JSON.stringify({ ...metadataExtras, ...(hold ?? {}) });
+
+      const [storedText] = await tx
+        .select({
+          prompt_md: question.prompt_md,
+          reference_md: question.reference_md,
+          choices_md: question.choices_md,
+        })
+        .from(question)
+        .where(eq(question.id, questionId));
+      const embedStamp =
+        ingestVector != null &&
+        storedText != null &&
+        storedText.prompt_md === questionText.prompt_md &&
+        (storedText.reference_md ?? null) === questionText.reference_md &&
+        JSON.stringify(storedText.choices_md ?? null) === JSON.stringify(questionText.choices_md)
+          ? questionEmbedStamp(
+              {
+                prompt_md: storedText.prompt_md,
+                reference_md: storedText.reference_md,
+                choices_md: storedText.choices_md ?? null,
+              },
+              ingestVector,
+            )
+          : null;
+
       if (hasImages && candidate.figures && candidate.image_refs && candidate.structured) {
         await tx
           .update(question)
@@ -438,16 +533,18 @@ async function runCandidateSubmit(
             })),
             image_refs: candidate.image_refs,
             structured: { ...candidate.structured, id: questionId },
-            metadata: sql`${question.metadata} || ${JSON.stringify(metadataExtras)}::jsonb`,
+            metadata: sql`${question.metadata} || ${metadataJson}::jsonb`,
             updated_at: now,
+            ...(embedStamp ?? {}),
           })
           .where(eq(question.id, questionId));
       } else {
         await tx
           .update(question)
           .set({
-            metadata: sql`${question.metadata} || ${JSON.stringify(metadataExtras)}::jsonb`,
+            metadata: sql`${question.metadata} || ${metadataJson}::jsonb`,
             updated_at: now,
+            ...(embedStamp ?? {}),
           })
           .where(eq(question.id, questionId));
       }
@@ -467,6 +564,17 @@ async function runCandidateSubmit(
   } catch (err) {
     await cleanupStagedForRejected(db, candidate.staged_asset_ids);
     throw err;
+  }
+
+  if (persisted.status === 'source_duplicate') {
+    await cleanupStagedForRejected(db, candidate.staged_asset_ids);
+    return {
+      status: 'conflict',
+      reason: 'duplicate_source',
+      detail: `同一来源网址命中既有题 ${persisted.existingId}；目标 KC 已并入`,
+      existing_question_id: persisted.existingId,
+      request_id: input.request_id,
+    };
   }
 
   if (persisted.status === 'raced_merged') {
@@ -576,7 +684,12 @@ export async function executeStoreSourcedQuestion(
     }
   | {
       status: 'rejected';
-      reason: 'dead_knowledge_node' | 'duplicate_exact' | 'near_dup' | 'foreign_host';
+      reason:
+        | 'dead_knowledge_node'
+        | 'duplicate_exact'
+        | 'duplicate_source'
+        | 'near_dup'
+        | 'foreign_host';
       detail: string;
       existing_question_id: string | null;
     }
@@ -621,6 +734,7 @@ export async function executeStoreSourcedQuestion(
     reason: (out.reason ?? 'duplicate_exact') as
       | 'dead_knowledge_node'
       | 'duplicate_exact'
+      | 'duplicate_source'
       | 'near_dup'
       | 'foreign_host',
     detail: out.detail ?? out.reason ?? '',

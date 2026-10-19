@@ -19,7 +19,7 @@ import type { Provider } from '@/ai/registry';
 import { getConfig } from '@/core/config/store';
 import type { Db, Tx } from '@/db/client';
 import { provider_session_admission } from '@/db/schema';
-import { isKnownProvider } from '@/server/ai/providers';
+import { readProviderId } from '@/server/ai/providers';
 
 export type ProviderSessionAdmissionMode = 'off' | 'observe' | 'enforce';
 
@@ -187,8 +187,14 @@ function parsePolicies(
 
   const policies = new Map<Provider, ProviderSessionLanePolicy>();
   for (const [laneId, rawPolicy] of Object.entries(parsed)) {
-    if (!isKnownProvider(laneId)) {
+    const provider = readProviderId(laneId);
+    if (!provider) {
       throw new Error(`${POLICIES_ENV} contains unknown provider lane '${laneId}'`);
+    }
+    if (policies.has(provider)) {
+      throw new Error(
+        `${POLICIES_ENV} contains both '${laneId}' and another id for provider '${provider}'`,
+      );
     }
     if (!rawPolicy || typeof rawPolicy !== 'object' || Array.isArray(rawPolicy)) {
       throw new Error(`${POLICIES_ENV}.${laneId} must be an object`);
@@ -200,7 +206,7 @@ function parsePolicies(
     }
     const value = rawPolicy as Partial<RawLanePolicy>;
     const base = {
-      laneId,
+      laneId: provider,
       maxConcurrentSessions: readPositiveInteger(
         value.maxConcurrentSessions,
         `${laneId}.maxConcurrentSessions`,
@@ -224,7 +230,7 @@ function parsePolicies(
         },
       ),
     } satisfies Omit<ProviderSessionLanePolicy, 'fingerprint'>;
-    policies.set(laneId, { ...base, fingerprint: policyFingerprint(base) });
+    policies.set(provider, { ...base, fingerprint: policyFingerprint(base) });
   }
   if (policies.size === 0) {
     throw new Error(`${POLICIES_ENV} must configure at least one provider lane`);

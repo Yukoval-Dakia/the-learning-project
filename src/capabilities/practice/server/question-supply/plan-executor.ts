@@ -235,7 +235,7 @@ export interface RouteExecutionTally {
   skipped?: string;
   /** skipped 原因的补充说明（未预期异常 message / supply_trace 丢弃备注）。 */
   detail?: string;
-  /** per-candidate store 拒绝计数（reason→count：duplicate_exact / near_dup / dead_knowledge_node / foreign_host）。 */
+  /** per-candidate store 拒绝计数（reason→count：duplicate_exact / duplicate_source / near_dup / dead_knowledge_node / foreign_host）。 */
   rejections: Record<string, number>;
   /** per-candidate store commit 未预期异常计数（软失败，不中断路由）。 */
   errors: number;
@@ -401,8 +401,13 @@ export type CommitCandidateResult =
   | { status: 'inserted'; questionId: string }
   | {
       status: 'rejected';
-      /** store seam 的拒绝 reason 原样透传（outputSchema 的四值枚举）。 */
-      reason: 'dead_knowledge_node' | 'duplicate_exact' | 'near_dup' | 'foreign_host';
+      /** store seam 的拒绝 reason 原样透传。 */
+      reason:
+        | 'dead_knowledge_node'
+        | 'duplicate_exact'
+        | 'duplicate_source'
+        | 'near_dup'
+        | 'foreign_host';
     }
   | { status: 'threw'; detail: string };
 

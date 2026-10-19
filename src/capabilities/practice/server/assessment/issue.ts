@@ -8,6 +8,7 @@ export {
   ASSESSMENT_ISSUANCE_VERSION,
   issuanceRowToContract,
   issueAssessment,
+  readAutomaticServingDecision,
   readObservedAdmissionGeneration,
   revisionRowToContract,
 } from '@/kernel/records/assessment-issuance';

@@ -10,6 +10,8 @@
 // 纯类型 + 确定性原语，无 IO、无 DB、无 route —— 业务接线由后续 lane 经
 // 既有 capability manifest 贡献。subject-agnostic：科目专属逻辑不进本目录。
 
+export * from './blank-answer-compare';
+export * from './blank-answer-shape';
 export * from './capture';
 export * from './coverage';
 export * from './dto';

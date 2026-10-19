@@ -5,7 +5,12 @@ import { db } from '@/db/client';
 import { artifact, learning_session } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { Review } from '@/server/session';
-import { issuePaperAssessment } from '../server/assessment/paper-issuance';
+import {
+  assertIssuedPaperSlotsRenderable,
+  assertPaperOpenable,
+  issuePaperAssessment,
+  readPaperAssessmentBinding,
+} from '../server/assessment/paper-issuance';
 
 export interface PaperReviewSessionResult {
   sessionId: string;
@@ -71,9 +76,21 @@ export async function createPaperReviewSession(paperId: string): Promise<PaperRe
       .orderBy(desc(learning_session.created_at))
       .limit(1);
     if (existingSessionRows[0]) {
+      // YUK-1573 — an occurrence opened before the whole-paper guard is not handed back
+      // to the paper page when its issued slots include ones the page cannot render.
+      const binding = await readPaperAssessmentBinding(tx, existingSessionRows[0].id);
+      if (binding) {
+        await assertIssuedPaperSlotsRenderable(
+          tx,
+          paperId,
+          binding.slots.map((slot) => slot.issuance_id),
+        );
+      }
       return { sessionId: existingSessionRows[0].id, created: false };
     }
 
+    // YUK-1573 — read-only refusal before the session row and any issuance are written.
+    await assertPaperOpenable(tx, paperId);
     const { sessionId } = await Review.startReviewSession(tx, { artifactId: paperId });
     await issuePaperAssessment(tx, sessionId, paperId);
     return { sessionId, created: true };

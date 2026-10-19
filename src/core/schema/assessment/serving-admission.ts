@@ -1,4 +1,8 @@
 import { unit as parseUnit } from 'mathjs';
+import {
+  DECLARED_BLANK_COMPARE_VERSION,
+  declaredBlankGradeReadiness,
+} from './blank-answer-compare';
 import { EvaluationContractError, projectIssuedScoringBasis } from './evaluation';
 import { validateExecutionPlan } from './execution';
 import { isPublicSharedMaterial } from './materials';
@@ -11,6 +15,7 @@ import {
 import type { ResponseSlotT } from './response';
 import type { PublishedQuestionRevisionT } from './revision';
 import { type ScoringUnitT, validateScoringBasis } from './scoring';
+import { NATIVE_FIELD_SLOT_KIND_SET, PRESENTATION_INPUT_SLOT_KINDS } from './slot-renderers';
 
 /** YUK-1445 —— typed withheld reasons（公共读面安全枚举；detail 只作内部诊断）。
  * 单一来源：wire schema / DTO 共用此 tuple，禁止第二份拷贝。 */
@@ -176,23 +181,18 @@ function checkModelUnitAdmission(
 /**
  * 网页逐槽渲染已有输入控件的槽位种类（YUK-1496）。没有控件的题后端判得了也不发，
  * 避免「题出了却没有输入框」。只能由展示层积木画出的种类见 BLOCK_INPUT_SLOT_KINDS。
+ * 清单单一来源在 slot-renderers.ts（YUK-1573），与 nativeSlotFieldSpec 编译期绑定。
  */
-export const INPUT_RENDERER_SLOT_KINDS: ReadonlySet<ResponseSlotT['kind']> = new Set([
-  'single_choice',
-  'multi_choice',
-  'text',
-  'numeric',
-  'formula',
-  'matching',
-  'ordering',
-  'open_response',
-]);
+export const INPUT_RENDERER_SLOT_KINDS: ReadonlySet<ResponseSlotT['kind']> =
+  NATIVE_FIELD_SLOT_KIND_SET;
 
 /**
  * YUK-1497 —— 只能由展示层输入积木画出的槽位种类（spec §4）：没有逐槽控件，
  * 只有 revision 的 presentation 用声明式输入积木绑定它时才可出。
  */
-const BLOCK_INPUT_SLOT_KINDS: ReadonlySet<ResponseSlotT['kind']> = new Set(['select', 'blank']);
+const BLOCK_INPUT_SLOT_KINDS: ReadonlySet<ResponseSlotT['kind']> = new Set(
+  PRESENTATION_INPUT_SLOT_KINDS,
+);
 
 /** 每个被绑定槽位由谁画：声明式输入积木，或网页尚不能运行的自定义块。 */
 function presentationBinders(presentation: PresentationT): Map<string, 'block' | 'custom'> {
@@ -273,6 +273,23 @@ export function decideAutomaticServing(
   const answerSlots = revision.response_spec.slots.filter(
     (slot) => selected.has(slot.part_id) && slot.kind !== 'table',
   );
+  // YUK-1568（第 2 片）：发出范围内的已声明 blank 槽现在由共享比较核心判定
+  // 判分就绪（声明被支持 + 被 blank_key unit 读取 + 私有键可编译）。任一缺
+  // 项（未知版本、未实现 notation、键冲突、缺判分单元）仍明确拒绝发题，
+  // 绝不回退普通 exact 文本判分。此闸在渲染面检查之前：判不了分比画不出
+  // 更根本。
+  const declaredReadiness = declaredBlankGradeReadiness(
+    revision.response_spec,
+    revision.scoring_basis,
+    selectedPartIds,
+  );
+  if (!declaredReadiness.ok) {
+    return {
+      kind: 'unavailable',
+      reason: 'unsupported_deterministic_input',
+      detail: `declared answer_shape not gradable: ${declaredReadiness.reason} (comparator ${DECLARED_BLANK_COMPARE_VERSION})`,
+    };
+  }
   // YUK-1497 —— 展示层形状门先行（review R1）：行读面（revisionRowToContract）对解析
   // 失败的展示层原样透传而非丢列（丢列 = 静默降级为逐槽渲染的 fail-open）；这里以
   // invalid_presentation 拒绝，绝不带着坏展示层发题，原因也不被输入面检查盖住。

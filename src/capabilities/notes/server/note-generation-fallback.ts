@@ -4,21 +4,10 @@
 // error: the body is filled from REAL, already-persisted material only — the
 // note's own title, an excerpt of its first source material, the related
 // knowledge-point names, and (when the note was generated from an
-// already-issued question) the question's frozen reference solution under the
-// SAME reveal rules as the YUK-1409 hint fallback. Every piece is labelled
-// with where it came from and the body opens with
+// already-issued question) the frozen reference under the reveal rule in
+// kernel/records/study-reference.ts (the same rule the hint fallback uses).
+// Every piece is labelled with where it came from and the body opens with
 // 「自动生成失败，以下为原材料整理」. No AI content is invented.
-//
-// Reveal rules (mirror buildSolveHintFallback in practice/server/solve-session.ts;
-// notes cannot import practice — the capability-boundary baseline pins
-// notes->practice at 0 value edges): the frozen sol_* reference is included
-// ONLY when the issuance's solution was already revealed through the dedicated
-// reveal path (a prior experimental:assessment_assistance kind='solution'
-// exposure event) — re-serving an already-revealed reference is
-// non-disclosing, and the serving is recorded as one more kind='solution' /
-// impact='answer_help' exposure so submission snapshots keep counting it.
-// Without prior exposure the reference is withheld and the body says so
-// honestly, mirroring the hint ladder's disclosure line.
 //
 // The question linkage is EXPLICIT data on the note row (attrs
 // source_issuance_id + source_question_id, stamped by whatever writer derives
@@ -27,20 +16,19 @@
 // reference into a note the question never fed.
 
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { canonicalHash } from '@/core/migration/canonical';
 import type { ArtifactBodyBlocksT } from '@/core/schema/business';
-import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import type { Db, Tx } from '@/db/client';
+import { artifact, knowledge } from '@/db/schema';
+import { issuanceRowToContract, revisionRowToContract } from '@/kernel/records/assessment-issuance';
 import {
-  artifact,
-  assessment_issuance,
-  event,
-  knowledge,
-  question,
-  question_revision,
-} from '@/db/schema';
-import { writeEvent } from '@/kernel/events';
+  hasPriorSolutionExposure,
+  loadIssuanceStudyCoordinate,
+  projectFrozenIssuedPrompt,
+  projectFrozenStudyReference,
+  recordStudyAssistanceExposure,
+} from '@/kernel/records/study-reference';
 
 import { loadNoteGenerationReferences } from './note-generation-references';
 
@@ -54,17 +42,14 @@ export const NOTE_GENERATION_FALLBACK_ACTOR_REF = 'note_generate_fallback';
 export const NOTE_GENERATION_FALLBACK_NOTICE =
   '自动生成失败，以下为原材料整理（非 AI 生成，各段已标注来源）。';
 
-/** Mirrors the sol_* asset-id shape filter in projectFrozenStudyContext. */
-const FROZEN_SOLUTION_ASSET_RE = /^sol_[0-9a-f]{12}$/;
-
 const MATERIAL_EXCERPT_MAX_CHARS = 400;
 
 export interface NoteGenerationFallbackQuestion {
   question_id: string;
   issuance_id: string;
-  /** Live question prompt (same source the hint fallback reads). */
+  /** Frozen issued face (public materials + part prompts), not the live question row. */
   prompt_excerpt: string;
-  /** Frozen sol_* solution material; non-null only under the reveal rules. */
+  /** Frozen reference (sol_*, else issued scoring basis); non-null only when already revealed. */
   reference_md: string | null;
   /** A frozen reference exists but was not yet revealed — withheld honestly. */
   reference_withheld: boolean;
@@ -85,68 +70,7 @@ function capExcerpt(value: string, maxChars = MATERIAL_EXCERPT_MAX_CHARS): strin
   return collapsed.length > maxChars ? `${collapsed.slice(0, maxChars - 1)}…` : collapsed;
 }
 
-/** Mirror of hasPriorSolutionExposure (solve-session.ts) — the reveal rule. */
-async function hasPriorSolutionExposure(db: Db, issuanceId: string): Promise<boolean> {
-  const rows = await db
-    .select({ id: event.id })
-    .from(event)
-    .where(
-      and(
-        eq(event.action, 'experimental:assessment_assistance'),
-        eq(event.subject_id, issuanceId),
-        sql`${event.payload}->>'kind' = 'solution'`,
-      ),
-    )
-    .limit(1);
-  return rows.length > 0;
-}
-
-/**
- * Frozen sol_* solution material scoped to the ISSUED parts only — mirrors the
- * scoping + asset filter of projectFrozenStudyContext (study-context.ts) so a
- * multi-part revision never leaks a non-issued part's solution. Walked with
- * runtime guards over the raw jsonb structure (no projection duplication).
- */
-function extractFrozenSolutionMd(structure: unknown, partIds: readonly string[]): string | null {
-  if (structure === null || typeof structure !== 'object') return null;
-  const record = structure as Record<string, unknown>;
-  const issuedParts = new Set(partIds);
-  const scopedMaterialIds = new Set<string>();
-  if (Array.isArray(record.parts)) {
-    for (const part of record.parts) {
-      if (part === null || typeof part !== 'object') continue;
-      const p = part as Record<string, unknown>;
-      if (typeof p.part_id !== 'string' || !issuedParts.has(p.part_id)) continue;
-      if (Array.isArray(p.material_ids)) {
-        for (const id of p.material_ids) if (typeof id === 'string') scopedMaterialIds.add(id);
-      }
-    }
-  }
-  if (!Array.isArray(record.materials)) return null;
-  const texts: string[] = [];
-  for (const material of record.materials) {
-    if (material === null || typeof material !== 'object') continue;
-    const m = material as Record<string, unknown>;
-    if (typeof m.material_id !== 'string' || !scopedMaterialIds.has(m.material_id)) continue;
-    const asset = m.asset as Record<string, unknown> | null | undefined;
-    const assetId = asset != null && typeof asset === 'object' ? asset.asset_id : undefined;
-    if (typeof assetId !== 'string' || !FROZEN_SOLUTION_ASSET_RE.test(assetId)) continue;
-    if (typeof m.content_md === 'string' && m.content_md.length > 0) texts.push(m.content_md);
-  }
-  return texts.length > 0 ? texts.join('\n\n') : null;
-}
-
-/**
- * Question branch — only for notes whose attrs carry an EXPLICIT
- * source_issuance_id + source_question_id linkage (no writer today; a future
- * question→note writer stamps them). Coordinate + reveal-unavailable checks
- * mirror loadFrozenStudyContext (study-context.ts); a mismatch or a
- * non-assistable issuance simply leaves the question branch off.
- */
-async function loadFallbackQuestion(
-  db: Db,
-  attrs: unknown,
-): Promise<NoteGenerationFallbackQuestion | null> {
+function questionLinkage(attrs: unknown): { issuanceId: string; questionId: string } | null {
   const record =
     attrs !== null && typeof attrs === 'object' ? (attrs as Record<string, unknown>) : {};
   const issuanceId =
@@ -154,42 +78,45 @@ async function loadFallbackQuestion(
   const questionId =
     typeof record.source_question_id === 'string' ? record.source_question_id : null;
   if (!issuanceId || !questionId) return null;
+  return { issuanceId, questionId };
+}
 
-  const [issuance] = await db
-    .select()
-    .from(assessment_issuance)
-    .where(eq(assessment_issuance.issuance_id, issuanceId))
-    .limit(1);
-  if (!issuance) return null;
-  const [revision] = await db
-    .select({ group_id: question_revision.group_id, structure: question_revision.structure })
-    .from(question_revision)
-    .where(eq(question_revision.revision_id, issuance.revision_id))
-    .limit(1);
-  if (!revision || (revision.group_id !== questionId && !issuance.part_ids.includes(questionId)))
-    return null;
-  const [q] = await db
-    .select({ prompt_md: question.prompt_md, source: question.source })
-    .from(question)
-    .where(eq(question.id, questionId))
-    .limit(1);
-  if (!q) return null;
+/**
+ * Question branch — only for notes whose attrs carry an EXPLICIT
+ * source_issuance_id + source_question_id linkage. A missing issuance or a
+ * coordinate mismatch leaves the branch off. A non-assistable issuance still
+ * contributes the frozen issued face, never the reference.
+ */
+async function loadFallbackQuestion(
+  db: Db,
+  attrs: unknown,
+): Promise<NoteGenerationFallbackQuestion | null> {
+  const linkage = questionLinkage(attrs);
+  if (!linkage) return null;
+  const loaded = await loadIssuanceStudyCoordinate(db, linkage.issuanceId, linkage.questionId);
+  if (loaded.status === 'not_found' || loaded.status === 'coordinate_mismatch') return null;
 
-  // reveal_unavailable mirrors loadFrozenStudyContext: intervention
-  // diagnostics and container occurrences never permit study assistance.
-  const assistable =
-    q.source !== INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE && !issuance.container_occurrence_ref;
-  const solutionMd = assistable
-    ? extractFrozenSolutionMd(revision.structure, issuance.part_ids)
-    : null;
-  const revealed = solutionMd !== null && (await hasPriorSolutionExposure(db, issuanceId));
+  const revision = revisionRowToContract(loaded.revision);
+  const issuance = issuanceRowToContract(loaded.issuance);
+  if (loaded.status === 'reveal_unavailable') {
+    return {
+      question_id: linkage.questionId,
+      issuance_id: linkage.issuanceId,
+      prompt_excerpt: capExcerpt(projectFrozenIssuedPrompt(revision, issuance)),
+      reference_md: null,
+      reference_withheld: false,
+    };
+  }
 
+  const projected = projectFrozenStudyReference(revision, issuance);
+  const referenceMd = projected.referenceMd?.trim() ? projected.referenceMd : null;
+  const revealed = referenceMd !== null && (await hasPriorSolutionExposure(db, linkage.issuanceId));
   return {
-    question_id: questionId,
-    issuance_id: issuanceId,
-    prompt_excerpt: capExcerpt(q.prompt_md),
-    reference_md: revealed ? solutionMd : null,
-    reference_withheld: solutionMd !== null && !revealed,
+    question_id: linkage.questionId,
+    issuance_id: linkage.issuanceId,
+    prompt_excerpt: capExcerpt(projected.promptMd),
+    reference_md: revealed ? referenceMd : null,
+    reference_withheld: referenceMd !== null && !revealed,
   };
 }
 
@@ -415,28 +342,20 @@ export function mayOverwriteNoteBodyForGeneration(
 }
 
 /**
- * Record the fallback's serving of an already-revealed frozen reference —
- * SAME event action/payload shape as recordAssistanceExposure
- * (practice/server/assessment/assistance.ts) so exposure accounting and
- * submission snapshots count it identically; actor_ref names the real writer.
+ * Record the fallback's serving of an already-revealed frozen reference.
+ * actor_ref names this writer; the lock, coordinate re-check, and payload
+ * shape live in recordStudyAssistanceExposure.
  */
 export async function recordNoteFallbackReferenceExposure(
   tx: Tx,
-  input: { issuanceId: string; referenceMd: string },
+  input: { issuanceId: string; questionId: string; referenceMd: string },
 ): Promise<void> {
-  await writeEvent(tx, {
-    id: `evt_help_${createId()}`,
-    actor_kind: 'system',
-    actor_ref: NOTE_GENERATION_FALLBACK_ACTOR_REF,
-    action: 'experimental:assessment_assistance',
-    subject_kind: 'issuance',
-    subject_id: input.issuanceId,
-    outcome: null,
-    payload: {
-      version: 1,
-      kind: 'solution',
-      impact: 'answer_help',
-      content_digest: `sha256:${canonicalHash(input.referenceMd)}`,
-    },
+  await recordStudyAssistanceExposure(tx, {
+    issuanceId: input.issuanceId,
+    questionId: input.questionId,
+    kind: 'solution',
+    impact: 'answer_help',
+    contentDigest: `sha256:${canonicalHash(input.referenceMd)}`,
+    actorRef: NOTE_GENERATION_FALLBACK_ACTOR_REF,
   });
 }

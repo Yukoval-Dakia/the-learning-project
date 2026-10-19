@@ -25,7 +25,7 @@
 // authMode:'key', set the env-var name + baseURL. Adding a new task: edit
 // registry.ts only.
 
-import type { TaskDefinition } from '@/ai/task-spec';
+import { type TaskDefinition, canonicalProviderName } from '@/ai/task-spec';
 import { type Provider, type TaskKind, tasks } from '@/capabilities/task-registry';
 import { getLaneOverride, getTaskOverride } from '@/core/config/store';
 import type { ProviderModelBinding } from './model-profiles';
@@ -125,7 +125,7 @@ const PROVIDERS: Record<Provider, BoundProviderConfig> = {
       'mimo-v2.6-pro': { capabilities: { toolCalling: true } },
     },
   },
-  'zai-coding-cn': {
+  'zhipuai-coding-plan': {
     authMode: 'key',
     baseUrl: 'https://open.bigmodel.cn/api/coding/paas/v4',
     apiKeyEnv: 'ZAI_CODING_CN_API_KEY',
@@ -241,59 +241,18 @@ const PROVIDERS: Record<Provider, BoundProviderConfig> = {
     apiKeyEnv: 'OPENCODE_API_KEY',
     description: 'OpenCode Go subscription catalog via the pi execution adapter',
     modelDefaults: {
-      // The lane has no transport-level structured-output contract, and tool
-      // calling stays opt-in per model below: declare both false explicitly
-      // (not 'unknown') so the capability gate rejects with an honest
-      // classification, not a gap.
-      capabilities: { structuredOutput: false, toolCalling: false },
+      // This lane does not send response_format, so catalog structured_output stays off.
+      capabilities: { structuredOutput: false },
       // pi usage.cost is a catalog-rate estimate, not a contractual invoice
       // (design §6 R1): never metered.
       execution: { meteredUsd: false },
     },
     models: {
-      // YUK-1021 (921 P2) — evidence-gated toolCalling declarations: a model
-      // flips to true only after a sealed actual-output tool-loop run lands in
-      // docs/planning/evidence/2026-09-21-pi-tool-loop-<model>-actual.json.
-      // The pi catalog JSON carries no tool_call bit, so this binding IS the
-      // authoritative classification for opencode-go.
-      'glm-5.3-flash': { capabilities: { toolCalling: true } },
-      'deepseek-v4-pro': { capabilities: { toolCalling: true } },
-      // YUK-1341 — mimo-v2.6-pro is the post-incident product lane for
-      // CopilotTask and the other needsToolCall kinds (xiaomi mimo-v2.5-pro
-      // hit 402 insufficient_balance). Sealed evidence for this binding:
-      //   docs/planning/evidence/2026-09-21-pi-tool-loop-mimo-v2.6-pro-actual.json
-      //     (production SourcingTask entry + tool_call_log reconciliation,
-      //      2026-10-06T18:02Z)
-      //   docs/planning/evidence/2026-09-21-pi-p3-copilot-mimo-v2.6-pro-actual.json
-      //     (production Copilot two durable turns, 2026-10-06T18:05Z)
-      //   docs/planning/evidence/2026-10-07-yuk1341-synthetic-tool-mimo-v2.6-pro-actual.json
-      //     (PiAgentAdapter + synthetic tool wire proof — the surviving
-      //      artifact is the 2026-10-06T18:07Z post-binding reseal; the harness
-      //      had hardcoded pre-binding labels, superseded in that file's
-      //      `correction` record. The original pre-binding seal was overwritten
-      //      by the reseal and is not recoverable.)
-      // Vision needs no binding here: the native pi catalog declares
-      // input text+image and model-profiles reads it as authoritative.
-      'mimo-v2.6-pro': { capabilities: { toolCalling: true } },
-      // YUK-1547 — owner-designated QuestionAdmissionSolveTask lane. Paid
-      // evidence on the official endpoint (chat + probe_echo tool_call, both
-      // HTTP 200 with reasoning_effort=high) is sealed in
-      // docs/planning/evidence/2026-10-18-opencode-go-deepseek-v4.1-flash-receipts.json.
-      // forcedToolChoice=false: with thinking:{type:'enabled'} on the wire the
-      // endpoint returned HTTP 400 "Thinking mode does not support this
-      // tool_choice" on two paid calls (upstream request_id
-      // 6fde3ba6-8f64-4c84-8a3d-5a5e211b430a et al., 2026-10-18 backlog
-      // window) while five calls built by the same harness code path returned
-      // 200. Whether those requests were byte-identical is UNPROVEN — the
-      // successful requests' raw HTTP payloads are not archived (pre-C6 gap),
-      // and "upstream routing" remains a hypothesis, not a confirmed cause.
-      // What is confirmed: loom has exactly one forced named-function
-      // tool_choice construction site (adapter onPayload), and this model
-      // combination produced two measured 400s — so this lane never sends a
-      // forced choice at all.
-      'deepseek-v4.1-flash': {
-        capabilities: { toolCalling: true, forcedToolChoice: false },
-      },
+      // forcedToolChoice is not in the models.dev snapshot. With thinking
+      // enabled, this model returned HTTP 400 "Thinking mode does not support
+      // this tool_choice" (request_id 6fde3ba6-8f64-4c84-8a3d-5a5e211b430a).
+      // toolCalling stays on the snapshot.
+      'deepseek-v4.1-flash': { capabilities: { forcedToolChoice: false } },
     },
   },
   // YUK-365 — subscription-OAuth lane. Opus 4.8 via the owner's Claude Max
@@ -379,6 +338,11 @@ export function isKnownProvider(name: string): name is Provider {
   return Object.hasOwn(PROVIDERS, name);
 }
 
+export function readProviderId(name: string): Provider | undefined {
+  const canonical = canonicalProviderName(name);
+  return isKnownProvider(canonical) ? canonical : undefined;
+}
+
 /**
  * YUK-608 — is this provider's credential lane configured in THIS process's env? An
  * OAuth provider needs its `oauthTokenEnv`; a key provider needs its `apiKeyEnv`.
@@ -436,7 +400,7 @@ const IMPLEMENTED_KEY_PROVIDERS: ReadonlySet<Provider> = new Set([
   'anthropic',
   'xiaomi',
   'xiaomi-token-plan',
-  'zai-coding-cn',
+  'zhipuai-coding-plan',
   'opencode-go',
   'openai',
 ]);
@@ -604,8 +568,8 @@ function readEnvOverride(
 ): { provider: Provider; model?: string } | undefined {
   const raw = env.AI_PROVIDER_OVERRIDE;
   if (!raw) return undefined;
-  const provider = raw as Provider;
-  if (!isKnownProvider(provider)) {
+  const provider = readProviderId(raw);
+  if (!provider) {
     throw new Error(
       `AI_PROVIDER_OVERRIDE='${raw}' is not a known provider; expected one of ${Object.keys(PROVIDERS).join(' | ')}`,
     );
@@ -618,7 +582,7 @@ function readEnvOverride(
  * YUK-1007 — 全局 provider pin 的合并层：env（AI_PROVIDER_OVERRIDE，operator
  * 钉死进程，最高优先）> DB `lane.global.provider`/`lane.global.model`（面板
  * 写的 DB 位）。env 缺席时 DB pin 生效；两者都缺席 → undefined。
- * DB 值经 hydrate schema + 写端 isKnownProvider 校验，但手工注入行可能在写端
+ * DB 值经 hydrate schema + 写端 readProviderId 校验，但手工注入行可能在写端
  * 之外落地——这里仍走同一 unknown-name throw（与 env 侧一致的 config-error
  * 语义，让错配立刻可观测而不是静默降级）。
  *
@@ -638,12 +602,13 @@ export function resolveGlobalProviderSwitch(
   const env = readEnvOverride(envValues);
   if (env) return env;
   if (!db?.provider) return undefined;
-  if (!isKnownProvider(db.provider)) {
+  const provider = readProviderId(db.provider);
+  if (!provider) {
     throw new Error(
       `lane.global.provider='${db.provider}' (DB config) is not a known provider; expected one of ${Object.keys(PROVIDERS).join(' | ')}`,
     );
   }
-  return { provider: db.provider, model: db.model };
+  return { provider, model: db.model };
 }
 
 /**
@@ -710,20 +675,19 @@ export function resolveTaskBinding(
   // Chat env pin > explicit arg > DB global > DB per-task > registry —
   // with the opt-in: explicit arg > task pair > registry (global pin skipped).
   // The arg may set only `model`, so fall back through each layer per-field.
+  const dbTaskProvider = dbTaskOverride?.provider
+    ? readProviderId(dbTaskOverride.provider)
+    : undefined;
   if (
     !override?.provider &&
     !globalSwitch?.provider &&
     dbTaskOverride?.provider &&
-    !isKnownProvider(dbTaskOverride.provider)
+    !dbTaskProvider
   ) {
     throw new Error(
-      `task.${kind}.provider='${dbTaskOverride.provider}' is not a native provider; migrate legacy 'zhipu' to 'zai-coding-cn' and choose a model from its pi catalog.`,
+      `task.${kind}.provider='${dbTaskOverride.provider}' is not a native provider; migrate legacy 'zhipu' to 'zhipuai-coding-plan' and choose a model from its pi catalog.`,
     );
   }
-  const dbTaskProvider =
-    dbTaskOverride?.provider && isKnownProvider(dbTaskOverride.provider)
-      ? (dbTaskOverride.provider as Provider)
-      : undefined;
   const providerName: Provider =
     override?.provider ?? globalSwitch?.provider ?? dbTaskProvider ?? def.defaultProvider;
   const selectionRule: TaskSelectionRule = envPin
@@ -789,26 +753,26 @@ function assertOptedTaskPair(
   kind: TaskKind,
   dbTaskOverride: { provider?: string; model?: string } | undefined,
 ): void {
-  const fail = (reason: string): never => {
+  function fail(reason: string): never {
     throw new Error(
       `task.${kind}.override_global_pin=true requires a complete+legal task.<kind> pair — ${reason}. Fix the pair or clear the flag; this opt-in never falls through to the global pin or the registry default.`,
     );
-  };
-  const provider = dbTaskOverride?.provider;
+  }
+  const rawProvider = dbTaskOverride?.provider;
   const model = dbTaskOverride?.model;
-  if (typeof provider !== 'string' || provider === '' || !isKnownProvider(provider)) {
-    fail(`task.${kind}.provider='${provider ?? '∅'}' is missing or not a known provider`);
+  const provider =
+    typeof rawProvider === 'string' && rawProvider !== '' ? readProviderId(rawProvider) : undefined;
+  if (!provider) {
+    fail(`task.${kind}.provider='${rawProvider ?? '∅'}' is missing or not a known provider`);
   }
   if (typeof model !== 'string' || model === '') {
     fail(`task.${kind}.model is missing`);
   }
-  const optedProvider = provider as Provider;
-  const optedModel = model as string;
-  if (!isProviderImplementedForTask(optedProvider, kind)) {
-    fail(`provider '${optedProvider}' is not implemented for task '${kind}'`);
+  if (!isProviderImplementedForTask(provider, kind)) {
+    fail(`provider '${rawProvider}' is not implemented for task '${kind}'`);
   }
-  if (!nativePiModel(optedProvider, optedModel)) {
-    fail(`model '${optedModel}' is not in native pi provider '${piProviderId(optedProvider)}'`);
+  if (!nativePiModel(provider, model)) {
+    fail(`model '${model}' is not in native pi provider '${piProviderId(provider)}'`);
   }
 }
 

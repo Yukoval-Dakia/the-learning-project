@@ -34,7 +34,7 @@ status: proposed
 ### D5 门：判分只落准入模型；能力 fail-closed；embedding 不跨模型
 
 - **判分/评级任务**：链条目必须挂在 YUK-1445 准入切片上（D17 `admitted_slice_id`，`src/core/schema/assessment/execution.ts:53-61`；未准入 ⇒ `unadmitted_model_executor`，escalation 只许 withhold/human_review）。链上无可用条目 ⇒ 按现策略标 undecided/withhold，**绝不让未准入模型静默判分**。
-- **vision / 工具调用任务**：逐条目过 `assertModelProfileCapabilityFit`（'unknown' 即拒）。代码事实（`providers.ts` bindings）：toolCalling=true 已声明于 `xiaomi-token-plan` 的 `mimo-v2.6-pro`（`providers.ts:111-123`，YUK-1402 actual-output 证据）、opencode-go 的 `glm-5.3-flash`/`deepseek-v4-pro`/`mimo-v2.6-pro`、`zai-coding-cn` 的 `glm-5.3`、openai 的 `gpt-6-astra`；旧按量 `xiaomi` lane 的 `mimo-v2.6-pro` 无此声明（'unknown' ⇒ fail-closed）。Token Plan 证据不外推到按量或 OpenCode Go 同名模型（`src/server/ai/AGENTS.md`）——见 D9。
+- **vision / 工具调用任务**：逐条目过 `assertModelProfileCapabilityFit`（'unknown' 即拒）。代码事实：`xiaomi-token-plan` 的 `mimo-v2.6-pro` 与 `zhipuai-coding-plan` 的 `glm-5.3` 在 `providers.ts` binding 声明 toolCalling=true；opencode-go 的 toolCalling 取 models.dev 快照的 `tool_call`（YUK-1561），binding 不再逐模型声明；openai 的 `gpt-6-astra` 在 binding 声明 toolCalling=true。旧按量 `xiaomi` lane 的 `mimo-v2.6-pro` 无此声明（'unknown' ⇒ fail-closed）。Token Plan 证据不外推到按量或 OpenCode Go 同名模型（`src/server/ai/AGENTS.md`）——见 D9。
 - **embedding**：不跨模型。向量空间随模型不同（DashScope `text-embedding-v4` @1024 维写死 Drizzle `vector(1024)` 列，`src/server/ai/embed.ts:18-19`），换模型即污染向量空间；走既有 direct-provider-attempt / `dashscope.embedding` admission lane 延迟重试。
 
 ### D6 成本：每次尝试按其所在 provider 的口径独立预留与记账；unknown 永不记 0
@@ -51,7 +51,7 @@ run 行记录请求链与最终服务 provider/model（`ai_task_runs.provider/mo
 
 ### D9 默认链（提案）：`xiaomi-token-plan/mimo-v2.6-pro` → `opencode-go/mimo-v2.6-pro`
 
-代码核实：①`xiaomi-token-plan` 是独立 provider（`providers.ts:111`，`XIAOMI_TOKEN_PLAN_API_KEY`，YUK-1402），与旧按量 `xiaomi`（`XIAOMI_API_KEY`）key 不互通，TEST 现役即此 lane；②两通道都有 `mimo-v2.6-pro`（text+image），同模型双通道成立，且两者各自的 toolCalling 声明都有自己的 actual-output 证据（Token Plan：YUK-1402；OpenCode Go：YUK-1341），故 needsToolCall 种类两个条目都可用，仍逐条过能力门；③旧按量 `xiaomi` lane 不在默认链（无 toolCalling 证据，且与 Token Plan 证据不互通）。其余通道（`anthropic-sub`、`zai-coding-cn` 等）仅凭各自能力/准入证据入链。顺序 owner 随时调整。
+代码核实：①`xiaomi-token-plan` 是独立 provider（`providers.ts:111`，`XIAOMI_TOKEN_PLAN_API_KEY`，YUK-1402），与旧按量 `xiaomi`（`XIAOMI_API_KEY`）key 不互通，TEST 现役即此 lane；②两通道都有 `mimo-v2.6-pro`（text+image），同模型双通道成立，Token Plan 的 toolCalling 仍是 YUK-1402 actual-output 证据；OpenCode Go 的 toolCalling 取 models.dev 快照（YUK-1561）。needsToolCall 种类两个条目都可用，仍逐条过能力门；③旧按量 `xiaomi` lane 不在默认链（无 toolCalling 证据，且与 Token Plan 证据不互通）。其余通道（`anthropic-sub`、`zhipuai-coding-plan` 等）仅凭各自能力/准入证据入链。已存配置里的 `zai-coding-cn` 读取时解析为 `zhipuai-coding-plan`。顺序 owner 随时调整。
 
 ### D10 交付切片与验收
 

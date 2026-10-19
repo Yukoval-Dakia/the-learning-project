@@ -91,6 +91,7 @@
     "rehearsal:cutover": "tsx scripts/rehearsal.ts",
     "normalize:edge-created-by": "tsx scripts/normalize-edge-created-by.ts",
     "normalize:qb-bbox": "tsx scripts/sweep-question-block-bbox.ts",
+    "ops:yuk1547-repair-resolved-contracts": "tsx scripts/yuk1547-repair-resolved-contracts.ts",
     "compile:profile": "tsx scripts/compile-profile.ts",
     "docs:linear-manifest": "tsx scripts/linear-doc-manifest.ts",
     "preflight:vision": "tsx scripts/preflight-vision.ts",
