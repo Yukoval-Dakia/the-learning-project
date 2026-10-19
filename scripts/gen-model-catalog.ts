@@ -124,9 +124,16 @@ function trimProviders(
 
 function matchingBrace(text: string, open: number): number {
   let depth = 0;
+  let inString = false;
   for (let index = open; index < text.length; index += 1) {
     const char = text[index];
-    if (char === '{') depth += 1;
+    if (inString) {
+      if (char === '\\') index += 1;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') inString = true;
+    else if (char === '{') depth += 1;
     else if (char === '}') {
       depth -= 1;
       if (depth === 0) return index;

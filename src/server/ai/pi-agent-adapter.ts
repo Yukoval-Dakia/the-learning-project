@@ -72,10 +72,30 @@ import { emitPiAfterToolCall, runPiBeforeToolCall } from './pi-hooks';
 import { createLoomPiModels } from './pi-models';
 import { piProviderId } from './pi-provider-catalog';
 import { hasPiUsageEvidence, withPiUsageEvidence } from './pi-usage-evidence';
+import {
+  type ProviderErrorEvidence,
+  createProviderErrorCaptureFetch,
+  sanitizeArgumentsEvidence,
+  sanitizeArgumentsEvidenceText,
+} from './provider-error-evidence';
 import { UNDICI_DEFAULT_IDLE_TIMEOUT_MS } from './provider-http-timeout';
 import { createIdleBudgetFetch } from './provider-idle-fetch';
 import type { SDKAssistantMessage, SDKResultMessage, SDKUserMessage } from './sdk-types';
 import { isSpawnToolName } from './spawn-contract';
+import {
+  STRUCTURED_OUTPUT_SUBMIT_TOOL,
+  STRUCTURED_SUBMIT_REMINDER,
+  classifySubmitTurn,
+  resolveStructuredSubmitPolicy,
+  structuredSubmitSystemSuffix,
+  structuredSubmitWireFields,
+} from './structured-submit';
+import {
+  type ToolParamCoercion,
+  isToolArgumentContractFailure,
+  isToolParamContractRejection,
+  repairToolArguments,
+} from './tool-param-contract';
 import {
   type PiSubagentHost,
   type PiSubagentSpec,
@@ -102,7 +122,7 @@ export interface PiAdapterDeps {
 }
 
 const OPENCODE_SESSION_HEADER = 'x-opencode-session';
-const STRUCTURED_OUTPUT_TOOL = 'mcp__structured_output__submit';
+const STRUCTURED_OUTPUT_TOOL = STRUCTURED_OUTPUT_SUBMIT_TOOL;
 
 function toolOutputSchema(kind: ExecutionAdapterStartupArgs['kind']) {
   const definition: TaskDefinition = tasks[kind];
@@ -597,6 +617,15 @@ export function piTerminalResultFrame(args: {
   structuredOutputTool?: boolean;
   /** Reject pi best-effort JSON salvage: original streamed arguments must parse strictly. */
   invalidStructuredArguments?: boolean;
+  /** YUK-1547 — the run's ONE shared landing turn was consumed (by the
+   *  missing-submit reminder or by a parameter-contract correction) and the
+   *  submit still did not land; the terminal names which consumed it. */
+  submitLandingConsumedBy?: 'missing_submit' | 'param_contract';
+  /** YUK-1547 (C1) — the submit arguments AFTER the shared parameter-contract
+   *  repair was adopted (string-serialized array/object fields). This is what
+   *  pi validation and execute saw — the raw streamed bytes stay the failure
+   *  evidence record. */
+  repairedSubmitArguments?: unknown;
   /** Bounded raw-arguments evidence carried on the structured-failure terminal so
    *  the runner can attach it to the task run's tool_call_log. */
   structuredSubmitEvidence?: {
@@ -605,6 +634,16 @@ export function piTerminalResultFrame(args: {
     raw_args_sha256: string;
     truncated: boolean;
   };
+  /** YUK-1559 (C6) — bounded, sanitized provider error-body capture from the
+   *  query's wrapped fetch. Appended to errors[] on a failed terminal so the
+   *  raw non-2xx body (not just pi's formatted errorMessage) reaches
+   *  ai_task_runs.error_message and paid_effect.unresolved_reason. */
+  providerError?: ProviderErrorEvidence;
+  /** YUK-1559 (C6) — the capture's shared sanitize+bound for retained
+   *  provider text. Applied to pi's errorMessage (errors[0]): the driver can
+   *  embed the full unsanitized body in it, which would otherwise bypass the
+   *  evidence body's credential redaction and 4096B cap. */
+  sanitizeErrorMessage?: (text: string) => string;
   /** P3 — nested-child usage rolled into the run's terminal evidence, the
    *  same way the SDK result aggregates subagent tokens into modelUsage. */
   childUsage?: PiChildUsage;
@@ -647,6 +686,14 @@ export function piTerminalResultFrame(args: {
   const child = args.childUsage;
   const costUsd = (usage?.cost?.total ?? 0) + (child?.costUsd ?? 0);
   const usageParts = piUsageToResultUsage(usage, args.model);
+  // YUK-1559 (C6) — the captured non-2xx body rides as its own errors[] entry
+  // so it survives into error_message / unresolved_reason verbatim; errors[0]
+  // stays pi's own formatted message (a display string, not the raw body).
+  const providerErrorEntry =
+    args.providerError !== undefined
+      ? `provider_http_error=${JSON.stringify(args.providerError)}`
+      : undefined;
+  const errorEntry = args.sanitizeErrorMessage ?? ((text: string) => text);
   if (child && (child.input > 0 || child.output > 0)) {
     usageParts.usage.input_tokens += child.input;
     usageParts.usage.output_tokens += child.output;
@@ -676,7 +723,10 @@ export function piTerminalResultFrame(args: {
       is_error: true,
       stop_reason: null,
       total_cost_usd: costUsd,
-      errors: [final?.errorMessage ?? 'pi agent aborted by provider'],
+      errors: [
+        errorEntry(final?.errorMessage ?? 'pi agent aborted by provider'),
+        ...(providerErrorEntry ? [providerErrorEntry] : []),
+      ],
       ...usageParts,
     } as SDKResultMessage & { source: 'pi' };
   }
@@ -687,7 +737,10 @@ export function piTerminalResultFrame(args: {
       is_error: true,
       stop_reason: null,
       total_cost_usd: 0,
-      errors: ['pi agent_loop ended without an assistant message'],
+      errors: [
+        errorEntry('pi agent_loop ended without an assistant message'),
+        ...(providerErrorEntry ? [providerErrorEntry] : []),
+      ],
       ...usageParts,
     } as SDKResultMessage & { source: 'pi' };
   }
@@ -709,7 +762,10 @@ export function piTerminalResultFrame(args: {
       is_error: true,
       stop_reason: null,
       total_cost_usd: costUsd,
-      errors: [final.errorMessage ?? 'pi stream error'],
+      errors: [
+        errorEntry(final.errorMessage ?? 'pi stream error'),
+        ...(providerErrorEntry ? [providerErrorEntry] : []),
+      ],
       ...usageParts,
     } as SDKResultMessage & { source: 'pi' };
   }
@@ -736,6 +792,11 @@ export function piTerminalResultFrame(args: {
         // the truncated tool_call_log evidence can be matched back to this run.
         errors: [
           'structured output requires exactly one non-truncated submit call with strictly valid raw JSON arguments; no text fallback' +
+            (args.submitLandingConsumedBy === 'missing_submit'
+              ? '; the single landing turn was already consumed by the missing-submit reminder without a submit'
+              : args.submitLandingConsumedBy === 'param_contract'
+                ? '; the single landing turn was already consumed by the parameter-contract correction without a submit'
+                : '') +
             (args.structuredSubmitEvidence
               ? `;raw_args_sha256=${args.structuredSubmitEvidence.raw_args_sha256}`
               : ''),
@@ -746,12 +807,13 @@ export function piTerminalResultFrame(args: {
       } as SDKResultMessage & { source: 'pi' };
     }
     // YUK-1547 — the submit call's arguments ARE the structured output (the
-    // task's output schema itself); there is no {result: ...} envelope. Keep
-    // the SAME raw arguments even when pi's schema validator rejected them —
-    // a string where an object is expected still flows through, and the
-    // capability owns the one bounded deterministic normalization plus the
-    // final schema check; the loop must never re-ask the provider for a repair.
-    structuredOutput = arguments_;
+    // task's output schema itself); there is no {result: ...} envelope. When
+    // the shared parameter-contract repair was adopted the capability sees
+    // the REPAIRED arguments — the same value pi validation and execute
+    // accepted — so a string-serialized array/object field reaches the domain
+    // schema as its declared type. The raw streamed bytes stay the
+    // tool_call_log evidence record (structured_submit_evidence on failure).
+    structuredOutput = args.repairedSubmitArguments ?? arguments_;
   }
   return {
     ...base,
@@ -816,7 +878,70 @@ class PiPreparedQuery implements PreparedExecutionQuery {
   private readonly queuedFrames: RunnerMessage[] = [];
   private readonly childUsage = emptyPiChildUsage();
   private readonly executedToolCalls = new Map<string, number>();
+  /**
+   * YUK-1547/YUK-1559 (C1/C6) — per-call bookkeeping for the shared
+   * parameter-contract seam. `pendingCoercions` collects adopted string→JSON
+   * repairs per tool name (prepareArguments runs before pi validation, so a
+   * call that never reaches execute still lands its `coerced` evidence at
+   * tool_execution_end). `pendingArgs` holds each in-flight call's original
+   * arguments — captured at tool_execution_start, BEFORE pi's validation
+   * normalization can touch them — so a param-contract rejection can persist
+   * sanitized ≤4KiB raw-args evidence keyed to the exact call.
+   */
+  private readonly pendingCoercions = new Map<string, ToolParamCoercion[][]>();
+  private readonly pendingArgs = new Map<string, { toolName: string; args: unknown }>();
+  /** Latest adopted repair per tool name — the structured-submit terminal
+   *  hands the capability what validation actually accepted. */
+  private readonly repairedToolArgs = new Map<string, unknown>();
+  /**
+   * YUK-1547 (C1) — ONE run-scoped parameter-contract correction allowance,
+   * shared by this query's root loop AND every nested child loop (spawned
+   * researchers inherit wrapped tools but have no submit landing machine).
+   * A `[tool_param_contract]` rejection may continue once; a second rejection
+   * ends the loop regardless of the caller's iteration ceiling — unbounded
+   * Copilot and maxTurns runs share this budget. On the structured-submit
+   * lane the same allowance is further shared with the missing-submit
+   * reminder via `landingTurnUsed`.
+   */
+  private paramContractCorrectionUsed = false;
   private providerHttp: { fetch: typeof fetch; close: () => Promise<void> } | undefined;
+
+  /**
+   * Per-loop streamed-arguments tracker: `rawByIndex` accumulates this turn's
+   * `toolcall_delta` bytes; `byCallId` binds them to call ids at message_end.
+   * Each agentLoop (root and each nested child) owns its own pair so a
+   * child's turn_start can never erase a parent's in-flight evidence.
+   */
+  private trackStreamedArgs(
+    event: AgentEvent,
+    rawByIndex: Map<number, string>,
+    byCallId: Map<string, string>,
+  ): void {
+    if (event.type === 'turn_start') {
+      rawByIndex.clear();
+      byCallId.clear();
+      return;
+    }
+    if (
+      event.type === 'message_update' &&
+      event.message.role === 'assistant' &&
+      event.assistantMessageEvent.type === 'toolcall_delta'
+    ) {
+      const delta = event.assistantMessageEvent;
+      rawByIndex.set(delta.contentIndex, (rawByIndex.get(delta.contentIndex) ?? '') + delta.delta);
+      return;
+    }
+    if (event.type === 'message_end' && event.message.role === 'assistant') {
+      event.message.content.forEach((block, index) => {
+        if (block.type !== 'toolCall') return;
+        const raw = rawByIndex.get(index);
+        if (raw !== undefined) byCallId.set(block.id, raw);
+      });
+    }
+  }
+  /** YUK-1559 (C6) — per-query non-2xx capture fetch; created lazily in
+   *  baseLoopConfig once the base fetch (idle-budget or global) is resolved. */
+  private providerErrorCapture: ReturnType<typeof createProviderErrorCaptureFetch> | undefined;
 
   constructor(
     private readonly args: ExecutionAdapterStartupArgs,
@@ -849,6 +974,25 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       allowed === undefined ? spawnTools : spawnTools.filter((tool) => allowed.has(tool.name));
     this.allTools = [...tools, ...visibleSpawn].map((tool) => ({
       ...tool,
+      // YUK-1547/YUK-1559 (C1) — EVERY mounted tool gets the shared
+      // parameter-contract repair ahead of pi's validateToolArguments (pi
+      // calls prepareArguments first — this is the only seam that can fix a
+      // string-serialized array/object field before validation rejects the
+      // call). A repair that fails throws ToolParamContractError → isError
+      // result; execute is never reached, so tool side effects stay
+      // exactly-once. Adopted repairs are queued for the persisted `coerced`
+      // event drained at tool_execution_end.
+      prepareArguments: (rawArgs: unknown) => {
+        const prepared = tool.prepareArguments ? tool.prepareArguments(rawArgs) : rawArgs;
+        const repaired = repairToolArguments(tool.parameters, prepared);
+        if (repaired.coercions.length > 0) {
+          this.repairedToolArgs.set(tool.name, repaired.args);
+          const queue = this.pendingCoercions.get(tool.name) ?? [];
+          queue.push(repaired.coercions);
+          this.pendingCoercions.set(tool.name, queue);
+        }
+        return repaired.args;
+      },
       execute: (...args: Parameters<AgentTool['execute']>) => {
         this.executedToolCalls.set(args[0], (this.executedToolCalls.get(args[0]) ?? 0) + 1);
         return traceOperation(
@@ -870,13 +1014,76 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     }));
   }
 
-  private observeToolAttempt(event: AgentEvent): void {
+  private observeToolAttempt(
+    event: AgentEvent,
+    streamedArgsByCallId: ReadonlyMap<string, string>,
+  ): void {
+    if (event.type === 'tool_execution_start') {
+      // Capture the model's original arguments BEFORE prepareArguments repair
+      // and pi validation normalization — the C6 evidence baseline. Sanitized
+      // and bounded only if the call actually fails at the contract seam.
+      this.pendingArgs.set(event.toolCallId, { toolName: event.toolName, args: event.args });
+      return;
+    }
     if (event.type !== 'tool_execution_end') return;
     const executions = this.executedToolCalls.get(event.toolCallId) ?? 0;
     if (executions > 0) {
       if (executions === 1) this.executedToolCalls.delete(event.toolCallId);
       else this.executedToolCalls.set(event.toolCallId, executions - 1);
-      return;
+    }
+    const pending = this.pendingArgs.get(event.toolCallId);
+    this.pendingArgs.delete(event.toolCallId);
+    // Drain adopted string→JSON repairs for this call: the persisted `coerced`
+    // event carries tool/field metadata only — never the payload.
+    const coercedFields = this.pendingCoercions.get(event.toolName)?.shift();
+    if (coercedFields && this.pendingCoercions.get(event.toolName)?.length === 0) {
+      this.pendingCoercions.delete(event.toolName);
+    }
+    if (coercedFields && coercedFields.length > 0) {
+      this.emitFrame({
+        source: 'pi',
+        type: 'system',
+        subtype: 'tool_args_coerced',
+        tool_name: event.toolName,
+        tool_call_id: event.toolCallId,
+        fields: coercedFields,
+        uuid: randomUUID(),
+        session_id: this.sessionId,
+      });
+    }
+    if (executions > 0) return;
+    // YUK-1559 (C6) — a call that failed at the argument-contract seam (our
+    // parameter-contract rejection or pi's schema validation) never reached
+    // execute: persist the sanitized ≤4KiB original arguments as run evidence.
+    // Unknown-tool / hook-blocked / aborted / truncated calls keep their
+    // existing (non-args) evidence story.
+    if (
+      pending !== undefined &&
+      isToolArgumentContractFailure({ isError: event.isError, content: event.result?.content })
+    ) {
+      const secrets = this.args.resolved.apiKey ? [this.args.resolved.apiKey] : [];
+      // Fidelity: prefer THIS call's exact streamed argument bytes (sanitized
+      // — the recursive pass redacts credential keys even inside embedded
+      // JSON string fields before any serialization/cap). When the stream
+      // never delivered deltas, event.args is a pi-parsed/salvaged object —
+      // label it 'reconstructed' rather than claiming wire fidelity.
+      const streamed = streamedArgsByCallId.get(event.toolCallId);
+      const args_source = streamed !== undefined ? 'streamed' : 'reconstructed';
+      const sanitizedText =
+        streamed !== undefined
+          ? sanitizeArgumentsEvidenceText(streamed, { secrets })
+          : JSON.stringify(sanitizeArgumentsEvidence(pending.args ?? null, { secrets }));
+      this.emitFrame({
+        source: 'pi',
+        type: 'system',
+        subtype: 'tool_args_contract_failed',
+        tool_name: event.toolName,
+        tool_call_id: event.toolCallId,
+        args_source,
+        ...rawArgumentsEvidence(sanitizedText),
+        uuid: randomUUID(),
+        session_id: this.sessionId,
+      });
     }
     // Pi emits start/end even for validation, missing-tool and hook-blocked calls.
     // None crossed AgentTool.execute; do not label them executed or copy errors/args.
@@ -1056,6 +1263,19 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     'convertToLlm' | 'headers' | 'apiKey' | 'reasoning' | 'timeoutMs' | 'fetch'
   > {
     const { options, resolved, runId } = this.args;
+    const http = this.providerHttpBudget();
+    // YUK-1559 (C6) — every provider request in this query funnels through a
+    // capture fetch so a non-2xx leaves a bounded, sanitized body + status +
+    // request id for the terminal error evidence. A transparent passthrough:
+    // it only reads a clone of failing responses. Every loom-registered
+    // provider accepts a custom fetch (the same surface providerHttpBudget
+    // already uses for long-budget tasks).
+    this.providerErrorCapture ??= createProviderErrorCaptureFetch(
+      http.fetch ?? globalThis.fetch,
+      // The request's resolved credential — verbatim + JSON-escaped forms are
+      // redacted at the shared boundary before any field/header patterns run.
+      { secrets: resolved.apiKey ? [resolved.apiKey] : [] },
+    );
     return {
       // All prompts are standard LLM messages — identity conversion narrowed
       // to the LLM roles the union type needs. UI-only AgentMessages never
@@ -1090,13 +1310,27 @@ class PiPreparedQuery implements PreparedExecutionQuery {
           ? { maxRetries: piMaxRetries() }
           : {}),
       ...(options.effort !== undefined ? { reasoning: options.effort } : {}),
-      ...this.providerHttpBudget(),
+      ...(http.timeoutMs !== undefined ? { timeoutMs: http.timeoutMs } : {}),
+      fetch: this.providerErrorCapture.fetch,
     };
   }
 
+  /**
+   * YUK-1547 — the submit wire policy for this query's resolved lane, read
+   * through the shared capability surface (structured-submit.ts). 'forced'
+   * pins the named tool_choice; a lane whose profile records the forced
+   * choice as wire-rejected (forcedToolChoice:false) degrades to 'auto' +
+   * the single closing reminder wired in iterate().
+   */
+  private structuredSubmitPolicy(model: PiModel<PiApi>) {
+    if (toolOutputSchema(this.args.kind) === undefined || model.api !== 'openai-completions') {
+      return undefined;
+    }
+    return resolveStructuredSubmitPolicy(this.args.resolved.provider, this.args.resolved.model);
+  }
+
   private readonly streamFn: StreamFn = (model, llmContext, streamOptions) => {
-    const forceToolSubmit =
-      toolOutputSchema(this.args.kind) !== undefined && model.api === 'openai-completions';
+    const submitPolicy = this.structuredSubmitPolicy(model);
     // YUK-1547 — per-task model-native reasoning params (resolved +
     // fail-closed-validated in resolveTaskProvider): pass the model's own
     // wire parameter (e.g. DeepSeek `reasoning_effort`) through verbatim.
@@ -1104,7 +1338,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     // rejects both being set so the param has exactly one writer.
     const nativeReasoning = this.args.resolved.nativeReasoningParams;
     const streamOptionsWithPayload =
-      forceToolSubmit || nativeReasoning
+      submitPolicy !== undefined || nativeReasoning
         ? {
             ...streamOptions,
             onPayload: async (payload: unknown, requestModel: PiModel<PiApi>) => {
@@ -1115,17 +1349,11 @@ class PiPreparedQuery implements PreparedExecutionQuery {
               }
               return {
                 ...body,
-                // MiMo Token Plan uses native OpenAI function calling. Require
-                // submission on the wire, not merely in the natural-language prompt.
-                ...(forceToolSubmit
-                  ? {
-                      tool_choice: {
-                        type: 'function',
-                        function: { name: STRUCTURED_OUTPUT_TOOL },
-                      },
-                      parallel_tool_calls: false,
-                    }
-                  : {}),
+                // The structured-submit contract lives on the wire, not merely
+                // in the prompt — forced where the lane accepts it, 'auto'
+                // where the provider rejects a forced choice (one closing
+                // reminder turn then compensates, see iterate()).
+                ...(submitPolicy !== undefined ? structuredSubmitWireFields(submitPolicy) : {}),
                 ...nativeReasoning,
               };
             },
@@ -1145,6 +1373,25 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       streamOptionsWithPayload,
     );
   };
+
+  /**
+   * YUK-1547 (C1) — the run-scoped parameter-contract correction gate applied
+   * to EVERY loop this query runs (root and nested children share
+   * `paramContractCorrectionUsed`). A `[tool_param_contract]` isError result
+   * is the correction prompt itself: it may continue ONCE so the model can
+   * re-issue the call; a second rejection ends the loop regardless of the
+   * caller's iteration ceiling — unbounded Copilot and maxTurns runs share
+   * this budget. Clean turns and ordinary valid iterations defer to `inner`.
+   */
+  private contractCorrectionFinishTurn(inner?: FinishTurn): FinishTurn {
+    return (turn, signal) => {
+      if (turn.toolResults.some((result) => isToolParamContractRejection(result))) {
+        if (this.paramContractCorrectionUsed) return { action: 'end' as const };
+        this.paramContractCorrectionUsed = true;
+      }
+      return inner?.(turn, signal);
+    };
+  }
 
   /**
    * Child tool set: the spec's allowlist over the parent's mounted wire names,
@@ -1208,13 +1455,13 @@ class PiPreparedQuery implements PreparedExecutionQuery {
             model: childModel,
             ...this.baseLoopConfig(),
             ...(childTools.length > 0 ? { toolExecution: 'sequential' as const } : {}),
-            ...(childMaxTurns !== undefined
-              ? {
-                  finishTurn: turnLimiter(childMaxTurns, () => {
+            finishTurn: this.contractCorrectionFinishTurn(
+              childMaxTurns !== undefined
+                ? turnLimiter(childMaxTurns, () => {
                     childCapped = true;
-                  }),
-                }
-              : {}),
+                  })
+                : undefined,
+            ),
             beforeToolCall: this.makeBeforeToolCall(subagentType),
             afterToolCall: this.makeAfterToolCall(subagentType),
           };
@@ -1247,6 +1494,8 @@ class PiPreparedQuery implements PreparedExecutionQuery {
           };
 
           let finalMessages: AgentMessage[] = [];
+          const childRawArgs = new Map<number, string>();
+          const childStreamedArgs = new Map<string, string>();
           try {
             const stream = this.deps.agentLoop(
               [piUserMessage(prompt)],
@@ -1256,7 +1505,8 @@ class PiPreparedQuery implements PreparedExecutionQuery {
               this.streamFn,
             );
             for await (const event of stream) {
-              this.observeToolAttempt(event);
+              this.trackStreamedArgs(event, childRawArgs, childStreamedArgs);
+              this.observeToolAttempt(event, childStreamedArgs);
               if (event.type === 'tool_execution_start') {
                 toolUses += 1;
                 lastToolName = event.toolName;
@@ -1377,8 +1627,19 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       systemPrompt = `${systemPrompt}\n\n${docs}`;
     }
     const structuredOutput = toolOutputSchema(this.args.kind) !== undefined;
+    // YUK-1547 — capability-driven submit policy: forced named tool_choice on
+    // lanes that accept it; 'auto' + the closing reminder (C2-landing shape)
+    // where the provider rejects forcing (forcedToolChoice:false). Both share
+    // ONE landing budget with the parameter-contract correction turn.
+    const submitPolicy = structuredOutput ? this.structuredSubmitPolicy(this.model) : undefined;
+    const submitReminderAllowed = submitPolicy !== undefined && !submitPolicy.forced;
+    // YUK-1547 (C1) — ONE landing budget per run, shared across the
+    // missing-submit reminder and the parameter-contract correction (not one
+    // each). Whichever consumes it first ends the run's extra-turn allowance.
+    let landingTurnUsed = false;
+    let landingConsumer: 'missing_submit' | 'param_contract' | undefined;
     if (structuredOutput) {
-      systemPrompt += `\nSubmit exactly one ${STRUCTURED_OUTPUT_TOOL} tool call whose arguments are the requested output object itself (no result envelope). Do not return JSON as text. This invocation ends after this one model turn, including on invalid arguments; no repair turn is available.`;
+      systemPrompt += structuredSubmitSystemSuffix(submitPolicy?.forced ?? true);
     }
     const context: AgentContext = {
       // sdkSession→本地回放: durable-turn replay seeds context.messages — the
@@ -1401,6 +1662,17 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     // maxTurns=1 task deterministically failed after its first clean turn.
     const maxTurns = typeof options.maxTurns === 'number' ? options.maxTurns : undefined;
     let cappedByMaxTurns = false;
+    // Per-turn streamed-argument evidence, bound to call ids at message_end;
+    // the strict-JSON flag also gates the parameter-contract correction below.
+    const rawToolArguments = new Map<number, string>();
+    const streamedArgsByCallId = new Map<string, string>();
+    let invalidStructuredArguments = false;
+    // pi's producer only enqueues events; it does not wait for this adapter's
+    // consumer. Gate scheduling on observation of the SAME assistant message
+    // (pi emits and passes the same object to finishTurn), never a default flag.
+    // Root-local state cannot be acknowledged by a nested loop's events.
+    let observedStructuredMessage: PiAssistantMessage | undefined;
+    let acknowledgeStructuredMessage: ((message: PiAssistantMessage) => void) | undefined;
     const config: AgentLoopConfig = {
       model: this.model,
       ...this.baseLoopConfig(),
@@ -1408,14 +1680,100 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       // so batch ordering/tool_call_log sequence can't diverge by engine.
       ...(this.allTools.length > 0 ? { toolExecution: 'sequential' as const } : {}),
       ...(structuredOutput
-        ? { finishTurn: (() => ({ action: 'end' as const })) as FinishTurn }
-        : maxTurns !== undefined
-          ? {
-              finishTurn: turnLimiter(maxTurns, () => {
-                cappedByMaxTurns = true;
-              }),
-            }
-          : {}),
+        ? {
+            // Bounded submit state machine (structured-submit.ts): 'landed' or
+            // any non-clean turn ends the run — a turn with tool calls that is
+            // not exactly the one submit NEVER continues, because pi would
+            // otherwise pay the tool-result inner loop again (truncated calls
+            // come back terminate=false). Exactly two turns may exceed the
+            // initial one, sharing ONE landing budget: a clean text-only end
+            // on an 'auto' lane takes the closing reminder, and a clean submit
+            // envelope rejected at the parameter-contract seam takes the
+            // correction turn. Total model turns are at most initial + one.
+            finishTurn: (async ({ message, toolResults }) => {
+              if (observedStructuredMessage !== message && !this.abort.signal.aborted) {
+                await new Promise<void>((resolve) => {
+                  const done = () => {
+                    this.abort.signal.removeEventListener('abort', done);
+                    acknowledgeStructuredMessage = undefined;
+                    resolve();
+                  };
+                  acknowledgeStructuredMessage = (observed) => {
+                    if (observed === message) done();
+                  };
+                  this.abort.signal.addEventListener('abort', done, { once: true });
+                });
+              }
+              // Abort/close releases the wait without scheduling another turn.
+              // Missing or invalid streamed JSON stays terminal before either
+              // landing allowance can be consumed or evidence can be reset.
+              if (
+                this.abort.signal.aborted ||
+                observedStructuredMessage !== message ||
+                invalidStructuredArguments
+              ) {
+                return { action: 'end' as const };
+              }
+              const verdict = classifySubmitTurn(
+                {
+                  stopReason: message.stopReason,
+                  toolCallNames: message.content
+                    .filter((block) => block.type === 'toolCall')
+                    .map((call) => call.name),
+                },
+                { forced: !submitReminderAllowed },
+              );
+              if (verdict === 'needs_reminder') {
+                return submitReminderAllowed && !landingTurnUsed
+                  ? undefined
+                  : { action: 'end' as const };
+              }
+              // The ONE correction-eligible failure: a clean single-submit
+              // envelope (verdict 'landed') whose arguments were rejected at
+              // the parameter-contract seam — a string-serialized
+              // array/object field whose shared repair failed. The isError
+              // tool result itself is the correction prompt; the inner loop
+              // continues once inside the SAME run, sharing the single
+              // landing budget with the missing-submit reminder AND the
+              // run-scoped correction allowance nested loops also consume.
+              //
+              // Strict-envelope prerequisite (P1): the correction is only
+              // granted when THIS turn's streamed submit bytes were strictly
+              // valid JSON — a malformed outer envelope salvaged by pi's
+              // parser stays terminal with its retained evidence, identical
+              // to the preflight's strict JSON.parse ordering.
+              if (
+                verdict === 'landed' &&
+                !landingTurnUsed &&
+                !this.paramContractCorrectionUsed &&
+                !invalidStructuredArguments &&
+                toolResults.some(
+                  (result) =>
+                    result.toolName === STRUCTURED_OUTPUT_TOOL &&
+                    isToolParamContractRejection(result),
+                )
+              ) {
+                landingTurnUsed = true;
+                this.paramContractCorrectionUsed = true;
+                landingConsumer = 'param_contract';
+                return undefined;
+              }
+              return { action: 'end' as const };
+            }) satisfies FinishTurn,
+          }
+        : {
+            // Every non-structured root loop shares the run-scoped correction
+            // allowance too — an unbounded/maxTurns Copilot loop must not pay
+            // for a second param-contract rejection. The caller's turn ceiling
+            // keeps its normal meaning underneath the gate.
+            finishTurn: this.contractCorrectionFinishTurn(
+              maxTurns !== undefined
+                ? turnLimiter(maxTurns, () => {
+                    cappedByMaxTurns = true;
+                  })
+                : undefined,
+            ),
+          }),
       beforeToolCall: this.makeBeforeToolCall(),
       afterToolCall: this.makeAfterToolCall(),
       transformContext: this.makeTransformContext(),
@@ -1427,8 +1785,25 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       ...(this.args.piQueues?.getSteeringMessages
         ? { getSteeringMessages: this.args.piQueues.getSteeringMessages }
         : {}),
-      ...(this.args.piQueues?.getFollowUpMessages
-        ? { getFollowUpMessages: this.args.piQueues.getFollowUpMessages }
+      ...(submitReminderAllowed || this.args.piQueues?.getFollowUpMessages
+        ? {
+            // The C2-landing reminder fires once when the loop would stop
+            // without the submit call; afterwards (and on forced lanes never)
+            // the caller queue is the only follow-up source. Contract: never
+            // throws — a broken delegate returns [] rather than killing the run.
+            getFollowUpMessages: async () => {
+              if (submitReminderAllowed && !landingTurnUsed) {
+                landingTurnUsed = true;
+                landingConsumer = 'missing_submit';
+                return [piUserMessage(STRUCTURED_SUBMIT_REMINDER)];
+              }
+              try {
+                return (await this.args.piQueues?.getFollowUpMessages?.()) ?? [];
+              } catch {
+                return [];
+              }
+            },
+          }
         : {}),
     };
 
@@ -1444,26 +1819,21 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     });
     const stream = this.deps.agentLoop(prompts, context, config, this.abort.signal, this.streamFn);
     let textStreamed = false;
-    const rawToolArguments = new Map<number, string>();
-    let invalidStructuredArguments = false;
     for await (const event of stream) {
-      this.observeToolAttempt(event);
+      // A new assistant turn restarts the raw-arguments evidence window:
+      // tool-call content indexes repeat per message, so without the reset a
+      // rejected submit's streamed bytes would concatenate with the corrected
+      // call's and corrupt the strict-JSON check below. Only an ELIGIBLE
+      // continuation reaches a next turn — an invalid-envelope rejection ends
+      // immediately, so a terminal first-turn failure can never be erased by
+      // this reset.
+      this.trackStreamedArgs(event, rawToolArguments, streamedArgsByCallId);
+      if (event.type === 'turn_start') invalidStructuredArguments = false;
+      this.observeToolAttempt(event, streamedArgsByCallId);
       // Frames queued inside the loop (subagent task_*, compact_boundary)
       // surface before the engine event that follows them — matching the SDK
       // wire order where lifecycle frames precede the parent tool_result.
       yield* this.drainFrames();
-      if (
-        structuredOutput &&
-        event.type === 'message_update' &&
-        event.message.role === 'assistant' &&
-        event.assistantMessageEvent.type === 'toolcall_delta'
-      ) {
-        const delta = event.assistantMessageEvent;
-        rawToolArguments.set(
-          delta.contentIndex,
-          (rawToolArguments.get(delta.contentIndex) ?? '') + delta.delta,
-        );
-      }
       if (
         event.type === 'message_update' &&
         event.message.role === 'assistant' &&
@@ -1490,9 +1860,10 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       if (event.type === 'message_end' && event.message.role === 'assistant') {
         if (structuredOutput) {
           // pi's provider parser may repair malformed tool JSON. That hidden
-          // repair must not consume an untracked allowance in each blind pass.
-          // Reject salvaged output; only strict raw JSON reaches the capability's
-          // single shared normalization budget. Missing raw deltas fail closed.
+          // repair must not consume an untracked allowance in each blind
+          // pass. Reject salvaged output; only strict raw JSON reaches the
+          // capability's single shared normalization budget. Missing raw
+          // deltas fail closed.
           event.message.content.forEach((block, index) => {
             if (block.type !== 'toolCall') return;
             try {
@@ -1501,6 +1872,8 @@ class PiPreparedQuery implements PreparedExecutionQuery {
               invalidStructuredArguments = true;
             }
           });
+          observedStructuredMessage = event.message;
+          acknowledgeStructuredMessage?.(event.message);
         }
         numTurns += 1;
         yield {
@@ -1535,13 +1908,35 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       // The original streamed submit bytes survive a structured-parse failure
       // as bounded tool_call_log evidence (adapter-level failures never reach
       // the capability, which logs its own view of the payload).
+      submitLandingConsumedBy: landingConsumer,
+      // The submit arguments validation/execute actually saw when the shared
+      // parameter-contract repair was adopted — the capability receives this,
+      // not the still-stringified raw fields.
+      repairedSubmitArguments: this.repairedToolArgs.get(STRUCTURED_OUTPUT_TOOL),
       structuredSubmitEvidence:
         structuredOutput && rawToolArguments.size > 0
           ? {
               tool_name: STRUCTURED_OUTPUT_TOOL,
-              ...rawArgumentsEvidence([...rawToolArguments.values()].join('\n')),
+              // Same C6 safe boundary as the per-call evidence — streamed
+              // bytes can carry escaped credential keys inside embedded JSON
+              // string fields, so they pass the argument sanitizer too.
+              ...rawArgumentsEvidence(
+                [...rawToolArguments.values()]
+                  .map((raw) =>
+                    sanitizeArgumentsEvidenceText(raw, {
+                      secrets: this.args.resolved.apiKey ? [this.args.resolved.apiKey] : [],
+                    }),
+                  )
+                  .join('\n'),
+              ),
             }
           : undefined,
+      // YUK-1559 (C6) — the last non-2xx this query's capture fetch saw, if
+      // any; the terminal frame appends it to errors[] on failure terminals.
+      providerError: this.providerErrorCapture?.latest(),
+      // Same shared boundary on errors[0] — pi's errorMessage can carry the
+      // full unsanitized provider body; it must not bypass redaction/cap.
+      sanitizeErrorMessage: this.providerErrorCapture?.sanitize,
       childUsage: this.childUsage,
     });
     if (terminal) yield terminal;

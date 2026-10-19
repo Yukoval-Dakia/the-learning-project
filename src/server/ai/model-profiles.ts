@@ -40,6 +40,16 @@ export interface ModelProfileCapabilities {
   vision: ModelCapabilityTriState;
   reasoning: ModelCapabilityTriState;
   structuredOutput: ModelCapabilityTriState;
+  /**
+   * YUK-1547 — does this lane's endpoint accept a forced named-function
+   * `tool_choice` on the resolved wire shape (incl. thinking/reasoning params)?
+   * The catalog snapshots carry no such bit, so this is binding-declared only:
+   * 'unknown' keeps the legacy forced-submit posture (no evidence either way);
+   * `false` is an evidence-backed rejection — the runner degrades to
+   * `tool_choice:'auto'` + one closing reminder instead of sending the forced
+   * choice that the provider 400s. `true` is explicit confirmation.
+   */
+  forcedToolChoice: ModelCapabilityTriState;
 }
 
 export interface ModelProfileLimits {
@@ -114,6 +124,7 @@ export interface ProviderModelBinding {
     vision?: boolean;
     reasoning?: boolean;
     structuredOutput?: boolean;
+    forcedToolChoice?: boolean;
   };
   limits?: {
     contextWindowTokens?: number;
@@ -294,6 +305,9 @@ function applyBindingLayer(profile: ModelProfile, binding: ProviderModelBinding 
     if (caps.structuredOutput !== undefined) {
       profile.capabilities.structuredOutput = caps.structuredOutput;
     }
+    if (caps.forcedToolChoice !== undefined) {
+      profile.capabilities.forcedToolChoice = caps.forcedToolChoice;
+    }
   }
   if (binding.limits) {
     if (binding.limits.contextWindowTokens !== undefined) {
@@ -337,6 +351,7 @@ export function resolveModelProfile(provider: Provider, model: string): ModelPro
       vision: 'unknown',
       reasoning: 'unknown',
       structuredOutput: 'unknown',
+      forcedToolChoice: 'unknown',
     },
     limits: {},
     reasoning: { mode: 'toggle', supportedEfforts: [] },

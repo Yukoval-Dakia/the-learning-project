@@ -247,6 +247,13 @@ const PROVIDERS: Record<Provider, BoundProviderConfig> = {
       // (design §6 R1): never metered.
       execution: { meteredUsd: false },
     },
+    models: {
+      // forcedToolChoice is not in the models.dev snapshot. With thinking
+      // enabled, this model returned HTTP 400 "Thinking mode does not support
+      // this tool_choice" (request_id 6fde3ba6-8f64-4c84-8a3d-5a5e211b430a).
+      // toolCalling stays on the snapshot.
+      'deepseek-v4.1-flash': { capabilities: { forcedToolChoice: false } },
+    },
   },
   // YUK-365 — subscription-OAuth lane. Opus 4.8 via the owner's Claude Max
   // subscription. No baseUrl (first-party endpoint only); no apiKeyEnv (it reads

@@ -89,6 +89,7 @@ jobs:
               pnpm audit:api-contracts
               pnpm audit:api-client
               pnpm audit:api-client-usage
+              pnpm audit:tool-params
           - group: architecture
             commands: |
               pnpm audit:capability-boundaries
