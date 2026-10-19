@@ -83,8 +83,8 @@ interface CostLedgerEntryBase {
   /** YUK-359: currency of `cost`. Defaults to 'USD' (mimo/anthropic runner path).
    *  GLM-OCR + memory (GLM/百炼) write 'CNY'. Read paths MUST group by currency. */
   currency?: 'USD' | 'CNY';
-  tokens_in: number;
-  tokens_out: number;
+  tokens_in: number | null;
+  tokens_out: number | null;
   /** Sub 0c: track pg-boss job correlation + outcome for OCR / async jobs. */
   outcome?: 'success' | 'failed_retryable' | 'failed_permanent';
   pgboss_job_id?: string;
@@ -114,8 +114,8 @@ export async function writeModelCatalogProbeCost(
   entry: {
     provider: string;
     model: string;
-    tokensIn: number;
-    tokensOut: number;
+    tokensIn: number | null;
+    tokensOut: number | null;
     costUsd: number | null;
     costBasis: AttemptCostBasis;
     costRef: string;

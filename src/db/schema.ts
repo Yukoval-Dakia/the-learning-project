@@ -2319,8 +2319,8 @@ export const cost_ledger = pgTable(
     entry_kind: text('entry_kind').notNull().default('legacy'),
     cost_basis: text('cost_basis'),
     cost_ref: text('cost_ref'),
-    tokens_in: integer('tokens_in').notNull(),
-    tokens_out: integer('tokens_out').notNull(),
+    tokens_in: integer('tokens_in'),
+    tokens_out: integer('tokens_out'),
     outcome: text('outcome').notNull().default('success'),
     pgboss_job_id: text('pgboss_job_id'),
     occurred_at: timestamp('occurred_at', { withTimezone: true }).notNull(),
@@ -2334,6 +2334,16 @@ export const cost_ledger = pgTable(
     check(
       'cost_ledger_cost_basis_ck',
       sql`${t.cost_basis} IS NULL OR ${t.cost_basis} IN ('reported','estimated','unknown')`,
+    ),
+    check(
+      'cost_ledger_tokens_pair_ck',
+      sql`(
+        (${t.tokens_in} IS NULL AND ${t.tokens_out} IS NULL)
+        OR (
+          ${t.tokens_in} IS NOT NULL AND ${t.tokens_out} IS NOT NULL
+          AND ${t.tokens_in} >= 0 AND ${t.tokens_out} >= 0
+        )
+      )`,
     ),
     check(
       'cost_ledger_attempt_truth_ck',

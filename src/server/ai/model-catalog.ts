@@ -410,6 +410,29 @@ function mergeCatalogDocuments(
   return { providers, findings };
 }
 
+function withProviderAbsences(
+  findings: readonly CatalogFinding[],
+  checks: readonly ProviderModelsCheck[],
+): CatalogFinding[] {
+  const seen = new Set(findings.map(findingSignature));
+  const next = [...findings];
+  for (const check of checks) {
+    if (!check.catalogProvider) continue;
+    for (const model of check.catalogOnly) {
+      const finding: CatalogFinding = {
+        kind: 'model_absent',
+        catalogProvider: check.catalogProvider,
+        model,
+      };
+      const signature = findingSignature(finding);
+      if (seen.has(signature)) continue;
+      seen.add(signature);
+      next.push(finding);
+    }
+  }
+  return next;
+}
+
 function findingSignature(finding: CatalogFinding): string {
   if (finding.kind === 'model_absent') {
     return `model_absent\t${finding.catalogProvider}\t${finding.model}`;
@@ -426,7 +449,7 @@ function logActive(
   const auth =
     catalog.providerChecks.length === 0
       ? ''
-      : ` auth=${catalog.providerChecks.map((check) => `${check.provider}:${check.auth.status}`).join(',')}`;
+      : ` auth=${catalog.providerChecks.map((check) => `${check.provider}:${providerAuthLabel(check)}`).join(',')}`;
   console.info(
     `[model-catalog] ${action} origin=${catalog.origin} version=${catalog.version} at=${catalog.fetchedAt} findings=${catalog.findings.length}${auth}`,
   );
@@ -711,16 +734,13 @@ export async function refreshModelCatalog(
           const idle =
             remote === undefined &&
             sameChecks(checks, locked.checks) &&
-            (locked.hasRow || checks.every((check) => check.auth.status === 'unconfigured'));
+            (locked.hasRow || checks.every((check) => check.list.status === 'unconfigured'));
           return { locked, merged, checks, idle };
         });
         postings = await bookPaidProbes(lockedDb, postings, now);
         if (planned.idle) return { outcome: 'kept' as const, locked: planned.locked };
-        const version = documentVersion(
-          planned.merged.providers,
-          planned.merged.findings,
-          planned.checks,
-        );
+        const findings = withProviderAbsences(planned.merged.findings, planned.checks);
+        const version = documentVersion(planned.merged.providers, findings, planned.checks);
         const upstreamVersion = remote ? remote.upstreamVersion : planned.locked.upstreamVersion;
         const payload = {
           providers: planned.merged.providers,
@@ -737,7 +757,7 @@ export async function refreshModelCatalog(
               upstream_version: upstreamVersion,
               source_url: MODEL_CATALOG_URL,
               payload,
-              findings: planned.merged.findings,
+              findings,
             })
             .onConflictDoUpdate({
               target: model_catalog_cache.id,
@@ -747,7 +767,7 @@ export async function refreshModelCatalog(
                 upstream_version: upstreamVersion,
                 source_url: MODEL_CATALOG_URL,
                 payload,
-                findings: planned.merged.findings,
+                findings,
               },
             });
         });
@@ -757,7 +777,7 @@ export async function refreshModelCatalog(
           version,
           upstreamVersion,
           providers: planned.merged.providers,
-          findings: planned.merged.findings,
+          findings,
           providerChecks: planned.checks,
         };
         return { outcome: 'stored' as const, next, locked: planned.locked };

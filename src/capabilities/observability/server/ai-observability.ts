@@ -441,8 +441,8 @@ export async function getAdminRunTimeline(
             ? entry.cost_basis
             : null,
         cost_ref: entry.cost_ref,
-        tokens_in: entry.tokens_in,
-        tokens_out: entry.tokens_out,
+        tokens_in: entry.tokens_in ?? undefined,
+        tokens_out: entry.tokens_out ?? undefined,
         outcome: entry.outcome,
         pgboss_job_id: entry.pgboss_job_id,
       }),

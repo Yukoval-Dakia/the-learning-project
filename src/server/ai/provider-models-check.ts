@@ -26,11 +26,22 @@ const MAX_LIST_PAGES = 10;
 const ERROR_TYPE = /^[A-Za-z0-9_.:-]{1,64}$/;
 const SESSION_HEADER = 'catalog-auth-probe';
 
-export type ProviderAuthState =
+/** Whether GET /models could be read. Independent of the inference probe. */
+export type ModelListAccess =
   | { status: 'unconfigured' }
-  | { status: 'ok' }
+  | { status: 'readable' }
   | { status: 'auth_failed'; httpStatus: number; errorType: string }
   | { status: 'unreachable'; detail: string };
+
+/** Whether the 1-token probe could call the model. A readable list does not set this to ok. */
+export type InferenceAccess =
+  | { status: 'unprobed' }
+  | { status: 'ok' }
+  | { status: 'auth_failed'; httpStatus: number; errorType: string }
+  | { status: 'unsettled' };
+
+/** `known: false` is not zero usage. A known zero is `known: true` with both counts at 0. */
+export type ProbeUsage = { known: true; tokensIn: number; tokensOut: number } | { known: false };
 
 export interface ProviderProbeReceipt {
   status: 'succeeded' | 'failed';
@@ -38,8 +49,8 @@ export interface ProviderProbeReceipt {
   model: string;
   httpStatus: number | null;
   errorType: string | null;
-  tokensIn: number;
-  tokensOut: number;
+  tokensIn: number | null;
+  tokensOut: number | null;
   costUsd: number | null;
   costBasis: 'estimated' | 'unknown';
 }
@@ -47,7 +58,8 @@ export interface ProviderProbeReceipt {
 export interface ProviderModelsCheck {
   provider: string;
   catalogProvider: string | null;
-  auth: ProviderAuthState;
+  list: ModelListAccess;
+  inference: InferenceAccess;
   listed: readonly string[];
   catalogOnly: readonly string[];
   providerOnly: readonly string[];
@@ -69,27 +81,25 @@ type ModelsListResult =
 
 /** Probe verdict. Only `accepted` and `auth_failed` become a stored receipt. */
 export type ProbeOutcome =
-  | { kind: 'accepted'; httpStatus: number; tokensIn: number; tokensOut: number }
+  | { kind: 'accepted'; httpStatus: number; usage: ProbeUsage }
   | {
       kind: 'auth_failed';
       httpStatus: number;
       errorType: string;
-      tokensIn: number;
-      tokensOut: number;
+      usage: ProbeUsage;
     }
   | {
       kind: 'unsettled';
       httpStatus: number | null;
       errorType: string | null;
-      tokensIn: number;
-      tokensOut: number;
+      usage: ProbeUsage;
     };
 
 export interface ProbeLedgerBill {
   provider: string;
   model: string;
-  tokensIn: number;
-  tokensOut: number;
+  tokensIn: number | null;
+  tokensOut: number | null;
   costUsd: number | null;
   costBasis: 'estimated' | 'unknown';
   costRef: string;
@@ -161,19 +171,20 @@ function readErrorType(body: string): string {
   return 'unknown';
 }
 
-function readUsage(body: string): { tokensIn: number; tokensOut: number } {
+function readUsage(body: string): ProbeUsage {
   let parsed: unknown;
   try {
     parsed = JSON.parse(body) as unknown;
   } catch {
-    return { tokensIn: 0, tokensOut: 0 };
+    return { known: false };
   }
   const usage = asJson(asJson(parsed)?.usage);
   const input = usage?.prompt_tokens ?? usage?.input_tokens;
   const output = usage?.completion_tokens ?? usage?.output_tokens;
-  const tokensIn = typeof input === 'number' && input >= 0 ? input : 0;
-  const tokensOut = typeof output === 'number' && output >= 0 ? output : 0;
-  return { tokensIn, tokensOut };
+  if (typeof input !== 'number' || input < 0 || typeof output !== 'number' || output < 0) {
+    return { known: false };
+  }
+  return { known: true, tokensIn: input, tokensOut: output };
 }
 
 function authHeaders(provider: Provider, credential: string): Record<string, string> {
@@ -323,45 +334,41 @@ async function runProbe(
   const spec = probeSpec(provider);
   const credential = credentialFor(provider, env);
   const root = providerModelsRoot(provider, env);
-  const unsettled = {
+  const unreachable = {
     kind: 'unsettled' as const,
     httpStatus: null,
     errorType: null,
-    tokensIn: 0,
-    tokensOut: 0,
+    usage: { known: false as const },
   };
-  if (!spec || !credential || !root) return unsettled;
+  if (!spec || !credential || !root) return unreachable;
   const headers = { ...authHeaders(provider, credential), 'content-type': 'application/json' };
+  let response: Response;
   try {
-    const response = await fetchImpl(probeUrl(root, spec), {
+    response = await fetchImpl(probeUrl(root, spec), {
       method: 'POST',
       headers,
       body: probeBody(spec),
       redirect: 'error',
       signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
     });
-    const text = await response.text();
-    const usage = readUsage(text);
-    if (response.status === 401 || response.status === 403) {
-      return {
-        kind: 'auth_failed',
-        httpStatus: response.status,
-        errorType: readErrorType(text),
-        ...usage,
-      };
-    }
-    if (!response.ok) {
-      return {
-        kind: 'unsettled',
-        httpStatus: response.status,
-        errorType: readErrorType(text),
-        ...usage,
-      };
-    }
-    return { kind: 'accepted', httpStatus: response.status, ...usage };
   } catch {
-    return unsettled;
+    return unreachable;
   }
+  let text: string | undefined;
+  try {
+    text = await response.text();
+  } catch {
+    text = undefined;
+  }
+  const usage = text === undefined ? { known: false as const } : readUsage(text);
+  const errorType = text === undefined ? 'unreadable' : readErrorType(text);
+  if (response.status === 401 || response.status === 403) {
+    return { kind: 'auth_failed', httpStatus: response.status, errorType, usage };
+  }
+  if (!response.ok) {
+    return { kind: 'unsettled', httpStatus: response.status, errorType, usage };
+  }
+  return { kind: 'accepted', httpStatus: response.status, usage };
 }
 
 function catalogIds(providers: ProviderMap, catalogProvider: string | null): ReadonlySet<string> {
@@ -381,21 +388,31 @@ function reconcile(
   };
 }
 
-function authFromOutcome(outcome: ProbeOutcome): ProviderAuthState | undefined {
-  if (outcome.kind === 'accepted') return { status: 'ok' };
-  if (outcome.kind === 'auth_failed') {
-    return { status: 'auth_failed', httpStatus: outcome.httpStatus, errorType: outcome.errorType };
-  }
-  return undefined;
-}
-
 function decisiveReceipt(probe: ProviderProbeReceipt | undefined): probe is ProviderProbeReceipt {
   if (!probe) return false;
   if (probe.status === 'succeeded') return true;
   return probe.httpStatus === 401 || probe.httpStatus === 403;
 }
 
-function authFromReceipt(probe: ProviderProbeReceipt): ProviderAuthState {
+function listAccess(list: ModelsListResult): ModelListAccess {
+  if (list.status === 'unconfigured') return { status: 'unconfigured' };
+  if (list.status === 'ok') return { status: 'readable' };
+  if (list.status === 'auth_failed') {
+    return { status: 'auth_failed', httpStatus: list.httpStatus, errorType: list.errorType };
+  }
+  if (list.status === 'unsupported') return { status: 'unreachable', detail: 'models_endpoint' };
+  return { status: 'unreachable', detail: list.detail };
+}
+
+function inferenceFromOutcome(outcome: ProbeOutcome): InferenceAccess {
+  if (outcome.kind === 'accepted') return { status: 'ok' };
+  if (outcome.kind === 'auth_failed') {
+    return { status: 'auth_failed', httpStatus: outcome.httpStatus, errorType: outcome.errorType };
+  }
+  return { status: 'unsettled' };
+}
+
+function inferenceFromReceipt(probe: ProviderProbeReceipt): InferenceAccess {
   if (probe.status === 'succeeded') return { status: 'ok' };
   return {
     status: 'auth_failed',
@@ -404,22 +421,14 @@ function authFromReceipt(probe: ProviderProbeReceipt): ProviderAuthState {
   };
 }
 
-function authState(
-  list: ModelsListResult,
+function inferenceAccess(
   outcome: ProbeOutcome | undefined,
   previous: ProviderModelsCheck | undefined,
-): ProviderAuthState {
-  if (list.status === 'unconfigured') return { status: 'unconfigured' };
-  if (list.status === 'auth_failed') {
-    return { status: 'auth_failed', httpStatus: list.httpStatus, errorType: list.errorType };
-  }
-  if (list.status === 'ok') return { status: 'ok' };
-  const live = outcome ? authFromOutcome(outcome) : undefined;
-  if (live) return live;
+): InferenceAccess {
+  if (outcome) return inferenceFromOutcome(outcome);
   const receipt = previous?.probe;
-  if (decisiveReceipt(receipt)) return authFromReceipt(receipt);
-  if (list.status === 'unsupported') return { status: 'unreachable', detail: 'models_endpoint' };
-  return { status: 'unreachable', detail: list.detail };
+  if (decisiveReceipt(receipt)) return inferenceFromReceipt(receipt);
+  return previous?.inference ?? { status: 'unprobed' };
 }
 
 function shouldProbe(list: ModelsListResult, previous: ProviderModelsCheck | undefined): boolean {
@@ -427,6 +436,11 @@ function shouldProbe(list: ModelsListResult, previous: ProviderModelsCheck | und
   if (list.status === 'unconfigured' || list.status === 'auth_failed') return false;
   if (list.status === 'unreachable') return false;
   return true;
+}
+
+function receiptTokens(usage: ProbeUsage): { tokensIn: number | null; tokensOut: number | null } {
+  if (!usage.known) return { tokensIn: null, tokensOut: null };
+  return { tokensIn: usage.tokensIn, tokensOut: usage.tokensOut };
 }
 
 function receiptFor(
@@ -441,10 +455,28 @@ function receiptFor(
     model,
     httpStatus: outcome.httpStatus,
     errorType: outcome.kind === 'accepted' ? null : outcome.errorType,
-    tokensIn: outcome.tokensIn,
-    tokensOut: outcome.tokensOut,
+    ...receiptTokens(outcome.usage),
     costUsd: price.costUsd,
     costBasis: price.costBasis,
+  };
+}
+
+function billOutcome(kind: ProbeOutcome['kind']): ProbeLedgerBill['outcome'] {
+  if (kind === 'accepted') return 'success';
+  if (kind === 'auth_failed') return 'failed_permanent';
+  return 'failed_retryable';
+}
+
+function unobservedBill(provider: string, outcome: ProbeOutcome, model: string): ProbeLedgerBill {
+  return {
+    provider,
+    model,
+    tokensIn: null,
+    tokensOut: null,
+    costUsd: null,
+    costBasis: 'unknown',
+    costRef: `unobserved:model-catalog-probe/${provider}/${model}`,
+    outcome: billOutcome(outcome.kind),
   };
 }
 
@@ -454,30 +486,20 @@ function ledgerBill(
   model: string,
   price: ProbePrice,
 ): ProbeLedgerBill | undefined {
-  const consumed = outcome.tokensIn + outcome.tokensOut > 0;
-  if (outcome.kind === 'unsettled') {
-    if (!consumed) return undefined;
-    return {
-      provider,
-      model,
-      tokensIn: outcome.tokensIn,
-      tokensOut: outcome.tokensOut,
-      costUsd: price.costUsd,
-      costBasis: price.costBasis,
-      costRef: price.costRef,
-      outcome: 'failed_retryable',
-    };
-  }
+  if (outcome.kind === 'unsettled' && outcome.httpStatus === null) return undefined;
+  if (!outcome.usage.known) return unobservedBill(provider, outcome, model);
+  const consumed = outcome.usage.tokensIn + outcome.usage.tokensOut > 0;
+  if (outcome.kind === 'unsettled' && !consumed) return undefined;
   if (outcome.kind === 'auth_failed' && !consumed) return undefined;
   return {
     provider,
     model,
-    tokensIn: outcome.tokensIn,
-    tokensOut: outcome.tokensOut,
+    tokensIn: outcome.usage.tokensIn,
+    tokensOut: outcome.usage.tokensOut,
     costUsd: price.costUsd,
     costBasis: price.costBasis,
     costRef: price.costRef,
-    outcome: outcome.kind === 'accepted' ? 'success' : 'failed_permanent',
+    outcome: billOutcome(outcome.kind),
   };
 }
 
@@ -490,11 +512,12 @@ export function paidProbePostings(
     if (!isKnownProvider(provider)) continue;
     const spec = probeSpec(provider);
     if (!spec) continue;
+    const usage = outcome.usage.known ? outcome.usage : { tokensIn: 0, tokensOut: 0 };
     const bill = ledgerBill(
       provider,
       outcome,
       spec.model,
-      priceProbe(provider, spec.model, outcome.tokensIn, outcome.tokensOut),
+      priceProbe(provider, spec.model, usage.tokensIn, usage.tokensOut),
     );
     if (bill) postings.push({ state: 'owed', bill });
   }
@@ -515,26 +538,128 @@ function copyProbe(probe: ProviderProbeReceipt): ProviderProbeReceipt {
   };
 }
 
+function copyListAccess(list: ModelListAccess): ModelListAccess {
+  if (list.status === 'auth_failed') {
+    return { status: 'auth_failed', httpStatus: list.httpStatus, errorType: list.errorType };
+  }
+  if (list.status === 'unreachable') return { status: 'unreachable', detail: list.detail };
+  if (list.status === 'readable') return { status: 'readable' };
+  return { status: 'unconfigured' };
+}
+
+function copyInference(inference: InferenceAccess): InferenceAccess {
+  if (inference.status === 'auth_failed') {
+    return {
+      status: 'auth_failed',
+      httpStatus: inference.httpStatus,
+      errorType: inference.errorType,
+    };
+  }
+  if (inference.status === 'ok') return { status: 'ok' };
+  if (inference.status === 'unsettled') return { status: 'unsettled' };
+  return { status: 'unprobed' };
+}
+
 export function canonicalProviderCheck(check: ProviderModelsCheck): ProviderModelsCheck {
-  const auth = check.auth;
-  const storedAuth: ProviderAuthState =
-    auth.status === 'auth_failed'
-      ? { status: 'auth_failed', httpStatus: auth.httpStatus, errorType: auth.errorType }
-      : auth.status === 'unreachable'
-        ? { status: 'unreachable', detail: auth.detail }
-        : auth.status === 'ok'
-          ? { status: 'ok' }
-          : { status: 'unconfigured' };
   const stored: ProviderModelsCheck = {
     provider: check.provider,
     catalogProvider: check.catalogProvider,
-    auth: storedAuth,
+    list: copyListAccess(check.list),
+    inference: copyInference(check.inference),
     listed: [...check.listed].sort(),
     catalogOnly: [...check.catalogOnly].sort(),
     providerOnly: [...check.providerOnly].sort(),
   };
   if (check.probe) stored.probe = copyProbe(check.probe);
   return stored;
+}
+
+function readAuthFailed(row: Json): { httpStatus: number; errorType: string } | undefined {
+  if (typeof row.httpStatus !== 'number' || typeof row.errorType !== 'string') return undefined;
+  return { httpStatus: row.httpStatus, errorType: row.errorType };
+}
+
+function parseListAccess(value: unknown): ModelListAccess | undefined {
+  const row = asJson(value);
+  if (!row || typeof row.status !== 'string') return undefined;
+  if (row.status === 'unconfigured') return { status: 'unconfigured' };
+  if (row.status === 'readable') return { status: 'readable' };
+  if (row.status === 'auth_failed') {
+    const failed = readAuthFailed(row);
+    return failed ? { status: 'auth_failed', ...failed } : undefined;
+  }
+  if (row.status === 'unreachable' && typeof row.detail === 'string') {
+    return { status: 'unreachable', detail: row.detail };
+  }
+  return undefined;
+}
+
+function parseInference(value: unknown): InferenceAccess | undefined {
+  const row = asJson(value);
+  if (!row || typeof row.status !== 'string') return undefined;
+  if (row.status === 'unprobed') return { status: 'unprobed' };
+  if (row.status === 'ok') return { status: 'ok' };
+  if (row.status === 'unsettled') return { status: 'unsettled' };
+  if (row.status === 'auth_failed') {
+    const failed = readAuthFailed(row);
+    return failed ? { status: 'auth_failed', ...failed } : undefined;
+  }
+  return undefined;
+}
+
+function legacyAccess(
+  row: Json,
+): { list: ModelListAccess; inference: InferenceAccess } | undefined {
+  const auth = asJson(row.auth);
+  if (!auth || typeof auth.status !== 'string') return undefined;
+  const probe = asJson(row.probe);
+  const probeFailed =
+    probe?.status === 'failed' && (probe.httpStatus === 401 || probe.httpStatus === 403);
+  const probeError = typeof probe?.errorType === 'string' ? probe.errorType : 'unknown';
+  const probeStatus = typeof probe?.httpStatus === 'number' ? probe.httpStatus : 401;
+  if (auth.status === 'unconfigured') {
+    return { list: { status: 'unconfigured' }, inference: { status: 'unprobed' } };
+  }
+  if (auth.status === 'ok') {
+    return {
+      list: { status: 'readable' },
+      inference: probeFailed
+        ? { status: 'auth_failed', httpStatus: probeStatus, errorType: probeError }
+        : { status: 'ok' },
+    };
+  }
+  if (
+    auth.status === 'auth_failed' &&
+    typeof auth.httpStatus === 'number' &&
+    typeof auth.errorType === 'string'
+  ) {
+    if (probeFailed) {
+      return {
+        list: { status: 'unreachable', detail: 'unrecorded' },
+        inference: { status: 'auth_failed', httpStatus: probeStatus, errorType: probeError },
+      };
+    }
+    return {
+      list: { status: 'auth_failed', httpStatus: auth.httpStatus, errorType: auth.errorType },
+      inference: { status: 'unprobed' },
+    };
+  }
+  if (auth.status === 'unreachable' && typeof auth.detail === 'string') {
+    return {
+      list: { status: 'unreachable', detail: auth.detail },
+      inference: probe?.status === 'succeeded' ? { status: 'ok' } : { status: 'unprobed' },
+    };
+  }
+  return undefined;
+}
+
+function parseStoredAccess(
+  row: Json,
+): { list: ModelListAccess; inference: InferenceAccess } | undefined {
+  const list = parseListAccess(row.list);
+  const inference = parseInference(row.inference);
+  if (list && inference) return { list, inference };
+  return legacyAccess(row);
 }
 
 export function parseProviderChecks(payload: unknown): ProviderModelsCheck[] {
@@ -545,30 +670,15 @@ export function parseProviderChecks(payload: unknown): ProviderModelsCheck[] {
     const row = asJson(item);
     if (!row || typeof row.provider !== 'string') continue;
     if (!isKnownProvider(row.provider)) continue;
-    const auth = asJson(row.auth);
-    if (!auth || typeof auth.status !== 'string') continue;
-    let parsedAuth: ProviderAuthState;
-    if (auth.status === 'unconfigured') parsedAuth = { status: 'unconfigured' };
-    else if (auth.status === 'ok') parsedAuth = { status: 'ok' };
-    else if (
-      auth.status === 'auth_failed' &&
-      typeof auth.httpStatus === 'number' &&
-      typeof auth.errorType === 'string'
-    ) {
-      parsedAuth = {
-        status: 'auth_failed',
-        httpStatus: auth.httpStatus,
-        errorType: auth.errorType,
-      };
-    } else if (auth.status === 'unreachable' && typeof auth.detail === 'string') {
-      parsedAuth = { status: 'unreachable', detail: auth.detail };
-    } else continue;
+    const access = parseStoredAccess(row);
+    if (!access) continue;
     const strings = (value: unknown): string[] =>
       Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : [];
     const check: ProviderModelsCheck = {
       provider: row.provider,
       catalogProvider: typeof row.catalogProvider === 'string' ? row.catalogProvider : null,
-      auth: parsedAuth,
+      list: access.list,
+      inference: access.inference,
       listed: strings(row.listed),
       catalogOnly: strings(row.catalogOnly),
       providerOnly: strings(row.providerOnly),
@@ -586,8 +696,14 @@ export function parseProviderChecks(payload: unknown): ProviderModelsCheck[] {
         model: probe.model,
         httpStatus: typeof probe.httpStatus === 'number' ? probe.httpStatus : null,
         errorType: typeof probe.errorType === 'string' ? probe.errorType : null,
-        tokensIn: typeof probe.tokensIn === 'number' ? probe.tokensIn : 0,
-        tokensOut: typeof probe.tokensOut === 'number' ? probe.tokensOut : 0,
+        tokensIn:
+          probe.tokensIn === null ? null : typeof probe.tokensIn === 'number' ? probe.tokensIn : 0,
+        tokensOut:
+          probe.tokensOut === null
+            ? null
+            : typeof probe.tokensOut === 'number'
+              ? probe.tokensOut
+              : 0,
         costUsd: typeof probe.costUsd === 'number' ? probe.costUsd : null,
         costBasis: probe.costBasis === 'estimated' ? 'estimated' : 'unknown',
       };
@@ -598,11 +714,16 @@ export function parseProviderChecks(payload: unknown): ProviderModelsCheck[] {
 }
 
 export function providerAuthLabel(check: ProviderModelsCheck): string {
-  if (check.auth.status === 'auth_failed') {
-    return `auth_failed:${check.auth.httpStatus}:${check.auth.errorType}`;
+  if (check.inference.status === 'auth_failed') {
+    return `auth_failed:${check.inference.httpStatus}:${check.inference.errorType}`;
   }
-  if (check.auth.status === 'unreachable') return `unreachable:${check.auth.detail}`;
-  return check.auth.status;
+  if (check.list.status === 'auth_failed') {
+    return `auth_failed:${check.list.httpStatus}:${check.list.errorType}`;
+  }
+  if (check.inference.status === 'ok') return 'ok';
+  if (check.list.status === 'unconfigured') return 'unconfigured';
+  if (check.list.status === 'readable') return `inference:${check.inference.status}`;
+  return `unreachable:${check.list.detail}`;
 }
 
 export async function collectProviderProbes(input: {
@@ -643,34 +764,40 @@ export function finalizeProviderModelsChecks(input: {
     const previous = previousByProvider.get(provider);
     const keptReceipt = decisiveReceipt(previous?.probe) ? previous.probe : undefined;
     const outcome = keptReceipt ? undefined : input.probes.get(provider);
-    const auth = authState(list, outcome, previous);
     const spec = probeSpec(provider);
     const catalogProvider = CATALOG_PROVIDER_BY_INTERNAL[provider] ?? null;
-    const keptList = list.status !== 'ok' && auth.status === 'unreachable' ? previous : undefined;
-    const listed = list.status === 'ok' ? [...list.ids] : keptList ? [...keptList.listed] : [];
+    const listed = list.status === 'ok' ? [...list.ids] : previous ? [...previous.listed] : [];
     const sets =
       list.status === 'ok'
         ? reconcile(catalogIds(input.catalogProviders, catalogProvider), listed)
-        : keptList
-          ? { catalogOnly: [...keptList.catalogOnly], providerOnly: [...keptList.providerOnly] }
+        : previous
+          ? { catalogOnly: [...previous.catalogOnly], providerOnly: [...previous.providerOnly] }
           : { catalogOnly: [] as string[], providerOnly: [] as string[] };
     const check: ProviderModelsCheck = {
       provider,
       catalogProvider,
-      auth,
+      list: listAccess(list),
+      inference: inferenceAccess(outcome, previous),
       listed,
       catalogOnly: sets.catalogOnly,
       providerOnly: sets.providerOnly,
     };
     if (keptReceipt) check.probe = copyProbe(keptReceipt);
-    else if (outcome && spec) {
-      const price = input.priceProbe(provider, spec.model, outcome.tokensIn, outcome.tokensOut);
-      if (outcome.kind !== 'unsettled') {
-        check.probe = receiptFor(outcome, spec.model, input.now.toISOString(), price);
-        console.info(
-          `[model-catalog] auth probe ${provider}/${spec.model} ${check.probe.status} tokens_in=${outcome.tokensIn} tokens_out=${outcome.tokensOut} cost_usd=${price.costUsd ?? 'unknown'}`,
-        );
-      }
+    else if (outcome && spec && outcome.kind !== 'unsettled') {
+      const price = outcome.usage.known
+        ? input.priceProbe(provider, spec.model, outcome.usage.tokensIn, outcome.usage.tokensOut)
+        : {
+            costUsd: null,
+            costBasis: 'unknown' as const,
+            costRef: `unobserved:model-catalog-probe/${provider}/${spec.model}`,
+          };
+      check.probe = receiptFor(outcome, spec.model, input.now.toISOString(), price);
+      const tokens = outcome.usage.known
+        ? `${outcome.usage.tokensIn}/${outcome.usage.tokensOut}`
+        : 'unknown';
+      console.info(
+        `[model-catalog] auth probe ${provider}/${spec.model} ${check.probe.status} tokens=${tokens} cost_usd=${price.costUsd ?? 'unknown'}`,
+      );
     }
     checks.push(canonicalProviderCheck(check));
   }
