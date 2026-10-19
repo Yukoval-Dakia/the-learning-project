@@ -1,5 +1,7 @@
 # YUK-1358 Start Today and Inbox consumer handoff
 
+> Evidence relocation (YUK-1579 batch 1): links that pointed into `docs/planning/evidence/` now resolve on the sealed external volume under `/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1579/696449125b53b0c35a210dbc9a57292f014712de/evidence-export/` at the same `docs/planning/evidence/`-relative path; each link's `sha256:` title is that file's entry in `SHA256SUMS.txt` (digest `02a483a4841843ace8d7b8fb0f1649d7d94cd1108ecb0903343b2c2b2ad1638e`). Git history still retains all removed bytes.
+
 The initial implementation was a source-only, non-UI slice in `/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor`, branch `feat/yuk-1358-start-workbench`, based on clean main `6150f01a949c3d1357f8b44f0d8ed6807cd74179`. The parent owns integration, independent review, DB and browser acceptance, trackers, PR, CI and release. This writer changed no other worktree, started no service, accessed no database, called no provider, changed no queue or recovery process, and performed no external delivery action.
 
 ## Current parent acceptance — 2026-10-08
@@ -65,7 +67,7 @@ The remaining rows are migration continuations, not newly established runtime bu
 
 ## Source verification
 
-Node `v24.19.0`, pnpm `11.13.1`, existing main dependencies. Final formatting reported the install already up to date; package and lockfile bytes are unchanged. The [seal](evidence/2026-10-08-yuk1358-start-workbench/seal.json) contains per-file SHA-256 hashes for all 26 changed production sources, all 40 regression test files, lossless gzip archives of nine successful raw logs and 804 built files. It also defines the compact-JSON aggregate hash method. The seal records both archive and exact decompressed-log hashes. Logs contain source diagnostics and synthetic fixtures only; no token, private data, provider output or live database snapshot was archived.
+Node `v24.19.0`, pnpm `11.13.1`, existing main dependencies. Final formatting reported the install already up to date; package and lockfile bytes are unchanged. The [seal](/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1579/696449125b53b0c35a210dbc9a57292f014712de/evidence-export/docs/planning/evidence/2026-10-08-yuk1358-start-workbench/seal.json "sha256:bde0dba51ddaf5d4526631e8631637a171fefad3e36a87d1b9f5785820a659fb") contains per-file SHA-256 hashes for all 26 changed production sources, all 40 regression test files, lossless gzip archives of nine successful raw logs and 804 built files. It also defines the compact-JSON aggregate hash method. The seal records both archive and exact decompressed-log hashes. Logs contain source diagnostics and synthetic fixtures only; no token, private data, provider output or live database snapshot was archived.
 
 | Check | Observed result |
 | --- | --- |

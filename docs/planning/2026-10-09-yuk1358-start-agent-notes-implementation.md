@@ -1,5 +1,7 @@
 # YUK-1358 Start agent-note implementation
 
+> Evidence relocation (YUK-1579 batch 1): links that pointed into `docs/planning/evidence/` now resolve on the sealed external volume under `/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1579/696449125b53b0c35a210dbc9a57292f014712de/evidence-export/` at the same `docs/planning/evidence/`-relative path; each link's `sha256:` title is that file's entry in `SHA256SUMS.txt` (digest `02a483a4841843ace8d7b8fb0f1649d7d94cd1108ecb0903343b2c2b2ad1638e`). Git history still retains all removed bytes.
+
 The bounded non-UI consumer migration is implemented. Today reads20 and `/agent-notes` reads50 through the authenticated Start function and the existing `agency/public.loadAgentNoteBoard`. Source, unit, installed serializer, static and build checks passed. DB, real RPC and browser acceptance remain unrun and belong to the parent. This report does not establish full migration, CI, deployment or runtime acceptance.
 
 Workspace: `/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor`. Branch: `feat/yuk-1358-start-agent-notes`. Starting HEAD: `7503e0d3aa082f36e91bc726161a32d83d849a0e`. Main base and verified merge-base: `10df1a47179fe2e368f5df1a538e1dd11cf9e6da`. No branch switch, push, PR, merge, delegation or parent planning edits occurred. The final delivery commit is returned to the parent separately, avoiding a self-referential commit hash here.
@@ -25,7 +27,7 @@ Agency public/domain/server/contracts/manifest/jobs, package/lock, test-selectio
 
 ## Executed evidence
 
-Commands, exits and log references are in [commands.json](evidence/yuk1358-start-agent-notes/commands.json). The Node executable is `/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin/node`; direct and `pnpm exec node --version` both returned `v24.19.0`. Every pnpm check prepended this installation to PATH; installed CLI shims resolve `node` from PATH. Dependencies and host settings were not changed.
+Commands, exits and log references are in [commands.json](/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1579/696449125b53b0c35a210dbc9a57292f014712de/evidence-export/docs/planning/evidence/yuk1358-start-agent-notes/commands.json "sha256:00190d894e5d648a9465a4ede1f33f48a7b8b146bdd02d89f8f3e208df0e5d69"). The Node executable is `/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin/node`; direct and `pnpm exec node --version` both returned `v24.19.0`. Every pnpm check prepended this installation to PATH; installed CLI shims resolve `node` from PATH. Dependencies and host settings were not changed.
 
 | Check | Result | Log |
 | --- | --- | --- |
@@ -46,9 +48,9 @@ New unit cases prove401 for missing/empty/wrong tokens and503 for a fenced epoch
 
 The protocol case resolves the built function map and uses Start's installed fetcher and serializer. It verifies default/20/50/200 payloads and the complete ISO/nested-ref DTO through an offline transport. The fixture adapter's HTTP-shaped mapping is test-only; production calls the domain read directly. Offline fulfillment is not an actual server RPC.
 
-Self-review results are in [source-review.json](evidence/yuk1358-start-agent-notes/source-review.json). The emitted function chunk has only infrastructure imports at module scope, dynamic agency/DB imports within the guarded reader, the canonical call and identity validator. The resolver imports that chunk lazily. Both pages' JSX suffixes are byte-identical to the starting HEAD; durable/localStorage implementations and domain code are unchanged. All17 recorded source/artifact assertions passed. This is author self-review; the parent's independent review is still required.
+Self-review results are in [source-review.json](/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1579/696449125b53b0c35a210dbc9a57292f014712de/evidence-export/docs/planning/evidence/yuk1358-start-agent-notes/source-review.json "sha256:491ffe1d682c78ab60afb24262328de584cf0b5251c121d040d811d060b2f6ed"). The emitted function chunk has only infrastructure imports at module scope, dynamic agency/DB imports within the guarded reader, the canonical call and identity validator. The resolver imports that chunk lazily. Both pages' JSX suffixes are byte-identical to the starting HEAD; durable/localStorage implementations and domain code are unchanged. All17 recorded source/artifact assertions passed. This is author self-review; the parent's independent review is still required.
 
-Source/test manifest SHA-256: `bc707b29a7d70275e1f5dd376c3713cad3ebe9c232858a66c21549e2e980f6ba` across19 files. Built artifact manifest SHA-256: `96604d5ba1c43a0c2d5e248daccb360132118e015966e2763b58ad1314c1b6dd` across878 files. [hashes.json](evidence/yuk1358-start-agent-notes/hashes.json) contains every path/hash. Manifest digests hash the sorted compact JSON path/hash map. Build artifacts remain local ignored outputs; hashes and logs are committed evidence.
+Source/test manifest SHA-256: `bc707b29a7d70275e1f5dd376c3713cad3ebe9c232858a66c21549e2e980f6ba` across19 files. Built artifact manifest SHA-256: `96604d5ba1c43a0c2d5e248daccb360132118e015966e2763b58ad1314c1b6dd` across878 files. [hashes.json](/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1579/696449125b53b0c35a210dbc9a57292f014712de/evidence-export/docs/planning/evidence/yuk1358-start-agent-notes/hashes.json "sha256:1ceda02c0c4782512d256d51e6a11a0e558aade6fbea0591edffac3841c0fd4f") contains every path/hash. Manifest digests hash the sorted compact JSON path/hash map. Build artifacts remain local ignored outputs; hashes and logs are committed evidence.
 
 ## Prepared acceptance, not executed
 
