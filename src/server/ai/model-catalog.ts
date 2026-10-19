@@ -3,8 +3,10 @@
 // One document is active in the process. Origin is remote (this process just
 // stored a fetch), cache (a previous fetch read from model_catalog_cache), or
 // snapshot (the committed file). Readers never block on the network. A failed
-// pull leaves the active document in place. A selected model that disappears
-// or changes capability keeps its previous entry and records a finding.
+// pull leaves the active document in place. The stored document is the union of
+// the previous document and the fetch: a model missing from the fetch keeps its
+// previous entry and records model_absent. A selected model whose capabilities
+// change keeps its previous entry and records capability_changed.
 
 import { createHash } from 'node:crypto';
 import { eq, like } from 'drizzle-orm';
@@ -13,6 +15,7 @@ import { tasks } from '@/capabilities/task-registry';
 import type { Db } from '@/db/client';
 import { model_catalog_cache, system_config } from '@/db/schema';
 import rawSnapshot from './model-catalog.snapshot.json' with { type: 'json' };
+import { CATALOG_PROVIDER_BY_INTERNAL } from './model-profiles';
 
 export const MODEL_CATALOG_URL = 'https://models.dev/api.json';
 export const MODEL_CATALOG_REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000;
@@ -232,6 +235,15 @@ function snapshotActive(): ActiveCatalog {
 }
 
 let active: ActiveCatalog = snapshotActive();
+let unreadableCacheVersion: string | undefined;
+
+function warnUnreadableCache(version: string): void {
+  if (unreadableCacheVersion === version) return;
+  unreadableCacheVersion = version;
+  console.warn(
+    `[model-catalog] cache payload unreadable version=${version} — keeping snapshot or previous`,
+  );
+}
 
 function metaOf(catalog: ActiveCatalog): CatalogMeta {
   return {
@@ -284,64 +296,73 @@ async function readPinnedModelIds(db: Db): Promise<ReadonlySet<string>> {
   return ids;
 }
 
-function retainSelectedModels(
+type MergedModel =
+  | { kind: 'current'; entry: unknown }
+  | { kind: 'model_absent'; entry: unknown }
+  | { kind: 'capability_changed'; entry: unknown; fields: readonly string[] };
+
+function mergeModelEntry(
+  previousEntry: unknown,
+  nextEntry: unknown,
+  retainCapability: boolean,
+): MergedModel {
+  if (nextEntry === undefined) return { kind: 'model_absent', entry: previousEntry };
+  if (previousEntry !== undefined && retainCapability) {
+    const fields = capabilityDelta(previousEntry, nextEntry);
+    if (fields.length > 0) return { kind: 'capability_changed', entry: previousEntry, fields };
+  }
+  return { kind: 'current', entry: nextEntry };
+}
+
+function wiredCatalogProviderIds(): readonly string[] {
+  return [
+    ...new Set(
+      Object.values(CATALOG_PROVIDER_BY_INTERNAL).filter((id): id is string => id !== undefined),
+    ),
+  ].sort();
+}
+
+function missingWiredProviders(providers: ProviderMap): string[] {
+  return wiredCatalogProviderIds().filter((id) => providers[id] === undefined);
+}
+
+/** Previous document ∪ fetched document. Absence keeps the old entry for every model. */
+function mergeCatalogDocuments(
   previous: ProviderMap,
   next: ProviderMap,
   pinned: ReadonlySet<string>,
 ): { providers: ProviderMap; findings: CatalogFinding[] } {
-  const replacements: {
-    providerId: string;
-    modelId: string;
-    entry: unknown;
-    finding: CatalogFinding;
-  }[] = [];
+  const providers: ProviderMap = {};
+  const findings: CatalogFinding[] = [];
   const providerIds = [...new Set([...Object.keys(previous), ...Object.keys(next)])].sort();
   for (const providerId of providerIds) {
-    const previousModels = asJson(previous[providerId]?.models);
-    if (!previousModels) continue;
-    const nextModels = asJson(next[providerId]?.models);
-    const modelIds = [...pinned].filter((modelId) => Object.hasOwn(previousModels, modelId)).sort();
+    const previousModels = asJson(previous[providerId]?.models) ?? {};
+    const nextModels = asJson(next[providerId]?.models) ?? {};
+    const models: Json = {};
+    const modelIds = [
+      ...new Set([...Object.keys(previousModels), ...Object.keys(nextModels)]),
+    ].sort();
     for (const modelId of modelIds) {
-      const oldEntry = previousModels[modelId];
-      const newEntry = nextModels?.[modelId];
-      if (newEntry === undefined) {
-        replacements.push({
-          providerId,
-          modelId,
-          entry: oldEntry,
-          finding: { kind: 'model_absent', catalogProvider: providerId, model: modelId },
-        });
-        continue;
-      }
-      const fields = capabilityDelta(oldEntry, newEntry);
-      if (fields.length > 0) {
-        replacements.push({
-          providerId,
-          modelId,
-          entry: oldEntry,
-          finding: {
-            kind: 'capability_changed',
-            catalogProvider: providerId,
-            model: modelId,
-            fields,
-          },
+      const merged = mergeModelEntry(
+        previousModels[modelId],
+        nextModels[modelId],
+        pinned.has(modelId),
+      );
+      models[modelId] = merged.entry;
+      if (merged.kind === 'model_absent') {
+        findings.push({ kind: 'model_absent', catalogProvider: providerId, model: modelId });
+      } else if (merged.kind === 'capability_changed') {
+        findings.push({
+          kind: 'capability_changed',
+          catalogProvider: providerId,
+          model: modelId,
+          fields: merged.fields,
         });
       }
     }
-  }
-  if (replacements.length === 0) return { providers: next, findings: [] };
-  const providers = structuredClone(next);
-  const findings: CatalogFinding[] = [];
-  for (const replacement of replacements) {
-    let provider = providers[replacement.providerId];
-    if (!provider) {
-      provider = { models: {} };
-      providers[replacement.providerId] = provider;
-    }
-    const models = asJson(provider.models) ?? {};
-    provider.models = models;
-    models[replacement.modelId] = replacement.entry;
-    findings.push(replacement.finding);
+    const shell = { ...(next[providerId] ?? previous[providerId] ?? {}) };
+    shell.models = models;
+    providers[providerId] = shell;
   }
   return { providers, findings };
 }
@@ -394,6 +415,9 @@ async function pullRemote(
   }
   const providers = providerMapFrom(parsed);
   if (!providers) return { error: 'invalid', detail: 'catalog has no providers' };
+  const missing = missingWiredProviders(providers);
+  if (missing.length > 0)
+    return { error: 'invalid', detail: `missing providers ${missing.join(',')}` };
   return { providers, upstreamVersion: upstreamVersionOf(response, raw) };
 }
 
@@ -419,9 +443,10 @@ export async function hydrateModelCatalog(db: Db): Promise<CatalogMeta> {
     if (!row) return metaOf(active);
     const providers = providerMapFrom(row.payload);
     if (!providers) {
-      console.warn('[model-catalog] cache payload unreadable — keeping snapshot or previous');
+      warnUnreadableCache(row.version);
       return metaOf(active);
     }
+    unreadableCacheVersion = undefined;
     const fetchedAt =
       row.fetched_at instanceof Date ? row.fetched_at.toISOString() : String(row.fetched_at);
     install(
@@ -466,7 +491,7 @@ export async function refreshModelCatalog(
   const pulled = await pullRemote(fetchCatalog);
   if ('error' in pulled) return kept(pulled.error, pulled.detail);
 
-  const retained = retainSelectedModels(active.providers, pulled.providers, pinned);
+  const retained = mergeCatalogDocuments(active.providers, pulled.providers, pinned);
   const now = options.now?.() ?? new Date();
   const version = sha256(JSON.stringify(retained.providers));
   const next: ActiveCatalog = {
@@ -529,7 +554,8 @@ export function startModelCatalogWatch(
           .where(eq(model_catalog_cache.id, 1))
           .limit(1);
         const version = rows[0]?.version;
-        if (version && version !== active.version) await hydrateModelCatalog(db);
+        if (!version || version === active.version || version === unreadableCacheVersion) return;
+        await hydrateModelCatalog(db);
       } catch (error) {
         console.warn(
           '[model-catalog] cache watch failed',

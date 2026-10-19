@@ -18,9 +18,9 @@
 // row is missing or unreadable. `pnpm gen:model-catalog` still rewrites the
 // snapshot for offline boot and fixtures. The parse is deliberately NARROW
 // (only the fields we consume) and fail-closed (a malformed entry parses to an
-// empty catalog layer, never to invented capabilities). A selected model that
-// leaves the catalog or changes capability keeps its previous entry there;
-// this resolver does not swap the stored task model.
+// empty catalog layer, never to invented capabilities). A model missing from
+// the newest document keeps its previous entry there. A selected model whose
+// capabilities change does too. This resolver does not swap the stored task model.
 //
 // YUK-921 (execution-adapter) is PARKED and out of scope: this module only
 // classifies models; it does not change how requests are executed.
@@ -174,7 +174,7 @@ export interface ModelProfile {
  * 'opencode-go' reads the models.dev opencode-go bucket. toolCalling is that
  * bucket's tool_call. The binding still owns structuredOutput and meteredUsd.
  */
-const CATALOG_PROVIDER_BY_INTERNAL: Partial<Record<Provider, string>> = {
+export const CATALOG_PROVIDER_BY_INTERNAL: Partial<Record<Provider, string>> = {
   anthropic: 'anthropic',
   'anthropic-sub': 'anthropic',
   xiaomi: 'xiaomi',
