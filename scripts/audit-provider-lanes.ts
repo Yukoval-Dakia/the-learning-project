@@ -48,6 +48,7 @@ export type ProviderWireFinding = {
     | 'question-admission-preflight-fetch'
     | 'question-admission-reopen-preflight-fetch'
     | 'tencent-question-mark-agent-sdk'
+    | 'model-catalog-provider-check-fetch'
     | 'unclassified-provider-fetch';
   readonly call: string;
   readonly path: string;
@@ -762,6 +763,10 @@ function findingsFor(path: string, code: string, facts: SourceFacts): ProviderWi
     ) {
       return [];
     }
+    // YUK-1563 provider /models read and the one-shot 1-token auth probe.
+    if (call === 'fetchImpl' && path === 'src/server/ai/provider-models-check.ts') {
+      return [{ kind: 'model-catalog-provider-check-fetch', call, path }];
+    }
     return [{ kind: 'unclassified-provider-fetch', call, path }];
   });
 }
@@ -1023,6 +1028,7 @@ function laneForFinding(kind: ProviderWireFinding['kind']): string | undefined {
     'question-admission-preflight-fetch': 'xiaomi.question-admission-preflight',
     'question-admission-reopen-preflight-fetch': 'xiaomi.question-admission-reopen-preflight',
     'tencent-question-mark-agent-sdk': 'tencent.question-mark-agent',
+    'model-catalog-provider-check-fetch': 'catalog.provider-models-check',
   } as const;
   return kind === 'unclassified-provider-fetch' ? undefined : ids[kind];
 }

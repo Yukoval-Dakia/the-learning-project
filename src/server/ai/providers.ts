@@ -417,6 +417,57 @@ export function isProviderImplemented(provider: Provider): boolean {
   return IMPLEMENTED_KEY_PROVIDERS.has(provider) || isOauthProvider(provider);
 }
 
+/**
+ * Model used for the one-token catalog auth probe. This is not a task default:
+ * the probe only checks that the credential is accepted.
+ * opencode-go stays on deepseek-v4.1-flash at high effort, with no tool_choice.
+ */
+const AUTH_PROBE_PIN: Partial<Record<Provider, string>> = {
+  'opencode-go': 'deepseek-v4.1-flash',
+  anthropic: 'claude-haiku-4-5',
+  'anthropic-sub': 'claude-opus-4-8',
+  xiaomi: 'mimo-v2.5',
+  'xiaomi-token-plan': 'mimo-v2.6-pro',
+  'zhipuai-coding-plan': 'glm-5.3-flash',
+  openai: 'gpt-6-astra',
+};
+
+export function providerAuthProbeModel(provider: Provider): string | undefined {
+  return AUTH_PROBE_PIN[provider];
+}
+
+/** Implemented lanes, stable order. OpenRouter stays out: it is typed-only. */
+export function implementedProviderIds(): readonly Provider[] {
+  return (Object.keys(PROVIDERS) as Provider[])
+    .filter((provider) => isProviderImplemented(provider))
+    .sort();
+}
+
+/**
+ * Root the product actually calls, with `/v1` included, for a provider `/models`
+ * read. Null when the lane has no usable root (bad Token Plan region included).
+ * Directory `api` fields are not consulted here.
+ */
+export function providerModelsRoot(
+  provider: Provider,
+  env: Record<string, string | undefined> = process.env,
+): string | null {
+  if (!isProviderImplemented(provider)) return null;
+  if (provider === 'anthropic' || provider === 'anthropic-sub')
+    return 'https://api.anthropic.com/v1';
+  if (provider === 'openai') return 'https://api.openai.com/v1';
+  if (provider === 'xiaomi-token-plan') {
+    try {
+      return xiaomiTokenPlanBaseUrl(env);
+    } catch {
+      return null;
+    }
+  }
+  const config = PROVIDERS[provider];
+  if (config.authMode !== 'key' || config.baseUrl === undefined) return null;
+  return config.baseUrl.replace(/\/+$/, '');
+}
+
 // YUK-1049 — the openrouter lane is implemented ONLY for typed-execution
 // tasks (execution:'typed'): its wired surface is the native decisions
 // endpoint, not the chat façade pi drives. The lane is deliberately absent

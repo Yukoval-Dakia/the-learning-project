@@ -13,6 +13,7 @@ import {
   MODEL_CATALOG_REFRESH_INTERVAL_MS,
   hydrateModelCatalog,
   refreshModelCatalog,
+  startModelCatalogWatch,
 } from '@/server/ai/model-catalog';
 import { resolveTaskProvider } from '@/server/ai/providers';
 import { createBoss, isQueueCreateRace, markBossStarted } from '@/server/boss/client';
@@ -158,7 +159,13 @@ export async function startBossWorker(
     });
   }, MODEL_CATALOG_REFRESH_INTERVAL_MS);
   catalogRefresh.unref();
-  boss.once('stopped', () => clearInterval(catalogRefresh));
+  // The refresh lock serializes writers. This watch reloads the row another
+  // worker stored, so this process does not keep a stale merge in memory.
+  const catalogWatch = startModelCatalogWatch(db);
+  boss.once('stopped', () => {
+    clearInterval(catalogRefresh);
+    catalogWatch.stop();
+  });
   // YUK-576 §5.4 — boot-time stuck-run reconcile (PRIMARY trigger): the main
   // stuck cause is a process crash, so the restart converges >1h 'running'
   // ai_task_runs rows within seconds (the 1h threshold guards the previous
