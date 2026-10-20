@@ -29,7 +29,6 @@
 
 import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, or, sql } from 'drizzle-orm';
-import { listActiveGoalsWithResolvedScope } from '@/capabilities/agency/public';
 // PR #717 round-2 CodeRabbit fix #2 (YUK-574) — imports from src/core/ (RELOCATED
 // from knowledge/ui/mastery-band.ts; see the provenance note in that file). Pure
 // dependency-free band-derivation helpers, no cross-capability / cross-layer reach.
@@ -41,6 +40,7 @@ import {
   type ProposalFeedbackCell,
   getProposalFeedbackDigest,
 } from '@/kernel/proposals/adaptive-bias';
+import { listActiveGoalsWithResolvedScope } from '@/kernel/read-models/active-goal-scope';
 import { effectiveCauseCategoryForFailureAttempt } from '@/kernel/read-models/cause-policy';
 import type { FailureAttempt } from '@/kernel/read-models/failure-attempts';
 import { getFailureAttempts } from '@/kernel/read-models/failure-attempts';

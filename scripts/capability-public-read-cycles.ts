@@ -138,19 +138,16 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
     consumer: 'practice',
     files: [
       'src/capabilities/practice/jobs/quiz_verify.ts',
-      'src/capabilities/practice/server/due-list.ts',
       'src/capabilities/practice/server/intervention-author.ts',
     ],
     symbols: [
-      'ActiveGoal',
       'InterventionAuthoringContextT',
       'guardInterventionPreparationStage',
-      'listActiveGoalsWithResolvedScope',
       'recordQuestionPoolGap',
     ],
-    dto: 'ActiveGoal / intervention authoring context reads',
+    dto: 'intervention authoring context reads',
     justification:
-      'review due-list + intervention authoring read agency-owned goals; quiz verify submits a committed pool-gap observation, and Agency owns the coach hint policy.',
+      'intervention authoring reads the agency-owned preparation context; quiz verify submits a committed pool-gap observation, and Agency owns the coach hint policy. The active-goal effective-scope read moved to @/kernel/read-models/active-goal-scope (YUK-1571).',
     reviewIssue: 'YUK-885',
     commandFiles: ['src/capabilities/practice/jobs/quiz_verify.ts'],
   },

@@ -9,14 +9,6 @@ import {
   type AgencyScanRunFn,
   runAgencyProposalScan,
 } from '@/capabilities/agency/server/agent-run';
-// YUK-143 / ADR-0025 — North-Star: feed active goals into the Dreaming input so
-// it can BIAS proposals toward weak/under-covered knowledge in their scope.
-// Purely ADDITIVE (ND-5): Dreaming still only PROPOSES via the inbox and never
-// reads the FSRS-due queue or mutates review state; goals only add direction.
-import {
-  type ActiveGoal,
-  listActiveGoalsWithResolvedScope,
-} from '@/capabilities/agency/server/goals/queries';
 import { type AgentNote, readAgentNotes } from '@/capabilities/agency/server/notes';
 import { enqueueDreamingNoteRefine } from '@/capabilities/notes/public';
 import type { Db } from '@/db/client';
@@ -25,6 +17,14 @@ import {
   type ProposalFeedbackCell,
   getProposalFeedbackDigest,
 } from '@/kernel/proposals/adaptive-bias';
+// YUK-143 / ADR-0025 — North-Star: feed active goals into the Dreaming input so
+// it can BIAS proposals toward weak/under-covered knowledge in their scope.
+// Purely ADDITIVE (ND-5): Dreaming still only PROPOSES via the inbox and never
+// reads the FSRS-due queue or mutates review state; goals only add direction.
+import {
+  type ActiveGoal,
+  listActiveGoalsWithResolvedScope,
+} from '@/kernel/read-models/active-goal-scope';
 // P5.1 / YUK-143 — single tunable source for Dreaming run caps. YUK-290 keeps
 // the old max_tool_calls=8 as an advisory warning and moves the accident
 // ceiling to 24; max_proposals remains byte-identical at 5.

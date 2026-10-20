@@ -43,7 +43,8 @@
     "retired-api-aliases-2026-10-20": "Removal of 21 deprecated route registrations and their 10 orphan alias modules (extract/import wrappers, legacy practice/review/placement shells, proposal decide/retract wrappers). Decrease reflects deleted alias indirection reaching server internals, not new algorithm deepening. Measurements: on 1be6fba10 420 -> 416; merged with main c26ec39f9 (after PR1882 agency ownership) e5a46d610 measured 417 -> 413; merged with main dc8d7c27 (after PR1891 YUK-1522 budget gate) measured 416 -> 412: ingestion->boss 7->6, ingestion->session 9->8, shell->proposals 4->2. Main baseline history preserved verbatim; only measured decreases appended. Latest main232f01d67 after mastery consumer exit: server410 -> 406; cross43 and SCC5 unchanged. Prior measurements remain historical.",
     "YUK-1571-attempt-evidence-reader": "Complete attempt-question evidence read engine moved intact from practice to kernel with compatibility exports preserved; two ingestion consumers point to the real engine. Current main232f01d67 composition: ingestion -> practice 2 -> 0, cross 43 -> 41, server410 unchanged; no new algorithm depth and no write-owner transfer. Earlier main671/c26 compositions had server420/417 unchanged; subsequent main reductions are retained, not credited to this slice. Current main2338e0192 after API retirement: server406 unchanged, cross43 -> 41, SCC5 unchanged; earlier totals are historical.",
     "YUK-1571-hub-curation": "Complete hub curation algorithm and tree snapshot read engine now belong to kernel; knowledge compatibility exports remain. notes -> knowledge 1 -> 0, cross 42 -> 41; notes exits the five-capability SCC, leaving the four-capability SCC {agency, ingestion, knowledge, practice}. Capability -> server stays 429. Preserve mastery join/overlay, filters, limits, warnings, cursor conversion failures, fresh per-claim reads and finalization locks/CAS; no write-owner reversal. Residual SCC work remains YUK-1571. Latest composition includes supply PR #1883; main server baseline 429. Current integration after session PR #1880: server baseline 420; cross-capability delta unchanged. Current main671e08044 composition: cross 43 -> 42 (upstream TodayPlan added agency -> practice); server 420 unchanged. Current main c26ec39f9 after Agency PR1882: server417 unchanged, cross43 -> 42, SCC5 -> 4; prior totals are historical. Latest main dc8d7c27d includes ingestion budget: server416 unchanged, cross43 -> 42, SCC5 -> 4; main history is retained. Current main f3d443076 after mastery consumer exit: server410 unchanged, cross43 -> 42, SCC5 -> 4; prior totals are historical. Current main2338e0192 after API retirement: server406 unchanged, cross43 -> 42, SCC5 -> 4; prior values are historical. Current main efcfc2a14 after shared attempt read: server406 unchanged, cross41 -> 40, SCC5 -> 4; main attempt-read decrease retained.",
-    "YUK-1571-asset-store": "Complete content-addressed source_asset write protocol (byte-view sha256, same-key advisory lock held across blob put and owner-row commit, put compensation on insert failure, last-owner delete with fresh under-lock re-read, sharp lazy image-dimension read, caller-supplied kind/provenance) moved intact from ingestion/server/persist-image-asset.ts to src/kernel/records/asset-store.ts; ingestion and the practice jyeoo supply lane shared the same object-key lock and row lifecycle, so the protocol is common infrastructure, not an ingestion domain decision. persist-image-asset.ts keeps the getR2/R2Client seam and six coordinator-approved compat re-exports (window ends 2026-11-03 UTC, per-symbol site records in compatShims); jyeoo-candidates.ts consumes the kernel module directly and forwards lockImageStorageKey for the reap job. practice -> ingestion 1 -> 0 retires the last inbound edge: cross 40 -> 39 and the SCC shrinks to {agency, knowledge, practice}; capability -> server 406 unchanged (the r2 seam edge persists). Approval: https://linear.app/yukoval-studios/issue/YUK-1571#comment-03dae10a-ad31-4219-800f-2e79b948937a"
+    "YUK-1571-asset-store": "Complete content-addressed source_asset write protocol (byte-view sha256, same-key advisory lock held across blob put and owner-row commit, put compensation on insert failure, last-owner delete with fresh under-lock re-read, sharp lazy image-dimension read, caller-supplied kind/provenance) moved intact from ingestion/server/persist-image-asset.ts to src/kernel/records/asset-store.ts; ingestion and the practice jyeoo supply lane shared the same object-key lock and row lifecycle, so the protocol is common infrastructure, not an ingestion domain decision. persist-image-asset.ts keeps the getR2/R2Client seam and six coordinator-approved compat re-exports (window ends 2026-11-03 UTC, per-symbol site records in compatShims); jyeoo-candidates.ts consumes the kernel module directly and forwards lockImageStorageKey for the reap job. practice -> ingestion 1 -> 0 retires the last inbound edge: cross 40 -> 39 and the SCC shrinks to {agency, knowledge, practice}; capability -> server 406 unchanged (the r2 seam edge persists). Approval: https://linear.app/yukoval-studios/issue/YUK-1571#comment-03dae10a-ad31-4219-800f-2e79b948937a",
+    "YUK-1571-active-goal-read": "Shared active-goal effective-scope read model (ActiveGoal, listActiveGoals, listActiveGoalsWithResolvedScope) moved verbatim from capabilities/agency/server/goals/queries.ts to src/kernel/read-models/active-goal-scope.ts; agency keeps all goal writes (mutateGoal, updateGoalStatus, updateGoalScope) and the scope vocabulary (commands.ts). ActiveGoal.scope_mode now types against goal.$inferSelect (schema enum explicit|subject_live), not the agency command alias. Six consumers repointed with zero compat shims and no reader re-export: agency jobs coach_daily / dreaming_nightly / goal_scope_propose_nightly (same-capability edges become capabilityToKernel, recorded in edgeRecords), practice/server/due-list.ts (practice -> agency 3 -> 2), copilot/server/learner-state.ts (copilot -> agency 1 -> 0) and scripts/demo-flywheel.ts (outside the audited capability layer). The three retired agency/public read exports are deleted; updateGoalScope and every other export stay. Measured on main 93578223e merged with fabf68ec4: cross-capability value 39 -> 37, capability -> server follows upstream at 403, nontrivial SCCs unchanged at {agency, knowledge, practice}; benefit claimed is shared read-ownership convergence only, not new interface depth."
   },
   "changes": [
     {
@@ -190,6 +191,22 @@
       "date": "2026-10-20",
       "from": 7,
       "to": 6,
+      "direction": "decrease"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "copilot -> agency",
+      "date": "2026-10-20",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "practice -> agency",
+      "date": "2026-10-20",
+      "from": 3,
+      "to": 2,
       "direction": "decrease"
     }
   ],
@@ -350,6 +367,56 @@
       "symbols": ["lockImageStorageKey"],
       "issue": "YUK-1571",
       "owns": "Content-addressed source_asset write protocol: byte-view sha256 storage keys, one advisory lock held across blob put and owner-row commit, put compensation on insert failure, last-owner object delete with fresh re-read under the key lock",
+      "date": "2026-10-20"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/jobs/coach_daily.ts",
+      "module": "src/kernel/read-models/active-goal-scope.ts",
+      "kind": "value",
+      "symbols": ["ActiveGoal", "listActiveGoalsWithResolvedScope"],
+      "issue": "YUK-1571",
+      "owns": "Shared active-goal effective-scope read model: status='active' goals ordered by sequence_hint then created_at; explicit scope returns the frozen column, subject_live re-derives the subject KC set via resolveSubjectKnowledgeIds once per distinct subject (Map-deduped); agency keeps goal writes and the scope vocabulary",
+      "date": "2026-10-20"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/jobs/dreaming_nightly.ts",
+      "module": "src/kernel/read-models/active-goal-scope.ts",
+      "kind": "value",
+      "symbols": ["ActiveGoal", "listActiveGoalsWithResolvedScope"],
+      "issue": "YUK-1571",
+      "owns": "Shared active-goal effective-scope read model: status='active' goals ordered by sequence_hint then created_at; explicit scope returns the frozen column, subject_live re-derives the subject KC set via resolveSubjectKnowledgeIds once per distinct subject (Map-deduped); agency keeps goal writes and the scope vocabulary",
+      "date": "2026-10-20"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/jobs/goal_scope_propose_nightly.ts",
+      "module": "src/kernel/read-models/active-goal-scope.ts",
+      "kind": "value",
+      "symbols": ["listActiveGoals"],
+      "issue": "YUK-1571",
+      "owns": "Shared active-goal effective-scope read model: status='active' goals ordered by sequence_hint then created_at; explicit scope returns the frozen column, subject_live re-derives the subject KC set via resolveSubjectKnowledgeIds once per distinct subject (Map-deduped); agency keeps goal writes and the scope vocabulary",
+      "date": "2026-10-20"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/copilot/server/learner-state.ts",
+      "module": "src/kernel/read-models/active-goal-scope.ts",
+      "kind": "value",
+      "symbols": ["listActiveGoalsWithResolvedScope"],
+      "issue": "YUK-1571",
+      "owns": "Shared active-goal effective-scope read model: status='active' goals ordered by sequence_hint then created_at; explicit scope returns the frozen column, subject_live re-derives the subject KC set via resolveSubjectKnowledgeIds once per distinct subject (Map-deduped); agency keeps goal writes and the scope vocabulary",
+      "date": "2026-10-20"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/due-list.ts",
+      "module": "src/kernel/read-models/active-goal-scope.ts",
+      "kind": "value",
+      "symbols": ["ActiveGoal", "listActiveGoalsWithResolvedScope"],
+      "issue": "YUK-1571",
+      "owns": "Shared active-goal effective-scope read model: status='active' goals ordered by sequence_hint then created_at; explicit scope returns the frozen column, subject_live re-derives the subject KC set via resolveSubjectKnowledgeIds once per distinct subject (Map-deduped); agency keeps goal writes and the scope vocabulary",
       "date": "2026-10-20"
     }
   ],
@@ -607,12 +674,11 @@
       "byOwnerPair": {}
     },
     "crossCapabilityValue": {
-      "total": 39,
+      "total": 37,
       "byOwnerPair": {
         "agency -> knowledge": 4,
         "agency -> notes": 2,
         "agency -> practice": 5,
-        "copilot -> agency": 1,
         "copilot -> notes": 2,
         "copilot -> practice": 1,
         "ingestion -> knowledge": 2,
@@ -621,7 +687,7 @@
         "observability -> agency": 2,
         "observability -> practice": 1,
         "onboarding -> practice": 1,
-        "practice -> agency": 3,
+        "practice -> agency": 2,
         "practice -> knowledge": 4,
         "shell -> agency": 2,
         "shell -> knowledge": 1,
