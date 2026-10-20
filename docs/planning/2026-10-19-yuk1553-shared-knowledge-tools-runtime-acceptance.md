@@ -2,16 +2,20 @@
 
 > 状态：**前置清单（NOT RUN）**。本文只列出验收入口、数据与核对项；
 > 不构造 mock 证据，不把静态检查当运行验收。runtime 窗口由父统一申请/取锁。
-> 合并头：`032c83bc1`（d6e125a3 + merge origin/main@36b1346a）。
+> 合并头：`e4923c7dc`（d6e125a3 + merge origin/main@a519a05d2）；后续契约收口提交见分支 HEAD。
 
 ## 1. 已完成（本机，非运行）
 
 - `pnpm typecheck` / `pnpm lint` / `pnpm lint:ratchet` / `pnpm build`：exit 0。
-- `pnpm audit:capability-boundaries`：exit 0（total 442，knowledge -> ai 12）。
+- `pnpm audit:capability-boundaries`：exit 0（total 439，knowledge -> ai 12）。
 - `pnpm audit:tool-params`：exit 0 — `domain_tool(knowledge)` 6 工具（含
   `propose_knowledge_edge` / `propose_knowledge_mutation`）真实转换后 schema
   根 `type:"object"`、0 违规；私有 write_proposal custom-mount 扫描项已随
   该工具退役移除，改由 domain_tool 面覆盖。
+- `registerTool` 新增 C1-1 注册期契约：effectful 工具（propose/write/control）的
+  顶层或一级字段拒绝 `z.unknown()` / `z.any()` / 无约束 record。4 个既有 opaque
+  JSON 字段改用 `OpaqueJsonInput`（z.json）；本机转换通过，但 provider 对
+  `$ref`/`definitions` 的 wire 接受度 **NOT_RUN**。
 - 源码静态对账：`knowledge_review` surface = 5 readers +
   2 propose 工具（`src/kernel/tools/allowlists.ts`）；Dreaming 显式列表继承
   同名集合（不再展开 KNOWLEDGE_REVIEW_TOOLS），无新增 grant。

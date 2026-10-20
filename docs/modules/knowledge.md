@@ -276,9 +276,8 @@ This rubric applies to agent-generated graph proposals. Manual user-created edge
 
 > **Enforcement status (Layer 1, P5.4 / YUK-143 — shipped 2026-05-31).** §4.1 / §4.2 / §4.3
 > are now enforced deterministically by a single shared validator,
-> `src/server/knowledge/rubric-validator.ts` (`validateProposalQuality`), called by **both**
-> agent edge-proposal write paths before the propose-event write: the DomainTool
-> `proposeKnowledgeEdgeExecute` and the legacy MCP `writeProposalAfterGate`. Agents are strict
+> `src/capabilities/knowledge/server/rubric-validator.ts` (`validateProposalQuality`), called by the
+> agent edge-proposal write path (`proposeKnowledgeEdgeCreate`) before the propose-event write. Agents are strict
 > (structural + reasoning-depth + evidence floor + relation predicates); user-edited proposals run
 > structural-only (§4.1 G1–G6). A rejected agent proposal is **folded, not dropped**: the propose
 > event is still written carrying a `rubric_verdict: { ok:false, gate, reason }` marker, derives a

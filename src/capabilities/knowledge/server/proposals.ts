@@ -217,7 +217,11 @@ export function knowledgeMutationCooldown(
     case 'archive':
       return {
         kind: 'archive',
-        cooldownKeys: [archiveProposalCooldownKey('knowledge', payload.node_id)],
+        cooldownKeys: [
+          archiveProposalCooldownKey('knowledge', payload.node_id),
+          // Legacy experimental:knowledge_archive rows derive this key.
+          `legacy_knowledge:archive:${payload.node_id}`,
+        ],
       };
     case 'reparent':
     case 'merge':
@@ -279,8 +283,8 @@ export async function writeKnowledgeProposeEvent(
         },
         cooldown_key: knowledgeNodeCooldownKey(entry.payload),
         // P5.6 / YUK-178 — model-labeled discriminator (default proactive at the
-        // tool call site); only set when present so the field stays absent for
-        // non-tool callers (KnowledgeReviewTask etc.), keeping absence === proactive.
+        // tool call site); only set when present so absence === proactive for
+        // direct callers of this writer.
         ...(entry.suggestion_kind ? { suggestion_kind: entry.suggestion_kind } : {}),
       },
       task_run_id: entry.task_run_id ?? null,

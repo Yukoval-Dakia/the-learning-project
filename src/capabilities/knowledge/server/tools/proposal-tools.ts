@@ -2,7 +2,8 @@
 // capability and loaded through its manifest. These expose owner-service paths to
 // agent tool loops; they do not apply destructive graph mutations directly:
 // proposal tools write inbox-visible proposal events (propose-only invariant).
-// Moved byte-identical from src/server/ai/tools/proposal-tools.ts.
+// Originally moved from src/server/ai/tools/proposal-tools.ts; the five-branch
+// mutation schema and the shared cooldown gate now live here.
 
 import { and, eq, inArray, isNull, or } from 'drizzle-orm';
 import { z } from 'zod';
