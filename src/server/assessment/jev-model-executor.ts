@@ -1,27 +1,10 @@
-// YUK-1049 — Jev model executor: ModelUnitExecutorPort implementation for
-// evaluateSubmissionCore's admitted model_executor lane.
-//
-// Placement (grounding §4.3): TypeSafe transport lives in src/server/ai/
-// (typed-primitive-runner.ts); THIS module owns the translation between the
-// frozen assessment contract (scoring unit criterion, slot responses, shared
-// materials, group evidence) and the typed wire contract — plus the
-// APPLICATION-LAYER Jev→advanced upgrade (OpenRouter has no models-array
-// fallback on the decisions wire, so escalation is a separate invocation
-// inside the SAME wall-clock deadline).
-//
-// Supported criteria (D17/narrow-judgment boundary, grounding §3.1–3.2):
-//   - rule_reference  → noul  (satisfaction probability; explicit threshold
-//                             decides scored vs. counter-evidence — a policy
-//                             input, never a global constant the adapter
-//                             invents)
-//   - holistic_level  → score (probability-weighted expectation; argmax over
-//                             the LEVEL ORDER picks matched.level_id — the
-//                             expectation itself is never treated as points)
-// deterministic kinds (option_set_key / text_key / numeric_key /
-// matching_pairs_key) belong to comparators, not Jev — a plan that routes
-// them to a model_executor gets an explicit unjudgeable pending, not a
-// guessed judgment. Jev is text-only: units whose answers carry attachment
-// evidence escalate to the advanced executor or pending (never pretend).
+// Translates one frozen scoring unit onto the typed Jev wire.
+// OpenRouter has no models-array fallback, so the advanced executor is a second
+// call inside the same deadline. That deadline aborts the paid call.
+// rule_reference uses the caller's threshold. This module does not invent one.
+// holistic_level picks a level by the declared order. The expectation is not points.
+// Deterministic key kinds belong to comparators. Routing them here is pending, not a guess.
+// Attachment evidence is invisible on this text lane. Escalate or pending. Do not pretend.
 
 import Markdown from 'react-markdown';
 
@@ -83,9 +66,8 @@ export interface JevModelExecutorOptions {
   readonly judgeRetryPolicy?: 'none';
   readonly db: Db;
   /**
-   * Absolute wall-clock bound (ms epoch) for ONE port invocation: Jev
-   * retries AND the advanced fallback invocation share it. Required —
-   * "总时限覆盖重试及 fallback" is a release condition, not a default.
+   * Absolute wall-clock bound (ms epoch) for one port invocation. Jev
+   * retries and the advanced fallback share it. Required.
    */
   readonly deadlineAt: number;
   /**
@@ -235,9 +217,9 @@ function questionsForUnit(
       };
     }
     case 'blank_key': {
-      // YUK-1496 C2 — 文本空的 Jev 等价判定（统一设计 §4 jev 行 / 附录 A4）。
-      // 只有声明了 equivalence 域的文本空才可由 Jev 判；数值空与未声明等价域
-      // 的文本空是确定性比较器领土（数值/单位严格性不交模型宽松）。
+      // Only a declared text equivalence domain is Jev's.
+      // Numeric blanks, and text blanks with no domain, stay with the comparator.
+      // Numeric and unit strictness is not handed to the model to loosen.
       const key = criterion.key;
       if (key.kind !== 'text' || key.equivalence === undefined) {
         return { unsupported: `${criterion.kind}:${key.kind}` };
@@ -337,9 +319,8 @@ function interpretAnswer(
     };
   }
   if (criterion.kind === 'blank_key' && answer.type === 'choice') {
-    // YUK-1496 C2 — Jev 三值等价判定：equivalent/different → correct 1/0，
-    // 分值仍由 unit 的 K1 rule 给（模型绝不直接给分）；undecidable 或契约外
-    // 类别 → pending，绝不落零分。
+    // equivalent and different become 1 and 0. The unit rule still owns the points.
+    // undecidable, or a label outside the contract, stays pending. Do not write zero.
     if (unit.rule == null) {
       return pendingPaid({
         reason: 'unjudgeable',
@@ -362,7 +343,7 @@ function interpretAnswer(
     const correct = answer.choice === 'equivalent' ? (1 as const) : (0 as const);
     const ruleResult = evaluateScoringRule(unit.rule, { kind: 'single', correct });
     if (ruleResult.kind !== 'points') {
-      // 规则对该判定声明了 unknown（如错答分值未印）—— 诚实 pending，绝不造分。
+      // The rule says this award is unknown. Pending. Do not invent the points.
       return pendingPaid({
         reason: 'unjudgeable',
         detail: `rule declared unknown (${ruleResult.reason}) for equivalence verdict '${answer.choice}'`,
@@ -371,7 +352,7 @@ function interpretAnswer(
     return {
       kind: 'scored',
       points_awarded: ruleResult.points,
-      // Jev typed wire 不携带引文 —— 不补造（§4：只保留 typed 判断）。
+      // The typed wire has no citations. Do not add any.
       evidence_citations: [],
       ...(answer.confidence !== undefined ? { confidence: answer.confidence } : {}),
       run_refs: runRefs,
@@ -506,8 +487,7 @@ export function createJevModelExecutor(options: JevModelExecutorOptions): ModelU
       );
     }
     const entries = entriesForUnit(request);
-    // YUK-1496 C2 — Jev 只判【已读出的文本】；记录为 unreadable 的空作答
-    // 不是模型能挽救的（上游 all-blank 政策已先行处理）。
+    // An unreadable blank is not text Jev can judge. The all-blank policy already ran.
     if (request.unit.criterion.kind === 'blank_key') {
       const unreadable = entries.find(
         (entry) => entry.kind === 'blank' && entry.state !== 'answered',

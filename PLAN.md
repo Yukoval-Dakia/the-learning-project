@@ -1,8 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-19：架构深化线独立启动；首片 YUK-1572 拆练习流职责，首三片已获协调线同意；证据外置永久保留已批，测试缩减只做清单。
+> Linear 是权威 tracker。2026-10-20：YUK-1631 在既有 PR1854 修正 deferred 假完成；只普通提交推送，exact-head CI 绿色后停止，不合并或部署。
 
 ## NOW
+
+- **第一天能用 / 恢复完成证据（YUK-1631、YUK-1614）**：`el/yuk-1614` 保留 deferred 未完成状态，拒绝旧 deferred 假回执、未知契约与非法时间戳；legacy reserved/enqueued 保持可导入。隔离 PG16 实跑补丁排队→拒绝且原数据不变→drain→按证据人工补回执→恢复200；provider/回执写入故障及人工恢复已验证。既有备份8例通过，无测试代码改动，不碰 schema/export constants。最终静态检查及 exact-head CI 结果见 PR1854；自动恢复仍不在 LIGHT 范围。
 
 - **架构深化 / YUK-1572**：`refactor/yuk-1572-stream-modules`，独占 arch-lead；stream-store 已2120→1427，超长18→17，SCC与443边不变；合成d38e父级typecheck/lint/build/两审计通过；Kimi R1 APPROVE、旧head5c0e CI全绿；整合main2176仅看板冲突，新head验证/CI待完成。六票T3，#1830仍由Grok完成；不动其ratchet/baseline。见[首三片计划](docs/planning/2026-10-19-architecture-deepening.md)。
 

@@ -1,35 +1,9 @@
-// V-grid-fwd — grid-Bayes vs live-Elo forward retro-validation (YUK-436 / YUK-461).
-//
-// The OWNER decision "harness-validate-then-flip": pnpm audit:calibration retro-validates
-// the DARK grid-Bayes θ_KC posterior path against the LIVE Elo+SRT path on the real event
-// log, READ-ONLY + REPORT-ONLY, so the owner has the evidence to decide whether to flip
-// THETA_GRID_ENABLED live. This module NEVER flips the flag and NEVER writes the DB.
-//
-// CONTRAST WITH V-A1-fwd: V-A1-fwd compares two SRT VARIANTS of the SAME engine (Elo with
-//   SRT on vs off) → ΔAUC isolates SRT. V-grid-fwd compares two ENGINES on the SAME live
-//   run: the grid forward prediction (DARK) vs the live Elo+SRT forward prediction. Both
-//   predict the SAME realized outcomes from PRE-attempt state (no leakage — the replay
-//   emits gridPredictedP/predictedP before folding outcome_t).
-//
-// REUSES the ClusterForwardPreds {scoresSrt, scoresBinary, labels} shape so the proven
-//   paired whole-KC cluster bootstrap (deltaAucClusterBootstrap) gives
-//   ΔAUC = AUC(scoresSrt) − AUC(scoresBinary) = AUC_grid − AUC_live directly:
-//     scoresSrt    ← step.gridPredictedP (GRID, dark)
-//     scoresBinary ← step.predictedP     (LIVE Elo+SRT)
-//   The bootstrap is paired (same resampled clusters for both), so the CI reflects the
-//   grid-vs-live contrast, not either AUC's sampling noise.
-//
-// RT-less steps ARE included (unlike V-A1-fwd, which excludes them because they are
-//   identical under both SRT variants). Here the comparison is grid-vs-live, and grid vs
-//   Elo differ on every single-KC step regardless of RT, so all single-KC scorable steps
-//   carry signal.
-//
-// ALL PURE. The DB-loading of attempt records is the separate thin seam
-//   (scripts/audit-calibration.ts) — this module only consumes ReplayAttempt records.
-//
-// ADVISORY VERDICT (NEVER 'PASS'/auto-flip): READY_FOR_FLIP / NOT_READY / INSUFFICIENT.
-//   READY_FOR_FLIP only states the grid is NON-INFERIOR + at-least-as-calibrated on this
-//   data; the actual flip is an OWNER decision after reviewing this report.
+// Grid-Bayes against live Elo+SRT. Read-only. This module does not flip THETA_GRID_ENABLED
+// and does not write the database. READY_FOR_FLIP means non-inferior on this data. The flip
+// is still an owner decision.
+// scoresSrt holds the dark grid probability. scoresBinary holds the live Elo+SRT probability.
+// The names come from the shared bootstrap shape. RT-less steps stay in, unlike V-A1-fwd,
+// because the two engines differ without an RT. The loader is scripts/audit-calibration.ts.
 
 import { SRT_ENABLED } from '@/core/theta';
 import { type ClusterForwardPreds, deltaAucClusterBootstrap } from './bootstrap';
@@ -38,21 +12,13 @@ import { ece } from './ece';
 import { type ReplayAttempt, replayTheta } from './replay';
 
 export interface GridConfig {
-  /** effective-N power floor — OWNER-CHOSEN (mirrors V-A1-fwd default). */
   effectiveNFloor: number; // default 100
-  /** minimum KC clusters — owner-chosen (mirrors V-A1-fwd default). */
   minKcClusters: number; // default 10
-  /**
-   * non-inferiority margin on ΔAUC = AUC_grid − AUC_live: READY requires the bootstrap
-   * lower CI bound to exceed −deltaThreshold (grid AUC not materially worse than live).
-   * default 0.02 (mirrors the V-A1-fwd ΔAUC scale).
-   */
+  /** READY needs the ΔAUC lower CI bound above −this. Grid not materially worse than live. */
   deltaThreshold: number; // default 0.02
-  /** ECE non-inferiority tolerance: READY requires eceGrid <= eceLive + eceTolerance. */
+  /** READY needs eceGrid <= eceLive + this. */
   eceTolerance: number; // default 0.02
-  /** bootstrap replicates. */
   bootstrapB: number; // default 2000
-  /** max tolerated degenerate-replicate fraction before INSUFFICIENT — owner-chosen. */
   maxDegenerateFraction: number; // default 0.05
 }
 
@@ -65,11 +31,7 @@ const DEFAULT_CONFIG: GridConfig = {
   maxDegenerateFraction: 0.05,
 };
 
-/**
- * Validate a fully-merged GridConfig (mirrors v-a1-fwd validateConfig). Each field guards
- * a distinct silent-wrong-verdict failure mode, so an out-of-range override throws rather
- * than fabricating an advisory verdict.
- */
+/** An out-of-range override would mint an advisory verdict. Throw instead. */
 function validateConfig(config: GridConfig): void {
   const {
     effectiveNFloor,
@@ -115,7 +77,7 @@ function validateConfig(config: GridConfig): void {
 
 export type GridVerdict = 'READY_FOR_FLIP' | 'NOT_READY' | 'INSUFFICIENT';
 
-/** Pooled aligned predictions for ECE (grid vs live) over the same labels. */
+/** Same labels for both engines. ECE is not clustered. The AUC comparison is. */
 export interface GridPooled {
   predGrid: number[];
   predLive: number[];
@@ -123,27 +85,24 @@ export interface GridPooled {
 }
 
 export interface AssembledGridClusters {
-  /** one entry per KC: grid (scoresSrt) vs live (scoresBinary) forward preds + labels. */
+  /** scoresSrt is grid. scoresBinary is live Elo+SRT. */
   clusters: ClusterForwardPreds[];
-  /** pooled aligned grid/live predictions for the ECE comparison. */
   pooled: GridPooled;
-  /** count of single-KC scorable steps that contributed (both preds present). */
   nScorable: number;
 }
 
 export interface GridResult {
   verdict: GridVerdict;
-  /** AUC_grid − AUC_live on the full pooled sample. */
+  /** AUC_grid − AUC_live. */
   pointDelta: number;
   aucGrid: number | null;
   aucLive: number | null;
   ci: { lo: number; hi: number };
-  /** non-degenerate bootstrap replicates used. */
+  /** Non-degenerate replicates. Single-class draws are not redrawn. */
   b: number;
   degenerateFraction: number;
   eceGrid: number;
   eceLive: number;
-  /** single-KC scorable forward predictions compared (grid vs live). */
   n: number;
   n1: number;
   n0: number;
@@ -151,20 +110,12 @@ export interface GridResult {
   deff: number;
   effectiveN: number;
   reason: string;
-  /** merged config used for this evaluation (for audit traceability in formatGridReport). */
   config: GridConfig;
 }
 
 /**
- * Assemble per-KC grid-vs-live forward-prediction clusters (the no-leakage core).
- *
- * Replay the WHOLE ordered list ONCE under the LIVE flags (srtEnabled: SRT_ENABLED) with
- * the grid track ON. θ_global accumulates across every KC of a domain (YUK-466) in the one
- * replay; the grid track shadows it. For each single-KC scorable step that produced BOTH a
- * live prediction (predictedP) AND a grid prediction (gridPredictedP), bucket by
- * scoredKnowledgeId into a cluster carrying scoresSrt=grid, scoresBinary=live, labels.
- *
- * Map insertion order = order of first scored appearance → deterministic cluster order.
+ * One live replay, grid track on. θ_global is shared across KCs in a domain, so the list
+ * stays whole. A step needs both predictions. scoresSrt is the grid value.
  */
 export function assembleGridForwardClusters(
   orderedAttempts: ReplayAttempt[],
@@ -180,10 +131,8 @@ export function assembleGridForwardClusters(
 
   for (const s of run.steps) {
     const kc = s.scoredKnowledgeId;
-    if (kc === null) continue; // multi-KC → not forward-scorable.
-    // Both predictions must exist. predictedP is the LIVE Elo+SRT forward prediction;
-    // gridPredictedP is the DARK grid forward prediction. Either being null (should not
-    // happen for a single-KC step with grid on) means no comparable pair → skip.
+    if (kc === null) continue;
+    // Null on either side is not a pair. Skipping beats scoring a one-sided prediction.
     if (s.predictedP === null || s.gridPredictedP === null) continue;
     nScorable++;
     let entry = byKc.get(kc);
@@ -191,8 +140,8 @@ export function assembleGridForwardClusters(
       entry = { scoresSrt: [], scoresBinary: [], labels: [] };
       byKc.set(kc, entry);
     }
-    entry.scoresSrt.push(s.gridPredictedP); // GRID (dark)
-    entry.scoresBinary.push(s.predictedP); // LIVE Elo+SRT
+    entry.scoresSrt.push(s.gridPredictedP); // grid, despite the field name
+    entry.scoresBinary.push(s.predictedP); // live Elo+SRT
     entry.labels.push(s.outcome);
     pooled.predGrid.push(s.gridPredictedP);
     pooled.predLive.push(s.predictedP);
@@ -207,14 +156,7 @@ export function assembleGridForwardClusters(
   return { clusters, pooled, nScorable };
 }
 
-/**
- * Evaluate V-grid-fwd over assembled clusters + pooled predictions.
- *
- * @param clusters per-KC grid(scoresSrt)-vs-live(scoresBinary) forward-prediction clusters.
- * @param pooled   aligned pooled grid/live predictions + labels (for the ECE comparison).
- * @param cfg      partial config overriding the owner defaults.
- * @param rng      injected RNG for the bootstrap (mulberry32).
- */
+/** INSUFFICIENT on thin data. Otherwise READY_FOR_FLIP or NOT_READY. Neither flips the flag. */
 export function evaluateGridForward(
   clusters: ClusterForwardPreds[],
   pooled: GridPooled,
@@ -224,7 +166,6 @@ export function evaluateGridForward(
   const config: GridConfig = { ...DEFAULT_CONFIG, ...cfg };
   validateConfig(config);
 
-  // Pool counts within the single-KC scorable set.
   let n = 0;
   let n1 = 0;
   let n0 = 0;
@@ -237,13 +178,12 @@ export function evaluateGridForward(
   }
   const kClusters = clusters.length;
 
-  // deff/effectiveN over the per-KC LABELS (reported coarse floor + diagnostic).
+  // Reported floor. Not the verdict.
   const eff = effectiveNFromClusters(clusters.map((c) => c.labels));
   const deff = eff.deff;
   const effectiveN = eff.effectiveN;
 
-  // ECE on the pooled aligned predictions (grid vs live, same labels). Both classes
-  // present is guaranteed below before this matters; ece itself tolerates any binary mix.
+  // Pooled, so KC clustering is ignored. The AUC interval is the clustered one.
   const eceGrid = pooled.predGrid.length > 0 ? ece(pooled.predGrid, pooled.labels).ece : 0;
   const eceLive = pooled.predLive.length > 0 ? ece(pooled.predLive, pooled.labels).ece : 0;
 
@@ -264,7 +204,7 @@ export function evaluateGridForward(
     config,
   };
 
-  // Hard class floor — a forward AUC needs BOTH classes.
+  // One class has no AUC comparison. That is not NOT_READY.
   if (n1 === 0 || n0 === 0) {
     return {
       ...base,
@@ -275,8 +215,7 @@ export function evaluateGridForward(
     };
   }
 
-  // Power floor — INSUFFICIENT on thin data. Still compute the point delta + CI for the
-  // report (information only), so the owner sees the observed effect even when underpowered.
+  // The report still shows ΔAUC. The grid stays dark.
   if (effectiveN < config.effectiveNFloor || kClusters < config.minKcClusters) {
     const boot = deltaAucClusterBootstrap(clusters, { b: config.bootstrapB, rng });
     return {
@@ -295,10 +234,7 @@ export function evaluateGridForward(
     };
   }
 
-  // Adequately powered → paired cluster bootstrap on ΔAUC = AUC_grid − AUC_live.
   const boot = deltaAucClusterBootstrap(clusters, { b: config.bootstrapB, rng });
-
-  // Degenerate guard.
   if (boot.degenerateFraction > config.maxDegenerateFraction) {
     return {
       ...base,
@@ -315,9 +251,7 @@ export function evaluateGridForward(
     };
   }
 
-  // NON-INFERIORITY decision (advisory):
-  //   AUC: lower CI bound on (grid − live) must exceed −deltaThreshold (grid not worse).
-  //   ECE: grid ECE must be within eceTolerance of live ECE (grid at least as calibrated).
+  // Advisory only. ciLo above −deltaThreshold, and ECE within tolerance. Neither writes a flag.
   const aucNonInferior = boot.ciLo > -config.deltaThreshold;
   const eceNonInferior = eceGrid <= eceLive + config.eceTolerance;
   const ready = aucNonInferior && eceNonInferior;
@@ -349,7 +283,7 @@ function round(x: number): number {
   return Math.round(x * 10000) / 10000;
 }
 
-/** Human-readable report (or JSON when opts.json). */
+/** JSON when asked. The prose report is what a person reviews before any flag change. */
 export function formatGridReport(result: GridResult, opts: { json?: boolean } = {}): string {
   if (opts.json) {
     return JSON.stringify(result, null, 2);

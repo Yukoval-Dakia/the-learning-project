@@ -27,6 +27,9 @@ import {
   PaidEffectApplicationConflictError,
   PaidEffectAuthorizationError,
   type PaidEffectBackend,
+  type PaidEffectCancelReceipt,
+  type PaidEffectCancelRequest,
+  PaidEffectCancellationError,
   PaidEffectControlFencedError,
   PaidEffectDeliveryConflictError,
   type PaidEffectIdentity,
@@ -49,7 +52,13 @@ import {
   admitPaidEffectDeliveryControl,
   lockPaidEffectControlFamily,
 } from '@/db/paid-effect-control';
-import { paid_effect, paid_effect_authorization } from '@/db/schema';
+import {
+  event,
+  event_subscription_delivery,
+  paid_effect,
+  paid_effect_authorization,
+  paid_effect_cancellation,
+} from '@/db/schema';
 
 type PaidEffectRow = typeof paid_effect.$inferSelect;
 
@@ -72,6 +81,8 @@ export interface PaidEffectSnapshot {
   readonly unresolvedReason: string | null;
   readonly voidedAt: Date | null;
   readonly voidReceipt: unknown;
+  readonly cancelledAt: Date | null;
+  readonly cancelReceipt: unknown;
   readonly createdAt: Date;
   readonly updatedAt: Date;
 }
@@ -144,6 +155,8 @@ function toSnapshot(row: PaidEffectRow): PaidEffectSnapshot {
     unresolvedReason: row.unresolved_reason,
     voidedAt: row.voided_at,
     voidReceipt: row.void_json,
+    cancelledAt: row.cancelled_at,
+    cancelReceipt: row.cancel_json,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -501,7 +514,7 @@ export async function reservePaidEffect(
         applied: state === 'applied',
       } as const;
     }
-    if (state === 'sending' || state === 'unknown' || state === 'voided') {
+    if (state === 'sending' || state === 'unknown' || state === 'voided' || state === 'cancelled') {
       return { identity, kind: 'held', state, blockedBy: null } as const;
     }
     const outcome = await claimLockedRow(tx, row, identity, delivery);
@@ -816,6 +829,434 @@ export async function readPaidEffectAuthorizations(
       and(
         eq(paid_effect_authorization.family, scope.family),
         eq(paid_effect_authorization.entity_id, scope.entityId),
+      ),
+    );
+}
+
+type CancellationRow = typeof paid_effect_cancellation.$inferSelect;
+
+export type PaidEffectCancelOutcome =
+  | {
+      readonly kind: 'cancelled';
+      readonly requestId: string;
+      readonly cancelled: PaidEffectIdentity;
+      readonly cancelledAt: Date;
+      /** New fence on the cancelled row; stale fence tokens die. */
+      readonly fence: number;
+    }
+  | {
+      readonly kind: 'already_cancelled';
+      readonly requestId: string;
+      readonly cancelled: PaidEffectIdentity;
+      readonly receipt: PaidEffectCancelReceipt;
+    };
+
+/**
+ * THE generic cancel of a never-sent intent (YUK-1567). One call, inside the
+ * caller's transaction, atomically:
+ *   1. prove the locked row is a 'pending' intent that was NEVER sent
+ *      (delivery/backend/tick null, no lease, no result, no application,
+ *      fence === expectedFence),
+ *   2. refuse when the intent is the bound successor of a
+ *      paid_effect_authorization row (this slice never unbinds an
+ *      authorization gate),
+ *   3. insert the immutable cancellation EVENT row
+ *      (requestId / operator / reason / basis / previous fence), and
+ *   4. CAS pending → cancelled with a fence bump, persisting the cancellation
+ *      receipt on the row.
+ * The event insert and the state CAS commit or roll back TOGETHER — a failed
+ * event aborts the transition. Only 'pending' may be cancelled: 'sending' has
+ * a live send, 'unknown' is an unresolved obligation (void + successor owns
+ * its retirement), and receipts/applied are paid truth. The never-sent fence
+ * is literal: BOTH the request's expectedFence and the row's live fence must
+ * be exactly 0 — any advanced fence means a claim already touched the row.
+ * Replaying the request returns 'already_cancelled' with the stored receipt
+ * ONLY when every request field (requestId, reason, operator, basis), the
+ * full identity, and the receipt's previousFence all match; ANY divergence
+ * or a different requestId throws — replay never mints a second event and
+ * never mutates the recorded receipt.
+ */
+export async function cancelPaidEffectUnsentIntent(
+  tx: Tx,
+  identity: PaidEffectIdentity,
+  opts: { expectedFence: number; cancellation: PaidEffectCancelRequest },
+): Promise<PaidEffectCancelOutcome> {
+  const request = opts.cancellation;
+  if (opts.expectedFence !== 0) {
+    throw new PaidEffectCancellationError(
+      `paid-effect cancel requires the literal never-sent fence 0; ` +
+        `manifest expected_fence ${opts.expectedFence} is not a valid cancel token`,
+    );
+  }
+  // Same pinned order as a claim/void: family advisory → identity row →
+  // entity advisory, so a cancel serializes against every real send claim —
+  // exactly one of them commits.
+  const row = await lockRow(tx, identity);
+  if (!row) throw new PaidEffectProtocolError('paid-effect row missing');
+  const existing = row.cancel_json as PaidEffectCancelReceipt | null;
+  if (row.state === 'cancelled') {
+    // Replay is identified by the FULL recorded request, not the id alone:
+    // every audit field, the embedded identity, and the retired fence must
+    // match before the stored receipt is returned. Anything else fails
+    // closed — a borrowed request id never laundered through an old receipt.
+    const replayMatches =
+      existing !== null &&
+      existing.requestId === request.requestId &&
+      existing.reason === request.reason &&
+      existing.operator === request.operator &&
+      existing.basis === request.basis &&
+      existing.previousFence === opts.expectedFence &&
+      existing.identity.family === identity.family &&
+      existing.identity.entityId === identity.entityId &&
+      existing.identity.entityRevision === identity.entityRevision &&
+      existing.identity.unit === identity.unit &&
+      existing.identity.inputDigest === identity.inputDigest;
+    if (replayMatches) {
+      return {
+        kind: 'already_cancelled',
+        requestId: request.requestId,
+        cancelled: identity,
+        receipt: existing,
+      };
+    }
+    throw new PaidEffectCancellationError(
+      `paid-effect ${identity.family}/${identity.entityId} is already cancelled under ` +
+        `request ${existing?.requestId ?? '<missing receipt>'} and the replay ` +
+        `diverges in request fields, identity, or expected fence; ` +
+        'refusing to mint or mutate a cancellation event',
+    );
+  }
+  if (row.state !== 'pending') {
+    throw new PaidEffectProtocolError(
+      `paid-effect cancel requires a never-sent 'pending' intent; ` +
+        `${identity.family}/${identity.entityId} is '${row.state}'`,
+    );
+  }
+  if (row.fence !== 0) {
+    throw new PaidEffectDeliveryConflictError(
+      `paid-effect cancel requires fence 0 (never claimed); ` +
+        `${identity.family}/${identity.entityId} has row fence ${row.fence}`,
+    );
+  }
+  // The never-sent predicate is verified explicitly, not assumed from the
+  // state CHECK — any send/lease/receipt/application evidence refuses the
+  // cancel even if a future shape ever let it onto a pending row.
+  if (
+    row.delivery_id !== null ||
+    row.delivery_backend !== null ||
+    row.delivery_tick !== null ||
+    row.send_lease_expires_at !== null ||
+    row.result_json !== null ||
+    row.result_recorded_at !== null ||
+    row.application_json !== null ||
+    row.applied_at !== null
+  ) {
+    throw new PaidEffectProtocolError(
+      `paid-effect cancel found send or receipt evidence on ` +
+        `${identity.family}/${identity.entityId}; the intent is not never-sent`,
+    );
+  }
+  // Entity-scope check: same lock order as a claim, so the authorization scan
+  // serializes against every concurrent claim and void on the entity.
+  await lockEntityGate(tx, identity);
+  const [binding] = await tx
+    .select({ authorization_id: paid_effect_authorization.authorization_id })
+    .from(paid_effect_authorization)
+    .where(
+      and(
+        eq(paid_effect_authorization.family, identity.family),
+        eq(paid_effect_authorization.entity_id, identity.entityId),
+        eq(paid_effect_authorization.successor_entity_revision, identity.entityRevision),
+        eq(paid_effect_authorization.successor_unit, identity.unit),
+        eq(paid_effect_authorization.successor_input_digest, identity.inputDigest),
+      ),
+    )
+    .for('update')
+    .limit(1);
+  if (binding) {
+    throw new PaidEffectAuthorizationError(
+      `paid-effect ${identity.family}/${identity.entityId} is the bound successor of ` +
+        `authorization ${binding.authorization_id}; refusing to cancel an authorized send`,
+    );
+  }
+  const now = new Date();
+  const receipt: PaidEffectCancelReceipt = {
+    requestId: request.requestId,
+    reason: request.reason,
+    operator: request.operator,
+    basis: request.basis,
+    cancelledFromState: 'pending',
+    previousFence: row.fence,
+    identity,
+    cancelledAt: now.toISOString(),
+  };
+  // The cancellation EVENT — durable audit truth. Inserted before the CAS so
+  // an event failure (e.g. a second event for this identity) aborts the
+  // transition with it.
+  await tx.insert(paid_effect_cancellation).values({
+    family: identity.family,
+    entity_id: identity.entityId,
+    entity_revision: identity.entityRevision,
+    unit: identity.unit,
+    input_digest: identity.inputDigest,
+    request_id: request.requestId,
+    reason: request.reason,
+    operator: request.operator,
+    basis: request.basis,
+    cancelled_from_state: 'pending',
+    previous_fence: row.fence,
+  });
+  const fence = row.fence + 1;
+  const updated = await tx
+    .update(paid_effect)
+    .set({
+      state: 'cancelled',
+      fence,
+      cancelled_at: now,
+      cancel_json: receipt,
+      updated_at: now,
+    })
+    .where(
+      and(
+        identityWhere(identity),
+        eq(paid_effect.state, 'pending'),
+        eq(paid_effect.fence, opts.expectedFence),
+      ),
+    )
+    .returning({ family: paid_effect.family });
+  if (updated.length !== 1) {
+    throw new PaidEffectDeliveryConflictError(
+      `paid-effect cancel CAS did not apply for ${identity.family}/${identity.entityId}`,
+    );
+  }
+  return {
+    kind: 'cancelled',
+    requestId: request.requestId,
+    cancelled: identity,
+    cancelledAt: now,
+    fence,
+  };
+}
+
+/** The ops-gate predicate the cancel CLI shares between plan and apply. */
+export interface PaidEffectCancelEligibility {
+  readonly eligible: boolean;
+  readonly failures: readonly string[];
+  /** Observed row evidence; null when the identity has no row. */
+  readonly observed: {
+    readonly state: PaidEffectState;
+    readonly fence: number;
+    readonly createdAt: Date;
+    readonly updatedAt: Date;
+  } | null;
+}
+
+/**
+ * Read-side eligibility predicate for cancelling a never-sent intent — the
+ * SAME checks the ops CLI freezes in plan and re-verifies under the apply
+ * transaction's locks before any write. Pure SELECTs; the caller's
+ * transaction supplies the isolation/locks. A target is eligible only when:
+ *   - the row exists, is 'pending', carries the expected fence, and shows NO
+ *     send/lease/receipt/application evidence;
+ *   - it is NOT the bound successor of a paid_effect_authorization row;
+ *   - no 'sending' sibling exists for the same (family, entityId);
+ *   - no non-terminal pg-boss job of the family references the entity;
+ *   - no non-terminal event_subscription_delivery references the entity; and
+ *   - every declared watch (action, subscriberId, subscriberVersion) has a
+ *     delivery row — at the CURRENT declared version — for every matching
+ *     event; an old-version delivery does not prove this version saw it.
+ * Any read failure fails closed (the caller's transaction aborts).
+ */
+export async function evaluatePaidEffectCancelEligibility(
+  tx: Tx,
+  identity: PaidEffectIdentity,
+  opts: {
+    expectedFence: number;
+    watch: readonly { action: string; subscriberId: string; subscriberVersion: number }[];
+  },
+): Promise<PaidEffectCancelEligibility> {
+  const failures: string[] = [];
+  if (opts.expectedFence !== 0) {
+    failures.push(`expected_fence ${opts.expectedFence} is not the literal never-sent 0`);
+  }
+  const rows = await tx
+    .select({
+      state: paid_effect.state,
+      fence: paid_effect.fence,
+      delivery_id: paid_effect.delivery_id,
+      delivery_backend: paid_effect.delivery_backend,
+      delivery_tick: paid_effect.delivery_tick,
+      send_lease_expires_at: paid_effect.send_lease_expires_at,
+      result_json: paid_effect.result_json,
+      result_recorded_at: paid_effect.result_recorded_at,
+      application_json: paid_effect.application_json,
+      applied_at: paid_effect.applied_at,
+      created_at: paid_effect.created_at,
+      updated_at: paid_effect.updated_at,
+    })
+    .from(paid_effect)
+    .where(identityWhere(identity))
+    .limit(1);
+  const row = rows[0];
+  let observed: PaidEffectCancelEligibility['observed'] = null;
+  if (!row) {
+    failures.push('paid-effect row missing for manifest identity');
+  } else {
+    observed = {
+      state: PAID_EFFECT_STATE_SCHEMA.parse(row.state),
+      fence: row.fence,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+    if (row.state !== 'pending') {
+      failures.push(`state '${row.state}' is not 'pending'`);
+    }
+    if (row.fence !== 0) {
+      failures.push(`fence ${row.fence} is not the literal never-sent 0`);
+    } else if (row.fence !== opts.expectedFence) {
+      failures.push(`fence ${row.fence} != expected_fence ${opts.expectedFence}`);
+    }
+    const sentEvidence: string[] = [];
+    if (row.delivery_id !== null) sentEvidence.push('delivery_id');
+    if (row.delivery_backend !== null) sentEvidence.push('delivery_backend');
+    if (row.delivery_tick !== null) sentEvidence.push('delivery_tick');
+    if (row.send_lease_expires_at !== null) sentEvidence.push('send_lease_expires_at');
+    if (row.result_json !== null) sentEvidence.push('result_json');
+    if (row.result_recorded_at !== null) sentEvidence.push('result_recorded_at');
+    if (row.application_json !== null) sentEvidence.push('application_json');
+    if (row.applied_at !== null) sentEvidence.push('applied_at');
+    if (sentEvidence.length > 0) {
+      failures.push(`send/receipt evidence present: ${sentEvidence.join(',')}`);
+    }
+  }
+  const [binding] = await tx
+    .select({ authorization_id: paid_effect_authorization.authorization_id })
+    .from(paid_effect_authorization)
+    .where(
+      and(
+        eq(paid_effect_authorization.family, identity.family),
+        eq(paid_effect_authorization.entity_id, identity.entityId),
+        eq(paid_effect_authorization.successor_entity_revision, identity.entityRevision),
+        eq(paid_effect_authorization.successor_unit, identity.unit),
+        eq(paid_effect_authorization.successor_input_digest, identity.inputDigest),
+      ),
+    )
+    .limit(1);
+  if (binding) {
+    failures.push(`bound successor of authorization ${binding.authorization_id}`);
+  }
+  const inFlight = await tx
+    .select({ unit: paid_effect.unit, input_digest: paid_effect.input_digest })
+    .from(paid_effect)
+    .where(
+      and(
+        eq(paid_effect.family, identity.family),
+        eq(paid_effect.entity_id, identity.entityId),
+        eq(paid_effect.state, 'sending'),
+      ),
+    )
+    .limit(10);
+  if (inFlight.length > 0) {
+    failures.push(
+      `in-flight 'sending' sibling(s): ${inFlight.map((r) => `${r.unit}|${r.input_digest}`).join(',')}`,
+    );
+  }
+  // Non-terminal scheduler work that could still claim the intent. The job
+  // data shape is family-owned, so the entity match is conservative text
+  // containment — a false positive fails closed, never silently cancels.
+  // pgboss.job is absent on some ephemeral DBs (to_regclass probe is the
+  // repo's non-aborting pattern); its absence means no jobs can exist.
+  const [bossTable] = await tx.execute<{ reg: string | null }>(
+    sql`select to_regclass('pgboss.job') as reg`,
+  );
+  if (bossTable.reg === null) {
+    failures.push('pgboss.job absent — scheduler liveness could not be verified');
+  } else {
+    const liveJobs = await tx.execute<{ id: string; name: string; state: string }>(sql`
+      select id, name, state::text as state from pgboss.job
+      where name = ${identity.family}
+        and state in ('created','retry','active')
+        and data::text like ${`%${identity.entityId}%`}`);
+    if (liveJobs.length > 0) {
+      failures.push(
+        `non-terminal job(s) referencing entity: ${liveJobs.map((j) => `${j.id}:${j.state}`).join(',')}`,
+      );
+    }
+  }
+  const unsettledDeliveries = await tx
+    .select({
+      subscriber_id: event_subscription_delivery.subscriber_id,
+      source_event_id: event_subscription_delivery.source_event_id,
+      status: event_subscription_delivery.status,
+    })
+    .from(event_subscription_delivery)
+    .innerJoin(
+      event,
+      and(
+        eq(event.id, event_subscription_delivery.source_event_id),
+        eq(event.dispatch_seq, event_subscription_delivery.source_dispatch_seq),
+      ),
+    )
+    .where(
+      and(
+        inArray(event_subscription_delivery.status, ['pending', 'claimed', 'retry_wait']),
+        or(
+          eq(event.subject_id, identity.entityId),
+          sql`${event.payload}::text like ${`%${identity.entityId}%`}`,
+        ),
+      ),
+    )
+    .limit(20);
+  if (unsettledDeliveries.length > 0) {
+    failures.push(
+      `non-terminal subscription deliver${unsettledDeliveries.length === 1 ? 'y' : 'ies'} referencing entity: ${unsettledDeliveries
+        .map((d) => `${d.subscriber_id}:${d.source_event_id}:${d.status}`)
+        .join(',')}`,
+    );
+  }
+  for (const watch of opts.watch) {
+    const undelivered = await tx
+      .select({ id: event.id })
+      .from(event)
+      .where(
+        and(
+          eq(event.action, watch.action),
+          or(
+            eq(event.subject_id, identity.entityId),
+            sql`${event.payload}::text like ${`%${identity.entityId}%`}`,
+          ),
+          sql`not exists (
+            select 1 from ${event_subscription_delivery} d
+            where d.subscriber_id = ${watch.subscriberId}
+              and d.subscriber_version = ${watch.subscriberVersion}
+              and d.source_event_id = ${event.id}
+              and d.source_dispatch_seq = ${event.dispatch_seq})`,
+        ),
+      )
+      .limit(10);
+    if (undelivered.length > 0) {
+      failures.push(
+        `undelivered '${watch.action}' event(s) for subscriber ${watch.subscriberId}: ${undelivered
+          .map((e) => e.id)
+          .join(',')}`,
+      );
+    }
+  }
+  return { eligible: failures.length === 0, failures, observed };
+}
+
+/** Cancellation event rows for one (family, entityId) — plan/verify reads. */
+export async function readPaidEffectCancellations(
+  db: Db | Tx,
+  scope: { family: string; entityId: string },
+): Promise<CancellationRow[]> {
+  return db
+    .select()
+    .from(paid_effect_cancellation)
+    .where(
+      and(
+        eq(paid_effect_cancellation.family, scope.family),
+        eq(paid_effect_cancellation.entity_id, scope.entityId),
       ),
     );
 }
