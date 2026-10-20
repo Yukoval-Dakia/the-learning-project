@@ -41,13 +41,15 @@
 
 | 指标 | base | head | 说明 |
 |---|---|---|---|
-| cross-capability value edges | 48 | 43 | −5：K→A 2→1、K→N 1→0、A→N 3→2（evidence-mcp，设计算术漏算的第五条）、A→I 1→0、P→I 2→1 |
+| cross-capability value edges | 47 | 42 | −5：K→A 2→1、K→N 1→0、A→N 3→2（evidence-mcp，设计算术漏算的第五条）、A→I 1→0、P→I 2→1 |
 | nontrivial SCC | 1×5 cap | 1×5 cap | 不变（N 经 N→K→A→N 仍在环） |
-| capability→server | 441 | 441 | 不变（merge 后 main baseline 已 444→441，非本片所致） |
+| capability→server | 440 | 440 | 不变（main 已含 frontier #1837；此前独立测量441→441，非本片额外减边） |
 | server→capability deep | 0 | 0 | 不变 |
 | seam violations | — | 0 | 无新增跨包非 public import |
 
 merge `origin/main`（21 commits，含 YUK-1630 provider、YUK-1567 paid/subject、#1843 audit 合并）对本片 18 文件**零冲突零改动**；merge 后重测仅含本片 5 条减少，无未知增减。协调线解除 #1830 对 baseline 独占后，本片已按实测收紧 `capability-boundary-baseline.json`（total 48→43 + 5 pair），并新增 `YUK1571-shared-reads` note 记录读归属迁移、退出的 5 条读依赖、残留 compat 与未解 SCC；baseline 既有 notes 全部保留。
+
+整合已合 #1837（main `de061af07`）后，再测 cross47→42、server440→440；本片五条削减与原实现保持，frontier基线note原样保留。只有baseline数值冲突，按合成源码实测解决；原48→43/441记录属于独立测量历史。R1与唯一R2已完成，本次组合由父核源码保持并重跑检查及新exactCI，不开启第三审。
 
 ## Revision / 外部路径
 
@@ -67,7 +69,7 @@ merge 前（revision `3078acd4f`，base e6ca25b03）：
 - `pnpm audit:architecture-deepening` 同上 6 条 baseline delta；5 条 stale catalog entry 已按本 head 真实边集修正 `scripts/capability-public-read-cycles.ts`（台账非 baseline）
 - `pnpm audit:capability-boundaries:snapshot` 实测快照已封存
 
-merge `origin/main` + baseline 登记后（最新 head）：
+merge `origin/main@1440e864b` + 首次 baseline 登记后（历史独立head b14730e31）：
 
 - `pnpm typecheck` PASS；`pnpm lint` PASS（179 warnings，+1 为 merge 带入的既有级 warning）；`pnpm build` PASS
 - `pnpm audit:capability-boundaries` **PASS**（debt ratchets exact：capability->server=441 / server->capability-deep=0 / cross-capability-value=43）
@@ -77,3 +79,5 @@ merge `origin/main` + baseline 登记后（最新 head）：
 ## NOT_RUN
 
 本机不跑任何测试套件 / DB / 运行时 / provider / 付费链路；无 tsx-eval/合成输入脚本。行为验收由 exact-head CI Gate（既有 notes/knowledge/agency/ingestion/practice 单测零改动）与独立审查承担。draft #1802（review.ts proposal/runtime 迁移）未合，本 PR 仅改其 `readAgentNotes` import 一行；后合方按 main 解冲突。
+
+#1837合入后组合head的命令结果另存 `YUK-1571/<head>/post-frontier-integration/`，以父检查结果和新exact-head CI为准，不用旧b147的绿色代替。
