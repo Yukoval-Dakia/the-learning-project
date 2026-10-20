@@ -1,5 +1,5 @@
-import { spawn, execFileSync } from 'node:child_process';
-import { mkdir, readFile, unlink, rmdir, writeFile } from 'node:fs/promises';
+import { execFileSync, spawn } from 'node:child_process';
+import { mkdir, readFile, rmdir, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -97,7 +97,9 @@ async function acquire() {
       return;
     }
     if (!announced) {
-      console.error(`[local-heavy] waiting for ${directory}; stale slots require owner verification`);
+      console.error(
+        `[local-heavy] waiting for ${directory}; stale slots require owner verification`,
+      );
       announced = true;
     }
     await sleep(1000);
