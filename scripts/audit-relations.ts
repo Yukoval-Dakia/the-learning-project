@@ -238,7 +238,7 @@ const CONSUMER_REGISTRY: ConsumerEntry[] = [
   },
 
   // ---- specialized: A5/A6 (YUK-441/442) mastery-projection KG soft layer ----
-  // getMasteryProjection (src/server/mastery/state.ts) branches on relation_type to
+  // getMasteryProjection (src/kernel/read-models/mastery-projection.ts) branches on relation_type to
   // feed the per-KC ability θ̂ soft layer: related_to → A5 graph-Laplacian symmetric
   // smoothing; prerequisite / derived_from → A6 directed order prior. dark-ship
   // (GRAPH_LAPLACIAN_ENABLED / PREREQ_PROPAGATION_ENABLED default false) but the
@@ -246,7 +246,7 @@ const CONSUMER_REGISTRY: ConsumerEntry[] = [
   {
     relation: 'related_to',
     tier: 'specialized',
-    file: 'src/server/mastery/state.ts',
+    file: 'src/kernel/read-models/mastery-projection.ts',
     marker: "r.relation_type === 'related_to'",
     surface: 'diagnosis',
     evidence:
@@ -255,7 +255,7 @@ const CONSUMER_REGISTRY: ConsumerEntry[] = [
   {
     relation: 'prerequisite',
     tier: 'specialized',
-    file: 'src/server/mastery/state.ts',
+    file: 'src/kernel/read-models/mastery-projection.ts',
     marker: "r.relation_type === 'prerequisite'",
     surface: 'diagnosis',
     evidence:
@@ -264,7 +264,7 @@ const CONSUMER_REGISTRY: ConsumerEntry[] = [
   {
     relation: 'derived_from',
     tier: 'specialized',
-    file: 'src/server/mastery/state.ts',
+    file: 'src/kernel/read-models/mastery-projection.ts',
     marker: "r.relation_type === 'derived_from'",
     surface: 'diagnosis',
     evidence:
