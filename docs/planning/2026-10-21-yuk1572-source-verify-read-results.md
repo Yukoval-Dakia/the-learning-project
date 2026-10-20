@@ -38,4 +38,10 @@
 
 准备态完整 patch、源码及 SHA256 已封存于 `/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1572/83bbecdaecaf70be0ae0241795fac3d5a07940c1/source_verify-prepared-20261020T221915Z/`；patch SHA256 `04bf0436087fba75047fb53403d4fdcb2d57703e7106b581914fe2365c16c3c5`。该目录记录的是候选，不能冒充已接入状态。已接入源码比较封于同一基线目录的 `source_verify-source-proof-20261020T222121Z/source-proof.json`，SHA256 `0b72721572a5bba03358ac994b7c374b6e10f54859f8b4747e2c5d1c60b93a8a`：三个受保护正文区及原 prechecks 全文 IDENTICAL，dedup/solve 迁出体除 export、result 投影除缩进均 IDENTICAL。commit 后按 exact-head 另封最终文件 hash、git diff 与真实命令退出状态，不覆盖旧 seal。
 
-本树 node_modules 缺失，不 install/update/复制依赖。typecheck、lint、build、audit:capability-boundaries、audit:architecture-deepening 均 NOT_RUN；交父线串行一次 frozen install 后经 heavy.sh 执行。所有 tests/vitest/DB/TEST/Docker/daemon/provider/runtime/demo/paid、push/PR/watch/review/Linear/部署/清树均 NOT_RUN；测试代码零修改。未发现本范围之外的新 actionable follow-up；五门、占用和 audit 实测登记属于父线既有 YUK-1572 交付义务。
+父线于源码 head `3468f41a283d40c46d27783b757ec22e82bf4614` 完成唯一一次 heavy frozen install（rc0），package/lock/workspace hashes 前后一致，回执见该 head 仓外目录的 `parent-frozen-install.json`。本 writer 未 install/update/复制依赖。随后 fetch 并普通 merge 最新 main `20222f2cafe1500a9e445b43fe132935405d825a` 得到 `854652e87cb147c04ece5ba354e9dc53011a6410`，无冲突；己方4个文件与上游3个publication文件 blob 均保留，依赖 hashes 与安装回执一致，无须重装。
+
+首轮五门经 heavy.sh 串行实跑：typecheck/build/两audit rc0；lint rc1（180 warnings，唯一 error 为本片 `source_verify_dedup.ts` 的 import 换行格式，非上游问题），本提交只将该 import 折回 formatter 要求的单行，函数正文原样。首轮 raw stdout/stderr、argv、UTC、真实 rc 封于 merge head 的 `source_verify-five-gates/`，诊断另封 `source_verify-lint-diagnostic/`，不覆盖。
+
+首轮实际 audit：capability→server403、deep0、cross37、SCC1（agency/knowledge/practice）、超长13（新 main 基线13）；本片 source 仍1525，不能据13减少再归功本片。baseline 无变更，两audit均无新增站点或需登记变化。格式修正后的本交付 commit 须重新执行同五门；其真实结果与 raw 证据按本提交 exact head 放在仓外 `architecture-deepening/YUK-1572/<git rev-parse HEAD>/source_verify-five-gates/`，以该回执为最终结果，不拿旧轮替代。
+
+所有 tests/vitest/DB/TEST/Docker/daemon/provider/runtime/demo/paid、push/PR/watch/review/Linear/部署/清树均 NOT_RUN；测试代码零修改。未发现本范围之外的新 actionable follow-up；父线继续负责独立验收、PR/CI与既有 YUK-1572 整票义务。

@@ -5,10 +5,7 @@ import { and, ne, or, sql } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import { notDraftPredicate } from '@/db/predicates';
 import { question } from '@/db/schema';
-import {
-  DEDUP_OVERLAP_THRESHOLD,
-  maxNgramOverlap,
-} from '../server/question-supply/sourced-dedup';
+import { DEDUP_OVERLAP_THRESHOLD, maxNgramOverlap } from '../server/question-supply/sourced-dedup';
 import type { CheckOutcome } from './source_verify_prechecks';
 
 type QuestionRow = typeof question.$inferSelect;
