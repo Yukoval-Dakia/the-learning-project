@@ -1,16 +1,6 @@
-// ADR-0013 — abandon review sessions left in started/paused for >6h.
-// YUK-57: extended to scan paused too. A paused session is still "live" from
-// the user's POV but we apply the same 6h cutoff as started — past 6h it's
-// effectively abandoned regardless of which state it's stuck in.
-//
-// /review page sendBeacon close handles 99% of normal exits; this cron catches:
-//   - browser hard-killed (no pagehide fired)
-//   - sendBeacon dropped (network down / extension blocked)
-//   - dev hot-reload abandoning a session without closing
-//   - YUK-57: user paused then never came back
-//
-// Selection: type='review' AND status IN ('started','paused') AND started_at < now() - 6h.
-// Action: abandon via Review.abandonReviewSession (single-owner transition).
+// The page beacon covers a normal close. This helper covers a killed browser, a dropped beacon,
+// and a pause the user never resumed. Paused uses the same 6h cutoff as started.
+// The mounted handler calls runReviewOrphanTick and does not use the catch below.
 
 import { and, eq, inArray, lt, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
@@ -47,8 +37,7 @@ export async function runPruneOrphanReviewSessions(db: Db): Promise<{ abandoned:
       );
       if (result.kind === 'abandoned') abandoned += 1;
     } catch (err) {
-      // Lost-race: another caller (sendBeacon end route) abandoned/completed it
-      // between our SELECT and abandon. Skip — terminal states are fine.
+      // Any error is skipped in this helper. The mounted cron does not come through here.
       console.warn(`[prune_orphan_review_sessions] skip ${r.sessionId}:`, String(err));
     }
   }

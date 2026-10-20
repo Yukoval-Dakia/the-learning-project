@@ -2,6 +2,7 @@
 
 > 自用 · 移动 + 桌面双修 · 应试与兴趣并行
 > v0.12 · 2026-05-09 · Learning Orchestrator + Source Layer + Ingestion Layer
+> 历史规划快照（2026-05），现行规划以 Linear 和 PLAN.md 为准
 
 ---
 
@@ -9,7 +10,7 @@
 
 **Current roadmap → [`docs/planning/v0.3-generalized-ai-learning-framework.md`](docs/planning/v0.3-generalized-ai-learning-framework.md) §1.5**（Foundation A/B/C → Product Track 1/2 → Later）
 
-**Anchor ADR → [ADR-0014 — Generalized Learning Activity + Capability Registry](docs/adr/0014-generalized-activity-and-capability-registry.md)**（proposed, 2026-05-18；10 决议见 [`docs/discussion/summary.md`](docs/discussion/summary.md)；N+1 实施步骤见 [`docs/superpowers/plans/2026-05-18-capability-registry-foundation.md`](docs/superpowers/plans/2026-05-18-capability-registry-foundation.md)）
+**Anchor ADR → [ADR-0014 — Generalized Learning Activity + Capability Registry](docs/adr/0014-generalized-activity-and-capability-registry.md)**（accepted, 2026-05-29；10 决议见 [`docs/discussion/summary.md`](docs/discussion/summary.md)；N+1 实施步骤见 [`docs/superpowers/plans/2026-05-18-capability-registry-foundation.md`](docs/superpowers/plans/2026-05-18-capability-registry-foundation.md)）
 
 **Phase 进度索引 → [`docs/superpowers/status.md`](docs/superpowers/status.md)**
 
@@ -63,7 +64,7 @@ the-learning-project/
 | 架构基础 | KG / Artifact 多态化 / 统一题库 / AI 任务层 / 技术栈 / 数据模型 | [docs/architecture.md](docs/architecture.md) |
 | 错题管理 | 录入 / 归因（10 类错因）/ 复习（FSRS）；变式题双 pass + 三层防"错题繁殖" | [docs/modules/mistakes.md](docs/modules/mistakes.md) |
 | 待学习列表 | hub + atomic 层级 / 6 状态机 / 优先级 score / 复学机制 | [docs/modules/learning-items.md](docs/modules/learning-items.md) |
-| 学习进度追踪 | mastery 双层 + StudyLog（5 种 kind）+ 学习时间线视图 | [docs/modules/progress.md](docs/modules/progress.md) |
+| 学习进度追踪 | mastery 单层 derived view + LearningRecord（已取代 StudyLog）+ 学习时间线视图 | [docs/modules/progress.md](docs/modules/progress.md) |
 | Artifact: Note (note_hub / note_atomic) | 阅读型；hub + atomic 结构；source tier 防幻觉 | [docs/modules/notes.md](docs/modules/notes.md) |
 | Artifact: Tool (tool_quiz) | 互动型当前唯一实例；可独立或嵌入 Note；Question/Answer/Judgment + ai_flexible 兜底 | [docs/modules/quiz.md](docs/modules/quiz.md) |
 | Dreaming + Maintenance | AI 主动产出（生产 + 维护）两条 lane | [docs/modules/lanes.md](docs/modules/lanes.md) |
@@ -125,7 +126,7 @@ the-learning-project/
 
 1. **扩展 token 而非重写** — 在 `src/index.css` 既有 `--token-*` 之上加新 token，不替换已有名字；命名向 bundle 的 `colors_and_type.css` 对齐
 2. **重复 ≥3 次抽 component** — 抽到 `src/components/`，业务命名（`Card` / `StatusBadge` / `KnowledgePicker`），不是 `BoxV2`
-3. **写 design extension 小文档** — 引入新 token / component 时加一节到 `docs/design/extensions.md`：[新增 token + 用途] / [新增 component + 用途 + 已用页]
+3. **写 design extension 小文档** — 引入新 token / component 时加一节到 `docs/design/extensions.md`（该文件已不存在）：[新增 token + 用途] / [新增 component + 用途 + 已用页]
 4. **不偏离 Loom anchor** — 暖白底 + coral 单 accent / 思源宋体 + Source Serif 4 / 中文优先 / 低视觉噪音 / **零 emoji（任何场合，包括首页入口、empty state、loading 状态）**；要图标用 Lucide（`lucide-react` 已在 deps）；UI sans 字体未定（bundle 推 Geist + Noto Sans SC，session 选过 MiSans + Inter — 见 issue 待决）
 5. **既有 page 用既有 token** — 不允许新 page 用 ad-hoc 颜色 / 字号 / 间距；token 不够先扩展 token，再用
 6. **Anti-drift CI guard（建议加）** — 至少跑 `grep -r '[\x{1F300}-\x{1FAFF}\x{2600}-\x{27BF}]' src/` 防止再混入 emoji

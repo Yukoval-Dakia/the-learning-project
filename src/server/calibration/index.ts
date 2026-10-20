@@ -1,14 +1,8 @@
-// Calibration harness — PURE surface barrel (YUK-461, axis-2 Wave-0).
-//
-// Re-exports ONLY the pure, fully-unit-tested calibration math + replay engine + V-A1-fwd
-// gate. The DB-touching loader lives in scripts/audit-calibration.ts and is NOT exported
-// here (the math core stays import-clean of @/db/client so the unit partition holds).
+// Math, replay, and the forward gate. The DB loader stays in scripts/audit-calibration.ts
+// so this barrel does not import the database client.
 
-// forward-AUC — Mann–Whitney U.
 export { type AucResult, forwardAuc } from './auc';
-// paired cluster bootstrap CI for ΔAUC.
 export { type ClusterForwardPreds, type DeltaAucCi, deltaAucClusterBootstrap } from './bootstrap';
-// design-effect / ICC(1,1) / effective-N.
 export {
   type EffectiveNResult,
   type IccResult,
@@ -16,9 +10,7 @@ export {
   effectiveNFromClusters,
   iccOneWayAnova,
 } from './design-effect';
-// ECE — Expected Calibration Error + reliability table.
 export { type Binning, type EceOptions, type EceResult, type ReliabilityBin, ece } from './ece';
-// EZ-diffusion — closed-form caution / speed-accuracy axis recovery (A11, YUK-445).
 export {
   EZ_SCALING_S,
   type EzInputs,
@@ -28,9 +20,7 @@ export {
   edgeCorrectPc,
   ezFromResponses,
 } from './ez-diffusion';
-// Cohen's κ.
 export { type KappaResult, cohenKappa } from './kappa';
-// PURE θ̂ replay engine.
 export {
   type ReplayAttempt,
   type ReplayFinalState,
@@ -38,9 +28,7 @@ export {
   type ReplayStep,
   replayTheta,
 } from './replay';
-// seeded RNG.
 export { mulberry32 } from './rng';
-// V-A1-fwd gate + assembly + report.
 export {
   type AssembledClusters,
   type VA1Config,
