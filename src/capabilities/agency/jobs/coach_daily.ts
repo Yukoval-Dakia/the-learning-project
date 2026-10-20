@@ -4,8 +4,17 @@
 // allowlist MCP bridge, runs `CoachTask`, and writes trigger + scan events
 // (`experimental:trigger_coach_scan` / `experimental:coach_scan`).
 
-import { createId } from '@paralleldrive/cuid2';
 import type { Job } from 'pg-boss';
+// YUK-1570 — the complete run assembly (inbox before/after diff, trigger + scan
+// provenance events, budget tracker + propose-cap gate, piDomainMount wiring,
+// hard+1 budgetOverride, runAgentTask call, failure event + rethrow) is owned by
+// runAgencyProposalScan. This job keeps only the Coach signal reads, the input
+// build, and the TodayPlan parse that feeds the scan payload.
+import {
+  type AgencyScanInboxRow,
+  type AgencyScanRunFn,
+  runAgencyProposalScan,
+} from '@/capabilities/agency/server/agent-run';
 // YUK-143 / ADR-0025 — North-Star: feed active goals into the Coach input so it
 // can add a goal-oriented strand. Purely ADDITIVE (ND-5): the FSRS-due / review
 // backbone and other capture tasks are untouched; goals only add direction.
@@ -26,7 +35,6 @@ import { type ReviewPlanNumbers, computeReviewPlanNumbers } from '@/core/daily-r
 import { CoachPlanDraft, type CoachPlanDraftT, composeTodayPlan } from '@/core/schema/coach';
 import type { Db } from '@/db/client';
 import type { WriteEventInput } from '@/kernel/events';
-import { writeEvent } from '@/kernel/events';
 // P5.4-L2 / YUK-174 (Facet A + C, §3.3) — feed the per-(kind, relation) accept-
 // learned reason digest into the Coach input. Scoped to the kinds Coach can act
 // on; Coach now proposes knowledge_edge (AB-4), so its scope INCLUDES edge cells
@@ -35,20 +43,10 @@ import {
   type ProposalFeedbackCell,
   getProposalFeedbackDigest,
 } from '@/kernel/proposals/adaptive-bias';
-import { type ProposalInboxRow, listProposalInboxRows } from '@/kernel/proposals/inbox';
-import {
-  DOMAIN_TOOL_MCP_SERVER_NAME,
-  resolveDomainToolNames,
-  resolveMcpAllowedTools,
-} from '@/kernel/tools/allowlists';
 // P5.1 / YUK-143 — single tunable source for Coach run caps. YUK-290 keeps the
 // old max_tool_calls=12 as an advisory warning and moves the accident ceiling
 // to 36; max_proposals remains byte-identical at 5.
 import { COACH_CONTEXT_BUDGET, PROPOSAL_FEEDBACK_BUDGET } from '@/kernel/tools/budgets';
-import { ContextBudgetTracker } from '@/kernel/tools/context-throttle';
-import { type RunTaskResult, runAgentTask } from '@/server/ai/runner';
-import type { BuildMcpServerOptions, ToolExecutionGateInput } from '@/server/ai/tools/mcp-bridge';
-import { type PiToolMount, piDomainMount } from '@/server/ai/tools/pi-tools';
 // YUK-203 U4 / D11① — feed active/pinned learning items' knowledge_ids into the
 // Coach input as ATTENTION PRESSURE only (CO §7.1:723-726). Purely additive
 // (ND-5): never carries scheduling/bookkeeping, never touches the FSRS-due
@@ -128,17 +126,7 @@ export interface CoachRunResult {
   tool_context_task_run_id: string;
 }
 
-type ProposalSnapshotRow = Pick<ProposalInboxRow, 'id' | 'status'>;
-type CoachTaskRunResult = Pick<RunTaskResult, 'task_run_id' | 'text' | 'cost_usd'>;
-type RunAgentTaskFn = (
-  kind: string,
-  input: unknown,
-  ctx: {
-    db: Db;
-    piToolMounts?: PiToolMount[];
-    allowedTools?: string[];
-  },
-) => Promise<CoachTaskRunResult>;
+type ProposalSnapshotRow = AgencyScanInboxRow;
 type ListProposalInboxRowsFn = (db: Db) => Promise<ProposalSnapshotRow[]>;
 type WriteEventFn = (db: Db, input: WriteEventInput) => Promise<string>;
 // YUK-143 / ADR-0025 — swappable active-goals reader (DB tests inject fixtures).
@@ -159,7 +147,7 @@ type ResolvePlanInputsFn = (db: Db) => Promise<DailyReviewPlanInputs>;
 export type CoachRunKind = 'daily' | 'weekly';
 
 export interface CoachRunDeps {
-  runAgentTaskFn?: RunAgentTaskFn;
+  runAgentTaskFn?: AgencyScanRunFn;
   listProposalInboxRowsFn?: ListProposalInboxRowsFn;
   writeEventFn?: WriteEventFn;
   // YUK-143 / ADR-0025 — defaults to listActiveGoals; goals feed the additive
@@ -279,10 +267,6 @@ export async function runCoach(
   runKind: CoachRunKind,
   deps: CoachRunDeps = {},
 ): Promise<CoachRunResult> {
-  const now = deps.now?.() ?? new Date();
-  const listRows = deps.listProposalInboxRowsFn ?? listProposalInboxRows;
-  const run = deps.runAgentTaskFn ?? runAgentTask;
-  const write = deps.writeEventFn ?? writeEvent;
   // YUK-603 — resolved read: subject_live goals live-derive their scope (the frozen column
   // is [] and was previously read verbatim here, blinding the goal strand).
   const listGoals = deps.listActiveGoalsFn ?? listActiveGoalsWithResolvedScope;
@@ -296,153 +280,45 @@ export async function runCoach(
   const readNotes =
     deps.readAgentNotesFn ??
     ((db: Db, now: Date) => readAgentNotes(db, { for_agent: 'coach', now }));
-  // YUK-1622 — due queue + budget + measured pace; the plan arithmetic below is
-  // pure and shared with the practice stream.
-  const loadPlanInputs =
-    deps.resolvePlanInputsFn ?? ((db: Db) => resolveDailyReviewPlanInputs(db, now));
   const triggerActorRef = runKind === 'daily' ? 'nightly_coach' : 'weekly_coach';
   const objective = runKind === 'daily' ? COACH_DAILY_OBJECTIVE : COACH_WEEKLY_OBJECTIVE;
 
-  const beforeRows = await listRows(db);
-  const beforeIds = new Set(beforeRows.map((row) => row.id));
-  // YUK-143 / ADR-0025 — read active goals for the additive goal strand. This is
-  // a read-only ADD to the Coach signal set; it does not read the FSRS-due queue
-  // or mutate any review state (ND-5).
-  const activeGoals = await listGoals(db);
-  // P5.4-L2 / YUK-174 (Facet A) — read the feedback digest for the additive
-  // reason bias. Read-only ADD; never touches the FSRS-due / review backbone.
-  // Empty on cold start → the feed degrades to a no-op.
-  const feedbackDigest = await loadFeedback(db);
-  // codex #3356884494 / AF §4 — read the un-expired out-of-band hints addressed
-  // to Coach (for_agent='coach'). Read-only ADD mirroring dreaming_nightly; hints
-  // bias attention only, never the FSRS-due queue / review backbone (ND-5). Empty
-  // in the common case → the COACH_AGENT_NOTES_GUIDANCE clause is inert.
-  const agentNotes = await readNotes(db, now);
-  // YUK-203 U4 / D11① — read active/pinned learning items for the brief's
-  // attention pressure. Read-only ADD; never touches the FSRS-due / review
-  // backbone (ND-5). Empty in the cold-start case → brief derives from due/weak.
-  const activeItems = await listItems(db);
-  const planInputs = await loadPlanInputs(db);
-  const reviewPlan = {
-    ...computeReviewPlanNumbers({
-      budget_minutes: planInputs.budget_minutes,
-      question_minutes: planInputs.question_minutes,
-      due_by_subject: planInputs.due_by_subject,
-    }),
-    due_count: planInputs.due_count,
-    budget_minutes: planInputs.budget_minutes,
-    question_minutes: planInputs.question_minutes,
-    question_minutes_source: planInputs.question_minutes_source,
-    question_minutes_sample_count: planInputs.question_minutes_sample_count,
-  };
-  const triggerEventId = `coach_trigger_${createId()}`;
-  const toolContextTaskRunId = `coach_tool_${createId()}`;
-
-  await write(db, {
-    id: triggerEventId,
-    actor_kind: 'cron',
-    actor_ref: triggerActorRef,
-    action: 'experimental:trigger_coach_scan',
-    subject_kind: 'query',
-    subject_id: triggerEventId,
-    outcome: null,
-    payload: {
-      surface: 'coach',
-      run_kind: runKind,
-      pending_before: beforeRows.filter((row) => row.status === 'pending').length,
+  return runAgencyProposalScan(db, {
+    surface: 'coach',
+    taskKind: 'CoachTask',
+    triggerActorRef,
+    budget: COACH_CONTEXT_BUDGET,
+    deps: {
+      now: deps.now,
+      writeEventFn: deps.writeEventFn,
+      listProposalInboxRowsFn: deps.listProposalInboxRowsFn,
+      runAgentTaskFn: deps.runAgentTaskFn,
     },
-    created_at: now,
-  });
-
-  try {
-    const toolNames = resolveDomainToolNames('coach');
-    let proposalWrites = 0;
-    const budgetTracker = new ContextBudgetTracker(COACH_CONTEXT_BUDGET);
-    // YUK-1021 — one descriptor feeds both mounts (see dreaming_nightly).
-    const domainMountOptions = {
-      ctx: {
-        db,
-        taskRunId: toolContextTaskRunId,
-        providerAttemptCaller: 'worker',
-        providerSessionDeadlineAt: Date.now() + 65_000,
-        callerActor: { kind: 'agent', ref: 'coach' },
-        causedByEventId: triggerEventId,
-      },
-      serverName: DOMAIN_TOOL_MCP_SERVER_NAME,
-      toolNames,
-      taskKind: 'CoachTask',
-      beforeExecute: (tool: ToolExecutionGateInput) => {
-        const budgetReason = budgetTracker.beforeExecute(tool);
-        if (budgetReason) return budgetReason;
-        if (tool.effect !== 'propose') return undefined;
-        if (proposalWrites >= COACH_MAX_PROPOSALS) {
-          return `coach proposal cap reached (${COACH_MAX_PROPOSALS}); stop creating proposals in this run`;
-        }
-        proposalWrites += 1;
-        return undefined;
-      },
-      interceptInput: (tool: ToolExecutionGateInput, args: unknown) => {
-        const { args: capped, contextBudget, softStop } = budgetTracker.capInput(tool.name, args);
-        return { args: capped, truncationNote: contextBudget, softStop };
-      },
-    } satisfies BuildMcpServerOptions;
-    const taskResult = await run(
-      'CoachTask',
-      buildCoachInput(
-        runKind,
-        now,
-        beforeRows,
-        objective,
-        activeGoals,
-        feedbackDigest,
-        agentNotes,
-        activeItems,
-        reviewPlan,
-      ),
-      {
-        db,
-        // YUK-290: maxTurns must not pre-empt the runtime tool-call ceiling.
-        // Keep one final turn for the TodayPlan after the last allowed tool call.
-        budgetOverride: { maxIterations: COACH_CONTEXT_BUDGET.toolCalls.hard + 1 },
-        piToolMounts: [piDomainMount(domainMountOptions)],
-        allowedTools: [...resolveMcpAllowedTools('coach')],
-      },
-    );
-
-    const afterRows = await listRows(db);
-    const pendingAfter = afterRows.filter((row) => row.status === 'pending').length;
-    const proposalsCreated = afterRows.filter((row) => !beforeIds.has(row.id)).length;
-
-    // Parse the CoachTask's TodayPlan JSON out of `taskResult.text`. The
-    // `/api/today/copilot-summary` reader looks for `payload.daily_focus`
-    // (and `payload.today_plan.daily_focus`) on the latest
-    // `experimental:coach_scan` event — so we need to persist the plan here
-    // for the drawer summary slot to render Coach's actual output. If the
-    // model returned non-JSON or schema-invalid output, fall through to the
-    // placeholder copy (copilot-summary handles the null/missing case).
-    const todayPlanDraft = parseCoachOutputSafely(taskResult.text);
-    const todayPlan = todayPlanDraft ? composeTodayPlan(todayPlanDraft, reviewPlan) : null;
-
-    await write(db, {
-      id: `coach_scan_${createId()}`,
-      actor_kind: 'agent',
-      actor_ref: 'coach',
-      action: 'experimental:coach_scan',
-      subject_kind: 'query',
-      subject_id: triggerEventId,
-      outcome: 'success',
-      payload: {
+    extraTriggerPayload: { run_kind: runKind },
+    extraScanFailurePayload: { run_kind: runKind },
+    buildScanSuccessPayloadExtras: (taskResult, input) => {
+      // Parse the CoachTask's plan draft out of `taskResult.text`. The
+      // `/api/today/copilot-summary` reader looks for `payload.daily_focus`
+      // (and `payload.today_plan.daily_focus`) on the latest
+      // `experimental:coach_scan` event — so we need to persist the composed
+      // plan here for the drawer summary slot to render Coach's actual
+      // output. If the model returned non-JSON or schema-invalid output, fall
+      // through to the placeholder copy (copilot-summary handles the
+      // null/missing case). The reviewPlan was computed in prepareInput before
+      // the trigger write and rides inside the built input — the SAME object
+      // feeds this payload (main's shared reviewPlan fact, no re-read).
+      const { review_plan: reviewPlan } = input as ReturnType<typeof buildCoachInput>;
+      const todayPlanDraft = parseCoachOutputSafely(taskResult.text ?? '');
+      const todayPlan = todayPlanDraft ? composeTodayPlan(todayPlanDraft, reviewPlan) : null;
+      return {
         run_kind: runKind,
-        proposals_created: proposalsCreated,
-        pending_after: pendingAfter,
-        tool_context_task_run_id: toolContextTaskRunId,
         // YUK-1622 — why these numbers, so a replay can verify them.
         review_plan_basis: {
-          due_count: planInputs.due_count,
-          budget_minutes: planInputs.budget_minutes,
-          question_minutes: planInputs.question_minutes,
-          question_minutes_source: planInputs.question_minutes_source,
-          question_minutes_sample_count: planInputs.question_minutes_sample_count,
+          due_count: reviewPlan.due_count,
+          budget_minutes: reviewPlan.budget_minutes,
+          question_minutes: reviewPlan.question_minutes,
+          question_minutes_source: reviewPlan.question_minutes_source,
+          question_minutes_sample_count: reviewPlan.question_minutes_sample_count,
           count: reviewPlan.count,
           estimated_minutes: reviewPlan.estimated_minutes,
           subject_mix: reviewPlan.subject_mix,
@@ -450,40 +326,64 @@ export async function runCoach(
         ...(todayPlan
           ? { today_plan: todayPlan, daily_focus: todayPlan.daily_focus }
           : { today_plan: null, plan_parse_error: true }),
-      },
-      caused_by_event_id: triggerEventId,
-      task_run_id: taskResult.task_run_id,
-      cost_micro_usd:
-        taskResult.cost_usd === undefined ? null : Math.round(taskResult.cost_usd * 1_000_000),
-      created_at: deps.now?.() ?? new Date(),
-    });
-
-    return {
-      processed: 1,
-      proposals_created: proposalsCreated,
-      pending_after: pendingAfter,
-      task_run_id: taskResult.task_run_id,
-      tool_context_task_run_id: toolContextTaskRunId,
-    };
-  } catch (err) {
-    await write(db, {
-      id: `coach_scan_${createId()}`,
-      actor_kind: 'agent',
-      actor_ref: 'coach',
-      action: 'experimental:coach_scan',
-      subject_kind: 'query',
-      subject_id: triggerEventId,
-      outcome: 'failure',
-      payload: {
-        run_kind: runKind,
-        error: err instanceof Error ? err.message : String(err),
-        tool_context_task_run_id: toolContextTaskRunId,
-      },
-      caused_by_event_id: triggerEventId,
-      created_at: deps.now?.() ?? new Date(),
-    });
-    throw err;
-  }
+      };
+    },
+    prepareInput: async ({ now, beforeRows }) => {
+      // YUK-143 / ADR-0025 — read active goals for the additive goal strand.
+      // This is a read-only ADD to the Coach signal set; it does not read the
+      // FSRS-due queue or mutate any review state (ND-5).
+      const activeGoals = await listGoals(db);
+      // P5.4-L2 / YUK-174 (Facet A) — read the feedback digest for the additive
+      // reason bias. Read-only ADD; never touches the FSRS-due / review
+      // backbone. Empty on cold start → the feed degrades to a no-op.
+      const feedbackDigest = await loadFeedback(db);
+      // codex #3356884494 / AF §4 — read the un-expired out-of-band hints
+      // addressed to Coach (for_agent='coach'). Read-only ADD mirroring
+      // dreaming_nightly; hints bias attention only, never the FSRS-due queue /
+      // review backbone (ND-5). Empty in the common case → the
+      // COACH_AGENT_NOTES_GUIDANCE clause is inert.
+      const agentNotes = await readNotes(db, now);
+      // YUK-203 U4 / D11① — read active/pinned learning items for the brief's
+      // attention pressure. Read-only ADD; never touches the FSRS-due / review
+      // backbone (ND-5). Empty in the cold-start case → brief derives from
+      // due/weak.
+      const activeItems = await listItems(db);
+      // YUK-1622 — due queue + budget + measured pace; the plan arithmetic
+      // below is pure and shared with the practice stream. Resolved here so the
+      // default reader closes over the SAME anchored `now` the op uses for the
+      // trigger event; the read itself happens before the trigger write and
+      // outside the scan failure boundary — main's exact position. The computed
+      // facts ride into the input and (through the built input passed to the
+      // extras) the success payload.
+      const loadPlanInputs =
+        deps.resolvePlanInputsFn ?? ((db: Db) => resolveDailyReviewPlanInputs(db, now));
+      const planInputs = await loadPlanInputs(db);
+      const reviewPlan = {
+        ...computeReviewPlanNumbers({
+          budget_minutes: planInputs.budget_minutes,
+          question_minutes: planInputs.question_minutes,
+          due_by_subject: planInputs.due_by_subject,
+        }),
+        due_count: planInputs.due_count,
+        budget_minutes: planInputs.budget_minutes,
+        question_minutes: planInputs.question_minutes,
+        question_minutes_source: planInputs.question_minutes_source,
+        question_minutes_sample_count: planInputs.question_minutes_sample_count,
+      };
+      return () =>
+        buildCoachInput(
+          runKind,
+          now,
+          beforeRows,
+          objective,
+          activeGoals,
+          feedbackDigest,
+          agentNotes,
+          activeItems,
+          reviewPlan,
+        );
+    },
+  });
 }
 
 /**
