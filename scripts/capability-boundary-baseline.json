@@ -41,41 +41,9 @@
     {
       "direction": "decrease",
       "debt": "capabilityToServer",
-      "pair": "copilot -> mastery",
-      "date": "2026-10-20",
-      "from": 1,
-      "to": 0
-    },
-    {
-      "direction": "decrease",
-      "debt": "capabilityToServer",
       "pair": "knowledge -> ai",
       "date": "2026-10-20",
       "from": 13,
-      "to": 12
-    },
-    {
-      "direction": "decrease",
-      "debt": "capabilityToServer",
-      "pair": "knowledge -> mastery",
-      "date": "2026-10-20",
-      "from": 6,
-      "to": 1
-    },
-    {
-      "direction": "decrease",
-      "debt": "capabilityToServer",
-      "pair": "practice -> ai",
-      "date": "2026-10-20",
-      "from": 66,
-      "to": 63
-    },
-    {
-      "direction": "decrease",
-      "debt": "capabilityToServer",
-      "pair": "practice -> mastery",
-      "date": "2026-10-20",
-      "from": 14,
       "to": 12
     }
   ],
