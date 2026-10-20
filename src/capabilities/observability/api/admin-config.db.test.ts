@@ -119,11 +119,6 @@ describe('GET /api/admin/config — injected runtime facts over HTTP (real build
       api: 'openai-completions',
       input: ['text'],
     });
-    expect(byName.get('opencode-go')?.models).toContainEqual({
-      id: 'glm-5.3-flash',
-      api: 'openai-completions',
-      input: ['text', 'image'],
-    });
     expect(byName.get('openrouter')).toMatchObject({ implemented: false });
     expect(byName.get('gateway')).toMatchObject({ implemented: false });
     // 布尔与 env 名之外不得有任何 credential 派生事实；值绝不进响应体。

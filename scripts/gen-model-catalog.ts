@@ -10,14 +10,16 @@
  * TRIM (documented per the ticket): the snapshot keeps only
  *   - the catalog providers our internal provider map consumes
  *     (see CATALOG_PROVIDER_BY_INTERNAL in src/server/ai/model-profiles.ts):
- *     anthropic, xiaomi, zhipuai-coding-plan, opencode-go
+ *     anthropic, xiaomi, zhipuai-coding-plan, opencode-go, openai, openrouter
+ *     (OpenRouter keeps only the typed lane's model, not its unused chat catalog)
  *   - per model, only the fields the narrow parse layer consumes:
- *     id, name, last_updated, limit.{context,output}, tool_call,
+ *     id, name, last_updated, limit.{context,input,output}, tool_call,
  *     structured_output, attachment, reasoning, reasoning_options,
- *     modalities.{input,output}, cost.{input,output,cache_read,cache_write}
+ *     provider, modalities.{input,output}, cost.{input,output,cache_read,cache_write}
+ *   - provider api, for execution and /models reads
  *
  * Everything else (description, family, interleaved, temperature, knowledge,
- * release_date, open_weights, provider-level env/npm/api/doc metadata, and all
+ * release_date, open_weights, provider-level env/npm/doc metadata, and all
  * unrelated providers) is dropped. Output is deterministic apart from
  * `retrieved_at` (ISO timestamp of the fetch) so a regen diff is reviewable.
  *
@@ -46,6 +48,8 @@ const KEPT_CATALOG_PROVIDERS = [
   'xiaomi',
   'zhipuai-coding-plan',
   'opencode-go',
+  'openai',
+  'openrouter',
 ] as const;
 
 const KEPT_MODEL_FIELDS = [
@@ -58,6 +62,7 @@ const KEPT_MODEL_FIELDS = [
   'attachment',
   'reasoning',
   'reasoning_options',
+  'provider',
   'modalities',
   'cost',
 ] as const;
@@ -67,6 +72,7 @@ interface RawCatalogModel {
 }
 
 interface TrimmedProvider {
+  api?: unknown;
   models: Record<string, Record<string, unknown>>;
 }
 
@@ -115,10 +121,14 @@ function trimProviders(
     }
     const trimmedModels: Record<string, Record<string, unknown>> = {};
     for (const [modelId, model] of Object.entries(models as Record<string, unknown>)) {
+      if (providerId === 'openrouter' && modelId !== 'typesafe/jev-1.13') continue;
       if (model === null || typeof model !== 'object' || Array.isArray(model)) continue;
       trimmedModels[modelId] = trimModel(modelId, model as RawCatalogModel);
     }
-    providers[providerId] = { models: trimmedModels };
+    providers[providerId] = {
+      api: (entry as Record<string, unknown>).api,
+      models: trimmedModels,
+    };
   }
   return { providers, missing };
 }
@@ -240,6 +250,13 @@ async function main(): Promise<void> {
       return undefined;
     }
   })();
+  if (previous) {
+    const old = JSON.parse(previous) as { providers: Record<string, TrimmedProvider> };
+    for (const [id, provider] of Object.entries(providers)) {
+      // Offline regeneration must not remove previously available models either.
+      provider.models = { ...old.providers[id]?.models, ...provider.models };
+    }
+  }
   mkdirSync(dirname(snapshotPath), { recursive: true });
   if (only !== undefined) {
     if (previous === undefined) {
