@@ -182,40 +182,48 @@
       "file": "src/capabilities/practice/server/session-summary.ts",
       "module": "src/kernel/read-models/assessment-verdict.ts",
       "kind": "value",
-      "symbols": ["resolveVerdictsForAttempts"],
+      "symbols": [
+        "resolveVerdictsForAttempts"
+      ],
       "issue": "YUK-1570",
       "owns": "双轨裁决读模型：某次作答/评估最终判分的共享 resolver（legacy judge-event 与 assessment_verdict 两车道）",
-      "date": "2026-10-21"
+      "date": "2026-10-20"
     },
     {
       "debt": "capabilityToKernel",
       "file": "src/capabilities/practice/server/session-summary.ts",
       "module": "src/kernel/read-models/cause-policy.ts",
       "kind": "value",
-      "symbols": ["effectiveCauseForFailureAttempt"],
+      "symbols": [
+        "effectiveCauseForFailureAttempt"
+      ],
       "issue": "YUK-1570",
       "owns": "mistake 投影的 effective cause 策略：active user_cause 权威，否则最新 active agent judge",
-      "date": "2026-10-21"
+      "date": "2026-10-20"
     },
     {
       "debt": "capabilityToKernel",
       "file": "src/capabilities/practice/server/session-summary.ts",
       "module": "src/kernel/read-models/failure-attempts.ts",
       "kind": "value",
-      "symbols": ["getFailureAttempts"],
+      "symbols": [
+        "getFailureAttempts"
+      ],
       "issue": "YUK-1570",
       "owns": "failure-attempt 证据读模型：失败 attempt 投影 + chained judge/user_cause 归因 + correction active-row 解析",
-      "date": "2026-10-21"
+      "date": "2026-10-20"
     },
     {
       "debt": "capabilityToKernel",
       "file": "src/capabilities/practice/server/session-summary.ts",
       "module": "src/kernel/read-models/misc-cause-labels.ts",
       "kind": "value",
-      "symbols": ["resolveMiscCauseLabels"],
+      "symbols": [
+        "resolveMiscCauseLabels"
+      ],
       "issue": "YUK-1570",
       "owns": "misc_ cause id → 已晋升 misconception 节点 title 的读模型层回填",
-      "date": "2026-10-21"
+      "date": "2026-10-20"
     }
   ],
   "sourceSizeRecords": [],
@@ -331,7 +339,14 @@
         "shell -> onboarding": 3,
         "shell -> practice": 1
       },
-      "nontrivialSccs": [["agency", "ingestion", "knowledge", "practice"]]
+      "nontrivialSccs": [
+        [
+          "agency",
+          "ingestion",
+          "knowledge",
+          "practice"
+        ]
+      ]
     }
   }
 }
