@@ -65,7 +65,7 @@ const obligation = z.object({
   run_id: z.string().nullable(),
 });
 export type JudgeObligation = z.infer<typeof obligation>;
-/** Inventory includes terminal jobs, DLQs, accepted ticks, forwarding ambiguity, originals and unresolved paid claims. */
+/** Terminal jobs, DLQs, accepted ticks, forwarders, originals and unresolved paid claims. */
 export async function inspectLegacyJudgeObligations(database: Db | Tx): Promise<JudgeObligation[]> {
   const rows = await database.execute(sql`select id::text as task_id,state::text as state,
     case when name like '%_dlq' then 'dlq' when name='judge_pending_reconcile' then 'tick' else 'job' end as kind,
@@ -141,7 +141,7 @@ export async function disposeLegacyJudgeObligation(
     });
   });
 }
-/** Parent supplies sealed quiescence and engine inventory. This function never contacts an engine inside Tx. */
+/** Parent supplies sealed quiescence and engine inventory; no engine call runs inside the tx. */
 export async function transitionJudgeFamily(
   database: Db,
   input: {
@@ -339,7 +339,7 @@ export async function transitionJudgeFamily(
             if (p.success) {
               const state = await readPermanentJudgeRun(tx, p.data.run_id);
               if (state.kind === 'resolved' || state.kind === 'manual') continue;
-              // Approved imports must explicitly map to the next ownership epoch.
+              // Imports must explicitly map to the next ownership epoch.
               const mappings = await tx
                 .select()
                 .from(event)
@@ -413,7 +413,7 @@ export async function transitionJudgeFamily(
     return JudgeControl.parse(updated[0]);
   });
 }
-/** Import only an explicitly proven cohort. Archive receipts alone cannot select this incarnation. */
+/** Import only an explicitly proven cohort; archive receipts alone cannot select an incarnation. */
 export async function mapJudgePendingOwnership(
   database: Db,
   input: {

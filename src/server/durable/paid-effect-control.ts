@@ -1,23 +1,18 @@
-// YUK-1355 Lane B — backend-switch composition. Generic ownership admission
-// and generation fencing live in src/db/paid-effect-control.ts.
+// Backend-switch composition. Generic ownership admission and generation fencing
+// live in src/db/paid-effect-control.ts.
 //
-// - Absence of a control row is the bootstrap DEFAULT OWNER (pg-boss,
-//   generation 0, explicit:false). DBOS never default-admits; it requires an
-//   explicit control row created by the parent-controlled switch.
-// - Admission takes the control row FOR SHARE inside the caller's transaction,
-//   so it serializes against a concurrent switch (which takes FOR UPDATE).
-// - switchPaidEffectBackend refuses while the family has ANY unfinished
-//   obligation (P1-5: pending/sending/unknown/receipt_ready — intents and
-//   unapplied receipts included); for families whose paid authority lives
-//   outside paid_effect (note_verify), a pinned adapter projects their live
-//   claim states into the same blocking vocabulary (P1-3). Until the parent
-//   defines per-state takeover evidence, ownership moves only over a fully
-//   drained family. Producer-side dispatch cutover stays parent-owned.
-// - Before the parent's migration lands, paid_effect_control may not exist;
-//   paidEffectControlTableExists() is the NON-ABORTING probe for that (a
-//   caught 42P01 would abort a live transaction — every later statement
-//   fails with 25P02 — so in-transaction code must never catch-and-continue
-//   it).
+// A missing control row is the bootstrap owner (pg-boss, generation 0); DBOS
+// requires an explicit row. Admission takes the row FOR SHARE in the caller's
+// transaction, so it serializes against a switch's FOR UPDATE.
+//
+// A switch is refused while any obligation is unfinished, including note_verify
+// claims projected through a pinned probe. Until per-state takeover evidence
+// exists, ownership moves only over a fully drained family; producer cutover
+// stays parent-owned.
+//
+// The table may not exist before the control migration. Probe with
+// paidEffectControlTableExists(); catching 42P01 would abort the transaction and
+// every later statement fails with 25P02.
 import { and, count, eq, inArray } from 'drizzle-orm';
 
 import {
@@ -41,10 +36,9 @@ import { lockPaidEffectControlFamily, rowToControl } from '@/db/paid-effect-cont
 import { paid_effect, paid_effect_control } from '@/db/schema';
 
 /**
- * Pinned family obligation probes: families whose paid authority is NOT a
- * paid_effect row project their live unfinished obligations here. The probe
- * ALWAYS runs on the caller's transaction (never a separate connection /
- * snapshot) so it observes exactly the state the switch serialized against.
+ * Live unfinished obligations for families whose paid authority is not a
+ * paid_effect row. Runs on the caller's transaction so it sees exactly the state
+ * the switch serialized against.
  */
 const FAMILY_OBLIGATION_PROBES: ReadonlyMap<
   string,
@@ -57,13 +51,9 @@ const FAMILY_OBLIGATION_PROBES: ReadonlyMap<
 > = new Map([[NOTE_VERIFY_OBLIGATION_FAMILY, countNoteVerifyClaimObligations]]);
 
 /**
- * Switch the family's owning backend. Blocked while ANY unfinished obligation
- * exists for the family (P1-5): paid_effect rows in pending/sending/unknown/
- * receipt_ready PLUS the pinned family probe's projection for families whose
- * paid authority lives elsewhere (note_verify claim states, P1-3). On success
- * the generation increments, which fences stale deliveries dispatched by the
- * previous owner — including an A→B→A round trip. Switching to the current
- * owner is an idempotent no-op that does not bump the generation.
+ * Switch the family's backend. Refused while any obligation is unfinished. The
+ * generation bump fences stale deliveries from the previous owner, including an
+ * A→B→A round trip. Switching to the current owner is a no-op.
  */
 export async function switchPaidEffectBackend(
   db: Db,
@@ -71,9 +61,8 @@ export async function switchPaidEffectBackend(
   to: PaidEffectBackend,
 ): Promise<PaidEffectControlSnapshot> {
   return db.transaction(async (tx) => {
-    // FIRST: the family serialization lock — closes the missing-row race
-    // where an admission reading "no row = default pg-boss" overlapped a
-    // concurrent insert+scan+flip switch that never saw the uncommitted claim.
+    // Family lock closes the missing-row race with an admission that read the
+    // default owner while a concurrent switch never saw its uncommitted claim.
     await lockPaidEffectControlFamily(tx, family);
     const existing = await tx
       .select()
@@ -82,9 +71,8 @@ export async function switchPaidEffectBackend(
       .for('update');
     let row = existing[0];
     if (!row) {
-      // Materialize the default owner first so the switch bumps a real row.
-      // ON CONFLICT DO NOTHING + re-lock closes the concurrent-switch insert
-      // race (P1-2): exactly one switch materializes, the other re-locks it.
+      // Materialize the default row so the switch bumps a real row. ON CONFLICT
+      // plus re-lock serializes concurrent switches: one inserts, the other locks.
       const inserted = await tx
         .insert(paid_effect_control)
         .values({
@@ -119,8 +107,7 @@ export async function switchPaidEffectBackend(
     for (const group of grouped) countsByState[group.state] = Number(group.n);
     const probe = FAMILY_OBLIGATION_PROBES.get(family);
     if (probe) {
-      // Same transaction, same lock window — never a second connection's
-      // snapshot (P1-R2).
+      // Same transaction and lock window, never a second connection's snapshot.
       const projected = await probe(tx);
       countsByState.pending = (countsByState.pending ?? 0) + projected.pending;
       countsByState.sending = (countsByState.sending ?? 0) + projected.sending;
