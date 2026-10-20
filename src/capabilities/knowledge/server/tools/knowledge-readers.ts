@@ -14,12 +14,12 @@ import { z } from 'zod';
 import { RUBRIC_EVIDENCE_WINDOW_DAYS } from '@/capabilities/knowledge/server/rubric-validator';
 import type { Db } from '@/db/client';
 import { knowledge, knowledge_edge, knowledge_mastery } from '@/db/schema';
+import { getMasteryProjection } from '@/kernel/read-models/mastery-projection';
 // P5.1 / YUK-143 — excerpt cap + courtesy defaults sourced from the single
 // budgets.ts source of truth. KNOWLEDGE_EXCERPT_MAX is 180 (byte-unchanged from
 // the prior file-local TEXT_SNIPPET_MAX); the courtesy defaults below are the
 // tools' CURRENT defaults, just named centrally.
 import { KNOWLEDGE_EXCERPT_MAX, TOOL_COURTESY_DEFAULTS } from '@/kernel/tools/budgets';
-import { getMasteryProjection } from '@/server/mastery/state';
 import type { DomainTool, ToolContext } from './types';
 
 const TEXT_SNIPPET_MAX = KNOWLEDGE_EXCERPT_MAX;
