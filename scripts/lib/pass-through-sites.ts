@@ -222,8 +222,9 @@ function forwardArgsShape(
   }
   if (argNames.every((name, i) => name === paramNames[i])) return 'direct';
   // Permutation: distinct parameters, each used exactly once, order may differ.
-  const distinct = new Set(paramNames).size === paramNames.length;
-  if (distinct && [...argNames].sort().join('') === [...paramNames].sort().join('')) {
+  // Element-wise set membership (lengths already equal) — never string concat.
+  const paramSet = new Set(paramNames);
+  if (paramSet.size === paramNames.length && argNames.every((name) => paramSet.has(name))) {
     return 'reordered';
   }
   return null;

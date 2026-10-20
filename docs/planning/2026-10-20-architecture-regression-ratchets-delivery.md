@@ -125,11 +125,11 @@ recorded for the coordinator.
   `{knowledge,practice}/public.ts`).
 - Text fixes: SCC bullets now read *non-increasing* (implementation always was);
   `edgeRecords` "1:1" claim corrected to two-way coverage (duplicate-record
-  inflation is tolerated, per R1 P2-9); AGENTS.md checklist items now carry a
-  per-item machine anchor or `N/A` plus the review-evidence lead-in required
-  by proposal §3.
+  inflation is tolerated, per R1 P2-9); AGENTS.md keeps the original six
+  checklist items plus the proposal-§3 lead-in "independent review cites
+  per-item source evidence or NOT_APPLICABLE".
 
-### R2 negative-evidence status (honest)
+### R1-fix negative-evidence status (honest)
 
 - `reordered`/`spread` F1 shapes: **NOT_RUN on real history** — no real file
   at current head exercises either shape (0 occurrences in the `--base`
@@ -145,7 +145,7 @@ recorded for the coordinator.
   `supply-dispatch-web-search.ts`) shows every historical churn is type→type
   retargeting; no real pair ever flipped type→value. The `--base cc1167518`
   run (519 violations) covers the same code paths via absent-pair edges; the
-  upgrade branch is one boolean condition reviewed in R2 scope.
+  upgrade branch is one boolean condition left to the independent R2 review.
 - `--base 46663192d` (pre-merge base): FAIL with exactly the 5 real upstream
   pass-through sites — confirms the gate fires on real base↔head deltas.
 

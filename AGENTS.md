@@ -110,20 +110,17 @@ nested `AGENTS.md` / `.claude/rules`，机械约束放在 hooks。
 独立审查逐项给出源码证据或 NOT_APPLICABLE。
 
 1. 一个 owner 拥有一项完整事实或完整操作；同一事实不允许两个模块各自拼装。
-   （N/A——归属判断非机器门；机器侧仅有 SCC 与新依赖登记。）
 2. 窄接口必须隐藏决策、状态与恢复复杂度；拒绝 pass-through 转发和时序耦合
    （调用方必须按特定顺序做的事属于模块内部职责）。
-   （门禁：`audit-architecture-deepening` 的 pass-through site diff 与 `compatShims`。）
 3. 判断深模块用两个真实变更场景下的局部理解/修改范围；行数、import 数
-   只是信号，不构成架构收益证明。（N/A——深度判断靠审查，不被数字替代。）
+   只是信号，不构成架构收益证明。
 4. 不新增 god file，不把业务规则写进 UI；调用方不得重写被依赖模块的内部
-   排序或决策。（门禁：`>1500`/`>1000` 尺寸 ratchet 与 `sourceSizeRecords`。）
+   排序或决策。
 5. 事务边界、锁顺序、幂等、部分完成/恢复路径和兼容契约必须显式；如实区分
-   静态检查、CI 校验与真实运行验证，不把前者冒充后者。（N/A——如实记录义务。）
+   静态检查、CI 校验与真实运行验证，不把前者冒充后者。
 6. 新增依赖来源只能走既有 `public`/`ui-public` 规则或已批准的 kernel 端口；
    所有 ratchet 台账记录必须与机器输出逐条一致（baseline `edgeRecords` /
    `sourceSizeRecords` / `compatShims` / `changes`）。
-   （门禁：`edgeRecords` 覆盖校验、kernel 反向边与 facade 检查、append-only `changes`。）
 
 ## Development and verification
 
