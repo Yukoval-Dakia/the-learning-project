@@ -39,7 +39,6 @@
 | `prune_orphan_conversation_sessions` | `25 4` | ../handlers.ts | 弃置 stuck conversation（错峰避 learning_session 锁）|
 | `prune_orphan_placement_sessions` | `35 4` | ../handlers.ts | 弃置 stuck placement；dark-ship（placement flag off）|
 | `reference_answer_backfill` | `20 5` | practice/manifest | `reference_md IS NULL` → 参考答案。**不入 compose 选题路径**（走判分/UI），故 YUK-758 未编边、留裸 cron。YUK-1560 起入队前做资格判定 |
-| ~~`kt_estimate_nightly`~~ | — | — | **YUK-1560 摘掉 cron**。kt_json 没有读者。handler 文件还在，epoch 表保留队列名 |
 | ~~`axis_state_nightly`~~ | — | — | **YUK-1560 摘掉夜写 cron**。placement-profile 仍读 `learner_axis_state` 的最后一次写入 |
 | `confusable_contrast_nightly` | `20 6` | practice/manifest | DARK（flag off = discovery 返 [] NO-OP；owner 拍 2026-07-06 保留空转）|
 

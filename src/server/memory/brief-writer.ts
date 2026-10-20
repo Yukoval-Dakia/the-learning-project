@@ -6,16 +6,15 @@ import { allowsDerivation } from '@/core/schema/derivation-policy';
 // but never had wired (handlers.ts called `registerMemoryHandlers` with no
 // deps → the throwing `defaultGenerateBrief`). This is a single
 // structured-output AI call, the same archetype as GoalScopeTask
-// (`goals/scope.ts`): build input → runTask('MemoryBriefTask', …) → brace-slice
-// + Zod-parse → defensive id-subset filter. No tool loop, no proposal write.
+// (`goals/scope.ts`): server-bucket events → runTask('MemoryBriefTask', …) →
+// brace-slice + Zod-parse → assemble evidence ids from the same buckets. No
+// tool loop, no proposal write.
 //
 // Reuse-first: the LLM loop, logging, and cost
 // ledger all live inside `runTask`; this file never hand-rolls them. The writer
 // stays LOUD on failure (re-throws); the graceful "log + leave old brief" posture
 // is delivered one layer up by the per-scope try/catch in the regen-handler loop
 // (triggers.ts, F-1 / D8).
-
-import { z } from 'zod';
 
 // YUK-879 — the MemoryBriefTask writer-side output contract moved to the agency
 // TaskSpec module; consume it through the agency public entrypoint.
@@ -29,21 +28,22 @@ import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import type { BriefDraft, BriefEvent, BriefFact, GenerateBrief } from './brief';
 
-// ── Writer output schema = BriefDraft (brief.ts:37-44). ──
+// ── Writer output schema = BriefDraft prose (brief.ts:60-67). ──
 // 1B/I-4: named `BriefDraftOutputSchema` (NOT `MemoryBriefOutputSchema`) — the
 // latter is ALREADY taken by the read-side {note, evidence} schema in
 // context-readers.ts:1051. Two same-named, structurally-different symbols would
-// be a footgun; this writer-side shape is the 6-field BriefDraft.
+// be a footgun; this writer-side shape is the 3 prose fields. The three
+// evidence-id arrays are server-owned and never parsed from model output.
 //
-// PR #232 review (FIX #3) — all 6 keys are REQUIRED (no `.default(...)`). A
+// PR #232 review (FIX #3) — all 3 keys are REQUIRED (no `.default(...)`). A
 // transient structured-output degradation that DROPS a section must FAIL parse
 // (throw in parseBriefDraftOutput → propagate → caught by the F-1 per-scope
 // try/catch in triggers.ts → prior brief left intact) rather than silently parse
 // into an all-empty draft and let regenerateMemoryBrief upsert ''/[] over a good
-// prior brief. The 3 md fields stay `z.string()` so an EMPTY-STRING VALUE is
-// still allowed (a present-but-empty window is legitimate); only a MISSING KEY
-// throws. The cold-scope early-return builds its empty draft directly and never
-// goes through this parser, so it is unaffected.
+// prior brief. The md fields stay `z.string()` so an EMPTY-STRING VALUE is still
+// allowed (a present-but-empty window is legitimate); only a MISSING KEY throws.
+// The cold-scope early-return builds its empty draft directly and never goes
+// through this parser, so it is unaffected.
 // PR #232 review (FIX #5) — a FRESH empty draft per call. A shared module-level
 // singleton would hand every cold-scope caller the SAME `[]` array instances;
 // any downstream in-place mutation of an evidence array would then pollute every
@@ -93,6 +93,38 @@ function projectEventPayload(payload: unknown): { excerpt?: string } {
   return out;
 }
 
+const RECENT_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+const RECENT_MONTHS_MS = 90 * 24 * 60 * 60 * 1000;
+
+type BriefWindowKey = 'recent_week' | 'recent_months' | 'long_term';
+
+// Fixed 90-day month window keeps replay deterministic across time zones and
+// calendar months. Future timestamps (clock skew) stay in the week window.
+function bucketEventsByAge(events: BriefEvent[], now: Date): Record<BriefWindowKey, BriefEvent[]> {
+  const buckets: Record<BriefWindowKey, BriefEvent[]> = {
+    recent_week: [],
+    recent_months: [],
+    long_term: [],
+  };
+  for (const event of events) {
+    const age = now.getTime() - event.created_at.getTime();
+    if (age <= RECENT_WEEK_MS) buckets.recent_week.push(event);
+    else if (age <= RECENT_MONTHS_MS) buckets.recent_months.push(event);
+    else buckets.long_term.push(event);
+  }
+  return buckets;
+}
+
+function projectEvent(event: BriefEvent) {
+  return {
+    action: event.action,
+    subject_kind: event.subject_kind,
+    subject_id: event.subject_id,
+    outcome: event.outcome ?? undefined,
+    payload: projectEventPayload(event.payload),
+  };
+}
+
 // The injectable orchestrator: now+events+facts+template+scopeKey -> BriefDraft.
 // Mirrors runGoalScopeAndWrite's shape (scope.ts) minus the proposal write.
 export async function runBriefWriter(params: {
@@ -101,7 +133,7 @@ export async function runBriefWriter(params: {
   template: string;
   events: BriefEvent[];
   facts: BriefFact[];
-  now: string; // 3A: real-clock ISO anchor for the 7d/3mo/long_term buckets
+  now: string; // real-clock ISO anchor for the server-owned 7d/90d buckets
   ctx?: import('@/server/ai/runner-fn').RunTaskCallCtx;
 }): Promise<BriefDraft> {
   const { runTaskFn, scopeKey, template, facts, now } = params;
@@ -114,61 +146,43 @@ export async function runBriefWriter(params: {
   // wasted paid call on every cold scope.
   if (events.length === 0) return makeEmptyDraft();
 
-  // Project the input down to what the writer needs:
-  //  - 3A: `now` (real-clock ISO) so the model anchors the age windows on the
-  //    true clock, NOT the newest-event position. On a dormant scope (newest
-  //    event months old) a newest-event anchor would collapse everything into
-  //    recent_week and the prose would say "current" while the host freshness
-  //    score (which uses the REAL now at brief.ts:252,273-277) reads "stale" —
-  //    prose/score divergence. Anchoring on the real `now` keeps buckets correct.
-  //  - I-3: each `payload` truncated/projected (no raw jsonb blob bloat).
+  // YUK-1621 — the host owns window boundaries and evidence ids. Anchoring on
+  // the real `now` keeps prose aligned with the host freshness score on dormant
+  // scopes. I-3: each `payload` is truncated/projected (no raw jsonb blob bloat).
+  const buckets = bucketEventsByAge(events, new Date(now));
+  const windowInput = (key: BriefWindowKey) => ({
+    evidence_ids: buckets[key].map((event) => event.id),
+    events: buckets[key].map(projectEvent),
+  });
   const input = {
     scope_key: scopeKey,
-    now, // 3A — bucket anchor
     template,
-    events: events.map((e) => ({
-      id: e.id,
-      action: e.action,
-      subject_kind: e.subject_kind,
-      subject_id: e.subject_id,
-      created_at: e.created_at.toISOString(),
-      // PR #232 review (FIX #1) — `outcome` comes from the event COLUMN (threaded
-      // through BriefEvent), NOT the payload. This is what gives the writer the
-      // success/failure/partial signal for weakness/progress summaries.
-      outcome: e.outcome ?? undefined,
-      payload: projectEventPayload(e.payload), // I-3 — capped excerpt projection, not raw blob
-    })),
+    windows: {
+      recent_week: windowInput('recent_week'),
+      recent_months: windowInput('recent_months'),
+      long_term: windowInput('long_term'),
+    },
     facts: facts.map((f) => ({ id: f.id, memory: f.memory })),
   };
 
   const result = await runTaskFn('MemoryBriefTask', input, params.ctx ?? {});
   const parsed = parseBriefDraftOutput(result.text);
 
-  // D3 defensive filter — keep only ids that exist in the input events
-  // (mirror scope.ts:90-92). Guarantees stored evidence arrays are a true
-  // subset; P5.3 scoring then resolves every id in-memory (brief.ts:213-214).
-  const validIds = new Set(events.map((e) => e.id));
-  const keep = (ids: string[]) => ids.filter((id) => validIds.has(id));
-
   return {
     recent_week_md: parsed.recent_week_md,
     recent_months_md: parsed.recent_months_md,
     long_term_md: parsed.long_term_md,
-    recent_week_evidence_ids: keep(parsed.recent_week_evidence_ids),
-    recent_months_evidence_ids: keep(parsed.recent_months_evidence_ids),
-    long_term_evidence_ids: keep(parsed.long_term_evidence_ids),
+    recent_week_evidence_ids: buckets.recent_week.map((event) => event.id),
+    recent_months_evidence_ids: buckets.recent_months.map((event) => event.id),
+    long_term_evidence_ids: buckets.long_term.map((event) => event.id),
   };
 }
 
 // Production factory: binds the DB-backed runner once; injected test runners remain untouched.
 //
-// 3A note: GenerateBrief's signature (brief.ts:46-51) carries NO `now`, and
-// regenerateMemoryBrief computes its own `now` at brief.ts:252 but does not
-// forward it to `generate`. Rather than change the GenerateBrief contract, the
-// orchestrator stamps `new Date().toISOString()` into the WRITER INPUT here —
-// additive to the projection runBriefWriter builds. (If a future change threads
-// the host `now` through GenerateBrief, prefer that; for this station the
-// fresh-clock stamp is within milliseconds of brief.ts:252 and is sufficient.)
+// GenerateBrief's signature (brief.ts:69-74) carries NO `now`, so the factory
+// stamps a real-clock ISO anchor for the server-owned bucket split. If a future
+// change threads the host `now` through GenerateBrief, prefer that.
 export function buildBriefGenerator(deps: { db: Db; runTaskFn?: TaskTextRunFn }): GenerateBrief {
   const runTaskFn: TaskTextRunFn = deps.runTaskFn ?? makeRunTaskFn(deps.db);
   return async ({ scopeKey, template, events, facts }) =>

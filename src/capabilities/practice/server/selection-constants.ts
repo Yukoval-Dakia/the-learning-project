@@ -1,6 +1,6 @@
 // YUK-361 Phase 3 Step C1 — 选题策略常量 + policy config（PURE，无 IO，无接线）。
 //
-// 权威：ADR-0042 编排档2 amendment（docs/adr/0042-...md:46-68）+ ADR-0043 §7
+// 权威：ADR-0042 编排档2 amendment（docs/adr/0042-mfi-selection-signal-three-layer-engine.md:46-68）+ ADR-0043 §7
 // （π_i 必须是真随机抽样的 inclusion probability，满足 positivity，非确定性
 // top-item 事后归一化）+ docs/superpowers/plans/2026-06-16-phase3-randomized-mfi-impl.md Step C。
 //

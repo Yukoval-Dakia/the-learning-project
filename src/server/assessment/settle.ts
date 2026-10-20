@@ -1,66 +1,23 @@
 import { settlementReversions } from '@/core/assessment-settlement-liveness';
-// ====================================================================
-// YUK-1053 — 学习结算集成：bounded evidence adapter + 同事务结算编排
-// ====================================================================
-//
-// 本模块是 YUK-1045 `activateEvaluation` 注入端口 `LearningSettlementPort` 的
-// 真实实现（grounding §8/§11，D13–D16）。它在 activation 事务内：
-//
-//   - 读冻结契约（revision.structure/response_spec/scoring_basis/execution_plan）
-//     与组 KC 作用域（question.knowledge_ids，组根 + 物理 part 行）；
-//   - 经纯决策层（`@/core/schema/assessment/settlement`）把 evaluation verdict
-//     折成 per-KC 局部证据（success 1 / failure 0 / abstain —— 每 KC ≤1 obs；
-//     ambiguous/partial 未局部化 ⇒ abstain；blank_marked_zero 不产生掌握证据）；
-//   - bounded evidence adapter：仅在「全部非 abstain KC 共享同一位」时做恰好
-//     一次共享 θ̂ update（one-bit conjunctive updater 表达不了 mixed 位，也不
-//     能按 KC 重复调用 ⇒ 混合即 abstain；无 fractional θ / 无新 IRT）；
-//   - D14 三等级评级（correct→good / partial→hard / incorrect→again；
-//     unsupported ⇒ 不调度），SCOPE_V1 = 组内全部非合成 KC 的 knowledge 卡
-//     （无 KC ⇒ 组根 question 卡），scope 版本随证据封存；
-//   - D15：provenance.source ∈ {manual, self_report} ⇒ 只写 FSRS（用户评级），
-//     θ̂ / calibration 不动（无 self-report θ̂）；
-//   - D16：provenance.assisted ⇒ 分数保留但 θ̂ / hard-mastery / calibration
-//     全排除（explicit manual FSRS 仍允许 —— 评级来源本身是用户）；
-//   - FSRS upsert / θ̂ update / family calibration / snapshot brackets 全部在
-//     activation 同一事务；advisory lock 纪律不变（G 已由 activateEvaluation
-//     持有；per-KC `fsrs:knowledge:<id>` 与 `mastery:ability_global:<domain>`
-//     锁由 updateThetaForAttempt 自取，本层先取 FSRS 主体锁）；
-//
-// 时点纪律（§11「服务端稳定学习顺序，分离 original occurrence/submitted/
-// evaluation 时间」）：学习态一律按 `occurrence_at = submission.submitted_at`
-// 写（θ̂ last_outcome_at / FSRS now / 标签 θ-before 全部同源）；evaluated_at
-// 与 activated_at 独立记录。regrade 不算额外练习。
-//
-// 有序 replay（§11「更晚到的早期证据走有序 replay，不在完成时追加，也不假
-// 装 evidence-only applied」；§12「重算 state、作废 pending/stale 派生结论」）：
-//
-//   - 本结算的生效范围（occurrence ≥ 本次 occurrence 的 live applied 结算 ×
-//     写入主体交集）经【确定性 fixpoint】闭包成 revert 集 R；
-//   - R 内成员按最新→最旧 revert（checkpoint bracket 的 A-class 段恢复 +
-//     difficulty_calibration_label 按 attempt_event_id 摘除）；任一成员携带
-//     不可回退的 family running-mean 折进 ⇒ replay_required（fail-closed，
-//     家族残差无法事后相减 —— 不做假 revert）；
-//   - 非结算 writer 的更晚痕迹（fsrs.last_review_event_id 不是 live 结算事件、
-//     mastery.last_outcome_at 落不到 R 任一成员的 occurrence）⇒ replay_required；
-//   - 本结算先按原始 occurrence 落位，R 成员随后按原 occurrence 顺序重放
-//     （reapply 读取其 replay_inputs —— 结算事件封存的原判输入，绝不重判）；
-//   - regrade（同 group 替换生效判词）：被替换结算先在 revert 集内（user
-//     rating 守卫除外，见下），新 verdict 随后落位 —— revert+apply 在同一
-//     snapshot 恢复面上完成，θ̂ evidence_count 不凭空 +1 ⇒ 不算额外练习；
-//   - replay 任何一步失败 ⇒ 整个 apply savepoint 回滚（含已做 revert），写
-//     disposition=replay_required 的结算事件并返回 failed_pending —— receipt
-//     不被吞，学习态保持激活前一致性（绝不半 replay）；
-//
-//   - D4 对偶：用户评级 provenance 独立 —— 被替换结算的评级若来自
-//     manual/self_report，其 FSRS 段【绝不】被 judge 纠正在本层静默覆盖
-//     （skip FSRS revert + skip 本次 FSRS apply；θ̂ 段照常独立更正 ——
-//     「有效判分证据独立地可以更新 θ̂」）。
-//
-// 消费契约（YUK-1054 依赖）：每个 settlement 事件封存 original（被替换的）
-// 与 effective（本次）双方 —— `supersedes_evaluation_id`/`supersedes_
-// settlement_event_id`/`replay_of`/`reverted_settlement_event_ids` 全部显式；
-// replay_required 事件是有序 replay 的显式 worklist 条目（disposition 字段），
-// 下游消费者据此区分「已结算事实」与「待 replay 义务」。
+// Learning settlement for one activation, on the caller's transaction.
+// The caller already holds learning-state lock G. This layer takes the FSRS subject
+// locks first. updateThetaForAttempt then takes its own fsrs and ability_global locks.
+// Do not open a top-level transaction. Replay uses a savepoint.
+// Occurrence time is the frozen submission time. evaluated_at and activated_at stay separate.
+// A regrade is not extra practice: revert and apply share one snapshot, so evidence_count does not grow by one.
+// One shared theta update, and only when every non-abstain KC shares the same bit.
+// Mixed bits abstain. There is no fractional theta and no second IRT.
+// manual and self_report write FSRS only. Assisted scores stay, while theta, hard-mastery,
+// and calibration are excluded. An explicit user rating may still write FSRS.
+// The replay set is a deterministic fixpoint of later live settlements whose subjects intersect.
+// Revert newest to oldest, then reapply in original occurrence order from the sealed inputs.
+// Reapply does not re-judge. A family mean that cannot be un-folded, or a later trace from a
+// non-settlement writer, is replay_required. The savepoint rolls back every revert already done,
+// the receipt is failed_pending, and learning state stays as it was before activation.
+// A user rating on the replaced settlement is not overwritten by a judge correction.
+// Skip that FSRS revert and this FSRS apply. Theta still corrects on its own.
+// Each settlement event seals both the replaced side and the effective side.
+// replay_required is the worklist. It is not a settled fact.
 
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray, sql } from 'drizzle-orm';
@@ -143,8 +100,6 @@ import { loadAssessmentLearningScope } from './learning-scope';
 export const ASSESSMENT_SETTLEMENT_ACTION = 'experimental:assessment_settlement';
 export const ASSESSMENT_SETTLEMENT_VERSION = 1 as const;
 
-// ---------- 形状 ----------
-
 interface QuestionLite {
   id: string;
   knowledge_ids: string[];
@@ -176,24 +131,26 @@ interface SettlementPlan {
   submissionId: string;
   evaluationId: string;
   attempt: number;
-  /** 学习事实时点：冻结成员 max(submitted_at)，旧单成员仍为原提交时点。 */
+  /** Frozen member max(submitted_at). A legacy single member keeps its own submitted_at. */
   occurrenceAt: string;
-  /** 评估完成时点（evaluation.created_at，ISO）。 */
+  /** When the evaluation completed. Distinct from the occurrence. */
   evaluatedAt: string;
   provenance: { source: 'automatic' | 'manual' | 'self_report'; assisted: boolean };
   verdict: { verdict: string; reason: string; points: number | null; normalized: number | null };
-  /** D14 评级；null = 不调度（unsupported/无 ratable verdict）。 */
+  /** null means do not schedule. Unsupported and unratable verdicts stay null. */
   rating: 'again' | 'hard' | 'good' | null;
   /** 'user' = explicit activation choice or manual/self_report provenance. */
   ratingSource: 'verdict' | 'user' | 'none';
+  /** Sealed on the settlement evidence. Replay keeps this mapping instead of today's labels. */
   scopeVersion: number;
+  /** Non-synthetic KC ids in this scope. */
   scopeKcIds: string[];
+  /** One knowledge card per scope KC. An empty scope uses the group-root question card. */
   fsrsSubjects: FsrsSubject[];
   kcObservations: KcObservation[];
   theta: ThetaApply | { applied: false; abstainReason: string };
-  /** family/difficulty calibration 的判分路由面（全 deterministic 才 'exact'）。 */
+  /** exact only when every unit was deterministic. Mixed routes must not look exact. */
   judgeRoute: string;
-  /** practice_stream_item.id —— 契约层当前无流 slot 归属，恒 null（如实记）。 */
   difficultyLabelStreamItemId: string | null;
   forgettingInput?: SealedCandidateInput;
   forgettingEngine?: 'fsrs' | 'forgetting_candidate';
@@ -214,12 +171,12 @@ interface AppliedSettlementEvent {
   evaluationId: string;
   occurrenceMs: number;
   createdMs: number;
-  /** 该结算实际触碰的主体（'kind:id'）—— replay 冲突域。 */
+  /** Subjects actually touched. The replay closure intersects on these. */
   subjects: Set<string>;
-  /** 该结算实际写下的 FSRS 主体（'kind:id'）—— re-apply 保真（原事件跳过 FSRS ⇒ 重放也跳过）。 */
+  /** FSRS subjects actually written. An empty list means replay must skip FSRS too. */
   fsrsApplied: string[];
   familyObservationRecorded: boolean;
-  /** 该结算留下的 family fold（null = 未触）—— revert 的逆输入。 */
+  /** Family fold left behind. null was not touched, so revert has no mean to undo. */
   familyFold: FamilyFoldRecord | null;
   inputs: SettlementPlan;
 }
@@ -231,8 +188,6 @@ type ReplayRequired =
   | { kind: 'unattributed_newer_write'; subject: string; detail: string }
   | { kind: 'revert_failed'; settlementEventId: string; refusal: string }
   | { kind: 'reapply_failed'; settlementEventId: string; reason: string };
-
-// ---------- 纯函数 ----------
 
 function coerceMs(value: Date | string | null | undefined): number | null {
   if (value === null || value === undefined) return null;
@@ -253,7 +208,7 @@ function subjectKey(kind: string, id: string): string {
   return `${kind}:${id}`;
 }
 
-/** unit → 其作答面 part 集：槽位引用的 part 并集；无槽引用 ⇒ 组级（空集标记）。 */
+/** Parts cited by the unit's slots. No slot ref is the group, marked by an empty set. */
 function unitPartIdsOf(basis: ScoringBasisT, spec: ResponseSpecT): Map<string, Set<string>> {
   const partBySlot = new Map(spec.slots.map((s) => [s.slot_id, s.part_id] as const));
   const map = new Map<string, Set<string>>();
@@ -268,7 +223,7 @@ function unitPartIdsOf(basis: ScoringBasisT, spec: ResponseSpecT): Map<string, S
   return map;
 }
 
-/** unit → 判它的执行器 kind（execution_plan assignment 覆盖唯一，1046 已校验）。 */
+/** Executor kind. Assignment coverage is already unique, so this only reads it. */
 function unitExecutorKinds(plan: ExecutionPlanT): Map<string, string> {
   const map = new Map<string, string>();
   for (const assignment of plan.assignments) {
@@ -292,9 +247,7 @@ function planFromPayload(raw: unknown): SettlementPlan | null {
   return p as unknown as SettlementPlan;
 }
 
-// ---------- 范围装载 ----------
-
-/** 事件 effects.family_fold 的解析（乱掉/缺省一律 null = 无 fold 可逆）。 */
+/** A missing or unreadable family_fold is null. There is then no fold to undo. */
 function parseFamilyFold(raw: unknown): FamilyFoldRecord | null {
   if (raw === null || typeof raw !== 'object') return null;
   const f = raw as Record<string, unknown>;
@@ -425,19 +378,17 @@ async function loadScope(tx: Tx, input: ActivationSettleInput): Promise<Settleme
   };
 }
 
-// ---------- 计划推导 ----------
-
 function derivePlan(input: ActivationSettleInput, scope: SettlementScope): SettlementPlan {
   const groupKcs = contentKcs(scope.groupRow?.knowledge_ids ?? []);
   const partKcIds = new Map<string, string[]>();
-  // 完整发题保留组级标签；子集仅取发出的 part 标签。虚拟 part / 无局部
-  // 标签及真正 group-only 单元仍使用组级回落，不把未发物理 part 的标签并入。
+  // A full issue keeps group labels. A subset keeps only the issued parts.
+  // Virtual parts and group-only units fall back to the group. Unissued physical parts stay out.
   const groupEvidence = scope.basis.units.some(
     (unit) => unit.slot_refs.length === 0 && unit.evidence_slot_refs.length === 0,
   );
   const scopeSet = new Set<string>(scope.fullScope || groupEvidence ? groupKcs : []);
-  // part → KC：物理 part 行用自身 knowledge_ids；虚拟 part（structured 叶，
-  // 无行）回落组级。空数组回落组级（该 part 无独立标签语义）。
+  // A physical part uses its own knowledge ids. A virtual part has no row, so it uses the group.
+  // An empty list has no part-local meaning and also uses the group.
   // Full-scope virtual-part fallback and theta anchors retain the v1 mapping.
   const localizedParts = scope.fullScope ? [...scope.partRows.keys()] : scope.issuedPartIds;
   for (const partId of localizedParts) {
@@ -496,8 +447,8 @@ function derivePlan(input: ActivationSettleInput, scope: SettlementScope): Settl
   if (thetaDecision.kind === 'abstain') {
     theta = { applied: false, abstainReason: thetaDecision.reason };
   } else {
-    // 锚：update KC 全部归属于同一 part ⇒ 该 part 行（part = 物理 question 行，
-    // item_calibration 按行成键）；跨 part ⇒ 组根行（难度/族键的组级代表）。
+    // One part: that physical question row, because item calibration is keyed by row.
+    // Across parts: the group root stands for the difficulty and family keys.
     const partsCovering = new Set<string>();
     const updateSet = new Set(thetaDecision.knowledgeIds);
     for (const [partId, kcs] of partKcIds) {
@@ -519,7 +470,7 @@ function derivePlan(input: ActivationSettleInput, scope: SettlementScope): Settl
         anchorKind: anchor.kind,
         anchorSource: anchor.source,
         familyPrimaryKnowledgeId: anchor.knowledge_ids[0] ?? null,
-        abilityGlobalByKnowledgeId: {}, // derivePlanAsync 填充
+        abilityGlobalByKnowledgeId: {}, // Filled later by derivePlanAsync. An empty map here is not the frozen pin.
       };
     }
   }
@@ -653,8 +604,6 @@ function derivePlan(input: ActivationSettleInput, scope: SettlementScope): Settl
   };
 }
 
-// ---------- 结算事件面 ----------
-
 function candidateSchedulingSuppressed(plan: SettlementPlan): boolean {
   if (plan.forgettingSuppressed) return true;
   const selfReport = plan.forgettingInput
@@ -710,7 +659,7 @@ interface SettlementEventRow {
   effect: string | null;
   occurrenceMs: number | null;
   subjects: Set<string>;
-  /** 该结算实际写下的 FSRS 主体（'kind:id'）—— user-rating provenance 回溯 + replay 保真。 */
+  /** FSRS subjects written. User-rating lookup and replay both trust this list. */
   fsrsApplied: string[];
   familyObservationRecorded: boolean;
   familyFold: FamilyFoldRecord | null;
@@ -776,7 +725,7 @@ function liveAppliedSettlements(rows: SettlementEventRow[]): AppliedSettlementEv
       row.inputs?.ratingSource === 'user' &&
       row.fsrsApplied.length > 0;
     if (dead.has(row.id) && !retainedFsrs) continue;
-    if (row.inputs === null) continue; // 无 replay 输入的 applied 行不可参与闭包
+    if (row.inputs === null) continue; // An applied row with no replay inputs cannot enter the closure.
     const fsrsOnly = retainedFsrs || row.fsrsOnly;
     live.push({
       fsrsOnly,
@@ -810,10 +759,9 @@ function byOccurrenceAsc(a: AppliedSettlementEvent, b: AppliedSettlementEvent): 
 }
 
 /**
- * replay 闭包（确定性 fixpoint）：种子 = occurrence ≥ minOccurrenceBound 且主
- * 体与 mySubjects 相交的 live 结算；扩张 = 已入集成员触碰的主体再吸进满足
- * 同一下界的结算（不同 occurrence 段的 revert/re-apply 顺序靠闭包完整覆盖）。
- * 同组成员永远不入闭包 —— 本组被替换结算由 replaced 通道单独处理。
+ * Seed is live settlements at or after the bound whose subjects intersect.
+ * Each member's subjects pull in more settlements at that same bound.
+ * The replaced settlement of this group stays out. The replaced channel handles it.
  */
 function replayClosure(
   live: AppliedSettlementEvent[],
@@ -845,7 +793,7 @@ function replayClosure(
       }
     }
   }
-  // fixpoint：反复把触碰 covered 主体的合格成员吸进来（live 集有限 ⇒ 必终止）。
+  // Pull in every eligible member that touches a covered subject. The live set is finite.
   for (;;) {
     let grew = false;
     for (const m of live) {
@@ -862,14 +810,12 @@ function replayClosure(
   }
 }
 
-// ---------- 执行（apply / revert / reapply） ----------
-
 interface ApplyOutcome {
   fsrsApplied: string[];
   thetaApplied: string[];
-  /** family 观测是否写入（含未折进 mean 的纯 evidence_count 记录）。 */
+  /** A count-only family write still counts. It did not have to enter the mean. */
   familyObservationRecorded: boolean;
-  /** 实际折进记录（null = 未触校准行）—— un-fold 的逆运算输入。 */
+  /** The fold that was written. null never touched the calibration row. */
   familyFold: FamilyFoldRecord | null;
   subjects: Set<string>;
 }
@@ -1003,9 +949,9 @@ export async function candidateStateForRead(tx: Tx, subject: FsrsSubject, now: D
 }
 
 /**
- * 落位单个 plan 的学习效应（不重判：全部输入来自 plan.replay_inputs 等价物）。
- * 先 FSRS（评级），再 θ̂（bounded adapter 单次共享 update），再 brackets，
- * 最后 calibration（family 观测仅在 objective + θ̂ applied 时折进）。
+ * Apply one plan from its sealed inputs. Do not re-judge.
+ * FSRS, then one shared theta update, then brackets, then calibration.
+ * Family calibration folds only when the score is objective and theta was applied.
  */
 export interface SettlementObservers {
   /** Runs once for the new occurrence at its own ordered position, never for replayed neighbors. */
@@ -1047,8 +993,7 @@ async function executePlan(
     after: SchedulingState;
   }> = [];
   if (hasSchedulingEffect(plan) && !options.skipFsrs) {
-    // 主体锁：sorted 序取 `fsrs:<kind>:<id>`（与 updateThetaForAttempt 的
-    // `fsrs:knowledge:<id>` 同 namespace；G 已由 activation 持有）。
+    // Sorted fsrs subject locks, same namespace as updateThetaForAttempt. G is already held.
     const subjects = schedulingSubjects(plan);
     const keys = subjects.map((s) => subjectKey(s.kind, s.id)).sort();
     for (const key of keys) {
@@ -1134,7 +1079,6 @@ async function executePlan(
     }
   }
 
-  // ---- θ̂（bounded adapter：恰好一次共享 update）----
   const thetaSnapshots: Awaited<ReturnType<typeof updateThetaForAttempt>>['theta_snapshots'] = [];
   let thetaBefore = 0;
   if (plan.theta.applied) {
@@ -1158,7 +1102,6 @@ async function executePlan(
     outcome.thetaApplied = [...theta.knowledgeIds];
   }
 
-  // ---- A-class 恢复 bracket（每个 moved 轴一段；replay/纠错的机械基础）----
   await writeAttemptSnapshotBrackets(tx, {
     attemptEventId: settlementEventId,
     sessionId: null,
@@ -1167,7 +1110,6 @@ async function executePlan(
     fsrsSnapshots,
   });
 
-  // ---- calibration（D16 已在 plan 层排除 assisted/manual；objective 才折）----
   if (plan.theta.applied) {
     const theta = plan.theta;
     try {
@@ -1185,8 +1127,8 @@ async function executePlan(
           now: occurrenceAt,
         });
       });
-      // 回执非 null = 行被写（门未过时也可能是「未折进 mean」的纯计数记录——
-      // 如实封存，revert 按 record.folded 决定是否逆均值）。
+      // A receipt means the row was written. A count-only write did not enter the mean.
+      // Revert uses record.folded to decide whether the mean comes back.
       outcome.familyObservationRecorded = outcome.familyFold !== null;
     } catch (err) {
       console.warn(
@@ -1222,14 +1164,14 @@ async function executePlan(
   return outcome;
 }
 
-/** revert 一个 live 结算成员（A-class 段 + family fold 逆运算 + 标签订除）。失败 ⇒ ReplayRequired。 */
+/** Undo one live member. A failed undo is ReplayRequired, not a partial revert. */
 async function revertSettlementMember(
   tx: Tx,
   member: AppliedSettlementEvent,
   options: { skipFsrsSegment?: boolean } = {},
 ): Promise<ReplayRequired | null> {
-  // family fold：封存残差是 self-contained 的逆运算输入（running mean 对次序不敏感）——
-  // 精确 un-fold；drift（record 称已折但 calibrated_n=0）⇒ 非结算路径动过 ⇒ fail-closed。
+  // The sealed residual is enough to un-fold. Order does not matter for this mean.
+  // drift means the record says it folded while calibrated_n is 0. Something else wrote. Fail closed.
   if (member.familyObservationRecorded) {
     if (member.familyFold === null) {
       return { kind: 'family_fold_missing', settlementEventId: member.id };
@@ -1251,8 +1193,7 @@ async function revertSettlementMember(
     });
     if (!result.ok) {
       if (result.refusal === 'no_checkpoint') {
-        // 段无 bracket = 该成员这段没动过（theta abstain / fsrs unrated）——
-        // 不是错误，继续其它段。
+        // No bracket means this segment never moved. Continue with the other segment.
         continue;
       }
       return {
@@ -1262,11 +1203,9 @@ async function revertSettlementMember(
       };
     }
   }
-  // 摘除该成员写入的 difficulty_calibration_label（attempt_event_id 成键）——
-  // 防止 re-apply 换新事件 id 后旧标签残留成双。returning 收集受影响 question，
-  // 重建（标签摘除）后跌破 RECALIBRATION_MIN_LABELS 的题须显式清 stale b_calib
-  // （grounding §8：recalibrateQuestion below_threshold 不清旧值，重建路径必须
-  // 自己显式清——否则已撤销作答留下的 b_calib 继续喂 effectiveB）。
+  // Drop this member's difficulty label. Reapply mints a new event id, so the old label would double.
+  // Falling under the minimum does not clear b_calib by itself. Clear it here,
+  // or the undone attempt keeps feeding effectiveB.
   if (member.fsrsOnly) return null;
   const removedLabels = await tx
     .delete(difficulty_calibration_label)
@@ -1285,7 +1224,7 @@ async function revertSettlementMember(
   return null;
 }
 
-/** 结算事件落盘（消费契约面：original/effective 双方显式封存）。 */
+/** Persist both the replaced side and the effective side. A consumer must not infer either. */
 async function writeSettlementEvent(
   tx: Tx,
   input: {
@@ -1352,8 +1291,8 @@ async function writeSettlementEvent(
             family_observation_recorded: false,
             family_fold: null,
           },
-      // replay worklist 面：本结算【将触碰】的主体域（applied 时 = effects.subjects；
-      // replay_required 时是 replay 消费者需要的冲突域，不是空集）。
+      // Subjects this settlement will touch. replay_required still names the conflict domain.
+      // An empty set would hide the work from the replay consumer.
       planned_subjects: plan ? [...planSubjects(plan)].sort() : [],
       replay_inputs: plan ?? null,
       ...(input.fsrsOnly ? { fsrs_only: true } : {}),
@@ -1367,12 +1306,9 @@ async function writeSettlementEvent(
   });
 }
 
-// ---------- 主入口（LearningSettlementPort 实现） ----------
-
 /**
- * activation 同事务学习结算。必须由 `activateEvaluation` 在持有全局
- * learning-state 写锁 G 的事务内调用（端口契约）；本函数不另开顶层事务，
- * replay 段用嵌套 savepoint 保护。
+ * Call only from activateEvaluation, inside the transaction that already holds G.
+ * This function opens no top-level transaction. Replay is a nested savepoint.
  */
 export async function learningSettlement(
   input: ActivationSettleInput,
@@ -1381,15 +1317,13 @@ export async function learningSettlement(
   const { tx } = input;
   const activatedAt = input.now;
 
-  // ---- 计划（冻结契约 + 组 KC 作用域；纯判定无写）----
   const scope = await loadScope(tx, input);
   const plan = derivePlan(input, scope);
   // The validated plan owns the joint occurrence. Its anchor may have been
   // submitted earlier; actual writes, receipts and replay boundaries must agree.
   const occurrenceAt = new Date(plan.occurrenceAt);
   const occurrenceMs = occurrenceAt.getTime();
-  // θ̂ 依赖域映射（HIERARCHICAL_ELO_ENABLED 开时为真；冻结进 replay 输入，
-  // re-apply 不重解析 —— 与 durable judge 的冻结语义同款）。
+  // Freeze whether hierarchical elo was on. Reapply must not resolve it again.
   if (plan.theta.applied) {
     plan.theta.abilityGlobalByKnowledgeId =
       scope.frozenAbilityGlobalByKnowledgeId === undefined
@@ -1428,7 +1362,6 @@ export async function learningSettlement(
     }
   }
 
-  // ---- live applied 结算面 + 被替换结算定位 ----
   const rows = await loadSettlementEvents(tx);
   const live = liveAppliedSettlements(rows);
   const priorEffectiveId = input.head.effective_evaluation_id;
@@ -1438,8 +1371,8 @@ export async function learningSettlement(
       )
     : [];
   if (replaced.length > 1) {
-    // 同一 effective evaluation 有 >1 live applied 结算 = 数据不一致（CAS 应
-    // 已阻止多写）；fail-closed 到 replay_required，不猜谁是权威。
+    // More than one live applied settlement for one effective evaluation is inconsistent.
+    // CAS should have stopped the second write. Do not pick an authority.
     await writeReplayRequired(tx, {
       eventId: settlementEventId,
       plan,
@@ -1464,18 +1397,15 @@ export async function learningSettlement(
     for (const s of replacedMember.fsrsApplied) fsrsAtRisk.add(s);
   }
   const occurrenceHasUserRating = preservedUserRatingExists(rows, [...fsrsAtRisk], plan.groupId);
-  // 评级 provenance 随链携带「直到显式被另一个用户评级替换」：本次评级同样
-  // 来自用户 ⇒ 不保留（新评级正常落位）；verdict 评级 ⇒ 保留用户排程。
+  // A user rating stays until another user rating replaces it.
+  // This call's user rating replaces it. A verdict rating leaves the user schedule in place.
   const preserveUserRating =
     (plan.ratingSource !== 'user' || input.reusesActivation === true) && occurrenceHasUserRating;
 
-  // ---- replay 闭包：occurrence ≥ mine 且与我的写入主体相交的 live 结算 ----
-  // YUK-1093 P1-3 — 种子 = 本结算主体 ∪ 被替换结算主体。全量 regrade（如
-  // correct→unsupported）下 mySubjects 可为空，但 S_old 的写入仍要 revert：
-  // 不播被替换主体，碰到其主体的更晚异组结算就不入闭包 —— revert S_old 撞上
-  // 对方的 snapshot 链 ⇒ revert_failed ⇒ failed_pending（§12 许诺的有序
-  // replay 变成 false negative）。异组主体的更晚写入天然就在 S_old 的恢复
-  // 面上，必须把对方 revert+重放。
+  // Seed is this settlement's subjects plus the replaced settlement's subjects.
+  // A full regrade can have no subjects of its own, and the replaced writes still have to revert.
+  // Leave them out and a later other-group settlement on those subjects never enters the closure.
+  // Reverting the old snapshot then hits that chain and fails closed.
   const seedSubjects = new Set<string>(mySubjects);
   if (replacedMember !== null) {
     for (const s of replacedMember.subjects) seedSubjects.add(s);
@@ -1487,15 +1417,14 @@ export async function learningSettlement(
     seedSubjects,
   });
 
-  // ---- 无冲突快路径（首次顺序结算；regrade 也走这里做 revert+apply）----
   const revertSet = [...conflictSet];
   if (replacedMember !== null) revertSet.push(replacedMember);
   const reapplySet = conflictSet.slice().sort(byOccurrenceAsc);
   const revertOrder = revertSet.slice().sort(byOccurrenceAsc).reverse();
 
-  // ---- 非结算 writer 的更晚痕迹 ⇒ replay_required（不能假装那是我们的写入）----
-  // 必须先于快路径判定：首次结算也可能撞上「主体已被非结算路径动过」的局面
-  // （legacy review / 手工写入），追加会静默埋没乱序证据。
+  // A later trace from a non-settlement writer is replay_required.
+  // Check this before the fast path. A first settlement can still land on a hand-written or legacy review,
+  // and appending would hide that out-of-order evidence.
   const unexplained = await findUnattributedNewerWrites(tx, {
     occurrenceMs,
     fsrsSubjects: schedulingSubjects(plan),
@@ -1558,9 +1487,8 @@ export async function learningSettlement(
     return effect;
   }
 
-  // ---- 有序 replay（单 savepoint：revert 最新→最旧 → apply 本结算 →
-  //      re-apply 被 revert 成员按原 occurrence 升序）----
-  const replayAppliedIds = new Map<string, string>(); // old event id → new event id
+  // One savepoint. Revert newest to oldest, apply this settlement, then reapply oldest to newest.
+  const replayAppliedIds = new Map<string, string>(); // old event id to the new event id
   let appliedOutcome: ApplyOutcome;
   try {
     appliedOutcome = await tx.transaction(async (sp): Promise<ApplyOutcome> => {
@@ -1588,10 +1516,8 @@ export async function learningSettlement(
       if (mine.fsrsApplied.length > 0) memoryHistory.push(plan);
       for (const member of reapplySet) {
         const newIdFor = `stl_${createId()}`;
-        // YUK-1093 P1-2 — re-apply 保真：原结算经守卫【跳过】了 FSRS（plan 有
-        // rating 但 effects.fsrs_applied 为空 = 该事件从未写卡）；按原判输入
-        // 重放时也必须跳过，否则重放会把用户保留的评级悄悄改写成 verdict
-        // 评级 —— 同一守卫语义的 replay 面对偶。
+        // A rating with an empty fsrs_applied list never wrote the card.
+        // Replay must skip it too, or the kept user rating becomes the verdict rating.
         const memberSkippedFsrs =
           hasSchedulingEffect(member.inputs) && member.fsrsApplied.length === 0;
         const reOutcome = await executePlan(
@@ -1612,7 +1538,7 @@ export async function learningSettlement(
           groupId: member.groupId,
           submissionId: member.inputs.submissionId,
           evaluationId: member.evaluationId,
-          // re-apply 不伪造 supersede 关系：原成员链经 replay_of 指回。
+          // Reapply does not invent a supersede link. replay_of points at the original chain.
           priorEffectiveEvaluationId: null,
           supersedesSettlementEventId: null,
           replayOf: member.id,
@@ -1710,19 +1636,18 @@ function preservedUserRatingExists(
 }
 
 /**
- * 非结算 writer 的更晚痕迹检测：我的写入主体上，任何 occurrence 之后的
- * 痕迹必须能归因到 replay 闭包成员（live 结算事件 / 其 occurrence）——
- * 否则那是【没法重放的更新证据】，fail-closed 到 replay_required。
+ * A trace after this occurrence, on a subject this settlement writes, must belong
+ * to a closure member. Otherwise it cannot be replayed.
  */
 async function findUnattributedNewerWrites(
   tx: Tx,
   input: {
     occurrenceMs: number;
-    /** 本次实际将写的 FSRS 主体（rating=null 时不写，不查）。 */
+    /** FSRS subjects this call will write. A null rating writes none, so skip the check. */
     fsrsSubjects: FsrsSubject[];
-    /** 本次实际将写的 θ̂ KC（theta abstain 时不写，不查）。 */
+    /** Theta KCs this call will write. Abstain writes none. */
     thetaKcIds: string[];
-    /** 本次将写的 ability_global domain（θ̂ applied + hierarchical 时）。 */
+    /** ability_global domain, only when theta was applied and hierarchical elo is on. */
     abilityIds: string[];
     reapplySet: AppliedSettlementEvent[];
     liveIds: Set<string>;

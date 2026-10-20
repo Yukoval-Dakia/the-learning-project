@@ -1282,10 +1282,8 @@ export const practiceCapability = defineCapability({
       // with reference_md IS NULL (auto-enroll / image-candidate-accept). This job
       // fills those nulls nightly + independently, REUSING generateReferenceSolution
       // (no new task). Trigger = reference_md IS NULL AND ≥1 knowledge_id (resolvable
-      // subject); no-knowledge_id rows are skipped. cron 05:20 Asia/Shanghai: in a
-      // clear slot after the data-prep chain (item_prior 04:20 / recalibration 04:50 /
-      // answer_class 05:00 / kt_estimate 05:10) and BEFORE compose 05:30 — so a freshly
-      // filled reference_md is available to the day's stream selection + judge. queue=llm:
+      // subject); no-knowledge_id rows are skipped. cron 05:20 Asia/Shanghai is
+      // independent of the nightly DAG. queue=llm:
       // generateReferenceSolution runs SolutionGenerateTask (LLM) — same DLQ/retry bucket
       // as the other slow backfills. Idempotent via the reference_md IS NULL filter
       // (no NULL rows = no-op); a per-row solver skipped_error leaves the row NULL for
@@ -1318,14 +1316,11 @@ export const practiceCapability = defineCapability({
         load: () =>
           import('./jobs/answer_class_backfill').then((m) => m.buildAnswerClassBackfillHandler),
       },
-      // YUK-1560 — kt_estimate_nightly 与 axis_state_nightly 的 cron 已摘掉。
-      // handler 文件还在，队列名仍留在 epoch 表里，好让已经入队的行有分类。
-      // kt_json 没有读者。learner_axis_state 的显示读还在，停夜写后停在最后一次写入。
+      // YUK-1560 停掉 axis_state_nightly 夜写；learner_axis_state 显示保留最后一次写入。
       // YUK-573 — judge 校准不同意率采样（report-only，dark-ship）。kill switch
       // JUDGE_CALIBRATION_SAMPLING_ENABLED 默认 OFF（cron 保持注册，handler no-op，
       // 零 spend）。复判走第二 lane（per-call ctx.override=anthropic-sub，绝不翻
-      // 全局 AI_PROVIDER_OVERRIDE）。cron 06:10 Asia/Shanghai：排在既有夜链
-      // （axis_state 05:40 / question_supply 06:00）之后的空槽，夜间避开 owner
+      // 全局 AI_PROVIDER_OVERRIDE）。cron 06:10 Asia/Shanghai：夜间避开 owner
       // 交互期减 Max 订阅 rate-limit 争用（S2）。queue:'agent'（EXPIRE_AGENT=
       // 7200s）：批内 ≤BATCH_MAX（默认 20）次 LLM 复判调用，是多次调用批任务，
       // 非单-shot 'llm' 档。幂等由 MF8 partial unique index（drizzle/0059）DB 层

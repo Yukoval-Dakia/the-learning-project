@@ -1,21 +1,7 @@
-// ====================================================================
-// YUK-1057 — cutover measured window + 失败处置观测
-// ====================================================================
-//
-// 「切换演练产出 measured window + failure-handling record」（Q21 并入项）：
-//
-//   CutoverClock        —— begin_prepare → … → activate 的分步计时器
-//                          （每步进入/退出时刻 + duration；artifact 落盘给
-//                          真实切换填模板）。
-//   observeWalAndActivity(db, label) —— pg_current_wal_lsn + pg_stat_activity
-//                          快照（每步前后各一拍 → WAL 位移 + 活跃连接画像）。
-//   simulateStaleWriterLock —— 故障注入：专用连接持 ACCESS EXCLUSIVE（模拟
-//                          忘记停的旧 writer），cutover 侧排他锁等待 →
-//                          lock_timeout 证据（失败处置 A）；pg_terminate_backend
-//                          杀掉 → 锁等待解除（失败处置 B）。
-//   probeEpochFence       —— epoch='preparing'/'ready' 下 gateContractEpoch /
-//                          fenceAwareJobHandler 的拒绝证据（新码 runtime 全
-//                          fenced；旧码靠停 writer —— 故障注入证明其前提）。
+// Measured cutover window and the two failure records.
+// A forgotten writer holds ACCESS EXCLUSIVE until its backend is terminated.
+// The cutover side uses a short lock_timeout so the wait is evidence, not a hang.
+// preparing and ready fence the current runtime. Older code is safe only if its writers are stopped.
 
 import { sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
@@ -36,11 +22,11 @@ export interface ActivitySample {
   label: string;
   at: string;
   wal_lsn: string | null;
-  /** 活跃 backend 画像（state 计数 + 最长运行 query）。 */
+  /** State counts and the longest running query. */
   backends: { total: number; active: number; blocked: number; longest_active_ms: number | null };
 }
 
-/** 采样 WAL LSN + pg_stat_activity（切窗观测原语）。 */
+/** WAL LSN and pg_stat_activity. The cutover window is measured from these. */
 export async function observeWalAndActivity(db: Db, label: string): Promise<ActivitySample> {
   const lsnRows = await db.execute<{ lsn: string | null }>(
     sql`select pg_current_wal_lsn()::text as lsn`,
@@ -85,7 +71,7 @@ export function walDeltaBytes(start: string | null, end: string | null): number 
   return a === null || b === null || b < a ? null : b - a;
 }
 
-/** 分步计时器：每步 before/after 观测 WAL+activity，记录墙钟。 */
+/** Wall clock plus WAL and activity before and after each step. */
 export class CutoverClock {
   private readonly steps: CutoverStep[] = [];
   private readonly samples: ActivitySample[] = [];
@@ -137,45 +123,43 @@ export class CutoverClock {
 }
 
 export interface StaleWriterLockResult {
-  /** 排他锁在 stale writer 持有期间被拒的证据。 */
+  /** Exclusive lock refused while the stale writer held it. */
   lock_wait_observed: boolean;
   lock_wait_ms: number;
   lock_timeout_error: string | null;
-  /** 杀掉 stale backend 后同锁立即获得的证据。 */
+  /** Same lock acquired right after that backend was terminated. */
   recovered_after_terminate: boolean;
   terminated_pid: number | null;
 }
 
 /**
- * 故障注入：stale writer 持有 ACCESS EXCLUSIVE（演练只在 rehearsal 库上 ——
- * 生产 cutover 的对应物是「旧 writer 忘停 / 连接未释放」）。
- * 观测链：cutover 连接 SET lock_timeout 尝试同锁 → 超时证据；
- * pg_terminate_backend → 重试成功。
+ * A forgotten writer holds ACCESS EXCLUSIVE on the rehearsal database only.
+ * The cutover connection's lock_timeout is the wait evidence.
+ * terminate, then the same lock succeeds.
  */
 export async function simulateStaleWriterLock(
   targetUrl: string,
   db: Db,
   table = 'assessment_submission',
 ): Promise<StaleWriterLockResult> {
-  // 专用连接 = stale writer（不被池化复用，持有期间独占）。
+  // Dedicated connection. The pool must not reuse the lock holder.
   const stale = postgres(targetUrl, { max: 1 });
   let stalePid: number | null = null;
   try {
     const pidRows = await stale`select pg_backend_pid() as pid`;
     stalePid = Number(pidRows[0]?.pid ?? 0) || null;
-    // stale writer 持表锁（事务内持有直到 terminate —— 模拟忘停 writer）。
-    // begin() 永不 resolve（回调内挂起）—— 不能 await；终止后端时的
-    // reject 由 .catch 吞掉（预期路径）。
+    // begin() never resolves while the lock is held. Do not await it.
+    // Terminating the backend rejects the promise. That rejection is the expected path.
     const staleTx = stale
       .begin(async (tx) => {
         await tx.unsafe(`lock table "${table}" in access exclusive mode`);
-        // 事务保持打开直到外层 terminate —— 不在此 await 内做别的。
+        // Stay open until the outer terminate.
         await new Promise(() => {});
       })
       .catch(() => undefined);
     void staleTx;
 
-    // 等待锁真正建立（stale backend 可见且持锁）。
+    // Wait until the lock is visible on the stale backend.
     for (let i = 0; i < 50; i++) {
       const rows = await db.execute<{ n: number }>(sql`
         select count(*)::int as n from pg_locks l
@@ -186,7 +170,7 @@ export async function simulateStaleWriterLock(
       await new Promise((r) => setTimeout(r, 50));
     }
 
-    // cutover 侧排他锁尝试 —— 短 lock_timeout 取证（不等无限挂起）。
+    // Short lock_timeout. The timeout is the evidence.
     const contender = postgres(targetUrl, { max: 1 });
     let waitMs = 0;
     let timeoutError: string | null = null;
@@ -200,7 +184,7 @@ export async function simulateStaleWriterLock(
       waitMs = Date.now() - t0;
       timeoutError = err instanceof Error ? err.message : String(err);
     }
-    // 杀掉 stale backend（生产对应物：停旧 writer / 连接驱逐）。
+    // Production counterpart: stop the old writer and evict its connection.
     if (stalePid !== null) {
       await db.execute(sql`select pg_terminate_backend(${stalePid})`);
     }
@@ -234,9 +218,8 @@ export interface FenceProbeResult {
 }
 
 /**
- * fence 证据：在当前 DB epoch 状态下，runtime 裁决（assertContractEpochRunnable）
- * 与 per-delivery fence 是否拒绝。
- * 'preparing'/'ready' 下两者都应拒绝（maintenance）。
+ * Whether the current epoch fences the API gate and one job delivery.
+ * preparing and ready must both reject. This probe does not cover older binaries.
  */
 export async function probeEpochFence(db: Db): Promise<FenceProbeResult> {
   let apiRejected = false;
@@ -248,8 +231,8 @@ export async function probeEpochFence(db: Db): Promise<FenceProbeResult> {
   let jobFenced = false;
   const handler = fenceAwareJobHandler(db, 'judge_run', async () => 'consumed');
   try {
-    // 合成 job：id/queue 可缺省 created_on 时按保守放行 —— 'preparing' 下
-    // 是 maintenance 拒绝（未到 birth-epoch 分支），不依赖 pgboss.job 行。
+    // Synthetic job, no created_on. preparing rejects as maintenance before the
+    // birth-epoch branch, so no pgboss.job row is required.
     await handler([{ id: 'probe-job-1' } as Job]);
   } catch (err) {
     jobFenced = err instanceof ContractEpochFenceError;

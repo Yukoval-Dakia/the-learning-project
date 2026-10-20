@@ -767,6 +767,14 @@ function findingsFor(path: string, code: string, facts: SourceFacts): ProviderWi
     if (call === 'fetchImpl' && path === 'src/server/ai/provider-models-check.ts') {
       return [{ kind: 'model-catalog-provider-check-fetch', call, path }];
     }
+    // YUK-1630 — provider-transport invokes the current globalThis.fetch with
+    // its budget-pinned dispatcher injected into init, so observer/test
+    // wrappers stay honored instead of bypassed. Same provider wire, not a
+    // new lane; the undici Agent the dispatcher wraps is constructor-injected
+    // per attempt, not a fetch import.
+    if (call === 'fetch' && path === 'src/server/ai/provider-transport.ts') {
+      return [];
+    }
     return [{ kind: 'unclassified-provider-fetch', call, path }];
   });
 }

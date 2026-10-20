@@ -93,36 +93,64 @@ skill. Common entry points:
 ```bash
 pnpm audit:schema
 pnpm audit:dependencies
+pnpm audit:partition
+pnpm audit:question-writers
 pnpm audit:api-contracts
 pnpm audit:api-client
 pnpm audit:api-client-usage
+pnpm audit:tool-params
 pnpm audit:capability-boundaries
-pnpm audit:provider-lanes
-pnpm audit:partition
-pnpm audit:test-policy
+pnpm audit:architecture-deepening
 pnpm audit:profile
 pnpm audit:learner-copy
 pnpm audit:no-learning-styles
 pnpm audit:structured-judge
+pnpm audit:test-policy
 pnpm audit:task-census
 pnpm audit:draft-status
-pnpm audit:draft-status-reads
-pnpm audit:relations
-pnpm audit:calibration
-pnpm audit:threshold-calibration
-pnpm audit:mastery-provenance
-pnpm audit:fold-writes
-pnpm audit:flags
-pnpm audit:projection
-pnpm audit:golden --kind=<kind>
+pnpm audit:draft-status-reads --strict
+pnpm audit:flags --strict
+pnpm audit:hub-sync-writers
+pnpm audit:provider-attempt-truth
+pnpm audit:model-source
 ```
+
+`pnpm embed:inventory` is a read-only question-vector census (no embedding calls,
+no writes; `scripts/embed-inventory.ts`).
 
 `audit:capability-boundaries` 同时检查 public/ui-public access seam 与三张架构债
 ratchet（capability→server、server→capability deep、cross-capability value/SCC）。
-机器可读报告用 `pnpm audit:capability-boundaries -- --json`；有意删除依赖后用
-`pnpm audit:capability-boundaries:snapshot` 打印 canonical baseline，再在同一变更中收紧
-`scripts/capability-boundary-baseline.json`。snapshot 命令只打印，不直接覆盖文件；禁止为了让
-新增依赖通过而上调 baseline。
+机器可读报告用 `pnpm audit:capability-boundaries --json`。实测 pair 比基线低时审计失败，
+运行 `pnpm audit:capability-boundaries --tighten` 收紧
+`scripts/capability-boundary-baseline.json`。该命令仅下调，并追加 `changes` 记录：
+`direction: "decrease"`、`debt`、`pair`、UTC `date`、`from`、`to`。
+审计仍有任何错误时不写文件；再次运行不会重复追加记录。SCC 只能缩小，不能自动扩张。
+
+基线只降不升，禁止为让新增依赖通过而直接上调 baseline。
+按 YUK-1570 的 2026-10-19 21:21 JST PM 裁决，上调记录除非空 `reason`、
+`exitCondition` 外，必须带以下一种 `justification`，仅有理由不构成准入：
+
+- `{ "kind": "offset" }`：相对同一 PR 的 base，同一债务类别内其他 pair 必须有实测下降，
+  且该类别实测总数不得增加。不能用另一类别的下降、临时降后回涨的记录或只改基线抵消。
+- `{ "kind": "recorded_ruling", "ruling": "<协调线裁决的 HTTP(S) URL>" }`：
+  无抵消例外须在基线文件里保留协调线逐条裁决出处，供 reviewer 核验其 pair、旧值、新值。
+  不接受泛化授权，历史裁决不得复用或抵其他上调。
+
+同步 pair 与 total，并追加 `direction: "increase"` 记录。三类债务都受检查，缺失 pair 按 0 处理。
+CI 从 PR base SHA（push 时为 before SHA）重放新增记录，要求其结果与当前基线一致，
+且旧记录不可删除或改写。历史 `notes` 不追溯补写，也不能代替新上调记录。
+协调线明确要求追认已在 main 的变化时，`notes` 可保存同一类型的结构化历史记录，
+但不参与 `changes` 重放或新上调准入。YUK-1567 的记录只限 practice→r2 3→4（当时总数443→444），
+出处为 bb3e06ad 与 YUK-1570 的 82d63281；须在下一次 YUK-1570 减边 PR 回到3，最迟不晚于该票关闭。
+CI 检查实测抵消或裁决出处字段，不联网判断裁决的真实性、授权范围及退出条件是否达成。
+这些判断仍由 reviewer 负责。校验错误包含基线文件名及记录路径。
+
+本地默认比较 `git merge-base HEAD origin/main`，也可用 `--base <commit SHA>`。
+CI 的静态 `audits_architecture` job 必须提供 `CAPABILITY_BASE_SHA`；手动 workflow 使用已有的 `test_policy_base` 输入。
+CircleCI 的事件可能缺少 PR base 和 push before，因此该 job 复用
+`scripts/ci/resolve-circle-audit-base.mjs`，将其验证后的 SHA 输出传给 `CAPABILITY_BASE_SHA`。
+无法确认 base 时仍失败，不回退到移动分支或猜测父提交；GitHub 保留原有 event/input 来源。
+`pnpm audit:capability-boundaries:snapshot` 仍只打印实测快照，不带变更记录，不能用它覆盖基线。
 
 ### Lint warning ratchet（YUK-909）
 
@@ -157,11 +185,12 @@ migration, build and parity lanes. Every code change runs all retained invariant
 the unit/DB lanes; only verified docs-only changes skip them. Each lane computes its plan after checkout, without waiting for a classifier job. DB files run in eight nonempty native Vitest shards; unit files run in two. The exact include lists live in
 `vitest.shared.ts`, and `audit:partition` rejects missing, duplicate or unassigned
 files and direct unmocked DB imports in unit files. The audit lanes run exactly the
-commands listed in `.github/workflows/ci-gate.yml`: schema, dependencies, partition, test-policy,
-question-writers, API-contract, API-client, API-client-usage, capability-boundary,
-architecture-deepening, profile, learner-copy, no-learning-styles, structured-judge,
-task-census, draft-status, strict draft-status-read, strict flags, hub-sync-writer and
-provider-attempt-truth. `audit:provider-lanes` is a local-only census and is not in CI.
+commands listed in `.github/workflows/ci-gate.yml`: schema, dependencies, partition,
+question-writers, API-contract, API-client, API-client-usage, tool-params,
+capability-boundary, architecture-deepening, profile, learner-copy, no-learning-styles,
+structured-judge, test-policy, task-census, draft-status, strict draft-status-read, strict
+flags, hub-sync-writers, provider-attempt-truth and model-source.
+`audit:provider-lanes` is a local-only census and is not in CI.
 The build lane injects secret canaries into the build environment, scans
 both SPA and Start browser artifacts, and verifies frontdoor token/exemptions via
 an isolated listener. The parity lane runs `cargo test` plus the native/WASM/JS

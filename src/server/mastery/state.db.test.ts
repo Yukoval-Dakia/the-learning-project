@@ -16,11 +16,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // const (we assert the slow-drift split with its real value).
 const srtFlag = { value: false };
 const hierFlag = { value: false };
-// A1 (YUK-450 / YUK-449) — the two new SRT-refinement flags, mocked the same way (both
-// dark-ship default false). Flag-OFF regression anchors run against false through this
-// factory; the flag-ON tests opt in via fisherFlag.value / quantileDFlag.value = true.
 const fisherFlag = { value: false };
-const quantileDFlag = { value: false };
 vi.mock('@/core/theta', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/core/theta')>();
   return {
@@ -33,9 +29,6 @@ vi.mock('@/core/theta', async (importOriginal) => {
     },
     get SRT_FISHER_WEIGHT_ENABLED() {
       return fisherFlag.value;
-    },
-    get SRT_D_FROM_QUANTILE() {
-      return quantileDFlag.value;
     },
   };
 });
@@ -90,7 +83,7 @@ vi.mock('@/core/prereq-propagation', async (importOriginal) => {
 
 import { newId } from '@/core/ids';
 import { PFA_GAMMA, PFA_RHO, pLearned } from '@/core/pfa';
-import { ELO_K_GLOBAL, SRT_RT_MIN_N, thetaToMastery } from '@/core/theta';
+import { ELO_K_GLOBAL, thetaToMastery } from '@/core/theta';
 import { GRID_POINTS, type ThetaGridPosterior, posteriorMean } from '@/core/theta-grid';
 import { db } from '@/db/client';
 import {
@@ -1405,21 +1398,16 @@ describe('updateThetaForAttempt — SRT scoring (A1 / YUK-433)', () => {
   });
 });
 
-// ── A1 (YUK-449) — per-KC rolling RT quantile as the SRT design constant d ────────
 describe('updateThetaForAttempt — SRT quantile-d (A1 / YUK-449)', () => {
   beforeEach(async () => {
     await resetDb();
-    srtFlag.value = true; // SRT live; the quantile flag is what these tests toggle.
-    quantileDFlag.value = false; // dark-ship default; individual tests opt in.
+    srtFlag.value = true;
   });
   afterEach(() => {
     srtFlag.value = false;
-    quantileDFlag.value = false;
   });
 
   it('LIVE collection: a correct attempt with RT accumulates into rt_correct_ms; wrong / no-RT do NOT', async () => {
-    // Collection is gated on `useSrt && correct` — NOT on SRT_D_FROM_QUANTILE — so the buffer
-    // accrues live (flag still off here) for the eventual flip.
     const kCorrect = createId();
     const kWrong = createId();
     const kNoRt = createId();
@@ -1486,144 +1474,6 @@ describe('updateThetaForAttempt — SRT quantile-d (A1 / YUK-449)', () => {
       });
     });
     expect((await readState(k))?.rt_correct_ms ?? null).toBeNull();
-  });
-
-  it('flag OFF byte-identical: a pre-filled RT buffer does NOT change θ̂ (population-seed d)', async () => {
-    // kBuf has a full buffer (median ~1s); kNoBuf has none. With the flag OFF both must resolve
-    // d from the population seed (30s) → identical θ̂. The buffer is present but never read.
-    const kBuf = createId();
-    const kNoBuf = createId();
-    const qBuf = createId();
-    const qNoBuf = createId();
-    await seedKnowledge(kBuf);
-    await seedKnowledge(kNoBuf);
-    await seedQuestion(qBuf, [kBuf], 3);
-    await seedQuestion(qNoBuf, [kNoBuf], 3);
-    // Pre-seed kBuf's row with a cold θ but a FULL fast-RT buffer (median 1s).
-    await upsertMasteryState(db, {
-      subject_id: kBuf,
-      theta_hat: 0,
-      evidence_count: 0,
-      success_count: 0,
-      fail_count: 0,
-      last_outcome_at: new Date(),
-      rt_correct_ms: { samples: Array.from({ length: SRT_RT_MIN_N }, () => 1000) },
-    });
-
-    quantileDFlag.value = false;
-    await db.transaction(async (tx) => {
-      await updateThetaForAttempt(tx, {
-        knowledgeIds: [kBuf],
-        questionId: qBuf,
-        outcome: 1,
-        difficulty: 3,
-        attemptEventId: newId(),
-        now: new Date(),
-        responseTimeMs: 2000,
-      });
-      await updateThetaForAttempt(tx, {
-        knowledgeIds: [kNoBuf],
-        questionId: qNoBuf,
-        outcome: 1,
-        difficulty: 3,
-        attemptEventId: newId(),
-        now: new Date(),
-        responseTimeMs: 2000,
-      });
-    });
-    const buf = (await readState(kBuf))?.theta_hat;
-    const noBuf = (await readState(kNoBuf))?.theta_hat;
-    expect(buf).toBe(noBuf); // byte-identical: flag off → buffer ignored
-  });
-
-  it('flag ON: a full fast-RT buffer derives a small quantile-d → a 2s answer scores SLOWER than under the 30s seed', async () => {
-    const kBuf = createId();
-    const kNoBuf = createId();
-    const qBuf = createId();
-    const qNoBuf = createId();
-    await seedKnowledge(kBuf);
-    await seedKnowledge(kNoBuf);
-    await seedQuestion(qBuf, [kBuf], 3);
-    await seedQuestion(qNoBuf, [kNoBuf], 3);
-    await upsertMasteryState(db, {
-      subject_id: kBuf,
-      theta_hat: 0,
-      evidence_count: 0,
-      success_count: 0,
-      fail_count: 0,
-      last_outcome_at: new Date(),
-      rt_correct_ms: { samples: Array.from({ length: SRT_RT_MIN_N }, () => 1000) }, // median 1s
-    });
-
-    quantileDFlag.value = true;
-    await db.transaction(async (tx) => {
-      await updateThetaForAttempt(tx, {
-        knowledgeIds: [kBuf],
-        questionId: qBuf,
-        outcome: 1,
-        difficulty: 3,
-        attemptEventId: newId(),
-        now: new Date(),
-        responseTimeMs: 2000, // 2s ≫ quantile d≈1s → "slow" → smaller credit
-      });
-      await updateThetaForAttempt(tx, {
-        knowledgeIds: [kNoBuf],
-        questionId: qNoBuf,
-        outcome: 1,
-        difficulty: 3,
-        attemptEventId: newId(),
-        now: new Date(),
-        responseTimeMs: 2000, // 2s ≪ seed d=30s → "fast" → larger credit
-      });
-    });
-    const buf = (await readState(kBuf))?.theta_hat ?? 0;
-    const noBuf = (await readState(kNoBuf))?.theta_hat ?? 0;
-    expect(buf).toBeGreaterThan(0); // still a correct answer → θ rises
-    expect(buf).toBeLessThan(noBuf); // but LESS, because it was slow vs the learner's own pace
-  });
-
-  it('flag ON cold-start (< SRT_RT_MIN_N samples): quantile-d falls back to the population seed', async () => {
-    const kFew = createId();
-    const kNoBuf = createId();
-    const qFew = createId();
-    const qNoBuf = createId();
-    await seedKnowledge(kFew);
-    await seedKnowledge(kNoBuf);
-    await seedQuestion(qFew, [kFew], 3);
-    await seedQuestion(qNoBuf, [kNoBuf], 3);
-    await upsertMasteryState(db, {
-      subject_id: kFew,
-      theta_hat: 0,
-      evidence_count: 0,
-      success_count: 0,
-      fail_count: 0,
-      last_outcome_at: new Date(),
-      rt_correct_ms: { samples: Array.from({ length: SRT_RT_MIN_N - 1 }, () => 1000) }, // too few
-    });
-
-    quantileDFlag.value = true;
-    await db.transaction(async (tx) => {
-      await updateThetaForAttempt(tx, {
-        knowledgeIds: [kFew],
-        questionId: qFew,
-        outcome: 1,
-        difficulty: 3,
-        attemptEventId: newId(),
-        now: new Date(),
-        responseTimeMs: 2000,
-      });
-      await updateThetaForAttempt(tx, {
-        knowledgeIds: [kNoBuf],
-        questionId: qNoBuf,
-        outcome: 1,
-        difficulty: 3,
-        attemptEventId: newId(),
-        now: new Date(),
-        responseTimeMs: 2000,
-      });
-    });
-    // Below SRT_RT_MIN_N the quantile is not trusted → seed d (30s) for BOTH → identical θ̂.
-    expect((await readState(kFew))?.theta_hat).toBe((await readState(kNoBuf))?.theta_hat);
   });
 });
 

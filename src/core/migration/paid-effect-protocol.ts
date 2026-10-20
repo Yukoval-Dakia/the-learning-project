@@ -34,6 +34,7 @@ export const PAID_EFFECT_STATE_SCHEMA = z.enum([
   'receipt_ready',
   'applied',
   'voided',
+  'cancelled',
 ]);
 export type PaidEffectState = z.infer<typeof PAID_EFFECT_STATE_SCHEMA>;
 
@@ -43,6 +44,12 @@ export type PaidEffectState = z.infer<typeof PAID_EFFECT_STATE_SCHEMA>;
 // audit forever — void never deletes, never rewrites input/history, and bumps
 // the fence so the old delivery's late receipt/unknown-marking is rejected by
 // the same CAS that protects receipt recording.
+// 'cancelled' is likewise terminal RESOLVED: a lead-authorized cancel retired
+// a 'pending' intent that was NEVER sent (no delivery, no lease, no result, no
+// application, fence literally 0 — an advanced fence means a claim touched the
+// row). Unlike void it binds no successor and authorizes no new send — the
+// cancelled intent is only proven never-spent and sealed under an immutable
+// cancellation event + receipt (YUK-1567).
 /**
  * States in which a successor authorization still gates the entity: while the
  * authorized successor row is missing or in one of these states, ONLY the
@@ -296,6 +303,58 @@ export interface PaidEffectVoidReceipt {
   readonly previousFence: number;
   readonly successor: PaidEffectIdentity;
   readonly successorDelivery: PaidEffectSuccessorDelivery;
+}
+
+/**
+ * Lead request to cancel a never-sent 'pending' intent — the generic YUK-1567
+ * cancellation record (never family- or task-specific). All fields are audit
+ * truth written verbatim to paid_effect_cancellation and the cancelled row's
+ * receipt. A cancel mints NO authorization, binds NO successor, and triggers
+ * no paid call — it only seals the proven-never-sent intent.
+ */
+export interface PaidEffectCancelRequest {
+  /**
+   * Operator-chosen unique id for this cancellation operation. Replaying the
+   * request returns the stored receipt ONLY when every field of the replay
+   * (request id, reason, operator, basis, full five-part identity, expected
+   * fence) matches the recorded request exactly; ANY divergence is a
+   * conflict error, and a second event under a different request id is
+   * refused — replay never rewrites history.
+   */
+  readonly requestId: string;
+  /** Why the never-sent intent is being cancelled. */
+  readonly reason: string;
+  /** Who executed the cancellation (operator/actor identity). */
+  readonly operator: string;
+  /** The authorization basis — coordination-line reference for the decision. */
+  readonly basis: string;
+}
+
+/** The durable receipt persisted on the cancelled row's cancel_json column. */
+export interface PaidEffectCancelReceipt {
+  readonly requestId: string;
+  readonly reason: string;
+  readonly operator: string;
+  readonly basis: string;
+  readonly cancelledFromState: 'pending';
+  /** Fence value retired by this cancel; stale fence tokens are CAS-rejected. */
+  readonly previousFence: number;
+  /** The cancelled effect identity, embedded so the receipt is self-contained. */
+  readonly identity: PaidEffectIdentity;
+  /** ISO-8601 wall-clock time the cancellation committed. */
+  readonly cancelledAt: string;
+}
+
+/**
+ * A cancellation request conflicts with the recorded cancellation event —
+ * the row is already cancelled and the replay diverges in request id or any
+ * audit field, or the request violates the never-sent contract (e.g. a
+ * non-zero expected fence). Fail-closed: the caller's transaction must
+ * abort, never mint a second cancellation event or rewrite the recorded
+ * receipt.
+ */
+export class PaidEffectCancellationError extends PaidEffectProtocolError {
+  override name = 'PaidEffectCancellationError';
 }
 
 /** A delivery was fenced by backend control before any paid work started. */

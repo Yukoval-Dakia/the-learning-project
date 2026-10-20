@@ -1,24 +1,10 @@
-// ====================================================================
-// YUK-1057 — post-cutover 新写入 + roll-forward delta 导出/回放/对账
-// ====================================================================
-//
-// rollback 边界（b）（grounding §16）：新写入之后若必须回退，没有无损
-// image rollback —— 路径是【导出全部新写入 → 独立 target restore → 回放
-// 导出 → 可证明的对账】。本模块是那条链路的实现：
-//
-//   simulatePostCutoverWrites(db)
-//     走【真实 writer seam】（publishQuestionGroup → issueAssessment →
-//     saveResponseDraft → saveSubmission + 手工 event）—— 不是裸 insert；
-//     返回 PostWriteHandle（生成 id + 事件水位标）。
-//   exportPostWriteDelta(db, mark)
-//     把 post-mark 的新写入按 FK_ORDER 相关表导出（行级 canonical JSON）；
-//     事件表按 dispatch_seq 水位切片（schema.ts 注释：不是完整性证明 —
-//     这里仅作演练 delta 标记，真实 cutover 另有 checkpoint 捕获）。
-//   replayPostWriteDelta(db, delta)
-//     在 restore 出的独立 target 上按拓扑序回放（幂等 ON CONFLICT DO
-//     NOTHING 不适用 —— 目标是 clean restore，直接 insert；冲突即 fail）。
-//   reconcileDelta(db, delta)
-//     逐行 canonicalHash 对账 + 计数断言。
+// After new writes there is no lossless image rollback.
+// Export the new writes, restore an independent target, replay, then reconcile.
+// publish, issue, draft, and submit use their real seams.
+// The question row and the identity mapping are direct inserts.
+// reference_md is display metadata and is not parsed for keys.
+// The event.dispatch_seq watermark marks this rehearsal delta. It is not an integrity proof.
+// Replay is INSERT. The target is a clean restore, so a conflict fails.
 
 import { eq, sql } from 'drizzle-orm';
 import { issueAssessment, saveResponseDraft, saveSubmission } from '@/capabilities/practice/public';
@@ -48,25 +34,21 @@ export interface PostWriteHandle {
   issuance_id: string;
   submission_id: string;
   evaluation_group_id: string;
-  /** post-writes 起点的 event.dispatch_seq 水位（delta 切片上界用）。 */
+  /** event.dispatch_seq before the new writes. The delta starts after this. */
   event_watermark: number;
   writer_summary: Record<string, string>;
 }
 
 const PW_NOW = new Date('2026-09-26T10:00:00.000Z');
 
-/** post-cutover 新写入（真实 seam；PW_* id 前缀标记 delta 归属）。 */
+/** Real writer seams. PW_* ids mark rows that belong to the delta. */
 export async function simulatePostCutoverWrites(db: Db): Promise<PostWriteHandle> {
   const watermarkRows = await db.execute<{ m: number | null }>(
     sql`select max(dispatch_seq) as m from event`,
   );
   const watermark = Number(watermarkRows[0]?.m ?? 0);
 
-  // 1) 新题发布（生产 publish 路径：显式契约 → publishQuestionGroup）。
-  //    契约逐字声明 —— single_choice 槽位、option_set_key 判据
-  //    （accepted_option_ids 直指 11/12 选项）、deterministic exact_option_set
-  //    执行计划 —— 不经 normalizer 的 reference_md 猜 key 路径（owner：
-  //    fixture 不做任何 reference 文本 key 提取）。
+  // Explicit contract. This fixture does not extract an answer key from reference text.
   await db.insert(question).values({
     id: 'q-live',
     kind: 'choice',
@@ -79,15 +61,13 @@ export async function simulatePostCutoverWrites(db: Db): Promise<PostWriteHandle
     variant_depth: 0,
     image_refs: [],
     figures: [],
-    // draft_status 显式声明：三态字段 NULL≡active，本写入即「发布 active 题」语义。
-    // audit 要求 key 必须显式出现；显式 null 保留 NULL≡active 契约不交字符串。
+    // NULL means active. The key must appear. A string would drop that contract.
     draft_status: null,
     created_at: PW_NOW,
     updated_at: PW_NOW,
     version: 0,
   });
-  // 契约四层显式声明（与 seed 行的 choices_md 文案一致；答案 key 只存在于
-  // scoring_basis 判据 —— reference_md 是惰性展示元数据，不参与任何路由）。
+  // The answer key lives only in scoring_basis. reference_md routes nothing.
   const options = [
     { option_id: 'opt_q_live_a', label: 'A', text: '11/12' },
     { option_id: 'opt_q_live_b', label: 'B', text: '9/12' },
@@ -165,9 +145,8 @@ export async function simulatePostCutoverWrites(db: Db): Promise<PostWriteHandle
   if (slot.kind !== 'single_choice') {
     throw new Error(`post-write: expected single_choice slot, got ${slot.kind}`);
   }
-  // 答案 key 绑定到【冻结 revision 的 scoring_basis 判据】—— 不是从槽位文案
-  // 或 reference 文本反查。断言原不变量保留：判据恰好接受一个选项，且该选项
-  // 就是稳定正确项 11/12。
+  // Bound to the frozen revision's scoring_basis, not slot text or reference text.
+  // The criterion accepts exactly one option, and that option is 11/12.
   const unit = rev.scoring_basis.units[0];
   if (
     unit === undefined ||
@@ -182,7 +161,7 @@ export async function simulatePostCutoverWrites(db: Db): Promise<PostWriteHandle
     throw new Error('post-write: correct option missing');
   }
 
-  // 2) 发题 → 草稿 → 提交（真实 seam；draft 随后被 submit 清掉 —— 事件/head 落库）。
+  // Real issue, draft, and submit seams. Submit clears the draft. The event and head stay.
   const issued = await issueAssessment(db, {
     group_id: 'q-live',
     issuance_id: 'pw-iss-1',
@@ -221,7 +200,7 @@ export async function simulatePostCutoverWrites(db: Db): Promise<PostWriteHandle
     throw new Error(`post-write saveSubmission failed: ${submitted.status}`);
   }
 
-  // 3) 迁移面新写入：一条新 identity mapping（新合同内的显式断言映射）。
+  // Migration-surface write. The delta has to carry it.
   await db.insert(assessment_identity_mapping).values({
     mapping_id: 'pw-map-1',
     source_kind: 'postwrite_direct',
@@ -255,18 +234,16 @@ export async function simulatePostCutoverWrites(db: Db): Promise<PostWriteHandle
   };
 }
 
-// ───────────────────────── delta 导出 ─────────────────────────
-
 export interface PostWriteDelta {
   exported_at: string;
   event_watermark: number;
-  /** 表 → 行集（canonical JSON 形态；回放按声明序）。 */
+  /** Object key order is not the replay order. */
   rows: Record<string, Array<Record<string, unknown>>>;
-  /** 行级 digest（对账证明用）。 */
+  /** Sorted. Row order is not part of the proof. */
   digests: Record<string, string[]>;
 }
 
-/** 导出 post-write 面：PW_* id 前缀行 + q-live 组 + 水位后事件。 */
+/** Rows written after cutover, plus events after the watermark. */
 export async function exportPostWriteDelta(
   db: Db,
   handle: PostWriteHandle,
@@ -349,7 +326,7 @@ export async function exportPostWriteDelta(
       .from(assessment_identity_mapping)
       .where(eq(assessment_identity_mapping.mapping_id, 'pw-map-1')),
   );
-  // post-mark 事件（issue/submit 的 receipt 事件 + 任何伴生写）。
+  // Receipts and any companion writes after the watermark.
   const newEvents = (await db.execute(
     sql`select * from event where dispatch_seq > ${handle.event_watermark} order by dispatch_seq`,
   )) as Array<Record<string, unknown>>;
@@ -363,9 +340,7 @@ export async function exportPostWriteDelta(
   };
 }
 
-// ───────────────────────── delta 回放 + 对账 ─────────────────────────
-
-/** 回放拓扑序（FK 父先子后；与 FK_ORDER 的评估簇序一致）。 */
+/** Parents before children. Matches the assessment cluster in FK_ORDER. */
 const REPLAY_ORDER = [
   'question',
   'question_revision',
@@ -382,8 +357,8 @@ const REPLAY_ORDER = [
 ] as const;
 
 /**
- * 表列元数据：timestamptz 列名集合（raw `select *` 回 PG 文本形态，
- * drizzle select 回 ISO/Date —— 对账/回放统一按列型归一）。
+ * timestamptz column names. Raw select * returns PG text. Drizzle returns Date.
+ * Hashing those two forms false-drifts, so replay and reconcile normalize first.
  */
 const timestampColsOf = (table: unknown): Set<string> => {
   const def = table as Record<symbol, unknown>;
@@ -395,11 +370,11 @@ const timestampColsOf = (table: unknown): Set<string> => {
   );
 };
 
-/** PG 文本形态的 timestamptz（'2026-09-26 10:00:00+00' / '+00:00'）→ Date。 */
+/** PG timestamptz text to Date. A short offset such as '+00' is not valid ISO. */
 const asTimestamp = (v: unknown): unknown => {
   if (v instanceof Date) return v;
   if (typeof v !== 'string') return v;
-  // PG 文本输出形态：'YYYY-MM-DD HH:MM:SS[.us][+tz| UTC]' —— 空格换 T。
+  // PG prints a space. Date parses 'T'.
   const m = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2}(?:\.\d+)?)([+-]\d{2}(?::\d{2})?|Z)?$/.exec(
     v,
   );
@@ -408,17 +383,13 @@ const asTimestamp = (v: unknown): unknown => {
   if (tz === undefined || tz === 'Z') {
     tz = 'Z';
   } else if (!tz.includes(':')) {
-    // PG 短形 '+00' → ISO '+00:00'（new Date('+00') 不解析 → NaN 原样透传）。
+    // new Date('+00') is NaN. Append ':00' or the value would pass through unparsed.
     tz = `${tz}:00`;
   }
   const d = new Date(`${m[1]}T${m[2]}${tz}`);
   return Number.isNaN(d.getTime()) ? v : d;
 };
 
-/**
- * 在 restore 出的 target 上回放 delta。dispatch_seq 显式回放（跳过序列
- * 原值落库后 setval 推进，保证后续写入不撞号）。
- */
 const TABLES = {
   question,
   question_revision,
@@ -434,13 +405,15 @@ const TABLES = {
   event,
 } as const;
 
+/**
+ * INSERT onto a clean restore. A conflict fails. dispatch_seq is written as stored,
+ * then setval advances the sequence so a later write does not collide.
+ */
 export async function replayPostWriteDelta(db: Db, delta: PostWriteDelta): Promise<void> {
   for (const table of REPLAY_ORDER) {
     const list = delta.rows[table];
     if (!list || list.length === 0) continue;
-    // delta rows 源于 drizzle select（timestamptz=Date）或 raw sql select *
-    // （timestamptz=PG 文本，如 event 采集列）—— 统一经列元数据归一为
-    // driver value（Date 或 ISO string 均可被 pg 解析为 timestamptz）。
+    // Drizzle rows carry Date. Raw event rows carry PG text. Both must become driver values.
     const timestampCols = timestampColsOf(TABLES[table]);
     const normalized = list.map((row) => {
       const out: Record<string, unknown> = {};
@@ -466,7 +439,7 @@ export interface DeltaReconciliation {
   divergences: string[];
 }
 
-/** 对账：target 上 delta 行逐条 canonicalHash 回比（缺行/漂移 fail-visible）。 */
+/** canonicalHash each delta row against the target. A miss or a drift stays visible. */
 export async function reconcilePostWriteDelta(
   db: Db,
   delta: PostWriteDelta,
@@ -505,11 +478,9 @@ export async function reconcilePostWriteDelta(
         divergences.push(`${table}.${id}: missing on rollback target`);
         continue;
       }
-      // raw `select *` 的驱动类型与 drizzle select 不同：bigint 回 BigInt
-      //（drizzle mode:'number' → number），timestamptz 回 PG 文本
-      //（drizzle → Date/ISO）。canonicalHash 对二者分别产十进制串/ISO ——
-      // 假漂移；比较前统一归一（dispatch_seq 在 Number.MAX_SAFE_INTEGER 内，
-      // timestamptz 列按列元数据解析）。
+      // Raw select returns bigint as BigInt and timestamptz as PG text.
+      // Drizzle returns number and Date. Hashing those raw forms false-drifts.
+      // dispatch_seq is inside Number.MAX_SAFE_INTEGER. Timestamps parse by column type.
       const tsCols = timestampColsOf(TABLES[table]);
       const normalized = Object.fromEntries(
         Object.entries(targetRow).map(([k, v]) => {
@@ -528,7 +499,7 @@ export async function reconcilePostWriteDelta(
       const a = canonicalHash(normalized);
       const b = canonicalHash(srcNorm);
       if (a !== b) {
-        // 逐键定位漂移源（raw 驱动类型差正常化后仍不等 ⇒ 真漂移）。
+        // Keys that still differ after that normalization are a real drift.
         const keys = new Set([...Object.keys(normalized), ...Object.keys(srcNorm)]);
         const differing = [...keys]
           .filter((k) => {
