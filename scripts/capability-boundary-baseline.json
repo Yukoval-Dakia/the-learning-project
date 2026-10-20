@@ -17,7 +17,8 @@
     "YUK-1529": "practice -> boss 15 -> 18 (+3, total 437 -> 441): worksheet-export-route enqueues worksheet_render via getStartedBoss + WORKSHEET_RENDER_QUEUE (same seam as session-end.ts enqueue), and practice manifest JobDecl imports the shared queue name (same as copilot manifest -> queue-names). practice -> r2 2 -> 3 (+1): server/worksheet/pdf-store is the single blob seam — content-addressed PDF put (render job) + read (download route), same edge kind as ingestion -> r2.",
     "YUK-1547": "practice -> ai 65 -> 66 (+1, total 437 -> 438): verify-framework.ts re-exports writeToolCallLog (src/server/ai/log) — structured-submit parse failures keep the bounded raw submit arguments as tool_call_log evidence attached to the task run (admission solve + crosscheck). Same owner-service lane as the file's existing server/ai re-exports (Provider/TaskTextResult); consumers add no new edge.",
     "YUK-1559": "C1-10 model-source unification: ingestion -> ai 15 -> 16 (+1, total 437 -> 438): provider-attempts.ts reads GLM_OCR_MODEL_ID from the provider catalog (src/server/ai/providers.ts) instead of pinning the glm-ocr literal — direct-lane declared ids belong to the catalog.",
-    "YUK-1567": "practice -> r2 raised 2 -> 3 (+1, total 439 -> 440): admission/reauthorization.ts void-release republish calls publishQuestionGroup, whose declared contract requires an injected readAssetBytes blob reader (refuses custom-block publishes without one); supplying getR2().get is the same caller-injection owner seam as the existing practice -> r2 edges in assets.ts and question-supply/jyeoo-candidates.ts."
+    "YUK-1567": "practice -> r2 raised 2 -> 3 (+1, total 439 -> 440): admission/reauthorization.ts void-release republish calls publishQuestionGroup, whose declared contract requires an injected readAssetBytes blob reader (refuses custom-block publishes without one); supplying getR2().get is the same caller-injection owner seam as the existing practice -> r2 edges in assets.ts and question-supply/jyeoo-candidates.ts.",
+    "YUK-1622": "agency -> practice 4 -> 5 (+1, total 48 -> 49): coach_daily imports the practice public resolveDailyReviewPlanInputs so Coach's TodayPlan count / minutes / time box / subject mix come from the same due queue + measured pace as the practice stream. Public-barrel owner-service call, not a deep import; it replaces model arithmetic with one deterministic source."
   },
   "debts": {
     "capabilityToServer": {
@@ -109,12 +110,12 @@
       "byOwnerPair": {}
     },
     "crossCapabilityValue": {
-      "total": 48,
+      "total": 49,
       "byOwnerPair": {
         "agency -> ingestion": 1,
         "agency -> knowledge": 4,
         "agency -> notes": 3,
-        "agency -> practice": 4,
+        "agency -> practice": 5,
         "copilot -> agency": 1,
         "copilot -> notes": 2,
         "copilot -> practice": 1,

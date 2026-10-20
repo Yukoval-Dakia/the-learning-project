@@ -80,6 +80,7 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
     owner: 'practice',
     consumer: 'agency',
     files: [
+      'src/capabilities/agency/jobs/coach_daily.ts',
       'src/capabilities/agency/jobs/prepare_intervention.ts',
       'src/capabilities/agency/server/intervention/reconcile.ts',
       'src/capabilities/agency/server/intervention/settlement-subscription.ts',
@@ -89,11 +90,12 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
       'authorInterventionPackage',
       'loadLatestTrustedInterventionDiagnosticVerdict',
       'materializeInterventionDiagnostics',
+      'resolveDailyReviewPlanInputs',
       'retireInterventionDiagnosticQuestion',
     ],
-    dto: 'intervention authoring + diagnostic materialization commands',
+    dto: 'intervention authoring + diagnostic materialization commands; due/budget/question-pace reads for the daily plan',
     justification:
-      'agency owns the intervention lifecycle; practice owns diagnostic question materialization and authoring.',
+      'agency owns the intervention lifecycle; practice owns diagnostic question materialization and authoring. YUK-1622: coach_daily reads the practice due queue + budget + measured question pace so the TodayPlan numbers have one deterministic owner.',
     reviewIssue: 'YUK-885',
     commandFiles: [
       'src/capabilities/agency/jobs/prepare_intervention.ts',

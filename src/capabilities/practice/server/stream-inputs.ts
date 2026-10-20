@@ -34,6 +34,7 @@ import { REVIEW_DUE_LIMIT_MAX, type ReviewDueRow, queryReviewDue } from './due-l
 import { knowledgeLabels } from './knowledge-labels';
 import { FRONTIER_MAX_ITEMS, learnableFrontier } from './learnable-frontier';
 import { getPracticeList } from './practice-read';
+import { readQuestionPace } from './question-pace';
 import {
   type DailyPracticePace,
   dailyPracticeBudgetMinutes,
@@ -122,7 +123,10 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
   //   （NULL≡active / 'active' 留池，仅排字面 'draft'）。new_check + frontier 共用
   //   notDraftPredicate（@/db/predicates，三值逻辑安全的单一定义）。
 
-  const dailyBudget = await resolveDailyPracticeBudget(db);
+  const [dailyBudget, questionPace] = await Promise.all([
+    resolveDailyPracticeBudget(db),
+    readQuestionPace(db),
+  ]);
 
   // 1. FSRS 到期投影 — 与 HTTP adapter 共用的 typed due 读取。
   const cappedDueRows = await readComposerDueRows(db);
@@ -318,6 +322,7 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
   return {
     date,
     dailyBudgetMinutes: dailyBudget.minutes,
+    questionMinutes: questionPace.minutes,
     dueItems: dueRows.map((r) => {
       const metadata = mixMetadataByQuestion.get(r.question_id);
       return {
