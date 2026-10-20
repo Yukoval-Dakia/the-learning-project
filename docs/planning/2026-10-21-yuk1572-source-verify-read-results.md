@@ -1,6 +1,6 @@
 # YUK-1572 — 来源核验的去重读取与结果投影
 
-基线 `83bbecdaecaf70be0ae0241795fac3d5a07940c1`；分支 `arch/source-verify-read-results`；唯一 worktree `/Users/yuqi/.t3/worktrees/the-learning-project/t3-f0139945`。已 fetch 并从最新 main 开始，未带父旧 docs。#1910 的 `source_verify_prechecks.ts` 原样。
+原始实施基线 `83bbecdaecaf70be0ae0241795fac3d5a07940c1`；当前整合基线 `67506c5eaa5604ba34d2c943132343bf2e7fab5e`；分支 `arch/source-verify-read-results`；唯一 worktree `/Users/yuqi/.t3/worktrees/the-learning-project/t3-f0139945`。已 fetch 并从最新 main 开始，未带父旧 docs。#1910 的 `source_verify_prechecks.ts` 原样。
 
 占用状态：主线逐 hunk 释放、父线明确批准后，已原子接入原 `checkDedup` 337–386（含紧邻职责注释）、`solveCheckToOutcome` 388–397、纯结果投影 1019–1042 与必要 import hunk。冻结投影 496–668 仍保护；自己准备的未接入 `source_verify_input.ts` 已删除，不纳入提交。
 
@@ -40,8 +40,17 @@
 
 父线于源码 head `3468f41a283d40c46d27783b757ec22e82bf4614` 完成唯一一次 heavy frozen install（rc0），package/lock/workspace hashes 前后一致，回执见该 head 仓外目录的 `parent-frozen-install.json`。本 writer 未 install/update/复制依赖。随后 fetch 并普通 merge 最新 main `20222f2cafe1500a9e445b43fe132935405d825a` 得到 `854652e87cb147c04ece5ba354e9dc53011a6410`，无冲突；己方4个文件与上游3个publication文件 blob 均保留，依赖 hashes 与安装回执一致，无须重装。
 
-首轮五门经 heavy.sh 串行实跑：typecheck/build/两audit rc0；lint rc1（180 warnings，唯一 error 为本片 `source_verify_dedup.ts` 的 import 换行格式，非上游问题），本提交只将该 import 折回 formatter 要求的单行，函数正文原样。首轮 raw stdout/stderr、argv、UTC、真实 rc 封于 merge head 的 `source_verify-five-gates/`，诊断另封 `source_verify-lint-diagnostic/`，不覆盖。
+首轮五门经 heavy.sh 串行实跑：typecheck/build/两audit rc0；lint rc1（180 warnings，唯一 error 为本片 `source_verify_dedup.ts` 的 import 换行格式，非上游问题），已审源码提交 `668a3974ebcefd40cd7d2072d460780eb8d70fea` 只将该 import 折回 formatter 要求的单行，函数正文原样。首轮 raw stdout/stderr、argv、UTC、真实 rc 封于 merge head 的 `source_verify-five-gates/`，诊断另封 `source_verify-lint-diagnostic/`，不覆盖。
 
-首轮实际 audit：capability→server403、deep0、cross37、SCC1（agency/knowledge/practice）、超长13（新 main 基线13）；本片 source 仍1525，不能据13减少再归功本片。baseline 无变更，两audit均无新增站点或需登记变化。格式修正后的本交付 commit 须重新执行同五门；其真实结果与 raw 证据按本提交 exact head 放在仓外 `architecture-deepening/YUK-1572/<git rev-parse HEAD>/source_verify-five-gates/`，以该回执为最终结果，不拿旧轮替代。
+首轮实际 audit：capability→server403、deep0、cross37、SCC1（agency/knowledge/practice）、超长13（新 main 基线13）；本片 source 仍1525，不能据13减少再归功本片。baseline 无变更，两audit均无新增站点或需登记变化。格式修正后的已审 head `668a3974ebcefd40cd7d2072d460780eb8d70fea` 五门已全部 rc0（lint180 warnings），其真实结果与 raw 证据封于该 exact head 的仓外 `source_verify-five-gates/`，不拿旧轮替代。
+
+
+## 唯一 R1 后的 main 整合
+
+父线通知唯一 R1 对 `668a3974ebcefd40cd7d2072d460780eb8d70fea` APPROVE；这是父线提供的审查裁定，本 writer 未启动新审查。fetch 后最新 main 确认为 `67506c5eaa5604ba34d2c943132343bf2e7fab5e`（#1912 JSON 算法归属迁移），普通 merge 得到 `68d4ae0baf3649589e21ed7b007118517071af54`，无冲突。三源码 blob 均与已审 head 相同：job `a3cf667fe619d258308e50358f25db8400a7a792`、dedup `30a3b616f29c408e1d9c958de517777855ad3fb5`、result `108798d6a66f7ac0112e3bc53889309d4300ccc5`；本次仅更新此交付文档。
+
+main 全树4461个 tracked 条目按 mode/type/blob 核对，除明确列出的本片四文件外均保留，无丢失或改写上游条目。main baseline 全文 blob `4c4154f785b0f2ae2dadc2f2e3223809117a8984` 原样保留；changes22、edgeRecords20、sourceSizeRecords1、compatShims7 的 main 前缀和全数组均相同，本片 baseline 零 delta。main 声明 debt394/0/37、SCC1×3，相对上一轮403的下降来自上游JSON片，不计入本片收益；该数字为 main baseline 声明，新的实际 audit 以本提交 exact-head 五门回执为准。source仍1525行。
+
+整合与账本核对原始回执封于仓外 merge head `68d4ae0baf3649589e21ed7b007118517071af54/source_verify-r1-main-integration/`。package/lock/workspace 三hash仍与父唯一 install receipt 一致，本轮没有重装。文档提交后的新 exact head 须经 heavy.sh 串行重新执行 typecheck/lint/build/两audit；raw stdout/stderr、argv、UTC、真实rc放在 `architecture-deepening/YUK-1572/<本交付git HEAD>/source_verify-five-gates/`，最终源码/body/main全树与账本证明放在同 head 的 `source_verify-r1-final/`。不复用旧head检查，不覆盖旧seal。
 
 所有 tests/vitest/DB/TEST/Docker/daemon/provider/runtime/demo/paid、push/PR/watch/review/Linear/部署/清树均 NOT_RUN；测试代码零修改。未发现本范围之外的新 actionable follow-up；父线继续负责独立验收、PR/CI与既有 YUK-1572 整票义务。
