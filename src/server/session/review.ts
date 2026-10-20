@@ -17,19 +17,15 @@ import { assertFromState } from './guards';
 //      completed | abandoned
 //                  ↳ reopened → started (YUK-63)
 //
-// YUK-57: paused is a user-initiated transient state from /review page. Both
-// started and paused are "live" states — orphan cron (6h) sweeps both, and
-// sendBeacon close / explicit complete can terminate either.
+// YUK-57: paused is a transient user state from /review. Both started and paused
+// are "live": the 6h orphan cron sweeps both, and complete/abandon can end either.
 //
-// Review sessions in Phase 1c.1 are state envelopes only. Per-question review
-// events (FSRS rating + state) are written by the review route in Step 6 using
-// `writeEvent` directly with session_id chained back to this session. NO domain
-// grading writes happen inside these transitions. Completion releases buffered
-// native feedback through a durable notification in the same transaction.
+// These are state envelopes only. Per-question review events (FSRS rating + state)
+// are written by the review route; these transitions never grade. Completion
+// releases buffered native feedback in the same transaction, so it is visible only
+// once the session is really over.
 //
-// Per-transition `job_events` are emitted for SSE / observability parity with
-// IngestionSession, using business_table='learning_session' (no legacy table
-// name continuity needed since review sessions are new in 1c.1).
+// job_events are emitted for SSE / observability parity with IngestionSession.
 
 const SESSION_TABLE = 'learning_session' as const;
 
@@ -161,9 +157,8 @@ async function applyReviewSessionTransition(
     }
 
     if (target === 'completed') {
-      // Raw drizzle `execute` returns timestamptz in PG text form (not a Date);
-      // attempt payloads store `started_at.toISOString()` (see paper-attempt.ts),
-      // so normalize to ISO for the comparison either way.
+      // Raw `execute` returns timestamptz as PG text, while attempt payloads store
+      // the ISO form (paper-attempt.ts); normalize before comparing.
       const paperStartedAt = new Date(current.started_at).toISOString();
       const attempts = await tx
         .select()
@@ -242,27 +237,23 @@ export async function transitionReviewSession(
 // ---------- startReviewSession ----------
 
 export type StartReviewSessionParams = {
-  /** Optional Phase 1d goal linkage. */
+  /** Optional goal linkage. */
   goalId?: string | null;
   /**
-   * U5 (YUK-203) — optional soft reference to the paper artifact this review
-   * session is taking (the answering page passes it on mount). Null for the
-   * FSRS-逐张 /review flow. No FK (Q4) — loose text ref.
+   * U5 (YUK-203) — soft reference to the paper being answered. Null for the
+   * FSRS per-card /review flow; loose text ref, no FK.
    */
   artifactId?: string | null;
   /**
-   * YUK-535 — optional server-owned KC scope for an on-demand review session. Daily/FSRS and
-   * paper review sessions leave this null; scoped practice persists `[kc]` so reloads can recover
-   * the same session without trusting a client-supplied session id.
+   * YUK-535 — server-owned KC scope for on-demand review; persists so reloads can
+   * recover the same session without trusting a client-supplied session id.
    */
   scopeKnowledgeIds?: string[] | null;
 };
 
 /**
- * Create a fresh review session (type='review', status='started').
- *
- * @returns the new sessionId. Caller (route layer) writes per-question review
- *   events with session_id=<this id> through writeEvent.
+ * Create a fresh review session (type='review', status='started'). The route
+ * chains per-question review events to the returned id.
  */
 export async function startReviewSession(
   db: Db | Tx,
@@ -309,7 +300,7 @@ export async function startReviewSession(
 // ---------- completeReviewSession ----------
 
 /**
- * started → completed. Sets ended_at = now and bumps version.
+ * started|paused → completed. Sets ended_at and bumps version.
  */
 export async function completeReviewSession(db: Db, sessionId: string): Promise<void> {
   await applyReviewSessionTransition(db, sessionId, 'completed', {
@@ -321,11 +312,8 @@ export async function completeReviewSession(db: Db, sessionId: string): Promise<
 // ---------- abandonReviewSession ----------
 
 /**
- * started → abandoned. Sets ended_at = now and bumps version.
- *
- * Distinct from `completed` so the timeline UI can show "session you walked
- * away from" separately from "session you finished". No data loss; events
- * already written stay chained.
+ * started|paused → abandoned. Distinct terminal state so the timeline can show
+ * "walked away" separately from "finished"; existing events stay chained.
  */
 export async function abandonReviewSession(db: Db, sessionId: string): Promise<void> {
   await applyReviewSessionTransition(db, sessionId, 'abandoned', {
@@ -337,12 +325,8 @@ export async function abandonReviewSession(db: Db, sessionId: string): Promise<v
 // ---------- pauseReviewSession (YUK-57) ----------
 
 /**
- * started → paused. Pause is a user-initiated transient state from /review.
- * Does NOT set ended_at — the session is still "live" semantically. Version
- * bumps so optimistic-concurrency consumers see the change.
- *
- * sendBeacon on pagehide must skip emit when status='paused' (handled
- * client-side); orphan cron still abandons paused sessions older than 6h.
+ * started → paused. Transient and does not set ended_at; the 6h orphan cron
+ * still abandons old paused sessions.
  */
 export async function pauseReviewSession(db: Db, sessionId: string): Promise<void> {
   await applyReviewSessionTransition(db, sessionId, 'paused', {
@@ -354,9 +338,7 @@ export async function pauseReviewSession(db: Db, sessionId: string): Promise<voi
 // ---------- resumeReviewSession (YUK-57) ----------
 
 /**
- * paused → started. Resumes from /today SessionStrip or via `?session=<id>`
- * URL param on /review mount. Version bumps; ended_at stays null (was null
- * during paused too).
+ * paused → started. Resumes from /today or `?session=<id>` on /review mount.
  */
 export async function resumeReviewSession(db: Db, sessionId: string): Promise<void> {
   await applyReviewSessionTransition(db, sessionId, 'started', {
@@ -368,10 +350,8 @@ export async function resumeReviewSession(db: Db, sessionId: string): Promise<vo
 // ---------- reopenAbandonedReviewSession (YUK-63) ----------
 
 /**
- * abandoned → started. Used when the user returns to an orphan-cron-abandoned
- * review session from `/learning-sessions`. Re-bases started_at and clears
- * ended_at because the session is live again; per-question review events remain
- * chained by session_id.
+ * abandoned → started. Re-bases started_at and clears ended_at because the
+ * session is live again; prior review events stay chained by session_id.
  */
 export async function reopenAbandonedReviewSession(db: Db | Tx, sessionId: string): Promise<void> {
   await applyReviewSessionTransition(db, sessionId, 'started', {
