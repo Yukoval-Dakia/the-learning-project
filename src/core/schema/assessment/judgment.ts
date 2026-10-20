@@ -160,7 +160,18 @@ export const ScoredUnitResult = z.object({
           }),
         )
         .optional(),
-      rule_case: z.union([z.number().int().min(0), z.literal('otherwise')]),
+      rule_case: z.union([z.number().int().min(0), z.literal('otherwise')]).optional(),
+      /**
+       * YUK-1407 — exact 判分的终态答案提取证据：过程作答里确定性抽出的
+       * 明示结论（"答：…"/"所以…"/末行等式右侧）及其 marker。只在比较器
+       * 实际走了终态提取时携带；缺省 = 没有提取（直接整段比较）。
+       */
+      final_answer: z
+        .object({
+          value: z.string(),
+          marker: z.enum(['answer_marker', 'conclusion_marker', 'trailing_equality']),
+        })
+        .optional(),
     })
     .optional(),
   matched: z
@@ -172,6 +183,12 @@ export const ScoredUnitResult = z.object({
     .optional(),
   feedback_md: z.string().optional(),
   evidence_citations: z.array(EvidenceCitation).default([]),
+  /**
+   * YUK-1407 — 实际执行路径：deterministic comparator id / model task_kind /
+   * 'human_review'。由 evaluateSubmissionCore 分发点盖印（receipt 的 route
+   * 真相）；asserted 结果由调用方按实标注。历史行无此字段 ⇒ 未知不补造。
+   */
+  judged_by: z.string().min(1).optional(),
   probe_judgement: ConjectureProbeResponseJudgement.optional(),
 });
 export type ScoredUnitResultT = z.infer<typeof ScoredUnitResult>;
@@ -181,6 +198,8 @@ export const PendingUnitResult = z.object({
   status: z.literal('pending'),
   scoring_unit_id: z.string().min(1),
   pending: PendingState,
+  /** YUK-1407 — 见 ScoredUnitResult.judged_by；pending 单元同样盖印执行路径。 */
+  judged_by: z.string().min(1).optional(),
   probe_judgement: ConjectureProbeResponseJudgement.optional(),
 });
 export type PendingUnitResultT = z.infer<typeof PendingUnitResult>;

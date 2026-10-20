@@ -432,10 +432,15 @@ export class JudgeInvoker {
       );
     }
 
-    return await runner.run({
+    const runnerResult = await runner.run({
       question: buildLocalJudgeQuestion(input.question, route),
       answer: { content: input.answer_md },
     });
+    // YUK-1407 — 过程作答超出 exact 合同时 exact runner 返回
+    // unsupported(process_answer_unresolvable)，此处如实透传：语义升级（复用
+    // 既有 SemanticJudge）按 coordinator 决定推迟到 executor+admission 就绪的
+    // 后续小切片，本 PR 不含模型执行回退。
+    return runnerResult;
   }
 
   private async emitTelemetry(telemetry: JudgeInvocationTelemetry): Promise<void> {

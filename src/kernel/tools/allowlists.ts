@@ -127,6 +127,9 @@ export const PROPOSE_WRITE_TOOLS = [
   // surface below.
   'report_ingestion_progress',
   'ask_learner',
+  // YUK-1407 — 判分纠错提案（可逆，人审 accept 才经 appeal/rejudge/CAS+replay
+  // 生效）。授予发现疑似误判的 agent 面：copilot / dreaming / coach。
+  'propose_grading_correction',
 ] as const;
 
 // YUK-949 — model-authored presentation intent. This is neither a data read nor
@@ -250,6 +253,8 @@ export const COPILOT_TOOLS = [
   'edit_question',
   'read_agent_notes',
   'write_agent_note',
+  // YUK-1407 — 判分纠错提案（对话中发现疑似误判时可落地；accept 仍人审）。
+  'propose_grading_correction',
 ] as const satisfies readonly DomainToolName[];
 
 const DREAMING_TOOLS = [
@@ -267,6 +272,8 @@ const DREAMING_TOOLS = [
   'search_memory_facts',
   'read_agent_notes',
   'write_agent_note',
+  // YUK-1407 — dreaming 复核中发现疑似误判 → 可逆纠错提案。
+  'propose_grading_correction',
 ] as const satisfies readonly DomainToolName[];
 
 // T-D6/C (YUK-120) — Coach surface allowlist.
@@ -298,6 +305,8 @@ const COACH_TOOLS = [
   'search_memory_facts',
   'read_agent_notes',
   'write_agent_note',
+  // YUK-1407 — coach 复盘发现疑似误判 → 可逆纠错提案。
+  'propose_grading_correction',
 ] as const satisfies readonly DomainToolName[];
 
 // D7③ (docs/design/2026-06-04-u0-decisions.md) — deny-from-wide: the
