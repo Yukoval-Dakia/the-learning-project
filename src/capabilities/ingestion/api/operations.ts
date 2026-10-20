@@ -165,8 +165,8 @@ async function ensureOperationDispatched(
           }
           // YUK-1522 — weekly budget gate: authorizeAgentRunStart runs inside
           // the dispatch transaction. Expected denials commit the failed
-          // identity/evidence and return before queued/send. pg-boss still uses
-          // its existing independent connection; recovery retains this identity.
+          // identity/evidence and return before queued/send. The agent job INSERT
+          // uses the same transaction as the grant, owner and queued transition.
           const dispatch = await Ingestion.enqueueAgentRun({
             db,
             boss,

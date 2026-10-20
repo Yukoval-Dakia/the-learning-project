@@ -148,6 +148,39 @@ OOM协调新规已给作者及R2：本机重命令全经 `/Volumes/YukovalSBak/y
 
 Linear capture沿YUK-1522记录父定向/运营验收，queued session恢复仍归YUK-1638，不另建重复票、不借其豁免本片P1。所有测试/断言脚本、DB/迁移执行、Docker/OrbStack/TEST/provider/paid、浏览器、运行验收、第三审、PR merge/watch/部署均NOT_RUN；新head CI待父处理，不轮询。
 
+## 两条 bot P1 实施修复（c3456dc337，非R3）
+
+父已确认 discussion4326286717/4326286736 成立。本轮唯一作者从clean `c3456dc337edd8c97338a1eb2935edd86c784600` 继续，保留7899fed80可选durable key读取和Shanghai周界文档；无新树/install/无关merge/子任务/第三审。父负责Linear、外部证据及bot回复，本轮不resolve。
+
+实施前修法：
+
+1. **dispatch真实事务与所有权**：复用现役 `server/boss/pg-boss-drizzle.ts`，仅agent enqueue的boss.send使用原Drizzle事务；grant、固定execution owner、queued、job同事务提交/回滚，不再依赖独立连接。worker在翻session或claim前按payload operation/run身份校验，冻结runRef，不从后来latest grant借身份。resume/continue的marker在原事务绑定owner，实际send读取该marker绑定并带身份；旧无身份payload只能进入可证明的同一legacy owner，不能进入新transactional owner。
+2. **旧无grant派发未证**：现有agent reservation（以及仍可恢复的accepted/legacy queued事件）没有新协议的明确not_started/closed证据时，持久身份本身代表dispatch未证，全局新启动503，不看job是否存在、是否先重放。旧worker按固定payload被入口fence拒绝，拒绝一次delivery不冒充所有旧执行者的关闭证据。无法证明的legacy归属诚实封闭，不造grant或重发unknown。缺失历史不能声称自动修复；运营数据核对仍NOT_RUN。
+3. **终态原子收口与恢复**：paid catch的error、segment failed、receipt、session/grant/operation必须同一事务；失败回滚保留running，不能先关segment再吞结算异常。claim不因running过期直接开新segment，只有现役sweeper可恢复。旧已closed failed但session未终态也进入显式settlement-pending分支，worker重投和sweeper均只收口、不入模型。stale无paid marker也不构成未发证明，统一收口并保留execution未证，不自动续付。恢复收据的内存redaction明细已不可重建，明确写unavailable/null，不编造零计数。
+4. **成功同根**：done stage/segment与session/receipt/grant/operation同事务，避免成功部分提交；segment cap继续只做终态收口、不重入模型。超时/缺job并不证明旧执行者已关闭，财务unknown仍保留，不能为解除阻塞清费用身份。
+
+新owner实现只依赖本capability、db与kernel；共享session文件只新增server→server现役事务适配器引用，不新增capability→server或跨capability值边。run.ts原974行，增加恢复前先拆出实际输入/隐私/幂等组装职责到同目录模块，由run直接消费；不做透传包装。只运行heavy.sh串行typecheck/lint/build及必要既有静态audit，全部运行/故障注入/DB/provider/测试均NOT_RUN，默认助手禁开。
+
+本轮实现收口（2026-10-21，以下是源码时序推导，非DB/并发实测）：
+
+| 故障窗口 | 持久身份与真实消费者 |
+| --- | --- |
+| 新agent send成功后外层rollback | `server/session/ingestion.ts:enqueueAgentRun` 的两条agent send都用 `fromPgBossDrizzleTx(tx)`；已安装pg-boss的createJob实际以options.db执行job INSERT。grant/owner/queued/job全部回滚；独立accepted reservation仍是not_started，未获得付费授权。extract旧路径不变。 |
+| 旧无grant ghost，未先replay/另一key/另一session/已claim或job消失 | `operation-store.ts:retainUnprovenAgentReservations` 在全局预算锁下保留可读accepted和legacy queued证据；已有durable reservation缺dispatch_state也属于未证。`spend.ts:hasUnresolvedAgentSpend`全历史检查这些身份、未证dispatch及active owner，不能靠缺job/缺attempt/状态终结/周切换释放。拒绝不创建grant。 |
+| 旧executor遇到后来queued授权 | `ownership.ts:enterAgentExecution` 在翻状态/claim前校验payload operation与固定owner。新协议无身份旧job被拒绝；task/OCR负债写入和OCR beforeRequest再次校验同runRef。`run.ts`全程冻结owner，不再用latest grant。新run事件floor隔离旧segment终态，旧intent的快照不能绑定新owner。 |
+| paid catch终态事务失败/崩溃/重投 | error+failed segment+receipt+session/grant/operation同事务；回滚仍是running。`ledger.ts:claimRunSegment`对任何running返回busy，旧failed半终态返回settlement_pending，不开付费segment。`ingestion_agent_run`与已注册每分钟`ingestion_ask_sweep`消费同一终态恢复函数；恢复失败仍保留原marker供下次扫描，成功则session/operation失败、grant awaiting_cost、execution未证保留。 |
+| success/post-model/cap终态失败 | done stage/segment与session/receipt/结算同事务；cap也先持久claim，终态回滚后可被同一sweeper发现。没有sent marker同样不自动续付；正常ask等待和同owner的resume/continue仍消费已绑定intent。 |
+
+legacy兼容边界：带operation的旧job只认其真实in_flight grant；无身份resume只有唯一历史grant可证明归属时才能采用；多grant时拒绝猜latest。无grant旧lane仅在唯一可见queued且lane=agent时采用session runRef；多次/混合queued或历史已裁剪而归属不足时封闭。一次被拒绝的delivery不清除原未证占位。已完成且可证明的worker终态才关闭owner；超时恢复不是“执行者已关闭”的证明。实际历史缺口数未知，仍需父运营核对，不借YUK-1638豁免本片。
+
+锁序：collection key reservation事务先结束；per-operation dispatch锁→全局预算锁→session行；worker/recovery是run advisory→session行。ask resolution是ask advisory→session行；intent绑定不反取run或预算锁。结算仅持session行，不反取key/全局预算锁。rollback不能留下新job或grant；旧执行身份、费用身份与key均不按TTL/周/数量裁剪。已知旧周支出仍只记原周，未结执行/费用则全历史阻断。
+
+恢复收据不重建已丢的内存脱敏统计：原event内明确unavailable/null；必要同capability读接线`api/session-detail.ts:readUsageReceipt`按既有nullable契约返回null，避免500和虚构“零脱敏”。正常receipt格式、API schema和UI不变；session失败原因和operation终态仍可观察。未触global provider/paid协议、其它capability、迁移或测试。
+
+本轮静态证据目录：`/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/yuk1522/pr1891-dispatch-settlement-c345-20261021/`。边界及架构audit实际exit1，原因是移除不安全retries-exhausted分支后ingestion→boss值边8→7、总边417→416（真实下降）；遵父要求不改baseline、不恢复假边、不重跑Circle，不称全绿。其它检查和日志hash以本轮checks.json为准。无第三审、resolve、merge、ready、watch、部署；Linear/外部证据由父负责。
+
+最终typecheck/lint/build均exit0，lint为179warnings；八项静态audit中API contracts/client/client-usage、schema、provider-lanes、provider-attempt-truth六项exit0，capability-boundaries/architecture-deepening两项exit1如上。gen:api-client（由audit:api-client执行）与gen:postman均exit0且生成文件无diff。收据读接线的中间typecheck错误及修后日志全部保留。23份检查/格式日志清单`logs.sha256`的SHA256为`9916d845d7ab19e085fa613c807c28052e76beeb4ed51883105ef8a9629bd94c`；每条命令均经外部heavy.sh串行执行，内置限流复用祖先槽，Node3072MiB/全机2槽/本线1。无测试或断言脚本、fixture修改；所有DB/并发/TTL/跨周/费用/真实恢复/故障注入/provider/运行验收均NOT_RUN。
+
 
 ## R2裁决与重新分派（不再开审查轮次）
 

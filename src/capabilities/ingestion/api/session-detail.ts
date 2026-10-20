@@ -36,6 +36,14 @@ async function readUsageReceipt(sourceDocumentId: string) {
     limit: 1,
   });
   if (!receipt) return null;
+  // Recovery preserves an honest unknown receipt in the event stream. The
+  // existing nullable read contract cannot present missing sink data as zero
+  // redactions, nor parse that recovery evidence as a normal counted receipt.
+  if (
+    'redaction_accounting' in receipt.payload &&
+    receipt.payload.redaction_accounting === 'unavailable'
+  )
+    return null;
   const payload = UsageReceiptPayloadSchema.parse(receipt.payload);
   return {
     derivation_policy: await resolveDocumentDerivationPolicy(db, sourceDocumentId),

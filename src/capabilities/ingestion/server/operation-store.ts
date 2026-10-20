@@ -5,6 +5,7 @@ import type { IngestionOperationKind } from '@/capabilities/ingestion/api/operat
 import type { Db, Tx } from '@/db/client';
 import { job_events, learning_session } from '@/db/schema';
 import { writeJobEvent } from '@/server/events/writer';
+import { writeAgentBudgetPath } from './agent/budget-state';
 import {
   findDurableAgentKey,
   persistAgentReservation,
@@ -119,6 +120,7 @@ export async function reserveIngestionOperation(
           await persistAgentReservation(tx, {
             ...input,
             operationId: durable.operationId,
+            restored: true,
             resource: (await readIngestionOperation(tx, durable.operationId)) ?? undefined,
           });
         }
@@ -150,6 +152,7 @@ export async function reserveIngestionOperation(
           await persistAgentReservation(tx, {
             ...input,
             operationId: existing.businessId,
+            restored: true,
             resource: (await readIngestionOperation(tx, existing.businessId)) ?? undefined,
           });
         }
@@ -177,6 +180,65 @@ export async function reserveIngestionOperation(
     });
     return { outcome: 'created', operationId: input.operationId };
   });
+}
+
+/** Preserve still-readable pre-durable accepted handles before a new start. */
+export async function retainUnprovenAgentReservations(tx: Tx): Promise<void> {
+  const rows = await tx.execute<{
+    operation_id: string;
+    session_id: string;
+    input_hash: string;
+    idempotency_key: string | null;
+  }>(sql`
+    SELECT DISTINCT ON (j.business_id) j.business_id AS operation_id,
+      s.id AS session_id, j.payload->>'input_hash' AS input_hash,
+      j.payload->>'idempotency_key' AS idempotency_key
+    FROM job_events j JOIN learning_session s ON s.id = j.payload->>'session_id'
+    WHERE s.type = 'ingestion' AND j.business_table = 'ingestion_operation'
+      AND j.event_type = 'operation.accepted' AND j.payload->>'operation_kind' = 'agent'
+      AND NOT (COALESCE(s.agent_budget->'operations', '{}'::jsonb) ? j.business_id)
+      AND NOT (COALESCE(s.agent_budget->'grants', '{}'::jsonb) ? j.business_id)
+    ORDER BY j.business_id, j.id
+  `);
+  for (const row of rows) {
+    if (!row.input_hash) {
+      await writeAgentBudgetPath(tx, row.session_id, ['unproven_dispatches', row.operation_id], {
+        reason: 'historical_input_identity_unavailable',
+        observed_at: new Date().toISOString(),
+      });
+      continue;
+    }
+    await persistAgentReservation(tx, {
+      operationId: row.operation_id,
+      sessionId: row.session_id,
+      inputHash: row.input_hash,
+      ...(row.idempotency_key ? { idempotencyKey: row.idempotency_key } : {}),
+      restored: true,
+      resource: (await readIngestionOperation(tx, row.operation_id)) ?? undefined,
+    });
+  }
+  // Pre-reservation agent dispatches have no operation id to restore. Retain
+  // the actual event identity rather than inventing a grant or guessing cost.
+  const legacy = await tx.execute<{ session_id: string; id: number }>(sql`
+    SELECT DISTINCT ON (s.id) s.id AS session_id, j.id
+    FROM learning_session s JOIN job_events j ON j.business_id = s.id
+    WHERE s.type = 'ingestion' AND j.business_table = 'ingestion_session'
+      AND j.event_type = 'ingestion.queued' AND j.payload->>'lane' = 'agent'
+      AND COALESCE(s.agent_budget->'grants', '{}'::jsonb) = '{}'::jsonb
+      AND COALESCE(s.agent_budget->'operations', '{}'::jsonb) = '{}'::jsonb
+      AND s.agent_budget->'execution_owner' IS NULL
+    ORDER BY s.id, j.id
+  `);
+  for (const row of legacy)
+    await writeAgentBudgetPath(
+      tx,
+      row.session_id,
+      ['unproven_dispatches', `legacy_event:${row.id}`],
+      {
+        reason: 'legacy_dispatch_ownership_unproven',
+        observed_at: new Date().toISOString(),
+      },
+    );
 }
 
 export async function writeIngestionOperationEvent(

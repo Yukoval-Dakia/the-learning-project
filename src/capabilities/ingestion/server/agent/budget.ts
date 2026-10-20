@@ -8,6 +8,7 @@ import type { Db, Tx } from '@/db/client';
 import { learning_session, system_config } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import {
+  retainUnprovenAgentReservations,
   writeIngestionOperationEvent,
   writeIngestionOperationTerminalOnce,
 } from '../operation-store';
@@ -22,6 +23,7 @@ import {
   persistGrant,
   readAgentBudget,
 } from './budget-state';
+import { bindGrantedAgentExecution, closeAgentExecution } from './ownership';
 import {
   hasUnresolvedAgentSpend,
   readAgentWeekSpend,
@@ -106,12 +108,19 @@ async function finalizeGrant(
 ): Promise<'settled' | 'awaiting_cost'> {
   const current = await readAgentBudget(tx, sessionId, true);
   grant = current?.grants[operationId] ?? grant;
-  const spend = await hasUnresolvedAgentSpend(tx);
   const now = new Date().toISOString();
   const executionClosed = input.settleReason === 'run_terminal';
+  if (executionClosed) {
+    // A real worker terminal clears its own execution placeholder in this
+    // transaction, before checking remaining financial liabilities.
+    grant = { ...grant, execution_closed_at: now };
+    await persistGrant(tx, sessionId, operationId, grant);
+    await closeAgentExecution(tx, sessionId, operationId);
+  }
+  const spend = await hasUnresolvedAgentSpend(tx);
   // A vanished job is not proof that a claimed executor cannot still send.
   const dispatchUnproven =
-    ['queue_vanished', 'dispatch_unproven'].includes(input.settleReason) &&
+    ['queue_vanished', 'dispatch_unproven', 'session_terminal'].includes(input.settleReason) &&
     !grant.execution_closed_at;
   const unsettled = spend.unsettled || dispatchUnproven;
   const next: AgentBudgetGrant = {
@@ -146,6 +155,7 @@ async function authorizeGrant(
   // 先全局串行，再碰行数据——所有 start 判定同一次序，无锁次序分叉。
   await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${BUDGET_LOCK_KEY}))`);
 
+  await retainUnprovenAgentReservations(tx);
   await retainHistoricalOcrLiabilities(tx, input.sessionId);
   const now = new Date();
   const rows = await loadAgentBudgetRows(tx);
@@ -301,6 +311,7 @@ async function authorizeGrant(
     op_status: 'accepted',
     op_updated_at: now.toISOString(),
   });
+  await bindGrantedAgentExecution(tx, input.sessionId, input.operationId);
 }
 
 /**
@@ -339,7 +350,7 @@ export async function settleAgentRunBudget(
   tx: Tx,
   input: {
     sessionId: string;
-    /** job payload 带来的 operationId（resume/continue 可能没有 → 从 grant 反查）。 */
+    /** Frozen payload owner; legacy callers may use the persisted execution owner. */
     operationId?: string;
     terminal: 'completed' | 'failed';
     /** Only a worker's real terminal proves its executor cannot send again. */
@@ -351,12 +362,14 @@ export async function settleAgentRunBudget(
   },
 ): Promise<void> {
   const budget = await readAgentBudget(tx, input.sessionId, true);
-  const requested = input.operationId ? budget?.grants[input.operationId] : undefined;
-  const open =
-    requested && input.operationId
-      ? { operationId: input.operationId, grant: requested }
-      : findOpenGrant(budget);
-  const operationId = open?.operationId ?? input.operationId;
+  const requestedId = input.operationId ?? budget?.execution_owner?.operation_id ?? undefined;
+  const requested = requestedId ? budget?.grants[requestedId] : undefined;
+  const open = requestedId
+    ? requested
+      ? { operationId: requestedId, grant: requested }
+      : null
+    : null;
+  const operationId = requestedId;
 
   if (open && budget) {
     const { code, message, status, ...extra } = input.error ?? { code: 'run_failed' };
@@ -391,6 +404,7 @@ export async function settleAgentRunBudget(
             },
     });
   }
+  if (input.executionClosed !== false) await closeAgentExecution(tx, input.sessionId, operationId);
 }
 
 /** G6: the event owner atomically advances durable identity and stream. */
@@ -429,30 +443,6 @@ export async function agentOpOwnsSessionRun(
     ) AS found
   `);
   return jobs[0]?.found === true;
-}
-
-/**
- * 本次启动的稳定身份 = 未终结 grant 的 operation_id（无 open grant 时扫
- * settled——已收口 run 的 resume/continue 仍属同一启动身份）。
- * 无 grant（预授权时代 / 手工恢复）退化回 sessionId——run 级身份仍稳定。
- */
-export async function resolveAgentRunRef(db: Db, sessionId: string): Promise<string> {
-  const [row] = await db
-    .select({ agentBudget: learning_session.agent_budget })
-    .from(learning_session)
-    .where(and(eq(learning_session.id, sessionId), eq(learning_session.type, 'ingestion')))
-    .limit(1);
-  const budget = parseAgentBudget(row?.agentBudget);
-  const open = findOpenGrant(budget);
-  if (open) return open.operationId;
-  // jsonb 键序是字典序不是时间序——按 granted_at 取最后授权的 settled grant。
-  let latest: { operationId: string; grantedAt: string } | null = null;
-  for (const [operationId, grant] of Object.entries(budget?.grants ?? {})) {
-    if (latest == null || grant.granted_at > latest.grantedAt) {
-      latest = { operationId, grantedAt: grant.granted_at };
-    }
-  }
-  return latest?.operationId ?? sessionId;
 }
 
 /** 主 run 的确定性 ai_task_runs.id（cost_ledger.task_run_id 同源）。 */

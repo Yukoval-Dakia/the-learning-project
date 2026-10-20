@@ -4,6 +4,7 @@ import type { Db, Tx } from '@/db/client';
 import { providerCostProjectedCte } from '@/kernel/read-models/provider-cost-projection';
 import {
   AGENT_TASK_KIND,
+  type AgentBudgetEnvelope,
   type HistoricalOcrIdentity,
   budgetUnavailable,
   loadAgentBudgetRows,
@@ -174,8 +175,18 @@ export async function hasUnresolvedAgentSpend(tx: Tx) {
         AND (${UNPRICED_SQL})) AS unresolved_records,
       (SELECT COUNT(*)::int FROM history WHERE identity->>'ownership' = 'unproven') +
       (SELECT COUNT(*)::int FROM learning_session s,
+        jsonb_each(COALESCE(s.agent_budget->'operations', '{}'::jsonb)) o
+        WHERE s.type = 'ingestion' AND (o.value->>'dispatch_state' IS NULL
+          OR o.value->>'dispatch_state' = 'unproven')
+          AND NOT (COALESCE(s.agent_budget->'grants', '{}'::jsonb) ? o.key)) +
+      (SELECT COUNT(*)::int FROM learning_session s,
+        jsonb_object_keys(COALESCE(s.agent_budget->'unproven_dispatches', '{}'::jsonb)) d
+        WHERE s.type = 'ingestion') +
+      (SELECT COUNT(*)::int FROM learning_session s WHERE s.type = 'ingestion'
+        AND s.agent_budget->'execution_owner'->>'state' = 'active') +
+      (SELECT COUNT(*)::int FROM learning_session s,
         jsonb_each(COALESCE(s.agent_budget->'grants', '{}'::jsonb)) g
-        WHERE s.type = 'ingestion' AND g.value->>'settle_reason' IN ('queue_vanished', 'dispatch_unproven')
+        WHERE s.type = 'ingestion' AND g.value->>'settle_reason' IN ('queue_vanished', 'dispatch_unproven', 'session_terminal')
           AND g.value->>'execution_closed_at' IS NULL) +
       (SELECT COUNT(*)::int FROM provider_attempt pa WHERE pa.provider = 'glm'
         AND pa.lane_id = 'glm.ocr-layout-parsing' AND pa.operation_kind = 'ocr_page_fetch'
@@ -199,11 +210,19 @@ export async function hasUnresolvedAgentSpend(tx: Tx) {
 export async function retainAgentTaskLiability(db: Db, sessionId: string, taskRunId: string) {
   await db.transaction(async (tx) => {
     const budget = await readAgentBudget(tx, sessionId, true);
+    requireTaskOwner(budget, taskRunId, 'ingestion_agent_run');
     if (budget?.tasks?.[taskRunId]) return;
     await writeAgentBudgetPath(tx, sessionId, ['tasks', taskRunId], {
       bound_at: new Date().toISOString(),
     });
   });
+}
+
+function requireTaskOwner(budget: AgentBudgetEnvelope | null, taskRunId: string, prefix: string) {
+  const owner = budget?.execution_owner;
+  if (owner?.state !== 'active' || !taskRunId.startsWith(`${prefix}:${owner.run_ref}:seg:`)) {
+    budgetUnavailable('unsettled_cost');
+  }
 }
 
 /**
@@ -220,6 +239,7 @@ export async function withAgentProviderLiability<T>(
   const liabilityId = randomUUID();
   const index = await db.transaction(async (tx) => {
     const budget = await readAgentBudget(tx, input.sessionId, true);
+    requireTaskOwner(budget, input.taskRunId, 'ingestion_agent_tool');
     const attributions = budget?.attributions ?? [];
     if (attributions.some((a) => a.operation_id === input.operationId)) {
       // Same anchor already entered this paid boundary. Do not re-send an
@@ -246,6 +266,7 @@ export async function withAgentProviderLiability<T>(
   return execute(async (attemptId) => {
     await db.transaction(async (tx) => {
       const budget = await readAgentBudget(tx, input.sessionId, true);
+      requireTaskOwner(budget, input.taskRunId, 'ingestion_agent_tool');
       const attribution = budget?.attributions?.[index];
       if (attribution?.liability_id !== liabilityId) budgetUnavailable('budget_read_unavailable');
       if (attribution.attempt_id && attribution.attempt_id !== attemptId) {

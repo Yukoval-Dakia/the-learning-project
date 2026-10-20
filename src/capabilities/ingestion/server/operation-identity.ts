@@ -55,6 +55,7 @@ export async function persistAgentReservation(
     inputHash: string;
     idempotencyKey?: string;
     resource?: IngestionOperationResource;
+    restored?: boolean;
   },
 ): Promise<void> {
   const budget = await readAgentBudget(tx, input.sessionId, true);
@@ -74,6 +75,8 @@ export async function persistAgentReservation(
             : 'accepted',
     created_at: resource?.created_at ?? now,
     updated_at: resource?.updated_at ?? now,
+    // Only a newly created reservation proves it has never entered enqueue.
+    dispatch_state: input.restored ? 'unproven' : 'not_started',
     ...(resource?.error ? { error: { ...resource.error } } : {}),
     ...(resource?.result !== undefined ? { result: resource.result } : {}),
   } satisfies AgentOperationIdentity);

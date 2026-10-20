@@ -7,11 +7,11 @@ import { ApiError } from '@/kernel/http';
 import {
   writeAgentAskEvent,
   writeAgentAskResolvedEvent,
-  writeAgentRunSegment,
   writeAskAnswerClaimed,
   writeAskCreated,
   writeAskResolved,
 } from '../events/agent-progress';
+import { readAgentBudget } from './budget-state';
 import {
   ASK_ANSWER_CLAIMED,
   ASK_CREATED,
@@ -28,6 +28,7 @@ import {
   type IngestionAskAnswerT,
 } from './contract';
 import { enqueueAgentResume } from './dispatch';
+import { recordAgentExecutionIntent } from './ownership';
 
 // YUK-1522 (R8) — durable ask lifecycle for the ingestion agent.
 //
@@ -93,13 +94,18 @@ export interface SessionAskRow {
   readonly resolved: AskResolvedPayloadT | null;
 }
 
-export async function readSessionAsks(db: Db | Tx, sessionId: string): Promise<SessionAskRow[]> {
+export async function readSessionAsks(
+  db: Db | Tx,
+  sessionId: string,
+  afterEventId = 0,
+): Promise<SessionAskRow[]> {
   const createdRows = await db.execute<{ business_id: string; payload: unknown }>(sql`
     SELECT business_id, payload
     FROM job_events
     WHERE business_table = ${INGESTION_ASK_TABLE}
       AND event_type = ${ASK_CREATED}
       AND payload ->> 'session_id' = ${sessionId}
+      AND id > ${afterEventId}
     ORDER BY id ASC
   `);
   const out: SessionAskRow[] = [];
@@ -292,17 +298,22 @@ async function writeResolution(
   tx: Tx,
   input: { askId: string; state: AskState; answer: IngestionAskAnswerT; via: 'answer' | 'timeout' },
 ): Promise<number> {
+  const budget = await readAgentBudget(tx, input.state.created.session_id, true);
+  const floor = budget?.execution_owner?.event_floor ?? 0;
+  const [created] = await tx.execute<{ id: number }>(sql`
+    SELECT id FROM job_events WHERE business_table = ${INGESTION_ASK_TABLE}
+      AND business_id = ${input.askId} AND event_type = ${ASK_CREATED} AND id > ${floor}
+  `);
+  if (!created || budget?.execution_owner?.state === 'closed') {
+    throw new ApiError('conflict', 'Ask belongs to an earlier ingestion run', 409);
+  }
   await writeAskResolved(tx, input.askId, { answer: input.answer, via: input.via });
   await writeAgentAskResolvedEvent(tx, input.state.created.session_id, {
     kind: 'ingestion_agent.ask_resolved',
     ask_id: input.askId,
     answer: input.answer,
   });
-  return writeAgentRunSegment(tx, input.state.created.session_id, {
-    segment: 0,
-    trigger: 'resume',
-    outcome: 'resume_requested',
-  });
+  return recordAgentExecutionIntent(tx, input.state.created.session_id, 'resume');
 }
 
 export interface AnswerAskResult {
@@ -444,7 +455,11 @@ export async function listPendingResumeSessions(
     WHERE business_table = ${INGESTION_AGENT_RUN_TABLE}
       AND event_type = ${'agent.run_segment'}
       AND payload ->> 'outcome' = 'resume_requested'
-      AND occurred_at > clock_timestamp() - interval '24 hours'
+      AND EXISTS (SELECT 1 FROM learning_session current_session
+        WHERE current_session.id = job_events.business_id AND current_session.type = 'ingestion'
+          AND current_session.status IN ('queued', 'extracting')
+          AND job_events.id > COALESCE((current_session.agent_budget->'execution_owner'->>'event_floor')::int, 0)
+          AND COALESCE(current_session.agent_budget->'execution_owner'->>'state', 'active') = 'active')
       AND NOT EXISTS (
         SELECT 1 FROM job_events s
         WHERE s.business_table = ${INGESTION_AGENT_RUN_TABLE}
@@ -474,7 +489,11 @@ export async function listPendingContinuationSessions(
     WHERE business_table = ${INGESTION_AGENT_RUN_TABLE}
       AND event_type = ${'agent.run_segment'}
       AND payload ->> 'outcome' = 'continue_requested'
-      AND occurred_at > clock_timestamp() - interval '24 hours'
+      AND EXISTS (SELECT 1 FROM learning_session current_session
+        WHERE current_session.id = job_events.business_id AND current_session.type = 'ingestion'
+          AND current_session.status IN ('queued', 'extracting')
+          AND job_events.id > COALESCE((current_session.agent_budget->'execution_owner'->>'event_floor')::int, 0)
+          AND COALESCE(current_session.agent_budget->'execution_owner'->>'state', 'active') = 'active')
       AND NOT EXISTS (
         SELECT 1 FROM job_events s
         WHERE s.business_table = ${INGESTION_AGENT_RUN_TABLE}
@@ -490,53 +509,58 @@ export async function listPendingContinuationSessions(
 }
 
 /**
- * Sessions whose latest numbered 'running' segment has no same-segment closer
- * and is older than `staleBeforeMs` — a segment whose worker died mid-model or
- * whose post-model bookkeeping crashed (deliberately never retried as a paid
- * re-run). `paid_attempt_sent` tells the sweeper whether a paid model call was
- * already dispatched for the segment: if so its provider outcome is unknown
- * and the session fails (worker_lost, explicitly retryable) instead of
- * silently re-paying (R2-5).
+ * Recover both an abandoned running segment and the old failed-before-settle
+ * window. Only the current run's latest numbered marker is eligible. Selection
+ * is rechecked under the run/session locks by terminal recovery; no candidate
+ * authorizes another model call, even when no paid-attempt marker survived.
  */
 export async function listStaleRunningSessions(
   db: Db,
   staleBeforeMs: number,
   limit = 25,
-): Promise<{ session_id: string; segment: number; paid_attempt_sent: boolean }[]> {
+): Promise<
+  {
+    session_id: string;
+    segment: number;
+    marker_id: number;
+    operation_id?: string;
+    run_ref?: string;
+  }[]
+> {
   const rows = await db.execute<{
     business_id: string;
     segment: number;
-    paid_attempt_sent: boolean;
+    marker_id: number;
+    operation_id: string | null;
+    run_ref: string | null;
   }>(sql`
-    SELECT business_id, (payload ->> 'segment')::int AS segment,
-      EXISTS (
-        SELECT 1 FROM job_events p
-        WHERE p.business_table = ${INGESTION_AGENT_RUN_TABLE}
-          AND p.business_id = job_events.business_id
-          AND p.event_type = ${'agent.paid_attempt'}
-          AND p.payload ->> 'phase' = 'sent'
-          AND (p.payload ->> 'segment')::int = (job_events.payload ->> 'segment')::int
-      ) AS paid_attempt_sent
-    FROM job_events
-    WHERE business_table = ${INGESTION_AGENT_RUN_TABLE}
-      AND event_type = ${'agent.run_segment'}
-      AND payload ->> 'outcome' = 'running'
-      AND (payload ->> 'segment')::int >= 1
-      AND occurred_at < clock_timestamp() - (make_interval(secs => ${staleBeforeMs / 1000}))
+    SELECT j.business_id, (j.payload ->> 'segment')::int AS segment, j.id AS marker_id,
+      s.agent_budget->'execution_owner'->>'operation_id' AS operation_id,
+      s.agent_budget->'execution_owner'->>'run_ref' AS run_ref
+    FROM job_events j JOIN learning_session s ON s.id = j.business_id
+    WHERE s.type = 'ingestion' AND s.status IN ('queued', 'extracting')
+      AND j.business_table = ${INGESTION_AGENT_RUN_TABLE}
+      AND j.event_type = 'agent.run_segment'
+      AND j.id > COALESCE((s.agent_budget->'execution_owner'->>'event_floor')::int, 0)
+      AND (j.payload ->> 'segment')::int >= 1
+      AND (j.payload->>'outcome' = 'failed' OR (
+        j.payload->>'outcome' = 'running'
+        AND j.occurred_at < clock_timestamp() - make_interval(secs => ${staleBeforeMs / 1000})
+      ))
       AND NOT EXISTS (
-        SELECT 1 FROM job_events s
-        WHERE s.business_table = ${INGESTION_AGENT_RUN_TABLE}
-          AND s.business_id = job_events.business_id
-          AND s.event_type = ${'agent.run_segment'}
-          AND s.payload ->> 'segment' = job_events.payload ->> 'segment'
-          AND s.id > job_events.id
+        SELECT 1 FROM job_events newer
+        WHERE newer.business_table = ${INGESTION_AGENT_RUN_TABLE}
+          AND newer.business_id = j.business_id AND newer.event_type = 'agent.run_segment'
+          AND (newer.payload->>'segment')::int >= 1 AND newer.id > j.id
       )
-    ORDER BY id ASC
+    ORDER BY j.id ASC
     LIMIT ${limit}
   `);
   return rows.map((row) => ({
     session_id: row.business_id,
     segment: row.segment,
-    paid_attempt_sent: row.paid_attempt_sent,
+    marker_id: row.marker_id,
+    ...(row.operation_id ? { operation_id: row.operation_id } : {}),
+    ...(row.run_ref ? { run_ref: row.run_ref } : {}),
   }));
 }

@@ -10,7 +10,6 @@ import {
 import { enqueueAgentContinuation, enqueueAgentResume } from '../server/agent/dispatch';
 import { STALE_SEGMENT_MS } from '../server/agent/ledger';
 import { failSessionForUnknownPaidAttempt } from '../server/agent/run';
-import { writeAgentRunSegment } from '../server/events/agent-progress';
 
 // YUK-1522 (R8) — ask sweeper (fast queue, every minute).
 //
@@ -25,11 +24,10 @@ import { writeAgentRunSegment } from '../server/events/agent-progress';
 //   4. A 'running' segment left open past the segment lifetime (worker died
 //      mid-model, or post-model bookkeeping crashed — bookkeeping is
 //      deliberately never retried as a paid re-run):
-//        - NO agent.paid_attempt 'sent' marker → the model call never
-//          dispatched; close the segment 'failed' + resume safely.
-//        - 'sent' marker present → the provider outcome is unknown; NEVER
-//          re-pay. Emit error{worker_lost, retryable:true} + session failed so
-//          the owner retries explicitly through the failed→agent path (R2-5).
+//      or an old failed segment whose session settlement never committed:
+//      close session/receipt/grant/operation atomically, without entering the
+//      model. A missing paid marker is not unsent proof. Execution uncertainty
+//      and unknown cost remain blockers until evidenced reconciliation.
 //
 // First-writer-wins: a learner answer racing the sweep resolves under the same
 // per-ask advisory lock, never double-resolves.
@@ -62,41 +60,14 @@ export function buildIngestionAskSweepHandler(db: Db) {
     }
     const stale = await listStaleRunningSessions(db, STALE_SEGMENT_MS, 10);
     for (const entry of stale) {
-      if (entry.paid_attempt_sent) {
-        // Unknown paid outcome / lost bookkeeping — never re-pay silently.
-        await failSessionForUnknownPaidAttempt(db, entry.session_id, entry.segment).catch((err) =>
-          console.error('[ingestion-ask-sweep] stale paid-attempt terminal write failed', {
-            sessionId: entry.session_id,
-            segment: entry.segment,
-            error: err,
-          }),
-        );
-        continue;
-      }
-      const resumeMarkerId = await db
-        .transaction(async (tx) => {
-          await writeAgentRunSegment(tx, entry.session_id, {
-            segment: entry.segment,
-            trigger: 'resume',
-            outcome: 'failed',
-          });
-          return writeAgentRunSegment(tx, entry.session_id, {
-            segment: 0,
-            trigger: 'resume',
-            outcome: 'resume_requested',
-          });
-        })
-        .catch((err) => {
-          console.error('[ingestion-ask-sweep] stale segment close failed', {
-            sessionId: entry.session_id,
-            segment: entry.segment,
-            error: err,
-          });
-          return null;
-        });
-      await enqueueAgentResume(entry.session_id, resumeMarkerId ?? undefined).catch((err) =>
-        console.error('[ingestion-ask-sweep] stale resume dispatch failed', {
+      await failSessionForUnknownPaidAttempt(db, entry.session_id, entry.segment, {
+        markerId: entry.marker_id,
+        operationId: entry.operation_id,
+        runRef: entry.run_ref,
+      }).catch((err) =>
+        console.error('[ingestion-ask-sweep] terminal settlement recovery failed', {
           sessionId: entry.session_id,
+          segment: entry.segment,
           error: err,
         }),
       );

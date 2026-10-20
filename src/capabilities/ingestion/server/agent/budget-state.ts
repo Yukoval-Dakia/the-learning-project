@@ -67,6 +67,8 @@ const operationSchema = z
     updated_at: z.string(),
     error: errorSchema.optional(),
     result: z.unknown().optional(),
+    // Missing on pre-transactional reservations: dispatch outcome is unproven.
+    dispatch_state: z.enum(['not_started', 'enqueued', 'closed', 'unproven']).optional(),
   })
   .passthrough();
 export type AgentOperationIdentity = z.infer<typeof operationSchema>;
@@ -97,6 +99,15 @@ const historySchema = z
   .passthrough();
 export type HistoricalOcrIdentity = z.infer<typeof historySchema>;
 
+const executionOwnerSchema = z.object({
+  operation_id: z.string().nullable(),
+  run_ref: z.string(),
+  protocol: z.enum(['transactional-v1', 'legacy']),
+  state: z.enum(['active', 'closed']),
+  event_floor: z.number().int().optional(),
+});
+export type AgentExecutionOwner = z.infer<typeof executionOwnerSchema>;
+
 const envelopeSchema = z
   .object({
     week_tz: z.literal(AGENT_BUDGET_WEEK_TZ),
@@ -105,6 +116,11 @@ const envelopeSchema = z
     attributions: z.array(attributionSchema).optional(),
     tasks: z.record(z.string(), z.object({ bound_at: z.string() }).passthrough()).optional(),
     historical_ocr: z.record(z.string(), historySchema).optional(),
+    execution_owner: executionOwnerSchema.optional(),
+    execution_intents: z.record(z.string(), executionOwnerSchema).optional(),
+    unproven_dispatches: z
+      .record(z.string(), z.object({ reason: z.string(), observed_at: z.string() }))
+      .optional(),
   })
   .passthrough();
 export type AgentBudgetEnvelope = z.infer<typeof envelopeSchema>;
@@ -126,13 +142,18 @@ export async function readAgentBudget(db: Db | Tx, sessionId: string, lock = fal
   return parseAgentBudget(rows[0].agent_budget);
 }
 
+/** New starts read only their own ledger; retained old runs remain readable. */
+export async function readAgentEventFloor(db: Db | Tx, sessionId: string): Promise<number> {
+  return (await readAgentBudget(db, sessionId))?.execution_owner?.event_floor ?? 0;
+}
+
 // Normalize only missing fields. Do not replace the envelope or strip unknown
 // fields: the column also contains immutable historical grants and bindings.
 export const AGENT_BUDGET_BASE_SQL = sql`
   jsonb_build_object(
     'week_tz', ${AGENT_BUDGET_WEEK_TZ}::text, 'grants', '{}'::jsonb,
     'operations', '{}'::jsonb, 'attributions', '[]'::jsonb,
-    'tasks', '{}'::jsonb, 'historical_ocr', '{}'::jsonb
+    'tasks', '{}'::jsonb, 'historical_ocr', '{}'::jsonb, 'execution_intents', '{}'::jsonb, 'unproven_dispatches', '{}'::jsonb
   ) || COALESCE(agent_budget, '{}'::jsonb)
 `;
 

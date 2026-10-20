@@ -8,6 +8,7 @@ import { learning_session, question_block } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { USAGE_POLICY_PROVENANCE_KEY } from '@/kernel/read-models/usage-policy';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
+import { fromPgBossDrizzleTx } from '@/server/boss/pg-boss-drizzle';
 import { writeJobEvent } from '@/server/events/writer';
 import { writeQuestionBlockCreateEvent } from '@/server/projections/question_block-create-event';
 import { type DocxExternalRefOmissionFacts, EXTERNAL_REF_OMISSION_NOTICE } from './docx-omission';
@@ -154,9 +155,8 @@ export const INGESTION_AGENT_RUN_QUEUE = 'ingestion_agent_run' as const;
 
 /**
  * uploaded | failed → queued. Posts an `ingestion_agent_run` pg-boss job for the
- * R8 agent lane (whole-package agentic ingestion). Same tx/ghost-job semantics
- * as enqueueExtraction; the only differences are the queue name and the lane
- * marker on the `ingestion.queued` payload.
+ * R8 agent lane (whole-package agentic ingestion). The job INSERT uses this
+ * transaction too: a rollback cannot leave a runnable job without its owner.
  */
 export async function enqueueAgentRun(
   params: EnqueueExtractionParams,
@@ -165,8 +165,7 @@ export async function enqueueAgentRun(
     // YUK-1522 — the budget gate runs FIRST inside this dispatch transaction
     // so the global budget advisory lock precedes the session row lock (one
     // lock order for all start decisions), and so the durable grant, the
-    // `queued` flip commit (or roll back) together. boss.send still uses its
-    // existing independent connection; its commit gap is not a new grant.
+    // `queued` flip and transactional boss.send commit (or roll back) together.
     const rejection = await params.beforeTransition?.(tx);
     // An expected budget denial commits its durable failed reservation and
     // financial evidence. The route raises the HTTP error after this commit.
@@ -200,14 +199,19 @@ export async function enqueueAgentRun(
           INGESTION_AGENT_RUN_QUEUE,
           { sessionId: params.sessionId, operationId: params.operationId, trigger: 'start' },
           {
+            db: fromPgBossDrizzleTx(tx),
             singletonKey: params.operationId,
             singletonSeconds: OPERATION_DISPATCH_SINGLETON_SECONDS,
           },
         )
-      : await params.boss.send(INGESTION_AGENT_RUN_QUEUE, {
-          sessionId: params.sessionId,
-          trigger: 'start',
-        });
+      : await params.boss.send(
+          INGESTION_AGENT_RUN_QUEUE,
+          {
+            sessionId: params.sessionId,
+            trigger: 'start',
+          },
+          { db: fromPgBossDrizzleTx(tx) },
+        );
     if (!jobId && !params.operationId) {
       throw new Error('Ingestion.enqueueAgentRun: boss.send returned no jobId');
     }
