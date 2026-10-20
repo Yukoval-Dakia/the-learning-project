@@ -81,7 +81,7 @@ export async function prepareJudgeBackend(boss: PgBoss, db: Db) {
   await createOrUpdateQueue(boss, JUDGE_RECONCILE_FAMILY, FAST_QUEUE_OPTS);
   await installJudgeProducerFence(db);
 }
-/** The existing host owns the only lifecycle and timer. This adapter switches both judge declarations together. */
+/** The host owns lifecycle and timers; this adapter switches both judge declarations together. */
 export function createJudgeBackend(args: {
   boss: PgBoss;
   db: Db;
@@ -125,8 +125,8 @@ export function createJudgeBackend(args: {
           },
         ]);
         await DBOS.resumeSchedule(JUDGE_RECONCILE_FAMILY);
-        // External scheduler operations cannot share the control transaction. A drain that
-        // raced the resume must pause it again; tick admission independently checks epoch.
+        // Scheduler operations cannot join the control tx. If a drain raced the
+        // resume, pause again; tick admission independently checks the epoch.
         const after = await readJudgeFamilyControl(db);
         if (
           after.phase !== 'dbos' ||

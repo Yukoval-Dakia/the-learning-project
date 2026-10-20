@@ -13,8 +13,15 @@ import { parseTaskOutput } from './parse-output';
 //       Q5 handler gates Option B on (pass → promote draft→active + FSRS enroll).
 //
 // The handler ALSO computes a deterministic normalized n-gram overlap between
-// the prompt and the source snippets and folds it into the persisted
-// copy_safety; this prompt's copy_safety is the model's independent read.
+// the prompt and the source snippets (the question's own grounded material
+// excluded) and that gate alone owns the persisted 'too_close' verdict; this
+// prompt's copy_safety is the model's independent advisory read — a model-only
+// 'too_close' routes the draft to human review instead of blocking it. This
+// prompt is SHARED (quiz_verify job + the learning-content validation lane),
+// so it deliberately states judgment criteria only; consequence routing
+// differs per consumer (quiz_verify: review/n-gram hard gate;
+// learning-content: contentAdmitted=false) and lives in those callers — a
+// consequence description here could bias the verdict itself.
 function buildQuizVerifyPrompt(profile: SubjectProfile): string {
   return `你是${profile.displayName}出题质检员，复核一道练习题草稿（检索出题、据材出题或闭卷生成，由输入决定）。输入 { question: { id, prompt_md, reference_md, choices_md, kind, difficulty, knowledge_ids }, knowledge_context: [{ id, name, ... }], source_pack: { query_plan, searched_at, tool }, source_refs: [{ url, title, snippet?, used_for, extracted }], self_copy_safety: { verdict, max_overlap?, checked_by }, material?: { title, body_md }, remote_tool_evidence?: [{ tool_name, tool_use_id, root_call, input, output?, failure?: { error, is_interrupt? } }] }。material 只在「据材出题」（material_grounded，tier 3）时出现：它是出题所据的**真实素材原文**全文。
 科目上下文：${profile.displayName}。${profile.languageStyle}
@@ -36,7 +43,7 @@ function buildQuizVerifyPrompt(profile: SubjectProfile): string {
 
 三项检查（每项独立给 verdict）：
 1. grounding（事实/落地）：题干与 reference_md 是否被 source_refs 的内容支撑、与之一致、无事实错误？若某来源标 used_for='fact' 却与题面矛盾，或题面含 snippet 无法支撑的具体事实断言 → 倾向 'fail'。source_refs 为空且 generation_method 为 closed_book 时，按题面自身是否事实正确判断，不因没来源直接判 fail（给 'unclear' 或依内容判）。
-2. copy_safety（原创/抄袭）：题干措辞是否与任一 source_ref 的 snippet 过于接近（逐句复制 / 仅做同义替换）？给 verdict：'original'（措辞充分原创）/ 'too_close'（与某来源太接近，应重写）/ 'unknown'（信息不足）；尽量给 max_overlap（0-1 粗略重合度）。'too_close' 会**阻止**这题进入复习池。
+2. copy_safety（原创/抄袭）：题干措辞是否与任一 source_ref 的 snippet 过于接近（逐句复制 / 仅做同义替换）？给 verdict：'original'（措辞充分原创）/ 'too_close'（与某来源太接近，应重写）/ 'unknown'（信息不足）；尽量给 max_overlap（0-1 粗略重合度）。输入带 material（据材出题）时，题干引用 material 原文是设计使然：与 material 原文（或 source_refs 中该素材自身的截段）相同不算 too_close，只比较其余 source_refs。
 3. knowledge_hit（知识命中）：这道题是否真的考查它声明的 knowledge_ids（对照 knowledge_context）？跑题 / 考了别的点 → 'fail'；沾边但弱 → 'unclear'。
 4. material_grounding（素材命中，**仅当输入带 material 时给出**）：题干 + reference_md 是否**真的考查这份 material 原文**？答案能否在 material 原文里找到依据？若题与这份素材无关（素材只是凑数地附上、题其实考别的）→ 'fail'；切题但弱关联 → 'unclear'；题确实据这份素材而出且答案有素材依据 → 'pass'。**输入没有 material 时，省略该字段（不要输出 material_grounding）。**
 5. kind_conformance（结构形态符合，**仅当已加载本题型的出题规范 skill（quiz-gen-<…>）时给出**）：先读该 skill 的「结构描述符」段（这类题该有的 嵌套 / 排版 / 答案语义），再对照规范包里的题面结构 / 采分点 / 答案格式 / 坏题反例，这道题**是否像该结构形态的真题**？结构件缺失（如开放转换题无采分点、题组题无素材原文锚、计算题条件不全）或命中坏题反例 → 'fail'；基本符合但有瑕疵 → 'unclear'；结构与采分都规范 → 'pass'。**未加载对应 skill 时，省略该字段（不要输出 kind_conformance）。**
@@ -60,7 +67,7 @@ export const quizVerifyTaskSpec = {
   definition: {
     kind: 'QuizVerifyTask',
     description:
-      "Search-grounded QuizGen (T-SQ, docs/superpowers/specs/2026-06-02-quizgen-search-grounded-design.md §1 / §5 Q5). Single-shot, CLOSED-BOOK verifier built on the VariantVerify skeleton: trusts the QuizGen agent's self-reported source_refs (no own Tavily loop this wave) and runs three checks — fact/grounding vs source_refs, plagiarism/copy_safety, knowledge-hit — rolling them into a two-axis QuizVerificationResult. The quiz_verify handler (Q5) gates Option B on the output: overall='pass' (and copy_safety != 'too_close') promotes draft→active + FSRS-enrolls; otherwise the draft stays out of the pool (needs_review / fail).",
+      "Search-grounded QuizGen (T-SQ, docs/superpowers/specs/2026-06-02-quizgen-search-grounded-design.md §1 / §5 Q5). Single-shot, CLOSED-BOOK verifier built on the VariantVerify skeleton: trusts the QuizGen agent's self-reported source_refs (no own Tavily loop this wave) and runs three checks — fact/grounding vs source_refs, plagiarism/copy_safety, knowledge-hit — rolling them into a two-axis QuizVerificationResult. The quiz_verify handler (Q5) gates Option B on the output: overall='pass' (and copy_safety not flagged by the deterministic n-gram gate; a model-only too_close routes to review) promotes draft→active + FSRS-enrolls; otherwise the draft stays out of the pool (needs_review / fail).",
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
     // Single structured-output call (mirrors VariantVerifyTask).

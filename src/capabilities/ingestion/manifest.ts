@@ -182,6 +182,10 @@ export const ingestionCapability = defineCapability({
           200: IngestionOperationSchema,
           202: IngestionOperationSchema,
           ...API_ERROR_RESPONSES,
+          // YUK-1522 — agent kind=agent 周额度门：
+          // 429 已含于 API_ERROR_RESPONSES；503 = 额度判定本身不可用
+          // (another_ingestion_in_flight / unsettled_cost / budget_read_unavailable)。
+          503: ApiErrorResponseSchema,
         },
         successStatus: [200, 202],
         load: () => import('./api/operations').then((m) => m.POST),

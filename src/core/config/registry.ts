@@ -749,6 +749,17 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     envMode: 'priority',
     tier: 'B',
   },
+  // ── ingestion agent 周预算（YUK-1522 LIGHT 启动额度门） ────────────────────
+  'ingestion.agent_weekly_budget_usd': {
+    // USD/周上限；0 = 显式关闭 agent 启动（kill switch）。判定点在事务内直读
+    // system_config 行 + revision（不依赖 15s 快照），env 仅作无 DB 行时的
+    // fallback 层。周口径 = Asia/Shanghai 自然周一 00:00 半开区间。
+    schema: z.number().min(0),
+    codeDefault: 20,
+    envName: 'INGESTION_AGENT_WEEKLY_BUDGET_USD',
+    envParse: numberEnv,
+    tier: 'A',
+  },
   // ── locale ────────────────────────────────────────────────────────────────
   'locale.learner': {
     schema: z.enum(['zh-CN', 'en']),

@@ -123,7 +123,7 @@ function declarationKey(options: HostOptions) {
     )
       throw new Error(`Invalid admitted declaration ${name}`);
   }
-  // Preserve prune-only fixtures; any later expansion or changed contract is explicit failure.
+  // Freeze the admitted surface; later expansion or a changed contract fails explicitly.
   return JSON.stringify(
     [
       options.decl,
@@ -191,7 +191,7 @@ function startHost(options: HostOptions) {
 export async function startPruneWorker(options: PruneWorkerOptions) {
   return startHost(options);
 }
-/** Production collects all four families before registering either workflow or launching the SDK. */
+/** Production collects all four families before registering workflows or launching DBOS. */
 export async function startDurableWorker(options: DurableWorkerOptions): Promise<void> {
   if (
     !options.declarations.reviewOrphans ||
@@ -336,8 +336,8 @@ async function mountHost(
     const reconcile = async () => {
       if (stopping) return;
       await db.transaction(async (tx) => {
-        // SHARE allows pg-boss's producer trigger to read the same row. Transitions
-        // take UPDATE and therefore cannot race a stale cron registration.
+        // SHARE lets pg-boss's producer trigger read the row; transitions take
+        // UPDATE and cannot race a stale cron registration.
         await tx.execute(sql`select phase from prune_job_events_control for share`);
         const phase = await readPrunePhase(tx);
         if (phase === 'dbos') {
