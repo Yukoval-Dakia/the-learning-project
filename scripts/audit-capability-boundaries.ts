@@ -30,6 +30,7 @@ import {
   edgeRecordSchema,
   inSizeScope,
   sourceSizeRecordSchema,
+  stableContractRulingSchema,
 } from './lib/source-size';
 
 const SOURCE_RE = /\.[cm]?[jt]sx?$/;
@@ -87,7 +88,9 @@ const baselineSchema = z.object({
   schemaVersion: z.literal(1),
   edgeUnit: z.literal(EDGE_UNIT),
   notes: z.record(z.string(), z.union([z.string(), baselineChangeSchema])).optional(),
-  changes: z.array(baselineChangeSchema).default([]),
+  /** Debt adjustments + stable_contract rulings share one append-only
+   *  ledger; rulings are discriminated by `type` and never enter debt math. */
+  changes: z.array(z.union([baselineChangeSchema, stableContractRulingSchema])).default([]),
   /** Registration log: every new audited dependency edge needs one entry. */
   edgeRecords: z.array(edgeRecordSchema).default([]),
   /** Registration log: >1000-line growth/crossing/new files (proposal §1.4). */
@@ -456,13 +459,21 @@ function posixDirname(path: string): string {
 
 const DEPENDENCY_ROOTS = ['src/capabilities', 'src/server'];
 const KERNEL_CORE_ROOTS = ['src/kernel', 'src/core'];
-/** Top-level composition root + Start frontdoor — outside DEPENDENCY_ROOTS
- *  so it never feeds the src-layer debt buckets; it gets its own port gate. */
-const SERVER_ENTRY_ROOTS = ['server'];
+/** Top-level composition root + Start frontdoor + the production worker
+ *  entry — outside DEPENDENCY_ROOTS so they never feed the src-layer debt
+ *  buckets; they get their own port gate. Only these named entry files are
+ *  scanned — maintenance scripts stay out of scope. */
+const SERVER_ENTRY_ROOTS = ['server', 'scripts/worker.ts'];
 
 function headSourceInputs(projectRoot: string, roots: readonly string[]): SourceInput[] {
   return roots
-    .flatMap((root) => sourceFiles(resolve(projectRoot, root)))
+    .flatMap((root) => {
+      const abs = resolve(projectRoot, root);
+      if (existsSync(abs) && statSync(abs).isFile()) {
+        return SOURCE_RE.test(abs) && !TEST_RE.test(abs) ? [abs] : [];
+      }
+      return sourceFiles(abs);
+    })
     .sort()
     .map((file) => ({
       path: relative(projectRoot, file).split(sep).join('/'),
@@ -479,7 +490,7 @@ function refSourceInputs(
   const pathSet = new Set(tree.map((entry) => entry.path));
   const wanted = tree.filter(
     (entry) =>
-      roots.some((root) => entry.path.startsWith(`${root}/`)) &&
+      roots.some((root) => entry.path === root || entry.path.startsWith(`${root}/`)) &&
       SOURCE_RE.test(entry.path) &&
       !TEST_RE.test(entry.path),
   );
@@ -1003,6 +1014,9 @@ function compareBaselineChanges(
   }
   const replayed = structuredClone(previous.debts);
   for (const change of baseline.changes.slice(previous.changes.length)) {
+    // stable_contract rulings are site classifications, not debt moves —
+    // they are validated in audit-architecture-deepening against real sites.
+    if ('type' in change) continue;
     const counts = replayed[change.debt].byOwnerPair;
     if ((counts[change.pair] ?? 0) !== change.from) {
       fail(change.pair, `change.from=${change.from} does not match preceding baseline`);
@@ -1061,7 +1075,10 @@ function compareBaselineChanges(
 }
 
 function tightenBaseline(baseline: DependencyBaseline, actual: DependencySnapshot): void {
-  const date = new Date().toISOString().slice(0, 10);
+  // Ledger dates are author-local ("the day the record is written"), not UTC —
+  // a JST morning lands the day before in UTC and would falsely trip the
+  // post-dating guard.
+  const date = new Date().toLocaleDateString('en-CA');
   for (const debt of DEBT_KINDS) {
     const counts = baseline.debts[debt].byOwnerPair;
     for (const [pair, from] of Object.entries(counts)) {
@@ -1255,8 +1272,11 @@ export function main(argv = process.argv.slice(2), projectRoot = process.cwd()):
   );
 
   // Anti-regression ratchets measured against the immutable base commit.
-  const today = new Date().toISOString().slice(0, 10);
-  const renames = worktreeRenameMap(projectRoot, baseSha, [...SIZE_METRIC.roots]);
+  const today = new Date().toLocaleDateString('en-CA');
+  const renames = worktreeRenameMap(projectRoot, baseSha, [
+    ...SIZE_METRIC.roots,
+    'scripts/worker.ts',
+  ]);
   const headEdges = auditedRatchetEdges(result.dependencies);
   const baseDependencies = collectSemanticDependenciesAtRef(projectRoot, baseSha);
   const baseEdges = auditedRatchetEdges(baseDependencies);

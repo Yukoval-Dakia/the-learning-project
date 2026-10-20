@@ -1443,11 +1443,18 @@ async function runCli(): Promise<void> {
     baselinePath,
   );
   const previousFull = readBaselineAtRef(projectRoot, baseSha);
+  // stable_contract rulings share the changes ledger — only the tail
+  // appended after the base can classify a site (historical rulings already
+  // did their job and are never re-punished).
+  const stableRulings = baselineFull.changes
+    .slice(previousFull.changes.length)
+    .filter((change) => 'type' in change);
   const passThroughViolations: OwnershipViolation[] = auditCompatShims({
     headSites,
     newSites: siteDiff.added,
     records: baselineFull.compatShims,
     previousRecords: previousFull.compatShims.length,
+    stableRulings,
     readSource: (path) => {
       try {
         return readFileSync(resolve(projectRoot, path), 'utf8');
@@ -1456,7 +1463,9 @@ async function runCli(): Promise<void> {
       }
     },
     resolveTarget: resolveHeadTarget,
-    today: new Date().toISOString().slice(0, 10),
+    // Author-local date — ledger dates are written in local convention; UTC
+    // midnight skew would reject a record legitimately dated today.
+    today: new Date().toLocaleDateString('en-CA'),
   });
 
   const result = auditArchitectureDeepening(projectRoot, publicReadCycleCatalog, {

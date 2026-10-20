@@ -306,3 +306,61 @@ exception; new ledgers remain empty, main changes/notes are preserved.
 Product/test/CI/package content relative to this main is unchanged. Parent
 validation and new exact CI are recorded against the post-integration head
 in the external evidence directory.
+
+## Sixth pass — server worker entry, variable-alias binding, self-consumer block, stable_contract rulings
+
+Three bot P1s plus the coordinator-approved public-port classification, in
+the same narrow fix series (no new framework/job/registry):
+
+1. **Server-entry gate now covers `scripts/worker.ts`**
+   (`SERVER_ENTRY_ROOTS = ['server', 'scripts/worker.ts']`). `headSourceInputs`
+   accepts explicit file roots (file → itself when it matches SOURCE_RE/non-test,
+   directory → `sourceFiles` recursion); `refSourceInputs` matches exact-path
+   roots in the base tree, not only `root/` prefixes; the rename map pathspec
+   gains `scripts/worker.ts` so a renamed worker cannot launder an edge. New
+   value AND type edges to non-public capability modules hard-fail — the
+   owner ruling allows only `public`/`ui-public`/kernel ports; base stock is
+   grandfathered. Other `scripts/` maintenance files stay out of scope;
+   `DEPENDENCY_ROOTS`/size/debt semantics unchanged.
+
+2. **`const wrapper = imported` is a real alias binding.** The scanner
+   registers `const X = imported` as a permanent alias
+   (`let`/`var`/member-expr/call RHS excluded), resolved after the full-file
+   pass so declaration/export order cannot hide it; each actual export name
+   (named or `default`) emits its own site. Type-only imports still excluded.
+   Sites now carry `targetSymbol` (export-from → the `from` specifier's local
+   name, namespace → `*`, `export *` → `*`, alias/function sites → the
+   imported symbol), so a retargeted or re-aliased site diffs as a NEW site.
+
+3. **Self-referencing consumer evidence is rejected.** A declared consumer
+   whose normalized path equals the record's own file fails closed (`./x`,
+   backslash and `a/./x` spellings normalized) — self-reference can never be
+   a real consumer for either `compatShims` or `stable_contract` records.
+
+4. **`stable_contract` rulings in the existing `changes` ledger.** New
+   discriminated record (field shape in `scripts/lib/source-size.ts`:
+   `type`, `file`, `siteKind`, `symbol`, `targetModule`, `targetSymbol`,
+   `owner`, `consumers[{file,line}]`, `evidence`, `rationale`, `issue`,
+   `approval`, `date`). Debt replay skips `'type' in change` members — they
+   are provenance classifications, never numeric exemptions; totals,
+   baseline reconciliation, protected debts and append-only prefix checks
+   are untouched. Only the tail appended after base can cover a new site; a
+   ruling must still match an exact current site (no alias/target/owner
+   drift, no module-wide exemption), its consumer evidence is verified
+   against real head source, and its `date` may not be post-dated. The
+   `approval` URL is shape-checked only — coordinator authority is verified
+   by the parent/coordination review, not by this code.
+
+   Approved ruling recorded (verbatim five-field material in
+   `docs/planning/2026-10-21-frontier-port-site-decisions.md`, proposal SHA
+   `c89165fc…`): `knowledge/public.ts` `learnableFrontierResolved`
+   (`siteKind: module`, target `knowledge/server/frontier-read.ts` same
+   symbol, owner `knowledge`, consumer
+   `practice/server/learnable-frontier.ts:5`, evidence `frontier-read.ts:220-352`
+   @ `de061af07`, Linear approval comment URL). This is an existing base
+   site receiving classification — it does not claim a new-site exemption.
+   The `practice/server/learnable-frontier.ts:9` same-name re-export is
+   ruled COMPAT (not stable), stays un-punished base stock, and receives NO
+   new approval/deadline; retirement is a follow-up slice. Original approved
+   proposal added verbatim as
+   `docs/planning/2026-10-20-architecture-no-regression-proposal.md`.

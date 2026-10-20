@@ -22,8 +22,8 @@
  */
 import { createHash } from 'node:crypto';
 import { parse } from '@babel/parser';
-import type { CompatShim } from './source-size';
-import { shimIsLive, validateCompatShimFields } from './source-size';
+import type { CompatShim, StableContractRuling } from './source-size';
+import { shimIsLive, validateCompatShimFields, validateStableRulingFields } from './source-size';
 import { analyzeSource } from './ts-tokenize';
 
 export const PASS_THROUGH_SCANNER_VERSION = 2;
@@ -38,6 +38,8 @@ export interface PassThroughSite {
   symbol: string;
   /** Resolved repo-relative module the site forwards to. */
   targetModule: string;
+  /** Symbol inside targetModule the site forwards ('*' for export-star). */
+  targetSymbol?: string;
   /** Canonical fingerprint of the forwarding body/signature. */
   detail: string;
 }
@@ -85,29 +87,36 @@ interface FunctionCandidate {
 }
 
 /** Exported (consumer-visible) names carried by an export-from statement,
- *  per specifier — `export {a as b} from` → 'b', `export * as ns from` → 'ns',
- *  `export v from` → 'v'. Type-only declarations/specifiers produce none. */
-function exportedValueSpecifiers(node: Record<string, unknown>): string[] {
+ *  per specifier, paired with the name inside the target module —
+ *  `export {a as b} from` → {exported:'b', target:'a'}, `export * as ns` →
+ *  {exported:'ns', target:'*'}, `export v` → {exported:'v', target:'v'}.
+ *  Type-only declarations/specifiers produce none. */
+function exportedValueSpecifiers(
+  node: Record<string, unknown>,
+): { exported: string; targetName: string }[] {
   if (!Array.isArray(node.specifiers)) return [];
   if (node.exportKind === 'type') return [];
-  const names: string[] = [];
+  const pairs: { exported: string; targetName: string }[] = [];
   for (const specifier of node.specifiers) {
     if (!isRecord(specifier)) continue;
     if (specifier.exportKind === 'type') continue;
     const exported = isRecord(specifier.exported)
       ? (nodeName(specifier.exported) ?? literalString(specifier.exported))
       : undefined;
+    const local = isRecord(specifier.local)
+      ? (nodeName(specifier.local) ?? literalString(specifier.local))
+      : undefined;
     if (specifier.type === 'ExportNamespaceSpecifier') {
-      names.push(exported ?? '*');
+      pairs.push({ exported: exported ?? '*', targetName: '*' });
       continue;
     }
     if (specifier.type === 'ExportDefaultSpecifier') {
-      names.push(exported ?? 'default');
+      pairs.push({ exported: exported ?? 'default', targetName: local ?? 'default' });
       continue;
     }
-    if (exported) names.push(exported);
+    if (exported) pairs.push({ exported, targetName: local ?? exported });
   }
-  return names;
+  return pairs;
 }
 
 /** True when the statement adds no local runtime surface of its own. */
@@ -354,10 +363,19 @@ export function scanPassThroughSites(
     // Re-export identities keyed by exported symbol + target so adding
     // `export { b } from './m'` beside an existing `export { a } from './m'`
     // produces a NEW site instead of collapsing into one module-level key.
-    const reexportPairs = new Map<string, { exported: string; target: string }>();
-    const addReexportPair = (exported: string, target: string) => {
-      reexportPairs.set(`${exported} → ${target}`, { exported, target });
+    const reexportPairs = new Map<
+      string,
+      { exported: string; target: string; targetName: string }
+    >();
+    const addReexportPair = (exported: string, target: string, targetName: string) => {
+      reexportPairs.set(`${exported} → ${target}`, { exported, target, targetName });
     };
+    // Plain `const wrapper = imported` keeps the import as a permanent alias —
+    // when that local is later exported (any order, any name) it is the same
+    // pass-through as an export specifier of an import binding. `let`/`var`
+    // and non-identifier inits are never provable permanent bindings.
+    const varAliases = new Map<string, ImportBinding>();
+    const pendingVarExports: { local: string; exported: string }[] = [];
     let runtimeDefs = 0;
     let sawValueReexport = false;
 
@@ -388,11 +406,13 @@ export function scanPassThroughSites(
         const source = literalString(statement.source);
         if (source !== undefined) {
           // export-from: a pass-through site candidate per exported symbol.
-          const valueSymbols = exportedValueSpecifiers(statement);
-          if (valueSymbols.length > 0) {
+          const valuePairs = exportedValueSpecifiers(statement);
+          if (valuePairs.length > 0) {
             const target = resolve(path, source);
             if (target) {
-              for (const symbol of valueSymbols) addReexportPair(symbol, target);
+              for (const pair of valuePairs) {
+                addReexportPair(pair.exported, target, pair.targetName);
+              }
               sawValueReexport = true;
             }
           }
@@ -425,6 +445,7 @@ export function scanPassThroughSites(
               if (isRecord(aliasOf) && aliasOf.type === 'Identifier' && name) {
                 const binding = bindings.get(nodeName(aliasOf) ?? '');
                 if (binding && !binding.typeOnly) {
+                  varAliases.set(name, binding);
                   const target = resolve(path, binding.source);
                   if (target) {
                     sites.push({
@@ -432,6 +453,7 @@ export function scanPassThroughSites(
                       kind: 'alias',
                       symbol: name,
                       targetModule: target,
+                      targetSymbol: binding.imported,
                       detail: `alias:${binding.imported}`,
                     });
                   }
@@ -451,6 +473,7 @@ export function scanPassThroughSites(
             if (!local || !exported) continue;
             addLocalExport(local, exported);
             exportedNames.add(exported);
+            pendingVarExports.push({ local, exported });
             const binding = bindings.get(local);
             if (binding && !binding.typeOnly) {
               const target = resolve(path, binding.source);
@@ -460,6 +483,7 @@ export function scanPassThroughSites(
                   kind: 'site',
                   symbol: exported,
                   targetModule: target,
+                  targetSymbol: binding.imported,
                   detail: `local-export:${binding.imported}`,
                 });
               }
@@ -475,7 +499,7 @@ export function scanPassThroughSites(
         if (source !== undefined && statement.exportKind !== 'type') {
           const target = resolve(path, source);
           if (target) {
-            addReexportPair('*', target);
+            addReexportPair('*', target, '*');
             sawValueReexport = true;
           }
         }
@@ -530,6 +554,7 @@ export function scanPassThroughSites(
             // no candidate will ever match this name.)
             addLocalExport(localName, 'default');
             exportedNames.add('default');
+            pendingVarExports.push({ local: localName, exported: 'default' });
           }
           const binding = bindings.get(localName ?? '');
           if (binding && !binding.typeOnly) {
@@ -540,6 +565,7 @@ export function scanPassThroughSites(
                 kind: 'alias',
                 symbol: 'default',
                 targetModule: target,
+                targetSymbol: binding.imported,
                 detail: `alias:${binding.imported}`,
               });
             }
@@ -558,7 +584,21 @@ export function scanPassThroughSites(
           : []) {
           if (!isRecord(declarator)) continue;
           const fn = functionCandidateFromDeclarator(declarator);
-          if (fn) candidates.push(fn);
+          if (fn) {
+            candidates.push(fn);
+            continue;
+          }
+          // `const wrapper = imported` — a permanent alias only when the
+          // declarator is const, the init is a bare identifier (TSAs ok) and
+          // that identifier is a value import binding. `let`/`var`, member or
+          // call expressions are never provable permanent bindings.
+          if (statement.kind !== 'const') continue;
+          const name = nodeName(declarator.id);
+          let init: unknown = declarator.init;
+          if (isRecord(init) && init.type === 'TSAsExpression') init = init.expression;
+          if (!name || !isRecord(init) || init.type !== 'Identifier') continue;
+          const binding = bindings.get(nodeName(init) ?? '');
+          if (binding && !binding.typeOnly) varAliases.set(name, binding);
         }
       }
       if (!isNonRuntimeStatement(statement)) runtimeDefs += 1;
@@ -580,6 +620,7 @@ export function scanPassThroughSites(
           kind: 'function',
           symbol: exported,
           targetModule: target,
+          targetSymbol: forward.target.imported,
           detail: [
             `forward:${forward.target.imported}${forward.member ? `.${forward.member}` : ''}`,
             `${forward.shape}${forward.awaited ? '+await' : ''}`,
@@ -587,6 +628,26 @@ export function scanPassThroughSites(
           ].join(';'),
         });
       }
+    }
+
+    // `const wrapper = imported` re-exported under any name — same-site as a
+    // specifier of an import binding, resolved after the whole pass so
+    // declaration/export order cannot hide it. Import bindings take the
+    // immediate `local-export`/`alias` path and can never be varAliases.
+    for (const pending of pendingVarExports) {
+      if (bindings.has(pending.local)) continue;
+      const alias = varAliases.get(pending.local);
+      if (!alias) continue;
+      const target = resolve(path, alias.source);
+      if (!target) continue;
+      sites.push({
+        file: path,
+        kind: 'site',
+        symbol: pending.exported,
+        targetModule: target,
+        targetSymbol: alias.imported,
+        detail: `var-export:${alias.imported}`,
+      });
     }
 
     const reexports = [...reexportPairs.values()].sort(
@@ -599,6 +660,7 @@ export function scanPassThroughSites(
           kind: 'module',
           symbol: pair.exported,
           targetModule: pair.target,
+          targetSymbol: pair.targetName,
           detail: `module:${PASS_THROUGH_SCANNER_VERSION}`,
         });
       }
@@ -609,6 +671,7 @@ export function scanPassThroughSites(
           kind: 'site',
           symbol: pair.exported,
           targetModule: pair.target,
+          targetSymbol: pair.targetName,
           detail: `site:${PASS_THROUGH_SCANNER_VERSION}`,
         });
       }
@@ -625,7 +688,9 @@ export function scanPassThroughSites(
 }
 
 function siteKey(site: PassThroughSite): string {
-  return `${site.file}|${site.kind}|${site.symbol}|${site.targetModule}|${site.detail}`;
+  // targetSymbol is identity: `export { a as b }` retargeted to `{ c as b }`
+  // is a NEW site, never a continuation the old ruling/stock may cover.
+  return `${site.file}|${site.kind}|${site.symbol}|${site.targetModule}|${site.targetSymbol ?? ''}|${site.detail}`;
 }
 
 /**
@@ -771,6 +836,82 @@ export function shimCoversSite(shim: CompatShim, site: PassThroughSite): boolean
   return site.symbol === shim.symbol;
 }
 
+/** Whether a stable_contract ruling covers this site — exact five-way
+ *  binding; a renamed alias, moved target or different owner never inherits
+ *  an old ruling (no module-wide exemption). */
+export function stableCoversSite(ruling: StableContractRuling, site: PassThroughSite): boolean {
+  return (
+    site.file === ruling.file &&
+    site.kind === ruling.siteKind &&
+    site.symbol === ruling.symbol &&
+    site.targetModule === ruling.targetModule &&
+    site.targetSymbol === ruling.targetSymbol
+  );
+}
+
+/** Repo path normalization for evidence comparison — `./x`, `x`, `x/./x`
+ *  and backslash spellings must all name the same file. */
+function normalizeEvidencePath(path: string): string {
+  return path
+    .replace(/\\/g, '/')
+    .replace(/\/{2,}/g, '/')
+    .replace(/(^|\/)\.\//g, '$1')
+    .replace(/^\.\//, '');
+}
+
+/** Verify declared consumer evidence: the file exists, parses, is not the
+ *  record file itself, and really imports recordPath (value, declared line,
+ *  required symbol or namespace). */
+function checkConsumerEvidence(input: {
+  recordPath: string;
+  recordSymbol: string | undefined;
+  moduleWide: boolean;
+  consumers: readonly { file: string; line: number }[];
+  readSource: (path: string) => string | undefined;
+  resolveTarget: (consumerFile: string, source: string) => string | undefined;
+  fail: (path: string, source: string, reason: string) => void;
+}): void {
+  for (const consumer of input.consumers) {
+    if (normalizeEvidencePath(consumer.file) === normalizeEvidencePath(input.recordPath)) {
+      input.fail(
+        consumer.file,
+        `line ${consumer.line}`,
+        'declared consumer is the record file itself — self-reference cannot evidence a real consumer',
+      );
+      continue;
+    }
+    const code = input.readSource(consumer.file);
+    if (code === undefined) {
+      input.fail(consumer.file, `line ${consumer.line}`, 'declared consumer file does not exist');
+      continue;
+    }
+    let references: ConsumerReference[];
+    try {
+      references = consumerImports(code, consumer.file);
+    } catch {
+      input.fail(consumer.file, `line ${consumer.line}`, 'declared consumer file does not parse');
+      continue;
+    }
+    const hit = references.find(
+      (reference) =>
+        reference.line === consumer.line &&
+        reference.kind === 'value' &&
+        input.resolveTarget(consumer.file, reference.source) === input.recordPath &&
+        (input.moduleWide ||
+          input.recordSymbol === undefined ||
+          reference.symbols.includes(input.recordSymbol) ||
+          reference.symbols.includes('*')),
+    );
+    if (!hit) {
+      input.fail(
+        consumer.file,
+        `line ${consumer.line}`,
+        `no value import of record ${input.recordPath} at the declared line — consumer evidence must be real`,
+      );
+    }
+  }
+}
+
 export interface ShimViolation {
   path: string;
   source: string;
@@ -783,6 +924,8 @@ export function auditCompatShims(input: {
   records: readonly CompatShim[];
   /** Number of records that already existed at base (append-only tail is new). */
   previousRecords: number;
+  /** stable_contract rulings appended in this change (tail only). */
+  stableRulings: readonly StableContractRuling[];
   readSource: (path: string) => string | undefined;
   resolveTarget: (consumerFile: string, source: string) => string | undefined;
   today: string;
@@ -792,11 +935,14 @@ export function auditCompatShims(input: {
     violations.push({ path, source, reason });
 
   for (const site of input.newSites) {
-    if (!input.records.some((record) => shimCoversSite(record, site))) {
+    if (
+      !input.records.some((record) => shimCoversSite(record, site)) &&
+      !input.stableRulings.some((ruling) => stableCoversSite(ruling, site))
+    ) {
       fail(
         site.file,
         describeSite(site),
-        'new pass-through shell — remove it or record a coordinator-approved compatShims entry {consumers file:line, exitCondition, issue, approval, deadline <= date+14d}',
+        'new pass-through shell — remove it, record a coordinator-approved compatShims entry {consumers file:line, exitCondition, issue, approval, deadline <= date+14d}, or a coordinator-ruled stable_contract {owner, targetSymbol, consumers, evidence, rationale}',
       );
     }
   }
@@ -824,37 +970,40 @@ export function auditCompatShims(input: {
         'shim record does not cover a newly added pass-through site',
       );
     }
-    for (const consumer of record.consumers) {
-      const code = input.readSource(consumer.file);
-      if (code === undefined) {
-        fail(consumer.file, `line ${consumer.line}`, 'declared consumer file does not exist');
-        continue;
-      }
-      let references: ConsumerReference[];
-      try {
-        references = consumerImports(code, consumer.file);
-      } catch {
-        fail(consumer.file, `line ${consumer.line}`, 'declared consumer file does not parse');
-        continue;
-      }
-      const hit = references.find(
-        (reference) =>
-          reference.line === consumer.line &&
-          reference.kind === 'value' &&
-          input.resolveTarget(consumer.file, reference.source) === record.path &&
-          (record.symbol === undefined ||
-            record.kind === 'module' ||
-            reference.symbols.includes(record.symbol) ||
-            reference.symbols.includes('*')),
-      );
-      if (!hit) {
-        fail(
-          consumer.file,
-          `line ${consumer.line}`,
-          `no value import of shim ${record.path} at the declared line — consumer evidence must be real`,
-        );
-      }
+    checkConsumerEvidence({
+      recordPath: record.path,
+      recordSymbol: record.symbol,
+      moduleWide: record.kind === 'module',
+      consumers: record.consumers,
+      readSource: input.readSource,
+      resolveTarget: input.resolveTarget,
+      fail,
+    });
+  }
+
+  for (const ruling of input.stableRulings) {
+    for (const problem of validateStableRulingFields(ruling, input.today)) {
+      fail(ruling.file, 'stable_contract', problem);
     }
+    // A ruling must bind a site that still exists at head — exact
+    // file/kind/symbol/target identity. It may lawfully classify existing
+    // base stock; it must never pretend to cover a site that is not there.
+    if (!input.headSites.some((site) => stableCoversSite(ruling, site))) {
+      fail(
+        ruling.file,
+        'stable_contract',
+        'stable_contract ruling matches no current pass-through site — the exact file/kind/symbol/target binding must still exist',
+      );
+    }
+    checkConsumerEvidence({
+      recordPath: ruling.file,
+      recordSymbol: ruling.symbol,
+      moduleWide: false,
+      consumers: ruling.consumers,
+      readSource: input.readSource,
+      resolveTarget: input.resolveTarget,
+      fail,
+    });
   }
   return violations;
 }

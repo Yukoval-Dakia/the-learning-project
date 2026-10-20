@@ -88,6 +88,42 @@ export const compatShimSchema = z
   });
 export type CompatShim = z.infer<typeof compatShimSchema>;
 
+/**
+ * A coordinator-rulled stable public contract ruling — the only legal way a
+ * new pass-through site avoids the 14-day compat window. It lives inside the
+ * existing `changes` ledger (discriminated by `type`), never in debt math.
+ * Binding is exact: file + site kind + exported symbol + target module +
+ * target symbol, so a renamed alias, moved target or different implementation
+ * owner can never inherit an old ruling.
+ */
+export const stableContractRulingSchema = z.object({
+  type: z.literal('stable_contract'),
+  /** Repo-relative path of the ruled site file (site.file identity). */
+  file: z.string().trim().min(1),
+  siteKind: z.enum(['module', 'function', 'alias', 'site']),
+  /** Exported symbol the ruling binds — exact, no wildcard exemptions. */
+  symbol: z.string().trim().min(1),
+  /** Resolved repo-relative target module the site forwards to. */
+  targetModule: z.string().trim().min(1),
+  /** Symbol inside targetModule that owns the complete decision. */
+  targetSymbol: z.string().trim().min(1),
+  /** Real implementation owner — must equal targetModule's capability dir. */
+  owner: z.string().trim().min(1),
+  /** Real consumer evidence: file + line of its import of this site file. */
+  consumers: z
+    .array(z.object({ file: z.string().trim().min(1), line: z.number().int().positive() }))
+    .min(1),
+  /** Source evidence: file:line ranges proving the target owns the decision. */
+  evidence: z.string().trim().min(1),
+  /** Why this is a stable public contract, not a temporary compat hand-off. */
+  rationale: z.string().trim().min(1),
+  issue,
+  /** Traceable coordinator confirmation (URL). Shape verified; authority is review's. */
+  approval: z.url({ protocol: /^https?$/ }),
+  date: isoDate,
+});
+export type StableContractRuling = z.infer<typeof stableContractRulingSchema>;
+
 export interface SizedFile {
   path: string;
   lines: number;
@@ -118,7 +154,7 @@ export function collectSizeFacts(
   return { overCeiling, overThreshold };
 }
 
-function daysBetween(from: string, to: string): number {
+export function daysBetween(from: string, to: string): number {
   return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
 }
 
@@ -233,6 +269,28 @@ export function validateCompatShimFields(record: CompatShim, today: string): str
   }
   if (daysBetween(record.date, record.deadline) > MAX_SHIM_DAYS) {
     problems.push(`deadline ${record.deadline} exceeds the ${MAX_SHIM_DAYS}-day approval window`);
+  }
+  return problems;
+}
+
+/**
+ * Field-level checks on a NEW `stable_contract` ruling: the ruling date may
+ * not be post-dated, and `owner` must equal the capability directory that
+ * owns targetModule — the ruling must name the real implementation owner,
+ * not an author-chosen label.
+ */
+export function validateStableRulingFields(ruling: StableContractRuling, today: string): string[] {
+  const problems: string[] = [];
+  if (daysBetween(today, ruling.date) > 0) {
+    problems.push(`date ${ruling.date} is in the future — approval records may not be post-dated`);
+  }
+  if (ruling.targetModule.startsWith('src/capabilities/')) {
+    const owner = ruling.targetModule.split('/')[2];
+    if (owner && ruling.owner !== owner) {
+      problems.push(
+        `owner '${ruling.owner}' != target capability owner '${owner}' — the ruling must name the real implementation owner`,
+      );
+    }
   }
   return problems;
 }
