@@ -2,42 +2,19 @@ import { PgBoss } from 'pg-boss';
 
 import { getServerEnv, resolveBossAutomationMode } from '@/server/env';
 
-// Queue-owning callers import one boss runtime port for both the singleton and
-// pg-boss's transaction adapter; the adapter itself remains independently testable.
+// Callers that own a queue import the singleton and the transaction adapter from here.
 export { fromPgBossDrizzleTx } from './pg-boss-drizzle';
 
-// Singleton PgBoss instance —— pg-boss 内部维护连接池，每进程一个。
-// 复用模式与 src/db/client.ts 的 db 单例一致。
-//
-// 配置说明（plan Step 2.3 写的 newJobCheckInterval / archiveCompletedAfterSeconds /
-// expireInSeconds 在 pg-boss v12 已搬到 per-queue / per-work 级别）：
-//   schema='pgboss'  —— 自动建出独立 schema，与业务表隔离
-//
-// 以下原本在 constructor 的选项，v12 在调 `boss.work(queue, opts, handler)` 或
-// `boss.createQueue(name, opts)` 时设：
-//   - retentionSeconds / deleteAfterSeconds（替换 archiveCompletedAfterSeconds）
-//   - expireInSeconds（per-job timeout）
-//   - newJobCheckIntervalSeconds（per-worker poll interval；测试用低值，生产用默认 2s）
+// One PgBoss per process. It owns its pool. v12 sets retention, expiry, and the
+// poll interval on createQueue or work, not on this constructor. schema 'pgboss'
+// keeps those tables off the business schema.
 
-// Postgres unique-violation SQLSTATE. pg-boss talks to Postgres via
-// node-postgres (`pg.Pool`, pg-boss/dist/db.js), so a duplicate-key surfaces as
-// a raw `pg` error with `.code === '23505'` directly on the thrown object.
+// pg-boss uses node-postgres, so a duplicate key is a raw error with this code.
 const PG_UNIQUE_VIOLATION = '23505';
 
 /**
- * True when `err` is a benign pg-boss queue create race — a Postgres 23505
- * unique_violation on the queue primary key (`queue_pkey`, the only unique
- * constraint on `pgboss.queue`).
- *
- * YUK-259: when the app's in-process boss (instrumentation / getStartedBoss) and
- * the worker register/start against the same DB at once, pg-boss's `create_queue`
- * INSERT can race past its own `ON CONFLICT DO NOTHING` and raise
- * `Key (name)=(<queue>) already exists`. This includes pg-boss's INTERNAL
- * `__pgboss__send-it` queue created by the timekeeper at start, whose failure
- * surfaces on the boss `error` event (not through our createOrUpdateQueue). A
- * 23505 here means the queue already exists — the desired end state — so callers
- * treat it as benign. `constraint` may be absent on wrapped/older errors; any
- * 23505 reaching a queue-create path means the row already exists, so be lenient.
+ * True when a queue-create 23505 means the row already exists.
+ * A wrapped error may omit `constraint`. The internal send queue's create rejects start().
  */
 export function isQueueCreateRace(err: unknown): boolean {
   if (typeof err !== 'object' || err === null) return false;
@@ -47,22 +24,12 @@ export function isQueueCreateRace(err: unknown): boolean {
   return e.constraint === undefined || e.constraint === 'queue_pkey';
 }
 
-// next dev HMR re-evaluates this module on every recompile; module-level
-// singletons (`let bossInstance` / `let startPromise`) reset each time, so the
-// previously started PgBoss — its timekeeper timers AND its `pg.Pool` — is
-// orphaned with nothing left to `stop()` it. Observed 2026-06-07: a single
-// recompile rebuilds the boss and grows the pgboss DB connection count 2→4,
-// climbing with every reload until Postgres runs out of clients. Cache the
-// instance + start promise on globalThis outside production so they survive
-// module reloads, mirroring src/db/client.ts's pool cache (YUK-263 / PR #339).
-// Production (standalone container / worker) has no HMR, so the per-process
-// module cache alone suffices and we never write to globalThis there —
-// behaviour unchanged. The PR #340 getStartedBoss catch semantics are preserved
-// below, only retargeted to clear bossState.startPromise. (YUK-274)
-// `started` holds the boss ONLY once boss.start() has fully resolved — it is what
-// getRunningBoss() peeks so a caller can send a best-effort job WITHOUT starting
-// boss itself (YUK-384 hub-sync mutation wake: no-op when boss isn't running,
-// e.g. tests / cold start, so it never triggers a real pg-boss start).
+// Dev re-evaluates this module and would drop the only handle on the pool.
+// Cache the state on globalThis outside production so a reload can still stop it.
+// Production has no reload, so the module cache is enough.
+// `started` is the peek handle. It is set when start resolves, when that 23505 is
+// swallowed, or when the worker calls markBossStarted. getRunningBoss peeks it
+// and must not start a boss on its own.
 type BossState = {
   instance: PgBoss | null;
   startPromise: Promise<PgBoss> | null;
@@ -82,35 +49,14 @@ export function createBoss(): PgBoss {
   if (bossState.instance) return bossState.instance;
   const env = getServerEnv();
   const connectionString = env.DATABASE_URL;
-  // Under vitest, cap the internal connection pool aggressively. Multiple test
-  // files re-create the singleton via _resetBossForTests; pg-boss's default
-  // pool (~10) + testcontainer Postgres's default `max_connections=100` leave
-  // little headroom once the dozens of test files have each cycled through a
-  // boss instance. Capping at 2 inside vitest keeps the total well below the
-  // ceiling and removes the "too many clients already" flake seen in
-  // boss/client.test when run with the full suite. Production (worker /
-  // route processes) keeps the library default.
+  // Tests recreate the singleton per file. The default pool exhausts the
+  // testcontainer connection cap, so cap at 2 there. Production keeps the default.
   const isVitest = Boolean(env.VITEST);
-  // YUK-1359 — RW_BOSS_AUTOMATION=disabled 显式关闭 pg-boss 自带的 automation
-  // 子系统（pg-boss 12.36.0 dist 验证的 gating）：
-  //   schedule:false         #doStart 跳过 timekeeper.start()（index.js:176）——
-  //                          无 __pgboss__send-it 行、无 5s 内部消费、无 30s cron claim
-  //   supervise:false        boss supervisor 定时器不武装（boss.js:149）、
-  //                          navigator.start() 提前返回（navigator.js:47）——无
-  //                          monitor/maintain/flow claim
-  //   migrate:false          #doStart 走 contractor.check()（只读 isInstalled +
-  //                          schemaVersion，版本≠44 直接 throw）而非
-  //                          contractor.start()；bam.start() 同样被跳过
-  //                          （index.js:160,179）——无任何 DDL/schema 创建
-  //   registerInstance:false registrar.start() 提前返回（registrar.js:55）——
-  //                          无 instance INSERT、无 30s heartbeat、无 prune
-  // 四个 flag 只在 disabled 时显式传入；enabled（默认）路径不传任何 flag，
-  // 构造配置与历史逐字节一致（库内 default 全 true）。
-  // 残余（非 automation owner，不在本开关范围）：start 时的 SELECT version()
-  // 探针 + contractor.check() 两次 SELECT、manager 的 60s queue-cache SELECT
-  // 定时器与 2s 纯内存 wip 定时器（无 work() 调用时永不发 DB 流量）。
-  // send/fetch/complete 都直接走 manager（index.js:301+），不依赖被关掉的子系统。
-  // 不从 RW_WORKER 推断；worker 进程语义不变（不设即 enabled）。
+  // disabled turns off schedule, supervise, migrate, and instance registration.
+  // Enabled passes no flags, so the library defaults stay. Do not infer this
+  // from RW_WORKER. A disabled boss still probes the server version, checks the
+  // schema, and keeps the queue-cache read and the in-memory wip timer.
+  // send, fetch, and complete do not need the subsystems this switch stops.
   const automation = resolveBossAutomationMode(env.RW_BOSS_AUTOMATION);
   bossState.instance = new PgBoss({
     connectionString,
@@ -124,25 +70,12 @@ export function createBoss(): PgBoss {
 }
 
 /**
- * Lazily start the singleton pg-boss client and return it ready to use.
- *
- * Why this exists: pg-boss v12 requires `boss.start()` to be called before
- * `boss.send()` (otherwise it throws "Database not opened"). The worker
- * process calls start() at boot in scripts/worker.ts. App processes (Next
- * route handlers) need to enqueue without dragging pg-boss into the
- * instrumentation bundle — webpack can't trace pg's Node built-ins through
- * the instrumentation hook compile path. So routes call this at request time
- * the first time they need to send; the promise is cached so subsequent
- * calls are O(1).
- *
- * App processes only call boss.send/schedule via this getter — they never
- * call boss.work(), so jobs aren't pulled in this process even though
- * pg-boss is "started" here.
+ * Start the singleton once. send throws before start.
+ * The worker starts at boot. App code calls this on the first send and never calls work, so this process does not consume jobs.
  */
 export async function getStartedBoss(): Promise<PgBoss> {
-  // X4: if the boss is ALREADY started (e.g. the RW_WORKER=1 single-process path started it
-  // via startBossWorker → markBossStarted, which sets `started` but not `startPromise`),
-  // return it — never call boss.start() a second time on a running instance.
+  // The in-process worker sets `started` without `startPromise`. After a swallowed
+  // 23505 the library flag stays false, so another start() would run startup again.
   if (bossState.started) return bossState.started;
   if (!bossState.startPromise) {
     const boss = createBoss();
@@ -153,19 +86,9 @@ export async function getStartedBoss(): Promise<PgBoss> {
         return boss;
       })
       .catch((err) => {
-        // YUK-259: pg-boss's own `boss.start()` directly awaits the timekeeper
-        // creating its internal `__pgboss__send-it` queue (pg-boss index.js
-        // start → timekeeper.start → manager.createQueue, an `INSERT ... ON
-        // CONFLICT DO NOTHING` that can still race-raise 23505 `queue_pkey`).
-        // During a cold start where this app process and the worker race to
-        // start against the same DB, that benign race rejects the start()
-        // promise — and because we cache it, every later getStartedBoss() caller
-        // would re-reject (a request-time 500) until the process restarts. A
-        // 23505 here means SEND_IT already exists and the db is already opened
-        // (pg-boss opens it before the timekeeper runs), so `send()`/`schedule()`
-        // work; swallow it and resolve to the usable boss. Any other failure is a
-        // real start error: re-throw it, but clear the cached promise first so a
-        // later call can retry instead of being permanently poisoned.
+        // A cached rejection would 500 every later caller until restart. A 23505
+        // means the internal send queue exists and the database is already open,
+        // so send still works. Any other failure clears the cache and rethrows.
         if (isQueueCreateRace(err)) {
           console.warn(
             '[boss] getStartedBoss(): boss.start() hit pg-boss internal SEND_IT queue create race (23505 queue_pkey) — benign, queue already exists, continuing (YUK-259)',
@@ -180,35 +103,20 @@ export async function getStartedBoss(): Promise<PgBoss> {
   return bossState.startPromise;
 }
 
-/**
- * Peek at the already-started boss WITHOUT starting one. Returns null when boss
- * has not been started (tests, cold start) — callers use this for best-effort
- * fire-and-forget sends (e.g. YUK-384 hub-sync mutation wake) that must never
- * become a boss-lifecycle driver nor a durability dependency.
- */
+/** Peek without starting. Null means the caller must not become the thing that boots boss. */
 export function getRunningBoss(): PgBoss | null {
   return bossState.started;
 }
 
 /**
- * Record an already-started boss as the running instance so getRunningBoss() can peek
- * it. getStartedBoss() (the app-process enqueue path) sets this itself; the WORKER
- * process starts boss via startBossWorker()/createBoss().start() instead, so without
- * this call getRunningBoss() would return null IN THE WORKER — making the YUK-384 FULL
- * hub-sync mutation wake + continuation dispatch inert exactly where they must run.
- * Idempotent; the caller passes the boss it just started.
+ * The worker starts boss itself and never calls getStartedBoss.
+ * Without this, getRunningBoss stays null there and the post-commit wake never sends.
  */
 export function markBossStarted(boss: PgBoss): void {
   bossState.started = boss;
 }
 
-/**
- * Reset the singleton —— **test-only**.
- *
- * Production code must never call this; the singleton's lifecycle is tied to
- * the process. Vitest tests need to recreate the instance across files when
- * DATABASE_URL points at a fresh testcontainer.
- */
+/** Test-only. Production lifetime is the process. Tests point DATABASE_URL at a new container. */
 export function _resetBossForTests(): void {
   bossState.instance = null;
   bossState.startPromise = null;
