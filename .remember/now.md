@@ -1,3 +1,11 @@
+# YUK-1631 恢复完成证据修复，2026-10-20
+
+仅本树 `/workspace/amp/wt/YUK-1614`、`el/yuk-1614`、既有 PR1854。以4e27b820为基线普通commit/push，禁止rebase/amend/force push/新PR。owner要求CI绿色即停止，不合并、不部署、不追加审查或后续自动工作。
+
+deferred只记结果不写completed_at；导入拒绝既有deferred假回执、未知/非法契约和坏时间戳，兼容实际PG导出时间及legacy reserved/enqueued。LIGHT不接自动drain回执，失败/缺回执按docs/sub5-restore-cli.md的owner证据核对流程恢复。没有改测试代码、schema或export/constants。
+
+隔离PG16.2/pgvector实际运行排队/拒绝/数据不变/drain/人工补回执/恢复200，并注入provider与回执写入故障后人工恢复；模型输出为离线给定补丁，无网络或付费调用。既有subscription-backup八例通过。原始本机运行日志在本树`.amp/in/artifacts/`，最终静态检查与exact-head CI状态以PR1854为准。Linear查重未发现本范围外的新可执行缺陷；自动恢复仍属既有FULL后续。
+
 # Architecture deepening — 2026-10-19
 
 Current owner: arch-lead, refactor/yuk-1572-stream-modules, base d41f24213. Six tickets relabelled T3. Grok retains #1830 ratchet writer; semantic alignment posted to PR and YUK-1570. First-three plan approved: docs/planning/2026-10-19-architecture-deepening.md. SWE-2 source writer released at 2cd19533a: stream-store 1427, inputs355, view410; >1500 files17. Merged main615437b76 into d38e72c447; parent typecheck/lint179warnings/full build/boundary+architecture audits exit0. Kimi R1 APPROVE d41..2cd, source unchanged; exact5c0e CI39252986951 SUCCESS. Main2176 integration only PLAN/now conflicts; new synthetic-head checks/CI pending, no new source review needed. Sol independently examines knowledge outbound SCC cut after GLM notes-only impossibility inference was rejected. Parent owns docs/review/integration. No tests/DB/Docker/TEST/provider operations. Baseline measured: SCC1/5 members, cap-server443, >1500 files18, baseline141 lines. External bulky evidence approved with permanent retention; old HEAD deletion requires copy/hash/reference inventory and per-batch coordinator review. First evidence PR updates AGENTS for all lanes. Test shrink remains inventory only pending owner approval.
