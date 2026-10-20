@@ -10,7 +10,7 @@
 - branch：`arch/intervention-schema-split`
 - worktree：`/Users/yuqi/.t3/worktrees/the-learning-project/t3-7f2c17bf`
 - head / diff hash / 校验输出原件：外部证据目录
-  `tlp-audit-artifacts/architecture-deepening/YUK-1572/<head>/intervention-schema/`
+  `tlp-audit-artifacts/architecture-deepening/YUK-1572/25fe0dedd6076cc95735e8eb3980ed8333d3a39c/intervention-schema/`
 
 ## 逐文件范围
 
@@ -23,36 +23,48 @@
 protected/其他文件：diff 仅含上表一改动 + 两新增；36 个消费者与全部测试逐 blob 无变
 （`git status`/`git diff --stat` 证据封存外部目录）。
 
-## 拆分边界为何成立
+## 拆分边界与共享演进限制
 
-历史格式兼容与当前审计绑定是两条真实会独立变化的职责：
+本片按业务构造、评审绑定、历史解码组织代码，保持原行为和 schema 实例身份。
+这三部分不是接受范围可独立演进的版本边界。撤回初稿中「当前严格化不波及历史」
+及「另一模块只读依赖所以不受影响」的结论；该耦合在拆分前已经存在，本片未消除它。
 
-- **场景 1 — 历史格式兼容演进**：新增一个更老的持久化形状（例如再发现
-  pre-V2 记录变体）。Before：在 2268 行业务+协议混合文件里改 reader 并担心
-  误伤当前绑定 refinement。After：只改 `intervention-review-history.ts`，
-  加形状并进 union；当前 V3/V2 绑定与 digest 逻辑不在该文件，无法被误改。
-- **场景 2 — 当前因果证据绑定演进**：收紧或扩展当前绑定规则（如新 claim 类别、
-  新 required-operation 维度、V4 协议）。Before：同一文件里当前 refinement 与
-  历史宽容 reader 相邻，改 current 易被兼容诉求传染成「新字段 optional」。
-  After：只改 `intervention-review.ts`；历史 reader 依赖的共享锚点
-  （`AuditV2Fields`/`RequiredOperationChecks`/`refineInterventionPackageReviewAuditBindings`）
-  是三个显式内部出口，历史形状的宽容语义不受当前严格化波及。
+以下行号固定于源码 head `25fe0dedd6076cc95735e8eb3980ed8333d3a39c`：
 
-caller 少知：消费者仍只 import `@/core/schema/intervention`，连「历史/当前是
-两个文件」这一事实都不需要知道；`contracts.ts` facade 的 26 个 re-export 不变。
+| 锚点 | 现状与变更影响 |
+|---|---|
+| `intervention-review-history.ts:89,116` → review 的 `InterventionPackageReviewRequiredOperationChecks`（review:243–246） | 历史分支复用当前检查对象；optional 只允许字段缺席，字段存在时仍受共享规则约束。收紧该对象会影响历史接受范围。 |
+| history:391–397 → `InterventionPackageReviewAuditV2Fields`（review:670–679）与 `refineInterventionPackageReviewAuditBindings`（review:740–777） | 历史 V2 的字段与 task-run/digest 绑定检查共同演进，不能视为已冻结的历史副本。 |
+| history:449–454 的 `InterventionPackageReviewAudit` | union 同时保留当前 V2/V3、历史 V2、pre-operation 和 Legacy 分支；当前分支变化也会影响这个持久化 reader。 |
+| history:399–447 的 pre-operation 分支及 Legacy 定义 | 分支专有的旧字段缺省与 refinement 是应保留的兼容锚点；它们仍可引用共享类型/词表，不能笼统称整条旧分支完全冻结。 |
+| `agency/server/intervention/store.ts:80–81` → `intervention.ts:845` → 上述 union | 真实生产 consumer 读取 `preparation_attempts_json`；规则变化必须核对存量记录接受范围，不仅核当前生成契约。 |
 
-## 五标准对账（诚实项）
+这里「共享且共同演进」描述现有依赖事实，不授权改变旧数据接受范围。
+需冻结的兼容义务是现有旧形状、缺省和绑定规则；本片通过不改这些定义来保持它们，
+并未建立独立版本快照。若后续要求真正的版本冻结，须单独按原权限裁定，
+不得为证明本次拆分而复制 schema、放宽或收紧任何旧分支。
 
-1. **责任**：三文件各承载一条可独立变化的责任（业务构造 / 当前协议绑定 /
-   历史解码）。成立。
-2. **接口**：内部缝收窄到必需——history 仅从 review 复用 3 个组合件 +
-   11 个已公开符号；无新 registry/shim/豁免。成立。
-3. **隐藏知识**：历史宽容语义（哪些字段可缺）现在只存在 history 模块；
-   当前严格绑定（task id 唯一性、末次 attempt digest 相等、双 pass 门槛）
-   只存在 review 模块。成立。
-4. **修改局部性**：见两场景；两场景下另一模块均为只读依赖。成立。
-5. **行为证据**：静态见下；运行时 gate 因本树无 node_modules 全部 NOT_RUN，
-   如实上报父安排 frozen install。**不声称 typecheck/test 已过。**
+## 两个变化场景的影响表
+
+| 场景 | 可能修改处 | 必须核对的影响与边界 |
+|---|---|---|
+| 新增一种历史持久化形状 | history 中新增专用分支及 union；仅当共享锚点无需变化时可限于此文件 | 核对 union 分支选择、既有旧形状和当前 V2/V3；真实入口为 store 的 preparation attempts reader。不能因分文件就宣称当前行为自动不受影响。 |
+| 只收紧当前 operation/task-run 规则 | 若直接改 review 的共享 RequiredOperationChecks、AuditV2Fields 或 refinement，历史 V2 也会受影响 | 必须沿上表核历史与生产 reader。要求“只影响当前”时，现有布局不足以保证；需另行版本边界方案与裁定，本片不实施语义隔离。 |
+
+## 五标准对账
+
+1. **责任**：按业务构造、当前及共享绑定、历史解码组织；职责可辨，但规则存在明确共享耦合。
+2. **接口**：公共 import 面与 95 个导出保留。24 个 value 转出逐站点分类仍待协调裁定，
+   不能凭原公共面、文件仍有实现或实例相同自动豁免；未新增 registry 或自行批准 shim。
+3. **隐藏知识**：外部 caller 原本就不知道内部版本实现，本片没有新增 caller 少知。
+   分文件让历史分支与共享锚点更易定位，不等于历史接受范围与当前绑定隔离。
+4. **修改局部性**：新增历史形状可能局部；共享绑定收紧必须核多个分支。
+   不声称两个场景的编辑或审读范围必然减少。
+5. **行为证据**：下述静态证据限于行为保持与结构；运行时门仍 NOT_RUN。
+
+本次文案纠偏依据原 YUK-1572 评论
+https://linear.app/yukoval-studios/issue/YUK-1572#comment-050998a7-f1a7-43de-bd43-c27193e53b42。
+只改交付说明；源码、完整旧分支、schema 实例身份及接受范围均未改变。
 
 ## 行为保持证据（本机实跑）
 
@@ -79,5 +91,5 @@ caller 少知：消费者仍只 import `@/core/schema/intervention`，连「历�
 ## 行数声明（不作为收益）
 
 2268 → 990 + 919 + 456 = 2365（+97 行为三文件 header/import/re-export 管道）。
-拆分理由是责任分离与修改局部性；行数本身不是收益证据。两新文件均未到
+拆分理由是代码职责组织与审读定位；修改局部性的限制见上表，行数本身不是收益证据。两新文件均未到
 1500 行硬线，但这只是附带结果。
