@@ -8,7 +8,7 @@ Owner 2026-10-19 授权独立架构线与功能并行。冻结起点 `d41f24213`
 
 后续顺序：持续拆环至 SCC=0 → capability-owned 模块消除 server 依赖至 ≤300、收窄 practice 公共端口 → 其余超长文件 → 锁登记及获取顺序证明 → 审计合并。UI 文件由 Opus UI 唯一 writer 负责。锁证明须区分静态调用链与未运行的并发验收。
 
-**所有权与门禁**：六票 T3 接管；#1830 ratchet 由 Grok 完成，本线合入前不写审计或 baseline。上调须同 PR 抵消，净上涨例外在文件记录协调裁定；CI 语义改变先找协调线。每片分支/工作树独占，独立初审及至多一次 P0/P1 验证审，typecheck/lint/build、exact-head CI Gate 和等待窗后 match-head merge。无本机完整测试、TEST/Docker/DB 写或产品 provider 调用。未运行的行为验收如实标 NOT_RUN。
+**所有权与门禁**：六票 T3 接管；#1830 ratchet 由 Grok 完成。2026-10-20 协调线解除 baseline 独占，允许 #1837/#1852 按 main 现有规则登记实测数字；本线不改 audit 脚本或 CI 语义。上调须同 PR 抵消，净上涨例外在文件记录协调裁定；CI 语义改变先找协调线。每片分支/工作树独占，独立初审及至多一次 P0/P1 验证审，typecheck/lint/build、exact-head CI Gate 和等待窗后 match-head merge。无本机完整测试、TEST/Docker/DB 写或产品 provider 调用。未运行的行为验收如实标 NOT_RUN。
 
 **测试缩减文本方案（YUK-1580，未批准实施）**：先对最大 15 个测试文件和 mock 密集文件列出 case→真实边界→五类承重不变量→重复覆盖证据，逐 case 给保留/合并/删除理由与预计行数；先发协调线转 owner，得到明确批准后才动指定 case。第一批不设任意删行配额，不迁移测试以绕过批准。
 
@@ -62,3 +62,9 @@ Owner 2026-10-19 授权独立架构线与功能并行。冻结起点 `d41f24213`
 R1 Kimi K3在22b03fd5..5fc5bdfec给APPROVE、无P0/P1，但明确新增文件级环knowledge/public→frontier-read→mastery/state→knowledge/public无初始化风险。父不把初始化安全当作架构成功：0c5837e33让mastery/state直接读取现有kernel/read-models/knowledge-tree的同两函数（knowledge/public原本逐字re-export它们），删除该直接回边。此post-review import-only差异由父核对，不冒称R1覆盖，也未重开全量审查。
 
 0c5837e33父typecheck/lint179warnings/fullbuild均exit0，snapshot443/0/47、SCC1/5、超长18；baseline仍142行未改。R1及旧审计日志在5fc5bdfec目录，最新日志在 `/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1571/0c5837e330dc76c1f21d47748c2bf0820f87c0a9/`，checks-sha256.json索引SHA256 `12c28d58a809059a568b13030aa36b2ec4fc0959b20f65687f223d6fb1788716`。待#1830释放后整合收紧与exact-head CI，当前仅可draft，不能merge。
+
+### 基线写权释放与登记（2026-10-20）
+
+协调线已明确解除 #1830 对 baseline 的独占：两个架构 PR 可先登记，谁先 exact 绿先合；Grok 后续普通 merge main 并适配已登记数字。此裁定取代前文历史检查点的等待条件，不授权改审计或测试。
+
+#1837 在 main `1440e864b` 上实测：practice→mastery15→14、capability→server441→440；knowledge→practice3→1、practice→knowledge3→4、cross48→47；SCC仍1个5成员，>1500源文件17不变。新增practice→knowledge是消费knowledge完整frontier决策的真实依赖，knowledge/frontier-read和nightly两个旧practice读取退出，在同PR同类别抵消新增1条；不能仅以净减解释。退出条件是在YUK-1571拆环时一并处理残留依赖。上述三点已记入baseline note，数值由现有CLI重新生成核对；不创建新门禁。
