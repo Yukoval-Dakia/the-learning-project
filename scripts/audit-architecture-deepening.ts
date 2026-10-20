@@ -6,6 +6,18 @@ import { relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parse } from '@babel/parser';
 import type { DependencySnapshot } from './audit-capability-boundaries';
+import {
+  listTreeFiles,
+  readBlobs,
+  resolveAuditBaseSha,
+  resolveSpecifierInTree,
+  worktreeRenameMap,
+} from './lib/git-base-scan';
+import {
+  auditCompatShims,
+  diffPassThroughSites,
+  scanPassThroughSites,
+} from './lib/pass-through-sites';
 
 // YUK-885 (F3.11) — architecture-ownership audit, consolidated into the YUK-886
 // (F4.1) quantitative architecture-deepening audit.
@@ -1107,6 +1119,14 @@ export interface ArchitectureDeepeningFacts {
     /** Exact-baseline comparison violations from audit-capability-boundaries. */
     readonly baselineViolations: readonly { readonly source: string; readonly reason: string }[];
   };
+  /** Pass-through shell ratchet measured head-vs-base by the CLI runner. */
+  readonly passThrough?: {
+    readonly baseSites: number;
+    readonly headSites: number;
+    readonly added: number;
+    readonly removed: number;
+    readonly violations: readonly OwnershipViolation[];
+  };
 }
 
 export interface AuditResult {
@@ -1131,6 +1151,8 @@ export interface DeepeningAuditResult extends AuditResult {
     readonly classifiedProviderLanes: number;
     readonly unclassifiedProviderWires: number;
     readonly dependencyTotals: DependencyCeilings;
+    readonly passThroughSites: number;
+    readonly newPassThroughSites: number;
   };
 }
 
@@ -1204,6 +1226,7 @@ export function auditArchitectureDeepening(
       source: violation.source,
       reason: violation.reason,
     })),
+    ...(facts.passThrough?.violations ?? []),
   ];
 
   const uniqueOwners = new Set(facts.ownerMaps.flatMap((map) => Object.keys(map.specs))).size;
@@ -1237,6 +1260,8 @@ export function auditArchitectureDeepening(
       classifiedProviderLanes: facts.providerAttemptCensus.classifiedLaneFindings,
       unclassifiedProviderWires: facts.providerAttemptCensus.unclassifiedFindings,
       dependencyTotals: facts.dependency.totals,
+      passThroughSites: facts.passThrough?.headSites ?? 0,
+      newPassThroughSites: facts.passThrough?.added ?? 0,
     },
   };
 }
@@ -1251,9 +1276,13 @@ async function runCli(): Promise<void> {
   const { scanForbiddenTaskCatalogPatterns } = await import('./lib/task-census-guards.js');
   const { collectProviderWireFindings } = await import('./audit-provider-lanes.js');
   const { runProviderAttemptTruthAudit } = await import('./audit-provider-attempt-truth.js');
-  const { collectDependencySnapshot, compareDependencySnapshot } = await import(
-    './audit-capability-boundaries.js'
-  );
+  const {
+    collectDependencySnapshot,
+    compareDependencySnapshot,
+    parseBaseline,
+    readBaselineAtRef,
+    resolveImportTarget,
+  } = await import('./audit-capability-boundaries.js');
   const { CONTROL_TOOLS, READ_TOOLS, PROPOSE_WRITE_TOOLS } = await import(
     '../src/kernel/tools/allowlists.js'
   );
@@ -1353,10 +1382,82 @@ async function runCli(): Promise<void> {
 
   // --- dependency facts -----------------------------------------------------
   const { snapshot } = collectDependencySnapshot(projectRoot);
+  const baselinePath = 'scripts/capability-boundary-baseline.json';
   const baseline = JSON.parse(
-    readFileSync(resolve(projectRoot, 'scripts/capability-boundary-baseline.json'), 'utf8'),
+    readFileSync(resolve(projectRoot, baselinePath), 'utf8'),
   ) as DependencySnapshot;
   const baselineViolations = compareDependencySnapshot(snapshot, baseline);
+
+  // --- pass-through / compat-shim ratchets ----------------------------------
+  // New pure re-export / identity-forward sites fail by default; only a
+  // coordinator-approved compatShims entry with real consumers, an exit
+  // condition, an issue and a <=14-day window may cover them.
+  const argv = process.argv.slice(2);
+  const baseIndex = argv.indexOf('--base');
+  if (baseIndex !== -1 && !argv[baseIndex + 1]) {
+    throw new Error('--base requires a commit SHA.');
+  }
+  const baseSha = resolveAuditBaseSha(
+    projectRoot,
+    baseIndex === -1 ? process.env.CAPABILITY_BASE_SHA : argv[baseIndex + 1],
+  );
+  const SCAN_ROOTS = ['src', 'server', 'web'];
+  const inScanScope = (path: string) =>
+    SCAN_ROOTS.some((root) => path.startsWith(`${root}/`)) &&
+    SOURCE_RE.test(path) &&
+    !TEST_RE.test(path) &&
+    !path.endsWith('.d.ts') &&
+    !path.includes('.generated.');
+  const resolveHeadTarget = (file: string, source: string) => {
+    const target = resolveImportTarget(projectRoot, resolve(projectRoot, file), source);
+    return target ? relative(projectRoot, target).split(sep).join('/') : undefined;
+  };
+  const headSources = SCAN_ROOTS.flatMap((root) =>
+    sourceFilesUnder(projectRoot, resolve(projectRoot, root)),
+  ).filter((file) => inScanScope(file.path));
+  const headSites = scanPassThroughSites(headSources, resolveHeadTarget);
+
+  const baseEntries = listTreeFiles(projectRoot, baseSha, SCAN_ROOTS).filter((entry) =>
+    inScanScope(entry.path),
+  );
+  const baseBlobs = readBlobs(
+    projectRoot,
+    baseSha,
+    baseEntries.map((entry) => entry.path),
+  );
+  const basePathSet = new Set(listTreeFiles(projectRoot, baseSha, []).map((entry) => entry.path));
+  const baseSources = baseEntries
+    .filter((entry) => baseBlobs.has(entry.path))
+    .map((entry) => ({ path: entry.path, code: baseBlobs.get(entry.path) ?? '' }));
+  const baseSites = scanPassThroughSites(baseSources, (file, source) =>
+    resolveSpecifierInTree(
+      basePathSet,
+      file.includes('/') ? file.slice(0, file.lastIndexOf('/')) : '',
+      source,
+    ),
+  );
+  const renames = worktreeRenameMap(projectRoot, baseSha, SCAN_ROOTS);
+  const siteDiff = diffPassThroughSites(baseSites, headSites, renames);
+  const baselineFull = parseBaseline(
+    readFileSync(resolve(projectRoot, baselinePath), 'utf8'),
+    baselinePath,
+  );
+  const previousFull = readBaselineAtRef(projectRoot, baseSha);
+  const passThroughViolations: OwnershipViolation[] = auditCompatShims({
+    headSites,
+    newSites: siteDiff.added,
+    records: baselineFull.compatShims,
+    previousRecords: previousFull.compatShims.length,
+    readSource: (path) => {
+      try {
+        return readFileSync(resolve(projectRoot, path), 'utf8');
+      } catch {
+        return undefined;
+      }
+    },
+    resolveTarget: resolveHeadTarget,
+    today: new Date().toISOString().slice(0, 10),
+  });
 
   const result = auditArchitectureDeepening(projectRoot, publicReadCycleCatalog, {
     ownerMaps,
@@ -1410,6 +1511,13 @@ async function runCli(): Promise<void> {
         reason: violation.reason,
       })),
     },
+    passThrough: {
+      baseSites: baseSites.length,
+      headSites: headSites.length,
+      added: siteDiff.added.length,
+      removed: siteDiff.removed.length,
+      violations: passThroughViolations,
+    },
   });
 
   if (!result.ok) {
@@ -1428,7 +1536,7 @@ async function runCli(): Promise<void> {
       .map((component) => component.join('/'))
       .join(
         '; ',
-      )}] fully catalogued (${result.intraSccEdgeCount} intra-SCC edge directions; ${result.catalogReadFiles} public-read files, ${result.catalogCommandFiles} command files); ${result.counts.classifiedProviderLanes} classified provider lanes / ${result.counts.unclassifiedProviderWires} unclassified; dependency totals ${result.counts.dependencyTotals.capabilityToServer}/${result.counts.dependencyTotals.serverToCapabilityDeep}/${result.counts.dependencyTotals.crossCapabilityValue} strictly below 531/70/62.`,
+      )}] fully catalogued (${result.intraSccEdgeCount} intra-SCC edge directions; ${result.catalogReadFiles} public-read files, ${result.catalogCommandFiles} command files); ${result.counts.classifiedProviderLanes} classified provider lanes / ${result.counts.unclassifiedProviderWires} unclassified; dependency totals ${result.counts.dependencyTotals.capabilityToServer}/${result.counts.dependencyTotals.serverToCapabilityDeep}/${result.counts.dependencyTotals.crossCapabilityValue} strictly below 531/70/62; pass-through sites ${result.counts.passThroughSites} (+${result.counts.newPassThroughSites} new).`,
   );
 }
 

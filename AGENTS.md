@@ -105,6 +105,21 @@ nested `AGENTS.md` / `.claude/rules`，机械约束放在 hooks。
   除非当前代码或文档明确说明。
 - 多 provider 细节以 `src/server/ai/AGENTS.md` 为准。
 
+## Architecture no-regression checklist（YUK-1579，六项）
+
+1. 一个 owner 拥有一项完整事实或完整操作；同一事实不允许两个模块各自拼装。
+2. 窄接口必须隐藏决策、状态与恢复复杂度；拒绝 pass-through 转发和时序耦合
+   （调用方必须按特定顺序做的事属于模块内部职责）。
+3. 判断深模块用两个真实变更场景下的局部理解/修改范围；行数、import 数
+   只是信号，不构成架构收益证明。
+4. 不新增 god file，不把业务规则写进 UI；调用方不得重写被依赖模块的内部
+   排序或决策。
+5. 事务边界、锁顺序、幂等、部分完成/恢复路径和兼容契约必须显式；如实区分
+   静态检查、CI 校验与真实运行验证，不把前者冒充后者。
+6. 新增依赖来源只能走既有 `public`/`ui-public` 规则或已批准的 kernel 端口；
+   所有 ratchet 台账记录必须与机器输出逐条一致（baseline `edgeRecords` /
+   `sourceSizeRecords` / `compatShims` / `changes`）。
+
 ## Development and verification
 
 命令矩阵、测试分区、audit 清单和 Postman 流程见
