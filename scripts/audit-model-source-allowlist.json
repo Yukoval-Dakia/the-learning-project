@@ -1,4 +1,13 @@
 {
+  "scripts/gen-model-catalog.ts": {
+    "literals": ["typesafe/jev-1.13"],
+    "reason": "Offline catalog trim keeps only the supported typed OpenRouter model; this does not select a task model or enable OpenRouter chat execution.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1563 part 4: revisit when custom provider support changes the set of executable OpenRouter protocols",
+      "expected_by": "2027-01-01"
+    }
+  },
   "src/server/rehearsal/corpus.ts": {
     "literals": ["mimo-v2.5", "unpriced:xiaomi/mimo-v2.5", "typesafe/jev-1.13"],
     "reason": "rehearsal fixture: synthetic ai_task_runs/cost_ledger seed rows mirror a historical run ledger; fixtures are read-only evidence, not runtime config",

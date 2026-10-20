@@ -1,48 +1,20 @@
-// Provider Manager — single source of truth for which upstream serves each
-// AI task. The registry (src/ai/registry.ts) declares `defaultProvider +
-// defaultModel` per task; `resolveTaskProvider()` looks up the provider here
-// and returns a ResolvedProvider. Pi's native preset owns the model, API,
-// compatibility flags and wire headers; endpoint/key substitution is not a provider switch.
-//
-// Two auth modes (YUK-365):
-//   - authMode 'key'   — a bearer / x-api-key value (ANTHROPIC_API_KEY style),
-//     optionally with a baseUrl override (xiaomi/mimo). The pi catalog entry
-//     carries the baseUrl; the resolved key feeds pi's credential wiring.
-//     This is the default + the only pre-YUK-365 behaviour, preserved exactly.
-//   - authMode 'oauth' — a long-lived subscription OAuth token (the owner's
-//     Claude Max sub, generated via `claude setup-token`). It works ONLY against
-//     Anthropic's first-party endpoint and is MUTUALLY EXCLUSIVE with any
-//     ANTHROPIC_BASE_URL / ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN (precedence:
-//     ANTHROPIC_API_KEY > CLAUDE_CODE_OAUTH_TOKEN). resolveTaskProvider returns
-//     the token as the resolved credential; pi's Anthropic driver sends
-//     `sk-ant-oat*` values as Bearer automatically (pi-models.ts).
-//
-// Pre-2026-05-17 this module returned a Vercel AI SDK `LanguageModel`
-// instance; it now returns a plain config record — pi owns the wire protocol
-// and resolves the model from the loom catalog entry, no model handle needed.
-//
-// Adding a new key-auth provider: append an entry to PROVIDERS with
-// authMode:'key', set the env-var name + baseURL. Adding a new task: edit
-// registry.ts only.
+// Task configuration owns model selection. The runtime catalog supplies facts,
+// Pi supplies transport, and credentials stay scoped to the provider.
 
 import { type TaskDefinition, canonicalProviderName } from '@/ai/task-spec';
 import { type Provider, type TaskKind, tasks } from '@/capabilities/task-registry';
 import { getLaneOverride, getTaskOverride } from '@/core/config/store';
-import type { ProviderModelBinding } from './model-profiles';
-import { OPENCODE_GO_OPENAI_BASE_URL } from './opencode-go';
+import { type ProviderModelBinding, resolveModelProfile } from './model-profiles';
 import { nativePiModel, piProviderId } from './pi-provider-catalog';
-import { xiaomiTokenPlanBaseUrl } from './xiaomi-token-plan';
 
 // YUK-608 — re-export the provider union so override consumers (solve-lane, verify-framework)
 // type `override.provider` as `Provider` (matching the runner's RunTaskCallCtx) without each
 // reaching back into the registry.
 export type { Provider };
 
-/** A key-auth provider: bearer/x-api-key value read from `apiKeyEnv`, optional baseUrl. */
+/** A key-auth provider: bearer/x-api-key value read from `apiKeyEnv`. */
 interface KeyProviderConfig {
   authMode: 'key';
-  /** Override ANTHROPIC_BASE_URL. Anthropic direct doesn't need one. */
-  baseUrl?: string;
   /** Env var holding the bearer / x-api-key value. */
   apiKeyEnv: string;
   /** Optional human-readable note shown in errors when the env is missing. */
@@ -51,7 +23,7 @@ interface KeyProviderConfig {
 
 /**
  * An OAuth-auth provider (YUK-365): a long-lived subscription token read from
- * `oauthTokenEnv`, run against Anthropic's first-party endpoint (NO baseUrl).
+ * `oauthTokenEnv`, using Anthropic's protocol and catalog endpoint.
  */
 interface OauthProviderConfig {
   authMode: 'oauth';
@@ -62,16 +34,7 @@ interface OauthProviderConfig {
 
 type ProviderConfig = KeyProviderConfig | OauthProviderConfig;
 
-/**
- * YUK-924 Layer-2 provider binding surface (the "config" in config-over-catalog).
- * `modelDefaults` applies to EVERY model id resolved on the provider — including
- * catalog-miss and future ids — so lane-wide facts (xiaomi's missing
- * structured-output protocol, anthropic's metered USD) hold byte-identically to
- * the provider-string checks they replace. `models` holds per-model entries:
- * a full definition for catalog-miss models or field overrides of a catalog
- * entry. Explicit field wins; unspecified falls through to the catalog snapshot
- * (src/server/ai/model-profiles.ts) and then conservative tri-state defaults.
- */
+/** Execution policy only; model facts and exceptions belong to model-profiles. */
 interface ProviderModelBindings {
   modelDefaults?: ProviderModelBinding;
   models?: Record<string, ProviderModelBinding>;
@@ -92,13 +55,8 @@ const PROVIDERS: Record<Provider, BoundProviderConfig> = {
   },
   xiaomi: {
     authMode: 'key',
-    baseUrl: 'https://api.xiaomimimo.com/v1',
     apiKeyEnv: 'XIAOMI_API_KEY',
     description: 'Native pi Xiaomi preset (OpenAI Completions)',
-    // The app does not pass a transport-level structured-output schema.
-    // Structured extraction stays app-level
-    // (Zod parse of the result text, with char-scan fallbacks downstream).
-    modelDefaults: { capabilities: { structuredOutput: false } },
     models: {
       'mimo-v2.5-pro': {
         execution: { localPricebook: true },
@@ -115,19 +73,11 @@ const PROVIDERS: Record<Provider, BoundProviderConfig> = {
     apiKeyEnv: 'XIAOMI_TOKEN_PLAN_API_KEY',
     description: 'Xiaomi official Token Plan via native pi OpenAI Completions',
     modelDefaults: {
-      capabilities: { structuredOutput: false, toolCalling: false },
       execution: { meteredUsd: false },
-    },
-    models: {
-      // YUK-1402: Token Plan Sourcing tool-loop actual-output sealed in
-      // docs/planning/evidence/2026-10-10-pi-tool-loop-xiaomi-token-plan-mimo-v2.6-pro-actual.json.
-      // Copilot executions and tool_use mirrors are sealed in the companion evidence.
-      'mimo-v2.6-pro': { capabilities: { toolCalling: true } },
     },
   },
   'zhipuai-coding-plan': {
     authMode: 'key',
-    baseUrl: 'https://open.bigmodel.cn/api/coding/paas/v4',
     apiKeyEnv: 'ZAI_CODING_CN_API_KEY',
     description: 'Native pi Z.AI Coding CN preset (OpenAI Completions)',
     models: {
@@ -137,122 +87,49 @@ const PROVIDERS: Record<Provider, BoundProviderConfig> = {
       // no such tier and keeps 'standard'.
       'glm-5.3-flash': {
         execution: { timeoutClass: 'durable-heavy', budgetClass: 'cheap' },
-        reasoning: { defaultEffort: 'high' },
       },
       'glm-5.3': {
-        capabilities: { toolCalling: true },
         execution: { budgetClass: 'heavy' },
-        reasoning: { defaultEffort: 'high' },
       },
     },
   },
   openrouter: {
     authMode: 'key',
-    baseUrl: 'https://openrouter.ai/api/v1',
     apiKeyEnv: 'OPENROUTER_API_KEY',
     description:
       'OpenRouter gateway — TYPED decisions lane only (native /api/v1/systemone, YUK-1049); no chat façade',
     models: {
-      // YUK-1049 — TypeSafe Jev on the native typed endpoint. Text-only,
-      // 32k context (OpenRouter catalog probe 2026-09-24, D12 smoke); the
-      // typed schema IS the structured-output contract, so the lane carries
-      // the structuredOutput confirmation. meteredUsd stays false: usage.cost
-      // is provider-reported evidence (basis 'reported'), while the USD cap
-      // enforcement lives in the typed runner's reserve math, not in a
-      // transport maxBudgetUsd hook that no longer exists.
+      // Provider-reported cost is not a transport-enforced budget.
       'typesafe/jev-1.13': {
-        capabilities: {
-          structuredOutput: true,
-          toolCalling: false,
-          vision: false,
-          reasoning: false,
-        },
-        limits: { contextWindowTokens: 32_000 },
         execution: { budgetClass: 'cheap', meteredUsd: false },
       },
     },
   },
   gateway: {
     authMode: 'key',
-    baseUrl: 'https://ai-gateway.vercel.sh',
     apiKeyEnv: 'VERCEL_AI_GATEWAY_TOKEN',
     description: 'Vercel AI Gateway (not currently in use)',
   },
   openai: {
     authMode: 'key',
-    // No baseUrl — pi's builtin 'openai' provider already points at
-    // https://api.openai.com/v1 and serves gpt-6-astra on the
-    // openai-responses wire (the ONLY wire this lane uses; Astra tool calls
-    // must go through Responses, not Chat Completions).
     apiKeyEnv: 'OPENAI_API_KEY',
     description: 'OpenAI direct first-party (gpt-6-astra via the Responses API, YUK-1027)',
     modelDefaults: {
-      // The lane never wires response_format/json-schema passthrough today —
-      // structured extraction stays app-level (Zod parse of result text).
-      // Declaring false (not 'unknown') is the honest classification; a model
-      // may only flip true after the app actually threads the schema and
-      // handles refusal/incomplete.
-      capabilities: { structuredOutput: false },
       // pi usage.cost is the catalog rate-card estimate, not a contractual
       // invoice (attempt-cost.ts classifies it 'estimated'); meteredUsd stays
       // false until the P2 budget work proves real accounting on this lane.
       execution: { meteredUsd: false },
     },
-    models: {
-      // YUK-1027 — the pi builtin catalog already carries the full entry
-      // (openai-responses api, text+image input, reasoning, 272k/128k limits,
-      // tiered cache pricing); this binding is the authoritative APP-LEVEL
-      // capability declaration the fail-closed gate reads. toolCalling/vision
-      // are declared on the strength of the offline contract test
-      // (astra-responses-contract.test.ts: function_call ⇄ toolCall ⇄
-      // function_call_output round-trip, input_image payloads) — paid
-      // actual-output evidence remains a P3 gate.
-      'gpt-6-astra': {
-        capabilities: {
-          toolCalling: true,
-          vision: true,
-          reasoning: true,
-          structuredOutput: false,
-        },
-        limits: { contextWindowTokens: 272_000, maxOutputTokens: 128_000 },
-        reasoning: {
-          mode: 'effort',
-          // thinkingLevelMap maps all five tiers verbatim; 'minimal'/'off'
-          // are intentionally absent from EffortLevel.
-          supportedEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
-        },
-      },
-    },
   },
-  // YUK-921 P1 — OpenCode Go subscription lane. The
-  // catalog's target models speak openai-completions/openai-responses; served
-  // by the pi adapter's builtin 'opencode-go' provider, which owns
-  // baseUrl/model catalog/auth. This entry only declares the loom-side
-  // credential + capability classification. Every request additionally needs
-  // an x-opencode-session header (injected by the pi adapter from the run id —
-  // see pi-agent-adapter.ts).
-  // YUK-1547 — pi-ai 1.1.0's builtin catalog still points the OpenAI-API
-  // family at the legacy /zen/go/v1; OPENCODE_GO_OPENAI_BASE_URL is the single
-  // official-endpoint source that pi-models.ts and pi-provider-catalog.ts
-  // rebind onto the wire models (chat+tool receipts: HTTP 200).
+  // The adapter adds x-opencode-session from the run id on every request.
   'opencode-go': {
     authMode: 'key',
-    baseUrl: OPENCODE_GO_OPENAI_BASE_URL,
     apiKeyEnv: 'OPENCODE_API_KEY',
     description: 'OpenCode Go subscription catalog via the pi execution adapter',
     modelDefaults: {
-      // This lane does not send response_format, so catalog structured_output stays off.
-      capabilities: { structuredOutput: false },
       // pi usage.cost is a catalog-rate estimate, not a contractual invoice
       // (design §6 R1): never metered.
       execution: { meteredUsd: false },
-    },
-    models: {
-      // forcedToolChoice is not in the models.dev snapshot. With thinking
-      // enabled, this model returned HTTP 400 "Thinking mode does not support
-      // this tool_choice" (request_id 6fde3ba6-8f64-4c84-8a3d-5a5e211b430a).
-      // toolCalling stays on the snapshot.
-      'deepseek-v4.1-flash': { capabilities: { forcedToolChoice: false } },
     },
   },
   // YUK-365 — subscription-OAuth lane. Opus 4.8 via the owner's Claude Max
@@ -273,8 +150,7 @@ const PROVIDERS: Record<Provider, BoundProviderConfig> = {
 /**
  * YUK-924 — the model-binding half of the provider registry, derived from the
  * PROVIDERS entries above (single source of truth: edit the entries, not this
- * projection). Consumed by src/server/ai/model-profiles.ts as the top layer of
- * the config-over-catalog merge.
+ * projection). ModelProfile merges this execution policy separately from catalog facts.
  */
 export const PROVIDER_MODEL_BINDINGS: Readonly<Record<Provider, ProviderModelBindings>> =
   Object.fromEntries(
@@ -445,27 +321,25 @@ export function implementedProviderIds(): readonly Provider[] {
 
 /**
  * Root the product actually calls, with `/v1` included, for a provider `/models`
- * read. Null when the lane has no usable root (bad Token Plan region included).
- * Directory `api` fields are not consulted here.
+ * read. The probe model selects the same endpoint as execution.
  */
 export function providerModelsRoot(
   provider: Provider,
   env: Record<string, string | undefined> = process.env,
 ): string | null {
   if (!isProviderImplemented(provider)) return null;
-  if (provider === 'anthropic' || provider === 'anthropic-sub')
-    return 'https://api.anthropic.com/v1';
-  if (provider === 'openai') return 'https://api.openai.com/v1';
-  if (provider === 'xiaomi-token-plan') {
-    try {
-      return xiaomiTokenPlanBaseUrl(env);
-    } catch {
-      return null;
-    }
+  const model = providerAuthProbeModel(provider);
+  if (!model) return null;
+  try {
+    const base = resolveModelProfile(provider, model, env).baseUrl;
+    if (!base) return null;
+    return nativePiModel(provider, model, env)?.api === 'anthropic-messages' &&
+      !base.endsWith('/v1')
+      ? `${base}/v1`
+      : base;
+  } catch {
+    return null;
   }
-  const config = PROVIDERS[provider];
-  if (config.authMode !== 'key' || config.baseUrl === undefined) return null;
-  return config.baseUrl.replace(/\/+$/, '');
 }
 
 // YUK-1049 — the openrouter lane is implemented ONLY for typed-execution
@@ -578,7 +452,7 @@ export type ResolvedProvider =
       provider: Provider;
       model: string;
       apiKey: string;
-      /** undefined for Anthropic direct (uses the catalog default). */
+      /** Undefined when neither the catalog nor a documented exception supplies it. */
       baseUrl?: string;
       /** Per-task model-native reasoning params, validated against the resolved model. */
       nativeReasoningParams?: TaskNativeReasoningParams;
@@ -833,7 +707,7 @@ function assertOptedTaskPair(
  * a config error before any admission row, attempt row, or paid call (same
  * posture as the credential checks below). `reasoning_effort` is only honest
  * on an OpenAI-completions reasoning model, and only when the model's OWN
- * thinkingLevelMap names the value — the model declares its native levels
+ * runtime directory names the value — the model declares its native levels
  * (e.g. low|high|max for deepseek-v4.1-flash), loom never invents or maps a
  * tier. Returns the FULL wire param set: for thinkingFormat='deepseek' the
  * model's own compat requires `thinking:{type:'enabled'}` beside the effort
@@ -854,12 +728,10 @@ function resolveTaskNativeReasoningParams(
       `task.${kind}.reasoning sets reasoning_effort='${effort}', but '${provider}/${model}' is not an OpenAI-completions reasoning model — the param would be dropped or rejected on the wire. Remove the task override or point the task at a lane whose own reasoning parameter is reasoning_effort.`,
     );
   }
-  const supported = Object.values(native.thinkingLevelMap ?? {}).filter(
-    (value): value is string => typeof value === 'string',
-  );
+  const supported = resolveModelProfile(provider, model).reasoning.supportedEfforts;
   if (!supported.includes(effort)) {
     throw new Error(
-      `task.${kind}.reasoning reasoning_effort='${effort}' is not a value '${provider}/${model}' accepts — the model's own thinkingLevelMap declares [${supported.join(', ')}]. Pass one of those values verbatim (no tier mapping).`,
+      `task.${kind}.reasoning reasoning_effort='${effort}' is not a value '${provider}/${model}' accepts. The runtime catalog declares [${supported.join(', ')}]. Pass one of those values verbatim.`,
     );
   }
   return native.thinkingFormat === 'deepseek'
@@ -947,7 +819,7 @@ export function resolveTaskProvider(
     provider: providerName,
     model: modelId,
     apiKey,
-    baseUrl: providerName === 'xiaomi-token-plan' ? xiaomiTokenPlanBaseUrl() : config.baseUrl,
+    baseUrl: resolveModelProfile(providerName, modelId).baseUrl,
     selectionRule,
     ...nativeReasoning,
   };
