@@ -3,13 +3,13 @@ import { z } from 'zod';
 import type { Db, Tx } from '@/db/client';
 import { ai_task_runs, cost_ledger, tool_call_log } from '@/db/schema';
 import { ApiError, collectionPayload } from '@/kernel/http';
+import { readProviderCostAggregates } from '@/kernel/read-models/provider-cost-projection';
 import {
   type AdminCostQuerySchema,
   type AdminFailuresQuerySchema,
   AdminRunParamsSchema,
   AdminRunStatusSchema,
 } from '../api/admin-observability-contracts';
-import { readProviderCostAggregates } from './provider-cost-projection';
 
 type DbLike = Db | Tx;
 

@@ -41,12 +41,9 @@ function resultIsIdempotent(result: ProposalLifecycleResult): boolean {
 }
 
 /**
- * YUK-1404 — the narrow soft-stale block_merge accept: the applier skipped the
- * merge (referenced blocks left draft), so NO rate event and NO decision
- * signal were written — there is no immutable event to point at. Guard shape
- * is structural AND state-checked (pending + block_merge + accept) so a
- * malformed result can never masquerade as stale and fall out of the event
- * requirement below.
+ * YUK-1404 — soft-stale block_merge accept: the applier skipped the merge and
+ * wrote no rate event or signal, so there is no immutable event to point at.
+ * Structural and state checks keep a malformed result from being served as stale.
  */
 function isStaleBlockMergeAccept(
   decision: ProposalDecisionInputT['decision'],
@@ -58,15 +55,11 @@ function isStaleBlockMergeAccept(
 /**
  * Create the canonical immutable decision representation for a proposal.
  *
- * Matrix:
- * - accept/reverse/change_type/dismiss -> one chained `rate` event
- * - retract -> one effective chained `correct(retract)` event
- * - same normalized decision replay -> existing event, 200/idempotent
- * - different terminal decision -> 409
- * - retract may follow an accept/dismiss because it is the L3 correction lane
+ * accept/reverse/change_type/dismiss → chained `rate`; retract → chained
+ * `correct(retract)`. Same decision replay → existing event, idempotent;
+ * a different terminal decision → 409. Retract may follow accept/dismiss.
  *
- * `decision_event_id` is readable through GET /api/events/:id, allowing the
- * HTTP handler to return an honest Location for newly created decisions.
+ * `decision_event_id` is readable via GET /api/events/:id for an honest Location.
  */
 export async function createProposalDecision(
   db: Db,
@@ -99,15 +92,10 @@ export async function createProposalDecision(
       if (existingRate.decision !== input.decision) {
         throw conflict(proposalId, existingRate.decision);
       }
-      // Only `accept` falls through to acceptAiProposal → the per-kind applier: that is where
-      // learning_item re-drives the best-effort note_generate enqueue on re-accept, the recovery
-      // path this early return previously made unreachable (YUK-681 P2). The audit confirmed all
-      // accept-family appliers self-guard re-accept idempotency, and the applier result carries
-      // `idempotent:true` for `resultIsIdempotent` below.
-      //
-      // reverse/change_type/dismiss have no re-drive hop, and acceptAiProposal's top guard only
-      // admits an existing `accept` decision — routing them through it would regress their
-      // same-decision idempotent replay from 200 to 409. Keep serving that replay here.
+      // Only accept re-enters the per-kind applier, which re-drives best-effort
+      // note_generate on re-accept; accept appliers self-guard idempotency.
+      // reverse/change_type/dismiss have no re-drive hop and would turn a
+      // same-decision replay from 200 into 409, so serve that replay here.
       if (input.decision !== 'accept') {
         return {
           proposal_id: proposalId,
@@ -165,12 +153,9 @@ export async function createProposalDecision(
     throw new ApiError('not_found', `proposal ${proposalId} not found after decision`, 404);
   }
 
-  // YUK-1404 — the soft-stale block_merge accept committed NOTHING (no rate
-  // event, no signal, no status change). Serving the honest stale
-  // representation — 200 non-created, decision_event_id:null, proposal still
-  // pending (no false resolve) — instead of the former decision_event_missing
-  // 500. Every other completed decision still falls through to the hard event
-  // requirement below.
+  // YUK-1404 — a soft-stale block_merge accept committed nothing, so serve the
+  // honest pending representation (200, decision_event_id:null) instead of 500.
+  // Every other completed decision still requires an immutable event below.
   if (
     isStaleBlockMergeAccept(input.decision, result) &&
     proposal.kind === 'block_merge' &&

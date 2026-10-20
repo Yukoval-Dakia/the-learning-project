@@ -532,7 +532,7 @@ export async function runSessionOrphanTick(
     if (outcome.kind === 'abandoned') counts.abandoned++;
     else if (outcome.kind === 'skipped') counts.skipped++;
     else counts.deferred++;
-    // Boundary failures are process/test failures, never ordinary row failures.
+    // Boundary failures are process failures, never ordinary row failures.
     await boundary({ ...key, kind: 'row-committed', sessionId: candidate.sessionId });
   }
   return counts.deferred

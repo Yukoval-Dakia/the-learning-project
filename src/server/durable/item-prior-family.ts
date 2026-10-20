@@ -1,4 +1,4 @@
-// YUK-1355: unregistered, read-only DAG member candidate. No cron or paid dispatch.
+// Unregistered, read-only DAG member candidate: no cron and no paid dispatch.
 // Safe durable paid claims/receipts are a parent prerequisite. Every invocation
 // fails after admission, including an empty batch, so it cannot discharge a node.
 
@@ -56,11 +56,9 @@ export interface ItemPriorAdmission {
   candidates: ItemPriorCandidateFrozen[];
   knowledgeNames: [string, string][];
   /**
-   * Frozen per-candidate paid inputs (subject profile included), prepared
-   * inside the same read-only snapshot. Execution and every later recorded-step
-   * replay consume only these works: re-resolving a profile after admission
-   * would re-key the input digest, strand old obligations and re-send the same
-   * logical input under a new identity (parent review 2026-10-11).
+   * Paid inputs frozen in the admission snapshot, subject profile included.
+   * Execution and step replay must consume these works; re-resolving a profile
+   * would change the digest and re-send the same logical input as a new identity.
    */
   prepared: ItemPriorPreparedWork[];
 }
@@ -122,7 +120,7 @@ async function verifyItemPriorMemberIdentity(
         );
       }
       await readItemPriorPgBossDelivery(tx, { ...request, dispatch }, 'read');
-      // Terminal jobs may recover receipts; reservation rechecks state under a job row lock.
+      // Terminal jobs may recover receipts; the reservation rechecks under a job row lock.
     } else if (node.boss_job_id) {
       const [rawJob] = await tx.execute(
         sql`select state::text as state from pgboss.job where id = ${node.boss_job_id}::uuid`,
@@ -133,7 +131,7 @@ async function verifyItemPriorMemberIdentity(
         );
       }
     }
-    // Read-only snapshot check preserves the supplied generation. The adapter's shared claim
+    // Read-only check preserves the supplied generation; the shared claim still
     // enforces control atomically before a send, including a concurrent switch.
     const control = await readPaidEffectControl(tx, ITEM_PRIOR_MEMBER);
     const admission = decidePaidEffectControlAdmission(control, dispatch);
@@ -142,8 +140,8 @@ async function verifyItemPriorMemberIdentity(
     }
     return;
   }
-  // This is only a read check in one direction, not a cross-backend claim or fence.
-  // Even passing this check never enables paid dispatch in this checkpoint.
+  // One-directional read check, not a cross-backend claim or fence; passing it
+  // never enables paid dispatch in this checkpoint.
   if (node.boss_job_id) {
     const [rawBossJob] = await tx.execute(
       sql`select state::text as state from pgboss.job where id = ${node.boss_job_id}::uuid`,
@@ -166,18 +164,16 @@ export interface ItemPriorMemberDeps {
 }
 
 /**
- * Shared admission body (one recorded step, `item-prior-admission-v1`): epoch
- * gate, then a read-only repeatable-read freeze of delivery identity,
- * normalized params, candidates and knowledge names. Used unchanged by the
- * blocked candidate and by the explicit versioned execution path below.
+ * Shared admission body: epoch gate, then a read-only repeatable-read snapshot
+ * freezing identity, normalized params, candidates and knowledge names.
  */
 async function admitItemPriorMember(
   deps: Pick<ItemPriorMemberDeps, 'db' | 'gateEpoch'>,
   request: ItemPriorMemberRequest,
   dispatch?: ItemPriorDispatch,
 ): Promise<ItemPriorAdmission> {
-  // All I/O stays inside the step. A missing checkpoint may repeat these reads;
-  // retriesAllowed:false does not prevent crash recovery from running a step.
+  // All I/O stays inside the step; crash recovery may run it again even with
+  // retriesAllowed:false.
   await (deps.gateEpoch ?? waitForRunnableEpoch)(deps.db);
   return deps.db.transaction(
     async (tx) => {
@@ -188,9 +184,8 @@ async function admitItemPriorMember(
       } satisfies ItemPriorExecutionParams;
       const candidates = await selectItemPriorCandidates(tx, DEFAULT_MAX_PER_RUN);
       const names = await resolveItemPriorKnowledgeNames(tx, candidates);
-      // Freeze the exact paid inputs (subject profile included) inside this
-      // snapshot so execution and every later replay use identical digests; a
-      // profile change after admission can never re-key the work.
+      // Freeze paid inputs in this snapshot so execution and replay use identical
+      // digests; a later profile change cannot re-key the work.
       const nameById = new Map(names);
       const prepared: ItemPriorPreparedWork[] = [];
       for (const candidate of candidates) {
@@ -220,11 +215,11 @@ export async function runItemPriorDurableMember(deps: ItemPriorMemberDeps): Prom
   );
 
   // No token comparison, task invocation or domain write. A failed prerequisite
-  // is not an unknown paid outcome and is not a terminal business disposition.
+  // is neither an unknown paid outcome nor a terminal disposition.
   throw new ItemPriorDurabilityPrerequisiteError(admission);
 }
 
-/** Parent integration entry, currently unused by registration, boot or manifests. */
+/** Parent integration entry; no registration, boot path or manifest uses it yet. */
 export function registerItemPriorFamilyWorkflow(db: Db) {
   return DBOS.registerWorkflow(
     async (request: unknown): Promise<never> =>
@@ -239,7 +234,7 @@ export function registerItemPriorFamilyWorkflow(db: Db) {
   );
 }
 
-// Explicit versioned dispatch only. The old candidate and registration remain blocked.
+// Explicit versioned dispatch only; the old candidate stays blocked.
 export interface ItemPriorDispatchedAdmission extends ItemPriorAdmission {
   readonly dispatch: ItemPriorDispatchedRequest['dispatch'];
 }
