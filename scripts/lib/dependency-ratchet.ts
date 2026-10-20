@@ -62,11 +62,11 @@ function isNewEdge(baseIndex: ReadonlyMap<string, 'value' | 'type'>, edge: Kinde
  * existing pairs — after rename normalization of both endpoints. This is the
  * "new dependency" set the records must cover.
  */
-export function addedEdges(
-  base: readonly RatchetEdge[],
-  head: readonly RatchetEdge[],
+export function addedEdges<T extends KindedEdge>(
+  base: readonly KindedEdge[],
+  head: readonly T[],
   renames: ReadonlyMap<string, string>,
-): RatchetEdge[] {
+): T[] {
   const baseIndex = baseKindIndex(base, renames);
   return head.filter((edge) => isNewEdge(baseIndex, edge));
 }
@@ -78,10 +78,13 @@ function sameSymbols(a: readonly string[], b: readonly string[]): boolean {
 }
 
 /**
- * Every new audited edge must be covered by a matching edgeRecord, and every
- * new record must correspond to a real new edge (coverage both ways; a
- * duplicated record for one edge is tolerated ledger inflation, never a
- * hidden edge). Historical records are append-only and are not re-punished.
+ * Every new audited edge must be covered by a matching edgeRecord appended in
+ * this change — the tail after `previousRecords` — whose kind and symbols are
+ * then verified against the real measured edge. Historical records are
+ * append-only, never re-punished, and can never cover a new edge (a stale
+ * type-edge record must not launder a type→value upgrade). Coverage is
+ * two-way; a duplicated record for one edge is tolerated ledger inflation,
+ * never a hidden edge.
  */
 export function auditEdgeRecords(input: {
   records: readonly EdgeRecord[];
@@ -97,7 +100,7 @@ export function auditEdgeRecords(input: {
   for (const edge of input.head) byEdge.set(edgeKey(edge.file, edge.module), edge);
 
   const covering = new Set<string>();
-  for (const record of input.records) {
+  for (const record of input.records.slice(input.previousRecords)) {
     covering.add(`${record.debt}|${record.file}|${record.module}`);
   }
   for (const edge of input.added) {

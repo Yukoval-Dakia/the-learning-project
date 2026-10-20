@@ -6,6 +6,7 @@ import { parse } from '@babel/parser';
 import { z } from 'zod';
 import {
   type RatchetEdge,
+  type RatchetViolation,
   addedEdges,
   auditEdgeRecords,
   auditKernelFacadeConsumption,
@@ -146,6 +147,7 @@ export interface BoundaryAuditResult {
   regressions?: {
     sccs: { base: number; head: number };
     newDependencyEdges: number;
+    serverEntryNew: { public: number; type: number; blocked: number };
     kernelReverseNew: { value: number; type: number };
     overCeilingFiles: { base: number; head: number };
     overThresholdFiles: { base: number; head: number };
@@ -454,6 +456,9 @@ function posixDirname(path: string): string {
 
 const DEPENDENCY_ROOTS = ['src/capabilities', 'src/server'];
 const KERNEL_CORE_ROOTS = ['src/kernel', 'src/core'];
+/** Top-level composition root + Start frontdoor — outside DEPENDENCY_ROOTS
+ *  so it never feeds the src-layer debt buckets; it gets its own port gate. */
+const SERVER_ENTRY_ROOTS = ['server'];
 
 function headSourceInputs(projectRoot: string, roots: readonly string[]): SourceInput[] {
   return roots
@@ -506,6 +511,61 @@ export function collectSemanticDependenciesAtRef(
 ): SemanticDependency[] {
   const { files, pathSet } = refSourceInputs(projectRoot, ref, DEPENDENCY_ROOTS);
   return collectDependencies(files, (file, source) =>
+    resolveSpecifierInTree(pathSet, posixDirname(file), source),
+  );
+}
+
+interface ServerEntryEdge {
+  file: string;
+  module: string;
+  kind: DependencyKind;
+  symbols: string[];
+}
+
+/**
+ * Real `server/**` imports into `src/capabilities/**`, measured the same way
+ * as DEPENDENCY_ROOTS edges (same parser, same resolution, same merge) so
+ * base and head use an identical representation.
+ */
+function collectServerEntryEdges(
+  files: readonly SourceInput[],
+  resolveTarget: (file: string, source: string) => string | undefined,
+): ServerEntryEdge[] {
+  const edges: ServerEntryEdge[] = [];
+  for (const { path: file, code } of files) {
+    const targets = new Map<string, { kind: DependencyKind; symbols: Set<string> }>();
+    for (const reference of importedReferences(code, file)) {
+      const target = resolveTarget(file, reference.source);
+      if (!target?.startsWith('src/capabilities/')) continue;
+      const previous = targets.get(target);
+      const symbols = previous?.symbols ?? new Set<string>();
+      for (const symbol of reference.symbols) symbols.add(symbol);
+      targets.set(target, {
+        kind: previous?.kind === 'value' || reference.kind === 'value' ? 'value' : 'type',
+        symbols,
+      });
+    }
+    for (const [module, target] of [...targets].sort(([left], [right]) =>
+      left.localeCompare(right),
+    )) {
+      edges.push({ file, module, kind: target.kind, symbols: [...target.symbols].sort() });
+    }
+  }
+  return edges;
+}
+
+function collectServerEntryDependencies(projectRoot: string): ServerEntryEdge[] {
+  const resolveTarget = (file: string, source: string) => {
+    const target = resolveImportTarget(projectRoot, resolve(projectRoot, file), source);
+    return target ? relative(projectRoot, target).split(sep).join('/') : undefined;
+  };
+  return collectServerEntryEdges(headSourceInputs(projectRoot, SERVER_ENTRY_ROOTS), resolveTarget);
+}
+
+/** Same measurement on an immutable base commit. */
+function collectServerEntryDependenciesAtRef(projectRoot: string, ref: string): ServerEntryEdge[] {
+  const { files, pathSet } = refSourceInputs(projectRoot, ref, SERVER_ENTRY_ROOTS);
+  return collectServerEntryEdges(files, (file, source) =>
     resolveSpecifierInTree(pathSet, posixDirname(file), source),
   );
 }
@@ -1067,6 +1127,44 @@ function auditedRatchetEdges(dependencies: readonly SemanticDependency[]): Ratch
   return edges;
 }
 
+/**
+ * A new `server/**` value edge may reach capabilities only through the
+ * approved ports — `public`/`ui-public` entrypoints. A new value edge to a
+ * private `api/`, `ui/` or `server/` module, or to the `src/capabilities`
+ * barrel (a second composition-root entry), fails. Base stock is
+ * grandfathered; a type→value upgrade on an existing pair counts as a new
+ * value edge. New type-only edges carry no runtime reach — counted, not
+ * hard-failed (same split as the kernel reverse-edge gate).
+ */
+function auditServerEntryEdges(input: {
+  base: readonly ServerEntryEdge[];
+  head: readonly ServerEntryEdge[];
+  renames: ReadonlyMap<string, string>;
+}): { violations: RatchetViolation[]; newPublicEdges: number; newTypeEdges: number } {
+  const added = addedEdges(input.base, input.head, input.renames);
+  const violations: RatchetViolation[] = [];
+  let newPublicEdges = 0;
+  let newTypeEdges = 0;
+  for (const edge of added) {
+    const target = locateModulePath(edge.module);
+    if (target?.layer === 'capability' && PUBLIC_ENTRYPOINTS.has(target.entrypoint)) {
+      newPublicEdges += 1;
+      continue;
+    }
+    if (edge.kind === 'type') {
+      newTypeEdges += 1;
+      continue;
+    }
+    violations.push({
+      file: edge.file,
+      source: edge.module,
+      reason:
+        'new server/ entry dependency reaches a capability private module — only capability public/ui-public entrypoints (or kernel ports) are approved ports for new edges',
+    });
+  }
+  return { violations, newPublicEdges, newTypeEdges };
+}
+
 function crossValuePairs(dependencies: readonly SemanticDependency[]): string[] {
   const pairs = new Set<string>();
   for (const dep of dependencies) {
@@ -1176,6 +1274,11 @@ export function main(argv = process.argv.slice(2), projectRoot = process.cwd()):
     result.dependencySnapshot.debts.crossCapabilityValue.nontrivialSccs,
     nontrivialSccs(crossValuePairs(baseDependencies)),
   );
+  const serverEntry = auditServerEntryEdges({
+    base: collectServerEntryDependenciesAtRef(projectRoot, baseSha),
+    head: collectServerEntryDependencies(projectRoot),
+    renames,
+  });
   const baseSizes = collectBaseSizeFiles(projectRoot, baseSha);
   const headSizes = collectHeadSizeFiles(projectRoot);
   result.violations.push(
@@ -1186,6 +1289,7 @@ export function main(argv = process.argv.slice(2), projectRoot = process.cwd()):
       added: newEdges,
     }),
     ...sccs.violations,
+    ...serverEntry.violations,
     ...reverse.violations,
     ...auditKernelFacadeConsumption({
       added: newEdges,
@@ -1209,6 +1313,11 @@ export function main(argv = process.argv.slice(2), projectRoot = process.cwd()):
   result.regressions = {
     sccs: { base: sccs.baseCount, head: sccs.actualCount },
     newDependencyEdges: newEdges.length,
+    serverEntryNew: {
+      public: serverEntry.newPublicEdges,
+      type: serverEntry.newTypeEdges,
+      blocked: serverEntry.violations.length,
+    },
     kernelReverseNew: { value: reverse.newValueEdges, type: reverse.newTypeEdges },
     overCeilingFiles: { base: overCeiling(baseSizes), head: overCeiling(headSizes) },
     overThresholdFiles: { base: overThreshold(baseSizes), head: overThreshold(headSizes) },
@@ -1235,7 +1344,7 @@ export function main(argv = process.argv.slice(2), projectRoot = process.cwd()):
     const regressions = result.regressions;
     console.log(
       `Capability boundary audit passed: 0 deep cross-capability imports; debt ratchets exact (capability->server=${debts.capabilityToServer.total}, server->capability-deep=${debts.serverToCapabilityDeep.total}, cross-capability-value=${debts.crossCapabilityValue.total}); ` +
-        `new dependency edges=${regressions?.newDependencyEdges ?? 0}; nontrivial SCCs=${regressions?.sccs.head ?? 0} (base ${regressions?.sccs.base ?? 0}); ` +
+        `new dependency edges=${regressions?.newDependencyEdges ?? 0}; server-entry new edges=${regressions?.serverEntryNew.public ?? 0} approved/${regressions?.serverEntryNew.blocked ?? 0} blocked/${regressions?.serverEntryNew.type ?? 0} type-only; nontrivial SCCs=${regressions?.sccs.head ?? 0} (base ${regressions?.sccs.base ?? 0}); ` +
         `>${SIZE_METRIC.hardCeiling}-line files=${regressions?.overCeilingFiles.head ?? 0} (base ${regressions?.overCeilingFiles.base ?? 0}).`,
     );
   }

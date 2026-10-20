@@ -342,7 +342,15 @@ export function scanPassThroughSites(
     const bindings = new Map<string, ImportBinding>();
     const candidates: FunctionCandidate[] = [];
     const exportedNames = new Set<string>();
-    const localToExported = new Map<string, string>();
+    // A local binding may be re-exported under several aliases
+    // (`export { f as a, f as b }`) — keep every real exported name so each
+    // alias produces its own site and alias ordering cannot hide one.
+    const localToExported = new Map<string, Set<string>>();
+    const addLocalExport = (local: string, exported: string) => {
+      const names = localToExported.get(local) ?? new Set<string>();
+      names.add(exported);
+      localToExported.set(local, names);
+    };
     // Re-export identities keyed by exported symbol + target so adding
     // `export { b } from './m'` beside an existing `export { a } from './m'`
     // produces a NEW site instead of collapsing into one module-level key.
@@ -441,7 +449,7 @@ export function scanPassThroughSites(
               ? (nodeName(specifier.exported) ?? literalString(specifier.exported))
               : undefined;
             if (!local || !exported) continue;
-            localToExported.set(local, exported);
+            addLocalExport(local, exported);
             exportedNames.add(exported);
             const binding = bindings.get(local);
             if (binding && !binding.typeOnly) {
@@ -481,7 +489,7 @@ export function scanPassThroughSites(
           if (candidate) {
             candidates.push(candidate);
             exportedNames.add('default');
-            localToExported.set(candidate.localName, 'default');
+            addLocalExport(candidate.localName, 'default');
           }
         } else if (
           isRecord(declaration) &&
@@ -548,23 +556,28 @@ export function scanPassThroughSites(
     }
 
     for (const candidate of candidates) {
-      const exported = localToExported.get(candidate.localName) ?? candidate.localName;
-      if (!exportedNames.has(exported)) continue;
+      const exportedSet = new Set<string>(
+        localToExported.get(candidate.localName) ?? new Set<string>(),
+      );
+      if (exportedNames.has(candidate.localName)) exportedSet.add(candidate.localName);
       const forward = forwardDetail(candidate, bindings);
       if (!forward) continue;
       const target = resolve(path, forward.target.source);
       if (!target) continue;
-      sites.push({
-        file: path,
-        kind: 'function',
-        symbol: exported,
-        targetModule: target,
-        detail: [
-          `forward:${forward.target.imported}${forward.member ? `.${forward.member}` : ''}`,
-          `${forward.shape}${forward.awaited ? '+await' : ''}`,
-          canonicalHash(code, candidate.start, candidate.end),
-        ].join(';'),
-      });
+      for (const exported of exportedSet) {
+        if (!exportedNames.has(exported)) continue;
+        sites.push({
+          file: path,
+          kind: 'function',
+          symbol: exported,
+          targetModule: target,
+          detail: [
+            `forward:${forward.target.imported}${forward.member ? `.${forward.member}` : ''}`,
+            `${forward.shape}${forward.awaited ? '+await' : ''}`,
+            canonicalHash(code, candidate.start, candidate.end),
+          ].join(';'),
+        });
+      }
     }
 
     const reexports = [...reexportPairs.values()].sort(

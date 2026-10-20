@@ -51,12 +51,15 @@ byte-for-byte.
 ## Verification (ran)
 
 - `pnpm typecheck` — clean.
-- `pnpm exec biome check <6 changed files>` — clean; `pnpm lint` — 0 errors
-  (178 pre-existing repo warnings, none in changed files).
+- `pnpm exec biome check <changed files>` — clean; `pnpm lint` — 0 errors
+  (179 pre-existing repo warnings, none in changed files).
 - `pnpm build` — clean (web + server/worker/migrate esbuild).
-- `pnpm audit:capability-boundaries` (merge-base `c26ec39f9`) — PASS:
-  `debt ratchets exact (capability->server=417, server->capability-deep=0, cross-capability-value=43);
-  new dependency edges=0; nontrivial SCCs=1 (base 1); >1500-line files=16 (base 16)`.
+- `pnpm audit:capability-boundaries` (merge-base `2338e0192`, current head) —
+  PASS: `debt ratchets exact (capability->server=406, server->capability-deep=0,
+  cross-capability-value=43); new dependency edges=0; server-entry new
+  edges=0 approved/0 blocked/0 type-only; nontrivial SCCs=1 (base 1);
+  >1500-line files=15 (base 15)`.
+  (Previous PASS at merge-base `c26ec39f9`: `417/0/43`, `16 (base 16)`.)
   (Earlier PASS at merge-base `46663192d`: `429/0/42`, `17 (base 17)` — the 17
   matches the independently measured Flash facts at `4fd1798`.)
 - `pnpm audit:architecture-deepening` — PASS:
@@ -107,6 +110,16 @@ against real growth (801 violations at the post-merge head — 796 at `875faac0c
 `4fd1798` and `46663192d` no audited edge was added, no `>1500` file appeared,
 SCCs unchanged. (At the post-merge head the same base now spans the upstream
 growth and correctly fails — the PASS claim is scoped to `875faac0c`.)
+
+Server-entry gate on real history: the same `--base 24add632b` run fires the
+new port check — **8 real violations**, all value edges that entered
+`server/start/**` after that base: the barrel import
+(`server/start/acceptance-server.ts → src/capabilities/index.ts`) and seven
+`observability` `api/*-contracts` Zod schema modules. Type-only edges on the
+same area (`import type {AdminReadClient}` / `{AdminControlClient}` from
+`ui/*-client`) are counted, not blocked — the same value/type split as the
+kernel reverse-edge gate. At the current merge-base every one is base stock
+→ `0 approved/0 blocked`.
 
 ## R1 fixes (second pass)
 
@@ -164,6 +177,35 @@ Three confirmed P1s, fixed narrowly:
   site-kind coverage to the recorded `symbol` when the record names one.
   Scanner version bumped 1→2; base/head diff representation identical.
 
+### PR #1895 bot findings (fourth author pass)
+
+Three confirmed P1s, fixed narrowly:
+
+- **Historical `edgeRecords` could cover new edges** —
+  `auditEdgeRecords` covering is now restricted to the tail appended in this
+  change (`records.slice(previousRecords)`); each added edge must be covered
+  by a new record whose `kind`/`symbols` are verified against the measured
+  edge in the same pass. A stale type-edge record can no longer launder a
+  type→value upgrade. Historical records stay append-only, never re-punished.
+- **`export { f as a, f as b }` collapsed to one alias** —
+  `localToExported` is now a multi-map keeping every real exported name per
+  local (specifier aliases, `export default` function names, direct named
+  exports); each exported alias emits its own `function` site, so adding or
+  reordering aliases can never hide an existing one. Type-only specifiers
+  remain excluded; body-transform checks unchanged.
+- **`server/**` (composition root + Start frontdoor) was unscanned** —
+  `DEPENDENCY_ROOTS` still covers only `src/capabilities` + `src/server`
+  (the three debt buckets and the zero-deep boundary are untouched). A new
+  independent check collects real `server/**` → `src/capabilities/**` imports
+  at base and head with the same parser/resolution/rename map, diffs them
+  kind-aware, and hard-fails any **new value edge** whose target is not a
+  `public`/`ui-public` entrypoint — that includes the `src/capabilities`
+  barrel (a second composition-root entry). New type-only edges are counted
+  but not failed, matching the kernel reverse-edge split; a type→value
+  upgrade on an existing pair counts as a new value edge. `server/**` →
+  `src/kernel`/`src/core`/`src/server` targets are approved ports and stay
+  out of this collector.
+
 ### R1-fix negative-evidence status (honest)
 
 - `reordered`/`spread`/`direct+spread`/`reordered+spread` F1 shapes and
@@ -184,6 +226,12 @@ Three confirmed P1s, fixed narrowly:
   upgrade branch is one boolean condition left to the independent R2 review.
 - `--base 46663192d` (pre-merge base): FAIL with exactly the 5 real upstream
   pass-through sites — confirms the gate fires on real base↔head deltas.
+- Fourth-pass fixes on real history: tail-only `edgeRecords` covering is
+  **NOT_RUN** (the ledgers stay empty — no real non-empty tail exists to
+  observe); multi-alias `export { f as a, f as b }` re-exports are **NOT_RUN**
+  (no real file exports one local under two names); the server-entry port
+  gate **IS exercised** on real history at `--base 24add632b` (8 real
+  blocked value edges — see above).
 
 ## Machine-verification limits (stated honestly)
 
@@ -239,10 +287,14 @@ External run logs: `tlp-audit-artifacts/architecture-deepening/YUK-1579/<head>/`
 ## Latest ordinary-main integration
 
 After the bot P1 fixes at `068fea678`, this branch normally merged main
-`dc8d7c27db1fe8e56eb8049cb167d71a4b9e1ae8` (including ingestion budget #1891).
-Main now records capability→server416, cross43, SCC1×5 and16 files>1500.
-Earlier417 readings above remain historical validation, not a current count.
-The merge changes no audit rule or exception; new ledgers remain empty,
-main changes/notes are preserved. Product/test/CI/package content relative
-to this main is unchanged. Parent validation and new exact CI are recorded
-against the post-integration head in the external evidence directory.
+`dc8d7c27db1fe8e56eb8049cb167d71a4b9e1ae8` (including ingestion budget #1891)
+and later `2338e0192e77a7a80769e8fad7b08f559e42927a` (mastery compat exits
+#1892, configuration docs #1899, retired approved HTTP aliases #1894 — the
+retired `api/legacy-*` deletions dropped capability→server to 406 and
+`>1500`-line files to 15). Main records capability→server 406, cross 43,
+SCC 1×5 and 15 files >1500. Earlier 417 readings above remain historical
+validation, not a current count. The merges change no audit rule or
+exception; new ledgers remain empty, main changes/notes are preserved.
+Product/test/CI/package content relative to this main is unchanged. Parent
+validation and new exact CI are recorded against the post-integration head
+in the external evidence directory.
