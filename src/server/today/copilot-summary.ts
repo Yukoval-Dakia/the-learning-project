@@ -26,6 +26,7 @@
 
 import { executeMemoryBrief } from '@/capabilities/copilot/public';
 import { executeGetReviewDue } from '@/capabilities/practice/public';
+import { guardDailyFocusClaims } from '@/core/daily-focus-guard';
 import type { Db, Tx } from '@/db/client';
 import { getEvents } from '@/kernel/events';
 import {
@@ -184,22 +185,23 @@ export async function loadCopilotSummary(
   const coachEvent = latestCoach[0] ?? null;
   const dreamingEvent = latestDreaming[0] ?? null;
   const coachPayload = (coachEvent?.payload as Record<string, unknown> | undefined) ?? null;
-  // CoachTask returns a TodayPlan JSON; daily_focus shows up either at the
-  // top level of the scan payload (experimental:coach_scan record) or under
-  // payload.today_plan when the worker copies the result through. Prefer
-  // either path; fall back to the placeholder.
-  const dailyFocus =
+  // CoachTask returns a CoachPlanDraft; daily_focus shows up either at the top
+  // level of the scan payload (experimental:coach_scan record) or under
+  // payload.today_plan when the worker copies the result through. Prefer either
+  // path; fall back to the placeholder. The guard also covers historical events
+  // written before the writer started stripping plan claims.
+  const todayPlanInPayload = coachPayload?.today_plan as Record<string, unknown> | undefined;
+  const rawDailyFocus =
     (typeof coachPayload?.daily_focus === 'string' ? coachPayload.daily_focus : null) ||
-    (typeof (coachPayload?.today_plan as Record<string, unknown> | undefined)?.daily_focus ===
-    'string'
-      ? ((coachPayload?.today_plan as Record<string, unknown>).daily_focus as string)
+    (typeof todayPlanInPayload?.daily_focus === 'string'
+      ? (todayPlanInPayload.daily_focus as string)
       : null) ||
     COACH_PLACEHOLDER_FOCUS;
+  const dailyFocus = guardDailyFocusClaims(rawDailyFocus);
 
   // Prefer the TodayPlan-derived count (plan_adjustments + maintenance) when
   // available; fall back to the cron run's proposals_created counter; finally
   // null when Coach hasn't run yet.
-  const todayPlanInPayload = coachPayload?.today_plan as Record<string, unknown> | undefined;
   const planAdjustmentsArr = Array.isArray(todayPlanInPayload?.plan_adjustments)
     ? (todayPlanInPayload?.plan_adjustments as unknown[])
     : null;

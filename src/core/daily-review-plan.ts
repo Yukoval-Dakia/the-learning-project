@@ -30,9 +30,9 @@ export interface ReviewPlanNumbers {
 }
 
 export interface ReviewPlanInput {
-  due_count: number;
   budget_minutes: number;
   question_minutes: number;
+  /** Complete due distribution; every due question has one subject bucket. */
   due_by_subject: readonly SubjectDueCount[];
 }
 
@@ -49,24 +49,31 @@ export function normalizeQuestionMinutes(value: number | null | undefined): numb
 }
 
 /**
+ * Collapse the due rows into one bucket per subject. Counts are whole
+ * non-negative numbers so the denominator is the same value the caller sees.
+ */
+function normalizeDueBySubject(dueBySubject: readonly SubjectDueCount[]): Map<string, number> {
+  const bySubject = new Map<string, number>();
+  for (const row of dueBySubject) {
+    const due = wholeNonNegative(row.due_count);
+    if (!row.subject_id || due === 0) continue;
+    bySubject.set(row.subject_id, (bySubject.get(row.subject_id) ?? 0) + due);
+  }
+  return bySubject;
+}
+
+/**
  * Allocate `count` seats across subjects proportional to their due counts.
  * Largest remainder keeps the result deterministic: ties break by due count,
  * then subject id, so the same input always yields the same mix.
  */
 function allocateSubjectMix(
   count: number,
-  dueBySubject: readonly SubjectDueCount[],
+  dueBySubject: Map<string, number>,
+  totalDue: number,
 ): ReviewPlanNumbers['subject_mix'] {
-  if (count <= 0) return [];
-  const dueBySubjectId = new Map<string, number>();
-  for (const row of dueBySubject) {
-    if (!row.subject_id || !Number.isFinite(row.due_count) || row.due_count <= 0) continue;
-    dueBySubjectId.set(row.subject_id, (dueBySubjectId.get(row.subject_id) ?? 0) + row.due_count);
-  }
-  const totalDue = [...dueBySubjectId.values()].reduce((sum, due) => sum + due, 0);
-  if (totalDue <= 0) return [];
-
-  const shares = [...dueBySubjectId.entries()].map(([subjectId, due]) => {
+  if (count <= 0 || totalDue <= 0) return [];
+  const shares = [...dueBySubject.entries()].map(([subjectId, due]) => {
     const exact = (due * count) / totalDue;
     return {
       subject_id: subjectId,
@@ -94,15 +101,16 @@ function allocateSubjectMix(
 }
 
 export function computeReviewPlanNumbers(input: ReviewPlanInput): ReviewPlanNumbers {
-  const dueCount = wholeNonNegative(input.due_count);
   const budgetMinutes = wholeNonNegative(input.budget_minutes);
   const questionMinutes = normalizeQuestionMinutes(input.question_minutes);
+  const dueBySubject = normalizeDueBySubject(input.due_by_subject);
+  const dueCount = [...dueBySubject.values()].reduce((sum, due) => sum + due, 0);
   const count = Math.min(dueCount, Math.floor(budgetMinutes / questionMinutes));
   const estimatedMinutes = Math.round(count * questionMinutes);
   return {
     count,
     estimated_minutes: estimatedMinutes,
     time_box_minutes: estimatedMinutes,
-    subject_mix: allocateSubjectMix(count, input.due_by_subject),
+    subject_mix: allocateSubjectMix(count, dueBySubject, dueCount),
   };
 }

@@ -8,6 +8,7 @@
 // first-paint slot.
 
 import { z } from 'zod';
+import { guardDailyFocusClaims } from '@/core/daily-focus-guard';
 import type { ReviewPlanNumbers } from '@/core/daily-review-plan';
 
 export const PlanAdjustmentKind = z.enum(['defer', 'split', 'relearn', 'archive']);
@@ -124,6 +125,8 @@ export const COACH_MAX_MAINTENANCE_PROPOSALS = 8;
 export function composeTodayPlan(draft: CoachPlanDraftT, numbers: ReviewPlanNumbers): TodayPlanT {
   return TodayPlan.parse({
     ...draft,
+    // YUK-1622 — the model's prose must not restate plan arithmetic.
+    daily_focus: guardDailyFocusClaims(draft.daily_focus),
     review_session_proposal: {
       ...draft.review_session_proposal,
       count: numbers.count,

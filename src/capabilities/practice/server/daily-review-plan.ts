@@ -8,6 +8,7 @@
 import type { SubjectDueCount } from '@/core/daily-review-plan';
 import type { Db, Tx } from '@/db/client';
 import { batchResolveSubjectIds } from '@/kernel/read-models/subject-resolution';
+import { resolveSubjectProfile } from '@/subjects/profile';
 import { REVIEW_DUE_LIMIT_MAX, queryReviewDue } from './due-list';
 import { readQuestionPace } from './question-pace';
 import { resolveDailyPracticeBudget } from './stream-inputs';
@@ -43,18 +44,21 @@ export async function resolveDailyReviewPlanInputs(
     db,
     dueRows.map((row) => ({ id: row.question_id, knowledge_ids: row.knowledge_ids ?? [] })),
   );
+  // Every due question must land in one bucket: otherwise the mix denominator
+  // would leave unresolved questions out and over-allocate to resolved subjects.
+  const fallbackSubjectId = resolveSubjectProfile(null).id;
   const dueBySubject = new Map<string, number>();
   for (const row of dueRows) {
-    const subjectId = subjectByQuestion.get(row.question_id);
-    if (!subjectId) continue;
+    const subjectId = subjectByQuestion.get(row.question_id) ?? fallbackSubjectId;
     dueBySubject.set(subjectId, (dueBySubject.get(subjectId) ?? 0) + 1);
   }
+  const dueBySubjectRows = [...dueBySubject.entries()]
+    .map(([subject_id, due_count]) => ({ subject_id, due_count }))
+    .sort((a, b) => a.subject_id.localeCompare(b.subject_id));
 
   return {
-    due_count: dueRows.length,
-    due_by_subject: [...dueBySubject.entries()]
-      .map(([subject_id, due_count]) => ({ subject_id, due_count }))
-      .sort((a, b) => a.subject_id.localeCompare(b.subject_id)),
+    due_count: dueBySubjectRows.reduce((sum, row) => sum + row.due_count, 0),
+    due_by_subject: dueBySubjectRows,
     budget_minutes: budget.minutes,
     question_minutes: pace.minutes,
     question_minutes_source: pace.source,

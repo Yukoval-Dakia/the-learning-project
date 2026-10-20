@@ -325,7 +325,6 @@ export async function runCoach(
   const planInputs = await loadPlanInputs(db);
   const reviewPlan = {
     ...computeReviewPlanNumbers({
-      due_count: planInputs.due_count,
       budget_minutes: planInputs.budget_minutes,
       question_minutes: planInputs.question_minutes,
       due_by_subject: planInputs.due_by_subject,
