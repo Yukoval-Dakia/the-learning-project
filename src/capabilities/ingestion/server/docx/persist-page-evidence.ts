@@ -1,10 +1,7 @@
 import { renderPdfToPngPages } from '@/capabilities/ingestion/server/pdf-render';
-import {
-  persistImageAsset,
-  persistSourceAsset,
-} from '@/capabilities/ingestion/server/persist-image-asset';
 import { MAX_DOCX_PAGES, MAX_PDF_PAGES } from '@/core/limits';
 import type { Db } from '@/db/client';
+import { persistImageAsset, persistSourceAsset } from '@/kernel/records/asset-store';
 import type { R2Client } from '@/server/r2';
 
 import type { DocxConverter } from './convert';

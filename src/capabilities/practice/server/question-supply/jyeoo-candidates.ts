@@ -48,7 +48,6 @@ import { type R2Client, getR2 } from '@/server/r2';
 
 // r2 访问单主：practice 内只有本模块直接触达 '@/server/r2'（边界 audit 的
 // distinct-file 计数保持基线）。reaper / tools 一律经本模块的转发出口。
-export { lockImageStorageKey } from '@/kernel/records/asset-store';
 export type { R2Client as JyeooR2Client } from '@/server/r2';
 export { getR2 as resolveJyeooR2 } from '@/server/r2';
 

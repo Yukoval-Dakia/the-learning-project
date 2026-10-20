@@ -205,6 +205,96 @@
       "issue": "YUK-1571",
       "owns": "Content-addressed source_asset write protocol: byte-view sha256 storage keys, one advisory lock held across blob put and owner-row commit, put compensation on insert failure, last-owner object delete with fresh re-read under the key lock",
       "date": "2026-10-20"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/api/asset-delete.ts",
+      "module": "src/kernel/records/asset-store.ts",
+      "kind": "value",
+      "symbols": ["deleteImageAsset"],
+      "issue": "YUK-1571",
+      "owns": "Content-addressed source_asset write protocol: byte-view sha256 storage keys, one advisory lock held across blob put and owner-row commit, put compensation on insert failure, last-owner object delete with fresh re-read under the key lock",
+      "date": "2026-10-21"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/api/assets.ts",
+      "module": "src/kernel/records/asset-store.ts",
+      "kind": "value",
+      "symbols": ["persistImageAsset"],
+      "issue": "YUK-1571",
+      "owns": "Content-addressed source_asset write protocol: byte-view sha256 storage keys, one advisory lock held across blob put and owner-row commit, put compensation on insert failure, last-owner object delete with fresh re-read under the key lock",
+      "date": "2026-10-21"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/api/pdf.ts",
+      "module": "src/kernel/records/asset-store.ts",
+      "kind": "value",
+      "symbols": ["persistImageAsset"],
+      "issue": "YUK-1571",
+      "owns": "Content-addressed source_asset write protocol: byte-view sha256 storage keys, one advisory lock held across blob put and owner-row commit, put compensation on insert failure, last-owner object delete with fresh re-read under the key lock",
+      "date": "2026-10-21"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/crop.ts",
+      "module": "src/kernel/records/asset-store.ts",
+      "kind": "value",
+      "symbols": ["isUniqueViolation", "lockImageStorageKey", "sha256Hex"],
+      "issue": "YUK-1571",
+      "owns": "Content-addressed source_asset write protocol: byte-view sha256 storage keys, one advisory lock held across blob put and owner-row commit, put compensation on insert failure, last-owner object delete with fresh re-read under the key lock",
+      "date": "2026-10-21"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/docx/persist-page-evidence.ts",
+      "module": "src/kernel/records/asset-store.ts",
+      "kind": "value",
+      "symbols": ["persistImageAsset", "persistSourceAsset"],
+      "issue": "YUK-1571",
+      "owns": "Content-addressed source_asset write protocol: byte-view sha256 storage keys, one advisory lock held across blob put and owner-row commit, put compensation on insert failure, last-owner object delete with fresh re-read under the key lock",
+      "date": "2026-10-21"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/image-candidate-accept.ts",
+      "module": "src/kernel/records/asset-store.ts",
+      "kind": "value",
+      "symbols": ["persistImageAsset"],
+      "issue": "YUK-1571",
+      "owns": "Content-addressed source_asset write protocol: byte-view sha256 storage keys, one advisory lock held across blob put and owner-row commit, put compensation on insert failure, last-owner object delete with fresh re-read under the key lock",
+      "date": "2026-10-21"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/source-package.ts",
+      "module": "src/kernel/records/asset-store.ts",
+      "kind": "value",
+      "symbols": ["persistSourceAsset", "sha256Hex"],
+      "issue": "YUK-1571",
+      "owns": "Content-addressed source_asset write protocol: byte-view sha256 storage keys, one advisory lock held across blob put and owner-row commit, put compensation on insert failure, last-owner object delete with fresh re-read under the key lock",
+      "date": "2026-10-21"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/tools/media-tools.ts",
+      "module": "src/kernel/records/asset-store.ts",
+      "kind": "value",
+      "symbols": ["isUniqueViolation", "persistSourceAsset"],
+      "issue": "YUK-1571",
+      "owns": "Content-addressed source_asset write protocol: byte-view sha256 storage keys, one advisory lock held across blob put and owner-row commit, put compensation on insert failure, last-owner object delete with fresh re-read under the key lock",
+      "date": "2026-10-21"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/jobs/jyeoo_staged_asset_reap.ts",
+      "module": "src/kernel/records/asset-store.ts",
+      "kind": "value",
+      "symbols": ["lockImageStorageKey"],
+      "issue": "YUK-1571",
+      "owns": "Content-addressed source_asset write protocol: byte-view sha256 storage keys, one advisory lock held across blob put and owner-row commit, put compensation on insert failure, last-owner object delete with fresh re-read under the key lock",
+      "date": "2026-10-21"
     }
   ],
   "sourceSizeRecords": [],

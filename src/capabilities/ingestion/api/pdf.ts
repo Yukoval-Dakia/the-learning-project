@@ -1,12 +1,12 @@
 import { renderPdfToPngPages } from '@/capabilities/ingestion/server/pdf-render';
 import { extractPdfTextLayers } from '@/capabilities/ingestion/server/pdf-text';
-import { persistImageAsset } from '@/capabilities/ingestion/server/persist-image-asset';
 import {
   pdfPageImageProvenance,
   preparePdfSourceAssets,
 } from '@/capabilities/ingestion/server/source-package';
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/kernel/http';
+import { persistImageAsset } from '@/kernel/records/asset-store';
 import { getR2 } from '@/server/r2';
 
 // PDF expansion endpoint (YUK-250). Takes ONE PDF multipart upload, renders it

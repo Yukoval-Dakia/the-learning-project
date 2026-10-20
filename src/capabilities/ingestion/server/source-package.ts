@@ -2,13 +2,9 @@ import { eq, inArray } from 'drizzle-orm';
 
 import type { Db } from '@/db/client';
 import { learning_session, source_asset, source_document } from '@/db/schema';
+import { persistSourceAsset, sha256Hex } from '@/kernel/records/asset-store';
 import type { PdfPageText } from './pdf-text';
-import {
-  type R2Client,
-  type SourceAssetRow,
-  persistSourceAsset,
-  sha256Hex,
-} from './persist-image-asset';
+import type { R2Client, SourceAssetRow } from './persist-image-asset';
 
 // YUK-1404 (B2/R1) — unified source package.
 //
