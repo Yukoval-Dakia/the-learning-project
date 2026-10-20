@@ -242,6 +242,258 @@
       "direction": "decrease"
     },
     {
+      "type": "stable_contract",
+      "file": "src/core/schema/intervention.ts",
+      "siteKind": "site",
+      "symbol": "CurrentInterventionPackageReviewAudit",
+      "targetModule": "src/core/schema/intervention-review.ts",
+      "targetSymbol": "CurrentInterventionPackageReviewAudit",
+      "owner": "core/schema/intervention",
+      "consumers": [
+        {
+          "file": "src/capabilities/agency/server/intervention/prepare.ts",
+          "line": 7
+        },
+        {
+          "file": "src/capabilities/practice/server/intervention-author.ts",
+          "line": 7
+        },
+        {
+          "file": "src/server/grounding-gate/intervention-review-eval.ts",
+          "line": 5
+        }
+      ],
+      "evidence": "src/core/schema/intervention-review.ts:916-919: const bound to same-module InterventionPackageReviewAuditV3 (804), no Zod object rebuilt",
+      "rationale": "长期契约：Practice 写当前 audit、Agency 激活与独立 eval 消费同一严格 reader；Current 是版本选择责任而非过渡别名",
+      "issue": "YUK-1572",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1572#comment-c07e26a1-af2e-4d06-8faf-8b796635fa00",
+      "date": "2026-10-20"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/core/schema/intervention.ts",
+      "siteKind": "site",
+      "symbol": "INTERVENTION_CONTRACT_VERSION",
+      "targetModule": "src/core/schema/intervention-review.ts",
+      "targetSymbol": "INTERVENTION_CONTRACT_VERSION",
+      "owner": "core/schema/intervention",
+      "consumers": [
+        {
+          "file": "src/capabilities/agency/server/intervention/recommend.ts",
+          "line": 3
+        },
+        {
+          "file": "src/capabilities/practice/server/intervention-author.ts",
+          "line": 7
+        },
+        {
+          "file": "src/capabilities/practice/server/intervention-diagnostics.ts",
+          "line": 17
+        },
+        {
+          "file": "src/capabilities/agency/server/intervention/intervention-preparation.db.test.ts",
+          "line": 38
+        },
+        {
+          "file": "src/capabilities/practice/api/submit-durable-resource.db.test.ts",
+          "line": 18
+        },
+        {
+          "file": "src/capabilities/practice/api/submit-native-diagnostic.db.test.ts",
+          "line": 4
+        }
+      ],
+      "evidence": "src/core/schema/intervention-review.ts:14: literal 1; 主模块与 history/review 多处 JSON literal 复用同一绑定",
+      "rationale": "长期契约：推荐/包/诊断/历史读取共享序列化版本锚点，跨 Agency/Practice 的 canonical 常量",
+      "issue": "YUK-1572",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1572#comment-c07e26a1-af2e-4d06-8faf-8b796635fa00",
+      "date": "2026-10-20"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/core/schema/intervention.ts",
+      "siteKind": "site",
+      "symbol": "INTERVENTION_REVIEW_AUDIT_PROTOCOL_VERSION",
+      "targetModule": "src/core/schema/intervention-review.ts",
+      "targetSymbol": "INTERVENTION_REVIEW_AUDIT_PROTOCOL_VERSION",
+      "owner": "core/schema/intervention",
+      "consumers": [
+        {
+          "file": "src/capabilities/practice/server/intervention-author.ts",
+          "line": 7
+        }
+      ],
+      "evidence": "src/core/schema/intervention-review.ts:15: literal 3; 804-807 当前 V3 schema 使用同一版本绑定",
+      "rationale": "长期契约：writer 与 reader 必须共享协议版本，canonical 当前协议职责保留在 core 入口",
+      "issue": "YUK-1572",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1572#comment-c07e26a1-af2e-4d06-8faf-8b796635fa00",
+      "date": "2026-10-20"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/core/schema/intervention.ts",
+      "siteKind": "site",
+      "symbol": "InterventionIndependentSolutionAudit",
+      "targetModule": "src/core/schema/intervention-review.ts",
+      "targetSymbol": "InterventionIndependentSolutionAudit",
+      "owner": "core/schema/intervention",
+      "consumers": [
+        {
+          "file": "src/capabilities/practice/server/intervention-author.ts",
+          "line": 7
+        }
+      ],
+      "evidence": "src/core/schema/intervention-review.ts:600-606: 独立解题聚合 reader，依赖 509 的 diagnostic 与 578 的完整性/唯一 task-run 检查",
+      "rationale": "长期契约：Practice 密封 writer 与持久化/当前评审 reader 共用唯一确定性验证契约",
+      "issue": "YUK-1572",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1572#comment-c07e26a1-af2e-4d06-8faf-8b796635fa00",
+      "date": "2026-10-20"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/core/schema/intervention.ts",
+      "siteKind": "site",
+      "symbol": "InterventionPackageReviewFailureCode",
+      "targetModule": "src/core/schema/intervention-review.ts",
+      "targetSymbol": "InterventionPackageReviewFailureCode",
+      "owner": "core/schema/intervention",
+      "consumers": [
+        {
+          "file": "src/server/grounding-gate/intervention-review-eval.ts",
+          "line": 5
+        }
+      ],
+      "evidence": "src/core/schema/intervention-review.ts:43-59: 唯一 failure-code enum; 403、430 当前输出与 history 23/30/170/177 等旧分支共用",
+      "rationale": "长期契约：eval fixture 校验公开失败码词表，canonical 输出同源；跨 producer/evaluator 共享",
+      "issue": "YUK-1572",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1572#comment-c07e26a1-af2e-4d06-8faf-8b796635fa00",
+      "date": "2026-10-20"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/core/schema/intervention.ts",
+      "siteKind": "site",
+      "symbol": "InterventionPackageReviewModelOutputFull",
+      "targetModule": "src/core/schema/intervention-review.ts",
+      "targetSymbol": "InterventionPackageReviewModelOutputFull",
+      "owner": "core/schema/intervention",
+      "consumers": [
+        {
+          "file": "src/capabilities/practice/server/intervention-author.ts",
+          "line": 7
+        }
+      ],
+      "evidence": "src/core/schema/intervention-review.ts:430-471: FULL pass/fail union 与 granular checks 的确定性裁决; V2/V3 audit 783/799/813 引用",
+      "rationale": "长期契约：服务端 canonical 决策与 audit reader 需同源",
+      "issue": "YUK-1572",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1572#comment-c07e26a1-af2e-4d06-8faf-8b796635fa00",
+      "date": "2026-10-20"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/core/schema/intervention.ts",
+      "siteKind": "site",
+      "symbol": "InterventionPackageReviewModelOutputV2",
+      "targetModule": "src/core/schema/intervention-review.ts",
+      "targetSymbol": "InterventionPackageReviewModelOutputV2",
+      "owner": "core/schema/intervention",
+      "consumers": [
+        {
+          "file": "src/capabilities/practice/server/intervention-author.ts",
+          "line": 7
+        }
+      ],
+      "evidence": "src/core/schema/intervention-review.ts:403-418: V2 canonical branch reader; history 280 与共享 historical decoding 使用",
+      "rationale": "长期契约：writer 在绑定/推导阶段调用该 canonical reader，旧记录宽容 union 引用同一实例",
+      "issue": "YUK-1572",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1572#comment-c07e26a1-af2e-4d06-8faf-8b796635fa00",
+      "date": "2026-10-20"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/core/schema/intervention.ts",
+      "siteKind": "site",
+      "symbol": "InterventionPackageReviewStructuredOutput",
+      "targetModule": "src/core/schema/intervention-review.ts",
+      "targetSymbol": "InterventionPackageReviewStructuredOutput",
+      "owner": "core/schema/intervention",
+      "consumers": [
+        {
+          "file": "src/capabilities/agency/tasks/intervention.ts",
+          "line": 12
+        },
+        {
+          "file": "src/capabilities/practice/server/intervention-author.ts",
+          "line": 7
+        }
+      ],
+      "evidence": "src/core/schema/intervention-review.ts:477-495: provider-facing flat comparator schema; failure_codes 有界、granular checks 与 package_checks 组合",
+      "rationale": "长期契约：Agency task 三处 schema 插槽与 Practice bind 入口共用一对象的运行契约",
+      "issue": "YUK-1572",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1572#comment-c07e26a1-af2e-4d06-8faf-8b796635fa00",
+      "date": "2026-10-20"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/core/schema/intervention.ts",
+      "siteKind": "site",
+      "symbol": "InterventionQuestionContentValidationAudit",
+      "targetModule": "src/core/schema/intervention-review.ts",
+      "targetSymbol": "InterventionQuestionContentValidationAudit",
+      "owner": "core/schema/intervention",
+      "consumers": [
+        {
+          "file": "src/capabilities/practice/server/intervention-author.ts",
+          "line": 7
+        }
+      ],
+      "evidence": "src/core/schema/intervention-review.ts:659-665: 题目内容校验聚合; 611-657 子 reader 绑定 digest、kind 完整性与唯一 task-run",
+      "rationale": "长期契约：Practice 形成密封证据、core 当前 audit 读取同一协议",
+      "issue": "YUK-1572",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1572#comment-c07e26a1-af2e-4d06-8faf-8b796635fa00",
+      "date": "2026-10-20"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/core/schema/intervention.ts",
+      "siteKind": "site",
+      "symbol": "MAX_INTERVENTION_REVIEW_ATTEMPTS",
+      "targetModule": "src/core/schema/intervention-review.ts",
+      "targetSymbol": "MAX_INTERVENTION_REVIEW_ATTEMPTS",
+      "owner": "core/schema/intervention",
+      "consumers": [
+        {
+          "file": "src/capabilities/practice/server/intervention-author.ts",
+          "line": 7
+        }
+      ],
+      "evidence": "src/core/schema/intervention-review.ts:17: 上限 2; review 677/812/887 与主模块总调用预算使用同一绑定",
+      "rationale": "长期契约：writer 重试上限与 reader 双 pass/attempt 上限须一致，共同有界协议常量",
+      "issue": "YUK-1572",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1572#comment-c07e26a1-af2e-4d06-8faf-8b796635fa00",
+      "date": "2026-10-20"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/core/schema/intervention.ts",
+      "siteKind": "site",
+      "symbol": "interventionRequiredOperationDigest",
+      "targetModule": "src/core/schema/intervention-review.ts",
+      "targetSymbol": "interventionRequiredOperationDigest",
+      "owner": "core/schema/intervention",
+      "consumers": [
+        {
+          "file": "src/capabilities/practice/server/intervention-author.ts",
+          "line": 7
+        }
+      ],
+      "evidence": "src/core/schema/intervention-review.ts:221-223: sha256CanonicalJson({ operation_md: operationMd }); review 563-568 验证 sealed expected_signal",
+      "rationale": "长期契约：Practice 构造 operation digest 与 core reader 确定性校验共用 exact canonical input",
+      "issue": "YUK-1572",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1572#comment-c07e26a1-af2e-4d06-8faf-8b796635fa00",
+      "date": "2026-10-20"
+    },
+    {
       "debt": "crossCapabilityValue",
       "pair": "agency -> practice",
       "date": "2026-10-20",
