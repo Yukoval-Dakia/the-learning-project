@@ -3,7 +3,11 @@
 状态：已实施，本地验证完成。服务"帮助靠谱"阶段的共享事实读取归位。
 获批方案：`docs/planning/2026-10-21-shared-active-goal-read-proposal.md`
 （arch-lead 树，SHA256 ac555524b47125399182cda2c80ad07f6fc8a218c01055fc7b0a385411e5b3e6）。
-固定基座 `93578223e1489d44e1e66690611473848e2a08df`（交付时 origin/main 未前移）。
+初始基座 `93578223e1489d44e1e66690611473848e2a08df`；实施期间 origin/main
+先后前移至 `fabf68ec4`（#1904）与 `d97019477aac72fdd19c9b872cc88211c2a2f8b8`
+（#1907），均以普通 merge 并入，现合入基座为 `d97019477`。
+本片 head：`70817c2fb990107e474a37d1bb095458a0ee6a58`（merge commit，
+产品 blob 与已批 `d9fe5d268` 逐字一致）。
 
 ## 变更内容
 
@@ -32,7 +36,8 @@
 
 - cross-capability value：39 → 37（`practice -> agency` 3→2，
   `copilot -> agency` 1→0）。
-- capability → server：405 不变；server → capability-deep：0。
+- capability → server：403（本片不减 server；405→403 为上游 #1904
+  session-summary 归位的实测下降，归上游记账）。server → capability-deep：0。
 - 非平凡 SCC：`{agency, knowledge, practice}` 不变。
 - pass-through sites：+0 新增。
 
@@ -41,7 +46,9 @@
 ## 验证
 
 heavy.sh 包装执行，原始日志与 SHA256 封存于仓库外：
-`…/tlp-audit-artifacts/architecture-deepening/YUK-1571/<head>/`。
+`/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1571/d9fe5d268f33a262ec2e3e72d41c6c10001bdbb1/`
+（初切基座 935+fab 合并头证据）；合并 `d970` 后复验证据追加于
+`/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1571/70817c2fb990107e474a37d1bb095458a0ee6a58/`。
 
 - `pnpm typecheck`：exit 0
 - `pnpm lint`：exit 0（180 条存量 warning，本片文件零命中）
