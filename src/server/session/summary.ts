@@ -2,8 +2,8 @@
 //
 // The session_summary handler calls this after a review session completes. It
 // builds a compact stats snapshot from chained events, runs the task, and stores
-// the result in learning_session.summary_md. Errors are the caller's to swallow;
-// a missing summary degrades to the UI stub.
+// the result in learning_session.summary_md. The handler logs and rethrows
+// failures so pg-boss can retry; a missing summary degrades to the UI stub.
 
 import { and, asc, eq, inArray } from 'drizzle-orm';
 

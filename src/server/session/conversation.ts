@@ -93,8 +93,8 @@ export async function startConversation(
 export const COPILOT_SESSION_SELECTION_LOCK = 'copilot:session-selection';
 
 export async function lockCopilotSessionSelection(tx: Tx): Promise<void> {
-  // Single-arg hashtext matches every other advisory lock in this codebase; this
-  // is the only owner of COPILOT_SESSION_SELECTION_LOCK.
+  // This lock is owned only here, so its single-arg hashtext key is local; it
+  // does not need to match the hashtextextended keys used by other lock sites.
   await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${COPILOT_SESSION_SELECTION_LOCK}))`);
 }
 
@@ -422,7 +422,8 @@ export async function idleConversation(db: Db, sessionId: string): Promise<void>
 // ---------- endConversation (T5) ----------
 
 /**
- * active|idle → ended (T5). The normal user-initiated close.
+ * active|idle → ended (T5). E5: pagehide while the drawer is idle uses
+ * abandonConversation instead, so walking away is not recorded as an explicit end.
  */
 export async function endConversation(db: Db, sessionId: string): Promise<void> {
   await db.transaction(async (tx) => {
