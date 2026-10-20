@@ -64,7 +64,7 @@ export const TRACKED_CONSUMERS: readonly string[] = [
   'src/capabilities/practice/server/mastery-progress-signal.ts',
   'src/capabilities/knowledge/server/node-page.ts',
   'src/capabilities/knowledge/server/frontier-read.ts',
-  'src/capabilities/knowledge/server/tree.ts',
+  'src/kernel/read-models/knowledge-graph.ts',
   'src/capabilities/practice/api/placement-profile.ts',
   'src/capabilities/knowledge/server/tools/knowledge-readers.ts',
   'src/server/questions/detail.ts',
