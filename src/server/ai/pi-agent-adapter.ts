@@ -50,6 +50,7 @@ import type {
 import type {
   Api as PiApi,
   AssistantMessage as PiAssistantMessage,
+  Message as PiMessage,
   Model as PiModel,
   MutableModels as PiMutableModels,
   Usage as PiUsage,
