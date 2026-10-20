@@ -104,24 +104,11 @@ export function BlockLine({
           <p className="rc-line-text">{edit.prompt || '（没认出文字）'}</p>
         )}
         {!edit.skip && (
-          <>
-            <KnowledgePick
-              value={edit.knowledgeIds}
-              onChange={(ids) => onEdit({ knowledgeIds: ids })}
-              disabled={locked}
-            />
-            {edit.wrong && (
-              <textarea
-                className="rc-area rc-area-sm"
-                rows={2}
-                value={edit.answer}
-                placeholder="我当时的答案，错的也照抄"
-                aria-label={`第 ${no} 题我当时的答案`}
-                disabled={locked}
-                onChange={(e) => onEdit({ answer: e.target.value })}
-              />
-            )}
-          </>
+          <KnowledgePick
+            value={edit.knowledgeIds}
+            onChange={(ids) => onEdit({ knowledgeIds: ids })}
+            disabled={locked}
+          />
         )}
         <div className="rc-line-tools">
           {!edit.skip && (
@@ -154,6 +141,19 @@ export function BlockLine({
             {edit.skip ? '还是收' : '不收这道'}
           </button>
         </div>
+        {edit.wrong && !edit.skip && (
+          <label className="rc-field">
+            <span className="rc-field-label">我当时的答案</span>
+            <textarea
+              className="rc-area rc-area-sm"
+              rows={2}
+              value={edit.answer}
+              placeholder="照着当时写的抄下来，错的也照抄"
+              disabled={locked}
+              onChange={(e) => onEdit({ answer: e.target.value })}
+            />
+          </label>
+        )}
       </div>
       <span className="rc-state" data-tone={ready.tone}>
         {ready.text}

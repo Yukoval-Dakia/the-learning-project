@@ -19,7 +19,7 @@ export const ITEM_WORDS: Record<string, string> = {
   solving: '解题中',
   calibrating: '核对中',
   admitted: '已进题库',
-  withheld: '进了题库，先不出',
+  withheld: '进了题库，等核对',
   failed: '没整理好',
 };
 
@@ -42,19 +42,23 @@ export function stopWords(code: string | null, scope: 'session' | 'item'): strin
 }
 
 const HOLD_WORDS: Record<string, string> = {
-  awaiting_admission: '答案还在核对，核对完才会出给你。',
   admission_failed: '两次独立解出的答案对不上，先不出。',
-  unverified_rules: '答案还没核对过，核对完才会出给你。',
   source_check_failed: '和原题对不上，先不出。',
   verify_hold: '等你确认之后再出。',
   no_input_renderer: '这种作答方式暂时还不支持。',
   invalid_presentation: '排版有问题，先不出。',
 };
+/** Reasons that only mean "in the library, answer still being checked" — the normal path. */
+const NORMAL_HOLDS = new Set(['awaiting_admission', 'unverified_rules']);
 
-/** The helper writes its own reason; codes are translated, plain sentences pass through. */
-export function holdWords(reason: string | null): string {
-  if (!reason) return '答案还没核对好，先不出给你。';
+/**
+ * Why a question in the library is held back, or null when it is just the normal wait for the
+ * answer check. The helper writes its own reason: codes are translated, sentences pass through.
+ */
+export function holdWords(reason: string | null): string | null {
+  if (!reason) return null;
   const code = reason.trim().split(/[:\s]/)[0];
+  if (NORMAL_HOLDS.has(code)) return null;
   if (HOLD_WORDS[code]) return HOLD_WORDS[code];
   if (/^[a-z][a-z0-9_]*$/.test(code)) return '先不出，原因没有说清。';
   return reason;

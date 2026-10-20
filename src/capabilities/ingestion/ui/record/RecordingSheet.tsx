@@ -64,6 +64,7 @@ export function RecordingSheet({
       <p className="rc-status" data-tone={status.tone} aria-live="polite">
         {status.text}
       </p>
+      {status.detail && <p className="rc-quiet">{status.detail}</p>}
       {working && (
         <div className="rc-meter" data-indeterminate={meter === null} aria-hidden="true">
           <span

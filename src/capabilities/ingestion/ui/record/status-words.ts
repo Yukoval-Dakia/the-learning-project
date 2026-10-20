@@ -6,10 +6,14 @@ import type { Recording } from './recording-model';
 
 export type Tone = 'neutral' | 'working' | 'positive' | 'caution' | 'critical';
 
-export function statusWords(
-  rec: Recording,
-  start: StartState | null,
-): { text: string; tone: Tone } {
+export interface StatusWords {
+  text: string;
+  tone: Tone;
+  /** One quieter line under the sentence, when there is something everyone needs to know. */
+  detail?: string;
+}
+
+export function statusWords(rec: Recording, start: StartState | null): StatusWords {
   if (rec.history === 'expired') {
     return { text: '这次录入的过程记录已经过期，只剩下收进来的题目', tone: 'neutral' };
   }
@@ -38,7 +42,11 @@ export function statusWords(
     const inBank = rec.items.filter((i) => i.status === 'withheld' || i.status === 'admitted');
     const failed = rec.items.filter((i) => i.status === 'failed').length;
     const tail = failed > 0 ? `，${failed} 道没整理好` : '';
-    return { text: `整理完了：${inBank.length} 道进了题库${tail}`, tone: 'positive' };
+    return {
+      text: `整理完了：${inBank.length} 道进了题库${tail}`,
+      tone: 'positive',
+      detail: '录入助手自己解过每道题；答案再核对一遍之后，这些题才会出给你练。',
+    };
   }
   const importable = rec.status === 'extracted' || rec.status === 'reviewed';
   const drafts = importable ? rec.blocks.filter((b) => b.status === 'draft').length : 0;
