@@ -21,6 +21,7 @@ import {
 } from '@/capabilities/knowledge/api/contracts';
 import { API_ERROR_RESPONSES } from '@/kernel/http-contracts';
 import { defineCapability } from '@/kernel/manifest';
+import { nightlyEligibility } from '@/kernel/nightly-eligibility';
 import { uiPagesFor } from '@/kernel/ui-surfaces';
 
 // M3-T1 (YUK-317)：knowledge 包骨架。routes 在 T4（API 上 Hono）逐条填充——
@@ -208,6 +209,7 @@ export const knowledgeCapability = defineCapability({
         // orchestrator 起步即触发。dreaming / knowledge_maintenance 对它是软边（读 inbox 去重基线）。
         name: 'knowledge_edge_propose_nightly',
         dependsOn: [],
+        eligibility: nightlyEligibility('structure'),
         queue: 'llm',
         load: () =>
           import('./jobs/knowledge_edge_propose_nightly').then(
@@ -224,6 +226,7 @@ export const knowledgeCapability = defineCapability({
         // 是时钟巧合，非真上游边。cron 移除，orchestrator 触发。
         name: 'frontier_fill_nightly',
         dependsOn: [],
+        eligibility: nightlyEligibility('structure', { respectPendingCap: true }),
         queue: 'llm',
         load: () =>
           import('./jobs/frontier_fill_nightly').then((m) => m.buildFrontierFillNightlyHandler),
@@ -236,6 +239,7 @@ export const knowledgeCapability = defineCapability({
         // 读的 stale payload）。cron 移除，orchestrator 触发。
         name: 'knowledge_maintenance_nightly',
         dependsOn: [{ job: 'knowledge_edge_propose_nightly', soft: true }],
+        eligibility: nightlyEligibility('structure'),
         queue: 'agent',
         load: () =>
           import('./jobs/knowledge_maintenance_nightly').then(
@@ -266,6 +270,7 @@ export const knowledgeCapability = defineCapability({
         // practice 包）。cron 移除，orchestrator 在 embed_backfill 成功后触发。
         name: 'kc_dedup_nightly',
         dependsOn: ['embed_backfill'],
+        eligibility: nightlyEligibility('hygiene_dedup'),
         queue: 'llm',
         load: () => import('./jobs/kc_dedup_nightly').then((m) => m.buildKcDedupNightlyHandler),
       },
@@ -284,6 +289,7 @@ export const knowledgeCapability = defineCapability({
         // DLQ, and a repair write deserves DLQ retry coverage like its siblings). Auto-mounted.
         name: 'merge_attribution_sweep',
         schedule: { cron: '0 4 * * 1', tz: 'Asia/Shanghai' },
+        eligibility: nightlyEligibility('deterministic'),
         queue: 'llm',
         load: () =>
           import('./jobs/merge_attribution_sweep').then((m) => m.buildMergeAttributionSweepHandler),
@@ -298,6 +304,7 @@ export const knowledgeCapability = defineCapability({
         // DLQ → a dropped run = a silent week-long evidence blind spot). Auto-mounted.
         name: 'projection_oracle_sweep',
         schedule: { cron: '30 4 * * 1', tz: 'Asia/Shanghai' },
+        eligibility: nightlyEligibility('deterministic'),
         queue: 'llm',
         load: () =>
           import('./jobs/projection_oracle_sweep').then((m) => m.buildProjectionOracleSweepHandler),
@@ -316,6 +323,7 @@ export const knowledgeCapability = defineCapability({
         // (the runner self-swallows, so a failed run logs but never DLQ-thrashes). Auto-mounted.
         name: 'kg_borrow_shadow_sweep',
         schedule: { cron: '0 5 * * 1', tz: 'Asia/Shanghai' },
+        eligibility: nightlyEligibility('deterministic'),
         queue: 'llm',
         load: () =>
           import('./jobs/kg_borrow_shadow_sweep').then((m) => m.buildKgBorrowShadowSweepHandler),

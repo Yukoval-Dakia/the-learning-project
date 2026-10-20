@@ -5,6 +5,10 @@
 
 import { createHash } from 'node:crypto';
 
+// Bump when the embedder model or the embed-source join rule changes.
+// v2 (YUK-393): KC embed text folds effective domain.
+export const EMBED_VERSION = 2;
+
 // text-embedding-v4 rejects any single input over 8192 tokens (and a 400 fails
 // the whole batch, not just the long item — see embedMany's chunking). We don't
 // have a tokenizer here, so cap by characters with a conservative budget: for the

@@ -1,6 +1,6 @@
 name: CI Gate
 
-# GitHub-only pre-merge gate. The heavyweight lanes run in parallel; the final `gate` job keeps
+# Shared GitHub/CircleCI pre-merge gate. The heavyweight lanes run in parallel; the final `gate` job keeps
 # the historical required-check name stable. DB tests use Testcontainers on GitHub-hosted runners.
 # Each lane plans locally, so setup no longer waits for a separate classifier job.
 # Verified docs-only changes still succeed without installing dependencies.
@@ -21,7 +21,7 @@ permissions:
 
 concurrency:
   group: ci-gate-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   static:
@@ -72,42 +72,12 @@ jobs:
       - name: Lint and warning ratchet
         if: steps.filter.outputs.static_changed != 'false'
         run: node scripts/ci/lint-ratchet.mjs
-  audits:
-    name: audits (${{ matrix.group }})
+  # YUK-1612: CircleCI GHA matrix instances share result filenames, and include-only
+  # audit matrices do not fan out there. Static IDs keep every result distinct.
+  audits_contracts:
+    name: audits (contracts)
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - group: contracts
-            commands: |
-              pnpm audit:schema
-              pnpm audit:dependencies
-              pnpm audit:partition
-              pnpm audit:question-writers
-              pnpm audit:api-contracts
-              pnpm audit:api-client
-              pnpm audit:api-client-usage
-              pnpm audit:tool-params
-          - group: architecture
-            commands: |
-              pnpm audit:capability-boundaries
-              pnpm audit:architecture-deepening
-              pnpm audit:profile
-              pnpm audit:learner-copy
-              pnpm audit:no-learning-styles
-              pnpm audit:structured-judge
-          - group: policy
-            commands: |
-              pnpm audit:test-policy
-              pnpm audit:task-census
-              pnpm audit:draft-status
-              pnpm audit:draft-status-reads --strict
-              pnpm audit:flags --strict
-              pnpm audit:hub-sync-writers
-              pnpm audit:provider-attempt-truth
-              pnpm audit:model-source
     steps:
       - uses: actions/checkout@v5
         with:
@@ -139,16 +109,118 @@ jobs:
         if: steps.filter.outputs.static_changed != 'false'
         env:
           TEST_POLICY_BASE: ${{ inputs.test_policy_base || github.event.pull_request.base.sha || github.event.before }}
-        run: ${{ matrix.commands }}
+        run: |
+          pnpm audit:schema
+          pnpm audit:dependencies
+          pnpm audit:partition
+          pnpm audit:question-writers
+          pnpm audit:api-contracts
+          pnpm audit:api-client
+          pnpm audit:api-client-usage
+          pnpm audit:tool-params
 
-  unit:
-    name: unit invariant tests (${{ matrix.shard }}/2)
+  audits_architecture:
+    name: audits (architecture)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Plan core gate
+        id: filter
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          CI_EVENT_NAME: ${{ github.event_name }}
+        run: node scripts/ci/gate-plan.mjs
+      - name: Audit lane skipped
+        if: steps.filter.outputs.static_changed == 'false'
+        run: echo "Audit lane not selected — lane is green."
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        if: steps.filter.outputs.static_changed != 'false'
+        with:
+          version: 11.13.1
+      - uses: actions/setup-node@v7
+        if: steps.filter.outputs.static_changed != 'false'
+        with:
+          node-version-file: '.node-version'
+          cache: 'pnpm'
+      - name: Install dependencies
+        if: steps.filter.outputs.static_changed != 'false'
+        run: pnpm install --frozen-lockfile
+      # Audits mirror the standalone pre-PR audits plus the audit prefix of `pnpm test`.
+      # The split test lanes below must not call the umbrella script again.
+      - name: Audits
+        if: steps.filter.outputs.static_changed != 'false'
+        env:
+          TEST_POLICY_BASE: ${{ inputs.test_policy_base || github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          pnpm audit:capability-boundaries
+          pnpm audit:architecture-deepening
+          pnpm audit:profile
+          pnpm audit:learner-copy
+          pnpm audit:no-learning-styles
+          pnpm audit:structured-judge
+
+  audits_policy:
+    name: audits (policy)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Plan core gate
+        id: filter
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          CI_EVENT_NAME: ${{ github.event_name }}
+        run: node scripts/ci/gate-plan.mjs
+      - name: Audit lane skipped
+        if: steps.filter.outputs.static_changed == 'false'
+        run: echo "Audit lane not selected — lane is green."
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        if: steps.filter.outputs.static_changed != 'false'
+        with:
+          version: 11.13.1
+      - uses: actions/setup-node@v7
+        if: steps.filter.outputs.static_changed != 'false'
+        with:
+          node-version-file: '.node-version'
+          cache: 'pnpm'
+      - name: Resolve Circle audit comparison base
+        id: circle_base
+        if: steps.filter.outputs.static_changed != 'false'
+        env:
+          GH_READ_TOKEN: ${{ github.token }}
+          BUILD_HEAD: ${{ github.sha }}
+          BUILD_REF: ${{ github.ref }}
+          BUILD_EVENT: ${{ github.event_name }}
+          PROVIDED_BEFORE: ${{ github.event.before }}
+        run: node scripts/ci/resolve-circle-audit-base.mjs
+      - name: Install dependencies
+        if: steps.filter.outputs.static_changed != 'false'
+        run: pnpm install --frozen-lockfile
+      # Audits mirror the standalone pre-PR audits plus the audit prefix of `pnpm test`.
+      # The split test lanes below must not call the umbrella script again.
+      - name: Audits
+        if: steps.filter.outputs.static_changed != 'false'
+        env:
+          TEST_POLICY_BASE: ${{ steps.circle_base.outputs.base || inputs.test_policy_base || github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          pnpm audit:test-policy
+          pnpm audit:task-census
+          pnpm audit:draft-status
+          pnpm audit:draft-status-reads --strict
+          pnpm audit:flags --strict
+          pnpm audit:hub-sync-writers
+          pnpm audit:provider-attempt-truth
+          pnpm audit:model-source
+
+  unit_1:
+    name: unit invariant tests (1/2)
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2]
     steps:
       - uses: actions/checkout@v5
         with:
@@ -178,24 +250,63 @@ jobs:
         if: steps.filter.outputs.unit_changed != 'false'
         run: |
           mkdir -p .cache/ci-profile
-          pnpm test:unit --shard=${{ matrix.shard }}/2 --reporter=default --reporter=json --outputFile.json=.cache/ci-profile/unit-${{ matrix.shard }}.json
+          pnpm test:unit --shard=1/2 --reporter=default --reporter=json --outputFile.json=.cache/ci-profile/unit-1.json
       - name: Save per-case unit timings
         if: always() && steps.filter.outputs.unit_changed != 'false'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: unit-case-timings-${{ matrix.shard }}
-          path: .cache/ci-profile/unit-${{ matrix.shard }}.json
+          name: unit-case-timings-1
+          path: .cache/ci-profile/unit-1.json
           retention-days: 7
           if-no-files-found: ignore
 
-  db:
-    name: db invariant tests (${{ matrix.shard }}/8)
+  unit_2:
+    name: unit invariant tests (2/2)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Plan core gate
+        id: filter
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          CI_EVENT_NAME: ${{ github.event_name }}
+        run: node scripts/ci/gate-plan.mjs
+      - name: unit lane skipped
+        if: steps.filter.outputs.unit_changed == 'false'
+        run: echo "Docs-only change; unit lane skipped."
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        if: steps.filter.outputs.unit_changed != 'false'
+        with:
+          version: 11.13.1
+      - uses: actions/setup-node@v7
+        if: steps.filter.outputs.unit_changed != 'false'
+        with:
+          node-version-file: '.node-version'
+          cache: 'pnpm'
+      - name: Install dependencies
+        if: steps.filter.outputs.unit_changed != 'false'
+        run: pnpm install --frozen-lockfile
+      - name: Run retained unit invariants
+        if: steps.filter.outputs.unit_changed != 'false'
+        run: |
+          mkdir -p .cache/ci-profile
+          pnpm test:unit --shard=2/2 --reporter=default --reporter=json --outputFile.json=.cache/ci-profile/unit-2.json
+      - name: Save per-case unit timings
+        if: always() && steps.filter.outputs.unit_changed != 'false'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: unit-case-timings-2
+          path: .cache/ci-profile/unit-2.json
+          retention-days: 7
+          if-no-files-found: ignore
+
+  db_1:
+    name: db invariant tests (1/8)
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     steps:
       - uses: actions/checkout@v5
         with:
@@ -228,12 +339,334 @@ jobs:
           TLP_REVIEW_EVIDENCE_PATH: .cache/ci-profile/review-migration.json
         run: |
           mkdir -p .cache/ci-profile
-          pnpm test:db --shard=${{ matrix.shard }}/8 --reporter=default --reporter=json --outputFile.json=.cache/ci-profile/db-${{ matrix.shard }}.json
+          pnpm test:db --shard=1/8 --reporter=default --reporter=json --outputFile.json=.cache/ci-profile/db-1.json
       - name: Save per-case DB timings
         if: always() && steps.filter.outputs.db_changed != 'false'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: db-case-timings-${{ matrix.shard }}
+          name: db-case-timings-1
+          path: .cache/ci-profile/*.json
+          retention-days: 7
+          if-no-files-found: ignore
+
+  db_2:
+    name: db invariant tests (2/8)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Plan core gate
+        id: filter
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          CI_EVENT_NAME: ${{ github.event_name }}
+        run: node scripts/ci/gate-plan.mjs
+      - name: db lane skipped
+        if: steps.filter.outputs.db_changed == 'false'
+        run: echo "Docs-only change; db lane skipped."
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        if: steps.filter.outputs.db_changed != 'false'
+        with:
+          version: 11.13.1
+      - uses: actions/setup-node@v7
+        if: steps.filter.outputs.db_changed != 'false'
+        with:
+          node-version-file: '.node-version'
+          cache: 'pnpm'
+      - name: Install dependencies
+        if: steps.filter.outputs.db_changed != 'false'
+        run: pnpm install --frozen-lockfile
+      - name: Run retained db invariants
+        if: steps.filter.outputs.db_changed != 'false'
+        env:
+          TLP_SESSION_EVIDENCE_PATH: .cache/ci-profile/session
+          TLP_REVIEW_EVIDENCE_PATH: .cache/ci-profile/review-migration.json
+        run: |
+          mkdir -p .cache/ci-profile
+          pnpm test:db --shard=2/8 --reporter=default --reporter=json --outputFile.json=.cache/ci-profile/db-2.json
+      - name: Save per-case DB timings
+        if: always() && steps.filter.outputs.db_changed != 'false'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: db-case-timings-2
+          path: .cache/ci-profile/*.json
+          retention-days: 7
+          if-no-files-found: ignore
+
+  db_3:
+    name: db invariant tests (3/8)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Plan core gate
+        id: filter
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          CI_EVENT_NAME: ${{ github.event_name }}
+        run: node scripts/ci/gate-plan.mjs
+      - name: db lane skipped
+        if: steps.filter.outputs.db_changed == 'false'
+        run: echo "Docs-only change; db lane skipped."
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        if: steps.filter.outputs.db_changed != 'false'
+        with:
+          version: 11.13.1
+      - uses: actions/setup-node@v7
+        if: steps.filter.outputs.db_changed != 'false'
+        with:
+          node-version-file: '.node-version'
+          cache: 'pnpm'
+      - name: Install dependencies
+        if: steps.filter.outputs.db_changed != 'false'
+        run: pnpm install --frozen-lockfile
+      - name: Run retained db invariants
+        if: steps.filter.outputs.db_changed != 'false'
+        env:
+          TLP_SESSION_EVIDENCE_PATH: .cache/ci-profile/session
+          TLP_REVIEW_EVIDENCE_PATH: .cache/ci-profile/review-migration.json
+        run: |
+          mkdir -p .cache/ci-profile
+          pnpm test:db --shard=3/8 --reporter=default --reporter=json --outputFile.json=.cache/ci-profile/db-3.json
+      - name: Save per-case DB timings
+        if: always() && steps.filter.outputs.db_changed != 'false'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: db-case-timings-3
+          path: .cache/ci-profile/*.json
+          retention-days: 7
+          if-no-files-found: ignore
+
+  db_4:
+    name: db invariant tests (4/8)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Plan core gate
+        id: filter
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          CI_EVENT_NAME: ${{ github.event_name }}
+        run: node scripts/ci/gate-plan.mjs
+      - name: db lane skipped
+        if: steps.filter.outputs.db_changed == 'false'
+        run: echo "Docs-only change; db lane skipped."
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        if: steps.filter.outputs.db_changed != 'false'
+        with:
+          version: 11.13.1
+      - uses: actions/setup-node@v7
+        if: steps.filter.outputs.db_changed != 'false'
+        with:
+          node-version-file: '.node-version'
+          cache: 'pnpm'
+      - name: Install dependencies
+        if: steps.filter.outputs.db_changed != 'false'
+        run: pnpm install --frozen-lockfile
+      - name: Run retained db invariants
+        if: steps.filter.outputs.db_changed != 'false'
+        env:
+          TLP_SESSION_EVIDENCE_PATH: .cache/ci-profile/session
+          TLP_REVIEW_EVIDENCE_PATH: .cache/ci-profile/review-migration.json
+        run: |
+          mkdir -p .cache/ci-profile
+          pnpm test:db --shard=4/8 --reporter=default --reporter=json --outputFile.json=.cache/ci-profile/db-4.json
+      - name: Save per-case DB timings
+        if: always() && steps.filter.outputs.db_changed != 'false'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: db-case-timings-4
+          path: .cache/ci-profile/*.json
+          retention-days: 7
+          if-no-files-found: ignore
+
+  db_5:
+    name: db invariant tests (5/8)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Plan core gate
+        id: filter
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          CI_EVENT_NAME: ${{ github.event_name }}
+        run: node scripts/ci/gate-plan.mjs
+      - name: db lane skipped
+        if: steps.filter.outputs.db_changed == 'false'
+        run: echo "Docs-only change; db lane skipped."
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        if: steps.filter.outputs.db_changed != 'false'
+        with:
+          version: 11.13.1
+      - uses: actions/setup-node@v7
+        if: steps.filter.outputs.db_changed != 'false'
+        with:
+          node-version-file: '.node-version'
+          cache: 'pnpm'
+      - name: Install dependencies
+        if: steps.filter.outputs.db_changed != 'false'
+        run: pnpm install --frozen-lockfile
+      - name: Run retained db invariants
+        if: steps.filter.outputs.db_changed != 'false'
+        env:
+          TLP_SESSION_EVIDENCE_PATH: .cache/ci-profile/session
+          TLP_REVIEW_EVIDENCE_PATH: .cache/ci-profile/review-migration.json
+        run: |
+          mkdir -p .cache/ci-profile
+          pnpm test:db --shard=5/8 --reporter=default --reporter=json --outputFile.json=.cache/ci-profile/db-5.json
+      - name: Save per-case DB timings
+        if: always() && steps.filter.outputs.db_changed != 'false'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: db-case-timings-5
+          path: .cache/ci-profile/*.json
+          retention-days: 7
+          if-no-files-found: ignore
+
+  db_6:
+    name: db invariant tests (6/8)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Plan core gate
+        id: filter
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          CI_EVENT_NAME: ${{ github.event_name }}
+        run: node scripts/ci/gate-plan.mjs
+      - name: db lane skipped
+        if: steps.filter.outputs.db_changed == 'false'
+        run: echo "Docs-only change; db lane skipped."
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        if: steps.filter.outputs.db_changed != 'false'
+        with:
+          version: 11.13.1
+      - uses: actions/setup-node@v7
+        if: steps.filter.outputs.db_changed != 'false'
+        with:
+          node-version-file: '.node-version'
+          cache: 'pnpm'
+      - name: Install dependencies
+        if: steps.filter.outputs.db_changed != 'false'
+        run: pnpm install --frozen-lockfile
+      - name: Run retained db invariants
+        if: steps.filter.outputs.db_changed != 'false'
+        env:
+          TLP_SESSION_EVIDENCE_PATH: .cache/ci-profile/session
+          TLP_REVIEW_EVIDENCE_PATH: .cache/ci-profile/review-migration.json
+        run: |
+          mkdir -p .cache/ci-profile
+          pnpm test:db --shard=6/8 --reporter=default --reporter=json --outputFile.json=.cache/ci-profile/db-6.json
+      - name: Save per-case DB timings
+        if: always() && steps.filter.outputs.db_changed != 'false'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: db-case-timings-6
+          path: .cache/ci-profile/*.json
+          retention-days: 7
+          if-no-files-found: ignore
+
+  db_7:
+    name: db invariant tests (7/8)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Plan core gate
+        id: filter
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          CI_EVENT_NAME: ${{ github.event_name }}
+        run: node scripts/ci/gate-plan.mjs
+      - name: db lane skipped
+        if: steps.filter.outputs.db_changed == 'false'
+        run: echo "Docs-only change; db lane skipped."
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        if: steps.filter.outputs.db_changed != 'false'
+        with:
+          version: 11.13.1
+      - uses: actions/setup-node@v7
+        if: steps.filter.outputs.db_changed != 'false'
+        with:
+          node-version-file: '.node-version'
+          cache: 'pnpm'
+      - name: Install dependencies
+        if: steps.filter.outputs.db_changed != 'false'
+        run: pnpm install --frozen-lockfile
+      - name: Run retained db invariants
+        if: steps.filter.outputs.db_changed != 'false'
+        env:
+          TLP_SESSION_EVIDENCE_PATH: .cache/ci-profile/session
+          TLP_REVIEW_EVIDENCE_PATH: .cache/ci-profile/review-migration.json
+        run: |
+          mkdir -p .cache/ci-profile
+          pnpm test:db --shard=7/8 --reporter=default --reporter=json --outputFile.json=.cache/ci-profile/db-7.json
+      - name: Save per-case DB timings
+        if: always() && steps.filter.outputs.db_changed != 'false'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: db-case-timings-7
+          path: .cache/ci-profile/*.json
+          retention-days: 7
+          if-no-files-found: ignore
+
+  db_8:
+    name: db invariant tests (8/8)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Plan core gate
+        id: filter
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          CI_EVENT_NAME: ${{ github.event_name }}
+        run: node scripts/ci/gate-plan.mjs
+      - name: db lane skipped
+        if: steps.filter.outputs.db_changed == 'false'
+        run: echo "Docs-only change; db lane skipped."
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        if: steps.filter.outputs.db_changed != 'false'
+        with:
+          version: 11.13.1
+      - uses: actions/setup-node@v7
+        if: steps.filter.outputs.db_changed != 'false'
+        with:
+          node-version-file: '.node-version'
+          cache: 'pnpm'
+      - name: Install dependencies
+        if: steps.filter.outputs.db_changed != 'false'
+        run: pnpm install --frozen-lockfile
+      - name: Run retained db invariants
+        if: steps.filter.outputs.db_changed != 'false'
+        env:
+          TLP_SESSION_EVIDENCE_PATH: .cache/ci-profile/session
+          TLP_REVIEW_EVIDENCE_PATH: .cache/ci-profile/review-migration.json
+        run: |
+          mkdir -p .cache/ci-profile
+          pnpm test:db --shard=8/8 --reporter=default --reporter=json --outputFile.json=.cache/ci-profile/db-8.json
+      - name: Save per-case DB timings
+        if: always() && steps.filter.outputs.db_changed != 'false'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: db-case-timings-8
           path: .cache/ci-profile/*.json
           retention-days: 7
           if-no-files-found: ignore
@@ -334,6 +767,27 @@ jobs:
         with:
           node-version-file: '.node-version'
           cache: 'pnpm'
+      # CircleCI's GHA machine image can inherit root-owned /usr/local Rust homes.
+      # Keep installs and Cargo cache writes owned by this job's unprivileged user.
+      - name: Prepare writable Rust homes
+        if: steps.filter.outputs.parity_changed != 'false'
+        shell: bash
+        run: |
+          set -euo pipefail
+          id
+          for directory in "${RUSTUP_HOME:-$HOME/.rustup}" "${CARGO_HOME:-$HOME/.cargo}"; do
+            if [ -e "$directory" ]; then
+              stat -c '%U:%G %a %n' "$directory"
+            fi
+          done
+          rustup_home="$RUNNER_TEMP/parity-rustup"
+          cargo_home="$RUNNER_TEMP/parity-cargo"
+          mkdir -p "$rustup_home" "$cargo_home"
+          test -w "$rustup_home" && test -w "$cargo_home"
+          echo "RUSTUP_HOME=$rustup_home" >> "$GITHUB_ENV"
+          echo "CARGO_HOME=$cargo_home" >> "$GITHUB_ENV"
+          echo "$cargo_home/bin" >> "$GITHUB_PATH"
+          stat -c '%U:%G %a %n' "$rustup_home" "$cargo_home"
       # stable @ 2026-07-20; pin third-party actions to immutable commits.
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         if: steps.filter.outputs.parity_changed != 'false'
@@ -374,26 +828,54 @@ jobs:
   gate:
     name: typecheck · lint · audits · test · build
     if: always()
-    needs: [static, audits, unit, db, migration, build, parity]
+    needs:
+      - static
+      - audits_contracts
+      - audits_architecture
+      - audits_policy
+      - unit_1
+      - unit_2
+      - db_1
+      - db_2
+      - db_3
+      - db_4
+      - db_5
+      - db_6
+      - db_7
+      - db_8
+      - migration
+      - build
+      - parity
+
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Require every CI lane
         env:
           STATIC_RESULT: ${{ needs.static.result }}
-          AUDITS_RESULT: ${{ needs.audits.result }}
-          UNIT_RESULT: ${{ needs.unit.result }}
-          DB_RESULT: ${{ needs.db.result }}
+          AUDITS_CONTRACTS_RESULT: ${{ needs.audits_contracts.result }}
+          AUDITS_ARCHITECTURE_RESULT: ${{ needs.audits_architecture.result }}
+          AUDITS_POLICY_RESULT: ${{ needs.audits_policy.result }}
+          UNIT_1_RESULT: ${{ needs.unit_1.result }}
+          UNIT_2_RESULT: ${{ needs.unit_2.result }}
+          DB_1_RESULT: ${{ needs.db_1.result }}
+          DB_2_RESULT: ${{ needs.db_2.result }}
+          DB_3_RESULT: ${{ needs.db_3.result }}
+          DB_4_RESULT: ${{ needs.db_4.result }}
+          DB_5_RESULT: ${{ needs.db_5.result }}
+          DB_6_RESULT: ${{ needs.db_6.result }}
+          DB_7_RESULT: ${{ needs.db_7.result }}
+          DB_8_RESULT: ${{ needs.db_8.result }}
           MIGRATION_RESULT: ${{ needs.migration.result }}
           BUILD_RESULT: ${{ needs.build.result }}
           PARITY_RESULT: ${{ needs.parity.result }}
         run: |
           set -euo pipefail
           failed=0
-          for lane in STATIC AUDITS UNIT DB MIGRATION BUILD PARITY; do
+          for lane in STATIC AUDITS_CONTRACTS AUDITS_ARCHITECTURE AUDITS_POLICY UNIT_1 UNIT_2 DB_1 DB_2 DB_3 DB_4 DB_5 DB_6 DB_7 DB_8 MIGRATION BUILD PARITY; do
             result_var="${lane}_RESULT"
             result="${!result_var}"
-            printf '%-12s %s\n' "$lane" "$result"
+            printf '%-22s %s\n' "$lane" "$result"
             if [ "$result" != "success" ]; then
               failed=1
             fi

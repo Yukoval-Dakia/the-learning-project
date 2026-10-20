@@ -9,16 +9,21 @@ import type {
   ResponseSlotT,
   ScoringUnitResultT,
 } from '../schema/assessment';
-import {
-  validateExecutionPlan,
-  validateIssuanceBinding,
-  validateResponseSet,
-  validateResponseSpec,
-  validateScoringBasis,
-  validateStructure,
-} from '../schema/assessment';
-import { extractAnswerHead } from '../schema/judge-routing';
+import { validateIssuanceBinding, validateResponseSet } from '../schema/assessment';
 import { canonicalHash, shortHash } from './canonical';
+import {
+  type RevisionRegistry,
+  type RevisionRegistryEntry,
+  groupEntriesByQuestion,
+  registryDigestOf,
+  resolveRegistryBinding,
+} from './revision-registry';
+import {
+  frozenSnapshotOf,
+  snapshotContentViewOf,
+  validateEntryCoordinates,
+  verifySnapshotTransformation,
+} from './snapshot-fidelity';
 import type {
   MigrationCapture,
   MigrationClassification,
@@ -57,6 +62,27 @@ import type {
 //
 // 幂等基座：一切主键内容寻址派生（mapping_id 含裁决内容 —— pending→resolved
 // 的 supersession 换行不换 id 冲突），同输入 ⇒ 同 plan 同 id 同 digest。
+//
+// YUK-1572 拆分（实现逐字不变，三个完整决策各归其主）：
+//   ./revision-registry —— registry v2 工件解析 + occurrence/snapshot 绑定裁决；
+//   ./snapshot-fidelity —— 冻结 snapshot 提取 + 内容/坐标 fidelity 校验；
+//   本文件 —— 确定性写意图装配（mapping/submission/evaluation/head + rollup）。
+// 迁至私有模块的既有公开导出经下方 re-export 原样对外，消费方 import 不变。
+
+export {
+  type RegistryBindingKind,
+  type RegistryParseIssue,
+  type RevisionRegistry,
+  type RevisionRegistryEntry,
+  parseRevisionRegistry,
+  registryDigestOf,
+} from './revision-registry';
+export {
+  type EntryCoordinateIssue,
+  type SnapshotTransformationIssue,
+  validateEntryCoordinates,
+  verifySnapshotTransformation,
+} from './snapshot-fidelity';
 
 export const APPLY_ALGORITHM_VERSION = 'yuk1050-apply/1.1.0';
 
@@ -78,192 +104,8 @@ const SUBMISSION_BEARING_CATEGORIES: ReadonlySet<NativeCategory> = new Set([
   'embedded_tutor_grade',
 ]);
 
-// ───────────────────────── revision registry v2（接缝工件） ─────────────────────────
-
-export type RegistryBindingKind = 'snapshot_verified' | 'question_asserted';
-
-/**
- * 语料导入（publisher/normalizer lane 或隔离演练产物）声明的 legacy → 新契约
- * 绑定。v2（review P1-4）：
- *   - occurrence/snapshot 感知：同一 legacy question 的多个历史版本可各绑不同
- *     revision/快照；多个 legacy question 也可绑同一 group revision 的不同 parts。
- *   - `snapshot_verified`：携带冻结 snapshot digest，解析时与历史记录自身的
- *     冻结 snapshot digest【逐一比对】—— 这是绑定为已验证的唯一途径。
- *   - `question_asserted`：显式、可审计的断言（缺历史证明时的唯一合法路径）；
- *     必须给出 assertion_reason，进 mapping evidence，绝不冒充已验证。
- *   - `scoring_unit_id` 必填：整题 legacy 判词必须可归属到唯一计分单元，
- *     否则 registry 拒绝（归属不明 ⇒ 不列绑定，不是规划器猜）。
- */
-export interface RevisionRegistryEntry {
-  question_id: string;
-  revision_id: string;
-  /** issuance 绑定的 part 子集（导入方声明；solo 题 = 单 part）。 */
-  part_ids: string[];
-  slot_id: string;
-  scoring_unit_id: string;
-  binding_kind: RegistryBindingKind;
-  /** binding_kind=snapshot_verified 必填：冻结 snapshot 的 canonical digest。 */
-  snapshot_digest: string | null;
-  /** binding_kind=question_asserted 必填：断言理由（可审计）。 */
-  assertion_reason: string | null;
-  published_at: string | null;
-}
-
-export interface RevisionRegistry {
-  registry_version: 2;
-  generated_by: string;
-  entries: RevisionRegistryEntry[];
-}
-
-export interface RegistryParseIssue {
-  detail: string;
-}
-
-/** 解析 + 校验 registry v2 工件（fail-visible：任何形状问题都拒绝，不猜）。 */
-export function parseRevisionRegistry(
-  input: unknown,
-): { ok: true; registry: RevisionRegistry } | { ok: false; issues: RegistryParseIssue[] } {
-  const issues: RegistryParseIssue[] = [];
-  if (input === null || typeof input !== 'object' || Array.isArray(input)) {
-    return { ok: false, issues: [{ detail: 'registry 根必须是对象' }] };
-  }
-  const root = input as Record<string, unknown>;
-  if (root.registry_version !== 2) {
-    return {
-      ok: false,
-      issues: [
-        {
-          detail: `registry_version 必须为 2（得到 ${String(root.registry_version)}）—— v1（可空 snapshot_digest 的单题绑定）已被 review P1-4 废弃`,
-        },
-      ],
-    };
-  }
-  if (typeof root.generated_by !== 'string' || root.generated_by.length === 0) {
-    issues.push({ detail: 'generated_by 必须为非空字符串（工件来源可审计）' });
-  }
-  if (!Array.isArray(root.entries)) {
-    issues.push({ detail: 'entries 必须为数组' });
-    return { ok: false, issues };
-  }
-  const seenVerified = new Set<string>(); // question_id|snapshot_digest 唯一
-  const seenAsserted = new Set<string>(); // question_id 唯一（一题一断言）
-  const seenExact = new Set<string>(); // 完全重复拒绝
-  const entries: RevisionRegistryEntry[] = [];
-  for (const [idx, raw] of root.entries.entries()) {
-    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
-      issues.push({ detail: `entries[${idx}] 必须为对象` });
-      continue;
-    }
-    const entry = raw as Record<string, unknown>;
-    const questionId = entry.question_id;
-    const revisionId = entry.revision_id;
-    const partIds = entry.part_ids;
-    const slotId = entry.slot_id;
-    const scoringUnitId = entry.scoring_unit_id;
-    const bindingKind = entry.binding_kind;
-    if (typeof questionId !== 'string' || questionId.length === 0) {
-      issues.push({ detail: `entries[${idx}].question_id 必须为非空字符串` });
-      continue;
-    }
-    if (typeof revisionId !== 'string' || revisionId.length === 0) {
-      issues.push({ detail: `entries[${idx}].revision_id 必须为非空字符串` });
-      continue;
-    }
-    if (
-      !Array.isArray(partIds) ||
-      partIds.length === 0 ||
-      partIds.some((p) => typeof p !== 'string' || p.length === 0)
-    ) {
-      issues.push({
-        detail: `entries[${idx}].part_ids 必须为非空字符串数组（导入方声明 issuance 绑定子集）`,
-      });
-      continue;
-    }
-    if (typeof slotId !== 'string' || slotId.length === 0) {
-      issues.push({ detail: `entries[${idx}].slot_id 必填（legacy 作答的槽位归属必须显式声明）` });
-      continue;
-    }
-    if (typeof scoringUnitId !== 'string' || scoringUnitId.length === 0) {
-      issues.push({
-        detail: `entries[${idx}].scoring_unit_id 必填（整题 legacy 判词必须可归属到唯一计分单元）`,
-      });
-      continue;
-    }
-    if (bindingKind !== 'snapshot_verified' && bindingKind !== 'question_asserted') {
-      issues.push({
-        detail: `entries[${idx}].binding_kind 必须为 'snapshot_verified' 或 'question_asserted'`,
-      });
-      continue;
-    }
-    const snapshotDigest =
-      typeof entry.snapshot_digest === 'string' && entry.snapshot_digest.length > 0
-        ? entry.snapshot_digest
-        : null;
-    const assertionReason =
-      typeof entry.assertion_reason === 'string' && entry.assertion_reason.length > 0
-        ? entry.assertion_reason
-        : null;
-    if (bindingKind === 'snapshot_verified' && snapshotDigest === null) {
-      issues.push({
-        detail: `entries[${idx}] binding_kind=snapshot_verified 必须携带 snapshot_digest —— 缺历史证明只能走显式 question_asserted 断言`,
-      });
-      continue;
-    }
-    if (bindingKind === 'question_asserted' && assertionReason === null) {
-      issues.push({
-        detail: `entries[${idx}] binding_kind=question_asserted 必须携带 assertion_reason`,
-      });
-      continue;
-    }
-    const exactKey = `${questionId}|${revisionId}|${slotId}|${bindingKind}|${snapshotDigest ?? ''}`;
-    if (seenExact.has(exactKey)) {
-      issues.push({ detail: `entries[${idx}] 与既有条目完全重复（${exactKey}）` });
-      continue;
-    }
-    seenExact.add(exactKey);
-    if (bindingKind === 'snapshot_verified') {
-      const verifiedKey = `${questionId}|${snapshotDigest}`;
-      if (seenVerified.has(verifiedKey)) {
-        issues.push({
-          detail: `entries[${idx}] 同一 question 的同一 snapshot digest 有多条 snapshot_verified 绑定 —— 解析歧义，拒绝`,
-        });
-        continue;
-      }
-      seenVerified.add(verifiedKey);
-    } else if (seenAsserted.has(questionId)) {
-      issues.push({
-        detail: `entries[${idx}] 同一 question 已有一条 question_asserted 断言 —— 一题一断言`,
-      });
-      continue;
-    } else {
-      seenAsserted.add(questionId);
-    }
-    entries.push({
-      question_id: questionId,
-      revision_id: revisionId,
-      part_ids: partIds as string[],
-      slot_id: slotId,
-      scoring_unit_id: scoringUnitId,
-      binding_kind: bindingKind,
-      snapshot_digest: snapshotDigest,
-      assertion_reason: assertionReason,
-      published_at:
-        typeof entry.published_at === 'string' && entry.published_at.length > 0
-          ? entry.published_at
-          : null,
-    });
-  }
-  if (issues.length > 0) return { ok: false, issues };
-  return {
-    ok: true,
-    registry: { registry_version: 2, generated_by: root.generated_by as string, entries },
-  };
-}
-
-/** registry 工件的内容 digest（plan/run 身份的一部分）。 */
-export function registryDigestOf(registry: RevisionRegistry | null): string | null {
-  return registry === null ? null : canonicalHash(registry);
-}
+// ─── revision registry v2 工件解析 + occurrence/snapshot 绑定裁决：已迁至
+// ./revision-registry（本模块唯一 owner；公开导出经上方 re-export 原样对外）。
 
 // ───────────────────────── 写意图类型 ─────────────────────────
 
@@ -521,41 +363,6 @@ export function responseDigestOf(input: {
   });
 }
 
-/** 分类记录的冻结 snapshot（attempt 事件 / durable pending submit）与 digest。 */
-function frozenSnapshotOf(
-  record: RecordClassification,
-  eventById: Map<string, RawEventRow>,
-  pendingByRunId: Map<string, RawEventRow>,
-): {
-  snapshot: unknown;
-  digest: string | null;
-} {
-  if (record.source_kind !== 'event') return { snapshot: null, digest: null };
-  const event = eventById.get(record.source_id);
-  if (event === undefined) return { snapshot: null, digest: null };
-  const payload = payloadOf(event.payload);
-  if (event.action === 'attempt') {
-    const snapshot = payload.question_snapshot ?? null;
-    return { snapshot, digest: snapshot == null ? null : canonicalHash(snapshot) };
-  }
-  if (event.action === 'review') {
-    // durable 回填 review 的冻结输入在 pending 事件的 submit.question_snapshot；
-    // 绑定键是 payload.run_id === review.id（与分类器同构，evidence id 去重不可靠）。
-    const pending = pendingByRunId.get(event.id);
-    if (pending === undefined) return { snapshot: null, digest: null };
-    const submit = payloadOf(payloadOf(pending.payload).submit);
-    const snapshot = submit.question_snapshot ?? null;
-    return { snapshot, digest: snapshot == null ? null : canonicalHash(snapshot) };
-  }
-  if (event.action === 'experimental:judge_pending_attempt') {
-    // 未回填 run 的冻结输入本体（缺件 pending 仍有权做 digest 对照）。
-    const submit = payloadOf(payload.submit);
-    const snapshot = submit.question_snapshot ?? null;
-    return { snapshot, digest: snapshot == null ? null : canonicalHash(snapshot) };
-  }
-  return { snapshot: null, digest: null };
-}
-
 /** judge 事件锚定的作答锚事件（attempt/review）；非 judge 记录返回 null。 */
 function anchorEventOf(
   record: RecordClassification,
@@ -713,349 +520,8 @@ function pendingRecoveryEnvelopeOf(
   };
 }
 
-// ───────────── P1-2：snapshot → revision 内容可推导性验证 ─────────────
-
-/** 冻结 snapshot 的【可机械比对】内容面（题干/选项/参考 —— 学习者所见）。 */
-interface SnapshotContentView {
-  prompt_md: string | null;
-  choices_md: string[] | null;
-  reference_md: string | null;
-}
-
-function normalizeText(value: string): string {
-  return value.trim().replace(/\s+/g, ' ');
-}
-
-/** 从记录自身的冻结 snapshot 提取可机械比对内容（attempt/durable/pending 三形态）。 */
-function snapshotContentViewOf(
-  record: RecordClassification,
-  eventById: Map<string, RawEventRow>,
-  pendingByRunId: Map<string, RawEventRow>,
-): SnapshotContentView | null {
-  const snapshotOf = (raw: unknown): SnapshotContentView | null => {
-    if (raw === null || typeof raw !== 'object') return null;
-    const obj = raw as Record<string, unknown>;
-    // AttemptQuestionSnapshot：question.{prompt_md,choices_md,reference_md}
-    // FrozenQuestionSnapshot：顶层 {prompt_md,choices_md,reference_md}。
-    const q =
-      obj.question !== null && typeof obj.question === 'object'
-        ? (obj.question as Record<string, unknown>)
-        : obj;
-    const prompt = typeof q.prompt_md === 'string' ? q.prompt_md : null;
-    const choices = Array.isArray(q.choices_md)
-      ? (q.choices_md as unknown[]).filter((v): v is string => typeof v === 'string')
-      : null;
-    const reference = typeof q.reference_md === 'string' ? q.reference_md : null;
-    if (prompt === null && choices === null && reference === null) return null;
-    return { prompt_md: prompt, choices_md: choices, reference_md: reference };
-  };
-  if (record.source_kind !== 'event') return null;
-  const event = eventById.get(record.source_id);
-  if (event === undefined) return null;
-  const payload = payloadOf(event.payload);
-  if (event.action === 'attempt') return snapshotOf(payload.question_snapshot);
-  if (event.action === 'review') {
-    const pending = pendingByRunId.get(event.id);
-    if (pending === undefined) return null;
-    return snapshotOf(payloadOf(payloadOf(pending.payload).submit).question_snapshot);
-  }
-  if (event.action === 'experimental:judge_pending_attempt') {
-    return snapshotOf(payloadOf(payload.submit).question_snapshot);
-  }
-  return null;
-}
-
-export interface SnapshotTransformationIssue {
-  detail: string;
-}
-
-/**
- * digest_verified 的内容可推导性（review P1-2）：registry 只证明「拿到过同一份
- * snapshot」；本函数再证明【目标 revision 的学习者所见内容可由该 snapshot 机械
- * 推导】—— solo 单 part：题干 trim/空白归一后逐字一致；选择题面：slot 选项
- * 文本与 snapshot.choices_md 序列一致（归一）；非选择题面不得出现选择题槽。
- * 评分依据/材料 digest 无法机械证明（§3.1 版本化 integrity 不等于 snapshot 字段），
- * 超出机械比对面的必须走 question_asserted 显式断言 —— 不冒充 digest_verified。
- *
- * YUK-1100（review P1）：snapshot.reference_md 一并纳入比对 —— 题干/选项相同
- * 而答案不同的同题面 snapshot 不得绑定到答案不同的 revision。只在【答案可机械
- * 推导】的计分单元判据上比对（text_key/option_set_key/numeric_key，镜像
- * evaluation.ts 确定性比较器的归一化语义）；rule_reference/holistic_level/
- * matching_pairs_key 的答案不能从参考答案文本机械推出 —— 按既有纪律跳过
- * （不冒充已验证；需要此类比对的绑定走 question_asserted）。
- */
-export function verifySnapshotTransformation(
-  view: SnapshotContentView,
-  contract: PublishedQuestionRevisionT,
-  partIds: readonly string[],
-  slotId: string,
-  scoringUnitId: string,
-): SnapshotTransformationIssue[] {
-  const issues: SnapshotTransformationIssue[] = [];
-  const boundParts = contract.structure.parts.filter((part) => partIds.includes(part.part_id));
-  if (boundParts.length !== 1) {
-    issues.push({
-      detail: `snapshot 是 solo 单题形态，但绑定 ${boundParts.length} 个 part —— 无法机械推导多 part 组合`,
-    });
-    return issues;
-  }
-  const [boundPart] = boundParts;
-  if (boundPart === undefined) return issues; // length===1 已保证；TS 收窄用
-  const part = boundPart;
-  if (view.prompt_md === null || normalizeText(part.prompt_md) !== normalizeText(view.prompt_md)) {
-    issues.push({
-      detail: `题干不一致：snapshot='${normalizeText(view.prompt_md ?? '<null>').slice(0, 40)}…' vs revision part='${normalizeText(part.prompt_md).slice(0, 40)}…'（归一后逐字比对）`,
-    });
-  }
-  const slot = contract.response_spec.slots.find((candidate) => candidate.slot_id === slotId);
-  if (slot === undefined) {
-    issues.push({ detail: `slot '${slotId}' 不在 revision 契约内` });
-    return issues;
-  }
-  const isChoiceSlot = slot.kind === 'single_choice' || slot.kind === 'multi_choice';
-  if (view.choices_md !== null) {
-    if (!isChoiceSlot) {
-      issues.push({
-        detail: `snapshot 携带 ${view.choices_md.length} 个选项但槽位 '${slotId}' 是 ${slot.kind} —— 题型形态不一致`,
-      });
-    } else {
-      const optionTexts =
-        slot.kind === 'single_choice' || slot.kind === 'multi_choice'
-          ? slot.options.map((option) => option.text)
-          : [];
-      const normalizedSnapshot = view.choices_md.map(normalizeText);
-      const normalizedOptions = optionTexts.map(normalizeText);
-      if (normalizedSnapshot.join('\u0001') !== normalizedOptions.join('\u0001')) {
-        issues.push({
-          detail: `选项文本序列不一致：snapshot ${normalizedSnapshot.length} 项 vs 槽位 ${normalizedOptions.length} 项（归一后逐项比对）`,
-        });
-      }
-    }
-  } else if (isChoiceSlot) {
-    issues.push({
-      detail: `revision 槽位 '${slotId}' 是选择题但 snapshot 无 choices_md —— 无法机械推导选项身份`,
-    });
-  }
-  for (const issue of verifySnapshotReference(view, contract, slotId, scoringUnitId)) {
-    issues.push(issue);
-  }
-  return issues;
-}
-
-/** text_key.normalization 四档的本地镜像（与 evaluation.ts 归一化同语义）。 */
-function normalizeReferenceText(
-  value: string,
-  mode: 'exact' | 'trim' | 'trim_casefold_nfc' | 'answer_head',
-): string {
-  switch (mode) {
-    case 'exact':
-      return value;
-    case 'trim':
-      return value.trim();
-    case 'trim_casefold_nfc':
-      return value.normalize('NFKC').trim().toLowerCase();
-    case 'answer_head':
-      return extractAnswerHead(value).normalize('NFKC').trim().toLowerCase();
-  }
-}
-
-/** 参考答案首部形态：选项字母/label 前缀（含 （C） / C. / C． 标注）。 */
-const OPTION_MARKER_RE = /^[（(]?\s*([A-Za-z]{1,6})\s*[)）.．、:：]?\s*/;
-const NUMERIC_HEAD_RE = /^[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?/;
-
-/**
- * snapshot.reference_md ↔ 计分单元判据的机械比对（YUK-1100）：只处理答案可由
- * 参考文本确定性推导的判据；其余判据（rule_reference 等）无答案可机械比对，
- * 保持既有纪律 —— 不在此判定。
- */
-function verifySnapshotReference(
-  view: SnapshotContentView,
-  contract: PublishedQuestionRevisionT,
-  slotId: string,
-  scoringUnitId: string,
-): SnapshotTransformationIssue[] {
-  const issues: SnapshotTransformationIssue[] = [];
-  if (view.reference_md === null) return issues;
-  const unit = contract.scoring_basis.units.find(
-    (candidate) => candidate.scoring_unit_id === scoringUnitId,
-  );
-  // 坐标完整性（unit 存在/消费绑定槽位）由 validateEntryCoordinates 判定；
-  // 这里只补充答案内容的机械比对，不重复坐标结论。
-  if (unit === undefined || !unit.slot_refs.includes(slotId)) return issues;
-  const criterion = unit.criterion;
-  const head = extractAnswerHead(view.reference_md);
-  if (head.length === 0) return issues;
-  const slot = contract.response_spec.slots.find((candidate) => candidate.slot_id === slotId);
-
-  if (criterion.kind === 'text_key') {
-    const given = normalizeReferenceText(view.reference_md, criterion.normalization);
-    const accepted = criterion.accepted_texts.map((t) =>
-      normalizeReferenceText(t, criterion.normalization),
-    );
-    if (!accepted.includes(given)) {
-      issues.push({
-        detail: `参考答案不一致：snapshot reference 归一化后为 '${given.slice(0, 40)}'，不在 scoring unit '${scoringUnitId}' 的 accepted_texts 内 —— 同题面异答案快照不得绑定`,
-      });
-    }
-    return issues;
-  }
-
-  if (criterion.kind === 'option_set_key') {
-    if (slot === undefined || (slot.kind !== 'single_choice' && slot.kind !== 'multi_choice')) {
-      return issues; // 选项键落在非选择槽是契约违背（坐标校验已报），不加二次结论
-    }
-    const options = slot.options;
-    const marker = OPTION_MARKER_RE.exec(head);
-    if (marker !== null && marker[1] !== undefined) {
-      const letters = marker[1].toUpperCase().split('');
-      const rest = normalizeText(head.slice(marker[0].length));
-      const resolved = new Set<string>();
-      let allResolved = true;
-      for (const letter of letters) {
-        const option = options.find(
-          (o) => o.label.toUpperCase() === letter || o.option_id.toUpperCase() === letter,
-        );
-        if (option === undefined) {
-          allResolved = false;
-          break;
-        }
-        resolved.add(option.option_id);
-      }
-      if (allResolved) {
-        // 字母路径命中且 marker 尾部非空 —— 尾部必须是所选选项的原文
-        // （如 '（C）选项原文'），否则不采信字母解释，退到文本比对。
-        if (rest.length > 0) {
-          const tailMatches = [...resolved].some((id) => {
-            const text = options.find((o) => o.option_id === id)?.text;
-            return text !== undefined && normalizeText(text) === rest;
-          });
-          if (tailMatches) {
-            if (!sameOptionSet(resolved, criterion.accepted_option_ids)) {
-              issues.push({
-                detail: `参考答案不一致：snapshot 选项 '${marker[1].toUpperCase()}' 解出的集合与 scoring unit '${scoringUnitId}' 的 accepted_option_ids [${criterion.accepted_option_ids.join(',')}] 不符 —— 同题面异答案快照不得绑定`,
-              });
-            }
-            return issues;
-          }
-        } else {
-          if (!sameOptionSet(resolved, criterion.accepted_option_ids)) {
-            issues.push({
-              detail: `参考答案不一致：snapshot 选项 '${marker[1].toUpperCase()}' vs scoring unit '${scoringUnitId}' 的 accepted_option_ids [${criterion.accepted_option_ids.join(',')}] —— 同题面异答案快照不得绑定`,
-            });
-          }
-          return issues;
-        }
-      }
-    }
-    // 文本路径：参考答案首部直接是选项文本（或与 accepted 选项文本序列一致）。
-    const normalizedHead = normalizeText(head);
-    const acceptedOptions = options.filter((o) =>
-      criterion.accepted_option_ids.includes(o.option_id),
-    );
-    const acceptedTexts = acceptedOptions.map((o) => normalizeText(o.text));
-    const headMatchesAccepted =
-      acceptedTexts.includes(normalizedHead) || acceptedTexts.join('\u0001') === normalizedHead;
-    if (acceptedTexts.length > 0 && !headMatchesAccepted) {
-      issues.push({
-        detail: `参考答案不一致：snapshot reference '${normalizedHead.slice(0, 40)}' 与 scoring unit '${scoringUnitId}' 所接受选项的文本不符 —— 同题面异答案快照不得绑定`,
-      });
-    }
-    return issues;
-  }
-
-  if (criterion.kind === 'numeric_key') {
-    const match = NUMERIC_HEAD_RE.exec(head);
-    if (match === null) return issues; // 非数值首部无法机械比对 —— 不判
-    const value = Number.parseFloat(match[0]);
-    if (!Number.isFinite(value)) return issues;
-    const diff = Math.abs(value - criterion.expected);
-    const inTolerance =
-      criterion.tolerance.kind === 'absolute'
-        ? diff <= criterion.tolerance.value
-        : criterion.expected === 0
-          ? diff === 0
-          : diff / Math.abs(criterion.expected) <= criterion.tolerance.ratio;
-    if (!inTolerance) {
-      issues.push({
-        detail: `参考答案不一致：snapshot 数值 ${value} 超出 scoring unit '${scoringUnitId}' 期望 ${criterion.expected}±容差 —— 同题面异答案快照不得绑定`,
-      });
-    }
-    if (criterion.expected_unit !== undefined && criterion.expected_unit.trim().length > 0) {
-      const unitSuffix = head.slice(match[0].length).trim();
-      if (unitSuffix.length > 0 && unitSuffix !== criterion.expected_unit.trim()) {
-        issues.push({
-          detail: `参考答案单位不一致：snapshot '${unitSuffix}' vs 契约 '${criterion.expected_unit}'`,
-        });
-      }
-    }
-    return issues;
-  }
-  // rule_reference / holistic_level / matching_pairs_key：答案不能从参考文本
-  // 机械推出（既有纪律：超机械比对面走 question_asserted）—— 不在此判定。
-  return issues;
-}
-
-function sameOptionSet(resolved: ReadonlySet<string>, accepted: readonly string[]): boolean {
-  return resolved.size === accepted.length && accepted.every((id) => resolved.has(id));
-}
-
-// ───────────── P1-2b/c：registry 坐标对 revision 契约的普适校验 ─────────────
-
-export interface EntryCoordinateIssue {
-  detail: string;
-}
-
-/**
- * 每一条 mapped 绑定（不限 submission 锚）都必须对上目标库 revision 契约：
- * part_ids ⊆ structure.parts；slot 存在且属于绑定 part 集；scoring_unit 存在
- * 且【关联】绑定槽位（unit.slot_refs 覆盖 slot —— 不允许拿他槽的 unit 判本题）；
- * 契约自身过发布 barrier 的确定性子集校验。
- */
-export function validateEntryCoordinates(
-  entry: RevisionRegistryEntry,
-  contract: PublishedQuestionRevisionT,
-): EntryCoordinateIssue[] {
-  const issues: EntryCoordinateIssue[] = [];
-  const contractIssues = [
-    ...validateStructure(contract.structure),
-    ...validateResponseSpec(contract.response_spec, contract.structure),
-    ...validateScoringBasis(contract.scoring_basis, contract.response_spec, contract.structure),
-    ...validateExecutionPlan(contract.execution_plan, contract.scoring_basis),
-  ];
-  if (contractIssues.length > 0) {
-    issues.push({
-      detail: `revision 契约校验失败：${contractIssues.map((i) => `${i.code}(${'detail' in i ? i.detail : ''})`).join('; ')}`,
-    });
-    return issues;
-  }
-  const partIds = new Set(contract.structure.parts.map((part) => part.part_id));
-  if (!entry.part_ids.every((partId) => partIds.has(partId))) {
-    issues.push({
-      detail: `part_ids [${entry.part_ids.join(',')}] 不在契约 parts [${[...partIds].join(',')}] 内`,
-    });
-  }
-  const slot = contract.response_spec.slots.find(
-    (candidate) => candidate.slot_id === entry.slot_id,
-  );
-  if (slot === undefined) {
-    issues.push({ detail: `slot '${entry.slot_id}' 不在 revision 契约内` });
-  } else if (!entry.part_ids.includes(slot.part_id)) {
-    issues.push({
-      detail: `slot '${entry.slot_id}' 属于 part '${slot.part_id}'，不在绑定 part 集 [${entry.part_ids.join(',')}] 内`,
-    });
-  }
-  const unit = contract.scoring_basis.units.find(
-    (candidate) => candidate.scoring_unit_id === entry.scoring_unit_id,
-  );
-  if (unit === undefined) {
-    issues.push({ detail: `scoring_unit '${entry.scoring_unit_id}' 不在契约计分单元集内` });
-  } else if (!unit.slot_refs.includes(entry.slot_id)) {
-    issues.push({
-      detail: `scoring_unit '${entry.scoring_unit_id}' 不消费绑定槽位 '${entry.slot_id}'（其 slot_refs=[${unit.slot_refs.join(',')}]）—— 不允许拿他槽单元判本题`,
-    });
-  }
-  return issues;
-}
+// ─── 冻结 snapshot 提取 + 内容/坐标 fidelity 校验：已迁至
+// ./snapshot-fidelity（本模块唯一 owner；公开导出经上方 re-export 原样对外）。
 
 /** source_asset 行 → 契约原生 EvidenceAttachment（digest/mime/bytes 齐备才忠实）。 */
 function evidenceAttachmentOf(asset: RawSourceAssetRow): EvidenceAttachmentT {
@@ -1149,59 +615,6 @@ export function buildMigrationApplyPlan(input: BuildApplyPlanInput): MigrationAp
     historical_unresolved: 0,
   };
   const resolutionByLocator = new Map<string, Resolution>();
-
-  /** registry v2 解析（P1-4）：snapshot 逐一对照 + 显式断言 + 漂移/缺证明分支。 */
-  const resolveAgainstRegistry = (
-    originalQuestionId: string,
-    snapshotDigest: string | null,
-  ): Resolution => {
-    const candidates = registryByQuestion.get(originalQuestionId) ?? [];
-    if (candidates.length === 0) {
-      return {
-        status: 'pending',
-        entry: null,
-        reason: 'revision registry 无该题绑定 —— 身份待语料导入后解析',
-        binding: null,
-      };
-    }
-    if (snapshotDigest !== null) {
-      const exact = candidates.find(
-        (c) => c.binding_kind === 'snapshot_verified' && c.snapshot_digest === snapshotDigest,
-      );
-      if (exact !== undefined) {
-        return {
-          status: 'mapped',
-          entry: exact,
-          reason: '冻结 snapshot digest 与 registry snapshot_verified 绑定逐一一致 —— 绑定已验证',
-          binding: 'digest_verified',
-        };
-      }
-    }
-    const asserted = candidates.find((c) => c.binding_kind === 'question_asserted');
-    if (asserted !== undefined) {
-      return {
-        status: 'mapped',
-        entry: asserted,
-        reason: `registry question_asserted 显式断言：${asserted.assertion_reason ?? ''}（可审计，非 digest 验证）`,
-        binding: 'question_asserted',
-      };
-    }
-    if (snapshotDigest === null) {
-      return {
-        status: 'pending',
-        entry: null,
-        reason:
-          '该记录无冻结 snapshot digest 可与 registry 的 snapshot_verified 绑定对照，且无显式断言 —— 不猜',
-        binding: null,
-      };
-    }
-    return {
-      status: 'conflicted',
-      entry: null,
-      reason: `冻结 snapshot digest 与该题全部 snapshot_verified 绑定不符（记录 ${snapshotDigest.slice(0, 12)}）—— 内容漂移，不得绑定`,
-      binding: null,
-    };
-  };
 
   // 阶段 1（分两遍，P1-6/P1-4 一致性）：先解析【非镜像】记录（attempt/review
   // 锚、pending 事件等），随后做锚的忠实重建（降级会改写锚的裁决），最后才
@@ -1320,7 +733,7 @@ export function buildMigrationApplyPlan(input: BuildApplyPlanInput): MigrationAp
       };
       // worklist（awaiting/conflicted/reconstruction_blocked）以锚记录为代表。
     } else {
-      resolution = resolveAgainstRegistry(originalQuestionId, snapshotDigest);
+      resolution = resolveRegistryBinding(registryByQuestion, originalQuestionId, snapshotDigest);
       if (resolution.status === 'pending') {
         awaitingRegistry.push({
           source_locator: record.source_locator,
@@ -1928,18 +1341,6 @@ function verdictValid(payload: { coarse_outcome?: unknown; score?: unknown }): b
       branchOk('incorrect', (s) => typeof s === 'number' && s === 0) ||
       branchOk('unsupported', () => false))
   );
-}
-
-function groupEntriesByQuestion(
-  entries: RevisionRegistryEntry[],
-): Map<string, RevisionRegistryEntry[]> {
-  const map = new Map<string, RevisionRegistryEntry[]>();
-  for (const entry of entries) {
-    const list = map.get(entry.question_id) ?? [];
-    list.push(entry);
-    map.set(entry.question_id, list);
-  }
-  return map;
 }
 
 /** 目标 part 选择（P1-4）：answer.part_ref 优先且必须在该绑定的 part 集内；否则唯一 part；否则不猜。 */

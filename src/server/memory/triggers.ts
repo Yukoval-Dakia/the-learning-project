@@ -8,6 +8,11 @@ import {
   eventAllowsDerivationSql,
   readEventDerivationPolicy,
 } from '@/kernel/events/derivation-policy';
+import {
+  MEMORY_BRIEF_SWEEP_JOB,
+  REFLECTION_BRIEF_SCOPE_KEYS,
+  eligibilityFor,
+} from '@/kernel/nightly-eligibility';
 import { BRIEF_REFRESH_BUDGET } from '@/kernel/tools/budgets';
 import {
   createDirectProviderOperationContext,
@@ -22,6 +27,7 @@ import {
   createOrUpdateQueue,
 } from '@/server/boss/queue-config';
 import { fenceAwareJobHandler } from '@/server/contract-epoch';
+import { loadNightlyContext, noteEligibilitySkip } from '@/server/orchestration/nightly-signals';
 import {
   QUALIFYING_ACTIONS,
   listActiveSubjectsSinceRefresh,
@@ -962,6 +968,26 @@ async function applyPlannedRows(db: Db, userId: string): Promise<void> {
   }
 }
 
+async function reflectionBriefsOff(db: Db, now: Date): Promise<boolean> {
+  try {
+    const signals = (await loadNightlyContext(db, now, [MEMORY_BRIEF_SWEEP_JOB])).forJob(
+      MEMORY_BRIEF_SWEEP_JOB,
+    );
+    const decision = eligibilityFor('reflection', signals);
+    if (!decision.run) {
+      noteEligibilitySkip(MEMORY_BRIEF_SWEEP_JOB, decision);
+      return true;
+    }
+    return false;
+  } catch (err) {
+    console.error(
+      '[eligibility] memory brief signal load failed; skipping global/meta this sweep',
+      err,
+    );
+    return true;
+  }
+}
+
 export function buildMemoryBriefSweepHandler(
   db: Db,
   boss: Pick<BossLike, 'send'>,
@@ -980,7 +1006,12 @@ export function buildMemoryBriefSweepHandler(
     // (brief.ts), so subject refresh is owned entirely by the capped per-subject
     // path below and is never enqueued uncapped via this loop. The global brief
     // is always enqueued here and is NOT subject to maxSubjectsPerRun.
-    for (const scopeKey of await listStaleBriefScopes(db, now)) {
+    const staleScopes = await listStaleBriefScopes(db, now);
+    const reflectionOff = await reflectionBriefsOff(db, now);
+    for (const scopeKey of staleScopes) {
+      if (reflectionOff && (REFLECTION_BRIEF_SCOPE_KEYS as readonly string[]).includes(scopeKey)) {
+        continue;
+      }
       await enqueueBriefRegen(boss, scopeKey);
     }
 

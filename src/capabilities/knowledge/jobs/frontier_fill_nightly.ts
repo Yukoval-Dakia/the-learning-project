@@ -59,6 +59,7 @@ import { parseFrontierProposals } from '@/capabilities/knowledge/tasks/knowledge
 import { isDirectTreePair } from '@/core/topology-gate';
 import type { Db } from '@/db/client';
 import { knowledge, knowledge_edge } from '@/db/schema';
+import { FRONTIER_PENDING_CAP } from '@/kernel/nightly-eligibility';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
@@ -75,7 +76,7 @@ import { resolveSubjectProfile } from '@/subjects/profile';
 export const FRONTIER_BOOTSTRAP_FLOOR = 0;
 
 /** Hard cap on proposals written per run (cost cap / anti-storm). */
-export const FRONTIER_FILL_MAX_PROPOSALS = 5;
+export const FRONTIER_FILL_MAX_PROPOSALS = FRONTIER_PENDING_CAP;
 
 /**
  * Cap on candidate KCs fed to the LLM. The sparsity gate bounds *frequency* and

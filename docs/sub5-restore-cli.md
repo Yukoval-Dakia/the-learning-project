@@ -145,6 +145,14 @@ normal API traffic while the import is running. The archive excludes and transac
 `provider_session_admission`.
 
 Import validates the ZIP, schema version, table names, columns, and row shapes before mutation.
+It also refuses an archive whose completion-receipt effect still lacks a downstream receipt: this
+logical ZIP has no pg-boss jobs, so the work cannot be replayed. The response is HTTP 400 with
+`error: "downstream_completion_unproven"` and the effect identity. Only a missing contract is
+legacy; legacy enqueued and reserved effects carry no completion fact and are not treated as
+outstanding. Unknown or malformed contracts and invalid completion timestamps return 400.
+Deferred patches are not completed. Import rejects them even if an older worker wrote a timestamp,
+because `editing_presence` is outside the ZIP. A successful drain does not automatically repair
+the effect receipt in this LIGHT implementation.
 The database replacement itself runs in one transaction: a failure rolls back atomically and
 leaves Postgres unchanged. An archive with inline assets writes R2 after the database commit;
 individual R2 failures therefore appear in `failed_keys` and must be retried.
@@ -187,6 +195,54 @@ already lost, a central caller ran off/unlisted, or no trustworthy application-l
 exists, use the same stop-time worst-case bound. If the deployed maximum timeout cannot be proven,
 keep ingress/dispatch closed. Once safe, restart app and worker together with one identical admission
 mode/policy.
+
+## Reconcile an unresolved note-refine effect
+
+This is an owner-approved maintenance operation on the source database, not an automatic retry.
+A job exception still follows pg-boss retry policy. A receipt-write exception does not replay paid
+work. Both leave logical restore blocked until the owner reconciles the effect.
+
+1. Keep a full Postgres dump. Record the effect id, downstream job id, task-run id, and error.
+2. Inspect the job, `editing_presence.pending`, artifact revisions, proposals, and apply events.
+   Match the exact patch and trigger event, not just the artifact id. For a deferred patch, use
+   the existing editing-session blur/drain path before stopping writers, then verify the applied
+   revision or a persisted proposal. An empty queue alone is not proof; stale patches can expire.
+3. Stop ingress and workers under the maintenance boundary above. Confirm that no job retry or
+   deferred patch can still run. Do not delete the effect, clear its contract, or replay a paid job
+   merely to obtain a receipt.
+4. Record one disposition with an owner identity and evidence reference. Use `applied`, `proposed`,
+   or the exact terminal `skipped:*` result only when persisted evidence proves it. If retries have
+   ended and no patch or proposal remains outstanding, the owner may explicitly accept a terminal
+   failure as `failed:owner_confirmed`. This records a failed outcome, not a successful refinement.
+   If the result is uncertain or a pending/dead patch remains, keep the refusal and use full
+   Postgres recovery. Never mark that work completed.
+5. After approval, use the following transaction with psql variables `effect_id`, `result`, `owner`,
+   and `evidence`. For example, `result` may be `applied` after a verified drain. Expect exactly one
+   returned row. A zero-row result requires investigation, not a broader update.
+
+```sql
+begin;
+update event_subscription_effect
+set completed_at = clock_timestamp(),
+    updated_at = clock_timestamp(),
+    outcome = outcome || jsonb_build_object(
+      'status', :'result', 'reconciled_by', :'owner', 'reconciliation_evidence', :'evidence')
+where id = :'effect_id'
+  and effect_kind = 'mastery_change'
+  and outcome->>'completion_contract' = 'event-subscription-effect/v1'
+  and (completed_at is null or outcome->>'status' = 'deferred')
+  and :'result' in ('applied', 'proposed', 'proposed:breaker_tripped',
+    'skipped:empty_patch', 'skipped:target_not_found', 'skipped:not_found',
+    'skipped:no_body_blocks', 'skipped:archived', 'skipped:version_conflict',
+    'failed:owner_confirmed')
+  and length(:'owner') > 0 and length(:'evidence') > 0
+returning id, completed_at, outcome;
+commit;
+```
+
+Export a new ZIP and run the restore drill against a disposable target. The old ZIP remains
+unresolved. Unknown contracts need their matching writer/importer version; do not rewrite them
+as legacy. This procedure does not authorize data deletion or a provider call.
 
 ## R2 orphan audit
 

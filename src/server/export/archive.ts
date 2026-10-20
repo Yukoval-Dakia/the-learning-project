@@ -8,7 +8,9 @@
 import { downloadZip } from 'client-zip';
 import { getTableColumns, getTableName, isTable, sql } from 'drizzle-orm';
 import { unzipSync } from 'fflate';
+import { z } from 'zod';
 import { getConfigSnapshot } from '@/core/config/store';
+import { readCompletionContract } from '@/core/event-subscription-effect';
 import type { Db, Tx } from '@/db/client';
 import * as schema from '@/db/schema';
 import { hydrateConfigFromDb } from '@/server/config/hydrate';
@@ -336,6 +338,9 @@ export type RestoreResult =
       column?: string;
       // Set by the YUK-159 per-row shape barrier.
       index?: number;
+      // Set by the YUK-1614 downstream-completion pre-flight (before any wipe).
+      effects?: UnresolvedEffect[];
+      effect_count?: number;
     };
 
 export interface RestoreFromArchiveOpts {
@@ -391,6 +396,87 @@ function mem0RestoreValue(column: string, value: unknown) {
     return sql`${bound}::jsonb`;
   }
   return sql`${value ?? null}`;
+}
+
+// ─── Downstream completion pre-flight (YUK-1614) ───────────────────────────
+//
+// event_subscription_effect records that downstream work was reserved or sent
+// to pg-boss; it is not a completion receipt. pg-boss rows are outside the
+// logical ZIP, so an unresolved effect cannot be replayed on the target.
+const EFFECT_STATUS_WITHOUT_DOWNSTREAM_WORK: ReadonlySet<string> = new Set([
+  'debounced',
+  'disabled',
+]);
+const UNRESOLVED_EFFECT_PREVIEW_LIMIT = 20;
+// Raw postgres-js exports use a space separator and may abbreviate the UTC offset.
+const completionTimestamp = z
+  .string()
+  .transform((value) => value.replace(' ', 'T').replace(/([+-]\d{2})$/, '$1:00'))
+  .pipe(z.iso.datetime({ offset: true }));
+
+interface UnresolvedEffect {
+  id: string | null;
+  effect_kind: string | null;
+  artifact_id: string | null;
+  attempt_event_id: string | null;
+  source_event_id: string | null;
+  downstream_job_id: string | null;
+  status: string | null;
+  reason: string;
+}
+
+function stringOrNull(value: unknown): string | null {
+  return typeof value === 'string' ? value : null;
+}
+
+function unresolvedEffectReason(status: string | null): string {
+  switch (status) {
+    case 'enqueued':
+      return 'downstream job was enqueued under the completion contract but the archive has no completion receipt';
+    case 'reserved':
+      return 'effect was reserved but never enqueued or completed';
+    default:
+      return status === null
+        ? 'effect has no status or completion receipt'
+        : `effect status "${status}" is not terminal and has no completion receipt`;
+  }
+}
+
+// Only absent contracts are legacy. Old deferred receipts cannot prove completion.
+function findUnresolvedEffects(
+  rows: ReadonlyArray<Record<string, unknown>> | undefined,
+): UnresolvedEffect[] {
+  const unresolved: UnresolvedEffect[] = [];
+  for (const row of rows ?? []) {
+    const status = stringOrNull(row.status);
+    const contract = readCompletionContract(row.outcome);
+    const settledByStatus = status !== null && EFFECT_STATUS_WITHOUT_DOWNSTREAM_WORK.has(status);
+    const hasTimestamp = row.completed_at !== null && row.completed_at !== undefined;
+    let reason: string;
+    if (contract.kind === 'invalid') {
+      reason = 'unknown or malformed completion contract';
+    } else if (hasTimestamp && !completionTimestamp.safeParse(row.completed_at).success) {
+      reason = 'completed_at must be a valid timestamp';
+    } else if (contract.kind === 'v1' && contract.status === 'deferred') {
+      reason =
+        'deferred patch is not completed and editing_presence is outside the logical archive';
+    } else {
+      const legacy = contract.kind === 'legacy' && (status === 'enqueued' || status === 'reserved');
+      if (settledByStatus || hasTimestamp || legacy) continue;
+      reason = unresolvedEffectReason(status);
+    }
+    unresolved.push({
+      id: stringOrNull(row.id),
+      effect_kind: stringOrNull(row.effect_kind),
+      artifact_id: stringOrNull(row.artifact_id),
+      attempt_event_id: stringOrNull(row.attempt_event_id),
+      source_event_id: stringOrNull(row.source_event_id),
+      downstream_job_id: stringOrNull(row.downstream_job_id),
+      status,
+      reason,
+    });
+  }
+  return unresolved;
 }
 
 export async function restoreFromArchive({
@@ -680,6 +766,22 @@ export async function restoreFromArchive({
         error: 'data_validation_failed',
         message: 'Pre-flight validation caught issues; DB was NOT wiped.',
         issues: columnValidationErrors.slice(0, 20),
+      },
+    };
+  }
+
+  // YUK-1614: a receipt-bearing effect can record a queue send without the
+  // downstream completion receipt; the logical ZIP has no pg-boss rows to
+  // recover it. Refuse before the destructive transaction.
+  const unresolvedEffects = findUnresolvedEffects(data.event_subscription_effect);
+  if (unresolvedEffects.length > 0) {
+    return {
+      status: 400,
+      body: {
+        error: 'downstream_completion_unproven',
+        message: `Archive has ${unresolvedEffects.length} event-subscription effect(s) whose downstream work is not proven complete; the logical ZIP has no pg-boss job or completion receipt for them. DB was NOT wiped. Use a full PostgreSQL backup when queue state must be recovered.`,
+        effect_count: unresolvedEffects.length,
+        effects: unresolvedEffects.slice(0, UNRESOLVED_EFFECT_PREVIEW_LIMIT),
       },
     };
   }

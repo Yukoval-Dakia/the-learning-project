@@ -58,6 +58,7 @@ import { logMissingToolMountsWarning } from './log';
 import type { PiHookBridge } from './pi-hooks';
 import { providerHttpTimeoutMs } from './provider-http-timeout';
 import { PROVIDER_SESSION_SDK_STARTUP_TIMEOUT_MS } from './provider-session-admission';
+import type { ProviderTransportCollector } from './provider-transport';
 import type { ResolvedProvider } from './providers';
 import {
   type AiRunLifecycle,
@@ -503,6 +504,7 @@ function buildQueryOptions(
   // per-attempt-consistent.
   resolved: ResolvedProvider,
   budget: TaskBudget,
+  transportEvidence?: ProviderTransportCollector,
 ): Options {
   // The registry map's value type is the union of every spec's inferred literal
   // shape. Optional fields (reasoningEffort) only exist on declaring members, so
@@ -519,9 +521,13 @@ function buildQueryOptions(
     // YUK-575 (N5) — durable copilot run overrides the turn ceiling per-call;
     // 'unbounded' removes it entirely (pi mounts no shouldStopAfterTurn).
     maxTurns: budget.maxIterations === 'unbounded' ? undefined : budget.maxIterations || 1,
+    // YUK-1630 — the resolved task budget is the single source for every
+    // provider HTTP layer: this value is both the SDK per-request `timeout`
+    // and the derivation of the controlled dispatcher's connect/headers/body
+    // timers (see provider-transport.ts).
+    providerTimeoutMs: providerHttpTimeoutMs(budget.timeout),
+    transportEvidence,
   };
-  const providerTimeoutMs = providerHttpTimeoutMs(budget.timeout);
-  if (providerTimeoutMs !== undefined) options.providerTimeoutMs = providerTimeoutMs;
   // YUK-923 — reasoning effort tier: per-run modelBinding wins over the
   // task-kind declaration; unset → the provider default applies.
   const reasoningEffort = ctx.modelBinding?.effort ?? declaredDef.reasoningEffort;
@@ -848,6 +854,7 @@ async function runTaskAttempt(args: {
     lifecycle.abortController,
     lifecycle.resolved,
     budget,
+    lifecycle.transportEvidence,
   );
   const usagePrompt = `${typeof callOptions.systemPrompt === 'string' ? callOptions.systemPrompt : ''}\n${typeof promptText === 'string' ? promptText : ''}`;
   lifecycle.recordNotePhases({
@@ -977,6 +984,7 @@ async function runTaskImpl(kind: string, input: unknown, ctx: RunTaskCtx): Promi
       db: ctx.db,
       kind,
       timeoutMs: budget.timeout,
+      timeoutSource: budget.timeoutSource,
       abortController: ctx.lifecycleAbortController,
       override: ctx.override,
       modelBinding,
@@ -1089,6 +1097,7 @@ export function streamTask(kind: string, input: unknown, initialCtx: StreamTaskC
     db: ctx.db,
     kind,
     timeoutMs: budget.timeout,
+    timeoutSource: budget.timeoutSource,
     abortController: ctx.lifecycleAbortController,
     override: ctx.override,
     modelBinding,
@@ -1126,6 +1135,7 @@ export function streamTask(kind: string, input: unknown, initialCtx: StreamTaskC
                 lifecycle.abortController,
                 lifecycle.resolved,
                 budget,
+                lifecycle.transportEvidence,
               );
               const consumePreparedQuery = async (q: AsyncIterable<RunnerMessage>) => {
                 await consumeProviderAttempt({
@@ -1307,6 +1317,7 @@ async function streamTaskCollectingImpl(
     db: ctx.db,
     kind,
     timeoutMs: budget.timeout,
+    timeoutSource: budget.timeoutSource,
     abortController: ctx.lifecycleAbortController,
     override: ctx.override,
     modelBinding,
@@ -1335,6 +1346,7 @@ async function streamTaskCollectingImpl(
         lifecycle.abortController,
         lifecycle.resolved,
         budget,
+        lifecycle.transportEvidence,
       );
       const consumePreparedQuery = async (q: AsyncIterable<RunnerMessage>) => {
         await consumeProviderAttempt({

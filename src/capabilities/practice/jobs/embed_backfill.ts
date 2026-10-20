@@ -33,12 +33,14 @@ import {
   type EmbedProviderAttemptOptions,
   embedMany,
 } from '@/server/ai/embed';
-import { embedHash, knowledgeEmbedText, questionEmbedText } from '@/server/ai/embed-source';
+import {
+  EMBED_VERSION,
+  embedHash,
+  knowledgeEmbedText,
+  questionEmbedText,
+} from '@/server/ai/embed-source';
 
-// Bump when the embedder model or the embed-source join rule changes, to trigger
-// a background re-embed of rows stamped with an older version. v2 (YUK-393):
-// KC embed text now folds effective-domain → every existing KC vector is stale.
-export const EMBED_VERSION = 2;
+export { EMBED_VERSION };
 
 /** 入库已经算过的向量。文本必须是即将落库的题面，否则不要写，留给本任务重算。 */
 export function questionEmbedStamp(

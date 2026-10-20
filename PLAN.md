@@ -4,7 +4,9 @@
 
 ## NOW
 
-- **架构深化 / YUK-1571**：frontier draft #1837 c2b80ee，server444→443/cross48→47/SCC不变，R1通过，等#1830独占释放；超过半天上报协调线。迁移规划器#1840已合ee53df413（超长18→17）；typed due完整输入操作#1842已合71986f224，均父静态构建/独立R1/exact-head CI通过，无本机DB/provider。审计去重#1843已合3adb1cde4，scripts净减41，SWE-2 MAX R1/父静态构建/11命令输出核对/GH exactCI通过；Circle矩阵漏展开及workspace冲突归YUK1612。锁登记#1846已合4419f4fbb（仅文档）；YUK1577误关已恢复In Progress并读回completedAt=null；新增4项事实错误：协调线裁定顶部立即加未修正声明（只文档免审、exactCI后合），下一片先改4项再扩展；不能自称证明。完整操作设计f848145e9将B降为待证候选，两个真实变化场景未证正收益，当前保留直接owner port更简单；LIGHT共享读draft#1852 aab422064，父静态构建通过、实测cross48→43减5，GLM初审通过；两架构audit等1830释放后收紧baseline，保护#1802 review.ts。
+- **第一天能用 / 恢复完成证据（YUK-1631、YUK-1614）**：`el/yuk-1614` 保留 deferred 未完成状态，拒绝旧 deferred 假回执、未知契约与非法时间戳；legacy reserved/enqueued 保持可导入。隔离 PG16 实跑补丁排队→拒绝且原数据不变→drain→按证据人工补回执→恢复200；provider/回执写入故障及人工恢复已验证。既有备份8例通过，无测试代码改动，不碰 schema/export constants。最终静态检查及 exact-head CI 结果见 PR1854；自动恢复仍不在 LIGHT 范围。
+
+- **架构深化 / YUK-1571**：frontier draft #1837 正常整合main1440e864b，仅PLAN/now冲突；保留main nightly上限常量和mastery变更，新head静态验证/实测待完成，R1仍有效范围不扩张，等#1830独占释放；超过半天上报协调线。迁移规划器#1840已合ee53df413（超长18→17）；typed due完整输入操作#1842已合71986f224，均父静态构建/独立R1/exact-head CI通过，无本机DB/provider。审计去重#1843已合3adb1cde4，scripts净减41，SWE-2 MAX R1/父静态构建/11命令输出核对/GH exactCI通过；Circle矩阵漏展开及workspace冲突归YUK1612。锁登记#1846已合4419f4fbb（仅文档）；YUK1577误关已恢复In Progress并读回completedAt=null；新增4项事实错误：协调线裁定顶部立即加未修正声明（只文档免审、exactCI后合），下一片先改4项再扩展；不能自称证明。完整操作设计f848145e9将B降为待证候选，两个真实变化场景未证正收益，当前保留直接owner port更简单；LIGHT共享读draft#1852 aab422064，父静态构建通过、实测cross48→43减5，GLM初审通过；两架构audit等1830释放后收紧baseline，保护#1802 review.ts。
 
 - **第一天能用 / 题库暂不出题计数（YUK-1525）**：`yuk-1525-serving-counts-sql` 将 lifecycle 理由统一到 SQL，冻结题面继续复用原校验，计数与列表使用同一只读快照。2600 行中，旧列表少算为1846，修后2400，与原投影全库逐行统计一致；窗口外 `q_02600` 可见。无新增测试、UI 改动或付费调用。
 

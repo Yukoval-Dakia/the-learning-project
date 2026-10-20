@@ -11,7 +11,7 @@
 //
 // ── NOT a live-path writer (方案 A) ─────────────────────────────────────────────────────────────
 // item_calibration's LIVE writers stay the B1 single-owner primitives in src/server/mastery/
-// (applyItemPrior / fixed-anchor / applyKtEstimate / recalibrateQuestion — untouched by YUK-496).
+// (applyItemPrior / fixed-anchor / recalibrateQuestion — untouched by YUK-496).
 // This shell exists for the OFFLINE registry surfaces only: rebuild:projection / the B3 gate
 // (clone-only) and the audit's shared gather. The per-entity SoT flag
 // (projectionIsWriter('item_calibration')) is default OFF and NO flip is planned under 方案 A —

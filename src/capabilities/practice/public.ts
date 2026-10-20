@@ -202,6 +202,7 @@ export {
   SUPPLY_DISPATCH_COOLDOWN_DAYS,
   dispatchSupplyTarget as dispatchPracticeSupplyTarget,
   dispatchSupplyTargets as dispatchPracticeSupplyTargets,
+  inFlightSupplyCount,
 } from './server/question-supply/dispatcher';
 export type {
   EvidenceDemandV1T,

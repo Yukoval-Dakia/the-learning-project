@@ -54,13 +54,11 @@
 // 2. handler 把报告作为**返回值**交给 pg-boss：batchSize:1 时 pg-boss 把 handler
 //    的 resolved value 存进 job 的 `output` 列（manager.js `complete(name, jobIds,
 //    jobIds.length === 1 ? result : undefined)`）→ job 终态携带该信号。
-// 3. orchestrator 轮询 `getJobById` 时连 `output` 一起读，把 stalled/degraded 盖进
-//    `dag_orchestration_node.detail`——即「昨晚一切正常」这个假象的正面修复。
-//
-// **本模块不改变夜链的失败语义**：stalled 的 job 依然以 succeeded 收尾、DAG 节点
-// 依然转绿、硬下游依然照跑。「要不要让异常空跑直接 fail（进而让硬下游 skip）」是
-// 产品语义决策（一次限流风暴会让整条子树全 skip，且 pg-boss 会以 30s 退避重投递
-// ——在限流风暴里正是最不该做的事），留给 owner 拍板。
+// 3. orchestrator 轮询 `getJobById` 时连 `output` 一起读。YUK-1560：yield 档
+//    `stalled`（试过、零成功）把 DAG 节点落成终态 `degraded`，不再显示 succeeded。
+//    yield 档 `degraded`（有成功、失败占多数）仍是 succeeded，detail 保留告警。
+//    `degraded` 节点是软终态：下游不按 skipped 连坐，只记 stale。pg-boss job 本身
+//    仍以 completed 收尾——失败重投会在限流风暴里再打一轮，那不是这里要做的事。
 
 /** 一轮夜跑对「可失败步骤」的尝试/成败计数。不变量：attempted === succeeded + failed。 */
 export interface JobYield {

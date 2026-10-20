@@ -19,7 +19,7 @@ import { AssessmentAttemptCapture } from '../assessment/capture';
 // **It is deliberately NOT `action='attempt'`.** An `attempt` event is a JUDGED outcome:
 // its `outcome` enum is required, and `knowledge_mastery`
 // (drizzle/0005_phase1c1_event_payload_gin_and_mastery_view.sql:27),
-// `kt_estimate_nightly` and `personalized-difficulty` all aggregate
+// and `personalized-difficulty` aggregate
 // `action IN ('attempt','review')`. Writing one here would either invent an outcome the
 // judge has not produced yet, or double-count this answer once the worker writes its
 // `review` event. A distinct action keeps every existing aggregate byte-identical while

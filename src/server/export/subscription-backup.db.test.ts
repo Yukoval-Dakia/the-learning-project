@@ -48,6 +48,7 @@ const liveSubscriberIdentities = [
   ['agency.probe-publication-serve', 1],
   ['notes.mastery-progress-note-refine', 1],
   ['practice.failure-learning-attempt', 3],
+  ['practice.learner-return-wake', 1],
   ['practice.question-admission-enqueue', 1],
 ];
 const subscriberCount = liveSubscriberIdentities.length;
@@ -196,7 +197,9 @@ async function seedProgress() {
   const notes = registry.subscriptions.find((s) => s.id.startsWith('notes.'));
   if (!notes) throw new Error('notes subscriber missing');
   const attempt = await source('effect-attempt', 'attempt');
-  for (const status of ['enqueued', 'debounced', 'disabled', 'reserved'] as const) {
+  // YUK-1614: legacy enqueued rows have no completion contract and must not
+  // block restore; settled effects need no downstream receipt.
+  for (const status of ['enqueued', 'debounced', 'disabled'] as const) {
     const artifactId = `backup-note-${status}`;
     await db.insert(artifact).values({
       id: artifactId,
@@ -225,7 +228,7 @@ async function seedProgress() {
       stable_job_key: `job-key-${status}`,
       downstream_job_id: status === 'enqueued' ? 'archived-downstream-job' : null,
       enqueued_at: status === 'enqueued' ? now : null,
-      completed_at: status === 'debounced' || status === 'disabled' ? now : null,
+      completed_at: status === 'enqueued' ? null : now,
       outcome: status === 'disabled' ? { reason: 'disabled at source time' } : null,
     });
   }
@@ -239,9 +242,9 @@ describe('YUK-766 subscription progress backup', () => {
     await testDb().execute(sql`DROP TABLE IF EXISTS test_subscription_snapshot_memory`);
   });
 
-  // @invariant data: archive keeps six subscribers, seven states, and one shared publish event
-  // @fails-if omit admission enqueue or split its publish source; lengths or shared ids change
-  it('archives all six live subscriber identities, seven delivery states and effect provenance', async () => {
+  // @invariant data: archive keeps seven subscribers, seven states, and one shared publish event
+  // @fails-if omit admission enqueue or the return wake, or split the publish source
+  it('archives all seven live subscriber identities, seven delivery states and effect provenance', async () => {
     const { registry } = await seedProgress();
     const data = decode(await archive());
     expect(data.event_subscription_checkpoint).toHaveLength(subscriberCount);
@@ -264,18 +267,25 @@ describe('YUK-766 subscription progress backup', () => {
     const shared = registry.subscriptions.filter((sub) => (counts.get(sub.actions[0]) ?? 0) > 1);
     expect(shared.map((sub) => sub.id)).toEqual([
       'agency.probe-publication-serve',
+      'practice.failure-learning-attempt',
+      'practice.learner-return-wake',
       'practice.question-admission-enqueue',
     ]);
     const sourceIds = (id: string) =>
       data.event_subscription_delivery
         .filter((row) => row.subscriber_id === id)
         .map((row) => row.source_event_id);
-    expect([...sourceIds(shared[0].id)].sort()).toEqual([...sourceIds(shared[1].id)].sort());
-    expect(new Set(sourceIds(shared[0].id)).size).toBe(statuses.length);
-    expect(data.event_subscription_effect).toHaveLength(4);
+    const publish = ['agency.probe-publication-serve', 'practice.question-admission-enqueue'];
+    expect([...sourceIds(publish[0])].sort()).toEqual([...sourceIds(publish[1])].sort());
+    expect(new Set(sourceIds(publish[0])).size).toBe(statuses.length);
+    expect(data.event_subscription_effect).toHaveLength(3);
     expect(data.event_subscription_effect.find((r) => r.status === 'enqueued')).toMatchObject({
       downstream_job_id: 'archived-downstream-job',
       completed_at: null,
+      outcome: null,
+    });
+    expect(data.event_subscription_effect.find((r) => r.status === 'debounced')).toMatchObject({
+      downstream_job_id: null,
       mastery_event_ids: [
         'notes.mastery-progress-note-refine:succeeded',
         'additional-mastery-evidence',
@@ -330,7 +340,7 @@ describe('YUK-766 subscription progress backup', () => {
         tx,
         bossSend: send,
         attemptEventId: 'effect-attempt',
-        artifactId: 'backup-note-enqueued',
+        artifactId: 'backup-note-debounced',
         masteryEventIds: [`${notes.id}:succeeded`],
         subscriberId: notes.id,
         subscriberVersion: notes.version,
@@ -392,7 +402,8 @@ describe('YUK-766 subscription progress backup', () => {
           .select()
           .from(delivery)
           .where(eq(delivery.subscriber_id, sub.id));
-        expect(discovered).toHaveLength(statuses.length + 1);
+        const effectAttemptDelivery = sub.actions.includes('attempt') ? 1 : 0;
+        expect(discovered).toHaveLength(statuses.length + 1 + effectAttemptDelivery);
         expect(
           discovered.filter(
             (row) => row.source_event_id === fixtureSourceId(sub, 'undiscovered', counts),

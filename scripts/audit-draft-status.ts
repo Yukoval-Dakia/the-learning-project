@@ -39,7 +39,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { analyzeSource, extractObjectBlock } from './lib/ts-tokenize';
+import { analyzeSource, extractObjectBlock, lineOf } from './lib/ts-tokenize';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
@@ -53,11 +53,11 @@ const EXCLUDE_DIRS = new Set(['node_modules', '.next', 'dist', '.git', '.claude'
 const RESOLVE_KINDS = ['pr', 'phase', 'manual'] as const;
 type ResolveKind = (typeof RESOLVE_KINDS)[number];
 type ResolvesWhen = { kind: ResolveKind; ref: string; expected_by: string };
-type AllowlistEntry = { reason: string; resolves_when: ResolvesWhen };
+export type AllowlistEntry = { reason: string; resolves_when: ResolvesWhen };
 
 export type HygieneIssue = { file: string; problem: string };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
@@ -107,8 +107,11 @@ export function validateAllowlistHygiene(raw: unknown): HygieneIssue[] {
   return issues;
 }
 
-function loadAllowlist(): { entries: Record<string, AllowlistEntry>; raw: unknown } {
-  const raw = JSON.parse(readFileSync(ALLOWLIST_PATH, 'utf-8')) as unknown;
+export function loadAllowlist(path: string): {
+  entries: Record<string, AllowlistEntry>;
+  raw: unknown;
+} {
+  const raw = JSON.parse(readFileSync(path, 'utf-8')) as unknown;
   const entries: Record<string, AllowlistEntry> = {};
   if (isRecord(raw)) {
     for (const [k, v] of Object.entries(raw)) {
@@ -189,14 +192,6 @@ const INSERT_HEAD_RE =
 // another identifier.
 const DRAFT_STATUS_KEY_RE = /(^|[^A-Za-z0-9_])(['"]?)draft_status\2\s*:/;
 
-function lineOf(src: string, idx: number): number {
-  let line = 1;
-  for (let i = 0; i < idx && i < src.length; i += 1) {
-    if (src[i] === '\n') line += 1;
-  }
-  return line;
-}
-
 /**
  * Scan one source file for every `.insert(question).values({ ... })` site, returning
  * whether each carries a draft_status key. Exported pure for unit testing.
@@ -264,7 +259,7 @@ function main(): void {
     if (!src.includes('.insert(')) continue;
     sites.push(...scanQuestionInserts(file, src));
   }
-  const { entries, raw } = loadAllowlist();
+  const { entries, raw } = loadAllowlist(ALLOWLIST_PATH);
   const result = validateDraftGate(sites, entries, raw);
 
   const isJson = process.argv.includes('--json');

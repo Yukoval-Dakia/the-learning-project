@@ -1,42 +1,10 @@
-// ====================================================================
-// YUK-1057 — 隔离演练编排器（restore → migration → cutover → rollback 全链）
-// ====================================================================
-//
-// 全流程（grounding §15–§16 对应；产物落 <out>/，步骤账本 steps.jsonl）：
-//
-//   01 provision      ephemeral pgvector/pg16 容器 + 完整启动面 migrate
-//                     （drizzle 迁移 + builtin seed + trait reconcile +
-//                     projection readiness + epoch marker —— scripts/migrate.ts）。
-//   02 seed           合成语料（corpus.ts + contract-corpus.ts + 隔离 blob）。
-//   03 backup         容器内 pg_dump -Fc（生产 dump 形态）→ dump 工件 + sha256。
-//   04 restore-proof  同容器新库 rehearsal_restore → pg_restore →
-//                     snapshotDbState 逐表比对（restore identity 证据）。
-//                     【同时是 rollback 边界 (a)：新写入前 restore 的已验证形态】
-//   05 capture        migration:capture（幂等重跑：第二遍 already-present）。
-//   06 window-open    begin_prepare('assessment-contract-v1') + stale-writer
-//                     锁注入（terminate 恢复）+ fence 探针（preparing 拒跑）。
-//   07 migrate-apply  无 registry apply（中途 terminate backend 崩溃注入 →
-//                     resume 收敛；失败处置）→ fence 占用时 apply 被拒（单写者
-//                     纪律）→ 幂等重跑（全 phases skipped 零写入）→ registry 版
-//                     重跑（pending→resolved supersession）。
-//   08 mark-ready     mark_ready → 'ready' 下 fence 仍拒（安静窗口）。
-//   09 activate       activate('assessment-contract-v1')；本二进制 code epoch
-//                     = assessment-contract-v1（post-flip）→ active 后 gate 放行；
-//                     「旧代码 epoch_mismatch 拒跑」的演练语义由
-//                     rehearsal.db.test.ts 的 legacy-codeEpoch 断言承载。
-//   10 post-writes    新写入（publish/issue/draft/submit；域 seam 不经 API
-//                     middleware/ worker fence —— 与 CLI 直写一致）。
-//   11 delta-export   exportPostWriteDelta（行级 canonical JSON + digest）。
-//   12 rollback-b     独立库 rehearsal_rollback：restore 旧 dump →
-//                     replayPostWriteDelta → reconcilePostWriteDelta
-//                     （roll-forward + 导出对账 = 边界 (b)）。
-//   13 report         steps.jsonl + report.json + cutover-window.json。
-//
-// 全部步骤在 ephemeral 容器内完成；绝不触碰 running compose。migration
-// capture/apply 与 epoch transition 全部 in-process 调真实实现（不走
-// stdout 解析）；apply 用 application_name 打标的连接，故障注入 =
-// pg_terminate_backend(application_name='yuk1057-apply')，确定性杀在执行
-// 中途（phase ledger 'running' 行出现后）。
+// Every step stays in the ephemeral container. Never touch a running compose.
+// Capture, apply, and epoch transitions call the real code in process. Do not parse their stdout.
+// Apply connections are tagged. Terminate them only after a phase ledger row is 'running'.
+// The orchestrator's own connection is untagged, and the kill excludes its own backend, so the terminate skips it.
+// Restore-proof is rollback boundary (a), before new writes. Boundary (b) restores an independent
+// database and replays the post-write delta. Legacy epoch_mismatch is asserted in
+// rehearsal.db.test.ts, not here. ready still fences. That quiet window is part of the cutover.
 
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -74,12 +42,11 @@ import {
   simulatePostCutoverWrites,
 } from './post-write';
 
-// 每个 in-process apply 的连接打标 —— 故障注入按 application_name terminate，
-// 不碰编排器自己的连接。
+// Crash injection terminates this name and leaves the orchestrator's own connection alone.
 const APPLY_APP_NAME = 'yuk1057-apply';
 
 export interface RehearsalOptions {
-  /** 工件根（调用方给绝对路径；通常 .remember/rehearsal/<ts>）。 */
+  /** Absolute artifact root. */
   out: string;
 }
 
@@ -167,11 +134,10 @@ interface ApplyOnceResult {
 }
 
 /**
- * 与 scripts/migration-apply.ts 同路径的 in-process apply（report JSON 同样
- * 落 artifactsDir）。application_name 打标使 pg_terminate_backend 故障注入
- * 精确命中 apply 的连接（fence 由 advisoryFence 另开连接，同样打标在 URL
- * 参数层无法注入 —— 故注入等待点取 phase ledger 'running'，此刻 fence
- * 连接与 worker 池都在，terminate 后锁随连接死亡释放）。
+ * Same path as scripts/migration-apply.ts. The report lands in artifactsDir.
+ * The fence opens its own connection, and the URL cannot tag that one, so injection
+ * waits for a phase ledger 'running' row. By then the fence and the worker pool are
+ * both up, and the lock is released when those connections die.
  */
 async function applyOnce(args: {
   targetUrl: string;
@@ -251,7 +217,6 @@ async function applyOnce(args: {
   }
 }
 
-/** 等条件成立（上限 tries×intervalMs；超时返回 false）。 */
 async function waitFor(fn: () => Promise<boolean>, tries = 200, intervalMs = 25) {
   for (let i = 0; i < tries; i++) {
     if (await fn()) return true;
@@ -260,7 +225,6 @@ async function waitFor(fn: () => Promise<boolean>, tries = 200, intervalMs = 25)
   return false;
 }
 
-/** 隔离演练主流程。 */
 export async function runRehearsal(opts: RehearsalOptions): Promise<RehearsalReport> {
   const steps: StepRecord[] = [];
   const log = makeLogger(opts.out);
@@ -286,7 +250,6 @@ export async function runRehearsal(opts: RehearsalOptions): Promise<RehearsalRep
     const rollbackDb = 'rehearsal_rollback';
     const clock = new CutoverClock(db);
 
-    // ── 01 provision + migrate ──────────────────────────────────────────
     await stepRun(steps, log, 'provision', async () => {
       await pg.migrate(dbName);
       const marker = await pg.psql(
@@ -296,13 +259,11 @@ export async function runRehearsal(opts: RehearsalOptions): Promise<RehearsalRep
       return { db: dbName, image: REHEARSAL_PG_IMAGE, epoch: marker };
     });
 
-    // ── 02 seed + isolated blobs ────────────────────────────────────────
     const blobStore = isolatedBlobStore(join(opts.out, 'blobs'));
     await stepRun(steps, log, 'seed', async () => {
       const manifest = await seedRehearsalCorpus(db);
       await seedContractCorpus(db);
-      // 隔离 blob：source_asset 行引用的两张图（内容合成；sha256 回写行内，
-      // 保持「行引用 ↔ blob 内容」一致闭环）。
+      // Synthetic bytes. The sha256 is written back so the source_asset row matches the file.
       const pngMain = Buffer.from(`fixture-png-main-${'x'.repeat(4000)}`);
       const pngFig = Buffer.from(`fixture-png-fig-${'y'.repeat(4000)}`);
       await blobStore.put('answers/asset-answer-1.png', pngMain);
@@ -319,7 +280,6 @@ export async function runRehearsal(opts: RehearsalOptions): Promise<RehearsalRep
       return { tables: manifest.tables, blobs: inv.length };
     });
 
-    // ── 03 backup（生产 dump 形态：容器内 pg_dump -Fc） ──────────────────
     const preBackup = await snapshotDbState(db);
     writeProof(opts.out, 'state-pre-dump.json', preBackup);
     const dumpPath = `/tmp/rehearsal-${Date.now()}.dump`;
@@ -331,7 +291,6 @@ export async function runRehearsal(opts: RehearsalOptions): Promise<RehearsalRep
       return dump;
     });
 
-    // ── 04 restore-proof（= rollback 边界 a 的载体） ─────────────────────
     await stepRun(steps, log, 'restore-proof', async () => {
       await pg.createDatabase(restoreDb);
       await pg.pgRestore(restoreDb, dumpPath);
@@ -352,7 +311,6 @@ export async function runRehearsal(opts: RehearsalOptions): Promise<RehearsalRep
       }
     });
 
-    // ── 05 capture（含幂等重跑：第二遍工件 already-present） ─────────────
     const artifactsDir = join(opts.out, 'artifacts');
     await stepRun(steps, log, 'capture', async () => {
       const { runMigrationCapture } = await import('../../../scripts/migration-capture');
@@ -380,7 +338,6 @@ export async function runRehearsal(opts: RehearsalOptions): Promise<RehearsalRep
       };
     });
 
-    // ── 06 window-open（begin_prepare + stale writer + fence 探针） ──────
     await stepRun(steps, log, 'window-open', async () => {
       const report = await clock.step('window-open', async () => {
         const lock = await simulateStaleWriterLock(targetUrl, db);
@@ -409,16 +366,15 @@ export async function runRehearsal(opts: RehearsalOptions): Promise<RehearsalRep
       return report as Record<string, unknown>;
     });
 
-    // ── 07 migrate-apply（崩溃注入 + 单写者 + 幂等 + supersession） ───────
     await stepRun(steps, log, 'migrate-apply', async () => {
       return clock.step('migrate-apply', async (): Promise<Record<string, unknown>> => {
         const registryPath = join(opts.out, 'registry.json');
         writeFileSync(registryPath, `${JSON.stringify(buildRehearsalRegistry(), null, 2)}\n`);
         artifacts['registry.json'] = registryPath;
 
-        // 7a. 首次 apply（无 registry → pending 基线），执行中途把 apply 的
-        //     backend 全部 terminate（连接崩溃 ≈ 进程崩溃/断电的 DB 侧形态），
-        //     然后同参数重跑 —— phase ledger 收敛到 completed。
+        // First apply has no registry, so the baseline stays pending.
+        // Killing the connection is the database-side shape of a process crash or a power loss.
+        // Rerun the same args until the ledger is completed.
         const { loadMigrationArtifacts } = await import('../../../scripts/migration-apply');
         const { manifest } = loadMigrationArtifacts(artifactsDir);
         const firstRunId = applyRunIdOf({
@@ -431,11 +387,11 @@ export async function runRehearsal(opts: RehearsalOptions): Promise<RehearsalRep
           targetUrl,
           artifactsDir,
           registryPath: null,
-          batchSize: 1, // 拉长执行窗口，让崩溃注入确定性落在写阶段中途
+          batchSize: 1, // Widen the write so the crash lands mid-phase.
         });
 
-        // 触发点：phase ledger 出现 'running' 行（已过 fence、已进入阶段执行）
-        // → terminate 该 run 的全部 apply backend（fence + worker 连接）。
+        // A 'running' phase row means the fence is held and the phase has started.
+        // Terminate every apply backend for this run. The lock dies with the connection.
         const sawRunning = await waitFor(async () => {
           const rows = await db.execute(
             sql`select count(*)::int as n from migration_apply_phase
@@ -457,18 +413,17 @@ export async function runRehearsal(opts: RehearsalOptions): Promise<RehearsalRep
         } catch (err) {
           crashError = err instanceof Error ? err.message : String(err);
         }
-        // 崩溃证据：run 行停在 'running'/'failed'（绝不是 completed）。
+        // Crash evidence: the run row is running or failed, never completed.
         const deadRunRows = await db.execute(
           sql`select status from migration_apply_run where run_id = ${firstRunId}`,
         );
         const deadStatus = (deadRunRows[0] as { status: string } | undefined)?.status ?? 'absent';
 
-        // resume：同 checkpoint/同分类重跑 —— 已完成 phase skip，崩溃 phase 重做。
+        // Same checkpoint and classification. Finished phases skip. The crashed phase reruns.
         const resumed = await applyOnce({ targetUrl, artifactsDir, registryPath: null });
         const resumedStatuses = resumed.phases.map((p) => `${p.phase}:${p.status}`);
 
-        // 7b. 单写者纪律：持有 advisory fence 时 apply 必须被拒（并行第二
-        //     写者不得介入 —— 生产对应物：两个维护窗口实例互踩）。
+        // A second writer must be refused while the advisory fence is held.
         const fenceClient = postgres(targetUrl, {
           max: 1,
           connection: { application_name: 'yuk1057-stale-apply' },
@@ -493,14 +448,14 @@ export async function runRehearsal(opts: RehearsalOptions): Promise<RehearsalRep
           await fenceClient.end({ timeout: 5 }).catch(() => undefined);
         }
 
-        // 7c. 幂等重跑（同 run 已 completed → 全 phases skipped、零写入）。
+        // The completed run reruns with every phase skipped and zero rows written.
         const idempotent = await applyOnce({ targetUrl, artifactsDir, registryPath: null });
         const idempotentZeroWrite =
           idempotent.phases.length > 0 &&
           idempotent.phases.every((p) => p.status === 'skipped' && p.rows_written === 0);
 
-        // 7d. registry 版重跑（新 runId：registry_digest 入 run 身份；
-        //     awaiting_revision_registry worklist → resolved，supersession 入对账）。
+        // registry_digest is part of run identity, so this is a new runId.
+        // awaiting_revision_registry resolves, and supersession lands in the reconciliation.
         const withRegistry = await applyOnce({ targetUrl, artifactsDir, registryPath });
         const supersededInRun = withRegistry.reconciliation.mapping_rows_superseded_in_run;
 
@@ -534,7 +489,6 @@ export async function runRehearsal(opts: RehearsalOptions): Promise<RehearsalRep
       });
     });
 
-    // ── 08 mark-ready（ready 下仍 fenced = 安静窗口证据） ─────────────────
     await stepRun(steps, log, 'mark-ready', async () => {
       return clock.step('mark-ready', async (): Promise<Record<string, unknown>> => {
         await transitionContractEpoch(db, 'mark_ready', 'assessment-contract-v1', 'rehearsal');
@@ -548,7 +502,6 @@ export async function runRehearsal(opts: RehearsalOptions): Promise<RehearsalRep
       });
     });
 
-    // ── 09 activate（window 关闭；post-flip 本代码 runnable） ─────────
     await stepRun(steps, log, 'activate', async () => {
       return clock.step('activate', async (): Promise<Record<string, unknown>> => {
         await transitionContractEpoch(db, 'activate', 'assessment-contract-v1', 'rehearsal');
@@ -562,7 +515,6 @@ export async function runRehearsal(opts: RehearsalOptions): Promise<RehearsalRep
       });
     });
 
-    // ── 10 post-writes（真实 writer seam） ──────────────────────────────
     const pw = await stepRun(steps, log, 'post-writes', async () => {
       const handle = await simulatePostCutoverWrites(db);
       writeProof(opts.out, 'post-writes.json', handle);
@@ -570,7 +522,6 @@ export async function runRehearsal(opts: RehearsalOptions): Promise<RehearsalRep
     });
     const handle = pw.detail.handle as unknown as PostWriteHandle;
 
-    // ── 11 delta-export ────────────────────────────────────────────────
     await stepRun(steps, log, 'delta-export', async () => {
       const d = await exportPostWriteDelta(db, handle);
       writeProof(opts.out, 'postwrite-delta.json', d);
@@ -581,7 +532,6 @@ export async function runRehearsal(opts: RehearsalOptions): Promise<RehearsalRep
       };
     });
 
-    // ── 12 rollback-b（独立库 restore → replay → 对账） ──────────────────
     await stepRun(steps, log, 'rollback-b', async () => {
       await pg.createDatabase(rollbackDb);
       await pg.pgRestore(rollbackDb, dumpPath);
@@ -605,7 +555,6 @@ export async function runRehearsal(opts: RehearsalOptions): Promise<RehearsalRep
       }
     });
 
-    // ── 13 window close + report ────────────────────────────────────────
     const windowReport = clock.report();
     writeProof(opts.out, 'cutover-window.json', windowReport);
     artifacts['cutover-window.json'] = join(opts.out, 'cutover-window.json');
