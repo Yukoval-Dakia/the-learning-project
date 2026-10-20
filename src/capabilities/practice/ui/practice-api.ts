@@ -127,11 +127,6 @@ export const getQuestionKnowledgeOptions = (): Promise<{ rows: QuestionKnowledge
 // 上面那个薄 QuestionDetail 是 solve 链用的兼容子集；详情编辑面要全投影：
 // family（变体家族）/ parts（composite 小题）/ scheduling（FSRS）/ backlinks（卷引用）
 // / timeline（attempt·review）/ version（PATCH/DELETE 乐观锁 token）。
-export type QFullDetailLabel = QuestionFullDetail['labels'][number];
-export type QFullFamilyMember = QuestionFullDetail['family']['members'][number];
-export type QFullPart = QuestionFullDetail['parts'][number];
-export type QFullPerKnowledge = QuestionFullDetail['scheduling']['per_knowledge'][number];
-export type QFullBacklink = QuestionFullDetail['backlinks'][number];
 export type QFullTimelineEntry = QuestionFullDetail['timeline'][number];
 
 export function buildQuestionDetailUrl(id: string, surface?: 'practice'): string {
@@ -406,13 +401,11 @@ type QBankWireQuestion = QBankWireResult['items'][number];
 export type QBankQuestion = Omit<QBankWireQuestion, 'children'> & {
   children: QBankQuestion[];
 };
-export type QBankListResult = Omit<QBankWireResult, 'data' | 'items' | 'page'> & {
+type QBankListResult = Omit<QBankWireResult, 'data' | 'items' | 'page'> & {
   data?: QBankWireResult['data'];
   items: QBankQuestion[];
   page: Omit<QBankWireResult['page'], 'next_cursor'> & { next_cursor?: string | null };
 };
-export type QBankSourceTier = QBankQuestion['source_tier'];
-export type QBankKnowledgeLabel = NonNullable<QBankQuestion['knowledge_labels']>[number];
 
 function toQBankQuestion(row: QBankWireQuestion): QBankQuestion {
   return {
@@ -732,26 +725,6 @@ export interface DraftKnowledgeRef {
   label: string;
 }
 
-export interface DraftReviewRow {
-  id: string;
-  prompt_preview: string;
-  kind: string;
-  source: string;
-  created_at: string;
-  difficulty: number;
-  knowledge: DraftKnowledgeRef[];
-  verify_status: DraftVerifyStatus;
-  verify_reason: string | null;
-}
-
-export interface DraftReviewListPage {
-  rows: DraftReviewRow[];
-  limit: number;
-  offset: number;
-  total: number;
-  truncated: boolean;
-}
-
 export interface DraftReviewDetail {
   id: string;
   subject: string | null;
@@ -768,53 +741,6 @@ export interface DraftReviewDetail {
   verify_status: DraftVerifyStatus;
   verify_reason: string | null;
 }
-
-/** verify→promote / force-enable 的共享返回（promoted=true 转 active；false 留池+reason）。 */
-export interface DraftPromoteResult {
-  promoted: boolean;
-  status: string;
-  verify_event_id: string | null;
-  reason: string | null;
-}
-
-export interface DraftListFilters {
-  source?: string;
-  kind?: string;
-  limit?: number;
-  offset?: number;
-}
-
-/**
- * Build the /api/review/drafts query string from filters, with a client-side
- * negative-value guard. The server already clamps limit/offset (review-drafts-list.ts
- * + listDraftReview), so this is defense-in-depth: it stops malformed negatives from
- * ever leaving the browser as `?limit=-5`. Negative/zero limit and negative offset are
- * dropped (omitted → server applies its own default/clamp); valid positive values pass
- * through untouched, so current callers (limit: 200) are unaffected. Pure + exported
- * for unit testing.
- */
-export function buildDraftListQuery(filters: DraftListFilters): string {
-  const sp = new URLSearchParams();
-  if (filters.source) sp.set('source', filters.source);
-  if (filters.kind) sp.set('kind', filters.kind);
-  // limit must be a positive integer to be meaningful; drop ≤0 / non-finite.
-  if (filters.limit != null && Number.isFinite(filters.limit) && filters.limit > 0) {
-    sp.set('limit', String(Math.trunc(filters.limit)));
-  }
-  // offset is a non-negative index; drop negatives / non-finite (0 is valid).
-  if (filters.offset != null && Number.isFinite(filters.offset) && filters.offset >= 0) {
-    sp.set('offset', String(Math.trunc(filters.offset)));
-  }
-  return sp.toString();
-}
-
-export const getDrafts = (filters: DraftListFilters = {}) => {
-  const qs = buildDraftListQuery(filters);
-  return apiOperationJson('listReviewDrafts', {
-    url: `/api/review/drafts${qs ? `?${qs}` : ''}`,
-    method: 'GET',
-  });
-};
 
 export const getDraftDetail = (id: string): Promise<DraftReviewDetail> =>
   apiOperationJson('getReviewDraft', {
