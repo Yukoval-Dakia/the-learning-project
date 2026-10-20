@@ -10,14 +10,12 @@ import { assertFromState } from './guards';
 
 // LearningSession.Tutor.* — YUK-193 solve-tutor session (spec §3.1).
 //
-// State machine (docs/superpowers/specs/2026-06-01-solve-tutor-design.md §3.1):
-//   active → submitted → judged → ended   (+ abandoned terminal)
+// State machine: active → submitted → judged → ended, plus abandoned from any
+// non-terminal state.
 //
-// This module is the ONLY allowed writer of learning_session(type='tutor')
-// (ADR-0005 single-owner invariant, mirrors conversation.ts). Routes / handlers
-// MUST NOT update learning_session for type='tutor' directly. The linked
-// question_id lives in the `goal_id` slot (same convention conversation.ts uses
-// for learning_item_id).
+// Only this module writes learning_session(type='tutor') (ADR-0005, mirroring
+// conversation.ts). The linked question id lives in the `goal_id` slot, as
+// conversation keeps its learning item there.
 
 const SESSION_TABLE = 'learning_session' as const;
 
@@ -79,10 +77,9 @@ export async function startTutorSession(
   });
 }
 
-// Core transition body — runs inside a caller-supplied tx so the status change
-// can be made atomic with sibling writes (e.g. the attempt event + mistake in
-// submitSolveAttempt). FOR UPDATE serialises concurrent transitions. This keeps
-// the single-owner invariant: only this module mutates learning_session(tutor).
+// Runs inside a caller-supplied tx so the status change is atomic with sibling
+// writes (attempt event + mistake in submitSolveAttempt). FOR UPDATE serialises
+// concurrent transitions.
 async function applyTransition(
   tx: Tx,
   sessionId: string,
@@ -158,7 +155,7 @@ export async function abandonTutor(db: Db, sessionId: string): Promise<void> {
   );
 }
 
-/** Read the linked question id + status for an accepting (active) session. */
+/** Read the linked question id, status, and issuance id. */
 export async function getTutorQuestionId(
   db: Db,
   sessionId: string,

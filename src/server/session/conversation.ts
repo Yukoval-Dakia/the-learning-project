@@ -9,29 +9,14 @@ import { assertFromState } from './guards';
 
 // LearningSession.Conversation.* — Phase 2C Active Teaching Session.
 //
-// State machine (ADR-0008 + YUK-14
-// docs/design/2026-05-24-teaching-idle-state-machine.md):
+// State machine (ADR-0008 + docs/design/2026-05-24-teaching-idle-state-machine.md):
+//   active → idle             T4: 5min without a user message (promote_conversation_idle)
+//   idle → active             T2b: next user turn resumes in place
+//   active|idle → ended       T5: endConversation
+//   active|idle → abandoned   T6/T7: abandonConversation / 6h orphan cron
 //
-//                +----------+
-//                |  active  |◀───────────┐ (T2b: user msg in /turn)
-//                +----+-----+            │
-//             T4 (5min idle)             │
-//                     │                  │
-//                     ▼                  │
-//                +----------+            │
-//                |   idle   |────────────┘
-//                +----+--+--+
-//                     │  │
-//          T5 (end)   │  │  T6/T7 (pagehide-from-idle / orphan cron 6h)
-//                     │  │
-//                     ▼  ▼
-//             +-------+  +------------+
-//             | ended |  | abandoned  |
-//             +-------+  +------------+
-//
-// All five transitions live in this module per ADR-0005 single-owner
-// invariant; routes / boss handlers MUST NOT update learning_session for
-// type='conversation' directly.
+// All conversation transitions live in this module per ADR-0005; routes and
+// boss handlers must not update learning_session(type='conversation') directly.
 
 const SESSION_TABLE = 'learning_session' as const;
 
@@ -93,50 +78,33 @@ export async function startConversation(
 
 /**
  * Copilot session envelope (AF spec §1.5 + §7 S3a). Returns the durable
- * `learning_session(type='conversation')` that THIS Copilot turn belongs to,
- * creating one only when there is no live session to continue.
+ * `learning_session(type='conversation')` this Copilot turn belongs to, creating
+ * one only when no live session can be reused.
  *
- * Reuse predicate (no new columns — see L-copilot pre-flight缺口表): the most
- * recent conversation session that is still live (`status IN ('active','idle')`,
- * i.e. not ended/abandoned) AND was active within the last 24h
- * (`updated_at >= now - 24h`). Otherwise a fresh `status='active'` row is
- * inserted. Copilot conversations carry `goal_id = null` — there is no learning
- * item, which is what distinguishes them from teaching's `startConversation`.
+ * Reuse predicate lives in `findReusableCopilotConversation`. Copilot sessions
+ * carry `goal_id = null`; teaching's `startConversation` sets it.
  *
- * Single-owner invariant (ADR-0005, this module owns all conversation
- * transitions): both the candidate select and the insert run in ONE
- * transaction, and an `idle` reuse is inline-resumed to `active` here rather
- * than leaving the row stale. Single-user tool → no `FOR UPDATE` fan-out needed.
+ * Both select and insert run in one transaction, and an idle reuse is resumed to
+ * active here so the row never stays stale.
  */
-// Reuse window constant lives in @/core/limits (single source of truth) so the UI
-// bootstrap auto-selection (copilot/session-reuse.ts) and this server predicate cannot
-// drift. The server must not deep-import the copilot capability for it
-// (server→capability-deep is an architecture regression), hence the shared-leaf
-// placement (YUK-1340 P1).
+// The reuse window lives in @/core/limits so the UI bootstrap auto-selection and
+// this server predicate cannot drift; deep-importing the copilot capability from
+// server would be an architecture regression (YUK-1340 P1).
 export const COPILOT_SESSION_SELECTION_LOCK = 'copilot:session-selection';
 
 export async function lockCopilotSessionSelection(tx: Tx): Promise<void> {
-  // YUK-497 review — single-arg `hashtext` to match this PR's advisory-lock convention
-  // (acquireLearningStateWriteLock / acquireSortedAdvisoryLocks / mastery fsrs:knowledge all
-  // use hashtext); the two functions produce different keys, so this is the lone owner of
-  // COPILOT_SESSION_SELECTION_LOCK and no other lock site depends on the prior hashtextextended.
+  // Single-arg hashtext matches every other advisory lock in this codebase; this
+  // is the only owner of COPILOT_SESSION_SELECTION_LOCK.
   await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${COPILOT_SESSION_SELECTION_LOCK}))`);
 }
 
 /**
- * Resolve the single live Copilot conversation session that THIS surface would
- * reuse right now (or `null` if none). This is the SHARED reuse predicate:
- * `findOrCreateCopilotConversation` uses it to decide find-vs-create, and the
- * turns reader (src/capabilities/copilot/server/turns.ts) uses it to scope replay to the
- * current session so a stale prior conversation's turns are never preloaded
- * into what the server treats as a fresh session (codex #3356884484). Keeping
- * one predicate prevents the two call sites from drifting.
+ * Resolve the single live Copilot session this surface would reuse right now,
+ * or null. Shared by `findOrCreateCopilotConversation` (find-vs-create) and the
+ * turns reader (replay scoping), so "live" cannot drift between them.
  *
- * Predicate (no new columns): the most-recent conversation session that is
- *   - entrypoint='copilot' (Copilot's own envelopes, not teaching's),
- *   - status IN ('active','idle') (not ended/abandoned), AND
- *   - updated_at >= now - 24h (still inside the reuse window).
- * Read-only: callers wrap it in their own transaction when they need to mutate.
+ * A match is entrypoint='copilot', status active|idle, updated within the reuse
+ * window. Read-only; callers that mutate wrap it in their own transaction.
  */
 export async function findReusableCopilotConversation(
   db: Db | Tx,
@@ -151,11 +119,9 @@ export async function findReusableCopilotConversation(
     .where(
       and(
         eq(learning_session.type, 'conversation'),
-        // Scope reuse to Copilot's own envelopes. teaching's startConversation
-        // inserts type='conversation' with entrypoint=null + goal_id set, so
-        // without this filter a live teaching session could be the most-recent
-        // live row and get cross-surface reused — polluting teaching's event
-        // stream and violating this fn's goal_id=null invariant.
+        // Teaching's startConversation also writes type='conversation' (entrypoint
+        // null, goal_id set); without this filter a live teaching session could be
+        // reused here and pollute teaching's event stream.
         eq(learning_session.entrypoint, 'copilot'),
         inArray(learning_session.status, ['active', 'idle']),
         gte(learning_session.updated_at, cutoff),
@@ -266,7 +232,7 @@ export async function getCopilotConversation(
   return rows[0] ?? null;
 }
 
-/** YUK-936 — read the stored Agent SDK session id for foreground inline resume. */
+/** YUK-936 — provider session id persisted for foreground inline resume. */
 export async function getAgentSdkSessionId(db: Db | Tx, sessionId: string): Promise<string | null> {
   const rows = await db
     .select({ agent_sdk_session_id: learning_session.agent_sdk_session_id })
@@ -282,7 +248,7 @@ export async function getAgentSdkSessionId(db: Db | Tx, sessionId: string): Prom
   return rows[0]?.agent_sdk_session_id ?? null;
 }
 
-/** YUK-936 — persist Agent SDK session id after a successful foreground inline query. */
+/** YUK-936 — persist the provider session id after a successful inline query. */
 export async function setAgentSdkSessionId(
   db: Db | Tx,
   sessionId: string,
@@ -300,7 +266,7 @@ export async function setAgentSdkSessionId(
     );
 }
 
-/** YUK-936 — clear stored id on resume miss/fail/restart (ADR-0054 resume-fail). */
+/** Resume miss/fail/restart clears the id so the next turn starts fresh (ADR-0054). */
 export async function clearAgentSdkSessionId(
   db: Db | Tx,
   sessionId: string,
@@ -368,12 +334,10 @@ export async function findOrCreateCopilotConversation(
       }
       return { sessionId: current.id, created: false };
     }
-    // Shared reuse predicate (findReusableCopilotConversation) so this and the
-    // turns reader never drift on "which session is live".
+    // Same predicate as the turns reader, so "live" cannot drift between them.
     const existing = await findReusableCopilotConversation(tx, { now });
     if (existing) {
-      // Inline-resume an idle session so the row reflects the live turn (mirrors
-      // assertAcceptingTurns' idle → active transition).
+      // Reflect the live turn immediately, mirroring assertAcceptingTurns.
       if (existing.status === 'idle') {
         await tx
           .update(learning_session)
@@ -391,12 +355,9 @@ export async function findOrCreateCopilotConversation(
           payload: { resumed_at: now.toISOString(), surface: 'copilot' },
         });
       } else {
-        // codex #3356884503 — an already-`active` session is being reused, so it
-        // is genuinely live RIGHT NOW. Touch updated_at (+ version bump, per this
-        // table's update convention) so the reuse window is measured from the
-        // last turn, not from creation/resume time. Without this, a long active
-        // conversation with regular turns would age past `now - 24h` and split
-        // into a new session even while in active use.
+        // An already-active session is live right now, so touch updated_at: the
+        // reuse window must be measured from the last turn, not from creation or
+        // resume time, or a long conversation would split mid-use after 24h.
         await tx
           .update(learning_session)
           .set({
@@ -416,10 +377,10 @@ export async function findOrCreateCopilotConversation(
 // ---------- idleConversation (T4) ----------
 
 /**
- * active → idle. Called by `promote_conversation_idle` boss handler after the
- * 5min no-user-input threshold. No-op-safe: if another caller already moved
- * the session to a different status (e.g. T2b race), throws 409 — handler
- * skips per design §"Edge cases" E10.
+ * active → idle (T4). `promote_conversation_idle` calls this after the 5min
+ * no-user-input threshold. If a concurrent close/abandon (T5/T6/T7) or an
+ * overlapping promote already moved the session before this transaction takes
+ * the row lock, the status assert throws 409 and the handler skips.
  */
 export async function idleConversation(db: Db, sessionId: string): Promise<void> {
   await db.transaction(async (tx) => {
@@ -461,8 +422,7 @@ export async function idleConversation(db: Db, sessionId: string): Promise<void>
 // ---------- endConversation (T5) ----------
 
 /**
- * active|idle → ended. Used by explicit user close, drawer unmount, and
- * pagehide-while-active (E5: pagehide-while-idle uses abandonConversation).
+ * active|idle → ended (T5). The normal user-initiated close.
  */
 export async function endConversation(db: Db, sessionId: string): Promise<void> {
   await db.transaction(async (tx) => {
@@ -507,8 +467,8 @@ export async function endConversation(db: Db, sessionId: string): Promise<void> 
 export type AbandonReason = 'orphan_cron' | 'pagehide_idle' | 'pagehide_explicit';
 
 /**
- * active|idle → abandoned. Triggered by orphan cron (>6h) or sendBeacon with
- * `{status:'abandoned'}` (typically pagehide-while-drawer-showed-idle).
+ * active|idle → abandoned (T6/T7). The 6h orphan cron sweeps through
+ * `abandonOrphanConversationTx`; the reason is recorded on the event payload.
  */
 export async function abandonConversation(
   db: Db,
@@ -588,12 +548,9 @@ export async function abandonOrphanConversationTx(
 // ---------- assertAcceptingTurns (T2 + T2b inline resume) ----------
 
 /**
- * Verify the conversation accepts a new user turn. If the session is `idle`,
- * inline-resume it (idle → active) inside the same transaction. Returns
- * `{ goalId, wasIdle }` so the caller can communicate the resume to the UI
- * (was_idle=true → drawer clears its idle banner).
- *
- * Terminal states (ended/abandoned) throw 409.
+ * Verify the conversation accepts a user turn; idle is resumed to active inside
+ * the same transaction. Returns `{ goalId, wasIdle }` so the UI can clear its
+ * idle banner. Terminal states (ended/abandoned) throw 409.
  */
 export async function assertAcceptingTurns(
   db: Db,
@@ -645,12 +602,8 @@ export async function assertAcceptingTurns(
 
 /**
  * Require an already-active conversation without changing lifecycle state.
- *
- * This and `assertAcceptingTurns` are both supported but intentionally differ:
- * this strict variant rejects every non-active status with no side effects;
- * `assertAcceptingTurns` accepts idle and writes `conversation.resumed` while
- * returning `wasIdle`. Choose based on whether the caller owns resume semantics.
- * In particular, accept-chip PIN 9 requires this no-resume variant.
+ * Unlike `assertAcceptingTurns`, this never resumes idle; accept-chip PIN 9
+ * needs the 409-on-ended, no-side-effect contract.
  */
 export async function assertActive(db: Db, sessionId: string): Promise<{ goalId: string | null }> {
   const rows = await db

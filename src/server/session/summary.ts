@@ -1,12 +1,9 @@
-// Phase 1d — SessionSummaryTask runner.
+// SessionSummaryTask runner.
 //
-// Called by the session_summary pg-boss handler (or directly in tests) after a
-// learning_session(type='review') transitions to completed. Builds a compact
-// stats snapshot from chained events, calls SessionSummaryTask via the AI
-// runner, writes the result into learning_session.summary_md.
-//
-// Errors are swallowed by the caller (handler does best-effort retry; missing
-// summary degrades gracefully — the /learning-sessions/[id] UI shows a stub).
+// The session_summary handler calls this after a review session completes. It
+// builds a compact stats snapshot from chained events, runs the task, and stores
+// the result in learning_session.summary_md. Errors are the caller's to swallow;
+// a missing summary degrades to the UI stub.
 
 import { and, asc, eq, inArray } from 'drizzle-orm';
 
@@ -77,10 +74,9 @@ export interface RunSessionSummaryResult {
 }
 
 /**
- * Generate + persist a short markdown summary for a finished review session.
- *
- * Idempotent: skips if summary_md is already set (re-running won't overwrite).
- * Bounded read: only review events on this session_id are considered.
+ * Generate and persist a short markdown summary for a finished review session.
+ * Idempotent: skips when summary_md is already set. Only review events on this
+ * session_id are considered.
  */
 export async function runSessionSummary(
   params: RunSessionSummaryParams,
@@ -124,7 +120,6 @@ export async function runSessionSummary(
     return { status: 'skipped:no_events' };
   }
 
-  // Knowledge counts from review payloads.
   const knowledgeCounts = new Map<string, number>();
   for (const r of reviewEvents) {
     const payload = r.payload as { referenced_knowledge_ids?: string[] };
@@ -210,7 +205,6 @@ export async function runSessionSummary(
     primary_cause: topCauses[0]?.category_label?.trim() || null,
   });
 
-  // Notable attempts (the again/hard ones, up to NOTABLE_LIMIT) — join question.
   const notable = reviewEvents
     .filter((r) => {
       const rating = (r.payload as { fsrs_rating?: string }).fsrs_rating;
