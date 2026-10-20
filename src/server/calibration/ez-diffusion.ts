@@ -72,7 +72,7 @@ const FAIL = (pcUsed: number, reason: EzReason): EzResult => ({
   reason,
 });
 
-/** Wagenmakers 2007 Eqs. 5-8, `get.vaTer`. A bad input returns nulls, never a made-up (v, a, Ter). */
+/** Wagenmakers 2007 `get.vaTer`. v is Eq. 7, a is Eq. 5, MDT is Eq. 9, Ter is Eq. 8. A bad input returns nulls, never a made-up (v, a, Ter). */
 export function computeEzDiffusion(inputs: EzInputs): EzResult {
   const s = inputs.s ?? EZ_SCALING_S;
   const { pc, vrt, mrt, n } = inputs;
@@ -107,11 +107,11 @@ export function computeEzDiffusion(inputs: EzInputs): EzResult {
   const radicand = (L * (L * pcUsed * pcUsed - L * pcUsed + pcUsed - 0.5)) / vrt;
   if (radicand < 0) return FAIL(pcUsed, 'nonpositive-radicand');
 
-  const v = sign(pcUsed - 0.5) * s * radicand ** 0.25; // Eq. 5
-  const a = (s2 * L) / v; // Eq. 6
+  const v = sign(pcUsed - 0.5) * s * radicand ** 0.25; // Eq. 7
+  const a = (s2 * L) / v; // Eq. 5
   const y = (-v * a) / s2;
   const expY = Math.exp(y);
-  const mdt = (a / (2 * v)) * ((1 - expY) / (1 + expY));
+  const mdt = (a / (2 * v)) * ((1 - expY) / (1 + expY)); // Eq. 9
   const ter = mrt - mdt; // Eq. 8
 
   return { v, a, ter, pcUsed, reason: 'ok' };

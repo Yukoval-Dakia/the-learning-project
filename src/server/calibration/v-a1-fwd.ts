@@ -220,7 +220,7 @@ export function evaluateVA1Forward(
   meta: VA1Meta = {},
 ): VA1Result {
   const config: VA1Config = { ...DEFAULT_CONFIG, ...cfg };
-  // Validate the merged values. A non-positive threshold or a zero replicate count would mint a verdict.
+  // Validate the merged values. A negative threshold or a zero replicate count would mint a verdict.
   validateConfig(config);
 
   let nWithRt = 0;
