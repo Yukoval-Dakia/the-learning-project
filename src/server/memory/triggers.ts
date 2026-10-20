@@ -43,6 +43,7 @@ import {
   scopeHasNewEvidence,
 } from './brief';
 import { type MemoryClient, type MemoryEventInput, createMemoryClient } from './client';
+import { isLearnerEvidenceAction } from './learner-evidence';
 import type { MemoryIngestReplayGrant } from './memory-ingest-recovery-contract';
 import {
   assertMemoryIngestReplayGrant,
@@ -478,8 +479,17 @@ export function buildMemoryEventIngestHandler(
       // only scopes that ALREADY have a memory_brief_note row, so a first-appearance
       // scope (or a truncated one) loses just this batch's regen; scopes with an
       // existing brief row are still swept.
-      const regenScopes = row.affected_scopes.slice(0, MAX_BRIEF_REGEN_SCOPES);
-      if (row.affected_scopes.length > MAX_BRIEF_REGEN_SCOPES) {
+      // YUK-1629 — question-bank authoring/publish events are not
+      // learner-memory input (learner-evidence.ts owns the classification): no
+      // brief-regen fan-out at all, so a canonical publish produces 0 regen
+      // jobs / 0 MemoryBriefTask calls. The SAME classification filters them out
+      // of the brief evidence reads (brief.ts), so the nightly sweep cannot
+      // resurrect a question revision as learning evidence.
+      const learnerEvidence = isLearnerEvidenceAction(row.action);
+      const regenScopes = learnerEvidence
+        ? row.affected_scopes.slice(0, MAX_BRIEF_REGEN_SCOPES)
+        : [];
+      if (learnerEvidence && row.affected_scopes.length > MAX_BRIEF_REGEN_SCOPES) {
         console.warn(
           `[memory_brief_bridge] event ${row.id} has ${row.affected_scopes.length} affected scopes; capping brief regen fan-out at ${MAX_BRIEF_REGEN_SCOPES} (best-effort, sweep partially backstops the rest)`,
         );
