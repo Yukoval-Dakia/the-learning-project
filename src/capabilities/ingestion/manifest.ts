@@ -26,8 +26,6 @@ import {
   IngestionSessionDetailResponseSchema,
   IngestionSessionResponseSchema,
   IngestionSessionSchema,
-  LegacyExtractionResponseSchema,
-  LegacyImportResponseSchema,
   LegacyMakePaperResponseSchema,
   LegacyRescueResponseSchema,
   MistakeListQuerySchema,
@@ -38,7 +36,6 @@ import {
   RevertAutoEnrolledBlockBodySchema,
   RevertAutoEnrolledBlockResponseSchema,
 } from './api/contracts';
-import { ImportBody } from './api/import-schema';
 import { IngestionOperationRequest, MakePaperBody, RescueBody } from './api/operation-schema';
 
 export const ingestionCapability = defineCapability({
@@ -201,26 +198,6 @@ export const ingestionCapability = defineCapability({
         responses: { 200: IngestionOperationSchema, ...API_ERROR_RESPONSES },
         successStatus: 200,
         load: () => import('./api/operations').then((m) => m.GET),
-      },
-      {
-        method: 'POST',
-        path: '/api/ingestion/[id]/extract',
-        operationId: 'extractLegacyIngestionSession',
-        request: { params: ApiIdParamsSchema },
-        responses: { 200: LegacyExtractionResponseSchema, ...API_ERROR_RESPONSES },
-        successStatus: 200,
-        deprecation: { successor: '/api/ingestion-sessions/[id]/operations' },
-        load: () => import('./api/extract').then((m) => m.POST),
-      },
-      {
-        method: 'POST',
-        path: '/api/ingestion/[id]/import',
-        operationId: 'importLegacyIngestionSession',
-        request: { params: ApiIdParamsSchema, body: ImportBody },
-        responses: { 200: LegacyImportResponseSchema, ...API_ERROR_RESPONSES },
-        successStatus: 200,
-        deprecation: { successor: '/api/ingestion-sessions/[id]/operations' },
-        load: () => import('./api/import').then((m) => m.POST),
       },
       {
         method: 'POST',
