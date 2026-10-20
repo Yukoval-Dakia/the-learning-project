@@ -58,13 +58,6 @@ export { writeToolCallLog } from '@/server/ai/log';
 export type { TaskTextResult } from '@/server/ai/provenance';
 export type { Provider } from '@/server/ai/providers';
 
-// YUK-1572 — the deterministic choice-surface precheck rules moved to
-// ./choice-surface (same capability, pure module). quiz_verify.ts still
-// imports them via this path and its file belongs to another lane, so this
-// re-export is the forced compat seam, not a pass-through for new code.
-export { choiceSurfacePrecheckRecord, evaluateChoiceSurface } from './choice-surface';
-export type { ChoiceSurfacePrecheckRecord, ChoiceSurfaceRuleCheck } from './choice-surface';
-
 import {
   PlacementStarterAdmissionError,
   PlacementStarterStaleAuthorityError,
@@ -494,9 +487,8 @@ function isExactQuestion(q: SolveCheckQuestion): boolean {
 // MOVED to ./choice-surface.ts (YUK-1572): the pure answer-candidate kernel
 // (referenceAnswerCandidates / normalizeAnswer / choiceLabel* / answerCandidates)
 // plus the whole choice-surface rule block. runSolveCheck's exact path imports
-// the kernel back above; quiz_verify.ts keeps its import path via the re-export
-// at the top of this file. Semantics unchanged — the module received the code
-// verbatim.
+// the kernel back above; consumers (quiz_verify.ts) import the rules module
+// directly. Semantics unchanged — the module received the code verbatim.
 
 // OCR (PR #716) — `label` identifies the CALLER (check name + task kind) so a parse-failure
 // error message names the check/task that actually blew up. This is a SHARED helper (solve_check
