@@ -211,6 +211,38 @@
     },
     {
       "debt": "capabilityToServer",
+      "pair": "agency -> ai",
+      "date": "2026-10-20",
+      "from": 25,
+      "to": 24,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "copilot -> orchestrator",
+      "date": "2026-10-20",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> ai",
+      "date": "2026-10-20",
+      "from": 61,
+      "to": 55,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> orchestrator",
+      "date": "2026-10-20",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
       "pair": "ingestion -> ai",
       "date": "2026-10-20",
       "from": 16,
@@ -221,8 +253,8 @@
       "debt": "capabilityToServer",
       "pair": "practice -> ai",
       "date": "2026-10-20",
-      "from": 61,
-      "to": 58,
+      "from": 55,
+      "to": 52,
       "direction": "decrease"
     }
   ],
@@ -614,9 +646,9 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 399,
+      "total": 390,
       "byOwnerPair": {
-        "agency -> ai": 25,
+        "agency -> ai": 24,
         "agency -> boss": 10,
         "agency -> conjectures": 2,
         "agency -> http": 1,
@@ -632,7 +664,6 @@
         "copilot -> events": 5,
         "copilot -> http": 1,
         "copilot -> memory": 1,
-        "copilot -> orchestrator": 1,
         "copilot -> proposals": 1,
         "copilot -> questions": 1,
         "copilot -> revert": 1,
@@ -671,7 +702,7 @@
         "observability -> r2": 2,
         "observability -> subjects": 9,
         "practice -> advisory-locks": 5,
-        "practice -> ai": 58,
+        "practice -> ai": 52,
         "practice -> assessment": 1,
         "practice -> boss": 18,
         "practice -> calibration": 3,
@@ -681,7 +712,6 @@
         "practice -> http": 3,
         "practice -> mastery": 9,
         "practice -> memory": 1,
-        "practice -> orchestrator": 1,
         "practice -> projections": 4,
         "practice -> proposals": 5,
         "practice -> questions": 14,

@@ -26,6 +26,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { JobWithMetadata, SendOptions } from 'pg-boss';
 import { assertGeneratedQuestionHasJudgeContract } from '@/capabilities/practice/server/judge/question-contract';
+import { parseJsonObjectLoose } from '@/core/json-extract';
 import {
   DifficultyEvidence,
   type DifficultyEvidenceT,
@@ -65,7 +66,6 @@ import {
   type DomainToolName,
   toMcpAllowedToolName,
 } from '@/kernel/tools/allowlists';
-import { parseJsonObjectLoose } from '@/server/ai/json-extract';
 import {
   EXA_MCP_ALLOWED_TOOLS,
   EXA_MCP_SERVER_NAME,

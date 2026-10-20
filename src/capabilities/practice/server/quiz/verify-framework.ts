@@ -4,6 +4,7 @@ import {
   type JudgeAnswerParams,
   runSemanticJudge,
 } from '@/capabilities/practice/server/judge/question-contract';
+import { type RepairLevel, parseJsonObjectLoose } from '@/core/json-extract';
 import { isObjectiveAnswerKind } from '@/core/schema/answer-class';
 // YUK-216 S2 (题源扩展 Strategy D) — slice 1 verification-gate framework.
 //
@@ -40,7 +41,6 @@ import { QuizVerificationResult, type QuizVerificationResultT } from '@/core/sch
 import { SolutionGenerateOutput, type SolutionGenerateOutputT } from '@/core/schema/solution';
 import type { Db, Tx } from '@/db/client';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
-import { type RepairLevel, parseJsonObjectLoose } from '@/server/ai/json-extract';
 import {
   type TaskTextResult,
   type TaskTextRunFn,
