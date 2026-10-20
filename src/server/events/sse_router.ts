@@ -1,9 +1,6 @@
 // In-memory pub/sub for SSE channels keyed by (business_table, business_id).
-//
-// Subscribers connect via SSE endpoint (Step 4 / Step 10 routes); the listen
-// loop（listen_loop.ts）解析 NOTIFY 后调 broadcast 把事件 fan-out 给所有匹配订阅。
-// 这是单进程 in-memory 实现 —— Sub 0c 范围内 worker 与 app 是独立进程，
-// app 进程才需要这个 router；worker 不订阅自己发出的 NOTIFY。
+// The listen loop parses NOTIFY and fans out here. Only the app process
+// subscribes; the worker does not consume its own notifications.
 
 export type SSEPayload = {
   event_id: number;
@@ -50,7 +47,7 @@ export function broadcast(payload: SSEPayload): void {
     try {
       h(payload);
     } catch (err) {
-      // 一个 handler 抛错不能影响其它订阅者
+      // One failing subscriber must not skip the rest.
       console.error('[sse_router] handler error', err);
     }
   }

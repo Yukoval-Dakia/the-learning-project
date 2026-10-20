@@ -28,7 +28,7 @@ export async function hasRecentDbosPruneReceipt(db: Executor): Promise<boolean> 
 }
 
 export async function installPruneProducerFence(db: Db): Promise<void> {
-  // All families replace triggers on the same relations; retain the family lock too.
+  // Families replace triggers on the same relations, so take both locks.
   await db.transaction(async (tx) => {
     await lockProducerFenceInstaller(tx);
     await tx.execute(sql`select pg_advisory_xact_lock(1355, 1)`);
@@ -43,7 +43,7 @@ export async function installPruneProducerFence(db: Db): Promise<void> {
   });
 }
 
-/** One transaction owns the delete and receipt. A lost DBOS checkpoint reuses the receipt. */
+/** One transaction owns the delete and receipt; a lost checkpoint reuses the receipt. */
 export async function commitPrune(db: Db, workflowId: string, cutoff: Date) {
   return db.transaction(async (tx) => {
     await tx.execute(sql`select phase from prune_job_events_control for update`);
@@ -78,7 +78,7 @@ export async function drainLegacyPrune(db: Db) {
 }
 
 export async function pruneObligations(db: Executor, backend: 'pg-boss' | 'dbos') {
-  // Terminal failures remain obligations until a named, justified disposition. Never replay.
+  // Terminal failures stay obligations until a named disposition; never replay.
   if (backend === 'pg-boss') {
     return db.execute(sql`select j.id::text as task_id, j.state::text as state, j.name from pgboss.job j
       where j.name in ('prune_job_events','prune_job_events_dlq') and j.state <> 'completed'
@@ -104,7 +104,7 @@ export async function retireFailedPrune(
       backend === 'pg-boss' ? ['failed', 'cancelled'] : ['ERROR', 'CANCELLED', 'RETRIES_EXCEEDED'];
     if (!row || !terminal.includes(String(row.state)))
       throw new Error('Only observed terminal prune failures may be retired');
-    // A DLQ can contain unknown imported payloads. Keep it for explicit investigation.
+    // A DLQ can hold unknown imported payloads; keep it for investigation.
     if (row.name === 'prune_job_events_dlq')
       throw new Error('Unexpected prune DLQ requires manual investigation');
     await tx.execute(
