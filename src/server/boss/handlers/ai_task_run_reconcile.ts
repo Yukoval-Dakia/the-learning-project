@@ -43,7 +43,7 @@ export async function reconcileStuckAiTaskRuns(
 
   const converged: Array<{ id: string; task_kind: string }> = [];
   for (const run of staleRuns) {
-    // One row's constraint error rolls that row back to 'running' and the next tick retries it.
+    // A DB or constraint error on one row rolls it back to 'running'; the next tick retries it.
     // Letting it escape would skip every later row until the next cron.
     let settled: boolean;
     try {
