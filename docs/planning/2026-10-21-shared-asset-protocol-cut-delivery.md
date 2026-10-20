@@ -6,7 +6,7 @@
 `src/kernel/records/asset-store.ts`。纯搬迁，无运行时 registry/DI/新机制；
 抓取、供给、paid、检索行为不在本片。批准出处：
 <https://linear.app/yukoval-studios/issue/YUK-1571#comment-03dae10a-ad31-4219-800f-2e79b948937a>
-（提案 `docs/planning/2026-10-21-shared-asset-protocol-cut-proposal.md`）。
+（获批提案 SHA-256 `278c2fcf6acfa52ccac3a0233131d1211af60213a77efad9abc7ddee717aacfc`；批准记录含完整范围）。
 
 ## 协议责任（kernel 模块 owns 什么）
 
@@ -41,7 +41,7 @@ kind/provenance 是 caller 自带词表，kernel 只承载机制不吸收语义�
    不是按纯函数或目录名论证 kernel。
 4. **无新框架/非转发**：零运行时新机制；转出仅指向真身的同名符号，
    不用 wrapper 顶替完整职责。
-5. **行为保持**：迁移体逐语句等价（锁序、补偿、失败面、注释原样）；
+5. **行为保持**：迁移体逐语句等价（锁序、补偿、失败面保持；归属注释和类型签名已更新）；
    测试与 `ingestion/public.ts` 字节不变。
 
 ## 两个真实变化场景
@@ -56,9 +56,10 @@ kind/provenance 是 caller 自带词表，kernel 只承载机制不吸收语义�
 ## 非新算法深度声明
 
 接口/调用步骤与维护场景修改文件数基本不变；本片是归属修正与图边消除，
-不称新增算法深度。预计图变化（cross 40→39、SCC 4→3 {agency,knowledge,
-practice}、capability→server 406 不变）已按现有 audit 口径登记进
-`scripts/capability-boundary-baseline.json`，以 audit 实测为准。
+不称新增算法深度。普通合入 main `3698dabb5` 后，两项真实 audit 已确认 cross 40→39、
+SCC 4→3 {agency,knowledge,practice}、capability→server 405 不变。
+这些是候选 head 的实测，合入后仍须在实际 main 对账。baseline 288→433 行，
+两条新 capability→kernel 边和七条 compat 均显式登记。
 
 ## 授权原话（批准范围）
 
@@ -70,8 +71,9 @@ practice}、capability→server 406 不变）已按现有 audit 口径登记进
   kernel 同名真身；
 - `jyeoo-candidates.ts` 的 `lockImageStorageKey` 旧转出改 kernel；
 - `getR2`/`R2Client` 保留原接缝；`SourceAssetRow` 类型保留兼容；
-- 测试本实施 PR 一字不动；`persistImageAsset` 旧路径测试绑定只有
-  owner 另行批准文本方案后才能改指。
+- 测试本实施 PR 一字不动。协调线已按 owner 10-19 清单类测试授权，
+  明确批准退出 PR 仅修改 `assets.db.test.ts` 的 import 路径；不动用例、
+  数据或断言。超出此范围须停下另交方案，不再把纯改路径写成待 owner 批准。
 
 ## Compat 退出清单（deadline UTC 2026-11-03，不续期）
 
@@ -81,7 +83,7 @@ UTC 合入日起算、最迟 2026-11-03。退出动作（另片原子删，需�
 | shim 文件 | 符号 | 退出动作 |
 |---|---|---|
 | ingestion/server/persist-image-asset.ts | persistSourceAsset | docx/persist-page-evidence、source-package、media-tools 改指 kernel 后删转出 |
-| 同上 | persistImageAsset | api/assets、api/pdf、image-candidate-accept、docx/persist-page-evidence、ingestion/public 改指后删转出；assets.db.test 绑定须 owner 另行批准文本方案 |
+| 同上 | persistImageAsset | api/assets、api/pdf、image-candidate-accept、docx/persist-page-evidence、ingestion/public 改指后删转出；assets.db.test 仅 import 路径改指已获协调批准，其他测试内容不动 |
 | 同上 | deleteImageAsset | api/asset-delete 改指后删转出 |
 | 同上 | lockImageStorageKey | crop、ingestion/public 改指后删转出 |
 | 同上 | sha256Hex | crop、source-package、ingestion/public 改指后删转出 |
@@ -96,5 +98,7 @@ pass-through 站点身份与 base 相同（`site|local-export`），未生成新
 
 - base：`origin/main` `6a76a5225`（固定基线，自最新 origin/main 起，非父 local）
 - branch：`arch/shared-asset-protocol`（不带票号，避免整票自动关）
-- head / worktree：以 `git rev-parse HEAD` 与本 worktree 路径为准
-- 证据外置：`/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1571/<head>/`
+- 实现：`dae8ce8b525855f678d1fbf0307e2950a344bd89`；整合 `3698dabb5`：`a1ffa0b7a1a343f83d792393f0119380271c4a46`。
+- 证据外置：`/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1571/a1ffa0b7a1a343f83d792393f0119380271c4a46/`。父修订与检查记录见该目录 `parent-lint-errors.log`、`parent-checks.json`。
+- 作者首轮 lint 失败实际是本片导出排序和函数签名格式两项 error；测试 suppression 提示为 warning，未修改测试。父仅按 Biome 修正，锁与执行语句不变；原失败日志保留。
+- NOT_RUN：本机 tests/DB/Docker/provider/runtime；类型、构建和静态审计不替代运行期验收。

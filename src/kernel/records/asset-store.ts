@@ -177,11 +177,7 @@ export function persistImageAsset(
  * Delete one logical owner and remove the content-addressed object only after its final owner.
  * Every `assets/<sha>` owner mutation shares the same advisory-lock protocol as writes.
  */
-export async function deleteImageAsset(
-  db: Db,
-  r2: AssetBlobClient,
-  id: string,
-): Promise<boolean> {
+export async function deleteImageAsset(db: Db, r2: AssetBlobClient, id: string): Promise<boolean> {
   return db.transaction(async (tx) => {
     const [snapshot] = await tx
       .select({ id: source_asset.id, storageKey: source_asset.storage_key })

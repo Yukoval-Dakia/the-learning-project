@@ -238,7 +238,7 @@
         { "file": "src/capabilities/ingestion/server/docx/persist-page-evidence.ts", "line": 2 },
         { "file": "src/capabilities/ingestion/public.ts", "line": 23 }
       ],
-      "exitCondition": "consumers repoint their imports to @/kernel/records/asset-store and this re-export is deleted in the YUK-1571 compat-exit slice; the test binding changes only under a separately approved text plan",
+      "exitCondition": "consumers repoint their imports to @/kernel/records/asset-store and this re-export is deleted in the YUK-1571 compat-exit slice; assets.db.test.ts import-path-only repoint is coordinator-approved under the owner 2026-10-19 inventory-change authorization; cases, data and assertions stay unchanged",
       "issue": "YUK-1571",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1571#comment-03dae10a-ad31-4219-800f-2e79b948937a",
       "date": "2026-10-20",
