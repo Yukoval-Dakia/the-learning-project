@@ -1,16 +1,5 @@
-// YUK-14 — promote stale active conversation sessions to status='idle'.
-//
-// design/2026-05-24-teaching-idle-state-machine.md §"Idle clock" rules: a
-// conversation is "idle" when the last user message (NOT agent reply) was
-// more than IDLE_MS ago. Agent replies do not reset the idle clock by design,
-// so a long chain of agent autopilot turns won't keep a session active forever
-// (forward-compat for future dreaming triggers — out of scope this PR).
-//
-// Runs every minute. Per-row transition uses single-owner
-// Conversation.idleConversation; the inner transaction handles T4 conflicts
-// (e.g. a /turn race resuming the session between SELECT and UPDATE) by
-// rejecting — we swallow the 409 here as a lost-race no-op skip, identical
-// to prune_orphan_review_sessions handling.
+// Idle follows the last user message, not an agent reply. Autopilot must not keep the session active.
+// The transition owner rejects a lost race. This tick skips that row.
 
 import { sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
@@ -20,12 +9,7 @@ import { Conversation } from '@/server/session';
 
 export const IDLE_MS = 5 * 60 * 1000;
 
-/**
- * Returns ids of `active` conversation sessions whose latest user-message
- * event (event.actor_kind='user') is older than the cutoff. If a session has
- * NO user message yet, fall back to `started_at` — the conversation began but
- * the user never typed, so once started_at < cutoff it's idle.
- */
+/** A session with no user message yet uses started_at. The user never typed. */
 async function selectIdleCandidates(db: Db, cutoff: Date): Promise<string[]> {
   const cutoffIso = cutoff.toISOString();
   const rows = await db.execute<{ id: string }>(
@@ -59,9 +43,7 @@ export async function runPromoteConversationIdle(
       await Conversation.idleConversation(db, id);
       promoted += 1;
     } catch (err) {
-      // Lost race: /turn route resumed the session (T2b) or another caller
-      // transitioned it between our SELECT and UPDATE. Terminal states or
-      // already-idle = fine.
+      // Another writer moved the row between the select and the update.
       skipped += 1;
       console.warn(`[promote_conversation_idle] skip ${id}:`, (err as Error).message);
     }

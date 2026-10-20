@@ -1,37 +1,11 @@
-// YUK-237 [STB-3]: per-queue expiration / retention / dead-letter config.
-// M4-T3 (YUK-319)：从 handlers.ts 抽出共享——渐缩簿（handlers.ts）与 capability
-// jobs 注册器（register-capability-jobs.ts）共用同一建队配方，YUK-237/259 的
-// 调和 + race 防护不维护两份。
+// Shared by the infra book and the capability registrar, so expiry and the create race live once.
 //
-// Background: pg-boss v12 sets these at the QUEUE level (createQueue options),
-// inherited by each job. Defaults are `expireInSeconds: 900` (15 min — a job is
-// retried/failed if it stays active longer) and `retentionSeconds: 1209600`
-// (14 days a created/retry job survives before deletion). The 15-min active
-// ceiling is too tight for our long tool-calling LLM jobs (quiz_gen / sourcing /
-// dreaming can run multi-step agent loops), so an over-running job was being
-// silently retried mid-flight. We raise expiry per workload tier and add a
-// dead-letter queue for the expensive LLM producers so a job that exhausts its
-// retries is preserved for inspection instead of vanishing.
-//
-// Tiers (expireInSeconds is the max time a job may stay `active`):
-//   FAST  — sub-second housekeeping (echo / prune_* / promote_idle). Brief floor
-//           of 1h is overkill for these but keeps a single safe minimum.
-//   LLM   — single LLM call handlers (note_*, variant_*, coach_*,
-//           session_summary, attribution_followup,
-//           goal_scope, hub_auto_sync, auto_enroll). 1h ceiling.
-//           note_generate's own budget is 30 minutes (YUK-1531); the 1h lease
-//           still covers admission wait, that call, and the fallback write.
-//   AGENT — multi-step tool-calling agents that can legitimately run for many
-//           minutes (quiz_gen / quiz_verify / sourcing / source_verify /
-//           dreaming_nightly / knowledge_maintenance / tencent_ocr). 2h ceiling.
-//
-// retentionSeconds: 7 days everywhere (brief floor; below the 14-day default so
-// we don't keep stuck created/retry jobs around for two weeks).
-//
-// Dead-letter: only the AGENT + LLM producers route exhausted jobs to
-// `<queue>_dlq`. We create the DLQ first (createQueue is idempotent on name) so
-// the failed payload lands somewhere queryable. FAST housekeeping queues skip
-// the DLQ — a dropped prune tick just re-runs on the next cron.
+// pg-boss stores expiry on the queue. The 15-minute default retries a long model job while it is still active.
+// FAST queues have no dead-letter queue. A missed cron tick runs on the next schedule.
+// LLM is one model call. note_generate's 30-minute budget still fits in the 1h lease, with the wait before the call.
+// AGENT is a multi-step loop, with a 2h lease. Both keep an exhausted job on `<queue>_dlq`.
+// Retention is 7 days, under the 14-day default, so a stuck created job does not sit for two weeks.
+// Create the dead-letter queue first. createQueue does not update a row that already exists.
 
 import type { PgBoss } from 'pg-boss';
 
@@ -39,34 +13,17 @@ import { isQueueCreateRace } from '@/server/boss/client';
 
 type QueueAdmin = Pick<PgBoss, 'createQueue' | 'updateQueue'>;
 
-export const RETENTION_7D = 604_800; // 7 days, brief floor
-export const EXPIRE_FAST = 3_600; // 1h — brief minimum floor for cheap jobs
-export const EXPIRE_LLM = 3_600; // 1h — single LLM call handlers
-export const EXPIRE_AGENT = 7_200; // 2h — multi-step tool-calling agent loops
+export const RETENTION_7D = 604_800; // 7 days
+export const EXPIRE_FAST = 3_600; // 1h floor for a cheap tick
+export const EXPIRE_LLM = 3_600; // 1h
+export const EXPIRE_AGENT = 7_200; // 2h
 
-// YUK-576 — explicit queue-level retry policy for the DLQ-backed llm/agent
-// producers. pg-boss v12 persists retryLimit in the queue options with
-// COALESCE(..., 2) (plans.js) — the implicit default ALREADY redelivers twice,
-// so `retryLimit: 2` is a zero-count change that turns an accidental dependency
-// into declared intent (copilot_run.ts:138-165 documented the transient→
-// permanent hazard of relying on the implicit default). The deliberate DELTA is
-// retryDelay + retryBackoff (defaults 0/false → immediate redelivery): a failed
-// job now waits ~30s → ~60s before the next paid attempt, giving transient
-// endpoint conditions time to recover instead of hammering the same outage.
-// USER-VISIBLE: failure recovery is 30–90s slower than immediate redelivery —
-// accepted for a single-user self-hosted tool (design doc §6). Semantics:
-// handler re-throw → delayed/backed-off redelivery ×2 → `<queue>_dlq`.
-// Cap = 2 (not memory's 3, triggers.ts:294): each LLM/agent retry is a full
-// inference bill, so the cap stays tighter; the DLQ preserves exhausted jobs.
-// Single-transient-layer note: in-process transient retry (runner.ts) is gated
-// OFF for durable handlers — queue redelivery is their ONLY transient layer, so
-// worst-case paid calls per logical job stays 1 + retryLimit = 3.
+// retryLimit 2 matches the library default, so the count does not change.
+// The delay and backoff are the change. A failed paid job waits instead of hammering the outage.
+// In-process retry is off for these handlers, so this queue is their only retry.
+// Worst case is one try plus retryLimit. The cap stays at 2 because each retry is a full bill.
 export const JOB_RETRY_LIMIT = 2;
 export const JOB_RETRY_DELAY_SECONDS = 30;
-
-// YUK-577 (should#8) — the copilot proactive-nudge queue name lives in the dependency-free
-// ./queue-names (so producers, the copilot manifest, and unit tests share one source without
-// this DB-tainted module leaking into a unit partition). See queue-names.ts.
 
 export const FAST_QUEUE_OPTS = {
   expireInSeconds: EXPIRE_FAST,
@@ -74,11 +31,8 @@ export const FAST_QUEUE_OPTS = {
 } as const;
 
 /**
- * Build createQueue options for an LLM/agent queue, wiring a dead-letter queue.
- * Caller MUST create the returned `deadLetter` queue first (see createJobQueue).
- * Includes the explicit YUK-576 retry policy (see JOB_RETRY_LIMIT above); the
- * reconcile path lands it on pre-existing prod queues too — plans.js
- * `updateQueue` SETs retry_limit/retry_delay/retry_backoff via COALESCE.
+ * Caller creates the dead-letter queue first.
+ * updateQueue writes these retry fields onto a queue that already exists.
  */
 function jobQueueOpts(
   queueName: string,
@@ -97,30 +51,9 @@ function jobQueueOpts(
 }
 
 /**
- * Create a queue AND reconcile its config if it already exists.
- *
- * pg-boss `createQueue` is `INSERT ... ON CONFLICT DO NOTHING` (plans.js
- * `create_queue` plpgsql) — on an upgrade where the queue was already created by
- * an older worker, it leaves the *old* expire/retention/dead-letter untouched.
- * That silently no-ops the YUK-237 stability tuning on every existing prod DB
- * (the only DBs that matter for a long-running NAS worker). `updateQueue` runs
- * `UPDATE ${schema}.queue SET expire_seconds/retention_seconds/dead_letter ...
- * WHERE name = $1` (plans.js `updateQueue`), so calling it right after
- * createQueue forces the live config onto both brand-new and pre-existing
- * queues. On a fresh queue updateQueue is a harmless self-update; on a missing
- * queue it is a no-op UPDATE (0 rows) — but we always createQueue first, so the
- * row exists. Keeping the SAME opts object for both calls keeps them in lockstep.
- *
- * YUK-259: concurrency-safe. When the app's in-process boss (instrumentation,
- * getStartedBoss) and the worker both register/start against the same DB during
- * a cold start, pg-boss's queue INSERT can race past its own ON CONFLICT and
- * raise a 23505 `queue_pkey` violation (observed repeatedly in the test env —
- * worker crashed in registration with `Key (name)=(...) already exists`). A
- * 23505 here means the queue already exists, which is the desired end state, so
- * we swallow it and STILL run `updateQueue` — the reconcile that lands the
- * YUK-237 config onto the (now confirmed-existing) row. #329 semantics are
- * preserved: an already-existing queue still gets the new config. Any other
- * error is re-thrown.
+ * createQueue is insert-on-conflict-do-nothing, so an existing row keeps its old expiry.
+ * updateQueue is what lands the current options on a database that already has the queue.
+ * A 23505 means the other process inserted the row. Still update it. Any other error rethrows.
  */
 export async function createOrUpdateQueue(
   boss: QueueAdmin,
@@ -129,7 +62,6 @@ export async function createOrUpdateQueue(
     expireInSeconds: number;
     retentionSeconds: number;
     deadLetter?: string;
-    // YUK-576 — explicit queue-level retry policy (see jobQueueOpts).
     retryLimit?: number;
     retryDelay?: number;
     retryBackoff?: boolean;
@@ -140,8 +72,7 @@ export async function createOrUpdateQueue(
     await boss.createQueue(name, opts);
   } catch (err) {
     if (!isQueueCreateRace(err)) throw err;
-    // Benign create race — the queue row exists; fall through to updateQueue so
-    // the YUK-237 config still gets reconciled onto it.
+    // The row exists. updateQueue below still applies the current options.
     console.warn(
       `[boss] createQueue('${name}') hit a concurrent create race (23505 queue_pkey) — queue already exists, reconciling config (YUK-259)`,
     );
@@ -150,14 +81,8 @@ export async function createOrUpdateQueue(
 }
 
 /**
- * Create an LLM/agent producer queue together with its dead-letter queue.
- *
- * Order matters: the DLQ must exist before the main queue references it as
- * `deadLetter`. createQueue is idempotent on name, so re-running registration is
- * safe; createOrUpdateQueue additionally reconciles config onto an existing
- * queue (see its docblock — required so YUK-237 tuning lands on upgraded prod
- * DBs, not just fresh ones). The DLQ itself uses FAST opts (7-day retention, 1h
- * expire) — it only holds inert failed payloads, never runs a worker.
+ * The dead-letter queue must exist before the main queue names it.
+ * It holds failed payloads and has no worker, so it uses the fast options.
  */
 export async function createJobQueue(
   boss: QueueAdmin,

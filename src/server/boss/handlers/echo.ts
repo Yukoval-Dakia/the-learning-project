@@ -10,15 +10,7 @@ export type EchoJobData = {
   input: string;
 };
 
-/**
- * Echo job handler —— golden E2E pattern。**反转输入字符串**作为示例业务逻辑。
- *
- * 事务内：
- *   1. UPDATE echo_jobs(output, status='completed')
- *   2. writeJobEvent(event_type='echo.completed', payload={input, output})
- *
- * 两步同事务，pg_notify 在 commit 后到达 LISTEN 客户端 → broadcast → SSE。
- */
+/** 更新和事件写在同一个事务里，NOTIFY 才会在提交之后才到 SSE。 */
 export function buildEchoHandler(db: Db): (jobs: Job<EchoJobData>[]) => Promise<void> {
   return async (jobs: Job<EchoJobData>[]) => {
     for (const job of jobs) {
