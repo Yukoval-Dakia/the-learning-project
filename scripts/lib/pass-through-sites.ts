@@ -8,10 +8,11 @@
  *                    runtime surface is value re-export-from statements;
  *   - function (F1): exported function whose body is one `return [await]
  *                    imported(arg…)` that forwards its parameters verbatim —
- *                    same order, a full permutation of distinct params, or a
- *                    single rest parameter spread verbatim; no defaults/
- *                    patterns, and no try/catch/guard — error boundaries,
- *                    conversions and validation never match;
+ *                    same order or a full permutation of distinct params,
+ *                    optionally followed by a trailing `...rest` spread of the
+ *                    same binding; no defaults/patterns, and no try/catch/
+ *                    guard — error boundaries, conversions and validation
+ *                    never match;
  *   - alias    (A1): `export const X = importedBinding` / `export default
  *                    importedBinding` — no call, no transform;
  *   - site     (S1): a value-bearing export-from statement inside a module that
@@ -180,34 +181,12 @@ function callTargetOf(
   return null;
 }
 
-/** Decidable F1 argument shapes — everything else (defaults, patterns,
- *  transforms, dropped/duplicated params, computed calls) stays a real
- *  definition, not a thin forward. */
-function forwardArgsShape(
-  params: unknown[],
-  args: unknown[],
-): 'direct' | 'reordered' | 'spread' | null {
-  // `(...args) => target(...args)` / `function f(...args) { return target(...args) }`
-  if (params.length === 1 && args.length === 1) {
-    const param = params[0];
-    const arg = args[0];
-    if (
-      isRecord(param) &&
-      param.type === 'RestElement' &&
-      isRecord(param.argument) &&
-      param.argument.type === 'Identifier' &&
-      isRecord(arg) &&
-      arg.type === 'SpreadElement' &&
-      isRecord(arg.argument) &&
-      arg.argument.type === 'Identifier' &&
-      arg.argument.name === param.argument.name
-    ) {
-      return 'spread';
-    }
-  }
-  if (args.length !== params.length) return null;
-  // Every parameter must be a plain Identifier — defaults, rest (outside the
-  // single-rest case above) and destructuring patterns own decisions.
+export type ForwardShape = 'direct' | 'reordered' | 'spread' | 'direct+spread' | 'reordered+spread';
+
+/** Plain-Identifier prefix comparison: 'direct' same order, 'reordered' for a
+ *  full permutation of distinct names (element-wise sorted equality — never
+ *  string concat; `f(a,b) => g(a,a)` must not match), null otherwise. */
+function plainPrefixShape(params: unknown[], args: unknown[]): 'direct' | 'reordered' | null {
   const paramNames: string[] = [];
   for (const param of params) {
     if (!isRecord(param) || param.type !== 'Identifier' || typeof param.name !== 'string') {
@@ -220,9 +199,8 @@ function forwardArgsShape(
     if (!isRecord(arg) || arg.type !== 'Identifier' || typeof arg.name !== 'string') return null;
     argNames.push(arg.name);
   }
+  if (argNames.length !== paramNames.length) return null;
   if (argNames.every((name, i) => name === paramNames[i])) return 'direct';
-  // Permutation: distinct parameters AND distinct arguments, sorted element-wise
-  // equality (lengths already equal). `f(a,b) => g(a,a)` must not match.
   const sortedParams = [...paramNames].sort();
   const sortedArgs = [...argNames].sort();
   if (
@@ -234,9 +212,49 @@ function forwardArgsShape(
   return null;
 }
 
+/** Decidable F1 argument shapes — everything else (defaults, patterns,
+ *  transforms, dropped/duplicated params, a spread anywhere but last, computed
+ *  calls) stays a real definition, not a thin forward:
+ *   - plain params forwarded in order (`direct`) or fully permuted (`reordered`)
+ *   - a trailing `...rest` parameter forwarded as a trailing `...rest` spread
+ *     of the same binding, with no leading prefix (`spread`) or a verbatim/
+ *     permuted plain prefix (`direct+spread` / `reordered+spread`). */
+function forwardArgsShape(params: unknown[], args: unknown[]): ForwardShape | null {
+  const lastParam = params[params.length - 1];
+  const restName =
+    isRecord(lastParam) &&
+    lastParam.type === 'RestElement' &&
+    isRecord(lastParam.argument) &&
+    lastParam.argument.type === 'Identifier'
+      ? lastParam.argument.name
+      : null;
+  if (restName !== null) {
+    // `(...rest) => target(...rest)` and `(p…, ...rest) => target(p…, ...rest)`:
+    // the spread must be the last argument and name the same binding.
+    const lastArg = args[args.length - 1];
+    if (
+      args.length !== params.length ||
+      !isRecord(lastArg) ||
+      lastArg.type !== 'SpreadElement' ||
+      !isRecord(lastArg.argument) ||
+      lastArg.argument.type !== 'Identifier' ||
+      lastArg.argument.name !== restName
+    ) {
+      return null;
+    }
+    const prefix = plainPrefixShape(params.slice(0, -1), args.slice(0, -1));
+    if (prefix === null) return null;
+    if (params.length === 1) return 'spread';
+    return prefix === 'direct' ? 'direct+spread' : 'reordered+spread';
+  }
+  // No rest parameter: any spread argument is out of shape.
+  if (args.length !== params.length) return null;
+  return plainPrefixShape(params, args);
+}
+
 /** The F1 shape: `return [await] imported(…)` with a decidable forward of the
- *  parameters — same order, a full permutation of distinct params, or a single
- *  rest parameter spread verbatim — and nothing else. */
+ *  parameters — same order or a full permutation of distinct params, with an
+ *  optional trailing `...rest` spread of the same binding — and nothing else. */
 function forwardDetail(
   candidate: FunctionCandidate,
   bindings: Map<string, ImportBinding>,
@@ -244,7 +262,7 @@ function forwardDetail(
   target: ImportBinding;
   member: string | null;
   awaited: boolean;
-  shape: 'direct' | 'reordered' | 'spread';
+  shape: ForwardShape;
 } | null {
   let returned: unknown;
   if (candidate.expressionBody !== null) {
@@ -456,6 +474,29 @@ export function scanPassThroughSites(
             exportedNames.add('default');
             localToExported.set(candidate.localName, 'default');
           }
+        } else if (
+          isRecord(declaration) &&
+          (declaration.type === 'ArrowFunctionExpression' ||
+            declaration.type === 'FunctionExpression')
+        ) {
+          // `export default (a) => imported(a)` — the same F1 pipeline,
+          // exported symbol `default`.
+          candidates.push({
+            localName: 'default',
+            params: Array.isArray(declaration.params) ? declaration.params : [],
+            body:
+              isRecord(declaration.body) && declaration.body.type === 'BlockStatement'
+                ? declaration.body
+                : null,
+            expressionBody:
+              isRecord(declaration.body) && declaration.body.type !== 'BlockStatement'
+                ? declaration.body
+                : null,
+            async: declaration.async === true,
+            start: typeof declaration.start === 'number' ? declaration.start : 0,
+            end: typeof declaration.end === 'number' ? declaration.end : 0,
+          });
+          exportedNames.add('default');
         } else if (
           isRecord(declaration) &&
           (declaration.type === 'Identifier' ||

@@ -1,9 +1,9 @@
 # Architecture anti-regression ratchets — delivery (YUK-1579)
 
 Implementation of `docs/planning/2026-10-20-architecture-no-regression-proposal.md`
-on branch `arch/regression-ratchets`, merged through `origin/main` `671e08044`
+on branch `arch/regression-ratchets`, merged through `origin/main` `c26ec39f9`
 (which contains the recorded-baseline mechanism from #1830 / `58289c05` and
-the post-#1872 debt state `420/0/43`, `>1500`=16).
+the post-#1882 debt state `417/0/43`, `>1500`=16).
 Everything reuses the existing `audit:capability-boundaries` and
 `audit:architecture-deepening` commands, `CAPABILITY_BASE_SHA`/`--base`,
 append-only `changes`, and `--tighten`. No new audit command, CI job, package,
@@ -54,8 +54,8 @@ byte-for-byte.
 - `pnpm exec biome check <6 changed files>` — clean; `pnpm lint` — 0 errors
   (178 pre-existing repo warnings, none in changed files).
 - `pnpm build` — clean (web + server/worker/migrate esbuild).
-- `pnpm audit:capability-boundaries` (merge-base `671e08044`) — PASS:
-  `debt ratchets exact (capability->server=420, server->capability-deep=0, cross-capability-value=43);
+- `pnpm audit:capability-boundaries` (merge-base `c26ec39f9`) — PASS:
+  `debt ratchets exact (capability->server=417, server->capability-deep=0, cross-capability-value=43);
   new dependency edges=0; nontrivial SCCs=1 (base 1); >1500-line files=16 (base 16)`.
   (Earlier PASS at merge-base `46663192d`: `429/0/42`, `17 (base 17)` — the 17
   matches the independently measured Flash facts at `4fd1798`.)
@@ -75,8 +75,8 @@ byte-for-byte.
 against real growth (801 violations at the post-merge head — 796 at `875faac0c`,
 +5 from upstream commits; full logs archived externally):
 
-- `edgeRecords`: 658 real base→head audited edges enumerated per
-  `file -> module` (266 capabilityToServer + 27 crossCapabilityValue +
+- `edgeRecords`: 582 real base→head audited edges enumerated per
+  `file -> module` (204 capabilityToServer + 13 crossCapabilityValue +
   365 capabilityToKernel; 574 at `875faac0c`), each carrying its measured
   `kind`/`symbols`.
 - Kernel reverse gate: 16 real new value edges — exactly the real stock
@@ -85,7 +85,7 @@ against real growth (801 violations at the post-merge head — 796 at `875faac0c
   type-kind reverse edges are report-only, never hard-failed.
 - Facade check: 32 cases where a new cap→kernel edge targets a kernel module
   that itself reverse-imports (`…/research_meeting_nightly.ts` → `src/kernel/judge.ts`).
-- Size gate: 11 new `>1500` paths (1 is a true `git -M` rename —
+- Size gate: 10 new `>1500` paths (1 is a true `git -M` rename —
   `src/capabilities/practice/jobs/quiz_verify.ts` keeps base identity
   `src/server/boss/handlers/quiz_verify.ts` 1107→1528; the rest are real
   new-or-grown files at that base); 55 `>1000` crossings/growths listed with
@@ -94,10 +94,10 @@ against real growth (801 violations at the post-merge head — 796 at `875faac0c
   (subset / total-member / max-member all held).
 - Pass-through gate (`audit:architecture-deepening --base 24add632b`):
   438 real new sites at the post-merge head (433 at `875faac0c`, +5 from
-  upstream), incl. `module` re-export shells
-  (`src/capabilities/agency/public.ts`), `site` re-exports, `alias`
-  (`DURABLE_BUDGET -> …/copilot-execution.ts`), and `function` forwards.
-  On the real merge-base all of these are grandfathered: `+0 new`.
+  upstream): 200 `module` re-export shells
+  (`src/capabilities/agency/public.ts`), 210 `site` re-exports (154 bare +
+  56 `local-export` members), 17 `alias` (`DURABLE_BUDGET -> …/copilot-execution.ts`),
+  11 `function` forwards. On the real merge-base all are grandfathered: `+0 new`.
 
 `--base 4fd179818` (pre-#1830) was additionally PASS at `875faac0c` — between
 `4fd1798` and `46663192d` no audited edge was added, no `>1500` file appeared,
@@ -110,12 +110,18 @@ Independent review R1 (`review-r1-glm.md`, external evidence dir): 0 P0 /
 2 P1 / 9 P2. Both P1s fixed; direct text errors corrected; remaining P2s
 recorded for the coordinator.
 
-- **P1-1 — F1 forward shapes widened to the approved set.** `forwardArgsShape`
-  now accepts three decidable shapes — same-order params (`direct`), a full
-  permutation of distinct params (`reordered`), and a single rest param spread
-  verbatim (`spread`), each incl. `return await`; everything else still fails
-  F1 (defaults/patterns/transforms/dropped params never match). The shape is
-  recorded in the site `detail` (`forward:<imported>;<shape>[+await];<hash>`).
+- **P1-1 — F1 forward shapes widened to the approved set (closed in three
+  passes).** `forwardArgsShape` now accepts the approved decidable shapes —
+  same-order params (`direct`), a full permutation of distinct params
+  (`reordered`), a single rest param spread verbatim (`spread`), and a plain
+  verbatim/permuted prefix followed by a same-binding trailing `...rest`
+  spread (`direct+spread` / `reordered+spread`), each incl. `return await`;
+  `export default` arrows/function expressions run through the same F1
+  pipeline (`symbol=default`). Everything else still fails F1: defaults/
+  patterns/transforms/dropped-or-duplicated params never match, and a
+  permutation requires sorted element-wise equality of distinct names
+  (`(a,b) => t(a,a)` is not a forward). The shape is recorded in the site
+  `detail` (`forward:<imported>;<shape>[+await];<hash>`).
 - **P1-2 — kind-aware base index.** `addedEdges` and `auditKernelReverseEdges`
   share `baseKindIndex`/`isNewEdge`: base pairs are indexed by `file→module`
   with value-wins kind; a head edge is new iff the pair was absent **or** the
@@ -133,10 +139,11 @@ recorded for the coordinator.
 
 ### R1-fix negative-evidence status (honest)
 
-- `reordered`/`spread` F1 shapes: **NOT_RUN on real history** — no real file
-  at current head exercises either shape (0 occurrences in the `--base`
-  violation details at `24add632b`/`46663192d`; `rg` over `src/|server/|web/`
-  finds no top-level `(...args) => fn(...args)` or permuted exports —
+- `reordered`/`spread`/`direct+spread`/`reordered+spread` F1 shapes and
+  `export default` arrow forwards: **NOT_RUN on real history** — no real file
+  at current head exercises them (0 occurrences in the `--base` violation
+  details at `24add632b`/`46663192d`; `rg` over `src/|server/|web/` finds no
+  top-level `(...args) => fn(...args)` or permuted exports —
   `workbench-client.tsx`'s `(...args) => fn(...args)` are object properties,
   correctly out of scope; `src/ui/lib/utils.ts` `cn(...args)` composes
   `twMerge(clsx(…))`, correctly not a forward). Code path verified by
