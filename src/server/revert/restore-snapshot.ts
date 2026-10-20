@@ -1,7 +1,9 @@
 // Restores mastery_state and material_fsrs_state from one state_snapshot payload.
 // The two segments stay independent. Reverting one must not block or alter the other.
 // This function does not compare the live row with snapshot.after. That guard stays in the orchestrator.
-// Upserts go through the single writers. A null before means the attempt created the row, so it is deleted here.
+// Upserts go through the single writers. A null before deletes the row the attempt created.
+// Those writers do not expose delete, so the cold-start delete goes through drizzle
+// in this same transaction.
 
 import { and, eq } from 'drizzle-orm';
 
@@ -26,7 +28,8 @@ export async function restoreStateSnapshot(
   tx: Tx,
   payload: StateSnapshotExperimentalT['payload'],
 ): Promise<RestoreSnapshotResult> {
-  // Same transaction lock as the other writers. A second acquire in this transaction does not take another hold.
+  // Same transaction lock as the other writers.
+  // Acquiring it again in this transaction does not wait.
   // The orchestrator already holds it. A direct caller still needs it.
   await acquireLearningStateWriteLock(tx);
   // Refuse before any write. A bare number has no counts, precision, rt, or grid, so restoring it would invent them.
@@ -89,8 +92,11 @@ export async function restoreStateSnapshot(
         subject_id: snap.subject_id,
         state: snap.before,
         due_at: snap.before.due,
-        // The snapshot card has no prior review event id. Null means that id is unknown.
-        // Pointing it at this attempt would say the restored card was last reviewed by the attempt being undone.
+        // The snapshot card has no prior review event id, so null means that id is unknown.
+        // Pointing it at this attempt would say the restored card was last reviewed
+        // by the attempt being undone.
+        // Settlement replay does revert this FSRS checkpoint, so the missing id
+        // is not limited to a theta-only rejudge.
         last_review_event_id: null,
       });
     }

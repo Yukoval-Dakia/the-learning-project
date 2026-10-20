@@ -4,6 +4,7 @@ import type { TaskKind } from '@/capabilities/task-registry';
 import type { Db, Tx } from '@/db/client';
 import { ai_task_runs, cost_ledger, tool_call_log } from '@/db/schema';
 import type { AttemptCostBasis, AttemptCostTruth } from './attempt-cost';
+import type { ProviderTransportEvidence } from './provider-transport';
 
 // cost_ledger / tool_call_log are loose-coupled correlation logs (no FK); a single
 // INSERT/UPDATE works against either a top-level Db or a Tx. Accepting DbLike lets callers
@@ -232,6 +233,13 @@ export interface AiTaskUsage {
     count: number;
     last: { trigger: 'manual' | 'auto'; preTokens: number; postTokens?: number };
   };
+  /**
+   * YUK-1630 — per-attempt provider transport evidence: the timeout budget
+   * receipt (task timeout source + each derived layer) plus per-request wire
+   * milestones (fetch invoked / request sent / response / failure layer).
+   * Metadata only — it never feeds token counts or cost truth.
+   */
+  transport?: ProviderTransportEvidence;
 }
 
 export interface AiTaskRunFinishEntry {
