@@ -95,6 +95,12 @@ export {
 export type { PracticeTaskRunFn } from './server/task-runtime';
 export const queryReviewDue: typeof import('./server/due-list').queryReviewDue = async (...args) =>
   (await import('./server/due-list')).queryReviewDue(...args);
+// YUK-1622 — Coach's nightly daily-plan inputs share the practice due queue and
+// measured question pace.
+export const resolveDailyReviewPlanInputs: typeof import('./server/daily-review-plan').resolveDailyReviewPlanInputs =
+  async (...args) =>
+    (await import('./server/daily-review-plan')).resolveDailyReviewPlanInputs(...args);
+export type { DailyReviewPlanInputs } from './server/daily-review-plan';
 
 type HandleReviewDue = typeof import('./server/due-list').handleReviewDue;
 export const handleReviewDue: HandleReviewDue = async (...args) => {

@@ -36,7 +36,8 @@
     "YUK-1570-mastery-read-engine": "Complete mastery row/ability and p(L)/KG projection read implementations now belong to kernel read models, with old server exports kept for compatibility; only 8 capability consumers move. knowledge -> mastery 6 -> 1, practice -> mastery 14 -> 12, copilot -> mastery 1 -> 0, total 440 -> 432. Write implementations, locks, transactions and non-capability consumer imports stay unchanged; no kernel-to-server facade.",
     "YUK-1570-supply-run": "Supply planning owns complete bounded attempt orchestration (mount identity, run, parse/validation, rejection feedback and result accounting); web sourcing implementation is separated from the tool adapter and shares production dependency assembly with executor. practice -> ai 66 -> 63, total 432 -> 429. This auxiliary metric includes two removed type-only mcp-bridge imports and consolidation of JSON-parser dependency assembly; these import changes alone are not claimed as algorithmic deepening. Existing 2-attempt bound, cross-attempt tool context identity, Exa-null gate, injection and cost/event policies preserved. Composed after main mastery-read-engine PR #1881; earlier standalone measurement was 440 -> 437.",
     "YUK-1570-session-operation": "Review/paper/placement lifecycle operations own existing state-transition, frozen-paper and dispatch decisions behind route adapters; practice -> session 16 -> 7, total 429 -> 420. boss/runtime-env move with the operation with zero net decrease; pause/resume are thin compatibility members, not independent deepening. HTTP behavior and manifests preserved. Composed after main mastery-read-engine PR #1881; earlier standalone measurement was 440 -> 431. Latest composition includes supply PR #1883; main server baseline 429.",
-    "YUK-1570-mastery-read-consumer-exit": "Consumer exit from the compat read surface after the mastery read engine landed (#1881): six capability call sites that still imported through @/server/mastery/state now import the kernel read-model implementations directly. agency -> mastery 3 -> 0 (agency/jobs/research_meeting_nightly, agency/server/meeting/director, director-tools -> kernel/read-models/mastery-projection getMasteryProjection) and practice -> mastery 12 -> 9 (practice/server/candidate-signals, placement-advance, question-supply/target-discovery -> kernel/read-models/mastery-state MasteryStateRow/effectiveThetaForKcBatch/getMasteryStates/getMasteryState/globalThetaForDomain); capability -> server total 420 -> 414. The compat re-exports in src/server/mastery/state.ts are preserved for tests and remaining consumers; the moved call sites resolve to the same function objects the re-export exposed, so this is import-path consolidation only, not new algorithm deepening."
+    "YUK-1622": "agency -> practice 4 -> 5 (+1, total 42 -> 43 after main's YUK-1571 shared-read offset): coach_daily imports the practice public resolveDailyReviewPlanInputs so the TodayPlan due queue, daily budget and measured pace have one formula and one source; Coach reads practice's public module instead of copying the formula. PM ruling (Linear YUK-1622 comment 82cd19fd-51d1-46d5-bc70-5b0365409dd1, https://linear.app/yukoval-studios/issue/YUK-1622#comment-82cd19fd) approved this single edge only; it is not a general relaxation.",
+    "YUK-1570-mastery-read-consumer-exit": "Consumer exit from the compat read surface after the mastery read engine landed (#1881): six capability call sites that still imported through @/server/mastery/state now import the kernel read-model implementations directly. agency -> mastery 3 -> 0 (agency/jobs/research_meeting_nightly, agency/server/meeting/director, director-tools -> kernel/read-models/mastery-projection getMasteryProjection) and practice -> mastery 12 -> 9 (practice/server/candidate-signals, placement-advance, question-supply/target-discovery -> kernel/read-models/mastery-state MasteryStateRow/effectiveThetaForKcBatch/getMasteryStates/getMasteryState/globalThetaForDomain); capability -> server total 420 -> 414. The compat re-exports in src/server/mastery/state.ts are preserved for tests and remaining consumers; the moved call sites resolve to the same function objects the re-export exposed, so this is import-path consolidation only, not new algorithm deepening. Current main671e08044 composition: server 420 -> 414; cross 43 unchanged."
   },
   "changes": [
     {
@@ -46,6 +47,20 @@
       "from": 16,
       "to": 7,
       "direction": "decrease"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "agency -> practice",
+      "date": "2026-10-20",
+      "from": 4,
+      "to": 5,
+      "direction": "increase",
+      "reason": "TodayPlan 的到期队列、每日预算和实测节奏必须由同一公式、同一来源计算；Coach 通过 practice 的公开模块读取，不复制公式。仅批准这一条边，不外延。",
+      "exitCondition": "当 TodayPlan 的到期队列、预算和节奏读取迁入 kernel 所有的读模型，或 Coach 不再需要 practice 的这三个输入时，把 agency -> practice 归回 4；本记录不得复用或抵其他上调。",
+      "justification": {
+        "kind": "recorded_ruling",
+        "ruling": "https://linear.app/yukoval-studios/issue/YUK-1622#comment-82cd19fd"
+      }
     },
     {
       "debt": "capabilityToServer",
@@ -152,11 +167,11 @@
       "byOwnerPair": {}
     },
     "crossCapabilityValue": {
-      "total": 42,
+      "total": 43,
       "byOwnerPair": {
         "agency -> knowledge": 4,
         "agency -> notes": 2,
-        "agency -> practice": 4,
+        "agency -> practice": 5,
         "copilot -> agency": 1,
         "copilot -> notes": 2,
         "copilot -> practice": 1,
