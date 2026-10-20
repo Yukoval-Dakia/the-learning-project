@@ -138,27 +138,13 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
   {
     owner: 'practice',
     consumer: 'knowledge',
-    files: [
-      'src/capabilities/knowledge/jobs/frontier_fill_nightly.ts',
-      'src/capabilities/knowledge/server/frontier-read.ts',
-      'src/capabilities/knowledge/server/proposals.ts',
-    ],
-    symbols: [
-      'FrontierResolution',
-      'isMasteredForFrontier',
-      'learnableFrontierResolved',
-      'rewriteQuestionKnowledgeIds',
-      'rewriteLearningItemKnowledgeIds',
-    ],
-    dto: 'FrontierResolution / merge attribution receipts',
+    files: ['src/capabilities/knowledge/server/proposals.ts'],
+    symbols: ['rewriteQuestionKnowledgeIds', 'rewriteLearningItemKnowledgeIds'],
+    dto: 'merge attribution receipts',
     justification:
-      'frontier reads remain bounded; the merge transaction calls Practice-owned attribution commands instead of mutating foreign rows. Retention reads now belong to the FSRS state owner.',
+      'the merge transaction calls Practice-owned attribution commands instead of mutating foreign rows. The learnable-frontier graph decision moved INTO knowledge (YUK-1571): frontier-read.ts and frontier_fill_nightly.ts now consume it same-package, so they no longer cross this port. Retention reads now belong to the FSRS state owner.',
     reviewIssue: 'YUK-953',
-    commandFiles: [
-      'src/capabilities/knowledge/jobs/frontier_fill_nightly.ts',
-      'src/capabilities/knowledge/server/frontier-read.ts',
-      'src/capabilities/knowledge/server/proposals.ts',
-    ],
+    commandFiles: ['src/capabilities/knowledge/server/proposals.ts'],
   },
   {
     owner: 'knowledge',
@@ -219,12 +205,18 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
     files: [
       'src/capabilities/practice/server/attempt-events.ts',
       'src/capabilities/practice/server/knowledge-runtime.ts',
+      'src/capabilities/practice/server/learnable-frontier.ts',
       'src/capabilities/practice/server/question-supply/placement-starter-store.ts',
     ],
-    symbols: ['loadFailureLearningKnowledgeContext', 'createKnowledgeNodeFromEvents'],
-    dto: 'failure-learning reads and placement knowledge creation command',
+    symbols: [
+      'createKnowledgeNodeFromEvents',
+      'isMasteredForFrontier',
+      'learnableFrontierResolved',
+      'loadFailureLearningKnowledgeContext',
+    ],
+    dto: 'failure-learning reads, FrontierResolution, and placement knowledge creation command',
     justification:
-      'Placement relinquishes its direct knowledge INSERT/event/index assembly to the Knowledge creation owner (YUK-984). This is an explicit command dependency, not a read or a kernel-hidden write. Existing failure-learning read seams remain.',
+      'Placement relinquishes its direct knowledge INSERT/event/index assembly to the Knowledge creation owner (YUK-984). This is an explicit command dependency, not a read or a kernel-hidden write. Existing failure-learning read seams remain. YUK-1571: the learnable-frontier graph decision is knowledge-owned; practice keeps the per-day capacity and id-list policy, with compatibility exports for its unchanged public contract.',
     reviewIssue: 'YUK-984',
     commandFiles: ['src/capabilities/practice/server/question-supply/placement-starter-store.ts'],
   },
