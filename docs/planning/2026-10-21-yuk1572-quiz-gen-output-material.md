@@ -1,14 +1,16 @@
 # 出题输出验证与材料职责归属（YUK-1572）
 
 独立 writer：`/Users/yuqi/.t3/worktrees/the-learning-project/t3-e0c956e0`。
-交付 base：main `67506c5eaa5604ba34d2c943132343bf2e7fab5e`（JSON PR1912 已合）。
+交付 base：main `f52a41bb2b8453a3cce8907e805327e20d821934`（含 SOURCE/PI/schema/settle）。
 branch `arch/yuk-1572-quiz-gen-knowledge`；最初从 fetch 后 main
 `83bbecdaecaf70be0ae0241795fac3d5a07940c1` 建分支，未带父旧提交。
-初版源码 `35399b53a0dbaca9bc64322864df1502f14d200e`；普通合入 main 20222f2 后，
-再普通 merge 最新 main 67506c5，形成已检查源码 head
-`fe2e8a6efcb991fd95def93527511066d4d1f644`。唯一冲突是 job 顶部已迁出的 import：
-保留本片 job，JSON import 实际放在新 output owner 并改指 core 真身。
-没有 rebase/force；main 全部其它文件、publication/source/JSON 和 ledger 前缀逐 blob 保留。
+初版源码 `35399b53a0dbaca9bc64322864df1502f14d200e`；父已审版本为
+`d2f65fc89e8707fad8264f8cdcedc00e9d4ed633`。本轮从该 clean head 普通 merge
+实际 origin/main f52a41bb，得到已检查源码 head
+`71a9a66ecf17f360aae3ed3c096efd8e709c7ebb`，无冲突、无源码适配。
+三个本片源码完整 blob 与已审版本相同；main 除本片四路径外全 tree entry、
+删除状态和 baseline 全文保留。output 仍直读 core JSON，未恢复旧 server 两文件。
+没有 rebase/force，不重新审查，不带父旧 docs；依赖三 hash 未变，未安装。
 
 ## 两个职责与真实消费者
 
@@ -68,19 +70,20 @@ output 69 行、material 56 行；仍超过 1500，不为尺寸触及保护段�
 父在旧 head `264733f6d32f4dc299446d93c39496ed5f5eb997` 唯一一次 heavy frozen install
 returncode 0；receipt/log hash 已核，前后三份依赖文件相同。lane 未 install/update/复制。
 
-在源码 head `fe2e8a6efcb991fd95def93527511066d4d1f644`，外部 heavy.sh 全机≤2、
-本 lane 串行实际跑五门，raw stdout/stderr、argv、UTC 与 subprocess 真退出码均封存：
+在源码 head `71a9a66ecf17f360aae3ed3c096efd8e709c7ebb`，外部 heavy.sh 全机≤2、
+本 lane 串行（HEAVY_SLOTS=2）实际跑五门，raw stdout/stderr、argv、UTC 与 subprocess 真退出码均封存：
 - typecheck 0、lint 0（181 warnings，本片三个源码无命中）、build 0；
 - capability-boundaries 0：debt exact 394/0/37、新依赖边 0、server-entry 新边 0，
-  SCC 1（base 1），>1500 文件 13（base 13）；
-- architecture-deepening 0：SCC 仍 agency/knowledge/practice，pass-through 1088（+0 new）。
+  SCC 1（base 1），>1500 文件 12（base 12）；
+- architecture-deepening 0：SCC 仍 agency/knowledge/practice，pass-through 1097（+0 new）。
 
-与 main 67506c5 相比没有本片额外 debt 下降或新违规，因此不需要 --tighten。
+与 main f52a41bb 相比没有本片额外 debt 下降或新违规，因此不需要 --tighten
+或既有 record 行号修复；超长 12／pass-through 1097 是组合后的当前全库口径。
 lane 未改 baseline、门或 ignore；不登记已不存在的临时 server JSON 边。
 旧检查 head 9b334750 的 boundaries rc1（output→server/json-extract 新边缺登记）是
 真实历史失败，原 seal 保留；core 组合后真实 binding 已改变，当前五门全部 rc0。
-保护 proof 证：job/material 完整 blob 与交付 2f0af296 相同；output 全部 body 相同、
-仅 JSON import 改 core 并排序；main 其它文件及 ledger 与 67506c5 完全相同。
+保护 proof 证：job/material/output 三个完整 blob 与已审 d2f65fc8 相同；
+main 其它文件、删除状态及 ledger 与 f52a41bb 完全相同。
 package/lock/workspace hashes 与父既有安装回执相同，lane 没有再次安装。
 全部 tests/vitest、DB、TEST、Docker、daemon、provider、runtime、demo、paid：NOT_RUN。
 不 push、PR、watch、review、Linear 或清树。未发现范围外新 actionable 缺陷；
@@ -91,13 +94,15 @@ YUK-1572/35399b53a0dbaca9bc64322864df1502f14d200e/quiz-gen/source-proof/`，
 含 full diff、保护块比较、完整 caller census、语法 raw stdout/stderr、argv/UTC/真 rc；
 sha256.json `351d97dc8f4c7610ba37a08394a463adb19d3edb767f3f307ec8b7e372adc11f`。
 当前五门证据：同一 artifact 根下
-`YUK-1572/fe2e8a6efcb991fd95def93527511066d4d1f644/quiz-gen/json-core-checks-round1/`，
-sha256.json `7ca200149729dea107177e3434784616868eb83c00bd1cde25eb0188a908ae01`。
-相邻 json-core-integration-proof/ 记录 main 全部 blob 保留、own job/material/output body、
-依赖 hash、旧路径缺席及命令原始回执，manifest SHA256
-`3c82c85c337a8aac9dc9b87518cea9ee030672f6149e15e90e1cc113331d45e1`。
+`YUK-1572/71a9a66ecf17f360aae3ed3c096efd8e709c7ebb/quiz-gen/main-refresh-checks/`，
+sha256.json `bd3f402d89e4c9d2509432d3cd7eae361e88853e5d3da3871dbc84cc29b5694e`。
+相邻 main-refresh-integration-proof/ 保存 main 与合成 tree 的全部 entry 比较、
+三份已审源码 blob、baseline 全文、所有删除状态、依赖 hash 和命令 raw，manifest SHA256
+`7d2351fbea52e84b022681a56fec6dc5dfcd66b00bc7ad7fc0e589664c26bea2`。
+JSON 组合旧 head fe2e8a6efcb991fd95def93527511066d4d1f644 的五门 seal 独立保留，
+manifest `7ca200149729dea107177e3434784616868eb83c00bd1cde25eb0188a908ae01`。
 历史五门 `9b3347505be06798feeded4fc1cb86eea1706acf/quiz-gen/checks-round1/` manifest SHA256
 `17cd275b326cb0578ef2c0a0d15e39ef46dc22e2a75b2509293001784d3a6cfc`；未覆盖。
 原 source/preflight/handoff seal 全部独立保留。当前无待批边登记、compat、未知 caller
-或范围扩张请求。源码与短文档提交后 clean 停止 writer，交父唯一 R1 与后续 CI／整合；
+或范围扩张请求。源码与短文档提交后 clean 停止 writer；源码保持原 R1，不开启新审查，交父验收／发布；
 不自行审查／push／PR。测试与真实运行继续 NOT_RUN。
