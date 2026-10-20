@@ -1,16 +1,4 @@
-// Seeded deterministic RNG (mulberry32) — a small, fast, well-distributed 32-bit PRNG.
-// Injected into the cluster bootstrap so its CI is reproducible (same seed → identical
-// resampling → identical CI bounds), which lets the bootstrap unit tests assert exact
-// numbers instead of relying on the non-deterministic global Math.random.
-//
-// PURE (given a seed): returns a closure with internal state; calling it advances the
-// state and returns the next value in [0, 1).
-
-/**
- * mulberry32 PRNG. Standard reference implementation.
- * @param seed any 32-bit integer seed.
- * @returns a function () → number in [0, 1).
- */
+// mulberry32. The bootstrap takes this so one seed reproduces the CI bounds.
 export function mulberry32(seed: number): () => number {
   let a = seed >>> 0;
   return () => {

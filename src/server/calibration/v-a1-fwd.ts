@@ -1,42 +1,25 @@
-// V-A1-fwd — the keystone retro-validation gate for A1 SRT (YUK-461).
-//
-// Replay the FULL ordered attempt list twice (SRT on vs off) so θ_global accumulates across
-// every KC of a domain (YUK-466); for each forward-scorable RT-bearing single-KC attempt t,
-// predict outcome_t from the PRE-attempt θ̂_{t−1} via the 1PL P = σ(θ̂_{t−1} − b_effective);
-// compute forward-AUC per variant; ΔAUC = AUC_SRT − AUC_binary; PASS iff ΔAUC > 0.02 AND
-// a paired cluster-bootstrap CI on ΔAUC excludes 0. If the RT-bearing evidence base is
-// too thin → verdict = INSUFFICIENT ("A1 stays live provisionally") — NEVER fabricate a
-// pass/fail on thin data.
-//
-// ALL PURE. The DB-loading of attempt records is a separate thin seam
-// (scripts/audit-calibration.ts) — this module only consumes ReplayAttempt records.
-//
-// THRESHOLD PROVENANCE (B1): deltaThreshold 0.02 is from the dossier's one V-A1-fwd cell
-//   ("ΔAUC>0.02 CI 排 0"). effectiveNFloor 100, minKcClusters 10, maxDegenerateFraction
-//   0.05, bootstrapB 2000 are OWNER/ENGINEERING DEFAULTS with no external source — the
-//   report says so.
+// Forward gate for SRT against binary Elo. PASS needs ΔAUC above deltaThreshold and a CI
+// that excludes 0. Thin evidence stays INSUFFICIENT.
+// Replay the full ordered list twice. θ_global is shared across KCs in a domain, so a
+// per-KC replay would not match production. The loader is scripts/audit-calibration.ts.
+// deltaThreshold 0.02 comes from the dossier cell. The other defaults have no external source.
 
 import { type ClusterForwardPreds, deltaAucClusterBootstrap } from './bootstrap';
 import { effectiveNFromClusters } from './design-effect';
 import { type ReplayAttempt, replayTheta } from './replay';
 
 export interface VA1Config {
-  /** effective-N power floor — OWNER-CHOSEN, no external source. */
+  /** No external source. Below it the verdict is INSUFFICIENT. */
   effectiveNFloor: number; // default 100
-  /** minimum KC clusters — owner-chosen. */
   minKcClusters: number; // default 10
-  /** ΔAUC threshold — from the dossier's V-A1-fwd cell ("ΔAUC>0.02"). */
+  /** From the dossier cell. */
   deltaThreshold: number; // default 0.02
-  /** bootstrap replicates. */
   bootstrapB: number; // default 2000
-  /** max tolerated degenerate-replicate fraction before INSUFFICIENT — owner-chosen (M1). */
+  /** Above this fraction of single-class replicates the verdict is INSUFFICIENT. */
   maxDegenerateFraction: number; // default 0.05
   /**
-   * YUK-463 — fold MULTI-KC attempts into the scored forward pool via the conjunctive
-   * item-level prediction (∏ σ(θ_j − b)). Default false → Wave-0 behaviour (single-KC pool
-   * only). This is a REPORTING/traceability flag carried in `result.config`; the actual
-   * bucketing is driven by the matching `multiKcScoring` arg to assembleForwardClusters —
-   * the caller (audit-calibration --multi-kc) MUST set both consistently.
+   * Copied onto the result for the report. Bucketing uses the argument to
+   * assembleForwardClusters. The audit caller must set both the same way.
    */
   multiKcScoring: boolean; // default false
 }
@@ -50,11 +33,7 @@ const DEFAULT_CONFIG: VA1Config = {
   multiKcScoring: false,
 };
 
-/**
- * Validate a fully-merged VA1Config (OCR finding 6). Each field guards a distinct
- * silent-wrong-verdict failure mode, so an out-of-range override throws rather than
- * fabricating a verdict.
- */
+/** An out-of-range override would mint a verdict. Throw instead. */
 function validateConfig(config: VA1Config): void {
   const {
     effectiveNFloor,
@@ -108,64 +87,35 @@ export interface VA1Result {
   ci: { lo: number; hi: number };
   b: number;
   degenerateFraction: number;
-  /** all forward-scorable (single-KC) predictions, incl. RT-less (context only). */
+  /** Scorable steps, including RT-less. Missing meta falls back to nWithRt. */
   nTotal: number;
-  /** subset where RT is present — the GATE's N (M4). */
+  /** The gate's sample. RT-less steps are identical under both variants, so they stay out. */
   nWithRt: number;
-  /** class counts within nWithRt. */
   n1: number;
   n0: number;
-  /** KCs contributing RT-bearing forward predictions. */
   kClusters: number;
-  /** REPORTED COARSE FLOOR / diagnostic (B4) — NOT the decision. */
+  /** Reported floor. The verdict is the bootstrap, not this. */
   deff: number;
   effectiveN: number;
-  /** B3 — attempts where a non-zero family delta entered the forward predictor's b. */
+  /** Attempts whose forward b included a non-zero family delta. */
   familyDeltaAppliedCount: number;
   familyDeltaTotal: number;
-  /** attempts dropped because outcome was 'partial' (no clean binary 1PL label). */
+  /** Dropped because a partial outcome is not a binary 1PL label. */
   partialDropped: number;
   reason: string;
-  /** merged config used for this evaluation (for audit traceability in formatReport). */
   config: VA1Config;
 }
 
 export interface AssembledClusters {
-  /** one entry per KC: RT-bearing single-KC forward predictions under both variants. */
+  /** Single-KC clusters, plus combo clusters when multi-KC scoring is on. */
   clusters: ClusterForwardPreds[];
-  /** all single-KC scorable steps incl. RT-less (for nTotal context). */
+  /** Includes RT-less steps. The gate pool does not. */
   nTotalScorable: number;
 }
 
 /**
- * Assemble per-KC forward-prediction clusters (the no-leakage core, M4 split).
- *
- * ⚠ θ_GLOBAL FIDELITY (YUK-466): takes the FULL time-ordered attempt list (every KC
- *   interleaved), NOT a per-KC partition. Production θ̂ = θ_KC + θ_global(domain), and
- *   θ_global drifts once per touched DOMAIN per attempt (replay.ts:207-227 / state.ts:682-
- *   735, ELO_K_GLOBAL=0.048) — i.e. it is shared across every KC in a domain. Replaying
- *   each KC's attempts in isolation would let that KC's θ_global see ONLY its own attempts,
- *   missing the drift contributed by sibling-KC attempts in the same domain → the forward
- *   predictor's θ̂ would diverge from production. Replaying the WHOLE ordered list once per
- *   variant accumulates θ_global correctly across all KCs, then we bucket the forward-
- *   scorable steps by scoredKnowledgeId. (For ΔAUC = AUC_SRT − AUC_binary this is a 2nd-
- *   order correction since both variants share θ_global, but the ABSOLUTE forward-AUC
- *   fidelity requires it — and the verdict must be trustworthy before it is load-bearing.)
- *
- * Replay BOTH variants over the SAME full list (full multi-KC update each), then keep ONLY
- * the steps that are forward-scorable (scoredKnowledgeId !== null, i.e. single-KC question)
- * AND RT-bearing (hasRt). RT-less steps yield IDENTICAL predictions under both variants → 0
- * ΔAUC contribution → excluded from the gate's pool. One cluster per scored KC, in order of
- * first scored appearance in the timeline.
- *
- * ⚠ OCR finding 8: this THIN variant DISCARDS `nTotalScorable` (the count of single-KC
- *   forward-scorable steps INCLUDING the RT-less ones). A caller that pairs this with
- *   `evaluateVA1Forward` but does NOT pass `meta.nTotalScorable` will get the result's
- *   `nTotal` silently falling back to `nWithRt` — under-reporting the evidence context.
- *   If you need an accurate `nTotal` in the report, call `assembleForwardClustersDetailed`
- *   and thread its `nTotalScorable` into `meta`. Use this thin variant ONLY when the
- *   RT-less context count is genuinely irrelevant (e.g. unit tests that assert on the
- *   gate's pooled decision, not on nTotal).
+ * Drops nTotalScorable. evaluateVA1Forward then reports nWithRt as nTotal.
+ * Use assembleForwardClustersDetailed when the report must count RT-less steps.
  */
 export function assembleForwardClusters(
   orderedAttempts: ReplayAttempt[],
@@ -175,44 +125,32 @@ export function assembleForwardClusters(
 }
 
 /**
- * Same as assembleForwardClusters, also returning the total scorable-step count.
- *
- * @param opts.multiKcScoring YUK-463 — when true, MULTI-KC attempts are folded into the
- *   scored pool via the conjunctive item-level prediction (∏ σ(θ_j − b)). RT-bearing
- *   multi-KC steps are bucketed by their COMBO key (sorted KC set) into combo clusters that
- *   are DISJOINT from the single-KC clusters (cluster independence — one attempt joins
- *   exactly one cluster). Default false → byte-identical to the Wave-0 single-KC-only pool.
+ * Pass the full timeline. θ_global drifts once per touched domain per attempt and is shared
+ * by every KC in that domain, so a per-KC replay would not match production θ̂.
+ * Multi-KC steps join a separate combo cluster, disjoint from single-KC keys, and only when
+ * multiKcScoring is set. Otherwise the pool matches the single-KC assembly.
  */
 export function assembleForwardClustersDetailed(
   orderedAttempts: ReplayAttempt[],
   opts: { multiKcScoring?: boolean } = {},
 ): AssembledClusters {
   const multiKcScoring = opts.multiKcScoring ?? false;
-  // Replay the WHOLE ordered list once per variant — θ_global accumulates across every KC
-  // in a domain (YUK-466). The engine emits one step per attempt, in list order. Thread
-  // multiKcScoring to BOTH runs so the multi-KC item prediction exists under each variant.
+  // Both runs see multiKcScoring. One side without it would pair a combo score with null.
   const srtRun = replayTheta(orderedAttempts, { srtEnabled: true, multiKcScoring });
   const binaryRun = replayTheta(orderedAttempts, { srtEnabled: false, multiKcScoring });
-  // OCR finding 7: the index-alignment below assumes both runs produce the SAME number of
-  // steps (they replay the SAME attempt list, so they must). Assert it so a future
-  // divergence in replayTheta fails LOUD here rather than silently mis-pairing srt/binary
-  // scores (which would corrupt every ΔAUC without any signal).
+  // A length mismatch would pair an SRT score with the wrong binary score and corrupt every ΔAUC.
   if (srtRun.steps.length !== binaryRun.steps.length) {
     throw new Error(
       `assembleForwardClusters: srt/binary step count mismatch (${srtRun.steps.length} vs ${binaryRun.steps.length}) — replay divergence`,
     );
   }
 
-  // Bucket forward-scorable RT-bearing steps by scoredKnowledgeId (one cluster per KC).
-  // Map insertion order = order of first scored appearance → deterministic cluster order.
+  // Map order is first scored appearance, so the cluster order does not depend on key sort.
   const byKc = new Map<
     string,
     { scoresSrt: number[]; scoresBinary: number[]; labels: (0 | 1)[] }
   >();
-  // YUK-463 — multi-KC combo clusters live in a SEPARATE map keyed by the sorted KC set, so
-  // their keys can NEVER collide with a single-KC scoredKnowledgeId → the two cluster
-  // families stay disjoint (cluster independence in the paired whole-KC bootstrap). Stays
-  // empty when !multiKcScoring → the output cluster set is byte-identical to Wave-0.
+  // A separate map so a combo key cannot collide with a single-KC id. One attempt, one cluster.
   const byCombo = new Map<
     string,
     { scoresSrt: number[]; scoresBinary: number[]; labels: (0 | 1)[] }
@@ -222,14 +160,11 @@ export function assembleForwardClustersDetailed(
   for (let i = 0; i < srtRun.steps.length; i++) {
     const s = srtRun.steps[i];
     const bnry = binaryRun.steps[i];
-    // forward-scorable iff the attempt's question is single-KC (scoredKnowledgeId !== null).
-    // scoredKnowledgeId/hasRt are variant-independent (set from the attempt), so reading
-    // them off the SRT run is safe.
+    // scoredKnowledgeId and hasRt come from the attempt, so the SRT run and the binary run agree.
     const kc = s.scoredKnowledgeId;
     if (kc !== null) {
-      // ── SINGLE-KC forward-scorable step (Wave-0 path, unchanged) ──
       nTotalScorable++;
-      if (!s.hasRt) continue; // RT-less → identical under both variants → 0 ΔAUC (M4).
+      if (!s.hasRt) continue; // Identical under both variants, so ΔAUC would not move.
       if (s.predictedP === null || bnry.predictedP === null) continue;
       let entry = byKc.get(kc);
       if (entry === undefined) {
@@ -241,12 +176,10 @@ export function assembleForwardClustersDetailed(
       entry.labels.push(s.outcome);
       continue;
     }
-    // ── MULTI-KC step (YUK-463) ── only folded when multiKcScoring is on; otherwise the
-    // item fields are null (the engine emitted them dark) → this is a pure no-op, preserving
-    // the Wave-0 single-KC-only pool exactly.
+    // Item fields stay null unless multi-KC scoring is on, so this does not change the single-KC pool.
     if (!multiKcScoring || s.itemPredictedP === null || s.itemClusterKey === null) continue;
-    nTotalScorable++; // multi-KC scorable steps join the scorable context count (incl. RT-less).
-    if (!s.hasRt) continue; // RT-less multi-KC → identical under both SRT variants (mirrors M4).
+    nTotalScorable++;
+    if (!s.hasRt) continue;
     if (bnry.itemPredictedP === null) continue;
     const comboKey = s.itemClusterKey;
     let entry = byCombo.get(comboKey);
@@ -263,8 +196,7 @@ export function assembleForwardClustersDetailed(
   for (const entry of byKc.values()) {
     if (entry.labels.length > 0) clusters.push(entry);
   }
-  // Combo clusters appended after the single-KC clusters. Order is irrelevant to the
-  // index-resampling bootstrap; deterministic by Map insertion (first combo appearance).
+  // Appended after single-KC clusters. The bootstrap resamples by index, so this order is only for stability.
   for (const entry of byCombo.values()) {
     if (entry.labels.length > 0) clusters.push(entry);
   }
@@ -273,22 +205,14 @@ export function assembleForwardClustersDetailed(
 }
 
 export interface VA1Meta {
-  /** total scorable steps incl. RT-less (for nTotal). */
+  /** When omitted, nTotal becomes nWithRt. The RT-less count is not invented. */
   nTotalScorable?: number;
   familyDeltaAppliedCount?: number;
   familyDeltaTotal?: number;
   partialDropped?: number;
 }
 
-/**
- * Evaluate V-A1-fwd over assembled per-KC clusters.
- *
- * @param clusters RT-bearing single-KC forward-prediction clusters (assembleForwardClusters).
- * @param cfg      partial config overriding the owner defaults.
- * @param rng      injected RNG for the bootstrap.
- * @param meta     optional reporting metadata threaded from the loader (nTotal, family
- *   delta counts, partial-dropped count).
- */
+/** INSUFFICIENT on one class, on a thin sample, or on an unstable bootstrap. Otherwise PASS or FAIL. */
 export function evaluateVA1Forward(
   clusters: ClusterForwardPreds[],
   cfg: Partial<VA1Config>,
@@ -296,13 +220,9 @@ export function evaluateVA1Forward(
   meta: VA1Meta = {},
 ): VA1Result {
   const config: VA1Config = { ...DEFAULT_CONFIG, ...cfg };
-  // OCR finding 6: the merged config is otherwise unchecked — an override like
-  // bootstrapB<=0 (no replicates → empty CI), deltaThreshold<0 (every positive ΔAUC
-  // "passes"), or minKcClusters=0 (power floor disabled) silently produces a nonsense
-  // verdict. Validate the MERGED values so a bad override fails loud.
+  // Validate the merged values. A non-positive threshold or a zero replicate count would mint a verdict.
   validateConfig(config);
 
-  // Pool counts within the RT-bearing single-KC set.
   let nWithRt = 0;
   let n1 = 0;
   let n0 = 0;
@@ -314,15 +234,13 @@ export function evaluateVA1Forward(
     }
   }
   const kClusters = clusters.length;
-  // OCR finding 8: nTotalScorable (single-KC scorable steps incl. RT-less) MUST be threaded
-  // from the loader/assembler via meta. When absent it degrades to nWithRt (a strict lower
-  // bound — the RT-less context is simply unknown to this call, never fabricated upward).
+  // Absent meta means the RT-less count is unknown. Do not invent a larger nTotal.
   const nTotal = meta.nTotalScorable ?? nWithRt;
   const familyDeltaAppliedCount = meta.familyDeltaAppliedCount ?? 0;
   const familyDeltaTotal = meta.familyDeltaTotal ?? 0;
   const partialDropped = meta.partialDropped ?? 0;
 
-  // deff/effectiveN over the per-KC LABELS (reported coarse floor + diagnostic, B4).
+  // Labels only. This floor is not the verdict.
   const eff = effectiveNFromClusters(clusters.map((c) => c.labels));
   const deff = eff.deff;
   const effectiveN = eff.effectiveN;
@@ -346,7 +264,7 @@ export function evaluateVA1Forward(
     config,
   };
 
-  // Hard class floor — a forward AUC needs BOTH classes among the RT-bearing attempts.
+  // One class has no AUC. That is not a fail.
   if (n1 === 0 || n0 === 0) {
     return {
       ...base,
@@ -356,8 +274,7 @@ export function evaluateVA1Forward(
     };
   }
 
-  // Power floor — keyed on the RT-bearing data (M4). Still compute pointDelta "for
-  // information only" so the report shows the observed effect even when underpowered.
+  // Still compute pointDelta. The report shows the effect, and the verdict stays INSUFFICIENT.
   if (effectiveN < config.effectiveNFloor || kClusters < config.minKcClusters) {
     const boot = deltaAucClusterBootstrap(clusters, { b: config.bootstrapB, rng });
     return {
@@ -373,10 +290,7 @@ export function evaluateVA1Forward(
     };
   }
 
-  // Adequately powered → run the paired cluster bootstrap and decide.
   const boot = deltaAucClusterBootstrap(clusters, { b: config.bootstrapB, rng });
-
-  // Degenerate guard (M1).
   if (boot.degenerateFraction > config.maxDegenerateFraction) {
     return {
       ...base,
@@ -414,7 +328,7 @@ function round(x: number): number {
   return Math.round(x * 10000) / 10000;
 }
 
-/** Human-readable report (or JSON when opts.json). */
+/** JSON when asked. The prose report is for a person reading the harness output. */
 export function formatReport(result: VA1Result, opts: { json?: boolean } = {}): string {
   if (opts.json) {
     return JSON.stringify(result, null, 2);
