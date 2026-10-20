@@ -116,7 +116,23 @@ COMMIT;
 
 -- calibration-delta 2026-10-10T04:13:41.012374+00:00
 BEGIN READ ONLY; SET LOCAL statement_timeout='15s';
-select count(*) n,count(b_calib) calibrated,count(*) filter(where abs(b_calib-b_anchor)>0.5) delta_gt_half,count(*) filter(where abs(b_calib-b_anchor)>1) delta_gt_one,avg(b_calib-b_anchor) avg_delta,max(abs(b_calib-b_anchor)) max_delta from item_calibration;
+-- YUK-439 (ADR-0043 Amendment A6): delta 族语义从 b_calib−b_anchor 平移到 b_post−b_anchor
+-- （联合标定后验）。τ_j 按 source 经登记映射（core/difficulty-posterior.ts priorTau）内联：
+-- fixed_anchor 0.5 / llm_prior_llasa 1.5 / llm_prior 2.0 / 其它 2.5。left_prior = 移出
+-- 1 个先验 σ（|b_post − b_anchor| > τ_j）的题（A6.1）；calibrated_only 限 calibration_n>0。
+select count(*) n,
+  count(b_post) post_nonnull,
+  count(b_calib) legacy_calib,
+  count(*) filter(where calibration_source='joint') joint_n,
+  count(*) filter(where abs(coalesce(b_post,b_anchor)-b_anchor) > case source when 'fixed_anchor' then 0.5 when 'llm_prior_llasa' then 1.5 when 'llm_prior' then 2.0 else 2.5 end) left_prior,
+  count(*) filter(where calibration_n>0) calibrated_only_n,
+  avg(abs(coalesce(b_post,b_anchor)-b_anchor)) filter(where calibration_n>0) avg_abs_delta,
+  percentile_cont(0.5) within group (order by abs(coalesce(b_post,b_anchor)-b_anchor)) filter(where calibration_n>0) p50_abs_delta,
+  percentile_cont(0.9) within group (order by abs(coalesce(b_post,b_anchor)-b_anchor)) filter(where calibration_n>0) p90_abs_delta,
+  max(abs(coalesce(b_post,b_anchor)-b_anchor)) filter(where calibration_n>0) max_abs_delta,
+  avg(b_post-b_anchor) filter(where calibration_n>0) avg_delta,
+  max(abs(b_post-b_anchor)) filter(where calibration_n>0) max_delta
+from item_calibration where b_anchor is not null;
 COMMIT;
 
 -- calibration-labels 2026-10-10T04:13:41.059361+00:00

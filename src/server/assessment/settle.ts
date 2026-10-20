@@ -52,6 +52,7 @@ import type { Tx } from '@/db/client';
 import {
   assessment_issuance,
   assessment_submission,
+  difficulty_calibration_evidence,
   difficulty_calibration_label,
   evaluation,
   evaluation_effective_head,
@@ -78,6 +79,7 @@ import {
 } from '@/server/fsrs/candidate';
 import { selectedForgettingEngine } from '@/server/fsrs/engine-selection';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
+import { recordDifficultyCalibrationEvidence } from '@/server/mastery/calibration-evidence';
 import {
   type FamilyFoldRecord,
   recordFamilyObservationForAttempt,
@@ -125,6 +127,23 @@ interface ThetaApply {
   abilityGlobalByKnowledgeId: AbilityGlobalByKnowledgeId;
 }
 
+/**
+ * YUK-439 (ADR-0043 Amendment A4) — 联合标定证据的封存输入。theta abstain（partial /
+ * mixed bits）不排除证据：连续分数照样进标定账本（A4 部分得分条款）。null = 本次
+ * 结算不产生标定证据（manual/self_report/assisted 被 D15/D16 排除，或分数未知
+ * unsupported/partial_unknown，或锚不可解析）。sealed 在 plan 上（replay 稳定）。
+ */
+interface CalibrationEvidencePlan {
+  /** 被标定题（锚推导的 anchor question id，同 theta.anchorQuestionId 的推导）。 */
+  questionId: string;
+  /** 锚题 1-5 难度（provenance 备档）。 */
+  difficulty: number;
+  /** 锚题 primary KC（thetaBefore 读取键；无 KC 的题 null → θ̂ 快照按冷启 0）。 */
+  primaryKnowledgeId: string | null;
+  /** issuance 容器 ref（来源解析：paper/placement/probe/ingestion/worksheet）。 */
+  containerRef: string | null;
+}
+
 interface SettlementPlan {
   kind: 'plan';
   groupId: string;
@@ -152,6 +171,8 @@ interface SettlementPlan {
   /** exact only when every unit was deterministic. Mixed routes must not look exact. */
   judgeRoute: string;
   difficultyLabelStreamItemId: string | null;
+  /** YUK-439 — 联合标定证据输入（null = 本次不产生证据，见 CalibrationEvidencePlan）。 */
+  calibration: CalibrationEvidencePlan | null;
   forgettingInput?: SealedCandidateInput;
   forgettingEngine?: 'fsrs' | 'forgetting_candidate';
   forgettingSuppressed?: boolean;
@@ -443,21 +464,42 @@ function derivePlan(input: ActivationSettleInput, scope: SettlementScope): Settl
       ? 'exact'
       : 'contract_evaluation';
 
+  // YUK-439 — 标定证据的锚推导从 theta 分支**提出**：theta abstain（partial/mixed）
+  // 不排除证据（A4 连续分数进标定）。锚规则与 theta 分支同一推导：单 part 覆盖 → 该
+  // part 行；跨 part / 无 decided KC → group root。theta applied 路径的锚与下方的
+  // theta.anchor 完全一致（同一 partsCovering 推导）。
+  const calibrationEligible =
+    provenance.source === 'automatic' && !provenance.assisted && verdict.normalized != null;
+  const calibrationUpdateSet = new Set(
+    thetaDecision.kind === 'update' ? thetaDecision.knowledgeIds : [],
+  );
+  const calibrationPartsCovering = new Set<string>();
+  for (const [partId, kcs] of partKcIds) {
+    if (kcs.some((kc) => calibrationUpdateSet.has(kc))) calibrationPartsCovering.add(partId);
+  }
+  const calibrationAnchor =
+    calibrationPartsCovering.size === 1
+      ? (scope.partRows.get([...calibrationPartsCovering][0]) ?? scope.groupRow)
+      : scope.groupRow;
+  const calibration: CalibrationEvidencePlan | null =
+    calibrationEligible && calibrationAnchor
+      ? {
+          questionId: calibrationAnchor.id,
+          difficulty: calibrationAnchor.difficulty,
+          primaryKnowledgeId: calibrationAnchor.knowledge_ids[0] ?? null,
+          containerRef: input.issuance.container_occurrence_ref ?? null,
+        }
+      : null;
+
   let theta: SettlementPlan['theta'];
   if (thetaDecision.kind === 'abstain') {
     theta = { applied: false, abstainReason: thetaDecision.reason };
   } else {
     // One part: that physical question row, because item calibration is keyed by row.
     // Across parts: the group root stands for the difficulty and family keys.
-    const partsCovering = new Set<string>();
-    const updateSet = new Set(thetaDecision.knowledgeIds);
-    for (const [partId, kcs] of partKcIds) {
-      if (kcs.some((kc) => updateSet.has(kc))) partsCovering.add(partId);
-    }
-    const anchor =
-      partsCovering.size === 1
-        ? (scope.partRows.get([...partsCovering][0]) ?? scope.groupRow)
-        : scope.groupRow;
+    // 〔YUK-439：原锚推导已上提为 calibrationAnchor（同一 partsCovering 规则，
+    // updateSet 一致时同锚）；此处复用其结果，applied 路径行为逐位不变。〕
+    const anchor = calibrationAnchor;
     if (!anchor) {
       theta = { applied: false, abstainReason: 'anchor_unavailable' };
     } else {
@@ -601,6 +643,7 @@ function derivePlan(input: ActivationSettleInput, scope: SettlementScope): Settl
     theta,
     judgeRoute,
     difficultyLabelStreamItemId: scope.difficultyLabelStreamItemId,
+    calibration,
   };
 }
 
@@ -1081,6 +1124,16 @@ async function executePlan(
 
   const thetaSnapshots: Awaited<ReturnType<typeof updateThetaForAttempt>>['theta_snapshots'] = [];
   let thetaBefore = 0;
+  // YUK-439 — 标定证据的 θ̂ 快照：必须在 updateThetaForAttempt **之前**捕获（PRE-attempt，
+  // 同 thetaBefore 纪律；批时后验似然 σ(θ_e − b) 锚定它）。无 KC 的锚题按冷启 0。
+  let calibrationThetaBefore: number | null = null;
+  const calibrationPrimary = plan.calibration?.primaryKnowledgeId ?? null;
+  if (plan.calibration !== null) {
+    calibrationThetaBefore =
+      calibrationPrimary !== null
+        ? ((await getMasteryState(tx, calibrationPrimary))?.theta_hat ?? 0)
+        : 0;
+  }
   if (plan.theta.applied) {
     const theta = plan.theta;
     const familyPrimary = theta.familyPrimaryKnowledgeId ?? theta.knowledgeIds[0] ?? null;
@@ -1161,6 +1214,33 @@ async function executePlan(
       outcome: plan.theta.outcome,
     });
   }
+  // YUK-439 (ADR-0043 Amendment A4) — 联合标定证据：连续分数（含 partial）、模型判分、
+  // 非 softmax 来源都进（门在 derivePlan 的 calibrationEligible：automatic 且非
+  // assisted 且分数已知；theta abstain 不排除）。SAVEPOINT 内 best-effort，同 label
+  // hook 纪律；判分真相源是 judge/evaluation event，本 hook 只读 (score, route,
+  // provenance) 绝不回写判分——这是掌握更新，不是答案判分。
+  if (plan.calibration !== null && plan.verdict.normalized != null) {
+    const cal = plan.calibration;
+    try {
+      await tx.transaction(async (sp) => {
+        await recordDifficultyCalibrationEvidence(sp, {
+          questionId: cal.questionId,
+          attemptEventId: settlementEventId,
+          score: plan.verdict.normalized as number,
+          judgeRoute: plan.judgeRoute,
+          thetaBefore: calibrationThetaBefore ?? 0,
+          streamItemId: plan.difficultyLabelStreamItemId,
+          containerRef: cal.containerRef,
+          now: occurrenceAt,
+        });
+      });
+    } catch (error) {
+      console.warn(
+        '[assessment-settle] difficulty calibration evidence failed (non-fatal):',
+        error,
+      );
+    }
+  }
   return outcome;
 }
 
@@ -1206,6 +1286,9 @@ async function revertSettlementMember(
   // Drop this member's difficulty label. Reapply mints a new event id, so the old label would double.
   // Falling under the minimum does not clear b_calib by itself. Clear it here,
   // or the undone attempt keeps feeding effectiveB.
+  // 〔YUK-439：b_calib 已退出 effectiveB 读链，clear 保留为旧列的 hygiene（无害）；
+  //   读链头 b_post 的对应语义 = 删下面的 evidence 行——下一批从账本全量重算，被撤销
+  //   的作答自然退出后验（更正跟随有效判分，A4）。〕
   if (member.fsrsOnly) return null;
   const removedLabels = await tx
     .delete(difficulty_calibration_label)
@@ -1221,6 +1304,10 @@ async function revertSettlementMember(
       );
     }
   }
+  // YUK-439 — 同判别子删联合标定证据（reapply 落新 settlement id ⇒ 新证据行，不双计）。
+  await tx
+    .delete(difficulty_calibration_evidence)
+    .where(eq(difficulty_calibration_evidence.attempt_event_id, member.id));
   return null;
 }
 

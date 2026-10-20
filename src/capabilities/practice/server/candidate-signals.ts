@@ -206,6 +206,7 @@ async function resolveBAnchor(
       b: item_calibration.b,
       b_anchor: item_calibration.b_anchor,
       b_calib: item_calibration.b_calib,
+      b_post: item_calibration.b_post,
     })
     .from(item_calibration)
     .where(and(eq(item_calibration.question_id, refId), eq(item_calibration.track, 'hard')))

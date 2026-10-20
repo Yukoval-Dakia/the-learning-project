@@ -1139,7 +1139,7 @@ export const practiceCapability = defineCapability({
       // 的新题都被此 job 兜住，无需每条创建路径埋 hook）。
       {
         // YUK-758 DAG 成员（根）：item_calibration b 锚**种子**写者。recalibration 在其后 firm-up
-        // 同表 b_calib → item_prior 是 recalibration 的硬上游（写序：种子先、firm 后）。cron 移除。
+        // 同表后验列 → item_prior 是 recalibration 的硬上游（写序：种子先、标定后）。cron 移除。
         name: 'item_prior_backfill',
         dependsOn: [],
         eligibility: nightlyEligibility('deterministic', { usesModel: true }),
@@ -1155,7 +1155,7 @@ export const practiceCapability = defineCapability({
       // 编排），与 item_prior 同档。
       // 幂等由 composeNightly 的单飞锁 + 双重检查保证（夜产后用户首读 lazy 命中 no-op）。
       {
-        // YUK-758 DAG 成员：compose 选题（candidate-signals）实读 item_calibration.b_calib，故对
+        // YUK-758 DAG 成员：compose 选题（candidate-signals）实读 item_calibration.b_post，故对
         // recalibration_nightly 是**真硬边**（读最终标定态）。注：reference_md / answer_class **不**入
         // compose 选题路径（reference_md 走判分/UI、answer_class 走 quiz/pool-fetch），旧 05:00/05:20
         // 排在 compose 前是时钟巧合，不作伪边纳入（见 PR 考据表）。cron 移除，orchestrator 触发。
@@ -1202,7 +1202,7 @@ export const practiceCapability = defineCapability({
         //    也不会因未 backfill 而漏题。故原「answer_class 新鲜 → 缺口判定准」是伪依赖。
         //  · 改声明 `recalibration_nightly` 硬边（**真读后写**）：同一个私有 loadQuestionPool
         //    在 target-discovery.ts:684-699 批量读 item_calibration(track='hard') 的
-        //    b/b_anchor/b_calib → effectiveB(= b_calib ?? b_anchor ?? b)，该值喂 R3 的
+        //    b/b_anchor/b_post → effectiveB(= b_post ?? b_anchor ?? b，YUK-439)，该值喂 R3 的
         //    「无近-θ̂ 锚」判定（:490-511）并直接决定是否派**付费** diagnostic 供给目标。
         //    这与 compose 对 recalibration 的既有硬边是**同一列同一 resolver**。上游未 firm-up
         //    就扫 → 拿陈旧 b 误判 mis-banded → 派本不需要的付费 job。经 item_prior_backfill
@@ -1245,16 +1245,18 @@ export const practiceCapability = defineCapability({
             (m) => m.buildConfusableContrastNightlyHandler,
           ),
       },
-      // YUK-372 L1 (YUK-361 Phase 6 wire-up, ADR-0043 §4) — active-PPI 难度重标定触发器。
-      // recalibrateQuestion（建好但 Phase 6 无生产 caller 的离线 b 去偏引擎）的夜间触发：每夜扫
-      // 「攒够标签 + 昨日起窗内有新标签」的非 draft 题，逐题 firm-up b_calib（track='hard'）。
-      // 排在 item_prior 之后、compose/supply 之前——这样今晨 firm 的 b_calib 被当天的选题与
-      // 缺口扫描读到；YUK-758 起该次序由 dependsOn 硬边保证，不再靠 cron 错峰。queue=llm：
-      // 与其它慢热 job 同档 DLQ 重试（慢资产写慢，给重试余量）。recalibrateQuestion 在 job
-      // 顶层调（非 attempt tx 内），per-question try/catch 隔离单题失败，不加 SAVEPOINT（G1）。
+      // YUK-439 (ADR-0043 2026-10-19 Amendment A2/A3) — 联合标定批的夜间触发器（原
+      // YUK-372 L1 的 active-PPI firm-up 触发器改喂连续后验批）。每夜对「有证据且
+      // stale（窗内新证据 / calibration_n ≠ 证据行数 / 尚非 joint）」的非 draft 题从
+      // 证据账本全量重算后验 b_post（track='hard'）——证据从第一条起连续收缩，无 12
+      // 标签跳变（A3）；批边界跑 KB 漂移审计（A5）。排在 item_prior 之后、compose/
+      // supply 之前——今晨收敛的 b_post 被当天的选题与缺口扫描读到；YUK-758 起该次序
+      // 由 dependsOn 硬边保证。queue=llm：慢资产写慢，同档 DLQ 重试。批函数在 job
+      // 顶层调（非 attempt tx 内），per-question try/catch 隔离单题失败（G1）。
       {
-        // YUK-758 DAG 成员：firm-up item_calibration.b_calib（track='hard'）。对 item_prior_backfill
-        // 是硬边（同表 b 锚：种子先、firm 后），且是 compose 选题实读的最终标定态上游。cron 移除。
+        // YUK-758 DAG 成员：收敛 item_calibration.b_post（track='hard'，联合标定后验）。
+        // 对 item_prior_backfill 是硬边（同表 b 锚：种子先、后验后），且是 compose 选题
+        // 实读的最终标定态上游。cron 移除。
         name: 'recalibration_nightly',
         dependsOn: ['item_prior_backfill'],
         eligibility: nightlyEligibility('deterministic'),

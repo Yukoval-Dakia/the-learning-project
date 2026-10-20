@@ -694,7 +694,8 @@ async function loadQuestionPool(db: Db | Tx, frontierKids: string[]): Promise<Po
     );
   if (rows.length === 0) return [];
 
-  // item_calibration（track='hard'）批量读：b / b_anchor / b_calib → effectiveB（FINDING #4）。
+  // item_calibration（track='hard'）批量读：b / b_anchor / b_calib / b_post → effectiveB
+  // （FINDING #4；YUK-439 起后验 b_post 优先）。
   const qids = rows.map((r) => r.id);
   const calRows = await db
     .select({
@@ -702,13 +703,14 @@ async function loadQuestionPool(db: Db | Tx, frontierKids: string[]): Promise<Po
       b: item_calibration.b,
       b_anchor: item_calibration.b_anchor,
       b_calib: item_calibration.b_calib,
+      b_post: item_calibration.b_post,
     })
     .from(item_calibration)
     .where(and(inArray(item_calibration.question_id, qids), eq(item_calibration.track, 'hard')));
   const effectiveBByQid = new Map(
     calRows.map((r) => [
       r.question_id,
-      effectiveB({ b: r.b, b_anchor: r.b_anchor, b_calib: r.b_calib }),
+      effectiveB({ b: r.b, b_anchor: r.b_anchor, b_calib: r.b_calib, b_post: r.b_post }),
     ]),
   );
 
