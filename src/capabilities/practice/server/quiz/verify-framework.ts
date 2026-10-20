@@ -544,13 +544,28 @@ export function normalizeAnswer(text: string): string {
 }
 
 function choiceLabelIndex(value: string): number | null {
-  const label = value.normalize('NFKC').trim().toUpperCase();
+  // Wrapper forms「（C）」/「【C】」are legal label shapes (sourcing contract),
+  // so strip label wrappers before the bare-letter test. NFKC already folds
+  // fullwidth （）；【】 survives it, hence both sets here.
+  const label = value
+    .normalize('NFKC')
+    .replace(/^[\s([【]+|[\s)\]】]+$/gu, '')
+    .trim()
+    .toUpperCase();
   if (!/^[A-F]$/u.test(label)) return null;
   return label.charCodeAt(0) - 'A'.charCodeAt(0);
 }
 
 function stripLeadingChoiceLabel(value: string): string | null {
   const normalized = value.normalize('NFKC').trim();
+  // Leading-wrapper shapes「（C）选项原文」/「【C】开封」(sourcing.ts declares
+  // both legal). A wrapper-only string carries no content to strip — the
+  // caller's label expansion (choiceLabelIndex) resolves it instead.
+  const leading = /^[(（[【]\s*([A-F])\s*[)）\]】]\s*(.*)$/u.exec(normalized);
+  if (leading) {
+    const rest = (leading[2] ?? '').trim();
+    return rest.length > 0 ? rest : null;
+  }
   // low-pri (YUK-554 review A2, skip 裁决): `.` here is not dotAll — a multi-line labelled
   // answer won't strip. Post-A1 the fallback candidates are first-line/first-sentence
   // (single-line) so this is moot in practice; not worth a behavior-bearing regex change.
@@ -559,11 +574,14 @@ function stripLeadingChoiceLabel(value: string): string | null {
   // A labelled answer is persisted with an uppercase option marker. Keep this
   // case-sensitive: treating lowercase function names such as `f(x)` as an
   // option wrapper would add the false candidate `x` and could normalize-pass
-  // an actually wrong fill-blank answer.
-  const match = /^([A-F])(?:\s*[(（[【]\s*(.+?)\s*[)）\]】]\s*$|[\s.、:：)\]）-]+(.+))$/u.exec(
-    normalized,
-  );
-  const stripped = (match?.[2] ?? match?.[3])?.trim();
+  // an actually wrong fill-blank answer. The no-separator branch (`C开封`)
+  // requires a Han follower so token-shaped answers like `E₂` or `DNA` never
+  // lose their leading letter.
+  const match =
+    /^([A-F])(?:\s*[(（[【]\s*(.+?)\s*[)）\]】]\s*$|[\s.、:：)\]）-]+(.+)|(\p{Script=Han}.*))$/u.exec(
+      normalized,
+    );
+  const stripped = (match?.[2] ?? match?.[3] ?? match?.[4])?.trim();
   return stripped && stripped.length > 0 ? stripped : null;
 }
 
@@ -613,10 +631,27 @@ function answerCandidates(
 
 // ---------- deterministic choice-surface pre-checks (YUK-1624 #24) ----------
 
-export type ChoiceSurfaceDefect =
+export type ChoiceSurfaceRule =
   | 'insufficient_choices'
   | 'duplicate_options'
   | 'reference_not_in_choices';
+
+export interface ChoiceSurfaceRuleCheck {
+  rule: ChoiceSurfaceRule;
+  verdict: 'pass' | 'reject';
+  reason: string;
+}
+
+/**
+ * The precheck record persisted on the admission record for EVERY outcome —
+ * reject or pass (PM condition, YUK-1624): each rule's name, verdict, and a
+ * concrete reason, so a reviewer can audit what the deterministic gate decided
+ * without re-deriving it.
+ */
+export interface ChoiceSurfacePrecheckRecord {
+  outcome: 'pass' | 'reject';
+  rules: ChoiceSurfaceRuleCheck[];
+}
 
 export interface ChoiceSurfaceQuestion {
   kind: string;
@@ -631,47 +666,113 @@ function referenceFirstLine(referenceMd: string | null): string | null {
   return (fallback.split(/\r?\n/, 1)[0] ?? '').trim() || null;
 }
 
+/** Case-preserving option identity: NFKC + whitespace only (duplicate detection). */
+function normalizeOptionIdentity(text: string): string {
+  return text.normalize('NFKC').replace(/[\s　]+/gu, '');
+}
+
 /**
- * Choice-surface defects rules can decide before ANY paid verify call runs —
+ * Choice-surface rules that can decide before ANY paid verify call runs —
  * the model is reserved for what rules cannot judge. Applies only to rows that
  * carry persisted choices (structure is the source of truth, mirroring
  * isExactQuestion; the repo's true_false form legitimately has no choices and
- * is skipped). Answer resolution reuses the solve-check candidates, so `B`,
- * `B. …`, `（B）`, a structured rubric final_answer and the first-line-of-prose
- * contract all count as the declared answer; a multi-select reference like
- * `A、C` passes when every label resolves to a real option.
+ * is skipped — an empty result records nothing). Answer resolution reuses the
+ * solve-check candidates, so `B`, `B. …`, `（B）`, `【B】…`, `B选项原文` and a
+ * structured rubric final_answer all count as the declared answer; a
+ * multi-select reference like `A、C` passes when every label resolves to a real
+ * option. Duplicate detection preserves case: `T` / `t` are different physical
+ * symbols, so only NFKC-and-whitespace-equal options collide.
  */
-export function deterministicChoiceDefects(question: ChoiceSurfaceQuestion): ChoiceSurfaceDefect[] {
+export function evaluateChoiceSurface(question: ChoiceSurfaceQuestion): ChoiceSurfaceRuleCheck[] {
   const choices = question.choices_md ?? [];
   if (choices.length === 0) return [];
-  if (choices.length < 2) return ['insufficient_choices'];
-
-  const defects: ChoiceSurfaceDefect[] = [];
-  const normalizedOptions = choices.map((choice) => normalizeAnswer(choice));
-  if (new Set(normalizedOptions).size !== normalizedOptions.length) {
-    defects.push('duplicate_options');
+  if (choices.length < 2) {
+    return [
+      {
+        rule: 'insufficient_choices',
+        verdict: 'reject',
+        reason: `选项数 ${choices.length}，不足 2`,
+      },
+    ];
   }
 
+  const checks: ChoiceSurfaceRuleCheck[] = [
+    {
+      rule: 'insufficient_choices',
+      verdict: 'pass',
+      reason: `选项数 ${choices.length}`,
+    },
+  ];
+
+  const identities = choices.map((choice) => normalizeOptionIdentity(choice));
+  const collisions: string[] = [];
+  const seen = new Map<string, number>();
+  for (const [index, identity] of identities.entries()) {
+    const firstIndex = seen.get(identity);
+    if (firstIndex === undefined) {
+      seen.set(identity, index);
+      continue;
+    }
+    if (collisions.length < 3) {
+      collisions.push(`第 ${firstIndex + 1}、${index + 1} 项规范化后相同`);
+    }
+  }
+  checks.push(
+    collisions.length > 0
+      ? { rule: 'duplicate_options', verdict: 'reject', reason: collisions.join('；') }
+      : { rule: 'duplicate_options', verdict: 'pass', reason: '规范化后（保留大小写）无重复' },
+  );
+
+  const normalizedOptions = choices.map((choice) => normalizeAnswer(choice));
   const firstLine = referenceFirstLine(question.reference_md);
   const labels = firstLine ? firstLine.split(/[、，,\s]+/u).filter(Boolean) : [];
+  const resolvedLabelIndices = labels.map((token) => {
+    const index = choiceLabelIndex(token);
+    return index !== null && index < choices.length ? index : null;
+  });
   const everyTokenIsResolvableLabel =
-    labels.length > 0 &&
-    labels.every((token) => {
-      const index = choiceLabelIndex(token);
-      return index !== null && index < choices.length;
-    });
-  // Same candidate composition the solve-check exact path uses, so `B`, `B. …`,
-  // `（B）` and structured rubric answers all resolve to their option.
-  const referenceInChoices =
-    everyTokenIsResolvableLabel ||
-    referenceAnswerCandidates(question).some((candidate) =>
-      answerCandidates(candidate, choices, true).some((expanded) =>
-        normalizedOptions.includes(normalizeAnswer(expanded)),
-      ),
-    );
-  if (!referenceInChoices) defects.push('reference_not_in_choices');
+    labels.length > 0 && resolvedLabelIndices.every((index) => index !== null);
+  // Same candidate composition the solve-check exact path uses, so `B`,
+  // `B. …`, `（B）选项原文` and structured rubric answers all resolve.
+  let matchedOptionIndices: number[] = [];
+  if (everyTokenIsResolvableLabel) {
+    matchedOptionIndices = resolvedLabelIndices.filter((index): index is number => index !== null);
+  } else {
+    outer: for (const candidate of referenceAnswerCandidates(question)) {
+      for (const expanded of answerCandidates(candidate, choices, true)) {
+        const index = normalizedOptions.indexOf(normalizeAnswer(expanded));
+        if (index >= 0) {
+          matchedOptionIndices = [index];
+          break outer;
+        }
+      }
+    }
+  }
+  checks.push(
+    matchedOptionIndices.length > 0
+      ? {
+          rule: 'reference_not_in_choices',
+          verdict: 'pass',
+          reason: `参考答案命中选项 ${matchedOptionIndices.map((index) => index + 1).join('、')}`,
+        }
+      : {
+          rule: 'reference_not_in_choices',
+          verdict: 'reject',
+          reason: '参考答案首行未命中任何选项（含标签与 rubric 结构化答案展开）',
+        },
+  );
 
-  return defects;
+  return checks;
+}
+
+/** Fold per-rule checks into the admission-record precheck block. */
+export function choiceSurfacePrecheckRecord(
+  checks: ChoiceSurfaceRuleCheck[],
+): ChoiceSurfacePrecheckRecord {
+  return {
+    outcome: checks.some((check) => check.verdict === 'reject') ? 'reject' : 'pass',
+    rules: checks,
+  };
 }
 
 // OCR (PR #716) — `label` identifies the CALLER (check name + task kind) so a parse-failure

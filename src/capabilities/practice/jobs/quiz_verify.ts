@@ -107,11 +107,13 @@ import { lockPlacementSupplyScopes } from '../server/question-supply/placement-s
 import { maxNgramOverlap } from '../server/question-supply/sourced-dedup';
 import { resolveSolveOverrideFromEnv } from '../server/quiz/solve-lane';
 import {
-  type ChoiceSurfaceDefect,
+  type ChoiceSurfacePrecheckRecord,
+  type ChoiceSurfaceRuleCheck,
   type SolveCheckQuestion,
   type TeachingQualityQuestion,
   checksForTier,
-  deterministicChoiceDefects,
+  choiceSurfacePrecheckRecord,
+  evaluateChoiceSurface,
   runQuestionContentValidation,
   runSolveCheck,
   runTeachingQualityCheck,
@@ -451,31 +453,39 @@ function readMaterialUrl(
 
 /**
  * YUK-1624 (#24) — terminal write for a draft whose deterministic choice-surface
- * pre-check failed. Zero paid calls were spent, so there is no model verdict to
+ * pre-check rejected. Zero paid calls were spent, so there is no model verdict to
  * record: the event honestly reports a rules-only needs_review and the draft is
  * held for human review exactly like a model needs_review (verify_hold +
  * unverified_rules; a rules defect is not promoted to a proven failure because
- * the check could still mis-shape an unusual-but-valid item). Deliberately
- * outside the main failure-bottom: this path has no minutes-long model window,
- * so a rare throw (version race) simply falls back to pg-boss retry with no
- * terminal event written for the idempotency guard to trip over.
+ * the check could still mis-shape an unusual-but-valid item). The per-rule
+ * precheck record (name + verdict + reason) lands in the admission
+ * verification evidence — PM condition: every precheck outcome, reject or pass,
+ * is auditable on the admission record. Deliberately outside the main
+ * failure-bottom: this path has no minutes-long model window, so a rare throw
+ * (version race) simply falls back to pg-boss retry with no terminal event
+ * written for the idempotency guard to trip over.
  */
 async function finalizeDeterministicPrecheckFailure(input: {
   db: Db;
   row: typeof question.$inferSelect;
   metadataRaw: Record<string, unknown>;
   meta: QuizGenMetadataT;
-  precheckDefects: ChoiceSurfaceDefect[];
+  precheckChecks: ChoiceSurfaceRuleCheck[];
+  precheckRecord: ChoiceSurfacePrecheckRecord;
   sourceTier: number;
   admissionGenerationAtStart: number | undefined;
   supplyTrace?: SupplyTraceV1T;
   difficultyEvidence?: unknown;
 }): Promise<RunQuizVerifyResult> {
-  const { db, row, meta, metadataRaw, precheckDefects } = input;
+  const { db, row, meta, metadataRaw, precheckChecks, precheckRecord } = input;
   const questionId = row.id;
   const now = new Date();
   const verifyEventId = createId();
-  const summary = `quiz_verify 确定性预检未通过（${precheckDefects.join('、')}）；未运行付费核验，留人工复核。`;
+  const rejectedRules = precheckChecks
+    .filter((check) => check.verdict === 'reject')
+    .map((check) => check.rule)
+    .join('、');
+  const summary = `quiz_verify 确定性预检未通过（${rejectedRules}）；未运行付费核验，留人工复核。`;
   const verifiedBy = { by: 'system' as const, task_kind: 'quiz_verify' };
   const verification: QuizGenVerificationT = {
     status: 'needs_review',
@@ -536,7 +546,10 @@ async function finalizeDeterministicPrecheckFailure(input: {
           verification: {
             policy_id: 'quiz_verify@1',
             outcome: 'suspended',
-            evidence: { overall: 'needs_review', deterministic_precheck: precheckDefects },
+            evidence: {
+              overall: 'needs_review',
+              deterministic_precheck: { ...precheckRecord, paid_calls_skipped: true },
+            },
           },
           actorRef: 'quiz_verify:suspend',
           now,
@@ -555,7 +568,7 @@ async function finalizeDeterministicPrecheckFailure(input: {
       payload: {
         question_id: questionId,
         ...unified,
-        deterministic_precheck: { defects: precheckDefects, paid_calls_skipped: true },
+        deterministic_precheck: { ...precheckRecord, paid_calls_skipped: true },
         copy_safety: {
           llm_verdict: null,
           persisted_verdict: meta.copy_safety.verdict,
@@ -727,23 +740,27 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
   }
 
   // YUK-1624 (#24) — deterministic choice-surface pre-check runs BEFORE any paid
-  // call. Duplicated options (post-normalization), a reference answer that
-  // resolves to no option, and an insufficient option count are rule-decidable;
-  // the model stays reserved for what rules cannot judge. A defect holds the
-  // draft for human review without spending QuizVerifyTask / solve / teaching.
-  const precheckDefects = deterministicChoiceDefects({
+  // call. Duplicated options (post-normalization, case-preserving), a reference
+  // answer that resolves to no option, and an insufficient option count are
+  // rule-decidable; the model stays reserved for what rules cannot judge. The
+  // per-rule record is persisted on the admission record for BOTH outcomes
+  // (PM condition): rejects terminate here with zero model calls, passes ride
+  // along every downstream terminal write's verification evidence.
+  const precheckChecks = evaluateChoiceSurface({
     kind: row.kind,
     reference_md: row.reference_md,
     choices_md: row.choices_md,
     rubric_json: row.rubric_json,
   });
-  if (precheckDefects.length > 0) {
+  const precheckRecord = choiceSurfacePrecheckRecord(precheckChecks);
+  if (precheckRecord.outcome === 'reject') {
     return finalizeDeterministicPrecheckFailure({
       db,
       row,
       metadataRaw,
       meta,
-      precheckDefects,
+      precheckChecks,
+      precheckRecord,
       sourceTier: tier,
       admissionGenerationAtStart,
       ...(supplyTrace ? { supplyTrace } : {}),
@@ -1338,6 +1355,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
                   overall: parsed.overall,
                   copy_safety: copySafetyVerdict,
                   admission: 'kept_independent_admission',
+                  deterministic_precheck: precheckRecord,
                 },
               },
               actorRef: 'quiz_verify:promote',
@@ -1368,6 +1386,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
               evidence: {
                 overall: parsed.overall,
                 copy_safety: copySafetyVerdict,
+                deterministic_precheck: precheckRecord,
               },
             },
             availability: QUESTION_AVAILABILITY.GENERAL_POOL,
@@ -1443,6 +1462,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
                 evidence: {
                   overall: parsed.overall,
                   copy_safety: copySafetyVerdict,
+                  deterministic_precheck: precheckRecord,
                 },
               },
               actorRef: 'quiz_verify:suspend',
@@ -1481,6 +1501,9 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
             max_overlap: maxOverlap,
             deterministic_too_close: deterministicTooClose,
           },
+          // YUK-1624 — precheck per-rule record on every terminal event, pass or
+          // reject (mirrors the admission verification evidence above).
+          deterministic_precheck: precheckRecord,
           // YUK-224 — source tier + the tier-3 material_grounding outcome (audit trail).
           source_tier: tier,
           ...(tierChecks.includes('material_grounding')
