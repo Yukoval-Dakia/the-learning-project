@@ -1,49 +1,21 @@
-// Global Copilot drawer open-state hook. The legacy first-visit dwell timer and
-// return-visit localStorage auto-open were removed in YUK-577: opening now always
-// requires an explicit user action or a qualified cross-tree signal.
-//
-// The hook exposes `open` plus the visit epoch and controlled setters so the
-// drawer parent can also drive open state from a manual trigger button.
-//
-// AF S4 / YUK-203 U6 — cross-tree open-with-context channel. The drawer `open`
-// flag is component-local (it lives inside CopilotDock's hook instance), so a
-// button in a DIFFERENT subtree (e.g. learning-items/[id]) cannot reach it to
-// open the Dock pre-seeded with a skill. A tiny module-level Zustand store —
-// co-located here, NOT a separate store file — carries an `openCopilotWith`
-// signal. CopilotDock claims each request exactly once through
-// subscribeCopilotOpenRequests, attached from its always-mounted root node.
+// The companion (学习伙伴) channel: how pages reach the one companion instance from another
+// subtree. Two small module-level stores:
+//   • open requests — a page asks the companion to open (optionally with a prefill, a skill
+//     context or a nudge); the companion claims each request exactly once;
+//   • focus — what the learner is looking at (a question, a knowledge point, a note, an ingestion
+//     session). Pages publish it from event handlers with setCompanionFocus; the companion shows
+//     「正在看：<title>」 and sends {kind,id} as ambient_context.focused_entity.
+// Opening always needs an explicit action; the legacy dwell / revisit auto-open is gone (YUK-577).
 
 'use client';
 
-import { useCallback, useRef, useState } from 'react';
 import { create } from 'zustand';
 import type { CopilotSkillContextT } from '@/capabilities/copilot/ui-public';
 
-export interface CopilotDrawerVisit {
-  open: boolean;
-  /** Increments on every closed→open transition; one visit = one fresh session read. */
-  epoch: number;
-}
-
-export interface UseCopilotDwellResult {
-  open: boolean;
-  /** The current visit's epoch (see CopilotDrawerVisit). */
-  epoch: number;
-  /**
-   * Open the drawer manually (e.g. from a header button). Returns the epoch of the
-   * visit this call started, or null when the drawer was already open.
-   */
-  openDrawer: () => number | null;
-  /** Close the drawer; no implicit timer or revisit path may reopen it. */
-  closeDrawer: () => void;
-  /** The visit as of the latest open/close command, for async continuations. */
-  currentVisit: () => CopilotDrawerVisit;
-}
-
 // AF S4 / YUK-203 U6 — a single pending open-with-context request published by a
 // cross-tree caller (e.g. the learning-items 「对话教学」 button) and consumed by
-// CopilotDock once on open. `seq` is a monotonically incrementing nonce so the
-// Dock can distinguish a brand-new request from a re-render with the same
+// the companion once on open. `seq` is a monotonically incrementing nonce so the
+// companion can distinguish a brand-new request from a re-render with the same
 // payload (two consecutive teaching opens for the same item, say).
 // YUK-577 — a proactive-nudge open. The deterministic nudge headline IS the agent's
 // opening turn (seeded client-side, agent-authored — never an owner user bubble, MF1);
@@ -63,7 +35,7 @@ export interface CopilotOpenRequest {
   /** Optional message to auto-send on open (none today; reserved for §5.1). */
   prefill?: string;
   /**
-   * How the Dock treats `prefill`: 'send' sends it as the next turn when the
+   * How the companion treats `prefill`: 'send' sends it as the next turn when the
    * conversation is ready; 'compose' only appends it to the composer for the
    * learner to send. Absent means 'send'.
    */
@@ -127,7 +99,7 @@ function claimCopilotOpenRequest(): CopilotOpenRequest | null {
 }
 
 /**
- * The Dock's attach command: claim a request published before it mounted, then every
+ * The companion's attach command: claim a request published before it mounted, then every
  * later publish, until the returned unsubscribe runs on detach.
  */
 export function subscribeCopilotOpenRequests(
@@ -144,14 +116,14 @@ export function subscribeCopilotOpenRequests(
   return unsubscribe;
 }
 
-/** Open the global drawer as a normal free-form turn (no fake entity/skill ref). */
+/** Open the companion as a normal free-form turn (no fake entity/skill ref). */
 export function openCopilot(prefill?: string, options?: CopilotOpenOptions): void {
   useCopilotOpenSignal.getState().openCopilot(prefill, options);
 }
 
 /**
- * Cross-tree opener for the global CopilotDock, seeded with a skill context.
- * Buttons outside the Dock subtree call this; CopilotDock subscribes to the
+ * Cross-tree opener for the companion, seeded with a skill context.
+ * Buttons outside the companion subtree call this; the companion subscribes to the
  * store and opens itself, sending the next turn with the skill context.
  */
 export function openCopilotWith(skillContext: CopilotSkillContextT, prefill?: string): void {
@@ -159,33 +131,35 @@ export function openCopilotWith(skillContext: CopilotSkillContextT, prefill?: st
 }
 
 /**
- * YUK-577 — open the global CopilotDock for a proactive nudge 「看看」click: the headline
+ * YUK-577 — open the companion for a proactive nudge 「看看」click: the headline
  * seeds the agent opening turn client-side, and session_id rides into ambient_context.
  */
 export function openCopilotForNudge(nudge: CopilotNudgeOpen): void {
   useCopilotOpenSignal.getState().openCopilotForNudge(nudge);
 }
 
-export function useCopilotDwell(): UseCopilotDwellResult {
-  const [visit, setVisit] = useState<CopilotDrawerVisit>({ open: false, epoch: 0 });
-  // Written only by the two commands below, so async work started in one visit can
-  // check whether that visit is still the open one.
-  const visitRef = useRef(visit);
+/** What the learner is looking at, as the companion shows and sends it. */
+export interface CompanionFocus {
+  /** Entity kind sent as focused_entity.kind, e.g. 'question' | 'knowledge' | 'note' | 'learning_session'. */
+  kind: string;
+  id: string;
+  /** Learner-visible title for 「正在看：…」. */
+  title: string;
+}
 
-  const openDrawer = useCallback(() => {
-    if (visitRef.current.open) return null;
-    const next = { open: true, epoch: visitRef.current.epoch + 1 };
-    visitRef.current = next;
-    setVisit(next);
-    return next.epoch;
-  }, []);
-  const closeDrawer = useCallback(() => {
-    if (!visitRef.current.open) return;
-    const next = { open: false, epoch: visitRef.current.epoch };
-    visitRef.current = next;
-    setVisit(next);
-  }, []);
-  const currentVisit = useCallback(() => visitRef.current, []);
+const useCompanionFocusStore = create<{ focus: CompanionFocus | null }>(() => ({ focus: null }));
 
-  return { open: visit.open, epoch: visit.epoch, openDrawer, closeDrawer, currentVisit };
+/** Publish (or clear with null) what the learner is looking at. Call from event handlers. */
+export function setCompanionFocus(focus: CompanionFocus | null): void {
+  useCompanionFocusStore.setState({ focus });
+}
+
+/** Send-time read for the companion's commands. */
+export function readCompanionFocus(): CompanionFocus | null {
+  return useCompanionFocusStore.getState().focus;
+}
+
+/** Render-time read (useSyncExternalStore through zustand). */
+export function useCompanionFocus(): CompanionFocus | null {
+  return useCompanionFocusStore((state) => state.focus);
 }
