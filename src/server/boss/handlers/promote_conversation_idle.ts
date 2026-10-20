@@ -44,8 +44,9 @@ export async function runPromoteConversationIdle(
       promoted += 1;
     } catch (err) {
       skipped += 1;
-      // Expected race: /turn may resume the session between SELECT and UPDATE.
-      // Terminal or already-idle is fine, so skipping and continuing is safe.
+      // Expected race: between the SELECT and the UPDATE the user may close or
+      // abandon the session (T5/T6/T7), or an overlapping promote may have
+      // already idled it. Terminal or already-idle is fine; keep going.
       console.warn(`[promote_conversation_idle] skip ${id}:`, (err as Error).message);
     }
   }
