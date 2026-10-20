@@ -9,7 +9,7 @@ import { LearningScope } from '@/kernel/read-models/assessment-learning-scope';
 
 export { loadAssessmentLearningScope } from '@/kernel/read-models/assessment-learning-scope';
 
-import { resolveAbilityGlobalByKnowledgeId } from '@/kernel/read-models/mastery-state';
+import { resolveAbilityGlobalByKnowledgeId } from '@/server/mastery/state';
 
 /** Frozen in the original submission transaction, before any model execution. */
 export async function snapshotAssessmentLearningScope(tx: Tx, groupId: string, partIds: string[]) {
