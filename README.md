@@ -160,6 +160,21 @@ pnpm smoke:local
 `hydrateModelCatalogBeforeServe`、`src/server/ai/model-catalog.ts` `startModelCatalogWatch`）。
 拉取失败沿用该行；没有该行就用 `src/server/ai/model-catalog.snapshot.json`。
 `pnpm gen:model-catalog` 仍重写这份随包快照。
+工具调用、推理及原生档位、输入模态、上下文/输入/输出上限和 API base URL
+统一从该目录读取；Pi 只提供协议与兼容处理，不覆盖这些事实。目录缺项保持 unknown，
+执行缺少必需端点或限额时明确报错。只有目录缺失或实测不符才能在
+`src/server/ai/model-catalog-overrides.ts` 按 provider/model 写明原因后覆盖。
+配置保存与 adapter 启动都以 `createLoomPiModels().getModel` 判定可执行性；
+task、global 和 pin 设置均先校验必需事实，再校验任务能力，不接受保存成功但无法启动的模型。
+目录缺失的四个旧模型以固定 main 快照补缺，Grok 另有已封存实测；这些依据不等同于新的付费准入。
+压缩沿用 85% 触发、60% 裁剪目标，基数为目录 context 与显式 input 上限的较小值，
+取整后至少为 1；最新工具结果与其调用成组保留，即使该组超出裁剪目标。
+请求输出不得超过目录上限及估算的剩余上下文。估算不是 provider token 计量。
+目录的模型级 Anthropic/OpenAI-compatible 协议声明优先于 Pi 协议快照；
+OpenCode Go 已知协议路径不匹配时不执行。Anthropic 的目录 `/v1` 仅在传输适配时
+去重，避免 SDK 再追加 `/v1/messages`。目录能力不等同于应用已接线或实测准入。
+刷新不改任务选模；已选模型消失或能力/端点变化保留旧事实，并记录由 YUK-1563
+负责处理的 finding。自定义 provider 配置仍属该票第 ④ 部分，本片未实现。
 
 生产 / NAS compose 配置放在 `.env`；host-side local dev 也从 `.env` 的 `POSTGRES_*`
 派生本地连接串。浏览器代码不持有 provider key，所有 AI 调用都通过 Hono route 或

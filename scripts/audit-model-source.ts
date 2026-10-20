@@ -60,6 +60,7 @@ const EXCLUDED_DIRS = new Set([
 const PROVIDER_CATALOG_FILES = new Set([
   'src/server/ai/providers.ts',
   'src/server/ai/pricing.ts',
+  'src/server/ai/model-catalog-overrides.ts',
   'src/server/ai/model-profiles.ts',
   'src/server/ai/pi-models.ts',
   'src/server/ai/pi-provider-catalog.ts',
