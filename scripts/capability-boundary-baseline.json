@@ -208,6 +208,38 @@
       "from": 3,
       "to": 2,
       "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "agency -> ai",
+      "date": "2026-10-20",
+      "from": 25,
+      "to": 24,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "copilot -> orchestrator",
+      "date": "2026-10-20",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> ai",
+      "date": "2026-10-20",
+      "from": 61,
+      "to": 55,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> orchestrator",
+      "date": "2026-10-20",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -588,9 +620,9 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 403,
+      "total": 394,
       "byOwnerPair": {
-        "agency -> ai": 25,
+        "agency -> ai": 24,
         "agency -> boss": 10,
         "agency -> conjectures": 2,
         "agency -> http": 1,
@@ -606,7 +638,6 @@
         "copilot -> events": 5,
         "copilot -> http": 1,
         "copilot -> memory": 1,
-        "copilot -> orchestrator": 1,
         "copilot -> proposals": 1,
         "copilot -> questions": 1,
         "copilot -> revert": 1,
@@ -645,7 +676,7 @@
         "observability -> r2": 2,
         "observability -> subjects": 9,
         "practice -> advisory-locks": 5,
-        "practice -> ai": 61,
+        "practice -> ai": 55,
         "practice -> assessment": 1,
         "practice -> boss": 18,
         "practice -> calibration": 3,
@@ -655,7 +686,6 @@
         "practice -> http": 3,
         "practice -> mastery": 9,
         "practice -> memory": 1,
-        "practice -> orchestrator": 1,
         "practice -> projections": 4,
         "practice -> proposals": 5,
         "practice -> questions": 14,
