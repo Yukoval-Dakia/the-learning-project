@@ -5,12 +5,14 @@
 
 import type { z } from 'zod';
 
-import { db } from '@/db/client';
 import { ApiError, deprecatedRouteResponse, errorResponse } from '@/kernel/http';
-import { getStartedBoss } from '@/server/boss/client';
-import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
-import { Review } from '@/server/session';
+import { closeReviewSession } from '../server/session-operations/review-session';
 import { EndReviewSessionBodySchema } from './contracts';
+
+// Compatibility export: the summary-dispatch contract lives in
+// server/session-operations/review-session.ts now; importers on this path
+// keep working unchanged.
+export { enqueueReviewSessionSummary } from '../server/session-operations/review-session';
 
 async function parseBody(req: Request): Promise<z.infer<typeof EndReviewSessionBodySchema>> {
   const contentType = req.headers.get('content-type') ?? '';
@@ -42,37 +44,12 @@ async function parseBody(req: Request): Promise<z.infer<typeof EndReviewSessionB
   return { status: 'completed' };
 }
 
-export async function enqueueReviewSessionSummary(sessionId: string): Promise<void> {
-  // Best-effort: closing the session succeeds even when pg-boss is unavailable.
-  if (!shouldEnqueueBackgroundJobs()) return;
-  try {
-    const boss = await getStartedBoss();
-    await boss.send('session_summary', { session_id: sessionId });
-  } catch (err) {
-    console.warn(`session_summary enqueue failed for ${sessionId}:`, err);
-  }
-}
-
 export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
   let response: Response;
   try {
     const { id } = params;
     const body = await parseBody(req);
-    if (body.status === 'completed') {
-      await Review.completeReviewSession(db, id);
-      // Enqueue async SessionSummaryTask (Phase 1d). Best-effort: if pg-boss
-      // is down the session still closes successfully and summary stays null
-      // (the /learning-sessions/[id] UI shows a stub in that case).
-      //
-      // Skipped in tests via the shared shouldEnqueueBackgroundJobs() (YUK-239)
-      // — the singleton boss instance + per-route invocation bloats the
-      // testcontainer's connection pool past max_connections, tipping over
-      // src/server/boss/client.test.ts. The summary handler is covered by its
-      // own unit test (src/server/session/summary.test.ts).
-      await enqueueReviewSessionSummary(id);
-    } else {
-      await Review.abandonReviewSession(db, id);
-    }
+    await closeReviewSession(id, body.status);
     response = Response.json({ ok: true, status: body.status });
   } catch (err) {
     response = errorResponse(err);

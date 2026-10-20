@@ -43,6 +43,7 @@ import {
   scopeHasNewEvidence,
 } from './brief';
 import { type MemoryClient, type MemoryEventInput, createMemoryClient } from './client';
+import { isLearnerEvidenceAction } from './learner-evidence';
 import type { MemoryIngestReplayGrant } from './memory-ingest-recovery-contract';
 import {
   assertMemoryIngestReplayGrant,
@@ -359,16 +360,22 @@ export function buildMemoryEventIngestHandler(
           throw new MemoryReconcileHandoffError('operator source unavailable');
       }
       if (!row) continue;
-      memoryClient ??= createMemoryClient();
-      const client = memoryClient;
 
       // P3 (YUK-351) extraction gate (ADR-0039 §决定 7 (i) / Phase 2 §6.3 C3 / §7 H6):
       // agent-originated events must NEVER feed mem0 extraction (closes the
       // confirmation loop). The brief NOTE layer is orthogonal — it reads events
       // straight from PG (brief.ts:loadEventsFromDb) and legitimately summarizes
-      // agent activity too — so the brief regen fan-out STILL runs for gated events;
-      // only inferred event-memory add + reconcile are skipped.
-      const admitToExtraction = shouldExtractToMemory(row);
+      // agent activity too — so the brief regen fan-out STILL runs for actor-gated
+      // events; only inferred event-memory add + reconcile are skipped for them.
+      //
+      // YUK-1629 — the learner-evidence classification conjoins the actor gate
+      // BEFORE extraction runs: a user-actor question_edit would otherwise pass
+      // shouldExtractToMemory and infer a revision "fact" into mem0, which
+      // searchFacts would then re-feed into a later brief (R1 P1). Excluded
+      // events therefore skip extraction, produce no new reconcile handoff, and
+      // fan out no brief regen below; previously written memories are untouched.
+      const learnerEvidence = isLearnerEvidenceAction(row.action);
+      const admitToExtraction = learnerEvidence && shouldExtractToMemory(row);
       const editedConjecture = editedConjectureMemory(row);
 
       // Owner-edited conjectures are already canonical text. Persist the claim verbatim
@@ -376,6 +383,11 @@ export function buildMemoryEventIngestHandler(
       // does not also ask the generic extraction LLM to infer a duplicate preference.
       const ingest = await (async () => {
         if (!admitToExtraction) return null;
+        // Lazily init the Mem0 client only when an event is actually admitted —
+        // the F-4 pattern keeps excluded/gated events off the provider boundary
+        // entirely (and a missing key can't reject the job on their behalf).
+        memoryClient ??= createMemoryClient();
+        const client = memoryClient;
         const completed = await readIngestCompleted(db, row.id);
         if (completed?.memory_count === 0) {
           return { result: { results: [] }, resolution: completed.resolution } as const;
@@ -478,8 +490,17 @@ export function buildMemoryEventIngestHandler(
       // only scopes that ALREADY have a memory_brief_note row, so a first-appearance
       // scope (or a truncated one) loses just this batch's regen; scopes with an
       // existing brief row are still swept.
-      const regenScopes = row.affected_scopes.slice(0, MAX_BRIEF_REGEN_SCOPES);
-      if (row.affected_scopes.length > MAX_BRIEF_REGEN_SCOPES) {
+      // YUK-1629 — question-bank authoring/publish events are not
+      // learner-memory input (learnerEvidence computed above, already applied
+      // to extraction): no brief-regen fan-out at all, so a canonical publish
+      // produces 0 regen jobs / 0 MemoryBriefTask calls. The SAME
+      // classification filters them out of the brief evidence reads
+      // (brief.ts), so the nightly sweep cannot resurrect a question revision
+      // as learning evidence.
+      const regenScopes = learnerEvidence
+        ? row.affected_scopes.slice(0, MAX_BRIEF_REGEN_SCOPES)
+        : [];
+      if (learnerEvidence && row.affected_scopes.length > MAX_BRIEF_REGEN_SCOPES) {
         console.warn(
           `[memory_brief_bridge] event ${row.id} has ${row.affected_scopes.length} affected scopes; capping brief regen fan-out at ${MAX_BRIEF_REGEN_SCOPES} (best-effort, sweep partially backstops the rest)`,
         );
