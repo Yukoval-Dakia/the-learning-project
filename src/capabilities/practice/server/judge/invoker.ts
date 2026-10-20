@@ -10,6 +10,7 @@ import {
   JudgeResultV2,
   type JudgeResultV2T,
 } from '@/core/schema/capability';
+import { sha256Canonical, taskInputHash } from '@/core/task-input-hash';
 import type { Db } from '@/db/client';
 import type { TaskTextResult } from '@/server/ai/provenance';
 import {
@@ -25,8 +26,6 @@ import { persistJudgeRunDigests } from './execution-provenance-resolve';
 import {
   JUDGE_PROMPT_TEMPLATE_REVISION,
   judgePromptFingerprint,
-  sha256Canonical,
-  taskInputHash,
 } from './judge-execution-provenance';
 import { narrowQuestionToPart } from './narrow-part';
 import {
