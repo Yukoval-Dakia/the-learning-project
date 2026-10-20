@@ -11,13 +11,6 @@ import { createHash, randomUUID } from 'node:crypto';
 import { hostname } from 'node:os';
 
 import { sql } from 'drizzle-orm';
-import {
-  type HubMeshAtomicInput,
-  type HubMeshEdge,
-  listKnowledgeEdges,
-  loadTreeSnapshot,
-  resolveHubMeshAtomics,
-} from '@/capabilities/knowledge/public';
 import { syncBlockRefsForArtifact } from '@/capabilities/notes/server/block-refs';
 // Auto-zone builder + suppression reader live in a neutral module (YUK-384 Task 8
 // ESM-cycle lift) so both the reconciler and the nightly job — which now imports
@@ -32,6 +25,15 @@ import { getConfig } from '@/core/config/store';
 import { ArtifactBodyBlocks, type ArtifactBodyBlocksT } from '@/core/schema/business';
 import type { Db, Tx } from '@/db/client';
 import { writeEvent } from '@/kernel/events';
+import {
+  type HubMeshAtomicInput,
+  type HubMeshEdge,
+  resolveHubMeshAtomics,
+} from '@/kernel/hub-mesh';
+import {
+  listKnowledgeMeshEdges,
+  loadKnowledgeBackboneNodes,
+} from '@/kernel/read-models/knowledge-graph';
 
 export interface HubSyncClaim {
   artifactId: string;
@@ -282,7 +284,7 @@ async function loadAtomicInputs(db: Db | Tx): Promise<HubMeshAtomicInput[]> {
 }
 
 async function loadEdgeInputs(db: Db): Promise<HubMeshEdge[]> {
-  const rows = await listKnowledgeEdges(db);
+  const rows = await listKnowledgeMeshEdges(db);
   return rows.map((r) => ({
     from_knowledge_id: r.from_knowledge_id,
     to_knowledge_id: r.to_knowledge_id,
@@ -295,7 +297,7 @@ async function loadEdgeInputs(db: Db): Promise<HubMeshEdge[]> {
 // graph. runHubSyncCycle never passes it — each claim reloads fresh (see the revert of the
 // per-cycle snapshot in runHubSyncCycle for why a shared snapshot was a stale-win).
 export type HubMeshGraphInputs = {
-  nodes: Awaited<ReturnType<typeof loadTreeSnapshot>>;
+  nodes: Awaited<ReturnType<typeof loadKnowledgeBackboneNodes>>;
   edges: Awaited<ReturnType<typeof loadEdgeInputs>>;
   atomics: Awaited<ReturnType<typeof loadAtomicInputs>>;
 };
@@ -331,7 +333,7 @@ export async function computeHubDesiredState(
   // compute from an older graph and apply a stale body (see runHubSyncCycle). The `graph`
   // param exists only for direct tests; runHubSyncCycle never passes it.
   const { nodes, edges, atomics } = graph ?? {
-    nodes: await loadTreeSnapshot(db),
+    nodes: await loadKnowledgeBackboneNodes(db),
     edges: await loadEdgeInputs(db),
     atomics: await loadAtomicInputs(db),
   };
