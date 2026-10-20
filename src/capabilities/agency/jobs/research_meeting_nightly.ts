@@ -79,7 +79,8 @@ import { listProposalInboxRows } from '@/kernel/proposals/inbox';
 import { type WriteAiProposalInput, writeAiProposal } from '@/kernel/proposals/writer';
 import type { FailureAttempt } from '@/kernel/read-models/failure-attempts';
 import { getFailureAttemptsWithReasoningTrace } from '@/kernel/read-models/failure-attempts';
-import { sumAllKnownCostUsd } from '@/server/ai/provenance';
+import { type TaskTextRunFn, costUsdToMicroUsd, sumAllKnownCostUsd } from '@/server/ai/provenance';
+import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { type JobYieldOutput, reportJobYield } from '@/server/boss/job-yield';
 import {
   type PredictionAccountability,
@@ -94,12 +95,7 @@ import {
 } from '@/server/conjectures/reconcile';
 import { getMasteryProjection } from '@/server/mastery/state';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import {
-  type TaskTextRunFn,
-  agencyBoundTextRunner,
-  costUsdToMicroUsd,
-  writeRetryableAiFailureLedger,
-} from '../server/ai-runtime';
+import { writeRetryableAiFailureLedger } from '../server/ai-runtime';
 
 /** Structural per-run propose cap (top-K salient cells → at most K conjectures). */
 export const RESEARCH_MEETING_MAX_CONJECTURES = 3;
@@ -445,6 +441,15 @@ async function defaultLoadKnownConjectureKeys(db: Db): Promise<Set<string>> {
     }
   }
   return keys;
+}
+
+/**
+ * Real runner: wrap runTask and INJECT `db` into the ctx that induceConjecture
+ * supplies ({ override, modelBinding }). induceConjecture stays db-free (unit
+ * testable); the job is the seam that binds db (same role as runGoalScopeAndWrite).
+ */
+function makeDefaultRunTaskFn(db: Db): TaskTextRunFn {
+  return makeRunTaskFn(db);
 }
 
 const RUNNER_IMAGE_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
@@ -817,13 +822,7 @@ async function runResearchMeetingNightlyClaimed(
     deps.writeRetryableAiFailureLedgerFn ?? writeRetryableAiFailureLedger;
   const resolveSubjectProfileFn = deps.resolveSubjectProfileFn ?? resolveSubjectProfile;
   const loadEvidenceImagesFn = deps.loadEvidenceImagesFn ?? defaultLoadEvidenceImages;
-  // Real runner: the db-bound text runner minted by the ai-runtime port
-  // (agencyBoundTextRunner owns `deps.runTaskFn ?? makeRunTaskFn(db)`) — it
-  // injects `db` into the ctx that induceConjecture supplies
-  // ({ override, modelBinding }). induceConjecture stays db-free (unit
-  // testable); the port is the seam that binds db (same role as
-  // runGoalScopeAndWrite).
-  const runTaskFn = agencyBoundTextRunner(db, deps.runTaskFn);
+  const runTaskFn = deps.runTaskFn ?? makeDefaultRunTaskFn(db);
   const reconcileFn =
     deps.reconcileFn ?? ((d: Db) => reconcileConjecturePredictions(d, { executionId }));
   const persistCompletionOnly = async (result: ResearchMeetingResult): Promise<void> => {
