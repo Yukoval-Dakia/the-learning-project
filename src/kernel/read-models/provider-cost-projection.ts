@@ -110,8 +110,8 @@ export async function readProviderCostAggregates(
  * truth (dedup, basis, currency-split) without a capability→capability import.
  * `ref`/`operation_id` are identity columns for scoped attribution filters:
  * ref = cost_ledger.task_run_id | provider_attempt.attempt_id; operation_id is
- * the provider attempt's anchor (NULL for ledger rows). Existing aggregate
- * consumers do not select them and are unaffected.
+ * the provider attempt's durable operation id as text (NULL for ledger rows).
+ * Existing aggregate consumers do not select them and are unaffected.
  */
 export function providerCostProjectedCte(from: Date, to?: Date) {
   const fromIso = from.toISOString();
@@ -147,7 +147,7 @@ export function providerCostProjectedCte(from: Date, to?: Date) {
         COALESCE((p.usage_json->>'input')::double precision, 0)::int,
         COALESCE((p.usage_json->>'output')::double precision, 0)::int,
         p.finished_at, p.provider, p.model, p.lane_id, 'provider_attempt',
-        p.attempt_id::text AS ref, p.operation_id,
+        p.attempt_id::text AS ref, p.operation_id::text AS operation_id,
         p.wire_count,
         p.usage_json->>'basis', p.usage_json->>'unit', p.usage_json->>'source',
         (p.usage_json->>'input')::double precision,

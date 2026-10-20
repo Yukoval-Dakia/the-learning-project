@@ -9,6 +9,7 @@ import { PermanentError, RetryableError } from '@/core/schema/structured_questio
 import { source_asset } from '@/db/schema';
 import type { ToolContext } from '@/kernel/tools/types';
 import { TOOL_OUTPUT_IMAGES_FIELD } from '@/kernel/tools/types';
+import { AGENT_TOOL_RUN_ID_PREFIX, bindAgentProviderAttempt } from '../agent/budget';
 import { type PixelBBox, cropToPng, probeImage, rotateImage } from '../image-ops';
 import { type SourceAssetRow, isUniqueViolation, persistSourceAsset } from '../persist-image-asset';
 import { redactIngestionText } from '../privacy-guard';
@@ -575,7 +576,7 @@ async function executeGlmOcr(ctx: ToolContext, raw: GlmOcrInput): Promise<GlmOcr
   if (ctx.providerSessionDeadlineAt === undefined) {
     throw new TypeError('glm_ocr requires a provider session deadline');
   }
-  requireIngestionScope(ctx);
+  const scopeId = requireIngestionScope(ctx);
   ctx.signal?.throwIfAborted();
   if (Date.now() >= ctx.providerSessionDeadlineAt) {
     throw new Error('hard_deadline_exceeded');
@@ -651,6 +652,20 @@ async function executeGlmOcr(ctx: ToolContext, raw: GlmOcrInput): Promise<GlmOcr
     // provider_operation — the lifecycle, not a second mystery row.
     operationAnchor: `glm_ocr:${ctx.taskRunId}:${parent.sha256}:${appliedRegion ? `${appliedRegion.x},${appliedRegion.y},${appliedRegion.width},${appliedRegion.height}` : 'full'}`,
   });
+
+  // YUK-1522 — durable cost attribution: the real provider operation_id is
+  // a hashed uuid (raw anchor can't be recovered). Persist the run↔operation
+  // binding BEFORE the wire call so the attempt row written at acquire shares
+  // it; the weekly budget gate bills and unsettled-checks by this binding —
+  // never by guessing anchors and never by sweeping all OCR.
+  if (ctx.taskRunId.startsWith(`${AGENT_TOOL_RUN_ID_PREFIX}:`)) {
+    await bindAgentProviderAttempt(ctx.db, {
+      sessionId: scopeId,
+      operationId: providerAttempt.operationId,
+      taskRunId: ctx.taskRunId,
+      tool: 'glm_ocr',
+    });
+  }
 
   try {
     const { response, attemptId } = await runGlmLayoutParsingWithAttempt({

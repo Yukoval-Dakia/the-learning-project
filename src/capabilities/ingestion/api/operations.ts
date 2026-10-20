@@ -12,8 +12,14 @@ import { Ingestion } from '@/server/session';
 import {
   AGENT_BUDGET_EXCEEDED_CODE,
   AGENT_BUDGET_UNAVAILABLE_CODE,
+  AgentBudgetReplayError,
+  agentKeyDigest,
   agentOpOwnsSessionRun,
   authorizeAgentRunStart,
+  findAgentGrantByKeyDigest,
+  hasUnboundAgentGrants,
+  readAgentOperationById,
+  synthesizeAgentOperationResource,
 } from '../server/agent/budget';
 import {
   findIdempotentIngestionOperation,
@@ -105,6 +111,7 @@ async function ensureOperationDispatched(
   operationId: string,
   sessionId: string,
   request: IngestionOperationRequestParsed,
+  idempotency?: { key?: string; inputDigest?: string },
   onDispatched?: () => void,
 ) {
   return withIngestionOperationDispatchLock(db, operationId, async () => {
@@ -149,7 +156,13 @@ async function ensureOperationDispatched(
           boss,
           sessionId,
           operationId,
-          beforeTransition: (tx) => authorizeAgentRunStart(tx, { sessionId, operationId }),
+          beforeTransition: (tx) =>
+            authorizeAgentRunStart(tx, {
+              sessionId,
+              operationId,
+              idempotencyKey: idempotency?.key,
+              inputDigest: idempotency?.inputDigest,
+            }),
         }));
       } else if (
         !['queued', 'extracting', 'extracted', 'partial', 'reviewed', 'imported'].includes(status)
@@ -283,8 +296,48 @@ export async function POST(req: Request, params: Record<string, string>): Promis
           );
         }
         replayedOperationId = existing.operationId;
-        const resource = await ensureOperationDispatched(existing.operationId, sessionId, request);
+        const resource = await ensureOperationDispatched(existing.operationId, sessionId, request, {
+          key: idempotencyKey,
+          inputDigest: hash,
+        });
         return resourceResponse(resource, 200);
+      }
+      // YUK-1522 — durable 幂等权威：job_events 30 天清理后，agent op 的
+      // key→handle 绑定仍在 learning_session.agent_budget（grant 持久，
+      // 不随 TTL/回执裁剪消失）。命中同输入 → 原 handle；不同输入 → 409；
+      // 旧无绑定证据的 grant → 不静默新发，fail closed。
+      if (request.kind === 'agent') {
+        const bound = await findAgentGrantByKeyDigest(db, {
+          sessionId,
+          keyDigest: agentKeyDigest(idempotencyKey),
+        });
+        if (bound) {
+          if (bound.grant.input_digest !== hash) {
+            throw new ApiError(
+              'idempotency_conflict',
+              `Idempotency-Key is already bound to operation ${bound.operationId}`,
+              409,
+            );
+          }
+          replayedOperationId = bound.operationId;
+          const readable = await readIngestionOperation(db, bound.operationId);
+          const resource = readable
+            ? await ensureOperationDispatched(bound.operationId, sessionId, request, {
+                key: idempotencyKey,
+                inputDigest: hash,
+              })
+            : synthesizeAgentOperationResource(bound.operationId, sessionId, bound.grant);
+          return resourceResponse(resource, 200);
+        }
+        if (await hasUnboundAgentGrants(db, sessionId)) {
+          throw new ApiError(
+            AGENT_BUDGET_UNAVAILABLE_CODE,
+            '暂时无法确认录入助手的剩余额度，请稍后再试。',
+            503,
+            undefined,
+            { reason: 'budget_read_unavailable' },
+          );
+        }
       }
     }
 
@@ -307,15 +360,54 @@ export async function POST(req: Request, params: Record<string, string>): Promis
     }
     if (reservation.outcome === 'reused') {
       replayedOperationId = reservation.operationId;
-      const resource = await ensureOperationDispatched(reservation.operationId, sessionId, request);
+      const resource = await ensureOperationDispatched(
+        reservation.operationId,
+        sessionId,
+        request,
+        {
+          key: idempotencyKey,
+          inputDigest: hash,
+        },
+      );
       return resourceResponse(resource, 200);
     }
     createdOperationId = operationId;
-    const resource = await ensureOperationDispatched(operationId, sessionId, request, () => {
-      dispatched = true;
-    });
+    const resource = await ensureOperationDispatched(
+      operationId,
+      sessionId,
+      request,
+      { key: idempotencyKey, inputDigest: hash },
+      () => {
+        dispatched = true;
+      },
+    );
     return resourceResponse(resource, 202);
   } catch (err) {
+    // 授权事务内命中 durable 绑定（并发首单抢跑或事件已 TTL 的重放）：
+    // 重复创建的新 handle 显式终态化，返回原 handle（200），不二次付费。
+    if (err instanceof AgentBudgetReplayError) {
+      try {
+        if (createdOperationId) {
+          await writeIngestionOperationTerminalOnce(db, {
+            operationId: createdOperationId,
+            eventType: 'operation.failed',
+            payload: {
+              error: {
+                code: 'idempotent_replay',
+                message: `replayed to original operation ${err.operationId}`,
+                status: 200,
+              },
+            },
+          });
+        }
+        const original =
+          (await readIngestionOperation(db, err.operationId)) ??
+          (await readAgentOperationById(db, err.operationId));
+        if (original) return resourceResponse(original, 200);
+      } catch (replayErr) {
+        console.error('failed to serve durable idempotent replay', replayErr);
+      }
+    }
     // boss 已接收 job 后，即使后续 queued-event/readback 短暂失败也不能把真实运行中的
     // operation 标成 failed；同 Idempotency-Key 重试会读回 accepted handle，worker/抽取
     // session 的后续事件继续推进资源快照。
@@ -346,7 +438,11 @@ export async function GET(_req: Request, params: Record<string, string>): Promis
   try {
     const operationId = params.id;
     if (!operationId) throw new ApiError('validation_error', 'operation id is required', 400);
-    const resource = await readIngestionOperation(db, operationId);
+    const resource =
+      (await readIngestionOperation(db, operationId)) ??
+      // YUK-1522 — agent op 的 durable readback：job_events 30 天清理后
+      // 仍可从 learning_session.agent_budget 的 grant 合成真实终态。
+      (await readAgentOperationById(db, operationId));
     if (!resource) {
       throw new ApiError('not_found', `ingestion operation ${operationId} not found`, 404);
     }
