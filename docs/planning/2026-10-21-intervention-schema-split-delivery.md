@@ -112,6 +112,31 @@ scanner 实测原文：`pass-through sites 1097 (+11 new)`——恰为本片 11 
 `>1500-line files=12 (base 13)`——本片使 intervention.ts 退出该档；
 此为实测量，不自行放宽门，交父登记。tests/DB/runtime/provider 按禁令未跑未改。
 
+## main 整合复审（R1 APPROVE 后）
+
+- 普通 merge `origin/main@67506c5e`（YUK-1570 json 算法入 core）；
+  `20222f2ca` 已为此前 merge 前缀，上游账本完整保留。
+- 唯一冲突 `capability-boundary-baseline.json`（双方尾追加 `changes`）：
+  按并集解——main 全部段（`debts` server 394、`edgeRecords`、
+  `sourceSizeRecords`、`compatShims`、上游新增 changes）逐字节保留 +
+  本片 11 条 stable_contract 原记录追加；全文件 `git diff origin/main`
+  仅 +253/-0。
+- 已审 source 等价：merge 后 `intervention.ts` / `intervention-review.ts` /
+  `intervention-review-history.ts` / `contracts.ts` / 本 doc 与 R1 所审
+  `bc4ffb5ac` blob 逐字节相同（sha256 对验），31 types / union 臂顺序 /
+  Current alias / 实例 identity 均未动；上游 json core 两文件与 11 处
+  consumer import 字面量 hunk 自动合入。
+- 机械修复披露：上游 Biome 重排把 `recommend.ts` / `intervention-author.ts`
+  的 intervention import 起始行 2→3 / 6→7，致我 11 条记录的 consumer
+  `line` 证据失实（audit 11 violations，非语义 finding）。仅改 ledger 内
+  该 11 处行号，site/symbol/consumer 不变；修复后 audit rc=0。
+- 整合后重跑 5 门全绿（heavy.sh 串行）：typecheck 0 / lint 0 / build 0 /
+  boundaries 0（`394/0/37` 精确）/ architecture 0（`+11 new` 仍全覆盖）。
+  receipt 与 raw 存 `…/<final-head>/intervention-schema/gates/`。
+- R1 过程披露补遗：首轮 runner 的 boundaries 中途被 SIGKILL（终端 rc=143），
+  其 partial stdout 随后被有效重跑截断覆盖，raw 未独立封存 =
+  NOT_CAPTURED；receipt 体系仅收录有效 run，不补造日志。
+
 ## 行数声明（不作为收益）
 
 2268 → 975 + 919 + 456 = 2350（+82 行为三文件 header/import/re-export 管道）。
