@@ -14,10 +14,10 @@
 // secondary KC, so the fold gate and the forward prediction can name different KCs.
 // The likelihood is binary. A KC with no posterior starts from uniformPrior().
 // Production fills globalOf once, before the attempt, and the drift does not mutate that map.
-// The fold keeps the referenced KC's pre-drift global and posterior. The prediction reads
-// the scored KC's posterior and domain global, also before the drift. That per-KC posterior
-// and anchor match only when the scored KC is the folded KC. globalOf is per domain, so
-// equal globals do not require the same KC.
+// The fold keeps the referenced KC's pre-drift posterior and domain global. The prediction
+// reads the scored KC's posterior and domain global, also before the drift. The posterior
+// is that KC's only when the scored KC is the folded KC. The anchor is the domain global,
+// so it can still be equal for another KC in the same domain.
 // With the grid flag off, every grid field stays null and thetaGridByKc stays empty.
 
 import {
