@@ -30,13 +30,16 @@ import {
 import { getArtifactCorrectionStates } from '@/kernel/read-models/artifact-corrections';
 import { isLearnerVisibleKnowledgeId } from '@/kernel/read-models/learner-knowledge-visibility';
 import {
+  getMasteryProjection,
+  getRepresentativeKcBeta,
+} from '@/kernel/read-models/mastery-projection';
+import {
   type NoteSummary,
   interactiveForKnowledge,
   notesForKnowledge,
 } from '@/kernel/read-models/notes-read';
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import { type RetentionReading, getFsrsRetrievabilityByIds } from '@/server/fsrs/state';
-import { getMasteryProjection, getRepresentativeKcBeta } from '@/server/mastery/state';
 import { type SlimSubjectProfile, toSlimSubjectProfile } from '@/subjects/profile';
 
 const CROSS_LINK_REF_KIND = 'cross_link';
