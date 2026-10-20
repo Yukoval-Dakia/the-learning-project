@@ -10,7 +10,6 @@ import fixtureData from './data.json' with { type: 'json' };
 // (physics/fixtures/index.ts:4-8). No new production schema / migration / UI /
 // judge / profile change; the yuwen profile + all three routes (exact /
 // keyword / semantic) already exist.
-// See docs/superpowers/specs/2026-05-31-p5.8-yuwen-eval-fixtures-design.md.
 
 export const YuwenFixtureItemSchema = z
   .object({

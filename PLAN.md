@@ -1,10 +1,12 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-20：YUK-1570 普通整合 main210dfb2c，保留 main 全部已合内容；基线实测440/0/47，限定裁定不变。验证和 exact-head CI 结果见 PR1830，不合并 PR、不改票状态。
+> Linear 是权威 tracker。2026-10-20：YUK-1570 普通整合 main a519a05d，保留双方交接和已合源码；基线随 main 下调，限定裁定不变。验证结果见 PR1830，不合并 PR、不改票状态。
 
 ## NOW
 
-- **YUK-1570 / 依赖基线收紧**：[ready PR1830](https://github.com/Yukoval-Dakia/the-learning-project/pull/1830)，同分支普通 merge main210dfb2c。仅 PLAN/now 冲突，保留 main 交接并补本票进度；baseline 自动合并到 main 的440/0/47，recorded_ruling 与原 head 完全一致，不放宽准入。CI模式审计、typecheck/lint/build 本地通过，179条既有lint warnings；远端结果按PR精确head，不沿用旧绿色结果。
+- **YUK-1570 / 依赖基线收紧**：[ready PR1830](https://github.com/Yukoval-Dakia/the-learning-project/pull/1830)，同分支普通 merge main a519a05d。仅 PLAN/now 冲突，保留双方交接；baseline 自动合并到 main 的440/0/42，recorded_ruling 保持不变，不放宽准入。本轮 typecheck/lint/build 和 CI模式审计全部exit0，178条既有lint warnings；不沿用旧head的CI结果。
+
+- **帮助靠谱 / 夜间摘要统计（YUK-1621、YUK-1632）**：`el/yuk-1621` 的 PR #1858 普通整合 main `210dfb2c1`。仅 PLAN/now 冲突，采用 main 最新记录并保留本 PR 交接；服务端分桶、有效判分统计与模型统计守卫源码未变。本轮 typecheck/lint/build 通过，178 个既有 warnings；新 head CI 单独等待，不复用旧 head 结果。
 
 - **第一天能用 / 恢复完成证据（YUK-1631、YUK-1614）**：`el/yuk-1614` 保留 deferred 未完成状态，拒绝旧 deferred 假回执、未知契约与非法时间戳；legacy reserved/enqueued 保持可导入。隔离 PG16 实跑补丁排队→拒绝且原数据不变→drain→按证据人工补回执→恢复200；provider/回执写入故障及人工恢复已验证。既有备份8例通过，无测试代码改动，不碰 schema/export constants。最终静态检查及 exact-head CI 结果见 PR1854；自动恢复仍不在 LIGHT 范围。
 
@@ -40,7 +42,9 @@
 
 ## NEXT
 
-- **YUK-1570**：本轮仅整合与验证，普通 push 后记录 exact-head CI 结果即停止，不合并 PR。practice→r2 4→3 的退出义务仍属下一次减边 PR，最迟不晚于票关闭；历史裁定不得复用。
+- **YUK-1570**：本轮仅整合与本地验证，普通 push 后报告 head 和冲突文件，不合并 PR。practice→r2 4→3 的退出义务仍属下一次减边 PR，最迟不晚于票关闭；历史裁定不得复用。
+
+- **PR #1858**：本地检查通过后普通 merge commit/push，等待 exact-head CI。CI 绿即停止；不改 PR 描述或 Linear 状态，不合并 PR、不部署。
 
 - **架构深化**：警示#1851已合7e2ab18f5，再交付锁四事实纠错#1853已合86917b10a（父静态构建、唯一R2、exactCI通过，仍只是登记，1577读回进行中）；#1847证据删除已合0f8b1fbbc，后续批另批。#1830释放后收紧frontier基线；完整操作设计必须体现调用方少知决策/恢复规则，不能以重导出或合文件代替深化。
 
