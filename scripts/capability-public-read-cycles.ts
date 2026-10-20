@@ -70,12 +70,10 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
       'src/capabilities/agency/jobs/coach_daily.ts',
       'src/capabilities/agency/jobs/prepare_intervention.ts',
       'src/capabilities/agency/server/intervention/reconcile.ts',
-      'src/capabilities/agency/server/intervention/settlement-subscription.ts',
       'src/capabilities/agency/server/intervention/store.ts',
     ],
     symbols: [
       'authorInterventionPackage',
-      'loadLatestTrustedInterventionDiagnosticVerdict',
       'materializeInterventionDiagnostics',
       'resolveDailyReviewPlanInputs',
       'retireInterventionDiagnosticQuestion',
