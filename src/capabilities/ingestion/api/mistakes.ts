@@ -3,12 +3,12 @@
 
 import { createId } from '@paralleldrive/cuid2';
 import { and, inArray, isNull } from 'drizzle-orm';
-import { loadAttemptQuestionSnapshot } from '@/capabilities/practice/public';
 import { db } from '@/db/client';
 import { knowledge, question, source_asset } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError, errorResponse, resourceResponse } from '@/kernel/http';
 import { withActiveCauseCategoryOverlays } from '@/kernel/read-models/cause-overlay';
+import { loadAttemptQuestionSnapshot } from '@/kernel/read-models/question-evidence-snapshot';
 import {
   assertCauseAllowedForSubjectProfile,
   resolveSubjectProfileForKnowledgeIds,
