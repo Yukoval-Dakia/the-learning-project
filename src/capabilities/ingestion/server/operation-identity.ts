@@ -26,7 +26,13 @@ export async function findDurableAgentKey(
   tx: Tx,
   input: { sessionId: string; idempotencyKey: string; inputHash: string },
 ): Promise<{ operationId: string; sameInput: boolean } | null> {
-  const budget = await readAgentBudget(tx, input.sessionId);
+  // This collection-wide lookup also serves non-agent operations. Absence is
+  // not a binding; the route and agent reservation still validate the session.
+  const rows = await tx.execute<{ agent_budget: unknown }>(sql`
+    SELECT agent_budget FROM learning_session
+    WHERE id = ${input.sessionId} AND type = 'ingestion' LIMIT 1
+  `);
+  const budget = parseAgentBudget(rows[0]?.agent_budget);
   const digest = keyDigest(input.idempotencyKey);
   for (const [operationId, identity] of Object.entries(budget?.operations ?? {})) {
     if (identity.key_digest === digest) {
