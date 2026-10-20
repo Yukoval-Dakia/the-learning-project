@@ -235,3 +235,14 @@ External run logs: `tlp-audit-artifacts/architecture-deepening/YUK-1579/<head>/`
 - After merge, notify main/UI/migration lines that new audited dependency
   edges now require `edgeRecords`, `>1000` growth requires `sourceSizeRecords`,
   and new pass-through shells require `compatShims` (14-day cap).
+
+## Latest ordinary-main integration
+
+After the bot P1 fixes at `068fea678`, this branch normally merged main
+`dc8d7c27db1fe8e56eb8049cb167d71a4b9e1ae8` (including ingestion budget #1891).
+Main now records capability→server416, cross43, SCC1×5 and16 files>1500.
+Earlier417 readings above remain historical validation, not a current count.
+The merge changes no audit rule or exception; new ledgers remain empty,
+main changes/notes are preserved. Product/test/CI/package content relative
+to this main is unchanged. Parent validation and new exact CI are recorded
+against the post-integration head in the external evidence directory.
