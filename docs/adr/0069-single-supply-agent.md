@@ -43,7 +43,7 @@ owner 未采纳讨论稿推荐的「默认自家库→外部→生成/改编顺�
 
 自己出题与参考改编统一由 `generate_question_candidate` 产出候选，经 D8 泛化后的 `store_sourced_question` 入库闸写入。该闸在当前 main 的注册名已是 `submit_question`，不恢复旧工具名、不再新增写入器。父子结构题、既有质量检查、持久化与恢复保证一并迁入；`quiz_gen` 不作为永久例外保留。先迁调用方，再排空旧任务和验证意图，最后删除独立 job 与入口。
 
-旧路由层的同缺口并跑与盲核仍保留。quiz_gen 退役与路由层切换同批还是分开，按下文修订第 5 点交 owner 选择；在 owner 同意前，不以本修订启动删码或改变 YUK-1468 的在途实现。
+旧路由层的同缺口并跑与盲核仍保留。quiz_gen 退役与路由层切换采用同批退役（修订第 5 点 A；owner 2026-10-20 确认）；在 owner 同意前，不以本修订启动删码或改变 YUK-1468 的在途实现。
 
 #### 旧 D6 原文（被本 Proposed 修订取代，待 owner 同意后生效）
 
@@ -149,18 +149,18 @@ owner 原话：「quiz_gen.ts 单独存在就很奇怪。」本节把出题要�
 4. 最后删除独立 `quiz_gen` job 注册、API、队列派发契约及无消费者的 `quiz_gen_plan` 编排；`quiz_verify` / `source_verify` 的旧执行入口在检查和旧意图迁完后退出，不留两套并行裁决。[`manifest`](../../src/capabilities/practice/manifest.ts#L1004-L1045)、[`kernel/quiz-gen-contract.ts`](../../src/kernel/quiz-gen-contract.ts)、[`kernel/supply-dispatch.ts`](../../src/kernel/supply-dispatch.ts)、[`kernel/placement-jobs.ts`](../../src/kernel/placement-jobs.ts) 同批收口。
 5. 删除前区分代码入口和历史词汇。`core/schema/quiz_gen.ts` 还被 [`verify-contract`](../../src/core/schema/verify-contract.ts)、`verify-framework` 与 placement outcome 读取；[`provenance.ts`](../../src/core/schema/provenance.ts)、`write-quiz.ts`、`practice-read.ts`、`fewshot-retrieve.ts` 仍解释历史题/卷。共享 schema 搬到实际 owner 后迁完 import 再删旧模块，持久化 `source='quiz_gen'`、metadata、核验事件、费用与历史卷可读性保留，不做全库替换字符串。
 
-### 5. 排期结论：推荐单独先收敛生成路径，再比较路由决策；由 owner 选
+### 5. 排期结论：已选同批退役（A）；owner 2026-10-20 确认
 
 | 排法 | 代价与可比较内容 | 退出条件 |
 | --- | --- | --- |
-| A．同一批：旧路由+quiz_gen 对照完整备题员路径，通过后一起退役 | 少一次切换，但路由策略、生成器、父子写入、验证门同时变化，结果差异难归因；数周内维护两条写入与验证路径，回退也牵涉两套队列。 | 同缺口包含平题、父子题与恢复情形；盲核质量、成本、时限及未交付原因，所有调用方和旧任务收口后一起删。 |
-| B．单独一刀：先迁生成/提交/验证并退役 quiz_gen，再并跑路由层（推荐） | 多一次有边界的切换，先承担第 2、3 点等价迁移验收；旧路由暂时仍作需求决策，但其供给执行交同一备题员，不再直达生成器。后续比较的是“旧策略约束下的选择”与“备题员自由选择”，不是原封不动的旧 quiz_gen 管线。 | 先保存旧路径基线证据，确认结构、来源、历史与恢复保证后迁调用方、排空旧任务并删 job；再按原 D6 并跑数周。对照约束只存在于现有任务输入，随旧决策层删除，不新增生产入口。 |
+| A．同一批：旧路由+quiz_gen 对照完整备题员路径，通过后一起退役（已选） | 少一次切换，但路由策略、生成器、父子写入、验证门同时变化，结果差异难归因；数周内维护两条写入与验证路径，回退也牵涉两套队列。 | 同缺口包含平题、父子题与恢复情形；盲核质量、成本、时限及未交付原因，所有调用方和旧任务收口后一起删。 |
+| B．单独一刀：先迁生成/提交/验证并退役 quiz_gen，再并跑路由层 | 多一次有边界的切换，先承担第 2、3 点等价迁移验收；旧路由暂时仍作需求决策，但其供给执行交同一备题员，不再直达生成器。后续比较的是“旧策略约束下的选择”与“备题员自由选择”，不是原封不动的旧 quiz_gen 管线。 | 先保存旧路径基线证据，确认结构、来源、历史与恢复保证后迁调用方、排空旧任务并删 job；再按原 D6 并跑数周。对照约束只存在于现有任务输入，随旧决策层删除，不新增生产入口。 |
 
-推荐 B，因为 `dispatcher`、`plan-executor` 与 `runQuizGen` 在 main 已有可分开的调用边界，先统一执行与准入能减少比较变量。**这不是已批准排期。** 若 owner 要求数周对照必须运行未经改造的旧整条链，应选 A；不能选择 B 却宣称保留了原链对照。
+owner 于 2026-10-20 确认选 A（同批退役）：旧路由与 quiz_gen 对照完整备题员路径，通过后一起退役。原稿曾推荐 B（先收敛生成路径再比较路由），因可分开调用边界、减少比较变量；现以 owner 选择为准。选 A 即接受数周对照须运行未经改造的旧整条链；不能选择 A 却宣称只对照改造后的生成路径。
 
 并跑期间须隔离两臂的候选、幂等回执与证据，不能让一臂的题库写入替另一臂填平缺口；只让指定交付臂进实际可练池。记录 exact revision、缺口输入、候选及发布摘要、task-run、provider/model/cost 和失败原因，协调线负责实际验收，不把本次静态调查称作实验结果。上述复用现有提交与发布边界，不新增对照平台。
 
-待 owner 确认：A 或 B；保留软判据还是收紧 `material_grounding` / `kind_conformance` 的缺证据语义；refill 是否接管。既有每请求数量限制与 placement 费用授权（`QuizGenTriggerBodySchema`、`placement-starter-attempts`）不能假借 D4“无质量数量顶、费用全记账”悄悄移除，其与新缺口任务的映射由 owner 在实施前定。本票不自行改这些边界，也不为每个调用方开 Linear 票。
+排期已确认选 A（同批退役，owner 2026-10-20）。仍待 owner 确认：保留软判据还是收紧 `material_grounding` / `kind_conformance` 的缺证据语义；refill 是否接管。既有每请求数量限制与 placement 费用授权（`QuizGenTriggerBodySchema`、`placement-starter-attempts`）不能假借 D4“无质量数量顶、费用全记账”悄悄移除，其与新缺口任务的映射由 owner 在实施前定。本票不自行改这些边界，也不为每个调用方开 Linear 票。
 
 ## 硬边界（后果）
 
