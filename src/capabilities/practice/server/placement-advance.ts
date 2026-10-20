@@ -24,7 +24,7 @@ import type { Db, Tx } from '@/db/client';
 import { goal } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
-import { getMasteryState } from '@/server/mastery/state';
+import { getMasteryState } from '@/kernel/read-models/mastery-state';
 import { loadPlacementSessionForUpdate } from '@/server/session/placement';
 import type { PlacementNoItemSchema, PlacementUnresolvedItem } from '../api/placement-contracts';
 import {
