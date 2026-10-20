@@ -1,0 +1,254 @@
+// YUK-1570 — the agency nightly domain-agent scan operation.
+//
+// Single owner of the complete run assembly that dreaming_nightly and
+// coach_daily previously copied line-for-line: inbox before-read → consumer
+// input build → `experimental:trigger_<surface>_scan` provenance event →
+// ContextBudgetTracker + propose-cap beforeExecute gate + interceptInput
+// throttle on a piDomainMount → runAgentTask with the YUK-290 `hard+1` summary
+// turn budgetOverride → inbox after-diff → consumer per-new-row hook →
+// `experimental:<surface>_scan` success/failure events → rethrow.
+//
+// Injection seams are preserved exactly: every swappable dep keeps the name and
+// shape the jobs declared (`now`, `writeEventFn`, `listProposalInboxRowsFn`,
+// `runAgentTaskFn`), and the mount keeps the same ctx fields, gates, and
+// BuildMcpServerOptions semantics — including the unused cancellationSignals /
+// onExecute* hooks the options type still supports for future consumers.
+// Surface differences stay in the spec: trigger actor_ref, run_kind payload
+// slots, TodayPlan extras, and Dreaming's note-refine fan-out.
+
+import { createId } from '@paralleldrive/cuid2';
+import type { Db } from '@/db/client';
+import { type WriteEventInput, writeEvent } from '@/kernel/events';
+import { type ProposalInboxRow, listProposalInboxRows } from '@/kernel/proposals/inbox';
+import {
+  DOMAIN_TOOL_MCP_SERVER_NAME,
+  type DomainToolSurface,
+  resolveDomainToolNames,
+  resolveMcpAllowedTools,
+} from '@/kernel/tools/allowlists';
+import type { ContextBudget } from '@/kernel/tools/budgets';
+import { ContextBudgetTracker } from '@/kernel/tools/context-throttle';
+import { type RunAgentTaskCtx, type RunTaskResult, runAgentTask } from '@/server/ai/runner';
+import type { BuildMcpServerOptions, ToolExecutionGateInput } from '@/server/ai/tools/mcp-bridge';
+import { piDomainMount } from '@/server/ai/tools/pi-tools';
+
+/**
+ * The inbox row slice the scan diff needs. Dreaming reads `kind`/`target` on the
+ * after-rows for its note-refine fan-out; Coach reads neither — so both stay
+ * optional here and each consumer narrows in its own code.
+ */
+export type AgencyScanInboxRow = Pick<ProposalInboxRow, 'id' | 'status'> &
+  Partial<Pick<ProposalInboxRow, 'kind' | 'target'>>;
+
+/**
+ * The result slice the scan bookkeeping needs. `task_run_id` is always present
+ * on a settled run; `cost_usd`/`text` stay optional because injected runners
+ * (and some task kinds) don't promise them — Coach's extras tolerate a missing
+ * `text` via the plan-parse fallback.
+ */
+export type AgencyScanRunResult = Pick<RunTaskResult, 'task_run_id' | 'cost_usd'> &
+  Partial<Pick<RunTaskResult, 'text'>>;
+
+/** The ctx the scan hands to its runner — the same fields the jobs passed. */
+export type AgencyScanRunCtx = Pick<
+  RunAgentTaskCtx,
+  'db' | 'budgetOverride' | 'piToolMounts' | 'allowedTools'
+>;
+
+export type AgencyScanRunFn = (
+  kind: string,
+  input: unknown,
+  ctx: AgencyScanRunCtx,
+) => Promise<AgencyScanRunResult>;
+
+export interface AgencyProposalScanDeps {
+  /** Clock seam: called once for the run anchor, again per scan-event write. */
+  now?: () => Date;
+  writeEventFn?: (db: Db, input: WriteEventInput) => Promise<string>;
+  listProposalInboxRowsFn?: (db: Db) => Promise<AgencyScanInboxRow[]>;
+  /** Runner seam — the old `deps.runAgentTaskFn ?? runAgentTask` injection. */
+  runAgentTaskFn?: AgencyScanRunFn;
+}
+
+export interface AgencyProposalScanSpec {
+  /**
+   * DomainTool surface — resolves the mount toolNames + MCP allowedTools, names
+   * the agent actor_ref, the `experimental:trigger_<surface>_scan` /
+   * `experimental:<surface>_scan` actions, the `<surface>_{trigger,tool,scan}_`
+   * event ids, and the proposal-cap message label.
+   */
+  surface: DomainToolSurface;
+  /**
+   * Registered task kind, also stamped as tool_call_log task_kind. Declared as a
+   * literal union (not `string`) — the task census resolves production callers
+   * through this declared type, and the op is intentionally narrow: extend the
+   * union when another nightly scan surface joins.
+   */
+  taskKind: 'DreamingTask' | 'CoachTask';
+  /** actor_ref on the cron trigger event (e.g. 'nightly_dreaming'). */
+  triggerActorRef: string;
+  /** Per-run context budget: tracker bounds + the hard+1 summary turn. */
+  budget: ContextBudget;
+  deps?: AgencyProposalScanDeps;
+  /**
+   * Consumer's signal reads + input assembly, called after the inbox
+   * before-read and before the trigger write — the exact position the jobs
+   * built their input today.
+   */
+  buildInput: (ctx: { db: Db; now: Date; beforeRows: AgencyScanInboxRow[] }) => Promise<unknown>;
+  /** Extra trigger payload fields (Coach stamps `run_kind`). */
+  extraTriggerPayload?: Record<string, unknown>;
+  /** Scan-success payload extras computed from the task result. */
+  buildScanSuccessPayloadExtras?: (taskResult: AgencyScanRunResult) => Record<string, unknown>;
+  /** Extra scan-failure payload fields (Coach stamps `run_kind`). */
+  extraScanFailurePayload?: Record<string, unknown>;
+  /**
+   * Runs between the after-diff and the scan-success write — Dreaming's
+   * note_update → note-refine enqueue fan-out. Receives only the NEW rows
+   * (not in the before-read).
+   */
+  onNewProposalRows?: (args: {
+    db: Db;
+    newRows: AgencyScanInboxRow[];
+    triggerEventId: string;
+  }) => Promise<void>;
+}
+
+export interface AgencyProposalScanResult {
+  processed: number;
+  proposals_created: number;
+  pending_after: number;
+  task_run_id?: string;
+  tool_context_task_run_id: string;
+}
+
+export async function runAgencyProposalScan(
+  db: Db,
+  spec: AgencyProposalScanSpec,
+): Promise<AgencyProposalScanResult> {
+  const deps = spec.deps ?? {};
+  // Hoisted so the task census resolves both served kinds at this callsite.
+  const { taskKind } = spec;
+  const now = deps.now?.() ?? new Date();
+  const listRows = deps.listProposalInboxRowsFn ?? listProposalInboxRows;
+  const write = deps.writeEventFn ?? writeEvent;
+  const run: AgencyScanRunFn = deps.runAgentTaskFn ?? runAgentTask;
+  const maxProposals = spec.budget.maxProposals ?? Number.POSITIVE_INFINITY;
+
+  const beforeRows = await listRows(db);
+  const beforeIds = new Set(beforeRows.map((row) => row.id));
+  const input = await spec.buildInput({ db, now, beforeRows });
+  const triggerEventId = `${spec.surface}_trigger_${createId()}`;
+  const toolContextTaskRunId = `${spec.surface}_tool_${createId()}`;
+
+  await write(db, {
+    id: triggerEventId,
+    actor_kind: 'cron',
+    actor_ref: spec.triggerActorRef,
+    action: `experimental:trigger_${spec.surface}_scan`,
+    subject_kind: 'query',
+    subject_id: triggerEventId,
+    outcome: null,
+    payload: {
+      surface: spec.surface,
+      ...spec.extraTriggerPayload,
+      pending_before: beforeRows.filter((row) => row.status === 'pending').length,
+    },
+    created_at: now,
+  });
+
+  try {
+    let proposalWrites = 0;
+    const budgetTracker = new ContextBudgetTracker(spec.budget);
+    // piDomainMount compiles the DomainTools into AgentTools with the
+    // identical beforeExecute/interceptInput gates via executeDomainToolCall.
+    const domainMountOptions = {
+      ctx: {
+        db,
+        taskRunId: toolContextTaskRunId,
+        providerAttemptCaller: 'worker',
+        providerSessionDeadlineAt: Date.now() + 65_000,
+        callerActor: { kind: 'agent', ref: spec.surface },
+        causedByEventId: triggerEventId,
+      },
+      serverName: DOMAIN_TOOL_MCP_SERVER_NAME,
+      toolNames: resolveDomainToolNames(spec.surface),
+      taskKind,
+      beforeExecute: (tool: ToolExecutionGateInput) => {
+        const budgetReason = budgetTracker.beforeExecute(tool);
+        if (budgetReason) return budgetReason;
+        if (tool.effect !== 'propose') return undefined;
+        if (proposalWrites >= maxProposals) {
+          return `${spec.surface} proposal cap reached (${maxProposals}); stop creating proposals in this run`;
+        }
+        proposalWrites += 1;
+        return undefined;
+      },
+      interceptInput: (tool: ToolExecutionGateInput, args: unknown) => {
+        const { args: capped, contextBudget, softStop } = budgetTracker.capInput(tool.name, args);
+        return { args: capped, truncationNote: contextBudget, softStop };
+      },
+    } satisfies BuildMcpServerOptions;
+    const taskResult = await run(taskKind, input, {
+      db,
+      // YUK-290: maxTurns must not pre-empt the runtime tool-call ceiling.
+      // Keep one final turn for the agent's summary after the last allowed tool call.
+      budgetOverride: { maxIterations: spec.budget.toolCalls.hard + 1 },
+      piToolMounts: [piDomainMount(domainMountOptions)],
+      allowedTools: [...resolveMcpAllowedTools(spec.surface)],
+    });
+
+    const afterRows = await listRows(db);
+    const pendingAfter = afterRows.filter((row) => row.status === 'pending').length;
+    const newRows = afterRows.filter((row) => !beforeIds.has(row.id));
+    const proposalsCreated = newRows.length;
+    await spec.onNewProposalRows?.({ db, newRows, triggerEventId });
+
+    await write(db, {
+      id: `${spec.surface}_scan_${createId()}`,
+      actor_kind: 'agent',
+      actor_ref: spec.surface,
+      action: `experimental:${spec.surface}_scan`,
+      subject_kind: 'query',
+      subject_id: triggerEventId,
+      outcome: 'success',
+      payload: {
+        proposals_created: proposalsCreated,
+        pending_after: pendingAfter,
+        tool_context_task_run_id: toolContextTaskRunId,
+        ...spec.buildScanSuccessPayloadExtras?.(taskResult),
+      },
+      caused_by_event_id: triggerEventId,
+      task_run_id: taskResult.task_run_id,
+      cost_micro_usd:
+        taskResult.cost_usd === undefined ? null : Math.round(taskResult.cost_usd * 1_000_000),
+      created_at: deps.now?.() ?? new Date(),
+    });
+
+    return {
+      processed: 1,
+      proposals_created: proposalsCreated,
+      pending_after: pendingAfter,
+      task_run_id: taskResult.task_run_id,
+      tool_context_task_run_id: toolContextTaskRunId,
+    };
+  } catch (err) {
+    await write(db, {
+      id: `${spec.surface}_scan_${createId()}`,
+      actor_kind: 'agent',
+      actor_ref: spec.surface,
+      action: `experimental:${spec.surface}_scan`,
+      subject_kind: 'query',
+      subject_id: triggerEventId,
+      outcome: 'failure',
+      payload: {
+        ...spec.extraScanFailurePayload,
+        error: err instanceof Error ? err.message : String(err),
+        tool_context_task_run_id: toolContextTaskRunId,
+      },
+      caused_by_event_id: triggerEventId,
+      created_at: deps.now?.() ?? new Date(),
+    });
+    throw err;
+  }
+}
