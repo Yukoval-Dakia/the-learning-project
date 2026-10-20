@@ -33,6 +33,26 @@ export function isLearnerLocalDay(day: string): boolean {
 
 const BJT_OFFSET_MS = 8 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
+const WEEK_MS = 7 * DAY_MS;
+
+/**
+ * YUK-1522 — the product week: natural Monday 00:00 inclusive through the next
+ * Monday 00:00 exclusive, in the learner's product timezone (Asia/Shanghai, the
+ * same zone as learnerLocalDay — NOT the dev-account Saturday week). Returned
+ * as UTC instants for `col >= from AND col < to` SQL filters; cost rows are
+ * attributed by their canonical occurred/finished instant against this window.
+ */
+export function learnerLocalWeekWindowUtc(at: Date): { from: Date; to: Date } {
+  if (Number.isNaN(at.getTime())) throw new Error('learnerLocalWeekWindowUtc: invalid date');
+  // Shift into BJT wall clock, take midnight, subtract weekday offset to reach
+  // this week's Monday, then shift back to the UTC instant.
+  const bjtMs = at.getTime() + BJT_OFFSET_MS;
+  const bjtDayStartMs = Math.floor(bjtMs / DAY_MS) * DAY_MS;
+  const bjtWeekday = new Date(bjtDayStartMs).getUTCDay(); // 0=Sun … 6=Sat
+  const daysSinceMonday = (bjtWeekday + 6) % 7;
+  const weekStartUtcMs = bjtDayStartMs - daysSinceMonday * DAY_MS - BJT_OFFSET_MS;
+  return { from: new Date(weekStartUtcMs), to: new Date(weekStartUtcMs + WEEK_MS) };
+}
 
 /**
  * The half-open UTC instant range `[from, to)` covering the inclusive Asia/Shanghai calendar-day

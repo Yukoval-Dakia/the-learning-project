@@ -170,6 +170,8 @@ export interface IngestionUsageReceipt {
   redactedFields: IngestionRedactionField[];
   /** Mutated-span count per category — numbers only, never values. */
   redactionCounts?: Partial<Record<IngestionRedactionField, number>>;
+  /** Recovery cannot reconstruct an in-memory sink after rollback/crash. */
+  redactionAccounting?: 'unavailable';
   /**
    * YUK-1408 (S1 read side) — honest per-path channel accounting. The OCR job
    * sends raw page images (unredactable) plus redacted text; the docx TEXT
@@ -222,8 +224,9 @@ export async function writeIngestionUsageReceipt(
         page_images: 'raw',
         extracted_text: 'redacted',
       },
-      redacted_fields: input.redactedFields,
-      redaction_counts: input.redactionCounts ?? {},
+      redacted_fields: input.redactionAccounting ? null : input.redactedFields,
+      redaction_counts: input.redactionAccounting ? null : (input.redactionCounts ?? {}),
+      ...(input.redactionAccounting ? { redaction_accounting: input.redactionAccounting } : {}),
       ...(input.segment !== undefined ? { segment: input.segment } : {}),
     },
     caused_by_event_id: null,
