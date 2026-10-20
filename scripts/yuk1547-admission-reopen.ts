@@ -1,21 +1,15 @@
 // Lead-only TEST operation. No automatic caller; no tests or Docker operations.
-// Preflight sends ONE provider request outside paid_effect. Reopen atomically
-// re-pends and enqueues exactly five explicitly named @2 identities —
-// admission@2 rows in state 'unknown', or the single @2 applied row whose
-// verdict withheld on the blank_text-vs-blank_numeric kind-mismatch conflict.
-// Old paid rows are never updated; the marked @3 jobs carry the exact old row
-// identity (unit + input digest) as reopen_paid_effect_identity.
+// Preflight sends ONE provider request outside paid_effect. --plan is a dry,
+// read-only eligibility evaluation that freezes the void+reauthorization
+// manifest. This script NEVER enqueues jobs, republishes, or mutates
+// paid_effect — the backlog driver releases each authorized group inside its
+// own per-question gate (STOP / queue / unknown-rate / budget), so nothing
+// becomes consumable before its turn.
 import { createHash, randomUUID } from 'node:crypto';
 import { open, readFile } from 'node:fs/promises';
-import { and, count, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Provider } from '@/ai/task-spec';
-import {
-  ADMISSION_FAMILY,
-  admissionJobId,
-  lockAdmissionGroup,
-} from '@/capabilities/practice/server/admission/enqueue';
-import { isKindMismatchSolveConflict } from '@/capabilities/practice/server/admission/receipt';
+import { evaluateAdmissionVoidGroup } from '@/capabilities/practice/server/admission/reauthorization';
 import { QUESTION_ADMISSION_TASK_KIND } from '@/capabilities/practice/server/admission/solve';
 import {
   QuestionAdmissionSolveInput,
@@ -25,12 +19,6 @@ import {
   questionAdmissionSolveTaskSpec,
 } from '@/capabilities/practice/tasks/question-admission-solve';
 import { getTaskSystemPrompt } from '@/capabilities/task-registry';
-import {
-  LEGACY_QUESTION_ADMISSION_PAID_UNIT,
-  PREVIOUS_QUESTION_ADMISSION_PAID_UNIT,
-  QUESTION_ADMISSION_PAID_UNIT,
-  QUESTION_ADMISSION_PAID_UNITS,
-} from '@/core/question-admission-policy';
 import { zodToToolParametersSchema } from '@/kernel/zod-json-schema';
 import { assertModelProfileCapabilityFit } from '@/server/ai/model-profiles';
 import { nativePiModel } from '@/server/ai/pi-provider-catalog';
@@ -51,15 +39,7 @@ import { isToolParamContractError, repairToolArguments } from '@/server/ai/tool-
 
 const submit = STRUCTURED_OUTPUT_SUBMIT_TOOL;
 const digest = z.string().regex(/^sha256:[0-9a-f]{64}$/);
-const manifestSchema = z
-  .array(
-    z.object({
-      group_id: z.string().min(1),
-      base_digest: digest,
-      input_digest: digest,
-    }),
-  )
-  .length(5);
+
 const hash = (value: unknown) =>
   `sha256:${createHash('sha256').update(JSON.stringify(value)).digest('hex')}`;
 // YUK-1547 — the submit tool's parameters are the task output schema itself;
@@ -527,254 +507,173 @@ async function preflight(path: string) {
     await file.close();
   }
 }
+// ─── generic void + successor reauthorization planning (YUK-1567) ───────────
 
-async function reopen(receiptPath: string, manifestPath: string) {
-  const { routeA, routeB, solver2Provider, solver2Model, policy, config_db_layer } =
-    await routing();
-  const receipt = z
-    .object({
-      passed: z.literal(true),
-      created_at: z.string().datetime(),
-      routing_hash: z.string(),
-      schema_hash: z.string(),
-      probes: z.array(z.object({ http_status: z.literal(200) })).min(1),
-    })
-    .parse(JSON.parse(await readFile(receiptPath, 'utf8')));
-  const age = Date.now() - Date.parse(receipt.created_at);
-  if (
-    age < 0 ||
-    age > 60 * 60_000 ||
-    receipt.routing_hash !==
-      hash({
-        routes: [routeA, routeB].map(({ apiKey: _apiKey, ...publicRoute }) => publicRoute),
-        solver2Provider,
-        solver2Model,
-        policy,
-        config_db_layer,
-      }) ||
-    receipt.schema_hash !== hash(schema)
-  ) {
-    throw new Error('Require the successful preflight from this schema/routing within one hour');
-  }
+function requireTestDb(): void {
   if (
     !process.env.DATABASE_URL ||
     process.env.DATABASE_URL !== process.env.YUK1547_TEST_DATABASE_URL
   ) {
     throw new Error('Explicitly set YUK1547_TEST_DATABASE_URL to the approved TEST DATABASE_URL');
   }
-  const rows = manifestSchema
-    .parse(JSON.parse(await readFile(manifestPath, 'utf8')))
-    .sort((a, b) => a.group_id.localeCompare(b.group_id));
-  if (new Set(rows.map((row) => row.group_id)).size !== 5)
-    throw new Error('Require five distinct approved groups');
+}
+
+/**
+ * Operator-authored void manifest: every 'unknown' blocker on each group must
+ * be named explicitly (unit + input digest + the fence CAS token read at
+ * manifest time). The successor unit is declared per group; the plan freezes
+ * the successor's full identity + bound job id from the post-repend
+ * generation. NO mutation happens here — the backlog driver performs each
+ * release itself inside its per-question gate (STOP / queue / unknown-rate /
+ * budget), so nothing becomes consumable before its gate turn.
+ */
+const reopenManifestSchema = z.object({
+  authorization_id: z.string().min(1),
+  operator: z.string().min(1),
+  basis: z.string().min(1),
+  reason: z.string().min(1),
+  groups: z
+    .array(
+      z.object({
+        group_id: z.string().min(1),
+        base_digest: digest,
+        successor_unit: z.string().min(1),
+        void: z
+          .array(
+            z.object({
+              unit: z.string().min(1),
+              input_digest: digest,
+              expected_fence: z.number().int().nonnegative(),
+            }),
+          )
+          .nonempty(),
+      }),
+    )
+    .nonempty(),
+});
+type ReopenManifest = z.infer<typeof reopenManifestSchema>;
+
+/**
+ * --plan: dry, read-only eligibility evaluation that freezes the
+ * authorization manifest the driver consumes via --authorized. The frozen
+ * `successor.input` is audit evidence; the driver re-derives the input under
+ * locks at release time and refuses to proceed on any digest/generation/job-id
+ * drift.
+ */
+async function plan(manifestPath: string, outPath: string) {
+  requireTestDb();
+  const manifest = reopenManifestSchema.parse(JSON.parse(await readFile(manifestPath, 'utf8')));
   const { db } = await import('@/db/client');
-  const { paid_effect, question_revision } = await import('@/db/schema');
-  const { lockPaidEffectControlFamily, readPaidEffectControl } = await import(
-    '@/db/paid-effect-control'
-  );
-  const { getPracticeBoss, practiceBossTransaction } = await import(
-    '@/capabilities/practice/server/queue-runtime'
-  );
-  const { publishQuestionGroup } = await import('@/kernel/records/assessment-publication');
-  const { publishedContractSeal, publishedSealAccepts } = await import(
-    '@/kernel/records/assessment-normalization'
-  );
-  const { getR2 } = await import('@/server/r2');
-  const boss = await getPracticeBoss();
   try {
-    const jobs = await db.transaction(async (tx) => {
-      await lockPaidEffectControlFamily(tx, ADMISSION_FAMILY);
-      const [oldReceipts] = await tx
-        .select({ count: count() })
-        .from(paid_effect)
-        .where(
-          and(
-            eq(paid_effect.family, ADMISSION_FAMILY),
-            inArray(paid_effect.unit, [
-              LEGACY_QUESTION_ADMISSION_PAID_UNIT,
-              PREVIOUS_QUESTION_ADMISSION_PAID_UNIT,
-            ]),
-            eq(paid_effect.state, 'receipt_ready'),
-          ),
-        );
-      if (oldReceipts.count !== 0)
-        throw new Error(
-          'Stop: admission@1/@2 receipt_ready rows must be reconciled before cutover',
-        );
-      const control = await readPaidEffectControl(tx, ADMISSION_FAMILY);
-      if (control.backend !== 'pg-boss') throw new Error('Admission producer fenced');
-      const jobs: {
-        group_id: string;
-        job_id: string;
-        reopened_via: 'unknown' | 'applied_conflict';
-        old_snapshot: {
-          unit: string;
-          input_digest: string;
-          state: string;
-          application_sha256: string | null;
-        };
+    const groups = await db.transaction(async (tx) => {
+      const evaluated: {
+        spec: ReopenManifest['groups'][number];
+        eval: Awaited<ReturnType<typeof evaluateAdmissionVoidGroup>>;
       }[] = [];
-      for (const row of rows) {
-        const { root, lifecycle } = await lockAdmissionGroup(tx, row.group_id);
-        if (
-          !root ||
-          root.parent_question_id ||
-          !lifecycle ||
-          !lifecycle.current_revision_id ||
-          lifecycle.withdrawn ||
-          lifecycle.suspended ||
-          lifecycle.scoring_admission_state !== 'withheld'
-        )
-          throw new Error(`Not an eligible withheld group: ${row.group_id}`);
-        const effects = await tx
-          .select()
-          .from(paid_effect)
-          .where(
-            and(eq(paid_effect.family, ADMISSION_FAMILY), eq(paid_effect.entity_id, row.group_id)),
-          )
-          .for('update');
-        const old = effects.find(
-          (effect) =>
-            effect.unit === PREVIOUS_QUESTION_ADMISSION_PAID_UNIT &&
-            effect.entity_revision === row.base_digest &&
-            effect.input_digest === row.input_digest,
-        );
-        // Snapshot the exact old row BEFORE any re-pend mutation; the row itself
-        // is never updated — this snapshot is the post-run comparison evidence.
-        const oldSnapshot = old
-          ? {
-              unit: old.unit,
-              input_digest: old.input_digest,
-              state: old.state,
-              application_sha256: old.application_json == null ? null : hash(old.application_json),
-            }
-          : null;
-        const reopenedState =
-          old?.state === 'unknown'
-            ? ('unknown' as const)
-            : old?.state === 'applied' && isKindMismatchSolveConflict(old.application_json)
-              ? ('applied_conflict' as const)
-              : null;
-        if (
-          reopenedState == null ||
-          effects.some((effect) => effect.unit === QUESTION_ADMISSION_PAID_UNIT) ||
-          effects.some(
-            (effect) =>
-              effect.entity_revision === row.base_digest &&
-              QUESTION_ADMISSION_PAID_UNITS.includes(
-                effect.unit as (typeof QUESTION_ADMISSION_PAID_UNITS)[number],
-              ) &&
-              effect.state === 'applied' &&
-              !(effect.unit === old?.unit && effect.input_digest === old?.input_digest),
-          )
-        )
-          throw new Error(
-            `Missing exact old @2 row (unknown or applied kind-mismatch conflict), existing @3, or another known verdict: ${row.group_id}`,
-          );
-        const [revision] = await tx
-          .select()
-          .from(question_revision)
-          .where(eq(question_revision.revision_id, lifecycle.current_revision_id));
-        if (
-          !revision ||
-          revision.group_id !== row.group_id ||
-          revision.integrity_digest !== row.base_digest
-        )
-          throw new Error('Current revision/base mismatch');
-        const seal = publishedContractSeal({
-          structure: revision.structure,
-          response_spec: revision.response_spec,
-          scoring_basis: revision.scoring_basis,
-          execution_plan: revision.execution_plan,
-          ...(revision.presentation != null ? { presentation: revision.presentation } : {}),
-        });
-        if (!publishedSealAccepts(seal, row.base_digest))
-          throw new Error('Published digest mismatch');
-        const layers = seal.parsed;
-        let generation = lifecycle.scoring_admission_generation;
-        for (const reason of ['owner_hold', 'unverified_rules'] as const) {
-          if (
-            reason === 'owner_hold' &&
-            lifecycle.scoring_admission_withheld_reason === 'owner_hold'
-          )
-            continue;
-          const published = await publishQuestionGroup(tx, {
-            group_id: row.group_id,
-            contract: { ...layers, integrity_digest: row.base_digest },
-            expectedCurrentRevision: revision.revision_id,
-            expectedAdmissionGeneration: generation,
-            availability: lifecycle.availability,
-            admission: { state: 'withheld', reason },
-            actorRef: 'owner:yuk1547-approved-reopen',
-            now: new Date(),
-            readAssetBytes: (key) => getR2().get(key),
-          });
-          if (
-            published.status !== 'admission_updated' ||
-            published.current_revision_id !== revision.revision_id
-          )
-            throw new Error('Reopen must be a dimension-only update');
-          generation = published.admission_generation;
-        }
-        const id = admissionJobId(
-          row.group_id,
-          revision.revision_id,
-          row.base_digest,
-          generation,
-          row.input_digest,
-        );
-        const queued = await boss.send(
-          ADMISSION_FAMILY,
-          {
-            admission_version: 3,
-            question_id: row.group_id,
-            revision_id: revision.revision_id,
-            expected_revision_digest: row.base_digest,
-            expected_admission_generation: generation,
-            dispatch_generation: control.generation,
-            reopen_paid_effect_identity: {
-              unit: 'admission@2',
-              input_digest: row.input_digest,
-            },
-          },
-          { id, db: practiceBossTransaction(tx) },
-        );
-        if (queued === null)
-          throw new Error('Marked job already exists; inspect instead of replaying');
-        jobs.push({
-          group_id: row.group_id,
-          job_id: id,
-          reopened_via: reopenedState,
-          old_snapshot: oldSnapshot as NonNullable<typeof oldSnapshot>,
+      for (const spec of manifest.groups) {
+        evaluated.push({
+          spec,
+          eval: await evaluateAdmissionVoidGroup(tx, {
+            groupId: spec.group_id,
+            baseDigest: spec.base_digest,
+            successorUnit: spec.successor_unit,
+            void: spec.void.map((v) => ({
+              unit: v.unit,
+              inputDigest: v.input_digest,
+              expectedFence: v.expected_fence,
+            })),
+          }),
         });
       }
-      return jobs;
+      return evaluated;
     });
-    console.log(JSON.stringify({ enqueued: jobs, old_paid_rows: 'untouched' }));
+    const eligible = groups.every((g) => g.eval.failures.length === 0);
+    const artifact = {
+      version: 1,
+      planned_at: new Date().toISOString(),
+      manifest_sha256: hash(manifest),
+      authorization: {
+        authorization_id: manifest.authorization_id,
+        operator: manifest.operator,
+        basis: manifest.basis,
+        reason: manifest.reason,
+      },
+      eligible,
+      groups: groups.map(({ spec, eval: g }) => ({
+        group_id: spec.group_id,
+        base_digest: spec.base_digest,
+        successor_unit: spec.successor_unit,
+        eligible: g.failures.length === 0,
+        failures: g.failures,
+        void: spec.void,
+        republish_generations: g.republishGenerations,
+        final_generation: g.finalGeneration,
+        ghost_generations: g.ghostGenerations,
+        revision_id: g.revisionId ?? '',
+        successor:
+          g.successorInputDigest != null && g.jobId != null
+            ? {
+                unit: spec.successor_unit,
+                entity_revision: spec.base_digest,
+                input_digest: g.successorInputDigest,
+                job_id: g.jobId,
+                input: g.successorInput,
+              }
+            : null,
+        ghost_job_ids: g.ghostJobIds,
+      })),
+    };
+    // A frozen plan is write-once evidence — never overwrite an earlier plan.
+    const file = await open(outPath, 'wx');
+    try {
+      await file.writeFile(JSON.stringify(artifact, null, 2));
+    } finally {
+      await file.close();
+    }
+    console.log(
+      eligible ? `plan OK — wrote ${outPath}` : `plan has ineligible groups — wrote ${outPath}`,
+    );
+    if (!eligible) process.exitCode = 1;
   } finally {
-    await boss.stop();
     await db.$client.end();
   }
 }
 
-const [mode, path, manifestPath] = process.argv.slice(2);
-if (mode === '--help')
-  console.log(
-    'TEST only: --preflight <new-receipt.json> OR --reopen-approved-five <receipt.json> <private-five-identities.json>. Preflight sends one probe per admission mode (solve per distinct resolved solver lane + one source_crosscheck on the primary lane) using the shared capability-driven submit wire policy. Never retries; no Docker.',
-  );
-else {
-  const run =
-    mode === '--preflight' && path
-      ? preflight(path)
-      : mode === '--reopen-approved-five' && path && manifestPath
-        ? reopen(path, manifestPath)
-        : Promise.reject(new Error('Use --help; explicit mode and paths are required'));
-  run
-    .catch((error) => {
-      console.error(error instanceof Error ? error.message : String(error));
-      process.exitCode = 1;
-    })
-    .finally(async () => {
-      await closeHydratedDb?.().catch(() => {});
-    });
+const [mode, positional, ...flagArgs] = process.argv.slice(2);
+const flags: Record<string, string> = {};
+for (let i = 0; i < flagArgs.length; i += 1) {
+  const arg = flagArgs[i];
+  if (arg.startsWith('--')) {
+    const next = flagArgs[i + 1];
+    if (next !== undefined && !next.startsWith('--')) {
+      flags[arg.slice(2)] = next;
+      i += 1;
+    } else {
+      flags[arg.slice(2)] = 'true';
+    }
+  }
 }
+const run =
+  mode === '--help'
+    ? Promise.resolve(
+        console.log(
+          'TEST only: --preflight <new-receipt.json> | --plan <manifest.json> --out <plan.json>. ' +
+            'Preflight sends one probe per admission mode (solve per distinct resolved solver lane + one source_crosscheck on the primary lane). ' +
+            '--plan is read-only and freezes the void+reauthorization manifest for the backlog driver ' +
+            '(drive --authorized <plan.json> releases each group inside its per-question gates). ' +
+            'This script never enqueues jobs or mutates paid_effect. Never retries; no Docker.',
+        ),
+      )
+    : mode === '--preflight' && positional
+      ? preflight(positional)
+      : mode === '--plan' && positional && flags.out
+        ? plan(positional, flags.out)
+        : Promise.reject(new Error('Use --help; explicit mode and paths are required'));
+run
+  .catch((error) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  })
+  .finally(async () => {
+    await closeHydratedDb?.().catch(() => {});
+  });

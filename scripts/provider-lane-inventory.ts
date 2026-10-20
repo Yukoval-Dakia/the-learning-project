@@ -159,25 +159,6 @@ export const PRUNED_MISCONCEPTION_MODULES = prunedMisconceptionModules;
 
 export const IMPORTED_FETCH_EXCEPTIONS = [
   {
-    path: 'src/server/ai/provider-idle-fetch.ts',
-    source: 'undici',
-    imported: 'fetch',
-    local: 'undiciFetch',
-    owner: 'server/ai',
-    purpose:
-      'YUK-1531 idle-timeout transport for a task budget longer than the OpenAI SDK default; the same Pi request, not a new provider endpoint',
-    expectedCalls: 1,
-    directImporters: [
-      {
-        path: 'src/server/ai/pi-agent-adapter.ts',
-        kind: 'runtime',
-        source: './provider-idle-fetch',
-        imported: 'createIdleBudgetFetch',
-        local: 'createIdleBudgetFetch',
-      },
-    ],
-  },
-  {
     path: 'src/capabilities/ingestion/server/pinned-fetch.ts',
     source: 'undici',
     imported: 'fetch',
@@ -1147,6 +1128,101 @@ export const PROVIDER_LANES = [
     },
     costSupport:
       'no durable cost row under the explicit support exemption; the dated artifact preserves model, endpoint, duration, outcome, and raw response',
+  },
+  {
+    id: 'catalog.provider-models-check',
+    owner: 'server/ai',
+    disposition: 'migrate',
+    wire: {
+      path: 'src/server/ai/provider-models-check.ts',
+      calls: ['fetchImpl', 'fetchImpl', 'fetchImpl'],
+      contains: ['/models', 'max_tokens: 1'],
+    },
+    callers: [
+      {
+        path: 'src/server/ai/model-catalog.ts',
+        calls: [
+          'listProviderModels',
+          'claimDueProbes',
+          'collectProviderProbes',
+          'paidProbePostings',
+          'finalizeProviderModelsChecks',
+        ],
+      },
+    ],
+    directImporters: [{ path: 'src/server/ai/model-catalog.ts', kind: 'runtime' }],
+    roles: ['api', 'worker'],
+    provider: 'each implemented provider whose credential is present in this process',
+    model:
+      'one pinned probe model per provider; deepseek-v4.1-flash stays high effort and does not send tool_choice',
+    endpointClass:
+      'credentialed GET /models (paginated) plus one persisted 1-token POST on the product wire',
+    configuration: {
+      endpoint: {
+        summary: 'product wire root from providerModelsRoot; models.dev api fields are not used',
+        source: {
+          path: 'src/server/ai/provider-models-check.ts',
+          imports: ['./providers'],
+          calls: ['providerModelsRoot'],
+        },
+      },
+      credential: {
+        summary: 'lane credential env via providerCredentialEnvName; a missing key is unconfigured',
+        source: {
+          path: 'src/server/ai/provider-models-check.ts',
+          imports: ['./providers'],
+          calls: ['providerCredentialEnvName'],
+        },
+      },
+      model: {
+        summary:
+          'providerAuthProbeModel pins one model per provider; opencode-go probes deepseek-v4.1-flash at high effort',
+        source: {
+          path: 'src/server/ai/provider-models-check.ts',
+          imports: ['./providers'],
+          calls: ['providerAuthProbeModel', 'probeBody'],
+        },
+      },
+    },
+    evidence: {
+      path: 'src/server/ai/model-catalog.ts',
+      calls: ['writeModelCatalogProbeCost', 'withinSessionAdvisoryLock'],
+      contains: ['model-catalog:refresh'],
+    },
+    attemptSemantics: {
+      admittedUnit:
+        'one /models page or one 1-token auth probe; a missing key, auth failure, or unreachable list does not call the model',
+      transportRetryCount: 0,
+      attemptsPerInvocation: {
+        kind: 'dynamic',
+        multiplierRationale:
+          'one GET /models per configured provider, plus up to 9 has_more pages, and at most one probe per key fingerprint; a missing key, list auth failure, fresh claim, or fresh unsettled receipt skips the probe',
+      },
+      durableIdentity:
+        'the probe receipt and credential fingerprint live on model_catalog_cache.payload.provider_checks; a later refresh reuses them only while the fingerprint matches',
+      timeout:
+        '15s per /models page and 30s for the probe, both AbortSignal.timeout with redirect error',
+      clientRetry:
+        '429/5xx, other returned 4xx such as 400/404, and a dispatched timeout or socket reset are stored as unsettled and skipped for one hour; a request that never left the process is not stored',
+      redelivery:
+        'a claim is written under the session lock before the probe is sent; owed postings are written before the receipt, and still written when the catalog transaction fails',
+      fanOut:
+        'implemented providers are listed in parallel; claimed probes run one provider at a time after the claim lock is released',
+      evidence: [
+        {
+          path: 'src/server/ai/provider-models-check.ts',
+          calls: ['AbortSignal.timeout', 'runProbe'],
+          contains: ['LIST_TIMEOUT_MS = 15_000', 'PROBE_TIMEOUT_MS = 30_000'],
+        },
+        {
+          path: 'src/server/ai/model-catalog.ts',
+          calls: ['withinSessionAdvisoryLock', 'bookPaidProbes'],
+          contains: ["key: 'model-catalog:refresh'"],
+        },
+      ],
+    },
+    costSupport:
+      'a billed probe writes one cost_ledger attempt row (task_kind model_catalog_auth_probe) with models.dev rates; anthropic-sub is estimated 0; an unpriced probe stores null rather than a fake zero',
   },
 ] as const satisfies readonly ProviderLane[];
 

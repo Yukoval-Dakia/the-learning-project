@@ -1,30 +1,16 @@
-# YUK-1570 依赖基线机制 QA 修复 — 2026-10-19
+# Architecture deepening — 2026-10-19
 
-独立 worktree `/workspace/amp/wt/YUK-1570`，分支 `yuk-1570-baseline-ratchet`，
-[ready PR1830](https://github.com/Yukoval-Dakia/the-learning-project/pull/1830)。只交付基线机制，
-不关闭票、不改 Linear 状态、不压降业务依赖、不合并或部署。目标总数和期限归 PM。
+Current owner: arch-lead, refactor/yuk-1572-stream-modules, base d41f24213. Six tickets relabelled T3. Grok retains #1830 ratchet writer; semantic alignment posted to PR and YUK-1570. First-three plan approved: docs/planning/2026-10-19-architecture-deepening.md. SWE-2 source writer released at 2cd19533a: stream-store 1427, inputs355, view410; >1500 files17. Merged main615437b76 into d38e72c447; parent typecheck/lint179warnings/full build/boundary+architecture audits exit0. Kimi R1 APPROVE d41..2cd, source unchanged; exact5c0e CI39252986951 SUCCESS. Main2176 integration only PLAN/now conflicts; new synthetic-head checks/CI pending, no new source review needed. Sol independently examines knowledge outbound SCC cut after GLM notes-only impossibility inference was rejected. Parent owns docs/review/integration. No tests/DB/Docker/TEST/provider operations. Baseline measured: SCC1/5 members, cap-server443, >1500 files18, baseline141 lines. External bulky evidence approved with permanent retention; old HEAD deletion requires copy/hash/reference inventory and per-batch coordinator review. First evidence PR updates AGENTS for all lanes. Test shrink remains inventory only pending owner approval.
 
-main d41f242138ee2336abd9a58bd2e99f3f958b5263 新旧脚本实测 443/0/48，practice→ai 66。
-按 PM 21:21 JST 裁决，increase 的 justification 是 offset 或 recorded_ruling 判别联合。
-offset 要求同类别其他 pair 相对 Git base 有真实下降且总数不升；仅 reason/exitCondition 不准入。
-裁决出处只校验 HTTP(S) URL 结构，具体授权由 reviewer 核验，不冒称联网验证。
-本轮 Node24.0.0、pnpm11.13.1 的 typecheck/lint/build、唯一 CLI 测试、CI 模式边界审计通过。
-lint 179 warnings。测试在旧实现及 main 为 RED，修复后 GREEN。临时真实源码 Git 仓库中，
-S7 66→67 仅理由、虚假 offset、纸面下降均 exit 1；真实 notes→ai 8→7 抵消、带裁决出处的
-合成输入均 exit 0；方向错误包含文件与 changes.0 路径。正式 baseline 仍 443/0/48，
-changes 留空，不造记录。日志在 `.amp/in/artifacts/qa-fix/`，命令与限制见 PR。
-产品修复已普通推送 25d28e29727a317620afa356c485e358b42f91ce，CI39254942736 失败。
-仅 architecture lane 失败，其他执行 lane 成功。CI 合成树 3db53a5a5 含 main aa1156f8 的
-#1811/YUK-1567 新增 practice→r2 3→4（总数444），事件 base 仍 d41 的443，缺上调记录。
-YUK-1567 00:26 评论记载旧批准合为444，尚待协调线确认该来源可作为本口径的裁决及退出条件。
-阻塞已留 YUK-1570 评论 6cd6a6bb-a49f-4e60-81cc-d1731f245b47；不伪造授权或仅换 base 绕过。
-远端 CI 失败，QA 复核待进行；旧 90ab91c3 的绿色 CI 不代表本次修复通过。
+# YUK-1525 题库计数 draft 交接 — 2026-10-19
 
-无本机全量测试、DB、UI、provider 或付费调用。已查 Linear，没有新增范围外 actionable 缺陷，
-实际依赖压降留 PM 后续规划。PR1822 此时仍开放；+5 须有抵消或基线中的协调线裁决出处。
-若先合入但缺证明，停止整合并交协调线补齐，不能借换 base 当历史豁免。
-后续用 merge main 维持同一分支普通 push，不 force push；本轮未整合 #1822。
-没有运行服务或持有 runtime 锁。
+本 worktree `/workspace/amp/wt/YUK-1525`，分支 `yuk-1525-serving-counts-sql`，只处理 YUK-1525。服务「第一天能用」。SQL 统一 lifecycle 理由，冻结题面按200行分批复用 `decideAutomaticServing`，不复制规则。服务状态计数与列表使用 repeatable-read 只读事务，保留 API 字段与 offset 契约。
+
+临时 Postgres 17/pgvector 全量迁移后造2600行。旧路径计数1846且最新仅 `q_02000`；修后2400且 `q_02600` 可见。原投影对全库逐行统计为2400，八种理由一致，2600行 serving 投影零差异。翻页、难度/时间排序、tier、family、空集合与 HTTP handler 参数已实跑。原始命令、数据和结果封存在本机 `.amp/in/artifacts/`。没有新测试、完整本机测试、UI 改动或付费调用。
+
+仅授权 commit、普通 push、draft PR，未授权本轮 merge 或部署。独立审查工具因额度限制未执行，不能标为通过；后续仍需独立审查与 exact-head CI。Linear 保持未完成，PR 链接与状态以该票交接评论为准。未发现需另建票的范围外缺陷。
+
+以下为其他 lane 的历史交接，不表示本线程接管。
 
 # YUK-1404 figure main composition — 2026-10-11
 

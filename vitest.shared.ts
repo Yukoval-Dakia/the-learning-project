@@ -273,7 +273,6 @@ export const dbTestInclude = [
   'src/server/export/subscription-backup.db.test.ts',
   'src/server/mastery/fixed-anchor.db.test.ts',
   'src/server/mastery/item-calibration.db.test.ts',
-  'src/server/mastery/kt-calibration.db.test.ts',
   'src/server/mastery/personalized-difficulty.db.test.ts',
   'src/server/mastery/recalibration.db.test.ts',
   'src/server/mastery/retire-state-on-merge.db.test.ts',

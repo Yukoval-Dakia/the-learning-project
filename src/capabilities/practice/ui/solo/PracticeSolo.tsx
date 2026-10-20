@@ -7,7 +7,8 @@
 // - banner (R2): way back and 需要提示？ (the hint drawer) on one quiet line, eyebrow (source ·
 //   position · minutes), serif title, state chips; the mascot sits at the banner's right in the
 //   page's flow (B1; it scrolls with the banner);
-// - one sheet of paper: the question with its number in the gutter, each answer written right
+// - the page itself is white paper (owner 2026-10-18, R2: no card): a 「题目」 label, then the
+//   question with its number in the gutter, each answer written right
 //   under its own question on ruled lines, a glass action bar floating at the bottom while
 //   answering (T3: a floating layer), then the result settling in place (R3) and the earlier
 //   attempts at the end;
@@ -15,9 +16,9 @@
 // - a question whose issuance carries a presentation (YUK-1497) is drawn by its block tree
 //   instead: the blocks lay out the text, figures, passage and inputs, and their answers go
 //   through the same draft, autosave and submit engine.
-// The companion stays the global Copilot drawer, opened from the shell's Copilot button as in 纸面;
-// where it sits on this page is not decided, so it is not embedded here. Quoting question text
-// puts it in that drawer's composer.
+// The companion stays the global Copilot drawer, opened from the shell's Copilot button or ⌘J
+// when needed (owner 2026-10-18, C1: closed by default on this page, no persistent column), so it
+// is not embedded here. Quoting question text puts it in that drawer's composer.
 //
 // No effects. Window listeners belong to DOM nodes through ref callbacks (pagehide flush on the
 // answering root, ⌘Enter on the action bar, the selection listener on the quotable root); the
@@ -1055,7 +1056,10 @@ export function PracticeSolo({
 
     const hasStem = !hasPassage || figures.length > 0 || !multiPart;
     const sheet = (
-      <article className="un-ps-sheet" aria-label="题目与作答">
+      <article className="un-ps-sheet" aria-labelledby={id('sheet')}>
+        <h2 id={id('sheet')} className="un-ps-sheet-label">
+          题目
+        </h2>
         {blockSheet}
         {!blocks && hasStem && (
           <div className="un-ps-sheet-q">

@@ -210,6 +210,23 @@ export async function registerOrchestrator(
  * 每条 orchestrator job 投给两者 → 整条夜链（含付费 LLM 根节点）双跑。
  * 反过来把 work 放最后是安全的：cron 已排但消费者还没起，只是这一拍晚几秒被 poll 到。
  */
+// 已从 manifest 摘掉、但旧库 schedule 仍会发 job 的裸 cron。不在当前 DAG 成员里，
+// registerCapabilityJobs 也不会再排它们。
+const RETIRED_BARE_CRONS = ['kt_estimate_nightly', 'axis_state_nightly'] as const;
+
+async function unscheduleRetiredCrons(boss: PgBoss): Promise<void> {
+  for (const name of RETIRED_BARE_CRONS) {
+    await boss.unschedule(name);
+    try {
+      // 尚未进入 active 的排队 job 没有消费者。已经 active 的留给队列 expire。
+      await boss.deleteQueuedJobs(name);
+    } catch (err) {
+      if (err instanceof Error && err.message === `Queue ${name} does not exist`) continue;
+      throw err;
+    }
+  }
+}
+
 async function mountOrchestrator(boss: PgBoss, db: Db, dag: JobDag): Promise<void> {
   await ensureOrchestratorQueues(boss);
 
@@ -240,6 +257,8 @@ async function mountOrchestrator(boss: PgBoss, db: Db, dag: JobDag): Promise<voi
       `[orchestrator] aborting mount: could not clear legacy cron for ${failedUnschedules.length} DAG member(s) (${failedUnschedules.join(', ')}); mounting the anchor now would let them both self-fire and be orchestrated (duplicate paid jobs, dependency gate bypassed)`,
     );
   }
+
+  await unscheduleRetiredCrons(boss);
 
   // 单锚点 cron（图成员自身已无 cron，validateComposition 强制）。
   await boss.schedule(ORCHESTRATOR_QUEUE, ORCHESTRATOR_CRON, {}, { tz: ORCHESTRATOR_TZ });

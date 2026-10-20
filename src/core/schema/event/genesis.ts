@@ -346,15 +346,15 @@ export type QuestionBlockRowSnapshotT = z.infer<typeof QuestionBlockRowSnapshot>
 //
 // The projected (fold) shape of an `item_calibration` row (src/db/schema.ts:2214-2275). YUK-496 方案 A
 // (owner 2026-08-26): the table is B-CLASS BACKFILLED, not event-sourced — its rows are born from
-// `runItemPriorBackfill` → `applyItemPrior` direct INSERTs (and mutated by kt-calibration /
+// `runItemPriorBackfill` → `applyItemPrior` direct INSERTs (and mutated by
 // recalibration UPDATEs) with NO canonical event, so the ONLY event the fold ever sees is the
 // `experimental:genesis` anchor (payload.row = the row's CURRENT values). The fold is therefore
 // ANCHOR-ONLY: fold(latest genesis) == the row snapshot, byte for byte (b / b_anchor / b_calib /
 // confidence / kt_json / … all carried verbatim — every column is fold truth, mirroring the
 // goal / artifact full-row precedent).
 //
-// KNOWN PLAN A BOUNDARY (deliberate, ticket-scoped): a post-anchor imperative write (the nightly
-// KT kt_json sink, a recalibration b_calib firm-up) is invisible to the log, so audit:projection
+// KNOWN PLAN A BOUNDARY (deliberate, ticket-scoped): a post-anchor imperative write (a
+// recalibration b_calib firm-up) is invisible to the log, so audit:projection
 // reports that row as DRIFT until it is re-anchored or the future canonical-event route (方案 B /
 // the YUK-405 attempt+fixed_anchor fold) lands. "不动 B1 在线写逻辑" is the owner's explicit
 // trade-off; the drift is the honest event=truth signal, not a false positive to suppress.

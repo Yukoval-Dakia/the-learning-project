@@ -74,6 +74,17 @@
  *     into the ledger before the first drive — nothing is charged at zero.
  *     Resume re-ajudicates every settled receipt (alarms/timeout) before any
  *     further enqueue.
+ *   - --authorized <plan.json> (YUK-1567): the frozen void+successor PLAN
+ *     emitted by yuk1547-admission-reopen --plan. Authorized groups are
+ *     verified against the DB at every run (phase-aware: pre-release rows
+ *     stay 'unknown' at the frozen fences; post-release rows are 'voided'
+ *     under the same authorization_id with successor row + bound job). Each
+ *     authorized group's void + authorization + successor intent + bound
+ *     enqueue is RELEASED inside its own per-question gate turn — after the
+ *     queue/unknown-rate/budget gates pass for that item — so an un-released
+ *     group has no consumable send. They are exempted from the --sent
+ *     overlap guard only because the authorization IS the re-send evidence;
+ *     every other overlap stays fatal.
  *
  * Ledger schema (the frozen prior-B artifact — e.g.
  * review/stage1-yuk1547-ledger-20261019/prior-b-ledger.verified.json — plus
@@ -89,9 +100,11 @@
  * duplicate run/count ids, totals finite non-negative.
  *
  * usage:
- *   tsx scripts/yuk1547-admission-backlog.ts check --manifest <m.json> <group_id>
+ *   tsx scripts/yuk1547-admission-backlog.ts check --manifest <m.json>
+ *       [--authorized <plan.json>] <group_id>
  *   tsx scripts/yuk1547-admission-backlog.ts drive --manifest <m.json> --out <dir>
  *       --preflight-receipt <path> --ledger <history-ledger.json>
+ *       [--authorized <plan.json>]
  *       [--batch N] [--batch-size 20]
  *       [--per-question-usd 0.03] [--cumulative-usd 1] [--hard-cap-usd 3]
  *       [--unknown-reserve-usd 0.01] [--max-unknown-rate 0.1]
@@ -113,8 +126,15 @@ import {
   admissionJobId,
   lockAdmissionGroup,
 } from '@/capabilities/practice/server/admission/enqueue';
+import {
+  type AdmissionVoidRecovered,
+  type AdmissionVoidRelease,
+  recoverAdmissionVoidSend,
+  releaseAdmissionVoidSuccessor,
+} from '@/capabilities/practice/server/admission/reauthorization';
 import { resolveQuestionAdmissionPolicyId } from '@/capabilities/practice/server/admission/run-admission';
 import { QUESTION_ADMISSION_TASK_KIND } from '@/capabilities/practice/server/admission/solve';
+import { getPracticeBoss } from '@/capabilities/practice/server/queue-runtime';
 import {
   QUESTION_ADMISSION_PAID_UNIT,
   QUESTION_ADMISSION_POLICY_ID,
@@ -243,6 +263,57 @@ function manifestActorRef(scope: ManifestScope | null): string {
   if (scope === null) return LEGACY_ACTOR_REF;
   return scope.actor_ref ?? `stage1:${scope.id}`;
 }
+
+// YUK-1567 — the frozen void+reauthorization plan emitted by
+// yuk1547-admission-reopen --plan: explicit old 'unknown' row identities +
+// fence CAS tokens, the frozen successor identity, its bound job id, and the
+// republish generations the release will emit. The DRIVER releases each group
+// inside its own per-question gate (STOP / queue / unknown-rate / budget) —
+// nothing in this file is consumable before that turn.
+const digestRe = z.string().regex(/^sha256:[0-9a-f]{64}$/);
+const authorizedGroupSchema = z.object({
+  group_id: z.string().min(1),
+  base_digest: digestRe,
+  successor_unit: z.string().min(1),
+  eligible: z.boolean(),
+  void: z
+    .array(
+      z.object({
+        unit: z.string().min(1),
+        input_digest: digestRe,
+        expected_fence: z.number().int().nonnegative(),
+      }),
+    )
+    .nonempty(),
+  republish_generations: z.array(z.number().int().nonnegative()).nonempty(),
+  final_generation: z.number().int().nonnegative(),
+  ghost_generations: z.array(z.number().int().nonnegative()),
+  revision_id: z.string().min(1),
+  successor: z
+    .object({
+      unit: z.string().min(1),
+      entity_revision: digestRe,
+      input_digest: digestRe,
+      job_id: z.string().min(1),
+      input: z.unknown().optional(),
+    })
+    .nullable(),
+  ghost_job_ids: z.array(z.string()).default([]),
+});
+type AuthorizedGroup = z.infer<typeof authorizedGroupSchema>;
+const authorizedManifestSchema = z.object({
+  version: z.literal(1),
+  authorization: z.object({
+    authorization_id: z.string().min(1),
+    operator: z.string().min(1),
+    basis: z.string().min(1),
+    reason: z.string().min(1),
+  }),
+  eligible: z.boolean(),
+  groups: z.array(authorizedGroupSchema).nonempty(),
+});
+type AuthorizedManifest = z.infer<typeof authorizedManifestSchema>;
+type ReleasedGroup = AuthorizedGroup & { successor: NonNullable<AuthorizedGroup['successor']> };
 
 /**
  * The fixed historical cost ledger this window must merge — supplied by the
@@ -460,6 +531,7 @@ export function parseProviderHttpError(text: string | null | undefined): HttpEvi
 // ─── db boot ─────────────────────────────────────────────────────────────────
 
 let dbHandle: Db | undefined;
+let bossHandle: Awaited<ReturnType<typeof getPracticeBoss>> | undefined;
 let configEpoch = 0;
 async function dbBoot(): Promise<Db> {
   const { db } = await import('@/db/client');
@@ -822,7 +894,7 @@ function boundRunIds(row: PaidRow): {
 }
 
 const TERMINAL_JOB_STATES = new Set(['completed', 'failed', 'cancelled']);
-const TERMINAL_PAID_STATES = new Set(['applied', 'unknown']);
+const TERMINAL_PAID_STATES = new Set(['applied', 'unknown', 'voided']);
 
 // ─── baselines / invariants ─────────────────────────────────────────────────
 
@@ -1347,6 +1419,240 @@ async function admissionQueueGate(
   };
 }
 
+// ─── authorized (void+successor) sends ──────────────────────────────────────
+
+/**
+ * DB-side verification of the frozen plan, phase-aware. BEFORE release every
+ * named row must still be 'unknown' at the recorded fence with NO
+ * authorization rows, NO successor row and NO bound job; AFTER release the
+ * rows are 'voided' under this authorization_id, the authorization rows
+ * exist, the successor row exists, and the bound job exists. A partial void
+ * count is inconsistent state and fails loudly. Read-only — the driver's
+ * release re-verifies under locks.
+ */
+async function authorizedBindingFailures(
+  db: Db | Tx,
+  authId: string,
+  entry: ReleasedGroup,
+): Promise<string[]> {
+  const failures: string[] = [];
+  const { paid_effect, paid_effect_authorization } = await import('@/db/schema');
+  const expectedJob = admissionJobId(
+    entry.group_id,
+    entry.revision_id,
+    entry.base_digest,
+    entry.final_generation,
+  );
+  if (entry.successor.job_id !== expectedJob) {
+    failures.push(`bound job_id ${entry.successor.job_id} != derived ${expectedJob}`);
+  }
+  const rows = await db
+    .select()
+    .from(paid_effect)
+    .where(and(eq(paid_effect.family, FAMILY), eq(paid_effect.entity_id, entry.group_id)));
+  const targets = entry.void.map((v) =>
+    rows.find((r) => r.unit === v.unit && r.input_digest === v.input_digest),
+  );
+  const voidedCount = targets.filter((r) => r?.state === 'voided').length;
+  const [job] = (await db.execute(
+    sql`select id from pgboss.job where id = ${entry.successor.job_id}::uuid`,
+  )) as unknown as { id: string }[];
+  const auths = await db
+    .select()
+    .from(paid_effect_authorization)
+    .where(
+      and(
+        eq(paid_effect_authorization.family, FAMILY),
+        eq(paid_effect_authorization.entity_id, entry.group_id),
+      ),
+    );
+  const ours = auths.filter((a) => a.authorization_id === authId);
+  const successorRow = rows.find(
+    (r) =>
+      r.entity_revision === entry.base_digest &&
+      r.unit === entry.successor.unit &&
+      r.input_digest === entry.successor.input_digest,
+  );
+  if (voidedCount === 0) {
+    // Not yet released: every target must still be an explicit 'unknown' at
+    // the frozen fence — nothing else may have changed.
+    for (const [i, row] of targets.entries()) {
+      const v = entry.void[i];
+      if (!row) {
+        failures.push(`void target missing: ${v.unit}|${v.input_digest}`);
+      } else if (row.state !== 'unknown') {
+        failures.push(`void target ${v.unit}|${v.input_digest} is '${row.state}', not 'unknown'`);
+      } else if (row.fence !== v.expected_fence) {
+        failures.push(
+          `void target ${v.unit}|${v.input_digest} fence ${row.fence} != plan ${v.expected_fence}`,
+        );
+      }
+    }
+    if (ours.length > 0) failures.push('authorization rows exist before release');
+    if (successorRow) failures.push('successor paid row exists before release');
+    if (job) failures.push(`bound job ${entry.successor.job_id} exists before release`);
+  } else if (voidedCount === entry.void.length) {
+    for (const [i, row] of targets.entries()) {
+      const receipt = row?.void_json as { authorizationId?: string } | null;
+      if (receipt?.authorizationId !== authId) {
+        failures.push(
+          `voided row ${entry.void[i].unit}|${entry.void[i].input_digest} authorization mismatch`,
+        );
+      }
+    }
+    if (ours.length < entry.void.length) {
+      failures.push('authorization rows missing under this authorization_id');
+    }
+    if (!successorRow) failures.push('authorized successor paid row missing');
+    if (!job) failures.push(`bound job ${entry.successor.job_id} missing`);
+  } else {
+    failures.push(
+      `partial void state (${voidedCount}/${entry.void.length} targets voided) — inspect`,
+    );
+  }
+  return failures;
+}
+
+function authorizedSpec(entry: ReleasedGroup): {
+  groupId: string;
+  baseDigest: string;
+  successorUnit: string;
+  void: { unit: string; inputDigest: string; expectedFence: number }[];
+} {
+  return {
+    groupId: entry.group_id,
+    baseDigest: entry.base_digest,
+    successorUnit: entry.successor_unit,
+    void: entry.void.map((v) => ({
+      unit: v.unit,
+      inputDigest: v.input_digest,
+      expectedFence: v.expected_fence,
+    })),
+  };
+}
+
+/**
+ * Release ONE authorized group — runs inside the per-question gate turn
+ * (after STOP/queue/unknown-rate/budget all passed for this item). One
+ * transaction: re-verify the frozen plan under locks → republish
+ * (owner_hold → unverified_rules) → enqueue the single bound job → void each
+ * named 'unknown' row + bind this successor + this delivery. Committed but
+ * crashed before file persistence → recoverAdmissionVoidSend rebuilds
+ * evidence without re-mutating.
+ */
+async function authorizedRelease(
+  db: Db,
+  boss: Awaited<ReturnType<typeof getPracticeBoss>>,
+  entry: ReleasedGroup,
+  auth: AuthorizedManifest['authorization'],
+): Promise<AdmissionVoidRelease & { sentAt?: string }> {
+  const spec = authorizedSpec(entry);
+  const frozen = {
+    finalGeneration: entry.final_generation,
+    revisionId: entry.revision_id,
+    successorInputDigest: entry.successor.input_digest,
+    jobId: entry.successor.job_id,
+    republishGenerations: entry.republish_generations,
+  };
+  return db.transaction(async (tx) => {
+    const recovered = await recoverAdmissionVoidSend(tx, spec, frozen, auth.authorization_id);
+    if (recovered) return recovered;
+    return releaseAdmissionVoidSuccessor(
+      tx,
+      spec,
+      frozen,
+      {
+        authorizationId: auth.authorization_id,
+        reason: auth.reason,
+        operator: auth.operator,
+        basis: auth.basis,
+      },
+      boss,
+    );
+  });
+}
+
+/** Queue-gate ownership: every republish event triple + ghost job the
+ *  releases will emit (pre-release the ids don't exist yet — triples are
+ *  computable from the frozen plan). */
+function authorizedOwnedEvents(auth: AuthorizedManifest | null): OwnedPublishEvents {
+  const eventIds = new Set<string>();
+  const tripleKeys = new Set<string>();
+  const sends: OwnedPublishEvents['sends'] = [];
+  for (const g of auth?.groups ?? []) {
+    for (const generation of g.republish_generations) {
+      tripleKeys.add(publishTripleKey(g.group_id, g.revision_id, generation));
+      sends.push({ groupId: g.group_id, revisionId: g.revision_id, generation });
+    }
+  }
+  return { eventIds, tripleKeys, sends };
+}
+
+function mergeOwned(a: OwnedPublishEvents, b: OwnedPublishEvents): OwnedPublishEvents {
+  const sends = new Map(
+    [...a.sends, ...b.sends].map((s) => [
+      publishTripleKey(s.groupId, s.revisionId, s.generation),
+      s,
+    ]),
+  );
+  return {
+    eventIds: new Set([...a.eventIds, ...b.eventIds]),
+    tripleKeys: new Set([...a.tripleKeys, ...b.tripleKeys]),
+    sends: [...sends.values()],
+  };
+}
+
+/** Job identities the gate may exempt: ghost jobs (stale-generation
+ *  subscribers of each release's republish events) plus the bound jobs.
+ *  Window-open only — the per-item NEW-send gate exempts ghosts alone. */
+function authorizedInFlight(
+  auth: AuthorizedManifest | null,
+  manifestById: Map<string, ManifestItem>,
+): InFlightSend[] {
+  const sends: InFlightSend[] = [];
+  for (const g of auth?.groups ?? []) {
+    const item = manifestById.get(g.group_id);
+    if (!item) continue;
+    for (const generation of [...g.ghost_generations, g.final_generation]) {
+      sends.push({
+        groupId: g.group_id,
+        revisionId: g.revision_id,
+        generation,
+        digest: item.integrity_digest,
+      });
+    }
+  }
+  return sends;
+}
+
+/**
+ * Per-item gate exemptions: ONLY the stale-generation ghost jobs each
+ * authorized release can produce (the republish's intermediate event also
+ * enqueues, and always resolves 'stale' — it can never spend). The bound
+ * successor job of a previously released group is terminal by the time the
+ * loop reaches the next item, so it is NOT exempted — a still-running bound
+ * send must keep blocking the next release.
+ */
+function authorizedGhostJobs(
+  auth: AuthorizedManifest | null,
+  manifestById: Map<string, ManifestItem>,
+): InFlightSend[] {
+  const sends: InFlightSend[] = [];
+  for (const g of auth?.groups ?? []) {
+    const item = manifestById.get(g.group_id);
+    if (!item) continue;
+    for (const generation of g.ghost_generations) {
+      sends.push({
+        groupId: g.group_id,
+        revisionId: g.revision_id,
+        generation,
+        digest: item.integrity_digest,
+      });
+    }
+  }
+  return sends;
+}
+
 // ─── receipt io ─────────────────────────────────────────────────────────────
 
 const intentPath = (outDir: string, id: string) => join(outDir, `intent-${id}.json`);
@@ -1596,6 +1902,7 @@ async function drive(opts: {
   preflightReceipt?: string;
   ledgerPath: string;
   sentIdsPath?: string;
+  authorizedPath?: string;
 }): Promise<void> {
   const db = await dbBoot();
   const manifestRaw = await readJson(opts.manifestPath);
@@ -1615,8 +1922,50 @@ async function drive(opts: {
   const manifestIds = new Set(manifest.map((item) => item.id));
   if (manifestIds.size !== manifest.length) throw new Error('manifest contains duplicate ids');
   const manifestById = new Map(manifest.map((item) => [item.id, item]));
+  // YUK-1567: the frozen void+reauthorization plan. NOTHING becomes
+  // consumable at parse time — each authorized group is voided + bound +
+  // enqueued only inside its own per-question gate turn below.
+  const authorized = opts.authorizedPath
+    ? authorizedManifestSchema.parse(JSON.parse(await readFile(opts.authorizedPath, 'utf8')))
+    : null;
+  if (authorized && !authorized.eligible) {
+    throw new Error('authorized plan is not fully eligible — re-run --plan');
+  }
+  const authorizedById = new Map<string, ReleasedGroup>();
+  for (const g of authorized?.groups ?? []) {
+    if (!g.eligible || g.successor == null) {
+      throw new Error(`authorized group ${g.group_id} is ineligible or missing successor`);
+    }
+    authorizedById.set(g.group_id, g as ReleasedGroup);
+  }
+  for (const groupId of authorizedById.keys()) {
+    if (!manifestById.has(groupId)) {
+      throw new Error(`authorized group ${groupId} is not in the manifest`);
+    }
+  }
+  if (authorized) {
+    // Read-only phase-aware binding check at every run start — pre-release
+    // rows must still be 'unknown' at the frozen fences; post-release rows
+    // must be 'voided' under this authorization.
+    const bindingFailures: string[] = [];
+    for (const entry of authorizedById.values()) {
+      const failures = await authorizedBindingFailures(
+        db,
+        authorized.authorization.authorization_id,
+        entry,
+      );
+      bindingFailures.push(...failures.map((f) => `${entry.group_id}: ${f}`));
+    }
+    if (bindingFailures.length > 0) {
+      throw new Error(`authorized binding failures: ${bindingFailures.join('; ')}`);
+    }
+    bossHandle = await getPracticeBoss();
+  }
   const sentIds = opts.sentIdsPath ? await readJson<string[]>(opts.sentIdsPath) : [];
-  const leaked = sentIds.filter((id) => manifestIds.has(id));
+  // The --sent overlap guard holds for every manifest item EXCEPT authorized
+  // re-sends — the frozen authorization is the explicit evidence trail that
+  // this exact previously-sent group may send once more.
+  const leaked = sentIds.filter((id) => manifestIds.has(id) && !authorizedById.has(id));
   if (leaked.length > 0) {
     throw new Error(`already-sent ids present in manifest — never replay: ${leaked.join(', ')}`);
   }
@@ -1707,8 +2056,14 @@ async function drive(opts: {
   // sends are NOT foreign — exempting them lets a crash-resumed in-flight
   // send reach its existing-intent settle instead of a permanent STOP.
   {
-    const owned = await windowOwnedEvents(opts.outDir, manifestById);
-    const inFlight = await windowInFlightSends(opts.outDir, manifestById);
+    const owned = mergeOwned(
+      await windowOwnedEvents(opts.outDir, manifestById),
+      authorizedOwnedEvents(authorized),
+    );
+    const inFlight = [
+      ...(await windowInFlightSends(opts.outDir, manifestById)),
+      ...authorizedInFlight(authorized, manifestById),
+    ];
     const gate = await admissionQueueGate(db, owned, { exemptJobs: inFlight });
     if (!gate.clear) {
       await writeStop(opts.outDir, 'queue_not_empty', { at: 'window_open', ...gate.evidence });
@@ -1793,87 +2148,167 @@ async function drive(opts: {
       const hasIntent = await fileExists(intentFile);
       let sentAt: string;
       let publishReceipt: PublishReceipt | undefined;
+      const authEntry = authorizedById.get(item.id);
       if (hasIntent) {
         // Published but not receipted (crash between publish and settle):
         // settle the existing send — never republish.
         const intent = await readJson<{ sent_at: string }>(intentFile);
         sentAt = intent.sent_at;
       } else {
-        // Queue-empty gate before the next paid send: non-terminal jobs AND
-        // unsettled enqueue-subscription deliveries not emitted by this
-        // window — a pending delivery is paid work already owed. NO job
-        // exemptions here: every non-terminal job (ours included) blocks a
-        // NEW publish.
-        const gate = await admissionQueueGate(
-          db,
-          await windowOwnedEvents(opts.outDir, manifestById),
-        );
-        if (!gate.clear) {
-          await writeStop(opts.outDir, 'queue_not_empty', {
-            batch: batchN,
-            group_id: item.id,
-            ...gate.evidence,
-          });
-          stopped = 'queue_not_empty';
-          break;
+        // YUK-1567 probe BEFORE the gates: if this group's release already
+        // committed (voided rows + bound job) but the run died before the
+        // intent file, the bound job would look 'foreign' to the queue gate.
+        // A committed release is recovered without re-mutating and without
+        // counting as a NEW send — the gates only gate actual releases.
+        let recovered: AdmissionVoidRecovered | null = null;
+        if (authEntry) {
+          if (!authorized) throw new Error('authorized entry without manifest');
+          recovered = await recoverAdmissionVoidSend(
+            db,
+            authorizedSpec(authEntry),
+            {
+              finalGeneration: authEntry.final_generation,
+              revisionId: authEntry.revision_id,
+              republishGenerations: authEntry.republish_generations,
+              jobId: authEntry.successor.job_id,
+            },
+            authorized.authorization.authorization_id,
+          );
         }
-        // Unknown-rate gate before EVERY enqueue: recomputed against the
-        // planned batch denominator, so once an overrun is unrecoverable the
-        // next question is never sent (e.g. 3rd unknown in a 20-item batch).
-        const batchTally = await countBatchReceipts(opts.outDir, items);
-        if (batchTally.unknown > items.length * opts.thresholds.maxUnknownRate) {
-          await writeStop(opts.outDir, 'unknown_rate', {
-            batch: batchN,
-            unknown: batchTally.unknown,
-            denominator: `planned_batch_items=${items.length}`,
-            rate: opts.thresholds.maxUnknownRate,
-          });
-          stopped = 'unknown_rate';
-          break;
+        if (!recovered) {
+          // Queue-empty gate before the next paid send: non-terminal jobs AND
+          // unsettled enqueue-subscription deliveries not emitted by this
+          // window — a pending delivery is paid work already owed. Exemptions:
+          // authorized releases' ghost jobs only — provably stale-generation
+          // subscribers that resolve 'stale' and can never spend. Every other
+          // non-terminal job (incl. our own in-flight bound sends) still
+          // blocks a NEW release.
+          const gate = await admissionQueueGate(
+            db,
+            mergeOwned(
+              await windowOwnedEvents(opts.outDir, manifestById),
+              authorizedOwnedEvents(authorized),
+            ),
+            { exemptJobs: authorizedGhostJobs(authorized, manifestById) },
+          );
+          if (!gate.clear) {
+            await writeStop(opts.outDir, 'queue_not_empty', {
+              batch: batchN,
+              group_id: item.id,
+              ...gate.evidence,
+            });
+            stopped = 'queue_not_empty';
+            break;
+          }
+          // Unknown-rate gate before EVERY enqueue: recomputed against the
+          // planned batch denominator, so once an overrun is unrecoverable the
+          // next question is never sent (e.g. 3rd unknown in a 20-item batch).
+          const batchTally = await countBatchReceipts(opts.outDir, items);
+          if (batchTally.unknown > items.length * opts.thresholds.maxUnknownRate) {
+            await writeStop(opts.outDir, 'unknown_rate', {
+              batch: batchN,
+              unknown: batchTally.unknown,
+              denominator: `planned_batch_items=${items.length}`,
+              rate: opts.thresholds.maxUnknownRate,
+            });
+            stopped = 'unknown_rate';
+            break;
+          }
+          // Budget gate before enqueue — ledger-merged totals, never
+          // window-local zero: cumulative >$1 stops, and the hard cap counts
+          // unknown cost at its recorded reserve, not at zero.
+          const cumulative = await auditWindowReceipts(
+            opts.outDir,
+            ledger,
+            opts.thresholds.unknownReserveUsd,
+          );
+          if (cumulative.violations.length > 0) {
+            await writeStop(opts.outDir, 'carried_guardrail', {
+              batch: batchN,
+              violations: cumulative.violations,
+            });
+            stopped = 'carried_guardrail';
+            break;
+          }
+          if (cumulative.knownUsd > opts.thresholds.cumulativeUsd) {
+            await writeStop(opts.outDir, 'cumulative_cost', {
+              batch: batchN,
+              cumulative_known_usd: cumulative.knownUsd,
+            });
+            stopped = 'cumulative_cost';
+            break;
+          }
+          const bounded = cumulative.knownUsd + cumulative.reserveUsd;
+          if (bounded > opts.thresholds.hardCapUsd) {
+            await writeStop(opts.outDir, 'hard_cap', {
+              batch: batchN,
+              bounded_total_usd: bounded,
+            });
+            stopped = 'hard_cap';
+            break;
+          }
         }
-        // Budget gate before enqueue — ledger-merged totals, never
-        // window-local zero: cumulative >$1 stops, and the hard cap counts
-        // unknown cost at its recorded reserve, not at zero.
-        const cumulative = await auditWindowReceipts(
-          opts.outDir,
-          ledger,
-          opts.thresholds.unknownReserveUsd,
-        );
-        if (cumulative.violations.length > 0) {
-          await writeStop(opts.outDir, 'carried_guardrail', {
-            batch: batchN,
-            violations: cumulative.violations,
-          });
-          stopped = 'carried_guardrail';
-          break;
+        sentAt = recovered?.sentAt ?? new Date().toISOString();
+        if (authEntry) {
+          if (!authorized || !bossHandle) {
+            throw new Error('authorized entry without manifest or boss');
+          }
+          // YUK-1567 release turn: the void + authorization + successor
+          // intent + bound enqueue happen HERE, inside the one transaction,
+          // only after every per-question gate above passed for THIS item.
+          // Not-yet-reached groups keep their 'unknown' rows and no
+          // consumable successor exists for them.
+          const released =
+            recovered ??
+            (await authorizedRelease(db, bossHandle, authEntry, authorized.authorization));
+          const boundEvent = released.events.find(
+            (e) =>
+              e.admissionGeneration === released.generation && e.revisionId === released.revisionId,
+          );
+          // publish file FIRST, then intent — a crash before intent means the
+          // next run re-enters this branch and recovery rebuilds evidence.
+          await writeFile(
+            join(opts.outDir, `publish-${item.id}.json`),
+            JSON.stringify(
+              {
+                at: sentAt,
+                group_id: item.id,
+                admission: 'authorized',
+                revision_id: released.revisionId,
+                generation: released.generation,
+                event_emitted: boundEvent != null,
+                event_id: boundEvent?.eventId ?? null,
+                authorized: true,
+                job_id: released.jobId,
+                owned_events: released.events,
+                extra_owned_job_generations: released.ghostGenerations,
+              },
+              null,
+              2,
+            ),
+          );
+          await writeFile(
+            intentFile,
+            JSON.stringify({
+              group_id: item.id,
+              batch: batchN,
+              index: idx,
+              sent_at: sentAt,
+              authorized: true,
+              job_id: released.jobId,
+            }),
+          );
+        } else {
+          await writeFile(
+            intentFile,
+            JSON.stringify({ group_id: item.id, batch: batchN, index: idx, sent_at: sentAt }),
+          );
+          publishReceipt = await db.transaction(async (tx) => publishOne(tx, item, actorRef));
+          await writeFile(
+            join(opts.outDir, `publish-${item.id}.json`),
+            JSON.stringify({ at: sentAt, ...publishReceipt }, null, 2),
+          );
         }
-        if (cumulative.knownUsd > opts.thresholds.cumulativeUsd) {
-          await writeStop(opts.outDir, 'cumulative_cost', {
-            batch: batchN,
-            cumulative_known_usd: cumulative.knownUsd,
-          });
-          stopped = 'cumulative_cost';
-          break;
-        }
-        const bounded = cumulative.knownUsd + cumulative.reserveUsd;
-        if (bounded > opts.thresholds.hardCapUsd) {
-          await writeStop(opts.outDir, 'hard_cap', {
-            batch: batchN,
-            bounded_total_usd: bounded,
-          });
-          stopped = 'hard_cap';
-          break;
-        }
-        sentAt = new Date().toISOString();
-        await writeFile(
-          intentFile,
-          JSON.stringify({ group_id: item.id, batch: batchN, index: idx, sent_at: sentAt }),
-        );
-        publishReceipt = await db.transaction(async (tx) => publishOne(tx, item, actorRef));
-        await writeFile(
-          join(opts.outDir, `publish-${item.id}.json`),
-          JSON.stringify({ at: sentAt, ...publishReceipt }, null, 2),
-        );
       }
 
       // ── settle: poll DB until THIS send's paid row + job are terminal ──
@@ -1881,7 +2316,12 @@ async function drive(opts: {
       // input revision + admission_generation) and the job by
       // (question, revision, expected generation) — the job id is the same
       // deterministic admissionJobId the enqueue handler derives.
-      const expected = expectedSendIdentity(item, publishReceipt);
+      // Authorized sends carry the exact successor identity the void op
+      // bound — revision/generation come from the frozen authorization, not
+      // the manifest generation convention.
+      const expected = authEntry
+        ? { revisionId: authEntry.revision_id, generation: authEntry.final_generation }
+        : expectedSendIdentity(item, publishReceipt);
       const expectedJobId = admissionJobId(
         item.id,
         expected.revisionId,
@@ -2160,15 +2600,39 @@ async function drive(opts: {
 
 // ─── check (read-only eligibility) ──────────────────────────────────────────
 
-async function check(manifestPath: string, groupId: string): Promise<void> {
+async function check(
+  manifestPath: string,
+  groupId: string,
+  authorizedPath?: string,
+): Promise<void> {
   const db = await dbBoot();
   const { items: manifest } = parseManifest(await readJson(manifestPath));
   const item = manifest.find((entry) => entry.id === groupId);
   if (!item) throw new Error(`manifest has no item ${groupId}`);
-  const failures = await db.transaction(async (tx) => eligibilityFailure(tx, item));
+  const authorized = authorizedPath
+    ? authorizedManifestSchema.parse(JSON.parse(await readFile(authorizedPath, 'utf8')))
+    : null;
+  const authEntry = authorized?.groups.find((g) => g.group_id === groupId);
+  if (authorized && !authEntry) {
+    throw new Error(`group ${groupId} is not in the authorized manifest`);
+  }
+  if (authEntry && (authEntry.successor == null || !authEntry.eligible)) {
+    throw new Error(`authorized group ${groupId} is ineligible or missing successor`);
+  }
+  const failures = await db.transaction(async (tx) =>
+    authEntry
+      ? authorizedBindingFailures(
+          tx,
+          authorized?.authorization.authorization_id ?? '',
+          authEntry as ReleasedGroup,
+        )
+      : eligibilityFailure(tx, item),
+  );
   console.log(
     JSON.stringify(
-      failures.length === 0 ? { ok: true, group_id: groupId } : { ok: false, failures },
+      failures.length === 0
+        ? { ok: true, group_id: groupId, authorized: authEntry != null }
+        : { ok: false, failures, authorized: authEntry != null },
       null,
       2,
     ),
@@ -2226,7 +2690,7 @@ const positional = rest.filter(
 
 const run =
   command === 'check' && flags.manifest && positional.length === 1
-    ? check(flags.manifest, positional[0])
+    ? check(flags.manifest, positional[0], flags.authorized)
     : command === 'drive' && flags.manifest && flags.out && flags.ledger
       ? drive({
           manifestPath: flags.manifest,
@@ -2238,10 +2702,11 @@ const run =
             ? { preflightReceipt: flags['preflight-receipt'] }
             : {}),
           ...(flags.sent !== undefined ? { sentIdsPath: flags.sent } : {}),
+          ...(flags.authorized !== undefined ? { authorizedPath: flags.authorized } : {}),
         })
       : Promise.reject(
           new Error(
-            'usage: check --manifest <m.json> <group_id> | drive --manifest <m.json> --out <dir> --preflight-receipt <r.json> --ledger <history-ledger.json> [--batch N] [--batch-size 20] [--per-question-usd 0.03] [--cumulative-usd 1] [--hard-cap-usd 3] [--unknown-reserve-usd 0.01] [--max-unknown-rate 0.1] [--sent ids.json]',
+            'usage: check --manifest <m.json> [--authorized <plan.json>] <group_id> | drive --manifest <m.json> --out <dir> --preflight-receipt <r.json> --ledger <history-ledger.json> [--batch N] [--batch-size 20] [--per-question-usd 0.03] [--cumulative-usd 1] [--hard-cap-usd 3] [--unknown-reserve-usd 0.01] [--max-unknown-rate 0.1] [--sent ids.json] [--authorized <plan.json>]',
           ),
         );
 
@@ -2251,5 +2716,6 @@ run
     process.exitCode = 1;
   })
   .finally(async () => {
+    await bossHandle?.stop().catch(() => {});
     await dbHandle?.$client.end().catch(() => {});
   });
