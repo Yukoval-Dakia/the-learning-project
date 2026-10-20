@@ -175,6 +175,22 @@
       "from": 1,
       "to": 0,
       "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> ai",
+      "date": "2026-10-20",
+      "from": 62,
+      "to": 61,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> session",
+      "date": "2026-10-20",
+      "from": 7,
+      "to": 6,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -204,6 +220,46 @@
       "symbols": ["SourceAssetRow", "lockImageStorageKey", "persistImageAsset", "sha256Hex"],
       "issue": "YUK-1571",
       "owns": "Content-addressed source_asset write protocol: byte-view sha256 storage keys, one advisory lock held across blob put and owner-row commit, put compensation on insert failure, last-owner object delete with fresh re-read under the key lock",
+      "date": "2026-10-20"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/session-summary.ts",
+      "module": "src/kernel/read-models/assessment-verdict.ts",
+      "kind": "value",
+      "symbols": ["resolveVerdictsForAttempts"],
+      "issue": "YUK-1570",
+      "owns": "双轨裁决读模型：某次作答/评估最终判分的共享 resolver（legacy judge-event 与 assessment_verdict 两车道）",
+      "date": "2026-10-20"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/session-summary.ts",
+      "module": "src/kernel/read-models/cause-policy.ts",
+      "kind": "value",
+      "symbols": ["effectiveCauseForFailureAttempt"],
+      "issue": "YUK-1570",
+      "owns": "mistake 投影的 effective cause 策略：active user_cause 权威，否则最新 active agent judge",
+      "date": "2026-10-20"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/session-summary.ts",
+      "module": "src/kernel/read-models/failure-attempts.ts",
+      "kind": "value",
+      "symbols": ["getFailureAttempts"],
+      "issue": "YUK-1570",
+      "owns": "failure-attempt 证据读模型：失败 attempt 投影 + chained judge/user_cause 归因 + correction active-row 解析",
+      "date": "2026-10-20"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/session-summary.ts",
+      "module": "src/kernel/read-models/misc-cause-labels.ts",
+      "kind": "value",
+      "symbols": ["resolveMiscCauseLabels"],
+      "issue": "YUK-1570",
+      "owns": "misc_ cause id → 已晋升 misconception 节点 title 的读模型层回填",
       "date": "2026-10-20"
     },
     {
@@ -305,9 +361,18 @@
       "symbol": "persistSourceAsset",
       "targetModule": "src/kernel/records/asset-store.ts",
       "consumers": [
-        { "file": "src/capabilities/ingestion/server/docx/persist-page-evidence.ts", "line": 2 },
-        { "file": "src/capabilities/ingestion/server/source-package.ts", "line": 6 },
-        { "file": "src/capabilities/ingestion/server/tools/media-tools.ts", "line": 15 }
+        {
+          "file": "src/capabilities/ingestion/server/docx/persist-page-evidence.ts",
+          "line": 2
+        },
+        {
+          "file": "src/capabilities/ingestion/server/source-package.ts",
+          "line": 6
+        },
+        {
+          "file": "src/capabilities/ingestion/server/tools/media-tools.ts",
+          "line": 15
+        }
       ],
       "exitCondition": "consumers repoint their imports to @/kernel/records/asset-store and this re-export is deleted in the YUK-1571 compat-exit slice",
       "issue": "YUK-1571",
@@ -321,12 +386,30 @@
       "symbol": "persistImageAsset",
       "targetModule": "src/kernel/records/asset-store.ts",
       "consumers": [
-        { "file": "src/capabilities/ingestion/api/assets.ts", "line": 1 },
-        { "file": "src/capabilities/ingestion/api/pdf.ts", "line": 3 },
-        { "file": "src/capabilities/ingestion/api/assets.db.test.ts", "line": 2 },
-        { "file": "src/capabilities/ingestion/server/image-candidate-accept.ts", "line": 46 },
-        { "file": "src/capabilities/ingestion/server/docx/persist-page-evidence.ts", "line": 2 },
-        { "file": "src/capabilities/ingestion/public.ts", "line": 23 }
+        {
+          "file": "src/capabilities/ingestion/api/assets.ts",
+          "line": 1
+        },
+        {
+          "file": "src/capabilities/ingestion/api/pdf.ts",
+          "line": 3
+        },
+        {
+          "file": "src/capabilities/ingestion/api/assets.db.test.ts",
+          "line": 2
+        },
+        {
+          "file": "src/capabilities/ingestion/server/image-candidate-accept.ts",
+          "line": 46
+        },
+        {
+          "file": "src/capabilities/ingestion/server/docx/persist-page-evidence.ts",
+          "line": 2
+        },
+        {
+          "file": "src/capabilities/ingestion/public.ts",
+          "line": 23
+        }
       ],
       "exitCondition": "consumers repoint their imports to @/kernel/records/asset-store and this re-export is deleted in the YUK-1571 compat-exit slice; assets.db.test.ts import-path-only repoint is coordinator-approved under the owner 2026-10-19 inventory-change authorization; cases, data and assertions stay unchanged",
       "issue": "YUK-1571",
@@ -339,7 +422,12 @@
       "kind": "site",
       "symbol": "deleteImageAsset",
       "targetModule": "src/kernel/records/asset-store.ts",
-      "consumers": [{ "file": "src/capabilities/ingestion/api/asset-delete.ts", "line": 1 }],
+      "consumers": [
+        {
+          "file": "src/capabilities/ingestion/api/asset-delete.ts",
+          "line": 1
+        }
+      ],
       "exitCondition": "consumers repoint their imports to @/kernel/records/asset-store and this re-export is deleted in the YUK-1571 compat-exit slice",
       "issue": "YUK-1571",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1571#comment-03dae10a-ad31-4219-800f-2e79b948937a",
@@ -352,8 +440,14 @@
       "symbol": "lockImageStorageKey",
       "targetModule": "src/kernel/records/asset-store.ts",
       "consumers": [
-        { "file": "src/capabilities/ingestion/server/crop.ts", "line": 10 },
-        { "file": "src/capabilities/ingestion/public.ts", "line": 23 }
+        {
+          "file": "src/capabilities/ingestion/server/crop.ts",
+          "line": 10
+        },
+        {
+          "file": "src/capabilities/ingestion/public.ts",
+          "line": 23
+        }
       ],
       "exitCondition": "consumers repoint their imports to @/kernel/records/asset-store and this re-export is deleted in the YUK-1571 compat-exit slice",
       "issue": "YUK-1571",
@@ -367,9 +461,18 @@
       "symbol": "sha256Hex",
       "targetModule": "src/kernel/records/asset-store.ts",
       "consumers": [
-        { "file": "src/capabilities/ingestion/server/crop.ts", "line": 10 },
-        { "file": "src/capabilities/ingestion/server/source-package.ts", "line": 6 },
-        { "file": "src/capabilities/ingestion/public.ts", "line": 23 }
+        {
+          "file": "src/capabilities/ingestion/server/crop.ts",
+          "line": 10
+        },
+        {
+          "file": "src/capabilities/ingestion/server/source-package.ts",
+          "line": 6
+        },
+        {
+          "file": "src/capabilities/ingestion/public.ts",
+          "line": 23
+        }
       ],
       "exitCondition": "consumers repoint their imports to @/kernel/records/asset-store and this re-export is deleted in the YUK-1571 compat-exit slice",
       "issue": "YUK-1571",
@@ -383,8 +486,14 @@
       "symbol": "isUniqueViolation",
       "targetModule": "src/kernel/records/asset-store.ts",
       "consumers": [
-        { "file": "src/capabilities/ingestion/server/crop.ts", "line": 10 },
-        { "file": "src/capabilities/ingestion/server/tools/media-tools.ts", "line": 15 }
+        {
+          "file": "src/capabilities/ingestion/server/crop.ts",
+          "line": 10
+        },
+        {
+          "file": "src/capabilities/ingestion/server/tools/media-tools.ts",
+          "line": 15
+        }
       ],
       "exitCondition": "consumers repoint their imports to @/kernel/records/asset-store and this re-export is deleted in the YUK-1571 compat-exit slice",
       "issue": "YUK-1571",
@@ -398,7 +507,10 @@
       "symbol": "lockImageStorageKey",
       "targetModule": "src/kernel/records/asset-store.ts",
       "consumers": [
-        { "file": "src/capabilities/practice/jobs/jyeoo_staged_asset_reap.ts", "line": 17 }
+        {
+          "file": "src/capabilities/practice/jobs/jyeoo_staged_asset_reap.ts",
+          "line": 17
+        }
       ],
       "exitCondition": "jyeoo_staged_asset_reap repoints its import to @/kernel/records/asset-store and this re-export is deleted in the YUK-1571 compat-exit slice",
       "issue": "YUK-1571",
@@ -409,7 +521,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 405,
+      "total": 403,
       "byOwnerPair": {
         "agency -> ai": 25,
         "agency -> boss": 10,
@@ -466,7 +578,7 @@
         "observability -> r2": 2,
         "observability -> subjects": 9,
         "practice -> advisory-locks": 5,
-        "practice -> ai": 62,
+        "practice -> ai": 61,
         "practice -> assessment": 1,
         "practice -> boss": 18,
         "practice -> calibration": 3,
@@ -482,7 +594,7 @@
         "practice -> questions": 14,
         "practice -> r2": 4,
         "practice -> runtime-env": 4,
-        "practice -> session": 7,
+        "practice -> session": 6,
         "shell -> boss": 1,
         "shell -> proposals": 2,
         "shell -> records": 1,
