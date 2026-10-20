@@ -158,14 +158,71 @@
       "issue": "YUK-1579",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1579#comment-af8190bd-7e93-4133-ba02-68a844f006fc",
       "date": "2026-10-20"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> ai",
+      "date": "2026-10-20",
+      "from": 63,
+      "to": 62,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> session",
+      "date": "2026-10-20",
+      "from": 7,
+      "to": 6,
+      "direction": "decrease"
     }
   ],
-  "edgeRecords": [],
+  "edgeRecords": [
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/session-summary.ts",
+      "module": "src/kernel/read-models/assessment-verdict.ts",
+      "kind": "value",
+      "symbols": ["resolveVerdictsForAttempts"],
+      "issue": "YUK-1570",
+      "owns": "双轨裁决读模型：某次作答/评估最终判分的共享 resolver（legacy judge-event 与 assessment_verdict 两车道）",
+      "date": "2026-10-21"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/session-summary.ts",
+      "module": "src/kernel/read-models/cause-policy.ts",
+      "kind": "value",
+      "symbols": ["effectiveCauseForFailureAttempt"],
+      "issue": "YUK-1570",
+      "owns": "mistake 投影的 effective cause 策略：active user_cause 权威，否则最新 active agent judge",
+      "date": "2026-10-21"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/session-summary.ts",
+      "module": "src/kernel/read-models/failure-attempts.ts",
+      "kind": "value",
+      "symbols": ["getFailureAttempts"],
+      "issue": "YUK-1570",
+      "owns": "failure-attempt 证据读模型：失败 attempt 投影 + chained judge/user_cause 归因 + correction active-row 解析",
+      "date": "2026-10-21"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/session-summary.ts",
+      "module": "src/kernel/read-models/misc-cause-labels.ts",
+      "kind": "value",
+      "symbols": ["resolveMiscCauseLabels"],
+      "issue": "YUK-1570",
+      "owns": "misc_ cause id → 已晋升 misconception 节点 title 的读模型层回填",
+      "date": "2026-10-21"
+    }
+  ],
   "sourceSizeRecords": [],
   "compatShims": [],
   "debts": {
     "capabilityToServer": {
-      "total": 406,
+      "total": 404,
       "byOwnerPair": {
         "agency -> ai": 25,
         "agency -> boss": 10,
@@ -222,7 +279,7 @@
         "observability -> r2": 2,
         "observability -> subjects": 9,
         "practice -> advisory-locks": 5,
-        "practice -> ai": 63,
+        "practice -> ai": 62,
         "practice -> assessment": 1,
         "practice -> boss": 18,
         "practice -> calibration": 3,
@@ -238,7 +295,7 @@
         "practice -> questions": 14,
         "practice -> r2": 4,
         "practice -> runtime-env": 4,
-        "practice -> session": 7,
+        "practice -> session": 6,
         "shell -> boss": 1,
         "shell -> proposals": 2,
         "shell -> records": 1,
