@@ -1,6 +1,10 @@
-# YUK-1621 夜间摘要服务端统计 — 2026-10-20
+# YUK-1632 会话摘要统计守卫 — 2026-10-20
 
-本 worktree `/workspace/amp/wt/YUK-1621`，分支 `el/yuk-1621`，base `dc42a29e`，PR #1858。`MemoryBriefTask` 只输出三段 prose；服务端按 `created_at` 分 7d/90d/长期桶并写每桶 evidence ids。`SessionSummaryTask` 的数字只来自服务端 `numeric_summary`（本场有效判分；无有效判分时明示），模型只写观察/建议；模型输入不再带原始判分数字或计数。QA r2 修复：删除模型文本正则删数字，改为 prompt 约束；本场错因复用 `effectiveCauseForFailureAttempt` cause policy（用户 cause 优先），只用本场 effective-incorrect review，历史失败不混入；无 label 不输出裸 id；模型空文本保存纯数字摘要并返回 `written:numbers_only`。验证：双 tsc、lint、build；真实 PG16+pgvector 复用 QA harness 覆盖历史 cause、模型自写数字、用户 cause、空模型、冷 session；exact-head CI 待新 push。未改 UI/`.tsx`；无新增测试。
+分支 `el/yuk-1621`，沿用 [PR #1858](https://github.com/Yukoval-Dakia/the-learning-project/pull/1858)。YUK-1632 修复 QA r3 的模型数字回流，不再仅靠 prompt。写入前按分句剔除题数、正确率、百分比陈述，非统计观察及其中的章节号、题目序号保留；无剩余观察时写入服务端前缀并返回 `written:numbers_only`。P3 按票面选择注释说明，当前 user_cause 生产写者只面向无会话的手工错题，不修改共享 cause policy。
+
+本轮用独立 PG17 + pgvector 和指定模型响应回放实际 `runSessionSummary`，读取落库结果。旧代码存入互相矛盾的 100% 与 40%，修后只留服务端 100%；混合句保留观察与建议。中文数字、全角数字、章节号、题目序号、空响应均核对。没有真实 provider 调用，也未重跑旧轮的全部 QA 场景。Node 24.22.0 下 typecheck、lint、build 通过，lint 为既有 178 warnings。无新增或修改测试、UI、schema。
+
+交付仅普通 commit、push、补 `Closes YUK-1632` 并等待 exact-head CI；CI 状态以 PR 当前 head 为准。本轮 CI 绿即停止，不合并、不部署、不启动新 review。未发现本票之外的新 actionable follow-up；YUK-1621 的记忆分桶及有效判分计算保持原样。
 
 # Architecture deepening — 2026-10-19
 

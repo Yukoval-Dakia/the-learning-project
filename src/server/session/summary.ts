@@ -20,6 +20,11 @@ import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
 const NOTABLE_LIMIT = 3;
+const MODEL_STATISTIC_CLAIMS = [
+  /%|百分之/u,
+  /(?:题数|正确率|错误率|准确率|得分率|通过率)(?:为|是|约|仅|只有|达到|[:：=])*[\d零〇一二两三四五六七八九十百千万半几]/u,
+  /(?<![第这那每\d零〇一二两三四五六七八九十百千万半几])[\d零〇一二两三四五六七八九十百千万半几]+(?:[.点]\d+)?(?:题|道(?=题|没做完|未完成|答[对错]|[对错])|成(?=没对|正确|错误|答[对错]|的?题))/u,
+];
 
 /**
  * YUK-1621 — deterministic session numbers. Only the effective verdict track is
@@ -58,7 +63,7 @@ export interface RunSessionSummaryParams {
 export interface RunSessionSummaryResult {
   /**
    * 'written' = numbers + observation saved;
-   * 'written:numbers_only' = model output had no number-free observation, so only
+   * 'written:numbers_only' = model output had no non-statistical observation, so only
    * the deterministic server template was saved;
    * 'skipped:<reason>' = no-op (already had a summary, no events, etc.).
    */
@@ -174,6 +179,8 @@ export async function runSessionSummary(
   const causeCounts = new Map<string, number>();
   for (const id of sessionFailureIds) {
     const failure = failureById.get(id);
+    // Success-rated reviews fall back to the judge: user_cause is currently
+    // written only for sessionless manual attempts, never for these reviews.
     const category =
       (failure ? effectiveCauseForFailureAttempt(failure)?.primary_category : null) ??
       verdictMap.get(id)?.effective?.verdict.cause?.primary_category;
@@ -195,8 +202,8 @@ export async function runSessionSummary(
       count,
     }));
 
-  // YUK-1621 — all numbers in the final summary come from this template; the
-  // model only writes the observation/advice suffix below it.
+  // Session statistics belong to this template; observations may still name
+  // numbered chapters, questions or mathematical concepts.
   const numericSummary = renderSessionNumericSummary({
     total_reviewed: reviewEvents.length,
     effective_outcomes: Object.fromEntries(effectiveOutcomeCounts),
@@ -244,7 +251,14 @@ export async function runSessionSummary(
   };
 
   const result = await runTaskFn('SessionSummaryTask', input, { subjectProfile });
-  const observation = result.text.trim();
+  // Filter statistical clauses, not numerals in topic names or chapter references.
+  const observation = (result.text.match(/[^，,、。！？!?；;\n]+[，,、。！？!?；;\n]*/gu) ?? [])
+    .filter((clause) => {
+      const normalized = clause.normalize('NFKC').replace(/\s+/gu, '');
+      return !MODEL_STATISTIC_CLAIMS.some((claim) => claim.test(normalized));
+    })
+    .join('')
+    .trim();
   // The fixed numeric prefix is never truncated away by an over-long observation.
   const summaryMd = `${numericSummary}${observation}`.slice(0, 240);
 

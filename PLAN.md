@@ -1,8 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-19：架构深化线独立启动；首片 YUK-1572 拆练习流职责，首三片已获协调线同意；证据外置永久保留已批，测试缩减只做清单。
+> Linear 是权威 tracker。2026-10-20：YUK-1632 在 PR #1858 原分支修复会话摘要数字回流；仅普通提交、推送和等待 CI，不合并或部署。
 
 ## NOW
+
+- **帮助靠谱 / 会话摘要统计守卫（YUK-1632）**：`el/yuk-1621`，沿用 #1858。模型统计分句在写入前剔除，保留其他观察与建议；P3 注释说明当前生产写入边界。独立 PG17 回放核对修前/修后落库结果，typecheck/lint/build 通过，无新增测试。见 `.remember/now.md`。
 
 - **架构深化 / YUK-1572**：`refactor/yuk-1572-stream-modules`，独占 arch-lead；stream-store 已2120→1427，超长18→17，SCC与443边不变；合成d38e父级typecheck/lint/build/两审计通过；Kimi R1 APPROVE、旧head5c0e CI全绿；整合main2176仅看板冲突，新head验证/CI待完成。六票T3，#1830仍由Grok完成；不动其ratchet/baseline。见[首三片计划](docs/planning/2026-10-19-architecture-deepening.md)。
 
@@ -35,6 +37,8 @@
 - **本轮已交付 YUK-1392**：PR1619于17:11:43Z合main6aaf8ca89，tree5e8ab973与exact3883903相同；CI37812973662全绿、R1 NONE、threads0。父13unit/22DB、static/build/audits通过，已unwatch/Linear Done。无部署。
 
 ## NEXT
+
+- **YUK-1632**：普通 commit/push 至 #1858，保留原描述并补 `Closes YUK-1632`，运行 `gh pr checks 1858 --watch`。CI 绿即停止，最终状态以 PR 当前 head 为准。
 
 - **架构深化**：首片验证/独立审查/精确HEAD CI后推进YUK-1571拆环，再拆intervention职责；每片报告SCC、server边、超长文件及baseline行数。
 

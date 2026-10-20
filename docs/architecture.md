@@ -148,7 +148,7 @@ FailureAttempt 读模型已迁入 `src/capabilities/knowledge/server/`，中央
 | `AttributionRerankTask` | mimo-v2.5-pro | user action / pg-boss | 否 | — | 错题归因 retrieve→rerank stage 2（从 L1 候选 cause 列表重排选 primary + 逐候选理由，YUK-462；小词表时 == AttributionTask） |
 | `KnowledgeEdgeProposeTask` | mimo-v2.5-pro | maintenance / nightly | 否 | — | 0-5 条 knowledge_edge proposal |
 | `FrontierPrerequisiteTask` | mimo-v2.5-pro | maintenance / nightly（frontier bootstrap, YUK-349 PR-2） | 否 | — | 0-5 条 prerequisite knowledge_edge proposal（empty-frontier 时 propose-only 低置信） |
-| `SessionSummaryTask` | mimo-v2.5-pro | review session end | 否 | — | 服务端有效判分数字 + ≤70 字观察/建议 |
+| `SessionSummaryTask` | mimo-v2.5-pro | review session end | 否 | — | 服务端有效判分数字 + ≤70 字观察/建议；写入前剔除模型的题数、正确率与百分比陈述，保留非统计分句及其中的章节号、题目序号 |
 | `LearningIntentOutlineTask` | mimo-v2.5-pro | `/api/learning-intents` | 否 | — | 1 hub + N atomic outline |
 | `NoteGenerateTask` | mimo-v2.5-pro | pg-boss `note_generate` | 否 | — | atomic artifact sections |
 | `VariantGenTask` | mimo-v2.5-pro | pg-boss `variant_gen` / explicit tool | 否 | — | pending variant proposal + draft `mistake_variant` ledger；accept 后才物化 question |
