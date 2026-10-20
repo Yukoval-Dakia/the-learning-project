@@ -32,17 +32,17 @@ compose 的 `migrate` / `app` / `worker` 都从 `.env` 取环境，`cloudflared`
 | 键 | 谁读 | 未设置时 | 出处 |
 | --- | --- | --- | --- |
 | `INTERNAL_TOKEN` | app（`/api/*`） | 必填非空，否则 API 启动失败；`/api/health`、`/api/ready` 豁免 | `src/server/env.ts`；`server/app.ts` |
-| `JUDGE_PROVENANCE_SECRET` | app、worker | 未设、短于 32 字符或等于 `INTERNAL_TOKEN` 时 provenance 签发/校验关闭 | `src/capabilities/practice/server/judge/preview-provenance-token.ts` |
+| `JUDGE_PROVENANCE_SECRET` | app | 未设、短于 32 字符或等于 `INTERNAL_TOKEN` 时 provenance 签发/校验关闭；worker 不读 | `src/capabilities/practice/server/judge/preview-provenance-token.ts`；`.env.example` |
 | `BANK_GAP_EVIDENCE_SECRET` | app、worker | 未设、短于 32 字符或等于 `INTERNAL_TOKEN` 时一律视为未设：`search_bank` 不签 MAC，`file_bank_gap` 拒绝 filing | `src/capabilities/practice/server/tools/bank-search.ts`；`src/capabilities/practice/server/tools/file-bank-gap.ts` |
 
 ### AI provider 与模型选择
 
-全局 pin（`AI_PROVIDER_OVERRIDE` + `AI_PROVIDER_MODEL`）作用于所有非 typed 任务和 Mem0 提取/调和；`MEM0_LLM_*` 只在没有全局 pin 时生效（`src/server/ai/providers.ts`；`src/server/memory/llm-config.ts`）。`.env.example` 当前把这对值写成 `opencode-go` / `mimo-v2.6-pro`（`.env.example`）。Mem0 在 app（读）与 worker（写）进程内运行，compose 没有独立 mem0 服务；embedding 维度必须与 pgvector 列一致（`docker-compose.yml`；`src/server/memory/client.ts`）。typed 判分有专用 `openrouter` lane（只对 typed 任务开放）；OCR 由 `EXTRACT_OCR_ENGINE` 在 `glm`/`tencent` 两套实现间选择（`src/server/ai/providers.ts`；`registry`；`src/capabilities/ingestion/server/tencent_mark.ts`）。
+全局 pin（`AI_PROVIDER_OVERRIDE` + `AI_PROVIDER_MODEL`）作用于非 typed 任务和 Mem0 提取/调和，但若某任务在 `system_config` 设了 `task.<kind>.override_global_pin=true` 且 provider/model 成对合法，则该任务走 task pair、压过全局 pin（`src/server/ai/providers.ts`）。`MEM0_LLM_*` 只在没有全局 pin 时生效（`src/server/memory/llm-config.ts`）。`.env.example` 当前把这对值写成 `opencode-go` / `mimo-v2.6-pro`（`.env.example`）。Mem0 在 app（读）与 worker（写）进程内运行，compose 没有独立 mem0 服务；embedding 维度必须与 pgvector 列一致（`docker-compose.yml`；`src/server/memory/client.ts`）。typed 判分有专用 `openrouter` lane（只对 typed 任务开放）；OCR 由 `EXTRACT_OCR_ENGINE` 在 `glm`/`tencent` 两套实现间选择（`src/server/ai/providers.ts`；`registry`；`src/capabilities/ingestion/server/tencent_mark.ts`）。
 
 | 键 | 谁读 | 未设置时 | 出处 |
 | --- | --- | --- | --- |
 | `AI_PROVIDER_OVERRIDE` | app、worker | 走 task registry 默认 provider；未知 provider 抛错 | `src/server/ai/providers.ts`；`registry` |
-| `AI_PROVIDER_MODEL` | app、worker | 用 task 默认 model | `src/server/ai/providers.ts` |
+| `AI_PROVIDER_MODEL` | app、worker | 与 `AI_PROVIDER_OVERRIDE` 一起用：多数非 mimo lane（如 `opencode-go`/`openai`/`anthropic`）必须显式设可服务的 model，否则拒绝（task 默认常是 mimo id）；`xiaomi` 可复用默认；`anthropic-sub` 有自带 Opus 默认 | `src/server/ai/providers.ts` |
 | `ANTHROPIC_API_KEY` | app、worker | 选中 `anthropic` 时必需，缺失抛错 | `src/server/ai/providers.ts` |
 | `CLAUDE_CODE_OAUTH_TOKEN` | app、worker | 选中 `anthropic-sub` 时必需 | `src/server/ai/providers.ts` |
 | `CLAUDE_CODE_MAX_RETRIES` | app、worker | `2` | `registry` |
@@ -87,6 +87,7 @@ compose 的 `migrate` / `app` / `worker` 都从 `.env` 取环境，`cloudflared`
 | `MEM0_LLM_MODEL` | app、worker | 无全局 pin 时 `glm-5.2` | `src/server/memory/llm-config.ts`；`src/server/ai/providers.ts` |
 | `MEM0_LLM_BASE_URL` | app、worker | 无全局 pin 时 `https://open.bigmodel.cn/api/coding/paas/v4` | `src/server/memory/llm-config.ts` |
 | `MEMORY_RECONCILE_HANDOFF_MODE` | app、worker | `observe`；非法值在 reader 内抛错 | `registry` |
+| `MEM0_TELEMETRY` | app、worker（`mem0ai` SDK） | SDK 默认可向外报 PostHog；compose 强制 `false`；非 compose 部署也应显式 `false` | `docker-compose.yml`；`src/server/env.ts` |
 
 ### OCR、录入与外部检索
 
@@ -136,6 +137,7 @@ compose 的 `migrate` / `app` / `worker` 都从 `.env` 取环境，`cloudflared`
 | `AUTO_INTERVENTION_EXPANSION_ENABLED` | app、worker | `false` | `registry` |
 | `INTERVENTION_DISABLED_METHOD_IDS` | app、worker | `[]`；CSV 解析为数组 | `registry` |
 | `COPILOT_SUBAGENT_ENABLED` | app、worker | `true` | `registry` |
+| `NOTES_MASTERY_SUBSCRIPTION_ENABLED` | app、worker | `true`；关则掌握进度不入队笔记 refinement | `registry`；`src/capabilities/notes/server/mastery-progress-subscription.ts` |
 | `COPILOT_NUDGE_ENABLED` | app、worker | `false` | `registry` |
 | `COPILOT_NUDGE_DAILY_MAX` | app、worker | `3` | `registry` |
 | `COPILOT_NUDGE_EXPIRES_HOURS` | app、worker | `24` | `registry` |
@@ -189,7 +191,7 @@ compose 的 `migrate` / `app` / `worker` 都从 `.env` 取环境，`cloudflared`
 
 ### schema 中声明、未见读取
 
-`ANTHROPIC_AUTH_TOKEN`、`ANTHROPIC_BASE_URL`、`MEM0_TELEMETRY`（`src/server/env.ts`）。
+`ANTHROPIC_AUTH_TOKEN`、`ANTHROPIC_BASE_URL`（`src/server/env.ts`）。
 
 ## DB 配置层 `system_config`
 
