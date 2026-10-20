@@ -420,7 +420,17 @@
       "date": "2026-10-20"
     }
   ],
-  "sourceSizeRecords": [],
+  "sourceSizeRecords": [
+    {
+      "path": "src/capabilities/practice/jobs/quiz_verify.ts",
+      "date": "2026-10-20",
+      "baseBlob": "8a73b6df27d9da1ddb3b44c70fad89e3948e0535",
+      "from": 1788,
+      "to": 1790,
+      "issue": "YUK-1572",
+      "responsibilityReason": "Move the two choice-surface precheck values and two types to their owning pure module. Splitting the existing import adds two lines; all other imports and job execution, paid-call, placement authority, publication, fence, and recovery bodies are unchanged. This records measured growth, not a new responsibility or a ceiling exemption."
+    }
+  ],
   "compatShims": [
     {
       "path": "src/capabilities/ingestion/server/persist-image-asset.ts",
