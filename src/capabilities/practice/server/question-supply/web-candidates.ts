@@ -5,8 +5,9 @@
 // db 写面只有 canary 事件（YUK-988 E3 P1-3 起核内单写，见 runWebFetchCandidates）。
 //
 // 纯模块纪律（ownership/boundary）：不 import '@/server/'。MCP 挂载 + runAgentTask
-// 整个压进单个依赖注入函数 RunWebSourcingAgentFn；真实实现住在 DomainTool
-// （server/tools/web-fetch-candidates.ts），executor job 层共享同一实现。SourcingTask
+// 整个压进单个依赖注入函数 RunWebSourcingAgentFn；真实实现住在
+// ../web-sourcing-operation.ts（YUK-1570 自 tool 层下沉），tool 层与 executor
+// job 层经 defaultWebSourcingDeps() 共享同一实现。SourcingTask
 // prompt 契约（trigger/ref/knowledge_context/kinds/objective_only/kind_required）
 // 与旧 sourcing.ts 完全一致——SourcingTask TaskSpec 不变。
 

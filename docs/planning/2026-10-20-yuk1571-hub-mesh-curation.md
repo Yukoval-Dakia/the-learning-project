@@ -137,3 +137,5 @@ knowledge/public（type-only，不计 cross value 边；不在释放清单）。
 合成输入验证；测试零改动。行为验收由 exact-head CI Gate 与独立审查承担。
 
 父整合：完整树引擎144行亲自逐字对照；保留旧分页cursor编码失败（只保留501读取还不充分）。baseline按现有audit重测；public-cycle catalog移除已退出依赖的notes项，mastery-provenance台账仅替换真实新读取路径；不改审计判定或CI语义。独立R1待启动，未发生R2审查；本机与CI不能代替运行验收。
+
+Supply-main composition: ordinary merge of 4fd179818bd4a3ad8f16c07b2c9f38daa1adc259; 6 PR source files remain byte-identical to reviewed cbcba892a643c3404ac900eada544a4ad000955e. Existing audit: server429→429, cross42→41. 按 10-20 协调线基线整合等待窗解释：仅main带入内容及baseline/记录变更，等新head本地检查/exactCI及已有findings裁决；等待窗沿用最后一次本片产品/测试源码push，不免除任何新P0/P1裁决。
