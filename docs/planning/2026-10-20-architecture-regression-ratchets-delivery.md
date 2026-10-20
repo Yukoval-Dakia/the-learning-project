@@ -99,7 +99,8 @@ against real growth (801 violations at the post-merge head — 796 at `875faac0c
 
 `--base 4fd179818` (pre-#1830) was additionally PASS at `875faac0c` — between
 `4fd1798` and `46663192d` no audited edge was added, no `>1500` file appeared,
-SCCs unchanged.
+SCCs unchanged. (At the post-merge head the same base now spans the upstream
+growth and correctly fails — the PASS claim is scoped to `875faac0c`.)
 
 ## R1 fixes (second pass)
 
