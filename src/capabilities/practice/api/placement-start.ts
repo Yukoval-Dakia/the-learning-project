@@ -23,23 +23,23 @@ import { CreatePlacementSessionBodySchema } from './placement-contracts';
 
 export async function createPlacementSession(req: Request): Promise<Response> {
   try {
-    let raw: unknown;
-    try {
-      raw = await req.json();
-    } catch {
-      throw new ApiError('validation_error', 'request body must be valid JSON', 400);
-    }
-    const parsed = CreatePlacementSessionBodySchema.safeParse(raw);
-    if (!parsed.success) {
-      throw new ApiError(
-        'validation_error',
-        parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; '),
-        400,
-      );
-    }
-    const { goalId, knowledgeIds, leanings, pace } = parsed.data;
-
-    const result = await startPlacementProbe({ goalId, knowledgeIds, leanings, pace });
+    const result = await startPlacementProbe(async () => {
+      let raw: unknown;
+      try {
+        raw = await req.json();
+      } catch {
+        throw new ApiError('validation_error', 'request body must be valid JSON', 400);
+      }
+      const parsed = CreatePlacementSessionBodySchema.safeParse(raw);
+      if (!parsed.success) {
+        throw new ApiError(
+          'validation_error',
+          parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; '),
+          400,
+        );
+      }
+      return parsed.data;
+    });
     // Keep sourcingNeeded for compatibility. starterSupply distinguishes pending
     // supply from terminal failure; neither outcome completes the placement session.
     return Response.json({

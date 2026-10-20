@@ -47,14 +47,15 @@ export interface PlacementProbeStart {
 }
 
 export async function startPlacementProbe(
-  input: StartPlacementProbeInput,
+  loadInput: () => Promise<StartPlacementProbeInput>,
 ): Promise<PlacementProbeStart> {
   // Dark-ship gate: the whole placement entrypoint is unreachable until the flag flips.
   if (!Placement.placementProbeEnabled()) {
     throw new ApiError('not_found', 'placement probe is not enabled', 404);
   }
 
-  const { goalId, knowledgeIds: explicit, leanings, pace } = input;
+  // The entry gate precedes HTTP parsing, as in the original route.
+  const { goalId, knowledgeIds: explicit, leanings, pace } = await loadInput();
 
   let knowledgeIds: string[] = [...(explicit ?? [])];
   let requestedGoal:

@@ -13,3 +13,5 @@ Child typecheck/lint/build passed; original implementation evidence `/Volumes/Yu
 Commands: `pnpm typecheck`, `pnpm lint`, `pnpm build`, `pnpm audit:capability-boundaries`, `pnpm audit:architecture-deepening`, `pnpm gen:postman`.
 
 NOT_RUN: local tests, DB, TEST, Docker, provider, runtime acceptance and deployment. No test code changes. Exact-head CI and independent review remain required before merge.
+
+R1 approved the main move and found a dark-ship response-order regression (reported P2). Parent treats it as a blocker to this behavior-preserving delivery: placement start now checks its existing feature gate before invoking the adapter-owned input parser. Disabled invalid requests again receive the original404, with no parsing, state writes or dispatch. One R2 is reserved for this bounded correction; no test code is added. R1 report SHA256 11c1dc7f36b8858690edde938e3145e3ef5170ccec9bce6b3f1ef9f91e6df232; parent Postman regeneration passed with no diff.
