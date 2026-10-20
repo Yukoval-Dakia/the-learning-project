@@ -1,13 +1,3 @@
-# YUK-1570 Circle 比较基线修复 — 2026-10-20
-
-同分支 yuk-1570-baseline-ratchet、ready PR1830，在7a0a03787上修复CI接线，不rebase/amend/force push。
-Circle workflow6ea37d51 的 architecture job2415 在缺 CAPABILITY_BASE_SHA 时exit1；同workflow policy resolver验证了PR1830/base a519a05d。
-architecture现在复用现有resolve-circle-audit-base.mjs并传递其SHA输出；未修改resolver或ratchet源码、baseline、测试。无可信base仍拒绝，GitHub event/input来源保持不变。
-基线440/0/42；限定practice→r2裁定、退出条件与不得复用规则不变。
-本机缺base复现exit1，使用远端policy已验证base运行architecture六项审计全部exit0；typecheck/lint/build全部exit0，lint178既有warnings。
-本轮不新增测试，不运行本机完整test/DB/provider，不改Linear状态，不合并PR。
-不读取凭据、其他会话或本地数据库。普通push后等待新head的CircleCI与GitHub结果，不能沿用旧head绿色。最终结果见PR；本机日志在.amp/in/artifacts/circle-base-fix/。
-
 # PR #1858 主线整合，2026-10-20
 
 `el/yuk-1621` 从已推送的 `04a6fbedb` 普通 merge `origin/main` 的 `210dfb2c1`。仅本文件与 PLAN 冲突，main 最新交接完整保留，删除本分支落后的其他工作线记录。本 PR 的四个产品代码文件与合并前相同，没有新增设计决策。

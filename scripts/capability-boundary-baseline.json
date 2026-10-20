@@ -32,12 +32,13 @@
         "kind": "recorded_ruling",
         "ruling": "https://linear.app/yukoval-studios/issue/YUK-1570"
       }
-    }
+    },
+    "YUK-1570-mastery-read-engine": "Complete mastery row/ability and p(L)/KG projection read implementations now belong to kernel read models, with old server exports kept for compatibility; only 8 capability consumers move. knowledge -> mastery 6 -> 1, practice -> mastery 14 -> 12, copilot -> mastery 1 -> 0, total 440 -> 432. Write implementations, locks, transactions and non-capability consumer imports stay unchanged; no kernel-to-server facade."
   },
   "changes": [],
   "debts": {
     "capabilityToServer": {
-      "total": 440,
+      "total": 432,
       "byOwnerPair": {
         "agency -> ai": 28,
         "agency -> boss": 10,
@@ -55,7 +56,6 @@
         "copilot -> boss": 6,
         "copilot -> events": 5,
         "copilot -> http": 1,
-        "copilot -> mastery": 1,
         "copilot -> memory": 1,
         "copilot -> orchestrator": 1,
         "copilot -> proposals": 1,
@@ -80,7 +80,7 @@
         "knowledge -> calibration": 1,
         "knowledge -> conjectures": 1,
         "knowledge -> fsrs": 2,
-        "knowledge -> mastery": 6,
+        "knowledge -> mastery": 1,
         "knowledge -> memory": 2,
         "knowledge -> projections": 13,
         "knowledge -> proposals": 3,
@@ -104,7 +104,7 @@
         "practice -> events": 1,
         "practice -> fsrs": 6,
         "practice -> http": 3,
-        "practice -> mastery": 14,
+        "practice -> mastery": 12,
         "practice -> memory": 1,
         "practice -> orchestrator": 1,
         "practice -> projections": 4,

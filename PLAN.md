@@ -1,10 +1,8 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-20：YUK-1570 修复 Circle architecture job 缺比较 base 的接线，复用已有 verified resolver；基线与准入规则不变。精确 head 的双平台 CI 结果见 PR1830，不合并 PR、不改票状态。
+> Linear 是权威 tracker。2026-10-20：架构线最多8条；#1834/#1839/#1840/#1842已合，#1843已合，#1846已合、#1847已合，#1837等基线释放；首批证据HEAD删除获批实施，测试仍待owner。
 
 ## NOW
-
-- **YUK-1570 / 依赖基线收紧**：[ready PR1830](https://github.com/Yukoval-Dakia/the-learning-project/pull/1830)，已复现 Circle 缺 `CAPABILITY_BASE_SHA` 的 exit1；同一 workflow 的 policy resolver 已验证 PR base。architecture job 复用该 resolver 输出，不新增授权或猜测 base。typecheck/lint/build 和 architecture 六项审计全部exit0，基线440/0/42、178条既有lint warnings；新 head 双平台 CI 结果见 PR，不沿用旧绿色。
 
 - **帮助靠谱 / 夜间摘要统计（YUK-1621、YUK-1632）**：`el/yuk-1621` 的 PR #1858 普通整合 main `210dfb2c1`。仅 PLAN/now 冲突，采用 main 最新记录并保留本 PR 交接；服务端分桶、有效判分统计与模型统计守卫源码未变。本轮 typecheck/lint/build 通过，178 个既有 warnings；新 head CI 单独等待，不复用旧 head 结果。
 
@@ -41,8 +39,6 @@
 - **本轮已交付 YUK-1392**：PR1619于17:11:43Z合main6aaf8ca89，tree5e8ab973与exact3883903相同；CI37812973662全绿、R1 NONE、threads0。父13unit/22DB、static/build/audits通过，已unwatch/Linear Done。无部署。
 
 ## NEXT
-
-- **YUK-1570**：普通 push 后等待 CircleCI 与 GitHub 的各 audit 和 gate 结果，报告后停止，不合并 PR。practice→r2 4→3 的退出义务仍属下一次减边 PR，最迟不晚于票关闭；历史裁定不得复用。
 
 - **PR #1858**：本地检查通过后普通 merge commit/push，等待 exact-head CI。CI 绿即停止；不改 PR 描述或 Linear 状态，不合并 PR、不部署。
 
