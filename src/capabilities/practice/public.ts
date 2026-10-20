@@ -56,10 +56,7 @@ export {
   readItemPriorPgBossDelivery,
 } from './server/item-prior-paid-effect-adapter';
 export type { FrontierResolution } from './server/learnable-frontier';
-export {
-  isMasteredForFrontier,
-  learnableFrontierResolved,
-} from './server/learnable-frontier';
+export { isMasteredForFrontier } from './server/learnable-frontier';
 export {
   LEARNING_CONTENT_MAX_QUESTIONS,
   type LearningContentValidationDeps,
