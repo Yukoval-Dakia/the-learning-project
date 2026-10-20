@@ -1,9 +1,9 @@
 # Architecture anti-regression ratchets — delivery (YUK-1579)
 
 Implementation of `docs/planning/2026-10-20-architecture-no-regression-proposal.md`
-on branch `arch/regression-ratchets`, merged through `origin/main` `048dfc9b9`
+on branch `arch/regression-ratchets`, merged through `origin/main` `671e08044`
 (which contains the recorded-baseline mechanism from #1830 / `58289c05` and
-the post-#1880 debt state `420/0/42`, `>1500`=15).
+the post-#1872 debt state `420/0/43`, `>1500`=16).
 Everything reuses the existing `audit:capability-boundaries` and
 `audit:architecture-deepening` commands, `CAPABILITY_BASE_SHA`/`--base`,
 append-only `changes`, and `--tighten`. No new audit command, CI job, package,
@@ -54,18 +54,20 @@ byte-for-byte.
 - `pnpm exec biome check <6 changed files>` — clean; `pnpm lint` — 0 errors
   (178 pre-existing repo warnings, none in changed files).
 - `pnpm build` — clean (web + server/worker/migrate esbuild).
-- `pnpm audit:capability-boundaries` (merge-base `048dfc9b9`) — PASS:
-  `debt ratchets exact (capability->server=420, server->capability-deep=0, cross-capability-value=42);
-  new dependency edges=0; nontrivial SCCs=1 (base 1); >1500-line files=15 (base 15)`.
+- `pnpm audit:capability-boundaries` (merge-base `671e08044`) — PASS:
+  `debt ratchets exact (capability->server=420, server->capability-deep=0, cross-capability-value=43);
+  new dependency edges=0; nontrivial SCCs=1 (base 1); >1500-line files=16 (base 16)`.
   (Earlier PASS at merge-base `46663192d`: `429/0/42`, `17 (base 17)` — the 17
-  matches the independently measured Flash facts at `4fd1798`; upstream #1880
-  lowered server debt to 420 and >1500 to 15.)
+  matches the independently measured Flash facts at `4fd1798`.)
 - `pnpm audit:architecture-deepening` — PASS:
   `pass-through sites 592 (+0 new)`, all 11 existing families green.
-  The +5 sites vs the earlier `587` are five real pass-throughs upstream
-  (#1880/#1888) added between `46663192d` and `048dfc9b9` — running
-  `--base 46663192d` enumerates them as violations; vs the actual merge-base
-  they are grandfathered (`+0 new`).
+- Upstream merge honesty note: `origin/main` grew `crossCapabilityValue`
+  42→43 via a `recorded_ruling` `changes` entry (#1872 / YUK-1622,
+  agency→practice 4→5) and added one `>1500` file plus five real pass-through
+  sites. All of it sits **inside** the merge-base commit `671e08044`, so it is
+  base stock and grandfathered — the audit replays only post-base `changes`
+  tails, and `recorded_ruling` increases on the two protected debts remain
+  hard-fail for anything appended after the base.
 
 ## Negative evidence (real git history, no fixtures)
 
