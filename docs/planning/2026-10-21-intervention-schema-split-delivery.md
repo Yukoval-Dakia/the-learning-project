@@ -1,27 +1,32 @@
 # YUK-1572 — intervention schema 三段拆分（交付记录）
 
 候选 brief：`src/core/schema/intervention.ts`（2268 行）把三类职责叠在一个文件里：
-业务构造契约、当前评审/审计绑定协议、历史持久化格式解码。本片按职责拆为三个模块，
-公共 import 面 `@/core/schema/intervention` 与其全部 95 个导出（含 type/value 分类）不变。
+业务构造契约、当前评审/审计绑定协议、历史持久化格式解码。本片按职责拆为三个模块；
+公共 import 面 `@/core/schema/intervention` 按协调批准收窄为 82 个导出（51 value + 31 type）。
 
 ## 元数据
 
-- base：`ce74a7733f93044f55c0b00d056ae3c8d137f1fc`（fixed main）
+- base：`ce74a7733f93044f55c0b00d056ae3c8d137f1fc`；已普通 merge 最新 main `20222f2ca`
 - branch：`arch/intervention-schema-split`
 - worktree：`/Users/yuqi/.t3/worktrees/the-learning-project/t3-7f2c17bf`
+- 批准：YUK-1572 comment `c07e26a1-af2e-4d06-8faf-8b796635fa00`
+  （A11 stable_contract 逐条登记 + B13 旧 value 名收窄）；裁定事实基线 proposal SHA256
+  `d7460ab6008d464e6cfbf3ca2cf77665a2394e17750caace3d184c77fa3c2eaa`
 - head / diff hash / 校验输出原件：外部证据目录
-  `tlp-audit-artifacts/architecture-deepening/YUK-1572/25fe0dedd6076cc95735e8eb3980ed8333d3a39c/intervention-schema/`
+  `tlp-audit-artifacts/architecture-deepening/YUK-1572/<head>/intervention-schema/`
 
 ## 逐文件范围
 
 | 文件 | 行数 | 内容 |
 |---|---|---|
-| `src/core/schema/intervention.ts` | 2268 → 990 | 业务构造契约与公开面组装：snapshot/recommendation/settlement/package/preparation/authoring 全部 schema、settlement 构造与 reanchor、确定性校验、reverse-causation 抽取、review requirements、task-input builder；尾部为公开 re-export 区 |
+| `src/core/schema/intervention.ts` | 2268 → 975 | 业务构造契约与公开面组装：snapshot/recommendation/settlement/package/preparation/authoring 全部 schema、settlement 构造与 reanchor、确定性校验、reverse-causation 抽取、review requirements、task-input builder；尾部为批准收窄后的公开 re-export 区 |
 | `src/core/schema/intervention-review.ts` | 919（新） | 当前评审/审计协议：协议版本常量、failure code 词表、diagnostic kind、reverse-causation claim 上限与 schema、required-operation 检查与 `interventionRequiredOperationDigest`、独立解题/内容校验审计、V2/V3/Current 评审 audit 与全部当前绑定 refinement |
 | `src/core/schema/intervention-review-history.ts` | 456（新） | 历史只读解码：Legacy model output 与 audit、早期 V2 / pre-operation-binding 历史形状、`InterventionPackageReviewAudit`/`ModelOutput` 版本宽容 union reader |
+| `src/capabilities/agency/server/intervention/contracts.ts` | −2 行 | 删 `InterventionPackageReviewAudit`/`InterventionPackageReviewModelOutput` 两个无终端消费者的死 value 再导出（批准收窄项）；其余 12 type + 12 value 透出不动 |
+| `scripts/capability-boundary-baseline.json` | +11 条 | `changes` 尾部追加 11 条 `stable_contract` ruling（site 级、逐符号、含真实 consumer 起始行）；不覆盖上游前缀 |
 
-protected/其他文件：diff 仅含上表一改动 + 两新增；36 个消费者与全部测试逐 blob 无变
-（`git status`/`git diff --stat` 证据封存外部目录）。
+protected/其他文件：diff 仅含上表范围 + merge；36 个消费者与全部测试除上述 contracts.ts
+两行批准删除外逐 blob 无变（`git status`/`git diff --stat` 证据封存外部目录）。
 
 ## 拆分边界与共享演进限制
 
@@ -54,8 +59,10 @@ protected/其他文件：diff 仅含上表一改动 + 两新增；36 个消费�
 ## 五标准对账
 
 1. **责任**：按业务构造、当前及共享绑定、历史解码组织；职责可辨，但规则存在明确共享耦合。
-2. **接口**：公共 import 面与 95 个导出保留。24 个 value 转出逐站点分类仍待协调裁定，
-   不能凭原公共面、文件仍有实现或实例相同自动豁免；未新增 registry 或自行批准 shim。
+2. **接口**：公共面 95 → 82（51 value + 31 type）。11 个有终端消费者的 value 透出
+   已按批准逐条登记 `stable_contract` ruling；13 个无终端消费者的旧 value 名按批准
+   收窄（仅删 re-export 与 contracts.ts 两处死透出，真身/union 臂/Current alias/全部
+   type 出口不动）；无 registry、白名单或 `*`。
 3. **隐藏知识**：外部 caller 原本就不知道内部版本实现，本片没有新增 caller 少知。
    分文件让历史分支与共享锚点更易定位，不等于历史接受范围与当前绑定隔离。
 4. **修改局部性**：新增历史形状可能局部；共享绑定收紧必须核多个分支。
@@ -68,16 +75,18 @@ https://linear.app/yukoval-studios/issue/YUK-1572#comment-050998a7-f1a7-43de-bd4
 
 ## 行为保持证据（本机实跑）
 
-- 导出集合：旧 95 ↔ 新 95，missing=[] added=[]；type/value 分类逐名一致
-  （`CurrentInterventionPackageReviewAudit` 仍是 V3 的 `export const` 别名，
-  schema instance identity 经 `export ... from` 原样透出，无重复实例）。
+- 导出集合：旧 95 → 新 82，removed 恰为批准的 13 个旧 value 名，added=[]；
+  其余符号 type/value 分类逐名一致（`CurrentInterventionPackageReviewAudit`
+  仍是 V3 的 `export const` 别名，透出转发同一 live binding，无重复实例）。
 - 语句级多重集合：旧文件每条非 import/注释行在新三文件并集中逐字节对应；
-  仅差异 = 3 个内部缝定义获得 `export` 前缀 + 4 行 re-export 语句头。
+  除 re-export 语句头的符号增减外，仅差异 = 3 个内部缝定义获得 `export` 前缀。
 - 无环：两内部模块均不可达 `intervention.ts`（BFS 实跑 false/false）；
   三文件之外无任何文件 import `intervention-review*`。
+- 消费者闭包：36 个引用文件的全部 named import/re-export 仍解析（13 个被删名
+  在全部通道零终端消费，contracts.ts 两死透出已删；逐项通道核对非 grep 空代证）。
 - 逐文件 import↔usage 精确匹配，无漏无赘。
 - esbuild 0.28.2（arch-lead 既有 node_modules 的独立二进制，仅 parse 不解析依赖）：
-  三文件 PARSE OK。
+  四文件 PARSE OK。
 - advisory `biome check`（全局 2.5.7，仓 pin ^2.5.8）：0 error；1 warning 为
   原文件 :2040 已存在的同一 `useOptionalChain`（移动代码 :874），organize-imports
   已按仓规则整形。
@@ -90,6 +99,6 @@ https://linear.app/yukoval-studios/issue/YUK-1572#comment-050998a7-f1a7-43de-bd4
 
 ## 行数声明（不作为收益）
 
-2268 → 990 + 919 + 456 = 2365（+97 行为三文件 header/import/re-export 管道）。
+2268 → 975 + 919 + 456 = 2350（+82 行为三文件 header/import/re-export 管道）。
 拆分理由是代码职责组织与审读定位；修改局部性的限制见上表，行数本身不是收益证据。两新文件均未到
 1500 行硬线，但这只是附带结果。
