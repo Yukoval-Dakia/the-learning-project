@@ -1,46 +1,19 @@
-import { and, eq } from 'drizzle-orm';
-
-import { db } from '@/db/client';
-import { learning_session } from '@/db/schema';
 import { ApiError, errorResponse } from '@/kernel/http';
-import { Placement } from '@/server/session';
 import { unresolvedField } from '../server/placement-advance';
-import { readPlacementUnresolvedItems } from '../server/placement-assessment';
-import { readPlacementStarterOutcomes } from '../server/question-supply/placement-starter-outcome-reader';
+import {
+  readPlacementSession,
+  transitionPlacementSession,
+} from '../server/session-operations/placement-session';
 import { UpdatePlacementSessionBodySchema } from './placement-contracts';
 
 export async function GET(_req: Request, params: Record<string, string>): Promise<Response> {
   try {
-    const result = await db.transaction(
-      async (tx) => {
-        const rows = await tx
-          .select({
-            id: learning_session.id,
-            type: learning_session.type,
-            status: learning_session.status,
-            goal_id: learning_session.goal_id,
-            scope_knowledge_ids: learning_session.scope_knowledge_ids,
-            started_at: learning_session.started_at,
-            ended_at: learning_session.ended_at,
-            updated_at: learning_session.updated_at,
-          })
-          .from(learning_session)
-          .where(and(eq(learning_session.id, params.id), eq(learning_session.type, 'placement')))
-          .limit(1);
-        const session = rows[0];
-        if (!session) {
-          throw new ApiError('not_found', `placement session ${params.id} not found`, 404);
-        }
-        return {
-          ...session,
-          starterSupply: await readPlacementStarterOutcomes(tx, params.id),
-          // YUK-1405 L1 — issued items with no verdict at read time.
-          ...unresolvedField(await readPlacementUnresolvedItems(tx, params.id)),
-        };
-      },
-      { isolationLevel: 'repeatable read', accessMode: 'read only' },
-    );
-    return Response.json(result);
+    const { session, starterSupply, unresolvedItems } = await readPlacementSession(params.id);
+    return Response.json({
+      ...session,
+      starterSupply,
+      ...unresolvedField(unresolvedItems),
+    });
   } catch (err) {
     return errorResponse(err);
   }
@@ -59,16 +32,9 @@ export async function PATCH(req: Request, params: Record<string, string>): Promi
       );
     }
 
-    const transition = await Placement.transitionPlacementSession(
-      db,
+    const { transition, unresolvedItems } = await transitionPlacementSession(
       params.id,
       parsed.data.status,
-    );
-    // YUK-1405 L1 — the honest end result marks every item that closed without a
-    // verdict (held-release 'end' half lands here: no new route needed).
-    const unresolved_items = await db.transaction(
-      (tx) => readPlacementUnresolvedItems(tx, params.id),
-      { isolationLevel: 'repeatable read', accessMode: 'read only' },
     );
     return Response.json({
       id: params.id,
@@ -77,7 +43,7 @@ export async function PATCH(req: Request, params: Record<string, string>): Promi
       status: transition.status,
       changed: transition.changed,
       allowed_statuses: transition.allowedStatuses,
-      ...unresolvedField(unresolved_items),
+      ...unresolvedField(unresolvedItems),
     });
   } catch (err) {
     return errorResponse(err);

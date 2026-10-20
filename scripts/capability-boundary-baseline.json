@@ -34,9 +34,18 @@
       }
     },
     "YUK-1570-mastery-read-engine": "Complete mastery row/ability and p(L)/KG projection read implementations now belong to kernel read models, with old server exports kept for compatibility; only 8 capability consumers move. knowledge -> mastery 6 -> 1, practice -> mastery 14 -> 12, copilot -> mastery 1 -> 0, total 440 -> 432. Write implementations, locks, transactions and non-capability consumer imports stay unchanged; no kernel-to-server facade.",
-    "YUK-1570-supply-run": "Supply planning owns complete bounded attempt orchestration (mount identity, run, parse/validation, rejection feedback and result accounting); web sourcing implementation is separated from the tool adapter and shares production dependency assembly with executor. practice -> ai 66 -> 63, total 432 -> 429. This auxiliary metric includes two removed type-only mcp-bridge imports and consolidation of JSON-parser dependency assembly; these import changes alone are not claimed as algorithmic deepening. Existing 2-attempt bound, cross-attempt tool context identity, Exa-null gate, injection and cost/event policies preserved. Composed after main mastery-read-engine PR #1881; earlier standalone measurement was 440 -> 437."
+    "YUK-1570-supply-run": "Supply planning owns complete bounded attempt orchestration (mount identity, run, parse/validation, rejection feedback and result accounting); web sourcing implementation is separated from the tool adapter and shares production dependency assembly with executor. practice -> ai 66 -> 63, total 432 -> 429. This auxiliary metric includes two removed type-only mcp-bridge imports and consolidation of JSON-parser dependency assembly; these import changes alone are not claimed as algorithmic deepening. Existing 2-attempt bound, cross-attempt tool context identity, Exa-null gate, injection and cost/event policies preserved. Composed after main mastery-read-engine PR #1881; earlier standalone measurement was 440 -> 437.",
+    "YUK-1570-session-operation": "Review/paper/placement lifecycle operations own existing state-transition, frozen-paper and dispatch decisions behind route adapters; practice -> session 16 -> 7, total 429 -> 420. boss/runtime-env move with the operation with zero net decrease; pause/resume are thin compatibility members, not independent deepening. HTTP behavior and manifests preserved. Composed after main mastery-read-engine PR #1881; earlier standalone measurement was 440 -> 431. Latest composition includes supply PR #1883; main server baseline 429."
   },
   "changes": [
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> session",
+      "date": "2026-10-20",
+      "from": 16,
+      "to": 7,
+      "direction": "decrease"
+    },
     {
       "debt": "crossCapabilityValue",
       "pair": "ingestion -> practice",
@@ -48,7 +57,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 429,
+      "total": 420,
       "byOwnerPair": {
         "agency -> ai": 28,
         "agency -> boss": 10,
@@ -122,7 +131,7 @@
         "practice -> questions": 14,
         "practice -> r2": 4,
         "practice -> runtime-env": 4,
-        "practice -> session": 16,
+        "practice -> session": 7,
         "shell -> boss": 1,
         "shell -> proposals": 4,
         "shell -> records": 1,

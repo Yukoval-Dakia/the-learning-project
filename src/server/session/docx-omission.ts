@@ -1,11 +1,8 @@
 import type { DocxOmittedExternalRef } from '@/core/schema/docx-omission';
 
-// YUK-1476 (R1 P1-2) — zero-dependency leaf holding the SHARED external-ref
-// omission audit contract. Both docx lines consume it so the receipt is
-// identical everywhere:
-//   - text line  → src/server/session/docx-ingestion.ts (initiateDocxTextUpload)
-//   - visual line→ src/server/session/ingestion.ts (Ingestion.initiateUpload)
-// The shared core type is erased at runtime; no second session-create entry, no new store/schema.
+// YUK-1476 — zero-dependency leaf holding the shared external-ref omission
+// contract. Both DOCX lines consume it (text: docx-ingestion, visual: ingestion)
+// so the receipt cannot drift. The core type is erased at runtime; no new store.
 
 /** Audit facts for external resources omitted from the DOCX converter-input copy. */
 export interface DocxExternalRefOmissionFacts {
