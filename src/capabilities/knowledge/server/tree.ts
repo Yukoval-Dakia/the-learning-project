@@ -2,7 +2,7 @@ import { eq, isNull, sql } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import { knowledge, knowledge_mastery } from '@/db/schema';
 import { matchesSubjectDomain } from '@/kernel/read-models/knowledge-tree';
-import { getMasteryProjection } from '@/server/mastery/state';
+import { getMasteryProjection } from '@/kernel/read-models/mastery-projection';
 import { normalizeSubjectKey, resolveKnownSubjectId } from '@/subjects/profile';
 
 interface KnowledgeRow {

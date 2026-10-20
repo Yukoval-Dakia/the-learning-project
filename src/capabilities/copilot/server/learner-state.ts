@@ -45,11 +45,14 @@ import { effectiveCauseCategoryForFailureAttempt } from '@/kernel/read-models/ca
 import type { FailureAttempt } from '@/kernel/read-models/failure-attempts';
 import { getFailureAttempts } from '@/kernel/read-models/failure-attempts';
 import {
+  type MasteryProjection,
+  getMasteryProjection,
+} from '@/kernel/read-models/mastery-projection';
+import {
   LEARNER_STATE_HEADER_BUDGET,
   type LearnerStateHeaderBudget,
   PROPOSAL_FEEDBACK_BUDGET,
 } from '@/kernel/tools/budgets';
-import { type MasteryProjection, getMasteryProjection } from '@/server/mastery/state';
 import { type CopilotSummary, loadCopilotSummary } from '@/server/today/copilot-summary';
 import {
   type LoadTodayOvernightDigest,

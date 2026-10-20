@@ -20,9 +20,9 @@ import { POLY_SIGMOID_ENABLED } from '@/core/poly-exp';
 import { db } from '@/db/client';
 import { goal, knowledge } from '@/db/schema';
 import { ApiError, errorResponse } from '@/kernel/http';
+import { getMasteryProjection } from '@/kernel/read-models/mastery-projection';
 import { readLearnerAxisStates } from '@/server/calibration/axis-writer';
 import { loadDayOnePriors } from '@/server/coldstart/propagate-priors';
-import { getMasteryProjection } from '@/server/mastery/state';
 import { resolveGoalPlacementScope } from '../server/placement-scope';
 import type { PlacementProfileKc, TestedPlacementProfileKc } from './placement-contracts';
 
