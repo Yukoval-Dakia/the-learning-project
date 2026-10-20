@@ -20,12 +20,12 @@
     "YUK-1547": "practice -> ai 65 -> 66 (+1, total 437 -> 438): verify-framework.ts re-exports writeToolCallLog (src/server/ai/log) — structured-submit parse failures keep the bounded raw submit arguments as tool_call_log evidence attached to the task run (admission solve + crosscheck). Same owner-service lane as the file's existing server/ai re-exports (Provider/TaskTextResult); consumers add no new edge.",
     "YUK-1559": "C1-10 model-source unification: ingestion -> ai 15 -> 16 (+1, total 437 -> 438): provider-attempts.ts reads GLM_OCR_MODEL_ID from the provider catalog (src/server/ai/providers.ts) instead of pinning the glm-ocr literal — direct-lane declared ids belong to the catalog.",
     "YUK-1567": {
-      "direction": "increase",
       "debt": "capabilityToServer",
       "pair": "practice -> r2",
       "date": "2026-10-19",
       "from": 3,
       "to": 4,
+      "direction": "increase",
       "reason": "仅追认 #1811 / YUK-1567 已合入 main 的这一条依赖，capability→server 当时由 443→444。reauthorization.ts 为 publishQuestionGroup 注入 readAssetBytes。原批准出处 https://linear.app/yukoval-studios/issue/YUK-1567 评论 bb3e06ad-7c9f-4060-b89c-5617985f6a9c（2026-10-19 00:26Z）；限定范围的协调线裁定出处 https://linear.app/yukoval-studios/issue/YUK-1570 评论 82d63281-8a31-4433-a685-30b610bfcbcb（2026-10-19 15:21Z）。本记录不得复用，不能抵其他上调，不构成泛化授权。",
       "exitCondition": "下一次 YUK-1570 减边 PR 由 T3 架构线把这条 practice→r2 依赖收进 capability 自有模块或窄端口，让边回到 3，最迟不晚于 YUK-1570 关闭；退出前本记录不得复用，不能抵其他上调。",
       "justification": {
@@ -35,9 +35,18 @@
     },
     "YUK-1570-mastery-read-engine": "Complete mastery row/ability and p(L)/KG projection read implementations now belong to kernel read models, with old server exports kept for compatibility; only 8 capability consumers move. knowledge -> mastery 6 -> 1, practice -> mastery 14 -> 12, copilot -> mastery 1 -> 0, total 440 -> 432. Write implementations, locks, transactions and non-capability consumer imports stay unchanged; no kernel-to-server facade.",
     "YUK-1570-supply-run": "Supply planning owns complete bounded attempt orchestration (mount identity, run, parse/validation, rejection feedback and result accounting); web sourcing implementation is separated from the tool adapter and shares production dependency assembly with executor. practice -> ai 66 -> 63, total 432 -> 429. This auxiliary metric includes two removed type-only mcp-bridge imports and consolidation of JSON-parser dependency assembly; these import changes alone are not claimed as algorithmic deepening. Existing 2-attempt bound, cross-attempt tool context identity, Exa-null gate, injection and cost/event policies preserved. Composed after main mastery-read-engine PR #1881; earlier standalone measurement was 440 -> 437.",
+    "YUK-1570-session-operation": "Review/paper/placement lifecycle operations own existing state-transition, frozen-paper and dispatch decisions behind route adapters; practice -> session 16 -> 7, total 429 -> 420. boss/runtime-env move with the operation with zero net decrease; pause/resume are thin compatibility members, not independent deepening. HTTP behavior and manifests preserved. Composed after main mastery-read-engine PR #1881; earlier standalone measurement was 440 -> 431. Latest composition includes supply PR #1883; main server baseline 429.",
     "YUK-1622": "agency -> practice 4 -> 5 (+1, total 42 -> 43 after main's YUK-1571 shared-read offset): coach_daily imports the practice public resolveDailyReviewPlanInputs so the TodayPlan due queue, daily budget and measured pace have one formula and one source; Coach reads practice's public module instead of copying the formula. PM ruling (Linear YUK-1622 comment 82cd19fd-51d1-46d5-bc70-5b0365409dd1, https://linear.app/yukoval-studios/issue/YUK-1622#comment-82cd19fd) approved this single edge only; it is not a general relaxation."
   },
   "changes": [
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> session",
+      "date": "2026-10-20",
+      "from": 16,
+      "to": 7,
+      "direction": "decrease"
+    },
     {
       "direction": "increase",
       "debt": "crossCapabilityValue",
@@ -55,7 +64,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 429,
+      "total": 420,
       "byOwnerPair": {
         "agency -> ai": 28,
         "agency -> boss": 10,
@@ -129,7 +138,7 @@
         "practice -> questions": 14,
         "practice -> r2": 4,
         "practice -> runtime-env": 4,
-        "practice -> session": 16,
+        "practice -> session": 7,
         "shell -> boss": 1,
         "shell -> proposals": 4,
         "shell -> records": 1,
