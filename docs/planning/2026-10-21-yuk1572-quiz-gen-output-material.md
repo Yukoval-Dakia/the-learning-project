@@ -1,13 +1,14 @@
 # 出题输出验证与材料职责归属（YUK-1572）
 
 独立 writer：`/Users/yuqi/.t3/worktrees/the-learning-project/t3-e0c956e0`。
-base `83bbecdaecaf70be0ae0241795fac3d5a07940c1`，branch
-`arch/yuk-1572-quiz-gen-knowledge`；从 fetch 后的 origin/main 新建，未带父旧提交。
-源码提交 `35399b53a0dbaca9bc64322864df1502f14d200e`，tree
-`531821d1b5a86acf880816878525568685bb0cff`。父已核准旧出口删除与完整职责接入。
-后续普通 merge 最新 main `20222f2cafe1500a9e445b43fe132935405d825a` 得
-`9b3347505be06798feeded4fc1cb86eea1706acf`，无冲突；本片三个源码与上游三个文件
-分别对原提交逐 blob 相同。依赖 package/lock/workspace SHA 与父安装回执相同。
+交付 base：main `67506c5eaa5604ba34d2c943132343bf2e7fab5e`（JSON PR1912 已合）。
+branch `arch/yuk-1572-quiz-gen-knowledge`；最初从 fetch 后 main
+`83bbecdaecaf70be0ae0241795fac3d5a07940c1` 建分支，未带父旧提交。
+初版源码 `35399b53a0dbaca9bc64322864df1502f14d200e`；普通合入 main 20222f2 后，
+再普通 merge 最新 main 67506c5，形成已检查源码 head
+`fe2e8a6efcb991fd95def93527511066d4d1f644`。唯一冲突是 job 顶部已迁出的 import：
+保留本片 job，JSON import 实际放在新 output owner 并改指 core 真身。
+没有 rebase/force；main 全部其它文件、publication/source/JSON 和 ledger 前缀逐 blob 保留。
 
 ## 两个职责与真实消费者
 
@@ -30,7 +31,8 @@ quiz_gen.typecheck.ts（QuizGenJobData）、scripts/dev/question-supply-spike.ts
 ## 行为及受保护区
 
 原 class / parse 完整实现仅增加内部模块导出声明；材料块逐字搬移。
-JSON helper 保留原 import、调用参数与 warn 标签；risky repair 仍只认 jsonrepair，
+JSON helper 改指同一算法的 `@/core/json-extract` 真身；调用参数与 warn 标签不变；
+risky repair 仍只认 jsonrepair，
 schema 拒收仍经同一 placementSchemaFailure，判分契约异常仍直接外抛。
 解析模块没有 DB/provider 操作，但调用的 JSON helper 有原存量 warn 日志，
 不宣称完全无副作用。材料 trim、逐行 blockquote、空内容返回、500 UTF-16 code-unit
@@ -40,7 +42,7 @@ schema 拒收仍经同一 placementSchemaFailure，判分契约异常仍直接�
 imports。原 415–EOF（包括所有调用）逐字不动；K1 save/submit、主 run、placement
 admission/paid/fence、检索、persist/dispatch、预算及失败恢复顺序均保护。
 不改 question-contract、placement helpers、schema、audit、baseline、CI、package、lock
-或测试。JSON PR1912 尚未落在本 base，不能提前吞并其 import 改动。
+或测试；保留已合 PR1912 的 core JSON 真身和全部消费者改指，未恢复旧 server 两文件。
 
 ## 两个真实维护场景与五标准
 
@@ -66,19 +68,20 @@ output 69 行、material 56 行；仍超过 1500，不为尺寸触及保护段�
 父在旧 head `264733f6d32f4dc299446d93c39496ed5f5eb997` 唯一一次 heavy frozen install
 returncode 0；receipt/log hash 已核，前后三份依赖文件相同。lane 未 install/update/复制。
 
-在 merge head `9b3347505be06798feeded4fc1cb86eea1706acf`，经外部 heavy.sh 本 lane
-串行实际跑五门，raw stdout/stderr、argv、UTC 与 subprocess 真退出码均封存：
+在源码 head `fe2e8a6efcb991fd95def93527511066d4d1f644`，外部 heavy.sh 全机≤2、
+本 lane 串行实际跑五门，raw stdout/stderr、argv、UTC 与 subprocess 真退出码均封存：
 - typecheck 0、lint 0（181 warnings，本片三个源码无命中）、build 0；
-- architecture-deepening 0：依赖总数 403/0/37，SCC 仍 agency/knowledge/practice，
-  pass-through sites 1088（+0 new）；不宣称本片净降指标；
-- capability-boundaries 1：唯一 violation 是新 output 模块的 json-extract 真实依赖边
-  缺 edgeRecords 登记。旧 job 的原 import 已随职责删除；总数不变不免除新边登记。
-  已报父，lane 未改 baseline 或门；此真实失败回执保留，不称五门全绿。
+- capability-boundaries 0：debt exact 394/0/37、新依赖边 0、server-entry 新边 0，
+  SCC 1（base 1），>1500 文件 13（base 13）；
+- architecture-deepening 0：SCC 仍 agency/knowledge/practice，pass-through 1088（+0 new）。
 
-父待登记：file=`src/capabilities/practice/server/quiz/quiz-gen-output.ts`，
-module=`src/server/ai/json-extract.ts`，symbols=`parseJsonObjectLoose`，issue=`YUK-1572`；
-owns 为完整 JSON/schema/persisted judge-contract 输出验证，沿用原 helper 的风险修复
-与 warn 语义，无 wrapper 或伪 marker。未新增 sourceSize 或其它本 lane 登记请求。
+与 main 67506c5 相比没有本片额外 debt 下降或新违规，因此不需要 --tighten。
+lane 未改 baseline、门或 ignore；不登记已不存在的临时 server JSON 边。
+旧检查 head 9b334750 的 boundaries rc1（output→server/json-extract 新边缺登记）是
+真实历史失败，原 seal 保留；core 组合后真实 binding 已改变，当前五门全部 rc0。
+保护 proof 证：job/material 完整 blob 与交付 2f0af296 相同；output 全部 body 相同、
+仅 JSON import 改 core 并排序；main 其它文件及 ledger 与 67506c5 完全相同。
+package/lock/workspace hashes 与父既有安装回执相同，lane 没有再次安装。
 全部 tests/vitest、DB、TEST、Docker、daemon、provider、runtime、demo、paid：NOT_RUN。
 不 push、PR、watch、review、Linear 或清树。未发现范围外新 actionable 缺陷；
 tracker capture、最终审查、CI、baseline 实测登记与整合由父负责。
@@ -87,11 +90,14 @@ tracker capture、最终审查、CI、baseline 实测登记与整合由父负责
 YUK-1572/35399b53a0dbaca9bc64322864df1502f14d200e/quiz-gen/source-proof/`，
 含 full diff、保护块比较、完整 caller census、语法 raw stdout/stderr、argv/UTC/真 rc；
 sha256.json `351d97dc8f4c7610ba37a08394a463adb19d3edb767f3f307ec8b7e372adc11f`。
-五门证据：同一 artifact 根下
-`YUK-1572/9b3347505be06798feeded4fc1cb86eea1706acf/quiz-gen/checks-round1/`，
-sha256.json `17cd275b326cb0578ef2c0a0d15e39ef46dc22e2a75b2509293001784d3a6cfc`。
-相邻 integration-proof/ 记录双方 blob、依赖及安装 log hash，manifest SHA256
-`a6d9be9fd33614b68283a1a259d9cdb7971e1af40d4e794f71f3a54cf782c59f`。
-原 source/preflight/handoff seal 独立保留，未覆盖。待决是父新边登记及定向 audit
-复核、独立审查与 CI／整合；不存在待批 compat、未知 caller 或范围扩张请求。
-源码与短文档提交后 clean 停止 writer；测试与真实运行继续 NOT_RUN。
+当前五门证据：同一 artifact 根下
+`YUK-1572/fe2e8a6efcb991fd95def93527511066d4d1f644/quiz-gen/json-core-checks-round1/`，
+sha256.json `7ca200149729dea107177e3434784616868eb83c00bd1cde25eb0188a908ae01`。
+相邻 json-core-integration-proof/ 记录 main 全部 blob 保留、own job/material/output body、
+依赖 hash、旧路径缺席及命令原始回执，manifest SHA256
+`3c82c85c337a8aac9dc9b87518cea9ee030672f6149e15e90e1cc113331d45e1`。
+历史五门 `9b334750.../quiz-gen/checks-round1/` manifest SHA256
+`17cd275b326cb0578ef2c0a0d15e39ef46dc22e2a75b2509293001784d3a6cfc`；未覆盖。
+原 source/preflight/handoff seal 全部独立保留。当前无待批边登记、compat、未知 caller
+或范围扩张请求。源码与短文档提交后 clean 停止 writer，交父唯一 R1 与后续 CI／整合；
+不自行审查／push／PR。测试与真实运行继续 NOT_RUN。
