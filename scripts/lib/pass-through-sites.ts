@@ -221,10 +221,14 @@ function forwardArgsShape(
     argNames.push(arg.name);
   }
   if (argNames.every((name, i) => name === paramNames[i])) return 'direct';
-  // Permutation: distinct parameters, each used exactly once, order may differ.
-  // Element-wise set membership (lengths already equal) — never string concat.
-  const paramSet = new Set(paramNames);
-  if (paramSet.size === paramNames.length && argNames.every((name) => paramSet.has(name))) {
+  // Permutation: distinct parameters AND distinct arguments, sorted element-wise
+  // equality (lengths already equal). `f(a,b) => g(a,a)` must not match.
+  const sortedParams = [...paramNames].sort();
+  const sortedArgs = [...argNames].sort();
+  if (
+    new Set(paramNames).size === paramNames.length &&
+    sortedArgs.every((name, i) => name === sortedParams[i])
+  ) {
     return 'reordered';
   }
   return null;
