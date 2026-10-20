@@ -180,13 +180,10 @@ OpenCode Go 已知协议路径不匹配时不执行。Anthropic 的目录 `/v1` 
 派生本地连接串。浏览器代码不持有 provider key，所有 AI 调用都通过 Hono route 或
 pg-boss worker 在服务端执行。
 
-API 与独立 worker 都先由 `server/env.ts` 加载 `.env.local` / `.env`，再通过
-`src/server/env.ts` 的 t3-env server schema 校验运行时配置；`DATABASE_URL` 是共享运行时
-必需项，`INTERNAL_TOKEN` 仅由 API 组合根在监听前显式校验，DB-only 脚本不需要 API token。
-其余 provider、R2、OCR、feature flag 配置保持各自原有的可缺性与默认值。当前 Vite SPA
-没有 `VITE_*` 消费点，因此不设 client schema。Vitest 会
-跳过启动校验，让 DB 分区的 `tests/setup.db-fork.ts` 先改写每个 fork 的连接串；bundle build
-只打包入口，容器实际启动时仍会执行同一校验。
+API 与独立 worker 都先由 `server/env.ts` 加载 `.env.local` / `.env`，再由
+`src/server/env.ts` 用 @t3-oss/env-core + zod 校验 server schema。加载顺序、
+必填项、compose 与本机 dev 的取值、逐键默认值及 DB 配置层见
+[docs/configuration.md](./docs/configuration.md)。
 
 常用检查 / PR 前门禁：
 
@@ -235,45 +232,14 @@ Owner 于 2026-10-07 将产品交付与本机运维持续委托给 agent，见[�
    - Point the public hostname, for example `loom.<your-domain>`, to `http://app:8787`.
    - Copy the Tunnel Token shown after creation.
 
-2. **Configure environment variables** — copy `.env.example` to `.env` and fill in:
-   ```bash
-   DATABASE_URL=postgres://loom:loom@postgres:5432/loom?sslmode=disable
-   INTERNAL_TOKEN=...
-   XIAOMI_API_KEY=...
-   ANTHROPIC_API_KEY=...
-   # OPENAI_API_KEY=...          # 可选：opt-in openai/gpt-6-astra Responses lane（YUK-1027），默认路径不需要
-   TUNNEL_TOKEN=<paste-token-here>
-   TUNNEL_PROTOCOL=auto          # use http2 if outbound UDP/7844 is blocked
-   # + R2 / Tencent OCR keys
-   # MEM0_* keys are optional — see .env.example for defaults
-   ```
+2. **Configure environment variables** — copy `.env.example` to `.env`; 至少填写
+   `DATABASE_URL`、`INTERNAL_TOKEN` 和所选 provider lane 的 key（模板默认 lane 用
+   `OPENCODE_API_KEY`）。走 Cloudflare Tunnel 时填 `TUNNEL_TOKEN`；录入需要 R2 的 key，
+   以及 OCR 引擎的 key——默认 `glm` 需要 `ZHIPU_API_KEY`，设为 `tencent` 时改为腾讯 OCR
+   的 key；worker 处理记忆事件需要 `DASHSCOPE_API_KEY`。
 
-   `BANK_GAP_EVIDENCE_SECRET`（app 侧）：`search_bank` 用它给 gap_request 签 MAC，
-   `file_bank_gap` 验 MAC；短于 32 字符或等于 `INTERNAL_TOKEN` 时视为未设，未设时
-   `file_bank_gap` 拒绝所有提交。
-   `WORKSHEET_RENDER_APP_ORIGIN`（worker 侧）：`worksheet_render` 打开打印页的 origin，
-   compose 已设 `http://app:8787`；只有变量完全未设置才缺省 `http://localhost:5173`，
-   照抄 `.env.example` 留空会让 job 报 `WORKSHEET_RENDER_APP_ORIGIN is empty`，
-   本机要么删掉该行要么填值。
-
-   `DASHSCOPE_API_KEY` is required as soon as the worker
-   processes its first `memory_event_ingest` job (every `writeEvent` enqueues
-   one, per ADR-0017 §"Write triggers" #1). Pinned memory extraction requires
-   `OPENCODE_API_KEY`; `ZHIPU_API_KEY` is needed only for the unpinned GLM
-   path or a configured dedicated GLM OCR path. The fact layer runs on Mem0 with
-   the 阿里百炼 `text-embedding-v4` embedder. Product generative AI uses
-   `AI_PROVIDER_OVERRIDE=opencode-go` + `AI_PROVIDER_MODEL=mimo-v2.6-pro` with
-   `OPENCODE_API_KEY` in **both app and worker**. This pair covers chat task
-   overrides, Copilot children, Mem0 fact extraction and memory/knowledge-edge
-   reconciliation. `MEM0_LLM_*` cannot override the pair. Mem0 runs inside these
-   two processes, with app reads and worker writes; there is no separate Mem0
-   container. Keep `DASHSCOPE_API_KEY`, existing embedding model/dimensions,
-   pgvector collection and history volume unchanged. Without a global pin,
-   legacy task registry Xiaomi and Mem0 GLM configuration remains available for
-   explicit rollback; the known Xiaomi 402 is still a failure. Dedicated Jev
-   typed scoring and layout OCR keep their protocol-specific services.
-   See [product AI migration and runtime checklist](docs/planning/2026-10-07-yuk1341-product-mimo-routing.md)
-   for source, actual-output and deployment boundaries.
+   变量含义、默认值、AI/记忆 pin 与 DB 配置层见
+   [docs/configuration.md](./docs/configuration.md)。
 
 3. **Database migrations run automatically.** A dedicated `migrate` init container
    (YUK-65) applies the bundled drizzle migrations before `app` / `worker` start on
@@ -457,7 +423,7 @@ src/
   ui-next/        # UI rewrite 的 scoped design-system 基础层（tokens/primitives/shell/mascot/motion）
 scripts/          # worker.ts（pg-boss 独立进程）+ migrate.ts + dev-local.ts + audits（schema/partition/profile）
 postman/          # api-endpoints.json 真相源 + gen:postman manifest 对账层
-docs/             # architecture, modules, ADRs, planning
+docs/             # architecture, modules, ADRs, planning, configuration
 ```
 
 `core/` 是跨学科共享层；`subjects/<name>/` 是单学科特化层。`src/capabilities/<name>/manifest.ts`
