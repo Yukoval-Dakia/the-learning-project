@@ -14,7 +14,7 @@ Owner 明确授权的架构切片：三条完整 reader 从 practice 写协议�
   `/Users/yuqi/.t3/worktrees/the-learning-project/t3-e13621b0`。
 - source head：`9fca3640303ff7f935e9e468313376b08dd618eb`；source tree：
   `32f640cbafeb0c43ff944bf4aedd6a5c308fba2f`。本交付文档随后单独提交。
-- 外部证据根：`/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK1571/9fca3640303ff7f935e9e468313376b08dd618eb/diagnostic-read/`。
+- 初次源码证据根（历史目录 `YUK1571` 无连字符，原件保留）：`/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK1571/9fca3640303ff7f935e9e468313376b08dd618eb/diagnostic-read/`。
   `source-proof-v2/source-proof.json` SHA256：
   `8a79c81eb94f0092933c72e791fc6629934573c7fe75c2a962b40fc363241add`；
   `SHA256.json` SHA256：`65e46c129f6008af8435c4937c6dea313afd22aaca902031a858e14b22916334`。
@@ -36,8 +36,9 @@ owner/import seam；agency 不再为这两条读取加载 practice 公共面。
 精确符号检索互相核对。没有直接导入三 reader 的测试。
 `agency/server/intervention/intervention-preparation.db.test.ts:75` 导入真实 subscriber，
 调用在 971、1014、1269、1335、1365、1466、1546；文件与 case 均未改、未运行。
-`scripts/capability-public-read-cycles.ts:78` 仍记录旧 LatestTrusted 名，属于审计
-catalog，已报父；本 lane 不改 audit。代码索引返回 not ready，未以空索引证明无 caller。
+父随后批准 `scripts/capability-public-read-cycles.ts` 的 practice→agency 项纯数据退役：
+files 仅删 settlement-subscription，symbols 仅删旧 LatestTrusted 名；其余 files、
+commands、TodayPlan 与 audit 逻辑全部保留。代码索引返回 not ready，未以空索引证明无 caller。
 
 ## 五源码路径的保护证明
 
@@ -88,8 +89,54 @@ trusted=false 与 null 区别，以及原纠错事件作为 verdictEvent 的行�
   初次采证进程 rc1 源于 rg 继承 stdin 未给搜索路径，源码比对全过；修正显式 `.` 后
   v2 rc0，原始失败 raw 保留。未运行产品逻辑或测试。
 
-node_modules 缺失；本 lane 未安装/更新/复制依赖。typecheck/lint/build/两 audit 全为
-NOT_RUN（不是绿色），父串行一次 frozen install 后仅经 heavy.sh 执行并封存真实结果。
+初交付时 node_modules 缺失，五门 NOT_RUN 的旧 seal 保留；后续结果见下。本 lane
+未安装/更新/复制依赖。
 本机 tests/vitest/DB/TEST/Docker/daemon/provider/runtime/demo/paid 全部 NOT_RUN；
-没有 push/PR/watch/review/Linear/清树。audit catalog/baseline 更新、exact-head CI、
-独立审查与 Linear 状态归父。本 lane 不自改 baseline、不报告 SCC 减少或官方计数收益。
+没有 push/PR/watch/review/Linear/清树。baseline 登记、exact-head CI、独立审查与
+Linear 状态归父。
+
+## 普通整合 main 与五门实测
+
+父在本树唯一串行 `heavy.sh pnpm install --frozen-lockfile` rc0；package.json、
+pnpm-lock.yaml、pnpm-workspace.yaml 的三个 SHA256 前后相同，writer 已与本树实物核对。
+回执为正确目录 `architecture-deepening/YUK-1571/411c2f7046c44e32290b8641b25ba1b7c1d155a9/parent-frozen-install.json`。
+
+普通 merge `20222f2cafe1500a9e445b43fe132935405d825a`，merge commit
+`0d2aa207e`，无冲突。catalog 两行纯数据退役提交 `d4bb539ab0b1f4891bd4ea82cfc015fcd6b41939`，
+也是以下五门受检 head，tree `3ce30943ba3c384a021cc72c6e59a60d30038c9b`。
+4455 个上游非本片文件 blob 全部相同，五源码 blob 仍与 9fca 相同；ledger blob
+`9a0e9e53ae6dccaaf9eeebc934e0a898543a0348` 与 main 一致。无本片 import/format 修补。
+
+五门均从本树经 `heavy.sh pnpm <script>` 串行执行，HEAVY_SLOTS=2；两个 audit 显式
+`--base 20222f2cafe1500a9e445b43fe132935405d825a`。
+
+| 门 | 真正 rc | 结果 |
+|---|---|---|
+| typecheck | 0 | 两 tsconfig 完成 |
+| lint | 0 | 180 warnings；不宣称与 main 逐项相同 |
+| build | 0 | web/Start/server/worker/migrate 构建完成，未启动产品进程 |
+| audit:capability-boundaries | 1 | 仅两项债务下降 + 三条新 cap→kernel 边待父登记 |
+| audit:architecture-deepening | 1 | 仅相同两项债务下降；无其他 finding |
+
+实测 server/deep/cross 为 403/0/36；ledger cross37→实际36、agency→practice5→4。
+唯一退出跨包文件边是 settlement-subscription→practice/public；store 仍有真实
+materialize/retire 命令依赖，不能重复计算它。SCC 保持1×3{agency,knowledge,practice}；
+超1500行文件13→13；新 kernel 反向 value/type 边0/0。
+
+为从失败 audit 获取精确 symbols 与 counters，另经 heavy 串行执行 boundary
+`--json --base 20222f2...`，真实 rc1，仍同五项。三条新边的目标均为
+`src/kernel/read-models/intervention-diagnostic-verdict.ts`；source 前缀为 `src/capabilities/`：
+
+| source | kind | scanner 实际 symbols |
+|---|---|---|
+| `agency/server/intervention/settlement-subscription.ts` | value | `[loadLatestTrustedInterventionDiagnosticVerdict]` |
+| `agency/server/intervention/store.ts` | value | `['*']`（原位置动态 import） |
+| `practice/server/intervention-diagnostics.ts` | value | `[loadLatestTrustedInterventionDiagnosticVerdict,loadNativeInterventionDiagnosticState]` |
+
+本轮正确外证根为 `/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1571/d4bb539ab0b1f4891bd4ea82cfc015fcd6b41939/`：
+`diagnostic-read-five-gates-v1/` 保存全部 raw/argv/UTC/rc、上游逐 blob 证明；
+`SHA256.json` SHA256 `5195c761aac1218acaf10aae807b9edef4132786f3bcbabf157e6d1f790cbe6c`。
+`diagnostic-read-dependency-facts/dependency-facts.json` SHA256
+`c88f3ce9a16d24783057c85b5688c01aaa3f6ad2d65bec06c9ed4913d4b1d371`。
+失败 seal 均保留；baseline 未改，登记与后续两 audit 复验待父统一。上述结果只对应
+受检 d4bb；本节随后仅文档提交，终态由外部 delivery seal 绑定，不冒称新 head 跑过五门。
