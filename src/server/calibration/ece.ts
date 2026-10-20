@@ -1,29 +1,15 @@
-// Expected Calibration Error (ECE) + per-bin reliability table.
-//
-// Source: binned reliability diagram (Naeini, Cooper & Hauskrecht, AAAI 2015;
-//   Guo, Pleiss, Sun & Weinberger, ICML 2017 "On Calibration of Modern Neural
-//   Networks"). Bin the predicted P into K bins, then:
-//     ECE = Σ_b (n_b / N) · |acc_b − conf_b|
-//   where conf_b = mean predicted P in bin b, acc_b = empirical accuracy in bin b.
-//
-// PURE — no IO, no DB. The harness scores forward predictions with this; a wrong
-// ECE silently yields a false calibration verdict, so the formula matches the
-// textbook definition exactly and is pinned by hand-computed known-answer tests.
+// ECE = Σ_b (n_b / N) · |acc_b − conf_b|. Naeini et al., AAAI 2015; Guo et al., ICML 2017.
+// A wrong value yields a false calibration verdict, so this is the textbook sum, not a variant.
 
 export type Binning = 'equal-width' | 'equal-count';
 
 export interface ReliabilityBin {
-  /** displayed bin lower edge (equal-width: k/K; equal-count: realized group min — cosmetic). */
+  /** Equal-count edges are the realized group min and max. Display only. ECE ignores them. */
   binLo: number;
-  /** displayed bin upper edge (equal-width: (k+1)/K; equal-count: realized group max — cosmetic). */
   binHi: number;
-  /** number of predictions in the bin. */
   n: number;
-  /** mean predicted P in the bin (confidence). 0 for an empty bin. */
   conf: number;
-  /** empirical accuracy (mean label) in the bin. 0 for an empty bin. */
   acc: number;
-  /** |acc − conf|. 0 for an empty bin. */
   gap: number;
 }
 
@@ -40,43 +26,20 @@ export interface EceOptions {
   k?: number;
 }
 
-/**
- * Expected Calibration Error over (predicted P, binary label) pairs.
- *
- * @param predictions predicted probabilities in [0,1].
- * @param labels      binary outcomes (0|1), same length as predictions.
- * @param opts.binning 'equal-count' (default — quantile groups) or 'equal-width' (1/K bins).
- * @param opts.k       number of bins (default 10).
- *
- * Edge cases:
- *   - N=0 → {ece:0, n:0, bins:[]} (does NOT throw — the caller decides whether an
- *     empty sample is an error).
- *   - empty bins contribute 0 weight (conf=acc=gap=0).
- *   - length mismatch → throws.
- *
- * NOTE (m1): equal-count bin edges are the REALIZED group min/max (quantiles), not
- *   evenly-spaced partitions — purely cosmetic for the reliability display. ECE is
- *   edge-independent (it only depends on which points share a bin), so this does not
- *   affect the ECE value.
- */
+/** An empty sample returns ECE 0 and does not throw. The caller decides if that is an error. */
 export function ece(predictions: number[], labels: (0 | 1)[], opts: EceOptions = {}): EceResult {
   if (predictions.length !== labels.length) {
     throw new Error('ece: predictions and labels must have equal length');
   }
   const binning: Binning = opts.binning ?? 'equal-count';
   const k = opts.k ?? 10;
-  // OCR finding 2: k<1 → zero bins → the binning loop never runs → eceSum stays 0 →
-  // a SILENT false 'perfectly calibrated' (ECE=0) verdict on corrupt config. A verdict
-  // tool must fail loud on invalid bin counts, not fabricate a neutral result.
+  // k < 1 would skip the loop and report ECE 0, a silent "perfectly calibrated" verdict.
   if (!Number.isInteger(k) || k < 1) {
     throw new Error(`ece: k must be an integer >= 1 (got ${k})`);
   }
   const n = predictions.length;
 
-  // OCR finding 3: a NaN/non-finite prediction → Math.floor(NaN*k)=NaN bin index →
-  // binIndices[NaN] is undefined → .push throws an opaque TypeError (equal-count: the
-  // comparator sort silently mis-orders). A NaN prediction means upstream corruption;
-  // reject it loudly here rather than scoring a garbage reliability table.
+  // A non-finite prediction would make a NaN bin or mis-sort equal-count bins, so this throws.
   for (let i = 0; i < n; i++) {
     if (!Number.isFinite(predictions[i])) {
       throw new Error(`ece: prediction at index ${i} is not finite (got ${predictions[i]})`);
@@ -87,7 +50,6 @@ export function ece(predictions: number[], labels: (0 | 1)[], opts: EceOptions =
     return { ece: 0, n: 0, bins: [], binning, k };
   }
 
-  // Build per-bin index lists.
   let binIndices: number[][];
   let displayEdges: Array<{ lo: number; hi: number }>;
 
@@ -95,20 +57,18 @@ export function ece(predictions: number[], labels: (0 | 1)[], opts: EceOptions =
     binIndices = Array.from({ length: k }, () => [] as number[]);
     for (let i = 0; i < n; i++) {
       const p = predictions[i];
-      // min(K-1, floor(p*K)) lands p=1.0 in the last, closed bin [(K-1)/K, 1.0].
+      // p = 1 lands in the last closed bin. p < 0 is not a probability and would index below 0.
       const idx = Math.min(k - 1, Math.floor(p * k));
-      // Guard p<0 (shouldn't happen for a probability) → bin 0.
       binIndices[Math.max(0, idx)].push(i);
     }
     displayEdges = Array.from({ length: k }, (_, b) => ({ lo: b / k, hi: (b + 1) / k }));
   } else {
-    // equal-count: sort by predicted P, split into K contiguous index-quantile groups.
+    // Quantile groups. Ties may make them unequal. ECE uses membership, not equal counts.
     const order = Array.from({ length: n }, (_, i) => i).sort(
       (a, b) => predictions[a] - predictions[b],
     );
     binIndices = Array.from({ length: k }, () => [] as number[]);
     for (let pos = 0; pos < n; pos++) {
-      // floor(pos * K / N) gives ~N/K per group; ties may make groups unequal — OK.
       const b = Math.min(k - 1, Math.floor((pos * k) / n));
       binIndices[b].push(order[pos]);
     }

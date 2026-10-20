@@ -1,12 +1,14 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-20：YUK-1570 已按限定裁定追认历史 practice→r2 3→4，普通合入 main 的静态 CI jobs；本地 gate 全过，待新 head CI，不合并 PR、不改票状态。
+> Linear 是权威 tracker。2026-10-20：YUK-1570 普通整合 main210dfb2c，保留 main 全部已合内容；基线实测440/0/47，限定裁定不变。验证和 exact-head CI 结果见 PR1830，不合并 PR、不改票状态。
 
 ## NOW
 
-- **YUK-1570 / 依赖基线收紧**：[ready PR1830](https://github.com/Yukoval-Dakia/the-learning-project/pull/1830)，同分支 `yuk-1570-baseline-ratchet` 普通合入 main8ac23c48，冲突采用 main。恢复静态 architecture audit 的 `CAPABILITY_BASE_SHA`；历史 notes 用现有变更类型记录 #1811 的单条裁定、两条评论出处及下一次减边 PR 的退出条件，不作为新上调授权。当前实测441/0/48，未写回历史444；typecheck/lint/build、审计和原唯一测试通过，没有新增测试或 UI 改动。
+- **YUK-1570 / 依赖基线收紧**：[ready PR1830](https://github.com/Yukoval-Dakia/the-learning-project/pull/1830)，同分支普通 merge main210dfb2c。仅 PLAN/now 冲突，保留 main 交接并补本票进度；baseline 自动合并到 main 的440/0/47，recorded_ruling 与原 head 完全一致，不放宽准入。CI模式审计、typecheck/lint/build 本地通过，179条既有lint warnings；远端结果按PR精确head，不沿用旧绿色结果。
 
-- **架构深化 / YUK-1572**：`refactor/yuk-1572-stream-modules`，独占 arch-lead；stream-store 已2120→1427，超长18→17，SCC与443边不变；合成d38e父级typecheck/lint/build/两审计通过；Kimi R1 APPROVE、旧head5c0e CI全绿；整合main2176仅看板冲突，新head验证/CI待完成。六票T3，#1830仍由Grok完成；不动其ratchet/baseline。见[首三片计划](docs/planning/2026-10-19-architecture-deepening.md)。
+- **第一天能用 / 恢复完成证据（YUK-1631、YUK-1614）**：`el/yuk-1614` 保留 deferred 未完成状态，拒绝旧 deferred 假回执、未知契约与非法时间戳；legacy reserved/enqueued 保持可导入。隔离 PG16 实跑补丁排队→拒绝且原数据不变→drain→按证据人工补回执→恢复200；provider/回执写入故障及人工恢复已验证。既有备份8例通过，无测试代码改动，不碰 schema/export constants。最终静态检查及 exact-head CI 结果见 PR1854；自动恢复仍不在 LIGHT 范围。
+
+- **架构深化 / YUK-1571**：frontier draft #1837 正常整合main1440e864b，仅PLAN/now冲突；保留main nightly上限常量和mastery变更，新head e309ce3d4 静态构建通过、server441→440/cross48→47，5项基线差异已获准登记，当前实施，R1仍有效范围不扩张，协调线已释放baseline独占，两片按实测登记、先绿先合。迁移规划器#1840已合ee53df413（超长18→17）；typed due完整输入操作#1842已合71986f224，均父静态构建/独立R1/exact-head CI通过，无本机DB/provider。审计去重#1843已合3adb1cde4，scripts净减41，SWE-2 MAX R1/父静态构建/11命令输出核对/GH exactCI通过；Circle矩阵漏展开及workspace冲突归YUK1612。锁登记#1846已合4419f4fbb（仅文档）；YUK1577误关已恢复In Progress并读回completedAt=null；新增4项事实错误：协调线裁定顶部立即加未修正声明（只文档免审、exactCI后合），下一片先改4项再扩展；不能自称证明。完整操作设计f848145e9将B降为待证候选，两个真实变化场景未证正收益，当前保留直接owner port更简单；LIGHT共享读draft#1852 aab422064，父静态构建通过、实测cross48→43减5，GLM初审通过；两架构audit等1830释放后收紧baseline，保护#1802 review.ts。
 
 - **第一天能用 / 题库暂不出题计数（YUK-1525）**：`yuk-1525-serving-counts-sql` 将 lifecycle 理由统一到 SQL，冻结题面继续复用原校验，计数与列表使用同一只读快照。2600 行中，旧列表少算为1846，修后2400，与原投影全库逐行统计一致；窗口外 `q_02600` 可见。无新增测试、UI 改动或付费调用。
 
@@ -38,9 +40,9 @@
 
 ## NEXT
 
-- **YUK-1570**：普通 push 后等 exact-head CI，报告结果后停止，不合并 PR。下一次减边 PR 落实 practice→r2 4→3，期限不晚于该票关闭；本次裁定不可复用，不抵其他上调。
+- **YUK-1570**：本轮仅整合与验证，普通 push 后记录 exact-head CI 结果即停止，不合并 PR。practice→r2 4→3 的退出义务仍属下一次减边 PR，最迟不晚于票关闭；历史裁定不得复用。
 
-- **架构深化**：首片验证/独立审查/精确HEAD CI后推进YUK-1571拆环，再拆intervention职责；每片报告SCC、server边、超长文件及baseline行数。
+- **架构深化**：警示#1851已合7e2ab18f5，再交付锁四事实纠错#1853已合86917b10a（父静态构建、唯一R2、exactCI通过，仍只是登记，1577读回进行中）；#1847证据删除已合0f8b1fbbc，后续批另批。#1830释放后收紧frontier基线；完整操作设计必须体现调用方少知决策/恢复规则，不能以重导出或合文件代替深化。
 
 - **YUK-1525**：draft PR 交接后，由审查与 exact-head CI 决定是否可转 ready；本次不自动合并。
 
@@ -57,7 +59,7 @@
 
 ## PARKED
 
-- **测试与证据瘦身 / YUK-1580、1579**：测试先做最大15文件与高mock逐case清单交协调线转owner；新批量证据外置永久保留，旧证据复制核hash/建引用后每批交协调线查看再删；第一批证据PR同步AGENTS全线规则。
+- **测试与证据瘦身 / YUK-1580、1579**：测试19文件469声明逐case清单/B3/B1已交协调线，owner未选前零改动。#1839已建立全线外置规则与永久副本；2026-10-20首批5目录172文件11,552,302B HEAD删除获批，已合#1847 0f8b1fbbc（exact eaf565951）父逐文件/引用/静态构建核过，初审后修正删除证据revision目录并澄清JST，唯一R2及exactCI通过，固定revision/禁止覆盖/引用加SHA。后续批仍须逐批批准。
 
 
 - **YUK-1358/1359已有UI观察**：真实Inbox dismiss后本页499但侧栏500，document reload恢复一致；原onResolve仅本地resolved更新。Google Fonts原import受CSP拦截；fallback可用。记录在现有迁移验收/后续UI边界，不放宽CSP、不冒称本PR修复。

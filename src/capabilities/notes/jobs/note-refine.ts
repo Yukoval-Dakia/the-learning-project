@@ -24,6 +24,7 @@ import type { Job } from 'pg-boss';
 
 import { enqueueOrApplyNoteRefinePatch } from '@/capabilities/notes/server/artifacts/editing-session';
 import { bodyBlocksToBlockSummaries } from '@/capabilities/notes/server/body-blocks';
+import { recordMasteryRefineEffectResult } from '@/capabilities/notes/server/mastery-refine-effect';
 import {
   checkAutoApplyBreaker,
   countRecentAutoApplies,
@@ -61,6 +62,8 @@ export type NoteRefineTriggerKind = 'mark_wrong' | 'mastery_change' | 'dreaming'
 
 export interface NoteRefineJobData {
   artifact_id: string;
+  /** Present when the job was dispatched by an event-subscription effect. */
+  effect_id?: string;
   trigger: {
     kind: NoteRefineTriggerKind;
     context_md?: string;
@@ -399,12 +402,30 @@ export function buildNoteRefineHandler(
           onPropose,
           countRecentAutoApplies: countRecentAutoAppliesOverride,
         });
+        if (data.effect_id) {
+          try {
+            await recordMasteryRefineEffectResult({
+              db,
+              effectId: data.effect_id,
+              status: result.status,
+            });
+          } catch (err) {
+            // A missing receipt blocks logical restore, but must not replay paid work.
+            console.error(
+              `[note_refine] result receipt failed for ${data.effect_id} (${result.status}); owner reconciliation required: docs/sub5-restore-cli.md`,
+              err,
+            );
+          }
+        }
         const skippedOps = 'skipped_ops' in result ? (result.skipped_ops ?? 0) : 0;
         console.log(
           `[note_refine] ${data.artifact_id} → ${result.status}${skippedOps > 0 ? ` (${skippedOps} ghost op(s) skipped)` : ''}`,
         );
       } catch (err) {
-        console.error(`[note_refine] ${data.artifact_id} failed`, err);
+        console.error(
+          `[note_refine] ${data.artifact_id} failed (effect ${data.effect_id ?? 'none'}); after retries, reconcile via docs/sub5-restore-cli.md`,
+          err,
+        );
         throw err;
       }
     }

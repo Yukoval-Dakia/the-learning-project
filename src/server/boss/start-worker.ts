@@ -1,8 +1,5 @@
-// M1-T5 (YUK-314) — boss worker 启动配方，从 scripts/worker.ts 抽出共享：
-// scripts/worker.ts（独立 worker 进程，prod/NAS docker 拓扑）与 server/index.ts
-// （RW_WORKER=1 进程内 worker，新栈 dev 单进程拓扑）共用同一配方，YUK-259 的
-// 两段 23505 防护不维护两份。进程级 last-resort handler（unhandledRejection →
-// exit(1)）是独立 worker 进程的纪律，留在 scripts/worker.ts，不属于这里。
+// Shared by scripts/worker.ts and the in-process RW_WORKER path, so the 23505 guards live once.
+// The process-level unhandledRejection exit stays in scripts/worker.ts.
 
 import type { PgBoss } from 'pg-boss';
 import { capabilities } from '@/capabilities';
@@ -28,7 +25,7 @@ import { registerOrchestrator } from '@/server/orchestration/register';
 import { hydrateSubjectRegistryFromDb, startSubjectRefresh } from '@/server/subjects/hydrate';
 
 export type StartBossWorkerOptions = {
-  /** YUK-1055 epoch 闸门轮询间隔（测试注小值）。 */
+  /** Epoch-gate poll interval. Tests pass a short value. */
   epochPollIntervalMs?: number;
 };
 
@@ -37,18 +34,13 @@ export async function startBossWorker(
   options: StartBossWorkerOptions = {},
 ): Promise<PgBoss> {
   await initializeLaminarTracing();
-  // YUK-1055 — DB epoch guard 必须排在 recovery/handlers/cron 之前（grounding §15）。
-  // marker 'preparing'/'ready'（维护窗）或 epoch 不匹配时本 worker 停在闸门内
-  // 轮询，不启动 boss、不挂消费者 —— fenced 不 crash-loop，operator 推到
-  // runnable（本代码 epoch 的 'active'）后自动继续。DB 读失败原样上抛
-  // （boot 失败 = supervised restart，与既有 start 失败同语义）。
+  // Before any consumer. A maintenance marker or a mismatched epoch polls here and does not
+  // start boss. A database read failure throws, same as any other boot failure.
   await waitForRunnableEpoch(db, { pollIntervalMs: options.epochPollIntervalMs });
   await recoverToolOperationsOnBoot(db);
-  // YUK-599（v2 §4）— worker 首个 job 落地前水合 SubjectRegistry（never-throws：
-  // hydrate 内部 WARN + 代码种子地板，绝不挡 worker boot）。
+  // Never throws. A hydrate failure warns and keeps the code seed, so boot continues.
   await hydrateSubjectRegistryFromDb(db);
-  // YUK-1007 — 首批 config snapshot 入内存（同 never-throws 先例：表未建/DB down →
-  // 空快照 = 纯 env 行为，天然回滚位；§5.1 序 4）。
+  // Never throws. A missing table or a down database leaves an empty snapshot, which is env-only behavior.
   await hydrateConfigFromDb(db);
   await hydrateModelCatalog(db);
   // Validate the effective brief lane after config hydration, without a paid call.
@@ -63,19 +55,10 @@ export async function startBossWorker(
 
   const boss = createBoss();
 
-  // YUK-259: pg-boss is an EventEmitter; it emits `error` for failures raised by
-  // its INTERNAL background loops (timekeeper / supervise / maintenance) — e.g.
-  // the timekeeper creating its `__pgboss__send-it` queue at start. With NO
-  // `error` listener, Node's EventEmitter rethrows an emitted `error`, which a
-  // process-level uncaughtException handler turns into exit(1). During a
-  // cold start where the app's in-process boss and this worker race to create
-  // the same queues, that internal create can raise a benign 23505 `queue_pkey`
-  // (`Key (name)=(__pgboss__send-it) already exists`) — which used to crash the
-  // worker (the queue already exists; restarting "fixed" it). Swallow that
-  // benign race here and log everything else loudly. We do NOT exit on a logged
-  // error: a transient supervise-loop hiccup shouldn't kill a worker that is
-  // otherwise draining the queue; genuine fatal faults still surface via the
-  // entrypoint's unhandledRejection / uncaughtException guards.
+  // pg-boss emits `error` from its background loops. With no listener, EventEmitter
+  // rethrows and the process exits. A cold-start 23505 on an existing internal queue
+  // is that race. Swallow it. Do not exit on other logged errors. A transient
+  // supervise hiccup must not kill a worker that is still draining.
   boss.on('error', (err) => {
     if (isQueueCreateRace(err)) {
       console.warn(
@@ -86,20 +69,9 @@ export async function startBossWorker(
     console.error('[worker] pg-boss error event', err);
   });
 
-  // YUK-259: the boss `error` listener above only covers pg-boss's RECURRING
-  // background loops (timekeeper onCron / cacheClockSkew at timekeeper.js:105/129,
-  // which wrap their bodies in try/catch and re-emit on `error`). It does NOT
-  // cover the one-shot queue create the timekeeper runs INSIDE start():
-  // index.js start() → timekeeper.start() (timekeeper.js:57) directly awaits
-  // `manager.createQueue('__pgboss__send-it')`, whose `INSERT ... ON CONFLICT DO
-  // NOTHING` (plans.js create_queue) can still race-raise 23505 `queue_pkey`
-  // under the same cold-start contention. That rejection propagates out of the
-  // awaited start() — not through the EventEmitter — so without this guard it
-  // would fall through to the caller's catch → process.exit(1), reopening the
-  // supervised-restart loop YUK-259 set out to close. A 23505 here means SEND_IT
-  // already exists (the desired end state) and the db is already opened
-  // (index.js opens it before timekeeper.start), so the boss is usable;
-  // swallow + continue. Anything else is a real boot failure and re-throws.
+  // The listener above does not cover the queue create inside start(). That rejection
+  // leaves the awaited call, not the EventEmitter. A 23505 means the internal send
+  // queue already exists and the database is already open, so continue. Anything else rethrows.
   try {
     await boss.start();
   } catch (err) {
@@ -108,39 +80,24 @@ export async function startBossWorker(
       '[worker] boss.start() hit pg-boss internal SEND_IT queue create race (23505 queue_pkey) — benign, queue already exists, continuing (YUK-259)',
     );
   }
-  // Mark this started boss as the running instance so getRunningBoss() can peek it in
-  // the worker — otherwise the YUK-384 FULL mutation-wake + continuation dispatch are
-  // inert here (the worker never calls getStartedBoss, which is what app processes use
-  // to record the running boss). Both branches above leave `boss` usable.
+  // The worker never calls getStartedBoss. Without this mark, getRunningBoss() stays
+  // empty and the mutation wake never fires. Both branches above leave boss usable.
   markBossStarted(boss);
   await registerHandlers(boss, db);
-  // M4-T3 (YUK-319)：渐缩簿之后挂载各 capability manifest 声明的 job（建队 +
-  // work + cron schedule）。顺序约定：簿先、注册器后——簿里的链式目标
-  // （note_verify）先 ready，注册器再挂链式源。
+  // Infrastructure queues first. Manifest jobs create the domain queues this book sends to.
   await registerCapabilityJobs(boss, db, capabilities);
-  // YUK-891 — verify-dispatch startup recovery fires ONLY after
-  // registerCapabilityJobs created the practice-owned quiz_verify/source_verify
-  // queues (YUK-868). registerHandlers mounts the verify_dispatch_recover worker
-  // first, so a trigger fired there would race the registrar: with durable
-  // verify intents present, the first recovery execution sends into
-  // not-yet-created verifier queues, throws on pg-boss's missing-queue check,
-  // and the drain is delayed to the nightly cron.
+  // After the verifier queues exist. The recover worker is mounted earlier, so a send
+  // before those queues exist throws and the drain waits for the nightly cron.
   await sendVerifyDispatchStartupRecovery(boss);
-  // YUK-751 (review TcWGF)：给持久订阅总线通电——注册器之后挂一个周期 pg-boss job 驱动
-  // runSubscriptionDispatchCycle（registry 在此一次性加载）。checkpoint lease 跨 worker 串行化，
-  // 故 in-process 与独立 worker 同时挂载无冲突；无任何 capability 声明订阅时挂载器直接 no-op。
+  // The checkpoint lease serializes workers, so the in-process and standalone workers can both mount.
+  // No declared subscription means this is a no-op.
   await mountSubscriptionDispatch(boss, db, capabilities);
-  // YUK-758：夜间任务编排 orchestrator（单锚点 cron + tick 自调度链，上游成功才触发下游）。
-  // 挂在 registerCapabilityJobs 之后——图成员 job 的队列/handler 已就绪，orchestrator 才能
-  // boss.send 触发它们。无图成员声明时挂载器直接 no-op（不挂空 cron）。
+  // After the member queues exist, so a send has a queue. No members means no cron.
   await registerOrchestrator(boss, db, capabilities);
-  // YUK-599（v2 §4.3 可见性 SLA）— worker ≤60s 解析到新装配：60s 周期全量
-  // reconcile（level-triggered 承重路径，判词 B）。unref 不阻退出；SIGTERM →
-  // installShutdownHandler → boss.stop() → 'stopped' → 显式清定时器（v2-test-9）。
+  // Level-triggered reconcile. unref so the timer does not hold the process. Cleared on stopped.
   const refresh = startSubjectRefresh(db, 60_000);
   boss.once('stopped', () => refresh.stop());
-  // YUK-1007 — config 15s 周期 refresh（§1.3：epoch 探测 ≈ 0 成本；worker 无写
-  // 路径，纯靠此窗收敛，unref 不阻退出）。
+  // The worker has no config write path, so this window is how a new row arrives. unref.
   const configRefreshHandle = startConfigRefresh(db, 15_000);
   boss.once('stopped', () => configRefreshHandle.stop());
   try {
@@ -166,13 +123,8 @@ export async function startBossWorker(
     clearInterval(catalogRefresh);
     catalogWatch.stop();
   });
-  // YUK-576 §5.4 — boot-time stuck-run reconcile (PRIMARY trigger): the main
-  // stuck cause is a process crash, so the restart converges >1h 'running'
-  // ai_task_runs rows within seconds (the 1h threshold guards the previous
-  // process's youngest runs). The nightly cron (observability manifest,
-  // ai_task_run_reconcile_nightly) is the secondary trigger for DB-outage-type
-  // stuck rows where no restart happens. Best-effort: a sweep failure must
-  // never abort worker boot — the queue-draining duty comes first.
+  // A crash is the usual reason a run stays 'running'. Restart converges those rows.
+  // The nightly cron covers a database outage where nobody restarts. A sweep failure must not abort boot.
   try {
     await reconcileStuckAiTaskRuns(db);
   } catch (err) {
