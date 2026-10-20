@@ -40,7 +40,8 @@
     "YUK-1622": "agency -> practice 4 -> 5 (+1, total 42 -> 43 after main's YUK-1571 shared-read offset): coach_daily imports the practice public resolveDailyReviewPlanInputs so the TodayPlan due queue, daily budget and measured pace have one formula and one source; Coach reads practice's public module instead of copying the formula. PM ruling (Linear YUK-1622 comment 82cd19fd-51d1-46d5-bc70-5b0365409dd1, https://linear.app/yukoval-studios/issue/YUK-1622#comment-82cd19fd) approved this single edge only; it is not a general relaxation.",
     "YUK-1570-agency-scan": "Agency complete proposal scan operation owns inbox snapshots/diff, trigger/run outcome evidence, budget/proposal-cap tool gates and runtime assembly shared by dreaming and coach. agency -> ai 28 -> 25, total 420 -> 417 composed on main 671e08044 (which itself recorded YUK-1622 agency -> practice 4 -> 5); the 3 removed direct imports follow complete operation ownership. Research default-runner wrapper was rejected and reverted as pass-through in R1. Existing tool policies, injected dependencies, clock/event ordering and error propagation preserved; no central server/ai edits. Earlier standalone measurement on a519a05d2 was 440 -> 436 (28 -> 24) before the R1 revert.",
     "YUK-1570-mastery-read-consumer-exit": "Consumer exit from the compat read surface after the mastery read engine landed (#1881): six capability call sites that still imported through @/server/mastery/state now import the kernel read-model implementations directly. agency -> mastery 3 -> 0 (agency/jobs/research_meeting_nightly, agency/server/meeting/director, director-tools -> kernel/read-models/mastery-projection getMasteryProjection) and practice -> mastery 12 -> 9 (practice/server/candidate-signals, placement-advance, question-supply/target-discovery -> kernel/read-models/mastery-state MasteryStateRow/effectiveThetaForKcBatch/getMasteryStates/getMasteryState/globalThetaForDomain); capability -> server total 420 -> 414. The compat re-exports in src/server/mastery/state.ts are preserved for tests and remaining consumers; the moved call sites resolve to the same function objects the re-export exposed, so this is import-path consolidation only, not new algorithm deepening. Current main dc8d7c27d composition: server 416 -> 410; cross 43 unchanged. Earlier main671 composition was 420 -> 414.",
-    "retired-api-aliases-2026-10-20": "Removal of 21 deprecated route registrations and their 10 orphan alias modules (extract/import wrappers, legacy practice/review/placement shells, proposal decide/retract wrappers). Decrease reflects deleted alias indirection reaching server internals, not new algorithm deepening. Measurements: on 1be6fba10 420 -> 416; merged with main c26ec39f9 (after PR1882 agency ownership) e5a46d610 measured 417 -> 413; merged with main dc8d7c27 (after PR1891 YUK-1522 budget gate) measured 416 -> 412: ingestion->boss 7->6, ingestion->session 9->8, shell->proposals 4->2. Main baseline history preserved verbatim; only measured decreases appended. Latest main232f01d67 after mastery consumer exit: server410 -> 406; cross43 and SCC5 unchanged. Prior measurements remain historical."
+    "retired-api-aliases-2026-10-20": "Removal of 21 deprecated route registrations and their 10 orphan alias modules (extract/import wrappers, legacy practice/review/placement shells, proposal decide/retract wrappers). Decrease reflects deleted alias indirection reaching server internals, not new algorithm deepening. Measurements: on 1be6fba10 420 -> 416; merged with main c26ec39f9 (after PR1882 agency ownership) e5a46d610 measured 417 -> 413; merged with main dc8d7c27 (after PR1891 YUK-1522 budget gate) measured 416 -> 412: ingestion->boss 7->6, ingestion->session 9->8, shell->proposals 4->2. Main baseline history preserved verbatim; only measured decreases appended. Latest main232f01d67 after mastery consumer exit: server410 -> 406; cross43 and SCC5 unchanged. Prior measurements remain historical.",
+    "YUK-1571-attempt-evidence-reader": "Complete attempt-question evidence read engine moved intact from practice to kernel with compatibility exports preserved; two ingestion consumers point to the real engine. Current main232f01d67 composition: ingestion -> practice 2 -> 0, cross 43 -> 41, server410 unchanged; no new algorithm depth and no write-owner transfer. Earlier main671/c26 compositions had server420/417 unchanged; subsequent main reductions are retained, not credited to this slice. Current main2338e0192 after API retirement: server406 unchanged, cross43 -> 41, SCC5 unchanged; earlier totals are historical."
   },
   "changes": [
     {
@@ -119,6 +120,14 @@
       "date": "2026-10-20",
       "from": 4,
       "to": 2,
+      "direction": "decrease"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "ingestion -> practice",
+      "date": "2026-10-20",
+      "from": 2,
+      "to": 0,
       "direction": "decrease"
     }
   ],
@@ -213,7 +222,7 @@
       "byOwnerPair": {}
     },
     "crossCapabilityValue": {
-      "total": 43,
+      "total": 41,
       "byOwnerPair": {
         "agency -> knowledge": 4,
         "agency -> notes": 2,
@@ -222,7 +231,6 @@
         "copilot -> notes": 2,
         "copilot -> practice": 1,
         "ingestion -> knowledge": 2,
-        "ingestion -> practice": 2,
         "knowledge -> agency": 1,
         "knowledge -> practice": 1,
         "notes -> knowledge": 1,
