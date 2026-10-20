@@ -16,7 +16,6 @@ import { z } from 'zod';
 import type { Db } from '@/db/client';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { enqueueSupplyDispatchJob } from '@/kernel/supply-dispatch';
-import { parseJsonObjectLoose } from '@/server/ai/json-extract';
 import type { SupplyTraceV1T } from '../server/question-supply/evidence-demand';
 import type { JyeooFetchConfig } from '../server/question-supply/plan-executor';
 import {
@@ -26,7 +25,7 @@ import {
   executeSupplyPlan,
 } from '../server/question-supply/plan-executor';
 import { runWebFetchCandidates } from '../server/question-supply/web-candidates';
-import { runWebSourcingAgentDefault } from '../server/tools/web-fetch-candidates';
+import { defaultWebSourcingDeps } from '../server/web-sourcing-operation';
 
 /** scanner / planner 共用的默认 jyeoo 抓取参数（与 scripts/jyeoo-backfill.ts 缺省一致）。 */
 export const SUPPLY_EXECUTE_JYEOO_DEFAULTS: JyeooFetchConfig = {
@@ -69,16 +68,17 @@ const SupplyExecuteJobData = z.object({
 export type SupplyExecuteJobDataT = z.infer<typeof SupplyExecuteJobData>;
 
 /**
- * 生产 deps 装配（supply_planner phase-2 / 手动 caller 共用）。web 生产线经
- * runWebSourcingAgentDefault（工具层同一真身）+ parseJsonObjectLoose；quiz_gen
- * enqueue 失败上抛（pg-boss 语义保留）；image proposal 走 writeAiProposal 真身。
+ * 生产 deps 装配（supply_planner phase-2 / 手动 caller 共用）。web 生产线的
+ * runSourcingAgent/parseLoose 经 defaultWebSourcingDeps() 唯一组装点；
+ * quiz_gen enqueue 失败上抛（pg-boss 语义保留）；image proposal 走
+ * writeAiProposal 真身。
  */
 export function buildSupplyExecutorDeps(db: Db): ExecuteSupplyPlanDeps {
   return {
     runWebFetchCandidates: (params) =>
       runWebFetchCandidates({
         ...params,
-        deps: { runSourcingAgent: runWebSourcingAgentDefault, parseLoose: parseJsonObjectLoose },
+        deps: defaultWebSourcingDeps(),
       }),
     enqueueQuizGen: async (payload, opts) =>
       (await enqueueSupplyDispatchJob(
