@@ -67,6 +67,8 @@ export interface ComposerInputs {
   capacity?: { warn?: number; max?: number };
   /** YUK-622：用户 daily pace 映射出的分钟预算；缺省仅供旧测试/显式 DI 保持旧行为。 */
   dailyBudgetMinutes?: number;
+  /** YUK-1622：实测/默认单题用时；缺省时沿用 YUK-622 的 2 分钟。 */
+  questionMinutes?: number;
 }
 
 export interface StreamPlanItem {
@@ -187,7 +189,7 @@ export function composeDailyStream(inputs: ComposerInputs): StreamPlan {
   }));
 
   const all = [...solo, ...papers, ...tail, ...frontierTail];
-  const budgeted = fitStreamToTimeBudget(all, inputs.dailyBudgetMinutes);
+  const budgeted = fitStreamToTimeBudget(all, inputs.dailyBudgetMinutes, inputs.questionMinutes);
   const protectedIndexes = budgeted.kept.flatMap((item, index) =>
     item.source === 'intervention' ? [index] : [],
   );
