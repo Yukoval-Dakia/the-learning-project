@@ -949,6 +949,13 @@ function compareBaselineChanges(
     }
     counts[change.pair] = change.to;
     if (change.direction !== 'increase') continue;
+    if (change.debt === 'serverToCapabilityDeep') {
+      fail(
+        change.pair,
+        'serverToCapabilityDeep is a zero boundary — no justification can raise it; the import must go through the capability public module',
+      );
+      continue;
+    }
     if (change.justification.kind === 'offset') {
       const before = previous.debts[change.debt];
       const measured = actual.debts[change.debt];

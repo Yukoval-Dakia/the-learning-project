@@ -221,11 +221,16 @@ export function shimIsLive(shim: CompatShim, today: string): boolean {
 }
 
 /**
- * Field-level approval checks on a NEW compatShims tail entry (the window is
- * the only machine-checkable part — consumers/site coverage live in the audit).
+ * Field-level approval checks on a NEW compatShims tail entry: the record date
+ * may not be post-dated (a future date would stretch the 14-day window) and
+ * the deadline may not exceed date+14d, which bounds the whole window against
+ * today. Consumers/site coverage live in the audit.
  */
-export function validateCompatShimFields(record: CompatShim): string[] {
+export function validateCompatShimFields(record: CompatShim, today: string): string[] {
   const problems: string[] = [];
+  if (daysBetween(today, record.date) > 0) {
+    problems.push(`date ${record.date} is in the future — approval records may not be post-dated`);
+  }
   if (daysBetween(record.date, record.deadline) > MAX_SHIM_DAYS) {
     problems.push(`deadline ${record.deadline} exceeds the ${MAX_SHIM_DAYS}-day approval window`);
   }

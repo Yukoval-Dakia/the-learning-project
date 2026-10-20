@@ -60,7 +60,10 @@ byte-for-byte.
   (Earlier PASS at merge-base `46663192d`: `429/0/42`, `17 (base 17)` — the 17
   matches the independently measured Flash facts at `4fd1798`.)
 - `pnpm audit:architecture-deepening` — PASS:
-  `pass-through sites 592 (+0 new)`, all 11 existing families green.
+  `pass-through sites 1167 (+0 new)`, all 11 existing families green.
+  The 592→1167 growth is the per-symbol re-export granularity fix (each
+  exported name in an export-from is now its own site); base and head use the
+  identical representation, so `+0 new` still holds.
 - Upstream merge honesty note: `origin/main` grew `crossCapabilityValue`
   42→43 via a `recorded_ruling` `changes` entry (#1872 / YUK-1622,
   agency→practice 4→5) and added one `>1500` file plus five real pass-through
@@ -93,11 +96,12 @@ against real growth (801 violations at the post-merge head — 796 at `875faac0c
 - SCC: no violation — the 5-member SCC already existed at the old base
   (subset / total-member / max-member all held).
 - Pass-through gate (`audit:architecture-deepening --base 24add632b`):
-  438 real new sites at the post-merge head (433 at `875faac0c`, +5 from
-  upstream): 200 `module` re-export shells
-  (`src/capabilities/agency/public.ts`), 210 `site` re-exports (154 bare +
-  56 `local-export` members), 17 `alias` (`DURABLE_BUDGET -> …/copilot-execution.ts`),
-  11 `function` forwards. On the real merge-base all are grandfathered: `+0 new`.
+  928 real new sites after the per-symbol granularity fix (438 in the sealed
+  module-level scan: 200 `module` shells, 210 `site` re-exports, 17 `alias`,
+  11 `function`). Sites now enumerate real exported names — e.g.
+  `src/capabilities/agency/public.ts: module acceptLearningIntent ->
+  …/learning-intent.ts`. On the real merge-base all are grandfathered:
+  `+0 new`.
 
 `--base 4fd179818` (pre-#1830) was additionally PASS at `875faac0c` — between
 `4fd1798` and `46663192d` no audited edge was added, no `>1500` file appeared,
@@ -136,6 +140,29 @@ recorded for the coordinator.
   inflation is tolerated, per R1 P2-9); AGENTS.md keeps the original six
   checklist items plus the proposal-§3 lead-in "independent review cites
   per-item source evidence or NOT_APPLICABLE".
+
+### PR #1895 bot findings (third author pass)
+
+Three confirmed P1s, fixed narrowly:
+
+- **Post-dated `compatShims` records could stretch the 14-day window** —
+  `validateCompatShimFields(record, today)` now hard-fails a future `date`;
+  with `deadline ≤ date+14d` the whole approval window is bounded against
+  today. `shimIsLive` unchanged (expiry still fails while a covered site
+  remains live).
+- **`serverToCapabilityDeep` could be raised by any justification** —
+  `compareBaselineChanges` now fails every increase record on that debt
+  unconditionally (offset, `recorded_ruling`, `owner_approval` alike), keeping
+  the approved zero-deep boundary a hard gate; the measured-nonzero check
+  then fails via the ordinary baseline reconciliation. Other debts keep
+  their existing approval/offset semantics.
+- **Export-from granularity collapsed to target modules** — value re-export
+  statements now record `{exported symbol, target}` pairs (real exported
+  names: `export {a as b} → 'b'`, `export * as ns → 'ns'`, `export v → 'v'`;
+  `export *` stays `*`). Adding `export { b } from './m'` beside an existing
+  `{ a }` site is a NEW site requiring coverage. `shimCoversSite` narrows
+  site-kind coverage to the recorded `symbol` when the record names one.
+  Scanner version bumped 1→2; base/head diff representation identical.
 
 ### R1-fix negative-evidence status (honest)
 

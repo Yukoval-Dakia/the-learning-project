@@ -26,7 +26,7 @@ import type { CompatShim } from './source-size';
 import { shimIsLive, validateCompatShimFields } from './source-size';
 import { analyzeSource } from './ts-tokenize';
 
-export const PASS_THROUGH_SCANNER_VERSION = 1;
+export const PASS_THROUGH_SCANNER_VERSION = 2;
 
 export type PassThroughKind = 'module' | 'function' | 'alias' | 'site';
 
@@ -84,6 +84,9 @@ interface FunctionCandidate {
   end: number;
 }
 
+/** Exported (consumer-visible) names carried by an export-from statement,
+ *  per specifier — `export {a as b} from` → 'b', `export * as ns from` → 'ns',
+ *  `export v from` → 'v'. Type-only declarations/specifiers produce none. */
 function exportedValueSpecifiers(node: Record<string, unknown>): string[] {
   if (!Array.isArray(node.specifiers)) return [];
   if (node.exportKind === 'type') return [];
@@ -91,17 +94,17 @@ function exportedValueSpecifiers(node: Record<string, unknown>): string[] {
   for (const specifier of node.specifiers) {
     if (!isRecord(specifier)) continue;
     if (specifier.exportKind === 'type') continue;
-    if (specifier.type === 'ExportNamespaceSpecifier') {
-      names.push('*');
-      continue;
-    }
-    if (specifier.type === 'ExportDefaultSpecifier') {
-      names.push('default');
-      continue;
-    }
     const exported = isRecord(specifier.exported)
       ? (nodeName(specifier.exported) ?? literalString(specifier.exported))
       : undefined;
+    if (specifier.type === 'ExportNamespaceSpecifier') {
+      names.push(exported ?? '*');
+      continue;
+    }
+    if (specifier.type === 'ExportDefaultSpecifier') {
+      names.push(exported ?? 'default');
+      continue;
+    }
     if (exported) names.push(exported);
   }
   return names;
@@ -340,7 +343,13 @@ export function scanPassThroughSites(
     const candidates: FunctionCandidate[] = [];
     const exportedNames = new Set<string>();
     const localToExported = new Map<string, string>();
-    const reexportTargets = new Set<string>();
+    // Re-export identities keyed by exported symbol + target so adding
+    // `export { b } from './m'` beside an existing `export { a } from './m'`
+    // produces a NEW site instead of collapsing into one module-level key.
+    const reexportPairs = new Map<string, { exported: string; target: string }>();
+    const addReexportPair = (exported: string, target: string) => {
+      reexportPairs.set(`${exported} → ${target}`, { exported, target });
+    };
     let runtimeDefs = 0;
     let sawValueReexport = false;
 
@@ -370,12 +379,12 @@ export function scanPassThroughSites(
       if (statement.type === 'ExportNamedDeclaration') {
         const source = literalString(statement.source);
         if (source !== undefined) {
-          // export-from: a pass-through site candidate when it carries values.
+          // export-from: a pass-through site candidate per exported symbol.
           const valueSymbols = exportedValueSpecifiers(statement);
           if (valueSymbols.length > 0) {
             const target = resolve(path, source);
             if (target) {
-              reexportTargets.add(target);
+              for (const symbol of valueSymbols) addReexportPair(symbol, target);
               sawValueReexport = true;
             }
           }
@@ -458,7 +467,7 @@ export function scanPassThroughSites(
         if (source !== undefined && statement.exportKind !== 'type') {
           const target = resolve(path, source);
           if (target) {
-            reexportTargets.add(target);
+            addReexportPair('*', target);
             sawValueReexport = true;
           }
         }
@@ -558,23 +567,26 @@ export function scanPassThroughSites(
       });
     }
 
+    const reexports = [...reexportPairs.values()].sort(
+      (a, b) => a.target.localeCompare(b.target) || a.exported.localeCompare(b.exported),
+    );
     if (runtimeDefs === 0 && sawValueReexport) {
-      for (const target of [...reexportTargets].sort()) {
+      for (const pair of reexports) {
         sites.push({
           file: path,
           kind: 'module',
-          symbol: '*',
-          targetModule: target,
+          symbol: pair.exported,
+          targetModule: pair.target,
           detail: `module:${PASS_THROUGH_SCANNER_VERSION}`,
         });
       }
     } else {
-      for (const target of reexportTargets) {
+      for (const pair of reexports) {
         sites.push({
           file: path,
           kind: 'site',
-          symbol: '*',
-          targetModule: target,
+          symbol: pair.exported,
+          targetModule: pair.target,
           detail: `site:${PASS_THROUGH_SCANNER_VERSION}`,
         });
       }
@@ -730,7 +742,10 @@ export function describeSite(site: PassThroughSite): string {
 export function shimCoversSite(shim: CompatShim, site: PassThroughSite): boolean {
   if (site.file !== shim.path || site.kind !== shim.kind) return false;
   if (shim.kind === 'module') return true;
-  if (shim.kind === 'site') return site.targetModule === shim.targetModule;
+  if (shim.kind === 'site') {
+    if (site.targetModule !== shim.targetModule) return false;
+    return shim.symbol === undefined || site.symbol === shim.symbol;
+  }
   return site.symbol === shim.symbol;
 }
 
@@ -777,7 +792,7 @@ export function auditCompatShims(input: {
   }
 
   for (const record of input.records.slice(input.previousRecords)) {
-    for (const problem of validateCompatShimFields(record)) {
+    for (const problem of validateCompatShimFields(record, input.today)) {
       fail(record.path, 'compatShims', problem);
     }
     if (!input.newSites.some((site) => shimCoversSite(record, site))) {
