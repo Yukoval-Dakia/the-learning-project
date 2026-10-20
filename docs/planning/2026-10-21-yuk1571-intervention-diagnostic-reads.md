@@ -168,3 +168,35 @@ typecheck/lint/build 按授权不重复，保留此前 d4bb 的真实结果，�
 `SHA256.json` 摘要 `28baa8d90c3db06ad527b3eb65f683378a8c9463ec58ba9ff95965588581f31d`。
 旧失败 seal 保留；本节仅文档后提交，外部终态 seal 绑定受检账目与源码 blob。
 writer clean 后停止，唯一独立 R1、PR、exact-head CI 由父统一，未自行审查。
+
+## 已审片整合最新 main（2026-10-20 23:00 UTC）
+
+fetch 实际 main 为 `67506c5eaa5604ba34d2c943132343bf2e7fab5e`，与父预期相同；
+普通 merge 提交 `188f09856f9f365a18e71799b15eb42b4810adcb`，tree
+`2186cb93b7eac307f06c727060decb232bbfc462`。无 rebase/force。
+仅 baseline 追加历史一处冲突：逐 hunk 保留 main 四条 JSON decrease，保留本片
+原3条精确 edgeRecords（含 store `['*']`），原生 heavy tighten rc0 重建本片
+agency→practice5→4/cross37→36；保留 main server394，不回写旧403。
+main changes22条全部为前缀，新增本片一条为23；main edgeRecords20条全部为前缀，
+追加原3条为23；compat7/size1/notes/其他字段全部保留，无新增豁免。
+
+五源码与 catalog 六个 blob 逐项等于已审 ca0；三 reader 正文 SHA256 相同，完整
+practice blob 身份同时覆盖 loadCommitted/写协议/锁/claim/恢复正文。
+4455个 main 非本片文件及 JSON 迁移14个变更路径（含删除旧路径）均与 main 相同。
+唯一 R1 固定 base20222/headca0 的 APPROVE 原件 SHA256 为
+`0d44c09487c1102f12ab3ad0841303b5a4012f83bf410ed0a1180609cce128a9`；
+此处证明已审本片源码等价，不声称原 R1 审过新 main，不重开审查。
+
+依赖三 hash 与父 install receipt 一致，未 install。在 exact188f 上，heavy.sh
+全机2槽、本 lane 串行 typecheck/lint/build/两 audit 全部 rc0；lint180warnings，
+两个 audit 显式 `--base 67506c5eaa5604ba34d2c943132343bf2e7fab5e`。
+实测394/0/36、SCC1×3、超1500行13、新 pass-through0；无源码机械修补或语义 finding。
+tests/DB/runtime/provider 全部 NOT_RUN，未 push/PR/自派审。
+
+raw stdout/stderr、argv/UTC/rc、逐 owned blob/body proof 与全部 main 前缀证明封存在
+`architecture-deepening/YUK-1571/188f09856f9f365a18e71799b15eb42b4810adcb/diagnostic-read-main67506-five-gates-v1/`；
+manifest SHA256 `b187d1a989097719c59c0258c7a6e433ba1e9e3d0ecec500ac94e5b7e2461ad1`。
+原 merge rc1/conflict hunk、tighten raw 和账目并集证明保留在 ca0 目录的
+`diagnostic-read-main67506-integration/`；manifest SHA256
+`e6b084510ce6637a86510171ac696a339b3d3ccbb2722d74f8d9e601d08980c2`。
+本节随后仅文档提交；终态 seal 绑定到受检188f源码/账目，不冒称最终doc提交重跑五门。
