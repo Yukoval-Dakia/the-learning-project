@@ -6,7 +6,7 @@
 
 协调选择LIGHT：录入助手独立的产品周额度，默认USD20，通过现有产品配置面可改。开发验收的`budget-week-*.md`保持原义，不纳入产品额度。仅管`POST /api/ingestion-sessions/{id}/operations`的`kind=agent`启动链，不给全产品后台加闸门。
 
-最终LIGHT裁定：启动事务内复用产品本周已知/估价费用，按稳定身份与canonical attempt/ledger规则去重；另一个会话排队/运行/待结算，或unknown没有可靠上界时，明确503拒绝新的启动，绝不按0。达到配置额度返回429。原run与samekey返回原handle，continuation恢复同一持久身份。旧账/unknown不改。产品自然周一00:00至下周一半开区间，复用产品时区，无配置时Asia/Tokyo；不沿用开发账周六周期。跨周在途不因日历翻页放开另一新启动。
+最终LIGHT裁定：启动事务内复用产品本周已知/估价费用，按稳定身份与canonical attempt/ledger规则去重；另一个会话排队/运行/待结算，或unknown没有可靠上界时，明确503拒绝新的启动，绝不按0。达到配置额度返回429。原run与samekey返回原handle，continuation恢复同一持久身份。旧账/unknown不改。产品周界固定沿用既有 learner-day 的 Asia/Shanghai（UTC+8）：周一00:00（含）至下周一00:00（不含），对应 JST 周一01:00；不是宿主机时区，也没有缺省Tokyo分支，不沿用开发账周六周期。跨周在途不因日历翻页放开另一新启动。
 
 这只是启动许可，不保证单个已开始run不会超出当时余额，120轮/20分钟/最多8段保持原样，不新增单run美元上限或关OCR。下游准入另外记账，不能宣传整次录入全链路USD20封顶。严格逐调用预留/输出约束/8段与准入费用闭环另列YUK-1637（1559 C6，关联1558/1028），不作为本LIGHT前置。
 
