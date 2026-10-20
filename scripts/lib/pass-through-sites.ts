@@ -522,7 +522,16 @@ export function scanPassThroughSites(
               declaration.expression.type === 'Identifier'))
         ) {
           const ident = declaration.type === 'Identifier' ? declaration : declaration.expression;
-          const binding = bindings.get(nodeName(ident) ?? '');
+          const localName = nodeName(ident);
+          if (localName) {
+            // `export default f` / `export default f as T` — f may be a local
+            // forward candidate, so `default` is one of its exported names.
+            // (If f is an imported binding the alias site below covers it and
+            // no candidate will ever match this name.)
+            addLocalExport(localName, 'default');
+            exportedNames.add('default');
+          }
+          const binding = bindings.get(localName ?? '');
           if (binding && !binding.typeOnly) {
             const target = resolve(path, binding.source);
             if (target) {

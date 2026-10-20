@@ -112,14 +112,13 @@ SCCs unchanged. (At the post-merge head the same base now spans the upstream
 growth and correctly fails — the PASS claim is scoped to `875faac0c`.)
 
 Server-entry gate on real history: the same `--base 24add632b` run fires the
-new port check — **8 real violations**, all value edges that entered
+new port check — **13 real violations** (8 value + 5 type-only) that entered
 `server/start/**` after that base: the barrel import
-(`server/start/acceptance-server.ts → src/capabilities/index.ts`) and seven
-`observability` `api/*-contracts` Zod schema modules. Type-only edges on the
-same area (`import type {AdminReadClient}` / `{AdminControlClient}` from
-`ui/*-client`) are counted, not blocked — the same value/type split as the
-kernel reverse-edge gate. At the current merge-base every one is base stock
-→ `0 approved/0 blocked`.
+(`server/start/acceptance-server.ts → src/capabilities/index.ts`), seven
+`observability` `api/*-contracts` Zod schema modules (value), and five
+`ui/*-client` edges (type-only, blocked per owner ruling — no private
+type exemption). At the current merge-base every one is base stock →
+`0 approved/0 blocked`.
 
 ## R1 fixes (second pass)
 
@@ -193,18 +192,26 @@ Three confirmed P1s, fixed narrowly:
   exports); each exported alias emits its own `function` site, so adding or
   reordering aliases can never hide an existing one. Type-only specifiers
   remain excluded; body-transform checks unchanged.
+  (Fifth pass: `export default f` / `export default f as T` now also
+  registers `default` into f's exported set, so a local forward candidate
+  re-exported as default emits a `default` site alongside any named aliases;
+  an `export default ident` that names an import binding still emits the
+  `alias` site, and non-forward `export default` expressions/candidates
+  produce no site.)
 - **`server/**` (composition root + Start frontdoor) was unscanned** —
   `DEPENDENCY_ROOTS` still covers only `src/capabilities` + `src/server`
   (the three debt buckets and the zero-deep boundary are untouched). A new
   independent check collects real `server/**` → `src/capabilities/**` imports
   at base and head with the same parser/resolution/rename map, diffs them
-  kind-aware, and hard-fails any **new value edge** whose target is not a
+  kind-aware, and hard-fails any **new edge** whose target is not a
   `public`/`ui-public` entrypoint — that includes the `src/capabilities`
-  barrel (a second composition-root entry). New type-only edges are counted
-  but not failed, matching the kernel reverse-edge split; a type→value
-  upgrade on an existing pair counts as a new value edge. `server/**` →
-  `src/kernel`/`src/core`/`src/server` targets are approved ports and stay
-  out of this collector.
+  barrel (a second composition-root entry). Owner ruling: new edges to
+  private capability targets fail **regardless of kind** — top-level server
+  has no type-only exemption (the kernel reverse-edge type split is a
+  different direction); `newTypeEdges` is still counted for reporting.
+  A type→value upgrade on an existing pair counts as a new edge.
+  `server/**` → `src/kernel`/`src/core`/`src/server` targets are approved
+  ports and stay out of this collector.
 
 ### R1-fix negative-evidence status (honest)
 
@@ -226,12 +233,13 @@ Three confirmed P1s, fixed narrowly:
   upgrade branch is one boolean condition left to the independent R2 review.
 - `--base 46663192d` (pre-merge base): FAIL with exactly the 5 real upstream
   pass-through sites — confirms the gate fires on real base↔head deltas.
-- Fourth-pass fixes on real history: tail-only `edgeRecords` covering is
-  **NOT_RUN** (the ledgers stay empty — no real non-empty tail exists to
-  observe); multi-alias `export { f as a, f as b }` re-exports are **NOT_RUN**
-  (no real file exports one local under two names); the server-entry port
-  gate **IS exercised** on real history at `--base 24add632b` (8 real
-  blocked value edges — see above).
+- Fourth/fifth-pass fixes on real history: tail-only `edgeRecords` covering
+  is **NOT_RUN** (the ledgers stay empty — no real non-empty tail exists to
+  observe); multi-alias `export { f as a, f as b }` and `export default f`
+  local-alias branches are **NOT_RUN** (no real file re-exports one local
+  under two names or re-exports a forward candidate as default — branch
+  verified by inspection only); the server-entry port gate **IS exercised**
+  on real history at `--base 24add632b` (13 real blocked edges — see above).
 
 ## Machine-verification limits (stated honestly)
 

@@ -1128,13 +1128,13 @@ function auditedRatchetEdges(dependencies: readonly SemanticDependency[]): Ratch
 }
 
 /**
- * A new `server/**` value edge may reach capabilities only through the
- * approved ports — `public`/`ui-public` entrypoints. A new value edge to a
- * private `api/`, `ui/` or `server/` module, or to the `src/capabilities`
- * barrel (a second composition-root entry), fails. Base stock is
- * grandfathered; a type→value upgrade on an existing pair counts as a new
- * value edge. New type-only edges carry no runtime reach — counted, not
- * hard-failed (same split as the kernel reverse-edge gate).
+ * A new `server/**` edge may reach capabilities only through the approved
+ * ports — `public`/`ui-public` entrypoints. A new edge to a private `api/`,
+ * `ui/` or `server/` module, or to the `src/capabilities` barrel (a second
+ * composition-root entry), fails — regardless of kind; owner ruling gives
+ * top-level server no private type-only exemption (the kernel reverse-edge
+ * type split is a different direction and does not carry over). Base stock
+ * is grandfathered; a type→value upgrade on an existing pair counts as new.
  */
 function auditServerEntryEdges(input: {
   base: readonly ServerEntryEdge[];
@@ -1151,10 +1151,7 @@ function auditServerEntryEdges(input: {
       newPublicEdges += 1;
       continue;
     }
-    if (edge.kind === 'type') {
-      newTypeEdges += 1;
-      continue;
-    }
+    if (edge.kind === 'type') newTypeEdges += 1;
     violations.push({
       file: edge.file,
       source: edge.module,
