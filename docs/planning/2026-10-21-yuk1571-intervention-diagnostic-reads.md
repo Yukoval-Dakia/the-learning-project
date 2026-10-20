@@ -138,5 +138,33 @@ materialize/retire 命令依赖，不能重复计算它。SCC 保持1×3{agency,
 `SHA256.json` SHA256 `5195c761aac1218acaf10aae807b9edef4132786f3bcbabf157e6d1f790cbe6c`。
 `diagnostic-read-dependency-facts/dependency-facts.json` SHA256
 `c88f3ce9a16d24783057c85b5688c01aaa3f6ad2d65bec06c9ed4913d4b1d371`。
-失败 seal 均保留；baseline 未改，登记与后续两 audit 复验待父统一。上述结果只对应
+失败 seal 均保留；上述为登记前结果，当时 baseline 未改，后续授权登记见下。结果只对应
 受检 d4bb；本节随后仅文档提交，终态由外部 delivery seal 绑定，不冒称新 head 跑过五门。
+
+## 授权账目登记与两 audit 复验
+
+父亲读 kernel 与 dependency facts 后，明确授权原树只完成本片账目。ledger 提交
+`9d167d7ba64ca9db25f20ab654550e3155e88af4`（tree
+`43b3ab1f08ed170767117817a398b115cc49725d`）：按上表真实 file/module/symbols
+追加3条 capabilityToKernel/value，issue=YUK-1571，store symbols 严格为 `['*']`；
+owns 说明完整共享有效诊断读取与 writer/事务锁职责保留。实际 UTC 日期为
+`2026-10-20`（本地日期21日），未沿用猜测日期。
+
+`heavy.sh pnpm audit:capability-boundaries --tighten --base 20222f2cafe1500a9e445b43fe132935405d825a`
+原生 rc0，包含原生 baseline 格式化；仅收紧 agency→practice5→4 与 cross37→36，
+自动追加一条 decrease 历史。changes18→19、edgeRecords20→23，两个旧历史前缀
+逐项相同；compatShims7条、sourceSizeRecords1条、notes及其余字段全部相同。
+server403/deep0、SCC1×3及超1500行文件13保持，未新增豁免。
+
+在受检 ledger head 9d167 上，经 heavy.sh 单 lane 串行复验：
+`pnpm audit:capability-boundaries --base 20222f2cafe1500a9e445b43fe132935405d825a` rc0；
+`pnpm audit:architecture-deepening --base 20222f2cafe1500a9e445b43fe132935405d825a` rc0。
+本轮相对8678只改 baseline 和本交付文档，source/catalog/audit/schema 全部保持；
+typecheck/lint/build 按授权不重复，保留此前 d4bb 的真实结果，不称其验证新账目。
+
+本轮 tighten raw/argv/UTC/rc、baseline前后件及历史前缀证明位于正确目录
+`architecture-deepening/YUK-1571/8678a20c2bedd946c9da5de78188b1b935fd851e/diagnostic-read-ledger-prep/`；
+两 audit 位于 `architecture-deepening/YUK-1571/9d167d7ba64ca9db25f20ab654550e3155e88af4/diagnostic-read-ledger-audits-v1/`，
+`SHA256.json` 摘要 `28baa8d90c3db06ad527b3eb65f683378a8c9463ec58ba9ff95965588581f31d`。
+旧失败 seal 保留；本节仅文档后提交，外部终态 seal 绑定受检账目与源码 blob。
+writer clean 后停止，唯一独立 R1、PR、exact-head CI 由父统一，未自行审查。
