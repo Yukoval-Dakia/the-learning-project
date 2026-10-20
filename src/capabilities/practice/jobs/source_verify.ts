@@ -138,12 +138,6 @@ type DepsOverride = {
 // Jaccard, CJK-aware）。
 export { DEDUP_OVERLAP_THRESHOLD };
 
-// YUK-1572 — 结构/来源一致性纯预检（含 CheckOutcome 判定记录形）下沉到
-// ./source_verify_prechecks.ts；两处 re-export 保既有 import 路径（同上行
-// DEDUP_OVERLAP_THRESHOLD 先例）。
-export { SOURCE_GROUNDING_MIN_OVERLAP } from './source_verify_prechecks';
-export type { CheckOutcome };
-
 export type SourceVerifyPerQuestionStatus =
   | 'verified'
   | 'failed'
@@ -331,10 +325,9 @@ export async function publishVerifyLifecycleUpdate(
 // ---------- deterministic checks ----------
 //
 // YUK-1572 — the two PURE pre-checks of this set (structure_completeness +
-// source_consistency, plus their CheckOutcome record and the
-// SOURCE_GROUNDING_MIN_OVERLAP threshold) moved to ./source_verify_prechecks.ts.
-// What remains here is the checks that cannot be pure: dedup queries the pool
-// and solve_check spends the LLM call.
+// source_consistency, with the CheckOutcome record) moved to
+// ./source_verify_prechecks.ts. What remains here is the checks that cannot
+// be pure: dedup queries the pool and solve_check spends the LLM call.
 
 type QuestionRow = typeof question.$inferSelect;
 

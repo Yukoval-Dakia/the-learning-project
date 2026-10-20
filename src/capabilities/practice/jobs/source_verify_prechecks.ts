@@ -2,28 +2,29 @@
 // source_verify.ts (the "deterministic checks" block; the moved rule bodies are
 // verbatim).
 //
-// This module owns the PURE, DB-free half of the tier-2 check set
+// This module owns the PURE half of the tier-2 check set
 // (CHECK_SETS_BY_TIER[2] = structure_completeness + source_consistency +
 // solve_check + dedup): the two checks that decide — from question content
 // alone — whether a web_sourced draft is structurally complete and honestly
 // sourced. dedup stays in source_verify.ts (it queries the pool) and
 // solve_check stays there (it spends the LLM call via
-// verify-framework.runSolveCheck). Nothing here touches db / network / LLM:
-// same input ⇒ same verdict, same reason text.
+// verify-framework.runSolveCheck). Nothing here makes a db / network / LLM
+// call: same input ⇒ same verdict, same reason text.
 //
 // CheckOutcome is the per-check verdict record for the whole source_verify
 // handler — dedup / solve_check / source_grounding outcomes are recorded in
 // the same shape. It is declared here (the dependency leaf) so the import
-// direction stays one-way: source_verify.ts imports it for the checks it
-// still owns and re-exports it to keep the existing import path.
+// direction stays one-way: source_verify.ts type-imports it for the checks it
+// still owns.
 //
-// SourceVerifyPrecheckInput is exactly the field set these checks read. The
-// handler passes its verify-input — a question row, or its frozen-revision
-// flat projection carrying the same fields — which satisfies this shape
-// structurally, so this module never couples to the full row/schema. Rule
-// changes (required fields, thresholds, provenance interpretation) are local
-// to this file: the caller does not need to know which fields feed which
-// check.
+// SourceVerifyPrecheckInput is exactly the field set these checks read,
+// declared structurally so the module does not import the question table's
+// Drizzle type. It is not a zero-dependency module: the rules still
+// value-import the same helpers they used before (WebSourcedProvenance /
+// deriveSourceTier, normalizeToCanonicalKind, maxNgramOverlap) and
+// type-import the shared VerifyCheck contract. The handler passes the same
+// verify-input object it always passed — a question row, or its
+// frozen-revision flat projection carrying the same fields.
 
 import { WebSourcedProvenance, deriveSourceTier } from '@/core/schema/provenance';
 import { normalizeToCanonicalKind } from '@/subjects/question-kind';
@@ -40,9 +41,9 @@ export interface CheckOutcome {
 
 /**
  * The exact field set the deterministic pre-checks read — a strict subset of
- * the question row (`typeof question.$inferSelect`), declared here instead of
- * importing the schema so the module stays DB-free even at the type level.
- * Field types mirror the column types the handler passes in.
+ * the question row (`typeof question.$inferSelect`), declared here so this
+ * module never needs the table's Drizzle type. Field types mirror the column
+ * types the handler passes in.
  */
 export interface SourceVerifyPrecheckInput {
   kind: string;
@@ -91,7 +92,7 @@ export function checkStructureCompleteness(row: SourceVerifyPrecheckInput): Chec
 // deterministic word-shingle overlap (maxNgramOverlap, CJK-aware). CONSERVATIVE start
 // — the gate only fires when an extract is present AND clearly fails to ground the
 // question, so genuine restructuring (paraphrase) is not punished. Tunable.
-export const SOURCE_GROUNDING_MIN_OVERLAP = 0.15;
+const SOURCE_GROUNDING_MIN_OVERLAP = 0.15;
 
 // source_consistency — the row's declared source matches its persisted provenance:
 // deriveSourceTier lands tier 2, the web_sourced block parses, source_ref is present
