@@ -1,7 +1,8 @@
 # 运行失败契约归位（YUK-1570）
 
 完整共享契约与两个 server 适配已接线；零 shim、零新转出/白名单。
-基点 `83bbecdaecaf70be0ae0241795fac3d5a07940c1`，分支
+当前整合基点 `67506c5eaa5604ba34d2c943132343bf2e7fab5e`。
+原实现基点 `83bbecdaecaf70be0ae0241795fac3d5a07940c1`，分支
 `arch/yuk-1570-agent-error-contract`，独立树 `t3-91f03c31`。
 先 fetch 后从最新 origin/main 建分支，未带 T3 父起点 c338877f8 的旧文档提交。
 本片服务已授权架构深化，不宣称学习者行为或阶段验收变化。
@@ -63,8 +64,9 @@ runner.fallback.test.ts 经 runner 钉 null connection shape 与 durable judge �
 已在 9576999e55a5156c418f57e79f7d412055b151bf 核准 patch SHA 后精确应用；
 测试现 import 位于第 2 行，删除这一个 import 后全文与 9576999 逐字节相同。
 与最初 83bb 基点分别删除旧/新路径 import 后，全文亦逐字节相同；case/数据/断言/构造不动。
-原生 tighten 只追加两条下降账目，更新上述两 pair 和总数；main 18 条 changes 的逻辑前缀与
-原始字节前缀全部相同，其他 ledger 字段与债务值保持原样。
+此前在历史 main 20222f2 上按该批准原生收紧的记录已保留原 seal。当前整合以最新 main
+67506c5 的完整 22 条账本为底，原生实测仅追加 ingestion AI 16→15、practice AI 55→52，
+总数 394→390；main 22 条 changes 的逻辑与原始字节前缀均相同，旧未合 61→58 记录不携入。
 
 
 ## 两个维护场景与五项标准
@@ -77,7 +79,21 @@ runner.fallback.test.ts 经 runner 钉 null connection shape 与 durable judge �
 
 五标准：完整责任 owner 明确；两个场景明确修改位置；诚实区分传递依赖退出与接口知识未减；
 身份/成本/顺序/既有生命周期协议保留且 source/runtime 证据分层；按真实 consumer、占用及批准
-实施，数字不替代语义。四条 capability→server 边迁出仅为待官方审计假设，不预付收益。
+实施，数字不替代语义。四条 capability→server 依赖退出已由官方审计确认，尚不计为 main 合并收益。
+
+## 已审源码与 main 整合
+
+父已报告唯一 R1 APPROVE；已审原源码 `6a6655cf0377e0f7ba612e4b8950bf45b5311a23`。
+本轮 fetch 得到上述最新 main，普通 merge 后源码提交
+`2c1233c18972717e068eb29537d157c5cfd10b09`，未 rebase/force、未另开审查。
+仅 baseline 与 intervention-author / verify-framework 两处相邻旧 import 块冲突：
+产品只处理各五行冲突 hunk，保留 main core JSON 与 ERROR shared import 并集；
+baseline 从 main 全账本重建再原生 tighten，不用旧分支计数覆盖 main。
+
+静态 AST/字节证明：14 产品非 import 正文同 R1，其中 12 个整 blob 相同、两处仅获准 import
+owner 映射；所有 main import binding 保留，其余 14 个 main owned 路径的 blob/删除状态保持。
+批准测试全文同 R1；单一 class、fields、错误、unknown cost、SDK/admission 适配及所有 paid body
+不变。source 等价说明只覆盖这些实际差量，不冒称对上游 JSON 内容重新做过 R1。
 
 ## 验证与待决
 
@@ -87,21 +103,21 @@ runner.fallback.test.ts 经 runner 钉 null connection shape 与 durable judge �
 `b23b1f8c844efdc6f1a1c7d50344d8d7ffd0a36a6fb27809f3e5d8706742acf5`（此前待裁候选，非最终验收）。
 最终 exact HEAD 的源码/原始命令/逐文件 hash 另落 `<final-head>/agent-error/final-source-proof/`，不覆盖旧 seal。
 
-静态字节对照与 git diff --check 已完成。父唯一一次 heavy frozen install exit 0，依赖三 hash
-原样。真实 tsc（两 tsconfig）及 build 已在 c0b2e34cce31222bb8b3d274249007b63dc2dff5
-exit 0；本轮产品源码未变，依父指示不重跑 typecheck/build。此前 Node 解析失败保留，不作为 tsc 结论。
+静态字节对照与 git diff --check 已完成。依赖三 hash 与父唯一一次 frozen install 回执相同，
+本 writer 未 install。新 exact 源码 2c1233c 的 typecheck（两 tsconfig）/lint/build/两 audit
+均通过 exit 0，全部由外部 heavy.sh 全机最多两槽、本 lane 串行运行；lint 180 warnings。
+两 audit 固定 `--base 67506c5eaa5604ba34d2c943132343bf2e7fab5e`。
+实测 server 394→390（ingestion AI 16→15、practice AI 55→52）、deep 0、cross 37、
+SCC 1、>1500 文件 13（base 13），本片无超长减少。
 
-此前五门原始失败 seal 保留：
-`c0b2e34cce31222bb8b3d274249007b63dc2dff5/agent-error/checks-20261020T223305Z/`，
-sha256.json `84ca8c041da85ae6b5fb629335a4c18be77b6ce3ddabc4b5098c30d442119a6f`。
+本轮 raw stdout/stderr、argv、UTC、真实返回码、冲突及逐 owned/body/账本前缀证明在：
+`2c1233c18972717e068eb29537d157c5cfd10b09/agent-error/main-integration/`。
+`premerge-source-proof/r1-main-source-proof.json` SHA256
+`1c789ce74344ebf314b3857fffee6194092fca32a1f77b4133acc12445e78963`；
+`premerge-source-proof/main-ledger-prefix-proof.json` SHA256
+`23da7611ecb8a4efeea761cb08f040ebc1eb70f7c4d34a852a44c113b51af6a5`。
+所有 main 账目字段保留，仅授权的两条追加和三个数值下降；audit/schema/ignore 未改。
+此前 Node 解析及 lint/baseline 失败原 seal 保留，最新真实 tsc/五门结论不复用旧检查。
 
-本次获批排序/tighten 后，仅复验 lint、baseline 格式、两 audit，全部 exit 0；原生 tighten 亦 exit 0。
-两 audit 固定 `--base 20222f2cafe1500a9e445b43fe132935405d825a`，实际 server=399、deep=0、
-cross=37、SCC=1、>1500 文件=13（base 同为13，本片无超长减少）。
-本次 raw stdout/stderr、argv、UTC、真实返回码和 identity/ledger proof 在
-`9576999e55a5156c418f57e79f7d412055b151bf/agent-error/approved-sort-tighten-20261020T223932Z/`；
-`identity-ledger-proof.json` SHA256 `0d9e4ede70cefe2e270ccbc88c7384f5c6eeccaa4e9d5a56d597b6672d9b844e`。
-原失败不覆盖；baseline 仅由获批原生命令写入，不改 audit/schema/ignore。
-
-本 writer 未再次 install。所有本机 tests/vitest/DB/TEST/Docker/daemon/provider/runtime/demo/paid、
-push/PR/watch/review、Linear/清树均 NOT_RUN。无新范围外 actionable follow-up；父 R1/PR/exact-head CI 待父统一处理。
+所有本机 tests/vitest/DB/TEST/Docker/daemon/provider/runtime/demo/paid、push/PR/自派审、
+Linear/清树均 NOT_RUN。无新范围外 actionable follow-up；父 PR/exact-head CI 统一处理。
