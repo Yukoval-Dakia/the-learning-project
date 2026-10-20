@@ -90,15 +90,23 @@
 
 ## 机器门真实结果
 
-- `biome check`（全局 2.5.7 vs 仓库 pin ^2.5.8）：14 个改动文件
-  error-level + 默认级全绿；唯一修正为 reap 合并 import 折行回单行。
-- `jq` 校验 `capability-boundary-baseline.json` 合法。
-- NOT_RUN：`pnpm typecheck` / `pnpm lint`（项目本地 binary）/
-  `pnpm build` / `pnpm audit:capability-boundaries` /
-  `pnpm audit:architecture-deepening` / 全部 vitest 分区 / DB /
-  Docker / daemon / provider / runtime——本 worktree 无 node_modules
-  （pnpm install 依协调线规则不由本片执行）。依赖就位后按串行 heavy
-  顺序补跑。
+依赖由父 heavy.sh frozen install 就位（exit 0，lock 未动）后，本树按
+串行 heavy.sh 实测（全机 ≤2）：
+
+- `pnpm typecheck`：PASS（tsc 双跑 exit 0）。
+- `pnpm lint`（`biome check .` 项目 pin）：PASS——2510 文件 0 error，
+  180 warning 全部为存量上游（本片 0 新增）；error-only 复查干净。
+- `pnpm build`：PASS（web dist + server/worker/migrate 三 esbuild 产物，
+  仅存量 INEFFECTIVE_DYNAMIC_IMPORT 提示）。
+- `pnpm audit:capability-boundaries`：PASS——debt 精确 405/0/39，
+  **new dependency edges = 9**（恰为本片登记的 9 条 capabilityToKernel），
+  server-entry 新边 0，非平凡 SCC 1（base 1）。
+- `pnpm audit:architecture-deepening`：PASS——dependency totals
+  405/0/39 低于 531/70/62；**pass-through sites 1090（+0 new）**——
+  7 个退役站点在 head 消失，7 条 compatShims 记录 non-live → continue，
+  台账原样保留。
+- NOT_RUN：全部 vitest 分区 / DB / Docker / daemon / provider /
+  runtime（测试不在本机 gate；由 push 后 exact-head CI Gate 执行）。
 
 ## Revision / 外部路径
 
