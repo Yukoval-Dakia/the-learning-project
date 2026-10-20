@@ -25,8 +25,6 @@ export {
   InterventionOutcome,
   InterventionPackage,
   InterventionPackageModelOutput,
-  InterventionPackageReviewAudit,
-  InterventionPackageReviewModelOutput,
   InterventionPreparationAttempt,
   InterventionSnapshot,
   InterventionStatus,
