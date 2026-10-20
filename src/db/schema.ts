@@ -3188,8 +3188,10 @@ export const item_calibration = pgTable(
     //    b_calif（active-PPI 旧firm-up列）退出读链，仅作历史存档（值由 migration 回填
     //    进 b_post 一次性承接；旧 recalibrateQuestion 机器转离线审计，不再被生产调用）。
     //
-    // - b_post：**后验均值**（logit 尺度）。写者只有两个：锚写者初始化（= μ_j，即
-    //   b_anchor）+ 标定批（src/server/mastery/joint-calibration.ts，从证据账本全量重算）。
+    // - b_post：**后验均值**（logit 尺度）。写者三个：锚写者初始化（= μ_j，即 b_anchor）、
+    //   标定批（src/server/mastery/joint-calibration.ts，从证据账本全量重算），以及结算
+    //   revert/withdraw 删掉该题最后一条证据后的同事务「修回先验」
+    //   （item-calibration.ts resetPosteriorToPriorIfNoEvidence——A4 更正跟随有效判分）。
     //   在线 attempt 路径只 READS（G4 改写后的红线：b 单写者由标定批保）。0 条证据 ⇒
     //   数值 = b_anchor（A3：连续收缩取代 RECALIBRATION_MIN_LABELS=12 硬切换，无 NULL
     //   哨兵、无跳变、无「首写不可逆」）。nullable：仅历史行/锚缺失行在首批前为 NULL

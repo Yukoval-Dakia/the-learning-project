@@ -13,8 +13,11 @@
 // ─── 写者契约（G4 改写后的红线，A3）─────────────────────────────────────────
 // b_post / posterior_variance / calibration_n / calibration_weight /
 // calibration_source / last_calibrated_at 的批量写只由本模块承担；锚写者
-// （applyItemPrior / setFixedAnchor）只在写锚时**初始化**后验（= 先验）。在线 attempt
-// 路径只 READS（effectiveB），从不写 b——b 单写者由标定批保。
+// （applyItemPrior / setFixedAnchor）只在写锚时**初始化**后验（= 先验）；结算
+// revert/withdraw 删掉某题最后一条证据后，由 item-calibration.ts
+// resetPosteriorToPriorIfNoEvidence 在**同一事务**把该题后验修回先验（否则零证据题
+// 不再进批，会永久保留含已撤销作答的后验）。在线 attempt 路径只 READS（effectiveB），
+// 从不写 b——b 单写者由标定批保。
 //
 // ─── A5 尺度漂移审计（Kolen-Brennan mean/sigma linking）──────────────────────
 // 每批边界：参照集 = 后验仍由先验主导的强锚题（证据精度贡献 ≤
@@ -367,10 +370,15 @@ async function auditAndMaybeRenormalize(
   result.kb_slope = drift.slope;
   if (drift.n < REFERENCE_MIN_N || !drift.beyondTolerance) return;
 
-  // 越界归一（A5）：x → A + B·x 作用于 θ̂ 场（knowledge + ability_global）、b_post 场、
-  // 证据 θ 快照（批间一致性——历史快照若留在旧尺度会污染下批似然）；family b_delta 是
-  // 加性 offset，只乘 B 不平移（b+delta 在 x→A+B·x 下要求 delta→B·delta 才保复合读）。
+  // 越界归一（A5）：x → A + B·x 作用于 θ̂ 场、b_post 场、证据 θ 快照（批间一致性——
+  // 历史快照若留在旧尺度会污染下批似然）；family b_delta 是加性 offset，只乘 B 不平移
+  // （b+delta 在 x→A+B·x 下要求 delta→B·delta 才保复合读）。
   // 平移分量保预测不变（θ−b 不变）；slope 分量是单位修正（改变预测是越界修正的本意）。
+  //
+  // mastery_state 分两层：effective θ = θ_KC(knowledge 行) + θ_global(ability_global 行)
+  // （state.ts）。复合量只应整体加一次 A：knowledge 行取 A + B·x，ability_global 行只乘
+  // B（B·o + B·g = B·θ_eff）。两层都加 A 会把 θ_eff 双加 shift，恰好在本路径触发时
+  // 破坏「归一保 θ−b 不变」。
   // 先验质量调查 flag：日志出口（owner 读批日志/后续接 Linear）。
   const A = drift.shift;
   const B = drift.slope;
@@ -381,7 +389,10 @@ async function auditAndMaybeRenormalize(
   await db.transaction(async (tx) => {
     await acquireLearningStateWriteLock(tx);
     await tx.execute(
-      sql`UPDATE mastery_state SET theta_hat = ${A}::double precision + ${B}::double precision * theta_hat, updated_at = ${now.toISOString()}::timestamptz`,
+      sql`UPDATE mastery_state SET theta_hat = ${A}::double precision + ${B}::double precision * theta_hat, updated_at = ${now.toISOString()}::timestamptz WHERE subject_kind = 'knowledge'`,
+    );
+    await tx.execute(
+      sql`UPDATE mastery_state SET theta_hat = ${B}::double precision * theta_hat, updated_at = ${now.toISOString()}::timestamptz WHERE subject_kind = 'ability_global'`,
     );
     await tx.execute(
       sql`UPDATE item_calibration SET b_post = ${A}::double precision + ${B}::double precision * b_post, updated_at = ${now.toISOString()}::timestamptz WHERE b_post IS NOT NULL AND track = 'hard'`,
