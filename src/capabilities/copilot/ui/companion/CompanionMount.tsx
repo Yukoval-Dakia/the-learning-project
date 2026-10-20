@@ -34,7 +34,7 @@ export function CompanionMount({
   const attachLifetime = useCallback(
     (node: HTMLElement | null) => {
       if (!node) return undefined;
-      controller.sender.initializeFromStorage();
+      controller.initializeFromStorage();
       // Leaving the page never cancels: it only stops reading the streams.
       return () => controller.runs.detachSubscriptions(undefined, false);
     },
@@ -44,7 +44,7 @@ export function CompanionMount({
     (node: HTMLElement | null) => {
       if (!node) return undefined;
       return subscribeCopilotOpenRequests((request) =>
-        controller.sender.handleOpenRequest(request, () => onOpenChange(true)),
+        controller.handleOpenRequest(request, () => onOpenChange(true)),
       );
     },
     [controller, onOpenChange],

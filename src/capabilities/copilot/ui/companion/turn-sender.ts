@@ -5,15 +5,11 @@
 
 import { ApiAuthError, ApiError } from '@/ui/lib/api';
 import { randomId } from '@/ui/lib/random-id';
-import type { CopilotOpenRequest } from '@/ui/lib/use-copilot-dwell';
 import { readCompanionFocus } from '@/ui/lib/use-copilot-dwell';
 import {
   type PersistedPendingCopilotRequestBody,
   type PersistedPendingCopilotTurn,
   clearPersistedPendingCopilotTurn,
-  discardLegacyDurableCopilotReconnect,
-  loadCopilotDerivationPreference,
-  loadPersistedPendingCopilotTurns,
   persistPendingCopilotTurn,
 } from '../durable-reconnect-storage';
 import {
@@ -28,7 +24,6 @@ import { type PendingTurn, selectionValidated, supportsAnswerOnly } from './comp
 import {
   ACCEPTANCE_UNKNOWN_COPY,
   ANSWER_ONLY_UNAVAILABLE_COPY,
-  RESTORED_PENDING_COPY,
   plainSendError,
 } from './plain-errors';
 
@@ -38,8 +33,6 @@ export interface TurnSender {
   retryPendingTurn: (idempotencyKey: string) => void;
   discardPendingRecovery: (idempotencyKey: string) => void;
   pendingMessagesForSession: (sessionId: string) => ChatMessage[];
-  initializeFromStorage: () => void;
-  handleOpenRequest: (request: CopilotOpenRequest, requestOpen: () => void) => void;
 }
 
 export function createTurnSender(ctx: CompanionCtx): TurnSender {
@@ -248,70 +241,11 @@ export function createTurnSender(ctx: CompanionCtx): TurnSender {
     ctx.sessions.revalidateAutomaticSelection();
   }
 
-  /** Once per mount: the policy preference and every exact pre-202 tuple. Accepted runs come
-   *  from the server snapshot only. */
-  function initializeFromStorage() {
-    if (internals.storageInitialized) return;
-    internals.storageInitialized = true;
-    ctx.set({ derivationPolicy: loadCopilotDerivationPreference() });
-    discardLegacyDurableCopilotReconnect();
-    const restored = loadPersistedPendingCopilotTurns();
-    const recoverySessionId = restored.at(-1)?.requestBody.session_id;
-    if (!recoverySessionId) return;
-    const now = new Date().toISOString();
-    ctx.set({
-      pendingTurns: restored.map((t) => ({
-        ...t,
-        dispatching: false,
-        error: RESTORED_PENDING_COPY,
-      })),
-      currentSessionId: recoverySessionId,
-      selectionOrigin: 'recovery',
-      optimisticSession: {
-        id: recoverySessionId,
-        status: 'active',
-        title: '正在恢复的对话',
-        created_at: now,
-        updated_at: now,
-      },
-    });
-    ctx.updateMessages(pendingMessagesForSession(recoverySessionId));
-  }
-
-  function handleOpenRequest(request: CopilotOpenRequest, requestOpen: () => void) {
-    internals.activeSkill = request.skill_context ?? null;
-    ctx.set({
-      skillKnowledgeId:
-        request.skill_context?.ref.kind === 'knowledge' ? request.skill_context.ref.id : null,
-    });
-    if (request.nudge) {
-      // The nudge headline is the companion's opening line (never a learner bubble), seeded only
-      // into an empty conversation; its ingestion session is the first reply's ambient focus.
-      const { headline, session_id } = request.nudge;
-      internals.nudgeSession = session_id;
-      ctx.updateMessages((previous) =>
-        previous.length === 0 ? [{ id: nextMessageId(), role: 'ai', text: headline }] : previous,
-      );
-    }
-    requestOpen();
-    const prefill = request.prefill;
-    if (!prefill) return;
-    if (request.prefill_mode !== 'compose' && selectionValidated(ctx.get())) {
-      void send(prefill);
-      return;
-    }
-    // Compose handoffs never auto-send, and a cold open cannot send yet: append to the draft.
-    const draft = ctx.get().draft;
-    ctx.set({ draft: draft.trim() ? `${draft}\n${prefill}` : prefill });
-  }
-
   return {
     send,
     sendQuiz,
     retryPendingTurn,
     discardPendingRecovery,
     pendingMessagesForSession,
-    initializeFromStorage,
-    handleOpenRequest,
   };
 }

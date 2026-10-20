@@ -3,7 +3,9 @@
 
 import type { QueryClient } from '@tanstack/react-query';
 import { createStore } from 'zustand/vanilla';
+import type { CopilotOpenRequest } from '@/ui/lib/use-copilot-dwell';
 import type { CopilotClient } from '../copilot-client';
+import { handleOpenRequest, initializeFromStorage } from './arrivals';
 import { type CompanionCtx, createInternals, makeUpdateMessages } from './companion-context';
 import { type CompanionState, initialCompanionState } from './companion-state';
 import { type RunTracker, createRunTracker } from './run-tracker';
@@ -18,6 +20,10 @@ export interface CompanionController {
   runs: RunTracker;
   sender: TurnSender;
   actions: TurnActions;
+  /** Once per mount: restore the policy preference and every unconfirmed send. */
+  initializeFromStorage: () => void;
+  /** Claim one open request from a page; `requestOpen` asks the shell to open the panel. */
+  handleOpenRequest: (request: CopilotOpenRequest, requestOpen: () => void) => void;
 }
 
 export function createCompanionController(deps: {
@@ -48,5 +54,7 @@ export function createCompanionController(deps: {
     runs: ctx.runs,
     sender: ctx.sender,
     actions: createTurnActions(ctx),
+    initializeFromStorage: () => initializeFromStorage(ctx),
+    handleOpenRequest: (request, requestOpen) => handleOpenRequest(ctx, request, requestOpen),
   };
 }

@@ -106,7 +106,12 @@ export const ToolRow = memo(function ToolRow({ step }: { step: StepView }) {
         <StatusGlyph status={step.status} />
       </span>
       <span className="un-cp-step-label">{step.label}</span>
-      <span className="un-cp-step-status">{STATUS_COPY[step.status]}</span>
+      {/* A done step says so with its check; words only where the learner needs them. */}
+      {step.status === 'done' ? (
+        <span className="un-sr-only">{STATUS_COPY.done}</span>
+      ) : (
+        <span className="un-cp-step-status">{STATUS_COPY[step.status]}</span>
+      )}
     </>
   );
   return (
