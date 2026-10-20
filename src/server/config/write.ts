@@ -31,7 +31,8 @@ import { type Db, type Tx, db as defaultDb } from '@/db/client';
 import { system_config, system_config_journal } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { assertModelProfileCapabilityFit } from '@/server/ai/model-profiles';
-import { nativePiModel, piProviderId } from '@/server/ai/pi-provider-catalog';
+import { createLoomPiModels } from '@/server/ai/pi-models';
+import { piProviderId } from '@/server/ai/pi-provider-catalog';
 import { PROVIDER_ATTEMPT_ADMISSION_LANES } from '@/server/ai/provider-attempt-admission-config';
 import {
   ANTHROPIC_SUB_DEFAULT_MODEL,
@@ -287,6 +288,33 @@ async function validateFinalProviderPairs(
     }
   }
   if (scopes.size === 0) return;
+  const models = await createLoomPiModels();
+  function validateNativeModel(
+    label: string,
+    provider: Provider,
+    model: string,
+    taskKind?: TaskKind,
+  ): void {
+    // The adapter uses this same lookup, including template presence and required catalog facts.
+    if (!models.getModel(piProviderId(provider), model)) {
+      throw new ApiError(
+        'invalid_config_value',
+        `${label}: model '${model}' is not executable in native pi provider '${piProviderId(provider)}': protocol or required catalog facts are unavailable`,
+        422,
+      );
+    }
+    if (taskKind) {
+      try {
+        assertModelProfileCapabilityFit(tasks[taskKind], provider, model);
+      } catch (error) {
+        throw new ApiError(
+          'invalid_config_value',
+          error instanceof Error ? error.message : 'Incompatible task/model',
+          422,
+        );
+      }
+    }
+  }
   const solveTasks = ['SolutionGenerateTask', 'SolutionGenerateVisionTask'] as const;
   const visionTasks = VISION_JUDGE_TASK_KINDS;
   if (
@@ -484,33 +512,6 @@ async function validateFinalProviderPairs(
     }
     // 未知 provider 不在此拦（写 provider 键本身由 tx 外谓词拦；model-only 写下
     // provider 脏值是读端 fail-open 的既有面）。
-  }
-}
-
-/** Native membership and capability checks apply equally to task and global writes. */
-function validateNativeModel(
-  label: string,
-  provider: Provider,
-  model: string,
-  taskKind?: TaskKind,
-): void {
-  if (!nativePiModel(provider, model)) {
-    throw new ApiError(
-      'invalid_config_value',
-      `${label}: model '${model}' is not in native pi provider '${piProviderId(provider)}'`,
-      422,
-    );
-  }
-  if (taskKind) {
-    try {
-      assertModelProfileCapabilityFit(tasks[taskKind], provider, model);
-    } catch (error) {
-      throw new ApiError(
-        'invalid_config_value',
-        error instanceof Error ? error.message : 'Incompatible task/model',
-        422,
-      );
-    }
   }
 }
 

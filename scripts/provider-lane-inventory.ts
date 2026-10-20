@@ -224,7 +224,10 @@ export const PROVIDER_LANES = [
     configuration: {
       endpoint: {
         summary: 'same Token Plan /v1 endpoint as TEST app/worker',
-        source: { path: 'scripts/yuk1537-admission-reopen.ts', calls: ['xiaomiTokenPlanBaseUrl'] },
+        source: {
+          path: 'scripts/yuk1537-admission-reopen.ts',
+          calls: ['tokenPlanEndpointOverride'],
+        },
       },
       credential: {
         summary: 'Token Plan server credential, never printed',
@@ -518,12 +521,11 @@ export const PROVIDER_LANES = [
     configuration: {
       endpoint: {
         summary:
-          'Global product pin selects native completions baseUrl; legacy unpinned MEM0_LLM_BASE_URL rollback',
+          'Runtime catalog supplies completions baseUrl; legacy unpinned MEM0_LLM_BASE_URL rollback remains explicit',
         source: {
           path: 'src/server/memory/llm-config.ts',
           contains: ['env.MEM0_LLM_BASE_URL', 'baseURL: native.baseUrl'],
-          calls: ['resolveGlobalProviderSwitch', 'nativePiModel'],
-          literals: ['https://open.bigmodel.cn/api/coding/paas/v4'],
+          calls: ['resolveGlobalProviderSwitch', 'nativePiModel', 'resolveModelProfile'],
         },
       },
       credential: {
@@ -672,12 +674,11 @@ export const PROVIDER_LANES = [
     configuration: {
       endpoint: {
         summary:
-          'Global product pin selects native completions baseUrl; legacy unpinned MEM0_LLM_BASE_URL rollback',
+          'Runtime catalog supplies completions baseUrl; legacy unpinned MEM0_LLM_BASE_URL rollback remains explicit',
         source: {
           path: 'src/server/memory/llm-config.ts',
           contains: ['env.MEM0_LLM_BASE_URL', 'baseURL: native.baseUrl'],
-          calls: ['resolveGlobalProviderSwitch', 'nativePiModel'],
-          literals: ['https://open.bigmodel.cn/api/coding/paas/v4'],
+          calls: ['resolveGlobalProviderSwitch', 'nativePiModel', 'resolveModelProfile'],
         },
       },
       credential: {
