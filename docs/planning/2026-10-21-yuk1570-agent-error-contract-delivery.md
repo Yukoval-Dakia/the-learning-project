@@ -1,7 +1,8 @@
 # 运行失败契约归位（YUK-1570）
 
 完整共享契约与两个 server 适配已接线；零 shim、零新转出/白名单。
-当前整合基点 `67506c5eaa5604ba34d2c943132343bf2e7fab5e`。
+当前整合基点 `f52a41bb2b8453a3cce8907e805327e20d821934`；已审前序 final
+`2d86d6463b5363badfeaf5cc4c06066424b0d343`。
 原实现基点 `83bbecdaecaf70be0ae0241795fac3d5a07940c1`，分支
 `arch/yuk-1570-agent-error-contract`，独立树 `t3-91f03c31`。
 先 fetch 后从最新 origin/main 建分支，未带 T3 父起点 c338877f8 的旧文档提交。
@@ -24,23 +25,24 @@ wall-clock message/身份判别、10,000ms cap 和冻结重试白名单，零 im
   provider-session-admission.ts、paid/unknown、预算、typed-submit、frozen、claim-fence、
   发布/撤销、恢复、参数及执行顺序不动。仅 scope 内 import 拆分。
 
-## 全部直接消费者（src/ 下，原基点行号）
+## 全部直接消费者（src/ 下，当前 import 行号）
 
 | 文件 | import 行 | 实际使用 |
 |---|---:|---|
-| server/ai/runner.ts | 41–46 | SDK failure 构造、retry deadline；bind/isApi 仍由 server 适配 |
-| server/ai/typed-primitive-runner.ts | 37–42 | typed failure/permanent 判别；bind 仍由 server 适配 |
-| server/ai/run-lifecycle.ts | 6–10 | wall-clock 构造、失败终态和 retry |
-| server/ai/provenance.ts | 6 | isGenerationBudgetTimeout |
-| server/assessment/jev-model-executor.ts | 21 | instanceof 支出/重试判别 |
-| server/assessment/pi-model-executor.ts | 12 | 已知成本、失败 run refs |
-| server/assessment/rubric-model-executor.ts | 27 | run refs、timeout cost/预算错误 |
-| server/grounding-gate/intervention-review-eval.ts | 16 | 失败 durable run identity 对账 |
-| capabilities/ingestion/server/agent/run.ts | 12–16 | budget_exhausted/model_unavailable 分类 |
-| capabilities/practice/server/intervention-author.ts | 39 | 两处 validator failure run refs |
-| capabilities/practice/server/judge/provider-lane-fallback.ts | 6 | 仅 API failure 的 lane 判别 |
-| capabilities/practice/server/quiz/verify-framework.ts | 42 | solver paid run refs、unsupported/permanent |
-| server/assessment/rubric-model-executor.test.ts | 12 | 同一 AgentRunError constructor；唯一获批测试 import |
+| server/ai/runner.ts | 27、42 | SDK failure 构造、retry deadline；bind/isApi 仍由 server 适配 |
+| server/ai/typed-primitive-runner.ts | 33、38 | typed failure/permanent 判别；bind 仍由 server 适配 |
+| server/ai/run-lifecycle.ts | 2–6 | wall-clock 构造、失败终态和 retry |
+| server/ai/agent-run-error.ts | 4 | admission binder 复用唯一共享 class |
+| server/ai/provenance.ts | 1 | isGenerationBudgetTimeout |
+| server/assessment/jev-model-executor.ts | 11 | instanceof 支出/重试判别 |
+| server/assessment/pi-model-executor.ts | 2 | 已知成本、失败 run refs |
+| server/assessment/rubric-model-executor.ts | 12 | run refs、timeout cost/预算错误 |
+| server/grounding-gate/intervention-review-eval.ts | 3 | 失败 durable run identity 对账 |
+| capabilities/ingestion/server/agent/run.ts | 3–7 | budget_exhausted/model_unavailable 分类 |
+| capabilities/practice/server/intervention-author.ts | 1 | 两处 validator failure run refs |
+| capabilities/practice/server/judge/provider-lane-fallback.ts | 4 | 仅 API failure 的 lane 判别 |
+| capabilities/practice/server/quiz/verify-framework.ts | 2 | solver paid run refs、unsupported/permanent |
+| server/assessment/rubric-model-executor.test.ts | 2 | 同一 AgentRunError constructor；唯一获批测试 import |
 
 非 import 观察者：practice/server/solve-session.ts:369/372 按 name/subtype 分类；
 notes/jobs/note_generate.ts:115 经 provenance 间接识别预算错误，两者不动。
@@ -65,8 +67,8 @@ runner.fallback.test.ts 经 runner 钉 null connection shape 与 durable judge �
 测试现 import 位于第 2 行，删除这一个 import 后全文与 9576999 逐字节相同。
 与最初 83bb 基点分别删除旧/新路径 import 后，全文亦逐字节相同；case/数据/断言/构造不动。
 此前在历史 main 20222f2 上按该批准原生收紧的记录已保留原 seal。当前整合以最新 main
-67506c5 的完整 22 条账本为底，原生实测仅追加 ingestion AI 16→15、practice AI 55→52，
-总数 394→390；main 22 条 changes 的逻辑与原始字节前缀均相同，旧未合 61→58 记录不携入。
+f52a41b 的完整 33 条账本为底，原生实测仅追加 ingestion AI 16→15、practice AI 55→52，
+总数 394→390；main 33 条 changes 的逻辑与原始字节前缀均相同，旧未合 61→58 记录不携入。
 
 
 ## 两个维护场景与五项标准
@@ -84,40 +86,48 @@ runner.fallback.test.ts 经 runner 钉 null connection shape 与 durable judge �
 ## 已审源码与 main 整合
 
 父已报告唯一 R1 APPROVE；已审原源码 `6a6655cf0377e0f7ba612e4b8950bf45b5311a23`。
-本轮 fetch 得到上述最新 main，普通 merge 后源码提交
-`2c1233c18972717e068eb29537d157c5cfd10b09`，未 rebase/force、未另开审查。
-仅 baseline 与 intervention-author / verify-framework 两处相邻旧 import 块冲突：
-产品只处理各五行冲突 hunk，保留 main core JSON 与 ERROR shared import 并集；
-baseline 从 main 全账本重建再原生 tighten，不用旧分支计数覆盖 main。
+本轮 fetch 实际 main 为上述 f52a41b（SOURCE/PI/schema/settle），普通 merge 后源码提交
+`4be07a36ca32aca7de715c598889d1cdd9aff487`，未 rebase/force、未另开审查。
+仅 baseline 冲突；以 main 全账本为底，原生 tighten 生成本片两条下降。
+前序 67506c5 整合的 intervention-author / verify-framework 仅 import 并集保持原样，
+本轮未再改产品行；main core JSON 与 ERROR shared import 全部保留。
 
-静态 AST/字节证明：14 产品非 import 正文同 R1，其中 12 个整 blob 相同、两处仅获准 import
-owner 映射；所有 main import binding 保留，其余 14 个 main owned 路径的 blob/删除状态保持。
-批准测试全文同 R1；单一 class、fields、错误、unknown cost、SDK/admission 适配及所有 paid body
-不变。source 等价说明只覆盖这些实际差量，不冒称对上游 JSON 内容重新做过 R1。
+14 产品整 blob 同前序已审 final 2d86d646；14 个非 import 正文同 R1 6a6655cf，
+其中 12 整 blob 同 R1，另两处仅前序已准 core JSON import 归位。12 消费者 main import
+binding 并集完整；main 其余 4456 个路径的 mode/type/OID 全同，无上游删除状态反转。
+批准测试全文同 R1、import 仍在第 2 行，删除该行后同原 83bb 基点；用例/数据/断言不动。
+单一 class、fields、错误、unknown cost、SDK/admission 与全部 paid body 保持；此等价证明
+不冒称对上游 SOURCE/PI/schema/settle 语义另做过 R1。
+
+按父最新澄清执行既有 append-only / tail-only：main 已合的 11 条 schema stable record
+原始 entry 字节全同，含历史 consumer.line；未追加 stable/compat、未挪产品行、未改 gate。
+当前 AST 有 12 处 consumer 行号位置差异，binding 身份不变，只封存仓外事实。
+已核 audit-architecture-deepening.ts:1446–1451 仅取基点 changes 后的 tail，
+pass-through-sites.ts:991 仅核传入 stableRulings；本片 tail 无新 stable，实际审计结果见下。
 
 ## 验证与待决
 
 外置根 `/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1570/`。
-基点 `/83bbecdaecaf70be0ae0241795fac3d5a07940c1/agent-error/` 下保留各次准备 seal：
-`candidate-20261020T222116Z/sha256.json` SHA256
-`b23b1f8c844efdc6f1a1c7d50344d8d7ffd0a36a6fb27809f3e5d8706742acf5`（此前待裁候选，非最终验收）。
-最终 exact HEAD 的源码/原始命令/逐文件 hash 另落 `<final-head>/agent-error/final-source-proof/`，不覆盖旧 seal。
+原候选、原失败及前序 2c1233c / 2d86d646 seal 全保留，不覆盖；本轮 exact 源码封存在
+`4be07a36ca32aca7de715c598889d1cdd9aff487/agent-error/main-refresh/`。
+该目录含源码 tar/tree、冲突、原生 tighten、raw stdout/stderr、argv、UTC、真实返回码、
+依赖及 caller/class census。证明文件（相对该目录）：
+`premerge-evidence/source-identity-proof.json` SHA256
+`a81568d86f1fc90e658c944749c113c55088f224b04e06e28fe1b5f77198f96e`；
+`premerge-evidence/ledger-identity-proof.json` SHA256
+`9b6dfcc7f35cfe8f5b2df8823a3e9d16e9ffdfc3e04f82d8fb2fa8699c171587`。
 
-静态字节对照与 git diff --check 已完成。依赖三 hash 与父唯一一次 frozen install 回执相同，
-本 writer 未 install。新 exact 源码 2c1233c 的 typecheck（两 tsconfig）/lint/build/两 audit
-均通过 exit 0，全部由外部 heavy.sh 全机最多两槽、本 lane 串行运行；lint 180 warnings。
-两 audit 固定 `--base 67506c5eaa5604ba34d2c943132343bf2e7fab5e`。
+静态字节对照与 git diff --check 已完成。依赖三 hash 同父唯一一次 frozen install 回执，
+本 writer 未 install。新 exact 源码 4be07a36 的 typecheck（两 tsconfig）/lint/build/两 audit
+均通过 exit 0；全部经外部 heavy.sh、HEAVY_SLOTS=2，本 lane 串行；lint 180 warnings。
+两 audit 均固定 `--base f52a41bb2b8453a3cce8907e805327e20d821934`，未改用旧基点。
 实测 server 394→390（ingestion AI 16→15、practice AI 55→52）、deep 0、cross 37、
-SCC 1、>1500 文件 13（base 13），本片无超长减少。
-
-本轮 raw stdout/stderr、argv、UTC、真实返回码、冲突及逐 owned/body/账本前缀证明在：
-`2c1233c18972717e068eb29537d157c5cfd10b09/agent-error/main-integration/`。
-`premerge-source-proof/r1-main-source-proof.json` SHA256
-`1c789ce74344ebf314b3857fffee6194092fca32a1f77b4133acc12445e78963`；
-`premerge-source-proof/main-ledger-prefix-proof.json` SHA256
-`23da7611ecb8a4efeea761cb08f040ebc1eb70f7c4d34a852a44c113b51af6a5`。
-所有 main 账目字段保留，仅授权的两条追加和三个数值下降；audit/schema/ignore 未改。
-此前 Node 解析及 lint/baseline 失败原 seal 保留，最新真实 tsc/五门结论不复用旧检查。
+SCC 1、>1500 文件 12（base 12），本片无超长减少。
+main 全 33 条 changes 的逻辑与原始 entry 字节前缀相同，现共 35 条，仅追加授权两下降；
+除总数及两个 owner pair 外，其余 baseline 全字段同 main。11 历史 stable 未触及，
+真实 tail-only audit 未报历史 consumer stale。audit/schema/ignore/registry 无本片改动。
+后续只提交本交付文档，最终 source/ledger 对该已验证提交的等价证明另封
+`<final-head>/agent-error/final-main-refresh/`。
 
 所有本机 tests/vitest/DB/TEST/Docker/daemon/provider/runtime/demo/paid、push/PR/自派审、
 Linear/清树均 NOT_RUN。无新范围外 actionable follow-up；父 PR/exact-head CI 统一处理。
