@@ -1,3 +1,4 @@
+import { parseJsonObjectLoose } from '@/core/json-extract';
 import { PEDAGOGY_METHOD_LIBRARY, selectPedagogyCandidates } from '@/core/pedagogy';
 import {
   INTERVENTION_CONTRACT_VERSION,
@@ -8,7 +9,6 @@ import {
   type PedagogyRecommendationModelOutputT,
   type PedagogyRecommendationT,
 } from '@/core/schema/intervention';
-import { parseJsonObjectLoose } from '@/server/ai/json-extract';
 import type { TaskTextResult, TaskTextRunFn } from '@/server/ai/provenance';
 import type { SubjectProfile } from '@/subjects/profile';
 
