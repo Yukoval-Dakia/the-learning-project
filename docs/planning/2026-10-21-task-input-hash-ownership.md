@@ -17,13 +17,14 @@
 `core/migration/canonical.ts` 是已有 Node 纯算法位置先例；本片不混并语义不同的
 `kernel/canonical-json.ts`。没有新 adapter、registry、stable/compat 转发或假逻辑。
 
-下表路径除首项外均相对 `src/capabilities/practice/server/`；行号对应源码提交。
+下表路径除首项外均相对 `src/capabilities/practice/server/`；行号对应校验源码
+`18ddb1c3b41f7549634c84d22694a3f0d8ec8892`。
 
 | 真实 caller | 直接绑定与调用位置 | 原有调用方知识/策略 |
 | --- | --- | --- |
 | `src/server/ai/run-lifecycle.ts` | `taskInputHash`，171/173 | `safeInputHash` 的 catch/String 回退 |
 | `judge/judge-execution-provenance.ts` | `sha256Canonical`/`stableCanonicalValue`，15/27 | prompt/version/system/user envelope |
-| `judge/invoker.ts` | `taskInputHash`/`sha256Canonical`，270/319 | metadata guard 与 result digest |
+| `judge/invoker.ts` | `taskInputHash`/`sha256Canonical`，273/322 | metadata guard 与 result digest |
 | `judge/execution-provenance-resolve.ts` | `sha256Canonical`，202 | deterministic provenance |
 | `admission/solve.ts` | `taskInputHash`，178 | sealed receipt 的 input equality |
 
@@ -58,8 +59,22 @@
 `task-input-hash-exact-census/` 补充精确符号检索，排除另一算法的 substring 命中。
 源码比较与 `git diff --check` 通过，没有执行产品算法来冒充 hash 输出实测。
 
-本树缺依赖，已向父线唯一请求一次 frozen install，未自行 install/update/复制 node_modules。
-typecheck/lint/build/两 audit 当前 NOT_RUN；依赖就绪后的五门须经外部 heavy.sh 串行封存。
+父线已在原 `cb11d2d1` 对本树完成唯一一次 frozen install，rc0；安装日志 SHA-256
+`7492901033cec2d6e7757bcb4ad30c55ee185cac0b19209e2db5ae8003497c89` 核验一致。
+普通 merge main `20222f2cafe1500a9e445b43fe132935405d825a` 无冲突，产生 `ad65981c`；
+上游三个 publication 路径与本片原有 blob 全保留，package/lock/workspace 与已装版本相同，未重装。
+首轮 lint 因本片 `invoker.ts` import 被压成单行而失败；`18ddb1c3` 仅恢复其换行，
+受保护正文和算法全文再次核对相同，不归因上游。首轮失败证据保留，未覆盖 seal。
+
+在 `18ddb1c3b41f7549634c84d22694a3f0d8ec8892` 经外部 heavy.sh 串行重跑五门：
+typecheck/lint/build rc0（lint 180 warnings）；两 audit 均显式 `--base 20222f2c`，rc1，
+且各仅报两项预期收紧：`practice → ai 60 < 61`、`capability → server 402 < 403`。
+没有其他新边/size 违规；不把 audit rc1 写成通过，也未改 baseline 或门，交父线登记。
+原始 stdout/stderr、argv、UTC（含排队等待）、真实 rc 和逐文件证明封存在
+`/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1570/18ddb1c3b41f7549634c84d22694a3f0d8ec8892/task-input-hash-five-gates/`；
+`sha256.json` 的 SHA-256：`57abc3fe0d49f421917baf8ac66ba23018ffeb03fd64ae8eaab6c1f2eee9a353`。
+原 `ad65981c` 五门及定向格式诊断仍在其 exact-head 的独立目录中。
+
 tests/vitest/DB/TEST/Docker/daemon/provider/runtime/demo/paid、独立 review、push/PR/CI、部署均 NOT_RUN。
 audit/schema/CI/package/lock/baseline 零修改。后续验证、集成、issue 状态与审查归父线；
 本片未发现需新增 tracker 的独立缺陷，也未自行调用 Linear。
