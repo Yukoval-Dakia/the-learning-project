@@ -164,6 +164,9 @@ pnpm smoke:local
 统一从该目录读取；Pi 只提供协议与兼容处理，不覆盖这些事实。目录缺项保持 unknown，
 执行缺少必需端点或限额时明确报错。只有目录缺失或实测不符才能在
 `src/server/ai/model-catalog-overrides.ts` 按 provider/model 写明原因后覆盖。
+配置保存与 adapter 启动都以 `createLoomPiModels().getModel` 判定可执行性；
+task、global 和 pin 设置均先校验必需事实，再校验任务能力，不接受保存成功但无法启动的模型。
+目录缺失的四个旧模型以固定 main 快照补缺，Grok 另有已封存实测；这些依据不等同于新的付费准入。
 压缩沿用 85% 触发、60% 裁剪目标，基数为目录 context 与显式 input 上限的较小值，
 取整后至少为 1；最新工具结果与其调用成组保留，即使该组超出裁剪目标。
 请求输出不得超过目录上限及估算的剩余上下文。估算不是 provider token 计量。

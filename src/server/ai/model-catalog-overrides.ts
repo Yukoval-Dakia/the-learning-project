@@ -28,10 +28,67 @@ const overrides: Partial<Record<Provider, Record<string, CatalogOverride>>> = {
   'anthropic-sub': Object.fromEntries(
     Object.keys(protocols.anthropic).map((model) => [model, missingAnthropicEndpoint]),
   ),
-  openai: Object.fromEntries(
-    Object.keys(protocols.openai).map((model) => [model, missingOpenAiEndpoint]),
-  ),
+  openai: {
+    ...Object.fromEntries(
+      Object.keys(protocols.openai).map((model) => [model, missingOpenAiEndpoint]),
+    ),
+    'gpt-5-chat-latest': {
+      when: 'missing',
+      reason:
+        'Absent from models.dev. Preserve the wired metadata in main 518c8b21:src/server/ai/pi-provider-catalog.snapshot.json; not a new live-provider admission. First-party endpoint follows the OpenAI API reference.',
+      facts: {
+        ...missingOpenAiEndpoint.facts,
+        reasoning: false,
+        inputModalities: ['text', 'image'],
+        vision: true,
+        contextWindowTokens: 128_000,
+        maxOutputTokens: 16_384,
+      },
+    },
+  },
   'opencode-go': {
+    'deepseek-v4-flash': {
+      when: 'missing',
+      reason:
+        'Absent from models.dev. Preserve the wired metadata in main 518c8b21:src/server/ai/pi-provider-catalog.snapshot.json, not a new live-provider admission. Endpoint still comes from the current provider catalog.',
+      facts: {
+        reasoning: true,
+        reasoningMode: 'effort',
+        supportedEfforts: ['low', 'high', 'max'],
+        inputModalities: ['text'],
+        vision: false,
+        contextWindowTokens: 1_000_000,
+        maxOutputTokens: 384_000,
+      },
+    },
+    'deepseek-v4-flash-vision-exp': {
+      when: 'missing',
+      reason:
+        'Absent from models.dev. Preserve the wired metadata in main 518c8b21:src/server/ai/pi-provider-catalog.snapshot.json, including image input; not a new live-provider admission. Endpoint still comes from the current provider catalog.',
+      facts: {
+        reasoning: true,
+        reasoningMode: 'effort',
+        supportedEfforts: ['low', 'high', 'max'],
+        inputModalities: ['text', 'image'],
+        vision: true,
+        contextWindowTokens: 1_000_000,
+        maxOutputTokens: 384_000,
+      },
+    },
+    'grok-4.6': {
+      when: 'missing',
+      reason:
+        'Absent from models.dev. Text/reasoning run: docs/planning/evidence/2026-09-19-pi-adapter-grok-4.6-actual.json (task_run_id toumilrkxa6vfdqxy4a20toy). Limits, image input and effort tiers: main 518c8b21:src/server/ai/pi-provider-catalog.snapshot.json, not measured by that run. Endpoint still comes from the current provider catalog.',
+      facts: {
+        reasoning: true,
+        reasoningMode: 'effort',
+        supportedEfforts: ['low', 'medium', 'high', 'xhigh'],
+        inputModalities: ['text', 'image'],
+        vision: true,
+        contextWindowTokens: 500_000,
+        maxOutputTokens: 500_000,
+      },
+    },
     'deepseek-v4.1-flash': {
       when: 'missing',
       reason:
