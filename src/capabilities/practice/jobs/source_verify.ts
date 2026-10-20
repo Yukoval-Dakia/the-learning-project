@@ -25,7 +25,7 @@
 // verify-framework.ts for the full asymmetry rationale before "unifying" the two.
 
 import { createId } from '@paralleldrive/cuid2';
-import { and, desc, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import {
   type RunSourceGroundingVerifyParams,
@@ -55,7 +55,6 @@ import {
   recordPaidEffectApplication,
   recordPaidEffectResult,
 } from '@/db/paid-effect-store';
-import { notDraftPredicate } from '@/db/predicates';
 import {
   event,
   knowledge,
@@ -90,11 +89,10 @@ import { SYNTHETIC_SUBJECT_ROOT_RE } from '../server/placement-scope';
 import { SupplyTraceV1 } from '../server/question-supply/evidence-demand';
 import { readVectorNearHold, visibleSourceNeighbor } from '../server/question-supply/ingest-dedup';
 import { lockPlacementSupplyScopes } from '../server/question-supply/placement-supply-lock';
-import { DEDUP_OVERLAP_THRESHOLD, maxNgramOverlap } from '../server/question-supply/sourced-dedup';
+import { DEDUP_OVERLAP_THRESHOLD } from '../server/question-supply/sourced-dedup';
 import {
   type SolveCheckImageFetchFn,
   type SolveCheckQuestion,
-  type SolveCheckResult,
   checksForTier,
   runSolveCheck,
 } from '../server/quiz/verify-framework';
@@ -106,11 +104,13 @@ import {
   draftCanonicalIdentity,
   revisionToDraftDocument,
 } from '../server/tools/submit-question';
+import { checkDedup } from './source_verify_dedup';
 import {
   type CheckOutcome,
   checkSourceConsistency,
   checkStructureCompleteness,
 } from './source_verify_prechecks';
+import { projectSourceVerifyResult, solveCheckToOutcome } from './source_verify_result';
 
 export interface SourceVerifyJobData {
   question_ids: string[];
@@ -330,71 +330,6 @@ export async function publishVerifyLifecycleUpdate(
 // be pure: dedup queries the pool and solve_check spends the LLM call.
 
 type QuestionRow = typeof question.$inferSelect;
-
-// dedup — not a near-duplicate of an existing ACTIVE pool question sharing one of
-// this question's knowledge points. Deterministic n-gram overlap (reused from
-// quiz_verify). No candidates / no knowledge ids → no signal → pass.
-async function checkDedup(db: Db, row: QuestionRow): Promise<CheckOutcome> {
-  const knowledgeIds = row.knowledge_ids ?? [];
-  if (knowledgeIds.length === 0) {
-    return { check: 'dedup', verdict: 'pass', reason: 'no knowledge_ids — dedup not applicable' };
-  }
-  // Pull existing ACTIVE pool questions that share ANY knowledge point. Mirrors
-  // due-list's `knowledge_ids @> [id]::jsonb` containment precedent (due-list.ts:215),
-  // OR'd per id for ANY-overlap. Exclude the row itself + drafts. LIMIT keeps the
-  // comparison bounded.
-  const overlapClauses = knowledgeIds.map(
-    (kid) => sql`${question.knowledge_ids} @> ${JSON.stringify([kid])}::jsonb`,
-  );
-  const candidates = await db
-    .select({ id: question.id, prompt_md: question.prompt_md })
-    .from(question)
-    .where(
-      and(
-        ne(question.id, row.id),
-        // Pool-visibility (红线-4, NULL≡active; legacy active rows carry NULL — a bare
-        // ne() would drop them). Shared notDraftPredicate (@/db/predicates).
-        notDraftPredicate(question.draft_status),
-        or(...overlapClauses),
-      ),
-    )
-    .limit(50);
-  if (candidates.length === 0) {
-    return { check: 'dedup', verdict: 'pass', reason: 'no existing pool question to compare' };
-  }
-  let maxOverlap = 0;
-  let nearestId = '';
-  for (const c of candidates) {
-    const overlap = maxNgramOverlap(row.prompt_md, [c.prompt_md]);
-    if (overlap > maxOverlap) {
-      maxOverlap = overlap;
-      nearestId = c.id;
-    }
-  }
-  if (maxOverlap >= DEDUP_OVERLAP_THRESHOLD) {
-    return {
-      check: 'dedup',
-      verdict: 'fail',
-      reason: `near-duplicate of pool question ${nearestId} (overlap ${maxOverlap.toFixed(2)} >= ${DEDUP_OVERLAP_THRESHOLD})`,
-    };
-  }
-  return {
-    check: 'dedup',
-    verdict: 'pass',
-    reason: `max overlap ${maxOverlap.toFixed(2)} below dedup threshold`,
-  };
-}
-
-function solveCheckToOutcome(result: SolveCheckResult): CheckOutcome {
-  // verify-framework's solve-check is conservative: 'unsupported' carries no signal.
-  // Map its verdict onto the verify outcome — only a confident 'fail' blocks promotion.
-  return {
-    check: 'solve_check',
-    verdict:
-      result.verdict === 'fail' ? 'fail' : result.verdict === 'pass' ? 'pass' : 'unsupported',
-    reason: result.reason,
-  };
-}
 
 // ---------- YUK-230 source-grounding gate (single_source_grounding rows) ----------
 //
@@ -1016,29 +951,13 @@ export async function runSourceVerify(
     // YUK-230 (thread 3) — grounding fail is now a failing check in `checks[]`, so the generic
     // `failingCheck` branch names it (`source_grounding — <reason_md>`); no separate grounding
     // summary branch is needed, and toUnifiedVerifyResult's roll-up sees the failing check.
-    const failingCheck = checks.find((c) => c.verdict === 'fail');
-    const sourceSummaryMd = promote
-      ? 'tier-2 source verify passed'
-      : failingCheck
-        ? `tier-2 source verify failed: ${failingCheck.check} — ${failingCheck.reason}`
-        : unresolvedAnchoredExactMismatch
-          ? 'tier-2 source verify needs review: exact answer mismatch remained unresolved'
-          : imageInputUnavailable
-            ? 'tier-2 source verify needs review: prompt image content was unavailable'
-            : !knowledgeAlive
-              ? 'referenced knowledge point archived after sourcing; not promoted'
-              : vectorNearHold
-                ? `tier-2 source verify needs review: vector similarity ${vectorNearHold.similarity.toFixed(3)} with ${vectorNearHold.neighbor_question_id}`
-                : 'tier-2 source verify did not promote';
-    const unified = toUnifiedVerifyResult({
-      source: 'source',
+    const { failingCheck, unified } = projectSourceVerifyResult({
+      checks,
       promote,
-      summary_md: sourceSummaryMd,
-      // tier-2 checks are deterministic (or conservative solve-check); the handler has no
-      // calibrated scalar confidence, so report a flat 1 on a verdict and let the axes /
-      // overall carry the signal (mirrors the pre-existing absence of a confidence field).
-      confidence: 1,
-      checks: checks.map((c) => ({ check: c.check, verdict: c.verdict, reason: c.reason })),
+      unresolvedAnchoredExactMismatch,
+      imageInputUnavailable,
+      knowledgeAlive,
+      vectorNearHold,
     });
 
     let wasDemoted = false;
