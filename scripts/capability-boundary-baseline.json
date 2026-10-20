@@ -256,7 +256,7 @@
         },
         {
           "file": "src/capabilities/practice/server/intervention-author.ts",
-          "line": 6
+          "line": 7
         },
         {
           "file": "src/server/grounding-gate/intervention-review-eval.ts",
@@ -280,11 +280,11 @@
       "consumers": [
         {
           "file": "src/capabilities/agency/server/intervention/recommend.ts",
-          "line": 2
+          "line": 3
         },
         {
           "file": "src/capabilities/practice/server/intervention-author.ts",
-          "line": 6
+          "line": 7
         },
         {
           "file": "src/capabilities/practice/server/intervention-diagnostics.ts",
@@ -320,7 +320,7 @@
       "consumers": [
         {
           "file": "src/capabilities/practice/server/intervention-author.ts",
-          "line": 6
+          "line": 7
         }
       ],
       "evidence": "src/core/schema/intervention-review.ts:15: literal 3; 804-807 当前 V3 schema 使用同一版本绑定",
@@ -340,7 +340,7 @@
       "consumers": [
         {
           "file": "src/capabilities/practice/server/intervention-author.ts",
-          "line": 6
+          "line": 7
         }
       ],
       "evidence": "src/core/schema/intervention-review.ts:600-606: 独立解题聚合 reader，依赖 509 的 diagnostic 与 578 的完整性/唯一 task-run 检查",
@@ -380,7 +380,7 @@
       "consumers": [
         {
           "file": "src/capabilities/practice/server/intervention-author.ts",
-          "line": 6
+          "line": 7
         }
       ],
       "evidence": "src/core/schema/intervention-review.ts:430-471: FULL pass/fail union 与 granular checks 的确定性裁决; V2/V3 audit 783/799/813 引用",
@@ -400,7 +400,7 @@
       "consumers": [
         {
           "file": "src/capabilities/practice/server/intervention-author.ts",
-          "line": 6
+          "line": 7
         }
       ],
       "evidence": "src/core/schema/intervention-review.ts:403-418: V2 canonical branch reader; history 280 与共享 historical decoding 使用",
@@ -424,7 +424,7 @@
         },
         {
           "file": "src/capabilities/practice/server/intervention-author.ts",
-          "line": 6
+          "line": 7
         }
       ],
       "evidence": "src/core/schema/intervention-review.ts:477-495: provider-facing flat comparator schema; failure_codes 有界、granular checks 与 package_checks 组合",
@@ -444,7 +444,7 @@
       "consumers": [
         {
           "file": "src/capabilities/practice/server/intervention-author.ts",
-          "line": 6
+          "line": 7
         }
       ],
       "evidence": "src/core/schema/intervention-review.ts:659-665: 题目内容校验聚合; 611-657 子 reader 绑定 digest、kind 完整性与唯一 task-run",
@@ -464,7 +464,7 @@
       "consumers": [
         {
           "file": "src/capabilities/practice/server/intervention-author.ts",
-          "line": 6
+          "line": 7
         }
       ],
       "evidence": "src/core/schema/intervention-review.ts:17: 上限 2; review 677/812/887 与主模块总调用预算使用同一绑定",
@@ -484,7 +484,7 @@
       "consumers": [
         {
           "file": "src/capabilities/practice/server/intervention-author.ts",
-          "line": 6
+          "line": 7
         }
       ],
       "evidence": "src/core/schema/intervention-review.ts:221-223: sha256CanonicalJson({ operation_md: operationMd }); review 563-568 验证 sealed expected_signal",
