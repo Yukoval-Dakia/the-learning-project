@@ -41,8 +41,8 @@ import type { Db, Tx } from '@/db/client';
 import { notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
 import { item_calibration, learning_item, question } from '@/db/schema';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
+import { getMasteryState, globalThetaForDomain } from '@/kernel/read-models/mastery-state';
 import { effectiveB } from '@/server/mastery/recalibration';
-import { getMasteryState, globalThetaForDomain } from '@/server/mastery/state';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import type { SubjectProfile } from '@/subjects/profile-schema';
 import {

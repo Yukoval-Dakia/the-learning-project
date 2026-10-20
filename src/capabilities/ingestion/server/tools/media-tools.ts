@@ -9,6 +9,8 @@ import { PermanentError, RetryableError } from '@/core/schema/structured_questio
 import { source_asset } from '@/db/schema';
 import type { ToolContext } from '@/kernel/tools/types';
 import { TOOL_OUTPUT_IMAGES_FIELD } from '@/kernel/tools/types';
+import { AGENT_TOOL_RUN_ID_PREFIX } from '../agent/budget-state';
+import { withAgentProviderLiability } from '../agent/spend';
 import { type PixelBBox, cropToPng, probeImage, rotateImage } from '../image-ops';
 import { type SourceAssetRow, isUniqueViolation, persistSourceAsset } from '../persist-image-asset';
 import { redactIngestionText } from '../privacy-guard';
@@ -575,7 +577,7 @@ async function executeGlmOcr(ctx: ToolContext, raw: GlmOcrInput): Promise<GlmOcr
   if (ctx.providerSessionDeadlineAt === undefined) {
     throw new TypeError('glm_ocr requires a provider session deadline');
   }
-  requireIngestionScope(ctx);
+  const scopeId = requireIngestionScope(ctx);
   ctx.signal?.throwIfAborted();
   if (Date.now() >= ctx.providerSessionDeadlineAt) {
     throw new Error('hard_deadline_exceeded');
@@ -653,16 +655,36 @@ async function executeGlmOcr(ctx: ToolContext, raw: GlmOcrInput): Promise<GlmOcr
   });
 
   try {
-    const { response, attemptId } = await runGlmLayoutParsingWithAttempt({
-      imageBase64: Buffer.from(ocrBytes).toString('base64'),
-      mediaType: appliedRegion ? 'image/png' : parent.mime_type,
-      signal: ctx.signal,
-      timeoutMs,
-      providerAttempt,
-      // P1-4 — the operation-kind start fence serializes a second dispatch on
-      // this same anchor (unknown-paid 不自动重发).
-      fencedAttempt: true,
-    });
+    const call = (beforeRequest?: (attemptId: string) => Promise<void>) =>
+      runGlmLayoutParsingWithAttempt({
+        imageBase64: Buffer.from(ocrBytes).toString('base64'),
+        mediaType: appliedRegion ? 'image/png' : parent.mime_type,
+        signal: ctx.signal,
+        timeoutMs,
+        providerAttempt,
+        beforeRequest,
+        // P1-4 — the operation-kind start fence serializes a second dispatch on
+        // this same anchor (unknown-paid 不自动重发).
+        fencedAttempt: true,
+      });
+    const isAgent = ctx.taskRunId.startsWith(`${AGENT_TOOL_RUN_ID_PREFIX}:`);
+    // Credential absence is a concrete local pre-call rejection. Everything
+    // after entering the provider boundary retains its write-ahead liability.
+    if (isAgent && !(process.env.ZHIPU_API_KEY ?? '').trim()) {
+      throw new PermanentError('GLM OCR client requires ZHIPU_API_KEY');
+    }
+    const { response, attemptId } = isAgent
+      ? await withAgentProviderLiability(
+          ctx.db,
+          {
+            sessionId: scopeId,
+            operationId: providerAttempt.operationId,
+            taskRunId: ctx.taskRunId,
+            tool: 'glm_ocr',
+          },
+          call,
+        )
+      : await call();
     const blocks: GlmOcrBlock[] = [];
     for (const page of response.layout_details ?? []) {
       for (const block of page ?? []) {

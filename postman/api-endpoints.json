@@ -1919,6 +1919,28 @@
     ]
   },
   {
+    "path": "/api/ingestion-sessions/:id/operations",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "创建可轮询的录入 operation（kind=extract|agent|import|make_paper|rescue）；同 key 同请求幂等",
+        "query": [],
+        "headers": [
+          {
+            "name": "Idempotency-Key",
+            "value": "{{ingestionOperationIdempotencyKey}}",
+            "description": "建议必带（1–200 字符）；同 key + 同规范化请求重放返回 200 原 handle，同 key 不同请求返回 409 idempotency_conflict"
+          }
+        ],
+        "contentType": "application/json",
+        "bodyExample": {
+          "kind": "agent"
+        },
+        "notes": "201→202 {operation 资源} + Location；session 状态不符 → 409。kind=agent 走 YUK-1522 周额度门：本周已用 ≥ 额度（默认 20 USD，system_config 键 ingestion.agent_weekly_budget_usd，0=关闭启动）→ 429 ingestion_weekly_budget_exceeded；另一录入在途/排队/待结算、本周成本含无法定额记录或额度读不到 → 503 ingestion_weekly_budget_unavailable（details.reason ∈ another_ingestion_in_flight|unsettled_cost|budget_read_unavailable）。UI 不自动重试。需 x-internal-token"
+      }
+    ]
+  },
+  {
     "path": "/api/ingestion-sessions/:id/asks/:ask_id/answers",
     "methods": [
       {

@@ -16,6 +16,7 @@
     "YUK-1448": "ADR-0072 LIGHT: practice -> ai 64 -> 65 (+1, total 428 -> 429): bank-search.ts imports @/server/ai/embed — the search_bank vector channel MUST embed the query through the same seam as the pool vectors (matcher §190 铁律; directImporter registered in the provider-lane census, scripts/provider-lane-inventory.ts). Same owner-service lane as matcher/embed_backfill; not an architecture regression.",
     "YUK-1468": "practice -> questions tightened 15 -> 14 (-1, total 429 -> 428): B1 统一写口 — 新 submit/edit 服务经 facade 单口（server/questions/submit-question.ts 再导出 publish/draft-insert/edit 服务），capability 内部消费走 tools/submit-question.ts re-export；旧 store-sourced-question 两条 publisher/SDI 边随 shim 化归 0。",
     "YUK-1522": "R8 ingestion agent: ingestion -> ai 10 -> 12 (+2: server/agent/run.ts mounts the agent loop via runner-fn.makeRunTaskFn + pi-tools.piDomainMount — the same owner-service seams dreaming/coach use), ingestion -> session 8 -> 9 (+1: run.ts calls the Ingestion.* state guards — single-owner session writes, never raw status updates), ingestion -> boss 6 -> 7 (+1: server/agent/dispatch.ts is the sole boss.send seam for resume/continuation singletons), ingestion -> events 5 -> 6 (+1: server/events/agent-progress.ts emits durable job_events via writeJobEvent — contract event writer, same channel as extraction-progress). total 428 -> 434. R1: ingestion -> boss 7 -> 8 (+1: run.ts reads JOB_RETRY_LIMIT for the retries-exhausted terminal write — a queue-policy constant, not a send path). All are owner-service/facade calls required for a durable agent loop; no deep-import or raw-write bypass. R3/CI-fix: run.ts imports the failure-vocabulary modules (agent-run-error, provider-attempt-lifecycle, provider-session-admission) DIRECTLY instead of a runner-fn re-export — re-exporting them through runner-fn pulled providers→task-catalog→schema barrel into runner-fn's cone and broke a vitest import-order invariant. Same modules, same semantics; +3 same-owner ai edges (ingestion -> ai 12 -> 15, total 434 -> 437).",
+    "YUK-1522-dispatch-settlement": "PR1891 efa56dabf removes the real server/agent/run.ts -> server/boss/queue-config JOB_RETRY_LIMIT value import: the unsafe retries-exhausted terminal write is replaced by frozen execution ownership, atomic terminal settlement and recovery through the existing ingestion_ask_sweep consumer. ingestion -> boss 8 -> 7, capability -> server total 417 -> 416 against main 518c8b21a1ccd137d103b00e40eb82d60f1cdcd8. New ownership/run-input modules add no boss edge; no pass-through, baseline increase or audit-logic change. This records only that measured decrease and preserves main's earlier convergence history.",
     "YUK-1529": "practice -> boss 15 -> 18 (+3, total 437 -> 441): worksheet-export-route enqueues worksheet_render via getStartedBoss + WORKSHEET_RENDER_QUEUE (same seam as session-end.ts enqueue), and practice manifest JobDecl imports the shared queue name (same as copilot manifest -> queue-names). practice -> r2 2 -> 3 (+1): server/worksheet/pdf-store is the single blob seam — content-addressed PDF put (render job) + read (download route), same edge kind as ingestion -> r2.",
     "YUK-1547": "practice -> ai 65 -> 66 (+1, total 437 -> 438): verify-framework.ts re-exports writeToolCallLog (src/server/ai/log) — structured-submit parse failures keep the bounded raw submit arguments as tool_call_log evidence attached to the task run (admission solve + crosscheck). Same owner-service lane as the file's existing server/ai re-exports (Provider/TaskTextResult); consumers add no new edge.",
     "YUK-1559": "C1-10 model-source unification: ingestion -> ai 15 -> 16 (+1, total 437 -> 438): provider-attempts.ts reads GLM_OCR_MODEL_ID from the provider catalog (src/server/ai/providers.ts) instead of pinning the glm-ocr literal — direct-lane declared ids belong to the catalog.",
@@ -38,7 +39,8 @@
     "YUK-1570-session-operation": "Review/paper/placement lifecycle operations own existing state-transition, frozen-paper and dispatch decisions behind route adapters; practice -> session 16 -> 7, total 429 -> 420. boss/runtime-env move with the operation with zero net decrease; pause/resume are thin compatibility members, not independent deepening. HTTP behavior and manifests preserved. Composed after main mastery-read-engine PR #1881; earlier standalone measurement was 440 -> 431. Latest composition includes supply PR #1883; main server baseline 429.",
     "YUK-1622": "agency -> practice 4 -> 5 (+1, total 42 -> 43 after main's YUK-1571 shared-read offset): coach_daily imports the practice public resolveDailyReviewPlanInputs so the TodayPlan due queue, daily budget and measured pace have one formula and one source; Coach reads practice's public module instead of copying the formula. PM ruling (Linear YUK-1622 comment 82cd19fd-51d1-46d5-bc70-5b0365409dd1, https://linear.app/yukoval-studios/issue/YUK-1622#comment-82cd19fd) approved this single edge only; it is not a general relaxation.",
     "YUK-1570-agency-scan": "Agency complete proposal scan operation owns inbox snapshots/diff, trigger/run outcome evidence, budget/proposal-cap tool gates and runtime assembly shared by dreaming and coach. agency -> ai 28 -> 25, total 420 -> 417 composed on main 671e08044 (which itself recorded YUK-1622 agency -> practice 4 -> 5); the 3 removed direct imports follow complete operation ownership. Research default-runner wrapper was rejected and reverted as pass-through in R1. Existing tool policies, injected dependencies, clock/event ordering and error propagation preserved; no central server/ai edits. Earlier standalone measurement on a519a05d2 was 440 -> 436 (28 -> 24) before the R1 revert.",
-    "YUK-1571-attempt-evidence-reader": "Complete attempt-question evidence read engine moved intact from practice to kernel with compatibility exports preserved; two ingestion consumers point to the real engine. Current main c26ec39f9 composition: ingestion -> practice 2 -> 0, cross 43 -> 41, server 417 unchanged; no new algorithm depth and no write-owner transfer. Earlier main671 composition had server420 unchanged."
+    "YUK-1570-mastery-read-consumer-exit": "Consumer exit from the compat read surface after the mastery read engine landed (#1881): six capability call sites that still imported through @/server/mastery/state now import the kernel read-model implementations directly. agency -> mastery 3 -> 0 (agency/jobs/research_meeting_nightly, agency/server/meeting/director, director-tools -> kernel/read-models/mastery-projection getMasteryProjection) and practice -> mastery 12 -> 9 (practice/server/candidate-signals, placement-advance, question-supply/target-discovery -> kernel/read-models/mastery-state MasteryStateRow/effectiveThetaForKcBatch/getMasteryStates/getMasteryState/globalThetaForDomain); capability -> server total 420 -> 414. The compat re-exports in src/server/mastery/state.ts are preserved for tests and remaining consumers; the moved call sites resolve to the same function objects the re-export exposed, so this is import-path consolidation only, not new algorithm deepening. Current main dc8d7c27d composition: server 416 -> 410; cross 43 unchanged. Earlier main671 composition was 420 -> 414.",
+    "YUK-1571-attempt-evidence-reader": "Complete attempt-question evidence read engine moved intact from practice to kernel with compatibility exports preserved; two ingestion consumers point to the real engine. Current main232f01d67 composition: ingestion -> practice 2 -> 0, cross 43 -> 41, server410 unchanged; no new algorithm depth and no write-owner transfer. Earlier main671/c26 compositions had server420/417 unchanged; subsequent main reductions are retained, not credited to this slice."
   },
   "changes": [
     {
@@ -72,6 +74,30 @@
       "direction": "decrease"
     },
     {
+      "debt": "capabilityToServer",
+      "pair": "ingestion -> boss",
+      "date": "2026-10-20",
+      "from": 8,
+      "to": 7,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "agency -> mastery",
+      "date": "2026-10-20",
+      "from": 3,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> mastery",
+      "date": "2026-10-20",
+      "from": 12,
+      "to": 9,
+      "direction": "decrease"
+    },
+    {
       "debt": "crossCapabilityValue",
       "pair": "ingestion -> practice",
       "date": "2026-10-20",
@@ -82,14 +108,13 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 417,
+      "total": 410,
       "byOwnerPair": {
         "agency -> ai": 25,
         "agency -> boss": 10,
         "agency -> conjectures": 2,
         "agency -> http": 1,
         "agency -> learning-items": 1,
-        "agency -> mastery": 3,
         "agency -> projections": 8,
         "agency -> proposals": 4,
         "agency -> questions": 1,
@@ -110,7 +135,7 @@
         "copilot -> today": 3,
         "ingestion -> advisory-locks": 1,
         "ingestion -> ai": 16,
-        "ingestion -> boss": 8,
+        "ingestion -> boss": 7,
         "ingestion -> events": 6,
         "ingestion -> projections": 9,
         "ingestion -> proposals": 3,
@@ -148,7 +173,7 @@
         "practice -> events": 1,
         "practice -> fsrs": 6,
         "practice -> http": 3,
-        "practice -> mastery": 12,
+        "practice -> mastery": 9,
         "practice -> memory": 1,
         "practice -> orchestrator": 1,
         "practice -> projections": 4,

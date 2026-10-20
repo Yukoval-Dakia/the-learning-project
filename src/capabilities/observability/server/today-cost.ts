@@ -2,11 +2,11 @@ import { gte, sql } from 'drizzle-orm';
 import type { z } from 'zod';
 import type { Db, Tx } from '@/db/client';
 import { tool_call_log } from '@/db/schema';
-import type { CostTodayResponseSchema } from '../api/admin-observability-contracts';
 import {
   type ProviderCostAggregateRow,
   readProviderCostAggregates,
-} from './provider-cost-projection';
+} from '@/kernel/read-models/provider-cost-projection';
+import type { CostTodayResponseSchema } from '../api/admin-observability-contracts';
 
 export type TodayCost = z.infer<typeof CostTodayResponseSchema>;
 

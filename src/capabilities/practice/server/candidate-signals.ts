@@ -28,17 +28,17 @@ import { difficultyToLogitB } from '@/core/theta';
 import { THETA_GRID_ENABLED, type ThetaGridPosterior, klpScoreFromGrid } from '@/core/theta-grid';
 import type { Db, Tx } from '@/db/client';
 import { item_calibration, item_family_calibration, mistake_variant, question } from '@/db/schema';
+import {
+  type MasteryStateRow,
+  effectiveThetaForKcBatch,
+  getMasteryStates,
+} from '@/kernel/read-models/mastery-state';
 import { batchResolveFamilyKeys } from '@/server/mastery/family-key';
 import {
   type FamilyCalibrationRow,
   effectiveFamilyB,
 } from '@/server/mastery/personalized-difficulty';
 import { effectiveB } from '@/server/mastery/recalibration';
-import {
-  type MasteryStateRow,
-  effectiveThetaForKcBatch,
-  getMasteryStates,
-} from '@/server/mastery/state';
 import { MISCONCEPTION_RECURRENCE_ENABLED } from './selection-constants';
 import { rotationClassForKind } from './variant-rotation';
 
