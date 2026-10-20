@@ -96,7 +96,7 @@ sha256.json `7ca200149729dea107177e3434784616868eb83c00bd1cde25eb0188a908ae01`�
 相邻 json-core-integration-proof/ 记录 main 全部 blob 保留、own job/material/output body、
 依赖 hash、旧路径缺席及命令原始回执，manifest SHA256
 `3c82c85c337a8aac9dc9b87518cea9ee030672f6149e15e90e1cc113331d45e1`。
-历史五门 `9b334750.../quiz-gen/checks-round1/` manifest SHA256
+历史五门 `9b3347505be06798feeded4fc1cb86eea1706acf/quiz-gen/checks-round1/` manifest SHA256
 `17cd275b326cb0578ef2c0a0d15e39ef46dc22e2a75b2509293001784d3a6cfc`；未覆盖。
 原 source/preflight/handoff seal 全部独立保留。当前无待批边登记、compat、未知 caller
 或范围扩张请求。源码与短文档提交后 clean 停止 writer，交父唯一 R1 与后续 CI／整合；
