@@ -1,12 +1,14 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-19：YUK-1563 第③部分以 draft 交付；能力、限额和默认端点同源运行时目录，第④部分仍在原票。
+> Linear 是权威 tracker。2026-10-20：架构线最多8条；#1834/#1839/#1840/#1842已合，#1843已合，#1846已合、#1847已合，#1837等基线释放；首批证据HEAD删除获批实施，测试仍待owner。
 
 ## NOW
 
-- **帮助靠谱 / 模型事实同源（YUK-1563 ③）**：`el/yuk-1563` 复用现有目录缓存，Pi 不再覆盖能力/限额/端点，例外集中按 provider/model 记原因。typecheck/lint（179 warnings）/build、provider-lanes/model-source 审计及现有7条 adapter 测试通过。隔离PG刷新保留已选变化并产生有主finding，未选模型即时更新；离线重启读缓存。请求边界实跑输出上限、压缩与非法档位拒绝，无付费调用、UI或测试代码改动。仅授权普通push与draft，不merge/deploy；PR链接及exact-head CI见Linear交接。
+- **帮助靠谱 / 夜间摘要统计（YUK-1621、YUK-1632）**：`el/yuk-1621` 的 PR #1858 普通整合 main `210dfb2c1`。仅 PLAN/now 冲突，采用 main 最新记录并保留本 PR 交接；服务端分桶、有效判分统计与模型统计守卫源码未变。本轮 typecheck/lint/build 通过，178 个既有 warnings；新 head CI 单独等待，不复用旧 head 结果。
 
-- **架构深化 / YUK-1572**：`refactor/yuk-1572-stream-modules`，独占 arch-lead；stream-store 已2120→1427，超长18→17，SCC与443边不变；合成d38e父级typecheck/lint/build/两审计通过；Kimi R1 APPROVE、旧head5c0e CI全绿；整合main2176仅看板冲突，新head验证/CI待完成。六票T3，#1830仍由Grok完成；不动其ratchet/baseline。见[首三片计划](docs/planning/2026-10-19-architecture-deepening.md)。
+- **第一天能用 / 恢复完成证据（YUK-1631、YUK-1614）**：`el/yuk-1614` 保留 deferred 未完成状态，拒绝旧 deferred 假回执、未知契约与非法时间戳；legacy reserved/enqueued 保持可导入。隔离 PG16 实跑补丁排队→拒绝且原数据不变→drain→按证据人工补回执→恢复200；provider/回执写入故障及人工恢复已验证。既有备份8例通过，无测试代码改动，不碰 schema/export constants。最终静态检查及 exact-head CI 结果见 PR1854；自动恢复仍不在 LIGHT 范围。
+
+- **架构深化 / YUK-1571**：frontier draft #1837 正常整合main1440e864b，仅PLAN/now冲突；保留main nightly上限常量和mastery变更，新head e309ce3d4 静态构建通过、server441→440/cross48→47，5项基线差异已获准登记，当前实施，R1仍有效范围不扩张，协调线已释放baseline独占，两片按实测登记、先绿先合。迁移规划器#1840已合ee53df413（超长18→17）；typed due完整输入操作#1842已合71986f224，均父静态构建/独立R1/exact-head CI通过，无本机DB/provider。审计去重#1843已合3adb1cde4，scripts净减41，SWE-2 MAX R1/父静态构建/11命令输出核对/GH exactCI通过；Circle矩阵漏展开及workspace冲突归YUK1612。锁登记#1846已合4419f4fbb（仅文档）；YUK1577误关已恢复In Progress并读回completedAt=null；新增4项事实错误：协调线裁定顶部立即加未修正声明（只文档免审、exactCI后合），下一片先改4项再扩展；不能自称证明。完整操作设计f848145e9将B降为待证候选，两个真实变化场景未证正收益，当前保留直接owner port更简单；LIGHT共享读draft#1852 aab422064，父静态构建通过、实测cross48→43减5，GLM初审通过；两架构audit等1830释放后收紧baseline，保护#1802 review.ts。
 
 - **第一天能用 / 题库暂不出题计数（YUK-1525）**：`yuk-1525-serving-counts-sql` 将 lifecycle 理由统一到 SQL，冻结题面继续复用原校验，计数与列表使用同一只读快照。2600 行中，旧列表少算为1846，修后2400，与原投影全库逐行统计一致；窗口外 `q_02600` 可见。无新增测试、UI 改动或付费调用。
 
@@ -38,9 +40,9 @@
 
 ## NEXT
 
-- **YUK-1563**：③待独立审查与exact-head CI；④自定义provider仍未实现，不关闭整票。不改provider回退链，旧显式Memory rollback配置保持。
+- **PR #1858**：本地检查通过后普通 merge commit/push，等待 exact-head CI。CI 绿即停止；不改 PR 描述或 Linear 状态，不合并 PR、不部署。
 
-- **架构深化**：首片验证/独立审查/精确HEAD CI后推进YUK-1571拆环，再拆intervention职责；每片报告SCC、server边、超长文件及baseline行数。
+- **架构深化**：警示#1851已合7e2ab18f5，再交付锁四事实纠错#1853已合86917b10a（父静态构建、唯一R2、exactCI通过，仍只是登记，1577读回进行中）；#1847证据删除已合0f8b1fbbc，后续批另批。#1830释放后收紧frontier基线；完整操作设计必须体现调用方少知决策/恢复规则，不能以重导出或合文件代替深化。
 
 - **YUK-1525**：draft PR 交接后，由审查与 exact-head CI 决定是否可转 ready；本次不自动合并。
 
@@ -57,7 +59,7 @@
 
 ## PARKED
 
-- **测试与证据瘦身 / YUK-1580、1579**：测试先做最大15文件与高mock逐case清单交协调线转owner；新批量证据外置永久保留，旧证据复制核hash/建引用后每批交协调线查看再删；第一批证据PR同步AGENTS全线规则。
+- **测试与证据瘦身 / YUK-1580、1579**：测试19文件469声明逐case清单/B3/B1已交协调线，owner未选前零改动。#1839已建立全线外置规则与永久副本；2026-10-20首批5目录172文件11,552,302B HEAD删除获批，已合#1847 0f8b1fbbc（exact eaf565951）父逐文件/引用/静态构建核过，初审后修正删除证据revision目录并澄清JST，唯一R2及exactCI通过，固定revision/禁止覆盖/引用加SHA。后续批仍须逐批批准。
 
 
 - **YUK-1358/1359已有UI观察**：真实Inbox dismiss后本页499但侧栏500，document reload恢复一致；原onResolve仅本地resolved更新。Google Fonts原import受CSP拦截；fallback可用。记录在现有迁移验收/后续UI边界，不放宽CSP、不冒称本PR修复。
@@ -80,8 +82,6 @@
 - YUK-1325 / PR #1580：保留 `1be38edbc`、`1af72b427`、`3940d61f9`，正常合入 main `8841ce68a` 为 `e484efa60`；359 scoped tests、21 audits、typecheck/lint/build 与 lint ratchet 通过，无 high/critical 依赖告警。开发 transcript 与产品 MiMo/自主交付指导同时保留。writer 已释放，父线程负责最终 SDK/SQL/browser 回放、push、exact-head CI、review replies、Linear 与发布；P2 typed tracing 留 YUK-1339，不启动第三审。详情见 [Laminar 记录](docs/planning/2026-10-06-yuk1325-laminar.md)。旧完成线程越界写入风险仍由父线程独占 watch 约束，平台跟进待去重登记。 最新 main 的前缀 credential P1 修复及73tests记录一并保留；PR父线程仍负责后续验收，此lane无新review。
 
 ## BLOCKED-ON
-
-- **YUK-1563 独立审查**：工具额度限制，未执行；不以作者自查、离线请求或静态检查代替独立结论，draft明确保留。
 
 - **测试修改授权**：未获owner逐批批准，一行测试都不动；不阻塞产品重构。证据外置策略已批准，既有证据每批删除仍待协调线看清单。
 

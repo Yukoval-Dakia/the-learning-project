@@ -23,7 +23,6 @@ import {
 import { QUESTION_ADMISSION_POLICY_IDS } from '@/core/question-admission-policy';
 import type { Db, Tx } from '@/db/client';
 import { voidPaidEffectWithSuccessor } from '@/db/paid-effect-store';
-import { resolveSubjectProfile } from '@/subjects/profile';
 
 export const ADMISSION_VOID_ACTOR_REF = 'owner:yuk1547-approved-reopen';
 const ENQUEUE_SUBSCRIBER_ID = 'practice.question-admission-enqueue';
@@ -79,6 +78,12 @@ async function buildSuccessorInput(
   const { publishedContractSeal, publishedSealAccepts } = await import(
     '@/kernel/records/assessment-normalization'
   );
+  // Strictly-live subject resolution lives in the kernel read-model (shared
+  // hydration engine; capability files may not deep-import server/subjects):
+  // hydrates a private registry inside this transaction context and requires
+  // every bound trait to be a live DB payload — a paid input must never bind
+  // code-floor / journal_fallback / code_seed / general-fallback content.
+  const { resolveSubjectProfileStrictLive } = await import('@/kernel/read-models/subject-profile');
   const [revision] = await tx
     .select()
     .from(question_revision)
@@ -123,7 +128,7 @@ async function buildSuccessorInput(
           group_id: opts.groupId,
           conversion_issues: [],
         },
-        subject_profile: resolveSubjectProfile(node?.domain ?? null),
+        subject_profile: await resolveSubjectProfileStrictLive(tx, node?.domain ?? null),
         policy_id: resolveQuestionAdmissionPolicyId(),
         solver2:
           solver2Provider || solver2Model
@@ -235,7 +240,10 @@ export async function evaluateAdmissionVoidGroup(
       }
       continue;
     }
-    if (effect.state === 'voided') continue;
+    // Resolved history never blocks a reauthorization: 'voided' rows are
+    // retired obligations and 'cancelled' rows are sealed never-sent intents
+    // (YUK-1567) — neither owes a send nor an application.
+    if (effect.state === 'voided' || effect.state === 'cancelled') continue;
     if (effect.state === 'applied' && effect.entity_revision !== spec.baseDigest) continue;
     if (effect.state === 'applied') {
       failures.push(`terminal applied verdict on base: ${key}`);

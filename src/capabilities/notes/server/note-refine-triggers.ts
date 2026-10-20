@@ -26,6 +26,7 @@ export type NoteRefineBossSend = (
   queue: 'note_refine',
   data: {
     artifact_id: string;
+    effect_id?: string;
     trigger: {
       kind: NoteRefineTriggerKind;
       context_md?: string;

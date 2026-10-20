@@ -164,6 +164,215 @@ export function extractAnswerHead(s: string): string {
 const SOLUTION_BLOB_RE = /解析|详解|解答|证明|【解|【答/;
 const MAX_EXACT_HEAD_LEN = 300;
 
+// ====================================================================
+// YUK-1407 — 过程作答的【终态答案】提取（确定性、保守、绝不"最后数字获胜"）
+// ====================================================================
+//
+// 主解答槽的学习者文本可以是完整推导（"…q=-2，S5=11"）。整段做答案头比较
+// 必然 miss —— 这是 R02 误 0 的机制。本提取器只认【明示终态结论】：
+//   1. 结论标记行/从句：答 / 答案 / 最终答案 / 综上 / 所以 / 因此 / 故 / 即 / ∴；
+//   2. 完整末句 `identifier = value`，或肯定结果词引出的完整句末赋值从句。
+// 多个相互矛盾的明示结论 ⇒ 'ambiguous'（交人工/语义复核，绝不猜）；
+// 找不到任何明示结论 ⇒ 'none'（调用方对过程文本落 pending，不落 0）。
+// 提取到的 value 同时给出 `rhs` 备选（"答：S5=11" 的 "11"），比较面两侧
+// 都尝试 —— 等号两边是同一结论的左右表述，不是两个候选。
+
+export type FinalAnswerExtraction =
+  | { readonly kind: 'none' }
+  | { readonly kind: 'ambiguous'; readonly candidates: readonly string[] }
+  | {
+      readonly kind: 'found';
+      /** 所有等价表述（原文候选 + 等式右侧）；调用方逐一与 accepted keys 比较。 */
+      readonly values: readonly string[];
+      readonly marker: 'answer_marker' | 'conclusion_marker' | 'trailing_equality';
+    };
+
+// 声明类标记（"答：…"/"答案：…"/"最终答案"/"【答案】"）在任何行都成立 —— 它们
+// 是对最终答案的明示声明，推导中间不会写。结论类标记（所以/因此/故/综上/即/∴）
+// 与尾随赋值从最终句确定候选；此前不同变量的完整结论赋值属于中间量，
+// 不加入最终答案的候选集。同变量的结论及显式答案声明仍须一致。
+const DECLARATION_LINE_RE =
+  /^\s*(?:【\s*(?:答案|答)\s*】|(?:最终答案|答案|答)\s*[：:，,．.\s])\s*(\S.*?)\s*$/u;
+// Only a line/sentence boundary can introduce a conclusion; never a bare
+// copula (为/是) or a suffix inside arbitrary prose.
+const LAST_LINE_CONCLUSION_RE =
+  /(?:^|[。；;，,])\s*(?:所以|因此|故|综上(?:所述)?|即|∴)\s*[：:，,]?\s*(\S.*?)\s*$/u;
+// A positive result introducer must start a whole terminal clause. Capture
+// the entire value, then require an identifier assignment; never scan for `=`.
+const TERMINAL_RESULT_CLAUSE_RE = /(?:^|[，,；;])\s*(?:相加|可得|得到|得)\s*(\S.*?)\s*$/u;
+// NFKC maps S₅ / full-width forms to S5 / ASCII. Restrict projection to a
+// complete identifier assignment; e.g. 不是S5=11 cannot yield the suffix 11.
+const FINAL_ASSIGNMENT_RE = /^([A-Za-zΑ-Ωα-ω][A-Za-zΑ-Ωα-ω0-9_]*)\s*=\s*(\S.*?)$/u;
+const COMPARISON_RE = /[<>≤≥≠≈∈]|!=/u;
+
+function canonicalFinal(value: string): string {
+  return value.normalize('NFKC').trim().toLowerCase();
+}
+
+/**
+ * Marked text/compound values are opaque exact strings, never prose to reduce.
+ * Only a whole `identifier = value` adds its COMPLETE RHS as an alternative.
+ * Preserve !, signs, parentheses, multiplication and every other value token;
+ * Do not emit candidates whose existing answer-head normalization would
+ * discard tokens (e.g. an unmatched trailing `*`); refuse instead of letting
+ * that consumer turn an incomplete expression into an accepted fragment.
+ * Unsupported relations/equality chains are unresolved, not last-`=` guesses.
+ */
+function candidateValues(raw: string): string[] | null {
+  const value = raw.trim();
+  if (value.length === 0) return [];
+  if (COMPARISON_RE.test(value)) return null;
+  const values = [value];
+  if (value.includes('=')) {
+    const assignment = value.match(FINAL_ASSIGNMENT_RE);
+    if (!assignment?.[2] || value.indexOf('=') !== value.lastIndexOf('=')) return null;
+    values.push(assignment[2].trim());
+  }
+  return values.every((candidate) => extractAnswerHead(candidate) === candidate) ? values : null;
+}
+
+export function extractFinalAnswer(text: string): FinalAnswerExtraction {
+  // Chinese full stops delimit process sentences, not mathematical tokens.
+  // Explicit answer declarations still own their whole line, including prose
+  // or compound values. Do not split ASCII dots, `!`, operators or tuples.
+  const sentences = text
+    .normalize('NFKC')
+    .split(/\n+/)
+    .flatMap((line) => (DECLARATION_LINE_RE.test(line) ? [line] : line.split(/。+/)))
+    .map((sentence) => sentence.trim())
+    .filter((sentence) => sentence.length > 0);
+  const found: {
+    value: string;
+    marker: 'answer_marker' | 'conclusion_marker' | 'trailing_equality';
+  }[] = [];
+  // Unsupported syntax invalidates the extraction as a whole, even if
+  // another declaration is usable. No candidate may come from a submatch.
+  const unsafe: string[] = [];
+  const collect = (
+    value: string,
+    marker: 'answer_marker' | 'conclusion_marker' | 'trailing_equality',
+  ) => {
+    if (candidateValues(value) === null) {
+      unsafe.push(value);
+    } else {
+      found.push({ value, marker });
+    }
+  };
+
+  for (const sentence of sentences) {
+    const declaration = sentence.match(DECLARATION_LINE_RE);
+    if (declaration?.[1]) collect(declaration[1], 'answer_marker');
+  }
+  const lastSentence = sentences[sentences.length - 1];
+  if (lastSentence !== undefined) {
+    const declaration = lastSentence.match(DECLARATION_LINE_RE);
+    const result = declaration ? null : lastSentence.match(TERMINAL_RESULT_CLAUSE_RE);
+    const resultAssignment = result?.[1]?.match(FINAL_ASSIGNMENT_RE);
+    const conclusion = lastSentence.match(LAST_LINE_CONCLUSION_RE);
+    const terminalValue =
+      declaration?.[1] ??
+      (resultAssignment
+        ? result?.[1]
+        : (conclusion?.[1] ?? (lastSentence.includes('=') ? lastSentence : undefined)));
+    if (terminalValue !== undefined) {
+      if (!declaration) {
+        collect(
+          terminalValue,
+          resultAssignment || conclusion ? 'conclusion_marker' : 'trailing_equality',
+        );
+      }
+      const terminalVariable = terminalValue.match(FINAL_ASSIGNMENT_RE)?.[1];
+      const priorSentences = sentences.slice(0, -1);
+      if (resultAssignment && result?.index !== undefined && result.index > 0) {
+        priorSentences.push(lastSentence.slice(0, result.index));
+      }
+      for (const sentence of priorSentences) {
+        // Explicit answer declarations already participate unconditionally.
+        if (DECLARATION_LINE_RE.test(sentence)) continue;
+        const priorAssignmentVariable = sentence.match(FINAL_ASSIGNMENT_RE)?.[1];
+        const priorConclusion =
+          sentence.match(LAST_LINE_CONCLUSION_RE)?.[1] ??
+          (terminalVariable &&
+          priorAssignmentVariable &&
+          canonicalFinal(priorAssignmentVariable) === canonicalFinal(terminalVariable)
+            ? sentence
+            : undefined);
+        if (!priorConclusion) continue;
+        const priorVariable = priorConclusion.match(FINAL_ASSIGNMENT_RE)?.[1];
+        if (
+          terminalVariable &&
+          priorVariable &&
+          canonicalFinal(priorVariable) !== canonicalFinal(terminalVariable) &&
+          candidateValues(priorConclusion) !== null
+        ) {
+          continue;
+        }
+        // Same-variable contradictions, opaque conclusions and unsupported
+        // relations/chains cannot be erased by a later matching assignment.
+        collect(priorConclusion, 'conclusion_marker');
+      }
+    }
+  }
+  if (unsafe.length > 0) {
+    return {
+      kind: 'ambiguous',
+      candidates: [...new Set([...found.map((entry) => entry.value), ...unsafe])],
+    };
+  }
+
+  // 每条提取项展开成规范值集合（"S5=11" → {s5=11,11} —— 同一结论的左右面）。
+  // 全部提取项的规范集两两相容（存在共享规范值）⇒ 一致结论；任何一对不相交
+  // ⇒ 学习者明示了矛盾终态 ⇒ ambiguous，绝不猜其一。
+  const entries: {
+    marker: 'answer_marker' | 'conclusion_marker' | 'trailing_equality';
+    values: string[];
+  }[] = found
+    .map((entry) => ({
+      marker: entry.marker,
+      values: (candidateValues(entry.value) ?? []).filter((v) => canonicalFinal(v).length > 0),
+    }))
+    .filter((entry) => entry.values.length > 0);
+  if (entries.length === 0) return { kind: 'none' };
+  let shared: Set<string> | null = null;
+  for (const entry of entries) {
+    const current = new Set<string>(entry.values.map(canonicalFinal));
+    shared = shared === null ? current : new Set([...shared].filter((v: string) => current.has(v)));
+    if (shared.size === 0) {
+      return { kind: 'ambiguous', candidates: entries.map((e) => e.values[0] as string) };
+    }
+  }
+  const values = [...new Set<string>(entries.flatMap((entry) => entry.values))];
+  return {
+    kind: 'found',
+    values,
+    marker: entries[0]?.marker ?? 'conclusion_marker',
+  };
+}
+
+const PROCESS_MARKER_RE = /[∵∴⇒→]|解[：:]|步骤|因为[\s\S]{0,80}所以/u;
+const PROCESS_ANSWER_MAX_LEN = 120;
+
+/**
+ * 过程作答形态判定（保守）：多行、连等式、超出短答长度、或含推导标记 ⇒ true。
+ * 只用于「比较不出结果时给 pending 而非 0」的诚实降级边界；提取得到明确
+ * 终态的输入不走这里。
+ */
+export function isProcessLikeAnswer(text: string): boolean {
+  const t = text.trim();
+  if (t.length === 0) return false;
+  const normalized = t.normalize('NFKC');
+  const nonEmptyLines = t.split(/\n+/).filter((line) => line.trim().length > 0).length;
+  return (
+    nonEmptyLines > 1 ||
+    // A one-line equality chain is still worked reasoning. If extraction
+    // cannot establish its final answer, preserve review instead of a fake zero.
+    normalized.indexOf('=') !== normalized.lastIndexOf('=') ||
+    [...t].length > PROCESS_ANSWER_MAX_LEN ||
+    PROCESS_MARKER_RE.test(t) ||
+    LAST_LINE_CONCLUSION_RE.test(normalized)
+  );
+}
+
 /**
  * 'exact' is a verbatim-compare contract: the reference must resolve to a bare
  * answer head — single short paragraph, no worked-solution markers. A producer

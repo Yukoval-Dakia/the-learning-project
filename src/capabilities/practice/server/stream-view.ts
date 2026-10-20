@@ -8,6 +8,7 @@
 // 编排入口（getStream / scoped 物化 / advance / recompose / nightly）留在 stream-store.ts。
 
 import { and, desc, eq, gte, inArray, lte, sql } from 'drizzle-orm';
+import { DEFAULT_QUESTION_MINUTES } from '@/core/daily-review-plan';
 import type { Db, Tx } from '@/db/client';
 import {
   artifact,
@@ -26,6 +27,7 @@ import {
 } from '@/kernel/records/assessment-issuance';
 import { knowledgeLabels } from './knowledge-labels';
 import { countPaperSlots } from './paper-sections';
+import { readQuestionPace } from './question-pace';
 import { type DailyPracticePace, estimateStreamItemMinutes } from './stream-budget';
 
 /** 本模块的 DB 句柄：既可是顶层 `db`，也可是事务内 `tx`。 */
@@ -334,7 +336,11 @@ async function resolveStreamItemMetadata(
   return metadata;
 }
 
-function toStreamViewItem(row: StreamItemRow, metadata: StreamItemMetadata): StreamViewItem {
+function toStreamViewItem(
+  row: StreamItemRow,
+  metadata: StreamItemMetadata,
+  questionMinutes: number,
+): StreamViewItem {
   return {
     id: row.id,
     position: row.position,
@@ -343,7 +349,7 @@ function toStreamViewItem(row: StreamItemRow, metadata: StreamItemMetadata): Str
     source: row.source,
     reasoning: row.reasoning,
     status: row.status,
-    estimated_minutes: estimateStreamItemMinutes(row.item_kind),
+    estimated_minutes: estimateStreamItemMinutes(row.item_kind, questionMinutes),
     knowledge_name: metadata.knowledgeName,
     paper_title: metadata.paperTitle,
     verdict: metadata.verdict,
@@ -356,18 +362,30 @@ function toStreamViewItem(row: StreamItemRow, metadata: StreamItemMetadata): Str
 }
 
 /** Enriched PATCH response item; shares the exact projection used by GET. */
-export async function getStreamViewItem(db: DbLike, row: StreamItemRow): Promise<StreamViewItem> {
-  const metadata = await resolveStreamItemMetadata(db, [row]);
-  return toStreamViewItem(row, metadata.get(row.id) ?? EMPTY_STREAM_ITEM_METADATA);
+export async function getStreamViewItem(
+  db: DbLike,
+  row: StreamItemRow,
+  questionMinutes?: number,
+): Promise<StreamViewItem> {
+  const [metadata, pace] = await Promise.all([
+    resolveStreamItemMetadata(db, [row]),
+    questionMinutes === undefined ? readQuestionPace(db) : null,
+  ]);
+  return toStreamViewItem(
+    row,
+    metadata.get(row.id) ?? EMPTY_STREAM_ITEM_METADATA,
+    questionMinutes ?? pace?.minutes ?? DEFAULT_QUESTION_MINUTES,
+  );
 }
 
 async function projectStreamViewItems(
   db: DbLike,
   rows: StreamItemRow[],
+  questionMinutes: number,
 ): Promise<StreamViewItem[]> {
   const metadata = await resolveStreamItemMetadata(db, rows);
   return rows.map((row) =>
-    toStreamViewItem(row, metadata.get(row.id) ?? EMPTY_STREAM_ITEM_METADATA),
+    toStreamViewItem(row, metadata.get(row.id) ?? EMPTY_STREAM_ITEM_METADATA, questionMinutes),
   );
 }
 
@@ -382,17 +400,20 @@ export async function buildStreamView(input: {
   budget: { pace: DailyPracticePace; minutes: number };
   scope: StreamScope | null;
   openingLine: string;
+  /** YUK-1622 — measured/default question minutes; omit to read the shared pace. */
+  questionMinutes?: number;
 }): Promise<StreamView> {
   const { db, date, rows, budget, scope, openingLine } = input;
+  const questionMinutes = input.questionMinutes ?? (await readQuestionPace(db)).minutes;
   const done = rows.filter((row) => row.status === 'done').length;
   const estimatedTotalMinutes = rows.reduce(
-    (sum, row) => sum + estimateStreamItemMinutes(row.item_kind),
+    (sum, row) => sum + estimateStreamItemMinutes(row.item_kind, questionMinutes),
     0,
   );
   const estimatedRemainingMinutes = rows
     .filter((row) => row.status === 'pending' || row.status === 'in_progress')
-    .reduce((sum, row) => sum + estimateStreamItemMinutes(row.item_kind), 0);
-  const items = await projectStreamViewItems(db, rows);
+    .reduce((sum, row) => sum + estimateStreamItemMinutes(row.item_kind, questionMinutes), 0);
+  const items = await projectStreamViewItems(db, rows, questionMinutes);
 
   return {
     date,

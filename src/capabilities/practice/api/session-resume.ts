@@ -2,15 +2,14 @@
 // session back to started. Used by /today SessionStrip 恢复 button and
 // /review?session=<id> URL-param resume on mount.
 
-import { db } from '@/db/client';
 import { deprecatedRouteResponse, errorResponse } from '@/kernel/http';
-import { Review } from '@/server/session';
+import { resumeReviewSession } from '../server/session-operations/review-session';
 
 export async function POST(_req: Request, params: Record<string, string>): Promise<Response> {
   let response: Response;
   try {
     const { id } = params;
-    await Review.resumeReviewSession(db, id);
+    await resumeReviewSession(id);
     response = Response.json({ ok: true, status: 'started' });
   } catch (err) {
     response = errorResponse(err);

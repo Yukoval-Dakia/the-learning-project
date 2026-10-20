@@ -148,7 +148,7 @@ FailureAttempt 读模型已迁入 `src/capabilities/knowledge/server/`，中央
 | `AttributionRerankTask` | mimo-v2.5-pro | user action / pg-boss | 否 | — | 错题归因 retrieve→rerank stage 2（从 L1 候选 cause 列表重排选 primary + 逐候选理由，YUK-462；小词表时 == AttributionTask） |
 | `KnowledgeEdgeProposeTask` | mimo-v2.5-pro | maintenance / nightly | 否 | — | 0-5 条 knowledge_edge proposal |
 | `FrontierPrerequisiteTask` | mimo-v2.5-pro | maintenance / nightly（frontier bootstrap, YUK-349 PR-2） | 否 | — | 0-5 条 prerequisite knowledge_edge proposal（empty-frontier 时 propose-only 低置信） |
-| `SessionSummaryTask` | mimo-v2.5-pro | review session end | 否 | — | ≤120 字 session summary |
+| `SessionSummaryTask` | mimo-v2.5-pro | review session end | 否 | — | 服务端有效判分数字 + ≤70 字观察/建议；写入前剔除模型的题数、正确率与百分比陈述，保留非统计分句及其中的章节号、题目序号 |
 | `LearningIntentOutlineTask` | mimo-v2.5-pro | `/api/learning-intents` | 否 | — | 1 hub + N atomic outline |
 | `NoteGenerateTask` | mimo-v2.5-pro | pg-boss `note_generate` | 否 | — | atomic artifact sections |
 | `VariantGenTask` | mimo-v2.5-pro | pg-boss `variant_gen` / explicit tool | 否 | — | pending variant proposal + draft `mistake_variant` ledger；accept 后才物化 question |
@@ -171,7 +171,7 @@ FailureAttempt 读模型已迁入 `src/capabilities/knowledge/server/`，中央
 | `SolutionGenerateTask` | mimo-v2.5-pro | solve orchestrator lazy-gen (YUK-193) | 否 | — | bare question → reference + worked solution |
 | `SolutionGenerateVisionTask` | mimo-v2.5 | `source_verify` 图题独立求解（YUK-727） | 否 | 输入 | 读取题面图片后生成 reference + worked solution；图片或视觉调用失败时保持 draft |
 | `GoalScopeTask` | mimo-v2.5-pro | `/api/goals` scope 提议 (YUK-143 / ADR-0024) | 否 | — | goal → scope_knowledge_ids + sequence_hint proposal |
-| `MemoryBriefTask` | mimo-v2.5-pro | nightly brief sweep (YUK-185 / ADR-0017) | 否 | — | per-scope 3-window memory brief（带 evidence ids）|
+| `MemoryBriefTask` | mimo-v2.5-pro | nightly brief sweep (YUK-185 / ADR-0017) | 否 | — | per-scope 3-window memory brief（窗口与 evidence ids 由服务端分桶）|
 | `MindModelInductionTask` | mimo-v2.5-pro（Opus anthropic-sub per-call override） | pg-boss `research_meeting_nightly` (YUK-406 / YUK-821) | 否 | 输入 | EvidenceCells → claim + 冻结 DiagnosticSpec V2（含显式 `causal_direction_required`，本阶段不出题；V1 只读兼容并在 FULL review 保守按 causal 处理）；N=3 对完整 hypothesis 做 self-consistency + judge-only cap |
 | `ConjectureGroupingTask` | mimo-v2.5-pro | `induceConjecture`（per conjecture post-fast-path，YUK-821） | 否 | — | 语义去重：将 MindModelInductionTask N 个样本按 claim + 完整 DiagnosticSpec 等价分组；服务端再按 V2 `causal_direction_required` 确定性拆组，避免 claim 相似但触发条件、范围或因果审查类型不同的结果被误判为共识 |
 | `ConjectureProbeAuthorTask` | Opus（per-call override） | `induceConjecture` / research meeting director（共识后，YUK-821） | 否 | 输入 | 只根据冻结的 claim + DiagnosticSpec 生成完整双 probe 包；最多允许一次整包重生成 |
@@ -182,7 +182,7 @@ FailureAttempt 读模型已迁入 `src/capabilities/knowledge/server/`，中央
 | `ResearchMeetingDirectorTask` | mimo-v2.5-pro（Opus anthropic-sub per-call override） | pg-boss `research_meeting_agent_nightly` (YUK-572, dark-ship) | 是 | — | agent-led 教研例会 director（shadow lane）：charter agent 只提 claim + DiagnosticSpec；服务器复用 author/reviewer 质量门生成 probe；可按需派聚焦的 evidence-scout。共享 spawn contract 结构性封顶 depth=1、广度 report-only 留痕而不设拍脑袋次数 cap；可留 agent note，从不结算 / 不碰 FSRS |
 | `ProfileCriticTask` | mimo-v2.5-pro | compile CLI `--critic` (YUK-203 U7) | 否 | — | draft SubjectProfile 评审 + patch 建议（proposal-only）|
 | `DreamingTask` | mimo-v2.5-pro | pg-boss nightly (Foundation D) | 是 | — | 夜间学习信号 → inbox proposals（DomainTools）|
-| `CoachTask` | mimo-v2.5-pro | pg-boss `coach_daily` / `coach_weekly` (T-D6) | 是 | — | TodayPlan JSON（propose_* 写 inbox）|
+| `CoachTask` | mimo-v2.5-pro | pg-boss `coach_daily` / `coach_weekly` (T-D6) | 是 | — | TodayPlan draft（daily_focus / 知识焦点 / proposals；题数 / 分钟 / 时间盒 / 科目配比由代码计算，daily_focus 的题量/分钟/百分比声明由服务端剥离，YUK-1622；propose_* 写 inbox）|
 | `CopilotTask` | mimo-v2.5-pro | `/api/chat` inline + pg-boss `copilot_run`（AF S4 / YUK-203 / YUK-757 / YUK-939） | 是 | — | 唯一面向用户的对话式学习助手；terminal Markdown 由服务端绑定精确回复字节、实际 root 工具轨迹、更正、proposal 披露与学习内容质量门；普通 chat 前台执行，显式 `durable:true` 走 `copilot_run` |
 | `QuestionAuthorTask` | mimo-v2.5-pro | `author_question` DomainTool knowledge\|material seed（ADR-0031 / YUK-304） | 否 | — | 单道原创 draft 题（StructuredQuestion 树）+ `question_draft` proposal（单次 structured output，无工具循环；取代 YUK-275 的 `QuizIntentParseTask` C 形态解析器）|
 | `ItemPriorTask` | mimo-v2.5-pro | pg-boss `item_prior_backfill`（B1-W1 / ADR-0035 慢热阶段①） | 否 | — | 给新题估冷启先验难度 b（logit 尺度，抽教学特征路线）+ confidence → `item_calibration`（source=`llm_prior`）|

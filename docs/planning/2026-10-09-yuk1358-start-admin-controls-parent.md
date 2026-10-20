@@ -1,5 +1,7 @@
 # YUK-1358 parent verification
 
+> Evidence relocation (YUK-1579 batch 1): links that pointed into `docs/planning/evidence/` now resolve on the sealed external volume under `/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1579/696449125b53b0c35a210dbc9a57292f014712de/evidence-export/` at the same `docs/planning/evidence/`-relative path; each link's `sha256:` title is that file's entry in `SHA256SUMS.txt` (digest `02a483a4841843ace8d7b8fb0f1649d7d94cd1108ecb0903343b2c2b2ad1638e`). Git history still retains all removed bytes.
+
 The author released source608f36eb3 and final evidence eeb1ddbc4. Parent verified70 source/evidence/log hashes and868 built-file hashes. Independent R1 completed with no P0/P1 on fcfd7907f..608f36eb3. Parent matched diff SHA256 1bf728a66c646e678a46582c43657a6b02f8c2cbc9f03ac0ab5369eb64eb80ce.
 
 ## Real DB verification
@@ -19,7 +21,7 @@ Parent integrated lint caught two formatting errors in the author's final eviden
 
 ## Built RPC and browser acceptance
 
-Candidate 75c0fa149d903b757f6487e3105e3bfea11c7359 passed isolated acceptance. The [machine-readable record](evidence/2026-10-09-yuk1358-start-admin-controls/runtime-acceptance.json) contains artifact hashes, all RPC effect records, nine independently asserted browser database windows and the lock-release receipt. Full local evidence remains in `.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/` and `/tmp/yuk1358-controls-built-parent/`; the synthetic final database dump is retained locally, outside Git.
+Candidate 75c0fa149d903b757f6487e3105e3bfea11c7359 passed isolated acceptance. The [machine-readable record](/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1579/696449125b53b0c35a210dbc9a57292f014712de/evidence-export/docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/runtime-acceptance.json "sha256:35156003e8eaac1c8555a13e5dd95bc7f5f6f5d2157116459d2952a1c54c15b6") contains artifact hashes, all RPC effect records, nine independently asserted browser database windows and the lock-release receipt. Full local evidence remains in `.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/` and `/tmp/yuk1358-controls-built-parent/`; the synthetic final database dump is retained locally, outside Git.
 
 The installed server-function client and Seroval exercised the actual built resolver through the emitted host graph: 18 operations, 122 calls and 35 RPC windows. A separate read-refresh window verified that a committed configuration write was not repeated. Missing/wrong authentication returned 401 before input validation; preparing/ready epochs returned 503. Coverage includes complete DTOs, 206 journal revisions with unique descending cursor pages and 100/200 limits, validation, forbidden general-subject changes, CAS/name conflicts, noops, COW, explicit fork, rebind, shared fanout, rollback-forward, reset and atomic configuration rejection. Injected hydration failure preserved the committed receipt and last-good snapshot; explicit refresh performed only reads.
 

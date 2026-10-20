@@ -36,16 +36,29 @@
 - **复习（review）**：`event WHERE action='review' AND subject_kind='question'`（用户回答的永远是具体题，event 保持 question-scoped）；FSRS 状态派生到 `material_fsrs_state` 表（每次 review event 同事务写入）。**调度单元是知识点**（ADR-0028，2026-06-04 经 U0 裁决确认）：有 knowledge 标签的题，FSRS 投影按 `(subject_kind='knowledge', subject_id=知识点)` 键；未标注的 legacy 题 fallback 到 question 级投影。
 - **探针（probe）**：复习一个到期知识点时被选中的那道具体题。**题是测量工具，知识点才是调度 / 记忆对象**——同一知识点可由原题、变体或新生成题轮换探测，避免"背答案"。选题 seam 当前为确定性轮换（ADR-0028 决定 #3），规划由 Coach→ReviewPlanTask 流水线接管（仅替换该 seam，不动记忆单元）。
 - **判分（judge）**：评判用户对一道题的答案是否正确，输出分数 + 评语 + 错误细节（写为 judge event）。2026-06-04 U0 裁决：judge event payload 钉 `profile_version` / `capability_ref` / `judge_route`（判时在内存、写时落 event），历史判分的版本上下文从此可重建；rejudge = 新 event，不改写旧结果。
-- **组卷 / 试卷（paper / tool_quiz）**（2026-06-04 U0 裁决 X2）：一组引用题池 question 的练习集，**唯一容器是 `tool_quiz` artifact**（长期存储、knowledge 标签、`metadata.question_ids` 引用题池）——Coach 排期的"今日试卷"、用户按需测验、daily/final/笔记嵌入小测都是它，靠 provenance（plan 引用 / source）区分，**不分裂成第二容器**。做卷中的 attempt 走 `learning_session(type='review')`（复用 pause/resume/abandon）；Coach 的 session 内自适应 = artifact 就地更新 + adaptation event 留痕（`caused_by` 链到触发判分）。今日/往日练习有一级页面可查。
-- **复习规划（review planning）**（2026-06-04 U0 裁决 X3）：两级流水线——**Coach 出战略 brief**（科目配比 / 知识焦点 / 时间盒，住在 TodayPlan 的 `review_session_proposal` 扩展里），**ReviewPlanTask 按 brief 做战术出卷**（从候选池选题/探针、写 plan、session 内 checkpoint 自适应；池子不够时输出 `needs[]` 声明而非自己生成）。记忆（Mem0 / memory brief）只进 Coach、经 brief 下传，**永不直接参与选题**。
+- **组卷 / 试卷（paper / tool_quiz）**（2026-06-04 U0 裁决 X2）：一组引用题池 question 的练习集，**唯一容器是 `tool_quiz` artifact**（长期存储、knowledge 标签、`metadata.question_ids` 引用题池）——Coach 排期的"今日试卷"、用户按需测验、daily/final/笔记嵌入小测都是它，靠 provenance（plan 引用 / source）区分，**不分裂成第二容器**。做卷中的 attempt 走 `learning_session(type='review')`（复用 pause/resume/abandon）；Coach 的 session 内自适应 = artifact 就地更新 + adaptation event 留痕（`caused_by` 链到触发判分）。今日/往日练习有一级页面可查。导出可打印作答卷（导出时逐题创建发放）见本节的**作答卷导出**。
+- **复习规划（review planning）**（2026-06-04 U0 裁决 X3）：两级流水线——**Coach 出战略 brief**（知识焦点 / intent tags / 文案，住在 TodayPlan 的 `review_session_proposal` 扩展里；题数 / 分钟 / 时间盒 / 科目配比由 `src/core/daily-review-plan.ts` 按到期队列与每日预算计算，YUK-1622），**ReviewPlanTask 按 brief 做战术出卷**（从候选池选题/探针、写 plan、session 内 checkpoint 自适应；池子不够时输出 `needs[]` 声明而非自己生成）。记忆（Mem0 / memory brief）只进 Coach、经 brief 下传，**永不直接参与选题**。
 - **梦境流（Dreaming lane）**：夜间 cron 跑的批量任务，挖新知识点 / 调整掌握度 / 提议关联；产出为 `event WHERE action='propose' AND actor_kind='agent' AND actor_ref='dreaming'`。
 - **维护流（Maintenance lane）**：每周 cron 跑的批量任务，复检知识树质量 + 批量生成变体；产出走 MaintenanceSuggestion（含 snapshot + rollback_until）。
 - **记忆（memory / attention prior）**（ADR-0017；治理 2026-06-04 U0 裁决）：双层——Mem0 fact 层（细节，按需检索）+ brief 层（方向感，per-scope 三窗 markdown）。**记忆是注意力先验，不是 SoT**（SoT = event + knowledge_mastery view）；只供 orchestrator 角色（Coach / Dreaming / Copilot）读取，evaluator / operator / 生成类任务（judge、tagging、attribution、ReviewPlanTask、QuizGen、KnowledgeReview）一律不读——个性化信号经 Coach brief 洗过后下传。记忆永不直改 due / mastery / FSRS，永不给判分加偏置。
+- **作答卷导出（worksheet export）**：导出作答卷时对每道可判题各落一条**发放（issuance）**——不可变的发题记录（被发题门拒的题不发不导）——再据此生成可打印的作答卷 PDF；回读按这些冻结发放重建，不重跑发题门。每页带身份：页眉的人读短码 + 「第 x/y 页」，以及内容为 `tlp://ws/v1/<token>/<页>/<总页>` 的二维码。打印页路由 `/print/worksheet/$token`，PDF 由 worker 的 `worksheet_render` job 用无头 Chromium 渲染；同一遍渲染量出的**区域图（region map）**冻结存档，供回收时按坐标对位。
+
+## 题库准入与出题
+
+- **准入（admission）/ 待准入**：一道题（题组）必须先通过准入判定，才会被自动出给学习者；`withheld` 期间不进练习池。判分准入状态只有 `admitted` / `withheld` 两种；`withheld` 必须记明原因：`unverified_rules`（规则尚未经双门核验）、`verification_failed`、`no_admitted_executor`、`owner_hold`。判定由准入 job 执行：题目发布后自动排队做准入判定，双解与标定通过后才 `admitted`；但声明了尚不支持、未知或损坏的 `answer_shape` 的题会在入队前被拦下，一直停在 `withheld(unverified_rules)`。网页来源题（`sourcing_web`）来源核对通过、`quiz_verify` 质检通过，在当前版本尚无独立准入时首次发布为 `withheld(unverified_rules)`——这种状态叫「待准入」，题库界面显示为「还在检查」。
+- **暂不出题（serving hold）**：题目被判定暂时不能出给学习者。底层挂起（suspension）维度只有 `verify_hold` 与 `retraction_hold` 两个原因；题库「暂不出题」页签展示的暂不出题原因则共 8 种：`awaiting_admission`、`admission_failed`、`source_check_failed`、`verify_hold`、`retraction_hold`、`no_input_renderer`、`invalid_presentation`、`withdrawn`，每种都有对应白话标记；页签上的计数与筛选覆盖全库，不只是当前已加载的页。解除命令 `reverify` / `recheck_source` / `release_verify_hold`，经 `POST /api/questions/[id]/serving-actions/[command]`，每个命令都要求 `Idempotency-Key`；`release_verify_hold` 只清 `verify_hold`，不动 `retraction_hold`，`owner_hold` 这类有意扣留没有 reverify。
+- **付费效果（paid effect）作废与后继重授权**：一次已经付过费的模型调用记为一个「付费效果」，同一效果身份（同一对象、同一版本、同一单元、同一输入）只记一次账，重新投递不会再付一次。结果未知（`unknown`）的效果可由负责人显式作废为终态 `voided`——不删除、不改写输入与历史——并在同一条授权下指定一个后继效果（后继只能由授权里绑定的那次投递认领）。
 
 ## 录入与会话
 
-- **录入会话（ingestion session）**：一次"用户上传一批材料 → 系统抽取 → 落库"的工作单元。状态机：`uploaded` →（用户触发抽取）→ `queued` →（worker 起跑）→ `extracting` → `extracted` / `partial` / `failed`；`extracted` / `partial` 可 `markReviewed()` → `reviewed`（可选步骤，`commitImport()` 也直接接 `extracted` / `partial`）→ **`imported`（终态，只读）**。`failed` 可 `retryExtraction()` 重入 `queued`。所有 transition 由 `src/server/ingestion/session.ts` 单一守卫，五个写入位置（POST /api/ingestion、/extract、handler、/rescue、/import）都走它。**救援是 block-level**：session 状态不变（partial → partial），仅替换单块内容。
+- **录入会话（ingestion session）**：一次"用户上传一批材料 → 系统抽取 → 落库"的工作单元。状态机：`uploaded` →（用户触发抽取）→ `queued` →（worker 起跑）→ `extracting` → `extracted` / `partial` / `failed`；`extracted` / `partial` 可 `markReviewed()` → `reviewed`（可选步骤，`commitImport()` 也直接接 `extracted` / `partial`）→ **`imported`（终态，只读）**。`failed` 可重新入队（`enqueueExtraction()`）回到 `queued`。**救援是 block-level**：session 状态不变（partial → partial），仅替换单块内容。
 - **会话总结（session summary）**：用户主动结束一次学习会话时由 LLM 生成的总结。Phase 1b 新增（架构 review Q1）。
+- **上传材料的使用范围（usage choice）**：学习者上传材料时选择这份资料可以用在哪里：`allow`（**全部使用**，也可进长期记忆、学习总结）或 `answer_only`（**只用于本题**，只用来生成这道题的答案与判分）。
+- **使用回执（usage receipt）**：上传识别后给学习者的一条回执，说明从识别出的文字里隐去了哪些类别的个人信息（只报类别与处数，不报被隐去的值），以及**原图是否原样交给 AI**（拍照 / PDF 必须把原图交给识别引擎，回执明说原图原样交出；Word 文本行不外传图像）。在录入会话详情里可以查看这份回执，Word 文本行也补写回执。
+
+## 安全
+
+- **危机守卫（crisis guard）**：Copilot 在**接纳点**对用户消息做确定性词法分类（不接模型）；命中时服务端强制把该回合的 `derivation_policy` 设为 `crisis`，覆盖客户端送来的任何值，`answer_only` 回合也可被收紧为 `crisis`。回应不在接纳点生成，而由版本化模板文件给出，每条模板带审定状态 `未审定` / `已审定`（当前全部 `未审定`）。守卫事件 `experimental:crisis_guard` 只记类别、模板版本与入口，**永不写原文**。`crisis` 是受限用途：危机回合在写入点就退出记忆摄取（读写两面都排除），其回复与镜像同样排除。
 
 ## 已批准（approved，2026-05-15 v2 — event-driven 核）
 
@@ -77,16 +90,16 @@
 
 > 2026-06-08 grill 裁决：「skill」一词此前被过载（审计 AP-4），就地收归单一含义。
 
-- **技能包（skill / SKILL.md）**：可移植的**领域方法论指令包**，位于 `src/subjects/<id>/skills/<name>/SKILL.md`，frontmatter 含 `name` + `description`（description 是模型加载的触发钩子），正文是领域知识/规范（出题、笔记、质检标准等）。经 `ctx.skills` 白名单喂进 Claude Agent SDK，由对应 Task 按需加载。**「skill」在本项目只指这一样东西**——它是「把方法论交给模型按需加载」的知识，**不是**代码路由，**不是**在服务层用 enum 静态分流。现有 6 个：`note-{math,physics,yuwen}`、`quiz-gen-{calculation,reading-comprehension,translation}`，被 NoteGenerate/Verify/Refine 与 QuizGen/QuizVerify/Sourcing 共用。一个对应推论：题型规范（如「文言文阅读 = 原文 + 一组小题」）已住在技能包里，是**真相**；若生成产物没遵循，病灶在落库管线（schema / handler）而非知识层。
-- **行为包（behavior pack，≠ skill）**：`src/server/copilot/skills/{teaching,solve}-skill.ts` 与 `COPILOT_SKILL_KINDS` enum 是**服务层 TS 编排**（组一个 `TeachingTurnTask` 调用、绕开 CopilotTask 自由 loop），曾被冠以「skill」之名（AP-4 术语过载）。**它们不是技能包，停止用 skill 指代。** 一个「模式」本质上拆成三样、各有归处：**方法论 → 技能包**、**确定性副作用 → loop 内工具/effect**、**能力范围 → tool allowlist**；没有第四样需要独立代码路。目标形态：teaching/solve 两个 behavior pack 最终**消解**，不保留为独立构造（迁移路径见 `.omc/research/copilot-implementation-audit-2026-06-07.md` AP-1~AP-4 / Step 0~3）。
+- **技能包（skill / SKILL.md）**：可移植的**领域方法论指令包**，位于 `src/subjects/<id>/skills/<name>/SKILL.md`，frontmatter 含 `name` + `description`，正文是领域知识/规范（出题、笔记、质检标准等）。pi 执行引擎没有文件系统 skill loader——调用方（`resolveCopilotSkillDocs` / `resolveNoteSkillDoc` / `resolveQuizGenSkillDocs`）读出 SKILL.md 正文，经 `piSkillDocs` 注入 provider 的 system prompt；缺包时不注入、回退 prompt 散文。跨科共享包放在 `src/subjects/_shared/skills/`。**「skill」在本项目只指这一样东西**：**不是**代码路由，**不是**在服务层用 enum 静态分流。现有 8 个：`_shared` 的 `copilot` 与 `quiz-gen` 只由 `resolveCopilotSkillDocs()` 加载给 Copilot；`note-{math,physics,yuwen}` 由 `resolveNoteSkillDoc()` 给笔记生成/核验/精修；学科 `quiz-gen-{calculation,reading-comprehension,translation}` 由 `resolveQuizGenSkillDocs()` / `resolveQuizGenSkillDocsForSubject()` 给 QuizGen 与 QuizVerify。一个对应推论：题型规范（如「文言文阅读 = 原文 + 一组小题」）已住在技能包里，是**真相**；若生成产物没遵循，病灶在落库管线（schema / handler）而非知识层。
+- **行为包（behavior pack，≠ skill）**：server 端现役行为包只有 `teaching`（`COPILOT_BEHAVIOR_PACK_KINDS = ['teaching']`），由 `src/capabilities/copilot/server/skills/teaching-skill.ts` 做**服务层 TS 编排**（组一个 `TeachingTurnTask` 调用、绕开 CopilotTask 自由 loop），曾被冠以「skill」之名（AP-4 术语过载）。**它不是技能包，停止用 skill 指代。** `solve` 已脱离聊天路由，只作为暂无 UI 入口的独立解题提示服务存在（`solve-skill.ts`）；`skill_context` 仍保留 solve/quiz 只为兼容已持久化的值。一个「模式」本质上拆成三样、各有归处：**方法论 → 技能包**、**确定性副作用 → loop 内工具/effect**、**能力范围 → tool allowlist**；没有第四样需要独立代码路。目标形态：`teaching` behavior pack 最终**消解**，不保留为独立构造（迁移路径见 `.omc/research/copilot-implementation-audit-2026-06-07.md` AP-1~AP-4 / Step 0~3）。
 
 ## 提案中（PROPOSED — 未批准，勿当作已定术语）
 
 > 来源：`docs/planning/2026-09-24-question-assessment-redesign.md` 与 [implementation grounding](docs/planning/2026-09-24-question-assessment-implementation-grounding.md)（YUK-1038）。
-> **owner 已认可五层模型方向并裁决全量迁移（拒绝 LIGHT 分批），但方向认可 ≠ 已实施**：无 schema/数据迁移、无代码实施、无部署。
+> **owner 已认可五层模型方向并裁决全量迁移（拒绝 LIGHT 分批）**：schema 与迁移已落地（`assessment_issuance`、`evaluation_group`、`assessment_submission`、`assessment_response_draft`、`evaluation`、`evaluation_effective_head` 表，见 `drizzle/0104_yuk1044_assessment_contract_truth.sql` 与 `drizzle/0110_yuk1052_response_draft.sql`）。
 > 本节仅登记草案中新出现的候选术语，**不修改也不覆盖**上文任何已批准定义；术语本身仍未定案。
 
 - **响应槽（response slot）**（PROPOSED）：一个可作答小题下学生需要填的单个作答位置（选择集合 / 文本 / 数值 / 匹配对 / 扩展作答）。一个空不是天然一张 question 行，也不是天然一次 attempt。
-- **联合评分组（evaluation group）**（PROPOSED）：需要一起判分的响应槽集合；有依赖的槽要么一起定稿并一起结算，要么在前置缺失时保持 provisional 且不结算。
+- **联合评分组（evaluation group）**（PROPOSED）：需要一起判分的响应槽集合；有依赖的槽要么一起定稿并一起结算，要么在前置缺失时保持 provisional 且不结算。（对应 `evaluation_group` 表。）
 - **评分依据（MarkingSpec）**（PROPOSED）：`reference_md` 之外的评分契约，可组合答案键、得分点与等级量表；每个评分单元只贡献一次分数，响应槽是证据位置而非计分权威；区分来源权威、抽取断言与核验准入。
-- **有效判定（effective judgment）**（PROPOSED）：某次 submission 当前唯一生效的判分结果；候选/影子输出不进普通有效判分通道，接受与替代必须显式。
+- **有效判定（effective judgment）**（PROPOSED）：某次 submission 当前唯一生效的判分结果；候选/影子输出不进普通有效判分通道，接受与替代必须显式。（对应 `evaluation_effective_head` 表。）

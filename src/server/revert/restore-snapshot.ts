@@ -1,31 +1,9 @@
-// YUK-471 Wave 0 — restore-snapshot primitive (plan §2 CREATE; ADR-0044 §3).
-//
-// Pure-ish restore of the two A-class imperative online-update state tables
-// from a `StateSnapshotExperimental` payload:
-//   - θ̂ segment  → mastery_state       (per-KC before/after)
-//   - FSRS segment → material_fsrs_state (per-subject before/after)
-//
-// For EACH segment, independently:
-//   before !== null  → UPSERT the row back to its `before` value
-//   before === null  → DELETE the row (cold-start had no row; revert removes it)
-//
-// The two segments revert INDEPENDENTLY — 守 ADR-0035 三轴正交 R⟂p(L) (the θ̂
-// diagnostic axis and the FSRS R-scheduling axis must not be coupled: reverting
-// one must never block or alter the other).
-//
-// GUARD-AGNOSTIC (plan §6.5 / §6.5 resolved): this primitive does NOT assert
-// `current == snapshot.after` before restoring. That conflict guard lives in the
-// cascade-revert orchestrator (its live caller — cascade-revert.ts) — the primitive
-// is a caller-asserted idempotent upsert/delete. Do not add the guard here.
-//
-// No-op on empty arrays (degenerate snapshot with no KCs / no FSRS subjects).
-//
-// Single-writer discipline: we route writes through the canonical single-owner
-// upsert fns (upsertMasteryState / upsertFsrsState) for the before!=null path so
-// step9-invariant-audit's single-writer assertion on these tables still holds.
-// The before=null DELETE goes through drizzle directly (delete is not an upsert
-// and the single-writer modules don't expose a delete fn — DELETE is the inverse
-// of the cold-start INSERT, executed in the same revert tx).
+// Restores mastery_state and material_fsrs_state from one state_snapshot payload.
+// The two segments stay independent. Reverting one must not block or alter the other.
+// This function does not compare the live row with snapshot.after. That guard stays in the orchestrator.
+// Upserts go through the single writers. A null before deletes the row the attempt created.
+// Those writers do not expose delete, so the cold-start delete goes through drizzle
+// in this same transaction.
 
 import { and, eq } from 'drizzle-orm';
 
@@ -36,63 +14,36 @@ import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { upsertFsrsState } from '@/server/fsrs/state';
 import { upsertMasteryState } from '@/server/mastery/state';
 
-/**
- * The restore result. YUK-561 S1: a pre-S1 on-disk snapshot carries a BARE-NUMBER
- * θ̂ `before` (just theta_hat, no counts/precision/rt/grid) — it is NOT verbatim-
- * restorable, so restore REFUSES it (`legacy_snapshot`) WITHOUT mutating any row
- * rather than lossy-restore (never write θ̂ back while zeroing the rest). New
- * snapshots carry the rich ThetaRowSnapshot → { ok: true }.
- */
+/** A bare-number θ̂ before has no other columns, so the call refuses and writes nothing. */
 export type RestoreSnapshotResult =
   | { ok: true }
   | { ok: false; refusal: 'legacy_snapshot'; ref: { kind: 'theta'; kcId: string } };
 
 /**
- * Restore the two A-class imperative state tables from a state_snapshot event
- * payload. MUST be called inside the caller's revert transaction (`tx`).
- *
- * θ̂ segment: before=rich ThetaRowSnapshot → VERBATIM whole-row upsert (YUK-561 S1:
- *   theta_hat + counts + precision + delta + last_outcome_at + rt buffer + grid all
- *   restored, not just θ̂ with zeroed counts); before=null → DELETE the row (cold-
- *   start revert); before=bare number (legacy) → refuse `legacy_snapshot`, mutate
- *   nothing (scan-first, see below).
- * FSRS segment: before!=null → upsert material_fsrs_state back to the before
- *   Card; before=null → DELETE the row.
- *
- * The two segments are independent — one can be all-deletes while the other is
- * all-upserts (ADR-0035 R⟂p(L)).
- *
- * Guard-agnostic: no `current == after` conflict check. The caller (orchestrator)
- * asserts that before reverting.
+ * Restore both segments inside the caller's transaction.
+ * A rich before is written back column by column, including nulls. Omitting a column would keep the attempt's value.
+ * A bare-number θ̂ before refuses the whole restore. A null before deletes the row the attempt created.
  */
 export async function restoreStateSnapshot(
   tx: Tx,
   payload: StateSnapshotExperimentalT['payload'],
 ): Promise<RestoreSnapshotResult> {
-  // YUK-497 — same global learning-state write lock as every production writer. Reentrant (and
-  // effectively a no-op) under the revert orchestrator, which already holds it at tx entry;
-  // this guards direct callers of the primitive.
+  // Same transaction lock as the other writers.
+  // Acquiring it again in this transaction does not wait.
+  // The orchestrator already holds it. A direct caller still needs it.
   await acquireLearningStateWriteLock(tx);
-  // YUK-561 S1 — SCAN-FIRST for a legacy bare-number θ̂ `before` (pre-S1 on-disk
-  // snapshot). A bare number can't be verbatim-restored (counts/precision/rt/grid
-  // absent), so refuse the WHOLE restore WITHOUT mutating any row — never a partial-
-  // or-lossy restore (Lens A F5). Defence-in-depth: legacy rows have no checkpoint,
-  // so the orchestrator returns `no_checkpoint` before ever reaching this primitive;
-  // this branch bites only a direct caller / synthetic legacy payload (spec §6.6).
+  // Refuse before any write. A bare number has no counts, precision, rt, or grid, so restoring it would invent them.
   for (const snap of payload.theta_snapshots) {
     if (typeof snap.before === 'number') {
       return { ok: false, refusal: 'legacy_snapshot', ref: { kind: 'theta', kcId: snap.kc_id } };
     }
   }
 
-  // ---------- θ̂ segment (mastery_state) ----------
   for (const snap of payload.theta_snapshots) {
-    // YUK-1093 — 'knowledge' (per-KC) vs 'ability_global' (per-domain A2 rows);
-    // absent subject_kind = pre-YUK-1093 payload ⇒ 'knowledge'.
+    // A payload written before subject_kind existed is a per-KC row.
     const subjectKind = snap.subject_kind ?? 'knowledge';
     const before = snap.before;
     if (before === null) {
-      // Cold-start revert: the attempt had created this row; restore = remove it.
       await tx
         .delete(mastery_state)
         .where(
@@ -104,21 +55,12 @@ export async function restoreStateSnapshot(
       continue;
     }
     if (typeof before === 'number') {
-      // Unreachable — the scan above refused any bare-number before. Fail-loud rather
-      // than `continue`: silently skipping one KC's restore while upserting the rest
-      // (and still returning ok) would be a silent partial revert (项目头号忌). The
-      // enclosing tx/savepoint rolls back, so nothing is half-persisted. Same fail-loud
-      // discipline as rejudge.ts's unreachable-state throw. (PR #704 OCR round.)
+      // The scan above already returned. Continuing would restore the other rows and still report success.
       throw new Error(
         'restoreStateSnapshot: bare-number `before` survived the scan-first guard (unreachable)',
       );
     }
-    // Warm verbatim revert: restore the ENTIRE pre-attempt row (YUK-561 S1). Every
-    // column is passed explicitly (incl. null) so the upsert force-writes it back to
-    // its captured value — leaving one out would keep the reverted attempt's value on
-    // that column (the pre-S1 zeroed-counts / stale-precision bug). rt_correct_ms /
-    // theta_grid_json passed as null force the column to NULL (upsert writes when the
-    // key is present, even if null); last_theta_delta null likewise.
+    // Pass every column, including null. A missing key would leave the attempt's value on that column.
     await upsertMasteryState(tx, {
       subject_kind: subjectKind,
       subject_id: snap.kc_id,
@@ -134,10 +76,8 @@ export async function restoreStateSnapshot(
     });
   }
 
-  // ---------- FSRS segment (material_fsrs_state) ----------
   for (const snap of payload.fsrs_snapshots) {
     if (snap.before === null) {
-      // Cold-start revert: the attempt had created this row; restore = remove it.
       await tx
         .delete(material_fsrs_state)
         .where(
@@ -147,19 +87,16 @@ export async function restoreStateSnapshot(
           ),
         );
     } else {
-      // Warm revert: restore the FSRS Card to its pre-attempt state.
       await upsertFsrsState(tx, {
         subject_kind: snap.subject_kind,
         subject_id: snap.subject_id,
         state: snap.before,
         due_at: snap.before.due,
-        // augment review — the before-Card pre-dates the reverted attempt, so it must NOT
-        // back-reference that attempt: a downstream reader/audit would be misled into
-        // thinking the restored card was last reviewed by the very attempt we just undid.
-        // The snapshot's `before` carries only the FSRS Card scalars (not the prior
-        // last_review_event_id), so the primitive restores this to null ("unknown prior").
-        // Accepted limitation: the FSRS segment is not reverted by the live caller
-        // (rejudge reverts θ̂ only — O5), so no live path relies on this back-reference.
+        // The snapshot card has no prior review event id, so null means that id is unknown.
+        // Pointing it at this attempt would say the restored card was last reviewed
+        // by the attempt being undone.
+        // Settlement replay does revert this FSRS checkpoint, so the missing id
+        // is not limited to a theta-only rejudge.
         last_review_event_id: null,
       });
     }

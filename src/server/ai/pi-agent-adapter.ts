@@ -78,8 +78,12 @@ import {
   sanitizeArgumentsEvidence,
   sanitizeArgumentsEvidenceText,
 } from './provider-error-evidence';
-import { UNDICI_DEFAULT_IDLE_TIMEOUT_MS } from './provider-http-timeout';
-import { createIdleBudgetFetch } from './provider-idle-fetch';
+import {
+  OPENAI_SDK_DEFAULT_TIMEOUT_MS,
+  PROVIDER_HTTP_TIMEOUT_MARGIN_MS,
+  providerHttpTimeoutMs,
+} from './provider-http-timeout';
+import { createBudgetedProviderFetch } from './provider-transport';
 import type { SDKAssistantMessage, SDKResultMessage, SDKUserMessage } from './sdk-types';
 import { isSpawnToolName } from './spawn-contract';
 import {
@@ -1243,17 +1247,33 @@ class PiPreparedQuery implements PreparedExecutionQuery {
   }
 
   /**
-   * Raise the provider HTTP timer above the task abort. The OpenAI SDK's
-   * 10-minute default, and undici's 5-minute header/body idle timers, would
-   * otherwise cut off a 30-minute note generation. Shorter tasks leave both
-   * alone so they keep `globalThis.fetch`.
+   * YUK-1630 — every provider request in this query runs through the
+   * attempt's controlled transport: an npm-undici Agent whose connect,
+   * headers and body timers all take the same budget-derived value the SDK
+   * gets as its per-request `timeout` (provider-transport.ts). The runner
+   * always resolves `options.providerTimeoutMs` from the task budget; a
+   * caller that leaves it unset gets the SDK's 10-minute default as the
+   * derivation base so the undici layer stays consistent with the SDK's own
+   * bound rather than falling back to hidden undici defaults.
    */
-  private providerHttpBudget(): { timeoutMs?: number; fetch?: typeof fetch } {
+  private providerTransport(): { timeoutMs?: number; fetch: typeof fetch } {
     const timeoutMs = this.args.options.providerTimeoutMs;
-    if (timeoutMs === undefined) return {};
-    if (timeoutMs <= UNDICI_DEFAULT_IDLE_TIMEOUT_MS) return { timeoutMs };
-    this.providerHttp ??= createIdleBudgetFetch(timeoutMs);
-    return { timeoutMs, fetch: this.providerHttp.fetch };
+    const collector = this.args.options.transportEvidence;
+    this.providerHttp ??= createBudgetedProviderFetch({
+      httpTimeoutMs: timeoutMs ?? providerHttpTimeoutMs(OPENAI_SDK_DEFAULT_TIMEOUT_MS),
+      marginMs: PROVIDER_HTTP_TIMEOUT_MARGIN_MS,
+      secrets: this.args.resolved.apiKey ? [this.args.resolved.apiKey] : [],
+      ...(collector !== undefined ? { collector } : {}),
+    });
+    collector?.noteSdkTimeout(
+      timeoutMs !== undefined
+        ? { sdkTimeoutMs: timeoutMs, source: 'task_budget' }
+        : { sdkTimeoutMs: OPENAI_SDK_DEFAULT_TIMEOUT_MS, source: 'sdk_default' },
+    );
+    return {
+      ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+      fetch: this.providerHttp.fetch,
+    };
   }
 
   /** Shared config fields every loop level (root + nested) reuses. */
@@ -1262,15 +1282,15 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     'convertToLlm' | 'headers' | 'apiKey' | 'reasoning' | 'timeoutMs' | 'fetch'
   > {
     const { options, resolved, runId } = this.args;
-    const http = this.providerHttpBudget();
+    const http = this.providerTransport();
     // YUK-1559 (C6) — every provider request in this query funnels through a
     // capture fetch so a non-2xx leaves a bounded, sanitized body + status +
     // request id for the terminal error evidence. A transparent passthrough:
     // it only reads a clone of failing responses. Every loom-registered
-    // provider accepts a custom fetch (the same surface providerHttpBudget
-    // already uses for long-budget tasks).
+    // provider accepts a custom fetch (the same surface providerTransport
+    // already uses for the budget-derived dispatcher).
     this.providerErrorCapture ??= createProviderErrorCaptureFetch(
-      http.fetch ?? globalThis.fetch,
+      http.fetch,
       // The request's resolved credential — verbatim + JSON-escaped forms are
       // redacted at the shared boundary before any field/header patterns run.
       { secrets: resolved.apiKey ? [resolved.apiKey] : [] },

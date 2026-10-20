@@ -81,13 +81,15 @@ nested `AGENTS.md` / `.claude/rules`，机械约束放在 hooks。
 
 ## Runtime and architecture
 
-当前运行形态、端口、本地/NAS 设置和目录图以 `README.md` 为准；详细架构以
-`docs/architecture.md`、`docs/modules/` 和当前 ADR 为准。
+当前运行形态、端口、本地/NAS 设置和目录图以 `README.md` 为准；详细架构以当前代码和
+当前 ADR 为准。`docs/architecture.md` 与 `docs/modules/` 已知部分过时（自述残留
+`app/api/**`、`middleware.ts` 等历史描述，cron 注册描述也已过时），采信前先对照代码。
 
 必须保持的当前边界：
 
-- Hono API（`server/index.ts` + `server/app.ts`）+ Vite SPA（`web/`）+
-  独立 pg-boss worker（`scripts/worker.ts`）。
+- Hono API（`server/index.ts` + `server/app.ts`，含 TanStack Start 前门 `server/start/`）+
+  Vite SPA（`web/`）+ 独立 worker（`scripts/worker.ts`，同进程挂 pg-boss 队列与
+  DBOS durable 层 `src/server/durable/`）。
 - Postgres + Drizzle 是真相源；editing presence 走 PG，无 Redis。
 - blob storage 走 R2/S3-compatible client。
 - 后端 route/job/copilotTool 只能经
@@ -211,7 +213,7 @@ Linear（Yukoval Studios / YUK）是新规划和跟进的权威 tracker；GitHub
 
 ## Deployment
 
-2026-10-07 起 owner 指定生产部署与运维在这台 Mac，沿用 Docker Compose 的 app、worker、migrate 和 Postgres/pgvector，默认本机访问。Cloudflare Tunnel / NAS 是可选历史部署方式，不是当前发布目标。部署授权持续有效，数据恢复、独立审查与验收要求仍保留。当前入口见 `README.md` 和[自主交付授权](docs/planning/2026-10-07-autonomous-delivery-charter.md)。
+2026-10-07 起 owner 指定生产部署与运维在这台 Mac，沿用 Docker Compose 的 app、worker、migrate、mem0-init 和 Postgres/pgvector（worker 是独立镜像 target，叠加 playwright/Chromium 供 `worksheet_render`），默认本机访问。Cloudflare Tunnel / NAS 是可选历史部署方式，不是当前发布目标。部署授权持续有效，数据恢复、独立审查与验收要求仍保留。当前入口见 `README.md` 和[自主交付授权](docs/planning/2026-10-07-autonomous-delivery-charter.md)。
 
 ## Review, merge, and delivery
 

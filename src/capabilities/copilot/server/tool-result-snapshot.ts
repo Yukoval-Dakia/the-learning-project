@@ -75,6 +75,8 @@ const POLICIES: Record<string, ResultPolicy> = {
     'publishable',
     'replayed',
   ],
+  // YUK-1407 — 纠错提案回执（proposal id + 状态给模型；内部评估细节不泄）。
+  propose_grading_correction: ['status', 'reason', 'proposal_event_id', 'evaluation_id'],
   attribute_mistake: ['status', 'judge_event_id', 'cause'],
   propose_variant: ['status', 'proposal_ids', 'mistake_variant_ids', 'variant_question_ids'],
   write_quiz: ['artifact_id', 'question_count', 'knowledge_ids', 'practice_path'],

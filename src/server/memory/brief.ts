@@ -5,6 +5,7 @@ import { event, memory_brief_note } from '@/db/schema';
 import { eventAllowsDerivationSql } from '@/kernel/events/derivation-policy';
 import { BRIEF_REFRESH_BUDGET, LONG_TERM_FRESHNESS_BUDGET } from '@/kernel/tools/budgets';
 import { scoreLongTermFreshness } from './brief-freshness';
+import { learnerEvidenceSql } from './learner-evidence';
 
 // YUK-565 — reserved rollback-ledger actions that were written before
 // writeEvent began persisting insert-time opt-out intent as affected_scopes=[].
@@ -113,6 +114,9 @@ async function loadEventsFromDb(db: Db, scopeKey: string): Promise<BriefEvent[]>
       and(
         sql`${event.affected_scopes} @> ARRAY[${scopeKey}]::text[]`,
         excludesInternalBriefLedger(),
+        // YUK-1629 — question-bank authoring/publish events audit bank content,
+        // not learner activity; they never enter the brief evidence window.
+        learnerEvidenceSql(),
         eventAllowsDerivationSql(),
       ),
     )
@@ -210,6 +214,9 @@ export async function scopeHasNewEvidence(db: Db, scopeKey: string): Promise<boo
       and(
         sql`${event.affected_scopes} @> ARRAY[${scopeKey}]::text[]`,
         excludesInternalBriefLedger(),
+        // YUK-1629 — same classification as the evidence window: a question
+        // revision never counts as "new evidence" toward a brief refresh.
+        learnerEvidenceSql(),
         eventAllowsDerivationSql(),
         gt(event.created_at, briefLatest),
       ),

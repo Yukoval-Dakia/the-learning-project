@@ -32,7 +32,7 @@
 ## Optional Laminar application tracing
 
 Set `LMNR_PROJECT_API_KEY` in the API and worker environment to enable application
-traces with `@lmnr-ai/lmnr` 0.8.49. API startup and both worker modes initialize it
+traces with `@lmnr-ai/lmnr`. API startup and both worker modes initialize it
 idempotently after environment loading. An empty key skips SDK loading and export.
 Restart the relevant processes after changing this environment setting.
 
@@ -136,8 +136,11 @@ pnpm smoke:local
 ```
 
 模型能力目录（YUK-924 / YUK-1563）：worker 启动时和每天从 models.dev 拉取
-`api.json`，写入 `model_catalog_cache`。拉取失败沿用该行；没有该行就用
-`src/server/ai/model-catalog.snapshot.json`。`pnpm gen:model-catalog` 仍重写这份随包快照。
+`api.json`，写入 `model_catalog_cache`（`src/server/boss/start-worker.ts`）。API 启动时
+也从该行 hydrate，并每 60 秒检查 version 变化后重载（`server/index.ts`
+`hydrateModelCatalogBeforeServe`、`src/server/ai/model-catalog.ts` `startModelCatalogWatch`）。
+拉取失败沿用该行；没有该行就用 `src/server/ai/model-catalog.snapshot.json`。
+`pnpm gen:model-catalog` 仍重写这份随包快照。
 工具调用、推理及原生档位、输入模态、上下文/输入/输出上限和 API base URL
 统一从该目录读取；Pi 只提供协议与兼容处理，不覆盖这些事实。目录缺项保持 unknown，
 执行缺少必需端点或限额时明确报错。只有目录缺失或实测不符才能在
@@ -165,10 +168,10 @@ API 与独立 worker 都先由 `server/env.ts` 加载 `.env.local` / `.env`，�
 pnpm typecheck        # tsc --noEmit
 pnpm lint             # biome check .
 pnpm lint:ratchet     # warning/info 总数 ratchet（基线 scripts/lint-baseline.json，只降不升；修完 warning 后 pnpm lint:ratchet:update 重生基线）
-pnpm test             # CI 全量门禁（含 audit:task-census + unit/db/migration；本机按 AGENTS.md 跑 scoped tests）
+pnpm test             # 全量 umbrella（audit 链 + unit/db/migration）；CI Gate 不调用它，而是跑 .github/workflows/ci-gate.yml 的矩阵（见 docs/agents/development-workflow.md）；本机按 AGENTS.md 只跑 scoped tests
 pnpm audit:schema     # schema write-path 审计（新表/字段必须有 write path）
 pnpm audit:partition  # 测试分区审计（依赖 DB 的测试不得进 unit config）
-pnpm audit:task-census # 52 registered / 51 static / 1 compatibility + wiring/run-log contract
+pnpm audit:task-census # task registry 的 static caller / compatibility 分类与 wiring、run-log 契约
 pnpm build            # SPA + TanStack Start + 三 esbuild 产物（dist/server.cjs / dist/worker.cjs / dist/migrate.cjs）
 ```
 
@@ -218,6 +221,14 @@ Owner 于 2026-10-07 将产品交付与本机运维持续委托给 agent，见[�
    # + R2 / Tencent OCR keys
    # MEM0_* keys are optional — see .env.example for defaults
    ```
+
+   `BANK_GAP_EVIDENCE_SECRET`（app 侧）：`search_bank` 用它给 gap_request 签 MAC，
+   `file_bank_gap` 验 MAC；短于 32 字符或等于 `INTERNAL_TOKEN` 时视为未设，未设时
+   `file_bank_gap` 拒绝所有提交。
+   `WORKSHEET_RENDER_APP_ORIGIN`（worker 侧）：`worksheet_render` 打开打印页的 origin，
+   compose 已设 `http://app:8787`；只有变量完全未设置才缺省 `http://localhost:5173`，
+   照抄 `.env.example` 留空会让 job 报 `WORKSHEET_RENDER_APP_ORIGIN is empty`，
+   本机要么删掉该行要么填值。
 
    `DASHSCOPE_API_KEY` is required as soon as the worker
    processes its first `memory_event_ingest` job (every `writeEvent` enqueues
@@ -297,23 +308,26 @@ docker compose logs --tail 50 cloudflared
 ```
 
 The compose stack starts `migrate` (one-shot init that applies migrations), `postgres`
-(pgvector image), `app` (Hono :8787), `worker`（同镜像，compose `command` override 跑
-`node dist/worker.cjs`），and `cloudflared`. The app is reachable through the Cloudflare
-Tunnel; port 8787 is bound only inside the compose network，不暴露到 host。
+(pgvector image), `app` (Hono :8787), `mem0-init`（one-shot `chown` `mem0data` 卷，供
+worker 写入历史库前修好属主）, `worker`（`image: the-learning-project-worker` +
+`target: worker`，在 runner 上叠加 `playwright-core` 1.64.0 与
+`chromium-headless-shell`，供 `worksheet_render` 使用），and `cloudflared`. The app is
+reachable through the Cloudflare Tunnel; port 8787 is bound only inside the compose
+network，不暴露到 host。
 
-Dockerfile（node:24-slim 多阶段）build 产物为 `web/dist`（原 SPA）、
-`dist/start`（固定 TanStack Start 1.168.60 / Router 1.170.41）和 `dist/server.cjs`、
-`dist/worker.cjs`、`dist/migrate.cjs`。app 容器 `CMD ["node", "dist/server.cjs"]`，
-`RW_STATIC_DIR=/app/web/dist` 启用 Start 前门：`/api/*` 直接交给原 Hono app，
-`/_build/*` 提供 Start 客户端资产，其余页面回落到原 SPA。API hydration、tool recovery、
-shutdown 和独立 worker 的 owner 保持不变。源码已接线，不代表已部署到当前日用镜像。
-切换/回退及 P7 清理条件见[前门 runbook](docs/planning/2026-10-07-yuk1352-start-frontdoor.md)。
-worker 容器同镜像，
-compose 层 `command: ["node", "dist/worker.cjs"]` 覆盖。**无 Redis 服务**——editing presence 走
-PG 表 `editing_presence`（PgPresenceStore，YUK-321 M5 gate 选项 b）。
+`migrate` / `app` / `mem0-init` 都显式 `target: runner`；只有 `worker` 用
+`target: worker`。Dockerfile（node:24-slim 多阶段）build 产物为 `web/dist`（原 SPA）、
+`dist/start`（TanStack Start 前门）和 `dist/server.cjs`、`dist/worker.cjs`、`dist/migrate.cjs`。
+app 容器 `CMD ["node", "dist/server.cjs"]`，`RW_STATIC_DIR=/app/web/dist` 启用 Start 前门：
+`/api/*` 直接交给原 Hono app，`/_build/*` 提供 Start 客户端资产，已接管的页面以
+`server/start/routes/` 为准，其余页面回落到原 SPA。API hydration、tool recovery 和 shutdown
+的 owner 保持不变。切换/回退及 P7 清理条件见[前门 runbook](docs/planning/2026-10-07-yuk1352-start-frontdoor.md)。
+**无 Redis 服务**——editing presence 走 PG 表 `editing_presence`（PgPresenceStore，YUK-321
+M5 gate 选项 b）。
 
 停止时 API 先停止接纳 HTTP，请求最多排空 30 秒（超时断开订阅连接，不等于
-Copilot Stop），再等待同进程 worker 就绪并执行 pg-boss 的 30 秒清理、关闭 DB pool。
+Copilot Stop）；`RW_WORKER=1` 时先等同进程 worker 启动完成，随后已启动的 pg-boss 执行
+30 秒清理，再关闭 DB pool。
 API 总退出期限 65 秒，Compose 留 70 秒；独立 worker 保留 30 秒清理，Compose 留 40 秒。
 超出总期限或清理失败以非零退出并记录日志；未完成的持久任务仍按既有恢复策略处理。
 
@@ -387,11 +401,15 @@ pnpm db:restore < /tmp/loom-20260101-000000.sql
 
 ```text
 server/           # Hono API 入口（index.ts）+ 组合根工厂（app.ts）+ env 加载
+  start/          # TanStack Start 前门：routes、server functions、授权 middleware
 web/              # Vite SPA 工程（root=web/；TanStack Router；@ alias 指 ../src）
+crates/
+  calibration-native/ # Rust 离线 calibration 核心（napi + WASM，与 TS oracle parity）
 src/
   capabilities/   # Capability 包：manifest.ts 声明路由/jobs/copilotTools/ui.pages
     copilot/      # Copilot 域（D14 单人格 + 统一记忆读取面 + copilotTools 贡献制）
     observability/# Observability 域（admin/logs/cost/jobs four GET 面平移）
+    onboarding/   # 冷启动引导：目标设定、材料上传、起点探测与起始档案
     ingestion/    # 录入域（assets/ingestion pipeline）
     knowledge/    # 知识图谱域
     notes/        # Note artifact 域（block-tree Tiptap 编辑器）
@@ -408,7 +426,9 @@ src/
     yuwen/        # Phase 1 subject bundle: 语文 (current content: classical Chinese)
     math/         # Non-yuwen pressure subject: KaTeX + steps judging
     physics/      # Foundation closeout subject: units/dimensions pressure test
+    general/      # 中性默认 subject profile（未知 domain 的 fallback 身份）
   ui/             # Shared React components（block-tree Tiptap 编辑器、KnowledgeGraph cytoscape）
+  ui-next/        # UI rewrite 的 scoped design-system 基础层（tokens/primitives/shell/mascot/motion）
 scripts/          # worker.ts（pg-boss 独立进程）+ migrate.ts + dev-local.ts + audits（schema/partition/profile）
 postman/          # api-endpoints.json 真相源 + gen:postman manifest 对账层
 docs/             # architecture, modules, ADRs, planning

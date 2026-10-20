@@ -20,22 +20,7 @@ import { and, eq, isNull } from 'drizzle-orm';
 import { z } from 'zod';
 import { SourcedQuestion, SourcingImageCandidate } from '@/core/schema/sourcing';
 import { knowledge } from '@/db/schema';
-import {
-  DOMAIN_TOOL_MCP_SERVER_NAME,
-  type DomainToolName,
-  toMcpAllowedToolName,
-} from '@/kernel/tools/allowlists';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
-import { parseJsonObjectLoose } from '@/server/ai/json-extract';
-import {
-  EXA_MCP_ALLOWED_TOOLS,
-  EXA_MCP_SERVER_NAME,
-  EXA_SCOPED_TOOL_NAMES,
-  buildExaMcpServer,
-} from '@/server/ai/mcp/exa';
-import { runAgentTask } from '@/server/ai/runner';
-import type { BuildMcpServerOptions } from '@/server/ai/tools/mcp-bridge';
-import { type PiToolMount, piDomainMount, piRemoteMcpMount } from '@/server/ai/tools/pi-tools';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import {
   type ParseLooseFn,
@@ -43,60 +28,14 @@ import {
   type RunWebSourcingAgentFn,
   runWebFetchCandidates,
 } from '../question-supply/web-candidates';
-
-// SourcingTask 挂载的 read-only domain-tool 面——从 jobs/sourcing.ts SOURCING_READ_TOOLS
-// 逐字拷贝（退役 monolith 不许从 tool 层 import；两边保持同步直至该 job 退役）。
-const SOURCING_READ_TOOLS = [
-  'query_knowledge',
-  'get_subject_graph_overview',
-  'expand_knowledge_subgraph',
-  'find_knowledge_paths',
-] as const satisfies readonly DomainToolName[];
+import { defaultWebSourcingDeps, runWebSourcingOperation } from '../web-sourcing-operation';
 
 /**
- * RunWebSourcingAgentFn 的真身：MCP 挂载（domain read tools + Exa remote）+
- * runAgentTask('SourcingTask')。Exa key 缺失时返回 null——核映射为
- * failureClass 'web_search_unavailable'（旧 dispatcher webSearchAvailable 闸同款语义）。
- * executor job 层共享同一实现。
+ * 兼容导出（YUK-1570）：RunWebSourcingAgentFn 的真身已下沉到
+ * ../web-sourcing-operation.ts（Exa 闸 + domain/Exa 双 mount + SourcingTask
+ * 运行 + 结果收窄的完整操作）；本别名保持旧 import 路径可用。
  */
-export const runWebSourcingAgentDefault: RunWebSourcingAgentFn = async (params) => {
-  const { db, input, subjectProfile, ctx } = params;
-
-  // web 路由无检索后端即不可执行——先闸，避免无谓挂载 domain server。
-  const exaCfg = buildExaMcpServer();
-  if (exaCfg === null) return null;
-
-  // MCP mount 镜像旧 sourcing job：in-process domain read tools（ctx 归因到
-  // 调用方透传的 run 上下文，callerActor='sourcing'）+ Exa remote。
-  const domainMountOptions = {
-    ctx: {
-      db,
-      taskRunId: ctx.taskRunId,
-      callerActor: { kind: 'agent', ref: 'sourcing' },
-      causedByEventId: ctx.causedByEventId,
-    },
-    serverName: DOMAIN_TOOL_MCP_SERVER_NAME,
-    toolNames: SOURCING_READ_TOOLS,
-    taskKind: 'SourcingTask',
-  } satisfies BuildMcpServerOptions;
-  const piToolMounts: PiToolMount[] = [
-    piDomainMount(domainMountOptions),
-    piRemoteMcpMount(EXA_MCP_SERVER_NAME, exaCfg, EXA_SCOPED_TOOL_NAMES),
-  ];
-  const allowedTools = [
-    ...SOURCING_READ_TOOLS.map((name) => toMcpAllowedToolName(name)),
-    ...EXA_MCP_ALLOWED_TOOLS,
-  ];
-
-  const result = await runAgentTask('SourcingTask', input, {
-    db,
-    piToolMounts,
-    allowedTools,
-    subjectProfile,
-    modelBinding: ctx.modelBinding,
-  });
-  return { text: result.text, task_run_id: result.task_run_id, cost_usd: result.cost_usd };
-};
+export const runWebSourcingAgentDefault: RunWebSourcingAgentFn = runWebSourcingOperation;
 
 const inputSchema = z.object({
   /** 需求锚点 KC（executor 的 plan item / dispatcher 的 target anchor）；subject 由其 domain 服务端解析。 */
@@ -183,8 +122,10 @@ export async function executeWebFetchCandidates(
   input: Input,
   deps: WebFetchCandidatesDeps = {},
 ): Promise<Output> {
-  const runSourcingAgent = deps.runSourcingAgent ?? runWebSourcingAgentDefault;
-  const parseLoose: ParseLooseFn = deps.parseLoose ?? parseJsonObjectLoose;
+  // 生产默认依赖来自 defaultWebSourcingDeps() 唯一组装点；逐字段注入 seam 不变。
+  const productionDeps = defaultWebSourcingDeps();
+  const runSourcingAgent = deps.runSourcingAgent ?? productionDeps.runSourcingAgent;
+  const parseLoose: ParseLooseFn = deps.parseLoose ?? productionDeps.parseLoose;
 
   // subject 服务端解析：读锚点 knowledge 节点（与核相同谓词——活节点）→ domain →
   // profile（驱动 SourcingTask prompt 声部与 whitelist）。查无/归档不在此短路——

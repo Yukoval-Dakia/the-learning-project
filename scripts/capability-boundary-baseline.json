@@ -2,6 +2,8 @@
   "schemaVersion": 1,
   "edgeUnit": "distinct-source-file-to-resolved-module",
   "notes": {
+    "YUK1571-shared-reads": "LIGHT shared read ownership move: After integrating frontier PR #1837, cross total 47 -> 42 (-5); prior standalone measurement was 48 -> 43. Five capability read consumers now import kernel-owned read models (src/kernel/read-models/{agent-note-hints,notes-read,artifact-backlinks,artifact-corrections,extraction-summary}) instead of sibling capability modules: knowledge/review.ts exits the agency-owned readAgentNotes entry via agent-note-hints (knowledge -> agency 2 -> 1); knowledge/node-page.ts exits notes server reads (knowledge -> notes 1 -> 0); agency/scout/evidence-mcp.ts exits notesForKnowledge (agency -> notes 3 -> 2); agency/tools/learning-item-context.ts exits ingestion extraction-summary reads (agency -> ingestion 1 -> 0); practice/tools/question-context.ts exits them too (practice -> ingestion 2 -> 1). Old capability paths remain explicit compat re-exports (no copied implementations), so residual edges are unchanged; the five-capability SCC {agency, ingestion, knowledge, notes, practice} persists; for example notes -> knowledge -> agency -> notes remains a cycle.",
+    "YUK-1571-frontier": "Frontier complete prerequisite closure, canonical mastery gate and sparse/dense/overflow decisions now belong to knowledge. practice -> knowledge 3 -> 4 is a real dependency on that owned decision, not a pass-through count shift. In this PR knowledge -> practice 3 -> 1 removes two reads of the former practice-owned decision (knowledge frontier read and nightly bootstrap); those same-category decreases offset the one added practice -> knowledge edge, cross-capability value total 48 -> 47. practice -> mastery 15 -> 14 moves the algorithm-owned mastery read with the operation, capability -> server total 441 -> 440. Exit condition: address the remaining practice -> knowledge dependency as part of YUK-1571 cycle removal; this slice does not claim SCC elimination. Baseline write ownership released by coordinator on 2026-10-20; audit and CI semantics unchanged.",
     "YUK-1022": "copilot -> ai raised 10 -> 16 (+6, total 435 -> 441). Spec-mandated P3 dual-descriptor wiring: copilot-execution/subagents now import the pi lane parallels (pi-hooks, pi-subagent host, execution-adapter lane pin, pi-agent-adapter types) alongside the existing SDK descriptor edges, plus the test seam in copilot_run.test.ts. Ratified per the YUK-921 migration spec; P4 retires the SDK side of these edges.",
     "YUK-1025": "P4 SDK retirement: pi-only edges net agency->ai 27->28 (piCustomTool/pi-subagent/piDomainMount imports replaced the retired SdkMcpServer/buildMcpServerFromRegistry/createSpawnContract edges), copilot->ai 16->18 (execution-adapter ModelBinding + pi-subagent contract), practice->ai 73->65 (output-format.ts + SDK descriptor imports deleted). Total 441->436.",
     "YUK-1011": "practice -> questions raised 7 -> 8 (+1, total 436 -> 437): quiz_gen.ts now calls createQuestionPart (src/server/questions/parts.ts — the sole owner of question_part inserts) to materialize composite 篇 children inside the same persist transaction. Owner-service call per the write-path convention, same shape as ingestion -> questions (5).",
@@ -17,11 +19,52 @@
     "YUK-1529": "practice -> boss 15 -> 18 (+3, total 437 -> 441): worksheet-export-route enqueues worksheet_render via getStartedBoss + WORKSHEET_RENDER_QUEUE (same seam as session-end.ts enqueue), and practice manifest JobDecl imports the shared queue name (same as copilot manifest -> queue-names). practice -> r2 2 -> 3 (+1): server/worksheet/pdf-store is the single blob seam — content-addressed PDF put (render job) + read (download route), same edge kind as ingestion -> r2.",
     "YUK-1547": "practice -> ai 65 -> 66 (+1, total 437 -> 438): verify-framework.ts re-exports writeToolCallLog (src/server/ai/log) — structured-submit parse failures keep the bounded raw submit arguments as tool_call_log evidence attached to the task run (admission solve + crosscheck). Same owner-service lane as the file's existing server/ai re-exports (Provider/TaskTextResult); consumers add no new edge.",
     "YUK-1559": "C1-10 model-source unification: ingestion -> ai 15 -> 16 (+1, total 437 -> 438): provider-attempts.ts reads GLM_OCR_MODEL_ID from the provider catalog (src/server/ai/providers.ts) instead of pinning the glm-ocr literal — direct-lane declared ids belong to the catalog.",
-    "YUK-1567": "practice -> r2 raised 2 -> 3 (+1, total 439 -> 440): admission/reauthorization.ts void-release republish calls publishQuestionGroup, whose declared contract requires an injected readAssetBytes blob reader (refuses custom-block publishes without one); supplying getR2().get is the same caller-injection owner seam as the existing practice -> r2 edges in assets.ts and question-supply/jyeoo-candidates.ts."
+    "YUK-1567": {
+      "debt": "capabilityToServer",
+      "pair": "practice -> r2",
+      "date": "2026-10-19",
+      "from": 3,
+      "to": 4,
+      "direction": "increase",
+      "reason": "仅追认 #1811 / YUK-1567 已合入 main 的这一条依赖，capability→server 当时由 443→444。reauthorization.ts 为 publishQuestionGroup 注入 readAssetBytes。原批准出处 https://linear.app/yukoval-studios/issue/YUK-1567 评论 bb3e06ad-7c9f-4060-b89c-5617985f6a9c（2026-10-19 00:26Z）；限定范围的协调线裁定出处 https://linear.app/yukoval-studios/issue/YUK-1570 评论 82d63281-8a31-4433-a685-30b610bfcbcb（2026-10-19 15:21Z）。本记录不得复用，不能抵其他上调，不构成泛化授权。",
+      "exitCondition": "下一次 YUK-1570 减边 PR 由 T3 架构线把这条 practice→r2 依赖收进 capability 自有模块或窄端口，让边回到 3，最迟不晚于 YUK-1570 关闭；退出前本记录不得复用，不能抵其他上调。",
+      "justification": {
+        "kind": "recorded_ruling",
+        "ruling": "https://linear.app/yukoval-studios/issue/YUK-1570"
+      }
+    },
+    "YUK-1570-mastery-read-engine": "Complete mastery row/ability and p(L)/KG projection read implementations now belong to kernel read models, with old server exports kept for compatibility; only 8 capability consumers move. knowledge -> mastery 6 -> 1, practice -> mastery 14 -> 12, copilot -> mastery 1 -> 0, total 440 -> 432. Write implementations, locks, transactions and non-capability consumer imports stay unchanged; no kernel-to-server facade.",
+    "YUK-1570-supply-run": "Supply planning owns complete bounded attempt orchestration (mount identity, run, parse/validation, rejection feedback and result accounting); web sourcing implementation is separated from the tool adapter and shares production dependency assembly with executor. practice -> ai 66 -> 63, total 432 -> 429. This auxiliary metric includes two removed type-only mcp-bridge imports and consolidation of JSON-parser dependency assembly; these import changes alone are not claimed as algorithmic deepening. Existing 2-attempt bound, cross-attempt tool context identity, Exa-null gate, injection and cost/event policies preserved. Composed after main mastery-read-engine PR #1881; earlier standalone measurement was 440 -> 437.",
+    "YUK-1570-session-operation": "Review/paper/placement lifecycle operations own existing state-transition, frozen-paper and dispatch decisions behind route adapters; practice -> session 16 -> 7, total 429 -> 420. boss/runtime-env move with the operation with zero net decrease; pause/resume are thin compatibility members, not independent deepening. HTTP behavior and manifests preserved. Composed after main mastery-read-engine PR #1881; earlier standalone measurement was 440 -> 431. Latest composition includes supply PR #1883; main server baseline 429.",
+    "YUK-1622": "agency -> practice 4 -> 5 (+1, total 42 -> 43 after main's YUK-1571 shared-read offset): coach_daily imports the practice public resolveDailyReviewPlanInputs so the TodayPlan due queue, daily budget and measured pace have one formula and one source; Coach reads practice's public module instead of copying the formula. PM ruling (Linear YUK-1622 comment 82cd19fd-51d1-46d5-bc70-5b0365409dd1, https://linear.app/yukoval-studios/issue/YUK-1622#comment-82cd19fd) approved this single edge only; it is not a general relaxation."
   },
+  "changes": [
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> session",
+      "date": "2026-10-20",
+      "from": 16,
+      "to": 7,
+      "direction": "decrease"
+    },
+    {
+      "direction": "increase",
+      "debt": "crossCapabilityValue",
+      "pair": "agency -> practice",
+      "date": "2026-10-20",
+      "from": 4,
+      "to": 5,
+      "reason": "TodayPlan 的到期队列、每日预算和实测节奏必须由同一公式、同一来源计算；Coach 通过 practice 的公开模块读取，不复制公式。仅批准这一条边，不外延。",
+      "exitCondition": "当 TodayPlan 的到期队列、预算和节奏读取迁入 kernel 所有的读模型，或 Coach 不再需要 practice 的这三个输入时，把 agency -> practice 归回 4；本记录不得复用或抵其他上调。",
+      "justification": {
+        "kind": "recorded_ruling",
+        "ruling": "https://linear.app/yukoval-studios/issue/YUK-1622#comment-82cd19fd"
+      }
+    }
+  ],
   "debts": {
     "capabilityToServer": {
-      "total": 444,
+      "total": 420,
       "byOwnerPair": {
         "agency -> ai": 28,
         "agency -> boss": 10,
@@ -39,7 +82,6 @@
         "copilot -> boss": 6,
         "copilot -> events": 5,
         "copilot -> http": 1,
-        "copilot -> mastery": 1,
         "copilot -> memory": 1,
         "copilot -> orchestrator": 1,
         "copilot -> proposals": 1,
@@ -64,7 +106,7 @@
         "knowledge -> calibration": 1,
         "knowledge -> conjectures": 1,
         "knowledge -> fsrs": 2,
-        "knowledge -> mastery": 6,
+        "knowledge -> mastery": 1,
         "knowledge -> memory": 2,
         "knowledge -> projections": 13,
         "knowledge -> proposals": 3,
@@ -80,7 +122,7 @@
         "observability -> r2": 2,
         "observability -> subjects": 9,
         "practice -> advisory-locks": 5,
-        "practice -> ai": 66,
+        "practice -> ai": 63,
         "practice -> assessment": 1,
         "practice -> boss": 18,
         "practice -> calibration": 3,
@@ -88,7 +130,7 @@
         "practice -> events": 1,
         "practice -> fsrs": 6,
         "practice -> http": 3,
-        "practice -> mastery": 18,
+        "practice -> mastery": 12,
         "practice -> memory": 1,
         "practice -> orchestrator": 1,
         "practice -> projections": 4,
@@ -96,7 +138,7 @@
         "practice -> questions": 14,
         "practice -> r2": 4,
         "practice -> runtime-env": 4,
-        "practice -> session": 16,
+        "practice -> session": 7,
         "shell -> boss": 1,
         "shell -> proposals": 4,
         "shell -> records": 1,
@@ -109,27 +151,25 @@
       "byOwnerPair": {}
     },
     "crossCapabilityValue": {
-      "total": 48,
+      "total": 43,
       "byOwnerPair": {
-        "agency -> ingestion": 1,
         "agency -> knowledge": 4,
-        "agency -> notes": 3,
-        "agency -> practice": 4,
+        "agency -> notes": 2,
+        "agency -> practice": 5,
         "copilot -> agency": 1,
         "copilot -> notes": 2,
         "copilot -> practice": 1,
         "ingestion -> knowledge": 2,
         "ingestion -> practice": 2,
-        "knowledge -> agency": 2,
-        "knowledge -> notes": 1,
-        "knowledge -> practice": 3,
+        "knowledge -> agency": 1,
+        "knowledge -> practice": 1,
         "notes -> knowledge": 1,
         "observability -> agency": 2,
         "observability -> practice": 1,
         "onboarding -> practice": 1,
         "practice -> agency": 3,
-        "practice -> ingestion": 2,
-        "practice -> knowledge": 3,
+        "practice -> ingestion": 1,
+        "practice -> knowledge": 4,
         "shell -> agency": 2,
         "shell -> knowledge": 1,
         "shell -> notes": 2,
