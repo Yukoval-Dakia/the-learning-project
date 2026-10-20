@@ -57,9 +57,6 @@ import {
   DECLARED_BLANK_COMPARE_VERSION,
   Presentation,
   declaredBlankGradeReadiness,
-  describeAnswerShape,
-  findAnswerShapeDeclarations,
-  findBlankOrderDeclarations,
   findCustomCodeForbiddenSequence,
   validateExecutionPlan,
   validatePresentation,
@@ -81,11 +78,11 @@ import {
   source_asset,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { resolveGroupContract } from './assessment-group-contract';
 import {
   type NormalizedContract,
   type PartRow,
   type PublishedContractSeal,
-  normalizeQuestionGroupToContract,
   publishedContractSeal,
   publishedSealAccepts,
 } from './assessment-normalization';
@@ -1157,107 +1154,12 @@ export async function loadQuestionGroupContractSnapshot(
     return meta?.archived_at == null && meta?.dismissed_at == null;
   });
 
-  // ---- YUK-1568（第 1 片）中央保护：已声明 revision 以冻结四层为权威 ----
-  //
-  // 当前 revision 携带 answer_shape / blank_order 时，读取不再从 flat
-  // question / legacy structured 重建（那会掉声明再铸新 revision），而是
-  // 原样返回冻结契约 —— source_verify C1 守卫与 admission loadDefinition
-  // 因此看到与库内一致的 integrity_digest。未支持/坏声明（未知版本、未知
-  // 字段）在这里 fail-loud：拒绝读取，绝不 strip 后回退旧解释。
-  //
-  // 注：这里对 lifecycle 的读不加锁（快照语义）；publisher 调用方随后会
-  // FOR UPDATE 重读并做 CAS —— 声明态若被并发发布改变，CAS 冲突 fail-closed。
-  const [declaredLifecycle] = await db
-    .select({ revisionId: question_group_lifecycle.current_revision_id })
-    .from(question_group_lifecycle)
-    .where(eq(question_group_lifecycle.group_id, root.id))
-    .limit(1);
-  let declaredRevisionId: string | null = null;
-  let frozenContract: NormalizedContract | null = null;
-  if (declaredLifecycle?.revisionId != null) {
-    const [current] = await db
-      .select({
-        revision_id: question_revision.revision_id,
-        integrity_digest: question_revision.integrity_digest,
-        structure: question_revision.structure,
-        response_spec: question_revision.response_spec,
-        scoring_basis: question_revision.scoring_basis,
-        execution_plan: question_revision.execution_plan,
-        presentation: question_revision.presentation,
-      })
-      .from(question_revision)
-      .where(eq(question_revision.revision_id, declaredLifecycle.revisionId))
-      .limit(1);
-    if (current != null) {
-      const shapeDeclarations = findAnswerShapeDeclarations(current.response_spec);
-      const orderDeclarations = findBlankOrderDeclarations(current.structure);
-      if (shapeDeclarations.length > 0 || orderDeclarations.length > 0) {
-        let seal: PublishedContractSeal;
-        try {
-          seal = publishedContractSeal({
-            structure: current.structure,
-            response_spec: current.response_spec,
-            scoring_basis: current.scoring_basis,
-            execution_plan: current.execution_plan,
-            ...(current.presentation != null ? { presentation: current.presentation } : {}),
-          });
-        } catch (error) {
-          const detail = error instanceof Error ? error.message : String(error);
-          throw new Error(
-            `loadQuestionGroupContractSnapshot: revision '${current.revision_id}' of group '${root.id}' carries answer declarations this reader cannot parse (${
-              shapeDeclarations
-                .map((d) => `${d.slot_id}:${describeAnswerShape(d.answer_shape)}`)
-                .join(', ') ||
-              `blank_order on ${orderDeclarations.map((d) => d.part_id).join(', ')}`
-            }) — ${detail} — refusing to fall back to the legacy row interpreter`,
-          );
-        }
-        declaredRevisionId = current.revision_id;
-        frozenContract = {
-          structure: seal.parsed.structure,
-          response_spec: seal.parsed.response_spec,
-          scoring_basis: seal.parsed.scoring_basis,
-          execution_plan: seal.parsed.execution_plan,
-          ...(seal.parsed.presentation != null ? { presentation: seal.parsed.presentation } : {}),
-          integrity_digest: current.integrity_digest,
-          group_id: root.id,
-          conversion_issues: [],
-          rule_statement_origins: {},
-        };
-      }
-    }
-  }
-  if (frozenContract != null) {
-    return {
-      rootId: root.id,
-      root,
-      partRows,
-      liveParts,
-      declaredRevisionId,
-      contract: frozenContract,
-    };
-  }
-
-  // figure 实内容 digest 核验（root + parts 全部 figure 资产）：来自 asset
-  // store 元数据（source_asset.sha256，裸 hex）。无核验值 ⇒ normalizer 如实
-  // 标 unverified + conversion issue（不伪造 digest）。
-  const figureAssetIds = new Set<string>();
-  for (const f of root.figures ?? []) figureAssetIds.add(f.asset_id);
-  for (const p of liveParts) for (const f of p.figures ?? []) figureAssetIds.add(f.asset_id);
-  const figureDigests: Record<string, string> = {};
-  if (figureAssetIds.size > 0) {
-    const assetRows = await db
-      .select({ assetId: source_asset.id, sha256: source_asset.sha256 })
-      .from(source_asset)
-      .where(inArray(source_asset.id, [...figureAssetIds]));
-    for (const assetRow of assetRows) figureDigests[assetRow.assetId] = assetRow.sha256;
-  }
-
-  const contract = normalizeQuestionGroupToContract(
-    { ...(root as Parameters<typeof normalizeQuestionGroupToContract>[0]), figureDigests },
-    liveParts,
-  );
-  return { rootId: root.id, root, partRows, liveParts, declaredRevisionId: null, contract };
+  // 契约如何物化（declared 冻结层 | legacy 行归一 + figure 实内容 digest
+  // 核验，含 YUK-1568 fail-loud 保护）由 ./assessment-group-contract 全权裁
+  // 决 —— 本口只对组行快照的边界（root 锁序 + parts + live 过滤）与返回
+  // 形状负责。
+  const { declaredRevisionId, contract } = await resolveGroupContract(db, root, liveParts);
+  return { rootId: root.id, root, partRows, liveParts, declaredRevisionId, contract };
 }
 
 // ─── 从 legacy 行发布（加载 + 归一 + 发布 的便捷 seam） ─────
