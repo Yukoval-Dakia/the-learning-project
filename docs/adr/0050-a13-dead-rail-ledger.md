@@ -30,7 +30,7 @@ A13 问责轨上有四条同型债（「建成不通电」/「结构死格」/�
 | 事实 | 证据（符号锚，用 grep 定位） |
 |------|------|
 | reconcile 是 `upsertKcTypedState` 的**唯一生产调用者** | `src/server/conjectures/reconcile.ts` → `reconcileConjecturePredictions()` 内对 `upsertFn(db, {…})` 的调用（`upsertFn` 默认解析为 `upsertKcTypedState`）；全仓 grep `upsertKcTypedState` 其余命中全在 `*.test.ts` / 注释 |
-| 它**硬编码** `confused_with_kc_id: null` | 同一 `upsertFn(db, {…})` 调用内的 `confused_with_kc_id: null` 字面量（紧邻注释自陈「Phase 0 supplies NO confused_with KC」）；`grep -n 'confused_with_kc_id: null' src/server/conjectures/reconcile.ts` |
+| 它**硬编码** `confused_with_kc_id: null` | 同一 `upsertFn(db, {…})` 调用内的 `confused_with_kc_id: null` 字面量（文件头：此循环传入 null，解除前归纳侧须点名第二个 KC 并核实其存在）；`grep -n 'confused_with_kc_id: null' src/server/conjectures/reconcile.ts` |
 | 唯一 gate 要求该字段为真才返回 `confused-with-X` | `src/server/conjectures/typed-state.ts` → `nextTypedState()` 的四项合取 `if`（`proposed==='confused-with-X' && discriminating && recurrence_count>=CONFUSED_WITH_RECURRENCE_FLOOR && confused_with_kc_id`） |
 | `upsertKcTypedState` 是 `kc_typed_state` 的**单写者**，CI 锁死 | `tests/integration/step9-invariant-audit.test.ts` → 测试 `db.{insert,update}(kc_typed_state) appears only in src/server/conjectures/typed-state.ts (A7 settlement ledger)` |
 | 诱导侧 schema **根本没有**这个字段 | `src/core/schema/proposal.ts` → `ConjectureProposalChange` 的字段列表无 `confused_with_kc_id` |

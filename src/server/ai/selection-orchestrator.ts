@@ -3,7 +3,7 @@
 //
 // 权威 spec：
 //   - docs/superpowers/plans/2026-06-16-phase3-randomized-mfi-impl.md（Step B）
-//   - ADR-0042 编排档2 amendment（docs/adr/0042-...md:46-68）
+//   - ADR-0042 编排档2 amendment（docs/adr/0042-mfi-selection-signal-three-layer-engine.md:46-68）
 //
 // 两个出口：
 //   - buildSelectionOrchestratorInput(candidates)：把 Step A 的 CollectedSignal[] 投影成

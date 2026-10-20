@@ -1,27 +1,14 @@
-// YUK-531 (A5 S4 / ADR-0036 RT1) — misconception HARD-confirm decision layer (Tier 1).
-//
-// The SISTER of reconcile.ts (NOT inside it — import-ring stays pure: reconcile
-// imports scoring+typed-state, this imports scoring only; neither imports the other).
-// This module is the pure decision/read layer for the promote-identity axis:
-// "can this evidence DISSOCIATE a HELD misconception M from a mere skill deficit S?"
-// (R3 identifiability / SISM). YUK-795 wires the batch reader + verdict into the
-// nightly prediction-accountability ranker. The hard-label mutation itself remains
-// fail-closed: a soft→hard flip still demands a FRESH owner confirmation at a
-// dedicated command and is never inferred from the nightly pass.
-//
-// Tier-1 red lines (design 2026-07-01-misconception-promote-mechanism.md §6):
-//   - n=1 SAFE: everything here is a COUNT, a two/three-value READ, or an ENUM. There
-//     is ZERO fitted parameter — no se/sp/ρ, no Bayesian posterior, no Kish n_eff
-//     arithmetic (those are Tier 2, Rust-first, DEFERRED). δ_sep / bands / windows are
-//     NAMED constants (owner-tunable operating points), never learner-fitted.
-//   - ND-5: this module WRITES NOTHING. It reads prediction_score/probe_result events +
-//     baseline_p/p(L) facts and returns a verdict. No mastery/θ̂/p(L)/FSRS/difficulty is
-//     ever touched (read-only on baseline_p is allowed).
-//   - flag OFF ⇒ decideDissociation is STRUCTURALLY unable to return HARD_CONFIRM.
-//   - a decisive PROBE only separates M from BASELINE, never from a rival M′ (C1-O1): with
-//     no rival-separating probe in the pool the verdict is CAPPED at EMERGING, never HARD.
-//   - proper-scoring reuse is the SINGLE-POINT skillScorePoint (scoring.ts); the honest
-//     "beats baseline" WINDOW MEAN is Rust-owned + DEFERRED (ADR-0046). Not used here.
+// Can this evidence separate a held misconception from a skill gap?
+// Sister of reconcile.ts, and not inside it. Reconcile imports scoring and typed-state.
+// This file imports scoring only. Neither file imports the other.
+// Counts, two- or three-value reads, and enums only. No fitted parameter.
+// The thresholds below are owner operating points, not values fitted to a learner.
+// Writes nothing. Does not touch mastery, FSRS, or difficulty. Reading baseline probability is allowed.
+// With the hard-confirm flag off, decideDissociation cannot return HARD_CONFIRM.
+// A probe separates the misconception from the baseline, not from a rival misconception.
+// Without a rival-separating probe the verdict stops at EMERGING.
+// Uses the single-probe skill score. The window mean is deferred and not migrated yet (ADR-0046).
+// A soft-to-hard label still needs a fresh owner confirmation. The nightly pass never infers it.
 
 import { and, eq, inArray, sql } from 'drizzle-orm';
 
@@ -36,123 +23,91 @@ import { event } from '@/db/schema';
 import { getCorrectionStatuses } from '@/kernel/events';
 import { scorePrediction } from '@/server/conjectures/scoring';
 
-// ── Tier-1 knobs (NAMED consts + owner-tunable — never learner-fitted) ───────────────
-
 /**
- * Proper-distractor SEPARATION floor: a probe is admissible as CRUCIAL evidence only when
- * |predicted_p − baseline_p| ≥ δ_sep (the conjecture's prediction genuinely diverges from
- * the quantitative baseline, so the outcome can discriminate a held misconception from a skill
- * deficit). 0.20 ≈
- * Köhn-Chiu-Wang proper-distractor separation. Owner-tunable.
+ * A probe is crucial evidence only when prediction and baseline differ by at least this much.
+ * Otherwise the outcome cannot separate a held misconception from a skill gap.
+ * 0.2 matches the proper-distractor separation in Köhn, Chiu, and Wang. Owner-tunable, not fitted.
  */
 export const DELTA_SEP = 0.2;
 
 /**
- * "High mastery" p(L) band for the DISCRIMINATION gate: a HELD misconception is credible only
- * when the learner errs WITH mastery in place (an error at low p(L) is a skill deficit, not held-M).
- * Read as a three-value band (high / low / unknown≡null). 0.6 = owner-tunable operating point.
+ * An error counts toward a held misconception only at or above this mastery.
+ * Below it, the error is a skill gap. A null baseline is unknown, not high. Owner-tunable.
  */
 export const HELD_M_MASTERY_BAND = 0.6;
 
 /**
- * Independence floor. n_dedup counts DISTINCT (question_id, session_window, judge_run_id)
- * tuples so a noisy judge's self-consistency triple / rerun collapses to ONE unit and cannot
- * railroad a mint. Sits at 2 to reuse the existing recurrence floor (evidence.ts). This is a
- * DEDUP COUNT, not a Kish n_eff (that is Tier 2). Owner-tunable.
+ * Distinct (question, session, judge run) tuples required before a label can be minted.
+ * Reruns of one judging run collapse, so one noisy judge cannot force it.
+ * Same floor as recurrence. A count, not a Kish effective sample size. Owner-tunable.
  */
 export const N_DEDUP_FLOOR = 2;
 
 /**
- * Stability floor (VanLehn bug-migration guard): a misconception that flickers in a SINGLE
- * context is a transient bug, not a stable identity. Require ≥2 distinct contexts. Owner-tunable.
+ * Distinct contexts required. One context is a transient bug, not a stable misconception (VanLehn).
+ * Owner-tunable.
  */
 export const CONTEXT_SPREAD_FLOOR = 2;
 
-/**
- * Post-promotion recency window for the {active, quiet} display band. 21d = owner-tunable.
- * This is a read-time projection, NOT a second forgetting scheduler (Tier 3, n=1 not built).
- */
+/** Display band only. Not a second forgetting schedule. Owner-tunable. */
 export const RECENCY_ACTIVE_WINDOW_MS = 21 * 24 * 60 * 60 * 1000;
 
-/**
- * Maximum knowledge/result ids per SQL batch in the accountability reader. Keeps
- * IN-clause plans bounded on large nightly histories. Owner-tunable.
- */
+/** Bounds each SQL IN list. A long nightly history must not plan one unbounded clause. Owner-tunable. */
 export const MAX_ACCOUNTABILITY_IDS_PER_QUERY = 500;
 
 /**
- * Archive-honesty map: which cause_categories denote INTUITIVE / ONTOLOGICAL misconceptions
- * that are SUPPRESSED-not-deleted (Shtulman) → archive as `dormant` (a "cure" is machine-
- * inexpressible), vs PROCEDURAL ones that can be genuinely `resolved`. Read-time projection,
- * ZERO columns. Grounded against the live subject profiles (general, yuwen, math, physics):
- * only `concept` (概念理解, present in all four) is unambiguously conceptual/ontological. Every
- * other cause — knowledge_gap, reading, memory, method, calculation, computation, expression,
- * unit / unit_error, dimension, formula, grammar, word_meaning, carelessness, time_pressure,
- * other — defaults to procedural, i.e. `resolved`. CONSERVATIVE and owner-tunable: widen this
- * set as the owner sees fit.
+ * Ontological causes are archived as dormant, not deleted. A cure is not something this system can record (Shtulman).
+ * Procedural causes can be resolved. Only `concept` is ontological across the live subject profiles.
+ * Every other cause defaults to resolved. Read at display time. No column. Owner-tunable.
  */
 export const DORMANT_CAUSE_CATEGORIES: ReadonlySet<string> = new Set(['concept']);
 
-// ── Records + evidence summary ───────────────────────────────────────────────────────
-
-/** One scored dissociation observation (mapped from a prediction_score event). */
+/** One scored observation, mapped from a prediction_score event. */
 export interface DissociationRecord {
-  /** the prediction_score event identity (audit/ref provenance). */
   scoreEventId: string;
-  /** the conjecture proposal that made the prediction. */
   conjectureEventId: string;
-  /** the backing probe_result event identity. */
   probeResultEventId: string;
-  /** question id: anchor payload → backing probe_result.subject_id → result event id. */
   questionId: string;
-  /** session/time bucket (UTC-day default) — dedup dimension 2. */
+  /** Second dedup dimension. UTC day when the event carries no window. */
   sessionWindow: string;
-  /** judging run identity — dedup dimension 3 (reruns/self-consistency collapse). */
+  /** Third dedup dimension. Reruns of one judging run collapse. */
   judgeRunId: string;
-  /** context class for contextSpread (VanLehn migration guard). */
+  /** Context class for the stability floor. A question id is not a context. */
   contextKey: string;
-  /** the learner's PFA p(L) at induction — three-value read (null≡unknown). */
+  /** Null means unknown, not low mastery. */
   baselineP: number | null;
-  /** the conjecture's predicted probability of a correct answer. */
   predictedP: number;
-  /** graded probe outcome (1 correct / 0 wrong). */
+  /** 1 when the answer is correct. */
   outcome: 0 | 1;
-  /** the probe isolates THIS misconception (conjecture.discriminating). */
+  /** True only when the probe isolates this misconception. */
   discriminating: boolean;
-  /** the RESPONSE matched a distractor tag / rubric facet — NOT merely "unexpectedly wrong". */
+  /** The response matched a distractor or rubric facet. Unexpectedly wrong is not enough. */
   mDiagnostic: boolean;
-  /** probe lifecycle resolution. */
   resolution: 'evidence_for' | 'confirmed' | 'retired';
-  /** score source instant; prediction-accountability streaks stay ordered by this. */
+  /** Accountability streaks stay ordered by this, not by batch time. */
   scoredAt: Date;
-  /** effective evidence instant (terminal confirmation time when recurrence confirms sequence 1). */
+  /** Confirmation time when a later recurrence confirms sequence 1. Otherwise the score time. */
   judgedAt: Date;
 }
 
-/** Counts + booleans distilled from the records — the input to decideDissociation. */
+/** Counts and booleans. The only input decideDissociation is allowed to see. */
 export interface DissociationEvidence {
-  /** distinct (question, session, judge-run) tuples — noise-collapsed independence. */
+  /** Distinct (question, session, judge run) tuples after reruns collapse. */
   nDedup: number;
-  /** distinct contexts a discriminating manifestation appeared in. */
   contextSpread: number;
-  /** count of CRUCIAL + confirmed observations (admissible held-M evidence). */
+  /** Confirmed observations that also passed the crucial gate. */
   crucialConfirmedCount: number;
-  /** retired observations AFTER the last crucial-confirmed (asymmetry / falsification). */
+  /** Retired observations after the latest crucial confirmation. A falsification counter. */
   retiredSinceLastCrucial: number;
-  /** ≥1 discriminable context exists (p(L) high AND M-diagnostic response). */
+  /** Mastery was high and the response was diagnostic. Both are required. */
   hasDiscriminatingContext: boolean;
-  /** most-recent discriminating activation instant (→ recency band), or null. */
+  /** Drives the display recency band. Null when there is no discriminating activation. */
   lastDiscriminatingActivation: Date | null;
 }
 
-// ── Pure gates ───────────────────────────────────────────────────────────────────────
-
 /**
- * DISCRIMINATION gate (the real Tier-1 progress): a context distinguishes HELD-M from缺-skill
- * ONLY when the learner errs WITH mastery in place (p(L) high) AND the response is M-DIAGNOSTIC
- * (matches a distractor tag / rubric facet). p(L) alone would amplify high-mastery SLIPS (C1-O3),
- * so both facts are required. A null baseline (cold start) is NOT high — cannot confirm held-M.
- * Two facts, a three-value read, no accumulator.
+ * Held misconception, not a skill gap, only when mastery is high and the response is diagnostic.
+ * Mastery alone would treat a high-mastery slip as a misconception. A null baseline is not high.
  */
 export function isDiscriminatingContext(r: {
   baselineP: number | null;
@@ -162,11 +117,9 @@ export function isDiscriminatingContext(r: {
 }
 
 /**
- * isCrucial admissibility gate: the probe is admissible as CRUCIAL evidence iff it is
- * `discriminating` AND its prediction separates from the baseline by ≥ δ_sep AND the model
- * beat the baseline at THIS point (single-point skillScorePoint > 0). Reuses scoring.ts's
- * SINGLE-POINT skill — deliberately NOT the Brier window mean (Rust-deferred, ADR-0046). A
- * null baseline is inadmissible (no separation to measure).
+ * Crucial only when the probe discriminates, prediction and baseline differ by DELTA_SEP,
+ * and this probe beat the baseline. Uses the single-probe skill score. The window mean is deferred, not migrated yet.
+ * A null baseline cannot separate.
  */
 export function isCrucial(r: {
   discriminating: boolean;
@@ -181,16 +134,14 @@ export function isCrucial(r: {
   return skillScorePoint > 0;
 }
 
-/** Independence dedup key — collapses reruns / self-consistency onto one unit. */
+/** Collapses reruns of one judging run onto one independence unit. */
 function dedupKey(r: DissociationRecord): string {
   return `${r.questionId}::${r.sessionWindow}::${r.judgeRunId}`;
 }
 
 /**
- * Distil records into the evidence summary (PURE). Counts only — dedup set size, distinct
- * discriminating contexts, crucial-confirmed tally, and the asymmetry counter (retired AFTER
- * the last crucial-confirmed). No fitted arithmetic. Sorted by judgedAt so "since the last
- * crucial" is well defined and the recency anchor is the latest discriminating activation.
+ * Counts only. A new crucial confirmation resets the retirement counter.
+ * Sorted by judgedAt so "since the last crucial confirmation" is defined.
  */
 export function summarizeDissociation(records: DissociationRecord[]): DissociationEvidence {
   const sorted = [...records].sort((a, b) => a.judgedAt.getTime() - b.judgedAt.getTime());
@@ -210,7 +161,7 @@ export function summarizeDissociation(records: DissociationRecord[]): Dissociati
     }
     if (r.resolution === 'confirmed' && isCrucial(r)) {
       crucialConfirmedCount += 1;
-      retiredSinceLastCrucial = 0; // a fresh crucial-confirmed resets the falsification counter
+      retiredSinceLastCrucial = 0;
     } else if (r.resolution === 'retired') {
       retiredSinceLastCrucial += 1;
     }
@@ -226,34 +177,26 @@ export function summarizeDissociation(records: DissociationRecord[]): Dissociati
   };
 }
 
-// ── Tier-1 decision ─────────────────────────────────────────────────────────────────
-
 /**
- * Dissociation verdict:
- *   - HARD_CONFIRM — soft→hard upgrade is licensed (all gates + flag ON + rival probe + fresh
- *     owner confirmation). The nightly ranker always passes ownerFreshlyConfirmed=false,
- *     so it can observe EMERGING but never perform the protected label mutation.
- *   - EMERGING     — discriminating held-M evidence is accruing but CAPPED (flag OFF, or no
- *     rival-separating probe, or no fresh owner confirm). Stays soft; renders as "emerging".
- *   - INSUFFICIENT — the gates are not met: most likely a skill deficit, not a held misconception.
+ * HARD_CONFIRM licenses a soft-to-hard upgrade. The nightly ranker passes a false owner
+ * confirmation, so it can observe EMERGING and cannot mint the hard label.
+ * EMERGING means the base gates passed and the flag, the rival probe, or a fresh confirmation is missing.
+ * INSUFFICIENT means the evidence did not clear the threshold.
  */
 export type DissociationVerdict = 'HARD_CONFIRM' | 'EMERGING' | 'INSUFFICIENT';
 
 export interface DecideDissociationOpts {
-  /** misconceptionHardConfirmEnabled() — flag OFF ⇒ HARD_CONFIRM is structurally impossible. */
+  /** Off makes HARD_CONFIRM unreachable, whatever the evidence says. */
   hardConfirmEnabled: boolean;
-  /** the pool has a probe that separates M from a rival M′ (honest decisive experiment). */
+  /** A probe in the pool separates this misconception from a rival one. */
   hasRivalProbe: boolean;
-  /** the owner FRESHLY re-confirmed the soft→hard upgrade (never automatic). */
+  /** The owner just confirmed the upgrade. Never inferred. */
   ownerFreshlyConfirmed: boolean;
 }
 
 /**
- * Decide the dissociation verdict (PURE). The base gates establish that held-M is DISCRIMINABLE
- * at all (≥1 discriminating context, ≥1 crucial-confirmed, 0 retired since, n_dedup≥2,
- * contextSpread≥2). HARD additionally REQUIRES the flag ON + a rival-separating probe + a fresh
- * owner confirmation; ANY of those missing caps the verdict at EMERGING (never HARD). With the
- * flag OFF this can never return HARD_CONFIRM — structurally, not by convention.
+ * Base gates first. HARD_CONFIRM also needs the flag, a rival-separating probe, and a fresh
+ * owner confirmation. Any one missing stops at EMERGING. Flag off cannot return HARD_CONFIRM.
  */
 export function decideDissociation(
   ev: DissociationEvidence,
@@ -267,20 +210,13 @@ export function decideDissociation(
     ev.contextSpread >= CONTEXT_SPREAD_FLOOR;
   if (!gatesMet) return 'INSUFFICIENT';
 
-  // Rival-probe honesty + fresh owner confirmation + flag ON, else cap at EMERGING. flag OFF
-  // makes HARD_CONFIRM unreachable regardless of evidence strength.
   if (opts.hardConfirmEnabled && opts.hasRivalProbe && opts.ownerFreshlyConfirmed) {
     return 'HARD_CONFIRM';
   }
   return 'EMERGING';
 }
 
-// ── Read-time projections (0 columns) ─────────────────────────────────────────────────
-
-/**
- * Post-promotion recency band from the last discriminating activation (read-time projection,
- * NOT stored). Never a forgetting scheduler — just active/quiet for display.
- */
+/** Display band from the last discriminating activation. Not stored, and not a forgetting schedule. */
 export function recencyBand(
   lastDiscriminatingActivation: Date | null,
   now: Date,
@@ -291,31 +227,19 @@ export function recencyBand(
     : 'quiet';
 }
 
-/**
- * Archive-honesty read-time map: procedural cause → `resolved`, intuitive/ontological cause →
- * `dormant` (suppressed-not-deleted; a "cure" is machine-inexpressible). ZERO columns —
- * derived from cause_category alone. Unknown/unlisted causes default to the conservative
- * `resolved`.
- */
+/** Procedural and unknown causes resolve. Ontological causes go dormant. Derived from the category alone. */
 export function resolutionClass(causeCategory: string): 'resolved' | 'dormant' {
   return DORMANT_CAUSE_CATEGORIES.has(causeCategory) ? 'dormant' : 'resolved';
 }
 
-// ── Thin DB reader ─────────────────────────────────────────────────────────────────────
-
-/** Default UTC-day session bucket for the dedup tuple when the event carries none. */
+/** UTC day, used only when the event carries no session window. */
 function utcDayWindow(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
 /**
- * Map ONE `experimental:prediction_score` payload → a DissociationRecord, or null (fail-closed)
- * if the load-bearing scoring facts are unsound. The scoring facts (predicted_p / baseline_p /
- * outcome / resolution) are already written by the reconcile loop. Score anchors are derived
- * copies, so the DISCRIMINATION facts (`m_diagnostic` / `context` / `session_window` /
- * `judge_run_id`) come only from the authoritative probe-result/Judge event. Missing facts use
- * conservative defaults. A malformed legacy anchor therefore cannot manufacture target-error,
- * context-spread, or independence evidence.
+ * Map one prediction_score payload, or return null when a scoring fact is unsound.
+ * Discrimination facts come from the probe result. Copies on the score cannot mint them.
  */
 function predictionScoreToRecord(
   eventId: string,
@@ -330,15 +254,9 @@ function predictionScoreToRecord(
   const outcome = payload.outcome;
   const resolution = payload.resolution;
   if (typeof predictedP !== 'number' || !Number.isFinite(predictedP)) return null;
-  // baseline_p is a LOAD-BEARING scoring fact — DROPPED fail-closed (whole record) on any
-  // null/NaN/±Infinity/non-number, NOT passed through as the three-value null. The live producer
-  // (reconcile.ts) always writes it from baseline_p_at_induction = z.number().min(0).max(1), so a
-  // null here is ONLY an anomaly (manual edit / drift), never a legitimate cold start. The
-  // `baselineP: number | null` record type is defense-in-depth INSIDE the gates
-  // (isDiscriminatingContext/isCrucial read null as non-discriminating and never crash), NOT a
-  // signal to synthesize null records: a null baseline can never be crucial/discriminating, so
-  // KEEPing it would only let an anomaly inflate the n_dedup independence AND-gate for zero real
-  // signal. DROP = strictly safer; KEEP = weaken-fail-closed-for-nothing (Finding-2, kept as-is).
+  // Drop the record. Reconcile always writes a probability in [0, 1], so a null here is drift,
+  // not a cold start. Keeping it would inflate nDedup with a row that can never be crucial.
+  // The nullable field is only so the gates treat a missing baseline as "not high".
   if (typeof baselineP !== 'number' || !Number.isFinite(baselineP)) return null;
   if (outcome !== 0 && outcome !== 1) return null;
   if (resolution !== 'evidence_for' && resolution !== 'confirmed' && resolution !== 'retired') {
@@ -376,9 +294,7 @@ function predictionScoreToRecord(
     baselineP,
     predictedP,
     outcome,
-    // The proposal owns this diagnostic-spec fact. Legacy score anchors may
-    // omit its redundant copy; a present conflicting copy is rejected before
-    // this mapper runs.
+    // The proposal owns this fact. A conflicting copy on the score is rejected before this mapper.
     discriminating: authoritativeDiscriminating,
     mDiagnostic: sourcePayload?.m_diagnostic === true,
     resolution,
@@ -387,7 +303,7 @@ function predictionScoreToRecord(
   };
 }
 
-/** The (cause_category × knowledge_id) IDENTITY a conjecture proposal asserts. */
+/** Identity a conjecture proposal asserts. Cause and KC together, not the proposal id. */
 interface ConjectureIdentity {
   cause_category: string;
   knowledge_id: string;
@@ -458,10 +374,8 @@ function boundedChunks<T>(values: readonly T[]): T[][] {
 }
 
 /**
- * Recover the misconception identity and immutable scoring facts for each backing
- * conjecture (read-only JOIN, ZERO writes). The proposal is authoritative for
- * cause, KC, predicted_p, and baseline_p_at_induction; copies on a score anchor
- * are only accepted after exact cross-validation.
+ * Read identity and the immutable scoring facts from each proposal. Writes nothing.
+ * Copies on a score anchor are accepted only after they match these values.
  */
 async function loadIdentityByConjectureId(
   db: Db,
@@ -485,10 +399,7 @@ async function loadIdentityByConjectureId(
   return out;
 }
 
-/**
- * Read identity and immutable scoring facts off a conjecture proposal,
- * fail-closed. Score payload copies are never trusted alone.
- */
+/** Null when the proposal is not a conjecture or a scoring fact is unsound. Copies are not a source. */
 function extractConjectureIdentity(
   payload: Record<string, unknown> | null,
 ): ConjectureIdentity | null {
@@ -537,34 +448,19 @@ function extractConjectureIdentity(
 }
 
 /**
- * Gather dissociation evidence for ONE misconception identity = (cause_category × knowledge_id)
- * (PURE-READ, no writes). A misconception is keyed on cause×KC (misconception-promote.ts:100), so
- * this reads the KC's `experimental:prediction_score` events plus terminal score-free recurrence
- * projections, JOINS each back to its conjecture proposal (via `conjecture_event_id`) to recover
- * the proposal's AUTHORITATIVE (cause × kc) identity, and keeps ONLY anchors whose proposal
- * identity equals the requested (cause×KC). A valid terminal projection upgrades the associated
- * sequence-1 `evidence_for` score to `confirmed`; it never receives or fabricates its own score. The
- * proposal — not the score payload — is the identity source of truth on BOTH axes: because the SQL
- * pre-filter already pins score.payload.knowledge_id == params.knowledgeId, re-checking the
- * proposal's knowledge_id here CROSS-VALIDATES the two kc copies, so a mis-stamped score whose
- * conjecture points at another KC's same-cause conjecture can never sneak into this (cause×KC)
- * (Finding-3). Scores from a DIFFERENT cause OR a different kc belong to a DIFFERENT misconception
- * and must NEVER pool into this one — pooling would let two single-context rival misconceptions
- * fake a 2-context spread and forge held-M from rival-M′ evidence (violates doc C1-O1 rival-M′
- * separation + ③ VanLehn bug-migration guard). Grouping is by cause×KC, NOT by raw
- * conjecture_event_id: a later RE-INDUCTION of the same cause×KC is a fresh proposal but the SAME
- * misconception, so its scores must accrue together. Never touches mastery/θ̂/FSRS (ND-5); only
- * reads baseline_p off the score events. Structurally cannot confirm hard from today's un-tagged data
- * (see predictionScoreToRecord). The join is a query — counts/enumerates only, ZERO fitted
- * parameter (n=1 red line held).
+ * Read rows for each requested (cause, knowledge) identity. Writes nothing.
+ * The proposal is the identity, on both axes. A score whose payload KC disagrees with its proposal
+ * matches neither pool. Scores from another cause or KC stay out, or two single-context rivals
+ * could fake a two-context spread.
+ * A later proposal for the same cause and KC is the same misconception, so its scores accrue.
+ * A terminal score-free projection can confirm the sequence-1 score. It does not invent a second score.
  */
 export async function gatherDissociationRecordsByIdentity(
   db: Db,
   targets: readonly ConjectureIdentityTarget[],
 ): Promise<Map<string, DissociationRecord[]>> {
-  // Total-map contract: every requested key remains present. Invalid duplicate
-  // aliases get an empty evidence bucket (plus a warning), so callers can
-  // distinguish "requested but inadmissible" from "not requested".
+  // Every requested key stays in the map. A bad duplicate gets an empty bucket and a warning,
+  // so callers can tell "inadmissible" from "not requested".
   const out = new Map<string, DissociationRecord[]>();
   const targetKeyByIdentity = new Map<string, string>();
   const identityByTargetKey = new Map<string, string>();
@@ -616,10 +512,8 @@ export async function gatherDissociationRecordsByIdentity(
         .orderBy(event.created_at, event.id),
     ),
   );
-  // Current production is an n=1 owner history, so keeping the bounded-query
-  // batches in one chronologically sorted fold is intentional. If this reader
-  // expands to multi-owner cohorts, replace this whole-history accumulator with
-  // per-owner cursors; truncating here would silently change streak semantics.
+  // One owner's history, folded in time order after the bounded queries.
+  // A multi-owner cohort needs per-owner cursors. Truncating this list would change streaks.
   const rows: Array<{ id: string; action: string; payload: unknown; created_at: Date }> =
     scoreChunks.flat();
   rows.sort((a, b) => a.created_at.getTime() - b.created_at.getTime() || a.id.localeCompare(b.id));
@@ -684,8 +578,7 @@ export async function gatherDissociationRecordsByIdentity(
     ),
   );
 
-  // Recover each score's AUTHORITATIVE identity by joining back to its conjecture proposal, then
-  // keep only the rows whose proposal (cause × kc) equals the requested misconception identity.
+  // Identity comes from the proposal. A score is kept only when that identity was requested.
   const conjectureEventIds = new Set<string>();
   for (const r of rows) {
     const cid = (r.payload as { conjecture_event_id?: unknown } | null)?.conjecture_event_id;
@@ -693,11 +586,7 @@ export async function gatherDissociationRecordsByIdentity(
   }
   const identityByConjectureId = await loadIdentityByConjectureId(db, conjectureEventIds);
 
-  // Sequence 2 intentionally has no calibrated probability, so reconcile writes a
-  // score-free projection instead of a prediction_score. Its immutable
-  // independent_probe_question_ids lineage can nevertheless confirm the scored
-  // sequence-1 observation. Fold that terminal fact onto the existing score rather
-  // than fabricating a second score row.
+  // Sequence 2 has no probability of its own. Fold its confirmation onto the sequence-1 score.
   const confirmationTimeByConjectureAndQuestion = new Map<string, Map<string, Date>>();
   for (const r of rows) {
     if (r.action !== PROBE_RESULT_PROJECTED_ACTION) continue;
@@ -753,9 +642,7 @@ export async function gatherDissociationRecordsByIdentity(
     const probeResultEventId = payload?.probe_result_event_id;
     const sourceStatus =
       typeof probeResultEventId === 'string' ? scoreStatuses.get(probeResultEventId) : undefined;
-    // Fail closed on legacy/unattributable scores: without a source probe-result id
-    // there is no way to fold later corrections or recurrence dependencies. Such a
-    // row remains in the audit log but cannot contribute to hard-confirm evidence.
+    // No source probe result means later corrections cannot be folded. Keep the audit row. Drop the evidence.
     if (
       typeof probeResultEventId !== 'string' ||
       sourceStatus !== 'active' ||
@@ -765,11 +652,8 @@ export async function gatherDissociationRecordsByIdentity(
     }
     const cid = payload?.conjecture_event_id;
     const identity = typeof cid === 'string' ? (identityByConjectureId.get(cid) ?? null) : null;
-    // Identity-scoped on the PROPOSAL (source of truth, both axes). Drop the score when it is
-    // un-attributable (no resolvable proposal) OR its proposal (cause × kc) differs from the
-    // requested identity — so rival causes never pool (FAIL-2) AND a mis-stamped score whose
-    // payload kc disagrees with its proposal kc satisfies NEITHER pool (cross-validation against
-    // the SQL kc pre-filter, Finding-3). Never trust the score payload's own knowledge_id here.
+    // Drop when the proposal is missing, or when payload and proposal disagree.
+    // A mismatched KC matches neither pool. Do not trust the score payload's own knowledge id.
     const payloadKnowledgeId = payload?.knowledge_id;
     if (
       identity === null ||
@@ -789,9 +673,7 @@ export async function gatherDissociationRecordsByIdentity(
     if (!source) continue;
     const parsed = predictionScoreToRecord(
       r.id,
-      // Legacy score anchors used the nightly batch time. Always prefer the
-      // backing probe-result timestamp so old and new histories share the same
-      // evidence chronology without rewriting immutable events.
+      // Prefer the probe time. Legacy anchors stored the nightly batch clock, and rewriting them is not allowed.
       source.createdAt,
       payload,
       source,

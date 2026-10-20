@@ -46,7 +46,7 @@ import {
   compareBySourceTierThenWhitelist,
   deriveSourceTier,
 } from '@/core/schema/provenance';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import { notDraftPredicate } from '@/db/predicates';
 import { knowledge, question } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
@@ -55,7 +55,8 @@ import {
   type QuestionServing,
   type ServingCounts,
   UNKNOWN_SERVING,
-  aggregateServingCounts,
+  countQuestionServing,
+  questionServingSet,
   readQuestionServing,
 } from './question-serving';
 
@@ -128,8 +129,7 @@ export interface ListQuestionsParams {
   // draft exclusion (default false → draft 排除惯例).
   includeDrafts?: boolean;
   draftStatus?: QuestionListDraftStatus;
-  // YUK-1514 — status=not_servable: keep only held questions (serving gate,
-  // in-memory like the tier/family paths — never SQL-paginated).
+  // status=not_servable: filter held questions before SQL pagination.
   notServable?: boolean;
   // YUK-1514 — return pagination-independent hold counts alongside the page.
   includeServingCounts?: boolean;
@@ -392,18 +392,18 @@ function deriveCandidate(row: CandidateRow): DerivedCandidate {
 // ORDER BY created_at ASC is the stable BASE order the comparator relies on
 // (compareBySourceTierThenWhitelist is a stable secondary sort within equal keys).
 async function fetchCandidates(
-  db: Db,
+  db: Db | Tx,
   filters: SQL[],
+  complete = false,
 ): Promise<{ rows: CandidateRow[]; truncated: boolean }> {
-  const rows = (await db
+  const query = db
     .select(CANDIDATE_COLUMNS)
     .from(question)
     .where(filters.length > 0 ? and(...filters) : undefined)
-    .orderBy(asc(question.created_at), asc(question.id))
-    // CANDIDATE_CAP + 1 so we can detect (and flag) truncation without an extra count.
-    .limit(CANDIDATE_CAP + 1)) as CandidateRow[];
+    .orderBy(asc(question.created_at), asc(question.id));
+  const rows = await (complete ? query : query.limit(CANDIDATE_CAP + 1));
 
-  if (rows.length > CANDIDATE_CAP) {
+  if (!complete && rows.length > CANDIDATE_CAP) {
     console.warn(
       '[questions/list] candidate set exceeded CANDIDATE_CAP; truncating in-memory derive',
       { cap: CANDIDATE_CAP },
@@ -450,14 +450,9 @@ const emptyResult = (params: ListQuestionsParams): ListQuestionsResult => ({
 /**
  * YUK-1514 — attach the serving projection to every emitted item (top-level,
  * composite children, family representatives). One batched read per call —
- * never per item (N+1). `precomputed` (keyed by group id) lets the not_servable
- * / serving_counts path reuse its full-set derivation instead of re-reading.
+ * never per item (N+1).
  */
-async function attachServingToItems(
-  db: Db,
-  items: QuestionListItem[],
-  precomputed?: Map<string, QuestionServing>,
-): Promise<void> {
+async function attachServingToItems(db: Db | Tx, items: QuestionListItem[]): Promise<void> {
   const flat: QuestionListItem[] = [];
   const collect = (item: QuestionListItem) => {
     flat.push(item);
@@ -466,10 +461,12 @@ async function attachServingToItems(
   for (const item of items) collect(item);
   // Per-ITEM attachment (P1-3): a composite child reports its own per-part
   // verdict, not the group's shared one.
-  const missing = [...new Set(flat.map((item) => item.id))].filter((id) => !precomputed?.has(id));
-  const extra = missing.length > 0 ? await readQuestionServing(db, missing) : null;
+  const serving = await readQuestionServing(
+    db,
+    flat.map((item) => item.id),
+  );
   for (const item of flat) {
-    item.serving = precomputed?.get(item.id) ?? extra?.byId.get(item.id) ?? { ...UNKNOWN_SERVING };
+    item.serving = serving.byId.get(item.id) ?? { ...UNKNOWN_SERVING };
   }
 }
 
@@ -477,10 +474,21 @@ export async function listQuestions(
   db: Db,
   params: ListQuestionsParams,
 ): Promise<ListQuestionsResult> {
+  // The SQL aggregate and the frozen-contract batches must see the same revisions.
+  if (params.notServable || params.includeServingCounts) {
+    return db.transaction((tx) => readQuestions(tx, params), {
+      isolationLevel: 'repeatable read',
+      accessMode: 'read only',
+    });
+  }
+  return readQuestions(db, params);
+}
+
+async function readQuestions(
+  db: Db | Tx,
+  params: ListQuestionsParams,
+): Promise<ListQuestionsResult> {
   const computedAtSec = Math.floor(Date.now() / 1000);
-  // Serving-count requests need the full filtered set in memory (same class of
-  // path as the tier/family aggregation) — the route rejects cursor pagination
-  // for them, so only offset paging reaches this branch.
   const needServingPass = params.notServable === true || params.includeServingCounts === true;
 
   if (params.expandRoot !== undefined) {
@@ -489,48 +497,40 @@ export async function listQuestions(
 
   const filters = buildSqlFilters(params);
 
-  // Plain default path (no tier filter, no tier sort, no family aggregation,
-  // no serving pass): created_at is a real column, so this path MUST
-  // SQL-paginate (ORDER BY created_at DESC + LIMIT/OFFSET + a separate COUNT)
-  // instead of reusing the OOM-capped in-memory candidate fetch. The cap only
-  // exists for paths that CANNOT SQL-paginate (tier filter/sort, family
-  // aggregation, serving gates — they need the full WHERE-hit set in memory,
-  // see A1b). Routing the default list through it would, once the WHERE-hit
-  // set exceeds CANDIDATE_CAP, return "the newest page of the OLDEST 2000
-  // rows" and misreport total as 2000 (plan §risk-table: "default sort_by
-  // falls back to the SQL-pageable created_at path").
   const tierFiltered = params.sourceTier !== undefined && params.sourceTier.length > 0;
   const tierSorted = params.sortBy === 'source_tier';
-  if (!params.groupByFamily && !tierFiltered && !tierSorted && !needServingPass) {
-    return flatListSqlPaginated(db, filters, params, computedAtSec);
-  }
-
-  const { rows, truncated } = await fetchCandidates(db, filters);
-  let derived = rows.map(deriveCandidate);
-
-  // Serving pass runs over the SAME filtered set the producers see — the
-  // producers' own tier filter is idempotent over this pre-filter.
-  if (tierFiltered) {
-    const wanted = new Set<SourceTier>(params.sourceTier as SourceTier[]);
-    derived = derived.filter((c) => wanted.has(c.tier));
-  }
-  let servingById: Map<string, QuestionServing> | undefined;
   let servingCounts: ServingCounts | undefined;
   if (needServingPass) {
-    const servingRead = await readQuestionServing(
-      db,
-      derived.map((c) => c.row.id),
-    );
-    servingById = servingRead.byId;
-    servingCounts = aggregateServingCounts(
-      servingRead.byId.values(),
-      servingRead.legacyUnpublished,
-    );
+    // Tier remains provenance-derived in TS. Only this opt-in combination
+    // needs its complete metadata set; it must not truncate the count's scope.
+    if (tierFiltered) {
+      const rows = await db
+        .select({ id: question.id, source: question.source, metadata: question.metadata })
+        .from(question)
+        .where(and(...filters));
+      const ids = rows
+        .filter((row) => params.sourceTier?.includes(deriveSourceTier(row).tier))
+        .map((row) => row.id);
+      filters.push(
+        sql`${question.id} in (select jsonb_array_elements_text(${JSON.stringify(ids)}::jsonb))`,
+      );
+    }
+    const servingSet = await questionServingSet(db, filters);
+    servingCounts = await countQuestionServing(db, servingSet);
     if (params.notServable) {
-      derived = derived.filter((c) => servingById?.get(c.row.id)?.servable === false);
+      filters.push(
+        sql`${question.id} in (select id from (${servingSet}) serving where not servable)`,
+      );
     }
   }
 
+  if (!params.groupByFamily && (!tierFiltered || needServingPass) && !tierSorted) {
+    const result = await flatListSqlPaginated(db, filters, params, computedAtSec);
+    return servingCounts == null ? result : { ...result, serving_counts: servingCounts };
+  }
+
+  const { rows, truncated } = await fetchCandidates(db, filters, needServingPass);
+  const derived = rows.map(deriveCandidate);
   let result = params.groupByFamily
     ? aggregateFamilies(derived, params, truncated, computedAtSec)
     : flatList(derived, params, truncated, computedAtSec);
@@ -547,7 +547,7 @@ export async function listQuestions(
 
   const attachTargets =
     result.families != null ? result.families.map((f) => f.representative) : result.items;
-  await attachServingToItems(db, attachTargets, servingById);
+  await attachServingToItems(db, attachTargets);
   return result;
 }
 
@@ -645,7 +645,7 @@ function questionCursorFilter(cursor: QuestionCursor): SQL {
 // SQL does ORDER BY created_at DESC + LIMIT/OFFSET and a separate COUNT for total.
 // `truncated` is always false here — there is no OOM guard on this path.
 async function flatListSqlPaginated(
-  db: Db,
+  db: Db | Tx,
   filters: SQL[],
   params: ListQuestionsParams,
   computedAtSec: number,
@@ -674,9 +674,10 @@ async function flatListSqlPaginated(
 
   const hasMore = fetchedRows.length > params.limit;
   const rows = hasMore ? fetchedRows.slice(0, params.limit) : fetchedRows;
-  const nextCursor = hasMore
-    ? encodeQuestionCursor(rows[rows.length - 1], cursorMode, cursorDirection)
-    : null;
+  const nextCursor =
+    hasMore && !params.notServable && !params.includeServingCounts
+      ? encodeQuestionCursor(rows[rows.length - 1], cursorMode, cursorDirection)
+      : null;
 
   const [{ count }] = await db
     .select({ count: sql<number>`count(*)::int` })
@@ -707,7 +708,7 @@ async function flatListSqlPaginated(
 //   3. knowledge_labels — 一次 IN 查 page+children 全体 knowledge_ids 的非归档 name。
 // children 自身也被 enrich（subject/labels），但不再递归取它们的 children（小题无小题）。
 async function enrichItems(
-  db: Db,
+  db: Db | Tx,
   items: QuestionListItem[],
   includeDrafts: boolean,
 ): Promise<QuestionListItem[]> {
@@ -886,32 +887,36 @@ function aggregateFamilies(
 
 // ── A1c (2): expand one root's full family ────────────────────────────────────
 async function expandRootFamily(
-  db: Db,
+  db: Db | Tx,
   params: ListQuestionsParams,
   computedAtSec: number,
 ): Promise<ListQuestionsResult> {
   const rootKey = params.expandRoot as string;
   const members = await loadFamilyMembers(db, rootKey, !params.includeDrafts);
-  if (members.length === 0) return { ...emptyResult(params), computed_at_sec: computedAtSec };
+  const needServingPass = params.notServable === true || params.includeServingCounts === true;
+  if (members.length === 0)
+    return {
+      ...emptyResult(params),
+      computed_at_sec: computedAtSec,
+      ...(needServingPass
+        ? { serving_counts: { not_servable_total: 0, by_reason: {}, legacy_unpublished: 0 } }
+        : {}),
+    };
 
   let derived = members.map(deriveCandidate);
-  // YUK-1514 — same serving pass as the flat path: not_servable filters the
-  // family members themselves; counts cover the unfiltered member set.
-  const needServingPass = params.notServable === true || params.includeServingCounts === true;
-  let servingById: Map<string, QuestionServing> | undefined;
   let servingCounts: ServingCounts | undefined;
   if (needServingPass) {
-    const servingRead = await readQuestionServing(
-      db,
-      derived.map((c) => c.row.id),
-    );
-    servingById = servingRead.byId;
-    servingCounts = aggregateServingCounts(
-      servingRead.byId.values(),
-      servingRead.legacyUnpublished,
-    );
+    const ids = JSON.stringify(members.map((row) => row.id));
+    const servingSet = await questionServingSet(db, [
+      sql`${question.id} in (select jsonb_array_elements_text(${ids}::jsonb))`,
+    ]);
+    servingCounts = await countQuestionServing(db, servingSet);
     if (params.notServable) {
-      derived = derived.filter((c) => servingById?.get(c.row.id)?.servable === false);
+      const held = await db.execute<{ id: string }>(sql`
+        select id from (${servingSet}) serving where not servable
+      `);
+      const heldIds = new Set(held.map((row) => row.id));
+      derived = derived.filter((c) => heldIds.has(c.row.id));
     }
   }
 
@@ -926,7 +931,7 @@ async function expandRootFamily(
   const total = derived.length;
   const page = derived.slice(params.offset, params.offset + params.limit);
   const items = page.map(toListItem);
-  await attachServingToItems(db, items, servingById);
+  await attachServingToItems(db, items);
   return {
     items,
     families: null,
@@ -948,7 +953,7 @@ async function expandRootFamily(
  * a null root_question_id and is matched by its own id).
  */
 export async function loadFamilyMembers(
-  db: Db,
+  db: Db | Tx,
   rootKey: string,
   excludeDrafts: boolean,
 ): Promise<CandidateRow[]> {

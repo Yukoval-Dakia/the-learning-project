@@ -170,12 +170,6 @@
     "file": "src/core/poly-exp.ts",
     "notes": "compile-time const dark-ship. export const X = false."
   },
-  "PREREQ_RISK_EMIT_ENABLED": {
-    "kind": "const",
-    "value": false,
-    "file": "src/server/mastery/prereq-propagation.ts",
-    "notes": "A13 prereq risk-emit producer, dark. export const X = false. Renamed FROM PREREQ_PROPAGATION_ENABLED to disambiguate."
-  },
   "PREREQ_THETA_PROPAGATION_ENABLED": {
     "kind": "const",
     "value": false,

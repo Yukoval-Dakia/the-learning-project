@@ -1,5 +1,7 @@
 # YUK-1358 Start event detail implementation
 
+> Evidence relocation (YUK-1579 batch 1): links that pointed into `docs/planning/evidence/` now resolve on the sealed external volume under `/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1579/696449125b53b0c35a210dbc9a57292f014712de/evidence-export/` at the same `docs/planning/evidence/`-relative path; each link's `sha256:` title is that file's entry in `SHA256SUMS.txt` (digest `02a483a4841843ace8d7b8fb0f1649d7d94cd1108ecb0903343b2c2b2ad1638e`). Git history still retains all removed bytes.
+
 Source-only author handoff for `/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor`, branch `feat/yuk-1358-start-event-detail`, starting HEAD `74f648fad471b11a99c2e3339d7626ad5aa43e7a`, main baseline `6212a4560c68c294245dc3f3e10e4f774c6ff6f8`.
 
 ## Delivered behavior
@@ -22,35 +24,35 @@ The initial unit run failed three assertions because the fixture's zero cache li
 
 | Command ledger name | Exit | Log |
 | --- | --- | --- |
-| `format-initial` | 0 | [log](evidence/yuk1358-start-event-detail/format-initial.log) |
-| `build-start-initial` | 0 | [log](evidence/yuk1358-start-event-detail/build-start-initial.log) |
-| `unit-initial` | 1 | [log](evidence/yuk1358-start-event-detail/unit-initial.log) |
-| `typecheck-initial` | 1 | [log](evidence/yuk1358-start-event-detail/typecheck-initial.log) |
-| `protocol-initial` | 0 | [log](evidence/yuk1358-start-event-detail/protocol-initial.log) |
-| `format-repair` | 0 | [log](evidence/yuk1358-start-event-detail/format-repair.log) |
-| `unit-final` | 0 | [log](evidence/yuk1358-start-event-detail/unit-final.log) |
-| `lint-final` | 0 | [log](evidence/yuk1358-start-event-detail/lint-final.log) |
-| `typecheck-final` | 0 | [log](evidence/yuk1358-start-event-detail/typecheck-final.log) |
-| `toolchain` | 0 | [log](evidence/yuk1358-start-event-detail/toolchain.log) |
-| `build-final` | 0 | [log](evidence/yuk1358-start-event-detail/build-final.log) |
-| `protocol-final` | 0 | [log](evidence/yuk1358-start-event-detail/protocol-final.log) |
-| `audit-schema` | 0 | [log](evidence/yuk1358-start-event-detail/audit-schema.log) |
-| `audit-partition` | 0 | [log](evidence/yuk1358-start-event-detail/audit-partition.log) |
-| `audit-api-client` | 0 | [log](evidence/yuk1358-start-event-detail/audit-api-client.log) |
-| `audit-api-client-usage` | 0 | [log](evidence/yuk1358-start-event-detail/audit-api-client-usage.log) |
-| `audit-capability-boundaries` | 0 | [log](evidence/yuk1358-start-event-detail/audit-capability-boundaries.log) |
-| `audit-provider-lanes` | 0 | [log](evidence/yuk1358-start-event-detail/audit-provider-lanes.log) |
-| `pnpm-toolchain` | 0 | [log](evidence/yuk1358-start-event-detail/pnpm-toolchain.log) |
-| `audit-profile` | 0 | [log](evidence/yuk1358-start-event-detail/audit-profile.log) |
-| `audit-task-census` | 0 | [log](evidence/yuk1358-start-event-detail/audit-task-census.log) |
-| `audit-draft-status` | 0 | [log](evidence/yuk1358-start-event-detail/audit-draft-status.log) |
-| `audit-draft-status-reads` | 0 | [log](evidence/yuk1358-start-event-detail/audit-draft-status-reads.log) |
-| `diff-check` | 0 | [log](evidence/yuk1358-start-event-detail/diff-check.log) |
-| `scope-check` | 0 | [log](evidence/yuk1358-start-event-detail/scope-check.log) |
-| `staged-diff-check` | 2 | [log](evidence/yuk1358-start-event-detail/staged-diff-check.log) |
-| `source-diff-check` | 0 | [log](evidence/yuk1358-start-event-detail/source-diff-check.log) |
+| `format-initial` | 0 | [log](/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1579/696449125b53b0c35a210dbc9a57292f014712de/evidence-export/docs/planning/evidence/yuk1358-start-event-detail/format-initial.log "sha256:e3d9b8d9f110d904d443d5d0e7a5518c0dc4cc4a03ddd720c854d5ebee9bc512") |
+| `build-start-initial` | 0 | [log](/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1579/696449125b53b0c35a210dbc9a57292f014712de/evidence-export/docs/planning/evidence/yuk1358-start-event-detail/build-start-initial.log "sha256:43487ceabaded46589a7848be00b45b9ee1494087743d4538aeaede9b11973ab") |
+| `unit-initial` | 1 | [log](/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1579/696449125b53b0c35a210dbc9a57292f014712de/evidence-export/docs/planning/evidence/yuk1358-start-event-detail/unit-initial.log "sha256:40c767623ee879e0d323892c8bc1c49f3b0782153c457833cce5c3bbcec0af1b") |
+| `typecheck-initial` | 1 | [log](/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1579/696449125b53b0c35a210dbc9a57292f014712de/evidence-export/docs/planning/evidence/yuk1358-start-event-detail/typecheck-initial.log "sha256:a45edcd7e1b6de828c5c841f935929454c8b62a908eccd9884a3edc225f15968") |
+| `protocol-initial` | 0 | [log](/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1579/696449125b53b0c35a210dbc9a57292f014712de/evidence-export/docs/planning/evidence/yuk1358-start-event-detail/protocol-initial.log "sha256:db9b4ea170ddc7f6f65ceda3d40a8dbd44a915352d53200e983b020c4496dc36") |
+| `format-repair` | 0 | [log](/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1579/696449125b53b0c35a210dbc9a57292f014712de/evidence-export/docs/planning/evidence/yuk1358-start-event-detail/format-repair.log "sha256:f40d1cd3d2c61f00d716d967978c57eb92bd680a5d76856bd4c84a2658a1e9dc") |
+| `unit-final` | 0 | [log](/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1579/696449125b53b0c35a210dbc9a57292f014712de/evidence-export/docs/planning/evidence/yuk1358-start-event-detail/unit-final.log "sha256:32c654d9d0f7d559d068f7a4a4b15fd3eba1ac94613cef8a64b05fb044b53d25") |
+| `lint-final` | 0 | [log](/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1579/696449125b53b0c35a210dbc9a57292f014712de/evidence-export/docs/planning/evidence/yuk1358-start-event-detail/lint-final.log "sha256:158478fd12cde09976d52c2c10bc1a08eeb22cfbbc8af999ec6ff439a447c7c3") |
+| `typecheck-final` | 0 | [log](/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1579/696449125b53b0c35a210dbc9a57292f014712de/evidence-export/docs/planning/evidence/yuk1358-start-event-detail/typecheck-final.log "sha256:36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6") |
+| `toolchain` | 0 | [log](/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1579/696449125b53b0c35a210dbc9a57292f014712de/evidence-export/docs/planning/evidence/yuk1358-start-event-detail/toolchain.log "sha256:1c8b321800e1805305bb56e0a64bc2888656c053458a26803979ff5a4f32699a") |
+| `build-final` | 0 | [log](/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1579/696449125b53b0c35a210dbc9a57292f014712de/evidence-export/docs/planning/evidence/yuk1358-start-event-detail/build-final.log "sha256:11afcb84c2ccbdbcd063371c3f4d7d6fa9e71e9376cc2521107aead257473dc4") |
+| `protocol-final` | 0 | [log](/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1579/696449125b53b0c35a210dbc9a57292f014712de/evidence-export/docs/planning/evidence/yuk1358-start-event-detail/protocol-final.log "sha256:69a64ea485a7a6d66a902fc2236d28325665e2b9f3bb38fa35442d7ab9a4dae8") |
+| `audit-schema` | 0 | [log](/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1579/696449125b53b0c35a210dbc9a57292f014712de/evidence-export/docs/planning/evidence/yuk1358-start-event-detail/audit-schema.log "sha256:b43c2e8046de03e0e3d034636c4b86fe0278c98cffcabf9694bfc791f5ccf8f0") |
+| `audit-partition` | 0 | [log](/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1579/696449125b53b0c35a210dbc9a57292f014712de/evidence-export/docs/planning/evidence/yuk1358-start-event-detail/audit-partition.log "sha256:39c5135f9961266a7e6f7e94a68a8a76903120576c370765f7116876f903f102") |
+| `audit-api-client` | 0 | [log](/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1579/696449125b53b0c35a210dbc9a57292f014712de/evidence-export/docs/planning/evidence/yuk1358-start-event-detail/audit-api-client.log "sha256:f26bc904f865f0cc5a1a1613ea5d4017d46fdab55aceaf8eb0a831aedd0cea7c") |
+| `audit-api-client-usage` | 0 | [log](/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1579/696449125b53b0c35a210dbc9a57292f014712de/evidence-export/docs/planning/evidence/yuk1358-start-event-detail/audit-api-client-usage.log "sha256:71c2c93dd9e51bd4fc368e7845a5a34d42b2b56cf97e4dcf94a8556a99f45b46") |
+| `audit-capability-boundaries` | 0 | [log](/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1579/696449125b53b0c35a210dbc9a57292f014712de/evidence-export/docs/planning/evidence/yuk1358-start-event-detail/audit-capability-boundaries.log "sha256:484405f1ec91a3f4ecfc833a00e772ba72da3c35e9ebef7b3ebcff730f89f21f") |
+| `audit-provider-lanes` | 0 | [log](/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1579/696449125b53b0c35a210dbc9a57292f014712de/evidence-export/docs/planning/evidence/yuk1358-start-event-detail/audit-provider-lanes.log "sha256:4e94a5c1aa34213ec2cbb56a60b90e883fdcf6a7fd9c10daff833b754ea85b5c") |
+| `pnpm-toolchain` | 0 | [log](/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1579/696449125b53b0c35a210dbc9a57292f014712de/evidence-export/docs/planning/evidence/yuk1358-start-event-detail/pnpm-toolchain.log "sha256:1c8b321800e1805305bb56e0a64bc2888656c053458a26803979ff5a4f32699a") |
+| `audit-profile` | 0 | [log](/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1579/696449125b53b0c35a210dbc9a57292f014712de/evidence-export/docs/planning/evidence/yuk1358-start-event-detail/audit-profile.log "sha256:f2f14ec06808ef23b857f78b1f54fd2fb25ba55e75776644d2a00aef10981db4") |
+| `audit-task-census` | 0 | [log](/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1579/696449125b53b0c35a210dbc9a57292f014712de/evidence-export/docs/planning/evidence/yuk1358-start-event-detail/audit-task-census.log "sha256:ddf8d63319f242b650617ac0e743a24966ea2eb10c9c446a74b9d24f8c58df6a") |
+| `audit-draft-status` | 0 | [log](/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1579/696449125b53b0c35a210dbc9a57292f014712de/evidence-export/docs/planning/evidence/yuk1358-start-event-detail/audit-draft-status.log "sha256:de3569839d7a890654a591c9c6b77334b1031fa56e3ecedef457f132dd24eb8d") |
+| `audit-draft-status-reads` | 0 | [log](/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1579/696449125b53b0c35a210dbc9a57292f014712de/evidence-export/docs/planning/evidence/yuk1358-start-event-detail/audit-draft-status-reads.log "sha256:d20e8ef68122b2971b8f07b005e6014eccc517b272c04b6e4bcfcbe8a61189b3") |
+| `diff-check` | 0 | [log](/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1579/696449125b53b0c35a210dbc9a57292f014712de/evidence-export/docs/planning/evidence/yuk1358-start-event-detail/diff-check.log "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855") |
+| `scope-check` | 0 | [log](/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1579/696449125b53b0c35a210dbc9a57292f014712de/evidence-export/docs/planning/evidence/yuk1358-start-event-detail/scope-check.log "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855") |
+| `staged-diff-check` | 2 | [log](/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1579/696449125b53b0c35a210dbc9a57292f014712de/evidence-export/docs/planning/evidence/yuk1358-start-event-detail/staged-diff-check.log "sha256:b7335706ea08e7ef508190d92af8dd5e9a5e4f4899aab510991051c13e3e81be") |
+| `source-diff-check` | 0 | [log](/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1579/696449125b53b0c35a210dbc9a57292f014712de/evidence-export/docs/planning/evidence/yuk1358-start-event-detail/source-diff-check.log "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855") |
 
-Full exact commands, absolute cwd, exit codes, elapsed time and log paths are in [commands.jsonl](evidence/yuk1358-start-event-detail/commands.jsonl). [owned-source-paths.json](evidence/yuk1358-start-event-detail/owned-source-paths.json) lists every changed TypeScript path. Source, logs and all emitted build assets have separate SHA256 manifests in this evidence directory. Build artifacts themselves stay in the existing ignored `dist/` and `web/dist/` directories.
+Full exact commands, absolute cwd, exit codes, elapsed time and log paths are in [commands.jsonl](/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1579/696449125b53b0c35a210dbc9a57292f014712de/evidence-export/docs/planning/evidence/yuk1358-start-event-detail/commands.jsonl "sha256:d7655f717b491675a989350c4efa228c6af0b08f6f711cda052cf340a29cb9ac"). [owned-source-paths.json](/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1579/696449125b53b0c35a210dbc9a57292f014712de/evidence-export/docs/planning/evidence/yuk1358-start-event-detail/owned-source-paths.json "sha256:be5d795b9b58edb7001816a26bc3b2af3da6e80f51a211df0542f979feab2002") lists every changed TypeScript path. Source, logs and all emitted build assets have separate SHA256 manifests in this evidence directory. Build artifacts themselves stay in the existing ignored `dist/` and `web/dist/` directories.
 
 ## Prepared parent acceptance
 

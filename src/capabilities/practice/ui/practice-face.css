@@ -557,6 +557,69 @@
   flex: none;
 }
 
+/* YUK-1490 — draft conflict on one slot: the two versions side by side and the choice.
+   Same caution ink as the save chip's conflict state; never right/wrong colours (§6.4). */
+.pfp-conflict {
+  display: grid;
+  gap: var(--s-3);
+  background: var(--paper-sunk);
+  border: 1px solid var(--hard-line);
+  border-radius: var(--r-2);
+  padding: var(--s-3) var(--s-4);
+  margin: var(--s-4) 0;
+}
+.pfp-conflict-msg {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+  margin: 0;
+  color: var(--ink-2);
+}
+.pfp-conflict-msg .ico {
+  color: var(--hard-ink);
+  flex: none;
+  margin-top: 3px;
+}
+.pfp-conflict-cmp {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--s-3);
+}
+.pfp-conflict-side {
+  display: grid;
+  align-content: start;
+  gap: var(--s-1);
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  padding: var(--s-2) var(--s-3);
+  min-width: 0;
+}
+.pfp-conflict-text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 12em;
+  overflow-y: auto;
+}
+.pfp-conflict-text[data-empty] {
+  color: var(--ink-4);
+}
+
+.pfp-discarded {
+  display: grid;
+  gap: var(--s-2);
+  margin-top: var(--s-3);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-2);
+  padding: var(--s-2) var(--s-3);
+  color: var(--ink-3);
+}
+.pfp-discarded summary {
+  cursor: pointer;
+  font-size: var(--fs-caption);
+}
+
 /* navigator pips — strictly neutral (§6.4) */
 .pfp-pips {
   display: flex;

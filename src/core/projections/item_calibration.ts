@@ -13,7 +13,7 @@ import type { FoldEvent } from './fold-event';
 // Projects the current state of ONE item_calibration row (`rowId`) from the event log. UNLIKE
 // every W1/W2/W3 sibling, item_calibration has NO runtime create / mutation events: its rows are
 // born from `runItemPriorBackfill` → `applyItemPrior` direct INSERTs and mutated by
-// kt-calibration / recalibration UPDATEs (owner 方案 A decision, 2026-08-26: 不动 B1 在线写逻辑).
+// recalibration UPDATEs (owner 方案 A decision, 2026-08-26: 不动 B1 在线写逻辑).
 // The ONLY event the fold ever consumes is the `experimental:genesis` anchor the backfill seeds
 // per row, whose payload.row snapshots the row's CURRENT values — so the fold is ANCHOR-ONLY:
 //
@@ -27,7 +27,7 @@ import type { FoldEvent } from './fold-event';
 // snapshot. Deterministic either way: (created_at asc, id asc) order, keep-last.
 //
 // PLAN A BOUNDARY (documented, ticket-scoped): an imperative write that lands AFTER the anchor
-// (nightly KT kt_json sink, recalibration b_calib firm-up) is invisible to the log, so
+// (recalibration b_calib firm-up) is invisible to the log, so
 // audit:projection reports the row as DRIFT until it is re-anchored / allowlisted — the honest
 // event=truth signal 方案 A accepts, and the concrete push toward the future canonical-event
 // route (方案 B / YUK-405 attempt+fixed_anchor deterministic fold).

@@ -1,10 +1,5 @@
-// ====================================================================
-// YUK-1057 — 隔离 blob store（无生产凭证、无 R2 egress）
-// ====================================================================
-//
-// R2Client 兼容的文件系统实现：演练产物的 blob 侧全部落在工件目录下
-// （<out>/blobs/<storage_key>），键直接作相对路径（防穿越校验）。
-// 明确不读 R2_* env / .env 凭证 —— 「隔离 blobs」的实现约束。
+// Filesystem stand-in for the blob client. Keys are relative paths under the artifact directory.
+// This store never reads R2 credentials. A key that escapes the root is rejected.
 
 import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
@@ -23,9 +18,9 @@ function assertSafeKey(key: string): void {
 }
 
 export interface IsolatedBlobStore extends R2Client {
-  /** 工件目录下的 blob 根（证明用：sha256 清单）。 */
+  /** Absolute blob root. The proof hashes files under it. */
   readonly root: string;
-  /** 当前 blob 清单（key → sha256+size；排序稳定）。 */
+  /** Sorted inventory. Order is part of the proof. */
   inventory(): Array<{ key: string; sha256: string; bytes: number }>;
 }
 
@@ -70,7 +65,7 @@ export function isolatedBlobStore(root: string): IsolatedBlobStore {
         const { rmSync } = await import('node:fs');
         rmSync(pathFor(key));
       } catch {
-        // 与 R2 delete 的幂等语义一致：缺对象不视为失败。
+        // A missing object is success, matching R2 delete.
       }
     },
     inventory() {

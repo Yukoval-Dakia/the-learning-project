@@ -19,10 +19,10 @@
 // Proposals are proposal-only (event(action='propose') rows); the user accepts
 // in the inbox — no direct mutation, per the knowledge capability boundary.
 
-import { readAgentNotes } from '@/capabilities/agency/public';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { knowledge } from '@/db/schema';
+import { readAgentNotes } from '@/kernel/read-models/agent-note-hints';
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
 import { getFailureAttempts } from '@/kernel/read-models/failure-attempts';
 import { DOMAIN_TOOL_MCP_SERVER_NAME, resolveDomainToolNames } from '@/kernel/tools/allowlists';

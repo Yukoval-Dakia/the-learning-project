@@ -14,6 +14,8 @@ export interface SaveStateChipProps {
   /** error 态的重试回调；给了就以 button 渲（chip 即重试入口）。 */
   onRetry?: () => void;
   retrying?: boolean;
+  /** Replaces the state's default wording, for a surface whose case it does not fit. */
+  label?: string;
 }
 
 const STATE_COPY: Record<SaveState, string> = {
@@ -24,12 +26,12 @@ const STATE_COPY: Record<SaveState, string> = {
   conflict: '版本有更新 · 先刷新再改',
 };
 
-export function SaveStateChip({ state, onRetry, retrying }: SaveStateChipProps) {
+export function SaveStateChip({ state, onRetry, retrying, label }: SaveStateChipProps) {
   if (state === 'error' && onRetry) {
     return (
       <button type="button" className="rs-save is-error" onClick={onRetry} disabled={retrying}>
         <LoomIcon name="alert" size={12} />
-        {retrying ? '重试中…' : STATE_COPY.error}
+        {retrying ? '重试中…' : (label ?? STATE_COPY.error)}
       </button>
     );
   }
@@ -43,7 +45,7 @@ export function SaveStateChip({ state, onRetry, retrying }: SaveStateChipProps) 
         }
         size={12}
       />
-      {STATE_COPY[state]}
+      {label ?? STATE_COPY[state]}
     </span>
   );
 }

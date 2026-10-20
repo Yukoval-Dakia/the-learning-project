@@ -44,10 +44,11 @@ import {
   SCORING_ADMISSION_WITHHELD_REASON,
   SUSPENSION_REASON,
 } from '@/core/schema/assessment/lifecycle';
+import { defaultPresentation } from '@/core/schema/assessment/presentation';
 import { readDifficultyEvidenceFromMetadata } from '@/core/schema/difficulty-evidence';
 import { WebSourcedProvenance, deriveSourceTier } from '@/core/schema/provenance';
 import { toUnifiedVerifyResult } from '@/core/schema/verify-contract';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import {
   admitPaidEffectIntent,
   claimPaidEffectSend,
@@ -65,16 +66,31 @@ import {
   question_revision,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import {
+  normalizeQuestionRowToContract,
+  publishedContractSeal,
+  publishedSealAccepts,
+} from '@/kernel/records/assessment-normalization';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { type TaskTextResult, type TaskTextRunFn, aiAgentRef } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { getFsrsState, initialSchedulingState, upsertFsrsState } from '@/server/fsrs/state';
-import { publishQuestionGroup, publishQuestionGroupFromRow } from '@/server/questions/publisher';
+import {
+  type AdmissionVerificationWrite,
+  type PublishAdmission,
+  type PublishQuestionGroupResult,
+  type SuspensionUpdate,
+  archiveGroupLifecycle,
+  loadQuestionGroupContractSnapshot,
+  publishQuestionGroup,
+  publishQuestionGroupFromRow,
+} from '@/server/questions/publisher';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
 import { normalizeToCanonicalKind } from '@/subjects/question-kind';
 import { resolveQuestionAdmissionPolicyId } from '../server/admission/run-admission';
 import { SYNTHETIC_SUBJECT_ROOT_RE } from '../server/placement-scope';
 import { SupplyTraceV1 } from '../server/question-supply/evidence-demand';
+import { readVectorNearHold, visibleSourceNeighbor } from '../server/question-supply/ingest-dedup';
 import { lockPlacementSupplyScopes } from '../server/question-supply/placement-supply-lock';
 import { DEDUP_OVERLAP_THRESHOLD, maxNgramOverlap } from '../server/question-supply/sourced-dedup';
 import {
@@ -85,6 +101,14 @@ import {
   checksForTier,
   runSolveCheck,
 } from '../server/quiz/verify-framework';
+// YUK-1568 S3（R1 F2）—— revision→flat 投影原语经同 capability 工具文件
+// 再出口（它对 questions seam 的 import 边已登记），本文件不新增
+// capability→server 债。
+import {
+  deriveKind,
+  draftCanonicalIdentity,
+  revisionToDraftDocument,
+} from '../server/tools/submit-question';
 
 export interface SourceVerifyJobData {
   question_ids: string[];
@@ -160,6 +184,148 @@ export interface RunSourceVerifyParams {
 export interface RunSourceVerifyResult {
   status: SourceVerifyPerQuestionStatus;
   checks?: CheckOutcome[];
+}
+
+/**
+ * YUK-1568（第 3 片，S3 处置表 P 分支；R1 F1+F2）—— verify/promote 生命
+ * 周期维度更新（admission / suspension / verification / availability），
+ * 不携内容变更。
+ *
+ * F1（权威选择）：凡组当前有【已发布 revision】，该冻结四层契约就是唯一
+ * 内容权威——typed 候选（含不携 answer_shape/blank_order 的普通 parts）
+ * 的 5 分/规则/unit 身份/points 不在 flat 行投影里，FromRow 重建会丢；
+ * 对 row-归一发布的旧组，冻结层与行归一产物在 converged-writer 不变量下
+ * 本就 digest 相同（生命周期更新更不该借机重铸内容 revision）。
+ * 只有【从未发布】的真 legacy 组（current_revision_id 为空）走 FromRow。
+ *
+ * F2（核验输入绑定）：expectedRevision / expectedGeneration 是调用方在
+ * 核验【开始时】冻结的「被验证对象」身份（当时的组 current revision +
+ *  admission generation）。本 helper 锁后比对——漂移即抛错回滚同事务，
+ * 绝不把旧核验结果贴到较新 revision / 误清较新屏障。
+ *
+ * 锁序与既有约定一致：root question FOR UPDATE → lifecycle FOR UPDATE
+ * → 发布（publisher 内部 CAS 双令牌另作纵深）。CAS 冲突或任何发布冲突
+ * 一律抛错回滚（与 publishQuestionGroupFromRow 的 fail-closed 同款纪律）。
+ *
+ * 来源核验通过只改 admission/suspension/verification 维度——不授予 K1
+ * admitted，不放宽中央保护（admitted + 声明仍过 publishQuestionGroup 的
+ * 判分就绪闸）。
+ */
+export async function publishVerifyLifecycleUpdate(
+  tx: Tx,
+  input: {
+    rootId: string;
+    admission: PublishAdmission;
+    availability?: 'general_pool' | 'container_only';
+    suspension?: SuspensionUpdate;
+    verification?: AdmissionVerificationWrite;
+    /** 核验开始时冻结的组 current revision（null = 当时从未发布）。 */
+    expectedRevision: string | null;
+    /** 核验开始时冻结的 scoring_admission_generation。 */
+    expectedGeneration: number | null;
+    actorRef: string;
+    now: Date;
+  },
+): Promise<PublishQuestionGroupResult> {
+  const [supplied] = await tx
+    .select({ id: question.id, parentId: question.parent_question_id })
+    .from(question)
+    .where(eq(question.id, input.rootId))
+    .limit(1);
+  if (supplied == null) {
+    throw new Error(`publishVerifyLifecycleUpdate: root question '${input.rootId}' not found`);
+  }
+  const groupRootId = supplied.parentId ?? supplied.id;
+  // 唯一加载口（锁序 root FOR UPDATE → 组快照）：partRows/liveParts 的
+  // tombstone 判定语义不在这里复制；declared revision 不可解析仍 fail-loud。
+  const snapshot = await loadQuestionGroupContractSnapshot(tx, groupRootId);
+  const [lifecycle] = await tx
+    .select()
+    .from(question_group_lifecycle)
+    .where(eq(question_group_lifecycle.group_id, groupRootId))
+    .for('update')
+    .limit(1);
+  const currentRevisionId = lifecycle?.current_revision_id ?? null;
+  const currentGeneration = lifecycle?.scoring_admission_generation ?? null;
+  // F2 漂移闸：核验结果只许落在它被算出的那个 revision/generation 上。
+  // （编辑 withheld→withheld 叠新 revision 不翻 question.version，行版本
+  // 检查兜不住——这里按 revision/generation 身份兜底，漂移则整笔回滚。）
+  if (
+    currentRevisionId !== input.expectedRevision ||
+    currentGeneration !== input.expectedGeneration
+  ) {
+    throw new Error(
+      `publishVerifyLifecycleUpdate: verify input drifted for group '${groupRootId}' ` +
+        `(expected revision ${input.expectedRevision ?? 'none'}/gen ${input.expectedGeneration ?? 'none'}, ` +
+        `now ${currentRevisionId ?? 'none'}/${currentGeneration ?? 'none'}) — refusing to apply a stale verify verdict`,
+    );
+  }
+  // 全部子 part 已 tombstone ⇒ 组无可服务成员：与 FromRow 同款的撤回语义
+  // （只落 lifecycle 撤回维度，不铸空组 revision、忽略传入生命周期字段）。
+  // declared 组不能进 FromRow（声明保护在归一前先冲突）→ 此处直接落。
+  if (snapshot.partRows.length > 0 && snapshot.liveParts.length === 0) {
+    await archiveGroupLifecycle(tx, groupRootId, input.now);
+    return { status: 'withdrawn', group_id: groupRootId };
+  }
+  if (currentRevisionId == null) {
+    // 真 legacy：组从未发布（无冻结 revision 可保），行归一发布照旧。
+    return publishQuestionGroupFromRow(tx, {
+      rootId: groupRootId,
+      admission: input.admission,
+      ...(input.availability != null ? { availability: input.availability } : {}),
+      ...(input.suspension != null ? { suspension: input.suspension } : {}),
+      ...(input.verification != null ? { verification: input.verification } : {}),
+      actorRef: input.actorRef,
+      now: input.now,
+    });
+  }
+  const [frozenRevision] = await tx
+    .select()
+    .from(question_revision)
+    .where(eq(question_revision.revision_id, currentRevisionId))
+    .limit(1);
+  if (frozenRevision == null) {
+    throw new Error(
+      `publishVerifyLifecycleUpdate: current revision '${currentRevisionId}' missing for group '${groupRootId}'`,
+    );
+  }
+  const [rootRow] = await tx
+    .select({ source: question.source })
+    .from(question)
+    .where(eq(question.id, groupRootId))
+    .limit(1);
+  const result = await publishQuestionGroup(tx, {
+    group_id: groupRootId,
+    contract: {
+      // F1：冻结四层（含 presentation/digest）逐字回送——同 digest ⇒ 不铸
+      // 新 revision；声明与非声明的 typed 契约都被字节级保留。
+      structure: frozenRevision.structure,
+      response_spec: frozenRevision.response_spec,
+      scoring_basis: frozenRevision.scoring_basis,
+      execution_plan: frozenRevision.execution_plan,
+      ...(frozenRevision.presentation != null ? { presentation: frozenRevision.presentation } : {}),
+      integrity_digest: frozenRevision.integrity_digest,
+    },
+    expectedCurrentRevision: currentRevisionId,
+    expectedAdmissionGeneration: currentGeneration,
+    availability:
+      input.availability ??
+      lifecycle?.availability ??
+      (rootRow?.source === 'web_sourced' || rootRow?.source === 'quiz_gen'
+        ? QUESTION_AVAILABILITY.GENERAL_POOL
+        : QUESTION_AVAILABILITY.CONTAINER_ONLY),
+    admission: input.admission,
+    ...(input.suspension != null ? { suspension: input.suspension } : {}),
+    ...(input.verification != null ? { verification: input.verification } : {}),
+    actorRef: input.actorRef,
+    now: input.now,
+  });
+  if (result.status === 'conflict') {
+    throw new Error(
+      `publishVerifyLifecycleUpdate: unexpected ${result.reason} conflict for group '${groupRootId}' (revision raced during verify lifecycle update)`,
+    );
+  }
+  return result;
 }
 
 // ---------- deterministic checks ----------
@@ -400,10 +566,223 @@ export async function runSourceVerify(
 ): Promise<RunSourceVerifyResult> {
   const { db, questionId, runTaskFn } = params;
 
-  const rows = await db.select().from(question).where(eq(question.id, questionId)).limit(1);
-  const row = rows[0];
+  // YUK-1568 S3（R1 F2 真收口）—— 核验输入与身份必须同一快照：
+  // 行内容 + 组 current revision/generation + 对应冻结 revision 行在【同一
+  // 条 SELECT】内读出（单语句一致性；不持锁跨付费调用）。分开读会拼出
+  // 「旧行内容 + 新 revision 身份」——withheld→withheld 编辑铸新 revision
+  // 不动 question 行，检查却在核旧投影、结论又贴新身份。
+  const [snap] = await db
+    .select({
+      row: question,
+      lifecycleRevisionId: question_group_lifecycle.current_revision_id,
+      admissionGeneration: question_group_lifecycle.scoring_admission_generation,
+      frozenRevision: question_revision,
+    })
+    .from(question)
+    .leftJoin(
+      question_group_lifecycle,
+      sql`${question_group_lifecycle.group_id} = coalesce(${question.parent_question_id}, ${question.id})`,
+    )
+    .leftJoin(
+      question_revision,
+      sql`${question_revision.revision_id} = ${question_group_lifecycle.current_revision_id}`,
+    )
+    .where(eq(question.id, questionId))
+    .limit(1);
+  const row = snap?.row;
   if (!row) return { status: 'skipped:not_found' };
   if (row.source !== 'web_sourced') return { status: 'skipped:not_web_sourced' };
+  // 核验输入身份 = 快照里的组 current revision + admission generation；
+  // 应用侧（publishVerifyLifecycleUpdate / 主事务漂移闸）锁后比对，漂移回滚。
+  const verifiedIdentity = {
+    revisionId: snap.lifecycleRevisionId ?? null,
+    admissionGeneration: snap.admissionGeneration ?? null,
+  };
+  const frozenRevision =
+    verifiedIdentity.revisionId != null &&
+    snap.frozenRevision != null &&
+    snap.frozenRevision.revision_id === verifiedIdentity.revisionId
+      ? snap.frozenRevision
+      : null;
+  if (verifiedIdentity.revisionId != null && frozenRevision == null) {
+    // lifecycle 指向的 revision 行不存在 = 组指针损坏——响铃，不猜内容。
+    throw new Error(
+      `source_verify: lifecycle current revision '${verifiedIdentity.revisionId}' missing for question ${questionId}`,
+    );
+  }
+  // 冻结契约是内容权威。legacy 行仅在现成发布 normalizer 能重建同一
+  // integrity digest 时复用；否则只能消费可无损表达的冻结投影。
+  // provenance/KC/plumbing 留在行上，不能因此继承行级答案权威。
+  let verifyInput: QuestionRow = row;
+  /** flat 投影对核验有损 ⇒ 付费前明确 hold（原因，见下方 gate）。 */
+  let verifyInputHoldReason: string | null = null;
+  const frozenFigures =
+    frozenRevision?.structure.materials.filter((m) => m.kind === 'figure') ?? [];
+  // 复用冻结资产 digest 只为重建发布时的归一输入，不查询/冒充新资产核验。
+  const figureDigests = Object.fromEntries(
+    frozenFigures.flatMap((m) =>
+      /^sha256:[a-f0-9]{64}$/i.test(m.asset.digest)
+        ? [[m.asset.asset_id, m.asset.digest.slice('sha256:'.length)]]
+        : [],
+    ),
+  );
+  let legacyRowMatchesRevision = false;
+  let presentationProjectsLosslessly = frozenRevision?.presentation == null;
+  if (frozenRevision != null) {
+    if (frozenRevision.presentation != null) {
+      const standard = defaultPresentation(
+        frozenRevision.structure,
+        frozenRevision.response_spec,
+        frozenRevision.scoring_basis,
+      );
+      // 只接受现役 producer 的标准呈现：题干 part_ref + 普通选项/空/作答区。
+      // 默认生成器也能输出 matching/order/break_tap；flat choices 不表达它们。
+      // canonical seal 消除 jsonb 键序差异，仍逐字段约束内容引用和作答绑定；
+      // custom、material_ref、增删题干/输入或改绑都不可能与标准树同封存。
+      presentationProjectsLosslessly =
+        standard?.root.kind === 'stack' &&
+        standard.root.children.every((block) =>
+          ['text_math', 'option_list', 'blank_input', 'free_area'].includes(block.kind),
+        ) &&
+        publishedContractSeal(frozenRevision).canonical ===
+          publishedContractSeal({ ...frozenRevision, presentation: standard }).canonical;
+    }
+    try {
+      // 先验证库存 digest 确实封存这份冻结内容（兼容合法旧键序 seal），
+      // 再按 canonical 内容比较；既不把旧 seal 恒判漂移，也不接受坏 seal。
+      const frozenSeal = publishedContractSeal(frozenRevision);
+      legacyRowMatchesRevision =
+        publishedSealAccepts(frozenSeal, frozenRevision.integrity_digest) &&
+        publishedContractSeal(normalizeQuestionRowToContract({ ...row, figureDigests }))
+          .canonical === frozenSeal.canonical &&
+        // structured normalizer 可优先用叶答案/选项，忽略 flat 列。
+        // 复用 flat verifier 前，额外证明它实际读取的答案/选项也已封存。
+        (row.structured == null ||
+          ((row.reference_md == null ||
+            frozenRevision.structure.materials.some(
+              (m) => m.caption === 'reference solution' && m.content_md === row.reference_md,
+            )) &&
+            ((row.choices_md?.length ?? 0) === 0 ||
+              frozenRevision.response_spec.slots.some(
+                (s) =>
+                  (s.kind === 'single_choice' || s.kind === 'multi_choice') &&
+                  JSON.stringify(s.options.map((o) => o.text)) === JSON.stringify(row.choices_md),
+              )))) &&
+        // image_refs 不在 normalizer 输入内，不能让未封存的资产进入 solver。
+        row.image_refs.every((id) => frozenFigures.some((m) => m.asset.asset_id === id));
+    } catch {
+      // 非 legacy / 无法归一不等于一致，继续冻结投影的付费前形状闸。
+    }
+  }
+  if (frozenRevision != null && legacyRowMatchesRevision && presentationProjectsLosslessly) {
+    // text/numeric/structured legacy 槽不用绕草稿编辑器的 free fallback。
+    // reference、rubric、判分意图及材料由完整 digest 证明属于本 revision。
+    // 资产来自冻结材料；行级 bbox/placement 未封存，不作 solver 提示。
+    verifyInput = {
+      ...row,
+      image_refs: frozenFigures.map((m) => m.asset.asset_id),
+      figures: [],
+      structured: null,
+    };
+  } else if (frozenRevision != null) {
+    const verifyDoc = revisionToDraftDocument(
+      {
+        revision_id: frozenRevision.revision_id,
+        group_id: frozenRevision.group_id,
+        structure: frozenRevision.structure,
+        response_spec: frozenRevision.response_spec,
+        scoring_basis: frozenRevision.scoring_basis,
+        execution_plan: frozenRevision.execution_plan,
+        presentation: frozenRevision.presentation,
+      },
+      // KC 归属是组/行级账本（claim merge 写行），不在 revision 层——
+      // 快照内的行值即被验对象的 KC 集。
+      { knowledge_ids: row.knowledge_ids ?? [] },
+    );
+    const verifyUnits = verifyDoc.parts.flatMap((part) => part.units);
+    const selectUnits = verifyUnits.filter((u) => u.response_spec.kind === 'select');
+    if (
+      // flat 核验无法保留多 part/unit/slot 的作答边界。
+      verifyDoc.parts.length !== 1 ||
+      verifyUnits.length !== 1 ||
+      frozenRevision.response_spec.slots.length !== 1
+    ) {
+      verifyInputHoldReason = 'typed_multiple_response_boundaries';
+    } else if (
+      // scoring unit 引用多 slot 时投影只取 slot_refs[0]，其余槽位不进视图。
+      frozenRevision.scoring_basis.units.some((unit) => unit.slot_refs.length > 1)
+    ) {
+      verifyInputHoldReason = 'typed_multi_slot_scoring_unit';
+    } else if (
+      // draftSpecFromSlot 不可映射 → 该 unit 以 {kind:'free'} 兜底 +
+      // metadata.unmapped_slot_kind 显式标记（投影器自身记号，非猜测）。
+      verifyUnits.some(
+        (u) => (u.metadata as Record<string, unknown> | undefined)?.unmapped_slot_kind != null,
+      )
+    ) {
+      verifyInputHoldReason = 'typed_unmapped_slot_kind';
+    } else if (selectUnits.length > 1) {
+      // projectChoices 只取第一个 select unit —— 多 select 槽位喂给
+      // 求解器是残缺选项集。
+      verifyInputHoldReason = 'typed_multi_select_units';
+    } else if (
+      selectUnits.some((u) => {
+        const spec = u.response_spec;
+        return (
+          spec.kind === 'select' &&
+          u.key?.kind === 'select' &&
+          u.key.accepted_item_ids.some(
+            (itemId) => !spec.items.some((item) => item.item_id === itemId),
+          )
+        );
+      })
+    ) {
+      // select 键引用了 spec.items 之外的 item_id —— projectReference 会
+      // 静默丢该键，flat 视图的答案残缺。
+      verifyInputHoldReason = 'typed_select_key_unresolved';
+    } else if (
+      // 已冻结的选择键可直接比较；私有旧 rubric/解析不能抢占它。
+      // 标准展示只引用下面实际投影的题干/选项/槽；其他展示不可静默丢弃。
+      !presentationProjectsLosslessly ||
+      frozenRevision.structure.materials.some(
+        (m) =>
+          m.kind === 'figure' ||
+          m.visibility !== 'private' ||
+          (m.caption !== 'reference solution' &&
+            m.caption !== 'rubric (authoritative scoring input)'),
+      ) ||
+      frozenRevision.scoring_basis.units.some(
+        (u) =>
+          u.material_refs.length > 0 ||
+          u.evidence_slot_refs.length > 0 ||
+          u.requires_group_evidence,
+      ) ||
+      frozenRevision.response_spec.slots.some(
+        (s) => s.kind === 'open_response' && (s.evidence_required || s.accepted_evidence?.length),
+      )
+    ) {
+      verifyInputHoldReason = 'typed_unprojected_material_or_evidence';
+    } else if (
+      // 非 key 型私有材料可能承载 rubric，不能当普通答案或静默舍弃。
+      frozenRevision.structure.materials.length > 0 &&
+      selectUnits.length === 0
+    ) {
+      verifyInputHoldReason = 'typed_unprojected_private_scoring_material';
+    }
+    const ident = draftCanonicalIdentity(verifyDoc);
+    verifyInput = {
+      ...row,
+      kind: deriveKind(verifyDoc),
+      prompt_md: ident.promptMd,
+      reference_md: ident.referenceMd,
+      choices_md: ident.choicesMd,
+      judge_kind_override: null,
+      rubric_json: null,
+      structured: null,
+      image_refs: [],
+      figures: [],
+    };
+  }
   const metadataRaw =
     row.metadata && typeof row.metadata === 'object'
       ? (row.metadata as Record<string, unknown>)
@@ -524,39 +903,54 @@ export async function runSourceVerify(
     let unresolvedAnchoredExactMismatch = false;
     let imageInputUnavailable = false;
 
-    if (tierChecks.includes('structure_completeness')) {
-      checks.push(checkStructureCompleteness(row));
-    }
-    if (tierChecks.includes('source_consistency')) {
-      checks.push(checkSourceConsistency(row));
-    }
-    if (tierChecks.includes('dedup')) {
-      checks.push(await checkDedup(db, row));
-    }
-    if (tierChecks.includes('solve_check')) {
-      const solveQuestion: SolveCheckQuestion = {
-        id: row.id,
-        kind: row.kind,
-        prompt_md: row.prompt_md,
-        reference_md: row.reference_md,
-        choices_md: row.choices_md,
-        judge_kind_override: row.judge_kind_override,
-        rubric_json: row.rubric_json,
-        knowledge_ids: row.knowledge_ids,
-        metadata: (row.metadata ?? null) as Record<string, unknown> | null,
-        image_refs: row.image_refs,
-        figures: row.figures,
-      };
-      const solveResult = await runSolveCheck(solveQuestion, {
-        runTaskFn,
-        profile: { id: subjectProfile.id, full: subjectProfile },
-        db,
-        imageFetchFn: params.imageFetchFn,
+    // R1 F2 —— flat 投影对核验输入有损 ⇒ 付费前明确 hold：只落一条
+    // structure_completeness fail（原因名指到具体有损形状），不跑确定性
+    // 检查不花 solve/grounding——不走「拿残缺视图验一遍」的猜测路径。
+    // fail → 既有 !promote 分支（demote + verify_hold suspend + 证据落账），
+    // 后续编辑改形状后重验可恢复，typed sourcing 的真实可用面不受影响。
+    if (verifyInputHoldReason != null) {
+      checks.push({
+        check: 'structure_completeness',
+        verdict: 'fail',
+        reason: `frozen revision's flat projection is lossy for verification (${verifyInputHoldReason}); refusing to run checks against a partial view — hold until the shape projects losslessly or verify learns typed inputs`,
       });
-      unresolvedAnchoredExactMismatch =
-        solveResult.verdict === 'unsupported' && solveResult.normalized_exact_mismatch === true;
-      imageInputUnavailable = solveResult.image_input_unavailable === true;
-      checks.push(solveCheckToOutcome(solveResult));
+    } else {
+      if (tierChecks.includes('structure_completeness')) {
+        checks.push(checkStructureCompleteness(verifyInput));
+      }
+      if (tierChecks.includes('source_consistency')) {
+        checks.push(checkSourceConsistency(verifyInput));
+      }
+      if (tierChecks.includes('dedup')) {
+        checks.push(await checkDedup(db, verifyInput));
+      }
+      if (tierChecks.includes('solve_check')) {
+        const solveQuestion: SolveCheckQuestion = {
+          id: verifyInput.id,
+          kind: verifyInput.kind,
+          prompt_md: verifyInput.prompt_md,
+          reference_md: verifyInput.reference_md,
+          choices_md: verifyInput.choices_md,
+          judge_kind_override: verifyInput.judge_kind_override,
+          rubric_json: verifyInput.rubric_json,
+          knowledge_ids: verifyInput.knowledge_ids,
+          // metadata 的来源/KC 账本可留给确定性检查；其中腾讯答案/解析
+          // 提示不在冻结契约内，不能进入该 revision 的独立求解输入。
+          metadata: frozenRevision == null ? verifyInput.metadata : null,
+          image_refs: verifyInput.image_refs,
+          figures: verifyInput.figures,
+        };
+        const solveResult = await runSolveCheck(solveQuestion, {
+          runTaskFn,
+          profile: { id: subjectProfile.id, full: subjectProfile },
+          db,
+          imageFetchFn: params.imageFetchFn,
+        });
+        unresolvedAnchoredExactMismatch =
+          solveResult.verdict === 'unsupported' && solveResult.normalized_exact_mismatch === true;
+        imageInputUnavailable = solveResult.image_input_unavailable === true;
+        checks.push(solveCheckToOutcome(solveResult));
+      }
     }
 
     // `otherwisePromotable` is the tier-2 promote decision BEFORE the source-grounding gate:
@@ -564,11 +958,17 @@ export async function runSourceVerify(
     // check. It is the SINGLE source for both the grounding-gate trigger below AND the final
     // `promote` (which just ANDs in the grounding verdict) — PR #1063 review thread 3 (was
     // two copy-pasted condition lists).
+    const storedHold = readVectorNearHold(metadataRaw);
+    const vectorNearHold =
+      storedHold != null && (await visibleSourceNeighbor(db, storedHold.neighbor_question_id))
+        ? storedHold
+        : null;
     const otherwisePromotable =
       knowledgeAlive &&
       !unresolvedAnchoredExactMismatch &&
       !imageInputUnavailable &&
-      !checks.some((c) => c.verdict === 'fail');
+      !checks.some((c) => c.verdict === 'fail') &&
+      vectorNearHold == null;
 
     // ---- YUK-230 source-grounding gate (single_source_grounding rows only) ----
     // Runs ONLY when the row is otherwise promotable: a deterministic/solve fail already
@@ -607,8 +1007,8 @@ export async function runSourceVerify(
       try {
         outcome = await groundingFn({
           db,
-          prompt_md: row.prompt_md,
-          reference_md: row.reference_md,
+          prompt_md: verifyInput.prompt_md,
+          reference_md: verifyInput.reference_md,
           sourceAssetId: groundingSourceAssetId,
           subjectProfile,
         });
@@ -660,8 +1060,12 @@ export async function runSourceVerify(
               .update(question)
               .set({ draft_status: LEGACY_DRAFT_STATUS.DRAFT, updated_at: new Date() })
               .where(eq(question.id, questionId));
-            await publishQuestionGroupFromRow(suspendTx, {
+            // YUK-1568 P：已声明 revision 走冻结契约的 typed lifecycle 更新，
+            // 未声明组照旧行归一（helper 内部分派，fail-closed 不变）。
+            await publishVerifyLifecycleUpdate(suspendTx, {
               rootId: groupRootId,
+              expectedRevision: verifiedIdentity.revisionId,
+              expectedGeneration: verifiedIdentity.admissionGeneration,
               admission: {
                 state: SCORING_ADMISSION_STATE.WITHHELD,
                 reason: SCORING_ADMISSION_WITHHELD_REASON.UNVERIFIED_RULES,
@@ -740,7 +1144,9 @@ export async function runSourceVerify(
             ? 'tier-2 source verify needs review: prompt image content was unavailable'
             : !knowledgeAlive
               ? 'referenced knowledge point archived after sourcing; not promoted'
-              : 'tier-2 source verify did not promote';
+              : vectorNearHold
+                ? `tier-2 source verify needs review: vector similarity ${vectorNearHold.similarity.toFixed(3)} with ${vectorNearHold.neighbor_question_id}`
+                : 'tier-2 source verify did not promote';
     const unified = toUnifiedVerifyResult({
       source: 'source',
       promote,
@@ -802,6 +1208,30 @@ export async function runSourceVerify(
       if (!current || current.version !== row.version) {
         throw new Error(
           `source_verify question ${questionId} changed during verification (expected version ${row.version}, got ${current?.version ?? 'missing'})`,
+        );
+      }
+      // YUK-1568 S3（R1 F2）—— 锁后复核组身份（锁序 root question →
+      // lifecycle 与 publisher/C1 一致）：行版本相同不代表 revision 未变
+      // （withheld→withheld 草稿编辑不翻 version 仍铸新 revision）。与核验
+      // 开始冻结值不符 ⇒ 整笔回滚：本次核验结果不得贴到较新 revision、
+      // 不得误清其 verify_hold，也不得把 demote/suspend 落到没核过的版本上。
+      const [verifyLifecycle] = await tx
+        .select({
+          revisionId: question_group_lifecycle.current_revision_id,
+          generation: question_group_lifecycle.scoring_admission_generation,
+        })
+        .from(question_group_lifecycle)
+        .where(eq(question_group_lifecycle.group_id, row.parent_question_id ?? questionId))
+        .for('update')
+        .limit(1);
+      if (
+        (verifyLifecycle?.revisionId ?? null) !== verifiedIdentity.revisionId ||
+        (verifyLifecycle?.generation ?? null) !== verifiedIdentity.admissionGeneration
+      ) {
+        throw new Error(
+          `source_verify: verify input drifted for question ${questionId} ` +
+            `(expected revision ${verifiedIdentity.revisionId ?? 'none'}/gen ${verifiedIdentity.admissionGeneration ?? 'none'}, ` +
+            `now ${verifyLifecycle?.revisionId ?? 'none'}/${verifyLifecycle?.generation ?? 'none'}) — refusing to apply a stale verify verdict`,
         );
       }
       // YUK-1507 pair-race guard —— promote 成功分支在重发前，同事务锁
@@ -993,8 +1423,12 @@ export async function runSourceVerify(
           }
         }
         if (keptIndependentAdmissionRevisionId == null) {
-          await publishQuestionGroupFromRow(tx, {
+          // YUK-1568 P：正向 promote 同样只翻生命周期维度；已声明 revision
+          // 保留冻结契约（不铸新 revision、不丢声明、不因核验通过而 admitted）。
+          await publishVerifyLifecycleUpdate(tx, {
             rootId: groupRootId,
+            expectedRevision: verifiedIdentity.revisionId,
+            expectedGeneration: verifiedIdentity.admissionGeneration,
             admission: {
               state: SCORING_ADMISSION_STATE.WITHHELD,
               reason: SCORING_ADMISSION_WITHHELD_REASON.UNVERIFIED_RULES,
@@ -1063,8 +1497,12 @@ export async function runSourceVerify(
         // promotedElsewhere ⇒ 本投递 stale：不翻 contract 维度（honest：stale
         // 投递也不写核验记录 —— 记录的是「本版核验结果」，不该落在较新决定上）。
         if (!promotedElsewhere) {
-          await publishQuestionGroupFromRow(tx, {
+          // YUK-1568 P：hold/suspend 只翻生命周期维度；已声明 revision 走
+          // 冻结契约的 typed publisher（helper 内部分派，fail-closed 不变）。
+          await publishVerifyLifecycleUpdate(tx, {
             rootId: row.parent_question_id ?? questionId,
+            expectedRevision: verifiedIdentity.revisionId,
+            expectedGeneration: verifiedIdentity.admissionGeneration,
             admission: {
               state: SCORING_ADMISSION_STATE.WITHHELD,
               reason:

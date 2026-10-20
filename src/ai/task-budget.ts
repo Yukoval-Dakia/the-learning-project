@@ -14,13 +14,35 @@ export interface TaskBudgetOverride {
   readonly timeoutMs?: number;
 }
 
+/**
+ * YUK-1630 — which layer produced the resolved `timeout`: the caller's
+ * explicit `timeoutMs`, the `system_config` task override, or the task
+ * definition default. Persisted with the run's transport budget receipt so a
+ * timeout failure can attribute the bound it ran under.
+ */
+export type TaskTimeoutSource = 'caller' | 'config' | 'definition';
+
+/** `resolveTaskBudget` result: the budget plus its timeout provenance. */
+export type ResolvedTaskBudget = TaskBudget & {
+  readonly timeoutSource: TaskTimeoutSource;
+};
+
 /** Bind shared budget readers to an immutable, caller-owned catalog. */
 export function createTaskBudgetReaders<const Catalog extends TaskCatalog>(tasks: Catalog) {
   /** Read once before asynchronous work; never retain the mutable store value. */
-  function resolveTaskBudget(kind: TaskKindOf<Catalog>, explicit?: TaskBudgetOverride): TaskBudget {
+  function resolveTaskBudget(
+    kind: TaskKindOf<Catalog>,
+    explicit?: TaskBudgetOverride,
+  ): ResolvedTaskBudget {
     const defaults = tasks[kind].budget;
     const configured = getTaskOverride(kind)?.budget;
     const timeout = explicit?.timeoutMs ?? configured?.timeout ?? defaults.timeout;
+    const timeoutSource: TaskTimeoutSource =
+      explicit?.timeoutMs !== undefined
+        ? 'caller'
+        : configured?.timeout !== undefined
+          ? 'config'
+          : 'definition';
     if (!Number.isFinite(timeout) || timeout <= 0 || timeout >= STUCK_RUN_THRESHOLD_MS) {
       throw new RangeError(`Task timeout must be positive and below ${STUCK_RUN_THRESHOLD_MS}ms`);
     }
@@ -29,6 +51,7 @@ export function createTaskBudgetReaders<const Catalog extends TaskCatalog>(tasks
       maxCost: configured?.maxCost ?? defaults.maxCost,
       transientRetries: configured?.transientRetries ?? defaults.transientRetries,
       timeout,
+      timeoutSource,
     });
   }
 

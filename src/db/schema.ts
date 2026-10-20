@@ -58,6 +58,9 @@ import type { RtCorrectBuffer as RtCorrectBufferJson } from '../core/theta';
 // A4 (YUK-436) — persisted shadow shape for mastery_state.theta_grid_json (type-only,
 // erased at compile; the actual grid math lives in src/core/theta-grid.ts).
 import type { ThetaGridPosterior as ThetaGridPosteriorJson } from '../core/theta-grid';
+// YUK-1630 — ai_task_runs.usage_json.transport persisted shape (type-only;
+// the collector/writer lives with the ai server modules).
+import type { ProviderTransportEvidence } from '../server/ai/provider-transport';
 import type { SerializedQueuedPatch } from '../server/artifacts/presence/types';
 // YUK-599 — trait kind 枚举的单一来源（browser-safe 模块；防 db/subjects 两处漂移）。
 import { SUBJECT_TRAIT_KINDS } from '../subjects/trait-schemas';
@@ -480,11 +483,11 @@ export const question = pgTable(
     created_at: timestamp('created_at', { withTimezone: true }).notNull(),
     updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
     version: integer('version').notNull().default(0),
-    // YUK-383 Phase 0 — semantic retrieval substrate. Nullable: NULL default for
-    // every existing/new row; only write path is the idempotent nightly
-    // embed_backfill job (UPDATE ... WHERE embedding IS NULL). dims=1024 MUST match
-    // EMBED_DIMS (src/server/ai/embed.ts). Transparent to all current reads (zero
-    // behaviour change). See plan 2026-06-16-phase0-retrieval-substrate.
+    // YUK-383 Phase 0 — semantic retrieval substrate. Nullable. Nightly
+    // embed_backfill fills NULL or stale-version rows. Ingest may also stamp a
+    // vector it already computed (questionEmbedStamp) when the stored text is the
+    // text that was embedded, so backfill does not pay for that row again.
+    // dims=1024 MUST match EMBED_DIMS (src/server/ai/embed.ts).
     embedding: vector(1024),
     embed_model: text('embed_model'),
     embed_version: integer('embed_version'),
@@ -1615,6 +1618,8 @@ export const ai_task_runs = pgTable(
         d18_score?: { points_awarded: number; max_points: number };
         d18_escalated?: boolean;
         d18_latency_ms?: number;
+        /** YUK-1630 — per-attempt provider transport evidence; metadata only. */
+        transport?: ProviderTransportEvidence;
       }>()
       .notNull()
       .default({ inputTokens: 0, outputTokens: 0 }),
@@ -2319,8 +2324,8 @@ export const cost_ledger = pgTable(
     entry_kind: text('entry_kind').notNull().default('legacy'),
     cost_basis: text('cost_basis'),
     cost_ref: text('cost_ref'),
-    tokens_in: integer('tokens_in').notNull(),
-    tokens_out: integer('tokens_out').notNull(),
+    tokens_in: integer('tokens_in'),
+    tokens_out: integer('tokens_out'),
     outcome: text('outcome').notNull().default('success'),
     pgboss_job_id: text('pgboss_job_id'),
     occurred_at: timestamp('occurred_at', { withTimezone: true }).notNull(),
@@ -2334,6 +2339,16 @@ export const cost_ledger = pgTable(
     check(
       'cost_ledger_cost_basis_ck',
       sql`${t.cost_basis} IS NULL OR ${t.cost_basis} IN ('reported','estimated','unknown')`,
+    ),
+    check(
+      'cost_ledger_tokens_pair_ck',
+      sql`(
+        (${t.tokens_in} IS NULL AND ${t.tokens_out} IS NULL)
+        OR (
+          ${t.tokens_in} IS NOT NULL AND ${t.tokens_out} IS NOT NULL
+          AND ${t.tokens_in} >= 0 AND ${t.tokens_out} >= 0
+        )
+      )`,
     ),
     check(
       'cost_ledger_attempt_truth_ck',
@@ -2892,14 +2907,8 @@ export const mastery_state = pgTable(
     // 进 audit-schema allowlist（写路径存在但 inc-1 无 live reader）。
     theta_grid_json: jsonb('theta_grid_json').$type<ThetaGridPosteriorJson>(),
     // A1 (YUK-449) — per-KC rolling correct-RT ring buffer (last ≤ SRT_RT_BUFFER_K answered-
-    // correct response times, ms). The SRT design constant d's QUANTILE source: once
-    // SRT_D_FROM_QUANTILE flips, d = quantile(this buffer) instead of the population seed
-    // (resolveSrtTimeLimit). COLLECTION is LIVE (written on every SRT-eligible correct attempt
-    // so the data exists to justify the flip); the flag only gates the d READ. SHADOW vs
-    // theta_hat: while SRT_D_FROM_QUANTILE is false the buffer never affects θ̂ (byte-identical).
-    // flag-OFF d-read is byte-identical-anchored in state.db.test.ts. Has a live WRITE path
-    // (updateThetaForAttempt upsert → audit:schema sees it as init-only, NOT a stub, so no
-    // allowlist entry); the only READER (resolveSrtTimeLimitFromQuantile) is dark behind the flag.
+    // correct response times, ms). Collection and snapshot restore remain; θ̂ uses only
+    // the population-seeded SRT time limit (YUK-1576).
     rt_correct_ms: jsonb('rt_correct_ms').$type<RtCorrectBufferJson>(),
     // 软轨占位（本 wave 不写，进 audit allowlist，kind:'manual' 解除）:
     // fixed-anchor 慢热校准残差——Wave2 复盘/锚校准路径才写。n=1 结构性受锚质量约束。
@@ -4228,9 +4237,19 @@ export const dag_orchestration_node = pgTable(
     // 图成员 job 名（= boss 队列名 = JobDecl.name）。
     job_name: text('job_name').notNull(),
     // pending（未就绪）| enqueued（已 boss.send，等 pg-boss 消费）| running（pg-boss active）|
-    // succeeded | failed | skipped（硬上游失败/跳过 → 本节点不跑）。
+    // succeeded | failed | skipped（硬上游失败/跳过 → 本节点不跑）|
+    // not_needed（资格判定不跑）| degraded（试过且零成功）。后两者是软终态。
     status: text('status', {
-      enum: ['pending', 'enqueued', 'running', 'succeeded', 'failed', 'skipped'],
+      enum: [
+        'pending',
+        'enqueued',
+        'running',
+        'succeeded',
+        'failed',
+        'skipped',
+        'not_needed',
+        'degraded',
+      ],
     }).notNull(),
     // enqueue 后回填的 pg-boss job id（轮询终态用 boss.getJobById）。
     boss_job_id: text('boss_job_id'),
@@ -4251,7 +4270,7 @@ export const dag_orchestration_node = pgTable(
     // 坏值会破坏推进不变量——CHECK 兜住。
     check(
       'dag_orchestration_node_status_ck',
-      sql`${t.status} IN ('pending','enqueued','running','succeeded','failed','skipped')`,
+      sql`${t.status} IN ('pending','enqueued','running','succeeded','failed','skipped','not_needed','degraded')`,
     ),
   ],
 );
@@ -4518,7 +4537,11 @@ export const paid_effect_control = pgTable('paid_effect_control', {
 // (delivery_id/tick) is audit metadata on the admitted send, never part of the
 // key; identity columns are never updated and rows are never deleted. State
 // machine: pending → sending → (unknown | receipt_ready) → applied, with no
-// path back to pending and no auto-replay from unknown.
+// path back to pending and no auto-replay from unknown. YUK-1567 adds
+// unknown → voided: a lead-authorized terminal resolution that preserves every
+// evidence column and carries a void receipt (voided_at + void_json). The same
+// ticket also adds pending → cancelled: a lead-authorized retirement of a
+// never-sent intent (cancelled_at + cancel_json) — no successor, no re-spend.
 export const paid_effect = pgTable(
   'paid_effect',
   {
@@ -4548,6 +4571,10 @@ export const paid_effect = pgTable(
     application_attempts: integer('application_attempts').notNull().default(0),
     last_application_error: text('last_application_error'),
     unresolved_reason: text('unresolved_reason'),
+    voided_at: timestamp('voided_at', { withTimezone: true }),
+    void_json: jsonb('void_json'),
+    cancelled_at: timestamp('cancelled_at', { withTimezone: true }),
+    cancel_json: jsonb('cancel_json'),
     created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -4556,7 +4583,7 @@ export const paid_effect = pgTable(
     index('paid_effect_obligation_idx').on(t.family, t.state),
     check(
       'paid_effect_state_ck',
-      sql`${t.state} IN ('pending','sending','unknown','receipt_ready','applied')`,
+      sql`${t.state} IN ('pending','sending','unknown','receipt_ready','applied','voided','cancelled')`,
     ),
     check('paid_effect_digest_ck', sql`${t.input_digest} ~ '^sha256:[0-9a-f]{64}$'`),
     check('paid_effect_fence_ck', sql`${t.fence} >= 0`),
@@ -4572,9 +4599,136 @@ export const paid_effect = pgTable(
         OR (${t.state} = 'unknown' AND ${t.delivery_id} IS NOT NULL AND ${t.delivery_backend} IS NOT NULL AND ${t.send_lease_expires_at} IS NULL AND ${t.result_json} IS NULL AND ${t.applied_at} IS NULL AND ${t.unresolved_reason} IS NOT NULL)
         OR (${t.state} = 'receipt_ready' AND ${t.result_json} IS NOT NULL AND ${t.result_recorded_at} IS NOT NULL AND ${t.send_lease_expires_at} IS NULL AND ${t.applied_at} IS NULL)
         OR (${t.state} = 'applied' AND ${t.result_json} IS NOT NULL AND ${t.applied_at} IS NOT NULL AND ${t.application_json} IS NOT NULL AND ${t.send_lease_expires_at} IS NULL)
+        OR (${t.state} = 'voided' AND ${t.delivery_id} IS NOT NULL AND ${t.delivery_backend} IS NOT NULL AND ${t.unresolved_reason} IS NOT NULL AND ${t.send_lease_expires_at} IS NULL AND ${t.result_json} IS NULL AND ${t.applied_at} IS NULL AND ${t.voided_at} IS NOT NULL AND ${t.void_json} IS NOT NULL)
+        OR (${t.state} = 'cancelled' AND ${t.delivery_id} IS NULL AND ${t.delivery_backend} IS NULL AND ${t.delivery_tick} IS NULL AND ${t.send_lease_expires_at} IS NULL AND ${t.result_json} IS NULL AND ${t.result_recorded_at} IS NULL AND ${t.application_json} IS NULL AND ${t.applied_at} IS NULL AND ${t.unresolved_reason} IS NULL AND ${t.voided_at} IS NULL AND ${t.void_json} IS NULL AND ${t.cancelled_at} IS NOT NULL AND ${t.cancel_json} IS NOT NULL)
       )`,
     ),
     check('paid_effect_application_attempts_ck', sql`${t.application_attempts} >= 0`),
+  ],
+);
+
+// YUK-1567 — one durable authorization row per voided paid effect (PK = the
+// voided identity, so a row can be void-authorized at most once). Several
+// voided rows may share one authorization_id when a single decision retires
+// multiple old blockers in favor of ONE successor; the successor delivery
+// binding is what makes the named successor send consumable by exactly one
+// delivery and no other. consumed_at/consumed_delivery_id record the claim
+// that spent the authorization (audit; once-only is the pending→sending CAS).
+export const paid_effect_authorization = pgTable(
+  'paid_effect_authorization',
+  {
+    family: text('family').notNull(),
+    entity_id: text('entity_id').notNull(),
+    entity_revision: text('entity_revision').notNull(),
+    unit: text('unit').notNull(),
+    input_digest: text('input_digest').notNull(),
+    authorization_id: text('authorization_id').notNull(),
+    successor_entity_revision: text('successor_entity_revision').notNull(),
+    successor_unit: text('successor_unit').notNull(),
+    successor_input_digest: text('successor_input_digest').notNull(),
+    successor_delivery_backend: text('successor_delivery_backend')
+      .$type<import('../core/migration/paid-effect-protocol').PaidEffectBackend>()
+      .notNull(),
+    successor_delivery_id: text('successor_delivery_id').notNull(),
+    reason: text('reason').notNull(),
+    operator: text('operator').notNull(),
+    basis: text('basis').notNull(),
+    consumed_delivery_id: text('consumed_delivery_id'),
+    consumed_at: timestamp('consumed_at', { withTimezone: true }),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({
+      columns: [t.family, t.entity_id, t.entity_revision, t.unit, t.input_digest],
+      // Explicit short names: the auto-derived PK/FK names both truncate to the
+      // same 63-byte identifier and collide on ADD CONSTRAINT.
+      name: 'paid_effect_authorization_pk',
+    }),
+    index('paid_effect_authorization_entity_idx').on(t.family, t.entity_id),
+    index('paid_effect_authorization_successor_idx').on(
+      t.family,
+      t.entity_id,
+      t.successor_entity_revision,
+      t.successor_unit,
+      t.successor_input_digest,
+    ),
+    check(
+      'paid_effect_authorization_digest_ck',
+      sql`${t.input_digest} ~ '^sha256:[0-9a-f]{64}$' AND ${t.successor_input_digest} ~ '^sha256:[0-9a-f]{64}$'`,
+    ),
+    check(
+      'paid_effect_authorization_nonempty_ck',
+      sql`${t.entity_id} <> '' AND ${t.entity_revision} <> '' AND ${t.unit} <> '' AND ${t.authorization_id} <> '' AND ${t.successor_entity_revision} <> '' AND ${t.successor_unit} <> '' AND ${t.successor_delivery_id} <> '' AND ${t.reason} <> '' AND ${t.operator} <> '' AND ${t.basis} <> ''`,
+    ),
+    foreignKey({
+      columns: [t.family, t.entity_id, t.entity_revision, t.unit, t.input_digest],
+      name: 'paid_effect_authorization_old_effect_fk',
+      foreignColumns: [
+        paid_effect.family,
+        paid_effect.entity_id,
+        paid_effect.entity_revision,
+        paid_effect.unit,
+        paid_effect.input_digest,
+      ],
+    }),
+  ],
+);
+
+// YUK-1567 — one durable cancellation EVENT row per cancelled paid effect
+// (PK = the cancelled identity, so an identity can be cancelled at most once;
+// a second event under a different request_id can never be minted). Several
+// cancelled rows may share one request_id when a single approved operation
+// retires a batch of never-sent intents. The row is audit truth written in
+// the SAME transaction as the paid_effect pending → cancelled CAS — an event
+// failure rolls the state transition back with it. Unlike
+// paid_effect_authorization it binds no successor: cancel authorizes nothing.
+export const paid_effect_cancellation = pgTable(
+  'paid_effect_cancellation',
+  {
+    family: text('family').notNull(),
+    entity_id: text('entity_id').notNull(),
+    entity_revision: text('entity_revision').notNull(),
+    unit: text('unit').notNull(),
+    input_digest: text('input_digest').notNull(),
+    request_id: text('request_id').notNull(),
+    reason: text('reason').notNull(),
+    operator: text('operator').notNull(),
+    basis: text('basis').notNull(),
+    cancelled_from_state: text('cancelled_from_state').notNull(),
+    previous_fence: integer('previous_fence').notNull(),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({
+      columns: [t.family, t.entity_id, t.entity_revision, t.unit, t.input_digest],
+      // Explicit short name so ADD CONSTRAINT never truncates-collides (same
+      // 63-byte identifier discipline as the authorization table).
+      name: 'paid_effect_cancellation_pk',
+    }),
+    index('paid_effect_cancellation_entity_idx').on(t.family, t.entity_id),
+    index('paid_effect_cancellation_request_idx').on(t.request_id),
+    check('paid_effect_cancellation_digest_ck', sql`${t.input_digest} ~ '^sha256:[0-9a-f]{64}$'`),
+    check(
+      'paid_effect_cancellation_nonempty_ck',
+      sql`${t.entity_id} <> '' AND ${t.entity_revision} <> '' AND ${t.unit} <> '' AND ${t.request_id} <> '' AND ${t.reason} <> '' AND ${t.operator} <> '' AND ${t.basis} <> ''`,
+    ),
+    check(
+      'paid_effect_cancellation_from_ck',
+      // The never-sent contract is literal: only a fence-0 pending intent may
+      // be cancelled — any advanced fence implies a claim touched the row.
+      sql`${t.cancelled_from_state} = 'pending' AND ${t.previous_fence} = 0`,
+    ),
+    foreignKey({
+      columns: [t.family, t.entity_id, t.entity_revision, t.unit, t.input_digest],
+      name: 'paid_effect_cancellation_old_effect_fk',
+      foreignColumns: [
+        paid_effect.family,
+        paid_effect.entity_id,
+        paid_effect.entity_revision,
+        paid_effect.unit,
+        paid_effect.input_digest,
+      ],
+    }),
   ],
 );
 

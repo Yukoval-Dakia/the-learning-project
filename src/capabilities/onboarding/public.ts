@@ -1,6 +1,2 @@
-/**
- * Onboarding currently exposes no server-side cross-capability port.
- *
- * Its browser contribution boundary is `ui-public.ts`.
- */
+/** No server-side cross-capability port. The browser boundary is ui-public.ts. */
 export {};

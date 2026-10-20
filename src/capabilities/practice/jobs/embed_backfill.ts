@@ -1,7 +1,8 @@
 // YUK-383 Phase 0 — idempotent embed backfill job. One job covers all four
 // cases: existing-corpus backfill, next-day new rows, embed-API-failure retry
-// (§9 fallback: a question is always inserted with embedding NULL; this nightly
-// job fills it), AND (YUK-393) corpus re-embed when EMBED_VERSION bumps.
+// (§9 fallback: a question is inserted with embedding NULL unless ingest already
+// stamped the vector it computed for near-dup; this nightly job fills the rest),
+// AND (YUK-393) corpus re-embed when EMBED_VERSION bumps.
 // Idempotent because the select predicate is `embedding IS NULL OR
 // embed_version < EMBED_VERSION` — a second run with no matching rows is a no-op.
 // embed_version stamps which join rule / model produced the vector; bump
@@ -32,12 +33,52 @@ import {
   type EmbedProviderAttemptOptions,
   embedMany,
 } from '@/server/ai/embed';
-import { embedHash, knowledgeEmbedText, questionEmbedText } from '@/server/ai/embed-source';
+import {
+  EMBED_VERSION,
+  embedHash,
+  knowledgeEmbedText,
+  questionEmbedText,
+} from '@/server/ai/embed-source';
 
-// Bump when the embedder model or the embed-source join rule changes, to trigger
-// a background re-embed of rows stamped with an older version. v2 (YUK-393):
-// KC embed text now folds effective-domain → every existing KC vector is stale.
-export const EMBED_VERSION = 2;
+export { EMBED_VERSION };
+
+/** 入库已经算过的向量。文本必须是即将落库的题面，否则不要写，留给本任务重算。 */
+export function questionEmbedStamp(
+  q: {
+    prompt_md: string;
+    reference_md: string | null;
+    choices_md: string[] | null;
+  },
+  vector: number[],
+): {
+  embedding: number[];
+  embed_model: string;
+  embed_version: number;
+  embed_content_hash: string;
+} | null {
+  if (vector.length !== EMBED_DIMS) return null;
+  return {
+    embedding: vector,
+    embed_model: EMBED_MODEL,
+    embed_version: EMBED_VERSION,
+    embed_content_hash: embedHash(questionEmbedText(q)),
+  };
+}
+
+export async function embedQuestionTextForIngest(
+  q: {
+    prompt_md: string;
+    reference_md: string | null;
+    choices_md: string[] | null;
+  },
+  providerAttempt: EmbedProviderAttemptOptions,
+): Promise<number[]> {
+  const [vector] = await embedMany([questionEmbedText(q)], providerAttempt);
+  if (vector == null || vector.length !== EMBED_DIMS) {
+    throw new Error('ingest embed returned no usable vector');
+  }
+  return vector;
+}
 
 export type QuestionVectorInvalidReason =
   | 'no_vector'

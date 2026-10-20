@@ -5,7 +5,7 @@ This project uses a **single-context** layout.
 ## Layout
 
 - **Context file**: `CONTEXT.md` at repo root — 领域术语表（领域专家视角的术语，不收纯实现概念）
-- **ADR directory**: `docs/adr/` at repo root — 当前 13 个 ADR（0001–0014，跳过 0009）；ADR-0014 是当前 generalized framework / capability registry roadmap anchor
+- **ADR directory**: `docs/adr/` at repo root — ADR 以四位编号 `NNNN-<slug>.md` 依次存放（0001 起，仅缺 0009）；无索引文件，直接读目录，数量以目录为准。ADR-0014 记录 generalized activity / capability registry 的基础决策（部分 facet 已被后续 ADR 修订）
 
 ## Consumer Rules
 
@@ -22,7 +22,7 @@ Skills that read domain documentation should:
 The project also maintains:
 
 - `docs/architecture.md` — 纯实现层架构（pg-boss、SSE、jsonb schema 等），与 CONTEXT.md 互补
-- `docs/modules/` — 各业务模块文档（lanes / learning-items / mistakes / notes / progress / quiz）
+- `docs/modules/` — 各业务模块文档（knowledge / lanes / learning-items / memory / mistakes / notes / progress / quiz / records）
 - `docs/design/` — 设计与决策草稿
 - `docs/planning/` — 版本规划（v0.X）
 - `docs/audit/` — 漂移审计输出（`/audit-drift` skill 写入）

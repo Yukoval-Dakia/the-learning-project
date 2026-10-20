@@ -71,6 +71,7 @@ export { isLiveQuestionReference } from './server/live-question-reference';
 // seam so server→capability stays public (not deep).
 export { SYNTHETIC_SUBJECT_ROOT_RE } from './server/placement-scope';
 export { loadAttemptQuestionSnapshot } from './server/question-evidence-snapshot';
+export { claimHttpSourceDuplicate } from './server/question-supply/ingest-dedup';
 export {
   DEDUP_OVERLAP_THRESHOLD,
   maxNgramOverlap,
@@ -201,6 +202,7 @@ export {
   SUPPLY_DISPATCH_COOLDOWN_DAYS,
   dispatchSupplyTarget as dispatchPracticeSupplyTarget,
   dispatchSupplyTargets as dispatchPracticeSupplyTargets,
+  inFlightSupplyCount,
 } from './server/question-supply/dispatcher';
 export type {
   EvidenceDemandV1T,

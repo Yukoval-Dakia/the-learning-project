@@ -1,8 +1,16 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-11：YUK-1107隔离head f0f2d63bf完整CI三绿166/207/144秒、中位166；唯一验证R2 NONE及逐不变量说明已过。正常纳入main c2新测试规则后，作者代码不变，等待新exact-head CI再合1691。judge阶段诊断仅独立实验，backup等audit/owner，120未达。
+> Linear 是权威 tracker。2026-10-20：架构线最多8条；#1834/#1839/#1840/#1842已合，#1843已合，#1846已合、#1847已合，#1837等基线释放；首批证据HEAD删除获批实施，测试仍待owner。
 
 ## NOW
+
+- **帮助靠谱 / 夜间摘要统计（YUK-1621、YUK-1632）**：`el/yuk-1621` 的 PR #1858 普通整合 main `210dfb2c1`。仅 PLAN/now 冲突，采用 main 最新记录并保留本 PR 交接；服务端分桶、有效判分统计与模型统计守卫源码未变。本轮 typecheck/lint/build 通过，178 个既有 warnings；新 head CI 单独等待，不复用旧 head 结果。
+
+- **第一天能用 / 恢复完成证据（YUK-1631、YUK-1614）**：`el/yuk-1614` 保留 deferred 未完成状态，拒绝旧 deferred 假回执、未知契约与非法时间戳；legacy reserved/enqueued 保持可导入。隔离 PG16 实跑补丁排队→拒绝且原数据不变→drain→按证据人工补回执→恢复200；provider/回执写入故障及人工恢复已验证。既有备份8例通过，无测试代码改动，不碰 schema/export constants。最终静态检查及 exact-head CI 结果见 PR1854；自动恢复仍不在 LIGHT 范围。
+
+- **架构深化 / YUK-1571**：frontier draft #1837 正常整合main1440e864b，仅PLAN/now冲突；保留main nightly上限常量和mastery变更，新head e309ce3d4 静态构建通过、server441→440/cross48→47，5项基线差异已获准登记，当前实施，R1仍有效范围不扩张，协调线已释放baseline独占，两片按实测登记、先绿先合。迁移规划器#1840已合ee53df413（超长18→17）；typed due完整输入操作#1842已合71986f224，均父静态构建/独立R1/exact-head CI通过，无本机DB/provider。审计去重#1843已合3adb1cde4，scripts净减41，SWE-2 MAX R1/父静态构建/11命令输出核对/GH exactCI通过；Circle矩阵漏展开及workspace冲突归YUK1612。锁登记#1846已合4419f4fbb（仅文档）；YUK1577误关已恢复In Progress并读回completedAt=null；新增4项事实错误：协调线裁定顶部立即加未修正声明（只文档免审、exactCI后合），下一片先改4项再扩展；不能自称证明。完整操作设计f848145e9将B降为待证候选，两个真实变化场景未证正收益，当前保留直接owner port更简单；LIGHT共享读draft#1852 aab422064，父静态构建通过、实测cross48→43减5，GLM初审通过；两架构audit等1830释放后收紧baseline，保护#1802 review.ts。
+
+- **第一天能用 / 题库暂不出题计数（YUK-1525）**：`yuk-1525-serving-counts-sql` 将 lifecycle 理由统一到 SQL，冻结题面继续复用原校验，计数与列表使用同一只读快照。2600 行中，旧列表少算为1846，修后2400，与原投影全库逐行统计一致；窗口外 `q_02600` 可见。无新增测试、UI 改动或付费调用。
 
 - **YUK-1404 / native03题图修复**：PR1657 fixed4c52 exact CI38144495041全绿；正常纳入main eb960c079，仅PLAN/now冲突。图ownership/隐私产品代码与单capture边界测试保留，旧细粒度四tests已删。独立初审/最终R2预算已完成，不启第三审。当前crop producer仍无source_asset SHA登记，旧visibility未知，public withholding不是完整配图交付；同卷actual-output验收仍待。无DB/runtime/provider/paid。 [证据](docs/planning/2026-10-11-yuk1404-native03-figure-repair.md)。
 
@@ -32,6 +40,12 @@
 
 ## NEXT
 
+- **PR #1858**：本地检查通过后普通 merge commit/push，等待 exact-head CI。CI 绿即停止；不改 PR 描述或 Linear 状态，不合并 PR、不部署。
+
+- **架构深化**：警示#1851已合7e2ab18f5，再交付锁四事实纠错#1853已合86917b10a（父静态构建、唯一R2、exactCI通过，仍只是登记，1577读回进行中）；#1847证据删除已合0f8b1fbbc，后续批另批。#1830释放后收紧frontier基线；完整操作设计必须体现调用方少知决策/恢复规则，不能以重导出或合文件代替深化。
+
+- **YUK-1525**：draft PR 交接后，由审查与 exact-head CI 决定是否可转 ready；本次不自动合并。
+
 - Start/judge共享文件边界见[交接](docs/planning/2026-10-09-judge-start-ownership.md)，Start/boot/shutdown由5796独占；judge A/B/C/D由7631接续，迁移号后核。
 
 - PR1625 本轮仅同步 main 并恢复可合并状态；判分 DBOS 家族源码、进程恢复、真实模型和整体迁移退出分开验收。正常 push 后等待新 exact-head CI，不合并 PR。
@@ -44,6 +58,8 @@
 - UI 线：视觉方向已定（#1612、#1627）。#1633 KaTeX、#1634 F06 对比度与 #1642 ≠ 修复（YUK-1446）已于 2026-10-10 20:01 JST 部署到 TEST（main `515669863`），并完成真实页面截图验收。遗留 YUK-1447（等 rehype-katex 升级）。下一步 YUK-1438：等功能线各后端片落地后接入；placement/profile 的 UI 等迁移线给出 Start client 契约。
 
 ## PARKED
+
+- **测试与证据瘦身 / YUK-1580、1579**：测试19文件469声明逐case清单/B3/B1已交协调线，owner未选前零改动。#1839已建立全线外置规则与永久副本；2026-10-20首批5目录172文件11,552,302B HEAD删除获批，已合#1847 0f8b1fbbc（exact eaf565951）父逐文件/引用/静态构建核过，初审后修正删除证据revision目录并澄清JST，唯一R2及exactCI通过，固定revision/禁止覆盖/引用加SHA。后续批仍须逐批批准。
 
 
 - **YUK-1358/1359已有UI观察**：真实Inbox dismiss后本页499但侧栏500，document reload恢复一致；原onResolve仅本地resolved更新。Google Fonts原import受CSP拦截；fallback可用。记录在现有迁移验收/后续UI边界，不放宽CSP、不冒称本PR修复。
@@ -66,6 +82,10 @@
 - YUK-1325 / PR #1580：保留 `1be38edbc`、`1af72b427`、`3940d61f9`，正常合入 main `8841ce68a` 为 `e484efa60`；359 scoped tests、21 audits、typecheck/lint/build 与 lint ratchet 通过，无 high/critical 依赖告警。开发 transcript 与产品 MiMo/自主交付指导同时保留。writer 已释放，父线程负责最终 SDK/SQL/browser 回放、push、exact-head CI、review replies、Linear 与发布；P2 typed tracing 留 YUK-1339，不启动第三审。详情见 [Laminar 记录](docs/planning/2026-10-06-yuk1325-laminar.md)。旧完成线程越界写入风险仍由父线程独占 watch 约束，平台跟进待去重登记。 最新 main 的前缀 credential P1 修复及73tests记录一并保留；PR父线程仍负责后续验收，此lane无新review。
 
 ## BLOCKED-ON
+
+- **测试修改授权**：未获owner逐批批准，一行测试都不动；不阻塞产品重构。证据外置策略已批准，既有证据每批删除仍待协调线看清单。
+
+- **YUK-1525 独立审查**：已尝试调用只读审查工具，但额度限制使其未执行。作者自查和本地实跑不能替代独立审查；此限制记录在 draft PR。
 
 - **协调线验收**：第一天能用的时限与 TEST 危机数据清理状态由审计协调线维护；100% 实际出题自动可判已获 owner 确认，不再作为待裁决值。
 
