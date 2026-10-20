@@ -234,8 +234,9 @@ Owner 于 2026-10-07 将产品交付与本机运维持续委托给 agent，见[�
 
 2. **Configure environment variables** — copy `.env.example` to `.env`; 至少填写
    `DATABASE_URL`、`INTERNAL_TOKEN` 和所选 provider lane 的 key（模板默认 lane 用
-   `OPENCODE_API_KEY`）。走 Cloudflare Tunnel 时填 `TUNNEL_TOKEN`；录入还需要 R2 与
-   腾讯 OCR 的 key，worker 处理记忆事件需要 `DASHSCOPE_API_KEY`。
+   `OPENCODE_API_KEY`）。走 Cloudflare Tunnel 时填 `TUNNEL_TOKEN`；录入需要 R2 的 key，
+   以及 OCR 引擎的 key——默认 `glm` 需要 `ZHIPU_API_KEY`，设为 `tencent` 时改为腾讯 OCR
+   的 key；worker 处理记忆事件需要 `DASHSCOPE_API_KEY`。
 
    变量含义、默认值、AI/记忆 pin 与 DB 配置层见
    [docs/configuration.md](./docs/configuration.md)。
