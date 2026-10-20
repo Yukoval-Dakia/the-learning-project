@@ -98,8 +98,8 @@ export async function retractAiProposal(
       if (attempt === 2) {
         throw new ApiError('conflict', 'Proposal target keeps changing; retry the retraction', 409);
       }
-      // The old event and its outbox intent rolled back. Keep the same logical ID,
-      // but choose a new clock beyond the state observed under the target row lock.
+      // The event and its outbox intent rolled back. Keep the same logical ID but
+      // move the clock past the target state observed under the row lock.
       correctionFloor = Math.max(correctionFloor, error.requiredAt.getTime());
     }
   }

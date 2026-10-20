@@ -18,11 +18,8 @@ export type ReplayEvent = {
 };
 
 /**
- * Fetch all job_events for (businessTable, businessId) with id > lastEventId,
- * ordered by id ascending. SSE clients pass `Last-Event-ID` header on reconnect;
- * we use that to replay missed events between disconnect and resubscribe.
- *
- * 见 Sub 0c plan Step 3.3 + Step 10.3（SSE endpoint reads cursor + emits replay）。
+ * Fetch this stream's events after `lastEventId`, ordered by id. SSE clients pass
+ * the cursor as `Last-Event-ID` to replay what they missed while disconnected.
  */
 export async function computeReplay(db: Db, params: ReplayParams): Promise<ReplayEvent[]> {
   const rows = await db

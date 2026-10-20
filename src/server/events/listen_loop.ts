@@ -1,9 +1,9 @@
 import postgres from 'postgres';
 import { type SSEPayload, broadcast } from './sse_router';
 
-// 专用 postgres LISTEN 连接 —— max:1 避免 pg-boss / drizzle 主池被占。
-// 这个连接整个 app process lifetime 维持，断了得重连（v0 不做自动重连，靠重启
-// 进程；生产监控由 docker-compose restart 兜底）。
+// One dedicated LISTEN connection for the process lifetime. max:1 keeps it off
+// the pg-boss and drizzle pools. There is no reconnect; a dropped connection
+// needs a process restart.
 
 let listenClient: ReturnType<typeof postgres> | null = null;
 

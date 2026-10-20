@@ -16,7 +16,7 @@
 
 import { createHash } from 'node:crypto';
 import { eq, like } from 'drizzle-orm';
-import type { EffortLevel, Provider } from '@/ai/task-spec';
+import type { Provider } from '@/ai/task-spec';
 import { tasks } from '@/capabilities/task-registry';
 import type { Db, Tx } from '@/db/client';
 import { model_catalog_cache, system_config } from '@/db/schema';
@@ -46,7 +46,6 @@ export const MODEL_CATALOG_WATCH_INTERVAL_MS = 60_000;
 
 const FETCH_TIMEOUT_MS = 30_000;
 const REFRESH_LOCK_WAIT_MS = 15_000;
-const EFFORT_LEVELS: readonly EffortLevel[] = ['low', 'medium', 'high', 'xhigh', 'max'];
 const ENV_MODEL_KEYS = [
   'AI_PROVIDER_MODEL',
   'VERIFY_SOLVE_MODEL_OVERRIDE',
@@ -55,7 +54,7 @@ const ENV_MODEL_KEYS = [
 
 export type CatalogOrigin = 'remote' | 'cache' | 'snapshot';
 
-export type CatalogFinding =
+export type CatalogFinding = { owner: 'YUK-1563' } & (
   | {
       kind: 'model_absent';
       catalogProvider: string;
@@ -67,7 +66,8 @@ export type CatalogFinding =
       catalogProvider: string;
       model: string;
       fields: readonly string[];
-    };
+    }
+);
 
 export interface CatalogMeta {
   origin: CatalogOrigin;
@@ -88,15 +88,20 @@ export interface TokenRates {
   cache_read: number;
 }
 
-interface ParsedCatalogModel {
+export interface ParsedCatalogModel {
   toolCalling?: boolean;
   vision?: boolean;
   reasoning?: boolean;
   structuredOutput?: boolean;
+  forcedToolChoice?: boolean;
+  inputModalities?: readonly string[];
+  baseUrl?: string;
+  api?: 'anthropic-messages' | 'openai-completions';
   contextWindowTokens?: number;
+  maxInputTokens?: number;
   maxOutputTokens?: number;
   reasoningMode?: 'effort' | 'budget_tokens' | 'toggle';
-  supportedEfforts?: readonly EffortLevel[];
+  supportedEfforts?: readonly string[];
 }
 
 type Json = Record<string, unknown>;
@@ -161,36 +166,49 @@ function isUndefinedTable(err: unknown): boolean {
 }
 
 /** Narrow, fail-closed parse of one models.dev model object. */
-export function parseCatalogModelEntry(entry: unknown): ParsedCatalogModel {
+export function parseCatalogModelEntry(
+  entry: unknown,
+  providerEntry?: unknown,
+): ParsedCatalogModel {
   const parsed: ParsedCatalogModel = {};
   const model = asJson(entry);
   if (!model) return parsed;
 
+  const endpoint = asJson(model.provider)?.api ?? asJson(providerEntry)?.api;
+  parsed.baseUrl = catalogEndpoint(endpoint);
+  const npm = asJson(model.provider)?.npm;
+  if (npm === '@ai-sdk/anthropic') parsed.api = 'anthropic-messages';
+  if (npm === '@ai-sdk/openai-compatible') parsed.api = 'openai-completions';
   parsed.toolCalling = asBoolean(model.tool_call);
   parsed.structuredOutput = asBoolean(model.structured_output);
   parsed.reasoning = asBoolean(model.reasoning);
 
   const inputModalities = asJson(model.modalities)?.input;
-  if (Array.isArray(inputModalities)) {
+  if (
+    Array.isArray(inputModalities) &&
+    inputModalities.every((value) => typeof value === 'string')
+  ) {
+    parsed.inputModalities = inputModalities;
     parsed.vision = inputModalities.includes('image');
   }
 
   const limit = asJson(model.limit);
   if (limit) {
     parsed.contextWindowTokens = asPositiveInteger(limit.context);
+    parsed.maxInputTokens = asPositiveInteger(limit.input);
     parsed.maxOutputTokens = asPositiveInteger(limit.output);
   }
 
   const options = model.reasoning_options;
   if (Array.isArray(options) && options.length > 0) {
-    const first = asJson(options[0]);
-    const type = first?.type;
-    if (first && (type === 'effort' || type === 'budget_tokens' || type === 'toggle')) {
+    const parsedOptions = options.map(asJson);
+    const option = parsedOptions.find((value) => value?.type === 'effort') ?? parsedOptions[0];
+    const type = option?.type;
+    if (option && (type === 'effort' || type === 'budget_tokens' || type === 'toggle')) {
       parsed.reasoningMode = type;
-      if (type === 'effort' && Array.isArray(first.values)) {
-        const efforts = first.values.filter(
-          (value): value is EffortLevel =>
-            typeof value === 'string' && EFFORT_LEVELS.includes(value as EffortLevel),
+      if (type === 'effort' && Array.isArray(option.values)) {
+        const efforts = option.values.filter(
+          (value): value is string => typeof value === 'string' && value.length > 0,
         );
         if (efforts.length > 0) parsed.supportedEfforts = efforts;
       }
@@ -199,16 +217,30 @@ export function parseCatalogModelEntry(entry: unknown): ParsedCatalogModel {
   return parsed;
 }
 
+function catalogEndpoint(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash)
+      return undefined;
+    return value.replace(/\/+$/, '');
+  } catch {
+    return undefined;
+  }
+}
+
 function capabilityDelta(previous: unknown, next: unknown): string[] {
   const before = parseCatalogModelEntry(previous);
   const after = parseCatalogModelEntry(next);
   const changed: string[] = [];
   const keys = [
+    'api',
     'toolCalling',
     'vision',
     'reasoning',
     'structuredOutput',
     'contextWindowTokens',
+    'maxInputTokens',
     'maxOutputTokens',
     'reasoningMode',
   ] as const;
@@ -218,6 +250,10 @@ function capabilityDelta(previous: unknown, next: unknown): string[] {
   const beforeEfforts = (before.supportedEfforts ?? []).join(',');
   const afterEfforts = (after.supportedEfforts ?? []).join(',');
   if (beforeEfforts !== afterEfforts) changed.push('supportedEfforts');
+  if (JSON.stringify(before.inputModalities) !== JSON.stringify(after.inputModalities)) {
+    changed.push('inputModalities');
+  }
+  if (before.baseUrl !== undefined && before.baseUrl !== after.baseUrl) changed.push('baseUrl');
   return changed;
 }
 
@@ -256,12 +292,18 @@ function parseFindings(value: unknown): CatalogFinding[] {
     if (row.kind === 'model_absent') {
       const source =
         row.source === 'models_dev' || row.source === 'provider_list' ? row.source : 'legacy';
-      findings.push({ kind: 'model_absent', catalogProvider, model, source });
+      findings.push({ owner: 'YUK-1563', kind: 'model_absent', catalogProvider, model, source });
       continue;
     }
     if (row.kind === 'capability_changed' && Array.isArray(row.fields)) {
       const fields = row.fields.filter((field): field is string => typeof field === 'string');
-      findings.push({ kind: 'capability_changed', catalogProvider, model, fields });
+      findings.push({
+        owner: 'YUK-1563',
+        kind: 'capability_changed',
+        catalogProvider,
+        model,
+        fields,
+      });
     }
   }
   return findings;
@@ -314,6 +356,13 @@ export function currentModelCatalog(): CatalogMeta {
 
 export function catalogModelEntry(catalogProviderId: string, modelId: string): unknown {
   return asJson(active.providers[catalogProviderId]?.models)?.[modelId];
+}
+
+export function catalogModelFacts(catalogProviderId: string, modelId: string): ParsedCatalogModel {
+  return parseCatalogModelEntry(
+    catalogModelEntry(catalogProviderId, modelId) ?? {},
+    active.providers[catalogProviderId],
+  );
 }
 
 export function catalogModelCost(
@@ -379,6 +428,15 @@ function missingWiredProviders(providers: ProviderMap): string[] {
   return wiredCatalogProviderIds().filter((id) => providers[id] === undefined);
 }
 
+function withProviderEndpoint(entry: unknown, provider: Json | undefined): unknown {
+  const model = asJson(entry);
+  if (!model) return entry;
+  const endpoint = asJson(model.provider)?.api ?? provider?.api;
+  return endpoint === undefined
+    ? entry
+    : { ...model, provider: { ...asJson(model.provider), api: endpoint } };
+}
+
 /** Previous document ∪ fetched document. Absence keeps the old entry for every model. */
 function mergeCatalogDocuments(
   previous: ProviderMap,
@@ -397,13 +455,14 @@ function mergeCatalogDocuments(
     ].sort();
     for (const modelId of modelIds) {
       const merged = mergeModelEntry(
-        previousModels[modelId],
-        nextModels[modelId],
+        withProviderEndpoint(previousModels[modelId], previous[providerId]),
+        withProviderEndpoint(nextModels[modelId], next[providerId]),
         pinned.has(modelId),
       );
       models[modelId] = merged.entry;
       if (merged.kind === 'model_absent') {
         findings.push({
+          owner: 'YUK-1563',
           kind: 'model_absent',
           catalogProvider: providerId,
           model: modelId,
@@ -411,6 +470,7 @@ function mergeCatalogDocuments(
         });
       } else if (merged.kind === 'capability_changed') {
         findings.push({
+          owner: 'YUK-1563',
           kind: 'capability_changed',
           catalogProvider: providerId,
           model: modelId,
@@ -460,7 +520,13 @@ function reconcileCatalogFindings(
   for (const [catalogProvider, revision] of revisionByProvider) {
     if (revision.kind !== 'replace') continue;
     for (const model of revision.models) {
-      push({ kind: 'model_absent', catalogProvider, model, source: 'provider_list' });
+      push({
+        owner: 'YUK-1563',
+        kind: 'model_absent',
+        catalogProvider,
+        model,
+        source: 'provider_list',
+      });
     }
   }
   return kept;
@@ -492,7 +558,7 @@ function logActive(
     const fields =
       finding.kind === 'capability_changed' ? ` fields=${finding.fields.join(',')}` : '';
     console.warn(
-      `[model-catalog] retained ${finding.catalogProvider}/${finding.model} ${finding.kind}${fields}`,
+      `[model-catalog] retained ${finding.catalogProvider}/${finding.model} ${finding.kind}${fields} owner=${finding.owner}`,
     );
   }
   const seenAuth = new Map(
