@@ -91,11 +91,26 @@ https://linear.app/yukoval-studios/issue/YUK-1572#comment-050998a7-f1a7-43de-bd4
   原文件 :2040 已存在的同一 `useOptionalChain`（移动代码 :874），organize-imports
   已按仓规则整形。
 
-## NOT_RUN（缺 node_modules，按禁令未 install）
+## 机器实跑（父完成 frozen install 后，heavy.sh 单 lane 串行）
 
-`pnpm typecheck` / `pnpm lint`（仓内 biome 2.5.8）/ `pnpm build` /
-`pnpm audit:*`：本树无 node_modules，全部 NOT_RUN；源码与静态证据已完成，
-报父安排一次 frozen install 后补跑。本机/CI 测试按禁令未跑未改。
+父 frozen install receipt：`parent-frozen-install.json`（rc=0，log SHA
+`03a596b7…594`，package/lock/workspace 前后哈希不变）。以下门均经
+`heavy.sh`（全机 2 槽）串行实跑，argv/UTC/原始 stdout/stderr/真实 rc
+封存 `…/<head>/intervention-schema/gates/`：
+
+| 门 | argv | rc |
+|---|---|---|
+| typecheck | `pnpm typecheck`（tsc --noEmit + server/start tsconfig） | 0 |
+| lint | `pnpm lint`（仓内 biome 2.5.8 `biome check .`） | 0 |
+| build | `pnpm build`（web+start+server+worker+migrate） | 0 |
+| audit:capability-boundaries | `pnpm audit:capability-boundaries` | 0 |
+| audit:architecture-deepening | `pnpm audit:architecture-deepening --base 20222f2cafe1500a9e445b43fe132935405d825a` | 0 |
+
+scanner 实测原文：`pass-through sites 1097 (+11 new)`——恰为本片 11 条已登记
+`stable_contract` site 全覆盖，无未分类违规；`dependency totals 403/0/37`
+与 ratchet 精确一致，`new dependency edges=0`。**尺寸下降披露**：
+`>1500-line files=12 (base 13)`——本片使 intervention.ts 退出该档；
+此为实测量，不自行放宽门，交父登记。tests/DB/runtime/provider 按禁令未跑未改。
 
 ## 行数声明（不作为收益）
 
