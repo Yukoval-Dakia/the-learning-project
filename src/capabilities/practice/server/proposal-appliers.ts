@@ -8,10 +8,8 @@ import { initialSchedulingState } from '@/server/fsrs/state';
 //   - question_draft    → acceptQuestionDraftProposal（本文件）
 //                       + dismissQuestionDraftProposal（本文件，YUK-308：
 //                         dismiss tombstone 草稿行 metadata.dismissed_at）
-//   - judge_retraction  → 有 producer（producers.ts 的 judge_retraction 提议）
-//     但无 accept applier：accept 走 actions.ts 的 default throw
-//     （unsupported_proposal_kind），剩余 producer 语义归 YUK-44。归属声明
-//     与 applier 存在性解耦（见 kernel/manifest.ts 的 ProposalKindDecl 注释）。
+//   - judge_retraction  → acceptJudgeRetractionProposal（本文件；evaluation 目标走
+//     appeal/rejudge/CAS 激活，legacy judge-event 目标写 CorrectEvent）。
 //
 // import 环 gate：本文件不得 import producers/writer/actions（含 type-only）；
 // 共享 helper 一律走 @/server/proposals/applier-helpers。
@@ -1471,9 +1469,9 @@ async function acceptUnifiedQuestionEditRequest(
 //
 // 两类目标：
 //   - subject_kind='evaluation'（native 评价行）：按 proposed_change.correction_kind
-//       · rejudge → 写 experimental:appeal_request（expected head = 当前 head，
-//         允许非 effective 目标）→ rejudge job → 冻结输入重评 → CAS 激活 →
-//         settlement replay 自动回算 FSRS/θ/掌握度；
+//       · rejudge → 写 experimental:appeal_request（expected head = 提案创建时
+//         冻结的快照，允许非 effective 目标）→ rejudge job → 冻结输入重评 →
+//         CAS 激活 → settlement replay 自动回算 FSRS/θ/掌握度；
 //       · assert  → 按 asserted_verdicts 产出 manual_assert candidate 并同步
 //         激活 + 写 appeal resolution 事件。
 //   - subject_kind='event'（legacy judge event）：写 CorrectEvent(retract)，
@@ -1546,6 +1544,29 @@ async function writeCorrectionResolution(
       ...(input.evaluationId ? { evaluation_id: input.evaluationId } : {}),
     },
   });
+}
+
+// applyManualAssertCorrection 的确定性校验失败：写一条 failed:<code> resolution，
+// 但绝不落 accept —— 提案保持 pending，owner 可重试/驳回，而不是显示成已采纳却零效果。
+const permanentAssertFailureCodes: ReadonlySet<string> = new Set([
+  'not_correctable',
+  'frozen_input_unavailable',
+  'not_found',
+  'assert_coverage_incomplete',
+  'assert_unit_not_additive',
+  'assert_unit_unknown',
+  'evaluation_key_conflict',
+]);
+
+function permanentAssertFailureDisposition(error: unknown): string | null {
+  if (!(error instanceof Error)) return null;
+  const code =
+    error instanceof ApiError
+      ? error.code
+      : error.name === 'EvaluateSubmissionError'
+        ? (error as Error & { code?: string }).code
+        : undefined;
+  return code && permanentAssertFailureCodes.has(code) ? `failed:${code}` : null;
 }
 
 /** assert 路径：人工判定 → manual_assert candidate → CAS 激活 + resolution 事件。 */
@@ -1748,6 +1769,26 @@ export async function acceptJudgeRetractionProposal(
     }
     const expectedGeneration = change.expected_generation;
 
+    // assert payload 校验放在写 appeal request 之前：畸形提案不能留下无结论的
+    // correction 事件。producer 已做同样的全覆盖校验，这里保留解析/兜底。
+    let assertedVerdicts: { scoring_unit_id: string; verdict: 'correct' | 'incorrect' }[] = [];
+    if (correctionKind === 'assert') {
+      const rawVerdicts = Array.isArray(change.asserted_verdicts) ? change.asserted_verdicts : [];
+      assertedVerdicts = rawVerdicts
+        .map((v) => asPlainRecord(v))
+        .map((v) => ({
+          scoring_unit_id: typeof v.scoring_unit_id === 'string' ? v.scoring_unit_id : '',
+          verdict: v.verdict === 'correct' ? ('correct' as const) : ('incorrect' as const),
+        }));
+      if (assertedVerdicts.length === 0 || assertedVerdicts.some((v) => v.scoring_unit_id === '')) {
+        throw new ApiError(
+          'validation_error',
+          "correction_kind='assert' requires non-empty asserted_verdicts",
+          400,
+        );
+      }
+    }
+
     const existingRate = await existingAcceptRate(db, proposalId);
     const existingCorrection = await findProposalCorrectionEvent(db, proposalId);
 
@@ -1791,39 +1832,40 @@ export async function acceptJudgeRetractionProposal(
       };
     }
 
-    // assert —— asserted_verdicts 已在 producer 校验过存在性；此处做全量校验。
-    const rawVerdicts = Array.isArray(change.asserted_verdicts) ? change.asserted_verdicts : [];
-    const assertedVerdicts = rawVerdicts
-      .map((v) => asPlainRecord(v))
-      .map((v) => ({
-        scoring_unit_id: typeof v.scoring_unit_id === 'string' ? v.scoring_unit_id : '',
-        verdict: v.verdict === 'correct' ? ('correct' as const) : ('incorrect' as const),
-      }));
-    if (assertedVerdicts.length === 0 || assertedVerdicts.some((v) => v.scoring_unit_id === '')) {
-      throw new ApiError(
-        'validation_error',
-        "correction_kind='assert' requires non-empty asserted_verdicts",
-        400,
-      );
-    }
-    const rate = existingRate
-      ? { rate_event_id: existingRate.id, rate_at: existingRate.created_at }
-      : await writeProposalRateEvent(db, proposalId, 'accept', opts.user_note);
+    // assert —— asserted_verdicts 已在上方解析校验，producer 也预校验过覆盖。
     // assert 幂等：manual_assert 的 evaluation_key（correction:<proposalId>）在
     // evaluateSubmission 里按 intent_digest 重放同一 candidate；activation CAS
     // 以 proposal 冻结期望比对 —— head 已动则 conflict（非变异性），命中已激
     // 活则 already_effective；resolution 事件按确定性 id 只写一次。
-    const outcome = await applyManualAssertCorrection(db, {
-      proposalId,
-      evaluationId,
-      correctionEventId,
-      reasonMd,
-      assertedVerdicts,
-      expectedHead: {
-        effectiveEvaluationId: expectedEffectiveId,
-        generation: expectedGeneration,
-      },
-    });
+    let outcome: { correctedEvaluationId: string; disposition: string };
+    try {
+      outcome = await applyManualAssertCorrection(db, {
+        proposalId,
+        evaluationId,
+        correctionEventId,
+        reasonMd,
+        assertedVerdicts,
+        expectedHead: {
+          effectiveEvaluationId: expectedEffectiveId,
+          generation: expectedGeneration,
+        },
+      });
+    } catch (error) {
+      // accept rate 必须写在效果之后：确定性校验失败时提案保持 pending。
+      // correction request 已提交，补终态 resolution，不让 appeal 无结论。
+      const disposition = permanentAssertFailureDisposition(error);
+      if (disposition) {
+        await writeCorrectionResolution(db, {
+          correctionEventId,
+          evaluationSubjectId: evaluationId,
+          disposition,
+        });
+      }
+      throw error;
+    }
+    const rate = existingRate
+      ? { rate_event_id: existingRate.id, rate_at: existingRate.created_at }
+      : await writeProposalRateEvent(db, proposalId, 'accept', opts.user_note);
     await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
     return {
       kind: 'judge_retraction',

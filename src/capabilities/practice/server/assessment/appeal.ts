@@ -6,6 +6,7 @@ import { evaluation, evaluation_effective_head, event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import {
+  EvaluateSubmissionError,
   activateSubmissionCandidate,
   createFormalModelExecutor,
 } from '../judge/evaluate-submission';
@@ -161,6 +162,18 @@ export async function requestEvaluationCorrection(
   });
 }
 
+/**
+ * 重判的确定性绑定冲突：重试不会改变结果。按 stale_head 同款落 hold resolution，
+ * 否则 pg-boss 耗尽重试后进 DLQ，而 accept 已告诉 owner queued_rejudge。
+ */
+function isPermanentRejudgeConflict(error: unknown): boolean {
+  if (error instanceof ApiError) return error.code === 'appeal_execution_conflict';
+  if (error instanceof EvaluateSubmissionError) {
+    return error.code === 'attempt_conflict' || error.code === 'evaluation_key_conflict';
+  }
+  return false;
+}
+
 export async function rejudgeNativeAppeal(database: Db, appeal: typeof event.$inferSelect) {
   const resolutionId = `evt_native_resolution_${canonicalHash(appeal.id)}`;
   const record = async (tx: Db | Tx, disposition: string, evaluationId?: string) => {
@@ -218,26 +231,32 @@ export async function rejudgeNativeAppeal(database: Db, appeal: typeof event.$in
     (head?.generation ?? 0) !== intent.data.expected_generation
   )
     return hold('stale_head');
-  const candidate = await evaluateAttempt({
-    db: database,
-    entry: 'appeal_rejudge',
-    contract: {
-      submission_id: original.submission_id,
-      evaluation_group_id: original.evaluation_group_id,
-      expected_submission_ids: provenance.data.input_snapshot.member_submission_ids,
-      evaluation_key: `appeal:${appeal.id}`,
-      provenance: {
-        source: 'automatic',
-        assisted: provenance.data.assisted,
-        review_context: {
-          appeal_event_id: appeal.id,
-          prior_evaluation_id: original.evaluation_id,
-          reason_md: typeof appeal.payload.reason_md === 'string' ? appeal.payload.reason_md : '',
+  let candidate: Awaited<ReturnType<typeof evaluateAttempt>>;
+  try {
+    candidate = await evaluateAttempt({
+      db: database,
+      entry: 'appeal_rejudge',
+      contract: {
+        submission_id: original.submission_id,
+        evaluation_group_id: original.evaluation_group_id,
+        expected_submission_ids: provenance.data.input_snapshot.member_submission_ids,
+        evaluation_key: `appeal:${appeal.id}`,
+        provenance: {
+          source: 'automatic',
+          assisted: provenance.data.assisted,
+          review_context: {
+            appeal_event_id: appeal.id,
+            prior_evaluation_id: original.evaluation_id,
+            reason_md: typeof appeal.payload.reason_md === 'string' ? appeal.payload.reason_md : '',
+          },
         },
+        model_executor: createFormalModelExecutor(database),
       },
-      model_executor: createFormalModelExecutor(database),
-    },
-  });
+    });
+  } catch (error) {
+    if (isPermanentRejudgeConflict(error)) return hold('binding_conflict');
+    throw error;
+  }
   const candidateId = candidate.evaluation.record.evaluation_id;
   if (
     candidate.evaluation.record.status !== 'completed' ||

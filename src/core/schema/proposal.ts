@@ -219,8 +219,8 @@ export type ProposalDecisionResourceT = z.infer<typeof ProposalDecisionResource>
 // 走 default 分支抛 unsupported_proposal_kind 400（producer/accept
 // 语义归 YUK-44）。Phase 0 关系脑 (YUK-406/YUK-440) 的 conjecture 现有真身 accept
 // applier（acceptConjectureProposal，agency 包），故已纳入本集合。UI（ProposalCard）
-// 据此门控 Accept CTA；inbox-meta.unit.test.ts 钉住「本集合 ∪ 未实现 kind ===
-// aiProposalKinds」，dispatchAccept 增删 kind 时漂移会被测试拦下。
+// 据此门控 Accept CTA；增加/删除 accept kind 时保持「本集合 ∪ 未实现 kind ===
+// aiProposalKinds」不漂移。
 // YUK-1407 — judge_retraction 纳入：判分纠错提案（evaluation→appeal/rejudge/CAS
 // 激活+settlement replay；legacy judge-event→CorrectEvent），接受面在
 // practice proposal-appliers。
@@ -262,8 +262,8 @@ export const acceptSupportedProposalKinds = [
 //   C — observe-only（仅折叠到 AI 观察面，无 Accept CTA）。恰好是「无 accept
 //       applier」的三 kind：dispatchAccept 对它们抛 unsupported_proposal_kind。
 //
-// 红线（防双 SoT 漂移，proposal-strength.unit.test.ts 钉死）：C 档集合 ⟺
-// `aiProposalKinds ∖ acceptSupportedProposalKinds`（={defer,archive,judge_retraction}）
+// 红线（防双 SoT 漂移）：C 档集合 ⟺
+// `aiProposalKinds ∖ acceptSupportedProposalKinds`（当前 = {defer, archive}）
 // 恒等。强度轴 ≠ accept-applier 轴 ≠ tone 视觉轴（KIND_META.tone），三轴勿耦合。
 export type AiProposalStrength = 'A' | 'B' | 'C';
 

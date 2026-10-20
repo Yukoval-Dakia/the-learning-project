@@ -580,3 +580,12 @@ actual-output、旧库 head 激活、真实 rejudge 或页面验收 PASS。提�
 - 冲突裁断：全部保留 main 的 YUK-1568 K1 声明契约——`runDeterministicComparator` 增 `declaredShape` 形参、`gradeBlankExactUnit(unit, entry, declaredShape)`、分发点按冻结 slot 查 `answer_shape`；本 PR 的提取拦截挂在未声明文本空路径（`declaredShape == null` 门控），声明槽走共享比较核心 compareDeclaredBlank；`judged_by: executor.comparator` receipt 字段与 main 的声明传递并存。未回退任何 main 新声明。
 - 本机静态门全绿：`pnpm typecheck` / `pnpm lint`（179 warnings，同基线）/ `pnpm build` exit 0；`biome check` 冲突文件 clean。未写/改任何测试，未跑 DB/容器/provider。
 - 未复验：新 head 的 S5=11 / a=-4 真实页面与 DB 复验仍待父获批窗口；真实提取行为未变（拦截条件外加 `declaredShape == null`，未声明槽路径逐字保留）。
+
+### glm 跨模型审查修复（2026-10-20）
+
+- **assert accept 先效果后决策**：`acceptJudgeRetractionProposal` 仅在 `applyManualAssertCorrection` 成功后写 accept rate；确定性校验失败时写 `failed:<code>` resolution 并重新抛出，提案保持 pending，不再出现"已采纳但零效果、appeal 无结论"。
+- **producer 预校验**：`writeEvaluationCorrectionProposal` 在落单时按冻结 revision + `projectIssuedScoringBasis` 校验 assert 全覆盖、unit 存在且 additive；工具将这类 `ApiError` 映射为 `rejected`，不落无效提案。
+- **重判永久绑定冲突落 hold**：`rejudgeNativeAppeal` 对 `appeal_execution_conflict` / `attempt_conflict` / `evaluation_key_conflict` 写 `binding_conflict` resolution，不再只靠 pg-boss DLQ。
+- **纠错提案原子去重**：producer 在写事务内先取 `proposal-cooldown` 咨询锁再复查 pending，同一 evaluation 的并发重复落单只保留一条，避免两次 accept 各跑一次同一冻结输入的付费重判。
+- 同步修正 `proposal.ts` 中引用不存在测试的过时注释，以及 `proposal-appliers.ts` 的旧 judge_retraction 无 applier 描述。
+- 本机 `pnpm typecheck` / `pnpm lint`（179 warnings，同基线）/ `pnpm build` exit 0；`audit:schema` / `audit:capability-boundaries` / `audit:architecture-deepening` / `audit:structured-judge` / `audit:test-policy` / `audit:provider-attempt-truth` 均 exit 0。未写/改测试，未跑 DB/queue/provider/真实页面。

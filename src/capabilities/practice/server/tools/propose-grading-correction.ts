@@ -10,8 +10,8 @@
 //      rejudge → experimental:appeal_request → rejudge job → 冻结输入重评 →
 //      activation CAS → settlement replay；assert → manual_assert candidate
 //      直接激活。两条路径都不回写原评价/FSRS/掌握度。
-//   3. 幂等：同一 evaluation 存在 pending 的 judge_retraction proposal ⇒
-//      duplicate，不重复落单。
+//   3. 幂等：producer 在同一事务内复查 pending 的 judge_retraction proposal，
+//      并发重复调用也只落一单。
 //
 // 不自动执行任何判分变更；accept 策略是 owner 决策（见 YUK-1407）。
 
@@ -19,7 +19,7 @@ import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Db } from '@/db/client';
 import { evaluation } from '@/db/schema';
-import { pendingProposalWithCooldown } from '@/kernel/proposals/inbox';
+import { ApiError } from '@/kernel/http';
 import { writeEvaluationCorrectionProposal } from '@/kernel/proposals/producers';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 
@@ -93,16 +93,6 @@ async function executeProposeGradingCorrection(
     };
   }
 
-  const cooldownKey = `judge_retraction:${input.evaluation_id}`;
-  if (await pendingProposalWithCooldown(db, 'judge_retraction', cooldownKey)) {
-    return {
-      status: 'duplicate',
-      reason: 'a pending grading-correction proposal already exists for this evaluation',
-      proposal_event_id: null,
-      evaluation_id: input.evaluation_id,
-    };
-  }
-
   // 判词快照：让 reviewer 不用回查 evaluation 行就能看清在纠错什么。
   const unitResults = Array.isArray(row.unit_results) ? row.unit_results : [];
   const observed = {
@@ -127,21 +117,42 @@ async function executeProposeGradingCorrection(
     }),
   };
 
-  const proposalEventId = await writeEvaluationCorrectionProposal(db, {
-    actor_ref: ctx.callerActor.ref,
-    evaluation_id: input.evaluation_id,
-    correction_kind: input.correction_kind,
-    asserted_verdicts: input.asserted_verdicts,
-    observed,
-    attempt_event_id: `evt_assessment_${row.submission_id}`,
-    reason_md: input.reason_md,
-    evidence_refs: (input.evidence_event_ids ?? []).map((id) => ({
-      kind: 'event' as const,
-      id,
-    })),
-    task_run_id: ctx.taskRunId,
-    caused_by_event_id: ctx.causedByEventId ?? null,
-  });
+  let written: Awaited<ReturnType<typeof writeEvaluationCorrectionProposal>>;
+  try {
+    written = await writeEvaluationCorrectionProposal(db, {
+      actor_ref: ctx.callerActor.ref,
+      evaluation_id: input.evaluation_id,
+      correction_kind: input.correction_kind,
+      asserted_verdicts: input.asserted_verdicts,
+      observed,
+      attempt_event_id: `evt_assessment_${row.submission_id}`,
+      reason_md: input.reason_md,
+      evidence_refs: (input.evidence_event_ids ?? []).map((id) => ({
+        kind: 'event' as const,
+        id,
+      })),
+      task_run_id: ctx.taskRunId,
+      caused_by_event_id: ctx.causedByEventId ?? null,
+    });
+  } catch (error) {
+    if (error instanceof ApiError) {
+      return {
+        status: 'rejected',
+        reason: error.message,
+        proposal_event_id: null,
+        evaluation_id: input.evaluation_id,
+      };
+    }
+    throw error;
+  }
+  if (written.status === 'duplicate') {
+    return {
+      status: 'duplicate',
+      reason: 'a pending grading-correction proposal already exists for this evaluation',
+      proposal_event_id: null,
+      evaluation_id: input.evaluation_id,
+    };
+  }
 
   return {
     status: 'filed',
@@ -149,7 +160,7 @@ async function executeProposeGradingCorrection(
       input.correction_kind === 'assert'
         ? 'grading-correction proposal filed — owner accept runs a manual-assert candidate through activation + settlement replay'
         : 'grading-correction proposal filed — owner accept queues a regrade of the frozen submission through the appeal chain',
-    proposal_event_id: proposalEventId,
+    proposal_event_id: written.proposal_event_id,
     evaluation_id: input.evaluation_id,
   };
 }

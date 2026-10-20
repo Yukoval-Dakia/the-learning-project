@@ -1,9 +1,16 @@
 import { eq, inArray, sql } from 'drizzle-orm';
+import {
+  EvaluationProvenance,
+  PublishedQuestionRevision,
+  projectIssuedScoringBasis,
+} from '@/core/schema/assessment';
 import type { SuggestionKindT } from '@/core/schema/event/known';
 import type { ProposalEvidenceRefT } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
-import { evaluation, evaluation_effective_head, event } from '@/db/schema';
+import { evaluation, evaluation_effective_head, event, question_revision } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
+import { revisionRowToContract } from '@/kernel/records/assessment-issuance';
+import { pendingProposalWithCooldown } from './inbox';
 import { writeAiProposal } from './writer';
 
 type DbLike = Db | Tx;
@@ -458,6 +465,74 @@ export interface WriteEvaluationCorrectionProposalInput extends CommonProducerIn
   attempt_event_id?: string | null;
 }
 
+export type WriteEvaluationCorrectionProposalResult =
+  | { status: 'filed'; proposal_event_id: string }
+  | { status: 'duplicate'; proposal_event_id: null };
+
+// assert 提案在落单时就按冻结发题范围校验全覆盖：等 accept 才发现缺 unit
+// 会留下一条永远无法生效的提案。校验口径与 accept 的 manual_assert 相同。
+async function assertCorrectionCoversFrozenScope(
+  db: DbLike,
+  evaluationProvenance: unknown,
+  assertedVerdicts: { scoring_unit_id: string; verdict: 'correct' | 'incorrect' }[],
+): Promise<void> {
+  const provenance = EvaluationProvenance.safeParse(evaluationProvenance);
+  if (!provenance.success || !provenance.data.input_snapshot) {
+    throw new ApiError(
+      'frozen_input_unavailable',
+      'assert correction requires the frozen input snapshot',
+      422,
+    );
+  }
+  const [revisionRow] = await db
+    .select()
+    .from(question_revision)
+    .where(eq(question_revision.revision_id, provenance.data.input_snapshot.revision_id))
+    .limit(1);
+  if (!revisionRow) {
+    throw new ApiError(
+      'frozen_input_unavailable',
+      'frozen revision row missing for assert correction',
+      422,
+    );
+  }
+  const revision = PublishedQuestionRevision.parse(revisionRowToContract(revisionRow));
+  const scopedBasis = projectIssuedScoringBasis(
+    revision,
+    provenance.data.input_snapshot.issued_part_ids,
+  );
+  const verdictByUnit = new Map(
+    assertedVerdicts.map((verdict) => [verdict.scoring_unit_id, verdict.verdict]),
+  );
+  const scopedUnitIds = new Set(scopedBasis.units.map((unit) => unit.scoring_unit_id));
+  const missing = [...scopedUnitIds].filter((unitId) => !verdictByUnit.has(unitId));
+  if (missing.length > 0) {
+    throw new ApiError(
+      'assert_coverage_incomplete',
+      `asserted_verdicts must cover every in-scope unit; missing '${missing.join("', '")}'`,
+      422,
+    );
+  }
+  const unknown = [...verdictByUnit.keys()].filter((unitId) => !scopedUnitIds.has(unitId));
+  if (unknown.length > 0) {
+    throw new ApiError(
+      'assert_unit_unknown',
+      `asserted_verdicts references unknown/out-of-scope unit '${unknown.join("', '")}'`,
+      422,
+    );
+  }
+  const notAdditive = scopedBasis.units
+    .filter((unit) => unit.points === null)
+    .map((unit) => unit.scoring_unit_id);
+  if (notAdditive.length > 0) {
+    throw new ApiError(
+      'assert_unit_not_additive',
+      `unit '${notAdditive.join("', '")}' is not additive-scored — manual assert needs the holistic lane`,
+      422,
+    );
+  }
+}
+
 /**
  * YUK-1407 — agent 发现疑似误判 ⇒ 可逆纠错 proposal（不自动执行）。
  *
@@ -465,6 +540,10 @@ export interface WriteEvaluationCorrectionProposalInput extends CommonProducerIn
  * 评价的判词快照（observed）与 attempt event 证据引用 —— 不是 note 文本里
  * 的裸 regex。pending 的 evaluation attempt 是可重试 infra 态，不是可纠错的
  * 判词 → 422。
+ *
+ * 同一 evaluation 的 pending 纠错提案在事务内原子去重：先取 cooldown 咨询锁再
+ * 复查 pending 集，避免两个并发 producer 都看不到对方而各落一单，后续各跑一次
+ * 同一冻结输入的付费重判。
  *
  * accept 语义（practice proposal-accept-applier）：
  *   - rejudge → 写 `experimental:appeal_request`（expected head = 本提案创建
@@ -477,7 +556,7 @@ export interface WriteEvaluationCorrectionProposalInput extends CommonProducerIn
 export async function writeEvaluationCorrectionProposal(
   db: DbLike,
   input: WriteEvaluationCorrectionProposalInput,
-): Promise<string> {
+): Promise<WriteEvaluationCorrectionProposalResult> {
   return db.transaction(async (tx) => {
     const [target] = await tx
       .select({
@@ -485,6 +564,7 @@ export async function writeEvaluationCorrectionProposal(
         status: evaluation.status,
         evaluation_group_id: evaluation.evaluation_group_id,
         submission_id: evaluation.submission_id,
+        provenance: evaluation.provenance,
       })
       .from(evaluation)
       .where(eq(evaluation.evaluation_id, input.evaluation_id))
@@ -510,6 +590,18 @@ export async function writeEvaluationCorrectionProposal(
         400,
       );
     }
+    const cooldownKey = `judge_retraction:${input.evaluation_id}`;
+    // 事务级咨询锁让「查 pending → 写 proposal」成为原子操作：只压缩并发重复
+    // 落单，不替代 accept 的冻结 head/CAS 校验。
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtext('proposal-cooldown'), hashtext(${cooldownKey}))`,
+    );
+    if (await pendingProposalWithCooldown(tx, 'judge_retraction', cooldownKey)) {
+      return { status: 'duplicate' as const, proposal_event_id: null };
+    }
+    if (correctionKind === 'assert') {
+      await assertCorrectionCoversFrozenScope(tx, target.provenance, input.asserted_verdicts ?? []);
+    }
     // P1 review — head 快照在组锁下、与 proposal 写入同事务内读取：accept 时
     // 把该冻结期望运进 correction request 与 activation CAS —— head 已移动
     // ⇒ 拒绝/冲突，绝不把过期 proposal 静默 rebase 到新 head。服务端派生，
@@ -531,7 +623,7 @@ export async function writeEvaluationCorrectionProposal(
       evidenceRefs.unshift({ kind: 'event', id: input.attempt_event_id });
     }
 
-    return writeAiProposal(tx, {
+    const proposalEventId = await writeAiProposal(tx, {
       id: input.id,
       actor_ref: input.actor_ref ?? 'copilot',
       payload: {
@@ -555,11 +647,12 @@ export async function writeEvaluationCorrectionProposal(
           action:
             'dismiss proposal — no evaluation changes; an accepted correction is itself a new evaluation/correction event and can be re-corrected by a further proposal',
         },
-        cooldown_key: `judge_retraction:${input.evaluation_id}`,
+        cooldown_key: cooldownKey,
       },
       task_run_id: input.task_run_id ?? null,
       cost_usd: input.cost_usd,
       created_at: input.created_at,
     });
+    return { status: 'filed' as const, proposal_event_id: proposalEventId };
   });
 }
