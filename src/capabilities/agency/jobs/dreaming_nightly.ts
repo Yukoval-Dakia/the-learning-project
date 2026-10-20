@@ -280,7 +280,7 @@ export async function runDreamingNightly(
       listProposalInboxRowsFn: deps.listProposalInboxRowsFn,
       runAgentTaskFn: deps.runAgentTaskFn,
     },
-    buildInput: async ({ now, beforeRows }) => {
+    prepareInput: async ({ now, beforeRows }) => {
       // YUK-143 / ADR-0025 — read active goals for the additive goal bias. This
       // is a read-only ADD to the Dreaming signal set; it does not read the
       // FSRS-due queue or mutate any review state (ND-5).
@@ -292,7 +292,7 @@ export async function runDreamingNightly(
       // U8 / AF §4 — read un-expired hints addressed to Dreaming. Empty on the
       // common cold path → input feed degrades to a no-op.
       const agentNotes = await readNotes(db, now);
-      return buildDreamingInput(now, beforeRows, activeGoals, feedbackDigest, agentNotes);
+      return () => buildDreamingInput(now, beforeRows, activeGoals, feedbackDigest, agentNotes);
     },
     onNewProposalRows: async ({ db, newRows, triggerEventId }) => {
       const newDreamingNoteTargets = [

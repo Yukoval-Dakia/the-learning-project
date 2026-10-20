@@ -291,7 +291,7 @@ export async function runCoach(
           : { today_plan: null, plan_parse_error: true }),
       };
     },
-    buildInput: async ({ now, beforeRows }) => {
+    prepareInput: async ({ now, beforeRows }) => {
       // YUK-143 / ADR-0025 — read active goals for the additive goal strand.
       // This is a read-only ADD to the Coach signal set; it does not read the
       // FSRS-due queue or mutate any review state (ND-5).
@@ -311,16 +311,17 @@ export async function runCoach(
       // backbone (ND-5). Empty in the cold-start case → brief derives from
       // due/weak.
       const activeItems = await listItems(db);
-      return buildCoachInput(
-        runKind,
-        now,
-        beforeRows,
-        objective,
-        activeGoals,
-        feedbackDigest,
-        agentNotes,
-        activeItems,
-      );
+      return () =>
+        buildCoachInput(
+          runKind,
+          now,
+          beforeRows,
+          objective,
+          activeGoals,
+          feedbackDigest,
+          agentNotes,
+          activeItems,
+        );
     },
   });
 }

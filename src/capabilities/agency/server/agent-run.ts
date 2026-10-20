@@ -2,7 +2,7 @@
 //
 // Single owner of the complete run assembly that dreaming_nightly and
 // coach_daily previously copied line-for-line: inbox before-read → consumer
-// input build → `experimental:trigger_<surface>_scan` provenance event →
+// signal reads → `experimental:trigger_<surface>_scan` provenance event →
 // ContextBudgetTracker + propose-cap beforeExecute gate + interceptInput
 // throttle on a piDomainMount → runAgentTask with the YUK-290 `hard+1` summary
 // turn budgetOverride → inbox after-diff → consumer per-new-row hook →
@@ -91,11 +91,15 @@ export interface AgencyProposalScanSpec {
   budget: ContextBudget;
   deps?: AgencyProposalScanDeps;
   /**
-   * Consumer's signal reads + input assembly, called after the inbox
-   * before-read and before the trigger write — the exact position the jobs
-   * built their input today.
+   * Read signals after the inbox snapshot, before the trigger event. Return
+   * the input builder so assembly still occurs inside the scan failure boundary
+   * at the runner call, after the trigger and mount options have been prepared.
    */
-  buildInput: (ctx: { db: Db; now: Date; beforeRows: AgencyScanInboxRow[] }) => Promise<unknown>;
+  prepareInput: (ctx: {
+    db: Db;
+    now: Date;
+    beforeRows: AgencyScanInboxRow[];
+  }) => Promise<() => unknown>;
   /** Extra trigger payload fields (Coach stamps `run_kind`). */
   extraTriggerPayload?: Record<string, unknown>;
   /** Scan-success payload extras computed from the task result. */
@@ -137,7 +141,7 @@ export async function runAgencyProposalScan(
 
   const beforeRows = await listRows(db);
   const beforeIds = new Set(beforeRows.map((row) => row.id));
-  const input = await spec.buildInput({ db, now, beforeRows });
+  const buildInput = await spec.prepareInput({ db, now, beforeRows });
   const triggerEventId = `${spec.surface}_trigger_${createId()}`;
   const toolContextTaskRunId = `${spec.surface}_tool_${createId()}`;
 
@@ -189,7 +193,7 @@ export async function runAgencyProposalScan(
         return { args: capped, truncationNote: contextBudget, softStop };
       },
     } satisfies BuildMcpServerOptions;
-    const taskResult = await run(taskKind, input, {
+    const taskResult = await run(taskKind, buildInput(), {
       db,
       // YUK-290: maxTurns must not pre-empt the runtime tool-call ceiling.
       // Keep one final turn for the agent's summary after the last allowed tool call.
