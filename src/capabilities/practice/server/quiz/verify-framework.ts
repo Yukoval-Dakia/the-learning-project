@@ -503,7 +503,9 @@ function isExactQuestion(q: SolveCheckQuestion): boolean {
 // vs. the certain false FAIL today. Whole-text candidate kept (multi-candidate `.includes`
 // = any hit passes); candidate[0] stays the whole text so the semantic path's reference is
 // unchanged. No kind gate — spec 附录 B (review A1 裁决).
-function referenceAnswerCandidates(q: SolveCheckQuestion): string[] {
+function referenceAnswerCandidates(
+  q: Pick<SolveCheckQuestion, 'reference_md' | 'rubric_json' | 'choices_md'>,
+): string[] {
   const rubric = q.rubric_json;
   if (rubric !== null && typeof rubric === 'object' && !Array.isArray(rubric)) {
     const refSolution = (rubric as Record<string, unknown>).reference_solution;
@@ -607,6 +609,69 @@ function answerCandidates(
   }
 
   return out;
+}
+
+// ---------- deterministic choice-surface pre-checks (YUK-1624 #24) ----------
+
+export type ChoiceSurfaceDefect =
+  | 'insufficient_choices'
+  | 'duplicate_options'
+  | 'reference_not_in_choices';
+
+export interface ChoiceSurfaceQuestion {
+  kind: string;
+  reference_md: string | null;
+  choices_md: string[] | null;
+  rubric_json: unknown;
+}
+
+function referenceFirstLine(referenceMd: string | null): string | null {
+  const fallback = (referenceMd ?? '').trim();
+  if (fallback.length === 0) return null;
+  return (fallback.split(/\r?\n/, 1)[0] ?? '').trim() || null;
+}
+
+/**
+ * Choice-surface defects rules can decide before ANY paid verify call runs —
+ * the model is reserved for what rules cannot judge. Applies only to rows that
+ * carry persisted choices (structure is the source of truth, mirroring
+ * isExactQuestion; the repo's true_false form legitimately has no choices and
+ * is skipped). Answer resolution reuses the solve-check candidates, so `B`,
+ * `B. …`, `（B）`, a structured rubric final_answer and the first-line-of-prose
+ * contract all count as the declared answer; a multi-select reference like
+ * `A、C` passes when every label resolves to a real option.
+ */
+export function deterministicChoiceDefects(question: ChoiceSurfaceQuestion): ChoiceSurfaceDefect[] {
+  const choices = question.choices_md ?? [];
+  if (choices.length === 0) return [];
+  if (choices.length < 2) return ['insufficient_choices'];
+
+  const defects: ChoiceSurfaceDefect[] = [];
+  const normalizedOptions = choices.map((choice) => normalizeAnswer(choice));
+  if (new Set(normalizedOptions).size !== normalizedOptions.length) {
+    defects.push('duplicate_options');
+  }
+
+  const firstLine = referenceFirstLine(question.reference_md);
+  const labels = firstLine ? firstLine.split(/[、，,\s]+/u).filter(Boolean) : [];
+  const everyTokenIsResolvableLabel =
+    labels.length > 0 &&
+    labels.every((token) => {
+      const index = choiceLabelIndex(token);
+      return index !== null && index < choices.length;
+    });
+  // Same candidate composition the solve-check exact path uses, so `B`, `B. …`,
+  // `（B）` and structured rubric answers all resolve to their option.
+  const referenceInChoices =
+    everyTokenIsResolvableLabel ||
+    referenceAnswerCandidates(question).some((candidate) =>
+      answerCandidates(candidate, choices, true).some((expanded) =>
+        normalizedOptions.includes(normalizeAnswer(expanded)),
+      ),
+    );
+  if (!referenceInChoices) defects.push('reference_not_in_choices');
+
+  return defects;
 }
 
 // OCR (PR #716) — `label` identifies the CALLER (check name + task kind) so a parse-failure
