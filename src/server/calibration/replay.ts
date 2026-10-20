@@ -14,8 +14,10 @@
 // secondary KC, so the fold gate and the forward prediction can name different KCs.
 // The likelihood is binary. A KC with no posterior starts from uniformPrior().
 // Production fills globalOf once, before the attempt, and the drift does not mutate that map.
-// The fold keeps the referenced KC's pre-drift global. The prediction reads the scored KC
-// before the drift. Those reads match only when the scored KC is the folded KC.
+// The fold keeps the referenced KC's pre-drift global and posterior. The prediction reads
+// the scored KC's posterior and domain global, also before the drift. That per-KC posterior
+// and anchor match only when the scored KC is the folded KC. globalOf is per domain, so
+// equal globals do not require the same KC.
 // With the grid flag off, every grid field stays null and thetaGridByKc stays empty.
 
 import {
@@ -119,7 +121,8 @@ function isFiniteNum(x: number | null | undefined): x is number {
 // Production persists θ̂ as double precision, and the driver round-trips binary64.
 // The fixture still allows about 1e-6. That bound is conservative. A residual gap is
 // replay arithmetic, not column truncation, and it moves predicted P by about the same
-// amount, below any ΔAUC threshold.
+// amount, below any ΔAUC threshold. Bit-exact waits until replay uses the shared
+// polySigmoid, which is when POLY_SIGMOID_ENABLED flips (#46).
 
 /** Same trim and drop-empty as production's KC set. */
 function dedupKcs(ids: string[]): string[] {

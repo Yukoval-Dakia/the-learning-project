@@ -58,7 +58,9 @@ export async function startBossWorker(
   // pg-boss emits `error` from its background loops. With no listener, EventEmitter
   // rethrows and the process exits. A cold-start 23505 on an existing internal queue
   // is that race. Swallow it. Do not exit on other logged errors. A transient
-  // supervise hiccup must not kill a worker that is still draining.
+  // supervise hiccup must not kill a worker that is still draining. On the standalone
+  // worker, an uncaught rejection or exception still exits through the handlers in
+  // scripts/worker.ts.
   boss.on('error', (err) => {
     if (isQueueCreateRace(err)) {
       console.warn(
