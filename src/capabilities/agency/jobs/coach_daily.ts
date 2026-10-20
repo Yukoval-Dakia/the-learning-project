@@ -15,13 +15,6 @@ import {
   type AgencyScanRunFn,
   runAgencyProposalScan,
 } from '@/capabilities/agency/server/agent-run';
-// YUK-143 / ADR-0025 — North-Star: feed active goals into the Coach input so it
-// can add a goal-oriented strand. Purely ADDITIVE (ND-5): the FSRS-due / review
-// backbone and other capture tasks are untouched; goals only add direction.
-import {
-  type ActiveGoal,
-  listActiveGoalsWithResolvedScope,
-} from '@/capabilities/agency/server/goals/queries';
 // codex #3356884494 — Coach consumes the out-of-band agent-note HINT channel
 // (for_agent='coach'). quiz_verify leaves question_pool_gap notes targeting
 // 'coach', but nothing read them until now (the only live readers were Dreaming /
@@ -43,6 +36,13 @@ import {
   type ProposalFeedbackCell,
   getProposalFeedbackDigest,
 } from '@/kernel/proposals/adaptive-bias';
+// YUK-143 / ADR-0025 — North-Star: feed active goals into the Coach input so it
+// can add a goal-oriented strand. Purely ADDITIVE (ND-5): the FSRS-due / review
+// backbone and other capture tasks are untouched; goals only add direction.
+import {
+  type ActiveGoal,
+  listActiveGoalsWithResolvedScope,
+} from '@/kernel/read-models/active-goal-scope';
 // P5.1 / YUK-143 — single tunable source for Coach run caps. YUK-290 keeps the
 // old max_tool_calls=12 as an advisory warning and moves the accident ceiling
 // to 36; max_proposals remains byte-identical at 5.
