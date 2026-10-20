@@ -16,7 +16,7 @@
 //      evaluated before ANY paid verify call — insufficient_choices /
 //      duplicate_options / reference_not_in_choices, folded into the admission
 //      record by choiceSurfacePrecheckRecord. Public consumer: quiz_verify.ts
-//      (admission lane), reached through verify-framework's forced re-export.
+//      (admission lane), importing this module directly.
 
 import { normalizeToCanonicalKind } from '@/subjects/question-kind';
 
