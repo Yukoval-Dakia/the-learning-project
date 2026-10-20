@@ -5,6 +5,9 @@ base `83bbecdaecaf70be0ae0241795fac3d5a07940c1`，branch
 `arch/yuk-1572-quiz-gen-knowledge`；从 fetch 后的 origin/main 新建，未带父旧提交。
 源码提交 `35399b53a0dbaca9bc64322864df1502f14d200e`，tree
 `531821d1b5a86acf880816878525568685bb0cff`。父已核准旧出口删除与完整职责接入。
+后续普通 merge 最新 main `20222f2cafe1500a9e445b43fe132935405d825a` 得
+`9b3347505be06798feeded4fc1cb86eea1706acf`，无冲突；本片三个源码与上游三个文件
+分别对原提交逐 blob 相同。依赖 package/lock/workspace SHA 与父安装回执相同。
 
 ## 两个职责与真实消费者
 
@@ -60,9 +63,22 @@ admission/paid/fence、检索、persist/dispatch、预算及失败恢复顺序�
 `6194b9ac1c42114483e339455df16ab663a36685d4c2c33188cb07b5667ed10c`）；
 class / parse 除 export 声明、material 全块逐字相同。job 2055→1939 行，
 output 69 行、material 56 行；仍超过 1500，不为尺寸触及保护段。
-缺 node_modules，未 install/update/复制；源码与证明已报父请求串行一次 frozen install。
-typecheck、lint、build、capability-boundaries 与 architecture-deepening：NOT_RUN。
-没有实跑 audit，不预付指标收益；baseline 原样，若实测变化由父裁定登记。
+父在旧 head `264733f6d32f4dc299446d93c39496ed5f5eb997` 唯一一次 heavy frozen install
+returncode 0；receipt/log hash 已核，前后三份依赖文件相同。lane 未 install/update/复制。
+
+在 merge head `9b3347505be06798feeded4fc1cb86eea1706acf`，经外部 heavy.sh 本 lane
+串行实际跑五门，raw stdout/stderr、argv、UTC 与 subprocess 真退出码均封存：
+- typecheck 0、lint 0（181 warnings，本片三个源码无命中）、build 0；
+- architecture-deepening 0：依赖总数 403/0/37，SCC 仍 agency/knowledge/practice，
+  pass-through sites 1088（+0 new）；不宣称本片净降指标；
+- capability-boundaries 1：唯一 violation 是新 output 模块的 json-extract 真实依赖边
+  缺 edgeRecords 登记。旧 job 的原 import 已随职责删除；总数不变不免除新边登记。
+  已报父，lane 未改 baseline 或门；此真实失败回执保留，不称五门全绿。
+
+父待登记：file=`src/capabilities/practice/server/quiz/quiz-gen-output.ts`，
+module=`src/server/ai/json-extract.ts`，symbols=`parseJsonObjectLoose`，issue=`YUK-1572`；
+owns 为完整 JSON/schema/persisted judge-contract 输出验证，沿用原 helper 的风险修复
+与 warn 语义，无 wrapper 或伪 marker。未新增 sourceSize 或其它本 lane 登记请求。
 全部 tests/vitest、DB、TEST、Docker、daemon、provider、runtime、demo、paid：NOT_RUN。
 不 push、PR、watch、review、Linear 或清树。未发现范围外新 actionable 缺陷；
 tracker capture、最终审查、CI、baseline 实测登记与整合由父负责。
@@ -71,5 +87,11 @@ tracker capture、最终审查、CI、baseline 实测登记与整合由父负责
 YUK-1572/35399b53a0dbaca9bc64322864df1502f14d200e/quiz-gen/source-proof/`，
 含 full diff、保护块比较、完整 caller census、语法 raw stdout/stderr、argv/UTC/真 rc；
 sha256.json `351d97dc8f4c7610ba37a08394a463adb19d3edb767f3f307ec8b7e372adc11f`。
-原 preflight seal 独立保留，未覆盖。待决仅父安装／五门、独立审查及 CI／整合；
-不存在待批 compat、未知 caller 或范围扩张请求。源码与短文档提交后 clean 停止 writer。
+五门证据：同一 artifact 根下
+`YUK-1572/9b3347505be06798feeded4fc1cb86eea1706acf/quiz-gen/checks-round1/`，
+sha256.json `17cd275b326cb0578ef2c0a0d15e39ef46dc22e2a75b2509293001784d3a6cfc`。
+相邻 integration-proof/ 记录双方 blob、依赖及安装 log hash，manifest SHA256
+`a6d9be9fd33614b68283a1a259d9cdb7971e1af40d4e794f71f3a54cf782c59f`。
+原 source/preflight/handoff seal 独立保留，未覆盖。待决是父新边登记及定向 audit
+复核、独立审查与 CI／整合；不存在待批 compat、未知 caller 或范围扩张请求。
+源码与短文档提交后 clean 停止 writer；测试与真实运行继续 NOT_RUN。
