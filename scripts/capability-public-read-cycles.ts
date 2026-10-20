@@ -146,23 +146,7 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
     reviewIssue: 'YUK-953',
     commandFiles: ['src/capabilities/knowledge/server/proposals.ts'],
   },
-  {
-    owner: 'knowledge',
-    consumer: 'notes',
-    files: ['src/capabilities/notes/server/hub-sync-reconciliation.ts'],
-    symbols: [
-      'HubMeshAtomicInput',
-      'HubMeshEdge',
-      'listKnowledgeEdges',
-      'loadTreeSnapshot',
-      'resolveHubMeshAtomics',
-    ],
-    dto: 'TreeSnapshot / HubMeshEdge projections',
-    justification:
-      'hub auto-sync reconciles note hubs against the knowledge tree; subject-profile resolution moved to kernel read models (YUK-892).',
-    reviewIssue: 'YUK-885',
-    commandFiles: ['src/capabilities/notes/server/hub-sync-reconciliation.ts'],
-  },
+
   {
     owner: 'agency',
     consumer: 'practice',

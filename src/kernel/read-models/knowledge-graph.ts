@@ -14,8 +14,7 @@
 // src/capabilities/knowledge/server/edges.ts for the hub-mesh consumer: full-row
 // select (identical column-decode surface), `archived_at IS NULL`,
 // `ORDER BY created_at DESC, id DESC`, fetch LIMIT+1 then keep the first 500 —
-// the same row set and the same read work; only the page cursor the consumer
-// discarded is not produced. The >500 truncation is pre-existing behavior,
+// the same row set and the same read work; the discarded page cursor is still encoded to preserve its error surface. The >500 truncation is pre-existing behavior,
 // preserved deliberately.
 
 import { desc, eq, isNull, sql } from 'drizzle-orm';
@@ -185,8 +184,8 @@ const LIST_MESH_EDGES_LIMIT = 500;
  * src/capabilities/knowledge/server/edges.ts: no subject/from/to/relation
  * filter, `archived_at IS NULL`, `ORDER BY created_at DESC, id DESC`, fetch
  * LIMIT+1 (501) then keep the first 500 — the source path fetched the extra row
- * to compute `next_cursor`; the read work and row set are identical, only the
- * discarded cursor is not produced. Full-row select keeps the column-decode
+ * to compute `next_cursor`; the read work and row set are identical. The discarded cursor is still
+ * encoded because its timestamp conversion can fail on malformed data. Full-row select keeps the column-decode
  * surface identical (no `select({...})` narrowing that could turn a would-be
  * decode failure into a success). KNOWN PRE-EXISTING TRUNCATION, preserved
  * deliberately: beyond 500 live edges the curation sees only the newest 500 —
@@ -199,9 +198,20 @@ export async function listKnowledgeMeshEdges(db: Db | Tx): Promise<KnowledgeMesh
     .where(isNull(knowledge_edge.archived_at))
     .orderBy(desc(knowledge_edge.created_at), desc(knowledge_edge.id))
     .limit(LIST_MESH_EDGES_LIMIT + 1);
-  return fetched.slice(0, LIST_MESH_EDGES_LIMIT).map((row) => ({
+  const hasMore = fetched.length > LIST_MESH_EDGES_LIMIT;
+  const rows = hasMore ? fetched.slice(0, LIST_MESH_EDGES_LIMIT) : fetched;
+  const result = rows.map((row) => ({
     from_knowledge_id: row.from_knowledge_id,
     to_knowledge_id: row.to_knowledge_id,
     relation_type: row.relation_type,
   }));
+  const last = rows.at(-1);
+  if (hasMore && last) {
+    // listKnowledgeEdgesPage encoded this cursor even though the caller only
+    // consumed rows. Keep its timestamp failure behavior during this move.
+    Buffer.from(
+      JSON.stringify({ created_at: last.created_at.toISOString(), id: last.id }),
+    ).toString('base64url');
+  }
+  return result;
 }

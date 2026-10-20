@@ -1,4 +1,4 @@
-# YUK-1571 Stage1 — hub 策展算法 + 知识图读引擎归 kernel（交付记录，R2 修正版）
+# YUK-1571 Stage1 — hub 策展算法 + 知识图读引擎归 kernel（交付记录，作者修正版（独立首审尚未开始））
 
 协调线释放的切片：笔记 hub auto-zone 对知识图的确定性策展算法
 （`resolveHubMeshAtomics`，ADR-0020 §9 四条纳入规则 + 优先级 + 排除规则）
@@ -6,7 +6,7 @@
 纯搬迁，无运行时 registry/DI/新机制；knowledge FULL merge、tagKnowledge、
 pool-fetch、subject/retrieval 面不在本片。
 
-**R2 修正（协调线 2026-10-20）**：首版把 backbone 读收窄为
+**作者修正（父核对与主线释放 2026-10-20）**：首版把 backbone 读收窄为
 `{id, parent_id}`、丢弃 mastery join/overlay——这会把「损坏数据本失败」变成
 「成功」，不按行为保持接受。本片改为 `tree.ts` 完整 `loadTreeSnapshot` 读
 引擎逐字迁入 kernel（mastery join/overlay/effective_domain 链/subject 过滤/
@@ -68,8 +68,8 @@ knowledge/public（type-only，不计 cross value 边；不在释放清单）。
 - **边读等效**：`listKnowledgeEdges(db)` 默认路径 = 全列 select +
   `archived_at IS NULL` + `ORDER BY created_at DESC, id DESC` + fetch 501
   slice 500。kernel 读保留全部真实语义（全列 select 保持列解码失败面、
-  LIMIT+1 fetch + slice 500 保持读工与行集），仅不产出被消费者丢弃的
-  `next_cursor`；>500 截断是既有行为，忠实保留。
+  LIMIT+1 fetch + slice 500 保持读工与行集），保留消费者丢弃的
+  `next_cursor` 编码及其时间戳失败面；>500 截断是既有行为，忠实保留。
 - **每次 compute 新鲜读保留**：`computeHubDesiredState` 的
   `graph ?? {nodes: await …, edges: await …, atomics: await …}` 结构原样，
   仅换 loader 归属路径；`runHubSyncCycle`/`reconcileClaim` 仍不传 `graph`，
@@ -100,10 +100,10 @@ knowledge/public（type-only，不计 cross value 边；不在释放清单）。
 |---|---|---|---|
 | cross-capability value edges | 42 | 41 | `notes -> knowledge` 1→0 |
 | nontrivial SCC | 5 {agency,ingestion,knowledge,notes,practice} | 4 {agency,ingestion,knowledge,practice} | notes 退出；不声称 SCC→0 |
-| intra-SCC cross | 25 | 24 | #17 切除 |
+| intra-SCC cross | 25 | 22 | notes 的1条出边删除，2条入边转为非SCC边 |
 | capability→server | 432 | 432 | 不变（#1881 已自 440 收紧） |
 | server→capability deep | 0 | 0 | 不变 |
-| 非 SCC cross | 17 | 17 | 不变 |
+| 非 SCC cross | 17 | 19 | agency→notes仍保留，notes退出SCC后重新分类 |
 
 （首版曾在 a519a05d2 基测 42/SCC5/440；本片经普通 merge origin/main #1881
 后在合并树上复测，capability→server 基线已是 432。）
@@ -135,3 +135,5 @@ knowledge/public（type-only，不计 cross value 边；不在释放清单）。
 
 本机不跑任何测试套件 / DB / 运行时 / provider / 付费链路；无 tsx-eval /
 合成输入验证；测试零改动。行为验收由 exact-head CI Gate 与独立审查承担。
+
+父整合：完整树引擎144行亲自逐字对照；保留旧分页cursor编码失败（只保留501读取还不充分）。baseline按现有audit重测；public-cycle catalog移除已退出依赖的notes项，mastery-provenance台账仅替换真实新读取路径；不改审计判定或CI语义。独立R1待启动，未发生R2审查；本机与CI不能代替运行验收。
