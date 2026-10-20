@@ -15,35 +15,30 @@ import { assertFromState } from './guards';
 
 // LearningSession.Ingestion.* — Phase 1c.1 Step 5 evolution of the ADR-0005
 // single-owner ingestion-session module. Writes to `learning_session(type='ingestion')`
-// (NOT legacy `ingestion_session`). All status transitions go through this module.
+// (not the legacy `ingestion_session`). All status transitions go through this module.
 //
 // State machine (unchanged from ADR-0005):
 //   uploaded → queued → extracting → extracted | partial | failed
 //   extracted / partial → reviewed → imported (terminal)
 //   failed → retry → queued
 //
-// Each transition writes a `job_events` row (Sub 0c pg-boss SSE plumbing).
-// Extract-flavored transitions additionally write a domain `event` row via
-// `writeSessionEvent` (Step 5 / ADR-0006 v2). State-only transitions
-// (initiateUpload / enqueueExtraction / markExtractionStarted / markReviewed /
-// commitImport) write NO domain event — reconsider in Phase 1d.
+// Every transition writes a `job_events` row. Extract-flavoured transitions also
+// write a domain `event` via `writeSessionEvent`; the rest are state-only because
+// job_events already covers async observability.
 
 const SESSION_TABLE = 'ingestion_session' as const;
 export const IMPORTABLE_SESSION_STATUSES = ['extracted', 'reviewed'] as const;
 const OPERATION_DISPATCH_SINGLETON_SECONDS = 24 * 60 * 60;
 
-// job_events business_table label kept as 'ingestion_session' for SSE replay
-// continuity (old job_events rows already carry that label). Renaming would
-// require migration; deferred to Phase 1d if/when a session-type-agnostic
-// SSE channel is needed.
+// business_table stays 'ingestion_session' for SSE replay continuity: existing
+// job_events rows already carry that label and renaming would need a migration.
 
 import { writeSessionEvent } from './events';
 
 // ---------- Load helpers ----------
 //
-// Filters by `type='ingestion'` so a row of another type can NEVER be loaded by
-// an ingestion transition. This is the structural invariant that lets
-// learning_session host multiple session types without cross-type mutation.
+// Filters by `type='ingestion'` so no other session type can be loaded or
+// mutated by an ingestion transition.
 
 async function loadSessionForUpdate(
   tx: Db | Tx,
@@ -77,22 +72,16 @@ export type EnqueueExtractionParams = {
 };
 
 /**
- * uploaded | failed → queued. Posts a `tencent_ocr_extract` pg-boss job.
+ * uploaded | failed → queued. Posts a `tencent_ocr_extract` job.
  *
- * **Ghost-job risk** (PR #30 review #2, preserved):
- * `boss.send` uses pg-boss's own connection pool, writing to `pgboss.*` tables
- * outside our drizzle tx. If boss.send succeeds but our tx commit fails (rare:
- * network blip), we get an "enqueued job but session.status not flipped to queued"
- * orphan.
+ * Ghost-job risk (PR #30 review #2): boss.send uses pg-boss's own pool, so it
+ * writes outside this drizzle tx. If the send commits but our tx fails, the job
+ * exists without status queued. The handler's markExtractionStarted then sees a
+ * non-queued session and throws 409; markFailedAndLogCost records the failure and
+ * pg-boss archives the job. No corruption, just one archived ghost.
  *
- * Recovery: when the handler later calls `markExtractionStarted`, it sees the
- * session is not 'queued' and throws ApiError(409). The handler's internal
- * markFailedAndLogCost catches, writes a cost_ledger failure, and rethrows —
- * pg-boss archives the job. No data corruption; one archived ghost job remains.
- *
- * Accepted trade-off: moving boss.send outside the tx would eliminate ghosts but
- * introduce "session=queued but no job" (also requires cleanup). The inside-tx +
- * ghost-tolerant handler is the simpler complexity.
+ * Moving boss.send outside the tx would trade this for "queued with no job",
+ * which also needs cleanup; the ghost-tolerant handler is the smaller cost.
  */
 export async function enqueueExtraction(
   params: EnqueueExtractionParams,
@@ -121,8 +110,8 @@ export async function enqueueExtraction(
       payload: { from: current.status },
     });
 
-    // boss.send within tx is fine; pg-boss writes to pgboss.* tables which
-    // commit atomically with our INSERT.
+    // boss.send is NOT part of this drizzle tx (it uses its own pool); the
+    // ghost-job trade-off above is accepted.
     const jobId = params.operationId
       ? await params.boss.send(
           'tencent_ocr_extract',
@@ -284,9 +273,8 @@ export async function applyExtractionResult(
     );
   }
 
-  // Validate the complete batch before locking the session or writing any block.
-  // This service also accepts a bare Db (not only a transaction), so validating
-  // inside the insert loop could otherwise leave a valid prefix partially persisted.
+  // Validate the whole batch before locking or inserting: this service also
+  // accepts a bare Db, so an in-loop failure could persist a valid prefix.
   for (const blk of params.blocks) {
     if (
       !Number.isFinite(blk.extraction_confidence) ||
@@ -357,8 +345,8 @@ export async function applyExtractionResult(
         version: 0,
       })
       .returning();
-    // YUK-471 W3-C1δ — canonical create event (additive; flag OFF). Built from the `.returning()`
-    // row so the snapshot is byte-faithful to what landed (incl. crop_refs = figures' asset_ids).
+    // Canonical create event (additive, flag OFF) built from the returned row so
+    // the snapshot matches what landed, including crop_refs = figures' asset_ids.
     await writeQuestionBlockCreateEvent(tx, {
       row: insertedRow,
       origin: 'ocr',
@@ -385,8 +373,7 @@ export async function applyExtractionResult(
     },
   });
 
-  // Domain event: ExtractSourceDocument (Lane B). Chained to the session via
-  // session_id so any future timeline UI can walk the chain.
+  // Domain event chained to the session via session_id for the timeline.
   await writeSessionEvent(tx, {
     session_id: params.sessionId,
     action: 'extract',
@@ -446,11 +433,8 @@ export async function markExtractionFailed(
     payload: { error_message: errorMessage },
   });
 
-  // Domain event: extract failure. Lane B's ExtractSourceDocument carries the
-  // error message in `warnings` (no dedicated `error_message` field) — this is
-  // the cleanest fit without an experimental:* escape. Skipped if source_document_id
-  // is null (degenerate, shouldn't happen post-Step 3 migration; subject_id must
-  // be a real string per Lane B).
+  // The extract event carries the error in `warnings` (no dedicated field).
+  // Skipped when source_document_id is null, because subject_id must be real.
   if (current.source_document_id) {
     await writeSessionEvent(tx, {
       session_id: sessionId,
@@ -589,9 +573,8 @@ export async function applyRescue(tx: Db | Tx, params: ApplyRescueParams): Promi
     .set({
       structured: params.structured,
       figures: params.figures,
-      // F5 (YUK-471 W3 §9 #3) — the rescue overwrites `figures` but historically OMITTED `crop_refs`,
-      // leaving it STALE vs the new figures. Re-derive it the same way applyExtractionResult does
-      // (crop_refs = figures' asset_ids) so the row + the create-event snapshot stay consistent.
+      // The rescue overwrites figures; without re-deriving crop_refs it would go
+      // stale against them and the create-event snapshot.
       crop_refs: params.figures.map((f) => f.asset_id),
       updated_at: now,
       version: sql`${question_block.version} + 1` as unknown as SQL<number>,
@@ -599,9 +582,9 @@ export async function applyRescue(tx: Db | Tx, params: ApplyRescueParams): Promi
     .where(eq(question_block.id, params.blockId))
     .returning();
 
-  // YUK-471 W3-C1δ — canonical create event (origin='rescue'): a SECOND full-snapshot create for the
-  // SAME blockId that the fold applies last-write-wins (design §5.2). Built from the `.returning()`
-  // after-row so it carries the new structured/figures/crop_refs (F5) + the bumped version.
+  // A second full-snapshot create for the same blockId; the fold applies
+  // last-write-wins. Built from the after-row, so it carries the new content and
+  // the bumped version.
   await writeQuestionBlockCreateEvent(tx, {
     row: rescuedRow,
     origin: 'rescue',
@@ -617,10 +600,8 @@ export async function applyRescue(tx: Db | Tx, params: ApplyRescueParams): Promi
     payload: { block_id: params.blockId },
   });
 
-  // Domain event: rescue produces a fresh structured block — modeled as an
-  // extract success authored by 'vision_rescue' (vs 'tencent_ocr' for the
-  // original extraction). layout_quality reflects the session's current state
-  // (rescue happens on partial / extracted sessions, doesn't transition them).
+  // Model the rescue as an extract success authored by 'vision_rescue'.
+  // layout_quality reflects the session's current state; the status does not change.
   if (current.source_document_id) {
     await writeSessionEvent(tx, {
       session_id: params.sessionId,
@@ -643,10 +624,8 @@ export async function applyRescue(tx: Db | Tx, params: ApplyRescueParams): Promi
 // ---------- markReviewed ----------
 
 /**
- * extracted | partial → reviewed. User-driven "I've reviewed" UI action.
- *
- * State-only — no domain event written. (Reviewing the extraction result is
- * a UX checkpoint; per-question review events come later via FSRS flow.)
+ * extracted | partial → reviewed. The user's "I've reviewed" checkpoint; no
+ * domain event, since per-question review events come later via the FSRS flow.
  */
 export async function markReviewed(db: Db, sessionId: string): Promise<void> {
   await db.transaction(async (tx) => {
@@ -678,23 +657,18 @@ export async function markReviewed(db: Db, sessionId: string): Promise<void> {
 // ---------- assertSessionAvailableForImport ----------
 
 /**
- * Acquires `SELECT … FOR UPDATE` lock on the session row and asserts it is in
- * an importable state. Must be called at the start of an import transaction
- * (Codex P1-A): otherwise the route's INSERTs run outside any concurrency
- * guard, and two simultaneous POSTs both pass the status check, both write
- * question / mistake / question_block rows, then race in commitImport — the
- * loser throws 409 *after* its writes have already committed.
- *
- * Held until the surrounding transaction commits or rolls back. Concurrent
- * callers serialise on the row lock; the second to acquire sees `imported`
- * and throws.
+ * Lock the session row and assert it is importable. Must open the import
+ * transaction: without it two POSTs both pass the status check and write rows,
+ * then race in commitImport, and the loser's writes are already committed when
+ * it throws 409. The lock is held until the transaction ends, so the second
+ * caller sees `imported` and throws.
  */
 export async function assertSessionAvailableForImport(
   tx: Tx,
   sessionId: string,
 ): Promise<{ source_document_id: string | null }> {
-  // Auto-enrollment claims G then its block, without a session lock. Import must
-  // follow G -> session -> sorted blocks, including the later draft-ignore sweep.
+  // Lock order: G → session → sorted blocks. Auto-enrollment claims G and its
+  // block without a session lock, so import must not take them in reverse.
   await acquireLearningStateWriteLock(tx);
   const current = await loadSessionForUpdate(tx, sessionId);
   if (!current) {
@@ -718,19 +692,12 @@ export async function assertSessionAvailableForImport(
 // ---------- commitImport ----------
 
 /**
- * extracted | reviewed → imported. State-only transition — the actual question /
- * mistake / question_block INSERTs happen in the route handler (legacy import
- * route is the single-call-site for now; Phase 1d may invert this).
+ * extracted | reviewed → imported (terminal). The question/mistake/block INSERTs
+ * happen in the route, and its per-block attempt events are the user-facing
+ * footprint; this transition writes no domain event.
  *
- * Sets ended_at = now (terminal state). No domain event in Phase 1c.1 —
- * KnownEvent has no 'import' action; the user-facing "I imported these"
- * footprint is the attempt events the route already writes per-block. Reconsider
- * a session-level 'import' event in Phase 1d if the timeline UI surfaces a need.
- *
- * **Concurrency** (Codex P1-A): callers MUST run this inside a transaction
- * that already holds the session lock via `assertSessionAvailableForImport`
- * (or accept that a fresh load + lock here is the only guard — the route uses
- * the first pattern so writes ride the same lock).
+ * Callers must run this in the transaction that already holds the session lock
+ * from `assertSessionAvailableForImport`, so the writes ride the same lock.
  */
 export async function commitImport(tx: Db | Tx, sessionId: string): Promise<void> {
   const current = await loadSessionForUpdate(tx, sessionId);
@@ -762,40 +729,32 @@ export async function commitImport(tx: Db | Tx, sessionId: string): Promise<void
 
 export type InitiateUploadParams = {
   assetIds: string[];
-  // YUK-258: 'docx' — the visual line feeds docx page images through this same
-  // upload+extract path (text line uses the dedicated docx-ingestion owner).
+  // 'docx' is the visual line for docx page images; the text line has its own
+  // owner (docx-ingestion.ts).
   entrypoint: 'vision_single' | 'vision_paper' | 'docx';
-  // YUK-1404 — canonical learner-selected upload subject, already resolved and
-  // validated against the selectable registry by the caller (API route).
-  // null / omitted = no explicit signal: provenance keeps only `entrypoint`, so
-  // those sessions read exactly like legacy ones (derived notation fallback
-  // stays available). Persisted INSIDE this transaction on the session-bound
-  // source_document.provenance.learner_selected_subject_id — never a
-  // learning_session column, never scope_knowledge_ids.
+  // YUK-1404 — already resolved and validated by the API route. Omitted/null
+  // means no explicit signal: provenance keeps only entrypoint so the derived
+  // notation fallback stays available. Written to source_document.provenance,
+  // never to a learning_session column or scope_knowledge_ids.
   learnerSelectedSubjectId?: string | null;
   /**
-   * YUK-1476 (R1 P1-2) — docx visual line: honest external-ref omission audit.
-   * Same facts object / provenance key / warnings wording as the text-line
-   * owner (docx-ingestion.ts) so BOTH lines emit the identical receipt; absent
-   * for every other entrypoint. No new store/schema — provenance + the existing
-   * learning_session.warnings field.
+   * YUK-1476 — docx visual line: the same omission facts and notice wording as
+   * the text-line owner, so both lines emit an identical receipt. Absent for
+   * other entrypoints.
    */
   externalRefOmission?: DocxExternalRefOmissionFacts;
   /**
-   * YUK-1408 — the learner's consented usage for this document
-   * ('allow' derivations vs 'answer_only'). Omitted / null = legacy default
-   * 'allow'; an explicit value is persisted verbatim on
-   * `source_document.provenance.usage_policy` and inherited by every
-   * ingestion-derived event written for this session.
+   * YUK-1408 — consented usage ('allow' vs 'answer_only'). Omitted/null keeps
+   * the legacy 'allow' default; an explicit value is persisted on
+   * source_document.provenance and inherited by this session's events.
    */
   derivationPolicy?: DerivationPolicyT | null;
 };
 
 /**
- * Creates a source_document + learning_session(type='ingestion', status='uploaded').
- * Callers must pre-validate that assetIds exist in source_asset.
- *
- * State-only — no domain event ("user picked file" isn't an extract action yet).
+ * Create a source_document and learning_session(type='ingestion', status='uploaded').
+ * Callers must pre-validate that assetIds exist in source_asset. No domain event:
+ * "user picked a file" is not an extract action yet.
  */
 export async function initiateUpload(
   db: Db,
@@ -805,7 +764,7 @@ export async function initiateUpload(
     const sourceDocumentId = createId();
     const sessionId = createId();
     const now = new Date();
-    // dynamic import to avoid circular dep at module load time
+    // Dynamic import avoids a circular dependency at module load time.
     const { source_document } = await import('@/db/schema');
     const omission = params.externalRefOmission;
     const omissionWarnings = omission ? [EXTERNAL_REF_OMISSION_NOTICE] : [];
@@ -814,20 +773,16 @@ export async function initiateUpload(
       title: null,
       source_asset_ids: params.assetIds,
       body_md: null,
-      // YUK-1404 — the explicit upload subject rides the open provenance record
-      // (no new column). Key presence = explicit learner choice (canonical id);
-      // key absence = unknown (omitted/null request OR legacy session). Only a
-      // non-null resolved id writes the key, so absent and explicit-unknown stay
-      // indistinguishable-by-design from legacy rows on purpose: the derived
-      // fallback remains available for both, while a stored id that later stops
-      // resolving pins notation to null (never a guessed subject).
+      // YUK-1404 — key presence means an explicit learner choice; absence means
+      // unknown (omitted request or legacy row). Writing only non-null ids keeps
+      // the derived fallback available, while an id that later stops resolving
+      // pins notation to null instead of guessing.
       provenance: {
         entrypoint: params.entrypoint,
         ...(params.learnerSelectedSubjectId
           ? { learner_selected_subject_id: params.learnerSelectedSubjectId }
           : {}),
-        // YUK-1408 — explicit consent signal rides the same open provenance
-        // record; absence = default 'allow'.
+        // YUK-1408 — explicit consent on the same record; absence = 'allow'.
         ...(params.derivationPolicy
           ? {
               [USAGE_POLICY_PROVENANCE_KEY]: {
@@ -835,8 +790,7 @@ export async function initiateUpload(
               },
             }
           : {}),
-        // YUK-1476 — identical provenance shape to the text-line owner
-        // (docx-ingestion.ts) so audits read uniformly across both docx lines.
+        // Same provenance shape as the text-line owner, so audits read uniformly.
         ...(omission
           ? {
               docx_external_ref_omission: {

@@ -1,17 +1,10 @@
-// Phase 1c.1 Step 5 — single-point session → event mapper.
+// Session-scoped domain-event writer.
 //
-// `writeSessionEvent` is the only place inside src/server/session/* that writes
-// domain `event` rows for state transitions. Delegates to Step 4's `writeEvent`
-// (the single-owner INSERT path per ADR-0005). Constrained to action='extract'
-// for Phase 1c.1 — review/conversation domain events are written by route
-// handlers (Step 6+), not by session transitions.
-//
-// Why constrain to extract here? Other state transitions (initiateUpload /
-// enqueueExtraction / markExtractionStarted / markReviewed / commitImport) are
-// state-only — job_events (Sub 0c pg-boss SSE plumbing) covers async
-// observability. Domain event log is for user-/agent-facing actions. Per spec
-// §"Locked contract": reconsider in Phase 1d when user-facing event timeline
-// surfaces a need.
+// `writeSessionEvent` is the only place in this directory that writes domain
+// `event` rows; it delegates to `writeEvent` (ADR-0005 single owner). Action is
+// locked to 'extract' because the other transitions are state-only: their async
+// observability already rides on job_events. Review/conversation domain events
+// belong to their route handlers, not to session transitions.
 
 import { createId } from '@paralleldrive/cuid2';
 
@@ -22,12 +15,12 @@ import { resolveSessionDerivationPolicy } from '@/kernel/read-models/usage-polic
 export type WriteSessionEventInput = {
   /** Required: chains the event to a learning_session row via event.session_id. */
   session_id: string;
-  /** Currently locked to 'extract' for Phase 1c.1. Expand in Phase 1d. */
+  /** Locked to 'extract'. */
   action: 'extract';
-  /** Locked to 'source_document' for action='extract'. */
+  /** Locked to 'source_document'. */
   subject_kind: 'source_document';
   subject_id: string;
-  /** Locked to 'agent' for action='extract'. */
+  /** Locked to 'agent'. */
   actor_kind: 'agent';
   /** e.g. 'tencent_ocr' | 'vision_rescue' — free-form per agent identity. */
   actor_ref: string;
@@ -38,9 +31,8 @@ export type WriteSessionEventInput = {
     layout_quality: 'structured' | 'partial' | 'text_only';
     warnings: string[];
     /**
-     * YUK-1408 — normally resolved from the session's source_document usage
-     * policy automatically. Pass explicitly only when the caller already holds
-     * the resolved policy (avoids a repeated lookup inside loops).
+     * YUK-1408 — resolved from the session's usage policy automatically; pass
+     * explicitly only when the caller already holds it (avoids lookup in loops).
      */
     derivation_policy?: 'allow' | 'answer_only';
   };
@@ -52,28 +44,22 @@ export type WriteSessionEventInput = {
 };
 
 /**
- * Write a session-scoped domain event. Constructs a row matching the
- * `ExtractSourceDocument` shape in Lane B and delegates to `writeEvent` for
- * the actual INSERT + Zod validation.
+ * Write a session-scoped ExtractSourceDocument event through `writeEvent`
+ * (INSERT + Zod validation).
  *
- * MUST be called within the same transaction as the corresponding
- * `learning_session` status UPDATE — otherwise a partial commit can leave the
- * session transitioned but no event recorded (or vice versa). Callers pass `tx`
- * (the transaction handle from `db.transaction(...)`).
+ * Must run in the same transaction as the session status UPDATE; a partial commit
+ * could otherwise leave the status and the event out of sync.
  *
- * @returns the assigned event id (deterministic — generated here so the caller
- *   can capture it for caused_by chains).
+ * @returns the generated event id, so callers can chain caused_by.
  */
 export async function writeSessionEvent(
   tx: Db | Tx,
   input: WriteSessionEventInput,
 ): Promise<string> {
   const id = createId();
-  // YUK-1408 — ingestion-derived events inherit the source document's consented
-  // usage. When the learner restricted the document to answer_only (or withdrew
-  // consent before this write), the payload carries it and the shared
-  // derivation filter keeps the event out of memory/brief channels. Explicit
-  // payload values win; absent policy resolves to the legacy 'allow' default.
+  // YUK-1408 — ingestion-derived events inherit the document's consented usage;
+  // answer_only keeps the event out of memory/brief channels. Explicit payload
+  // wins; an absent policy resolves to the legacy 'allow' default.
   const derivationPolicy =
     input.payload.derivation_policy ?? (await resolveSessionDerivationPolicy(tx, input.session_id));
   const payload =

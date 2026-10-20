@@ -1,13 +1,65 @@
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, extname, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parse } from '@babel/parser';
+import { z } from 'zod';
 
 const SOURCE_RE = /\.[cm]?[jt]sx?$/;
 const TEST_RE = /\.(?:unit|db|migration|integration|e2e)?\.?(?:test|spec)\.[cm]?[jt]sx?$/;
 const PUBLIC_ENTRYPOINTS = new Set(['public', 'ui-public']);
 const MODULE_EXTENSIONS = ['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs'];
 const EDGE_UNIT = 'distinct-source-file-to-resolved-module' as const;
+const BASELINE_PATH = 'scripts/capability-boundary-baseline.json';
+const DEBT_KINDS = [
+  'capabilityToServer',
+  'serverToCapabilityDeep',
+  'crossCapabilityValue',
+] as const;
+const countSchema = z.number().int().nonnegative();
+const debtSchema = z.object({
+  total: countSchema,
+  byOwnerPair: z.record(z.string(), countSchema),
+});
+const changeFields = {
+  debt: z.enum(DEBT_KINDS),
+  pair: z.string().trim().min(1),
+  date: z.iso.date(),
+  from: countSchema,
+  to: countSchema,
+};
+const raiseJustificationSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('offset') }),
+  z.object({ kind: z.literal('recorded_ruling'), ruling: z.url({ protocol: /^https?$/ }) }),
+]);
+const baselineChangeSchema = z
+  .discriminatedUnion('direction', [
+    z.object({ ...changeFields, direction: z.literal('decrease') }),
+    z.object({
+      ...changeFields,
+      direction: z.literal('increase'),
+      reason: z.string().trim().min(1),
+      exitCondition: z.string().trim().min(1),
+      justification: raiseJustificationSchema,
+    }),
+  ])
+  .refine(
+    (change) =>
+      change.direction === 'increase' ? change.to > change.from : change.to < change.from,
+    { message: 'decrease requires to < from; increase requires to > from' },
+  );
+const baselineSchema = z.object({
+  schemaVersion: z.literal(1),
+  edgeUnit: z.literal(EDGE_UNIT),
+  notes: z.record(z.string(), z.union([z.string(), baselineChangeSchema])).optional(),
+  changes: z.array(baselineChangeSchema).default([]),
+  debts: z.object({
+    capabilityToServer: debtSchema,
+    serverToCapabilityDeep: debtSchema,
+    crossCapabilityValue: debtSchema.extend({ nontrivialSccs: z.array(z.array(z.string())) }),
+  }),
+});
+type DependencyBaseline = z.infer<typeof baselineSchema>;
 
 export type DependencyKind = 'type' | 'value';
 
@@ -416,7 +468,7 @@ function compareCounts(
       reason:
         current > expected
           ? `${name} architecture regression: ${current} > baseline ${expected}`
-          : `${name} debt decreased: ${current} < baseline ${expected}; tighten the baseline in this change`,
+          : `${name} debt decreased: ${current} < baseline ${expected}; run pnpm audit:capability-boundaries --tighten`,
     });
   }
   if (actual.total !== baseline.total) {
@@ -608,9 +660,102 @@ export function serializeDependencySnapshot(snapshot: DependencySnapshot): strin
   return `${JSON.stringify(snapshot, null, 2)}\n`;
 }
 
-function readBaseline(projectRoot: string): DependencySnapshot {
-  const path = resolve(projectRoot, 'scripts/capability-boundary-baseline.json');
-  return JSON.parse(readFileSync(path, 'utf8')) as DependencySnapshot;
+function parseBaseline(text: string, source: string): DependencyBaseline {
+  try {
+    return baselineSchema.parse(JSON.parse(text));
+  } catch (error) {
+    const detail =
+      error instanceof z.ZodError
+        ? error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join('\n')
+        : error instanceof Error
+          ? error.message
+          : String(error);
+    throw new Error(`${source}: ${detail}`);
+  }
+}
+
+function readBaselineBase(projectRoot: string, requested?: string): DependencyBaseline {
+  const git = (args: string[]) => execFileSync('git', args, { cwd: projectRoot, encoding: 'utf8' });
+  if (process.env.CI && !requested) {
+    throw new Error('CI requires CAPABILITY_BASE_SHA or --base <commit>.');
+  }
+  const base = requested || git(['merge-base', 'HEAD', 'origin/main']).trim();
+  if (!/^[a-f0-9]{7,40}$/.test(base) || /^0+$/.test(base)) {
+    throw new Error('Baseline comparison requires an existing commit SHA; fetch the base first.');
+  }
+  return parseBaseline(git(['show', `${base}:${BASELINE_PATH}`]), `${base}:${BASELINE_PATH}`);
+}
+
+function compareBaselineChanges(
+  baseline: DependencyBaseline,
+  previous: DependencyBaseline,
+  actual: DependencySnapshot,
+): Violation[] {
+  const violations: Violation[] = [];
+  const fail = (source: string, reason: string) =>
+    violations.push({ file: BASELINE_PATH, source, reason });
+  if (
+    JSON.stringify(baseline.changes.slice(0, previous.changes.length)) !==
+    JSON.stringify(previous.changes)
+  ) {
+    fail('changes', 'baseline change history must be append-only');
+  }
+  const replayed = structuredClone(previous.debts);
+  for (const change of baseline.changes.slice(previous.changes.length)) {
+    const counts = replayed[change.debt].byOwnerPair;
+    if ((counts[change.pair] ?? 0) !== change.from) {
+      fail(change.pair, `change.from=${change.from} does not match preceding baseline`);
+    }
+    counts[change.pair] = change.to;
+    if (change.direction === 'increase' && change.justification.kind === 'offset') {
+      const before = previous.debts[change.debt];
+      const measured = actual.debts[change.debt];
+      const otherPairDecreased = Object.entries(before.byOwnerPair).some(
+        ([pair, count]) => pair !== change.pair && (measured.byOwnerPair[pair] ?? 0) < count,
+      );
+      if (!otherPairDecreased || measured.total > before.total) {
+        fail(
+          change.pair,
+          `${change.debt} offset requires a real decrease in another pair and no net growth from base (${before.total} -> ${measured.total}); otherwise record a coordination ruling`,
+        );
+      }
+    }
+  }
+  for (const debt of DEBT_KINDS) {
+    const before = replayed[debt].byOwnerPair;
+    const after = baseline.debts[debt].byOwnerPair;
+    for (const pair of new Set([...Object.keys(before), ...Object.keys(after)])) {
+      const from = before[pair] ?? 0;
+      const to = after[pair] ?? 0;
+      if (from !== to) {
+        fail(
+          pair,
+          `${debt} baseline ${from} -> ${to} needs a dated ${to > from ? 'increase record with reason, exitCondition and justification' : 'decrease record'} in changes`,
+        );
+      }
+    }
+  }
+  return violations;
+}
+
+function tightenBaseline(baseline: DependencyBaseline, actual: DependencySnapshot): void {
+  const date = new Date().toISOString().slice(0, 10);
+  for (const debt of DEBT_KINDS) {
+    const counts = baseline.debts[debt].byOwnerPair;
+    for (const [pair, from] of Object.entries(counts)) {
+      const to = actual.debts[debt].byOwnerPair[pair] ?? 0;
+      if (to >= from) continue;
+      baseline.changes.push({ debt, pair, date, from, to, direction: 'decrease' });
+      if (to === 0) delete counts[pair];
+      else counts[pair] = to;
+    }
+    baseline.debts[debt].total = Object.values(counts).reduce((sum, count) => sum + count, 0);
+  }
+  const current = actual.debts.crossCapabilityValue.nontrivialSccs;
+  const previous = baseline.debts.crossCapabilityValue.nontrivialSccs;
+  if (current.every((group) => previous.some((old) => group.every((node) => old.includes(node))))) {
+    baseline.debts.crossCapabilityValue.nontrivialSccs = current;
+  }
 }
 
 function printViolations(violations: Violation[]): void {
@@ -623,8 +768,10 @@ function printViolations(violations: Violation[]): void {
 export function main(argv = process.argv.slice(2), projectRoot = process.cwd()): void {
   const printBaseline = argv.includes('--print-dependency-baseline');
   const json = argv.includes('--json');
-  const baseline = printBaseline ? undefined : readBaseline(projectRoot);
-  const result = auditCapabilityBoundaries(projectRoot, baseline);
+  const tighten = argv.includes('--tighten');
+  if (printBaseline && tighten)
+    throw new Error('Snapshot printing cannot be combined with --tighten.');
+  const result = auditCapabilityBoundaries(projectRoot);
 
   if (printBaseline) {
     if (result.violations.length > 0) {
@@ -635,6 +782,22 @@ export function main(argv = process.argv.slice(2), projectRoot = process.cwd()):
     process.stdout.write(serializeDependencySnapshot(result.dependencySnapshot));
     return;
   }
+  const baseline = parseBaseline(
+    readFileSync(resolve(projectRoot, BASELINE_PATH), 'utf8'),
+    BASELINE_PATH,
+  );
+  const baseIndex = argv.indexOf('--base');
+  if (baseIndex !== -1 && !argv[baseIndex + 1]) throw new Error('--base requires a commit SHA.');
+  const previous = readBaselineBase(
+    projectRoot,
+    baseIndex === -1 ? process.env.CAPABILITY_BASE_SHA : argv[baseIndex + 1],
+  );
+  if (tighten) tightenBaseline(baseline, result.dependencySnapshot);
+  result.violations.push(
+    ...compareBaselineChanges(baseline, previous, result.dependencySnapshot),
+    ...compareDependencySnapshot(result.dependencySnapshot, baseline),
+  );
+  result.ok = result.violations.length === 0;
   if (json) {
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   }
@@ -642,6 +805,14 @@ export function main(argv = process.argv.slice(2), projectRoot = process.cwd()):
     if (!json) printViolations(result.violations);
     process.exitCode = 1;
     return;
+  }
+  if (tighten) {
+    const formatted = execFileSync(
+      'pnpm',
+      ['exec', 'biome', 'format', '--stdin-file-path', BASELINE_PATH],
+      { cwd: projectRoot, input: serializeDependencySnapshot(baseline), encoding: 'utf8' },
+    );
+    writeFileSync(resolve(projectRoot, BASELINE_PATH), formatted);
   }
   if (!json) {
     const debts = result.dependencySnapshot.debts;
@@ -652,4 +823,11 @@ export function main(argv = process.argv.slice(2), projectRoot = process.cwd()):
 }
 
 const entrypoint = process.argv[1] ? pathToFileURL(resolve(process.argv[1])).href : undefined;
-if (entrypoint === import.meta.url) main();
+if (entrypoint === import.meta.url) {
+  try {
+    main();
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  }
+}
