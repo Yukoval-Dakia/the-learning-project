@@ -1,6 +1,7 @@
 // Frozen solve sessions: issue-bound hints and atomic native submission.
 import { and, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
+import { sanitizeJsonStringLiterals } from '@/core/json-sanitize';
 import { canonicalHash } from '@/core/migration/canonical';
 import type { ActivateEvaluationIntentT, PracticeIssuanceDtoT } from '@/core/schema/assessment';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
@@ -12,7 +13,6 @@ import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subje
 import { createAssessmentLearningRecord } from '@/kernel/records/queries';
 import { hasPriorSolutionExposure } from '@/kernel/records/study-reference';
 import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
-import { sanitizeJsonStringLiterals } from '@/server/orchestrator/json-sanitize';
 import { Tutor } from '@/server/session';
 import { recordAssistanceExposure } from './assessment/assistance';
 import { commitFormalAttempt } from './assessment/attempt';
