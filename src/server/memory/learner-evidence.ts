@@ -7,21 +7,27 @@
 // publish, archive/restore, block enrollment. They remain append-only audit
 // history (event rows and affected_scopes are untouched) but are NOT learner
 // evidence. This module owns that classification behind a narrow interface so
-// both consumers stay in lockstep:
+// every consumer stays in lockstep:
 //
-//   1. Immediate refresh — buildMemoryEventIngestHandler (triggers.ts) stops
-//      fanning out enqueueBriefRegen for these events: a canonical publish
-//      produces 0 memory_brief_regen jobs and 0 MemoryBriefTask calls.
-//   2. Evidence reads — brief.ts loadEventsFromDb / scopeHasNewEvidence
+//   1. Extraction — buildMemoryEventIngestHandler (triggers.ts) conjoins this
+//      predicate with the ADR-0039 actor gate BEFORE any mem0 call: a
+//      user-actor question_edit would otherwise pass shouldExtractToMemory and
+//      infer a revision "fact" into mem0, which a later brief's searchFacts
+//      could then re-feed as evidence. Excluded events skip extraction, create
+//      no reconcile handoff, and never mutate or delete existing memories.
+//   2. Immediate refresh — the same handler fans out no enqueueBriefRegen for
+//      the class: a canonical publish produces 0 memory_brief_regen jobs and
+//      0 MemoryBriefTask calls.
+//   3. Evidence reads — brief.ts loadEventsFromDb / scopeHasNewEvidence
 //      exclude the class from both the brief event window and the "new
 //      evidence" watermark check, so the nightly sweep cannot resurrect a
 //      question revision as learning evidence (YUK-1559 C5 / YUK-1560
 //      demand-driven downshift).
 //
-// Boundary (owner-locked): classify by action only — never actor_kind (real
-// attempts can arrive on agent/system lanes) and never subject_kind (a real
-// attempt's subject is also 'question'). The Mem0 extraction actor gate
-// (ADR-0039) is an independent surface and is untouched here.
+// Boundary: classify by action only — never actor_kind (real attempts can
+// arrive on agent lanes) and never subject_kind (a real attempt's subject is
+// also 'question'). The ADR-0039 actor gate stays intact; this predicate only
+// narrows what reaches the paid surfaces, jointly with that gate.
 
 import { inArray, sql } from 'drizzle-orm';
 import { event } from '@/db/schema';
@@ -62,7 +68,7 @@ const QUESTION_BANK_AUTHORING_ACTIONS = [
 const NON_LEARNER_ACTIONS: ReadonlySet<string> = new Set(QUESTION_BANK_AUTHORING_ACTIONS);
 
 /**
- * Row-level predicate for the ingest fan-out: does this event count as input to
+ * Row-level predicate for the ingest handler: does this event count as input to
  * the learner's memory? Bank-authoring actions return false; everything else
  * keeps its existing behavior.
  */
