@@ -5,7 +5,8 @@
 // LLM is one model call. note_generate's 30-minute budget still fits in the 1h lease, with the wait before the call.
 // AGENT is a multi-step loop, with a 2h lease. Both keep an exhausted job on `<queue>_dlq`.
 // Retention is 7 days, under the 14-day default, so a stuck created job does not sit for two weeks.
-// Create the dead-letter queue first. createQueue does not update a row that already exists.
+// The main queue references its dead-letter queue, so the DLQ is created first.
+// createQueue leaves an existing row untouched; updateQueue applies the current options.
 
 import type { PgBoss } from 'pg-boss';
 
