@@ -18,17 +18,17 @@
 //       · weight ≥ 0（Zod 已 min(0) 硬拒负权——越界 throw 当本轮失败，走 fallback）；
 //       · 去重/过滤后若 candidates 空 → throw（无可用编排 = 本轮失败）。
 
-import type { CollectedSignal } from '@/capabilities/practice/public';
+import {
+  type SelectionOrchestratorCandidateT,
+  SelectionOrchestratorDraft,
+} from '@/core/schema/selection-orchestrator';
+import type { CollectedSignal } from './candidate-signals';
 import {
   MEM0_PRIOR_BLOCK_CHAR_CAP,
   MEM0_PRIOR_CAP,
   MEM0_PRIOR_ITEM_CHAR_CAP,
   SELECTION_ORCHESTRATOR_CANDIDATE_CAP,
-} from '@/capabilities/practice/public';
-import {
-  type SelectionOrchestratorCandidateT,
-  SelectionOrchestratorDraft,
-} from '@/core/schema/selection-orchestrator';
+} from './selection-constants';
 
 // ───────────────────────────────────────────────────────────────────────────
 // 分桶（bucketing）——signal-fidelity mitigation（ADR-0042:68）。

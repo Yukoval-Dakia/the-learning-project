@@ -9,7 +9,7 @@
 // 契约）。本 task 只给**非到期候选**加权/排序。到期项不在 candidates 输入里、也不该
 // 出现在输出里——parse barrier 用 inputRefIds 做 ⊆ 校验兜底。
 //
-// 解析 barrier + 分桶输入格式化器在 src/server/ai/selection-orchestrator.ts。
+// 解析 barrier + 分桶输入格式化器在 src/capabilities/practice/server/selection-orchestrator.ts。
 // schema 名（StructuredOutput / brace-slice 两路都用）= SelectionOrchestratorDraft。
 
 import { z } from 'zod';
