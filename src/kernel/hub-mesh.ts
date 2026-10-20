@@ -194,7 +194,7 @@ function meshRelatedKnowledgeIds(
  * Decide which atomics belong in the hub's auto-zone and tag each with its
  * strongest matching relation.
  *
- * @param nodes      loaded backbone snapshot (`loadKnowledgeBackboneNodes`).
+ * @param nodes      loaded tree snapshot (`loadTreeSnapshot`).
  * @param edges      loaded non-archived mesh edges (`listKnowledgeMeshEdges`).
  * @param hub        the hub artifact (id + knowledge_ids).
  * @param atomics    candidate atomic artifacts to test (typically all

@@ -30,10 +30,7 @@ import {
   type HubMeshEdge,
   resolveHubMeshAtomics,
 } from '@/kernel/hub-mesh';
-import {
-  listKnowledgeMeshEdges,
-  loadKnowledgeBackboneNodes,
-} from '@/kernel/read-models/knowledge-graph';
+import { listKnowledgeMeshEdges, loadTreeSnapshot } from '@/kernel/read-models/knowledge-graph';
 
 export interface HubSyncClaim {
   artifactId: string;
@@ -297,7 +294,7 @@ async function loadEdgeInputs(db: Db): Promise<HubMeshEdge[]> {
 // graph. runHubSyncCycle never passes it — each claim reloads fresh (see the revert of the
 // per-cycle snapshot in runHubSyncCycle for why a shared snapshot was a stale-win).
 export type HubMeshGraphInputs = {
-  nodes: Awaited<ReturnType<typeof loadKnowledgeBackboneNodes>>;
+  nodes: Awaited<ReturnType<typeof loadTreeSnapshot>>;
   edges: Awaited<ReturnType<typeof loadEdgeInputs>>;
   atomics: Awaited<ReturnType<typeof loadAtomicInputs>>;
 };
@@ -333,7 +330,7 @@ export async function computeHubDesiredState(
   // compute from an older graph and apply a stale body (see runHubSyncCycle). The `graph`
   // param exists only for direct tests; runHubSyncCycle never passes it.
   const { nodes, edges, atomics } = graph ?? {
-    nodes: await loadKnowledgeBackboneNodes(db),
+    nodes: await loadTreeSnapshot(db),
     edges: await loadEdgeInputs(db),
     atomics: await loadAtomicInputs(db),
   };
