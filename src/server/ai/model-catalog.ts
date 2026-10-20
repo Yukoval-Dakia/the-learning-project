@@ -96,6 +96,7 @@ export interface ParsedCatalogModel {
   forcedToolChoice?: boolean;
   inputModalities?: readonly string[];
   baseUrl?: string;
+  api?: 'anthropic-messages' | 'openai-completions';
   contextWindowTokens?: number;
   maxInputTokens?: number;
   maxOutputTokens?: number;
@@ -175,6 +176,9 @@ export function parseCatalogModelEntry(
 
   const endpoint = asJson(model.provider)?.api ?? asJson(providerEntry)?.api;
   parsed.baseUrl = catalogEndpoint(endpoint);
+  const npm = asJson(model.provider)?.npm;
+  if (npm === '@ai-sdk/anthropic') parsed.api = 'anthropic-messages';
+  if (npm === '@ai-sdk/openai-compatible') parsed.api = 'openai-completions';
   parsed.toolCalling = asBoolean(model.tool_call);
   parsed.structuredOutput = asBoolean(model.structured_output);
   parsed.reasoning = asBoolean(model.reasoning);
@@ -230,6 +234,7 @@ function capabilityDelta(previous: unknown, next: unknown): string[] {
   const after = parseCatalogModelEntry(next);
   const changed: string[] = [];
   const keys = [
+    'api',
     'toolCalling',
     'vision',
     'reasoning',

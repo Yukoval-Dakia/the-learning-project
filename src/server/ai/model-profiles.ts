@@ -44,6 +44,7 @@ export interface ModelProfile {
   limits: ModelProfileLimits;
   inputModalities: readonly string[] | 'unknown';
   baseUrl?: string;
+  api?: ParsedCatalogModel['api'];
   reasoning: ModelProfileReasoning;
   execution: ModelProfileExecution;
   source: 'binding' | 'catalog' | 'defaults';
@@ -110,6 +111,7 @@ export function resolveModelProfile(
     },
     inputModalities: facts.inputModalities ?? 'unknown',
     baseUrl: facts.baseUrl,
+    api: facts.api,
     reasoning: {
       mode: facts.reasoningMode ?? 'unknown',
       supportedEfforts: facts.supportedEfforts ?? [],

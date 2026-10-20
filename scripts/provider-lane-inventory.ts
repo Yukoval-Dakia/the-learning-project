@@ -224,7 +224,10 @@ export const PROVIDER_LANES = [
     configuration: {
       endpoint: {
         summary: 'same Token Plan /v1 endpoint as TEST app/worker',
-        source: { path: 'scripts/yuk1537-admission-reopen.ts', calls: ['xiaomiTokenPlanBaseUrl'] },
+        source: {
+          path: 'scripts/yuk1537-admission-reopen.ts',
+          calls: ['tokenPlanEndpointOverride'],
+        },
       },
       credential: {
         summary: 'Token Plan server credential, never printed',

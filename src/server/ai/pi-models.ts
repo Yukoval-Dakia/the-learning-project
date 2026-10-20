@@ -59,7 +59,11 @@ export async function createLoomPiModels() {
           ...template,
           id: modelId,
           provider: id,
-          baseUrl: facts.baseUrl,
+          api: facts.api,
+          compat: facts.api === template.api ? template.compat : undefined,
+          // Anthropic's SDK appends /v1/messages; models.dev's API root already includes /v1.
+          baseUrl:
+            facts.api === 'anthropic-messages' ? facts.baseUrl.replace(/\/v1$/, '') : facts.baseUrl,
           input: facts.input.filter(
             (input): input is 'text' | 'image' => input === 'text' || input === 'image',
           ),

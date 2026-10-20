@@ -1181,13 +1181,13 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     if (!compaction) return undefined;
     const sessionId = this.sessionId;
     const sessionContext = compaction.sessionContext;
-    const contextWindow = this.model.contextWindow;
-    const triggerTokens = Math.min(
-      this.model.maxInputTokens ?? contextWindow,
-      contextWindow - this.model.maxTokens,
+    const contextWindow = Math.min(
+      this.model.contextWindow,
+      this.model.maxInputTokens ?? this.model.contextWindow,
     );
-    // Reserve another output-sized turn after pruning, without a model-specific threshold.
-    const targetTokens = Math.max(0, triggerTokens - this.model.maxTokens);
+    // Keep the existing 85%/60% policy; max output is a ceiling, not a reservation.
+    const triggerTokens = Math.max(1, Math.floor(contextWindow * 0.85));
+    const targetTokens = Math.max(1, Math.floor(contextWindow * 0.6));
     const isSessionContextMessage = (message: AgentMessage): boolean =>
       message.role === 'user' &&
       (message.content === sessionContext ||
@@ -1212,7 +1212,8 @@ class PiPreparedQuery implements PreparedExecutionQuery {
         for (let i = history.length - 1; i >= 0; i -= 1) {
           const message = history[i];
           const cost = estimatePiTokens([message]);
-          if (kept.length > 0 && cost > budget) break;
+          // A retained tool-result batch must include its assistant call even if it exceeds budget.
+          if (kept.length > 0 && cost > budget && kept[0].role !== 'toolResult') break;
           kept.unshift(message);
           budget -= cost;
           if (i === 0) break;
@@ -1220,13 +1221,6 @@ class PiPreparedQuery implements PreparedExecutionQuery {
         // A fresh injection replaces any previously injected copy so repeated
         // compactions never stack duplicate session contexts.
         const tail = kept.filter((message) => !isSessionContextMessage(message));
-        // Boundary cleanup: if the retained head is a toolResult, its paired
-        // assistant toolCall was just cut — an orphan toolResult gets rejected
-        // by the provider. Trim leading orphans (never the last element: that
-        // is the current-turn prompt).
-        while (tail.length > 1 && tail[0].role === 'toolResult') {
-          tail.shift();
-        }
         const transformed: AgentMessage[] = [...prefix, ...tail];
         this.emitFrame(
           piCompactBoundaryFrame({
