@@ -32,7 +32,7 @@ import { and, desc, eq, inArray, isNull, notLike, sql } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge, knowledge_edge } from '@/db/schema';
 import { isLearnerVisibleKnowledgeId } from '@/kernel/read-models/learner-knowledge-visibility';
-import { getMasteryProjection } from '@/server/mastery/state';
+import { getMasteryProjection } from '@/kernel/read-models/mastery-projection';
 
 // B3 frontier (YUK-349 scope #3, ADR-0037 #4 / ADR-0042) — the `learnable_frontier`
 // read: KCs ready to learn NOW = self NOT mastered AND all (transitive,

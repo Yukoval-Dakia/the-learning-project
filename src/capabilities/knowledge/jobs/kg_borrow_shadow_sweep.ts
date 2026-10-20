@@ -62,12 +62,12 @@ import type { Db } from '@/db/client';
 import { knowledge_edge, mastery_state } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 // C9 single source — the borrow epsilon, admitted relation-type set, and edge split are the
-// live soft layer's (state.ts) exports so the shadow can never drift from the live path.
+// live soft layer's exports so the shadow can never drift from the live path.
 import {
   BORROW_EPS,
   PROJECTION_EDGE_RELATION_TYPES,
   splitProjectionEdgeRows,
-} from '@/server/mastery/state';
+} from '@/kernel/read-models/mastery-projection';
 
 export const KG_BORROW_SHADOW_ACTION = 'experimental:kg_borrow_shadow';
 export const KG_BORROW_SHADOW_SUBJECT_KIND = 'kg_borrow_shadow';

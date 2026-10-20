@@ -20,12 +20,12 @@ import {
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
 import { listProposalInboxRows } from '@/kernel/proposals/inbox';
+import { getMasteryProjection } from '@/kernel/read-models/mastery-projection';
 import {
   type PredictionAccountability,
   loadPredictionAccountabilityByKey,
   rankEvidenceCellsByAccountability,
 } from '@/server/conjectures/accountability';
-import { getMasteryProjection } from '@/server/mastery/state';
 
 export const GROUNDING_GATE_WINDOW_DAYS = 14;
 export const GROUNDING_GATE_ENRICH_BATCH_SIZE = 3;

@@ -63,6 +63,11 @@ import {
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
+import {
+  type AbilityGlobalByKnowledgeId,
+  getMasteryState,
+  resolveAbilityGlobalByKnowledgeId,
+} from '@/kernel/read-models/mastery-state';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import {
   CandidateFactSchema,
@@ -87,12 +92,7 @@ import {
   clearCalibrationBelowThreshold,
   recordDifficultyCalibrationLabel,
 } from '@/server/mastery/recalibration';
-import {
-  type AbilityGlobalByKnowledgeId,
-  getMasteryState,
-  resolveAbilityGlobalByKnowledgeId,
-  updateThetaForAttempt,
-} from '@/server/mastery/state';
+import { updateThetaForAttempt } from '@/server/mastery/state';
 import { orchestrateCascadeRevert } from '@/server/revert/cascade-revert';
 import type { ActivationEffect, ActivationSettleInput } from './activate';
 import { loadAssessmentLearningScope } from './learning-scope';
