@@ -178,7 +178,7 @@ export function evaluateGridForward(
   }
   const kClusters = clusters.length;
 
-  // Reported floor. Not the verdict.
+  // Below the floor this returns INSUFFICIENT, not NOT_READY. The value is also reported.
   const eff = effectiveNFromClusters(clusters.map((c) => c.labels));
   const deff = eff.deff;
   const effectiveN = eff.effectiveN;

@@ -1,39 +1,10 @@
-// YUK-576 §5 — stuck-in-running reconcile sweeper for ai_task_runs.
-//
-// The runner's terminal finish-write can fail (DB outage) or the process can
-// die before the finally block — the row then sticks at status='running'
-// forever. The stream paths have warned about this since YUK-240
-// (`task_run_stuck_in_running` structured warns, runner.ts) with "a real
-// reconcile job is the follow-up"; the runTask (judge) paths were even quieter
-// (console.error only, warns added alongside this sweeper). This module IS
-// that reconcile job.
-//
-// Semantics — OBSERVATION-STATE CONVERGENCE ONLY:
-//   - touches ONLY the central attempt observation pair (ai_task_runs + its
-//     attempt cost_ledger row); no domain writes, job re-emission, or LLM re-run.
-//   - terminal status is 'failure' (NOT 'error'): the write vocabulary is the
-//     closed enum {running, success, failure} (log.ts AiTaskRunFinishEntry) —
-//     'error' would be invisible to the admin failure surface
-//     (ai-observability.ts filters eq(status,'failure')). The sub-class rides
-//     finish_reason='reconciled_stuck', which the overnight watchdog EXCLUDES
-//     from degraded-kind alerting (not a logical task failure) while the admin
-//     Failures page keeps it browsable (alerting-excluded, browse-retained).
-//   - threshold 1h is shared with config validation and the task-budget reader.
-//     Persisted budgets >= the threshold are rejected at write/hydration; caller
-//     overrides are checked by the reader too. Registry defaults currently max
-//     at 300s; the durable copilot override is 45min after the uncapped-budget
-//     change (YUK-1373) → ~1.3× margin. Still safe but the headroom is thin —
-//     LOAD-BEARING invariant: every per-call budget MUST stay below
-//     STUCK_RUN_THRESHOLD_MS or this sweeper could converge a LIVE run.
-//     (copilot_run.test.ts asserts the durable lifetime bound.)
-//
-// Triggers (design doc §5.4):
-//   - PRIMARY: one boot-time sweep in start-worker.ts (process crash is the
-//     main stuck cause; restart converges within seconds — the 1h threshold
-//     guards the previous process's youngest runs).
-//   - SECONDARY: a nightly fast-tier cron (observability manifest) for the
-//     DB-outage flavor where no restart happens. fast tier has no DLQ by
-//     design: the sweep is idempotent, a dropped tick re-converges next cron.
+// A crash or a failed finish-write leaves ai_task_runs at 'running'.
+// This sweep writes the observation row only. It does not rerun the model or the domain write.
+// Status is 'failure', not 'error'. The admin page filters on 'failure'.
+// finish_reason reconciled_stuck stays out of the degraded alert and stays on the failures page.
+// Every per-call budget must stay under STUCK_RUN_THRESHOLD_MS. A longer budget is a live run.
+// Boot sweeps the crash case. The nightly fast cron covers an outage with no restart.
+// That queue has no dead-letter queue. A dropped tick converges on the next one.
 
 import { and, eq, lt } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
@@ -53,11 +24,7 @@ export interface ReconcileResult {
   reconciled: number;
 }
 
-/**
- * Converge every ai_task_runs row stuck at status='running' for longer than
- * STUCK_RUN_THRESHOLD_MS to a terminal failure row. Idempotent: converged rows
- * no longer match the WHERE clause.
- */
+/** Idempotent. A converged row no longer matches the status filter. */
 export async function reconcileStuckAiTaskRuns(
   db: Db,
   now: Date = new Date(),
@@ -76,13 +43,8 @@ export async function reconcileStuckAiTaskRuns(
 
   const converged: Array<{ id: string; task_kind: string }> = [];
   for (const run of staleRuns) {
-    // YUK-843 — isolate per-row settle failures. writeAiTaskAttemptFinished
-    // throws on DB/constraint errors (e.g. a ledger attempt row already
-    // existing for this run) and its transaction rolls back, leaving the run
-    // row 'running' — exactly the state this sweep selects on, so the next
-    // tick retries it. Letting the throw escape would abort the whole sweep
-    // and strand every later row until the next cron, so catch, emit one
-    // structured failure event, and continue.
+    // One row's constraint error rolls that row back to 'running' and the next tick retries it.
+    // Letting it escape would skip every later row until the next cron.
     let settled: boolean;
     try {
       settled = await writeAiTaskAttemptFinished(db, {
@@ -100,8 +62,7 @@ export async function reconcileStuckAiTaskRuns(
         finished_at: now,
       });
     } catch (error) {
-      // `err` is the driver error summary (constraint name etc.) — run
-      // input/output payloads are never logged.
+      // Log the driver summary only. The run payload stays out of the log.
       console.warn('[ai_task_run_reconcile] settle failed for stuck run', {
         event: 'task_run_reconcile_failed',
         task_run_id: run.id,
@@ -117,19 +78,14 @@ export async function reconcileStuckAiTaskRuns(
     console.warn('[ai_task_run_reconcile] converged stuck runs', {
       event: 'task_run_stuck_reconciled',
       reconciled: converged.length,
-      // Truncated sample — enough to jump into the admin run detail, without
-      // flooding the log line when a long outage left many rows behind.
+      // A long outage can leave many rows. The sample is enough to open one.
       sample: converged.slice(0, 10),
     });
   }
   return { reconciled: converged.length };
 }
 
-/**
- * pg-boss handler factory (JobHandlerFactory shape `(db) => (jobs) => Promise<void>`),
- * mounted by register-capability-jobs.ts from the observability manifest's
- * nightly cron JobDecl. The job payload is empty; `now` is the wall clock.
- */
+/** Nightly cron. The clock is the wall clock inside the sweep. */
 export function buildAiTaskRunReconcileHandler(db: Db): (jobs: Job[]) => Promise<void> {
   return async (jobs) => {
     for (const _job of jobs) {

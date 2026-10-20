@@ -51,26 +51,15 @@ export interface VerifyDispatchResult {
   failed: number;
 }
 
-// The id is version-scoped so a synthesized valid intent never collides with a stale intent that
-// shares the same (question, verifier) but carries a different (or absent) schema version. Because
-// `writeEvent` is INSERT-only (ADR-0021 append-only: PK conflict = do-nothing), a colliding id would
-// silently no-op the replacement and leave the draft stuck. Version scoping keeps the id
-// deterministic (idempotent re-synthesis) while giving each schema version its own id space.
-//
-// Residual collision tail (out of scope): a structurally-broken CURRENT-version intent could only
-// pre-occupy the exact version-scoped replacement id by reproducing sha256(verifier\0questionId) with
-// a corrupt payload — i.e. someone hand-crafting the digest. Append-only writes never produce that
-// (a correct digest implies a correct payload), so we do not engineer against it.
+// The id includes the schema version. writeEvent is insert-only, so a colliding id would
+// no-op the replacement and leave the draft stuck. The id stays deterministic per version.
+// A corrupt current-version payload can occupy that id only if someone hand-builds the digest.
+// Append-only writes do not do that.
 const VERIFY_DISPATCH_VERSION_TAG = String(VERIFY_DISPATCH_VERSION);
 
-// SQL mirror of verifyDispatchIntentPayloadSchema's required keys — a cheap JSONB probe for whether a
-// payload would survive safeParse as a current-version intent. Both the dispatch lock and the
-// synthesis anti-join gate on it so a current-version-but-incomplete row (e.g. {version:1,
-// verifier_kind} with no question_id) is never treated as dispatchable: dispatch would safeParse-drop
-// it without writing a completion (re-occupying the oldest lock page → starving valid intents), and
-// synthesis would count it as "already owned" (blocking a valid replacement from being synthesized).
-// safeParse stays the exact backstop for anything SQL cannot cheaply assert (e.g. a numeric
-// question_id that is non-empty text yet not a string per the schema).
+// Cheap probe for a current-version intent. An incomplete row must not count as dispatchable.
+// Dispatch would drop it without a completion and keep locking that page. Synthesis would
+// treat it as already owned. safeParse still rejects what this probe cannot see.
 function isStructurallyDispatchableIntent(payload: AnyColumn) {
   return and(
     sql`${payload}->>'version' = ${VERIFY_DISPATCH_VERSION_TAG}`,
@@ -89,10 +78,7 @@ function placementAuthorityIdentity(authority?: PlacementVerificationAuthority):
     : '';
 }
 
-// Field-wise equality (YUK-452 review): the persisted authority is compared after a JSONB
-// round-trip + zod parse, which does NOT preserve object key order, so a raw JSON.stringify of the
-// two objects could differ purely by key order and raise a false "conflict". Compare the known
-// fields explicitly instead. All fields are strings (no Date serialization concern).
+// JSONB does not keep key order, so stringify can report a false conflict. Compare the fields.
 function placementAuthorityEquals(
   a: PlacementVerificationAuthority | undefined,
   b: PlacementVerificationAuthority | undefined,
@@ -237,8 +223,7 @@ async function writeDispatchFailure(
 ) {
   try {
     const now = new Date();
-    // Truncate before persisting: driver/infra error strings can carry connection details, internal
-    // hostnames, or query text into the immutable event log read by broader observability tooling.
+    // The event log is append-only and widely read. Driver errors can carry hosts and query text.
     const rawMsg = input.error instanceof Error ? input.error.message : String(input.error);
     await writeEvent(db, {
       id: createId(),
@@ -282,23 +267,16 @@ export async function dispatchPendingVerifyIntents(
   if (input.questionIds?.length === 0) return empty;
   const recovery = input.recovery ?? false;
   const now = input.now ?? new Date();
-  // Hoisted so the catch can report how many locked intents the rolled-back
-  // transaction actually covered (the full-scan path has no questionIds count).
+  // The catch runs after rollback, and a full scan has no questionIds length to report.
   let lockedCount = 0;
   try {
     return await db.transaction(async (tx) => {
       const completion = alias(event, 'verify_dispatch_completion');
       const predicates = [
         eq(event.action, VERIFY_DISPATCH_INTENT_ACTION),
-        // Only lock intents structurally dispatchable for the CURRENT schema version. A
-        // version-mismatched or otherwise schema-incomplete intent can never be enqueued (safeParse
-        // drops it below) and never receives a completion, so without this guard it would permanently
-        // re-occupy the oldest lock page and starve valid pending intents. The synthesis anti-join
-        // issues a fresh valid intent (distinct version-scoped id) for such a draft, which flows
-        // through here normally.
+        // An incomplete or wrong-version intent never gets a completion, so it would keep the oldest lock page.
         isStructurallyDispatchableIntent(event.payload),
-        // Filter completion rows before LIMIT. Otherwise an old first page of completed intents
-        // permanently starves later pending work because every drain locks the same no-op page.
+        // Filter completions before LIMIT. Otherwise every drain locks the same finished page.
         notExists(
           tx
             .select({ id: completion.id })
@@ -324,10 +302,7 @@ export async function dispatchPendingVerifyIntents(
       lockedCount = locked.length;
       if (locked.length === 0) return empty;
 
-      // safeParse (not parse): backstop for any row that passes the SQL version guard above yet
-      // still fails full schema validation. One corrupt payload must not throw and abort the whole
-      // transaction — that would starve every other pending intent in the locked page. Skip the
-      // unparseable rows, mirroring the recovery path below.
+      // One corrupt payload must not abort the locked page. Skip it. The SQL probe is not the full schema.
       const intents = locked
         .map((row) => verifyDispatchIntentPayloadSchema.safeParse(row.payload))
         .filter((result) => result.success)
@@ -376,11 +351,7 @@ export async function dispatchPendingVerifyIntents(
           !row ||
           row.draftStatus !== 'draft' ||
           metadataIsArchived(row.metadata) ||
-          // YUK-1011 — a question_part has no independent verify subject: the
-          // composite parent's verify cascade owns it. A stray intent for a
-          // part (synthesized before the exclusion, or written by hand) is
-          // terminal-drained here instead of enqueueing a job that can only
-          // ever return skipped:question_part.
+          // A part has no verify of its own. The parent's cascade owns it. Drain a stray intent instead of enqueueing a job that can only skip.
           row.parentQuestionId != null ||
           terminalKeys.has(`${intent.question_id}\0${intent.verifier_kind}`)
         ) {
@@ -437,9 +408,7 @@ export async function dispatchPendingVerifyIntents(
       questionIds: input.questionIds,
       error,
     });
-    // The whole locked batch failed as a group when the transaction rolled back;
-    // report its real size (floor 1 when the throw preceded the locking SELECT)
-    // instead of a misleading constant on the full-scan/recovery path.
+    // The locked batch rolled back together. Floor at 1 when the throw came before the lock.
     return { ...empty, failed: input.questionIds?.length ?? Math.max(1, lockedCount) };
   }
 }
@@ -464,21 +433,10 @@ export async function recoverOrphanVerifyDispatches(
           eq(question.draft_status, 'draft'),
           inArray(question.source, ['quiz_gen', 'web_sourced']),
           sql`${question.metadata}->>'archived_at' IS NULL`,
-          // YUK-1011 — composite children (question_part drafts) never get
-          // their own verify intent: the parent's verify cascade promotes the
-          // whole group atomically. Synthesizing one here would enqueue a job
-          // that can only return skipped:question_part.
+          // A part is promoted with its parent. An intent here can only skip.
           isNull(question.parent_question_id),
-          // Filter already-owned/terminal rows before LIMIT. A persistent oldest page must not
-          // prevent later legacy drafts from ever receiving an intent.
-          //
-          // Only a structurally-dispatchable CURRENT-version intent counts as "already owned". A
-          // version-mismatched or schema-incomplete intent (e.g. wrong version, or {version:1,
-          // verifier_kind} with no question_id) is not dispatchable — dispatch's safeParse drops it and
-          // never writes a completion — so if it counted here the draft would be stuck forever: never
-          // synthesized a valid intent, never enqueued. Excluding it lets a fresh valid intent be
-          // synthesized (the version-scoped id avoids colliding with the stale one). The extra CASE also
-          // requires the verifier_kind to be the one this draft's source expects.
+          // Filter owned and terminal rows before LIMIT, or a stuck first page hides later drafts.
+          // An incomplete intent is not owned. Counting it would block the valid replacement.
           notExists(
             tx
               .select({ id: existingIntent.id })
@@ -567,21 +525,9 @@ export function buildVerifyDispatchRecoveryHandler(
 }
 
 /**
- * YUK-891 — fire the verify-dispatch startup recovery trigger.
- *
- * Called by start-worker AFTER registerCapabilityJobs has created the
- * practice-owned quiz_verify / source_verify queues. registerHandlers mounts
- * the verify_dispatch_recover worker (polling) BEFORE those queues exist, so a
- * trigger fired from there races the registrar: with durable verify intents
- * present, the first recovery execution boss.sends into a not-yet-created
- * verifier queue and pg-boss throws `Queue <name> does not exist` — the attempt
- * fails noisily and the drain is delayed to the nightly cron. The trigger
- * lives next to the queue it targets; start-worker owns the ordering.
- *
- * Every completed boot enqueues a recovery pass. The standard-policy queue
- * intentionally has no send-level dedup: durable intent completion makes the
- * handler idempotent, while suppressing a later boot could delay its drain to
- * the nightly cron.
+ * start-worker calls this after the verifier queues exist. The consumer is mounted earlier.
+ * A send before those queues exist throws, and the drain waits for the nightly cron.
+ * No send dedupe. Completion makes a repeat pass a no-op, and skipping a later boot would wait for that cron.
  */
 export async function sendVerifyDispatchStartupRecovery(boss: PgBoss): Promise<void> {
   await boss.send(VERIFY_DISPATCH_RECOVERY_QUEUE, { trigger: 'startup' });

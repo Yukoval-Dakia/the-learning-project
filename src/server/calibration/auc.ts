@@ -21,7 +21,7 @@ export function forwardAuc(scores: number[], labels: (0 | 1)[]): AucResult {
   const pos: number[] = [];
   const neg: number[] = [];
   for (let i = 0; i < n; i++) {
-    // The (0|1) type is unchecked at runtime. Any other value would be counted as a negative.
+    // The (0|1) type is unchecked at runtime. Any other value throws instead of counting as a negative.
     const y = labels[i];
     if (y !== 0 && y !== 1) {
       throw new Error(`forwardAuc: label at index ${i} must be 0 or 1 (got ${y})`);

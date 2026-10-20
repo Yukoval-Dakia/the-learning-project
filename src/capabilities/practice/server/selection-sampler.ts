@@ -1,6 +1,6 @@
 // YUK-361 Phase 3 Step C1 — 薄 tempered-softmax 选题 sampler（PURE，无 IO，无接线）。
 //
-// 权威：ADR-0042 编排档2 amendment（docs/adr/0042-...md:46-68，「LLM 出权重 +
+// 权威：ADR-0042 编排档2 amendment（docs/adr/0042-mfi-selection-signal-three-layer-engine.md:46-68，「LLM 出权重 +
 // sampler + π_i」）+ ADR-0043 §7（π_i 必须是**真随机抽样的 inclusion probability、
 // 满足 positivity**，**非**确定性 top-item 事后归一化）+ impl plan Step C。
 // 此 π_i 喂 Phase 6 active-PPI 的 IPW / Horvitz-Thompson rectifier，**必须精确**。
