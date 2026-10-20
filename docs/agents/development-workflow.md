@@ -147,6 +147,9 @@ CI 检查实测抵消或裁决出处字段，不联网判断裁决的真实性�
 
 本地默认比较 `git merge-base HEAD origin/main`，也可用 `--base <commit SHA>`。
 CI 的静态 `audits_architecture` job 必须提供 `CAPABILITY_BASE_SHA`；手动 workflow 使用已有的 `test_policy_base` 输入。
+CircleCI 的事件可能缺少 PR base 和 push before，因此该 job 复用
+`scripts/ci/resolve-circle-audit-base.mjs`，将其验证后的 SHA 输出传给 `CAPABILITY_BASE_SHA`。
+无法确认 base 时仍失败，不回退到移动分支或猜测父提交；GitHub 保留原有 event/input 来源。
 `pnpm audit:capability-boundaries:snapshot` 仍只打印实测快照，不带变更记录，不能用它覆盖基线。
 
 ### Lint warning ratchet（YUK-909）

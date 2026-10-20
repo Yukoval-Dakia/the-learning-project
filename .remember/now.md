@@ -1,12 +1,12 @@
-# YUK-1570 main 冲突整合 — 2026-10-20
+# YUK-1570 Circle 比较基线修复 — 2026-10-20
 
-同分支 yuk-1570-baseline-ratchet、ready PR1830，普通 merge main a519a05d。
-冲突只有 PLAN.md 和本文件，保留双方交接；未重做设计或修改源码语义。
-baseline 自动合并到 main 的440/0/42；notes.YUK-1567 保持不变。
-限定 practice→r2 3→4 的出处、退出条件与不得复用规则保持不变，不能当作新上调授权。
-本轮 CI模式审计（base a519a05d）、typecheck/lint/build 全部exit0，lint178既有warnings；旧head的CI结果不用于本轮验收。
+同分支 yuk-1570-baseline-ratchet、ready PR1830，在7a0a03787上修复CI接线，不rebase/amend/force push。
+Circle workflow6ea37d51 的 architecture job2415 在缺 CAPABILITY_BASE_SHA 时exit1；同workflow policy resolver验证了PR1830/base a519a05d。
+architecture现在复用现有resolve-circle-audit-base.mjs并传递其SHA输出；未修改resolver或ratchet源码、baseline、测试。无可信base仍拒绝，GitHub event/input来源保持不变。
+基线440/0/42；限定practice→r2裁定、退出条件与不得复用规则不变。
+本机缺base复现exit1，使用远端policy已验证base运行architecture六项审计全部exit0；typecheck/lint/build全部exit0，lint178既有warnings。
 本轮不新增测试，不运行本机完整test/DB/provider，不改Linear状态，不合并PR。
-不读取凭据、其他会话或本地数据库；普通 push 后报告 head 与冲突文件。命令证据在.amp/in/artifacts/merge-a519a05d/。
+不读取凭据、其他会话或本地数据库。普通push后等待新head的CircleCI与GitHub结果，不能沿用旧head绿色。最终结果见PR；本机日志在.amp/in/artifacts/circle-base-fix/。
 
 # PR #1858 主线整合，2026-10-20
 
