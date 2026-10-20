@@ -6,6 +6,7 @@ import {
 } from '@/core/schema/intervention';
 import { API_ERROR_RESPONSES, ApiIdParamsSchema } from '@/kernel/http-contracts';
 import { defineCapability } from '@/kernel/manifest';
+import { nightlyEligibility } from '@/kernel/nightly-eligibility';
 import { uiPagesFor } from '@/kernel/ui-surfaces';
 import {
   AgentNotesQuerySchema,
@@ -143,6 +144,7 @@ export const agencyCapability = defineCapability({
         // / maintenance 03:00）；其余 producer 旧序在 dreaming 之后，非其上游。cron 移除，改由
         // orchestrator 触发。
         name: 'dreaming_nightly',
+        eligibility: nightlyEligibility('reflection'),
         dependsOn: [
           { job: 'knowledge_edge_propose_nightly', soft: true },
           { job: 'knowledge_maintenance_nightly', soft: true },
@@ -155,12 +157,14 @@ export const agencyCapability = defineCapability({
         // （旧 03:45 错峰是时钟巧合）。cron 移除，orchestrator 起步即触发。
         name: 'coach_daily',
         dependsOn: [],
+        eligibility: nightlyEligibility('reflection'),
         queue: 'llm',
         load: () => import('./jobs/coach_daily').then((m) => m.buildCoachDailyHandler),
       },
       {
         name: 'coach_weekly',
         schedule: { cron: '30 4 * * 0', tz: 'Asia/Shanghai' },
+        eligibility: nightlyEligibility('reflection'),
         queue: 'llm',
         load: () => import('./jobs/coach_weekly').then((m) => m.buildCoachWeeklyHandler),
       },
@@ -191,6 +195,7 @@ export const agencyCapability = defineCapability({
         // inbox，不消费其它夜链 job 的 live 产物（旧 03:50 错峰是时钟巧合）。cron 移除。
         name: 'goal_scope_propose_nightly',
         dependsOn: [],
+        eligibility: nightlyEligibility('reflection'),
         queue: 'llm',
         load: () =>
           import('./jobs/goal_scope_propose_nightly').then(
@@ -206,6 +211,7 @@ export const agencyCapability = defineCapability({
       {
         name: 'research_meeting_nightly',
         dependsOn: [],
+        eligibility: nightlyEligibility('reflection'),
         queue: 'llm',
         load: () =>
           import('./jobs/research_meeting_nightly').then(
@@ -241,6 +247,7 @@ export const agencyCapability = defineCapability({
       {
         name: 'research_meeting_agent_nightly',
         dependsOn: ['research_meeting_nightly'],
+        eligibility: nightlyEligibility('reflection'),
         queue: 'agent',
         load: () =>
           import('./jobs/research_meeting_agent_nightly').then(

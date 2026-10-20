@@ -83,12 +83,29 @@ export type InsertSourcedDraftResult =
  * when an ON CONFLICT fires but no duplicate can be found / the retry still conflicts (a
  * real invariant violation).
  */
+/**
+ * YUK-1568 S3 — 本 writer 只服务【未声明】候选（jyeoo_fetch 及未带 parts 的
+ * sourcing_web 旧路径）。携带 typed parts/units 声明的候选必须走统一草稿链
+ * （saveDraftEdit → submitDraftQuestion）：在这里静默丢掉
+ * parts/answer_shape/blank_order 等同用 flat 解释器吞掉声明。fail-closed。
+ */
+export function assertNoDraftDeclarations(q: SourcedQuestionT): void {
+  if (q.parts != null && q.parts.length > 0) {
+    throw new Error(
+      'insertSourcedDraft: candidate carries typed parts/units declarations — ' +
+        'flat writer would silently drop them; route via saveDraftEdit + submitDraftQuestion',
+    );
+  }
+}
+
 export async function insertSourcedDraft(
   tx: Tx,
   input: InsertSourcedDraftInput,
 ): Promise<InsertSourcedDraftResult> {
   const { id, q, knowledgeIds, sourceRoute, createdBy, whitelistMatch, fetchedAt, now } = input;
   const { canonicalContentHash, mergeActorRef, taskRunId } = input;
+
+  assertNoDraftDeclarations(q);
 
   // Preserve an EXPLICIT judge_kind_override; only derive the structural default when absent
   // (never clobber e.g. 'keyword' with the default). YUK-1003 exception: a producer 'exact'

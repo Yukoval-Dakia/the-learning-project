@@ -62,6 +62,14 @@ export {
   listActiveMisconceptionsForKcs,
   loadFailureLearningKnowledgeContext,
 } from './server/failure-learning-context';
+// YUK-1571 — the learnable-frontier graph decision is knowledge-owned; the
+// practice capability consumes it through this narrow port (its compat shim on
+// the old learnable-frontier module path re-exports these same bindings).
+export type { FrontierResolution } from './server/frontier-read';
+export {
+  isMasteredForFrontier,
+  learnableFrontierResolved,
+} from './server/frontier-read';
 export type {
   CuratedAtomic,
   HubMeshAtomicInput,

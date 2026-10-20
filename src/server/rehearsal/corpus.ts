@@ -1,22 +1,11 @@
-// ====================================================================
-// YUK-1057 — 隔离演练 fixture 语料（sanitized synthetic，不退化成单字段
-// happy path）
-// ====================================================================
-//
-// 全部内容是【合成】学习者数据 —— 无任何生产 learner 原文；但结构上保持
-// 生产形状：长文本题干/作答、嵌套 jsonb（question_snapshot、unit_results
-// 输入面的 response_set、fsrs_state、evidence）、跨表 loose text-ref 链
-// （event → answer → learning_record → fsrs/mastery/calibration）、以及
-// 边界样例（live draft、无 snapshot 的 pre-snapshot attempt、纠正链、
-// ambiguous judge 并列、未回填 durable pending、solo review）。
-//
-// 语料分区对照 capture（src/server/migration/capture.ts 的读取面）：
-//   events 全分区（assessment 锚 + causal_closure_lineage 引用世系）、
-//   fsrs/mastery/kc_typed/axis/item+family calibration/difficulty labels、
-//   selection_observation、answers（live draft + submitted mirror）、
-//   sessions、learning_record mirrors、question lineage、source_assets。
-// contract corpus（question_revision / lifecycle / admission / registry）
-// 在 ./contract-corpus.ts —— 演练侧 mock 语料导入 lane 的产物。
+// Synthetic learner data. No production learner text.
+// The shape matches production, including long text, nested jsonb, and loose refs
+// event → answer → learning_record → fsrs/mastery/calibration.
+// Boundary cases stay in: live draft, pre-snapshot attempt, correction chain,
+// ambiguous judges, unfilled durable pending, and solo review.
+// Capture reads events, fsrs, mastery, calibration, answers, sessions, and source assets
+// from this seed.
+// The contract corpus lives in ./contract-corpus.ts. Live publish does not use it.
 
 import type { InferInsertModel } from 'drizzle-orm';
 import { sql } from 'drizzle-orm';
@@ -52,16 +41,13 @@ import {
   source_document,
 } from '@/db/schema';
 
-// 固定时间轴（全部事件/行落同一逻辑日；幂等重放要求 id/timestamps 稳定）。
+// Fixed timestamps. Idempotent replay needs stable ids and times.
 const T0 = new Date('2026-09-20T08:00:00.000Z');
 const at = (minuteOffset: number) => new Date(T0.getTime() + minuteOffset * 60_000);
 
-// ───────────────────────── 冻结 snapshot（真实契约形状） ─────────────────────────
-
 /**
- * attempt 事件的冻结 snapshot（AttemptQuestionSnapshot，见
- * src/core/schema/question-evidence-snapshot.ts；与 capture.db.test.ts 同型）。
- * `q-main` 的 snapshot_verified registry 绑定 digest = canonicalHash(本对象)。
+ * Frozen attempt snapshot. The q-main snapshot_verified digest is canonicalHash of this object.
+ * Do not hand-write that digest.
  */
 export const MAIN_SNAPSHOT = {
   schema_version: 1,
@@ -83,9 +69,8 @@ export const MAIN_SNAPSHOT = {
 } as const;
 
 /**
- * durable pending 的冻结输入（FrozenQuestionSnapshot 结构，practice 侧
- * judge-run-payload.ts；core 侧结构等价校验，见 classify.ts 注释）。
- * `q-durable` 的 snapshot_verified 绑定 digest = canonicalHash(本对象)。
+ * Frozen durable-pending input.
+ * The q-durable snapshot_verified digest is canonicalHash of this object.
  */
 export const DURABLE_SNAPSHOT = {
   kind: 'short_answer',
@@ -107,7 +92,7 @@ export const DURABLE_SNAPSHOT = {
   updated_at: '2026-09-01T00:00:00.000Z',
 } as const;
 
-// q-solo 的 attempt 快照（solo review 的历史事件版本；pre-snapshot 形态另行覆盖）。
+// Historical solo-review snapshot. The pre-snapshot case is a separate event with none.
 export const SOLO_SNAPSHOT = {
   schema_version: 1,
   question: {
@@ -124,11 +109,9 @@ export const SOLO_SNAPSHOT = {
   parent_question: null,
 } as const;
 
-// ───────────────────────── 语料清单（报告/断言用） ─────────────────────────
-
 export interface SeedManifest {
   tables: Record<string, number>;
-  /** 分类锚点（测试/报告读）：capture 分类器应产出的关键 category。 */
+  /** Categories capture must emit. The report and the test read these ids. */
   anchors: {
     complete_attempt_event_id: string;
     durable_review_event_id: string;
@@ -139,7 +122,7 @@ export interface SeedManifest {
     live_draft_answer_id: string;
     mirror_answer_id: string;
   };
-  /** 冻结 snapshot 常量（registry digest 计算用）。 */
+  /** Frozen snapshots. Registry digests hash these objects. */
   snapshots: {
     main: typeof MAIN_SNAPSHOT;
     durable: typeof DURABLE_SNAPSHOT;
@@ -147,7 +130,7 @@ export interface SeedManifest {
   };
 }
 
-/** 语料的事件/锚 id 常量（下游步骤与报告共用）。 */
+/** Shared event and anchor ids. */
 export const SEED_IDS = {
   completeAttempt: 'att-main-1',
   completeJudge: 'jud-main-1',
@@ -184,14 +167,12 @@ function ev(
   };
 }
 
-// ───────────────────────── 主体结构 ─────────────────────────
-
 /**
- * 种入全量语料（FK/loose-ref 序：身份→素材→题→会话/条目→作答→投影→事件流）。
- * 幂等不保证（同库重跑会撞 PK）—— 演练库是一次性 ephemeral，seed 只跑一次。
+ * Seed once. A rerun hits primary keys. The rehearsal database is ephemeral.
+ * Order follows foreign keys and the loose text refs capture walks.
  */
 export async function seedRehearsalCorpus(db: Db): Promise<SeedManifest> {
-  // ── 1) 身份层：knowledge + edge（挂 builtin seed:math:root 锚之下） ──
+  // Cards hang under the builtin seed:math:root. That parent is not seeded here.
   await db.insert(knowledge).values([
     {
       id: 'kc-math-ratio',
@@ -247,7 +228,6 @@ export async function seedRehearsalCorpus(db: Db): Promise<SeedManifest> {
     },
   ]);
 
-  // ── 2) 素材层：source_asset ×2（含一张答案图片）+ source_document ──
   await db.insert(source_asset).values([
     {
       id: 'asset-answer-1',
@@ -286,7 +266,6 @@ export async function seedRehearsalCorpus(db: Db): Promise<SeedManifest> {
     updated_at: T0,
   });
 
-  // ── 3) 题目层：4 题（含父子 part 行 + draft 行 + 嵌入 lineage） ──
   await db.insert(question).values([
     {
       id: 'q-main',
@@ -374,10 +353,9 @@ export async function seedRehearsalCorpus(db: Db): Promise<SeedManifest> {
     },
   ]);
 
-  // ── 4) 会话/条目/档案 ──
-  // 单写者不变量（session-single-owner）：learning_session 的生产写入只允许
-  // src/server/session/*。这里是对 ephemeral 演练库的种子写入（非生产 seam），
-  // 用原生 SQL 明示身份，绕开 drizzle 类型化 insert 以免被不变量扫描误判。
+  // Production writes learning_session only from src/server/session.
+  // This seed is not that seam. Raw SQL keeps the single-writer scan
+  // from flagging a drizzle insert.
   await db.execute(sql`
     insert into learning_session
       (id, type, status, source_document_id, artifact_id, started_at, ended_at, created_at, updated_at)
@@ -396,7 +374,7 @@ export async function seedRehearsalCorpus(db: Db): Promise<SeedManifest> {
     intent_source: 'user',
     source: 'manual',
     source_ref: null,
-    // ArtifactBodyBlocks = TipTap doc（{ type:'doc', content:[...] }）。
+    // TipTap doc. A bare string would not match ArtifactBodyBlocks.
     body_blocks: {
       type: 'doc',
       content: [
@@ -449,7 +427,7 @@ export async function seedRehearsalCorpus(db: Db): Promise<SeedManifest> {
     decided_at: at(30),
   });
 
-  // ── 5) 作答层：live draft（未提交）+ submitted mirror（链回 att-main-1） ──
+  // Unsubmitted draft plus a submitted mirror of att-main-1. Capture reads both.
   await db.insert(answer).values([
     {
       id: SEED_IDS.liveDraftAnswer,
@@ -459,7 +437,7 @@ export async function seedRehearsalCorpus(db: Db): Promise<SeedManifest> {
       content_md: '（未提交草稿）乙车速度：60×1.2=72km/h；相遇时间估算中……',
       image_refs: [],
       tags: ['autosave'],
-      submitted_at: null, // live draft
+      submitted_at: null, // unsubmitted live draft
       session_id: 'sess-tutor-1',
       paper_artifact_id: null,
       part_ref: null,
@@ -485,7 +463,6 @@ export async function seedRehearsalCorpus(db: Db): Promise<SeedManifest> {
     },
   ]);
 
-  // ── 6) 目标/备忘/错因 overlay/变体账本 ──
   await db.insert(goal).values({
     id: 'goal-1',
     title: '期末数学复习（合成目标）',
@@ -493,7 +470,7 @@ export async function seedRehearsalCorpus(db: Db): Promise<SeedManifest> {
     scope_knowledge_ids: ['kc-math-motion', 'kc-math-ratio'],
     scope_mode: 'explicit',
     sequence_hint: 0,
-    declared_stage: 'middle_school', // DeclaredStage 枚举（custom/…/university）
+    declared_stage: 'middle_school',
     status: 'active',
     source: 'user',
     source_ref: null,
@@ -541,10 +518,9 @@ export async function seedRehearsalCorpus(db: Db): Promise<SeedManifest> {
     updated_at: at(60),
   });
 
-  // ── 7) 事件流（15 行：评估锚 + closure lineage + subscriptions 底座） ──
-  // 顺序即 created_at 序：attempt → judge → review → closure。
+  // created_at order is attempt, then judge, then review, then closure.
   const events: Array<EventInsert> = [
-    // (a) complete attempt 链：att-main-1（带冻结 snapshot + 图片证据）+ jud-main-1（verdict）。
+    // Complete attempt with a frozen snapshot and image evidence, plus its verdict.
     ev({
       id: SEED_IDS.completeAttempt,
       action: 'attempt',
@@ -585,7 +561,7 @@ export async function seedRehearsalCorpus(db: Db): Promise<SeedManifest> {
       created_at: at(11),
       ingest_at: at(11),
     }),
-    // (b) ambiguous anchor：两份 judge verdict created_at 并列 → ambiguous_held。
+    // Two judge verdicts at the same created_at. Capture must hold them as ambiguous.
     ev({
       id: SEED_IDS.ambiguousAttempt,
       action: 'attempt',
@@ -609,7 +585,7 @@ export async function seedRehearsalCorpus(db: Db): Promise<SeedManifest> {
       outcome: 'success',
       payload: { coarse_outcome: 'correct', score: 1, feedback_md: '成立' },
       caused_by_event_id: SEED_IDS.ambiguousAttempt,
-      created_at: at(13), // 与 B 并列
+      created_at: at(13), // same instant as B
     }),
     ev({
       id: SEED_IDS.ambiguousJudgeB,
@@ -621,9 +597,9 @@ export async function seedRehearsalCorpus(db: Db): Promise<SeedManifest> {
       outcome: 'success',
       payload: { coarse_outcome: 'correct', score: 1, feedback_md: '同上（重评）' },
       caused_by_event_id: SEED_IDS.ambiguousAttempt,
-      created_at: at(13), // 并列 → ambiguous_held
+      created_at: at(13), // tie, so capture holds this pair as ambiguous
     }),
-    // (c) durable 回填 review：pending（run_id=rev-dur-1）+ review（embedded judge）。
+    // Durable pending whose review arrives. The pending run_id is that review.
     ev({
       id: SEED_IDS.durablePending,
       action: 'experimental:judge_pending_attempt',
@@ -674,7 +650,7 @@ export async function seedRehearsalCorpus(db: Db): Promise<SeedManifest> {
       },
       created_at: at(22),
     }),
-    // (d) 未回填 durable pending（无 review 到达）→ worklist/pending 侧。
+    // Durable pending with no review. It stays on the pending worklist.
     ev({
       id: SEED_IDS.pendingOnly,
       action: 'experimental:judge_pending_attempt',
@@ -693,7 +669,7 @@ export async function seedRehearsalCorpus(db: Db): Promise<SeedManifest> {
       },
       created_at: at(30),
     }),
-    // (e) pre-snapshot attempt（payload 无冻结 snapshot）→ historical_unresolved。
+    // No frozen snapshot. Capture classifies this as historical_unresolved.
     ev({
       id: SEED_IDS.presnapshotAttempt,
       action: 'attempt',
@@ -706,7 +682,7 @@ export async function seedRehearsalCorpus(db: Db): Promise<SeedManifest> {
       },
       created_at: at(32),
     }),
-    // (f) solo answer-bearing review（判 live 行、无 durable pending）→ historical_unresolved。
+    // Solo review of the live row, with no durable pending. Also historical_unresolved.
     ev({
       id: SEED_IDS.soloReview,
       action: 'review',
@@ -733,7 +709,7 @@ export async function seedRehearsalCorpus(db: Db): Promise<SeedManifest> {
       },
       created_at: at(35),
     }),
-    // (g) rating-only review（无作答/judge 块）→ FSRS 评级 provenance，不是 submission。
+    // Rating only. No answer or judge block, so this is FSRS provenance, not a submission.
     ev({
       id: SEED_IDS.ratingOnlyReview,
       action: 'review',
@@ -746,7 +722,7 @@ export async function seedRehearsalCorpus(db: Db): Promise<SeedManifest> {
       },
       created_at: at(40),
     }),
-    // (h) causal_closure_lineage：非评估动作但携带评估链引用。
+    // Not an assessment action, but it cites the assessment chain. Capture must keep that lineage.
     ev({
       id: 'evt-checkpoint-1',
       actor_kind: 'system',
@@ -802,11 +778,10 @@ export async function seedRehearsalCorpus(db: Db): Promise<SeedManifest> {
       created_at: at(43),
     }),
   ];
-  // 单写者不变量：event 生产写入只允许 kernel 事件装配模块；此处是 ephemeral
-  // 演练库的种子事件流（非生产 seam），用原生 SQL 参数化批量插入明示身份
-  //（同 learning_session 的处理）。payload/affected_scopes 显式 ::jsonb。
-  // affected_scopes 恒为空（seed corpus 不写 scopes）；空数组参数会被驱动渲染成非法
-  // 的 `()`，故用字面量 ARRAY[]::text[]；若未来 seed 需要非空 scopes，显式抛错逼实现。
+  // Production event writes go through the kernel assembler. This seed is not that seam.
+  // Raw SQL keeps the single-writer scan from flagging a drizzle insert.
+  // An empty array parameter renders as `()`. ARRAY[]::text[] is the legal empty value.
+  // A future non-empty scope must throw until that literal is written out.
   for (const e of events) {
     if ((e.affected_scopes ?? []).length > 0) {
       throw new Error(
@@ -825,7 +800,6 @@ export async function seedRehearsalCorpus(db: Db): Promise<SeedManifest> {
     values ${sql.join(eventRows, sql`, `)}
   `);
 
-  // ── 8) 投影层（FSRS / mastery / kc_typed / axis / calibration / signals） ──
   const fsrsState = {
     due: at(24 * 60),
     stability: 2.5,
@@ -928,7 +902,7 @@ export async function seedRehearsalCorpus(db: Db): Promise<SeedManifest> {
     boundary_a: 1.1,
     ter: 0.66,
     n_obs: 3,
-    // provenance 是 text 列（'adaptive' | 'probe'；'probe' 才保留 drift_v）。
+    // Text column. Only 'probe' keeps drift_v.
     provenance: 'probe',
     updated_at: at(43),
   });
@@ -1048,7 +1022,7 @@ export async function seedRehearsalCorpus(db: Db): Promise<SeedManifest> {
     },
   ]);
 
-  // ── 9) AI 台账（task_run + cost_ledger；event.task_run_id 软链） ──
+  // event.task_run_id is a loose ref. The row has to exist or the chain breaks.
   await aiTaskRunsInsert(db);
   await db.insert(learning_record).values([
     {
@@ -1075,7 +1049,7 @@ export async function seedRehearsalCorpus(db: Db): Promise<SeedManifest> {
     },
   ]);
 
-  // ── 10) subscription 底座（checkpoint + 2 条 delivery：FK 到 event(id, dispatch_seq)） ──
+  // Delivery FKs event(id, dispatch_seq). The seq is read back, not invented.
   const evRows = await db.select({ id: event.id, dispatch_seq: event.dispatch_seq }).from(event);
   const seqOf = new Map(evRows.map((r) => [r.id, r.dispatch_seq] as const));
   await db.insert(event_subscription_checkpoint).values({
@@ -1170,7 +1144,7 @@ export async function seedRehearsalCorpus(db: Db): Promise<SeedManifest> {
   };
 }
 
-/** ai_task_runs + cost_ledger 台账（event.task_run_id 的软链目标）。 */
+/** Rows that event.task_run_id points at. */
 async function aiTaskRunsInsert(db: Db) {
   await db.insert(ai_task_runs).values([
     {

@@ -11,7 +11,9 @@
 
 `memory_brief_note` is the pre-summarized "方向感" the Layer-8 orchestrator, Dreaming, and Coach read
 before consulting the SoT. Each row is a three-段 short text (recent week / recent months / long
-term) keyed by `scope_key`. Two scopes are governed today (P5.2 non-goals: no `topic:` /
+term) keyed by `scope_key`. The host partitions events into those windows by `created_at` and writes
+the matching evidence ids; the model only writes each window's prose. Two scopes are governed today
+(P5.2 non-goals: no `topic:` /
 `mistake_cluster:` / `meta:` briefs — the `MemoryBriefScopeKey` validator only permits
 `global` + `subject:*`):
 

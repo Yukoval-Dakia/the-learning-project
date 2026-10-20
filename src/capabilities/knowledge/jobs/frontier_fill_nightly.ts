@@ -42,21 +42,24 @@
 
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
+// SAME-PACKAGE read (was a cross-package seam until YUK-1571): the
+// learnable-frontier graph decision moved into this capability's
+// server/frontier-read.ts — knowledge now owns both the read-side graph decision
+// and this job's write-side edge proposals. This job only READS the frontier as
+// a deterministic gate signal; it still PRODUCES PROPOSE-ONLY knowledge_edge
+// proposals (co-located with knowledge_edge_propose_nightly).
+import {
+  type FrontierResolution,
+  learnableFrontierResolved,
+} from '@/capabilities/knowledge/server/frontier-read';
 import { loadPendingEdgeProposalKeys } from '@/capabilities/knowledge/server/propose_edge';
 // loadTreeSnapshot is the knowledge package's own tree reader (same-package import).
 import { loadTreeSnapshot } from '@/capabilities/knowledge/server/tree';
 import { parseFrontierProposals } from '@/capabilities/knowledge/tasks/knowledge-tasks';
-// CROSS-PACKAGE seam (YUK-349): learnableFrontier is a practice-package read.
-// This job lives in the KNOWLEDGE package because it PRODUCES knowledge_edge
-// proposals (it is co-located with knowledge_edge_propose_nightly, the other
-// graph-topology producer). It only READS the frontier as a deterministic gate
-// signal — the same direction the agency goal_scope cron already crosses into
-// knowledge (loadTreeSnapshot). Mirrors that documented precedent; flip if M5
-// tightens package boundaries.
-import { type FrontierResolution, learnableFrontierResolved } from '@/capabilities/practice/public';
 import { isDirectTreePair } from '@/core/topology-gate';
 import type { Db } from '@/db/client';
 import { knowledge, knowledge_edge } from '@/db/schema';
+import { FRONTIER_PENDING_CAP } from '@/kernel/nightly-eligibility';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
@@ -73,7 +76,7 @@ import { resolveSubjectProfile } from '@/subjects/profile';
 export const FRONTIER_BOOTSTRAP_FLOOR = 0;
 
 /** Hard cap on proposals written per run (cost cap / anti-storm). */
-export const FRONTIER_FILL_MAX_PROPOSALS = 5;
+export const FRONTIER_FILL_MAX_PROPOSALS = FRONTIER_PENDING_CAP;
 
 /**
  * Cap on candidate KCs fed to the LLM. The sparsity gate bounds *frequency* and

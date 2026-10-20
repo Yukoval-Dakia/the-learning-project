@@ -12,7 +12,7 @@
 // (no_input_renderer / invalid_presentation), the serving-action command
 // event log, and in-flight pg-boss jobs. No parallel state store.
 
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { type SQL, and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { QUESTION_ADMISSION_PAID_UNITS } from '@/core/question-admission-policy';
 
 import {
@@ -23,6 +23,7 @@ import {
   decideAutomaticServing,
 } from '@/core/schema/assessment';
 import type { Db, Tx } from '@/db/client';
+import { notDraftPredicate } from '@/db/predicates';
 import {
   event,
   paid_effect,
@@ -146,6 +147,143 @@ export interface QuestionServingRead {
   legacyUnpublished: Set<string>;
 }
 
+type ServingState =
+  | ServingHoldReason
+  | 'revision_check'
+  | 'legacy_unpublished'
+  | 'draft'
+  | 'owner_hold';
+
+/** Lifecycle diagnosis shared by page projections, SQL counts and SQL filtering. */
+function servingFactsQuery(filters: SQL[]): SQL {
+  return sql`
+    select ${question.id} as id, diagnosis.state,
+      l.group_id is null as legacy_unpublished,
+      applied.entity_id is null as may_reverify,
+      case
+        when l.withdrawn then coalesce(l.withdrawn_at, l.updated_at)
+        when l.suspended then l.updated_at
+        when l.group_id is null then null
+        when l.scoring_admission_state = 'withheld' then
+          case when diagnosis.state in ('source_check_failed', 'admission_failed')
+            then coalesce(verification.recorded_at, l.updated_at)
+            else l.updated_at end
+        when not ${notDraftPredicate(question.draft_status)} then null
+        else l.updated_at
+      end as held_since
+    from ${question}
+    left join ${question_group_lifecycle} l
+      on l.group_id = coalesce(${question.parent_question_id}, ${question.id})
+    left join ${question_revision} r on r.revision_id = l.current_revision_id
+    left join lateral (
+      select v.policy_id, v.outcome, v.recorded_at
+      from ${question_admission_verification} v
+      join ${question_revision} vr on vr.revision_id = v.revision_id
+      where vr.group_id = l.group_id
+      order by v.recorded_at desc limit 1
+    ) verification on true
+    left join lateral (
+      select p.entity_id, p.application_json->>'status' as status
+      from ${paid_effect} p
+      where p.entity_id = l.group_id and p.entity_revision = r.integrity_digest
+        and p.family = ${PAID_EFFECT_ADMISSION_FAMILY}
+        and p.unit in (${sql.join(
+          PAID_EFFECT_ADMISSION_UNITS.map((unit) => sql`${unit}`),
+          sql`, `,
+        )})
+        and p.state = 'applied'
+      order by p.created_at desc limit 1
+    ) applied on true
+    cross join lateral (
+      select case
+        when l.withdrawn then 'withdrawn'
+        when l.suspended then case
+          when l.suspension_reason = 'retraction_hold' then 'retraction_hold'
+          when verification.policy_id = 'source_verify@1' and verification.outcome = 'failed'
+            then 'source_check_failed'
+          else 'verify_hold' end
+        when l.group_id is null then 'legacy_unpublished'
+        when l.scoring_admission_state = 'withheld' then case
+          when verification.policy_id = 'source_verify@1' and verification.outcome = 'failed'
+            then 'source_check_failed'
+          when applied.status = 'withheld'
+            or l.scoring_admission_withheld_reason in ('verification_failed', 'no_admitted_executor')
+            then 'admission_failed'
+          when l.scoring_admission_withheld_reason = 'owner_hold' then 'owner_hold'
+          else 'awaiting_admission' end
+        when not ${notDraftPredicate(question.draft_status)} then 'draft'
+        else 'revision_check'
+      end as state
+    ) diagnosis
+    where ${and(...filters) ?? sql`true`}
+  `;
+}
+
+function stateHoldReason(state: ServingState): ServingHoldReason | null {
+  switch (state) {
+    case 'revision_check':
+    case 'legacy_unpublished':
+    case 'draft':
+    case 'owner_hold':
+      return null;
+    default:
+      return state;
+  }
+}
+
+/** Called within the list's repeatable-read snapshot. Frozen scoring/presentation
+ * validation stays in the issuance gate, not a SQL copy. */
+export async function questionServingSet(db: Db | Tx, filters: SQL[]): Promise<SQL> {
+  const facts = servingFactsQuery(filters);
+  const unavailable: { id: string; reason: ServingHoldReason | null }[] = [];
+  let after: string | null = null;
+  for (;;) {
+    const batch: { id: string }[] = await db.execute<{ id: string }>(sql`
+      select id from (${facts}) facts
+      where state = 'revision_check' ${after === null ? sql`` : sql`and id > ${after}`}
+      order by id limit 200
+    `);
+    if (batch.length === 0) break;
+    const serving = await readQuestionServing(
+      db,
+      batch.map((row) => row.id),
+    );
+    for (const [id, item] of serving.byId) {
+      if (!item.servable) unavailable.push({ id, reason: item.hold_reason });
+    }
+    after = batch[batch.length - 1].id;
+  }
+  return sql`
+    select facts.id, facts.legacy_unpublished,
+      facts.state = 'revision_check' and gate.id is null as servable,
+      case when facts.state = 'revision_check' then gate.reason
+        when facts.state in ('legacy_unpublished', 'draft', 'owner_hold') then null
+        else facts.state end as hold_reason
+    from (${facts}) facts
+    left join jsonb_to_recordset(${JSON.stringify(unavailable)}::jsonb)
+      as gate(id text, reason text) on gate.id = facts.id
+  `;
+}
+
+export async function countQuestionServing(db: Db | Tx, servingSet: SQL): Promise<ServingCounts> {
+  const rows = await db.execute<{
+    hold_reason: ServingHoldReason | null;
+    count: number;
+    legacy: number;
+  }>(sql`
+    select hold_reason, count(*)::int as count,
+      count(*) filter (where legacy_unpublished)::int as legacy
+    from (${servingSet}) serving where not servable group by hold_reason
+  `);
+  const counts: ServingCounts = { not_servable_total: 0, by_reason: {}, legacy_unpublished: 0 };
+  for (const row of rows) {
+    counts.not_servable_total += row.count;
+    counts.legacy_unpublished += row.legacy;
+    if (row.hold_reason !== null) counts.by_reason[row.hold_reason] = row.count;
+  }
+  return counts;
+}
+
 /**
  * Batch serving derivation for question ids (roots or parts). A part id
  * resolves to its parent group (parent_question_id ?? id) for the shared
@@ -197,68 +335,14 @@ export async function readQuestionServing(
     : [];
   const revisionById = new Map(revisions.map((row) => [row.revision_id, row]));
 
-  // Latest verification row per group (any revision) — names WHICH check last
-  // produced a verdict, distinguishing a failed source check from a failed
-  // scoring admission behind the same 'verification_failed' withheld reason.
-  const verifyRows = groupIds.length
-    ? await db
-        .select({
-          groupId: question_revision.group_id,
-          policyId: question_admission_verification.policy_id,
-          outcome: question_admission_verification.outcome,
-          recordedAt: question_admission_verification.recorded_at,
-        })
-        .from(question_admission_verification)
-        .innerJoin(
-          question_revision,
-          eq(question_admission_verification.revision_id, question_revision.revision_id),
-        )
-        .where(inArray(question_revision.group_id, groupIds))
-        .orderBy(desc(question_admission_verification.recorded_at))
-    : [];
-  const latestVerifyByGroup = new Map<
-    string,
-    { policyId: string; outcome: string; recordedAt: Date }
-  >();
-  for (const row of verifyRows) {
-    if (!latestVerifyByGroup.has(row.groupId)) latestVerifyByGroup.set(row.groupId, row);
-  }
-
-  // Applied paid-effect verdicts for the CURRENT revision digest, per group.
-  // reverify cannot change an applied verdict for an identical base — the
-  // claim never re-pays it — so its presence suppresses next_action and turns
-  // a second reverify call into a 409 (the command enforces the same read).
-  const appliedRows = groupIds.length
-    ? await db
-        .select({
-          groupId: paid_effect.entity_id,
-          entityRevision: paid_effect.entity_revision,
-          application: paid_effect.application_json,
-          createdAt: paid_effect.created_at,
-        })
-        .from(paid_effect)
-        .where(
-          and(
-            eq(paid_effect.family, PAID_EFFECT_ADMISSION_FAMILY),
-            inArray(paid_effect.entity_id, groupIds),
-            inArray(paid_effect.unit, [...PAID_EFFECT_ADMISSION_UNITS]),
-            eq(paid_effect.state, 'applied'),
-          ),
-        )
-        .orderBy(desc(paid_effect.created_at))
-    : [];
-  const appliedByGroupDigest = new Map<string, { status: string | null }>();
-  for (const row of appliedRows) {
-    const key = `${row.groupId}|${row.entityRevision}`;
-    if (appliedByGroupDigest.has(key)) continue;
-    const status =
-      row.application != null &&
-      typeof row.application === 'object' &&
-      typeof (row.application as Record<string, unknown>).status === 'string'
-        ? ((row.application as Record<string, unknown>).status as string)
-        : null;
-    appliedByGroupDigest.set(key, { status });
-  }
+  const facts = await db.execute<{
+    id: string;
+    state: ServingState;
+    legacy_unpublished: boolean;
+    may_reverify: boolean;
+    held_since: string | Date | null;
+  }>(servingFactsQuery([inArray(question.id, ids)]));
+  const factsById = new Map(facts.map((row) => [row.id, row]));
 
   // Serving command events per group, newest first — pending_action's event
   // half. Kept as a list per group (not just the latest): a later REJECTED or
@@ -348,24 +432,17 @@ export async function readQuestionServing(
 
   for (const id of ids) {
     const row = rowById.get(id);
-    if (row == null) {
+    const fact = factsById.get(id);
+    if (row == null || fact == null) {
       result.set(id, { ...NOT_SERVABLE });
       continue;
     }
     const groupId = row.parentId ?? id;
     const partId = row.parentId != null ? id : null;
     const lifecycle = lifecycleByGroup.get(groupId);
-    const latestVerify = latestVerifyByGroup.get(groupId);
     const commands = commandsByGroup.get(groupId);
     const contractEntry = contractByGroup.get(groupId);
-    const currentDigest = lifecycle?.current_revision_id
-      ? (revisionById.get(lifecycle.current_revision_id)?.integrity_digest ?? null)
-      : null;
-    const applied =
-      currentDigest != null
-        ? (appliedByGroupDigest.get(`${groupId}|${currentDigest}`) ?? null)
-        : null;
-    if (lifecycle == null) legacyUnpublished.add(id);
+    if (fact.legacy_unpublished) legacyUnpublished.add(id);
 
     // Frozen-plan serving decision for THIS item's issuance scope: the root
     // is checked once with every part; a part with only itself.
@@ -394,77 +471,12 @@ export async function readQuestionServing(
       }
     }
 
-    const isDraft = row.draftStatus === 'draft';
-    const servable =
-      lifecycle != null &&
-      !lifecycle.withdrawn &&
-      !lifecycle.suspended &&
-      lifecycle.scoring_admission_state === 'admitted' &&
-      !isDraft &&
-      decisionAdmitted;
-
-    const sourceCheckFailed =
-      latestVerify?.policyId === 'source_verify@1' && latestVerify.outcome === 'failed';
-
-    let holdReason: ServingHoldReason | null = null;
-    let heldSince: Date | null = null;
-    if (!servable) {
-      if (lifecycle?.withdrawn === true) {
-        holdReason = 'withdrawn';
-        heldSince = lifecycle.withdrawn_at ?? lifecycle.updated_at;
-      } else if (lifecycle?.suspended === true) {
-        heldSince = lifecycle.updated_at;
-        holdReason =
-          lifecycle.suspension_reason === 'retraction_hold'
-            ? 'retraction_hold'
-            : sourceCheckFailed
-              ? 'source_check_failed'
-              : 'verify_hold';
-      } else if (lifecycle == null) {
-        // Never published — generic hold, no enum name, no action.
-        holdReason = null;
-        heldSince = null;
-      } else if (lifecycle.scoring_admission_state === 'withheld') {
-        const withheldReason = lifecycle.scoring_admission_withheld_reason;
-        if (sourceCheckFailed) {
-          // The last recorded verdict is a failed SOURCE check — diagnosis and
-          // recovery both route through recheck_source.
-          holdReason = 'source_check_failed';
-          heldSince = latestVerify?.recordedAt ?? lifecycle.updated_at;
-        } else if (
-          applied?.status === 'withheld' ||
-          withheldReason === 'verification_failed' ||
-          withheldReason === 'no_admitted_executor'
-        ) {
-          // An applied failed verdict for the current digest keeps the
-          // diagnosis but loses the button — an identical base is never
-          // re-paid, so reverify cannot change it (edit the content).
-          holdReason = 'admission_failed';
-          heldSince = latestVerify?.recordedAt ?? lifecycle.updated_at;
-        } else if (withheldReason === 'owner_hold') {
-          // Deliberate owner withhold — no enum claims it and no release
-          // command undoes it; the UI shows the generic "暂不出题" badge.
-          holdReason = null;
-          heldSince = lifecycle.updated_at;
-        } else {
-          // Pending this verification cycle — held_since is the cycle start
-          // (the re-pend / latest dimension update), not an earlier verify row.
-          holdReason = 'awaiting_admission';
-          heldSince = lifecycle.updated_at;
-        }
-      } else if (isDraft) {
-        // Admission passed but the row is still a draft — same generic-hold
-        // treatment as a never-published row: no enum, no dead button.
-        holdReason = null;
-        heldSince = null;
-      } else {
-        holdReason =
-          itemUnavailableReason != null
-            ? holdReasonForServingDecision(itemUnavailableReason)
-            : null;
-        heldSince = lifecycle.updated_at;
-      }
-    }
+    const servable = fact.state === 'revision_check' && decisionAdmitted;
+    const holdReason =
+      fact.state === 'revision_check' && itemUnavailableReason != null
+        ? holdReasonForServingDecision(itemUnavailableReason)
+        : stateHoldReason(fact.state);
+    const heldSince = fact.held_since == null ? null : new Date(fact.held_since);
 
     // pending_action = command event + in-flight job. A release_verify_hold is
     // synchronous, so it never reports pending; a rejected command never counts
@@ -495,7 +507,7 @@ export async function readQuestionServing(
       // a never-run or stuck pending cycle, or an errored/unknown outcome the
       // paid-effect claim allows to resume. An applied verdict for the current
       // digest is terminal — the identical base is never re-paid.
-      const mayReverify = applied == null;
+      const mayReverify = fact.may_reverify;
       const command: ServingActionCommand | null =
         holdReason === 'admission_failed' && mayReverify
           ? 'reverify'
@@ -524,21 +536,4 @@ export async function readQuestionServing(
   }
 
   return { byId: result, legacyUnpublished };
-}
-
-/** Pagination-independent counts over a computed serving set. */
-export function aggregateServingCounts(
-  servings: Iterable<QuestionServing>,
-  legacyUnpublished: Iterable<string> = [],
-): ServingCounts {
-  const counts: ServingCounts = { not_servable_total: 0, by_reason: {}, legacy_unpublished: 0 };
-  for (const serving of servings) {
-    if (serving.servable) continue;
-    counts.not_servable_total += 1;
-    if (serving.hold_reason != null) {
-      counts.by_reason[serving.hold_reason] = (counts.by_reason[serving.hold_reason] ?? 0) + 1;
-    }
-  }
-  for (const _ of legacyUnpublished) counts.legacy_unpublished += 1;
-  return counts;
 }

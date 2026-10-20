@@ -1,77 +1,8 @@
-// YUK-471 Wave 0 (deferred capstone) — cascade-revert ORCHESTRATOR.
-//
-// This is the cross-cutting consumer that makes the Wave-0 snapshot/cascade
-// machinery usable (ADR-0044 §4 + 诚实天花板). It wires three primitives:
-//   collectCascadeFromCheckpoint (cascade.ts)        → the closure to revert
-//   restoreStateSnapshot         (restore-snapshot.ts) → A-class state revert
-//   writeEvent action='correct'  (corrections.ts trap) → event-layer compensation
-//
-// ─────────────────────────────────────────────────────────────────────────────
-// REVERSIBILITY TAXONOMY (ADR-0044 §4 / §100 honest-ceiling). Each cascade node
-// (and the root checkpoint) maps to one class. Classification is ROW-AWARE — a
-// node's class depends on (action, subject_kind, payload.edge_op), not action
-// alone — because the imperative inverse differs per shape.
-//
-//   A-class  state_snapshot      — action='experimental:state_snapshot'.
-//                                   Reversed by restoreStateSnapshot (θ̂ + FSRS
-//                                   row upsert/delete) + the conflict guard below
-//                                   (the restore primitive is guard-agnostic by
-//                                   design — restore-snapshot.ts:16-20).
-//
-//   B-class  structural fold      — splits by whether a LIVE SoT row exists:
-//
-//     · imperative_undo  generate(knowledge_edge) CREATE: a real knowledge_edge
-//                        ROW exists. Event-layer `correct` alone is a
-//                        NO-OP on that row + a fold LIE: NO poller reconciles
-//                        action='correct' into the named projection, and the edge
-//                        fold (gatherAndFoldKnowledgeEdge) gathers ONLY events
-//                        keyed (subject_kind='knowledge_edge', subject_id=edgeId)
-//                        — the cascade's `correct` (subject_kind='event') is
-//                        invisible to it, so a projection REBUILD re-folds the
-//                        still-present generate(create) and RESURRECTS the live row.
-//                        Knowledge's archive owner therefore records a fold-visible
-//                        archive and projects it in the same transaction.
-//                        The `correct` event is also written (belt-and-braces for a
-//                        future SoT-flip reader). generate(knowledge_edge) ARCHIVE
-//                        (reverting an archive) is IRREVERSIBLE here — the fold has
-//                        no event that re-activates a row without rewriting its
-//                        create metadata; fail-closed, not silently shipped.
-//
-//     · event_layer      conversational mirrors (copilot_reply / teach_message),
-//                        checkpoint anchors (copilot_user_ask / chip_trigger),
-//                        propose / rate. These have NO independent live SoT row to
-//                        undo: a `propose` is a suggestion (its materialization is
-//                        the chained generate, which IS in the cascade and gets
-//                        its own imperative undo); a `rate` is a vote; mirrors /
-//                        anchors are pure conversation history. For these the
-//                        `correct`(retract) event IS the complete reversal (the
-//                        proposal-inbox + conversation projections read corrections
-//                        / getCorrectionStatuses).
-//
-//   IRREVERSIBLE                   — real learner facts: attempt / review (FSRS
-//                                   register) / judge / accept_suggestion
-//                                   (user_verified) / tool_use. Per 诚实天花板 §100
-//                                   these cannot be undone (retract = 篡改真实历史).
-//
-// FAIL-CLOSED: any (action, subject_kind) shape NOT in the A/B reversible tables
-// is treated as IRREVERSIBLE — we NEVER return ok:true while leaving a live SoT
-// row untouched. Notably `extract` (materializes question_block rows, no clean
-// cascade-driven inverse — Wave 3), `suppress`, and any generate whose subject is
-// NOT knowledge_edge fall here: they refuse the whole cascade rather than silently
-// no-op. (fail-loud > silent incomplete undo.)
-//
-// CONFLICT GUARD: before restoring an A-class snapshot, assert the CURRENT state
-// row equals snapshot.after. If not (something outside the cascade moved it) →
-// 409-style refuse the WHOLE revert. This guard is the orchestrator's job; the
-// restore primitive deliberately omits it (restore-snapshot.ts:16-20). YUK-495 S4
-// widened mastery_state.theta_hat to `double precision`, so the live row now stores
-// the exact f64 the snapshot `after` holds (same compute, lossless round-trip) — the
-// compare is an exact `current === after` (see thetaExactEq); any drift down to 1 ULP
-// is a real conflict that must trip the guard (decision-④ bit-exact intent).
-//
-// DETERMINISM: single tx, reverse-dependency order (cascade nodes are already
-// depth-DESC; the root checkpoint is reverted LAST). Parse-barrier-clean: every
-// snapshot payload is validated against StateSnapshotExperimental before use.
+// One cascade revert. The class depends on action, subject_kind, and edge_op.
+// Anything outside the reversible tables is irreversible, and one such node refuses the whole cascade.
+// state_snapshot restore does not check the live row. This orchestrator does.
+// θ̂ uses exact ===. FSRS uses fsrsCardEq on the card scalars.
+// The root checkpoint is applied last, in one transaction.
 
 import { and, eq, inArray } from 'drizzle-orm';
 import { archiveKnowledgeEdgeFromEvents } from '@/capabilities/knowledge/public';
@@ -98,51 +29,30 @@ type DbLike = Db | Tx;
 /** A-class: the only action whose revert is a state-snapshot restore. */
 const STATE_SNAPSHOT_ACTION = 'experimental:state_snapshot';
 
-/**
- * Copilot per-utterance checkpoint anchor + reply actions. The revert subsystem is the
- * canonical owner of these names for the revert side (revert-checkpoint.ts imports them
- * from here) so the magic strings are not re-minted across the endpoint + orchestrator.
- */
+/** Shared with the revert endpoint so the two sides do not mint a second copy of these action names. */
 export const COPILOT_USER_ASK_ACTION = 'experimental:copilot_user_ask';
 export const COPILOT_REPLY_ACTION = 'experimental:copilot_reply';
 
 /**
- * B-class EVENT-LAYER actions: a `correct`(retract) event is the COMPLETE reversal
- * (no independent live SoT row to undo). Mirrors / anchors / propose / rate.
- *   - copilot_reply / teach_message : conversational history mirrors (zero θ̂ /
- *     FSRS / structural change). MED-1: copilot_reply is a depth-1 child of EVERY
- *     real per-utterance checkpoint (chat.ts:524 caused_by=userAsk), so omitting
- *     it would make the flagship clean-revert use case fail-closed-irreversible.
- *   - copilot_user_ask / chip_trigger : checkpoint ANCHOR actions (root of a
- *     per-utterance revert). Reversible utterance markers (诚实天花板 §102).
- *   - propose : a suggestion; its materialization is the chained generate (handled
- *     separately with imperative undo when present).
- *   - rate : a vote; the materialization is the chained generate.
- *   - tool_use : an agent tool-call PROVENANCE mirror (mcp-bridge, subject_kind='query')
- *     written under the same caused_by as the ask. Pure episodic provenance — zero live
- *     SoT: scope-tagger only adds a routing tag, memory maps it to the episodic 'event'
- *     kind (same as copilot_reply / generate / correct), and no projection folds it as
- *     authoritative domain state. The tool's REAL effect (propose / generate / …) is a
- *     separate chained event the cascade reverts independently. So a `correct` retract is
- *     harmless — same class as copilot_reply. Admitting it stops a propose-only ask turn
- *     that emitted a tool_use mirror from 409-ing (YUK-497 wave-3, codex P2).
+ * A `correct` retract is the whole reversal. These actions have no separate live row.
+ * An ask checkpoint's reply is in the cascade. Leaving this action out refuses that revert.
+ * propose is the suggestion. Its materialization is a separate generate.
+ * rate stays here, but classifyRow refuses rating accept before this lookup.
+ * tool_use is the tool-call mirror. The tool's effect is a separate event in the cascade.
+ * grading_checkpoint only anchors a state_snapshot. The state lives in that snapshot.
  */
 const EVENT_LAYER_ACTIONS: ReadonlySet<string> = new Set([
   COPILOT_REPLY_ACTION,
   'experimental:teach_message',
   COPILOT_USER_ASK_ACTION,
   'experimental:copilot_chip_trigger',
-  // YUK-561 S2 (revert-bracket §4.2) — the grading_checkpoint anchor a state_snapshot
-  // hangs off. NO independent live SoT row (the A-class state is in the snapshot it
-  // anchors), so a `correct`(retract) event IS its complete reversal — same class as
-  // the copilot_user_ask / chip_trigger checkpoint anchors above.
   'experimental:grading_checkpoint',
   'propose',
   'rate',
   'tool_use',
 ]);
 
-/** The compensation actor (agent lane; non-'self' per CorrectEvent attribution). */
+/** CorrectEvent attribution rejects actor_ref 'self' for an agent actor. */
 const CASCADE_REVERT_ACTOR_REF = 'cascade_revert';
 
 export type ReversibilityClass =
@@ -152,18 +62,8 @@ export type ReversibilityClass =
   | 'irreversible';
 
 /**
- * The imperative inverse to run for a `structural_imperative` node (B-class with a
- * live SoT row). Currently ONLY the revert-of-`generate(create)` edge case has a
- * clean inverse (archive the edge); anything else fails closed before reaching here.
- *
- * NOTE — there is intentionally NO `unarchive_edge` variant. Reverting a
- * `generate(edge_op='archive')` would have to RE-ACTIVATE the edge, but the edge
- * fold reducer (core/projections/knowledge_edge.ts) has no fold-visible event that
- * restores a live row WITHOUT overwriting its original created_at/created_by/
- * reasoning (only `generate(create)` yields archived_at=null, and it stamps
- * created_at=event-now + rebuilds created_by from the event → drift vs the
- * imperative row). So that sub-case is fail-closed irreversible (classifyRow), not
- * silently shipped — see the Linear follow-up.
+ * The only wired inverse is archiving the edge a create-generate produced.
+ * There is no unarchive. The fold's only path back to a live row is a fresh create, which replaces created_at and created_by.
  */
 export type ImperativeUndo = { kind: 'archive_edge'; edgeId: string };
 
@@ -179,13 +79,12 @@ export interface CascadeRevertResult {
   ok: true;
   checkpointEventId: string;
   reverted: {
-    /** A-class state_snapshot events restored (θ̂ / FSRS). */
     snapshotsRestored: number;
-    /** B-class structural rows imperatively archived/un-archived (knowledge_edge). */
+    /** Edges archived. There is no unarchive. */
     structuralRowsArchived: number;
-    /** B-class event-layer nodes reversed by the `correct` event alone. */
+    /** Nodes whose `correct` retract is the whole reversal. */
     eventLayerCompensated: number;
-    /** Total nodes reverted (= every node got a `correct` compensation). */
+    /** Every reverted node, including the ones counted above. Each one gets a `correct` event. */
     totalNodes: number;
   };
   /** Ids of the `correct` compensation events written, in apply order. */
@@ -199,10 +98,7 @@ export type CascadeRevertRefusal =
       reason: string;
     }
   | {
-      // YUK-561 S3 — the checkpoint row does not exist: this segment/attempt has no
-      // snapshot bracket to revert (pre-S2 attempt, or a segment that never moved).
-      // NOT a caller bug — it's the honest "nothing to revert here, defer" signal
-      // (distinct from `irreversible`, which is a real learner fact in the closure).
+      // The checkpoint row is missing. This attempt was never bracketed. It is not a learner fact in the closure.
       ok: false;
       refusal: 'no_checkpoint';
       reason: string;
@@ -211,14 +107,11 @@ export type CascadeRevertRefusal =
       ok: false;
       refusal: 'irreversible';
       reason: string;
-      /** Event ids that are irreversible (or unknown → fail-closed). */
+      /** Event ids that are irreversible, including shapes this module does not know. */
       irreversibleEventIds: string[];
     }
   | {
-      // YUK-561 S3 — the snapshot carries a legacy bare-number θ̂ `before` (pre-S1
-      // on-disk snapshot), which is not verbatim-restorable. Surfaced from the restore
-      // primitive (never a lossy restore). Defence-in-depth: legacy snapshots have no
-      // checkpoint in prod, so `no_checkpoint` fires first.
+      // The snapshot's θ̂ before is a bare number, so restore refused instead of inventing the other columns.
       ok: false;
       refusal: 'legacy_snapshot';
       reason: string;
@@ -228,29 +121,21 @@ export type CascadeRevertRefusal =
       ok: false;
       refusal: 'conflict';
       reason: string;
-      /** The (subject_kind, subject_id) of the snapshot segment that conflicted. */
       conflictRef: { kind: 'theta' | 'fsrs'; subjectKind: string; subjectId: string };
     };
 
 export type OrchestrateCascadeRevertResult = CascadeRevertResult | CascadeRevertRefusal;
 
 export interface OrchestrateCascadeRevertOptions extends CollectCascadeOptions {
-  /** Restrict the closure to the YUK-497 Copilot ask revert contract. */
   copilotAskOnly?: boolean;
   /**
-   * YUK-561 S3 — provenance threaded onto the retract compensation events' reason_md
-   * (e.g. the appeal that drove a judge-overturn revert + the prior→new outcome). O2:
-   * there is NO `revertSegments` option — the segment is selected by WHICH checkpoint
-   * the caller reverts (`${E}:checkpoint:theta` vs `:fsrs`), each closing over a
-   * single-segment snapshot. The orchestrator has no segment-slicing logic.
+   * Written onto each retract's reason_md. There is no segment slicer.
+   * The caller picks the checkpoint, and that checkpoint closes over one segment.
    */
   reasonContext?: { appeal_event_id?: string; note?: string };
 }
 
-/**
- * Classify a single event ROW into its reversibility class (fail-closed).
- * Row-aware: a generate's class depends on subject_kind + payload.edge_op.
- */
+/** Fail closed. A generate's class depends on subject_kind and edge_op, not on the action alone. */
 function classifyRow(row: EventRow): RevertableEffect {
   const base = { eventId: row.id, action: row.action };
 
@@ -258,16 +143,9 @@ function classifyRow(row: EventRow): RevertableEffect {
     return { ...base, reversibility: 'state_snapshot' };
   }
 
-  // generate(knowledge_edge): a live knowledge_edge ROW exists. subject_id IS the
-  // edge id (GenerateKnowledgeEdge, known.ts).
-  //   - CREATE generate (edge_op != 'archive') → reversible: archive the edge AND
-  //     write a fold-visible generate(edge_op='archive') (so a projection rebuild
-  //     re-derives archived, not the resurrected create — HIGH fold-parity fix).
-  //   - ARCHIVE generate (edge_op='archive') → IRREVERSIBLE here: re-activating
-  //     would require a fold-visible "restore" event that preserves the original
-  //     create metadata, which the edge reducer does not support (a fresh create
-  //     drifts created_at/created_by). Fail-closed rather than ship an undo that a
-  //     rebuild silently re-archives. (Linear follow-up.)
+  // subject_id is the edge id.
+  // A `correct` event is keyed as an event, so the edge fold never sees it. A rebuild would resurrect the create unless this also writes a fold-visible archive.
+  // An archive generate stays irreversible. A fresh create would replace created_at and created_by.
   if (row.action === 'generate' && row.subject_kind === 'knowledge_edge') {
     const edgeOp = (row.payload as { edge_op?: string } | null)?.edge_op;
     if (edgeOp === 'archive') {
@@ -280,12 +158,8 @@ function classifyRow(row: EventRow): RevertableEffect {
     };
   }
 
-  // rate(rating='accept') (YUK-497 wave-7, TeZZO): the vote ACCEPTED a proposal, LANDING a KG mutation
-  // (reparent / merge / archive) that materialized OUTSIDE this event chain — chained from the accept
-  // or applied imperatively by the accept applier — which a `correct`(retract) cannot compensate.
-  // Reverting the closure would tombstone ask→propose→rate while the mutation survives (a false-success
-  // revert). Fail-closed. A `dismiss` / `rollback` / plain vote lands no such effect and stays
-  // event-layer reversible below.
+  // An accepted vote landed a knowledge mutation outside this chain. Retracting the vote would leave that mutation in place.
+  // dismiss, rollback, and a plain vote stay reversible below.
   if (row.action === 'rate' && (row.payload as { rating?: string } | null)?.rating === 'accept') {
     return { ...base, reversibility: 'irreversible' };
   }
@@ -294,44 +168,26 @@ function classifyRow(row: EventRow): RevertableEffect {
     return { ...base, reversibility: 'event_layer' };
   }
 
-  // Everything else (real learner facts, AND any structural shape with no wired
-  // clean inverse — generate(artifact), extract, suppress, …) → fail-closed.
+  // Fallback. Everything not listed in a reversible table is irreversible.
+  // extract and suppress are their own actions.
+  // They land here because no reversible table names them.
+  // A generate whose subject is not a knowledge edge lands here for the same reason.
   return { ...base, reversibility: 'irreversible' };
 }
 
 /**
- * copilotAskOnly allowlist (YUK-497 wave-2): which event rows a per-utterance Copilot ask revert may
- * compensate. It MUST stay a subset of classifyRow's reversible set for the actions a copilot ask
- * turn produces, or a legitimately-reversible turn gets rewritten to irreversible and every revert
- * of it 409s:
- *   - the root copilot_user_ask anchor, copilot_reply, and the state_snapshot anchor;
- *   - propose / rate — event-layer proposals/votes a copilot ask emits via the propose and rate tools
- *     (a `correct` retract is the complete reversal — EVENT_LAYER_ACTIONS). Scoped to these two, NOT the
- *     whole event-layer set (teach_message / chip_trigger / grading_checkpoint belong to other lanes);
- *   - a non-archive generate(knowledge_edge): an ABSENT edge_op means create everywhere in the
- *     codebase, so gate on `!== 'archive'` (mirrors classifyRow, also admits supersede) — a strict
- *     `=== 'create'` wrongly refuses legacy/supersede generate events.
- * Exported for unit coverage.
+ * Must stay inside classifyRow's reversible set for an ask. A wider list is still refused. A narrower list refuses a turn that can be reverted.
+ * teach_message, chip_trigger, and grading_checkpoint belong to other lanes, so they stay out.
+ * An absent edge_op is a create. Refusing only archive also keeps supersede.
  */
 export function copilotAskRevertAllows(row: EventRow, isRoot: boolean): boolean {
-  // Defense-in-depth (YUK-497 wave-5, TcHwW). A `question_draft` proposal MATERIALIZES its draft
-  // `question` row at PROPOSE time — runQuestionAuthor (question-author.ts) inserts the row AND writes
-  // the proposal in ONE tx (draft_status='draft', invisible to pool until accept). That row lives
-  // OUTSIDE the event chain a `correct`(retract) can compensate, unlike knowledge_node/knowledge_edge
-  // proposals whose materialization is the DEFERRED accept. Its event action is 'experimental:proposal'
-  // (writer.ts default branch), already outside the allow-list below — but refuse it EXPLICITLY on the
-  // durable payload marker so a DIRECT API revert can never half-revert (tombstone the turn's events
-  // while orphaning the still-present draft row). Mirrors the live/replay anchor suppression in
-  // materializing-tools.ts that keeps the revert button off a materializing turn.
+  // runQuestionAuthor inserts the draft question in the same transaction as the proposal. That row is outside this chain.
+  // The action is already excluded. This marker still refuses it, so a later action change cannot tombstone the turn and leave the draft.
   const proposalKind = (row.payload as { ai_proposal?: { kind?: string } } | null)?.ai_proposal
     ?.kind;
   if (proposalKind === 'question_draft') return false;
 
-  // TeZZO — same materializing-class corner: a rate(rating='accept') accepted a proposal, landing a KG
-  // mutation OUTSIDE the ask's event chain (see classifyRow). Refuse so a direct API revert 409s
-  // honestly instead of tombstoning ask→propose→rate while the mutation survives. Keeps this allowlist a
-  // subset of classifyRow's reversible set (which now also refuses rate=accept). dismiss/rollback stay
-  // reversible via the `rate` clause below.
+  // Same refusal as classifyRow. An accept leaves a mutation this chain cannot retract.
   if (row.action === 'rate' && (row.payload as { rating?: string } | null)?.rating === 'accept') {
     return false;
   }
@@ -342,9 +198,7 @@ export function copilotAskRevertAllows(row: EventRow, isRoot: boolean): boolean 
     row.action === STATE_SNAPSHOT_ACTION ||
     row.action === 'propose' ||
     row.action === 'rate' ||
-    // tool_use — the agent tool-call provenance mirror mcp-bridge writes under the ask (episodic,
-    // no live state; see EVENT_LAYER_ACTIONS). Without it a propose-only ask that emitted a mirror
-    // would 409 on the extra irreversible node (YUK-497 wave-3, codex P2).
+    // Without this, an ask that only mirrored the tool call is refused.
     row.action === 'tool_use' ||
     (row.action === 'generate' &&
       row.subject_kind === 'knowledge_edge' &&
@@ -353,39 +207,22 @@ export function copilotAskRevertAllows(row: EventRow, isRoot: boolean): boolean 
 }
 
 /**
- * Orchestrate a cascade revert from `checkpointEventId`.
- *
- * Collects the downstream closure, classifies every node + the root, refuses the
- * WHOLE revert (no partial cascade) on truncation / irreversibility / conflict,
- * then applies the reversible effects inside ONE transaction in reverse-dependency
- * order (deepest first; root last), writing a `correct` compensation event per node.
+ * Refuse the whole cascade on truncation, an irreversible node, or a conflict. Otherwise apply it in one transaction, deepest node first.
  */
 export async function orchestrateCascadeRevert(
   db: DbLike,
   checkpointEventId: string,
   opts?: OrchestrateCascadeRevertOptions,
 ): Promise<OrchestrateCascadeRevertResult> {
-  // YUK-561 S3 — `db` is DbLike (Db | Tx): the atomic judge-overturn caller passes its
-  // OWN tx so the revert commits with the overturn (all-or-nothing). Steps 1-5 are
-  // read-only pre-checks (no mutation); step 6 opens db.transaction(...) — a SAVEPOINT
-  // when db is already a Tx (so an in-tx conflict/legacy rolls back ONLY the apply
-  // savepoint and returns a typed refusal, leaving the caller's tx alive to write a
-  // deferred marker + commit), a real tx when db is a top-level Db.
-
-  // YUK-497 review F1 — G-FIRST for the tx-passed branch. When the caller owns the tx
-  // (revert endpoint / atomic judge-overturn), the step-5 pre-check below takes FOR NO KEY
-  // UPDATE row locks on mastery_state / material_fsrs_state. Those row locks must NEVER
-  // precede the global learning-state write lock G, or this tx (rows→G) deadlocks against a
-  // concurrent learning-state writer (which takes G→rows). Acquire G HERE, before ANY row
-  // access, so the whole caller tx is G-first. Reentrant: step 6's tx re-acquires it (no-op)
-  // and a caller that already holds G (the revert endpoint) is unaffected. A top-level Db
-  // (self-opened path) skips this — its pre-check row locks run in per-statement implicit
-  // txs (never held across G) and step 6 opens the real tx that acquires G first.
+  // A caller transaction makes db.transaction a savepoint. A conflict then rolls back only the apply, and the caller can still commit its own marker.
+  // A top-level Db opens a real transaction below.
+  // Row locks must not precede the learning-state lock, or this transaction deadlocks a writer that takes that lock first.
+  // A Tx has no $client, so the lock is taken here, before any row read. A Db skips it. Its pre-check locks end with each statement, and the real transaction takes the lock first.
   if (!('$client' in db)) {
     await acquireLearningStateWriteLock(db);
   }
 
-  // 1. Collect the cascade. Truncation → honest-reject (no half set).
+  // A truncated closure is refused. A partial set is never applied.
   const cascade = await collectCascadeFromCheckpoint(db, checkpointEventId, opts);
   if (cascade.truncated) {
     return {
@@ -395,14 +232,10 @@ export async function orchestrateCascadeRevert(
     };
   }
 
-  // 2. Load the root checkpoint row. It is reverted LAST, after its downstream
-  //    (cascade.ts excludes the root from the collected set — cascade.ts:18).
+  // The collector omits the root. It is appended below and applied last.
   const rootRow = await loadEventRow(db, checkpointEventId);
   if (!rootRow) {
-    // YUK-561 S3 — a missing checkpoint is `no_checkpoint`, NOT `irreversible`. It
-    // means "this segment/attempt was never bracketed" (a pre-S2 attempt, or a segment
-    // that didn't move) — the honest "nothing to revert, defer" signal. `irreversible`
-    // is reserved for a real learner fact inside the closure (a genuine caller bug).
+    // Missing is not irreversible. irreversible is a learner fact inside the closure.
     return {
       ok: false,
       refusal: 'no_checkpoint',
@@ -410,10 +243,7 @@ export async function orchestrateCascadeRevert(
     };
   }
 
-  // 3. Build the ordered effect list. cascade.nodes are depth-DESC (deepest
-  //    first); the root checkpoint is appended LAST (reverted after everything it
-  //    caused). The root is excluded from the collected nodes, so it cannot be a
-  //    duplicate here.
+  // The collector returns deepest first. The root cannot already be in that list.
   const orderedRows: EventRow[] = [];
   const nodeRows = await loadEventRows(
     db,
@@ -422,8 +252,7 @@ export async function orchestrateCascadeRevert(
   for (const node of cascade.nodes) {
     const row = nodeRows.get(node.id);
     if (!row) {
-      // A node vanished between collection and load (should not happen in one
-      // request, but fail-closed rather than silently skip).
+      // Skipping a vanished node would revert the rest and report success.
       return {
         ok: false,
         refusal: 'irreversible',
@@ -435,8 +264,7 @@ export async function orchestrateCascadeRevert(
   }
   orderedRows.push(rootRow);
 
-  // 4. PRE-CHECK reversibility (all-or-nothing). Any irreversible / unknown / no-
-  //    clean-inverse node → refuse the whole revert naming what blocked it.
+  // One irreversible node refuses the cascade before any write.
   const effects: RevertableEffect[] = orderedRows.map(classifyRow);
   if (opts?.copilotAskOnly) {
     for (let index = 0; index < orderedRows.length; index += 1) {
@@ -456,9 +284,7 @@ export async function orchestrateCascadeRevert(
     };
   }
 
-  // 5. PRE-CHECK the A-class conflict guard for EVERY snapshot BEFORE opening the
-  //    tx, so a conflict refuses without any mutation. Parse + validate each
-  //    snapshot payload here too (parse-barrier).
+  // A conflict returns before the transaction, so nothing is written. The payload is parsed here, not inside the apply.
   const snapshotPayloads = new Map<string, StateSnapshotExperimentalPayload>();
   for (const e of effects) {
     if (e.reversibility !== 'state_snapshot') continue;
@@ -476,22 +302,14 @@ export async function orchestrateCascadeRevert(
     }
   }
 
-  // 6. Execute inside ONE tx (a SAVEPOINT when `db` is a caller Tx). reverse-dependency
-  //    order (effects already deepest-first, root last). Each reversible node gets its
-  //    effect applied + a `correct`(retract) compensation event.
-  //
-  //    YUK-561 S3 — the tx callback throws a TYPED error on an in-tx conflict/legacy re-
-  //    check; the try/catch below rolls the tx/SAVEPOINT back and RETURNS a typed refusal
-  //    (so the atomic caller can write a deferred marker in the same outer tx + commit).
-  //    Any OTHER throw (missing edge, etc.) still propagates — fail-loud.
+  // A typed conflict or legacy error rolls back only this transaction and returns a refusal. Any other throw still propagates.
   const compensationEventIds: string[] = [];
   let snapshotsRestored = 0;
   let structuralRowsArchived = 0;
   let eventLayerCompensated = 0;
   const now = new Date();
 
-  // YUK-561 S3 — provenance suffix for the retract reason_md (e.g. the appeal + the
-  // prior→new outcome that drove a judge-overturn revert). Empty for a bare revert.
+  // Empty when the caller passed no provenance.
   const rc = opts?.reasonContext;
   const reasonSuffix = rc
     ? ` — appeal:${rc.appeal_event_id ?? '?'}${rc.note ? ` (${rc.note})` : ''}`
@@ -505,52 +323,31 @@ export async function orchestrateCascadeRevert(
         if (e.reversibility === 'state_snapshot') {
           const payload = snapshotPayloads.get(e.eventId);
           if (!payload) {
-            // Defensive: every snapshot was parsed in step 5.
+            // Every snapshot was parsed before this transaction. A miss here is a bug, not a skip.
             throw new Error(`snapshot payload for ${e.eventId} missing in apply phase`);
           }
-          // Re-assert the conflict guard inside the tx (defence-in-depth against a
-          // concurrent writer between pre-check and tx). A conflict here throws → the
-          // catch below returns the typed refusal (the pre-check already returned it in
-          // the common case).
+          // The pre-check can go stale before this transaction. A conflict here throws, and the catch returns the refusal.
           const conflict = await assertSnapshotMatchesCurrent(tx, payload, true);
           if (conflict) {
             throw new CascadeRevertConflictError(e.eventId, conflict);
           }
-          // YUK-561 S3 — a legacy bare-number θ̂ `before` (pre-S1 snapshot) is
-          // unrevertable → throw the typed legacy error so the catch returns a
-          // `legacy_snapshot` refusal (never a lossy restore).
+          // A bare-number before must become a refusal. Returning it directly would not roll back the rows already restored in this transaction.
           const restored = await restoreStateSnapshot(tx, payload);
           if (!restored.ok) {
             throw new CascadeRevertLegacyError(e.eventId, restored.ref);
           }
           snapshotsRestored += 1;
         } else if (e.reversibility === 'structural_imperative') {
-          // B-class with a live SoT row — mirror the FULL live archive dual-write
-          // (actions.ts:413-439): archive the edge row imperatively AND write a
-          // fold-visible generate(edge_op='archive') so a projection REBUILD re-
-          // derives archived (the `correct` event below is invisible to the edge
-          // fold). Same tx, same `now`, so imperative archived_at == folded archived_at.
+          // The edge fold ignores the `correct` event below. This archive is what a rebuild reads. The shared `now` keeps the row and the fold on one timestamp.
           await applyImperativeUndo(tx, e.imperativeUndo, e.eventId, now);
           structuralRowsArchived += 1;
         } else {
-          // event_layer → the `correct`(retract) below IS the complete reversal.
           eventLayerCompensated += 1;
         }
 
-        // Write the compensation `correct`(retract) event for EVERY reverted node.
-        //
-        // YUK-561 S1 attribution订正 (Lens A F4): this retract is the fold/read-layer
-        // TOMBSTONE (the proposal-inbox + getCorrectionStatuses projections honour it,
-        // and cascade.ts drops action='correct' from re-collection). It is NOT what stops
-        // a DOUBLE revert of the SAME snapshot — cascade.ts's `action <> 'correct'` only
-        // excludes the compensation node itself, so the state_snapshot IS re-collected on
-        // a second revert. What actually blocks the double-apply is the CONFLICT GUARD:
-        // after the first revert the live row = snapshot.before ≠ snapshot.after, so the
-        // second revert's guard trips → conflict refuse. That guard is also the LIFO
-        // correctness carrier (restore-to-before is only mathematically right for the
-        // KC's MOST-RECENT transition). For structural_imperative the retract is BELT-
-        // AND-BRACES with the imperative archive above (a future SoT-flip re-projection
-        // that DOES read corrections stays consistent).
+        // The collector drops action `correct`, so this retract is not collected again. The original snapshot still is.
+        // A second revert stops because the live row is now `before`, not `after`. Restoring `before` is only right for the latest transition.
+        // The edge fold ignores this retract. Projections that read corrections still see it.
         const compId = newId();
         await writeEvent(tx, {
           id: compId,
@@ -562,27 +359,19 @@ export async function orchestrateCascadeRevert(
           outcome: 'success',
           payload: {
             correction_kind: 'retract',
-            // YUK-561 S3 — reasonSuffix threads the caller provenance (appeal + prior→new)
-            // onto the retract so the forensic trail is traceable to the overturn (O2:
-            // the segment is self-evident from subject_id = the snapshot event id).
             reason_md: `cascade revert of checkpoint ${checkpointEventId} (${e.reversibility})${reasonSuffix}`,
             affected_refs: [{ kind: 'open_inquiry', id: e.eventId }],
           },
           caused_by_event_id: e.eventId,
           created_at: now,
-          // Internal rollback ledger row — opt out of the memory outbox (ADR-0044
-          // §42 mirrors the state_snapshot opt-out; a compensation is not a learner
-          // fact). Non-NULL stamp = outbox poller's `WHERE ingest_at IS NULL` skips it.
+          // A compensation is not a learner fact. A non-null ingest_at is skipped by the outbox poller.
           ingest_at: now,
         });
         compensationEventIds.push(compId);
       }
     });
   } catch (err) {
-    // YUK-561 S3 — an in-tx conflict/legacy re-check throws a TYPED error; the tx
-    // (or SAVEPOINT) is already rolled back. Return the corresponding typed refusal so
-    // the atomic caller can dispatch (deferred marker). Any OTHER error is a real fault
-    // (missing edge, DB failure) — re-throw fail-loud.
+    // These two errors are already rolled back. Return them so the caller can commit its own marker. Anything else is a fault.
     if (err instanceof CascadeRevertConflictError) {
       return {
         ok: false,
@@ -615,14 +404,11 @@ export async function orchestrateCascadeRevert(
   };
 }
 
-// ── internals ────────────────────────────────────────────────────────────────
-
 type EventRow = typeof event.$inferSelect;
 
 /**
- * Keep the existing rollback taxonomy while delegating the complete, replayable
- * archive to Knowledge. Missing history or a concurrent archive aborts the cascade;
- * compensation retains its original cause, timestamp and memory-outbox opt-out.
+ * Knowledge owns the archive write. Missing history or a concurrent archive aborts the cascade.
+ * The cause, timestamp, and outbox opt-out stay on that write.
  */
 async function applyImperativeUndo(
   tx: Tx,
@@ -633,14 +419,12 @@ async function applyImperativeUndo(
   if (!undo) {
     throw new Error('cascade revert: structural_imperative effect missing its imperativeUndo plan');
   }
-  // undo.kind is necessarily 'archive_edge' (the only ImperativeUndo variant; the
-  // archive-generate revert is fail-closed in classifyRow).
   const { edgeId } = undo;
 
   const archived = await archiveKnowledgeEdgeFromEvents(tx, edgeId, {
     caused_by_event_id: revertedGenerateEventId,
     created_at: now,
-    // Preserve the compensation ledger's explicit memory-outbox opt-out.
+    // Same outbox opt-out as the compensation event. The archive generate is not a learner fact either.
     ingest_at: now,
   });
   if (!archived.archived) {
@@ -648,7 +432,7 @@ async function applyImperativeUndo(
   }
 }
 
-/** Thrown inside the tx when the in-tx conflict re-check fails (defence-in-depth). */
+/** Thrown so the catch can return a refusal after this transaction rolls back. */
 class CascadeRevertConflictError extends Error {
   constructor(
     public readonly snapshotEventId: string,
@@ -662,11 +446,7 @@ class CascadeRevertConflictError extends Error {
   }
 }
 
-/**
- * YUK-561 S3 — thrown inside the tx when restore hits a legacy bare-number θ̂ `before`
- * (pre-S1 snapshot), which is not verbatim-restorable. The catch converts it into a
- * `legacy_snapshot` refusal (never a lossy restore).
- */
+/** Thrown so a bare-number before becomes a refusal instead of a partial write. */
 class CascadeRevertLegacyError extends Error {
   constructor(
     public readonly snapshotEventId: string,
@@ -692,10 +472,9 @@ async function loadEventRows(db: DbLike, ids: string[]): Promise<Map<string, Eve
   return map;
 }
 
-// The validated snapshot payload type (off the inferred schema type).
 type StateSnapshotExperimentalPayload = StateSnapshotExperimentalT['payload'];
 
-/** Validate + extract a state_snapshot payload via the parse barrier. */
+/** Throw on an invalid payload. Restoring it would write a guessed row. */
 function parseSnapshotPayload(row: EventRow): StateSnapshotExperimentalPayload {
   const parsed = StateSnapshotExperimental.safeParse({
     actor_kind: row.actor_kind,
@@ -710,7 +489,6 @@ function parseSnapshotPayload(row: EventRow): StateSnapshotExperimentalPayload {
     cost_micro_usd: row.cost_micro_usd ?? undefined,
   });
   if (!parsed.success) {
-    // A malformed snapshot is unrevertable — fail loud rather than restore garbage.
     throw new Error(
       `cascade revert: state_snapshot ${row.id} failed schema validation: ${parsed.error.message}`,
     );
@@ -722,15 +500,8 @@ async function acquireSnapshotStateLocks(
   tx: Tx,
   payloads: Iterable<StateSnapshotExperimentalPayload>,
 ): Promise<void> {
-  // Per-KC / per-material ids under the shared `fsrs` namespace — matching the key space the
-  // merge-attribution retire pair uses (fsrs:knowledge:<id>). The global learning-state write lock
-  // G (acquired above) is the primary guard against concurrent writers; the regular grading path
-  // (updateThetaForAttempt / upsertMasteryState) only holds G, not these per-KC locks. These
-  // per-row advisory locks are defense-in-depth for the conflict guard's FOR-UPDATE reads.
-  // YUK-1093 — 'ability_global' theta entries lock under their own
-  // `mastery:ability_global:<domain>` namespace (same key shape updateThetaForAttempt's
-  // per-domain block takes), ordered AFTER the fsrs keys to match the writer's
-  // per-KC → per-domain acquire order (deadlock-safe).
+  // The learning-state lock is what writers take. These locks only cover the conflict guard's row reads.
+  // ability_global is taken after fsrs, in the same order as the writer. Reversing the two deadlocks.
   const fsrsIds = new Set<string>();
   const globalIds = new Set<string>();
   for (const payload of payloads) {
@@ -749,25 +520,14 @@ async function acquireSnapshotStateLocks(
   await acquireSortedAdvisoryLocks(tx, 'mastery:ability_global', [...globalIds]);
 }
 
-/**
- * Conflict guard: for each snapshot segment, assert the CURRENT live row equals
- * the snapshot's `after`. Returns the first conflicting ref, or null if all match.
- *
- * θ̂ segment: current mastery_state.theta_hat must equal after; if after≠null and
- *   the row is missing, that's a conflict (the after-state should exist). When
- *   after-state had a row (before could be null for cold-start), the row must be
- *   present with theta_hat == after.
- * FSRS segment: current material_fsrs_state.state must deep-equal after (compared
- *   via the FsrsState scalars; jsonb roundtrip-safe).
- */
+/** Return the first segment whose live row is missing or differs from after. A missing row means the after state is gone. */
 async function assertSnapshotMatchesCurrent(
   db: DbLike,
   payload: StateSnapshotExperimentalPayload,
   lockRows = false,
 ): Promise<{ kind: 'theta' | 'fsrs'; subjectKind: string; subjectId: string } | null> {
   for (const snap of payload.theta_snapshots) {
-    // YUK-1093 — theta snapshots are subject_kind-tagged ('knowledge' | 'ability_global');
-    // absent = pre-YUK-1093 payload ⇒ 'knowledge'.
+    // A payload written before subject_kind existed is a per-KC row.
     const subjectKind = snap.subject_kind ?? 'knowledge';
     const rows = await db
       .select({ theta_hat: mastery_state.theta_hat })
@@ -778,8 +538,6 @@ async function assertSnapshotMatchesCurrent(
       .limit(1)
       .for(lockRows ? 'update' : 'no key update');
     const current = rows[0]?.theta_hat;
-    // The current θ̂ must equal the snapshot's after. A missing row means the
-    // after-state is gone → conflict.
     if (current === undefined || !thetaExactEq(current, snap.after)) {
       return { kind: 'theta', subjectKind, subjectId: snap.kc_id };
     }
@@ -807,23 +565,15 @@ async function assertSnapshotMatchesCurrent(
 }
 
 /**
- * θ̂ conflict-guard compare — EXACT f64 equality (YUK-495 S4 / decision-④).
- *
- * `mastery_state.theta_hat` is now `double precision` (was `real`/float4 — widened in
- * YUK-495 S4, migration 0051). The live column therefore stores the SAME un-truncated
- * f64 as the snapshot payload's `after` (both derive from the one `newTheta` compute;
- * postgres-js round-trips binary64 losslessly via its TEXT form). So the conflict guard
- * is now an exact `===`: identical inputs ⇒ no conflict; any genuine external drift —
- * down to a single ULP — IS a real conflict and MUST trip the guard. (The old float4
- * version rounded BOTH sides with Math.fround to compensate for the truncated column;
- * keeping that after the widen would mask sub-float4 drift and silently defeat the
- * guard — the exact opposite of decision-④'s bit-exact intent.)
+ * theta_hat is double precision. The live column and snapshot.after come from the same
+ * computation, and postgres-js round-trips that float without loss, so === does not false-alarm.
+ * Rounding both sides would hide a real drift.
  */
 function thetaExactEq(current: number, payloadAfter: number): boolean {
   return current === payloadAfter;
 }
 
-/** Compare two FsrsState cards on their scalar identity (jsonb roundtrip-safe). */
+/** A candidate is not a card, so it is compared whole. A card is compared on its scalars, so a jsonb date round-trip still matches. */
 function fsrsCardEq(rawA: SchedulingState, rawB: SchedulingState): boolean {
   const a = SchedulingStateSchema.parse(rawA);
   const b = SchedulingStateSchema.parse(rawB);

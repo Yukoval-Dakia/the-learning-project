@@ -1,24 +1,8 @@
-// YUK-445 (A11 — 谨慎 / 速度-精度轴) — the SINGLE writer + reader of learner_axis_state.
-//
-// Batch, nightly, per-KC. Reads attempt events (RT + outcome) from the event log, groups them
-// by the question's PRIMARY KC, and for each KC with ≥ AXIS_MIN_OBS scored RT-bearing responses
-// recovers the EZ-diffusion descriptor (drift_v, boundary_a, ter) from THIS learner's own
-// correct-RT moments + Pc (ez-diffusion.ts). It writes ONLY learner_axis_state — never θ̂ /
-// FSRS / scheduling — so it touches no LIVE estimation engine (descriptor only; read-out is
-// display-only via placement-profile). No dark-ship flag is needed.
-//
-// ── provenance gate (the A11 hard boundary) ─────────────────────────────────────────────────
-// In an ADAPTIVE flow item selection pins Pc to a target band, confounding the DRIFT
-// interpretation (v absorbs the selection strategy, not just the learner). So drift_v is
-// persisted ONLY for provenance='probe' (a non-adaptive fixed-difficulty probe-set). The live
-// main flow is adaptive → we persist boundary_a + ter and leave drift_v NULL. No non-adaptive
-// probe-set source exists yet, so this batch always runs with provenance='adaptive'; the
-// column + the writer + the gate are wired now, the probe-set data source is the deferred flip.
-//
-// ── usage gate ──────────────────────────────────────────────────────────────────────────────
-// AXIS_MIN_OBS scored responses per KC before we attempt a recovery (data-sparse → no row,
-// NOT a flag). Below the gate, or a degenerate EZ recovery (chance Pc / <2 correct RTs), the
-// KC is simply skipped — the descriptor stays absent rather than fabricated.
+// Batch writer of the EZ descriptor on learner_axis_state. It does not write θ̂, FSRS, or scheduling.
+// drift_v is stored only for provenance 'probe'. Adaptive selection pins Pc, so v there
+// absorbs the policy. The live default is 'adaptive'. Probe is wired, and nothing feeds it yet.
+// Below AXIS_MIN_OBS the KC gets no row. A degenerate recovery still upserts, with null
+// boundary and ter, so the absence of a signal is recorded instead of invented.
 
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { newId } from '@/core/ids';
@@ -27,33 +11,26 @@ import { event, learner_axis_state, question } from '@/db/schema';
 import { acquireSortedAdvisoryLocks } from '@/server/advisory-locks';
 import { type EzResult, ezFromResponses } from './ez-diffusion';
 
-/** Usage gate: minimum scored, RT-bearing responses on a KC before a recovery is attempted. */
+/** Below this, no row. A sparser KC stays absent rather than getting a made-up descriptor. */
 export const AXIS_MIN_OBS = 30;
 
 export type AxisProvenance = 'adaptive' | 'probe';
 
-/** One scored, RT-bearing attempt reduced to the two fields A11 needs. */
 export interface AxisAttempt {
-  /** primary KC the attempt exercises (question.knowledge_ids[0]). */
+  /** question.knowledge_ids[0]. Later knowledge ids on the question are not this attempt's KC. */
   kc: string;
-  /** true iff outcome === 'success'. */
   correct: boolean;
-  /** response time in SECONDS (duration_ms / 1000), finite and > 0. */
+  /** Seconds, from duration_ms / 1000. Finite and > 0. */
   rtSeconds: number;
 }
 
 export interface KcAccumulator {
-  /** RTs of the CORRECT responses only (EZ uses correct-trial moments). */
+  /** Correct trials only. EZ moments ignore error RTs. totalCount still includes them, for Pc. */
   correctRtSeconds: number[];
   correctCount: number;
   totalCount: number;
 }
 
-/**
- * Fold raw scored attempts into per-KC accumulators. PURE. correctRtSeconds collects ONLY the
- * correct responses' RTs (EZ moment requirement); totalCount counts every scored response so Pc
- * = correctCount/totalCount over the same set.
- */
 export function foldResponsesByKc(attempts: AxisAttempt[]): Map<string, KcAccumulator> {
   const byKc = new Map<string, KcAccumulator>();
   for (const a of attempts) {
@@ -75,16 +52,11 @@ export interface KcAxisRecovery {
   kc: string;
   ez: EzResult;
   nObs: number;
-  /** whether drift_v should be persisted (provenance='probe' AND a finite v). */
+  /** True only for a probe provenance with a finite v. Adaptive drift is not stored. */
   persistDriftV: boolean;
 }
 
-/**
- * Apply the usage gate + EZ recovery + provenance gate to one KC accumulator. PURE.
- * Returns null when the usage gate is not met (no row should be written). When the recovery is
- * degenerate the EzResult carries the reason and boundary_a/ter come back null — the caller
- * still upserts (an explicit "we have N obs but no usable signal" row), but never fabricates.
- */
+/** Null means below the usage gate, so the caller writes nothing. A degenerate result is not null. */
 export function recoverKcAxis(
   kc: string,
   acc: KcAccumulator,
@@ -93,7 +65,7 @@ export function recoverKcAxis(
 ): KcAxisRecovery | null {
   if (acc.totalCount < minObs) return null;
   const ez = ezFromResponses(acc.correctRtSeconds, acc.correctCount, acc.totalCount);
-  // drift_v is only admissible on a non-adaptive probe-set; the adaptive flow confounds it.
+  // Adaptive v absorbs the selection policy, so it is not a learner drift.
   const persistDriftV = provenance === 'probe' && ez.v !== null && Number.isFinite(ez.v);
   return { kc, ez, nObs: acc.totalCount, persistDriftV };
 }
@@ -108,12 +80,7 @@ export interface AxisStateUpsert {
   provenance: AxisProvenance;
 }
 
-/**
- * Single-writer upsert of one (subject_kind, subject_id) axis row. Advisory-locked in an
- * INDEPENDENT namespace `axis_state:<kind>:<id>` (distinct hashtext keyspace from mastery_state
- * `fsrs:`/`mastery:` and kc_typed_state `kc_typed:` locks → no collision). Slow-varying
- * overwrite (the row is fully recomputed each batch). Writes NO FSRS / mastery / θ̂ state.
- */
+/** Lock namespace `axis_state:` is distinct from `fsrs:`, `mastery:`, and `kc_typed:`. The row is replaced, not merged. */
 export async function upsertLearnerAxisState(db: Db, input: AxisStateUpsert): Promise<void> {
   const subjectKind = input.subjectKind ?? 'knowledge';
   const now = new Date();
@@ -148,19 +115,7 @@ export async function upsertLearnerAxisState(db: Db, input: AxisStateUpsert): Pr
   });
 }
 
-/**
- * YUK-543 — repair `learner_axis_state` (EZ-diffusion descriptor) when a KC (`fromId`) is merged
- * into another (`intoId`). NEVER combines drift_v / boundary_a / ter (they are per-KC EZ recoveries
- * — averaging two is invented merge math; the batch re-recovers the survivor from its own responses
- * on the next nightly run anyway). 3-case identity-rename/freeze-and-log, mirroring the mastery/fsrs
- * retires:
- *   - neither row → 'noop'; only from → RENAME `subject_id` → 'renamed'; both → FREEZE + log →
- *     'frozen'.
- * Takes the module's OWN `axis_state:<kind>:<id>` advisory-lock namespace (distinct from
- * `fsrs:knowledge:` / `kc_typed:`) for BOTH ids, sorted, so a concurrent nightly `runAxisStateBatch`
- * upsert serializes against the merge. Runs on the merge Tx (NOT its own transaction — this is a
- * savepoint-free in-line write, unlike upsertLearnerAxisState which opens its own tx).
- */
+/** Does not average the two recoveries. Averaging would invent a descriptor. Both ids take `axis_state:` locks, sorted, on this transaction. The nightly batch opens its own, so the locks are what serialize them. */
 export async function retireLearnerAxisStateOnMerge(
   tx: Tx,
   fromId: string,
@@ -208,10 +163,7 @@ export interface AxisStateRow {
   updatedAt: Date;
 }
 
-/**
- * Read the axis descriptor for a set of KCs (read-out surface). Returns a Map keyed by
- * subject_id; KCs without a row are simply absent. Read-only.
- */
+/** A KC with no row is absent. It is not filled with a default descriptor. */
 export async function readLearnerAxisStates(
   db: Db,
   subjectIds: string[],
@@ -253,33 +205,19 @@ export async function readLearnerAxisStates(
 }
 
 export interface AxisBatchDeps {
-  /** provenance of THIS batch's response source. Default 'adaptive' (the only live source). */
+  /** Default 'adaptive'. 'probe' is accepted, and no live source passes it yet. */
   provenance?: AxisProvenance;
-  /** usage gate override (tests). Default AXIS_MIN_OBS. */
   minObs?: number;
 }
 
 export interface AxisBatchResult {
-  /** distinct KCs that met the usage gate and were upserted. */
   written: number;
-  /** distinct KCs seen with at least one scored RT-bearing attempt. */
   kcsSeen: number;
-  /** KCs upserted whose EZ recovery was non-'ok' (boundary_a/ter null but n_obs recorded). */
+  /** Upserts whose recovery was not 'ok'. The row exists. boundary and ter are null. */
   degenerate: number;
 }
 
-/**
- * Load scored, RT-bearing attempt events, fold them per primary KC, and upsert one
- * learner_axis_state row per KC that meets the usage gate. PRE-write reads are OUTSIDE any
- * per-KC swallow (a throw is a retryable DB fault → pg-boss retries). Per-KC upserts are
- * independent: one failure is logged + counted, the rest proceed.
- *
- * Attempt admission: action ∈ {attempt, review}, subject_kind='question', outcome ∈
- * {success, failure} (partial / unsupported excluded — EZ is binary), AND a finite positive
- * payload.duration_ms (only RT-bearing solo attempts carry the timing EZ needs; paper attempts
- * write no RT and are naturally excluded). Attributed to the question's PRIMARY KC
- * (knowledge_ids[0], the canonical-primary convention used across the calibration loaders).
- */
+/** A throw while loading is outside the per-KC catch, so the queue retries it. One upsert failure is logged and the other KCs still write. Partial outcomes and attempts with no positive duration_ms stay out. EZ is binary, and paper attempts carry no RT. */
 export async function runAxisStateBatch(
   db: Db,
   deps: AxisBatchDeps = {},
@@ -288,7 +226,6 @@ export async function runAxisStateBatch(
   const minObs = deps.minObs ?? AXIS_MIN_OBS;
   const result: AxisBatchResult = { written: 0, kcsSeen: 0, degenerate: 0 };
 
-  // 1. Scored attempt events, time-ordered (stable tiebreak).
   const attemptRows = await db
     .select({
       outcome: event.outcome,
@@ -306,7 +243,6 @@ export async function runAxisStateBatch(
     .orderBy(asc(event.created_at), asc(event.id));
   if (attemptRows.length === 0) return result;
 
-  // 2. Per-question primary KC.
   const questionIds = Array.from(
     new Set(attemptRows.map((r) => r.subject_id).filter((id): id is string => id !== null)),
   );
@@ -323,12 +259,11 @@ export async function runAxisStateBatch(
     if (primary) primaryKcByQuestion.set(q.id, primary);
   }
 
-  // 3. Reduce to scored RT-bearing attempts attributed to a primary KC.
   const attempts: AxisAttempt[] = [];
   for (const r of attemptRows) {
     if (r.subject_id === null) continue;
     const kc = primaryKcByQuestion.get(r.subject_id);
-    if (!kc) continue; // question gone / no resolvable KC
+    if (!kc) continue;
     const durationMs = (r.payload as Record<string, unknown> | null)?.duration_ms;
     if (typeof durationMs !== 'number' || !Number.isFinite(durationMs) || durationMs <= 0) continue;
     attempts.push({ kc, correct: r.outcome === 'success', rtSeconds: durationMs / 1000 });
@@ -337,10 +272,9 @@ export async function runAxisStateBatch(
   const byKc = foldResponsesByKc(attempts);
   result.kcsSeen = byKc.size;
 
-  // 4. Gate + recover + upsert per KC.
   for (const [kc, acc] of byKc) {
     const recovery = recoverKcAxis(kc, acc, provenance, minObs);
-    if (!recovery) continue; // usage gate not met
+    if (!recovery) continue;
     if (recovery.ez.reason !== 'ok') result.degenerate += 1;
     try {
       await upsertLearnerAxisState(db, {

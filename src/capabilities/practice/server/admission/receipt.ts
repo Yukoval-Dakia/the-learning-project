@@ -5,7 +5,6 @@ import {
   paidEffectJsonEquals,
 } from '@/core/migration/paid-effect-protocol';
 import {
-  type AdmissionReopenMarker,
   LEGACY_QUESTION_ADMISSION_PAID_UNIT,
   PREVIOUS_QUESTION_ADMISSION_PAID_UNIT,
   QUESTION_ADMISSION_PAID_UNIT,
@@ -19,7 +18,7 @@ import { QuestionGroupStructure } from '@/core/schema/assessment/structure';
 import type { Tx } from '@/db/client';
 import { admitPaidEffectDeliveryControl } from '@/db/paid-effect-control';
 import { admitPaidEffectIntent, claimPaidEffectSend, readPaidEffect } from '@/db/paid-effect-store';
-import { paid_effect } from '@/db/schema';
+import { paid_effect, paid_effect_authorization } from '@/db/schema';
 import { SubjectProfileSchema } from '@/subjects/profile';
 import { ADMISSION_FAMILY, type AdmissionJobData } from './enqueue';
 
@@ -93,78 +92,6 @@ export function completedAdmissionStatus(application: unknown) {
   return status === 'stale' || status === 'conflict' ? status : ('already_verified' as const);
 }
 
-const KIND_MISMATCH_CONFLICT = /key kind (blank_text vs blank_numeric|blank_numeric vs blank_text)/;
-
-/**
- * True when an applied admission verdict withheld at least one unit on the
- * blank kind-mismatch branch of keysAgree (blank_text vs blank_numeric). The
- * marker check is deliberately narrow: solve_conflict from ANY other branch
- * keeps the applied row terminal.
- */
-export function isKindMismatchSolveConflict(application: unknown): boolean {
-  const parsed = z
-    .object({
-      status: z.literal('withheld'),
-      per_unit: z
-        .array(
-          z
-            .object({
-              status: z.string().optional(),
-              reason: z.string().optional(),
-              solve: z
-                .object({ verdict: z.string().optional(), detail: z.string().optional() })
-                .passthrough()
-                .optional(),
-            })
-            .passthrough(),
-        )
-        .optional(),
-    })
-    .passthrough()
-    .safeParse(application);
-  if (!parsed.success) return false;
-  return (parsed.data.per_unit ?? []).some(
-    (unit) =>
-      unit.status === 'withheld' &&
-      unit.reason === 'solve_conflict' &&
-      unit.solve?.verdict === 'conflict' &&
-      KIND_MISMATCH_CONFLICT.test(unit.solve.detail ?? ''),
-  );
-}
-
-/**
- * The one marked YUK-1547 exception: the named same-base @2 row is an
- * unresolved unknown send, or an applied verdict withheld on the blank
- * kind-mismatch conflict. Anything else stays terminal.
- */
-export function reopenMarkedRowEligibility(row: {
-  state: string;
-  application: unknown;
-}): 'unknown' | 'applied_conflict' | null {
-  if (row.state === 'unknown') return 'unknown';
-  if (row.state === 'applied' && isKindMismatchSolveConflict(row.application)) {
-    return 'applied_conflict';
-  }
-  return null;
-}
-
-/**
- * Whether an applied verdict stays terminal for a new claim: every applied row
- * blocks EXCEPT the single marker-named @2 row whose withhold was the blank
- * kind-mismatch conflict. Without the marker nothing is exempt.
- */
-export function appliedVerdictBlocksClaim(
-  applied: { unit: string; inputDigest: string; application: unknown },
-  marker: AdmissionReopenMarker | undefined,
-): boolean {
-  return !(
-    marker != null &&
-    applied.unit === marker.unit &&
-    applied.inputDigest === marker.inputDigest &&
-    isKindMismatchSolveConflict(applied.application)
-  );
-}
-
 export type AdmissionDelivery = { id: string; jobData?: AdmissionJobData };
 
 export async function assertAdmissionDelivery(tx: Tx, delivery: AdmissionDelivery) {
@@ -204,47 +131,11 @@ export async function claimAdmissionBatch(
       : version === 2
         ? PREVIOUS_QUESTION_ADMISSION_PAID_UNIT
         : LEGACY_QUESTION_ADMISSION_PAID_UNIT;
-  // Lead-only YUK-1547 marker: names the exact same-base @2 row one marked @3
-  // send re-opens. Verified BEFORE any terminal short-circuit — a marker that
-  // names a missing or ineligible row fails the job, and it is never inferred.
-  const markedIdentity = version === 3 ? delivery.jobData?.reopen_paid_effect_identity : undefined;
-  const marker: AdmissionReopenMarker | undefined = markedIdentity
-    ? { unit: markedIdentity.unit, inputDigest: markedIdentity.input_digest }
-    : undefined;
-  let markedEligibility: 'unknown' | 'applied_conflict' | null = null;
-  if (marker) {
-    const [markedRow] = await tx
-      .select()
-      .from(paid_effect)
-      .where(
-        and(
-          eq(paid_effect.family, ADMISSION_FAMILY),
-          eq(paid_effect.entity_id, prepared.group_id),
-          eq(paid_effect.entity_revision, prepared.contract.integrity_digest),
-          eq(paid_effect.unit, marker.unit),
-          eq(paid_effect.input_digest, marker.inputDigest),
-        ),
-      )
-      .for('update')
-      .limit(1);
-    markedEligibility = markedRow
-      ? reopenMarkedRowEligibility({
-          state: markedRow.state,
-          application: markedRow.application_json,
-        })
-      : null;
-    // An applied-but-ordinary verdict falls through to the applied scan below,
-    // which returns the terminal 'applied' — the marker cannot override it.
-    if (markedEligibility == null && markedRow?.state !== 'applied') {
-      throw new Error(
-        `Question admission reopen marker does not name an eligible same-base ${marker.unit} row`,
-      );
-    }
-  }
-  // An applied verdict from ANY contract version is terminal for this base —
-  // except the single lead-marked @2 kind-mismatch solve_conflict reopen, which
-  // is the ONLY applied row this loop may pass over.
-  const appliedRows = await tx
+  // An applied verdict from ANY contract version is terminal for this base.
+  // YUK-1567: the marked @2 -> @3 reopen exception is retired — unresolved
+  // rows move through the generic void + successor authorization instead, and
+  // no applied row is ever passed over.
+  const [applied] = await tx
     .select()
     .from(paid_effect)
     .where(
@@ -256,20 +147,9 @@ export async function claimAdmissionBatch(
         eq(paid_effect.state, 'applied'),
       ),
     )
-    .for('update');
-  for (const applied of appliedRows) {
-    if (
-      !appliedVerdictBlocksClaim(
-        {
-          unit: applied.unit,
-          inputDigest: applied.input_digest,
-          application: applied.application_json,
-        },
-        marker,
-      )
-    ) {
-      continue;
-    }
+    .for('update')
+    .limit(1);
+  if (applied) {
     const input = FrozenAdmissionInput.parse(applied.input_json);
     return {
       kind: 'applied' as const,
@@ -290,13 +170,17 @@ export async function claimAdmissionBatch(
     eq(paid_effect.unit, unit),
   );
   const revisionId = delivery.jobData?.revision_id ?? prepared.revision_id;
-  // Prefer the original delivery/revision even if mutable rows changed after payment.
+  // Prefer the original delivery/revision even if mutable rows changed after
+  // payment. A voided predecessor shares unit + base with its successor —
+  // 'voided' rows are resolved history and are NEVER the row to reconcile.
+  // 'cancelled' rows are likewise sealed never-sent history (YUK-1567).
   const [pinned] = await tx
     .select()
     .from(paid_effect)
     .where(
       and(
         scope,
+        inArray(paid_effect.state, ['pending', 'sending', 'unknown', 'receipt_ready', 'applied']),
         or(
           eq(paid_effect.delivery_id, delivery.id),
           ...(revisionId ? [sql`${paid_effect.input_json}->>'revision_id' = ${revisionId}`] : []),
@@ -314,6 +198,7 @@ export async function claimAdmissionBatch(
         eq(paid_effect.entity_id, prepared.group_id),
         eq(paid_effect.entity_revision, prepared.contract.integrity_digest),
         eq(paid_effect.unit, unit),
+        inArray(paid_effect.state, ['pending', 'sending', 'unknown', 'receipt_ready', 'applied']),
       ),
     )
     .for('update')
@@ -354,12 +239,15 @@ export async function claimAdmissionBatch(
       receipt: AdmissionResultReceipt.parse(snapshot.result),
     };
   }
-  if (snapshot?.state === 'sending' || snapshot?.state === 'unknown')
+  if (
+    snapshot?.state === 'sending' ||
+    snapshot?.state === 'unknown' ||
+    snapshot?.state === 'voided' ||
+    snapshot?.state === 'cancelled'
+  )
     return { kind: 'held' as const, input, identity };
-  // A terminal verification suppresses re-payment — except the marked @2 row
-  // this exact send is authorized to re-open. Normal jobs still see 'historical'.
-  if (options.historicalTerminal && markedEligibility == null)
-    return { kind: 'historical' as const, input, identity };
+  // A terminal verification suppresses re-payment.
+  if (options.historicalTerminal) return { kind: 'historical' as const, input, identity };
   // Old-version deliveries keep reconciling their own unit's rows above but can
   // never initiate a paid send under the @3 contract.
   if (unit !== QUESTION_ADMISSION_PAID_UNIT || !options.maySend)
@@ -373,8 +261,8 @@ export async function claimAdmissionBatch(
   // the row lock first, so this check is atomic with a sending -> receipt_ready
   // transition: a sending legacy row still hits the entity gate below, and a
   // receipt recorded in a serialized-earlier transaction is already visible.
-  // The marked @2 -> @3 reopen exempts gate blockers only; it never waives a
-  // recorded receipt. Held claims admit no @3 intent row at all.
+  // A void + successor authorization exempts gate blockers only; it never
+  // waives a recorded receipt. Held claims admit no @3 intent row at all.
   const [legacyReceipt] = await tx
     .select({ unit: paid_effect.unit })
     .from(paid_effect)
@@ -393,12 +281,57 @@ export async function claimAdmissionBatch(
     .for('update')
     .limit(1);
   if (legacyReceipt) return { kind: 'held' as const, input, identity };
+  // Sealed-history gate (YUK-1567): a cancelled never-sent intent is the
+  // original admission decision for this base/revision. When no live row
+  // reconciles, a redelivery whose prepared input drifted (admission
+  // generation, subject profile, policy, solver config) computes a NEW input
+  // digest → a fresh paid identity the entity gate would not stop. Cancel
+  // authorizes nothing: the new identity may only send when an existing
+  // paid_effect_authorization explicitly binds it as a successor (the bound
+  // successor's own row normally reconciles above — this exempts exactly the
+  // authorized identity, nothing else). Any other same-revision redelivery
+  // holds. Only 'cancelled' rows of THIS entity+revision gate here — other
+  // revisions and other entities' content are unaffected. Like the legacy
+  // check above, this runs inside the family-locked claim transaction, so a
+  // concurrent cancel cannot commit a 'cancelled' row between this read and
+  // the admit below.
+  if (!existing) {
+    const sealed = await tx
+      .select({ input_digest: paid_effect.input_digest })
+      .from(paid_effect)
+      .where(
+        and(
+          eq(paid_effect.family, effect.family),
+          eq(paid_effect.entity_id, effect.entityId),
+          eq(paid_effect.entity_revision, effect.entityRevision),
+          eq(paid_effect.state, 'cancelled'),
+        ),
+      )
+      .for('update')
+      .limit(4);
+    if (sealed.length > 0) {
+      const [authorizedSuccessor] = await tx
+        .select({ authorization_id: paid_effect_authorization.authorization_id })
+        .from(paid_effect_authorization)
+        .where(
+          and(
+            eq(paid_effect_authorization.family, effect.family),
+            eq(paid_effect_authorization.entity_id, effect.entityId),
+            eq(paid_effect_authorization.successor_entity_revision, identity.entityRevision),
+            eq(paid_effect_authorization.successor_unit, identity.unit),
+            eq(paid_effect_authorization.successor_input_digest, identity.inputDigest),
+          ),
+        )
+        .for('update')
+        .limit(1);
+      if (!authorizedSuccessor) return { kind: 'held' as const, input, identity };
+    }
+  }
   await admitPaidEffectIntent(tx, effect);
   const claim = await claimPaidEffectSend(tx, identity, {
     backend: 'pg-boss',
     deliveryId: delivery.id,
     generation: delivery.jobData?.dispatch_generation ?? 0,
-    admissionReopenMarker: marker,
     leaseExpiresAt: new Date(Date.now() + 60 * 60_000),
   });
   if (claim.kind !== 'claimed') return { kind: 'held' as const, input, identity };

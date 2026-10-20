@@ -92,7 +92,7 @@ napi 约定——**反转后从 dev/CI 惯例升为生产正确性契约**，本
 
 > **Decision source**: owner 2026-08-27 裁决③LIGHT —— YUK-679 走 acceptance 路径 (b)：**成文豁免，不 port**。无 crate 变更、无行为变更（本段 + 相关文件头注释指向，纯文档）；`crates/calibration-native` 的一切实现仍归 Rust 线 owner lane（上文 lane 约束不变）。
 >
-> 本段把本 ADR accept（2026-06-26）后仍以 TS 落地 / 存续的全部数值 kernel/helper **逐项登记**（YUK-679 本体两项 + extended scope，owner 批准 2026-07-20：srtOutcome 数值路径、continuous-credit/Fisher helpers）。**登记 ≠ 永久豁免**：每项带 PORT TRIGGER，触发即回到 §4 的 port-进-crate → caller-切-binding → 删-TS 纪律。任何 port / binding 切换 / 豁免都**不得静默改变历史 score 的解释**，且必须保 frozen-input replay compatibility（YUK-679 扩展 scope 条款；R3/R4 明示）。`src/server/conjectures/scoring.ts` 头注释的 PLACEHOLDER 声明自此指向本段（占位意图保留、豁免已 merge）。
+> 本段把本 ADR accept（2026-06-26）后仍以 TS 落地 / 存续的全部数值 kernel/helper **逐项登记**（YUK-679 本体两项 + extended scope，owner 批准 2026-07-20：srtOutcome 数值路径、continuous-credit/Fisher helpers）。**登记 ≠ 永久豁免**：每项带 PORT TRIGGER，触发即回到 §4 的 port-进-crate → caller-切-binding → 删-TS 纪律。任何 port / binding 切换 / 豁免都**不得静默改变历史 score 的解释**，且必须保 frozen-input replay compatibility（YUK-679 扩展 scope 条款；R3/R4 明示）。`src/server/conjectures/scoring.ts` 头注释现作 “Placeholder for the Rust calibration kernel”，窗口均值写明 deferred、尚未迁入 Rust，占位意图仍指向本段 R1。
 
 ### R1 · proper-scoring — `src/server/conjectures/scoring.ts`
 

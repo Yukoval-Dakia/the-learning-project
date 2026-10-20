@@ -90,7 +90,6 @@ export const JOB_EPOCH_DISPOSITION: Readonly<Record<string, JobEpochDisposition>
   // 校准/估计写难度与掌握投影 —— 输入是旧合同 attempt。
   item_prior_backfill: 'translate',
   recalibration_nightly: 'translate',
-  kt_estimate_nightly: 'translate',
   axis_state_nightly: 'translate',
   embed_backfill: 'translate',
   kc_dedup_nightly: 'translate',
@@ -109,6 +108,7 @@ export const JOB_EPOCH_DISPOSITION: Readonly<Record<string, JobEpochDisposition>
   knowledge_maintenance_nightly: 'translate',
   practice_stream_compose_nightly: 'translate',
   question_supply_nightly: 'translate',
+  learner_return_wake: 'translate',
   supply_planner: 'translate',
   jyeoo_staged_asset_reap: 'drain', // 资产回收只删 staged 文件/行，合同无关。
 };

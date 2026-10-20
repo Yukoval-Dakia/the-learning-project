@@ -1,16 +1,6 @@
-// ====================================================================
-// YUK-1057 — 演练证据：DB 状态快照 / 逐字节 diff / 报告工件
-// ====================================================================
-//
-// 「恢复出的库就是备份时的那个库」的可重跑证明原语：
-//   snapshotDbState(db)   → 全量表（FK_ORDER + 运维账本 + pgboss.job）的
-//                           canonical row hash + 计数清单；
-//   diffDbStates(a, b)    → 表级/行级 divergence 报告（空 = 一致）；
-//   writeProof(dir, name) → 工件落盘（.remember/rehearsal/… gitignored）。
-//
-// 非 FK_ORDER 面（migration_apply_*/contract_epoch/pgboss.job）单独入
-// `operational` 分区 —— 备份载荷不含它们，它们的快照只回答
-// 「运维态在演练中的真实终态」，不参与 restore-identity 断言。
+// Proof that a restored database matches the backup.
+// Operational tables are not in the backup payload.
+// Their snapshot records the rehearsal's final ops state and is not part of the restore-identity check.
 
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -19,7 +9,7 @@ import { canonicalHash } from '@/core/migration/canonical';
 import type { Db } from '@/db/client';
 import { FK_ORDER } from '@/server/export/constants';
 
-/** 备份覆盖的持久表全集（FK_ORDER）+ 演练关注的运维表。 */
+/** Operational tables. They are not the backup payload. */
 const OPERATIONAL_TABLES = [
   'migration_apply_run',
   'migration_apply_phase',
@@ -31,30 +21,30 @@ const OPERATIONAL_TABLES = [
 
 export interface TableProof {
   row_count: number;
-  /** 该表全部行 canonical hash 的聚合 hash（空表 = hash of []）。 */
+  /** Hash of the per-row hashes. An empty table hashes []. */
   rows_digest: string;
-  /** 逐行 digest（行量小时保留明细；>5000 行表退化为 null 只留聚合）。 */
+  /** Per-row digests, or null above 5000 rows. */
   row_digests: string[] | null;
 }
 
 export interface DbStateProof {
   taken_at: string;
-  /** 备份覆盖面（FK_ORDER，逐表全行 hash）。 */
+  /** Full-row hashes of the backup tables. */
   backed_up: Record<string, TableProof>;
-  /** 运维/账本面（不入备份，但演练断言面）。 */
+  /** Final ops state. Not part of the restore-identity check. */
   operational: Record<string, TableProof>;
-  /** pgboss.job 概览（name×state 计数 + 行 digest 聚合）。 */
+  /** pgboss.job counts by name and state, plus a row digest. */
   pgboss_jobs: { present: boolean; by_state: Record<string, number>; rows_digest: string | null };
-  /** 全库聚合 digest（backed_up + operational + pgboss 一起 hash）。 */
+  /** Hash of backed_up, operational, and pgboss together. */
   digest: string;
 }
 
 const ROW_DIGEST_DETAIL_LIMIT = 5_000;
 
 async function tableProof(db: Db, table: string): Promise<TableProof> {
-  // 表名是 FK_ORDER/OPERATIONAL 白名单（非用户输入）—— raw 安全。
-  // 排序在 JS 层做（digest 排序）：复合主键表的第一列不唯一，`order by 1`
-  // 的物理序在 dump/restore 后可漂移 —— 行集合的【无序】等价才是断言面。
+  // Names come from the FK_ORDER and OPERATIONAL whitelists, not user input.
+  // Sort digests in JS. A composite primary key's first column is not unique,
+  // so ORDER BY 1 can change after restore.
   const rows = (await db.execute(sql.raw(`select * from "${table}"`))) as Array<
     Record<string, unknown>
   >;
@@ -66,7 +56,10 @@ async function tableProof(db: Db, table: string): Promise<TableProof> {
   };
 }
 
-/** 拍一份全量状态证明（同一连接内顺序读 —— 快照一致性由演练编排的停写窗口保证）。 */
+/**
+ * Read every table on this connection.
+ * Consistency is the rehearsal write-stop window, not the connection.
+ */
 export async function snapshotDbState(db: Db): Promise<DbStateProof> {
   const backedUp: Record<string, TableProof> = {};
   for (const t of FK_ORDER) {
@@ -74,7 +67,7 @@ export async function snapshotDbState(db: Db): Promise<DbStateProof> {
   }
   const operational: Record<string, TableProof> = {};
   for (const t of OPERATIONAL_TABLES) {
-    // 表可能不存在（pgboss/账本在未跑的库上缺）→ 记 row_count=-1 哨兵。
+    // A missing table, before pgboss or the ledger exists, is row_count=-1.
     try {
       operational[t] = await tableProof(db, t);
     } catch {
@@ -113,7 +106,7 @@ export interface DbStateDiff {
   divergences: string[];
 }
 
-/** 逐表比对两份快照（行数 + rows_digest + 逐行明细定位）。 */
+/** Compare row counts and digests. A miss names the table. */
 export function diffDbStates(a: DbStateProof, b: DbStateProof): DbStateDiff {
   const divergences: string[] = [];
   const comparePartition = (
@@ -156,7 +149,7 @@ export function diffDbStates(a: DbStateProof, b: DbStateProof): DbStateDiff {
   return { identical: divergences.length === 0, divergences };
 }
 
-/** 工件落盘（JSON pretty；目录自动创建 —— .remember/rehearsal/ gitignored）。 */
+/** Write pretty JSON. The caller picks the directory. */
 export function writeProof(dir: string, name: string, value: unknown): string {
   mkdirSync(dir, { recursive: true });
   const path = join(dir, name);

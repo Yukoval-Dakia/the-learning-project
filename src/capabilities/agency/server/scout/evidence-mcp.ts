@@ -21,11 +21,11 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { and, desc, eq, inArray, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { notesForKnowledge } from '@/capabilities/notes/public';
 import { PROBE_RESOLUTION_RULE_VERSION } from '@/core/schema/conjecture';
 import type { Db } from '@/db/client';
 import { event, kc_typed_state, question } from '@/db/schema';
 import { getFailureAttemptById } from '@/kernel/read-models/failure-attempts';
+import { notesForKnowledge } from '@/kernel/read-models/notes-read';
 import { writeToolCallLog } from '@/server/ai/log';
 import { piCustomTool } from '@/server/ai/tools/pi-tools';
 import { getEffectiveProbeResultStatuses } from '../../public';

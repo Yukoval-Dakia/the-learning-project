@@ -186,22 +186,11 @@ const CONSUMER_REGISTRY: ConsumerEntry[] = [
       'hub-mesh 笔记自动同步按 prerequisite 边（incoming）组装「这是 X 的前置」复习上下文（RELATION_PRIORITY）。',
   },
   {
-    // YUK-455 inc-E — prereq 诊断「向后传播」producer。答错 KC 沿 prerequisite 边向上闭包，
-    // 按 type 特化 EMIT experimental:prereq_risk 上调前置掌握风险（诊断投影，dark-ship）。
-    relation: 'prerequisite',
-    tier: 'specialized',
-    file: 'src/server/mastery/prereq-propagation.ts',
-    marker: "e.relation_type = 'prerequisite'",
-    surface: 'diagnosis',
-    evidence:
-      'prereq-propagation 沿 prerequisite 边向上闭包失败 KC 的 transitive 前置，按 type 驱动诊断向后传播（EMIT experimental:prereq_risk 上调前置掌握风险，dark-ship）。',
-  },
-  {
     // YUK-455 grounding — learnable_frontier (B3, PR #635) 的 prerequisite specialized 消费在
     // 原 PR 遗漏登记；inc-E 顺手补上（否则该 type-specific 消费路径不在反查覆盖内）。
     relation: 'prerequisite',
     tier: 'specialized',
-    file: 'src/capabilities/practice/server/learnable-frontier.ts',
+    file: 'src/capabilities/knowledge/server/frontier-read.ts',
     marker: "e.relation_type = 'prerequisite'",
     surface: 'recommendation',
     evidence:
@@ -249,7 +238,7 @@ const CONSUMER_REGISTRY: ConsumerEntry[] = [
   },
 
   // ---- specialized: A5/A6 (YUK-441/442) mastery-projection KG soft layer ----
-  // getMasteryProjection (src/server/mastery/state.ts) branches on relation_type to
+  // getMasteryProjection (src/kernel/read-models/mastery-projection.ts) branches on relation_type to
   // feed the per-KC ability θ̂ soft layer: related_to → A5 graph-Laplacian symmetric
   // smoothing; prerequisite / derived_from → A6 directed order prior. dark-ship
   // (GRAPH_LAPLACIAN_ENABLED / PREREQ_PROPAGATION_ENABLED default false) but the
@@ -257,7 +246,7 @@ const CONSUMER_REGISTRY: ConsumerEntry[] = [
   {
     relation: 'related_to',
     tier: 'specialized',
-    file: 'src/server/mastery/state.ts',
+    file: 'src/kernel/read-models/mastery-projection.ts',
     marker: "r.relation_type === 'related_to'",
     surface: 'diagnosis',
     evidence:
@@ -266,7 +255,7 @@ const CONSUMER_REGISTRY: ConsumerEntry[] = [
   {
     relation: 'prerequisite',
     tier: 'specialized',
-    file: 'src/server/mastery/state.ts',
+    file: 'src/kernel/read-models/mastery-projection.ts',
     marker: "r.relation_type === 'prerequisite'",
     surface: 'diagnosis',
     evidence:
@@ -275,7 +264,7 @@ const CONSUMER_REGISTRY: ConsumerEntry[] = [
   {
     relation: 'derived_from',
     tier: 'specialized',
-    file: 'src/server/mastery/state.ts',
+    file: 'src/kernel/read-models/mastery-projection.ts',
     marker: "r.relation_type === 'derived_from'",
     surface: 'diagnosis',
     evidence:

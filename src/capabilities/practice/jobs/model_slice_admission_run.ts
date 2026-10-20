@@ -453,11 +453,8 @@ export async function runModelSliceAdmission(
     admitted_by: data.admitted_by,
   };
 
-  // 2b) 切片登记预检（付费前置栅栏）：登记处会拒绝的状态（已退役 / 同
-  //     slice_id 不同证据或 actor）在这里当场失败 —— 绝不让 ~30 次付费调用
-  //     跑完后才在登记处抛错、被队列重跑整段付费循环。幂等可登记的既有行
-  //     静默通过（登记处返回既有行，不重复写）。dry run 同样预检：退役切片
-  //     的证据不可能再用于登记，付费跑它纯属浪费。
+  // Refuse a retired or conflicting slice before the paid loop. A later refusal is
+  // caught and the job returns, so the queue does not rerun those calls.
   await assertModelAdmissionSliceRegistrable(db, registrationInput);
 
   // 2c) 同一 run_id 的证据已存在就直接复读。先写者赢：失败的证据不能被后来的

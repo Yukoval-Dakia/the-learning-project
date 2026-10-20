@@ -23,7 +23,8 @@ import { newId } from '@/core/ids';
 import { MASTERY_PROGRESS_ACTION } from '@/core/schema/event';
 import type { Db, Tx } from '@/db/client';
 import { writeEvents } from '@/kernel/events';
-import { getMasteryProjection, getMasteryState } from '@/server/mastery/state';
+import { getMasteryProjection } from '@/kernel/read-models/mastery-projection';
+import { getMasteryState } from '@/kernel/read-models/mastery-state';
 
 // Injectable writeEvent seam (defaults to the real writeEvent). Lets callers/tests
 // substitute the per-event INSERT — used to prove per-event failure isolation

@@ -195,6 +195,14 @@ export interface ReviewDueQuery {
   now?: Date;
 }
 
+/**
+ * Upper bound of the due page — `queryReviewDue` clamps `limit` to
+ * 1..REVIEW_DUE_LIMIT_MAX. Exported so in-process consumers that want the full
+ * page (the practice-stream composer due input, ADR-0037 H8) name the real
+ * contract instead of copying the literal.
+ */
+export const REVIEW_DUE_LIMIT_MAX = 200;
+
 export type ReviewDueRow = {
   id: string;
   activity_ref: ActivityRefT;
@@ -220,7 +228,7 @@ export async function queryReviewDue(
   const requestedLimit = input.limit ?? 20;
   const limit = Math.min(
     Math.max(Number.isNaN(requestedLimit) ? 20 : Math.trunc(requestedLimit), 1),
-    200,
+    REVIEW_DUE_LIMIT_MAX,
   );
   const now = input.now ?? new Date();
   // Two slices, unioned:

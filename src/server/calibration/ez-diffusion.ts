@@ -1,61 +1,29 @@
-// EZ-diffusion closed-form recovery — Wagenmakers, van der Maas & Grasman (2007),
-//   "An EZ-diffusion model for response time and accuracy", Psychonomic Bulletin & Review
-//   14(1), 3-22 (≈2000+ citations). The recovery (data → parameters) is closed-form and
-//   explicitly designed for data-sparse SINGLE-SUBJECT designs — one of the few RT/accuracy
-//   models that fits an n=1 learner without a cohort.
-//
-// PURE — no IO, no DB (lives beside auc/ece/replay in the calibration barrel so the unit
-// partition holds; the DB-touching batch writer is src/server/calibration/axis-writer.ts).
-//
-// ADR-0046: this closed-form numeric kernel is TS by explicit ADR-0048 mandate (「纯闭式
-// 模块」, 形态 §1) and is REGISTERED under the ADR-0046 exemption inventory (owner
-// 2026-08-27, YUK-679 LIGHT) — see 「豁免登记」 R2 in
-// docs/adr/0046-rust-numerical-engine-single-source-of-truth.md. Exempt while A11 stays a
-// descriptor-only axis (zero engine contact); port triggers are recorded there.
-//
-// ── n=1 admissibility (YUK-445 / litmus) ────────────────────────────────────────────────
-// (v, a, Ter) are recovered SOLELY from ONE learner's own sufficient statistics:
-//   Pc       = that learner's proportion correct,
-//   MRT, VRT = the mean & variance of that SAME learner's CORRECT response times.
-// NO cross-subject variance component enters. In particular this `a` (boundary separation)
-// is THIS learner's own decision-boundary / response caution — it is NOT, and must never be
-// read as, a 2PL item DISCRIMINATION (those are the litmus-forbidden a/slip/guess/φ family
-// that require between-subject variance). `s` is an owner-fixed scaling constant (the field's
-// standard 0.1 convention), not an estimated parameter.
-//
-// ── what it is / is NOT ─────────────────────────────────────────────────────────────────
-// The outputs are a SLOW-VARYING DESCRIPTOR (the "谨慎 / 速度-精度" axis, orthogonal to θ̂).
-// They are NEVER fed to θ̂ / p(L) / item selection. A11 is a Tier-3 (preprint / by-analogy)
-// signal — kept strictly as a descriptor so it touches no LIVE estimation engine (no flag
-// needed; see axis-writer.ts).
-//
-// ── interpretation ──────────────────────────────────────────────────────────────────────
-//   v   — drift rate: speed of evidence accumulation. Low v = "slow because the material is
-//         harder for this learner". CONFOUNDED in an adaptive flow (item selection pins Pc),
-//         so v is only trustworthy on a NON-adaptive probe-set — the writer gates this.
-//   a   — boundary separation: how much evidence the learner waits for before committing.
-//         High a = "slow because this learner is more cautious" (the answer to A11's question:
-//         distinguishing "can't" from "too careful"). Stable enough to keep in adaptive flow.
-//   Ter — non-decision time (s): motor + encoding baseline, deducted to refine the decision
-//         component of RT. Stable enough to keep in adaptive flow.
+// Closed-form EZ recovery. Wagenmakers, van der Maas & Grasman, Psychonomic Bulletin
+// & Review 2007. It fits one learner from that learner's own Pc and correct-RT moments.
+// No cohort variance enters. The database writer is axis-writer.ts.
+// ADR-0048 keeps this closed form in TypeScript. ADR-0046 lists the exemption while the
+// axis stays a descriptor. Port triggers are in that ADR.
+// `a` is this learner's caution boundary. It is not a 2PL item discrimination.
+// `s` is the fixed 0.1 scale, not an estimated parameter.
+// Nothing here is an input to θ̂, p(L), or item selection.
+// v is confounded when selection pins Pc, so the writer stores it only for a probe set.
+// a and Ter stay meaningful in an adaptive flow.
 
 /** Owner-fixed scaling constant `s` (Wagenmakers convention). NOT an estimated parameter. */
 export const EZ_SCALING_S = 0.1;
 
-/** Below this |Pc − 0.5| the recovery is degenerate (v → 0, a = 0/0): chance performance
- * carries no caution signal, so we return null rather than fabricate one. */
+/** |Pc − 0.5| below this makes a = 0/0. Chance performance is not a caution signal. */
 const CHANCE_EPS = 1e-9;
 
 export interface EzInputs {
-  /** proportion correct, RAW (pre-edge-correction), in [0,1]. */
+  /** Raw Pc, before the 0/1 edge correction. */
   pc: number;
-  /** variance of this learner's CORRECT-response RT, in seconds² (sample variance). */
+  /** Sample variance of this learner's correct RTs, seconds². */
   vrt: number;
-  /** mean of this learner's CORRECT-response RT, in seconds. */
+  /** Mean of those correct RTs, seconds. */
   mrt: number;
-  /** total scored responses backing `pc` — used ONLY for the Pc∈{0,1} edge correction. */
+  /** Used only to nudge Pc off 0 or 1. */
   n: number;
-  /** scaling constant `s` (owner-fixed). Defaults to EZ_SCALING_S = 0.1. */
   s?: number;
 }
 
@@ -71,14 +39,11 @@ export type EzReason =
   | 'invalid-input';
 
 export interface EzResult {
-  /** drift rate v. null on any non-'ok' reason. */
   v: number | null;
-  /** boundary separation a (caution). null on any non-'ok' reason. */
   a: number | null;
-  /** non-decision time Ter, seconds. null on any non-'ok' reason. May be negative under
-   * model misfit (MDT > MRT) — returned as-is; the caller decides whether to surface it. */
+  /** Seconds. Null unless reason is 'ok'. Negative when mean decision time exceeds MRT. Returned as-is. */
   ter: number | null;
-  /** the Pc actually used (after Pc∈{0,1} edge correction). */
+  /** Pc after the 0/1 nudge. */
   pcUsed: number;
   reason: EzReason;
 }
@@ -92,11 +57,7 @@ function sign(x: number): number {
   return x > 0 ? 1 : x < 0 ? -1 : 0;
 }
 
-/**
- * Wagenmakers Appendix edge correction for perfect / zero accuracy. With Pc exactly 1 (or 0)
- * the logit diverges, so nudge it in by half an observation: Pc=1 → 1 − 1/(2n), Pc=0 → 1/(2n).
- * Interior Pc is returned unchanged.
- */
+/** Pc of 0 or 1 makes logit diverge. Nudge by half an observation. Interior Pc is unchanged. */
 export function edgeCorrectPc(pc: number, n: number): number {
   if (pc >= 1) return 1 - 1 / (2 * n);
   if (pc <= 0) return 1 / (2 * n);
@@ -111,28 +72,12 @@ const FAIL = (pcUsed: number, reason: EzReason): EzResult => ({
   reason,
 });
 
-/**
- * EZ-diffusion recovery: (Pc, VRT, MRT) → (v, a, Ter). Closed form, PURE.
- *
- * Mirrors the published `get.vaTer` recovery (Wagenmakers 2007 Eqs. 5-8) verbatim so the math
- * is auditable line-for-line:
- *   L   = logit(Pc)
- *   x   = L · (L·Pc² − L·Pc + Pc − ½) / VRT
- *   v   = sign(Pc − ½) · s · x^(1/4)                 (Eq. 5)
- *   a   = s² · L / v                                  (Eq. 6)
- *   y   = −v·a/s²   (= −L)
- *   MDT = (a / 2v) · (1 − e^y) / (1 + e^y)
- *   Ter = MRT − MDT                                   (Eq. 8)
- *
- * Degenerate / contradictory inputs return all-null with a typed reason (NEVER a fabricated
- * neutral value — same discipline as forwardAuc returning null for a single-class sample).
- */
+/** Wagenmakers 2007 `get.vaTer`. v is Eq. 7, a is Eq. 5, MDT is Eq. 9, Ter is Eq. 8. A bad input returns nulls, never a made-up (v, a, Ter). */
 export function computeEzDiffusion(inputs: EzInputs): EzResult {
   const s = inputs.s ?? EZ_SCALING_S;
   const { pc, vrt, mrt, n } = inputs;
 
-  // Input hygiene: every numeric must be finite; Pc a probability; n ≥ 1 (edge correction
-  // divides by 2n); s > 0.
+  // The edge correction divides by 2n, so n < 1 is not a degenerate result. It is a bad call.
   if (
     !Number.isFinite(pc) ||
     !Number.isFinite(vrt) ||
@@ -149,42 +94,30 @@ export function computeEzDiffusion(inputs: EzInputs): EzResult {
 
   const pcUsed = edgeCorrectPc(pc, n);
 
-  // Chance performance: drift ≈ 0 and a = s²·0/0 is undefined → no caution signal.
+  // Drift is ~0 and a is 0/0. There is no caution signal to return.
   if (Math.abs(pcUsed - 0.5) < CHANCE_EPS) return FAIL(pcUsed, 'degenerate-chance');
 
-  // Variance must be strictly positive (needs ≥2 distinct correct RTs); the 4th root and the
-  // a/2v term both blow up at VRT ≤ 0.
+  // The fourth root and a/(2v) both blow up at VRT ≤ 0. That needs two distinct correct RTs.
   if (vrt <= 0) return FAIL(pcUsed, 'nonpositive-vrt');
 
   const s2 = s * s;
   const L = logit(pcUsed);
-  // radicand = L·(L·Pc² − L·Pc + Pc − ½)/VRT. The bracket is sign-symmetric about Pc=½, so
-  // L·bracket ≥ 0 for every valid Pc≠½ (verified across the Pc range); a negative value can
-  // only come from corrupt inputs, where x^(1/4) would be NaN — guard it.
+  // For a valid Pc other than 1/2 this radicand is ≥ 0. A negative value is corrupt input
+  // and the fourth root would be NaN.
   const radicand = (L * (L * pcUsed * pcUsed - L * pcUsed + pcUsed - 0.5)) / vrt;
   if (radicand < 0) return FAIL(pcUsed, 'nonpositive-radicand');
 
-  const v = sign(pcUsed - 0.5) * s * radicand ** 0.25;
-  const a = (s2 * L) / v;
+  const v = sign(pcUsed - 0.5) * s * radicand ** 0.25; // Eq. 7
+  const a = (s2 * L) / v; // Eq. 5
   const y = (-v * a) / s2;
   const expY = Math.exp(y);
-  const mdt = (a / (2 * v)) * ((1 - expY) / (1 + expY));
-  const ter = mrt - mdt;
+  const mdt = (a / (2 * v)) * ((1 - expY) / (1 + expY)); // Eq. 9
+  const ter = mrt - mdt; // Eq. 8
 
   return { v, a, ter, pcUsed, reason: 'ok' };
 }
 
-/**
- * Reduce a learner's per-KC CORRECT response times (seconds) and total scored count into the
- * EZ sufficient statistics, then recover (v, a, Ter). PURE.
- *
- * Contract:
- *   - `correctRtSeconds` = RTs of the CORRECT responses only (EZ uses correct-trial RT moments).
- *   - `correctCount`/`totalCount` give Pc = correctCount/totalCount over the SAME response set.
- *   - VRT is the SAMPLE variance (÷ (m−1)); needs ≥2 correct RTs, else 'nonpositive-vrt'.
- * The usage gate (minimum N before we even attempt this) lives in the batch writer, not here —
- * this stays a pure reducer so it is unit-testable without a DB.
- */
+/** Correct-trial moments only. VRT divides by m−1. The usage gate lives in the batch writer. */
 export function ezFromResponses(
   correctRtSeconds: number[],
   correctCount: number,
@@ -203,11 +136,11 @@ export function ezFromResponses(
   const pc = correctCount / totalCount;
   const m = correctRtSeconds.length;
   if (m < 2) {
-    // Pc may still be defined, but with <2 correct RTs there is no variance → no recovery.
+    // Pc can exist with one correct RT. The variance cannot.
     return FAIL(pc, 'nonpositive-vrt');
   }
   const mean = correctRtSeconds.reduce((acc, x) => acc + x, 0) / m;
   const ss = correctRtSeconds.reduce((acc, x) => acc + (x - mean) * (x - mean), 0);
-  const vrt = ss / (m - 1); // sample variance
+  const vrt = ss / (m - 1);
   return computeEzDiffusion({ pc, vrt, mrt: mean, n: totalCount, s });
 }

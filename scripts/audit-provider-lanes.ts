@@ -48,6 +48,7 @@ export type ProviderWireFinding = {
     | 'question-admission-preflight-fetch'
     | 'question-admission-reopen-preflight-fetch'
     | 'tencent-question-mark-agent-sdk'
+    | 'model-catalog-provider-check-fetch'
     | 'unclassified-provider-fetch';
   readonly call: string;
   readonly path: string;
@@ -762,6 +763,18 @@ function findingsFor(path: string, code: string, facts: SourceFacts): ProviderWi
     ) {
       return [];
     }
+    // YUK-1563 provider /models read and the one-shot 1-token auth probe.
+    if (call === 'fetchImpl' && path === 'src/server/ai/provider-models-check.ts') {
+      return [{ kind: 'model-catalog-provider-check-fetch', call, path }];
+    }
+    // YUK-1630 — provider-transport invokes the current globalThis.fetch with
+    // its budget-pinned dispatcher injected into init, so observer/test
+    // wrappers stay honored instead of bypassed. Same provider wire, not a
+    // new lane; the undici Agent the dispatcher wraps is constructor-injected
+    // per attempt, not a fetch import.
+    if (call === 'fetch' && path === 'src/server/ai/provider-transport.ts') {
+      return [];
+    }
     return [{ kind: 'unclassified-provider-fetch', call, path }];
   });
 }
@@ -1023,6 +1036,7 @@ function laneForFinding(kind: ProviderWireFinding['kind']): string | undefined {
     'question-admission-preflight-fetch': 'xiaomi.question-admission-preflight',
     'question-admission-reopen-preflight-fetch': 'xiaomi.question-admission-reopen-preflight',
     'tencent-question-mark-agent-sdk': 'tencent.question-mark-agent',
+    'model-catalog-provider-check-fetch': 'catalog.provider-models-check',
   } as const;
   return kind === 'unclassified-provider-fetch' ? undefined : ids[kind];
 }

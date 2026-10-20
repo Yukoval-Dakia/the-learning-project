@@ -3,7 +3,7 @@
 // runAxisStateBatch (src/server/calibration/axis-writer.ts) folds scored RT-bearing attempts
 // per primary KC and upserts the slow-varying (drift_v, boundary_a, ter) descriptor for every
 // KC past the usage gate. This job is its sole live trigger — structurally a peer of
-// kt_estimate_nightly / recalibration_nightly: a per-KC nightly scan that writes a descriptor
+// recalibration_nightly: a per-KC nightly scan that writes a descriptor
 // column and feeds NO θ̂/p(L)/scheduling (display-only read-out via placement-profile). So it
 // touches no LIVE estimation engine and needs no dark-ship flag.
 //

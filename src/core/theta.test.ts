@@ -4,8 +4,6 @@ import {
   DIFFICULTY_PROXY_WEIGHT,
   SRT_MIN_SIGNAL,
   SRT_RT_BUFFER_K,
-  SRT_RT_MIN_N,
-  SRT_RT_QUANTILE,
   conjunctiveCredits,
   conjunctiveCreditsContinuous,
   conjunctiveItemProb,
@@ -16,7 +14,6 @@ import {
   pushRtCorrectSample,
   quantile,
   resolveSrtTimeLimit,
-  resolveSrtTimeLimitFromQuantile,
   srtOutcome,
   thetaSe,
   updateTheta,
@@ -627,29 +624,5 @@ describe('pushRtCorrectSample (per-KC correct-RT ring buffer)', () => {
     // returns a COPY even on a dropped sample (no aliasing).
     const dropped = pushRtCorrectSample(buf, -1);
     expect(dropped).not.toBe(buf);
-  });
-});
-
-describe('resolveSrtTimeLimitFromQuantile (quantile-d with cold-start population-seed fallback)', () => {
-  it('falls back to the population seed below SRT_RT_MIN_N samples (cold start)', () => {
-    expect(resolveSrtTimeLimitFromQuantile(null, 3)).toBe(resolveSrtTimeLimit(3));
-    expect(resolveSrtTimeLimitFromQuantile([], 3)).toBe(resolveSrtTimeLimit(3));
-    const few = Array.from({ length: SRT_RT_MIN_N - 1 }, () => 5000);
-    expect(resolveSrtTimeLimitFromQuantile(few, 3)).toBe(resolveSrtTimeLimit(3));
-  });
-
-  it('derives d (seconds) from the quantile once ≥ SRT_RT_MIN_N samples accrue', () => {
-    // SRT_RT_MIN_N copies of 5000ms → median 5000ms → d = 5s.
-    const buf = Array.from({ length: SRT_RT_MIN_N }, () => 5000);
-    expect(resolveSrtTimeLimitFromQuantile(buf, 3)).toBeCloseTo(5, 12);
-    // and it is INDEPENDENT of the difficulty seed once data is present (self-RT drives d).
-    expect(resolveSrtTimeLimitFromQuantile(buf, 1)).toBeCloseTo(5, 12);
-    expect(resolveSrtTimeLimitFromQuantile(buf, 5)).toBeCloseTo(5, 12);
-  });
-
-  it('uses the configured quantile (median by default) of the buffered correct RTs', () => {
-    const buf = [2000, 4000, 6000, 8000, 10000, 12000, 14000, 16000]; // 8 samples
-    const expectedMs = quantile(buf, SRT_RT_QUANTILE);
-    expect(resolveSrtTimeLimitFromQuantile(buf, 3)).toBeCloseTo(expectedMs / 1000, 12);
   });
 });

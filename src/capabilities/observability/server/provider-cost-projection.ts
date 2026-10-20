@@ -57,7 +57,7 @@ export async function readProviderCostAggregates(
         COUNT(*) FILTER (WHERE entry_kind = 'attempt' AND cost_basis = 'estimated')::int,
         COUNT(*) FILTER (WHERE entry_kind = 'attempt' AND cost_basis = 'unknown')::int,
         COUNT(*) FILTER (WHERE entry_kind = 'legacy')::int,
-        SUM(tokens_in)::double precision, SUM(tokens_out)::double precision, COUNT(*)::int
+        COALESCE(SUM(tokens_in), 0)::double precision, COALESCE(SUM(tokens_out), 0)::double precision, COUNT(*)::int
       FROM projected GROUP BY currency
       UNION ALL
       SELECT 'task', NULL, task_kind, currency, NULL, NULL, NULL,
@@ -69,7 +69,7 @@ export async function readProviderCostAggregates(
         COUNT(*) FILTER (WHERE entry_kind = 'attempt' AND cost_basis = 'estimated')::int,
         COUNT(*) FILTER (WHERE entry_kind = 'attempt' AND cost_basis = 'unknown')::int,
         COUNT(*) FILTER (WHERE entry_kind = 'legacy')::int,
-        SUM(tokens_in)::double precision, SUM(tokens_out)::double precision, COUNT(*)::int
+        COALESCE(SUM(tokens_in), 0)::double precision, COALESCE(SUM(tokens_out), 0)::double precision, COUNT(*)::int
       FROM projected GROUP BY task_kind, currency
       UNION ALL
       SELECT 'truth', NULL, NULL, currency, entry_kind, cost_basis, cost_ref,
@@ -78,7 +78,7 @@ export async function readProviderCostAggregates(
         COUNT(*) FILTER (WHERE entry_kind = 'attempt' AND cost_basis = 'reported')::int,
         COUNT(*) FILTER (WHERE entry_kind = 'attempt' AND cost_basis = 'estimated')::int,
         COUNT(*) FILTER (WHERE entry_kind = 'attempt' AND cost_basis = 'unknown')::int,
-        0::int, SUM(tokens_in)::double precision, SUM(tokens_out)::double precision, COUNT(*)::int
+        0::int, COALESCE(SUM(tokens_in), 0)::double precision, COALESCE(SUM(tokens_out), 0)::double precision, COUNT(*)::int
       FROM projected GROUP BY currency, entry_kind, cost_basis, cost_ref
       UNION ALL
       SELECT 'day', (occurred_at AT TIME ZONE 'UTC')::date::text, NULL, currency,
@@ -91,7 +91,7 @@ export async function readProviderCostAggregates(
         COUNT(*) FILTER (WHERE entry_kind = 'attempt' AND cost_basis = 'estimated')::int,
         COUNT(*) FILTER (WHERE entry_kind = 'attempt' AND cost_basis = 'unknown')::int,
         COUNT(*) FILTER (WHERE entry_kind = 'legacy')::int,
-        SUM(tokens_in)::double precision, SUM(tokens_out)::double precision, COUNT(*)::int
+        COALESCE(SUM(tokens_in), 0)::double precision, COALESCE(SUM(tokens_out), 0)::double precision, COUNT(*)::int
       FROM projected GROUP BY (occurred_at AT TIME ZONE 'UTC')::date, currency
     )
     SELECT dimension, day, task_kind, currency, entry_kind, cost_basis, cost_ref,
