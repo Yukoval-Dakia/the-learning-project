@@ -1115,9 +1115,12 @@ export async function listLegacyKnowledgeProposals(
  * YUK-892 — shared cooldown dedup used by the capability-owned record/question
  * proposal tools (Practice author/record seed + Ingestion record links/promotion).
  * True when a pending proposal of `kind` already carries `cooldownKey`.
+ *
+ * 这是只读检查：需要「查 pending → 写 proposal」原子去重的调用方必须在写事务内
+ * 先锁同一 cooldown 键（见 writeEvaluationCorrectionProposal）。
  */
 export async function pendingProposalWithCooldown(
-  db: Db,
+  db: DbLike,
   kind: string,
   cooldownKey: string,
 ): Promise<boolean> {

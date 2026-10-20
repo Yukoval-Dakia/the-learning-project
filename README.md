@@ -108,6 +108,25 @@ Prerequisites: **Node.js >=24.0.0**（`.node-version` 固定最低支持版本�
 **pnpm 11.13.1**。本地开发、生产 Docker 镜像与 CI 完整门禁统一使用 Node 24，
 避免公开运行时契约与实际验证环境漂移。
 
+### 本地重活限流
+
+`pnpm typecheck*`、`lint*`、`build*`、`test*` 和 web/compose build 入口自动使用
+`~/.cache/tlp-heavy-slots/slot-{1,2}`（`HEAVY_SLOTS=1` 可收紧）。与运营
+`heavy.sh` 使用同一 `owner` 协议；嵌套 pnpm 和 `heavy.sh pnpm build` 复用
+祖先持有的槽位。默认 Node 堆上限为 3072 MiB，覆盖继承的堆配置，其他
+`NODE_OPTIONS` 保留。这是每个 Node 进程的堆上限，不是整棵进程树的 RSS 上限。
+
+CI（`CI`、`GITHUB_ACTIONS` 或 `CIRCLECI` 为 `true` / `1`）不拿槽、不改
+`NODE_OPTIONS`，原命令及退出状态继续传给 CI。Docker build 内部的槽位不与
+宿主共享，因此 **宿主 docker build、pnpm install、直接运行 vitest 等仍须经**
+`/Volumes/YukovalSBak/yukoval-projects/tlp-status/_work/heavy/heavy.sh <命令>`。
+每条工作线同时最多一个重活；开运行窗前还须确认磁盘 ≥20GB、
+`memory_pressure` free ≥25%、load ≤20。这些运行窗检查不由 pnpm 包装器替代。
+
+包装器收到 INT/TERM/HUP 时转发给自己的命令进程组，组内进程退出后才归还槽位。
+它不自动删除旧槽，避免与其他进程回收竞争。若主机重启或 SIGKILL 留下槽位，先核
+`owner` PID 及运行资源，再由运营清理确认为过期的槽；不要删除仍由其他线持有的槽。
+
 Local development uses the docker-compose Postgres database as the source of truth.
 Inside compose, services use `postgres:5432`; host-side commands use the local overlay
 port `127.0.0.1:5433`.

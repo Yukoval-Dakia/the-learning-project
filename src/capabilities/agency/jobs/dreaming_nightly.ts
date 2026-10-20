@@ -1,5 +1,14 @@
-import { createId } from '@paralleldrive/cuid2';
 import type { Job } from 'pg-boss';
+// YUK-1570 — the complete run assembly (inbox before/after diff, trigger + scan
+// provenance events, budget tracker + propose-cap gate, piDomainMount wiring,
+// hard+1 budgetOverride, runAgentTask call, failure event + rethrow) is owned by
+// runAgencyProposalScan. This job keeps only the Dreaming signal reads, the
+// input build, and the note_update → note-refine fan-out.
+import {
+  type AgencyScanInboxRow,
+  type AgencyScanRunFn,
+  runAgencyProposalScan,
+} from '@/capabilities/agency/server/agent-run';
 // YUK-143 / ADR-0025 — North-Star: feed active goals into the Dreaming input so
 // it can BIAS proposals toward weak/under-covered knowledge in their scope.
 // Purely ADDITIVE (ND-5): Dreaming still only PROPOSES via the inbox and never
@@ -12,27 +21,16 @@ import { type AgentNote, readAgentNotes } from '@/capabilities/agency/server/not
 import { enqueueDreamingNoteRefine } from '@/capabilities/notes/public';
 import type { Db } from '@/db/client';
 import type { WriteEventInput } from '@/kernel/events';
-import { writeEvent } from '@/kernel/events';
 import {
   type ProposalFeedbackCell,
   getProposalFeedbackDigest,
 } from '@/kernel/proposals/adaptive-bias';
-import { type ProposalInboxRow, listProposalInboxRows } from '@/kernel/proposals/inbox';
-import {
-  DOMAIN_TOOL_MCP_SERVER_NAME,
-  resolveDomainToolNames,
-  resolveMcpAllowedTools,
-} from '@/kernel/tools/allowlists';
 // P5.1 / YUK-143 — single tunable source for Dreaming run caps. YUK-290 keeps
 // the old max_tool_calls=8 as an advisory warning and moves the accident
 // ceiling to 24; max_proposals remains byte-identical at 5.
 // P5.4-L2 / YUK-174 (Facet A, §3.2) — PROPOSAL_FEEDBACK_BUDGET bounds the new
 // per-(kind, relation) digest (see the getProposalFeedbackDigest import below).
 import { DREAMING_CONTEXT_BUDGET, PROPOSAL_FEEDBACK_BUDGET } from '@/kernel/tools/budgets';
-import { ContextBudgetTracker } from '@/kernel/tools/context-throttle';
-import { type RunTaskResult, runAgentTask } from '@/server/ai/runner';
-import type { BuildMcpServerOptions, ToolExecutionGateInput } from '@/server/ai/tools/mcp-bridge';
-import { type PiToolMount, piDomainMount } from '@/server/ai/tools/pi-tools';
 
 // P5.1 / YUK-143 — re-exported alias kept so existing imports / tests don't
 // break (spec §4.2). Sourced from DREAMING_CONTEXT_BUDGET.maxProposals (= 5),
@@ -52,18 +50,7 @@ export interface DreamingNightlyResult {
   tool_context_task_run_id: string;
 }
 
-type ProposalSnapshotRow = Pick<ProposalInboxRow, 'id' | 'status'> &
-  Partial<Pick<ProposalInboxRow, 'kind' | 'target'>>;
-type DreamingRunResult = Pick<RunTaskResult, 'task_run_id' | 'cost_usd'>;
-type RunAgentTaskFn = (
-  kind: string,
-  input: unknown,
-  ctx: {
-    db: Db;
-    piToolMounts?: PiToolMount[];
-    allowedTools?: string[];
-  },
-) => Promise<DreamingRunResult>;
+type ProposalSnapshotRow = AgencyScanInboxRow;
 type ListProposalInboxRowsFn = (db: Db) => Promise<ProposalSnapshotRow[]>;
 type WriteEventFn = (db: Db, input: WriteEventInput) => Promise<string>;
 // YUK-143 / ADR-0025 — swappable active-goals reader (DB tests inject fixtures).
@@ -79,7 +66,7 @@ type LoadProposalAcceptanceRatesFn = (db: Db) => Promise<ProposalFeedbackCell[]>
 type ReadAgentNotesFn = (db: Db, now: Date) => Promise<AgentNote[]>;
 
 interface DepsOverride {
-  runAgentTaskFn?: RunAgentTaskFn;
+  runAgentTaskFn?: AgencyScanRunFn;
   listProposalInboxRowsFn?: ListProposalInboxRowsFn;
   writeEventFn?: WriteEventFn;
   // YUK-143 / ADR-0025 — defaults to listActiveGoals; goals bias proposals
@@ -271,10 +258,6 @@ export async function runDreamingNightly(
   db: Db,
   deps: DepsOverride = {},
 ): Promise<DreamingNightlyResult> {
-  const now = deps.now?.() ?? new Date();
-  const listRows = deps.listProposalInboxRowsFn ?? listProposalInboxRows;
-  const run = deps.runAgentTaskFn ?? runAgentTask;
-  const write = deps.writeEventFn ?? writeEvent;
   // YUK-603 — resolved read (see coach_daily): subject_live goals live-derive their scope.
   const listGoals = deps.listActiveGoalsFn ?? listActiveGoalsWithResolvedScope;
   const loadAcceptanceRates =
@@ -287,151 +270,52 @@ export async function runDreamingNightly(
     deps.readAgentNotesFn ??
     ((db: Db, now: Date) => readAgentNotes(db, { for_agent: 'dreaming', now }));
 
-  const beforeRows = await listRows(db);
-  const beforeIds = new Set(beforeRows.map((row) => row.id));
-  // YUK-143 / ADR-0025 — read active goals for the additive goal bias. This is a
-  // read-only ADD to the Dreaming signal set; it does not read the FSRS-due
-  // queue or mutate any review state (ND-5).
-  const activeGoals = await listGoals(db);
-  // T-AR (YUK-TAR) — read the acceptance-rate signal for the additive bias.
-  // Read-only ADD; no FSRS-due read, no review-state mutation (ND-5). Empty on
-  // cold start → the input feed degrades to a no-op.
-  const feedbackDigest = await loadAcceptanceRates(db);
-  // U8 / AF §4 — read un-expired hints addressed to Dreaming. Empty on the
-  // common cold path → input feed degrades to a no-op.
-  const agentNotes = await readNotes(db, now);
-  const triggerEventId = `dreaming_trigger_${createId()}`;
-  const toolContextTaskRunId = `dreaming_tool_${createId()}`;
-
-  await write(db, {
-    id: triggerEventId,
-    actor_kind: 'cron',
-    actor_ref: 'nightly_dreaming',
-    action: 'experimental:trigger_dreaming_scan',
-    subject_kind: 'query',
-    subject_id: triggerEventId,
-    outcome: null,
-    payload: {
-      surface: 'dreaming',
-      pending_before: beforeRows.filter((row) => row.status === 'pending').length,
+  return runAgencyProposalScan(db, {
+    surface: 'dreaming',
+    taskKind: 'DreamingTask',
+    triggerActorRef: 'nightly_dreaming',
+    budget: DREAMING_CONTEXT_BUDGET,
+    deps: {
+      now: deps.now,
+      writeEventFn: deps.writeEventFn,
+      listProposalInboxRowsFn: deps.listProposalInboxRowsFn,
+      runAgentTaskFn: deps.runAgentTaskFn,
     },
-    created_at: now,
+    prepareInput: async ({ now, beforeRows }) => {
+      // YUK-143 / ADR-0025 — read active goals for the additive goal bias. This
+      // is a read-only ADD to the Dreaming signal set; it does not read the
+      // FSRS-due queue or mutate any review state (ND-5).
+      const activeGoals = await listGoals(db);
+      // T-AR (YUK-TAR) — read the acceptance-rate signal for the additive bias.
+      // Read-only ADD; no FSRS-due read, no review-state mutation (ND-5). Empty
+      // on cold start → the input feed degrades to a no-op.
+      const feedbackDigest = await loadAcceptanceRates(db);
+      // U8 / AF §4 — read un-expired hints addressed to Dreaming. Empty on the
+      // common cold path → input feed degrades to a no-op.
+      const agentNotes = await readNotes(db, now);
+      return () => buildDreamingInput(now, beforeRows, activeGoals, feedbackDigest, agentNotes);
+    },
+    onNewProposalRows: async ({ db, newRows, triggerEventId }) => {
+      const newDreamingNoteTargets = [
+        ...new Set(
+          newRows
+            .filter(
+              (row) =>
+                row.kind === 'note_update' &&
+                row.target?.subject_kind === 'artifact' &&
+                typeof row.target.subject_id === 'string',
+            )
+            .map((row) => row.target?.subject_id)
+            .filter((artifactId): artifactId is string => Boolean(artifactId)),
+        ),
+      ];
+      await Promise.all(
+        newDreamingNoteTargets.map((artifactId) =>
+          enqueueDreamingNoteRefine({ db, artifactId, triggerEventId }),
+        ),
+      );
+    },
   });
-
-  try {
-    const toolNames = resolveDomainToolNames('dreaming');
-    let proposalWrites = 0;
-    const budgetTracker = new ContextBudgetTracker(DREAMING_CONTEXT_BUDGET);
-    // piDomainMount compiles the DomainTools into AgentTools with the
-    // identical beforeExecute/interceptInput gates via executeDomainToolCall.
-    const domainMountOptions = {
-      ctx: {
-        db,
-        taskRunId: toolContextTaskRunId,
-        providerAttemptCaller: 'worker',
-        providerSessionDeadlineAt: Date.now() + 65_000,
-        callerActor: { kind: 'agent', ref: 'dreaming' },
-        causedByEventId: triggerEventId,
-      },
-      serverName: DOMAIN_TOOL_MCP_SERVER_NAME,
-      toolNames,
-      taskKind: 'DreamingTask',
-      beforeExecute: (tool: ToolExecutionGateInput) => {
-        const budgetReason = budgetTracker.beforeExecute(tool);
-        if (budgetReason) return budgetReason;
-        if (tool.effect !== 'propose') return undefined;
-        if (proposalWrites >= DREAMING_MAX_PROPOSALS) {
-          return `dreaming proposal cap reached (${DREAMING_MAX_PROPOSALS}); stop creating proposals in this run`;
-        }
-        proposalWrites += 1;
-        return undefined;
-      },
-      interceptInput: (tool: ToolExecutionGateInput, args: unknown) => {
-        const { args: capped, contextBudget, softStop } = budgetTracker.capInput(tool.name, args);
-        return { args: capped, truncationNote: contextBudget, softStop };
-      },
-    } satisfies BuildMcpServerOptions;
-    const taskResult = await run(
-      'DreamingTask',
-      buildDreamingInput(now, beforeRows, activeGoals, feedbackDigest, agentNotes),
-      {
-        db,
-        // YUK-290: maxTurns must not pre-empt the runtime tool-call ceiling.
-        // Keep one final turn for the agent's summary after the last allowed tool call.
-        budgetOverride: { maxIterations: DREAMING_CONTEXT_BUDGET.toolCalls.hard + 1 },
-        piToolMounts: [piDomainMount(domainMountOptions)],
-        allowedTools: [...resolveMcpAllowedTools('dreaming')],
-      },
-    );
-
-    const afterRows = await listRows(db);
-    const pendingAfter = afterRows.filter((row) => row.status === 'pending').length;
-    const proposalsCreated = afterRows.filter((row) => !beforeIds.has(row.id)).length;
-    const newDreamingNoteTargets = [
-      ...new Set(
-        afterRows
-          .filter((row) => !beforeIds.has(row.id))
-          .filter(
-            (row) =>
-              row.kind === 'note_update' &&
-              row.target?.subject_kind === 'artifact' &&
-              typeof row.target.subject_id === 'string',
-          )
-          .map((row) => row.target?.subject_id)
-          .filter((artifactId): artifactId is string => Boolean(artifactId)),
-      ),
-    ];
-    await Promise.all(
-      newDreamingNoteTargets.map((artifactId) =>
-        enqueueDreamingNoteRefine({ db, artifactId, triggerEventId }),
-      ),
-    );
-
-    await write(db, {
-      id: `dreaming_scan_${createId()}`,
-      actor_kind: 'agent',
-      actor_ref: 'dreaming',
-      action: 'experimental:dreaming_scan',
-      subject_kind: 'query',
-      subject_id: triggerEventId,
-      outcome: 'success',
-      payload: {
-        proposals_created: proposalsCreated,
-        pending_after: pendingAfter,
-        tool_context_task_run_id: toolContextTaskRunId,
-      },
-      caused_by_event_id: triggerEventId,
-      task_run_id: taskResult.task_run_id,
-      cost_micro_usd:
-        taskResult.cost_usd === undefined ? null : Math.round(taskResult.cost_usd * 1_000_000),
-      created_at: deps.now?.() ?? new Date(),
-    });
-
-    return {
-      processed: 1,
-      proposals_created: proposalsCreated,
-      pending_after: pendingAfter,
-      task_run_id: taskResult.task_run_id,
-      tool_context_task_run_id: toolContextTaskRunId,
-    };
-  } catch (err) {
-    await write(db, {
-      id: `dreaming_scan_${createId()}`,
-      actor_kind: 'agent',
-      actor_ref: 'dreaming',
-      action: 'experimental:dreaming_scan',
-      subject_kind: 'query',
-      subject_id: triggerEventId,
-      outcome: 'failure',
-      payload: {
-        error: err instanceof Error ? err.message : String(err),
-        tool_context_task_run_id: toolContextTaskRunId,
-      },
-      caused_by_event_id: triggerEventId,
-      created_at: deps.now?.() ?? new Date(),
-    });
-    throw err;
-  }
 }
 
 export function buildDreamingNightlyHandler(
