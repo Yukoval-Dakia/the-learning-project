@@ -1,20 +1,27 @@
-// SessionSummaryTask runner.
+// SessionSummaryTask runner — practice-owned session domain operation.
 //
-// The session_summary handler calls this after a review session completes. It
-// builds a compact stats snapshot from chained events, runs the task, and stores
-// the result in learning_session.summary_md. The handler logs and rethrows
-// failures so pg-boss can retry; a missing summary degrades to the UI stub.
+// The session_summary job handler (practice/jobs/session_summary.ts) calls this
+// after a review session completes. It builds a compact stats snapshot from
+// chained events, runs the task, and stores the result in
+// learning_session.summary_md. The handler logs and rethrows failures so
+// pg-boss can retry; a missing summary degrades to the UI stub.
+//
+// YUK-1570 — moved VERBATIM from src/server/session/summary.ts (only consumer
+// was this capability's job; session summary is a review-domain operation).
+// `getFailureAttempts` now comes from the kernel read-model directly (the
+// knowledge public seam only re-exported it); the run function is the
+// capability-local PracticeTaskRunFn port.
 
 import { and, asc, eq, inArray } from 'drizzle-orm';
 
-import { getFailureAttempts } from '@/capabilities/knowledge/public';
 import type { Db } from '@/db/client';
 import { event, knowledge, learning_session, question } from '@/db/schema';
 import { resolveVerdictsForAttempts } from '@/kernel/read-models/assessment-verdict';
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
+import { getFailureAttempts } from '@/kernel/read-models/failure-attempts';
 import { resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
-import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { resolveSubjectProfile } from '@/subjects/profile';
+import type { PracticeTaskRunFn } from './task-runtime';
 
 const NOTABLE_LIMIT = 3;
 const MODEL_STATISTIC_CLAIMS = [
@@ -49,7 +56,7 @@ export function renderSessionNumericSummary(input: {
   return `本次复习 ${input.total_reviewed} 题，${pct}% 正确${denominator}${cause}。`;
 }
 
-export type RunTaskFn = TaskTextRunFn;
+export type RunTaskFn = PracticeTaskRunFn;
 
 export interface RunSessionSummaryParams {
   db: Db;
