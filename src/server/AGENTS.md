@@ -21,7 +21,6 @@
 | `copilot/` | conversation/tutor session runtime |
 | `teaching/` | Active Teaching turn 物化（ask_check → question(source='teaching_check')）|
 | `quiz/` | QuizGen / Sourcing few-shot 检索 + verify framework |
-| `orchestrator/` | today plan / coach 编排 |
 | `agents/` | `leave_agent_note` 软提示 channel（→ Dreaming / Maintenance）|
 | `learning-items/` | active learning-item reader（Coach brief 的 attention pressure）|
 | `goals/` · `today/` · `records/` · `admin/` | learning intent / today plan / learning record / 管理面 |
