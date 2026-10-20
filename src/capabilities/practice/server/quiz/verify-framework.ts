@@ -48,6 +48,7 @@ import {
 } from '@/server/ai/provenance';
 import type { Provider } from '@/server/ai/providers';
 import type { SubjectProfile } from '@/subjects/profile';
+import { normalizeToCanonicalKind } from '@/subjects/question-kind';
 
 // YUK-1547 — practice is the only capability caller of this run-logging seam
 // (structured-submit failure evidence); re-exported through the existing
@@ -673,19 +674,22 @@ function normalizeOptionIdentity(text: string): string {
 
 /**
  * Choice-surface rules that can decide before ANY paid verify call runs —
- * the model is reserved for what rules cannot judge. Applies only to rows that
- * carry persisted choices (structure is the source of truth, mirroring
- * isExactQuestion; the repo's true_false form legitimately has no choices and
- * is skipped — an empty result records nothing). Answer resolution reuses the
- * solve-check candidates, so `B`, `B. …`, `（B）`, `【B】…`, `B选项原文` and a
- * structured rubric final_answer all count as the declared answer; a
- * multi-select reference like `A、C` passes when every label resolves to a real
- * option. Duplicate detection preserves case: `T` / `t` are different physical
- * symbols, so only NFKC-and-whitespace-equal options collide.
+ * the model is reserved for what rules cannot judge. Applies to every row
+ * whose kind folds to the choice family (a choice row with ZERO options is
+ * rejected too) and to any row that carries persisted options (a lone option
+ * is choice-shaped regardless of its kind label). Only genuinely option-less
+ * kinds skip: the repo's true_false form legitimately carries no choices.
+ * Answer resolution reuses the solve-check candidates, so `B`, `B. …`,
+ * `（B）选项原文`, `【B】…`, `B选项原文` and a structured rubric final_answer
+ * all count as the declared answer; a multi-select reference like `A、C`
+ * passes when every label resolves to a real option. Duplicate detection
+ * preserves case: `T` / `t` are different physical symbols, so only
+ * NFKC-and-whitespace-equal options collide.
  */
 export function evaluateChoiceSurface(question: ChoiceSurfaceQuestion): ChoiceSurfaceRuleCheck[] {
   const choices = question.choices_md ?? [];
-  if (choices.length === 0) return [];
+  const choiceShaped = normalizeToCanonicalKind(question.kind) === 'choice';
+  if (choices.length === 0 && !choiceShaped) return [];
   if (choices.length < 2) {
     return [
       {
