@@ -214,7 +214,7 @@
       "symbols": ["deleteImageAsset"],
       "issue": "YUK-1571",
       "owns": "Content-addressed source_asset write protocol: byte-view sha256 storage keys, one advisory lock held across blob put and owner-row commit, put compensation on insert failure, last-owner object delete with fresh re-read under the key lock",
-      "date": "2026-10-21"
+      "date": "2026-10-20"
     },
     {
       "debt": "capabilityToKernel",
@@ -224,7 +224,7 @@
       "symbols": ["persistImageAsset"],
       "issue": "YUK-1571",
       "owns": "Content-addressed source_asset write protocol: byte-view sha256 storage keys, one advisory lock held across blob put and owner-row commit, put compensation on insert failure, last-owner object delete with fresh re-read under the key lock",
-      "date": "2026-10-21"
+      "date": "2026-10-20"
     },
     {
       "debt": "capabilityToKernel",
@@ -234,7 +234,7 @@
       "symbols": ["persistImageAsset"],
       "issue": "YUK-1571",
       "owns": "Content-addressed source_asset write protocol: byte-view sha256 storage keys, one advisory lock held across blob put and owner-row commit, put compensation on insert failure, last-owner object delete with fresh re-read under the key lock",
-      "date": "2026-10-21"
+      "date": "2026-10-20"
     },
     {
       "debt": "capabilityToKernel",
@@ -244,7 +244,7 @@
       "symbols": ["isUniqueViolation", "lockImageStorageKey", "sha256Hex"],
       "issue": "YUK-1571",
       "owns": "Content-addressed source_asset write protocol: byte-view sha256 storage keys, one advisory lock held across blob put and owner-row commit, put compensation on insert failure, last-owner object delete with fresh re-read under the key lock",
-      "date": "2026-10-21"
+      "date": "2026-10-20"
     },
     {
       "debt": "capabilityToKernel",
@@ -254,7 +254,7 @@
       "symbols": ["persistImageAsset", "persistSourceAsset"],
       "issue": "YUK-1571",
       "owns": "Content-addressed source_asset write protocol: byte-view sha256 storage keys, one advisory lock held across blob put and owner-row commit, put compensation on insert failure, last-owner object delete with fresh re-read under the key lock",
-      "date": "2026-10-21"
+      "date": "2026-10-20"
     },
     {
       "debt": "capabilityToKernel",
@@ -264,7 +264,7 @@
       "symbols": ["persistImageAsset"],
       "issue": "YUK-1571",
       "owns": "Content-addressed source_asset write protocol: byte-view sha256 storage keys, one advisory lock held across blob put and owner-row commit, put compensation on insert failure, last-owner object delete with fresh re-read under the key lock",
-      "date": "2026-10-21"
+      "date": "2026-10-20"
     },
     {
       "debt": "capabilityToKernel",
@@ -274,7 +274,7 @@
       "symbols": ["persistSourceAsset", "sha256Hex"],
       "issue": "YUK-1571",
       "owns": "Content-addressed source_asset write protocol: byte-view sha256 storage keys, one advisory lock held across blob put and owner-row commit, put compensation on insert failure, last-owner object delete with fresh re-read under the key lock",
-      "date": "2026-10-21"
+      "date": "2026-10-20"
     },
     {
       "debt": "capabilityToKernel",
@@ -284,7 +284,7 @@
       "symbols": ["isUniqueViolation", "persistSourceAsset"],
       "issue": "YUK-1571",
       "owns": "Content-addressed source_asset write protocol: byte-view sha256 storage keys, one advisory lock held across blob put and owner-row commit, put compensation on insert failure, last-owner object delete with fresh re-read under the key lock",
-      "date": "2026-10-21"
+      "date": "2026-10-20"
     },
     {
       "debt": "capabilityToKernel",
@@ -294,7 +294,7 @@
       "symbols": ["lockImageStorageKey"],
       "issue": "YUK-1571",
       "owns": "Content-addressed source_asset write protocol: byte-view sha256 storage keys, one advisory lock held across blob put and owner-row commit, put compensation on insert failure, last-owner object delete with fresh re-read under the key lock",
-      "date": "2026-10-21"
+      "date": "2026-10-20"
     }
   ],
   "sourceSizeRecords": [],

@@ -106,7 +106,8 @@
   7 个退役站点在 head 消失，7 条 compatShims 记录 non-live → continue，
   台账原样保留。
 - NOT_RUN：全部 vitest 分区 / DB / Docker / daemon / provider /
-  runtime（测试不在本机 gate；由 push 后 exact-head CI Gate 执行）。
+  runtime。本机未运行测试；exact-head CI 仅证明其实际执行的 jobs，
+  不代表生产部署或 provider 验收。
 
 ## Revision / 外部路径
 
