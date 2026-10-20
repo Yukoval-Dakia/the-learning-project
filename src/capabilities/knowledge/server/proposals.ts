@@ -27,7 +27,7 @@ import type { Db, Tx } from '@/db/client';
 import { event, knowledge, knowledge_edge } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
-import { writeArchiveProposal } from '@/kernel/proposals/producers';
+import { archiveProposalCooldownKey, writeArchiveProposal } from '@/kernel/proposals/producers';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
 import { acquireLearningStateWriteLock, acquireSortedAdvisoryLocks } from '@/server/advisory-locks';
@@ -191,6 +191,49 @@ export function knowledgeNodeCooldownKey(payload: {
     : `knowledge_node:${payload.parent_id}:${payload.name}`;
 }
 
+export interface KnowledgeMutationCooldown {
+  /** Proposal kind the writer stores / the gate queries. */
+  kind: 'knowledge_node' | 'archive' | 'knowledge_mutation';
+  /**
+   * Canonical key first (the one this writer persists). Legacy equivalent keys
+   * follow: proposals projected from pre-`ai_proposal` events carry them, and a
+   * dismissal on either side must suppress the other.
+   */
+  cooldownKeys: readonly string[];
+}
+
+/**
+ * Single source for a mutation's `(kind, cooldown_key)` dedup identity, shared
+ * by {@link writeKnowledgeProposeEvent} (stored marker) and the propose tool's
+ * pending/dismiss gate. All five branches are covered: reparent/merge/split
+ * previously had no propose-side gate at all.
+ */
+export function knowledgeMutationCooldown(
+  payload: KnowledgeMutationPayload,
+): KnowledgeMutationCooldown {
+  switch (payload.mutation) {
+    case 'propose_new':
+      return { kind: 'knowledge_node', cooldownKeys: [knowledgeNodeCooldownKey(payload)] };
+    case 'archive':
+      return {
+        kind: 'archive',
+        cooldownKeys: [archiveProposalCooldownKey('knowledge', payload.node_id)],
+      };
+    case 'reparent':
+    case 'merge':
+    case 'split': {
+      const subjectId = mutationSubjectId(payload);
+      return {
+        kind: 'knowledge_mutation',
+        cooldownKeys: [
+          `knowledge_mutation:${payload.mutation}:${subjectId}`,
+          `legacy_knowledge:${payload.mutation}:${subjectId}`,
+        ],
+      };
+    }
+  }
+}
+
 export async function writeKnowledgeProposeEvent(
   db: DbLike,
   entry: WriteProposalEntry,
@@ -298,7 +341,7 @@ export async function writeKnowledgeProposeEvent(
       reason_md: reasoning,
       evidence_refs: entry.evidence_refs ?? [],
       proposed_change: entry.payload,
-      cooldown_key: `knowledge_mutation:${entry.payload.mutation}:${subjectId}`,
+      cooldown_key: knowledgeMutationCooldown(entry.payload).cooldownKeys[0],
       // P5.6 / YUK-178 — model-labeled discriminator; absent → proactive.
       ...(entry.suggestion_kind ? { suggestion_kind: entry.suggestion_kind } : {}),
     },

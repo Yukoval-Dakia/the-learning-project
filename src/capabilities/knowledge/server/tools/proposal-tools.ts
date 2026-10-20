@@ -10,7 +10,7 @@ import { z } from 'zod';
 // the single-owner edges module is the read authority.
 import { getKnowledgeEdgeById } from '@/capabilities/knowledge/server/edges';
 import {
-  knowledgeNodeCooldownKey,
+  knowledgeMutationCooldown,
   writeKnowledgeProposeEvent,
 } from '@/capabilities/knowledge/server/proposals';
 import {
@@ -731,21 +731,6 @@ function knowledgeIdsForMutation(change: KnowledgeMutationChange): string[] {
   }
 }
 
-// The cooldown-gated mutations (the same set the retired KR gate covered):
-// propose_new and archive. reparent / merge / split keep their ungated write —
-// key-completion for those is tracked separately, not silently expanded here.
-function mutationCooldownGate(
-  change: KnowledgeMutationChange,
-): { kind: string; cooldownKey: string } | null {
-  if (change.mutation === 'propose_new') {
-    return { kind: 'knowledge_node', cooldownKey: knowledgeNodeCooldownKey(change) };
-  }
-  if (change.mutation === 'archive') {
-    return { kind: 'archive', cooldownKey: `archive:knowledge:${change.node_id}` };
-  }
-  return null;
-}
-
 async function proposeKnowledgeMutationExecute(
   ctx: ToolContext,
   raw: KnowledgeMutationInput,
@@ -815,17 +800,15 @@ async function proposeKnowledgeMutationExecute(
       suggestion_kind: input.suggestion_kind ?? 'proactive',
     });
 
-  const gate = mutationCooldownGate(change);
-  if (gate === null) {
-    const proposalId = await writeProposal(ctx.db);
-    return { status: 'proposed', proposal_id: proposalId };
-  }
-
+  // Every mutation branch shares the writer's `(kind, cooldown_key)` identity;
+  // reparent / merge / split are included here (they had no propose-side gate
+  // before, so repeated proposals stacked in the inbox).
+  const gate = knowledgeMutationCooldown(change);
   // YUK-1553 — pending/dismiss-cooldown dedup reads and the proposal write in
   // ONE advisory-locked txn; same-args retries inside the window skip instead
   // of stacking inbox rows (the retired KR gate's serialized check-then-write).
-  return await withProposalGateLock(ctx.db, gate.kind, [gate.cooldownKey], async (tx) => {
-    const skip = await checkProposalCooldownGate(tx, gate.kind, [gate.cooldownKey]);
+  return await withProposalGateLock(ctx.db, gate.kind, gate.cooldownKeys, async (tx) => {
+    const skip = await checkProposalCooldownGate(tx, gate.kind, gate.cooldownKeys);
     if (skip) {
       return {
         status: skip.status,
