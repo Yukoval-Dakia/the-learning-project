@@ -557,19 +557,25 @@ function choiceLabelIndex(value: string): number | null {
   return label.charCodeAt(0) - 'A'.charCodeAt(0);
 }
 
-function stripLeadingChoiceLabel(value: string): string | null {
+/**
+ * Single shape parser for a label-prefixed reference: returns the option the
+ * label points at plus the remainder text, or null when the value is not
+ * label-prefixed (bare labels carry no remainder and also return null —
+ * choiceLabelIndex resolves those).
+ */
+function choiceLabelPrefix(value: string): { index: number; remainder: string } | null {
   const normalized = value.normalize('NFKC').trim();
   // Leading-wrapper shapes「（C）选项原文」/「【C】开封」(sourcing.ts declares
-  // both legal). A wrapper-only string carries no content to strip — the
+  // both legal). A wrapper-only string carries no remainder to strip — the
   // caller's label expansion (choiceLabelIndex) resolves it instead.
   const leading = /^[(（[【]\s*([A-F])\s*[)）\]】]\s*(.*)$/u.exec(normalized);
   if (leading) {
-    const rest = (leading[2] ?? '').trim();
-    return rest.length > 0 ? rest : null;
+    const label = leading[1] ?? '';
+    const remainder = (leading[2] ?? '').trim();
+    return remainder.length > 0
+      ? { index: label.charCodeAt(0) - 'A'.charCodeAt(0), remainder }
+      : null;
   }
-  // low-pri (YUK-554 review A2, skip 裁决): `.` here is not dotAll — a multi-line labelled
-  // answer won't strip. Post-A1 the fallback candidates are first-line/first-sentence
-  // (single-line) so this is moot in practice; not worth a behavior-bearing regex change.
   // Try the balanced-bracket shape first. Otherwise `A (content)` is consumed
   // by the generic separator branch at the space and retains `(content)`.
   // A labelled answer is persisted with an uppercase option marker. Keep this
@@ -582,8 +588,14 @@ function stripLeadingChoiceLabel(value: string): string | null {
     /^([A-F])(?:\s*[(（[【]\s*(.+?)\s*[)）\]】]\s*$|[\s.、:：)\]）-]+(.+)|(\p{Script=Han}.*))$/u.exec(
       normalized,
     );
-  const stripped = (match?.[2] ?? match?.[3] ?? match?.[4])?.trim();
-  return stripped && stripped.length > 0 ? stripped : null;
+  const label = match?.[1];
+  const remainder = (match?.[2] ?? match?.[3] ?? match?.[4])?.trim();
+  if (!label || !remainder || remainder.length === 0) return null;
+  return { index: label.charCodeAt(0) - 'A'.charCodeAt(0), remainder };
+}
+
+function stripLeadingChoiceLabel(value: string): string | null {
+  return choiceLabelPrefix(value)?.remainder ?? null;
 }
 
 // A1 (YUK-554 独立 review) — trailing sentence-punctuation variant for exact compare, applied
@@ -647,11 +659,15 @@ export interface ChoiceSurfaceRuleCheck {
  * The precheck record persisted on the admission record for EVERY outcome —
  * reject or pass (PM condition, YUK-1624): each rule's name, verdict, and a
  * concrete reason, so a reviewer can audit what the deterministic gate decided
- * without re-deriving it.
+ * without re-deriving it. `not_applicable` marks a row the rules genuinely do
+ * not cover (an option-less non-choice kind) — recorded explicitly instead of
+ * masquerading as a pass with no rules.
  */
 export interface ChoiceSurfacePrecheckRecord {
-  outcome: 'pass' | 'reject';
+  outcome: 'pass' | 'reject' | 'not_applicable';
   rules: ChoiceSurfaceRuleCheck[];
+  /** Present only when outcome='not_applicable': why the rules do not apply. */
+  reason?: string;
 }
 
 export interface ChoiceSurfaceQuestion {
@@ -728,6 +744,13 @@ export function evaluateChoiceSurface(question: ChoiceSurfaceQuestion): ChoiceSu
   );
 
   const normalizedOptions = choices.map((choice) => normalizeAnswer(choice));
+  const matchOptionIndex = (text: string, allowChoiceWrapper: boolean): number => {
+    for (const expanded of answerCandidates(text, choices, allowChoiceWrapper)) {
+      const index = normalizedOptions.indexOf(normalizeAnswer(expanded));
+      if (index >= 0) return index;
+    }
+    return -1;
+  };
   const firstLine = referenceFirstLine(question.reference_md);
   const labels = firstLine ? firstLine.split(/[、，,\s]+/u).filter(Boolean) : [];
   const resolvedLabelIndices = labels.map((token) => {
@@ -737,33 +760,51 @@ export function evaluateChoiceSurface(question: ChoiceSurfaceQuestion): ChoiceSu
   const everyTokenIsResolvableLabel =
     labels.length > 0 && resolvedLabelIndices.every((index) => index !== null);
   // Same candidate composition the solve-check exact path uses, so `B`,
-  // `B. …`, `（B）选项原文` and structured rubric answers all resolve.
+  // `B. …`, `（B）选项原文` and structured rubric answers all resolve. A
+  // label-prefixed reference whose remainder names a DIFFERENT option is
+  // internally inconsistent — reject instead of guessing which side is right.
   let matchedOptionIndices: number[] = [];
+  let inconsistencyReason: string | null = null;
   if (everyTokenIsResolvableLabel) {
     matchedOptionIndices = resolvedLabelIndices.filter((index): index is number => index !== null);
   } else {
-    outer: for (const candidate of referenceAnswerCandidates(question)) {
-      for (const expanded of answerCandidates(candidate, choices, true)) {
-        const index = normalizedOptions.indexOf(normalizeAnswer(expanded));
+    const prefix = firstLine ? choiceLabelPrefix(firstLine) : null;
+    if (prefix) {
+      const textIndex = matchOptionIndex(prefix.remainder, false);
+      if (textIndex >= 0 && textIndex !== prefix.index) {
+        inconsistencyReason = `标签 ${String.fromCharCode(65 + prefix.index)} 指向选项 ${prefix.index + 1}，但选项文本命中第 ${textIndex + 1} 项，前后不一致`;
+      } else if (textIndex === prefix.index) {
+        matchedOptionIndices = [prefix.index];
+      }
+    }
+    if (matchedOptionIndices.length === 0 && inconsistencyReason === null) {
+      for (const candidate of referenceAnswerCandidates(question)) {
+        const index = matchOptionIndex(candidate, true);
         if (index >= 0) {
           matchedOptionIndices = [index];
-          break outer;
+          break;
         }
       }
     }
   }
   checks.push(
-    matchedOptionIndices.length > 0
+    inconsistencyReason !== null
       ? {
           rule: 'reference_not_in_choices',
-          verdict: 'pass',
-          reason: `参考答案命中选项 ${matchedOptionIndices.map((index) => index + 1).join('、')}`,
-        }
-      : {
-          rule: 'reference_not_in_choices',
           verdict: 'reject',
-          reason: '参考答案首行未命中任何选项（含标签与 rubric 结构化答案展开）',
-        },
+          reason: inconsistencyReason,
+        }
+      : matchedOptionIndices.length > 0
+        ? {
+            rule: 'reference_not_in_choices',
+            verdict: 'pass',
+            reason: `参考答案命中选项 ${matchedOptionIndices.map((index) => index + 1).join('、')}`,
+          }
+        : {
+            rule: 'reference_not_in_choices',
+            verdict: 'reject',
+            reason: '参考答案首行未命中任何选项（含标签与 rubric 结构化答案展开）',
+          },
   );
 
   return checks;
@@ -773,6 +814,13 @@ export function evaluateChoiceSurface(question: ChoiceSurfaceQuestion): ChoiceSu
 export function choiceSurfacePrecheckRecord(
   checks: ChoiceSurfaceRuleCheck[],
 ): ChoiceSurfacePrecheckRecord {
+  if (checks.length === 0) {
+    return {
+      outcome: 'not_applicable',
+      rules: [],
+      reason: '非 choice 题型且无选项，预检不适用',
+    };
+  }
   return {
     outcome: checks.some((check) => check.verdict === 'reject') ? 'reject' : 'pass',
     rules: checks,

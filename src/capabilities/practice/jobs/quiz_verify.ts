@@ -76,6 +76,7 @@ import {
   source_document,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { appendAdmissionVerificationRecord } from '@/kernel/records/assessment-publication';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import {
   type TaskTextResult,
@@ -1371,6 +1372,26 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
             if ('admission_generation' in cleared) {
               promotedAdmissionGeneration = cleared.admission_generation;
             }
+          } else {
+            // YUK-1624（PM 条件）——无 verify_hold 可清的 kept 分支也要给这次
+            // verify 结果落一条 append-only 记录：不改任何 lifecycle 维度、
+            // 不推进 generation（readBoundIndependentAdmission 已锁 lifecycle 行）。
+            await appendAdmissionVerificationRecord(tx, {
+              groupId: groupRootId,
+              expectedRevisionId: keptAdmission.revisionId,
+              expectedGeneration: keptAdmission.lifecycle.scoring_admission_generation,
+              verification: {
+                policy_id: 'quiz_verify@1',
+                outcome: 'passed',
+                evidence: {
+                  overall: parsed.overall,
+                  copy_safety: copySafetyVerdict,
+                  admission: 'kept_independent_admission',
+                  deterministic_precheck: precheckRecord,
+                },
+              },
+              now,
+            });
           }
         } else {
           const promotePublish = await publishQuestionGroupFromRow(tx, {
