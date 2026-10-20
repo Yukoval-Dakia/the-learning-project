@@ -2,15 +2,14 @@
 // session to paused. Mirrors end/route.ts body-parsing so it stays
 // sendBeacon-friendly (text/plain Blob body works just like JSON).
 
-import { db } from '@/db/client';
 import { deprecatedRouteResponse, errorResponse } from '@/kernel/http';
-import { Review } from '@/server/session';
+import { pauseReviewSession } from '../server/session-operations/review-session';
 
 export async function POST(_req: Request, params: Record<string, string>): Promise<Response> {
   let response: Response;
   try {
     const { id } = params;
-    await Review.pauseReviewSession(db, id);
+    await pauseReviewSession(id);
     response = Response.json({ ok: true, status: 'paused' });
   } catch (err) {
     response = errorResponse(err);
