@@ -4,6 +4,8 @@
 
 ## NOW
 
+- **帮助靠谱 / 夜间摘要统计（YUK-1621、YUK-1632）**：`el/yuk-1621` 的 PR #1858 普通整合 main `210dfb2c1`。仅 PLAN/now 冲突，采用 main 最新记录并保留本 PR 交接；服务端分桶、有效判分统计与模型统计守卫源码未变。本轮 typecheck/lint/build 通过，178 个既有 warnings；新 head CI 单独等待，不复用旧 head 结果。
+
 - **第一天能用 / 恢复完成证据（YUK-1631、YUK-1614）**：`el/yuk-1614` 保留 deferred 未完成状态，拒绝旧 deferred 假回执、未知契约与非法时间戳；legacy reserved/enqueued 保持可导入。隔离 PG16 实跑补丁排队→拒绝且原数据不变→drain→按证据人工补回执→恢复200；provider/回执写入故障及人工恢复已验证。既有备份8例通过，无测试代码改动，不碰 schema/export constants。最终静态检查及 exact-head CI 结果见 PR1854；自动恢复仍不在 LIGHT 范围。
 
 - **架构深化 / YUK-1571**：frontier draft #1837 正常整合main1440e864b，仅PLAN/now冲突；保留main nightly上限常量和mastery变更，新head e309ce3d4 静态构建通过、server441→440/cross48→47，5项基线差异已获准登记，当前实施，R1仍有效范围不扩张，协调线已释放baseline独占，两片按实测登记、先绿先合。迁移规划器#1840已合ee53df413（超长18→17）；typed due完整输入操作#1842已合71986f224，均父静态构建/独立R1/exact-head CI通过，无本机DB/provider。审计去重#1843已合3adb1cde4，scripts净减41，SWE-2 MAX R1/父静态构建/11命令输出核对/GH exactCI通过；Circle矩阵漏展开及workspace冲突归YUK1612。锁登记#1846已合4419f4fbb（仅文档）；YUK1577误关已恢复In Progress并读回completedAt=null；新增4项事实错误：协调线裁定顶部立即加未修正声明（只文档免审、exactCI后合），下一片先改4项再扩展；不能自称证明。完整操作设计f848145e9将B降为待证候选，两个真实变化场景未证正收益，当前保留直接owner port更简单；LIGHT共享读draft#1852 aab422064，父静态构建通过、实测cross48→43减5，GLM初审通过；两架构audit等1830释放后收紧baseline，保护#1802 review.ts。
@@ -37,6 +39,8 @@
 - **本轮已交付 YUK-1392**：PR1619于17:11:43Z合main6aaf8ca89，tree5e8ab973与exact3883903相同；CI37812973662全绿、R1 NONE、threads0。父13unit/22DB、static/build/audits通过，已unwatch/Linear Done。无部署。
 
 ## NEXT
+
+- **PR #1858**：本地检查通过后普通 merge commit/push，等待 exact-head CI。CI 绿即停止；不改 PR 描述或 Linear 状态，不合并 PR、不部署。
 
 - **架构深化**：警示#1851已合7e2ab18f5，再交付锁四事实纠错#1853已合86917b10a（父静态构建、唯一R2、exactCI通过，仍只是登记，1577读回进行中）；#1847证据删除已合0f8b1fbbc，后续批另批。#1830释放后收紧frontier基线；完整操作设计必须体现调用方少知决策/恢复规则，不能以重导出或合文件代替深化。
 
