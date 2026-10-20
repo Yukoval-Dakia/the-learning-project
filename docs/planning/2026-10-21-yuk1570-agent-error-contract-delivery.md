@@ -51,8 +51,21 @@ runner.fallback.test.ts 经 runner 钉 null connection shape 与 durable judge �
 
 > 协调最新明确裁定已到：选零shim。唯一测试改动src/server/assessment/rubric-model-executor.test.ts:12 AgentRunError从@/server/ai/agent-run-error改到@/ai/agent-run-error，同名同class，用例/数据/断言/:89–97构造全不动，只这一行，不排序/格式其他行，测试运行仍禁。旧server的AgentRunError转出同时删，绝不登记compat。属owner10-19授权协调直接批的清单类测试更改；交付doc引用本条批准原话，PR父引用。
 
-已按该范围仅改测试第 12 行路径，其余字节原样；旧 AgentRunError 转出删除。
+初次按该范围仅改测试第 12 行路径，其余字节原样；旧 AgentRunError 转出删除。
 此前 compat 仅是未提交候选，未自批/登记，最终无 stable/compat 待决。
+
+追加明确批准（本父线程，2026-10-21）：
+
+> 协调最新明确批准已到（本父线程）：同意 proposed-test-import-sort.diff SHA db178d52dbc6bde5f5bff08f3422e12bf1e9f86d720a12ffbb8585ec2d40cb65，把同一 AgentRunError import 从12移至2，除该行外全文逐字节一致；测试运行范围不扩大。
+
+> 另父授权仅原生 heavy.sh pnpm audit:capability-boundaries --tighten 登记 ingestion→ai16→15/practice→ai61→58/total403→399（以官方真实输出为准），保留所有main账目前缀，不改audit/schema/ignore。
+
+已在 9576999e55a5156c418f57e79f7d412055b151bf 核准 patch SHA 后精确应用；
+测试现 import 位于第 2 行，删除这一个 import 后全文与 9576999 逐字节相同。
+与最初 83bb 基点分别删除旧/新路径 import 后，全文亦逐字节相同；case/数据/断言/构造不动。
+原生 tighten 只追加两条下降账目，更新上述两 pair 和总数；main 18 条 changes 的逻辑前缀与
+原始字节前缀全部相同，其他 ledger 字段与债务值保持原样。
+
 
 ## 两个维护场景与五项标准
 
@@ -75,18 +88,20 @@ runner.fallback.test.ts 经 runner 钉 null connection shape 与 durable judge �
 最终 exact HEAD 的源码/原始命令/逐文件 hash 另落 `<final-head>/agent-error/final-source-proof/`，不覆盖旧 seal。
 
 静态字节对照与 git diff --check 已完成。父唯一一次 heavy frozen install exit 0，依赖三 hash
-原样；回执在 c0b2e34cce31222bb8b3d274249007b63dc2dff5/parent-frozen-install.json。
-真实 tsc（两 tsconfig）及 build 均 exit 0。此前新共享 TS 的 Node --check private type 解析失败
-原 seal 保留；它不是 tsc 结论，现已由真实 typecheck 通过消除该类型疑问。
+原样。真实 tsc（两 tsconfig）及 build 已在 c0b2e34cce31222bb8b3d274249007b63dc2dff5
+exit 0；本轮产品源码未变，依父指示不重跑 typecheck/build。此前 Node 解析失败保留，不作为 tsc 结论。
 
-五门全部经外部 heavy.sh 串行运行，原始 stdout/stderr、argv、UTC 和真实返回码在
+此前五门原始失败 seal 保留：
 `c0b2e34cce31222bb8b3d274249007b63dc2dff5/agent-error/checks-20261020T223305Z/`，
 sha256.json `84ca8c041da85ae6b5fb629335a4c18be77b6ce3ddabc4b5098c30d442119a6f`。
-Lint exit 1（180 warnings）：唯一 error 是获批测试 import 应从第 12 行排序到第 2 行，
-超出“只这一行、不排序其他行”边界；测试未擅改，精确 TEXT 候选已交父裁定。
-两 audit 各 exit 1，且仅三项下降待父收紧：ingestion→ai 16→15、practice→ai 61→58、
-capability→server 403→399；无其他 violation。作者未修改 baseline/上游 ledger，不称五门全绿。
+
+本次获批排序/tighten 后，仅复验 lint、baseline 格式、两 audit，全部 exit 0；原生 tighten 亦 exit 0。
+两 audit 固定 `--base 20222f2cafe1500a9e445b43fe132935405d825a`，实际 server=399、deep=0、
+cross=37、SCC=1、>1500 文件=13（base 同为13，本片无超长减少）。
+本次 raw stdout/stderr、argv、UTC、真实返回码和 identity/ledger proof 在
+`9576999e55a5156c418f57e79f7d412055b151bf/agent-error/approved-sort-tighten-20261020T223932Z/`；
+`identity-ledger-proof.json` SHA256 `0d9e4ede70cefe2e270ccbc88c7384f5c6eeccaa4e9d5a56d597b6672d9b844e`。
+原失败不覆盖；baseline 仅由获批原生命令写入，不改 audit/schema/ignore。
 
 本 writer 未再次 install。所有本机 tests/vitest/DB/TEST/Docker/daemon/provider/runtime/demo/paid、
-push/PR/watch/review、Linear/清树均 NOT_RUN。无新范围外 actionable follow-up；
-测试排序裁定、baseline tighten 与父 R1/PR/exact-head CI 尚待父统一处理。
+push/PR/watch/review、Linear/清树均 NOT_RUN。无新范围外 actionable follow-up；父 R1/PR/exact-head CI 待父统一处理。
