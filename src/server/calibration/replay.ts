@@ -39,7 +39,7 @@ import {
 export interface ReplayAttempt {
   /** Full KC set. Production updates every member. */
   knowledgeIds: string[];
-  /** The single scored KC, or null when the question is not forward-scorable. */
+  /** The single scored KC. Null on a multi-KC question, which can still set itemPredictedP. */
   scoredKnowledgeId: string | null;
   /** Effective domain per KC. Null skips hierarchical drift for that KC. */
   domainByKc: Record<string, string | null>;
@@ -160,7 +160,6 @@ export function replayTheta(
     // Production returns before any write when the KC set is empty.
     if (kcs.length === 0) continue;
 
-    // Flag off, or an unresolved domain, contributes 0.
     const globalOf = (kcId: string): number => {
       const domain = a.domainByKc[kcId] ?? null;
       return domain !== null && HIERARCHICAL_ELO_ENABLED ? (thetaGlobal.get(domain) ?? 0) : 0;

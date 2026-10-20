@@ -10,7 +10,7 @@
 // stalled 不需要阈值。只报全败会漏掉 25 次里成功 1 次的限流。
 // 分母是 resolved = succeeded + failed，所以比率是抛错率，不被合法跳过稀释。
 // 稳态坏数据彼此独立。限流是相关失败。0.5 是「失败比成功多」，再低会每夜报警。
-// 样本不足 5 时比率是噪声，只留无参的 stalled。
+// 样本不足 5 时不算 degraded。有成功仍是 ok。stalled 只看是否一个成功都没有。
 //
 // pg-boss 在 batchSize 为 1 时把返回值写入 job.output。FAST 队列没有 DLQ，所以失败必须打日志。
 // stalled 让 DAG 节点落成 degraded。yield 档 degraded 仍是 succeeded，detail 留告警。
@@ -40,7 +40,7 @@ export interface JobYieldReport extends JobYield {
 /** 严格大于才算 degraded。理由见文件头。 */
 export const YIELD_DEGRADED_FAILURE_RATE = 0.5;
 
-/** 低于它只生效无参的 stalled。 */
+/** 低于它不算 degraded。有成功仍是 ok。 */
 export const YIELD_DEGRADED_MIN_SAMPLE = 5;
 
 /** orchestrator 用这个键从 job output 取回报告。 */
@@ -72,7 +72,6 @@ export function describeJobYield(job: string, y: JobYield, level: JobYieldLevel)
   const resolved = y.succeeded + y.failed;
   // level 由调用方传入，不必与判档自洽。resolved 为 0 时返回 null，避免印出 NaN%。
   if (resolved <= 0) return null;
-  // 不变量不成立时标出 attempted，不把它放进分母。
   const attemptedNote = y.attempted === resolved ? '' : ` [attempted=${y.attempted}]`;
   if (level === 'stalled') {
     return `${job}: zero yield — 0/${resolved} resolved unit(s) succeeded, ${y.failed} swallowed failure(s); downstream reads stale/empty data${attemptedNote}`;

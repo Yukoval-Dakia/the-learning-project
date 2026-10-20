@@ -1,4 +1,4 @@
-// Mounts manifest jobs that declare a loader.
+// Mounts manifest jobs that declare a loader, and starts admitted DBOS jobs, which have none.
 // A fast queue has no dead-letter queue. A missed housekeeping beat reruns on the next cron.
 // Declared worker options win. Absent fields stay on the retired 2s/1 recipe.
 // Jobs with no schedule mount first, so a cron sender finds its on-demand queue already created.

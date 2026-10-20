@@ -94,8 +94,9 @@ export interface VA1Result {
   n1: number;
   n0: number;
   kClusters: number;
-  /** Reported floor. The verdict is the bootstrap, not this. */
+  /** Kish design effect. The power check uses effectiveN. */
   deff: number;
+  /** Below the floor the verdict is INSUFFICIENT, before PASS or FAIL. */
   effectiveN: number;
   /** Attempts whose forward b included a non-zero family delta. */
   familyDeltaAppliedCount: number;
@@ -240,7 +241,7 @@ export function evaluateVA1Forward(
   const familyDeltaTotal = meta.familyDeltaTotal ?? 0;
   const partialDropped = meta.partialDropped ?? 0;
 
-  // Labels only. This floor is not the verdict.
+  // Below this floor, or below minKcClusters, the verdict is INSUFFICIENT.
   const eff = effectiveNFromClusters(clusters.map((c) => c.labels));
   const deff = eff.deff;
   const effectiveN = eff.effectiveN;

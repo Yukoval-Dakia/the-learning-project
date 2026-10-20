@@ -42,7 +42,7 @@ export async function bootWorker(options: BootWorkerOptions = {}): Promise<void>
     startup = null;
   } catch (err) {
     // Once a signal is in progress, the shutdown handler owns the exit code.
-    // A rejection here is the registration hitting a boss that is already stopping.
+    // Any other boot failure still throws.
     if (shutdown.ownsExit()) {
       console.error(
         '[worker] startup failed during shutdown — exit owned by the shutdown handler',

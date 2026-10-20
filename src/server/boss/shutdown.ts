@@ -44,7 +44,7 @@ export async function stopBossGracefully(boss: PgBoss, reason: string): Promise<
     }
     console.log('[boss] stopped cleanly');
   } catch (err) {
-    // stop() rejects when the timeout elapses with work still running.
+    // The graceful timeout resolves stop() and then shutdown continues. This catch is any other rejection.
     const interrupted = snapshotActiveQueues(boss);
     console.error('[boss] error during shutdown', err, {
       interrupted: interrupted.length > 0 ? interrupted : undefined,
