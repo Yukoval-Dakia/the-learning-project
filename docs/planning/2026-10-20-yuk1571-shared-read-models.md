@@ -43,24 +43,36 @@
 |---|---|---|---|
 | cross-capability value edges | 48 | 43 | −5：K→A 2→1、K→N 1→0、A→N 3→2（evidence-mcp，设计算术漏算的第五条）、A→I 1→0、P→I 2→1 |
 | nontrivial SCC | 1×5 cap | 1×5 cap | 不变（N 经 N→K→A→N 仍在环） |
-| capability→server | 444 | 444 | 不变 |
+| capability→server | 441 | 441 | 不变（merge 后 main baseline 已 444→441，非本片所致） |
 | server→capability deep | 0 | 0 | 不变 |
 | seam violations | — | 0 | 无新增跨包非 public import |
+
+merge `origin/main`（21 commits，含 YUK-1630 provider、YUK-1567 paid/subject、#1843 audit 合并）对本片 18 文件**零冲突零改动**；merge 后重测仅含本片 5 条减少，无未知增减。协调线解除 #1830 对 baseline 独占后，本片已按实测收紧 `capability-boundary-baseline.json`（total 48→43 + 5 pair），并新增 `YUK1571-shared-reads` note 记录读归属迁移、退出的 5 条读依赖、残留 compat 与未解 SCC；baseline 既有 notes 全部保留。
 
 ## Revision / 外部路径
 
 - base：`origin/main` e6ca25b03（branch `refactor/yuk-1571-shared-read-models`，独立 worktree `/Users/yuqi/.t3/worktrees/the-learning-project/t3-33f77fae`）
 - head：以 `git rev-parse HEAD` / checkpoint 目录名为准（本文件随 head 提交，不能自含 SHA）
 - 源码 revision `3078acd4f61c38a5695d110b161efc7d5e13311c` 的日志：`/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1571/3078acd4f61c38a5695d110b161efc7d5e13311c/`；`checks-sha256.json` SHA-256 `f29a316df1fe0a76a133be36fecd2abbc79119e75d4ca4faf8ab8887b57d47b8`。
+- merge+baseline 后最新 head 的日志：同根 `YUK-1571/<head>/main-baseline-release/`（不覆旧目录）。
 
 ## Commands（本机已跑）
+
+merge 前（revision `3078acd4f`，base e6ca25b03）：
 
 - `pnpm typecheck` PASS（两 tsconfig）
 - `pnpm lint` PASS（178 warnings，未将警告总数当作与 main 逐项等价的证明）
 - `pnpm build` PASS（web + server/worker/migrate 三 esbuild 产物）
-- `pnpm audit:capability-boundaries` **EXPECTED-FAIL**（6 条全部是「debt decreased → tighten baseline」delta；`capability-boundary-baseline.json` 归 Grok1830 独占，本 PR 不写）
+- `pnpm audit:capability-boundaries` **EXPECTED-FAIL**（6 条全部是「debt decreased → tighten baseline」delta；当时 baseline 归 Grok1830 独占，本 PR 不写）
 - `pnpm audit:architecture-deepening` 同上 6 条 baseline delta；5 条 stale catalog entry 已按本 head 真实边集修正 `scripts/capability-public-read-cycles.ts`（台账非 baseline）
 - `pnpm audit:capability-boundaries:snapshot` 实测快照已封存
+
+merge `origin/main` + baseline 登记后（最新 head）：
+
+- `pnpm typecheck` PASS；`pnpm lint` PASS（179 warnings，+1 为 merge 带入的既有级 warning）；`pnpm build` PASS
+- `pnpm audit:capability-boundaries` **PASS**（debt ratchets exact：capability->server=441 / server->capability-deep=0 / cross-capability-value=43）
+- `pnpm audit:architecture-deepening` **PASS**（SCC 台账核对通过；totals 441/0/43 低于上限 531/70/62）
+- `pnpm audit:capability-boundaries:snapshot` 实测快照已按新 head 封存
 
 ## NOT_RUN
 

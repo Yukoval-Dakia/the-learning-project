@@ -17,7 +17,8 @@
     "YUK-1529": "practice -> boss 15 -> 18 (+3, total 437 -> 441): worksheet-export-route enqueues worksheet_render via getStartedBoss + WORKSHEET_RENDER_QUEUE (same seam as session-end.ts enqueue), and practice manifest JobDecl imports the shared queue name (same as copilot manifest -> queue-names). practice -> r2 2 -> 3 (+1): server/worksheet/pdf-store is the single blob seam — content-addressed PDF put (render job) + read (download route), same edge kind as ingestion -> r2.",
     "YUK-1547": "practice -> ai 65 -> 66 (+1, total 437 -> 438): verify-framework.ts re-exports writeToolCallLog (src/server/ai/log) — structured-submit parse failures keep the bounded raw submit arguments as tool_call_log evidence attached to the task run (admission solve + crosscheck). Same owner-service lane as the file's existing server/ai re-exports (Provider/TaskTextResult); consumers add no new edge.",
     "YUK-1559": "C1-10 model-source unification: ingestion -> ai 15 -> 16 (+1, total 437 -> 438): provider-attempts.ts reads GLM_OCR_MODEL_ID from the provider catalog (src/server/ai/providers.ts) instead of pinning the glm-ocr literal — direct-lane declared ids belong to the catalog.",
-    "YUK-1567": "practice -> r2 raised 2 -> 3 (+1, total 439 -> 440): admission/reauthorization.ts void-release republish calls publishQuestionGroup, whose declared contract requires an injected readAssetBytes blob reader (refuses custom-block publishes without one); supplying getR2().get is the same caller-injection owner seam as the existing practice -> r2 edges in assets.ts and question-supply/jyeoo-candidates.ts."
+    "YUK-1567": "practice -> r2 raised 2 -> 3 (+1, total 439 -> 440): admission/reauthorization.ts void-release republish calls publishQuestionGroup, whose declared contract requires an injected readAssetBytes blob reader (refuses custom-block publishes without one); supplying getR2().get is the same caller-injection owner seam as the existing practice -> r2 edges in assets.ts and question-supply/jyeoo-candidates.ts.",
+    "YUK1571-shared-reads": "LIGHT shared read ownership move: cross total 48 -> 43 (-5). Five capability read consumers now import kernel-owned read models (src/kernel/read-models/{agent-note-hints,notes-read,artifact-backlinks,artifact-corrections,extraction-summary}) instead of sibling capability modules: knowledge/review.ts exits agency->notes-style reads via agent-note-hints (knowledge -> agency 2 -> 1); knowledge/node-page.ts exits notes server reads (knowledge -> notes 1 -> 0); agency/scout/evidence-mcp.ts exits notesForKnowledge (agency -> notes 3 -> 2); agency/tools/learning-item-context.ts exits ingestion extraction-summary reads (agency -> ingestion 1 -> 0); practice/tools/question-context.ts exits them too (practice -> ingestion 2 -> 1). Old capability paths remain explicit compat re-exports (no copied implementations), so residual edges are unchanged; the five-capability SCC {agency, ingestion, knowledge, notes, practice} persists because notes -> knowledge -> agency still reaches agency."
   },
   "debts": {
     "capabilityToServer": {
@@ -109,26 +110,24 @@
       "byOwnerPair": {}
     },
     "crossCapabilityValue": {
-      "total": 48,
+      "total": 43,
       "byOwnerPair": {
-        "agency -> ingestion": 1,
         "agency -> knowledge": 4,
-        "agency -> notes": 3,
+        "agency -> notes": 2,
         "agency -> practice": 4,
         "copilot -> agency": 1,
         "copilot -> notes": 2,
         "copilot -> practice": 1,
         "ingestion -> knowledge": 2,
         "ingestion -> practice": 2,
-        "knowledge -> agency": 2,
-        "knowledge -> notes": 1,
+        "knowledge -> agency": 1,
         "knowledge -> practice": 3,
         "notes -> knowledge": 1,
         "observability -> agency": 2,
         "observability -> practice": 1,
         "onboarding -> practice": 1,
         "practice -> agency": 3,
-        "practice -> ingestion": 2,
+        "practice -> ingestion": 1,
         "practice -> knowledge": 3,
         "shell -> agency": 2,
         "shell -> knowledge": 1,
