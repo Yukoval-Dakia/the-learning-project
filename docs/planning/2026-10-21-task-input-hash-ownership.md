@@ -3,8 +3,10 @@
 服务阶段：帮助靠谱；契约：任务输入、判分 provenance 与准入回执使用同一规范化/hash 算法。
 本片是完整职责迁址与冗余转出退役，不是新的接口深化，也不完成整张架构票。
 
-基准 `83bbecdaecaf70be0ae0241795fac3d5a07940c1`，源码提交
-`32bda226435b50cd3391b0a1cdec68fd78bf64c4`。
+当前整合基准 `67506c5eaa5604ba34d2c943132343bf2e7fab5e`，五门源码提交
+`0575996e798539762be3d3dd54e42ae6090fa4dd`；实际依赖总数 `393/0/37`，practiceAI 54。
+原始迁址基准 `83bbecdaecaf70be0ae0241795fac3d5a07940c1`，初次源码提交
+`32bda226435b50cd3391b0a1cdec68fd78bf64c4`；下文旧水位与旧 gate 为历史证据。
 父线逐路径确认六处 import/export hunk 后实施；没有带入父树旧 docs。
 
 ## 完整 owner 与调用方
@@ -18,7 +20,7 @@
 `kernel/canonical-json.ts`。没有新 adapter、registry、stable/compat 转发或假逻辑。
 
 下表路径除首项外均相对 `src/capabilities/practice/server/`；行号对应校验源码
-`18ddb1c3b41f7549634c84d22694a3f0d8ec8892`。
+`0575996e798539762be3d3dd54e42ae6090fa4dd`。
 
 | 真实 caller | 直接绑定与调用位置 | 原有调用方知识/策略 |
 | --- | --- | --- |
@@ -51,7 +53,7 @@
 5. 风险集中在持久 hash 表示和 caller 拒绝策略，因此仅迁址，未改这些行为。
    不减少 >1500 文件；数字、SCC 与 baseline 收紧需父线实测，不自行登记或改 audit。
 
-## 源码证据与验证边界
+## 初次交付证据与验证历史
 
 外置根：`/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1570/32bda226435b50cd3391b0a1cdec68fd78bf64c4/`。
 `task-input-hash-source/` 保存逐文件证明、raw diff、完整 caller census、argv/UTC/真实退出码；
@@ -90,7 +92,35 @@ raw stdout/stderr、argv、UTC、真实 rc 位于
 `/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1570/ed6f272b2f666fca14f6f055685fc14756a8f6f4/task-input-hash-tightened-audits/`；
 `sha256.json` 的 SHA-256：`ede629a7d13d3a84381adb5e14d06214b22f3d77b8c9ac6fba2d566347777df5`。
 
-tests/vitest/DB/TEST/Docker/daemon/provider/runtime/demo/paid、独立 review、push/PR/CI、部署均 NOT_RUN。
-audit 逻辑/schema/CI/package/lock 零修改；baseline 仅上述原生收紧。
-后续集成、issue 状态与唯一 R1 归父线；
+## 已审片普通合入最新 main
+
+父唯一 R1 对 `20222f2c→e1e49804f8ae956fb59af1010326c2f9e3c551cd` 给出 APPROVE，
+新可达 P0/P1 为 0。已读取原报告并核 SHA-256
+`c46c2ba1fedc4e9eda21f9160a6e17b210b003eac8b045e6f44737ed7afc3862`，
+报告位于外置 `YUK-1570/e1e49804f8ae956fb59af1010326c2f9e3c551cd/review-r1-codex.md`。
+本次未重开审查；以下是已审源码等价与重新执行五门的证据，不扩大原 R1 的静态裁决范围。
+
+fetch 确认最新 main 为 `67506c5eaa5604ba34d2c943132343bf2e7fab5e`，普通 merge 得到
+`473ac74b48874cdf4b0377d85ed821343e8f713c`。唯一冲突为 baseline 的三个真实 hunk：
+旧本片 `61→60` 与 main 四条 JSON decrease、总数 402/394、practiceAI 60/55。
+逐 hunk 采用 main incoming，解决后的 baseline 字节等于 main；没有覆盖产品文件。
+本片 7 个存活产品文件及旧删除路径共 8 路径状态/blob 与 R1 源码相同，五 caller 保护正文逐字相同；
+main 其余 16 个上游路径（含旧删除路径）全部保留。依赖三 hash 与父 install receipt 相同，未安装。
+
+从 main 的 394/55 出发，官方 `--tighten --base 67506c5e` 实测后仅追加 `55→54`、总数 `394→393`，
+提交为 `0575996e`；未预付数字。本片旧未合 `61→60` 账目不进入最终 HEAD，旧提交及 seal 留在历史。
+main changes 22 条完整前缀与其中四条 JSON decrease 原样保留，最终仅 append 第 23 条；
+notes 30、edgeRecords 20、sourceSizeRecords 1、compatShims 7 全部不变。
+
+在 `0575996e798539762be3d3dd54e42ae6090fa4dd` 经 heavy.sh 全机 2 槽、本 lane 串行运行
+typecheck/lint/build/两 audit，五项真实 rc0；lint 180 warnings，两 audit 显式 `--base 67506c5e`。
+实测 `393/0/37`、practiceAI 54、SCC 1×`{agency, knowledge, practice}`、>1500 文件 13（base 13），
+new dependency edges=0、new pass-through sites=0。未修改测试，无新的类型/格式或语义修复。
+raw stdout/stderr、argv、UTC、真实 rc、逐 owned blob/body 及 main 前缀证明位于
+`/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1570/0575996e798539762be3d3dd54e42ae6090fa4dd/task-input-hash-main675-five-gates/`；
+`sha256.json` 的 SHA-256：`5153e4220537d8f896938ffad2ee892cfa10a5b39fb650c35b92779eedbb5bca`。
+
+tests/vitest/DB/TEST/Docker/daemon/provider/runtime/demo/paid、push/PR/CI、部署均 NOT_RUN。
+audit 逻辑/schema/CI/package/lock 零修改；baseline 仅授权原生收紧与真实冲突整合。
+父负责后续 PR/CI 与 issue 状态；本 writer 未自派审查。
 本片未发现需新增 tracker 的独立缺陷，也未自行调用 Linear。
