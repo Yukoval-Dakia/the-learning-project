@@ -74,11 +74,19 @@ runner.fallback.test.ts 经 runner 钉 null connection shape 与 durable judge �
 `b23b1f8c844efdc6f1a1c7d50344d8d7ffd0a36a6fb27809f3e5d8706742acf5`（此前待裁候选，非最终验收）。
 最终 exact HEAD 的源码/原始命令/逐文件 hash 另落 `<final-head>/agent-error/final-source-proof/`，不覆盖旧 seal。
 
-静态字节对照与 git diff --check 已完成；13 个既有改动 TS 的 node --check exit 0。
-新共享 TS 在原样迁入的 private type 处被 Node --check 报 Unexpected identifier；显式模式也 exit 1，
-失败原样留在基点 syntax-* 目录，不冒称类型检查通过，待真实 tsc 验证。
+静态字节对照与 git diff --check 已完成。父唯一一次 heavy frozen install exit 0，依赖三 hash
+原样；回执在 c0b2e34cce31222bb8b3d274249007b63dc2dff5/parent-frozen-install.json。
+真实 tsc（两 tsconfig）及 build 均 exit 0。此前新共享 TS 的 Node --check private type 解析失败
+原 seal 保留；它不是 tsc 结论，现已由真实 typecheck 通过消除该类型疑问。
 
-缺 node_modules，未 install/update/复制依赖。typecheck/lint/build/两 audit 均 NOT_RUN，
-交父串行一次 frozen install 并仅经 heavy.sh 验证；baseline 实测差异由父登记。
-本机 tests/vitest/DB/TEST/Docker/daemon/provider/runtime/demo/paid、push/PR/watch/review、
-Linear/清树均 NOT_RUN。无新范围外 actionable follow-up；父负责 tracker、基线和最终 gate。
+五门全部经外部 heavy.sh 串行运行，原始 stdout/stderr、argv、UTC 和真实返回码在
+`c0b2e34cce31222bb8b3d274249007b63dc2dff5/agent-error/checks-20261020T223305Z/`，
+sha256.json `84ca8c041da85ae6b5fb629335a4c18be77b6ce3ddabc4b5098c30d442119a6f`。
+Lint exit 1（180 warnings）：唯一 error 是获批测试 import 应从第 12 行排序到第 2 行，
+超出“只这一行、不排序其他行”边界；测试未擅改，精确 TEXT 候选已交父裁定。
+两 audit 各 exit 1，且仅三项下降待父收紧：ingestion→ai 16→15、practice→ai 61→58、
+capability→server 403→399；无其他 violation。作者未修改 baseline/上游 ledger，不称五门全绿。
+
+本 writer 未再次 install。所有本机 tests/vitest/DB/TEST/Docker/daemon/provider/runtime/demo/paid、
+push/PR/watch/review、Linear/清树均 NOT_RUN。无新范围外 actionable follow-up；
+测试排序裁定、baseline tighten 与父 R1/PR/exact-head CI 尚待父统一处理。
