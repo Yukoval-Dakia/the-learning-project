@@ -40,9 +40,9 @@ import {
   selectSurface,
 } from '@/capabilities/copilot/server/copilot-run-input';
 import {
+  captureWorkerSessionCursor,
   commitWorkerSessionCursor,
-  discardWorkerSessionCursor,
-  readWorkerSessionCursor,
+  selectResumableWorkerSession,
 } from '@/capabilities/copilot/server/copilot-run-session-cursor';
 import {
   type ClaimCopilotExecutionFenceFn,
@@ -70,7 +70,6 @@ import {
   COPILOT_RUN_TABLE,
   isCopilotRunTerminalEvent,
 } from '@/capabilities/copilot/server/copilot-run-status';
-import { isCopilotWorkerSessionOwned } from '@/capabilities/copilot/server/copilot-worker-session';
 import { acceptedCopilotDerivationPolicy } from '@/capabilities/copilot/server/derivation-policy';
 import {
   type CopilotRunJobData,
@@ -253,9 +252,7 @@ async function executeAcceptedCopilotRun(
   const claimExecutionFence = params.claimExecutionFenceFn ?? claimCopilotExecutionFence;
   const createCancellationControl =
     params.createCancellationControlFn ?? createCopilotRunCancellationControl;
-  const initialCursor = await readWorkerSessionCursor(db, data.session_id);
-  const discardWorkerCursor = async (database: Db | Tx = db) =>
-    discardWorkerSessionCursor(database, data.session_id, initialCursor);
+  const discardWorkerCursor = await captureWorkerSessionCursor(db, data.session_id);
 
   // 启动前 replay 一次：F3 terminal-already-present 守卫 + pre-fence 协作取消。
   // 运行中 Stop 由下方 cancellation control 的 poll / SDK hook / DomainTool gate
@@ -454,18 +451,7 @@ async function executeAcceptedCopilotRun(
     now: new Date(),
     historyAnchorEventId: runId,
   });
-  // A worker may resume only a session it observed and registered in this
-  // process, and only while the conversation row still points at that id.
-  // Persisted ids from another process/app are intentionally cold-started.
-  // Stored ids are `pi:<uuid>` markers — resume replays the bounded durable
-  // turns into context.messages (pi-agent-adapter piSessionReplay).
-  const persistedSdkSessionId = await readWorkerSessionCursor(db, data.session_id);
-  const resumeSessionId =
-    !answerOnly &&
-    isCopilotWorkerSessionOwned(data.session_id, persistedSdkSessionId) &&
-    persistedSdkSessionId
-      ? persistedSdkSessionId
-      : undefined;
+  const resumeSessionId = await selectResumableWorkerSession(db, data.session_id, answerOnly);
   let progressChain: Promise<void> = Promise.resolve();
   let streamedProse = '';
   const toolSummaries: string[] = [];

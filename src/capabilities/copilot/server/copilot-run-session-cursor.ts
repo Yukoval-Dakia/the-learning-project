@@ -2,10 +2,12 @@
 //
 // Session reuse is only safe when two stores agree: the conversation row's
 // persisted cursor (`agent_sdk_session_id`, a `pi:<uuid>` marker) and this
-// worker process's registered ownership. Both halves move together through
-// this module — a run may resume only a session it observed and registered
-// in-process, and a discarded or superseded cursor clears both halves under
-// the caller's transaction. Consumers never drive the two stores separately.
+// worker process's registered ownership. This module owns the full decision
+// and mutation surface for that pairing — reading, resume selection, commit,
+// and guarded discard — so no consumer drives the two stores separately.
+// Ordering is consolidated, not hardened: the in-process registry is not
+// transactional with Postgres, so a rolled-back write does not roll back
+// memory; this preserves the pre-existing protocol unchanged.
 
 import { eq } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
@@ -15,29 +17,53 @@ import {
   getAgentSdkSessionId,
   setAgentSdkSessionId,
 } from '@/server/session/conversation';
-import { clearCopilotWorkerSession, registerCopilotWorkerSession } from './copilot-worker-session';
+import {
+  clearCopilotWorkerSession,
+  isCopilotWorkerSessionOwned,
+  registerCopilotWorkerSession,
+} from './copilot-worker-session';
 
-/** Read the persisted native-session cursor without judging ownership. */
-export async function readWorkerSessionCursor(
+/** Discard armed against the cursor captured earlier in the run. */
+export type WorkerSessionCursorDiscard = (database?: Db | Tx) => Promise<void>;
+
+/**
+ * Capture the conversation's persisted cursor and return a discard bound to
+ * that captured value. The read happens at capture time; the returned closure
+ * clears the in-process half only when a cursor was captured, then clears the
+ * durable row under the caller's transaction with the captured value as the
+ * expected-cursor guard, so a cursor superseded since capture is never
+ * cleared.
+ */
+export async function captureWorkerSessionCursor(
   database: Db | Tx,
   conversationId: string,
-): Promise<string | null> {
-  return getAgentSdkSessionId(database, conversationId);
+): Promise<WorkerSessionCursorDiscard> {
+  const capturedCursor = await getAgentSdkSessionId(database, conversationId);
+  return async (target: Db | Tx = database) => {
+    if (capturedCursor) clearCopilotWorkerSession(conversationId, capturedCursor);
+    await clearAgentSdkSessionId(target, conversationId, capturedCursor);
+  };
 }
 
 /**
- * Discard the persisted cursor and this process's registered session. When
- * `expectedCursor` is given it guards both halves so a superseded cursor is
- * never cleared; the durable clear still runs unconditionally so a missing
- * expected value cannot leave a stale pointer behind.
+ * Select the native session this worker may resume. The persisted cursor is
+ * always read — including for answer-only runs — so the durable observation
+ * ordering is unchanged; the answer-only gate and this process's registered
+ * ownership then decide. Persisted ids from another process/app intentionally
+ * cold-start: `pi:<uuid>` markers mean durable turns replay into
+ * context.messages instead (pi-agent-adapter piSessionReplay).
  */
-export async function discardWorkerSessionCursor(
+export async function selectResumableWorkerSession(
   database: Db | Tx,
   conversationId: string,
-  expectedCursor?: string | null,
-): Promise<void> {
-  if (expectedCursor) clearCopilotWorkerSession(conversationId, expectedCursor);
-  await clearAgentSdkSessionId(database, conversationId, expectedCursor);
+  answerOnly: boolean,
+): Promise<string | undefined> {
+  const persistedCursor = await getAgentSdkSessionId(database, conversationId);
+  return !answerOnly &&
+    isCopilotWorkerSessionOwned(conversationId, persistedCursor) &&
+    persistedCursor
+    ? persistedCursor
+    : undefined;
 }
 
 /**
@@ -52,9 +78,8 @@ export async function discardRunWorkerSessionCursor(tx: Tx, runId: string): Prom
     .where(eq(event.id, runId))
     .limit(1);
   if (!ask?.sessionId) return;
-  const cursor = await getAgentSdkSessionId(tx, ask.sessionId);
-  if (cursor) clearCopilotWorkerSession(ask.sessionId, cursor);
-  await clearAgentSdkSessionId(tx, ask.sessionId, cursor);
+  const discard = await captureWorkerSessionCursor(tx, ask.sessionId);
+  await discard(tx);
 }
 
 /**
