@@ -154,21 +154,10 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
     reviewIssue: 'YUK-885',
     commandFiles: ['src/capabilities/practice/jobs/quiz_verify.ts'],
   },
-  {
-    owner: 'ingestion',
-    consumer: 'practice',
-    files: [
-      // YUK-986 (Supply-Agent/1) — jyeoo-fetch queue job 退休后，candidates 模块接手
-      // staged 资产持久化（同一 ingestion owner seam，r2/lock 经本模块单点转发）。
-      'src/capabilities/practice/server/question-supply/jyeoo-candidates.ts',
-    ],
-    symbols: ['SourceAssetRow', 'lockImageStorageKey', 'persistImageAsset', 'sha256Hex'],
-    dto: 'SourceAssetRow + asset persistence commands',
-    justification:
-      'the jyeoo supply lane (jyeoo_fetch_candidates DomainTool, YUK-986) persists staged assets through the ingestion owner. The question-context material excerpt reads moved to @/kernel/read-models/extraction-summary (YUK-1571).',
-    reviewIssue: 'YUK-885',
-    commandFiles: ['src/capabilities/practice/server/question-supply/jyeoo-candidates.ts'],
-  },
+  // YUK-1571 — the practice -> ingestion edge is retired: the content-addressed
+  // source_asset write protocol moved to src/kernel/records/asset-store.ts;
+  // jyeoo-candidates.ts now consumes the kernel module directly and ingestion
+  // exits the SCC (asset-store compat shims keep the old import paths alive).
   {
     owner: 'knowledge',
     consumer: 'practice',
