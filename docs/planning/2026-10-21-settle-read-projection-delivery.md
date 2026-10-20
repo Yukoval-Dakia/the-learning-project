@@ -1,100 +1,121 @@
 # 结算读投影归位 — 交付说明（YUK-1572）
 
-状态：已实施，静态证据齐全；机器重活因 worktree 无 node_modules 记 NOT_RUN（不自行安装，交父统一 frozen install 后复跑）。
+状态：已实施；静态等价证据齐全，机器门禁结果见末节（以实跑为准）。
 
 - 基座 `origin/main`：`ce74a7733f93044f55c0b00d056ae3c8d137f1fc`（与任务固定 SHA 一致，无更新重叠）。
 - 分支：`arch/settle-read-projection`；worktree：`/Users/yuqi/.t3/worktrees/the-learning-project/t3-617d65b4`。
-- 本片 head：本 commit（见 `git rev-parse HEAD`）。
+- 本 lane 最终 head：`git rev-parse HEAD` 实际值；静态证据 seal 已存于
+  `…/YUK-1572/4c50287cf2b9b1bd4cd39721b024eb1c5da293c1/settle-read/`（不覆盖），
+  源码固定4c50287，父接手后真实门日志见 `/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1572/4c50287cf2b9b1bd4cd39721b024eb1c5da293c1/parent-gates-after-rate-limit/`；之后只有本交付doc改动。
 
 ## 变更内容
 
 - 新增 `src/server/assessment/settle-read.ts`（469 行）：结算读投影模块，
-  拥有事件加载 → live/effective 判定 → 回放闭包 → 候选历史重建 → 只读
-  候选态转换的完整读簇。逐字迁入：`FsrsSubject`/`ThetaApply`/
-  `SettlementPlan`/`AppliedSettlementEvent`/`SettlementEventRow` 五个类型，
-  `coerceMs`/`subjectKey`/`planFromPayload`/`parseFamilyFold`/
-  `candidateSchedulingSuppressed` 五个纯辅助，`loadSettlementEvents`/
-  `liveAppliedSettlements`/`byOccurrenceAsc`/`replayClosure`/
-  `candidateHistory`/`candidateStateForRead` 六个读函数。
-- `src/server/assessment/settle.ts`（1915 → 1532 行）：删除移出块与
-  仅被移出块消费的 imports；新增 `rederiveSettlementPlan` 端口绑定
-  （`loadScope`+`derivePlan` 保持写者私有，不出本文件）；`executePlan`
-  两处 `candidateHistory` 调用仅追加该注入参，调用顺序不变；
-  `candidateStateForRead` 以绑定端口的真适配函数保留原签名与原出口
-  （4 实参 → 绑 3 形参，非 pass-through 形态）。
-- 方向：`settle.ts`（写者）→ `settle-read.ts`（读者）单边值依赖；
-  读模块不 import 写者。scope 加载/plan 推导经显式 `RederiveSettlementPlan`
-  端口注入，无 import 环。
-- 未新增 `export-from`、别名导出、registry、shim 或豁免；未改
-  `scripts/`、audit、schema、baseline、CI、package/lock；未动测试。
+  拥有事件行解码 → live/effective 判定 → 回放闭包 → 候选历史重建 →
+  只读候选态转换的读簇。逐字迁入（仅 `export` 关键字差异）：
+  `FsrsSubject`/`ThetaApply`/`SettlementPlan`/`AppliedSettlementEvent`/
+  `SettlementEventRow` 五个类型；`coerceMs`/`subjectKey`/`planFromPayload`/
+  `parseFamilyFold`/`candidateSchedulingSuppressed` 五个纯辅助；
+  `loadSettlementEvents`/`liveAppliedSettlements`/`byOccurrenceAsc`/
+  `replayClosure` 四个读函数。
+- `candidateHistory` 与 `candidateStateForRead` 实现迁入 settle-read.ts，
+  非逐字：为获得 scope 加载与 plan 推导（写者私有，不出 settle.ts），
+  二者新增 `rederive: RederiveSettlementPlan` 形参；`candidateHistory`
+  体内原 `await loadScope(tx, input)` + `derivePlan(input, scope)` +
+  `scope.frozenLearningScope` 三行改为单次 `await rederive(tx, input)`
+  解构。除此之外两函数体逐字不变（set-diff 逐行见 seal）。
+- `settle.ts`（1915→1532 行）：删除移出块与仅被移出块消费的 imports；
+  新增 `rederiveSettlementPlan` 绑定体（551-552 行，直接调用原样的
+  loadScope/derivePlan，返回 `{plan, frozenLearningScope}`）；
+  `executePlan` 两处 `candidateHistory` 调用仅在第 5 位插入注入参
+  （原 `[]`/`options.memoryHistory?…` 等其余实参逐字不变，调用时点不变）；
+  `candidateStateForRead` 公开出口改为绑定适配函数（同签名，转发
+  (tx,subject,now) + 绑定端口）。
+- 方向：settle.ts（写者）→ settle-read.ts（读者）单边值依赖；读模块无
+  settle.ts import edge。
+- 未新增 `export-from`/registry/shim/豁免；未改 `scripts/`、audit、
+  schema、baseline、CI、package/lock；未动任何测试文件。
 
-## 保护段证据（逐块提取 + 花括号配对比对，base vs head）
+## 保护段证明（brace 配对提取 base↔head 逐块比对，证据见 seal）
 
-IDENTICAL：`executePlan`（归一化两处注入参后）、`revertSettlementMember`、
+逐字 IDENTICAL（无任何差异）：`revertSettlementMember`、
 `writeSettlementEvent`、`learningSettlement`、`withdrawCapturedOccurrence`、
 `writeReplayRequired`、`preservedUserRatingExists`、`findUnattributedNewerWrites`、
-`loadScope`、`derivePlan`、`ReplayRequiredError`、type `ReplayRequired`。
-
-移出块 base↔settle-read 逐字一致（仅 `export` 关键字与 candidateHistory/
-candidateStateForRead 的注入形参差异）；14 个 diff hunk 全为
-import 调整/块删除/注入参追加，零写者语义改动。完整 diff 与提取证据
-封存于 architecture-deepening/YUK-1572/<head>/settle-read/ 外部 artifact。
-
-`ASSESSMENT_SETTLEMENT_ACTION` 字面量在 settle-read.ts 按
-`src/kernel/read-models/assessment-verdict.ts:99` 既有先例复刻并注释，
-不在 settle.ts 新增 export-from site。
+`loadScope`、`derivePlan`、`ReplayRequiredError`、type `ReplayRequired`、
+`normalizeIds`、`contentKcs`、`unitPartIdsOf`、`unitExecutorKinds`、
+`schedulingSubjects`、`hasSchedulingEffect`、`planSubjects`。
+`executePlan`：除两处 `candidateHistory` 实参位插入 `rederiveSettlementPlan`
+外逐字相同（归一化该参后 IDENTICAL）。
+`candidateHistory`/`candidateStateForRead`：见上"变更内容"——读模块内的
+缝区改动即注入形参与三行重推导收口，等价性逐条证明封存于
+`call-seam-equivalence.txt`（同 tx/input/调用时点、frozenLearningScope
+读取时点、plan 对象身份、current.forgetting* mutation 顺序、错误实例
+透传；stack 多一个 async frame + 一次 microtask hop，如实记录）。
 
 ## 两个真实变化场景
 
-1. **历史/有效状态投影**：dead 判定仍由 `settlementReversions` 权威计算；
-   verdict 被替换但 `ratingSource==='user'` 且写过 FSRS 的旧结算保留为
-   `fsrsOnly` 段（theta 置 `retained_user_rating` 弃权）——该规则逐字在
-   settle-read 的 `liveAppliedSettlements`，写者 replay（settle.ts:983、
-   1453）与测试/fsrs-state 消费的行为不变。
+1. **历史/有效状态投影**：`settlementReversions` 仍权威判定 dead；
+   verdict 被替换但 `ratingSource==='user'` 且写过 FSRS 的旧结算保留
+   `fsrsOnly` 段（theta 置 `retained_user_rating` 弃权）。该规则逐字在
+   settle-read 的 `liveAppliedSettlements`；写者 replay 路径
+   （settle.ts:983、1453）与外部消费者的可观察行为不变。
 2. **执行/撤销协议**：回放闭包、occurrence+submissionId 排序、
-   revert 新→旧/reapply 旧→新、更正/撤销协议未随读拆分改一行；
-   `executePlan` 仅在两处 `candidateHistory` 调用追加注入参，写序不变。
+   revert 新→旧/reapply 旧→新、更正/撤销协议代码逐字未动；
+   `executePlan` 仅两处调用点追加注入参，写序不变。
 
-## 五标准对账
+## 五标准对账（事实陈述，不声称收益）
 
-- 责任：读模块完整拥有"结算事件→有效投影→候选态"一条链；非转发壳。
-- 接口：14 个导出符号全部被 settle.ts 消费；`planFromPayload`/
-  `parseFamilyFold`/`ThetaApply` 不外泄。写者对读的唯一耦合是消费
-  读函数 + 注入一个 rederive 端口。
-- 隐藏知识：事件 payload 形状解析（replay_inputs/family_fold/subjects）、
-  live/dead 判定、闭包算法、legacy 行重建全部藏于读模块；settle.ts
-  只剩"要历史就给 rederive"这一黑箱边界。
-- 修改局部性：读侧规则演进只改 settle-read.ts；写者协议演进只改
-  settle.ts；交汇处是稳定端口类型。
-- 行为证据：逐块 IDENTICAL 证明 + 14 hunk 人工核验；typecheck/lint/
-  build/audit 因缺依赖 NOT_RUN，未声明语义等价之外的任何收益。
+- 责任：读模块拥有事件解码→投影→闭包→历史重建→只读转换这一条读链；
+  写者保留执行/撤销/事件写入/scope/plan 推导。
+- 接口：settle-read 导出 14 个符号，全部被 settle.ts 消费（其中
+  `candidateStateForRead` 经适配出口对外）；`planFromPayload`/
+  `parseFamilyFold`/`ThetaApply` 未导出。
+- 隐藏知识：外部 caller 的可观察面未变——它们原先就只能经公开出口
+  触达，私有函数本不可达；本次变化是**写者文件内部**：读算法不再与
+  写者实现同文件，写者经 import 消费读模块。不声称 caller "少知"是
+  新增收益。
+- 修改局部性：读规则演进改 settle-read、写者协议演进改 settle.ts；
+  场景编辑原先同样只涉及单一文件，不冒称新的单点收益。
+- 行为证据：逐块提取比对 + 14 hunk 逐行核验 + 缝等价逐项证明；
+  其余以门禁实跑结果为准（末节）。
 
-## 闭包与消费者
+## 适配器与字面量复刻 — 待分类事项（不自签）
 
-- `candidateStateForRead` 消费者：`src/server/fsrs/state.ts:54` 动态
-  import、`settle-forgetting.db.test.ts` 四处调用——签名 `(tx, subject,
-  now)` 原样保留。
-- `settle.ts` 其余出口（`ASSESSMENT_SETTLEMENT_ACTION/VERSION`、
-  `SettlementObservers`、`learningSettlement`、`withdrawCapturedOccurrence`）
-  未动；runtime.ts re-export 不受影响。
-- settle-read 无未解析标识符（全符号溯源完成）；`biome check` 两文件
-  exit 0；Node strip-types 语法解析 settle-read.ts OK（settle.ts 因
-  预存 parameter-property 不支持 strip-only，已由 biome 全解析覆盖）。
+- `candidateStateForRead` 适配器：转发全部 3 个公开形参 + 绑定 1 个
+  端口常量。是否被 pass-through scanner 判为新 site，以
+  `audit:architecture-deepening` 实跑输出与父裁决为准；writer 不自签
+  非 pass-through，也不为绕门改实现。
+- `ASSESSMENT_SETTLEMENT_ACTION`：settle-read.ts:42 复刻字面量并注释
+  （参照 `kernel/read-models/assessment-verdict.ts` 既有先例——先例仅
+  证明该做法存在，不构成授权）。漂移代价如实列出：action 字符串若
+  未来改名需同步两处；建议由父裁决登记或改由共享常量归位。
 
 ## 行数与边界
 
-- settle.ts 1915 → 1532（仍 >1500，如实报告：未为凑阈值移动保护段）。
-- settle-read.ts 469（<1000，无需 baseline 登记）。
-- 边界成立理由：读簇是单一职责闭包（事件表→投影→候选态），写者对它
-  只保留消费 + 一个注入端口；移出的全部符号在 settle.ts 中除消费外
-  无第二实现。
+- settle.ts 1915 → 1532（**仍 >1500**，如实报告；未为凑阈值移动任何保护段）。
+- settle-read.ts 469（<1000，不触发 baseline 登记）。
+- 边界构成：读簇为"event 表 → 有效投影 → 候选态"完整职责闭包；
+  写者对它的耦合 = 消费读函数 + 注入一个 rederive 端口。
 
 ## 机器实跑 / NOT_RUN
 
-实跑：`biome check`（全局 2.5.7，两文件）exit 0；Node `stripTypeScriptTypes`
-语法解析（settle-read）OK；`git diff --check` clean；保护段逐块比对
-（上表）；行数与 hash 记录。
-NOT_RUN：`pnpm typecheck`、`pnpm lint`、`pnpm build`、
-`pnpm audit:capability-boundaries`、`pnpm audit:architecture-deepening`、
-全部测试/DB/provider/runtime——worktree 无 node_modules 且授权禁止
-自行安装，交父统一安排。
+实跑（本机，heavy.sh 槽位内，原始日志与 argv/UTC/真实 rc 封存于
+`/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1572/4c50287cf2b9b1bd4cd39721b024eb1c5da293c1/parent-gates-after-rate-limit/`）：
+
+- `pnpm typecheck`：父实际执行 rc=0，argv/UTC/log SHA见 results.jsonl
+- `pnpm lint`：父实际执行 rc=0，argv/UTC/log SHA见 results.jsonl
+- `pnpm build`：父实际执行 rc=0，argv/UTC/log SHA见 results.jsonl
+- `pnpm audit:capability-boundaries`：父实际执行 rc=0，argv/UTC/log SHA见 results.jsonl
+- `pnpm audit:architecture-deepening`：父实际执行 rc=0，argv/UTC/log SHA见 results.jsonl
+- 静态：`biome check`（global 2.5.7 冒烟，早于 frozen install）exit 0；
+  Node strip-types 语法解析 settle-read OK；`git diff --check` clean。
+
+NOT_RUN：全部 tests/vitest/DB/migration/provider/runtime/demo（lane
+授权明确禁止）。
+
+
+## 父接手后的实测与边界
+
+原writer因模型额度中断，未完成的文档占位已由父替换为真实回执，源码与4c50287逐字相同。父21:53:40–21:54:25 UTC经heavy.sh串行完成五门：typecheck/lint/build/两architecture audits全部0；403/0/37、SCC1、超长15保持，pass-through新增0。机器未发射新站点不等于证明新接口深化；公开适配口只绑定既有scope/plan推导，不宣称caller步骤变少。原static接缝说明中的boolean|undefined应更正为实际SettlementScope.frozenLearningScope:boolean；旧封存保留，本文作更正。
+
+原有action字面量的复制是本次解耦的维护代价，不作为新抽象收益；两处调用实参改动与多一层async边界单独呈独立审查，不称executePlan整体逐字相同。独立R1和exact CI仍待，尚未验收或计main；测试/DB/runtime/provider未运行。
