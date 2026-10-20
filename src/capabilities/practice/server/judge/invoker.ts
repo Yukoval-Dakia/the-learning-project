@@ -10,6 +10,7 @@ import {
   JudgeResultV2,
   type JudgeResultV2T,
 } from '@/core/schema/capability';
+import { sha256Canonical, taskInputHash } from '@/core/task-input-hash';
 import type { Db } from '@/db/client';
 import type { TaskTextResult } from '@/server/ai/provenance';
 import {
@@ -22,12 +23,7 @@ import { SubjectProfileSchema } from '@/subjects/profile';
 import type { JudgeKind } from '.';
 // F0 (PR #309 round-3) — resolver now lives in the dependency-light leaf.
 import { persistJudgeRunDigests } from './execution-provenance-resolve';
-import {
-  JUDGE_PROMPT_TEMPLATE_REVISION,
-  judgePromptFingerprint,
-  sha256Canonical,
-  taskInputHash,
-} from './judge-execution-provenance';
+import { JUDGE_PROMPT_TEMPLATE_REVISION, judgePromptFingerprint } from './judge-execution-provenance';
 import { narrowQuestionToPart } from './narrow-part';
 import {
   type JudgeAnswerParams,
