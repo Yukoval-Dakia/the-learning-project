@@ -118,3 +118,11 @@ env.txt、diff-full.patch、commit-stat.txt、checks-sha256.json。
 父侧证据在 `…/YUK-1572/c2cfb668f9b60eaa694507791c8eecd1a29be93a/`：
 `parent-function-body-proof.json`（28 函数体逐字一致）、
 `parent-frozen-install.json`（frozen install rc0）。
+
+## 父级尺寸登记与终检
+
+原代码 `92e4c4ead17495658114302525e5437b742b8667` 的 typecheck/lint/build 与 deepening 真实退出码为0，唯一 boundaries 失败是 job import 拆分增加2行。父按现有 sourceSizeRecords schema 追加一次真实登记：quiz_verify 1788→1790，base blob `8a73b6df27d9da1ddb3b44c70fad89e3948e0535`，UTC 2026-10-20，YUK-1572；不是放宽1500门或增加职责。
+
+登记后父实际 baseline Biome、capability-boundaries、architecture-deepening 全部退出0；未改三个产品文件，前述源码检查与最终源码逐blob一致。boundary实测403/0/37、无新增依赖、SCC仍1，超长文件14（base15）；pass-through新增0。原红灯日志保留。
+
+父原始argv/UTC/退出码/log SHA：`/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1572/eb2c09d583a903ed1e7e667d6d90601e865cdcf6/parent-ledger/results.jsonl`。本机tests/DB/provider/runtime未运行，独立R1与exact CI由父另行验收；未计main收益。
