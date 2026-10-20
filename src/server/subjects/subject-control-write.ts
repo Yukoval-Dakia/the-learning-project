@@ -1,14 +1,9 @@
-// YUK-601 (v3.2 §3.4) — 控制行写面业务层（CAS 轴 = subject.revision）：
-//   renameSubject   → PATCH /api/admin/subjects/:id            {expectedRevision, displayName}
-//   retireSubject   → POST  /api/admin/subjects/:id/retire     {expectedRevision}
-//   restoreSubject  → POST  /api/admin/subjects/:id/restore    {expectedRevision}
-//   resetSubject    → POST  /api/admin/subjects/:id/reset      {expectedRevision}
-//   validateSubject → POST  /api/admin/subjects/:id/validate   {traitPayloadOverrides}（无状态）
+// 控制行写面业务层（CAS 轴 = subject.revision）：rename/retire/restore/reset/
+// validate。
 //
-// 与 trait-write 同一并发协议：写事务开头控制面 advisory lock；CAS = 陈旧 UI
-// 提交守卫（锁内比对，'stale' 携 currentRevision）。
-// rename/reset 锁内验证 root 历史，写专属 fold event 后由共同 projection 更新结构。
-// subject/revision/journal 与 root 事件及投影保持同事务，未知历史拒绝并整体回滚。
+// 写事务开头取控制面 advisory lock；CAS 只守卫陈旧 UI 提交（锁内比对，'stale'
+// 携 currentRevision）。rename/reset 锁内验证 root 历史并写 fold event；
+// subject/revision/journal 与 root 事件及投影同事务，未知历史整体回滚。
 
 import { and, eq, isNull, ne } from 'drizzle-orm';
 import { getDefaultRegistry } from '@/core/capability/judges';
@@ -88,15 +83,14 @@ async function updateSubjectRootName(
     .where(eq(knowledge.id, rootId))
     .limit(1)
     .for('update');
-  // Legacy/test control rows can exist without a root. There is no knowledge row mutation in that
-  // case, so no fold event is needed; a later ensureSubjectRoot writes a genesis with displayName.
+  // Legacy/test rows can exist without a root. With no knowledge row there is no
+  // mutation to fold; a later ensureSubjectRoot writes the genesis with displayName.
   if (!root) return;
   await requireKnowledgeHistory(tx, root);
 
-  // Stamp the materialization only after the root row lock is acquired. A knowledge
-  // proposal can mutate this root without taking the subject control-plane lock; reusing
-  // the caller's earlier transaction timestamp would let replay order this rename before
-  // the mutation whose post-version we just observed.
+  // Stamp the materialization after the root row lock. A knowledge proposal can
+  // mutate this root without the control-plane lock; reusing an earlier timestamp
+  // would let replay order this rename before the mutation we just observed.
   const materializedAt = new Date();
   const nextVersion = root.version + 1;
 
@@ -122,8 +116,6 @@ async function updateSubjectRootName(
   });
   await projectKnowledgeNodeGuarded(tx, rootId);
 }
-
-// ---------- rename ----------
 
 export async function renameSubject(
   db: Db,
@@ -173,14 +165,12 @@ export async function renameSubject(
   });
 }
 
-// ---------- retire / restore ----------
-
 export async function retireSubject(
   db: Db,
   args: { subjectId: string; expectedRevision: number },
 ): Promise<ControlWriteResult> {
   if (args.subjectId === 'general') {
-    // 固定 default fallback；可替换 fallback 机制不采纳（v3.2 §3.4）。
+    // general 是固定 default fallback；可替换 fallback 机制不采纳。
     return { kind: 'forbidden', message: 'general cannot be retired' };
   }
   return db.transaction(async (tx): Promise<ControlWriteResult> => {
@@ -253,7 +243,7 @@ export async function resetSubject(
   args: { subjectId: string; expectedRevision: number },
 ): Promise<ControlWriteResult> {
   if (args.subjectId === 'general') {
-    // general 绑定结构性锁定在自有种子（P1-1）——reset 无意义且换绑面被锁。
+    // general 的绑定结构性锁定在自有种子，reset 无意义。
     return { kind: 'forbidden', message: 'general bindings are structurally locked (P1-1)' };
   }
   return db.transaction(async (tx): Promise<ControlWriteResult> => {
@@ -266,7 +256,7 @@ export async function resetSubject(
     }
 
     const isBuiltin = row.origin === 'builtin';
-    // custom → general 种子；builtin → 本科种子（v3.2 §3.4）。
+    // custom → general 种子；builtin → 本科种子。
     const seedSubject = (isBuiltin ? args.subjectId : 'general') as BuiltinSubjectId;
     if (isBuiltin && !(BUILTIN_SUBJECT_IDS as readonly string[]).includes(args.subjectId)) {
       return { kind: 'invalid', message: `builtin subject "${args.subjectId}" has no code seeds` };
@@ -289,8 +279,8 @@ export async function resetSubject(
       if (from && from !== to) rebound.push({ kind, from_trait_id: from, to_trait_id: to });
     }
 
-    // displayName 联动：custom 保留；builtin 回种子名 + root.name 同步（镜像
-    // rename 的写点纪律，v3.2 §3.4）。
+    // displayName 联动：custom 保留；builtin 回种子名并同步 root.name（与 rename
+    // 相同的写点）。
     const seedDisplayName = isBuiltin
       ? (subjectProfiles[args.subjectId]?.displayName ?? row.display_name)
       : row.display_name;
@@ -301,11 +291,9 @@ export async function resetSubject(
       return { kind: 'noop', subjectRevision: row.revision };
     }
 
-    // SCF-260 (YUK-1316): a builtin reset renames the row back to its code seed (mirroring rename's
-    // write points) but, unlike rename/restore, previously skipped the live-name uniqueness check.
-    // The DB partial unique index covers only live CUSTOM rows, so a reset back onto a name a
-    // custom row now holds would create a duplicate live display name. Same 409 conflict contract
-    // as rename — checked BEFORE any binding/name write so the transaction rolls back untouched.
+    // A builtin reset can rename the row back to a name a custom row now holds;
+    // the partial unique index only covers live custom rows. Same 409 contract as
+    // rename, checked before any binding/name write so the transaction stays clean.
     if (nameChanges && (await normCollides(tx, args.subjectId, seedDisplayNameNorm))) {
       return { kind: 'conflict', message: `display name "${seedDisplayName}" is already taken` };
     }
@@ -362,14 +350,13 @@ export interface ValidateSubjectResult {
   errors: string[];
   warnings: string[];
   /**
-   * YUK-739 — the assembled profile (present on the success path), so audits
-   * can run semantics checks the generic validateProfile cannot express
-   * (builtin fail-closed declarations; see evaluation-semantics-audit.ts).
+   * Assembled profile on the success path, so audits can run semantics checks
+   * validateProfile cannot express (see evaluation-semantics-audit.ts).
    */
   profile?: SubjectProfile;
 }
 
-/** null = subject 不存在。零落库、零 CAS（只读，无需锁）。 */
+/** null = subject 不存在（404）。只读、零 CAS，无需锁。 */
 export async function validateSubject(
   db: Db,
   subjectId: string,

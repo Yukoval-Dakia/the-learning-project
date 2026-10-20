@@ -10,14 +10,11 @@ export type JobEventInput = {
 };
 
 /**
- * Insert a row into `job_events` and fire `pg_notify('job_status', …)` —— **both
- * within the same transaction**, so the NOTIFY only fires after the caller's tx
- * commits. This is the source-of-truth for async job state transitions.
+ * Insert the job event and NOTIFY in the caller's transaction, so the
+ * notification fires only after commit. Job state must be written in that same
+ * transaction for the three writes to stay atomic.
  *
- * MUST be called with a tx (not the global db), per Sub 0c plan Step 3.3。
- * 调用方在自己的事务里调，保证 INSERT + NOTIFY + 业务状态写入三者原子。
- *
- * @returns the auto-assigned job_events.id (used by SSE replay as cursor)
+ * @returns the job_events.id, which SSE replay uses as its cursor
  */
 export async function writeJobEvent(tx: Db | Tx, input: JobEventInput): Promise<number> {
   const result = await tx
@@ -39,8 +36,7 @@ export async function writeJobEvent(tx: Db | Tx, input: JobEventInput): Promise<
     business_table: input.business_table,
     business_id: input.business_id,
   });
-  // pg_notify within the same tx fires on commit. We pass the payload via
-  // parameter to avoid SQL-injection through caller-supplied business_id etc.
+  // Parameter binding keeps caller-supplied ids out of the SQL text.
   await tx.execute(sql`SELECT pg_notify('job_status', ${notificationPayload})`);
   return id;
 }

@@ -1294,6 +1294,31 @@ export type InterventionPackageReviewPackageChecksT = z.infer<
   typeof InterventionPackageReviewPackageChecks
 >;
 
+/**
+ * Provider-facing package checks (YUK-1624): the comparator no longer judges
+ * `tested_claims_match` / `target_errors_match`. Those two bits are a plain
+ * string equality between the frozen snapshot claim identity and the
+ * server-normalized diagnostic fields, so the server derives them at bind time.
+ * Strip-mode on purpose: outputs that still carry the retired keys (older
+ * persisted fixtures, text-fallback completions) parse instead of failing —
+ * the provider's value for a server-owned bit was never authority anyway.
+ */
+export const InterventionPackageComparatorPackageChecks = z.object({
+  material_grounded: z.boolean(),
+  method_followed: z.boolean(),
+  answers_unique: z.boolean(),
+  answers_gradable: z.boolean(),
+  no_answer_leak: z.boolean(),
+  diagnostics_same_construct: z.boolean(),
+  transfer_context_changed: z.boolean(),
+  target_error_identifiable: z.boolean(),
+  serious_factual_error_absent: z.boolean(),
+  safe_material: z.boolean(),
+});
+export type InterventionPackageComparatorPackageChecksT = z.infer<
+  typeof InterventionPackageComparatorPackageChecks
+>;
+
 const InterventionPackageReviewProtocolV2Fields = {
   review_protocol_version: z.literal(2),
   diagnostic_checks: InterventionPackageReviewDiagnosticChecks,
@@ -1527,7 +1552,7 @@ export const InterventionPackageReviewStructuredOutput = z
     // server-owned and joined from the sealed independent-solution audit after
     // this provider response parses.
     diagnostic_checks: InterventionPackageComparatorDiagnosticChecks,
-    package_checks: InterventionPackageReviewPackageChecks,
+    package_checks: InterventionPackageComparatorPackageChecks,
     summary_md: z.string().trim().min(1).max(2000),
   })
   .strict();
@@ -2198,6 +2223,9 @@ export function buildInterventionQuestionContentValidationTaskInput(input: {
 }
 
 /** Canonical comparator input, reconstructed again before activation for run binding. */
+export type InterventionPackageReviewTaskInputT = ReturnType<
+  typeof buildInterventionPackageReviewTaskInput
+>;
 export function buildInterventionPackageReviewTaskInput(input: {
   context: InterventionAuthoringContextT;
   packageValue: InterventionPackageT;

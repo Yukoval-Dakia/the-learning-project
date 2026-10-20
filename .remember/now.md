@@ -1,3 +1,7 @@
+# 录入助手永久身份与未结费用修复，2026-10-20
+
+PR1891原树从clean6c82接手，单代码写手，无委派/第三审。52548d889源码修复五P1，70d8ff68b普通整合main518c8b21a；main baseline/限流原样，父503类型保留，任务相对main无测试差量。永久reservation先于额度检查且同key锁先查agent durable；OCR wire前pending/精确attempt，主模型确定性task负债；全历史unknown/非USD/归属未证阻启动，周过滤只算known used。job消失/HTTP恢复不证明执行者结束，原grant不重新enqueue。生成/typecheck/lint/build与schema/api-contracts/capability-boundaries/architecture-deepening/provider-attempt-truth/profile/draft-status/partition全exit0，lint179warnings；本线重活全外部heavy.sh串行、内置复用祖先槽，未install。仓外tlp-audit-artifacts/yuk1522/pr1891-codex-repair-20261020/checks.json SHA256 3a7123f9240eec4208351810027916eadfbc5cdade777c68f949df2a2d961196；typecheck01失败也保留。后续普通push原draft交父定向及新head CI，无watch。历史归属数量未查，需运营实际核对，不能声称缺口为空。所有test/断言脚本/DB/迁移/TEST/Docker/provider/daemon/PR merge/部署NOT_RUN，默认助手禁开。完整证据和源码入口见docs/planning/2026-10-20-ingestion-budget-history.md。
+
 # PR #1858 主线整合，2026-10-20
 
 `el/yuk-1621` 从已推送的 `04a6fbedb` 普通 merge `origin/main` 的 `210dfb2c1`。仅本文件与 PLAN 冲突，main 最新交接完整保留，删除本分支落后的其他工作线记录。本 PR 的四个产品代码文件与合并前相同，没有新增设计决策。

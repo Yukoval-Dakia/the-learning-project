@@ -99,7 +99,7 @@ export async function sessionOrphanRollbackHorizon(
   raw: SessionOrphanFamily,
 ): Promise<string> {
   const family = parseSessionOrphan(sessionOrphanFamilySchema, raw);
-  // Validate backend identities before interpreting their suffix as a timestamp.
+  // Validate identities before interpreting their suffix as a timestamp.
   const workflows = await db.execute(
     sql`select workflow_uuid from tlp_dbos.workflow_status where name = ${family}`,
   );

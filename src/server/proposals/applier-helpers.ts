@@ -1,8 +1,6 @@
-// M4-T4 (YUK-319) — shared accept-applier helpers, extracted verbatim from
-// actions.ts so per-capability proposal-appliers (practice / agency / ingestion
-// / knowledge / notes) can import them WITHOUT importing actions.ts itself.
-// The import-cycle gate forbids capability appliers from importing
-// producers/writer/actions; this file is the sanctioned shared surface.
+// Shared accept-applier surface. Capability appliers import these helpers
+// directly; the import-cycle gate forbids them from importing
+// producers/writer/actions.
 
 import { and, eq, sql } from 'drizzle-orm';
 
@@ -23,10 +21,8 @@ export async function acquireProposalDecisionLock(tx: Tx, proposalId: string): P
 
 export type ExistingRateDecision = 'accept' | 'dismiss' | 'reverse' | 'change_type' | 'rollback';
 
-// YUK-471 (retract fold/rollback) — accepts Db | Tx so a caller (retractAiProposal) can read
-// the existing rate event INSIDE its single retract transaction (consistent snapshot). It is a
-// pure read of an immutable historical event row, so widening is safe; existing Db callers are
-// unaffected (Db is assignable to DbLike).
+// Accepts Db | Tx so retract can read the existing rate event inside its own
+// transaction; the read is of an immutable historical row, so widening is safe.
 export async function findExistingRateEvent(
   db: DbLike,
   proposalId: string,
@@ -112,8 +108,7 @@ export async function existingAcceptRate(
   return existingRate;
 }
 
-// Structural-minimal opts shape: appliers only ever inspect `decision`, and
-// the dispatch shell's AcceptAiProposalOpts is structurally assignable to it.
+// Appliers only inspect `decision`; AcceptAiProposalOpts is structurally assignable.
 export function ensureAcceptOnly(kind: string, opts: { decision?: string }): void {
   if (opts.decision && opts.decision !== 'accept') {
     throw new ApiError('validation_error', `${kind} proposal only supports accept`, 400);

@@ -1415,6 +1415,47 @@ export async function publishQuestionGroupFromRow(
 
 // ─── lifecycle 维度操作（archive/restore 的 claim 分离语义，§3.2/§3.3） ─────
 
+/** YUK-1624 — append a verify record WITHOUT touching any lifecycle dimension:
+ * for a delivery that keeps the current published admission state unchanged
+ * (e.g. quiz_verify passing over an already-admitted group with no hold to
+ * clear), the outcome still owes an append-only
+ * question_admission_verification row (PM condition: every precheck outcome is
+ * recorded with rule names and reasons). generation binds the CURRENT
+ * generation the delivery observed — no bump, so stale-detection predicates
+ * that compare generations are unaffected. The caller must already hold the
+ * lifecycle row lock in this tx (readBoundIndependentAdmission does). */
+export async function appendAdmissionVerificationRecord(
+  tx: Tx,
+  input: {
+    groupId: string;
+    expectedRevisionId: string;
+    expectedGeneration: number;
+    verification: AdmissionVerificationWrite;
+    now: Date;
+  },
+): Promise<void> {
+  const [revision] = await tx
+    .select({ integrity_digest: question_revision.integrity_digest })
+    .from(question_revision)
+    .where(eq(question_revision.revision_id, input.expectedRevisionId))
+    .limit(1);
+  if (!revision) {
+    throw new Error(
+      `appendAdmissionVerificationRecord: revision '${input.expectedRevisionId}' missing for group '${input.groupId}'`,
+    );
+  }
+  await tx.insert(question_admission_verification).values({
+    id: createId(),
+    revision_id: input.expectedRevisionId,
+    revision_digest: revision.integrity_digest,
+    policy_id: input.verification.policy_id,
+    generation: input.expectedGeneration,
+    outcome: input.verification.outcome,
+    evidence: input.verification.evidence ?? {},
+    recorded_at: input.now,
+  });
+}
+
 /** §3.3「新verify保存 (revision_id,digest,policy,generation)」—— 发布事务内
  * 追加 question_admission_verification（append-only，0105 trigger）。仅当调用方
  * 带 verification 输入时写入；generation = 本次写入后的 admission generation。 */
