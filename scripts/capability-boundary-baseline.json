@@ -37,7 +37,22 @@
     "YUK-1570-supply-run": "Supply planning owns complete bounded attempt orchestration (mount identity, run, parse/validation, rejection feedback and result accounting); web sourcing implementation is separated from the tool adapter and shares production dependency assembly with executor. practice -> ai 66 -> 63, total 432 -> 429. This auxiliary metric includes two removed type-only mcp-bridge imports and consolidation of JSON-parser dependency assembly; these import changes alone are not claimed as algorithmic deepening. Existing 2-attempt bound, cross-attempt tool context identity, Exa-null gate, injection and cost/event policies preserved. Composed after main mastery-read-engine PR #1881; earlier standalone measurement was 440 -> 437.",
     "YUK-1622": "agency -> practice 4 -> 5 (+1, total 42 -> 43 after main's YUK-1571 shared-read offset): coach_daily imports the practice public resolveDailyReviewPlanInputs so the TodayPlan due queue, daily budget and measured pace have one formula and one source; Coach reads practice's public module instead of copying the formula. PM ruling (Linear YUK-1622 comment 82cd19fd-51d1-46d5-bc70-5b0365409dd1, https://linear.app/yukoval-studios/issue/YUK-1622#comment-82cd19fd) approved this single edge only; it is not a general relaxation."
   },
-  "changes": [],
+  "changes": [
+    {
+      "direction": "increase",
+      "debt": "crossCapabilityValue",
+      "pair": "agency -> practice",
+      "date": "2026-10-20",
+      "from": 4,
+      "to": 5,
+      "reason": "TodayPlan 的到期队列、每日预算和实测节奏必须由同一公式、同一来源计算；Coach 通过 practice 的公开模块读取，不复制公式。仅批准这一条边，不外延。",
+      "exitCondition": "当 TodayPlan 的到期队列、预算和节奏读取迁入 kernel 所有的读模型，或 Coach 不再需要 practice 的这三个输入时，把 agency -> practice 归回 4；本记录不得复用或抵其他上调。",
+      "justification": {
+        "kind": "recorded_ruling",
+        "ruling": "https://linear.app/yukoval-studios/issue/YUK-1622#comment-82cd19fd"
+      }
+    }
+  ],
   "debts": {
     "capabilityToServer": {
       "total": 429,
