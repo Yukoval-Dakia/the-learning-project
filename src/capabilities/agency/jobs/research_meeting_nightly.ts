@@ -79,6 +79,7 @@ import { listProposalInboxRows } from '@/kernel/proposals/inbox';
 import { type WriteAiProposalInput, writeAiProposal } from '@/kernel/proposals/writer';
 import type { FailureAttempt } from '@/kernel/read-models/failure-attempts';
 import { getFailureAttemptsWithReasoningTrace } from '@/kernel/read-models/failure-attempts';
+import { getMasteryProjection } from '@/kernel/read-models/mastery-projection';
 import { type TaskTextRunFn, costUsdToMicroUsd, sumAllKnownCostUsd } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { type JobYieldOutput, reportJobYield } from '@/server/boss/job-yield';
@@ -93,7 +94,6 @@ import {
   type ReconcileResult,
   reconcileConjecturePredictions,
 } from '@/server/conjectures/reconcile';
-import { getMasteryProjection } from '@/server/mastery/state';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { writeRetryableAiFailureLedger } from '../server/ai-runtime';
 
