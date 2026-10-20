@@ -40,6 +40,11 @@ import {
   selectSurface,
 } from '@/capabilities/copilot/server/copilot-run-input';
 import {
+  commitWorkerSessionCursor,
+  discardWorkerSessionCursor,
+  readWorkerSessionCursor,
+} from '@/capabilities/copilot/server/copilot-run-session-cursor';
+import {
   type ClaimCopilotExecutionFenceFn,
   DURABLE_OWNER_SETTLEMENT_BUDGET_MS,
   DurableTerminalProjectionError,
@@ -54,6 +59,7 @@ import {
   hasCopilotSettlementTerminal,
   markCopilotRunStarted,
   projectCopilotOutcomeMarker,
+  publishCopilotRunProgressEvent,
   terminalRunResult,
   withCopilotExecutionSettlementLock,
   writeFailedTerminalProjection,
@@ -62,14 +68,9 @@ import {
 import {
   COPILOT_RUN_EVENTS,
   COPILOT_RUN_TABLE,
-  hasCancelRequest,
   isCopilotRunTerminalEvent,
 } from '@/capabilities/copilot/server/copilot-run-status';
-import {
-  clearCopilotWorkerSession,
-  isCopilotWorkerSessionOwned,
-  registerCopilotWorkerSession,
-} from '@/capabilities/copilot/server/copilot-worker-session';
+import { isCopilotWorkerSessionOwned } from '@/capabilities/copilot/server/copilot-worker-session';
 import { acceptedCopilotDerivationPolicy } from '@/capabilities/copilot/server/derivation-policy';
 import {
   type CopilotRunJobData,
@@ -82,12 +83,6 @@ import type { Db, Tx } from '@/db/client';
 import { readEventDerivationPolicy } from '@/kernel/events/derivation-policy';
 import type { ModelBinding } from '@/server/ai/execution-adapter';
 import { computeReplay } from '@/server/events/sse_replay';
-import { writeJobEvent } from '@/server/events/writer';
-import {
-  clearAgentSdkSessionId,
-  getAgentSdkSessionId,
-  setAgentSdkSessionId,
-} from '@/server/session/conversation';
 import {
   DURABLE_COPILOT_EXECUTION_BUDGET,
   type ExecuteCopilotTurn,
@@ -258,11 +253,9 @@ async function executeAcceptedCopilotRun(
   const claimExecutionFence = params.claimExecutionFenceFn ?? claimCopilotExecutionFence;
   const createCancellationControl =
     params.createCancellationControlFn ?? createCopilotRunCancellationControl;
-  const initialCursor = await getAgentSdkSessionId(db, data.session_id);
-  const discardWorkerCursor = async (database: Db | Tx = db) => {
-    if (initialCursor) clearCopilotWorkerSession(data.session_id, initialCursor);
-    await clearAgentSdkSessionId(database, data.session_id, initialCursor);
-  };
+  const initialCursor = await readWorkerSessionCursor(db, data.session_id);
+  const discardWorkerCursor = async (database: Db | Tx = db) =>
+    discardWorkerSessionCursor(database, data.session_id, initialCursor);
 
   // 启动前 replay 一次：F3 terminal-already-present 守卫 + pre-fence 协作取消。
   // 运行中 Stop 由下方 cancellation control 的 poll / SDK hook / DomainTool gate
@@ -466,7 +459,7 @@ async function executeAcceptedCopilotRun(
   // Persisted ids from another process/app are intentionally cold-started.
   // Stored ids are `pi:<uuid>` markers — resume replays the bounded durable
   // turns into context.messages (pi-agent-adapter piSessionReplay).
-  const persistedSdkSessionId = await getAgentSdkSessionId(db, data.session_id);
+  const persistedSdkSessionId = await readWorkerSessionCursor(db, data.session_id);
   const resumeSessionId =
     !answerOnly &&
     isCopilotWorkerSessionOwned(data.session_id, persistedSdkSessionId) &&
@@ -646,19 +639,19 @@ async function executeAcceptedCopilotRun(
           progressChain = progressChain
             .catch(() => undefined)
             .then(async () => {
-              // Stop and terminal commits share this lock. A queued delta cannot
-              // cross either boundary, even when persistence lags the provider.
-              await withCopilotExecutionSettlementLock(db, runId, async (tx, events) => {
-                if (hasCancelRequest(events) || (await findPersistedDurableReply(tx, runId)))
-                  return;
-                if (activity.kind === 'prose_delta') streamedProse += activity.text;
-                await writeJobEvent(tx, {
-                  business_table: COPILOT_RUN_TABLE,
-                  business_id: runId,
-                  event_type: isProse ? COPILOT_RUN_EVENTS.DELTA : COPILOT_RUN_EVENTS.STEP,
-                  payload,
-                });
-              });
+              // Stop and terminal commits share the settlement lock. A queued
+              // delta cannot cross either boundary, even when persistence lags
+              // the provider; the boundary rule lives in the settlement owner.
+              await publishCopilotRunProgressEvent(
+                db,
+                runId,
+                isProse ? { kind: 'delta', text: activity.text } : { kind: 'step', payload },
+                isProse
+                  ? (text) => {
+                      streamedProse += text;
+                    }
+                  : undefined,
+              );
             });
           return progressChain;
         },
@@ -752,9 +745,9 @@ async function executeAcceptedCopilotRun(
             finalized.receipt.candidate_sha256 ===
             createHash('sha256').update(cleanedReply, 'utf8').digest('hex');
           if (!answerOnly && result.sdkSessionId && candidateMatchesCommitted) {
-            await setAgentSdkSessionId(tx, data.session_id, result.sdkSessionId);
             // The settlement lock still prevents terminal publication and successor pickup.
-            registerCopilotWorkerSession(
+            await commitWorkerSessionCursor(
+              tx,
               data.session_id,
               result.sdkSessionId,
               result.contextDigest,

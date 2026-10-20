@@ -19,7 +19,9 @@
 // - every recovery decision: in-flight cancel after tool drain, exhausted
 //   failure, ambiguous_execution, pre_execution_lost, marker repair, and the
 //   bounded reconciler classification;
-// - the checkpoint-anchor (revert) policy shared by live output and repair.
+// - the checkpoint-anchor (revert) policy shared by live output and repair;
+// - the outcome boundary for live progress: a DELTA/STEP event may only
+//   publish while no cancel request and no committed outcome marker exist.
 //
 // The execution owner (jobs/copilot_run.ts) feeds its final outcome in here;
 // it never appends terminal job_events itself. Injection seams stay explicit
@@ -44,13 +46,13 @@ import {
   type PersistedDurableReply,
   findPersistedDurableReply,
 } from '@/capabilities/copilot/server/copilot-run-outcome';
+import { discardRunWorkerSessionCursor } from '@/capabilities/copilot/server/copilot-run-session-cursor';
 import {
   COPILOT_RUN_EVENTS,
   COPILOT_RUN_TABLE,
   hasCancelRequest,
   isCopilotRunTerminalEvent,
 } from '@/capabilities/copilot/server/copilot-run-status';
-import { clearCopilotWorkerSession } from '@/capabilities/copilot/server/copilot-worker-session';
 import {
   type CopilotRunJobData,
   withCopilotDurableDispatchLock,
@@ -70,7 +72,6 @@ import {
   observeBossJob,
 } from '@/server/boss/job-observation';
 import { writeJobEvent } from '@/server/events/writer';
-import { clearAgentSdkSessionId, getAgentSdkSessionId } from '@/server/session/conversation';
 
 export const COPILOT_RUN_QUEUE = 'copilot_run' as const;
 
@@ -408,6 +409,37 @@ type CopilotExecutionSettlement<T> =
   | { outcome: 'settled'; value: T }
   | { outcome: 'already_terminal'; events: TerminalProjectionEvent[] };
 
+/** One non-terminal progress frame the execution owner may publish mid-run. */
+export type CopilotRunProgressEvent =
+  | { kind: 'delta'; text: string }
+  | { kind: 'step'; payload: Record<string, unknown> };
+
+/**
+ * Publish live progress under the settlement lock. The outcome boundary is
+ * owned here: a queued delta/step is dropped once a cancel request or a
+ * committed outcome marker exists, so progress can never cross either
+ * boundary even when persistence lags the provider. `onDeltaAccepted` fires
+ * inside the lock between the boundary check and the event write, so the
+ * caller's streamed-prose accumulation keeps the same ordering as the write.
+ */
+export async function publishCopilotRunProgressEvent(
+  db: Db,
+  runId: string,
+  progress: CopilotRunProgressEvent,
+  onDeltaAccepted?: (text: string) => void,
+): Promise<void> {
+  await withCopilotExecutionSettlementLock(db, runId, async (tx, events) => {
+    if (hasCancelRequest(events) || (await findPersistedDurableReply(tx, runId))) return;
+    if (progress.kind === 'delta') onDeltaAccepted?.(progress.text);
+    await writeJobEvent(tx, {
+      business_table: COPILOT_RUN_TABLE,
+      business_id: runId,
+      event_type: progress.kind === 'delta' ? COPILOT_RUN_EVENTS.DELTA : COPILOT_RUN_EVENTS.STEP,
+      payload: progress.kind === 'delta' ? { text: progress.text } : progress.payload,
+    });
+  });
+}
+
 /**
  * Serialize every paid-owner outcome and ambiguous recovery for one run. The
  * expensive model/tool loop deliberately runs outside this lock; only its
@@ -534,16 +566,7 @@ export async function projectCopilotOutcomeMarker(
         };
       }
       if (lockedEvents.some((item) => item.event_type === COPILOT_RUN_EVENTS.EXECUTION_STARTED)) {
-        const [ask] = await tx
-          .select({ sessionId: event.session_id })
-          .from(event)
-          .where(eq(event.id, runId))
-          .limit(1);
-        if (ask?.sessionId) {
-          const cursor = await getAgentSdkSessionId(tx, ask.sessionId);
-          if (cursor) clearCopilotWorkerSession(ask.sessionId, cursor);
-          await clearAgentSdkSessionId(tx, ask.sessionId, cursor);
-        }
+        await discardRunWorkerSessionCursor(tx, runId);
       }
       await projectFailedTerminal(
         tx,
