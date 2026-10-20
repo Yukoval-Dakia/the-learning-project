@@ -106,22 +106,6 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
     ],
   },
   {
-    owner: 'practice',
-    consumer: 'ingestion',
-    files: [
-      'src/capabilities/ingestion/api/mistakes.ts',
-      'src/capabilities/ingestion/server/enroll.ts',
-    ],
-    symbols: ['loadAttemptQuestionSnapshot'],
-    dto: 'AttemptQuestionSnapshot',
-    justification: 'mistake enrollment reads the attempt question snapshot owned by practice.',
-    reviewIssue: 'YUK-885',
-    commandFiles: [
-      'src/capabilities/ingestion/api/mistakes.ts',
-      'src/capabilities/ingestion/server/enroll.ts',
-    ],
-  },
-  {
     owner: 'agency',
     consumer: 'knowledge',
     files: ['src/capabilities/knowledge/server/proposals.ts'],
