@@ -1463,9 +1463,7 @@ async function runCli(): Promise<void> {
       }
     },
     resolveTarget: resolveHeadTarget,
-    // Author-local date — ledger dates are written in local convention; UTC
-    // midnight skew would reject a record legitimately dated today.
-    today: new Date().toLocaleDateString('en-CA'),
+    today: new Date().toISOString().slice(0, 10),
   });
 
   const result = auditArchitectureDeepening(projectRoot, publicReadCycleCatalog, {

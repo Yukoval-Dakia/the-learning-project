@@ -1075,10 +1075,7 @@ function compareBaselineChanges(
 }
 
 function tightenBaseline(baseline: DependencyBaseline, actual: DependencySnapshot): void {
-  // Ledger dates are author-local ("the day the record is written"), not UTC —
-  // a JST morning lands the day before in UTC and would falsely trip the
-  // post-dating guard.
-  const date = new Date().toLocaleDateString('en-CA');
+  const date = new Date().toISOString().slice(0, 10);
   for (const debt of DEBT_KINDS) {
     const counts = baseline.debts[debt].byOwnerPair;
     for (const [pair, from] of Object.entries(counts)) {
@@ -1272,7 +1269,7 @@ export function main(argv = process.argv.slice(2), projectRoot = process.cwd()):
   );
 
   // Anti-regression ratchets measured against the immutable base commit.
-  const today = new Date().toLocaleDateString('en-CA');
+  const today = new Date().toISOString().slice(0, 10);
   const renames = worktreeRenameMap(projectRoot, baseSha, [
     ...SIZE_METRIC.roots,
     'scripts/worker.ts',

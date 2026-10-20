@@ -333,9 +333,12 @@ the same narrow fix series (no new framework/job/registry):
    imported symbol), so a retargeted or re-aliased site diffs as a NEW site.
 
 3. **Self-referencing consumer evidence is rejected.** A declared consumer
-   whose normalized path equals the record's own file fails closed (`./x`,
-   backslash and `a/./x` spellings normalized) — self-reference can never be
-   a real consumer for either `compatShims` or `stable_contract` records.
+   whose normalized path equals the record's own file fails closed —
+   normalization is `posix.normalize` after separator unification, so `./x`,
+   backslashes, `a/./x` AND `a/server/../x` all resolve to the real file
+   identity; absolute paths and `..` root-escapes are rejected outright as
+   non-repo-relative evidence. Self-reference can never be a real consumer
+   for either `compatShims` or `stable_contract` records.
 
 4. **`stable_contract` rulings in the existing `changes` ledger.** New
    discriminated record (field shape in `scripts/lib/source-size.ts`:
@@ -346,8 +349,12 @@ the same narrow fix series (no new framework/job/registry):
    baseline reconciliation, protected debts and append-only prefix checks
    are untouched. Only the tail appended after base can cover a new site; a
    ruling must still match an exact current site (no alias/target/owner
-   drift, no module-wide exemption), its consumer evidence is verified
-   against real head source, and its `date` may not be post-dated. The
+   drift, no module-wide exemption — `'*'` is refused outright for both
+   `symbol` and `targetSymbol` so a namespace never inherits a ruling), its
+   consumer evidence is verified against real head source, and its `date`
+   may not be post-dated. Ledger dates are UTC (`toISOString().slice(0,10)`
+   everywhere); the recorded approval date is the coordination's actual UTC
+   day — file names and commit dates in JST do not set the ledger day. The
    `approval` URL is shape-checked only — coordinator authority is verified
    by the parent/coordination review, not by this code.
 

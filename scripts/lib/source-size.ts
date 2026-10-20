@@ -89,7 +89,7 @@ export const compatShimSchema = z
 export type CompatShim = z.infer<typeof compatShimSchema>;
 
 /**
- * A coordinator-rulled stable public contract ruling — the only legal way a
+ * A coordinator-ruled stable public contract ruling — the only legal way a
  * new pass-through site avoids the 14-day compat window. It lives inside the
  * existing `changes` ledger (discriminated by `type`), never in debt math.
  * Binding is exact: file + site kind + exported symbol + target module +
@@ -101,12 +101,24 @@ export const stableContractRulingSchema = z.object({
   /** Repo-relative path of the ruled site file (site.file identity). */
   file: z.string().trim().min(1),
   siteKind: z.enum(['module', 'function', 'alias', 'site']),
-  /** Exported symbol the ruling binds — exact, no wildcard exemptions. */
-  symbol: z.string().trim().min(1),
+  /** Exported symbol the ruling binds — exact; '*' (export-star / namespace)
+   *  is refused: a stable ruling is always a per-symbol decision, never a
+   *  blanket exemption future symbols could inherit. */
+  symbol: z
+    .string()
+    .trim()
+    .min(1)
+    .refine((v) => v !== '*', 'stable rulings bind one named symbol, not a namespace'),
   /** Resolved repo-relative target module the site forwards to. */
   targetModule: z.string().trim().min(1),
-  /** Symbol inside targetModule that owns the complete decision. */
-  targetSymbol: z.string().trim().min(1),
+  /** Symbol inside targetModule that owns the complete decision — same
+   *  no-namespace rule: '*' would exempt every future export of that
+   *  module without a per-symbol coordinator decision. */
+  targetSymbol: z
+    .string()
+    .trim()
+    .min(1)
+    .refine((v) => v !== '*', 'stable rulings bind one named target symbol, not a namespace'),
   /** Real implementation owner — must equal targetModule's capability dir. */
   owner: z.string().trim().min(1),
   /** Real consumer evidence: file + line of its import of this site file. */

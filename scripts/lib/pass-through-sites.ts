@@ -21,6 +21,7 @@
  * surface and are excluded by per-specifier kind checks, not by file name.
  */
 import { createHash } from 'node:crypto';
+import { posix } from 'node:path';
 import { parse } from '@babel/parser';
 import type { CompatShim, StableContractRuling } from './source-size';
 import { shimIsLive, validateCompatShimFields, validateStableRulingFields } from './source-size';
@@ -849,14 +850,11 @@ export function stableCoversSite(ruling: StableContractRuling, site: PassThrough
   );
 }
 
-/** Repo path normalization for evidence comparison — `./x`, `x`, `x/./x`
- *  and backslash spellings must all name the same file. */
+/** Repo path normalization for evidence comparison — posix.normalize after
+ *  unifying separators, so `./x`, `x`, `x/./x`, backslashes AND `a/../x`
+ *  spellings all resolve to the same actual file identity. */
 function normalizeEvidencePath(path: string): string {
-  return path
-    .replace(/\\/g, '/')
-    .replace(/\/{2,}/g, '/')
-    .replace(/(^|\/)\.\//g, '$1')
-    .replace(/^\.\//, '');
+  return posix.normalize(path.replace(/\\/g, '/'));
 }
 
 /** Verify declared consumer evidence: the file exists, parses, is not the
@@ -872,7 +870,16 @@ function checkConsumerEvidence(input: {
   fail: (path: string, source: string, reason: string) => void;
 }): void {
   for (const consumer of input.consumers) {
-    if (normalizeEvidencePath(consumer.file) === normalizeEvidencePath(input.recordPath)) {
+    const consumerPath = normalizeEvidencePath(consumer.file);
+    if (consumerPath.startsWith('/') || consumerPath === '..' || consumerPath.startsWith('../')) {
+      input.fail(
+        consumer.file,
+        `line ${consumer.line}`,
+        'declared consumer path is absolute or escapes the repo root — only repo-relative paths are evidence',
+      );
+      continue;
+    }
+    if (consumerPath === normalizeEvidencePath(input.recordPath)) {
       input.fail(
         consumer.file,
         `line ${consumer.line}`,
