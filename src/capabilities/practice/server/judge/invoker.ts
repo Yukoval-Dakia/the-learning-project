@@ -23,7 +23,10 @@ import { SubjectProfileSchema } from '@/subjects/profile';
 import type { JudgeKind } from '.';
 // F0 (PR #309 round-3) — resolver now lives in the dependency-light leaf.
 import { persistJudgeRunDigests } from './execution-provenance-resolve';
-import { JUDGE_PROMPT_TEMPLATE_REVISION, judgePromptFingerprint } from './judge-execution-provenance';
+import {
+  JUDGE_PROMPT_TEMPLATE_REVISION,
+  judgePromptFingerprint,
+} from './judge-execution-provenance';
 import { narrowQuestionToPart } from './narrow-part';
 import {
   type JudgeAnswerParams,
