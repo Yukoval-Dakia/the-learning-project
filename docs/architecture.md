@@ -182,13 +182,13 @@ FailureAttempt 读模型已迁入 `src/capabilities/knowledge/server/`，中央
 | `ResearchMeetingDirectorTask` | mimo-v2.5-pro（Opus anthropic-sub per-call override） | pg-boss `research_meeting_agent_nightly` (YUK-572, dark-ship) | 是 | — | agent-led 教研例会 director（shadow lane）：charter agent 只提 claim + DiagnosticSpec；服务器复用 author/reviewer 质量门生成 probe；可按需派聚焦的 evidence-scout。共享 spawn contract 结构性封顶 depth=1、广度 report-only 留痕而不设拍脑袋次数 cap；可留 agent note，从不结算 / 不碰 FSRS |
 | `ProfileCriticTask` | mimo-v2.5-pro | compile CLI `--critic` (YUK-203 U7) | 否 | — | draft SubjectProfile 评审 + patch 建议（proposal-only）|
 | `DreamingTask` | mimo-v2.5-pro | pg-boss nightly (Foundation D) | 是 | — | 夜间学习信号 → inbox proposals（DomainTools）|
-| `CoachTask` | mimo-v2.5-pro | pg-boss `coach_daily` / `coach_weekly` (T-D6) | 是 | — | TodayPlan JSON（propose_* 写 inbox）|
+| `CoachTask` | mimo-v2.5-pro | pg-boss `coach_daily` / `coach_weekly` (T-D6) | 是 | — | TodayPlan draft（daily_focus / 知识焦点 / proposals；题数 / 分钟 / 时间盒 / 科目配比由代码计算，daily_focus 的题量/分钟/百分比声明由服务端剥离，YUK-1622；propose_* 写 inbox）|
 | `CopilotTask` | mimo-v2.5-pro | `/api/chat` inline + pg-boss `copilot_run`（AF S4 / YUK-203 / YUK-757 / YUK-939） | 是 | — | 唯一面向用户的对话式学习助手；terminal Markdown 由服务端绑定精确回复字节、实际 root 工具轨迹、更正、proposal 披露与学习内容质量门；普通 chat 前台执行，显式 `durable:true` 走 `copilot_run` |
 | `QuestionAuthorTask` | mimo-v2.5-pro | `author_question` DomainTool knowledge\|material seed（ADR-0031 / YUK-304） | 否 | — | 单道原创 draft 题（StructuredQuestion 树）+ `question_draft` proposal（单次 structured output，无工具循环；取代 YUK-275 的 `QuizIntentParseTask` C 形态解析器）|
 | `ItemPriorTask` | mimo-v2.5-pro | pg-boss `item_prior_backfill`（B1-W1 / ADR-0035 慢热阶段①） | 否 | — | 给新题估冷启先验难度 b（logit 尺度，抽教学特征路线）+ confidence → `item_calibration`（source=`llm_prior`）|
 | `SelectionOrchestratorTask` | mimo-v2.5 | `composeSoftmaxStream` 选题编排（YUK-361 Phase 3 / ADR-0042 编排档2） | 否 | — | 档2 L2 选题主脑：对每个非到期候选出 weight/role/arrangement/reason（单次 structured output）→ 薄 tempered-softmax sampler 抽样落题 + 记 π_i；不碰到期项/recall 项 |
 | `QuizGenTask` | mimo-v2.5-pro | pg-boss `quiz_gen` (T-SQ) | 是 | — | search-grounded 原创题（Tavily + domain MCP）|
-| `QuizVerifyTask` | mimo-v2.5-pro | pg-boss `quiz_verify` (T-SQ Q5) | 否 | — | closed-book 出题校验（fact/copy_safety/knowledge-hit）|
+| `QuizVerifyTask` | mimo-v2.5-pro | pg-boss `quiz_verify` (T-SQ Q5) | 否 | — | closed-book 出题校验（fact/copy_safety/knowledge-hit）；handler 先跑确定性预检（选项重复/参考答案不在选项/选项数不足——choice 题型 0 选项同样拦截，命中则零模型调用留人审），copy_safety 的 `too_close` 以确定性 n-gram 为准（tier-3 素材原文豁免），模型-only too_close 转人审（YUK-1624）|
 | `TeachingQualityTask` | mimo-v2.5-pro | pg-boss `quiz_verify`（tier3/4 teaching_quality 审题闸，YUK-578） | 否 | — | 入池前审题：只读题面判 题干清晰度/唯一正解性/干扰项诊断力(仅选择题)；confident-fail 留 draft(needs_review) 绝不 promote |
 | `SourcingTask` | mimo-v2.5-pro | pg-boss `sourcing` (YUK-216 S2) | 是 | — | web-sourced 题（draft, tier 2）+ source_verify chain |
 | `ColdStartPlacementBridgeTask` | mimo-v2.5 | ingestion 上传 accept（抽题无 KC 匹配时，YUK-478） | 否 | — | 冷启上传题一次 pass：classify subject（∈KNOWN_SUBJECT_IDS）+ kc_name + reference 答案（OCR 无答案则生成，有则 echo）→ 喂建子 KC + auto-promote |

@@ -22,6 +22,7 @@ import {
   sanitizeDiagnostic,
   waitForFixtureMessage,
 } from './fixture-process';
+import { unavailableSqlClass } from './unavailable-primary-diagnostics';
 
 const OLD_BASE = '6aaf8ca89eaf5feb5af5c00b7c5b3bd90cd953ea';
 const exec = promisify(execFile);
@@ -66,6 +67,7 @@ function worker(
     appUrl?: string;
     oldBundle?: string;
     pruneId?: string;
+    unavailableDiagnostics?: boolean;
   } = {},
 ) {
   const child = spawn(process.execPath, [options.oldBundle ?? bundle], {
@@ -81,6 +83,7 @@ function worker(
       TLP_REVIEW_RECOVER: options.recover ? '1' : '0',
       TLP_REVIEW_APP_DATABASE_URL: options.appUrl,
       TLP_REVIEW_APP_PROXY: options.appUrl ? '1' : '0',
+      TLP_REVIEW_UNAVAILABLE_DIAGNOSTICS: options.unavailableDiagnostics ? '1' : undefined,
       TLP_PRUNE_TEST_PROCESS: '1',
       TLP_PRUNE_WORKFLOW_ID: options.pruneId,
       TLP_PRUNE_PAUSE_AT: options.oldBundle ? 'business-committed' : undefined,
@@ -231,13 +234,49 @@ async function commitFault(
   connectionFailure.writeInt32BE(4 + errorFields.length, 1);
   errorFields.copy(connectionFailure, 5);
   const ready = Buffer.from([90, 0, 0, 0, 5, 73]);
+  let connectionSequence = 0;
+  let diagnosticSequence = 0;
   let fired = false;
   let listenerClosed: Promise<void> | undefined;
   const closeListener = () =>
     (listenerClosed ??= new Promise<void>((done) => server.close(() => done())));
   const server = createServer((downstream) => {
+    const connection = ++connectionSequence;
+    let lifecycle = 'accepted';
+    let unavailable = false;
+    let pendingReady = 0;
+    let unsyncedQuery = false;
+    let failedExtendedQuery = false;
+    let querySequence = 0;
+    let lastQuery:
+      | { sequence: number; sqlClass: ReturnType<typeof unavailableSqlClass> }
+      | undefined;
+    const diagnosticStatements = new Map<string, NonNullable<typeof lastQuery>>();
+    const diagnosticPortals = new Map<string, NonNullable<typeof lastQuery>>();
+    const diagnostic = (event: string, tag?: string) => {
+      if (mode !== 'after-server-commit-and-unavailable') return;
+      evidence.push({
+        kind: 'unavailable-primary-diagnostic',
+        event,
+        sequence: ++diagnosticSequence,
+        at: new Date().toISOString(),
+        monotonicNs: process.hrtime.bigint().toString(),
+        connection,
+        lifecycle,
+        tag,
+        // This is the last observed frontend query, not an inferred rejected promise.
+        lastQuery,
+        pendingReady,
+        unsyncedQuery,
+        failedExtendedQuery,
+        unavailable,
+        fired,
+      });
+    };
+    diagnostic('accepted');
     downstream.setNoDelay(true);
     if (fired && mode === 'after-server-commit-and-unavailable') {
+      diagnostic('refused-after-fault');
       downstream.destroy();
       return;
     }
@@ -249,12 +288,10 @@ async function commitFault(
     let back = Buffer.alloc(0);
     let startup = true;
     let receiptTx = false;
-    let unavailable = false;
-    let pendingReady = 0;
-    let unsyncedQuery = false;
-    let failedExtendedQuery = false;
     const statements = new Map<string, string>();
     const close = () => {
+      lifecycle = 'closed';
+      diagnostic('close');
       downstream.destroy();
       upstream.destroy();
       sockets.delete(downstream);
@@ -262,10 +299,13 @@ async function commitFault(
       disconnectPrimary.delete(disconnect);
     };
     const rejectQuery = () => {
+      diagnostic('send-08006');
       downstream.write(connectionFailure);
       evidence.push({ unavailableResponse: '08006' });
     };
     const disconnect = () => {
+      diagnostic('disconnect-primary');
+      lifecycle = 'unavailable';
       unavailable = true;
       upstream.destroy();
       // Reject in-flight work before closing the client transport. An abrupt RST
@@ -280,6 +320,10 @@ async function commitFault(
         failedExtendedQuery = true;
       }
     };
+    upstream.on('connect', () => {
+      lifecycle = 'primary-connected';
+      diagnostic('primary-connected');
+    });
     disconnectPrimary.add(disconnect);
     downstream.on('error', close);
     upstream.on('error', () => {
@@ -297,11 +341,37 @@ async function commitFault(
         const packet = front.subarray(0, size);
         front = front.subarray(size);
         if (startup) {
+          lifecycle = 'startup-forwarded';
+          diagnostic('startup');
           startup = false;
           upstream.write(packet);
           continue;
         }
         const tag = String.fromCharCode(packet[0]);
+        if (mode === 'after-server-commit-and-unavailable') {
+          // Observe only SQL-bearing protocol fields; never decode Bind parameter values.
+          if (tag === 'Q' || tag === 'P') {
+            const end = tag === 'P' ? packet.indexOf(0, 5) : 4;
+            const sqlClass = unavailableSqlClass(
+              packet.subarray(end + 1, packet.indexOf(0, end + 1)).toString(),
+            );
+            lastQuery = { sequence: ++querySequence, sqlClass };
+            if (tag === 'P')
+              diagnosticStatements.set(packet.subarray(5, end).toString(), lastQuery);
+          } else if (tag === 'B') {
+            const end = packet.indexOf(0, 5);
+            lastQuery = diagnosticStatements.get(
+              packet.subarray(end + 1, packet.indexOf(0, end + 1)).toString(),
+            );
+            if (lastQuery) diagnosticPortals.set(packet.subarray(5, end).toString(), lastQuery);
+          } else if (tag === 'E') {
+            lastQuery = diagnosticPortals.get(packet.subarray(5, packet.indexOf(0, 5)).toString());
+          }
+          if (!unavailable && ['Q', 'P', 'B', 'E'].includes(tag))
+            lifecycle =
+              lastQuery?.sqlClass === 'internal-pg-type' ? 'initializing-types' : 'query-submitted';
+          diagnostic('frontend', tag);
+        }
         if (unavailable) {
           // No SQL reaches the primary after the fault, including through a
           // previously healthy pool connection. Honor extended-protocol Sync.
@@ -360,8 +430,11 @@ async function commitFault(
         back = back.subarray(size);
         const tag = String.fromCharCode(packet[0]);
         const command = tag === 'C' ? packet.subarray(5, -1).toString() : '';
+        if (tag === 'Z') lifecycle = 'ready-for-query';
+        if (['R', 'Z', 'C', 'E', '1', '2'].includes(tag)) diagnostic('backend', tag);
         if (!fired && receiptTx && command === 'COMMIT' && mode !== 'before-server-commit') {
           fired = true;
+          diagnostic('lost-commit-response');
           evidence.push({ fault: mode, at: new Date().toISOString(), serverCommand: command });
           if (mode === 'after-server-commit-and-unavailable') {
             // Refuse new connections instead of accepting and resetting each retry.
@@ -707,7 +780,7 @@ describe('actual review orphan crash and recovery', () => {
     await sessions();
     const proxy = await commitFault('after-server-commit-and-unavailable');
     const id = `review-unknown-${randomUUID()}`;
-    const first = worker({ id, appUrl: proxy.url });
+    const first = worker({ id, appUrl: proxy.url, unavailableDiagnostics: true });
     try {
       await first.wait('ready');
       // Unlike ordinary wait(), this fixture expects the failure message itself.
@@ -736,7 +809,7 @@ describe('actual review orphan crash and recovery', () => {
         await client.destroy();
       }
 
-      const retry = worker({ id, recover: true });
+      const retry = worker({ id, recover: true, unavailableDiagnostics: true });
       await retry.wait('ready');
       expect((await retry.wait('failure')).error).toContain(
         `Review orphan outcome unknown: ${id}/crash-a`,

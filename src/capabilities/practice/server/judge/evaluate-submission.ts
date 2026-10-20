@@ -75,6 +75,7 @@ import {
   withdrawCapturedOccurrence,
 } from '@/server/assessment/runtime';
 import { checkRateLimit } from '@/server/http/rate-limit';
+import { bindAppealExecution, reservedEvaluationAttempt } from '../assessment/appeal-execution';
 import {
   type JudgeExecution,
   bindJudgeExecution,
@@ -619,8 +620,40 @@ export async function evaluateSubmission(
           .where(eq(evaluation.submission_id, submissionRow.submission_id))
           .orderBy(desc(evaluation.attempt))
           .limit(1);
+        const nextAttempt =
+          Math.max(
+            latest?.attempt ?? 0,
+            await reservedEvaluationAttempt(
+              tx,
+              request.evaluation_group_id,
+              submissionRow.submission_id,
+            ),
+          ) + 1;
+        // manual_assert carries review context too, but never dispatches a model.
+        const reviewContext =
+          request.mode === 'manual_assert' ? undefined : request.provenance?.review_context;
+        if (reviewContext && (!executionReceipt || request.judge_execution)) {
+          throw new EvaluateSubmissionError(
+            'evaluation_key_conflict',
+            'appeals require their own execution key, separate from native judge-run authority',
+          );
+        }
+        const appealBinding =
+          reviewContext && executionReceipt
+            ? await bindAppealExecution(tx, {
+                evaluation_group_id: request.evaluation_group_id,
+                submission_id: submissionRow.submission_id,
+                execution_key: executionReceipt.key,
+                input_snapshot: inputSnapshot,
+                intent_digest: executionReceipt.intent_digest,
+                review_context: reviewContext,
+                next_attempt: nextAttempt,
+                admission_snapshot: admissionSnapshot ?? null,
+              })
+            : null;
         const binding =
-          request.judge_execution && executionReceipt
+          appealBinding ??
+          (request.judge_execution && executionReceipt
             ? await bindJudgeExecution(tx, request.judge_execution, {
                 evaluation_group_id: request.evaluation_group_id,
                 submission_id: submissionRow.submission_id,
@@ -628,7 +661,7 @@ export async function evaluateSubmission(
                 member_submission_ids: ids,
                 input_digest: canonicalHash(inputSnapshot),
                 intent_digest: executionReceipt.intent_digest,
-                attempt: (latest?.attempt ?? 0) + 1,
+                attempt: nextAttempt,
                 admission_snapshot: admissionSnapshot ?? null,
                 execution_policy: {
                   version: 1,
@@ -636,8 +669,8 @@ export async function evaluateSubmission(
                   evaluation: request.policy ?? {},
                 },
               })
-            : null;
-        const attempt = binding?.attempt ?? (latest?.attempt ?? 0) + 1;
+            : null);
+        const attempt = binding?.attempt ?? nextAttempt;
         if (binding) {
           const [occupied] = await tx
             .select({ id: evaluation.evaluation_id })
@@ -675,7 +708,17 @@ export async function evaluateSubmission(
             policy: request.policy,
             mode: request.mode,
             asserted_unit_results: request.asserted_unit_results,
-            model_executor: modelExecutor,
+            model_executor: appealBinding?.model_hold_reason
+              ? async () => ({
+                  kind: 'pending',
+                  pending: {
+                    reason: 'infra_failure',
+                    retryable: false,
+                    detail: appealBinding.model_hold_reason ?? 'explicit recovery required',
+                  },
+                  run_refs: [],
+                })
+              : modelExecutor,
           }).catch((error: unknown) => {
             if (error instanceof ModelExecutionNotStartedError) throw error.cause;
             throw error;

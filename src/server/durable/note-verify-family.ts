@@ -1,27 +1,17 @@
-// DBOS family adapter for note_verify (YUK-1355 receipt reference).
+// DBOS family adapter for note_verify. Explicit migration candidate: no runtime
+// path imports it, and registration, launch, queue admission and shutdown remain
+// parent-owned. Note verification keeps running on pg-boss until the parent
+// proves and registers this path.
 //
-// Explicit migration candidate — NOT admitted runtime: nothing in src/ or
-// scripts/ imports this module. Serial registration, workflow launch, queue
-// admission, phase/fence machinery and shutdown remain parent-owned shared
-// lifecycle (see docs/planning/2026-10-11-yuk1355-receipt-reference.md).
-// Until the parent registers and proves it, note_verify keeps running on
-// pg-boss via src/capabilities/notes/jobs/note_verify.ts.
+// No repurchase: the paid boundary is one named step with retriesAllowed:false.
+// A recovered workflow re-enters runNoteVerify, whose reservation prelude
+// refuses to buy again for provider_started (skipped:in_progress) or result_ready
+// (finalize only). The host still decides how to dispose of skipped or ambiguous
+// outcomes; this adapter only passes results through.
 //
-// No-repurchase contract: the paid execution boundary runs inside a single
-// named step with retriesAllowed:false. A recovered workflow re-enters
-// runNoteVerify, whose reservation prelude refuses to re-purchase a claim in
-// provider_started (busy → skipped:in_progress) or result_ready (finalize
-// only) — an unknown paid outcome is never auto-replayed as a new provider
-// call; backend-specific disposition of skipped:in_progress / ambiguous stays
-// with the host (pg-boss handler throws retry-required today; a DBOS host
-// decides its own policy), so this adapter only passes results through.
-//
-// YUK-1355 paid-effect control: the workflow body admits itself under backend
-// control (backend 'dbos', deliveryId = workflowId) BEFORE any step runs.
-// Fenced ⇒ PaidEffectControlFencedError (workflow ERROR, zero paid work); a
-// missing control table is fenced as well — DBOS never default-admits, the
-// bootstrap default owner is pg-boss. note_verification_claim remains the
-// paid authority; no paid_effect rows are written for notes.
+// The body admits backend control (dbos, deliveryId = workflowId) before any
+// step. Fenced, including a missing control table, means zero paid work: DBOS
+// never default-admits. note_verification_claim remains the paid authority.
 import { DBOS, type StepConfig } from '@dbos-inc/dbos-sdk';
 import { z } from 'zod';
 
@@ -45,7 +35,7 @@ import {
 
 export const NOTE_VERIFY_FAMILY = 'note_verify';
 export const NOTE_VERIFY_STEP_NAME = 'note-verify-v1';
-/** Same shape as the already-queued pg-boss payload (NoteVerifyJobData). */
+/** Matches the queued pg-boss payload. */
 export const noteVerifyWorkflowInputSchema = z.object({ artifact_id: z.string().min(1) });
 export type NoteVerifyWorkflowInput = z.infer<typeof noteVerifyWorkflowInputSchema>;
 
@@ -66,23 +56,22 @@ export type NoteVerifyDurableDeps = {
   /** Backend-control admission; defaults to the shared paid-effect control gate. */
   admitDeliveryControl?: NoteVerifyAdmitDeliveryControlFn;
   /**
-   * In-transaction admission hook threaded into the claim reservation.
-   * Default: the shared builder with backend 'dbos' and this workflow's id —
-   * under an explicit control row a DBOS delivery additionally requires the
-   * dispatch generation, so generation-less hosts stay hard-refused.
+   * In-transaction admission hook for the claim reservation. Defaults to the
+   * shared DBOS builder; an explicit control row also requires the dispatch
+   * generation, so generation-less hosts stay refused.
    */
   buildControlAdmission?: (workflowId: string) => (tx: import('@/db/client').Tx) => Promise<void>;
 };
 
-/** DBOS admission under the shared backend control; never default-admits. */
+/** Admit under shared backend control; never default-admits. */
 export async function defaultAdmitNoteVerifyDeliveryControl(
   db: Db,
   ref: PaidEffectDeliveryRef,
 ): Promise<PaidEffectControlAdmission> {
   return db.transaction(async (tx) => {
     await lockPaidEffectControlFamily(tx, NOTE_VERIFY_FAMILY);
-    // Missing control table: pg-boss is the bootstrap default owner, so a
-    // DBOS delivery is hard-fenced. to_regclass — never a caught 42P01.
+    // Missing table means the bootstrap pg-boss owner, so fence this delivery.
+    // to_regclass, never a caught 42P01.
     if (!(await paidEffectControlTableExists(tx))) {
       return {
         kind: 'fenced',
@@ -96,10 +85,8 @@ export async function defaultAdmitNoteVerifyDeliveryControl(
 }
 
 /**
- * Pure workflow body: durable identity check, payload validation against the
- * queued contract, backend-control admission, then the verification operation
- * inside one pinned, non-retryable step. Kept DBOS-free so the wiring contract
- * is testable offline; registerNoteVerifyWorkflow is the real consumer.
+ * DBOS-free workflow body: identity, payload, backend admission, then one
+ * non-retryable verification step. registerNoteVerifyWorkflow is the consumer.
  */
 export async function runNoteVerifyWorkflowBody(
   deps: NoteVerifyDurableDeps,
@@ -133,7 +120,7 @@ export async function runNoteVerifyWorkflowBody(
   );
 }
 
-/** Migration-candidate registration entry; the parent-owned host calls this. */
+/** Migration-candidate registration entry, called by the parent-owned host. */
 export function registerNoteVerifyWorkflow(deps: NoteVerifyDurableDeps) {
   return DBOS.registerWorkflow(
     async (rawInput: unknown): Promise<RunNoteVerifyResult> =>

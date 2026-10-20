@@ -1357,10 +1357,10 @@ export const practiceCapability = defineCapability({
     ],
   },
   // M4-T4 (YUK-319)：proposal kind 归属声明。variant_question / question_draft
-  // 的 accept applier 真身在 ./server/proposal-appliers；judge_retraction 有
-  // producer（@/server/proposals/producers）但无 accept applier——accept 走
-  // dispatch 壳 default throw（unsupported_proposal_kind，YUK-44 收口），归属
-  // 声明与 applier 存在性解耦。
+  // 的 accept applier 真身在 ./server/proposal-appliers。
+  // YUK-1407 — judge_retraction accept applier 落地：evaluation 目标走既有
+  // appeal/rejudge/CAS 激活 + settlement replay 链（可逆，不回写原评价）；
+  // legacy judge-event 目标写 CorrectEvent(retract)。
   // ADR-0032 D6-B (YUK-203 lane L6) — question_edit accept applier
   // （acceptQuestionEditProposal）也落在 ./server/proposal-appliers：active 题
   // structured 节点编辑属练习域（题库生命周期）。
@@ -1405,7 +1405,15 @@ export const practiceCapability = defineCapability({
             ),
         },
       },
-      { kind: 'judge_retraction' },
+      {
+        kind: 'judge_retraction',
+        accept: {
+          load: () =>
+            import('./server/proposal-accept-applier').then(
+              (module) => module.judgeRetractionProposalAcceptApplier,
+            ),
+        },
+      },
       // YUK-1016 / 454-B — 错因 catalog 扩张：accept INSERT overlay 行、retract
       // 置 archived_at。dismiss 无定制语义（pending 期尚无行可立），走 generic
       // rate-event 路径。
@@ -1545,6 +1553,15 @@ export const practiceCapability = defineCapability({
       {
         name: 'propose_question_edit',
         load: () => import('./server/tools/proposal-tools').then((m) => m.proposeQuestionEditTool),
+      },
+      // YUK-1407 — 判分纠错提案工具（judge_retraction→evaluation）。授予
+      // copilot/dreaming/coach 三个发现疑似误判的 agent 面（allowlists.ts）。
+      {
+        name: 'propose_grading_correction',
+        load: () =>
+          import('./server/tools/propose-grading-correction').then(
+            (m) => m.proposeGradingCorrectionTool,
+          ),
       },
     ],
   },

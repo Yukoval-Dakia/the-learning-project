@@ -159,8 +159,8 @@ async function routing(): Promise<{
         resolved.model,
       );
       const native = nativePiModel(resolved.provider, resolved.model);
-      if (native?.api !== 'openai-completions') {
-        throw new Error('Require an OpenAI-completions model');
+      if (native?.api !== 'openai-completions' || !native.baseUrl) {
+        throw new Error('Require an OpenAI-completions model with a known catalog endpoint');
       }
       routes.set(solver, {
         solver,

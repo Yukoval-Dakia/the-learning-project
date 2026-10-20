@@ -129,7 +129,7 @@ async function admitTick(db: Db, input: ReviewOrphanTickInput): Promise<SavedTic
   return db.transaction(async (tx) => {
     const phase = await lockPhase(tx);
     const id = tickId(input);
-    // Admission has no row yet; this lock also reconciles a lost admission COMMIT.
+    // No row exists yet; this lock also recovers a lost admission COMMIT.
     await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${id}, 1393))`);
     const saved = await readTick(tx, id);
     if (saved) {
@@ -207,7 +207,7 @@ export type ReviewOrphanOutcomeInspection =
   | { kind: 'committed'; outcome: ReviewOrphanOutcome }
   | { kind: 'not-committed' }
   | { kind: 'unknown'; error: string };
-/** The writable primary's tick lock waits for the original transaction to resolve. No mutation. */
+/** Wait for the original transaction under the primary's tick lock. Read-only. */
 export async function inspectReviewOrphanOutcome(
   db: Db,
   input: { tickId: string; sessionId: string },
@@ -236,7 +236,7 @@ async function commitRow(
     const phase = await lockPhase(tx);
     const locked = await readTick(tx, saved.tick_id);
     if (!locked) throw new Error('Frozen tick is missing');
-    // Receipt wins over current session state and even subsequent phase transitions.
+    // A receipt wins over session state and later phase transitions.
     const prior = await readReceipt(tx, saved.tick_id, candidate.sessionId);
     if (prior) return prior;
     authorizeAdmitted(phase, locked);
@@ -256,7 +256,7 @@ async function commitRow(
 
 async function gateTickEpoch(db: Db, input: ReviewOrphanTickInput): Promise<void> {
   if (input.kind === 'dbos') return waitForRunnableEpoch(db);
-  // Legacy housekeeping retains the existing drain disposition at an older active epoch.
+  // Legacy housekeeping keeps its existing drain disposition at an older epoch.
   const verdict = gateContractEpoch(await readContractEpoch(db));
   if (!verdict.runnable && verdict.reason !== 'epoch_mismatch')
     throw new ContractEpochFenceError(`job:${REVIEW_ORPHAN_FAMILY}`, verdict);
@@ -307,7 +307,7 @@ export async function runReviewOrphanTick(
         throw new ReviewOrphanUnknownOutcome(id, candidate.sessionId, error);
       if (inspected.kind === 'committed') outcome = inspected.outcome;
       else {
-        // Proven absence under the authoritative lock confirms rollback. Preserve the daily backstop.
+        // Proven absence under the lock confirms rollback; keep the daily backstop.
         try {
           outcome = await commitRow(db, saved, candidate, String(error));
         } catch (receiptError) {
@@ -386,7 +386,7 @@ export async function reviewOrphanObligations(
   return z.array(obligationSchema).parse([...tasks, ...gaps]);
 }
 
-/** A source lookback is a minimum cooldown, never proof that suspended senders disappeared. */
+/** A source lookback is a minimum cooldown, not proof that suspended senders are gone. */
 export async function reviewOrphanRollbackHorizon(db: Executor) {
   const [row] = await db.execute(sql`select greatest(c.phase_changed_at,
     coalesce((select max(tick_at) from review_orphan_tick where backend = 'dbos'), c.phase_changed_at),

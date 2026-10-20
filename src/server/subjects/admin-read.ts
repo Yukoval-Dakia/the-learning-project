@@ -1,20 +1,11 @@
-// YUK-601 (v3.2 §3.5) — 管理读面：编辑器/badge 的 HTTP 表面的业务层。
-// 四个读函数对应四个 GET 端点（route 壳在 observability capability）：
-//   listAdminSubjects        → GET /api/admin/subjects（既有 slim 面扩容）
-//   getAdminSubjectTraits    → GET /api/admin/subjects/:id/traits
-//   listAdminTraits          → GET /api/admin/traits?kind=
-//   getTraitJournalPage      → GET /api/admin/traits/:id/journal
+// 管理读面（编辑器/badge）的业务层。四个读函数对应四个 GET 端点，route 壳在
+// observability capability。
 //
-// 读面纪律：
-// - 枚举全量走 DB（含 general 与 retired——编辑器选科数据源，GET /api/subjects
-//   只给 selectable 不够）；version 组合串/notation/capabilityCount 从活 registry
-//   取（装配产物，DB 无此列），未装配 → null 不编造。
-// - `subjectRevision`（数字 CAS 轴）随两个 subject 读端点下发——写面全部要
-//   `expectedSubjectRevision`，UI 首次提交的初始值只能从读面来（design doc
-//   2026-07-11 v1.1 owner review P1；409 的 currentRevision 只在冲突时出现）。
-// - revision（live）vs effectiveRevision（实际采用）vs degraded 三元事实来自
-//   resolution-cache（hydrate 每轮整体替换）；缓存缺位（未水合窗口）回落
-//   live revision + degraded:null，不臆造降级态。
+// 全量枚举读 DB（含 general 与 retired）；version/notation/capabilityCount 是
+// registry 装配产物，未装配时给 null/0，不编造。
+// `subjectRevision` 是写面 expectedSubjectRevision 的 CAS 轴，UI 首次提交只能从
+// 读面取值。revision/effectiveRevision/degraded 来自 resolution-cache；缓存缺位
+// 时回落 live revision + degraded:null。
 
 import { and, asc, desc, eq, inArray, lt } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
@@ -34,13 +25,12 @@ export interface AdminSubjectListRow {
   displayName: string;
   origin: 'builtin' | 'custom';
   retiredAt: string | null;
-  /** 派生布尔（v3 §2.3）；general 恒 null（自身豁免）。 */
+  /** 派生布尔；general 恒 null（自身豁免）。 */
   isGeneralFallback: boolean | null;
-  /** 装配身份组合串（jt:…）；未装配（registry 无此科）→ null。 */
+  /** 装配身份组合串（jt:…）；未装配 → null。 */
   version: string | null;
   /** 控制行 CAS 轴——写面 expectedSubjectRevision 的首次提交值。 */
   subjectRevision: number;
-  // 既有 slim 面消费字段（/admin/subjects 列表页），保留防断。
   notation: string | null;
   capabilityCount: number;
 }
@@ -221,8 +211,7 @@ export interface TraitJournalRow {
 
 /**
  * append-only 历史，倒序（rollback UI 数据源）。null = trait 不存在（404）。
- * 不下发 payload——doc v1.1 §2.2 裁定 journal 区为纯 revision 列表（diff 查看器
- * 是 owner 点名后的 follow-up）；rollback 提交只需 targetRevision。
+ * 不下发 payload：journal 区只列 revision，rollback 提交只需 targetRevision。
  */
 export async function getTraitJournal(db: Db, traitId: string): Promise<TraitJournalRow[] | null> {
   const allRows: TraitJournalRow[] = [];
