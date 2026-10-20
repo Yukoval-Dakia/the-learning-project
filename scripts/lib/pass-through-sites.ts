@@ -7,9 +7,11 @@
  *   - module   (M1): file with zero runtime top-level definitions whose only
  *                    runtime surface is value re-export-from statements;
  *   - function (F1): exported function whose body is one `return [await]
- *                    imported(arg…)` with arguments identical to parameters, no
- *                    defaults/rest/patterns, and no try/catch/guard — error
- *                    boundaries, conversions and validation never match;
+ *                    imported(arg…)` that forwards its parameters verbatim —
+ *                    same order, a full permutation of distinct params, or a
+ *                    single rest parameter spread verbatim; no defaults/
+ *                    patterns, and no try/catch/guard — error boundaries,
+ *                    conversions and validation never match;
  *   - alias    (A1): `export const X = importedBinding` / `export default
  *                    importedBinding` — no call, no transform;
  *   - site     (S1): a value-bearing export-from statement inside a module that
@@ -178,11 +180,67 @@ function callTargetOf(
   return null;
 }
 
-/** The one F1 shape: `return [await] imported(p1, p2, …)` and nothing else. */
+/** Decidable F1 argument shapes — everything else (defaults, patterns,
+ *  transforms, dropped/duplicated params, computed calls) stays a real
+ *  definition, not a thin forward. */
+function forwardArgsShape(
+  params: unknown[],
+  args: unknown[],
+): 'direct' | 'reordered' | 'spread' | null {
+  // `(...args) => target(...args)` / `function f(...args) { return target(...args) }`
+  if (params.length === 1 && args.length === 1) {
+    const param = params[0];
+    const arg = args[0];
+    if (
+      isRecord(param) &&
+      param.type === 'RestElement' &&
+      isRecord(param.argument) &&
+      param.argument.type === 'Identifier' &&
+      isRecord(arg) &&
+      arg.type === 'SpreadElement' &&
+      isRecord(arg.argument) &&
+      arg.argument.type === 'Identifier' &&
+      arg.argument.name === param.argument.name
+    ) {
+      return 'spread';
+    }
+  }
+  if (args.length !== params.length) return null;
+  // Every parameter must be a plain Identifier — defaults, rest (outside the
+  // single-rest case above) and destructuring patterns own decisions.
+  const paramNames: string[] = [];
+  for (const param of params) {
+    if (!isRecord(param) || param.type !== 'Identifier' || typeof param.name !== 'string') {
+      return null;
+    }
+    paramNames.push(param.name);
+  }
+  const argNames: string[] = [];
+  for (const arg of args) {
+    if (!isRecord(arg) || arg.type !== 'Identifier' || typeof arg.name !== 'string') return null;
+    argNames.push(arg.name);
+  }
+  if (argNames.every((name, i) => name === paramNames[i])) return 'direct';
+  // Permutation: distinct parameters, each used exactly once, order may differ.
+  const distinct = new Set(paramNames).size === paramNames.length;
+  if (distinct && [...argNames].sort().join('') === [...paramNames].sort().join('')) {
+    return 'reordered';
+  }
+  return null;
+}
+
+/** The F1 shape: `return [await] imported(…)` with a decidable forward of the
+ *  parameters — same order, a full permutation of distinct params, or a single
+ *  rest parameter spread verbatim — and nothing else. */
 function forwardDetail(
   candidate: FunctionCandidate,
   bindings: Map<string, ImportBinding>,
-): { target: ImportBinding; member: string | null; awaited: boolean } | null {
+): {
+  target: ImportBinding;
+  member: string | null;
+  awaited: boolean;
+  shape: 'direct' | 'reordered' | 'spread';
+} | null {
   let returned: unknown;
   if (candidate.expressionBody !== null) {
     returned = candidate.expressionBody;
@@ -201,15 +259,9 @@ function forwardDetail(
   const call = callTargetOf(returned, bindings);
   if (!call) return null;
   const args = isRecord(returned) && Array.isArray(returned.arguments) ? returned.arguments : [];
-  if (args.length !== candidate.params.length) return null;
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-    const param = candidate.params[i];
-    if (!isRecord(arg) || arg.type !== 'Identifier') return null;
-    if (!isRecord(param) || param.type !== 'Identifier') return null;
-    if (arg.name !== param.name) return null;
-  }
-  return { target: call.binding, member: call.member, awaited };
+  const shape = forwardArgsShape(candidate.params, args);
+  if (!shape) return null;
+  return { target: call.binding, member: call.member, awaited, shape };
 }
 
 function functionCandidateFromDeclarator(
@@ -454,7 +506,7 @@ export function scanPassThroughSites(
         targetModule: target,
         detail: [
           `forward:${forward.target.imported}${forward.member ? `.${forward.member}` : ''}`,
-          forward.awaited ? 'awaited' : 'direct',
+          `${forward.shape}${forward.awaited ? '+await' : ''}`,
           canonicalHash(code, candidate.start, candidate.end),
         ].join(';'),
       });

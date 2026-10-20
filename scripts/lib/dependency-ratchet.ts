@@ -33,19 +33,42 @@ function normalize(path: string, renames: ReadonlyMap<string, string>): string {
   return renames.get(path) ?? path;
 }
 
+type KindedEdge = { file: string; module: string; kind: 'value' | 'type' };
+
+/** Kind-aware base index over file→module pairs; value wins when a pair
+ *  appears at base as both a type and a value edge. */
+function baseKindIndex(
+  base: readonly KindedEdge[],
+  renames: ReadonlyMap<string, string>,
+): Map<string, 'value' | 'type'> {
+  const index = new Map<string, 'value' | 'type'>();
+  for (const edge of base) {
+    const key = edgeKey(normalize(edge.file, renames), normalize(edge.module, renames));
+    if (index.get(key) !== 'value') index.set(key, edge.kind);
+  }
+  return index;
+}
+
+/** A head edge is new when its file→module pair was absent at base, or when a
+ *  type-only edge is upgraded to a runtime (value) edge. Downgrading
+ *  value→type is a tightening and never counts as new. */
+function isNewEdge(baseIndex: ReadonlyMap<string, 'value' | 'type'>, edge: KindedEdge): boolean {
+  const baseKind = baseIndex.get(edgeKey(edge.file, edge.module));
+  return baseKind === undefined || (edge.kind === 'value' && baseKind === 'type');
+}
+
 /**
- * Edges present at head but not at base (after rename normalization of both
- * endpoints). This is the "new dependency" set the records must cover.
+ * Edges present at head but not at base — including type→value upgrades on
+ * existing pairs — after rename normalization of both endpoints. This is the
+ * "new dependency" set the records must cover.
  */
 export function addedEdges(
   base: readonly RatchetEdge[],
   head: readonly RatchetEdge[],
   renames: ReadonlyMap<string, string>,
 ): RatchetEdge[] {
-  const baseKeys = new Set(
-    base.map((edge) => edgeKey(normalize(edge.file, renames), normalize(edge.module, renames))),
-  );
-  return head.filter((edge) => !baseKeys.has(edgeKey(edge.file, edge.module)));
+  const baseIndex = baseKindIndex(base, renames);
+  return head.filter((edge) => isNewEdge(baseIndex, edge));
 }
 
 function sameSymbols(a: readonly string[], b: readonly string[]): boolean {
@@ -55,9 +78,10 @@ function sameSymbols(a: readonly string[], b: readonly string[]): boolean {
 }
 
 /**
- * Every new audited edge needs exactly one edgeRecord, and every new record
- * must correspond to a real new edge (1:1). Historical records are append-only
- * and are not re-punished.
+ * Every new audited edge must be covered by a matching edgeRecord, and every
+ * new record must correspond to a real new edge (coverage both ways; a
+ * duplicated record for one edge is tolerated ledger inflation, never a
+ * hidden edge). Historical records are append-only and are not re-punished.
  */
 export function auditEdgeRecords(input: {
   records: readonly EdgeRecord[];
@@ -133,12 +157,8 @@ export function auditKernelReverseEdges(input: {
   head: readonly { file: string; module: string; kind: 'value' | 'type' }[];
   renames: ReadonlyMap<string, string>;
 }): { violations: RatchetViolation[]; newValueEdges: number; newTypeEdges: number } {
-  const baseKeys = new Set(
-    input.base.map((edge) =>
-      edgeKey(normalize(edge.file, input.renames), normalize(edge.module, input.renames)),
-    ),
-  );
-  const added = input.head.filter((edge) => !baseKeys.has(edgeKey(edge.file, edge.module)));
+  const baseIndex = baseKindIndex(input.base, input.renames);
+  const added = input.head.filter((edge) => isNewEdge(baseIndex, edge));
   const violations: RatchetViolation[] = [];
   let newTypeEdges = 0;
   for (const edge of added) {
