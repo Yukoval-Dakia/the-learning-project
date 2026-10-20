@@ -1,4 +1,8 @@
-import { extractAnswerHead } from '@/core/schema/judge-routing';
+import {
+  extractAnswerHead,
+  extractFinalAnswer,
+  isProcessLikeAnswer,
+} from '@/core/schema/judge-routing';
 
 export interface JudgeInput {
   reference: string;
@@ -87,17 +91,24 @@ export function judgeExact(question: JudgeInput, answer: AnswerInput): JudgeResu
     answerIdx.every((v, i) => v === referenceIdx[i]);
 
   const match = choiceMatch || normalize(answerHead) === normalize(referenceHead);
-  // YUK-260 evidence: record HOW the match was decided plus resolved indices, so
-  // a choice_index verdict (where normalized text legitimately differs) does not
-  // read as self-contradictory. Kept isomorphic with the V2 capability judge.
+  // YUK-1407 — 头比较 miss 后确定性抽明示终态再比一次（与 V2 判官及 native
+  // exact_text comparator 同形）。V1 没有 pending/unsupported 语义：过程文本
+  // 仍回落 incorrect，但 evidence 如实标注 process_answer_unresolvable —
+  // 消费面（calibration 对照）能据此区分"真错"与"exact 判不动"。
+  const finalAnswer = match ? null : extractFinalAnswer(answer.content);
+  const finalMatch =
+    finalAnswer?.kind === 'found' &&
+    finalAnswer.values.some((candidate) => normalize(candidate) === normalize(referenceHead));
+  const effectiveMatch = match || finalMatch === true;
+  const processUnresolvable = !effectiveMatch && isProcessLikeAnswer(answer.content);
   return {
-    verdict: match ? 'correct' : 'incorrect',
-    score: match ? 1 : 0,
-    feedback_md: match
+    verdict: effectiveMatch ? 'correct' : 'incorrect',
+    score: effectiveMatch ? 1 : 0,
+    feedback_md: effectiveMatch
       ? `正确答案：${question.reference}。`
       : `参考答案：${question.reference}。你的答案：${answer.content}。`,
     evidence_json: {
-      match,
+      match: effectiveMatch,
       normalized_reference: normalize(question.reference),
       // YUK-1003: when either side embedded an explanation tail the compare ran
       // on extracted heads — record them, otherwise a stripped verdict reads
@@ -108,7 +119,11 @@ export function judgeExact(question: JudgeInput, answer: AnswerInput): JudgeResu
       ...(referenceHead !== question.reference.normalize('NFKC').trim()
         ? { reference_answer_head: referenceHead }
         : {}),
-      match_type: choiceMatch ? 'choice_index' : 'text',
+      ...(finalAnswer?.kind === 'found'
+        ? { final_answer: { value: finalAnswer.values[0] ?? '', marker: finalAnswer.marker } }
+        : {}),
+      ...(processUnresolvable ? { process_answer_unresolvable: true } : {}),
+      match_type: finalMatch === true ? 'final_answer' : choiceMatch ? 'choice_index' : 'text',
       answer_choice_indices: answerIdx,
       reference_choice_indices: referenceIdx,
     },

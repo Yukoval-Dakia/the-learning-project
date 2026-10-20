@@ -23,6 +23,7 @@ import {
 import {
   type PracticeApplierOpts,
   acceptCauseCategoryProposal,
+  acceptJudgeRetractionProposal,
   acceptQuestionDraftProposal,
   acceptQuestionEditProposal,
   acceptVariantQuestionProposal,
@@ -129,6 +130,23 @@ export const questionEditProposalAcceptApplier: ProposalAcceptApplier = async (
 ) =>
   wrap(
     await acceptQuestionEditProposal(
+      db as Db,
+      input.proposalId,
+      inboxView(input),
+      runtimeOptions(input, runtime),
+    ),
+  );
+
+// YUK-1407 — judge_retraction accept：判分纠错提案（evaluation 目标走
+// appeal/rejudge/CAS 激活 + settlement replay；legacy judge-event 目标写
+// CorrectEvent）。真身在 proposal-appliers.ts。
+export const judgeRetractionProposalAcceptApplier: ProposalAcceptApplier = async (
+  db,
+  input,
+  runtime,
+) =>
+  wrap(
+    await acceptJudgeRetractionProposal(
       db as Db,
       input.proposalId,
       inboxView(input),

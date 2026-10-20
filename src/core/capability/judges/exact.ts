@@ -1,6 +1,10 @@
 import { z } from 'zod';
 import type { CapabilityManifestT, JudgeResultV2T } from '@/core/schema/capability';
-import { extractAnswerHead } from '@/core/schema/judge-routing';
+import {
+  extractAnswerHead,
+  extractFinalAnswer,
+  isProcessLikeAnswer,
+} from '@/core/schema/judge-routing';
 import type { JudgeCapabilityRunner, JudgeRunInput } from '../types';
 
 const ExactJudgeQuestion = z.object({
@@ -167,6 +171,64 @@ function run(input: JudgeRunInput): JudgeResultV2T {
     };
   }
 
+  // YUK-1407 — 头比较 miss 后确定性抽明示终态再比一次："推导…S5=11" 的 head
+  // 是整段推导（无解析 tail），与 "11" 不等 ⇒ 旧行为直接 incorrect。
+  // 提取不到/矛盾/过程文本 miss ⇒ unsupported('process_answer_unresolvable') ——
+  // 如实上报不假装 0 分；语义升级推迟到 executor+admission 切片（YUK-1407 后续）。
+  const finalAnswer = extractFinalAnswer(input.answer.content);
+  if (finalAnswer.kind === 'found') {
+    const finalHit = finalAnswer.values.some(
+      (candidate) => normalize(candidate) === normalize(referenceHead),
+    );
+    if (finalHit) {
+      return {
+        score: 1,
+        score_meaning: 'correctness',
+        coarse_outcome: 'correct',
+        confidence: 1,
+        capability_ref: CAPABILITY_REF,
+        feedback_md: `正确答案：${question.reference}。`,
+        evidence_json: {
+          match: true,
+          normalized_answer: normalizedAnswer,
+          normalized_reference: normalizedReference,
+          final_answer: { value: finalAnswer.values[0] ?? '', marker: finalAnswer.marker },
+          ...choiceEvidence,
+          ...headEvidence,
+        },
+      };
+    }
+  }
+  if (isProcessLikeAnswer(input.answer.content)) {
+    return {
+      score: null,
+      score_meaning: 'correctness',
+      coarse_outcome: 'unsupported',
+      confidence: 0,
+      capability_ref: CAPABILITY_REF,
+      feedback_md:
+        finalAnswer.kind === 'found'
+          ? 'extracted final answer does not match the reference — equivalence beyond the exact comparator contract'
+          : finalAnswer.kind === 'ambiguous'
+            ? `conflicting explicit final answers (${finalAnswer.candidates.join(' / ')}) — exact comparator cannot adjudicate`
+            : 'worked/process answer carries no unambiguous final answer — beyond the exact comparator contract',
+      evidence_json: {
+        match: false,
+        reason: 'process_answer_unresolvable',
+        normalized_answer: normalizedAnswer,
+        normalized_reference: normalizedReference,
+        ...(finalAnswer.kind === 'found'
+          ? { final_answer: { value: finalAnswer.values[0] ?? '', marker: finalAnswer.marker } }
+          : {}),
+        ...(finalAnswer.kind === 'ambiguous'
+          ? { final_answer_candidates: finalAnswer.candidates }
+          : {}),
+        ...choiceEvidence,
+        ...headEvidence,
+      },
+    };
+  }
+
   return {
     score: 0,
     score_meaning: 'correctness',
@@ -178,6 +240,9 @@ function run(input: JudgeRunInput): JudgeResultV2T {
       match,
       normalized_answer: normalizedAnswer,
       normalized_reference: normalizedReference,
+      ...(finalAnswer.kind === 'found'
+        ? { final_answer: { value: finalAnswer.values[0] ?? '', marker: finalAnswer.marker } }
+        : {}),
       ...choiceEvidence,
       ...headEvidence,
     },
