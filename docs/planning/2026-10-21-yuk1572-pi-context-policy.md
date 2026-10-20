@@ -5,8 +5,12 @@
 `arch/yuk-1572-pi-context-decisions`。起点旧 `c338877f` 经 `git fetch origin`
 核得 `HEAD..origin/main=38`，从最新
 `83bbecdaecaf70be0ae0241795fac3d5a07940c1` 新切，不带父旧 docs。
-源码提交 `a6d85a17a280dd7c8c1022f194c31093ebac6a1e`，tree
-`653ecba86477c4dfefc4d7279363d22379c7ad4e`；本文随后单独提交。
+首轮源码 `a6d85a17a`，交付 `caf4e4d42`。父完成唯一一次 frozen install 后，
+fetch 确认 main 前移至 `20222f2cafe1500a9e445b43fe132935405d825a`，仅三个
+publication 路径；普通 merge `eee099ddb` 无冲突，双方 blob 保留。
+恢复旧 type import 与最小换行后，最终源码验证 head
+`586269c5ee4d9bf1bc04c18cc539e614e88af853`，tree
+`17cffc3315a198d8ad139c68ef2f2d46fb80cb98`；本次随后仅更新本文。
 
 ## 职责与授权
 
@@ -16,7 +20,7 @@
 stable/compat、新 registry 或白名单。未改 audit/schema/CI/package/lock/baseline、
 测试、PLAN 或其他树；全局状态和后续门由父线收口。
 
-新模块 114 行，3 个同 family 入口，唯一 importer 是 adapter：
+新模块 117 行，3 个同 family 入口，唯一 importer 是 adapter：
 
 - `estimatePiTokens`：完整保留 text/thinking/tool arguments、system sections/
   toolsAdded 的序列化及 CJK/非 CJK 估算。只用于容量，从未用于 billing。
@@ -70,14 +74,15 @@ adapter 原 8 个导出全部保留。外部 importers 共 6 个文件，均零�
 paid owner 不变；②三个内部入口承载真实实现，无转发壳；③两场景的编辑点数
 不变，收敛的是审读范围及 class 内策略知识，不冒称新算法深化；④事务、锁序、
 claim-fence、unknown/cost 恢复不属于本片，全部原样；⑤按职责及已核写权切，
-adapter **2121 → 2044，仍 >1500**，新模块 114，不为尺寸扩大范围。
+adapter **2121 → 2045，仍 >1500**，新模块 117，不为尺寸扩大范围。
 
 ## 逐文件保护与证据
 
 `pi-agent-adapter.ts`：静态逆向恢复获准替换后，全文件与 base 逐字相等；
 估算/constants 原文一致（仅 estimator 增内部 export）；选择体只将原
-piUserMessage 绑定换成传入 factory、最终局部赋值换成 return；predicate/
-role filter 仅缩进不同。所有 clock 调用表达式与源码顺序一致。
+piUserMessage 绑定换成传入 factory、最终局部赋值换成 return、prefix 数组
+按 Biome 换行；predicate/role filter 仅缩进不同。原 `PiMessage` type import
+继续服务既有 aliases。所有 clock 调用表达式与源码顺序一致。
 `EMPTY_PI_USAGE` + replay、user/SDK 消息构造、providerTransport、structured
 submit/streamFn 直到文件结尾各段逐字相等，保留错误/usage/class/message identity。
 
@@ -85,18 +90,37 @@ submit/streamFn 直到文件结尾各段逐字相等，保留错误/usage/class/
 逆序预算循环、toolResult 配对及 session 判定原样归位。新导出均有上述真实
 consumer；无独立 runtime consumer 扩面，无测试或付费入口。
 
-源码 seal：
-`/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1572/a6d85a17a280dd7c8c1022f194c31093ebac6a1e/pi-context-policy-v2/`。
-`sha256.json` SHA256 `ad005c86395a64b287c51b4fd25425edda0b2991dd5f3b574770c770400a568a`；
+最终源码 seal：
+`/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1572/586269c5ee4d9bf1bc04c18cc539e614e88af853/pi-context-source-proof/`。
+`sha256.json` SHA256 `4ba346632073928df0d128acb11b57f01c74d7253ac9ca3eb70ef43bca72d6d8`；
 `source-comparison.stdout` SHA256
-`38aa2a78608b60a7cd48febadfb76323e780a42c826ae26e7f60b74d2ea91389`。
+`380106ac6ef11150b40aa3e1f2612e68b2ea3ec669a8c2cbaf84ab5b550a6d53`。
 每条命令 raw stdout/stderr、argv、UTC、真实 returncode 在各 `*.run.json`。
 首轮 seal 保留：其 session-id 比较范围误含已迁 estimator；v2 只纠正比较范围，
 产品源码没有为该证据修正而变化。
 
-实跑：两文件 `node --check`、`git diff --check` 均 rc0；静态源码比较及 caller
-清单已逐项读取。无依赖，未 install/update/复制 node_modules；typecheck/lint/
-build/两 audit **NOT_RUN**，source 已交父串行一次 frozen install 后经 heavy.sh
-验证。tests/vitest/DB/TEST/Docker/daemon/provider/runtime/demo/paid、push/PR/
-watch/review/Linear/清树均 NOT_RUN。不以静态相等代替运行验收，不预付 audit 或
-main 收益；baseline 如有真实变化交父登记。未发现新的范围外 actionable follow-up。
+## 主线整合后的实测验证
+
+父安装回执：原 `caf4e4d42` 证据目录的 `parent-frozen-install.json/log`，
+`heavy.sh pnpm install --frozen-lockfile` rc0；三项 package/lock/workspace
+hash 前后同，merge 后仍同。writer 未 install/update/复制依赖。
+
+最终源码 head 的 typecheck/lint/build/audit:capability-boundaries/
+audit:architecture-deepening **全部 rc0**，均经外部 heavy.sh 单 lane 串行、全机
+最多两槽；lint 180 warnings。原始日志与 argv/UTC/真实 rc：
+`/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1572/586269c5ee4d9bf1bc04c18cc539e614e88af853/pi-context-five-gates-01/`。
+`sha256.json` SHA256 `1eaffd05efe0e80a3609f0c94e8a45d64edea6f51642fdc2e4f56e9b034bef01`。
+
+审计 base 为 merge-base `20222f2cafe1500a9e445b43fe132935405d825a`，实测
+403/0/37、新增依赖边0、server-entry新增边0、SCC 1（base 1）、超长13
+（base 13）、pass-through 1088（+0）。超长14→13属上游 publication 片，
+本片未退出超长清单。不改 baseline，当前 blob 与上游均为
+`9a0e9e53ae6dccaaf9eeebc934e0a898543a0348`。
+
+首轮 typecheck rc1：本片误删仍被两个 aliases 使用的 `PiMessage` type import，
+`5c92e07a2` 恢复原1行后通过。随后 lint rc1：本片 prefix 数组需格式换行，
+`586269c5e` 最小修复后完整五门通过；不是上游错误，旧红日志保留在各原 head。
+两文件 `node --check`、`git diff --check` 及静态源码/caller 比较仍通过。
+tests/vitest/DB/TEST/Docker/daemon/provider/runtime/demo/paid、push/PR/watch/
+review/Linear/清树均 NOT_RUN。不以静态构建代替真实运行验收，不预付 main 收益；
+未发现新的范围外 actionable follow-up。
