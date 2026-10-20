@@ -1,6 +1,6 @@
 // Native appeals evaluate the immutable original and activate a new candidate.
 // Historical queued requests receive a durable held receipt, never a fresh score.
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import { canonicalHash } from '@/core/migration/canonical';
 import type { Db, Tx } from '@/db/client';
@@ -20,7 +20,12 @@ async function appealAlreadyResolved(db: Db | Tx, appealId: string): Promise<boo
   const [existing] = await db
     .select({ id: event.id })
     .from(event)
-    .where(eq(event.caused_by_event_id, appealId))
+    .where(
+      and(
+        eq(event.caused_by_event_id, appealId),
+        eq(event.action, 'experimental:assessment_appeal_resolution'),
+      ),
+    )
     .limit(1);
   return existing !== undefined;
 }

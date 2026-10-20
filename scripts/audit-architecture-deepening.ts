@@ -1492,7 +1492,9 @@ async function runCli(): Promise<void> {
     proposals: {
       declarations: proposalDeclarations,
       supportedKinds,
-      producerOnlyKinds: ['archive', 'defer', 'judge_retraction'],
+      // YUK-1407 — judge_retraction now has an accept applier (practice
+      // proposal-appliers), so it leaves the producer-only set.
+      producerOnlyKinds: ['archive', 'defer'],
     },
     providerAttemptCensus: {
       attemptTruthViolations,
