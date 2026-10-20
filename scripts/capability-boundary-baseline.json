@@ -138,8 +138,31 @@
       "from": 1,
       "to": 0,
       "direction": "decrease"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/knowledge/public.ts",
+      "siteKind": "module",
+      "symbol": "learnableFrontierResolved",
+      "targetModule": "src/capabilities/knowledge/server/frontier-read.ts",
+      "targetSymbol": "learnableFrontierResolved",
+      "owner": "knowledge",
+      "consumers": [
+        {
+          "file": "src/capabilities/practice/server/learnable-frontier.ts",
+          "line": 5
+        }
+      ],
+      "evidence": "src/capabilities/knowledge/server/frontier-read.ts:220-352 at de061af07afece563d0f350a5e101a3e395c6c58 — bounded recursive closure query :220-278, overflow/sparse states :280-314, mastery gate+ordering+dense results :324-352; practice passes only Db/Tx and reads .ids (learnable-frontier.ts:26-27)",
+      "rationale": "协调线裁定：批准为稳定公开契约。这个接口把闭包、overflow、sparse/dense、掌握判定、排序都藏在里面，调用方不需要知道这些顺序。只限这一个符号、这一个目标。isMastered 等其他符号不连带豁免。",
+      "issue": "YUK-1579",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1579#comment-af8190bd-7e93-4133-ba02-68a844f006fc",
+      "date": "2026-10-20"
     }
   ],
+  "edgeRecords": [],
+  "sourceSizeRecords": [],
+  "compatShims": [],
   "debts": {
     "capabilityToServer": {
       "total": 406,
