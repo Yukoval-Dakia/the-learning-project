@@ -92,7 +92,10 @@ export function createPiContextCompactionPolicy(
         createUserMessage: (content: string) => AgentMessage,
       ): AgentMessage[] {
         const history = messages.filter((message) => message.role !== 'system');
-        const prefix: AgentMessage[] = [...(system ? [system] : []), createUserMessage(sessionContext)];
+        const prefix: AgentMessage[] = [
+          ...(system ? [system] : []),
+          createUserMessage(sessionContext),
+        ];
         const kept: AgentMessage[] = [];
         let budget = targetTokens - estimatePiTokens(prefix);
         for (let i = history.length - 1; i >= 0; i -= 1) {
