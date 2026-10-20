@@ -69,12 +69,28 @@
 在 `18ddb1c3b41f7549634c84d22694a3f0d8ec8892` 经外部 heavy.sh 串行重跑五门：
 typecheck/lint/build rc0（lint 180 warnings）；两 audit 均显式 `--base 20222f2c`，rc1，
 且各仅报两项预期收紧：`practice → ai 60 < 61`、`capability → server 402 < 403`。
-没有其他新边/size 违规；不把 audit rc1 写成通过，也未改 baseline 或门，交父线登记。
+该轮无其他新边/size 违规，baseline 尚未登记，rc1 原样封存。
 原始 stdout/stderr、argv、UTC（含排队等待）、真实 rc 和逐文件证明封存在
 `/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1570/18ddb1c3b41f7549634c84d22694a3f0d8ec8892/task-input-hash-five-gates/`；
 `sha256.json` 的 SHA-256：`57abc3fe0d49f421917baf8ac66ba23018ffeb03fd64ae8eaab6c1f2eee9a353`。
 原 `ad65981c` 五门及定向格式诊断仍在其 exact-head 的独立目录中。
 
+父线随后明确授权仅用既有 `audit:capability-boundaries --tighten` 原生登记本片下降。
+在 `96653c64` 经 heavy.sh 执行该命令 rc0，产生 baseline 提交
+`ed6f272b2f666fca14f6f055685fc14756a8f6f4`：仅追加一条原生 UTC 日期的
+`practice → ai 61→60` decrease，并收紧总数 `403→402`。
+原 changes 18 条前缀、notes 30 项、edgeRecords 20 条、sourceSizeRecords 1 条、compatShims 7 条
+全部原样保留；没有手造数字、改 audit 逻辑或预付尚未合入 JSON 片的下降。
+
+在 `ed6f272b` 经 heavy.sh 串行运行 baseline Biome check、两 audit（`--base 20222f2c`），
+三项均 rc0。实测依赖总数 `402/0/37`，SCC 仍为 `{agency, knowledge, practice}`，
+new dependency edges=0、new pass-through sites=0；>1500 文件 13，与本次 base 相同。
+源码未变，按授权不重跑 typecheck/build；保留先前 `18ddb1c3` 的真实通过结果。
+raw stdout/stderr、argv、UTC、真实 rc 位于
+`/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1570/ed6f272b2f666fca14f6f055685fc14756a8f6f4/task-input-hash-tightened-audits/`；
+`sha256.json` 的 SHA-256：`ede629a7d13d3a84381adb5e14d06214b22f3d77b8c9ac6fba2d566347777df5`。
+
 tests/vitest/DB/TEST/Docker/daemon/provider/runtime/demo/paid、独立 review、push/PR/CI、部署均 NOT_RUN。
-audit/schema/CI/package/lock/baseline 零修改。后续验证、集成、issue 状态与审查归父线；
+audit 逻辑/schema/CI/package/lock 零修改；baseline 仅上述原生收紧。
+后续集成、issue 状态与唯一 R1 归父线；
 本片未发现需新增 tracker 的独立缺陷，也未自行调用 Linear。
