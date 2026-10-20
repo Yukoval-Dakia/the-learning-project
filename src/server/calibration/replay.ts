@@ -2,10 +2,11 @@
 // Attempt loading stays in scripts/audit-calibration.ts. This module never touches the database.
 // The faithfulness fixture drives the real updateThetaForAttempt and compares the final maps.
 //
-// Every attempt that touches a scoped KC applies the full multi-KC update. A forward
-// step is emitted only when the question is single-KC (scoredKnowledgeId !== null).
+// Every non-empty attempt applies the full multi-KC update and pushes a step.
+// predictedP is set only for a single-KC question. A multi-KC step leaves it null
+// unless multiKcScoring fills the conjunctive item fields.
 // Both SRT variants share the live HIERARCHICAL_ELO_ENABLED flag, so ΔAUC isolates SRT.
-// The forward step is emitted before any θ̂ write. outcome_t never forms θ̂_{t−1}.
+// The step is pushed before any θ̂ write. outcome_t never forms θ̂_{t−1}.
 //
 // The grid track is a read-only shadow. It never flips THETA_GRID_ENABLED and never writes.
 // Production folds only when the deduped referenced KC set has length 1. That set is `kcs`,
@@ -13,7 +14,8 @@
 // secondary KC, so the fold gate and the forward prediction can name different KCs.
 // The likelihood is binary. A KC with no posterior starts from uniformPrior().
 // Production fills globalOf once, before the attempt, and the drift does not mutate that map.
-// Capture preGlobal before this engine's drift and use it for both the prediction and the fold.
+// The fold keeps the referenced KC's pre-drift global. The prediction reads the scored KC
+// before the drift. Those reads match only when the scored KC is the folded KC.
 // With the grid flag off, every grid field stays null and thetaGridByKc stays empty.
 
 import {
