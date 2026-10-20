@@ -13,9 +13,12 @@ const MAX_PRACTICE = 3;
  */
 export function NextSteps({
   detail,
+  lead,
   navigate,
 }: {
   detail: QuestionFullDetail;
+  /** False when a notice above already holds the page's main action. */
+  lead: boolean;
   navigate: (to: string) => void;
 }) {
   const due = new Map(
@@ -45,7 +48,7 @@ export function NextSteps({
               </div>
               <Button
                 size="sm"
-                variant={index === 0 ? 'primary' : 'secondary'}
+                variant={lead && index === 0 ? 'primary' : 'secondary'}
                 onClick={() => navigate(scopedPracticeHref(k.id))}
               >
                 去练
@@ -60,7 +63,7 @@ export function NextSteps({
           </div>
           <Button
             size="sm"
-            variant={knowledge.length === 0 ? 'primary' : 'secondary'}
+            variant={lead && knowledge.length === 0 ? 'primary' : 'secondary'}
             onClick={askCompanion}
           >
             打开

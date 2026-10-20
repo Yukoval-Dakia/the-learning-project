@@ -7,7 +7,13 @@ import { useCallback, useState } from 'react';
 import { ApiError } from '@/ui/lib/api';
 import { setCompanionFocus } from '@/ui/lib/use-copilot-dwell';
 import { Button, Card, RetryLine, SkeletonLines, UiNextRoot } from '@/ui-next/public';
-import { type QuestionFullDetail, focusTitle, getQuestionFull, isDeleted } from './library-api';
+import {
+  type QuestionFullDetail,
+  focusTitle,
+  getQuestionFull,
+  isDeleted,
+  isDraft,
+} from './library-api';
 import { MyHistory } from './MyHistory';
 import { NextSteps } from './NextSteps';
 import { QuestionBanner } from './QuestionBanner';
@@ -55,7 +61,13 @@ function Loaded({
         />
       )}
       <MyHistory detail={detail} navigate={navigate} />
-      {!deleted && <NextSteps detail={detail} navigate={navigate} />}
+      {!deleted && (
+        <NextSteps
+          detail={detail}
+          lead={detail.serving.servable && !isDraft(detail)}
+          navigate={navigate}
+        />
+      )}
       {!deleted && <QuestionTidy detail={detail} />}
     </main>
   );

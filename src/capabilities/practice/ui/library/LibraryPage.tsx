@@ -30,7 +30,7 @@ export interface LibraryPageProps {
 }
 
 const VIEW_LEADS: Readonly<Record<LibraryView, string>> = {
-  all: '能出给你的题，新收进来的在前。',
+  all: '新收进来的在前。点开一道题，能看到全文、你做过的记录和接下来能做的事。',
   mistakes: '有做错记录的题，最近的在前。这是记录，不代表现在还会错；判分更正过的不算做错。',
   review: '这些题还没启用。核验通过就会开始出给你；也可以打开一道细看再决定。',
   held: '这些题暂时不会出给你。每组写了原因，能处理的在右边直接处理。',
@@ -91,7 +91,7 @@ export default function LibraryPage({ navigate, searchStr, replace }: LibraryPag
           <p className="ql-lead">{VIEW_LEADS[view]}</p>
           {view === 'all' && <AllView key="all" {...common} />}
           {view === 'mistakes' && <MistakesView key="mistakes" {...common} lookups={lookups} />}
-          {view === 'review' && <ReviewView key="review" {...common} />}
+          {view === 'review' && <ReviewView key="review" {...common} lookups={lookups} />}
           {view === 'held' && <HeldView key="held" {...common} />}
         </section>
       </main>

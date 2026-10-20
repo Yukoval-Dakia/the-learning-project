@@ -52,7 +52,11 @@ export function AllView({
             navigate={navigate}
             facts={[
               item.knowledge_labels?.map((k) => k.name).join('、') || null,
-              item.is_composite ? `大题 · ${item.children.length} 小题` : kindWord(item.kind),
+              item.is_composite
+                ? item.children.length > 0
+                  ? `大题 · ${item.children.length} 小题`
+                  : '大题'
+                : kindWord(item.kind),
               difficultyWord(item.difficulty),
               sourceWord(item.source),
               shortDay(item.created_at_sec),

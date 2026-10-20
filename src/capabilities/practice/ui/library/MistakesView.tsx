@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { CollapsibleList } from '@/ui/primitives/CollapsibleList';
 import { Button, Card, RetryLine, SkeletonLines } from '@/ui-next/public';
 import type { LibraryScope } from './library-url';
@@ -28,17 +29,25 @@ function MistakeLine({
   // The answer shown is from the newest record that still stands, else the newest record.
   const record = group.records.find((r) => r.standing === 'stands') ?? group.records[0];
   const answer = record ? plainAnswer(record.wrongAnswerMd) : '';
+  const notation = lookups.notationFor(group.knowledgeIds);
   return (
     <QuestionLine
       id={summary.question_id}
       stem={group.promptMd}
+      notation={notation}
       navigate={navigate}
       detail={
         <span className="ql-mine">
           <span className="ql-mine-label">当时答</span>
-          <span className="ql-mine-text">
-            {answer || (record?.wrongAnswerImages.length ? '（拍的照片）' : '（没有留下作答）')}
-          </span>
+          {answer ? (
+            <MathMarkdown className="ql-mine-text" notation={notation}>
+              {answer}
+            </MathMarkdown>
+          ) : (
+            <span className="ql-mine-text">
+              {record?.wrongAnswerImages.length ? '（拍的照片）' : '（没有留下作答）'}
+            </span>
+          )}
           {counted && (
             <span className="ql-mine-cause">
               原因：{causeWords(summary.primary_cause, lookups.causeLabel)}
@@ -59,7 +68,10 @@ function MistakeLine({
           : `最近 ${shortDay(group.latestRecordAtSec)}`,
       ]}
       aside={
-        counted || !record || record.standing === 'stands' ? null : (
+        counted ||
+        !record ||
+        record.standing === 'stands' ||
+        record.standing === 'grading_corrected' ? null : (
           <span className="ql-state" data-tone="neutral">
             {RECORD_WORDS[record.standing]}
           </span>

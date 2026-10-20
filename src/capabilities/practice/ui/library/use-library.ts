@@ -3,7 +3,7 @@
 
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { useSubjects } from '@/ui/hooks/useSubjects';
-import { listSubjectChoices } from '@/ui/lib/subject';
+import { listSubjectChoices, subjectIdentityKey } from '@/ui/lib/subject';
 import {
   countDrafts,
   countQuestions,
@@ -79,6 +79,8 @@ export interface LibraryLookups {
   knowledgeOptions: ReadonlyArray<{ id: string; name: string }>;
   subjectOptions: ReadonlyArray<{ id: string; label: string }>;
   causeLabel: (category: string) => string;
+  /** Math notation for content filed under these knowledge points (via their subject). */
+  notationFor: (knowledgeIds: readonly string[]) => string | null;
 }
 
 export function useLookups(): LibraryLookups {
@@ -92,11 +94,13 @@ export function useLookups(): LibraryLookups {
     id: string;
     name: string;
     archived_at?: string | null;
+    effective_domain?: string | null;
   }>;
+  const domains = new Map(rows.map((row) => [row.id, row.effective_domain ?? null]));
   const names = new Map(rows.map((row) => [row.id, row.name]));
   const causes = new Map<string, string>();
   for (const subject of subjects) {
-    for (const cause of subject.causeCategories) causes.set(cause.id, cause.label);
+    for (const cause of subject.causeCategories ?? []) causes.set(cause.id, cause.label);
   }
   return {
     knowledgeName: (id) => names.get(id) ?? null,
@@ -108,5 +112,15 @@ export function useLookups(): LibraryLookups {
       (choice) => choice.configurationStatus !== 'unconfigured',
     ),
     causeLabel: (category) => causes.get(category) ?? '其他原因',
+    notationFor: (knowledgeIds) => {
+      for (const id of knowledgeIds) {
+        const domain = domains.get(id);
+        if (!domain) continue;
+        const key = subjectIdentityKey(domain, subjects);
+        const subject = subjects.find((row) => row.id === key);
+        if (subject) return subject.renderConfig?.notation ?? null;
+      }
+      return null;
+    },
   };
 }

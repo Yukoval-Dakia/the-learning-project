@@ -5,7 +5,7 @@ import type { LibraryScope } from './library-url';
 import { LoadMore, QuestionLine, shortDay } from './QuestionLine';
 import { ReviewBar } from './ReviewBar';
 import { useBatchVerify } from './use-batch-verify';
-import { useDraftPages } from './use-library';
+import { type LibraryLookups, useDraftPages } from './use-library';
 
 /**
  * 待审核: questions waiting for you before they can be given out. Tick some and verify them in a
@@ -14,11 +14,13 @@ import { useDraftPages } from './use-library';
 export function ReviewView({
   scope,
   scoped,
+  lookups,
   navigate,
   onClearScope,
 }: {
   scope: LibraryScope;
   scoped: boolean;
+  lookups: LibraryLookups;
   navigate: (to: string) => void;
   onClearScope: () => void;
 }) {
@@ -85,6 +87,7 @@ export function ReviewView({
               key={row.id}
               id={row.id}
               stem={row.prompt_preview}
+              notation={lookups.notationFor(row.knowledge.map((k) => k.id))}
               navigate={navigate}
               lead={
                 <input
