@@ -1,6 +1,6 @@
 # 录入助手默认启动前置与历史还原 — YUK-1522
 
-2026-10-20 owner 20:00/20:01选择拍整卷默认启动录入助手，20:04要求从历史完整还原录入页面。后端预算门完成前不默认开启。排期为1630收尾、1629、录入预算与历史，1634离线研究可并行，结论在本项之后。状态：草稿PR1891固定d4549704d初审5P1，父接受后已交原SWE-2 Max集中修；历史后续同writer串行，均未验收/部署。
+2026-10-20 owner 20:00/20:01选择拍整卷默认启动录入助手，20:04要求从历史完整还原录入页面。后端预算门完成前不默认开启。状态：草稿PR1891在原树修复R2五项P1并完成静态构建/审计，待父定向验证及运营核对；默认助手禁开，未验收/部署。下文保留R1/R2历史，最新实现和限制见末节。
 
 ## 已批准边界
 
@@ -121,6 +121,32 @@ OOM协调新规已给作者及R2：本机重命令全经 `/Volumes/YukovalSBak/y
 实施补充：实际 worker 终态才可写 `execution_closed_at`；queue-vanished 或 HTTP 恢复不能证明已 claim 的执行者不会继续，原 handle 如实失败、grant 保持 awaiting_cost，不凭无 job/无 task 解锁。已有 grant/job 的同 handle 不再重新 enqueue。失败写入留在 per-operation dispatch 锁内，避免旧请求的迟到 catch 把另一个重放已成功派发的 handle 改成 failed。旧 grant 的 key 及原 handle 兼容读取，事件仍在时将其 reservation增量持久化，不删原字段。
 
 本轮 typecheck-01 exit1（error 对象的 index signature 类型）已修；typecheck-02 exit0。日志均保留，未把失败覆盖成成功。协调最新每线重活最多1个，全机2槽；当前作者树尚无main内置限流，检查继续外部heavy.sh。五项源码接线完成后先普通commit，再正常整合main，保留main架构下降历史/限流脚本，核package真实命令后进行最终串行检查。此整合授权不开放测试、DB、provider或部署。
+
+### 最终静态交付证据与父验证入口
+
+修复提交 `52548d889`；普通整合 main `518c8b21a1ccd137d103b00e40eb82d60f1cdcd8` 为 `70d8ff68b264637bf9905309c5b78e3fa6052f4e`，无冲突。`package.json`、`scripts/local-heavy.mjs`、`scripts/capability-boundary-baseline.json` 与该 main 零差量，保留 session16→7 等下降历史；0128 journal顺序、CTE identity text 与父503生成修复均未改回。整合带入的其它线代码/测试不计为本片编写；相对 main 无测试文件差量。
+
+在 `70d8ff68b` 上全部经外部 heavy.sh **串行**执行，未 install：
+
+- `pnpm gen:api-client` / `pnpm gen:postman`：exit0，生成物均无差量。
+- `pnpm typecheck` / `pnpm lint` / `pnpm build`：exit0；lint179warnings。build实际完成web、Start、server、worker、migrate bundles，不执行迁移。
+- `pnpm audit:schema`、`audit:api-contracts`、`audit:capability-boundaries`、`audit:architecture-deepening --base 518c8b21a1ccd137d103b00e40eb82d60f1cdcd8`、`audit:provider-attempt-truth`、`audit:profile`、`audit:draft-status`、`audit:partition`：全部exit0。边界417/0/43、0 deep cross-capability imports；无baseline改动。
+
+原始日志与真实exit/SHA清单：`/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/yuk1522/pr1891-codex-repair-20261020/checks.json`。先前typecheck-01失败和typecheck-02成功同时保留。上述结果只证明静态源码/构建，不证明SQL实际执行、跨周/并发/TTL恢复或实际费用。
+
+`checks.json` SHA256：`3a7123f9240eec4208351810027916eadfbc5cdade777c68f949df2a2d961196`。
+
+父定向验证代码入口：
+
+1. 历史OCR：`agent/spend.ts:retainHistoricalOcrLiabilities`，精确run_ref归属、冲突证据持久、缺源不删；未证状态先写入，再503提交拒绝，不把独立OCR加成agent金额。
+2. 新OCR：`agent/spend.ts:withAgentProviderLiability` → `tools/media-tools.ts:executeGlmOcr` → `glm_ocr.ts:beforeRequest`；持久pending早于调用，精确attempt绑定早于fetch，untracked缺行始终未结，同anchor不自动重发。
+3. 跨周：`agent/spend.ts:hasUnresolvedAgentSpend` 全历史canonical与持久任务/工具负债；`agent/budget.ts:finalizeGrant` 独立维护operation终态与awaiting_cost。周窗口仅在`readAgentWeekSpend`累计已知USD，旧周known不重复算新周。
+4. 拒绝身份：`operation-store.ts:reserveIngestionOperation` 原子accepted+`operation-identity.ts:persistAgentReservation`；`agent/budget.ts:authorizeAgentRunStart`提交失败身份，拒绝无grant；`readIngestionOperation`优先durable，POST/GET不依赖TTL、不裁剪。
+5. 跨kind：`reserveIngestionOperation`在真实collection key锁内，先`findDurableAgentKey`，后事件/校验/reserve。锁序：key→本session行（事务结束）→per-op dispatch→预算→session；worker不反取key/预算锁。运行终态按session行串行并与事件原子推进，迟到catch留在per-op锁内，不能覆盖已派发重放。
+
+**运营历史缺口：有核对义务，实际记录数未知。** 本轮禁止DB，未读取任何生产/TEST记录，不能声称旧OCR均已映射或缺口为空。未证归属、旧binding无精确attempt、缺canonical行、unknown/CNY无可信USD折算，以及job消失但执行者关闭未证，都会保守阻新启动；只允许运营带真实原始证据核对，不能删记录/编汇率/写0来开放默认助手。已确定独立OCR不计agent费用；历史明细展示与严格整链cap仍不在本片。
+
+Linear capture沿YUK-1522记录父定向/运营验收，queued session恢复仍归YUK-1638，不另建重复票、不借其豁免本片P1。所有测试/断言脚本、DB/迁移执行、Docker/OrbStack/TEST/provider/paid、浏览器、运行验收、第三审、PR merge/watch/部署均NOT_RUN；新head CI待父处理，不轮询。
 
 
 ## R2裁决与重新分派（不再开审查轮次）
