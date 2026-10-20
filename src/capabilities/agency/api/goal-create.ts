@@ -1,5 +1,4 @@
 // POST /api/goals — cold-start openable sprint P0 (YUK-472).
-// docs/planning/2026-06-21-cold-start-openable-sprint.md 图一 P0.
 //
 // At-entry DIRECT goal creation: a brand-new user declares a goal (with a KC
 // scope) so the cold-start placement probe (YUK-475) has knowledge nodes to walk.

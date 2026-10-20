@@ -7,7 +7,7 @@
 //
 // 权威 spec：
 //   - docs/superpowers/plans/2026-06-16-phase3-randomized-mfi-impl.md（Step C）
-//   - ADR-0042 编排档2 amendment（docs/adr/0042-...md:46-68）
+//   - ADR-0042 编排档2 amendment（docs/adr/0042-mfi-selection-signal-three-layer-engine.md:46-68）
 //
 // ════════════════════════════════════════════════════════════════════════════
 // 4 条不可让铁律（ADR-0042:58，本模块的 L3 守门保全）：

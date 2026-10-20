@@ -1,6 +1,6 @@
 // Discriminated attempt-payload sub-schema (YUK-367 / A1).
 //
-// owner ratify 2026-06-16 — docs/superpowers/plans/2026-06-16-A1-A5-ratified-decisions.md.
+// owner ratify 2026-06-16.
 //
 // WHAT THIS IS: a per-archetype discriminated union for the STRUCTURED answer an
 // attempt carries, so a deterministic verifier (A5 / YUK-350) and item calibration
