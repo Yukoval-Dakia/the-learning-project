@@ -1,5 +1,5 @@
 // Idle follows the last user message, not an agent reply. Autopilot must not keep the session active.
-// The transition owner rejects a lost race. This tick skips that row.
+// Any error from the transition is skipped, and the job still completes.
 
 import { sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
@@ -43,7 +43,6 @@ export async function runPromoteConversationIdle(
       await Conversation.idleConversation(db, id);
       promoted += 1;
     } catch (err) {
-      // Another writer moved the row between the select and the update.
       skipped += 1;
       console.warn(`[promote_conversation_idle] skip ${id}:`, (err as Error).message);
     }

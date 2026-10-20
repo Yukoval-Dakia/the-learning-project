@@ -50,7 +50,8 @@ export const INFRA_HOUSEKEEPING_SCHEDULES: readonly InfraScheduleDeclaration[] =
  * 基础设施队列。start-worker 在这之后才调用 registerCapabilityJobs。
  */
 export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
-  // 每个 delivery 都过 epoch fence。停机没赶上的 worker 在 epoch 翻转后仍会被拒跑。
+  // 每个 delivery 都过 epoch fence。echo 和空闲晋升是 drain，活跃 marker 不挑 epoch。
+  // 校验补发是 translate，出生 epoch 不对就拒。这些队列没有死信，拒跑按 fast 重试。
   await createOrUpdateQueue(boss, 'echo', FAST_QUEUE_OPTS);
   await boss.work(
     'echo',

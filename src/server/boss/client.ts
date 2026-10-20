@@ -13,10 +13,8 @@ export { fromPgBossDrizzleTx } from './pg-boss-drizzle';
 const PG_UNIQUE_VIOLATION = '23505';
 
 /**
- * True when a queue-create race lost and the row already exists.
- * The app process and the worker can both insert past ON CONFLICT DO NOTHING.
- * That includes the internal send queue, which fails on the boss `error` event.
- * A wrapped error may omit `constraint`. Any 23505 on this path is that row.
+ * True when a queue-create 23505 means the row already exists.
+ * A wrapped error may omit `constraint`. The internal send queue's create rejects start().
  */
 export function isQueueCreateRace(err: unknown): boolean {
   if (typeof err !== 'object' || err === null) return false;
@@ -29,8 +27,9 @@ export function isQueueCreateRace(err: unknown): boolean {
 // Dev re-evaluates this module and would drop the only handle on the pool.
 // Cache the state on globalThis outside production so a reload can still stop it.
 // Production has no reload, so the module cache is enough.
-// `started` is set only after start() resolves. getRunningBoss peeks it and must
-// not start a boss on its own.
+// `started` is the peek handle. It is set when start resolves, when that 23505 is
+// swallowed, or when the worker calls markBossStarted. getRunningBoss peeks it
+// and must not start a boss on its own.
 type BossState = {
   instance: PgBoss | null;
   startPromise: Promise<PgBoss> | null;
@@ -75,7 +74,8 @@ export function createBoss(): PgBoss {
  * The worker starts at boot. App code calls this on the first send and never calls work, so this process does not consume jobs.
  */
 export async function getStartedBoss(): Promise<PgBoss> {
-  // The in-process worker sets `started` without `startPromise`. A second start throws.
+  // The in-process worker sets `started` without `startPromise`. After a swallowed
+  // 23505 the library flag stays false, so another start() would run startup again.
   if (bossState.started) return bossState.started;
   if (!bossState.startPromise) {
     const boss = createBoss();

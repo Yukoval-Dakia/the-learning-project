@@ -72,7 +72,6 @@ export async function createOrUpdateQueue(
     await boss.createQueue(name, opts);
   } catch (err) {
     if (!isQueueCreateRace(err)) throw err;
-    // The row exists. updateQueue below still applies the current options.
     console.warn(
       `[boss] createQueue('${name}') hit a concurrent create race (23505 queue_pkey) — queue already exists, reconciling config (YUK-259)`,
     );

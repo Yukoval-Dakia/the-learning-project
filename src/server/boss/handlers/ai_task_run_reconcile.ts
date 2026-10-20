@@ -85,7 +85,7 @@ export async function reconcileStuckAiTaskRuns(
   return { reconciled: converged.length };
 }
 
-/** Nightly cron. The payload is unused. The clock is the wall clock inside the sweep. */
+/** Nightly cron. The clock is the wall clock inside the sweep. */
 export function buildAiTaskRunReconcileHandler(db: Db): (jobs: Job[]) => Promise<void> {
   return async (jobs) => {
     for (const _job of jobs) {
