@@ -44,7 +44,7 @@
     "YUK-1571-attempt-evidence-reader": "Complete attempt-question evidence read engine moved intact from practice to kernel with compatibility exports preserved; two ingestion consumers point to the real engine. Current main232f01d67 composition: ingestion -> practice 2 -> 0, cross 43 -> 41, server410 unchanged; no new algorithm depth and no write-owner transfer. Earlier main671/c26 compositions had server420/417 unchanged; subsequent main reductions are retained, not credited to this slice. Current main2338e0192 after API retirement: server406 unchanged, cross43 -> 41, SCC5 unchanged; earlier totals are historical.",
     "YUK-1571-hub-curation": "Complete hub curation algorithm and tree snapshot read engine now belong to kernel; knowledge compatibility exports remain. notes -> knowledge 1 -> 0, cross 42 -> 41; notes exits the five-capability SCC, leaving the four-capability SCC {agency, ingestion, knowledge, practice}. Capability -> server stays 429. Preserve mastery join/overlay, filters, limits, warnings, cursor conversion failures, fresh per-claim reads and finalization locks/CAS; no write-owner reversal. Residual SCC work remains YUK-1571. Latest composition includes supply PR #1883; main server baseline 429. Current integration after session PR #1880: server baseline 420; cross-capability delta unchanged. Current main671e08044 composition: cross 43 -> 42 (upstream TodayPlan added agency -> practice); server 420 unchanged. Current main c26ec39f9 after Agency PR1882: server417 unchanged, cross43 -> 42, SCC5 -> 4; prior totals are historical. Latest main dc8d7c27d includes ingestion budget: server416 unchanged, cross43 -> 42, SCC5 -> 4; main history is retained. Current main f3d443076 after mastery consumer exit: server410 unchanged, cross43 -> 42, SCC5 -> 4; prior totals are historical. Current main2338e0192 after API retirement: server406 unchanged, cross43 -> 42, SCC5 -> 4; prior values are historical. Current main efcfc2a14 after shared attempt read: server406 unchanged, cross41 -> 40, SCC5 -> 4; main attempt-read decrease retained.",
     "YUK-1571-asset-store": "Complete content-addressed source_asset write protocol (byte-view sha256, same-key advisory lock held across blob put and owner-row commit, put compensation on insert failure, last-owner delete with fresh under-lock re-read, sharp lazy image-dimension read, caller-supplied kind/provenance) moved intact from ingestion/server/persist-image-asset.ts to src/kernel/records/asset-store.ts; ingestion and the practice jyeoo supply lane shared the same object-key lock and row lifecycle, so the protocol is common infrastructure, not an ingestion domain decision. persist-image-asset.ts keeps the getR2/R2Client seam and six coordinator-approved compat re-exports (window ends 2026-11-03 UTC, per-symbol site records in compatShims); jyeoo-candidates.ts consumes the kernel module directly and forwards lockImageStorageKey for the reap job. practice -> ingestion 1 -> 0 retires the last inbound edge: cross 40 -> 39 and the SCC shrinks to {agency, knowledge, practice}; capability -> server 406 unchanged (the r2 seam edge persists). Approval: https://linear.app/yukoval-studios/issue/YUK-1571#comment-03dae10a-ad31-4219-800f-2e79b948937a",
-    "YUK-1571-active-goal-read": "Shared active-goal effective-scope read model (ActiveGoal, listActiveGoals, listActiveGoalsWithResolvedScope) moved verbatim from capabilities/agency/server/goals/queries.ts to src/kernel/read-models/active-goal-scope.ts; agency keeps all goal writes (mutateGoal, updateGoalStatus, updateGoalScope) and the scope vocabulary (commands.ts). ActiveGoal.scope_mode now types against goal.$inferSelect (schema enum explicit|subject_live), not the agency command alias. Six consumers repointed with zero compat shims and no reader re-export: agency jobs coach_daily / dreaming_nightly / goal_scope_propose_nightly (same-capability edges become capabilityToKernel, recorded in edgeRecords), practice/server/due-list.ts (practice -> agency 3 -> 2), copilot/server/learner-state.ts (copilot -> agency 1 -> 0) and scripts/demo-flywheel.ts (outside the audited capability layer). The three retired agency/public read exports are deleted; updateGoalScope and every other export stay. Measured on main 93578223e: cross-capability value 39 -> 37, capability -> server 405 unchanged, nontrivial SCCs unchanged at {agency, knowledge, practice}; benefit claimed is shared read-ownership convergence only, not new interface depth."
+    "YUK-1571-active-goal-read": "Shared active-goal effective-scope read model (ActiveGoal, listActiveGoals, listActiveGoalsWithResolvedScope) moved verbatim from capabilities/agency/server/goals/queries.ts to src/kernel/read-models/active-goal-scope.ts; agency keeps all goal writes (mutateGoal, updateGoalStatus, updateGoalScope) and the scope vocabulary (commands.ts). ActiveGoal.scope_mode now types against goal.$inferSelect (schema enum explicit|subject_live), not the agency command alias. Six consumers repointed with zero compat shims and no reader re-export: agency jobs coach_daily / dreaming_nightly / goal_scope_propose_nightly (same-capability edges become capabilityToKernel, recorded in edgeRecords), practice/server/due-list.ts (practice -> agency 3 -> 2), copilot/server/learner-state.ts (copilot -> agency 1 -> 0) and scripts/demo-flywheel.ts (outside the audited capability layer). The three retired agency/public read exports are deleted; updateGoalScope and every other export stay. Measured on main 93578223e merged with fabf68ec4: cross-capability value 39 -> 37, capability -> server follows upstream at 403, nontrivial SCCs unchanged at {agency, knowledge, practice}; benefit claimed is shared read-ownership convergence only, not new interface depth."
   },
   "changes": [
     {
@@ -178,6 +178,22 @@
       "direction": "decrease"
     },
     {
+      "debt": "capabilityToServer",
+      "pair": "practice -> ai",
+      "date": "2026-10-20",
+      "from": 62,
+      "to": 61,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> session",
+      "date": "2026-10-20",
+      "from": 7,
+      "to": 6,
+      "direction": "decrease"
+    },
+    {
       "debt": "crossCapabilityValue",
       "pair": "copilot -> agency",
       "date": "2026-10-20",
@@ -221,6 +237,46 @@
       "symbols": ["SourceAssetRow", "lockImageStorageKey", "persistImageAsset", "sha256Hex"],
       "issue": "YUK-1571",
       "owns": "Content-addressed source_asset write protocol: byte-view sha256 storage keys, one advisory lock held across blob put and owner-row commit, put compensation on insert failure, last-owner object delete with fresh re-read under the key lock",
+      "date": "2026-10-20"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/session-summary.ts",
+      "module": "src/kernel/read-models/assessment-verdict.ts",
+      "kind": "value",
+      "symbols": ["resolveVerdictsForAttempts"],
+      "issue": "YUK-1570",
+      "owns": "双轨裁决读模型：某次作答/评估最终判分的共享 resolver（legacy judge-event 与 assessment_verdict 两车道）",
+      "date": "2026-10-20"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/session-summary.ts",
+      "module": "src/kernel/read-models/cause-policy.ts",
+      "kind": "value",
+      "symbols": ["effectiveCauseForFailureAttempt"],
+      "issue": "YUK-1570",
+      "owns": "mistake 投影的 effective cause 策略：active user_cause 权威，否则最新 active agent judge",
+      "date": "2026-10-20"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/session-summary.ts",
+      "module": "src/kernel/read-models/failure-attempts.ts",
+      "kind": "value",
+      "symbols": ["getFailureAttempts"],
+      "issue": "YUK-1570",
+      "owns": "failure-attempt 证据读模型：失败 attempt 投影 + chained judge/user_cause 归因 + correction active-row 解析",
+      "date": "2026-10-20"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/session-summary.ts",
+      "module": "src/kernel/read-models/misc-cause-labels.ts",
+      "kind": "value",
+      "symbols": ["resolveMiscCauseLabels"],
+      "issue": "YUK-1570",
+      "owns": "misc_ cause id → 已晋升 misconception 节点 title 的读模型层回填",
       "date": "2026-10-20"
     },
     {
@@ -442,7 +498,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 405,
+      "total": 403,
       "byOwnerPair": {
         "agency -> ai": 25,
         "agency -> boss": 10,
@@ -499,7 +555,7 @@
         "observability -> r2": 2,
         "observability -> subjects": 9,
         "practice -> advisory-locks": 5,
-        "practice -> ai": 62,
+        "practice -> ai": 61,
         "practice -> assessment": 1,
         "practice -> boss": 18,
         "practice -> calibration": 3,
@@ -515,7 +571,7 @@
         "practice -> questions": 14,
         "practice -> r2": 4,
         "practice -> runtime-env": 4,
-        "practice -> session": 7,
+        "practice -> session": 6,
         "shell -> boss": 1,
         "shell -> proposals": 2,
         "shell -> records": 1,
