@@ -158,6 +158,14 @@
       "issue": "YUK-1579",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1579#comment-af8190bd-7e93-4133-ba02-68a844f006fc",
       "date": "2026-10-20"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> ai",
+      "date": "2026-10-20",
+      "from": 63,
+      "to": 62,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [],
@@ -165,7 +173,7 @@
   "compatShims": [],
   "debts": {
     "capabilityToServer": {
-      "total": 406,
+      "total": 405,
       "byOwnerPair": {
         "agency -> ai": 25,
         "agency -> boss": 10,
@@ -222,7 +230,7 @@
         "observability -> r2": 2,
         "observability -> subjects": 9,
         "practice -> advisory-locks": 5,
-        "practice -> ai": 63,
+        "practice -> ai": 62,
         "practice -> assessment": 1,
         "practice -> boss": 18,
         "practice -> calibration": 3,
