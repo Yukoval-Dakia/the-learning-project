@@ -119,6 +119,34 @@ export async function readSessionAsks(
 
 // ---------- create ----------
 
+// Apply before ORDER/LIMIT: retained asks from an earlier/closed run must not
+// be adopted or consume the sweeper's batch. Missing owners preserve only the
+// existing active legacy-session path; they cannot reactivate terminal runs.
+const CURRENT_RUN_ASK_SQL = sql`
+  EXISTS (SELECT 1 FROM learning_session current_session
+    WHERE current_session.id = job_events.payload->>'session_id'
+      AND current_session.type = 'ingestion'
+      AND current_session.status IN ('queued', 'extracting')
+      AND job_events.id > COALESCE((current_session.agent_budget->'execution_owner'->>'event_floor')::int, 0)
+      AND COALESCE(current_session.agent_budget->'execution_owner'->>'state', 'active') = 'active')
+`;
+
+/** Hold the owner/floor stable until the ask creation or resolution commits. */
+async function lockActiveAskRun(tx: Tx, sessionId: string): Promise<number> {
+  const budget = await readAgentBudget(tx, sessionId, true);
+  const [session] = await tx.execute<{ status: string }>(sql`
+    SELECT status FROM learning_session WHERE id = ${sessionId} AND type = 'ingestion'
+  `);
+  if (
+    !session ||
+    !['queued', 'extracting'].includes(session.status) ||
+    budget?.execution_owner?.state === 'closed'
+  ) {
+    throw new ApiError('conflict', 'Ask does not belong to an active ingestion run', 409);
+  }
+  return budget?.execution_owner?.event_floor ?? 0;
+}
+
 export interface CreateAskInput {
   readonly sessionId: string;
   readonly item_id: string;
@@ -146,6 +174,7 @@ export async function findOpenAskForItem(
       AND event_type = ${ASK_CREATED}
       AND payload ->> 'session_id' = ${sessionId}
       AND payload ->> 'item_id' = ${itemId}
+      AND ${CURRENT_RUN_ASK_SQL}
       AND NOT EXISTS (
         SELECT 1 FROM job_events r
         WHERE r.business_table = ${INGESTION_ASK_TABLE}
@@ -189,6 +218,9 @@ export async function createAsk(
     await tx.execute(
       sql`SELECT pg_advisory_xact_lock(hashtext(${`ingestion-ask:${input.sessionId}:${input.item_id}`}))`,
     );
+    // Item advisory -> session row, the same direction as ask resolution.
+    // Keep the owner fixed across both the lookup and a possible new event.
+    await lockActiveAskRun(tx, input.sessionId);
     const existing = await findOpenAskForItem(tx, input.sessionId, input.item_id);
     if (existing != null) {
       return { ask_id: existing.ask_id, expires_at: existing.expires_at, created: false };
@@ -298,13 +330,12 @@ async function writeResolution(
   tx: Tx,
   input: { askId: string; state: AskState; answer: IngestionAskAnswerT; via: 'answer' | 'timeout' },
 ): Promise<number> {
-  const budget = await readAgentBudget(tx, input.state.created.session_id, true);
-  const floor = budget?.execution_owner?.event_floor ?? 0;
+  const floor = await lockActiveAskRun(tx, input.state.created.session_id);
   const [created] = await tx.execute<{ id: number }>(sql`
     SELECT id FROM job_events WHERE business_table = ${INGESTION_ASK_TABLE}
       AND business_id = ${input.askId} AND event_type = ${ASK_CREATED} AND id > ${floor}
   `);
-  if (!created || budget?.execution_owner?.state === 'closed') {
+  if (!created) {
     throw new ApiError('conflict', 'Ask belongs to an earlier ingestion run', 409);
   }
   await writeAskResolved(tx, input.askId, { answer: input.answer, via: input.via });
@@ -425,6 +456,7 @@ export async function listExpiredOpenAsks(db: Db, limit = 50): Promise<string[]>
     FROM job_events
     WHERE business_table = ${INGESTION_ASK_TABLE}
       AND event_type = ${ASK_CREATED}
+      AND ${CURRENT_RUN_ASK_SQL}
       AND payload ->> 'expires_at' IS NOT NULL
       AND (payload ->> 'expires_at')::timestamptz < clock_timestamp()
       AND occurred_at > clock_timestamp() - interval '7 days'
