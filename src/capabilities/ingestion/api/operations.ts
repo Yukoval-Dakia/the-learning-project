@@ -10,6 +10,12 @@ import { resolveSessionDerivationPolicy } from '@/kernel/read-models/usage-polic
 import { getStartedBoss } from '@/server/boss/client';
 import { Ingestion } from '@/server/session';
 import {
+  AGENT_BUDGET_EXCEEDED_CODE,
+  AGENT_BUDGET_UNAVAILABLE_CODE,
+  agentOpOwnsSessionRun,
+  authorizeAgentRunStart,
+} from '../server/agent/budget';
+import {
   findIdempotentIngestionOperation,
   hasQueuedIngestionOperationEvent,
   isTerminalIngestionOperation,
@@ -17,6 +23,7 @@ import {
   reserveIngestionOperation,
   withIngestionOperationDispatchLock,
   writeIngestionOperationEvent,
+  writeIngestionOperationTerminalOnce,
 } from '../server/operation-store';
 import {
   IngestionOperationRequest,
@@ -133,7 +140,17 @@ async function ensureOperationDispatched(
             422,
           );
         }
-        ({ jobId } = await Ingestion.enqueueAgentRun({ db, boss, sessionId, operationId }));
+        // YUK-1522 — weekly budget gate: authorizeAgentRunStart runs inside
+        // the dispatch transaction (grant + `queued` flip + send atomic).
+        // A 429/503 rejection aborts the dispatch; the catch below records an
+        // explicit operation.failed on the original handle.
+        ({ jobId } = await Ingestion.enqueueAgentRun({
+          db,
+          boss,
+          sessionId,
+          operationId,
+          beforeTransition: (tx) => authorizeAgentRunStart(tx, { sessionId, operationId }),
+        }));
       } else if (
         !['queued', 'extracting', 'extracted', 'partial', 'reviewed', 'imported'].includes(status)
       ) {
@@ -141,6 +158,36 @@ async function ensureOperationDispatched(
           'conflict',
           `ingestion session ${sessionId} cannot resume agent dispatch from status '${status}'`,
           409,
+        );
+      } else if (!(await agentOpOwnsSessionRun(db, sessionId, operationId))) {
+        // YUK-1522 — recovery path: the session is past 'uploaded|failed' and
+        // this op does NOT own its agent run → it can never be paid → explicit
+        // failure, not a fake 'queued' zombie handle. queued|extracting means
+        // another run is in flight (503); past-terminal statuses mean the op
+        // missed its window entirely (409).
+        const inFlight = status === 'queued' || status === 'extracting';
+        const err = inFlight
+          ? {
+              code: AGENT_BUDGET_UNAVAILABLE_CODE,
+              message: '另一个录入还在进行中，请等它结束后再试。',
+              status: 503,
+            }
+          : {
+              code: 'conflict',
+              message: `ingestion session ${sessionId} is '${status}'; this operation can no longer dispatch`,
+              status: 409,
+            };
+        await writeIngestionOperationTerminalOnce(db, {
+          operationId,
+          eventType: 'operation.failed',
+          payload: { error: err },
+        });
+        throw new ApiError(
+          err.code,
+          err.message,
+          err.status,
+          undefined,
+          inFlight ? { reason: 'another_ingestion_in_flight' } : undefined,
         );
       }
     } else if (request.kind === 'extract') {
@@ -189,6 +236,10 @@ async function ensureOperationDispatched(
 /** POST /api/ingestion-sessions/[id]/operations —— 创建可轮询的录入 operation。 */
 export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
   let createdOperationId: string | undefined;
+  // Replayed/reused handle currently attempting dispatch — a budget-gate
+  // rejection must still land an explicit operation.failed on it (the brief:
+  // accepted ops that cannot be paid get an honest terminal state).
+  let replayedOperationId: string | undefined;
   let dispatched = false;
   try {
     const sessionId = params.id;
@@ -231,6 +282,7 @@ export async function POST(req: Request, params: Record<string, string>): Promis
             409,
           );
         }
+        replayedOperationId = existing.operationId;
         const resource = await ensureOperationDispatched(existing.operationId, sessionId, request);
         return resourceResponse(resource, 200);
       }
@@ -254,6 +306,7 @@ export async function POST(req: Request, params: Record<string, string>): Promis
       );
     }
     if (reservation.outcome === 'reused') {
+      replayedOperationId = reservation.operationId;
       const resource = await ensureOperationDispatched(reservation.operationId, sessionId, request);
       return resourceResponse(resource, 200);
     }
@@ -266,10 +319,17 @@ export async function POST(req: Request, params: Record<string, string>): Promis
     // boss 已接收 job 后，即使后续 queued-event/readback 短暂失败也不能把真实运行中的
     // operation 标成 failed；同 Idempotency-Key 重试会读回 accepted handle，worker/抽取
     // session 的后续事件继续推进资源快照。
-    if (createdOperationId && !dispatched) {
+    // Fresh reservations record operation.failed for any dispatch failure;
+    // replayed handles only for budget-gate rejections (429/503) — transient
+    // recovery errors must not permanently kill a still-dispatchable op.
+    const pendingOperationId = createdOperationId ?? replayedOperationId;
+    const isBudgetRejection =
+      err instanceof ApiError &&
+      (err.code === AGENT_BUDGET_EXCEEDED_CODE || err.code === AGENT_BUDGET_UNAVAILABLE_CODE);
+    if (pendingOperationId && !dispatched && (createdOperationId != null || isBudgetRejection)) {
       try {
-        await writeIngestionOperationEvent(db, {
-          operationId: createdOperationId,
+        await writeIngestionOperationTerminalOnce(db, {
+          operationId: pendingOperationId,
           eventType: 'operation.failed',
           payload: { error: operationError(err) },
         });

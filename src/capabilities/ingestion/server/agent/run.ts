@@ -1,6 +1,5 @@
 import { and, eq } from 'drizzle-orm';
 
-import { newId } from '@/core/ids';
 import type { DerivationPolicyT } from '@/core/schema/derivation-policy';
 import type { Db, Tx } from '@/db/client';
 import { learning_session, source_document } from '@/db/schema';
@@ -41,6 +40,13 @@ import {
   recordAgentRedaction,
 } from '../tools/redaction-sink';
 import { listExpiredOpenAsks, readSessionAsks, resolveAskByTimeout } from './asks';
+import {
+  agentRunTaskRunId,
+  agentToolRunId,
+  recordAgentOperationRunning,
+  resolveAgentRunRef,
+  settleAgentRunBudget,
+} from './budget';
 import type { IngestionAgentErrorCodeT, IngestionAgentStageCountsT } from './contract';
 import { enqueueAgentContinuation } from './dispatch';
 import {
@@ -306,6 +312,12 @@ export async function runIngestionAgentSegment(
             params.sessionId,
             'ingestion agent run exhausted queue retries',
           );
+          await settleAgentRunBudget(tx, {
+            sessionId: params.sessionId,
+            operationId: params.operationId,
+            terminal: 'failed',
+            error: { code: 'worker_lost', reason: 'queue_retries_exhausted' },
+          });
         })
         .catch((secondary) =>
           console.error('[ingestion-agent] retries-exhausted terminal write failed', {
@@ -384,6 +396,14 @@ async function runSegmentInner(
           items_failed: prior.items_failed + stranded.length,
         },
       });
+      await settleAgentRunBudget(tx, {
+        sessionId,
+        operationId: params.operationId,
+        terminal: done.status === 'failed' ? 'failed' : 'completed',
+        ...(done.status === 'failed'
+          ? { error: { code: 'worker_lost', reason: 'segment_cap' } }
+          : { result: { session_status: done.status } }),
+      });
       await writeRunReceipt(
         tx,
         sessionId,
@@ -443,6 +463,12 @@ async function runSegmentInner(
         sessionId,
         `agent reported the package terminal (${ledger.terminalRequest!.code})`,
       );
+      await settleAgentRunBudget(tx, {
+        sessionId,
+        operationId: params.operationId,
+        terminal: 'failed',
+        error: { code: ledger.terminalRequest!.code },
+      });
     });
     return { outcome: 'failed', error: `terminal_request ${ledger.terminalRequest.code}` };
   }
@@ -475,6 +501,12 @@ async function runSegmentInner(
         sessionId,
         `usage policy '${derivationPolicy}' does not permit bank ingestion`,
       );
+      await settleAgentRunBudget(tx, {
+        sessionId,
+        operationId: params.operationId,
+        terminal: 'failed',
+        error: { code: 'policy_blocked', policy: derivationPolicy },
+      });
     });
     return { outcome: 'failed', error: `derivation_policy ${derivationPolicy}` };
   }
@@ -494,9 +526,13 @@ async function runSegmentInner(
   }
 
   const providerDeadline = Date.now() + SEGMENT_TIMEOUT_MS;
+  // YUK-1522 — 本次授权的稳定身份 = in_flight grant 的 operation_id（预授权时代
+  // run 无 grant → 退化 sessionId）。resume/continue 取回同一 runRef；
+  // task/tool run id 由 (runRef, segment) 确定性派生，GLM OCR anchor 归属同一次启动。
+  const runRef = await resolveAgentRunRef(db, sessionId);
   const toolCtx = {
     db,
-    taskRunId: `ingestion_agent_tool_${newId()}`,
+    taskRunId: agentToolRunId(runRef, segment),
     providerAttemptCaller: 'worker' as const,
     providerSessionDeadlineAt: providerDeadline,
     callerActor: { kind: 'agent' as const, ref: `ingestion_agent:${sessionId}` },
@@ -530,6 +566,16 @@ async function runSegmentInner(
     // segment with a 'sent' marker can never be auto re-paid (outcome unknown).
     const attemptRef = `r8:${sessionId}:seg:${segment}`;
     try {
+      if (segment === 1) {
+        // YUK-1522/G6 — operation handle queued → running（投影取最新事件，
+        // 重放幂等）。只在首个付费 segment 起步时写一次。
+        await db.transaction(async (tx) =>
+          recordAgentOperationRunning(tx, {
+            sessionId,
+            operationId: params.operationId,
+          }),
+        );
+      }
       await writeAgentPaidAttempt(db, sessionId, {
         segment,
         attempt_ref: attemptRef,
@@ -540,6 +586,9 @@ async function runSegmentInner(
         allowedTools: [...resolveMcpAllowedTools('ingestion')],
         budgetOverride: { maxIterations: SEGMENT_MAX_ITERATIONS, timeoutMs: SEGMENT_TIMEOUT_MS },
         providerSessionDeadlineAt: providerDeadline,
+        // YUK-1522 — caller-owned deterministic task_run_id（segment 级），
+        // 主 run 的 cost_ledger 行由此锚定到本次授权。
+        taskRunId: agentRunTaskRunId(runRef, segment),
       });
       taskRunId = result.task_run_id;
       await writeAgentPaidAttempt(db, sessionId, {
@@ -575,6 +624,12 @@ async function runSegmentInner(
             segment,
           );
           await Ingestion.markExtractionFailed(tx, sessionId, message.slice(0, 500));
+          await settleAgentRunBudget(tx, {
+            sessionId,
+            operationId: params.operationId,
+            terminal: 'failed',
+            error: { code },
+          });
         })
         .catch((secondary) =>
           console.error('[ingestion-agent] failed to mark session failed', {
@@ -622,6 +677,12 @@ async function runSegmentInner(
             sessionId,
             `agent reported the package terminal (${after.terminalRequest!.code})`,
           );
+          await settleAgentRunBudget(tx, {
+            sessionId,
+            operationId: params.operationId,
+            terminal: 'failed',
+            error: { code: after.terminalRequest!.code },
+          });
         });
         return {
           outcome: 'failed',
@@ -671,6 +732,12 @@ async function runSegmentInner(
           const completed = await Ingestion.markAgentRunCompleted(tx, {
             sessionId,
             completion: terminalItemCounts(after.items),
+          });
+          await settleAgentRunBudget(tx, {
+            sessionId,
+            operationId: params.operationId,
+            terminal: completed.status === 'failed' ? 'failed' : 'completed',
+            result: { session_status: completed.status },
           });
           await writeRunReceipt(
             tx,
@@ -779,6 +846,11 @@ export async function failSessionForUnknownPaidAttempt(
       sessionId,
       'ingestion agent segment paid attempt outcome unknown — re-dispatch the agent op to retry explicitly',
     );
+    await settleAgentRunBudget(tx, {
+      sessionId,
+      terminal: 'failed',
+      error: { code: 'worker_lost', reason: 'paid_attempt_outcome_unknown' },
+    });
   });
 }
 
@@ -803,6 +875,11 @@ async function finalizeRun(
     const completed = await Ingestion.markAgentRunCompleted(tx, {
       sessionId,
       completion: counts,
+    });
+    await settleAgentRunBudget(tx, {
+      sessionId,
+      terminal: completed.status === 'failed' ? 'failed' : 'completed',
+      result: { session_status: completed.status },
     });
     await writeRunReceipt(
       tx,

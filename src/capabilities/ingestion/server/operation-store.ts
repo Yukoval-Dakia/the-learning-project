@@ -160,6 +160,30 @@ export async function writeIngestionOperationEvent(
   });
 }
 
+/**
+ * Append a terminal operation event only when the projection has no terminal
+ * event yet (idempotent — callers on settle/recovery paths may race).
+ */
+export async function writeIngestionOperationTerminalOnce(
+  db: Db | Tx,
+  input: {
+    operationId: string;
+    eventType: 'operation.completed' | 'operation.failed';
+    payload?: Record<string, unknown>;
+  },
+): Promise<void> {
+  const existing = await db.execute<{ terminal: boolean }>(sql`
+    SELECT EXISTS(
+      SELECT 1 FROM job_events
+      WHERE business_table = ${INGESTION_OPERATION_TABLE}
+        AND business_id = ${input.operationId}
+        AND event_type IN ('operation.completed', 'operation.failed')
+    ) AS terminal
+  `);
+  if (existing[0]?.terminal === true) return;
+  await writeIngestionOperationEvent(db, input);
+}
+
 export async function hasQueuedIngestionOperationEvent(
   db: Db,
   operationId: string,

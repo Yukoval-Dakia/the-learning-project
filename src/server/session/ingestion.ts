@@ -74,6 +74,18 @@ export type EnqueueExtractionParams = {
   sessionId: string;
   /** Canonical ingestion operation handle; legacy callers omit it unchanged. */
   operationId?: string;
+  /**
+   * YUK-1522 budget gate — optional in-tx hook invoked by `enqueueAgentRun`
+   * as the FIRST step of the dispatch transaction (before the row lock and
+   * the from-state assert). It must run first so its global advisory lock is
+   * acquired before any learning_session row lock — keeping a single lock
+   * order (budget lock → session rows) and preventing cross-session
+   * deadlocks when the gate lazily settles other sessions' grants. Throwing
+   * aborts the whole dispatch (no flip, no job); its writes commit
+   * atomically with the flip. `enqueueExtraction` does not invoke it
+   * (OCR lane is ungated).
+   */
+  beforeTransition?: (tx: Tx) => Promise<void>;
 };
 
 /**
@@ -160,6 +172,12 @@ export async function enqueueAgentRun(
   params: EnqueueExtractionParams,
 ): Promise<{ jobId: string | null }> {
   return params.db.transaction(async (tx) => {
+    // YUK-1522 — the budget gate runs FIRST inside this dispatch transaction
+    // so the global budget advisory lock precedes the session row lock (one
+    // lock order for all start decisions), and so the durable grant, the
+    // `queued` flip and the job send commit (or roll back) atomically.
+    if (params.beforeTransition) await params.beforeTransition(tx);
+
     const current = await loadSessionForUpdate(tx, params.sessionId);
     if (!current) {
       throw new ApiError('not_found', `learning_session ${params.sessionId} not found`, 404);
