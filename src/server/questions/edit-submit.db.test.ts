@@ -8,7 +8,11 @@ import { poolFetch } from '@/capabilities/practice/server/quiz/pool-fetch';
 import { gradeBlankExactUnit } from '@/core/schema/assessment/grade';
 import { defaultPresentation } from '@/core/schema/assessment/presentation';
 import type { AdmissionEvidenceT } from '@/core/schema/assessment/publish';
-import { QuestionDraftDocument, type QuestionDraftDocumentT } from '@/core/schema/question-draft';
+import {
+  type DraftBlankTextKeyT,
+  QuestionDraftDocument,
+  type QuestionDraftDocumentT,
+} from '@/core/schema/question-draft';
 import {
   knowledge,
   question,
@@ -1865,26 +1869,82 @@ describe('edit/submit question boundary', () => {
 
   // @invariant grading: case_sensitive true together with casefold true is not a publishable key
   // @fails-if the draft accepts both flags and a case-sensitive answer is graded case-insensitively
-  it('rejects a blank key that is both case sensitive and casefolded', async () => {
+  // @invariant grading: case_sensitive false together with casefold false is not a publishable key
+  // @fails-if the draft accepts both flags and then drops case_sensitive false
+  // @invariant grading: trim false together with trim_outer true is not a publishable key
+  // @fails-if the draft accepts both flags and then drops trim false
+  // @invariant grading: trim true together with trim_outer false is not a publishable key
+  // @fails-if the draft accepts both flags and then drops trim true
+  it.each([
+    {
+      title: 'rejects a blank key that is both case sensitive and casefolded',
+      prompt: '大小写冲突：水的化学式是',
+      key: {
+        kind: 'text',
+        accepted: ['H2O'],
+        case_sensitive: true,
+        normalization: { ...BLANK_NORM, casefold: true },
+      },
+      requestId: 'casefold-conflict-save',
+      fragment: 'casefold',
+    },
+    {
+      title: 'rejects a blank key that asks to ignore case and also keep case',
+      prompt: '大小写双关：水的化学式是',
+      key: {
+        kind: 'text',
+        accepted: ['H2O'],
+        case_sensitive: false,
+        normalization: { ...BLANK_NORM, casefold: false },
+      },
+      requestId: 'casefold-false-conflict-save',
+      fragment: 'casefold false',
+    },
+    {
+      title: 'rejects a blank key that asks to keep outer spaces and also trim them',
+      prompt: '空白双关：水的化学式是',
+      key: {
+        kind: 'text',
+        accepted: ['H2O'],
+        trim: false,
+        normalization: { ...BLANK_NORM, trim_outer: true },
+      },
+      requestId: 'trim-false-conflict-save',
+      fragment: 'trim_outer true',
+    },
+    {
+      title: 'rejects a blank key that asks to trim outer spaces and also keep them',
+      prompt: '空白反向双关：水的化学式是',
+      key: {
+        kind: 'text',
+        accepted: ['H2O'],
+        trim: true,
+        normalization: { ...BLANK_NORM, trim_outer: false },
+      },
+      requestId: 'trim-true-conflict-save',
+      fragment: 'trim_outer false',
+    },
+  ] satisfies {
+    title: string;
+    prompt: string;
+    key: DraftBlankTextKeyT;
+    requestId: string;
+    fragment: string;
+  }[])('$title', async ({ prompt, key, requestId, fragment }) => {
     const db = testDb();
-    const doc = blankDocument('大小写冲突：水的化学式是');
+    const doc = blankDocument(prompt);
     const unit = doc.parts[0]?.units[0];
     if (unit?.key?.kind !== 'blank' || unit.key.key.kind !== 'text') {
       throw new Error('blank fixture has no text key');
     }
-    unit.key.key = {
-      kind: 'text',
-      accepted: ['H2O'],
-      case_sensitive: true,
-      normalization: { ...BLANK_NORM, casefold: true },
-    };
+    unit.key.key = key;
     const saved = await saveDraftEdit(db, {
-      input: { action: 'save', document: doc, request_id: 'casefold-conflict-save' },
+      input: { action: 'save', document: doc, request_id: requestId },
       ctx: ACTOR,
     });
     expect(saved.status, JSON.stringify(saved)).toBe('rejected');
     if (saved.status !== 'rejected') return;
-    expect(JSON.stringify(saved.issues)).toContain('casefold');
+    expect(JSON.stringify(saved.issues)).toContain(fragment);
   });
 
   // @invariant grading: a key edit that omits normalisation keeps the previous revision's normalisation
@@ -2360,78 +2420,6 @@ describe('edit/submit question boundary', () => {
     expect(bare.status, JSON.stringify(bare)).toBe('scored');
     if (bare.status !== 'scored') return;
     expect(bare.points_awarded, JSON.stringify(bare)).toBe(1);
-  });
-
-  // @invariant grading: case_sensitive false together with casefold false is not a publishable key
-  // @fails-if the draft accepts both flags and then drops case_sensitive false
-  it('rejects a blank key that asks to ignore case and also keep case', async () => {
-    const db = testDb();
-    const doc = blankDocument('大小写双关：水的化学式是');
-    const unit = doc.parts[0]?.units[0];
-    if (unit?.key?.kind !== 'blank' || unit.key.key.kind !== 'text') {
-      throw new Error('blank fixture has no text key');
-    }
-    unit.key.key = {
-      kind: 'text',
-      accepted: ['H2O'],
-      case_sensitive: false,
-      normalization: { ...BLANK_NORM, casefold: false },
-    };
-    const saved = await saveDraftEdit(db, {
-      input: { action: 'save', document: doc, request_id: 'casefold-false-conflict-save' },
-      ctx: ACTOR,
-    });
-    expect(saved.status, JSON.stringify(saved)).toBe('rejected');
-    if (saved.status !== 'rejected') return;
-    expect(JSON.stringify(saved.issues)).toContain('casefold false');
-  });
-
-  // @invariant grading: trim false together with trim_outer true is not a publishable key
-  // @fails-if the draft accepts both flags and then drops trim false
-  it('rejects a blank key that asks to keep outer spaces and also trim them', async () => {
-    const db = testDb();
-    const doc = blankDocument('空白双关：水的化学式是');
-    const unit = doc.parts[0]?.units[0];
-    if (unit?.key?.kind !== 'blank' || unit.key.key.kind !== 'text') {
-      throw new Error('blank fixture has no text key');
-    }
-    unit.key.key = {
-      kind: 'text',
-      accepted: ['H2O'],
-      trim: false,
-      normalization: { ...BLANK_NORM, trim_outer: true },
-    };
-    const saved = await saveDraftEdit(db, {
-      input: { action: 'save', document: doc, request_id: 'trim-false-conflict-save' },
-      ctx: ACTOR,
-    });
-    expect(saved.status, JSON.stringify(saved)).toBe('rejected');
-    if (saved.status !== 'rejected') return;
-    expect(JSON.stringify(saved.issues)).toContain('trim_outer true');
-  });
-
-  // @invariant grading: trim true together with trim_outer false is not a publishable key
-  // @fails-if the draft accepts both flags and then drops trim true
-  it('rejects a blank key that asks to trim outer spaces and also keep them', async () => {
-    const db = testDb();
-    const doc = blankDocument('空白反向双关：水的化学式是');
-    const unit = doc.parts[0]?.units[0];
-    if (unit?.key?.kind !== 'blank' || unit.key.key.kind !== 'text') {
-      throw new Error('blank fixture has no text key');
-    }
-    unit.key.key = {
-      kind: 'text',
-      accepted: ['H2O'],
-      trim: true,
-      normalization: { ...BLANK_NORM, trim_outer: false },
-    };
-    const saved = await saveDraftEdit(db, {
-      input: { action: 'save', document: doc, request_id: 'trim-true-conflict-save' },
-      ctx: ACTOR,
-    });
-    expect(saved.status, JSON.stringify(saved)).toBe('rejected');
-    if (saved.status !== 'rejected') return;
-    expect(JSON.stringify(saved.issues)).toContain('trim_outer false');
   });
 
   // @invariant grading: editing one blank's key keeps the other unit's slot placement byte-for-byte

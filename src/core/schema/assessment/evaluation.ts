@@ -3,7 +3,7 @@ import {
   ConjectureProbeSignatureMatch,
   classifyConjectureProbeResponseFromJudgeMatch,
 } from '../conjecture-probe-response';
-import { extractAnswerHead } from '../judge-routing';
+import { extractAnswerHead, extractFinalAnswer, isProcessLikeAnswer } from '../judge-routing';
 import type { BlankAnswerShapeT } from './blank-answer-shape';
 import {
   type DeterministicComparatorIdT,
@@ -11,7 +11,7 @@ import {
   type ModelExecutorT,
   validateExecutionPlan,
 } from './execution';
-import { gradeBlankExactUnit, gradeSelectUnit } from './grade';
+import { gradeBlankExactUnit, gradeSelectUnit, normalizeBlankText } from './grade';
 import { type EvaluationInputMember, combineEvaluationMembers } from './group-input';
 import {
   type AggregateOutcomeT,
@@ -31,6 +31,7 @@ import type { ResponseSlotT, ResponseSpecT, SlotResponseT } from './response';
 import { isBlankSlotResponse, validateResponseSet } from './response';
 import type { PublishedQuestionRevisionT } from './revision';
 import { type ScoringBasisT, type ScoringUnitT, validateScoringBasis } from './scoring';
+import { evaluateScoringRule } from './scoring-rule';
 import type { QuestionPartT } from './structure';
 
 // ====================================================================
@@ -327,18 +328,85 @@ async function runDeterministicComparator(
       if (textValue == null || unit.criterion.kind !== 'text_key') {
         return unjudgeableMismatch(unit, 'slot/entry kind mismatch for text_key');
       }
-      const given = normalizeText(textValue, unit.criterion.normalization);
+      const normalization = unit.criterion.normalization;
+      const given = normalizeText(textValue, normalization);
       const hit = unit.criterion.accepted_texts.some(
-        (accepted) =>
-          normalizeText(
-            accepted,
-            unit.criterion.kind === 'text_key' ? unit.criterion.normalization : 'trim',
-          ) === given,
+        (accepted) => normalizeText(accepted, normalization) === given,
       );
+      if (hit) {
+        return {
+          status: 'scored',
+          scoring_unit_id: unit.scoring_unit_id,
+          points_awarded: full,
+          scored_because: 'response',
+          evidence_citations: [{ slot_id: entry.slot_id }],
+        };
+      }
+      // YUK-1407 — 整段比较 miss 后，对过程作答再确定性抽一次【明示终态答案】：
+      // "推导…S5=11" 的 head 是整段（无解析 tail），与 "11" 不等 ⇒ 旧路径判 0。
+      // 提取规则见 judge-routing.ts：只认答/答案/所以/故/即/∴ 声明或末行等式。
+      const finalAnswer = extractFinalAnswer(textValue);
+      const extractionEvidence =
+        finalAnswer.kind === 'found'
+          ? { value: finalAnswer.values[0] ?? '', marker: finalAnswer.marker }
+          : undefined;
+      if (finalAnswer.kind === 'found') {
+        const finalHit = unit.criterion.accepted_texts.some((accepted) =>
+          finalAnswer.values.some(
+            (candidate) =>
+              normalizeText(candidate, normalization) === normalizeText(accepted, normalization),
+          ),
+        );
+        if (finalHit) {
+          return {
+            status: 'scored',
+            scoring_unit_id: unit.scoring_unit_id,
+            points_awarded: full,
+            scored_because: 'response',
+            comparison: { final_answer: extractionEvidence },
+            evidence_citations: [{ slot_id: entry.slot_id }],
+          };
+        }
+        // 明示结论与参考答案不一致：单句明示结论（"答：12"）= 确定性判错；
+        // 过程文本的 miss 可能是单位/等价形式 —— 超出本比较器合同，交复核，
+        // 绝不把"没看懂"落成 0。
+        if (isProcessLikeAnswer(textValue)) {
+          return withUnit(
+            pending({
+              reason: 'needs_review',
+              trigger: 'flagged',
+              detail:
+                'extracted final answer does not match any accepted key — equivalence beyond the exact-text comparator contract; review required (no fake zero)',
+            }),
+            unit.scoring_unit_id,
+          );
+        }
+        return {
+          status: 'scored',
+          scoring_unit_id: unit.scoring_unit_id,
+          points_awarded: 0,
+          scored_because: 'response',
+          comparison: { final_answer: extractionEvidence },
+          evidence_citations: [{ slot_id: entry.slot_id }],
+        };
+      }
+      if (isProcessLikeAnswer(textValue)) {
+        return withUnit(
+          pending({
+            reason: 'needs_review',
+            trigger: 'flagged',
+            detail:
+              finalAnswer.kind === 'ambiguous'
+                ? `conflicting explicit final answers (${finalAnswer.candidates.join(' / ')}) — the exact-text comparator cannot adjudicate; review required`
+                : 'worked/process answer carries no unambiguous final answer — beyond the exact-text comparator contract; review required (no fake zero)',
+          }),
+          unit.scoring_unit_id,
+        );
+      }
       return {
         status: 'scored',
         scoring_unit_id: unit.scoring_unit_id,
-        points_awarded: hit ? full : 0,
+        points_awarded: 0,
         scored_because: 'response',
         evidence_citations: [{ slot_id: entry.slot_id }],
       };
@@ -554,6 +622,70 @@ async function runDeterministicComparator(
     case 'blank_exact': {
       if (entry.kind !== 'blank') {
         return unjudgeableMismatch(unit, 'slot/entry kind mismatch for blank_key');
+      }
+      // YUK-1407 — 文本空也会收到整段过程作答（"…，S5=11"）：整段归一化比较
+      // 必然 miss ⇒ 旧路径按规则判 0。对过程文本先确定性抽明示终态再比；
+      // 提取不到/矛盾/过程文本 miss ⇒ pending needs_review，绝不伪零分。
+      // 数值空已由 numericCorrect 的 unparseable → pending 覆盖，不动。
+      // 本拦截只在分发点运行，不改 grade.ts（该文件有在途 PR 所有权）。
+      // YUK-1568 合入适配：带声明 answer_shape 的槽走共享比较核心
+      // （compareDeclaredBlank），本拦截仅作用于未声明文本空。
+      const criterion = unit.criterion;
+      const key = criterion.kind === 'blank_key' ? criterion.key : null;
+      if (
+        declaredShape == null &&
+        key !== null &&
+        key.kind === 'text' &&
+        unit.rule != null &&
+        entry.state === 'answered' &&
+        isProcessLikeAnswer(entry.text)
+      ) {
+        const norm = (value: string) => normalizeBlankText(value, key.normalization);
+        if (!key.accepted.map(norm).includes(norm(entry.text))) {
+          const finalAnswer = extractFinalAnswer(entry.text);
+          if (finalAnswer.kind === 'found') {
+            const finalHit = finalAnswer.values.some((candidate) =>
+              key.accepted.map(norm).includes(norm(candidate)),
+            );
+            if (finalHit) {
+              const ruleResult = evaluateScoringRule(unit.rule, { kind: 'single', correct: 1 });
+              return {
+                status: 'scored',
+                scoring_unit_id: unit.scoring_unit_id,
+                scored_because: 'response',
+                comparison: {
+                  correct: 1,
+                  rule_case: ruleResult.rule_case,
+                  final_answer: { value: finalAnswer.values[0] ?? '', marker: finalAnswer.marker },
+                },
+                ...(ruleResult.kind === 'points'
+                  ? { points_awarded: ruleResult.points }
+                  : {
+                      points_awarded: null,
+                      partial_unknown_points: {
+                        correct_count: 1,
+                        total_count: 1,
+                        reason: ruleResult.reason,
+                      },
+                    }),
+                evidence_citations: [{ slot_id: entry.slot_id }],
+              };
+            }
+          }
+          return withUnit(
+            pending({
+              reason: 'needs_review',
+              trigger: 'flagged',
+              detail:
+                finalAnswer.kind === 'found'
+                  ? 'extracted final answer does not match any accepted key — equivalence beyond the blank-exact comparator contract; review required (no fake zero)'
+                  : finalAnswer.kind === 'ambiguous'
+                    ? `conflicting explicit final answers (${finalAnswer.candidates.join(' / ')}) — the blank-exact comparator cannot adjudicate; review required`
+                    : 'worked/process answer carries no unambiguous final answer — beyond the blank-exact comparator contract; review required (no fake zero)',
+            }),
+            unit.scoring_unit_id,
+          );
+        }
       }
       return gradeBlankExactUnit(unit, entry, declaredShape);
     }
@@ -923,20 +1055,28 @@ export async function evaluateSubmissionCore(
         primarySlot != null && primarySlot.kind === 'blank' && primarySlot.answer_shape != null
           ? primarySlot.answer_shape
           : undefined;
-      unitResults.push(
-        await runDeterministicComparator(executor.comparator, unit, primaryEntry, declaredShape),
+      const determined = await runDeterministicComparator(
+        executor.comparator,
+        unit,
+        primaryEntry,
+        declaredShape,
       );
+      // YUK-1407 — receipt 的 route 真相：回执要能读到实际执行路径。
+      unitResults.push({ ...determined, judged_by: executor.comparator });
       continue;
     }
 
     if (executor.kind === 'human_review') {
       unitResults.push(
         withUnit(
-          pending({
-            reason: 'needs_review',
-            trigger: 'manual_request',
-            detail: 'execution plan assigns this unit to human review',
-          }),
+          {
+            ...pending({
+              reason: 'needs_review',
+              trigger: 'manual_request',
+              detail: 'execution plan assigns this unit to human review',
+            }),
+            judged_by: 'human_review',
+          },
           unitId,
         ),
       );
@@ -1116,7 +1256,15 @@ export async function evaluateSubmissionCore(
 
     if (outcome.kind === 'pending') {
       unitResults.push(
-        withUnit({ status: 'pending', scoring_unit_id: '', pending: outcome.pending }, unitId),
+        withUnit(
+          {
+            status: 'pending',
+            scoring_unit_id: '',
+            pending: outcome.pending,
+            judged_by: executor.task_kind,
+          },
+          unitId,
+        ),
       );
       continue;
     }
@@ -1136,6 +1284,7 @@ export async function evaluateSubmissionCore(
         status: 'pending',
         scoring_unit_id: unitId,
         pending: { reason: 'needs_review', trigger: 'flagged', detail: probeJudgement.reason_code },
+        judged_by: executor.task_kind,
         probe_judgement: probeJudgement,
       });
       continue;
@@ -1147,6 +1296,7 @@ export async function evaluateSubmissionCore(
           scoring_unit_id: '',
           points_awarded: outcome.points_awarded,
           scored_because: 'response',
+          judged_by: executor.task_kind,
           ...(outcome.matched ? { matched: outcome.matched } : {}),
           ...(outcome.feedback_md ? { feedback_md: outcome.feedback_md } : {}),
           evidence_citations: outcome.evidence_citations,

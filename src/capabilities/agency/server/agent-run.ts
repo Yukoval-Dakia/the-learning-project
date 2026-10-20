@@ -102,8 +102,16 @@ export interface AgencyProposalScanSpec {
   }) => Promise<() => unknown>;
   /** Extra trigger payload fields (Coach stamps `run_kind`). */
   extraTriggerPayload?: Record<string, unknown>;
-  /** Scan-success payload extras computed from the task result. */
-  buildScanSuccessPayloadExtras?: (taskResult: AgencyScanRunResult) => Record<string, unknown>;
+  /**
+   * Scan-success payload extras computed from the task result and the built
+   * runner input — the SAME input object passed to runAgentTask, so consumer
+   * facts computed in prepareInput (e.g. Coach's reviewPlan) reach the payload
+   * without a second read or shared state.
+   */
+  buildScanSuccessPayloadExtras?: (
+    taskResult: AgencyScanRunResult,
+    input: unknown,
+  ) => Record<string, unknown>;
   /** Extra scan-failure payload fields (Coach stamps `run_kind`). */
   extraScanFailurePayload?: Record<string, unknown>;
   /**
@@ -193,7 +201,8 @@ export async function runAgencyProposalScan(
         return { args: capped, truncationNote: contextBudget, softStop };
       },
     } satisfies BuildMcpServerOptions;
-    const taskResult = await run(taskKind, buildInput(), {
+    const input = buildInput();
+    const taskResult = await run(taskKind, input, {
       db,
       // YUK-290: maxTurns must not pre-empt the runtime tool-call ceiling.
       // Keep one final turn for the agent's summary after the last allowed tool call.
@@ -220,7 +229,7 @@ export async function runAgencyProposalScan(
         proposals_created: proposalsCreated,
         pending_after: pendingAfter,
         tool_context_task_run_id: toolContextTaskRunId,
-        ...spec.buildScanSuccessPayloadExtras?.(taskResult),
+        ...spec.buildScanSuccessPayloadExtras?.(taskResult, input),
       },
       caused_by_event_id: triggerEventId,
       task_run_id: taskResult.task_run_id,
