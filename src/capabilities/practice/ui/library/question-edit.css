@@ -1,0 +1,57 @@
+/* One question (YUK-1473): the in-place editor and form fields. Split from question.css. */
+
+[data-ui-next].qd-page {
+  /* ── Editor fields ── */
+  & .qd-editor {
+    gap: var(--un-sp-5);
+  }
+
+  & .qd-field {
+    display: grid;
+    gap: var(--un-sp-2);
+  }
+
+  & .qd-field-label {
+    color: var(--un-text-2);
+    font-size: var(--un-fs-1);
+    font-weight: var(--un-fw-medium);
+  }
+
+  & .qd-input {
+    width: 100%;
+    min-height: var(--un-h-control);
+    padding: var(--un-sp-2) var(--un-sp-3);
+    border: 0;
+    border-radius: var(--un-r-1);
+    background: var(--un-bg);
+    box-shadow: inset 0 0 0 var(--un-hairline) var(--un-line-strong);
+    color: var(--un-text-1);
+    font: inherit;
+  }
+
+  & .qd-input:focus-visible {
+    outline: none;
+    box-shadow: inset 0 0 0 1.5px var(--un-focus);
+  }
+
+  & .qd-textarea {
+    resize: vertical;
+    line-height: var(--un-lh-prose);
+  }
+
+  & .qd-kn-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--un-sp-2) var(--un-sp-4);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  & .qd-kn {
+    display: inline-flex;
+    align-items: baseline;
+    gap: var(--un-sp-2);
+    color: var(--un-text-1);
+  }
+}

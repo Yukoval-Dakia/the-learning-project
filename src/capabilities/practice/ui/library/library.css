@@ -1,0 +1,224 @@
+/* 题目 library (YUK-1473): page frame, head, switch + scope, reading-line rows, groups, the
+   floating review bar. Design language: docs/design/2026-10-07-ui-visual-direction.md
+   (T1 semantic tokens, T3 glass only on floating layers, M1 motion only on change, A2 hit areas). */
+
+[data-ui-next].ql-page {
+  & .ql-main,
+  & .qd-main {
+    display: grid;
+    align-content: start;
+    gap: var(--un-sp-6);
+    width: min(860px, 100%);
+    margin: 0 auto;
+    padding: var(--un-sp-7) var(--un-sp-6) calc(var(--un-sp-8) + var(--un-sp-7));
+  }
+
+  /* ── Head: a title and one sentence of state ── */
+  & .ql-head {
+    display: grid;
+    gap: var(--un-sp-2);
+  }
+
+  & .ql-title,
+  & .qd-title {
+    color: var(--un-text-1);
+    font-family: var(--un-font-serif);
+    font-size: var(--un-fs-6);
+    font-weight: var(--un-fw-regular);
+    letter-spacing: var(--un-ls-tight);
+    line-height: var(--un-lh-tight);
+  }
+
+  & .ql-sentence {
+    min-height: 1.5em;
+    color: var(--un-text-2);
+    font-size: var(--un-fs-3);
+  }
+
+  /* ── Switch and scope ── */
+  & .ql-controls {
+    display: grid;
+    gap: var(--un-sp-4);
+    justify-items: start;
+  }
+
+  & .ql-scope {
+    display: grid;
+    gap: var(--un-sp-3);
+    width: 100%;
+  }
+
+  & .ql-search {
+    position: relative;
+    display: flex;
+    align-items: center;
+    width: 100%;
+  }
+
+  & .ql-search-icon {
+    position: absolute;
+    left: var(--un-sp-3);
+    width: 16px;
+    height: 16px;
+    color: var(--un-text-3);
+    pointer-events: none;
+  }
+
+  & .ql-search-input {
+    width: 100%;
+    height: var(--un-h-control);
+    padding: 0 var(--un-sp-3) 0 calc(var(--un-sp-3) + 16px + var(--un-sp-2));
+    border: 0;
+    border-radius: var(--un-r-1);
+    background: var(--un-bg-sunk);
+    color: var(--un-text-1);
+    font-size: var(--un-fs-2);
+    transition: box-shadow var(--un-t-small) var(--un-ease-glide);
+  }
+
+  & .ql-search-input::placeholder {
+    color: var(--un-text-4);
+  }
+
+  & .ql-search-input:focus-visible {
+    outline: none;
+    box-shadow: inset 0 0 0 1.5px var(--un-focus);
+  }
+
+  /* The scope reads as a sentence of quiet pickers; a chosen one turns to ink with an underline. */
+  & .ql-pickers {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--un-sp-1) var(--un-sp-5);
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  & .ql-picker {
+    display: inline-flex;
+    align-items: baseline;
+    gap: var(--un-sp-2);
+  }
+
+  & .ql-picker-select {
+    max-width: 14em;
+    padding: 2px 0;
+    border: 0;
+    border-bottom: var(--un-hairline) dashed var(--un-line-strong);
+    background: transparent;
+    color: var(--un-text-2);
+    font-size: var(--un-fs-1);
+    cursor: pointer;
+  }
+
+  & .ql-picker[data-set="true"] .ql-picker-select {
+    border-bottom-style: solid;
+    border-bottom-color: var(--un-accent-strong);
+    color: var(--un-text-1);
+    font-weight: var(--un-fw-medium);
+  }
+
+  & .ql-picker-select:focus-visible {
+    outline: 2px solid var(--un-focus);
+    outline-offset: 2px;
+  }
+
+  & .ql-text-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--un-sp-1);
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--un-accent-strong);
+    font-size: var(--un-fs-1);
+    font-weight: var(--un-fw-medium);
+    cursor: pointer;
+  }
+
+  & .ql-text-btn:hover {
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+
+  & .ql-text-btn:disabled {
+    color: var(--un-text-disabled);
+    text-decoration: none;
+    cursor: default;
+  }
+
+  & .ql-clear-icon {
+    width: 13px;
+    height: 13px;
+  }
+
+  /* ── Body ── */
+  & .ql-body {
+    display: grid;
+    gap: var(--un-sp-4);
+  }
+
+  & .ql-lead {
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  & .ql-empty {
+    display: grid;
+    justify-items: start;
+    gap: var(--un-sp-3);
+    padding: var(--un-sp-5);
+    color: var(--un-text-2);
+  }
+}
+
+@media (max-width: 720px) {
+  [data-ui-next].ql-page {
+    & .ql-main,
+    & .qd-main {
+      gap: var(--un-sp-5);
+      padding: var(--un-sp-5) var(--un-sp-4) calc(var(--un-sp-8) + var(--un-shell-tabbar));
+    }
+
+    & .ql-title,
+    & .qd-title {
+      font-size: var(--un-fs-5);
+    }
+
+    & .ql-sentence {
+      font-size: var(--un-fs-2);
+    }
+
+    & .ql-controls .un-seg {
+      width: 100%;
+    }
+
+    & .ql-pickers {
+      gap: var(--un-sp-2) var(--un-sp-4);
+    }
+
+    & .ql-line {
+      flex-wrap: wrap;
+      gap: var(--un-sp-2);
+    }
+
+    & .ql-line-aside {
+      width: 100%;
+      padding-left: 0;
+    }
+
+    & .ql-line:has(.ql-line-tick) .ql-line-aside {
+      padding-left: calc(18px + var(--un-sp-2));
+    }
+
+    & .ql-line-main {
+      flex-basis: calc(100% - 18px - var(--un-sp-3));
+    }
+
+    & .ql-bar {
+      bottom: calc(var(--un-shell-tabbar) + var(--un-sp-3));
+      padding: var(--un-sp-3);
+    }
+  }
+}
