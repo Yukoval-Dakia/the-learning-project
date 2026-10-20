@@ -107,9 +107,7 @@ export async function resolveGroupContract(
             response_spec: seal.parsed.response_spec,
             scoring_basis: seal.parsed.scoring_basis,
             execution_plan: seal.parsed.execution_plan,
-            ...(seal.parsed.presentation != null
-              ? { presentation: seal.parsed.presentation }
-              : {}),
+            ...(seal.parsed.presentation != null ? { presentation: seal.parsed.presentation } : {}),
             integrity_digest: current.integrity_digest,
             group_id: root.id,
             conversion_issues: [],

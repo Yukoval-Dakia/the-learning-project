@@ -1,8 +1,8 @@
 # assessment-publication 组契约解析拆分 — 交付说明（YUK-1572）
 
-状态：已实施；静态证据完整。**typecheck/lint/build/audits 全部 NOT_RUN**（本
-worktree 无 node_modules，按约不自行安装；待父安排一次 frozen install 后复验）。
-服务"证明有效"阶段的 kernel 读职责归位；`records/` 同层拆分，无跨边界新边。
+状态：已实施；本地门已实跑（父完成一次 frozen install 后，heavy.sh 串行
+typecheck/lint/build/两 audit 全 rc=0；过程见「验证」）。服务"证明有效"阶段
+的 kernel 读职责归位；`records/` 同层拆分，无跨边界新边。
 
 基座 `ce74a7733f93044f55c0b00d056ae3c8d137f1fc`（= 拉取时 origin/main，
 fixed main，未带父旧提交；本 worktree T3 预建分支落后 36 提交/带父 docs 提交，
@@ -48,17 +48,25 @@ fixed main，未带父旧提交；本 worktree T3 预建分支落后 36 提交/�
 - **修改局部性**：契约解释语义演进（新声明类型、seal 格式、digest 来源）
   只触新模块；组成员边界/锁序/快照形状演进只触父文件加载口；写协议演进
   不触读模型。
-- **行为证据**：逐语句对账——移除块全部语句在新模块原样存在（唯一差异为
-  presentation spread 行按 100 列折行）；查询序列与条件性不变（root→
-  parts→lifecycle→[declared: revision 早退，无 asset 读]|[legacy: asset→
-  normalize]）；异常文本逐字节保留（含 `loadQuestionGroupContractSnapshot:`
-  前缀，经同一调用栈抛出）；每次调用返回全新对象字面量，对象身份语义不变。
+- **行为证据**：以语句级对账 + 语义等价点举证——移除块的每条语句在新模块
+  均有逐字对应（唯一格式差：presentation spread 行按 100 列折行）；控制流
+  有重塑，如实声明：原 `declaredRevisionId`/`frozenContract` 临时赋值 + 末尾
+  `if (frozenContract != null)` 分支改为 `resolveGroupContract` 内直接
+  `return { declaredRevisionId, contract }`，入口再以解构字段组装同形快照。
+  等价以相同查询顺序（root→parts→lifecycle→[declared: revision 早退、无
+  asset 读]|[legacy: asset→normalize]）、相同触发条件、相同返回字段值与
+  错误类型/错误文本（含 `loadQuestionGroupContractSnapshot:` 前缀）证明；
+  调用栈边界如实变化 —— 抛错现经 `resolveGroupContract` async 帧，不声称
+  栈不变。每次调用仍返回全新对象字面量。
 
 ## 两个真实变化场景
 
-1. **快照装载/版本回退演进**（如新增声明种类或 seal 版本）：改
-   `assessment-group-contract.ts` 一处；调用方（source_verify、publisher、
-   FromRow）无感知，少知「契约如何物化」。
+拆分前两处逻辑本就在同一文件，**不声称减少编辑文件数**；真实收益是
+快照装载职责与契约解释职责分离：
+
+1. **快照装载/版本回退演进**（如新增声明种类或 seal 版本）：改动落在
+   `assessment-group-contract.ts`，与行快照职责物理隔离；调用方
+   （source_verify、publisher、FromRow）少知「契约如何物化」。
 2. **publication 写协议演进**（CAS/admission/lifecycle 变化）：改父文件
    publish/lifecycle 节，不触读模型与契约解析知识。
 
@@ -79,30 +87,39 @@ fixed main，未带父旧提交；本 worktree T3 预建分支落后 36 提交/�
 ## 实测指标（本 head，非收益声明）
 
 - `assessment-publication.ts`：1562 → 1464 物理行（-98）。
-- 新增 `assessment-group-contract.ts`：141 行。合计 +43 行（模块头/接口/
+- 新增 `assessment-group-contract.ts`：143 行。合计 +45 行（模块头/接口/
   docstring/import 开销），数字本身不是收益。
-- 预期 >1500 文件计数 15 → 14（source-size 棘轮：收缩无需
-  sourceSizeRecords 登记；新文件 141 行低于 1000 登记阈值）。跨边界
-  edgeRecords 口径不变（同层内部边不计数）。以上待父实测登记，本 lane
-  未改 baseline/audit/schema/CI/package/lock。
-- baseline 兼容预期：依赖快照零新边；pass-through sites 预期 +0。
+- audit 实测（本 head，`audit:capability-boundaries` stdout）：>1500 文件
+  **14（基 15）**；capability→server=403、server→capability-deep=0、
+  cross-capability-value=37、新依赖边=0、非平凡 SCC=1（基 1）。
+  `audit:architecture-deepening`：pass-through sites 1088（**+0 new**）、
+  依赖总量 403/0/37 < 531/70/62、SCC 目录 21 边/7 public-read/14 command。
+  收缩按 source-size 棘轮无需 sourceSizeRecords 登记；新文件低于 1000
+  登记阈值。以上实测差值供父登记参考，本 lane 未改
+  baseline/audit/schema/CI/package/lock。
 
 ## 验证
 
-- 逐语句搬移对账脚本：旧块（git HEAD 1157–1259）全部语句在新模块命中；
-  反向差异仅为 imports/接口/返回形状适配。PASS。
-- `git diff` 审查：恰 3 hunk，保护段零命中。PASS。
-- 残留引用扫描：父文件 0 处引用已迁符号；新模块 import 全数使用。PASS。
-- 括号平衡两文件均 0 差。PASS（弱证据，静态）。
+实跑（父 frozen install 后，heavy.sh 串行；raw stdout/stderr + argv/UTC/
+真实 rc 封存于下述目录）：
 
-NOT_RUN：`pnpm typecheck` / `lint` / `build` / `audit:*`（无 node_modules，
-遵约不装；父安排 frozen install 后建议依次跑 typecheck → biome check 两文件 →
-build → audit:capability-boundaries → audit:architecture-deepening，heavy.sh
-包装）。全部测试/DB/provider/runtime/Docker/paid 未触（owner 规则；本片不触
-五类不变量）。
+- `pnpm typecheck`：rc=0（21:43:27–35Z，最终字节复跑）。
+- `pnpm lint`：rc=0（21:43:55–57Z，180 条存量 warning、0 error）。如实
+  过程：初跑（21:41）rc=1，唯一 error 是**本 lane 新文件的格式诊断**
+  （spread 行折行），`biome check --write` 修复后全量复跑清零；修复使该行
+  与 base 原文逐字一致。触及两文件 scoped `biome check` rc=0。
+- `pnpm build`：rc=0（21:42:30–40Z）。
+- `pnpm audit:capability-boundaries`：rc=0（实测数见上节）。
+- `pnpm audit:architecture-deepening`：rc=0（pass-through 1088 +0）。
+- 语句级搬移对账脚本（`reconcile.py`）：PASS（语义与边界见「行为证据」）。
+- `git diff` 审查：恰 3 源码 hunk，保护段零命中。PASS。
+
+NOT_RUN：全部测试/vitest/DB/provider/runtime/Docker/paid（owner 规则；本片
+不触五类不变量）。globals.css 等存量 warning 未处理（写权外）。
 
 ## 证据
 
 仓库外封存：`tlp-audit-artifacts/architecture-deepening/YUK-1572/<head>/
-assessment-publication-read/`（diff、前后文件、对账输出、SHA256 清单、
-argv/UTC/exit 记录）。
+assessment-publication-read/`（diff、前后文件、对账脚本与输出、五门 raw
+stdout/stderr + meta、SHA256 清单；59bc 目录另有父 frozen-install 与
+function-proof 回执）。
