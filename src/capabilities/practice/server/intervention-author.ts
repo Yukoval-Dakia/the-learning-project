@@ -3,6 +3,7 @@ import {
   guardInterventionPreparationStage,
 } from '@/capabilities/agency/public';
 import { getLearnerLocale } from '@/capabilities/task-registry';
+import { parseJsonObjectLoose } from '@/core/json-extract';
 import {
   CurrentInterventionPackageReviewAudit,
   INTERVENTION_CONTRACT_VERSION,
@@ -37,7 +38,6 @@ import type { Db } from '@/db/client';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
 import { resolveSubjectProfileForKnowledgeIdsStrict } from '@/kernel/read-models/subject-profile';
 import { AgentRunError } from '@/server/ai/agent-run-error';
-import { parseJsonObjectLoose } from '@/server/ai/json-extract';
 import {
   type TaskTextResult,
   type TaskTextRunFn,

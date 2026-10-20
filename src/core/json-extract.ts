@@ -15,13 +15,13 @@
 //   4. 文本里没有 {...} → 返回 null，由调用点用自己的既有措辞抛错。
 // 修复带只救语法；语义仍由各站点下游的 Zod 门把关，判词/晋级逻辑不变。
 //
-// 与既有 `src/server/orchestrator/json-sanitize.ts` 的分工：那边是手写状态机、只转义字符串
+// 与同簇 `src/core/json-sanitize.ts`（原 `src/server/orchestrator/json-sanitize.ts`）的分工：那边是手写状态机、只转义字符串
 // 内裸控制字符（teaching / solve-session 在用，保持不动）；本模块面向 quiz supply lane，用
 // jsonrepair 覆盖更宽的失败类（未转义引号【spike 观测主类】/ 裸换行 / 智能引号等）。
 
 import { jsonrepair } from 'jsonrepair';
 
-import { sanitizeJsonStringLiterals } from '@/server/orchestrator/json-sanitize';
+import { sanitizeJsonStringLiterals } from './json-sanitize';
 
 // 确定性转义「内容引号」：一个未被反斜杠转义的 `"`，若其前一个非空白字符不是 {[,:
 // （不可能是 string 开引号）、后一个非空白字符也不是 ,}]: （不可能是 string 闭引号或
@@ -164,7 +164,7 @@ interface LadderHit {
 //   确定性级（内容保真可证明，只做转义、绝不重划字符串边界）：
 //     ① escapeContentQuotes（内容引号）
 //     ② escapeInvalidJsonStringBackslashes（字符串内非法反斜杠）
-//     ③ sanitizeJsonStringLiterals（字符串内裸控制字符，复用 orchestrator 状态机）
+//     ③ sanitizeJsonStringLiterals（字符串内裸控制字符，复用同簇 json-sanitize 状态机）
 //     ④ closeUnterminatedJsonContainers（只补确定缺失的尾部闭合符）
 //   jsonrepair 级（启发式；对 ASCII 标点毗邻引号的形态可能【静默重划字符串边界】——
 //   截断内容 + 伪造 key，且能过非 strict 的 Zod 门。review 已用真实 lib 复现）：
