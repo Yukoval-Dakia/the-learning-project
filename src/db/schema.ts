@@ -2430,12 +2430,13 @@ export const learning_session = pgTable('learning_session', {
   warnings: jsonb('warnings').$type<string[]>().notNull().default([]),
   error_message: text('error_message'),
   // YUK-1522 (LIGHT 启动额度门) — ingestion-agent 周预算授权台账。jsonb 包络
-  // `{week_tz, grants: {<operation_id>: Grant}}`：Grant 记录本次启动的授权
-  // 身份（in_flight | settled）、授权时读到的 system_config revision、
+  // `{week_tz, grants, operations, attributions, tasks, historical_ocr}`：Grant 记录本次启动的授权
+  // 身份（in_flight | awaiting_cost | settled）、授权时读到的 system_config revision、
   // limit/used 回执、周起点 instant。DURABLE 启动身份不能落在 30 天 TTL 的
   // job_events 上，故挂本行随 session 备份（additive 列 → 整行 dump/restore，
-  // 不 bump SCHEMA_VERSION）。NULL = 该 session 从未持有 agent 启动授权。
-  // Write path = src/capabilities/ingestion/server/agent/budget.ts only.
+  // 不 bump SCHEMA_VERSION）。reservation 无付费授权，拒绝记录也永久保存。
+  // Write path = ingestion/server/agent/budget-state.ts 的路径级写入；
+  // operation-identity.ts / agent/{budget,spend}.ts 分别持有身份/授权/费用职责。
   agent_budget: jsonb('agent_budget'),
   // conversation-only fields
   summary_md: text('summary_md'),

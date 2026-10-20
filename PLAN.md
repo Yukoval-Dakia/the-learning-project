@@ -1,8 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-20：架构线最多8条；#1834/#1839/#1840/#1842已合，#1843已合，#1846已合、#1847已合，#1837等基线释放；首批证据HEAD删除获批实施，测试仍待owner。
+> Linear 是权威 tracker。2026-10-20：录入助手 PR1891 五项P1由原树唯一作者修复；尚待整合main和静态检查，草稿禁合/默认禁开。
 
 ## NOW
+
+- **第一天能用 / 录入助手启动额度（YUK-1522）**：PR1891 从6c82接手，永久operation reservation独立于grant，OCR/model pending身份、历史归属未证及跨周unknown持续保留；预算拒绝提交原失败handle，所有kind在同key锁内先查原agent绑定。typecheck修后exit0；真实DB/并发/TTL/跨周/provider均NOT_RUN，R1/R2预算已用完，本轮无第三审。[实施与保守边界](docs/planning/2026-10-20-ingestion-budget-history.md)。
 
 - **帮助靠谱 / 夜间摘要统计（YUK-1621、YUK-1632）**：`el/yuk-1621` 的 PR #1858 普通整合 main `210dfb2c1`。仅 PLAN/now 冲突，采用 main 最新记录并保留本 PR 交接；服务端分桶、有效判分统计与模型统计守卫源码未变。本轮 typecheck/lint/build 通过，178 个既有 warnings；新 head CI 单独等待，不复用旧 head 结果。
 
@@ -39,6 +41,8 @@
 - **本轮已交付 YUK-1392**：PR1619于17:11:43Z合main6aaf8ca89，tree5e8ab973与exact3883903相同；CI37812973662全绿、R1 NONE、threads0。父13unit/22DB、static/build/audits通过，已unwatch/Linear Done。无部署。
 
 ## NEXT
+
+- **PR1891**：正常整合main，保留架构下降历史和新限流脚本；核实际package后串行生成/typecheck/lint/build/受影响audit，普通push后交父定向验证，不merge/watch/部署。历史OCR归属与费用需运营核对，不以发行说明放宽503。
 
 - **PR #1858**：本地检查通过后普通 merge commit/push，等待 exact-head CI。CI 绿即停止；不改 PR 描述或 Linear 状态，不合并 PR、不部署。
 

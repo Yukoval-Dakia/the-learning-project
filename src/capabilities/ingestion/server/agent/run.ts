@@ -56,6 +56,7 @@ import {
   readAgentRunLedger,
   terminalItemCounts,
 } from './ledger';
+import { retainAgentTaskLiability } from './spend';
 
 // YUK-1522 (R8) — ingestion agent run orchestrator.
 //
@@ -576,6 +577,7 @@ async function runSegmentInner(
           }),
         );
       }
+      await retainAgentTaskLiability(db, sessionId, agentRunTaskRunId(runRef, segment));
       await writeAgentPaidAttempt(db, sessionId, {
         segment,
         attempt_ref: attemptRef,

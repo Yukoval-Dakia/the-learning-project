@@ -5,6 +5,13 @@ import type { IngestionOperationKind } from '@/capabilities/ingestion/api/operat
 import type { Db, Tx } from '@/db/client';
 import { job_events, learning_session } from '@/db/schema';
 import { writeJobEvent } from '@/server/events/writer';
+import {
+  findDurableAgentKey,
+  persistAgentReservation,
+  readDurableAgentOperation,
+  requireAgentKeyEvidence,
+  updateDurableAgentOperation,
+} from './operation-identity';
 
 export const INGESTION_OPERATION_TABLE = 'ingestion_operation';
 
@@ -40,6 +47,8 @@ interface ReserveInput {
   operationKind: IngestionOperationKind;
   inputHash: string;
   idempotencyKey?: string;
+  /** Only after replay/conflict has been decided inside the key lock. */
+  beforeReserve?: (tx: Tx) => Promise<void>;
 }
 
 export type ReserveResult =
@@ -59,7 +68,7 @@ function payloadString(payload: Record<string, unknown>, key: string): string | 
 }
 
 export async function findIdempotentIngestionOperation(
-  db: Db,
+  db: Db | Tx,
   input: { sessionId: string; idempotencyKey: string },
 ): Promise<IdempotentOperationMatch | null> {
   const rows = await db
@@ -98,6 +107,27 @@ export async function reserveIngestionOperation(
       const scope = `ingestion-operation:${input.sessionId}:${input.idempotencyKey}`;
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${scope}))`);
 
+      // Collection key scope includes *every* kind. Permanent agent identity
+      // takes precedence over later/TTL-limited events, inside this same lock.
+      const durable = await findDurableAgentKey(tx, {
+        sessionId: input.sessionId,
+        idempotencyKey: input.idempotencyKey,
+        inputHash: input.inputHash,
+      });
+      if (durable) {
+        if (durable.sameInput && input.operationKind === 'agent') {
+          await persistAgentReservation(tx, {
+            ...input,
+            operationId: durable.operationId,
+            resource: (await readIngestionOperation(tx, durable.operationId)) ?? undefined,
+          });
+        }
+        return {
+          outcome: durable.sameInput ? 'reused' : 'conflict',
+          operationId: durable.operationId,
+        };
+      }
+
       const existingRows = await tx
         .select({ businessId: job_events.business_id, payload: job_events.payload })
         .from(job_events)
@@ -116,12 +146,23 @@ export async function reserveIngestionOperation(
         const sameInput =
           payloadString(existing.payload, 'operation_kind') === input.operationKind &&
           payloadString(existing.payload, 'input_hash') === input.inputHash;
+        if (sameInput && input.operationKind === 'agent') {
+          await persistAgentReservation(tx, {
+            ...input,
+            operationId: existing.businessId,
+            resource: (await readIngestionOperation(tx, existing.businessId)) ?? undefined,
+          });
+        }
         return {
           outcome: sameInput ? 'reused' : 'conflict',
           operationId: existing.businessId,
         };
       }
+      if (input.operationKind === 'agent') await requireAgentKeyEvidence(tx, input.sessionId);
     }
+
+    await input.beforeReserve?.(tx);
+    if (input.operationKind === 'agent') await persistAgentReservation(tx, input);
 
     await writeJobEvent(tx, {
       business_table: INGESTION_OPERATION_TABLE,
@@ -151,6 +192,15 @@ export async function writeIngestionOperationEvent(
   },
 ): Promise<void> {
   await db.transaction(async (tx) => {
+    if (
+      !(await updateDurableAgentOperation(
+        tx,
+        input.operationId,
+        input.eventType,
+        input.payload ?? {},
+      ))
+    )
+      return;
     await writeJobEvent(tx, {
       business_table: INGESTION_OPERATION_TABLE,
       business_id: input.operationId,
@@ -221,6 +271,8 @@ export async function readIngestionOperation(
   db: Db | Tx,
   operationId: string,
 ): Promise<IngestionOperationResource | null> {
+  const durable = await readDurableAgentOperation(db, operationId);
+  if (durable) return durable;
   const events = await db
     .select({
       eventType: job_events.event_type,

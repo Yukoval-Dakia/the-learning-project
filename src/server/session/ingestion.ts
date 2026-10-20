@@ -83,9 +83,10 @@ export type EnqueueExtractionParams = {
    * deadlocks when the gate lazily settles other sessions' grants. Throwing
    * aborts the whole dispatch (no flip, no job); its writes commit
    * atomically with the flip. `enqueueExtraction` does not invoke it
-   * (OCR lane is ungated).
+   * (OCR lane is ungated). Returning ApiError commits a durable budget denial
+   * without transition/send; the caller raises it after the transaction commits.
    */
-  beforeTransition?: (tx: Tx) => Promise<void>;
+  beforeTransition?: (tx: Tx) => Promise<undefined | ApiError>;
 };
 
 /**
@@ -170,13 +171,17 @@ export const INGESTION_AGENT_RUN_QUEUE = 'ingestion_agent_run' as const;
  */
 export async function enqueueAgentRun(
   params: EnqueueExtractionParams,
-): Promise<{ jobId: string | null }> {
+): Promise<{ jobId: string | null; error?: ApiError }> {
   return params.db.transaction(async (tx) => {
     // YUK-1522 — the budget gate runs FIRST inside this dispatch transaction
     // so the global budget advisory lock precedes the session row lock (one
     // lock order for all start decisions), and so the durable grant, the
-    // `queued` flip and the job send commit (or roll back) atomically.
-    if (params.beforeTransition) await params.beforeTransition(tx);
+    // `queued` flip commit (or roll back) together. boss.send still uses its
+    // existing independent connection; its commit gap is not a new grant.
+    const rejection = await params.beforeTransition?.(tx);
+    // An expected budget denial commits its durable failed reservation and
+    // financial evidence. The route raises the HTTP error after this commit.
+    if (rejection) return { jobId: null, error: rejection };
 
     const current = await loadSessionForUpdate(tx, params.sessionId);
     if (!current) {

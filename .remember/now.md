@@ -1,3 +1,7 @@
+# 录入助手永久身份与未结费用修复，2026-10-20
+
+PR1891原树从clean6c82接手，单代码写手，无委派/第三审。五P1实施：operations永久reservation先于额度检查；collection真实key锁先查agent durable权威；OCR wire前pending及精确attempt绑定；主模型确定性task负债；全历史unknown/非USD/归属未证阻启动，周过滤只算known used。job消失/HTTP恢复不能证明执行者结束，保留awaiting_cost，原grant不重新enqueue。此前typecheck01 exit1类型问题已修，typecheck02 exit0；尚未最终lint/build/audit。日志在仓外tlp-audit-artifacts/yuk1522/pr1891-codex-repair-20261020。后续普通整合main并核内置限流，串行检查后普通push到原draft，父定向验证。所有test/断言脚本/DB/迁移/TEST/Docker/provider/daemon/merge/watch/部署NOT_RUN，默认助手仍禁开。完整边界见docs/planning/2026-10-20-ingestion-budget-history.md。
+
 # PR #1858 主线整合，2026-10-20
 
 `el/yuk-1621` 从已推送的 `04a6fbedb` 普通 merge `origin/main` 的 `210dfb2c1`。仅本文件与 PLAN 冲突，main 最新交接完整保留，删除本分支落后的其他工作线记录。本 PR 的四个产品代码文件与合并前相同，没有新增设计决策。
