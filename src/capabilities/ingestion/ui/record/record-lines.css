@@ -19,6 +19,12 @@
     gap: var(--un-sp-3);
   }
 
+  & .rc-sheet-title {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+  }
+
   & .rc-sheet-meta {
     color: var(--un-text-3);
     font-size: var(--un-fs-1);

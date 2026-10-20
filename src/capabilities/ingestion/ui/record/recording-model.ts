@@ -252,3 +252,34 @@ export function deriveRecording(input: {
     createdAt,
   };
 }
+
+const TITLE_MAX = 20;
+export const NO_TEXT_TITLE = '没认出题目文字';
+
+/** The opening words of a question as a title: markup and line breaks dropped, about 20 characters. */
+export function shortTitle(text: string | null | undefined): string | null {
+  const plain = (text ?? '')
+    .replace(/[#*_`>$\\]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!plain) return null;
+  const chars = Array.from(plain);
+  return chars.length > TITLE_MAX ? `${chars.slice(0, TITLE_MAX).join('')}…` : plain;
+}
+
+/**
+ * The automatic title of a recording: its first question's opening words. Null while nothing is
+ * read yet; NO_TEXT_TITLE once the recording settled without any question text.
+ */
+export function firstQuestionTitle(rec: Recording): string | null {
+  const byNo = [...rec.items].sort(
+    (a, b) => (Number.parseInt(a.no ?? '', 10) || 0) - (Number.parseInt(b.no ?? '', 10) || 0),
+  );
+  const text =
+    shortTitle(byNo.find((i) => i.preview)?.preview) ??
+    shortTitle(rec.blocks[0]?.extracted_prompt_md);
+  if (text) return text;
+  return rec.phase === 'finished' || rec.phase === 'failed' || rec.history === 'expired'
+    ? NO_TEXT_TITLE
+    : null;
+}

@@ -5,6 +5,7 @@ import { BlockLines } from './BlockLines';
 import { PageStrip } from './PageStrip';
 import { materialWords, receiptWords, whenWords } from './record-copy';
 import { useStartState } from './record-start';
+import { firstQuestionTitle } from './recording-model';
 import { useRecording } from './recording-read';
 import { StartTrouble } from './StartTrouble';
 import { statusWords } from './status-words';
@@ -41,6 +42,7 @@ export function RecordingSheet({
   const facts = detail.session;
   const now = Date.now();
   const status = statusWords(rec, start);
+  const title = firstQuestionTitle(rec);
   const receipt = detail.usage_receipt;
   const inBank =
     rec.items.some((i) => i.status === 'withheld' || i.status === 'admitted') ||
@@ -52,10 +54,16 @@ export function RecordingSheet({
   return (
     <article className="rc-sheet" aria-label="一次录入" data-phase={rec.phase}>
       <header className="rc-sheet-head">
-        <p className="rc-sheet-meta">
-          {materialWords(facts.entrypoint, facts.source_asset_ids.length)}
-          {rec.createdAt !== null && ` · ${whenWords(rec.createdAt, now)}`}
-        </p>
+        <div className="rc-sheet-title">
+          <h2 className="rc-row-title">
+            {[rec.createdAt !== null ? whenWords(rec.createdAt, now) : null, title]
+              .filter(Boolean)
+              .join(' · ')}
+          </h2>
+          <p className="rc-sheet-meta">
+            {materialWords(facts.entrypoint, facts.source_asset_ids.length)}
+          </p>
+        </div>
         <button type="button" className="rc-link" onClick={onClose}>
           收起
         </button>

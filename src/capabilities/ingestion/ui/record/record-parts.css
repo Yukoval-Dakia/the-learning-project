@@ -216,6 +216,12 @@
     font-weight: var(--un-fw-medium);
   }
 
+  & .rc-row .rc-row-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   & .rc-bar-sticky {
     position: sticky;
     bottom: var(--un-sp-3);

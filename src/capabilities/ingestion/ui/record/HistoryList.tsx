@@ -3,7 +3,7 @@ import { useAssetUrl } from '@/ui/lib/assets';
 import { RetryLine, SectionHead, SkeletonLines } from '@/ui-next/public';
 import { type SessionRow, getSession } from './record-api';
 import { materialWords, whenWords } from './record-copy';
-import { recordKeys, useRecordingList } from './recording-read';
+import { recordKeys, useRecordingList, useRowTitle } from './recording-read';
 
 const STATUS_WORDS: Record<string, { text: string; tone: string }> = {
   uploaded: { text: '还没开始', tone: 'neutral' },
@@ -28,16 +28,16 @@ function Thumb({ assetId }: { assetId: string | undefined }) {
 function Row({ row, onOpen, now }: { row: SessionRow; onOpen: () => void; now: number }) {
   const state = STATUS_WORDS[row.status] ?? { text: '', tone: 'neutral' };
   const count = row.block_count ?? 0;
+  const title = useRowTitle(row.id, row.status);
+  const when = whenWords(row.created_at ? row.created_at * 1000 : null, now);
   return (
     <li>
       <button type="button" className="rc-row un-hit" onClick={onOpen}>
         <Thumb assetId={row.source_asset_ids[0]} />
         <span className="rc-row-main">
-          <span className="rc-row-title">
-            {materialWords(row.entrypoint, row.source_asset_ids.length)}
-          </span>
+          <span className="rc-row-title">{[when, title].filter(Boolean).join(' · ')}</span>
           <span className="rc-quiet">
-            {whenWords(row.created_at ? row.created_at * 1000 : null, now)}
+            {materialWords(row.entrypoint, row.source_asset_ids.length)}
             {count > 0 && ` · ${count} 道题`}
           </span>
         </span>

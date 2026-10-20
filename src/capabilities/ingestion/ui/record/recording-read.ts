@@ -6,7 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useIngestionSSE } from '@/ui/lib/sse';
 import { getSession, listBlocks, listKnowledge, listSessions } from './record-api';
 import { useStartState } from './record-start';
-import { type Recording, deriveRecording } from './recording-model';
+import { NO_TEXT_TITLE, type Recording, deriveRecording, shortTitle } from './recording-model';
 
 const SETTLED = new Set(['extracted', 'partial', 'reviewed', 'imported', 'failed']);
 const HAS_BLOCKS = new Set(['extracted', 'partial', 'reviewed', 'imported']);
@@ -69,4 +69,21 @@ export function useRecordingList() {
 
 export function useKnowledgeList() {
   return useQuery({ queryKey: recordKeys.knowledge, queryFn: listKnowledge, staleTime: 60_000 });
+}
+
+/**
+ * A list row's automatic title. The session list carries no question text yet, so the row reads
+ * the session's blocks (the same cache the open sheet uses). Recordings the helper made have no
+ * blocks on today's reads; they show the time only until the backend list carries a title.
+ */
+export function useRowTitle(id: string, status: string): string | null {
+  const q = useQuery({
+    queryKey: recordKeys.blocks(id),
+    queryFn: () => listBlocks(id),
+    enabled: HAS_BLOCKS.has(status),
+    staleTime: 60_000,
+  });
+  if (!q.data) return null;
+  if (q.data.length === 0) return status === 'failed' ? NO_TEXT_TITLE : null;
+  return shortTitle(q.data[0].extracted_prompt_md) ?? NO_TEXT_TITLE;
 }
