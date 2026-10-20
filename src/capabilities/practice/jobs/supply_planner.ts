@@ -26,34 +26,10 @@ import type { Db } from '@/db/client';
 import { knowledge, mastery_state, placement_starter_claim, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { enqueueSupplyDispatchJob } from '@/kernel/supply-dispatch';
-import {
-  DOMAIN_TOOL_MCP_SERVER_NAME,
-  type DomainToolName,
-  toMcpAllowedToolName,
-} from '@/kernel/tools/allowlists';
-import { runAgentTask } from '@/server/ai/runner';
-import type { BuildMcpServerOptions } from '@/server/ai/tools/mcp-bridge';
-import { type PiToolMount, piDomainMount } from '@/server/ai/tools/pi-tools';
-import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
+import { resolveSubjectProfile } from '@/subjects/profile';
 import { jyeooBudgetRemaining } from '../server/question-supply/jyeoo-budget';
-import {
-  checkSupplyPlanKnowledgeIds,
-  checkSupplyPlanStructure,
-  parseSupplyPlanOutput,
-} from '../server/question-supply/supply-plan-gate';
 import { discoverSupplyTargets } from '../server/question-supply/target-discovery';
-
-// planner 只挂只读知识图谱面（下钻核实节点）；与 QUIZ_GEN_READ_TOOLS 同集但独立
-// 声明——共享 allowlist 矩阵扩张需显式决策（quiz_gen.ts 同款注释）。
-const SUPPLY_PLANNER_READ_TOOLS = [
-  'query_knowledge',
-  'get_subject_graph_overview',
-  'expand_knowledge_subgraph',
-  'find_knowledge_paths',
-] as const satisfies readonly DomainToolName[];
-
-// 照 QUIZ_PLAN_MAX_ATTEMPTS（quiz_gen_plan.ts）：规划至多 2 轮，仍不过 fail closed。
-const SUPPLY_PLAN_MAX_ATTEMPTS = 2;
+import { type SupplyPlanRunAgentFn, runSupplyPlanOperation } from '../server/supply-plan-operation';
 
 // 非终态 placement claim（schema.ts placement_starter_claim 注释同集）：
 // 这些 claim 是已声明未满足的供给需求，透传给 planner 并回填到 demand 事件。
@@ -80,25 +56,8 @@ const PLANNER_DATE_FORMATTER = new Intl.DateTimeFormat('en-CA', {
   day: '2-digit',
 });
 
-// runAgentTask 返回的最小结构面（照 quiz_gen.ts TaskTextResult 注释同款）。
-interface TaskTextResult {
-  text: string;
-  task_run_id?: string;
-  cost_usd?: number | null;
-}
-
-type RunAgentTaskFn = (
-  kind: string,
-  input: unknown,
-  opts: {
-    db: Db;
-    allowedTools?: string[];
-    subjectProfile: SubjectProfile;
-  },
-) => Promise<TaskTextResult>;
-
 export interface SupplyPlannerDeps {
-  runAgentTaskFn?: RunAgentTaskFn;
+  runAgentTaskFn?: SupplyPlanRunAgentFn;
   now?: () => Date;
   /** phase-2 入队口（默认 enqueueSupplyDispatchJob；db 测试注入 fake 断言载荷）。 */
   enqueueSupplyExecute?: (data: Record<string, unknown>) => Promise<string | null>;
@@ -263,7 +222,6 @@ export async function runSupplyPlanner(
   db: Db,
   deps: SupplyPlannerDeps = {},
 ): Promise<SupplyPlannerResult> {
-  const run = deps.runAgentTaskFn ?? runAgentTask;
   const now = deps.now?.() ?? new Date();
 
   // ── 1. 原始信号装配 ──────────────────────────────────────────────────────
@@ -320,57 +278,26 @@ export async function runSupplyPlanner(
   };
 
   // ── 2. LLM 规划 + 机器门（≤2 轮有界重生成） ──────────────────────────────
+  // 挂载装配 / 运行调用 / 解析与机检拒绝归集 / 有界尝试政策与留痕口径是
+  // supply-plan-operation 的完整拥有面；本 job 只喂快照（plannerInput /
+  // liveKnowledgeIds / jyeooRemaining + host profile）并消费结果写事件。
   const subjectProfile = resolveSubjectProfile(PLANNER_HOST_SUBJECT);
-  const toolContextTaskRunId = `supply_planner_tool_${createId()}`;
-  // piDomainMount compiles the DomainTools into AgentTools.
-  const domainMountOptions = {
-    ctx: {
+  const {
+    plan,
+    rejections: planRejections,
+    taskRunIds,
+    costUsdTotal,
+    attempts,
+  } = await runSupplyPlanOperation(
+    {
       db,
-      taskRunId: toolContextTaskRunId,
-      callerActor: { kind: 'agent', ref: 'supply_planner' },
-    },
-    serverName: DOMAIN_TOOL_MCP_SERVER_NAME,
-    toolNames: SUPPLY_PLANNER_READ_TOOLS,
-    taskKind: 'SupplyPlanTask',
-  } satisfies BuildMcpServerOptions;
-  const piToolMounts: PiToolMount[] = [piDomainMount(domainMountOptions)];
-  const allowedTools = SUPPLY_PLANNER_READ_TOOLS.map((name) => toMcpAllowedToolName(name));
-
-  let plan: SupplyPlanV1T | null = null;
-  const planRejections: string[][] = [];
-  const taskRunIds: string[] = [];
-  let costUsdTotal = 0;
-  let attempts = 0;
-  for (let attempt = 1; attempt <= SUPPLY_PLAN_MAX_ATTEMPTS; attempt += 1) {
-    const previousRejection = planRejections.flat().join('; ') || undefined;
-    const attemptInput = previousRejection
-      ? { ...plannerInput, previous_rejection: previousRejection }
-      : plannerInput;
-    attempts = attempt;
-    const runResult = await run('SupplyPlanTask', attemptInput, {
-      db,
-      piToolMounts,
-      allowedTools,
+      plannerInput,
       subjectProfile,
-    });
-    if (runResult.task_run_id) taskRunIds.push(runResult.task_run_id);
-    costUsdTotal += runResult.cost_usd ?? 0;
-
-    const parsed = parseSupplyPlanOutput(runResult.text);
-    if (!parsed.ok) {
-      planRejections.push(parsed.reasons);
-      continue;
-    }
-    const reasons = [
-      ...checkSupplyPlanStructure(parsed.plan, { jyeooBudgetRemaining: jyeooRemaining }),
-      ...checkSupplyPlanKnowledgeIds(parsed.plan, liveKnowledgeIds),
-    ];
-    if (reasons.length === 0) {
-      plan = parsed.plan;
-      break;
-    }
-    planRejections.push(reasons);
-  }
+      liveKnowledgeIds,
+      jyeooBudgetRemaining: jyeooRemaining,
+    },
+    { runAgentTaskFn: deps.runAgentTaskFn },
+  );
 
   // ── 3. run 事件（accepted / rejected）+ demand 留痕 ──────────────────────
   const claimByKnowledgeId = new Map<string, string>();
