@@ -11,7 +11,6 @@ import { SYNTHETIC_SUBJECT_ROOT_RE } from '../placement-scope';
 
 import { and, asc, desc, eq, inArray, isNull, lte, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { bodyBlockSummaries, excerpt, knowledgeContext } from '@/capabilities/ingestion/public';
 import { AddressableStructureSchema } from '@/core/schema/addressable-structure';
 import {
   INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
@@ -32,6 +31,11 @@ import {
   question,
 } from '@/db/schema';
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
+import {
+  bodyBlockSummaries,
+  excerpt,
+  knowledgeContext,
+} from '@/kernel/read-models/extraction-summary';
 import { getFailureAttempts } from '@/kernel/read-models/failure-attempts';
 import { miscCauseLabelMap, resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
 import { getQuestionTimeline, getRecentReviewEvents } from '@/kernel/read-models/question-activity';
