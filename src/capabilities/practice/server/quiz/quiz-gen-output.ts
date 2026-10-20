@@ -1,7 +1,7 @@
 // Validates generated quiz output before the job checks its accepted plan or persists rows.
+import { parseJsonObjectLoose } from '@/core/json-extract';
 import { defaultJudgeKindForQuestion } from '@/core/schema/judge-routing';
 import { QuizGenOutput, type QuizGenOutputT } from '@/core/schema/quiz_gen';
-import { parseJsonObjectLoose } from '@/server/ai/json-extract';
 import type { SubjectProfile } from '@/subjects/profile';
 import { assertGeneratedQuestionHasJudgeContract } from '../judge/question-contract';
 import {

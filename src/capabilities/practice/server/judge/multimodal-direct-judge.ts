@@ -2,10 +2,10 @@ import {
   MultimodalDirectLlmOutput,
   type MultimodalDirectLlmOutputT,
 } from '@/core/capability/judges/multimodal_direct';
+import { parseJsonObjectLoose } from '@/core/json-extract';
 import { ConjectureProbeSpecV2 } from '@/core/schema/business';
 import type { JudgeResultV2T } from '@/core/schema/capability';
 import type { Db } from '@/db/client';
-import { parseJsonObjectLoose } from '@/server/ai/json-extract';
 import type { SubjectProfile } from '@/subjects/profile';
 import { defaultStructuredRunTaskFn } from './judge-output-parse';
 import { type LaneDegradationEvidence, runTaskWithLaneFallback } from './provider-lane-fallback';
