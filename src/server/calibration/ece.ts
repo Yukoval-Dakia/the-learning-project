@@ -39,7 +39,7 @@ export function ece(predictions: number[], labels: (0 | 1)[], opts: EceOptions =
   }
   const n = predictions.length;
 
-  // A non-finite prediction becomes a NaN bin index, or silently mis-sorts equal-count bins.
+  // A non-finite prediction would make a NaN bin or mis-sort equal-count bins, so this throws.
   for (let i = 0; i < n; i++) {
     if (!Number.isFinite(predictions[i])) {
       throw new Error(`ece: prediction at index ${i} is not finite (got ${predictions[i]})`);
