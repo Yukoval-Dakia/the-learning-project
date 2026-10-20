@@ -36,7 +36,8 @@
     "YUK-1570-mastery-read-engine": "Complete mastery row/ability and p(L)/KG projection read implementations now belong to kernel read models, with old server exports kept for compatibility; only 8 capability consumers move. knowledge -> mastery 6 -> 1, practice -> mastery 14 -> 12, copilot -> mastery 1 -> 0, total 440 -> 432. Write implementations, locks, transactions and non-capability consumer imports stay unchanged; no kernel-to-server facade.",
     "YUK-1570-supply-run": "Supply planning owns complete bounded attempt orchestration (mount identity, run, parse/validation, rejection feedback and result accounting); web sourcing implementation is separated from the tool adapter and shares production dependency assembly with executor. practice -> ai 66 -> 63, total 432 -> 429. This auxiliary metric includes two removed type-only mcp-bridge imports and consolidation of JSON-parser dependency assembly; these import changes alone are not claimed as algorithmic deepening. Existing 2-attempt bound, cross-attempt tool context identity, Exa-null gate, injection and cost/event policies preserved. Composed after main mastery-read-engine PR #1881; earlier standalone measurement was 440 -> 437.",
     "YUK-1570-session-operation": "Review/paper/placement lifecycle operations own existing state-transition, frozen-paper and dispatch decisions behind route adapters; practice -> session 16 -> 7, total 429 -> 420. boss/runtime-env move with the operation with zero net decrease; pause/resume are thin compatibility members, not independent deepening. HTTP behavior and manifests preserved. Composed after main mastery-read-engine PR #1881; earlier standalone measurement was 440 -> 431. Latest composition includes supply PR #1883; main server baseline 429.",
-    "YUK-1622": "agency -> practice 4 -> 5 (+1, total 42 -> 43 after main's YUK-1571 shared-read offset): coach_daily imports the practice public resolveDailyReviewPlanInputs so the TodayPlan due queue, daily budget and measured pace have one formula and one source; Coach reads practice's public module instead of copying the formula. PM ruling (Linear YUK-1622 comment 82cd19fd-51d1-46d5-bc70-5b0365409dd1, https://linear.app/yukoval-studios/issue/YUK-1622#comment-82cd19fd) approved this single edge only; it is not a general relaxation."
+    "YUK-1622": "agency -> practice 4 -> 5 (+1, total 42 -> 43 after main's YUK-1571 shared-read offset): coach_daily imports the practice public resolveDailyReviewPlanInputs so the TodayPlan due queue, daily budget and measured pace have one formula and one source; Coach reads practice's public module instead of copying the formula. PM ruling (Linear YUK-1622 comment 82cd19fd-51d1-46d5-bc70-5b0365409dd1, https://linear.app/yukoval-studios/issue/YUK-1622#comment-82cd19fd) approved this single edge only; it is not a general relaxation.",
+    "retired-api-aliases-2026-10-20": "ingestion->boss 8->7, ingestion->session 9->8, shell->proposals 4->2 (capability->server total 420->416): removal of deprecated route registrations and their orphan alias modules (extract/import wrappers, legacy practice/review/placement shells, proposal decide/retract wrappers). The decrease reflects deleted alias indirection reaching server internals, not new algorithm deepening."
   },
   "changes": [
     {
@@ -48,23 +49,47 @@
       "direction": "decrease"
     },
     {
-      "direction": "increase",
       "debt": "crossCapabilityValue",
       "pair": "agency -> practice",
       "date": "2026-10-20",
       "from": 4,
       "to": 5,
+      "direction": "increase",
       "reason": "TodayPlan 的到期队列、每日预算和实测节奏必须由同一公式、同一来源计算；Coach 通过 practice 的公开模块读取，不复制公式。仅批准这一条边，不外延。",
       "exitCondition": "当 TodayPlan 的到期队列、预算和节奏读取迁入 kernel 所有的读模型，或 Coach 不再需要 practice 的这三个输入时，把 agency -> practice 归回 4；本记录不得复用或抵其他上调。",
       "justification": {
         "kind": "recorded_ruling",
         "ruling": "https://linear.app/yukoval-studios/issue/YUK-1622#comment-82cd19fd"
       }
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "ingestion -> boss",
+      "date": "2026-10-20",
+      "from": 8,
+      "to": 7,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "ingestion -> session",
+      "date": "2026-10-20",
+      "from": 9,
+      "to": 8,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "shell -> proposals",
+      "date": "2026-10-20",
+      "from": 4,
+      "to": 2,
+      "direction": "decrease"
     }
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 420,
+      "total": 416,
       "byOwnerPair": {
         "agency -> ai": 28,
         "agency -> boss": 10,
@@ -92,14 +117,14 @@
         "copilot -> today": 3,
         "ingestion -> advisory-locks": 1,
         "ingestion -> ai": 16,
-        "ingestion -> boss": 8,
+        "ingestion -> boss": 7,
         "ingestion -> events": 6,
         "ingestion -> projections": 9,
         "ingestion -> proposals": 3,
         "ingestion -> questions": 10,
         "ingestion -> r2": 13,
         "ingestion -> records": 1,
-        "ingestion -> session": 9,
+        "ingestion -> session": 8,
         "knowledge -> advisory-locks": 5,
         "knowledge -> ai": 13,
         "knowledge -> boss": 3,
@@ -140,7 +165,7 @@
         "practice -> runtime-env": 4,
         "practice -> session": 7,
         "shell -> boss": 1,
-        "shell -> proposals": 4,
+        "shell -> proposals": 2,
         "shell -> records": 1,
         "shell -> subjects": 1,
         "shell -> today": 3
