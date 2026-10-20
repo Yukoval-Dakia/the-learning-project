@@ -9,7 +9,7 @@ import {
 } from '@/core/assessment-rubric-timeout';
 import { resetTestConfig, setTestConfig } from '@/core/config/store';
 import type { ModelExecutorRequest, ScoringUnitT } from '@/core/schema/assessment';
-import { AgentRunError } from '@/server/ai/agent-run-error';
+import { AgentRunError } from '@/ai/agent-run-error';
 import type { RunTaskCtx, RunTaskResult } from '@/server/ai/runner';
 import { ASSESSMENT_RUBRIC_TASK_KIND, createRubricModelExecutor } from './rubric-model-executor';
 

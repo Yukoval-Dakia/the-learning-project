@@ -1,5 +1,6 @@
 import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
+import { AgentRunError } from '@/ai/agent-run-error';
 import { reviewInterventionPackageCandidate } from '@/capabilities/practice/public';
 import { type TaskKind, getLearnerLocale, tasks } from '@/capabilities/task-registry';
 import {
@@ -13,7 +14,6 @@ import {
 import type { Db } from '@/db/client';
 import { ai_task_runs, cost_ledger } from '@/db/schema';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
-import { AgentRunError } from '@/server/ai/agent-run-error';
 import { type TaskTextRunFn, taskPromptFingerprint } from '@/server/ai/provenance';
 import { resolveTaskBinding } from '@/server/ai/providers';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
