@@ -562,6 +562,13 @@ function choiceLabelIndex(value: string): number | null {
  * label points at plus the remainder text, or null when the value is not
  * label-prefixed (bare labels carry no remainder and also return null —
  * choiceLabelIndex resolves those).
+ *
+ * A label is a letter followed by a DELIMITER (a bracket wrapper, `.` `、`
+ * `：` etc., or whitespace) — never by a Han character: an option body like
+ * `C语言` starts with A–F + Han, and stripping it would both reject valid
+ * items (the whole text no longer matches its own option) and mint a false
+ * solve-check candidate that can grade a wrong answer as correct
+ * (review 6291233350 P1).
  */
 function choiceLabelPrefix(value: string): { index: number; remainder: string } | null {
   const normalized = value.normalize('NFKC').trim();
@@ -581,15 +588,12 @@ function choiceLabelPrefix(value: string): { index: number; remainder: string } 
   // A labelled answer is persisted with an uppercase option marker. Keep this
   // case-sensitive: treating lowercase function names such as `f(x)` as an
   // option wrapper would add the false candidate `x` and could normalize-pass
-  // an actually wrong fill-blank answer. The no-separator branch (`C开封`)
-  // requires a Han follower so token-shaped answers like `E₂` or `DNA` never
-  // lose their leading letter.
-  const match =
-    /^([A-F])(?:\s*[(（[【]\s*(.+?)\s*[)）\]】]\s*$|[\s.、:：)\]）-]+(.+)|(\p{Script=Han}.*))$/u.exec(
-      normalized,
-    );
+  // an actually wrong fill-blank answer.
+  const match = /^([A-F])(?:\s*[(（[【]\s*(.+?)\s*[)）\]】]\s*$|[\s.、:：)\]）-]+(.+))$/u.exec(
+    normalized,
+  );
   const label = match?.[1];
-  const remainder = (match?.[2] ?? match?.[3] ?? match?.[4])?.trim();
+  const remainder = (match?.[2] ?? match?.[3])?.trim();
   if (!label || !remainder || remainder.length === 0) return null;
   return { index: label.charCodeAt(0) - 'A'.charCodeAt(0), remainder };
 }
@@ -675,6 +679,8 @@ export interface ChoiceSurfaceQuestion {
   reference_md: string | null;
   choices_md: string[] | null;
   rubric_json: unknown;
+  /** A composite (篇) parent carries its options in structured.sub_questions, not flat choices_md. */
+  hasStructuredStem?: boolean;
 }
 
 function referenceFirstLine(referenceMd: string | null): string | null {
@@ -690,21 +696,25 @@ function normalizeOptionIdentity(text: string): string {
 
 /**
  * Choice-surface rules that can decide before ANY paid verify call runs —
- * the model is reserved for what rules cannot judge. Applies to every row
+ * the model is reserved for what rules cannot judge. Applies to every flat row
  * whose kind folds to the choice family (a choice row with ZERO options is
  * rejected too) and to any row that carries persisted options (a lone option
- * is choice-shaped regardless of its kind label). Only genuinely option-less
- * kinds skip: the repo's true_false form legitimately carries no choices.
- * Answer resolution reuses the solve-check candidates, so `B`, `B. …`,
- * `（B）选项原文`, `【B】…`, `B选项原文` and a structured rubric final_answer
+ * is choice-shaped regardless of its kind label). Composite (篇) parents are
+ * exempt via hasStructuredStem: their options live in structured
+ * sub-questions, not flat choices_md. Option-less non-choice kinds record
+ * not_applicable. Answer resolution reuses the solve-check candidates, so
+ * `B`, `B. …`, `（B）选项原文`, `【B】…` and a structured rubric final_answer
  * all count as the declared answer; a multi-select reference like `A、C`
- * passes when every label resolves to a real option. Duplicate detection
- * preserves case: `T` / `t` are different physical symbols, so only
- * NFKC-and-whitespace-equal options collide.
+ * passes when every label resolves to a real option. A label must be
+ * delimiter-separated from its text (`B.` / `（B）` / whitespace) — an option
+ * body like `C语言` is never stripped. Duplicate detection preserves case:
+ * `T` / `t` are different physical symbols, so only NFKC-and-whitespace-equal
+ * options collide.
  */
 export function evaluateChoiceSurface(question: ChoiceSurfaceQuestion): ChoiceSurfaceRuleCheck[] {
   const choices = question.choices_md ?? [];
-  const choiceShaped = normalizeToCanonicalKind(question.kind) === 'choice';
+  const choiceShaped =
+    !question.hasStructuredStem && normalizeToCanonicalKind(question.kind) === 'choice';
   if (choices.length === 0 && !choiceShaped) return [];
   if (choices.length < 2) {
     return [
@@ -768,7 +778,12 @@ export function evaluateChoiceSurface(question: ChoiceSurfaceQuestion): ChoiceSu
   if (everyTokenIsResolvableLabel) {
     matchedOptionIndices = resolvedLabelIndices.filter((index): index is number => index !== null);
   } else {
-    const prefix = firstLine ? choiceLabelPrefix(firstLine) : null;
+    const parsedPrefix = firstLine != null ? choiceLabelPrefix(firstLine) : null;
+    // An out-of-range label (e.g. `E. 选项` on 4 options) is not a usable label
+    // at all — fall through to whole-text matching instead of asserting an
+    // option that does not exist.
+    const prefix =
+      parsedPrefix != null && parsedPrefix.index < choices.length ? parsedPrefix : null;
     if (prefix) {
       const textIndex = matchOptionIndex(prefix.remainder, false);
       if (textIndex >= 0 && textIndex !== prefix.index) {

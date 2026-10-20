@@ -752,6 +752,9 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
     reference_md: row.reference_md,
     choices_md: row.choices_md,
     rubric_json: row.rubric_json,
+    // Composite (篇) parents keep flat choices null by design (quiz_gen.ts);
+    // their options live in structured sub-questions.
+    ...(row.structured != null ? { hasStructuredStem: true } : {}),
   });
   const precheckRecord = choiceSurfacePrecheckRecord(precheckChecks);
   if (precheckRecord.outcome === 'reject') {
