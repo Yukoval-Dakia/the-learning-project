@@ -19,6 +19,7 @@ import {
   collectCandidateSignals,
 } from './candidate-signals';
 import { DEFAULT_COMPOSE_LOCK_WAIT_MS, withinComposePaidWorkLock } from './compose-paid-work-lock';
+import { readQuestionPace } from './question-pace';
 // YUK-474 — 取题瞬间动态供题 refill（池见底补题）。compose 后 best-effort 调用，flag-off 默认 no-op。
 import { type RefillDeps, refillActiveLearningPools } from './question-supply/refill';
 import {
@@ -622,12 +623,15 @@ async function getKnowledgeScopedStream(
       : [];
   }
 
-  const dailyBudget = await resolveDailyPracticeBudget(db);
+  const [dailyBudget, questionPace] = await Promise.all([
+    resolveDailyPracticeBudget(db),
+    readQuestionPace(db),
+  ]);
   const budget = {
     pace: dailyBudget.pace,
     minutes: Math.min(
       dailyBudget.minutes,
-      SCOPED_QUESTION_LIMIT * estimateStreamItemMinutes('question'),
+      SCOPED_QUESTION_LIMIT * estimateStreamItemMinutes('question', questionPace.minutes),
     ),
   };
   const scope: StreamScope = {
@@ -643,6 +647,7 @@ async function getKnowledgeScopedStream(
     rows,
     budget,
     scope,
+    questionMinutes: questionPace.minutes,
     openingLine:
       rows.length === 0
         ? `「${knowledgeRow.name}」暂时没有可练的已发布题目。`
@@ -654,6 +659,7 @@ async function trimStoredPendingItemsToBudget(
   db: Db,
   date: string,
   budgetMinutes: number,
+  questionMinutes: number,
 ): Promise<StreamItemRow[]> {
   return db.transaction(async (tx) => {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`stream:compose:${date}`}))`);
@@ -672,7 +678,7 @@ async function trimStoredPendingItemsToBudget(
       (row) => row.status !== 'pending' && !recoveryRowIds.has(row.id),
     );
     const frozenMinutes = frozen.reduce(
-      (sum, row) => sum + estimateStreamItemMinutes(row.item_kind),
+      (sum, row) => sum + estimateStreamItemMinutes(row.item_kind, questionMinutes),
       0,
     );
     const pending = eligible.filter(
@@ -685,12 +691,14 @@ async function trimStoredPendingItemsToBudget(
     const protectedPending = pending.filter((row) => row.source === 'intervention');
     const budgetablePending = pending.filter((row) => row.source !== 'intervention');
     const protectedMinutes = protectedPending.reduce(
-      (sum, row) => sum + estimateStreamItemMinutes(row.item_kind),
+      (sum, row) => sum + estimateStreamItemMinutes(row.item_kind, questionMinutes),
       0,
     );
     const remaining = Math.max(0, budgetMinutes - frozenMinutes - protectedMinutes);
     const keptBudgetable =
-      remaining === 0 ? [] : fitStreamToTimeBudget(budgetablePending, remaining).kept;
+      remaining === 0
+        ? []
+        : fitStreamToTimeBudget(budgetablePending, remaining, questionMinutes).kept;
     const keptPending = [...protectedPending, ...keptBudgetable];
     const keptIds = new Set(keptPending.map((row) => row.id));
     const deleteIds = pending.filter((row) => !keptIds.has(row.id)).map((row) => row.id);
@@ -775,16 +783,19 @@ export async function getStream(
       .orderBy(asc(practice_stream_item.position));
   }
 
-  const budget = await resolveDailyPracticeBudget(db);
+  const [budget, questionPace] = await Promise.all([
+    resolveDailyPracticeBudget(db),
+    readQuestionPace(db),
+  ]);
   const gated = await filterProspectiveStreamQuestions(db, rows);
   rows = gated.rows;
   // Recovery rows are visible but not prospective: their minutes must neither
   // trigger the trim nor decide other rows' fate (same carve-out as the trim).
   const storedMinutes = rows
     .filter((row) => !gated.recoveryRowIds.has(row.id))
-    .reduce((sum, row) => sum + estimateStreamItemMinutes(row.item_kind), 0);
+    .reduce((sum, row) => sum + estimateStreamItemMinutes(row.item_kind, questionPace.minutes), 0);
   if ((opts.enforceBudget ?? opts.composeIfEmpty ?? false) && storedMinutes > budget.minutes) {
-    rows = await trimStoredPendingItemsToBudget(db, date, budget.minutes);
+    rows = await trimStoredPendingItemsToBudget(db, date, budget.minutes, questionPace.minutes);
   }
 
   rows = (await filterProspectiveStreamQuestions(db, rows)).rows;
@@ -793,6 +804,7 @@ export async function getStream(
     date,
     rows,
     budget,
+    questionMinutes: questionPace.minutes,
     scope: null,
     // M2 模板开场白；M4 由 composer_nightly 写 AI 开场白（随流持久化）。
     openingLine:

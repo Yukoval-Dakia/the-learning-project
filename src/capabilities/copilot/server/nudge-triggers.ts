@@ -13,7 +13,7 @@ import { type AnyColumn, type SQL, and, desc, eq, inArray, or, sql } from 'drizz
 import { alias } from 'drizzle-orm/pg-core';
 import type { NudgePayloadT } from '@/core/schema/event/nudge-events';
 import type { Db, Tx } from '@/db/client';
-import { event, learning_session, question_block, source_document } from '@/db/schema';
+import { evaluation, event, learning_session, question_block, source_document } from '@/db/schema';
 import { type CorrectionStatus, getCorrectionStatuses } from '@/kernel/events';
 import { resolveVerdictsForAttempts } from '@/kernel/read-models/assessment-verdict';
 import type { NudgeConfig } from './nudge-config';
@@ -230,6 +230,45 @@ async function evaluateWrongStreakInSnapshot(
           );
         for (const row of appealRows) appealedJudgeIds.add(row.subjectId);
       }
+      // YUK-1407 — 判分纠错提案（judge_retraction accept）产生的 appeal_request
+      // 挂在 subject_kind='evaluation'：attempt 上如有在途纠错申诉同样标
+      // contested，防止重判在途时 Copilot 沿用旧诊断放大误判。
+      const appealedAttemptIds = new Set<string>();
+      const submissionIds = attemptIds
+        .filter((id) => id.startsWith('evt_assessment_'))
+        .map((id) => id.slice('evt_assessment_'.length));
+      if (submissionIds.length > 0) {
+        const evals = await db
+          .select({
+            evaluationId: evaluation.evaluation_id,
+            submissionId: evaluation.submission_id,
+          })
+          .from(evaluation)
+          .where(inArray(evaluation.submission_id, submissionIds));
+        const submissionByEvalId = new Map(
+          evals.map((row) => [row.evaluationId, row.submissionId]),
+        );
+        const evalIds = [...submissionByEvalId.keys()];
+        for (let offset = 0; offset < evalIds.length; offset += RELATED_EVENT_QUERY_CHUNK_SIZE) {
+          const evalAppealRows = await db
+            .select({ subjectId: event.subject_id })
+            .from(event)
+            .where(
+              and(
+                eq(event.action, 'experimental:appeal_request'),
+                eq(event.subject_kind, 'evaluation'),
+                inArray(
+                  event.subject_id,
+                  evalIds.slice(offset, offset + RELATED_EVENT_QUERY_CHUNK_SIZE),
+                ),
+              ),
+            );
+          for (const row of evalAppealRows) {
+            const submissionId = submissionByEvalId.get(row.subjectId);
+            if (submissionId) appealedAttemptIds.add(`evt_assessment_${submissionId}`);
+          }
+        }
+      }
       // YUK-1054 §9 — 'unsupported' 判定须取 effective 判（链解析），不是任意
       // judge 行：一条已 supersede 的 unsupported judge 不能继续冻结该 attempt。
       const verdictMap = await resolveVerdictsForAttempts(db, attemptIds);
@@ -253,6 +292,10 @@ async function evaluateWrongStreakInSnapshot(
             attemptIdSet.has(judge.subjectId) ? judge.subjectId : (judge.causedById as string),
           ),
       );
+      // YUK-1407 — 在途 evaluation 纠错申诉同样标记 contested。
+      for (const id of appealedAttemptIds) {
+        if (attemptIdSet.has(id)) contestedAttemptIds.add(id);
+      }
 
       if (
         rows.some(
