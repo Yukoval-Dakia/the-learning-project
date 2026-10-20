@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { persistImageAsset } from '@/capabilities/ingestion/server/persist-image-asset';
 import { source_asset } from '@/db/schema';
+import { persistImageAsset } from '@/kernel/records/asset-store';
 import type { R2Client } from '@/server/r2';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { memR2 } from '../../../../tests/helpers/r2';

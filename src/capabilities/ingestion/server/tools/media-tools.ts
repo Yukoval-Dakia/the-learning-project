@@ -7,12 +7,13 @@ import {
 } from '@/capabilities/ingestion/server/glm_ocr';
 import { PermanentError, RetryableError } from '@/core/schema/structured_question';
 import { source_asset } from '@/db/schema';
+import { isUniqueViolation, persistSourceAsset } from '@/kernel/records/asset-store';
 import type { ToolContext } from '@/kernel/tools/types';
 import { TOOL_OUTPUT_IMAGES_FIELD } from '@/kernel/tools/types';
 import { AGENT_TOOL_RUN_ID_PREFIX } from '../agent/budget-state';
 import { withAgentProviderLiability } from '../agent/spend';
 import { type PixelBBox, cropToPng, probeImage, rotateImage } from '../image-ops';
-import { type SourceAssetRow, isUniqueViolation, persistSourceAsset } from '../persist-image-asset';
+import type { SourceAssetRow } from '../persist-image-asset';
 import { redactIngestionText } from '../privacy-guard';
 import {
   GLM_OCR_MODEL,
