@@ -1,8 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-19：架构深化线独立启动；首片 YUK-1572 拆练习流职责，首三片已获协调线同意；证据外置永久保留已批，测试缩减只做清单。
+> Linear 是权威 tracker。2026-10-20：YUK-1570 已按限定裁定追认历史 practice→r2 3→4，普通合入 main 的静态 CI jobs；本地 gate 全过，待新 head CI，不合并 PR、不改票状态。
 
 ## NOW
+
+- **YUK-1570 / 依赖基线收紧**：[ready PR1830](https://github.com/Yukoval-Dakia/the-learning-project/pull/1830)，同分支 `yuk-1570-baseline-ratchet` 普通合入 main8ac23c48，冲突采用 main。恢复静态 architecture audit 的 `CAPABILITY_BASE_SHA`；历史 notes 用现有变更类型记录 #1811 的单条裁定、两条评论出处及下一次减边 PR 的退出条件，不作为新上调授权。当前实测441/0/48，未写回历史444；typecheck/lint/build、审计和原唯一测试通过，没有新增测试或 UI 改动。
 
 - **架构深化 / YUK-1572**：`refactor/yuk-1572-stream-modules`，独占 arch-lead；stream-store 已2120→1427，超长18→17，SCC与443边不变；合成d38e父级typecheck/lint/build/两审计通过；Kimi R1 APPROVE、旧head5c0e CI全绿；整合main2176仅看板冲突，新head验证/CI待完成。六票T3，#1830仍由Grok完成；不动其ratchet/baseline。见[首三片计划](docs/planning/2026-10-19-architecture-deepening.md)。
 
@@ -35,6 +37,8 @@
 - **本轮已交付 YUK-1392**：PR1619于17:11:43Z合main6aaf8ca89，tree5e8ab973与exact3883903相同；CI37812973662全绿、R1 NONE、threads0。父13unit/22DB、static/build/audits通过，已unwatch/Linear Done。无部署。
 
 ## NEXT
+
+- **YUK-1570**：普通 push 后等 exact-head CI，报告结果后停止，不合并 PR。下一次减边 PR 落实 practice→r2 4→3，期限不晚于该票关闭；本次裁定不可复用，不抵其他上调。
 
 - **架构深化**：首片验证/独立审查/精确HEAD CI后推进YUK-1571拆环，再拆intervention职责；每片报告SCC、server边、超长文件及baseline行数。
 

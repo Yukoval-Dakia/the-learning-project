@@ -154,6 +154,7 @@ jobs:
         if: steps.filter.outputs.static_changed != 'false'
         env:
           TEST_POLICY_BASE: ${{ inputs.test_policy_base || github.event.pull_request.base.sha || github.event.before }}
+          CAPABILITY_BASE_SHA: ${{ inputs.test_policy_base || github.event.pull_request.base.sha || github.event.before }}
         run: |
           pnpm audit:capability-boundaries
           pnpm audit:architecture-deepening

@@ -1,3 +1,16 @@
+# YUK-1570 限定裁定接入 — 2026-10-20
+
+同分支 yuk-1570-baseline-ratchet、ready PR1830。普通 merge origin/main8ac23c48，
+三个冲突均采用 main；恢复 YUK-1612 展开后的 audits_architecture 的 CAPABILITY_BASE_SHA。
+按 YUK-1570 评论82d63281（15:21Z），notes.YUK-1567 用已有变更联合存放历史 recorded_ruling，
+只限 #1811 的 practice→r2 3→4、当时443→444；含原评论bb3e06ad和新裁定完整ID。
+退出为下一次 YUK-1570 减边 PR 收进 capability 自有模块或窄端口、回到3，最迟不晚于票关闭。
+记录不能复用、抵其他上调；notes 不参加新 changes 重放。当前基线实测441/0/48，不写回历史444。
+本地 typecheck/lint/build、CI模式边界审计及原唯一CLI测试均 exit0；lint179既有warnings。
+未增改测试或UI源文件，合入main携带的其他票变化保持原样。无本机DB/full test/provider/付费调用。
+裁定阻塞解除，普通push后等新head CI并报告后停止，不合并PR、不改Linear状态或label。
+旧DB6 flake由owner明确为已知问题，本线不改该运行路径。验证日志在本worktree的.amp/in/artifacts/ruling/。
+
 # Architecture deepening — 2026-10-19
 
 Current owner: arch-lead, refactor/yuk-1572-stream-modules, base d41f24213. Six tickets relabelled T3. Grok retains #1830 ratchet writer; semantic alignment posted to PR and YUK-1570. First-three plan approved: docs/planning/2026-10-19-architecture-deepening.md. SWE-2 source writer released at 2cd19533a: stream-store 1427, inputs355, view410; >1500 files17. Merged main615437b76 into d38e72c447; parent typecheck/lint179warnings/full build/boundary+architecture audits exit0. Kimi R1 APPROVE d41..2cd, source unchanged; exact5c0e CI39252986951 SUCCESS. Main2176 integration only PLAN/now conflicts; new synthetic-head checks/CI pending, no new source review needed. Sol independently examines knowledge outbound SCC cut after GLM notes-only impossibility inference was rejected. Parent owns docs/review/integration. No tests/DB/Docker/TEST/provider operations. Baseline measured: SCC1/5 members, cap-server443, >1500 files18, baseline141 lines. External bulky evidence approved with permanent retention; old HEAD deletion requires copy/hash/reference inventory and per-batch coordinator review. First evidence PR updates AGENTS for all lanes. Test shrink remains inventory only pending owner approval.

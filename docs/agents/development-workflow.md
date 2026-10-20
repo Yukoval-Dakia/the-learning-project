@@ -133,16 +133,20 @@ ratchet（capability→server、server→capability deep、cross-capability valu
 - `{ "kind": "offset" }`：相对同一 PR 的 base，同一债务类别内其他 pair 必须有实测下降，
   且该类别实测总数不得增加。不能用另一类别的下降、临时降后回涨的记录或只改基线抵消。
 - `{ "kind": "recorded_ruling", "ruling": "<协调线裁决的 HTTP(S) URL>" }`：
-  无抵消例外须在基线文件里保留具体裁决出处，供 reviewer 核验授权是否覆盖本次上调。
+  无抵消例外须在基线文件里保留协调线逐条裁决出处，供 reviewer 核验其 pair、旧值、新值。
+  不接受泛化授权，历史裁决不得复用或抵其他上调。
 
 同步 pair 与 total，并追加 `direction: "increase"` 记录。三类债务都受检查，缺失 pair 按 0 处理。
 CI 从 PR base SHA（push 时为 before SHA）重放新增记录，要求其结果与当前基线一致，
 且旧记录不可删除或改写。历史 `notes` 不追溯补写，也不能代替新上调记录。
+协调线明确要求追认已在 main 的变化时，`notes` 可保存同一类型的结构化历史记录，
+但不参与 `changes` 重放或新上调准入。YUK-1567 的记录只限 practice→r2 3→4（当时总数443→444），
+出处为 bb3e06ad 与 YUK-1570 的 82d63281；须在下一次 YUK-1570 减边 PR 回到3，最迟不晚于该票关闭。
 CI 检查实测抵消或裁决出处字段，不联网判断裁决的真实性、授权范围及退出条件是否达成。
 这些判断仍由 reviewer 负责。校验错误包含基线文件名及记录路径。
 
 本地默认比较 `git merge-base HEAD origin/main`，也可用 `--base <commit SHA>`。
-CI 必须提供 `CAPABILITY_BASE_SHA`；手动 workflow 使用已有的 `test_policy_base` 输入。
+CI 的静态 `audits_architecture` job 必须提供 `CAPABILITY_BASE_SHA`；手动 workflow 使用已有的 `test_policy_base` 输入。
 `pnpm audit:capability-boundaries:snapshot` 仍只打印实测快照，不带变更记录，不能用它覆盖基线。
 
 ### Lint warning ratchet（YUK-909）

@@ -51,7 +51,7 @@ const baselineChangeSchema = z
 const baselineSchema = z.object({
   schemaVersion: z.literal(1),
   edgeUnit: z.literal(EDGE_UNIT),
-  notes: z.record(z.string(), z.string()).optional(),
+  notes: z.record(z.string(), z.union([z.string(), baselineChangeSchema])).optional(),
   changes: z.array(baselineChangeSchema).default([]),
   debts: z.object({
     capabilityToServer: debtSchema,
