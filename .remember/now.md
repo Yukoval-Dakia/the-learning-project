@@ -1,3 +1,11 @@
+# PR #1858 主线整合，2026-10-20
+
+`el/yuk-1621` 从已推送的 `04a6fbedb` 普通 merge `origin/main` 的 `210dfb2c1`。仅本文件与 PLAN 冲突，main 最新交接完整保留，删除本分支落后的其他工作线记录。本 PR 的四个产品代码文件与合并前相同，没有新增设计决策。
+
+YUK-1621 仍由服务端完成记忆简报的 7d/90d 分桶与 evidence ids，并生成本场有效判分的摘要统计前缀。YUK-1632 在写入前剔除模型统计分句，保留非统计观察及章节号；P3 保留当前生产 user_cause 只写在无会话手工错题上的原因注释。用户仍在结束复习后读取已保存摘要。
+
+此前 `04a6fbedb` 的独立 PG17 回放与 CI 结果不用于代替本次验证。本轮 Node 24.22.0 的 typecheck/lint/build 已通过，178 个既有 warnings；首次 typecheck 被终止并返回 137，单独重跑成功；首次 lint 仅旧临时 JSON 格式报错，删除临时文件后通过。未重跑 DB/provider，未新增测试。普通提交推送后等待 exact-head CI，最终结果看 PR 当前 head。PR 的两条 Closes 和 Docs 行不变，不改 Linear 状态、不合并 PR、不部署；CI 绿即停止。没有本轮新发现的范围外 actionable follow-up。
+
 # Architecture deepening — 2026-10-20 01:06 JST
 
 MAX8 active incl parent; SWE-2 ALWAYS MAX. No test edits until owner approval, no local DB/TEST/Docker/provider/fulltest. #1830 owns audit script; coordinator20261020 RELEASED baseline for1837/1852 measuredregistration under currentmainrules; no touching main search/matcher/tagging/paid seams.

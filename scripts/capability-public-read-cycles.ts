@@ -17,17 +17,10 @@
 import type { PublicReadCycleEdge } from './audit-architecture-deepening';
 
 export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
-  {
-    owner: 'ingestion',
-    consumer: 'agency',
-    files: ['src/capabilities/agency/server/tools/learning-item-context.ts'],
-    symbols: ['bodyBlockSummaries', 'excerpt', 'knowledgeContext'],
-    dto: 'record/block context excerpts (string summaries)',
-    justification:
-      'get_learning_item_context grounds lifecycle suggestions in ingestion-owned record + block context; pure read.',
-    reviewIssue: 'YUK-885',
-    commandFiles: [],
-  },
+  // YUK-1571 — the agency -> ingestion read edge is retired: excerpt /
+  // knowledgeContext / bodyBlockSummaries moved verbatim to
+  // src/kernel/read-models/extraction-summary.ts; learning-item-context now
+  // consumes the kernel read model directly.
   {
     owner: 'knowledge',
     consumer: 'agency',
@@ -59,17 +52,11 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
     files: [
       'src/capabilities/agency/jobs/dreaming_nightly.ts',
       'src/capabilities/agency/server/proposal-accept-applier.ts',
-      'src/capabilities/agency/server/scout/evidence-mcp.ts',
     ],
-    symbols: [
-      'createLearningIntentNote',
-      'dispatchNoteGeneration',
-      'enqueueDreamingNoteRefine',
-      'notesForKnowledge',
-    ],
-    dto: 'note summaries + note-refine/generation commands',
+    symbols: ['createLearningIntentNote', 'dispatchNoteGeneration', 'enqueueDreamingNoteRefine'],
+    dto: 'note-refine/generation commands',
     justification:
-      'dreaming enqueues note refines; learning-intent accept creates notes; scout reads note summaries for evidence.',
+      'dreaming enqueues note refines; learning-intent accept creates notes. The scout note-summary read moved to @/kernel/read-models/notes-read (YUK-1571).',
     reviewIssue: 'YUK-885',
     commandFiles: [
       'src/capabilities/agency/jobs/dreaming_nightly.ts',
@@ -139,40 +126,17 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
   {
     owner: 'agency',
     consumer: 'knowledge',
-    files: [
-      'src/capabilities/knowledge/server/proposals.ts',
-      'src/capabilities/knowledge/server/review.ts',
-    ],
-    symbols: ['readAgentNotes', 'rewriteGoalScopeOnMerge'],
-    dto: 'goal-scope update command + agent-note reads',
+    files: ['src/capabilities/knowledge/server/proposals.ts'],
+    symbols: ['rewriteGoalScopeOnMerge'],
+    dto: 'goal-scope update command',
     justification:
-      'knowledge coordinates the atomic merge; Agency owns locked scope attribution updates. Knowledge review reads agent notes.',
+      'knowledge coordinates the atomic merge; Agency owns locked scope attribution updates. The knowledge-review agent-note read moved to @/kernel/read-models/agent-note-hints (YUK-1571).',
     reviewIssue: 'YUK-953',
-    commandFiles: [
-      'src/capabilities/knowledge/server/proposals.ts',
-      'src/capabilities/knowledge/server/review.ts',
-    ],
+    commandFiles: ['src/capabilities/knowledge/server/proposals.ts'],
   },
-  {
-    owner: 'notes',
-    consumer: 'knowledge',
-    files: ['src/capabilities/knowledge/server/node-page.ts'],
-    symbols: [
-      'BacklinksByArtifactType',
-      'NoteSummary',
-      'getArtifactCorrectionStates',
-      'groupBacklinksByArtifactType',
-      'interactiveForKnowledge',
-      'listBacklinks',
-      'notesForKnowledge',
-      'resolveOwningLearningItemIds',
-    ],
-    dto: 'NoteSummary / backlink projections',
-    justification:
-      'knowledge node pages render notes-owned backlinks and note summaries; pure read.',
-    reviewIssue: 'YUK-885',
-    commandFiles: [],
-  },
+  // YUK-1571 — the knowledge -> notes read edge is retired: node-page now
+  // consumes @/kernel/read-models/{notes-read,artifact-backlinks,artifact-corrections}
+  // directly; notes/public keeps the same symbols via compat re-exports.
   {
     owner: 'practice',
     consumer: 'knowledge',
@@ -229,20 +193,11 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
       // YUK-986 (Supply-Agent/1) — jyeoo-fetch queue job 退休后，candidates 模块接手
       // staged 资产持久化（同一 ingestion owner seam，r2/lock 经本模块单点转发）。
       'src/capabilities/practice/server/question-supply/jyeoo-candidates.ts',
-      'src/capabilities/practice/server/tools/question-context.ts',
     ],
-    symbols: [
-      'SourceAssetRow',
-      'bodyBlockSummaries',
-      'excerpt',
-      'knowledgeContext',
-      'lockImageStorageKey',
-      'persistImageAsset',
-      'sha256Hex',
-    ],
-    dto: 'SourceAssetRow + material body-block excerpts + asset persistence commands',
+    symbols: ['SourceAssetRow', 'lockImageStorageKey', 'persistImageAsset', 'sha256Hex'],
+    dto: 'SourceAssetRow + asset persistence commands',
     justification:
-      'the jyeoo supply lane (jyeoo_fetch_candidates DomainTool, YUK-986) persists staged assets through the ingestion owner; the question-context tool reads ingestion-owned material context excerpts (moved from the central context-readers, YUK-892).',
+      'the jyeoo supply lane (jyeoo_fetch_candidates DomainTool, YUK-986) persists staged assets through the ingestion owner. The question-context material excerpt reads moved to @/kernel/read-models/extraction-summary (YUK-1571).',
     reviewIssue: 'YUK-885',
     commandFiles: ['src/capabilities/practice/server/question-supply/jyeoo-candidates.ts'],
   },

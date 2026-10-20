@@ -9,12 +9,16 @@ import {
   question,
 } from '@/db/schema';
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
+import {
+  bodyBlockSummaries,
+  knowledgeContext,
+  knowledgeEdgeTouches,
+} from '@/kernel/read-models/extraction-summary';
 import { getFailureAttemptById } from '@/kernel/read-models/failure-attempts';
 import {
   isLearnerVisibleKnowledgeId,
   learnerVisibleKnowledgeIds,
 } from '@/kernel/read-models/learner-knowledge-visibility';
-import { bodyBlockSummaries, knowledgeContext, knowledgeEdgeTouches } from './record-tool-support';
 import type { DomainTool, ToolContext } from './types';
 
 const GetRecordContextInputSchema = z.object({

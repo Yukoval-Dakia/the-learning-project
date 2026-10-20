@@ -29,30 +29,34 @@
 // owner commands (for example recordQuestionPoolGap) for product-specific hints.
 
 import { createId } from '@paralleldrive/cuid2';
-import { and, desc, eq, inArray, notInArray, or, sql } from 'drizzle-orm';
+import { inArray, or, sql } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
-import { event, knowledge, question } from '@/db/schema';
+import { knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import {
+  type AgentNote,
+  type AgentNoteRef,
+  type AgentNoteTarget,
+  type ReadAllAgentNotesOpts,
+  readAllAgentNotes,
+} from '@/kernel/read-models/agent-note-hints';
+
+// YUK-1571 — the read side of the agent-note hint channel (readAgentNotes /
+// readAllAgentNotes / rowToAgentNote + their types) moved verbatim to
+// @/kernel/read-models/agent-note-hints. These explicit re-exports keep this
+// module's compat surface (agency-internal consumers + agency/public); the
+// write side (writeAgentNote / recordQuestionPoolGap) and the learner-facing
+// board projection stay owned here.
+export type {
+  AgentNote,
+  AgentNoteRef,
+  AgentNoteTarget,
+  ReadAgentNotesOpts,
+  ReadAllAgentNotesOpts,
+} from '@/kernel/read-models/agent-note-hints';
+export { readAgentNotes, readAllAgentNotes } from '@/kernel/read-models/agent-note-hints';
 
 type DbLike = Db | Tx;
-
-// Which background agents a note is addressed to. Mirrors AF §4's conceptual
-// tool signature target_agents. 'coach' is included per §4 (a task may leave a
-// hint the next Coach round should weigh — distinct from the structured needs[]
-// channel, which Coach consumes as plan input).
-//
-// YUK-572 — 'research_meeting' names the nightly 教研例会 CHANNEL (an attention prior
-// for the meeting lane), NOT a per-actor writer. Its current reader is the agent-lane
-// director's get_agent_notes (readAgentNotes for_agent:'research_meeting'); the
-// deterministic lane reads no agent_notes. Naming the channel (not the writing actor)
-// keeps it stable across future meeting forms; self-bias is handled orthogonally on
-// the writer axis via excludeSourceKinds (see ReadAgentNotesOpts).
-export type AgentNoteTarget = 'dreaming' | 'maintenance' | 'coach' | 'research_meeting' | 'copilot';
-
-export interface AgentNoteRef {
-  kind: string;
-  id: string;
-}
 
 export interface WriteAgentNoteInput {
   target_agents: AgentNoteTarget[];
@@ -66,25 +70,6 @@ export interface WriteAgentNoteInput {
   expires_at?: string;
   // Optional chain link to the event that triggered the observation (e.g. the
   // quiz_verify event that found the pool gap), for evidence-first traceability.
-  caused_by_event_id?: string;
-}
-
-export interface AgentNote {
-  id: string;
-  created_at: Date;
-  target_agents: AgentNoteTarget[];
-  source_task_kind: string;
-  source_task_run_id?: string;
-  refs: AgentNoteRef[];
-  summary_md: string;
-  signal_kind: string;
-  confidence?: number;
-  expires_at?: string;
-  // Chain link to the event that triggered the observation (mirrors the
-  // writeAgentNote `caused_by_event_id` input). Sourced from the EVENT COLUMN
-  // event.caused_by_event_id — NOT the payload. The agent-notes board uses it as
-  // the evidence fallback when refs[] is empty (YUK-294); readAgentNotes readers
-  // benefit too. Optional — a note may have no triggering event.
   caused_by_event_id?: string;
 }
 
@@ -172,143 +157,6 @@ export function recordQuestionPoolGap(
     expires_at: new Date(observation.observedAt.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString(),
     caused_by_event_id: observation.verificationEventId,
   });
-}
-
-export interface ReadAgentNotesOpts {
-  for_agent: AgentNoteTarget;
-  now: Date;
-  limit?: number;
-  // YUK-572 §7 — self-reinforcement guard. When non-empty, notes whose actor_ref
-  // (= source_task_kind, set by writeAgentNote) is in this list are excluded, so an
-  // agent's get_agent_notes never surfaces its OWN prior notes and close a confirmation
-  // loop (its old conclusion masquerading as new evidence). Omitted/empty ⇒ no filter.
-  excludeSourceKinds?: string[];
-}
-
-export interface ReadAllAgentNotesOpts {
-  now: Date;
-  limit?: number;
-}
-
-const DEFAULT_AGENT_NOTES_LIMIT = 20;
-
-// Minimal row shape needed to project an AgentNote. Both readAgentNotes and
-// readAllAgentNotes pass full event rows; this captures only the fields used.
-type AgentNoteEventRow = {
-  id: string;
-  created_at: Date;
-  actor_ref: string;
-  caused_by_event_id: string | null;
-  payload: unknown;
-};
-
-// Project one experimental:agent_note event row to an AgentNote. caused_by_event_id
-// comes from the EVENT COLUMN (not the payload) — it is the evidence-fallback
-// chain link the agent-notes board relies on when refs[] is empty (YUK-294).
-function rowToAgentNote(row: AgentNoteEventRow): AgentNote {
-  const p = (row.payload ?? {}) as {
-    target_agents?: AgentNoteTarget[];
-    refs?: AgentNoteRef[];
-    summary_md?: string;
-    signal_kind?: string;
-    confidence?: number;
-    expires_at?: string;
-    source_task_kind?: string;
-    source_task_run_id?: string;
-  };
-  const note: AgentNote = {
-    id: row.id,
-    created_at: row.created_at,
-    target_agents: p.target_agents ?? [],
-    source_task_kind: p.source_task_kind ?? row.actor_ref,
-    refs: p.refs ?? [],
-    summary_md: p.summary_md ?? '',
-    signal_kind: p.signal_kind ?? 'unknown',
-  };
-  if (p.source_task_run_id !== undefined) note.source_task_run_id = p.source_task_run_id;
-  if (p.confidence !== undefined) note.confidence = p.confidence;
-  if (p.expires_at !== undefined) note.expires_at = p.expires_at;
-  if (row.caused_by_event_id) note.caused_by_event_id = row.caused_by_event_id;
-  return note;
-}
-
-/**
- * Read recent un-expired agent notes addressed to `for_agent`, newest first.
- *
- * Filtering happens in two layers:
- *   - SQL: action='experimental:agent_note', subject_kind='query',
- *     target_agents @> [for_agent] (jsonb containment), and
- *     (expires_at IS NULL OR expires_at > now) so stale hints never surface.
- *   - The `?` jsonb-text-key check keeps the predicate index-friendly while the
- *     payload stays a loose record (generic ExperimentalEvent shape).
- *
- * Notes are hints — callers inject them as context labelled "hints, not facts"
- * (see dreaming_nightly.ts / knowledge/review.ts injection sites).
- */
-export async function readAgentNotes(db: DbLike, opts: ReadAgentNotesOpts): Promise<AgentNote[]> {
-  const limit = opts.limit ?? DEFAULT_AGENT_NOTES_LIMIT;
-  if (limit <= 0) return [];
-  const nowIso = opts.now.toISOString();
-
-  const conditions = [
-    eq(event.action, 'experimental:agent_note'),
-    eq(event.subject_kind, 'query'),
-    // target_agents array contains for_agent (jsonb containment).
-    sql`${event.payload}->'target_agents' @> ${JSON.stringify([opts.for_agent])}::jsonb`,
-    // Un-expired only: no expires_at OR expires_at strictly in the future.
-    sql`(NOT (${event.payload} ? 'expires_at') OR (${event.payload}->>'expires_at') > ${nowIso})`,
-  ];
-  // YUK-572 §7 — self-reinforcement guard: drop notes written by the excluded source
-  // kinds (actor_ref = source_task_kind). Empty list ⇒ no predicate added.
-  if (opts.excludeSourceKinds && opts.excludeSourceKinds.length > 0) {
-    conditions.push(notInArray(event.actor_ref, opts.excludeSourceKinds));
-  }
-
-  const rows = await db
-    .select()
-    .from(event)
-    .where(and(...conditions))
-    .orderBy(desc(event.created_at), desc(event.id))
-    .limit(limit);
-
-  return rows.map(rowToAgentNote);
-}
-
-/**
- * Read recent un-expired agent notes addressed to ANY agent, newest first.
- *
- * The unfiltered variant of readAgentNotes for the read-only "AI 观察" board
- * (YUK-294): the user spectates every cross-agent observation, so there is no
- * for_agent containment predicate. Everything else matches readAgentNotes —
- * same action + subject_kind, same un-expired filter, same newest-first order
- * and limit clamp — so the board never surfaces stale hints.
- *
- * Still HINTS, not facts: the board is a read-only spectator surface with no
- * accept/dismiss; it never writes back.
- */
-export async function readAllAgentNotes(
-  db: DbLike,
-  opts: ReadAllAgentNotesOpts,
-): Promise<AgentNote[]> {
-  const limit = opts.limit ?? DEFAULT_AGENT_NOTES_LIMIT;
-  if (limit <= 0) return [];
-  const nowIso = opts.now.toISOString();
-
-  const rows = await db
-    .select()
-    .from(event)
-    .where(
-      and(
-        eq(event.action, 'experimental:agent_note'),
-        eq(event.subject_kind, 'query'),
-        // Un-expired only: no expires_at OR expires_at strictly in the future.
-        sql`(NOT (${event.payload} ? 'expires_at') OR (${event.payload}->>'expires_at') > ${nowIso})`,
-      ),
-    )
-    .orderBy(desc(event.created_at), desc(event.id))
-    .limit(limit);
-
-  return rows.map(rowToAgentNote);
 }
 
 /**

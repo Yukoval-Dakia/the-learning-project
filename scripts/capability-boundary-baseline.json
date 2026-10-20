@@ -2,6 +2,7 @@
   "schemaVersion": 1,
   "edgeUnit": "distinct-source-file-to-resolved-module",
   "notes": {
+    "YUK1571-shared-reads": "LIGHT shared read ownership move: After integrating frontier PR #1837, cross total 47 -> 42 (-5); prior standalone measurement was 48 -> 43. Five capability read consumers now import kernel-owned read models (src/kernel/read-models/{agent-note-hints,notes-read,artifact-backlinks,artifact-corrections,extraction-summary}) instead of sibling capability modules: knowledge/review.ts exits the agency-owned readAgentNotes entry via agent-note-hints (knowledge -> agency 2 -> 1); knowledge/node-page.ts exits notes server reads (knowledge -> notes 1 -> 0); agency/scout/evidence-mcp.ts exits notesForKnowledge (agency -> notes 3 -> 2); agency/tools/learning-item-context.ts exits ingestion extraction-summary reads (agency -> ingestion 1 -> 0); practice/tools/question-context.ts exits them too (practice -> ingestion 2 -> 1). Old capability paths remain explicit compat re-exports (no copied implementations), so residual edges are unchanged; the five-capability SCC {agency, ingestion, knowledge, notes, practice} persists; for example notes -> knowledge -> agency -> notes remains a cycle.",
     "YUK-1571-frontier": "Frontier complete prerequisite closure, canonical mastery gate and sparse/dense/overflow decisions now belong to knowledge. practice -> knowledge 3 -> 4 is a real dependency on that owned decision, not a pass-through count shift. In this PR knowledge -> practice 3 -> 1 removes two reads of the former practice-owned decision (knowledge frontier read and nightly bootstrap); those same-category decreases offset the one added practice -> knowledge edge, cross-capability value total 48 -> 47. practice -> mastery 15 -> 14 moves the algorithm-owned mastery read with the operation, capability -> server total 441 -> 440. Exit condition: address the remaining practice -> knowledge dependency as part of YUK-1571 cycle removal; this slice does not claim SCC elimination. Baseline write ownership released by coordinator on 2026-10-20; audit and CI semantics unchanged.",
     "YUK-1022": "copilot -> ai raised 10 -> 16 (+6, total 435 -> 441). Spec-mandated P3 dual-descriptor wiring: copilot-execution/subagents now import the pi lane parallels (pi-hooks, pi-subagent host, execution-adapter lane pin, pi-agent-adapter types) alongside the existing SDK descriptor edges, plus the test seam in copilot_run.test.ts. Ratified per the YUK-921 migration spec; P4 retires the SDK side of these edges.",
     "YUK-1025": "P4 SDK retirement: pi-only edges net agency->ai 27->28 (piCustomTool/pi-subagent/piDomainMount imports replaced the retired SdkMcpServer/buildMcpServerFromRegistry/createSpawnContract edges), copilot->ai 16->18 (execution-adapter ModelBinding + pi-subagent contract), practice->ai 73->65 (output-format.ts + SDK descriptor imports deleted). Total 441->436.",
@@ -19,7 +20,7 @@
     "YUK-1547": "practice -> ai 65 -> 66 (+1, total 437 -> 438): verify-framework.ts re-exports writeToolCallLog (src/server/ai/log) — structured-submit parse failures keep the bounded raw submit arguments as tool_call_log evidence attached to the task run (admission solve + crosscheck). Same owner-service lane as the file's existing server/ai re-exports (Provider/TaskTextResult); consumers add no new edge.",
     "YUK-1559": "C1-10 model-source unification: ingestion -> ai 15 -> 16 (+1, total 437 -> 438): provider-attempts.ts reads GLM_OCR_MODEL_ID from the provider catalog (src/server/ai/providers.ts) instead of pinning the glm-ocr literal — direct-lane declared ids belong to the catalog.",
     "YUK-1567": "practice -> r2 raised 2 -> 3 (+1, total 439 -> 440): admission/reauthorization.ts void-release republish calls publishQuestionGroup, whose declared contract requires an injected readAssetBytes blob reader (refuses custom-block publishes without one); supplying getR2().get is the same caller-injection owner seam as the existing practice -> r2 edges in assets.ts and question-supply/jyeoo-candidates.ts.",
-    "YUK-1622": "agency -> practice 4 -> 5 (+1, total 47 -> 48 after main's YUK-1571 offset): coach_daily imports the practice public resolveDailyReviewPlanInputs so the TodayPlan due queue, daily budget and measured pace have one formula and one source; Coach reads practice's public module instead of copying the formula. PM ruling (Linear YUK-1622 comment 82cd19fd-51d1-46d5-bc70-5b0365409dd1, https://linear.app/yukoval-studios/issue/YUK-1622#comment-82cd19fd) approved this single edge only; it is not a general relaxation."
+    "YUK-1622": "agency -> practice 4 -> 5 (+1, total 42 -> 43 after main's YUK-1571 shared-read offset): coach_daily imports the practice public resolveDailyReviewPlanInputs so the TodayPlan due queue, daily budget and measured pace have one formula and one source; Coach reads practice's public module instead of copying the formula. PM ruling (Linear YUK-1622 comment 82cd19fd-51d1-46d5-bc70-5b0365409dd1, https://linear.app/yukoval-studios/issue/YUK-1622#comment-82cd19fd) approved this single edge only; it is not a general relaxation."
   },
   "debts": {
     "capabilityToServer": {
@@ -111,26 +112,24 @@
       "byOwnerPair": {}
     },
     "crossCapabilityValue": {
-      "total": 48,
+      "total": 43,
       "byOwnerPair": {
-        "agency -> ingestion": 1,
         "agency -> knowledge": 4,
-        "agency -> notes": 3,
+        "agency -> notes": 2,
         "agency -> practice": 5,
         "copilot -> agency": 1,
         "copilot -> notes": 2,
         "copilot -> practice": 1,
         "ingestion -> knowledge": 2,
         "ingestion -> practice": 2,
-        "knowledge -> agency": 2,
-        "knowledge -> notes": 1,
+        "knowledge -> agency": 1,
         "knowledge -> practice": 1,
         "notes -> knowledge": 1,
         "observability -> agency": 2,
         "observability -> practice": 1,
         "onboarding -> practice": 1,
         "practice -> agency": 3,
-        "practice -> ingestion": 2,
+        "practice -> ingestion": 1,
         "practice -> knowledge": 4,
         "shell -> agency": 2,
         "shell -> knowledge": 1,
