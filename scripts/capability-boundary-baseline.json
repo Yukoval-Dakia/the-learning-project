@@ -161,6 +161,14 @@
       "date": "2026-10-20"
     },
     {
+      "debt": "capabilityToServer",
+      "pair": "practice -> ai",
+      "date": "2026-10-20",
+      "from": 63,
+      "to": 62,
+      "direction": "decrease"
+    },
+    {
       "debt": "crossCapabilityValue",
       "pair": "practice -> ingestion",
       "date": "2026-10-20",
@@ -311,7 +319,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 406,
+      "total": 405,
       "byOwnerPair": {
         "agency -> ai": 25,
         "agency -> boss": 10,
@@ -368,7 +376,7 @@
         "observability -> r2": 2,
         "observability -> subjects": 9,
         "practice -> advisory-locks": 5,
-        "practice -> ai": 63,
+        "practice -> ai": 62,
         "practice -> assessment": 1,
         "practice -> boss": 18,
         "practice -> calibration": 3,
