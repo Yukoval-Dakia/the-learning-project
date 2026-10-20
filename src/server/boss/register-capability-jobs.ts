@@ -1,31 +1,7 @@
-// M4-T3 (YUK-319) — capability jobs 注册器（kernel jobs 契约的组合根侧）。
-//
-// 遍历 capabilities 的 manifest.jobs.handlers，对每条**有 load** 的 JobDecl：
-//   1. 按 queue 档位建队（handlers.ts 三档先例，配方共享自 queue-config.ts）：
-//      llm/agent → createJobQueue（先建 `<name>_dlq` 再建主队列，1h/2h expire）；
-//      fast → createOrUpdateQueue 无 DLQ（housekeeping 掉一拍下个 cron 重跑）。
-//      注册器不得给 fast 档统一建 DLQ（plan Critic m3）。
-//   2. boss.work(name, worker opts, factory(db))。缺省配方 2s/1 与 handlers.ts
-//      全部 LLM/AGENT 注册行的显式 opts 一致；原先两条无 opts 的注册
-//      （knowledge_propose_nightly / knowledge_edge_propose_nightly）pg-boss
-//      默认值即 2s/1，行为等价（等价平移红线）。YUK-867 起 decl 可显式声明
-//      includeMetadata（读 retryCount），YUK-882 起可声明非默认
-//      pollingIntervalSeconds / batchSize；声明值优先，注册器原样透传。
-//   3. 有 schedule 的 decl → boss.schedule(name, cron, {}, { tz })。
-//
-// 无 load 的 decl 是纯归属元数据，不被挂载（kernel JobDecl docblock）——工厂
-// 签名带 boss 依赖二参（note_verify/note_generate 链式回调）或非注册器形态
-// （rejudge 的 inline 动态 import）的 job 留在 handlers.ts 渐缩簿注册，声明仍
-// 归包。YUK-882 起非默认 worker 选项可在 decl 声明并由注册器透传，无需留簿。
-//
-// 两遍遍历（顺序不变量）：先注册所有**无 schedule** 的链式/按需 job，再注册
-// cron job。保留 handlers.ts 的 D5 不变量「review_plan（链式目标）建队先于
-// coach_daily（链式源）」——通用化为「chain-target ready before chain-source」，
-// 不依赖 capabilities 数组顺序（agency 在 practice 前，单遍会反序）。
-//
-// `as JobHandlerFactory` 窄化集中在此一处（kernel manifest docblock 的约定）：
-// 各包工厂是 `(db: Db) => (jobs: Job<T>[]) => Promise<void>` 的具体形态，
-// JobHandlerFactory 用 any 做 variance escape hatch。
+// Mounts manifest jobs that declare a loader.
+// A fast queue has no dead-letter queue. A missed housekeeping beat reruns on the next cron.
+// Declared worker options win. Absent fields stay on the retired 2s/1 recipe.
+// Jobs with no schedule mount first, so a cron sender finds its on-demand queue already created.
 
 import type { PgBoss } from 'pg-boss';
 
@@ -69,7 +45,7 @@ const EXPIRE_BY_QUEUE = {
 } as const;
 
 async function mountJob(boss: PgBoss, db: Db, decl: JobDecl): Promise<void> {
-  // load 在调用点已被过滤非空；这里再守一道（TS 窄化）。
+  // Narrows load for the calls below. The caller already filtered empty loaders.
   if (!decl.load) return;
 
   if (decl.queue === 'fast') {
@@ -84,12 +60,10 @@ async function mountJob(boss: PgBoss, db: Db, decl: JobDecl): Promise<void> {
   }
 
   const factory = await decl.load();
-  // YUK-1055 — per-delivery epoch fence：错过停机的活 worker 在 epoch 翻转后
-  // 被每个 delivery 拒跑；disposition（drain/translate/fenced）见
-  // src/server/contract-epoch/jobs.ts。
-  // Declared worker metadata wins; absent fields keep the uniform 2s/1 recipe
-  // (equivalence red line with the retired central registrations).
-  // DAG 成员没有 schedule，资格判定在 orchestrator send 之前。这里只包裸 cron。
+  // A worker that missed shutdown is refused on each delivery after the epoch flips.
+  // Disposition lives in src/server/contract-epoch/jobs.ts.
+  // DAG members have no schedule. Their eligibility runs before orchestrator send.
+  // This wrap covers only a bare cron.
   const handler = withScheduledEligibility(db, decl, factory(db));
   await boss.work(
     decl.name,
@@ -127,10 +101,7 @@ async function mountJob(boss: PgBoss, db: Db, decl: JobDecl): Promise<void> {
   }
 }
 
-/**
- * 在 registerHandlers（渐缩簿）之后调用（start-worker.ts）。挂载所有包声明的
- * 可加载 job：建队 + work + cron schedule。
- */
+/** Called after registerHandlers. Chain targets in that book must already exist. */
 export async function registerCapabilityJobs(
   boss: PgBoss,
   db: Db,
