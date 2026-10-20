@@ -1,6 +1,6 @@
-import { deleteImageAsset } from '@/capabilities/ingestion/server/persist-image-asset';
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/kernel/http';
+import { deleteImageAsset } from '@/kernel/records/asset-store';
 import { getR2 } from '@/server/r2';
 
 export async function DELETE(_req: Request, params: Record<string, string>): Promise<Response> {

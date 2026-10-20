@@ -43,7 +43,6 @@ import {
   type ColdStartBridgeRunTaskFn,
   runColdStartBridge,
 } from '@/capabilities/ingestion/server/cold-start-bridge';
-import { persistImageAsset } from '@/capabilities/ingestion/server/persist-image-asset';
 import {
   type PinnedFetchResponse,
   fetchWithPinnedDispatcher,
@@ -72,6 +71,7 @@ import {
   ensureProposalDecisionSignal,
   recordProposalDecisionSignal,
 } from '@/kernel/proposals/signals';
+import { persistImageAsset } from '@/kernel/records/asset-store';
 import { writeCostLedger } from '@/server/ai/log';
 import { aiAgentRef } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
