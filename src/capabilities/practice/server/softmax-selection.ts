@@ -284,7 +284,11 @@ export async function composeSoftmaxStream(
   }));
   // YUK-622：时间预算优先保留最早到期前缀，超预算到期题确定性延后。没有 budget 的显式
   // DI/旧单测仍保留历史「全部 due presence」行为。
-  const dueDrafts = fitStreamToTimeBudget(allDueDrafts, inputs.dailyBudgetMinutes).kept;
+  const dueDrafts = fitStreamToTimeBudget(
+    allDueDrafts,
+    inputs.dailyBudgetMinutes,
+    inputs.questionMinutes,
+  ).kept;
 
   // 到期项的 L1 真相序（预算筛选后仍保持 due_at ASC）——assertL3Invariants 据此校验 plan 里
   //   due 子序列**顺序**与 L1 一致（铁律②不止 presence，还含 intra-day 序）。
@@ -351,7 +355,7 @@ export async function composeSoftmaxStream(
     (s) => s.refKind === 'question' && s.recallLocked === true,
   );
   const dueMinutes = dueDrafts.reduce(
-    (sum, item) => sum + estimateStreamItemMinutes(item.item_kind),
+    (sum, item) => sum + estimateStreamItemMinutes(item.item_kind, inputs.questionMinutes),
     0,
   );
   const remainingAfterDue =
@@ -359,7 +363,7 @@ export async function composeSoftmaxStream(
       ? Number.POSITIVE_INFINITY
       : Math.max(0, inputs.dailyBudgetMinutes - dueMinutes);
   const recallLimit = Number.isFinite(remainingAfterDue)
-    ? Math.floor(remainingAfterDue / estimateStreamItemMinutes('question'))
+    ? Math.floor(remainingAfterDue / estimateStreamItemMinutes('question', inputs.questionMinutes))
     : allRecallLocked.length;
   const recallLocked = allRecallLocked.slice(0, recallLimit);
   const recallLockedRefs = new Set(recallLocked.map((s) => s.refId));
@@ -387,14 +391,15 @@ export async function composeSoftmaxStream(
   //    hard-present 同样先扣。
   const fixedCount = dueDrafts.length + recallLocked.length;
   const nonDueBudget = Math.max(0, max - fixedCount);
-  const fixedMinutes = fixedCount * estimateStreamItemMinutes('question');
+  const fixedMinutes = fixedCount * estimateStreamItemMinutes('question', inputs.questionMinutes);
   const timeQuestionBudget =
     inputs.dailyBudgetMinutes === undefined
       ? nonDueBudget
       : Math.max(
           0,
           Math.floor(
-            (inputs.dailyBudgetMinutes - fixedMinutes) / estimateStreamItemMinutes('question'),
+            (inputs.dailyBudgetMinutes - fixedMinutes) /
+              estimateStreamItemMinutes('question', inputs.questionMinutes),
           ),
         );
 
@@ -497,7 +502,11 @@ export async function composeSoftmaxStream(
     .filter((s) => roleByRef.get(s.refId) === 'frontier')
     .map((s) => s.refId);
   const frontierProtectedRefs = new Set(frontierSampledRefs.slice(0, frontierQuota));
-  const budgeted = fitStreamToTimeBudget(assembled, inputs.dailyBudgetMinutes);
+  const budgeted = fitStreamToTimeBudget(
+    assembled,
+    inputs.dailyBudgetMinutes,
+    inputs.questionMinutes,
+  );
   const budgetedRefs = new Set(budgeted.kept.map((item) => item.ref_id));
   const droppedSampled = sampled.some((item) => !budgetedRefs.has(item.refId));
   if (droppedSampled) {

@@ -215,12 +215,15 @@ export const ProposalDecisionResource = z.union([
 export type ProposalDecisionResourceT = z.infer<typeof ProposalDecisionResource>;
 
 // M4 review fix (YUK-319, codex P2) — dispatchAccept（src/server/proposals/
-// actions.ts）为这 16 个 kind 实现了 accept applier；只有 defer / archive /
-// judge_retraction 走 default 分支抛 unsupported_proposal_kind 400（producer/accept
+// actions.ts）为这些 kind 实现了 accept applier；只有 defer / archive
+// 走 default 分支抛 unsupported_proposal_kind 400（producer/accept
 // 语义归 YUK-44）。Phase 0 关系脑 (YUK-406/YUK-440) 的 conjecture 现有真身 accept
 // applier（acceptConjectureProposal，agency 包），故已纳入本集合。UI（ProposalCard）
-// 据此门控 Accept CTA；inbox-meta.unit.test.ts 钉住「本集合 ∪ 未实现三 kind ===
-// aiProposalKinds」，dispatchAccept 增删 kind 时漂移会被测试拦下。
+// 据此门控 Accept CTA；增加/删除 accept kind 时保持「本集合 ∪ 未实现 kind ===
+// aiProposalKinds」不漂移。
+// YUK-1407 — judge_retraction 纳入：判分纠错提案（evaluation→appeal/rejudge/CAS
+// 激活+settlement replay；legacy judge-event→CorrectEvent），接受面在
+// practice proposal-appliers。
 export const acceptSupportedProposalKinds = [
   'knowledge_node',
   'knowledge_edge',
@@ -245,6 +248,9 @@ export const acceptSupportedProposalKinds = [
   // YUK-1016 / 454-B — cause_category_overlay 写路径 = accept applier
   // （audit:schema 要求的唯一 INSERT 边界）。
   'cause_category',
+  // YUK-1407 — 判分纠错提案（evaluation 目标走 appeal/rejudge/CAS 激活链；
+  // legacy judge-event 目标写 CorrectEvent）。人审 accept，不自动执行。
+  'judge_retraction',
 ] as const satisfies readonly AiProposalKindT[];
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -256,8 +262,8 @@ export const acceptSupportedProposalKinds = [
 //   C — observe-only（仅折叠到 AI 观察面，无 Accept CTA）。恰好是「无 accept
 //       applier」的三 kind：dispatchAccept 对它们抛 unsupported_proposal_kind。
 //
-// 红线（防双 SoT 漂移，proposal-strength.unit.test.ts 钉死）：C 档集合 ⟺
-// `aiProposalKinds ∖ acceptSupportedProposalKinds`（={defer,archive,judge_retraction}）
+// 红线（防双 SoT 漂移）：C 档集合 ⟺
+// `aiProposalKinds ∖ acceptSupportedProposalKinds`（当前 = {defer, archive}）
 // 恒等。强度轴 ≠ accept-applier 轴 ≠ tone 视觉轴（KIND_META.tone），三轴勿耦合。
 export type AiProposalStrength = 'A' | 'B' | 'C';
 
@@ -267,7 +273,8 @@ export const aiProposalKindStrength = {
   // C — observe-only（恒 ⟺ aiProposalKinds ∖ acceptSupportedProposalKinds）。
   defer: 'C',
   archive: 'C',
-  judge_retraction: 'C',
+  // YUK-1407 — 判分纠错：人审 accept 才生效（B 档），绝不自动执行。
+  judge_retraction: 'B',
   // B — propose（默认档）。
   knowledge_node: 'B',
   knowledge_edge: 'B',
