@@ -68,6 +68,11 @@ import type {
   RunnerMessage,
 } from './execution-adapter';
 import { startTraceSpan, traceOperation, tracePiStream } from './laminar-tracing';
+import {
+  createPiContextCompactionPolicy,
+  createPiLlmMessageConverter,
+  estimatePiTokens,
+} from './pi-context-policy';
 import { emitPiAfterToolCall, runPiBeforeToolCall } from './pi-hooks';
 import { type LoomPiModel, createLoomPiModels } from './pi-models';
 import { piProviderId } from './pi-provider-catalog';
@@ -155,57 +160,10 @@ export function piMaxRetries(): number | undefined {
  */
 export const PI_SESSION_ID_PREFIX = 'pi:';
 
-/**
- * Rough chars-per-token divisor for the transformContext compaction trigger.
- * Used for pruning and request headroom, never billing usage.
- */
-const PI_COMPACT_CHARS_PER_TOKEN = 4;
-/**
- * CJK codepoints estimate to ~1 token each — the repo's own budget note puts
- * 400 CJK chars at ~400–1000 tokens (kernel/tools/budgets.ts), so the generic
- * divisor would undercount a Chinese transcript 4–10× and the window would
- * overflow before the compaction trigger ever fired. Erring toward early compaction
- * is the safe direction.
- */
-const PI_COMPACT_CJK_RE = /[\u2E80-\u9FFF\uF900-\uFAFF\uFF00-\uFFEF]/gu;
-
 function piSessionIdFor(optionsResume: string | undefined): string {
   return optionsResume?.startsWith(PI_SESSION_ID_PREFIX)
     ? optionsResume
     : `${PI_SESSION_ID_PREFIX}${randomUUID()}`;
-}
-
-/** Estimate context tokens over the LLM-visible text of a message list. */
-function estimatePiTokens(messages: readonly AgentMessage[]): number {
-  let chars = 0;
-  let cjkChars = 0;
-  const addText = (text: string) => {
-    chars += text.length;
-    cjkChars += text.match(PI_COMPACT_CJK_RE)?.length ?? 0;
-  };
-  for (const message of messages) {
-    if (message.role === 'user' || message.role === 'toolResult' || message.role === 'system') {
-      const content = message.content;
-      if (typeof content === 'string') {
-        addText(content);
-      } else if (Array.isArray(content)) {
-        for (const block of content) {
-          if (block.type === 'text') addText(block.text);
-        }
-      }
-      if (message.role === 'system') {
-        if (message.sections) addText(JSON.stringify(message.sections));
-        if (message.toolsAdded) addText(JSON.stringify(message.toolsAdded));
-      }
-    } else if (message.role === 'assistant') {
-      for (const block of message.content) {
-        if (block.type === 'text') addText(block.text);
-        else if (block.type === 'thinking') addText(block.thinking);
-        else if (block.type === 'toolCall') addText(JSON.stringify(block.arguments));
-      }
-    }
-  }
-  return Math.ceil((chars - cjkChars) / PI_COMPACT_CHARS_PER_TOKEN + cjkChars);
 }
 
 /** End at the configured ceiling without turning a clean final answer into failure. */
@@ -1181,23 +1139,12 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     if (!compaction) return undefined;
     const sessionId = this.sessionId;
     const sessionContext = compaction.sessionContext;
-    const contextWindow = Math.min(
-      this.model.contextWindow,
-      this.model.maxInputTokens ?? this.model.contextWindow,
-    );
-    // Keep the existing 85%/60% policy; max output is a ceiling, not a reservation.
-    const triggerTokens = Math.max(1, Math.floor(contextWindow * 0.85));
-    const targetTokens = Math.max(1, Math.floor(contextWindow * 0.6));
-    const isSessionContextMessage = (message: AgentMessage): boolean =>
-      message.role === 'user' &&
-      (message.content === sessionContext ||
-        (Array.isArray(message.content) &&
-          message.content.some((block) => block.type === 'text' && block.text === sessionContext)));
+    const planCompaction = createPiContextCompactionPolicy(this.model, sessionContext);
 
     return async (messages) => {
       try {
-        const preTokens = estimatePiTokens(messages);
-        if (preTokens <= triggerTokens) return messages;
+        const plan = planCompaction(messages);
+        if (!plan) return messages;
         const startedAt = Date.now();
         // Keep the newest tail that fits the target; the current-turn prompt
         // is the last element and is never dropped.
@@ -1205,27 +1152,11 @@ class PiPreparedQuery implements PreparedExecutionQuery {
         // Replay their deltas before pruning so neither can disappear with history.
         const { getCurrentSystemMessage } = await import('@earendil-works/pi-ai');
         const system = getCurrentSystemMessage(messages);
-        const history = messages.filter((message) => message.role !== 'system');
-        const prefix: AgentMessage[] = [...(system ? [system] : []), piUserMessage(sessionContext)];
-        const kept: AgentMessage[] = [];
-        let budget = targetTokens - estimatePiTokens(prefix);
-        for (let i = history.length - 1; i >= 0; i -= 1) {
-          const message = history[i];
-          const cost = estimatePiTokens([message]);
-          // A retained tool-result batch must include its assistant call even if it exceeds budget.
-          if (kept.length > 0 && cost > budget && kept[0].role !== 'toolResult') break;
-          kept.unshift(message);
-          budget -= cost;
-          if (i === 0) break;
-        }
-        // A fresh injection replaces any previously injected copy so repeated
-        // compactions never stack duplicate session contexts.
-        const tail = kept.filter((message) => !isSessionContextMessage(message));
-        const transformed: AgentMessage[] = [...prefix, ...tail];
+        const transformed = plan.selectMessages(system, piUserMessage);
         this.emitFrame(
           piCompactBoundaryFrame({
             sessionId,
-            preTokens,
+            preTokens: plan.preTokens,
             postTokens: estimatePiTokens(transformed),
             durationMs: Date.now() - startedAt,
           }),
@@ -1293,14 +1224,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       // All prompts are standard LLM messages — identity conversion narrowed
       // to the LLM roles the union type needs. UI-only AgentMessages never
       // reach this lane (loom owns the durable transcript).
-      convertToLlm: (messages): PiMessage[] =>
-        messages.filter(
-          (m): m is PiMessage =>
-            m.role === 'system' ||
-            m.role === 'user' ||
-            m.role === 'assistant' ||
-            m.role === 'toolResult',
-        ),
+      convertToLlm: createPiLlmMessageConverter(),
       // The x-opencode-session header is an opencode-go wire requirement
       // (400 MissingSessionID without it). Scope it to that lane: forwarding a
       // stray opencode-namespaced header to api.openai.com / the anthropic
