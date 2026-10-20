@@ -3,11 +3,9 @@
 // Closes a placement probe: status='completed' (hit a termination condition) or 'abandoned'
 // (walked away). Mirrors the review session-end handler (sendBeacon-tolerant body parse).
 
-import { db } from '@/db/client';
 import { ApiError, deprecatedRouteResponse, errorResponse } from '@/kernel/http';
-import { Placement } from '@/server/session';
 import { unresolvedField } from '../server/placement-advance';
-import { readPlacementUnresolvedItems } from '../server/placement-assessment';
+import { endPlacementSession } from '../server/session-operations/placement-session';
 import { type EndPlacementSessionBody, EndPlacementSessionBodySchema } from './placement-contracts';
 
 async function parseBody(req: Request): Promise<EndPlacementSessionBody> {
@@ -47,18 +45,7 @@ export async function POST(req: Request, params: Record<string, string>): Promis
   try {
     const { id } = params;
     const body = await parseBody(req);
-    if (body.status === 'completed') {
-      await Placement.completePlacementSession(db, id);
-    } else {
-      await Placement.abandonPlacementSession(db, id);
-    }
-    // YUK-1405 L1 — the honest end: items closed without a verdict are marked,
-    // not silently dropped (held/pending → awaiting_evaluation; released →
-    // held_released; an issued-but-never-answered card → unanswered).
-    const unresolved_items = await db.transaction((tx) => readPlacementUnresolvedItems(tx, id), {
-      isolationLevel: 'repeatable read',
-      accessMode: 'read only',
-    });
+    const unresolved_items = await endPlacementSession(id, body.status);
     response = Response.json({
       ok: true,
       status: body.status,

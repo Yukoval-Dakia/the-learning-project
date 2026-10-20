@@ -1,8 +1,6 @@
-import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/kernel/http';
-import { Review } from '@/server/session';
+import { createReviewSession } from '../server/session-operations/review-session';
 import { CreateReviewSessionBody } from './contracts';
-import { createPaperReviewSession } from './paper-session-create';
 
 export async function POST(req: Request): Promise<Response> {
   try {
@@ -24,9 +22,7 @@ export async function POST(req: Request): Promise<Response> {
       );
     }
 
-    const result = parsed.data.paper_id
-      ? await createPaperReviewSession(parsed.data.paper_id)
-      : { ...(await Review.startReviewSession(db)), created: true };
+    const result = await createReviewSession({ paperId: parsed.data.paper_id });
     const { sessionId } = result;
     const location = `/api/review-sessions/${encodeURIComponent(sessionId)}`;
 
