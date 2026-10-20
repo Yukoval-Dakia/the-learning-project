@@ -21,11 +21,12 @@
     "YUK-1559": "C1-10 model-source unification: ingestion -> ai 15 -> 16 (+1, total 437 -> 438): provider-attempts.ts reads GLM_OCR_MODEL_ID from the provider catalog (src/server/ai/providers.ts) instead of pinning the glm-ocr literal — direct-lane declared ids belong to the catalog.",
     "YUK-1567": "practice -> r2 raised 2 -> 3 (+1, total 439 -> 440): admission/reauthorization.ts void-release republish calls publishQuestionGroup, whose declared contract requires an injected readAssetBytes blob reader (refuses custom-block publishes without one); supplying getR2().get is the same caller-injection owner seam as the existing practice -> r2 edges in assets.ts and question-supply/jyeoo-candidates.ts.",
     "YUK-1570-mastery-read-engine": "Complete mastery row/ability and p(L)/KG projection read implementations now belong to kernel read models, with old server exports kept for compatibility; only 8 capability consumers move. knowledge -> mastery 6 -> 1, practice -> mastery 14 -> 12, copilot -> mastery 1 -> 0, total 440 -> 432. Write implementations, locks, transactions and non-capability consumer imports stay unchanged; no kernel-to-server facade.",
-    "YUK-1570-session-operation": "Review/paper/placement lifecycle operations own existing state-transition, frozen-paper and dispatch decisions behind route adapters; practice -> session 16 -> 7, total 432 -> 423. boss/runtime-env move with the operation with zero net decrease; pause/resume are thin compatibility members, not independent deepening. HTTP behavior and manifests preserved. Composed after main mastery-read-engine PR #1881; earlier standalone measurement was 440 -> 431."
+    "YUK-1570-supply-run": "Supply planning owns complete bounded attempt orchestration (mount identity, run, parse/validation, rejection feedback and result accounting); web sourcing implementation is separated from the tool adapter and shares production dependency assembly with executor. practice -> ai 66 -> 63, total 432 -> 429. This auxiliary metric includes two removed type-only mcp-bridge imports and consolidation of JSON-parser dependency assembly; these import changes alone are not claimed as algorithmic deepening. Existing 2-attempt bound, cross-attempt tool context identity, Exa-null gate, injection and cost/event policies preserved. Composed after main mastery-read-engine PR #1881; earlier standalone measurement was 440 -> 437.",
+    "YUK-1570-session-operation": "Review/paper/placement lifecycle operations own existing state-transition, frozen-paper and dispatch decisions behind route adapters; practice -> session 16 -> 7, total 429 -> 420. boss/runtime-env move with the operation with zero net decrease; pause/resume are thin compatibility members, not independent deepening. HTTP behavior and manifests preserved. Composed after main mastery-read-engine PR #1881; earlier standalone measurement was 440 -> 431. Latest composition includes supply PR #1883; main server baseline 429."
   },
   "debts": {
     "capabilityToServer": {
-      "total": 423,
+      "total": 420,
       "byOwnerPair": {
         "agency -> ai": 28,
         "agency -> boss": 10,
@@ -83,7 +84,7 @@
         "observability -> r2": 2,
         "observability -> subjects": 9,
         "practice -> advisory-locks": 5,
-        "practice -> ai": 66,
+        "practice -> ai": 63,
         "practice -> assessment": 1,
         "practice -> boss": 18,
         "practice -> calibration": 3,
