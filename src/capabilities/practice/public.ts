@@ -52,10 +52,7 @@ export {
   readItemPriorPgBossDelivery,
 } from './server/item-prior-paid-effect-adapter';
 export type { FrontierResolution } from './server/learnable-frontier';
-export {
-  isMasteredForFrontier,
-  learnableFrontierResolved,
-} from './server/learnable-frontier';
+export { isMasteredForFrontier } from './server/learnable-frontier';
 export { validateLearningContent } from './server/learning-content-validation';
 export { isLiveQuestionReference } from './server/live-question-reference';
 // YUK-1037/1053 — the seed-root anchor regex is a single pattern owned by

@@ -169,6 +169,14 @@
     },
     {
       "debt": "capabilityToServer",
+      "pair": "practice -> ai",
+      "date": "2026-10-20",
+      "from": 62,
+      "to": 61,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
       "pair": "practice -> session",
       "date": "2026-10-20",
       "from": 7,
@@ -222,7 +230,7 @@
   "compatShims": [],
   "debts": {
     "capabilityToServer": {
-      "total": 404,
+      "total": 403,
       "byOwnerPair": {
         "agency -> ai": 25,
         "agency -> boss": 10,
@@ -279,7 +287,7 @@
         "observability -> r2": 2,
         "observability -> subjects": 9,
         "practice -> advisory-locks": 5,
-        "practice -> ai": 62,
+        "practice -> ai": 61,
         "practice -> assessment": 1,
         "practice -> boss": 18,
         "practice -> calibration": 3,
