@@ -15,13 +15,15 @@
 //    根组身份：单 part 声明的 groupId = 该 part 绑定 id（根行即题目本身）；
 //    多 part 才铸独立 root id + 每 part 一条真实 child 行。
 //
-// 2) `insertTypedGroupChildren` —— 首发时把已绑定文档的每个 part 落成真实
-//    `question` 子行：`parent_question_id` = 根组 id、`part_index` = 声明序
-//    （唯一 part-ness 权威 = parent_question_id IS NOT NULL，parts.ts 约定），
-//    内容列 = 同一份单 part 文档走既有 `draftCanonicalIdentity` /
-//    `draftDocumentToStructuredQuestion` 投影 —— child 行与组契约逐字段同源，
-//    不存在第二套 flat 答案。created_by 按 part 写口约定保持 NULL
-//    （ADR-0006 v2：provenance 走 metadata + 事件）。
+// 2) 子行投影守闸与行值规则 —— `assertTypedGroupChildrenInsertable`（先
+//    FOR UPDATE 根、再查绑定 part_id 撞既有行；锁序沿用 parts.ts）与
+//    `typedChildChoicesMd`（choices 列口径）。真正的子行 INSERT 字面量在
+//    shared-submit.ts 内核 `submitDraftQuestionInTx` 内（YUK-1043
+//    per-site：内容写点须与 publishQuestionGroup seam 同函数闭包，writer
+//    审计按写点所在函数判定）。child 行内容列与组契约逐字段同源（同一份
+//    单 part 文档走既有 draftCanonicalIdentity/draftDocumentToStructuredQuestion
+//    投影），created_by 按 part 写口约定保持 NULL（ADR-0006 v2：
+//    provenance 走 metadata + 事件）。
 //
 // 非职责：不重发组 revision（发布 seam 由提交内核一次性调用），不在本文件做
 // 来源 URL claim / exact+near 去重（提交内核的供给投影段统一处理）。
@@ -29,15 +31,9 @@
 
 import { createHash } from 'node:crypto';
 import { eq, inArray } from 'drizzle-orm';
-import {
-  type DraftPartT,
-  type QuestionDraftDocumentT,
-  draftDocumentToStructuredQuestion,
-} from '@/core/schema/question-draft';
+import type { DraftPartT, QuestionDraftDocumentT } from '@/core/schema/question-draft';
 import type { Tx } from '@/db/client';
 import { question } from '@/db/schema';
-import { withAnswerClass } from '@/server/questions/answer-class-write';
-import { draftCanonicalIdentity } from '@/server/questions/draft-contract';
 
 // ---------- 身份绑定 ----------
 
@@ -284,44 +280,19 @@ export class TypedGroupProjectionError extends Error {
   }
 }
 
-export interface TypedChildRowSeed {
-  /** 根组 question.id（已绑定的真实组身份）。 */
-  groupId: string;
-  /** 已绑定文档（parts[].part_id 即子行 id）。 */
-  document: QuestionDraftDocumentT;
-  now: Date;
-  /** 与根行同口径的投影输入。 */
-  knowledgeIds: string[];
-  difficulty?: number;
-  source: string;
-  sourceRef: string | null;
-  draftBlockId: string;
-  /** 路由 provenance（写入 child metadata.produced_by；created_by 保持 NULL）。 */
-  producedBy?: unknown;
-  /** 绑定器产出的 idMap —— 记录 declared_part_id 留痕（可选）。 */
-  idMap?: BoundIdMap;
-}
-
-export interface InsertedTypedChild {
-  questionId: string;
-  partIndex: number;
-}
-
 /**
- * 多 part 文档 ⇒ 每 part 一条真实 question 子行（part_index = 声明序）。
- * 锁序沿用 parts.ts：先 FOR UPDATE 根再 INSERT 子行。单 part 文档不调用
- * （单 part 组 = 根行自身，不产子行 —— 与既有单题语义一致）。
+ * 多 part 文档投影子行前的守闸（只读）：先 FOR UPDATE 锁根（锁序沿用
+ * parts.ts，FK KEY SHARE 与根 FOR UPDATE 互斥，先锁根防「先子后根」
+ * 倒置），再查绑定 part_id 撞既有 question 行 —— 已占用 id 不静默覆盖。
+ * 真正的子行 INSERT 字面量在 shared-submit.ts 内核内（YUK-1043 per-site：
+ * 内容写点与 publishQuestionGroup seam 同函数闭包，writer 审计可见）。
+ * 单 part 文档不调用（单 part 组 = 根行自身，不产子行）。
  */
-export async function insertTypedGroupChildren(
+export async function assertTypedGroupChildrenInsertable(
   tx: Tx,
-  input: TypedChildRowSeed,
-): Promise<InsertedTypedChild[]> {
+  input: { groupId: string; document: QuestionDraftDocumentT },
+): Promise<void> {
   const doc = input.document;
-  const declaredPartIds = new Map(
-    Object.entries(input.idMap?.part ?? {}).map(([local, boundId]) => [boundId, local] as const),
-  );
-  // 与 createQuestionPart 相同的锁序：根 → 子（FK KEY SHARE 与根 FOR UPDATE
-  // 互斥，先锁根防「先子后根」事务倒置）。
   const [rootLock] = await tx
     .select({ id: question.id })
     .from(question)
@@ -330,12 +301,10 @@ export async function insertTypedGroupChildren(
     .limit(1);
   if (rootLock == null) {
     throw new TypedGroupProjectionError(
-      `insertTypedGroupChildren: root question '${input.groupId}' not found (children must follow the root row in the same transaction)`,
+      `assertTypedGroupChildrenInsertable: root question '${input.groupId}' not found (children must follow the root row in the same transaction)`,
       'root_missing',
     );
   }
-  // 已占用 id 不静默覆盖：绑定 part_id 撞任一既有 question 行 ⇒ 让本次
-  // 声明显式失败（PK 是兜底，这里给可读错误）。
   const existing = await tx
     .select({ id: question.id })
     .from(question)
@@ -349,62 +318,24 @@ export async function insertTypedGroupChildren(
   const collision = doc.parts.find((part) => existingIds.has(part.part_id));
   if (collision != null) {
     throw new TypedGroupProjectionError(
-      `insertTypedGroupChildren: declared part id '${collision.part_id}' already bound to an existing question row`,
+      `assertTypedGroupChildrenInsertable: declared part id '${collision.part_id}' already bound to an existing question row`,
       'part_id_conflict',
     );
   }
+}
 
-  const created: InsertedTypedChild[] = [];
-  for (let index = 0; index < doc.parts.length; index++) {
-    const part = doc.parts[index];
-    // 单 part 文档投影 ⇒ 子行内容列与「该 part 独立成题」的权威配方同源。
-    const childDoc: QuestionDraftDocumentT = { ...doc, parts: [part] };
-    const identity = draftCanonicalIdentity(childDoc);
-    // 选项体只在「本 part 恰好一个 select 单元」时落列 —— 与 draft 投影的
-    // choices 口径一致（多 select 单元 part 的 choices 无确定序，不冒充）。
-    const selectUnits = part.units.filter(
-      (unit) => unit.response_class === 'select' && unit.response_spec.kind === 'select',
-    );
-    const choicesMd =
-      selectUnits.length === 1 &&
-      part.units.length === 1 &&
-      selectUnits[0].response_spec.kind === 'select'
-        ? selectUnits[0].response_spec.items.map((item) => item.label_md ?? item.item_id)
-        : null;
-    const declaredPartId = declaredPartIds.get(part.part_id);
-    await tx.insert(question).values(
-      withAnswerClass({
-        id: part.part_id,
-        kind: 'question_part',
-        prompt_md: part.prompt_md,
-        reference_md: identity.referenceMd,
-        choices_md: choicesMd,
-        knowledge_ids: input.knowledgeIds,
-        difficulty: input.difficulty ?? 3,
-        source: input.source,
-        source_ref: input.sourceRef,
-        variant_depth: 0,
-        parent_question_id: input.groupId,
-        part_index: index,
-        draft_status: 'draft',
-        figures: [],
-        image_refs: [],
-        structured: draftDocumentToStructuredQuestion(childDoc),
-        metadata: {
-          part_of_question_id: input.groupId,
-          part_index: index,
-          draft_block_id: input.draftBlockId,
-          ...(declaredPartId != null && declaredPartId !== part.part_id
-            ? { declared_part_id: declaredPartId }
-            : {}),
-          ...(input.producedBy != null ? { produced_by: input.producedBy } : {}),
-        },
-        created_at: input.now,
-        updated_at: input.now,
-        version: 0,
-      }),
-    );
-    created.push({ questionId: part.part_id, partIndex: index });
-  }
-  return created;
+/**
+ * 子行 choices 列：只在「本 part 恰好一个 select 单元且 part 仅此单元」时
+ * 落列 —— 与 draft 投影的 choices 口径一致（多 select 单元 part 的
+ * choices 无确定序，不冒充）。纯函数。
+ */
+export function typedChildChoicesMd(part: DraftPartT): string[] | null {
+  const selectUnits = part.units.filter(
+    (unit) => unit.response_class === 'select' && unit.response_spec.kind === 'select',
+  );
+  return selectUnits.length === 1 &&
+    part.units.length === 1 &&
+    selectUnits[0].response_spec.kind === 'select'
+    ? selectUnits[0].response_spec.items.map((item) => item.label_md ?? item.item_id)
+    : null;
 }

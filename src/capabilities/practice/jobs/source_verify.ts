@@ -80,6 +80,7 @@ import {
   type SuspensionUpdate,
   archiveGroupLifecycle,
   loadQuestionGroupContractSnapshot,
+  promoteVerifiedGroupPartRows,
   publishQuestionGroup,
   publishQuestionGroupFromRow,
 } from '@/server/questions/publisher';
@@ -1106,6 +1107,50 @@ export async function runSourceVerify(
         // YUK-1045 — suspension:false 清 verify_hold（同版复核通过 ⇒ 幂等恢复，
         // §3.3 表「同版复核通过」行）；retraction_hold 不属本票接线，publisher 恒保留。
         const groupRootId = row.parent_question_id ?? questionId;
+
+        // YUK-1568 S3 R1-F2 — 组拥有的声明子行晋升：typed 声明多 part 组的
+        // question_part 子行（行 id = 冻结 revision structure.parts[].part_id
+        // 绑定）随根核验成功同事务翻 ACTIVE + 继承证据留痕。锁序 root→child
+        // （根行已在 tx 顶 FOR UPDATE）；旧式组与单 part 组命中零行 ⇒
+        // no-op。子行不首发 active、无独立 paid verify；serving 门不变 ——
+        // 仍需 part notDraft ∧ 组 admitted（C1 维度在下方发布链里翻）。
+        const promotedPartRows =
+          verifiedIdentity.revisionId != null
+            ? await promoteVerifiedGroupPartRows(tx, {
+                rootId: groupRootId,
+                revisionId: verifiedIdentity.revisionId,
+                verifyEventId,
+                now,
+              })
+            : [];
+        for (const part of promotedPartRows) {
+          // FSRS enroll-if-absent 与根同款约定（quiz_verify/owner-override
+          // 级联同款）：不重置既有排程；无 KC 绑定时走 question 级 fallback。
+          const partKnowledgeIds = Array.from(new Set(part.knowledgeIds));
+          if (partKnowledgeIds.length > 0) {
+            for (const knowledgeId of partKnowledgeIds) {
+              if (SYNTHETIC_SUBJECT_ROOT_RE.test(knowledgeId)) continue;
+              const existing = await getFsrsState(tx, 'knowledge', knowledgeId);
+              if (existing) continue;
+              await upsertFsrsState(tx, {
+                subject_kind: 'knowledge',
+                subject_id: knowledgeId,
+                ...initialSchedulingState(knowledgeId, now),
+                last_review_event_id: verifyEventId,
+              });
+            }
+          } else {
+            const existing = await getFsrsState(tx, 'question', part.id);
+            if (!existing) {
+              await upsertFsrsState(tx, {
+                subject_kind: 'question',
+                subject_id: part.id,
+                ...initialSchedulingState(part.id, now),
+                last_review_event_id: verifyEventId,
+              });
+            }
+          }
+        }
         {
           const [lifecycle] = await tx
             .select()

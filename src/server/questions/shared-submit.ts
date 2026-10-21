@@ -18,7 +18,9 @@
 //     草稿/根/子行。commit 后才 drain verify intent（drainSubmitVerifyIntents）。
 //     `caller` 槽位把调用方的 canonical receipt 写进同一事务 ——
 //     claim+domain+receipt 一次 commit，commit 前崩溃无「域已提交而
-//     顶层回执缺失」窗口。
+//     顶层回执缺失」窗口。R1-F1：同 request 已有升级前【原始未绑定文档】
+//     的 save 回执时，先原指纹重放恢复（原 submit 语义，无 producer），
+//     不误把半成品判成 request_id_reused。
 //
 //   - claim/receipt/fingerprint 原语（claimSubmitRequestId、
 //     writeSubmitReceiptEvent、submitRequestFingerprint）—— candidate/compat
@@ -57,6 +59,7 @@ import {
 } from '@/server/boss/verify-dispatch-outbox';
 import { projectQuestionBlockGuarded } from '@/server/projections/question_block';
 import { writeQuestionBlockLifecycleEvent } from '@/server/projections/question_block-lifecycle-event';
+import { withAnswerClass } from '@/server/questions/answer-class-write';
 import {
   applyScoringEditPlan,
   draftCanonicalIdentity,
@@ -66,6 +69,7 @@ import {
   type EditQuestionResult,
   TxAbort,
   encodeDraftRef,
+  findDraftSaveReceipt,
   parseDraftRef,
   saveDraftEditInTx,
 } from '@/server/questions/edit-question';
@@ -87,8 +91,9 @@ import type { SubmitDraftInput, SubmitResult } from '@/server/questions/submit-q
 import {
   type BindIssue,
   type BoundIdMap,
+  assertTypedGroupChildrenInsertable,
   bindDeclaredGroupIds,
-  insertTypedGroupChildren,
+  typedChildChoicesMd,
 } from '@/server/questions/typed-group';
 
 export const DRAFT_SUBMIT_ACTION = 'experimental:question_draft_submit';
@@ -674,19 +679,59 @@ export async function submitDraftQuestionInTx(
     // typed 组首发：多 part 文档在同事务投影真实子行 —— 契约 part_id 即
     // 子行 question.id（绑定器保证），parent_question_id/part_index 是唯一
     // part-ness/序权威；不逐 child FromRow 重发，发布 seam 一次覆盖全组。
+    // YUK-1043 per-site 纪律：内容写点的 INSERT 字面量留在本函数（与
+    // publishQuestionGroup 同闭包，writer 审计可见）；锁/查重与 choices
+    // 判定等纯逻辑仍在 typed-group。
     if (producer?.materializeParts === 'parent-parts' && doc.parts.length > 1) {
-      await insertTypedGroupChildren(tx, {
-        groupId,
-        document: doc,
-        now,
-        knowledgeIds: doc.knowledge_ids,
-        difficulty: input.sourced?.difficulty,
-        source: questionSource,
-        sourceRef: doc.source?.ref ?? null,
-        draftBlockId: block.id,
-        producedBy: input.sourced?.created_by,
-        idMap: opts?.declaredIdMap,
-      });
+      await assertTypedGroupChildrenInsertable(tx, { groupId, document: doc });
+      const declaredPartIds = new Map(
+        Object.entries(opts?.declaredIdMap?.part ?? {}).map(
+          ([local, boundId]) => [boundId, local] as const,
+        ),
+      );
+      await tx.insert(question).values(
+        doc.parts.map((part, index) => {
+          // 单 part 文档投影 ⇒ 子行内容列与「该 part 独立成题」的权威配方
+          // 同源；options 只在本 part 恰好一个 select 单元时落列。
+          const childDoc: QuestionDraftDocumentT = { ...doc, parts: [part] };
+          const identity = draftCanonicalIdentity(childDoc);
+          const declaredPartId = declaredPartIds.get(part.part_id);
+          return withAnswerClass({
+            id: part.part_id,
+            kind: 'question_part',
+            prompt_md: part.prompt_md,
+            reference_md: identity.referenceMd,
+            choices_md: typedChildChoicesMd(part),
+            knowledge_ids: doc.knowledge_ids,
+            difficulty: input.sourced?.difficulty ?? 3,
+            source: questionSource,
+            source_ref: doc.source?.ref ?? null,
+            variant_depth: 0,
+            parent_question_id: groupId,
+            part_index: index,
+            draft_status: 'draft',
+            figures: [],
+            image_refs: [],
+            structured: draftDocumentToStructuredQuestion(childDoc),
+            metadata: {
+              part_of_question_id: groupId,
+              part_index: index,
+              draft_block_id: block.id,
+              // created_by 保持 NULL（ADR-0006 v2）—— provenance 走
+              // metadata.produced_by/declared_part_id 留痕。
+              ...(declaredPartId != null && declaredPartId !== part.part_id
+                ? { declared_part_id: declaredPartId }
+                : {}),
+              ...(input.sourced?.created_by != null
+                ? { produced_by: input.sourced.created_by }
+                : {}),
+            },
+            created_at: now,
+            updated_at: now,
+            version: 0,
+          });
+        }),
+      );
     }
   } else {
     // Editing a published question: a hash held by another row is a conflict.
@@ -877,12 +922,19 @@ export async function drainSubmitVerifyIntents(db: Db, result: SubmitResult): Pr
  * claim-release 副作用按旧 submit tx 口径落库 —— 绝不回滚已执行的 merge。
  */
 export type DeclaredGroupDomainOutcome =
-  | { status: 'completed'; save: EditQuestionResult; submit: SubmitResult; id_map: BoundIdMap }
+  | {
+      status: 'completed';
+      save: EditQuestionResult;
+      submit: SubmitResult;
+      /** 首发绑定链 = BoundIdMap；R1-F1 恢复链（原 save 半成品按原文档指纹
+       * 重放 + 原 submit 语义完成）无新绑定 —— null 如实标记。 */
+      id_map: BoundIdMap | null;
+    }
   | {
       status: 'submit_conflict';
       save: EditQuestionResult;
       submit: Extract<SubmitResult, { status: 'conflict' }>;
-      id_map: BoundIdMap;
+      id_map: BoundIdMap | null;
     }
   | { status: 'save_failed'; save: EditQuestionResult }
   | { status: 'declaration_failed'; issues: BindIssue[] };
@@ -978,6 +1030,50 @@ export async function persistDeclaredQuestionGroupInTx(
             detail: `request_id '${caller.requestId}' was used with different content`,
           };
     }
+  }
+
+  // YUK-1568 S3 R1-F1 — 升级前半成品恢复：旧版链可能已用同一 :save
+  // request_id 对【原始未绑定】文档写过 save 回执（随后 submit/顶层回执
+  // 崩溃缺失）。此时若直接对新绑定文档算指纹会得到 request_id_reused 并
+  // 把半成品固化 —— 必须先以原文档经同一 saveDraftEditInTx 内核重放
+  // （同 request advisory lock、同指纹算法），恢复原 draft 后按原 submit
+  // 语义（无 producer ⇒ 旧指纹/平铺投影）完成提交或重放既有 :submit
+  // 回执；不重发布、不另付费核验。只对【确无历史 save】的首发才走下方
+  // 新绑定链 —— 不误把所有同 request 冲突当 legacy（指纹不符的探测落回
+  // 绑定链，由 bound save 产出同一诚实 request_id_reused 终态）。
+  const preExistingSave = await findDraftSaveReceipt(tx, params.saveRequestId);
+  if (preExistingSave != null) {
+    const resumed = await saveDraftEditInTx(tx, {
+      input: {
+        action: 'save',
+        document: params.document,
+        request_id: params.saveRequestId,
+      },
+      ctx: params.ctx,
+    });
+    if (resumed.status === 'saved' || resumed.status === 'noop') {
+      const submit = await submitDraftQuestionInTx(
+        tx,
+        {
+          draft_ref: resumed.draft_ref,
+          // 与旧 live caller 同口径：CAS 钉住 save 回执版本。
+          expected_draft_version: resumed.draft_version,
+          request_id: params.submitRequestId,
+          expected_revision: null,
+          availability: params.availability,
+          sourced: params.sourced,
+        },
+        params.ctx,
+      );
+      const resumedOutcome: DeclaredGroupDomainOutcome =
+        submit.status === 'conflict'
+          ? { status: 'submit_conflict', save: resumed, submit, id_map: null }
+          : { status: 'completed', save: resumed, submit, id_map: null };
+      await writeCallerReceipt(resumedOutcome);
+      return resumedOutcome;
+    }
+    // request_id_reused / rejected：既有回执指纹不符（非本请求的历史 save），
+    // 不绑定恢复 —— 下方新文档 save 会得到同一 request_id_reused 诚实终态。
   }
 
   // 身份绑定只在这里发生一次（调用方不得预先绑定再传入——双重绑定会再铸

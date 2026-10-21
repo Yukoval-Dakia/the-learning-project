@@ -359,6 +359,19 @@ async function findReceipt(
   return { fingerprint: payload.fingerprint, receipt: payload.receipt };
 }
 
+/**
+ * YUK-1568 S3 R1-F1 — save 幂等回执（DRAFT_SAVE_ACTION 域）的只读查询。
+ * 共享 declared 链在绑定新声明文档前用它甄别「升级前已用原始（未绑定）
+ * 文档完成 save、submit/顶层回执缺失」的历史半成品：存在 ⇒ 必须经同一
+ * saveDraftEditInTx 原指纹重放恢复，绝不对新文档换 request 重算。
+ */
+export async function findDraftSaveReceipt(
+  db: Db | Tx,
+  requestId: string,
+): Promise<{ fingerprint: string; receipt: unknown } | null> {
+  return findReceipt(db, requestId);
+}
+
 // ---------- save ----------
 
 /**
