@@ -24,21 +24,12 @@ import type { Db } from '@/db/client';
 import { type JobYieldOutput, reportJobYield } from '@/server/boss/job-yield';
 import { runJointCalibrationBatch } from '@/server/mastery/joint-calibration';
 
-/**
- * 夜跑联合标定批。零新写（除 joint-calibration 内部的后验写）。
- */
-export async function runRecalibrationNightly(
-  db: Db,
-): Promise<import('@/server/mastery/joint-calibration').JointCalibrationBatchResult> {
-  return runJointCalibrationBatch(db);
-}
-
 export function buildRecalibrationNightlyHandler(
   db: Db,
 ): (jobs: Job<Record<string, never>>[]) => Promise<JobYieldOutput> {
   return async () => {
     try {
-      const result = await runRecalibrationNightly(db);
+      const result = await runJointCalibrationBatch(db);
       console.log('[recalibration_nightly] result', result);
       // YUK-779 — this job has TWO hard downstreams (practice_stream_compose_nightly,
       // question_supply_nightly), so a silent zero-yield here poisons a whole subtree.
