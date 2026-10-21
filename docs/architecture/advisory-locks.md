@@ -92,6 +92,7 @@ salt ∈ {0,1,1393})、int 字面量（`597_001`、`406_440_3`）、int pair 字
 | `acquireSortedAdvisoryLocks` | `src/server/advisory-locks.ts` | `hashtext(<ns>:<id>)` sorted，consistent-ordering 原语 |
 | `withinSessionAdvisoryLock` | `src/db/session-advisory-lock.ts` | reserved conn `pg_try_advisory_lock`+retry 至 deadline；`begin`/`savepoint` 补丁到持锁连接，inner tx 全部跑在同一 backend；finally unlock+release |
 | `acquireProposalDecisionLock` | `src/server/proposals/applier-helpers.ts` | `proposal_decision:<id>` hte0 |
+| `withProposalGateLock` | `src/kernel/proposals/signals.ts` | `<kind>:<cooldown_key>` 多键 sorted xact gate；Db 开真 tx、Tx 内联 |
 | `lockPaidEffectControlFamily` / `lockEntityGate` | `src/db/paid-effect-control.ts` / `paid-effect-store.ts` | paid-effect family/entity 锁（只读盘点） |
 | `lockProducerFenceInstaller` 等 | `src/server/durable/*` | durable family install/control/tick |
 | `withinComposePaidWorkLock` | `practice/server/compose-paid-work-lock.ts` | `stream:compose-paid:<date>` session |
@@ -122,7 +123,7 @@ salt ∈ {0,1,1393})、int 字面量（`597_001`、`406_440_3`）、int pair 字
 | 13 | paper-native-issuance | paper-native:<issuance_id> | hashtext | transaction | xact | 1 |  |
 | 14 | paper-review-session | paper-review-session:<paperId> | hashtextextended:0 | transaction | xact | 1 |  |
 | 15 | proposal-decision | proposal_decision:<proposalId> | hashtextextended:0 | transaction | xact | 3 | write-quiz, conjecture-fold |
-| 16 | proposal-signal | <kind>:<cooldown_key> | hashtextextended:0 | transaction | xact | 1 |  |
+| 16 | proposal-signal | <kind>:<cooldown_key> | hashtextextended:0 | transaction | xact | 2 |  |
 | 17 | write-quiz | write_quiz:<taskRunId> | hashtextextended:0 | transaction | xact | 1 |  |
 | 18 | misconception | misc:<misconceptionId> | hashtext | transaction | xact | 2 |  |
 | 19 | intervention-instance | intervention:<interventionId>:<version> | hashtextextended:0 | transaction | xact | 4 | learning-state:write, intervention-corrections-all |

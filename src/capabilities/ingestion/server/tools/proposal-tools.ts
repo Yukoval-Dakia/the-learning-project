@@ -15,7 +15,7 @@ import { artifact, knowledge, learning_item, learning_record, question } from '@
 import { pendingProposalWithCooldown } from '@/kernel/proposals/inbox';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { getActiveLearningRecord } from '@/kernel/records/queries';
-import type { DomainTool, ToolContext } from '@/kernel/tools/types';
+import { type DomainTool, OpaqueJsonInput, type ToolContext } from '@/kernel/tools/types';
 
 function evidenceRefsFromEventIds(ids: string[]): ProposalEvidenceRefT[] {
   return [...new Set(ids)].map((id) => ({ kind: 'event', id }));
@@ -202,7 +202,10 @@ const ProposeRecordPromotionInputSchema = z.object({
   record_id: z.string().min(1),
   target: z.enum(['question', 'learning_item', 'artifact']),
   reasoning: z.string().min(1).max(2000),
-  draft: z.unknown().optional(),
+  // Opaque promotion draft: the accept applier reads the fields it needs
+  // (title/prompt/body_blocks/knowledge_ids); z.json keeps it a JSON document
+  // instead of an unconstrained value (YUK-1553 C1-1 registration contract).
+  draft: OpaqueJsonInput.optional(),
   // P5.6 / YUK-178 (§4.2, SK-5) — OPTIONAL model-labeled discriminator; omit
   // (→ proactive) unless this repairs a model-observed failure.
   suggestion_kind: SuggestionKind.optional(),

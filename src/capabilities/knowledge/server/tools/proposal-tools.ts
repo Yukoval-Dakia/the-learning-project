@@ -2,7 +2,8 @@
 // capability and loaded through its manifest. These expose owner-service paths to
 // agent tool loops; they do not apply destructive graph mutations directly:
 // proposal tools write inbox-visible proposal events (propose-only invariant).
-// Moved byte-identical from src/server/ai/tools/proposal-tools.ts.
+// Originally moved from src/server/ai/tools/proposal-tools.ts; the five-branch
+// mutation schema and the shared cooldown gate now live here.
 
 import { and, eq, inArray, isNull, or } from 'drizzle-orm';
 import { z } from 'zod';
@@ -10,8 +11,7 @@ import { z } from 'zod';
 // the single-owner edges module is the read authority.
 import { getKnowledgeEdgeById } from '@/capabilities/knowledge/server/edges';
 import {
-  type KnowledgeMutationPayload,
-  knowledgeNodeCooldownKey,
+  knowledgeMutationCooldown,
   writeKnowledgeProposeEvent,
 } from '@/capabilities/knowledge/server/proposals';
 import {
@@ -27,13 +27,14 @@ import {
   type ProposalEvidenceRefT,
   parseAiProposalPayload,
 } from '@/core/schema/proposal';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import { knowledge, knowledge_edge } from '@/db/schema';
 // P5.4-L2 / YUK-174 (Facet B) — resolve the per-(kind, relation) gate-bump for
 // this edge and pass it as the OPTIONAL adaptive input to the L1 validator. The
 // digest read is bounded; cold-start / below-threshold returns a no-op bump.
 import { resolveEdgeGateBump } from '@/kernel/proposals/adaptive-bias';
 import { listProposalInboxRows } from '@/kernel/proposals/inbox';
+import { findActiveProposalCooldown, withProposalGateLock } from '@/kernel/proposals/signals';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
 // P5.4-L2 / YUK-174 — the adaptive gate-bump budget + bias config single source.
@@ -42,29 +43,71 @@ import { writeToolCallLog } from '@/server/ai/log';
 import { sanitizeProposedNodeDomain } from '@/subjects/profile';
 import type { DomainTool, ToolContext } from './types';
 
+type DbLike = Db | Tx;
+
+// resolveEvidence resolves refs one-by-one; cap model input so a malformed call
+// cannot amplify into an unbounded query sequence.
+const EvidenceEventIdsSchema = z.array(z.string().min(1)).max(20);
+
 function evidenceRefsFromEventIds(ids: string[]): ProposalEvidenceRefT[] {
   return [...new Set(ids)].map((id) => ({ kind: 'event', id }));
 }
 
-async function pendingProposalWithCooldown(
-  db: Db,
-  kind: string,
-  cooldownKey: string,
-): Promise<boolean> {
-  const rows = await listProposalInboxRows(db, { status: 'pending' });
-  return rows.some((row) => row.kind === kind && row.payload.cooldown_key === cooldownKey);
+// YUK-1553 — the propose-side dedup/cooldown gate shared by both knowledge
+// proposal tools, run INSIDE {@link withProposalGateLock} so the pending +
+// dismiss-cooldown reads and the subsequent proposal write are serialized per
+// (kind, cooldown_key). This is the check the retired KR `runWriteProposal`
+// gate enforced (`checkProposalGate`); the canonical home is here so every
+// caller of the shared tools gets it, not just the maintenance task.
+interface ProposalCooldownSkip {
+  status: 'skipped:duplicate_pending' | 'skipped:cooldown';
+  /** Existing proposal row id: the pending twin, or the latest proposal on the key. */
+  proposal_id?: string;
+  cooldown_key: string;
+  cooldown_until?: string;
 }
 
-async function pendingProposalWithAnyCooldown(
-  db: Db,
+async function checkProposalCooldownGate(
+  db: DbLike,
   kind: string,
-  cooldownKeys: string[],
-): Promise<boolean> {
+  cooldownKeys: readonly string[],
+): Promise<ProposalCooldownSkip | null> {
   const keys = new Set(cooldownKeys);
-  const rows = await listProposalInboxRows(db, { status: 'pending' });
-  return rows.some(
-    (row) => row.kind === kind && row.payload.cooldown_key && keys.has(row.payload.cooldown_key),
+  const rows = await listProposalInboxRows(db);
+  const onKey = rows.filter(
+    (row) =>
+      row.kind === kind &&
+      row.payload.cooldown_key !== undefined &&
+      keys.has(row.payload.cooldown_key),
   );
+  const pending = onKey.find((row) => row.status === 'pending');
+  if (pending) {
+    return {
+      status: 'skipped:duplicate_pending',
+      proposal_id: pending.id,
+      cooldown_key: cooldownKeys[0] ?? (pending.payload.cooldown_key as string),
+    };
+  }
+  const cooling = await findActiveProposalCooldown(db, kind, cooldownKeys);
+  if (cooling) {
+    // Point the caller at the cooldown's origin: the latest DISMISSED proposal
+    // on the key (cooldowns only exist after a dismiss), falling back to the
+    // latest row at all if the dismiss predates this projection window.
+    const latest = (rows: typeof onKey) =>
+      rows.reduce<(typeof onKey)[number] | undefined>(
+        (best, row) => (best === undefined || row.proposed_at > best.proposed_at ? row : best),
+        undefined,
+      );
+    const dismissed = onKey.filter((row) => row.status === 'dismissed');
+    const source = latest(dismissed) ?? latest(onKey);
+    return {
+      status: 'skipped:cooldown',
+      proposal_id: source?.id,
+      cooldown_key: cooling.cooldown_key,
+      cooldown_until: cooling.cooldown_until.toISOString(),
+    };
+  }
+  return null;
 }
 
 function edgeCooldownKeys(fromId: string, toId: string, relationType: string): string[] {
@@ -138,7 +181,7 @@ const ProposeKnowledgeEdgeInputSchema = z.object({
   // archive-op target: the live knowledge_edge.id to soft-delete.
   edge_id: z.string().min(1).optional(),
   reasoning: z.string().min(1).max(2000),
-  evidence_event_ids: z.array(z.string().min(1)).optional(),
+  evidence_event_ids: EvidenceEventIdsSchema.optional(),
   // P5.6 / YUK-178 (§4.1/§4.2, SK-5) — OPTIONAL model-labeled discriminator. Set
   // 'corrective' ONLY when this edge repairs a failure the model itself observed;
   // omit (→ 'proactive') for a next-step suggestion. There is NO deterministic
@@ -154,6 +197,10 @@ const ProposeKnowledgeEdgeOutputSchema = z.object({
     'skipped:cross_subject',
     'skipped:duplicate_live_edge',
     'skipped:duplicate_pending',
+    // YUK-1553 — an active dismiss-cooldown covers this edge key; same-args
+    // retries inside the window are suppressed (was the retired KR gate's
+    // `skipped_cooldown`).
+    'skipped:cooldown',
     'skipped:parent_semantic_duplicate',
     // P5.4 / YUK-143 (RB-6) — rubric-rejected agent edge. The propose event is
     // still written, MARKED rubric-rejected (folded, not dropped); the verdict
@@ -166,13 +213,19 @@ const ProposeKnowledgeEdgeOutputSchema = z.object({
   ]),
   proposal_id: z.string().optional(),
   cooldown_key: z.string().optional(),
+  // YUK-1553 — ISO deadline for skipped:cooldown so the agent knows when a
+  // retry could succeed.
+  cooldown_until: z.string().optional(),
+  // YUK-1553 — the live edge id for skipped:duplicate_live_edge /
+  // skipped:edge_not_found (was smuggled through `reason`).
+  edge_id: z.string().optional(),
   reason: z.string().optional(),
   // P5.4 — stable gate string from the rubric verdict (YUK-174 Layer-2 signal).
   gate: z.string().optional(),
 });
 
 type ProposeKnowledgeEdgeInput = z.infer<typeof ProposeKnowledgeEdgeInputSchema>;
-type ProposeKnowledgeEdgeOutput = z.infer<typeof ProposeKnowledgeEdgeOutputSchema>;
+export type ProposeKnowledgeEdgeOutput = z.infer<typeof ProposeKnowledgeEdgeOutputSchema>;
 
 async function proposeKnowledgeEdgeExecute(
   ctx: ToolContext,
@@ -236,145 +289,164 @@ async function proposeKnowledgeEdgeCreate(
     };
   }
 
-  const duplicateLiveEdge = (
-    await ctx.db
-      .select({ id: knowledge_edge.id })
-      .from(knowledge_edge)
-      .where(
-        and(
-          isSymmetricKnowledgeRelation(relationType)
-            ? or(
-                and(
+  const cooldownKeys = edgeCooldownKeys(fromKnowledgeId, toKnowledgeId, relationType);
+  const cooldownKey = cooldownKeys[0];
+
+  // YUK-1553 — live-duplicate + pending + dismiss-cooldown reads and the
+  // proposal write run inside ONE (kind, cooldown_key) advisory-locked txn
+  // (the gate the retired KR path enforced); rubric/adaptive stay inside the
+  // same txn so a verdict-fold and a skip both see the serialized world.
+  return await withProposalGateLock(ctx.db, 'knowledge_edge', cooldownKeys, async (tx) => {
+    const duplicateLiveEdge = (
+      await tx
+        .select({ id: knowledge_edge.id })
+        .from(knowledge_edge)
+        .where(
+          and(
+            isSymmetricKnowledgeRelation(relationType)
+              ? or(
+                  and(
+                    eq(knowledge_edge.from_knowledge_id, fromKnowledgeId),
+                    eq(knowledge_edge.to_knowledge_id, toKnowledgeId),
+                  ),
+                  and(
+                    eq(knowledge_edge.from_knowledge_id, toKnowledgeId),
+                    eq(knowledge_edge.to_knowledge_id, fromKnowledgeId),
+                  ),
+                )
+              : and(
                   eq(knowledge_edge.from_knowledge_id, fromKnowledgeId),
                   eq(knowledge_edge.to_knowledge_id, toKnowledgeId),
                 ),
-                and(
-                  eq(knowledge_edge.from_knowledge_id, toKnowledgeId),
-                  eq(knowledge_edge.to_knowledge_id, fromKnowledgeId),
-                ),
-              )
-            : and(
-                eq(knowledge_edge.from_knowledge_id, fromKnowledgeId),
-                eq(knowledge_edge.to_knowledge_id, toKnowledgeId),
-              ),
-          eq(knowledge_edge.relation_type, relationType),
-          isNull(knowledge_edge.archived_at),
-        ),
-      )
-      .limit(1)
-  )[0];
-  if (duplicateLiveEdge) {
-    return { status: 'skipped:duplicate_live_edge', reason: duplicateLiveEdge.id };
-  }
+            eq(knowledge_edge.relation_type, relationType),
+            isNull(knowledge_edge.archived_at),
+          ),
+        )
+        .limit(1)
+    )[0];
+    if (duplicateLiveEdge) {
+      return {
+        status: 'skipped:duplicate_live_edge',
+        edge_id: duplicateLiveEdge.id,
+        reason: duplicateLiveEdge.id,
+      };
+    }
 
-  const cooldownKeys = edgeCooldownKeys(fromKnowledgeId, toKnowledgeId, relationType);
-  const cooldownKey = cooldownKeys[0];
-  if (await pendingProposalWithAnyCooldown(ctx.db, 'knowledge_edge', cooldownKeys)) {
-    return { status: 'skipped:duplicate_pending', cooldown_key: cooldownKey };
-  }
+    const skip = await checkProposalCooldownGate(tx, 'knowledge_edge', cooldownKeys);
+    if (skip) {
+      return {
+        status: skip.status,
+        proposal_id: skip.proposal_id,
+        cooldown_key: skip.cooldown_key,
+        cooldown_until: skip.cooldown_until,
+      };
+    }
 
-  const proposalPayload = {
-    kind: 'knowledge_edge' as const,
-    target: { subject_kind: 'knowledge_edge' as const, subject_id: null },
-    reason_md: input.reasoning,
-    evidence_refs: evidenceRefsFromEventIds(input.evidence_event_ids ?? []),
-    proposed_change: {
-      // ADR-0032 D4-E1 — explicit create marker (the schema defaults to it, but
-      // setting it makes the create branch's payload self-describing alongside
-      // the archive branch).
-      edge_op: 'create' as const,
-      from_knowledge_id: fromKnowledgeId,
-      to_knowledge_id: toKnowledgeId,
-      relation_type: relationType,
-      weight: input.weight ?? 1,
-    },
-    cooldown_key: cooldownKey,
-    // P5.6 / YUK-178 — explicit model label, default proactive. This payload flows
-    // through parseAiProposalPayload → validateProposalQuality (the rubric) BELOW
-    // before writeAiProposal, so the marker must survive that round-trip (§12 PIN
-    // 10); it does because suggestion_kind is on BaseProposal.
-    suggestion_kind: input.suggestion_kind ?? 'proactive',
-  };
+    const proposalPayload = {
+      kind: 'knowledge_edge' as const,
+      target: { subject_kind: 'knowledge_edge' as const, subject_id: null },
+      reason_md: input.reasoning,
+      evidence_refs: evidenceRefsFromEventIds(input.evidence_event_ids ?? []),
+      proposed_change: {
+        // ADR-0032 D4-E1 — explicit create marker (the schema defaults to it, but
+        // setting it makes the create branch's payload self-describing alongside
+        // the archive branch).
+        edge_op: 'create' as const,
+        from_knowledge_id: fromKnowledgeId,
+        to_knowledge_id: toKnowledgeId,
+        relation_type: relationType,
+        weight: input.weight ?? 1,
+      },
+      cooldown_key: cooldownKey,
+      // P5.6 / YUK-178 — explicit model label, default proactive. This payload flows
+      // through parseAiProposalPayload → validateProposalQuality (the rubric) BELOW
+      // before writeAiProposal, so the marker must survive that round-trip (§12 PIN
+      // 10); it does because suggestion_kind is on BaseProposal.
+      suggestion_kind: input.suggestion_kind ?? 'proactive',
+    };
 
-  // P5.4-L2 / YUK-174 (Facet B) — resolve the adaptive gate-bump for this edge's
-  // `(knowledge_edge, relation_type)` cell. Only meaningful for agents (the L1
-  // evidence floor + rescue is agent-only); for the user path the bump is inert
-  // because the rescue branch never runs. Cold-start / below-threshold → no-op.
-  //
-  // ND-5 (additive-only): the L2 bump is an OPTIONAL soft layer. A digest/query
-  // error here MUST NOT become a hard failure that blocks the pure-L1
-  // validateProposalQuality below — that would suppress L1's signal-driven
-  // proposals. Guard the call so any error downgrades `adaptive` to undefined
-  // (no-op, identical to cold start) and the L1 floor + downstream still run.
-  let adaptive: Awaited<ReturnType<typeof resolveEdgeGateBump>> | undefined;
-  if (ctx.callerActor.kind === 'agent') {
-    try {
-      adaptive = await resolveEdgeGateBump(
-        ctx.db,
-        relationType,
-        PROPOSAL_FEEDBACK_BUDGET,
-        PROPOSAL_GATE_BIAS_CONFIG,
-      );
-    } catch (bumpErr) {
-      adaptive = undefined;
-      // Evidence-first (CLAUDE.md): the soft-layer downgrade is traceable. Log
-      // via the AI action logger; the log write itself must never break the
-      // tool path, so swallow log errors with a console fallback (mirrors the
-      // mcp-bridge writeToolCallLog guard).
-      const errorReason = bumpErr instanceof Error ? bumpErr.message : String(bumpErr);
+    // P5.4-L2 / YUK-174 (Facet B) — resolve the adaptive gate-bump for this edge's
+    // `(knowledge_edge, relation_type)` cell. Only meaningful for agents (the L1
+    // evidence floor + rescue is agent-only); for the user path the bump is inert
+    // because the rescue branch never runs. Cold-start / below-threshold → no-op.
+    //
+    // ND-5 (additive-only): the L2 bump is an OPTIONAL soft layer. A digest/query
+    // error here MUST NOT become a hard failure that blocks the pure-L1
+    // validateProposalQuality below — that would suppress L1's signal-driven
+    // proposals. Guard the call so any error downgrades `adaptive` to undefined
+    // (no-op, identical to cold start) and the L1 floor + downstream still run.
+    let adaptive: Awaited<ReturnType<typeof resolveEdgeGateBump>> | undefined;
+    if (ctx.callerActor.kind === 'agent') {
       try {
-        await writeToolCallLog(ctx.db, {
-          task_run_id: ctx.taskRunId,
-          task_kind: ctx.callerActor.ref,
-          tool_name: 'propose_knowledge_edge:resolveEdgeGateBump',
-          effect: 'read',
-          input_json: { relation_type: relationType },
-          output_json: { adaptive_downgraded: true },
-          error_reason: errorReason,
-          iteration: 0,
-          latency_ms: 0,
-          cost: 0,
-        });
-      } catch (logErr) {
-        console.error('[propose_knowledge_edge] adaptive-bump downgrade log failed', {
-          task_run_id: ctx.taskRunId,
-          bump_error: errorReason,
-          err: logErr,
-        });
+        adaptive = await resolveEdgeGateBump(
+          tx,
+          relationType,
+          PROPOSAL_FEEDBACK_BUDGET,
+          PROPOSAL_GATE_BIAS_CONFIG,
+        );
+      } catch (bumpErr) {
+        adaptive = undefined;
+        // Evidence-first (CLAUDE.md): the soft-layer downgrade is traceable. Log
+        // via the AI action logger; the log write itself must never break the
+        // tool path, so swallow log errors with a console fallback (mirrors the
+        // mcp-bridge writeToolCallLog guard). The log deliberately goes through
+        // ctx.db (not tx): it is an independent side-record that must survive a
+        // later gate-txn rollback.
+        const errorReason = bumpErr instanceof Error ? bumpErr.message : String(bumpErr);
+        try {
+          await writeToolCallLog(ctx.db, {
+            task_run_id: ctx.taskRunId,
+            task_kind: ctx.callerActor.ref,
+            tool_name: 'propose_knowledge_edge:resolveEdgeGateBump',
+            effect: 'read',
+            input_json: { relation_type: relationType },
+            output_json: { adaptive_downgraded: true },
+            error_reason: errorReason,
+            iteration: 0,
+            latency_ms: 0,
+            cost: 0,
+          });
+        } catch (logErr) {
+          console.error('[propose_knowledge_edge] adaptive-bump downgrade log failed', {
+            task_run_id: ctx.taskRunId,
+            bump_error: errorReason,
+            err: logErr,
+          });
+        }
       }
     }
-  }
 
-  // P5.4 / YUK-143 (RB-1) — shared rubric floor before the write. Agents are
-  // strict; user-edited proposals (kind !== 'agent') run structural-only.
-  const verdict = await validateProposalQuality(
-    parseAiProposalPayload(proposalPayload),
-    ctx.db,
-    {
-      isAgent: ctx.callerActor.kind === 'agent',
-      actorRef: ctx.callerActor.ref,
-    },
-    adaptive,
-  );
-  if (!verdict.ok) {
-    return await foldRubricRejectedEdge(ctx, proposalPayload, cooldownKey, verdict, {
-      from_knowledge_id: fromKnowledgeId,
-      to_knowledge_id: toKnowledgeId,
-      relation_type: relationType,
-      weight: input.weight ?? 1,
-      reasoning: input.reasoning,
+    // P5.4 / YUK-143 (RB-1) — shared rubric floor before the write. Agents are
+    // strict; user-edited proposals (kind !== 'agent') run structural-only.
+    const verdict = await validateProposalQuality(
+      parseAiProposalPayload(proposalPayload),
+      tx,
+      {
+        isAgent: ctx.callerActor.kind === 'agent',
+        actorRef: ctx.callerActor.ref,
+      },
+      adaptive,
+    );
+    if (!verdict.ok) {
+      return await foldRubricRejectedEdge(ctx, tx, proposalPayload, cooldownKey, verdict, {
+        from_knowledge_id: fromKnowledgeId,
+        to_knowledge_id: toKnowledgeId,
+        relation_type: relationType,
+        weight: input.weight ?? 1,
+        reasoning: input.reasoning,
+      });
+    }
+
+    const proposalId = await writeAiProposal(tx, {
+      actor_ref: ctx.callerActor.ref,
+      outcome: 'success',
+      payload: proposalPayload,
+      task_run_id: ctx.taskRunId,
+      caused_by_event_id: ctx.causedByEventId ?? null,
     });
-  }
 
-  const proposalId = await writeAiProposal(ctx.db, {
-    actor_ref: ctx.callerActor.ref,
-    outcome: 'success',
-    payload: proposalPayload,
-    task_run_id: ctx.taskRunId,
-    caused_by_event_id: ctx.causedByEventId ?? null,
+    return { status: 'proposed', proposal_id: proposalId, cooldown_key: cooldownKey };
   });
-
-  return { status: 'proposed', proposal_id: proposalId, cooldown_key: cooldownKey };
 }
 
 // P5.4 / YUK-143 (RB-6 / §3.4) — on an agent rubric rejection, write the
@@ -394,6 +466,7 @@ async function proposeKnowledgeEdgeCreate(
 // output_json log and (2) the folded `rubric_rejected` propose event above.
 async function foldRubricRejectedEdge(
   ctx: ToolContext,
+  db: DbLike,
   proposalPayload: AiProposalPayloadInputT,
   cooldownKey: string,
   verdict: Extract<RubricVerdict, { ok: false }>,
@@ -407,7 +480,7 @@ async function foldRubricRejectedEdge(
     reasoning: string;
   },
 ): Promise<ProposeKnowledgeEdgeOutput> {
-  const proposalId = await writeAiProposal(ctx.db, {
+  const proposalId = await writeAiProposal(db, {
     actor_ref: ctx.callerActor.ref,
     outcome: 'success',
     payload: proposalPayload,
@@ -458,67 +531,78 @@ async function proposeKnowledgeEdgeArchive(
   if (!input.edge_id) {
     return { status: 'skipped:edge_not_found', reason: "op 'archive' requires edge_id" };
   }
-  const edge = await getKnowledgeEdgeById(ctx.db, input.edge_id);
-  // Target must be a LIVE (non-archived) edge. A missing id or an already-archived
-  // edge is a no-op — nothing to propose archiving.
-  if (!edge || edge.archived_at !== null) {
-    return { status: 'skipped:edge_not_found', reason: input.edge_id };
-  }
+  const edgeId = input.edge_id;
+  const cooldownKey = edgeArchiveCooldownKey(edgeId);
+  // YUK-1553 — the pending/dismiss-cooldown dedup + proposal write run inside
+  // ONE (kind, cooldown_key) advisory-locked txn (same gate as create).
+  return await withProposalGateLock(ctx.db, 'knowledge_edge', [cooldownKey], async (tx) => {
+    const edge = await getKnowledgeEdgeById(tx, edgeId);
+    // Target must be a LIVE (non-archived) edge. A missing id or an
+    // already-archived edge is a no-op — nothing to propose archiving.
+    if (!edge || edge.archived_at !== null) {
+      return { status: 'skipped:edge_not_found', edge_id: edgeId, reason: edgeId };
+    }
 
-  const cooldownKey = edgeArchiveCooldownKey(input.edge_id);
-  if (await pendingProposalWithCooldown(ctx.db, 'knowledge_edge', cooldownKey)) {
-    return { status: 'skipped:duplicate_pending', cooldown_key: cooldownKey };
-  }
+    const skip = await checkProposalCooldownGate(tx, 'knowledge_edge', [cooldownKey]);
+    if (skip) {
+      return {
+        status: skip.status,
+        proposal_id: skip.proposal_id,
+        cooldown_key: skip.cooldown_key,
+        cooldown_until: skip.cooldown_until,
+      };
+    }
 
-  const proposalPayload = {
-    kind: 'knowledge_edge' as const,
-    target: { subject_kind: 'knowledge_edge' as const, subject_id: input.edge_id },
-    reason_md: input.reasoning,
-    evidence_refs: evidenceRefsFromEventIds(input.evidence_event_ids ?? []),
-    proposed_change: {
-      edge_op: 'archive' as const,
-      // The endpoints + relation describe the edge being archived (inbox card +
-      // structural shape); archive_edge_id is the authoritative target the accept
-      // applier flips.
-      from_knowledge_id: edge.from_knowledge_id,
-      to_knowledge_id: edge.to_knowledge_id,
-      relation_type: edge.relation_type,
-      weight: edge.weight,
-      archive_edge_id: input.edge_id,
-    },
-    cooldown_key: cooldownKey,
-    suggestion_kind: input.suggestion_kind ?? 'proactive',
-  };
-
-  // The validator runs for shape uniformity but short-circuits {ok:true} on
-  // edge_op:'archive' (no evidence floor) — archive proposals are never folded.
-  const verdict = await validateProposalQuality(parseAiProposalPayload(proposalPayload), ctx.db, {
-    isAgent: ctx.callerActor.kind === 'agent',
-    actorRef: ctx.callerActor.ref,
-  });
-  if (!verdict.ok) {
-    // Defensive: archive should never fail the rubric (the validator bypasses the
-    // evidence floor for it). If a future structural gate does reject it, surface
-    // it as rubric_rejected rather than silently swallow — but do NOT fold a
-    // create-shaped event_override (this is an archive). Reuse the create fold's
-    // marker shape minimally.
-    return {
-      status: 'skipped:rubric_rejected',
+    const proposalPayload = {
+      kind: 'knowledge_edge' as const,
+      target: { subject_kind: 'knowledge_edge' as const, subject_id: edgeId },
+      reason_md: input.reasoning,
+      evidence_refs: evidenceRefsFromEventIds(input.evidence_event_ids ?? []),
+      proposed_change: {
+        edge_op: 'archive' as const,
+        // The endpoints + relation describe the edge being archived (inbox card +
+        // structural shape); archive_edge_id is the authoritative target the accept
+        // applier flips.
+        from_knowledge_id: edge.from_knowledge_id,
+        to_knowledge_id: edge.to_knowledge_id,
+        relation_type: edge.relation_type,
+        weight: edge.weight,
+        archive_edge_id: edgeId,
+      },
       cooldown_key: cooldownKey,
-      gate: verdict.gate,
-      reason: verdict.reason,
+      suggestion_kind: input.suggestion_kind ?? 'proactive',
     };
-  }
 
-  const proposalId = await writeAiProposal(ctx.db, {
-    actor_ref: ctx.callerActor.ref,
-    outcome: 'success',
-    payload: proposalPayload,
-    task_run_id: ctx.taskRunId,
-    caused_by_event_id: ctx.causedByEventId ?? null,
+    // The validator runs for shape uniformity but short-circuits {ok:true} on
+    // edge_op:'archive' (no evidence floor) — archive proposals are never folded.
+    const verdict = await validateProposalQuality(parseAiProposalPayload(proposalPayload), tx, {
+      isAgent: ctx.callerActor.kind === 'agent',
+      actorRef: ctx.callerActor.ref,
+    });
+    if (!verdict.ok) {
+      // Defensive: archive should never fail the rubric (the validator bypasses the
+      // evidence floor for it). If a future structural gate does reject it, surface
+      // it as rubric_rejected rather than silently swallow — but do NOT fold a
+      // create-shaped event_override (this is an archive). Reuse the create fold's
+      // marker shape minimally.
+      return {
+        status: 'skipped:rubric_rejected',
+        cooldown_key: cooldownKey,
+        gate: verdict.gate,
+        reason: verdict.reason,
+      };
+    }
+
+    const proposalId = await writeAiProposal(tx, {
+      actor_ref: ctx.callerActor.ref,
+      outcome: 'success',
+      payload: proposalPayload,
+      task_run_id: ctx.taskRunId,
+      caused_by_event_id: ctx.causedByEventId ?? null,
+    });
+
+    return { status: 'proposed', proposal_id: proposalId, cooldown_key: cooldownKey };
   });
-
-  return { status: 'proposed', proposal_id: proposalId, cooldown_key: cooldownKey };
 }
 
 function proposeKnowledgeEdgeSummary(
@@ -537,7 +621,7 @@ export const proposeKnowledgeEdgeTool: DomainTool<
 > = {
   name: 'propose_knowledge_edge',
   description:
-    'Propose one knowledge mesh edge change. op="create" (default) proposes a NEW edge from {from_knowledge_id, to_knowledge_id, relation_type, weight?} — validates active same-subject nodes, self loops, duplicate live/pending edges, and parent-only related_to redundancy. op="archive" proposes soft-deleting an EXISTING live edge named by edge_id (no failure evidence required — archiving is the inverse of proposing). Both ops are proposal-only: the user accepts in the inbox; archive sets archived_at, never a hard delete.',
+    'Propose one knowledge mesh edge change. op="create" (default) proposes a NEW edge from {from_knowledge_id, to_knowledge_id, relation_type, weight?} — validates active same-subject nodes, self loops, duplicate live/pending edges, and parent-only related_to redundancy. Agent-proposed creates are rubric-gated: put the supporting attempt/event ids in evidence_event_ids, not just in reasoning. op="archive" proposes soft-deleting an EXISTING live edge named by edge_id (no failure evidence required — archiving is the inverse of proposing). Both ops are proposal-only: the user accepts in the inbox; archive sets archived_at, never a hard delete. Results starting with skipped: mean the proposal was NOT written — do not retry the same change.',
   effect: 'propose',
   inputSchema: ProposeKnowledgeEdgeInputSchema,
   outputSchema: ProposeKnowledgeEdgeOutputSchema,
@@ -551,77 +635,59 @@ export const proposeKnowledgeEdgeTool: DomainTool<
 // propose_knowledge_mutation
 // ---------------------------------------------------------------------------
 
+// YUK-1553 — model-visible input exposes the real five-branch change
+// structure. The pi bridge requires a top-level z.object (pi-tools.ts:130), so
+// the discriminated union lives inside the `change` field; `change` IS the
+// KnowledgeMutationPayload written by the proposal writer — ONE schema serves
+// both the wire contract and the execute-side parse (no hidden second parser).
+const KnowledgeMutationChangeSchema = z.discriminatedUnion('mutation', [
+  z.object({
+    mutation: z.literal('propose_new'),
+    name: z.string().min(1).max(120),
+    // null = propose a NEW domain ROOT; then `domain` is required (validated in
+    // execute — flat z.object, no .refine, per the MCP-bridge ZodObject
+    // constraint). A string parent_id proposes a child node.
+    parent_id: z.string().min(1).nullable(),
+    domain: z.string().min(1).optional(),
+  }),
+  z.object({
+    mutation: z.literal('reparent'),
+    node_id: z.string().min(1),
+    new_parent_id: z.string().min(1),
+    // CAS token: the node's current `version` (see query_knowledge / tree input).
+    expected_version: z.number().int().min(0),
+  }),
+  z.object({
+    mutation: z.literal('merge'),
+    from_ids: z.array(z.string().min(1)).min(1),
+    into_id: z.string().min(1),
+    // CAS tokens for every absorbed node: {from_id: current version}. Accept
+    // rejects a merge whose recorded base version has drifted.
+    expected_versions: z.record(z.string(), z.number().int().min(0)),
+  }),
+  z.object({
+    mutation: z.literal('split'),
+    from_id: z.string().min(1),
+    into: z
+      .array(z.object({ name: z.string().min(1).max(120), parent_id: z.string().min(1) }))
+      .min(1),
+    expected_version: z.number().int().min(0),
+  }),
+  z.object({
+    mutation: z.literal('archive'),
+    node_id: z.string().min(1),
+    expected_version: z.number().int().min(0),
+  }),
+]);
+
 const KnowledgeMutationInputSchema = z.object({
-  mutation: z.enum(['propose_new', 'reparent', 'merge', 'split', 'archive']),
-  payload: z.record(z.string(), z.unknown()),
+  change: KnowledgeMutationChangeSchema,
   reasoning: z.string().min(1).max(2000),
-  evidence_event_ids: z.array(z.string().min(1)).optional(),
+  evidence_event_ids: EvidenceEventIdsSchema.optional(),
   // P5.6 / YUK-178 (§4.1/§4.2, SK-5) — OPTIONAL model-labeled discriminator;
   // omit (→ 'proactive') unless this mutation repairs a model-observed failure.
   suggestion_kind: SuggestionKind.optional(),
 });
-
-const KnowledgeMutationParsedSchema = z.discriminatedUnion('mutation', [
-  z.object({
-    mutation: z.literal('propose_new'),
-    payload: z.object({
-      name: z.string().min(1).max(120),
-      // null = propose a NEW domain ROOT; then payload.domain is required
-      // (validated in execute — flat z.object, no .refine, per the MCP-bridge
-      // ZodObject constraint). A string parent_id proposes a child node.
-      parent_id: z.string().min(1).nullable(),
-      domain: z.string().min(1).optional(),
-    }),
-    reasoning: z.string().min(1).max(2000),
-    evidence_event_ids: z.array(z.string().min(1)).default([]),
-    suggestion_kind: SuggestionKind.optional(),
-  }),
-  z.object({
-    mutation: z.literal('reparent'),
-    payload: z.object({
-      node_id: z.string().min(1),
-      new_parent_id: z.string().min(1),
-      expected_version: z.number().int().min(0),
-    }),
-    reasoning: z.string().min(1).max(2000),
-    evidence_event_ids: z.array(z.string().min(1)).default([]),
-    suggestion_kind: SuggestionKind.optional(),
-  }),
-  z.object({
-    mutation: z.literal('merge'),
-    payload: z.object({
-      from_ids: z.array(z.string().min(1)).min(1),
-      into_id: z.string().min(1),
-      expected_versions: z.record(z.string(), z.number().int().min(0)),
-    }),
-    reasoning: z.string().min(1).max(2000),
-    evidence_event_ids: z.array(z.string().min(1)).default([]),
-    suggestion_kind: SuggestionKind.optional(),
-  }),
-  z.object({
-    mutation: z.literal('split'),
-    payload: z.object({
-      from_id: z.string().min(1),
-      into: z
-        .array(z.object({ name: z.string().min(1).max(120), parent_id: z.string().min(1) }))
-        .min(1),
-      expected_version: z.number().int().min(0),
-    }),
-    reasoning: z.string().min(1).max(2000),
-    evidence_event_ids: z.array(z.string().min(1)).default([]),
-    suggestion_kind: SuggestionKind.optional(),
-  }),
-  z.object({
-    mutation: z.literal('archive'),
-    payload: z.object({
-      node_id: z.string().min(1),
-      expected_version: z.number().int().min(0),
-    }),
-    reasoning: z.string().min(1).max(2000),
-    evidence_event_ids: z.array(z.string().min(1)).default([]),
-    suggestion_kind: SuggestionKind.optional(),
-  }),
-]);
 
 const KnowledgeMutationOutputSchema = z.object({
   status: z.enum([
@@ -630,16 +696,22 @@ const KnowledgeMutationOutputSchema = z.object({
     'skipped:cross_subject',
     'skipped:invalid_payload',
     'skipped:duplicate_pending',
+    // YUK-1553 — an active dismiss-cooldown covers this key; same-args retries
+    // inside the window are suppressed (was the retired KR gate's
+    // `skipped_cooldown`).
+    'skipped:cooldown',
   ]),
   proposal_id: z.string().optional(),
+  cooldown_key: z.string().optional(),
+  cooldown_until: z.string().optional(),
   reason: z.string().optional(),
 });
 
 type KnowledgeMutationInput = z.infer<typeof KnowledgeMutationInputSchema>;
-type KnowledgeMutationParsedInput = z.infer<typeof KnowledgeMutationParsedSchema>;
-type KnowledgeMutationOutput = z.infer<typeof KnowledgeMutationOutputSchema>;
+type KnowledgeMutationChange = z.infer<typeof KnowledgeMutationChangeSchema>;
+export type KnowledgeMutationOutput = z.infer<typeof KnowledgeMutationOutputSchema>;
 
-async function activeKnowledgeIds(db: Db, ids: string[]): Promise<Set<string>> {
+async function activeKnowledgeIds(db: DbLike, ids: string[]): Promise<Set<string>> {
   const uniqueIds = [...new Set(ids)];
   if (uniqueIds.length === 0) return new Set();
   const rows = await db
@@ -649,44 +721,33 @@ async function activeKnowledgeIds(db: Db, ids: string[]): Promise<Set<string>> {
   return new Set(rows.map((row) => row.id));
 }
 
-function parseKnowledgeMutationInput(input: KnowledgeMutationInput): KnowledgeMutationParsedInput {
-  return KnowledgeMutationParsedSchema.parse(input);
-}
-
-function knowledgeIdsForMutation(input: KnowledgeMutationParsedInput): string[] {
-  switch (input.mutation) {
+function knowledgeIdsForMutation(change: KnowledgeMutationChange): string[] {
+  switch (change.mutation) {
     case 'propose_new':
-      return input.payload.parent_id === null ? [] : [input.payload.parent_id];
+      return change.parent_id === null ? [] : [change.parent_id];
     case 'reparent':
-      return [input.payload.node_id, input.payload.new_parent_id];
+      return [change.node_id, change.new_parent_id];
     case 'merge':
-      return [...input.payload.from_ids, input.payload.into_id];
+      return [...change.from_ids, change.into_id];
     case 'split':
-      return [input.payload.from_id, ...input.payload.into.map((entry) => entry.parent_id)];
+      return [change.from_id, ...change.into.map((entry) => entry.parent_id)];
     case 'archive':
-      return [input.payload.node_id];
+      return [change.node_id];
   }
-}
-
-function mutationPayload(input: KnowledgeMutationParsedInput): KnowledgeMutationPayload {
-  return {
-    mutation: input.mutation,
-    ...input.payload,
-  } as KnowledgeMutationPayload;
 }
 
 async function proposeKnowledgeMutationExecute(
   ctx: ToolContext,
   raw: KnowledgeMutationInput,
 ): Promise<KnowledgeMutationOutput> {
-  const outer = KnowledgeMutationInputSchema.parse(raw);
-  const input = parseKnowledgeMutationInput(outer);
-  if (input.mutation === 'merge' && input.payload.from_ids.includes(input.payload.into_id)) {
+  const input = KnowledgeMutationInputSchema.parse(raw);
+  const change = input.change;
+  if (change.mutation === 'merge' && change.from_ids.includes(change.into_id)) {
     return { status: 'skipped:invalid_payload', reason: 'merge into_id cannot appear in from_ids' };
   }
-  if (input.mutation === 'merge') {
-    const missingExpectedVersions = input.payload.from_ids.filter(
-      (fromId) => !(fromId in input.payload.expected_versions),
+  if (change.mutation === 'merge') {
+    const missingExpectedVersions = change.from_ids.filter(
+      (fromId) => !(fromId in change.expected_versions),
     );
     if (missingExpectedVersions.length > 0) {
       return {
@@ -701,23 +762,23 @@ async function proposeKnowledgeMutationExecute(
   // carry one — children inherit the parent's effective domain and an explicit
   // value would silently diverge from it. 'general'/blank is the fallback
   // subject identity and can never be a node domain (node-creation contract).
-  if (input.mutation === 'propose_new') {
-    if (input.payload.parent_id === null && !sanitizeProposedNodeDomain(input.payload.domain)) {
+  if (change.mutation === 'propose_new') {
+    if (change.parent_id === null && !sanitizeProposedNodeDomain(change.domain)) {
       return {
         status: 'skipped:invalid_payload',
         reason:
-          "root proposal (parent_id=null) requires a selectable payload.domain — 'general'/blank is a fallback identity, not a node domain",
+          "root proposal (parent_id=null) requires a selectable change.domain — 'general'/blank is a fallback identity, not a node domain",
       };
     }
-    if (input.payload.parent_id !== null && input.payload.domain !== undefined) {
+    if (change.parent_id !== null && change.domain !== undefined) {
       return {
         status: 'skipped:invalid_payload',
-        reason: 'child nodes inherit the parent domain — omit payload.domain when parent_id is set',
+        reason: 'child nodes inherit the parent domain — omit change.domain when parent_id is set',
       };
     }
   }
 
-  const ids = knowledgeIdsForMutation(input);
+  const ids = knowledgeIdsForMutation(change);
   const activeIds = await activeKnowledgeIds(ctx.db, ids);
   const missing = [...new Set(ids)].filter((id) => !activeIds.has(id));
   if (missing.length > 0) {
@@ -731,38 +792,39 @@ async function proposeKnowledgeMutationExecute(
     return { status: 'skipped:cross_subject', reason: 'mutation spans multiple domains' };
   }
 
-  const duplicateCooldown =
-    input.mutation === 'propose_new'
-      ? knowledgeNodeCooldownKey(input.payload)
-      : input.mutation === 'archive'
-        ? `archive:knowledge:${input.payload.node_id}`
-        : null;
-  if (
-    duplicateCooldown &&
-    (await pendingProposalWithCooldown(
-      ctx.db,
-      input.mutation === 'propose_new' ? 'knowledge_node' : 'archive',
-      duplicateCooldown,
-    ))
-  ) {
-    return { status: 'skipped:duplicate_pending', reason: duplicateCooldown };
-  }
+  const writeProposal = (db: DbLike) =>
+    writeKnowledgeProposeEvent(db, {
+      payload: change,
+      reasoning: input.reasoning,
+      evidence_refs: evidenceRefsFromEventIds(input.evidence_event_ids ?? []),
+      actor_ref: ctx.callerActor.ref,
+      caused_by_event_id: ctx.causedByEventId ?? null,
+      task_run_id: ctx.taskRunId,
+      // P5.6 / YUK-178 — model-labeled discriminator threaded into the proposal
+      // payload writeKnowledgeProposeEvent builds; default proactive.
+      suggestion_kind: input.suggestion_kind ?? 'proactive',
+    });
 
-  const proposalId = await writeKnowledgeProposeEvent(ctx.db, {
-    payload: mutationPayload(input),
-    reasoning: input.reasoning,
-    evidence_refs: evidenceRefsFromEventIds(input.evidence_event_ids ?? []),
-    actor_ref: ctx.callerActor.ref,
-    caused_by_event_id: ctx.causedByEventId ?? null,
-    task_run_id: ctx.taskRunId,
-    // P5.6 / YUK-178 — model-labeled discriminator threaded into the proposal
-    // payload writeKnowledgeProposeEvent builds; default proactive. Declared on
-    // every parsed-schema branch, so it flows through `input` (single source of
-    // truth — no reliance on the outer parse retaining a field the union strips).
-    suggestion_kind: input.suggestion_kind ?? 'proactive',
+  // Every mutation branch shares the writer's `(kind, cooldown_key)` identity;
+  // reparent / merge / split are included here (they had no propose-side gate
+  // before, so repeated proposals stacked in the inbox).
+  const gate = knowledgeMutationCooldown(change);
+  // YUK-1553 — pending/dismiss-cooldown dedup reads and the proposal write in
+  // ONE advisory-locked txn; same-args retries inside the window skip instead
+  // of stacking inbox rows (the retired KR gate's serialized check-then-write).
+  return await withProposalGateLock(ctx.db, gate.kind, gate.cooldownKeys, async (tx) => {
+    const skip = await checkProposalCooldownGate(tx, gate.kind, gate.cooldownKeys);
+    if (skip) {
+      return {
+        status: skip.status,
+        proposal_id: skip.proposal_id,
+        cooldown_key: skip.cooldown_key,
+        cooldown_until: skip.cooldown_until,
+      };
+    }
+    const proposalId = await writeProposal(tx);
+    return { status: 'proposed', proposal_id: proposalId };
   });
-
-  return { status: 'proposed', proposal_id: proposalId };
 }
 
 export const proposeKnowledgeMutationTool: DomainTool<
@@ -771,14 +833,14 @@ export const proposeKnowledgeMutationTool: DomainTool<
 > = {
   name: 'propose_knowledge_mutation',
   description:
-    'Propose a knowledge tree mutation: propose_new, reparent, merge, split, or archive. Writes proposal-only events; accept handlers own the real mutation. propose_new payload: {name, parent_id} — set parent_id=null plus payload.domain to propose a NEW subject/domain root (e.g. first node of a subject with zero roots); a child proposal uses an existing node id as parent_id and omits domain.',
+    "Propose one knowledge tree mutation (proposal-only; the user accepts in the inbox — never a direct write). Input: {change, reasoning, evidence_event_ids?}. change.mutation picks the branch: propose_new {name, parent_id} — parent_id=null + domain proposes a NEW subject root; a child uses an existing node id and omits domain. reparent {node_id, new_parent_id, expected_version}. merge {from_ids, into_id, expected_versions:{id:version} for every from_id}. split {from_id, into:[{name,parent_id}], expected_version}. archive {node_id, expected_version}. expected_version(s) are CAS tokens — copy the node's current `version` from query_knowledge / the tree input. Results starting with skipped: mean the proposal was NOT written — do not retry the same change.",
   effect: 'propose',
   inputSchema: KnowledgeMutationInputSchema,
   outputSchema: KnowledgeMutationOutputSchema,
   costClass: 'local',
   execute: proposeKnowledgeMutationExecute,
   summarize(input, output) {
-    return `knowledge ${input.mutation}: ${output.status}`;
+    return `knowledge ${input.change.mutation}: ${output.status}`;
   },
   mirrorEvent: 'when_causal',
 };
