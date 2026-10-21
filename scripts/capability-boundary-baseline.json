@@ -852,9 +852,7 @@
       "file": "src/capabilities/observability/api/harness-scoreboard.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",
-      "symbols": [
-        "errorResponse"
-      ],
+      "symbols": ["errorResponse"],
       "issue": "YUK-1557",
       "owns": "HTTP error envelope for the harness scoreboard read route",
       "date": "2026-10-21"
@@ -864,9 +862,7 @@
       "file": "src/capabilities/observability/server/harness-scoreboard.ts",
       "module": "src/kernel/events/index.ts",
       "kind": "value",
-      "symbols": [
-        "writeEvent"
-      ],
+      "symbols": ["writeEvent"],
       "issue": "YUK-1557",
       "owns": "Persist the deterministic daily harness scoreboard as a first-write-wins event projection",
       "date": "2026-10-21"
