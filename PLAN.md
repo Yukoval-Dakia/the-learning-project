@@ -1,10 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-21：迁移线回归首次上传 Start 入口；Stage1 已解除旧暂缓，UI 额度耗尽，三文件窄写权已交原协调裁定。旧 ea21 构建失败收口，不再作为源码前置。
+> Linear 是权威 tracker。2026-10-21：迁移线回归首次上传 Start 入口；Stage1 已解除旧暂缓，协调已分配三文件窄写权，源码与本地检查已完成。旧 ea21 构建失败收口，不再作为源码前置。
 
 ## NOW
 
-- **第一天能用 / 首次上传 Start 入口（YUK-1358）**：当前功能分支 `feat/yuk-1358-onboarding-upload-start` 从 main `def2aeb51` 开始。下一交付仅 `/onboarding/upload` 新 Start route、生成 routeTree、旧 SPA 对应 document handoff；复用原组件/HTTP/TokenGate，视觉、上传付费与默认 agent 不变。Stage1 无占用且解除旧暂缓；UI weekly quota 无法回复，已请原协调按已核非重叠 hunk 裁定后落源码，不扩为 record/drafts 或全 RPC。浏览器验收另排，未新建测试或 runtime。
+- **第一天能用 / 首次上传 Start 入口（YUK-1358）**：当前功能分支 `feat/yuk-1358-onboarding-upload-start` 从 main `def2aeb51` 开始。下一交付仅 `/onboarding/upload` 新 Start route、生成 routeTree、旧 SPA 对应 document handoff已完成；typecheck/lint/build通过（181 warnings）。独立审查/PR CI待执行；复用原组件/HTTP/TokenGate，视觉、上传付费与默认 agent 不变。Stage1 无占用且解除旧暂缓；协调已确认 UI 仅有 RecordRoute 异处注释，三文件入口壳由迁移独占实施，不扩为 record/drafts 或全 RPC。浏览器验收另排，未新建测试或 runtime。
 
 - **第一天能用 / 录入助手启动额度（YUK-1522）**：PR1891 从6c82接手，永久reservation独立于grant，OCR/model pending、历史归属未证与跨周unknown持续保留，所有kind同key锁内先查原agent绑定。52548修复，70d8普通整合main518c；生成/typecheck/lint/build/8审计全exit0（179warnings），基线/限流保留main，无测试差量。真实DB/并发/TTL/跨周/provider均NOT_RUN，无第三审，待父定向。[证据与保守边界](docs/planning/2026-10-20-ingestion-budget-history.md)。
 

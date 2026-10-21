@@ -1,6 +1,6 @@
 # Migration focus — 2026-10-21
 
-Owner停止手工SHA/重复seal/例行运维，ea21单次隔离build失败已清理且不重试。主线任务是YUK1358首次上传Start入口：new onboarding.upload route、生成routeTree、SPA onboardingUpload handoff，原组件/HTTP保持。Stage1已明确解除原暂缓且无writer；UI窄hunk/routeTree确认因其weekly quota失败，已将明确不重叠的三文件范围交原协调裁定。当前分支feat/yuk-1358-onboarding-upload-start基于def2aeb51，pnpm frozen install完成；不新写测试，不启服务/模型。后续以本片真实源码/CI/浏览器分层交付，不把旧运营包当迁移成果。
+Owner停止手工SHA/重复seal/例行运维，ea21单次隔离build失败已清理且不重试。主线任务是YUK1358首次上传Start入口：new onboarding.upload route、生成routeTree、SPA onboardingUpload handoff，原组件/HTTP保持。Stage1已明确解除原暂缓且无writer；协调已将三个非重叠入口范围分配给迁移，不等待 UI 额度；保留 UI RecordRoute 注释与其它页面差量。当前分支feat/yuk-1358-onboarding-upload-start基于def2aeb51，pnpm frozen install及typecheck/lint/build完成（lint181warnings），三处产品接线已完成，独立R1/PR CI待执行；不新写测试，不启服务/模型。后续以本片真实源码/CI/浏览器分层交付，不把旧运营包当迁移成果。
 
 # 录入助手永久身份与未结费用修复，2026-10-20
 

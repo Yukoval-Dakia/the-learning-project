@@ -141,11 +141,14 @@ const welcomeRoute = createRoute({
   component: WelcomeRoute,
 });
 
-const OnboardingUploadRoute = lazyNavigableRoute(loadOnboardRecordPage);
+const OnboardingUploadRoute = import.meta.env.PROD
+  ? StartPageEntry
+  : lazyNavigableRoute(loadOnboardRecordPage);
 
 const onboardingUploadRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: surfacePath('onboarding-upload'),
+  beforeLoad: startOnboardingBeforeLoad,
   component: OnboardingUploadRoute,
 });
 
